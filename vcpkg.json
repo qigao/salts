@@ -1,0 +1,20 @@
+{
+  "name": "vcpkg-turboutils",
+  "version-semver": "0.1.0",
+  "dependencies": [
+    {
+      "name": "aklomp-base64",
+      "version>=": "0.5.2"
+    },
+    {
+      "name": "pkgconf"
+    },
+    {
+      "name": "zstd"
+    },
+    {
+      "name": "simde"
+    }
+  ],
+  "builtin-baseline": "b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01"
+}

@@ -1,0 +1,26 @@
+set(TARGET_NAME ltv_parser)
+
+cmake_add_source(SOURCE_FILES RECURSE DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
+                 PATTERNS "*.c")
+
+add_library(${TARGET_NAME} STATIC ${SOURCE_FILES})
+cmake_config_target(${TARGET_NAME}
+    NO_INSTALL
+    ALIAS TurboUtils::LtvParser
+    FOLDER "parser/ltv_parser/"
+    EXPORT_NAME LtvParser)
+
+target_include_directories(${TARGET_NAME}
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+        $<INSTALL_INTERFACE:include/ltv_parser>
+)
+
+target_link_libraries(${TARGET_NAME}
+    PUBLIC
+        TurboUtils::UriParser
+)
+ 
+
+add_subdirectory(test)
