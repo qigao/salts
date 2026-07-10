@@ -7,6 +7,5 @@ find_package(TurboUtils CONFIG REQUIRED PATHS "${TurboUtils_DIR}" NO_DEFAULT_PAT
 add_executable(cron_package_consumer main.c)
 target_link_libraries(cron_package_consumer PRIVATE TurboUtils::Cron)
 
-cmake_config_target(cron_package_consumer NO_INSTALL)
 set_target_properties(cron_package_consumer PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
