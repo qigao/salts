@@ -262,8 +262,8 @@ static void __bdd_cleanup_specs__(void) {
 typedef void(__cdecl *__bdd_ctor_fn__)(void);
   #define __BDD_CONSTRUCTOR__(fn)                                                                  \
     static void __cdecl fn(void);                                                                  \
-    __declspec(allocate(".CRT$XCU")) __attribute__((used)) static __bdd_ctor_fn__                  \
-        __BDD_CAT2(__bdd_ctor_, fn) = fn;                                                          \
+    __declspec(allocate(".CRT$XCU"))                                                               \
+    __attribute__((used)) static __bdd_ctor_fn__ __BDD_CAT2(__bdd_ctor_, fn) = fn;                 \
     static void __cdecl fn(void)
 #elif defined(_MSC_VER)
   #ifdef read
@@ -291,9 +291,8 @@ typedef void(__cdecl *__bdd_ctor_fn__)(void);
 
 static inline void __bdd_bench_print_header__(__bdd_config_type__ *config, size_t level);
 
-static inline void __bdd_bench_print__(__bdd_config_type__ *config, const char *title,
-                                       size_t iters, double sum_ms,
-                                       double min_ms, double max_ms, double scale,
+static inline void __bdd_bench_print__(__bdd_config_type__ *config, const char *title, size_t iters,
+                                       double sum_ms, double min_ms, double max_ms, double scale,
                                        size_t level, bool use_color);
 
 static inline void __bdd_bench_reset__(__bdd_config_type__ *config);
@@ -376,8 +375,7 @@ static inline int tt_write_file(const char *path, const void *data, size_t size)
 static inline int tt_remove_file(const char *path) {
 #ifdef _WIN32
   DWORD attrs = GetFileAttributesA(path);
-  if (attrs != INVALID_FILE_ATTRIBUTES &&
-      (attrs & FILE_ATTRIBUTE_REPARSE_POINT) &&
+  if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) &&
       (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
     return RemoveDirectoryA(path) ? 0 : -1;
   }
@@ -399,8 +397,7 @@ static inline int tt_is_dir(const char *path) {
 #ifdef _WIN32
   DWORD attrs = GetFileAttributesA(path);
   if (attrs == INVALID_FILE_ATTRIBUTES) return 0;
-  return (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
-         (attrs & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+  return (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
 #else
   struct stat st;
   if (lstat(path, &st) != 0) return 0;
@@ -684,8 +681,7 @@ typedef struct __bdd_config_type__ {
   size_t bench_header_level; /* replaces static __bdd_bench_header_level__   */
 } __bdd_config_type__;
 
-static __BDD_NO_SANITIZE_ADDRESS__ void __bdd_longjmp_fail__(
-    __bdd_config_type__ *config) {
+static __BDD_NO_SANITIZE_ADDRESS__ void __bdd_longjmp_fail__(__bdd_config_type__ *config) {
   if (!config) {
     abort();
   }
@@ -967,9 +963,9 @@ static inline void __bdd_bench_print_header__(__bdd_config_type__ *config, size_
 #endif
 }
 
-static inline void __bdd_bench_print__(__bdd_config_type__ *config, const char *title,
-                                       size_t iters, double sum_ms, double min_ms, double max_ms,
-                                       double scale, size_t level, bool use_color) {
+static inline void __bdd_bench_print__(__bdd_config_type__ *config, const char *title, size_t iters,
+                                       double sum_ms, double min_ms, double max_ms, double scale,
+                                       size_t level, bool use_color) {
   __bdd_bench_entry__ e;
 
   memset(&e, 0, sizeof(e));
@@ -1070,7 +1066,7 @@ static void __bdd_exit_node__(__bdd_config_type__ *config) {
 
 static inline const char *__bdd_skip_message__(const __bdd_test_step__ *step) {
   return (step && step->skip_reason && step->skip_reason[0] != '\0') ? step->skip_reason
-                                                                      : "Test was skipped";
+                                                                     : "Test was skipped";
 }
 
 static void __bdd_report_skip__(__bdd_config_type__ *config, __bdd_test_step__ *step) {
@@ -1416,7 +1412,7 @@ static void __bdd_xml_escape__(FILE *f, const char *str) {
 }
 
 static __bdd_result__ __bdd_generate_junit__(__bdd_config_type__ *config, __bdd_array__ *steps,
-                                            size_t test_count) {
+                                             size_t test_count) {
   FILE *f = fopen(config->junit_file, "w");
   if (!f) {
     return __bdd_result_error__(__BDD_ERR_IO__, "could not open JUnit output file");
@@ -1470,8 +1466,8 @@ static __bdd_result__ __bdd_generate_junit__(__bdd_config_type__ *config, __bdd_
       fprintf(f, "\" time=\"%.6f\"", step->execution_time_ms / 1000.0); /* Convert ms to seconds */
 
       bool is_skip = step->result == __BDD_RESULT_SKIPPED__;
-      bool is_fail = step->result == __BDD_RESULT_FAILED__ ||
-                     step->result == __BDD_RESULT_UNEXPECTED_PASS__;
+      bool is_fail =
+          step->result == __BDD_RESULT_FAILED__ || step->result == __BDD_RESULT_UNEXPECTED_PASS__;
 
       if (is_skip) {
         fprintf(f, ">\n");
@@ -1525,9 +1521,9 @@ static __bdd_result__ __bdd_generate_junit__(__bdd_config_type__ *config, __bdd_
 /* main() must not be in extern "C" block */
 #ifndef TINYTEST_NO_MAIN
 int main(int argc, char **argv) {
-#ifdef _WIN32
+  #ifdef _WIN32
   SetConsoleOutputCP(CP_UTF8);
-#endif
+  #endif
 
   double __bdd_start_time__ = __bdd_get_time_ms__();
   struct __bdd_config_type__ config;
@@ -1819,11 +1815,13 @@ int main(int argc, char **argv) {
 #endif
 
 #define spec(name)                                                                                 \
-  static void __BDD_CAT2(__bdd_spec_fn_, __LINE__)(__BDD_UNUSED_PARAM__ __bdd_config_type__ * __bdd_config__);          \
+  static void __BDD_CAT2(__bdd_spec_fn_,                                                           \
+                         __LINE__)(__BDD_UNUSED_PARAM__ __bdd_config_type__ * __bdd_config__);     \
   __BDD_CONSTRUCTOR__(__BDD_CAT2(__bdd_spec_reg_, __LINE__)) {                                     \
     __bdd_register_spec__((name), __BDD_CAT2(__bdd_spec_fn_, __LINE__));                           \
   }                                                                                                \
-  static void __BDD_CAT2(__bdd_spec_fn_, __LINE__)(__BDD_UNUSED_PARAM__ __bdd_config_type__ * __bdd_config__)
+  static void __BDD_CAT2(__bdd_spec_fn_,                                                           \
+                         __LINE__)(__BDD_UNUSED_PARAM__ __bdd_config_type__ * __bdd_config__)
 
 #define __BDD_CAT(a, b) a##b
 #define __BDD_CAT2(a, b) __BDD_CAT(a, b)
@@ -1920,35 +1918,35 @@ static inline int __bdd_eval_bool__(int v) { return v; }
   do {                                                                                             \
     int __bdd_a__ = __BDD_CAST(int, (actual));                                                     \
     int __bdd_e__ = __BDD_CAST(int, (expected));                                                   \
-    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                   \
+    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                    \
   } while (0)
 
 #define __BDD_UINT_COMPARE__(emitter, actual, expected, op, fmt)                                   \
   do {                                                                                             \
     unsigned __bdd_a__ = __BDD_CAST(unsigned, (actual));                                           \
     unsigned __bdd_e__ = __BDD_CAST(unsigned, (expected));                                         \
-    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                   \
+    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                    \
   } while (0)
 
 #define __BDD_SIZE_COMPARE__(emitter, actual, expected, op, fmt)                                   \
   do {                                                                                             \
     size_t __bdd_a__ = __BDD_CAST(size_t, (actual));                                               \
     size_t __bdd_e__ = __BDD_CAST(size_t, (expected));                                             \
-    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                   \
+    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                    \
   } while (0)
 
 #define __BDD_LLONG_COMPARE__(emitter, actual, expected, op, fmt)                                  \
   do {                                                                                             \
     long long __bdd_a__ = __BDD_CAST(long long, (actual));                                         \
     long long __bdd_e__ = __BDD_CAST(long long, (expected));                                       \
-    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                   \
+    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                    \
   } while (0)
 
 #define __BDD_DOUBLE_COMPARE__(emitter, actual, expected, op, fmt)                                 \
   do {                                                                                             \
     double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
     double __bdd_e__ = __BDD_CAST(double, (expected));                                             \
-    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                   \
+    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                    \
   } while (0)
 
 /* --- Typed assertion macros --- */
@@ -2036,16 +2034,16 @@ static inline int __bdd_eval_bool__(int v) { return v; }
     double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
     double __bdd_e__ = __BDD_CAST(double, (expected));                                             \
     double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
-    __BDD_CHECK__(fabs(__bdd_a__ - __bdd_e__) <= __bdd_eps__,                                      \
-                  "expected %f (+/- %f) but got %f", __bdd_e__, __bdd_eps__, __bdd_a__);          \
+    __BDD_CHECK__(fabs(__bdd_a__ - __bdd_e__) <= __bdd_eps__, "expected %f (+/- %f) but got %f",   \
+                  __bdd_e__, __bdd_eps__, __bdd_a__);                                              \
   } while (0)
 #define check_float_eq_warn(actual, expected, epsilon)                                             \
   do {                                                                                             \
     double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
     double __bdd_e__ = __BDD_CAST(double, (expected));                                             \
     double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
-    __BDD_WARN__(fabs(__bdd_a__ - __bdd_e__) <= __bdd_eps__,                                       \
-                 "expected %f (+/- %f) but got %f", __bdd_e__, __bdd_eps__, __bdd_a__);           \
+    __BDD_WARN__(fabs(__bdd_a__ - __bdd_e__) <= __bdd_eps__, "expected %f (+/- %f) but got %f",    \
+                 __bdd_e__, __bdd_eps__, __bdd_a__);                                               \
   } while (0)
 
 #define check_float_ne(actual, expected, epsilon)                                                  \
@@ -2053,16 +2051,16 @@ static inline int __bdd_eval_bool__(int v) { return v; }
     double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
     double __bdd_e__ = __BDD_CAST(double, (expected));                                             \
     double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
-    __BDD_CHECK__(fabs(__bdd_a__ - __bdd_e__) > __bdd_eps__,                                       \
-                  "expected != %f (+/- %f) but got %f", __bdd_e__, __bdd_eps__, __bdd_a__);       \
+    __BDD_CHECK__(fabs(__bdd_a__ - __bdd_e__) > __bdd_eps__, "expected != %f (+/- %f) but got %f", \
+                  __bdd_e__, __bdd_eps__, __bdd_a__);                                              \
   } while (0)
 #define check_float_ne_warn(actual, expected, epsilon)                                             \
   do {                                                                                             \
     double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
     double __bdd_e__ = __BDD_CAST(double, (expected));                                             \
     double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
-    __BDD_WARN__(fabs(__bdd_a__ - __bdd_e__) > __bdd_eps__,                                        \
-                 "expected != %f (+/- %f) but got %f", __bdd_e__, __bdd_eps__, __bdd_a__);        \
+    __BDD_WARN__(fabs(__bdd_a__ - __bdd_e__) > __bdd_eps__, "expected != %f (+/- %f) but got %f",  \
+                 __bdd_e__, __bdd_eps__, __bdd_a__);                                               \
   } while (0)
 
 #define check_float_gt(actual, expected)                                                           \
@@ -2093,8 +2091,8 @@ static inline int __bdd_eval_bool__(int v) { return v; }
     double __bdd_rel__ = __BDD_CAST(double, (rel));                                                \
     double __bdd_delta__ = fabs(__bdd_a__ - __bdd_e__);                                            \
     __BDD_CHECK__(__bdd_delta__ <= __bdd_rel__ * fabs(__bdd_e__),                                  \
-                  "expected %f within %f%% of %f, delta was %f", __bdd_a__,                        \
-                  __bdd_rel__ * 100.0, __bdd_e__, __bdd_delta__);                                  \
+                  "expected %f within %f%% of %f, delta was %f", __bdd_a__, __bdd_rel__ * 100.0,   \
+                  __bdd_e__, __bdd_delta__);                                                       \
   } while (0)
 #define check_float_within_rel_warn(actual, expected, rel)                                         \
   do {                                                                                             \
@@ -2103,8 +2101,8 @@ static inline int __bdd_eval_bool__(int v) { return v; }
     double __bdd_rel__ = __BDD_CAST(double, (rel));                                                \
     double __bdd_delta__ = fabs(__bdd_a__ - __bdd_e__);                                            \
     __BDD_WARN__(__bdd_delta__ <= __bdd_rel__ * fabs(__bdd_e__),                                   \
-                 "expected %f within %f%% of %f, delta was %f", __bdd_a__,                         \
-                 __bdd_rel__ * 100.0, __bdd_e__, __bdd_delta__);                                   \
+                 "expected %f within %f%% of %f, delta was %f", __bdd_a__, __bdd_rel__ * 100.0,    \
+                 __bdd_e__, __bdd_delta__);                                                        \
   } while (0)
 
 /* Absolute tolerance — same as check_float_eq but named for clarity
@@ -2233,8 +2231,9 @@ static inline const char *__bdd_cstr_or_null__(const char *s) { return s ? s : "
   do {                                                                                             \
     const char *__bdd_s__ = (const char *)(str);                                                   \
     const char *__bdd_x__ = (const char *)(suffix);                                                \
-    __BDD_CHECK__(__bdd_str_ends_with__(__bdd_s__, __bdd_x__), "expected \"%s\" to end with \"%s\"",\
-                  __bdd_cstr_or_null__(__bdd_s__), __bdd_cstr_or_null__(__bdd_x__));               \
+    __BDD_CHECK__(__bdd_str_ends_with__(__bdd_s__, __bdd_x__),                                     \
+                  "expected \"%s\" to end with \"%s\"", __bdd_cstr_or_null__(__bdd_s__),           \
+                  __bdd_cstr_or_null__(__bdd_x__));                                                \
   } while (0)
 #define check_str_ends_with_warn(str, suffix)                                                      \
   do {                                                                                             \
@@ -2251,16 +2250,16 @@ static inline const char *__bdd_cstr_or_null__(const char *s) { return s ? s : "
     const void *__bdd_a__ = (const void *)(actual);                                                \
     const void *__bdd_e__ = (const void *)(expected);                                              \
     size_t __bdd_n__ = __BDD_CAST(size_t, (len));                                                  \
-    __BDD_CHECK__(memcmp(__bdd_a__, __bdd_e__, __bdd_n__) == 0, "memory mismatch at %zu bytes",   \
-                  __bdd_n__);                                                                       \
+    __BDD_CHECK__(memcmp(__bdd_a__, __bdd_e__, __bdd_n__) == 0, "memory mismatch at %zu bytes",    \
+                  __bdd_n__);                                                                      \
   } while (0)
 #define check_mem_eq_warn(actual, expected, len)                                                   \
   do {                                                                                             \
     const void *__bdd_a__ = (const void *)(actual);                                                \
     const void *__bdd_e__ = (const void *)(expected);                                              \
     size_t __bdd_n__ = __BDD_CAST(size_t, (len));                                                  \
-    __BDD_WARN__(memcmp(__bdd_a__, __bdd_e__, __bdd_n__) == 0, "memory mismatch at %zu bytes",    \
-                 __bdd_n__);                                                                        \
+    __BDD_WARN__(memcmp(__bdd_a__, __bdd_e__, __bdd_n__) == 0, "memory mismatch at %zu bytes",     \
+                 __bdd_n__);                                                                       \
   } while (0)
 
 #define check_mem_ne(actual, expected, len)                                                        \
@@ -2311,7 +2310,7 @@ static inline const char *__bdd_cstr_or_null__(const char *s) { return s ? s : "
   do {                                                                                             \
     unsigned long long __bdd_a__ = __BDD_CAST(unsigned long long, (actual));                       \
     unsigned long long __bdd_e__ = __BDD_CAST(unsigned long long, (expected));                     \
-    __BDD_CHECK__(__bdd_a__ == __bdd_e__, "expected 0x%llx but got 0x%llx", __bdd_e__, __bdd_a__);\
+    __BDD_CHECK__(__bdd_a__ == __bdd_e__, "expected 0x%llx but got 0x%llx", __bdd_e__, __bdd_a__); \
   } while (0)
 
 /* Boolean assertions */
@@ -2324,14 +2323,14 @@ static inline const char *__bdd_cstr_or_null__(const char *s) { return s ? s : "
   do {                                                                                             \
     const void *__bdd_a__ = (const void *)(actual);                                                \
     const void *__bdd_e__ = (const void *)(expected);                                              \
-    __BDD_CHECK__(__bdd_a__ == __bdd_e__, "expected %p but got %p", __bdd_e__, __bdd_a__);        \
+    __BDD_CHECK__(__bdd_a__ == __bdd_e__, "expected %p but got %p", __bdd_e__, __bdd_a__);         \
   } while (0)
 
 #define check_ptr_ne(actual, expected)                                                             \
   do {                                                                                             \
     const void *__bdd_a__ = (const void *)(actual);                                                \
     const void *__bdd_e__ = (const void *)(expected);                                              \
-    __BDD_CHECK__(__bdd_a__ != __bdd_e__, "expected != %p but got %p", __bdd_e__, __bdd_a__);     \
+    __BDD_CHECK__(__bdd_a__ != __bdd_e__, "expected != %p but got %p", __bdd_e__, __bdd_a__);      \
   } while (0)
 
 /* Range assertion: lo <= actual <= hi */
@@ -2341,7 +2340,7 @@ static inline const char *__bdd_cstr_or_null__(const char *s) { return s ? s : "
     int __bdd_lo__ = __BDD_CAST(int, (lo));                                                        \
     int __bdd_hi__ = __BDD_CAST(int, (hi));                                                        \
     __BDD_CHECK__(__bdd_a__ >= __bdd_lo__ && __bdd_a__ <= __bdd_hi__,                              \
-                  "expected %d in range [%d, %d]", __bdd_a__, __bdd_lo__, __bdd_hi__);            \
+                  "expected %d in range [%d, %d]", __bdd_a__, __bdd_lo__, __bdd_hi__);             \
   } while (0)
 
 /* Float special value assertions */
@@ -2379,8 +2378,8 @@ static inline const char *__bdd_cstr_or_null__(const char *s) { return s ? s : "
     unsigned __bdd_a__ = __BDD_CAST(unsigned, (actual));                                           \
     unsigned __bdd_m__ = __BDD_CAST(unsigned, (mask));                                             \
     unsigned __bdd_got__ = __bdd_a__ & __bdd_m__;                                                  \
-    __BDD_CHECK__(__bdd_got__ == __bdd_m__, "expected bits 0x%x set in 0x%x, got 0x%x",           \
-                  __bdd_m__, __bdd_a__, __bdd_got__);                                              \
+    __BDD_CHECK__(__bdd_got__ == __bdd_m__, "expected bits 0x%x set in 0x%x, got 0x%x", __bdd_m__, \
+                  __bdd_a__, __bdd_got__);                                                         \
   } while (0)
 
 /* --- Array comparison helpers --- */
@@ -2700,7 +2699,7 @@ static inline bool __bdd_bench_require_iterations__(__bdd_config_type__ *config,
  *   benchmark("case", iterations, scale) { code; }
  */
 /* Compatibility shim: benchmark titles are no longer configurable. */
-#define benchmark_titles(name_title, input_title, iters_title, avg_title, ns_title, min_title,    \
+#define benchmark_titles(name_title, input_title, iters_title, avg_title, ns_title, min_title,     \
                          max_title, ops_title, size_title, bw_title)                               \
   if (1)
 
@@ -2714,16 +2713,16 @@ static inline bool __bdd_bench_require_iterations__(__bdd_config_type__ *config,
         double __sum;                                                                              \
         double __scale;                                                                            \
         const char *__title;                                                                       \
-      } __bdd_bm__ = {0, __BDD_CAST(size_t, (iters)), 1e18, 0.0, 0.0,                              \
-                      __BDD_CAST(double, (scale)), (title)};                                       \
+      } __bdd_bm__ = {0, __BDD_CAST(size_t, (iters)), 1e18, 0.0, 0.0, __BDD_CAST(double, (scale)), \
+                      (title)};                                                                    \
       !__bdd_bm__.__done &&                                                                        \
-      __bdd_bench_require_iterations__(__bdd_active_config__, __bdd_bm__.__title,                  \
-                                       __bdd_bm__.__n, __FILE__, __STRING__LINE__);                \
+      __bdd_bench_require_iterations__(__bdd_active_config__, __bdd_bm__.__title, __bdd_bm__.__n,  \
+                                       __FILE__, __STRING__LINE__);                                \
       __bdd_bm__.__done = 1,                                                                       \
         __bdd_bench_print__(                                                                       \
-            __bdd_active_config__, __bdd_bm__.__title, __bdd_bm__.__n, __bdd_bm__.__sum,          \
-            __bdd_bm__.__min, __bdd_bm__.__max, __bdd_bm__.__scale,                               \
-            __bdd_active_config__->current_test ? __bdd_active_config__->current_test->level + 1  \
+            __bdd_active_config__, __bdd_bm__.__title, __bdd_bm__.__n, __bdd_bm__.__sum,           \
+            __bdd_bm__.__min, __bdd_bm__.__max, __bdd_bm__.__scale,                                \
+            __bdd_active_config__->current_test ? __bdd_active_config__->current_test->level + 1   \
                                                 : 1,                                               \
             __bdd_active_config__->use_color))                                                     \
     for (size_t __bdd_bm_i__ = 0; __bdd_bm_i__ < __bdd_bm__.__n; ++__bdd_bm_i__)                   \

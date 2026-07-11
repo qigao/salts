@@ -2,6 +2,7 @@
 #include "tinytest.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 // Test structure
@@ -10,6 +11,93 @@ typedef struct {
     double value;
     char name[32];
 } test_object_t;
+
+enum {
+    OBJECT_POOL_BENCH_ITERATIONS = 10,
+    OBJECT_POOL_BENCH_1K = 1000,
+    OBJECT_POOL_BENCH_10K = 10000,
+    OBJECT_POOL_BENCH_100K = 100000
+};
+
+static object_pool_t *benchmark_pool_create(size_t count) {
+    object_pool_config_t config = {
+        .object_size = sizeof(test_object_t),
+        .initial_capacity = count,
+        .max_capacity = count,
+        .zero_on_alloc = false
+    };
+    object_pool_t *pool = object_pool_create(&config);
+    if (!pool) abort();
+    return pool;
+}
+
+static void **benchmark_objects_create(size_t count) {
+    void **objects = (void **)malloc(count * sizeof(*objects));
+    if (!objects) abort();
+    return objects;
+}
+
+static void benchmark_interleaved(size_t count) {
+    object_pool_t *pool = benchmark_pool_create(count);
+    for (size_t i = 0; i < count; ++i) {
+        void *obj = object_pool_alloc(pool);
+        if (!obj) abort();
+        object_pool_free(pool, obj);
+    }
+    object_pool_destroy(pool);
+}
+
+static void benchmark_allocate_then_free(size_t count) {
+    object_pool_t *pool = benchmark_pool_create(count);
+    void **objects = benchmark_objects_create(count);
+    for (size_t i = 0; i < count; ++i) {
+        objects[i] = object_pool_alloc(pool);
+        if (!objects[i]) abort();
+    }
+    for (size_t i = 0; i < count; ++i) {
+        object_pool_free(pool, objects[i]);
+    }
+    free(objects);
+    object_pool_destroy(pool);
+}
+
+static uint32_t benchmark_random_next(uint32_t *state) {
+    uint32_t value = *state;
+    value ^= value << 13;
+    value ^= value >> 17;
+    value ^= value << 5;
+    *state = value;
+    return value;
+}
+
+static void benchmark_randomized(size_t count) {
+    object_pool_t *pool = benchmark_pool_create(count);
+    void **objects = benchmark_objects_create(count);
+    size_t active = 0;
+    size_t allocated = 0;
+    size_t freed = 0;
+    uint32_t random_state = 0x9e3779b9u;
+
+    while (allocated < count || freed < count) {
+        bool should_allocate = active == 0 ||
+                               (allocated < count && (benchmark_random_next(&random_state) & 1u));
+        if (should_allocate) {
+            objects[active] = object_pool_alloc(pool);
+            if (!objects[active]) abort();
+            active++;
+            allocated++;
+        } else {
+            size_t index = benchmark_random_next(&random_state) % active;
+            object_pool_free(pool, objects[index]);
+            objects[index] = objects[active - 1];
+            active--;
+            freed++;
+        }
+    }
+
+    free(objects);
+    object_pool_destroy(pool);
+}
 
 suite("ObjectPool") {
     group("Basic Operations") {
@@ -324,6 +412,7 @@ suite("ObjectPool") {
             object_pool_t *pool = object_pool_create(&config);
             check(pool == NULL);
         }
+
     }
 
     group("Stress Tests") {
@@ -395,64 +484,25 @@ suite("ObjectPool") {
     }
 
     bench("Performance") {
+        benchmark("interleaved alloc/free 1K", OBJECT_POOL_BENCH_ITERATIONS,
+                  2.0 * OBJECT_POOL_BENCH_1K) { benchmark_interleaved(OBJECT_POOL_BENCH_1K); }
+        benchmark("interleaved alloc/free 10K", OBJECT_POOL_BENCH_ITERATIONS,
+                  2.0 * OBJECT_POOL_BENCH_10K) { benchmark_interleaved(OBJECT_POOL_BENCH_10K); }
+        benchmark("interleaved alloc/free 100K", OBJECT_POOL_BENCH_ITERATIONS,
+                  2.0 * OBJECT_POOL_BENCH_100K) { benchmark_interleaved(OBJECT_POOL_BENCH_100K); }
 
-        benchmark_titles("benchmark", "input", "iters", "avg(us)", NULL, "min(us)", "max(us)", "ops/s", NULL, NULL);
-        benchmark("alloc/free 10k objects", 1, 1) {
-            object_pool_config_t config = {
-                .object_size = sizeof(test_object_t),
-                .initial_capacity = 10000,
-                .max_capacity = 0,
-                .zero_on_alloc = false
-            };
+        benchmark("allocate N then free all 1K", OBJECT_POOL_BENCH_ITERATIONS,
+                  2.0 * OBJECT_POOL_BENCH_1K) { benchmark_allocate_then_free(OBJECT_POOL_BENCH_1K); }
+        benchmark("allocate N then free all 10K", OBJECT_POOL_BENCH_ITERATIONS,
+                  2.0 * OBJECT_POOL_BENCH_10K) { benchmark_allocate_then_free(OBJECT_POOL_BENCH_10K); }
+        benchmark("allocate N then free all 100K", OBJECT_POOL_BENCH_ITERATIONS,
+                  2.0 * OBJECT_POOL_BENCH_100K) { benchmark_allocate_then_free(OBJECT_POOL_BENCH_100K); }
 
-            object_pool_t *pool = object_pool_create(&config);
-
-            for (int i = 0; i < 10000; ++i) {
-                void *obj = object_pool_alloc(pool);
-                object_pool_free(pool, obj);
-            }
-
-            object_pool_destroy(pool);
-        }
-
-        benchmark("alloc 10k then free all", 1, 1) {
-            object_pool_config_t config = {
-                .object_size = sizeof(test_object_t),
-                .initial_capacity = 10000,
-                .max_capacity = 0,
-                .zero_on_alloc = false
-            };
-
-            object_pool_t *pool = object_pool_create(&config);
-            void *objs[10000];
-
-            for (int i = 0; i < 10000; ++i) {
-                objs[i] = object_pool_alloc(pool);
-            }
-
-            for (int i = 0; i < 10000; ++i) {
-                object_pool_free(pool, objs[i]);
-            }
-
-            object_pool_destroy(pool);
-        }
-
-        benchmark("with zero_on_alloc", 1, 1) {
-            object_pool_config_t config = {
-                .object_size = sizeof(test_object_t),
-                .initial_capacity = 10000,
-                .max_capacity = 0,
-                .zero_on_alloc = true
-            };
-
-            object_pool_t *pool = object_pool_create(&config);
-
-            for (int i = 0; i < 10000; ++i) {
-                void *obj = object_pool_alloc(pool);
-                object_pool_free(pool, obj);
-            }
-
-            object_pool_destroy(pool);
-        }
+        benchmark("randomized allocate/free 1K", OBJECT_POOL_BENCH_ITERATIONS,
+                  2.0 * OBJECT_POOL_BENCH_1K) { benchmark_randomized(OBJECT_POOL_BENCH_1K); }
+        benchmark("randomized allocate/free 10K", OBJECT_POOL_BENCH_ITERATIONS,
+                  2.0 * OBJECT_POOL_BENCH_10K) { benchmark_randomized(OBJECT_POOL_BENCH_10K); }
+        benchmark("randomized allocate/free 100K", OBJECT_POOL_BENCH_ITERATIONS,
+                  2.0 * OBJECT_POOL_BENCH_100K) { benchmark_randomized(OBJECT_POOL_BENCH_100K); }
     }
 }

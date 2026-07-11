@@ -3,7 +3,7 @@
  * @brief TurboUtils FS example - demonstrates all major file I/O operations.
  *
  * Exercises: bulk read/write, streaming, pread/pwrite, seek/tell,
- * ftruncate, rename, mkdir, stat, and path utilities.
+ * ftruncate, rename, mkdir, directory enumeration, stat, and path utilities.
  * No libuv - pure POSIX / Win32 under the hood.
  */
 #include "turbo_fs.h"
@@ -62,6 +62,34 @@ static int example_mkdir(void) {
   printf("      is_directory: %d\n", (int)st.is_directory);
 
   CHECK(turbo_fs_rmdir("example_dir"), "rmdir(example_dir)");
+  return 0;
+}
+
+static const char *dirent_type_name(turbo_fs_dirent_type_t type) {
+  switch (type) {
+  case TURBO_FS_DIRENT_FILE: return "file";
+  case TURBO_FS_DIRENT_DIRECTORY: return "directory";
+  case TURBO_FS_DIRENT_SYMLINK: return "symlink";
+  case TURBO_FS_DIRENT_OTHER: return "other";
+  default: return "unknown";
+  }
+}
+
+static int example_directory_enumeration(void) {
+  puts("\n--- Directory enumeration ---");
+
+  turbo_fs_dir_t *dir = NULL;
+  CHECK(turbo_fs_opendir(".", &dir), "opendir(.)");
+
+  turbo_fs_dirent_t entry;
+  int rc;
+  while ((rc = turbo_fs_readdir(dir, &entry)) > 0) {
+    printf("      %-12s %s\n", dirent_type_name(entry.type), entry.name);
+  }
+
+  int close_rc = turbo_fs_closedir(dir);
+  CHECK(rc, "readdir(.)");
+  CHECK(close_rc, "closedir(.)");
   return 0;
 }
 
@@ -243,6 +271,7 @@ int main(void) {
   rc |= example_bulk_rw();
   rc |= example_stat();
   rc |= example_mkdir();
+  rc |= example_directory_enumeration();
   rc |= example_streaming();
   rc |= example_pread_pwrite();
   rc |= example_seek_tell();

@@ -36,6 +36,22 @@ typedef struct {
   bool is_symlink;
 } turbo_fs_stat_t;
 
+// Opaque directory enumeration handle
+typedef struct turbo_fs_dir_s turbo_fs_dir_t;
+
+typedef enum {
+  TURBO_FS_DIRENT_UNKNOWN = 0,
+  TURBO_FS_DIRENT_FILE,
+  TURBO_FS_DIRENT_DIRECTORY,
+  TURBO_FS_DIRENT_SYMLINK,
+  TURBO_FS_DIRENT_OTHER
+} turbo_fs_dirent_type_t;
+
+typedef struct {
+  const char *name;
+  turbo_fs_dirent_type_t type;
+} turbo_fs_dirent_t;
+
 // =============================================================================
 // Synchronous File Operations - simple blocking I/O
 // =============================================================================
@@ -169,6 +185,42 @@ CXX_C_API int turbo_fs_mkdir(const char *path, int mode);
  * @note Directory must be empty
  */
 CXX_C_API int turbo_fs_rmdir(const char *path);
+
+/**
+ * @brief Open a directory for enumeration
+ *
+ * @param path Directory path to enumerate
+ * @param dir Pointer that receives an owned directory handle
+ * @return 0 on success, negative error code on failure
+ *
+ * @note The returned handle must be released with turbo_fs_closedir().
+ * @note A directory handle is not safe for concurrent reads.
+ */
+CXX_C_API int turbo_fs_opendir(const char *path, turbo_fs_dir_t **dir);
+
+/**
+ * @brief Read the next directory entry
+ *
+ * @param dir Directory handle from turbo_fs_opendir()
+ * @param entry Pointer that receives the next entry
+ * @return 1 when an entry is returned, 0 at end of directory, or a negative
+ *         error code on failure
+ *
+ * @note The "." and ".." entries are skipped.
+ * @note entry->name is borrowed from dir and remains valid only until the next
+ *       turbo_fs_readdir() call or turbo_fs_closedir(). Copy it to retain it.
+ * @note type may be TURBO_FS_DIRENT_UNKNOWN when the platform does not expose
+ *       a file type during enumeration. Use turbo_fs_lstat() when required.
+ */
+CXX_C_API int turbo_fs_readdir(turbo_fs_dir_t *dir, turbo_fs_dirent_t *entry);
+
+/**
+ * @brief Close a directory enumeration handle
+ *
+ * @param dir Directory handle from turbo_fs_opendir()
+ * @return 0 on success, negative error code on failure
+ */
+CXX_C_API int turbo_fs_closedir(turbo_fs_dir_t *dir);
 
 /**
  * @brief Delete a file

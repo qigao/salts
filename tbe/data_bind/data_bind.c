@@ -5797,9 +5797,9 @@ const uint8_t *data_bind_value_as_bytes(const DataBindValue *value, size_t *len)
   return value->data.bytes_val.ptr;
 }
 
-int data_bind_value_as_uuid(const DataBindValue *value, uuid_t *out) {
+int data_bind_value_as_uuid(const DataBindValue *value, uint8_t out[DATA_BIND_UUID_SIZE]) {
   if (value == NULL || value->kind != DATA_BIND_VALUE_UUID || out == NULL) return 0;
-  *out = value->data.uuid_val;
+  memcpy(out, value->data.uuid_val.bytes, DATA_BIND_UUID_SIZE);
   return 1;
 }
 
@@ -5971,11 +5971,11 @@ DataBindStatus data_bind_value_get_bytes(const DataBindValue *value, const uint8
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_value_get_uuid(const DataBindValue *value, uuid_t *out) {
+DataBindStatus data_bind_value_get_uuid(const DataBindValue *value, uint8_t out[DATA_BIND_UUID_SIZE]) {
   if (out == NULL) return DATA_BIND_ERR_INVALID_ARG;
   if (value == NULL) return DATA_BIND_ERR_INVALID_ARG;
   if (value->kind != DATA_BIND_VALUE_UUID) return DATA_BIND_ERR_TYPE_MISMATCH;
-  *out = value->data.uuid_val;
+  memcpy(out, value->data.uuid_val.bytes, DATA_BIND_UUID_SIZE);
   return DATA_BIND_OK;
 }
 

@@ -47,7 +47,6 @@ include(Sanitizers)
 include(CmakeUtils)
 
 find_package(Threads REQUIRED)
-find_package(base64 CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 
 # Additional components

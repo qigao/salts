@@ -163,6 +163,84 @@ spec("Turbo FS Tests") {
     }
   }
 
+  describe("directory enumeration") {
+    it("enumerates child names and available types") {
+      char file_path[1024];
+      char child_dir_path[1024];
+      check_int_eq(turbo_fs_path_join(file_path, sizeof(file_path), g_dir, "child.txt"), 0);
+      check_int_eq(turbo_fs_path_join(child_dir_path, sizeof(child_dir_path), g_dir, "nested"), 0);
+
+      turbo_fs_unlink(file_path);
+      turbo_fs_rmdir(child_dir_path);
+      turbo_fs_rmdir(g_dir);
+      check_int_eq(turbo_fs_mkdir(g_dir, 0755), 0);
+      turbo_fs_buf_t wb = turbo_fs_buf_init((char *)"x", 1);
+      check_int_eq(turbo_fs_write_file(file_path, &wb), 0);
+      check_int_eq(turbo_fs_mkdir(child_dir_path, 0755), 0);
+
+      turbo_fs_dir_t *dir = NULL;
+      int open_rc = turbo_fs_opendir(g_dir, &dir);
+      check_int_eq(open_rc, 0);
+      if (open_rc == 0) {
+        bool saw_file = false;
+        bool saw_directory = false;
+        int count = 0;
+        int read_rc;
+        turbo_fs_dirent_t entry;
+        while ((read_rc = turbo_fs_readdir(dir, &entry)) > 0) {
+          check_str_ne(entry.name, ".");
+          check_str_ne(entry.name, "..");
+          if (strcmp(entry.name, "child.txt") == 0) {
+            saw_file = true;
+            check_true(entry.type == TURBO_FS_DIRENT_FILE ||
+                       entry.type == TURBO_FS_DIRENT_UNKNOWN);
+          } else if (strcmp(entry.name, "nested") == 0) {
+            saw_directory = true;
+            check_true(entry.type == TURBO_FS_DIRENT_DIRECTORY ||
+                       entry.type == TURBO_FS_DIRENT_UNKNOWN);
+          }
+          count++;
+        }
+        check_int_eq(read_rc, 0);
+        check_int_eq(count, 2);
+        check_true(saw_file);
+        check_true(saw_directory);
+        check_int_eq(turbo_fs_closedir(dir), 0);
+      }
+
+      check_int_eq(turbo_fs_unlink(file_path), 0);
+      check_int_eq(turbo_fs_rmdir(child_dir_path), 0);
+      check_int_eq(turbo_fs_rmdir(g_dir), 0);
+    }
+
+    it("reports end immediately for an empty directory") {
+      turbo_fs_rmdir(g_dir);
+      check_int_eq(turbo_fs_mkdir(g_dir, 0755), 0);
+
+      turbo_fs_dir_t *dir = NULL;
+      int open_rc = turbo_fs_opendir(g_dir, &dir);
+      check_int_eq(open_rc, 0);
+      if (open_rc == 0) {
+        turbo_fs_dirent_t entry;
+        check_int_eq(turbo_fs_readdir(dir, &entry), 0);
+        check_int_eq(turbo_fs_closedir(dir), 0);
+      }
+      check_int_eq(turbo_fs_rmdir(g_dir), 0);
+    }
+
+    it("rejects invalid arguments and missing paths") {
+      turbo_fs_dir_t *dir = NULL;
+      turbo_fs_dirent_t entry;
+      check_int_eq(turbo_fs_opendir(NULL, &dir), -EINVAL);
+      check_null(dir);
+      check_int_eq(turbo_fs_opendir(g_dir, NULL), -EINVAL);
+      check_int_eq(turbo_fs_readdir(NULL, &entry), -EINVAL);
+      check_int_eq(turbo_fs_closedir(NULL), -EINVAL);
+      check_int_eq(turbo_fs_opendir("__missing_directory__", &dir), -ENOENT);
+      check_null(dir);
+    }
+  }
+
   /* ── rename ─────────────────────────────────────────────────────────────── */
 
   describe("rename") {

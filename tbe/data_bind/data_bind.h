@@ -20,8 +20,7 @@
 #include <stdint.h>
 #include "turbo_parser.h"
 
-/* Keep the bundled UUID implementation out of the public include surface. */
-typedef union uuid_t uuid_t;
+#define DATA_BIND_UUID_SIZE 16
 
 #define DATA_BIND_VERSION_MAJOR 1
 #define DATA_BIND_VERSION_MINOR 6
@@ -422,7 +421,8 @@ DATA_BIND_API double data_bind_value_as_double(const DataBindValue* value);
 DATA_BIND_API int data_bind_value_as_bool(const DataBindValue* value);
 DATA_BIND_API const char* data_bind_value_as_string(const DataBindValue* value);
 DATA_BIND_API const uint8_t* data_bind_value_as_bytes(const DataBindValue* value, size_t* len);
-DATA_BIND_API int data_bind_value_as_uuid(const DataBindValue* value, uuid_t* out);
+DATA_BIND_API int data_bind_value_as_uuid(const DataBindValue* value,
+                                          uint8_t out[DATA_BIND_UUID_SIZE]);
 DATA_BIND_API const char* data_bind_value_as_uuid_string(const DataBindValue* value,
                                                          char* out, size_t len);
 DATA_BIND_API int data_bind_value_as_datetime(const DataBindValue* value, turbo_datetime_t* out);
@@ -453,7 +453,8 @@ DATA_BIND_API DataBindStatus data_bind_value_get_string(const DataBindValue* val
                                                         const char** data, size_t* len);
 DATA_BIND_API DataBindStatus data_bind_value_get_bytes(const DataBindValue* value,
                                                        const uint8_t** data, size_t* len);
-DATA_BIND_API DataBindStatus data_bind_value_get_uuid(const DataBindValue* value, uuid_t* out);
+DATA_BIND_API DataBindStatus data_bind_value_get_uuid(const DataBindValue* value,
+                                                      uint8_t out[DATA_BIND_UUID_SIZE]);
 DATA_BIND_API DataBindStatus data_bind_value_get_datetime(const DataBindValue* value,
                                                           turbo_datetime_t* out);
 DATA_BIND_API DataBindStatus data_bind_value_get_date(const DataBindValue* value,

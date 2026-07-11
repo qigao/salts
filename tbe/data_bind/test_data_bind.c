@@ -781,7 +781,7 @@ suite("Data Bind") {
             check_not_null(v);
             id = require_field(v, "id");
             check(data_bind_value_kind(id) == DATA_BIND_VALUE_UUID);
-            check(data_bind_value_get_uuid(id, &actual) == DATA_BIND_OK);
+            check(data_bind_value_get_uuid(id, actual.bytes) == DATA_BIND_OK);
             check_mem_eq(actual.bytes, expected.bytes, sizeof(expected.bytes));
             check_str_eq(data_bind_value_as_uuid_string(id, text, sizeof(text)), id_text);
           }
@@ -803,19 +803,19 @@ suite("Data Bind") {
             check_not_null(from_json);
             id = require_field(from_json, "id");
             check(data_bind_value_kind(id) == DATA_BIND_VALUE_UUID);
-            check(data_bind_value_as_uuid(id, &actual));
+            check(data_bind_value_as_uuid(id, actual.bytes));
             check_mem_eq(actual.bytes, expected.bytes, sizeof(expected.bytes));
 
             check_not_null(from_csv);
             id = require_field(from_csv, "id");
             check(data_bind_value_kind(id) == DATA_BIND_VALUE_UUID);
-            check(data_bind_value_as_uuid(id, &actual));
+            check(data_bind_value_as_uuid(id, actual.bytes));
             check_mem_eq(actual.bytes, expected.bytes, sizeof(expected.bytes));
 
             check_not_null(from_xml);
             id = require_field(from_xml, "id");
             check(data_bind_value_kind(id) == DATA_BIND_VALUE_UUID);
-            check(data_bind_value_as_uuid(id, &actual));
+            check(data_bind_value_as_uuid(id, actual.bytes));
             check_mem_eq(actual.bytes, expected.bytes, sizeof(expected.bytes));
           }
 

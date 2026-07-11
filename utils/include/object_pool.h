@@ -27,9 +27,8 @@ extern "C" {
  * - Predictable memory usage
  *
  * PERFORMANCE:
- * - Allocation: O(1) - pop from free-list
- * - Deallocation: O(1) - push to free-list
- * - 100M+ ops/sec (faster than malloc by 10-100x)
+ * - Allocation: O(1) from the active bump chunk; O(chunks) when reusing a free slot
+ * - Deallocation: O(chunks) ownership lookup, then O(1) bitmap validation/free-list push
  */
 
 typedef struct object_pool_s object_pool_t;
@@ -61,7 +60,7 @@ CXX_C_API void object_pool_destroy(object_pool_t *pool);
  * @param pool Pool handle
  * @return Pointer to object, or NULL if pool is at max capacity
  *
- * PERFORMANCE: O(1) - pop from free-list or allocate from chunk
+ * PERFORMANCE: O(1) from the active bump chunk; O(chunks) when reusing a free slot
  */
 CXX_C_API void *object_pool_alloc(object_pool_t *pool);
 
@@ -70,7 +69,7 @@ CXX_C_API void *object_pool_alloc(object_pool_t *pool);
  * @param pool Pool handle
  * @param obj Pointer to object (must have been allocated from this pool)
  *
- * PERFORMANCE: O(1) - push to free-list
+ * PERFORMANCE: O(chunks) ownership lookup, then O(1) bitmap validation/free-list push
  * WARNING: Does not call destructor. User must clean up object before returning.
  */
 CXX_C_API void object_pool_free(object_pool_t *pool, void *obj);

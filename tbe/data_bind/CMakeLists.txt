@@ -66,3 +66,11 @@ target_link_libraries(test_data_bind_public_api
 )
 cmake_config_target(test_data_bind_public_api NO_INSTALL FOLDER "tbe/data_bind")
 add_test(NAME test_data_bind_public_api COMMAND test_data_bind_public_api)
+
+add_executable(test_re test_re.c re.c)
+target_link_libraries(test_re
+  PRIVATE
+    TurboUtils::TinyTest
+)
+cmake_config_target(test_re NO_INSTALL FOLDER "tbe/data_bind")
+add_test(NAME test_re COMMAND test_re)

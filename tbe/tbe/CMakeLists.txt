@@ -31,8 +31,9 @@ cmake_config_target(
   ${TARGET_NAME}
   ALIAS TurboUtils::SchemaBE
   FOLDER tbe/${TARGET_NAME}
-  EXPORT_NAME SchemaBE
-  NO_INSTALL)
+  EXPORT_NAME SchemaBE)
+
+cmake_install_headers(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/)
 
 # =============================================================================
 # Tests

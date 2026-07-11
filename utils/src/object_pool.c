@@ -10,6 +10,7 @@
  */
 typedef struct object_pool_chunk_s {
   void *memory;                       // Chunk memory
+  uint8_t *allocation_bitmap;         // One bit per slot: 1 while checked out
   size_t capacity;                    // Number of objects in this chunk
   struct object_pool_chunk_s *next;   // Next chunk
 } object_pool_chunk_t;
@@ -38,6 +39,8 @@ struct object_pool_s {
  * @brief Allocate a new chunk
  */
 static bool object_pool_grow(object_pool_t *pool, size_t count) {
+  size_t bitmap_size;
+
   if (count == 0) {
     return false;
   }
@@ -70,6 +73,13 @@ static bool object_pool_grow(object_pool_t *pool, size_t count) {
     free(chunk);
     return false;
   }
+  bitmap_size = count / 8 + (count % 8 != 0);
+  chunk->allocation_bitmap = (uint8_t *)calloc(bitmap_size, 1);
+  if (!chunk->allocation_bitmap) {
+    free(chunk->memory);
+    free(chunk);
+    return false;
+  }
 
   // Bump allocator: we do not prepopulate the free-list natively.
   // Instead, just set the bump pointer to the new chunk's memory.
@@ -86,11 +96,12 @@ static bool object_pool_grow(object_pool_t *pool, size_t count) {
   return true;
 }
 
-static bool object_pool_owns_allocated_object(const object_pool_t *pool, const void *obj) {
-  const object_pool_chunk_t *chunk;
+static bool object_pool_locate_object(const object_pool_t *pool, const void *obj,
+                                      object_pool_chunk_t **chunk_out, size_t *slot_out) {
+  object_pool_chunk_t *chunk;
   uintptr_t ptr;
 
-  if (!pool || !obj) {
+  if (!pool || !obj || !chunk_out || !slot_out) {
     return false;
   }
 
@@ -99,36 +110,30 @@ static bool object_pool_owns_allocated_object(const object_pool_t *pool, const v
     uintptr_t start = (uintptr_t)chunk->memory;
     uintptr_t end = start + chunk->capacity * pool->object_size;
     if (ptr >= start && ptr < end) {
-      uintptr_t bump = (uintptr_t)pool->bump_ptr;
       if (((ptr - start) % pool->object_size) != 0) {
         return false;
       }
-      if (bump >= start && bump <= end && ptr >= bump) {
-        return false;
-      }
+      *chunk_out = chunk;
+      *slot_out = (size_t)((ptr - start) / pool->object_size);
       return true;
     }
   }
   return false;
 }
 
-static bool object_pool_object_is_free(const object_pool_t *pool, const void *obj) {
-  const void *node;
-  size_t scanned = 0;
+static bool object_pool_slot_is_allocated(const object_pool_chunk_t *chunk, size_t slot) {
+  uint8_t mask = (uint8_t)(1u << (slot & 7u));
+  return (chunk->allocation_bitmap[slot >> 3u] & mask) != 0;
+}
 
-  if (!pool || !obj) {
-    return false;
+static void object_pool_slot_set_allocated(object_pool_chunk_t *chunk, size_t slot, bool allocated) {
+  uint8_t *byte = &chunk->allocation_bitmap[slot >> 3u];
+  uint8_t mask = (uint8_t)(1u << (slot & 7u));
+  if (allocated) {
+    *byte |= mask;
+  } else {
+    *byte &= (uint8_t)~mask;
   }
-
-  node = pool->free_list;
-  while (node != NULL && scanned <= pool->free_count) {
-    if (node == obj) {
-      return true;
-    }
-    node = *(void * const *)node;
-    scanned++;
-  }
-  return false;
 }
 
 object_pool_t *object_pool_create(const object_pool_config_t *config) {
@@ -175,6 +180,7 @@ void object_pool_destroy(object_pool_t *pool) {
   object_pool_chunk_t *chunk = pool->chunks;
   while (chunk) {
     object_pool_chunk_t *next = chunk->next;
+    free(chunk->allocation_bitmap);
     free(chunk->memory);
     free(chunk);
     chunk = next;
@@ -184,6 +190,9 @@ void object_pool_destroy(object_pool_t *pool) {
 }
 
 void *object_pool_alloc(object_pool_t *pool) {
+  object_pool_chunk_t *chunk = NULL;
+  size_t slot = 0;
+
   if (!pool) {
     return NULL;
   }
@@ -193,11 +202,18 @@ void *object_pool_alloc(object_pool_t *pool) {
   if (pool->free_list) {
     // Pop from free-list
     obj = pool->free_list;
+    if (!object_pool_locate_object(pool, obj, &chunk, &slot) ||
+        object_pool_slot_is_allocated(chunk, slot)) {
+      assert(!"object_pool free-list is corrupt");
+      return NULL;
+    }
     pool->free_list = *(void **)obj;
     pool->free_count--;
   } else if (pool->bump_remaining > 0) {
     // Fast path: Bump allocation
     obj = pool->bump_ptr;
+    chunk = pool->chunks;
+    slot = (size_t)(pool->bump_ptr - (uint8_t *)chunk->memory) / pool->object_size;
     pool->bump_ptr += pool->object_size;
     pool->bump_remaining--;
   } else {
@@ -212,9 +228,13 @@ void *object_pool_alloc(object_pool_t *pool) {
 
     // After growth, allocate from new bump
     obj = pool->bump_ptr;
+    chunk = pool->chunks;
+    slot = 0;
     pool->bump_ptr += pool->object_size;
     pool->bump_remaining--;
   }
+
+  object_pool_slot_set_allocated(chunk, slot, true);
 
   pool->allocated_count++;
 
@@ -232,11 +252,15 @@ void *object_pool_alloc(object_pool_t *pool) {
 }
 
 void object_pool_free(object_pool_t *pool, void *obj) {
+  object_pool_chunk_t *chunk = NULL;
+  size_t slot = 0;
+
   if (!pool || !obj) {
     return;
   }
 
-  if (!object_pool_owns_allocated_object(pool, obj) || object_pool_object_is_free(pool, obj)) {
+  if (!object_pool_locate_object(pool, obj, &chunk, &slot) ||
+      !object_pool_slot_is_allocated(chunk, slot)) {
     assert(!"object_pool_free received an invalid or already-freed object");
     return;
   }
@@ -244,6 +268,8 @@ void object_pool_free(object_pool_t *pool, void *obj) {
     assert(!"object_pool_free called with no active allocations");
     return;
   }
+
+  object_pool_slot_set_allocated(chunk, slot, false);
 
   // Push to free-list
   void **node = (void **)obj;

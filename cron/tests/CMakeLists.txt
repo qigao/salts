@@ -81,4 +81,5 @@ set_tests_properties(cron_package_smoke_build PROPERTIES
 
 set_tests_properties(cron_package_smoke_run PROPERTIES
   FIXTURES_REQUIRED cron_package_smoke_built
-  LABELS "package;cron")
+  LABELS "package;cron"
+  WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/bin")

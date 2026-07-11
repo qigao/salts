@@ -3,10 +3,6 @@
   "version-semver": "0.1.0",
   "dependencies": [
     {
-      "name": "aklomp-base64",
-      "version>=": "0.5.2"
-    },
-    {
       "name": "pkgconf"
     },
     {

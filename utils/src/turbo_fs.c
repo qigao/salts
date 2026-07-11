@@ -63,6 +63,7 @@
   #endif
 
 #else  /* POSIX */
+  #include <dirent.h>
   #include <fcntl.h>
   #include <sys/stat.h>
   #include <sys/types.h>
@@ -91,6 +92,16 @@
   #define FS_ST_CTIME_NSEC(s) ((s).st_ctim.tv_nsec)
 #endif
 
+struct turbo_fs_dir_s {
+#ifdef _WIN32
+  HANDLE handle;
+  WIN32_FIND_DATAA entry;
+  bool first_pending;
+#else
+  DIR *handle;
+#endif
+};
+
 /* Helper: map errno to negative return value */
 static inline int err_from_errno(void) { return -errno; }
 
@@ -109,6 +120,13 @@ static int err_from_win32(DWORD error) {
   case ERROR_INVALID_PARAMETER:
   case ERROR_INVALID_NAME:
     return -EINVAL;
+  case ERROR_DIRECTORY:
+    return -ENOTDIR;
+  case ERROR_FILENAME_EXCED_RANGE:
+    return -ENAMETOOLONG;
+  case ERROR_NOT_ENOUGH_MEMORY:
+  case ERROR_OUTOFMEMORY:
+    return -ENOMEM;
   case ERROR_LOCK_VIOLATION:
   case ERROR_IO_PENDING:
     return -EAGAIN;
@@ -698,6 +716,166 @@ int turbo_fs_rmdir(const char *path) {
 
   TLOG_DEBUG("Directory removed: {}", path);
   return 0;
+}
+
+static bool turbo_fs_dirent_is_dot(const char *name) {
+  return name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'));
+}
+
+#ifdef _WIN32
+static turbo_fs_dirent_type_t turbo_fs_dirent_type_win32(const WIN32_FIND_DATAA *entry) {
+  if ((entry->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 &&
+      entry->dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
+    return TURBO_FS_DIRENT_SYMLINK;
+  }
+  if ((entry->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+    return TURBO_FS_DIRENT_DIRECTORY;
+  }
+  return TURBO_FS_DIRENT_FILE;
+}
+#else
+#ifdef DT_UNKNOWN
+static turbo_fs_dirent_type_t turbo_fs_dirent_type_posix(unsigned char type) {
+#ifdef DT_REG
+  if (type == DT_REG) {
+    return TURBO_FS_DIRENT_FILE;
+  }
+#endif
+#ifdef DT_DIR
+  if (type == DT_DIR) {
+    return TURBO_FS_DIRENT_DIRECTORY;
+  }
+#endif
+#ifdef DT_LNK
+  if (type == DT_LNK) {
+    return TURBO_FS_DIRENT_SYMLINK;
+  }
+#endif
+#ifdef DT_UNKNOWN
+  if (type == DT_UNKNOWN) {
+    return TURBO_FS_DIRENT_UNKNOWN;
+  }
+#endif
+  return TURBO_FS_DIRENT_OTHER;
+}
+#endif
+#endif
+
+int turbo_fs_opendir(const char *path, turbo_fs_dir_t **dir_out) {
+  if (!dir_out) {
+    return -EINVAL;
+  }
+  *dir_out = NULL;
+  if (!path || path[0] == '\0') {
+    return -EINVAL;
+  }
+
+  turbo_fs_dir_t *dir = (turbo_fs_dir_t *)calloc(1, sizeof(*dir));
+  if (!dir) {
+    return -ENOMEM;
+  }
+
+#ifdef _WIN32
+  size_t path_len = strlen(path);
+  bool needs_separator = path[path_len - 1] != '\\' && path[path_len - 1] != '/';
+  if (path_len > SIZE_MAX - (needs_separator ? 3u : 2u)) {
+    free(dir);
+    return -ENAMETOOLONG;
+  }
+
+  size_t pattern_size = path_len + (needs_separator ? 3u : 2u);
+  char *pattern = (char *)malloc(pattern_size);
+  if (!pattern) {
+    free(dir);
+    return -ENOMEM;
+  }
+  memcpy(pattern, path, path_len);
+  size_t pos = path_len;
+  if (needs_separator) {
+    pattern[pos++] = '\\';
+  }
+  pattern[pos++] = '*';
+  pattern[pos] = '\0';
+
+  dir->handle = FindFirstFileA(pattern, &dir->entry);
+  DWORD error = GetLastError();
+  free(pattern);
+  if (dir->handle == INVALID_HANDLE_VALUE) {
+    free(dir);
+    return err_from_win32(error);
+  }
+  dir->first_pending = true;
+#else
+  dir->handle = opendir(path);
+  if (!dir->handle) {
+    int error = errno;
+    free(dir);
+    return -error;
+  }
+#endif
+
+  *dir_out = dir;
+  return 0;
+}
+
+int turbo_fs_readdir(turbo_fs_dir_t *dir, turbo_fs_dirent_t *entry_out) {
+  if (!dir || !entry_out) {
+    return -EINVAL;
+  }
+
+#ifdef _WIN32
+  for (;;) {
+    if (dir->first_pending) {
+      dir->first_pending = false;
+    } else if (!FindNextFileA(dir->handle, &dir->entry)) {
+      DWORD error = GetLastError();
+      return error == ERROR_NO_MORE_FILES ? 0 : err_from_win32(error);
+    }
+
+    if (turbo_fs_dirent_is_dot(dir->entry.cFileName)) {
+      continue;
+    }
+    entry_out->name = dir->entry.cFileName;
+    entry_out->type = turbo_fs_dirent_type_win32(&dir->entry);
+    return 1;
+  }
+#else
+  for (;;) {
+    errno = 0;
+    struct dirent *entry = readdir(dir->handle);
+    if (!entry) {
+      return errno == 0 ? 0 : err_from_errno();
+    }
+    if (turbo_fs_dirent_is_dot(entry->d_name)) {
+      continue;
+    }
+    entry_out->name = entry->d_name;
+#ifdef DT_UNKNOWN
+    entry_out->type = turbo_fs_dirent_type_posix(entry->d_type);
+#else
+    entry_out->type = TURBO_FS_DIRENT_UNKNOWN;
+#endif
+    return 1;
+  }
+#endif
+}
+
+int turbo_fs_closedir(turbo_fs_dir_t *dir) {
+  if (!dir) {
+    return -EINVAL;
+  }
+
+#ifdef _WIN32
+  BOOL closed = FindClose(dir->handle);
+  DWORD error = closed ? ERROR_SUCCESS : GetLastError();
+  free(dir);
+  return closed ? 0 : err_from_win32(error);
+#else
+  int closed = closedir(dir->handle);
+  int error = errno;
+  free(dir);
+  return closed == 0 ? 0 : -error;
+#endif
 }
 
 int turbo_fs_unlink(const char *path) {
