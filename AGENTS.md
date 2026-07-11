@@ -11,17 +11,17 @@
 
 ## 专项技能参考
 
-本文件保留核心约束与原则。详细技术规范已拆分为独立 skills，按需激活：
+本文件保留核心约束与原则。详细技术规范已迁移为全局 Codex skills，按需激活：
 
-- **`skills/turboutils.md`** - TurboUtils 完整 API 参考（内存管理、字符串、文件、日志、并发、无锁数据结构）
-- **`skills/cmake_presets.md`** - CMake Presets 构建测试指南（configure/build/test preset、target 构建、build tree 恢复）
-- **`skills/c_design_patterns.md`** - C 语言设计模式实现指南（12 种模式、SOLID 原则、反模式警告）
-- **`skills/performance_optimization.md`** - 性能优化专项指南（热路径识别、SIMD、缓存优化、性能测试）
-- **`skills/logging_guide.md`** - 日志系统最佳实践（数量约束、质量规范、文件管理、生产配置）
-- **`skills/plugin_system.md`** - 插件系统开发规范（架构设计、隔离机制、热重载、安全）
-- **`skills/tinytest.md`** - TinyTest 测试框架指南（C/C++ 测试结构、断言、fixture、JUnit/TAP、benchmark）
+- **`turboutils`** - TurboUtils 完整 API 参考（内存管理、字符串、文件、日志、并发、无锁数据结构）
+- **`cmake-presets`** - CMake Presets 构建测试指南（configure/build/test preset、target 构建、build tree 恢复）
+- **`c-design-patterns`** - C 语言设计模式实现指南（12 种模式、SOLID 原则、反模式警告）
+- **`performance-optimization`** - 性能优化专项指南（热路径识别、SIMD、缓存优化、性能测试）
+- **`logging-guide`** - 日志系统最佳实践（数量约束、质量规范、文件管理、生产配置）
+- **`plugin-system`** - 插件系统开发规范（架构设计、隔离机制、热重载、安全）
+- **`tinytest`** - TinyTest 测试框架指南（C/C++ 测试结构、断言、fixture、JUnit/TAP、benchmark）
 
-激活方式： 查看 `skills/README.md` 了解详细使用说明。
+激活方式：在任务中涉及对应主题时使用相应全局 skill；需要显式指定时使用 `$turboutils`、`$cmake-presets`、`$c-design-patterns`、`$performance-optimization`、`$logging-guide`、`$plugin-system` 或 `$tinytest`。
 
 ---
 
@@ -136,7 +136,7 @@
 - 中间层若不能恢复、重试、补偿或转换错误，应直接返回错误码或 Result 向上传播；禁止仅记录日志后返回成功
 - 资源释放依靠清晰的 cleanup 路径或 goto cleanup 惯用法，不在多个错误分支重复清理逻辑
 - 可预期失败优先使用项目既有错误码、返回值（-1/NULL/错误码枚举）或 Result 结构表达
-- Result 设计以 `skills/c_design_patterns.md` 的“错误处理（Result 模式）”为准；`AGENTS.md` 只规定适用边界，不重复定义结构体样式
+- Result 设计以全局 skill `c-design-patterns` 的“错误处理（Result 模式）”为准；`AGENTS.md` 只规定适用边界，不重复定义结构体样式
 - 调用方必须检查错误码、NULL 或 Result 的失败状态；禁止忽略失败后继续使用未验证输出
 - 日志归属应集中在错误被消费或转换的边界，避免每层重复记录同一错误
 
@@ -183,7 +183,7 @@
 
 ### 插件系统设计规范
 
-> **详细规范参见**: `skills/plugin_system.md`
+> **详细规范参见**: 全局 skill `plugin-system`
 
 插件系统核心约束：
 - 稳定 ABI：纯 C 接口、opaque 指针、禁止跨边界传递复杂结构
@@ -194,7 +194,7 @@
 
 ### 设计模式应用指导
 
-> **详细模式实现参见**: `skills/c_design_patterns.md`
+> **详细模式实现参见**: 全局 skill `c-design-patterns`
 
 模式选择原则：
 - 创建型（工厂、建造者、单例）：对象创建逻辑复杂、延迟初始化、配置驱动
@@ -204,7 +204,7 @@
 
 ### 标准库与成熟算法优先
 
-> **详细 API 参见**: `skills/turboutils.md`
+> **详细 API 参见**: 全局 skill `turboutils`
 
 #### 库优先级顺序（从高到低）
 
@@ -321,7 +321,7 @@
 
 ## 性能与资源约束
 
-> **详细优化指南参见**: `skills/performance_optimization.md`
+> **详细优化指南参见**: 全局 skill `performance-optimization`
 
 - 热路径识别：每秒 >1000 次或占比 >20%（以 profiling 为准）
 - 热路径禁止：动态分配、函数指针间接调用、字符串拷贝
@@ -334,7 +334,7 @@
 
 ## 可观测性与诊断
 
-> **详细日志规范参见**: `skills/logging_guide.md`
+> **详细日志规范参见**: 全局 skill `logging-guide`
 
 - 错误上下文传播：错误必须携带操作类型、输入摘要、失败阶段、错误码
 - 日志分级：ERROR（用户可见失败）、WARN（降级/重试）、INFO（里程碑）、DEBUG（详细流程）
@@ -374,7 +374,7 @@
 
 ## 测试与验证
 
-> **TinyTest 使用指南参见**: `skills/tinytest.md`
+> **TinyTest 使用指南参见**: 全局 skill `tinytest`
 
 - 每次改动都应给出可重复的本地验证步骤
 - 验证顺序默认遵循：先最小相关测试，再相邻回归，最后按需扩大范围
