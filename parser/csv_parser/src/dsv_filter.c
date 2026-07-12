@@ -67,6 +67,7 @@ static void set_error(dsv_filter_t *filter, const char *msg) {
 }
 
 const char *dsv_filter_error(dsv_filter_t *filter) {
+    if (!filter) return "";
     return filter->error_msg;
 }
 
@@ -534,6 +535,7 @@ done:
 
 dsv_filter_t *dsv_filter_create(const csv_doc_t *doc, size_t header_row_index) {
     if (!doc) return NULL;
+    if (header_row_index >= csv_row_count(doc)) return NULL;
 
     dsv_filter_t *f = (dsv_filter_t*)calloc(1, sizeof(dsv_filter_t));
     if (!f) return NULL;
@@ -761,6 +763,37 @@ void dsv_filter_set_output_delimiter(dsv_filter_t *filter, char delimiter) {
     if (filter) filter->output_delim = delimiter;
 }
 
+static int dsv_field_needs_quote(tstr_v value, char delimiter) {
+    size_t i;
+    if (!value.data) return 0;
+    for (i = 0; i < value.len; i++) {
+        char ch = value.data[i];
+        if (ch == delimiter || ch == '"' || ch == '\r' || ch == '\n') return 1;
+    }
+    return 0;
+}
+
+static size_t dsv_rendered_field_len(tstr_v value, char delimiter) {
+    size_t i;
+    size_t len = value.len;
+    if (!dsv_field_needs_quote(value, delimiter)) return len;
+    len = 2;
+    for (i = 0; i < value.len; i++) len += value.data[i] == '"' ? 2 : 1;
+    return len;
+}
+
+static void dsv_render_field(char *dst, size_t *offset, tstr_v value, char delimiter) {
+    size_t i;
+    int quote = dsv_field_needs_quote(value, delimiter);
+    if (!value.data) value = tstr_v_from_buf("", 0);
+    if (quote) dst[(*offset)++] = '"';
+    for (i = 0; i < value.len; i++) {
+        if (quote && value.data[i] == '"') dst[(*offset)++] = '"';
+        dst[(*offset)++] = value.data[i];
+    }
+    if (quote) dst[(*offset)++] = '"';
+}
+
 int dsv_filter_check_row(dsv_filter_t *filter, size_t row_index) {
     size_t i;
     int result = 0;
@@ -801,23 +834,28 @@ void dsv_filter_run(dsv_filter_t *filter, dsv_row_callback_t callback, void *use
     for (size_t i = filter->header_row + 1; i < rows; ++i) {
         int match = dsv_filter_check_row(filter, i);
         if (match == 1) {
-            size_t buf_cap = 1024;
-            char *buf = (char*)malloc(buf_cap);
+            size_t buf_cap = 1;
             size_t buf_len = 0;
-
             size_t cols = csv_column_count(filter->doc);
             for (size_t c = 0; c < cols; ++c) {
                 tstr_v val = csv_get_v(filter->doc, i, c);
-                if (buf_len + val.len + 2 > buf_cap) {
-                    buf_cap = buf_len + val.len + 1024;
-                    buf = (char*)realloc(buf, buf_cap);
+                size_t field_len = dsv_rendered_field_len(val, filter->output_delim);
+                size_t add_len = field_len + (c > 0 ? 1 : 0);
+                if (field_len > add_len || add_len > (size_t)-1 - buf_cap) {
+                    set_error(filter, "oom rendering row");
+                    return;
                 }
-
-                if (c > 0) {
-                    buf[buf_len++] = filter->output_delim;
-                }
-                memcpy(buf + buf_len, val.data, val.len);
-                buf_len += val.len;
+                buf_cap += add_len;
+            }
+            char *buf = (char*)malloc(buf_cap);
+            if (!buf) {
+                set_error(filter, "oom rendering row");
+                return;
+            }
+            for (size_t c = 0; c < cols; ++c) {
+                tstr_v val = csv_get_v(filter->doc, i, c);
+                if (c > 0) buf[buf_len++] = filter->output_delim;
+                dsv_render_field(buf, &buf_len, val, filter->output_delim);
             }
             buf[buf_len] = '\0';
 

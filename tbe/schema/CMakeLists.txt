@@ -1,4 +1,4 @@
-set(TARGET_NAME tbe)
+set(TARGET_NAME tbe_schema)
 
 cmake_add_grammar(SCHEMA
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/parser/schema_lexer.re
@@ -29,9 +29,13 @@ target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::Core)
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS TurboUtils::SchemaBE
-  FOLDER tbe/${TARGET_NAME}
-  EXPORT_NAME SchemaBE)
+  ALIAS TurboUtils::TbeSchema
+  FOLDER tbe/schema
+  EXPORT_NAME TbeSchema)
+
+if(NOT TARGET TurboUtils::SchemaBE)
+  add_library(TurboUtils::SchemaBE ALIAS ${TARGET_NAME})
+endif()
 
 cmake_install_headers(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/)
 
@@ -40,49 +44,49 @@ cmake_install_headers(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/)
 # =============================================================================
 
 add_executable(test_tbe_parser test/test_tbe_parser.c)
-target_link_libraries(test_tbe_parser PRIVATE TurboUtils::SchemaBE
+target_link_libraries(test_tbe_parser PRIVATE TurboUtils::TbeSchema
                                               TurboUtils::TinyTest)
-cmake_config_target(test_tbe_parser NO_INSTALL FOLDER "tbe/${TARGET_NAME}")
+cmake_config_target(test_tbe_parser NO_INSTALL FOLDER "tbe/schema")
 add_test(NAME test_tbe_parser COMMAND test_tbe_parser)
 
 add_executable(test_flags_bdd test/test_flags_bdd.c)
-target_link_libraries(test_flags_bdd PRIVATE TurboUtils::SchemaBE
+target_link_libraries(test_flags_bdd PRIVATE TurboUtils::TbeSchema
                                              TurboUtils::TinyTest)
-cmake_config_target(test_flags_bdd NO_INSTALL FOLDER "tbe/tbe")
+cmake_config_target(test_flags_bdd NO_INSTALL FOLDER "tbe/schema")
 add_test(NAME test_flags_bdd COMMAND test_flags_bdd)
 
 add_executable(test_tbe_parser_bdd test/test_tbe_parser_bdd.c)
-target_link_libraries(test_tbe_parser_bdd PRIVATE TurboUtils::SchemaBE
+target_link_libraries(test_tbe_parser_bdd PRIVATE TurboUtils::TbeSchema
                                                   TurboUtils::TinyTest)
-cmake_config_target(test_tbe_parser_bdd NO_INSTALL FOLDER "tbe/tbe")
+cmake_config_target(test_tbe_parser_bdd NO_INSTALL FOLDER "tbe/schema")
 add_test(NAME test_tbe_parser_bdd COMMAND test_tbe_parser_bdd)
 
 add_executable(test_benchmark_schemas_bdd test/test_benchmark_schemas_bdd.c)
-target_link_libraries(test_benchmark_schemas_bdd PRIVATE TurboUtils::SchemaBE
+target_link_libraries(test_benchmark_schemas_bdd PRIVATE TurboUtils::TbeSchema
                                                          TurboUtils::TinyTest)
-cmake_config_target(test_benchmark_schemas_bdd NO_INSTALL FOLDER "tbe/tbe")
+cmake_config_target(test_benchmark_schemas_bdd NO_INSTALL FOLDER "tbe/schema")
 add_test(NAME test_benchmark_schemas_bdd COMMAND test_benchmark_schemas_bdd)
 
 add_executable(test_tbe_robustness test/test_tbe_robustness.c)
-target_link_libraries(test_tbe_robustness PRIVATE TurboUtils::SchemaBE
+target_link_libraries(test_tbe_robustness PRIVATE TurboUtils::TbeSchema
                                                   TurboUtils::TinyTest)
-cmake_config_target(test_tbe_robustness NO_INSTALL FOLDER "tbe/tbe")
+cmake_config_target(test_tbe_robustness NO_INSTALL FOLDER "tbe/schema")
 add_test(NAME test_tbe_robustness COMMAND test_tbe_robustness)
 
 add_executable(verify_fixes test/verify_fixes.c)
-target_link_libraries(verify_fixes PRIVATE TurboUtils::SchemaBE)
-cmake_config_target(verify_fixes NO_INSTALL FOLDER "tbe/tbe")
+target_link_libraries(verify_fixes PRIVATE TurboUtils::TbeSchema)
+cmake_config_target(verify_fixes NO_INSTALL FOLDER "tbe/schema")
 
 add_executable(test_optional_and_defaults test/test_optional_and_defaults.c)
-target_link_libraries(test_optional_and_defaults PRIVATE TurboUtils::SchemaBE
+target_link_libraries(test_optional_and_defaults PRIVATE TurboUtils::TbeSchema
                                                          TurboUtils::TinyTest)
-cmake_config_target(test_optional_and_defaults NO_INSTALL FOLDER "tbe/tbe")
+cmake_config_target(test_optional_and_defaults NO_INSTALL FOLDER "tbe/schema")
 add_test(NAME test_optional_and_defaults COMMAND test_optional_and_defaults)
 
 add_executable(test_enum_helpers test/test_enum_helpers.c)
-target_link_libraries(test_enum_helpers PRIVATE TurboUtils::SchemaBE
+target_link_libraries(test_enum_helpers PRIVATE TurboUtils::TbeSchema
                                                 TurboUtils::TinyTest)
-cmake_config_target(test_enum_helpers NO_INSTALL FOLDER "tbe/tbe")
+cmake_config_target(test_enum_helpers NO_INSTALL FOLDER "tbe/schema")
 add_test(NAME test_enum_helpers COMMAND test_enum_helpers)
 
 # =============================================================================
@@ -121,22 +125,22 @@ add_custom_target(generate_test_enum_enhanced_simple_header
 add_executable(test_enum_enhanced_functional
                test/test_enum_enhanced_functional.c
                ${ENUM_ENHANCED_HEADER})
-target_link_libraries(test_enum_enhanced_functional PRIVATE TurboUtils::SchemaBE
+target_link_libraries(test_enum_enhanced_functional PRIVATE TurboUtils::TbeSchema
                                                             TurboUtils::TinyTest)
 target_include_directories(test_enum_enhanced_functional PRIVATE ${CMAKE_BINARY_DIR}/bin)
 add_dependencies(test_enum_enhanced_functional generate_test_enum_enhanced_header)
-cmake_config_target(test_enum_enhanced_functional NO_INSTALL FOLDER "tbe/tbe")
+cmake_config_target(test_enum_enhanced_functional NO_INSTALL FOLDER "tbe/schema")
 add_test(NAME test_enum_enhanced_functional COMMAND test_enum_enhanced_functional)
 
 # 功能测试：枚举增强（简化版）
 add_executable(test_enum_enhanced_simple_functional
                test/test_enum_enhanced_simple_functional.c
                ${ENUM_ENHANCED_SIMPLE_HEADER})
-target_link_libraries(test_enum_enhanced_simple_functional PRIVATE TurboUtils::SchemaBE
+target_link_libraries(test_enum_enhanced_simple_functional PRIVATE TurboUtils::TbeSchema
                                                                     TurboUtils::TinyTest)
 target_include_directories(test_enum_enhanced_simple_functional PRIVATE ${CMAKE_BINARY_DIR}/bin)
 add_dependencies(test_enum_enhanced_simple_functional generate_test_enum_enhanced_simple_header)
-cmake_config_target(test_enum_enhanced_simple_functional NO_INSTALL FOLDER "tbe/tbe")
+cmake_config_target(test_enum_enhanced_simple_functional NO_INSTALL FOLDER "tbe/schema")
 add_test(NAME test_enum_enhanced_simple_functional COMMAND test_enum_enhanced_simple_functional)
 
 set(UNION_TYPES_SCHEMA ${CMAKE_CURRENT_SOURCE_DIR}/test/test_union_types.schema)
@@ -156,11 +160,11 @@ add_custom_target(generate_test_union_types_header
 add_executable(test_union_types_functional
                test/test_union_types_functional.c
                ${UNION_TYPES_HEADER})
-target_link_libraries(test_union_types_functional PRIVATE TurboUtils::SchemaBE
+target_link_libraries(test_union_types_functional PRIVATE TurboUtils::TbeSchema
                                                           TurboUtils::TinyTest)
 target_include_directories(test_union_types_functional PRIVATE ${CMAKE_BINARY_DIR}/bin)
 add_dependencies(test_union_types_functional generate_test_union_types_header)
-cmake_config_target(test_union_types_functional NO_INSTALL FOLDER "tbe/tbe")
+cmake_config_target(test_union_types_functional NO_INSTALL FOLDER "tbe/schema")
 add_test(NAME test_union_types_functional COMMAND test_union_types_functional)
 
 # =============================================================================
@@ -168,13 +172,13 @@ add_test(NAME test_union_types_functional COMMAND test_union_types_functional)
 # =============================================================================
 
 add_executable(benchmark_tbe_simple test/benchmark_tbe_simple.c)
-target_link_libraries(benchmark_tbe_simple PRIVATE TurboUtils::SchemaBE
+target_link_libraries(benchmark_tbe_simple PRIVATE TurboUtils::TbeSchema
                                                    TurboUtils::TinyTest)
-cmake_config_target(benchmark_tbe_simple NO_INSTALL FOLDER "tbe/tbe")
+cmake_config_target(benchmark_tbe_simple NO_INSTALL FOLDER "tbe/schema")
 
 add_executable(benchmark_encoding test/benchmark_encoding.c)
 target_link_libraries(benchmark_encoding PRIVATE TurboUtils::TinyTest)
-cmake_config_target(benchmark_encoding NO_INSTALL FOLDER "tbe/tbe")
+cmake_config_target(benchmark_encoding NO_INSTALL FOLDER "tbe/schema")
 
 # =============================================================================
 # TBE vs Native Struct Benchmark

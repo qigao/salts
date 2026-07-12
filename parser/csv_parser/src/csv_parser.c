@@ -207,11 +207,177 @@ static char *unescape_quotes_impl(csv_arena_t *arena, const char *src, size_t le
     return dst;
 }
 
+static csv_options_t csv_normalize_opts(const csv_options_t *opts) {
+    csv_options_t normalized = CSV_OPTIONS_DEFAULT;
+    if (!opts) return normalized;
+    normalized = *opts;
+    if (normalized.delimiter == '\0') normalized.delimiter = ',';
+    if (normalized.quote == '\0') normalized.quote = '"';
+    return normalized;
+}
+
+static int csv_opts_use_fast_lexer(const csv_options_t *opts) {
+    csv_options_t normalized = csv_normalize_opts(opts);
+    return normalized.delimiter == ',' && normalized.quote == '"' && normalized.skip_empty_rows;
+}
+
+typedef int (*csv_scan_field_cb)(void *ctx, size_t row, size_t col, const char *value,
+                                 size_t len);
+typedef int (*csv_scan_row_end_cb)(void *ctx, size_t row, size_t field_count);
+
+static int csv_buf_append(char **buf, size_t *len, size_t *cap, char ch) {
+    if (*len + 1 >= *cap) {
+        size_t new_cap = *cap ? (*cap * 2) : 64;
+        char *new_buf;
+        if (new_cap <= *len + 1) new_cap = *len + 2;
+        new_buf = (char *)realloc(*buf, new_cap);
+        if (!new_buf) return 0;
+        *buf = new_buf;
+        *cap = new_cap;
+    }
+    (*buf)[(*len)++] = ch;
+    return 1;
+}
+
+static int csv_scan_emit_field(csv_scan_field_cb field_cb, void *ctx, size_t row, size_t col,
+                               char *buf, size_t len) {
+    const char *value = len > 0 ? buf : "";
+    if (buf) buf[len] = '\0';
+    return !field_cb || field_cb(ctx, row, col, value, len) == 0;
+}
+
+static int csv_scan_opts(const char *content, size_t len, const csv_options_t *opts,
+                         csv_scan_field_cb field_cb, csv_scan_row_end_cb row_end_cb, void *ctx,
+                         char *error, size_t error_cap) {
+    csv_options_t o = csv_normalize_opts(opts);
+    char *field = NULL;
+    size_t field_len = 0;
+    size_t field_cap = 0;
+    size_t row = 0;
+    size_t col = 0;
+    size_t i = 0;
+    int in_quote = 0;
+    int field_started = 0;
+    int row_started = 0;
+
+    if (!content) return -1;
+    while (i < len) {
+        char ch = content[i++];
+        if (in_quote) {
+            if (ch == o.quote) {
+                if (i < len && content[i] == o.quote) {
+                    if (!csv_buf_append(&field, &field_len, &field_cap, o.quote)) goto oom;
+                    i++;
+                } else {
+                    in_quote = 0;
+                }
+            } else {
+                if (!csv_buf_append(&field, &field_len, &field_cap, ch)) goto oom;
+            }
+            field_started = 1;
+            row_started = 1;
+            continue;
+        }
+
+        if (!field_started && ch == o.quote) {
+            in_quote = 1;
+            field_started = 1;
+            row_started = 1;
+            continue;
+        }
+
+        if (ch == o.delimiter) {
+            if (!csv_scan_emit_field(field_cb, ctx, row, col, field, field_len)) goto fail;
+            col++;
+            field_len = 0;
+            field_started = 0;
+            row_started = 1;
+            continue;
+        }
+
+        if (ch == '\r' || ch == '\n') {
+            if (ch == '\r' && i < len && content[i] == '\n') i++;
+            if (row_started || field_started || !o.skip_empty_rows) {
+                if (row_started || field_started) {
+                    if (!csv_scan_emit_field(field_cb, ctx, row, col, field, field_len)) goto fail;
+                    col++;
+                }
+                if (row_end_cb && row_end_cb(ctx, row, col) != 0) goto fail;
+                row++;
+            }
+            col = 0;
+            field_len = 0;
+            field_started = 0;
+            row_started = 0;
+            continue;
+        }
+
+        if (!csv_buf_append(&field, &field_len, &field_cap, ch)) goto oom;
+        field_started = 1;
+        row_started = 1;
+    }
+
+    if (in_quote) {
+        if (error && error_cap > 0) {
+            fmt(error, error_cap, "Unterminated quoted field");
+        }
+        free(field);
+        return -1;
+    }
+
+    if (row_started || field_started) {
+        if (!csv_scan_emit_field(field_cb, ctx, row, col, field, field_len)) goto fail;
+        col++;
+        if (row_end_cb && row_end_cb(ctx, row, col) != 0) goto fail;
+    }
+
+    free(field);
+    return 0;
+
+oom:
+    if (error && error_cap > 0) fmt(error, error_cap, "Out of memory parsing CSV");
+fail:
+    free(field);
+    return -1;
+}
+
+typedef struct {
+    csv_doc_t *doc;
+    csv_arena_t *arena;
+    csv_row_node_t *current_row;
+} csv_dom_scan_ctx_t;
+
+static int csv_dom_scan_field(void *ctx, size_t row, size_t col, const char *value, size_t len) {
+    csv_dom_scan_ctx_t *scan = (csv_dom_scan_ctx_t *)ctx;
+    (void)row;
+    (void)col;
+    if (!scan->current_row) {
+        scan->current_row = csv_row_new_arena(scan->arena);
+        if (!scan->current_row) return -1;
+    }
+    csv_row_add_field(scan->arena, scan->current_row, value, len, 0);
+    return 0;
+}
+
+static int csv_dom_scan_row_end(void *ctx, size_t row, size_t field_count) {
+    csv_dom_scan_ctx_t *scan = (csv_dom_scan_ctx_t *)ctx;
+    (void)row;
+    (void)field_count;
+    if (!scan->current_row) {
+        scan->current_row = csv_row_new_arena(scan->arena);
+        if (!scan->current_row) return -1;
+    }
+    if (csv_doc_add_row(scan->doc, scan->current_row) != 0) return -1;
+    scan->current_row = NULL;
+    return 0;
+}
+
 csv_doc_t *csv_parse(const char *content, size_t len) {
     return csv_parse_opts(content, len, NULL);
 }
 
 csv_doc_t *csv_parse_opts(const char *content, size_t len, const csv_options_t *opts) {
+    csv_options_t normalized = csv_normalize_opts(opts);
     if (!content || len == 0) {
         fmt(g_error_msg, sizeof(g_error_msg), "Empty input");
         return NULL;
@@ -230,62 +396,84 @@ csv_doc_t *csv_parse_opts(const char *content, size_t len, const csv_options_t *
         return NULL;
     }
 
-    csv_lexer_t lexer;
-    csv_lexer_init(&lexer, content, len);
-    csv_lexer_reset_state();
+    if (csv_opts_use_fast_lexer(&normalized)) {
+        csv_lexer_t lexer;
+        csv_lexer_init(&lexer, content, len);
+        csv_lexer_reset_state();
 
-    csv_row_node_t *current_row = csv_row_new_arena(arena);
-    csv_token_t token;
-    int ret;
+        csv_row_node_t *current_row = csv_row_new_arena(arena);
+        csv_token_t token;
+        int ret;
+        if (!current_row) {
+            fmt(g_error_msg, sizeof(g_error_msg), "Out of memory parsing CSV rows");
+            turbo_vec_destroy(&doc->row_index);
+            csv_arena_free(arena);
+            return NULL;
+        }
 
-    while ((ret = csv_lexer_next(&lexer, &token)) > 0) {
-        switch (token.type) {
-            case CSV_TOKEN_FIELD: {
-                if (token.needs_unescape) {
-                    size_t unesc_len;
-                    char *unesc = unescape_quotes_impl(arena, token.value, token.length, &unesc_len);
-                    csv_row_add_field(arena, current_row, unesc, unesc_len, 1);
-                } else {
-                    csv_row_add_field(arena, current_row, token.value, token.length, 0);
+        while ((ret = csv_lexer_next(&lexer, &token)) > 0) {
+            switch (token.type) {
+                case CSV_TOKEN_FIELD: {
+                    if (token.needs_unescape) {
+                        size_t unesc_len;
+                        char *unesc = unescape_quotes_impl(arena, token.value, token.length, &unesc_len);
+                        csv_row_add_field(arena, current_row, unesc, unesc_len, 1);
+                    } else {
+                        csv_row_add_field(arena, current_row, token.value, token.length, 0);
+                    }
+                    break;
                 }
-                break;
-            }
-            case CSV_TOKEN_COMMA:
-                // Empty fields handled by lexer state machine
-                break;
-            case CSV_TOKEN_NEWLINE:
-                if (current_row->field_count > 0) {
-                    if (csv_doc_add_row(doc, current_row) != 0) {
-                        fmt(g_error_msg, sizeof(g_error_msg), "Out of memory indexing CSV rows");
+                case CSV_TOKEN_COMMA:
+                    // Empty fields handled by lexer state machine
+                    break;
+                case CSV_TOKEN_NEWLINE:
+                    if (current_row->field_count > 0) {
+                        if (csv_doc_add_row(doc, current_row) != 0) {
+                            fmt(g_error_msg, sizeof(g_error_msg), "Out of memory indexing CSV rows");
+                            turbo_vec_destroy(&doc->row_index);
+                            csv_arena_free(arena);
+                            return NULL;
+                        }
+                    }
+                    current_row = csv_row_new_arena(arena);
+                    if (!current_row) {
+                        fmt(g_error_msg, sizeof(g_error_msg), "Out of memory parsing CSV rows");
                         turbo_vec_destroy(&doc->row_index);
                         csv_arena_free(arena);
                         return NULL;
                     }
-                }
-                current_row = csv_row_new_arena(arena);
-                break;
+                    break;
+            }
         }
-    }
 
-    // Add final row if not empty
-    if (current_row && current_row->field_count > 0) {
-        if (csv_doc_add_row(doc, current_row) != 0) {
-            fmt(g_error_msg, sizeof(g_error_msg), "Out of memory indexing CSV rows");
+        // Add final row if not empty
+        if (current_row && current_row->field_count > 0) {
+            if (csv_doc_add_row(doc, current_row) != 0) {
+                fmt(g_error_msg, sizeof(g_error_msg), "Out of memory indexing CSV rows");
+                turbo_vec_destroy(&doc->row_index);
+                csv_arena_free(arena);
+                return NULL;
+            }
+        }
+
+        if (ret < 0) {
+            fmt(g_error_msg, sizeof(g_error_msg), "{}", lexer.error);
+            turbo_vec_destroy(&doc->row_index);
+            csv_arena_free(arena);
+            return NULL;
+        }
+    } else {
+        csv_dom_scan_ctx_t scan = { doc, arena, NULL };
+        if (csv_scan_opts(content, len, &normalized, csv_dom_scan_field, csv_dom_scan_row_end,
+                          &scan, g_error_msg, sizeof(g_error_msg)) != 0) {
             turbo_vec_destroy(&doc->row_index);
             csv_arena_free(arena);
             return NULL;
         }
     }
 
-    if (ret < 0) {
-        fmt(g_error_msg, sizeof(g_error_msg), "{}", lexer.error);
-        turbo_vec_destroy(&doc->row_index);
-        csv_arena_free(arena);
-        return NULL;
-    }
-
     // Handle header option
-    if (opts && opts->has_header && doc->rows) {
+    if (normalized.has_header && doc->rows) {
         doc->header = doc->rows;
         doc->rows = doc->rows->next;
         if (turbo_vec_erase(&doc->row_index, 0, NULL) != TURBO_OK) {
@@ -562,6 +750,36 @@ int csv_write_file(const csv_doc_t *doc, const char *filename) {
  * Streaming/SAX API
  * ============================================================================ */
 
+typedef struct {
+    const csv_stream_handler_t *handler;
+    void *user_ctx;
+    int row_open;
+} csv_stream_scan_ctx_t;
+
+static int csv_stream_scan_field(void *scan_ctx, size_t row, size_t col, const char *value,
+                                 size_t value_len) {
+    csv_stream_scan_ctx_t *s = (csv_stream_scan_ctx_t *)scan_ctx;
+    if (!s->row_open) {
+        s->row_open = 1;
+        if (s->handler->on_row_start && s->handler->on_row_start(s->user_ctx, row) != 0)
+            return -1;
+    }
+    if (s->handler->on_field &&
+        s->handler->on_field(s->user_ctx, row, col, value, value_len) != 0)
+        return -1;
+    return 0;
+}
+
+static int csv_stream_scan_row_end(void *scan_ctx, size_t row, size_t field_count) {
+    csv_stream_scan_ctx_t *s = (csv_stream_scan_ctx_t *)scan_ctx;
+    if (!s->row_open) {
+        if (s->handler->on_row_start && s->handler->on_row_start(s->user_ctx, row) != 0)
+            return -1;
+    }
+    s->row_open = 0;
+    return s->handler->on_row_end ? s->handler->on_row_end(s->user_ctx, row, field_count) : 0;
+}
+
 int csv_parse_stream(const char *content, size_t len,
                      const csv_stream_handler_t *handler, void *ctx) {
     return csv_parse_stream_opts(content, len, handler, ctx, NULL);
@@ -570,9 +788,14 @@ int csv_parse_stream(const char *content, size_t len,
 int csv_parse_stream_opts(const char *content, size_t len,
                           const csv_stream_handler_t *handler, void *ctx,
                           const csv_options_t *opts) {
-    (void)opts;  // Reserved for future use
-
+    csv_options_t normalized = csv_normalize_opts(opts);
     if (!content || !handler) return -1;
+
+    if (!csv_opts_use_fast_lexer(&normalized)) {
+        csv_stream_scan_ctx_t scan = { handler, ctx, 0 };
+        return csv_scan_opts(content, len, &normalized, csv_stream_scan_field,
+                             csv_stream_scan_row_end, &scan, g_error_msg, sizeof(g_error_msg));
+    }
 
     csv_lexer_t lexer;
     csv_lexer_init(&lexer, content, len);
@@ -666,6 +889,9 @@ int csv_parse_stream_opts(const char *content, size_t len,
 
 struct csv_iter_s {
     csv_lexer_t    lexer;
+    csv_doc_t     *generic_doc;
+    size_t         generic_next_row;
+    int            use_generic_doc;
     char         **fields;
     size_t        *field_lens;
     size_t         field_count;
@@ -681,13 +907,8 @@ csv_iter_t *csv_iter_new(const char *content, size_t len) {
 }
 
 csv_iter_t *csv_iter_new_opts(const char *content, size_t len, const csv_options_t *opts) {
-    (void)opts;
-
     csv_iter_t *iter = (csv_iter_t *)calloc(1, sizeof(csv_iter_t));
     if (!iter) return NULL;
-
-    csv_lexer_init(&iter->lexer, content, len);
-    csv_lexer_reset_state();
 
     iter->field_capacity = 16;
     iter->fields = (char **)calloc(iter->field_capacity, sizeof(char *));
@@ -701,6 +922,19 @@ csv_iter_t *csv_iter_new_opts(const char *content, size_t len, const csv_options
         return NULL;
     }
 
+    if (!csv_opts_use_fast_lexer(opts)) {
+        iter->generic_doc = csv_parse_opts(content, len, opts);
+        if (!iter->generic_doc) {
+            csv_iter_free(iter);
+            return NULL;
+        }
+        iter->use_generic_doc = 1;
+        return iter;
+    }
+
+    csv_lexer_init(&iter->lexer, content, len);
+    csv_lexer_reset_state();
+
     return iter;
 }
 
@@ -709,6 +943,7 @@ void csv_iter_free(csv_iter_t *iter) {
     free(iter->fields);
     free(iter->field_lens);
     free(iter->field_buffer);
+    csv_free(iter->generic_doc);
     free(iter);
 }
 
@@ -769,6 +1004,17 @@ bool csv_iter_next(csv_iter_t *iter) {
 
     iter->field_count = 0;
     iter->buffer_used = 0;
+
+    if (iter->use_generic_doc) {
+        csv_row_node_t *row = get_row_at(iter->generic_doc, iter->generic_next_row);
+        csv_field_node_t *field;
+        if (!row) return false;
+        for (field = row->fields; field; field = field->next) {
+            iter_add_field(iter, field->value ? field->value : "", field->length, 0);
+        }
+        iter->row_index = iter->generic_next_row++;
+        return true;
+    }
 
     csv_token_t token;
     int ret;

@@ -280,6 +280,39 @@ spec("csv_parser") {
     }
   }
 
+  describe("Parser Options") {
+    it("should parse custom delimiters and quote characters") {
+      const char *csv = "'name';'note'\n'Ada';'hello; world'\n'Bob';'it''s ok'\n";
+      csv_options_t opts = CSV_OPTIONS_DEFAULT;
+      opts.delimiter = ';';
+      opts.quote = '\'';
+
+      csv_doc_t *doc = csv_parse_opts(csv, strlen(csv), &opts);
+      check_not_null(doc);
+      check_int_eq(csv_row_count(doc), 3);
+      check_int_eq(csv_column_count(doc), 2);
+      check_str_eq(csv_get(doc, 1, 1), "hello; world");
+      check_str_eq(csv_get(doc, 2, 1), "it's ok");
+
+      csv_free(doc);
+    }
+
+    it("should preserve empty rows when requested") {
+      const char *csv = "a\n\nb\n";
+      csv_options_t opts = CSV_OPTIONS_DEFAULT;
+      opts.skip_empty_rows = false;
+
+      csv_doc_t *doc = csv_parse_opts(csv, strlen(csv), &opts);
+      check_not_null(doc);
+      check_int_eq(csv_row_count(doc), 3);
+      check_str_eq(csv_get(doc, 0, 0), "a");
+      check_null(csv_get(doc, 1, 0));
+      check_str_eq(csv_get(doc, 2, 0), "b");
+
+      csv_free(doc);
+    }
+  }
+
   describe("Type Conversion") {
     it("should convert fields to integers correctly") {
       const char *csv = "10,20,abc\n";
@@ -352,6 +385,24 @@ spec("csv_parser") {
       check_int_eq(ctx.field_count, 2);
       check_str_eq(ctx.last_field, "say \"hi\"");
     }
+
+    it("should honor streaming parser options") {
+      const char *csv = "'a'\t'b'\n'1'\t'2'\n";
+      csv_options_t opts = CSV_OPTIONS_DEFAULT;
+      opts.delimiter = '\t';
+      opts.quote = '\'';
+
+      csv_stream_handler_t handler = {
+          .on_row_start = on_row_start, .on_field = on_field, .on_row_end = on_row_end};
+
+      stream_test_ctx_t ctx = {0};
+      int ret = csv_parse_stream_opts(csv, strlen(csv), &handler, &ctx, &opts);
+
+      check_int_eq(ret, 0);
+      check_int_eq(ctx.row_count, 2);
+      check_int_eq(ctx.field_count, 4);
+      check_str_eq(ctx.last_field, "2");
+    }
   }
 
   describe("Iterator API") {
@@ -392,6 +443,27 @@ spec("csv_parser") {
       check_str_eq(csv_iter_field(iter, 0), "hello, world");
       check_str_eq(csv_iter_field(iter, 1), "line1\nline2");
 
+      csv_iter_free(iter);
+    }
+
+    it("should honor iterator parser options") {
+      const char *csv = "'x';'y;y'\n'1';'2'\n";
+      csv_options_t opts = CSV_OPTIONS_DEFAULT;
+      opts.delimiter = ';';
+      opts.quote = '\'';
+
+      csv_iter_t *iter = csv_iter_new_opts(csv, strlen(csv), &opts);
+      check_not_null(iter);
+
+      check(csv_iter_next(iter));
+      check_int_eq(csv_iter_field_count(iter), 2);
+      check_str_eq(csv_iter_field(iter, 1), "y;y");
+
+      check(csv_iter_next(iter));
+      check_str_eq(csv_iter_field(iter, 0), "1");
+      check_str_eq(csv_iter_field(iter, 1), "2");
+
+      check(!csv_iter_next(iter));
       csv_iter_free(iter);
     }
   }

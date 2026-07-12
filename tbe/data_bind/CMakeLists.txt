@@ -18,13 +18,13 @@ target_include_directories(${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
          $<INSTALL_INTERFACE:include>
   PRIVATE
-    ${CMAKE_SOURCE_DIR}/tbe/tbe/include
+    ${CMAKE_SOURCE_DIR}/tbe/schema/include
     ${CMAKE_SOURCE_DIR}/vendor/mir
 )
 
 target_link_libraries(${TARGET_NAME}
   PRIVATE
-    TurboUtils::SchemaBE
+    TurboUtils::TbeSchema
     mir_static
     uuid
   PUBLIC
@@ -47,7 +47,7 @@ install(FILES data_bind.h DESTINATION include)
 add_executable(test_data_bind test_data_bind.c tbe_helpers.c)
 target_include_directories(test_data_bind
   PRIVATE
-    ${CMAKE_SOURCE_DIR}/tbe/tbe/include
+    ${CMAKE_SOURCE_DIR}/tbe/schema/include
 )
 target_link_libraries(test_data_bind
   PRIVATE

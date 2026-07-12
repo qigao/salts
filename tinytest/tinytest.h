@@ -81,6 +81,7 @@ extern "C" {
   #pragma warning(push)
   #pragma warning(disable : 4130)
   #pragma warning(disable : 4611) /* setjmp/longjmp in test control flow */
+  #pragma warning(disable : 4702) /* fail-fast longjmp paths can leave marker returns unreachable */
   #pragma warning(disable : 4996) /* _CRT_SECURE_NO_WARNINGS */
   #pragma warning(                                                                                 \
       disable : 4127) /* conditional expression is constant (check macros with constant args) */

@@ -89,6 +89,29 @@ spec("dsv_filter") {
             csv_free(doc);
         }
 
+        it("should render matched rows with csv escaping") {
+            const char *csv = "id_n,text_s\n"
+                              "1,\"hello|world\"\n"
+                              "2,\"say \"\"hi\"\"\"\n";
+            run_ctx_t ctx = {0};
+
+            csv_doc_t *doc = csv_parse(csv, strlen(csv));
+            check_not_null(doc);
+
+            dsv_filter_t *f = dsv_filter_create(doc, 0);
+            check_not_null(f);
+            dsv_filter_set_output_delimiter(f, '|');
+            check(dsv_filter_compile(f, "id >= 2"));
+
+            dsv_filter_run(f, on_row, &ctx);
+
+            check_int_eq(ctx.count, 1);
+            check_str_eq(ctx.last_row_text, "2|\"say \"\"hi\"\"\"");
+
+            dsv_filter_destroy(f);
+            csv_free(doc);
+        }
+
         it("should filter with lhs arithmetic using two numeric columns") {
             const char *csv = "left_n,right_n,sym_s\n"
                               "2,3,A\n"
@@ -256,6 +279,17 @@ spec("dsv_filter") {
             check_int_eq(dsv_filter_check_row(f, 1), -1);
 
             dsv_filter_destroy(f);
+            csv_free(doc);
+        }
+
+        it("should handle null and invalid handles safely") {
+            const char *csv = "x_n\n1\n";
+            csv_doc_t *doc = csv_parse(csv, strlen(csv));
+            check_not_null(doc);
+
+            check_str_eq(dsv_filter_error(NULL), "");
+            check_null(dsv_filter_create(doc, 99));
+
             csv_free(doc);
         }
 

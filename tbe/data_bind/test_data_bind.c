@@ -94,6 +94,26 @@ static DataBindValue *test_data_bind_parse_json_all(DataBind *codec, const char 
   return value;
 }
 
+static DataBindValue *test_data_bind_parse_json_path(DataBind *codec, const char *type_name,
+                                                     const char *json, size_t len,
+                                                     const char *jsonpath) {
+  DataBindValue *value = NULL;
+  DataBindError err = DATA_BIND_ERROR_INIT;
+  if (data_bind_parse_json_path(codec, type_name, json, len, jsonpath, &value, &err) != DATA_BIND_OK)
+    return NULL;
+  return value;
+}
+
+static DataBindValue *test_data_bind_parse_json_path_all(DataBind *codec, const char *type_name,
+                                                         const char *json, size_t len,
+                                                         const char *jsonpath) {
+  DataBindValue *value = NULL;
+  DataBindError err = DATA_BIND_ERROR_INIT;
+  if (data_bind_parse_json_path_all(codec, type_name, json, len, jsonpath, &value, &err) != DATA_BIND_OK)
+    return NULL;
+  return value;
+}
+
 static DataBindValue *test_data_bind_parse_csv(DataBind *codec, const char *type_name,
                                                const char *csv, size_t len, size_t row) {
   DataBindValue *value = NULL;
@@ -110,6 +130,16 @@ static DataBindValue *test_data_bind_parse_csv_all(DataBind *codec, const char *
   return value;
 }
 
+static DataBindValue *test_data_bind_parse_csv_path(DataBind *codec, const char *type_name,
+                                                    const char *csv, size_t len,
+                                                    const char *csvpath) {
+  DataBindValue *value = NULL;
+  DataBindError err = DATA_BIND_ERROR_INIT;
+  if (data_bind_parse_csv_path(codec, type_name, csv, len, csvpath, &value, &err) != DATA_BIND_OK)
+    return NULL;
+  return value;
+}
+
 static DataBindValue *test_data_bind_parse_xml(DataBind *codec, const char *type_name,
                                                const char *xml, size_t len) {
   DataBindValue *value = NULL;
@@ -118,11 +148,13 @@ static DataBindValue *test_data_bind_parse_xml(DataBind *codec, const char *type
   return value;
 }
 
-static DataBindValue *test_data_bind_parse_xml_all(DataBind *codec, const char *type_name,
-                                                   const char *xml, size_t len, const char *xpath) {
+static DataBindValue *test_data_bind_parse_xml_path_all(DataBind *codec, const char *type_name,
+                                                        const char *xml, size_t len,
+                                                        const char *xmlpath) {
   DataBindValue *value = NULL;
   DataBindError err = DATA_BIND_ERROR_INIT;
-  if (data_bind_parse_xml_all(codec, type_name, xml, len, xpath, &value, &err) != DATA_BIND_OK) return NULL;
+  if (data_bind_parse_xml_path_all(codec, type_name, xml, len, xmlpath, &value, &err) != DATA_BIND_OK)
+    return NULL;
   return value;
 }
 
@@ -133,14 +165,20 @@ static DataBindValue *test_data_bind_parse_xml_all(DataBind *codec, const char *
   test_data_bind_parse_json((codec), (type_name), (json), (len))
 #define data_bind_parse_json_all(codec, type_name, json, len) \
   test_data_bind_parse_json_all((codec), (type_name), (json), (len))
+#define data_bind_parse_json_path(codec, type_name, json, len, jsonpath) \
+  test_data_bind_parse_json_path((codec), (type_name), (json), (len), (jsonpath))
+#define data_bind_parse_json_path_all(codec, type_name, json, len, jsonpath) \
+  test_data_bind_parse_json_path_all((codec), (type_name), (json), (len), (jsonpath))
 #define data_bind_parse_csv(codec, type_name, csv, len, row) \
   test_data_bind_parse_csv((codec), (type_name), (csv), (len), (row))
 #define data_bind_parse_csv_all(codec, type_name, csv, len) \
   test_data_bind_parse_csv_all((codec), (type_name), (csv), (len))
+#define data_bind_parse_csv_path(codec, type_name, csv, len, csvpath) \
+  test_data_bind_parse_csv_path((codec), (type_name), (csv), (len), (csvpath))
 #define data_bind_parse_xml(codec, type_name, xml, len) \
   test_data_bind_parse_xml((codec), (type_name), (xml), (len))
-#define data_bind_parse_xml_all(codec, type_name, xml, len, xpath) \
-  test_data_bind_parse_xml_all((codec), (type_name), (xml), (len), (xpath))
+#define data_bind_parse_xml_path_all(codec, type_name, xml, len, xmlpath) \
+  test_data_bind_parse_xml_path_all((codec), (type_name), (xml), (len), (xmlpath))
 
 suite("Data Bind") {
   section("Codec Creation") {
@@ -1357,6 +1395,37 @@ suite("Data Bind") {
         }
 
         {
+          const char *json_wrapped =
+              "{\"payload\":["
+              "{\"header\":{\"seq\":1,\"ts\":10},\"side\":\"Buy\",\"perms\":\"Read\","
+              "\"values\":[1],\"attrs\":{\"a\":5},\"choice\":{\"side\":\"Buy\"}},"
+              "{\"header\":{\"seq\":2,\"ts\":20},\"side\":\"Sell\",\"perms\":\"Write\","
+              "\"values\":[2],\"attrs\":{\"b\":6},\"choice\":{\"side\":\"Sell\"}}]}";
+          DataBindValue *at =
+              data_bind_parse_json_path(codec, "Book", json_wrapped, strlen(json_wrapped),
+                                      "$.payload[1]");
+          DataBindValue *all_path =
+              data_bind_parse_json_path_all(codec, "Book", json_wrapped, strlen(json_wrapped),
+                                          "$.payload[*]");
+          DataBindError err = DATA_BIND_ERROR_INIT;
+
+          then("JSONPath-selected values should bind through DataBind") {
+            check_not_null(at);
+            check_int_eq(data_bind_value_as_int(require_field(at, "side")), 2);
+            check_not_null(all_path);
+            check(data_bind_value_kind(all_path) == DATA_BIND_VALUE_LIST);
+            check_size_eq(data_bind_value_count(all_path), 2);
+            check_int_eq(data_bind_value_as_int(require_field(require_index(all_path, 0), "side")), 1);
+            check_int_eq(data_bind_validate_json_path(codec, "Book", json_wrapped,
+                                                    strlen(json_wrapped), "$.payload[0]", &err),
+                         DATA_BIND_OK);
+          }
+
+          data_bind_value_free(at);
+          data_bind_value_free(all_path);
+        }
+
+        {
           const char *csv =
               "header.seq,header.ts,side,perms,values[0],values[1],attrs.x,attrs.y,"
               "choice.side\n"
@@ -1387,6 +1456,30 @@ suite("Data Bind") {
 
           data_bind_value_free(row0);
           data_bind_value_free(rows);
+        }
+
+        {
+          const char *csv =
+              "header.seq_n,header.ts_n,side_s,perms_s,values[0]_n,values[1]_n,attrs.x_n,"
+              "attrs.y_n,choice.side_s\n"
+              "7,99,Buy,Read|Write,3,4,30,40,Sell\n"
+              "8,100,Sell,Execute,5,6,50,60,Buy\n";
+          DataBindValue *filtered =
+              data_bind_parse_csv_path(codec, "Book", csv, strlen(csv), "side == \"Sell\"");
+          DataBindError err = DATA_BIND_ERROR_INIT;
+
+          then("CSVPath should select rows before schema binding") {
+            check_not_null(filtered);
+            check(data_bind_value_kind(filtered) == DATA_BIND_VALUE_LIST);
+            check_size_eq(data_bind_value_count(filtered), 1);
+            check_int_eq(data_bind_value_as_int(require_field(require_index(filtered, 0), "side")), 2);
+            check_int_eq(data_bind_value_as_int(require_field(require_field(require_index(filtered, 0), "header"), "seq")), 8);
+            check_int_eq(data_bind_validate_csv_path(codec, "Book", csv, strlen(csv),
+                                                       "side == \"Buy\"", &err),
+                         DATA_BIND_OK);
+          }
+
+          data_bind_value_free(filtered);
         }
 
         {
@@ -1423,9 +1516,10 @@ suite("Data Bind") {
               "<perms>Read|Write</perms><choice><side>Sell</side></choice>"
               "<values>3</values><values>4</values><attrs><x>30</x><y>40</y></attrs></book>";
           DataBindValue *one = data_bind_parse_xml(codec, "Book", one_xml, strlen(one_xml));
-          DataBindValue *all = data_bind_parse_xml_all(codec, "Book", xml, strlen(xml), "//book");
+          DataBindValue *all = data_bind_parse_xml_path_all(codec, "Book", xml, strlen(xml),
+                                                           "//book");
 
-          then("XML should bind one document and XPath-selected nodes") {
+          then("XML should bind one document and XMLPath-selected nodes") {
             const DataBindValue *attrs;
             DataBindMapEntry entry;
             check_not_null(one);

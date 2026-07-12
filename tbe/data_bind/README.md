@@ -7,8 +7,8 @@ embedding TurboUtils scripts.
 
 `modules/parser` uses this library for TurboUtils-facing schema binding,
 strict boolean validation, and schema reflection. Parser remains responsible
-for script value conversion, JSON/CSV emit, detailed `validate_ex` diagnostics,
-and format-specific query helpers such as JSONPath, XPath, and CSV filters.
+for script value conversion, JSON/CSV emit, and detailed `validate_ex` diagnostics.
+DataBind owns format-aware path query APIs for JSONPath, XMLPath, and CSVPath.
 Format parsing inside `tbe/data_bind` uses TurboNet::Parser directly; it does
 not call into `modules/parser`.
 
@@ -144,7 +144,7 @@ consistent error reporting:
   position tracking is available
 - **JSON**: `"json: $.field.path"` using JSONPath-style notation for nested fields
 - **CSV**: `"csv: row R col C"` or `"csv: row R field_name"` for header-based location
-- **XML**: `"xml: /root/element[@attr]"` using XPath-style notation
+- **XML**: `"xml: /root/element[@attr]"` using XMLPath-style notation
 
 Example error output:
 
@@ -181,22 +181,30 @@ err.message = "Unknown enum value: 'PENDING'"
 - `data_bind_parse_xml`: XML document root binds to the requested schema type.
   Record fields bind from same-name child elements first and same-name
   attributes second. Repeated same-name elements bind lists/groups.
-- `data_bind_parse_xml_all`: XPath selects nodes and binds each selected node.
-  Use expressions supported by the bundled TurboNet XML parser, such as
+- `data_bind_parse_json_path`: bind the first value matching a JSONPath expression.
+- `data_bind_parse_json_path_all`: bind all values matching a JSONPath expression.
+- `data_bind_parse_xml_path_all`: XMLPath selects nodes and binds each selected
+  node. Use expressions supported by the bundled TurboNet XML parser, such as
   `//order`.
+- `data_bind_parse_csv_path`: bind rows matching a CSVPath expression.
+- `data_bind_validate_json_path`: validates the first JSONPath match against the
+  schema type.
+- `data_bind_validate_csv_path`: validates all CSV rows matching a CSVPath
+  expression.
+- `data_bind_validate_xml_path`: strictly validates the document root or every
+  node selected by the supplied XMLPath expression.
 - `data_bind_validate_json`: strictly validates JSON. Arrays are valid only
   when every item binds to the requested schema type.
 - `data_bind_validate_csv`: strictly validates every CSV data row against the
   requested schema type. CSV uses the same header path rules as CSV binding.
-- `data_bind_validate_xml`: strictly validates the document root or every node
-  selected by the supplied XPath expression.
 - `data_bind_create_from_text`: creates a codec directly from schema text in
   memory.
 
 `parse_*_all` APIs are binding helpers: they return a list of successfully
 bound values and may skip invalid array items or CSV rows. Use
 `data_bind_validate_json`, `data_bind_validate_csv`, or
-`data_bind_validate_xml` when the caller needs strict all-or-nothing input
+`data_bind_validate_json_path`, `data_bind_validate_csv_path`,
+`data_bind_validate_xml_path` when the caller needs strict all-or-nothing input
 validation.
 
 CSV and XML use the same schema binder as JSON:
@@ -209,7 +217,8 @@ CSV and XML use the same schema binder as JSON:
 - CSV union values choose the variant from non-empty payload columns on each
   row, so merged dynamic headers can represent different variants per row.
 - XML binds record fields from same-name child elements first and attributes
-  second. `data_bind_parse_xml_all` and `data_bind_validate_xml` accept XPath
+  second. `data_bind_parse_xml_path_all` and `data_bind_validate_xml_path` accept
+  XMLPath
   to select repeated record nodes.
 
 ## Strict Value Access

@@ -23,7 +23,7 @@
 #define DATA_BIND_UUID_SIZE 16
 
 #define DATA_BIND_VERSION_MAJOR 1
-#define DATA_BIND_VERSION_MINOR 6
+#define DATA_BIND_VERSION_MINOR 7
 #define DATA_BIND_VERSION_PATCH 0
 #define DATA_BIND_VERSION \
     (DATA_BIND_VERSION_MAJOR * 10000 + DATA_BIND_VERSION_MINOR * 100 + DATA_BIND_VERSION_PATCH)
@@ -323,6 +323,30 @@ DATA_BIND_API DataBindStatus data_bind_parse_json_all(DataBind* codec, const cha
                                                       DataBindError* error);
 
 /**
+ * @brief Bind the first JSONPath-selected JSON value using the codec schema.
+ *
+ * If jsonpath is NULL or empty, this is equivalent to data_bind_parse_json().
+ */
+DATA_BIND_API DataBindStatus data_bind_parse_json_path(DataBind* codec, const char* type_name,
+                                                      const char* json, size_t len,
+                                                      const char* jsonpath,
+                                                      DataBindValue** out_value,
+                                                      DataBindError* error);
+
+/**
+ * @brief Bind all JSONPath-selected JSON values to a dynamic list.
+ *
+ * If jsonpath is NULL or empty, this is equivalent to data_bind_parse_json_all().
+ * Returned list items are schema-bound copies; JSONPath matches are non-owning
+ * views into the parsed JSON document and are not exposed.
+ */
+DATA_BIND_API DataBindStatus data_bind_parse_json_path_all(DataBind* codec, const char* type_name,
+                                                         const char* json, size_t len,
+                                                         const char* jsonpath,
+                                                         DataBindValue** out_value,
+                                                         DataBindError* error);
+
+/**
  * @brief Bind a CSV row to a dynamic value tree using the codec schema.
  *
  * CSV is parsed with a header row. Nested fields use dotted/indexed column
@@ -342,9 +366,23 @@ DATA_BIND_API DataBindStatus data_bind_parse_csv_all(DataBind* codec, const char
                                                      DataBindError* error);
 
 /**
+ * @brief Bind CSV rows matched by a CSVPath expression to a dynamic list.
+ *
+ * The CSV input still uses a header row for schema binding. The CSVPath expression
+ * uses typed headers such as price_n and side_s expose
+ * expression names price and side while still binding to schema fields price and
+ * side.
+ */
+DATA_BIND_API DataBindStatus data_bind_parse_csv_path(DataBind* codec, const char* type_name,
+                                                     const char* csv, size_t len,
+                                                     const char* csvpath,
+                                                     DataBindValue** out_value,
+                                                     DataBindError* error);
+
+/**
  * @brief Bind XML text to a dynamic value tree using the codec schema.
  *
- * The XML binder uses XPath 1.0 over the parsed document. Record fields bind
+ * The XML binder uses XMLPath (XPath 1.0) over the parsed document. Record fields bind
  * from same-name child elements first and same-name attributes second.
  * Collections and groups bind from repeated same-name elements.
  */
@@ -354,16 +392,16 @@ DATA_BIND_API DataBindStatus data_bind_parse_xml(DataBind* codec, const char* ty
                                                  DataBindError* error);
 
 /**
- * @brief Bind all XML nodes matched by an XPath expression to a dynamic list.
+ * @brief Bind all XMLPath-selected XML nodes to a dynamic list.
  *
- * If xpath is NULL or empty, the root document element is bound as a one-item
+ * If xmlpath is NULL or empty, the root document element is bound as a one-item
  * list. The matched nodes are non-owning views into the parsed XML document.
  */
-DATA_BIND_API DataBindStatus data_bind_parse_xml_all(DataBind* codec, const char* type_name,
-                                                     const char* xml, size_t len,
-                                                     const char* xpath,
-                                                     DataBindValue** out_value,
-                                                     DataBindError* error);
+DATA_BIND_API DataBindStatus data_bind_parse_xml_path_all(DataBind* codec, const char* type_name,
+                                                        const char* xml, size_t len,
+                                                        const char* xmlpath,
+                                                        DataBindValue** out_value,
+                                                        DataBindError* error);
 
 /**
  * @brief Strictly validate JSON text against a schema type.
@@ -376,6 +414,16 @@ DATA_BIND_API DataBindStatus data_bind_validate_json(DataBind* codec, const char
                                                      DataBindError* error);
 
 /**
+ * @brief Strictly validate the first JSONPath-selected JSON value against a schema type.
+ *
+ * If jsonpath is NULL or empty, this is equivalent to data_bind_validate_json().
+ */
+DATA_BIND_API DataBindStatus data_bind_validate_json_path(DataBind* codec, const char* type_name,
+                                                          const char* json, size_t len,
+                                                          const char* jsonpath,
+                                                          DataBindError* error);
+
+/**
  * @brief Strictly validate every CSV data row against a schema type.
  *
  * CSV is parsed with a header row. Empty inputs with a valid header and no data
@@ -386,15 +434,23 @@ DATA_BIND_API DataBindStatus data_bind_validate_csv(DataBind* codec, const char*
                                                     DataBindError* error);
 
 /**
- * @brief Strictly validate XML text against a schema type.
- *
- * If xpath is NULL or empty, the document root is validated. Otherwise every
- * XPath-selected node must bind to the requested type.
+ * @brief Strictly validate CSV rows matched by a CSVPath expression.
  */
-DATA_BIND_API DataBindStatus data_bind_validate_xml(DataBind* codec, const char* type_name,
-                                                    const char* xml, size_t len,
-                                                    const char* xpath,
-                                                    DataBindError* error);
+DATA_BIND_API DataBindStatus data_bind_validate_csv_path(DataBind* codec, const char* type_name,
+                                                        const char* csv, size_t len,
+                                                        const char* csvpath,
+                                                        DataBindError* error);
+
+/**
+ * @brief Strictly validate XMLPath-selected XML text against a schema type.
+ *
+ * If xmlpath is NULL or empty, the document root is validated. Otherwise every
+ * XMLPath-selected node must bind to the requested type.
+ */
+DATA_BIND_API DataBindStatus data_bind_validate_xml_path(DataBind* codec, const char* type_name,
+                                                       const char* xml, size_t len,
+                                                       const char* xmlpath,
+                                                       DataBindError* error);
 
 /**
  * @brief Free a dynamic value tree returned by data_bind_parse().

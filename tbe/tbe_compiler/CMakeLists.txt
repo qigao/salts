@@ -3,7 +3,7 @@
 # =============================================================================
 
 add_executable(tbe_compiler main.c compiler_core.c mustache_helpers.c)
-target_link_libraries(tbe_compiler PRIVATE TurboUtils::SchemaBE
+target_link_libraries(tbe_compiler PRIVATE TurboUtils::TbeSchema
                                            TurboUtils::DataBind
                                            TurboUtils::Parser TurboUtils::Mustache)
 target_include_directories(tbe_compiler
@@ -64,7 +64,7 @@ add_custom_target(
 # =============================================================================
 
 add_executable(test_tbe_compiler test_tbe_compiler.c compiler_core.c mustache_helpers.c)
-target_link_libraries(test_tbe_compiler PRIVATE TurboUtils::SchemaBE
+target_link_libraries(test_tbe_compiler PRIVATE TurboUtils::TbeSchema
                                                 TurboUtils::DataBind
                                                 TurboUtils::TinyTest TurboUtils::Mustache)
 target_compile_definitions(

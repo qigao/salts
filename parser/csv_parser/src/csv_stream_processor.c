@@ -579,7 +579,7 @@ typedef struct {
     size_t      len;
 } field_span_t;
 
-static size_t split_csv_line(const char *line, size_t line_len, char delim,
+static size_t split_csv_line(const char *line, size_t line_len, char delim, char quote,
                               field_span_t *out, size_t max_fields) {
     size_t count = 0;
     const char *p = line;
@@ -593,13 +593,13 @@ static size_t split_csv_line(const char *line, size_t line_len, char delim,
         size_t field_len;
         trailing_delim = false;
 
-        if (*p == '"') {
+        if (*p == quote) {
             /* Quoted field */
             p++; /* skip opening quote */
             field_start = p;
             while (p < end) {
-                if (*p == '"') {
-                    if (p + 1 < end && *(p + 1) == '"') {
+                if (*p == quote) {
+                    if (p + 1 < end && *(p + 1) == quote) {
                         p += 2; /* escaped quote */
                     } else {
                         break; /* closing quote */
@@ -609,7 +609,7 @@ static size_t split_csv_line(const char *line, size_t line_len, char delim,
                 }
             }
             field_len = (size_t)(p - field_start);
-            if (p < end && *p == '"') p++; /* skip closing quote */
+            if (p < end && *p == quote) p++; /* skip closing quote */
             if (p < end && *p == delim) { p++; trailing_delim = true; }
         } else {
             /* Unquoted field */
@@ -636,11 +636,11 @@ static size_t split_csv_line(const char *line, size_t line_len, char delim,
 
 /* ── Unescape quoted field in-place into buffer ───────────────────── */
 
-static size_t unescape_field(const char *src, size_t len, char *dst) {
+static size_t unescape_field(const char *src, size_t len, char quote, char *dst) {
     size_t j = 0;
     for (size_t i = 0; i < len; i++) {
-        if (src[i] == '"' && i + 1 < len && src[i + 1] == '"') {
-            dst[j++] = '"';
+        if (src[i] == quote && i + 1 < len && src[i + 1] == quote) {
+            dst[j++] = quote;
             i++;
         } else {
             dst[j++] = src[i];
@@ -654,7 +654,7 @@ static size_t unescape_field(const char *src, size_t len, char *dst) {
 
 static void parse_header(csv_stream_processor_t *p, const char *line, size_t len) {
     field_span_t spans[256];
-    size_t n = split_csv_line(line, len, p->opts.delimiter, spans, 256);
+    size_t n = split_csv_line(line, len, p->opts.delimiter, p->opts.quote, spans, 256);
 
     p->col_count = n;
     p->cols = MEM_ALLOC_ARRAY(&p->arena, sp_col_t, n);
@@ -665,9 +665,10 @@ static void parse_header(csv_stream_processor_t *p, const char *line, size_t len
     memset(p->cols, 0, sizeof(sp_col_t) * n);
     memset(p->num_vecs, 0, sizeof(dvec_t) * n);
 
-    char tmp[512];
     for (size_t i = 0; i < n; i++) {
-        size_t flen = unescape_field(spans[i].start, spans[i].len, tmp);
+        char *tmp = MEM_ALLOC_ARRAY(&p->arena, char, spans[i].len + 1);
+        if (!tmp) { set_error(p, "OOM in parse_header"); return; }
+        size_t flen = unescape_field(spans[i].start, spans[i].len, p->opts.quote, tmp);
 
         /* Trim whitespace */
         char *s = tmp;
@@ -746,7 +747,7 @@ static void parse_header(csv_stream_processor_t *p, const char *line, size_t len
 
 static void process_row(csv_stream_processor_t *p, const char *line, size_t len) {
     field_span_t spans[256];
-    size_t n = split_csv_line(line, len, p->opts.delimiter, spans, 256);
+    size_t n = split_csv_line(line, len, p->opts.delimiter, p->opts.quote, spans, 256);
     if (n == 0) return;
 
     size_t cols = n < p->col_count ? n : p->col_count;
@@ -767,7 +768,7 @@ static void process_row(csv_stream_processor_t *p, const char *line, size_t len)
     size_t offset = 0;
 
     for (size_t i = 0; i < cols; i++) {
-        field_lens[i] = unescape_field(spans[i].start, spans[i].len, buf + offset);
+        field_lens[i] = unescape_field(spans[i].start, spans[i].len, p->opts.quote, buf + offset);
         field_ptrs[i] = buf + offset;
         offset += field_lens[i] + 1;
     }
@@ -785,8 +786,10 @@ static void process_row(csv_stream_processor_t *p, const char *line, size_t len)
     /* Accumulate only selected columns. */
     for (size_t i = 0; i < p->col_count; i++) {
         if (!p->col_selected[i]) continue;
-        double val = fast_atof(field_ptrs[i], field_lens[i]);
-        dvec_push(&p->num_vecs[i], val, &p->arena);
+        if (p->cols[i].type == COL_NUMBER) {
+            double val = fast_atof(field_ptrs[i], field_lens[i]);
+            dvec_push(&p->num_vecs[i], val, &p->arena);
+        }
     }
 
     /* Store strings only for selected string-typed columns */
@@ -838,6 +841,8 @@ csv_stream_processor_t *csv_stream_processor_create(const csv_options_t *opts) {
 
     if (opts) {
         p->opts = *opts;
+        if (p->opts.delimiter == '\0') p->opts.delimiter = ',';
+        if (p->opts.quote == '\0') p->opts.quote = '"';
     } else {
         p->opts = (csv_options_t){ true, ',', '"', true };
     }
@@ -961,8 +966,8 @@ size_t csv_stream_processor_col_index(const csv_stream_processor_t *p, const cha
 }
 
 const double *csv_stream_processor_col_data(const csv_stream_processor_t *p,
-                                             size_t col, size_t *out_len) {
-    if (!p || col >= p->col_count || !p->num_vecs) {
+                                              size_t col, size_t *out_len) {
+    if (!p || col >= p->col_count || !p->num_vecs || p->cols[col].type != COL_NUMBER) {
         if (out_len) *out_len = 0;
         return NULL;
     }

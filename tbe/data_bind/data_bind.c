@@ -3036,6 +3036,11 @@ static int csv_headers_have_path(const data_bind_csv_headers_t *headers, const c
   return 0;
 }
 
+static int csv_header_has_typed_suffix(const char *suffix) {
+  return suffix != NULL && suffix[0] == '_' &&
+         (suffix[1] == 'n' || suffix[1] == 's') && suffix[2] == '\0';
+}
+
 static int csv_header_matches_path(const char *header, const char *path) {
   char sanitized[256];
   size_t path_len, sanitized_len;
@@ -3045,9 +3050,15 @@ static int csv_header_matches_path(const char *header, const char *path) {
   sanitized_len = strlen(sanitized);
   if (strcmp(header, path) == 0) return 1;
   if (path_len > 0 && strncmp(header, path, path_len) == 0 &&
+      csv_header_has_typed_suffix(header + path_len))
+    return 1;
+  if (path_len > 0 && strncmp(header, path, path_len) == 0 &&
       (header[path_len] == '.' || header[path_len] == '['))
     return 1;
   if (sanitized_len > 0 && strcmp(header, sanitized) == 0) return 1;
+  if (sanitized_len > 0 && strncmp(header, sanitized, sanitized_len) == 0 &&
+      csv_header_has_typed_suffix(header + sanitized_len))
+    return 1;
   if (sanitized_len > 0 && strncmp(header, sanitized, sanitized_len) == 0 &&
       header[sanitized_len] == '_')
     return 1;
@@ -5348,6 +5359,124 @@ DataBindStatus data_bind_parse_json_all(DataBind *codec, const char *type_name,
   return DATA_BIND_OK;
 }
 
+DataBindStatus data_bind_parse_json_path(DataBind *codec, const char *type_name,
+                                       const char *json, size_t len,
+                                       const char *jsonpath,
+                                       DataBindValue **out_value, DataBindError *error) {
+  json_value_t *root = NULL;
+  json_value_t *selected;
+  DataBindValue *result;
+  void *ptr;
+  char error_path[256];
+  const char *path_error;
+  if (jsonpath == NULL || jsonpath[0] == '\0')
+    return data_bind_parse_json(codec, type_name, json, len, out_value, error);
+  if (out_value != NULL) *out_value = NULL;
+  if (codec == NULL || codec->schema_root == NULL || type_name == NULL || json == NULL ||
+      out_value == NULL)
+    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG,
+                          "Invalid JSONPath bind arguments");
+  codec->error[0] = '\0';
+  if (!bind_type_supported(codec->schema_root, type_name)) {
+    db_error_format_path(error_path, sizeof(error_path), "json", jsonpath);
+    return db_error_set(error, DATA_BIND_ERR_TYPE_NOT_FOUND, error_path, -1, -1,
+                        "Type not found: %s", type_name);
+  }
+  if (turbo_parse_json((const uint8_t *)json, len, &root) != 0 || root == NULL) {
+    db_error_format_path(error_path, sizeof(error_path), "json", NULL);
+    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1, "JSON parse failed");
+  }
+  selected = turbo_json_path_get(root, jsonpath);
+  path_error = turbo_json_path_error();
+  if (selected == NULL) {
+    ptr = root;
+    turbo_free_json(&ptr);
+    db_error_format_path(error_path, sizeof(error_path), "json", jsonpath);
+    if (path_error != NULL)
+      return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1,
+                          "JSONPath parse failed: %s", path_error);
+    return db_error_set(error, DATA_BIND_ERR_TYPE_MISMATCH, error_path, -1, -1,
+                        "JSONPath selected no value for type: %s", type_name);
+  }
+  result = bind_json_typed_value(codec->schema_root, type_name, selected);
+  ptr = root;
+  turbo_free_json(&ptr);
+  if (result == NULL) {
+    db_error_format_path(error_path, sizeof(error_path), "json", jsonpath);
+    return db_error_set(error, DATA_BIND_ERR_TYPE_MISMATCH, error_path, -1, -1,
+                        "JSONPath bind failed for type: %s", type_name);
+  }
+  *out_value = result;
+  db_error_clear(error);
+  return DATA_BIND_OK;
+}
+
+DataBindStatus data_bind_parse_json_path_all(DataBind *codec, const char *type_name,
+                                           const char *json, size_t len,
+                                           const char *jsonpath,
+                                           DataBindValue **out_value,
+                                           DataBindError *error) {
+  json_value_t *root = NULL;
+  turbo_json_path_result_t *matches = NULL;
+  DataBindValue *list;
+  void *ptr;
+  size_t i;
+  char error_path[256];
+  const char *path_error;
+  if (jsonpath == NULL || jsonpath[0] == '\0')
+    return data_bind_parse_json_all(codec, type_name, json, len, out_value, error);
+  if (out_value != NULL) *out_value = NULL;
+  if (codec == NULL || codec->schema_root == NULL || type_name == NULL || json == NULL ||
+      out_value == NULL)
+    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG,
+                          "Invalid JSONPath bind_all arguments");
+  codec->error[0] = '\0';
+  if (!bind_type_supported(codec->schema_root, type_name)) {
+    db_error_format_path(error_path, sizeof(error_path), "json", jsonpath);
+    return db_error_set(error, DATA_BIND_ERR_TYPE_NOT_FOUND, error_path, -1, -1,
+                        "Type not found: %s", type_name);
+  }
+  if (turbo_parse_json((const uint8_t *)json, len, &root) != 0 || root == NULL) {
+    db_error_format_path(error_path, sizeof(error_path), "json", NULL);
+    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1, "JSON parse failed");
+  }
+  matches = turbo_json_path_query(root, jsonpath);
+  path_error = turbo_json_path_error();
+  if (matches == NULL && path_error != NULL) {
+    ptr = root;
+    turbo_free_json(&ptr);
+    db_error_format_path(error_path, sizeof(error_path), "json", jsonpath);
+    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1,
+                        "JSONPath parse failed: %s", path_error);
+  }
+  list = dbv_new(DATA_BIND_VALUE_LIST);
+  if (list != NULL && matches != NULL) {
+    for (i = 0; i < turbo_json_path_result_size(matches); i++) {
+      json_value_t *matched = turbo_json_path_result_get(matches, i);
+      DataBindValue *item = bind_json_typed_value(codec->schema_root, type_name, matched);
+      if (item != NULL) {
+        if (!dbv_array_push(&list->data.array_val, item)) {
+          data_bind_value_free(item);
+          data_bind_value_free(list);
+          list = NULL;
+          break;
+        }
+      }
+    }
+  }
+  if (matches != NULL) turbo_json_path_result_free(matches);
+  ptr = root;
+  turbo_free_json(&ptr);
+  if (list == NULL) {
+    db_error_format_path(error_path, sizeof(error_path), "json", jsonpath);
+    return db_error_set(error, DATA_BIND_ERR_OOM, error_path, -1, -1,
+                        "Out of memory binding JSONPath result");
+  }
+  *out_value = list;
+  db_error_clear(error);
+  return DATA_BIND_OK;
+}
+
 DataBindStatus data_bind_parse_csv(DataBind *codec, const char *type_name,
                                    const char *csv, size_t len, size_t row,
                                    DataBindValue **out_value, DataBindError *error) {
@@ -5441,6 +5570,122 @@ DataBindStatus data_bind_parse_csv_all(DataBind *codec, const char *type_name,
   return DATA_BIND_OK;
 }
 
+DataBindStatus data_bind_parse_csv_path(DataBind *codec, const char *type_name,
+                                          const char *csv, size_t len,
+                                          const char *csvpath,
+                                          DataBindValue **out_value,
+                                          DataBindError *error) {
+  turbo_csv_doc_t *bind_doc = NULL;
+  turbo_csv_doc_t *filter_doc = NULL;
+  turbo_dsv_filter_t *filter = NULL;
+  data_bind_csv_headers_t headers = {0};
+  turbo_csv_options_t bind_opts = {true, ',', '"', true};
+  turbo_csv_options_t filter_opts = {false, ',', '"', true};
+  DataBindValue *list = NULL;
+  void *ptr;
+  size_t raw_row;
+  char error_path[256];
+  DataBindStatus failure = DATA_BIND_OK;
+  const char *failure_msg = NULL;
+  if (out_value != NULL) *out_value = NULL;
+  if (codec == NULL || codec->schema_root == NULL || type_name == NULL || csv == NULL ||
+      csvpath == NULL || csvpath[0] == '\0' || out_value == NULL)
+    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG,
+                          "Invalid CSVPath bind arguments");
+  codec->error[0] = '\0';
+  if (!bind_type_supported(codec->schema_root, type_name)) {
+    db_error_format_path(error_path, sizeof(error_path), "csv", csvpath);
+    return db_error_set(error, DATA_BIND_ERR_TYPE_NOT_FOUND, error_path, -1, -1,
+                        "Type not found: %s", type_name);
+  }
+  if (turbo_parse_csv_opts((const uint8_t *)csv, len, &bind_opts, &bind_doc) != 0 ||
+      bind_doc == NULL) {
+    db_error_format_path(error_path, sizeof(error_path), "csv", NULL);
+    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1, "CSV parse failed");
+  }
+  if (turbo_parse_csv_opts((const uint8_t *)csv, len, &filter_opts, &filter_doc) != 0 ||
+      filter_doc == NULL) {
+    ptr = bind_doc;
+    turbo_free_csv(&ptr);
+    db_error_format_path(error_path, sizeof(error_path), "csv", NULL);
+    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1,
+                        "CSVPath parse failed");
+  }
+  if (!csv_parse_header_names(csv, len, &headers)) {
+    ptr = filter_doc;
+    turbo_free_csv(&ptr);
+    ptr = bind_doc;
+    turbo_free_csv(&ptr);
+    return db_codec_error(codec, error, DATA_BIND_ERR_PARSE, "CSV header parse failed");
+  }
+  filter = turbo_dsv_filter_create(filter_doc, 0);
+  if (filter == NULL || !turbo_dsv_filter_compile(filter, csvpath)) {
+    const char *filter_error = turbo_dsv_filter_error(filter);
+    char filter_msg[128];
+    snprintf(filter_msg, sizeof(filter_msg), "%s",
+             filter_error != NULL && filter_error[0] != '\0' ? filter_error : "invalid filter");
+    if (filter != NULL) turbo_dsv_filter_destroy(filter);
+    csv_headers_free(&headers);
+    ptr = filter_doc;
+    turbo_free_csv(&ptr);
+    ptr = bind_doc;
+    turbo_free_csv(&ptr);
+    db_error_format_path(error_path, sizeof(error_path), "csv", csvpath);
+    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1,
+                        "CSVPath compile failed: %s", filter_msg);
+  }
+  list = dbv_new(DATA_BIND_VALUE_LIST);
+  if (list != NULL) {
+    for (raw_row = 1; raw_row < turbo_csv_row_count(filter_doc); raw_row++) {
+      int match = turbo_dsv_filter_check_row(filter, raw_row);
+      if (match < 0) {
+        data_bind_value_free(list);
+        list = NULL;
+        failure = DATA_BIND_ERR_PARSE;
+        failure_msg = "CSVPath evaluation failed";
+        break;
+      }
+      if (match) {
+        size_t bind_row = raw_row - 1;
+        DataBindValue *item = bind_csv_typed_value(codec->schema_root, type_name, bind_doc,
+                                                   bind_row, &headers, "");
+        if (item == NULL) {
+          data_bind_value_free(list);
+          list = NULL;
+          failure = DATA_BIND_ERR_TYPE_MISMATCH;
+          failure_msg = "CSVPath row bind failed";
+          break;
+        }
+        if (item != NULL) {
+          if (!dbv_array_push(&list->data.array_val, item)) {
+            data_bind_value_free(item);
+            data_bind_value_free(list);
+            list = NULL;
+            failure = DATA_BIND_ERR_OOM;
+            failure_msg = "Out of memory binding CSVPath rows";
+            break;
+          }
+        }
+      }
+    }
+  }
+  turbo_dsv_filter_destroy(filter);
+  csv_headers_free(&headers);
+  ptr = filter_doc;
+  turbo_free_csv(&ptr);
+  ptr = bind_doc;
+  turbo_free_csv(&ptr);
+  if (list == NULL) {
+    db_error_format_path(error_path, sizeof(error_path), "csv", csvpath);
+    return db_error_set(error, failure != DATA_BIND_OK ? failure : DATA_BIND_ERR_TYPE_MISMATCH,
+                        error_path, -1, -1, "%s for type: %s",
+                        failure_msg != NULL ? failure_msg : "CSVPath bind failed", type_name);
+  }
+  *out_value = list;
+  db_error_clear(error);
+  return DATA_BIND_OK;
+}
+
 DataBindStatus data_bind_parse_xml(DataBind *codec, const char *type_name,
                                    const char *xml, size_t len,
                                    DataBindValue **out_value, DataBindError *error) {
@@ -5476,8 +5721,8 @@ DataBindStatus data_bind_parse_xml(DataBind *codec, const char *type_name,
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_parse_xml_all(DataBind *codec, const char *type_name,
-                                       const char *xml, size_t len, const char *xpath,
+DataBindStatus data_bind_parse_xml_path_all(DataBind *codec, const char *type_name,
+                                       const char *xml, size_t len, const char *xmlpath,
                                        DataBindValue **out_value, DataBindError *error) {
   turbo_xml_doc_t *doc = NULL;
   DataBindValue *list = NULL;
@@ -5500,7 +5745,7 @@ DataBindStatus data_bind_parse_xml_all(DataBind *codec, const char *type_name,
   }
   list = dbv_new(DATA_BIND_VALUE_LIST);
   if (list != NULL) {
-    if (xpath == NULL || xpath[0] == '\0') {
+    if (xmlpath == NULL || xmlpath[0] == '\0') {
       DataBindValue *item = bind_xml_typed_value(codec->schema_root, type_name, doc, "/*");
       if (item == NULL || !dbv_array_push(&list->data.array_val, item)) {
         data_bind_value_free(item);
@@ -5510,11 +5755,11 @@ DataBindStatus data_bind_parse_xml_all(DataBind *codec, const char *type_name,
     } else {
       turbo_xml_list_t nodes;
       int index = 0;
-      turbo_xml_xpath_query(doc, xpath, &nodes);
+      turbo_xml_xpath_query(doc, xmlpath, &nodes);
       for (index = 0; index < nodes.len; index++) {
         char item_path[320];
         DataBindValue *item;
-        if (snprintf(item_path, sizeof(item_path), "%s[%d]", xpath, index + 1) >=
+        if (snprintf(item_path, sizeof(item_path), "%s[%d]", xmlpath, index + 1) >=
             (int)sizeof(item_path)) {
           data_bind_value_free(list);
           list = NULL;
@@ -5537,7 +5782,7 @@ DataBindStatus data_bind_parse_xml_all(DataBind *codec, const char *type_name,
   turbo_free_xml(&ptr);
   if (list == NULL) {
     db_error_format_path(error_path, sizeof(error_path), "xml", 
-                         xpath != NULL && xpath[0] != '\0' ? xpath : "/*");
+                         xmlpath != NULL && xmlpath[0] != '\0' ? xmlpath : "/*");
     return db_error_set(error, DATA_BIND_ERR_TYPE_MISMATCH, error_path, -1, -1,
                         "XML bind_all failed for type: %s", type_name);
   }
@@ -5591,6 +5836,19 @@ DataBindStatus data_bind_validate_json(DataBind *codec, const char *type_name,
   return DATA_BIND_OK;
 }
 
+DataBindStatus data_bind_validate_json_path(DataBind *codec, const char *type_name,
+                                           const char *json, size_t len,
+                                           const char *jsonpath,
+                                          DataBindError *error) {
+  DataBindValue *value = NULL;
+  DataBindStatus status;
+  if (jsonpath == NULL || jsonpath[0] == '\0')
+    return data_bind_validate_json(codec, type_name, json, len, error);
+  status = data_bind_parse_json_path(codec, type_name, json, len, jsonpath, &value, error);
+  data_bind_value_free(value);
+  return status;
+}
+
 DataBindStatus data_bind_validate_csv(DataBind *codec, const char *type_name,
                                       const char *csv, size_t len,
                                       DataBindError *error) {
@@ -5633,8 +5891,19 @@ DataBindStatus data_bind_validate_csv(DataBind *codec, const char *type_name,
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_validate_xml(DataBind *codec, const char *type_name,
-                                      const char *xml, size_t len, const char *xpath,
+DataBindStatus data_bind_validate_csv_path(DataBind *codec, const char *type_name,
+                                          const char *csv, size_t len,
+                                          const char *csvpath,
+                                             DataBindError *error) {
+  DataBindValue *value = NULL;
+  DataBindStatus status = data_bind_parse_csv_path(codec, type_name, csv, len,
+                                                  csvpath, &value, error);
+  data_bind_value_free(value);
+  return status;
+}
+
+DataBindStatus data_bind_validate_xml_path(DataBind *codec, const char *type_name,
+                                          const char *xml, size_t len, const char *xmlpath,
                                       DataBindError *error) {
   turbo_xml_doc_t *doc = NULL;
   void *ptr;
@@ -5649,7 +5918,7 @@ DataBindStatus data_bind_validate_xml(DataBind *codec, const char *type_name,
   if (turbo_parse_xml((const uint8_t *)xml, len, &doc) != 0 || doc == NULL) {
     return db_codec_error(codec, error, DATA_BIND_ERR_PARSE, "XML parse failed");
   }
-  if (xpath == NULL || xpath[0] == '\0') {
+  if (xmlpath == NULL || xmlpath[0] == '\0') {
     DataBindValue *item = bind_xml_typed_value(codec->schema_root, type_name, doc, "/*");
     if (item == NULL) {
       ptr = doc;
@@ -5661,11 +5930,11 @@ DataBindStatus data_bind_validate_xml(DataBind *codec, const char *type_name,
   } else {
     turbo_xml_list_t nodes;
     int index;
-    turbo_xml_xpath_query(doc, xpath, &nodes);
+    turbo_xml_xpath_query(doc, xmlpath, &nodes);
     for (index = 0; index < nodes.len; index++) {
       char item_path[320];
       DataBindValue *item;
-      if (snprintf(item_path, sizeof(item_path), "%s[%d]", xpath, index + 1) >=
+      if (snprintf(item_path, sizeof(item_path), "%s[%d]", xmlpath, index + 1) >=
           (int)sizeof(item_path)) {
         turbo_xml_list_free(&nodes);
         ptr = doc;

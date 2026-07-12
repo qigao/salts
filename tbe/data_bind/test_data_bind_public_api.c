@@ -153,9 +153,9 @@ spec("data_bind public API") {
       status = data_bind_validate_csv(codec, "Choice", csv_union, strlen(csv_union), &err);
       check_int_eq(status, DATA_BIND_OK);
 
-      status = data_bind_validate_xml(codec, "Order", xml_good, strlen(xml_good), "//order", &err);
+      status = data_bind_validate_xml_path(codec, "Order", xml_good, strlen(xml_good), "//order", &err);
       check_int_eq(status, DATA_BIND_OK);
-      status = data_bind_validate_xml(codec, "Order", xml_bad, strlen(xml_bad), "//order", &err);
+      status = data_bind_validate_xml_path(codec, "Order", xml_bad, strlen(xml_bad), "//order", &err);
       check_int_eq(status, DATA_BIND_ERR_TYPE_MISMATCH);
 
       data_bind_free(codec);
