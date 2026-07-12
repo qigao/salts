@@ -8,7 +8,7 @@
 typedef struct {
     char *name;
     char *raw_name;
-    enum { COL_UNUSED = 0, COL_NUMBER, COL_STRING } type;
+    enum { COL_UNUSED = 0, COL_NUMBER, COL_STRING, COL_DYNAMIC } type;
     size_t index;
 } dsv_col_t;
 
@@ -533,6 +533,76 @@ done:
     return ok;
 }
 
+static tstr_v dsv_value_at(const tstr_v *fields, size_t field_count, size_t col_idx) {
+    if (!fields || col_idx >= field_count) return tstr_v_from_buf("", 0);
+    return fields[col_idx];
+}
+
+static double dsv_value_double_at(const tstr_v *fields, size_t field_count, size_t col_idx) {
+    tstr_v value = dsv_value_at(fields, field_count, col_idx);
+    return dsv_fast_atof(value.data, value.len);
+}
+
+static int eval_lhs_numeric_expr_values(const dsv_filter_t *filter, const dsv_clause_t *clause,
+                                        const tstr_v *fields, size_t field_count,
+                                        double *out_value) {
+    size_t i;
+    size_t sp = 0;
+    size_t cap = 64;
+    double local_stack[64];
+    double *stack = local_stack;
+    int ok = 0;
+
+    if (clause->lhs_is_simple_col) {
+        if (clause->col_idx >= filter->col_count) return 0;
+        *out_value = dsv_value_double_at(fields, field_count, clause->col_idx);
+        return 1;
+    }
+    if (!clause->lhs_expr || clause->lhs_expr_count == 0) return 0;
+
+    if (clause->lhs_expr_count > cap) {
+        stack = (double *)malloc(sizeof(double) * clause->lhs_expr_count);
+        if (!stack) return 0;
+        cap = clause->lhs_expr_count;
+    }
+
+    for (i = 0; i < clause->lhs_expr_count; i++) {
+        const dsv_expr_item_t *it = &clause->lhs_expr[i];
+        if (it->kind == DSV_EXPR_ITEM_NUMBER) {
+            if (sp >= cap) goto done;
+            stack[sp++] = it->num;
+        } else if (it->kind == DSV_EXPR_ITEM_IDENT) {
+            if (it->col_idx >= filter->col_count) goto done;
+            if (sp >= cap) goto done;
+            stack[sp++] = dsv_value_double_at(fields, field_count, it->col_idx);
+        } else if (it->kind == DSV_EXPR_ITEM_NEG) {
+            if (sp < 1) goto done;
+            stack[sp - 1] = -stack[sp - 1];
+        } else {
+            double rhs, lhs, v;
+            if (sp < 2) goto done;
+            rhs = stack[--sp];
+            lhs = stack[--sp];
+            switch (it->kind) {
+                case DSV_EXPR_ITEM_ADD: v = lhs + rhs; break;
+                case DSV_EXPR_ITEM_SUB: v = lhs - rhs; break;
+                case DSV_EXPR_ITEM_MUL: v = lhs * rhs; break;
+                case DSV_EXPR_ITEM_DIV: v = lhs / rhs; break;
+                default: goto done;
+            }
+            stack[sp++] = v;
+        }
+    }
+
+    if (sp != 1) goto done;
+    *out_value = stack[0];
+    ok = 1;
+
+done:
+    if (stack != local_stack) free(stack);
+    return ok;
+}
+
 dsv_filter_t *dsv_filter_create(const csv_doc_t *doc, size_t header_row_index) {
     if (!doc) return NULL;
     if (header_row_index >= csv_row_count(doc)) return NULL;
@@ -556,11 +626,6 @@ dsv_filter_t *dsv_filter_create(const csv_doc_t *doc, size_t header_row_index) {
         size_t name_len = strlen(raw_name);
         f->cols[i].raw_name = dsv_strndup(raw_name, name_len);
         f->cols[i].index = i;
-        if (name_len < 2) {
-            f->cols[i].type = COL_UNUSED;
-            continue;
-        }
-
         if (dsv_ends_with(raw_name, "_n")) {
             f->cols[i].type = COL_NUMBER;
             f->cols[i].name = dsv_strndup(raw_name, name_len - 2);
@@ -568,7 +633,8 @@ dsv_filter_t *dsv_filter_create(const csv_doc_t *doc, size_t header_row_index) {
             f->cols[i].type = COL_STRING;
             f->cols[i].name = dsv_strndup(raw_name, name_len - 2);
         } else {
-            f->cols[i].type = COL_UNUSED;
+            f->cols[i].type = COL_DYNAMIC;
+            f->cols[i].name = dsv_strndup(raw_name, name_len);
         }
     }
 
@@ -694,7 +760,8 @@ bool dsv_filter_compile(dsv_filter_t *filter, const char *expression) {
                 free_plan(filter);
                 return false;
             }
-            if (!clause.lhs_is_simple_col || clause.col_type != COL_STRING) {
+            if (!clause.lhs_is_simple_col ||
+                (clause.col_type != COL_STRING && clause.col_type != COL_DYNAMIC)) {
                 set_error(filter, "invalid filter: string on non-string column");
                 free_clause_data(&clause);
                 free_plan(filter);
@@ -810,6 +877,38 @@ int dsv_filter_check_row(dsv_filter_t *filter, size_t row_index) {
         } else {
             double lhs = 0.0;
             if (!eval_lhs_numeric_expr(filter, c, row_index, &lhs)) {
+                return -1;
+            }
+            clause_ok = eval_num(c->op, lhs, c->rhs_num);
+        }
+
+        if (i == 0) {
+            result = clause_ok;
+        } else if (filter->joins[i - 1] == DSV_JOIN_AND) {
+            result = result && clause_ok;
+        } else {
+            result = result || clause_ok;
+        }
+    }
+
+    return result ? 1 : 0;
+}
+
+int dsv_filter_check_values(dsv_filter_t *filter, const tstr_v *fields, size_t field_count) {
+    size_t i;
+    int result = 0;
+    if (!filter || !filter->compiled || !fields) return -1;
+
+    for (i = 0; i < filter->clause_count; i++) {
+        dsv_clause_t *c = &filter->clauses[i];
+        int clause_ok;
+
+        if (c->rhs_is_string) {
+            tstr_v lhs = dsv_value_at(fields, field_count, c->col_idx);
+            clause_ok = eval_str(c->op, lhs, c->rhs_str, c->rhs_str_len);
+        } else {
+            double lhs = 0.0;
+            if (!eval_lhs_numeric_expr_values(filter, c, fields, field_count, &lhs)) {
                 return -1;
             }
             clause_ok = eval_num(c->op, lhs, c->rhs_num);

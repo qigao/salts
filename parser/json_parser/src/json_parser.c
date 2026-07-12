@@ -6,11 +6,16 @@
 #include "json_parser.h"
 #include "json_grammar_gen.h"
 #include "json_lexer.h"
+#include "json_lexer_whitespace.h"
 #include "json_types.h"
 #include <fmt.h>
+#include <errno.h>
+#include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <turbo_str.h>
 
 #define MAX_ERROR_LEN 512
 #define JSON_ARRAY_INDEX_THRESHOLD 8U
@@ -1086,10 +1091,79 @@ typedef enum {
 
 #define SAX_MAX_DEPTH 256
 
-static char *sax_unescape(const char *src, size_t len, size_t *out_len, char *buf,
-                          size_t buf_size) {
+struct json_sax_parser_s {
+  json_sax_handler_t handler;
+  void *ctx;
+  sax_state_t state_stack[SAX_MAX_DEPTH];
+  int depth;
+  sax_state_t state;
+  bool root_seen;
+  bool done;
+  bool failed;
+  bool finished;
+  tstr_t buffer;
+  size_t pos;
+  tstr_t scratch;
+  char error[MAX_ERROR_LEN];
+};
+
+static void json_sax_set_error(json_sax_parser_t *parser, const char *fmt_str, ...) {
+  va_list ap;
+  va_start(ap, fmt_str);
+  vsnprintf(g_error, sizeof(g_error), fmt_str, ap);
+  va_end(ap);
+
+  if (parser) {
+    va_start(ap, fmt_str);
+    vsnprintf(parser->error, sizeof(parser->error), fmt_str, ap);
+    va_end(ap);
+    parser->failed = true;
+  }
+}
+
+static bool json_sax_is_ws(char c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+static bool json_sax_is_delim(char c) {
+  return json_sax_is_ws(c) || c == ',' || c == ']' || c == '}';
+}
+
+static bool json_sax_is_hex4(const char *src) {
+  for (int i = 0; i < 4; ++i) {
+    char c = src[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+          (c >= 'A' && c <= 'F'))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static int sax_unescape_to_buffer(json_sax_parser_t *parser, const char *src, size_t len,
+                                  const char **out, size_t *out_len) {
+  if (!parser || !out || !out_len)
+    return -1;
+
+  if (!parser->scratch) {
+    parser->scratch = tstr_new_len(NULL, len);
+  } else {
+    tstr_clear(parser->scratch);
+    tstr_t next = tstr_reserve(parser->scratch, len);
+    if (!next) {
+      json_sax_set_error(parser, "Out of memory");
+      return -1;
+    }
+    parser->scratch = next;
+  }
+  if (!parser->scratch) {
+    json_sax_set_error(parser, "Out of memory");
+    return -1;
+  }
+
+  char *buf = parser->scratch;
   size_t j = 0;
-  for (size_t i = 0; i < len && j < buf_size - 1; i++) {
+  for (size_t i = 0; i < len; i++) {
     if (src[i] == '\\' && i + 1 < len) {
       i++;
       switch (src[i]) {
@@ -1156,10 +1230,591 @@ static char *sax_unescape(const char *src, size_t len, size_t *out_len, char *bu
       buf[j++] = src[i];
     }
   }
-  buf[j] = '\0';
-  if (out_len)
-    *out_len = j;
-  return buf;
+  if (!tstr_set_len_checked(parser->scratch, j)) {
+    json_sax_set_error(parser, "Out of memory");
+    return -1;
+  }
+  *out = parser->scratch;
+  *out_len = j;
+  return 0;
+}
+
+static int json_sax_emit_string(json_sax_parser_t *parser, const json_token_t *token,
+                                bool is_key) {
+  const char *value = token->value;
+  size_t len = token->length;
+
+  if (token->has_escape &&
+      sax_unescape_to_buffer(parser, token->value, token->length, &value, &len) != 0) {
+    return -1;
+  }
+
+  if (is_key) {
+    if (parser->handler.on_object_key && parser->handler.on_object_key(parser->ctx, value, len) != 0) {
+      json_sax_set_error(parser, "SAX callback failed");
+      return -1;
+    }
+  } else if (parser->handler.on_string && parser->handler.on_string(parser->ctx, value, len) != 0) {
+    json_sax_set_error(parser, "SAX callback failed");
+    return -1;
+  }
+  return 0;
+}
+
+static void json_sax_mark_value_complete(json_sax_parser_t *parser) {
+  if (parser->state == SAX_STATE_OBJECT_VALUE) {
+    parser->state = SAX_STATE_OBJECT_COMMA;
+  } else if (parser->state == SAX_STATE_ARRAY_VALUE) {
+    parser->state = SAX_STATE_ARRAY_COMMA;
+  } else {
+    parser->root_seen = true;
+    parser->done = true;
+  }
+}
+
+static int json_sax_after_container_end(json_sax_parser_t *parser) {
+  parser->state = (parser->depth > 0) ? parser->state_stack[--parser->depth] : SAX_STATE_VALUE;
+  if (parser->depth == 0 && parser->state == SAX_STATE_VALUE) {
+    parser->root_seen = true;
+    parser->done = true;
+  }
+  return 0;
+}
+
+static int json_sax_push_container(json_sax_parser_t *parser, sax_state_t next_state) {
+  if (parser->depth >= SAX_MAX_DEPTH) {
+    json_sax_set_error(parser, "Max depth exceeded");
+    return -1;
+  }
+  parser->state_stack[parser->depth++] =
+      (parser->state == SAX_STATE_OBJECT_VALUE)  ? SAX_STATE_OBJECT_COMMA
+      : (parser->state == SAX_STATE_ARRAY_VALUE) ? SAX_STATE_ARRAY_COMMA
+                                                 : SAX_STATE_VALUE;
+  parser->root_seen = true;
+  parser->state = next_state;
+  return 0;
+}
+
+static int json_sax_process_token(json_sax_parser_t *parser, const json_token_t *token) {
+  if (parser->done) {
+    json_sax_set_error(parser, "Unexpected data after JSON value");
+    return -1;
+  }
+
+  switch (parser->state) {
+  case SAX_STATE_VALUE:
+  case SAX_STATE_OBJECT_VALUE:
+  case SAX_STATE_ARRAY_VALUE:
+    switch (token->type) {
+    case JSON_TOKEN_NULL:
+      if (parser->handler.on_null && parser->handler.on_null(parser->ctx) != 0) {
+        json_sax_set_error(parser, "SAX callback failed");
+        return -1;
+      }
+      json_sax_mark_value_complete(parser);
+      break;
+
+    case JSON_TOKEN_TRUE:
+      if (parser->handler.on_bool && parser->handler.on_bool(parser->ctx, true) != 0) {
+        json_sax_set_error(parser, "SAX callback failed");
+        return -1;
+      }
+      json_sax_mark_value_complete(parser);
+      break;
+
+    case JSON_TOKEN_FALSE:
+      if (parser->handler.on_bool && parser->handler.on_bool(parser->ctx, false) != 0) {
+        json_sax_set_error(parser, "SAX callback failed");
+        return -1;
+      }
+      json_sax_mark_value_complete(parser);
+      break;
+
+    case JSON_TOKEN_NUMBER:
+      if (parser->handler.on_number && parser->handler.on_number(parser->ctx, token->num_value) != 0) {
+        json_sax_set_error(parser, "SAX callback failed");
+        return -1;
+      }
+      json_sax_mark_value_complete(parser);
+      break;
+
+    case JSON_TOKEN_STRING:
+      if (json_sax_emit_string(parser, token, false) != 0)
+        return -1;
+      json_sax_mark_value_complete(parser);
+      break;
+
+    case JSON_TOKEN_LBRACE:
+      if (parser->handler.on_object_start && parser->handler.on_object_start(parser->ctx) != 0) {
+        json_sax_set_error(parser, "SAX callback failed");
+        return -1;
+      }
+      return json_sax_push_container(parser, SAX_STATE_OBJECT_KEY);
+
+    case JSON_TOKEN_LBRACKET:
+      if (parser->handler.on_array_start && parser->handler.on_array_start(parser->ctx) != 0) {
+        json_sax_set_error(parser, "SAX callback failed");
+        return -1;
+      }
+      return json_sax_push_container(parser, SAX_STATE_ARRAY_VALUE);
+
+    case JSON_TOKEN_RBRACKET:
+      if (parser->state == SAX_STATE_ARRAY_VALUE) {
+        if (parser->handler.on_array_end && parser->handler.on_array_end(parser->ctx) != 0) {
+          json_sax_set_error(parser, "SAX callback failed");
+          return -1;
+        }
+        return json_sax_after_container_end(parser);
+      }
+      json_sax_set_error(parser, "Unexpected ]");
+      return -1;
+
+    case JSON_TOKEN_RBRACE:
+      if (parser->state == SAX_STATE_OBJECT_VALUE) {
+        json_sax_set_error(parser, "Expected value before }");
+        return -1;
+      }
+      json_sax_set_error(parser, "Unexpected }");
+      return -1;
+
+    default:
+      json_sax_set_error(parser, "Unexpected token in value context");
+      return -1;
+    }
+    break;
+
+  case SAX_STATE_OBJECT_KEY:
+    if (token->type == JSON_TOKEN_STRING) {
+      if (json_sax_emit_string(parser, token, true) != 0)
+        return -1;
+      parser->state = SAX_STATE_OBJECT_COLON;
+    } else if (token->type == JSON_TOKEN_RBRACE) {
+      if (parser->handler.on_object_end && parser->handler.on_object_end(parser->ctx) != 0) {
+        json_sax_set_error(parser, "SAX callback failed");
+        return -1;
+      }
+      return json_sax_after_container_end(parser);
+    } else {
+      json_sax_set_error(parser, "Expected string key or }");
+      return -1;
+    }
+    break;
+
+  case SAX_STATE_OBJECT_COLON:
+    if (token->type == JSON_TOKEN_COLON) {
+      parser->state = SAX_STATE_OBJECT_VALUE;
+    } else {
+      json_sax_set_error(parser, "Expected :");
+      return -1;
+    }
+    break;
+
+  case SAX_STATE_OBJECT_COMMA:
+    if (token->type == JSON_TOKEN_COMMA) {
+      parser->state = SAX_STATE_OBJECT_KEY;
+    } else if (token->type == JSON_TOKEN_RBRACE) {
+      if (parser->handler.on_object_end && parser->handler.on_object_end(parser->ctx) != 0) {
+        json_sax_set_error(parser, "SAX callback failed");
+        return -1;
+      }
+      return json_sax_after_container_end(parser);
+    } else {
+      json_sax_set_error(parser, "Expected , or }");
+      return -1;
+    }
+    break;
+
+  case SAX_STATE_ARRAY_COMMA:
+    if (token->type == JSON_TOKEN_COMMA) {
+      parser->state = SAX_STATE_ARRAY_VALUE;
+    } else if (token->type == JSON_TOKEN_RBRACKET) {
+      if (parser->handler.on_array_end && parser->handler.on_array_end(parser->ctx) != 0) {
+        json_sax_set_error(parser, "SAX callback failed");
+        return -1;
+      }
+      return json_sax_after_container_end(parser);
+    } else {
+      json_sax_set_error(parser, "Expected , or ]");
+      return -1;
+    }
+    break;
+  }
+  return 0;
+}
+
+static int json_sax_parse_number_token(const char *start, size_t len, double *out) {
+  char small[128];
+  char *buf = small;
+  char *endp = NULL;
+
+  if (len >= sizeof(small)) {
+    if (len == SIZE_MAX)
+      return -1;
+    buf = (char *)malloc(len + 1);
+    if (!buf)
+      return -1;
+  }
+
+  memcpy(buf, start, len);
+  buf[len] = '\0';
+  errno = 0;
+  *out = strtod(buf, &endp);
+  if (endp != buf + len) {
+    if (buf != small)
+      free(buf);
+    return -1;
+  }
+  if (buf != small)
+    free(buf);
+  return 0;
+}
+
+static int json_sax_scan_number(json_sax_parser_t *parser, json_token_t *token, bool final,
+                                const char *base, size_t len) {
+  size_t start = parser->pos;
+  size_t i = start;
+
+  if (i < len && base[i] == '-') {
+    ++i;
+    if (i == len)
+      return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
+  }
+
+  if (i >= len)
+    return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
+
+  if (base[i] == '0') {
+    ++i;
+    if (i < len && base[i] >= '0' && base[i] <= '9') {
+      json_sax_set_error(parser, "Invalid number");
+      return -1;
+    }
+  } else if (base[i] >= '1' && base[i] <= '9') {
+    do {
+      ++i;
+    } while (i < len && base[i] >= '0' && base[i] <= '9');
+  } else {
+    json_sax_set_error(parser, "Invalid number");
+    return -1;
+  }
+
+  if (i < len && base[i] == '.') {
+    ++i;
+    if (i == len)
+      return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
+    if (base[i] < '0' || base[i] > '9') {
+      json_sax_set_error(parser, "Invalid number");
+      return -1;
+    }
+    do {
+      ++i;
+    } while (i < len && base[i] >= '0' && base[i] <= '9');
+  }
+
+  if (i < len && (base[i] == 'e' || base[i] == 'E')) {
+    ++i;
+    if (i == len)
+      return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
+    if (base[i] == '+' || base[i] == '-') {
+      ++i;
+      if (i == len)
+        return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
+    }
+    if (base[i] < '0' || base[i] > '9') {
+      json_sax_set_error(parser, "Invalid number");
+      return -1;
+    }
+    do {
+      ++i;
+    } while (i < len && base[i] >= '0' && base[i] <= '9');
+  }
+
+  if (i == len && !final)
+    return 0;
+  if (i < len && !json_sax_is_delim(base[i])) {
+    json_sax_set_error(parser, "Invalid number terminator");
+    return -1;
+  }
+
+  token->type = JSON_TOKEN_NUMBER;
+  token->value = base + start;
+  token->length = i - start;
+  token->has_escape = 0;
+  if (json_sax_parse_number_token(token->value, token->length, &token->num_value) != 0) {
+    json_sax_set_error(parser, "Invalid number");
+    return -1;
+  }
+  parser->pos = i;
+  return 1;
+}
+
+static int json_sax_scan_string(json_sax_parser_t *parser, json_token_t *token, bool final,
+                                const char *base, size_t len) {
+  size_t start = parser->pos;
+  size_t i = start + 1;
+  bool has_escape = false;
+
+  while (i < len) {
+    unsigned char c = (unsigned char)base[i];
+    if (c == '"') {
+      token->type = JSON_TOKEN_STRING;
+      token->value = base + start + 1;
+      token->length = i - start - 1;
+      token->num_value = 0.0;
+      token->has_escape = has_escape ? 1 : 0;
+      parser->pos = i + 1;
+      return 1;
+    }
+    if (c == '\\') {
+      has_escape = true;
+      ++i;
+      if (i == len)
+        return final ? (json_sax_set_error(parser, "Incomplete escape sequence"), -1) : 0;
+      switch (base[i]) {
+      case '"':
+      case '\\':
+      case '/':
+      case 'b':
+      case 'f':
+      case 'n':
+      case 'r':
+      case 't':
+        ++i;
+        break;
+      case 'u':
+        if (i + 4 >= len)
+          return final ? (json_sax_set_error(parser, "Incomplete unicode escape"), -1) : 0;
+        if (!json_sax_is_hex4(base + i + 1)) {
+          json_sax_set_error(parser, "Invalid unicode escape");
+          return -1;
+        }
+        i += 5;
+        break;
+      default:
+        json_sax_set_error(parser, "Invalid escape sequence");
+        return -1;
+      }
+    } else {
+      if (c < 0x20U) {
+        json_sax_set_error(parser, "Invalid control character in string");
+        return -1;
+      }
+      ++i;
+    }
+  }
+
+  return final ? (json_sax_set_error(parser, "Unterminated string"), -1) : 0;
+}
+
+static int json_sax_scan_literal(json_sax_parser_t *parser, json_token_t *token, bool final,
+                                 const char *base, size_t len, const char *literal,
+                                 size_t literal_len, int token_type) {
+  size_t start = parser->pos;
+  size_t available = len - start;
+  size_t cmp_len = available < literal_len ? available : literal_len;
+
+  if (memcmp(base + start, literal, cmp_len) != 0) {
+    json_sax_set_error(parser, "Unexpected character '%c'", base[start]);
+    return -1;
+  }
+  if (available < literal_len)
+    return final ? (json_sax_set_error(parser, "Incomplete literal"), -1) : 0;
+  if (start + literal_len < len && !json_sax_is_delim(base[start + literal_len])) {
+    json_sax_set_error(parser, "Invalid literal terminator");
+    return -1;
+  }
+
+  token->type = token_type;
+  token->value = base + start;
+  token->length = literal_len;
+  token->num_value = 0.0;
+  token->has_escape = 0;
+  parser->pos = start + literal_len;
+  return 1;
+}
+
+static int json_sax_next_token(json_sax_parser_t *parser, json_token_t *token, bool final) {
+  const char *base = parser->buffer ? parser->buffer : "";
+  size_t len = tstr_len(parser->buffer);
+  const char *p = base + parser->pos;
+  const char *end = base + len;
+
+  p = json_skip_rfc_whitespace_simde(p, end);
+  parser->pos = (size_t)(p - base);
+  if (parser->pos >= len)
+    return 0;
+
+  memset(token, 0, sizeof(*token));
+  switch (base[parser->pos]) {
+  case '{':
+    token->type = JSON_TOKEN_LBRACE;
+    token->value = base + parser->pos;
+    token->length = 1;
+    ++parser->pos;
+    return 1;
+  case '}':
+    token->type = JSON_TOKEN_RBRACE;
+    token->value = base + parser->pos;
+    token->length = 1;
+    ++parser->pos;
+    return 1;
+  case '[':
+    token->type = JSON_TOKEN_LBRACKET;
+    token->value = base + parser->pos;
+    token->length = 1;
+    ++parser->pos;
+    return 1;
+  case ']':
+    token->type = JSON_TOKEN_RBRACKET;
+    token->value = base + parser->pos;
+    token->length = 1;
+    ++parser->pos;
+    return 1;
+  case ':':
+    token->type = JSON_TOKEN_COLON;
+    token->value = base + parser->pos;
+    token->length = 1;
+    ++parser->pos;
+    return 1;
+  case ',':
+    token->type = JSON_TOKEN_COMMA;
+    token->value = base + parser->pos;
+    token->length = 1;
+    ++parser->pos;
+    return 1;
+  case '"':
+    return json_sax_scan_string(parser, token, final, base, len);
+  case 't':
+    return json_sax_scan_literal(parser, token, final, base, len, "true", 4, JSON_TOKEN_TRUE);
+  case 'f':
+    return json_sax_scan_literal(parser, token, final, base, len, "false", 5, JSON_TOKEN_FALSE);
+  case 'n':
+    return json_sax_scan_literal(parser, token, final, base, len, "null", 4, JSON_TOKEN_NULL);
+  default:
+    if (base[parser->pos] == '-' || (base[parser->pos] >= '0' && base[parser->pos] <= '9'))
+      return json_sax_scan_number(parser, token, final, base, len);
+    json_sax_set_error(parser, "Unexpected character '%c'", base[parser->pos]);
+    return -1;
+  }
+}
+
+static void json_sax_compact_buffer(json_sax_parser_t *parser) {
+  size_t len = tstr_len(parser->buffer);
+  if (!parser->buffer || parser->pos == 0)
+    return;
+  if (parser->pos >= len) {
+    tstr_clear(parser->buffer);
+    parser->pos = 0;
+    return;
+  }
+
+  size_t remaining = len - parser->pos;
+  memmove(parser->buffer, parser->buffer + parser->pos, remaining);
+  (void)tstr_set_len_checked(parser->buffer, remaining);
+  parser->pos = 0;
+}
+
+static int json_sax_parser_run(json_sax_parser_t *parser, bool final) {
+  json_token_t token;
+  int result;
+
+  while ((result = json_sax_next_token(parser, &token, final)) > 0) {
+    if (json_sax_process_token(parser, &token) != 0) {
+      json_sax_compact_buffer(parser);
+      return -1;
+    }
+  }
+
+  json_sax_compact_buffer(parser);
+  return result < 0 ? -1 : 0;
+}
+
+json_sax_parser_t *json_sax_parser_create(const json_sax_handler_t *handler, void *ctx) {
+  if (!handler) {
+    fmt(g_error, sizeof(g_error), "Invalid arguments");
+    return NULL;
+  }
+
+  json_sax_parser_t *parser = (json_sax_parser_t *)calloc(1, sizeof(*parser));
+  if (!parser) {
+    fmt(g_error, sizeof(g_error), "Out of memory");
+    return NULL;
+  }
+
+  parser->handler = *handler;
+  parser->ctx = ctx;
+  parser->state = SAX_STATE_VALUE;
+  parser->buffer = tstr_new();
+  if (!parser->buffer) {
+    free(parser);
+    fmt(g_error, sizeof(g_error), "Out of memory");
+    return NULL;
+  }
+  return parser;
+}
+
+int json_sax_parser_feed(json_sax_parser_t *parser, const char *data, size_t len) {
+  if (!parser || (!data && len > 0)) {
+    fmt(g_error, sizeof(g_error), "Invalid arguments");
+    return -1;
+  }
+  if (parser->failed)
+    return -1;
+  if (parser->finished) {
+    json_sax_set_error(parser, "Parser already finished");
+    return -1;
+  }
+  if (len == 0)
+    return 0;
+
+  tstr_t next = tstr_cat_len(parser->buffer, data, len);
+  if (!next) {
+    json_sax_set_error(parser, "Out of memory");
+    return -1;
+  }
+  parser->buffer = next;
+
+  return json_sax_parser_run(parser, false);
+}
+
+int json_sax_parser_finish(json_sax_parser_t *parser) {
+  if (!parser) {
+    fmt(g_error, sizeof(g_error), "Invalid arguments");
+    return -1;
+  }
+  if (parser->failed)
+    return -1;
+  if (parser->finished) {
+    json_sax_set_error(parser, "Parser already finished");
+    return -1;
+  }
+
+  parser->finished = true;
+  if (json_sax_parser_run(parser, true) != 0)
+    return -1;
+  if (!parser->done) {
+    if (!parser->root_seen) {
+      json_sax_set_error(parser, "Expected JSON value");
+    } else {
+      json_sax_set_error(parser, "Unclosed object or array");
+    }
+    return -1;
+  }
+  return 0;
+}
+
+const char *json_sax_parser_error(const json_sax_parser_t *parser) {
+  if (!parser)
+    return g_error;
+  return parser->error[0] ? parser->error : g_error;
+}
+
+void json_sax_parser_destroy(json_sax_parser_t *parser) {
+  if (!parser)
+    return;
+  tstr_free(parser->buffer);
+  tstr_free(parser->scratch);
+  free(parser);
 }
 
 int json_parse_sax(const char *content, size_t len, const json_sax_handler_t *handler, void *ctx) {
@@ -1168,184 +1823,13 @@ int json_parse_sax(const char *content, size_t len, const json_sax_handler_t *ha
     return -1;
   }
 
-  json_lexer_t lexer;
-  json_lexer_init(&lexer, content, len);
-
-  sax_state_t state_stack[SAX_MAX_DEPTH];
-  int depth = 0;
-  sax_state_t state = SAX_STATE_VALUE;
-
-  json_token_t token;
-  int result;
-  char str_buf[4096];
-
-  while ((result = json_lexer_next(&lexer, &token)) > 0) {
-    switch (state) {
-    case SAX_STATE_VALUE:
-    case SAX_STATE_OBJECT_VALUE:
-    case SAX_STATE_ARRAY_VALUE:
-      switch (token.type) {
-      case JSON_TOKEN_NULL:
-        if (handler->on_null && handler->on_null(ctx) != 0)
-          return -1;
-        if (state == SAX_STATE_OBJECT_VALUE)
-          state = SAX_STATE_OBJECT_COMMA;
-        else if (state == SAX_STATE_ARRAY_VALUE)
-          state = SAX_STATE_ARRAY_COMMA;
-        break;
-
-      case JSON_TOKEN_TRUE:
-        if (handler->on_bool && handler->on_bool(ctx, true) != 0)
-          return -1;
-        if (state == SAX_STATE_OBJECT_VALUE)
-          state = SAX_STATE_OBJECT_COMMA;
-        else if (state == SAX_STATE_ARRAY_VALUE)
-          state = SAX_STATE_ARRAY_COMMA;
-        break;
-
-      case JSON_TOKEN_FALSE:
-        if (handler->on_bool && handler->on_bool(ctx, false) != 0)
-          return -1;
-        if (state == SAX_STATE_OBJECT_VALUE)
-          state = SAX_STATE_OBJECT_COMMA;
-        else if (state == SAX_STATE_ARRAY_VALUE)
-          state = SAX_STATE_ARRAY_COMMA;
-        break;
-
-      case JSON_TOKEN_NUMBER:
-        if (handler->on_number && handler->on_number(ctx, token.num_value) != 0)
-          return -1;
-        if (state == SAX_STATE_OBJECT_VALUE)
-          state = SAX_STATE_OBJECT_COMMA;
-        else if (state == SAX_STATE_ARRAY_VALUE)
-          state = SAX_STATE_ARRAY_COMMA;
-        break;
-
-      case JSON_TOKEN_STRING: {
-        size_t slen;
-        sax_unescape(token.value, token.length, &slen, str_buf, sizeof(str_buf));
-        if (handler->on_string && handler->on_string(ctx, str_buf, slen) != 0)
-          return -1;
-        if (state == SAX_STATE_OBJECT_VALUE)
-          state = SAX_STATE_OBJECT_COMMA;
-        else if (state == SAX_STATE_ARRAY_VALUE)
-          state = SAX_STATE_ARRAY_COMMA;
-        break;
-      }
-
-      case JSON_TOKEN_LBRACE:
-        if (handler->on_object_start && handler->on_object_start(ctx) != 0)
-          return -1;
-        if (depth >= SAX_MAX_DEPTH - 1) {
-          fmt(g_error, sizeof(g_error), "Max depth exceeded");
-          return -1;
-        }
-        state_stack[depth++] = (state == SAX_STATE_OBJECT_VALUE)  ? SAX_STATE_OBJECT_COMMA
-                               : (state == SAX_STATE_ARRAY_VALUE) ? SAX_STATE_ARRAY_COMMA
-                                                                  : SAX_STATE_VALUE;
-        state = SAX_STATE_OBJECT_KEY;
-        break;
-
-      case JSON_TOKEN_LBRACKET:
-        if (handler->on_array_start && handler->on_array_start(ctx) != 0)
-          return -1;
-        if (depth >= SAX_MAX_DEPTH - 1) {
-          fmt(g_error, sizeof(g_error), "Max depth exceeded");
-          return -1;
-        }
-        state_stack[depth++] = (state == SAX_STATE_OBJECT_VALUE)  ? SAX_STATE_OBJECT_COMMA
-                               : (state == SAX_STATE_ARRAY_VALUE) ? SAX_STATE_ARRAY_COMMA
-                                                                  : SAX_STATE_VALUE;
-        state = SAX_STATE_ARRAY_VALUE;
-        break;
-
-      case JSON_TOKEN_RBRACKET:
-        if (state == SAX_STATE_ARRAY_VALUE) {
-          if (handler->on_array_end && handler->on_array_end(ctx) != 0)
-            return -1;
-          state = (depth > 0) ? state_stack[--depth] : SAX_STATE_VALUE;
-        } else {
-          fmt(g_error, sizeof(g_error), "Unexpected ]");
-          return -1;
-        }
-        break;
-
-      case JSON_TOKEN_RBRACE:
-        if (state == SAX_STATE_OBJECT_VALUE) {
-          fmt(g_error, sizeof(g_error), "Expected value before }}");
-          return -1;
-        }
-        break;
-
-      default:
-        fmt(g_error, sizeof(g_error), "Unexpected token in value context");
-        return -1;
-      }
-      break;
-
-    case SAX_STATE_OBJECT_KEY:
-      if (token.type == JSON_TOKEN_STRING) {
-        size_t slen;
-        sax_unescape(token.value, token.length, &slen, str_buf, sizeof(str_buf));
-        if (handler->on_object_key && handler->on_object_key(ctx, str_buf, slen) != 0)
-          return -1;
-        state = SAX_STATE_OBJECT_COLON;
-      } else if (token.type == JSON_TOKEN_RBRACE) {
-        if (handler->on_object_end && handler->on_object_end(ctx) != 0)
-          return -1;
-        state = (depth > 0) ? state_stack[--depth] : SAX_STATE_VALUE;
-      } else {
-        fmt(g_error, sizeof(g_error), "Expected string key or }}");
-        return -1;
-      }
-      break;
-
-    case SAX_STATE_OBJECT_COLON:
-      if (token.type == JSON_TOKEN_COLON) {
-        state = SAX_STATE_OBJECT_VALUE;
-      } else {
-        fmt(g_error, sizeof(g_error), "Expected :");
-        return -1;
-      }
-      break;
-
-    case SAX_STATE_OBJECT_COMMA:
-      if (token.type == JSON_TOKEN_COMMA) {
-        state = SAX_STATE_OBJECT_KEY;
-      } else if (token.type == JSON_TOKEN_RBRACE) {
-        if (handler->on_object_end && handler->on_object_end(ctx) != 0)
-          return -1;
-        state = (depth > 0) ? state_stack[--depth] : SAX_STATE_VALUE;
-      } else {
-        fmt(g_error, sizeof(g_error), "Expected , or }}");
-        return -1;
-      }
-      break;
-
-    case SAX_STATE_ARRAY_COMMA:
-      if (token.type == JSON_TOKEN_COMMA) {
-        state = SAX_STATE_ARRAY_VALUE;
-      } else if (token.type == JSON_TOKEN_RBRACKET) {
-        if (handler->on_array_end && handler->on_array_end(ctx) != 0)
-          return -1;
-        state = (depth > 0) ? state_stack[--depth] : SAX_STATE_VALUE;
-      } else {
-        fmt(g_error, sizeof(g_error), "Expected , or ]");
-        return -1;
-      }
-      break;
-    }
-  }
-
-  if (result < 0) {
-    fmt(g_error, sizeof(g_error), "{}", lexer.error);
+  json_sax_parser_t *parser = json_sax_parser_create(handler, ctx);
+  if (!parser)
     return -1;
-  }
 
-  if (depth != 0) {
-    fmt(g_error, sizeof(g_error), "Unclosed object or array");
-    return -1;
-  }
-
-  return 0;
+  int ret = json_sax_parser_feed(parser, content, len);
+  if (ret == 0)
+    ret = json_sax_parser_finish(parser);
+  json_sax_parser_destroy(parser);
+  return ret;
 }

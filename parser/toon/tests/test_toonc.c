@@ -582,6 +582,73 @@ spec("toonc") {
         TOONc_free(root);
     }
 
+    it("should convert JSON into TOON using the shared JSON parser") {
+        const char *json = "{"
+                           "\"name\":\"Alice\\nBob\","
+                           "\"unicode\":\"\\u0041\\u0042\","
+                           "\"age\":42,"
+                           "\"score\":95.5,"
+                           "\"active\":true,"
+                           "\"none\":null,"
+                           "\"tags\":[\"admin\",2,false],"
+                           "\"profile\":{\"city\":\"Paris\"}"
+                           "}";
+
+        toonObject *root = TOONc_fromJSONString(json, strlen(json));
+        ASSERT_NOT_NULL(root);
+        ASSERT_TYPE(root, TOON_IS_OBJ);
+
+        toonObject *name = TOONc_get(root, "name");
+        ASSERT_NOT_NULL(name);
+        ASSERT_TYPE(name, TOON_IS_STRING);
+        ASSERT_STR_EQ(TOON_GET_STRING(name), "Alice\nBob");
+
+        toonObject *unicode = TOONc_get(root, "unicode");
+        ASSERT_NOT_NULL(unicode);
+        ASSERT_TYPE(unicode, TOON_IS_STRING);
+        ASSERT_STR_EQ(TOON_GET_STRING(unicode), "AB");
+
+        toonObject *age = TOONc_get(root, "age");
+        ASSERT_NOT_NULL(age);
+        ASSERT_TYPE(age, TOON_IS_INT);
+        ASSERT_EQ(TOON_GET_INT(age), 42);
+
+        toonObject *score = TOONc_get(root, "score");
+        ASSERT_NOT_NULL(score);
+        ASSERT_TYPE(score, TOON_IS_DOUBLE);
+        ASSERT_FLOAT_EQ(TOON_GET_DOUBLE(score), 95.5, 0.0001);
+
+        toonObject *active = TOONc_get(root, "active");
+        ASSERT_NOT_NULL(active);
+        ASSERT_TYPE(active, TOON_IS_BOOL);
+        ASSERT_EQ(TOON_GET_BOOL(active), 1);
+
+        toonObject *none = TOONc_get(root, "none");
+        ASSERT_NOT_NULL(none);
+        ASSERT_TYPE(none, TOON_IS_NULL);
+
+        toonObject *tags = TOONc_get(root, "tags");
+        ASSERT_NOT_NULL(tags);
+        ASSERT_TYPE(tags, TOON_IS_LIST);
+        ASSERT_EQ(TOONc_getArrayLength(tags), 3);
+        ASSERT_STR_EQ(TOON_GET_STRING(TOONc_getArrayItem(tags, 0)), "admin");
+        ASSERT_EQ(TOON_GET_INT(TOONc_getArrayItem(tags, 1)), 2);
+        ASSERT_EQ(TOON_GET_BOOL(TOONc_getArrayItem(tags, 2)), 0);
+
+        toonObject *city = TOONc_get(root, "profile.city");
+        ASSERT_NOT_NULL(city);
+        ASSERT_TYPE(city, TOON_IS_STRING);
+        ASSERT_STR_EQ(TOON_GET_STRING(city), "Paris");
+
+        TOONc_free(root);
+    }
+
+    it("should reject malformed JSON during TOON conversion") {
+        const char *missing_colon = "{\"key\" 1}";
+        toonObject *root = TOONc_fromJSONString(missing_colon, strlen(missing_colon));
+        ASSERT_NULL(root);
+    }
+
     it("should preserve a long plain string while skipping comments") {
         enum { VALUE_BYTES = 4096 };
         const char prefix[] = "  # ignored comment\nvalue: \"";

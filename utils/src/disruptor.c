@@ -1,4 +1,5 @@
 #include "disruptor.h"
+#include "turbo_thread.h"
 
 #include <limits.h>
 #include <stdatomic.h>
@@ -19,6 +20,7 @@
 #define DISRUPTOR_WAIT_COUNT 256U
 #define DISRUPTOR_YIELD_INTERVAL 1024U
 #define DISRUPTOR_PRODUCER_YIELD_INTERVAL 64U
+#define DISRUPTOR_WORKER_PARK_SPIN_ROUNDS 16U
 #define DISRUPTOR_VACANT UINT_FAST64_MAX
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -69,6 +71,9 @@ struct disruptor_s {
   disruptor_cursor_state_t *consumer_cursors;
   atomic_uint_fast64_t *published_sequences;
   atomic_uint_fast64_t *worker_completed_sequences;
+  turbo_mutex_t worker_wait_mutex;
+  turbo_cond_t worker_wait_cond;
+  atomic_uint worker_waiters;
   uint32_t *consumer_dependencies;
   uint32_t *consumer_dependency_counts;
   uint8_t *buffer;
@@ -246,6 +251,16 @@ static uint64_t disruptor_try_advance_published_cursor(disruptor_t *disruptor) {
   }
 }
 
+static void disruptor_worker_notify(disruptor_t *disruptor) {
+  if (disruptor == NULL ||
+      atomic_load_explicit(&disruptor->worker_waiters, memory_order_acquire) == 0U) {
+    return;
+  }
+  turbo_mutex_lock(&disruptor->worker_wait_mutex);
+  turbo_cond_broadcast(&disruptor->worker_wait_cond);
+  turbo_mutex_unlock(&disruptor->worker_wait_mutex);
+}
+
 static void disruptor_mark_worker_completed(disruptor_t *disruptor, uint64_t sequence) {
   uint64_t index = disruptor_ring_index(disruptor, sequence);
   atomic_store_explicit(&disruptor->worker_completed_sequences[index], sequence,
@@ -306,6 +321,7 @@ static void disruptor_init(disruptor_t *disruptor) {
   atomic_store_explicit(&disruptor->write_cursor.sequence, 0U, memory_order_relaxed);
   atomic_store_explicit(&disruptor->worker_claim_cursor.sequence, 1U, memory_order_relaxed);
   atomic_store_explicit(&disruptor->worker_completed_cursor.sequence, 0U, memory_order_relaxed);
+  atomic_store_explicit(&disruptor->worker_waiters, 0U, memory_order_relaxed);
 }
 
 disruptor_t *disruptor_create(const disruptor_config_t *config) {
@@ -405,6 +421,20 @@ disruptor_t *disruptor_create(const disruptor_config_t *config) {
   disruptor->capacity = config->capacity;
   disruptor->consumer_capacity = config->consumer_capacity;
   disruptor->mode = config->mode;
+  turbo_mutex_init(&disruptor->worker_wait_mutex);
+  turbo_cond_init(&disruptor->worker_wait_cond);
+  if (!disruptor->worker_wait_mutex || !disruptor->worker_wait_cond) {
+    turbo_cond_destroy(&disruptor->worker_wait_cond);
+    turbo_mutex_destroy(&disruptor->worker_wait_mutex);
+    disruptor_aligned_free(disruptor->buffer);
+    free(disruptor->consumer_dependency_counts);
+    free(disruptor->consumer_dependencies);
+    disruptor_aligned_free((void *)disruptor->worker_completed_sequences);
+    disruptor_aligned_free((void *)disruptor->published_sequences);
+    disruptor_aligned_free(disruptor->consumer_cursors);
+    disruptor_aligned_free(disruptor);
+    return NULL;
+  }
   disruptor_init(disruptor);
 
   return disruptor;
@@ -414,6 +444,8 @@ void disruptor_destroy(disruptor_t *disruptor) {
   if (disruptor == NULL) {
     return;
   }
+  turbo_cond_destroy(&disruptor->worker_wait_cond);
+  turbo_mutex_destroy(&disruptor->worker_wait_mutex);
   disruptor_aligned_free(disruptor->buffer);
   free(disruptor->consumer_dependency_counts);
   free(disruptor->consumer_dependencies);
@@ -1032,6 +1064,7 @@ static int disruptor_publish_range_internal(disruptor_t *disruptor,
   if (atomic_compare_exchange_strong_explicit(&disruptor->max_read_cursor.sequence, &expected,
                                               range->last_sequence, memory_order_release,
                                               memory_order_relaxed)) {
+    disruptor_worker_notify(disruptor);
     return 1;
   }
 
@@ -1050,10 +1083,12 @@ static int disruptor_publish_range_internal(disruptor_t *disruptor,
       (void)disruptor_try_advance_published_cursor(disruptor);
       disruptor_spin_backoff_producer(&wait_rounds);
     }
+    disruptor_worker_notify(disruptor);
     return 1;
   }
 
   (void)disruptor_try_advance_published_cursor(disruptor);
+  disruptor_worker_notify(disruptor);
   if (report_visibility) {
     return atomic_load_explicit(&disruptor->max_read_cursor.sequence, memory_order_acquire) >=
            range->last_sequence;
@@ -1190,6 +1225,43 @@ void disruptor_worker_claim_blocking(disruptor_t *disruptor, disruptor_cursor_t 
   while (!disruptor_worker_try_claim(disruptor, cursor)) {
     disruptor_spin_backoff(&wait_rounds);
   }
+}
+
+int disruptor_worker_claim_wait(disruptor_t *disruptor, disruptor_cursor_t *cursor,
+                                disruptor_should_run_fn should_run, void *ctx) {
+  unsigned int wait_rounds = 0U;
+
+  if (disruptor == NULL || cursor == NULL || should_run == NULL ||
+      disruptor->mode != DISRUPTOR_MODE_WORKER_POOL) {
+    return 0;
+  }
+
+  while (wait_rounds < DISRUPTOR_WORKER_PARK_SPIN_ROUNDS) {
+    if (disruptor_worker_try_claim(disruptor, cursor)) return 1;
+    if (!should_run(ctx)) return 0;
+    ++wait_rounds;
+    disruptor_spin_pause();
+  }
+
+  turbo_mutex_lock(&disruptor->worker_wait_mutex);
+  atomic_fetch_add_explicit(&disruptor->worker_waiters, 1U, memory_order_acq_rel);
+  for (;;) {
+    if (disruptor_worker_try_claim(disruptor, cursor)) {
+      atomic_fetch_sub_explicit(&disruptor->worker_waiters, 1U, memory_order_acq_rel);
+      turbo_mutex_unlock(&disruptor->worker_wait_mutex);
+      return 1;
+    }
+    if (!should_run(ctx)) {
+      atomic_fetch_sub_explicit(&disruptor->worker_waiters, 1U, memory_order_acq_rel);
+      turbo_mutex_unlock(&disruptor->worker_wait_mutex);
+      return 0;
+    }
+    turbo_cond_wait(&disruptor->worker_wait_cond, &disruptor->worker_wait_mutex);
+  }
+}
+
+void disruptor_worker_wake_all(disruptor_t *disruptor) {
+  disruptor_worker_notify(disruptor);
 }
 
 void disruptor_worker_release_entry(disruptor_t *disruptor, const disruptor_cursor_t *cursor) {

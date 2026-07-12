@@ -1,12 +1,36 @@
 #include "disruptor.h"
 #include "tinytest.h"
+#include "turbo_thread.h"
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 
 #define ENTRY_SIZE sizeof(uint64_t)
 #define CAPACITY 32
 #define CONSUMERS 2
+
+typedef struct disruptor_worker_wait_test_s {
+  disruptor_t *disruptor;
+  atomic_int running;
+  atomic_int entered;
+  atomic_int result;
+  disruptor_cursor_t cursor;
+} disruptor_worker_wait_test_t;
+
+static int disruptor_test_should_run(void *ctx) {
+  disruptor_worker_wait_test_t *test = (disruptor_worker_wait_test_t *)ctx;
+  atomic_store_explicit(&test->entered, 1, memory_order_release);
+  return atomic_load_explicit(&test->running, memory_order_acquire);
+}
+
+static void disruptor_test_worker_wait(void *ctx) {
+  disruptor_worker_wait_test_t *test = (disruptor_worker_wait_test_t *)ctx;
+  int result = disruptor_worker_claim_wait(test->disruptor, &test->cursor,
+                                           disruptor_test_should_run, test);
+  atomic_store_explicit(&test->result, result, memory_order_release);
+}
 
 spec("Disruptor Tests") {
   it("should create and destroy cleanly") {
@@ -164,6 +188,58 @@ spec("Disruptor Tests") {
       check(seen[i]);
     }
 
+    disruptor_destroy(d);
+  }
+
+  it("should wake a parked worker when an entry is published") {
+    disruptor_config_t cfg = {.entry_size = sizeof(uint64_t),
+                              .capacity = 16,
+                              .consumer_capacity = 1,
+                              .mode = DISRUPTOR_MODE_WORKER_POOL};
+    disruptor_worker_wait_test_t test;
+    turbo_thread_t worker = NULL;
+    disruptor_cursor_t published = {0};
+    disruptor_t *d = disruptor_create(&cfg);
+    check_not_null(d);
+    memset(&test, 0, sizeof(test));
+    test.disruptor = d;
+    atomic_init(&test.running, 1);
+    atomic_init(&test.entered, 0);
+    atomic_init(&test.result, 0);
+    check_int_eq(turbo_thread_create(&worker, disruptor_test_worker_wait, &test), 0);
+    while (!atomic_load_explicit(&test.entered, memory_order_acquire)) turbo_thread_yield();
+    check_int_eq(disruptor_publisher_try_claim(d, &published), 1);
+    *(uint64_t *)disruptor_acquire_entry(d, &published) = 42;
+    check_int_eq(disruptor_publisher_publish(d, &published), 1);
+    check_int_eq(turbo_thread_join(&worker), 0);
+    check_int_eq(atomic_load_explicit(&test.result, memory_order_acquire), 1);
+    check_size_eq(test.cursor.sequence, published.sequence);
+    check_size_eq(*(const uint64_t *)disruptor_show_entry(d, &test.cursor), 42);
+    disruptor_worker_release_entry(d, &test.cursor);
+    disruptor_destroy(d);
+  }
+
+  it("should interrupt a parked worker without claiming an entry") {
+    disruptor_config_t cfg = {.entry_size = sizeof(uint64_t),
+                              .capacity = 16,
+                              .consumer_capacity = 1,
+                              .mode = DISRUPTOR_MODE_WORKER_POOL};
+    disruptor_worker_wait_test_t test;
+    turbo_thread_t worker = NULL;
+    disruptor_t *d = disruptor_create(&cfg);
+    check_not_null(d);
+    memset(&test, 0, sizeof(test));
+    test.disruptor = d;
+    atomic_init(&test.running, 1);
+    atomic_init(&test.entered, 0);
+    atomic_init(&test.result, 1);
+    check_int_eq(turbo_thread_create(&worker, disruptor_test_worker_wait, &test), 0);
+    while (!atomic_load_explicit(&test.entered, memory_order_acquire)) turbo_thread_yield();
+    atomic_store_explicit(&test.running, 0, memory_order_release);
+    disruptor_worker_wake_all(d);
+    check_int_eq(turbo_thread_join(&worker), 0);
+    check_int_eq(atomic_load_explicit(&test.result, memory_order_acquire), 0);
+    check_size_eq(test.cursor.sequence, 0);
     disruptor_destroy(d);
   }
 

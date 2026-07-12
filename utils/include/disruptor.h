@@ -37,6 +37,9 @@ typedef enum {
   DISRUPTOR_MODE_WORKER_POOL = 1
 } disruptor_mode_t;
 
+/** Return non-zero while a blocking Disruptor operation should keep waiting. */
+typedef int (*disruptor_should_run_fn)(void *ctx);
+
 typedef struct {
   size_t entry_size;
   uint64_t capacity;
@@ -136,13 +139,19 @@ CXX_C_API int disruptor_topology_commit(disruptor_topology_t *topology);
 CXX_C_API int disruptor_worker_try_claim(disruptor_t *disruptor, disruptor_cursor_t *cursor);
 CXX_C_API void disruptor_worker_claim_blocking(disruptor_t *disruptor,
                                                disruptor_cursor_t *cursor);
+/**
+ * Claim one published worker-pool entry, parking the thread while the ring is empty.
+ * Returns 1 after claiming an entry, or 0 when should_run returns zero/arguments are invalid.
+ * Call disruptor_worker_wake_all() after changing the predicate state.
+ */
+CXX_C_API int disruptor_worker_claim_wait(disruptor_t *disruptor,
+                                          disruptor_cursor_t *cursor,
+                                          disruptor_should_run_fn should_run,
+                                          void *ctx);
+/** Wake parked worker claim calls so they can re-evaluate their stop predicate. */
+CXX_C_API void disruptor_worker_wake_all(disruptor_t *disruptor);
 CXX_C_API void disruptor_worker_release_entry(disruptor_t *disruptor,
                                               const disruptor_cursor_t *cursor);
-
-/**
- * @brief Callback: return non-zero while the consumer should keep running.
- */
-typedef int (*disruptor_should_run_fn)(void *ctx);
 
 /**
  * @brief Callback: process entries in range [first_seq, last_seq].

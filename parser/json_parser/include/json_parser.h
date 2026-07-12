@@ -16,6 +16,7 @@ extern "C" {
 
 typedef struct json_value_s json_value_t;
 typedef struct json_path_result_s json_path_result_t;
+typedef struct json_sax_parser_s json_sax_parser_t;
 
 typedef enum {
   JSON_NULL,
@@ -114,6 +115,14 @@ typedef struct json_sax_handler_s {
 } json_sax_handler_t;
 
 int json_parse_sax(const char *content, size_t len, const json_sax_handler_t *handler, void *ctx);
+
+/* Incremental SAX parser. Call feed() with any chunk size, then finish() once at EOF.
+ * Callback pointers are valid only for the duration of the callback. */
+json_sax_parser_t *json_sax_parser_create(const json_sax_handler_t *handler, void *ctx);
+int json_sax_parser_feed(json_sax_parser_t *parser, const char *data, size_t len);
+int json_sax_parser_finish(json_sax_parser_t *parser);
+const char *json_sax_parser_error(const json_sax_parser_t *parser);
+void json_sax_parser_destroy(json_sax_parser_t *parser);
 
 #ifdef __cplusplus
 }

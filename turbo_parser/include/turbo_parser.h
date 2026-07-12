@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <time.h>
 #include <platform.h>
+#include <turbo_str_view.h>
  
 
 #ifdef __cplusplus
@@ -14,6 +15,7 @@ extern "C" {
 /* JSON Parser */
 typedef struct json_value_s json_value_t;
 typedef struct json_path_result_s turbo_json_path_result_t;
+typedef struct turbo_json_sax_parser_s turbo_json_sax_parser_t;
 
 typedef enum {
   TURBO_JSON_NULL,
@@ -24,6 +26,18 @@ typedef enum {
   TURBO_JSON_OBJECT
 } turbo_json_type_t;
 
+typedef struct turbo_json_sax_handler_s {
+  int (*on_null)(void *ctx);
+  int (*on_bool)(void *ctx, bool val);
+  int (*on_number)(void *ctx, double val);
+  int (*on_string)(void *ctx, const char *val, size_t len);
+  int (*on_object_start)(void *ctx);
+  int (*on_object_key)(void *ctx, const char *key, size_t len);
+  int (*on_object_end)(void *ctx);
+  int (*on_array_start)(void *ctx);
+  int (*on_array_end)(void *ctx);
+} turbo_json_sax_handler_t;
+
 /**
  * @brief Parse JSON data.
  * @param data Input buffer.
@@ -32,6 +46,28 @@ typedef enum {
  * @return 0 on success, error code otherwise.
  */
 CXX_C_API int turbo_parse_json(const uint8_t *data, size_t len, void *out);
+
+/**
+ * @brief Parse one complete JSON document with SAX callbacks.
+ * @param data Input buffer.
+ * @param len Buffer length.
+ * @param handler Callback table.
+ * @param ctx User context passed to callbacks.
+ * @return 0 on success, -1 on parse or callback failure.
+ */
+CXX_C_API int turbo_parse_json_sax(const uint8_t *data, size_t len,
+                                   const turbo_json_sax_handler_t *handler, void *ctx);
+
+/* Incremental JSON SAX parser. Call feed() with any chunk size, then finish()
+ * once at EOF. Callback pointers are valid only for the duration of the
+ * callback. Returning non-zero from a callback stops parsing. */
+CXX_C_API turbo_json_sax_parser_t *
+turbo_json_sax_parser_create(const turbo_json_sax_handler_t *handler, void *ctx);
+CXX_C_API int turbo_json_sax_parser_feed(turbo_json_sax_parser_t *parser,
+                                         const char *data, size_t len);
+CXX_C_API int turbo_json_sax_parser_finish(turbo_json_sax_parser_t *parser);
+CXX_C_API const char *turbo_json_sax_parser_error(const turbo_json_sax_parser_t *parser);
+CXX_C_API void turbo_json_sax_parser_destroy(turbo_json_sax_parser_t *parser);
 
 /**
  * @brief Free JSON data and set pointer to NULL.
@@ -334,6 +370,7 @@ CXX_C_API void turbo_json_object_set_null(json_value_t *obj, const char *key);
 typedef struct _cx_doc_node turbo_xml_doc_t;
 typedef struct _cx_elem_node turbo_xml_node_t;
 typedef void turbo_xml_xpath_node_t;
+typedef struct turbo_xml_sax_parser_s turbo_xml_sax_parser_t;
 typedef enum {
   TURBO_XML_NODE_UNKNOWN = 0,
   TURBO_XML_NODE_TEXT,
@@ -356,6 +393,21 @@ typedef struct turbo_xml_list_s {
   turbo_xml_list_node_t *tail;
 } turbo_xml_list_t;
 
+typedef struct turbo_xml_sax_handler_s {
+  int (*on_start_document)(void *ctx);
+  int (*on_end_document)(void *ctx);
+  int (*on_element_start)(void *ctx, const char *name, size_t name_len);
+  int (*on_attribute)(void *ctx, const char *name, size_t name_len,
+                      const char *value, size_t value_len);
+  int (*on_element_end)(void *ctx, const char *name, size_t name_len);
+  int (*on_text)(void *ctx, const char *text, size_t text_len);
+  int (*on_comment)(void *ctx, const char *text, size_t text_len);
+  int (*on_cdata)(void *ctx, const char *text, size_t text_len);
+  int (*on_processing_instruction)(void *ctx, const char *target, size_t target_len,
+                                   const char *data, size_t data_len);
+  int (*on_doctype)(void *ctx, const char *text, size_t text_len);
+} turbo_xml_sax_handler_t;
+
 #define turbo_xml_for(_node, __list)                                                  \
   void *_node = NULL;                                                                 \
   for (turbo_xml_list_node_t *__00prev00##_node = NULL,                               \
@@ -373,6 +425,28 @@ typedef struct turbo_xml_list_s {
  * @return 0 on success, error code otherwise.
  */
 CXX_C_API int turbo_parse_xml(const uint8_t *data, size_t len, void *out);
+
+/**
+ * @brief Parse one complete XML document with SAX callbacks.
+ * @param data Input buffer.
+ * @param len Buffer length.
+ * @param handler Callback table.
+ * @param ctx User context passed to callbacks.
+ * @return 0 on success, -1 on parse or callback failure.
+ */
+CXX_C_API int turbo_parse_xml_sax(const uint8_t *data, size_t len,
+                                  const turbo_xml_sax_handler_t *handler, void *ctx);
+
+/* Incremental XML SAX parser. Call feed() with any chunk size, then finish() once at EOF.
+ * Callback pointers are valid only for the duration of the callback. Returning non-zero
+ * from a callback stops parsing. Text and attribute values are raw XML slices. */
+CXX_C_API turbo_xml_sax_parser_t *
+turbo_xml_sax_parser_create(const turbo_xml_sax_handler_t *handler, void *ctx);
+CXX_C_API int turbo_xml_sax_parser_feed(turbo_xml_sax_parser_t *parser,
+                                        const char *data, size_t len);
+CXX_C_API int turbo_xml_sax_parser_finish(turbo_xml_sax_parser_t *parser);
+CXX_C_API const char *turbo_xml_sax_parser_error(const turbo_xml_sax_parser_t *parser);
+CXX_C_API void turbo_xml_sax_parser_destroy(turbo_xml_sax_parser_t *parser);
 
 /**
  * @brief Free XML data and set pointer to NULL.
@@ -642,29 +716,29 @@ CXX_C_API size_t turbo_csv_find_column(const turbo_csv_doc_t *doc, const char *h
 CXX_C_API int turbo_csv_write_file(const turbo_csv_doc_t *doc, const char *filename);
 
 /**
- * @brief Create a DSV filter bound to a parsed CSV document.
+ * @brief Create a CSVPath filter bound to a parsed CSV document.
  * @param doc Parsed CSV document.
  * @param header_row_index Header row index (0-based).
- * @return DSV filter handle, or NULL on failure.
+ * @return CSVPath filter handle, or NULL on failure.
  */
 CXX_C_API turbo_dsv_filter_t *turbo_dsv_filter_create(const turbo_csv_doc_t *doc,
                                                       size_t header_row_index);
 
 /**
- * @brief Destroy a DSV filter.
- * @param filter DSV filter handle.
+ * @brief Destroy a CSVPath filter.
+ * @param filter CSVPath filter handle.
  */
 CXX_C_API void turbo_dsv_filter_destroy(turbo_dsv_filter_t *filter);
 
 /**
- * @brief Get last DSV filter error message.
- * @param filter DSV filter handle.
+ * @brief Get last CSVPath filter error message.
+ * @param filter CSVPath filter handle.
  * @return Error string, or empty/null when no error.
  */
 CXX_C_API const char *turbo_dsv_filter_error(turbo_dsv_filter_t *filter);
 
 /**
- * @brief Compile DSV filter expression.
+ * @brief Compile CSVPath filter expression.
  * @details Supports:
  *          - logical join: and/or
  *          - comparison: == != > >= < <=
@@ -672,7 +746,7 @@ CXX_C_API const char *turbo_dsv_filter_error(turbo_dsv_filter_t *filter);
  *          - string literal rhs: "..."
  *          See tScript/docs/csv_filter_expression.md for full syntax and
  *          error semantics.
- * @param filter DSV filter handle.
+ * @param filter CSVPath filter handle.
  * @param expression Expression string.
  * @return true on success, false on failure.
  */
@@ -680,22 +754,33 @@ CXX_C_API bool turbo_dsv_filter_compile(turbo_dsv_filter_t *filter, const char *
 
 /**
  * @brief Set output delimiter for rendered rows.
- * @param filter DSV filter handle.
+ * @param filter CSVPath filter handle.
  * @param delimiter Delimiter character.
  */
 CXX_C_API void turbo_dsv_filter_set_output_delimiter(turbo_dsv_filter_t *filter, char delimiter);
 
 /**
  * @brief Evaluate filter on one row.
- * @param filter DSV filter handle.
+ * @param filter CSVPath filter handle.
  * @param row_index Row index.
  * @return 1 match, 0 mismatch, -1 error.
  */
 CXX_C_API int turbo_dsv_filter_check_row(turbo_dsv_filter_t *filter, size_t row_index);
 
 /**
+ * @brief Evaluate filter against one row represented as field views.
+ * @param filter Compiled CSVPath filter handle.
+ * @param fields Non-owning field views for the current row.
+ * @param field_count Number of field views.
+ * @return 1 match, 0 mismatch, -1 error.
+ */
+CXX_C_API int turbo_dsv_filter_check_values(turbo_dsv_filter_t *filter,
+                                            const tstr_v *fields,
+                                            size_t field_count);
+
+/**
  * @brief Run filter across rows and emit matched rendered rows.
- * @param filter DSV filter handle.
+ * @param filter CSVPath filter handle.
  * @param callback Callback for each matched row.
  * @param user_data User context passed to callback.
  */

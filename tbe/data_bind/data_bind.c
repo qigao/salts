@@ -14,6 +14,7 @@
 #include "tbe_wire.h"
 #include "turbo_fs.h"
 #include "turbo_parser.h"
+#include "turbo_str.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -71,6 +72,7 @@ typedef struct mir_cache_entry {
 /* Small object pool for frequently allocated DataBindValue nodes */
 #define VALUE_POOL_SIZE 64
 #define VALUE_POOL_ENABLED 1
+#define DATA_BIND_FILE_STREAM_CHUNK_SIZE 65536
 
 typedef struct value_pool {
   DataBindValue *free_list;
@@ -126,6 +128,78 @@ struct DataBind {
   data_bind_runtime_api_t api;
   char schema_hash[65];  /* SHA-256 hash of schema for caching */
   int is_cloned;         /* Whether this codec shares MIR context with another */
+};
+
+typedef struct data_bind_json_stream_frame {
+  json_value_t *value;
+  char *pending_key;
+  int is_object;
+} data_bind_json_stream_frame_t;
+
+struct data_bind_stream_t {
+  DataBind *codec;
+  char *type_name;
+  char *path_or_expr;
+  DataBindValue **out_value;
+  DataBindError *error;
+  DataBindRecordFn record_callback;
+  void *record_callback_user;
+  uint64_t record_callback_index;
+  DataBindStatus (*feed_fn)(data_bind_stream_t *parser, const char *data,
+                            size_t len, DataBindError *error);
+  DataBindStatus (*finish_fn)(data_bind_stream_t *parser, DataBindValue **out_value,
+                              DataBindError *error);
+  DataBindStatus (*bind_fn)(DataBind *codec, const char *type_name,
+                            const char *text, size_t len, const char *path,
+                            DataBindValue **out_value, DataBindError *error);
+  char *buffer;
+  size_t size;
+  size_t capacity;
+  char *csv_header;
+  size_t csv_header_len;
+  char *csv_record;
+  size_t csv_record_len;
+  size_t csv_record_capacity;
+  char *csv_field;
+  size_t csv_field_len;
+  size_t csv_field_capacity;
+  tstr_v *csv_fields;
+  char **csv_field_storage;
+  size_t csv_field_count;
+  size_t csv_fields_capacity;
+  turbo_csv_doc_t *csv_filter_doc;
+  turbo_dsv_filter_t *csv_filter;
+  DataBindValue *csv_values;
+  DataBindValue *stream_values;
+  turbo_json_sax_parser_t *json_sax;
+  turbo_xml_sax_parser_t *xml_sax;
+  data_bind_json_stream_frame_t *json_frames;
+  size_t json_frame_count;
+  size_t json_frame_capacity;
+  size_t json_sax_depth;
+  char *xml_stream_target;
+  tstr_t xml_capture;
+  size_t xml_capture_depth;
+  size_t csv_data_row;
+  int csv_header_seen;
+  int csv_in_quotes;
+  int csv_quote_pending;
+  int csv_skip_next_lf;
+  int csv_failed;
+  int sax_failed;
+  int is_csv;
+  int json_stream_candidate;
+  int json_stream_active;
+  int json_stream_done;
+  int json_root_seen;
+  int xml_stream_candidate;
+  int xml_capture_active;
+  int xml_open_start;
+  char stream_error[256];
+  int finished;
+  int started;
+  int record_callback_stopped;
+  int record_callback_failed;
 };
 
 typedef struct data_bind_value_field {
@@ -5265,6 +5339,1517 @@ DataBindStatus data_bind_parse(DataBind *codec, const char *type_name, const uin
                         "Type not found: %s", type_name);
 }
 
+static int data_bind_stream_json_path_is_root_array(const char *path) {
+  return path == NULL || path[0] == '\0' || strcmp(path, "$[*]") == 0;
+}
+
+static int data_bind_stream_xml_name_char(char ch) {
+  return isalnum((unsigned char)ch) || ch == '_' || ch == '-' || ch == ':' || ch == '.';
+}
+
+static int data_bind_stream_xml_path_is_simple_descendant(const char *path) {
+  const char *name;
+  size_t len;
+  size_t i;
+  if (path == NULL || path[0] != '/' || path[1] != '/' || path[2] == '\0') return 0;
+  name = path + 2;
+  len = strlen(name);
+  for (i = 0; i < len; ++i) {
+    if (!data_bind_stream_xml_name_char(name[i])) return 0;
+  }
+  return 1;
+}
+
+static char *data_bind_stream_xml_target_from_path(const char *path) {
+  const char *name;
+  size_t len;
+  char *target;
+  if (!data_bind_stream_xml_path_is_simple_descendant(path)) return NULL;
+  name = path + 2;
+  len = strlen(name);
+  target = (char *)malloc(len + 1);
+  if (target == NULL) return NULL;
+  memcpy(target, name, len + 1);
+  return target;
+}
+
+static int data_bind_stream_xml_can_bind_incrementally(const char *path) {
+  return data_bind_stream_xml_path_is_simple_descendant(path);
+}
+
+static void data_bind_stream_error_msg(data_bind_stream_t *parser, const char *message) {
+  if (parser == NULL || message == NULL) return;
+  snprintf(parser->stream_error, sizeof(parser->stream_error), "%s", message);
+}
+
+static int data_bind_stream_emit_record(data_bind_stream_t *parser,
+                                        const DataBindValue *record) {
+  DataBindRecordAction action;
+  if (parser == NULL || record == NULL || parser->record_callback == NULL ||
+      parser->record_callback_stopped) {
+    return 0;
+  }
+  action = parser->record_callback(parser->record_callback_user, record,
+                                   parser->record_callback_index++);
+  if (action == DATA_BIND_RECORD_CONTINUE) return 0;
+  if (action == DATA_BIND_RECORD_STOP) {
+    parser->record_callback_stopped = 1;
+    return 0;
+  }
+  parser->record_callback_failed = 1;
+  data_bind_stream_error_msg(parser, "Record callback failed");
+  return -1;
+}
+
+static DataBindStatus data_bind_stream_emit_result(data_bind_stream_t *parser,
+                                                   const DataBindValue *value,
+                                                   DataBindError *error) {
+  size_t i;
+  if (parser == NULL || value == NULL || parser->record_callback == NULL ||
+      parser->record_callback_stopped) {
+    return DATA_BIND_OK;
+  }
+  if (data_bind_value_kind(value) == DATA_BIND_VALUE_LIST) {
+    for (i = 0; i < data_bind_value_count(value); ++i) {
+      if (data_bind_stream_emit_record(parser, data_bind_value_at(value, i)) != 0) {
+        return db_error_set(error, DATA_BIND_ERR_RUNTIME, "record_callback", -1, -1,
+                            "Record callback failed at index %llu",
+                            (unsigned long long)(parser->record_callback_index - 1));
+      }
+      if (parser->record_callback_stopped) break;
+    }
+  } else if (data_bind_stream_emit_record(parser, value) != 0) {
+    return db_error_set(error, DATA_BIND_ERR_RUNTIME, "record_callback", -1, -1,
+                        "Record callback failed at index %llu",
+                        (unsigned long long)(parser->record_callback_index - 1));
+  }
+  return DATA_BIND_OK;
+}
+
+static char *data_bind_stream_copy_slice(const char *text, size_t len) {
+  char *copy = (char *)malloc(len + 1);
+  if (copy == NULL) return NULL;
+  if (len > 0) memcpy(copy, text, len);
+  copy[len] = '\0';
+  return copy;
+}
+
+static int data_bind_stream_values_push(data_bind_stream_t *parser, DataBindValue *item,
+                                        const char *message) {
+  if (parser == NULL || parser->stream_values == NULL || item == NULL) {
+    data_bind_value_free(item);
+    data_bind_stream_error_msg(parser, message);
+    return -1;
+  }
+  if (data_bind_stream_emit_record(parser, item) != 0) {
+    data_bind_value_free(item);
+    return -1;
+  }
+  if (!dbv_array_push(&parser->stream_values->data.array_val, item)) {
+    data_bind_value_free(item);
+    data_bind_stream_error_msg(parser, "Out of memory appending streamed bind result");
+    return -1;
+  }
+  return 0;
+}
+
+static int data_bind_stream_json_bind_value(data_bind_stream_t *parser, json_value_t *value) {
+  DataBindValue *item;
+  void *ptr = value;
+  if (parser == NULL || value == NULL) return -1;
+  item = bind_json_typed_value(parser->codec->schema_root, parser->type_name, value);
+  turbo_free_json(&ptr);
+  if (item == NULL) {
+    data_bind_stream_error_msg(parser, "JSON stream item bind failed");
+    return -1;
+  }
+  return data_bind_stream_values_push(parser, item, "JSON stream item append failed");
+}
+
+static int data_bind_stream_json_frame_reserve(data_bind_stream_t *parser) {
+  data_bind_json_stream_frame_t *grown;
+  size_t next_capacity;
+  if (parser->json_frame_count < parser->json_frame_capacity) return 0;
+  next_capacity = parser->json_frame_capacity == 0 ? 8 : parser->json_frame_capacity * 2;
+  if (next_capacity <= parser->json_frame_capacity) {
+    data_bind_stream_error_msg(parser, "JSON stream nesting too deep");
+    return -1;
+  }
+  grown = (data_bind_json_stream_frame_t *)realloc(
+      parser->json_frames, next_capacity * sizeof(*grown));
+  if (grown == NULL) {
+    data_bind_stream_error_msg(parser, "Out of memory growing JSON stream stack");
+    return -1;
+  }
+  parser->json_frames = grown;
+  parser->json_frame_capacity = next_capacity;
+  return 0;
+}
+
+static int data_bind_stream_json_attach_value(data_bind_stream_t *parser,
+                                              json_value_t *value) {
+  data_bind_json_stream_frame_t *parent;
+  if (parser->json_frame_count == 0) return 0;
+  parent = &parser->json_frames[parser->json_frame_count - 1];
+  if (parent->is_object) {
+    if (parent->pending_key == NULL) {
+      data_bind_stream_error_msg(parser, "JSON stream object value without key");
+      return -1;
+    }
+    turbo_json_object_add(parent->value, parent->pending_key, value);
+    free(parent->pending_key);
+    parent->pending_key = NULL;
+  } else {
+    turbo_json_array_add(parent->value, value);
+  }
+  return 0;
+}
+
+static int data_bind_stream_json_scalar(data_bind_stream_t *parser, json_value_t *value) {
+  if (value == NULL) {
+    data_bind_stream_error_msg(parser, "Out of memory creating JSON stream value");
+    return -1;
+  }
+  if (!parser->json_stream_active || parser->json_sax_depth == 0) {
+    void *ptr = value;
+    turbo_free_json(&ptr);
+    return 0;
+  }
+  if (parser->json_sax_depth == 1 || parser->json_frame_count > 0) {
+    if (data_bind_stream_json_attach_value(parser, value) != 0) {
+      void *ptr = value;
+      turbo_free_json(&ptr);
+      return -1;
+    }
+    if (parser->json_frame_count == 0) {
+      return data_bind_stream_json_bind_value(parser, value);
+    }
+  } else {
+    void *ptr = value;
+    turbo_free_json(&ptr);
+  }
+  return 0;
+}
+
+static int data_bind_stream_json_container_start(data_bind_stream_t *parser,
+                                                 json_value_t *value, int is_object) {
+  data_bind_json_stream_frame_t *frame;
+  if (value == NULL) {
+    data_bind_stream_error_msg(parser, "Out of memory creating JSON stream value");
+    return -1;
+  }
+  if (!parser->json_stream_active || parser->json_sax_depth == 0) {
+    void *ptr = value;
+    turbo_free_json(&ptr);
+    return 0;
+  }
+  if (parser->json_sax_depth != 1 && parser->json_frame_count == 0) {
+    void *ptr = value;
+    turbo_free_json(&ptr);
+    return 0;
+  }
+  if (data_bind_stream_json_attach_value(parser, value) != 0 ||
+      data_bind_stream_json_frame_reserve(parser) != 0) {
+    void *ptr = value;
+    turbo_free_json(&ptr);
+    return -1;
+  }
+  frame = &parser->json_frames[parser->json_frame_count++];
+  frame->value = value;
+  frame->pending_key = NULL;
+  frame->is_object = is_object;
+  return 0;
+}
+
+static int data_bind_stream_json_container_end(data_bind_stream_t *parser, int is_object) {
+  data_bind_json_stream_frame_t frame;
+  if (parser == NULL || !parser->json_stream_active || parser->json_frame_count == 0)
+    return 0;
+  frame = parser->json_frames[parser->json_frame_count - 1];
+  if (frame.is_object != is_object) {
+    data_bind_stream_error_msg(parser, "JSON stream container mismatch");
+    return -1;
+  }
+  free(frame.pending_key);
+  parser->json_frames[--parser->json_frame_count].pending_key = NULL;
+  if (parser->json_frame_count == 0) {
+    return data_bind_stream_json_bind_value(parser, frame.value);
+  }
+  return 0;
+}
+
+static int data_bind_stream_json_on_null(void *ctx) {
+  return data_bind_stream_json_scalar((data_bind_stream_t *)ctx, turbo_json_create_null());
+}
+
+static int data_bind_stream_json_on_bool(void *ctx, bool val) {
+  return data_bind_stream_json_scalar((data_bind_stream_t *)ctx, turbo_json_create_bool(val));
+}
+
+static int data_bind_stream_json_on_number(void *ctx, double val) {
+  return data_bind_stream_json_scalar((data_bind_stream_t *)ctx, turbo_json_create_number(val));
+}
+
+static int data_bind_stream_json_on_string(void *ctx, const char *val, size_t len) {
+  char *copy = data_bind_stream_copy_slice(val, len);
+  json_value_t *value;
+  if (copy == NULL) {
+    data_bind_stream_error_msg((data_bind_stream_t *)ctx, "Out of memory copying JSON string");
+    return -1;
+  }
+  value = turbo_json_create_string(copy);
+  free(copy);
+  return data_bind_stream_json_scalar((data_bind_stream_t *)ctx, value);
+}
+
+static int data_bind_stream_json_on_object_key(void *ctx, const char *key, size_t len) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  data_bind_json_stream_frame_t *frame;
+  if (parser == NULL || !parser->json_stream_active || parser->json_frame_count == 0) return 0;
+  frame = &parser->json_frames[parser->json_frame_count - 1];
+  if (!frame->is_object) return 0;
+  free(frame->pending_key);
+  frame->pending_key = data_bind_stream_copy_slice(key, len);
+  if (frame->pending_key == NULL) {
+    data_bind_stream_error_msg(parser, "Out of memory copying JSON object key");
+    return -1;
+  }
+  return 0;
+}
+
+static int data_bind_stream_json_on_object_start(void *ctx) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  int rc = 0;
+  if (parser == NULL) return -1;
+  if (parser->json_sax_depth == 0) {
+    parser->json_root_seen = 1;
+  } else {
+    rc = data_bind_stream_json_container_start(parser, turbo_json_create_object(), 1);
+  }
+  parser->json_sax_depth++;
+  return rc;
+}
+
+static int data_bind_stream_json_on_object_end(void *ctx) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  int rc;
+  if (parser == NULL || parser->json_sax_depth == 0) return -1;
+  rc = data_bind_stream_json_container_end(parser, 1);
+  parser->json_sax_depth--;
+  return rc;
+}
+
+static int data_bind_stream_json_on_array_start(void *ctx) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  int rc = 0;
+  if (parser == NULL) return -1;
+  if (parser->json_sax_depth == 0) {
+    parser->json_root_seen = 1;
+    if (parser->json_stream_candidate) {
+      parser->json_stream_active = 1;
+      free(parser->buffer);
+      parser->buffer = NULL;
+      parser->size = 0;
+      parser->capacity = 0;
+    }
+  } else {
+    rc = data_bind_stream_json_container_start(parser, turbo_json_create_array(), 0);
+  }
+  parser->json_sax_depth++;
+  return rc;
+}
+
+static int data_bind_stream_json_on_array_end(void *ctx) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  int rc = 0;
+  if (parser == NULL || parser->json_sax_depth == 0) return -1;
+  if (parser->json_stream_active && parser->json_sax_depth == 1) {
+    parser->json_stream_done = 1;
+  } else {
+    rc = data_bind_stream_json_container_end(parser, 0);
+  }
+  parser->json_sax_depth--;
+  return rc;
+}
+
+static int data_bind_stream_xml_append(data_bind_stream_t *parser,
+                                       const char *text, size_t len) {
+  tstr_t next;
+  if (parser == NULL || !parser->xml_capture_active || len == 0) return 0;
+  next = tstr_cat_len(parser->xml_capture, text, len);
+  if (next == NULL) {
+    data_bind_stream_error_msg(parser, "Out of memory extending XML stream item");
+    return -1;
+  }
+  parser->xml_capture = next;
+  return 0;
+}
+
+static int data_bind_stream_xml_append_char(data_bind_stream_t *parser, char ch) {
+  return data_bind_stream_xml_append(parser, &ch, 1);
+}
+
+static int data_bind_stream_xml_close_start(data_bind_stream_t *parser) {
+  if (parser != NULL && parser->xml_capture_active && parser->xml_open_start) {
+    if (data_bind_stream_xml_append_char(parser, '>') != 0) return -1;
+    parser->xml_open_start = 0;
+  }
+  return 0;
+}
+
+static int data_bind_stream_xml_bind_capture(data_bind_stream_t *parser) {
+  turbo_xml_doc_t *doc = NULL;
+  DataBindValue *item;
+  void *ptr;
+  if (parser == NULL || parser->xml_capture == NULL) return -1;
+  if (turbo_parse_xml((const uint8_t *)parser->xml_capture,
+                      tstr_len(parser->xml_capture), &doc) != 0 ||
+      doc == NULL) {
+    data_bind_stream_error_msg(parser, "XML stream item parse failed");
+    return -1;
+  }
+  item = bind_xml_typed_value(parser->codec->schema_root, parser->type_name, doc, "/*");
+  ptr = doc;
+  turbo_free_xml(&ptr);
+  if (item == NULL) {
+    data_bind_stream_error_msg(parser, "XML stream item bind failed");
+    return -1;
+  }
+  return data_bind_stream_values_push(parser, item, "XML stream item append failed");
+}
+
+static int data_bind_stream_xml_name_eq(const char *left, size_t left_len,
+                                        const char *right) {
+  return right != NULL && strlen(right) == left_len && memcmp(left, right, left_len) == 0;
+}
+
+static int data_bind_stream_xml_on_element_start(void *ctx, const char *name,
+                                                 size_t name_len) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  if (parser == NULL || !parser->xml_stream_candidate) return 0;
+  if (!parser->xml_capture_active &&
+      !data_bind_stream_xml_name_eq(name, name_len, parser->xml_stream_target)) {
+    return 0;
+  }
+  if (!parser->xml_capture_active) {
+    tstr_clear(parser->xml_capture);
+    parser->xml_capture_active = 1;
+    parser->xml_capture_depth = 0;
+  } else if (data_bind_stream_xml_close_start(parser) != 0) {
+    return -1;
+  }
+  if (data_bind_stream_xml_append_char(parser, '<') != 0 ||
+      data_bind_stream_xml_append(parser, name, name_len) != 0) {
+    return -1;
+  }
+  parser->xml_open_start = 1;
+  parser->xml_capture_depth++;
+  return 0;
+}
+
+static int data_bind_stream_xml_on_attribute(void *ctx, const char *name, size_t name_len,
+                                             const char *value, size_t value_len) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  if (parser == NULL || !parser->xml_capture_active || !parser->xml_open_start) return 0;
+  if (data_bind_stream_xml_append_char(parser, ' ') != 0 ||
+      data_bind_stream_xml_append(parser, name, name_len) != 0 ||
+      data_bind_stream_xml_append(parser, "=\"", 2) != 0 ||
+      data_bind_stream_xml_append(parser, value, value_len) != 0 ||
+      data_bind_stream_xml_append_char(parser, '"') != 0) {
+    return -1;
+  }
+  return 0;
+}
+
+static int data_bind_stream_xml_on_element_end(void *ctx, const char *name,
+                                               size_t name_len) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  int rc;
+  if (parser == NULL || !parser->xml_capture_active) return 0;
+  if (data_bind_stream_xml_close_start(parser) != 0 ||
+      data_bind_stream_xml_append(parser, "</", 2) != 0 ||
+      data_bind_stream_xml_append(parser, name, name_len) != 0 ||
+      data_bind_stream_xml_append_char(parser, '>') != 0) {
+    return -1;
+  }
+  if (parser->xml_capture_depth > 0) parser->xml_capture_depth--;
+  if (parser->xml_capture_depth == 0) {
+    rc = data_bind_stream_xml_bind_capture(parser);
+    parser->xml_capture_active = 0;
+    parser->xml_open_start = 0;
+    tstr_clear(parser->xml_capture);
+    return rc;
+  }
+  return 0;
+}
+
+static int data_bind_stream_xml_on_text(void *ctx, const char *text, size_t text_len) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  if (parser == NULL || !parser->xml_capture_active) return 0;
+  if (data_bind_stream_xml_close_start(parser) != 0) return -1;
+  return data_bind_stream_xml_append(parser, text, text_len);
+}
+
+static int data_bind_stream_xml_on_comment(void *ctx, const char *text, size_t text_len) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  if (parser == NULL || !parser->xml_capture_active) return 0;
+  if (data_bind_stream_xml_close_start(parser) != 0 ||
+      data_bind_stream_xml_append(parser, "<!--", 4) != 0 ||
+      data_bind_stream_xml_append(parser, text, text_len) != 0 ||
+      data_bind_stream_xml_append(parser, "-->", 3) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
+static int data_bind_stream_xml_on_cdata(void *ctx, const char *text, size_t text_len) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  if (parser == NULL || !parser->xml_capture_active) return 0;
+  if (data_bind_stream_xml_close_start(parser) != 0 ||
+      data_bind_stream_xml_append(parser, "<![CDATA[", 9) != 0 ||
+      data_bind_stream_xml_append(parser, text, text_len) != 0 ||
+      data_bind_stream_xml_append(parser, "]]>", 3) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
+static const turbo_json_sax_handler_t DATA_BIND_JSON_STREAM_HANDLER = {
+    data_bind_stream_json_on_null,
+    data_bind_stream_json_on_bool,
+    data_bind_stream_json_on_number,
+    data_bind_stream_json_on_string,
+    data_bind_stream_json_on_object_start,
+    data_bind_stream_json_on_object_key,
+    data_bind_stream_json_on_object_end,
+    data_bind_stream_json_on_array_start,
+    data_bind_stream_json_on_array_end};
+
+static const turbo_xml_sax_handler_t DATA_BIND_XML_STREAM_HANDLER = {
+    NULL,
+    NULL,
+    data_bind_stream_xml_on_element_start,
+    data_bind_stream_xml_on_attribute,
+    data_bind_stream_xml_on_element_end,
+    data_bind_stream_xml_on_text,
+    data_bind_stream_xml_on_comment,
+    data_bind_stream_xml_on_cdata,
+    NULL,
+    NULL};
+
+static const turbo_json_sax_handler_t DATA_BIND_JSON_SAX_VALIDATE_HANDLER = {0};
+static const turbo_xml_sax_handler_t DATA_BIND_XML_SAX_VALIDATE_HANDLER = {0};
+
+static DataBindStatus data_bind_stream_sax_error(data_bind_stream_t *parser,
+                                                 DataBindError *error,
+                                                 const char *operation) {
+  const char *message = "Stream parse failed";
+  const char *path = "stream";
+  if (parser != NULL) {
+    if (parser->stream_error[0] != '\0') {
+      message = parser->stream_error;
+    } else if (parser->json_sax != NULL) {
+      message = turbo_json_sax_parser_error(parser->json_sax);
+      path = "json";
+    } else if (parser->xml_sax != NULL) {
+      message = turbo_xml_sax_parser_error(parser->xml_sax);
+      path = "xml";
+    }
+    parser->sax_failed = 1;
+  }
+  if (message == NULL || message[0] == '\0') message = "Stream parse failed";
+  if (parser != NULL && parser->record_callback_failed) {
+    return db_error_set(error, DATA_BIND_ERR_RUNTIME, "record_callback", -1, -1,
+                        "%s", message);
+  }
+  return db_error_set(error, DATA_BIND_ERR_PARSE, path, -1, -1,
+                      "%s: %s", operation, message);
+}
+
+static DataBindStatus data_bind_stream_sax_feed(data_bind_stream_t *parser,
+                                                const char *data, size_t len,
+                                                DataBindError *error) {
+  if (parser == NULL || parser->sax_failed) {
+    return data_bind_stream_sax_error(parser, error, "stream feed");
+  }
+  if (parser->json_sax != NULL) {
+    if (turbo_json_sax_parser_feed(parser->json_sax, data, len) != 0) {
+      return data_bind_stream_sax_error(parser, error, "JSON stream feed");
+    }
+  } else if (parser->xml_sax != NULL) {
+    if (turbo_xml_sax_parser_feed(parser->xml_sax, data, len) != 0) {
+      return data_bind_stream_sax_error(parser, error, "XML stream feed");
+    }
+  }
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus data_bind_stream_sax_finish(data_bind_stream_t *parser,
+                                                  DataBindError *error) {
+  if (parser == NULL || parser->sax_failed) {
+    return data_bind_stream_sax_error(parser, error, "stream finish");
+  }
+  if (parser->json_sax != NULL) {
+    if (turbo_json_sax_parser_finish(parser->json_sax) != 0) {
+      return data_bind_stream_sax_error(parser, error, "JSON stream finish");
+    }
+  } else if (parser->xml_sax != NULL) {
+    if (turbo_xml_sax_parser_finish(parser->xml_sax) != 0) {
+      return data_bind_stream_sax_error(parser, error, "XML stream finish");
+    }
+  }
+  return DATA_BIND_OK;
+}
+
+static int data_bind_stream_csv_record_append(data_bind_stream_t *parser, char ch) {
+  char *grown;
+  size_t next_capacity;
+  if (parser == NULL) return 0;
+  if (parser->csv_record_len + 1 >= parser->csv_record_capacity) {
+    next_capacity = parser->csv_record_capacity == 0 ? 256 : parser->csv_record_capacity * 2;
+    if (next_capacity <= parser->csv_record_capacity) return 0;
+    grown = (char *)realloc(parser->csv_record, next_capacity);
+    if (grown == NULL) return 0;
+    parser->csv_record = grown;
+    parser->csv_record_capacity = next_capacity;
+  }
+  parser->csv_record[parser->csv_record_len++] = ch;
+  parser->csv_record[parser->csv_record_len] = '\0';
+  return 1;
+}
+
+static int data_bind_stream_csv_field_append(data_bind_stream_t *parser, char ch) {
+  char *grown;
+  size_t next_capacity;
+  if (parser == NULL) return 0;
+  if (parser->csv_field_len + 1 >= parser->csv_field_capacity) {
+    next_capacity = parser->csv_field_capacity == 0 ? 128 : parser->csv_field_capacity * 2;
+    if (next_capacity <= parser->csv_field_capacity) return 0;
+    grown = (char *)realloc(parser->csv_field, next_capacity);
+    if (grown == NULL) return 0;
+    parser->csv_field = grown;
+    parser->csv_field_capacity = next_capacity;
+  }
+  parser->csv_field[parser->csv_field_len++] = ch;
+  parser->csv_field[parser->csv_field_len] = '\0';
+  return 1;
+}
+
+static void data_bind_stream_csv_clear_fields(data_bind_stream_t *parser) {
+  size_t i;
+  if (parser == NULL) return;
+  for (i = 0; i < parser->csv_field_count; i++) {
+    free(parser->csv_field_storage[i]);
+    parser->csv_field_storage[i] = NULL;
+  }
+  parser->csv_field_count = 0;
+  parser->csv_field_len = 0;
+  if (parser->csv_field != NULL) parser->csv_field[0] = '\0';
+}
+
+static int data_bind_stream_csv_finish_field(data_bind_stream_t *parser) {
+  char **grown_storage;
+  tstr_v *grown_fields;
+  char *field_copy;
+  size_t next_capacity;
+
+  if (parser == NULL) return 0;
+  if (parser->csv_field_count >= parser->csv_fields_capacity) {
+    next_capacity = parser->csv_fields_capacity == 0 ? 8 : parser->csv_fields_capacity * 2;
+    if (next_capacity <= parser->csv_fields_capacity) return 0;
+    grown_fields = (tstr_v *)realloc(parser->csv_fields, next_capacity * sizeof(*grown_fields));
+    if (grown_fields == NULL) return 0;
+    parser->csv_fields = grown_fields;
+    grown_storage = (char **)realloc(parser->csv_field_storage,
+                                     next_capacity * sizeof(*grown_storage));
+    if (grown_storage == NULL) return 0;
+    parser->csv_field_storage = grown_storage;
+    parser->csv_fields_capacity = next_capacity;
+  }
+
+  field_copy = (char *)malloc(parser->csv_field_len + 1);
+  if (field_copy == NULL) return 0;
+  if (parser->csv_field_len > 0) memcpy(field_copy, parser->csv_field, parser->csv_field_len);
+  field_copy[parser->csv_field_len] = '\0';
+  parser->csv_field_storage[parser->csv_field_count] = field_copy;
+  parser->csv_fields[parser->csv_field_count] =
+      tstr_v_from_buf(field_copy, parser->csv_field_len);
+  parser->csv_field_count++;
+  parser->csv_field_len = 0;
+  if (parser->csv_field != NULL) parser->csv_field[0] = '\0';
+  return 1;
+}
+
+static DataBindStatus data_bind_stream_csv_compile_filter(data_bind_stream_t *parser,
+                                                          DataBindError *error) {
+  char *header_doc = NULL;
+  size_t header_doc_len;
+  turbo_csv_options_t opts = {false, ',', '"', true};
+  int compiled;
+
+  if (parser == NULL || parser->path_or_expr == NULL || parser->csv_filter != NULL)
+    return DATA_BIND_OK;
+
+  header_doc_len = parser->csv_header_len + 1;
+  header_doc = (char *)malloc(header_doc_len + 1);
+  if (header_doc == NULL) {
+    parser->csv_failed = 1;
+    return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                        -1, -1, "Out of memory building CSVPath stream header");
+  }
+  memcpy(header_doc, parser->csv_header, parser->csv_header_len);
+  header_doc[parser->csv_header_len] = '\n';
+  header_doc[header_doc_len] = '\0';
+
+  if (turbo_parse_csv_opts((const uint8_t *)header_doc, header_doc_len, &opts,
+                           &parser->csv_filter_doc) != 0) {
+    free(header_doc);
+    parser->csv_failed = 1;
+    return db_error_set(error, DATA_BIND_ERR_PARSE, "csv", -1, -1,
+                        "Failed to parse CSVPath stream header");
+  }
+  free(header_doc);
+  if (parser->csv_filter_doc == NULL) {
+    parser->csv_failed = 1;
+    return db_error_set(error, DATA_BIND_ERR_PARSE, "csv", -1, -1,
+                        "Failed to parse CSVPath stream header");
+  }
+
+  parser->csv_filter = turbo_dsv_filter_create(parser->csv_filter_doc, 0);
+  compiled = parser->csv_filter != NULL &&
+             turbo_dsv_filter_compile(parser->csv_filter, parser->path_or_expr);
+  if (!compiled) {
+    const char *filter_error = parser->csv_filter != NULL
+                                   ? turbo_dsv_filter_error(parser->csv_filter)
+                                   : "Failed to create CSVPath filter";
+    parser->csv_failed = 1;
+    return db_error_set(error, DATA_BIND_ERR_PARSE, "csvpath", -1, -1, "%s", filter_error);
+  }
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus data_bind_stream_csv_process_record(data_bind_stream_t *parser,
+                                                          DataBindError *error) {
+  char *doc_text = NULL;
+  size_t doc_len;
+  DataBindValue *value = NULL;
+  DataBindStatus status;
+  int match;
+  if (parser == NULL) return DATA_BIND_ERR_INVALID_ARG;
+  if (parser->csv_record_len == 0 && parser->csv_header_seen) {
+    data_bind_stream_csv_clear_fields(parser);
+    return DATA_BIND_OK;
+  }
+
+  if (!parser->csv_header_seen) {
+    parser->csv_header = (char *)malloc(parser->csv_record_len + 1);
+    if (parser->csv_header == NULL) {
+      parser->csv_failed = 1;
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                          -1, -1, "Out of memory storing CSV stream header");
+    }
+    memcpy(parser->csv_header, parser->csv_record, parser->csv_record_len);
+    parser->csv_header[parser->csv_record_len] = '\0';
+    parser->csv_header_len = parser->csv_record_len;
+    parser->csv_header_seen = 1;
+    parser->csv_record_len = 0;
+    if (parser->csv_record != NULL) parser->csv_record[0] = '\0';
+    status = data_bind_stream_csv_compile_filter(parser, error);
+    data_bind_stream_csv_clear_fields(parser);
+    return status;
+  }
+
+  if (parser->path_or_expr != NULL) {
+    if (parser->csv_filter == NULL) {
+      status = data_bind_stream_csv_compile_filter(parser, error);
+      if (status != DATA_BIND_OK) return status;
+    }
+    match = turbo_dsv_filter_check_values(parser->csv_filter, parser->csv_fields,
+                                          parser->csv_field_count);
+    if (match < 0) {
+      parser->csv_failed = 1;
+      return db_error_set(error, DATA_BIND_ERR_PARSE, "csvpath", -1, -1,
+                          "CSVPath stream row filter evaluation failed");
+    }
+    if (match == 0) {
+      data_bind_stream_csv_clear_fields(parser);
+      parser->csv_record_len = 0;
+      if (parser->csv_record != NULL) parser->csv_record[0] = '\0';
+      parser->csv_data_row++;
+      return DATA_BIND_OK;
+    }
+  }
+
+  doc_len = parser->csv_header_len + 1 + parser->csv_record_len + 1;
+  doc_text = (char *)malloc(doc_len + 1);
+  if (doc_text == NULL) {
+    parser->csv_failed = 1;
+    return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                        -1, -1, "Out of memory building CSV stream row");
+  }
+  memcpy(doc_text, parser->csv_header, parser->csv_header_len);
+  doc_text[parser->csv_header_len] = '\n';
+  memcpy(doc_text + parser->csv_header_len + 1, parser->csv_record, parser->csv_record_len);
+  doc_text[doc_len - 1] = '\n';
+  doc_text[doc_len] = '\0';
+
+  status = data_bind_parse_csv(parser->codec, parser->type_name, doc_text, doc_len, 0,
+                               &value, error);
+  if (status == DATA_BIND_OK && value != NULL) {
+    if (data_bind_stream_emit_record(parser, value) != 0) {
+      data_bind_value_free(value);
+      free(doc_text);
+      parser->csv_failed = 1;
+      return db_error_set(error, DATA_BIND_ERR_RUNTIME, "record_callback", -1, -1,
+                          "Record callback failed at CSV row %llu",
+                          (unsigned long long)parser->csv_data_row);
+    }
+    if (!dbv_array_push(&parser->csv_values->data.array_val, value)) {
+      data_bind_value_free(value);
+      free(doc_text);
+      parser->csv_failed = 1;
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                          -1, -1, "Out of memory appending CSV stream row");
+    }
+  }
+
+  free(doc_text);
+  data_bind_stream_csv_clear_fields(parser);
+  parser->csv_record_len = 0;
+  if (parser->csv_record != NULL) parser->csv_record[0] = '\0';
+  parser->csv_data_row++;
+  if (status != DATA_BIND_OK) parser->csv_failed = 1;
+  return status;
+}
+
+static DataBindStatus data_bind_stream_csv_feed(data_bind_stream_t *parser, const char *data,
+                                                size_t len, DataBindError *error) {
+  size_t i;
+  DataBindStatus status = DATA_BIND_OK;
+  if (parser == NULL || data == NULL) return DATA_BIND_ERR_INVALID_ARG;
+
+  for (i = 0; i < len; i++) {
+    char ch = data[i];
+reprocess:
+    if (parser->csv_skip_next_lf) {
+      parser->csv_skip_next_lf = 0;
+      if (ch == '\n') continue;
+    }
+    if (parser->csv_quote_pending) {
+      parser->csv_quote_pending = 0;
+      if (ch == '"') {
+        if (!data_bind_stream_csv_record_append(parser, ch)) {
+          parser->csv_failed = 1;
+          return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                              -1, -1, "Out of memory extending CSV stream record");
+        }
+        if (!data_bind_stream_csv_field_append(parser, ch)) {
+          parser->csv_failed = 1;
+          return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                              -1, -1, "Out of memory extending CSV stream field");
+        }
+        continue;
+      }
+      parser->csv_in_quotes = 0;
+      goto reprocess;
+    }
+
+    if (parser->csv_in_quotes) {
+      if (!data_bind_stream_csv_record_append(parser, ch)) {
+        parser->csv_failed = 1;
+        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                            -1, -1, "Out of memory extending CSV stream record");
+      }
+      if (ch == '"') {
+        parser->csv_quote_pending = 1;
+      } else if (!data_bind_stream_csv_field_append(parser, ch)) {
+        parser->csv_failed = 1;
+        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                            -1, -1, "Out of memory extending CSV stream field");
+      }
+      continue;
+    }
+
+    if (ch == '"') {
+      parser->csv_in_quotes = 1;
+      if (!data_bind_stream_csv_record_append(parser, ch)) {
+        parser->csv_failed = 1;
+        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                            -1, -1, "Out of memory extending CSV stream record");
+      }
+      continue;
+    }
+    if (ch == ',') {
+      if (!data_bind_stream_csv_record_append(parser, ch) ||
+          !data_bind_stream_csv_finish_field(parser)) {
+        parser->csv_failed = 1;
+        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                            -1, -1, "Out of memory extending CSV stream field list");
+      }
+      continue;
+    }
+    if (ch == '\r' || ch == '\n') {
+      if (!data_bind_stream_csv_finish_field(parser)) {
+        parser->csv_failed = 1;
+        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                            -1, -1, "Out of memory extending CSV stream field list");
+      }
+      status = data_bind_stream_csv_process_record(parser, error);
+      if (status != DATA_BIND_OK) return status;
+      if (ch == '\r') parser->csv_skip_next_lf = 1;
+      continue;
+    }
+    if (!data_bind_stream_csv_record_append(parser, ch)) {
+      parser->csv_failed = 1;
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                          -1, -1, "Out of memory extending CSV stream record");
+    }
+    if (!data_bind_stream_csv_field_append(parser, ch)) {
+      parser->csv_failed = 1;
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
+                          -1, -1, "Out of memory extending CSV stream field");
+    }
+  }
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus data_bind_stream_csv_finish(data_bind_stream_t *parser,
+                                                  DataBindValue **out_value,
+                                                  DataBindError *error) {
+  DataBindStatus status;
+  if (parser == NULL || out_value == NULL) {
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish",
+                        -1, -1, "Invalid CSV stream finish arguments");
+  }
+  if (parser->csv_quote_pending) {
+    parser->csv_quote_pending = 0;
+    parser->csv_in_quotes = 0;
+  }
+  if (parser->csv_in_quotes) {
+    parser->csv_failed = 1;
+    return db_error_set(error, DATA_BIND_ERR_PARSE, "csv", -1, -1,
+                        "Unterminated quoted CSV field");
+  }
+  if (parser->csv_record_len > 0 || parser->csv_field_len > 0 ||
+      parser->csv_field_count > 0 || !parser->csv_header_seen) {
+    if (!data_bind_stream_csv_finish_field(parser)) {
+      parser->csv_failed = 1;
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish",
+                          -1, -1, "Out of memory extending CSV stream field list");
+    }
+    status = data_bind_stream_csv_process_record(parser, error);
+    if (status != DATA_BIND_OK) return status;
+  }
+  if (!parser->csv_header_seen || parser->csv_failed || parser->csv_values == NULL) {
+    return db_error_set(error, DATA_BIND_ERR_PARSE, "csv", -1, -1,
+                        "CSV stream parse failed");
+  }
+  *out_value = parser->csv_values;
+  parser->csv_values = NULL;
+  db_error_clear(error);
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus data_bind_stream_text_feed(data_bind_stream_t *parser,
+                                                 const char *data, size_t len,
+                                                 DataBindError *error);
+static DataBindStatus data_bind_stream_json_finish(data_bind_stream_t *parser,
+                                                   DataBindValue **out_value,
+                                                   DataBindError *error);
+static DataBindStatus data_bind_stream_xml_finish(data_bind_stream_t *parser,
+                                                  DataBindValue **out_value,
+                                                  DataBindError *error);
+
+static data_bind_stream_t *data_bind_stream_create_common(
+    DataBind *codec, const char *type_name, const char *path_or_expr,
+    DataBindValue **out_value, DataBindError *error,
+    DataBindStatus (*feed_fn)(data_bind_stream_t *, const char *, size_t, DataBindError *),
+    DataBindStatus (*finish_fn)(data_bind_stream_t *, DataBindValue **, DataBindError *),
+    DataBindStatus (*bind_fn)(DataBind *, const char *, const char *, size_t,
+                              const char *, DataBindValue **, DataBindError *),
+    int is_csv, int json_stream_candidate, int xml_stream_candidate) {
+  data_bind_stream_t *parser = NULL;
+  size_t type_name_len;
+  size_t path_len;
+  if (out_value != NULL) *out_value = NULL;
+  if (codec == NULL || type_name == NULL || type_name[0] == '\0' ||
+      out_value == NULL || feed_fn == NULL || finish_fn == NULL ||
+      (!is_csv && bind_fn == NULL)) {
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_create",
+                 -1, -1, "Invalid stream constructor arguments");
+    return NULL;
+  }
+
+  parser = (data_bind_stream_t *)malloc(sizeof(*parser));
+  if (parser == NULL) {
+    db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
+                 -1, -1, "Out of memory creating stream");
+    return NULL;
+  }
+
+  type_name_len = strlen(type_name);
+  parser->type_name = (char *)malloc(type_name_len + 1);
+  if (parser->type_name == NULL) {
+    free(parser);
+    db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create", -1, -1,
+                 "Out of memory creating stream");
+    return NULL;
+  }
+  memcpy(parser->type_name, type_name, type_name_len + 1);
+
+  if (path_or_expr != NULL && path_or_expr[0] != '\0') {
+    path_len = strlen(path_or_expr);
+    parser->path_or_expr = (char *)malloc(path_len + 1);
+    if (parser->path_or_expr == NULL) {
+      free(parser->type_name);
+      free(parser);
+      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
+                   -1, -1, "Out of memory creating stream");
+      return NULL;
+    }
+    memcpy(parser->path_or_expr, path_or_expr, path_len + 1);
+  } else {
+    parser->path_or_expr = NULL;
+  }
+
+  parser->codec = codec;
+  parser->out_value = out_value;
+  parser->error = error;
+  parser->record_callback = NULL;
+  parser->record_callback_user = NULL;
+  parser->record_callback_index = 0;
+  parser->feed_fn = feed_fn;
+  parser->finish_fn = finish_fn;
+  parser->bind_fn = bind_fn;
+  parser->buffer = NULL;
+  parser->size = 0;
+  parser->capacity = 0;
+  parser->csv_header = NULL;
+  parser->csv_header_len = 0;
+  parser->csv_record = NULL;
+  parser->csv_record_len = 0;
+  parser->csv_record_capacity = 0;
+  parser->csv_field = NULL;
+  parser->csv_field_len = 0;
+  parser->csv_field_capacity = 0;
+  parser->csv_fields = NULL;
+  parser->csv_field_storage = NULL;
+  parser->csv_field_count = 0;
+  parser->csv_fields_capacity = 0;
+  parser->csv_filter_doc = NULL;
+  parser->csv_filter = NULL;
+  parser->csv_values = NULL;
+  parser->stream_values = NULL;
+  parser->json_sax = NULL;
+  parser->xml_sax = NULL;
+  parser->json_frames = NULL;
+  parser->json_frame_count = 0;
+  parser->json_frame_capacity = 0;
+  parser->json_sax_depth = 0;
+  parser->xml_stream_target = NULL;
+  parser->xml_capture = NULL;
+  parser->xml_capture_depth = 0;
+  parser->csv_data_row = 0;
+  parser->csv_header_seen = 0;
+  parser->csv_in_quotes = 0;
+  parser->csv_quote_pending = 0;
+  parser->csv_skip_next_lf = 0;
+  parser->csv_failed = 0;
+  parser->sax_failed = 0;
+  parser->is_csv = is_csv;
+  parser->json_stream_candidate = json_stream_candidate;
+  parser->json_stream_active = 0;
+  parser->json_stream_done = 0;
+  parser->json_root_seen = 0;
+  parser->xml_stream_candidate = xml_stream_candidate;
+  parser->xml_capture_active = 0;
+  parser->xml_open_start = 0;
+  parser->stream_error[0] = '\0';
+  parser->finished = 0;
+  parser->started = 0;
+  parser->record_callback_stopped = 0;
+  parser->record_callback_failed = 0;
+  if (is_csv) {
+    parser->csv_values = dbv_new(DATA_BIND_VALUE_LIST);
+    if (parser->csv_values == NULL) {
+      free(parser->path_or_expr);
+      free(parser->type_name);
+      free(parser);
+      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
+                   -1, -1, "Out of memory creating CSV stream output");
+      return NULL;
+    }
+  } else if (finish_fn == data_bind_stream_json_finish) {
+    if (parser->json_stream_candidate) {
+      parser->stream_values = dbv_new(DATA_BIND_VALUE_LIST);
+      if (parser->stream_values == NULL) {
+        free(parser->path_or_expr);
+        free(parser->type_name);
+        free(parser);
+        db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
+                     -1, -1, "Out of memory creating JSON stream output");
+        return NULL;
+      }
+    }
+    parser->json_sax = turbo_json_sax_parser_create(
+        parser->json_stream_candidate ? &DATA_BIND_JSON_STREAM_HANDLER
+                                      : &DATA_BIND_JSON_SAX_VALIDATE_HANDLER,
+        parser);
+    if (parser->json_sax == NULL) {
+      data_bind_value_free(parser->stream_values);
+      free(parser->path_or_expr);
+      free(parser->type_name);
+      free(parser);
+      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
+                   -1, -1, "Out of memory creating JSON stream validator");
+      return NULL;
+    }
+  } else if (finish_fn == data_bind_stream_xml_finish) {
+    if (parser->xml_stream_candidate) {
+      parser->xml_stream_target = data_bind_stream_xml_target_from_path(parser->path_or_expr);
+      parser->xml_capture = tstr_new();
+      parser->stream_values = dbv_new(DATA_BIND_VALUE_LIST);
+      if (parser->xml_stream_target == NULL || parser->xml_capture == NULL ||
+          parser->stream_values == NULL) {
+        free(parser->xml_stream_target);
+        tstr_free(parser->xml_capture);
+        data_bind_value_free(parser->stream_values);
+        free(parser->path_or_expr);
+        free(parser->type_name);
+        free(parser);
+        db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
+                     -1, -1, "Out of memory creating XML stream output");
+        return NULL;
+      }
+    }
+    parser->xml_sax = turbo_xml_sax_parser_create(
+        parser->xml_stream_candidate ? &DATA_BIND_XML_STREAM_HANDLER
+                                     : &DATA_BIND_XML_SAX_VALIDATE_HANDLER,
+        parser);
+    if (parser->xml_sax == NULL) {
+      free(parser->xml_stream_target);
+      tstr_free(parser->xml_capture);
+      data_bind_value_free(parser->stream_values);
+      free(parser->path_or_expr);
+      free(parser->type_name);
+      free(parser);
+      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
+                   -1, -1, "Out of memory creating XML stream validator");
+      return NULL;
+    }
+  }
+  db_error_clear(error);
+  return parser;
+}
+
+static DataBindStatus data_bind_stream_bind_json(
+    DataBind *codec, const char *type_name, const char *text, size_t len,
+    const char *path, DataBindValue **out_value, DataBindError *error) {
+  (void)path;
+  return data_bind_parse_json(codec, type_name, text, len, out_value, error);
+}
+
+static DataBindStatus data_bind_stream_bind_json_all(
+    DataBind *codec, const char *type_name, const char *text, size_t len,
+    const char *path, DataBindValue **out_value, DataBindError *error) {
+  (void)path;
+  return data_bind_parse_json_all(codec, type_name, text, len, out_value, error);
+}
+
+static DataBindStatus data_bind_stream_bind_json_path(
+    DataBind *codec, const char *type_name, const char *text, size_t len,
+    const char *path, DataBindValue **out_value, DataBindError *error) {
+  return data_bind_parse_json_path(codec, type_name, text, len, path, out_value, error);
+}
+
+static DataBindStatus data_bind_stream_bind_json_path_all(
+    DataBind *codec, const char *type_name, const char *text, size_t len,
+    const char *path, DataBindValue **out_value, DataBindError *error) {
+  return data_bind_parse_json_path_all(codec, type_name, text, len, path, out_value, error);
+}
+
+static DataBindStatus data_bind_stream_bind_xml(
+    DataBind *codec, const char *type_name, const char *text, size_t len,
+    const char *path, DataBindValue **out_value, DataBindError *error) {
+  (void)path;
+  return data_bind_parse_xml(codec, type_name, text, len, out_value, error);
+}
+
+static DataBindStatus data_bind_stream_bind_xml_path_all(
+    DataBind *codec, const char *type_name, const char *text, size_t len,
+    const char *path, DataBindValue **out_value, DataBindError *error) {
+  return data_bind_parse_xml_path_all(codec, type_name, text, len, path, out_value, error);
+}
+
+data_bind_stream_t *data_bind_stream_json_create(
+    DataBind *codec, const char *type_name, DataBindValue **out_value,
+    DataBindError *error) {
+  return data_bind_stream_create_common(
+      codec, type_name, NULL, out_value, error, data_bind_stream_text_feed,
+      data_bind_stream_json_finish, data_bind_stream_bind_json, 0, 0, 0);
+}
+
+data_bind_stream_t *data_bind_stream_json_all_create(
+    DataBind *codec, const char *type_name, DataBindValue **out_value,
+    DataBindError *error) {
+  return data_bind_stream_create_common(
+      codec, type_name, NULL, out_value, error, data_bind_stream_text_feed,
+      data_bind_stream_json_finish, data_bind_stream_bind_json_all, 0, 1, 0);
+}
+
+data_bind_stream_t *data_bind_stream_json_path_create(
+    DataBind *codec, const char *type_name, const char *json_path,
+    DataBindValue **out_value, DataBindError *error) {
+  if (json_path == NULL || json_path[0] == '\0') {
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_json_path_create",
+                 -1, -1, "JSONPath is required");
+    return NULL;
+  }
+  return data_bind_stream_create_common(
+      codec, type_name, json_path, out_value, error, data_bind_stream_text_feed,
+      data_bind_stream_json_finish, data_bind_stream_bind_json_path, 0, 0, 0);
+}
+
+data_bind_stream_t *data_bind_stream_json_path_all_create(
+    DataBind *codec, const char *type_name, const char *json_path,
+    DataBindValue **out_value, DataBindError *error) {
+  if (json_path == NULL || json_path[0] == '\0') {
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG,
+                 "data_bind_stream_json_path_all_create", -1, -1,
+                 "JSONPath is required");
+    return NULL;
+  }
+  return data_bind_stream_create_common(
+      codec, type_name, json_path, out_value, error, data_bind_stream_text_feed,
+      data_bind_stream_json_finish, data_bind_stream_bind_json_path_all, 0,
+      data_bind_stream_json_path_is_root_array(json_path), 0);
+}
+
+data_bind_stream_t *data_bind_stream_csv_all_create(
+    DataBind *codec, const char *type_name, DataBindValue **out_value,
+    DataBindError *error) {
+  return data_bind_stream_create_common(
+      codec, type_name, NULL, out_value, error, data_bind_stream_csv_feed,
+      data_bind_stream_csv_finish, NULL, 1, 0, 0);
+}
+
+data_bind_stream_t *data_bind_stream_csv_path_create(
+    DataBind *codec, const char *type_name, const char *csv_path,
+    DataBindValue **out_value, DataBindError *error) {
+  if (csv_path == NULL || csv_path[0] == '\0') {
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_csv_path_create",
+                 -1, -1, "CSVPath is required");
+    return NULL;
+  }
+  return data_bind_stream_create_common(
+      codec, type_name, csv_path, out_value, error, data_bind_stream_csv_feed,
+      data_bind_stream_csv_finish, NULL, 1, 0, 0);
+}
+
+data_bind_stream_t *data_bind_stream_xml_create(
+    DataBind *codec, const char *type_name, DataBindValue **out_value,
+    DataBindError *error) {
+  return data_bind_stream_create_common(
+      codec, type_name, NULL, out_value, error, data_bind_stream_text_feed,
+      data_bind_stream_xml_finish, data_bind_stream_bind_xml, 0, 0, 0);
+}
+
+data_bind_stream_t *data_bind_stream_xml_path_all_create(
+    DataBind *codec, const char *type_name, const char *xml_path,
+    DataBindValue **out_value, DataBindError *error) {
+  if (xml_path == NULL || xml_path[0] == '\0') {
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG,
+                 "data_bind_stream_xml_path_all_create", -1, -1,
+                 "XMLPath is required");
+    return NULL;
+  }
+  return data_bind_stream_create_common(
+      codec, type_name, xml_path, out_value, error, data_bind_stream_text_feed,
+      data_bind_stream_xml_finish, data_bind_stream_bind_xml_path_all, 0, 0,
+      data_bind_stream_xml_can_bind_incrementally(xml_path));
+}
+
+DataBindStatus data_bind_stream_set_record_callback(
+    data_bind_stream_t *stream, DataBindRecordFn callback, void *user_data) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)stream;
+  if (parser == NULL || callback == NULL || parser->started || parser->finished) {
+    return db_error_set(parser != NULL ? parser->error : NULL,
+                        DATA_BIND_ERR_INVALID_ARG,
+                        "data_bind_stream_set_record_callback", -1, -1,
+                        "Record callback must be set before first feed");
+  }
+  parser->record_callback = callback;
+  parser->record_callback_user = user_data;
+  parser->record_callback_index = 0;
+  parser->record_callback_stopped = 0;
+  parser->record_callback_failed = 0;
+  db_error_clear(parser->error);
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus data_bind_stream_text_feed(data_bind_stream_t *parser,
+                                                 const char *data, size_t len,
+                                                 DataBindError *error) {
+  size_t needed;
+  size_t new_cap;
+  char *grown;
+  DataBindStatus status;
+
+  if (parser == NULL || parser->finished) {
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_feed",
+                        -1, -1, "Invalid stream parser feed state");
+  }
+  if (len == 0) return DATA_BIND_OK;
+  if (data == NULL) {
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_feed",
+                        -1, -1, "Invalid stream parser feed data");
+  }
+
+  status = data_bind_stream_sax_feed(parser, data, len, error);
+  if (status != DATA_BIND_OK) return status;
+
+  if ((parser->json_stream_candidate && parser->json_stream_active) ||
+      parser->xml_stream_candidate) {
+    parser->started = 1;
+    db_error_clear(error);
+    return DATA_BIND_OK;
+  }
+
+  needed = parser->size + len;
+  if (needed < parser->size) {
+    return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                        "Stream input size overflow");
+  }
+  if (parser->capacity < needed + 1) {
+    new_cap = parser->capacity == 0 ? 4096 : parser->capacity * 2;
+    while (new_cap < needed + 1) {
+      if (new_cap > (SIZE_MAX / 2)) {
+        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                            "Stream input too large");
+      }
+      new_cap *= 2;
+    }
+    grown = (char *)realloc(parser->buffer, new_cap);
+    if (grown == NULL) {
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                          "Out of memory while extending stream buffer");
+    }
+    parser->buffer = grown;
+    parser->capacity = new_cap;
+  }
+  memcpy(parser->buffer + parser->size, data, len);
+  parser->size += len;
+  parser->buffer[parser->size] = '\0';
+  parser->started = 1;
+  db_error_clear(error);
+  return DATA_BIND_OK;
+}
+
+int data_bind_stream_feed(data_bind_stream_t *stream, const void *data, size_t len) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)stream;
+  DataBindStatus status;
+  if (parser == NULL || parser->feed_fn == NULL) return DATA_BIND_ERR_INVALID_ARG;
+  status = parser->feed_fn(parser, (const char *)data, len, parser->error);
+  if (status == DATA_BIND_OK) {
+    parser->started = 1;
+    db_error_clear(parser->error);
+  }
+  return status;
+}
+
+int data_bind_stream_feed_file(data_bind_stream_t *stream, const char *file_path) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)stream;
+  DataBindError *error = parser ? parser->error : NULL;
+  char *chunk = NULL;
+  turbo_file_t fd;
+  DataBindStatus status;
+  int close_rc;
+
+  if (parser == NULL || file_path == NULL || file_path[0] == '\0') {
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_feed_file",
+                        -1, -1, "Invalid stream file feed arguments");
+  }
+  fd = turbo_fs_open(file_path, TURBO_FS_O_RDONLY, 0);
+  if (fd == TURBO_INVALID_FILE) {
+    return db_error_set(error, DATA_BIND_ERR_IO, file_path, -1, -1,
+                        "Failed to open stream input file");
+  }
+
+  chunk = (char *)malloc(DATA_BIND_FILE_STREAM_CHUNK_SIZE);
+  if (chunk == NULL) {
+    turbo_fs_close(fd);
+    return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed_file",
+                        -1, -1, "Out of memory allocating stream file chunk");
+  }
+
+  status = DATA_BIND_OK;
+  for (;;) {
+    int nread = turbo_fs_read(fd, chunk, DATA_BIND_FILE_STREAM_CHUNK_SIZE);
+    if (nread < 0) {
+      status = db_error_set(error, DATA_BIND_ERR_IO, file_path, -1, -1,
+                            "Failed to read stream input file");
+      break;
+    }
+    if (nread == 0) break;
+    status = data_bind_stream_feed(parser, chunk, (size_t)nread);
+    if (status != DATA_BIND_OK) break;
+  }
+
+  free(chunk);
+  close_rc = turbo_fs_close(fd);
+  if (status == DATA_BIND_OK && close_rc != 0) {
+    status = db_error_set(error, DATA_BIND_ERR_IO, file_path, -1, -1,
+                          "Failed to close stream input file");
+  }
+  return status;
+}
+
+static DataBindStatus data_bind_stream_json_finish(data_bind_stream_t *parser,
+                                                   DataBindValue **out_value,
+                                                   DataBindError *error) {
+  const char *path = parser ? parser->path_or_expr : NULL;
+  DataBindStatus status = DATA_BIND_OK;
+
+  if (parser == NULL || out_value == NULL || parser->codec == NULL ||
+      parser->type_name == NULL || parser->finished) {
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish",
+                        -1, -1, "Invalid stream parser finish state");
+  }
+  status = data_bind_stream_sax_finish(parser, error);
+  if (status != DATA_BIND_OK) {
+    parser->finished = 1;
+    return status;
+  }
+  if ((parser->json_stream_candidate && parser->json_stream_active) ||
+      parser->xml_stream_candidate) {
+    *out_value = parser->stream_values;
+    parser->stream_values = NULL;
+    parser->finished = 1;
+    db_error_clear(error);
+    return DATA_BIND_OK;
+  }
+  if (!parser->started) {
+    parser->buffer = (char *)realloc(parser->buffer, 1);
+    if (parser->buffer == NULL) {
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish",
+                          -1, -1, "Out of memory while finalizing stream parser");
+    }
+    parser->buffer[0] = '\0';
+    parser->size = 0;
+    parser->capacity = 1;
+  }
+  if (parser->buffer == NULL) {
+    parser->buffer = (char *)malloc(1);
+    if (parser->buffer == NULL) {
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish",
+                          -1, -1, "Out of memory while finalizing stream parser");
+    }
+    parser->buffer[0] = '\0';
+    parser->capacity = 1;
+  }
+  parser->buffer[parser->size] = '\0';
+
+  status = parser->bind_fn(parser->codec, parser->type_name, parser->buffer,
+                           parser->size, path, out_value, error);
+
+  if (status == DATA_BIND_OK) {
+    status = data_bind_stream_emit_result(parser, *out_value, error);
+  }
+
+  parser->finished = 1;
+  return status;
+}
+
+static DataBindStatus data_bind_stream_xml_finish(data_bind_stream_t *parser,
+                                                  DataBindValue **out_value,
+                                                  DataBindError *error) {
+  const char *path = parser ? parser->path_or_expr : NULL;
+  DataBindStatus status;
+  if (parser == NULL || out_value == NULL || parser->codec == NULL ||
+      parser->type_name == NULL || parser->finished) {
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish",
+                        -1, -1, "Invalid stream finish state");
+  }
+  status = data_bind_stream_sax_finish(parser, error);
+  if (status != DATA_BIND_OK) {
+    parser->finished = 1;
+    return status;
+  }
+  if (parser->xml_stream_candidate) {
+    *out_value = parser->stream_values;
+    parser->stream_values = NULL;
+    parser->finished = 1;
+    db_error_clear(error);
+    return DATA_BIND_OK;
+  }
+  if (!parser->started) {
+    parser->buffer = (char *)realloc(parser->buffer, 1);
+    if (parser->buffer == NULL) {
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish",
+                          -1, -1, "Out of memory while finalizing stream");
+    }
+    parser->buffer[0] = '\0';
+    parser->size = 0;
+    parser->capacity = 1;
+  }
+  if (parser->buffer == NULL) {
+    parser->buffer = (char *)malloc(1);
+    if (parser->buffer == NULL) {
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish",
+                          -1, -1, "Out of memory while finalizing stream");
+    }
+    parser->buffer[0] = '\0';
+    parser->capacity = 1;
+  }
+  parser->buffer[parser->size] = '\0';
+  status = parser->bind_fn(parser->codec, parser->type_name, parser->buffer,
+                           parser->size, path, out_value, error);
+  if (status == DATA_BIND_OK) {
+    status = data_bind_stream_emit_result(parser, *out_value, error);
+  }
+  parser->finished = 1;
+  return status;
+}
+
+int data_bind_stream_finish(data_bind_stream_t *stream) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)stream;
+  if (parser == NULL || parser->finish_fn == NULL || parser->out_value == NULL) {
+    return DATA_BIND_ERR_INVALID_ARG;
+  }
+  return parser->finish_fn(parser, parser->out_value, parser->error);
+}
+
+void data_bind_stream_destroy(data_bind_stream_t *stream) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)stream;
+  size_t i;
+  if (parser == NULL) return;
+  free(parser->type_name);
+  free(parser->path_or_expr);
+  free(parser->buffer);
+  free(parser->csv_header);
+  free(parser->csv_record);
+  data_bind_stream_csv_clear_fields(parser);
+  free(parser->csv_field);
+  free(parser->csv_fields);
+  free(parser->csv_field_storage);
+  if (parser->csv_filter != NULL) turbo_dsv_filter_destroy(parser->csv_filter);
+  if (parser->json_sax != NULL) turbo_json_sax_parser_destroy(parser->json_sax);
+  if (parser->xml_sax != NULL) turbo_xml_sax_parser_destroy(parser->xml_sax);
+  for (i = 0; i < parser->json_frame_count; ++i) {
+    free(parser->json_frames[i].pending_key);
+  }
+  free(parser->json_frames);
+  free(parser->xml_stream_target);
+  tstr_free(parser->xml_capture);
+  data_bind_value_free(parser->stream_values);
+  if (parser->csv_filter_doc != NULL) {
+    void *doc = parser->csv_filter_doc;
+    turbo_free_csv(&doc);
+  }
+  data_bind_value_free(parser->csv_values);
+  free(parser);
+}
+
 DataBindStatus data_bind_parse_json(DataBind *codec, const char *type_name,
                                     const char *json, size_t len,
                                     DataBindValue **out_value, DataBindError *error) {
@@ -6521,5 +8106,5 @@ int data_bind_abi_version(void) {
 }
 
 const char *data_bind_version_string(void) {
-  return "1.6.0";
+  return "1.9.0";
 }

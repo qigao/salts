@@ -187,6 +187,30 @@ err.message = "Unknown enum value: 'PENDING'"
   node. Use expressions supported by the bundled TurboNet XML parser, such as
   `//order`.
 - `data_bind_parse_csv_path`: bind rows matching a CSVPath expression.
+- Stream constructors encode binding semantics directly:
+  `data_bind_stream_json_create`, `data_bind_stream_json_all_create`,
+  `data_bind_stream_json_path_create`,
+  `data_bind_stream_json_path_all_create`,
+  `data_bind_stream_csv_all_create`, `data_bind_stream_csv_path_create`,
+  `data_bind_stream_xml_create`, and
+  `data_bind_stream_xml_path_all_create`. There is no stream mode or options
+  object. JSON root-array streams bind items incrementally; other JSONPath
+  expressions validate chunks incrementally with SAX and materialize the DOM
+  on finish. CSV streams process complete records incrementally and compile
+  CSVPath after the header row. XML streams bind non-overlapping `//name`
+  element matches incrementally; other XMLPath expressions validate chunks
+  incrementally with SAX and materialize the DOM on finish.
+- `data_bind_stream_feed_file`: read a file in fixed-size chunks and feed it
+  through an existing stream. Applications that own an asynchronous I/O loop
+  should feed completed buffers with `data_bind_stream_feed`; DataBind does not
+  duplicate scheduler or async file APIs.
+- `data_bind_stream_set_record_callback`: receive each path-selected,
+  schema-bound record synchronously. Root-array JSON, CSV rows, and simple
+  descendant XML paths such as `//order` deliver from `feed`; paths that require
+  the complete document deliver from `finish`. The callback record is borrowed
+  for the callback duration. Returning `DATA_BIND_RECORD_STOP` stops later
+  callback delivery without stopping validation or final-value construction;
+  returning `DATA_BIND_RECORD_ERROR` fails the stream.
 - `data_bind_validate_json_path`: validates the first JSONPath match against the
   schema type.
 - `data_bind_validate_csv_path`: validates all CSV rows matching a CSVPath
@@ -206,6 +230,35 @@ bound values and may skip invalid array items or CSV rows. Use
 `data_bind_validate_json_path`, `data_bind_validate_csv_path`,
 `data_bind_validate_xml_path` when the caller needs strict all-or-nothing input
 validation.
+
+## Record Streaming
+
+Record callbacks add low-latency consumption without replacing the final-value
+API:
+
+```c
+static DataBindRecordAction on_order(void *ctx,
+                                     const DataBindValue *record,
+                                     uint64_t index) {
+  consume_order(ctx, record, index); /* record is borrowed */
+  return DATA_BIND_RECORD_CONTINUE;
+}
+
+DataBindValue *all_orders = NULL;
+data_bind_stream_t *stream = data_bind_stream_csv_path_create(
+    codec, "Order", "side == \"Sell\"", &all_orders, &error);
+data_bind_stream_set_record_callback(stream, on_order, app);
+
+/* File, socket, HTTP, or broker code supplies chunks. */
+data_bind_stream_feed(stream, chunk, chunk_len);
+data_bind_stream_finish(stream);
+```
+
+Callbacks run on the thread calling `feed` or `finish`; DataBind owns no thread,
+event loop, network connection, or retry policy. Backpressure is applied by the
+source: do not issue the next asynchronous read until the callback consumer is
+ready. The current parser ABI does not report partially consumed chunks, so it
+does not expose mid-feed pause/resume.
 
 CSV and XML use the same schema binder as JSON:
 

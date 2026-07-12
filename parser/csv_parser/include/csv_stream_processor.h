@@ -37,8 +37,8 @@ CXX_C_API void csv_stream_processor_destroy(csv_stream_processor_t *p);
 /* ── Configuration (call before feeding data) ─────────────────────── */
 
 /**
- * @brief Set a filter expression. Uses dsv_filter column naming convention:
- *        header columns ending in _n are numeric, _s are string.
+ * @brief Set a CSVPath filter expression. Header columns ending in _n are
+ *        numeric, _s are string; plain headers are dynamically comparable.
  *        Expression example: "price > 100 and volume > 10000"
  * @return true on success (expression is compiled when header arrives).
  */
@@ -52,7 +52,7 @@ CXX_C_API bool csv_stream_processor_set_filter(csv_stream_processor_t *p, const 
  */
 CXX_C_API void csv_stream_processor_set_columns(csv_stream_processor_t *p, const char *names);
 
-/* ── Feed data �?signature matches http_data_cb ──────────────── */
+/* Feed data; signature matches http_data_cb. */
 
 CXX_C_API void csv_stream_processor_feed(const char *data, size_t len, void *user_data);
 

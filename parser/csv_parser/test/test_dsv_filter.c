@@ -64,6 +64,50 @@ spec("dsv_filter") {
             csv_free(doc);
         }
 
+        it("should evaluate compiled filters on field views") {
+            const char *csv = "price_n,volume_n,sym_s\n";
+            tstr_v row1[] = {
+                tstr_v_from_buf("50", 2),
+                tstr_v_from_buf("100", 3),
+                tstr_v_from_buf("AAPL", 4),
+            };
+            tstr_v row2[] = {
+                tstr_v_from_buf("150", 3),
+                tstr_v_from_buf("200", 3),
+                tstr_v_from_buf("GOOG", 4),
+            };
+            csv_doc_t *doc = csv_parse(csv, strlen(csv));
+            check_not_null(doc);
+
+            dsv_filter_t *f = dsv_filter_create(doc, 0);
+            check_not_null(f);
+            check(dsv_filter_compile(f, "price > 100 and sym == \"GOOG\""));
+
+            check_int_eq(dsv_filter_check_values(f, row1, 3), 0);
+            check_int_eq(dsv_filter_check_values(f, row2, 3), 1);
+
+            dsv_filter_destroy(f);
+            csv_free(doc);
+        }
+
+        it("should filter plain header columns as dynamic values") {
+            const char *csv = "id,side,symbol\n"
+                              "10,Buy,ABCD\n"
+                              "11,Sell,WXYZ\n";
+            csv_doc_t *doc = csv_parse(csv, strlen(csv));
+            check_not_null(doc);
+
+            dsv_filter_t *f = dsv_filter_create(doc, 0);
+            check_not_null(f);
+            check(dsv_filter_compile(f, "id > 10 and side == \"Sell\""));
+
+            check_int_eq(dsv_filter_check_row(f, 1), 0);
+            check_int_eq(dsv_filter_check_row(f, 2), 1);
+
+            dsv_filter_destroy(f);
+            csv_free(doc);
+        }
+
         it("should run callback for matched rows") {
             const char *csv = "price_n,volume_n,sym_s\n"
                               "50,100,AAPL\n"

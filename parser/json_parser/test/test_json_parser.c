@@ -92,6 +92,13 @@ static json_sax_handler_t test_handler = {.on_null = sax_on_null,
                                           .on_array_start = sax_on_array_start,
                                           .on_array_end = sax_on_array_end};
 
+static int sax_fail_on_string(void *ctx, const char *val, size_t len) {
+  (void)ctx;
+  (void)val;
+  (void)len;
+  return -1;
+}
+
 spec("json_parser") {
   describe("Basic Types") {
     it("should parse null correctly") {
@@ -573,6 +580,90 @@ spec("json_parser") {
       check_int_eq(ret, 0);
       check_int_eq(ctx.array_start_count, 1);
       check_int_eq(ctx.array_end_count, 1);
+    }
+
+    it("should incrementally SAX parse split strings, literals, and numbers") {
+      const char *parts[] = {"{\"na", "me\":\"a\\", "\"b\",", "\"items\":[tr",
+                             "ue,n",  "ull,12.5", "e2]}"};
+      sax_test_ctx_t ctx = {0};
+      json_sax_parser_t *parser = json_sax_parser_create(&test_handler, &ctx);
+      check_not_null(parser);
+
+      for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); ++i) {
+        check_int_eq(json_sax_parser_feed(parser, parts[i], strlen(parts[i])), 0);
+      }
+      check_int_eq(json_sax_parser_finish(parser), 0);
+
+      check_int_eq(ctx.object_start_count, 1);
+      check_int_eq(ctx.object_end_count, 1);
+      check_int_eq(ctx.array_start_count, 1);
+      check_int_eq(ctx.array_end_count, 1);
+      check_int_eq(ctx.key_count, 2);
+      check_int_eq(ctx.string_count, 1);
+      check_str_eq(ctx.last_string, "a\"b");
+      check_int_eq(ctx.bool_count, 1);
+      check_int_eq(ctx.null_count, 1);
+      check_int_eq(ctx.number_count, 1);
+      check_float_eq(ctx.last_number, 1250.0, 0.001);
+
+      json_sax_parser_destroy(parser);
+    }
+
+    it("should incrementally SAX parse byte by byte") {
+      const char *json = "[1,2,{\"x\":\"y\"}]";
+      sax_test_ctx_t ctx = {0};
+      json_sax_parser_t *parser = json_sax_parser_create(&test_handler, &ctx);
+      check_not_null(parser);
+
+      for (size_t i = 0; i < strlen(json); ++i) {
+        check_int_eq(json_sax_parser_feed(parser, json + i, 1), 0);
+      }
+      check_int_eq(json_sax_parser_finish(parser), 0);
+
+      check_int_eq(ctx.array_start_count, 1);
+      check_int_eq(ctx.array_end_count, 1);
+      check_int_eq(ctx.object_start_count, 1);
+      check_int_eq(ctx.object_end_count, 1);
+      check_int_eq(ctx.key_count, 1);
+      check_int_eq(ctx.string_count, 1);
+      check_int_eq(ctx.number_count, 2);
+      check_float_eq(ctx.last_number, 2.0, 0.001);
+      check_str_eq(ctx.last_key, "x");
+      check_str_eq(ctx.last_string, "y");
+
+      json_sax_parser_destroy(parser);
+    }
+
+    it("should report incomplete input at incremental finish") {
+      const char *json = "{\"a\": [";
+      sax_test_ctx_t ctx = {0};
+      json_sax_parser_t *parser = json_sax_parser_create(&test_handler, &ctx);
+      check_not_null(parser);
+
+      check_int_eq(json_sax_parser_feed(parser, json, strlen(json)), 0);
+      check_int_eq(json_sax_parser_finish(parser), -1);
+      check_not_null(json_sax_parser_error(parser));
+
+      json_sax_parser_destroy(parser);
+    }
+
+    it("should stop incremental SAX parsing when a callback fails") {
+      json_sax_handler_t handler = test_handler;
+      sax_test_ctx_t ctx = {0};
+      handler.on_string = sax_fail_on_string;
+
+      json_sax_parser_t *parser = json_sax_parser_create(&handler, &ctx);
+      check_not_null(parser);
+      check_int_eq(json_sax_parser_feed(parser, "\"stop\"", 6), -1);
+      check_str_contains(json_sax_parser_error(parser), "callback");
+
+      json_sax_parser_destroy(parser);
+    }
+
+    it("should reject extra data after one JSON document in SAX") {
+      sax_test_ctx_t ctx = {0};
+      int ret = json_parse_sax("true false", strlen("true false"), &test_handler, &ctx);
+      check_int_eq(ret, -1);
     }
   }
 }

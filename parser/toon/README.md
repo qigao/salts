@@ -1,6 +1,6 @@
 # TOONc
 
-A C library for parsing TOON (Token-Oriented Object Notation), a compact, human-readable encoding of the JSON data model optimized for LLM prompts.
+A C library for parsing TOON (Token-Oriented Object Notation) by re2c/lemon, a compact, human-readable encoding of the JSON data model optimized for LLM prompts.
 
 ## Table of Contents
 
@@ -696,11 +696,3 @@ users[3]{id,username,email,active}:
   2,bob,bob@example.com,false
   3,charlie,charlie@example.com,true
 ```
-
-## License
-
-MIT License. See source files for details.
-
-## Author
-
-Davide Usberti <usbertibox@gmail.com>

@@ -4,6 +4,112 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+typedef struct xml_sax_test_ctx_s {
+    int start_document_count;
+    int end_document_count;
+    int element_start_count;
+    int element_end_count;
+    int attribute_count;
+    int text_count;
+    int comment_count;
+    int cdata_count;
+    int pi_count;
+    char last_name[64];
+    char last_attr_name[64];
+    char last_attr_value[64];
+    char last_text[128];
+} xml_sax_test_ctx_t;
+
+static void copy_xml_piece(char *dst, size_t dst_size, const char *src, size_t len) {
+    if (dst_size == 0) return;
+    if (len >= dst_size) len = dst_size - 1;
+    memcpy(dst, src, len);
+    dst[len] = '\0';
+}
+
+static int xml_sax_on_start_document(void *ctx) {
+    ((xml_sax_test_ctx_t *)ctx)->start_document_count++;
+    return 0;
+}
+
+static int xml_sax_on_end_document(void *ctx) {
+    ((xml_sax_test_ctx_t *)ctx)->end_document_count++;
+    return 0;
+}
+
+static int xml_sax_on_element_start(void *ctx, const char *name, size_t name_len) {
+    xml_sax_test_ctx_t *c = (xml_sax_test_ctx_t *)ctx;
+    c->element_start_count++;
+    copy_xml_piece(c->last_name, sizeof(c->last_name), name, name_len);
+    return 0;
+}
+
+static int xml_sax_on_attribute(void *ctx, const char *name, size_t name_len,
+                                const char *value, size_t value_len) {
+    xml_sax_test_ctx_t *c = (xml_sax_test_ctx_t *)ctx;
+    c->attribute_count++;
+    copy_xml_piece(c->last_attr_name, sizeof(c->last_attr_name), name, name_len);
+    copy_xml_piece(c->last_attr_value, sizeof(c->last_attr_value), value, value_len);
+    return 0;
+}
+
+static int xml_sax_on_element_end(void *ctx, const char *name, size_t name_len) {
+    xml_sax_test_ctx_t *c = (xml_sax_test_ctx_t *)ctx;
+    c->element_end_count++;
+    copy_xml_piece(c->last_name, sizeof(c->last_name), name, name_len);
+    return 0;
+}
+
+static int xml_sax_on_text(void *ctx, const char *text, size_t text_len) {
+    xml_sax_test_ctx_t *c = (xml_sax_test_ctx_t *)ctx;
+    c->text_count++;
+    copy_xml_piece(c->last_text, sizeof(c->last_text), text, text_len);
+    return 0;
+}
+
+static int xml_sax_on_comment(void *ctx, const char *text, size_t text_len) {
+    xml_sax_test_ctx_t *c = (xml_sax_test_ctx_t *)ctx;
+    c->comment_count++;
+    copy_xml_piece(c->last_text, sizeof(c->last_text), text, text_len);
+    return 0;
+}
+
+static int xml_sax_on_cdata(void *ctx, const char *text, size_t text_len) {
+    xml_sax_test_ctx_t *c = (xml_sax_test_ctx_t *)ctx;
+    c->cdata_count++;
+    copy_xml_piece(c->last_text, sizeof(c->last_text), text, text_len);
+    return 0;
+}
+
+static int xml_sax_on_pi(void *ctx, const char *target, size_t target_len,
+                         const char *data, size_t data_len) {
+    (void)data;
+    (void)data_len;
+    xml_sax_test_ctx_t *c = (xml_sax_test_ctx_t *)ctx;
+    c->pi_count++;
+    copy_xml_piece(c->last_name, sizeof(c->last_name), target, target_len);
+    return 0;
+}
+
+static int xml_sax_fail_on_text(void *ctx, const char *text, size_t text_len) {
+    (void)ctx;
+    (void)text;
+    (void)text_len;
+    return -1;
+}
+
+static turbo_xml_sax_handler_t xml_sax_test_handler = {
+    .on_start_document = xml_sax_on_start_document,
+    .on_end_document = xml_sax_on_end_document,
+    .on_element_start = xml_sax_on_element_start,
+    .on_attribute = xml_sax_on_attribute,
+    .on_element_end = xml_sax_on_element_end,
+    .on_text = xml_sax_on_text,
+    .on_comment = xml_sax_on_comment,
+    .on_cdata = xml_sax_on_cdata,
+    .on_processing_instruction = xml_sax_on_pi,
+};
+
 spec("Turbo Parser") {
     describe("JSON Parser") {
         it("should parse valid JSON object") {
@@ -239,6 +345,102 @@ spec("Turbo Parser") {
             
             turbo_free_xml(&result);
             check(result == NULL);
+        }
+
+        it("should parse XML with SAX callbacks") {
+            const char *xml_data =
+                "<?xml version=\"1.0\"?><root id=\"a\"><child>text</child><!--ok--></root>";
+            xml_sax_test_ctx_t ctx = {0};
+
+            int rc = turbo_parse_xml_sax((const uint8_t *)xml_data, strlen(xml_data),
+                                         &xml_sax_test_handler, &ctx);
+            check(rc == 0);
+            check(ctx.start_document_count == 1);
+            check(ctx.end_document_count == 1);
+            check(ctx.pi_count == 1);
+            check(ctx.element_start_count == 2);
+            check(ctx.element_end_count == 2);
+            check(ctx.attribute_count == 1);
+            check(strcmp(ctx.last_attr_name, "id") == 0);
+            check(strcmp(ctx.last_attr_value, "a") == 0);
+            check(ctx.text_count == 1);
+            check(ctx.comment_count == 1);
+        }
+
+        it("should parse XML SAX chunks split across markup") {
+            const char *parts[] = {"<ro", "ot><item id=\"", "42\">he",
+                                   "llo</it", "em><![CDATA[raw<xml>]]></root>"};
+            xml_sax_test_ctx_t ctx = {0};
+            turbo_xml_sax_parser_t *parser =
+                turbo_xml_sax_parser_create(&xml_sax_test_handler, &ctx);
+            check(parser != NULL);
+
+            for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); ++i) {
+                check(turbo_xml_sax_parser_feed(parser, parts[i], strlen(parts[i])) == 0);
+            }
+            check(turbo_xml_sax_parser_finish(parser) == 0);
+
+            check(ctx.start_document_count == 1);
+            check(ctx.end_document_count == 1);
+            check(ctx.element_start_count == 2);
+            check(ctx.element_end_count == 2);
+            check(ctx.attribute_count == 1);
+            check(strcmp(ctx.last_attr_value, "42") == 0);
+            check(ctx.text_count == 2);
+            check(ctx.cdata_count == 1);
+            check(strcmp(ctx.last_text, "raw<xml>") == 0);
+
+            turbo_xml_sax_parser_destroy(parser);
+        }
+
+        it("should parse XML SAX byte by byte") {
+            const char *xml_data = "<root><empty/><child x='y'>z</child></root>";
+            xml_sax_test_ctx_t ctx = {0};
+            turbo_xml_sax_parser_t *parser =
+                turbo_xml_sax_parser_create(&xml_sax_test_handler, &ctx);
+            check(parser != NULL);
+
+            for (size_t i = 0; i < strlen(xml_data); ++i) {
+                check(turbo_xml_sax_parser_feed(parser, xml_data + i, 1) == 0);
+            }
+            check(turbo_xml_sax_parser_finish(parser) == 0);
+
+            check(ctx.element_start_count == 3);
+            check(ctx.element_end_count == 3);
+            check(ctx.attribute_count == 1);
+            check(strcmp(ctx.last_attr_name, "x") == 0);
+            check(strcmp(ctx.last_attr_value, "y") == 0);
+            check(strcmp(ctx.last_text, "z") == 0);
+
+            turbo_xml_sax_parser_destroy(parser);
+        }
+
+        it("should reject incomplete XML SAX input") {
+            const char *xml_data = "<root><child>";
+            xml_sax_test_ctx_t ctx = {0};
+            turbo_xml_sax_parser_t *parser =
+                turbo_xml_sax_parser_create(&xml_sax_test_handler, &ctx);
+            check(parser != NULL);
+
+            check(turbo_xml_sax_parser_feed(parser, xml_data, strlen(xml_data)) == 0);
+            check(turbo_xml_sax_parser_finish(parser) == -1);
+            check(strstr(turbo_xml_sax_parser_error(parser), "Unclosed") != NULL);
+
+            turbo_xml_sax_parser_destroy(parser);
+        }
+
+        it("should stop XML SAX parsing when a callback fails") {
+            const char *xml_data = "<root>stop</root>";
+            xml_sax_test_ctx_t ctx = {0};
+            turbo_xml_sax_handler_t handler = xml_sax_test_handler;
+            handler.on_text = xml_sax_fail_on_text;
+
+            turbo_xml_sax_parser_t *parser = turbo_xml_sax_parser_create(&handler, &ctx);
+            check(parser != NULL);
+            check(turbo_xml_sax_parser_feed(parser, xml_data, strlen(xml_data)) == -1);
+            check(strstr(turbo_xml_sax_parser_error(parser), "callback") != NULL);
+
+            turbo_xml_sax_parser_destroy(parser);
         }
     }
 

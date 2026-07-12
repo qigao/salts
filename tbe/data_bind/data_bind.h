@@ -23,13 +23,13 @@
 #define DATA_BIND_UUID_SIZE 16
 
 #define DATA_BIND_VERSION_MAJOR 1
-#define DATA_BIND_VERSION_MINOR 7
+#define DATA_BIND_VERSION_MINOR 9
 #define DATA_BIND_VERSION_PATCH 0
 #define DATA_BIND_VERSION \
     (DATA_BIND_VERSION_MAJOR * 10000 + DATA_BIND_VERSION_MINOR * 100 + DATA_BIND_VERSION_PATCH)
 
 /* Increment when the public C ABI changes incompatibly. */
-#define DATA_BIND_ABI_VERSION 6
+#define DATA_BIND_ABI_VERSION 7
 
 #ifdef __cplusplus
 extern "C" {
@@ -123,6 +123,25 @@ typedef struct DataBindMapEntry {
     const char* key;
     const DataBindValue* value;
 } DataBindMapEntry;
+
+typedef struct data_bind_stream_t data_bind_stream_t;
+
+typedef enum DataBindRecordAction {
+    DATA_BIND_RECORD_CONTINUE = 0,
+    DATA_BIND_RECORD_STOP = 1,
+    DATA_BIND_RECORD_ERROR = -1
+} DataBindRecordAction;
+
+/**
+ * @brief Receives one path-selected, schema-bound record synchronously.
+ *
+ * The record is borrowed and remains valid only for the callback duration.
+ * CONTINUE requests later records. STOP disables later callback delivery while
+ * parsing and final-result construction continue. ERROR fails the stream.
+ */
+typedef DataBindRecordAction (*DataBindRecordFn)(void *user_data,
+                                                  const DataBindValue *record,
+                                                  uint64_t record_index);
 
 typedef enum DataBindSchemaKind {
     DATA_BIND_SCHEMA_UNKNOWN = 0,
@@ -297,6 +316,74 @@ DATA_BIND_API void data_bind_get_value_pool_stats(size_t *allocated, size_t *reu
 DATA_BIND_API DataBindStatus data_bind_parse(DataBind* codec, const char* type_name,
                                              const uint8_t* buf, size_t len,
                                              DataBindValue** out_value, DataBindError* error);
+
+/**
+ * @brief Create stream handles for JSON inputs.
+ *
+ * The constructor name defines whether the whole document, every root-array
+ * item, the first JSONPath match, or all JSONPath matches are bound.
+ */
+DATA_BIND_API data_bind_stream_t* data_bind_stream_json_create(
+    DataBind* codec, const char* type_name, DataBindValue** out_value,
+    DataBindError* error);
+DATA_BIND_API data_bind_stream_t* data_bind_stream_json_all_create(
+    DataBind* codec, const char* type_name, DataBindValue** out_value,
+    DataBindError* error);
+DATA_BIND_API data_bind_stream_t* data_bind_stream_json_path_create(
+    DataBind* codec, const char* type_name, const char* json_path,
+    DataBindValue** out_value, DataBindError* error);
+DATA_BIND_API data_bind_stream_t* data_bind_stream_json_path_all_create(
+    DataBind* codec, const char* type_name, const char* json_path,
+    DataBindValue** out_value, DataBindError* error);
+
+/** @brief Create a CSV stream that binds all rows, optionally selected by CSVPath. */
+DATA_BIND_API data_bind_stream_t* data_bind_stream_csv_all_create(
+    DataBind* codec, const char* type_name, DataBindValue** out_value,
+    DataBindError* error);
+DATA_BIND_API data_bind_stream_t* data_bind_stream_csv_path_create(
+    DataBind* codec, const char* type_name, const char* csv_path,
+    DataBindValue** out_value, DataBindError* error);
+
+/** @brief Create an XML root stream or an all-matches XMLPath stream. */
+DATA_BIND_API data_bind_stream_t* data_bind_stream_xml_create(
+    DataBind* codec, const char* type_name, DataBindValue** out_value,
+    DataBindError* error);
+DATA_BIND_API data_bind_stream_t* data_bind_stream_xml_path_all_create(
+    DataBind* codec, const char* type_name, const char* xml_path,
+    DataBindValue** out_value, DataBindError* error);
+
+/**
+ * @brief Install a synchronous schema-bound record callback before first feed.
+ *
+ * Incrementally streamable inputs deliver records from feed(). Other path
+ * expressions deliver their bound records from finish(). Existing final-value
+ * output remains enabled. The stream and callback execute on the caller thread.
+ */
+DATA_BIND_API DataBindStatus data_bind_stream_set_record_callback(
+    data_bind_stream_t* stream, DataBindRecordFn callback, void* user_data);
+
+/**
+ * @brief Feed one chunk into a stream.
+ */
+DATA_BIND_API int data_bind_stream_feed(data_bind_stream_t* stream,
+                                        const void* data,
+                                        size_t len);
+
+/**
+ * @brief Read a file in fixed-size chunks and feed it into a stream.
+ */
+DATA_BIND_API int data_bind_stream_feed_file(data_bind_stream_t* stream,
+                                             const char* file_path);
+
+/**
+ * @brief Finish streaming parse. The final value is stored in the constructor's out_value.
+ */
+DATA_BIND_API int data_bind_stream_finish(data_bind_stream_t* stream);
+
+/**
+ * @brief Destroy a stream and release internal buffers.
+ */
+DATA_BIND_API void data_bind_stream_destroy(data_bind_stream_t* stream);
 
 /**
  * @brief Bind JSON text to a dynamic value tree using the codec schema.

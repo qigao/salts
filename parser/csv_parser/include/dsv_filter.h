@@ -25,6 +25,7 @@ const char *dsv_filter_error(dsv_filter_t *filter);
 bool dsv_filter_compile(dsv_filter_t *filter, const char *expression);
 void dsv_filter_set_output_delimiter(dsv_filter_t *filter, char delimiter);
 int dsv_filter_check_row(dsv_filter_t *filter, size_t row_index);
+int dsv_filter_check_values(dsv_filter_t *filter, const tstr_v *fields, size_t field_count);
 
 typedef void (*dsv_row_callback_t)(void *user_data, size_t row_index, const char *rendered_row);
 void dsv_filter_run(dsv_filter_t *filter, dsv_row_callback_t callback, void *user_data);
