@@ -6,4 +6,4 @@ target_link_libraries(${TARGET_NAME} PRIVATE TurboUtils::DateTimeParser TurboUti
 
 add_test(NAME ${TARGET_NAME} COMMAND ${TARGET_NAME})
 
-cmake_config_target(${TARGET_NAME} NO_INSTALL FOLDER "parser/datetime_parser/test")
+cmake_config_target(${TARGET_NAME} FOLDER "parser/datetime_parser/test")

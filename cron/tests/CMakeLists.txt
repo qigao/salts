@@ -8,7 +8,7 @@ target_link_libraries(${TEST_NAME}
 target_include_directories(${TEST_NAME}
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include)
 
-cmake_config_target(${TEST_NAME} NO_INSTALL FOLDER "cron/tests")
+cmake_config_target(${TEST_NAME} FOLDER "cron/tests")
 set_target_properties(${TEST_NAME} PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 

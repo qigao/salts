@@ -33,6 +33,13 @@ target_include_directories(
 
 target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::Core)
 
+install(
+  TARGETS ${TARGET_NAME}
+  EXPORT TurboUtilsTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 install(FILES ${CRON_HEADERS} DESTINATION include/cron)
 
 add_subdirectory(examples)

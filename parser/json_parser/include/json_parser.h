@@ -85,10 +85,31 @@ const char *json_path_get_error(void);
 json_value_t *json_create_object(void);
 json_value_t *json_create_array(void);
 json_value_t *json_create_string(const char *str);
+/** Create an owned JSON string from exactly len bytes.
+ * @param str Source bytes, copied before return; must not be NULL.
+ * @param len Byte length; embedded NUL bytes are allowed.
+ * @return New root value owned by the caller, or NULL on invalid input/OOM.
+ */
+json_value_t *json_create_string_n(const char *str, size_t len);
 json_value_t *json_create_number(double num);
 json_value_t *json_create_bool(bool val);
 json_value_t *json_create_null(void);
 
+/** Add a C-string key/value pair and report whether it was committed.
+ * On success obj owns val. On failure ownership remains unchanged.
+ */
+bool json_object_add_checked(json_value_t *obj, const char *key, json_value_t *val);
+/** Add a length-delimited key/value pair. The key is copied and may contain NUL.
+ * On success obj owns val. On failure ownership remains unchanged.
+ */
+bool json_object_add_n(json_value_t *obj, const char *key, size_t key_len,
+                       json_value_t *val);
+/** Append val and report whether it was committed.
+ * On success arr owns val. On failure ownership remains unchanged.
+ */
+bool json_array_add_checked(json_value_t *arr, json_value_t *val);
+
+/* Compatibility wrappers. Prefer the checked APIs in new code. */
 void json_object_add(json_value_t *obj, const char *key, json_value_t *val);
 void json_array_add(json_value_t *arr, json_value_t *val);
 

@@ -366,6 +366,79 @@ CXX_C_API void turbo_json_object_set_bool(json_value_t *obj, const char *key, bo
  */
 CXX_C_API void turbo_json_object_set_null(json_value_t *obj, const char *key);
 
+/* YAML Parser (CYAML). Documents own a copy of the parsed input. Nodes and
+ * YPATH matches are non-owning and remain valid until their document is freed. */
+typedef struct turbo_yaml_doc_s turbo_yaml_doc_t;
+typedef struct turbo_yaml_node_s turbo_yaml_node_t;
+typedef struct turbo_yaml_path_result_s turbo_yaml_path_result_t;
+
+typedef enum {
+  TURBO_YAML_NODE_NONE = 0,
+  TURBO_YAML_NODE_NULL,
+  TURBO_YAML_NODE_SCALAR,
+  TURBO_YAML_NODE_SEQUENCE,
+  TURBO_YAML_NODE_MAPPING,
+  TURBO_YAML_NODE_ALIAS
+} turbo_yaml_node_type_t;
+
+typedef enum {
+  TURBO_YAML_SCALAR_NULL = 0,
+  TURBO_YAML_SCALAR_BOOL,
+  TURBO_YAML_SCALAR_INT,
+  TURBO_YAML_SCALAR_FLOAT,
+  TURBO_YAML_SCALAR_STRING
+} turbo_yaml_scalar_kind_t;
+
+/** Parse one YAML document into an owned document handle. */
+CXX_C_API int turbo_parse_yaml(const uint8_t *data, size_t len,
+                               turbo_yaml_doc_t **out);
+
+/** Free a YAML document and set its pointer to NULL. */
+CXX_C_API void turbo_free_yaml(turbo_yaml_doc_t **doc);
+
+CXX_C_API turbo_yaml_node_t *turbo_yaml_root(const turbo_yaml_doc_t *doc);
+CXX_C_API turbo_yaml_node_type_t turbo_yaml_node_type(const turbo_yaml_node_t *node);
+CXX_C_API turbo_yaml_scalar_kind_t
+turbo_yaml_scalar_kind(const turbo_yaml_doc_t *doc, const turbo_yaml_node_t *node);
+
+/** Return a processed scalar string. Free it with turbo_yaml_string_free(). */
+CXX_C_API char *turbo_yaml_scalar_dup(const turbo_yaml_doc_t *doc,
+                                      const turbo_yaml_node_t *node);
+CXX_C_API size_t turbo_yaml_sequence_size(const turbo_yaml_node_t *node);
+CXX_C_API turbo_yaml_node_t *turbo_yaml_sequence_get(const turbo_yaml_node_t *node,
+                                                     size_t index);
+CXX_C_API size_t turbo_yaml_mapping_size(const turbo_yaml_node_t *node);
+CXX_C_API turbo_yaml_node_t *turbo_yaml_mapping_key(const turbo_yaml_node_t *node,
+                                                    size_t index);
+CXX_C_API turbo_yaml_node_t *turbo_yaml_mapping_value(const turbo_yaml_node_t *node,
+                                                      size_t index);
+
+/** Execute a YPATH expression relative to context, or the root when context is NULL. */
+CXX_C_API turbo_yaml_path_result_t *
+turbo_yaml_path_query(const turbo_yaml_doc_t *doc, const turbo_yaml_node_t *context,
+                      const char *expr);
+CXX_C_API size_t
+turbo_yaml_path_result_size(const turbo_yaml_path_result_t *result);
+CXX_C_API turbo_yaml_node_t *
+turbo_yaml_path_result_get(const turbo_yaml_path_result_t *result, size_t index);
+CXX_C_API const char *
+turbo_yaml_path_result_error(const turbo_yaml_path_result_t *result);
+CXX_C_API size_t
+turbo_yaml_path_result_error_pos(const turbo_yaml_path_result_t *result);
+CXX_C_API void turbo_yaml_path_result_free(turbo_yaml_path_result_t *result);
+
+/** Emit a document or node as YAML. Free the result with turbo_yaml_string_free(). */
+CXX_C_API char *turbo_yaml_emit(const turbo_yaml_doc_t *doc, size_t *out_len);
+CXX_C_API char *turbo_yaml_emit_node(const turbo_yaml_doc_t *doc,
+                                     const turbo_yaml_node_t *node,
+                                     size_t *out_len);
+CXX_C_API void turbo_yaml_string_free(char *str);
+
+/** Convert representable YAML semantics into an independently owned JSON DOM. */
+CXX_C_API json_value_t *turbo_yaml_to_json(const turbo_yaml_doc_t *doc);
+CXX_C_API json_value_t *turbo_yaml_node_to_json(const turbo_yaml_doc_t *doc,
+                                                const turbo_yaml_node_t *node);
+
 /* XML Parser (cxml) */
 typedef struct _cx_doc_node turbo_xml_doc_t;
 typedef struct _cx_elem_node turbo_xml_node_t;

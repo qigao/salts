@@ -12,7 +12,7 @@ function(add_toon_test test_name source_file)
     endif()
     
     add_test(NAME ${test_name} COMMAND ${test_name})
-    cmake_config_target(${test_name} NO_INSTALL FOLDER "parser/toon/tests")
+    cmake_config_target(${test_name} FOLDER "parser/toon/tests")
 endfunction()
 
 add_toon_test(toon_debug_test debug_test.c)

@@ -19,6 +19,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <float.h>
+#include <limits.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -6275,6 +6276,9 @@ static DataBindStatus data_bind_stream_json_finish(data_bind_stream_t *parser,
 static DataBindStatus data_bind_stream_xml_finish(data_bind_stream_t *parser,
                                                   DataBindValue **out_value,
                                                   DataBindError *error);
+static DataBindStatus data_bind_stream_buffered_finish(data_bind_stream_t *parser,
+                                                       DataBindValue **out_value,
+                                                       DataBindError *error);
 
 static data_bind_stream_t *data_bind_stream_create_common(
     DataBind *codec, const char *type_name, const char *path_or_expr,
@@ -6484,6 +6488,32 @@ static DataBindStatus data_bind_stream_bind_json_path_all(
   return data_bind_parse_json_path_all(codec, type_name, text, len, path, out_value, error);
 }
 
+static DataBindStatus data_bind_stream_bind_yaml(
+    DataBind *codec, const char *type_name, const char *text, size_t len,
+    const char *path, DataBindValue **out_value, DataBindError *error) {
+  (void)path;
+  return data_bind_parse_yaml(codec, type_name, text, len, out_value, error);
+}
+
+static DataBindStatus data_bind_stream_bind_yaml_all(
+    DataBind *codec, const char *type_name, const char *text, size_t len,
+    const char *path, DataBindValue **out_value, DataBindError *error) {
+  (void)path;
+  return data_bind_parse_yaml_all(codec, type_name, text, len, out_value, error);
+}
+
+static DataBindStatus data_bind_stream_bind_yaml_path(
+    DataBind *codec, const char *type_name, const char *text, size_t len,
+    const char *path, DataBindValue **out_value, DataBindError *error) {
+  return data_bind_parse_yaml_path(codec, type_name, text, len, path, out_value, error);
+}
+
+static DataBindStatus data_bind_stream_bind_yaml_path_all(
+    DataBind *codec, const char *type_name, const char *text, size_t len,
+    const char *path, DataBindValue **out_value, DataBindError *error) {
+  return data_bind_parse_yaml_path_all(codec, type_name, text, len, path, out_value, error);
+}
+
 static DataBindStatus data_bind_stream_bind_xml(
     DataBind *codec, const char *type_name, const char *text, size_t len,
     const char *path, DataBindValue **out_value, DataBindError *error) {
@@ -6539,6 +6569,50 @@ data_bind_stream_t *data_bind_stream_json_path_all_create(
       codec, type_name, json_path, out_value, error, data_bind_stream_text_feed,
       data_bind_stream_json_finish, data_bind_stream_bind_json_path_all, 0,
       data_bind_stream_json_path_is_root_array(json_path), 0);
+}
+
+data_bind_stream_t *data_bind_stream_yaml_create(
+    DataBind *codec, const char *type_name, DataBindValue **out_value,
+    DataBindError *error) {
+  return data_bind_stream_create_common(
+      codec, type_name, NULL, out_value, error, data_bind_stream_text_feed,
+      data_bind_stream_buffered_finish, data_bind_stream_bind_yaml, 0, 0, 0);
+}
+
+data_bind_stream_t *data_bind_stream_yaml_all_create(
+    DataBind *codec, const char *type_name, DataBindValue **out_value,
+    DataBindError *error) {
+  return data_bind_stream_create_common(
+      codec, type_name, NULL, out_value, error, data_bind_stream_text_feed,
+      data_bind_stream_buffered_finish, data_bind_stream_bind_yaml_all, 0, 0, 0);
+}
+
+data_bind_stream_t *data_bind_stream_yaml_path_create(
+    DataBind *codec, const char *type_name, const char *yaml_path,
+    DataBindValue **out_value, DataBindError *error) {
+  if (yaml_path == NULL || yaml_path[0] == '\0') {
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG,
+                 "data_bind_stream_yaml_path_create", -1, -1,
+                 "YPATH is required");
+    return NULL;
+  }
+  return data_bind_stream_create_common(
+      codec, type_name, yaml_path, out_value, error, data_bind_stream_text_feed,
+      data_bind_stream_buffered_finish, data_bind_stream_bind_yaml_path, 0, 0, 0);
+}
+
+data_bind_stream_t *data_bind_stream_yaml_path_all_create(
+    DataBind *codec, const char *type_name, const char *yaml_path,
+    DataBindValue **out_value, DataBindError *error) {
+  if (yaml_path == NULL || yaml_path[0] == '\0') {
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG,
+                 "data_bind_stream_yaml_path_all_create", -1, -1,
+                 "YPATH is required");
+    return NULL;
+  }
+  return data_bind_stream_create_common(
+      codec, type_name, yaml_path, out_value, error, data_bind_stream_text_feed,
+      data_bind_stream_buffered_finish, data_bind_stream_bind_yaml_path_all, 0, 0, 0);
 }
 
 data_bind_stream_t *data_bind_stream_csv_all_create(
@@ -6827,6 +6901,33 @@ static DataBindStatus data_bind_stream_xml_finish(data_bind_stream_t *parser,
   return status;
 }
 
+static DataBindStatus data_bind_stream_buffered_finish(data_bind_stream_t *parser,
+                                                       DataBindValue **out_value,
+                                                       DataBindError *error) {
+  DataBindStatus status;
+  if (parser == NULL || out_value == NULL || parser->codec == NULL ||
+      parser->type_name == NULL || parser->bind_fn == NULL || parser->finished) {
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish",
+                        -1, -1, "Invalid buffered stream finish state");
+  }
+  if (parser->buffer == NULL) {
+    parser->buffer = (char *)malloc(1);
+    if (parser->buffer == NULL) {
+      parser->finished = 1;
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish",
+                          -1, -1, "Out of memory finalizing buffered stream");
+    }
+    parser->buffer[0] = '\0';
+    parser->capacity = 1;
+  }
+  status = parser->bind_fn(parser->codec, parser->type_name, parser->buffer,
+                           parser->size, parser->path_or_expr, out_value, error);
+  if (status == DATA_BIND_OK)
+    status = data_bind_stream_emit_result(parser, *out_value, error);
+  parser->finished = 1;
+  return status;
+}
+
 int data_bind_stream_finish(data_bind_stream_t *stream) {
   data_bind_stream_t *parser = (data_bind_stream_t *)stream;
   if (parser == NULL || parser->finish_fn == NULL || parser->out_value == NULL) {
@@ -7076,6 +7177,170 @@ DataBindStatus data_bind_parse_json_path_all(DataBind *codec, const char *type_n
   *out_value = list;
   db_error_clear(error);
   return DATA_BIND_OK;
+}
+
+static DataBindStatus data_bind_parse_yaml_selected(
+    DataBind *codec, const char *type_name, const char *yaml, size_t len,
+    const char *yamlpath, int bind_all, DataBindValue **out_value,
+    DataBindError *error) {
+  turbo_yaml_doc_t *doc = NULL;
+  turbo_yaml_path_result_t *matches = NULL;
+  turbo_yaml_node_t *root;
+  DataBindValue *result = NULL;
+  char error_path[256];
+  size_t count = 0;
+  size_t i;
+
+  if (out_value != NULL) *out_value = NULL;
+  if (codec == NULL || codec->schema_root == NULL || type_name == NULL ||
+      yaml == NULL || out_value == NULL) {
+    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG,
+                          "Invalid YAML bind arguments");
+  }
+  codec->error[0] = '\0';
+  if (!bind_type_supported(codec->schema_root, type_name)) {
+    db_error_format_path(error_path, sizeof(error_path), "yaml", yamlpath);
+    return db_error_set(error, DATA_BIND_ERR_TYPE_NOT_FOUND, error_path, -1, -1,
+                        "Type not found: %s", type_name);
+  }
+  if (turbo_parse_yaml((const uint8_t *)yaml, len, &doc) != 0 || doc == NULL) {
+    db_error_format_path(error_path, sizeof(error_path), "yaml", NULL);
+    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1,
+                        "YAML parse failed");
+  }
+
+  root = turbo_yaml_root(doc);
+  if (yamlpath != NULL && yamlpath[0] != '\0') {
+    matches = turbo_yaml_path_query(doc, NULL, yamlpath);
+    if (matches == NULL) {
+      turbo_free_yaml(&doc);
+      db_error_format_path(error_path, sizeof(error_path), "yaml", yamlpath);
+      return db_error_set(error, DATA_BIND_ERR_OOM, error_path, -1, -1,
+                          "Out of memory executing YPATH");
+    }
+    if (turbo_yaml_path_result_error(matches) != NULL) {
+      const char *path_error = turbo_yaml_path_result_error(matches);
+      size_t error_pos = turbo_yaml_path_result_error_pos(matches);
+      char path_message[160];
+      snprintf(path_message, sizeof(path_message), "%s", path_error);
+      turbo_yaml_path_result_free(matches);
+      turbo_free_yaml(&doc);
+      db_error_format_path(error_path, sizeof(error_path), "yaml", yamlpath);
+      return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1,
+                          error_pos <= INT_MAX ? (int)error_pos : -1,
+                          "YPATH parse failed: %s", path_message);
+    }
+    count = turbo_yaml_path_result_size(matches);
+  } else if (bind_all &&
+             turbo_yaml_node_type(root) == TURBO_YAML_NODE_SEQUENCE) {
+    count = turbo_yaml_sequence_size(root);
+  } else if (root != NULL) {
+    count = 1;
+  }
+
+  if (count == 0) {
+    turbo_yaml_path_result_free(matches);
+    turbo_free_yaml(&doc);
+    db_error_format_path(error_path, sizeof(error_path), "yaml", yamlpath);
+    return db_error_set(error, DATA_BIND_ERR_TYPE_MISMATCH, error_path, -1, -1,
+                        "YAML selection matched no values");
+  }
+
+  if (bind_all) {
+    result = dbv_new(DATA_BIND_VALUE_LIST);
+    if (result == NULL) {
+      turbo_yaml_path_result_free(matches);
+      turbo_free_yaml(&doc);
+      return db_error_set(error, DATA_BIND_ERR_OOM, "yaml", -1, -1,
+                          "Out of memory creating YAML result list");
+    }
+  }
+
+  for (i = 0; i < (bind_all ? count : 1); i++) {
+    turbo_yaml_node_t *node;
+    json_value_t *json_value;
+    DataBindValue *bound;
+    void *json_ptr;
+    if (matches != NULL)
+      node = turbo_yaml_path_result_get(matches, i);
+    else if (bind_all && turbo_yaml_node_type(root) == TURBO_YAML_NODE_SEQUENCE)
+      node = turbo_yaml_sequence_get(root, i);
+    else
+      node = root;
+
+    json_value = turbo_yaml_node_to_json(doc, node);
+    if (json_value == NULL) {
+      data_bind_value_free(result);
+      turbo_yaml_path_result_free(matches);
+      turbo_free_yaml(&doc);
+      db_error_format_path(error_path, sizeof(error_path), "yaml", yamlpath);
+      return db_error_set(error, DATA_BIND_ERR_TYPE_MISMATCH, error_path, -1, -1,
+                          "YAML value cannot be represented as JSON-compatible data");
+    }
+    bound = bind_json_typed_value(codec->schema_root, type_name, json_value);
+    json_ptr = json_value;
+    turbo_free_json(&json_ptr);
+    if (bound == NULL) {
+      data_bind_value_free(result);
+      turbo_yaml_path_result_free(matches);
+      turbo_free_yaml(&doc);
+      db_error_format_path(error_path, sizeof(error_path), "yaml", yamlpath);
+      return db_error_set(error, DATA_BIND_ERR_TYPE_MISMATCH, error_path, -1, -1,
+                          "YAML bind failed for type: %s", type_name);
+    }
+    if (!bind_all) {
+      result = bound;
+    } else if (!dbv_array_push(&result->data.array_val, bound)) {
+      data_bind_value_free(bound);
+      data_bind_value_free(result);
+      turbo_yaml_path_result_free(matches);
+      turbo_free_yaml(&doc);
+      return db_error_set(error, DATA_BIND_ERR_OOM, "yaml", -1, -1,
+                          "Out of memory appending YAML result");
+    }
+  }
+
+  turbo_yaml_path_result_free(matches);
+  turbo_free_yaml(&doc);
+  *out_value = result;
+  db_error_clear(error);
+  return DATA_BIND_OK;
+}
+
+DataBindStatus data_bind_parse_yaml(DataBind *codec, const char *type_name,
+                                    const char *yaml, size_t len,
+                                    DataBindValue **out_value, DataBindError *error) {
+  return data_bind_parse_yaml_selected(codec, type_name, yaml, len, NULL, 0,
+                                       out_value, error);
+}
+
+DataBindStatus data_bind_parse_yaml_all(DataBind *codec, const char *type_name,
+                                        const char *yaml, size_t len,
+                                        DataBindValue **out_value, DataBindError *error) {
+  return data_bind_parse_yaml_selected(codec, type_name, yaml, len, NULL, 1,
+                                       out_value, error);
+}
+
+DataBindStatus data_bind_parse_yaml_path(DataBind *codec, const char *type_name,
+                                         const char *yaml, size_t len,
+                                         const char *yamlpath,
+                                         DataBindValue **out_value,
+                                         DataBindError *error) {
+  if (yamlpath == NULL || yamlpath[0] == '\0')
+    return data_bind_parse_yaml(codec, type_name, yaml, len, out_value, error);
+  return data_bind_parse_yaml_selected(codec, type_name, yaml, len, yamlpath, 0,
+                                       out_value, error);
+}
+
+DataBindStatus data_bind_parse_yaml_path_all(DataBind *codec, const char *type_name,
+                                             const char *yaml, size_t len,
+                                             const char *yamlpath,
+                                             DataBindValue **out_value,
+                                             DataBindError *error) {
+  if (yamlpath == NULL || yamlpath[0] == '\0')
+    return data_bind_parse_yaml_all(codec, type_name, yaml, len, out_value, error);
+  return data_bind_parse_yaml_selected(codec, type_name, yaml, len, yamlpath, 1,
+                                       out_value, error);
 }
 
 DataBindStatus data_bind_parse_csv(DataBind *codec, const char *type_name,
@@ -7446,6 +7711,30 @@ DataBindStatus data_bind_validate_json_path(DataBind *codec, const char *type_na
   if (jsonpath == NULL || jsonpath[0] == '\0')
     return data_bind_validate_json(codec, type_name, json, len, error);
   status = data_bind_parse_json_path(codec, type_name, json, len, jsonpath, &value, error);
+  data_bind_value_free(value);
+  return status;
+}
+
+DataBindStatus data_bind_validate_yaml(DataBind *codec, const char *type_name,
+                                       const char *yaml, size_t len,
+                                       DataBindError *error) {
+  DataBindValue *value = NULL;
+  DataBindStatus status = data_bind_parse_yaml_all(codec, type_name, yaml, len,
+                                                   &value, error);
+  data_bind_value_free(value);
+  return status;
+}
+
+DataBindStatus data_bind_validate_yaml_path(DataBind *codec, const char *type_name,
+                                            const char *yaml, size_t len,
+                                            const char *yamlpath,
+                                            DataBindError *error) {
+  DataBindValue *value = NULL;
+  DataBindStatus status;
+  if (yamlpath == NULL || yamlpath[0] == '\0')
+    return data_bind_validate_yaml(codec, type_name, yaml, len, error);
+  status = data_bind_parse_yaml_path(codec, type_name, yaml, len, yamlpath,
+                                     &value, error);
   data_bind_value_free(value);
   return status;
 }

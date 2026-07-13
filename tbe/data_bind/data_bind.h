@@ -336,6 +336,25 @@ DATA_BIND_API data_bind_stream_t* data_bind_stream_json_path_all_create(
     DataBind* codec, const char* type_name, const char* json_path,
     DataBindValue** out_value, DataBindError* error);
 
+/**
+ * @brief Create buffered YAML streams for root, root sequence, or YPATH binding.
+ *
+ * YAML chunks are buffered and parsed at finish(); record callbacks are emitted
+ * after successful schema binding.
+ */
+DATA_BIND_API data_bind_stream_t* data_bind_stream_yaml_create(
+    DataBind* codec, const char* type_name, DataBindValue** out_value,
+    DataBindError* error);
+DATA_BIND_API data_bind_stream_t* data_bind_stream_yaml_all_create(
+    DataBind* codec, const char* type_name, DataBindValue** out_value,
+    DataBindError* error);
+DATA_BIND_API data_bind_stream_t* data_bind_stream_yaml_path_create(
+    DataBind* codec, const char* type_name, const char* yaml_path,
+    DataBindValue** out_value, DataBindError* error);
+DATA_BIND_API data_bind_stream_t* data_bind_stream_yaml_path_all_create(
+    DataBind* codec, const char* type_name, const char* yaml_path,
+    DataBindValue** out_value, DataBindError* error);
+
 /** @brief Create a CSV stream that binds all rows, optionally selected by CSVPath. */
 DATA_BIND_API data_bind_stream_t* data_bind_stream_csv_all_create(
     DataBind* codec, const char* type_name, DataBindValue** out_value,
@@ -433,6 +452,27 @@ DATA_BIND_API DataBindStatus data_bind_parse_json_path_all(DataBind* codec, cons
                                                          DataBindValue** out_value,
                                                          DataBindError* error);
 
+/** @brief Bind YAML root or YPATH-selected nodes through the JSON-compatible schema binder. */
+DATA_BIND_API DataBindStatus data_bind_parse_yaml(DataBind* codec, const char* type_name,
+                                                  const char* yaml, size_t len,
+                                                  DataBindValue** out_value,
+                                                  DataBindError* error);
+DATA_BIND_API DataBindStatus data_bind_parse_yaml_all(DataBind* codec, const char* type_name,
+                                                      const char* yaml, size_t len,
+                                                      DataBindValue** out_value,
+                                                      DataBindError* error);
+DATA_BIND_API DataBindStatus data_bind_parse_yaml_path(DataBind* codec, const char* type_name,
+                                                       const char* yaml, size_t len,
+                                                       const char* yamlpath,
+                                                       DataBindValue** out_value,
+                                                       DataBindError* error);
+DATA_BIND_API DataBindStatus data_bind_parse_yaml_path_all(DataBind* codec,
+                                                           const char* type_name,
+                                                           const char* yaml, size_t len,
+                                                           const char* yamlpath,
+                                                           DataBindValue** out_value,
+                                                           DataBindError* error);
+
 /**
  * @brief Bind a CSV row to a dynamic value tree using the codec schema.
  *
@@ -508,6 +548,16 @@ DATA_BIND_API DataBindStatus data_bind_validate_json(DataBind* codec, const char
 DATA_BIND_API DataBindStatus data_bind_validate_json_path(DataBind* codec, const char* type_name,
                                                           const char* json, size_t len,
                                                           const char* jsonpath,
+                                                          DataBindError* error);
+
+/** @brief Strictly validate a YAML root or first YPATH match against a schema type. */
+DATA_BIND_API DataBindStatus data_bind_validate_yaml(DataBind* codec, const char* type_name,
+                                                     const char* yaml, size_t len,
+                                                     DataBindError* error);
+DATA_BIND_API DataBindStatus data_bind_validate_yaml_path(DataBind* codec,
+                                                          const char* type_name,
+                                                          const char* yaml, size_t len,
+                                                          const char* yamlpath,
                                                           DataBindError* error);
 
 /**

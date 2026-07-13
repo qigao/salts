@@ -128,6 +128,71 @@ spec("turbo_parser") {
 
   }
 
+  describe("YAML") {
+    it("should own input and expose YPATH plus JSON conversion") {
+      char yaml_data[] =
+          "users:\n"
+          "  - name: Alice\n"
+          "    active: true\n"
+          "  - name: Bob\n"
+          "    active: false\n";
+      turbo_yaml_doc_t *doc = NULL;
+      turbo_yaml_path_result_t *matches;
+      turbo_yaml_node_t *name;
+      json_value_t *json;
+      char *text;
+
+      check_int_eq(turbo_parse_yaml((const uint8_t *)yaml_data,
+                                    strlen(yaml_data), &doc), 0);
+      check_not_null(doc);
+      memset(yaml_data, 'x', strlen(yaml_data));
+
+      matches = turbo_yaml_path_query(doc, NULL, "/users[*]/name");
+      check_not_null(matches);
+      check_null(turbo_yaml_path_result_error(matches));
+      check_size_eq(turbo_yaml_path_result_size(matches), 2);
+      name = turbo_yaml_path_result_get(matches, 1);
+      text = turbo_yaml_scalar_dup(doc, name);
+      check_str_eq(text, "Bob");
+      turbo_yaml_string_free(text);
+
+      json = turbo_yaml_to_json(doc);
+      check_not_null(json);
+      check_str_eq(turbo_json_string(turbo_json_path_get(json, "$.users[0].name")),
+                   "Alice");
+      turbo_free_json(&json);
+      turbo_yaml_path_result_free(matches);
+      turbo_free_yaml(&doc);
+      check_null(doc);
+    }
+
+    it("should emit YAML documents and selected nodes") {
+      const char *yaml_data = "name: turbo\nitems: [1, 2]\n";
+      turbo_yaml_doc_t *doc = NULL;
+      turbo_yaml_path_result_t *matches;
+      char *emitted;
+      size_t emitted_len = 0;
+
+      check_int_eq(turbo_parse_yaml((const uint8_t *)yaml_data,
+                                    strlen(yaml_data), &doc), 0);
+      emitted = turbo_yaml_emit(doc, &emitted_len);
+      check_not_null(emitted);
+      check(emitted_len > 0);
+      check(strstr(emitted, "name: turbo") != NULL);
+      turbo_yaml_string_free(emitted);
+
+      matches = turbo_yaml_path_query(doc, NULL, "/items");
+      check_not_null(matches);
+      emitted = turbo_yaml_emit_node(doc, turbo_yaml_path_result_get(matches, 0),
+                                     &emitted_len);
+      check_not_null(emitted);
+      check(strstr(emitted, "1") != NULL);
+      turbo_yaml_string_free(emitted);
+      turbo_yaml_path_result_free(matches);
+      turbo_free_yaml(&doc);
+    }
+  }
+
   describe("INI") {
     it("should parse INI correctly") {
       const char* ini_data = "[section]\nkey=value\n";

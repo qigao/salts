@@ -3,7 +3,7 @@ set(TARGET_NAME uri_parser)
 # Generated files
 cmake_add_grammar(URI
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/parser/uri_lexer.re
-  FOLDER "parser/${TARGET_NAME}")
+  FOLDER "parser/${TARGET_NAME}/grammar")
 
 # Library
 cmake_add_source(SOURCE_FILES DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src)

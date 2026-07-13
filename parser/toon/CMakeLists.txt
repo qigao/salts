@@ -3,7 +3,7 @@ set(TARGET_NAME toon)
 cmake_add_grammar(TOON
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/parser/toon_lexer.re
   GRAMMAR_Y ${CMAKE_CURRENT_SOURCE_DIR}/parser/toon_grammar.y
-  FOLDER "parser/${TARGET_NAME}")
+  FOLDER "parser/${TARGET_NAME}/grammar")
 
 # =============================================================================
 # Library
@@ -13,7 +13,6 @@ add_library(${TARGET_NAME} STATIC toonc.c ${TOON_LEXER_GEN} ${TOON_GRAMMAR_GEN})
 add_dependencies(${TARGET_NAME} ${TOON_LEXER_TARGET} ${TOON_GRAMMAR_TARGET})
 
 cmake_config_target(${TARGET_NAME}
-  NO_INSTALL
   ALIAS TurboUtils::Toon
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME Toon)

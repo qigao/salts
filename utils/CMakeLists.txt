@@ -30,6 +30,9 @@ target_compile_definitions(
   PUBLIC
     $<$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>,$<CONFIG:RelWithDebInfo>>:TURBO_LOG_CAPTURE_SOURCE=0>
   PRIVATE SHARED_CXX)
+target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
+target_compile_options(${TARGET_NAME}
+  PUBLIC $<$<COMPILE_LANG_AND_ID:C,MSVC>:/experimental:c11atomics>)
 if(UNIX)
   target_compile_definitions(
     ${TARGET_NAME} PUBLIC _DEFAULT_SOURCE=1 _POSIX_C_SOURCE=200809L
@@ -46,6 +49,13 @@ target_link_libraries(
 if(WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE iphlpapi ws2_32)
 endif()
+
+install(
+  TARGETS ${TARGET_NAME}
+  EXPORT TurboUtilsTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # Install headers
 cmake_install_headers(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/)

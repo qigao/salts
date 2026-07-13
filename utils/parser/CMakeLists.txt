@@ -3,14 +3,13 @@
 cmake_add_grammar(LOG_PATTERN
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/log_pattern_lexer.re
   LEXER_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/log_pattern_lexer.h
-  FOLDER "utils/parser")
+  FOLDER "utils/parser/grammar")
 
 # Create parser library
 add_library(log_pattern_lexer STATIC ${LOG_PATTERN_LEXER_GEN})
 add_dependencies(log_pattern_lexer ${LOG_PATTERN_LEXER_TARGET})
 
 cmake_config_target(log_pattern_lexer
-  NO_INSTALL
   FOLDER "utils/parser"
   OUTPUT_NAME "log_pattern_lexer")
 
@@ -35,14 +34,13 @@ set(LOG_PATTERN_LEXER_INCLUDE_DIRS
 cmake_add_grammar(FMT
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/fmt_lexer.re
   LEXER_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/fmt_lexer.h
-  FOLDER "utils/parser")
+  FOLDER "utils/parser/grammar")
 
 # Create fmt lexer library
 add_library(fmt_lexer STATIC ${FMT_LEXER_GEN})
 add_dependencies(fmt_lexer ${FMT_LEXER_TARGET})
 
 cmake_config_target(fmt_lexer
-  NO_INSTALL
   FOLDER "utils/parser"
   OUTPUT_NAME "fmt_lexer")
 

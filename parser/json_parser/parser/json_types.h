@@ -101,9 +101,9 @@ json_value_t *json_value_string_arena(json_arena_t *arena, const char *str, size
 json_value_t *json_value_array_arena(json_arena_t *arena);
 json_value_t *json_value_object_arena(json_arena_t *arena);
 
-void json_array_append_arena(json_arena_t *arena, json_value_t *arr, json_value_t *val);
-void json_object_set_arena(json_arena_t *arena, json_value_t *obj, const char *key, size_t key_len, json_value_t *val);
-void json_object_set_arena_ex(json_arena_t *arena, json_value_t *obj, const char *key, size_t key_len, int key_owned, json_value_t *val);
+bool json_array_append_arena(json_arena_t *arena, json_value_t *arr, json_value_t *val);
+bool json_object_set_arena(json_arena_t *arena, json_value_t *obj, const char *key, size_t key_len, json_value_t *val);
+bool json_object_set_arena_ex(json_arena_t *arena, json_value_t *obj, const char *key, size_t key_len, int key_owned, json_value_t *val);
 
 #ifdef __cplusplus
 }

@@ -4,7 +4,7 @@ set(TARGET_NAME ini_parser)
 cmake_add_grammar(INI
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/parser/ini_lexer.re
   GRAMMAR_Y ${CMAKE_CURRENT_SOURCE_DIR}/parser/ini_grammar.y
-  FOLDER "parser/${TARGET_NAME}")
+  FOLDER "parser/${TARGET_NAME}/grammar")
 
 # Library
 cmake_add_source(SOURCE_FILES DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src)

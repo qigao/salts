@@ -27,11 +27,17 @@ target_link_libraries(
           toon
           toml_parser
           datetime_parser
+          cyaml_json_adapter
           cxml)
 
 target_compile_definitions(turbo_parser PRIVATE SHARED_CXX)
 
-# Install headers
+install(
+  TARGETS turbo_parser
+  EXPORT TurboUtilsTargets
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/turbo_parser.h
         DESTINATION include)
 

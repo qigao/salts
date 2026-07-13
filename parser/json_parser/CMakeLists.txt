@@ -4,11 +4,11 @@ set(TARGET_NAME json_parser)
 cmake_add_grammar(JSON
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/parser/json_lexer.re
   GRAMMAR_Y ${CMAKE_CURRENT_SOURCE_DIR}/parser/json_grammar.y
-  FOLDER "parser/${TARGET_NAME}")
+  FOLDER "parser/${TARGET_NAME}/grammar")
 
 cmake_add_grammar(JSONPATH
   GRAMMAR_Y ${CMAKE_CURRENT_SOURCE_DIR}/parser/jsonpath_grammar.y
-  FOLDER "parser/${TARGET_NAME}")
+  FOLDER "parser/${TARGET_NAME}/grammar")
 
 # Library
 cmake_add_source(SOURCE_FILES DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src)

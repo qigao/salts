@@ -38,6 +38,12 @@ cmake_config_target(
   FOLDER tbe/data_bind
   EXPORT_NAME DataBind)
 
+install(
+  TARGETS ${TARGET_NAME}
+  EXPORT TurboUtilsTargets
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES data_bind.h DESTINATION include)
 
 # =============================================================================
@@ -55,7 +61,7 @@ target_link_libraries(test_data_bind
     TurboUtils::TinyTest
     uuid
 )
-cmake_config_target(test_data_bind NO_INSTALL FOLDER "tbe/data_bind")
+cmake_config_target(test_data_bind FOLDER "tbe/data_bind")
 add_test(NAME test_data_bind COMMAND test_data_bind)
 
 add_executable(test_data_bind_public_api test_data_bind_public_api.c)
@@ -64,7 +70,7 @@ target_link_libraries(test_data_bind_public_api
     TurboUtils::DataBind
     TurboUtils::TinyTest
 )
-cmake_config_target(test_data_bind_public_api NO_INSTALL FOLDER "tbe/data_bind")
+cmake_config_target(test_data_bind_public_api FOLDER "tbe/data_bind")
 add_test(NAME test_data_bind_public_api COMMAND test_data_bind_public_api)
 
 add_executable(test_re test_re.c re.c)
@@ -72,5 +78,5 @@ target_link_libraries(test_re
   PRIVATE
     TurboUtils::TinyTest
 )
-cmake_config_target(test_re NO_INSTALL FOLDER "tbe/data_bind")
+cmake_config_target(test_re FOLDER "tbe/data_bind")
 add_test(NAME test_re COMMAND test_re)

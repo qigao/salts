@@ -14,7 +14,6 @@ list(FILTER SOURCE_FILES EXCLUDE REGEX ".*memory_pool\\.(c|h)$")
 # Library
 add_library(${TARGET_NAME} STATIC ${SOURCE_FILES})
 cmake_config_target(${TARGET_NAME}
-    NO_INSTALL
     ALIAS TurboUtils::TLVParser
     FOLDER "parser/tlv_parser"
     EXPORT_NAME TLVParser)
@@ -51,7 +50,7 @@ target_include_directories(production_example PRIVATE
 if(UNIX)
     target_link_libraries(production_example PRIVATE pthread)
 endif()
-cmake_config_target(production_example NO_INSTALL FOLDER "parser/tlv_parser/examples")
+cmake_config_target(production_example FOLDER "parser/tlv_parser/examples")
 
 # =============================================================================
 # Tests

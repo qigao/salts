@@ -13,6 +13,7 @@ target_include_directories(
   tinytest INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
                      $<INSTALL_INTERFACE:include>)
 
+install(TARGETS tinytest EXPORT TurboUtilsTargets)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/tinytest.h DESTINATION include)
 
 # Examples / self-tests
@@ -140,5 +141,5 @@ if(TARGET tinytest_regression_cpp)
 endif()
 
 foreach(tinytest_target IN LISTS TINYTEST_TARGETS)
-  cmake_config_target(${tinytest_target} NO_INSTALL FOLDER "tinytest")
+  cmake_config_target(${tinytest_target} FOLDER "tinytest")
 endforeach()

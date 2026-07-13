@@ -15,7 +15,7 @@ target_include_directories(${TEST_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
 
-cmake_config_target(${TEST_NAME} NO_INSTALL FOLDER "parser/cmd_parser/test")
+cmake_config_target(${TEST_NAME} FOLDER "parser/cmd_parser/test")
 set_target_properties(${TEST_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 

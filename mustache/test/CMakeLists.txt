@@ -15,7 +15,7 @@ foreach(test IN ITEMS test_mustache_json test_mustache_spec
                       test_spec_runner test_scope)
   target_link_libraries(${test} PRIVATE ${TEST_LIBS})
   target_include_directories(${test} PRIVATE ${TEST_INCLUDES})
-  cmake_config_target(${test} NO_INSTALL FOLDER "mustache/tests")
+  cmake_config_target(${test} FOLDER "mustache/tests")
   add_test(NAME ${test} COMMAND ${test})
 endforeach()
 

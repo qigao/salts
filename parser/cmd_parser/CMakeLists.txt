@@ -3,7 +3,7 @@ set(TARGET_NAME cmd_parser)
 cmake_add_grammar(CMD_ARGER
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/src/cmd_arger.re
   LEXER_OUTPUT cmd_arger_gen.c
-  FOLDER "parser/${TARGET_NAME}")
+  FOLDER "parser/${TARGET_NAME}/grammar")
 
 # =============================================================================
 # Library
@@ -16,7 +16,6 @@ add_library(${TARGET_NAME} STATIC
 add_dependencies(${TARGET_NAME} ${CMD_ARGER_LEXER_TARGET})
 
 cmake_config_target(${TARGET_NAME}
-  NO_INSTALL
   ALIAS TurboUtils::CmdParser
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME CmdParser)

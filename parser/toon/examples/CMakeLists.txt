@@ -12,5 +12,5 @@ foreach(EXAMPLE_SOURCE ${EXAMPLE_SOURCES})
         target_link_libraries(${EXAMPLE_NAME} PRIVATE m)
     endif()
     
-    cmake_config_target(${EXAMPLE_NAME} NO_INSTALL FOLDER "parser/toon/examples")
+    cmake_config_target(${EXAMPLE_NAME} FOLDER "parser/toon/examples")
 endforeach()

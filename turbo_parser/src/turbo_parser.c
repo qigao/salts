@@ -13,6 +13,8 @@
 #include "frame_parser.h" // for TLV
 #include "ini_parser.h"
 #include "json_parser.h"
+#include "cyaml.h"
+#include "cyaml_json_adapter.h"
 #include "ltv_parser.h"
 #include "modbus_parser.h"
 #include "soa_parser.h"
@@ -136,6 +138,188 @@ void turbo_json_path_result_free(turbo_json_path_result_t *result) {
 }
 
 const char *turbo_json_path_error(void) { return json_path_get_error(); }
+
+/* YAML */
+struct turbo_yaml_doc_s {
+  cyaml_doc_t *doc;
+  char *source;
+};
+
+struct turbo_yaml_path_result_s {
+  cyaml_path_result_t result;
+};
+
+int turbo_parse_yaml(const uint8_t *data, size_t len, turbo_yaml_doc_t **out) {
+  turbo_yaml_doc_t *yaml;
+  cyaml_error_t error = {0};
+  if (!data || !out || len > UINT32_MAX)
+    return -1;
+  *out = NULL;
+  yaml = (turbo_yaml_doc_t *)calloc(1, sizeof(*yaml));
+  if (!yaml)
+    return -1;
+  yaml->source = (char *)malloc(len + 1);
+  if (!yaml->source) {
+    free(yaml);
+    return -1;
+  }
+  memcpy(yaml->source, data, len);
+  yaml->source[len] = '\0';
+  yaml->doc = cyaml_parse(yaml->source, len, NULL, &error);
+  if (!yaml->doc) {
+    free(yaml->source);
+    free(yaml);
+    return -1;
+  }
+  *out = yaml;
+  return 0;
+}
+
+void turbo_free_yaml(turbo_yaml_doc_t **doc) {
+  turbo_yaml_doc_t *yaml;
+  if (!doc || !*doc)
+    return;
+  yaml = *doc;
+  cyaml_free(yaml->doc);
+  free(yaml->source);
+  free(yaml);
+  *doc = NULL;
+}
+
+turbo_yaml_node_t *turbo_yaml_root(const turbo_yaml_doc_t *doc) {
+  return doc ? (turbo_yaml_node_t *)cyaml_root(doc->doc) : NULL;
+}
+
+turbo_yaml_node_type_t turbo_yaml_node_type(const turbo_yaml_node_t *node) {
+  const cyaml_node_t *raw = (const cyaml_node_t *)node;
+  if (!raw)
+    return TURBO_YAML_NODE_NONE;
+  switch (raw->type) {
+  case CYAML_NULL: return TURBO_YAML_NODE_NULL;
+  case CYAML_SCALAR: return TURBO_YAML_NODE_SCALAR;
+  case CYAML_SEQ: return TURBO_YAML_NODE_SEQUENCE;
+  case CYAML_MAP: return TURBO_YAML_NODE_MAPPING;
+  case CYAML_ALIAS: return TURBO_YAML_NODE_ALIAS;
+  default: return TURBO_YAML_NODE_NONE;
+  }
+}
+
+turbo_yaml_scalar_kind_t
+turbo_yaml_scalar_kind(const turbo_yaml_doc_t *doc, const turbo_yaml_node_t *node) {
+  cyaml_scalar_kind_t kind;
+  if (!doc || !node)
+    return TURBO_YAML_SCALAR_NULL;
+  kind = cyaml_scalar_kind(doc->doc, (const cyaml_node_t *)node);
+  switch (kind) {
+  case CYAML_KIND_BOOL: return TURBO_YAML_SCALAR_BOOL;
+  case CYAML_KIND_INT: return TURBO_YAML_SCALAR_INT;
+  case CYAML_KIND_FLOAT: return TURBO_YAML_SCALAR_FLOAT;
+  case CYAML_KIND_STRING: return TURBO_YAML_SCALAR_STRING;
+  default: return TURBO_YAML_SCALAR_NULL;
+  }
+}
+
+char *turbo_yaml_scalar_dup(const turbo_yaml_doc_t *doc,
+                            const turbo_yaml_node_t *node) {
+  return (doc && node) ? cyaml_scalar_str(doc->doc, (const cyaml_node_t *)node) : NULL;
+}
+
+size_t turbo_yaml_sequence_size(const turbo_yaml_node_t *node) {
+  return cyaml_seq_len((const cyaml_node_t *)node);
+}
+
+turbo_yaml_node_t *turbo_yaml_sequence_get(const turbo_yaml_node_t *node,
+                                           size_t index) {
+  if (index > UINT32_MAX)
+    return NULL;
+  return (turbo_yaml_node_t *)cyaml_seq_get((const cyaml_node_t *)node,
+                                            (uint32_t)index);
+}
+
+size_t turbo_yaml_mapping_size(const turbo_yaml_node_t *node) {
+  return cyaml_map_len((const cyaml_node_t *)node);
+}
+
+turbo_yaml_node_t *turbo_yaml_mapping_key(const turbo_yaml_node_t *node,
+                                          size_t index) {
+  cyaml_pair_t *pair;
+  if (index > UINT32_MAX)
+    return NULL;
+  pair = cyaml_map_at((const cyaml_node_t *)node, (uint32_t)index);
+  return pair ? (turbo_yaml_node_t *)pair->key : NULL;
+}
+
+turbo_yaml_node_t *turbo_yaml_mapping_value(const turbo_yaml_node_t *node,
+                                            size_t index) {
+  cyaml_pair_t *pair;
+  if (index > UINT32_MAX)
+    return NULL;
+  pair = cyaml_map_at((const cyaml_node_t *)node, (uint32_t)index);
+  return pair ? (turbo_yaml_node_t *)pair->val : NULL;
+}
+
+turbo_yaml_path_result_t *
+turbo_yaml_path_query(const turbo_yaml_doc_t *doc, const turbo_yaml_node_t *context,
+                      const char *expr) {
+  turbo_yaml_path_result_t *result;
+  if (!doc || !expr)
+    return NULL;
+  result = (turbo_yaml_path_result_t *)calloc(1, sizeof(*result));
+  if (!result)
+    return NULL;
+  result->result = cyaml_path_query(doc->doc, (const cyaml_node_t *)context, expr);
+  return result;
+}
+
+size_t turbo_yaml_path_result_size(const turbo_yaml_path_result_t *result) {
+  return result ? cyaml_path_count(&result->result) : 0;
+}
+
+turbo_yaml_node_t *
+turbo_yaml_path_result_get(const turbo_yaml_path_result_t *result, size_t index) {
+  if (!result || index > UINT32_MAX)
+    return NULL;
+  return (turbo_yaml_node_t *)cyaml_path_get(&result->result, (uint32_t)index);
+}
+
+const char *turbo_yaml_path_result_error(const turbo_yaml_path_result_t *result) {
+  return result ? result->result.error : "Invalid YAML path result";
+}
+
+size_t turbo_yaml_path_result_error_pos(const turbo_yaml_path_result_t *result) {
+  return result ? result->result.error_pos : 0;
+}
+
+void turbo_yaml_path_result_free(turbo_yaml_path_result_t *result) {
+  if (!result)
+    return;
+  cyaml_path_result_free(&result->result);
+  free(result);
+}
+
+char *turbo_yaml_emit(const turbo_yaml_doc_t *doc, size_t *out_len) {
+  return doc ? cyaml_emit(doc->doc, NULL, out_len) : NULL;
+}
+
+char *turbo_yaml_emit_node(const turbo_yaml_doc_t *doc,
+                           const turbo_yaml_node_t *node, size_t *out_len) {
+  return (doc && node)
+      ? cyaml_emit_node(doc->doc, (const cyaml_node_t *)node, NULL, out_len)
+      : NULL;
+}
+
+void turbo_yaml_string_free(char *str) { free(str); }
+
+json_value_t *turbo_yaml_to_json(const turbo_yaml_doc_t *doc) {
+  return doc ? json_value_from_cyaml(doc->doc) : NULL;
+}
+
+json_value_t *turbo_yaml_node_to_json(const turbo_yaml_doc_t *doc,
+                                      const turbo_yaml_node_t *node) {
+  return (doc && node)
+      ? json_value_from_cyaml_node(doc->doc, (const cyaml_node_t *)node)
+      : NULL;
+}
 
 /* XML (cxml) */
 int turbo_parse_xml(const uint8_t *data, size_t len, void *out) {

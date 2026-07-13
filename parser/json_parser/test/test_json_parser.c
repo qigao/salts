@@ -320,6 +320,87 @@ spec("json_parser") {
   }
 
   describe("Auxiliary") {
+    it("should build length-delimited strings and object keys") {
+      json_value_t *obj = json_create_object();
+      json_value_t *value = json_create_string_n("x\0y", 3);
+
+      check_not_null(obj);
+      check_not_null(value);
+      check_true(json_object_add_n(obj, "a\0b", 3, value));
+      check_size_eq(json_object_size(obj), 1);
+      check_size_eq(json_object_key_len(obj, 0), 3);
+      check_mem_eq(json_object_key(obj, 0), "a\0b", 3);
+      check_size_eq(json_string_len(json_object_value(obj, 0)), 3);
+      check_mem_eq(json_string(json_object_value(obj, 0)), "x\0y", 3);
+
+      size_t len = 0;
+      char *serialized = json_serialize(obj, &len);
+      check_not_null(serialized);
+      check_str_eq(serialized, "{\"a\\u0000b\":\"x\\u0000y\"}");
+      json_serialize_free(serialized);
+      json_free(obj);
+    }
+
+    it("should report checked builder argument failures") {
+      json_value_t *array = json_create_array();
+      json_value_t *value = json_create_number(1.0);
+
+      check_not_null(array);
+      check_not_null(value);
+      check_false(json_array_add_checked(NULL, value));
+      check_false(json_array_add_checked(array, NULL));
+      check_false(json_object_add_checked(array, "key", value));
+      check_false(json_object_add_n(array, "key", 3, value));
+      check_size_eq(json_array_size(array), 0);
+
+      check_true(json_array_add_checked(array, value));
+      check_size_eq(json_array_size(array), 1);
+      json_free(array);
+    }
+
+    it("should reject adopting a child into a second parent") {
+      json_value_t *first = json_create_array();
+      json_value_t *second = json_create_array();
+      json_value_t *value = json_create_string("owned");
+
+      check_not_null(first);
+      check_not_null(second);
+      check_not_null(value);
+      check_true(json_array_add_checked(first, value));
+      check_false(json_array_add_checked(second, value));
+      check_size_eq(json_array_size(first), 1);
+      check_size_eq(json_array_size(second), 0);
+
+      json_free(second);
+      json_free(first);
+    }
+
+    it("should reject an arena ownership cycle") {
+      json_value_t *parent = json_create_array();
+      json_value_t *child = json_create_array();
+
+      check_not_null(parent);
+      check_not_null(child);
+      check_true(json_array_add_checked(parent, child));
+      check_false(json_array_add_checked(child, parent));
+      check_size_eq(json_array_size(parent), 1);
+      check_size_eq(json_array_size(child), 0);
+      json_free(parent);
+    }
+
+    it("should keep legacy builder wrappers working") {
+      json_value_t *obj = json_create_object();
+      json_value_t *array = json_create_array();
+
+      check_not_null(obj);
+      check_not_null(array);
+      json_array_add(array, json_create_bool(true));
+      json_object_add(obj, "items", array);
+      check_size_eq(json_array_size(json_object_get(obj, "items")), 1);
+      check_true(json_bool(json_array_get(json_object_get(obj, "items"), 0)));
+      json_free(obj);
+    }
+
     it("should handle whitespace around JSON") {
       const char *json = "  \n\t { \"key\" : \"value\" } \n";
       json_value_t *v = json_parse(json, strlen(json));

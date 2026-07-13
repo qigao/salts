@@ -8,7 +8,7 @@ target_link_libraries(tbe_compiler PRIVATE TurboUtils::TbeSchema
                                            TurboUtils::Parser TurboUtils::Mustache)
 target_include_directories(tbe_compiler
                            PRIVATE ${PROJECT_SOURCE_DIR}/shared/utils/include)
-cmake_config_target(tbe_compiler NO_INSTALL FOLDER "tbe/tbe_compiler")
+cmake_config_target(tbe_compiler FOLDER "tbe/tbe_compiler")
 
 function(tbe_copy_turbonet_runtime_deps target_name)
   if(WIN32)
@@ -78,5 +78,5 @@ target_compile_definitions(
     RUST_STRUCTS_TEMPLATE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/templates/rust_structs.mustache"
     TS_TYPES_TEMPLATE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/templates/ts_types.mustache"
 )
-cmake_config_target(test_tbe_compiler NO_INSTALL FOLDER "tbe/tbe_compiler")
+cmake_config_target(test_tbe_compiler FOLDER "tbe/tbe_compiler")
 tbe_copy_turbonet_runtime_deps(test_tbe_compiler)

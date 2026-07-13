@@ -3,7 +3,7 @@ set(TARGET_NAME datetime_parser)
 cmake_add_grammar(DATETIME
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/parser/datetime_lexer.re
   GRAMMAR_Y ${CMAKE_CURRENT_SOURCE_DIR}/parser/datetime_grammar.y
-  FOLDER "parser/${TARGET_NAME}")
+  FOLDER "parser/${TARGET_NAME}/grammar")
 
 # =============================================================================
 # Library
@@ -18,7 +18,6 @@ add_dependencies(${TARGET_NAME} ${DATETIME_LEXER_TARGET}
                  ${DATETIME_GRAMMAR_TARGET})
 
 cmake_config_target(${TARGET_NAME}
-  NO_INSTALL
   ALIAS TurboUtils::DateTimeParser
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME DatetimeParser)

@@ -433,6 +433,106 @@ spec("data_bind public API") {
     }
   }
 
+  it("should bind validate select and stream YAML through public APIs") {
+    const char *schema =
+        "enum Side <uint8> { Buy = 1; Sell = 2; }\n"
+        "message Order { uint32 id; Side side; bool active; string symbol; }\n";
+    const char *yaml =
+        "orders:\n"
+        "  - id: 7\n"
+        "    side: Buy\n"
+        "    active: true\n"
+        "    symbol: ABCD\n"
+        "  - id: 8\n"
+        "    side: Sell\n"
+        "    active: false\n"
+        "    symbol: WXYZ\n";
+    const char *yaml_sequence =
+        "- {id: 1, side: Buy, active: true, symbol: ONE}\n"
+        "- {id: 2, side: Sell, active: false, symbol: TWO}\n";
+    const char *yaml_root =
+        "id: 9\nside: Buy\nactive: true\nsymbol: ROOT\n";
+    DataBind *codec = NULL;
+    DataBindValue *value = NULL;
+    DataBindValue *all = NULL;
+    DataBindValue *stream_value = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    DataBindStatus status = data_bind_create_from_text(schema, strlen(schema),
+                                                       &codec, &err);
+    check_int_eq(status, DATA_BIND_OK);
+    check_not_null(codec);
+
+    if (codec) {
+      data_bind_stream_t *stream;
+      record_callback_state state = {0};
+      status = data_bind_parse_yaml(codec, "Order", yaml_root, strlen(yaml_root),
+                                    &value, &err);
+      check_int_eq(status, DATA_BIND_OK);
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(value, "id")), 9);
+      data_bind_value_free(value);
+      value = NULL;
+
+      status = data_bind_parse_yaml_all(codec, "Order", yaml_sequence,
+                                        strlen(yaml_sequence), &all, &err);
+      check_int_eq(status, DATA_BIND_OK);
+      check_size_eq(data_bind_value_count(all), 2);
+      data_bind_value_free(all);
+      all = NULL;
+      check_int_eq(data_bind_validate_yaml(codec, "Order", yaml_sequence,
+                                           strlen(yaml_sequence), &err), DATA_BIND_OK);
+
+      status = data_bind_parse_yaml_path(codec, "Order", yaml, strlen(yaml),
+                                         "/orders[1]", &value, &err);
+      check_int_eq(status, DATA_BIND_OK);
+      check_not_null(value);
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(value, "id")), 8);
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(value, "side")), 2);
+
+      status = data_bind_parse_yaml_path_all(codec, "Order", yaml, strlen(yaml),
+                                             "/orders[*]", &all, &err);
+      check_int_eq(status, DATA_BIND_OK);
+      check_size_eq(data_bind_value_count(all), 2);
+      check_int_eq(data_bind_value_as_int(
+                       data_bind_value_get(data_bind_value_at(all, 0), "id")), 7);
+      check_int_eq(data_bind_validate_yaml_path(codec, "Order", yaml, strlen(yaml),
+                                                "/orders[0]", &err), DATA_BIND_OK);
+
+      stream = data_bind_stream_yaml_all_create(codec, "Order", &stream_value, &err);
+      check_not_null(stream);
+      if (stream) {
+        check_int_eq(data_bind_stream_set_record_callback(stream, collect_record, &state),
+                     DATA_BIND_OK);
+        check_int_eq(data_bind_stream_feed(stream, yaml_sequence, 19), DATA_BIND_OK);
+        check_int_eq(data_bind_stream_feed(stream, yaml_sequence + 19,
+                                           strlen(yaml_sequence) - 19), DATA_BIND_OK);
+        check_int_eq(data_bind_stream_finish(stream), DATA_BIND_OK);
+        check_size_eq(state.count, 2);
+        check_int_eq(state.ids[0], 1);
+        check_int_eq(state.ids[1], 2);
+        check_size_eq(data_bind_value_count(stream_value), 2);
+        data_bind_stream_destroy(stream);
+      }
+
+      data_bind_value_free(stream_value);
+      data_bind_value_free(all);
+      data_bind_value_free(value);
+      value = NULL;
+      status = data_bind_parse_yaml_path(codec, "Order", yaml, strlen(yaml),
+                                         "/missing", &value, &err);
+      check_int_eq(status, DATA_BIND_ERR_TYPE_MISMATCH);
+      check_null(value);
+      status = data_bind_parse_yaml_path(codec, "Order", yaml, strlen(yaml),
+                                         "/orders[", &value, &err);
+      check_int_eq(status, DATA_BIND_ERR_PARSE);
+      check_null(value);
+      status = data_bind_parse_yaml(codec, "Order", "? [a, b]\n: 1\n", 14,
+                                    &value, &err);
+      check_int_eq(status, DATA_BIND_ERR_TYPE_MISMATCH);
+      check_null(value);
+      data_bind_free(codec);
+    }
+  }
+
   it("should deliver schema-bound JSON CSV and XML records during feed") {
     const char *schema =
         "enum Side <uint8> { Buy = 1; Sell = 2; }\n"

@@ -79,15 +79,32 @@ static void json_arena_destroy_self(json_arena_t *arena) {
   free(arena);
 }
 
-static void json_arena_adopt(json_arena_t *dst, json_arena_t *src) {
-  if (!dst || !src || dst == src || src->parent == dst)
-    return;
+static bool json_arena_can_adopt(const json_arena_t *dst,
+                                 const json_arena_t *src) {
+  if (!dst || !src)
+    return false;
+  if (dst == src || src->parent == dst)
+    return true;
   if (src->parent)
-    return;
+    return false;
+
+  for (const json_arena_t *parent = dst; parent; parent = parent->parent) {
+    if (parent == src)
+      return false;
+  }
+  return true;
+}
+
+static bool json_arena_adopt(json_arena_t *dst, json_arena_t *src) {
+  if (!json_arena_can_adopt(dst, src))
+    return false;
+  if (dst == src || src->parent == dst)
+    return true;
 
   src->adopted_next = dst->adopted_head;
   src->parent = dst;
   dst->adopted_head = src;
+  return true;
 }
 
 static void *json_blob_alloc(json_arena_t *arena, size_t size) {
@@ -175,6 +192,8 @@ void *json_arena_alloc(json_arena_t *arena, size_t size) {
 }
 
 char *json_arena_strdup(json_arena_t *arena, const char *str, size_t len) {
+  if (!arena || !str || len == SIZE_MAX)
+    return NULL;
   char *dst = (char *)json_arena_alloc(arena, len + 1);
   if (!dst)
     return NULL;
@@ -267,6 +286,8 @@ json_value_t *json_value_number_arena(json_arena_t *arena, double val) {
 }
 
 json_value_t *json_value_string_arena(json_arena_t *arena, const char *str, size_t len) {
+  if (!arena || !str)
+    return NULL;
   json_value_t *v = json_value_new_arena(arena, JSON_STRING);
   if (!v)
     return NULL;
@@ -325,10 +346,11 @@ static int json_array_index_reserve(json_arena_t *arena, json_value_t *arr, size
   return 1;
 }
 
-void json_array_append_arena(json_arena_t *arena, json_value_t *arr, json_value_t *val) {
+bool json_array_append_arena(json_arena_t *arena, json_value_t *arr, json_value_t *val) {
   size_t next_count;
-  if (!arr || arr->type != JSON_ARRAY || !val)
-    return;
+  if (!arena || !arr || arr->type != JSON_ARRAY || !val ||
+      arr->data.array_val.count == SIZE_MAX)
+    return false;
 
   next_count = arr->data.array_val.count + 1;
   if ((arr->data.array_val.index || next_count >= JSON_ARRAY_INDEX_THRESHOLD) &&
@@ -340,7 +362,7 @@ void json_array_append_arena(json_arena_t *arena, json_value_t *arr, json_value_
 
   json_element_t *elem = (json_element_t *)json_arena_alloc(arena, sizeof(json_element_t));
   if (!elem)
-    return;
+    return false;
 
   elem->value = val;
   elem->next = NULL;
@@ -355,25 +377,26 @@ void json_array_append_arena(json_arena_t *arena, json_value_t *arr, json_value_
     arr->data.array_val.index[arr->data.array_val.count] = val;
   }
   arr->data.array_val.count++;
+  return true;
 }
 
-void json_object_set_arena_ex(json_arena_t *arena, json_value_t *obj, const char *key,
+bool json_object_set_arena_ex(json_arena_t *arena, json_value_t *obj, const char *key,
                               size_t key_len, int key_owned, json_value_t *val) {
   json_pair_t *existing;
 
-  if (!obj || obj->type != JSON_OBJECT || !key || !val)
-    return;
+  if (!arena || !obj || obj->type != JSON_OBJECT || !key || !val)
+    return false;
 
   for (existing = obj->data.object_val.pairs; existing; existing = existing->next) {
     if (existing->key_len == key_len && memcmp(existing->key, key, key_len) == 0) {
       existing->value = val;
-      return;
+      return true;
     }
   }
 
   json_pair_t *pair = (json_pair_t *)json_arena_alloc(arena, sizeof(json_pair_t));
   if (!pair)
-    return;
+    return false;
 
   pair->key = key;
   pair->key_len = key_len;
@@ -388,15 +411,16 @@ void json_object_set_arena_ex(json_arena_t *arena, json_value_t *obj, const char
   }
   obj->data.object_val.pairs_tail = pair;
   obj->data.object_val.count++;
+  return true;
 }
 
-void json_object_set_arena(json_arena_t *arena, json_value_t *obj, const char *key, size_t key_len,
+bool json_object_set_arena(json_arena_t *arena, json_value_t *obj, const char *key, size_t key_len,
                            json_value_t *val) {
   // Legacy API - always copy key
   char *key_copy = json_arena_strdup(arena, key, key_len);
   if (!key_copy)
-    return;
-  json_object_set_arena_ex(arena, obj, key_copy, key_len, 1, val);
+    return false;
+  return json_object_set_arena_ex(arena, obj, key_copy, key_len, 1, val);
 }
 
 /* ============================================================================
@@ -708,10 +732,18 @@ static bool json_buffer_init(json_buffer_t *buf) {
 }
 
 static bool json_buffer_append(json_buffer_t *buf, const char *str, size_t len) {
-  if (buf->size + len + 1 > buf->capacity) {
-    size_t new_cap = buf->capacity * 2;
-    if (new_cap < buf->size + len + 1)
-      new_cap = buf->size + len + 1024;
+  if (!buf || !str || len > SIZE_MAX - buf->size - 1)
+    return false;
+  size_t needed = buf->size + len + 1;
+  if (needed > buf->capacity) {
+    size_t new_cap = buf->capacity;
+    while (new_cap < needed) {
+      if (new_cap > SIZE_MAX / 2) {
+        new_cap = needed;
+        break;
+      }
+      new_cap *= 2;
+    }
     char *new_data = (char *)realloc(buf->data, new_cap);
     if (!new_data)
       return false;
@@ -722,6 +754,55 @@ static bool json_buffer_append(json_buffer_t *buf, const char *str, size_t len) 
   buf->size += len;
   buf->data[buf->size] = '\0';
   return true;
+}
+
+static bool json_serialize_string(const char *str, size_t len, json_buffer_t *buf) {
+  if (!str || !json_buffer_append(buf, "\"", 1))
+    return false;
+
+  for (size_t i = 0; i < len; i++) {
+    unsigned char c = (unsigned char)str[i];
+    switch (c) {
+    case '"':
+      if (!json_buffer_append(buf, "\\\"", 2))
+        return false;
+      break;
+    case '\\':
+      if (!json_buffer_append(buf, "\\\\", 2))
+        return false;
+      break;
+    case '\b':
+      if (!json_buffer_append(buf, "\\b", 2))
+        return false;
+      break;
+    case '\f':
+      if (!json_buffer_append(buf, "\\f", 2))
+        return false;
+      break;
+    case '\n':
+      if (!json_buffer_append(buf, "\\n", 2))
+        return false;
+      break;
+    case '\r':
+      if (!json_buffer_append(buf, "\\r", 2))
+        return false;
+      break;
+    case '\t':
+      if (!json_buffer_append(buf, "\\t", 2))
+        return false;
+      break;
+    default:
+      if (c < 32) {
+        char tmp[8];
+        int tlen = fmt(tmp, sizeof(tmp), "\\u{:04x}", (int)c);
+        if (tlen < 0 || !json_buffer_append(buf, tmp, (size_t)tlen))
+          return false;
+      } else if (!json_buffer_append(buf, (const char *)&c, 1)) {
+        return false;
+      }
+    }
+  }
+  return json_buffer_append(buf, "\"", 1);
 }
 
 static bool json_serialize_value(const json_value_t *v, json_buffer_t *buf) {
@@ -810,11 +891,9 @@ static bool json_serialize_value(const json_value_t *v, json_buffer_t *buf) {
       return false;
     json_pair_t *p = v->data.object_val.pairs;
     while (p) {
-      if (!json_buffer_append(buf, "\"", 1))
+      if (!json_serialize_string(p->key, p->key_len, buf))
         return false;
-      if (!json_buffer_append(buf, p->key, p->key_len))
-        return false;
-      if (!json_buffer_append(buf, "\":", 2))
+      if (!json_buffer_append(buf, ":", 1))
         return false;
       if (!json_serialize_value(p->value, buf))
         return false;
@@ -914,11 +993,9 @@ static bool json_serialize_pretty_value_ex(const json_value_t *v, json_buffer_t 
     while (p) {
       if (!json_serialize_indent(buf, level + 1))
         return false;
-      if (!json_buffer_append(buf, "\"", 1))
+      if (!json_serialize_string(p->key, p->key_len, buf))
         return false;
-      if (!json_buffer_append(buf, p->key, p->key_len))
-        return false;
-      if (!json_buffer_append(buf, "\": ", 3))
+      if (!json_buffer_append(buf, ": ", 2))
         return false;
       if (!json_serialize_pretty_value_ex(p->value, buf, level + 1, newline, newline_len))
         return false;
@@ -982,63 +1059,99 @@ void json_serialize_free(char *str) { free(str); }
  * Builder Implementation
  * ============================================================================ */
 
-json_value_t *json_create_object(void) {
+static json_value_t *json_create_root(json_type_t type) {
   json_arena_t *arena = json_arena_create();
-  return arena ? json_value_object_arena(arena) : NULL;
+  if (!arena)
+    return NULL;
+
+  json_value_t *value = json_value_new_arena(arena, type);
+  if (!value)
+    json_arena_free(arena);
+  return value;
+}
+
+json_value_t *json_create_object(void) {
+  return json_create_root(JSON_OBJECT);
 }
 
 json_value_t *json_create_array(void) {
-  json_arena_t *arena = json_arena_create();
-  return arena ? json_value_array_arena(arena) : NULL;
+  return json_create_root(JSON_ARRAY);
 }
 
 json_value_t *json_create_string(const char *str) {
+  return str ? json_create_string_n(str, strlen(str)) : NULL;
+}
+
+json_value_t *json_create_string_n(const char *str, size_t len) {
+  if (!str)
+    return NULL;
   json_arena_t *arena = json_arena_create();
-  return arena ? json_value_string_arena(arena, str, strlen(str)) : NULL;
+  if (!arena)
+    return NULL;
+  json_value_t *value = json_value_string_arena(arena, str, len);
+  if (!value)
+    json_arena_free(arena);
+  return value;
 }
 
 json_value_t *json_create_number(double num) {
-  json_arena_t *arena = json_arena_create();
-  return arena ? json_value_number_arena(arena, num) : NULL;
+  json_value_t *value = json_create_root(JSON_NUMBER);
+  if (value)
+    value->data.num_val = num;
+  return value;
 }
 
 json_value_t *json_create_bool(bool val) {
-  json_arena_t *arena = json_arena_create();
-  return arena ? json_value_bool_arena(arena, val) : NULL;
+  json_value_t *value = json_create_root(JSON_BOOL);
+  if (value)
+    value->data.bool_val = val;
+  return value;
 }
 
 json_value_t *json_create_null(void) {
-  json_arena_t *arena = json_arena_create();
-  return arena ? json_value_null_arena(arena) : NULL;
+  return json_create_root(JSON_NULL);
 }
 
-static void json_transfer_to_arena(json_arena_t *dst, json_value_t *val) {
-  if (!dst || !val || val->arena == dst)
-    return;
+static bool json_can_transfer_to_arena(const json_arena_t *dst,
+                                       const json_value_t *val) {
+  return val && json_arena_can_adopt(dst, val->arena);
+}
 
-  json_arena_adopt(dst, val->arena);
+bool json_object_add_n(json_value_t *obj, const char *key, size_t key_len,
+                       json_value_t *val) {
+  if (!obj || obj->type != JSON_OBJECT || !key || !val ||
+      !json_can_transfer_to_arena(obj->arena, val))
+    return false;
+
+  char *key_copy = json_arena_strdup(obj->arena, key, key_len);
+  if (!key_copy)
+    return false;
+
+  if (!json_object_set_arena_ex(obj->arena, obj, key_copy, key_len, 1, val))
+    return false;
+  return json_arena_adopt(obj->arena, val->arena);
+}
+
+bool json_object_add_checked(json_value_t *obj, const char *key, json_value_t *val) {
+  return key ? json_object_add_n(obj, key, strlen(key), val) : false;
+}
+
+bool json_array_add_checked(json_value_t *arr, json_value_t *val) {
+  if (!arr || arr->type != JSON_ARRAY || !val ||
+      !json_can_transfer_to_arena(arr->arena, val))
+    return false;
+
+  if (!json_array_append_arena(arr->arena, arr, val))
+    return false;
+  return json_arena_adopt(arr->arena, val->arena);
 }
 
 void json_object_add(json_value_t *obj, const char *key, json_value_t *val) {
-  if (!obj || obj->type != JSON_OBJECT || !key || !val)
-    return;
-
-  if (val->arena != obj->arena) {
-    json_transfer_to_arena(obj->arena, val);
-  }
-
-  json_object_set_arena(obj->arena, obj, key, strlen(key), val);
+  (void)json_object_add_checked(obj, key, val);
 }
 
 void json_array_add(json_value_t *arr, json_value_t *val) {
-  if (!arr || arr->type != JSON_ARRAY || !val)
-    return;
-
-  if (val->arena != arr->arena) {
-    json_transfer_to_arena(arr->arena, val);
-  }
-
-  json_array_append_arena(arr->arena, arr, val);
+  (void)json_array_add_checked(arr, val);
 }
 
 void json_object_set_string(json_value_t *obj, const char *key, const char *val) {
