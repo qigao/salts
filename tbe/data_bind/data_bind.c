@@ -88,6 +88,7 @@ static int g_mir_cache_enabled = 1;
 
 typedef struct data_bind_runtime_api {
   DataBindValue *(*create_object)(void);
+  void (*free_value)(DataBindValue *value);
   void (*set_field_int)(DataBindValue *obj, const char *name, int32_t val);
   void (*set_field_int64)(DataBindValue *obj, const char *name, int64_t val);
   void (*set_field_double)(DataBindValue *obj, const char *name, double val);
@@ -128,6 +129,7 @@ struct DataBind {
   data_bind_runtime_api_t api;
   char schema_hash[65];  /* SHA-256 hash of schema for caching */
   int is_cloned;         /* Whether this codec shares MIR context with another */
+  int mir_gen_initialized;
 };
 
 typedef struct data_bind_json_stream_frame {
@@ -310,7 +312,7 @@ typedef struct {
   MIR_item_t proto_item;
 } external_ref_t;
 typedef struct {
-  external_ref_t create_obj, set_int, set_i64, set_dbl, set_bool, set_str, set_bytes;
+  external_ref_t create_obj, free_value, set_int, set_i64, set_dbl, set_bool, set_str, set_bytes;
   external_ref_t set_uuid;
   external_ref_t create_list, add_list_int, add_list_i64, add_list_dbl, add_list_bool,
       add_list_str, add_list_obj, set_list;
@@ -1140,6 +1142,7 @@ static void dynamic_add_map_entry_string_bool(DataBindValue *map, const char *ke
 
 static const data_bind_runtime_api_t DYNAMIC_VALUE_API = {
     .create_object = dynamic_create_object,
+    .free_value = data_bind_value_free,
     .set_field_int = dynamic_set_field_int,
     .set_field_int64 = dynamic_set_field_int64,
     .set_field_double = dynamic_set_field_double,
@@ -1220,9 +1223,11 @@ static void add_map_str_bool_noop(DataBindValue *m, const char *k, int v) {
   (void)v;
 }
 static DataBindValue *create_value_noop(void) { return NULL; }
+static void free_value_noop(DataBindValue *value) { (void)value; }
 
 static const data_bind_runtime_api_t MIR_OUTPUT_API = {
     .create_object = create_value_noop,
+    .free_value = free_value_noop,
     .set_field_int = set_i32_noop,
     .set_field_int64 = set_i64_noop,
     .set_field_double = set_dbl_noop,
@@ -1341,7 +1346,7 @@ static void mir_cache_release(const char *schema_hash) {
   mir_cache_entry_t **prev_ptr = &g_mir_cache_head;
   mir_cache_entry_t *entry;
   
-  if (!g_mir_cache_enabled || schema_hash == NULL) return;
+  if (schema_hash == NULL) return;
   
   entry = g_mir_cache_head;
   while (entry != NULL) {
@@ -1351,6 +1356,7 @@ static void mir_cache_release(const char *schema_hash) {
         /* Remove from cache and free resources */
         *prev_ptr = entry->next;
         if (entry->shared_ctx != NULL) {
+          MIR_gen_finish(entry->shared_ctx);
           MIR_finish(entry->shared_ctx);
         }
         /* Free func_head nodes that belong to this cache entry */
@@ -4100,6 +4106,7 @@ static void init_externals(mir_builder_t *builder) {
   MIR_var_t free_args[] = {{MIR_T_P, "ptr", 0}};
 
   declare_external(builder, &builder->ext.create_obj, "create_obj", 1, &ptr_result, 0, NULL);
+  declare_external(builder, &builder->ext.free_value, "free_value", 0, NULL, 1, free_args);
   declare_external(builder, &builder->ext.set_int, "set_int", 0, NULL, 3, set_int_args);
   declare_external(builder, &builder->ext.set_i64, "set_int64", 0, NULL, 3, set_i64_args);
   declare_external(builder, &builder->ext.set_dbl, "set_dbl", 0, NULL, 3, set_dbl_args);
@@ -4384,6 +4391,10 @@ static void emit_list_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_
   emitter_call_result(e, &e->builder->ext.create_list, list_reg, NULL, 0);
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
                                  emitter_reg(e, list_reg), MIR_new_int_op(e->builder->ctx, 0)));
+  args[0] = emitter_reg(e, target_obj_reg);
+  args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
+  args[2] = emitter_reg(e, list_reg);
+  emitter_call(e, &e->builder->ext.set_list, args, 3);
   if (field->fixed_count > 0) {
     emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, count_reg),
                                    MIR_new_int_op(e->builder->ctx, field->fixed_count)));
@@ -4451,12 +4462,12 @@ static void emit_list_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_
     emitter_call_result(e, &e->builder->ext.create_obj, child_reg, NULL, 0);
     emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
                                    emitter_reg(e, child_reg), MIR_new_int_op(e->builder->ctx, 0)));
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, child_off_reg),
-                                   emitter_reg(e, off_reg)));
-    emit_fields_into_object(e, child_reg, child_off_reg, &field->children);
     args[0] = emitter_reg(e, list_reg);
     args[1] = emitter_reg(e, child_reg);
     emitter_call(e, &e->builder->ext.add_list_obj, args, 2);
+    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, child_off_reg),
+                                   emitter_reg(e, off_reg)));
+    emit_fields_into_object(e, child_reg, child_off_reg, &field->children);
     emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, off_reg),
                                    emitter_reg(e, child_off_reg)));
   }
@@ -4464,10 +4475,6 @@ static void emit_list_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_
                                  emitter_reg(e, index_reg), MIR_new_int_op(e->builder->ctx, 1)));
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, loop_label)));
   emitter_append(e, done_label);
-  args[0] = emitter_reg(e, target_obj_reg);
-  args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
-  args[2] = emitter_reg(e, list_reg);
-  emitter_call(e, &e->builder->ext.set_list, args, 3);
 }
 
 static void emit_set_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
@@ -4481,6 +4488,10 @@ static void emit_set_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t
   emitter_call_result(e, &e->builder->ext.create_set, set_reg, NULL, 0);
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
                                  emitter_reg(e, set_reg), MIR_new_int_op(e->builder->ctx, 0)));
+  args[0] = emitter_reg(e, target_obj_reg);
+  args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
+  args[2] = emitter_reg(e, set_reg);
+  emitter_call(e, &e->builder->ext.set_set, args, 3);
   emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, count_reg),
                                  emitter_reg(e, emitter_load_u32(e, off_reg, 0))));
@@ -4540,10 +4551,6 @@ static void emit_set_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t
                                  emitter_reg(e, index_reg), MIR_new_int_op(e->builder->ctx, 1)));
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, loop_label)));
   emitter_append(e, done_label);
-  args[0] = emitter_reg(e, target_obj_reg);
-  args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
-  args[2] = emitter_reg(e, set_reg);
-  emitter_call(e, &e->builder->ext.set_set, args, 3);
 }
 
 static void emit_map_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
@@ -4557,6 +4564,10 @@ static void emit_map_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t
   emitter_call_result(e, &e->builder->ext.create_map, map_reg, NULL, 0);
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
                                  emitter_reg(e, map_reg), MIR_new_int_op(e->builder->ctx, 0)));
+  args[0] = emitter_reg(e, target_obj_reg);
+  args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
+  args[2] = emitter_reg(e, map_reg);
+  emitter_call(e, &e->builder->ext.set_map, args, 3);
   emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, count_reg),
                                  emitter_reg(e, emitter_load_u32(e, off_reg, 0))));
@@ -4652,10 +4663,6 @@ static void emit_map_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t
                                  emitter_reg(e, index_reg), MIR_new_int_op(e->builder->ctx, 1)));
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, loop_label)));
   emitter_append(e, done_label);
-  args[0] = emitter_reg(e, target_obj_reg);
-  args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
-  args[2] = emitter_reg(e, map_reg);
-  emitter_call(e, &e->builder->ext.set_map, args, 3);
 }
 
 static void emit_group_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
@@ -4682,6 +4689,10 @@ static void emit_group_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg
   emitter_call_result(e, &e->builder->ext.create_list, list_reg, NULL, 0);
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
                                  emitter_reg(e, list_reg), MIR_new_int_op(e->builder->ctx, 0)));
+  args[0] = emitter_reg(e, target_obj_reg);
+  args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
+  args[2] = emitter_reg(e, list_reg);
+  emitter_call(e, &e->builder->ext.set_list, args, 3);
   entries_off_reg = emitter_new_reg(e, MIR_T_I64, "__entries_off");
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, entries_off_reg),
                                  emitter_reg(e, off_reg)));
@@ -4706,22 +4717,18 @@ static void emit_group_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg
     emitter_call_result(e, &e->builder->ext.create_obj, child_reg, NULL, 0);
     emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
                                    emitter_reg(e, child_reg), MIR_new_int_op(e->builder->ctx, 0)));
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, child_off_reg),
-                                   emitter_reg(e, entry_off_reg)));
-    emit_fields_into_object(e, child_reg, child_off_reg, &field->children);
     args[0] = emitter_reg(e, list_reg);
     args[1] = emitter_reg(e, child_reg);
     emitter_call(e, &e->builder->ext.add_list_obj, args, 2);
+    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, child_off_reg),
+                                   emitter_reg(e, entry_off_reg)));
+    emit_fields_into_object(e, child_reg, child_off_reg, &field->children);
   }
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, index_reg),
                                  emitter_reg(e, index_reg), MIR_new_int_op(e->builder->ctx, 1)));
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, loop_label)));
   emitter_append(e, done_label);
   emitter_advance_reg(e, off_reg, total_reg);
-  args[0] = emitter_reg(e, target_obj_reg);
-  args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
-  args[2] = emitter_reg(e, list_reg);
-  emitter_call(e, &e->builder->ext.set_list, args, 3);
 }
 
 static void emit_field_code(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
@@ -4801,6 +4808,10 @@ static int generate_message_function(mir_builder_t *builder, Node *message_node,
   emit_fields_into_object(&e, e.obj_reg, e.off_reg, &fields);
   emitter_append(&e, MIR_new_ret_insn(builder->ctx, 1, emitter_reg(&e, e.obj_reg)));
   emitter_append(&e, e.fail_label);
+  {
+    MIR_op_t free_args[1] = {emitter_reg(&e, e.obj_reg)};
+    emitter_call(&e, &builder->ext.free_value, free_args, 1);
+  }
   emitter_append(&e, MIR_new_ret_insn(builder->ctx, 1, MIR_new_int_op(builder->ctx, 0)));
   MIR_finish_func(builder->ctx);
   emit_field_array_free(&fields);
@@ -4890,12 +4901,13 @@ static void data_bind_free_contents(DataBind *codec) {
     if (codec->is_cloned && codec->schema_hash[0] != '\0') {
       /* Release cache reference - context will be freed by cache when ref_count reaches 0 */
       mir_cache_release(codec->schema_hash);
-    } else if (!codec->is_cloned && codec->schema_hash[0] == '\0') {
+    } else if (!codec->is_cloned) {
       /* Owned context not in cache, can be destroyed directly */
+      if (codec->mir_gen_initialized) MIR_gen_finish(codec->ctx);
       MIR_finish(codec->ctx);
     }
-    /* If is_cloned == 0 but schema_hash exists, context is in cache and will be freed by cache */
     codec->ctx = NULL;
+    codec->mir_gen_initialized = 0;
   }
   
   if (codec->schema_root != NULL) {
@@ -4937,6 +4949,7 @@ static MIR_module_t generate_parser_module(DataBind *codec) {
 static int link_module(DataBind *codec, MIR_module_t module) {
   MIR_load_module(codec->ctx, module);
   MIR_load_external(codec->ctx, "create_obj", codec->api.create_object);
+  MIR_load_external(codec->ctx, "free_value", codec->api.free_value);
   MIR_load_external(codec->ctx, "set_int", codec->api.set_field_int);
   MIR_load_external(codec->ctx, "set_int64",
                     codec->api.set_field_int64 != NULL ? codec->api.set_field_int64 : set_i64_noop);
@@ -5015,6 +5028,7 @@ static int link_module(DataBind *codec, MIR_module_t module) {
   MIR_load_external(codec->ctx, "read_varstr", tbe_read_varstring);
   MIR_load_external(codec->ctx, "free", free);
   MIR_gen_init(codec->ctx);
+  codec->mir_gen_initialized = 1;
   MIR_link(codec->ctx, MIR_set_gen_interface, NULL);
   return 1;
 }
@@ -5114,7 +5128,8 @@ static DataBindStatus data_bind_create_with_api_from_root(Node *schema_root,
   DataBind *codec;
   DataBindStatus status;
   if (out_codec != NULL) *out_codec = NULL;
-  if (api == NULL || api->create_object == NULL || api->set_field_int == NULL ||
+  if (api == NULL || api->create_object == NULL || api->free_value == NULL ||
+      api->set_field_int == NULL ||
       api->set_field_double == NULL || api->set_field_string == NULL)
     return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1,
                         "Invalid runtime API");
@@ -5203,6 +5218,7 @@ void data_bind_clear_cache(void) {
     /* Only free entries with zero ref count */
     if (entry->ref_count <= 0) {
       if (entry->shared_ctx != NULL) {
+        MIR_gen_finish(entry->shared_ctx);
         MIR_finish(entry->shared_ctx);
       }
       free(entry);

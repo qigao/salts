@@ -31,7 +31,7 @@
             "cacheVariables": {
                 "VCPKG_TARGET_TRIPLET": "x64-linux",
                 "VCPKG_MANIFEST_MODE": "ON",
-                "CMAKE_INSTALL_PREFIX": "/opt/turboutils",
+                "CMAKE_INSTALL_PREFIX": "/root/dev/release",
                 "CMAKE_MAKE_PROGRAM": "/usr/bin/ninja"
             },
             "environment": {

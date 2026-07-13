@@ -20,6 +20,7 @@
 #include "schema_lexer.h"
 #include "schema_types.h"
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 

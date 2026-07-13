@@ -181,6 +181,14 @@ static DataBindValue *test_data_bind_parse_xml_path_all(DataBind *codec, const c
   test_data_bind_parse_xml_path_all((codec), (type_name), (xml), (len), (xmlpath))
 
 suite("Data Bind") {
+  before_all() {
+    data_bind_set_value_pool_enabled(0);
+  }
+
+  after_all() {
+    data_bind_clear_cache();
+  }
+
   section("Codec Creation") {
     given("a valid schema file") {
       write_schema("test_create.tbe", "message Ping { uint32 seq; }\n");
@@ -585,11 +593,10 @@ suite("Data Bind") {
               "<pointer>/</pointer><jsonpath>$</jsonpath><xpath>/endpoint/ip</xpath>"
               "<cron>0 12 * * MON-FRI</cron><color>#11223344</color>"
               "<mime>image/png</mime><regex>^[a-z]{2}$</regex></endpoint>";
-          DataBindValue *from_json = data_bind_parse_json(codec, "Endpoint", json, strlen(json));
-          DataBindValue *from_csv = data_bind_parse_csv(codec, "Endpoint", csv, strlen(csv), 0);
-          DataBindValue *from_xml = data_bind_parse_xml(codec, "Endpoint", xml, strlen(xml));
-
           then("formatted values should remain strings after validation") {
+            DataBindValue *from_json = data_bind_parse_json(codec, "Endpoint", json, strlen(json));
+            DataBindValue *from_csv = data_bind_parse_csv(codec, "Endpoint", csv, strlen(csv), 0);
+            DataBindValue *from_xml = data_bind_parse_xml(codec, "Endpoint", xml, strlen(xml));
             const DataBindValue *ip;
             check_not_null(from_json);
             ip = require_field(from_json, "ip");
@@ -609,11 +616,11 @@ suite("Data Bind") {
             check_str_eq(field.format, "url");
             check(data_bind_schema_field_at(codec, "Endpoint", 14, &field) == 1);
             check_str_eq(field.format, "regex");
-          }
 
-          data_bind_value_free(from_json);
-          data_bind_value_free(from_csv);
-          data_bind_value_free(from_xml);
+            data_bind_value_free(from_json);
+            data_bind_value_free(from_csv);
+            data_bind_value_free(from_xml);
+          }
         }
 
         when("validating invalid formatted strings") {
@@ -951,8 +958,11 @@ suite("Data Bind") {
       if (codec) {
         when("buffer is too short") {
           uint8_t buf[2] = {0x01, 0x02};
-          DataBindValue *v = data_bind_parse(codec, "Small", buf, sizeof(buf));
-          then("should return NULL") { check_null(v); }
+          then("should return NULL") {
+            DataBindValue *v = data_bind_parse(codec, "Small", buf, sizeof(buf));
+            check_null(v);
+            data_bind_value_free(v);
+          }
         }
 
         when("buffer is exactly right size") {
@@ -1093,9 +1103,9 @@ suite("Data Bind") {
             check_int_eq(data_bind_value_as_int(require_field(v, "qty")), 42);
             data_bind_value_free(v);
           }
-          data_bind_free(codec);
         }
       }
+      data_bind_free(codec);
       remove("test_varstr_tail.tbe");
     }
   }
