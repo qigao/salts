@@ -13,15 +13,13 @@ if(WIN32)
 endif()
 
 # Create test executables
-cmake_add_test(
-  SOURCES
-  ${TEST_SOURCES}
-  ${CXX_TEST_SOURCES}
-  FOLDER
-  "utils/tests"
-  LIBS
-  ${COMMON_LIBS}
-  uri_parser)
+foreach(test_source ${TEST_SOURCES} ${CXX_TEST_SOURCES})
+  get_filename_component(test_name ${test_source} NAME_WE)
+  cmake_add_test(${test_name}
+    SOURCES ${test_source}
+    FOLDER "utils/tests"
+    LIBS ${COMMON_LIBS} uri_parser)
+endforeach()
 
 # Link specific libraries for certain tests
 foreach(tgt test_fmt_re2c test_fmt)

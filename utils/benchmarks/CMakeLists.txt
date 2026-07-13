@@ -8,10 +8,13 @@ if(WIN32)
   list(APPEND COMMON_LIBS psapi iphlpapi userenv ws2_32)
 endif()
 
-cmake_add_benchmark(
-  SOURCES ${BENCHMARK_SOURCES}
-  FOLDER "utils/benchmarks"
-  LIBS ${COMMON_LIBS} uri_parser)
+foreach(benchmark_source ${BENCHMARK_SOURCES})
+  get_filename_component(benchmark_name ${benchmark_source} NAME_WE)
+  cmake_add_benchmark(${benchmark_name}
+    SOURCES ${benchmark_source}
+    FOLDER "utils/benchmarks"
+    LIBS ${COMMON_LIBS} uri_parser)
+endforeach()
 
 foreach(tgt test_fmt_bench)
   if(TARGET ${tgt})

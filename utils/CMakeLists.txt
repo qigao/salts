@@ -58,12 +58,15 @@ install(
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # Install headers
-cmake_install_headers(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/)
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
+  DESTINATION include
+  FILES_MATCHING
+  PATTERN "*.h")
 
 # Install extra parser header
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/parser/fmt_lexer.h
         DESTINATION include)
-
 # Tests
 add_subdirectory(tests)
 if(BUILD_BENCHMARKS)

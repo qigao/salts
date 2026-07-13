@@ -36,14 +36,17 @@ target_include_directories(${TARGET_NAME} PRIVATE ${SIMDE_INCLUDE_DIRS})
 # Tools / Examples (Optional)
 # =============================================================================
 
-add_executable(toml2json tools/toml2json.c)
-target_link_libraries(toml2json PRIVATE TurboUtils::TomlParser)
-cmake_config_target(toml2json FOLDER "parser/${TARGET_NAME}/examples")
+cmake_add_executable(toml2json
+  SOURCES tools/toml2json.c
+  LIBS TurboUtils::TomlParser
+  FOLDER "parser/${TARGET_NAME}/examples")
 
-add_executable(toml-c-test tools/toml-c-test.c)
-target_link_libraries(toml-c-test PRIVATE TurboUtils::TomlParser)
-cmake_config_target(toml-c-test FOLDER "parser/${TARGET_NAME}/examples")
+cmake_add_executable(toml-c-test
+  SOURCES tools/toml-c-test.c
+  LIBS TurboUtils::TomlParser
+  FOLDER "parser/${TARGET_NAME}/examples")
 
-add_executable(test_toml tests/test_toml.c)
-target_link_libraries(test_toml PRIVATE TurboUtils::TomlParser TurboUtils::TinyTest)
-cmake_config_target(test_toml FOLDER "parser/${TARGET_NAME}/tests")
+cmake_add_executable(test_toml
+  SOURCES tests/test_toml.c
+  LIBS TurboUtils::TomlParser TurboUtils::TinyTest
+  FOLDER "parser/${TARGET_NAME}/tests")

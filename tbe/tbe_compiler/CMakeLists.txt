@@ -2,13 +2,12 @@
 # Executable
 # =============================================================================
 
-add_executable(tbe_compiler main.c compiler_core.c mustache_helpers.c)
-target_link_libraries(tbe_compiler PRIVATE TurboUtils::TbeSchema
-                                           TurboUtils::DataBind
-                                           TurboUtils::Parser TurboUtils::Mustache)
-target_include_directories(tbe_compiler
-                           PRIVATE ${PROJECT_SOURCE_DIR}/shared/utils/include)
-cmake_config_target(tbe_compiler FOLDER "tbe/tbe_compiler")
+cmake_add_executable(tbe_compiler
+  SOURCES main.c compiler_core.c mustache_helpers.c
+  LIBS TurboUtils::TbeSchema TurboUtils::DataBind TurboUtils::Parser
+       TurboUtils::Mustache
+  INCLUDES ${PROJECT_SOURCE_DIR}/shared/utils/include
+  FOLDER "tbe/tbe_compiler")
 
 function(tbe_copy_turbonet_runtime_deps target_name)
   if(WIN32)
@@ -47,29 +46,14 @@ add_custom_command(
   COMMENT "Copying template files to output directory")
 
 # =============================================================================
-# Convenience target
-# =============================================================================
-
-add_custom_target(
-  generate_tbe_compiler
-  COMMAND
-    "$<TARGET_FILE:tbe_compiler>"
-    "${CMAKE_CURRENT_SOURCE_DIR}/example.schema" --lang c --output
-    "${CMAKE_CURRENT_BINARY_DIR}/output.h"
-  WORKING_DIRECTORY "$<TARGET_FILE_DIR:tbe_compiler>"
-  COMMENT "Generating TBE definitions from schema")
-
-# =============================================================================
 # Tests
 # =============================================================================
 
-add_executable(test_tbe_compiler test_tbe_compiler.c compiler_core.c mustache_helpers.c)
-target_link_libraries(test_tbe_compiler PRIVATE TurboUtils::TbeSchema
-                                                TurboUtils::DataBind
-                                                TurboUtils::TinyTest TurboUtils::Mustache)
-target_compile_definitions(
-  test_tbe_compiler
-  PRIVATE
+cmake_add_executable(test_tbe_compiler
+  SOURCES test_tbe_compiler.c compiler_core.c mustache_helpers.c
+  LIBS TurboUtils::TbeSchema TurboUtils::DataBind TurboUtils::TinyTest
+       TurboUtils::Mustache
+  DEFS
     SCHEMA_EXAMPLE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/example.schema"
     C_STRUCT_TEMPLATE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/templates/c_structs.mustache"
     CPP_TYPES_TEMPLATE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/templates/cpp_types.mustache"
@@ -77,6 +61,5 @@ target_compile_definitions(
     PYTHON_DATACLASS_TEMPLATE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/templates/python_dataclass.mustache"
     RUST_STRUCTS_TEMPLATE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/templates/rust_structs.mustache"
     TS_TYPES_TEMPLATE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/templates/ts_types.mustache"
-)
-cmake_config_target(test_tbe_compiler FOLDER "tbe/tbe_compiler")
+  FOLDER "tbe/tbe_compiler")
 tbe_copy_turbonet_runtime_deps(test_tbe_compiler)

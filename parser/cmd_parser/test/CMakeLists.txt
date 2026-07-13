@@ -1,22 +1,9 @@
 set(TEST_NAME test_cmd_parser)
 
-add_executable(${TEST_NAME}
-    test_cmd_parser.c
-)
-
-target_link_libraries(${TEST_NAME}
-    PRIVATE
-        TurboUtils::CmdParser
-        TurboUtils::TinyTest
-)
-
-target_include_directories(${TEST_NAME}
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
-
-cmake_config_target(${TEST_NAME} FOLDER "parser/cmd_parser/test")
+cmake_add_test(${TEST_NAME}
+  SOURCES test_cmd_parser.c
+  LIBS TurboUtils::CmdParser TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  FOLDER "parser/cmd_parser/test")
 set_target_properties(${TEST_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-
-add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})

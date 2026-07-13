@@ -39,18 +39,14 @@ target_link_libraries(${TARGET_NAME}
 # Examples
 # =============================================================================
 
-add_executable(production_example
-    ${CMAKE_CURRENT_SOURCE_DIR}/example/production_example.c
-)
-target_link_libraries(production_example PRIVATE ${TARGET_NAME})
-target_include_directories(production_example PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_BINARY_DIR}
-)
+cmake_add_executable(production_example
+  SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/example/production_example.c
+  LIBS ${TARGET_NAME}
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_BINARY_DIR}
+  FOLDER "parser/tlv_parser/examples")
 if(UNIX)
     target_link_libraries(production_example PRIVATE pthread)
 endif()
-cmake_config_target(production_example FOLDER "parser/tlv_parser/examples")
 
 # =============================================================================
 # Tests

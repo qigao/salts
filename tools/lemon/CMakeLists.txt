@@ -1,4 +1,4 @@
-add_executable(lemon lemon.c)
-cmake_config_target(lemon ALIAS TurboUtils::Lemon FOLDER "tools")
+cmake_add_executable(lemon SOURCES lemon.c FOLDER "tools")
+add_executable(TurboUtils::Lemon ALIAS lemon)
 target_compile_features(lemon PRIVATE c_std_11)
 

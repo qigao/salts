@@ -4,17 +4,17 @@
  */
 
 #include "data_bind.h"
-#include "re.h"
-#include "uuid.h"
 #include "mir-gen.h"
 #include "mir.h"
 #include "node_tree.h"
+#include "re.h"
 #include "schema_parser_dsl.h"
 #include "tbe_error.h"
 #include "tbe_wire.h"
 #include "turbo_fs.h"
 #include "turbo_parser.h"
 #include "turbo_str.h"
+#include "uuid.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -128,8 +128,8 @@ struct DataBind {
   char error[256];
   char binary_error[256];
   data_bind_runtime_api_t api;
-  char schema_hash[65];  /* SHA-256 hash of schema for caching */
-  int is_cloned;         /* Whether this codec shares MIR context with another */
+  char schema_hash[65]; /* SHA-256 hash of schema for caching */
+  int is_cloned;        /* Whether this codec shares MIR context with another */
   int mir_gen_initialized;
 };
 
@@ -148,13 +148,12 @@ struct data_bind_stream_t {
   DataBindRecordFn record_callback;
   void *record_callback_user;
   uint64_t record_callback_index;
-  DataBindStatus (*feed_fn)(data_bind_stream_t *parser, const char *data,
-                            size_t len, DataBindError *error);
+  DataBindStatus (*feed_fn)(data_bind_stream_t *parser, const char *data, size_t len,
+                            DataBindError *error);
   DataBindStatus (*finish_fn)(data_bind_stream_t *parser, DataBindValue **out_value,
                               DataBindError *error);
-  DataBindStatus (*bind_fn)(DataBind *codec, const char *type_name,
-                            const char *text, size_t len, const char *path,
-                            DataBindValue **out_value, DataBindError *error);
+  DataBindStatus (*bind_fn)(DataBind *codec, const char *type_name, const char *text, size_t len,
+                            const char *path, DataBindValue **out_value, DataBindError *error);
   char *buffer;
   size_t size;
   size_t capacity;
@@ -315,11 +314,11 @@ typedef struct {
 typedef struct {
   external_ref_t create_obj, free_value, set_int, set_i64, set_dbl, set_bool, set_str, set_bytes;
   external_ref_t set_uuid;
-  external_ref_t create_list, add_list_int, add_list_i64, add_list_dbl, add_list_bool,
-      add_list_str, add_list_obj, set_list;
+  external_ref_t create_list, add_list_int, add_list_i64, add_list_dbl, add_list_bool, add_list_str,
+      add_list_obj, set_list;
   external_ref_t create_set, add_set_int, add_set_dbl, add_set_bool, add_set_str, set_set;
-  external_ref_t create_map, add_map_str_str, add_map_str_int, add_map_str_dbl,
-      add_map_str_bool, set_map;
+  external_ref_t create_map, add_map_str_str, add_map_str_int, add_map_str_dbl, add_map_str_bool,
+      set_map;
   external_ref_t read_varstr, free_fn;
 } external_items_t;
 
@@ -400,7 +399,7 @@ static char *dbv_strdup(const char *src) {
 
 static DataBindValue *dbv_new(DataBindValueKind kind) {
   DataBindValue *value = NULL;
-  
+
   /* Try to get from pool first if enabled */
   if (g_value_pool_enabled && g_value_pool.free_list != NULL) {
     value = g_value_pool.free_list;
@@ -413,7 +412,7 @@ static DataBindValue *dbv_new(DataBindValueKind kind) {
       g_value_pool.allocated_count++;
     }
   }
-  
+
   if (value != NULL) value->kind = kind;
   return value;
 }
@@ -437,8 +436,7 @@ static int dbv_object_set(DataBindValue *obj, const char *name, DataBindValue *v
   data_bind_value_field_array_t *fields;
   data_bind_value_field_t *items;
   size_t capacity;
-  if (obj == NULL || obj->kind != DATA_BIND_VALUE_OBJECT || name == NULL || value == NULL)
-    return 0;
+  if (obj == NULL || obj->kind != DATA_BIND_VALUE_OBJECT || name == NULL || value == NULL) return 0;
   fields = &obj->data.object_val;
   if (fields->count == fields->capacity) {
     capacity = fields->capacity == 0 ? 8 : fields->capacity * 2;
@@ -478,8 +476,7 @@ static int dbv_map_has_key(const DataBindValue *map, const char *key) {
   size_t i;
   if (map == NULL || map->kind != DATA_BIND_VALUE_MAP || key == NULL) return 0;
   for (i = 0; i < map->data.map_val.count; i++) {
-    if (map->data.map_val.items[i].key != NULL &&
-        strcmp(map->data.map_val.items[i].key, key) == 0)
+    if (map->data.map_val.items[i].key != NULL && strcmp(map->data.map_val.items[i].key, key) == 0)
       return 1;
   }
   return 0;
@@ -521,7 +518,7 @@ void data_bind_value_free(DataBindValue *value) {
   default:
     break;
   }
-  
+
   /* Return to pool if enabled and pool not full */
   if (g_value_pool_enabled && g_value_pool.allocated_count < VALUE_POOL_SIZE) {
     /* Reuse object_val.items pointer as next pointer in free list */
@@ -668,26 +665,25 @@ static int db_parse_duration_text(const char *text, int64_t *out) {
   int consumed = 0;
   int colon_sign;
   if (text == NULL || out == NULL) return 0;
-  if (sscanf(text, "%lld:%lld:%lld.%lld%n", &hours, &minutes, &seconds, &millis, &consumed) ==
-          4 &&
-      text[consumed] == '\0' && minutes >= 0 && minutes <= 59 && seconds >= 0 &&
-      seconds <= 60 && millis >= 0 && millis <= 999) {
+  if (sscanf(text, "%lld:%lld:%lld.%lld%n", &hours, &minutes, &seconds, &millis, &consumed) == 4 &&
+      text[consumed] == '\0' && minutes >= 0 && minutes <= 59 && seconds >= 0 && seconds <= 60 &&
+      millis >= 0 && millis <= 999) {
     colon_sign = hours < 0 ? -1 : 1;
     if (hours < 0) hours = -hours;
-    *out = (int64_t)(colon_sign *
-                     (hours * 3600000LL + minutes * 60000LL + seconds * 1000LL + millis));
+    *out =
+        (int64_t)(colon_sign * (hours * 3600000LL + minutes * 60000LL + seconds * 1000LL + millis));
     return 1;
   }
   if (sscanf(text, "%lld:%lld:%lld%n", &hours, &minutes, &seconds, &consumed) == 3 &&
-      text[consumed] == '\0' && minutes >= 0 && minutes <= 59 && seconds >= 0 &&
-      seconds <= 60) {
+      text[consumed] == '\0' && minutes >= 0 && minutes <= 59 && seconds >= 0 && seconds <= 60) {
     colon_sign = hours < 0 ? -1 : 1;
     if (hours < 0) hours = -hours;
     *out = (int64_t)(colon_sign * (hours * 3600000LL + minutes * 60000LL + seconds * 1000LL));
     return 1;
   }
   p = text;
-  while (isspace((unsigned char)*p)) p++;
+  while (isspace((unsigned char)*p))
+    p++;
   if (*p == '-') {
     sign = -1;
     p++;
@@ -697,13 +693,15 @@ static int db_parse_duration_text(const char *text, int64_t *out) {
   while (*p != '\0') {
     char *next = NULL;
     double n;
-    while (isspace((unsigned char)*p)) p++;
+    while (isspace((unsigned char)*p))
+      p++;
     if (*p == '\0') break;
     errno = 0;
     n = strtod(p, &next);
     if (errno != 0 || next == p) return 0;
     p = next;
-    while (isspace((unsigned char)*p)) p++;
+    while (isspace((unsigned char)*p))
+      p++;
     if (*p == '\0') {
       total += n;
       saw_value = 1;
@@ -740,13 +738,13 @@ static int db_date_to_text(DataBindDate date, char *out, size_t len) {
 }
 
 static int db_time_to_text(DataBindTime time, char *out, size_t len) {
-  if (out == NULL || len == 0 || time.hour < 0 || time.hour > 23 ||
-      time.minute < 0 || time.minute > 59 || time.second < 0 || time.second > 60 ||
-      time.millisecond < 0 || time.millisecond > 999)
+  if (out == NULL || len == 0 || time.hour < 0 || time.hour > 23 || time.minute < 0 ||
+      time.minute > 59 || time.second < 0 || time.second > 60 || time.millisecond < 0 ||
+      time.millisecond > 999)
     return 0;
   if (time.millisecond > 0)
-    return snprintf(out, len, "%02d:%02d:%02d.%03d", time.hour, time.minute,
-                    time.second, time.millisecond) > 0;
+    return snprintf(out, len, "%02d:%02d:%02d.%03d", time.hour, time.minute, time.second,
+                    time.millisecond) > 0;
   return snprintf(out, len, "%02d:%02d:%02d", time.hour, time.minute, time.second) > 0;
 }
 
@@ -763,9 +761,8 @@ static int db_duration_to_text(int64_t ms, char *out, size_t len) {
   rem %= 60000;
   seconds = rem / 1000;
   rem %= 1000;
-  return snprintf(out, len, "%s%lld:%02lld:%02lld.%03lld", ms < 0 ? "-" : "",
-                  (long long)hours, (long long)minutes, (long long)seconds,
-                  (long long)rem) > 0;
+  return snprintf(out, len, "%s%lld:%02lld:%02lld.%03lld", ms < 0 ? "-" : "", (long long)hours,
+                  (long long)minutes, (long long)seconds, (long long)rem) > 0;
 }
 
 static DataBindValue *dbv_date(DataBindDate value) {
@@ -828,7 +825,8 @@ static int db_parse_decimal_text(const char *text, DataBindDecimal *out) {
 
   if (text == NULL || out == NULL) return 0;
   p = text;
-  while (isspace((unsigned char)*p)) p++;
+  while (isspace((unsigned char)*p))
+    p++;
   if (*p == '-') {
     sign = -1;
     p++;
@@ -856,7 +854,8 @@ static int db_parse_decimal_text(const char *text, DataBindDecimal *out) {
       continue;
     }
     if (isspace((unsigned char)*p)) {
-      while (isspace((unsigned char)*p)) p++;
+      while (isspace((unsigned char)*p))
+        p++;
       if (*p == '\0') break;
     }
     return 0;
@@ -906,7 +905,8 @@ static int db_decimal_to_text(DataBindDecimal value, char *out, size_t len) {
     if (pos + 2 + zeros + digit_count >= len) return 0;
     out[pos++] = '0';
     out[pos++] = '.';
-    while (zeros-- > 0) out[pos++] = '0';
+    while (zeros-- > 0)
+      out[pos++] = '0';
     memcpy(out + pos, p, digit_count);
     pos += digit_count;
     out[pos] = '\0';
@@ -949,7 +949,8 @@ static int db_bigint_canonical_text(const char *text, char *out, size_t len) {
   int negative = 0;
   if (text == NULL || out == NULL || len == 0) return 0;
   p = text;
-  while (isspace((unsigned char)*p)) p++;
+  while (isspace((unsigned char)*p))
+    p++;
   if (*p == '-') {
     negative = 1;
     p++;
@@ -957,7 +958,8 @@ static int db_bigint_canonical_text(const char *text, char *out, size_t len) {
     p++;
   }
   digits = p;
-  while (*p == '0') p++;
+  while (*p == '0')
+    p++;
   if (!isdigit((unsigned char)*p)) {
     const char *q = digits;
     int saw_zero = 0;
@@ -965,15 +967,18 @@ static int db_bigint_canonical_text(const char *text, char *out, size_t len) {
       saw_zero = 1;
       q++;
     }
-    while (isspace((unsigned char)*q)) q++;
+    while (isspace((unsigned char)*q))
+      q++;
     if (!saw_zero || *q != '\0' || len < 2) return 0;
     memcpy(out, "0", 2);
     return 1;
   }
   digits = p;
-  while (isdigit((unsigned char)*p)) p++;
+  while (isdigit((unsigned char)*p))
+    p++;
   digits_len = (size_t)(p - digits);
-  while (isspace((unsigned char)*p)) p++;
+  while (isspace((unsigned char)*p))
+    p++;
   if (*p != '\0' || digits_len == 0) return 0;
   if ((negative ? 1 : 0) + digits_len + 1 > len) return 0;
   if (negative) {
@@ -1058,38 +1063,191 @@ static DataBindValue *dbv_money_text(const char *text) {
   return dbv_money(value);
 }
 
-static DataBindValue *dynamic_create_object(void) { return (DataBindValue *)dbv_new(DATA_BIND_VALUE_OBJECT); }
-static DataBindValue *dynamic_create_list(void) { return (DataBindValue *)dbv_new(DATA_BIND_VALUE_LIST); }
-static DataBindValue *dynamic_create_set(void) { return (DataBindValue *)dbv_new(DATA_BIND_VALUE_SET); }
-static DataBindValue *dynamic_create_map(void) { return (DataBindValue *)dbv_new(DATA_BIND_VALUE_MAP); }
+#define DATA_BIND_VALUE_CLONE_MAX_DEPTH 32u
+
+static DataBindStatus dbv_clone_tree(const DataBindValue *source, size_t depth,
+                                     DataBindValue **out_value) {
+  DataBindValue *copy = NULL;
+  DataBindValue *child = NULL;
+  size_t i;
+  DataBindStatus status;
+
+  if (out_value == NULL) return DATA_BIND_ERR_INVALID_ARG;
+  *out_value = NULL;
+  if (source == NULL) return DATA_BIND_ERR_INVALID_ARG;
+  if (depth > DATA_BIND_VALUE_CLONE_MAX_DEPTH) return DATA_BIND_ERR_RUNTIME;
+
+  switch (source->kind) {
+  case DATA_BIND_VALUE_NULL:
+    copy = dbv_new(DATA_BIND_VALUE_NULL);
+    break;
+  case DATA_BIND_VALUE_OBJECT:
+    copy = dbv_new(DATA_BIND_VALUE_OBJECT);
+    if (copy == NULL) return DATA_BIND_ERR_OOM;
+    for (i = 0; i < source->data.object_val.count; ++i) {
+      const data_bind_value_field_t *field = &source->data.object_val.items[i];
+      if (field->name == NULL || field->value == NULL) {
+        status = DATA_BIND_ERR_RUNTIME;
+        goto fail;
+      }
+      status = dbv_clone_tree(field->value, depth + 1u, &child);
+      if (status != DATA_BIND_OK) goto fail;
+      if (!dbv_object_set(copy, field->name, child)) {
+        status = DATA_BIND_ERR_OOM;
+        goto fail;
+      }
+      child = NULL;
+    }
+    break;
+  case DATA_BIND_VALUE_LIST:
+  case DATA_BIND_VALUE_SET:
+    copy = dbv_new(source->kind);
+    if (copy == NULL) return DATA_BIND_ERR_OOM;
+    for (i = 0; i < source->data.array_val.count; ++i) {
+      if (source->data.array_val.items[i] == NULL) {
+        status = DATA_BIND_ERR_RUNTIME;
+        goto fail;
+      }
+      status = dbv_clone_tree(source->data.array_val.items[i], depth + 1u, &child);
+      if (status != DATA_BIND_OK) goto fail;
+      if (!dbv_array_push(&copy->data.array_val, child)) {
+        status = DATA_BIND_ERR_OOM;
+        goto fail;
+      }
+      child = NULL;
+    }
+    break;
+  case DATA_BIND_VALUE_MAP:
+    copy = dbv_new(DATA_BIND_VALUE_MAP);
+    if (copy == NULL) return DATA_BIND_ERR_OOM;
+    for (i = 0; i < source->data.map_val.count; ++i) {
+      const data_bind_value_map_entry_t *entry = &source->data.map_val.items[i];
+      if (entry->key == NULL || entry->value == NULL) {
+        status = DATA_BIND_ERR_RUNTIME;
+        goto fail;
+      }
+      status = dbv_clone_tree(entry->value, depth + 1u, &child);
+      if (status != DATA_BIND_OK) goto fail;
+      if (!dbv_map_set(copy, entry->key, child)) {
+        status = DATA_BIND_ERR_OOM;
+        goto fail;
+      }
+      child = NULL;
+    }
+    break;
+  case DATA_BIND_VALUE_INT:
+    copy = dbv_int(source->data.int_val);
+    break;
+  case DATA_BIND_VALUE_INT64:
+    copy = dbv_int64(source->data.int64_val);
+    break;
+  case DATA_BIND_VALUE_DOUBLE:
+    copy = dbv_double(source->data.double_val);
+    break;
+  case DATA_BIND_VALUE_BOOL:
+    copy = dbv_bool(source->data.bool_val);
+    break;
+  case DATA_BIND_VALUE_STRING:
+    if (source->data.string_val.ptr == NULL) return DATA_BIND_ERR_RUNTIME;
+    copy = dbv_string(source->data.string_val.ptr);
+    break;
+  case DATA_BIND_VALUE_BYTES:
+    if (source->data.bytes_val.len > 0u && source->data.bytes_val.ptr == NULL) {
+      return DATA_BIND_ERR_RUNTIME;
+    }
+    copy = dbv_bytes(source->data.bytes_val.ptr, source->data.bytes_val.len);
+    break;
+  case DATA_BIND_VALUE_UUID:
+    copy = dbv_uuid_bytes(source->data.uuid_val.bytes);
+    break;
+  case DATA_BIND_VALUE_DATETIME:
+    copy = dbv_datetime(source->data.datetime_val);
+    break;
+  case DATA_BIND_VALUE_DATE:
+    copy = dbv_date(source->data.date_val);
+    break;
+  case DATA_BIND_VALUE_TIME:
+    copy = dbv_time(source->data.time_val);
+    break;
+  case DATA_BIND_VALUE_DURATION:
+    copy = dbv_duration(source->data.duration_ms);
+    break;
+  case DATA_BIND_VALUE_DECIMAL:
+    copy = dbv_decimal(source->data.decimal_val);
+    break;
+  case DATA_BIND_VALUE_BIGINT:
+    if (source->data.bigint_val.ptr == NULL) return DATA_BIND_ERR_RUNTIME;
+    copy = dbv_bigint_text(source->data.bigint_val.ptr);
+    break;
+  case DATA_BIND_VALUE_MONEY:
+    copy = dbv_money(source->data.money_val);
+    break;
+  default:
+    return DATA_BIND_ERR_RUNTIME;
+  }
+
+  if (copy == NULL) return DATA_BIND_ERR_OOM;
+  *out_value = copy;
+  return DATA_BIND_OK;
+
+fail:
+  data_bind_value_free(child);
+  data_bind_value_free(copy);
+  return status;
+}
+
+DataBindStatus data_bind_value_clone(const DataBindValue *value, DataBindValue **out_value) {
+  return dbv_clone_tree(value, 0u, out_value);
+}
+
+static DataBindValue *dynamic_create_object(void) {
+  return (DataBindValue *)dbv_new(DATA_BIND_VALUE_OBJECT);
+}
+static DataBindValue *dynamic_create_list(void) {
+  return (DataBindValue *)dbv_new(DATA_BIND_VALUE_LIST);
+}
+static DataBindValue *dynamic_create_set(void) {
+  return (DataBindValue *)dbv_new(DATA_BIND_VALUE_SET);
+}
+static DataBindValue *dynamic_create_map(void) {
+  return (DataBindValue *)dbv_new(DATA_BIND_VALUE_MAP);
+}
 
 static void dynamic_set_field_int(DataBindValue *obj, const char *name, int32_t val) {
   DataBindValue *child = dbv_int(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) data_bind_value_free(child);
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+    data_bind_value_free(child);
 }
 static void dynamic_set_field_int64(DataBindValue *obj, const char *name, int64_t val) {
   DataBindValue *child = dbv_int64(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) data_bind_value_free(child);
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+    data_bind_value_free(child);
 }
 static void dynamic_set_field_double(DataBindValue *obj, const char *name, double val) {
   DataBindValue *child = dbv_double(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) data_bind_value_free(child);
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+    data_bind_value_free(child);
 }
 static void dynamic_set_field_bool(DataBindValue *obj, const char *name, int val) {
   DataBindValue *child = dbv_bool(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) data_bind_value_free(child);
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+    data_bind_value_free(child);
 }
 static void dynamic_set_field_string(DataBindValue *obj, const char *name, const char *val) {
   DataBindValue *child = dbv_string(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) data_bind_value_free(child);
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+    data_bind_value_free(child);
 }
-static void dynamic_set_field_bytes(DataBindValue *obj, const char *name, const uint8_t *data, size_t len) {
+static void dynamic_set_field_bytes(DataBindValue *obj, const char *name, const uint8_t *data,
+                                    size_t len) {
   DataBindValue *child = dbv_bytes(data, len);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) data_bind_value_free(child);
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+    data_bind_value_free(child);
 }
 static void dynamic_set_field_uuid(DataBindValue *obj, const char *name, const uint8_t *data) {
   DataBindValue *child = dbv_uuid_bytes(data);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) data_bind_value_free(child);
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+    data_bind_value_free(child);
 }
 static void dynamic_set_field_value(DataBindValue *obj, const char *name, DataBindValue *child) {
   if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, (DataBindValue *)child))
@@ -1121,10 +1279,12 @@ static void dynamic_add_list_item_string(DataBindValue *list, const char *val) {
     data_bind_value_free(child);
 }
 static void dynamic_add_list_item_object(DataBindValue *list, DataBindValue *obj) {
-  if (obj == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, (DataBindValue *)obj))
+  if (obj == NULL ||
+      !dbv_array_push(&((DataBindValue *)list)->data.array_val, (DataBindValue *)obj))
     data_bind_value_free((DataBindValue *)obj);
 }
-static void dynamic_add_map_entry_string_string(DataBindValue *map, const char *key, const char *val) {
+static void dynamic_add_map_entry_string_string(DataBindValue *map, const char *key,
+                                                const char *val) {
   DataBindValue *child = dbv_string(val);
   if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) data_bind_value_free(child);
 }
@@ -1301,22 +1461,22 @@ static int set_codec_error(DataBind *codec, const char *fmt, ...) {
  * Uses FNV-1a hash algorithm for simplicity.
  */
 static void compute_schema_hash(const char *schema_text, size_t len, char *hash_out) {
-  uint64_t hash = 14695981039346656037ULL;  /* FNV offset basis */
+  uint64_t hash = 14695981039346656037ULL; /* FNV offset basis */
   size_t i;
   if (schema_text == NULL || hash_out == NULL) return;
-  
+
   for (i = 0; i < len; i++) {
     hash ^= (uint64_t)(unsigned char)schema_text[i];
-    hash *= 1099511628211ULL;  /* FNV prime */
+    hash *= 1099511628211ULL; /* FNV prime */
   }
-  
+
   snprintf(hash_out, 65, "%016llx", (unsigned long long)hash);
 }
 
 static mir_cache_entry_t *mir_cache_find(const char *schema_hash) {
   mir_cache_entry_t *entry;
   if (!g_mir_cache_enabled || schema_hash == NULL) return NULL;
-  
+
   for (entry = g_mir_cache_head; entry != NULL; entry = entry->next) {
     if (strcmp(entry->schema_hash, schema_hash) == 0) {
       return entry;
@@ -1326,29 +1486,29 @@ static mir_cache_entry_t *mir_cache_find(const char *schema_hash) {
 }
 
 static mir_cache_entry_t *mir_cache_insert(const char *schema_hash, MIR_context_t ctx,
-                                            mir_func_node_t *func_head) {
+                                           mir_func_node_t *func_head) {
   mir_cache_entry_t *entry;
   if (!g_mir_cache_enabled || schema_hash == NULL || ctx == NULL) return NULL;
-  
+
   entry = (mir_cache_entry_t *)malloc(sizeof(*entry));
   if (entry == NULL) return NULL;
-  
+
   snprintf(entry->schema_hash, sizeof(entry->schema_hash), "%s", schema_hash);
   entry->shared_ctx = ctx;
   entry->func_head = func_head;
   entry->ref_count = 1;
   entry->next = g_mir_cache_head;
   g_mir_cache_head = entry;
-  
+
   return entry;
 }
 
 static void mir_cache_release(const char *schema_hash) {
   mir_cache_entry_t **prev_ptr = &g_mir_cache_head;
   mir_cache_entry_t *entry;
-  
+
   if (schema_hash == NULL) return;
-  
+
   entry = g_mir_cache_head;
   while (entry != NULL) {
     if (strcmp(entry->schema_hash, schema_hash) == 0) {
@@ -1384,8 +1544,7 @@ static void db_error_clear(DataBindError *error) {
   error->code = DATA_BIND_OK;
   error->line = -1;
   error->column = -1;
-  if (error->size >= offsetof(DataBindError, path) + sizeof(error->path))
-    error->path[0] = '\0';
+  if (error->size >= offsetof(DataBindError, path) + sizeof(error->path)) error->path[0] = '\0';
   if (error->size >= offsetof(DataBindError, message) + sizeof(error->message))
     error->message[0] = '\0';
 }
@@ -1409,9 +1568,8 @@ static void db_error_format_path(char *out, size_t out_size, const char *format,
   }
 }
 
-static DataBindStatus db_error_set(DataBindError *error, DataBindStatus code,
-                                   const char *path, int line, int column,
-                                   const char *fmt, ...) {
+static DataBindStatus db_error_set(DataBindError *error, DataBindStatus code, const char *path,
+                                   int line, int column, const char *fmt, ...) {
   va_list ap;
   if (error != NULL && error->size >= offsetof(DataBindError, message)) {
     error->code = code;
@@ -1429,8 +1587,8 @@ static DataBindStatus db_error_set(DataBindError *error, DataBindStatus code,
   return code;
 }
 
-static DataBindStatus db_codec_error(DataBind *codec, DataBindError *error,
-                                     DataBindStatus code, const char *fmt, ...) {
+static DataBindStatus db_codec_error(DataBind *codec, DataBindError *error, DataBindStatus code,
+                                     const char *fmt, ...) {
   char msg[512];
   va_list ap;
   va_start(ap, fmt);
@@ -1490,9 +1648,7 @@ static int field_flag(Node *field_node, const char *name) {
   return n != NULL && n->type == NODE_STRING && strcmp(n->data.string_val, "1") == 0;
 }
 
-static int record_flag(Node *node, const char *name) {
-  return field_flag(node, name);
-}
+static int record_flag(Node *node, const char *name) { return field_flag(node, name); }
 
 static const char *node_attribute_value(Node *node, const char *name) {
   Node *attrs;
@@ -1509,13 +1665,9 @@ static const char *node_attribute_value(Node *node, const char *name) {
   return NULL;
 }
 
-static const char *field_format(Node *field) {
-  return node_attribute_value(field, "format");
-}
+static const char *field_format(Node *field) { return node_attribute_value(field, "format"); }
 
-static int db_text_is_empty(const char *text) {
-  return text == NULL || text[0] == '\0';
-}
+static int db_text_is_empty(const char *text) { return text == NULL || text[0] == '\0'; }
 
 static int db_parse_i64_text(const char *text, int64_t *out) {
   char *end = NULL;
@@ -1552,13 +1704,9 @@ static int db_parse_bool_text(const char *text, int *out) {
   return 0;
 }
 
-static int db_is_alpha_num(char c) {
-  return isalnum((unsigned char)c) != 0;
-}
+static int db_is_alpha_num(char c) { return isalnum((unsigned char)c) != 0; }
 
-static int db_is_hex_char(char c) {
-  return isxdigit((unsigned char)c) != 0;
-}
+static int db_is_hex_char(char c) { return isxdigit((unsigned char)c) != 0; }
 
 static int db_validate_ipv4_n(const char *text, size_t len) {
   size_t pos = 0;
@@ -1604,7 +1752,8 @@ static int db_validate_ipv6_n(const char *text, size_t len) {
     }
     if (pos < len && text[pos] == '.') {
       size_t ipv4_start = start;
-      while (ipv4_start > 0 && text[ipv4_start - 1] != ':') ipv4_start--;
+      while (ipv4_start > 0 && text[ipv4_start - 1] != ':')
+        ipv4_start--;
       if (!db_validate_ipv4_n(text + ipv4_start, len - ipv4_start)) return 0;
       groups += 2;
       pos = len;
@@ -1702,8 +1851,7 @@ static int db_validate_email(const char *text) {
   for (i = 0; i < local_len; i++) {
     char c = text[i];
     if (c == '.' && i > 0 && text[i - 1] == '.') return 0;
-    if (!(db_is_alpha_num(c) || c == '.' || c == '_' || c == '%' || c == '+' || c == '-'))
-      return 0;
+    if (!(db_is_alpha_num(c) || c == '.' || c == '_' || c == '%' || c == '+' || c == '-')) return 0;
   }
   return db_validate_hostname_like(at + 1, 1);
 }
@@ -1736,14 +1884,15 @@ static int db_validate_uri_text(const char *text, int require_authority) {
   if (*host_start == '\0') return 0;
   if (*host_start == '[') {
     host_end = strchr(host_start, ']');
-    if (host_end == NULL || !db_validate_ipv6_n(host_start + 1, (size_t)(host_end - host_start - 1)))
+    if (host_end == NULL ||
+        !db_validate_ipv6_n(host_start + 1, (size_t)(host_end - host_start - 1)))
       return 0;
-    return host_end[1] == '\0' || host_end[1] == ':' || host_end[1] == '/' ||
-           host_end[1] == '?' || host_end[1] == '#';
+    return host_end[1] == '\0' || host_end[1] == ':' || host_end[1] == '/' || host_end[1] == '?' ||
+           host_end[1] == '#';
   }
   host_end = host_start;
-  while (*host_end != '\0' && *host_end != ':' && *host_end != '/' &&
-         *host_end != '?' && *host_end != '#')
+  while (*host_end != '\0' && *host_end != ':' && *host_end != '/' && *host_end != '?' &&
+         *host_end != '#')
     host_end++;
   if (host_end == host_start) return 0;
   if (db_validate_ipv4_n(host_start, (size_t)(host_end - host_start))) return 1;
@@ -1806,7 +1955,8 @@ static int db_validate_semver(const char *text) {
   if (text == NULL) return 0;
   for (part = 0; part < 3; part++) {
     const char *start = p;
-    while (isdigit((unsigned char)*p)) p++;
+    while (isdigit((unsigned char)*p))
+      p++;
     if (!db_validate_semver_ident(start, (size_t)(p - start), 1)) return 0;
     if (part < 2) {
       if (*p != '.') return 0;
@@ -1815,7 +1965,8 @@ static int db_validate_semver(const char *text) {
   }
   if (*p == '-') {
     const char *start = ++p;
-    while (*p != '\0' && *p != '+') p++;
+    while (*p != '\0' && *p != '+')
+      p++;
     if (!db_validate_semver_tail_n(start, (size_t)(p - start))) return 0;
   }
   if (*p == '+') {
@@ -1857,8 +2008,8 @@ static int db_validate_base64_text(const char *text, int urlsafe) {
 }
 
 static int db_validate_currency(const char *text) {
-  return text != NULL && strlen(text) == 3 && text[0] >= 'A' && text[0] <= 'Z' &&
-         text[1] >= 'A' && text[1] <= 'Z' && text[2] >= 'A' && text[2] <= 'Z';
+  return text != NULL && strlen(text) == 3 && text[0] >= 'A' && text[0] <= 'Z' && text[1] >= 'A' &&
+         text[1] <= 'Z' && text[2] >= 'A' && text[2] <= 'Z';
 }
 
 static int db_validate_json_pointer(const char *text) {
@@ -1912,8 +2063,8 @@ static int db_validate_cron_field(const char *text, size_t len) {
   if (text == NULL || len == 0) return 0;
   for (i = 0; i < len; i++) {
     char c = text[i];
-    if (!(db_is_alpha_num(c) || c == '*' || c == '/' || c == '?' || c == ',' ||
-          c == '-' || c == '.' || c == '#' || c == 'L' || c == 'W'))
+    if (!(db_is_alpha_num(c) || c == '*' || c == '/' || c == '?' || c == ',' || c == '-' ||
+          c == '.' || c == '#' || c == 'L' || c == 'W'))
       return 0;
   }
   return 1;
@@ -1926,10 +2077,12 @@ static int db_validate_cron(const char *text) {
   p = text;
   while (*p != '\0') {
     const char *start;
-    while (*p == ' ' || *p == '\t') p++;
+    while (*p == ' ' || *p == '\t')
+      p++;
     if (*p == '\0') break;
     start = p;
-    while (*p != '\0' && *p != ' ' && *p != '\t') p++;
+    while (*p != '\0' && *p != ' ' && *p != '\t')
+      p++;
     if (!db_validate_cron_field(start, (size_t)(p - start))) return 0;
     fields++;
   }
@@ -1951,8 +2104,8 @@ static int db_validate_color(const char *text) {
 }
 
 static int db_is_mime_token_char(char c) {
-  return db_is_alpha_num(c) || c == '!' || c == '#' || c == '$' || c == '&' ||
-         c == '^' || c == '_' || c == '.' || c == '+' || c == '-';
+  return db_is_alpha_num(c) || c == '!' || c == '#' || c == '$' || c == '&' || c == '^' ||
+         c == '_' || c == '.' || c == '+' || c == '-';
 }
 
 static int db_validate_mime_token(const char *text, size_t len) {
@@ -1973,14 +2126,11 @@ static int db_validate_mime(const char *text) {
          db_validate_mime_token(slash + 1, strlen(slash + 1));
 }
 
-static int db_validate_regex(const char *text) {
-  return text != NULL && re_compile(text) != NULL;
-}
+static int db_validate_regex(const char *text) { return text != NULL && re_compile(text) != NULL; }
 
 static int db_validate_string_format(const char *format, const char *text) {
   if (format == NULL || format[0] == '\0') return 1;
-  if (strcmp(format, "ipaddr") == 0 || strcmp(format, "ip") == 0)
-    return db_validate_ipaddr(text);
+  if (strcmp(format, "ipaddr") == 0 || strcmp(format, "ip") == 0) return db_validate_ipaddr(text);
   if (strcmp(format, "cidr") == 0) return db_validate_cidr(text);
   if (strcmp(format, "hostname") == 0) return db_validate_hostname_like(text, 0);
   if (strcmp(format, "domain") == 0) return db_validate_hostname_like(text, 1);
@@ -2111,14 +2261,13 @@ static data_bind_text_kind_t bind_type_kind(Node *schema_root, const char *type)
   if (strcmp(type, "bytes") == 0) return DB_TEXT_BYTES;
   if (strcmp(type, "string") == 0) return DB_TEXT_STRING;
   if (strcmp(type, "bool") == 0) return DB_TEXT_BOOL;
-  if (strcmp(type, "float") == 0 || strcmp(type, "double") == 0 ||
-      strcmp(type, "f32") == 0 || strcmp(type, "f64") == 0)
+  if (strcmp(type, "float") == 0 || strcmp(type, "double") == 0 || strcmp(type, "f32") == 0 ||
+      strcmp(type, "f64") == 0)
     return DB_TEXT_NUMBER;
-  if (strstr(type, "int") != NULL || strcmp(type, "uint8") == 0 ||
-      strcmp(type, "uint16") == 0 || strcmp(type, "uint32") == 0 ||
-      strcmp(type, "uint64") == 0 || strcmp(type, "u8") == 0 || strcmp(type, "u16") == 0 ||
-      strcmp(type, "u32") == 0 || strcmp(type, "u64") == 0 || strcmp(type, "byte") == 0 ||
-      find_enum_record(schema_root, type) != NULL)
+  if (strstr(type, "int") != NULL || strcmp(type, "uint8") == 0 || strcmp(type, "uint16") == 0 ||
+      strcmp(type, "uint32") == 0 || strcmp(type, "uint64") == 0 || strcmp(type, "u8") == 0 ||
+      strcmp(type, "u16") == 0 || strcmp(type, "u32") == 0 || strcmp(type, "u64") == 0 ||
+      strcmp(type, "byte") == 0 || find_enum_record(schema_root, type) != NULL)
     return DB_TEXT_INTEGER;
   return DB_TEXT_UNSUPPORTED;
 }
@@ -2144,7 +2293,8 @@ static int bind_field_missing_allowed(Node *field) {
 static Node *fields_node_for_record(Node *record);
 static Node *items_node_for_enum(Node *record);
 
-static const char *enum_item_value(Node *schema_root, const char *type_name, const char *item_name) {
+static const char *enum_item_value(Node *schema_root, const char *type_name,
+                                   const char *item_name) {
   Node *e = find_enum_record(schema_root, type_name);
   Node *items = items_node_for_enum(e);
   size_t i;
@@ -2177,10 +2327,11 @@ static int flags_text_value(Node *schema_root, const char *type_name, const char
     char token[128];
     size_t len = 0;
     int64_t value = 0;
-    while (*p == ' ' || *p == '\t' || *p == '|' || *p == ',' || *p == '+') p++;
+    while (*p == ' ' || *p == '\t' || *p == '|' || *p == ',' || *p == '+')
+      p++;
     if (*p == '\0') break;
-    while (*p != '\0' && *p != '|' && *p != ',' && *p != '+' &&
-           *p != ' ' && *p != '\t' && len + 1 < sizeof(token))
+    while (*p != '\0' && *p != '|' && *p != ',' && *p != '+' && *p != ' ' && *p != '\t' &&
+           len + 1 < sizeof(token))
       token[len++] = *p++;
     token[len] = '\0';
     if (len == 0 || !enum_text_value(schema_root, type_name, token, &value)) return 0;
@@ -2193,9 +2344,9 @@ static int flags_text_value(Node *schema_root, const char *type_name, const char
 }
 
 static int schema_text_integer_value(Node *schema_root, const char *type_name,
-                                     data_bind_text_kind_t kind, const char *text,
-                                     int64_t *out) {
-  if (is_flags_type(schema_root, type_name)) return flags_text_value(schema_root, type_name, text, out);
+                                     data_bind_text_kind_t kind, const char *text, int64_t *out) {
+  if (is_flags_type(schema_root, type_name))
+    return flags_text_value(schema_root, type_name, text, out);
   if (find_enum_record(schema_root, type_name) != NULL)
     return enum_text_value(schema_root, type_name, text, out);
   if (kind == DB_TEXT_INTEGER) return db_parse_i64_text(text, out);
@@ -2216,8 +2367,7 @@ static DataBindValue *bind_text_scalar(Node *schema_root, const char *type_name,
   case DB_TEXT_STRING:
     return dbv_string(text != NULL ? text : "");
   case DB_TEXT_BYTES:
-    return dbv_bytes((const uint8_t *)(text != NULL ? text : ""),
-                     text != NULL ? strlen(text) : 0);
+    return dbv_bytes((const uint8_t *)(text != NULL ? text : ""), text != NULL ? strlen(text) : 0);
   case DB_TEXT_UUID:
     return dbv_uuid_text(text);
   case DB_TEXT_DATETIME:
@@ -2346,7 +2496,8 @@ static DataBindValue *bind_json_value(Node *schema_root, const char *type_name,
     if (turbo_json_type(value) != TURBO_JSON_STRING) return NULL;
     return dbv_time_text(turbo_json_string(value));
   case DB_TEXT_DURATION:
-    if (turbo_json_type(value) == TURBO_JSON_NUMBER) return dbv_duration((int64_t)turbo_json_number(value));
+    if (turbo_json_type(value) == TURBO_JSON_NUMBER)
+      return dbv_duration((int64_t)turbo_json_number(value));
     if (turbo_json_type(value) != TURBO_JSON_STRING) return NULL;
     return dbv_duration_text(turbo_json_string(value));
   case DB_TEXT_DECIMAL:
@@ -2362,8 +2513,7 @@ static DataBindValue *bind_json_value(Node *schema_root, const char *type_name,
       return dbv_bigint_text(turbo_json_string(value));
     if (turbo_json_type(value) == TURBO_JSON_NUMBER) {
       double n = turbo_json_number(value);
-      if (!isfinite(n) || floor(n) != n || n < -9007199254740991.0 ||
-          n > 9007199254740991.0)
+      if (!isfinite(n) || floor(n) != n || n < -9007199254740991.0 || n > 9007199254740991.0)
         return NULL;
       snprintf(bigint_buf, sizeof(bigint_buf), "%.0f", n);
       return dbv_bigint_text(bigint_buf);
@@ -2396,7 +2546,8 @@ static DataBindValue *bind_json_value(Node *schema_root, const char *type_name,
     return NULL;
   case DB_TEXT_BOOL:
     if (turbo_json_type(value) == TURBO_JSON_BOOL) return dbv_bool(turbo_json_bool(value));
-    if (turbo_json_type(value) == TURBO_JSON_NUMBER) return dbv_bool(turbo_json_number(value) != 0.0);
+    if (turbo_json_type(value) == TURBO_JSON_NUMBER)
+      return dbv_bool(turbo_json_number(value) != 0.0);
     if (turbo_json_type(value) == TURBO_JSON_STRING)
       return bind_text_scalar(schema_root, type_name, kind, turbo_json_string(value));
     return NULL;
@@ -2406,7 +2557,8 @@ static DataBindValue *bind_json_value(Node *schema_root, const char *type_name,
     return NULL;
   case DB_TEXT_NUMBER:
     if (turbo_json_type(value) == TURBO_JSON_NUMBER) return dbv_double(turbo_json_number(value));
-    if (turbo_json_type(value) == TURBO_JSON_BOOL) return dbv_double(turbo_json_bool(value) ? 1.0 : 0.0);
+    if (turbo_json_type(value) == TURBO_JSON_BOOL)
+      return dbv_double(turbo_json_bool(value) ? 1.0 : 0.0);
     if (turbo_json_type(value) == TURBO_JSON_STRING)
       return bind_text_scalar(schema_root, type_name, kind, turbo_json_string(value));
     return NULL;
@@ -2437,7 +2589,8 @@ static DataBindValue *bind_json_array(Node *schema_root, Node *field, json_value
   DataBindValue *list;
   size_t expected = 0;
   size_t i;
-  if (value == NULL || turbo_json_type(value) != TURBO_JSON_ARRAY || inner_type == NULL) return NULL;
+  if (value == NULL || turbo_json_type(value) != TURBO_JSON_ARRAY || inner_type == NULL)
+    return NULL;
   if (parse_size_value(get_string_val(find_child(field, "length_field")), &expected) &&
       turbo_json_array_size(value) != expected)
     return NULL;
@@ -2451,8 +2604,7 @@ static DataBindValue *bind_json_array(Node *schema_root, Node *field, json_value
         find_data_record(schema_root, inner_type) != NULL ||
         find_union_record(schema_root, inner_type) != NULL)
       bound = bind_json_typed_value(schema_root, inner_type, item);
-    else
-      bound = bind_json_value(schema_root, inner_type, scalar_kind, item);
+    else bound = bind_json_value(schema_root, inner_type, scalar_kind, item);
     if (bound == NULL || !dbv_array_push(&list->data.array_val, bound)) {
       data_bind_value_free(bound);
       data_bind_value_free(list);
@@ -2470,7 +2622,8 @@ static DataBindValue *bind_json_record_array(Node *schema_root, const char *type
   list = dbv_new(DATA_BIND_VALUE_LIST);
   if (list == NULL) return NULL;
   for (i = 0; i < turbo_json_array_size(value); i++) {
-    DataBindValue *bound = bind_json_typed_value(schema_root, type_name, turbo_json_array_get(value, i));
+    DataBindValue *bound =
+        bind_json_typed_value(schema_root, type_name, turbo_json_array_get(value, i));
     if (bound == NULL || !dbv_array_push(&list->data.array_val, bound)) {
       data_bind_value_free(bound);
       data_bind_value_free(list);
@@ -2485,7 +2638,8 @@ static DataBindValue *bind_json_map(Node *schema_root, Node *field, json_value_t
   data_bind_text_kind_t value_kind = bind_type_kind(schema_root, value_type);
   DataBindValue *map;
   size_t i;
-  if (value == NULL || turbo_json_type(value) != TURBO_JSON_OBJECT || value_type == NULL) return NULL;
+  if (value == NULL || turbo_json_type(value) != TURBO_JSON_OBJECT || value_type == NULL)
+    return NULL;
   map = dbv_new(DATA_BIND_VALUE_MAP);
   if (map == NULL) return NULL;
   for (i = 0; i < turbo_json_object_size(value); i++) {
@@ -2493,10 +2647,10 @@ static DataBindValue *bind_json_map(Node *schema_root, Node *field, json_value_t
     json_value_t *item = turbo_json_object_value(value, i);
     DataBindValue *bound;
     if (key == NULL || item == NULL) continue;
-    if (find_data_record(schema_root, value_type) != NULL || find_union_record(schema_root, value_type) != NULL)
+    if (find_data_record(schema_root, value_type) != NULL ||
+        find_union_record(schema_root, value_type) != NULL)
       bound = bind_json_typed_value(schema_root, value_type, item);
-    else
-      bound = bind_json_value(schema_root, value_type, value_kind, item);
+    else bound = bind_json_value(schema_root, value_type, value_kind, item);
     if (bound == NULL || !dbv_map_set(map, key, bound)) {
       data_bind_value_free(bound);
       data_bind_value_free(map);
@@ -2522,7 +2676,8 @@ static DataBindValue *bind_json_union(Node *schema_root, Node *union_node, json_
   variant = union_variant(union_node, variant_name);
   variant_type = get_string_val(find_child(variant, "type"));
   if (variant == NULL || variant_type == NULL || payload == NULL) return NULL;
-  if (find_data_record(schema_root, variant_type) != NULL || find_union_record(schema_root, variant_type) != NULL)
+  if (find_data_record(schema_root, variant_type) != NULL ||
+      find_union_record(schema_root, variant_type) != NULL)
     bound = bind_json_typed_value(schema_root, variant_type, payload);
   else {
     scalar_kind = bind_type_kind(schema_root, variant_type);
@@ -2575,12 +2730,14 @@ static DataBindValue *bind_json_object(Node *schema_root, Node *record, json_val
       continue;
     }
     if (field_flag(field, "is_group_field")) {
-      bound = bind_json_record_array(schema_root, get_string_val(find_child(field, "group_type")), value);
+      bound = bind_json_record_array(schema_root, get_string_val(find_child(field, "group_type")),
+                                     value);
     } else if (field_flag(field, "is_map")) {
       bound = bind_json_map(schema_root, field, value);
     } else if (field_flag(field, "is_collection")) {
-      bound = bind_json_array(schema_root, field, value,
-                              field_flag(field, "is_set") ? DATA_BIND_VALUE_SET : DATA_BIND_VALUE_LIST);
+      bound =
+          bind_json_array(schema_root, field, value,
+                          field_flag(field, "is_set") ? DATA_BIND_VALUE_SET : DATA_BIND_VALUE_LIST);
     } else if (field_flag(field, "is_composite_ref") && field_type != NULL) {
       bound = bind_json_typed_value(schema_root, field_type, value);
     } else if (field_type != NULL && find_union_record(schema_root, field_type) != NULL) {
@@ -2614,10 +2771,8 @@ static DataBindValue *bind_json_typed_value(Node *schema_root, const char *type_
 static int xml_join_path(char *out, size_t out_size, const char *prefix, const char *name) {
   int written;
   if (out == NULL || out_size == 0 || name == NULL) return 0;
-  if (prefix != NULL && prefix[0] != '\0')
-    written = snprintf(out, out_size, "%s/%s", prefix, name);
-  else
-    written = snprintf(out, out_size, "/*/%s", name);
+  if (prefix != NULL && prefix[0] != '\0') written = snprintf(out, out_size, "%s/%s", prefix, name);
+  else written = snprintf(out, out_size, "/*/%s", name);
   return written > 0 && (size_t)written < out_size;
 }
 
@@ -2626,8 +2781,7 @@ static int xml_attr_path(char *out, size_t out_size, const char *prefix, const c
   if (out == NULL || out_size == 0 || name == NULL) return 0;
   if (prefix != NULL && prefix[0] != '\0')
     written = snprintf(out, out_size, "%s/@%s", prefix, name);
-  else
-    written = snprintf(out, out_size, "/*/@%s", name);
+  else written = snprintf(out, out_size, "/*/@%s", name);
   return written > 0 && (size_t)written < out_size;
 }
 
@@ -2653,8 +2807,8 @@ static const char *xml_path_text(turbo_xml_doc_t *doc, const char *path) {
   return turbo_xml_xpath_text(doc, path);
 }
 
-static int xml_field_path(turbo_xml_doc_t *doc, const char *prefix, const char *name,
-                          char *out, size_t out_size) {
+static int xml_field_path(turbo_xml_doc_t *doc, const char *prefix, const char *name, char *out,
+                          size_t out_size) {
   char child[256], attr[256];
   if (!xml_join_path(child, sizeof(child), prefix, name)) return 0;
   if (xml_path_exists(doc, child)) {
@@ -2715,8 +2869,7 @@ static DataBindValue *bind_xml_list_at_path(Node *schema_root, Node *field, turb
         find_data_record(schema_root, inner_type) != NULL ||
         find_union_record(schema_root, inner_type) != NULL)
       item = bind_xml_typed_value(schema_root, inner_type, doc, item_path);
-    else
-      item = bind_xml_scalar_at_path(schema_root, inner_type, scalar_kind, doc, item_path);
+    else item = bind_xml_scalar_at_path(schema_root, inner_type, scalar_kind, doc, item_path);
     if (item == NULL || !dbv_array_push(&list->data.array_val, item)) {
       data_bind_value_free(item);
       data_bind_value_free(list);
@@ -2761,8 +2914,8 @@ static DataBindValue *bind_xml_map_at_path(Node *schema_root, Node *field, turbo
         find_union_record(schema_root, value_type) != NULL)
       item = bind_xml_typed_value(schema_root, value_type, doc, item_path);
     else
-      item = bind_xml_scalar_at_path(schema_root, value_type, bind_type_kind(schema_root, value_type),
-                                     doc, item_path);
+      item = bind_xml_scalar_at_path(schema_root, value_type,
+                                     bind_type_kind(schema_root, value_type), doc, item_path);
     if (item != NULL) {
       if (!dbv_map_set(map, key, item)) {
         data_bind_value_free(item);
@@ -2808,8 +2961,7 @@ static DataBindValue *bind_xml_union_at_path(Node *schema_root, Node *union_node
     if (find_data_record(schema_root, variant_type) != NULL ||
         find_union_record(schema_root, variant_type) != NULL)
       item = bind_xml_typed_value(schema_root, variant_type, doc, item_path);
-    else
-      item = bind_xml_scalar_at_path(schema_root, variant_type, scalar_kind, doc, item_path);
+    else item = bind_xml_scalar_at_path(schema_root, variant_type, scalar_kind, doc, item_path);
     if (item == NULL || !dbv_object_set(result, name, item)) {
       data_bind_value_free(item);
       data_bind_value_free(result);
@@ -2824,8 +2976,8 @@ static DataBindValue *bind_xml_union_at_path(Node *schema_root, Node *union_node
   return result;
 }
 
-static DataBindValue *bind_xml_record_at_path(Node *schema_root, Node *record,
-                                              turbo_xml_doc_t *doc, const char *path) {
+static DataBindValue *bind_xml_record_at_path(Node *schema_root, Node *record, turbo_xml_doc_t *doc,
+                                              const char *path) {
   Node *fields = fields_node_for_record(record);
   DataBindValue *result;
   size_t i;
@@ -2850,7 +3002,8 @@ static DataBindValue *bind_xml_record_at_path(Node *schema_root, Node *record,
         bound = bind_xml_list_at_path(schema_root, field, doc, field_path,
                                       field_flag(field, "is_set") ? DATA_BIND_VALUE_SET
                                                                   : DATA_BIND_VALUE_LIST);
-    } else if (field_flag(field, "is_composite_ref") || find_union_record(schema_root, field_type)) {
+    } else if (field_flag(field, "is_composite_ref") ||
+               find_union_record(schema_root, field_type)) {
       if (xml_join_path(field_path, sizeof(field_path), path, name))
         bound = bind_xml_typed_value(schema_root, field_type, doc, field_path);
     } else {
@@ -2886,7 +3039,8 @@ static DataBindValue *bind_xml_typed_value(Node *schema_root, const char *type_n
 static void csv_headers_free(data_bind_csv_headers_t *headers) {
   size_t i;
   if (headers == NULL) return;
-  for (i = 0; i < headers->count; i++) free(headers->names[i]);
+  for (i = 0; i < headers->count; i++)
+    free(headers->names[i]);
   free(headers->names);
   memset(headers, 0, sizeof(*headers));
 }
@@ -3022,10 +3176,8 @@ static int csv_find_path_column(turbo_csv_doc_t *doc, const char *path, size_t *
 static int csv_join_path(char *out, size_t out_size, const char *prefix, const char *name) {
   int written;
   if (out == NULL || out_size == 0 || name == NULL) return 0;
-  if (prefix != NULL && prefix[0] != '\0')
-    written = snprintf(out, out_size, "%s.%s", prefix, name);
-  else
-    written = snprintf(out, out_size, "%s", name);
+  if (prefix != NULL && prefix[0] != '\0') written = snprintf(out, out_size, "%s.%s", prefix, name);
+  else written = snprintf(out, out_size, "%s", name);
   return written > 0 && (size_t)written < out_size;
 }
 
@@ -3109,17 +3261,19 @@ static int csv_headers_have_path(const data_bind_csv_headers_t *headers, const c
     if (header == NULL) continue;
     if (strcmp(header, path) == 0) return 1;
     if (path_len > 0 && strncmp(header, path, path_len) == 0 &&
-        (header[path_len] == '.' || header[path_len] == '[')) return 1;
+        (header[path_len] == '.' || header[path_len] == '['))
+      return 1;
     if (sanitized_len > 0 && strcmp(header, sanitized) == 0) return 1;
     if (sanitized_len > 0 && strncmp(header, sanitized, sanitized_len) == 0 &&
-        header[sanitized_len] == '_') return 1;
+        header[sanitized_len] == '_')
+      return 1;
   }
   return 0;
 }
 
 static int csv_header_has_typed_suffix(const char *suffix) {
-  return suffix != NULL && suffix[0] == '_' &&
-         (suffix[1] == 'n' || suffix[1] == 's') && suffix[2] == '\0';
+  return suffix != NULL && suffix[0] == '_' && (suffix[1] == 'n' || suffix[1] == 's') &&
+         suffix[2] == '\0';
 }
 
 static int csv_header_matches_path(const char *header, const char *path) {
@@ -3171,7 +3325,8 @@ static int csv_header_map_key(const char *header, const char *path, char *key, s
     start = header + path_len + 1;
   if (start == NULL || start[0] == '\0') return 0;
   end = start;
-  while (*end != '\0' && *end != '.' && *end != '[' && *end != '_') end++;
+  while (*end != '\0' && *end != '.' && *end != '[' && *end != '_')
+    end++;
   len = (size_t)(end - start);
   if (len == 0 || len >= key_size) return 0;
   memcpy(key, start, len);
@@ -3229,8 +3384,7 @@ static DataBindValue *bind_csv_map_at_path(Node *schema_root, Node *field, turbo
     }
     if (find_data_record(schema_root, value_type) || find_union_record(schema_root, value_type))
       item = bind_csv_typed_value(schema_root, value_type, doc, row, headers, item_path);
-    else
-      item = bind_csv_scalar_at_path(schema_root, value_type, value_kind, doc, row, item_path);
+    else item = bind_csv_scalar_at_path(schema_root, value_type, value_kind, doc, row, item_path);
     if (item != NULL) {
       if (!dbv_map_set(map, key, item)) {
         data_bind_value_free(item);
@@ -3278,8 +3432,7 @@ static DataBindValue *bind_csv_list_at_path(Node *schema_root, Node *field, turb
     if (field_flag(field, "collection_element_is_composite") ||
         find_data_record(schema_root, inner_type) || find_union_record(schema_root, inner_type))
       item = bind_csv_typed_value(schema_root, inner_type, doc, row, headers, item_path);
-    else
-      item = bind_csv_scalar_at_path(schema_root, inner_type, scalar_kind, doc, row, item_path);
+    else item = bind_csv_scalar_at_path(schema_root, inner_type, scalar_kind, doc, row, item_path);
     if (item != NULL) {
       if (!dbv_array_push(&list->data.array_val, item)) {
         data_bind_value_free(item);
@@ -3302,8 +3455,9 @@ fail_indexes:
   return NULL;
 }
 
-static DataBindValue *bind_csv_union_at_path(Node *schema_root, Node *union_node, turbo_csv_doc_t *doc,
-                                             size_t row, const data_bind_csv_headers_t *headers,
+static DataBindValue *bind_csv_union_at_path(Node *schema_root, Node *union_node,
+                                             turbo_csv_doc_t *doc, size_t row,
+                                             const data_bind_csv_headers_t *headers,
                                              const char *path) {
   Node *fields = fields_node_for_record(union_node);
   DataBindValue *result;
@@ -3357,13 +3511,16 @@ static DataBindValue *bind_csv_record_at_path(Node *schema_root, Node *record, t
     DataBindValue *bound = NULL;
     if (name == NULL || !csv_join_path(path, sizeof(path), prefix, name)) continue;
     if (field_flag(field, "is_group_field")) {
-      bound = bind_csv_list_at_path(schema_root, field, doc, row, headers, path, DATA_BIND_VALUE_LIST);
+      bound =
+          bind_csv_list_at_path(schema_root, field, doc, row, headers, path, DATA_BIND_VALUE_LIST);
     } else if (field_flag(field, "is_map")) {
       bound = bind_csv_map_at_path(schema_root, field, doc, row, headers, path);
     } else if (field_flag(field, "is_collection")) {
       bound = bind_csv_list_at_path(schema_root, field, doc, row, headers, path,
-                                    field_flag(field, "is_set") ? DATA_BIND_VALUE_SET : DATA_BIND_VALUE_LIST);
-    } else if (field_flag(field, "is_composite_ref") || find_union_record(schema_root, field_type)) {
+                                    field_flag(field, "is_set") ? DATA_BIND_VALUE_SET
+                                                                : DATA_BIND_VALUE_LIST);
+    } else if (field_flag(field, "is_composite_ref") ||
+               find_union_record(schema_root, field_type)) {
       bound = bind_csv_typed_value(schema_root, field_type, doc, row, headers, path);
     } else {
       bound = bind_csv_scalar_at_path(schema_root, field_type, bind_field_kind(schema_root, field),
@@ -3393,8 +3550,10 @@ static DataBindValue *bind_csv_typed_value(Node *schema_root, const char *type_n
   Node *union_node = find_union_record(schema_root, type_name);
   data_bind_text_kind_t kind = bind_type_kind(schema_root, type_name);
   if (record != NULL) return bind_csv_record_at_path(schema_root, record, doc, row, headers, path);
-  if (union_node != NULL) return bind_csv_union_at_path(schema_root, union_node, doc, row, headers, path);
-  if (path != NULL && path[0] != '\0') return bind_csv_scalar_at_path(schema_root, type_name, kind, doc, row, path);
+  if (union_node != NULL)
+    return bind_csv_union_at_path(schema_root, union_node, doc, row, headers, path);
+  if (path != NULL && path[0] != '\0')
+    return bind_csv_scalar_at_path(schema_root, type_name, kind, doc, row, path);
   return bind_csv_scalar_value(schema_root, type_name, kind, doc, row);
 }
 
@@ -3440,10 +3599,10 @@ static void db_reflect_clear(void *out, size_t requested, size_t full_size) {
   if (out_size >= sizeof(size_t)) *(size_t *)out = out_size;
 }
 
-#define DB_REFLECT_SET(type, out, out_size, field, value) \
-  do { \
-    if (db_reflect_has_field((out_size), offsetof(type, field), sizeof((out)->field))) \
-      (out)->field = (value); \
+#define DB_REFLECT_SET(type, out, out_size, field, value)                                          \
+  do {                                                                                             \
+    if (db_reflect_has_field((out_size), offsetof(type, field), sizeof((out)->field)))             \
+      (out)->field = (value);                                                                      \
   } while (0)
 
 static int fill_schema_type(Node *record, const char *list_name, DataBindSchemaType *out) {
@@ -3470,9 +3629,8 @@ static int fill_schema_type(Node *record, const char *list_name, DataBindSchemaT
                            sizeof(out->fixed_block_size)) &&
       db_reflect_has_field(out_size, offsetof(DataBindSchemaType, has_fixed_block_size),
                            sizeof(out->has_fixed_block_size))) {
-    out->has_fixed_block_size =
-        parse_size_value(get_string_val(find_child(record, "fixed_block_size")),
-                         &out->fixed_block_size);
+    out->has_fixed_block_size = parse_size_value(
+        get_string_val(find_child(record, "fixed_block_size")), &out->fixed_block_size);
   }
   return name != NULL;
 }
@@ -3520,18 +3678,15 @@ static int fill_schema_field(Node *schema_root, Node *field, DataBindSchemaField
                  get_string_val(find_child(field, "collection_kind")));
   DB_REFLECT_SET(DataBindSchemaField, out, out_size, length,
                  get_string_val(find_child(field, "length_field")));
-  DB_REFLECT_SET(DataBindSchemaField, out, out_size, is_optional,
-                 field_flag(field, "is_optional"));
-  DB_REFLECT_SET(DataBindSchemaField, out, out_size, has_default,
-                 field_flag(field, "has_default"));
+  DB_REFLECT_SET(DataBindSchemaField, out, out_size, is_optional, field_flag(field, "is_optional"));
+  DB_REFLECT_SET(DataBindSchemaField, out, out_size, has_default, field_flag(field, "has_default"));
   DB_REFLECT_SET(DataBindSchemaField, out, out_size, default_value,
                  get_string_val(find_child(field, "default_value")));
   DB_REFLECT_SET(DataBindSchemaField, out, out_size, is_collection,
                  field_flag(field, "is_collection"));
   DB_REFLECT_SET(DataBindSchemaField, out, out_size, is_composite,
                  field_flag(field, "is_composite_ref"));
-  DB_REFLECT_SET(DataBindSchemaField, out, out_size, is_group,
-                 field_flag(field, "is_group_field"));
+  DB_REFLECT_SET(DataBindSchemaField, out, out_size, is_group, field_flag(field, "is_group_field"));
   DB_REFLECT_SET(DataBindSchemaField, out, out_size, is_map, field_flag(field, "is_map"));
   if (db_reflect_has_field(out_size, offsetof(DataBindSchemaField, is_enum),
                            sizeof(out->is_enum))) {
@@ -3543,12 +3698,10 @@ static int fill_schema_field(Node *schema_root, Node *field, DataBindSchemaField
                  field_flag(field, "is_variable_size"));
   DB_REFLECT_SET(DataBindSchemaField, out, out_size, is_fixed_size,
                  field_flag(field, "is_fixed_size"));
-  if (db_reflect_has_field(out_size, offsetof(DataBindSchemaField, offset),
-                           sizeof(out->offset)) &&
+  if (db_reflect_has_field(out_size, offsetof(DataBindSchemaField, offset), sizeof(out->offset)) &&
       db_reflect_has_field(out_size, offsetof(DataBindSchemaField, has_offset),
                            sizeof(out->has_offset))) {
-    out->has_offset = parse_size_value(get_string_val(find_child(field, "offset")),
-                                       &out->offset);
+    out->has_offset = parse_size_value(get_string_val(find_child(field, "offset")), &out->offset);
   }
   if (db_reflect_has_field(out_size, offsetof(DataBindSchemaField, size_bytes),
                            sizeof(out->size_bytes)) &&
@@ -3561,9 +3714,8 @@ static int fill_schema_field(Node *schema_root, Node *field, DataBindSchemaField
                            sizeof(out->field_size_bytes)) &&
       db_reflect_has_field(out_size, offsetof(DataBindSchemaField, has_field_size_bytes),
                            sizeof(out->has_field_size_bytes))) {
-    out->has_field_size_bytes =
-        parse_size_value(get_string_val(find_child(field, "field_size_bytes")),
-                         &out->field_size_bytes);
+    out->has_field_size_bytes = parse_size_value(
+        get_string_val(find_child(field, "field_size_bytes")), &out->field_size_bytes);
   }
   DB_REFLECT_SET(DataBindSchemaField, out, out_size, format, field_format(field));
   return name != NULL;
@@ -3630,14 +3782,14 @@ static int build_fields(emit_field_array_t *fields, Node *src_fields, Node *sche
 
 /* Schema validation limits to prevent malicious schemas */
 #define MAX_FIELD_NESTING_DEPTH 32
-#define MAX_FIELD_OFFSET_BYTES (1024 * 1024 * 1024)  /* 1GB */
+#define MAX_FIELD_OFFSET_BYTES (1024 * 1024 * 1024) /* 1GB */
 #define MAX_TOTAL_FIELDS 10000
 
 typedef struct schema_validation_context {
   int nesting_depth;
   size_t total_fields;
   size_t max_offset;
-  char visited_types[256][128];  /* Track visited types to detect cycles */
+  char visited_types[256][128]; /* Track visited types to detect cycles */
   size_t visited_count;
   char error[256];
 } schema_validation_context_t;
@@ -3666,15 +3818,16 @@ static void schema_validation_unmark_visited(schema_validation_context_t *ctx) {
   if (ctx->visited_count > 0) ctx->visited_count--;
 }
 
-static int validate_field_offset_safe(schema_validation_context_t *ctx, size_t offset, size_t size) {
+static int validate_field_offset_safe(schema_validation_context_t *ctx, size_t offset,
+                                      size_t size) {
   if (offset > MAX_FIELD_OFFSET_BYTES) {
-    snprintf(ctx->error, sizeof(ctx->error), "Field offset %zu exceeds maximum %d bytes",
-             offset, MAX_FIELD_OFFSET_BYTES);
+    snprintf(ctx->error, sizeof(ctx->error), "Field offset %zu exceeds maximum %d bytes", offset,
+             MAX_FIELD_OFFSET_BYTES);
     return 0;
   }
   if (size > 0 && offset + size > MAX_FIELD_OFFSET_BYTES) {
-    snprintf(ctx->error, sizeof(ctx->error), "Field range [%zu, %zu) exceeds maximum",
-             offset, offset + size);
+    snprintf(ctx->error, sizeof(ctx->error), "Field range [%zu, %zu) exceeds maximum", offset,
+             offset + size);
     return 0;
   }
   if (offset + size > ctx->max_offset) {
@@ -3701,12 +3854,11 @@ static int validate_composite_or_group_type(schema_validation_context_t *ctx, No
   }
 
   record = find_named_record(schema_root, list_name, type_name);
-  if (record == NULL) return 1;  /* Not found is not a validation error */
+  if (record == NULL) return 1; /* Not found is not a validation error */
 
   /* Check nesting depth */
   if (ctx->nesting_depth >= MAX_FIELD_NESTING_DEPTH) {
-    snprintf(ctx->error, sizeof(ctx->error), 
-             "Field nesting depth exceeds maximum %d (in type %s)",
+    snprintf(ctx->error, sizeof(ctx->error), "Field nesting depth exceeds maximum %d (in type %s)",
              MAX_FIELD_NESTING_DEPTH, type_name);
     return 0;
   }
@@ -3740,8 +3892,8 @@ static int validate_schema_fields(schema_validation_context_t *ctx, Node *src_fi
     /* Count total fields */
     ctx->total_fields++;
     if (ctx->total_fields > MAX_TOTAL_FIELDS) {
-      snprintf(ctx->error, sizeof(ctx->error),
-               "Total field count exceeds maximum %d", MAX_TOTAL_FIELDS);
+      snprintf(ctx->error, sizeof(ctx->error), "Total field count exceeds maximum %d",
+               MAX_TOTAL_FIELDS);
       return 0;
     }
 
@@ -3753,24 +3905,21 @@ static int validate_schema_fields(schema_validation_context_t *ctx, Node *src_fi
         int offset_int = parse_positive_int(offset_str);
         int size_int = size_str != NULL ? parse_positive_int(size_str) : 0;
         if (offset_int >= 0 && size_int >= 0) {
-          if (!validate_field_offset_safe(ctx, (size_t)offset_int, (size_t)size_int))
-            return 0;
+          if (!validate_field_offset_safe(ctx, (size_t)offset_int, (size_t)size_int)) return 0;
         }
       }
     }
 
     /* Validate composite references */
     if (field_flag(field, "is_composite_ref")) {
-      if (!validate_composite_or_group_type(ctx, schema_root, field_type, "composites"))
-        return 0;
+      if (!validate_composite_or_group_type(ctx, schema_root, field_type, "composites")) return 0;
       continue;
     }
 
     /* Validate group references */
     if (field_flag(field, "is_group_field")) {
       const char *group_type = get_string_val(find_child(field, "group_type"));
-      if (!validate_composite_or_group_type(ctx, schema_root, group_type, "groups"))
-        return 0;
+      if (!validate_composite_or_group_type(ctx, schema_root, group_type, "groups")) return 0;
       continue;
     }
 
@@ -3778,8 +3927,7 @@ static int validate_schema_fields(schema_validation_context_t *ctx, Node *src_fi
     if (field_flag(field, "is_collection")) {
       const char *inner_type = get_string_val(find_child(field, "inner_type"));
       if (inner_type != NULL) {
-        if (!validate_composite_or_group_type(ctx, schema_root, inner_type, "composites"))
-          return 0;
+        if (!validate_composite_or_group_type(ctx, schema_root, inner_type, "composites")) return 0;
       }
     }
   }
@@ -3836,8 +3984,8 @@ static int build_map_collection_emit_field(emit_field_array_t *fields, Node *fie
   if (strcmp(value_type, "string") == 0)
     return append_emit_field(fields, full_name, EF_MAP_STR_STR, NULL, 0, 0, 0, 0, NULL);
   if (strcmp(value_type, "bool") == 0)
-    return append_emit_field(fields, full_name, EF_MAP_STR_BOOL, find_type_meta("bool"), 1, 0,
-                             0, 0, NULL);
+    return append_emit_field(fields, full_name, EF_MAP_STR_BOOL, find_type_meta("bool"), 1, 0, 0, 0,
+                             NULL);
 
   meta = find_scalar_meta(schema_root, value_type);
   if (meta == NULL) return 1;
@@ -3900,9 +4048,9 @@ static int build_list_or_set_collection_emit_field(emit_field_array_t *fields, N
 
   return append_emit_field(
       fields, full_name,
-      strcmp(inner_type, "bool") == 0 ? EF_LIST_BOOL
-                                      : (meta->is_float ? EF_LIST_DBL
-                                                        : (meta->is_64 ? EF_LIST_I64 : EF_LIST_INT)),
+      strcmp(inner_type, "bool") == 0
+          ? EF_LIST_BOOL
+          : (meta->is_float ? EF_LIST_DBL : (meta->is_64 ? EF_LIST_I64 : EF_LIST_INT)),
       meta, meta->size, 0, field_flag(field, "is_fixed_size") ? (size_t)count : 0, 0, NULL);
 }
 
@@ -3954,8 +4102,7 @@ static int build_var_or_scalar_emit_field(emit_field_array_t *fields, Node *fiel
                              strcmp(field_type, "bool") == 0
                                  ? EF_BOOL
                                  : (meta->is_float ? EF_DBL : (meta->is_64 ? EF_I64 : EF_INT)),
-                             meta,
-                             meta->size, 0, 0, 0, NULL);
+                             meta, meta->size, 0, 0, 0, NULL);
   }
 }
 
@@ -4045,8 +4192,8 @@ static int validate_fields_api(DataBind *codec, const char *message_name,
                              message_name, field->name);
     }
     if (field->kind == EF_UUID && codec->api.set_field_uuid == NULL) {
-      return set_codec_error(codec, "Schema field '%s.%s' requires uuid API callback",
-                             message_name, field->name);
+      return set_codec_error(codec, "Schema field '%s.%s' requires uuid API callback", message_name,
+                             field->name);
     }
     if (field->children.count > 0 && !validate_fields_api(codec, message_name, &field->children))
       return 0;
@@ -4103,7 +4250,8 @@ static void init_externals(mir_builder_t *builder) {
   MIR_var_t map_str_dbl_args[] = {{MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_D, "value", 0}};
   MIR_var_t map_str_bool_args[] = {
       {MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_I32, "value", 0}};
-  MIR_var_t read_varstr_args[] = {{MIR_T_P, "buf", 0}, {MIR_T_I64, "offset", 0}, {MIR_T_I64, "remaining", 0}};
+  MIR_var_t read_varstr_args[] = {
+      {MIR_T_P, "buf", 0}, {MIR_T_I64, "offset", 0}, {MIR_T_I64, "remaining", 0}};
   MIR_var_t free_args[] = {{MIR_T_P, "ptr", 0}};
 
   declare_external(builder, &builder->ext.create_obj, "create_obj", 1, &ptr_result, 0, NULL);
@@ -4128,8 +4276,7 @@ static void init_externals(mir_builder_t *builder) {
   declare_external(builder, &builder->ext.create_set, "create_set", 1, &ptr_result, 0, NULL);
   declare_external(builder, &builder->ext.add_set_int, "add_set_int", 0, NULL, 2, list_i32_args);
   declare_external(builder, &builder->ext.add_set_dbl, "add_set_dbl", 0, NULL, 2, list_dbl_args);
-  declare_external(builder, &builder->ext.add_set_bool, "add_set_bool", 0, NULL, 2,
-                   list_bool_args);
+  declare_external(builder, &builder->ext.add_set_bool, "add_set_bool", 0, NULL, 2, list_bool_args);
   declare_external(builder, &builder->ext.add_set_str, "add_set_str", 0, NULL, 2, list_str_args);
   declare_external(builder, &builder->ext.set_set, "set_set", 0, NULL, 3, set_list_args);
   declare_external(builder, &builder->ext.create_map, "create_map", 1, &ptr_result, 0, NULL);
@@ -4740,15 +4887,14 @@ static void emit_field_code(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_
     return;
   }
   if (field->kind == EF_INT || field->kind == EF_I64 || field->kind == EF_DBL ||
-      field->kind == EF_BOOL ||
-      field->kind == EF_UUID ||
-      field->kind == EF_STR || field->kind == EF_FIX_BYTES || field->kind == EF_VAR_BYTES)
+      field->kind == EF_BOOL || field->kind == EF_UUID || field->kind == EF_STR ||
+      field->kind == EF_FIX_BYTES || field->kind == EF_VAR_BYTES)
     emit_scalar_field(e, target_obj_reg, off_reg, field, field_name_item);
   else if (field->kind == EF_LIST_INT || field->kind == EF_LIST_I64 || field->kind == EF_LIST_DBL ||
            field->kind == EF_LIST_BOOL || field->kind == EF_LIST_STR || field->kind == EF_LIST_OBJ)
     emit_list_field(e, target_obj_reg, off_reg, field, field_name_item);
-  else if (field->kind == EF_SET_INT || field->kind == EF_SET_DBL ||
-           field->kind == EF_SET_BOOL || field->kind == EF_SET_STR)
+  else if (field->kind == EF_SET_INT || field->kind == EF_SET_DBL || field->kind == EF_SET_BOOL ||
+           field->kind == EF_SET_STR)
     emit_set_field(e, target_obj_reg, off_reg, field, field_name_item);
   else if (field->kind == EF_MAP_STR_STR || field->kind == EF_MAP_STR_INT ||
            field->kind == EF_MAP_STR_DBL || field->kind == EF_MAP_STR_BOOL)
@@ -4778,8 +4924,8 @@ static int generate_message_function(mir_builder_t *builder, Node *message_node,
 
   /* Validate schema structure before code generation */
   if (!validate_schema_fields(&validation_ctx, fields_node, schema_root, message_name)) {
-    set_codec_error(builder->codec, "Schema validation failed for %s: %s",
-                    message_name, validation_ctx.error);
+    set_codec_error(builder->codec, "Schema validation failed for %s: %s", message_name,
+                    validation_ctx.error);
     return 0;
   }
 
@@ -4819,29 +4965,26 @@ static int generate_message_function(mir_builder_t *builder, Node *message_node,
   return 1;
 }
 
-static Node *parse_schema_text_to_root(const char *schema_text, size_t len,
-                                       const char *path, char *error_buf,
-                                       size_t error_size, DataBindError *error) {
+static Node *parse_schema_text_to_root(const char *schema_text, size_t len, const char *path,
+                                       char *error_buf, size_t error_size, DataBindError *error) {
   Node *root;
   tbe_error_t err = {0};
   if (schema_text == NULL) {
-    if (error_buf != NULL && error_size > 0)
-      snprintf(error_buf, error_size, "Invalid schema text");
+    if (error_buf != NULL && error_size > 0) snprintf(error_buf, error_size, "Invalid schema text");
     db_error_set(error, DATA_BIND_ERR_INVALID_ARG, path, -1, -1, "Invalid schema text");
     return NULL;
   }
   root = create_node_map(NULL);
   if (root == NULL) {
-    if (error_buf != NULL && error_size > 0)
-      snprintf(error_buf, error_size, "Out of memory");
+    if (error_buf != NULL && error_size > 0) snprintf(error_buf, error_size, "Out of memory");
     db_error_set(error, DATA_BIND_ERR_OOM, path, -1, -1, "Out of memory");
     return NULL;
   }
   if (parse_schema(schema_text, len, root, &err) != 0) {
     if (error_buf != NULL && error_size > 0)
       snprintf(error_buf, error_size, "Parse error: %s", err.message);
-    db_error_set(error, DATA_BIND_ERR_PARSE, path, err.line, err.column,
-                 "Parse error: %s", err.message);
+    db_error_set(error, DATA_BIND_ERR_PARSE, path, err.line, err.column, "Parse error: %s",
+                 err.message);
     node_free(root);
     return NULL;
   }
@@ -4849,21 +4992,20 @@ static Node *parse_schema_text_to_root(const char *schema_text, size_t len,
   return root;
 }
 
-static Node *load_and_parse_schema(const char *schema_path, char *error_buf,
-                                   size_t error_size, DataBindError *error) {
+static Node *load_and_parse_schema(const char *schema_path, char *error_buf, size_t error_size,
+                                   DataBindError *error) {
   turbo_fs_buf_t buf;
   Node *root;
   if (schema_path == NULL) {
-    if (error_buf != NULL && error_size > 0)
-      snprintf(error_buf, error_size, "Invalid schema path");
+    if (error_buf != NULL && error_size > 0) snprintf(error_buf, error_size, "Invalid schema path");
     db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1, "Invalid schema path");
     return NULL;
   }
   if (turbo_fs_read_file(schema_path, &buf) != 0) {
     if (error_buf != NULL && error_size > 0)
       snprintf(error_buf, error_size, "Cannot read schema: %s", schema_path);
-    db_error_set(error, DATA_BIND_ERR_IO, schema_path, -1, -1,
-                 "Cannot read schema: %s", schema_path);
+    db_error_set(error, DATA_BIND_ERR_IO, schema_path, -1, -1, "Cannot read schema: %s",
+                 schema_path);
     return NULL;
   }
   root = parse_schema_text_to_root(buf.base, buf.len, schema_path, error_buf, error_size, error);
@@ -4875,7 +5017,7 @@ static void data_bind_free_contents(DataBind *codec) {
   mir_func_node_t *func_node;
   owned_alloc_node_t *alloc_node;
   if (codec == NULL) return;
-  
+
   /* Only free func_head if this codec owns it (not from cache) */
   if (!codec->is_cloned) {
     func_node = codec->func_head;
@@ -4887,7 +5029,7 @@ static void data_bind_free_contents(DataBind *codec) {
     }
   }
   codec->func_head = NULL;
-  
+
   alloc_node = codec->owned_allocs;
   while (alloc_node != NULL) {
     owned_alloc_node_t *next = alloc_node->next;
@@ -4896,7 +5038,7 @@ static void data_bind_free_contents(DataBind *codec) {
     alloc_node = next;
   }
   codec->owned_allocs = NULL;
-  
+
   /* Handle MIR context based on whether this is a cloned codec */
   if (codec->ctx != NULL) {
     if (codec->is_cloned && codec->schema_hash[0] != '\0') {
@@ -4910,7 +5052,7 @@ static void data_bind_free_contents(DataBind *codec) {
     codec->ctx = NULL;
     codec->mir_gen_initialized = 0;
   }
-  
+
   if (codec->schema_root != NULL) {
     node_free(codec->schema_root);
     codec->schema_root = NULL;
@@ -4956,15 +5098,13 @@ static int link_module(DataBind *codec, MIR_module_t module) {
                     codec->api.set_field_int64 != NULL ? codec->api.set_field_int64 : set_i64_noop);
   MIR_load_external(codec->ctx, "set_dbl", codec->api.set_field_double);
   MIR_load_external(codec->ctx, "set_bool",
-                    codec->api.set_field_bool != NULL ? codec->api.set_field_bool
-                                                      : set_bool_noop);
+                    codec->api.set_field_bool != NULL ? codec->api.set_field_bool : set_bool_noop);
   MIR_load_external(codec->ctx, "set_str", codec->api.set_field_string);
   MIR_load_external(codec->ctx, "set_bytes",
                     codec->api.set_field_bytes != NULL ? codec->api.set_field_bytes
                                                        : set_bytes_noop);
   MIR_load_external(codec->ctx, "set_uuid",
-                    codec->api.set_field_uuid != NULL ? codec->api.set_field_uuid
-                                                      : set_uuid_noop);
+                    codec->api.set_field_uuid != NULL ? codec->api.set_field_uuid : set_uuid_noop);
   MIR_load_external(codec->ctx, "create_list",
                     codec->api.create_list != NULL ? codec->api.create_list : container_noop);
   MIR_load_external(codec->ctx, "add_list_int",
@@ -5065,13 +5205,13 @@ static DataBindStatus data_bind_finish_codec(DataBind *codec, DataBindError *err
                                              const char *schema_text, size_t schema_len) {
   MIR_module_t module;
   mir_cache_entry_t *cache_entry = NULL;
-  
+
   /* Compute schema hash for caching */
   if (schema_text != NULL && schema_len > 0) {
     compute_schema_hash(schema_text, schema_len, codec->schema_hash);
     cache_entry = mir_cache_find(codec->schema_hash);
   }
-  
+
   /* Use cached MIR context if available */
   if (cache_entry != NULL && cache_entry->shared_ctx != NULL) {
     codec->ctx = cache_entry->shared_ctx;
@@ -5083,7 +5223,7 @@ static DataBindStatus data_bind_finish_codec(DataBind *codec, DataBindError *err
     codec->binary_error[0] = '\0';
     return DATA_BIND_OK;
   }
-  
+
   /* Generate new MIR module */
   module = generate_parser_module(codec);
   if (module == NULL) {
@@ -5101,39 +5241,35 @@ static DataBindStatus data_bind_finish_codec(DataBind *codec, DataBindError *err
     return DATA_BIND_OK;
   }
   register_parse_functions(codec, module);
-  
+
   /* Cache the MIR context if hashing was successful */
   if (codec->schema_hash[0] != '\0') {
     cache_entry = mir_cache_insert(codec->schema_hash, codec->ctx, codec->func_head);
     if (cache_entry != NULL) {
-      codec->is_cloned = 1;  /* Mark as using cached context */
+      codec->is_cloned = 1; /* Mark as using cached context */
     } else {
-      codec->is_cloned = 0;  /* Cache failed, codec owns the context */
+      codec->is_cloned = 0; /* Cache failed, codec owns the context */
     }
   } else {
-    codec->is_cloned = 0;  /* No hash, codec owns the context */
+    codec->is_cloned = 0; /* No hash, codec owns the context */
   }
-  
+
   db_error_clear(error);
   codec->error[0] = '\0';
   codec->binary_error[0] = '\0';
   return DATA_BIND_OK;
 }
 
-static DataBindStatus data_bind_create_with_api_from_root(Node *schema_root,
-                                                          const data_bind_runtime_api_t *api,
-                                                          DataBind **out_codec,
-                                                          DataBindError *error,
-                                                          const char *schema_text,
-                                                          size_t schema_len) {
+static DataBindStatus
+data_bind_create_with_api_from_root(Node *schema_root, const data_bind_runtime_api_t *api,
+                                    DataBind **out_codec, DataBindError *error,
+                                    const char *schema_text, size_t schema_len) {
   DataBind *codec;
   DataBindStatus status;
   if (out_codec != NULL) *out_codec = NULL;
   if (api == NULL || api->create_object == NULL || api->free_value == NULL ||
-      api->set_field_int == NULL ||
-      api->set_field_double == NULL || api->set_field_string == NULL)
-    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1,
-                        "Invalid runtime API");
+      api->set_field_int == NULL || api->set_field_double == NULL || api->set_field_string == NULL)
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1, "Invalid runtime API");
   if (schema_root == NULL || out_codec == NULL)
     return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1,
                         "Invalid codec create arguments");
@@ -5157,29 +5293,28 @@ static DataBindStatus data_bind_create_with_api_from_root(Node *schema_root,
 
 static DataBindStatus data_bind_create_with_api(const char *schema_path,
                                                 const data_bind_runtime_api_t *api,
-                                                DataBind **out_codec,
-                                                DataBindError *error) {
+                                                DataBind **out_codec, DataBindError *error) {
   Node *schema_root;
   turbo_fs_buf_t schema_buf = {NULL, 0};
   DataBindStatus status;
-  
+
   if (out_codec != NULL) *out_codec = NULL;
-  
+
   /* Load schema file to get both parsed AST and raw text for hashing */
   if (turbo_fs_read_file(schema_path, &schema_buf) != 0) {
-    return db_error_set(error, DATA_BIND_ERR_IO, schema_path, -1, -1,
-                       "Cannot read schema: %s", schema_path);
+    return db_error_set(error, DATA_BIND_ERR_IO, schema_path, -1, -1, "Cannot read schema: %s",
+                        schema_path);
   }
-  
-  schema_root = parse_schema_text_to_root(schema_buf.base, schema_buf.len,
-                                          schema_path, NULL, 0, error);
+
+  schema_root =
+      parse_schema_text_to_root(schema_buf.base, schema_buf.len, schema_path, NULL, 0, error);
   if (schema_root == NULL) {
     turbo_fs_buf_free(&schema_buf);
     return error != NULL && error->code != DATA_BIND_OK ? error->code : DATA_BIND_ERR_SCHEMA;
   }
-  
-  status = data_bind_create_with_api_from_root(schema_root, api, out_codec, error,
-                                                schema_buf.base, schema_buf.len);
+
+  status = data_bind_create_with_api_from_root(schema_root, api, out_codec, error, schema_buf.base,
+                                               schema_buf.len);
   turbo_fs_buf_free(&schema_buf);
   return status;
 }
@@ -5189,15 +5324,15 @@ DataBindStatus data_bind_create(const char *schema_path, DataBind **out_codec,
   return data_bind_create_with_api(schema_path, &DYNAMIC_VALUE_API, out_codec, error);
 }
 
-DataBindStatus data_bind_create_from_text(const char *schema_text, size_t len,
-                                          DataBind **out_codec, DataBindError *error) {
+DataBindStatus data_bind_create_from_text(const char *schema_text, size_t len, DataBind **out_codec,
+                                          DataBindError *error) {
   Node *schema_root;
   if (out_codec != NULL) *out_codec = NULL;
   schema_root = parse_schema_text_to_root(schema_text, len, NULL, NULL, 0, error);
   if (schema_root == NULL)
     return error != NULL && error->code != DATA_BIND_OK ? error->code : DATA_BIND_ERR_SCHEMA;
   return data_bind_create_with_api_from_root(schema_root, &DYNAMIC_VALUE_API, out_codec, error,
-                                              schema_text, len);
+                                             schema_text, len);
 }
 
 void data_bind_free(DataBind *codec) {
@@ -5206,14 +5341,12 @@ void data_bind_free(DataBind *codec) {
   free(codec);
 }
 
-void data_bind_set_cache_enabled(int enabled) {
-  g_mir_cache_enabled = enabled != 0;
-}
+void data_bind_set_cache_enabled(int enabled) { g_mir_cache_enabled = enabled != 0; }
 
 void data_bind_clear_cache(void) {
   mir_cache_entry_t *entry = g_mir_cache_head;
   mir_cache_entry_t *next;
-  
+
   while (entry != NULL) {
     next = entry->next;
     /* Only free entries with zero ref count */
@@ -5226,7 +5359,7 @@ void data_bind_clear_cache(void) {
     }
     entry = next;
   }
-  
+
   /* Rebuild list with only referenced entries */
   g_mir_cache_head = NULL;
   entry = g_mir_cache_head;
@@ -5241,7 +5374,7 @@ void data_bind_clear_cache(void) {
 
 void data_bind_set_value_pool_enabled(int enabled) {
   g_value_pool_enabled = enabled != 0;
-  
+
   /* If disabling, free all pooled nodes */
   if (!g_value_pool_enabled) {
     DataBindValue *node = g_value_pool.free_list;
@@ -5259,8 +5392,8 @@ void data_bind_get_value_pool_stats(size_t *allocated, size_t *reused) {
   if (reused != NULL) *reused = g_value_pool.reused_count;
 }
 
-static DataBindStatus data_bind_emit_file_to_writer(FILE *file, DataBindWriteFn write,
-                                                    void *user, DataBindError *error) {
+static DataBindStatus data_bind_emit_file_to_writer(FILE *file, DataBindWriteFn write, void *user,
+                                                    DataBindError *error) {
   unsigned char buf[4096];
   size_t n;
   if (fflush(file) != 0 || fseek(file, 0, SEEK_SET) != 0)
@@ -5274,8 +5407,8 @@ static DataBindStatus data_bind_emit_file_to_writer(FILE *file, DataBindWriteFn 
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_generate_mir(const char *schema_path, DataBindWriteFn write,
-                                      void *user, int binary_output, DataBindError *error) {
+DataBindStatus data_bind_generate_mir(const char *schema_path, DataBindWriteFn write, void *user,
+                                      int binary_output, DataBindError *error) {
   DataBind codec;
   MIR_module_t module = NULL;
   FILE *tmp = NULL;
@@ -5304,10 +5437,8 @@ DataBindStatus data_bind_generate_mir(const char *schema_path, DataBindWriteFn w
                           "Failed to create temporary MIR output");
     goto cleanup;
   }
-  if (binary_output)
-    MIR_write_module(codec.ctx, tmp, module);
-  else
-    MIR_output_module(codec.ctx, tmp, module);
+  if (binary_output) MIR_write_module(codec.ctx, tmp, module);
+  else MIR_output_module(codec.ctx, tmp, module);
   if (ferror(tmp)) {
     status = db_error_set(error, DATA_BIND_ERR_IO, schema_path, -1, -1, "MIR output failed");
     goto cleanup;
@@ -5328,8 +5459,7 @@ DataBindStatus data_bind_parse(DataBind *codec, const char *type_name, const uin
   char error_path[64];
   if (out_value != NULL) *out_value = NULL;
   if (codec == NULL || type_name == NULL || buf == NULL || out_value == NULL)
-    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG,
-                          "Invalid binary bind arguments");
+    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG, "Invalid binary bind arguments");
   if (codec->func_head == NULL) {
     db_error_format_path(error_path, sizeof(error_path), "binary", NULL);
     return db_error_set(error, DATA_BIND_ERR_RUNTIME, error_path, -1, -1, "%s",
@@ -5339,7 +5469,7 @@ DataBindStatus data_bind_parse(DataBind *codec, const char *type_name, const uin
   }
   for (node = codec->func_head; node != NULL; node = node->next) {
     if (strcmp(node->type_name, type_name) == 0) {
-      parse_fn = (DataBindValue *(*)(const uint8_t *, int64_t))node->parse_fn;
+      parse_fn = (DataBindValue * (*)(const uint8_t *, int64_t)) node->parse_fn;
       codec->error[0] = '\0';
       result = parse_fn(buf, (int64_t)len);
       if (result == NULL) {
@@ -5352,8 +5482,8 @@ DataBindStatus data_bind_parse(DataBind *codec, const char *type_name, const uin
       return DATA_BIND_OK;
     }
   }
-  return db_codec_error(codec, error, DATA_BIND_ERR_TYPE_NOT_FOUND,
-                        "Type not found: %s", type_name);
+  return db_codec_error(codec, error, DATA_BIND_ERR_TYPE_NOT_FOUND, "Type not found: %s",
+                        type_name);
 }
 
 static int data_bind_stream_json_path_is_root_array(const char *path) {
@@ -5399,8 +5529,7 @@ static void data_bind_stream_error_msg(data_bind_stream_t *parser, const char *m
   snprintf(parser->stream_error, sizeof(parser->stream_error), "%s", message);
 }
 
-static int data_bind_stream_emit_record(data_bind_stream_t *parser,
-                                        const DataBindValue *record) {
+static int data_bind_stream_emit_record(data_bind_stream_t *parser, const DataBindValue *record) {
   DataBindRecordAction action;
   if (parser == NULL || record == NULL || parser->record_callback == NULL ||
       parser->record_callback_stopped) {
@@ -5492,8 +5621,8 @@ static int data_bind_stream_json_frame_reserve(data_bind_stream_t *parser) {
     data_bind_stream_error_msg(parser, "JSON stream nesting too deep");
     return -1;
   }
-  grown = (data_bind_json_stream_frame_t *)realloc(
-      parser->json_frames, next_capacity * sizeof(*grown));
+  grown =
+      (data_bind_json_stream_frame_t *)realloc(parser->json_frames, next_capacity * sizeof(*grown));
   if (grown == NULL) {
     data_bind_stream_error_msg(parser, "Out of memory growing JSON stream stack");
     return -1;
@@ -5503,8 +5632,7 @@ static int data_bind_stream_json_frame_reserve(data_bind_stream_t *parser) {
   return 0;
 }
 
-static int data_bind_stream_json_attach_value(data_bind_stream_t *parser,
-                                              json_value_t *value) {
+static int data_bind_stream_json_attach_value(data_bind_stream_t *parser, json_value_t *value) {
   data_bind_json_stream_frame_t *parent;
   if (parser->json_frame_count == 0) return 0;
   parent = &parser->json_frames[parser->json_frame_count - 1];
@@ -5548,8 +5676,8 @@ static int data_bind_stream_json_scalar(data_bind_stream_t *parser, json_value_t
   return 0;
 }
 
-static int data_bind_stream_json_container_start(data_bind_stream_t *parser,
-                                                 json_value_t *value, int is_object) {
+static int data_bind_stream_json_container_start(data_bind_stream_t *parser, json_value_t *value,
+                                                 int is_object) {
   data_bind_json_stream_frame_t *frame;
   if (value == NULL) {
     data_bind_stream_error_msg(parser, "Out of memory creating JSON stream value");
@@ -5580,8 +5708,7 @@ static int data_bind_stream_json_container_start(data_bind_stream_t *parser,
 
 static int data_bind_stream_json_container_end(data_bind_stream_t *parser, int is_object) {
   data_bind_json_stream_frame_t frame;
-  if (parser == NULL || !parser->json_stream_active || parser->json_frame_count == 0)
-    return 0;
+  if (parser == NULL || !parser->json_stream_active || parser->json_frame_count == 0) return 0;
   frame = parser->json_frames[parser->json_frame_count - 1];
   if (frame.is_object != is_object) {
     data_bind_stream_error_msg(parser, "JSON stream container mismatch");
@@ -5689,8 +5816,7 @@ static int data_bind_stream_json_on_array_end(void *ctx) {
   return rc;
 }
 
-static int data_bind_stream_xml_append(data_bind_stream_t *parser,
-                                       const char *text, size_t len) {
+static int data_bind_stream_xml_append(data_bind_stream_t *parser, const char *text, size_t len) {
   tstr_t next;
   if (parser == NULL || !parser->xml_capture_active || len == 0) return 0;
   next = tstr_cat_len(parser->xml_capture, text, len);
@@ -5719,8 +5845,8 @@ static int data_bind_stream_xml_bind_capture(data_bind_stream_t *parser) {
   DataBindValue *item;
   void *ptr;
   if (parser == NULL || parser->xml_capture == NULL) return -1;
-  if (turbo_parse_xml((const uint8_t *)parser->xml_capture,
-                      tstr_len(parser->xml_capture), &doc) != 0 ||
+  if (turbo_parse_xml((const uint8_t *)parser->xml_capture, tstr_len(parser->xml_capture), &doc) !=
+          0 ||
       doc == NULL) {
     data_bind_stream_error_msg(parser, "XML stream item parse failed");
     return -1;
@@ -5735,13 +5861,11 @@ static int data_bind_stream_xml_bind_capture(data_bind_stream_t *parser) {
   return data_bind_stream_values_push(parser, item, "XML stream item append failed");
 }
 
-static int data_bind_stream_xml_name_eq(const char *left, size_t left_len,
-                                        const char *right) {
+static int data_bind_stream_xml_name_eq(const char *left, size_t left_len, const char *right) {
   return right != NULL && strlen(right) == left_len && memcmp(left, right, left_len) == 0;
 }
 
-static int data_bind_stream_xml_on_element_start(void *ctx, const char *name,
-                                                 size_t name_len) {
+static int data_bind_stream_xml_on_element_start(void *ctx, const char *name, size_t name_len) {
   data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
   if (parser == NULL || !parser->xml_stream_candidate) return 0;
   if (!parser->xml_capture_active &&
@@ -5778,8 +5902,7 @@ static int data_bind_stream_xml_on_attribute(void *ctx, const char *name, size_t
   return 0;
 }
 
-static int data_bind_stream_xml_on_element_end(void *ctx, const char *name,
-                                               size_t name_len) {
+static int data_bind_stream_xml_on_element_end(void *ctx, const char *name, size_t name_len) {
   data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
   int rc;
   if (parser == NULL || !parser->xml_capture_active) return 0;
@@ -5832,14 +5955,10 @@ static int data_bind_stream_xml_on_cdata(void *ctx, const char *text, size_t tex
 }
 
 static const turbo_json_sax_handler_t DATA_BIND_JSON_STREAM_HANDLER = {
-    data_bind_stream_json_on_null,
-    data_bind_stream_json_on_bool,
-    data_bind_stream_json_on_number,
-    data_bind_stream_json_on_string,
-    data_bind_stream_json_on_object_start,
-    data_bind_stream_json_on_object_key,
-    data_bind_stream_json_on_object_end,
-    data_bind_stream_json_on_array_start,
+    data_bind_stream_json_on_null,         data_bind_stream_json_on_bool,
+    data_bind_stream_json_on_number,       data_bind_stream_json_on_string,
+    data_bind_stream_json_on_object_start, data_bind_stream_json_on_object_key,
+    data_bind_stream_json_on_object_end,   data_bind_stream_json_on_array_start,
     data_bind_stream_json_on_array_end};
 
 static const turbo_xml_sax_handler_t DATA_BIND_XML_STREAM_HANDLER = {
@@ -5857,8 +5976,7 @@ static const turbo_xml_sax_handler_t DATA_BIND_XML_STREAM_HANDLER = {
 static const turbo_json_sax_handler_t DATA_BIND_JSON_SAX_VALIDATE_HANDLER = {0};
 static const turbo_xml_sax_handler_t DATA_BIND_XML_SAX_VALIDATE_HANDLER = {0};
 
-static DataBindStatus data_bind_stream_sax_error(data_bind_stream_t *parser,
-                                                 DataBindError *error,
+static DataBindStatus data_bind_stream_sax_error(data_bind_stream_t *parser, DataBindError *error,
                                                  const char *operation) {
   const char *message = "Stream parse failed";
   const char *path = "stream";
@@ -5876,16 +5994,13 @@ static DataBindStatus data_bind_stream_sax_error(data_bind_stream_t *parser,
   }
   if (message == NULL || message[0] == '\0') message = "Stream parse failed";
   if (parser != NULL && parser->record_callback_failed) {
-    return db_error_set(error, DATA_BIND_ERR_RUNTIME, "record_callback", -1, -1,
-                        "%s", message);
+    return db_error_set(error, DATA_BIND_ERR_RUNTIME, "record_callback", -1, -1, "%s", message);
   }
-  return db_error_set(error, DATA_BIND_ERR_PARSE, path, -1, -1,
-                      "%s: %s", operation, message);
+  return db_error_set(error, DATA_BIND_ERR_PARSE, path, -1, -1, "%s: %s", operation, message);
 }
 
-static DataBindStatus data_bind_stream_sax_feed(data_bind_stream_t *parser,
-                                                const char *data, size_t len,
-                                                DataBindError *error) {
+static DataBindStatus data_bind_stream_sax_feed(data_bind_stream_t *parser, const char *data,
+                                                size_t len, DataBindError *error) {
   if (parser == NULL || parser->sax_failed) {
     return data_bind_stream_sax_error(parser, error, "stream feed");
   }
@@ -5977,8 +6092,8 @@ static int data_bind_stream_csv_finish_field(data_bind_stream_t *parser) {
     grown_fields = (tstr_v *)realloc(parser->csv_fields, next_capacity * sizeof(*grown_fields));
     if (grown_fields == NULL) return 0;
     parser->csv_fields = grown_fields;
-    grown_storage = (char **)realloc(parser->csv_field_storage,
-                                     next_capacity * sizeof(*grown_storage));
+    grown_storage =
+        (char **)realloc(parser->csv_field_storage, next_capacity * sizeof(*grown_storage));
     if (grown_storage == NULL) return 0;
     parser->csv_field_storage = grown_storage;
     parser->csv_fields_capacity = next_capacity;
@@ -5989,8 +6104,7 @@ static int data_bind_stream_csv_finish_field(data_bind_stream_t *parser) {
   if (parser->csv_field_len > 0) memcpy(field_copy, parser->csv_field, parser->csv_field_len);
   field_copy[parser->csv_field_len] = '\0';
   parser->csv_field_storage[parser->csv_field_count] = field_copy;
-  parser->csv_fields[parser->csv_field_count] =
-      tstr_v_from_buf(field_copy, parser->csv_field_len);
+  parser->csv_fields[parser->csv_field_count] = tstr_v_from_buf(field_copy, parser->csv_field_len);
   parser->csv_field_count++;
   parser->csv_field_len = 0;
   if (parser->csv_field != NULL) parser->csv_field[0] = '\0';
@@ -6011,8 +6125,8 @@ static DataBindStatus data_bind_stream_csv_compile_filter(data_bind_stream_t *pa
   header_doc = (char *)malloc(header_doc_len + 1);
   if (header_doc == NULL) {
     parser->csv_failed = 1;
-    return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                        -1, -1, "Out of memory building CSVPath stream header");
+    return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                        "Out of memory building CSVPath stream header");
   }
   memcpy(header_doc, parser->csv_header, parser->csv_header_len);
   header_doc[parser->csv_header_len] = '\n';
@@ -6062,8 +6176,8 @@ static DataBindStatus data_bind_stream_csv_process_record(data_bind_stream_t *pa
     parser->csv_header = (char *)malloc(parser->csv_record_len + 1);
     if (parser->csv_header == NULL) {
       parser->csv_failed = 1;
-      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                          -1, -1, "Out of memory storing CSV stream header");
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                          "Out of memory storing CSV stream header");
     }
     memcpy(parser->csv_header, parser->csv_record, parser->csv_record_len);
     parser->csv_header[parser->csv_record_len] = '\0';
@@ -6101,8 +6215,8 @@ static DataBindStatus data_bind_stream_csv_process_record(data_bind_stream_t *pa
   doc_text = (char *)malloc(doc_len + 1);
   if (doc_text == NULL) {
     parser->csv_failed = 1;
-    return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                        -1, -1, "Out of memory building CSV stream row");
+    return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                        "Out of memory building CSV stream row");
   }
   memcpy(doc_text, parser->csv_header, parser->csv_header_len);
   doc_text[parser->csv_header_len] = '\n';
@@ -6110,8 +6224,8 @@ static DataBindStatus data_bind_stream_csv_process_record(data_bind_stream_t *pa
   doc_text[doc_len - 1] = '\n';
   doc_text[doc_len] = '\0';
 
-  status = data_bind_parse_csv(parser->codec, parser->type_name, doc_text, doc_len, 0,
-                               &value, error);
+  status =
+      data_bind_parse_csv(parser->codec, parser->type_name, doc_text, doc_len, 0, &value, error);
   if (status == DATA_BIND_OK && value != NULL) {
     if (data_bind_stream_emit_record(parser, value) != 0) {
       data_bind_value_free(value);
@@ -6125,8 +6239,8 @@ static DataBindStatus data_bind_stream_csv_process_record(data_bind_stream_t *pa
       data_bind_value_free(value);
       free(doc_text);
       parser->csv_failed = 1;
-      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                          -1, -1, "Out of memory appending CSV stream row");
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                          "Out of memory appending CSV stream row");
     }
   }
 
@@ -6147,7 +6261,7 @@ static DataBindStatus data_bind_stream_csv_feed(data_bind_stream_t *parser, cons
 
   for (i = 0; i < len; i++) {
     char ch = data[i];
-reprocess:
+  reprocess:
     if (parser->csv_skip_next_lf) {
       parser->csv_skip_next_lf = 0;
       if (ch == '\n') continue;
@@ -6157,13 +6271,13 @@ reprocess:
       if (ch == '"') {
         if (!data_bind_stream_csv_record_append(parser, ch)) {
           parser->csv_failed = 1;
-          return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                              -1, -1, "Out of memory extending CSV stream record");
+          return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                              "Out of memory extending CSV stream record");
         }
         if (!data_bind_stream_csv_field_append(parser, ch)) {
           parser->csv_failed = 1;
-          return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                              -1, -1, "Out of memory extending CSV stream field");
+          return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                              "Out of memory extending CSV stream field");
         }
         continue;
       }
@@ -6174,15 +6288,15 @@ reprocess:
     if (parser->csv_in_quotes) {
       if (!data_bind_stream_csv_record_append(parser, ch)) {
         parser->csv_failed = 1;
-        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                            -1, -1, "Out of memory extending CSV stream record");
+        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                            "Out of memory extending CSV stream record");
       }
       if (ch == '"') {
         parser->csv_quote_pending = 1;
       } else if (!data_bind_stream_csv_field_append(parser, ch)) {
         parser->csv_failed = 1;
-        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                            -1, -1, "Out of memory extending CSV stream field");
+        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                            "Out of memory extending CSV stream field");
       }
       continue;
     }
@@ -6191,8 +6305,8 @@ reprocess:
       parser->csv_in_quotes = 1;
       if (!data_bind_stream_csv_record_append(parser, ch)) {
         parser->csv_failed = 1;
-        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                            -1, -1, "Out of memory extending CSV stream record");
+        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                            "Out of memory extending CSV stream record");
       }
       continue;
     }
@@ -6200,16 +6314,16 @@ reprocess:
       if (!data_bind_stream_csv_record_append(parser, ch) ||
           !data_bind_stream_csv_finish_field(parser)) {
         parser->csv_failed = 1;
-        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                            -1, -1, "Out of memory extending CSV stream field list");
+        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                            "Out of memory extending CSV stream field list");
       }
       continue;
     }
     if (ch == '\r' || ch == '\n') {
       if (!data_bind_stream_csv_finish_field(parser)) {
         parser->csv_failed = 1;
-        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                            -1, -1, "Out of memory extending CSV stream field list");
+        return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                            "Out of memory extending CSV stream field list");
       }
       status = data_bind_stream_csv_process_record(parser, error);
       if (status != DATA_BIND_OK) return status;
@@ -6218,25 +6332,24 @@ reprocess:
     }
     if (!data_bind_stream_csv_record_append(parser, ch)) {
       parser->csv_failed = 1;
-      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                          -1, -1, "Out of memory extending CSV stream record");
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                          "Out of memory extending CSV stream record");
     }
     if (!data_bind_stream_csv_field_append(parser, ch)) {
       parser->csv_failed = 1;
-      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed",
-                          -1, -1, "Out of memory extending CSV stream field");
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed", -1, -1,
+                          "Out of memory extending CSV stream field");
     }
   }
   return DATA_BIND_OK;
 }
 
 static DataBindStatus data_bind_stream_csv_finish(data_bind_stream_t *parser,
-                                                  DataBindValue **out_value,
-                                                  DataBindError *error) {
+                                                  DataBindValue **out_value, DataBindError *error) {
   DataBindStatus status;
   if (parser == NULL || out_value == NULL) {
-    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish",
-                        -1, -1, "Invalid CSV stream finish arguments");
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish", -1, -1,
+                        "Invalid CSV stream finish arguments");
   }
   if (parser->csv_quote_pending) {
     parser->csv_quote_pending = 0;
@@ -6244,22 +6357,20 @@ static DataBindStatus data_bind_stream_csv_finish(data_bind_stream_t *parser,
   }
   if (parser->csv_in_quotes) {
     parser->csv_failed = 1;
-    return db_error_set(error, DATA_BIND_ERR_PARSE, "csv", -1, -1,
-                        "Unterminated quoted CSV field");
+    return db_error_set(error, DATA_BIND_ERR_PARSE, "csv", -1, -1, "Unterminated quoted CSV field");
   }
-  if (parser->csv_record_len > 0 || parser->csv_field_len > 0 ||
-      parser->csv_field_count > 0 || !parser->csv_header_seen) {
+  if (parser->csv_record_len > 0 || parser->csv_field_len > 0 || parser->csv_field_count > 0 ||
+      !parser->csv_header_seen) {
     if (!data_bind_stream_csv_finish_field(parser)) {
       parser->csv_failed = 1;
-      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish",
-                          -1, -1, "Out of memory extending CSV stream field list");
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish", -1, -1,
+                          "Out of memory extending CSV stream field list");
     }
     status = data_bind_stream_csv_process_record(parser, error);
     if (status != DATA_BIND_OK) return status;
   }
   if (!parser->csv_header_seen || parser->csv_failed || parser->csv_values == NULL) {
-    return db_error_set(error, DATA_BIND_ERR_PARSE, "csv", -1, -1,
-                        "CSV stream parse failed");
+    return db_error_set(error, DATA_BIND_ERR_PARSE, "csv", -1, -1, "CSV stream parse failed");
   }
   *out_value = parser->csv_values;
   parser->csv_values = NULL;
@@ -6267,43 +6378,39 @@ static DataBindStatus data_bind_stream_csv_finish(data_bind_stream_t *parser,
   return DATA_BIND_OK;
 }
 
-static DataBindStatus data_bind_stream_text_feed(data_bind_stream_t *parser,
-                                                 const char *data, size_t len,
-                                                 DataBindError *error);
+static DataBindStatus data_bind_stream_text_feed(data_bind_stream_t *parser, const char *data,
+                                                 size_t len, DataBindError *error);
 static DataBindStatus data_bind_stream_json_finish(data_bind_stream_t *parser,
-                                                   DataBindValue **out_value,
-                                                   DataBindError *error);
+                                                   DataBindValue **out_value, DataBindError *error);
 static DataBindStatus data_bind_stream_xml_finish(data_bind_stream_t *parser,
-                                                  DataBindValue **out_value,
-                                                  DataBindError *error);
+                                                  DataBindValue **out_value, DataBindError *error);
 static DataBindStatus data_bind_stream_buffered_finish(data_bind_stream_t *parser,
                                                        DataBindValue **out_value,
                                                        DataBindError *error);
 
 static data_bind_stream_t *data_bind_stream_create_common(
-    DataBind *codec, const char *type_name, const char *path_or_expr,
-    DataBindValue **out_value, DataBindError *error,
+    DataBind *codec, const char *type_name, const char *path_or_expr, DataBindValue **out_value,
+    DataBindError *error,
     DataBindStatus (*feed_fn)(data_bind_stream_t *, const char *, size_t, DataBindError *),
     DataBindStatus (*finish_fn)(data_bind_stream_t *, DataBindValue **, DataBindError *),
-    DataBindStatus (*bind_fn)(DataBind *, const char *, const char *, size_t,
-                              const char *, DataBindValue **, DataBindError *),
+    DataBindStatus (*bind_fn)(DataBind *, const char *, const char *, size_t, const char *,
+                              DataBindValue **, DataBindError *),
     int is_csv, int json_stream_candidate, int xml_stream_candidate) {
   data_bind_stream_t *parser = NULL;
   size_t type_name_len;
   size_t path_len;
   if (out_value != NULL) *out_value = NULL;
-  if (codec == NULL || type_name == NULL || type_name[0] == '\0' ||
-      out_value == NULL || feed_fn == NULL || finish_fn == NULL ||
-      (!is_csv && bind_fn == NULL)) {
-    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_create",
-                 -1, -1, "Invalid stream constructor arguments");
+  if (codec == NULL || type_name == NULL || type_name[0] == '\0' || out_value == NULL ||
+      feed_fn == NULL || finish_fn == NULL || (!is_csv && bind_fn == NULL)) {
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_create", -1, -1,
+                 "Invalid stream constructor arguments");
     return NULL;
   }
 
   parser = (data_bind_stream_t *)malloc(sizeof(*parser));
   if (parser == NULL) {
-    db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
-                 -1, -1, "Out of memory creating stream");
+    db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create", -1, -1,
+                 "Out of memory creating stream");
     return NULL;
   }
 
@@ -6323,8 +6430,8 @@ static data_bind_stream_t *data_bind_stream_create_common(
     if (parser->path_or_expr == NULL) {
       free(parser->type_name);
       free(parser);
-      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
-                   -1, -1, "Out of memory creating stream");
+      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create", -1, -1,
+                   "Out of memory creating stream");
       return NULL;
     }
     memcpy(parser->path_or_expr, path_or_expr, path_len + 1);
@@ -6395,8 +6502,8 @@ static data_bind_stream_t *data_bind_stream_create_common(
       free(parser->path_or_expr);
       free(parser->type_name);
       free(parser);
-      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
-                   -1, -1, "Out of memory creating CSV stream output");
+      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create", -1, -1,
+                   "Out of memory creating CSV stream output");
       return NULL;
     }
   } else if (finish_fn == data_bind_stream_json_finish) {
@@ -6406,22 +6513,22 @@ static data_bind_stream_t *data_bind_stream_create_common(
         free(parser->path_or_expr);
         free(parser->type_name);
         free(parser);
-        db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
-                     -1, -1, "Out of memory creating JSON stream output");
+        db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create", -1, -1,
+                     "Out of memory creating JSON stream output");
         return NULL;
       }
     }
-    parser->json_sax = turbo_json_sax_parser_create(
-        parser->json_stream_candidate ? &DATA_BIND_JSON_STREAM_HANDLER
-                                      : &DATA_BIND_JSON_SAX_VALIDATE_HANDLER,
-        parser);
+    parser->json_sax = turbo_json_sax_parser_create(parser->json_stream_candidate
+                                                        ? &DATA_BIND_JSON_STREAM_HANDLER
+                                                        : &DATA_BIND_JSON_SAX_VALIDATE_HANDLER,
+                                                    parser);
     if (parser->json_sax == NULL) {
       data_bind_value_free(parser->stream_values);
       free(parser->path_or_expr);
       free(parser->type_name);
       free(parser);
-      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
-                   -1, -1, "Out of memory creating JSON stream validator");
+      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create", -1, -1,
+                   "Out of memory creating JSON stream validator");
       return NULL;
     }
   } else if (finish_fn == data_bind_stream_xml_finish) {
@@ -6437,15 +6544,15 @@ static data_bind_stream_t *data_bind_stream_create_common(
         free(parser->path_or_expr);
         free(parser->type_name);
         free(parser);
-        db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
-                     -1, -1, "Out of memory creating XML stream output");
+        db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create", -1, -1,
+                     "Out of memory creating XML stream output");
         return NULL;
       }
     }
-    parser->xml_sax = turbo_xml_sax_parser_create(
-        parser->xml_stream_candidate ? &DATA_BIND_XML_STREAM_HANDLER
-                                     : &DATA_BIND_XML_SAX_VALIDATE_HANDLER,
-        parser);
+    parser->xml_sax = turbo_xml_sax_parser_create(parser->xml_stream_candidate
+                                                      ? &DATA_BIND_XML_STREAM_HANDLER
+                                                      : &DATA_BIND_XML_SAX_VALIDATE_HANDLER,
+                                                  parser);
     if (parser->xml_sax == NULL) {
       free(parser->xml_stream_target);
       tstr_free(parser->xml_capture);
@@ -6453,8 +6560,8 @@ static data_bind_stream_t *data_bind_stream_create_common(
       free(parser->path_or_expr);
       free(parser->type_name);
       free(parser);
-      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create",
-                   -1, -1, "Out of memory creating XML stream validator");
+      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create", -1, -1,
+                   "Out of memory creating XML stream validator");
       return NULL;
     }
   }
@@ -6462,137 +6569,146 @@ static data_bind_stream_t *data_bind_stream_create_common(
   return parser;
 }
 
-static DataBindStatus data_bind_stream_bind_json(
-    DataBind *codec, const char *type_name, const char *text, size_t len,
-    const char *path, DataBindValue **out_value, DataBindError *error) {
+static DataBindStatus data_bind_stream_bind_json(DataBind *codec, const char *type_name,
+                                                 const char *text, size_t len, const char *path,
+                                                 DataBindValue **out_value, DataBindError *error) {
   (void)path;
   return data_bind_parse_json(codec, type_name, text, len, out_value, error);
 }
 
-static DataBindStatus data_bind_stream_bind_json_all(
-    DataBind *codec, const char *type_name, const char *text, size_t len,
-    const char *path, DataBindValue **out_value, DataBindError *error) {
+static DataBindStatus data_bind_stream_bind_json_all(DataBind *codec, const char *type_name,
+                                                     const char *text, size_t len, const char *path,
+                                                     DataBindValue **out_value,
+                                                     DataBindError *error) {
   (void)path;
   return data_bind_parse_json_all(codec, type_name, text, len, out_value, error);
 }
 
-static DataBindStatus data_bind_stream_bind_json_path(
-    DataBind *codec, const char *type_name, const char *text, size_t len,
-    const char *path, DataBindValue **out_value, DataBindError *error) {
+static DataBindStatus data_bind_stream_bind_json_path(DataBind *codec, const char *type_name,
+                                                      const char *text, size_t len,
+                                                      const char *path, DataBindValue **out_value,
+                                                      DataBindError *error) {
   return data_bind_parse_json_path(codec, type_name, text, len, path, out_value, error);
 }
 
-static DataBindStatus data_bind_stream_bind_json_path_all(
-    DataBind *codec, const char *type_name, const char *text, size_t len,
-    const char *path, DataBindValue **out_value, DataBindError *error) {
+static DataBindStatus data_bind_stream_bind_json_path_all(DataBind *codec, const char *type_name,
+                                                          const char *text, size_t len,
+                                                          const char *path,
+                                                          DataBindValue **out_value,
+                                                          DataBindError *error) {
   return data_bind_parse_json_path_all(codec, type_name, text, len, path, out_value, error);
 }
 
-static DataBindStatus data_bind_stream_bind_yaml(
-    DataBind *codec, const char *type_name, const char *text, size_t len,
-    const char *path, DataBindValue **out_value, DataBindError *error) {
+static DataBindStatus data_bind_stream_bind_yaml(DataBind *codec, const char *type_name,
+                                                 const char *text, size_t len, const char *path,
+                                                 DataBindValue **out_value, DataBindError *error) {
   (void)path;
   return data_bind_parse_yaml(codec, type_name, text, len, out_value, error);
 }
 
-static DataBindStatus data_bind_stream_bind_yaml_all(
-    DataBind *codec, const char *type_name, const char *text, size_t len,
-    const char *path, DataBindValue **out_value, DataBindError *error) {
+static DataBindStatus data_bind_stream_bind_yaml_all(DataBind *codec, const char *type_name,
+                                                     const char *text, size_t len, const char *path,
+                                                     DataBindValue **out_value,
+                                                     DataBindError *error) {
   (void)path;
   return data_bind_parse_yaml_all(codec, type_name, text, len, out_value, error);
 }
 
-static DataBindStatus data_bind_stream_bind_yaml_path(
-    DataBind *codec, const char *type_name, const char *text, size_t len,
-    const char *path, DataBindValue **out_value, DataBindError *error) {
+static DataBindStatus data_bind_stream_bind_yaml_path(DataBind *codec, const char *type_name,
+                                                      const char *text, size_t len,
+                                                      const char *path, DataBindValue **out_value,
+                                                      DataBindError *error) {
   return data_bind_parse_yaml_path(codec, type_name, text, len, path, out_value, error);
 }
 
-static DataBindStatus data_bind_stream_bind_yaml_path_all(
-    DataBind *codec, const char *type_name, const char *text, size_t len,
-    const char *path, DataBindValue **out_value, DataBindError *error) {
+static DataBindStatus data_bind_stream_bind_yaml_path_all(DataBind *codec, const char *type_name,
+                                                          const char *text, size_t len,
+                                                          const char *path,
+                                                          DataBindValue **out_value,
+                                                          DataBindError *error) {
   return data_bind_parse_yaml_path_all(codec, type_name, text, len, path, out_value, error);
 }
 
-static DataBindStatus data_bind_stream_bind_xml(
-    DataBind *codec, const char *type_name, const char *text, size_t len,
-    const char *path, DataBindValue **out_value, DataBindError *error) {
+static DataBindStatus data_bind_stream_bind_xml(DataBind *codec, const char *type_name,
+                                                const char *text, size_t len, const char *path,
+                                                DataBindValue **out_value, DataBindError *error) {
   (void)path;
   return data_bind_parse_xml(codec, type_name, text, len, out_value, error);
 }
 
-static DataBindStatus data_bind_stream_bind_xml_path_all(
-    DataBind *codec, const char *type_name, const char *text, size_t len,
-    const char *path, DataBindValue **out_value, DataBindError *error) {
+static DataBindStatus data_bind_stream_bind_xml_path_all(DataBind *codec, const char *type_name,
+                                                         const char *text, size_t len,
+                                                         const char *path,
+                                                         DataBindValue **out_value,
+                                                         DataBindError *error) {
   return data_bind_parse_xml_path_all(codec, type_name, text, len, path, out_value, error);
 }
 
-data_bind_stream_t *data_bind_stream_json_create(
-    DataBind *codec, const char *type_name, DataBindValue **out_value,
-    DataBindError *error) {
-  return data_bind_stream_create_common(
-      codec, type_name, NULL, out_value, error, data_bind_stream_text_feed,
-      data_bind_stream_json_finish, data_bind_stream_bind_json, 0, 0, 0);
+data_bind_stream_t *data_bind_stream_json_create(DataBind *codec, const char *type_name,
+                                                 DataBindValue **out_value, DataBindError *error) {
+  return data_bind_stream_create_common(codec, type_name, NULL, out_value, error,
+                                        data_bind_stream_text_feed, data_bind_stream_json_finish,
+                                        data_bind_stream_bind_json, 0, 0, 0);
 }
 
-data_bind_stream_t *data_bind_stream_json_all_create(
-    DataBind *codec, const char *type_name, DataBindValue **out_value,
-    DataBindError *error) {
-  return data_bind_stream_create_common(
-      codec, type_name, NULL, out_value, error, data_bind_stream_text_feed,
-      data_bind_stream_json_finish, data_bind_stream_bind_json_all, 0, 1, 0);
+data_bind_stream_t *data_bind_stream_json_all_create(DataBind *codec, const char *type_name,
+                                                     DataBindValue **out_value,
+                                                     DataBindError *error) {
+  return data_bind_stream_create_common(codec, type_name, NULL, out_value, error,
+                                        data_bind_stream_text_feed, data_bind_stream_json_finish,
+                                        data_bind_stream_bind_json_all, 0, 1, 0);
 }
 
-data_bind_stream_t *data_bind_stream_json_path_create(
-    DataBind *codec, const char *type_name, const char *json_path,
-    DataBindValue **out_value, DataBindError *error) {
+data_bind_stream_t *data_bind_stream_json_path_create(DataBind *codec, const char *type_name,
+                                                      const char *json_path,
+                                                      DataBindValue **out_value,
+                                                      DataBindError *error) {
   if (json_path == NULL || json_path[0] == '\0') {
-    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_json_path_create",
-                 -1, -1, "JSONPath is required");
-    return NULL;
-  }
-  return data_bind_stream_create_common(
-      codec, type_name, json_path, out_value, error, data_bind_stream_text_feed,
-      data_bind_stream_json_finish, data_bind_stream_bind_json_path, 0, 0, 0);
-}
-
-data_bind_stream_t *data_bind_stream_json_path_all_create(
-    DataBind *codec, const char *type_name, const char *json_path,
-    DataBindValue **out_value, DataBindError *error) {
-  if (json_path == NULL || json_path[0] == '\0') {
-    db_error_set(error, DATA_BIND_ERR_INVALID_ARG,
-                 "data_bind_stream_json_path_all_create", -1, -1,
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_json_path_create", -1, -1,
                  "JSONPath is required");
     return NULL;
   }
-  return data_bind_stream_create_common(
-      codec, type_name, json_path, out_value, error, data_bind_stream_text_feed,
-      data_bind_stream_json_finish, data_bind_stream_bind_json_path_all, 0,
-      data_bind_stream_json_path_is_root_array(json_path), 0);
+  return data_bind_stream_create_common(codec, type_name, json_path, out_value, error,
+                                        data_bind_stream_text_feed, data_bind_stream_json_finish,
+                                        data_bind_stream_bind_json_path, 0, 0, 0);
 }
 
-data_bind_stream_t *data_bind_stream_yaml_create(
-    DataBind *codec, const char *type_name, DataBindValue **out_value,
-    DataBindError *error) {
+data_bind_stream_t *data_bind_stream_json_path_all_create(DataBind *codec, const char *type_name,
+                                                          const char *json_path,
+                                                          DataBindValue **out_value,
+                                                          DataBindError *error) {
+  if (json_path == NULL || json_path[0] == '\0') {
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_json_path_all_create", -1, -1,
+                 "JSONPath is required");
+    return NULL;
+  }
+  return data_bind_stream_create_common(codec, type_name, json_path, out_value, error,
+                                        data_bind_stream_text_feed, data_bind_stream_json_finish,
+                                        data_bind_stream_bind_json_path_all, 0,
+                                        data_bind_stream_json_path_is_root_array(json_path), 0);
+}
+
+data_bind_stream_t *data_bind_stream_yaml_create(DataBind *codec, const char *type_name,
+                                                 DataBindValue **out_value, DataBindError *error) {
   return data_bind_stream_create_common(
       codec, type_name, NULL, out_value, error, data_bind_stream_text_feed,
       data_bind_stream_buffered_finish, data_bind_stream_bind_yaml, 0, 0, 0);
 }
 
-data_bind_stream_t *data_bind_stream_yaml_all_create(
-    DataBind *codec, const char *type_name, DataBindValue **out_value,
-    DataBindError *error) {
+data_bind_stream_t *data_bind_stream_yaml_all_create(DataBind *codec, const char *type_name,
+                                                     DataBindValue **out_value,
+                                                     DataBindError *error) {
   return data_bind_stream_create_common(
       codec, type_name, NULL, out_value, error, data_bind_stream_text_feed,
       data_bind_stream_buffered_finish, data_bind_stream_bind_yaml_all, 0, 0, 0);
 }
 
-data_bind_stream_t *data_bind_stream_yaml_path_create(
-    DataBind *codec, const char *type_name, const char *yaml_path,
-    DataBindValue **out_value, DataBindError *error) {
+data_bind_stream_t *data_bind_stream_yaml_path_create(DataBind *codec, const char *type_name,
+                                                      const char *yaml_path,
+                                                      DataBindValue **out_value,
+                                                      DataBindError *error) {
   if (yaml_path == NULL || yaml_path[0] == '\0') {
-    db_error_set(error, DATA_BIND_ERR_INVALID_ARG,
-                 "data_bind_stream_yaml_path_create", -1, -1,
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_yaml_path_create", -1, -1,
                  "YPATH is required");
     return NULL;
   }
@@ -6601,12 +6717,12 @@ data_bind_stream_t *data_bind_stream_yaml_path_create(
       data_bind_stream_buffered_finish, data_bind_stream_bind_yaml_path, 0, 0, 0);
 }
 
-data_bind_stream_t *data_bind_stream_yaml_path_all_create(
-    DataBind *codec, const char *type_name, const char *yaml_path,
-    DataBindValue **out_value, DataBindError *error) {
+data_bind_stream_t *data_bind_stream_yaml_path_all_create(DataBind *codec, const char *type_name,
+                                                          const char *yaml_path,
+                                                          DataBindValue **out_value,
+                                                          DataBindError *error) {
   if (yaml_path == NULL || yaml_path[0] == '\0') {
-    db_error_set(error, DATA_BIND_ERR_INVALID_ARG,
-                 "data_bind_stream_yaml_path_all_create", -1, -1,
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_yaml_path_all_create", -1, -1,
                  "YPATH is required");
     return NULL;
   }
@@ -6615,56 +6731,55 @@ data_bind_stream_t *data_bind_stream_yaml_path_all_create(
       data_bind_stream_buffered_finish, data_bind_stream_bind_yaml_path_all, 0, 0, 0);
 }
 
-data_bind_stream_t *data_bind_stream_csv_all_create(
-    DataBind *codec, const char *type_name, DataBindValue **out_value,
-    DataBindError *error) {
-  return data_bind_stream_create_common(
-      codec, type_name, NULL, out_value, error, data_bind_stream_csv_feed,
-      data_bind_stream_csv_finish, NULL, 1, 0, 0);
+data_bind_stream_t *data_bind_stream_csv_all_create(DataBind *codec, const char *type_name,
+                                                    DataBindValue **out_value,
+                                                    DataBindError *error) {
+  return data_bind_stream_create_common(codec, type_name, NULL, out_value, error,
+                                        data_bind_stream_csv_feed, data_bind_stream_csv_finish,
+                                        NULL, 1, 0, 0);
 }
 
-data_bind_stream_t *data_bind_stream_csv_path_create(
-    DataBind *codec, const char *type_name, const char *csv_path,
-    DataBindValue **out_value, DataBindError *error) {
+data_bind_stream_t *data_bind_stream_csv_path_create(DataBind *codec, const char *type_name,
+                                                     const char *csv_path,
+                                                     DataBindValue **out_value,
+                                                     DataBindError *error) {
   if (csv_path == NULL || csv_path[0] == '\0') {
-    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_csv_path_create",
-                 -1, -1, "CSVPath is required");
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_csv_path_create", -1, -1,
+                 "CSVPath is required");
     return NULL;
   }
-  return data_bind_stream_create_common(
-      codec, type_name, csv_path, out_value, error, data_bind_stream_csv_feed,
-      data_bind_stream_csv_finish, NULL, 1, 0, 0);
+  return data_bind_stream_create_common(codec, type_name, csv_path, out_value, error,
+                                        data_bind_stream_csv_feed, data_bind_stream_csv_finish,
+                                        NULL, 1, 0, 0);
 }
 
-data_bind_stream_t *data_bind_stream_xml_create(
-    DataBind *codec, const char *type_name, DataBindValue **out_value,
-    DataBindError *error) {
-  return data_bind_stream_create_common(
-      codec, type_name, NULL, out_value, error, data_bind_stream_text_feed,
-      data_bind_stream_xml_finish, data_bind_stream_bind_xml, 0, 0, 0);
+data_bind_stream_t *data_bind_stream_xml_create(DataBind *codec, const char *type_name,
+                                                DataBindValue **out_value, DataBindError *error) {
+  return data_bind_stream_create_common(codec, type_name, NULL, out_value, error,
+                                        data_bind_stream_text_feed, data_bind_stream_xml_finish,
+                                        data_bind_stream_bind_xml, 0, 0, 0);
 }
 
-data_bind_stream_t *data_bind_stream_xml_path_all_create(
-    DataBind *codec, const char *type_name, const char *xml_path,
-    DataBindValue **out_value, DataBindError *error) {
+data_bind_stream_t *data_bind_stream_xml_path_all_create(DataBind *codec, const char *type_name,
+                                                         const char *xml_path,
+                                                         DataBindValue **out_value,
+                                                         DataBindError *error) {
   if (xml_path == NULL || xml_path[0] == '\0') {
-    db_error_set(error, DATA_BIND_ERR_INVALID_ARG,
-                 "data_bind_stream_xml_path_all_create", -1, -1,
+    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_xml_path_all_create", -1, -1,
                  "XMLPath is required");
     return NULL;
   }
-  return data_bind_stream_create_common(
-      codec, type_name, xml_path, out_value, error, data_bind_stream_text_feed,
-      data_bind_stream_xml_finish, data_bind_stream_bind_xml_path_all, 0, 0,
-      data_bind_stream_xml_can_bind_incrementally(xml_path));
+  return data_bind_stream_create_common(codec, type_name, xml_path, out_value, error,
+                                        data_bind_stream_text_feed, data_bind_stream_xml_finish,
+                                        data_bind_stream_bind_xml_path_all, 0, 0,
+                                        data_bind_stream_xml_can_bind_incrementally(xml_path));
 }
 
-DataBindStatus data_bind_stream_set_record_callback(
-    data_bind_stream_t *stream, DataBindRecordFn callback, void *user_data) {
+DataBindStatus data_bind_stream_set_record_callback(data_bind_stream_t *stream,
+                                                    DataBindRecordFn callback, void *user_data) {
   data_bind_stream_t *parser = (data_bind_stream_t *)stream;
   if (parser == NULL || callback == NULL || parser->started || parser->finished) {
-    return db_error_set(parser != NULL ? parser->error : NULL,
-                        DATA_BIND_ERR_INVALID_ARG,
+    return db_error_set(parser != NULL ? parser->error : NULL, DATA_BIND_ERR_INVALID_ARG,
                         "data_bind_stream_set_record_callback", -1, -1,
                         "Record callback must be set before first feed");
   }
@@ -6677,22 +6792,21 @@ DataBindStatus data_bind_stream_set_record_callback(
   return DATA_BIND_OK;
 }
 
-static DataBindStatus data_bind_stream_text_feed(data_bind_stream_t *parser,
-                                                 const char *data, size_t len,
-                                                 DataBindError *error) {
+static DataBindStatus data_bind_stream_text_feed(data_bind_stream_t *parser, const char *data,
+                                                 size_t len, DataBindError *error) {
   size_t needed;
   size_t new_cap;
   char *grown;
   DataBindStatus status;
 
   if (parser == NULL || parser->finished) {
-    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_feed",
-                        -1, -1, "Invalid stream parser feed state");
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_feed", -1, -1,
+                        "Invalid stream parser feed state");
   }
   if (len == 0) return DATA_BIND_OK;
   if (data == NULL) {
-    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_feed",
-                        -1, -1, "Invalid stream parser feed data");
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_feed", -1, -1,
+                        "Invalid stream parser feed data");
   }
 
   status = data_bind_stream_sax_feed(parser, data, len, error);
@@ -6756,8 +6870,8 @@ int data_bind_stream_feed_file(data_bind_stream_t *stream, const char *file_path
   int close_rc;
 
   if (parser == NULL || file_path == NULL || file_path[0] == '\0') {
-    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_feed_file",
-                        -1, -1, "Invalid stream file feed arguments");
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_feed_file", -1, -1,
+                        "Invalid stream file feed arguments");
   }
   fd = turbo_fs_open(file_path, TURBO_FS_O_RDONLY, 0);
   if (fd == TURBO_INVALID_FILE) {
@@ -6768,8 +6882,8 @@ int data_bind_stream_feed_file(data_bind_stream_t *stream, const char *file_path
   chunk = (char *)malloc(DATA_BIND_FILE_STREAM_CHUNK_SIZE);
   if (chunk == NULL) {
     turbo_fs_close(fd);
-    return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed_file",
-                        -1, -1, "Out of memory allocating stream file chunk");
+    return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_feed_file", -1, -1,
+                        "Out of memory allocating stream file chunk");
   }
 
   status = DATA_BIND_OK;
@@ -6800,10 +6914,10 @@ static DataBindStatus data_bind_stream_json_finish(data_bind_stream_t *parser,
   const char *path = parser ? parser->path_or_expr : NULL;
   DataBindStatus status = DATA_BIND_OK;
 
-  if (parser == NULL || out_value == NULL || parser->codec == NULL ||
-      parser->type_name == NULL || parser->finished) {
-    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish",
-                        -1, -1, "Invalid stream parser finish state");
+  if (parser == NULL || out_value == NULL || parser->codec == NULL || parser->type_name == NULL ||
+      parser->finished) {
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish", -1, -1,
+                        "Invalid stream parser finish state");
   }
   status = data_bind_stream_sax_finish(parser, error);
   if (status != DATA_BIND_OK) {
@@ -6821,8 +6935,8 @@ static DataBindStatus data_bind_stream_json_finish(data_bind_stream_t *parser,
   if (!parser->started) {
     parser->buffer = (char *)realloc(parser->buffer, 1);
     if (parser->buffer == NULL) {
-      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish",
-                          -1, -1, "Out of memory while finalizing stream parser");
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish", -1, -1,
+                          "Out of memory while finalizing stream parser");
     }
     parser->buffer[0] = '\0';
     parser->size = 0;
@@ -6831,16 +6945,16 @@ static DataBindStatus data_bind_stream_json_finish(data_bind_stream_t *parser,
   if (parser->buffer == NULL) {
     parser->buffer = (char *)malloc(1);
     if (parser->buffer == NULL) {
-      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish",
-                          -1, -1, "Out of memory while finalizing stream parser");
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish", -1, -1,
+                          "Out of memory while finalizing stream parser");
     }
     parser->buffer[0] = '\0';
     parser->capacity = 1;
   }
   parser->buffer[parser->size] = '\0';
 
-  status = parser->bind_fn(parser->codec, parser->type_name, parser->buffer,
-                           parser->size, path, out_value, error);
+  status = parser->bind_fn(parser->codec, parser->type_name, parser->buffer, parser->size, path,
+                           out_value, error);
 
   if (status == DATA_BIND_OK) {
     status = data_bind_stream_emit_result(parser, *out_value, error);
@@ -6851,14 +6965,13 @@ static DataBindStatus data_bind_stream_json_finish(data_bind_stream_t *parser,
 }
 
 static DataBindStatus data_bind_stream_xml_finish(data_bind_stream_t *parser,
-                                                  DataBindValue **out_value,
-                                                  DataBindError *error) {
+                                                  DataBindValue **out_value, DataBindError *error) {
   const char *path = parser ? parser->path_or_expr : NULL;
   DataBindStatus status;
-  if (parser == NULL || out_value == NULL || parser->codec == NULL ||
-      parser->type_name == NULL || parser->finished) {
-    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish",
-                        -1, -1, "Invalid stream finish state");
+  if (parser == NULL || out_value == NULL || parser->codec == NULL || parser->type_name == NULL ||
+      parser->finished) {
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish", -1, -1,
+                        "Invalid stream finish state");
   }
   status = data_bind_stream_sax_finish(parser, error);
   if (status != DATA_BIND_OK) {
@@ -6875,8 +6988,8 @@ static DataBindStatus data_bind_stream_xml_finish(data_bind_stream_t *parser,
   if (!parser->started) {
     parser->buffer = (char *)realloc(parser->buffer, 1);
     if (parser->buffer == NULL) {
-      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish",
-                          -1, -1, "Out of memory while finalizing stream");
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish", -1, -1,
+                          "Out of memory while finalizing stream");
     }
     parser->buffer[0] = '\0';
     parser->size = 0;
@@ -6885,15 +6998,15 @@ static DataBindStatus data_bind_stream_xml_finish(data_bind_stream_t *parser,
   if (parser->buffer == NULL) {
     parser->buffer = (char *)malloc(1);
     if (parser->buffer == NULL) {
-      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish",
-                          -1, -1, "Out of memory while finalizing stream");
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish", -1, -1,
+                          "Out of memory while finalizing stream");
     }
     parser->buffer[0] = '\0';
     parser->capacity = 1;
   }
   parser->buffer[parser->size] = '\0';
-  status = parser->bind_fn(parser->codec, parser->type_name, parser->buffer,
-                           parser->size, path, out_value, error);
+  status = parser->bind_fn(parser->codec, parser->type_name, parser->buffer, parser->size, path,
+                           out_value, error);
   if (status == DATA_BIND_OK) {
     status = data_bind_stream_emit_result(parser, *out_value, error);
   }
@@ -6905,25 +7018,24 @@ static DataBindStatus data_bind_stream_buffered_finish(data_bind_stream_t *parse
                                                        DataBindValue **out_value,
                                                        DataBindError *error) {
   DataBindStatus status;
-  if (parser == NULL || out_value == NULL || parser->codec == NULL ||
-      parser->type_name == NULL || parser->bind_fn == NULL || parser->finished) {
-    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish",
-                        -1, -1, "Invalid buffered stream finish state");
+  if (parser == NULL || out_value == NULL || parser->codec == NULL || parser->type_name == NULL ||
+      parser->bind_fn == NULL || parser->finished) {
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish", -1, -1,
+                        "Invalid buffered stream finish state");
   }
   if (parser->buffer == NULL) {
     parser->buffer = (char *)malloc(1);
     if (parser->buffer == NULL) {
       parser->finished = 1;
-      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish",
-                          -1, -1, "Out of memory finalizing buffered stream");
+      return db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_finish", -1, -1,
+                          "Out of memory finalizing buffered stream");
     }
     parser->buffer[0] = '\0';
     parser->capacity = 1;
   }
-  status = parser->bind_fn(parser->codec, parser->type_name, parser->buffer,
-                           parser->size, parser->path_or_expr, out_value, error);
-  if (status == DATA_BIND_OK)
-    status = data_bind_stream_emit_result(parser, *out_value, error);
+  status = parser->bind_fn(parser->codec, parser->type_name, parser->buffer, parser->size,
+                           parser->path_or_expr, out_value, error);
+  if (status == DATA_BIND_OK) status = data_bind_stream_emit_result(parser, *out_value, error);
   parser->finished = 1;
   return status;
 }
@@ -6967,9 +7079,8 @@ void data_bind_stream_destroy(data_bind_stream_t *stream) {
   free(parser);
 }
 
-DataBindStatus data_bind_parse_json(DataBind *codec, const char *type_name,
-                                    const char *json, size_t len,
-                                    DataBindValue **out_value, DataBindError *error) {
+DataBindStatus data_bind_parse_json(DataBind *codec, const char *type_name, const char *json,
+                                    size_t len, DataBindValue **out_value, DataBindError *error) {
   json_value_t *root = NULL;
   DataBindValue *result;
   void *ptr;
@@ -6977,8 +7088,7 @@ DataBindStatus data_bind_parse_json(DataBind *codec, const char *type_name,
   if (out_value != NULL) *out_value = NULL;
   if (codec == NULL || codec->schema_root == NULL || type_name == NULL || json == NULL ||
       out_value == NULL)
-    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG,
-                          "Invalid JSON bind arguments");
+    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG, "Invalid JSON bind arguments");
   codec->error[0] = '\0';
   if (!bind_type_supported(codec->schema_root, type_name)) {
     db_error_format_path(error_path, sizeof(error_path), "json", NULL);
@@ -7002,9 +7112,9 @@ DataBindStatus data_bind_parse_json(DataBind *codec, const char *type_name,
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_parse_json_all(DataBind *codec, const char *type_name,
-                                        const char *json, size_t len,
-                                        DataBindValue **out_value, DataBindError *error) {
+DataBindStatus data_bind_parse_json_all(DataBind *codec, const char *type_name, const char *json,
+                                        size_t len, DataBindValue **out_value,
+                                        DataBindError *error) {
   json_value_t *root = NULL;
   DataBindValue *list;
   void *ptr;
@@ -7029,8 +7139,8 @@ DataBindStatus data_bind_parse_json_all(DataBind *codec, const char *type_name,
   if (list != NULL) {
     if (turbo_json_type(root) == TURBO_JSON_ARRAY) {
       for (i = 0; i < turbo_json_array_size(root); i++) {
-        DataBindValue *item = bind_json_typed_value(codec->schema_root, type_name,
-                                                    turbo_json_array_get(root, i));
+        DataBindValue *item =
+            bind_json_typed_value(codec->schema_root, type_name, turbo_json_array_get(root, i));
         if (item != NULL) {
           if (!dbv_array_push(&list->data.array_val, item)) {
             data_bind_value_free(item);
@@ -7061,10 +7171,9 @@ DataBindStatus data_bind_parse_json_all(DataBind *codec, const char *type_name,
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_parse_json_path(DataBind *codec, const char *type_name,
-                                       const char *json, size_t len,
-                                       const char *jsonpath,
-                                       DataBindValue **out_value, DataBindError *error) {
+DataBindStatus data_bind_parse_json_path(DataBind *codec, const char *type_name, const char *json,
+                                         size_t len, const char *jsonpath,
+                                         DataBindValue **out_value, DataBindError *error) {
   json_value_t *root = NULL;
   json_value_t *selected;
   DataBindValue *result;
@@ -7114,10 +7223,8 @@ DataBindStatus data_bind_parse_json_path(DataBind *codec, const char *type_name,
 }
 
 DataBindStatus data_bind_parse_json_path_all(DataBind *codec, const char *type_name,
-                                           const char *json, size_t len,
-                                           const char *jsonpath,
-                                           DataBindValue **out_value,
-                                           DataBindError *error) {
+                                             const char *json, size_t len, const char *jsonpath,
+                                             DataBindValue **out_value, DataBindError *error) {
   json_value_t *root = NULL;
   turbo_json_path_result_t *matches = NULL;
   DataBindValue *list;
@@ -7148,8 +7255,8 @@ DataBindStatus data_bind_parse_json_path_all(DataBind *codec, const char *type_n
     ptr = root;
     turbo_free_json(&ptr);
     db_error_format_path(error_path, sizeof(error_path), "json", jsonpath);
-    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1,
-                        "JSONPath parse failed: %s", path_error);
+    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1, "JSONPath parse failed: %s",
+                        path_error);
   }
   list = dbv_new(DATA_BIND_VALUE_LIST);
   if (list != NULL && matches != NULL) {
@@ -7179,10 +7286,11 @@ DataBindStatus data_bind_parse_json_path_all(DataBind *codec, const char *type_n
   return DATA_BIND_OK;
 }
 
-static DataBindStatus data_bind_parse_yaml_selected(
-    DataBind *codec, const char *type_name, const char *yaml, size_t len,
-    const char *yamlpath, int bind_all, DataBindValue **out_value,
-    DataBindError *error) {
+static DataBindStatus data_bind_parse_yaml_selected(DataBind *codec, const char *type_name,
+                                                    const char *yaml, size_t len,
+                                                    const char *yamlpath, int bind_all,
+                                                    DataBindValue **out_value,
+                                                    DataBindError *error) {
   turbo_yaml_doc_t *doc = NULL;
   turbo_yaml_path_result_t *matches = NULL;
   turbo_yaml_node_t *root;
@@ -7192,10 +7300,9 @@ static DataBindStatus data_bind_parse_yaml_selected(
   size_t i;
 
   if (out_value != NULL) *out_value = NULL;
-  if (codec == NULL || codec->schema_root == NULL || type_name == NULL ||
-      yaml == NULL || out_value == NULL) {
-    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG,
-                          "Invalid YAML bind arguments");
+  if (codec == NULL || codec->schema_root == NULL || type_name == NULL || yaml == NULL ||
+      out_value == NULL) {
+    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG, "Invalid YAML bind arguments");
   }
   codec->error[0] = '\0';
   if (!bind_type_supported(codec->schema_root, type_name)) {
@@ -7205,8 +7312,7 @@ static DataBindStatus data_bind_parse_yaml_selected(
   }
   if (turbo_parse_yaml((const uint8_t *)yaml, len, &doc) != 0 || doc == NULL) {
     db_error_format_path(error_path, sizeof(error_path), "yaml", NULL);
-    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1,
-                        "YAML parse failed");
+    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1, "YAML parse failed");
   }
 
   root = turbo_yaml_root(doc);
@@ -7227,12 +7333,11 @@ static DataBindStatus data_bind_parse_yaml_selected(
       turbo_free_yaml(&doc);
       db_error_format_path(error_path, sizeof(error_path), "yaml", yamlpath);
       return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1,
-                          error_pos <= INT_MAX ? (int)error_pos : -1,
-                          "YPATH parse failed: %s", path_message);
+                          error_pos <= INT_MAX ? (int)error_pos : -1, "YPATH parse failed: %s",
+                          path_message);
     }
     count = turbo_yaml_path_result_size(matches);
-  } else if (bind_all &&
-             turbo_yaml_node_type(root) == TURBO_YAML_NODE_SEQUENCE) {
+  } else if (bind_all && turbo_yaml_node_type(root) == TURBO_YAML_NODE_SEQUENCE) {
     count = turbo_yaml_sequence_size(root);
   } else if (root != NULL) {
     count = 1;
@@ -7261,12 +7366,10 @@ static DataBindStatus data_bind_parse_yaml_selected(
     json_value_t *json_value;
     DataBindValue *bound;
     void *json_ptr;
-    if (matches != NULL)
-      node = turbo_yaml_path_result_get(matches, i);
+    if (matches != NULL) node = turbo_yaml_path_result_get(matches, i);
     else if (bind_all && turbo_yaml_node_type(root) == TURBO_YAML_NODE_SEQUENCE)
       node = turbo_yaml_sequence_get(root, i);
-    else
-      node = root;
+    else node = root;
 
     json_value = turbo_yaml_node_to_json(doc, node);
     if (json_value == NULL) {
@@ -7307,45 +7410,36 @@ static DataBindStatus data_bind_parse_yaml_selected(
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_parse_yaml(DataBind *codec, const char *type_name,
-                                    const char *yaml, size_t len,
-                                    DataBindValue **out_value, DataBindError *error) {
-  return data_bind_parse_yaml_selected(codec, type_name, yaml, len, NULL, 0,
-                                       out_value, error);
+DataBindStatus data_bind_parse_yaml(DataBind *codec, const char *type_name, const char *yaml,
+                                    size_t len, DataBindValue **out_value, DataBindError *error) {
+  return data_bind_parse_yaml_selected(codec, type_name, yaml, len, NULL, 0, out_value, error);
 }
 
-DataBindStatus data_bind_parse_yaml_all(DataBind *codec, const char *type_name,
-                                        const char *yaml, size_t len,
-                                        DataBindValue **out_value, DataBindError *error) {
-  return data_bind_parse_yaml_selected(codec, type_name, yaml, len, NULL, 1,
-                                       out_value, error);
+DataBindStatus data_bind_parse_yaml_all(DataBind *codec, const char *type_name, const char *yaml,
+                                        size_t len, DataBindValue **out_value,
+                                        DataBindError *error) {
+  return data_bind_parse_yaml_selected(codec, type_name, yaml, len, NULL, 1, out_value, error);
 }
 
-DataBindStatus data_bind_parse_yaml_path(DataBind *codec, const char *type_name,
-                                         const char *yaml, size_t len,
-                                         const char *yamlpath,
-                                         DataBindValue **out_value,
-                                         DataBindError *error) {
+DataBindStatus data_bind_parse_yaml_path(DataBind *codec, const char *type_name, const char *yaml,
+                                         size_t len, const char *yamlpath,
+                                         DataBindValue **out_value, DataBindError *error) {
   if (yamlpath == NULL || yamlpath[0] == '\0')
     return data_bind_parse_yaml(codec, type_name, yaml, len, out_value, error);
-  return data_bind_parse_yaml_selected(codec, type_name, yaml, len, yamlpath, 0,
-                                       out_value, error);
+  return data_bind_parse_yaml_selected(codec, type_name, yaml, len, yamlpath, 0, out_value, error);
 }
 
 DataBindStatus data_bind_parse_yaml_path_all(DataBind *codec, const char *type_name,
-                                             const char *yaml, size_t len,
-                                             const char *yamlpath,
-                                             DataBindValue **out_value,
-                                             DataBindError *error) {
+                                             const char *yaml, size_t len, const char *yamlpath,
+                                             DataBindValue **out_value, DataBindError *error) {
   if (yamlpath == NULL || yamlpath[0] == '\0')
     return data_bind_parse_yaml_all(codec, type_name, yaml, len, out_value, error);
-  return data_bind_parse_yaml_selected(codec, type_name, yaml, len, yamlpath, 1,
-                                       out_value, error);
+  return data_bind_parse_yaml_selected(codec, type_name, yaml, len, yamlpath, 1, out_value, error);
 }
 
-DataBindStatus data_bind_parse_csv(DataBind *codec, const char *type_name,
-                                   const char *csv, size_t len, size_t row,
-                                   DataBindValue **out_value, DataBindError *error) {
+DataBindStatus data_bind_parse_csv(DataBind *codec, const char *type_name, const char *csv,
+                                   size_t len, size_t row, DataBindValue **out_value,
+                                   DataBindError *error) {
   turbo_csv_doc_t *doc = NULL;
   data_bind_csv_headers_t headers = {0};
   turbo_csv_options_t opts = {true, ',', '"', true};
@@ -7355,8 +7449,7 @@ DataBindStatus data_bind_parse_csv(DataBind *codec, const char *type_name,
   if (out_value != NULL) *out_value = NULL;
   if (codec == NULL || codec->schema_root == NULL || type_name == NULL || csv == NULL ||
       out_value == NULL)
-    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG,
-                          "Invalid CSV bind arguments");
+    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG, "Invalid CSV bind arguments");
   codec->error[0] = '\0';
   if (!bind_type_supported(codec->schema_root, type_name)) {
     db_error_format_path(error_path, sizeof(error_path), "csv", NULL);
@@ -7382,9 +7475,9 @@ DataBindStatus data_bind_parse_csv(DataBind *codec, const char *type_name,
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_parse_csv_all(DataBind *codec, const char *type_name,
-                                       const char *csv, size_t len,
-                                       DataBindValue **out_value, DataBindError *error) {
+DataBindStatus data_bind_parse_csv_all(DataBind *codec, const char *type_name, const char *csv,
+                                       size_t len, DataBindValue **out_value,
+                                       DataBindError *error) {
   turbo_csv_doc_t *doc = NULL;
   data_bind_csv_headers_t headers = {0};
   turbo_csv_options_t opts = {true, ',', '"', true};
@@ -7411,7 +7504,8 @@ DataBindStatus data_bind_parse_csv_all(DataBind *codec, const char *type_name,
     list = dbv_new(DATA_BIND_VALUE_LIST);
     if (list != NULL) {
       for (row = 0; row < turbo_csv_row_count(doc); row++) {
-        DataBindValue *item = bind_csv_typed_value(codec->schema_root, type_name, doc, row, &headers, "");
+        DataBindValue *item =
+            bind_csv_typed_value(codec->schema_root, type_name, doc, row, &headers, "");
         if (item != NULL) {
           if (!dbv_array_push(&list->data.array_val, item)) {
             data_bind_value_free(item);
@@ -7436,11 +7530,9 @@ DataBindStatus data_bind_parse_csv_all(DataBind *codec, const char *type_name,
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_parse_csv_path(DataBind *codec, const char *type_name,
-                                          const char *csv, size_t len,
-                                          const char *csvpath,
-                                          DataBindValue **out_value,
-                                          DataBindError *error) {
+DataBindStatus data_bind_parse_csv_path(DataBind *codec, const char *type_name, const char *csv,
+                                        size_t len, const char *csvpath, DataBindValue **out_value,
+                                        DataBindError *error) {
   turbo_csv_doc_t *bind_doc = NULL;
   turbo_csv_doc_t *filter_doc = NULL;
   turbo_dsv_filter_t *filter = NULL;
@@ -7474,8 +7566,7 @@ DataBindStatus data_bind_parse_csv_path(DataBind *codec, const char *type_name,
     ptr = bind_doc;
     turbo_free_csv(&ptr);
     db_error_format_path(error_path, sizeof(error_path), "csv", NULL);
-    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1,
-                        "CSVPath parse failed");
+    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1, "CSVPath parse failed");
   }
   if (!csv_parse_header_names(csv, len, &headers)) {
     ptr = filter_doc;
@@ -7513,8 +7604,8 @@ DataBindStatus data_bind_parse_csv_path(DataBind *codec, const char *type_name,
       }
       if (match) {
         size_t bind_row = raw_row - 1;
-        DataBindValue *item = bind_csv_typed_value(codec->schema_root, type_name, bind_doc,
-                                                   bind_row, &headers, "");
+        DataBindValue *item =
+            bind_csv_typed_value(codec->schema_root, type_name, bind_doc, bind_row, &headers, "");
         if (item == NULL) {
           data_bind_value_free(list);
           list = NULL;
@@ -7552,9 +7643,8 @@ DataBindStatus data_bind_parse_csv_path(DataBind *codec, const char *type_name,
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_parse_xml(DataBind *codec, const char *type_name,
-                                   const char *xml, size_t len,
-                                   DataBindValue **out_value, DataBindError *error) {
+DataBindStatus data_bind_parse_xml(DataBind *codec, const char *type_name, const char *xml,
+                                   size_t len, DataBindValue **out_value, DataBindError *error) {
   turbo_xml_doc_t *doc = NULL;
   DataBindValue *result = NULL;
   void *ptr;
@@ -7562,8 +7652,7 @@ DataBindStatus data_bind_parse_xml(DataBind *codec, const char *type_name,
   if (out_value != NULL) *out_value = NULL;
   if (codec == NULL || codec->schema_root == NULL || type_name == NULL || xml == NULL ||
       out_value == NULL)
-    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG,
-                          "Invalid XML bind arguments");
+    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG, "Invalid XML bind arguments");
   codec->error[0] = '\0';
   if (!bind_type_supported(codec->schema_root, type_name)) {
     db_error_format_path(error_path, sizeof(error_path), "xml", NULL);
@@ -7587,9 +7676,9 @@ DataBindStatus data_bind_parse_xml(DataBind *codec, const char *type_name,
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_parse_xml_path_all(DataBind *codec, const char *type_name,
-                                       const char *xml, size_t len, const char *xmlpath,
-                                       DataBindValue **out_value, DataBindError *error) {
+DataBindStatus data_bind_parse_xml_path_all(DataBind *codec, const char *type_name, const char *xml,
+                                            size_t len, const char *xmlpath,
+                                            DataBindValue **out_value, DataBindError *error) {
   turbo_xml_doc_t *doc = NULL;
   DataBindValue *list = NULL;
   void *ptr;
@@ -7647,7 +7736,7 @@ DataBindStatus data_bind_parse_xml_path_all(DataBind *codec, const char *type_na
   ptr = doc;
   turbo_free_xml(&ptr);
   if (list == NULL) {
-    db_error_format_path(error_path, sizeof(error_path), "xml", 
+    db_error_format_path(error_path, sizeof(error_path), "xml",
                          xmlpath != NULL && xmlpath[0] != '\0' ? xmlpath : "/*");
     return db_error_set(error, DATA_BIND_ERR_TYPE_MISMATCH, error_path, -1, -1,
                         "XML bind_all failed for type: %s", type_name);
@@ -7657,9 +7746,8 @@ DataBindStatus data_bind_parse_xml_path_all(DataBind *codec, const char *type_na
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_validate_json(DataBind *codec, const char *type_name,
-                                       const char *json, size_t len,
-                                       DataBindError *error) {
+DataBindStatus data_bind_validate_json(DataBind *codec, const char *type_name, const char *json,
+                                       size_t len, DataBindError *error) {
   json_value_t *root = NULL;
   void *ptr;
   size_t i;
@@ -7668,16 +7756,16 @@ DataBindStatus data_bind_validate_json(DataBind *codec, const char *type_name,
                           "Invalid JSON validate arguments");
   codec->error[0] = '\0';
   if (!bind_type_supported(codec->schema_root, type_name)) {
-    return db_codec_error(codec, error, DATA_BIND_ERR_TYPE_NOT_FOUND,
-                          "Type not found: %s", type_name);
+    return db_codec_error(codec, error, DATA_BIND_ERR_TYPE_NOT_FOUND, "Type not found: %s",
+                          type_name);
   }
   if (turbo_parse_json((const uint8_t *)json, len, &root) != 0 || root == NULL) {
     return db_codec_error(codec, error, DATA_BIND_ERR_PARSE, "JSON parse failed");
   }
   if (turbo_json_type(root) == TURBO_JSON_ARRAY) {
     for (i = 0; i < turbo_json_array_size(root); i++) {
-      DataBindValue *item = bind_json_typed_value(codec->schema_root, type_name,
-                                                  turbo_json_array_get(root, i));
+      DataBindValue *item =
+          bind_json_typed_value(codec->schema_root, type_name, turbo_json_array_get(root, i));
       if (item == NULL) {
         ptr = root;
         turbo_free_json(&ptr);
@@ -7703,9 +7791,8 @@ DataBindStatus data_bind_validate_json(DataBind *codec, const char *type_name,
 }
 
 DataBindStatus data_bind_validate_json_path(DataBind *codec, const char *type_name,
-                                           const char *json, size_t len,
-                                           const char *jsonpath,
-                                          DataBindError *error) {
+                                            const char *json, size_t len, const char *jsonpath,
+                                            DataBindError *error) {
   DataBindValue *value = NULL;
   DataBindStatus status;
   if (jsonpath == NULL || jsonpath[0] == '\0')
@@ -7715,33 +7802,28 @@ DataBindStatus data_bind_validate_json_path(DataBind *codec, const char *type_na
   return status;
 }
 
-DataBindStatus data_bind_validate_yaml(DataBind *codec, const char *type_name,
-                                       const char *yaml, size_t len,
-                                       DataBindError *error) {
+DataBindStatus data_bind_validate_yaml(DataBind *codec, const char *type_name, const char *yaml,
+                                       size_t len, DataBindError *error) {
   DataBindValue *value = NULL;
-  DataBindStatus status = data_bind_parse_yaml_all(codec, type_name, yaml, len,
-                                                   &value, error);
+  DataBindStatus status = data_bind_parse_yaml_all(codec, type_name, yaml, len, &value, error);
   data_bind_value_free(value);
   return status;
 }
 
 DataBindStatus data_bind_validate_yaml_path(DataBind *codec, const char *type_name,
-                                            const char *yaml, size_t len,
-                                            const char *yamlpath,
+                                            const char *yaml, size_t len, const char *yamlpath,
                                             DataBindError *error) {
   DataBindValue *value = NULL;
   DataBindStatus status;
   if (yamlpath == NULL || yamlpath[0] == '\0')
     return data_bind_validate_yaml(codec, type_name, yaml, len, error);
-  status = data_bind_parse_yaml_path(codec, type_name, yaml, len, yamlpath,
-                                     &value, error);
+  status = data_bind_parse_yaml_path(codec, type_name, yaml, len, yamlpath, &value, error);
   data_bind_value_free(value);
   return status;
 }
 
-DataBindStatus data_bind_validate_csv(DataBind *codec, const char *type_name,
-                                      const char *csv, size_t len,
-                                      DataBindError *error) {
+DataBindStatus data_bind_validate_csv(DataBind *codec, const char *type_name, const char *csv,
+                                      size_t len, DataBindError *error) {
   turbo_csv_doc_t *doc = NULL;
   data_bind_csv_headers_t headers = {0};
   turbo_csv_options_t opts = {true, ',', '"', true};
@@ -7752,8 +7834,8 @@ DataBindStatus data_bind_validate_csv(DataBind *codec, const char *type_name,
                           "Invalid CSV validate arguments");
   codec->error[0] = '\0';
   if (!bind_type_supported(codec->schema_root, type_name)) {
-    return db_codec_error(codec, error, DATA_BIND_ERR_TYPE_NOT_FOUND,
-                          "Type not found: %s", type_name);
+    return db_codec_error(codec, error, DATA_BIND_ERR_TYPE_NOT_FOUND, "Type not found: %s",
+                          type_name);
   }
   if (turbo_parse_csv_opts((const uint8_t *)csv, len, &opts, &doc) != 0 || doc == NULL) {
     return db_codec_error(codec, error, DATA_BIND_ERR_PARSE, "CSV parse failed");
@@ -7764,7 +7846,8 @@ DataBindStatus data_bind_validate_csv(DataBind *codec, const char *type_name,
     return db_codec_error(codec, error, DATA_BIND_ERR_PARSE, "CSV header parse failed");
   }
   for (row = 0; row < turbo_csv_row_count(doc); row++) {
-    DataBindValue *item = bind_csv_typed_value(codec->schema_root, type_name, doc, row, &headers, "");
+    DataBindValue *item =
+        bind_csv_typed_value(codec->schema_root, type_name, doc, row, &headers, "");
     if (item == NULL) {
       csv_headers_free(&headers);
       ptr = doc;
@@ -7781,20 +7864,17 @@ DataBindStatus data_bind_validate_csv(DataBind *codec, const char *type_name,
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_validate_csv_path(DataBind *codec, const char *type_name,
-                                          const char *csv, size_t len,
-                                          const char *csvpath,
-                                             DataBindError *error) {
+DataBindStatus data_bind_validate_csv_path(DataBind *codec, const char *type_name, const char *csv,
+                                           size_t len, const char *csvpath, DataBindError *error) {
   DataBindValue *value = NULL;
-  DataBindStatus status = data_bind_parse_csv_path(codec, type_name, csv, len,
-                                                  csvpath, &value, error);
+  DataBindStatus status =
+      data_bind_parse_csv_path(codec, type_name, csv, len, csvpath, &value, error);
   data_bind_value_free(value);
   return status;
 }
 
-DataBindStatus data_bind_validate_xml_path(DataBind *codec, const char *type_name,
-                                          const char *xml, size_t len, const char *xmlpath,
-                                      DataBindError *error) {
+DataBindStatus data_bind_validate_xml_path(DataBind *codec, const char *type_name, const char *xml,
+                                           size_t len, const char *xmlpath, DataBindError *error) {
   turbo_xml_doc_t *doc = NULL;
   void *ptr;
   if (codec == NULL || codec->schema_root == NULL || type_name == NULL || xml == NULL)
@@ -7802,8 +7882,8 @@ DataBindStatus data_bind_validate_xml_path(DataBind *codec, const char *type_nam
                           "Invalid XML validate arguments");
   codec->error[0] = '\0';
   if (!bind_type_supported(codec->schema_root, type_name)) {
-    return db_codec_error(codec, error, DATA_BIND_ERR_TYPE_NOT_FOUND,
-                          "Type not found: %s", type_name);
+    return db_codec_error(codec, error, DATA_BIND_ERR_TYPE_NOT_FOUND, "Type not found: %s",
+                          type_name);
   }
   if (turbo_parse_xml((const uint8_t *)xml, len, &doc) != 0 || doc == NULL) {
     return db_codec_error(codec, error, DATA_BIND_ERR_PARSE, "XML parse failed");
@@ -8108,7 +8188,8 @@ DataBindStatus data_bind_value_get_bool(const DataBindValue *value, int *out) {
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_value_get_string(const DataBindValue *value, const char **data, size_t *len) {
+DataBindStatus data_bind_value_get_string(const DataBindValue *value, const char **data,
+                                          size_t *len) {
   if (data == NULL) return DATA_BIND_ERR_INVALID_ARG;
   *data = NULL;
   if (len != NULL) *len = 0;
@@ -8119,7 +8200,8 @@ DataBindStatus data_bind_value_get_string(const DataBindValue *value, const char
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_value_get_bytes(const DataBindValue *value, const uint8_t **data, size_t *len) {
+DataBindStatus data_bind_value_get_bytes(const DataBindValue *value, const uint8_t **data,
+                                         size_t *len) {
   if (data == NULL) return DATA_BIND_ERR_INVALID_ARG;
   *data = NULL;
   if (len != NULL) *len = 0;
@@ -8130,7 +8212,8 @@ DataBindStatus data_bind_value_get_bytes(const DataBindValue *value, const uint8
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_value_get_uuid(const DataBindValue *value, uint8_t out[DATA_BIND_UUID_SIZE]) {
+DataBindStatus data_bind_value_get_uuid(const DataBindValue *value,
+                                        uint8_t out[DATA_BIND_UUID_SIZE]) {
   if (out == NULL) return DATA_BIND_ERR_INVALID_ARG;
   if (value == NULL) return DATA_BIND_ERR_INVALID_ARG;
   if (value->kind != DATA_BIND_VALUE_UUID) return DATA_BIND_ERR_TYPE_MISMATCH;
@@ -8162,8 +8245,7 @@ DataBindStatus data_bind_value_get_time(const DataBindValue *value, DataBindTime
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_value_get_duration_milliseconds(const DataBindValue *value,
-                                                         int64_t *out) {
+DataBindStatus data_bind_value_get_duration_milliseconds(const DataBindValue *value, int64_t *out) {
   if (out == NULL) return DATA_BIND_ERR_INVALID_ARG;
   if (value == NULL) return DATA_BIND_ERR_INVALID_ARG;
   if (value->kind != DATA_BIND_VALUE_DURATION) return DATA_BIND_ERR_TYPE_MISMATCH;
@@ -8187,7 +8269,8 @@ DataBindStatus data_bind_value_get_bigint(const DataBindValue *value, const char
   if (value == NULL) return DATA_BIND_ERR_INVALID_ARG;
   if (value->kind != DATA_BIND_VALUE_BIGINT) return DATA_BIND_ERR_TYPE_MISMATCH;
   *text = value->data.bigint_val.ptr;
-  if (len != NULL) *len = value->data.bigint_val.ptr != NULL ? strlen(value->data.bigint_val.ptr) : 0;
+  if (len != NULL)
+    *len = value->data.bigint_val.ptr != NULL ? strlen(value->data.bigint_val.ptr) : 0;
   return DATA_BIND_OK;
 }
 
@@ -8389,27 +8472,31 @@ const char *data_bind_schema_attribute_get(DataBind *codec, const char *name) {
 
 const char *data_bind_status_name(DataBindStatus status) {
   switch (status) {
-  case DATA_BIND_OK: return "ok";
-  case DATA_BIND_ERR_INVALID_ARG: return "invalid_arg";
-  case DATA_BIND_ERR_IO: return "io";
-  case DATA_BIND_ERR_PARSE: return "parse";
-  case DATA_BIND_ERR_SCHEMA: return "schema";
-  case DATA_BIND_ERR_TYPE_NOT_FOUND: return "type_not_found";
-  case DATA_BIND_ERR_TYPE_MISMATCH: return "type_mismatch";
-  case DATA_BIND_ERR_OOM: return "oom";
-  case DATA_BIND_ERR_RUNTIME: return "runtime";
-  default: return "unknown";
+  case DATA_BIND_OK:
+    return "ok";
+  case DATA_BIND_ERR_INVALID_ARG:
+    return "invalid_arg";
+  case DATA_BIND_ERR_IO:
+    return "io";
+  case DATA_BIND_ERR_PARSE:
+    return "parse";
+  case DATA_BIND_ERR_SCHEMA:
+    return "schema";
+  case DATA_BIND_ERR_TYPE_NOT_FOUND:
+    return "type_not_found";
+  case DATA_BIND_ERR_TYPE_MISMATCH:
+    return "type_mismatch";
+  case DATA_BIND_ERR_OOM:
+    return "oom";
+  case DATA_BIND_ERR_RUNTIME:
+    return "runtime";
+  default:
+    return "unknown";
   }
 }
 
-int data_bind_library_version(void) {
-  return DATA_BIND_VERSION;
-}
+int data_bind_library_version(void) { return DATA_BIND_VERSION; }
 
-int data_bind_abi_version(void) {
-  return DATA_BIND_ABI_VERSION;
-}
+int data_bind_abi_version(void) { return DATA_BIND_ABI_VERSION; }
 
-const char *data_bind_version_string(void) {
-  return "1.9.0";
-}
+const char *data_bind_version_string(void) { return "1.10.0"; }

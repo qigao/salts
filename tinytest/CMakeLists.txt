@@ -18,43 +18,50 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/tinytest.h DESTINATION include)
 
 # Examples / self-tests
 set(EXAMPLE_SOURCES example.c tinytest.h)
-add_executable(example_test ${EXAMPLE_SOURCES})
+cmake_add_executable(example_test SOURCES ${EXAMPLE_SOURCES} FOLDER "tinytest")
 set(EXAMPLE_SOURCES math_test.c tinytest.h)
-add_executable(math_test ${EXAMPLE_SOURCES})
+cmake_add_executable(math_test SOURCES ${EXAMPLE_SOURCES} FOLDER "tinytest")
 if(UNIX)
   target_link_libraries(math_test PRIVATE m)
 endif()
 
 set(TEST_TREE_SOURCES test-tree.c tinytest.h test-tree.h)
-add_executable(test_tree_test ${TEST_TREE_SOURCES})
+cmake_add_executable(test_tree_test SOURCES ${TEST_TREE_SOURCES} FOLDER "tinytest")
 
 set(ARRAY_SOURCES array.c tinytest.h array.h)
-add_executable(array_test ${ARRAY_SOURCES})
+cmake_add_executable(array_test SOURCES ${ARRAY_SOURCES} FOLDER "tinytest")
 
 set(DYNAMIC_TEST_SOURCES dynamic-test.c tinytest.h array.h)
-add_executable(dynamic_test ${DYNAMIC_TEST_SOURCES})
+cmake_add_executable(dynamic_test SOURCES ${DYNAMIC_TEST_SOURCES} FOLDER "tinytest")
 
 set(BEFORE_AFTER_SOURCES before-after.c tinytest.h)
-add_executable(before_after ${BEFORE_AFTER_SOURCES})
+cmake_add_executable(before_after SOURCES ${BEFORE_AFTER_SOURCES} FOLDER "tinytest")
 
 set(GROUP_SUITE_SOURCES examples/group_suite_example.c tinytest.h)
-add_executable(group_suite_example ${GROUP_SUITE_SOURCES})
+cmake_add_executable(group_suite_example SOURCES ${GROUP_SUITE_SOURCES}
+                     FOLDER "tinytest")
 
 set(REGRESSION_RUNTIME_SOURCES regression_runtime.c tinytest.h)
-add_executable(tinytest_regression_runtime ${REGRESSION_RUNTIME_SOURCES})
-add_test(NAME tinytest_regression_runtime COMMAND tinytest_regression_runtime)
+cmake_add_test(tinytest_regression_runtime
+  SOURCES ${REGRESSION_RUNTIME_SOURCES}
+  FOLDER "tinytest")
 
 set(FOCUS_OUTPUT_SOURCES focus_output_cases.c tinytest.h)
-add_executable(tinytest_focus_output ${FOCUS_OUTPUT_SOURCES})
+cmake_add_executable(tinytest_focus_output SOURCES ${FOCUS_OUTPUT_SOURCES}
+                     FOLDER "tinytest")
 
 set(FILTER_OUTPUT_SOURCES filter_output_cases.c tinytest.h)
-add_executable(tinytest_filter_output ${FILTER_OUTPUT_SOURCES})
+cmake_add_executable(tinytest_filter_output SOURCES ${FILTER_OUTPUT_SOURCES}
+                     FOLDER "tinytest")
 
 set(JUNIT_COLOR_SOURCES junit_color_cases.c tinytest.h)
-add_executable(tinytest_junit_color ${JUNIT_COLOR_SOURCES})
+cmake_add_executable(tinytest_junit_color SOURCES ${JUNIT_COLOR_SOURCES}
+                     FOLDER "tinytest")
 
 set(BENCHMARK_INVALID_SOURCES benchmark_invalid_cases.c tinytest.h)
-add_executable(tinytest_benchmark_invalid ${BENCHMARK_INVALID_SOURCES})
+cmake_add_executable(tinytest_benchmark_invalid
+  SOURCES ${BENCHMARK_INVALID_SOURCES}
+  FOLDER "tinytest")
 
 add_test(
   NAME tinytest_focus_tap
@@ -90,56 +97,28 @@ add_test(
 
 if(CMAKE_CXX_COMPILER OR CMAKE_CXX_COMPILER_ID)
   set(EXAMPLE_CPP_SOURCES example.cpp tinytest.h)
-  add_executable(example_cpp_test ${EXAMPLE_CPP_SOURCES})
+  cmake_add_executable(example_cpp_test SOURCES ${EXAMPLE_CPP_SOURCES}
+                       FOLDER "tinytest")
   set_target_properties(example_cpp_test PROPERTIES CXX_STANDARD 17
                                                     CXX_STANDARD_REQUIRED ON)
 
   set(REGRESSION_CPP_SOURCES regression_cpp.cpp tinytest.h)
-  add_executable(tinytest_regression_cpp ${REGRESSION_CPP_SOURCES})
+  cmake_add_test(tinytest_regression_cpp
+    SOURCES ${REGRESSION_CPP_SOURCES}
+    FOLDER "tinytest")
   set_target_properties(tinytest_regression_cpp PROPERTIES CXX_STANDARD 17
                                                            CXX_STANDARD_REQUIRED ON)
-  add_test(NAME tinytest_regression_cpp COMMAND tinytest_regression_cpp)
 endif()
 
 # JUnit to HTML Dashboard Tool
 set(JUNIT_TO_HTML_SOURCES tools/junit_to_html.c)
-add_executable(junit_to_html ${JUNIT_TO_HTML_SOURCES})
-
-target_include_directories(
-  junit_to_html
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-          ${CMAKE_SOURCE_DIR}/mustache/include
-          ${CMAKE_SOURCE_DIR}/parser/internal/json_parser/include
-          ${CMAKE_SOURCE_DIR}/parser/internal/cmd_parser/include
-          ${CMAKE_SOURCE_DIR}/vendor/cxml/include)
-
-target_link_libraries(
-  junit_to_html PRIVATE TurboUtils::Core TurboUtils::Mustache TurboUtils::JsonParser
-                        TurboUtils::CmdParser cxml)
-
-set(TINYTEST_TARGETS
-    example_test
-    test_tree_test
-    array_test
-    dynamic_test
-    math_test
-    before_after
-    group_suite_example
-    tinytest_regression_runtime
-    tinytest_focus_output
-    tinytest_filter_output
-    tinytest_junit_color
-    tinytest_benchmark_invalid
-    junit_to_html)
-
-if(TARGET example_cpp_test)
-  list(APPEND TINYTEST_TARGETS example_cpp_test)
-endif()
-
-if(TARGET tinytest_regression_cpp)
-  list(APPEND TINYTEST_TARGETS tinytest_regression_cpp)
-endif()
-
-foreach(tinytest_target IN LISTS TINYTEST_TARGETS)
-  cmake_config_target(${tinytest_target} FOLDER "tinytest")
-endforeach()
+cmake_add_executable(junit_to_html
+  SOURCES ${JUNIT_TO_HTML_SOURCES}
+  LIBS TurboUtils::Core TurboUtils::Mustache TurboUtils::JsonParser
+       TurboUtils::CmdParser cxml
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+           ${CMAKE_SOURCE_DIR}/mustache/include
+           ${CMAKE_SOURCE_DIR}/parser/internal/json_parser/include
+           ${CMAKE_SOURCE_DIR}/parser/internal/cmd_parser/include
+           ${CMAKE_SOURCE_DIR}/vendor/cxml/include
+  FOLDER "tinytest")

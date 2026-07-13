@@ -95,6 +95,10 @@ data_bind_free(codec);
 - `DataBind*` is owned by the caller and released with `data_bind_free`.
 - `DataBindValue*` results are owned by the caller and released with
   `data_bind_value_free`.
+- `data_bind_value_clone` creates an independent deep copy of the complete value
+  tree. On success the caller owns the copy; source ownership is unchanged. On
+  failure the output is `NULL`. Use this API when retry, fan-out, queue, or
+  another lifetime boundary requires an independent bound value.
 - `const char*`, child `DataBindValue*`, and map entries returned by accessor
   functions are borrowed. They become invalid when the owning codec or value is
   freed.

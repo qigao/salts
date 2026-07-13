@@ -1,7 +1,7 @@
 # JSON Parser tests
 set(TEST_SOURCES test_json_parser.c)
 
-cmake_add_test(
+cmake_add_test(test_json_parser
     SOURCES ${TEST_SOURCES}
     FOLDER "parser/${TARGET_NAME}/test"
     LIBS json_parser tinytest

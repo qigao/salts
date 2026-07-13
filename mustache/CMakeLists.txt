@@ -33,14 +33,15 @@ target_link_libraries(
 
 # Example executable
 
-add_executable(mustache_json_example examples/json_example.c)
-target_link_libraries(mustache_json_example PRIVATE TurboUtils::Mustache
-                                                    TurboUtils::JsonParser)
-cmake_config_target(mustache_json_example FOLDER "mustache/examples")
+cmake_add_executable(mustache_json_example
+  SOURCES examples/json_example.c
+  LIBS TurboUtils::Mustache TurboUtils::JsonParser
+  FOLDER "mustache/examples")
 
-add_executable(mustache_xml_example examples/xml_example.c)
-target_link_libraries(mustache_xml_example PRIVATE TurboUtils::Mustache cxml)
-cmake_config_target(mustache_xml_example FOLDER "mustache/examples")
+cmake_add_executable(mustache_xml_example
+  SOURCES examples/xml_example.c
+  LIBS TurboUtils::Mustache cxml
+  FOLDER "mustache/examples")
 
 add_subdirectory(test)
 if(BUILD_BENCHMARKS OR BUILD_TESTS)

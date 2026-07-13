@@ -1,18 +1,12 @@
 set(TEST_NAME test_turbo_cron)
 
-add_executable(${TEST_NAME} test_turbo_cron.c)
-
-target_link_libraries(${TEST_NAME}
-  PRIVATE TurboUtils::Cron TurboUtils::TinyTest)
-
-target_include_directories(${TEST_NAME}
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include)
-
-cmake_config_target(${TEST_NAME} FOLDER "cron/tests")
+cmake_add_test(${TEST_NAME}
+  SOURCES test_turbo_cron.c
+  LIBS TurboUtils::Cron TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  FOLDER "cron/tests")
 set_target_properties(${TEST_NAME} PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-
-add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 
 set(CRON_PACKAGE_SMOKE_DIR ${CMAKE_CURRENT_BINARY_DIR}/package_consumer_build)
 set(CRON_PACKAGE_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/package_consumer)

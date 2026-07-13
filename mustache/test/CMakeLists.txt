@@ -4,20 +4,26 @@ set(TEST_LIBS TurboUtils::Mustache TurboUtils::JsonParser TurboUtils::TinyTest)
 set(TEST_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/../include ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 
-# Test executables
-add_executable(test_mustache_json test_json_integration.c)
-add_executable(test_mustache_spec test_spec_adapted.c)
-add_executable(test_spec_runner test_spec_runner.c)
-add_executable(test_scope test_scope.c)
- 
-# Configure all tests
-foreach(test IN ITEMS test_mustache_json test_mustache_spec
-                      test_spec_runner test_scope)
-  target_link_libraries(${test} PRIVATE ${TEST_LIBS})
-  target_include_directories(${test} PRIVATE ${TEST_INCLUDES})
-  cmake_config_target(${test} FOLDER "mustache/tests")
-  add_test(NAME ${test} COMMAND ${test})
-endforeach()
+cmake_add_test(test_mustache_json
+  SOURCES test_json_integration.c
+  LIBS ${TEST_LIBS}
+  INCLUDES ${TEST_INCLUDES}
+  FOLDER "mustache/tests")
+cmake_add_test(test_mustache_spec
+  SOURCES test_spec_adapted.c
+  LIBS ${TEST_LIBS}
+  INCLUDES ${TEST_INCLUDES}
+  FOLDER "mustache/tests")
+cmake_add_test(test_spec_runner
+  SOURCES test_spec_runner.c
+  LIBS ${TEST_LIBS}
+  INCLUDES ${TEST_INCLUDES}
+  FOLDER "mustache/tests")
+cmake_add_test(test_scope
+  SOURCES test_scope.c
+  LIBS ${TEST_LIBS}
+  INCLUDES ${TEST_INCLUDES}
+  FOLDER "mustache/tests")
 
 target_compile_definitions(test_spec_runner PRIVATE SPEC_JSON_DIR="${CMAKE_CURRENT_SOURCE_DIR}/spec")
 

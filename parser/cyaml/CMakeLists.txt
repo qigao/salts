@@ -67,25 +67,29 @@ cmake_config_target(cyaml_json_adapter
   FOLDER "${TARGET_FOLDER}/adapter")
 
 if(BUILD_TESTING)
-  cmake_add_test(
+  cmake_add_test(test_api
     SOURCES tests/test_api.c
     LIBS ${TARGET_NAME} TurboUtils::TinyTest
     FOLDER "${TARGET_FOLDER}/tests")
 
-  cmake_add_test(
-    SOURCES tests/test_ypath_lexer.c tests/test_ypath_ast.c
+  cmake_add_test(test_ypath_lexer
+    SOURCES tests/test_ypath_lexer.c
     LIBS ${TARGET_NAME} TurboUtils::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src
     FOLDER "${TARGET_FOLDER}/tests")
 
-  add_executable(test_cyaml_json_adapter tests/test_json_adapter.c)
-  target_link_libraries(test_cyaml_json_adapter PRIVATE
-    cyaml_json_adapter TurboUtils::TinyTest)
-  add_test(NAME test_cyaml_json_adapter COMMAND test_cyaml_json_adapter)
-  cmake_config_target(test_cyaml_json_adapter
+  cmake_add_test(test_ypath_ast
+    SOURCES tests/test_ypath_ast.c
+    LIBS ${TARGET_NAME} TurboUtils::TinyTest
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src
     FOLDER "${TARGET_FOLDER}/tests")
 
-  cmake_add_test(
+  cmake_add_test(test_cyaml_json_adapter
+    SOURCES tests/test_json_adapter.c
+    LIBS cyaml_json_adapter TurboUtils::TinyTest
+    FOLDER "${TARGET_FOLDER}/tests")
+
+  cmake_add_test(ypath_test
     SOURCES tests/ypath_test.c
     LIBS ${TARGET_NAME}
     DEFS CYAML_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
@@ -100,14 +104,15 @@ if(BUILD_TESTING)
       set(TOOL_SOURCE tests/${TOOL}.c)
     endif()
 
-    add_executable(${TOOL} ${TOOL_SOURCE})
-    target_link_libraries(${TOOL} PRIVATE ${TARGET_NAME})
-    cmake_config_target(${TOOL} FOLDER "${TARGET_FOLDER}/tools")
+    cmake_add_executable(${TOOL}
+      SOURCES ${TOOL_SOURCE}
+      LIBS ${TARGET_NAME}
+      FOLDER "${TARGET_FOLDER}/tools")
   endforeach()
 endif()
 
 if(BUILD_BENCHMARKS AND NOT WIN32)
-  cmake_add_benchmark(
+  cmake_add_benchmark(benchmark
     SOURCES tests/benchmark.c
     LIBS ${TARGET_NAME}
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src

@@ -42,7 +42,11 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/turbo_parser.h
         DESTINATION include)
 
 # Tests
-cmake_add_test(
-  SOURCES test/test_turbo_parser.c test/test_turbo_parser_bdd.c
+cmake_add_test(test_turbo_parser
+  SOURCES test/test_turbo_parser.c
+  LIBS turbo_parser TurboUtils::TinyTest
+  FOLDER turbo_parser)
+cmake_add_test(test_turbo_parser_bdd
+  SOURCES test/test_turbo_parser_bdd.c
   LIBS turbo_parser TurboUtils::TinyTest
   FOLDER turbo_parser)
