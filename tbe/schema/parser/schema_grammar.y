@@ -320,6 +320,7 @@ static void annotate_field(Node *field_map, const char *field_type,
         snprintf(size_text, sizeof(size_text), "%d", size);
         map_add(field_map, create_node_string("ctype", "UUID"));
         map_add(field_map, create_node_string("size_bytes", size_text));
+        map_add(field_map, create_node_string("host_type", "turbo_uuid_t"));
         add_true(field_map, "is_uuid");
         add_true(field_map, "is_primitive");
         add_true(field_map, "is_fixed_size");

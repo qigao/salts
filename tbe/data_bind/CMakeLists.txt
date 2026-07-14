@@ -4,7 +4,8 @@
 
 set(TARGET_NAME data_bind)
 
-add_library(${TARGET_NAME} SHARED data_bind.c data_bind.h re.c re.h tbe_helpers.c)
+add_library(${TARGET_NAME} SHARED data_bind.c data_bind.h tbe_typed.c tbe_typed.h re.c re.h
+                                  tbe_helpers.c)
 
 
 
@@ -16,9 +17,9 @@ endif()
 
 target_include_directories(${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/tbe/schema/include>
          $<INSTALL_INTERFACE:include>
   PRIVATE
-    ${CMAKE_SOURCE_DIR}/tbe/schema/include
     ${CMAKE_SOURCE_DIR}/vendor/mir
 )
 
@@ -26,7 +27,6 @@ target_link_libraries(${TARGET_NAME}
   PRIVATE
     TurboUtils::TbeSchema
     mir_static
-    uuid
   PUBLIC
     TurboUtils::Core
     TurboUtils::Parser
@@ -44,7 +44,7 @@ install(
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(FILES data_bind.h DESTINATION include)
+install(FILES data_bind.h tbe_typed.h DESTINATION include)
 
 # =============================================================================
 # Tests
@@ -52,7 +52,7 @@ install(FILES data_bind.h DESTINATION include)
 
 cmake_add_test(test_data_bind
   SOURCES test_data_bind.c tbe_helpers.c
-  LIBS TurboUtils::DataBind TurboUtils::TinyTest uuid
+  LIBS TurboUtils::DataBind TurboUtils::TinyTest
   INCLUDES ${CMAKE_SOURCE_DIR}/tbe/schema/include
   FOLDER "tbe/data_bind")
 
@@ -61,7 +61,17 @@ cmake_add_test(test_data_bind_public_api
   LIBS TurboUtils::DataBind TurboUtils::TinyTest
   FOLDER "tbe/data_bind")
 
+cmake_add_test(test_data_bind_pool
+  SOURCES test_data_bind_pool.c
+  LIBS TurboUtils::DataBind TurboUtils::TinyTest
+  FOLDER "tbe/data_bind")
+
 cmake_add_test(test_re
   SOURCES test_re.c re.c
   LIBS TurboUtils::TinyTest
+  FOLDER "tbe/data_bind")
+
+cmake_add_benchmark(benchmark_data_bind_pool
+  SOURCES benchmark_data_bind_pool.c
+  LIBS TurboUtils::DataBind TurboUtils::TinyTest
   FOLDER "tbe/data_bind")

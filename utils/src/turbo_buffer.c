@@ -14,7 +14,19 @@
 
 #define MEM_ALIGNMENT 8
 #define POOL_SIZE_CLASSES 9
-#define MEM_RECYCLE_LIMIT 32
+#define BUFFER_CACHE_LINE_SIZE 64U
+#define BUFFER_CACHE_SHARDS 8U
+#define BUFFER_CACHE_SLOTS 8U
+#define BUFFER_CACHE_FULL_MASK ((1U << BUFFER_CACHE_SLOTS) - 1U)
+#define INTERNAL_BUFFER_CACHE_SHARDS 8U
+#define INTERNAL_BUFFER_CACHE_SLOTS 4U
+#define INTERNAL_BUFFER_CACHE_FULL_MASK ((1U << INTERNAL_BUFFER_CACHE_SLOTS) - 1U)
+
+_Static_assert(INTERNAL_BUFFER_CACHE_SHARDS == BUFFER_CACHE_SHARDS,
+               "internal and external caches share the thread shard selector");
+_Static_assert(INTERNAL_BUFFER_CACHE_SHARDS * INTERNAL_BUFFER_CACHE_SLOTS ==
+                   MEM_BUFFER_RECYCLE_LIMIT,
+               "internal buffer cache capacity must match the public limit");
 
 typedef struct mem_slab_s mem_slab_t;
 
@@ -48,8 +60,74 @@ typedef struct oversize_header_s {
 static mem_pool_t g_global_pool;
 static turbo_once_t g_global_once = TURBO_ONCE_INIT;
 
-static turbo_mutex_t g_external_wrapper_lock;
-static turbo_once_t g_external_wrapper_once = TURBO_ONCE_INIT;
+/* Cache-line isolated shards avoid false sharing between independent atomic slots. */
+#ifdef _MSC_VER
+__declspec(align(BUFFER_CACHE_LINE_SIZE)) struct buffer_cache_shard_s {
+    _Atomic(mem_buffer_t *) slots[BUFFER_CACHE_SLOTS];
+    atomic_uint ready;
+};
+#else
+struct buffer_cache_shard_s {
+    _Atomic(mem_buffer_t *) slots[BUFFER_CACHE_SLOTS];
+    atomic_uint ready;
+} __attribute__((aligned(BUFFER_CACHE_LINE_SIZE)));
+#endif
+typedef struct buffer_cache_shard_s buffer_cache_shard_t;
+_Static_assert(sizeof(buffer_cache_shard_t) % BUFFER_CACHE_LINE_SIZE == 0,
+               "buffer cache shards must not share cache lines");
+
+#ifdef _MSC_VER
+__declspec(align(BUFFER_CACHE_LINE_SIZE)) struct internal_buffer_cache_shard_s {
+    _Atomic(mem_buffer_t *) slots[INTERNAL_BUFFER_CACHE_SLOTS];
+    atomic_uint ready;
+};
+#else
+struct internal_buffer_cache_shard_s {
+    _Atomic(mem_buffer_t *) slots[INTERNAL_BUFFER_CACHE_SLOTS];
+    atomic_uint ready;
+} __attribute__((aligned(BUFFER_CACHE_LINE_SIZE)));
+#endif
+typedef struct internal_buffer_cache_shard_s internal_buffer_cache_shard_t;
+_Static_assert(sizeof(internal_buffer_cache_shard_t) % BUFFER_CACHE_LINE_SIZE == 0,
+               "internal buffer cache shards must not share cache lines");
+
+typedef struct internal_buffer_cache_s {
+    internal_buffer_cache_shard_t shards[INTERNAL_BUFFER_CACHE_SHARDS];
+} internal_buffer_cache_t;
+
+#ifdef _MSC_VER
+__declspec(align(BUFFER_CACHE_LINE_SIZE)) struct slab_magazine_shard_s {
+    _Atomic(void *) slots[POOL_SIZE_CLASSES];
+};
+#else
+struct slab_magazine_shard_s {
+    _Atomic(void *) slots[POOL_SIZE_CLASSES];
+} __attribute__((aligned(BUFFER_CACHE_LINE_SIZE)));
+#endif
+typedef struct slab_magazine_shard_s slab_magazine_shard_t;
+_Static_assert(sizeof(slab_magazine_shard_t) % BUFFER_CACHE_LINE_SIZE == 0,
+               "slab magazine shards must not share cache lines");
+
+typedef struct slab_magazine_s {
+    slab_magazine_shard_t shards[BUFFER_CACHE_SHARDS];
+} slab_magazine_t;
+
+typedef struct mem_pool_cache_s {
+    _Atomic(internal_buffer_cache_t *) buffer_cache;
+    _Atomic(slab_magazine_t *) slab_magazine;
+} mem_pool_cache_t;
+
+static buffer_cache_shard_t g_external_wrapper_shards[BUFFER_CACHE_SHARDS];
+static atomic_size_t g_external_wrapper_next_shard;
+static TURBO_THREAD_LOCAL unsigned int g_external_wrapper_shard;
+static TURBO_THREAD_LOCAL unsigned int g_external_wrapper_shard_initialized;
+static TURBO_THREAD_LOCAL unsigned int g_external_wrapper_take_cursor;
+static TURBO_THREAD_LOCAL unsigned int g_external_wrapper_put_cursor;
+static TURBO_THREAD_LOCAL unsigned int g_internal_buffer_take_slot;
+static TURBO_THREAD_LOCAL unsigned int g_internal_buffer_put_slot;
+static TURBO_THREAD_LOCAL mem_pool_t *g_slab_magazine_hint_pool;
+static TURBO_THREAD_LOCAL unsigned int g_slab_magazine_checked_classes;
+static TURBO_THREAD_LOCAL unsigned int g_slab_magazine_ready_classes;
 
 /* Hashed locks to provide thread safety for mem_pool_t without increasing its size */
 #define POOL_LOCK_COUNT 32
@@ -69,6 +147,329 @@ static inline turbo_mutex_t* get_pool_lock(mem_pool_t* pool) {
 
 static void global_pool_init_cb(void) {
     mem_init(&g_global_pool, 0);
+}
+
+static unsigned int external_wrapper_current_shard(void) {
+    if (!g_external_wrapper_shard_initialized) {
+        g_external_wrapper_shard =
+            (unsigned int)(atomic_fetch_add_explicit(&g_external_wrapper_next_shard, 1U,
+                                                     memory_order_relaxed) %
+                           BUFFER_CACHE_SHARDS);
+        g_external_wrapper_shard_initialized = 1U;
+    }
+    return g_external_wrapper_shard;
+}
+
+static mem_buffer_t *external_wrapper_pool_take(void) {
+    unsigned int shard = external_wrapper_current_shard();
+    buffer_cache_shard_t *pool_shard = &g_external_wrapper_shards[shard];
+    unsigned int ready = atomic_load_explicit(&pool_shard->ready, memory_order_acquire);
+    unsigned int offset;
+
+    while (ready != 0) {
+        unsigned int desired;
+        unsigned int bit = 0;
+        unsigned int slot = 0;
+        mem_buffer_t *buffer;
+
+        for (offset = 0; offset < BUFFER_CACHE_SLOTS; ++offset) {
+            slot = (g_external_wrapper_take_cursor + offset) % BUFFER_CACHE_SLOTS;
+            bit = 1U << slot;
+            if ((ready & bit) != 0) break;
+        }
+        if (offset == BUFFER_CACHE_SLOTS) return NULL;
+
+        desired = ready & ~bit;
+        if (!atomic_compare_exchange_strong_explicit(&pool_shard->ready, &ready, desired,
+                                                     memory_order_acq_rel, memory_order_acquire))
+            return NULL;
+
+        buffer = atomic_load_explicit(&pool_shard->slots[slot], memory_order_acquire);
+        if (buffer != NULL &&
+            atomic_compare_exchange_strong_explicit(&pool_shard->slots[slot], &buffer, NULL,
+                                                    memory_order_acquire, memory_order_relaxed)) {
+            g_external_wrapper_take_cursor = (slot + 1U) % BUFFER_CACHE_SLOTS;
+            return buffer;
+        }
+        ready = atomic_load_explicit(&pool_shard->ready, memory_order_acquire);
+    }
+    return NULL;
+}
+
+static int external_wrapper_pool_put(mem_buffer_t *buffer) {
+    unsigned int shard = external_wrapper_current_shard();
+    buffer_cache_shard_t *pool_shard = &g_external_wrapper_shards[shard];
+    unsigned int ready = atomic_load_explicit(&pool_shard->ready, memory_order_relaxed);
+    unsigned int offset;
+
+    if (ready == BUFFER_CACHE_FULL_MASK) return 0;
+    for (offset = 0; offset < BUFFER_CACHE_SLOTS; ++offset) {
+        unsigned int slot = (g_external_wrapper_put_cursor + offset) % BUFFER_CACHE_SLOTS;
+        mem_buffer_t *expected = NULL;
+        if (atomic_compare_exchange_strong_explicit(&pool_shard->slots[slot], &expected, buffer,
+                                                    memory_order_release,
+                                                    memory_order_relaxed)) {
+            g_external_wrapper_put_cursor = (slot + 1U) % BUFFER_CACHE_SLOTS;
+            atomic_fetch_or_explicit(&pool_shard->ready, 1U << slot, memory_order_release);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static mem_pool_cache_t *mem_pool_cache_from_pool(mem_pool_t *pool) {
+    if (!pool || atomic_load_explicit(&pool->recycle_count, memory_order_acquire) == 0)
+        return NULL;
+    return (mem_pool_cache_t *)pool->recycle_head;
+}
+
+static mem_pool_cache_t *mem_pool_cache_ensure_nolock(mem_pool_t *pool) {
+    mem_pool_cache_t *cache = mem_pool_cache_from_pool(pool);
+
+    if (cache) return cache;
+    cache = (mem_pool_cache_t *)calloc(1, sizeof(*cache));
+    if (!cache) return NULL;
+    pool->recycle_head = (mem_buffer_t *)cache;
+    atomic_store_explicit(&pool->recycle_count, 1U, memory_order_release);
+    return cache;
+}
+
+/* Pool-owned slots avoid ABA. Common hit/put is O(1); a miss scans at most 32 slots. */
+static internal_buffer_cache_t *internal_buffer_cache_from_pool(mem_pool_t *pool) {
+    mem_pool_cache_t *pool_cache = mem_pool_cache_from_pool(pool);
+    return pool_cache ? atomic_load_explicit(&pool_cache->buffer_cache, memory_order_acquire) : NULL;
+}
+
+static int internal_buffer_cache_ensure_nolock(mem_pool_t *pool) {
+    mem_pool_cache_t *pool_cache = mem_pool_cache_ensure_nolock(pool);
+    internal_buffer_cache_t *cache;
+
+    if (!pool_cache) return 0;
+    cache = atomic_load_explicit(&pool_cache->buffer_cache, memory_order_acquire);
+    if (cache) return 1;
+    cache = (internal_buffer_cache_t *)calloc(1, sizeof(*cache));
+    if (!cache) return 0;
+    atomic_store_explicit(&pool_cache->buffer_cache, cache, memory_order_release);
+    return 1;
+}
+
+static mem_buffer_t *internal_buffer_cache_take(mem_pool_t *pool, size_t min_size) {
+    internal_buffer_cache_t *cache = internal_buffer_cache_from_pool(pool);
+    unsigned int start_shard = external_wrapper_current_shard();
+    unsigned int shard_offset;
+
+    if (!cache) return NULL;
+    for (shard_offset = 0; shard_offset < INTERNAL_BUFFER_CACHE_SHARDS; ++shard_offset) {
+        unsigned int shard =
+            (start_shard + shard_offset) % INTERNAL_BUFFER_CACHE_SHARDS;
+        internal_buffer_cache_shard_t *cache_shard = &cache->shards[shard];
+        unsigned int ready = atomic_load_explicit(&cache_shard->ready, memory_order_acquire);
+        unsigned int visited = 0;
+
+        while ((ready & ~visited) != 0) {
+            unsigned int slot_offset;
+            unsigned int bit = 0;
+            unsigned int slot = 0;
+            unsigned int desired;
+            mem_buffer_t *buffer;
+
+            for (slot_offset = 0; slot_offset < INTERNAL_BUFFER_CACHE_SLOTS; ++slot_offset) {
+                slot =
+                    (g_internal_buffer_take_slot + slot_offset) % INTERNAL_BUFFER_CACHE_SLOTS;
+                bit = 1U << slot;
+                if ((ready & bit) != 0 && (visited & bit) == 0) break;
+            }
+            if (slot_offset == INTERNAL_BUFFER_CACHE_SLOTS) break;
+            visited |= bit;
+            desired = ready & ~bit;
+            if (!atomic_compare_exchange_strong_explicit(&cache_shard->ready, &ready, desired,
+                                                         memory_order_acq_rel,
+                                                         memory_order_acquire))
+                continue;
+
+            buffer = atomic_load_explicit(&cache_shard->slots[slot], memory_order_acquire);
+            if (buffer != NULL && buffer->capacity >= min_size) {
+                atomic_store_explicit(&cache_shard->slots[slot], NULL, memory_order_release);
+                buffer->next = NULL;
+                buffer->used = 0;
+                atomic_store_explicit(&buffer->ref_count, 1U, memory_order_relaxed);
+                g_internal_buffer_take_slot = (slot + 1U) % INTERNAL_BUFFER_CACHE_SLOTS;
+                return buffer;
+            }
+
+            if (buffer != NULL)
+                atomic_fetch_or_explicit(&cache_shard->ready, bit, memory_order_release);
+            ready = atomic_load_explicit(&cache_shard->ready, memory_order_acquire);
+        }
+    }
+    return NULL;
+}
+
+static int internal_buffer_cache_put(mem_pool_t *pool, mem_buffer_t *buffer) {
+    internal_buffer_cache_t *cache = internal_buffer_cache_from_pool(pool);
+    unsigned int start_shard = external_wrapper_current_shard();
+    unsigned int shard_offset;
+
+    if (!cache) return 0;
+    for (shard_offset = 0; shard_offset < INTERNAL_BUFFER_CACHE_SHARDS; ++shard_offset) {
+        unsigned int shard =
+            (start_shard + shard_offset) % INTERNAL_BUFFER_CACHE_SHARDS;
+        internal_buffer_cache_shard_t *cache_shard = &cache->shards[shard];
+        unsigned int ready = atomic_load_explicit(&cache_shard->ready, memory_order_relaxed);
+        unsigned int slot_offset;
+
+        if (ready == INTERNAL_BUFFER_CACHE_FULL_MASK) continue;
+        for (slot_offset = 0; slot_offset < INTERNAL_BUFFER_CACHE_SLOTS; ++slot_offset) {
+            unsigned int slot =
+                (g_internal_buffer_put_slot + slot_offset) % INTERNAL_BUFFER_CACHE_SLOTS;
+            mem_buffer_t *expected = NULL;
+            if (atomic_compare_exchange_strong_explicit(&cache_shard->slots[slot], &expected,
+                                                        buffer, memory_order_release,
+                                                        memory_order_relaxed)) {
+                atomic_fetch_or_explicit(&cache_shard->ready, 1U << slot, memory_order_release);
+                g_internal_buffer_put_slot = (slot + 1U) % INTERNAL_BUFFER_CACHE_SLOTS;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static void internal_buffer_cache_clear(mem_pool_t *pool) {
+    internal_buffer_cache_t *cache = internal_buffer_cache_from_pool(pool);
+    unsigned int shard;
+
+    if (!cache) return;
+    for (shard = 0; shard < INTERNAL_BUFFER_CACHE_SHARDS; ++shard) {
+        internal_buffer_cache_shard_t *cache_shard = &cache->shards[shard];
+        unsigned int slot;
+
+        atomic_store_explicit(&cache_shard->ready, 0U, memory_order_release);
+        for (slot = 0; slot < INTERNAL_BUFFER_CACHE_SLOTS; ++slot)
+            atomic_store_explicit(&cache_shard->slots[slot], NULL, memory_order_relaxed);
+    }
+}
+
+static size_t internal_buffer_cache_count(const mem_pool_t *pool) {
+    const internal_buffer_cache_t *cache =
+        internal_buffer_cache_from_pool((mem_pool_t *)pool);
+    size_t count = 0;
+    unsigned int shard;
+
+    if (!cache) return 0;
+    for (shard = 0; shard < INTERNAL_BUFFER_CACHE_SHARDS; ++shard) {
+        unsigned int ready =
+            atomic_load_explicit(&((internal_buffer_cache_t *)cache)->shards[shard].ready,
+                                 memory_order_acquire);
+        while (ready != 0) {
+            count += ready & 1U;
+            ready >>= 1U;
+        }
+    }
+    return count;
+}
+
+static slab_magazine_t *slab_magazine_from_pool(mem_pool_t *pool) {
+    mem_pool_cache_t *pool_cache = mem_pool_cache_from_pool(pool);
+    return pool_cache ? atomic_load_explicit(&pool_cache->slab_magazine, memory_order_acquire)
+                      : NULL;
+}
+
+static int slab_magazine_ensure_nolock(mem_pool_t *pool) {
+    mem_pool_cache_t *pool_cache = mem_pool_cache_ensure_nolock(pool);
+    slab_magazine_t *magazine;
+
+    if (!pool_cache) return 0;
+    magazine = atomic_load_explicit(&pool_cache->slab_magazine, memory_order_acquire);
+    if (magazine) return 1;
+    magazine = (slab_magazine_t *)calloc(1, sizeof(*magazine));
+    if (!magazine) return 0;
+    atomic_store_explicit(&pool_cache->slab_magazine, magazine, memory_order_release);
+    return 1;
+}
+
+/* TLS tracks only local publication hints; the atomic slot remains the ownership source. */
+static void *slab_magazine_take(mem_pool_t *pool, int class_idx, int *needs_init) {
+    slab_magazine_t *magazine;
+    unsigned int shard;
+    unsigned int bit;
+
+    *needs_init = 0;
+    if (class_idx < 0 || class_idx >= POOL_SIZE_CLASSES) return NULL;
+    bit = 1U << (unsigned int)class_idx;
+    if ((g_slab_magazine_checked_classes & bit) != 0U &&
+        (g_slab_magazine_ready_classes & bit) == 0U)
+        return NULL;
+    if (g_slab_magazine_hint_pool != pool) {
+        g_slab_magazine_hint_pool = pool;
+        g_slab_magazine_checked_classes = 0U;
+        g_slab_magazine_ready_classes = 0U;
+    }
+
+    g_slab_magazine_checked_classes |= bit;
+    g_slab_magazine_ready_classes &= ~bit;
+    magazine = slab_magazine_from_pool(pool);
+    if (!magazine) {
+        *needs_init = 1;
+        return NULL;
+    }
+    shard = external_wrapper_current_shard();
+    return atomic_exchange_explicit(&magazine->shards[shard].slots[class_idx], NULL,
+                                    memory_order_acquire);
+}
+
+static int slab_magazine_put(mem_pool_t *pool, int class_idx, void *ptr) {
+    slab_magazine_t *magazine;
+    unsigned int shard;
+    unsigned int bit;
+    void *expected = NULL;
+
+    if (class_idx < 0 || class_idx >= POOL_SIZE_CLASSES || !ptr) return 0;
+    bit = 1U << (unsigned int)class_idx;
+    if ((g_slab_magazine_ready_classes & bit) != 0U) return 0;
+    if (g_slab_magazine_hint_pool != pool) {
+        g_slab_magazine_hint_pool = pool;
+        g_slab_magazine_checked_classes = 0U;
+        g_slab_magazine_ready_classes = 0U;
+    }
+
+    magazine = slab_magazine_from_pool(pool);
+    if (!magazine) return 0;
+    shard = external_wrapper_current_shard();
+    if (!atomic_compare_exchange_strong_explicit(&magazine->shards[shard].slots[class_idx],
+                                                 &expected, ptr, memory_order_release,
+                                                 memory_order_relaxed)) {
+        if (expected != NULL) {
+            g_slab_magazine_checked_classes |= bit;
+            g_slab_magazine_ready_classes |= bit;
+        }
+        return 0;
+    }
+    g_slab_magazine_checked_classes |= bit;
+    g_slab_magazine_ready_classes |= bit;
+    return 1;
+}
+
+static void slab_magazine_clear(mem_pool_t *pool, int return_to_slabs) {
+    slab_magazine_t *magazine = slab_magazine_from_pool(pool);
+    unsigned int shard;
+
+    if (!magazine) return;
+    for (shard = 0; shard < BUFFER_CACHE_SHARDS; ++shard) {
+        int class_idx;
+        for (class_idx = 0; class_idx < POOL_SIZE_CLASSES; ++class_idx) {
+            void *ptr = atomic_exchange_explicit(&magazine->shards[shard].slots[class_idx], NULL,
+                                                 memory_order_acq_rel);
+            if (ptr && return_to_slabs) {
+                void **tag_ptr = (void **)((char *)ptr - sizeof(void *));
+                mem_slab_t *slab = (mem_slab_t *)(*tag_ptr);
+                free_node_t *node = (free_node_t *)ptr;
+                node->next = slab->free_list;
+                slab->free_list = node;
+                slab->free_count++;
+            }
+        }
+    }
 }
 
 /* ── internal helpers ─────────────────────────────────────── */
@@ -217,11 +618,27 @@ int mem_init(mem_pool_t* pool, size_t initial_size) {
 }
 
 void mem_destroy(mem_pool_t* pool) {
+    mem_pool_cache_t *pool_cache;
+    internal_buffer_cache_t *buffer_cache = NULL;
+    slab_magazine_t *slab_magazine = NULL;
+
     if (!pool) return;
 
     turbo_mutex_lock(get_pool_lock(pool));
+    internal_buffer_cache_clear(pool);
+    slab_magazine_clear(pool, 0);
+    pool_cache = mem_pool_cache_from_pool(pool);
+    if (pool_cache) {
+        buffer_cache = atomic_load_explicit(&pool_cache->buffer_cache, memory_order_relaxed);
+        slab_magazine = atomic_load_explicit(&pool_cache->slab_magazine, memory_order_relaxed);
+    }
+    atomic_store_explicit(&pool->recycle_count, 0U, memory_order_release);
+    pool->recycle_head = NULL;
     oversize_free_all_nolock(pool);
     turbo_mutex_unlock(get_pool_lock(pool));
+    free(buffer_cache);
+    free(slab_magazine);
+    free(pool_cache);
 
     for (int i = 0; i < POOL_SIZE_CLASSES; i++) {
         mem_slab_t* slab = (mem_slab_t*)pool->slabs[i];
@@ -244,6 +661,8 @@ void mem_reset(mem_pool_t* pool) {
     if (!pool) return;
 
     turbo_mutex_lock(get_pool_lock(pool));
+    internal_buffer_cache_clear(pool);
+    slab_magazine_clear(pool, 0);
     oversize_free_all_nolock(pool);
 
     for (int i = 0; i < POOL_SIZE_CLASSES; i++) {
@@ -267,17 +686,14 @@ void mem_reset(mem_pool_t* pool) {
     }
 
     atomic_store_explicit(&pool->total_used, 0, memory_order_relaxed);
-    pool->recycle_head = NULL;
-    atomic_store_explicit(&pool->recycle_count, 0, memory_order_relaxed);
     turbo_mutex_unlock(get_pool_lock(pool));
-
-    mem_trim(pool);
 }
 
 void mem_trim(mem_pool_t* pool) {
     if (!pool) return;
 
     turbo_mutex_lock(get_pool_lock(pool));
+    slab_magazine_clear(pool, 1);
     for (int i = 0; i < POOL_SIZE_CLASSES; i++) {
         mem_slab_t** prev = (mem_slab_t**)&pool->slabs[i];
         mem_slab_t* slab = (mem_slab_t*)pool->slabs[i];
@@ -301,12 +717,18 @@ void mem_trim(mem_pool_t* pool) {
 /* ── public allocator ─────────────────────────────────────── */
 
 void* mem_alloc(mem_pool_t* pool, size_t size) {
+    int magazine_needs_init = 0;
+
     if (!pool || size == 0) return NULL;
 
-    size_t total = align_size(size + sizeof(slab_tag_t), MEM_ALIGNMENT);
+    if (size > SIZE_MAX - sizeof(slab_tag_t)) return NULL;
+    size_t tagged_size = size + sizeof(slab_tag_t);
+    if (tagged_size > SIZE_MAX - (MEM_ALIGNMENT - 1U)) return NULL;
+    size_t total = align_size(tagged_size, MEM_ALIGNMENT);
     int class_idx = size_class_index(total);
 
     if (class_idx < 0) {
+        if (size > SIZE_MAX - sizeof(oversize_header_t)) return NULL;
         size_t alloc_size = sizeof(oversize_header_t) + size;
         oversize_header_t* hdr = (oversize_header_t*)malloc(alloc_size);
         if (!hdr) return NULL;
@@ -322,11 +744,25 @@ void* mem_alloc(mem_pool_t* pool, size_t size) {
         return (char*)hdr + sizeof(oversize_header_t);
     }
 
+    void* ptr = slab_magazine_take(pool, class_idx, &magazine_needs_init);
+    if (ptr) {
+        atomic_fetch_add_explicit(&pool->total_used, index_to_size(class_idx),
+                                  memory_order_relaxed);
+        return ptr;
+    }
+
     turbo_mutex_lock(get_pool_lock(pool));
-    void* ptr = slab_alloc_nolock(pool, class_idx);
+    if (magazine_needs_init) (void)slab_magazine_ensure_nolock(pool);
+    ptr = slab_alloc_nolock(pool, class_idx);
     turbo_mutex_unlock(get_pool_lock(pool));
 
     return ptr;
+}
+
+void* mem_alloc_array(mem_pool_t* pool, size_t element_size, size_t count) {
+    if (!pool || element_size == 0 || count == 0) return NULL;
+    if (count > SIZE_MAX / element_size) return NULL;
+    return mem_alloc(pool, element_size * count);
 }
 
 void mem_free(mem_pool_t* pool, void* ptr) {
@@ -348,12 +784,15 @@ void mem_free(mem_pool_t* pool, void* ptr) {
         }
     } else {
         mem_slab_t* slab = (mem_slab_t*)(*tag_ptr);
+        int class_idx = size_class_index(slab->block_size);
+        atomic_fetch_sub_explicit(&pool->total_used, slab->block_size, memory_order_relaxed);
+        if (slab_magazine_put(pool, class_idx, ptr)) return;
+
         turbo_mutex_lock(get_pool_lock(pool));
         free_node_t* node = (free_node_t*)ptr;
         node->next = slab->free_list;
         slab->free_list = node;
         slab->free_count++;
-        atomic_fetch_sub(&pool->total_used, slab->block_size);
         turbo_mutex_unlock(get_pool_lock(pool));
     }
 }
@@ -384,64 +823,39 @@ char* mem_sprintf(mem_pool_t* pool, const char* fmt, ...) {
 
 /* ── buffer management ────────────────────────────────────── */
 
-static void pool_push_recycled_buffer_nolock(mem_pool_t* pool, mem_buffer_t* buffer) {
+static void pool_return_buffer_to_allocator_nolock(mem_pool_t* pool, mem_buffer_t* buffer) {
     if (!pool || !buffer) return;
-    size_t count = atomic_load_explicit(&pool->recycle_count, memory_order_relaxed);
-    if (count >= MEM_RECYCLE_LIMIT) {
-        if (buffer->is_oversized) {
-            size_t total_size = sizeof(mem_buffer_t) + buffer->capacity;
-            atomic_fetch_sub(&pool->total_used, total_size);
-            free(buffer);
-        } else {
-            /* Return to slab via tag pointer (tag sits just before the allocation) */
-            void **tag_ptr = (void **)((char *)buffer - sizeof(void *));
-            mem_slab_t *slab = (mem_slab_t *)(*tag_ptr);
-            free_node_t *node = (free_node_t *)buffer;
-            node->next = slab->free_list;
-            slab->free_list = node;
-            slab->free_count++;
-            atomic_fetch_sub(&pool->total_used, slab->block_size);
-        }
-        return;
+    if (buffer->is_oversized) {
+        size_t total_size = sizeof(mem_buffer_t) + buffer->capacity;
+        atomic_fetch_sub(&pool->total_used, total_size);
+        free(buffer);
+    } else {
+        void **tag_ptr = (void **)((char *)buffer - sizeof(void *));
+        mem_slab_t *slab = (mem_slab_t *)(*tag_ptr);
+        free_node_t *node = (free_node_t *)buffer;
+        node->next = slab->free_list;
+        slab->free_list = node;
+        slab->free_count++;
+        atomic_fetch_sub(&pool->total_used, slab->block_size);
     }
-
-    buffer->next = (mem_buffer_t*)pool->recycle_head;
-    pool->recycle_head = buffer;
-    atomic_fetch_add(&pool->recycle_count, 1);
-}
-
-static mem_buffer_t* pool_pop_recycled_buffer_nolock(mem_pool_t* pool, size_t min_size) {
-    if (!pool) return NULL;
-
-    mem_buffer_t** prev = (mem_buffer_t**)&pool->recycle_head;
-    mem_buffer_t* buffer = (mem_buffer_t*)pool->recycle_head;
-
-    while (buffer) {
-        if (buffer->capacity >= min_size) {
-            *prev = buffer->next;
-            atomic_fetch_sub(&pool->recycle_count, 1);
-            buffer->next = NULL;
-            buffer->used = 0;
-            atomic_store(&buffer->ref_count, 1);
-            buffer->pool = pool;
-            return buffer;
-        }
-        prev = &buffer->next;
-        buffer = buffer->next;
-    }
-    return NULL;
 }
 
 mem_buffer_t* mem_get_buffer(mem_pool_t* pool, size_t min_size) {
     if (!pool) return NULL;
+    if (min_size > SIZE_MAX - (MEM_ALIGNMENT - 1U)) return NULL;
+
+    size_t aligned_size = align_size(min_size, MEM_ALIGNMENT);
+    if (aligned_size > SIZE_MAX - sizeof(mem_buffer_t)) return NULL;
+    size_t total_size = sizeof(mem_buffer_t) + aligned_size;
+    if (total_size > SIZE_MAX - sizeof(slab_tag_t)) return NULL;
+    size_t total_with_tag = total_size + sizeof(slab_tag_t);
+
+    mem_buffer_t* buffer = internal_buffer_cache_take(pool, aligned_size);
+    if (buffer) return buffer;
 
     turbo_mutex_lock(get_pool_lock(pool));
-    mem_buffer_t* buffer = pool_pop_recycled_buffer_nolock(pool, min_size);
-    if (!buffer) {
-        size_t aligned_size = align_size(min_size, MEM_ALIGNMENT);
-        size_t total_size = sizeof(mem_buffer_t) + aligned_size;
-        size_t total_with_tag = total_size + sizeof(slab_tag_t);
-
+    (void)internal_buffer_cache_ensure_nolock(pool);
+    {
         int class_idx = size_class_index(total_with_tag);
         void* raw;
 
@@ -486,20 +900,22 @@ mem_buffer_t* mem_buffer_retain(mem_buffer_t* buffer) {
     return buffer;
 }
 
-static void external_wrapper_init_cb(void) {
-    turbo_mutex_init(&g_external_wrapper_lock);
-}
-
 static void release_external_buffer(mem_buffer_t* buffer) {
     if (buffer->free_cb) {
         buffer->free_cb(buffer->data, buffer->free_user_data);
     }
-    
-    turbo_once(&g_external_wrapper_once, external_wrapper_init_cb);
-    turbo_mutex_lock(&g_external_wrapper_lock);
-    // ... logic to return to global external wrapper pool if it existed ...
-    free(buffer); // Safety first
-    turbo_mutex_unlock(&g_external_wrapper_lock);
+
+    buffer->data = NULL;
+    buffer->capacity = 0;
+    buffer->used = 0;
+    atomic_store_explicit(&buffer->ref_count, 0, memory_order_relaxed);
+    buffer->pool = NULL;
+    buffer->next = NULL;
+    buffer->is_external = 0;
+    buffer->is_oversized = 0;
+    buffer->free_cb = NULL;
+    buffer->free_user_data = NULL;
+    if (!external_wrapper_pool_put(buffer)) free(buffer);
 }
 
 static void release_internal_buffer(mem_buffer_t* buffer) {
@@ -513,9 +929,11 @@ static void release_internal_buffer(mem_buffer_t* buffer) {
         return;
     }
 
-    turbo_mutex_lock(get_pool_lock(pool));
-    pool_push_recycled_buffer_nolock(pool, buffer);
-    turbo_mutex_unlock(get_pool_lock(pool));
+    if (!internal_buffer_cache_put(pool, buffer)) {
+        turbo_mutex_lock(get_pool_lock(pool));
+        pool_return_buffer_to_allocator_nolock(pool, buffer);
+        turbo_mutex_unlock(get_pool_lock(pool));
+    }
 }
 
 void mem_unref(mem_buffer_t* buffer) {
@@ -555,7 +973,8 @@ void mem_slice_release(mem_slice_t* slice) {
 /* ── external wrapping ────────────────────────────────────── */
 mem_buffer_t* mem_wrap_external(void* data, size_t size, void (*free_cb)(void*, void*), void* user_data) {
     if (!data || size == 0) return NULL;
-    mem_buffer_t* buffer = (mem_buffer_t*)malloc(sizeof(mem_buffer_t));
+    mem_buffer_t* buffer = external_wrapper_pool_take();
+    if (!buffer) buffer = (mem_buffer_t*)malloc(sizeof(mem_buffer_t));
     if (!buffer) return NULL;
     buffer->data = (char*)data;
     buffer->capacity = size;
@@ -583,7 +1002,7 @@ size_t mem_pool_total_used(const mem_pool_t* pool) {
 }
 
 size_t mem_pool_recycle_count(const mem_pool_t* pool) {
-    return pool ? atomic_load(&((mem_pool_t*)pool)->recycle_count) : 0;
+    return internal_buffer_cache_count(pool);
 }
 
 char* mem_buffer_data(mem_buffer_t* buffer) {

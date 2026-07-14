@@ -603,6 +603,218 @@ spec("data_bind public API") {
     }
   }
 
+  it("should own binary and CSV objects and deep clone them") {
+    const char *schema = "message Item { uint32 id; string name; }\n";
+    const char *csv = "id,name\n4,csv\n";
+    uint8_t bin[11] = {5, 0, 0, 0, 3, 0, 0, 0, 'b', 'i', 'n'};
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindObject *copy = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    if (codec) {
+      check_int_eq(data_bind_object_from_bin(codec, "Item", bin, sizeof(bin), &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_object_clone(object, &copy), DATA_BIND_OK);
+      check_ptr_ne(data_bind_object_value(object), data_bind_object_value(copy));
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(data_bind_object_value(copy), "id")),
+                   5);
+      data_bind_object_free(copy);
+      data_bind_object_free(object);
+      object = NULL;
+      copy = NULL;
+
+      check_int_eq(data_bind_object_from_csv(codec, "Item", csv, strlen(csv), 0, &object, &err),
+                   DATA_BIND_OK);
+      check_str_eq(
+          data_bind_value_as_string(data_bind_value_get(data_bind_object_value(object), "name")),
+          "csv");
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should serialize an owned object to the schema binary wire format") {
+    const char *schema = "enum Side <uint8> { Buy = 1; Sell = 2; }\n"
+                         "message Order { uint32 id; Side side; bool active; string symbol; }\n";
+    const char *json = "{\"id\":7,\"side\":\"Buy\",\"active\":true,\"symbol\":\"ABCD\"}";
+    const uint8_t expected[] = {7, 0, 0, 0, 1, 1, 4, 0, 0, 0, 'A', 'B', 'C', 'D'};
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindObject *roundtrip = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    uint8_t *wire = NULL;
+    size_t wire_len = 0;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    if (codec) {
+      check_int_eq(data_bind_object_from_json(codec, "Order", json, strlen(json), &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_bin(codec, object, &wire, &wire_len, &err),
+                   DATA_BIND_OK);
+      check_size_eq(wire_len, sizeof(expected));
+      if (wire && wire_len == sizeof(expected)) check_mem_eq(wire, expected, sizeof(expected));
+      check_int_eq(data_bind_object_from_bin(codec, "Order", wire, wire_len, &roundtrip, &err),
+                   DATA_BIND_OK);
+      if (roundtrip) {
+        const DataBindValue *value = data_bind_object_value(roundtrip);
+        check_int_eq(data_bind_value_as_int(data_bind_value_get(value, "id")), 7);
+        check_int_eq(data_bind_value_as_int(data_bind_value_get(value, "side")), 1);
+        check_int_eq(data_bind_value_as_bool(data_bind_value_get(value, "active")), 1);
+        check_str_eq(data_bind_value_as_string(data_bind_value_get(value, "symbol")), "ABCD");
+      }
+      data_bind_binary_free(wire);
+      data_bind_object_free(roundtrip);
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should round-trip binary fixed and variable collections") {
+    const char *schema = "message Values { uint32[2] fixed; list<uint32> values; "
+                         "set<string> tags; map<string,int32> attrs; bytes raw; }\n";
+    const char *json = "{\"fixed\":[11,22],\"values\":[3,4,5],\"tags\":[\"A\",\"B\"],"
+                       "\"attrs\":{\"x\":30,\"y\":40},\"raw\":\"Az\"}";
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindObject *roundtrip = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    uint8_t *wire = NULL;
+    size_t wire_len = 0;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    if (codec) {
+      const DataBindValue *root;
+      const DataBindValue *values;
+      const DataBindValue *tags;
+      const DataBindValue *attrs;
+      DataBindMapEntry entry;
+      size_t raw_len = 0;
+      check_int_eq(data_bind_object_from_json(codec, "Values", json, strlen(json), &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_bin(codec, object, &wire, &wire_len, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_object_from_bin(codec, "Values", wire, wire_len, &roundtrip, &err),
+                   DATA_BIND_OK);
+      root = data_bind_object_value(roundtrip);
+      values = data_bind_value_get(root, "values");
+      tags = data_bind_value_get(root, "tags");
+      attrs = data_bind_value_get(root, "attrs");
+      check_size_eq(data_bind_value_count(data_bind_value_get(root, "fixed")), 2u);
+      check_int_eq(data_bind_value_as_int(data_bind_value_at(values, 2u)), 5);
+      check_str_eq(data_bind_value_as_string(data_bind_value_at(tags, 1u)), "B");
+      entry = data_bind_value_map_entry_at(attrs, 1u);
+      check_str_eq(entry.key, "y");
+      check_int_eq(data_bind_value_as_int(entry.value), 40);
+      check_mem_eq(data_bind_value_as_bytes(data_bind_value_get(root, "raw"), &raw_len), "Az", 2u);
+      check_size_eq(raw_len, 2u);
+      data_bind_binary_free(wire);
+      data_bind_object_free(roundtrip);
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should round-trip binary composite and repeating group fields") {
+    const char *schema = "composite Header { uint32 seq; uint64 ts; }\n"
+                         "group Level { uint64 price; uint32 qty; }\n"
+                         "message Book { Header header; group<Level> bids; string symbol; }\n";
+    const char *json = "{\"header\":{\"seq\":7,\"ts\":9},"
+                       "\"bids\":[{\"price\":100,\"qty\":10},{\"price\":200,\"qty\":20}],"
+                       "\"symbol\":\"ABCD\"}";
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindObject *roundtrip = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    uint8_t *wire = NULL;
+    size_t wire_len = 0;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    if (codec) {
+      const DataBindValue *root;
+      const DataBindValue *bids;
+      check_int_eq(data_bind_object_from_json(codec, "Book", json, strlen(json), &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_bin(codec, object, &wire, &wire_len, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_object_from_bin(codec, "Book", wire, wire_len, &roundtrip, &err),
+                   DATA_BIND_OK);
+      root = data_bind_object_value(roundtrip);
+      bids = data_bind_value_get(root, "bids");
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(root, "header.seq")), 7);
+      check_int_eq(data_bind_value_as_int64(data_bind_value_get(root, "header.ts")), 9);
+      check_size_eq(data_bind_value_count(bids), 2u);
+      check_int_eq(data_bind_value_as_int64(
+                       data_bind_value_get(data_bind_value_at(bids, 1u), "price")),
+                   200);
+      check_str_eq(data_bind_value_as_string(data_bind_value_get(root, "symbol")), "ABCD");
+      data_bind_binary_free(wire);
+      data_bind_object_free(roundtrip);
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should report required binary capacity without modifying a short buffer") {
+    const char *schema = "message Item { uint32 id; string name; }\n";
+    const char *json = "{\"id\":5,\"name\":\"bin\"}";
+    const uint8_t guard[] = {0xa5, 0xa5, 0xa5, 0xa5};
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    uint8_t output[11];
+    size_t wire_len = 0;
+
+    memset(output, 0xa5, sizeof(output));
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    if (codec) {
+      check_int_eq(data_bind_object_from_json(codec, "Item", json, strlen(json), &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_bin_into(codec, object, output, sizeof(guard),
+                                                       &wire_len, &err),
+                   DATA_BIND_ERR_INVALID_ARG);
+      check_size_eq(wire_len, sizeof(output));
+      check_mem_eq(output, guard, sizeof(guard));
+      check_int_eq(data_bind_object_serialize_bin_into(codec, object, output, sizeof(output),
+                                                       &wire_len, &err),
+                   DATA_BIND_OK);
+      check_size_eq(wire_len, sizeof(output));
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should reject binary serialization without a compatible wire schema") {
+    const char *optional_schema = "message Item { optional uint32 id; }\n";
+    const char *other_schema = "message Other { uint32 id; }\n";
+    const char *json = "{\"id\":5}";
+    DataBind *codec = NULL;
+    DataBind *other = NULL;
+    DataBindObject *object = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    uint8_t *wire = NULL;
+    size_t wire_len = 0;
+
+    check_int_eq(data_bind_create_from_text(optional_schema, strlen(optional_schema), &codec, &err),
+                 DATA_BIND_OK);
+    check_int_eq(data_bind_create_from_text(other_schema, strlen(other_schema), &other, &err),
+                 DATA_BIND_OK);
+    if (codec && other) {
+      check_int_eq(data_bind_object_from_json(codec, "Item", json, strlen(json), &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_bin(codec, object, &wire, &wire_len, &err),
+                   DATA_BIND_ERR_SCHEMA);
+      check_null(wire);
+      check_size_eq(wire_len, 0u);
+      check_int_eq(data_bind_object_serialize_bin(other, object, &wire, &wire_len, &err),
+                   DATA_BIND_ERR_TYPE_NOT_FOUND);
+    }
+    data_bind_object_free(object);
+    data_bind_free(other);
+    data_bind_free(codec);
+  }
+
   it("should deep clone set and bytes storage") {
     const char *schema = "message Values { set<string> tags; bytes raw; }\n";
     const char *json = "{\"tags\":[\"alpha\",\"beta\"],\"raw\":\"Az\"}";
@@ -670,7 +882,7 @@ spec("data_bind public API") {
     DataBindTime time;
     DataBindDecimal decimal;
     DataBindMoney money;
-    uint8_t uuid[DATA_BIND_UUID_SIZE];
+    turbo_uuid_t uuid;
     char text[64];
     const char *source_bigint;
 
@@ -691,7 +903,7 @@ spec("data_bind public API") {
       data_bind_value_free(source);
       source = NULL;
       if (copy) {
-        check(data_bind_value_as_uuid(data_bind_value_get(copy, "id"), uuid));
+        check(data_bind_value_as_uuid(data_bind_value_get(copy, "id"), uuid.bytes));
         check_str_eq(
             data_bind_value_as_uuid_string(data_bind_value_get(copy, "id"), text, sizeof(text)),
             "01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001");

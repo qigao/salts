@@ -2,6 +2,7 @@
 #include "tinytest.h"
 
 #include <stdint.h>
+#include <stddef.h>
 #include <string.h>
 
 TURBO_VEC_DEFINE(int_vec_t, int)
@@ -14,6 +15,18 @@ static int int_min_compare(const void *left, const void *right, void *ctx) {
   int b = *(const int *)right;
   (void)ctx;
   return (a > b) - (a < b);
+}
+
+typedef struct large_heap_item {
+  int priority;
+  unsigned char payload[512];
+} large_heap_item_t;
+
+static int large_heap_item_compare(const void *left, const void *right, void *ctx) {
+  const large_heap_item_t *a = (const large_heap_item_t *)left;
+  const large_heap_item_t *b = (const large_heap_item_t *)right;
+  (void)ctx;
+  return (a->priority > b->priority) - (a->priority < b->priority);
 }
 
 TURBO_HEAP_DEFINE(int_heap_t, int, int_min_compare)
@@ -95,6 +108,27 @@ suite("Turbo Containers") {
       check_true(int_heap_t_empty(&heap));
       int_heap_t_destroy(&heap);
     }
+
+    it("orders elements larger than the stack swap buffer") {
+      turbo_heap_t heap;
+      large_heap_item_t item;
+      large_heap_item_t out;
+      int priorities[] = {9, 1, 7, 3, 5};
+      int expected[] = {1, 3, 5, 7, 9};
+      size_t i;
+
+      check_int_eq(turbo_heap_init(&heap, sizeof(item), large_heap_item_compare, NULL), TURBO_OK);
+      for (i = 0; i < sizeof(priorities) / sizeof(priorities[0]); ++i) {
+        memset(&item, priorities[i], sizeof(item));
+        item.priority = priorities[i];
+        check_int_eq(turbo_heap_push(&heap, &item), TURBO_OK);
+      }
+      for (i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
+        check_int_eq(turbo_heap_pop(&heap, &out), TURBO_OK);
+        check_int_eq(out.priority, expected[i]);
+      }
+      turbo_heap_destroy(&heap);
+    }
   }
 
   group("Hash map") {
@@ -155,6 +189,28 @@ suite("Turbo Containers") {
       check_not_null(found);
       check_int_eq(found->id, 2);
       check_str_eq(found->tag, "two");
+      turbo_hash_map_destroy(&map);
+    }
+
+    it("keeps key and value storage suitably aligned after rehash") {
+      turbo_hash_map_t map;
+      long double key;
+      long double value;
+      const long double *found;
+      size_t i;
+
+      check_int_eq(turbo_hash_map_init(&map, sizeof(key), sizeof(value), NULL, NULL, NULL),
+                   TURBO_OK);
+      for (i = 0; i < 128; ++i) {
+        key = (long double)i + 0.25L;
+        value = (long double)i * 2.0L;
+        check_int_eq(turbo_hash_map_put(&map, &key, &value), TURBO_OK);
+      }
+      key = 63.25L;
+      found = (const long double *)turbo_hash_map_get_const(&map, &key);
+      check_not_null(found);
+      check_true(((uintptr_t)found % _Alignof(long double)) == 0);
+      check_true(*found == 126.0L);
       turbo_hash_map_destroy(&map);
     }
   }

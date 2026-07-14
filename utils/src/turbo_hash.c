@@ -1,5 +1,6 @@
 #include "turbo_hash.h"
 
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -7,6 +8,12 @@
 #define TURBO_HASH_OCCUPIED 1U
 #define TURBO_HASH_TOMBSTONE 2U
 #define TURBO_HASH_MIN_CAPACITY 16U
+
+typedef union turbo_hash_max_align {
+  long double long_double_value;
+  long long long_long_value;
+  void *pointer_value;
+} turbo_hash_max_align_t;
 
 size_t turbo_hash_bytes(const void *key, size_t key_size, void *ctx) {
   const unsigned char *p = (const unsigned char *)key;
@@ -40,25 +47,55 @@ static size_t turbo_hash_round_pow2(size_t value) {
   return n;
 }
 
+static int turbo_hash_add_size(size_t left, size_t right, size_t *out) {
+  if (right > SIZE_MAX - left) return TURBO_ENOMEM;
+  *out = left + right;
+  return TURBO_OK;
+}
+
+static int turbo_hash_align_size(size_t value, size_t alignment, size_t *out) {
+  size_t remainder = value % alignment;
+  return remainder == 0 ? (*out = value, TURBO_OK)
+                        : turbo_hash_add_size(value, alignment - remainder, out);
+}
+
 static int turbo_hash_alloc_arrays(turbo_hash_map_t *map, size_t capacity) {
+  const size_t alignment = _Alignof(turbo_hash_max_align_t);
+  size_t hashes_offset;
+  size_t keys_offset;
+  size_t values_offset;
+  size_t total_size;
+  size_t region_size;
+  unsigned char *storage;
+
   if (capacity > SIZE_MAX / map->key_size) return TURBO_ENOMEM;
   if (capacity > SIZE_MAX / map->value_size) return TURBO_ENOMEM;
+  if (capacity > SIZE_MAX / sizeof(size_t)) return TURBO_ENOMEM;
 
-  map->states = (uint8_t *)calloc(capacity, sizeof(uint8_t));
-  map->hashes = (size_t *)malloc(capacity * sizeof(size_t));
-  map->keys = (unsigned char *)malloc(capacity * map->key_size);
-  map->values = (unsigned char *)malloc(capacity * map->value_size);
-  if (!map->states || !map->hashes || !map->keys || !map->values) {
-    free(map->states);
-    free(map->hashes);
-    free(map->keys);
-    free(map->values);
-    map->states = NULL;
-    map->hashes = NULL;
-    map->keys = NULL;
-    map->values = NULL;
+  total_size = capacity * sizeof(uint8_t);
+  if (turbo_hash_align_size(total_size, alignment, &hashes_offset) != TURBO_OK)
     return TURBO_ENOMEM;
-  }
+  region_size = capacity * sizeof(size_t);
+  if (turbo_hash_add_size(hashes_offset, region_size, &total_size) != TURBO_OK)
+    return TURBO_ENOMEM;
+  if (turbo_hash_align_size(total_size, alignment, &keys_offset) != TURBO_OK)
+    return TURBO_ENOMEM;
+  region_size = capacity * map->key_size;
+  if (turbo_hash_add_size(keys_offset, region_size, &total_size) != TURBO_OK)
+    return TURBO_ENOMEM;
+  if (turbo_hash_align_size(total_size, alignment, &values_offset) != TURBO_OK)
+    return TURBO_ENOMEM;
+  region_size = capacity * map->value_size;
+  if (turbo_hash_add_size(values_offset, region_size, &total_size) != TURBO_OK)
+    return TURBO_ENOMEM;
+
+  storage = (unsigned char *)malloc(total_size);
+  if (!storage) return TURBO_ENOMEM;
+  memset(storage, TURBO_HASH_EMPTY, capacity * sizeof(uint8_t));
+  map->states = storage;
+  map->hashes = (size_t *)(storage + hashes_offset);
+  map->keys = storage + keys_offset;
+  map->values = storage + values_offset;
   map->capacity = capacity;
   return TURBO_OK;
 }
@@ -103,9 +140,6 @@ static int turbo_hash_map_rehash(turbo_hash_map_t *map, size_t new_capacity) {
   }
 
   free(map->states);
-  free(map->hashes);
-  free(map->keys);
-  free(map->values);
   map->states = next.states;
   map->hashes = next.hashes;
   map->keys = next.keys;
@@ -177,9 +211,6 @@ int turbo_hash_map_init(turbo_hash_map_t *map, size_t key_size, size_t value_siz
 void turbo_hash_map_destroy(turbo_hash_map_t *map) {
   if (!map) return;
   free(map->states);
-  free(map->hashes);
-  free(map->keys);
-  free(map->values);
   memset(map, 0, sizeof(*map));
 }
 

@@ -1,6 +1,7 @@
 #include "turbo_buffer.h"
 #include "tinytest.h"
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdatomic.h>
 
@@ -10,6 +11,28 @@
 #include <pthread.h>
 #endif
 
+static atomic_int g_external_free_calls;
+static atomic_size_t g_external_stress_free_calls;
+static void *g_external_free_data;
+static void *g_external_free_user;
+
+#define TEST_SLAB_SIZE_CLASSES 9U
+#define TEST_SLAB_LOCAL_MAGAZINE_SLOTS 1U
+static const size_t g_test_slab_sizes[TEST_SLAB_SIZE_CLASSES] = {
+    16U, 48U, 112U, 240U, 496U, 1008U, 2032U, 4080U, 8176U};
+
+static void external_free_probe(void *data, void *user_data) {
+    g_external_free_data = data;
+    g_external_free_user = user_data;
+    atomic_fetch_add_explicit(&g_external_free_calls, 1, memory_order_relaxed);
+}
+
+static void external_stress_free_probe(void *data, void *user_data) {
+    (void)data;
+    (void)user_data;
+    atomic_fetch_add_explicit(&g_external_stress_free_calls, 1U, memory_order_relaxed);
+}
+
 /* 
  * Linus's Law: Keep it simple.
  * StressWorker is at file scope to satisfy C standard.
@@ -18,10 +41,14 @@
 static DWORD WINAPI StressWorker(LPVOID lpParam) {
     mem_pool_t* pool = (mem_pool_t*)lpParam;
     for (int i = 0; i < 1000; i++) {
+        unsigned char external = (unsigned char)i;
         void* p = mem_alloc(pool, (i % 8) * 64 + 1);
         if (p) mem_free(pool, p);
         
         mem_buffer_t* b = mem_get_buffer(pool, (i % 4) * 128 + 1);
+        if (b) mem_release(b);
+
+        b = mem_wrap_external(&external, sizeof(external), external_stress_free_probe, NULL);
         if (b) mem_release(b);
     }
     return 0;
@@ -30,10 +57,14 @@ static DWORD WINAPI StressWorker(LPVOID lpParam) {
 static void* StressWorker(void* arg) {
     mem_pool_t* pool = (mem_pool_t*)arg;
     for (int i = 0; i < 1000; i++) {
+        unsigned char external = (unsigned char)i;
         void* p = mem_alloc(pool, (i % 8) * 64 + 1);
         if (p) mem_free(pool, p);
         
         mem_buffer_t* b = mem_get_buffer(pool, (i % 4) * 128 + 1);
+        if (b) mem_release(b);
+
+        b = mem_wrap_external(&external, sizeof(external), external_stress_free_probe, NULL);
         if (b) mem_release(b);
     }
     return NULL;
@@ -77,6 +108,67 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     mem_destroy(&pool);
   }
 
+  it("should recycle every slab size class and drain magazines on trim") {
+    mem_pool_t pool;
+    void* first[TEST_SLAB_SIZE_CLASSES] = {0};
+    void* burst[TEST_SLAB_LOCAL_MAGAZINE_SLOTS + 1U] = {0};
+    size_t i;
+
+    mem_init(&pool, 0);
+    for (i = 0; i < TEST_SLAB_SIZE_CLASSES; ++i) {
+      first[i] = mem_alloc(&pool, g_test_slab_sizes[i]);
+      check_not_null(first[i]);
+    }
+    for (i = 0; i < TEST_SLAB_SIZE_CLASSES; ++i) mem_free(&pool, first[i]);
+    check_size_eq(mem_pool_total_used(&pool), 0U);
+
+    for (i = 0; i < TEST_SLAB_SIZE_CLASSES; ++i) {
+      void* recycled = mem_alloc(&pool, g_test_slab_sizes[i]);
+      check_ptr_eq(recycled, first[i]);
+      mem_free(&pool, recycled);
+    }
+    check_size_gt(mem_pool_total_allocated(&pool), 0U);
+    mem_trim(&pool);
+    check_size_eq(mem_pool_total_allocated(&pool), 0U);
+
+    for (i = 0; i < TEST_SLAB_LOCAL_MAGAZINE_SLOTS + 1U; ++i) {
+      burst[i] = mem_alloc(&pool, 64U);
+      check_not_null(burst[i]);
+    }
+    for (i = 0; i < TEST_SLAB_LOCAL_MAGAZINE_SLOTS + 1U; ++i) mem_free(&pool, burst[i]);
+    check_size_eq(mem_pool_total_used(&pool), 0U);
+    mem_trim(&pool);
+    check_size_eq(mem_pool_total_allocated(&pool), 0U);
+    mem_destroy(&pool);
+  }
+
+  it("should isolate thread-local slab hints between pools") {
+    mem_pool_t first_pool;
+    mem_pool_t second_pool;
+    void* first;
+    void* second;
+    void* recycled;
+
+    mem_init(&first_pool, 0);
+    mem_init(&second_pool, 0);
+    first = mem_alloc(&first_pool, 64U);
+    second = mem_alloc(&second_pool, 64U);
+    check_not_null(first);
+    check_not_null(second);
+    mem_free(&first_pool, first);
+    mem_free(&second_pool, second);
+
+    recycled = mem_alloc(&first_pool, 64U);
+    check_ptr_eq(recycled, first);
+    mem_free(&first_pool, recycled);
+    mem_trim(&first_pool);
+    mem_trim(&second_pool);
+    check_size_eq(mem_pool_total_allocated(&first_pool), 0U);
+    check_size_eq(mem_pool_total_allocated(&second_pool), 0U);
+    mem_destroy(&first_pool);
+    mem_destroy(&second_pool);
+  }
+
   it("should perform oversize allocations (large)") {
     mem_pool_t pool;
     mem_init(&pool, 0);
@@ -88,6 +180,42 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     check_size_ge(mem_pool_total_used(&pool), large_size);
     
     mem_free(&pool, p);
+    mem_destroy(&pool);
+  }
+
+  it("should retain slabs across reset until explicitly trimmed") {
+    mem_pool_t pool;
+    size_t allocated_before_reset;
+    void* first;
+    void* reused;
+
+    mem_init(&pool, 0);
+    first = mem_alloc(&pool, 32);
+    check_not_null(first);
+    allocated_before_reset = mem_pool_total_allocated(&pool);
+    check_size_gt(allocated_before_reset, 0);
+
+    mem_reset(&pool);
+    check_size_eq(mem_pool_total_used(&pool), 0);
+    check_size_eq(mem_pool_total_allocated(&pool), allocated_before_reset);
+
+    reused = mem_alloc(&pool, 32);
+    check_not_null(reused);
+    check_size_eq(mem_pool_total_allocated(&pool), allocated_before_reset);
+    mem_free(&pool, reused);
+    mem_trim(&pool);
+    check_size_eq(mem_pool_total_allocated(&pool), 0);
+    mem_destroy(&pool);
+  }
+
+  it("should reject overflowing allocation sizes") {
+    mem_pool_t pool;
+
+    mem_init(&pool, 0);
+    check_null(mem_alloc(&pool, SIZE_MAX));
+    check_null(mem_alloc_array(&pool, sizeof(uint64_t), SIZE_MAX));
+    check_null(MEM_ALLOC_ARRAY(&pool, uint64_t, SIZE_MAX));
+    check_null(mem_get_buffer(&pool, SIZE_MAX));
     mem_destroy(&pool);
   }
 
@@ -134,6 +262,28 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     mem_destroy(&pool);
   }
 
+  it("should bound and clear the internal buffer cache") {
+    mem_pool_t pool;
+    mem_buffer_t* buffers[MEM_BUFFER_RECYCLE_LIMIT + 8U] = {0};
+    void* cache_metadata;
+    size_t i;
+
+    mem_init(&pool, 0);
+    for (i = 0; i < sizeof(buffers) / sizeof(buffers[0]); ++i) {
+      buffers[i] = mem_get_buffer(&pool, 64);
+      check_not_null(buffers[i]);
+    }
+    for (i = 0; i < sizeof(buffers) / sizeof(buffers[0]); ++i) mem_buffer_release(buffers[i]);
+
+    check_size_eq(mem_pool_recycle_count(&pool), MEM_BUFFER_RECYCLE_LIMIT);
+    cache_metadata = pool.recycle_head;
+    check_not_null(cache_metadata);
+    mem_reset(&pool);
+    check_size_eq(mem_pool_recycle_count(&pool), 0U);
+    check_ptr_eq(pool.recycle_head, cache_metadata);
+    mem_destroy(&pool);
+  }
+
   it("should support slicing") {
     mem_pool_t pool;
     mem_init(&pool, 0);
@@ -159,18 +309,42 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
 
   it("should handle external wrapping") {
     char data[] = "External static data";
-    mem_buffer_t* buffer = mem_wrap_external(data, sizeof(data), NULL, NULL);
+    int user_data = 42;
+    mem_buffer_t* buffer;
+
+    atomic_store_explicit(&g_external_free_calls, 0, memory_order_relaxed);
+    g_external_free_data = NULL;
+    g_external_free_user = NULL;
+    buffer = mem_wrap_external(data, sizeof(data), external_free_probe, &user_data);
     
     check_not_null(buffer);
     check_size_eq((size_t)mem_is_external(buffer), 1);
     check_ptr_eq(mem_buffer_data(buffer), data);
     
     mem_release(buffer);
+    check_int_eq(atomic_load_explicit(&g_external_free_calls, memory_order_relaxed), 1);
+    check_ptr_eq(g_external_free_data, data);
+    check_ptr_eq(g_external_free_user, &user_data);
+  }
+
+  it("should fall back safely when the external wrapper cache is full") {
+    mem_buffer_t *buffers[80] = {0};
+    unsigned char data = 7;
+    size_t i;
+
+    atomic_store_explicit(&g_external_free_calls, 0, memory_order_relaxed);
+    for (i = 0; i < sizeof(buffers) / sizeof(buffers[0]); ++i) {
+      buffers[i] = mem_wrap_external(&data, sizeof(data), external_free_probe, NULL);
+      check_not_null(buffers[i]);
+    }
+    for (i = 0; i < sizeof(buffers) / sizeof(buffers[0]); ++i) mem_buffer_release(buffers[i]);
+    check_int_eq(atomic_load_explicit(&g_external_free_calls, memory_order_relaxed), 80);
   }
 
   it("should survive concurrency stress") {
     mem_pool_t pool;
     mem_init(&pool, 0);
+    atomic_store_explicit(&g_external_stress_free_calls, 0U, memory_order_relaxed);
     
     const int num_threads = 8;
 #ifdef _WIN32
@@ -190,8 +364,10 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     }
 #endif
     
+    check_size_gt(mem_pool_recycle_count(&pool), 0U);
+    check_size_le(mem_pool_recycle_count(&pool), MEM_BUFFER_RECYCLE_LIMIT);
     mem_destroy(&pool);
-    // Success if we reached here
-    check_size_eq(1, 1);
+    check_size_eq(atomic_load_explicit(&g_external_stress_free_calls, memory_order_relaxed),
+                  (size_t)num_threads * 1000U);
   }
 }

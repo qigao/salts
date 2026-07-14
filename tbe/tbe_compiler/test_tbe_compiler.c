@@ -57,6 +57,7 @@ static char *render_c_template(const char *schema) {
   if (!root) goto cleanup;
 
   if (parse_schema(schema, strlen(schema), root, NULL) != 0) goto cleanup;
+  tbe_compiler_annotate_language_types(root);
 
   templ = mustache_compile(template_text, template_size, NULL, NULL, 0);
   if (!templ) goto cleanup;
@@ -463,6 +464,65 @@ spec("tbe_compiler") {
       cleanup_test_file(output_path);
     }
 
+    it("should generate a Wasm guest bridge adapter with the built-in C generator") {
+      const char *header_path = "test_tbe_compiler_guest.h";
+      const char *guest_path = "test_tbe_compiler_guest.c";
+      size_t header_size = 0;
+      size_t guest_size = 0;
+      char *header = NULL;
+      char *guest = NULL;
+      tbe_compiler_options_t options = {
+          .schema_path = SCHEMA_EXAMPLE_FILE,
+          .template_path = NULL,
+          .output_path = header_path,
+          .guest_output_path = guest_path,
+          .lang_enum = TBE_COMPILER_LANG_C,
+      };
+
+      cleanup_test_file(header_path);
+      cleanup_test_file(guest_path);
+      check_int_eq(tbe_compiler_run(&options), 0);
+      header = tt_read_file(header_path, &header_size);
+      guest = tt_read_file(guest_path, &guest_size);
+      check_not_null(header);
+      check_not_null(guest);
+      check(header_size > 0);
+      check(guest_size > 0);
+      if (header != NULL) {
+        check_str_contains(header, "typedef struct tbe_guest_bridge_s");
+        check_str_contains(header, "uint32_t abi_version;");
+        check_str_contains(header, "record##_guest_from_json");
+        check_str_contains(header, "record##_guest_to_xml");
+        check_str_contains(header, "TBE_GUEST_DECLARE_RECORD(LoginMessage);");
+      }
+      if (guest != NULL) {
+        check_str_contains(guest, "TBE_GUEST_SCHEMA_ID[] = \"Session\"");
+        check_str_contains(guest, "TBE_GUEST_DEFINE_RECORD(LoginMessage)");
+        check_str_contains(guest, "TBE_GUEST_FORMAT_CSV");
+      }
+      free(header);
+      free(guest);
+      cleanup_test_file(header_path);
+      cleanup_test_file(guest_path);
+    }
+
+    it("should reject guest adapter output outside the built-in C generator") {
+      const char *output_path = "test_tbe_compiler_guest_invalid.out";
+      tbe_compiler_options_t options = {
+          .schema_path = SCHEMA_EXAMPLE_FILE,
+          .template_path = C_STRUCT_TEMPLATE_FILE,
+          .output_path = output_path,
+          .guest_output_path = "test_tbe_compiler_guest_invalid.c",
+          .lang_enum = TBE_COMPILER_LANG_C,
+      };
+
+      cleanup_test_file(output_path);
+      cleanup_test_file(options.guest_output_path);
+      check(tbe_compiler_run(&options) != 0);
+      cleanup_test_file(output_path);
+      cleanup_test_file(options.guest_output_path);
+    }
+
     it("should generate textual MIR parser modules") {
       const char *output_path = "test_tbe_compiler_mir.out";
       size_t output_size = 0;
@@ -520,7 +580,8 @@ spec("tbe_compiler") {
           "enum Side <uint8> { Buy = 1; Sell = 2; }"
           "composite Header { uint32_t seq; }"
           "group Level { uint64 price; uint32 qty; }"
-          "message Book { Header header; bytes(16) digest; group<Level> bids; string symbol; }";
+          "message Book { Header header; bytes(16) digest; uuid request_id; group<Level> bids; "
+          "string symbol; }";
       char *cpp_output = render_compiler_template_from_schema(
           schema, "test_tbe_compiler_lang.schema", CPP_TYPES_TEMPLATE_FILE,
           "test_tbe_compiler_lang.cpp.out");
@@ -547,25 +608,31 @@ spec("tbe_compiler") {
       check_str_contains(cpp_output, "std::vector<Level> bids;");
       check_str_contains(cpp_output, "std::string symbol;");
       check_str_contains(cpp_output, "std::vector<std::uint8_t> digest;");
+      check_str_contains(cpp_output, "turbo_uuid_t request_id;");
+      check_str_contains(cpp_output, "#include \"turbo_uuid.h\"");
 
       check_str_contains(go_output, "package market");
       check_str_contains(go_output, "Bids []Level");
       check_str_contains(go_output, "Symbol string");
       check_str_contains(go_output, "Digest []byte");
+      check_str_contains(go_output, "RequestId [16]byte");
 
       check_str_contains(py_output, "bids: list[Level]");
       check_str_contains(py_output, "symbol: str");
       check_str_contains(py_output, "digest: bytes");
+      check_str_contains(py_output, "request_id: str");
 
       check_str_contains(rust_output, "#[repr(u8)]");
       check_str_contains(rust_output, "pub bids: Vec<Level>");
       check_str_contains(rust_output, "pub symbol: String");
       check_str_contains(rust_output, "pub digest: Vec<u8>");
+      check_str_contains(rust_output, "pub request_id: [u8; 16]");
 
       check_str_contains(ts_output, "export enum Side");
       check_str_contains(ts_output, "bids: Array<Level>;");
       check_str_contains(ts_output, "symbol: string;");
       check_str_contains(ts_output, "digest: Uint8Array;");
+      check_str_contains(ts_output, "request_id: string;");
 
       free(cpp_output);
       free(go_output);
@@ -594,6 +661,22 @@ spec("tbe_compiler") {
       check_str_contains(output, "return tbe_wire_read_var_data(view->data + payload_offset,");
       check_str_contains(output, "return tbe_wire_read_var_data(view->data + payload_offset,");
       check(strstr(output, "uint8_t payload[") == NULL);
+
+      free(output);
+    }
+
+    it("should render UUID fields with the installed Core type") {
+      const char *schema = "message Event { uuid request_id; }";
+      char *output = render_c_template(schema);
+
+      check_not_null(output);
+      check_str_contains(output, "#include \"turbo_uuid.h\"");
+      check_str_contains(output, "turbo_uuid_t request_id;");
+      check_str_contains(output, "enum { Event_BLOCK_LENGTH = 16 };");
+      check_str_contains(output, "static inline bool Event_request_id_set(");
+      check_str_contains(output, "const turbo_uuid_t *value");
+      check_str_contains(output, "static inline bool Event_request_id_get(");
+      check_str_contains(output, "turbo_uuid_t *value");
 
       free(output);
     }
@@ -662,7 +745,7 @@ spec("tbe_compiler") {
       check_str_contains(output, "enum { Payloads_sides_OFFSET = 48 };");
       check_str_contains(output, "static inline bool Payloads_digest_set(");
       check_str_contains(output, "size != 16");
-      check_str_contains(output, "memcpy(view->data + 0, data, 16);");
+      check_str_contains(output, "TBE_GENERATED_MEMCPY(view->data + 0, data, 16);");
       check_str_contains(output, "static inline bool Payloads_points_builder_at(");
       check_str_contains(output, "Point_builder_t *value");
       check_str_contains(output, "index >= 2");

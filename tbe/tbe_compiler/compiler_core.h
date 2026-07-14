@@ -14,6 +14,8 @@ typedef struct tbe_compiler_options_s {
   const char *schema_path;
   const char *template_path;
   const char *output_path;
+  const char *source_output_path;
+  const char *guest_output_path;
   const char *dsl_output_path;
   int64_t lang_enum;
 } tbe_compiler_options_t;
@@ -33,6 +35,8 @@ char *tbe_compiler_read_file(const char *filename);
 
 const char *tbe_compiler_resolve_template(const char *user_template,
                                           int64_t lang_enum);
+
+void tbe_compiler_annotate_language_types(Node *root);
 
 int tbe_compiler_parse_schema_file(const char *schema_path, Node **out_root,
                                    char **out_schema_data);

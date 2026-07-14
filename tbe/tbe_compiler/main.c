@@ -8,7 +8,7 @@
  *
  * CLI (via cmd_arger):
  *   tbe_compiler <file> [--template <file>] [--lang c|cpp|go|rust|python|py|ts|mir|bmir]
- *              [--output <file>] [--dsl-output <file>]
+ *              [--output <file>] [--source-output <file>] [--dsl-output <file>]
  */
 
 #include <stdbool.h>
@@ -20,6 +20,8 @@ int main(int argc, char **argv) {
     char    *schema_path   = NULL;
     char    *template_path = NULL;
     char    *output_path   = NULL;
+    char    *source_output_path = NULL;
+    char    *guest_output_path = NULL;
     char    *dsl_output_path = NULL;
     int64_t  lang_enum     = 0;
 
@@ -51,6 +53,12 @@ int main(int argc, char **argv) {
                                
     turbo_cmd_add_string(parser, &output_path, "output", "o",
                                  "Output file path (default: stdout)");
+
+    turbo_cmd_add_string(parser, &source_output_path, "source-output", "s",
+                                 "Generate the C typed serde companion source");
+
+    turbo_cmd_add_string(parser, &guest_output_path, "guest-output", "g",
+                                 "Generate the C Wasm guest adapter source");
                                  
     turbo_cmd_add_string(parser, &dsl_output_path, "dsl-output", "d",
                                  "Generate DSL type declarations (.rfl file)");
@@ -61,6 +69,8 @@ int main(int argc, char **argv) {
         .schema_path = schema_path,
         .template_path = template_path,
         .output_path = output_path,
+        .source_output_path = source_output_path,
+        .guest_output_path = guest_output_path,
         .dsl_output_path = dsl_output_path,
         .lang_enum = lang_enum,
     };

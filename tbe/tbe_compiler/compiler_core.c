@@ -121,6 +121,7 @@ static const char *tbe_compiler_cpp_scalar_type(const char *type) {
   if (strcmp(type, "double") == 0) return "double";
   if (strcmp(type, "string") == 0) return "std::string";
   if (strcmp(type, "bytes") == 0) return "std::vector<std::uint8_t>";
+  if (strcmp(type, "uuid") == 0) return "turbo_uuid_t";
   return type;
 }
 
@@ -139,6 +140,7 @@ static const char *tbe_compiler_go_scalar_type(const char *type) {
   if (strcmp(type, "double") == 0) return "float64";
   if (strcmp(type, "string") == 0) return "string";
   if (strcmp(type, "bytes") == 0) return "[]byte";
+  if (strcmp(type, "uuid") == 0) return "[16]byte";
   return type;
 }
 
@@ -151,6 +153,7 @@ static const char *tbe_compiler_ts_scalar_type(const char *type) {
   }
   if (strcmp(type, "string") == 0) return "string";
   if (strcmp(type, "bytes") == 0) return "Uint8Array";
+  if (strcmp(type, "uuid") == 0) return "string";
   return type;
 }
 
@@ -161,6 +164,7 @@ static const char *tbe_compiler_python_scalar_type(const char *type) {
   if (strcmp(type, "float") == 0 || strcmp(type, "double") == 0) return "float";
   if (strcmp(type, "string") == 0) return "str";
   if (strcmp(type, "bytes") == 0) return "bytes";
+  if (strcmp(type, "uuid") == 0) return "str";
   return type;
 }
 
@@ -179,7 +183,112 @@ static const char *tbe_compiler_rust_scalar_type(const char *type) {
   if (strcmp(type, "double") == 0) return "f64";
   if (strcmp(type, "string") == 0) return "String";
   if (strcmp(type, "bytes") == 0) return "Vec<u8>";
+  if (strcmp(type, "uuid") == 0) return "[u8; 16]";
   return type;
+}
+
+static const char *tbe_compiler_typed_kind(const char *type) {
+  if (!type) return NULL;
+  if (strcmp(type, "bool") == 0) return "TBE_TYPED_BOOL";
+  if (strcmp(type, "int8") == 0 || strcmp(type, "int8_t") == 0) return "TBE_TYPED_I8";
+  if (strcmp(type, "uint8") == 0 || strcmp(type, "uint8_t") == 0 ||
+      strcmp(type, "byte") == 0)
+    return "TBE_TYPED_U8";
+  if (strcmp(type, "int16") == 0 || strcmp(type, "int16_t") == 0) return "TBE_TYPED_I16";
+  if (strcmp(type, "uint16") == 0 || strcmp(type, "uint16_t") == 0)
+    return "TBE_TYPED_U16";
+  if (strcmp(type, "int32") == 0 || strcmp(type, "int32_t") == 0) return "TBE_TYPED_I32";
+  if (strcmp(type, "uint32") == 0 || strcmp(type, "uint32_t") == 0)
+    return "TBE_TYPED_U32";
+  if (strcmp(type, "int64") == 0 || strcmp(type, "int64_t") == 0) return "TBE_TYPED_I64";
+  if (strcmp(type, "uint64") == 0 || strcmp(type, "uint64_t") == 0)
+    return "TBE_TYPED_U64";
+  if (strcmp(type, "float") == 0) return "TBE_TYPED_F32";
+  if (strcmp(type, "double") == 0) return "TBE_TYPED_F64";
+  if (strcmp(type, "uuid") == 0) return "TBE_TYPED_UUID";
+  return NULL;
+}
+
+static const char *tbe_compiler_typed_c_scalar(const char *type) {
+  if (!type) return NULL;
+  if (strcmp(type, "bool") == 0) return "uint8_t";
+  if (strcmp(type, "int8") == 0 || strcmp(type, "int8_t") == 0) return "int8_t";
+  if (strcmp(type, "uint8") == 0 || strcmp(type, "uint8_t") == 0 ||
+      strcmp(type, "byte") == 0)
+    return "uint8_t";
+  if (strcmp(type, "int16") == 0 || strcmp(type, "int16_t") == 0) return "int16_t";
+  if (strcmp(type, "uint16") == 0 || strcmp(type, "uint16_t") == 0) return "uint16_t";
+  if (strcmp(type, "int32") == 0 || strcmp(type, "int32_t") == 0) return "int32_t";
+  if (strcmp(type, "uint32") == 0 || strcmp(type, "uint32_t") == 0) return "uint32_t";
+  if (strcmp(type, "int64") == 0 || strcmp(type, "int64_t") == 0) return "int64_t";
+  if (strcmp(type, "uint64") == 0 || strcmp(type, "uint64_t") == 0) return "uint64_t";
+  if (strcmp(type, "float") == 0) return "float";
+  if (strcmp(type, "double") == 0) return "double";
+  if (strcmp(type, "uuid") == 0) return "turbo_uuid_t";
+  return NULL;
+}
+
+static Node *tbe_compiler_find_record(Node *root, const char *list_name, const char *name) {
+  Node *list = tbe_compiler_find_child(root, list_name);
+  size_t i;
+  if (!list || list->type != NODE_LIST || !name) return NULL;
+  for (i = 0; i < list->data.list.count; ++i) {
+    Node *record = list->data.list.items[i];
+    const char *record_name = tbe_compiler_string_value(record, "name");
+    if (record_name && strcmp(record_name, name) == 0) return record;
+  }
+  return NULL;
+}
+
+static const char *tbe_compiler_typed_named_kind(Node *root, const char *type,
+                                                 char *c_type, size_t c_type_size,
+                                                 char *descriptor, size_t descriptor_size) {
+  const char *kind = tbe_compiler_typed_kind(type);
+  const char *scalar = tbe_compiler_typed_c_scalar(type);
+  Node *record;
+  if (type && strcmp(type, "string") == 0) {
+    snprintf(c_type, c_type_size, "tstr_t");
+    descriptor[0] = '\0';
+    return "TBE_TYPED_STRING";
+  }
+  if (type && strcmp(type, "bytes") == 0) {
+    snprintf(c_type, c_type_size, "tbe_bytes_t");
+    descriptor[0] = '\0';
+    return "TBE_TYPED_BYTES";
+  }
+  if (kind && scalar) {
+    snprintf(c_type, c_type_size, "%s", scalar);
+    descriptor[0] = '\0';
+    return kind;
+  }
+  record = tbe_compiler_find_record(root, "enums", type);
+  if (record) {
+    snprintf(c_type, c_type_size, "%s_t", type);
+    descriptor[0] = '\0';
+    return "TBE_TYPED_ENUM";
+  }
+  record = tbe_compiler_find_record(root, "composites", type);
+  if (!record) record = tbe_compiler_find_record(root, "groups", type);
+  if (!record) record = tbe_compiler_find_record(root, "messages", type);
+  if (record) {
+    snprintf(c_type, c_type_size, "%s_t", type);
+    snprintf(descriptor, descriptor_size, "&%s_TYPED_TYPE", type);
+    return "TBE_TYPED_OBJECT";
+  }
+  c_type[0] = '\0';
+  descriptor[0] = '\0';
+  return NULL;
+}
+
+static const char *tbe_compiler_typed_wire_kind(Node *root, const char *type,
+                                                const char *fallback) {
+  Node *record = tbe_compiler_find_record(root, "enums", type);
+  if (record) {
+    const char *underlying = tbe_compiler_string_value(record, "underlying_type");
+    const char *kind = tbe_compiler_typed_kind(underlying ? underlying : "int32");
+    return kind ? kind : "TBE_TYPED_I32";
+  }
+  return fallback;
 }
 
 static const char *tbe_compiler_cpp_enum_underlying_type(const char *type) {
@@ -244,7 +353,132 @@ static void tbe_compiler_field_type(Node *field,
   snprintf(out, out_size, "%s", scalar_mapper(type));
 }
 
-static void tbe_compiler_annotate_field_types(Node *field) {
+static void tbe_compiler_annotate_typed_field(Node *root, Node *field) {
+  const char *name = tbe_compiler_string_value(field, "name");
+  const char *owner = tbe_compiler_string_value(field, "owner_name");
+  const char *type = tbe_compiler_string_value(field, "type");
+  char c_type[256] = {0};
+  char descriptor[256] = {0};
+  char declaration[512] = {0};
+  char vector_type[256] = {0};
+  const char *kind = NULL;
+
+  if (!name || !owner) return;
+  if (tbe_compiler_has_child(field, "is_group_field")) {
+    const char *group_type = tbe_compiler_string_value(field, "group_type");
+    snprintf(c_type, sizeof(c_type), "%s_t", group_type ? group_type : "unknown");
+    snprintf(descriptor, sizeof(descriptor), "&%s_TYPED_TYPE", group_type ? group_type : "unknown");
+    snprintf(vector_type, sizeof(vector_type), "%s_%s_vec_t", owner, name);
+    snprintf(declaration, sizeof(declaration), "%s %s;", vector_type, name);
+    tbe_compiler_set_string(field, "typed_kind", "TBE_TYPED_LIST");
+    tbe_compiler_set_string(field, "typed_element_kind", "TBE_TYPED_OBJECT");
+    tbe_compiler_set_string(field, "typed_element_wire_kind", "TBE_TYPED_OBJECT");
+    tbe_compiler_set_string(field, "typed_element_c_type", c_type);
+    tbe_compiler_set_string(field, "typed_object_descriptor", descriptor);
+    tbe_compiler_set_string(field, "typed_vector_type", vector_type);
+    tbe_compiler_set_string(field, "typed_needs_vector", "1");
+    tbe_compiler_set_string(field, "typed_is_group", "1");
+    tbe_compiler_set_string(field, "typed_declaration", declaration);
+    return;
+  }
+  if (tbe_compiler_has_child(field, "is_bytes")) {
+    if (tbe_compiler_has_child(field, "is_fixed_size")) {
+      const char *count = tbe_compiler_string_value(field, "size_bytes");
+      snprintf(declaration, sizeof(declaration), "uint8_t %s[%s];", name, count ? count : "0");
+      tbe_compiler_set_string(field, "typed_kind", "TBE_TYPED_FIXED_BYTES");
+      tbe_compiler_set_string(field, "typed_fixed_count", count ? count : "0");
+    } else {
+      snprintf(declaration, sizeof(declaration), "tbe_bytes_t %s;", name);
+      tbe_compiler_set_string(field, "typed_kind", "TBE_TYPED_BYTES");
+      tbe_compiler_set_string(field, "typed_is_var_data", "1");
+    }
+    tbe_compiler_set_string(field, "typed_declaration", declaration);
+    return;
+  }
+  if (tbe_compiler_has_child(field, "is_collection")) {
+    const char *inner = tbe_compiler_string_value(field, "inner_type");
+    kind = tbe_compiler_typed_named_kind(root, inner, c_type, sizeof(c_type), descriptor,
+                                         sizeof(descriptor));
+    if (!kind) {
+      snprintf(declaration, sizeof(declaration), "%s_t %s;", inner ? inner : "unknown", name);
+      tbe_compiler_set_string(field, "typed_declaration", declaration);
+      return;
+    }
+    tbe_compiler_set_string(field, "typed_element_kind", kind);
+    tbe_compiler_set_string(field, "typed_element_wire_kind",
+                            tbe_compiler_typed_wire_kind(root, inner, kind));
+    tbe_compiler_set_string(field, "typed_element_c_type", c_type);
+    if (descriptor[0]) tbe_compiler_set_string(field, "typed_object_descriptor", descriptor);
+    if (tbe_compiler_has_child(field, "is_fixed_size")) {
+      const char *count = tbe_compiler_string_value(field, "length_field");
+      snprintf(declaration, sizeof(declaration), "%s %s[%s];", c_type, name, count ? count : "0");
+      tbe_compiler_set_string(field, "typed_kind", "TBE_TYPED_FIXED_ARRAY");
+      tbe_compiler_set_string(field, "typed_fixed_count", count ? count : "0");
+    } else if (tbe_compiler_has_child(field, "is_map")) {
+      const char *key_type = tbe_compiler_string_value(field, "key_type");
+      const char *value_type = tbe_compiler_string_value(field, "value_type");
+      char value_c_type[256] = {0};
+      char value_descriptor[256] = {0};
+      const char *value_kind = tbe_compiler_typed_named_kind(
+          root, value_type ? value_type : inner, value_c_type, sizeof(value_c_type),
+          value_descriptor, sizeof(value_descriptor));
+      char entry_type[256];
+      if (!value_kind || !key_type || strcmp(key_type, "string") != 0) {
+        snprintf(declaration, sizeof(declaration), "/* unsupported map field %s */ uint8_t %s;",
+                 name, name);
+        tbe_compiler_set_string(field, "typed_declaration", declaration);
+        return;
+      }
+      snprintf(entry_type, sizeof(entry_type), "%s_%s_entry_t", owner, name);
+      snprintf(vector_type, sizeof(vector_type), "%s_%s_vec_t", owner, name);
+      snprintf(declaration, sizeof(declaration), "%s %s;", vector_type, name);
+      tbe_compiler_set_string(field, "typed_kind", "TBE_TYPED_MAP");
+      tbe_compiler_set_string(field, "typed_map_entry_type", entry_type);
+      tbe_compiler_set_string(field, "typed_map_value_kind", value_kind);
+      tbe_compiler_set_string(field, "typed_map_value_wire_kind",
+                              tbe_compiler_typed_wire_kind(
+                                  root, value_type ? value_type : inner, value_kind));
+      tbe_compiler_set_string(field, "typed_map_value_c_type", value_c_type);
+      if (value_descriptor[0])
+        tbe_compiler_set_string(field, "typed_map_value_descriptor", value_descriptor);
+      tbe_compiler_set_string(field, "typed_vector_type", vector_type);
+      tbe_compiler_set_string(field, "typed_element_c_type", entry_type);
+      tbe_compiler_set_string(field, "typed_needs_map_vector", "1");
+    } else {
+      snprintf(vector_type, sizeof(vector_type), "%s_%s_vec_t", owner, name);
+      snprintf(declaration, sizeof(declaration), "%s %s;", vector_type, name);
+      tbe_compiler_set_string(field, "typed_kind",
+                              tbe_compiler_has_child(field, "is_set") ? "TBE_TYPED_SET"
+                                                                      : "TBE_TYPED_LIST");
+      tbe_compiler_set_string(field, "typed_vector_type", vector_type);
+      tbe_compiler_set_string(field, "typed_needs_vector", "1");
+    }
+    tbe_compiler_set_string(field, "typed_declaration", declaration);
+    return;
+  }
+  if (tbe_compiler_has_child(field, "is_var_data") && type && strcmp(type, "string") == 0) {
+    snprintf(declaration, sizeof(declaration), "tstr_t %s;", name);
+    tbe_compiler_set_string(field, "typed_kind", "TBE_TYPED_STRING");
+    tbe_compiler_set_string(field, "typed_is_var_data", "1");
+    tbe_compiler_set_string(field, "typed_declaration", declaration);
+    return;
+  }
+  kind = tbe_compiler_typed_named_kind(root, type, c_type, sizeof(c_type), descriptor,
+                                       sizeof(descriptor));
+  if (!kind) {
+    snprintf(declaration, sizeof(declaration), "%s_t %s;", type ? type : "unknown", name);
+    tbe_compiler_set_string(field, "typed_declaration", declaration);
+    return;
+  }
+  snprintf(declaration, sizeof(declaration), "%s %s;", c_type, name);
+  tbe_compiler_set_string(field, "typed_kind", kind);
+  tbe_compiler_set_string(field, "typed_wire_kind",
+                          tbe_compiler_typed_wire_kind(root, type, kind));
+  if (descriptor[0]) tbe_compiler_set_string(field, "typed_object_descriptor", descriptor);
+  tbe_compiler_set_string(field, "typed_declaration", declaration);
+}
+
+static void tbe_compiler_annotate_field_types(Node *root, Node *field) {
   char type_buf[256];
   char field_name[128];
   const char *name = tbe_compiler_string_value(field, "name");
@@ -276,6 +510,7 @@ static void tbe_compiler_annotate_field_types(Node *field) {
                           "Vec<", ">", "std::collections::HashSet<", ">",
                           "std::collections::HashMap<", ", ", ">", type_buf, sizeof(type_buf));
   tbe_compiler_set_string(field, "rust_type", type_buf);
+  tbe_compiler_annotate_typed_field(root, field);
 }
 
 static void tbe_compiler_annotate_record_list_types(Node *root, const char *list_name) {
@@ -288,7 +523,7 @@ static void tbe_compiler_annotate_record_list_types(Node *root, const char *list
     if (!fields || fields->type != NODE_LIST) continue;
 
     for (size_t j = 0; j < fields->data.list.count; ++j) {
-      tbe_compiler_annotate_field_types(fields->data.list.items[j]);
+      tbe_compiler_annotate_field_types(root, fields->data.list.items[j]);
     }
   }
 }
@@ -310,11 +545,22 @@ static void tbe_compiler_annotate_enum_types(Node *root) {
 
 static void tbe_compiler_annotate_schema_types(Node *root) {
   Node *schema = tbe_compiler_find_child(root, "schema");
-  const char *schema_name = schema ? tbe_compiler_string_value(schema, "schema_name") : NULL;
+  const char *schema_name;
   char package_name[128];
   size_t out = 0;
 
-  if (!schema) return;
+  if (!schema) {
+    schema = create_node_map("schema");
+    if (!schema || map_add(root, schema) != 0) {
+      node_free(schema);
+      return;
+    }
+    tbe_compiler_set_string(schema, "schema_name", "GeneratedSchema");
+    tbe_compiler_set_string(schema, "schema_attributes_rendered", "");
+    tbe_compiler_set_string(schema, "schema_wire_big_endian_value", "0");
+  }
+
+  schema_name = tbe_compiler_string_value(schema, "schema_name");
 
   if (!schema_name || !schema_name[0]) {
     tbe_compiler_set_string(schema, "go_package_name", "generated");
@@ -340,13 +586,106 @@ static void tbe_compiler_annotate_schema_types(Node *root) {
   tbe_compiler_set_string(schema, "go_package_name", package_name);
 }
 
-static void tbe_compiler_annotate_language_types(Node *root) {
+void tbe_compiler_annotate_language_types(Node *root) {
   tbe_compiler_annotate_schema_types(root);
   tbe_compiler_annotate_enum_types(root);
   tbe_compiler_annotate_record_list_types(root, "composites");
   tbe_compiler_annotate_record_list_types(root, "groups");
   tbe_compiler_annotate_record_list_types(root, "messages");
   tbe_compiler_annotate_record_list_types(root, "unions");
+}
+
+static const char *tbe_compiler_path_basename(const char *path) {
+  const char *base = path;
+  const char *p;
+  if (!path) return "generated.h";
+  for (p = path; *p; ++p)
+    if (*p == '/' || *p == '\\') base = p + 1;
+  return base;
+}
+
+static char *tbe_compiler_escape_c_string(const char *text) {
+  size_t len = text ? strlen(text) : 0;
+  size_t capacity = len > (SIZE_MAX - 1) / 2 ? 0 : len * 2 + 1;
+  char *out;
+  size_t i;
+  size_t used = 0;
+  if (capacity == 0) return NULL;
+  out = (char *)malloc(capacity);
+  if (!out) return NULL;
+  for (i = 0; i < len; ++i) {
+    const char *escape = NULL;
+    char ch = text[i];
+    if (ch == '\\') escape = "\\\\";
+    else if (ch == '"') escape = "\\\"";
+    else if (ch == '\n') escape = "\\n";
+    else if (ch == '\r') escape = "\\r";
+    else if (ch == '\t') escape = "\\t";
+    if (escape) {
+      size_t n = strlen(escape);
+      if (used + n + 1 > capacity) {
+        size_t next = capacity * 2;
+        char *grown;
+        if (next < used + n + 1) next = used + n + 1;
+        grown = (char *)realloc(out, next);
+        if (!grown) {
+          free(out);
+          return NULL;
+        }
+        out = grown;
+        capacity = next;
+      }
+      memcpy(out + used, escape, n);
+      used += n;
+    } else {
+      if (used + 2 > capacity) {
+        size_t next = capacity * 2;
+        char *grown = (char *)realloc(out, next);
+        if (!grown) {
+          free(out);
+          return NULL;
+        }
+        out = grown;
+        capacity = next;
+      }
+      out[used++] = ch;
+    }
+  }
+  out[used] = '\0';
+  return out;
+}
+
+static int tbe_compiler_typed_list_supported(Node *root, const char *list_name) {
+  Node *list = tbe_compiler_find_child(root, list_name);
+  size_t i;
+  if (!list || list->type != NODE_LIST) return 1;
+  for (i = 0; i < list->data.list.count; ++i) {
+    Node *fields = tbe_compiler_find_child(list->data.list.items[i], "fields");
+    size_t j;
+    if (!fields || fields->type != NODE_LIST) continue;
+    for (j = 0; j < fields->data.list.count; ++j) {
+      Node *field = fields->data.list.items[j];
+      if (!tbe_compiler_string_value(field, "typed_kind")) {
+        fprintf(stderr, "Typed C serde does not support field %s.%s of type %s\n",
+                tbe_compiler_string_value(field, "owner_name"),
+                tbe_compiler_string_value(field, "name"),
+                tbe_compiler_string_value(field, "type"));
+        return 0;
+      }
+    }
+  }
+  return 1;
+}
+
+static int tbe_compiler_typed_schema_supported(Node *root) {
+  Node *unions = tbe_compiler_find_child(root, "unions");
+  if (unions && unions->type == NODE_LIST && unions->data.list.count != 0) {
+    fprintf(stderr, "Typed C serde does not yet support union declarations\n");
+    return 0;
+  }
+  return tbe_compiler_typed_list_supported(root, "composites") &&
+         tbe_compiler_typed_list_supported(root, "groups") &&
+         tbe_compiler_typed_list_supported(root, "messages");
 }
 
 char *tbe_compiler_read_file(const char *filename) {
@@ -524,6 +863,80 @@ int tbe_compiler_run(const tbe_compiler_options_t *options) {
                                               &schema_data);
   if (status != 0) return status;
 
+  if (tbe_compiler_set_string(root, "generated_header",
+                              tbe_compiler_path_basename(options->output_path)) != 0) {
+    status = 1;
+    goto cleanup;
+  }
+  {
+    char *schema_literal = tbe_compiler_escape_c_string(schema_data);
+    if (!schema_literal || tbe_compiler_set_string(root, "schema_c_literal", schema_literal) != 0) {
+      free(schema_literal);
+      status = 1;
+      goto cleanup;
+    }
+    free(schema_literal);
+  }
+
+  if (options->source_output_path) {
+    if (options->output_path == NULL || options->output_path[0] == '\0') {
+      fprintf(stderr, "--source-output requires --output for the generated header\n");
+      status = 1;
+      goto cleanup;
+    }
+    if (strcmp(options->output_path, options->source_output_path) == 0) {
+      fprintf(stderr, "--output and --source-output must name different files\n");
+      status = 1;
+      goto cleanup;
+    }
+    if (options->lang_enum != TBE_COMPILER_LANG_C || options->template_path != NULL) {
+      fprintf(stderr, "--source-output is supported only for the built-in C generator\n");
+      status = 1;
+      goto cleanup;
+    }
+    if (!tbe_compiler_typed_schema_supported(root)) {
+      status = 1;
+      goto cleanup;
+    }
+    if (tbe_compiler_set_string(root, "typed_source_enabled", "1") != 0) {
+      status = 1;
+      goto cleanup;
+    }
+  }
+
+  if (options->guest_output_path) {
+    if (options->output_path == NULL || options->output_path[0] == '\0') {
+      fprintf(stderr, "--guest-output requires --output for the generated header\n");
+      status = 1;
+      goto cleanup;
+    }
+    if (strcmp(options->output_path, options->guest_output_path) == 0) {
+      fprintf(stderr, "--output and --guest-output must name different files\n");
+      status = 1;
+      goto cleanup;
+    }
+    if (options->source_output_path != NULL &&
+        strcmp(options->source_output_path, options->guest_output_path) == 0) {
+      fprintf(stderr, "--source-output and --guest-output must name different files\n");
+      status = 1;
+      goto cleanup;
+    }
+    if (options->lang_enum != TBE_COMPILER_LANG_C || options->template_path != NULL) {
+      fprintf(stderr, "--guest-output is supported only for the built-in C generator\n");
+      status = 1;
+      goto cleanup;
+    }
+    if (tbe_compiler_set_string(root, "guest_adapter_enabled", "1") != 0) {
+      status = 1;
+      goto cleanup;
+    }
+    if (options->source_output_path == NULL &&
+        tbe_compiler_set_string(root, "guest_adapter_only", "1") != 0) {
+      status = 1;
+      goto cleanup;
+    }
+  }
+
   if (options->template_path == NULL &&
       (options->lang_enum == TBE_COMPILER_LANG_MIR ||
        options->lang_enum == TBE_COMPILER_LANG_BMIR)) {
@@ -537,6 +950,16 @@ int tbe_compiler_run(const tbe_compiler_options_t *options) {
         options->output_path);
   }
 
+  if (status == 0 && options->source_output_path) {
+    status = tbe_compiler_render_file(root, "templates/c_typed_source.mustache",
+                                      options->source_output_path);
+  }
+
+  if (status == 0 && options->guest_output_path) {
+    status = tbe_compiler_render_file(root, "templates/c_guest_adapter.mustache",
+                                      options->guest_output_path);
+  }
+
   if (status == 0 && options->dsl_output_path) {
     if (tbe_compiler_render_file(root, "templates/rfl_types.mustache",
                                  options->dsl_output_path)
@@ -545,6 +968,7 @@ int tbe_compiler_run(const tbe_compiler_options_t *options) {
     }
   }
 
+cleanup:
   free(schema_data);
   node_free(root);
   return status;

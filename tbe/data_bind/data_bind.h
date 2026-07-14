@@ -17,10 +17,11 @@
 #define DATA_BIND_H
 
 #include "turbo_parser.h"
+#include "turbo_uuid.h"
 #include <stddef.h>
 #include <stdint.h>
 
-#define DATA_BIND_UUID_SIZE 16
+#define DATA_BIND_UUID_SIZE TURBO_UUID_SIZE
 
 #define DATA_BIND_VERSION_MAJOR 1
 #define DATA_BIND_VERSION_MINOR 10
@@ -293,7 +294,10 @@ DATA_BIND_API void data_bind_clear_cache(void);
  * allocation overhead. The pool maintains up to 64 free nodes. Disabling the pool
  * causes all allocations to use malloc/free directly.
  *
- * This setting is process-global. For best performance, leave pooling enabled.
+ * This setting is process-global and synchronized across threads. The allocation and
+ * release hot paths use bounded atomic slot operations without a mutex. Disabling closes
+ * the slots atomically, then releases all cached nodes. A concurrent bitmap collision
+ * suspends reuse without waiting; calling this function with non-zero resumes it.
  */
 DATA_BIND_API void data_bind_set_value_pool_enabled(int enabled);
 
@@ -606,6 +610,17 @@ DATA_BIND_API DataBindStatus data_bind_value_clone(const DataBindValue *value,
                                                    DataBindValue **out_value);
 
 /**
+ * @brief Parse and own one schema-bound binary object.
+ *
+ * The returned handle owns its type name and value tree and remains valid after
+ * the codec is freed. Release it with data_bind_object_free().
+ */
+DATA_BIND_API DataBindStatus data_bind_object_from_bin(DataBind *codec, const char *type_name,
+                                                       const uint8_t *data, size_t len,
+                                                       DataBindObject **out_object,
+                                                       DataBindError *error);
+
+/**
  * @brief Parse and own one schema-bound JSON object.
  *
  * The returned handle owns its type name and value tree and remains valid after
@@ -628,11 +643,47 @@ DATA_BIND_API DataBindStatus data_bind_object_from_xml(DataBind *codec, const ch
                                                        DataBindObject **out_object,
                                                        DataBindError *error);
 
+/** Parse and own one schema-bound CSV row. */
+DATA_BIND_API DataBindStatus data_bind_object_from_csv(DataBind *codec, const char *type_name,
+                                                       const char *csv, size_t len, size_t row,
+                                                       DataBindObject **out_object,
+                                                       DataBindError *error);
+
+/** Deep clone the type name and value tree into an independently owned object. */
+DATA_BIND_API DataBindStatus data_bind_object_clone(const DataBindObject *object,
+                                                     DataBindObject **out_object);
+
 /** Return the copied schema type name owned by the handle. */
 DATA_BIND_API const char *data_bind_object_type_name(const DataBindObject *object);
 
 /** Return the borrowed value tree. It remains valid until data_bind_object_free(). */
 DATA_BIND_API const DataBindValue *data_bind_object_value(const DataBindObject *object);
+
+/**
+ * @brief Serialize an owned object to its schema binary wire representation.
+ *
+ * The codec supplies the schema intentionally not retained by DataBindObject.
+ * Its schema must contain a message with the object's type name. The returned
+ * buffer is owned by the caller and must be released with
+ * data_bind_binary_free(). The dynamic binary codec accepts the same
+ * little-endian field layouts as data_bind_parse(); schemas with optional
+ * presence bitmaps, unions, or text-only extended scalars fail with
+ * DATA_BIND_ERR_SCHEMA instead of emitting a partial representation.
+ */
+DATA_BIND_API DataBindStatus data_bind_object_serialize_bin(DataBind *codec,
+                                                            const DataBindObject *object,
+                                                            uint8_t **out_bin, size_t *out_len,
+                                                            DataBindError *error);
+
+/**
+ * @brief Serialize an owned object into a caller-provided binary buffer.
+ *
+ * On success, @p out_len receives the bytes written. If @p capacity is too
+ * small, no bytes are written and @p out_len receives the required size.
+ */
+DATA_BIND_API DataBindStatus data_bind_object_serialize_bin_into(
+    DataBind *codec, const DataBindObject *object, uint8_t *output, size_t capacity,
+    size_t *out_len, DataBindError *error);
 
 /**
  * @brief Serialize the owned value tree as compact UTF-8 JSON.
@@ -673,6 +724,7 @@ DATA_BIND_API DataBindStatus data_bind_object_write_xml(const DataBindObject *ob
                                                         DataBindError *error);
 
 DATA_BIND_API void data_bind_serialized_free(char *data);
+DATA_BIND_API void data_bind_binary_free(void *data);
 DATA_BIND_API void data_bind_object_free(DataBindObject *object);
 
 DATA_BIND_API DataBindValueKind data_bind_value_kind(const DataBindValue *value);

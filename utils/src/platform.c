@@ -6,6 +6,7 @@
 #include "memory_pool.h"
 #include "sds.h"
 #include "tlog.h"
+#include "turbo_error.h"
 #include "turbo_thread.h"
 #include <errno.h>
 #include <stdio.h>
@@ -15,7 +16,9 @@
 
 #ifdef _WIN32
   #include <windows.h>
+  #include <bcrypt.h>
   #include <iphlpapi.h>
+  #include <limits.h>
   #include <winternl.h>
 #else
   #include <ifaddrs.h>
@@ -25,7 +28,15 @@
   #include <sys/utsname.h>
   #include <time.h>
   #include <unistd.h>
+  #if defined(__linux__)
+    #include <sys/random.h>
+  #elif !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__OpenBSD__) && \
+      !defined(__NetBSD__) && !defined(__DragonFly__)
+    #include <fcntl.h>
+  #endif
 #endif
+
+#define TURBO_SECURE_RANDOM_CHUNK_SIZE 256U
 
 static int turbo_platform_copy_string(char *buffer, size_t buffer_size, const char *value) {
   size_t len;
@@ -194,6 +205,70 @@ uint64_t turbo_uptime_ms(void) {
     start_time = st;
   }
   return turbo_ns_to_ms(turbo_hrtime() - st);
+}
+
+int turbo_secure_random(void *buffer, size_t length) {
+  uint8_t *cursor = (uint8_t *)buffer;
+
+  if (length == 0U) return TURBO_OK;
+  if (!buffer) return TURBO_EINVAL;
+
+#ifdef _WIN32
+  while (length > 0U) {
+    ULONG chunk = length > (size_t)ULONG_MAX ? ULONG_MAX : (ULONG)length;
+    NTSTATUS status = BCryptGenRandom(NULL, cursor, chunk, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    if (!BCRYPT_SUCCESS(status)) return TURBO_EIO;
+    cursor += chunk;
+    length -= chunk;
+  }
+#elif defined(__linux__)
+  while (length > 0U) {
+    size_t chunk =
+        length > TURBO_SECURE_RANDOM_CHUNK_SIZE ? TURBO_SECURE_RANDOM_CHUNK_SIZE : length;
+    ssize_t received = getrandom(cursor, chunk, 0);
+    if (received < 0) {
+      if (errno == EINTR) continue;
+      return -errno;
+    }
+    if (received == 0) return TURBO_EIO;
+    cursor += (size_t)received;
+    length -= (size_t)received;
+  }
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
+    defined(__DragonFly__)
+  arc4random_buf(cursor, length);
+#else
+  {
+    int flags = O_RDONLY;
+    int fd;
+  #ifdef O_CLOEXEC
+    flags |= O_CLOEXEC;
+  #endif
+    fd = open("/dev/urandom", flags);
+    if (fd < 0) return -errno;
+
+    while (length > 0U) {
+      size_t chunk =
+          length > TURBO_SECURE_RANDOM_CHUNK_SIZE ? TURBO_SECURE_RANDOM_CHUNK_SIZE : length;
+      ssize_t received = read(fd, cursor, chunk);
+      if (received < 0) {
+        int error = errno;
+        if (error == EINTR) continue;
+        close(fd);
+        return -error;
+      }
+      if (received == 0) {
+        close(fd);
+        return TURBO_EIO;
+      }
+      cursor += (size_t)received;
+      length -= (size_t)received;
+    }
+    close(fd);
+  }
+#endif
+
+  return TURBO_OK;
 }
 
 static int turbo_is_leap_year(int year) {

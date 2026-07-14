@@ -36,6 +36,21 @@ tbe_compiler <schema_file> [options]
   - Overrides `--lang` option
   - Example: `--template my_template.mustache`
 
+- `--source-output <file>` or `-s <file>`
+  - With the built-in C generator, emits the typed serialization companion `.c` file
+  - Requires `--output`; custom templates and non-C languages are rejected
+  - The generated header exposes strong record types plus binary/JSON/YAML/CSV/XML APIs
+  - Example: `--output order.h --source-output order.c`
+
+- `--guest-output <file>` or `-g <file>`
+  - With the built-in C generator, emits a Wasm-friendly guest adapter `.c` file
+  - Requires `--output`; custom templates and non-C languages are rejected
+  - The adapter converts JSON/YAML/CSV/XML byte slices to generated wire views, and back,
+    through a caller-provided `tbe_guest_bridge_t`
+  - The adapter performs no parsing and owns no buffers; the runtime bridge controls
+    schema registration, sandbox policy, quotas, and provider errors
+  - Example: `--output order.h --guest-output order_guest.c`
+
 ### DSL Integration (RulesForge)
 
 - `--dsl-output <file>` or `-d <file>`
@@ -55,6 +70,85 @@ tbe_compiler order.schema --output order.h
 
 ```bash
 tbe_compiler order.schema --dsl-output order.rfl
+```
+
+### Example 2a: Generate Strong Typed C Bindings
+
+```bash
+tbe_compiler order.schema --lang c --output order.h --source-output order.c
+```
+
+The generated API includes `Order_t`, `Order_init`/`Order_clear`, schema codec creation,
+and `Order_from_*`/`Order_to_*` functions for `bin`, `json`, `yaml`, `csv`, and `xml`.
+`Orders_schema_codec()` exposes a schema-specific dispatch table for trusted host providers.
+Its `text_to_binary_into` operation binds JSON/YAML/CSV/XML directly into caller-owned,
+capacity-bounded wire storage, so a runtime can enforce its output quota before conversion.
+The reverse `binary_to_text` operation returns an allocated host buffer and is intended for
+trusted host code unless the runtime also enforces the serializer's temporary-allocation budget.
+Schema `uuid` fields are generated as `turbo_uuid_t`; text formats use canonical UUID strings
+and binary serialization preserves the fixed 16-byte wire value.
+Compile `order.c` in the consumer target and link `TurboUtils::DataBind`:
+
+```cmake
+add_executable(order_app main.c order.c)
+target_link_libraries(order_app PRIVATE TurboUtils::DataBind)
+```
+
+### Example 2b: Generate a Wasm Guest Adapter
+
+```bash
+tbe_compiler order.schema --lang c --output order.h --guest-output order_guest.c
+```
+
+Compile `order_guest.c` together with the guest application. The guest supplies a
+`tbe_guest_bridge_t` whose callbacks forward to the runtime's versioned DataBind
+capability. For example, `Order_guest_from_json` writes wire bytes into a caller-owned
+buffer and binds an `Order_view_t`; `Order_guest_to_json` serializes an existing view
+into a caller-owned text buffer. Callback failures are propagated unchanged, while
+invalid pointers, `size_t` values outside the Wasm `uint32_t` ABI, invalid bridge
+output lengths, and unbindable wire data return `tbe_guest_status_t` errors.
+
+CSV input accepts a zero-based logical record index. The runtime remains responsible
+for applying its input, output, object, and execution quotas before invoking the
+trusted host codec.
+
+For a freestanding wasm32 build, define `TBE_WASM_GUEST=1`. This removes the generated
+wire header's dependency on host libc and the TurboUtils UUID runtime while preserving
+the same fixed 16-byte `turbo_uuid_t` value layout:
+
+```bash
+clang --target=wasm32-unknown-unknown -DTBE_WASM_GUEST=1 -O2 -nostdlib \
+  -Igenerated -Ipath/to/tbe/schema/include -c order_guest.c
+```
+
+Initialize an object before its first use, clear it when finished, and release serialized
+buffers with `tbe_typed_serialized_free`:
+
+```c
+#include "order.h"
+
+#include <string.h>
+
+int main(void) {
+const char *input = "{\"id\":42}";
+DataBind *codec = NULL;
+DataBindError error = DATA_BIND_ERROR_INIT;
+Order_t order;
+char *json = NULL;
+size_t json_len = 0;
+int result = 1;
+
+Order_init(&order);
+if (Orders_codec_create(&codec, &error) == DATA_BIND_OK &&
+    Order_from_json(codec, &order, input, strlen(input), &error) == DATA_BIND_OK &&
+    Order_to_json(&order, &json, &json_len, &error) == DATA_BIND_OK) {
+    result = 0;
+}
+tbe_typed_serialized_free(json);
+Order_clear(&order);
+data_bind_free(codec);
+return result;
+}
 ```
 
 Output `order.rfl`:
@@ -128,5 +222,12 @@ tbe_compiler order.schema --lang bmir --output order.bmir
 - `--dsl-output` uses `templates/rfl_types.mustache` by default.
 - DSL output is intended for use in RulesForge to define the structure of data being processed.
 - C output is the complete wire-access target with generated view/builder APIs.
+- `--source-output` adds owning strong types and schema-driven text/binary serialization on top
+  of the existing zero-copy view/builder API. Union declarations are currently rejected for
+  this companion source. Generated `*_to_bin_into` and schema-codec `text_to_binary_into`
+  functions never allocate their output buffer; insufficient capacity is reported with the
+  required size in `out_len`.
+- `--guest-output` adds allocation-free adapters over the zero-copy wire views. It does not
+  embed JSON/YAML/CSV/XML parsers into Wasm and does not require `--source-output`.
 - C++, Go, Rust, Python, and TypeScript outputs currently generate schema type definitions, not complete wire codecs.
 - MIR outputs are loadable modules, not standalone executables. The host must bind runtime callbacks such as `create_obj`, `set_int`, `set_dbl`, `set_str`, and `read_varstr`, then link or JIT the module before calling generated functions such as `parse_Order`.

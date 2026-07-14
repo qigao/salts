@@ -25,7 +25,6 @@ static const unsigned char *turbo_deque_slot_const(const turbo_deque_t *deque,
 static int turbo_deque_grow_to(turbo_deque_t *deque, size_t min_capacity) {
   size_t new_capacity;
   unsigned char *new_data;
-  size_t i;
 
   if (!turbo_deque_valid(deque)) return TURBO_EINVAL;
   if (min_capacity <= deque->capacity) return TURBO_OK;
@@ -44,10 +43,17 @@ static int turbo_deque_grow_to(turbo_deque_t *deque, size_t min_capacity) {
   new_data = (unsigned char *)malloc(new_capacity * deque->elem_size);
   if (!new_data) return TURBO_ENOMEM;
 
-  for (i = 0; i < deque->size; ++i) {
-    size_t old_index = turbo_deque_physical_index(deque, i);
-    memcpy(new_data + i * deque->elem_size, turbo_deque_slot_const(deque, old_index),
-           deque->elem_size);
+  if (deque->size > 0) {
+    size_t first_count = deque->capacity - deque->head;
+    size_t second_count;
+    if (first_count > deque->size) first_count = deque->size;
+    second_count = deque->size - first_count;
+    memcpy(new_data, turbo_deque_slot_const(deque, deque->head),
+           first_count * deque->elem_size);
+    if (second_count > 0) {
+      memcpy(new_data + first_count * deque->elem_size, deque->data,
+             second_count * deque->elem_size);
+    }
   }
 
   free(deque->data);

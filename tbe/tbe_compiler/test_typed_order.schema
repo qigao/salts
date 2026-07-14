@@ -1,0 +1,25 @@
+schema Orders [id(42), version(1), byte_order(little)];
+
+enum Side <uint8> {
+    Buy = 1;
+    Sell = 2;
+}
+
+composite Header {
+    uint32 seq;
+}
+
+group Fill {
+    int32 price;
+    uint32 qty;
+}
+
+message Order {
+    Header header;
+    uint32 id;
+    uuid request_id;
+    Side side;
+    group<Fill> fills;
+    string symbol;
+    bytes payload;
+}

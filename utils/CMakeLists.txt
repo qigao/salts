@@ -47,7 +47,7 @@ target_link_libraries(
 )
 
 if(WIN32)
-  target_link_libraries(${TARGET_NAME} PRIVATE iphlpapi ws2_32)
+  target_link_libraries(${TARGET_NAME} PRIVATE bcrypt iphlpapi ws2_32)
 endif()
 
 install(

@@ -95,6 +95,10 @@ data_bind_free(codec);
 - `DataBind*` is owned by the caller and released with `data_bind_free`.
 - `DataBindValue*` results are owned by the caller and released with
   `data_bind_value_free`.
+- `DataBindObject*` results own their type name and value tree and are released
+  with `data_bind_object_free`. They do not retain a schema codec.
+- Binary buffers returned by `data_bind_object_serialize_bin` are released with
+  `data_bind_binary_free`.
 - `data_bind_value_clone` creates an independent deep copy of the complete value
   tree. On success the caller owns the copy; source ownership is unchanged. On
   failure the output is `NULL`. Use this API when retry, fan-out, queue, or
@@ -235,6 +239,39 @@ bound values and may skip invalid array items or CSV rows. Use
 `data_bind_validate_xml_path` when the caller needs strict all-or-nothing input
 validation.
 
+## Binary Output
+
+`DataBindObject` can be encoded back to the dynamic TBE wire format by supplying
+the codec that owns the matching schema:
+
+```c
+DataBindObject *order = NULL;
+uint8_t *wire = NULL;
+size_t wire_len = 0;
+
+if (data_bind_object_from_json(codec, "Order", json, strlen(json),
+                               &order, &err) == DATA_BIND_OK &&
+    data_bind_object_serialize_bin(codec, order, &wire, &wire_len,
+                                   &err) == DATA_BIND_OK) {
+  send_payload(wire, wire_len);
+}
+
+data_bind_binary_free(wire);
+data_bind_object_free(order);
+```
+
+Use `data_bind_object_serialize_bin_into` when the transport owns the output
+buffer. It validates and measures the complete object before writing. If the
+buffer is short, it returns `DATA_BIND_ERR_INVALID_ARG`, leaves the buffer
+unchanged, and reports the required size through `out_len`.
+
+The dynamic binary writer matches the current `data_bind_parse` layout: scalar
+fields, enums, booleans, UUID, fixed/variable bytes, strings, fixed/variable
+lists, sets, string-key maps, fixed composites, and repeating groups in
+little-endian schemas. Optional presence bitmaps, unions, big-endian schemas,
+and text-only extended scalars do not have a compatible dynamic binary parser
+path and fail with `DATA_BIND_ERR_SCHEMA`.
+
 ## Record Streaming
 
 Record callbacks add low-latency consumption without replacing the final-value
@@ -306,10 +343,11 @@ Schema `bool` values bind to `DATA_BIND_VALUE_BOOL`. Numeric convenience
 accessors still read them as `0` or `1`, but strict type checks should use
 `data_bind_value_get_bool`.
 
-Schema `uuid` values bind to `DATA_BIND_VALUE_UUID`. Binary parsing reads the
-fixed 16-byte field payload. JSON, CSV, and XML binding accept canonical UUID
-text such as `01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001`; use
-`data_bind_value_get_uuid` or `data_bind_value_as_uuid_string` to read it.
+Schema `uuid` values bind to `DATA_BIND_VALUE_UUID` and are stored internally as
+`turbo_uuid_t`. Binary parsing reads the fixed 16-byte field payload. JSON,
+YAML, CSV, and XML binding accept canonical UUID text such as
+`01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001`; use `data_bind_value_get_uuid` with a
+`turbo_uuid_t.bytes` destination or `data_bind_value_as_uuid_string` to read it.
 
 Schema `bytes` values bind to `DATA_BIND_VALUE_BYTES`. Binary parsing reads
 fixed or variable bytes payloads, while JSON/XML text binding reads string
@@ -480,8 +518,8 @@ beneficial for deeply nested JSON/CSV/XML documents.
 - **Automatic**: Pooling is enabled by default.
 - **Size limit**: Pool maintains up to 64 free nodes. Additional freed nodes are
   returned to the system allocator.
-- **Thread-local**: Pool state is process-global but optimized for single-threaded
-  access patterns.
+- **Thread-safe**: Pool state is process-global. Allocation and release use bounded
+  atomic slot operations without a hot-path mutex.
 - **Zero-copy reuse**: Pooled nodes are cleared and reused, avoiding repeated
   malloc/free calls.
 
@@ -503,13 +541,14 @@ printf("Pool efficiency: %zu reused / %zu allocated = %.1f%%\n",
 
 ### Performance Impact
 
-Pooling reduces allocation overhead by 30-50% for typical JSON parsing workloads.
-The benefit increases with document complexity and parsing frequency. For example:
-
-- Parsing 1000 small JSON documents (5-10 fields): ~15% faster with pooling
-- Parsing 1000 nested JSON documents (50+ nodes): ~40% faster with pooling
-
-Leave pooling enabled unless profiling shows contention in multi-threaded scenarios.
+Pooling avoids repeated node allocation while the fixed process-global pool holds at
+most 64 free nodes. A node is acquired with atomic exchange and returned with atomic
+compare-exchange; each operation examines at most 64 slots. Disabling atomically closes
+the slots at the control boundary, then releases cached nodes. A concurrent bitmap CAS
+collision suspends reuse without waiting; calling `data_bind_set_value_pool_enabled(1)`
+resumes it.
+Use `benchmark_data_bind_pool` for local single-thread and 1/2/4/8-thread measurements
+instead of assuming a fixed percentage improvement across workloads.
 
 ## Using DataBind with TurboUtils Classes
 

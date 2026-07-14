@@ -49,20 +49,21 @@ static int turbo_heap_grow_to(turbo_heap_t *heap, size_t min_capacity) {
 
 static int turbo_heap_swap(turbo_heap_t *heap, size_t a, size_t b) {
   unsigned char stack_tmp[256];
-  unsigned char *tmp = stack_tmp;
-  int heap_allocated = 0;
+  unsigned char *left;
+  unsigned char *right;
+  size_t offset = 0;
 
   if (a == b) return TURBO_OK;
-  if (heap->elem_size > sizeof(stack_tmp)) {
-    tmp = (unsigned char *)malloc(heap->elem_size);
-    if (!tmp) return TURBO_ENOMEM;
-    heap_allocated = 1;
+  left = turbo_heap_elem(heap, a);
+  right = turbo_heap_elem(heap, b);
+  while (offset < heap->elem_size) {
+    size_t remaining = heap->elem_size - offset;
+    size_t chunk_size = remaining < sizeof(stack_tmp) ? remaining : sizeof(stack_tmp);
+    memcpy(stack_tmp, left + offset, chunk_size);
+    memcpy(left + offset, right + offset, chunk_size);
+    memcpy(right + offset, stack_tmp, chunk_size);
+    offset += chunk_size;
   }
-
-  memcpy(tmp, turbo_heap_elem(heap, a), heap->elem_size);
-  memcpy(turbo_heap_elem(heap, a), turbo_heap_elem(heap, b), heap->elem_size);
-  memcpy(turbo_heap_elem(heap, b), tmp, heap->elem_size);
-  if (heap_allocated) free(tmp);
   return TURBO_OK;
 }
 

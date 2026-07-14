@@ -4,9 +4,9 @@
  */
 
 #include "data_bind.h"
-#include "uuid.h"
 #include "tbe_wire.h"
 #include "tinytest.h"
+#include "turbo_uuid.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -808,12 +808,12 @@ suite("Data Bind") {
 
     given("a schema with a uuid field") {
       const char *id_text = "01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001";
-      uuid_t expected;
+      turbo_uuid_t expected;
       write_schema("test_uuid.tbe", "message Event { uuid id; }\n");
 
       DataBind *codec = data_bind_create("test_uuid.tbe");
       check_not_null(codec);
-      check(uuid_from_s(id_text, &expected));
+      check_int_eq(turbo_uuid_parse(id_text, &expected), TURBO_OK);
 
       if (codec) {
         when("parsing binary data") {
@@ -821,8 +821,8 @@ suite("Data Bind") {
 
           then("uuid should bind from its fixed 16 byte payload") {
             const DataBindValue *id;
-            uuid_t actual;
-            char text[UUID4_STR_BUFFER_SIZE];
+            turbo_uuid_t actual;
+            char text[TURBO_UUID_STRING_SIZE];
             check_not_null(v);
             id = require_field(v, "id");
             check(data_bind_value_kind(id) == DATA_BIND_VALUE_UUID);
@@ -834,19 +834,30 @@ suite("Data Bind") {
           data_bind_value_free(v);
         }
 
-        when("binding JSON CSV and XML text") {
+        when("binding JSON YAML CSV and XML text") {
           const char *json = "{\"id\":\"01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001\"}";
+          const char *yaml = "id: 01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001\n";
           const char *csv = "id\n01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001\n";
           const char *xml = "<event><id>01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001</id></event>";
           DataBindValue *from_json = data_bind_parse_json(codec, "Event", json, strlen(json));
+          DataBindValue *from_yaml = NULL;
+          DataBindStatus yaml_status =
+              data_bind_parse_yaml(codec, "Event", yaml, strlen(yaml), &from_yaml, NULL);
           DataBindValue *from_csv = data_bind_parse_csv(codec, "Event", csv, strlen(csv), 0);
           DataBindValue *from_xml = data_bind_parse_xml(codec, "Event", xml, strlen(xml));
 
           then("all text formats should produce native uuid values") {
             const DataBindValue *id;
-            uuid_t actual;
+            turbo_uuid_t actual;
             check_not_null(from_json);
             id = require_field(from_json, "id");
+            check(data_bind_value_kind(id) == DATA_BIND_VALUE_UUID);
+            check(data_bind_value_as_uuid(id, actual.bytes));
+            check_mem_eq(actual.bytes, expected.bytes, sizeof(expected.bytes));
+
+            check_int_eq(yaml_status, DATA_BIND_OK);
+            check_not_null(from_yaml);
+            id = require_field(from_yaml, "id");
             check(data_bind_value_kind(id) == DATA_BIND_VALUE_UUID);
             check(data_bind_value_as_uuid(id, actual.bytes));
             check_mem_eq(actual.bytes, expected.bytes, sizeof(expected.bytes));
@@ -865,6 +876,7 @@ suite("Data Bind") {
           }
 
           data_bind_value_free(from_json);
+          data_bind_value_free(from_yaml);
           data_bind_value_free(from_csv);
           data_bind_value_free(from_xml);
         }

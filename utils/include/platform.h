@@ -198,6 +198,18 @@ CXX_C_API int turbo_strftime_local(time_t t, const char *format, char *buffer,
                                    size_t buffer_size);
 
 /**
+ * @brief Fill a buffer with bytes from the operating system CSPRNG.
+ *
+ * A zero-length request succeeds even when buffer is NULL. Non-empty requests
+ * require a valid buffer. This function never substitutes a process-local PRNG.
+ *
+ * @param buffer Destination buffer
+ * @param length Number of random bytes requested
+ * @return 0 on success, negative error code on failure
+ */
+CXX_C_API int turbo_secure_random(void *buffer, size_t length);
+
+/**
  * @brief Maximum platform info string length including trailing NUL
  */
 #define TURBO_PLATFORM_INFO_MAX 128

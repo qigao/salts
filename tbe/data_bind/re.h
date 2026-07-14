@@ -1,67 +1,99 @@
 /*
+ * Bounded byte-oriented regular expressions for native and Wasm guests.
  *
- * Mini regex-module inspired by Rob Pike's regex code described in:
- *
- * http://www.cs.princeton.edu/courses/archive/spr09/cos333/beautiful.html
- *
- *
- *
- * Supports:
- * ---------
- *   '.'        Dot, matches any character
- *   '^'        Start anchor, matches beginning of string
- *   '$'        End anchor, matches end of string
- *   '*'        Asterisk, match zero or more (greedy)
- *   '+'        Plus, match one or more (greedy)
- *   '?'        Question, match zero or one (non-greedy)
- *   '[abc]'    Character class, match if one of {'a', 'b', 'c'}
- *   '[^abc]'   Inverted class, match if NOT one of {'a', 'b', 'c'}
- *   '[a-zA-Z]' Character ranges, the character set of the ranges { a-z | A-Z }
- *   'a|b'      Branch, matches either expression
- *   '(a|b)+'   Group, matches grouped expression and allows quantifiers
- *   '\s'       Whitespace, \t \f \r \n \v and spaces
- *   '\S'       Non-whitespace
- *   '\w'       Alphanumeric, [a-zA-Z0-9_]
- *   '\W'       Non-alphanumeric
- *   '\d'       Digits, [0-9]
- *   '\D'       Non-digits
- *
- *
+ * Supported syntax: . ^ $ * + ? character classes, inverted classes,
+ * ranges, branches, groups, and \s/\S/\w/\W/\d/\D escapes.
  */
 
-#ifndef _TINY_REGEX_C
-#define _TINY_REGEX_C
+#ifndef TBE_BOUNDED_REGEX_H
+#define TBE_BOUNDED_REGEX_H
 
+#include <stddef.h>
+#include <stdint.h>
 
 #ifndef RE_DOT_MATCHES_NEWLINE
-/* Define to 0 if you DON'T want '.' to match '\r' + '\n' */
-#define RE_DOT_MATCHES_NEWLINE 1
+  #define RE_DOT_MATCHES_NEWLINE 1
 #endif
+
+#define RE_DEFAULT_MAX_PATTERN_BYTES 255u
+#define RE_DEFAULT_MAX_TEXT_BYTES (1024u * 1024u)
+#define RE_DEFAULT_MAX_DEPTH 256u
+#define RE_DEFAULT_MAX_WORKSPACE_BYTES (1024u * 1024u)
+#define RE_DEFAULT_MAX_STEPS 1000000ull
 
 #ifdef __cplusplus
-extern "C"{
+extern "C" {
 #endif
 
+typedef struct regex_t *re_t;
 
+typedef enum re_status {
+  RE_STATUS_OK = 0,
+  RE_STATUS_NO_MATCH = 1,
+  RE_STATUS_INVALID_ARGUMENT = 2,
+  RE_STATUS_INVALID_PATTERN = 3,
+  RE_STATUS_PATTERN_LIMIT = 4,
+  RE_STATUS_TEXT_LIMIT = 5,
+  RE_STATUS_DEPTH_LIMIT = 6,
+  RE_STATUS_STEP_LIMIT = 7,
+  RE_STATUS_WORKSPACE_LIMIT = 8,
+  RE_STATUS_NO_MEMORY = 9
+} re_status_t;
 
-/* Typedef'd pointer to get abstract datatype. */
-typedef struct regex_t* re_t;
+typedef struct re_limits {
+  uint32_t struct_size;
+  uint32_t max_pattern_bytes;
+  uint32_t max_text_bytes;
+  uint32_t max_depth;
+  uint32_t max_workspace_bytes;
+  uint64_t max_steps;
+} re_limits_t;
 
+#define RE_LIMITS_INIT                                                                             \
+  {sizeof(re_limits_t),  RE_DEFAULT_MAX_PATTERN_BYTES,   RE_DEFAULT_MAX_TEXT_BYTES,                \
+   RE_DEFAULT_MAX_DEPTH, RE_DEFAULT_MAX_WORKSPACE_BYTES, RE_DEFAULT_MAX_STEPS}
 
-/* Compile regex string pattern to a regex_t-array. */
-re_t re_compile(const char* pattern);
+typedef struct re_match_result {
+  size_t index;
+  size_t length;
+} re_match_result_t;
 
+#define RE_NPOS ((size_t)-1)
 
-/* Find matches of the compiled pattern inside text. */
-int re_matchp(re_t pattern, const char* text, int* matchlength);
+/* Returns the default bounded configuration by value. */
+re_limits_t re_limits_default(void);
 
+/* Validates exactly pattern_len bytes. NULL limits selects the defaults. */
+re_status_t re_validate_n(const char *pattern, size_t pattern_len, const re_limits_t *limits);
 
-/* Find matches of the txt pattern inside text (will compile automatically first). */
-int re_match(const char* pattern, const char* text, int* matchlength);
+/*
+ * Compiles an owned, immutable pattern. The returned handle is independent of
+ * every other handle and may be matched concurrently. The caller owns it.
+ */
+re_status_t re_compile_n(const char *pattern, size_t pattern_len, const re_limits_t *limits,
+                         re_t *out_pattern);
+void re_destroy(re_t pattern);
 
+/* Searches exactly text_len bytes using a compiled pattern. */
+re_status_t re_matchn(re_t pattern, const char *text, size_t text_len, const re_limits_t *limits,
+                      re_match_result_t *out_match);
+
+/* Validates and searches an uncompiled pattern without retaining allocations. */
+re_status_t re_match_n(const char *pattern, size_t pattern_len, const char *text, size_t text_len,
+                       const re_limits_t *limits, re_match_result_t *out_match);
+
+const char *re_status_string(re_status_t status);
+
+/*
+ * NUL-terminated compatibility API. re_compile() returns an owned handle that
+ * must be released with re_destroy(). Failure and no-match both map to -1.
+ */
+re_t re_compile(const char *pattern);
+int re_matchp(re_t pattern, const char *text, int *matchlength);
+int re_match(const char *pattern, const char *text, int *matchlength);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* ifndef _TINY_REGEX_C */
+#endif
