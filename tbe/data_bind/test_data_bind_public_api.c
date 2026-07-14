@@ -24,6 +24,20 @@ typedef struct record_callback_state {
   int fail;
 } record_callback_state;
 
+typedef struct serialized_output {
+  char data[2048];
+  size_t len;
+} serialized_output;
+
+static int collect_serialized(const void *data, size_t len, void *user) {
+  serialized_output *output = (serialized_output *)user;
+  if (!output || !data || len > sizeof(output->data) - output->len - 1) return -1;
+  memcpy(output->data + output->len, data, len);
+  output->len += len;
+  output->data[output->len] = '\0';
+  return 0;
+}
+
 static DataBindRecordAction collect_record(void *user_data, const DataBindValue *record,
                                            uint64_t record_index) {
   record_callback_state *state = (record_callback_state *)user_data;
@@ -488,6 +502,107 @@ spec("data_bind public API") {
     }
   }
 
+  it("should own and serialize schema-bound objects as lossless JSON") {
+    const char *schema =
+        "message Payload { int64 id; string emoji; bytes raw; map<string,int32> attrs; }\n";
+    const char *json = "{\"id\":\"9007199254740993\",\"emoji\":\"\\uD83D\\uDE00\","
+                       "\"raw\":\"Az\",\"attrs\":{\"x\":7}}";
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    char *serialized = NULL;
+    char *yaml = NULL;
+    char *xml = NULL;
+    size_t serialized_len = 0;
+    serialized_output output = {0};
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    check_not_null(codec);
+    if (codec) {
+      check_int_eq(data_bind_object_from_json(codec, "Payload", json, strlen(json), &object, &err),
+                   DATA_BIND_OK);
+      check_not_null(object);
+      data_bind_free(codec);
+      codec = NULL;
+    }
+    if (object) {
+      check_str_eq(data_bind_object_type_name(object), "Payload");
+      check_long_eq(
+          data_bind_value_as_int64(data_bind_value_get(data_bind_object_value(object), "id")),
+          INT64_C(9007199254740993));
+      check_int_eq(data_bind_object_serialize_json(object, &serialized, &serialized_len, &err),
+                   DATA_BIND_OK);
+      check_not_null(serialized);
+      check_str_contains(serialized, "\"id\":9007199254740993");
+      check_str_contains(serialized, "\"emoji\":\"");
+      check_str_contains(serialized, "\"raw\":\"Az\"");
+      check(serialized_len == strlen(serialized));
+      data_bind_serialized_free(serialized);
+
+      check_int_eq(data_bind_object_serialize_yaml(object, &yaml, NULL, &err), DATA_BIND_OK);
+      check_str_contains(yaml, "9007199254740993");
+      data_bind_serialized_free(yaml);
+
+      check_int_eq(data_bind_object_serialize_xml(object, &xml, NULL, &err), DATA_BIND_OK);
+      check_str_contains(xml, "<id>9007199254740993</id>");
+      data_bind_serialized_free(xml);
+
+      check_int_eq(data_bind_object_write_json(object, collect_serialized, &output, &err),
+                   DATA_BIND_OK);
+      check_str_contains(output.data, "9007199254740993");
+      data_bind_object_free(object);
+    }
+  }
+
+  it("should create the same object handle from YAML and XML") {
+    const char *schema = "message Item { int32 id; string name; }\n";
+    const char *yaml = "id: 3\nname: yaml\n";
+    const char *xml = "<Item><id>4</id><name>xml</name></Item>";
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindObject *roundtrip = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    char *serialized = NULL;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    if (codec) {
+      check_int_eq(data_bind_object_from_yaml(codec, "Item", yaml, strlen(yaml), &object, &err),
+                   DATA_BIND_OK);
+      check_str_eq(
+          data_bind_value_as_string(data_bind_value_get(data_bind_object_value(object), "name")),
+          "yaml");
+      check_int_eq(data_bind_object_serialize_yaml(object, &serialized, NULL, &err), DATA_BIND_OK);
+      check_int_eq(data_bind_object_from_yaml(codec, "Item", serialized, strlen(serialized),
+                                              &roundtrip, &err),
+                   DATA_BIND_OK);
+      check_str_eq(
+          data_bind_value_as_string(data_bind_value_get(data_bind_object_value(roundtrip), "name")),
+          "yaml");
+      data_bind_serialized_free(serialized);
+      data_bind_object_free(roundtrip);
+      data_bind_object_free(object);
+      object = NULL;
+      roundtrip = NULL;
+
+      check_int_eq(data_bind_object_from_xml(codec, "Item", xml, strlen(xml), &object, &err),
+                   DATA_BIND_OK);
+      check_str_eq(
+          data_bind_value_as_string(data_bind_value_get(data_bind_object_value(object), "name")),
+          "xml");
+      check_int_eq(data_bind_object_serialize_xml(object, &serialized, NULL, &err), DATA_BIND_OK);
+      check_int_eq(data_bind_object_from_xml(codec, "Item", serialized, strlen(serialized),
+                                             &roundtrip, &err),
+                   DATA_BIND_OK);
+      check_str_eq(
+          data_bind_value_as_string(data_bind_value_get(data_bind_object_value(roundtrip), "name")),
+          "xml");
+      data_bind_serialized_free(serialized);
+      data_bind_object_free(roundtrip);
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
   it("should deep clone set and bytes storage") {
     const char *schema = "message Values { set<string> tags; bytes raw; }\n";
     const char *json = "{\"tags\":[\"alpha\",\"beta\"],\"raw\":\"Az\"}";
@@ -527,9 +642,9 @@ spec("data_bind public API") {
       data_bind_value_free(source);
       source = NULL;
       if (copy) {
-        check_str_eq(data_bind_value_as_string(
-                         data_bind_value_at(data_bind_value_get(copy, "tags"), 1u)),
-                     "beta");
+        check_str_eq(
+            data_bind_value_as_string(data_bind_value_at(data_bind_value_get(copy, "tags"), 1u)),
+            "beta");
         copy_bytes = data_bind_value_as_bytes(data_bind_value_get(copy, "raw"), &copy_len);
         check_size_eq(copy_len, 2u);
         check_mem_eq(copy_bytes, "Az", 2u);
@@ -540,15 +655,13 @@ spec("data_bind public API") {
   }
 
   it("should clone UUID temporal decimal bigint and money values") {
-    const char *schema =
-        "message Scalars { uuid id; datetime at; date d; time t; duration span; "
-        "decimal price; bigint count; money total; }\n";
-    const char *json =
-        "{\"id\":\"01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001\","
-        "\"at\":\"Sat, 04 Mar 2006 13:27:54 GMT\",\"d\":\"2026-06-28\","
-        "\"t\":\"09:30:05.123\",\"span\":\"1h30m5s250ms\",\"price\":\"123.4500\","
-        "\"count\":\"000123456789012345678901234567890\","
-        "\"total\":{\"amount\":\"99.9900\",\"currency\":\"EUR\"}}";
+    const char *schema = "message Scalars { uuid id; datetime at; date d; time t; duration span; "
+                         "decimal price; bigint count; money total; }\n";
+    const char *json = "{\"id\":\"01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001\","
+                       "\"at\":\"Sat, 04 Mar 2006 13:27:54 GMT\",\"d\":\"2026-06-28\","
+                       "\"t\":\"09:30:05.123\",\"span\":\"1h30m5s250ms\",\"price\":\"123.4500\","
+                       "\"count\":\"000123456789012345678901234567890\","
+                       "\"total\":{\"amount\":\"99.9900\",\"currency\":\"EUR\"}}";
     DataBind *codec = NULL;
     DataBindValue *source = NULL;
     DataBindValue *copy = NULL;
@@ -579,20 +692,18 @@ spec("data_bind public API") {
       source = NULL;
       if (copy) {
         check(data_bind_value_as_uuid(data_bind_value_get(copy, "id"), uuid));
-        check_str_eq(data_bind_value_as_uuid_string(data_bind_value_get(copy, "id"), text,
-                                                    sizeof(text)),
-                     "01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001");
+        check_str_eq(
+            data_bind_value_as_uuid_string(data_bind_value_get(copy, "id"), text, sizeof(text)),
+            "01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001");
         check_double_eq(data_bind_value_as_datetime_timestamp(data_bind_value_get(copy, "at")),
                         1141478874.0, 0.001);
-        check_int_eq(data_bind_value_get_date(data_bind_value_get(copy, "d"), &date),
-                     DATA_BIND_OK);
+        check_int_eq(data_bind_value_get_date(data_bind_value_get(copy, "d"), &date), DATA_BIND_OK);
         check_int_eq(date.year, 2026);
-        check_int_eq(data_bind_value_get_time(data_bind_value_get(copy, "t"), &time),
-                     DATA_BIND_OK);
+        check_int_eq(data_bind_value_get_time(data_bind_value_get(copy, "t"), &time), DATA_BIND_OK);
         check_int_eq(time.millisecond, 123);
-        check_int_eq((int)data_bind_value_as_duration_milliseconds(
-                         data_bind_value_get(copy, "span")),
-                     5405250);
+        check_int_eq(
+            (int)data_bind_value_as_duration_milliseconds(data_bind_value_get(copy, "span")),
+            5405250);
         check_int_eq(data_bind_value_get_decimal(data_bind_value_get(copy, "price"), &decimal),
                      DATA_BIND_OK);
         check_int_eq((int)decimal.mantissa, 12345);

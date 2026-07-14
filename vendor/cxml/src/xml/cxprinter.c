@@ -213,6 +213,7 @@ _transpose_text_entities(
 }
 
 inline static void _space_indent(cxml_string* str, int level, cxml_config *cfg){
+    if (cfg->indent_space_size < 0) return;
     if (level > 0){
         if (cfg->indent_space_size <= 0
            || cfg->indent_space_size > 30)
@@ -223,6 +224,10 @@ inline static void _space_indent(cxml_string* str, int level, cxml_config *cfg){
         // '   ' + '   ' + ...
         cxml_string_n_append(str, ' ', cfg->indent_space_size * level);
     }
+}
+
+inline static void _append_newline(cxml_string *str, cxml_config *cfg){
+    if (cfg->indent_space_size >= 0) cxml_string_append(str, "\n", 1);
 }
 
 static void _text(
@@ -268,7 +273,8 @@ static void _elem_ctag_print_hlpr(
     _space_indent(str_acc, *level, cfg);
     cxml_string_append(str_acc, "</", 2);
     cxml_string_str_append(str_acc, (elem ? &elem->name.qname : &root->name));
-    cxml_string_append(str_acc, ">\n", 2);
+    cxml_string_append(str_acc, ">", 1);
+    _append_newline(str_acc, cfg);
 }
 
 
@@ -414,7 +420,8 @@ static void _cxml_print_elem_otag(
         _cxml_print_attrs(str_acc, node->attributes, node->namespaces, cfg);
     }
     if (!(node->is_self_enclosing)){
-        cxml_string_append(str_acc, ">\n", 2);
+        cxml_string_append(str_acc, ">", 1);
+        _append_newline(str_acc, cfg);
     }
 }
 
@@ -425,7 +432,8 @@ static void _cxml_print_elem_ctag(
         cxml_config *cfg)
 {
     if (node->is_self_enclosing){
-        cxml_string_append(str_acc,  "/>\n", 3);
+        cxml_string_append(str_acc,  "/>", 2);
+        _append_newline(str_acc, cfg);
     }else{
         _elem_ctag_print_hlpr(str_acc, node, NULL, level, cfg);
     }
@@ -439,7 +447,7 @@ static void _cxml_print_xhdr(
 {
     _space_indent(str_acc, (*level + 1), cfg);
     _cxml_xhdr_print_hlpr(str_acc, node, cfg);
-    cxml_string_append(str_acc, "\n", 1);
+    _append_newline(str_acc, cfg);
 }
 
 static void _cxml_print_doc_otag(
@@ -454,7 +462,8 @@ static void _cxml_print_doc_otag(
         _space_indent(str_acc, *level, cfg);
         cxml_string_append(str_acc, "<", 1);  // <
         cxml_string_str_append(str_acc, &node->name);
-        cxml_string_append(str_acc, ">\n", 2);  // >
+        cxml_string_append(str_acc, ">", 1);  // >
+        _append_newline(str_acc, cfg);
     }else{
         (*level)--;
     }
@@ -479,7 +488,7 @@ static void _cxml_print_pi(
 {
     _space_indent(str_acc, (*level + 1), cfg);
     _cxml_pi_print_hlpr(str_acc, node);
-    cxml_string_append(str_acc, "\n", 1);
+    _append_newline(str_acc, cfg);
 }
 
 static void _cxml_print_comm(
@@ -492,7 +501,7 @@ static void _cxml_print_comm(
     cxml_string_append(str_acc, "<!--", 4);  // opening
     cxml_string_str_append(str_acc, &node->value);
     cxml_string_append(str_acc, "-->", 3);  // closing
-    cxml_string_append(str_acc, "\n", 1);
+    _append_newline(str_acc, cfg);
 }
 
 static void _cxml_print_dtd(
@@ -503,7 +512,7 @@ static void _cxml_print_dtd(
 {
     if (level){ _space_indent(str_acc, (*level + 1), cfg); }
     cxml_string_str_append(str_acc, &node->value);
-    cxml_string_append(str_acc, "\n", 1);
+    _append_newline(str_acc, cfg);
 }
 
 static void _cxml_print_text(
@@ -512,6 +521,13 @@ static void _cxml_print_text(
         const int* level,
         cxml_config *cfg)
 {
+
+    if (cfg->indent_space_size < 0){
+        if (text_node->is_cdata) cxml_string_append(str_acc, "<![CDATA[", 9);
+        _text(text_node, str_acc, 1, cfg);
+        if (text_node->is_cdata) cxml_string_append(str_acc, "]]>", 3);
+        return;
+    }
 
     // temporarily hold text_node->value object
     cxml_string tmp = text_node->value;
@@ -544,8 +560,7 @@ static void _cxml_print_text(
 
     // assign text_node its original value
     text_node->value = tmp;
-    !is_empty ?
-    cxml_string_append(str_acc, "\n", 1) : (void)0;
+    !is_empty ? _append_newline(str_acc, cfg) : (void)0;
 }
 
 
@@ -822,6 +837,21 @@ void cxml_document_to_string(cxml_root_node *root, cxml_string *str){
 char* cxml_document_to_rstring(cxml_root_node *root){
     cxml_string str = new_cxml_string();
     cxml_document_to_string(root, &str);
+    return cxml_string_as_raw(&str);
+}
+
+char* cxml_document_to_xml_rstring(cxml_root_node *root){
+    if (!root) return NULL;
+    cxml_string str = new_cxml_string();
+    cxml_config cfg = cxml_get_config();
+    int level = 0;
+    cfg.print_fancy = false;
+    cfg.show_doc_as_top_level = false;
+    cfg.transpose_text = true;
+    cfg.strict_transpose = false;
+    cfg.indent_space_size = -1;
+    _cxml_node_tostring(&str, root, &level, &cfg);
+    _remove_newline(&str);
     return cxml_string_as_raw(&str);
 }
 

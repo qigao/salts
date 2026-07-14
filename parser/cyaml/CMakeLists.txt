@@ -72,6 +72,11 @@ if(BUILD_TESTING)
     LIBS ${TARGET_NAME} TurboUtils::TinyTest
     FOLDER "${TARGET_FOLDER}/tests")
 
+  cmake_add_test(test_sax
+    SOURCES tests/test_sax.c
+    LIBS ${TARGET_NAME} TurboUtils::TinyTest
+    FOLDER "${TARGET_FOLDER}/tests")
+
   cmake_add_test(test_ypath_lexer
     SOURCES tests/test_ypath_lexer.c
     LIBS ${TARGET_NAME} TurboUtils::TinyTest

@@ -16,14 +16,19 @@
 %include {
 #include "json_lexer.h"
 #include "json_types.h"
+#include "json_unicode.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
-static char *json_unescape_arena(json_arena_t *arena, const char *src, size_t len, size_t *out_len) {
+static char *json_unescape_arena(json_parse_ctx_t *ctx, const char *src, size_t len, size_t *out_len) {
     // Allocate max possible size (original length + 1)
-    char *dst = (char *)json_arena_alloc(arena, len + 1);
-    if (!dst) return NULL;
+    char *dst = (char *)json_arena_alloc(ctx->arena, len + 1);
+    if (!dst) {
+        ctx->error = 1;
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg), "Out of memory");
+        return NULL;
+    }
 
     size_t j = 0;
     for (size_t i = 0; i < len; i++) {
@@ -38,31 +43,18 @@ static char *json_unescape_arena(json_arena_t *arena, const char *src, size_t le
                 case 'n':  dst[j++] = '\n'; break;
                 case 'r':  dst[j++] = '\r'; break;
                 case 't':  dst[j++] = '\t'; break;
-                case 'u':
-                    if (i + 4 < len) {
-                        int cp = 0;
-                        for (int k = 0; k < 4; k++) {
-                            char c = src[i + 1 + k];
-                            int d;
-                            if (c >= '0' && c <= '9') d = c - '0';
-                            else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
-                            else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
-                            else { d = 0; break; }
-                            cp = (cp << 4) | d;
-                        }
-                        i += 4;
-                        if (cp < 0x80) {
-                            dst[j++] = (char)cp;
-                        } else if (cp < 0x800) {
-                            dst[j++] = (char)(0xC0 | (cp >> 6));
-                            dst[j++] = (char)(0x80 | (cp & 0x3F));
-                        } else {
-                            dst[j++] = (char)(0xE0 | (cp >> 12));
-                            dst[j++] = (char)(0x80 | ((cp >> 6) & 0x3F));
-                            dst[j++] = (char)(0x80 | (cp & 0x3F));
-                        }
+                case 'u': {
+                    size_t escape = i - 1;
+                    uint32_t codepoint;
+                    if (!json_unicode_decode_escape(src, len, &escape, &codepoint)) {
+                        ctx->error = 1;
+                        snprintf(ctx->error_msg, sizeof(ctx->error_msg), "Invalid Unicode surrogate pair");
+                        return NULL;
                     }
+                    j += json_unicode_append_utf8(dst + j, codepoint);
+                    i = escape - 1;
                     break;
+                }
                 default:
                     dst[j++] = src[i];
                     break;
@@ -97,7 +89,7 @@ value(A) ::= STRING(T). {
         if (T.has_escape) {
             // Need to unescape - allocate copy
             size_t len;
-            char *str = json_unescape_arena(ctx->arena, T.value, T.length, &len);
+            char *str = json_unescape_arena(ctx, T.value, T.length, &len);
             A->data.string_val.str = str;
             A->data.string_val.len = len;
             A->data.string_val.owned = 1;
@@ -147,7 +139,7 @@ pair(A) ::= STRING(K) COLON value(V). {
     if (K.has_escape) {
         // Need to unescape key
         size_t key_len;
-        char *key = json_unescape_arena(ctx->arena, K.value, K.length, &key_len);
+        char *key = json_unescape_arena(ctx, K.value, K.length, &key_len);
         json_object_set_arena_ex(ctx->arena, A, key, key_len, 1, V);
     } else {
         // Duplicate key to ensure null-termination

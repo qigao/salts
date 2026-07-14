@@ -114,7 +114,7 @@ spec("Turbo Parser") {
     describe("JSON Parser") {
         it("should parse valid JSON object") {
             const char* json_data = "{\"key\": \"value\", \"number\": 123}";
-            void* result = NULL;
+            turbo_json_doc_t* result = NULL;
             int rc = turbo_parse_json((const uint8_t*)json_data, strlen(json_data), &result);
             
             check(rc == 0);
@@ -127,7 +127,7 @@ spec("Turbo Parser") {
 
         it("should parse JSON types correctly") {
              const char* json_data = "{\"s\":\"str\", \"n\":1.5, \"b\":true, \"z\":null}";
-             void* result = NULL;
+             turbo_json_doc_t* result = NULL;
              turbo_parse_json((const uint8_t*)json_data, strlen(json_data), &result);
              
              json_value_t* val;
@@ -271,7 +271,7 @@ spec("Turbo Parser") {
     describe("XML Parser") {
         it("should parse valid XML") {
             const char* xml_data = "<root><child id=\"a\">text</child></root>";
-            void* result = NULL;
+            turbo_xml_doc_t* result = NULL;
             int rc = turbo_parse_xml((const uint8_t*)xml_data, strlen(xml_data), &result);
             
             check(rc == 0);
@@ -447,7 +447,7 @@ spec("Turbo Parser") {
     describe("CSV Parser") {
         it("should parse valid CSV data") {
             const char* csv_data = "name,age\nturbo,2\n";
-            void* result = NULL;
+            turbo_csv_doc_t* result = NULL;
             int rc = turbo_parse_csv((const uint8_t*)csv_data, strlen(csv_data), &result);
             
             check(rc == 0);

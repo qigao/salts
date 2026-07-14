@@ -8,8 +8,9 @@
 #include "json_lexer.h"
 #include "json_lexer_whitespace.h"
 #include "json_types.h"
-#include <fmt.h>
+#include "json_unicode.h"
 #include <errno.h>
+#include <fmt.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -27,8 +28,7 @@ static char g_error[MAX_ERROR_LEN] = {0};
 
 static json_blob_chunk_t *json_blob_chunk_create(size_t size) {
   json_blob_chunk_t *chunk = (json_blob_chunk_t *)malloc(sizeof(json_blob_chunk_t));
-  if (!chunk)
-    return NULL;
+  if (!chunk) return NULL;
 
   chunk->data = (unsigned char *)malloc(size);
   if (!chunk->data) {
@@ -43,18 +43,15 @@ static json_blob_chunk_t *json_blob_chunk_create(size_t size) {
 }
 
 static void json_blob_chunk_destroy(json_blob_chunk_t *chunk) {
-  if (!chunk)
-    return;
+  if (!chunk) return;
   free(chunk->data);
   free(chunk);
 }
 
 static object_pool_t *json_object_pool_create(size_t object_size, size_t hint_size) {
   size_t initial_capacity = hint_size / object_size;
-  if (initial_capacity < 64)
-    initial_capacity = 64;
-  if (initial_capacity > 65536)
-    initial_capacity = 65536;
+  if (initial_capacity < 64) initial_capacity = 64;
+  if (initial_capacity > 65536) initial_capacity = 65536;
 
   object_pool_config_t config = {
       .object_size = object_size,
@@ -79,27 +76,20 @@ static void json_arena_destroy_self(json_arena_t *arena) {
   free(arena);
 }
 
-static bool json_arena_can_adopt(const json_arena_t *dst,
-                                 const json_arena_t *src) {
-  if (!dst || !src)
-    return false;
-  if (dst == src || src->parent == dst)
-    return true;
-  if (src->parent)
-    return false;
+static bool json_arena_can_adopt(const json_arena_t *dst, const json_arena_t *src) {
+  if (!dst || !src) return false;
+  if (dst == src || src->parent == dst) return true;
+  if (src->parent) return false;
 
   for (const json_arena_t *parent = dst; parent; parent = parent->parent) {
-    if (parent == src)
-      return false;
+    if (parent == src) return false;
   }
   return true;
 }
 
 static bool json_arena_adopt(json_arena_t *dst, json_arena_t *src) {
-  if (!json_arena_can_adopt(dst, src))
-    return false;
-  if (dst == src || src->parent == dst)
-    return true;
+  if (!json_arena_can_adopt(dst, src)) return false;
+  if (dst == src || src->parent == dst) return true;
 
   src->adopted_next = dst->adopted_head;
   src->parent = dst;
@@ -108,26 +98,21 @@ static bool json_arena_adopt(json_arena_t *dst, json_arena_t *src) {
 }
 
 static void *json_blob_alloc(json_arena_t *arena, size_t size) {
-  if (!arena || size == 0)
-    return NULL;
+  if (!arena || size == 0) return NULL;
 
   size = (size + 7) & ~((size_t)7);
 
   if (!arena->blob_current || arena->blob_current->used + size > arena->blob_current->capacity) {
     size_t new_size = arena->initial_size;
-    if (new_size < size)
-      new_size = size;
+    if (new_size < size) new_size = size;
     while (new_size < size && new_size < JSON_POOL_MAX_SIZE / 2) {
       new_size *= 2;
     }
-    if (new_size > JSON_POOL_MAX_SIZE)
-      new_size = JSON_POOL_MAX_SIZE;
-    if (new_size < size)
-      new_size = size;
+    if (new_size > JSON_POOL_MAX_SIZE) new_size = JSON_POOL_MAX_SIZE;
+    if (new_size < size) new_size = size;
 
     json_blob_chunk_t *chunk = json_blob_chunk_create(new_size);
-    if (!chunk)
-      return NULL;
+    if (!chunk) return NULL;
 
     if (arena->blob_current) {
       arena->blob_current->next = chunk;
@@ -151,14 +136,11 @@ json_arena_t *json_arena_create(void) { return json_arena_create_sized(JSON_POOL
 
 json_arena_t *json_arena_create_sized(size_t hint_size) {
   json_arena_t *arena = (json_arena_t *)calloc(1, sizeof(json_arena_t));
-  if (!arena)
-    return NULL;
+  if (!arena) return NULL;
 
   // Clamp to reasonable range
-  if (hint_size < JSON_POOL_MIN_SIZE)
-    hint_size = JSON_POOL_MIN_SIZE;
-  if (hint_size > JSON_POOL_MAX_SIZE)
-    hint_size = JSON_POOL_MAX_SIZE;
+  if (hint_size < JSON_POOL_MIN_SIZE) hint_size = JSON_POOL_MIN_SIZE;
+  if (hint_size > JSON_POOL_MAX_SIZE) hint_size = JSON_POOL_MAX_SIZE;
 
   arena->value_pool = json_object_pool_create(sizeof(json_value_t), hint_size);
   arena->pair_pool = json_object_pool_create(sizeof(json_pair_t), hint_size);
@@ -175,8 +157,7 @@ json_arena_t *json_arena_create_sized(size_t hint_size) {
 }
 
 void *json_arena_alloc(json_arena_t *arena, size_t size) {
-  if (!arena)
-    return NULL;
+  if (!arena) return NULL;
 
   if (size == sizeof(json_value_t)) {
     return object_pool_alloc(arena->value_pool);
@@ -192,19 +173,16 @@ void *json_arena_alloc(json_arena_t *arena, size_t size) {
 }
 
 char *json_arena_strdup(json_arena_t *arena, const char *str, size_t len) {
-  if (!arena || !str || len == SIZE_MAX)
-    return NULL;
+  if (!arena || !str || len == SIZE_MAX) return NULL;
   char *dst = (char *)json_arena_alloc(arena, len + 1);
-  if (!dst)
-    return NULL;
+  if (!dst) return NULL;
   memcpy(dst, str, len);
   dst[len] = '\0';
   return dst;
 }
 
 void json_arena_free(json_arena_t *arena) {
-  if (!arena)
-    return;
+  if (!arena) return;
 
   if (arena->parent) {
     json_arena_free(arena->parent);
@@ -224,8 +202,7 @@ void json_arena_free(json_arena_t *arena) {
 }
 
 size_t json_arena_used(json_arena_t *arena) {
-  if (!arena)
-    return 0;
+  if (!arena) return 0;
 
   size_t total = arena->blob_used;
   total += object_pool_allocated_count(arena->value_pool) * sizeof(json_value_t);
@@ -239,8 +216,7 @@ size_t json_arena_used(json_arena_t *arena) {
 }
 
 size_t json_arena_peak(json_arena_t *arena) {
-  if (!arena)
-    return 0;
+  if (!arena) return 0;
 
   size_t total = arena->blob_peak;
   total += object_pool_peak_usage(arena->value_pool) * sizeof(json_value_t);
@@ -259,8 +235,7 @@ size_t json_arena_peak(json_arena_t *arena) {
 
 json_value_t *json_value_new_arena(json_arena_t *arena, json_type_t type) {
   json_value_t *v = (json_value_t *)json_arena_alloc(arena, sizeof(json_value_t));
-  if (!v)
-    return NULL;
+  if (!v) return NULL;
   memset(v, 0, sizeof(json_value_t));
   v->type = type;
   v->arena = arena;
@@ -273,28 +248,23 @@ json_value_t *json_value_null_arena(json_arena_t *arena) {
 
 json_value_t *json_value_bool_arena(json_arena_t *arena, bool val) {
   json_value_t *v = json_value_new_arena(arena, JSON_BOOL);
-  if (v)
-    v->data.bool_val = val;
+  if (v) v->data.bool_val = val;
   return v;
 }
 
 json_value_t *json_value_number_arena(json_arena_t *arena, double val) {
   json_value_t *v = json_value_new_arena(arena, JSON_NUMBER);
-  if (v)
-    v->data.num_val = val;
+  if (v) v->data.number_val.value = val;
   return v;
 }
 
 json_value_t *json_value_string_arena(json_arena_t *arena, const char *str, size_t len) {
-  if (!arena || !str)
-    return NULL;
+  if (!arena || !str) return NULL;
   json_value_t *v = json_value_new_arena(arena, JSON_STRING);
-  if (!v)
-    return NULL;
+  if (!v) return NULL;
 
   v->data.string_val.str = json_arena_strdup(arena, str, len);
-  if (!v->data.string_val.str)
-    return NULL;
+  if (!v->data.string_val.str) return NULL;
   v->data.string_val.len = len;
   v->data.string_val.owned = 1;
   return v;
@@ -312,8 +282,7 @@ static int json_array_index_reserve(json_arena_t *arena, json_value_t *arr, size
   json_value_t **index;
   size_t capacity;
 
-  if (needed <= arr->data.array_val.index_capacity)
-    return 1;
+  if (needed <= arr->data.array_val.index_capacity) return 1;
 
   capacity = arr->data.array_val.index_capacity ? arr->data.array_val.index_capacity : 8;
   while (capacity < needed) {
@@ -323,16 +292,13 @@ static int json_array_index_reserve(json_arena_t *arena, json_value_t *arr, size
     }
     capacity *= 2;
   }
-  if (capacity > SIZE_MAX / sizeof(*index))
-    return 0;
+  if (capacity > SIZE_MAX / sizeof(*index)) return 0;
 
   index = (json_value_t **)json_arena_alloc(arena, capacity * sizeof(*index));
-  if (!index)
-    return 0;
+  if (!index) return 0;
 
   if (arr->data.array_val.index && arr->data.array_val.count > 0) {
-    memcpy(index, arr->data.array_val.index,
-           arr->data.array_val.count * sizeof(*index));
+    memcpy(index, arr->data.array_val.index, arr->data.array_val.count * sizeof(*index));
   } else {
     json_element_t *element = arr->data.array_val.elements;
     size_t i = 0;
@@ -348,8 +314,7 @@ static int json_array_index_reserve(json_arena_t *arena, json_value_t *arr, size
 
 bool json_array_append_arena(json_arena_t *arena, json_value_t *arr, json_value_t *val) {
   size_t next_count;
-  if (!arena || !arr || arr->type != JSON_ARRAY || !val ||
-      arr->data.array_val.count == SIZE_MAX)
+  if (!arena || !arr || arr->type != JSON_ARRAY || !val || arr->data.array_val.count == SIZE_MAX)
     return false;
 
   next_count = arr->data.array_val.count + 1;
@@ -361,8 +326,7 @@ bool json_array_append_arena(json_arena_t *arena, json_value_t *arr, json_value_
   }
 
   json_element_t *elem = (json_element_t *)json_arena_alloc(arena, sizeof(json_element_t));
-  if (!elem)
-    return false;
+  if (!elem) return false;
 
   elem->value = val;
   elem->next = NULL;
@@ -384,8 +348,7 @@ bool json_object_set_arena_ex(json_arena_t *arena, json_value_t *obj, const char
                               size_t key_len, int key_owned, json_value_t *val) {
   json_pair_t *existing;
 
-  if (!arena || !obj || obj->type != JSON_OBJECT || !key || !val)
-    return false;
+  if (!arena || !obj || obj->type != JSON_OBJECT || !key || !val) return false;
 
   for (existing = obj->data.object_val.pairs; existing; existing = existing->next) {
     if (existing->key_len == key_len && memcmp(existing->key, key, key_len) == 0) {
@@ -395,8 +358,7 @@ bool json_object_set_arena_ex(json_arena_t *arena, json_value_t *obj, const char
   }
 
   json_pair_t *pair = (json_pair_t *)json_arena_alloc(arena, sizeof(json_pair_t));
-  if (!pair)
-    return false;
+  if (!pair) return false;
 
   pair->key = key;
   pair->key_len = key_len;
@@ -418,8 +380,7 @@ bool json_object_set_arena(json_arena_t *arena, json_value_t *obj, const char *k
                            json_value_t *val) {
   // Legacy API - always copy key
   char *key_copy = json_arena_strdup(arena, key, key_len);
-  if (!key_copy)
-    return false;
+  if (!key_copy) return false;
   return json_object_set_arena_ex(arena, obj, key_copy, key_len, 1, val);
 }
 
@@ -547,8 +508,7 @@ json_value_t *json_parse_file(const char *filename) {
 }
 
 void json_free(json_value_t *value) {
-  if (!value)
-    return;
+  if (!value) return;
   json_arena_free(value->arena);
 }
 
@@ -565,7 +525,7 @@ bool json_bool(const json_value_t *value) {
 }
 
 double json_number(const json_value_t *value) {
-  return value && value->type == JSON_NUMBER ? value->data.num_val : 0.0;
+  return value && value->type == JSON_NUMBER ? value->data.number_val.value : 0.0;
 }
 
 const char *json_string(const json_value_t *value) {
@@ -577,8 +537,7 @@ size_t json_string_len(const json_value_t *value) {
 }
 
 tstr_v json_string_v(const json_value_t *value) {
-  if (!value || value->type != JSON_STRING)
-    return tstr_v_from_buf(NULL, 0);
+  if (!value || value->type != JSON_STRING) return tstr_v_from_buf(NULL, 0);
   return tstr_v_from_buf(value->data.string_val.str, value->data.string_val.len);
 }
 
@@ -587,8 +546,7 @@ size_t json_object_size(const json_value_t *obj) {
 }
 
 const char *json_object_key(const json_value_t *obj, size_t index) {
-  if (!obj || obj->type != JSON_OBJECT)
-    return NULL;
+  if (!obj || obj->type != JSON_OBJECT) return NULL;
 
   json_pair_t *pair = obj->data.object_val.pairs;
   for (size_t i = 0; pair && i < index; i++) {
@@ -598,8 +556,7 @@ const char *json_object_key(const json_value_t *obj, size_t index) {
 }
 
 size_t json_object_key_len(const json_value_t *obj, size_t index) {
-  if (!obj || obj->type != JSON_OBJECT)
-    return 0;
+  if (!obj || obj->type != JSON_OBJECT) return 0;
 
   json_pair_t *pair = obj->data.object_val.pairs;
   for (size_t i = 0; pair && i < index; i++) {
@@ -609,8 +566,7 @@ size_t json_object_key_len(const json_value_t *obj, size_t index) {
 }
 
 tstr_v json_object_key_v(const json_value_t *obj, size_t index) {
-  if (!obj || obj->type != JSON_OBJECT)
-    return tstr_v_from_buf(NULL, 0);
+  if (!obj || obj->type != JSON_OBJECT) return tstr_v_from_buf(NULL, 0);
 
   json_pair_t *pair = obj->data.object_val.pairs;
   for (size_t i = 0; pair && i < index; i++) {
@@ -620,8 +576,7 @@ tstr_v json_object_key_v(const json_value_t *obj, size_t index) {
 }
 
 json_value_t *json_object_value(const json_value_t *obj, size_t index) {
-  if (!obj || obj->type != JSON_OBJECT)
-    return NULL;
+  if (!obj || obj->type != JSON_OBJECT) return NULL;
 
   json_pair_t *pair = obj->data.object_val.pairs;
   for (size_t i = 0; pair && i < index; i++) {
@@ -631,14 +586,12 @@ json_value_t *json_object_value(const json_value_t *obj, size_t index) {
 }
 
 json_value_t *json_object_get(const json_value_t *obj, const char *key) {
-  if (!obj || obj->type != JSON_OBJECT || !key)
-    return NULL;
+  if (!obj || obj->type != JSON_OBJECT || !key) return NULL;
   return json_object_get_v(obj, tstr_v_from_cstr(key));
 }
 
 json_value_t *json_object_get_v(const json_value_t *obj, tstr_v key) {
-  if (!obj || obj->type != JSON_OBJECT || !key.data)
-    return NULL;
+  if (!obj || obj->type != JSON_OBJECT || !key.data) return NULL;
 
   for (json_pair_t *pair = obj->data.object_val.pairs; pair; pair = pair->next) {
     if (pair->key_len == key.len && memcmp(pair->key, key.data, key.len) == 0) {
@@ -653,12 +606,9 @@ size_t json_array_size(const json_value_t *arr) {
 }
 
 json_value_t *json_array_get(const json_value_t *arr, size_t index) {
-  if (!arr || arr->type != JSON_ARRAY)
-    return NULL;
-  if (index >= arr->data.array_val.count)
-    return NULL;
-  if (arr->data.array_val.index)
-    return arr->data.array_val.index[index];
+  if (!arr || arr->type != JSON_ARRAY) return NULL;
+  if (index >= arr->data.array_val.count) return NULL;
+  if (arr->data.array_val.index) return arr->data.array_val.index[index];
 
   json_element_t *elem = arr->data.array_val.elements;
   for (size_t i = 0; elem && i < index; i++) {
@@ -669,7 +619,7 @@ json_value_t *json_array_get(const json_value_t *arr, size_t index) {
 
 int json_get_int(const json_value_t *obj, const char *key, int def) {
   json_value_t *v = json_object_get(obj, key);
-  return v && v->type == JSON_NUMBER ? (int)v->data.num_val : def;
+  return v && v->type == JSON_NUMBER ? (int)v->data.number_val.value : def;
 }
 
 bool json_get_bool(const json_value_t *obj, const char *key, bool def) {
@@ -679,7 +629,7 @@ bool json_get_bool(const json_value_t *obj, const char *key, bool def) {
 
 double json_get_double(const json_value_t *obj, const char *key, double def) {
   json_value_t *v = json_object_get(obj, key);
-  return v && v->type == JSON_NUMBER ? v->data.num_val : def;
+  return v && v->type == JSON_NUMBER ? v->data.number_val.value : def;
 }
 
 const char *json_get_string(const json_value_t *obj, const char *key) {
@@ -694,7 +644,7 @@ tstr_v json_get_string_v(const json_value_t *obj, const char *key) {
 
 int json_get_int_v(const json_value_t *obj, tstr_v key, int def) {
   json_value_t *v = json_object_get_v(obj, key);
-  return v && v->type == JSON_NUMBER ? (int)v->data.num_val : def;
+  return v && v->type == JSON_NUMBER ? (int)v->data.number_val.value : def;
 }
 
 bool json_get_bool_v(const json_value_t *obj, tstr_v key, bool def) {
@@ -704,7 +654,7 @@ bool json_get_bool_v(const json_value_t *obj, tstr_v key, bool def) {
 
 double json_get_double_v(const json_value_t *obj, tstr_v key, double def) {
   json_value_t *v = json_object_get_v(obj, key);
-  return v && v->type == JSON_NUMBER ? v->data.num_val : def;
+  return v && v->type == JSON_NUMBER ? v->data.number_val.value : def;
 }
 
 tstr_v json_get_string_vv(const json_value_t *obj, tstr_v key) {
@@ -732,8 +682,7 @@ static bool json_buffer_init(json_buffer_t *buf) {
 }
 
 static bool json_buffer_append(json_buffer_t *buf, const char *str, size_t len) {
-  if (!buf || !str || len > SIZE_MAX - buf->size - 1)
-    return false;
+  if (!buf || !str || len > SIZE_MAX - buf->size - 1) return false;
   size_t needed = buf->size + len + 1;
   if (needed > buf->capacity) {
     size_t new_cap = buf->capacity;
@@ -745,8 +694,7 @@ static bool json_buffer_append(json_buffer_t *buf, const char *str, size_t len) 
       new_cap *= 2;
     }
     char *new_data = (char *)realloc(buf->data, new_cap);
-    if (!new_data)
-      return false;
+    if (!new_data) return false;
     buf->data = new_data;
     buf->capacity = new_cap;
   }
@@ -757,46 +705,37 @@ static bool json_buffer_append(json_buffer_t *buf, const char *str, size_t len) 
 }
 
 static bool json_serialize_string(const char *str, size_t len, json_buffer_t *buf) {
-  if (!str || !json_buffer_append(buf, "\"", 1))
-    return false;
+  if (!str || !json_buffer_append(buf, "\"", 1)) return false;
 
   for (size_t i = 0; i < len; i++) {
     unsigned char c = (unsigned char)str[i];
     switch (c) {
     case '"':
-      if (!json_buffer_append(buf, "\\\"", 2))
-        return false;
+      if (!json_buffer_append(buf, "\\\"", 2)) return false;
       break;
     case '\\':
-      if (!json_buffer_append(buf, "\\\\", 2))
-        return false;
+      if (!json_buffer_append(buf, "\\\\", 2)) return false;
       break;
     case '\b':
-      if (!json_buffer_append(buf, "\\b", 2))
-        return false;
+      if (!json_buffer_append(buf, "\\b", 2)) return false;
       break;
     case '\f':
-      if (!json_buffer_append(buf, "\\f", 2))
-        return false;
+      if (!json_buffer_append(buf, "\\f", 2)) return false;
       break;
     case '\n':
-      if (!json_buffer_append(buf, "\\n", 2))
-        return false;
+      if (!json_buffer_append(buf, "\\n", 2)) return false;
       break;
     case '\r':
-      if (!json_buffer_append(buf, "\\r", 2))
-        return false;
+      if (!json_buffer_append(buf, "\\r", 2)) return false;
       break;
     case '\t':
-      if (!json_buffer_append(buf, "\\t", 2))
-        return false;
+      if (!json_buffer_append(buf, "\\t", 2)) return false;
       break;
     default:
       if (c < 32) {
         char tmp[8];
         int tlen = fmt(tmp, sizeof(tmp), "\\u{:04x}", (int)c);
-        if (tlen < 0 || !json_buffer_append(buf, tmp, (size_t)tlen))
-          return false;
+        if (tlen < 0 || !json_buffer_append(buf, tmp, (size_t)tlen)) return false;
       } else if (!json_buffer_append(buf, (const char *)&c, 1)) {
         return false;
       }
@@ -806,8 +745,7 @@ static bool json_serialize_string(const char *str, size_t len, json_buffer_t *bu
 }
 
 static bool json_serialize_value(const json_value_t *v, json_buffer_t *buf) {
-  if (!v)
-    return json_buffer_append(buf, "null", 4);
+  if (!v) return json_buffer_append(buf, "null", 4);
 
   switch (v->type) {
   case JSON_NULL:
@@ -816,13 +754,14 @@ static bool json_serialize_value(const json_value_t *v, json_buffer_t *buf) {
     return v->data.bool_val ? json_buffer_append(buf, "true", 4)
                             : json_buffer_append(buf, "false", 5);
   case JSON_NUMBER: {
+    if (v->data.number_val.lexeme)
+      return json_buffer_append(buf, v->data.number_val.lexeme, v->data.number_val.lexeme_len);
     char tmp[64];
-    int len = fmt(tmp, sizeof(tmp), "{}", v->data.num_val);
+    int len = fmt(tmp, sizeof(tmp), "{}", v->data.number_val.value);
     return json_buffer_append(buf, tmp, len);
   }
   case JSON_STRING: {
-    if (!json_buffer_append(buf, "\"", 1))
-      return false;
+    if (!json_buffer_append(buf, "\"", 1)) return false;
     // Simple escaping
     const char *s = v->data.string_val.str;
     size_t len = v->data.string_val.len;
@@ -830,77 +769,60 @@ static bool json_serialize_value(const json_value_t *v, json_buffer_t *buf) {
       char c = s[i];
       switch (c) {
       case '\"':
-        if (!json_buffer_append(buf, "\\\"", 2))
-          return false;
+        if (!json_buffer_append(buf, "\\\"", 2)) return false;
         break;
       case '\\':
-        if (!json_buffer_append(buf, "\\\\", 2))
-          return false;
+        if (!json_buffer_append(buf, "\\\\", 2)) return false;
         break;
       case '\b':
-        if (!json_buffer_append(buf, "\\b", 2))
-          return false;
+        if (!json_buffer_append(buf, "\\b", 2)) return false;
         break;
       case '\f':
-        if (!json_buffer_append(buf, "\\f", 2))
-          return false;
+        if (!json_buffer_append(buf, "\\f", 2)) return false;
         break;
       case '\n':
-        if (!json_buffer_append(buf, "\\n", 2))
-          return false;
+        if (!json_buffer_append(buf, "\\n", 2)) return false;
         break;
       case '\r':
-        if (!json_buffer_append(buf, "\\r", 2))
-          return false;
+        if (!json_buffer_append(buf, "\\r", 2)) return false;
         break;
       case '\t':
-        if (!json_buffer_append(buf, "\\t", 2))
-          return false;
+        if (!json_buffer_append(buf, "\\t", 2)) return false;
         break;
       default:
         if ((unsigned char)c < 32) {
           char tmp[8];
           int tlen = fmt(tmp, sizeof(tmp), "\\u{:04x}", (int)c);
-          if (!json_buffer_append(buf, tmp, tlen))
-            return false;
+          if (!json_buffer_append(buf, tmp, tlen)) return false;
         } else {
-          if (!json_buffer_append(buf, &c, 1))
-            return false;
+          if (!json_buffer_append(buf, &c, 1)) return false;
         }
       }
     }
     return json_buffer_append(buf, "\"", 1);
   }
   case JSON_ARRAY: {
-    if (!json_buffer_append(buf, "[", 1))
-      return false;
+    if (!json_buffer_append(buf, "[", 1)) return false;
     json_element_t *e = v->data.array_val.elements;
     while (e) {
-      if (!json_serialize_value(e->value, buf))
-        return false;
+      if (!json_serialize_value(e->value, buf)) return false;
       e = e->next;
       if (e) {
-        if (!json_buffer_append(buf, ",", 1))
-          return false;
+        if (!json_buffer_append(buf, ",", 1)) return false;
       }
     }
     return json_buffer_append(buf, "]", 1);
   }
   case JSON_OBJECT: {
-    if (!json_buffer_append(buf, "{", 1))
-      return false;
+    if (!json_buffer_append(buf, "{", 1)) return false;
     json_pair_t *p = v->data.object_val.pairs;
     while (p) {
-      if (!json_serialize_string(p->key, p->key_len, buf))
-        return false;
-      if (!json_buffer_append(buf, ":", 1))
-        return false;
-      if (!json_serialize_value(p->value, buf))
-        return false;
+      if (!json_serialize_string(p->key, p->key_len, buf)) return false;
+      if (!json_buffer_append(buf, ":", 1)) return false;
+      if (!json_serialize_value(p->value, buf)) return false;
       p = p->next;
       if (p) {
-        if (!json_buffer_append(buf, ",", 1))
-          return false;
+        if (!json_buffer_append(buf, ",", 1)) return false;
       }
     }
     return json_buffer_append(buf, "}", 1);
@@ -912,30 +834,27 @@ static bool json_serialize_value(const json_value_t *v, json_buffer_t *buf) {
 
 char *json_serialize(const json_value_t *value, size_t *out_len) {
   json_buffer_t buf;
-  if (!json_buffer_init(&buf))
-    return NULL;
+  if (!json_buffer_init(&buf)) return NULL;
 
   if (!json_serialize_value(value, &buf)) {
     free(buf.data);
     return NULL;
   }
 
-  if (out_len)
-    *out_len = buf.size;
+  if (out_len) *out_len = buf.size;
   return buf.data;
 }
 
 static bool json_serialize_indent(json_buffer_t *buf, int level) {
   for (int i = 0; i < level; i++) {
-    if (!json_buffer_append(buf, "  ", 2))
-      return false;
+    if (!json_buffer_append(buf, "  ", 2)) return false;
   }
   return true;
 }
 
-static bool json_serialize_pretty_value_ex(const json_value_t *v, json_buffer_t *buf, int level, const char *newline, size_t newline_len) {
-  if (!v)
-    return json_buffer_append(buf, "null", 4);
+static bool json_serialize_pretty_value_ex(const json_value_t *v, json_buffer_t *buf, int level,
+                                           const char *newline, size_t newline_len) {
+  if (!v) return json_buffer_append(buf, "null", 4);
 
   switch (v->type) {
   case JSON_NULL:
@@ -944,8 +863,10 @@ static bool json_serialize_pretty_value_ex(const json_value_t *v, json_buffer_t 
     return v->data.bool_val ? json_buffer_append(buf, "true", 4)
                             : json_buffer_append(buf, "false", 5);
   case JSON_NUMBER: {
+    if (v->data.number_val.lexeme)
+      return json_buffer_append(buf, v->data.number_val.lexeme, v->data.number_val.lexeme_len);
     char tmp[64];
-    int len = fmt(tmp, sizeof(tmp), "{}", v->data.num_val);
+    int len = fmt(tmp, sizeof(tmp), "{}", v->data.number_val.value);
     return json_buffer_append(buf, tmp, len);
   }
   case JSON_STRING: {
@@ -953,65 +874,47 @@ static bool json_serialize_pretty_value_ex(const json_value_t *v, json_buffer_t 
     return json_serialize_value(v, buf);
   }
   case JSON_ARRAY: {
-    if (v->data.array_val.count == 0)
-      return json_buffer_append(buf, "[]", 2);
+    if (v->data.array_val.count == 0) return json_buffer_append(buf, "[]", 2);
 
-    if (!json_buffer_append(buf, "[", 1))
-      return false;
-    if (!json_buffer_append(buf, newline, newline_len))
-      return false;
+    if (!json_buffer_append(buf, "[", 1)) return false;
+    if (!json_buffer_append(buf, newline, newline_len)) return false;
     json_element_t *e = v->data.array_val.elements;
     while (e) {
-      if (!json_serialize_indent(buf, level + 1))
-        return false;
+      if (!json_serialize_indent(buf, level + 1)) return false;
       if (!json_serialize_pretty_value_ex(e->value, buf, level + 1, newline, newline_len))
         return false;
       e = e->next;
       if (e) {
-        if (!json_buffer_append(buf, ",", 1))
-          return false;
-        if (!json_buffer_append(buf, newline, newline_len))
-          return false;
+        if (!json_buffer_append(buf, ",", 1)) return false;
+        if (!json_buffer_append(buf, newline, newline_len)) return false;
       } else {
-        if (!json_buffer_append(buf, newline, newline_len))
-          return false;
+        if (!json_buffer_append(buf, newline, newline_len)) return false;
       }
     }
-    if (!json_serialize_indent(buf, level))
-      return false;
+    if (!json_serialize_indent(buf, level)) return false;
     return json_buffer_append(buf, "]", 1);
   }
   case JSON_OBJECT: {
-    if (v->data.object_val.count == 0)
-      return json_buffer_append(buf, "{}", 2);
+    if (v->data.object_val.count == 0) return json_buffer_append(buf, "{}", 2);
 
-    if (!json_buffer_append(buf, "{", 1))
-      return false;
-    if (!json_buffer_append(buf, newline, newline_len))
-      return false;
+    if (!json_buffer_append(buf, "{", 1)) return false;
+    if (!json_buffer_append(buf, newline, newline_len)) return false;
     json_pair_t *p = v->data.object_val.pairs;
     while (p) {
-      if (!json_serialize_indent(buf, level + 1))
-        return false;
-      if (!json_serialize_string(p->key, p->key_len, buf))
-        return false;
-      if (!json_buffer_append(buf, ": ", 2))
-        return false;
+      if (!json_serialize_indent(buf, level + 1)) return false;
+      if (!json_serialize_string(p->key, p->key_len, buf)) return false;
+      if (!json_buffer_append(buf, ": ", 2)) return false;
       if (!json_serialize_pretty_value_ex(p->value, buf, level + 1, newline, newline_len))
         return false;
       p = p->next;
       if (p) {
-        if (!json_buffer_append(buf, ",", 1))
-          return false;
-        if (!json_buffer_append(buf, newline, newline_len))
-          return false;
+        if (!json_buffer_append(buf, ",", 1)) return false;
+        if (!json_buffer_append(buf, newline, newline_len)) return false;
       } else {
-        if (!json_buffer_append(buf, newline, newline_len))
-          return false;
+        if (!json_buffer_append(buf, newline, newline_len)) return false;
       }
     }
-    if (!json_serialize_indent(buf, level))
-      return false;
+    if (!json_serialize_indent(buf, level)) return false;
     return json_buffer_append(buf, "}", 1);
   }
   default:
@@ -1025,31 +928,27 @@ static bool json_serialize_pretty_value(const json_value_t *v, json_buffer_t *bu
 
 char *json_serialize_pretty(const json_value_t *value, size_t *out_len) {
   json_buffer_t buf;
-  if (!json_buffer_init(&buf))
-    return NULL;
+  if (!json_buffer_init(&buf)) return NULL;
 
   if (!json_serialize_pretty_value(value, &buf, 0)) {
     free(buf.data);
     return NULL;
   }
 
-  if (out_len)
-    *out_len = buf.size;
+  if (out_len) *out_len = buf.size;
   return buf.data;
 }
 
 char *json_serialize_pretty_crlf(const json_value_t *value, size_t *out_len) {
   json_buffer_t buf;
-  if (!json_buffer_init(&buf))
-    return NULL;
+  if (!json_buffer_init(&buf)) return NULL;
 
   if (!json_serialize_pretty_value_ex(value, &buf, 0, "\r\n", 2)) {
     free(buf.data);
     return NULL;
   }
 
-  if (out_len)
-    *out_len = buf.size;
+  if (out_len) *out_len = buf.size;
   return buf.data;
 }
 
@@ -1061,74 +960,124 @@ void json_serialize_free(char *str) { free(str); }
 
 static json_value_t *json_create_root(json_type_t type) {
   json_arena_t *arena = json_arena_create();
-  if (!arena)
-    return NULL;
+  if (!arena) return NULL;
 
   json_value_t *value = json_value_new_arena(arena, type);
-  if (!value)
-    json_arena_free(arena);
+  if (!value) json_arena_free(arena);
   return value;
 }
 
-json_value_t *json_create_object(void) {
-  return json_create_root(JSON_OBJECT);
-}
+json_value_t *json_create_object(void) { return json_create_root(JSON_OBJECT); }
 
-json_value_t *json_create_array(void) {
-  return json_create_root(JSON_ARRAY);
-}
+json_value_t *json_create_array(void) { return json_create_root(JSON_ARRAY); }
 
 json_value_t *json_create_string(const char *str) {
   return str ? json_create_string_n(str, strlen(str)) : NULL;
 }
 
 json_value_t *json_create_string_n(const char *str, size_t len) {
-  if (!str)
-    return NULL;
+  if (!str) return NULL;
   json_arena_t *arena = json_arena_create();
-  if (!arena)
-    return NULL;
+  if (!arena) return NULL;
   json_value_t *value = json_value_string_arena(arena, str, len);
-  if (!value)
-    json_arena_free(arena);
+  if (!value) json_arena_free(arena);
   return value;
 }
 
 json_value_t *json_create_number(double num) {
   json_value_t *value = json_create_root(JSON_NUMBER);
-  if (value)
-    value->data.num_val = num;
+  if (value) value->data.number_val.value = num;
+  return value;
+}
+
+json_value_t *json_create_int64(int64_t num) {
+  char text[32];
+  int len = snprintf(text, sizeof(text), "%lld", (long long)num);
+  json_value_t *value = json_create_root(JSON_NUMBER);
+  if (!value) return NULL;
+  value->data.number_val.value = (double)num;
+  value->data.number_val.lexeme = json_arena_strdup(value->arena, text, (size_t)len);
+  value->data.number_val.lexeme_len = (size_t)len;
+  if (!value->data.number_val.lexeme) {
+    json_free(value);
+    return NULL;
+  }
   return value;
 }
 
 json_value_t *json_create_bool(bool val) {
   json_value_t *value = json_create_root(JSON_BOOL);
-  if (value)
-    value->data.bool_val = val;
+  if (value) value->data.bool_val = val;
   return value;
 }
 
-json_value_t *json_create_null(void) {
-  return json_create_root(JSON_NULL);
+json_value_t *json_create_null(void) { return json_create_root(JSON_NULL); }
+
+json_value_t *json_clone(const json_value_t *value) {
+  json_value_t *copy = NULL;
+  size_t i;
+
+  if (!value) return NULL;
+  switch (value->type) {
+  case JSON_NULL:
+    return json_create_null();
+  case JSON_BOOL:
+    return json_create_bool(value->data.bool_val);
+  case JSON_NUMBER:
+    copy = json_create_number(value->data.number_val.value);
+    if (copy && value->data.number_val.lexeme) {
+      copy->data.number_val.lexeme = json_arena_strdup(copy->arena, value->data.number_val.lexeme,
+                                                       value->data.number_val.lexeme_len);
+      copy->data.number_val.lexeme_len = value->data.number_val.lexeme_len;
+      if (!copy->data.number_val.lexeme) {
+        json_free(copy);
+        return NULL;
+      }
+    }
+    return copy;
+  case JSON_STRING:
+    return json_create_string_n(value->data.string_val.str, value->data.string_val.len);
+  case JSON_ARRAY:
+    copy = json_create_array();
+    for (i = 0; copy && i < value->data.array_val.count; ++i) {
+      json_value_t *child = json_clone(json_array_get(value, i));
+      if (!child || !json_array_add_checked(copy, child)) {
+        json_free(child);
+        json_free(copy);
+        return NULL;
+      }
+    }
+    return copy;
+  case JSON_OBJECT:
+    copy = json_create_object();
+    for (i = 0; copy && i < value->data.object_val.count; ++i) {
+      json_value_t *child = json_clone(json_object_value(value, i));
+      if (!child || !json_object_add_n(copy, json_object_key(value, i),
+                                       json_object_key_len(value, i), child)) {
+        json_free(child);
+        json_free(copy);
+        return NULL;
+      }
+    }
+    return copy;
+  default:
+    return NULL;
+  }
 }
 
-static bool json_can_transfer_to_arena(const json_arena_t *dst,
-                                       const json_value_t *val) {
+static bool json_can_transfer_to_arena(const json_arena_t *dst, const json_value_t *val) {
   return val && json_arena_can_adopt(dst, val->arena);
 }
 
-bool json_object_add_n(json_value_t *obj, const char *key, size_t key_len,
-                       json_value_t *val) {
+bool json_object_add_n(json_value_t *obj, const char *key, size_t key_len, json_value_t *val) {
   if (!obj || obj->type != JSON_OBJECT || !key || !val ||
       !json_can_transfer_to_arena(obj->arena, val))
     return false;
 
   char *key_copy = json_arena_strdup(obj->arena, key, key_len);
-  if (!key_copy)
-    return false;
+  if (!key_copy) return false;
 
-  if (!json_object_set_arena_ex(obj->arena, obj, key_copy, key_len, 1, val))
-    return false;
+  if (!json_object_set_arena_ex(obj->arena, obj, key_copy, key_len, 1, val)) return false;
   return json_arena_adopt(obj->arena, val->arena);
 }
 
@@ -1137,12 +1086,10 @@ bool json_object_add_checked(json_value_t *obj, const char *key, json_value_t *v
 }
 
 bool json_array_add_checked(json_value_t *arr, json_value_t *val) {
-  if (!arr || arr->type != JSON_ARRAY || !val ||
-      !json_can_transfer_to_arena(arr->arena, val))
+  if (!arr || arr->type != JSON_ARRAY || !val || !json_can_transfer_to_arena(arr->arena, val))
     return false;
 
-  if (!json_array_append_arena(arr->arena, arr, val))
-    return false;
+  if (!json_array_append_arena(arr->arena, arr, val)) return false;
   return json_arena_adopt(arr->arena, val->arena);
 }
 
@@ -1155,35 +1102,27 @@ void json_array_add(json_value_t *arr, json_value_t *val) {
 }
 
 void json_object_set_string(json_value_t *obj, const char *key, const char *val) {
-  if (!obj || obj->type != JSON_OBJECT || !key || !val)
-    return;
+  if (!obj || obj->type != JSON_OBJECT || !key || !val) return;
   json_value_t *v = json_value_string_arena(obj->arena, val, strlen(val));
-  if (v)
-    json_object_set_arena(obj->arena, obj, key, strlen(key), v);
+  if (v) json_object_set_arena(obj->arena, obj, key, strlen(key), v);
 }
 
 void json_object_set_number(json_value_t *obj, const char *key, double val) {
-  if (!obj || obj->type != JSON_OBJECT || !key)
-    return;
+  if (!obj || obj->type != JSON_OBJECT || !key) return;
   json_value_t *v = json_value_number_arena(obj->arena, val);
-  if (v)
-    json_object_set_arena(obj->arena, obj, key, strlen(key), v);
+  if (v) json_object_set_arena(obj->arena, obj, key, strlen(key), v);
 }
 
 void json_object_set_bool(json_value_t *obj, const char *key, bool val) {
-  if (!obj || obj->type != JSON_OBJECT || !key)
-    return;
+  if (!obj || obj->type != JSON_OBJECT || !key) return;
   json_value_t *v = json_value_bool_arena(obj->arena, val);
-  if (v)
-    json_object_set_arena(obj->arena, obj, key, strlen(key), v);
+  if (v) json_object_set_arena(obj->arena, obj, key, strlen(key), v);
 }
 
 void json_object_set_null(json_value_t *obj, const char *key) {
-  if (!obj || obj->type != JSON_OBJECT || !key)
-    return;
+  if (!obj || obj->type != JSON_OBJECT || !key) return;
   json_value_t *v = json_value_null_arena(obj->arena);
-  if (v)
-    json_object_set_arena(obj->arena, obj, key, strlen(key), v);
+  if (v) json_object_set_arena(obj->arena, obj, key, strlen(key), v);
 }
 
 /* ============================================================================
@@ -1234,9 +1173,7 @@ static void json_sax_set_error(json_sax_parser_t *parser, const char *fmt_str, .
   }
 }
 
-static bool json_sax_is_ws(char c) {
-  return c == ' ' || c == '\t' || c == '\n' || c == '\r';
-}
+static bool json_sax_is_ws(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
 static bool json_sax_is_delim(char c) {
   return json_sax_is_ws(c) || c == ',' || c == ']' || c == '}';
@@ -1245,8 +1182,7 @@ static bool json_sax_is_delim(char c) {
 static bool json_sax_is_hex4(const char *src) {
   for (int i = 0; i < 4; ++i) {
     char c = src[i];
-    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
-          (c >= 'A' && c <= 'F'))) {
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
       return false;
     }
   }
@@ -1255,8 +1191,7 @@ static bool json_sax_is_hex4(const char *src) {
 
 static int sax_unescape_to_buffer(json_sax_parser_t *parser, const char *src, size_t len,
                                   const char **out, size_t *out_len) {
-  if (!parser || !out || !out_len)
-    return -1;
+  if (!parser || !out || !out_len) return -1;
 
   if (!parser->scratch) {
     parser->scratch = tstr_new_len(NULL, len);
@@ -1304,37 +1239,17 @@ static int sax_unescape_to_buffer(json_sax_parser_t *parser, const char *src, si
       case 't':
         buf[j++] = '\t';
         break;
-      case 'u':
-        if (i + 4 < len) {
-          int cp = 0;
-          for (int k = 0; k < 4; k++) {
-            char c = src[i + 1 + k];
-            int d;
-            if (c >= '0' && c <= '9')
-              d = c - '0';
-            else if (c >= 'a' && c <= 'f')
-              d = c - 'a' + 10;
-            else if (c >= 'A' && c <= 'F')
-              d = c - 'A' + 10;
-            else {
-              d = 0;
-              break;
-            }
-            cp = (cp << 4) | d;
-          }
-          i += 4;
-          if (cp < 0x80) {
-            buf[j++] = (char)cp;
-          } else if (cp < 0x800) {
-            buf[j++] = (char)(0xC0 | (cp >> 6));
-            buf[j++] = (char)(0x80 | (cp & 0x3F));
-          } else {
-            buf[j++] = (char)(0xE0 | (cp >> 12));
-            buf[j++] = (char)(0x80 | ((cp >> 6) & 0x3F));
-            buf[j++] = (char)(0x80 | (cp & 0x3F));
-          }
+      case 'u': {
+        size_t escape = i - 1;
+        uint32_t codepoint;
+        if (!json_unicode_decode_escape(src, len, &escape, &codepoint)) {
+          json_sax_set_error(parser, "Invalid Unicode surrogate pair");
+          return -1;
         }
+        j += json_unicode_append_utf8(buf + j, codepoint);
+        i = escape - 1;
         break;
+      }
       default:
         buf[j++] = src[i];
         break;
@@ -1352,8 +1267,7 @@ static int sax_unescape_to_buffer(json_sax_parser_t *parser, const char *src, si
   return 0;
 }
 
-static int json_sax_emit_string(json_sax_parser_t *parser, const json_token_t *token,
-                                bool is_key) {
+static int json_sax_emit_string(json_sax_parser_t *parser, const json_token_t *token, bool is_key) {
   const char *value = token->value;
   size_t len = token->length;
 
@@ -1363,7 +1277,8 @@ static int json_sax_emit_string(json_sax_parser_t *parser, const json_token_t *t
   }
 
   if (is_key) {
-    if (parser->handler.on_object_key && parser->handler.on_object_key(parser->ctx, value, len) != 0) {
+    if (parser->handler.on_object_key &&
+        parser->handler.on_object_key(parser->ctx, value, len) != 0) {
       json_sax_set_error(parser, "SAX callback failed");
       return -1;
     }
@@ -1444,7 +1359,8 @@ static int json_sax_process_token(json_sax_parser_t *parser, const json_token_t 
       break;
 
     case JSON_TOKEN_NUMBER:
-      if (parser->handler.on_number && parser->handler.on_number(parser->ctx, token->num_value) != 0) {
+      if (parser->handler.on_number &&
+          parser->handler.on_number(parser->ctx, token->num_value) != 0) {
         json_sax_set_error(parser, "SAX callback failed");
         return -1;
       }
@@ -1452,8 +1368,7 @@ static int json_sax_process_token(json_sax_parser_t *parser, const json_token_t 
       break;
 
     case JSON_TOKEN_STRING:
-      if (json_sax_emit_string(parser, token, false) != 0)
-        return -1;
+      if (json_sax_emit_string(parser, token, false) != 0) return -1;
       json_sax_mark_value_complete(parser);
       break;
 
@@ -1498,8 +1413,7 @@ static int json_sax_process_token(json_sax_parser_t *parser, const json_token_t 
 
   case SAX_STATE_OBJECT_KEY:
     if (token->type == JSON_TOKEN_STRING) {
-      if (json_sax_emit_string(parser, token, true) != 0)
-        return -1;
+      if (json_sax_emit_string(parser, token, true) != 0) return -1;
       parser->state = SAX_STATE_OBJECT_COLON;
     } else if (token->type == JSON_TOKEN_RBRACE) {
       if (parser->handler.on_object_end && parser->handler.on_object_end(parser->ctx) != 0) {
@@ -1561,11 +1475,9 @@ static int json_sax_parse_number_token(const char *start, size_t len, double *ou
   char *endp = NULL;
 
   if (len >= sizeof(small)) {
-    if (len == SIZE_MAX)
-      return -1;
+    if (len == SIZE_MAX) return -1;
     buf = (char *)malloc(len + 1);
-    if (!buf)
-      return -1;
+    if (!buf) return -1;
   }
 
   memcpy(buf, start, len);
@@ -1573,12 +1485,10 @@ static int json_sax_parse_number_token(const char *start, size_t len, double *ou
   errno = 0;
   *out = strtod(buf, &endp);
   if (endp != buf + len) {
-    if (buf != small)
-      free(buf);
+    if (buf != small) free(buf);
     return -1;
   }
-  if (buf != small)
-    free(buf);
+  if (buf != small) free(buf);
   return 0;
 }
 
@@ -1589,12 +1499,10 @@ static int json_sax_scan_number(json_sax_parser_t *parser, json_token_t *token, 
 
   if (i < len && base[i] == '-') {
     ++i;
-    if (i == len)
-      return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
+    if (i == len) return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
   }
 
-  if (i >= len)
-    return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
+  if (i >= len) return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
 
   if (base[i] == '0') {
     ++i;
@@ -1613,8 +1521,7 @@ static int json_sax_scan_number(json_sax_parser_t *parser, json_token_t *token, 
 
   if (i < len && base[i] == '.') {
     ++i;
-    if (i == len)
-      return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
+    if (i == len) return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
     if (base[i] < '0' || base[i] > '9') {
       json_sax_set_error(parser, "Invalid number");
       return -1;
@@ -1626,12 +1533,10 @@ static int json_sax_scan_number(json_sax_parser_t *parser, json_token_t *token, 
 
   if (i < len && (base[i] == 'e' || base[i] == 'E')) {
     ++i;
-    if (i == len)
-      return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
+    if (i == len) return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
     if (base[i] == '+' || base[i] == '-') {
       ++i;
-      if (i == len)
-        return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
+      if (i == len) return final ? (json_sax_set_error(parser, "Invalid number"), -1) : 0;
     }
     if (base[i] < '0' || base[i] > '9') {
       json_sax_set_error(parser, "Invalid number");
@@ -1642,8 +1547,7 @@ static int json_sax_scan_number(json_sax_parser_t *parser, json_token_t *token, 
     } while (i < len && base[i] >= '0' && base[i] <= '9');
   }
 
-  if (i == len && !final)
-    return 0;
+  if (i == len && !final) return 0;
   if (i < len && !json_sax_is_delim(base[i])) {
     json_sax_set_error(parser, "Invalid number terminator");
     return -1;
@@ -1754,8 +1658,7 @@ static int json_sax_next_token(json_sax_parser_t *parser, json_token_t *token, b
 
   p = json_skip_rfc_whitespace_simde(p, end);
   parser->pos = (size_t)(p - base);
-  if (parser->pos >= len)
-    return 0;
+  if (parser->pos >= len) return 0;
 
   memset(token, 0, sizeof(*token));
   switch (base[parser->pos]) {
@@ -1813,8 +1716,7 @@ static int json_sax_next_token(json_sax_parser_t *parser, json_token_t *token, b
 
 static void json_sax_compact_buffer(json_sax_parser_t *parser) {
   size_t len = tstr_len(parser->buffer);
-  if (!parser->buffer || parser->pos == 0)
-    return;
+  if (!parser->buffer || parser->pos == 0) return;
   if (parser->pos >= len) {
     tstr_clear(parser->buffer);
     parser->pos = 0;
@@ -1871,14 +1773,12 @@ int json_sax_parser_feed(json_sax_parser_t *parser, const char *data, size_t len
     fmt(g_error, sizeof(g_error), "Invalid arguments");
     return -1;
   }
-  if (parser->failed)
-    return -1;
+  if (parser->failed) return -1;
   if (parser->finished) {
     json_sax_set_error(parser, "Parser already finished");
     return -1;
   }
-  if (len == 0)
-    return 0;
+  if (len == 0) return 0;
 
   tstr_t next = tstr_cat_len(parser->buffer, data, len);
   if (!next) {
@@ -1895,16 +1795,14 @@ int json_sax_parser_finish(json_sax_parser_t *parser) {
     fmt(g_error, sizeof(g_error), "Invalid arguments");
     return -1;
   }
-  if (parser->failed)
-    return -1;
+  if (parser->failed) return -1;
   if (parser->finished) {
     json_sax_set_error(parser, "Parser already finished");
     return -1;
   }
 
   parser->finished = true;
-  if (json_sax_parser_run(parser, true) != 0)
-    return -1;
+  if (json_sax_parser_run(parser, true) != 0) return -1;
   if (!parser->done) {
     if (!parser->root_seen) {
       json_sax_set_error(parser, "Expected JSON value");
@@ -1917,14 +1815,12 @@ int json_sax_parser_finish(json_sax_parser_t *parser) {
 }
 
 const char *json_sax_parser_error(const json_sax_parser_t *parser) {
-  if (!parser)
-    return g_error;
+  if (!parser) return g_error;
   return parser->error[0] ? parser->error : g_error;
 }
 
 void json_sax_parser_destroy(json_sax_parser_t *parser) {
-  if (!parser)
-    return;
+  if (!parser) return;
   tstr_free(parser->buffer);
   tstr_free(parser->scratch);
   free(parser);
@@ -1937,12 +1833,10 @@ int json_parse_sax(const char *content, size_t len, const json_sax_handler_t *ha
   }
 
   json_sax_parser_t *parser = json_sax_parser_create(handler, ctx);
-  if (!parser)
-    return -1;
+  if (!parser) return -1;
 
   int ret = json_sax_parser_feed(parser, content, len);
-  if (ret == 0)
-    ret = json_sax_parser_finish(parser);
+  if (ret == 0) ret = json_sax_parser_finish(parser);
   json_sax_parser_destroy(parser);
   return ret;
 }

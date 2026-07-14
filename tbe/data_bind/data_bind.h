@@ -50,6 +50,7 @@ extern "C" {
 
 typedef struct DataBind DataBind;
 typedef struct DataBindValue DataBindValue;
+typedef struct DataBindObject DataBindObject;
 
 typedef enum DataBindStatus {
   DATA_BIND_OK = 0,
@@ -603,6 +604,76 @@ DATA_BIND_API void data_bind_value_free(DataBindValue *value);
  */
 DATA_BIND_API DataBindStatus data_bind_value_clone(const DataBindValue *value,
                                                    DataBindValue **out_value);
+
+/**
+ * @brief Parse and own one schema-bound JSON object.
+ *
+ * The returned handle owns its type name and value tree and remains valid after
+ * the codec is freed. Release it with data_bind_object_free().
+ */
+DATA_BIND_API DataBindStatus data_bind_object_from_json(DataBind *codec, const char *type_name,
+                                                        const char *json, size_t len,
+                                                        DataBindObject **out_object,
+                                                        DataBindError *error);
+
+/** Parse and own one schema-bound YAML object. */
+DATA_BIND_API DataBindStatus data_bind_object_from_yaml(DataBind *codec, const char *type_name,
+                                                        const char *yaml, size_t len,
+                                                        DataBindObject **out_object,
+                                                        DataBindError *error);
+
+/** Parse and own one schema-bound XML object. */
+DATA_BIND_API DataBindStatus data_bind_object_from_xml(DataBind *codec, const char *type_name,
+                                                       const char *xml, size_t len,
+                                                       DataBindObject **out_object,
+                                                       DataBindError *error);
+
+/** Return the copied schema type name owned by the handle. */
+DATA_BIND_API const char *data_bind_object_type_name(const DataBindObject *object);
+
+/** Return the borrowed value tree. It remains valid until data_bind_object_free(). */
+DATA_BIND_API const DataBindValue *data_bind_object_value(const DataBindObject *object);
+
+/**
+ * @brief Serialize the owned value tree as compact UTF-8 JSON.
+ *
+ * Extended scalars use the same representation accepted by the JSON binder:
+ * UUID/temporal/decimal/bigint/bytes are strings and money is an object. Bytes
+ * must contain valid UTF-8. On success, *out_json must be released with
+ * data_bind_serialized_free().
+ */
+DATA_BIND_API DataBindStatus data_bind_object_serialize_json(const DataBindObject *object,
+                                                             char **out_json, size_t *out_len,
+                                                             DataBindError *error);
+/**
+ * Serialize as YAML using the JSON-compatible DataBind scalar representation.
+ * On success, release *out_yaml with data_bind_serialized_free().
+ */
+DATA_BIND_API DataBindStatus data_bind_object_serialize_yaml(const DataBindObject *object,
+                                                             char **out_yaml, size_t *out_len,
+                                                             DataBindError *error);
+/**
+ * Serialize using the existing DataBind XML shape: object fields are child
+ * elements, collections repeat their field element, and map keys are element
+ * names. Values without an XML representation fail with a type mismatch. On
+ * success, release *out_xml with data_bind_serialized_free().
+ */
+DATA_BIND_API DataBindStatus data_bind_object_serialize_xml(const DataBindObject *object,
+                                                            char **out_xml, size_t *out_len,
+                                                            DataBindError *error);
+
+DATA_BIND_API DataBindStatus data_bind_object_write_json(const DataBindObject *object,
+                                                         DataBindWriteFn write, void *user,
+                                                         DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_object_write_yaml(const DataBindObject *object,
+                                                         DataBindWriteFn write, void *user,
+                                                         DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_object_write_xml(const DataBindObject *object,
+                                                        DataBindWriteFn write, void *user,
+                                                        DataBindError *error);
+
+DATA_BIND_API void data_bind_serialized_free(char *data);
+DATA_BIND_API void data_bind_object_free(DataBindObject *object);
 
 DATA_BIND_API DataBindValueKind data_bind_value_kind(const DataBindValue *value);
 DATA_BIND_API size_t data_bind_value_field_count(const DataBindValue *value);

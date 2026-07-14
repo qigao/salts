@@ -8,6 +8,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <turbo_str_view.h>
 
 #ifdef __cplusplus
@@ -68,7 +69,8 @@ char *json_serialize_pretty_crlf(const json_value_t *value, size_t *out_len);
 void json_serialize_free(char *str);
 
 /* ============================================================================
- * JSONPath Query API
+ * JSONPath Query
+ * API
  * ============================================================================ */
 
 json_value_t *json_path_get(const json_value_t *root, const char *expr);
@@ -80,32 +82,39 @@ const char *json_path_get_error(void);
 
 /* ============================================================================
  * Builder API
+ *
  * ============================================================================ */
 
 json_value_t *json_create_object(void);
 json_value_t *json_create_array(void);
 json_value_t *json_create_string(const char *str);
 /** Create an owned JSON string from exactly len bytes.
- * @param str Source bytes, copied before return; must not be NULL.
+ * @param str Source bytes, copied before
+ * return; must not be NULL.
  * @param len Byte length; embedded NUL bytes are allowed.
- * @return New root value owned by the caller, or NULL on invalid input/OOM.
+ * @return
+ * New root value owned by the caller, or NULL on invalid input/OOM.
  */
 json_value_t *json_create_string_n(const char *str, size_t len);
 json_value_t *json_create_number(double num);
+json_value_t *json_create_int64(int64_t num);
 json_value_t *json_create_bool(bool val);
 json_value_t *json_create_null(void);
+json_value_t *json_clone(const json_value_t *value);
 
 /** Add a C-string key/value pair and report whether it was committed.
- * On success obj owns val. On failure ownership remains unchanged.
+ * On success obj owns val.
+ * On failure ownership remains unchanged.
  */
 bool json_object_add_checked(json_value_t *obj, const char *key, json_value_t *val);
 /** Add a length-delimited key/value pair. The key is copied and may contain NUL.
- * On success obj owns val. On failure ownership remains unchanged.
+ * On success obj
+ * owns val. On failure ownership remains unchanged.
  */
-bool json_object_add_n(json_value_t *obj, const char *key, size_t key_len,
-                       json_value_t *val);
+bool json_object_add_n(json_value_t *obj, const char *key, size_t key_len, json_value_t *val);
 /** Append val and report whether it was committed.
- * On success arr owns val. On failure ownership remains unchanged.
+ * On success arr owns val. On failure ownership
+ * remains unchanged.
  */
 bool json_array_add_checked(json_value_t *arr, json_value_t *val);
 
@@ -117,7 +126,6 @@ void json_object_set_string(json_value_t *obj, const char *key, const char *val)
 void json_object_set_number(json_value_t *obj, const char *key, double val);
 void json_object_set_bool(json_value_t *obj, const char *key, bool val);
 void json_object_set_null(json_value_t *obj, const char *key);
-
 
 /* ============================================================================
  * SAX/Stream API - O(1) memory, callback-based parsing
@@ -138,7 +146,8 @@ typedef struct json_sax_handler_s {
 int json_parse_sax(const char *content, size_t len, const json_sax_handler_t *handler, void *ctx);
 
 /* Incremental SAX parser. Call feed() with any chunk size, then finish() once at EOF.
- * Callback pointers are valid only for the duration of the callback. */
+ * Callback
+ * pointers are valid only for the duration of the callback. */
 json_sax_parser_t *json_sax_parser_create(const json_sax_handler_t *handler, void *ctx);
 int json_sax_parser_feed(json_sax_parser_t *parser, const char *data, size_t len);
 int json_sax_parser_finish(json_sax_parser_t *parser);

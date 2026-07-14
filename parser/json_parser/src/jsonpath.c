@@ -5,6 +5,7 @@
 
 #include "json_parser.h"
 #include "json_types.h"
+#include "json_unicode.h"
 #include "jsonpath_grammar_gen.h"
 #include "jsonpath_types.h"
 #include <ctype.h>
@@ -31,8 +32,7 @@ void JsonPathParse(void *parser, int tokenType, jsonpath_opcode_t *token,
 
 static char *jsonpath_strdup_len(const char *str, size_t len) {
   char *out = (char *)malloc(len + 1);
-  if (!out)
-    return NULL;
+  if (!out) return NULL;
   memcpy(out, str, len);
   out[len] = '\0';
   return out;
@@ -41,8 +41,7 @@ static char *jsonpath_strdup_len(const char *str, size_t len) {
 jsonpath_opcode_t *jsonpath_append_op(jsonpath_opcode_t *a, jsonpath_opcode_t *b) {
   jsonpath_opcode_t *tail = a;
 
-  if (!a)
-    return b;
+  if (!a) return b;
 
   while (tail->sibling)
     tail = tail->sibling;
@@ -51,13 +50,12 @@ jsonpath_opcode_t *jsonpath_append_op(jsonpath_opcode_t *a, jsonpath_opcode_t *b
   return a;
 }
 
-jsonpath_opcode_t *jsonpath_alloc_op(jsonpath_parse_ctx_t *ctx, int type, int num,
-                                      double number, const char *str, ...) {
+jsonpath_opcode_t *jsonpath_alloc_op(jsonpath_parse_ctx_t *ctx, int type, int num, double number,
+                                     const char *str, ...) {
   jsonpath_opcode_t *child;
   jsonpath_opcode_t *op = (jsonpath_opcode_t *)calloc(1, sizeof(*op));
   if (!op) {
-    if (ctx)
-      ctx->error_code = -2;
+    if (ctx) ctx->error_code = -2;
     return NULL;
   }
 
@@ -69,8 +67,7 @@ jsonpath_opcode_t *jsonpath_alloc_op(jsonpath_parse_ctx_t *ctx, int type, int nu
     op->str = jsonpath_strdup_len(str, strlen(str));
     if (!op->str) {
       free(op);
-      if (ctx)
-        ctx->error_code = -2;
+      if (ctx) ctx->error_code = -2;
       return NULL;
     }
   }
@@ -78,10 +75,8 @@ jsonpath_opcode_t *jsonpath_alloc_op(jsonpath_parse_ctx_t *ctx, int type, int nu
   va_list ap;
   va_start(ap, str);
   while ((child = va_arg(ap, jsonpath_opcode_t *)) != NULL) {
-    if (!op->down)
-      op->down = child;
-    else
-      jsonpath_append_op(op->down, child);
+    if (!op->down) op->down = child;
+    else jsonpath_append_op(op->down, child);
   }
   va_end(ap);
 
@@ -101,19 +96,8 @@ static void jsonpath_free_ctx(jsonpath_parse_ctx_t *ctx) {
   free(ctx);
 }
 
-static int jsonpath_hex(char c) {
-  if (c >= '0' && c <= '9')
-    return c - '0';
-  if (c >= 'a' && c <= 'f')
-    return c - 'a' + 10;
-  if (c >= 'A' && c <= 'F')
-    return c - 'A' + 10;
-  return -1;
-}
-
 static int jsonpath_append_utf8(char *out, size_t *pos, int code) {
-  if (code <= 0)
-    return 0;
+  if (code <= 0) return 0;
   if (code <= 0x7F) {
     out[(*pos)++] = (char)code;
   } else if (code <= 0x7FF) {
@@ -135,12 +119,12 @@ static int jsonpath_append_utf8(char *out, size_t *pos, int code) {
 static int jsonpath_parse_string(const char *buf, char quote, char **out_str,
                                  jsonpath_parse_ctx_t *ctx) {
   size_t cap = strlen(buf) + 1;
+  size_t input_len = cap - 1;
   char *out = (char *)malloc(cap);
   size_t pos = 0;
   size_t i = 1;
 
-  if (!out)
-    return -2;
+  if (!out) return -2;
 
   while (buf[i]) {
     unsigned char c = (unsigned char)buf[i++];
@@ -156,6 +140,7 @@ static int jsonpath_parse_string(const char *buf, char quote, char **out_str,
       continue;
     }
 
+    size_t escape = i - 1;
     c = (unsigned char)buf[i++];
     if (!c) {
       free(out);
@@ -185,22 +170,20 @@ static int jsonpath_parse_string(const char *buf, char quote, char **out_str,
       out[pos++] = '\t';
       break;
     case 'u': {
-      int h0 = jsonpath_hex(buf[i]);
-      int h1 = jsonpath_hex(buf[i + 1]);
-      int h2 = jsonpath_hex(buf[i + 2]);
-      int h3 = jsonpath_hex(buf[i + 3]);
-      if (h0 < 0 || h1 < 0 || h2 < 0 || h3 < 0) {
+      uint32_t codepoint;
+      size_t next = escape;
+      if (!json_unicode_decode_escape(buf, input_len, &next, &codepoint)) {
         free(out);
-        ctx->error_pos = ctx->off + (int)i;
+        ctx->error_pos = ctx->off + (int)escape;
         return -3;
       }
-      jsonpath_append_utf8(out, &pos, (h0 << 12) | (h1 << 8) | (h2 << 4) | h3);
-      i += 4;
+      pos += json_unicode_append_utf8(out + pos, codepoint);
+      i = next;
       break;
     }
     case 'x': {
-      int h0 = jsonpath_hex(buf[i]);
-      int h1 = jsonpath_hex(buf[i + 1]);
+      int h0 = json_unicode_hex(buf[i]);
+      int h1 = json_unicode_hex(buf[i + 1]);
       if (h0 < 0 || h1 < 0) {
         free(out);
         ctx->error_pos = ctx->off + (int)i;
@@ -298,14 +281,12 @@ static int jsonpath_lex(const char *input, jsonpath_parse_ctx_t *ctx, jsonpath_o
   case '\'':
   case '"':
     consumed = jsonpath_parse_string(input, *input, &str, ctx);
-    if (consumed < 0)
-      return consumed;
+    if (consumed < 0) return consumed;
     type = JSONPATH_TOKEN_STRING;
     break;
   case '/':
     consumed = jsonpath_parse_string(input, '/', &str, ctx);
-    if (consumed < 0)
-      return consumed;
+    if (consumed < 0) return consumed;
     while (isalpha((unsigned char)input[consumed]))
       consumed++;
     type = JSONPATH_TOKEN_REGEXP;
@@ -313,12 +294,10 @@ static int jsonpath_lex(const char *input, jsonpath_parse_ctx_t *ctx, jsonpath_o
   default:
     if (*input == '-' || isdigit((unsigned char)*input)) {
       double number = strtod(input, &end);
-      if (end == input)
-        return -3;
+      if (end == input) return -3;
       consumed = (int)(end - input);
       op = jsonpath_alloc_op(ctx, JSONPATH_TOKEN_NUMBER, (int)number, number, NULL, NULL);
-      if (!op)
-        return -2;
+      if (!op) return -2;
       *out_op = op;
       return consumed;
     }
@@ -335,26 +314,22 @@ static int jsonpath_lex(const char *input, jsonpath_parse_ctx_t *ctx, jsonpath_o
         op = jsonpath_alloc_op(ctx, JSONPATH_TOKEN_BOOL, 0, 0.0, NULL, NULL);
       } else {
         str = jsonpath_strdup_len(start, (size_t)consumed);
-        if (!str)
-          return -2;
+        if (!str) return -2;
         op = jsonpath_alloc_op(ctx, JSONPATH_TOKEN_LABEL, 0, 0.0, str, NULL);
         free(str);
       }
-      if (!op)
-        return -2;
+      if (!op) return -2;
       *out_op = op;
       return consumed;
     }
     break;
   }
 
-  if (!type)
-    return -4;
+  if (!type) return -4;
 
   op = jsonpath_alloc_op(ctx, type, 0, 0.0, str, NULL);
   free(str);
-  if (!op)
-    return -2;
+  if (!op) return -2;
 
   *out_op = op;
   return consumed;
@@ -394,21 +369,19 @@ static jsonpath_parse_ctx_t *jsonpath_parse(const char *expr) {
       break;
     }
 
-    if (op)
-      JsonPathParse(parser, op->type, op, ctx);
+    if (op) JsonPathParse(parser, op->type, op, ctx);
 
     ptr += consumed;
     ctx->off += consumed;
   }
 
-  if (!ctx->error_code)
-    JsonPathParse(parser, 0, NULL, ctx);
+  if (!ctx->error_code) JsonPathParse(parser, 0, NULL, ctx);
 
   JsonPathParseFree(parser, free);
 
   if (ctx->error_code || !ctx->path) {
-    snprintf(g_jsonpath_error, sizeof(g_jsonpath_error),
-             "Invalid JSONPath expression at offset %d", ctx->error_pos);
+    snprintf(g_jsonpath_error, sizeof(g_jsonpath_error), "Invalid JSONPath expression at offset %d",
+             ctx->error_pos);
     jsonpath_free_ctx(ctx);
     return NULL;
   }
@@ -420,8 +393,7 @@ static int jsonpath_result_push(json_path_result_t *result, const json_value_t *
   json_value_t **items;
   size_t new_capacity;
 
-  if (!result || !value)
-    return 1;
+  if (!result || !value) return 1;
 
   if (result->count == result->capacity) {
     new_capacity = result->capacity ? result->capacity * 2 : 8;
@@ -439,12 +411,11 @@ static int jsonpath_result_push(json_path_result_t *result, const json_value_t *
 }
 
 static const json_value_t *jsonpath_match_next(jsonpath_opcode_t *ptr, const json_value_t *root,
-                                               const json_value_t *cur,
-                                               json_path_result_t *result, int first_only);
+                                               const json_value_t *cur, json_path_result_t *result,
+                                               int first_only);
 
 static int jsonpath_value_to_op(const json_value_t *value, jsonpath_opcode_t *op) {
-  if (!value || !op)
-    return 0;
+  if (!value || !op) return 0;
 
   memset(op, 0, sizeof(*op));
 
@@ -470,14 +441,11 @@ static int jsonpath_value_to_op(const json_value_t *value, jsonpath_opcode_t *op
 
 static const json_value_t *jsonpath_eval_path(jsonpath_opcode_t *op, const json_value_t *root,
                                               const json_value_t *cur) {
-  if (!op)
-    return NULL;
+  if (!op) return NULL;
 
-  if (op->type == JSONPATH_TOKEN_ROOT)
-    return jsonpath_match_next(op->down, root, root, NULL, 1);
+  if (op->type == JSONPATH_TOKEN_ROOT) return jsonpath_match_next(op->down, root, root, NULL, 1);
 
-  if (op->type == JSONPATH_TOKEN_THIS)
-    return jsonpath_match_next(op->down, root, cur, NULL, 1);
+  if (op->type == JSONPATH_TOKEN_THIS) return jsonpath_match_next(op->down, root, cur, NULL, 1);
 
   return NULL;
 }
@@ -486,8 +454,7 @@ static int jsonpath_resolve(jsonpath_opcode_t *op, const json_value_t *root,
                             const json_value_t *cur, jsonpath_opcode_t *out) {
   const json_value_t *value;
 
-  if (!op || !out)
-    return 0;
+  if (!op || !out) return 0;
 
   if (op->type == JSONPATH_TOKEN_ROOT || op->type == JSONPATH_TOKEN_THIS) {
     value = jsonpath_eval_path(op, root, cur);
@@ -514,10 +481,8 @@ static int jsonpath_compare(jsonpath_opcode_t *op, const json_value_t *root,
     cmp = left.num - right.num;
     break;
   case JSONPATH_TOKEN_NUMBER:
-    if (left.number < right.number)
-      cmp = -1;
-    else if (left.number > right.number)
-      cmp = 1;
+    if (left.number < right.number) cmp = -1;
+    else if (left.number > right.number) cmp = 1;
     break;
   case JSONPATH_TOKEN_STRING:
     cmp = strcmp(left.str ? left.str : "", right.str ? right.str : "");
@@ -545,8 +510,7 @@ static int jsonpath_compare(jsonpath_opcode_t *op, const json_value_t *root,
 }
 
 static void jsonpath_op_to_string(jsonpath_opcode_t *op, char *buf, size_t len) {
-  if (!op || !buf || len == 0)
-    return;
+  if (!op || !buf || len == 0) return;
 
   switch (op->type) {
   case JSONPATH_TOKEN_BOOL:
@@ -599,8 +563,7 @@ static int jsonpath_expr(jsonpath_opcode_t *op, const json_value_t *root, const 
                          int index, const char *key) {
   jsonpath_opcode_t *child;
 
-  if (!op)
-    return 0;
+  if (!op) return 0;
 
   switch (op->type) {
   case JSONPATH_TOKEN_WILDCARD:
@@ -621,15 +584,13 @@ static int jsonpath_expr(jsonpath_opcode_t *op, const json_value_t *root, const 
     return !jsonpath_expr(op->down, root, cur, index, key);
   case JSONPATH_TOKEN_AND:
     for (child = op->down; child; child = child->sibling) {
-      if (!jsonpath_expr(child, root, cur, index, key))
-        return 0;
+      if (!jsonpath_expr(child, root, cur, index, key)) return 0;
     }
     return 1;
   case JSONPATH_TOKEN_OR:
   case JSONPATH_TOKEN_UNION:
     for (child = op->down; child; child = child->sibling) {
-      if (jsonpath_expr(child, root, cur, index, key))
-        return 1;
+      if (jsonpath_expr(child, root, cur, index, key)) return 1;
     }
     return 0;
   case JSONPATH_TOKEN_STRING:
@@ -642,12 +603,11 @@ static int jsonpath_expr(jsonpath_opcode_t *op, const json_value_t *root, const 
 }
 
 static const json_value_t *jsonpath_match_expr(jsonpath_opcode_t *ptr, const json_value_t *root,
-                                               const json_value_t *cur,
-                                               json_path_result_t *result, int first_only) {
+                                               const json_value_t *cur, json_path_result_t *result,
+                                               int first_only) {
   const json_value_t *matched = NULL;
 
-  if (!ptr || !cur)
-    return NULL;
+  if (!ptr || !cur) return NULL;
 
   if (json_type(cur) == JSON_OBJECT) {
     size_t count = json_object_size(cur);
@@ -656,8 +616,7 @@ static const json_value_t *jsonpath_match_expr(jsonpath_opcode_t *ptr, const jso
       const json_value_t *value = json_object_value(cur, i);
       if (jsonpath_expr(ptr, root, value, -1, key)) {
         matched = jsonpath_match_next(ptr->sibling, root, value, result, first_only);
-        if (matched && first_only)
-          return matched;
+        if (matched && first_only) return matched;
       }
     }
   } else if (json_type(cur) == JSON_ARRAY) {
@@ -666,8 +625,7 @@ static const json_value_t *jsonpath_match_expr(jsonpath_opcode_t *ptr, const jso
       const json_value_t *value = json_array_get(cur, i);
       if (jsonpath_expr(ptr, root, value, (int)i, NULL)) {
         matched = jsonpath_match_next(ptr->sibling, root, value, result, first_only);
-        if (matched && first_only)
-          return matched;
+        if (matched && first_only) return matched;
       }
     }
   }
@@ -676,14 +634,13 @@ static const json_value_t *jsonpath_match_expr(jsonpath_opcode_t *ptr, const jso
 }
 
 static const json_value_t *jsonpath_match_next(jsonpath_opcode_t *ptr, const json_value_t *root,
-                                               const json_value_t *cur,
-                                               json_path_result_t *result, int first_only) {
+                                               const json_value_t *cur, json_path_result_t *result,
+                                               int first_only) {
   const json_value_t *next;
   int index;
   size_t len;
 
-  if (!cur)
-    return NULL;
+  if (!cur) return NULL;
 
   if (!ptr) {
     jsonpath_result_push(result, cur);
@@ -696,14 +653,11 @@ static const json_value_t *jsonpath_match_next(jsonpath_opcode_t *ptr, const jso
     next = json_object_get(cur, ptr->str);
     return next ? jsonpath_match_next(ptr->sibling, root, next, result, first_only) : NULL;
   case JSONPATH_TOKEN_NUMBER:
-    if (json_type(cur) != JSON_ARRAY)
-      return NULL;
+    if (json_type(cur) != JSON_ARRAY) return NULL;
     index = ptr->num;
     len = json_array_size(cur);
-    if (index < 0)
-      index += (int)len;
-    if (index < 0 || (size_t)index >= len)
-      return NULL;
+    if (index < 0) index += (int)len;
+    if (index < 0 || (size_t)index >= len) return NULL;
     next = json_array_get(cur, (size_t)index);
     return jsonpath_match_next(ptr->sibling, root, next, result, first_only);
   default:
@@ -721,8 +675,7 @@ json_path_result_t *json_path_query(const json_value_t *root, const char *expr) 
   }
 
   ctx = jsonpath_parse(expr);
-  if (!ctx)
-    return NULL;
+  if (!ctx) return NULL;
 
   result = (json_path_result_t *)calloc(1, sizeof(*result));
   if (!result) {
@@ -733,8 +686,7 @@ json_path_result_t *json_path_query(const json_value_t *root, const char *expr) 
 
   if (ctx->path->type == JSONPATH_TOKEN_LABEL)
     jsonpath_match_next(ctx->path->down, root, root, result, 0);
-  else
-    jsonpath_match_next(ctx->path->down, root, root, result, 0);
+  else jsonpath_match_next(ctx->path->down, root, root, result, 0);
 
   jsonpath_free_ctx(ctx);
 
@@ -752,11 +704,9 @@ json_value_t *json_path_get(const json_value_t *root, const char *expr) {
   json_path_result_t *result = json_path_query(root, expr);
   json_value_t *value = NULL;
 
-  if (!result)
-    return NULL;
+  if (!result) return NULL;
 
-  if (result->count > 0)
-    value = result->items[0];
+  if (result->count > 0) value = result->items[0];
 
   json_path_result_free(result);
   return value;
@@ -767,18 +717,14 @@ size_t json_path_result_size(const json_path_result_t *result) {
 }
 
 json_value_t *json_path_result_get(const json_path_result_t *result, size_t index) {
-  if (!result || index >= result->count)
-    return NULL;
+  if (!result || index >= result->count) return NULL;
   return result->items[index];
 }
 
 void json_path_result_free(json_path_result_t *result) {
-  if (!result)
-    return;
+  if (!result) return;
   free(result->items);
   free(result);
 }
 
-const char *json_path_get_error(void) {
-  return g_jsonpath_error[0] ? g_jsonpath_error : NULL;
-}
+const char *json_path_get_error(void) { return g_jsonpath_error[0] ? g_jsonpath_error : NULL; }

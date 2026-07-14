@@ -185,6 +185,27 @@ spec("json_parser") {
       check_str_eq(json_string(v), "AB");
       json_free(v);
     }
+
+    it("should decode UTF-16 surrogate pairs in values and keys") {
+      const char *json = "{\"\\uD83D\\uDE00\":\"\\uD83D\\uDE00\"}";
+      const char emoji[] = "\xF0\x9F\x98\x80";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      check_size_eq(json_object_key_len(v, 0), 4);
+      check_mem_eq(json_object_key(v, 0), emoji, 4);
+      check_size_eq(json_string_len(json_object_value(v, 0)), 4);
+      check_mem_eq(json_string(json_object_value(v, 0)), emoji, 4);
+      json_free(v);
+    }
+
+    it("should reject unpaired UTF-16 surrogates") {
+      const char *invalid[] = {"\"\\uD83D\"", "\"\\uDE00\"", "\"\\uD83D\\n\""};
+      for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        json_value_t *v = json_parse(invalid[i], strlen(invalid[i]));
+        check_null(v);
+        check_str_contains(json_get_error(), "surrogate");
+      }
+    }
   }
 
   describe("Arrays") {
@@ -259,12 +280,12 @@ spec("json_parser") {
 
     it("should handle mixed complex structures") {
       const char *json = "{"
-                        "  \"string\": \"hello\","
-                        "  \"number\": 3.14,"
-                        "  \"bool\": true,"
-                        "  \"null\": null,"
-                        "  \"array\": [1, 2, 3]"
-                        "}";
+                         "  \"string\": \"hello\","
+                         "  \"number\": 3.14,"
+                         "  \"bool\": true,"
+                         "  \"null\": null,"
+                         "  \"array\": [1, 2, 3]"
+                         "}";
 
       json_value_t *v = json_parse(json, strlen(json));
       check_not_null(v);
@@ -282,18 +303,18 @@ spec("json_parser") {
 
     it("should parse large configuration-like JSON correctly") {
       const char *json = "{"
-                        "  \"listeners\": ["
-                        "    {\"port\": 1883, \"transport\": \"tcp\"},"
-                        "    {\"port\": 8883, \"transport\": \"tls\"}"
-                        "  ],"
-                        "  \"upstreams\": ["
-                        "    {\"host\": \"10.0.0.1\", \"port\": 1883, \"weight\": 3}"
-                        "  ],"
-                        "  \"settings\": {"
-                        "    \"max_clients\": 10000,"
-                        "    \"connect_timeout_ms\": 5000"
-                        "  }"
-                        "}";
+                         "  \"listeners\": ["
+                         "    {\"port\": 1883, \"transport\": \"tcp\"},"
+                         "    {\"port\": 8883, \"transport\": \"tls\"}"
+                         "  ],"
+                         "  \"upstreams\": ["
+                         "    {\"host\": \"10.0.0.1\", \"port\": 1883, \"weight\": 3}"
+                         "  ],"
+                         "  \"settings\": {"
+                         "    \"max_clients\": 10000,"
+                         "    \"connect_timeout_ms\": 5000"
+                         "  }"
+                         "}";
 
       json_value_t *v = json_parse(json, strlen(json));
       check_not_null(v);
@@ -339,6 +360,22 @@ spec("json_parser") {
       check_str_eq(serialized, "{\"a\\u0000b\":\"x\\u0000y\"}");
       json_serialize_free(serialized);
       json_free(obj);
+    }
+
+    it("should serialize int64 builders without double precision loss") {
+      json_value_t *value = json_create_int64(INT64_C(9007199254740993));
+      json_value_t *copy = json_clone(value);
+      size_t len = 0;
+      char *serialized = json_serialize(value, &len);
+      check_not_null(serialized);
+      check_str_eq(serialized, "9007199254740993");
+      check_size_eq(len, 16);
+      json_serialize_free(serialized);
+      serialized = json_serialize(copy, &len);
+      check_str_eq(serialized, "9007199254740993");
+      json_serialize_free(serialized);
+      json_free(copy);
+      json_free(value);
     }
 
     it("should report checked builder argument failures") {
@@ -467,6 +504,22 @@ spec("json_parser") {
   }
 
   describe("JSONPath") {
+    it("should decode surrogate pairs in bracket property names") {
+      const char emoji[] = "\xF0\x9F\x98\x80";
+      const char *json = "{\"\\uD83D\\uDE00\":7}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_value_t *selected = json_path_get(v, "$['\\uD83D\\uDE00']");
+      check_not_null(selected);
+      check_int_eq((int)json_number(selected), 7);
+      check_mem_eq(json_object_key(v, 0), emoji, 4);
+
+      check_null(json_path_get(v, "$['\\uD83D']"));
+      check_not_null(json_path_get_error());
+      json_free(v);
+    }
+
     it("should get a nested object member by path") {
       const char *json = "{\"listeners\":[{\"port\":1883,\"transport\":\"tcp\"},"
                          "{\"port\":8883,\"transport\":\"tls\"}]}";
@@ -523,8 +576,7 @@ spec("json_parser") {
       json_value_t *v = json_parse(json, strlen(json));
       check_not_null(v);
 
-      json_path_result_t *result =
-          json_path_query(v, "$.listeners[@.port >= 8000].transport");
+      json_path_result_t *result = json_path_query(v, "$.listeners[@.port >= 8000].transport");
       check_not_null(result);
       check_size_eq(json_path_result_size(result), 2);
       check_str_eq(json_string(json_path_result_get(result, 0)), "tls");
@@ -665,7 +717,7 @@ spec("json_parser") {
 
     it("should incrementally SAX parse split strings, literals, and numbers") {
       const char *parts[] = {"{\"na", "me\":\"a\\", "\"b\",", "\"items\":[tr",
-                             "ue,n",  "ull,12.5", "e2]}"};
+                             "ue,n",  "ull,12.5",   "e2]}"};
       sax_test_ctx_t ctx = {0};
       json_sax_parser_t *parser = json_sax_parser_create(&test_handler, &ctx);
       check_not_null(parser);
@@ -713,6 +765,30 @@ spec("json_parser") {
       check_str_eq(ctx.last_string, "y");
 
       json_sax_parser_destroy(parser);
+    }
+
+    it("should SAX decode surrogate pairs across chunks") {
+      const char *parts[] = {"{\"\\uD83D", "\\uDE00\":\"\\uD83D", "\\uDE00\"}"};
+      const char emoji[] = "\xF0\x9F\x98\x80";
+      sax_test_ctx_t ctx = {0};
+      json_sax_parser_t *parser = json_sax_parser_create(&test_handler, &ctx);
+      check_not_null(parser);
+
+      for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); ++i)
+        check_int_eq(json_sax_parser_feed(parser, parts[i], strlen(parts[i])), 0);
+      check_int_eq(json_sax_parser_finish(parser), 0);
+      check_mem_eq(ctx.last_key, emoji, 4);
+      check_mem_eq(ctx.last_string, emoji, 4);
+
+      json_sax_parser_destroy(parser);
+    }
+
+    it("should SAX reject unpaired surrogates") {
+      const char *invalid[] = {"\"\\uD83D\"", "\"\\uDE00\"", "\"\\uD83D\\n\""};
+      for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        sax_test_ctx_t ctx = {0};
+        check_int_eq(json_parse_sax(invalid[i], strlen(invalid[i]), &test_handler, &ctx), -1);
+      }
     }
 
     it("should report incomplete input at incremental finish") {

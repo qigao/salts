@@ -8,6 +8,7 @@
 #include "csv_lexer.h"
 #include "csv_grammar_gen.h"
 #include <fmt.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -226,10 +227,13 @@ typedef int (*csv_scan_field_cb)(void *ctx, size_t row, size_t col, const char *
 typedef int (*csv_scan_row_end_cb)(void *ctx, size_t row, size_t field_count);
 
 static int csv_buf_append(char **buf, size_t *len, size_t *cap, char ch) {
+    size_t required;
+    if (*len > SIZE_MAX - 2) return 0;
+    required = *len + 2;
     if (*len + 1 >= *cap) {
-        size_t new_cap = *cap ? (*cap * 2) : 64;
+        size_t new_cap = *cap && *cap <= SIZE_MAX / 2 ? (*cap * 2) : required;
         char *new_buf;
-        if (new_cap <= *len + 1) new_cap = *len + 2;
+        if (new_cap < required) new_cap = required;
         new_buf = (char *)realloc(*buf, new_cap);
         if (!new_buf) return 0;
         *buf = new_buf;
@@ -654,11 +658,19 @@ static bool csv_field_needs_quoting(const char *s, size_t len) {
     return false;
 }
 
-static size_t csv_field_quoted_len(const char *s, size_t len) {
+static bool csv_size_add(size_t *total, size_t amount) {
+    if (amount > SIZE_MAX - *total) return false;
+    *total += amount;
+    return true;
+}
+
+static bool csv_field_quoted_len(const char *s, size_t len, size_t *out_len) {
     size_t n = 2;
-    for (size_t i = 0; i < len; ++i)
-        n += (s[i] == '"') ? 2 : 1;
-    return n;
+    for (size_t i = 0; i < len; ++i) {
+        if (!csv_size_add(&n, (s[i] == '"') ? 2 : 1)) return false;
+    }
+    *out_len = n;
+    return true;
 }
 
 static size_t csv_write_field(char *buf, const char *s, size_t len, bool quote) {
@@ -677,20 +689,24 @@ static size_t csv_write_field(char *buf, const char *s, size_t len, bool quote) 
     return pos;
 }
 
-static size_t csv_row_serialized_len(csv_row_node_t *row) {
+static bool csv_row_serialized_len(csv_row_node_t *row, size_t *out_len) {
     size_t total = 0;
     size_t col = 0;
     for (csv_field_node_t *f = row->fields; f; f = f->next, ++col) {
-        if (col > 0) total += 1; /* comma */
+        size_t field_len;
+        if (col > 0 && !csv_size_add(&total, 1)) return false; /* comma */
         const char *s = f->value ? f->value : "";
         size_t len = f->value ? f->length : 0;
-        if (csv_field_needs_quoting(s, len))
-            total += csv_field_quoted_len(s, len);
-        else
-            total += len;
+        if (csv_field_needs_quoting(s, len)) {
+            if (!csv_field_quoted_len(s, len, &field_len)) return false;
+        } else {
+            field_len = len;
+        }
+        if (!csv_size_add(&total, field_len)) return false;
     }
-    total += 1; /* newline */
-    return total;
+    if (!csv_size_add(&total, 1)) return false; /* newline */
+    *out_len = total;
+    return true;
 }
 
 static size_t csv_row_write(char *buf, csv_row_node_t *row) {
@@ -707,38 +723,102 @@ static size_t csv_row_write(char *buf, csv_row_node_t *row) {
     return pos;
 }
 
-char *csv_to_string(const csv_doc_t *doc) {
+char *csv_to_string_n(const csv_doc_t *doc, size_t *out_len) {
+    csv_row_node_t *row;
+    size_t row_len;
+    size_t total = 0;
+    size_t pos = 0;
+    char *buf;
+
+    if (out_len) *out_len = 0;
     if (!doc) return NULL;
 
     /* Pass 1: compute total size */
-    size_t total = 0;
-    if (doc->header) total += csv_row_serialized_len(doc->header);
-    for (csv_row_node_t *r = doc->rows; r; r = r->next)
-        total += csv_row_serialized_len(r);
+    if (doc->header &&
+        (!csv_row_serialized_len(doc->header, &row_len) || !csv_size_add(&total, row_len)))
+        return NULL;
+    for (row = doc->rows; row; row = row->next) {
+        if (!csv_row_serialized_len(row, &row_len) || !csv_size_add(&total, row_len)) return NULL;
+    }
+    if (total == SIZE_MAX) return NULL;
 
-    char *buf = (char *)malloc(total + 1);
+    buf = (char *)malloc(total + 1);
     if (!buf) return NULL;
 
     /* Pass 2: fill buffer */
-    size_t pos = 0;
     if (doc->header) pos += csv_row_write(buf + pos, doc->header);
-    for (csv_row_node_t *r = doc->rows; r; r = r->next)
-        pos += csv_row_write(buf + pos, r);
+    for (row = doc->rows; row; row = row->next)
+        pos += csv_row_write(buf + pos, row);
 
     buf[pos] = '\0';
+    if (out_len) *out_len = pos;
     return buf;
+}
+
+char *csv_to_string(const csv_doc_t *doc) {
+    return csv_to_string_n(doc, NULL);
+}
+
+int csv_write_records(const csv_doc_t *doc, csv_write_fn write, void *user) {
+    csv_row_node_t *row;
+    size_t max_len = 0;
+    size_t len;
+    char *buf;
+
+    if (!doc || !write) return -1;
+    if (doc->header && !csv_row_serialized_len(doc->header, &max_len)) return -1;
+    for (row = doc->rows; row; row = row->next) {
+        if (!csv_row_serialized_len(row, &len)) return -1;
+        if (len > max_len) max_len = len;
+    }
+    if (max_len == 0) return 0;
+
+    buf = (char *)malloc(max_len);
+    if (!buf) return -1;
+    if (doc->header) {
+        len = csv_row_write(buf, doc->header);
+        if (write(buf, len, user) != 0) {
+            free(buf);
+            return -1;
+        }
+    }
+    for (row = doc->rows; row; row = row->next) {
+        len = csv_row_write(buf, row);
+        if (write(buf, len, user) != 0) {
+            free(buf);
+            return -1;
+        }
+    }
+    free(buf);
+    return 0;
+}
+
+int csv_write(const csv_doc_t *doc, csv_write_fn write, void *user) {
+    size_t len = 0;
+    char *text;
+    int rc;
+    if (!doc || !write) return -1;
+    text = csv_to_string_n(doc, &len);
+    if (!text) return -1;
+    if (len == 0) {
+        free(text);
+        return 0;
+    }
+    rc = write(text, len, user);
+    free(text);
+    return rc == 0 ? 0 : -1;
 }
 
 int csv_write_file(const csv_doc_t *doc, const char *filename) {
     if (!doc || !filename) return -1;
 
-    char *str = csv_to_string(doc);
+    size_t len = 0;
+    char *str = csv_to_string_n(doc, &len);
     if (!str) return -1;
 
     FILE *fp = fopen(filename, "wb");
     if (!fp) { free(str); return -1; }
 
-    size_t len = strlen(str);
     size_t written = fwrite(str, 1, len, fp);
     fclose(fp);
     free(str);
@@ -750,34 +830,161 @@ int csv_write_file(const csv_doc_t *doc, const char *filename) {
  * Streaming/SAX API
  * ============================================================================ */
 
-typedef struct {
-    const csv_stream_handler_t *handler;
-    void *user_ctx;
-    int row_open;
-} csv_stream_scan_ctx_t;
+struct csv_sax_parser_s {
+    csv_stream_handler_t handler;
+    void *ctx;
+    csv_options_t opts;
+    char *field;
+    size_t field_len;
+    size_t field_cap;
+    size_t row;
+    size_t col;
+    bool in_quote;
+    bool quote_pending;
+    bool field_started;
+    bool row_started;
+    bool row_open;
+    bool skip_lf;
+    bool finished;
+    bool failed;
+    char error[128];
+};
 
-static int csv_stream_scan_field(void *scan_ctx, size_t row, size_t col, const char *value,
-                                 size_t value_len) {
-    csv_stream_scan_ctx_t *s = (csv_stream_scan_ctx_t *)scan_ctx;
-    if (!s->row_open) {
-        s->row_open = 1;
-        if (s->handler->on_row_start && s->handler->on_row_start(s->user_ctx, row) != 0)
-            return -1;
-    }
-    if (s->handler->on_field &&
-        s->handler->on_field(s->user_ctx, row, col, value, value_len) != 0)
-        return -1;
+static int csv_sax_fail(csv_sax_parser_t *parser, const char *message) {
+    parser->failed = true;
+    fmt(parser->error, sizeof(parser->error), "{}", message);
+    return -1;
+}
+
+static int csv_sax_start_row(csv_sax_parser_t *parser) {
+    if (parser->row_open) return 0;
+    parser->row_open = true;
+    if (parser->handler.on_row_start &&
+        parser->handler.on_row_start(parser->ctx, parser->row) != 0)
+        return csv_sax_fail(parser, "CSV row callback failed");
     return 0;
 }
 
-static int csv_stream_scan_row_end(void *scan_ctx, size_t row, size_t field_count) {
-    csv_stream_scan_ctx_t *s = (csv_stream_scan_ctx_t *)scan_ctx;
-    if (!s->row_open) {
-        if (s->handler->on_row_start && s->handler->on_row_start(s->user_ctx, row) != 0)
-            return -1;
+static int csv_sax_emit_field(csv_sax_parser_t *parser) {
+    const char *value = parser->field_len > 0 ? parser->field : "";
+    if (csv_sax_start_row(parser) != 0) return -1;
+    if (parser->field) parser->field[parser->field_len] = '\0';
+    if (parser->handler.on_field &&
+        parser->handler.on_field(parser->ctx, parser->row, parser->col, value,
+                                 parser->field_len) != 0)
+        return csv_sax_fail(parser, "CSV field callback failed");
+    parser->col++;
+    parser->field_len = 0;
+    parser->field_started = false;
+    return 0;
+}
+
+static int csv_sax_end_row(csv_sax_parser_t *parser, bool has_field) {
+    if (has_field && csv_sax_emit_field(parser) != 0) return -1;
+    if (!parser->row_open && csv_sax_start_row(parser) != 0) return -1;
+    if (parser->handler.on_row_end &&
+        parser->handler.on_row_end(parser->ctx, parser->row, parser->col) != 0)
+        return csv_sax_fail(parser, "CSV row callback failed");
+    parser->row++;
+    parser->col = 0;
+    parser->row_started = false;
+    parser->row_open = false;
+    return 0;
+}
+
+csv_sax_parser_t *csv_sax_parser_create(const csv_stream_handler_t *handler, void *ctx,
+                                        const csv_options_t *opts) {
+    csv_sax_parser_t *parser;
+    if (!handler) return NULL;
+    parser = (csv_sax_parser_t *)calloc(1, sizeof(*parser));
+    if (!parser) return NULL;
+    parser->handler = *handler;
+    parser->ctx = ctx;
+    parser->opts = csv_normalize_opts(opts);
+    return parser;
+}
+
+int csv_sax_parser_feed(csv_sax_parser_t *parser, const char *data, size_t len) {
+    size_t i = 0;
+    if (!parser || (!data && len != 0)) return -1;
+    if (parser->failed || parser->finished) return -1;
+
+    while (i < len) {
+        char ch = data[i++];
+        if (parser->skip_lf) {
+            parser->skip_lf = false;
+            if (ch == '\n') continue;
+        }
+
+        if (parser->in_quote) {
+            if (parser->quote_pending) {
+                if (ch == parser->opts.quote) {
+                    if (!csv_buf_append(&parser->field, &parser->field_len, &parser->field_cap,
+                                        parser->opts.quote))
+                        return csv_sax_fail(parser, "Out of memory parsing CSV");
+                    parser->quote_pending = false;
+                    parser->field_started = true;
+                    parser->row_started = true;
+                    continue;
+                }
+                parser->quote_pending = false;
+                parser->in_quote = false;
+            } else if (ch == parser->opts.quote) {
+                parser->quote_pending = true;
+                continue;
+            } else {
+                if (!csv_buf_append(&parser->field, &parser->field_len, &parser->field_cap, ch))
+                    return csv_sax_fail(parser, "Out of memory parsing CSV");
+                parser->field_started = true;
+                parser->row_started = true;
+                continue;
+            }
+        }
+
+        if (!parser->field_started && ch == parser->opts.quote) {
+            parser->in_quote = true;
+            parser->field_started = true;
+            parser->row_started = true;
+        } else if (ch == parser->opts.delimiter) {
+            if (csv_sax_emit_field(parser) != 0) return -1;
+            parser->row_started = true;
+        } else if (ch == '\r' || ch == '\n') {
+            bool has_field = parser->row_started || parser->field_started;
+            if (has_field || !parser->opts.skip_empty_rows) {
+                if (csv_sax_end_row(parser, has_field) != 0) return -1;
+            }
+            if (ch == '\r') parser->skip_lf = true;
+        } else {
+            if (!csv_buf_append(&parser->field, &parser->field_len, &parser->field_cap, ch))
+                return csv_sax_fail(parser, "Out of memory parsing CSV");
+            parser->field_started = true;
+            parser->row_started = true;
+        }
     }
-    s->row_open = 0;
-    return s->handler->on_row_end ? s->handler->on_row_end(s->user_ctx, row, field_count) : 0;
+    return 0;
+}
+
+int csv_sax_parser_finish(csv_sax_parser_t *parser) {
+    if (!parser || parser->failed || parser->finished) return -1;
+    parser->finished = true;
+    if (parser->quote_pending) {
+        parser->quote_pending = false;
+        parser->in_quote = false;
+    }
+    if (parser->in_quote) return csv_sax_fail(parser, "Unterminated quoted field");
+    if (parser->row_started || parser->field_started)
+        return csv_sax_end_row(parser, true);
+    return 0;
+}
+
+const char *csv_sax_parser_error(const csv_sax_parser_t *parser) {
+    return parser && parser->error[0] ? parser->error : NULL;
+}
+
+void csv_sax_parser_destroy(csv_sax_parser_t *parser) {
+    if (!parser) return;
+    free(parser->field);
+    free(parser);
 }
 
 int csv_parse_stream(const char *content, size_t len,
@@ -788,99 +995,17 @@ int csv_parse_stream(const char *content, size_t len,
 int csv_parse_stream_opts(const char *content, size_t len,
                           const csv_stream_handler_t *handler, void *ctx,
                           const csv_options_t *opts) {
-    csv_options_t normalized = csv_normalize_opts(opts);
+    csv_sax_parser_t *parser;
+    int rc;
     if (!content || !handler) return -1;
-
-    if (!csv_opts_use_fast_lexer(&normalized)) {
-        csv_stream_scan_ctx_t scan = { handler, ctx, 0 };
-        return csv_scan_opts(content, len, &normalized, csv_stream_scan_field,
-                             csv_stream_scan_row_end, &scan, g_error_msg, sizeof(g_error_msg));
-    }
-
-    csv_lexer_t lexer;
-    csv_lexer_init(&lexer, content, len);
-    csv_lexer_reset_state();
-
-    csv_token_t token;
-    size_t row_idx = 0;
-    size_t col_idx = 0;
-    bool in_row = false;
-    int ret;
-
-    while ((ret = csv_lexer_next(&lexer, &token)) > 0) {
-        switch (token.type) {
-            case CSV_TOKEN_FIELD: {
-                if (!in_row) {
-                    in_row = true;
-                    if (handler->on_row_start) {
-                        if (handler->on_row_start(ctx, row_idx) != 0) return -1;
-                    }
-                }
-                if (handler->on_field) {
-                    const char *val = token.value;
-                    size_t vlen = token.length;
-
-                    // Handle escaped quotes inline
-                    char *unescaped = NULL;
-                    if (token.needs_unescape) {
-                        unescaped = (char *)malloc(vlen + 1);
-                        if (unescaped) {
-                            size_t j = 0;
-                            for (size_t i = 0; i < vlen; i++) {
-                                if (val[i] == '"' && i + 1 < vlen && val[i + 1] == '"') {
-                                    unescaped[j++] = '"';
-                                    i++;
-                                } else {
-                                    unescaped[j++] = val[i];
-                                }
-                            }
-                            unescaped[j] = '\0';
-                            val = unescaped;
-                            vlen = j;
-                        }
-                    }
-
-                    int r = handler->on_field(ctx, row_idx, col_idx, val, vlen);
-                    free(unescaped);
-                    if (r != 0) return -1;
-                }
-                col_idx++;
-                break;
-            }
-
-            case CSV_TOKEN_COMMA:
-                if (!in_row) {
-                    in_row = true;
-                    if (handler->on_row_start) {
-                        if (handler->on_row_start(ctx, row_idx) != 0) return -1;
-                    }
-                    // Empty first field
-                    if (handler->on_field) {
-                        if (handler->on_field(ctx, row_idx, col_idx, "", 0) != 0) return -1;
-                    }
-                    col_idx++;
-                }
-                break;
-
-            case CSV_TOKEN_NEWLINE:
-                if (in_row) {
-                    if (handler->on_row_end) {
-                        if (handler->on_row_end(ctx, row_idx, col_idx) != 0) return -1;
-                    }
-                    row_idx++;
-                    col_idx = 0;
-                    in_row = false;
-                }
-                break;
-        }
-    }
-
-    // Handle last row without trailing newline
-    if (in_row && handler->on_row_end) {
-        handler->on_row_end(ctx, row_idx, col_idx);
-    }
-
-    return ret < 0 ? -1 : 0;
+    parser = csv_sax_parser_create(handler, ctx, opts);
+    if (!parser) return -1;
+    rc = csv_sax_parser_feed(parser, content, len);
+    if (rc == 0) rc = csv_sax_parser_finish(parser);
+    if (rc != 0 && csv_sax_parser_error(parser))
+        fmt(g_error_msg, sizeof(g_error_msg), "{}", csv_sax_parser_error(parser));
+    csv_sax_parser_destroy(parser);
+    return rc;
 }
 
 /* ============================================================================

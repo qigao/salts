@@ -219,6 +219,8 @@ typedef struct {
     cyaml_doc_t* doc;
     cyaml_error_t* err;
     cyaml_spec_t spec;
+    bool final;
+    bool need_more;
 } scanner_t;
 
 #define HAS_FLAG(s, f) (((s)->flags & (f)) != 0)
@@ -298,6 +300,10 @@ inline static void skip_comment(scanner_t* s)
 
 static void set_synerr(scanner_t* s, synerr_t err)
 {
+    if (!s->final && s->pos >= s->len && err != SYNERR_NOMEM) {
+        s->need_more = true;
+        return;
+    }
     if (s->err) {
         s->err->code = (err == SYNERR_NOMEM) ? CYAML_ERR_NOMEM : CYAML_ERR_SYNTAX;
         s->err->span.start_line = s->line;
@@ -311,6 +317,15 @@ static void set_synerr(scanner_t* s, synerr_t err)
 static inline bool skip_utf8(scanner_t* s)
 {
     cyaml_cp_t cp;
+    int width = cyaml_utf8_len((unsigned char)s->src[s->pos]);
+    if (width == 0) {
+        set_synerr(s, SYNERR_INVALID_UTF8);
+        return false;
+    }
+    if (!s->final && (size_t)width > s->len - s->pos) {
+        s->need_more = true;
+        return false;
+    }
     int consumed = cyaml_utf8_decode(s->src + s->pos, s->len - s->pos, &cp);
     if (consumed <= 0 || cp == CYAML_CP_INVALID) {
         set_synerr(s, SYNERR_INVALID_UTF8);
@@ -325,7 +340,7 @@ static inline bool skip_utf8(scanner_t* s)
 
 // #region Token Queue
 
-static inline size_t queue_count(scanner_t* s)
+static inline size_t queue_count(const scanner_t* s)
 {
     if (s->tok_tail >= s->tok_head)
         return s->tok_tail - s->tok_head;
@@ -696,6 +711,10 @@ static bool fetch_directive(scanner_t* s)
     size_t name_start = s->pos;
     while (PEEK(s) && !CYAML_IS_BLANKZ(PEEK(s)))
         SKIP(s);
+    if (!s->final && PEEK(s) == C_NUL) {
+        s->need_more = true;
+        return false;
+    }
     size_t name_len = s->pos - name_start;
 
     // [6.8.1] %YAML directive
@@ -791,6 +810,10 @@ static bool fetch_directive(scanner_t* s)
 
     while (PEEK(s) && !CYAML_IS_BREAK(PEEK(s)))
         SKIP(s);
+    if (!s->final && PEEK(s) == C_NUL) {
+        s->need_more = true;
+        return false;
+    }
     if (CYAML_IS_BREAK(PEEK(s)))
         skip_line(s);
     return true;
@@ -1040,6 +1063,10 @@ static bool fetch_anchor(scanner_t* s, scan_token_type_t type)
     while (PEEK(s) && !CYAML_IS_BLANKZ(PEEK(s)) && !CYAML_IS_FLOW(PEEK(s))) {
         SKIP(s);
     }
+    if (!s->final && PEEK(s) == C_NUL) {
+        s->need_more = true;
+        return false;
+    }
 
     scan_token_t tok = {
         .type = type,
@@ -1073,6 +1100,10 @@ static bool fetch_tag(scanner_t* s)
     } else {
         while (PEEK(s) && !CYAML_IS_BLANKZ(PEEK(s)) && !CYAML_IS_FLOW(PEEK(s))) {
             SKIP(s);
+        }
+        if (!s->final && PEEK(s) == C_NUL) {
+            s->need_more = true;
+            return false;
         }
     }
 
@@ -1293,6 +1324,11 @@ static bool fetch_block_scalar(scanner_t* s, bool literal)
         }
     }
 
+    if (!s->final && PEEK(s) == C_NUL) {
+        s->need_more = true;
+        return false;
+    }
+
     // For empty scalars (no content found), blank lines are trailing, not leading
     // This affects chomping: strip/clip remove them, keep preserves them
     if (first_line) {
@@ -1495,6 +1531,10 @@ static bool fetch_plain_scalar(scanner_t* s)
             }
             // In flow context, continuation line must not start with flow indicator
             char nc = PEEK(s);
+            if (nc == C_NUL && !s->final) {
+                s->need_more = true;
+                return false;
+            }
             if (nc == C_NUL || CYAML_IS_FLOW(nc) || (nc == ':' && CYAML_IS_BLANKZ(PEEK_AT(s, 1)))) {
                 s->pos = save_pos;
                 s->line = save_line;
@@ -1517,12 +1557,21 @@ static bool fetch_plain_scalar(scanner_t* s)
             spaces++;
         }
 
+        if (PEEK(s) == C_NUL && !s->final) {
+            s->need_more = true;
+            return false;
+        }
         if (spaces <= base_indent || PEEK(s) == C_NUL || is_doc_start(s) || is_doc_end(s)) {
             s->pos = save_pos;
             s->line = save_line;
             s->col = save_col;
             break;
         }
+    }
+
+    if (!s->final && PEEK(s) == C_NUL) {
+        s->need_more = true;
+        return false;
     }
 
     while (end > start && CYAML_IS_WHITE(s->src[end - 1]))
@@ -1554,8 +1603,25 @@ static bool fetch_next_token(scanner_t* s)
 
     char c = PEEK(s);
 
-    if (c == C_NUL)
+    if (c == C_NUL) {
+        if (!s->final) {
+            s->need_more = true;
+            return false;
+        }
         return fetch_stream_end(s);
+    }
+    if (!s->final && s->col == 1) {
+        size_t remaining = s->len - s->pos;
+        if ((c == '-' && remaining <= 3 && memcmp(s->src + s->pos, "---", remaining) == 0)
+            || (c == '.' && remaining <= 3 && memcmp(s->src + s->pos, "...", remaining) == 0)) {
+            s->need_more = true;
+            return false;
+        }
+    }
+    if (!s->final && s->pos + 1 == s->len && (c == '-' || c == '?' || c == ':')) {
+        s->need_more = true;
+        return false;
+    }
     if (s->col == 1 && c == '%' && !s->flow_level)
         return fetch_directive(s);
     if (is_doc_start(s))
@@ -2752,7 +2818,7 @@ CYAML_API cyaml_doc_t* cyaml_parse(const char* src, size_t len,
     }
 
     scanner_t scanner = {
-        .src = src, .len = len, .pos = 0, .line = 1, 1, .tokens = NULL, .tok_cap = 0, .tok_head = 0, .tok_tail = 0, .tokens_parsed = 0, .indents = NULL, .indents_cap = 0, .indent_top = 0, .indent = -1, .simple_keys = NULL, .simple_keys_cap = 0, .simple_key_top = 0, .flow_level = 0, .flags = SCAN_SIMPLE_KEY_ALLOWED, .adjacent_value_allowed_at = (size_t)-1, .doc = NULL, .err = err, .spec = opts ? opts->spec : CYAML_SPEC_AUTO
+        .src = src, .len = len, .pos = 0, .line = 1, 1, .tokens = NULL, .tok_cap = 0, .tok_head = 0, .tok_tail = 0, .tokens_parsed = 0, .indents = NULL, .indents_cap = 0, .indent_top = 0, .indent = -1, .simple_keys = NULL, .simple_keys_cap = 0, .simple_key_top = 0, .flow_level = 0, .flags = SCAN_SIMPLE_KEY_ALLOWED, .adjacent_value_allowed_at = (size_t)-1, .doc = NULL, .err = err, .spec = opts ? opts->spec : CYAML_SPEC_AUTO, .final = true
     };
 
     yaml_parser_t parser = { .scanner = &scanner, .state = PARSE_STREAM_START, .states = NULL, .states_cap = 0, .state_top = 0 };
@@ -2801,7 +2867,7 @@ CYAML_API cyaml_stream_t* cyaml_parse_stream(const char* src, size_t len,
     stream->src_len = (uint32_t)len;
 
     scanner_t scanner = {
-        .src = src, .len = len, .pos = 0, .line = 1, 1, .tokens = NULL, .tok_cap = 0, .tok_head = 0, .tok_tail = 0, .tokens_parsed = 0, .indents = NULL, .indents_cap = 0, .indent_top = 0, .indent = -1, .simple_keys = NULL, .simple_keys_cap = 0, .simple_key_top = 0, .flow_level = 0, .flags = SCAN_SIMPLE_KEY_ALLOWED, .adjacent_value_allowed_at = (size_t)-1, .doc = NULL, .err = err, .spec = opts ? opts->spec : CYAML_SPEC_AUTO
+        .src = src, .len = len, .pos = 0, .line = 1, 1, .tokens = NULL, .tok_cap = 0, .tok_head = 0, .tok_tail = 0, .tokens_parsed = 0, .indents = NULL, .indents_cap = 0, .indent_top = 0, .indent = -1, .simple_keys = NULL, .simple_keys_cap = 0, .simple_key_top = 0, .flow_level = 0, .flags = SCAN_SIMPLE_KEY_ALLOWED, .adjacent_value_allowed_at = (size_t)-1, .doc = NULL, .err = err, .spec = opts ? opts->spec : CYAML_SPEC_AUTO, .final = true
     };
 
     yaml_parser_t parser = { .scanner = &scanner, .state = PARSE_STREAM_START, .states = NULL, .states_cap = 0, .state_top = 0 };
@@ -2850,3 +2916,478 @@ CYAML_API cyaml_stream_t* cyaml_parse_stream(const char* src, size_t len,
     FREE_PARSER(parser);
     return stream;
 }
+
+// #region Incremental SAX Parsing
+
+typedef struct {
+    bool is_map;
+    bool is_key;
+    bool expect_key;
+} sax_frame_t;
+
+struct cyaml_sax_parser {
+    cyaml_sax_handler_t handler;
+    void* ctx;
+    cyaml_opts_t opts;
+    cyaml_error_t error;
+    char* input;
+    size_t input_len;
+    size_t input_cap;
+    size_t total_input_len;
+    scanner_t scanner;
+    yaml_parser_t parser;
+    cyaml_doc_t scratch_doc;
+    sax_frame_t* frames;
+    size_t depth;
+    size_t frame_cap;
+    bool finished;
+    bool failed;
+};
+
+typedef struct {
+    scanner_t scanner;
+    yaml_parser_t parser;
+    cyaml_doc_t scratch_doc;
+} sax_checkpoint_t;
+
+static void sax_checkpoint_discard(sax_checkpoint_t* checkpoint)
+{
+    free(checkpoint->scanner.tokens);
+    free(checkpoint->scanner.indents);
+    free(checkpoint->scanner.simple_keys);
+    free(checkpoint->parser.states);
+    memset(checkpoint, 0, sizeof(*checkpoint));
+}
+
+static bool sax_copy_array(void** out, const void* src, size_t count, size_t item_size)
+{
+    if (count == 0) {
+        *out = NULL;
+        return true;
+    }
+    *out = malloc(count * item_size);
+    if (!*out)
+        return false;
+    memcpy(*out, src, count * item_size);
+    return true;
+}
+
+static bool sax_checkpoint_take(cyaml_sax_parser_t* parser, sax_checkpoint_t* checkpoint)
+{
+    memset(checkpoint, 0, sizeof(*checkpoint));
+    checkpoint->scanner = parser->scanner;
+    checkpoint->parser = parser->parser;
+    checkpoint->scratch_doc = parser->scratch_doc;
+    checkpoint->scanner.tokens = NULL;
+    checkpoint->scanner.indents = NULL;
+    checkpoint->scanner.simple_keys = NULL;
+    checkpoint->parser.states = NULL;
+
+    if (!sax_copy_array((void**)&checkpoint->scanner.tokens, parser->scanner.tokens,
+            parser->scanner.tok_cap, sizeof(*parser->scanner.tokens))
+        || !sax_copy_array((void**)&checkpoint->scanner.indents, parser->scanner.indents,
+            parser->scanner.indents_cap, sizeof(*parser->scanner.indents))
+        || !sax_copy_array((void**)&checkpoint->scanner.simple_keys, parser->scanner.simple_keys,
+            parser->scanner.simple_keys_cap, sizeof(*parser->scanner.simple_keys))
+        || !sax_copy_array((void**)&checkpoint->parser.states, parser->parser.states,
+            parser->parser.states_cap, sizeof(*parser->parser.states))) {
+        sax_checkpoint_discard(checkpoint);
+        parser->error.code = CYAML_ERR_NOMEM;
+        snprintf(parser->error.msg, sizeof(parser->error.msg), "Out of memory checkpointing YAML parser");
+        parser->failed = true;
+        return false;
+    }
+    return true;
+}
+
+static void sax_checkpoint_restore(cyaml_sax_parser_t* parser, sax_checkpoint_t* checkpoint)
+{
+    free(parser->scanner.tokens);
+    free(parser->scanner.indents);
+    free(parser->scanner.simple_keys);
+    free(parser->parser.states);
+    parser->scanner = checkpoint->scanner;
+    parser->parser = checkpoint->parser;
+    parser->scratch_doc = checkpoint->scratch_doc;
+    parser->scanner.doc = &parser->scratch_doc;
+    parser->scanner.err = &parser->error;
+    parser->parser.scanner = &parser->scanner;
+    memset(checkpoint, 0, sizeof(*checkpoint));
+}
+
+static bool sax_grow_frames(cyaml_sax_parser_t* parser)
+{
+    size_t new_cap = parser->frame_cap ? parser->frame_cap * 2 : 32;
+    sax_frame_t* frames;
+    if (parser->opts.max_depth && new_cap > parser->opts.max_depth)
+        new_cap = parser->opts.max_depth;
+    if (new_cap <= parser->frame_cap) {
+        parser->error.code = CYAML_ERR_SYNTAX;
+        snprintf(parser->error.msg, sizeof(parser->error.msg), "Maximum YAML nesting depth exceeded");
+        return false;
+    }
+    frames = realloc(parser->frames, new_cap * sizeof(*frames));
+    if (!frames) {
+        parser->error.code = CYAML_ERR_NOMEM;
+        snprintf(parser->error.msg, sizeof(parser->error.msg), "Out of memory growing YAML event stack");
+        return false;
+    }
+    parser->frames = frames;
+    parser->frame_cap = new_cap;
+    return true;
+}
+
+static bool sax_event_is_key(const cyaml_sax_parser_t* parser)
+{
+    return parser->depth > 0 && parser->frames[parser->depth - 1].is_map
+        && parser->frames[parser->depth - 1].expect_key;
+}
+
+static void sax_complete_value(cyaml_sax_parser_t* parser)
+{
+    if (parser->depth > 0 && parser->frames[parser->depth - 1].is_map)
+        parser->frames[parser->depth - 1].expect_key
+            = !parser->frames[parser->depth - 1].expect_key;
+}
+
+static int sax_callback_failed(cyaml_sax_parser_t* parser)
+{
+    parser->error.code = CYAML_ERR_IO;
+    snprintf(parser->error.msg, sizeof(parser->error.msg), "YAML event callback failed");
+    parser->failed = true;
+    return -1;
+}
+
+static char* sax_scalar_text(cyaml_sax_parser_t* parser, const event_t* event,
+    cyaml_scalar_kind_t* kind, size_t* len)
+{
+    cyaml_node_t node = { 0 };
+    node.type = CYAML_SCALAR;
+    node.style = event->style;
+    node.chomp = event->chomp;
+    node.indent = event->indent;
+    node.leading_breaks = event->leading_breaks;
+    node.trailing_breaks = event->trailing_breaks;
+    node.span = event->value;
+    node.scalar.flags = event->scalar_flags;
+    if (event->style == CYAML_PLAIN && !(event->scalar_flags & CYAML_SCALAR_EXPLICIT_EMPTY)) {
+        const char* src = parser->scanner.src;
+        if (event->value.len == 0
+            || (event->value.len == L_TILDE && src[event->value.off] == C_TILDE)
+            || (event->value.len == L_NULL
+                && cyaml_memicmp(src + event->value.off, S_NULL, L_NULL) == 0))
+            node.type = CYAML_NULL;
+    }
+    *kind = cyaml_scalar_kind(&parser->scratch_doc, &node);
+    if (*kind == CYAML_KIND_NULL) {
+        *len = 0;
+        return NULL;
+    }
+    return cyaml_scalar_strn(&parser->scratch_doc, &node, len);
+}
+
+static int sax_dispatch_event(cyaml_sax_parser_t* parser, const event_t* event)
+{
+    bool is_key = sax_event_is_key(parser);
+    int rc = 0;
+    switch (event->type) {
+    case EVT_STREAM_START:
+    case EVT_STREAM_END:
+    case EVT_NONE:
+        return 0;
+    case EVT_DOC_START:
+        return !parser->handler.on_document_start
+                || parser->handler.on_document_start(parser->ctx) == 0
+            ? 0
+            : sax_callback_failed(parser);
+    case EVT_DOC_END:
+        rc = !parser->handler.on_document_end
+                || parser->handler.on_document_end(parser->ctx) == 0
+            ? 0
+            : sax_callback_failed(parser);
+        parser->scratch_doc.flags = 0;
+        parser->scratch_doc.tag_count = 0;
+        parser->scratch_doc.version.major = 1;
+        parser->scratch_doc.version.minor = 2;
+        return rc;
+    case EVT_SCALAR: {
+        cyaml_scalar_kind_t kind;
+        size_t len = 0;
+        char* text = sax_scalar_text(parser, event, &kind, &len);
+        if (kind == CYAML_KIND_NULL) {
+            rc = !parser->handler.on_null || parser->handler.on_null(parser->ctx, is_key) == 0
+                ? 0
+                : sax_callback_failed(parser);
+        } else if (!text) {
+            parser->error.code = CYAML_ERR_NOMEM;
+            snprintf(parser->error.msg, sizeof(parser->error.msg), "Out of memory decoding YAML scalar");
+            parser->failed = true;
+            return -1;
+        } else {
+            rc = !parser->handler.on_scalar
+                    || parser->handler.on_scalar(parser->ctx, kind, text, len, is_key) == 0
+                ? 0
+                : sax_callback_failed(parser);
+        }
+        free(text);
+        if (rc == 0)
+            sax_complete_value(parser);
+        return rc;
+    }
+    case EVT_ALIAS: {
+        const char* value = parser->scanner.src + event->anchor.off;
+        rc = !parser->handler.on_alias
+                || parser->handler.on_alias(parser->ctx, value, event->anchor.len, is_key) == 0
+            ? 0
+            : sax_callback_failed(parser);
+        if (rc == 0)
+            sax_complete_value(parser);
+        return rc;
+    }
+    case EVT_SEQ_START:
+    case EVT_MAP_START:
+        if (parser->depth >= parser->frame_cap && !sax_grow_frames(parser)) {
+            parser->failed = true;
+            return -1;
+        }
+        rc = event->type == EVT_SEQ_START
+            ? (!parser->handler.on_sequence_start
+                          || parser->handler.on_sequence_start(parser->ctx, is_key) == 0
+                      ? 0
+                      : sax_callback_failed(parser))
+            : (!parser->handler.on_mapping_start
+                          || parser->handler.on_mapping_start(parser->ctx, is_key) == 0
+                      ? 0
+                      : sax_callback_failed(parser));
+        if (rc != 0)
+            return rc;
+        parser->frames[parser->depth++] = (sax_frame_t) {
+            .is_map = event->type == EVT_MAP_START,
+            .is_key = is_key,
+            .expect_key = event->type == EVT_MAP_START
+        };
+        return 0;
+    case EVT_SEQ_END:
+    case EVT_MAP_END: {
+        sax_frame_t frame;
+        if (parser->depth == 0) {
+            parser->error.code = CYAML_ERR_SYNTAX;
+            snprintf(parser->error.msg, sizeof(parser->error.msg), "Unbalanced YAML collection event");
+            parser->failed = true;
+            return -1;
+        }
+        frame = parser->frames[--parser->depth];
+        rc = event->type == EVT_SEQ_END
+            ? (!parser->handler.on_sequence_end
+                          || parser->handler.on_sequence_end(parser->ctx, frame.is_key) == 0
+                      ? 0
+                      : sax_callback_failed(parser))
+            : (!parser->handler.on_mapping_end
+                          || parser->handler.on_mapping_end(parser->ctx, frame.is_key) == 0
+                      ? 0
+                      : sax_callback_failed(parser));
+        if (rc == 0)
+            sax_complete_value(parser);
+        return rc;
+    }
+    }
+    return 0;
+}
+
+static int sax_drive(cyaml_sax_parser_t* parser)
+{
+    while (!parser->failed) {
+        event_t event;
+        sax_checkpoint_t checkpoint;
+        parser->scanner.need_more = false;
+        if (!sax_checkpoint_take(parser, &checkpoint))
+            return -1;
+        if (!parse_event(&parser->parser, &event)) {
+            if (parser->scanner.need_more && !parser->scanner.final) {
+                sax_checkpoint_restore(parser, &checkpoint);
+                parser->error.code = CYAML_OK;
+                parser->error.msg[0] = C_NUL;
+                return 0;
+            }
+            sax_checkpoint_discard(&checkpoint);
+            parser->failed = true;
+            if (parser->error.code == CYAML_OK) {
+                parser->error.code = CYAML_ERR_SYNTAX;
+                snprintf(parser->error.msg, sizeof(parser->error.msg), "Invalid YAML stream");
+            }
+            return -1;
+        }
+        sax_checkpoint_discard(&checkpoint);
+        if (sax_dispatch_event(parser, &event) != 0)
+            return -1;
+        if (event.type == EVT_STREAM_END || event.type == EVT_NONE)
+            return 0;
+    }
+    return -1;
+}
+
+static size_t sax_retained_offset(const cyaml_sax_parser_t* parser)
+{
+    const scanner_t* scanner = &parser->scanner;
+    size_t retained = scanner->pos;
+    size_t count = queue_count(scanner);
+    size_t i;
+
+    for (i = 0; i < count; ++i) {
+        const scan_token_t* token
+            = &scanner->tokens[(scanner->tok_head + i) % scanner->tok_cap];
+        if (token->span.off < retained)
+            retained = token->span.off;
+    }
+    for (i = 0; i < scanner->simple_key_top; ++i) {
+        const simple_key_t* key = &scanner->simple_keys[i];
+        if (key->possible && key->mark_index < retained)
+            retained = key->mark_index;
+    }
+    for (i = 0; i < parser->scratch_doc.tag_count; ++i) {
+        const cyaml_tag_directive_t* tag = &parser->scratch_doc.tags[i];
+        if (tag->handle.off < retained)
+            retained = tag->handle.off;
+        if (tag->prefix.off < retained)
+            retained = tag->prefix.off;
+    }
+    return retained;
+}
+
+static void sax_compact_input(cyaml_sax_parser_t* parser)
+{
+    scanner_t* scanner = &parser->scanner;
+    size_t trim = sax_retained_offset(parser);
+    size_t count;
+    size_t i;
+
+    if (trim == 0)
+        return;
+
+    memmove(parser->input, parser->input + trim, parser->input_len - trim);
+    parser->input_len -= trim;
+    parser->input[parser->input_len] = C_NUL;
+    scanner->pos -= trim;
+    scanner->len = parser->input_len;
+
+    count = queue_count(scanner);
+    for (i = 0; i < count; ++i) {
+        scan_token_t* token = &scanner->tokens[(scanner->tok_head + i) % scanner->tok_cap];
+        token->span.off -= (uint32_t)trim;
+    }
+    for (i = 0; i < scanner->simple_key_top; ++i) {
+        simple_key_t* key = &scanner->simple_keys[i];
+        if (key->possible)
+            key->mark_index -= trim;
+    }
+    if (scanner->adjacent_value_allowed_at != (size_t)-1) {
+        scanner->adjacent_value_allowed_at = scanner->adjacent_value_allowed_at >= trim
+            ? scanner->adjacent_value_allowed_at - trim
+            : (size_t)-1;
+    }
+    for (i = 0; i < parser->scratch_doc.tag_count; ++i) {
+        parser->scratch_doc.tags[i].handle.off -= (uint32_t)trim;
+        parser->scratch_doc.tags[i].prefix.off -= (uint32_t)trim;
+    }
+    parser->scratch_doc.src.borrow.ptr = parser->input;
+    parser->scratch_doc.src.borrow.len = (uint32_t)parser->input_len;
+}
+
+CYAML_API cyaml_sax_parser_t* cyaml_sax_parser_create(
+    const cyaml_sax_handler_t* handler, void* ctx, const cyaml_opts_t* opts)
+{
+    cyaml_sax_parser_t* parser;
+    if (!handler)
+        return NULL;
+    parser = calloc(1, sizeof(*parser));
+    if (!parser)
+        return NULL;
+    parser->handler = *handler;
+    parser->ctx = ctx;
+    parser->opts = opts ? *opts : CYAML_OPTS_DEFAULT;
+    parser->scratch_doc.mode = CYAML_PARSING;
+    parser->scratch_doc.version.major = 1;
+    parser->scratch_doc.version.minor = 2;
+    parser->scanner.line = 1;
+    parser->scanner.col = 1;
+    parser->scanner.indent = -1;
+    parser->scanner.adjacent_value_allowed_at = (size_t)-1;
+    parser->scanner.doc = &parser->scratch_doc;
+    parser->scanner.err = &parser->error;
+    parser->scanner.spec = parser->opts.spec;
+    parser->parser.scanner = &parser->scanner;
+    parser->parser.state = PARSE_STREAM_START;
+    return parser;
+}
+
+CYAML_API int cyaml_sax_parser_feed(cyaml_sax_parser_t* parser,
+    const char* data, size_t len)
+{
+    char* input;
+    size_t required;
+    if (!parser || parser->finished || parser->failed || (!data && len != 0))
+        return -1;
+    if (len == 0)
+        return 0;
+    if (len > UINT32_MAX - parser->total_input_len
+        || (parser->opts.max_size && len > parser->opts.max_size - parser->total_input_len)) {
+        parser->error.code = CYAML_ERR_NOMEM;
+        snprintf(parser->error.msg, sizeof(parser->error.msg), "YAML input exceeds configured size");
+        parser->failed = true;
+        return -1;
+    }
+    required = parser->input_len + len + 1;
+    if (required > parser->input_cap) {
+        size_t new_cap = parser->input_cap ? parser->input_cap : 256;
+        while (new_cap < required)
+            new_cap *= 2;
+        input = realloc(parser->input, new_cap);
+        if (!input) {
+            parser->error.code = CYAML_ERR_NOMEM;
+            snprintf(parser->error.msg, sizeof(parser->error.msg), "Out of memory buffering YAML input");
+            parser->failed = true;
+            return -1;
+        }
+        parser->input = input;
+        parser->input_cap = new_cap;
+    }
+    memcpy(parser->input + parser->input_len, data, len);
+    parser->input_len += len;
+    parser->total_input_len += len;
+    parser->input[parser->input_len] = C_NUL;
+    parser->scanner.src = parser->input;
+    parser->scanner.len = parser->input_len;
+    parser->scratch_doc.src.borrow.ptr = parser->input;
+    parser->scratch_doc.src.borrow.len = (uint32_t)parser->input_len;
+    if (sax_drive(parser) != 0)
+        return -1;
+    sax_compact_input(parser);
+    return 0;
+}
+
+CYAML_API int cyaml_sax_parser_finish(cyaml_sax_parser_t* parser)
+{
+    if (!parser || parser->finished || parser->failed)
+        return -1;
+    parser->finished = true;
+    parser->scanner.final = true;
+    return sax_drive(parser);
+}
+
+CYAML_API const cyaml_error_t* cyaml_sax_parser_error(const cyaml_sax_parser_t* parser)
+{
+    return parser && parser->error.code != CYAML_OK ? &parser->error : NULL;
+}
+
+CYAML_API void cyaml_sax_parser_destroy(cyaml_sax_parser_t* parser)
+{
+    if (!parser)
+        return;
+    FREE_SCANNER(parser->scanner);
+    FREE_PARSER(parser->parser);
+    free(parser->frames);
+    free(parser->input);
+    free(parser);
+}
+
+// #endregion

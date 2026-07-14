@@ -5,7 +5,7 @@
  * Features:
  * - Full RFC 4180 compliance
  * - Zero-copy parsing where possible
- * - Streaming (SAX-like) API for O(1) memory
+ * - Streaming (SAX-like) API using O(largest field) memory
  * - Batch API for convenient access
  * - Arena-based memory management
  * - tstr_v (string view) support for zero-copy field access
@@ -27,6 +27,7 @@ extern "C" {
  * ============================================================================ */
 
 typedef struct csv_doc_s csv_doc_t;
+typedef struct csv_sax_parser_s csv_sax_parser_t;
 
 typedef struct {
     bool has_header;      // First row is header (default: false)
@@ -66,15 +67,28 @@ tstr_v      csv_get_by_name_v(const csv_doc_t *doc, size_t row, tstr_v col_name)
 
 const char *csv_get_error(void);
 
-/** Serialize a parsed document back to CSV string (RFC 4180).
- *  @return malloc'd string, caller must free(). NULL on error. */
+/** Serialize a parsed document back to CSV string.
+ *  @return malloc'd string, caller must free(). NULL on invalid input,
+ *  allocation failure, or serialized-size overflow. */
 char       *csv_to_string(const csv_doc_t *doc);
+/** Serialize a parsed document and return its exact byte length in out_len. */
+char       *csv_to_string_n(const csv_doc_t *doc, size_t *out_len);
+
+/** Serialized byte sink. Chunk boundaries have no semantic meaning. */
+typedef int (*csv_write_fn)(const void *data, size_t len, void *user);
+
+/** Serialize the document to a byte sink. */
+int         csv_write(const csv_doc_t *doc, csv_write_fn write, void *user);
+
+/** Serialize one complete logical record per callback invocation.
+ *  A quoted field's embedded newlines remain within the same record callback. */
+int         csv_write_records(const csv_doc_t *doc, csv_write_fn write, void *user);
 
 /** Serialize and write to file. @return 0 on success, -1 on error. */
 int         csv_write_file(const csv_doc_t *doc, const char *filename);
 
 /* ============================================================================
- * Streaming/SAX API - O(1) memory, callback-based parsing
+ * Streaming/SAX API - O(largest field) memory, callback-based parsing
  * ============================================================================ */
 
 typedef struct csv_stream_handler_s {
@@ -83,6 +97,14 @@ typedef struct csv_stream_handler_s {
                     const char *value, size_t len);
     int (*on_row_end)(void *ctx, size_t row_index, size_t field_count);
 } csv_stream_handler_t;
+
+/** Incremental CSV SAX parser. Callback field views are valid only during the callback. */
+csv_sax_parser_t *csv_sax_parser_create(const csv_stream_handler_t *handler, void *ctx,
+                                        const csv_options_t *opts);
+int               csv_sax_parser_feed(csv_sax_parser_t *parser, const char *data, size_t len);
+int               csv_sax_parser_finish(csv_sax_parser_t *parser);
+const char       *csv_sax_parser_error(const csv_sax_parser_t *parser);
+void              csv_sax_parser_destroy(csv_sax_parser_t *parser);
 
 int csv_parse_stream(const char *content, size_t len,
                      const csv_stream_handler_t *handler, void *ctx);

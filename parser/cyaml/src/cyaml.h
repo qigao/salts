@@ -104,6 +104,7 @@ typedef struct {
 
 typedef struct cyaml_node cyaml_node_t;
 typedef struct cyaml_doc cyaml_doc_t;
+typedef struct cyaml_sax_parser cyaml_sax_parser_t;
 
 //! Key-value pair for mappings
 typedef struct {
@@ -335,6 +336,38 @@ CYAML_API cyaml_stream_t* cyaml_parse_stream(const char* src, size_t len,
 //! Free stream and all documents (does not free source buffer)
 //! @param stream  Stream to free (NULL safe)
 CYAML_API void cyaml_stream_free(cyaml_stream_t* stream);
+
+//! Incremental YAML event callbacks. String data is borrowed and valid only
+//! for the duration of the callback.
+typedef struct {
+    int (*on_document_start)(void* ctx);
+    int (*on_document_end)(void* ctx);
+    int (*on_null)(void* ctx, bool is_key);
+    int (*on_scalar)(void* ctx, cyaml_scalar_kind_t kind,
+        const char* value, size_t value_len, bool is_key);
+    int (*on_sequence_start)(void* ctx, bool is_key);
+    int (*on_sequence_end)(void* ctx, bool is_key);
+    int (*on_mapping_start)(void* ctx, bool is_key);
+    int (*on_mapping_end)(void* ctx, bool is_key);
+    int (*on_alias)(void* ctx, const char* value, size_t value_len, bool is_key);
+} cyaml_sax_handler_t;
+
+//! Create an incremental YAML event parser. The handler is copied.
+CYAML_API cyaml_sax_parser_t* cyaml_sax_parser_create(
+    const cyaml_sax_handler_t* handler, void* ctx, const cyaml_opts_t* opts);
+
+//! Feed one input chunk. Complete events may be delivered before this returns.
+CYAML_API int cyaml_sax_parser_feed(cyaml_sax_parser_t* parser,
+    const char* data, size_t len);
+
+//! Mark end-of-input, deliver remaining events, and validate stream completion.
+CYAML_API int cyaml_sax_parser_finish(cyaml_sax_parser_t* parser);
+
+//! Return the parser-owned error record, or NULL when no error is present.
+CYAML_API const cyaml_error_t* cyaml_sax_parser_error(const cyaml_sax_parser_t* parser);
+
+//! Destroy an incremental parser. NULL safe.
+CYAML_API void cyaml_sax_parser_destroy(cyaml_sax_parser_t* parser);
 
 //! Get document count
 static inline uint32_t cyaml_stream_count(const cyaml_stream_t* s)

@@ -7,9 +7,27 @@
 #include "tinytest.h"
 #include <fmt.h>
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
+typedef struct {
+  char records[4][128];
+  size_t lengths[4];
+  size_t count;
+  size_t fail_at;
+} csv_write_state_t;
+
+static int capture_csv_record(const void *data, size_t len, void *user) {
+  csv_write_state_t *state = (csv_write_state_t *)user;
+  if (state->count < 4) {
+    size_t copy_len = len < sizeof(state->records[0]) - 1 ? len : sizeof(state->records[0]) - 1;
+    memcpy(state->records[state->count], data, copy_len);
+    state->records[state->count][copy_len] = '\0';
+    state->lengths[state->count] = len;
+  }
+  state->count++;
+  return state->fail_at > 0 && state->count >= state->fail_at ? -1 : 0;
+}
 
 typedef struct {
   size_t row_count;
@@ -652,6 +670,31 @@ spec("csv_parser") {
 
       csv_free(doc2);
       free(out);
+      csv_free(doc);
+    }
+
+    it("should write one complete logical record per callback") {
+      const char *csv = "name,value\n\"line1\nline2\",\"say \"\"hi\"\"\"\ntail,end\n";
+      csv_options_t opts = {true, ',', '"', true};
+      csv_write_state_t state = {0};
+      csv_doc_t *doc = csv_parse_opts(csv, strlen(csv), &opts);
+      check_not_null(doc);
+
+      check_int_eq(csv_write_records(doc, capture_csv_record, &state), 0);
+      check_size_eq(state.count, 3);
+      check_str_eq(state.records[0], "name,value\n");
+      check_str_eq(state.records[1], "\"line1\nline2\",\"say \"\"hi\"\"\"\n");
+      check_str_eq(state.records[2], "tail,end\n");
+      csv_free(doc);
+    }
+
+    it("should stop writing when a record callback fails") {
+      const char *csv = "a,b\n1,2\n3,4\n";
+      csv_write_state_t state = {.fail_at = 2};
+      csv_doc_t *doc = csv_parse(csv, strlen(csv));
+      check_not_null(doc);
+      check_int_eq(csv_write_records(doc, capture_csv_record, &state), -1);
+      check_size_eq(state.count, 2);
       csv_free(doc);
     }
   }

@@ -1,19 +1,23 @@
 #ifndef TURBO_PARSER_H
 #define TURBO_PARSER_H
 
+#include <platform.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <time.h>
-#include <platform.h>
 #include <turbo_str_view.h>
- 
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/** Serialized byte sink. Calls may use arbitrary non-empty chunk boundaries. */
+typedef int (*turbo_write_fn)(const void *data, size_t len, void *user);
+
 /* JSON Parser */
 typedef struct json_value_s json_value_t;
+typedef struct json_value_s turbo_json_doc_t;
 typedef struct json_path_result_s turbo_json_path_result_t;
 typedef struct turbo_json_sax_parser_s turbo_json_sax_parser_t;
 
@@ -45,35 +49,40 @@ typedef struct turbo_json_sax_handler_s {
  * @param out Address of a pointer (json_value_t **) to store the result.
  * @return 0 on success, error code otherwise.
  */
-CXX_C_API int turbo_parse_json(const uint8_t *data, size_t len, void *out);
+CXX_C_API int turbo_parse_json(const uint8_t *data, size_t len, turbo_json_doc_t **out);
 
 /**
  * @brief Parse one complete JSON document with SAX callbacks.
  * @param data Input buffer.
+ *
  * @param len Buffer length.
  * @param handler Callback table.
- * @param ctx User context passed to callbacks.
+ * @param ctx User context passed to
+ * callbacks.
  * @return 0 on success, -1 on parse or callback failure.
  */
 CXX_C_API int turbo_parse_json_sax(const uint8_t *data, size_t len,
                                    const turbo_json_sax_handler_t *handler, void *ctx);
 
 /* Incremental JSON SAX parser. Call feed() with any chunk size, then finish()
- * once at EOF. Callback pointers are valid only for the duration of the
- * callback. Returning non-zero from a callback stops parsing. */
+ * once at EOF.
+ * Callback pointers are valid only for the duration of the
+ * callback. Returning non-zero from a
+ * callback stops parsing. */
 CXX_C_API turbo_json_sax_parser_t *
 turbo_json_sax_parser_create(const turbo_json_sax_handler_t *handler, void *ctx);
-CXX_C_API int turbo_json_sax_parser_feed(turbo_json_sax_parser_t *parser,
-                                         const char *data, size_t len);
+CXX_C_API int turbo_json_sax_parser_feed(turbo_json_sax_parser_t *parser, const char *data,
+                                         size_t len);
 CXX_C_API int turbo_json_sax_parser_finish(turbo_json_sax_parser_t *parser);
 CXX_C_API const char *turbo_json_sax_parser_error(const turbo_json_sax_parser_t *parser);
 CXX_C_API void turbo_json_sax_parser_destroy(turbo_json_sax_parser_t *parser);
 
 /**
  * @brief Free JSON data and set pointer to NULL.
- * @param out Address of the pointer (json_value_t **) to free.
+ * @param out Address of the pointer
+ * (json_value_t **) to free.
  */
-CXX_C_API void turbo_free_json(void *out);
+CXX_C_API void turbo_free_json(turbo_json_doc_t **out);
 
 /**
  * @brief Get the type of a JSON value.
@@ -224,30 +233,37 @@ CXX_C_API char *turbo_json_serialize_pretty_crlf(const json_value_t *value, size
 
 /**
  * @brief Free a string allocated by turbo_json_serialize or turbo_json_serialize_pretty.
+ *
  * @param str Pointer to the serialized string.
  */
 CXX_C_API void turbo_json_serialize_free(char *str);
+CXX_C_API int turbo_json_write(const json_value_t *value, turbo_write_fn write, void *user);
 
 /**
  * @brief Deep-clone a JSON value tree.
  * @param value Source JSON value.
- * @return Newly allocated clone, or NULL on failure.
+ * @return Newly
+ * allocated clone, or NULL on failure.
  */
 CXX_C_API json_value_t *turbo_json_clone(const json_value_t *value);
 
 /**
  * @brief Get the first JSON value matching a JSONPath expression.
- * @param root Root JSON value.
+ * @param root Root JSON
+ * value.
  * @param expr JSONPath expression.
- * @return First matching value, or NULL if not found or invalid.
+ * @return First matching value, or NULL if not found
+ * or invalid.
  */
 CXX_C_API json_value_t *turbo_json_path_get(const json_value_t *root, const char *expr);
 
 /**
  * @brief Query JSON values matching a JSONPath expression.
  * @param root Root JSON value.
+ *
  * @param expr JSONPath expression.
- * @return Result handle containing non-owning JSON value pointers.
+ * @return Result handle containing non-owning JSON value
+ * pointers.
  */
 CXX_C_API turbo_json_path_result_t *turbo_json_path_query(const json_value_t *root,
                                                           const char *expr);
@@ -255,6 +271,7 @@ CXX_C_API turbo_json_path_result_t *turbo_json_path_query(const json_value_t *ro
 /**
  * @brief Get number of values in a JSONPath result.
  * @param result JSONPath result handle.
+ *
  * @return Match count.
  */
 CXX_C_API size_t turbo_json_path_result_size(const turbo_json_path_result_t *result);
@@ -262,6 +279,7 @@ CXX_C_API size_t turbo_json_path_result_size(const turbo_json_path_result_t *res
 /**
  * @brief Get one value from a JSONPath result.
  * @param result JSONPath result handle.
+ *
  * @param index Match index.
  * @return Matching value or NULL.
  */
@@ -270,7 +288,8 @@ CXX_C_API json_value_t *turbo_json_path_result_get(const turbo_json_path_result_
 
 /**
  * @brief Free a JSONPath result handle. Does not free matched JSON values.
- * @param result JSONPath result handle.
+ * @param result
+ * JSONPath result handle.
  */
 CXX_C_API void turbo_json_path_result_free(turbo_json_path_result_t *result);
 
@@ -299,6 +318,7 @@ CXX_C_API json_value_t *turbo_json_create_array(void);
  * @return Pointer to the newly created JSON string node.
  */
 CXX_C_API json_value_t *turbo_json_create_string(const char *str);
+CXX_C_API json_value_t *turbo_json_create_string_n(const char *str, size_t len);
 
 /**
  * @brief Create a JSON number node.
@@ -306,6 +326,9 @@ CXX_C_API json_value_t *turbo_json_create_string(const char *str);
  * @return Pointer to the newly created JSON number node.
  */
 CXX_C_API json_value_t *turbo_json_create_number(double num);
+
+/** Create a JSON integer whose serialized decimal form preserves all int64 bits. */
+CXX_C_API json_value_t *turbo_json_create_int64(int64_t num);
 
 /**
  * @brief Create a JSON boolean node.
@@ -327,6 +350,7 @@ CXX_C_API json_value_t *turbo_json_create_null(void);
  * @param val Value node.
  */
 CXX_C_API void turbo_json_object_add(json_value_t *obj, const char *key, json_value_t *val);
+CXX_C_API bool turbo_json_object_add_checked(json_value_t *obj, const char *key, json_value_t *val);
 
 /**
  * @brief Add value to array (takes ownership of val).
@@ -334,6 +358,7 @@ CXX_C_API void turbo_json_object_add(json_value_t *obj, const char *key, json_va
  * @param val Value node.
  */
 CXX_C_API void turbo_json_array_add(json_value_t *arr, json_value_t *val);
+CXX_C_API bool turbo_json_array_add_checked(json_value_t *arr, json_value_t *val);
 
 /**
  * @brief Set/Update string property in object.
@@ -367,10 +392,12 @@ CXX_C_API void turbo_json_object_set_bool(json_value_t *obj, const char *key, bo
 CXX_C_API void turbo_json_object_set_null(json_value_t *obj, const char *key);
 
 /* YAML Parser (CYAML). Documents own a copy of the parsed input. Nodes and
- * YPATH matches are non-owning and remain valid until their document is freed. */
+ * YPATH matches are
+ * non-owning and remain valid until their document is freed. */
 typedef struct turbo_yaml_doc_s turbo_yaml_doc_t;
 typedef struct turbo_yaml_node_s turbo_yaml_node_t;
 typedef struct turbo_yaml_path_result_s turbo_yaml_path_result_t;
+typedef struct turbo_yaml_sax_parser_s turbo_yaml_sax_parser_t;
 
 typedef enum {
   TURBO_YAML_NODE_NONE = 0,
@@ -389,50 +416,72 @@ typedef enum {
   TURBO_YAML_SCALAR_STRING
 } turbo_yaml_scalar_kind_t;
 
+typedef struct turbo_yaml_sax_handler_s {
+  int (*on_document_start)(void *ctx);
+  int (*on_document_end)(void *ctx);
+  int (*on_null)(void *ctx, bool is_key);
+  int (*on_scalar)(void *ctx, turbo_yaml_scalar_kind_t kind, const char *value, size_t value_len,
+                   bool is_key);
+  int (*on_sequence_start)(void *ctx, bool is_key);
+  int (*on_sequence_end)(void *ctx, bool is_key);
+  int (*on_mapping_start)(void *ctx, bool is_key);
+  int (*on_mapping_end)(void *ctx, bool is_key);
+  int (*on_alias)(void *ctx, const char *value, size_t value_len, bool is_key);
+} turbo_yaml_sax_handler_t;
+
 /** Parse one YAML document into an owned document handle. */
-CXX_C_API int turbo_parse_yaml(const uint8_t *data, size_t len,
-                               turbo_yaml_doc_t **out);
+CXX_C_API int turbo_parse_yaml(const uint8_t *data, size_t len, turbo_yaml_doc_t **out);
+CXX_C_API int turbo_parse_yaml_sax(const uint8_t *data, size_t len,
+                                   const turbo_yaml_sax_handler_t *handler, void *ctx);
+/**
+ * Create a chunk-fed YAML SAX parser. feed() parses incrementally and may
+ * invoke callbacks before returning. Callback string views are valid only
+ * during the callback. finish() marks EOF and validates the parser state.
+ */
+CXX_C_API turbo_yaml_sax_parser_t *
+turbo_yaml_sax_parser_create(const turbo_yaml_sax_handler_t *handler, void *ctx);
+CXX_C_API int turbo_yaml_sax_parser_feed(turbo_yaml_sax_parser_t *parser, const char *data,
+                                         size_t len);
+CXX_C_API int turbo_yaml_sax_parser_finish(turbo_yaml_sax_parser_t *parser);
+CXX_C_API const char *turbo_yaml_sax_parser_error(const turbo_yaml_sax_parser_t *parser);
+CXX_C_API void turbo_yaml_sax_parser_destroy(turbo_yaml_sax_parser_t *parser);
 
 /** Free a YAML document and set its pointer to NULL. */
 CXX_C_API void turbo_free_yaml(turbo_yaml_doc_t **doc);
 
 CXX_C_API turbo_yaml_node_t *turbo_yaml_root(const turbo_yaml_doc_t *doc);
 CXX_C_API turbo_yaml_node_type_t turbo_yaml_node_type(const turbo_yaml_node_t *node);
-CXX_C_API turbo_yaml_scalar_kind_t
-turbo_yaml_scalar_kind(const turbo_yaml_doc_t *doc, const turbo_yaml_node_t *node);
+CXX_C_API turbo_yaml_scalar_kind_t turbo_yaml_scalar_kind(const turbo_yaml_doc_t *doc,
+                                                          const turbo_yaml_node_t *node);
 
 /** Return a processed scalar string. Free it with turbo_yaml_string_free(). */
-CXX_C_API char *turbo_yaml_scalar_dup(const turbo_yaml_doc_t *doc,
-                                      const turbo_yaml_node_t *node);
+CXX_C_API char *turbo_yaml_scalar_dup(const turbo_yaml_doc_t *doc, const turbo_yaml_node_t *node);
 CXX_C_API size_t turbo_yaml_sequence_size(const turbo_yaml_node_t *node);
-CXX_C_API turbo_yaml_node_t *turbo_yaml_sequence_get(const turbo_yaml_node_t *node,
-                                                     size_t index);
+CXX_C_API turbo_yaml_node_t *turbo_yaml_sequence_get(const turbo_yaml_node_t *node, size_t index);
 CXX_C_API size_t turbo_yaml_mapping_size(const turbo_yaml_node_t *node);
-CXX_C_API turbo_yaml_node_t *turbo_yaml_mapping_key(const turbo_yaml_node_t *node,
-                                                    size_t index);
-CXX_C_API turbo_yaml_node_t *turbo_yaml_mapping_value(const turbo_yaml_node_t *node,
-                                                      size_t index);
+CXX_C_API turbo_yaml_node_t *turbo_yaml_mapping_key(const turbo_yaml_node_t *node, size_t index);
+CXX_C_API turbo_yaml_node_t *turbo_yaml_mapping_value(const turbo_yaml_node_t *node, size_t index);
 
 /** Execute a YPATH expression relative to context, or the root when context is NULL. */
-CXX_C_API turbo_yaml_path_result_t *
-turbo_yaml_path_query(const turbo_yaml_doc_t *doc, const turbo_yaml_node_t *context,
-                      const char *expr);
-CXX_C_API size_t
-turbo_yaml_path_result_size(const turbo_yaml_path_result_t *result);
-CXX_C_API turbo_yaml_node_t *
-turbo_yaml_path_result_get(const turbo_yaml_path_result_t *result, size_t index);
-CXX_C_API const char *
-turbo_yaml_path_result_error(const turbo_yaml_path_result_t *result);
-CXX_C_API size_t
-turbo_yaml_path_result_error_pos(const turbo_yaml_path_result_t *result);
+CXX_C_API turbo_yaml_path_result_t *turbo_yaml_path_query(const turbo_yaml_doc_t *doc,
+                                                          const turbo_yaml_node_t *context,
+                                                          const char *expr);
+CXX_C_API size_t turbo_yaml_path_result_size(const turbo_yaml_path_result_t *result);
+CXX_C_API turbo_yaml_node_t *turbo_yaml_path_result_get(const turbo_yaml_path_result_t *result,
+                                                        size_t index);
+CXX_C_API const char *turbo_yaml_path_result_error(const turbo_yaml_path_result_t *result);
+CXX_C_API size_t turbo_yaml_path_result_error_pos(const turbo_yaml_path_result_t *result);
 CXX_C_API void turbo_yaml_path_result_free(turbo_yaml_path_result_t *result);
 
-/** Emit a document or node as YAML. Free the result with turbo_yaml_string_free(). */
+/** Emit a document or node as YAML. Free serialized output with turbo_yaml_serialize_free(). */
 CXX_C_API char *turbo_yaml_emit(const turbo_yaml_doc_t *doc, size_t *out_len);
-CXX_C_API char *turbo_yaml_emit_node(const turbo_yaml_doc_t *doc,
-                                     const turbo_yaml_node_t *node,
+CXX_C_API char *turbo_yaml_serialize(const turbo_yaml_doc_t *doc, size_t *out_len);
+CXX_C_API char *turbo_yaml_emit_node(const turbo_yaml_doc_t *doc, const turbo_yaml_node_t *node,
                                      size_t *out_len);
 CXX_C_API void turbo_yaml_string_free(char *str);
+CXX_C_API void turbo_yaml_serialize_free(char *str);
+CXX_C_API int turbo_yaml_write(const turbo_yaml_doc_t *doc, turbo_write_fn write, void *user);
+CXX_C_API turbo_yaml_doc_t *turbo_yaml_from_json(const json_value_t *value);
 
 /** Convert representable YAML semantics into an independently owned JSON DOM. */
 CXX_C_API json_value_t *turbo_yaml_to_json(const turbo_yaml_doc_t *doc);
@@ -470,8 +519,8 @@ typedef struct turbo_xml_sax_handler_s {
   int (*on_start_document)(void *ctx);
   int (*on_end_document)(void *ctx);
   int (*on_element_start)(void *ctx, const char *name, size_t name_len);
-  int (*on_attribute)(void *ctx, const char *name, size_t name_len,
-                      const char *value, size_t value_len);
+  int (*on_attribute)(void *ctx, const char *name, size_t name_len, const char *value,
+                      size_t value_len);
   int (*on_element_end)(void *ctx, const char *name, size_t name_len);
   int (*on_text)(void *ctx, const char *text, size_t text_len);
   int (*on_comment)(void *ctx, const char *text, size_t text_len);
@@ -481,14 +530,14 @@ typedef struct turbo_xml_sax_handler_s {
   int (*on_doctype)(void *ctx, const char *text, size_t text_len);
 } turbo_xml_sax_handler_t;
 
-#define turbo_xml_for(_node, __list)                                                  \
-  void *_node = NULL;                                                                 \
-  for (turbo_xml_list_node_t *__00prev00##_node = NULL,                               \
-                             *__00current00##_node = (__list)->head;                  \
-       (_node = __00current00##_node ? __00current00##_node->item : NULL,             \
-        __00current00##_node != NULL);                                                \
-       __00prev00##_node = __00current00##_node,                                      \
-       __00current00##_node = (((void)__00prev00##_node), __00current00##_node->next))
+#define turbo_xml_for(_node, __list)                                                               \
+  void *_node = NULL;                                                                              \
+  for (turbo_xml_list_node_t *__00prev00##_node = NULL, *__00current00##_node = (__list)->head;    \
+       (_node = __00current00##_node ? __00current00##_node->item : NULL,                          \
+       __00current00##_node != NULL);                                                              \
+       __00prev00##_node = __00current00##_node,                                                   \
+                             __00current00##_node =                                                \
+                                 (((void)__00prev00##_node), __00current00##_node->next))
 
 /**
  * @brief Parse XML data.
@@ -497,35 +546,47 @@ typedef struct turbo_xml_sax_handler_s {
  * @param out Address of a pointer (turbo_xml_doc_t **) to store the result.
  * @return 0 on success, error code otherwise.
  */
-CXX_C_API int turbo_parse_xml(const uint8_t *data, size_t len, void *out);
+CXX_C_API int turbo_parse_xml(const uint8_t *data, size_t len, turbo_xml_doc_t **out);
 
 /**
  * @brief Parse one complete XML document with SAX callbacks.
  * @param data Input buffer.
+ *
  * @param len Buffer length.
  * @param handler Callback table.
- * @param ctx User context passed to callbacks.
+ * @param ctx User context passed to
+ * callbacks.
  * @return 0 on success, -1 on parse or callback failure.
  */
 CXX_C_API int turbo_parse_xml_sax(const uint8_t *data, size_t len,
                                   const turbo_xml_sax_handler_t *handler, void *ctx);
 
 /* Incremental XML SAX parser. Call feed() with any chunk size, then finish() once at EOF.
+ *
  * Callback pointers are valid only for the duration of the callback. Returning non-zero
- * from a callback stops parsing. Text and attribute values are raw XML slices. */
+ * from a
+ * callback stops parsing. Text and attribute values are raw XML slices. */
 CXX_C_API turbo_xml_sax_parser_t *
 turbo_xml_sax_parser_create(const turbo_xml_sax_handler_t *handler, void *ctx);
-CXX_C_API int turbo_xml_sax_parser_feed(turbo_xml_sax_parser_t *parser,
-                                        const char *data, size_t len);
+CXX_C_API int turbo_xml_sax_parser_feed(turbo_xml_sax_parser_t *parser, const char *data,
+                                        size_t len);
 CXX_C_API int turbo_xml_sax_parser_finish(turbo_xml_sax_parser_t *parser);
 CXX_C_API const char *turbo_xml_sax_parser_error(const turbo_xml_sax_parser_t *parser);
 CXX_C_API void turbo_xml_sax_parser_destroy(turbo_xml_sax_parser_t *parser);
 
 /**
  * @brief Free XML data and set pointer to NULL.
- * @param out Address of the pointer (turbo_xml_doc_t **) to free.
+ * @param out Address of the pointer
+ * (turbo_xml_doc_t **) to free.
  */
-CXX_C_API void turbo_free_xml(void *out);
+CXX_C_API void turbo_free_xml(turbo_xml_doc_t **out);
+CXX_C_API char *turbo_xml_serialize(const turbo_xml_doc_t *doc, size_t *out_len);
+CXX_C_API void turbo_xml_string_free(char *str);
+CXX_C_API void turbo_xml_serialize_free(char *str);
+CXX_C_API int turbo_xml_write(const turbo_xml_doc_t *doc, turbo_write_fn write, void *user);
+CXX_C_API turbo_xml_doc_t *turbo_xml_create_document(const char *root_name);
+CXX_C_API turbo_xml_node_t *turbo_xml_add_element(void *parent, const char *name);
+CXX_C_API int turbo_xml_set_text(turbo_xml_node_t *node, const char *text);
 
 /**
  * @brief Get the root element of an XML document.
@@ -556,7 +617,8 @@ CXX_C_API void turbo_xml_list_free(turbo_xml_list_t *list);
 /**
  * @brief Find the first XML node matching a query.
  * @param root Search root.
- * @param query Query string.
+ * @param query
+ * Query string.
  * @return Matching node or NULL.
  */
 CXX_C_API turbo_xml_node_t *turbo_xml_find(turbo_xml_node_t *root, const char *query);
@@ -564,24 +626,27 @@ CXX_C_API turbo_xml_node_t *turbo_xml_find(turbo_xml_node_t *root, const char *q
 /**
  * @brief Find all XML nodes matching a query.
  * @param root Search root.
- * @param query Query string.
+ * @param query Query
+ * string.
  * @param out Target list.
  */
-CXX_C_API void turbo_xml_find_all(turbo_xml_node_t *root, const char *query,
-                                  turbo_xml_list_t *out);
+CXX_C_API void turbo_xml_find_all(turbo_xml_node_t *root, const char *query, turbo_xml_list_t *out);
 
 /**
  * @brief Duplicate the text content of an XML node.
  * @param node Target node.
- * @return Newly allocated string or NULL.
+ * @return
+ * Newly allocated string or NULL.
  */
 CXX_C_API char *turbo_xml_text_dup(turbo_xml_node_t *node);
 
 /**
  * @brief Duplicate the text content of a named child element.
  * @param parent Parent node.
+ *
  * @param name Child local name.
- * @return Newly allocated string. Returns an empty string if not found.
+ * @return Newly allocated string. Returns an empty string if not
+ * found.
  */
 CXX_C_API char *turbo_xml_child_text_dup(turbo_xml_node_t *parent, const char *name);
 
@@ -603,25 +668,30 @@ CXX_C_API size_t turbo_xml_count(const turbo_xml_doc_t *doc, const char *xpath);
 
 /**
  * @brief Get the first XML node matching an XPath expression.
- * @param doc Pointer to the XML document.
+ * @param doc Pointer to the XML
+ * document.
  * @param xpath XPath expression.
- * @return First matching opaque XML node pointer, or NULL.
+ * @return First matching opaque XML node pointer, or
+ * NULL.
  */
 CXX_C_API turbo_xml_xpath_node_t *turbo_xml_xpath_get(const turbo_xml_doc_t *doc,
                                                       const char *xpath);
 
 /**
  * @brief Query XML nodes matching an XPath expression.
- * @param doc Pointer to the XML document.
+ * @param doc Pointer to the XML
+ * document.
  * @param xpath XPath expression.
- * @param out Target list. Contains non-owning opaque XML node pointers.
+ * @param out Target list. Contains non-owning opaque
+ * XML node pointers.
  */
 CXX_C_API void turbo_xml_xpath_query(const turbo_xml_doc_t *doc, const char *xpath,
                                      turbo_xml_list_t *out);
 
 /**
  * @brief Count XML nodes matching an XPath expression.
- * @param doc Pointer to the XML document.
+ * @param doc Pointer to the XML
+ * document.
  * @param xpath XPath expression.
  * @return Number of matching nodes.
  */
@@ -629,56 +699,61 @@ CXX_C_API size_t turbo_xml_xpath_count(const turbo_xml_doc_t *doc, const char *x
 
 /**
  * @brief Get text content of the first XML node matching an XPath expression.
- * @param doc Pointer to the XML document.
+ * @param doc
+ * Pointer to the XML document.
  * @param xpath XPath expression.
- * @return Pointer to text content of first matching node, or NULL if not found.
+ * @return Pointer to text content
+ * of first matching node, or NULL if not found.
  */
 CXX_C_API const char *turbo_xml_xpath_text(const turbo_xml_doc_t *doc, const char *xpath);
 
 /**
  * @brief Get the type of an opaque XPath node.
- * @param node Node returned from turbo_xml_xpath_get/query.
+ * @param node Node returned from
+ * turbo_xml_xpath_get/query.
  * @return Stable TurboNet XML node type.
  */
-CXX_C_API turbo_xml_node_type_t
-turbo_xml_xpath_node_type(const turbo_xml_xpath_node_t *node);
+CXX_C_API turbo_xml_node_type_t turbo_xml_xpath_node_type(const turbo_xml_xpath_node_t *node);
 
 /**
  * @brief Get the stable string name for an opaque XPath node type.
- * @param node Node returned from turbo_xml_xpath_get/query.
+ * @param node Node returned
+ * from turbo_xml_xpath_get/query.
  * @return Type name such as "element", "text", or "attribute".
+
  */
 CXX_C_API const char *turbo_xml_xpath_node_type_name(const turbo_xml_xpath_node_t *node);
 
 /**
  * @brief Get the qualified name for an opaque XPath node when it has one.
- * @param node Node returned from turbo_xml_xpath_get/query.
+ * @param node Node
+ * returned from turbo_xml_xpath_get/query.
  * @return Node name, or NULL for unnamed node kinds.
+
  */
 CXX_C_API const char *turbo_xml_xpath_node_name(const turbo_xml_xpath_node_t *node);
 
 /**
  * @brief Get textual value for an opaque XPath node when it has one.
- * @param node Node returned from turbo_xml_xpath_get/query.
- * @return Text value, or NULL when unavailable. The pointer is non-owning.
+ * @param node Node
+ * returned from turbo_xml_xpath_get/query.
+ * @return Text value, or NULL when unavailable. The
+ * pointer is non-owning.
  */
 CXX_C_API const char *turbo_xml_xpath_node_text(const turbo_xml_xpath_node_t *node);
 
 /**
  * @brief Serialize an opaque XPath node to XML/text.
- * @param node Node returned from turbo_xml_xpath_get/query.
- * @return Newly allocated string, or NULL. Free with turbo_xml_string_free().
+ * @param node Node returned from
+ * turbo_xml_xpath_get/query.
+ * @return Newly allocated string, or NULL. Free with
+ * turbo_xml_string_free().
  */
 CXX_C_API char *turbo_xml_xpath_node_xml_dup(const turbo_xml_xpath_node_t *node);
 
-/**
- * @brief Free a string returned by TurboNet XML helpers.
- * @param str String returned by a *_dup XML API.
- */
-CXX_C_API void turbo_xml_string_free(char *str);
-
 /* CSV */
 typedef struct csv_doc_s turbo_csv_doc_t;
+typedef struct csv_sax_parser_s turbo_csv_sax_parser_t;
 typedef struct dsv_filter_s turbo_dsv_filter_t;
 typedef struct csv_stream_processor_s turbo_csv_stream_processor_t;
 
@@ -688,6 +763,13 @@ typedef struct turbo_csv_options_s {
   char quote;
   bool skip_empty_rows;
 } turbo_csv_options_t;
+
+typedef struct turbo_csv_sax_handler_s {
+  int (*on_row_start)(void *ctx, size_t row_index);
+  int (*on_field)(void *ctx, size_t row_index, size_t column_index, const char *value,
+                  size_t value_len);
+  int (*on_row_end)(void *ctx, size_t row_index, size_t field_count);
+} turbo_csv_sax_handler_t;
 
 typedef void (*turbo_dsv_row_callback_t)(void *user_data, size_t row_index,
                                          const char *rendered_row);
@@ -699,7 +781,7 @@ typedef void (*turbo_dsv_row_callback_t)(void *user_data, size_t row_index,
  * @param out Address of a pointer (turbo_csv_doc_t **) to store the result.
  * @return 0 on success, error code otherwise.
  */
-CXX_C_API int turbo_parse_csv(const uint8_t *data, size_t len, void *out);
+CXX_C_API int turbo_parse_csv(const uint8_t *data, size_t len, turbo_csv_doc_t **out);
 
 /**
  * @brief Parse CSV data with options.
@@ -710,13 +792,25 @@ CXX_C_API int turbo_parse_csv(const uint8_t *data, size_t len, void *out);
  * @return 0 on success, error code otherwise.
  */
 CXX_C_API int turbo_parse_csv_opts(const uint8_t *data, size_t len, const turbo_csv_options_t *opts,
-                                   void *out);
+                                   turbo_csv_doc_t **out);
+
+CXX_C_API int turbo_parse_csv_sax(const uint8_t *data, size_t len,
+                                  const turbo_csv_sax_handler_t *handler, void *ctx,
+                                  const turbo_csv_options_t *opts);
+CXX_C_API turbo_csv_sax_parser_t *
+turbo_csv_sax_parser_create(const turbo_csv_sax_handler_t *handler, void *ctx,
+                            const turbo_csv_options_t *opts);
+CXX_C_API int turbo_csv_sax_parser_feed(turbo_csv_sax_parser_t *parser, const char *data,
+                                        size_t len);
+CXX_C_API int turbo_csv_sax_parser_finish(turbo_csv_sax_parser_t *parser);
+CXX_C_API const char *turbo_csv_sax_parser_error(const turbo_csv_sax_parser_t *parser);
+CXX_C_API void turbo_csv_sax_parser_destroy(turbo_csv_sax_parser_t *parser);
 
 /**
  * @brief Free CSV data and set pointer to NULL.
  * @param out Address of the pointer (turbo_csv_doc_t **) to free.
  */
-CXX_C_API void turbo_free_csv(void *out);
+CXX_C_API void turbo_free_csv(turbo_csv_doc_t **out);
 
 /**
  * @brief Get number of rows in CSV.
@@ -780,6 +874,17 @@ CXX_C_API bool turbo_csv_get_bool(const turbo_csv_doc_t *doc, size_t row, size_t
  */
 CXX_C_API size_t turbo_csv_find_column(const turbo_csv_doc_t *doc, const char *header_name);
 
+/** Serialize the complete CSV document. Free with turbo_csv_serialize_free(). */
+CXX_C_API char *turbo_csv_serialize(const turbo_csv_doc_t *doc, size_t *out_len);
+CXX_C_API void turbo_csv_string_free(char *str);
+CXX_C_API void turbo_csv_serialize_free(char *str);
+
+/** Serialize to a byte sink. Callback boundaries have no record semantics. */
+CXX_C_API int turbo_csv_write(const turbo_csv_doc_t *doc, turbo_write_fn write, void *user);
+
+/** Serialize one complete logical CSV record per callback invocation. */
+CXX_C_API int turbo_csv_write_records(const turbo_csv_doc_t *doc, turbo_write_fn write, void *user);
+
 /**
  * @brief Write CSV document to file.
  * @param doc Pointer to CSV document.
@@ -790,9 +895,11 @@ CXX_C_API int turbo_csv_write_file(const turbo_csv_doc_t *doc, const char *filen
 
 /**
  * @brief Create a CSVPath filter bound to a parsed CSV document.
- * @param doc Parsed CSV document.
+ * @param doc Parsed CSV
+ * document.
  * @param header_row_index Header row index (0-based).
- * @return CSVPath filter handle, or NULL on failure.
+ * @return CSVPath filter
+ * handle, or NULL on failure.
  */
 CXX_C_API turbo_dsv_filter_t *turbo_dsv_filter_create(const turbo_csv_doc_t *doc,
                                                       size_t header_row_index);
@@ -806,6 +913,7 @@ CXX_C_API void turbo_dsv_filter_destroy(turbo_dsv_filter_t *filter);
 /**
  * @brief Get last CSVPath filter error message.
  * @param filter CSVPath filter handle.
+ *
  * @return Error string, or empty/null when no error.
  */
 CXX_C_API const char *turbo_dsv_filter_error(turbo_dsv_filter_t *filter);
@@ -813,21 +921,27 @@ CXX_C_API const char *turbo_dsv_filter_error(turbo_dsv_filter_t *filter);
 /**
  * @brief Compile CSVPath filter expression.
  * @details Supports:
- *          - logical join: and/or
+ *          - logical join:
+ * and/or
  *          - comparison: == != > >= < <=
- *          - numeric lhs arithmetic: + - * /, unary +/- and parentheses
+ *          - numeric lhs arithmetic: + - * /,
+ * unary +/- and parentheses
  *          - string literal rhs: "..."
- *          See tScript/docs/csv_filter_expression.md for full syntax and
+ *          See
+ * tScript/docs/csv_filter_expression.md for full syntax and
  *          error semantics.
- * @param filter CSVPath filter handle.
+ * @param
+ * filter CSVPath filter handle.
  * @param expression Expression string.
- * @return true on success, false on failure.
+ * @return true on success,
+ * false on failure.
  */
 CXX_C_API bool turbo_dsv_filter_compile(turbo_dsv_filter_t *filter, const char *expression);
 
 /**
  * @brief Set output delimiter for rendered rows.
  * @param filter CSVPath filter handle.
+ *
  * @param delimiter Delimiter character.
  */
 CXX_C_API void turbo_dsv_filter_set_output_delimiter(turbo_dsv_filter_t *filter, char delimiter);
@@ -835,30 +949,34 @@ CXX_C_API void turbo_dsv_filter_set_output_delimiter(turbo_dsv_filter_t *filter,
 /**
  * @brief Evaluate filter on one row.
  * @param filter CSVPath filter handle.
- * @param row_index Row index.
+ * @param
+ * row_index Row index.
  * @return 1 match, 0 mismatch, -1 error.
  */
 CXX_C_API int turbo_dsv_filter_check_row(turbo_dsv_filter_t *filter, size_t row_index);
 
 /**
  * @brief Evaluate filter against one row represented as field views.
- * @param filter Compiled CSVPath filter handle.
+ * @param filter Compiled
+ * CSVPath filter handle.
  * @param fields Non-owning field views for the current row.
- * @param field_count Number of field views.
+ * @param
+ * field_count Number of field views.
  * @return 1 match, 0 mismatch, -1 error.
  */
-CXX_C_API int turbo_dsv_filter_check_values(turbo_dsv_filter_t *filter,
-                                            const tstr_v *fields,
+CXX_C_API int turbo_dsv_filter_check_values(turbo_dsv_filter_t *filter, const tstr_v *fields,
                                             size_t field_count);
 
 /**
  * @brief Run filter across rows and emit matched rendered rows.
- * @param filter CSVPath filter handle.
+ * @param filter CSVPath filter
+ * handle.
  * @param callback Callback for each matched row.
- * @param user_data User context passed to callback.
+ * @param user_data User context passed
+ * to callback.
  */
-CXX_C_API void turbo_dsv_filter_run(turbo_dsv_filter_t *filter,
-                                    turbo_dsv_row_callback_t callback, void *user_data);
+CXX_C_API void turbo_dsv_filter_run(turbo_dsv_filter_t *filter, turbo_dsv_row_callback_t callback,
+                                    void *user_data);
 
 /**
  * @brief Create CSV stream processor.
@@ -944,9 +1062,8 @@ CXX_C_API size_t turbo_csv_stream_processor_col_index(const turbo_csv_stream_pro
  * @param out_len Receives length.
  * @return Pointer to internal double array or NULL.
  */
-CXX_C_API const double *
-turbo_csv_stream_processor_col_data(const turbo_csv_stream_processor_t *p, size_t col,
-                                    size_t *out_len);
+CXX_C_API const double *turbo_csv_stream_processor_col_data(const turbo_csv_stream_processor_t *p,
+                                                            size_t col, size_t *out_len);
 
 /**
  * @brief Get string value from matched row/column.
@@ -1287,12 +1404,12 @@ CXX_C_API int turbo_ltv_stream_feed(turbo_ltv_stream_t *stream, const uint8_t *d
 CXX_C_API void turbo_ltv_stream_reset(turbo_ltv_stream_t *stream);
 
 /* Modbus Parser */
-#define TURBO_MODBUS_TCP_MBAP_SIZE      7
-#define TURBO_MODBUS_TCP_MIN_ADU_SIZE   8
-#define TURBO_MODBUS_TCP_MAX_ADU_SIZE   260
-#define TURBO_MODBUS_MAX_PDU_SIZE       253
-#define TURBO_MODBUS_RTU_MIN_ADU_SIZE   4
-#define TURBO_MODBUS_RTU_MAX_ADU_SIZE   256
+#define TURBO_MODBUS_TCP_MBAP_SIZE 7
+#define TURBO_MODBUS_TCP_MIN_ADU_SIZE 8
+#define TURBO_MODBUS_TCP_MAX_ADU_SIZE 260
+#define TURBO_MODBUS_MAX_PDU_SIZE 253
+#define TURBO_MODBUS_RTU_MIN_ADU_SIZE 4
+#define TURBO_MODBUS_RTU_MAX_ADU_SIZE 256
 
 typedef enum {
   TURBO_MODBUS_PARSE_OK = 0,
@@ -1310,25 +1427,25 @@ typedef enum {
 } turbo_modbus_transport_t;
 
 typedef struct {
-  uint8_t        function_code;
+  uint8_t function_code;
   const uint8_t *data;
-  size_t         data_size;
+  size_t data_size;
 } turbo_modbus_pdu_t;
 
 typedef struct {
-  uint16_t           transaction_id;
-  uint16_t           protocol_id;
-  uint16_t           length;
-  uint8_t            unit_id;
+  uint16_t transaction_id;
+  uint16_t protocol_id;
+  uint16_t length;
+  uint8_t unit_id;
   turbo_modbus_pdu_t pdu;
-  size_t             consumed;
+  size_t consumed;
 } turbo_modbus_tcp_adu_t;
 
 typedef struct {
-  uint8_t            address;
+  uint8_t address;
   turbo_modbus_pdu_t pdu;
-  uint16_t           crc;
-  size_t             consumed;
+  uint16_t crc;
+  size_t consumed;
 } turbo_modbus_rtu_adu_t;
 
 typedef struct {
@@ -1339,24 +1456,19 @@ typedef struct {
   } frame;
 } turbo_modbus_adu_t;
 
-CXX_C_API int turbo_modbus_tcp_peek_size(const uint8_t *data, size_t len,
-                                         size_t *out_size);
-CXX_C_API int turbo_modbus_tcp_read(const uint8_t *data, size_t len,
-                                    turbo_modbus_tcp_adu_t *out);
-CXX_C_API size_t turbo_modbus_tcp_write(const turbo_modbus_tcp_adu_t *adu,
-                                        uint8_t *out, size_t out_len);
+CXX_C_API int turbo_modbus_tcp_peek_size(const uint8_t *data, size_t len, size_t *out_size);
+CXX_C_API int turbo_modbus_tcp_read(const uint8_t *data, size_t len, turbo_modbus_tcp_adu_t *out);
+CXX_C_API size_t turbo_modbus_tcp_write(const turbo_modbus_tcp_adu_t *adu, uint8_t *out,
+                                        size_t out_len);
 
 CXX_C_API uint16_t turbo_modbus_rtu_crc16(const uint8_t *data, size_t len);
-CXX_C_API int turbo_modbus_rtu_read(const uint8_t *data, size_t len,
-                                    turbo_modbus_rtu_adu_t *out);
-CXX_C_API size_t turbo_modbus_rtu_write(const turbo_modbus_rtu_adu_t *adu,
-                                        uint8_t *out, size_t out_len);
+CXX_C_API int turbo_modbus_rtu_read(const uint8_t *data, size_t len, turbo_modbus_rtu_adu_t *out);
+CXX_C_API size_t turbo_modbus_rtu_write(const turbo_modbus_rtu_adu_t *adu, uint8_t *out,
+                                        size_t out_len);
 
-CXX_C_API int turbo_modbus_read(turbo_modbus_transport_t transport,
-                                const uint8_t *data, size_t len,
+CXX_C_API int turbo_modbus_read(turbo_modbus_transport_t transport, const uint8_t *data, size_t len,
                                 turbo_modbus_adu_t *out);
-CXX_C_API size_t turbo_modbus_write(const turbo_modbus_adu_t *adu,
-                                    uint8_t *out, size_t out_len);
+CXX_C_API size_t turbo_modbus_write(const turbo_modbus_adu_t *adu, uint8_t *out, size_t out_len);
 
 /* SOA Parser */
 typedef struct soa_batch_s turbo_soa_batch_t;
