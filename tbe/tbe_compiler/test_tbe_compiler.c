@@ -210,6 +210,25 @@ spec("tbe_compiler") {
       check_not_null(r.out_escaped);
     }
 
+    it("renderer should report file write failures") {
+      char *path = tt_make_temp_file("tbe_mustache", ".tmp");
+      FILE *read_only = NULL;
+      MUSTACHE_RENDERER renderer = mustache_helpers_renderer();
+
+      check_not_null(path);
+      if (path) {
+        check_int_eq(tt_write_file(path, "seed", 4), 0);
+        read_only = fopen(path, "rb");
+        check_not_null(read_only);
+        if (read_only) {
+          check_int_ne(renderer.out_verbatim("x", 1, read_only), 0);
+          fclose(read_only);
+        }
+        check_int_eq(tt_remove_file(path), 0);
+        free(path);
+      }
+    }
+
     it("get_child_by_name should find key in map") {
       Node *m = create_node_map(NULL);
       Node *v = create_node_string("key", "val");

@@ -51,7 +51,8 @@ CXX_C_API int mustache_json_provider_init_arena(MUSTACHE_JSON_PROVIDER *provider
  * @param json_data JSON data to use for rendering
  * @param renderer Output renderer
  * @param renderer_data Data for renderer callbacks
- * @param template_loader Optional template loader for partials
+ * @param template_loader Optional partial lookup. Returned templates remain user-owned and must
+ *                        stay valid until rendering completes.
  * @param user_data User data for template loader
  * @return 0 on success, -1 on error
  */

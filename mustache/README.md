@@ -80,9 +80,16 @@ The integration handles all JSON data types:
 - **Objects**: Used for variable lookup and sections
 - **Arrays**: Iterated in sections
 - **Strings**: Output directly
-- **Numbers**: Converted to strings (integers without decimals)
-- **Booleans**: Output as "true"/"false"
-- **Null**: Output as "null"
+- **Numbers**: Original JSON number text is preserved, including 64-bit integers
+- **Booleans**: `true` is output as `"true"`; `false` is falsey and interpolates as empty
+- **Null**: Falsey and interpolates as empty
+
+## XML Name and Value Semantics
+
+XML element and attribute names are matched case-sensitively by qualified name.
+For example, `{{item}}`, `{{a:item}}`, and `{{b:item}}` are distinct lookups.
+Repeated sibling elements with the same qualified name are exposed as an iterable
+section. Attributes and leaf-element text are output as strings.
 
 ## Advanced Usage
 
@@ -90,11 +97,11 @@ The integration handles all JSON data types:
 
 ```c
 MUSTACHE_TEMPLATE *load_partial(const char *name, size_t size, void *user_data) {
-    // Load template from file system, database, etc.
+    // Look up a template from a user-owned cache.
     char filename[256];
     snprintf(filename, sizeof(filename), "templates/%.*s.mustache", (int)size, name);
     
-    // Load and compile template...
+    // Load and compile on a cache miss. Keep it valid through the render.
     return compiled_template;
 }
 
@@ -124,6 +131,9 @@ int file_out_verbatim(const char *output, size_t size, void *renderer_data) {
 - JSON data is accessed on-demand without full traversal
 - Memory usage scales with template complexity, not data size
 - String renderer uses exponential growth for efficient concatenation
+- Nested partial/lambda expansion is limited to
+  `MUSTACHE_DEFAULT_MAX_RENDER_DEPTH`; use `mustache_process_ex()` to select a
+  lower per-render limit for untrusted templates
 
 ## Error Handling
 
@@ -155,10 +165,10 @@ See `examples/json_example.c` for a complete working example.
 Run the integration tests:
 ```bash
 # Basic JSON integration tests
-ctest -R mustache_json_integration
+ctest -R test_mustache_json
 
 # Comprehensive mustache specification tests
-ctest -R mustache_specification
+ctest -R "test_mustache_spec|test_spec_runner"
 
 # Run all mustache tests
 ctest -R mustache

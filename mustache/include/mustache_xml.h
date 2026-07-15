@@ -50,12 +50,19 @@ CXX_C_API int mustache_xml_provider_init(MUSTACHE_XML_PROVIDER *provider, void *
 CXX_C_API void mustache_xml_provider_free(MUSTACHE_XML_PROVIDER *provider);
 
 /**
+ * Return the provider status after direct use with mustache_process().
+ * @return 0 when no provider allocation failed, -1 for NULL or a failed provider.
+ */
+CXX_C_API int mustache_xml_provider_status(const MUSTACHE_XML_PROVIDER *provider);
+
+/**
  * Render a mustache template with XML data
  * @param template Compiled mustache template
  * @param xml_node XML node to use for rendering
  * @param renderer Output renderer
  * @param renderer_data Data for renderer callbacks
- * @param template_loader Optional template loader for partials
+ * @param template_loader Optional partial lookup. Returned templates remain user-owned and must
+ *                        stay valid until rendering completes.
  * @param user_data User data for template loader
  * @return 0 on success, -1 on error
  */

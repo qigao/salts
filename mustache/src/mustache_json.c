@@ -4,14 +4,6 @@
  */
 #include "json_parser.h"
 #include "mustache_json.h"
-#include <fmt.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include "turbo_buffer.h"
-#include "turbo_str.h"
-
-
 /* Forward declarations */
 static int json_dump(void *node, int (*out_fn)(const char *, size_t, void *), void *renderer_data,
                      void *provider_data);
@@ -66,6 +58,7 @@ int mustache_json_provider_init_arena(MUSTACHE_JSON_PROVIDER *provider, json_val
                                       MUSTACHE_TEMPLATE *(*template_loader)(const char *, size_t,
                                                                             void *),
                                       void *user_data, mem_pool_t *arena) {
+  if (!arena) return -1;
   if (mustache_json_provider_init(provider, json_data, template_loader, user_data) != 0) {
     return -1;
   }
@@ -89,21 +82,9 @@ static int json_dump(void *node, int (*out_fn)(const char *, size_t, void *), vo
     return json_bool(json_node) ? out_fn("true", 4, renderer_data) : 0;
 
   case JSON_NUMBER: {
-    char buffer[64];
-    double num = json_number(json_node);
-    int len;
-
-    /* Check if it's an integer */
-    if (num == (long long)num) {
-      len = fmt(buffer, sizeof(buffer), "{}", (long long)num);
-    } else {
-      len = fmt(buffer, sizeof(buffer), "{:.15g}", num);
-    }
-
-    if (len > 0 && len < sizeof(buffer)) {
-      return out_fn(buffer, len, renderer_data);
-    }
-    return -1;
+    size_t len = 0;
+    const char *text = json_number_text(json_node, &len);
+    return text ? out_fn(text, len, renderer_data) : -1;
   }
 
   case JSON_STRING: {
@@ -130,30 +111,13 @@ static void *json_get_root(void *provider_data) {
 static void *json_get_child_by_name(void *node, const char *name, size_t size,
                                     void *provider_data) {
   json_value_t *json_node = (json_value_t *)node;
-  tstr_t key_buffer = NULL;
-  json_value_t *result = NULL;
-  MUSTACHE_JSON_PROVIDER *provider = (MUSTACHE_JSON_PROVIDER *)provider_data;
+  (void)provider_data;
 
   if (!json_node || json_type(json_node) != JSON_OBJECT) {
     return NULL;
   }
 
-  /* Create null-terminated key string */
-  if (provider && provider->arena) {
-    key_buffer = mem_alloc(provider->arena, size + 1);
-  } else {
-    key_buffer = tstr_dup_len(name, size);
-  }
-  if (!key_buffer) {
-    return NULL;
-  }
-
-  result = json_object_get(json_node, key_buffer);
-  if (!(provider && provider->arena)) {
-    tstr_free(key_buffer);
-  }
-
-  return result;
+  return json_object_get_v(json_node, tstr_v_from_buf(name, size));
 }
 
 static void *json_get_child_by_index(void *node, unsigned index, void *provider_data) {

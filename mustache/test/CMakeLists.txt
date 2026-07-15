@@ -24,6 +24,16 @@ cmake_add_test(test_scope
   LIBS ${TEST_LIBS}
   INCLUDES ${TEST_INCLUDES}
   FOLDER "mustache/tests")
+cmake_add_test(test_mustache_runtime
+  SOURCES test_runtime_regressions.c
+  LIBS ${TEST_LIBS}
+  INCLUDES ${TEST_INCLUDES}
+  FOLDER "mustache/tests")
+cmake_add_test(test_mustache_xml
+  SOURCES test_xml_integration.c
+  LIBS ${TEST_LIBS} cxml
+  INCLUDES ${TEST_INCLUDES}
+  FOLDER "mustache/tests")
 
 target_compile_definitions(test_spec_runner PRIVATE SPEC_JSON_DIR="${CMAKE_CURRENT_SOURCE_DIR}/spec")
 
@@ -32,4 +42,6 @@ set_tests_properties(test_mustache_json PROPERTIES LABELS "integration")
 set_tests_properties(test_mustache_spec PROPERTIES LABELS "specification")
 set_tests_properties(test_spec_runner PROPERTIES LABELS "specification;runner")
 set_tests_properties(test_scope PROPERTIES LABELS "scope;unit")
+set_tests_properties(test_mustache_runtime PROPERTIES LABELS "regression;unit")
+set_tests_properties(test_mustache_xml PROPERTIES LABELS "integration;xml")
  

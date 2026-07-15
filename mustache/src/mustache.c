@@ -20,6 +20,7 @@
 #define MUSTACHE_DEFAULTCLOSER "}}"
 #define MUSTACHE_MAXOPENERLENGTH 32
 #define MUSTACHE_MAXCLOSERLENGTH 32
+#define MUSTACHE_HTML_ESCAPE_MAX_LENGTH 6U
 
 /**********************
  *** Growing Buffer ***
@@ -47,8 +48,8 @@ static int mustache_tstr_append(tstr_t *s, const char *data, size_t n) {
 
   if (!s)
     return -1;
-  if (!data || n == 0)
-    return 0;
+  if (!data && n != 0) return -1;
+  if (n == 0) return 0;
 
   next = tstr_cat_len(*s, data, n);
   if (!next)
@@ -59,8 +60,14 @@ static int mustache_tstr_append(tstr_t *s, const char *data, size_t n) {
 }
 
 static int mustache_buffer_insert(MUSTACHE_BUFFER *buf, off_t off, const void *data, size_t n) {
-  if (buf->n + n > buf->alloc) {
-    size_t new_alloc = (buf->n + n) * 2;
+  size_t required;
+
+  if (!buf || off < 0 || (size_t)off > buf->n || (!data && n != 0)) return -1;
+  if (n > SIZE_MAX - buf->n) return -1;
+  required = buf->n + n;
+
+  if (required > buf->alloc) {
+    size_t new_alloc = required > SIZE_MAX / 2 ? required : required * 2;
     uint8_t *new_data;
 
     new_data = (uint8_t *)realloc(buf->data, new_alloc);
@@ -72,7 +79,7 @@ static int mustache_buffer_insert(MUSTACHE_BUFFER *buf, off_t off, const void *d
 
   if (off < buf->n) memmove(buf->data + off + n, buf->data + off, buf->n - off);
 
-  memcpy(buf->data + off, data, n);
+  if (n != 0) memcpy(buf->data + off, data, n);
   buf->n += n;
   return 0;
 }
@@ -835,6 +842,7 @@ MUSTACHE_TEMPLATE *mustache_compile(const char *templ_data, size_t templ_size,
   size_t indent_len;
   MUSTACHE_LAMBDA_INFO lambda_info = {0};
 
+  if ((!templ_data && templ_size != 0) || (parser && !parser->parse_error)) return NULL;
   if (parser == NULL) parser = &default_parser;
 
   /* Collect all tags from the template using original parser */
@@ -992,7 +1000,13 @@ err:
   mustache_buffer_free(&jmp_pos_stack);
   mustache_buffer_free(&lambda_stack);
   if (success) {
-    size_t total = sizeof(MUSTACHE_TEMPLATE_IMPL) + insns.n + templ_size + 1;
+    size_t total;
+    if (insns.n > SIZE_MAX - sizeof(MUSTACHE_TEMPLATE_IMPL) - 1 ||
+        templ_size > SIZE_MAX - sizeof(MUSTACHE_TEMPLATE_IMPL) - insns.n - 1) {
+      mustache_buffer_free(&insns);
+      return NULL;
+    }
+    total = sizeof(MUSTACHE_TEMPLATE_IMPL) + insns.n + templ_size + 1;
     MUSTACHE_TEMPLATE_IMPL *templ = (MUSTACHE_TEMPLATE_IMPL *)malloc(total);
     if (!templ) {
       mustache_buffer_free(&insns);
@@ -1027,9 +1041,16 @@ void mustache_release(MUSTACHE_TEMPLATE *t) {
  *** Applying Compiled Template ***
  **********************************/
 
-int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *renderer,
-                     void *renderer_data, const MUSTACHE_DATAPROVIDER *provider,
-                     void *provider_data) {
+static int mustache_process_impl(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *renderer,
+                                 void *renderer_data, const MUSTACHE_DATAPROVIDER *provider,
+                                 void *provider_data, unsigned render_depth,
+                                 unsigned max_render_depth) {
+  if (!t || !renderer || !renderer->out_verbatim || !renderer->out_escaped || !provider ||
+      !provider->dump || !provider->get_root || !provider->get_child_by_name ||
+      !provider->get_child_by_index || render_depth > max_render_depth) {
+    return -1;
+  }
+
   const uint8_t *insns = (const uint8_t *)t;
   const char *source = NULL;
   size_t source_len = 0;
@@ -1047,6 +1068,7 @@ int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *render
   MUSTACHE_STACK index_stack = {0};
   MUSTACHE_STACK partial_stack = {0};
   MUSTACHE_BUFFER indent_buffer = {0};
+  unsigned partial_depth = 0;
   int ret = -1;
 
 #define PUSH_NODE()                                                                                \
@@ -1127,28 +1149,50 @@ int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *render
             provider->is_lambda(reg_node, provider_data)) {
           char *lambda_text = NULL;
           size_t lambda_len = 0;
-          if (provider->call_lambda(reg_node, "", 0, &lambda_text, &lambda_len, provider_data) ==
-                  0 &&
-              lambda_text) {
-            MUSTACHE_TEMPLATE *lambda_t = mustache_compile(lambda_text, lambda_len, NULL, NULL, 0);
-            if (lambda_t) {
-              MUSTACHE_STRING_RENDERER tmp_renderer;
-              if (mustache_string_renderer_init(&tmp_renderer) == 0) {
-                mustache_process(lambda_t, &tmp_renderer.base, &tmp_renderer, provider,
-                                 provider_data);
-                char *rendered = mustache_string_renderer_get(&tmp_renderer);
-                if (rendered) {
-                  out = (opcode == MUSTACHE_OP_OUTVERBATIM) ? renderer->out_verbatim
-                                                            : renderer->out_escaped;
-                  (void)out(rendered, strlen(rendered), renderer_data);
-                  free(rendered);
+          MUSTACHE_TEMPLATE *lambda_t = NULL;
+          MUSTACHE_STRING_RENDERER tmp_renderer = {0};
+          char *rendered = NULL;
+          size_t rendered_len = 0;
+          int lambda_failed = 0;
+          int tmp_ready = 0;
+
+          if (provider->call_lambda(reg_node, "", 0, &lambda_text, &lambda_len, provider_data) !=
+                  0 ||
+              (!lambda_text && lambda_len != 0)) {
+            lambda_failed = 1;
+          } else if (lambda_text) {
+            if (render_depth >= max_render_depth) {
+              lambda_failed = 1;
+            } else {
+              lambda_t = mustache_compile(lambda_text, lambda_len, NULL, NULL, 0);
+              if (!lambda_t || mustache_string_renderer_init(&tmp_renderer) != 0) {
+                lambda_failed = 1;
+              } else {
+                tmp_ready = 1;
+                if (mustache_process_impl(lambda_t, &tmp_renderer.base, &tmp_renderer, provider,
+                                          provider_data, render_depth + 1,
+                                          max_render_depth) != 0) {
+                  lambda_failed = 1;
+                } else {
+                  rendered_len = tstr_len(tmp_renderer.buffer);
+                  rendered = mustache_string_renderer_get(&tmp_renderer);
+                  if (!rendered) {
+                    lambda_failed = 1;
+                  } else {
+                    out = (opcode == MUSTACHE_OP_OUTVERBATIM) ? renderer->out_verbatim
+                                                              : renderer->out_escaped;
+                    if (out(rendered, rendered_len, renderer_data) != 0) lambda_failed = 1;
+                  }
                 }
-                mustache_string_renderer_free(&tmp_renderer);
               }
-              mustache_release(lambda_t);
             }
-            free(lambda_text);
           }
+
+          free(rendered);
+          if (tmp_ready) mustache_string_renderer_free(&tmp_renderer);
+          mustache_release(lambda_t);
+          free(lambda_text);
+          if (lambda_failed) goto err;
           break;
         }
 
@@ -1222,9 +1266,14 @@ int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *render
         }
         char *lambda_text = NULL;
         size_t lambda_len = 0;
-        if (provider->call_lambda(reg_node, raw ? raw : "", (size_t)len, &lambda_text, &lambda_len,
-                                  provider_data) == 0 &&
-            lambda_text) {
+        int lambda_rc = provider->call_lambda(reg_node, raw ? raw : "", (size_t)len, &lambda_text,
+                                              &lambda_len, provider_data);
+        if (lambda_rc != 0 || (!lambda_text && lambda_len != 0)) {
+          free(lambda_text);
+          tstr_free(raw);
+          goto err;
+        }
+        if (lambda_text) {
           char opener[32] = "{{";
           char closer[32] = "}}";
           size_t opener_len = 2;
@@ -1259,10 +1308,16 @@ int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *render
           } else {
             lambda_t = mustache_compile(lambda_text, lambda_len, NULL, NULL, 0);
           }
-          if (lambda_t) {
-            mustache_process(lambda_t, renderer, renderer_data, provider, provider_data);
+          if (!lambda_t || render_depth >= max_render_depth ||
+              mustache_process_impl(lambda_t, renderer, renderer_data, provider, provider_data,
+                                    render_depth + 1, max_render_depth) != 0) {
             mustache_release(lambda_t);
+            tstr_free(wrapped);
+            free(lambda_text);
+            tstr_free(raw);
+            goto err;
           }
+          mustache_release(lambda_t);
           tstr_free(wrapped);
           free(lambda_text);
         }
@@ -1287,7 +1342,7 @@ int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *render
       indent = (const char *)(insns + reg_pc);
       reg_pc += indent_len;
 
-      partial = provider->get_partial(name, name_len, provider_data);
+      partial = provider->get_partial ? provider->get_partial(name, name_len, provider_data) : NULL;
       if (partial != NULL) {
         const uint8_t *partial_insns = (const uint8_t *)partial;
         const char *partial_source = NULL;
@@ -1298,6 +1353,10 @@ int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *render
           partial_source = partial_tpl->source;
           partial_source_len = partial_tpl->source_len;
         }
+        if (render_depth >= max_render_depth ||
+            partial_depth >= max_render_depth - render_depth) {
+          goto err;
+        }
         if (mustache_stack_push(&partial_stack, (uintptr_t)insns) != 0) goto err;
         if (mustache_stack_push(&partial_stack, (uintptr_t)reg_pc) != 0) goto err;
         if (mustache_stack_push(&partial_stack, (uintptr_t)indent_len) != 0) goto err;
@@ -1305,6 +1364,7 @@ int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *render
         if (mustache_stack_push(&partial_stack, (uintptr_t)source_len) != 0) goto err;
         if (mustache_stack_push(&partial_stack, (uintptr_t)reg_jmpaddr) != 0) goto err;
         if (mustache_buffer_append(&indent_buffer, indent, indent_len) != 0) goto err;
+        partial_depth++;
         reg_pc = 0;
         insns = partial_insns;
         source = partial_source;
@@ -1331,6 +1391,7 @@ int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *render
         insns = (uint8_t *)mustache_stack_pop(&partial_stack);
 
         indent_buffer.n -= indent_len;
+        partial_depth--;
       }
       break;
     }
@@ -1347,9 +1408,48 @@ err:
   return ret;
 }
 
+int mustache_process_ex(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *renderer,
+                        void *renderer_data, const MUSTACHE_DATAPROVIDER *provider,
+                        void *provider_data, unsigned max_render_depth) {
+  if (max_render_depth == 0) return -1;
+  return mustache_process_impl(t, renderer, renderer_data, provider, provider_data, 0,
+                               max_render_depth);
+}
+
+int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *renderer,
+                     void *renderer_data, const MUSTACHE_DATAPROVIDER *provider,
+                     void *provider_data) {
+  return mustache_process_ex(t, renderer, renderer_data, provider, provider_data,
+                             MUSTACHE_DEFAULT_MAX_RENDER_DEPTH);
+}
+
 /* String renderer implementation using tstr_t */
+static size_t mustache_html_escape(char ch, const char **escaped) {
+  switch (ch) {
+  case '<':
+    *escaped = "&lt;";
+    return 4;
+  case '>':
+    *escaped = "&gt;";
+    return 4;
+  case '&':
+    *escaped = "&amp;";
+    return 5;
+  case '"':
+    *escaped = "&quot;";
+    return 6;
+  case '\'':
+    *escaped = "&#39;";
+    return 5;
+  default:
+    *escaped = NULL;
+    return 0;
+  }
+}
+
 static int string_out_verbatim(const char *output, size_t size, void *renderer_data) {
   MUSTACHE_STRING_RENDERER *renderer = (MUSTACHE_STRING_RENDERER *)renderer_data;
+  if (!renderer) return -1;
   return mustache_tstr_append(&renderer->buffer, output, size);
 }
 
@@ -1358,8 +1458,10 @@ static int string_out_escaped(const char *output, size_t size, void *renderer_da
   size_t chunk_start = 0;
   size_t i;
 
+  if (!renderer || (!output && size != 0)) return -1;
+
   /* Pre-allocate estimated space for escaping */
-  if (size > SIZE_MAX / 6) {
+  if (size > SIZE_MAX / MUSTACHE_HTML_ESCAPE_MAX_LENGTH) {
     return -1;
   }
   tstr_t buf = tstr_reserve(renderer->buffer, size * 6);
@@ -1369,31 +1471,8 @@ static int string_out_escaped(const char *output, size_t size, void *renderer_da
   renderer->buffer = buf;
 
   for (i = 0; i < size; i++) {
-    const char *escaped = NULL;
-    size_t escaped_len = 0;
-
-    switch (output[i]) {
-    case '<':
-      escaped = "&lt;";
-      escaped_len = 4;
-      break;
-    case '>':
-      escaped = "&gt;";
-      escaped_len = 4;
-      break;
-    case '&':
-      escaped = "&amp;";
-      escaped_len = 5;
-      break;
-    case '"':
-      escaped = "&quot;";
-      escaped_len = 6;
-      break;
-    case '\'':
-      escaped = "&#39;";
-      escaped_len = 5;
-      break;
-    }
+    const char *escaped;
+    size_t escaped_len = mustache_html_escape(output[i], &escaped);
 
     if (escaped) {
       if (mustache_tstr_append(&renderer->buffer, output + chunk_start, i - chunk_start) != 0 ||
@@ -1407,28 +1486,32 @@ static int string_out_escaped(const char *output, size_t size, void *renderer_da
   return mustache_tstr_append(&renderer->buffer, output + chunk_start, size - chunk_start);
 }
 
+static int arena_reserve(MUSTACHE_STRING_RENDERER_ARENA *renderer, size_t additional) {
+  mem_buffer_t *buf;
+  size_t required;
+
+  if (!renderer || !renderer->buffer) return -1;
+  buf = renderer->buffer;
+  if (buf->used == SIZE_MAX) return -1;
+  if (additional > SIZE_MAX - buf->used - 1) return -1;
+  required = buf->used + additional + 1;
+  if (required <= buf->capacity) return 0;
+
+  mem_buffer_t *new_buf = mem_get_buffer(buf->pool, required);
+  if (!new_buf) return -1;
+  if (buf->used != 0) memcpy(new_buf->data, buf->data, buf->used);
+  new_buf->used = buf->used;
+  mem_buffer_release(buf);
+  renderer->buffer = new_buf;
+  return 0;
+}
+
 static int arena_out_verbatim(const char *output, size_t size, void *renderer_data) {
   MUSTACHE_STRING_RENDERER_ARENA *renderer = (MUSTACHE_STRING_RENDERER_ARENA *)renderer_data;
-  mem_buffer_t *buf = renderer->buffer;
-  if (!buf) {
-    return -1;
-  }
+  if ((!output && size != 0) || arena_reserve(renderer, size) != 0) return -1;
 
-  if (buf->used + size > buf->capacity) {
-    size_t min_size = buf->used + size;
-    mem_buffer_t *new_buf = mem_get_buffer(buf->pool, min_size);
-    if (!new_buf) {
-      return -1;
-    }
-    memcpy(new_buf->data, buf->data, buf->used);
-    new_buf->used = buf->used;
-    mem_unref(buf);
-    renderer->buffer = new_buf;
-    buf = new_buf;
-  }
-
-  memcpy(buf->data + buf->used, output, size);
-  buf->used += size;
+  if (size != 0) memcpy(renderer->buffer->data + renderer->buffer->used, output, size);
+  renderer->buffer->used += size;
   return 0;
 }
 
@@ -1436,69 +1519,28 @@ static int arena_out_escaped(const char *output, size_t size, void *renderer_dat
   size_t i;
   size_t needed = 0;
 
+  if (!renderer_data || (!output && size != 0)) return -1;
+
   for (i = 0; i < size; i++) {
-    switch (output[i]) {
-    case '<':
-    case '>':
-      needed += 4;
-      break;
-    case '&':
-      needed += 5;
-      break;
-    case '"':
-    case '\'':
-      needed += 5;
-      break;
-    default:
-      needed += 1;
-      break;
-    }
+    const char *escaped;
+    size_t escaped_len = mustache_html_escape(output[i], &escaped);
+    size_t add = escaped ? escaped_len : 1;
+    if (add > SIZE_MAX - needed) return -1;
+    needed += add;
   }
 
   MUSTACHE_STRING_RENDERER_ARENA *renderer = (MUSTACHE_STRING_RENDERER_ARENA *)renderer_data;
+  if ((!output && size != 0) || arena_reserve(renderer, needed) != 0) return -1;
   mem_buffer_t *buf = renderer->buffer;
-  if (!buf) {
-    return -1;
-  }
-
-  if (buf->used + needed > buf->capacity) {
-    size_t min_size = buf->used + needed;
-    mem_buffer_t *new_buf = mem_get_buffer(buf->pool, min_size);
-    if (!new_buf) {
-      return -1;
-    }
-    memcpy(new_buf->data, buf->data, buf->used);
-    new_buf->used = buf->used;
-    mem_unref(buf);
-    renderer->buffer = new_buf;
-    buf = new_buf;
-  }
 
   for (i = 0; i < size; i++) {
-    switch (output[i]) {
-    case '<':
-      memcpy(buf->data + buf->used, "&lt;", 4);
-      buf->used += 4;
-      break;
-    case '>':
-      memcpy(buf->data + buf->used, "&gt;", 4);
-      buf->used += 4;
-      break;
-    case '&':
-      memcpy(buf->data + buf->used, "&amp;", 5);
-      buf->used += 5;
-      break;
-    case '"':
-      memcpy(buf->data + buf->used, "&quot;", 6);
-      buf->used += 6;
-      break;
-    case '\'':
-      memcpy(buf->data + buf->used, "&#39;", 5);
-      buf->used += 5;
-      break;
-    default:
+    const char *escaped;
+    size_t escaped_len = mustache_html_escape(output[i], &escaped);
+    if (escaped) {
+      memcpy(buf->data + buf->used, escaped, escaped_len);
+      buf->used += escaped_len;
+    } else {
       buf->data[buf->used++] = output[i];
-      break;
     }
   }
 
@@ -1565,7 +1607,7 @@ char *mustache_string_renderer_get_arena(MUSTACHE_STRING_RENDERER_ARENA *rendere
 
 void mustache_string_renderer_free_arena(MUSTACHE_STRING_RENDERER_ARENA *renderer) {
   if (renderer && renderer->buffer) {
-    mem_unref(renderer->buffer);
+    mem_buffer_release(renderer->buffer);
     renderer->buffer = NULL;
   }
 }

@@ -25,6 +25,9 @@ typedef struct mem_buffer_s mem_buffer_t;
 #define MUSTACHE_ERR_SECTIONOPENERHERE (9)
 #define MUSTACHE_ERR_INVALIDDELIMITERS (10)
 
+/** Default maximum number of nested partial/lambda expansions per render. */
+#define MUSTACHE_DEFAULT_MAX_RENDER_DEPTH (128U)
+
 typedef struct MUSTACHE_PARSER {
   void (*parse_error)(int /*err_code*/, const char * /*msg*/, unsigned /*line*/,
                       unsigned /*column*/, void * /*parser_data*/);
@@ -119,16 +122,19 @@ typedef struct MUSTACHE_DATAPROVIDER {
    * Called to get a partial template when mustache_process() handles
    * a partial tag `{{>name}}`.
    *
-   * Implementation should perform lookup for the template (compile it, if
-   * it is not), and return the template handle.
+   * Implementation should perform lookup for the template (compile and cache
+   * it, if needed), and return the template handle. The provider retains
+   * ownership; mustache_process() never releases returned partials.
    *
    * If the lookup fails, the implementation reports it by returning NULL.
    */
   MUSTACHE_TEMPLATE *(*get_partial)(const char * /*name*/, size_t /*size*/,
                                     void * /*provider_data*/);
 
-  /* Optional lambda support. If is_lambda returns non-zero, call_lambda is used. 
-   * call_lambda should allocate *out_text with malloc; caller will free().
+  /* Optional lambda support. If is_lambda returns non-zero, call_lambda is used.
+   * call_lambda returns zero on success and non-zero on failure. On success it
+   * should allocate *out_text with malloc; caller will free(). A NULL output is
+   * accepted only when *out_len is zero.
    * For interpolation lambdas, text is empty. For section lambdas, text is the raw section content.
    */
   int (*is_lambda)(void * /*node*/, void * /*provider_data*/);
@@ -192,8 +198,26 @@ CXX_C_API void mustache_release(MUSTACHE_TEMPLATE *t);
  * and aborts the operation.
  */
 CXX_C_API int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *renderer,
-                     void *renderer_data, const MUSTACHE_DATAPROVIDER *provider,
-                     void *provider_data);
+                      void *renderer_data, const MUSTACHE_DATAPROVIDER *provider,
+                      void *provider_data);
+
+/**
+ * Process a template with an explicit nested expansion limit.
+ *
+ * @param t Compiled template.
+ * @param renderer Output callbacks.
+ * @param renderer_data Data propagated to renderer callbacks.
+ * @param provider Data provider callbacks.
+ * @param provider_data Data propagated to provider callbacks.
+ * @param max_render_depth Maximum nested partial/lambda expansions; must be non-zero.
+ * @return Zero on success, non-zero on callback, allocation, or depth-limit failure.
+ */
+CXX_C_API int mustache_process_ex(const MUSTACHE_TEMPLATE *t,
+                                  const MUSTACHE_RENDERER *renderer,
+                                  void *renderer_data,
+                                  const MUSTACHE_DATAPROVIDER *provider,
+                                  void *provider_data,
+                                  unsigned max_render_depth);
 
 /**
  * Simple string renderer that appends to a tstr_t internally.

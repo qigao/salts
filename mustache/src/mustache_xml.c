@@ -8,12 +8,13 @@
 #include "core/cxstr.h"
 #include "core/cxlist.h"
 #include "core/cxtable.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "turbo_str.h"
 
 #define SURROGATE_LIST_TYPE 100
+#define MUSTACHE_XML_PROVIDER_ERROR_CAPACITY SIZE_MAX
 
 typedef struct {
     int _type;
@@ -28,6 +29,7 @@ static void *xml_get_root(void *provider_data);
 static void *xml_get_child_by_name(void *node, const char *name, size_t size, void *provider_data);
 static void *xml_get_child_by_index(void *node, unsigned index, void *provider_data);
 static MUSTACHE_TEMPLATE *xml_get_partial(const char *name, size_t size, void *provider_data);
+static int xml_provider_failed(const MUSTACHE_XML_PROVIDER *provider);
 
 int mustache_xml_provider_init(MUSTACHE_XML_PROVIDER *provider, void *xml_node,
                                 MUSTACHE_TEMPLATE *(*template_loader)(const char *, size_t, void *),
@@ -68,15 +70,64 @@ void mustache_xml_provider_free(MUSTACHE_XML_PROVIDER *provider) {
     provider->list_capacity = 0;
 }
 
+int mustache_xml_provider_status(const MUSTACHE_XML_PROVIDER *provider) {
+    return !provider || xml_provider_failed(provider) ? -1 : 0;
+}
+
+static int xml_provider_failed(const MUSTACHE_XML_PROVIDER *provider) {
+    return provider && provider->list_capacity == MUSTACHE_XML_PROVIDER_ERROR_CAPACITY;
+}
+
+static int xml_name_eq(const char *candidate, tstr_v expected) {
+    return candidate && tstr_v_eq(tstr_v_from_cstr(candidate), expected);
+}
+
 static void *add_surrogate(MUSTACHE_XML_PROVIDER *p, size_t count) {
+    size_t new_capacity;
+    void **new_lists;
+    SURROGATE_LIST *list;
+
+    if (!p || count == 0 || xml_provider_failed(p)) return NULL;
     if (p->list_count >= p->list_capacity) {
-        p->list_capacity = p->list_capacity == 0 ? 8 : p->list_capacity * 2;
-        p->allocated_lists = realloc(p->allocated_lists, p->list_capacity * sizeof(void *));
+        if (p->list_capacity == 0) {
+            new_capacity = 8;
+        } else {
+            if (p->list_capacity > SIZE_MAX / 2) {
+                p->list_capacity = MUSTACHE_XML_PROVIDER_ERROR_CAPACITY;
+                return NULL;
+            }
+            new_capacity = p->list_capacity * 2;
+        }
+        if (new_capacity > SIZE_MAX / sizeof(void *)) {
+            p->list_capacity = MUSTACHE_XML_PROVIDER_ERROR_CAPACITY;
+            return NULL;
+        }
+        new_lists = realloc(p->allocated_lists, new_capacity * sizeof(void *));
+        if (!new_lists) {
+            p->list_capacity = MUSTACHE_XML_PROVIDER_ERROR_CAPACITY;
+            return NULL;
+        }
+        p->allocated_lists = new_lists;
+        p->list_capacity = new_capacity;
     }
-    SURROGATE_LIST *list = malloc(sizeof(SURROGATE_LIST));
+    list = malloc(sizeof(SURROGATE_LIST));
+    if (!list) {
+        p->list_capacity = MUSTACHE_XML_PROVIDER_ERROR_CAPACITY;
+        return NULL;
+    }
     list->_type = SURROGATE_LIST_TYPE;
     list->count = count;
+    if (count > SIZE_MAX / sizeof(void *)) {
+        free(list);
+        p->list_capacity = MUSTACHE_XML_PROVIDER_ERROR_CAPACITY;
+        return NULL;
+    }
     list->items = malloc(count * sizeof(void *));
+    if (!list->items) {
+        free(list);
+        p->list_capacity = MUSTACHE_XML_PROVIDER_ERROR_CAPACITY;
+        return NULL;
+    }
     p->allocated_lists[p->list_count++] = list;
     return list;
 }
@@ -150,36 +201,24 @@ static void *xml_get_root(void *provider_data) {
 
 static void *xml_get_child_by_name(void *node, const char *name, size_t size, void *provider_data) {
     MUSTACHE_XML_PROVIDER *p = (MUSTACHE_XML_PROVIDER *)provider_data;
-    if (!node || is_surrogate(node)) return NULL;
+    tstr_v expected = tstr_v_from_buf(name, size);
+    if (!node || !name || is_surrogate(node) || xml_provider_failed(p)) return NULL;
 
     _cxml_node_t type = _cxml_get_node_type(node);
     if (type != CXML_ELEM_NODE && type != CXML_ROOT_NODE) return NULL;
-
-    tstr_t key = tstr_dup_len(name, size);
-    if (!key) {
-        return NULL;
-    }
 
     void *result = NULL;
 
     if (type == CXML_ELEM_NODE) {
         cxml_elem_node *elem = (cxml_elem_node *)node;
-        /* Check attributes - try exact match first */
+        /* XML names are matched exactly; no case folding is permitted. */
         if (elem->attributes) {
-            cxml_attr_node *attr = cxml_table_get(elem->attributes, key);
-            if (!attr) {
-                /* Case-insensitive lookup for attributes */
-                cxml_for_each(at_node, &elem->attributes->keys) {
-                    const char *attr_key = (const char *)at_node;
-                    if (tstr_casecmp(attr_key, key) == 0) {
-                        attr = cxml_table_get(elem->attributes, attr_key);
-                        break;
-                    }
+            cxml_for_each(at_node, &elem->attributes->keys) {
+                const char *attr_key = (const char *)at_node;
+                if (xml_name_eq(attr_key, expected)) {
+                    cxml_attr_node *attr = cxml_table_get(elem->attributes, attr_key);
+                    if (attr) return attr;
                 }
-            }
-            if (attr) {
-                tstr_free(key);
-                return attr;
             }
         }
     }
@@ -192,8 +231,7 @@ static void *xml_get_child_by_name(void *node, const char *name, size_t size, vo
         if (_cxml_get_node_type(child) == CXML_ELEM_NODE) {
             cxml_elem_node *e = (cxml_elem_node *)child;
             const char *qname = cxml_string_as_raw(&e->name.qname);
-            const char *lname = e->name.lname;
-            if (tstr_casecmp(qname, key) == 0 || (lname && tstr_casecmp(lname, key) == 0)) {
+            if (xml_name_eq(qname, expected)) {
                 count++;
             }
         }
@@ -204,8 +242,7 @@ static void *xml_get_child_by_name(void *node, const char *name, size_t size, vo
             if (_cxml_get_node_type(match_child) == CXML_ELEM_NODE) {
                 cxml_elem_node *e = (cxml_elem_node *)match_child;
                 const char *qname = cxml_string_as_raw(&e->name.qname);
-                const char *lname = e->name.lname;
-                if (tstr_casecmp(qname, key) == 0 || (lname && tstr_casecmp(lname, key) == 0)) {
+                if (xml_name_eq(qname, expected)) {
                     result = e;
                     break;
                 }
@@ -213,13 +250,13 @@ static void *xml_get_child_by_name(void *node, const char *name, size_t size, vo
         }
     } else if (count > 1) {
         SURROGATE_LIST *slist = add_surrogate(p, count);
+        if (!slist) return NULL;
         size_t i = 0;
         cxml_for_each(match_child, children) {
             if (_cxml_get_node_type(match_child) == CXML_ELEM_NODE) {
                 cxml_elem_node *e = (cxml_elem_node *)match_child;
                 const char *qname = cxml_string_as_raw(&e->name.qname);
-                const char *lname = e->name.lname;
-                if (tstr_casecmp(qname, key) == 0 || (lname && tstr_casecmp(lname, key) == 0)) {
+                if (xml_name_eq(qname, expected)) {
                     slist->items[i++] = e;
                 }
             }
@@ -227,7 +264,6 @@ static void *xml_get_child_by_name(void *node, const char *name, size_t size, vo
         result = slist;
     }
 
-    tstr_free(key);
     return result;
 }
 
@@ -263,6 +299,7 @@ int mustache_render_xml(const MUSTACHE_TEMPLATE *templ, void *xml_node,
     }
 
     int rc = mustache_process(templ, renderer, renderer_data, &provider.base, &provider);
+    if (mustache_xml_provider_status(&provider) != 0) rc = -1;
     mustache_xml_provider_free(&provider);
     return rc;
 }
