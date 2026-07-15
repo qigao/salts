@@ -36,6 +36,13 @@ json_type_t json_type(const json_value_t *value);
 bool json_is_null(const json_value_t *value);
 bool json_bool(const json_value_t *value);
 double json_number(const json_value_t *value);
+/**
+ * Return the exact decimal token retained by a JSON number node.
+ * @param value JSON number node.
+ * @param len Optional output byte length; set to zero when unavailable.
+ * @return Borrowed token text, or NULL when value is not a number.
+ */
+const char *json_number_text(const json_value_t *value, size_t *len);
 const char *json_string(const json_value_t *value);
 size_t json_string_len(const json_value_t *value);
 tstr_v json_string_v(const json_value_t *value);
@@ -98,6 +105,12 @@ json_value_t *json_create_string(const char *str);
 json_value_t *json_create_string_n(const char *str, size_t len);
 json_value_t *json_create_number(double num);
 json_value_t *json_create_int64(int64_t num);
+/**
+ * Create a JSON integer preserving the complete unsigned 64-bit decimal value.
+ * @param num Unsigned integer value.
+ * @return New root value owned by the caller, or NULL on OOM.
+ */
+json_value_t *json_create_uint64(uint64_t num);
 json_value_t *json_create_bool(bool val);
 json_value_t *json_create_null(void);
 json_value_t *json_clone(const json_value_t *value);
@@ -143,12 +156,44 @@ typedef struct json_sax_handler_s {
   int (*on_array_end)(void *ctx);
 } json_sax_handler_t;
 
+/** SAX callback table that preserves the exact JSON number token.
+ * Number slices are borrowed and valid only for the callback duration.
+ */
+typedef struct json_sax_handler_raw_s {
+  int (*on_null)(void *ctx);
+  int (*on_bool)(void *ctx, bool val);
+  int (*on_number)(void *ctx, const char *val, size_t len);
+  int (*on_string)(void *ctx, const char *val, size_t len);
+  int (*on_object_start)(void *ctx);
+  int (*on_object_key)(void *ctx, const char *key, size_t len);
+  int (*on_object_end)(void *ctx);
+  int (*on_array_start)(void *ctx);
+  int (*on_array_end)(void *ctx);
+} json_sax_handler_raw_t;
+
 int json_parse_sax(const char *content, size_t len, const json_sax_handler_t *handler, void *ctx);
+/** Parse one document while delivering exact JSON number tokens.
+ * @param content JSON input; must not be NULL.
+ * @param len Input length; must be non-zero.
+ * @param handler Raw-number callback table; must not be NULL.
+ * @param ctx User context passed unchanged to callbacks.
+ * @return 0 on success, -1 on invalid input, syntax error, allocation failure,
+ * or a non-zero callback result.
+ */
+int json_parse_sax_raw(const char *content, size_t len,
+                       const json_sax_handler_raw_t *handler, void *ctx);
 
 /* Incremental SAX parser. Call feed() with any chunk size, then finish() once at EOF.
  * Callback
  * pointers are valid only for the duration of the callback. */
 json_sax_parser_t *json_sax_parser_create(const json_sax_handler_t *handler, void *ctx);
+/** Create an incremental parser that preserves exact number tokens.
+ * @param handler Raw-number callback table; must not be NULL and is copied.
+ * @param ctx User context passed unchanged to callbacks.
+ * @return Owned parser released by json_sax_parser_destroy(), or NULL on invalid
+ * arguments/allocation failure.
+ */
+json_sax_parser_t *json_sax_parser_create_raw(const json_sax_handler_raw_t *handler, void *ctx);
 int json_sax_parser_feed(json_sax_parser_t *parser, const char *data, size_t len);
 int json_sax_parser_finish(json_sax_parser_t *parser);
 const char *json_sax_parser_error(const json_sax_parser_t *parser);

@@ -4,6 +4,7 @@
  */
 
 #include "data_bind.h"
+#include "fmt.h"
 #include "mir-gen.h"
 #include "mir.h"
 #include "node_tree.h"
@@ -16,6 +17,7 @@
 #include "turbo_str.h"
 #include "turbo_thread.h"
 #include "turbo_uuid.h"
+#include "turbo_vec.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -42,14 +44,17 @@ static const type_meta_t TYPE_METAS[] = {
     {"uint8_t", 1, MIR_T_U8, 0, 0},   {"uint8", 1, MIR_T_U8, 0, 0},
     {"u8", 1, MIR_T_U8, 0, 0},        {"byte", 1, MIR_T_U8, 0, 0},
     {"int8_t", 1, MIR_T_I8, 0, 0},    {"int8", 1, MIR_T_I8, 0, 0},
+    {"i8", 1, MIR_T_I8, 0, 0},
     {"uint16_t", 2, MIR_T_U16, 0, 0}, {"uint16", 2, MIR_T_U16, 0, 0},
     {"u16", 2, MIR_T_U16, 0, 0},      {"int16_t", 2, MIR_T_I16, 0, 0},
-    {"int16", 2, MIR_T_I16, 0, 0},    {"uint32_t", 4, MIR_T_U32, 0, 0},
+    {"int16", 2, MIR_T_I16, 0, 0},    {"i16", 2, MIR_T_I16, 0, 0},
+    {"uint32_t", 4, MIR_T_U32, 0, 0},
     {"uint32", 4, MIR_T_U32, 0, 0},   {"u32", 4, MIR_T_U32, 0, 0},
     {"int32_t", 4, MIR_T_I32, 0, 0},  {"int32", 4, MIR_T_I32, 0, 0},
     {"i32", 4, MIR_T_I32, 0, 0},      {"uint64_t", 8, MIR_T_U64, 0, 1},
     {"uint64", 8, MIR_T_U64, 0, 1},   {"u64", 8, MIR_T_U64, 0, 1},
     {"int64_t", 8, MIR_T_I64, 0, 1},  {"int64", 8, MIR_T_I64, 0, 1},
+    {"i64", 8, MIR_T_I64, 0, 1},
     {"float", 4, MIR_T_F, 1, 0},      {"f32", 4, MIR_T_F, 1, 0},
     {"double", 8, MIR_T_D, 1, 0},     {"f64", 8, MIR_T_D, 1, 0},
     {"bool", 1, MIR_T_U8, 0, 0},      {NULL, 0, MIR_T_UNDEF, 0, 0}};
@@ -69,6 +74,7 @@ typedef struct mir_cache_entry {
   MIR_context_t shared_ctx;
   mir_func_node_t *func_head;
   int ref_count;
+  int evicted;
   struct mir_cache_entry *next;
 } mir_cache_entry_t;
 
@@ -99,6 +105,7 @@ static atomic_size_t g_value_pool_reused_count;
 static turbo_once_t g_value_pool_once = TURBO_ONCE_INIT;
 static TURBO_THREAD_LOCAL size_t g_value_pool_take_cursor;
 static TURBO_THREAD_LOCAL size_t g_value_pool_put_cursor;
+static TURBO_THREAD_LOCAL int g_dynamic_runtime_oom;
 
 static void value_pool_init_once(void) { turbo_mutex_init(&g_value_pool_control_mutex); }
 
@@ -169,34 +176,44 @@ static int g_mir_cache_enabled = 1;
 typedef struct data_bind_runtime_api {
   DataBindValue *(*create_object)(void);
   void (*free_value)(DataBindValue *value);
-  void (*set_field_int)(DataBindValue *obj, const char *name, int32_t val);
-  void (*set_field_int64)(DataBindValue *obj, const char *name, int64_t val);
-  void (*set_field_double)(DataBindValue *obj, const char *name, double val);
-  void (*set_field_bool)(DataBindValue *obj, const char *name, int val);
-  void (*set_field_string)(DataBindValue *obj, const char *name, const char *val);
-  void (*set_field_bytes)(DataBindValue *obj, const char *name, const uint8_t *data, size_t len);
-  void (*set_field_uuid)(DataBindValue *obj, const char *name, const uint8_t *data);
+  int (*set_field_int)(DataBindValue *obj, const char *name, int32_t val);
+  int (*set_field_uint32)(DataBindValue *obj, const char *name, uint32_t val);
+  int (*set_field_int64)(DataBindValue *obj, const char *name, int64_t val);
+  int (*set_field_uint64)(DataBindValue *obj, const char *name, uint64_t val);
+  int (*set_field_double)(DataBindValue *obj, const char *name, double val);
+  int (*set_field_bool)(DataBindValue *obj, const char *name, int val);
+  int (*set_field_string)(DataBindValue *obj, const char *name, const char *val);
+  int (*set_field_bytes)(DataBindValue *obj, const char *name, const uint8_t *data, size_t len);
+  int (*set_field_uuid)(DataBindValue *obj, const char *name, const uint8_t *data);
   DataBindValue *(*create_list)(void);
-  void (*add_list_item_int)(DataBindValue *list, int32_t val);
-  void (*add_list_item_int64)(DataBindValue *list, int64_t val);
-  void (*add_list_item_double)(DataBindValue *list, double val);
-  void (*add_list_item_bool)(DataBindValue *list, int val);
-  void (*add_list_item_string)(DataBindValue *list, const char *val);
-  void (*add_list_item_object)(DataBindValue *list, DataBindValue *obj);
-  void (*set_field_list)(DataBindValue *obj, const char *name, DataBindValue *list);
-  void (*set_field_object)(DataBindValue *obj, const char *name, DataBindValue *child);
+  int (*add_list_item_int)(DataBindValue *list, int32_t val);
+  int (*add_list_item_uint32)(DataBindValue *list, uint32_t val);
+  int (*add_list_item_int64)(DataBindValue *list, int64_t val);
+  int (*add_list_item_uint64)(DataBindValue *list, uint64_t val);
+  int (*add_list_item_double)(DataBindValue *list, double val);
+  int (*add_list_item_bool)(DataBindValue *list, int val);
+  int (*add_list_item_string)(DataBindValue *list, const char *val);
+  int (*add_list_item_object)(DataBindValue *list, DataBindValue *obj);
+  int (*set_field_list)(DataBindValue *obj, const char *name, DataBindValue *list);
+  int (*set_field_object)(DataBindValue *obj, const char *name, DataBindValue *child);
   DataBindValue *(*create_set)(void);
-  void (*add_set_item_int)(DataBindValue *set, int32_t val);
-  void (*add_set_item_double)(DataBindValue *set, double val);
-  void (*add_set_item_bool)(DataBindValue *set, int val);
-  void (*add_set_item_string)(DataBindValue *set, const char *val);
-  void (*set_field_set)(DataBindValue *obj, const char *name, DataBindValue *set);
+  int (*add_set_item_int)(DataBindValue *set, int32_t val);
+  int (*add_set_item_uint32)(DataBindValue *set, uint32_t val);
+  int (*add_set_item_int64)(DataBindValue *set, int64_t val);
+  int (*add_set_item_uint64)(DataBindValue *set, uint64_t val);
+  int (*add_set_item_double)(DataBindValue *set, double val);
+  int (*add_set_item_bool)(DataBindValue *set, int val);
+  int (*add_set_item_string)(DataBindValue *set, const char *val);
+  int (*set_field_set)(DataBindValue *obj, const char *name, DataBindValue *set);
   DataBindValue *(*create_map)(void);
-  void (*add_map_entry_string_string)(DataBindValue *map, const char *key, const char *val);
-  void (*add_map_entry_string_int)(DataBindValue *map, const char *key, int32_t val);
-  void (*add_map_entry_string_double)(DataBindValue *map, const char *key, double val);
-  void (*add_map_entry_string_bool)(DataBindValue *map, const char *key, int val);
-  void (*set_field_map)(DataBindValue *obj, const char *name, DataBindValue *map);
+  int (*add_map_entry_string_string)(DataBindValue *map, const char *key, const char *val);
+  int (*add_map_entry_string_int)(DataBindValue *map, const char *key, int32_t val);
+  int (*add_map_entry_string_uint32)(DataBindValue *map, const char *key, uint32_t val);
+  int (*add_map_entry_string_int64)(DataBindValue *map, const char *key, int64_t val);
+  int (*add_map_entry_string_uint64)(DataBindValue *map, const char *key, uint64_t val);
+  int (*add_map_entry_string_double)(DataBindValue *map, const char *key, double val);
+  int (*add_map_entry_string_bool)(DataBindValue *map, const char *key, int val);
+  int (*set_field_map)(DataBindValue *obj, const char *name, DataBindValue *map);
 } data_bind_runtime_api_t;
 
 struct DataBind {
@@ -253,6 +270,7 @@ struct data_bind_stream_t {
   DataBindValue *csv_values;
   DataBindValue *stream_values;
   turbo_json_sax_parser_t *json_sax;
+  turbo_yaml_sax_parser_t *yaml_sax;
   turbo_xml_sax_parser_t *xml_sax;
   data_bind_json_stream_frame_t *json_frames;
   size_t json_frame_count;
@@ -316,6 +334,7 @@ struct DataBindValue {
   union {
     int32_t int_val;
     int64_t int64_val;
+    uint64_t uint64_val;
     double double_val;
     int bool_val;
     struct {
@@ -348,7 +367,9 @@ struct DataBindObject {
 
 typedef enum {
   EF_INT,
+  EF_U32,
   EF_I64,
+  EF_U64,
   EF_DBL,
   EF_BOOL,
   EF_UUID,
@@ -356,17 +377,25 @@ typedef enum {
   EF_FIX_BYTES,
   EF_VAR_BYTES,
   EF_LIST_INT,
+  EF_LIST_U32,
   EF_LIST_I64,
+  EF_LIST_U64,
   EF_LIST_DBL,
   EF_LIST_BOOL,
   EF_LIST_STR,
   EF_LIST_OBJ,
   EF_SET_INT,
+  EF_SET_U32,
+  EF_SET_I64,
+  EF_SET_U64,
   EF_SET_DBL,
   EF_SET_BOOL,
   EF_SET_STR,
   EF_MAP_STR_STR,
   EF_MAP_STR_INT,
+  EF_MAP_STR_U32,
+  EF_MAP_STR_I64,
+  EF_MAP_STR_U64,
   EF_MAP_STR_DBL,
   EF_MAP_STR_BOOL,
   EF_GROUP
@@ -396,13 +425,15 @@ typedef struct {
   MIR_item_t proto_item;
 } external_ref_t;
 typedef struct {
-  external_ref_t create_obj, free_value, set_int, set_i64, set_dbl, set_bool, set_str, set_bytes;
+  external_ref_t create_obj, free_value, set_int, set_u32, set_i64, set_u64, set_dbl, set_bool,
+      set_str, set_bytes;
   external_ref_t set_uuid;
-  external_ref_t create_list, add_list_int, add_list_i64, add_list_dbl, add_list_bool, add_list_str,
-      add_list_obj, set_list;
-  external_ref_t create_set, add_set_int, add_set_dbl, add_set_bool, add_set_str, set_set;
-  external_ref_t create_map, add_map_str_str, add_map_str_int, add_map_str_dbl, add_map_str_bool,
-      set_map;
+  external_ref_t create_list, add_list_int, add_list_u32, add_list_i64, add_list_u64, add_list_dbl,
+      add_list_bool, add_list_str, add_list_obj, set_list;
+  external_ref_t create_set, add_set_int, add_set_u32, add_set_i64, add_set_u64, add_set_dbl,
+      add_set_bool, add_set_str, set_set;
+  external_ref_t create_map, add_map_str_str, add_map_str_int, add_map_str_u32, add_map_str_i64,
+      add_map_str_u64, add_map_str_dbl, add_map_str_bool, set_map;
   external_ref_t read_varstr, free_fn;
 } external_items_t;
 
@@ -433,41 +464,60 @@ static const type_meta_t *find_type_meta(const char *type) {
   return NULL;
 }
 
-static void set_i64_noop(DataBindValue *o, const char *n, int64_t v) {
+static int set_i64_noop(DataBindValue *o, const char *n, int64_t v) {
   (void)o;
   (void)n;
   (void)v;
+  return 1;
 }
-static void set_bytes_noop(DataBindValue *o, const char *n, const uint8_t *d, size_t l) {
+static int set_u64_noop(DataBindValue *o, const char *n, uint64_t v) {
+  (void)o;
+  (void)n;
+  (void)v;
+  return 1;
+}
+static int set_bytes_noop(DataBindValue *o, const char *n, const uint8_t *d, size_t l) {
   (void)o;
   (void)n;
   (void)d;
   (void)l;
+  return 1;
 }
-static void set_uuid_noop(DataBindValue *o, const char *n, const uint8_t *d) {
+static int set_uuid_noop(DataBindValue *o, const char *n, const uint8_t *d) {
   (void)o;
   (void)n;
   (void)d;
+  return 1;
 }
-static void set_i32_noop(DataBindValue *o, const char *n, int32_t v) {
+static int set_i32_noop(DataBindValue *o, const char *n, int32_t v) {
   (void)o;
   (void)n;
   (void)v;
+  return 1;
 }
-static void set_dbl_noop(DataBindValue *o, const char *n, double v) {
+static int set_u32_noop(DataBindValue *o, const char *n, uint32_t v) {
   (void)o;
   (void)n;
   (void)v;
+  return 1;
 }
-static void set_bool_noop(DataBindValue *o, const char *n, int v) {
+static int set_dbl_noop(DataBindValue *o, const char *n, double v) {
   (void)o;
   (void)n;
   (void)v;
+  return 1;
 }
-static void set_str_noop(DataBindValue *o, const char *n, const char *v) {
+static int set_bool_noop(DataBindValue *o, const char *n, int v) {
   (void)o;
   (void)n;
   (void)v;
+  return 1;
+}
+static int set_str_noop(DataBindValue *o, const char *n, const char *v) {
+  (void)o;
+  (void)n;
+  (void)v;
+  return 1;
 }
 
 static char *dbv_strdup(const char *src) {
@@ -476,6 +526,7 @@ static char *dbv_strdup(const char *src) {
   if (src == NULL) return NULL;
   len = strlen(src) + 1;
   dst = (char *)malloc(len);
+  if (dst == NULL) g_dynamic_runtime_oom = 1;
   if (dst == NULL) return NULL;
   memcpy(dst, src, len);
   return dst;
@@ -500,6 +551,7 @@ static DataBindValue *dbv_new(DataBindValueKind kind) {
     }
   }
 
+  if (value == NULL) g_dynamic_runtime_oom = 1;
   if (value != NULL) value->kind = kind;
   return value;
 }
@@ -535,7 +587,10 @@ static int dbv_array_reserve(data_bind_value_array_t *array, size_t min_capacity
   if (!dbv_reserve_capacity(array->capacity, min_capacity, sizeof(*array->items), &capacity))
     return 0;
   items = (DataBindValue **)realloc(array->items, capacity * sizeof(*items));
-  if (items == NULL) return 0;
+  if (items == NULL) {
+    g_dynamic_runtime_oom = 1;
+    return 0;
+  }
   array->items = items;
   array->capacity = capacity;
   return 1;
@@ -551,7 +606,10 @@ static int dbv_object_reserve(DataBindValue *obj, size_t min_capacity) {
   if (!dbv_reserve_capacity(fields->capacity, min_capacity, sizeof(*fields->items), &capacity))
     return 0;
   items = (data_bind_value_field_t *)realloc(fields->items, capacity * sizeof(*items));
-  if (items == NULL) return 0;
+  if (items == NULL) {
+    g_dynamic_runtime_oom = 1;
+    return 0;
+  }
   fields->items = items;
   fields->capacity = capacity;
   return 1;
@@ -567,7 +625,10 @@ static int dbv_map_reserve(DataBindValue *map, size_t min_capacity) {
   if (!dbv_reserve_capacity(entries->capacity, min_capacity, sizeof(*entries->items), &capacity))
     return 0;
   items = (data_bind_value_map_entry_t *)realloc(entries->items, capacity * sizeof(*items));
-  if (items == NULL) return 0;
+  if (items == NULL) {
+    g_dynamic_runtime_oom = 1;
+    return 0;
+  }
   entries->items = items;
   entries->capacity = capacity;
   return 1;
@@ -667,6 +728,16 @@ static DataBindValue *dbv_int64(int64_t value) {
   return v;
 }
 
+static DataBindValue *dbv_uint32_compat(uint32_t value) {
+  return value <= INT32_MAX ? dbv_int((int32_t)value) : dbv_int64((int64_t)value);
+}
+
+static DataBindValue *dbv_uint64(uint64_t value) {
+  DataBindValue *v = dbv_new(DATA_BIND_VALUE_UINT64);
+  if (v != NULL) v->data.uint64_val = value;
+  return v;
+}
+
 static DataBindValue *dbv_double(double value) {
   DataBindValue *v = dbv_new(DATA_BIND_VALUE_DOUBLE);
   if (v != NULL) v->data.double_val = value;
@@ -696,6 +767,7 @@ static DataBindValue *dbv_bytes(const uint8_t *data, size_t len) {
   if (len > 0) {
     v->data.bytes_val.ptr = (uint8_t *)malloc(len);
     if (v->data.bytes_val.ptr == NULL) {
+      g_dynamic_runtime_oom = 1;
       data_bind_value_free(v);
       return NULL;
     }
@@ -703,6 +775,12 @@ static DataBindValue *dbv_bytes(const uint8_t *data, size_t len) {
   }
   v->data.bytes_val.len = len;
   return v;
+}
+
+static char *data_bind_read_varstring(const uint8_t *buf, size_t offset, size_t buf_remaining) {
+  char *value = tbe_read_varstring(buf, offset, buf_remaining);
+  if (value == NULL) g_dynamic_runtime_oom = 1;
+  return value;
 }
 
 static DataBindValue *dbv_uuid_bytes(const uint8_t *data) {
@@ -765,21 +843,18 @@ static int db_parse_date_text(const char *text, DataBindDate *out) {
 }
 
 static int db_parse_time_text(const char *text, DataBindTime *out) {
-  int hour = 0, minute = 0, second = 0, millisecond = 0, consumed = 0;
+  turbo_datetime_t dt;
   if (text == NULL || out == NULL) return 0;
-  if (sscanf(text, "%d:%d:%d.%d%n", &hour, &minute, &second, &millisecond, &consumed) >= 3 ||
-      sscanf(text, "%d:%d:%d%n", &hour, &minute, &second, &consumed) >= 3 ||
-      sscanf(text, "%d:%d%n", &hour, &minute, &consumed) >= 2) {
-    if (text[consumed] == '\0' && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 &&
-        second >= 0 && second <= 60 && millisecond >= 0 && millisecond <= 999) {
-      out->hour = hour;
-      out->minute = minute;
-      out->second = second;
-      out->millisecond = millisecond;
-      return 1;
-    }
-  }
-  return 0;
+  if (strchr(text, ':') == NULL || turbo_parse_datetime(text, strlen(text), &dt) != 0) return 0;
+  if (dt.year != 0 || dt.month != 0 || dt.day != 0 || dt.has_tz || dt.hour < 0 || dt.hour > 23 ||
+      dt.minute < 0 || dt.minute > 59 || dt.second < 0 || dt.second > 60 ||
+      dt.millisecond < 0 || dt.millisecond > 999)
+    return 0;
+  out->hour = dt.hour;
+  out->minute = dt.minute;
+  out->second = dt.second;
+  out->millisecond = dt.millisecond;
+  return 1;
 }
 
 static int db_parse_duration_text(const char *text, int64_t *out) {
@@ -1267,6 +1342,9 @@ static DataBindStatus dbv_clone_tree(const DataBindValue *source, size_t depth,
   case DATA_BIND_VALUE_INT64:
     copy = dbv_int64(source->data.int64_val);
     break;
+  case DATA_BIND_VALUE_UINT64:
+    copy = dbv_uint64(source->data.uint64_val);
+    break;
   case DATA_BIND_VALUE_DOUBLE:
     copy = dbv_double(source->data.double_val);
     break;
@@ -1339,99 +1417,215 @@ static DataBindValue *dynamic_create_map(void) {
   return (DataBindValue *)dbv_new(DATA_BIND_VALUE_MAP);
 }
 
-static void dynamic_set_field_int(DataBindValue *obj, const char *name, int32_t val) {
+static int dynamic_set_field_int(DataBindValue *obj, const char *name, int32_t val) {
   DataBindValue *child = dbv_int(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
     data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_set_field_int64(DataBindValue *obj, const char *name, int64_t val) {
+static int dynamic_set_field_uint32(DataBindValue *obj, const char *name, uint32_t val) {
+  DataBindValue *child = dbv_uint32_compat(val);
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
+    data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
+}
+static int dynamic_set_field_int64(DataBindValue *obj, const char *name, int64_t val) {
   DataBindValue *child = dbv_int64(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
     data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_set_field_double(DataBindValue *obj, const char *name, double val) {
+static int dynamic_set_field_uint64(DataBindValue *obj, const char *name, uint64_t val) {
+  DataBindValue *child = dbv_uint64(val);
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
+    data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
+}
+static int dynamic_set_field_double(DataBindValue *obj, const char *name, double val) {
   DataBindValue *child = dbv_double(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
     data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_set_field_bool(DataBindValue *obj, const char *name, int val) {
+static int dynamic_set_field_bool(DataBindValue *obj, const char *name, int val) {
   DataBindValue *child = dbv_bool(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
     data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_set_field_string(DataBindValue *obj, const char *name, const char *val) {
+static int dynamic_set_field_string(DataBindValue *obj, const char *name, const char *val) {
   DataBindValue *child = dbv_string(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
     data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_set_field_bytes(DataBindValue *obj, const char *name, const uint8_t *data,
-                                    size_t len) {
+static int dynamic_set_field_bytes(DataBindValue *obj, const char *name, const uint8_t *data,
+                                   size_t len) {
   DataBindValue *child = dbv_bytes(data, len);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
     data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_set_field_uuid(DataBindValue *obj, const char *name, const uint8_t *data) {
+static int dynamic_set_field_uuid(DataBindValue *obj, const char *name, const uint8_t *data) {
   DataBindValue *child = dbv_uuid_bytes(data);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child))
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
     data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_set_field_value(DataBindValue *obj, const char *name, DataBindValue *child) {
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, (DataBindValue *)child))
+static int dynamic_set_field_value(DataBindValue *obj, const char *name, DataBindValue *child) {
+  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, (DataBindValue *)child)) {
     data_bind_value_free((DataBindValue *)child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_add_list_item_int(DataBindValue *list, int32_t val) {
+static int dynamic_add_list_item_int(DataBindValue *list, int32_t val) {
   DataBindValue *child = dbv_int(val);
-  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child))
+  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
     data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_add_list_item_int64(DataBindValue *list, int64_t val) {
+static int dynamic_add_list_item_uint32(DataBindValue *list, uint32_t val) {
+  DataBindValue *child = dbv_uint32_compat(val);
+  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
+    data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
+}
+static int dynamic_add_list_item_int64(DataBindValue *list, int64_t val) {
   DataBindValue *child = dbv_int64(val);
-  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child))
+  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
     data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_add_list_item_double(DataBindValue *list, double val) {
+static int dynamic_add_list_item_uint64(DataBindValue *list, uint64_t val) {
+  DataBindValue *child = dbv_uint64(val);
+  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
+    data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
+}
+static int dynamic_add_list_item_double(DataBindValue *list, double val) {
   DataBindValue *child = dbv_double(val);
-  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child))
+  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
     data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_add_list_item_bool(DataBindValue *list, int val) {
+static int dynamic_add_list_item_bool(DataBindValue *list, int val) {
   DataBindValue *child = dbv_bool(val);
-  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child))
+  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
     data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_add_list_item_string(DataBindValue *list, const char *val) {
+static int dynamic_add_list_item_string(DataBindValue *list, const char *val) {
   DataBindValue *child = dbv_string(val);
-  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child))
+  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
     data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_add_list_item_object(DataBindValue *list, DataBindValue *obj) {
+static int dynamic_add_list_item_object(DataBindValue *list, DataBindValue *obj) {
   if (obj == NULL ||
-      !dbv_array_push(&((DataBindValue *)list)->data.array_val, (DataBindValue *)obj))
+      !dbv_array_push(&((DataBindValue *)list)->data.array_val, (DataBindValue *)obj)) {
     data_bind_value_free((DataBindValue *)obj);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_add_map_entry_string_string(DataBindValue *map, const char *key,
-                                                const char *val) {
+static int dynamic_add_map_entry_string_string(DataBindValue *map, const char *key,
+                                               const char *val) {
   DataBindValue *child = dbv_string(val);
-  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) data_bind_value_free(child);
+  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
+    data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_add_map_entry_string_int(DataBindValue *map, const char *key, int32_t val) {
+static int dynamic_add_map_entry_string_int(DataBindValue *map, const char *key, int32_t val) {
   DataBindValue *child = dbv_int(val);
-  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) data_bind_value_free(child);
+  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
+    data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_add_map_entry_string_double(DataBindValue *map, const char *key, double val) {
+static int dynamic_add_map_entry_string_uint32(DataBindValue *map, const char *key, uint32_t val) {
+  DataBindValue *child = dbv_uint32_compat(val);
+  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
+    data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
+}
+static int dynamic_add_map_entry_string_int64(DataBindValue *map, const char *key, int64_t val) {
+  DataBindValue *child = dbv_int64(val);
+  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
+    data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
+}
+static int dynamic_add_map_entry_string_uint64(DataBindValue *map, const char *key, uint64_t val) {
+  DataBindValue *child = dbv_uint64(val);
+  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
+    data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
+}
+static int dynamic_add_map_entry_string_double(DataBindValue *map, const char *key, double val) {
   DataBindValue *child = dbv_double(val);
-  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) data_bind_value_free(child);
+  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
+    data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
-static void dynamic_add_map_entry_string_bool(DataBindValue *map, const char *key, int val) {
+static int dynamic_add_map_entry_string_bool(DataBindValue *map, const char *key, int val) {
   DataBindValue *child = dbv_bool(val);
-  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) data_bind_value_free(child);
+  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
+    data_bind_value_free(child);
+    return 0;
+  }
+  return 1;
 }
 
 static const data_bind_runtime_api_t DYNAMIC_VALUE_API = {
     .create_object = dynamic_create_object,
     .free_value = data_bind_value_free,
     .set_field_int = dynamic_set_field_int,
+    .set_field_uint32 = dynamic_set_field_uint32,
     .set_field_int64 = dynamic_set_field_int64,
+    .set_field_uint64 = dynamic_set_field_uint64,
     .set_field_double = dynamic_set_field_double,
     .set_field_bool = dynamic_set_field_bool,
     .set_field_string = dynamic_set_field_string,
@@ -1439,7 +1633,9 @@ static const data_bind_runtime_api_t DYNAMIC_VALUE_API = {
     .set_field_uuid = dynamic_set_field_uuid,
     .create_list = dynamic_create_list,
     .add_list_item_int = dynamic_add_list_item_int,
+    .add_list_item_uint32 = dynamic_add_list_item_uint32,
     .add_list_item_int64 = dynamic_add_list_item_int64,
+    .add_list_item_uint64 = dynamic_add_list_item_uint64,
     .add_list_item_double = dynamic_add_list_item_double,
     .add_list_item_bool = dynamic_add_list_item_bool,
     .add_list_item_string = dynamic_add_list_item_string,
@@ -1448,6 +1644,9 @@ static const data_bind_runtime_api_t DYNAMIC_VALUE_API = {
     .set_field_object = dynamic_set_field_value,
     .create_set = dynamic_create_set,
     .add_set_item_int = dynamic_add_list_item_int,
+    .add_set_item_uint32 = dynamic_add_list_item_uint32,
+    .add_set_item_int64 = dynamic_add_list_item_int64,
+    .add_set_item_uint64 = dynamic_add_list_item_uint64,
     .add_set_item_double = dynamic_add_list_item_double,
     .add_set_item_bool = dynamic_add_list_item_bool,
     .add_set_item_string = dynamic_add_list_item_string,
@@ -1455,59 +1654,101 @@ static const data_bind_runtime_api_t DYNAMIC_VALUE_API = {
     .create_map = dynamic_create_map,
     .add_map_entry_string_string = dynamic_add_map_entry_string_string,
     .add_map_entry_string_int = dynamic_add_map_entry_string_int,
+    .add_map_entry_string_uint32 = dynamic_add_map_entry_string_uint32,
+    .add_map_entry_string_int64 = dynamic_add_map_entry_string_int64,
+    .add_map_entry_string_uint64 = dynamic_add_map_entry_string_uint64,
     .add_map_entry_string_double = dynamic_add_map_entry_string_double,
     .add_map_entry_string_bool = dynamic_add_map_entry_string_bool,
     .set_field_map = dynamic_set_field_value};
 
 static DataBindValue *container_noop(void) { return NULL; }
-static void add_i32_noop(DataBindValue *v, int32_t x) {
+static int add_i32_noop(DataBindValue *v, int32_t x) {
   (void)v;
   (void)x;
+  return 1;
 }
-static void add_i64_noop(DataBindValue *v, int64_t x) {
+static int add_u32_noop(DataBindValue *v, uint32_t x) {
   (void)v;
   (void)x;
+  return 1;
 }
-static void add_dbl_noop(DataBindValue *v, double x) {
+static int add_i64_noop(DataBindValue *v, int64_t x) {
   (void)v;
   (void)x;
+  return 1;
 }
-static void add_bool_noop(DataBindValue *v, int x) {
+static int add_u64_noop(DataBindValue *v, uint64_t x) {
   (void)v;
   (void)x;
+  return 1;
 }
-static void add_str_noop(DataBindValue *v, const char *s) {
+static int add_dbl_noop(DataBindValue *v, double x) {
+  (void)v;
+  (void)x;
+  return 1;
+}
+static int add_bool_noop(DataBindValue *v, int x) {
+  (void)v;
+  (void)x;
+  return 1;
+}
+static int add_str_noop(DataBindValue *v, const char *s) {
   (void)v;
   (void)s;
+  return 1;
 }
-static void add_obj_noop(DataBindValue *v, DataBindValue *o) {
+static int add_obj_noop(DataBindValue *v, DataBindValue *o) {
   (void)v;
   (void)o;
+  return 1;
 }
-static void set_container_noop(DataBindValue *o, const char *n, DataBindValue *v) {
+static int set_container_noop(DataBindValue *o, const char *n, DataBindValue *v) {
   (void)o;
   (void)n;
   (void)v;
+  return 1;
 }
-static void add_map_str_str_noop(DataBindValue *m, const char *k, const char *v) {
+static int add_map_str_str_noop(DataBindValue *m, const char *k, const char *v) {
   (void)m;
   (void)k;
   (void)v;
+  return 1;
 }
-static void add_map_str_int_noop(DataBindValue *m, const char *k, int32_t v) {
+static int add_map_str_int_noop(DataBindValue *m, const char *k, int32_t v) {
   (void)m;
   (void)k;
   (void)v;
+  return 1;
 }
-static void add_map_str_dbl_noop(DataBindValue *m, const char *k, double v) {
+static int add_map_str_u32_noop(DataBindValue *m, const char *k, uint32_t v) {
   (void)m;
   (void)k;
   (void)v;
+  return 1;
 }
-static void add_map_str_bool_noop(DataBindValue *m, const char *k, int v) {
+static int add_map_str_i64_noop(DataBindValue *m, const char *k, int64_t v) {
   (void)m;
   (void)k;
   (void)v;
+  return 1;
+}
+static int add_map_str_u64_noop(DataBindValue *m, const char *k, uint64_t v) {
+  (void)m;
+  (void)k;
+  (void)v;
+  return 1;
+}
+static int add_map_str_dbl_noop(DataBindValue *m, const char *k, double v) {
+  (void)m;
+  (void)k;
+  (void)v;
+  return 1;
+}
+static int add_map_str_bool_noop(DataBindValue *m, const char *k, int v) {
+  (void)m;
+  (void)k;
+  (void)v;
+  return 1;
 }
 static DataBindValue *create_value_noop(void) { return NULL; }
 static void free_value_noop(DataBindValue *value) { (void)value; }
@@ -1516,7 +1757,9 @@ static const data_bind_runtime_api_t MIR_OUTPUT_API = {
     .create_object = create_value_noop,
     .free_value = free_value_noop,
     .set_field_int = set_i32_noop,
+    .set_field_uint32 = set_u32_noop,
     .set_field_int64 = set_i64_noop,
+    .set_field_uint64 = set_u64_noop,
     .set_field_double = set_dbl_noop,
     .set_field_bool = set_bool_noop,
     .set_field_string = set_str_noop,
@@ -1524,7 +1767,9 @@ static const data_bind_runtime_api_t MIR_OUTPUT_API = {
     .set_field_uuid = set_uuid_noop,
     .create_list = create_value_noop,
     .add_list_item_int = add_i32_noop,
+    .add_list_item_uint32 = add_u32_noop,
     .add_list_item_int64 = add_i64_noop,
+    .add_list_item_uint64 = add_u64_noop,
     .add_list_item_double = add_dbl_noop,
     .add_list_item_bool = add_bool_noop,
     .add_list_item_string = add_str_noop,
@@ -1533,6 +1778,9 @@ static const data_bind_runtime_api_t MIR_OUTPUT_API = {
     .set_field_object = set_container_noop,
     .create_set = create_value_noop,
     .add_set_item_int = add_i32_noop,
+    .add_set_item_uint32 = add_u32_noop,
+    .add_set_item_int64 = add_i64_noop,
+    .add_set_item_uint64 = add_u64_noop,
     .add_set_item_double = add_dbl_noop,
     .add_set_item_bool = add_bool_noop,
     .add_set_item_string = add_str_noop,
@@ -1540,6 +1788,9 @@ static const data_bind_runtime_api_t MIR_OUTPUT_API = {
     .create_map = create_value_noop,
     .add_map_entry_string_string = add_map_str_str_noop,
     .add_map_entry_string_int = add_map_str_int_noop,
+    .add_map_entry_string_uint32 = add_map_str_u32_noop,
+    .add_map_entry_string_int64 = add_map_str_i64_noop,
+    .add_map_entry_string_uint64 = add_map_str_u64_noop,
     .add_map_entry_string_double = add_map_str_dbl_noop,
     .add_map_entry_string_bool = add_map_str_bool_noop,
     .set_field_map = set_container_noop};
@@ -1604,7 +1855,7 @@ static mir_cache_entry_t *mir_cache_find(const char *schema_hash) {
   if (!g_mir_cache_enabled || schema_hash == NULL) return NULL;
 
   for (entry = g_mir_cache_head; entry != NULL; entry = entry->next) {
-    if (strcmp(entry->schema_hash, schema_hash) == 0) {
+    if (!entry->evicted && strcmp(entry->schema_hash, schema_hash) == 0) {
       return entry;
     }
   }
@@ -1623,13 +1874,31 @@ static mir_cache_entry_t *mir_cache_insert(const char *schema_hash, MIR_context_
   entry->shared_ctx = ctx;
   entry->func_head = func_head;
   entry->ref_count = 1;
+  entry->evicted = 0;
   entry->next = g_mir_cache_head;
   g_mir_cache_head = entry;
 
   return entry;
 }
 
-static void mir_cache_release(const char *schema_hash) {
+static void mir_cache_entry_destroy(mir_cache_entry_t *entry) {
+  mir_func_node_t *func_node;
+  if (entry == NULL) return;
+  if (entry->shared_ctx != NULL) {
+    MIR_gen_finish(entry->shared_ctx);
+    MIR_finish(entry->shared_ctx);
+  }
+  func_node = entry->func_head;
+  while (func_node != NULL) {
+    mir_func_node_t *next = func_node->next;
+    free(func_node->type_name);
+    free(func_node);
+    func_node = next;
+  }
+  free(entry);
+}
+
+static void mir_cache_release(const char *schema_hash, MIR_context_t shared_ctx) {
   mir_cache_entry_t **prev_ptr = &g_mir_cache_head;
   mir_cache_entry_t *entry;
 
@@ -1637,26 +1906,11 @@ static void mir_cache_release(const char *schema_hash) {
 
   entry = g_mir_cache_head;
   while (entry != NULL) {
-    if (strcmp(entry->schema_hash, schema_hash) == 0) {
+    if (entry->shared_ctx == shared_ctx && strcmp(entry->schema_hash, schema_hash) == 0) {
       entry->ref_count--;
       if (entry->ref_count <= 0) {
-        /* Remove from cache and free resources */
         *prev_ptr = entry->next;
-        if (entry->shared_ctx != NULL) {
-          MIR_gen_finish(entry->shared_ctx);
-          MIR_finish(entry->shared_ctx);
-        }
-        /* Free func_head nodes that belong to this cache entry */
-        if (entry->func_head != NULL) {
-          mir_func_node_t *func_node = entry->func_head;
-          while (func_node != NULL) {
-            mir_func_node_t *next = func_node->next;
-            free(func_node->type_name);
-            free(func_node);
-            func_node = next;
-          }
-        }
-        free(entry);
+        mir_cache_entry_destroy(entry);
       }
       return;
     }
@@ -2377,6 +2631,7 @@ static int is_flags_type(Node *schema_root, const char *type_name) {
 }
 
 static data_bind_text_kind_t bind_type_kind(Node *schema_root, const char *type) {
+  const type_meta_t *meta;
   if (type == NULL) return DB_TEXT_UNSUPPORTED;
   if (strcmp(type, "uuid") == 0) return DB_TEXT_UUID;
   if (strcmp(type, "datetime") == 0) return DB_TEXT_DATETIME;
@@ -2389,14 +2644,8 @@ static data_bind_text_kind_t bind_type_kind(Node *schema_root, const char *type)
   if (strcmp(type, "bytes") == 0) return DB_TEXT_BYTES;
   if (strcmp(type, "string") == 0) return DB_TEXT_STRING;
   if (strcmp(type, "bool") == 0) return DB_TEXT_BOOL;
-  if (strcmp(type, "float") == 0 || strcmp(type, "double") == 0 || strcmp(type, "f32") == 0 ||
-      strcmp(type, "f64") == 0)
-    return DB_TEXT_NUMBER;
-  if (strstr(type, "int") != NULL || strcmp(type, "uint8") == 0 || strcmp(type, "uint16") == 0 ||
-      strcmp(type, "uint32") == 0 || strcmp(type, "uint64") == 0 || strcmp(type, "u8") == 0 ||
-      strcmp(type, "u16") == 0 || strcmp(type, "u32") == 0 || strcmp(type, "u64") == 0 ||
-      strcmp(type, "byte") == 0 || find_enum_record(schema_root, type) != NULL)
-    return DB_TEXT_INTEGER;
+  meta = find_scalar_meta(schema_root, type);
+  if (meta != NULL) return meta->is_float ? DB_TEXT_NUMBER : DB_TEXT_INTEGER;
   return DB_TEXT_UNSUPPORTED;
 }
 
@@ -2477,8 +2726,129 @@ static int schema_text_integer_value(Node *schema_root, const char *type_name,
     return flags_text_value(schema_root, type_name, text, out);
   if (find_enum_record(schema_root, type_name) != NULL)
     return enum_text_value(schema_root, type_name, text, out);
-  if (kind == DB_TEXT_INTEGER) return db_parse_i64_text(text, out);
+  (void)kind;
   return 0;
+}
+
+static int db_parse_integer_magnitude(const char *text, size_t len, uint64_t max_value,
+                                      int allow_negative, uint64_t *out, int *negative) {
+  size_t pos = 0, exponent_pos = len, digits = 0, fraction_digits = 0, digit_index = 0;
+  int seen_dot = 0, nonzero = 0, exponent_negative = 0;
+  int64_t exponent = 0, effective_digits;
+  uint64_t value = 0;
+  if (text == NULL || out == NULL || negative == NULL || len == 0 || len > INT_MAX) return 0;
+  *negative = 0;
+  if (text[pos] == '-' || text[pos] == '+') {
+    *negative = text[pos] == '-';
+    if (*negative && !allow_negative) return 0;
+    if (++pos == len) return 0;
+  }
+  for (; pos < len && text[pos] != 'e' && text[pos] != 'E'; ++pos) {
+    if (text[pos] == '.') {
+      if (seen_dot) return 0;
+      seen_dot = 1;
+      continue;
+    }
+    if (text[pos] < '0' || text[pos] > '9') return 0;
+    nonzero |= text[pos] != '0';
+    digits++;
+    if (seen_dot) fraction_digits++;
+  }
+  if (digits == 0) return 0;
+  if (pos < len) {
+    int64_t cap = (int64_t)len + 64;
+    exponent_pos = pos++;
+    if (pos < len && (text[pos] == '-' || text[pos] == '+')) {
+      exponent_negative = text[pos] == '-';
+      pos++;
+    }
+    if (pos == len) return 0;
+    for (; pos < len; ++pos) {
+      int digit;
+      if (text[pos] < '0' || text[pos] > '9') return 0;
+      digit = text[pos] - '0';
+      exponent = exponent > (cap - digit) / 10 ? cap : exponent * 10 + digit;
+    }
+    if (exponent_negative) exponent = -exponent;
+  }
+  if (!nonzero) {
+    *out = 0;
+    *negative = 0;
+    return 1;
+  }
+  effective_digits = (int64_t)digits - (int64_t)fraction_digits + exponent;
+  if (effective_digits <= 0) return 0;
+  for (pos = (*negative || text[0] == '+') ? 1u : 0u; pos < exponent_pos; ++pos) {
+    int digit;
+    if (text[pos] == '.') continue;
+    digit = text[pos] - '0';
+    if ((int64_t)digit_index < effective_digits) {
+      if (value > (max_value - (uint64_t)digit) / 10u) return 0;
+      value = value * 10u + (uint64_t)digit;
+    } else if (digit != 0) {
+      return 0;
+    }
+    digit_index++;
+  }
+  while ((int64_t)digit_index < effective_digits) {
+    if (value > max_value / 10u) return 0;
+    value *= 10u;
+    digit_index++;
+  }
+  *out = value;
+  return 1;
+}
+
+static DataBindValue *dbv_integer_text(Node *schema_root, const char *type_name, const char *text,
+                                       size_t len) {
+  const type_meta_t *meta;
+  uint64_t max_value, magnitude;
+  int negative;
+  int64_t named_value;
+  if (text == NULL || type_name == NULL) return NULL;
+  if (is_flags_type(schema_root, type_name) && flags_text_value(schema_root, type_name, text,
+                                                                &named_value))
+    return named_value >= INT32_MIN && named_value <= INT32_MAX ? dbv_int((int32_t)named_value)
+                                                               : dbv_int64(named_value);
+  if (find_enum_record(schema_root, type_name) != NULL &&
+      enum_text_value(schema_root, type_name, text, &named_value))
+    return named_value >= INT32_MIN && named_value <= INT32_MAX ? dbv_int((int32_t)named_value)
+                                                               : dbv_int64(named_value);
+  meta = find_scalar_meta(schema_root, type_name);
+  if (meta == NULL || meta->is_float) return NULL;
+  switch (meta->mir_type) {
+  case MIR_T_U8: max_value = UINT8_MAX; break;
+  case MIR_T_U16: max_value = UINT16_MAX; break;
+  case MIR_T_U32: max_value = UINT32_MAX; break;
+  case MIR_T_U64: max_value = UINT64_MAX; break;
+  case MIR_T_I8: max_value = (uint64_t)INT8_MAX + 1u; break;
+  case MIR_T_I16: max_value = (uint64_t)INT16_MAX + 1u; break;
+  case MIR_T_I32: max_value = (uint64_t)INT32_MAX + 1u; break;
+  case MIR_T_I64: max_value = (uint64_t)INT64_MAX + 1u; break;
+  default: return NULL;
+  }
+  if (!db_parse_integer_magnitude(text, len, max_value, meta->mir_type == MIR_T_I8 ||
+                                                             meta->mir_type == MIR_T_I16 ||
+                                                             meta->mir_type == MIR_T_I32 ||
+                                                             meta->mir_type == MIR_T_I64,
+                                  &magnitude, &negative))
+    return NULL;
+  if (meta->mir_type == MIR_T_U64) return dbv_uint64(magnitude);
+  if (negative) {
+    int64_t signed_value = magnitude == (uint64_t)INT64_MAX + 1u
+                               ? INT64_MIN
+                               : -(int64_t)magnitude;
+    if (meta->mir_type == MIR_T_I8 && signed_value < INT8_MIN) return NULL;
+    if (meta->mir_type == MIR_T_I16 && signed_value < INT16_MIN) return NULL;
+    if (meta->mir_type == MIR_T_I32 && signed_value < INT32_MIN) return NULL;
+    return signed_value >= INT32_MIN ? dbv_int((int32_t)signed_value)
+                                     : dbv_int64(signed_value);
+  }
+  if (meta->mir_type == MIR_T_I8 && magnitude > INT8_MAX) return NULL;
+  if (meta->mir_type == MIR_T_I16 && magnitude > INT16_MAX) return NULL;
+  if (meta->mir_type == MIR_T_I32 && magnitude > INT32_MAX) return NULL;
+  if (meta->mir_type == MIR_T_I64 && magnitude > INT64_MAX) return NULL;
+  return magnitude <= INT32_MAX ? dbv_int((int32_t)magnitude) : dbv_int64((int64_t)magnitude);
 }
 
 static DataBindValue *bind_text_scalar(Node *schema_root, const char *type_name,
@@ -2491,6 +2861,8 @@ static DataBindValue *bind_text_scalar(Node *schema_root, const char *type_name,
     if (i64 >= INT32_MIN && i64 <= INT32_MAX) return dbv_int((int32_t)i64);
     return dbv_int64(i64);
   }
+  if (kind == DB_TEXT_INTEGER)
+    return dbv_integer_text(schema_root, type_name, text, text != NULL ? strlen(text) : 0u);
   switch (kind) {
   case DB_TEXT_STRING:
     return dbv_string(text != NULL ? text : "");
@@ -2516,9 +2888,7 @@ static DataBindValue *bind_text_scalar(Node *schema_root, const char *type_name,
     if (!db_parse_bool_text(text, &b)) return NULL;
     return dbv_bool(b);
   case DB_TEXT_INTEGER:
-    if (!db_parse_i64_text(text, &i64)) return NULL;
-    if (i64 >= INT32_MIN && i64 <= INT32_MAX) return dbv_int((int32_t)i64);
-    return dbv_int64(i64);
+    return NULL;
   case DB_TEXT_NUMBER:
     if (!db_parse_double_text(text, &dbl)) return NULL;
     return dbv_double(dbl);
@@ -2546,23 +2916,31 @@ static DataBindValue *bind_field_default(Node *schema_root, Node *field) {
 
 static int json_integer_value(Node *schema_root, const char *type_name, json_value_t *value,
                               int64_t *out) {
+  DataBindValue *integer = NULL;
+  const char *text = NULL;
+  size_t len = 0;
   if (value == NULL || out == NULL) return 0;
   if (turbo_json_type(value) == TURBO_JSON_NUMBER) {
-    *out = (int64_t)turbo_json_number(value);
-    return 1;
+    text = turbo_json_number_text(value, &len);
+    if (text == NULL) return 0;
+  } else if (turbo_json_type(value) == TURBO_JSON_STRING) {
+    text = turbo_json_string(value);
+    len = turbo_json_string_len(value);
+  } else {
+    return 0;
   }
-  if (turbo_json_type(value) == TURBO_JSON_BOOL) {
-    *out = turbo_json_bool(value) ? 1 : 0;
-    return 1;
+  integer = dbv_integer_text(schema_root, type_name, text, len);
+  if (integer == NULL) return 0;
+  if (integer->kind == DATA_BIND_VALUE_INT) *out = integer->data.int_val;
+  else if (integer->kind == DATA_BIND_VALUE_INT64) *out = integer->data.int64_val;
+  else if (integer->kind == DATA_BIND_VALUE_UINT64 && integer->data.uint64_val <= INT64_MAX)
+    *out = (int64_t)integer->data.uint64_val;
+  else {
+    data_bind_value_free(integer);
+    return 0;
   }
-  if (turbo_json_type(value) == TURBO_JSON_STRING) {
-    if (is_flags_type(schema_root, type_name))
-      return flags_text_value(schema_root, type_name, turbo_json_string(value), out);
-    if (find_enum_record(schema_root, type_name) != NULL)
-      return enum_text_value(schema_root, type_name, turbo_json_string(value), out);
-    return db_parse_i64_text(turbo_json_string(value), out);
-  }
-  return 0;
+  data_bind_value_free(integer);
+  return 1;
 }
 
 static int json_flags_value(Node *schema_root, const char *type_name, json_value_t *value,
@@ -2592,9 +2970,13 @@ static DataBindValue *bind_json_value(Node *schema_root, const char *type_name,
     if (i64 >= INT32_MIN && i64 <= INT32_MAX) return dbv_int((int32_t)i64);
     return dbv_int64(i64);
   }
-  if (kind == DB_TEXT_INTEGER && json_integer_value(schema_root, type_name, value, &i64)) {
-    if (i64 >= INT32_MIN && i64 <= INT32_MAX) return dbv_int((int32_t)i64);
-    return dbv_int64(i64);
+  if (kind == DB_TEXT_INTEGER && turbo_json_type(value) == TURBO_JSON_NUMBER) {
+    const char *integer_text;
+    size_t integer_len = 0;
+    integer_text = turbo_json_number_text(value, &integer_len);
+    return integer_text != NULL
+               ? dbv_integer_text(schema_root, type_name, integer_text, integer_len)
+               : NULL;
   }
   switch (kind) {
   case DB_TEXT_STRING:
@@ -3457,15 +3839,18 @@ static int csv_header_map_key(const char *header, const char *path, char *key, s
   size_t path_len, len;
   const char *start = NULL;
   const char *end;
+  int sanitized_path = 0;
   if (header == NULL || path == NULL || key == NULL || key_size == 0) return 0;
   path_len = strlen(path);
   if (strncmp(header, path, path_len) == 0 && header[path_len] == '.')
     start = header + path_len + 1;
-  else if (strncmp(header, path, path_len) == 0 && header[path_len] == '_')
+  else if (strncmp(header, path, path_len) == 0 && header[path_len] == '_') {
     start = header + path_len + 1;
+    sanitized_path = 1;
+  }
   if (start == NULL || start[0] == '\0') return 0;
   end = start;
-  while (*end != '\0' && *end != '.' && *end != '[' && *end != '_')
+  while (*end != '\0' && *end != '.' && *end != '[' && (!sanitized_path || *end != '_'))
     end++;
   len = (size_t)(end - start);
   if (len == 0 || len >= key_size) return 0;
@@ -4131,9 +4516,13 @@ static int build_map_collection_emit_field(emit_field_array_t *fields, Node *fie
   if (meta == NULL) return 1;
   if (meta->is_float)
     return append_emit_field(fields, full_name, EF_MAP_STR_DBL, meta, meta->size, 0, 0, 0, NULL);
-  if (!meta->is_64)
-    return append_emit_field(fields, full_name, EF_MAP_STR_INT, meta, meta->size, 0, 0, 0, NULL);
-  return 1;
+  return append_emit_field(
+      fields, full_name,
+      meta->mir_type == MIR_T_U64
+          ? EF_MAP_STR_U64
+          : (meta->mir_type == MIR_T_U32 ? EF_MAP_STR_U32
+                                         : (meta->is_64 ? EF_MAP_STR_I64 : EF_MAP_STR_INT)),
+      meta, meta->size, 0, 0, 0, NULL);
 }
 
 static int build_list_or_set_collection_emit_field(emit_field_array_t *fields, Node *field,
@@ -4181,8 +4570,10 @@ static int build_list_or_set_collection_emit_field(emit_field_array_t *fields, N
     emit_kind_t kind;
     if (meta->is_float) kind = EF_SET_DBL;
     else if (strcmp(inner_type, "bool") == 0) kind = EF_SET_BOOL;
-    else if (!meta->is_64) kind = EF_SET_INT;
-    else return 1;
+    else if (meta->mir_type == MIR_T_U64) kind = EF_SET_U64;
+    else if (meta->mir_type == MIR_T_U32) kind = EF_SET_U32;
+    else if (meta->is_64) kind = EF_SET_I64;
+    else kind = EF_SET_INT;
     return append_emit_field(fields, full_name, kind, meta, meta->size, 0, 0, 0, NULL);
   }
 
@@ -4190,7 +4581,13 @@ static int build_list_or_set_collection_emit_field(emit_field_array_t *fields, N
       fields, full_name,
       strcmp(inner_type, "bool") == 0
           ? EF_LIST_BOOL
-          : (meta->is_float ? EF_LIST_DBL : (meta->is_64 ? EF_LIST_I64 : EF_LIST_INT)),
+          : (meta->is_float
+                 ? EF_LIST_DBL
+                 : (meta->mir_type == MIR_T_U64 ? EF_LIST_U64
+                                                : (meta->mir_type == MIR_T_U32
+                                                       ? EF_LIST_U32
+                                                       : (meta->is_64 ? EF_LIST_I64
+                                                                      : EF_LIST_INT)))),
       meta, meta->size, 0, field_flag(field, "is_fixed_size") ? (size_t)count : 0, 0, NULL);
 }
 
@@ -4231,8 +4628,12 @@ static int build_var_or_scalar_emit_field(emit_field_array_t *fields, Node *fiel
   if (field_flag(field, "is_enum_ref")) {
     const type_meta_t *meta = find_enum_meta(schema_root, field_type);
     if (meta == NULL) return 1;
-    return append_emit_field(fields, full_name, meta->is_64 ? EF_I64 : EF_INT, meta, meta->size, 0,
-                             0, 0, NULL);
+    return append_emit_field(fields, full_name,
+                             meta->mir_type == MIR_T_U64 ? EF_U64
+                                                        : (meta->mir_type == MIR_T_U32
+                                                               ? EF_U32
+                                                               : (meta->is_64 ? EF_I64 : EF_INT)),
+                             meta, meta->size, 0, 0, 0, NULL);
   }
 
   {
@@ -4241,7 +4642,13 @@ static int build_var_or_scalar_emit_field(emit_field_array_t *fields, Node *fiel
     return append_emit_field(fields, full_name,
                              strcmp(field_type, "bool") == 0
                                  ? EF_BOOL
-                                 : (meta->is_float ? EF_DBL : (meta->is_64 ? EF_I64 : EF_INT)),
+                                 : (meta->is_float
+                                        ? EF_DBL
+                                        : (meta->mir_type == MIR_T_U64
+                                               ? EF_U64
+                                               : (meta->mir_type == MIR_T_U32
+                                                      ? EF_U32
+                                                      : (meta->is_64 ? EF_I64 : EF_INT)))),
                              meta, meta->size, 0, 0, 0, NULL);
   }
 }
@@ -4412,6 +4819,12 @@ static DataBindStatus db_binary_write_integer(data_bind_binary_writer_t *writer,
   uint8_t *dst = NULL;
   int64_t integer;
   DataBindStatus status;
+  if (type == MIR_T_U64 && value != NULL && value->kind == DATA_BIND_VALUE_UINT64) {
+    status = db_binary_writer_reserve(writer, (size_t)size, path, &dst);
+    if (status == DATA_BIND_OK && dst != NULL)
+      tbe_wire_write_u64(dst, 0, value->data.uint64_val);
+    return status;
+  }
   if (!db_binary_integer_value(value, &integer) || !db_binary_integer_fits(type, integer))
     return db_error_set(writer->error, DATA_BIND_ERR_TYPE_MISMATCH, path, -1, -1,
                         "Integer value does not fit the schema wire type");
@@ -4491,7 +4904,9 @@ static DataBindStatus db_binary_write_scalar(data_bind_binary_writer_t *writer,
                         "Required binary field is missing");
   switch (field->kind) {
   case EF_INT:
+  case EF_U32:
   case EF_I64:
+  case EF_U64:
     return db_binary_write_integer(writer, field->mir_type, field->size, value, field->name);
   case EF_BOOL: {
     uint8_t boolean;
@@ -4549,8 +4964,17 @@ static DataBindStatus db_binary_write_collection_item(data_bind_binary_writer_t 
   case EF_SET_INT:
     scalar.kind = EF_INT;
     return db_binary_write_scalar(writer, &scalar, item);
+  case EF_LIST_U32:
+  case EF_SET_U32:
+    scalar.kind = EF_U32;
+    return db_binary_write_scalar(writer, &scalar, item);
   case EF_LIST_I64:
+  case EF_SET_I64:
     scalar.kind = EF_I64;
+    return db_binary_write_scalar(writer, &scalar, item);
+  case EF_LIST_U64:
+  case EF_SET_U64:
+    scalar.kind = EF_U64;
     return db_binary_write_scalar(writer, &scalar, item);
   case EF_LIST_DBL:
   case EF_SET_DBL:
@@ -4621,6 +5045,9 @@ static DataBindStatus db_binary_write_map(data_bind_binary_writer_t *writer,
     if (status != DATA_BIND_OK) return status;
     if (field->kind == EF_MAP_STR_STR) scalar.kind = EF_STR;
     else if (field->kind == EF_MAP_STR_INT) scalar.kind = EF_INT;
+    else if (field->kind == EF_MAP_STR_U32) scalar.kind = EF_U32;
+    else if (field->kind == EF_MAP_STR_I64) scalar.kind = EF_I64;
+    else if (field->kind == EF_MAP_STR_U64) scalar.kind = EF_U64;
     else if (field->kind == EF_MAP_STR_DBL) scalar.kind = EF_DBL;
     else scalar.kind = EF_BOOL;
     status = db_binary_write_scalar(writer, &scalar, entry->value);
@@ -4721,7 +5148,7 @@ static int db_binary_field_supported(Node *schema_root, Node *field) {
       if (key == NULL || mapped == NULL || strcmp(key, "string") != 0) return 0;
       if (strcmp(mapped, "string") == 0 || strcmp(mapped, "bool") == 0) return 1;
       meta = find_scalar_meta(schema_root, mapped);
-      return meta != NULL && (meta->is_float || !meta->is_64);
+      return meta != NULL;
     }
     if (inner == NULL ||
         (strcmp(kind, "list") != 0 && strcmp(kind, "set") != 0 && strcmp(kind, "array") != 0))
@@ -4739,7 +5166,7 @@ static int db_binary_field_supported(Node *schema_root, Node *field) {
     }
     if (strcmp(inner, "string") == 0) return 1;
     meta = find_scalar_meta(schema_root, inner);
-    return meta != NULL && (strcmp(kind, "set") != 0 || meta->is_float || !meta->is_64);
+    return meta != NULL;
   }
   if (field_flag(field, "is_var_data"))
     return field_flag(field, "is_string") || field_flag(field, "is_bytes");
@@ -4802,9 +5229,15 @@ static int validate_fields_api(DataBind *codec, const char *message_name,
     if ((field->kind == EF_LIST_INT &&
          (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
           codec->api.add_list_item_int == NULL)) ||
+        (field->kind == EF_LIST_U32 &&
+         (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
+          codec->api.add_list_item_uint32 == NULL)) ||
         (field->kind == EF_LIST_I64 &&
          (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
           codec->api.add_list_item_int64 == NULL)) ||
+        (field->kind == EF_LIST_U64 &&
+         (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
+          codec->api.add_list_item_uint64 == NULL)) ||
         (field->kind == EF_LIST_DBL &&
          (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
           codec->api.add_list_item_double == NULL)) ||
@@ -4820,6 +5253,15 @@ static int validate_fields_api(DataBind *codec, const char *message_name,
         (field->kind == EF_SET_INT &&
          (codec->api.create_set == NULL || codec->api.set_field_set == NULL ||
           codec->api.add_set_item_int == NULL)) ||
+        (field->kind == EF_SET_U32 &&
+         (codec->api.create_set == NULL || codec->api.set_field_set == NULL ||
+          codec->api.add_set_item_uint32 == NULL)) ||
+        (field->kind == EF_SET_I64 &&
+         (codec->api.create_set == NULL || codec->api.set_field_set == NULL ||
+          codec->api.add_set_item_int64 == NULL)) ||
+        (field->kind == EF_SET_U64 &&
+         (codec->api.create_set == NULL || codec->api.set_field_set == NULL ||
+          codec->api.add_set_item_uint64 == NULL)) ||
         (field->kind == EF_SET_DBL &&
          (codec->api.create_set == NULL || codec->api.set_field_set == NULL ||
           codec->api.add_set_item_double == NULL)) ||
@@ -4835,6 +5277,15 @@ static int validate_fields_api(DataBind *codec, const char *message_name,
         (field->kind == EF_MAP_STR_INT &&
          (codec->api.create_map == NULL || codec->api.set_field_map == NULL ||
           codec->api.add_map_entry_string_int == NULL)) ||
+        (field->kind == EF_MAP_STR_U32 &&
+         (codec->api.create_map == NULL || codec->api.set_field_map == NULL ||
+          codec->api.add_map_entry_string_uint32 == NULL)) ||
+        (field->kind == EF_MAP_STR_I64 &&
+         (codec->api.create_map == NULL || codec->api.set_field_map == NULL ||
+          codec->api.add_map_entry_string_int64 == NULL)) ||
+        (field->kind == EF_MAP_STR_U64 &&
+         (codec->api.create_map == NULL || codec->api.set_field_map == NULL ||
+          codec->api.add_map_entry_string_uint64 == NULL)) ||
         (field->kind == EF_MAP_STR_DBL &&
          (codec->api.create_map == NULL || codec->api.set_field_map == NULL ||
           codec->api.add_map_entry_string_double == NULL)) ||
@@ -4847,6 +5298,14 @@ static int validate_fields_api(DataBind *codec, const char *message_name,
     if (field->kind == EF_UUID && codec->api.set_field_uuid == NULL) {
       return set_codec_error(codec, "Schema field '%s.%s' requires uuid API callback", message_name,
                              field->name);
+    }
+    if (field->kind == EF_U32 && codec->api.set_field_uint32 == NULL) {
+      return set_codec_error(codec, "Schema field '%s.%s' requires uint32 API callback",
+                             message_name, field->name);
+    }
+    if (field->kind == EF_U64 && codec->api.set_field_uint64 == NULL) {
+      return set_codec_error(codec, "Schema field '%s.%s' requires uint64 API callback",
+                             message_name, field->name);
     }
     if (field->children.count > 0 && !validate_fields_api(codec, message_name, &field->children))
       return 0;
@@ -4882,8 +5341,11 @@ static void declare_external(mir_builder_t *builder, external_ref_t *ref, const 
 
 static void init_externals(mir_builder_t *builder) {
   MIR_type_t ptr_result = MIR_T_P;
+  MIR_type_t status_result = MIR_T_I32;
   MIR_var_t set_int_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_I32, "value", 0}};
+  MIR_var_t set_u32_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_U32, "value", 0}};
   MIR_var_t set_i64_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_I64, "value", 0}};
+  MIR_var_t set_u64_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_U64, "value", 0}};
   MIR_var_t set_dbl_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_D, "value", 0}};
   MIR_var_t set_bool_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_I32, "value", 0}};
   MIR_var_t set_str_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_P, "value", 0}};
@@ -4891,7 +5353,9 @@ static void init_externals(mir_builder_t *builder) {
       {MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_P, "data", 0}, {MIR_T_I64, "len", 0}};
   MIR_var_t set_uuid_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_P, "data", 0}};
   MIR_var_t list_i32_args[] = {{MIR_T_P, "list", 0}, {MIR_T_I32, "value", 0}};
+  MIR_var_t list_u32_args[] = {{MIR_T_P, "list", 0}, {MIR_T_U32, "value", 0}};
   MIR_var_t list_i64_args[] = {{MIR_T_P, "list", 0}, {MIR_T_I64, "value", 0}};
+  MIR_var_t list_u64_args[] = {{MIR_T_P, "list", 0}, {MIR_T_U64, "value", 0}};
   MIR_var_t list_dbl_args[] = {{MIR_T_P, "list", 0}, {MIR_T_D, "value", 0}};
   MIR_var_t list_bool_args[] = {{MIR_T_P, "list", 0}, {MIR_T_I32, "value", 0}};
   MIR_var_t list_str_args[] = {{MIR_T_P, "list", 0}, {MIR_T_P, "value", 0}};
@@ -4900,6 +5364,12 @@ static void init_externals(mir_builder_t *builder) {
   MIR_var_t map_str_str_args[] = {{MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_P, "value", 0}};
   MIR_var_t map_str_int_args[] = {
       {MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_I32, "value", 0}};
+  MIR_var_t map_str_u32_args[] = {
+      {MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_U32, "value", 0}};
+  MIR_var_t map_str_i64_args[] = {
+      {MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_I64, "value", 0}};
+  MIR_var_t map_str_u64_args[] = {
+      {MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_U64, "value", 0}};
   MIR_var_t map_str_dbl_args[] = {{MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_D, "value", 0}};
   MIR_var_t map_str_bool_args[] = {
       {MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_I32, "value", 0}};
@@ -4909,39 +5379,58 @@ static void init_externals(mir_builder_t *builder) {
 
   declare_external(builder, &builder->ext.create_obj, "create_obj", 1, &ptr_result, 0, NULL);
   declare_external(builder, &builder->ext.free_value, "free_value", 0, NULL, 1, free_args);
-  declare_external(builder, &builder->ext.set_int, "set_int", 0, NULL, 3, set_int_args);
-  declare_external(builder, &builder->ext.set_i64, "set_int64", 0, NULL, 3, set_i64_args);
-  declare_external(builder, &builder->ext.set_dbl, "set_dbl", 0, NULL, 3, set_dbl_args);
-  declare_external(builder, &builder->ext.set_bool, "set_bool", 0, NULL, 3, set_bool_args);
-  declare_external(builder, &builder->ext.set_str, "set_str", 0, NULL, 3, set_str_args);
-  declare_external(builder, &builder->ext.set_bytes, "set_bytes", 0, NULL, 4, set_bytes_args);
-  declare_external(builder, &builder->ext.set_uuid, "set_uuid", 0, NULL, 3, set_uuid_args);
+  declare_external(builder, &builder->ext.set_int, "set_int", 1, &status_result, 3, set_int_args);
+  declare_external(builder, &builder->ext.set_u32, "set_uint32", 1, &status_result, 3,
+                   set_u32_args);
+  declare_external(builder, &builder->ext.set_i64, "set_int64", 1, &status_result, 3, set_i64_args);
+  declare_external(builder, &builder->ext.set_u64, "set_uint64", 1, &status_result, 3, set_u64_args);
+  declare_external(builder, &builder->ext.set_dbl, "set_dbl", 1, &status_result, 3, set_dbl_args);
+  declare_external(builder, &builder->ext.set_bool, "set_bool", 1, &status_result, 3, set_bool_args);
+  declare_external(builder, &builder->ext.set_str, "set_str", 1, &status_result, 3, set_str_args);
+  declare_external(builder, &builder->ext.set_bytes, "set_bytes", 1, &status_result, 4, set_bytes_args);
+  declare_external(builder, &builder->ext.set_uuid, "set_uuid", 1, &status_result, 3, set_uuid_args);
   declare_external(builder, &builder->ext.create_list, "create_list", 1, &ptr_result, 0, NULL);
-  declare_external(builder, &builder->ext.add_list_int, "add_list_int", 0, NULL, 2, list_i32_args);
-  declare_external(builder, &builder->ext.add_list_i64, "add_list_int64", 0, NULL, 2,
+  declare_external(builder, &builder->ext.add_list_int, "add_list_int", 1, &status_result, 2, list_i32_args);
+  declare_external(builder, &builder->ext.add_list_u32, "add_list_uint32", 1, &status_result, 2,
+                   list_u32_args);
+  declare_external(builder, &builder->ext.add_list_i64, "add_list_int64", 1, &status_result, 2,
                    list_i64_args);
-  declare_external(builder, &builder->ext.add_list_dbl, "add_list_dbl", 0, NULL, 2, list_dbl_args);
-  declare_external(builder, &builder->ext.add_list_bool, "add_list_bool", 0, NULL, 2,
+  declare_external(builder, &builder->ext.add_list_u64, "add_list_uint64", 1, &status_result, 2,
+                   list_u64_args);
+  declare_external(builder, &builder->ext.add_list_dbl, "add_list_dbl", 1, &status_result, 2, list_dbl_args);
+  declare_external(builder, &builder->ext.add_list_bool, "add_list_bool", 1, &status_result, 2,
                    list_bool_args);
-  declare_external(builder, &builder->ext.add_list_str, "add_list_str", 0, NULL, 2, list_str_args);
-  declare_external(builder, &builder->ext.add_list_obj, "add_list_obj", 0, NULL, 2, list_obj_args);
-  declare_external(builder, &builder->ext.set_list, "set_list", 0, NULL, 3, set_list_args);
+  declare_external(builder, &builder->ext.add_list_str, "add_list_str", 1, &status_result, 2, list_str_args);
+  declare_external(builder, &builder->ext.add_list_obj, "add_list_obj", 1, &status_result, 2, list_obj_args);
+  declare_external(builder, &builder->ext.set_list, "set_list", 1, &status_result, 3, set_list_args);
   declare_external(builder, &builder->ext.create_set, "create_set", 1, &ptr_result, 0, NULL);
-  declare_external(builder, &builder->ext.add_set_int, "add_set_int", 0, NULL, 2, list_i32_args);
-  declare_external(builder, &builder->ext.add_set_dbl, "add_set_dbl", 0, NULL, 2, list_dbl_args);
-  declare_external(builder, &builder->ext.add_set_bool, "add_set_bool", 0, NULL, 2, list_bool_args);
-  declare_external(builder, &builder->ext.add_set_str, "add_set_str", 0, NULL, 2, list_str_args);
-  declare_external(builder, &builder->ext.set_set, "set_set", 0, NULL, 3, set_list_args);
+  declare_external(builder, &builder->ext.add_set_int, "add_set_int", 1, &status_result, 2, list_i32_args);
+  declare_external(builder, &builder->ext.add_set_u32, "add_set_uint32", 1, &status_result, 2,
+                   list_u32_args);
+  declare_external(builder, &builder->ext.add_set_i64, "add_set_int64", 1, &status_result, 2,
+                   list_i64_args);
+  declare_external(builder, &builder->ext.add_set_u64, "add_set_uint64", 1, &status_result, 2,
+                   list_u64_args);
+  declare_external(builder, &builder->ext.add_set_dbl, "add_set_dbl", 1, &status_result, 2, list_dbl_args);
+  declare_external(builder, &builder->ext.add_set_bool, "add_set_bool", 1, &status_result, 2, list_bool_args);
+  declare_external(builder, &builder->ext.add_set_str, "add_set_str", 1, &status_result, 2, list_str_args);
+  declare_external(builder, &builder->ext.set_set, "set_set", 1, &status_result, 3, set_list_args);
   declare_external(builder, &builder->ext.create_map, "create_map", 1, &ptr_result, 0, NULL);
-  declare_external(builder, &builder->ext.add_map_str_str, "add_map_str_str", 0, NULL, 3,
+  declare_external(builder, &builder->ext.add_map_str_str, "add_map_str_str", 1, &status_result, 3,
                    map_str_str_args);
-  declare_external(builder, &builder->ext.add_map_str_int, "add_map_str_int", 0, NULL, 3,
+  declare_external(builder, &builder->ext.add_map_str_int, "add_map_str_int", 1, &status_result, 3,
                    map_str_int_args);
-  declare_external(builder, &builder->ext.add_map_str_dbl, "add_map_str_dbl", 0, NULL, 3,
+  declare_external(builder, &builder->ext.add_map_str_u32, "add_map_str_uint32", 1,
+                   &status_result, 3, map_str_u32_args);
+  declare_external(builder, &builder->ext.add_map_str_i64, "add_map_str_int64", 1, &status_result,
+                   3, map_str_i64_args);
+  declare_external(builder, &builder->ext.add_map_str_u64, "add_map_str_uint64", 1,
+                   &status_result, 3, map_str_u64_args);
+  declare_external(builder, &builder->ext.add_map_str_dbl, "add_map_str_dbl", 1, &status_result, 3,
                    map_str_dbl_args);
-  declare_external(builder, &builder->ext.add_map_str_bool, "add_map_str_bool", 0, NULL, 3,
+  declare_external(builder, &builder->ext.add_map_str_bool, "add_map_str_bool", 1, &status_result, 3,
                    map_str_bool_args);
-  declare_external(builder, &builder->ext.set_map, "set_map", 0, NULL, 3, set_list_args);
+  declare_external(builder, &builder->ext.set_map, "set_map", 1, &status_result, 3, set_list_args);
   declare_external(builder, &builder->ext.read_varstr, "read_varstr", 1, &ptr_result, 3,
                    read_varstr_args);
   declare_external(builder, &builder->ext.free_fn, "free", 0, NULL, 1, free_args);
@@ -4981,6 +5470,23 @@ static void emitter_call_result(mir_emitter_t *e, external_ref_t *ref, MIR_reg_t
   for (i = 0; i < nargs; i++)
     ops[i + 3] = args[i];
   emitter_append(e, MIR_new_insn_arr(e->builder->ctx, MIR_CALL, nargs + 3, ops));
+}
+
+static MIR_reg_t emitter_call_status(mir_emitter_t *e, external_ref_t *ref, MIR_op_t *args,
+                                     size_t nargs) {
+  MIR_reg_t status_reg = emitter_new_reg(e, MIR_T_I64, "__mutation_status");
+  emitter_call_result(e, ref, status_reg, args, nargs);
+  return status_reg;
+}
+
+static void emitter_branch_on_failure(mir_emitter_t *e, MIR_reg_t status_reg) {
+  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
+                                 emitter_reg(e, status_reg), MIR_new_int_op(e->builder->ctx, 0)));
+}
+
+static void emitter_call_checked(mir_emitter_t *e, external_ref_t *ref, MIR_op_t *args,
+                                 size_t nargs) {
+  emitter_branch_on_failure(e, emitter_call_status(e, ref, args, nargs));
 }
 
 static MIR_op_t emitter_mem(mir_emitter_t *e, MIR_type_t type, MIR_reg_t off_reg, int disp) {
@@ -5093,24 +5599,31 @@ static void emit_fields_into_object(mir_emitter_t *e, MIR_reg_t target_obj_reg, 
 static void emit_scalar_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
                               const emit_field_t *field, MIR_item_t field_name_item) {
   MIR_op_t args[4];
-  if (field->kind == EF_INT || field->kind == EF_I64 || field->kind == EF_DBL ||
+  if (field->kind == EF_INT || field->kind == EF_U32 || field->kind == EF_I64 ||
+      field->kind == EF_U64 || field->kind == EF_DBL ||
       field->kind == EF_BOOL) {
     emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
     args[0] = emitter_reg(e, target_obj_reg);
     args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
     if (field->kind == EF_INT) {
       args[2] = emitter_int32_value(e, field, off_reg);
-      emitter_call(e, &e->builder->ext.set_int, args, 3);
+      emitter_call_checked(e, &e->builder->ext.set_int, args, 3);
+    } else if (field->kind == EF_U32) {
+      args[2] = emitter_mem(e, MIR_T_U32, off_reg, 0);
+      emitter_call_checked(e, &e->builder->ext.set_u32, args, 3);
     } else if (field->kind == EF_I64) {
       args[2] = emitter_mem(e, field->mir_type, off_reg, 0);
-      emitter_call(e, &e->builder->ext.set_i64, args, 3);
+      emitter_call_checked(e, &e->builder->ext.set_i64, args, 3);
+    } else if (field->kind == EF_U64) {
+      args[2] = emitter_mem(e, MIR_T_U64, off_reg, 0);
+      emitter_call_checked(e, &e->builder->ext.set_u64, args, 3);
     } else if (field->kind == EF_BOOL) {
       args[2] = emitter_bool_value(e, off_reg);
-      emitter_call(e, &e->builder->ext.set_bool, args, 3);
+      emitter_call_checked(e, &e->builder->ext.set_bool, args, 3);
     } else {
       args[2] = field->mir_type == MIR_T_F ? emitter_float_to_double(e, off_reg)
                                            : emitter_mem(e, MIR_T_D, off_reg, 0);
-      emitter_call(e, &e->builder->ext.set_dbl, args, 3);
+      emitter_call_checked(e, &e->builder->ext.set_dbl, args, 3);
     }
     emitter_advance_const(e, off_reg, field->size);
     return;
@@ -5123,7 +5636,7 @@ static void emit_scalar_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_re
       args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
       args[2] = emitter_reg(e, ptr_reg);
       args[3] = MIR_new_int_op(e->builder->ctx, field->size);
-      emitter_call(e, &e->builder->ext.set_bytes, args, 4);
+      emitter_call_checked(e, &e->builder->ext.set_bytes, args, 4);
     }
     emitter_advance_const(e, off_reg, field->size);
     return;
@@ -5135,7 +5648,7 @@ static void emit_scalar_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_re
     args[0] = emitter_reg(e, target_obj_reg);
     args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
     args[2] = emitter_reg(e, ptr_reg);
-    emitter_call(e, &e->builder->ext.set_uuid, args, 3);
+    emitter_call_checked(e, &e->builder->ext.set_uuid, args, 3);
     emitter_advance_const(e, off_reg, 16);
     return;
   }
@@ -5150,7 +5663,7 @@ static void emit_scalar_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_re
     if (field->kind == EF_STR) {
       MIR_reg_t str_reg = emitter_new_reg(e, MIR_T_I64, "__str");
       MIR_reg_t remaining_reg = emitter_new_reg(e, MIR_T_I64, "__str_rem");
-      MIR_label_t skip_label = MIR_new_label(e->builder->ctx);
+      MIR_reg_t status_reg;
       emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_SUB, emitter_reg(e, remaining_reg),
                                      emitter_reg(e, e->len_reg), emitter_reg(e, off_reg)));
       args[0] = emitter_reg(e, e->buf_reg);
@@ -5158,15 +5671,15 @@ static void emit_scalar_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_re
       args[2] = emitter_reg(e, remaining_reg);
       emitter_call_result(e, &e->builder->ext.read_varstr, str_reg, args, 3);
       emitter_advance_reg(e, off_reg, total_reg);
-      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, skip_label),
+      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
                                      emitter_reg(e, str_reg), MIR_new_int_op(e->builder->ctx, 0)));
       args[0] = emitter_reg(e, target_obj_reg);
       args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
       args[2] = emitter_reg(e, str_reg);
-      emitter_call(e, &e->builder->ext.set_str, args, 3);
-      emitter_append(e, skip_label);
+      status_reg = emitter_call_status(e, &e->builder->ext.set_str, args, 3);
       args[0] = emitter_reg(e, str_reg);
       emitter_call(e, &e->builder->ext.free_fn, args, 1);
+      emitter_branch_on_failure(e, status_reg);
     } else {
       if (field->has_set_bytes) {
         MIR_reg_t ptr_reg = emitter_ptr_from_off(e, off_reg, 4, "__var_bytes");
@@ -5174,7 +5687,7 @@ static void emit_scalar_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_re
         args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
         args[2] = emitter_reg(e, ptr_reg);
         args[3] = emitter_reg(e, len_reg);
-        emitter_call(e, &e->builder->ext.set_bytes, args, 4);
+        emitter_call_checked(e, &e->builder->ext.set_bytes, args, 4);
       }
       emitter_advance_reg(e, off_reg, total_reg);
     }
@@ -5195,7 +5708,7 @@ static void emit_list_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_
   args[0] = emitter_reg(e, target_obj_reg);
   args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
   args[2] = emitter_reg(e, list_reg);
-  emitter_call(e, &e->builder->ext.set_list, args, 3);
+  emitter_call_checked(e, &e->builder->ext.set_list, args, 3);
   if (field->fixed_count > 0) {
     emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, count_reg),
                                    MIR_new_int_op(e->builder->ctx, field->fixed_count)));
@@ -5210,28 +5723,35 @@ static void emit_list_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_
   emitter_append(e, loop_label);
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UBGE, emitter_label(e, done_label),
                                  emitter_reg(e, index_reg), emitter_reg(e, count_reg)));
-  if (field->kind == EF_LIST_INT || field->kind == EF_LIST_I64 || field->kind == EF_LIST_DBL ||
-      field->kind == EF_LIST_BOOL) {
+  if (field->kind == EF_LIST_INT || field->kind == EF_LIST_U32 ||
+      field->kind == EF_LIST_I64 || field->kind == EF_LIST_U64 ||
+      field->kind == EF_LIST_DBL || field->kind == EF_LIST_BOOL) {
     emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
     args[0] = emitter_reg(e, list_reg);
     if (field->kind == EF_LIST_INT) {
       args[1] = emitter_int32_value(e, field, off_reg);
-      emitter_call(e, &e->builder->ext.add_list_int, args, 2);
+      emitter_call_checked(e, &e->builder->ext.add_list_int, args, 2);
+    } else if (field->kind == EF_LIST_U32) {
+      args[1] = emitter_mem(e, MIR_T_U32, off_reg, 0);
+      emitter_call_checked(e, &e->builder->ext.add_list_u32, args, 2);
     } else if (field->kind == EF_LIST_I64) {
       args[1] = emitter_mem(e, field->mir_type, off_reg, 0);
-      emitter_call(e, &e->builder->ext.add_list_i64, args, 2);
+      emitter_call_checked(e, &e->builder->ext.add_list_i64, args, 2);
+    } else if (field->kind == EF_LIST_U64) {
+      args[1] = emitter_mem(e, MIR_T_U64, off_reg, 0);
+      emitter_call_checked(e, &e->builder->ext.add_list_u64, args, 2);
     } else if (field->kind == EF_LIST_BOOL) {
       args[1] = emitter_bool_value(e, off_reg);
-      emitter_call(e, &e->builder->ext.add_list_bool, args, 2);
+      emitter_call_checked(e, &e->builder->ext.add_list_bool, args, 2);
     } else {
       args[1] = field->mir_type == MIR_T_F ? emitter_float_to_double(e, off_reg)
                                            : emitter_mem(e, MIR_T_D, off_reg, 0);
-      emitter_call(e, &e->builder->ext.add_list_dbl, args, 2);
+      emitter_call_checked(e, &e->builder->ext.add_list_dbl, args, 2);
     }
     emitter_advance_const(e, off_reg, field->size);
   } else if (field->kind == EF_LIST_STR) {
     MIR_reg_t len_reg, total_reg, str_reg;
-    MIR_label_t skip_label = MIR_new_label(e->builder->ctx);
+    MIR_reg_t status_reg;
     emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
     len_reg = emitter_load_u32(e, off_reg, 0);
     total_reg = emitter_new_reg(e, MIR_T_I64, "__list_str_total");
@@ -5249,14 +5769,14 @@ static void emit_list_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_
       emitter_call_result(e, &e->builder->ext.read_varstr, str_reg, args, 3);
     }
     emitter_advance_reg(e, off_reg, total_reg);
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, skip_label),
+    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
                                    emitter_reg(e, str_reg), MIR_new_int_op(e->builder->ctx, 0)));
     args[0] = emitter_reg(e, list_reg);
     args[1] = emitter_reg(e, str_reg);
-    emitter_call(e, &e->builder->ext.add_list_str, args, 2);
-    emitter_append(e, skip_label);
+    status_reg = emitter_call_status(e, &e->builder->ext.add_list_str, args, 2);
     args[0] = emitter_reg(e, str_reg);
     emitter_call(e, &e->builder->ext.free_fn, args, 1);
+    emitter_branch_on_failure(e, status_reg);
   } else if (field->kind == EF_LIST_OBJ) {
     MIR_reg_t child_reg = emitter_new_reg(e, MIR_T_I64, "__child"),
               child_off_reg = emitter_new_reg(e, MIR_T_I64, "__child_off");
@@ -5265,7 +5785,7 @@ static void emit_list_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_
                                    emitter_reg(e, child_reg), MIR_new_int_op(e->builder->ctx, 0)));
     args[0] = emitter_reg(e, list_reg);
     args[1] = emitter_reg(e, child_reg);
-    emitter_call(e, &e->builder->ext.add_list_obj, args, 2);
+    emitter_call_checked(e, &e->builder->ext.add_list_obj, args, 2);
     emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, child_off_reg),
                                    emitter_reg(e, off_reg)));
     emit_fields_into_object(e, child_reg, child_off_reg, &field->children);
@@ -5292,7 +5812,7 @@ static void emit_set_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t
   args[0] = emitter_reg(e, target_obj_reg);
   args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
   args[2] = emitter_reg(e, set_reg);
-  emitter_call(e, &e->builder->ext.set_set, args, 3);
+  emitter_call_checked(e, &e->builder->ext.set_set, args, 3);
   emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, count_reg),
                                  emitter_reg(e, emitter_load_u32(e, off_reg, 0))));
@@ -5306,22 +5826,37 @@ static void emit_set_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t
   if (field->kind == EF_SET_INT) {
     emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
     args[1] = emitter_int32_value(e, field, off_reg);
-    emitter_call(e, &e->builder->ext.add_set_int, args, 2);
+    emitter_call_checked(e, &e->builder->ext.add_set_int, args, 2);
+    emitter_advance_const(e, off_reg, field->size);
+  } else if (field->kind == EF_SET_U32) {
+    emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
+    args[1] = emitter_mem(e, MIR_T_U32, off_reg, 0);
+    emitter_call_checked(e, &e->builder->ext.add_set_u32, args, 2);
+    emitter_advance_const(e, off_reg, field->size);
+  } else if (field->kind == EF_SET_I64) {
+    emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
+    args[1] = emitter_mem(e, field->mir_type, off_reg, 0);
+    emitter_call_checked(e, &e->builder->ext.add_set_i64, args, 2);
+    emitter_advance_const(e, off_reg, field->size);
+  } else if (field->kind == EF_SET_U64) {
+    emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
+    args[1] = emitter_mem(e, MIR_T_U64, off_reg, 0);
+    emitter_call_checked(e, &e->builder->ext.add_set_u64, args, 2);
     emitter_advance_const(e, off_reg, field->size);
   } else if (field->kind == EF_SET_DBL) {
     emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
     args[1] = field->mir_type == MIR_T_F ? emitter_float_to_double(e, off_reg)
                                          : emitter_mem(e, MIR_T_D, off_reg, 0);
-    emitter_call(e, &e->builder->ext.add_set_dbl, args, 2);
+    emitter_call_checked(e, &e->builder->ext.add_set_dbl, args, 2);
     emitter_advance_const(e, off_reg, field->size);
   } else if (field->kind == EF_SET_BOOL) {
     emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
     args[1] = emitter_bool_value(e, off_reg);
-    emitter_call(e, &e->builder->ext.add_set_bool, args, 2);
+    emitter_call_checked(e, &e->builder->ext.add_set_bool, args, 2);
     emitter_advance_const(e, off_reg, field->size);
   } else if (field->kind == EF_SET_STR) {
     MIR_reg_t len_reg, total_reg, str_reg;
-    MIR_label_t skip_label = MIR_new_label(e->builder->ctx);
+    MIR_reg_t status_reg;
     emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
     len_reg = emitter_load_u32(e, off_reg, 0);
     total_reg = emitter_new_reg(e, MIR_T_I64, "__set_str_total");
@@ -5339,14 +5874,14 @@ static void emit_set_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t
       emitter_call_result(e, &e->builder->ext.read_varstr, str_reg, args, 3);
     }
     emitter_advance_reg(e, off_reg, total_reg);
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, skip_label),
+    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
                                    emitter_reg(e, str_reg), MIR_new_int_op(e->builder->ctx, 0)));
     args[0] = emitter_reg(e, set_reg);
     args[1] = emitter_reg(e, str_reg);
-    emitter_call(e, &e->builder->ext.add_set_str, args, 2);
-    emitter_append(e, skip_label);
+    status_reg = emitter_call_status(e, &e->builder->ext.add_set_str, args, 2);
     args[0] = emitter_reg(e, str_reg);
     emitter_call(e, &e->builder->ext.free_fn, args, 1);
+    emitter_branch_on_failure(e, status_reg);
   }
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, index_reg),
                                  emitter_reg(e, index_reg), MIR_new_int_op(e->builder->ctx, 1)));
@@ -5368,7 +5903,7 @@ static void emit_map_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t
   args[0] = emitter_reg(e, target_obj_reg);
   args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
   args[2] = emitter_reg(e, map_reg);
-  emitter_call(e, &e->builder->ext.set_map, args, 3);
+  emitter_call_checked(e, &e->builder->ext.set_map, args, 3);
   emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, count_reg),
                                  emitter_reg(e, emitter_load_u32(e, off_reg, 0))));
@@ -5380,7 +5915,8 @@ static void emit_map_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t
                                  emitter_reg(e, index_reg), emitter_reg(e, count_reg)));
   {
     MIR_reg_t key_len_reg, key_total_reg, key_reg;
-    MIR_label_t skip_label = MIR_new_label(e->builder->ctx);
+    MIR_label_t cleanup_key_label = MIR_new_label(e->builder->ctx);
+    MIR_label_t item_done_label = MIR_new_label(e->builder->ctx);
     emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
     key_len_reg = emitter_load_u32(e, off_reg, 0);
     key_total_reg = emitter_new_reg(e, MIR_T_I64, "__key_total");
@@ -5399,15 +5935,17 @@ static void emit_map_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t
       emitter_call_result(e, &e->builder->ext.read_varstr, key_reg, args, 3);
     }
     emitter_advance_reg(e, off_reg, key_total_reg);
+    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
+                                   emitter_reg(e, key_reg), MIR_new_int_op(e->builder->ctx, 0)));
     if (field->kind == EF_MAP_STR_STR) {
-      MIR_reg_t val_len_reg, val_total_reg, val_reg;
-      emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
+      MIR_reg_t val_len_reg, val_total_reg, val_reg, status_reg;
+      emitter_bounds_check_const(e, off_reg, 4, cleanup_key_label);
       val_len_reg = emitter_load_u32(e, off_reg, 0);
       val_total_reg = emitter_new_reg(e, MIR_T_I64, "__val_total");
       emitter_append(e,
                      MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, val_total_reg),
                                   emitter_reg(e, val_len_reg), MIR_new_int_op(e->builder->ctx, 4)));
-      emitter_bounds_check_reg(e, off_reg, val_total_reg, e->fail_label);
+      emitter_bounds_check_reg(e, off_reg, val_total_reg, cleanup_key_label);
       val_reg = emitter_new_reg(e, MIR_T_I64, "__val");
       {
         MIR_reg_t vrem_reg = emitter_new_reg(e, MIR_T_I64, "__val_rem");
@@ -5419,46 +5957,70 @@ static void emit_map_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t
         emitter_call_result(e, &e->builder->ext.read_varstr, val_reg, args, 3);
       }
       emitter_advance_reg(e, off_reg, val_total_reg);
-      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, skip_label),
-                                     emitter_reg(e, key_reg), MIR_new_int_op(e->builder->ctx, 0)));
-      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, skip_label),
-                                     emitter_reg(e, val_reg), MIR_new_int_op(e->builder->ctx, 0)));
+      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ,
+                                     emitter_label(e, cleanup_key_label),
+                                     emitter_reg(e, val_reg),
+                                     MIR_new_int_op(e->builder->ctx, 0)));
       args[0] = emitter_reg(e, map_reg);
       args[1] = emitter_reg(e, key_reg);
       args[2] = emitter_reg(e, val_reg);
-      emitter_call(e, &e->builder->ext.add_map_str_str, args, 3);
-      emitter_append(e, skip_label);
+      status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_str, args, 3);
       args[0] = emitter_reg(e, key_reg);
       emitter_call(e, &e->builder->ext.free_fn, args, 1);
       args[0] = emitter_reg(e, val_reg);
       emitter_call(e, &e->builder->ext.free_fn, args, 1);
-    } else if (field->kind == EF_MAP_STR_INT || field->kind == EF_MAP_STR_DBL ||
-               field->kind == EF_MAP_STR_BOOL) {
-      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, skip_label),
-                                     emitter_reg(e, key_reg), MIR_new_int_op(e->builder->ctx, 0)));
+      emitter_branch_on_failure(e, status_reg);
+      emitter_append(e,
+                     MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, item_done_label)));
+    } else if (field->kind == EF_MAP_STR_INT || field->kind == EF_MAP_STR_U32 ||
+               field->kind == EF_MAP_STR_I64 || field->kind == EF_MAP_STR_U64 ||
+               field->kind == EF_MAP_STR_DBL || field->kind == EF_MAP_STR_BOOL) {
+      MIR_reg_t status_reg;
       args[0] = emitter_reg(e, map_reg);
       args[1] = emitter_reg(e, key_reg);
       if (field->kind == EF_MAP_STR_INT) {
-        emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
+        emitter_bounds_check_const(e, off_reg, field->size, cleanup_key_label);
         args[2] = emitter_int32_value(e, field, off_reg);
-        emitter_call(e, &e->builder->ext.add_map_str_int, args, 3);
+        status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_int, args, 3);
+        emitter_advance_const(e, off_reg, field->size);
+      } else if (field->kind == EF_MAP_STR_U32) {
+        emitter_bounds_check_const(e, off_reg, field->size, cleanup_key_label);
+        args[2] = emitter_mem(e, MIR_T_U32, off_reg, 0);
+        status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_u32, args, 3);
+        emitter_advance_const(e, off_reg, field->size);
+      } else if (field->kind == EF_MAP_STR_I64) {
+        emitter_bounds_check_const(e, off_reg, field->size, cleanup_key_label);
+        args[2] = emitter_mem(e, field->mir_type, off_reg, 0);
+        status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_i64, args, 3);
+        emitter_advance_const(e, off_reg, field->size);
+      } else if (field->kind == EF_MAP_STR_U64) {
+        emitter_bounds_check_const(e, off_reg, field->size, cleanup_key_label);
+        args[2] = emitter_mem(e, MIR_T_U64, off_reg, 0);
+        status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_u64, args, 3);
         emitter_advance_const(e, off_reg, field->size);
       } else if (field->kind == EF_MAP_STR_BOOL) {
-        emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
+        emitter_bounds_check_const(e, off_reg, field->size, cleanup_key_label);
         args[2] = emitter_bool_value(e, off_reg);
-        emitter_call(e, &e->builder->ext.add_map_str_bool, args, 3);
+        status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_bool, args, 3);
         emitter_advance_const(e, off_reg, field->size);
       } else {
-        emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
+        emitter_bounds_check_const(e, off_reg, field->size, cleanup_key_label);
         args[2] = field->mir_type == MIR_T_F ? emitter_float_to_double(e, off_reg)
                                              : emitter_mem(e, MIR_T_D, off_reg, 0);
-        emitter_call(e, &e->builder->ext.add_map_str_dbl, args, 3);
+        status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_dbl, args, 3);
         emitter_advance_const(e, off_reg, field->size);
       }
-      emitter_append(e, skip_label);
       args[0] = emitter_reg(e, key_reg);
       emitter_call(e, &e->builder->ext.free_fn, args, 1);
+      emitter_branch_on_failure(e, status_reg);
+      emitter_append(e,
+                     MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, item_done_label)));
     }
+    emitter_append(e, cleanup_key_label);
+    args[0] = emitter_reg(e, key_reg);
+    emitter_call(e, &e->builder->ext.free_fn, args, 1);
+    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, e->fail_label)));
+    emitter_append(e, item_done_label);
   }
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, index_reg),
                                  emitter_reg(e, index_reg), MIR_new_int_op(e->builder->ctx, 1)));
@@ -5493,7 +6055,7 @@ static void emit_group_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg
   args[0] = emitter_reg(e, target_obj_reg);
   args[1] = MIR_new_ref_op(e->builder->ctx, field_name_item);
   args[2] = emitter_reg(e, list_reg);
-  emitter_call(e, &e->builder->ext.set_list, args, 3);
+  emitter_call_checked(e, &e->builder->ext.set_list, args, 3);
   entries_off_reg = emitter_new_reg(e, MIR_T_I64, "__entries_off");
   emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, entries_off_reg),
                                  emitter_reg(e, off_reg)));
@@ -5520,7 +6082,7 @@ static void emit_group_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg
                                    emitter_reg(e, child_reg), MIR_new_int_op(e->builder->ctx, 0)));
     args[0] = emitter_reg(e, list_reg);
     args[1] = emitter_reg(e, child_reg);
-    emitter_call(e, &e->builder->ext.add_list_obj, args, 2);
+    emitter_call_checked(e, &e->builder->ext.add_list_obj, args, 2);
     emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, child_off_reg),
                                    emitter_reg(e, entry_off_reg)));
     emit_fields_into_object(e, child_reg, child_off_reg, &field->children);
@@ -5539,17 +6101,22 @@ static void emit_field_code(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_
     emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, e->fail_label)));
     return;
   }
-  if (field->kind == EF_INT || field->kind == EF_I64 || field->kind == EF_DBL ||
+  if (field->kind == EF_INT || field->kind == EF_U32 || field->kind == EF_I64 ||
+      field->kind == EF_U64 || field->kind == EF_DBL ||
       field->kind == EF_BOOL || field->kind == EF_UUID || field->kind == EF_STR ||
       field->kind == EF_FIX_BYTES || field->kind == EF_VAR_BYTES)
     emit_scalar_field(e, target_obj_reg, off_reg, field, field_name_item);
-  else if (field->kind == EF_LIST_INT || field->kind == EF_LIST_I64 || field->kind == EF_LIST_DBL ||
+  else if (field->kind == EF_LIST_INT || field->kind == EF_LIST_U32 ||
+           field->kind == EF_LIST_I64 || field->kind == EF_LIST_U64 || field->kind == EF_LIST_DBL ||
            field->kind == EF_LIST_BOOL || field->kind == EF_LIST_STR || field->kind == EF_LIST_OBJ)
     emit_list_field(e, target_obj_reg, off_reg, field, field_name_item);
-  else if (field->kind == EF_SET_INT || field->kind == EF_SET_DBL || field->kind == EF_SET_BOOL ||
-           field->kind == EF_SET_STR)
+  else if (field->kind == EF_SET_INT || field->kind == EF_SET_U32 ||
+           field->kind == EF_SET_I64 || field->kind == EF_SET_U64 || field->kind == EF_SET_DBL ||
+           field->kind == EF_SET_BOOL || field->kind == EF_SET_STR)
     emit_set_field(e, target_obj_reg, off_reg, field, field_name_item);
   else if (field->kind == EF_MAP_STR_STR || field->kind == EF_MAP_STR_INT ||
+           field->kind == EF_MAP_STR_U32 || field->kind == EF_MAP_STR_I64 ||
+           field->kind == EF_MAP_STR_U64 ||
            field->kind == EF_MAP_STR_DBL || field->kind == EF_MAP_STR_BOOL)
     emit_map_field(e, target_obj_reg, off_reg, field, field_name_item);
   else if (field->kind == EF_GROUP)
@@ -5696,7 +6263,7 @@ static void data_bind_free_contents(DataBind *codec) {
   if (codec->ctx != NULL) {
     if (codec->is_cloned && codec->schema_hash[0] != '\0') {
       /* Release cache reference - context will be freed by cache when ref_count reaches 0 */
-      mir_cache_release(codec->schema_hash);
+      mir_cache_release(codec->schema_hash, codec->ctx);
     } else if (!codec->is_cloned) {
       /* Owned context not in cache, can be destroyed directly */
       if (codec->mir_gen_initialized) MIR_gen_finish(codec->ctx);
@@ -5742,85 +6309,130 @@ static MIR_module_t generate_parser_module(DataBind *codec) {
   return builder.module;
 }
 
+typedef struct data_bind_mir_external {
+  const char *name;
+  const void *function_pointer;
+  size_t function_pointer_size;
+} data_bind_mir_external_t;
+
+static int load_mir_function_external(DataBind *codec,
+                                      const data_bind_mir_external_t *external) {
+  void *address = NULL;
+
+  if (external->function_pointer_size != sizeof(address))
+    return set_codec_error(codec, "Cannot link external function '%s': incompatible pointer size",
+                           external->name);
+
+  /* MIR uses void * for both function and data symbols.  Copy the representation here so callers
+     do not rely on a non-standard implicit function-to-object pointer conversion. */
+  memcpy(&address, external->function_pointer, sizeof(address));
+  if (address == NULL)
+    return set_codec_error(codec, "Cannot link external function '%s': null address",
+                           external->name);
+
+  MIR_load_external(codec->ctx, external->name, address);
+  return 1;
+}
+
 static int link_module(DataBind *codec, MIR_module_t module) {
-  MIR_load_module(codec->ctx, module);
-  MIR_load_external(codec->ctx, "create_obj", codec->api.create_object);
-  MIR_load_external(codec->ctx, "free_value", codec->api.free_value);
-  MIR_load_external(codec->ctx, "set_int", codec->api.set_field_int);
-  MIR_load_external(codec->ctx, "set_int64",
-                    codec->api.set_field_int64 != NULL ? codec->api.set_field_int64 : set_i64_noop);
-  MIR_load_external(codec->ctx, "set_dbl", codec->api.set_field_double);
-  MIR_load_external(codec->ctx, "set_bool",
-                    codec->api.set_field_bool != NULL ? codec->api.set_field_bool : set_bool_noop);
-  MIR_load_external(codec->ctx, "set_str", codec->api.set_field_string);
-  MIR_load_external(codec->ctx, "set_bytes",
-                    codec->api.set_field_bytes != NULL ? codec->api.set_field_bytes
-                                                       : set_bytes_noop);
-  MIR_load_external(codec->ctx, "set_uuid",
-                    codec->api.set_field_uuid != NULL ? codec->api.set_field_uuid : set_uuid_noop);
-  MIR_load_external(codec->ctx, "create_list",
-                    codec->api.create_list != NULL ? codec->api.create_list : container_noop);
-  MIR_load_external(codec->ctx, "add_list_int",
-                    codec->api.add_list_item_int != NULL ? codec->api.add_list_item_int
-                                                         : add_i32_noop);
-  MIR_load_external(codec->ctx, "add_list_int64",
-                    codec->api.add_list_item_int64 != NULL ? codec->api.add_list_item_int64
-                                                           : add_i64_noop);
-  MIR_load_external(codec->ctx, "add_list_dbl",
-                    codec->api.add_list_item_double != NULL ? codec->api.add_list_item_double
-                                                            : add_dbl_noop);
-  MIR_load_external(codec->ctx, "add_list_bool",
-                    codec->api.add_list_item_bool != NULL ? codec->api.add_list_item_bool
-                                                          : add_bool_noop);
-  MIR_load_external(codec->ctx, "add_list_str",
-                    codec->api.add_list_item_string != NULL ? codec->api.add_list_item_string
-                                                            : add_str_noop);
-  MIR_load_external(codec->ctx, "add_list_obj",
-                    codec->api.add_list_item_object != NULL ? codec->api.add_list_item_object
-                                                            : add_obj_noop);
-  MIR_load_external(codec->ctx, "set_list",
-                    codec->api.set_field_list != NULL ? codec->api.set_field_list
-                                                      : set_container_noop);
-  MIR_load_external(codec->ctx, "create_set",
-                    codec->api.create_set != NULL ? codec->api.create_set : container_noop);
-  MIR_load_external(codec->ctx, "add_set_int",
-                    codec->api.add_set_item_int != NULL ? codec->api.add_set_item_int
-                                                        : add_i32_noop);
-  MIR_load_external(codec->ctx, "add_set_dbl",
-                    codec->api.add_set_item_double != NULL ? codec->api.add_set_item_double
-                                                           : add_dbl_noop);
-  MIR_load_external(codec->ctx, "add_set_bool",
-                    codec->api.add_set_item_bool != NULL ? codec->api.add_set_item_bool
-                                                         : add_bool_noop);
-  MIR_load_external(codec->ctx, "add_set_str",
-                    codec->api.add_set_item_string != NULL ? codec->api.add_set_item_string
-                                                           : add_str_noop);
-  MIR_load_external(codec->ctx, "set_set",
-                    codec->api.set_field_set != NULL ? codec->api.set_field_set
-                                                     : set_container_noop);
-  MIR_load_external(codec->ctx, "create_map",
-                    codec->api.create_map != NULL ? codec->api.create_map : container_noop);
-  MIR_load_external(codec->ctx, "add_map_str_str",
-                    codec->api.add_map_entry_string_string != NULL
-                        ? codec->api.add_map_entry_string_string
-                        : add_map_str_str_noop);
-  MIR_load_external(codec->ctx, "add_map_str_int",
-                    codec->api.add_map_entry_string_int != NULL
-                        ? codec->api.add_map_entry_string_int
-                        : add_map_str_int_noop);
-  MIR_load_external(codec->ctx, "add_map_str_dbl",
-                    codec->api.add_map_entry_string_double != NULL
-                        ? codec->api.add_map_entry_string_double
-                        : add_map_str_dbl_noop);
-  MIR_load_external(codec->ctx, "add_map_str_bool",
-                    codec->api.add_map_entry_string_bool != NULL
-                        ? codec->api.add_map_entry_string_bool
-                        : add_map_str_bool_noop);
-  MIR_load_external(codec->ctx, "set_map",
-                    codec->api.set_field_map != NULL ? codec->api.set_field_map
-                                                     : set_container_noop);
-  MIR_load_external(codec->ctx, "read_varstr", tbe_read_varstring);
-  MIR_load_external(codec->ctx, "free", free);
+  data_bind_runtime_api_t api = codec->api;
+  char *(*read_varstr_fn)(const uint8_t *, size_t, size_t) = data_bind_read_varstring;
+  void (*free_fn)(void *) = free;
+  size_t i;
+
+  if (api.set_field_uint32 == NULL) api.set_field_uint32 = set_u32_noop;
+  if (api.set_field_int64 == NULL) api.set_field_int64 = set_i64_noop;
+  if (api.set_field_uint64 == NULL) api.set_field_uint64 = set_u64_noop;
+  if (api.set_field_bool == NULL) api.set_field_bool = set_bool_noop;
+  if (api.set_field_bytes == NULL) api.set_field_bytes = set_bytes_noop;
+  if (api.set_field_uuid == NULL) api.set_field_uuid = set_uuid_noop;
+  if (api.create_list == NULL) api.create_list = container_noop;
+  if (api.add_list_item_int == NULL) api.add_list_item_int = add_i32_noop;
+  if (api.add_list_item_uint32 == NULL) api.add_list_item_uint32 = add_u32_noop;
+  if (api.add_list_item_int64 == NULL) api.add_list_item_int64 = add_i64_noop;
+  if (api.add_list_item_uint64 == NULL) api.add_list_item_uint64 = add_u64_noop;
+  if (api.add_list_item_double == NULL) api.add_list_item_double = add_dbl_noop;
+  if (api.add_list_item_bool == NULL) api.add_list_item_bool = add_bool_noop;
+  if (api.add_list_item_string == NULL) api.add_list_item_string = add_str_noop;
+  if (api.add_list_item_object == NULL) api.add_list_item_object = add_obj_noop;
+  if (api.set_field_list == NULL) api.set_field_list = set_container_noop;
+  if (api.create_set == NULL) api.create_set = container_noop;
+  if (api.add_set_item_int == NULL) api.add_set_item_int = add_i32_noop;
+  if (api.add_set_item_uint32 == NULL) api.add_set_item_uint32 = add_u32_noop;
+  if (api.add_set_item_int64 == NULL) api.add_set_item_int64 = add_i64_noop;
+  if (api.add_set_item_uint64 == NULL) api.add_set_item_uint64 = add_u64_noop;
+  if (api.add_set_item_double == NULL) api.add_set_item_double = add_dbl_noop;
+  if (api.add_set_item_bool == NULL) api.add_set_item_bool = add_bool_noop;
+  if (api.add_set_item_string == NULL) api.add_set_item_string = add_str_noop;
+  if (api.set_field_set == NULL) api.set_field_set = set_container_noop;
+  if (api.create_map == NULL) api.create_map = container_noop;
+  if (api.add_map_entry_string_string == NULL)
+    api.add_map_entry_string_string = add_map_str_str_noop;
+  if (api.add_map_entry_string_int == NULL) api.add_map_entry_string_int = add_map_str_int_noop;
+  if (api.add_map_entry_string_uint32 == NULL)
+    api.add_map_entry_string_uint32 = add_map_str_u32_noop;
+  if (api.add_map_entry_string_int64 == NULL)
+    api.add_map_entry_string_int64 = add_map_str_i64_noop;
+  if (api.add_map_entry_string_uint64 == NULL)
+    api.add_map_entry_string_uint64 = add_map_str_u64_noop;
+  if (api.add_map_entry_string_double == NULL)
+    api.add_map_entry_string_double = add_map_str_dbl_noop;
+  if (api.add_map_entry_string_bool == NULL)
+    api.add_map_entry_string_bool = add_map_str_bool_noop;
+  if (api.set_field_map == NULL) api.set_field_map = set_container_noop;
+
+#define MIR_FUNCTION_EXTERNAL(external_name, function_pointer)                                      \
+  { external_name, &(function_pointer), sizeof(function_pointer) }
+  {
+    const data_bind_mir_external_t externals[] = {
+        MIR_FUNCTION_EXTERNAL("create_obj", api.create_object),
+        MIR_FUNCTION_EXTERNAL("free_value", api.free_value),
+        MIR_FUNCTION_EXTERNAL("set_int", api.set_field_int),
+        MIR_FUNCTION_EXTERNAL("set_uint32", api.set_field_uint32),
+        MIR_FUNCTION_EXTERNAL("set_int64", api.set_field_int64),
+        MIR_FUNCTION_EXTERNAL("set_uint64", api.set_field_uint64),
+        MIR_FUNCTION_EXTERNAL("set_dbl", api.set_field_double),
+        MIR_FUNCTION_EXTERNAL("set_bool", api.set_field_bool),
+        MIR_FUNCTION_EXTERNAL("set_str", api.set_field_string),
+        MIR_FUNCTION_EXTERNAL("set_bytes", api.set_field_bytes),
+        MIR_FUNCTION_EXTERNAL("set_uuid", api.set_field_uuid),
+        MIR_FUNCTION_EXTERNAL("create_list", api.create_list),
+        MIR_FUNCTION_EXTERNAL("add_list_int", api.add_list_item_int),
+        MIR_FUNCTION_EXTERNAL("add_list_uint32", api.add_list_item_uint32),
+        MIR_FUNCTION_EXTERNAL("add_list_int64", api.add_list_item_int64),
+        MIR_FUNCTION_EXTERNAL("add_list_uint64", api.add_list_item_uint64),
+        MIR_FUNCTION_EXTERNAL("add_list_dbl", api.add_list_item_double),
+        MIR_FUNCTION_EXTERNAL("add_list_bool", api.add_list_item_bool),
+        MIR_FUNCTION_EXTERNAL("add_list_str", api.add_list_item_string),
+        MIR_FUNCTION_EXTERNAL("add_list_obj", api.add_list_item_object),
+        MIR_FUNCTION_EXTERNAL("set_list", api.set_field_list),
+        MIR_FUNCTION_EXTERNAL("create_set", api.create_set),
+        MIR_FUNCTION_EXTERNAL("add_set_int", api.add_set_item_int),
+        MIR_FUNCTION_EXTERNAL("add_set_uint32", api.add_set_item_uint32),
+        MIR_FUNCTION_EXTERNAL("add_set_int64", api.add_set_item_int64),
+        MIR_FUNCTION_EXTERNAL("add_set_uint64", api.add_set_item_uint64),
+        MIR_FUNCTION_EXTERNAL("add_set_dbl", api.add_set_item_double),
+        MIR_FUNCTION_EXTERNAL("add_set_bool", api.add_set_item_bool),
+        MIR_FUNCTION_EXTERNAL("add_set_str", api.add_set_item_string),
+        MIR_FUNCTION_EXTERNAL("set_set", api.set_field_set),
+        MIR_FUNCTION_EXTERNAL("create_map", api.create_map),
+        MIR_FUNCTION_EXTERNAL("add_map_str_str", api.add_map_entry_string_string),
+        MIR_FUNCTION_EXTERNAL("add_map_str_int", api.add_map_entry_string_int),
+        MIR_FUNCTION_EXTERNAL("add_map_str_uint32", api.add_map_entry_string_uint32),
+        MIR_FUNCTION_EXTERNAL("add_map_str_int64", api.add_map_entry_string_int64),
+        MIR_FUNCTION_EXTERNAL("add_map_str_uint64", api.add_map_entry_string_uint64),
+        MIR_FUNCTION_EXTERNAL("add_map_str_dbl", api.add_map_entry_string_double),
+        MIR_FUNCTION_EXTERNAL("add_map_str_bool", api.add_map_entry_string_bool),
+        MIR_FUNCTION_EXTERNAL("set_map", api.set_field_map),
+        MIR_FUNCTION_EXTERNAL("read_varstr", read_varstr_fn),
+        MIR_FUNCTION_EXTERNAL("free", free_fn),
+    };
+#undef MIR_FUNCTION_EXTERNAL
+
+    MIR_load_module(codec->ctx, module);
+    for (i = 0; i < sizeof(externals) / sizeof(externals[0]); ++i)
+      if (!load_mir_function_external(codec, &externals[i])) return 0;
+  }
   MIR_gen_init(codec->ctx);
   codec->mir_gen_initialized = 1;
   MIR_link(codec->ctx, MIR_set_gen_interface, NULL);
@@ -5997,31 +6609,16 @@ void data_bind_free(DataBind *codec) {
 void data_bind_set_cache_enabled(int enabled) { g_mir_cache_enabled = enabled != 0; }
 
 void data_bind_clear_cache(void) {
-  mir_cache_entry_t *entry = g_mir_cache_head;
-  mir_cache_entry_t *next;
-
-  while (entry != NULL) {
-    next = entry->next;
-    /* Only free entries with zero ref count */
+  mir_cache_entry_t **entry_ptr = &g_mir_cache_head;
+  while (*entry_ptr != NULL) {
+    mir_cache_entry_t *entry = *entry_ptr;
+    entry->evicted = 1;
     if (entry->ref_count <= 0) {
-      if (entry->shared_ctx != NULL) {
-        MIR_gen_finish(entry->shared_ctx);
-        MIR_finish(entry->shared_ctx);
-      }
-      free(entry);
+      *entry_ptr = entry->next;
+      mir_cache_entry_destroy(entry);
+    } else {
+      entry_ptr = &entry->next;
     }
-    entry = next;
-  }
-
-  /* Rebuild list with only referenced entries */
-  g_mir_cache_head = NULL;
-  entry = g_mir_cache_head;
-  while (entry != NULL) {
-    if (entry->ref_count > 0) {
-      entry->next = g_mir_cache_head;
-      g_mir_cache_head = entry;
-    }
-    entry = entry->next;
   }
 }
 
@@ -6146,9 +6743,13 @@ DataBindStatus data_bind_parse(DataBind *codec, const char *type_name, const uin
     if (strcmp(node->type_name, type_name) == 0) {
       parse_fn = (DataBindValue * (*)(const uint8_t *, int64_t)) node->parse_fn;
       codec->error[0] = '\0';
+      g_dynamic_runtime_oom = 0;
       result = parse_fn(buf, (int64_t)len);
       if (result == NULL) {
         db_error_format_path(error_path, sizeof(error_path), "binary", "parse failed");
+        if (g_dynamic_runtime_oom)
+          return db_error_set(error, DATA_BIND_ERR_OOM, error_path, -1, -1,
+                              "Out of memory binding binary type: %s", type_name);
         return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1,
                             "Binary bind failed for type: %s", type_name);
       }
@@ -6398,8 +6999,17 @@ static int data_bind_stream_json_on_bool(void *ctx, bool val) {
   return data_bind_stream_json_scalar((data_bind_stream_t *)ctx, turbo_json_create_bool(val));
 }
 
-static int data_bind_stream_json_on_number(void *ctx, double val) {
-  return data_bind_stream_json_scalar((data_bind_stream_t *)ctx, turbo_json_create_number(val));
+static int data_bind_stream_json_on_number_raw(void *ctx, const char *val, size_t len) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  turbo_json_doc_t *value = NULL;
+  if (val == NULL || len == 0 ||
+      turbo_parse_json((const uint8_t *)val, len, &value) != 0 ||
+      turbo_json_type(value) != TURBO_JSON_NUMBER) {
+    turbo_free_json(&value);
+    data_bind_stream_error_msg(parser, "Failed to preserve exact JSON stream number");
+    return -1;
+  }
+  return data_bind_stream_json_scalar(parser, value);
 }
 
 static int data_bind_stream_json_on_string(void *ctx, const char *val, size_t len) {
@@ -6620,9 +7230,9 @@ static int data_bind_stream_xml_on_cdata(void *ctx, const char *text, size_t tex
   return 0;
 }
 
-static const turbo_json_sax_handler_t DATA_BIND_JSON_STREAM_HANDLER = {
+static const turbo_json_sax_handler_raw_t DATA_BIND_JSON_STREAM_HANDLER = {
     data_bind_stream_json_on_null,         data_bind_stream_json_on_bool,
-    data_bind_stream_json_on_number,       data_bind_stream_json_on_string,
+    data_bind_stream_json_on_number_raw,   data_bind_stream_json_on_string,
     data_bind_stream_json_on_object_start, data_bind_stream_json_on_object_key,
     data_bind_stream_json_on_object_end,   data_bind_stream_json_on_array_start,
     data_bind_stream_json_on_array_end};
@@ -6640,6 +7250,7 @@ static const turbo_xml_sax_handler_t DATA_BIND_XML_STREAM_HANDLER = {
     NULL};
 
 static const turbo_json_sax_handler_t DATA_BIND_JSON_SAX_VALIDATE_HANDLER = {0};
+static const turbo_yaml_sax_handler_t DATA_BIND_YAML_SAX_VALIDATE_HANDLER = {0};
 static const turbo_xml_sax_handler_t DATA_BIND_XML_SAX_VALIDATE_HANDLER = {0};
 
 static DataBindStatus data_bind_stream_sax_error(data_bind_stream_t *parser, DataBindError *error,
@@ -6652,6 +7263,9 @@ static DataBindStatus data_bind_stream_sax_error(data_bind_stream_t *parser, Dat
     } else if (parser->json_sax != NULL) {
       message = turbo_json_sax_parser_error(parser->json_sax);
       path = "json";
+    } else if (parser->yaml_sax != NULL) {
+      message = turbo_yaml_sax_parser_error(parser->yaml_sax);
+      path = "yaml";
     } else if (parser->xml_sax != NULL) {
       message = turbo_xml_sax_parser_error(parser->xml_sax);
       path = "xml";
@@ -6674,6 +7288,10 @@ static DataBindStatus data_bind_stream_sax_feed(data_bind_stream_t *parser, cons
     if (turbo_json_sax_parser_feed(parser->json_sax, data, len) != 0) {
       return data_bind_stream_sax_error(parser, error, "JSON stream feed");
     }
+  } else if (parser->yaml_sax != NULL) {
+    if (turbo_yaml_sax_parser_feed(parser->yaml_sax, data, len) != 0) {
+      return data_bind_stream_sax_error(parser, error, "YAML stream feed");
+    }
   } else if (parser->xml_sax != NULL) {
     if (turbo_xml_sax_parser_feed(parser->xml_sax, data, len) != 0) {
       return data_bind_stream_sax_error(parser, error, "XML stream feed");
@@ -6690,6 +7308,10 @@ static DataBindStatus data_bind_stream_sax_finish(data_bind_stream_t *parser,
   if (parser->json_sax != NULL) {
     if (turbo_json_sax_parser_finish(parser->json_sax) != 0) {
       return data_bind_stream_sax_error(parser, error, "JSON stream finish");
+    }
+  } else if (parser->yaml_sax != NULL) {
+    if (turbo_yaml_sax_parser_finish(parser->yaml_sax) != 0) {
+      return data_bind_stream_sax_error(parser, error, "YAML stream finish");
     }
   } else if (parser->xml_sax != NULL) {
     if (turbo_xml_sax_parser_finish(parser->xml_sax) != 0) {
@@ -7134,6 +7756,7 @@ static data_bind_stream_t *data_bind_stream_create_common(
   parser->csv_values = NULL;
   parser->stream_values = NULL;
   parser->json_sax = NULL;
+  parser->yaml_sax = NULL;
   parser->xml_sax = NULL;
   parser->json_frames = NULL;
   parser->json_frame_count = 0;
@@ -7184,10 +7807,11 @@ static data_bind_stream_t *data_bind_stream_create_common(
         return NULL;
       }
     }
-    parser->json_sax = turbo_json_sax_parser_create(parser->json_stream_candidate
-                                                        ? &DATA_BIND_JSON_STREAM_HANDLER
-                                                        : &DATA_BIND_JSON_SAX_VALIDATE_HANDLER,
-                                                    parser);
+    parser->json_sax = parser->json_stream_candidate
+                           ? turbo_json_sax_parser_create_raw(&DATA_BIND_JSON_STREAM_HANDLER,
+                                                             parser)
+                           : turbo_json_sax_parser_create(&DATA_BIND_JSON_SAX_VALIDATE_HANDLER,
+                                                         parser);
     if (parser->json_sax == NULL) {
       data_bind_value_free(parser->stream_values);
       free(parser->path_or_expr);
@@ -7195,6 +7819,17 @@ static data_bind_stream_t *data_bind_stream_create_common(
       free(parser);
       db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create", -1, -1,
                    "Out of memory creating JSON stream validator");
+      return NULL;
+    }
+  } else if (finish_fn == data_bind_stream_buffered_finish) {
+    parser->yaml_sax =
+        turbo_yaml_sax_parser_create(&DATA_BIND_YAML_SAX_VALIDATE_HANDLER, parser);
+    if (parser->yaml_sax == NULL) {
+      free(parser->path_or_expr);
+      free(parser->type_name);
+      free(parser);
+      db_error_set(error, DATA_BIND_ERR_OOM, "data_bind_stream_create", -1, -1,
+                   "Out of memory creating YAML stream validator");
       return NULL;
     }
   } else if (finish_fn == data_bind_stream_xml_finish) {
@@ -7689,6 +8324,11 @@ static DataBindStatus data_bind_stream_buffered_finish(data_bind_stream_t *parse
     return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "data_bind_stream_finish", -1, -1,
                         "Invalid buffered stream finish state");
   }
+  status = data_bind_stream_sax_finish(parser, error);
+  if (status != DATA_BIND_OK) {
+    parser->finished = 1;
+    return status;
+  }
   if (parser->buffer == NULL) {
     parser->buffer = (char *)malloc(1);
     if (parser->buffer == NULL) {
@@ -7729,6 +8369,7 @@ void data_bind_stream_destroy(data_bind_stream_t *stream) {
   free(parser->csv_field_storage);
   if (parser->csv_filter != NULL) turbo_dsv_filter_destroy(parser->csv_filter);
   if (parser->json_sax != NULL) turbo_json_sax_parser_destroy(parser->json_sax);
+  if (parser->yaml_sax != NULL) turbo_yaml_sax_parser_destroy(parser->yaml_sax);
   if (parser->xml_sax != NULL) turbo_xml_sax_parser_destroy(parser->xml_sax);
   for (i = 0; i < parser->json_frame_count; ++i) {
     free(parser->json_frames[i].pending_key);
@@ -8770,6 +9411,9 @@ static json_value_t *data_bind_value_to_json(const DataBindValue *value, unsigne
   case DATA_BIND_VALUE_INT64:
     json = turbo_json_create_int64(value->data.int64_val);
     break;
+  case DATA_BIND_VALUE_UINT64:
+    json = turbo_json_create_uint64(value->data.uint64_val);
+    break;
   case DATA_BIND_VALUE_DOUBLE:
     if (!isfinite(value->data.double_val)) {
       *status = DATA_BIND_ERR_TYPE_MISMATCH;
@@ -8983,12 +9627,14 @@ static int data_bind_xml_name_valid(const char *name) {
   return 1;
 }
 
-static int data_bind_xml_scalar_text(const DataBindValue *value, char *text, size_t size) {
+static int data_bind_standard_scalar_text(const DataBindValue *value, char *text, size_t size) {
   switch (value->kind) {
   case DATA_BIND_VALUE_INT:
     return snprintf(text, size, "%d", value->data.int_val) > 0;
   case DATA_BIND_VALUE_INT64:
     return snprintf(text, size, "%lld", (long long)value->data.int64_val) > 0;
+  case DATA_BIND_VALUE_UINT64:
+    return snprintf(text, size, "%llu", (unsigned long long)value->data.uint64_val) > 0;
   case DATA_BIND_VALUE_DOUBLE:
     return isfinite(value->data.double_val) &&
            snprintf(text, size, "%.17g", value->data.double_val) > 0;
@@ -9032,6 +9678,8 @@ static int data_bind_value_to_xml(const DataBindValue *value, turbo_xml_node_t *
     text[value->data.bytes_val.len] = '\0';
     return tstr_v_utf8_valid(tstr_v_from_buf(text, value->data.bytes_val.len)) &&
            turbo_xml_set_text(node, text) == 0;
+  case DATA_BIND_VALUE_BIGINT:
+    return value->data.bigint_val.ptr && turbo_xml_set_text(node, value->data.bigint_val.ptr) == 0;
   case DATA_BIND_VALUE_OBJECT:
     for (i = 0; i < value->data.object_val.count; ++i) {
       const char *name = value->data.object_val.items[i].name;
@@ -9070,7 +9718,7 @@ static int data_bind_value_to_xml(const DataBindValue *value, turbo_xml_node_t *
   case DATA_BIND_VALUE_NULL:
     return 0;
   default:
-    return data_bind_xml_scalar_text(value, text, sizeof(text)) &&
+    return data_bind_standard_scalar_text(value, text, sizeof(text)) &&
            turbo_xml_set_text(node, text) == 0;
   }
 }
@@ -9097,6 +9745,292 @@ DataBindStatus data_bind_object_serialize_xml(const DataBindObject *object, char
   if (!*out_xml)
     return db_error_set(error, DATA_BIND_ERR_OOM, "xml", -1, -1,
                         "Failed to serialize XML document");
+  db_error_clear(error);
+  return DATA_BIND_OK;
+}
+
+#define DATA_BIND_CSV_MAX_PATH_LENGTH 255u
+
+typedef struct data_bind_csv_cell {
+  tstr_t path;
+  tstr_t text;
+} data_bind_csv_cell_t;
+
+TURBO_VEC_DEFINE(data_bind_csv_cell_vec_t, data_bind_csv_cell_t)
+
+static void data_bind_csv_cells_destroy(data_bind_csv_cell_vec_t *cells) {
+  size_t i;
+  if (cells == NULL) return;
+  for (i = 0; i < data_bind_csv_cell_vec_t_size(cells); ++i) {
+    data_bind_csv_cell_t *cell = data_bind_csv_cell_vec_t_at(cells, i);
+    if (cell != NULL) {
+      tstr_free(cell->path);
+      tstr_free(cell->text);
+    }
+  }
+  data_bind_csv_cell_vec_t_destroy(cells);
+}
+
+static int data_bind_csv_tstr_append(tstr_t *out, const char *data, size_t len) {
+  tstr_t next;
+  if (out == NULL || *out == NULL || (data == NULL && len != 0)) return 0;
+  next = tstr_cat_len(*out, data, len);
+  if (next == NULL) return 0;
+  *out = next;
+  return 1;
+}
+
+static int data_bind_csv_path_component_valid(const char *component) {
+  if (component == NULL || component[0] == '\0' || strchr(component, '.') != NULL ||
+      strchr(component, '[') != NULL)
+    return 0;
+  return tstr_v_utf8_valid(tstr_v_from_cstr(component));
+}
+
+static tstr_t data_bind_csv_child_path(const tstr_t prefix, const char *name,
+                                       DataBindStatus *status) {
+  size_t prefix_len = prefix != NULL ? tstr_len(prefix) : 0;
+  size_t name_len;
+  size_t separator_len = prefix_len != 0 ? 1u : 0u;
+  tstr_t path;
+  if (status == NULL) return NULL;
+  *status = DATA_BIND_ERR_TYPE_MISMATCH;
+  if (!data_bind_csv_path_component_valid(name)) return NULL;
+  name_len = strlen(name);
+  if (prefix_len > DATA_BIND_CSV_MAX_PATH_LENGTH - separator_len ||
+      name_len > DATA_BIND_CSV_MAX_PATH_LENGTH - prefix_len - separator_len)
+    return NULL;
+  path = prefix != NULL ? tstr_clone(prefix) : tstr_new();
+  if (path == NULL) {
+    *status = DATA_BIND_ERR_OOM;
+    return NULL;
+  }
+  if ((separator_len != 0 && !data_bind_csv_tstr_append(&path, ".", 1u)) ||
+      !data_bind_csv_tstr_append(&path, name, name_len)) {
+    tstr_free(path);
+    *status = DATA_BIND_ERR_OOM;
+    return NULL;
+  }
+  *status = DATA_BIND_OK;
+  return path;
+}
+
+static tstr_t data_bind_csv_index_path(const tstr_t prefix, size_t index,
+                                       DataBindStatus *status) {
+  char suffix[32];
+  int suffix_len;
+  size_t prefix_len;
+  tstr_t path;
+  if (status == NULL) return NULL;
+  *status = DATA_BIND_ERR_TYPE_MISMATCH;
+  if (prefix == NULL || tstr_empty(prefix)) return NULL;
+  suffix_len = fmt(suffix, sizeof(suffix), "[{}]", index);
+  if (suffix_len <= 0 || (size_t)suffix_len >= sizeof(suffix)) return NULL;
+  prefix_len = tstr_len(prefix);
+  if (prefix_len > DATA_BIND_CSV_MAX_PATH_LENGTH ||
+      (size_t)suffix_len > DATA_BIND_CSV_MAX_PATH_LENGTH - prefix_len)
+    return NULL;
+  path = tstr_clone(prefix);
+  if (path == NULL) {
+    *status = DATA_BIND_ERR_OOM;
+    return NULL;
+  }
+  if (!data_bind_csv_tstr_append(&path, suffix, (size_t)suffix_len)) {
+    tstr_free(path);
+    *status = DATA_BIND_ERR_OOM;
+    return NULL;
+  }
+  *status = DATA_BIND_OK;
+  return path;
+}
+
+static tstr_t data_bind_csv_scalar_text(const DataBindValue *value, DataBindStatus *status) {
+  char text[128];
+  tstr_t result = NULL;
+  if (status == NULL) return NULL;
+  *status = DATA_BIND_ERR_TYPE_MISMATCH;
+  if (value == NULL) return NULL;
+  if (value->kind == DATA_BIND_VALUE_STRING) {
+    const char *string = value->data.string_val.ptr;
+    if (string == NULL || !tstr_v_utf8_valid(tstr_v_from_cstr(string))) return NULL;
+    result = tstr_dup(string);
+  } else if (value->kind == DATA_BIND_VALUE_BYTES) {
+    const char *bytes = (const char *)value->data.bytes_val.ptr;
+    size_t len = value->data.bytes_val.len;
+    if (len != 0 &&
+        (bytes == NULL || memchr(bytes, '\0', len) != NULL ||
+         !tstr_v_utf8_valid(tstr_v_from_buf(bytes, len))))
+      return NULL;
+    result = len != 0 ? tstr_dup_len(bytes, len) : tstr_new();
+  } else if (value->kind == DATA_BIND_VALUE_BIGINT) {
+    if (value->data.bigint_val.ptr == NULL) return NULL;
+    result = tstr_dup(value->data.bigint_val.ptr);
+  } else {
+    if (!data_bind_standard_scalar_text(value, text, sizeof(text))) return NULL;
+    result = tstr_dup(text);
+  }
+  if (result == NULL) {
+    *status = DATA_BIND_ERR_OOM;
+    return NULL;
+  }
+  *status = DATA_BIND_OK;
+  return result;
+}
+
+static DataBindStatus data_bind_csv_add_scalar(data_bind_csv_cell_vec_t *cells,
+                                               const tstr_t path,
+                                               const DataBindValue *value) {
+  data_bind_csv_cell_t cell = {0};
+  DataBindStatus status;
+  cell.path = path != NULL && !tstr_empty(path) ? tstr_clone(path) : tstr_dup("value");
+  if (cell.path == NULL) return DATA_BIND_ERR_OOM;
+  cell.text = data_bind_csv_scalar_text(value, &status);
+  if (cell.text == NULL) {
+    tstr_free(cell.path);
+    return status;
+  }
+  if (data_bind_csv_cell_vec_t_push(cells, cell) != TURBO_OK) {
+    tstr_free(cell.path);
+    tstr_free(cell.text);
+    return DATA_BIND_ERR_OOM;
+  }
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus data_bind_csv_flatten_value(data_bind_csv_cell_vec_t *cells,
+                                                  const DataBindValue *value,
+                                                  const tstr_t path, unsigned depth) {
+  size_t i;
+  if (cells == NULL || value == NULL) return DATA_BIND_ERR_INVALID_ARG;
+  if (depth > DATA_BIND_JSON_MAX_DEPTH) return DATA_BIND_ERR_RUNTIME;
+  switch (value->kind) {
+  case DATA_BIND_VALUE_OBJECT:
+    if (value->data.object_val.count == 0) return DATA_BIND_ERR_TYPE_MISMATCH;
+    for (i = 0; i < value->data.object_val.count; ++i) {
+      DataBindStatus status;
+      tstr_t child_path =
+          data_bind_csv_child_path(path, value->data.object_val.items[i].name, &status);
+      if (child_path == NULL) return status;
+      status = data_bind_csv_flatten_value(cells, value->data.object_val.items[i].value,
+                                           child_path, depth + 1);
+      tstr_free(child_path);
+      if (status != DATA_BIND_OK) return status;
+    }
+    return DATA_BIND_OK;
+  case DATA_BIND_VALUE_LIST:
+  case DATA_BIND_VALUE_SET:
+    if (path == NULL || tstr_empty(path) || value->data.array_val.count == 0)
+      return DATA_BIND_ERR_TYPE_MISMATCH;
+    for (i = 0; i < value->data.array_val.count; ++i) {
+      DataBindStatus status;
+      tstr_t child_path = data_bind_csv_index_path(path, i, &status);
+      if (child_path == NULL) return status;
+      status = data_bind_csv_flatten_value(cells, value->data.array_val.items[i], child_path,
+                                           depth + 1);
+      tstr_free(child_path);
+      if (status != DATA_BIND_OK) return status;
+    }
+    return DATA_BIND_OK;
+  case DATA_BIND_VALUE_MAP:
+    if (path == NULL || tstr_empty(path) || value->data.map_val.count == 0)
+      return DATA_BIND_ERR_TYPE_MISMATCH;
+    for (i = 0; i < value->data.map_val.count; ++i) {
+      DataBindStatus status;
+      tstr_t child_path =
+          data_bind_csv_child_path(path, value->data.map_val.items[i].key, &status);
+      if (child_path == NULL) return status;
+      status = data_bind_csv_flatten_value(cells, value->data.map_val.items[i].value,
+                                           child_path, depth + 1);
+      tstr_free(child_path);
+      if (status != DATA_BIND_OK) return status;
+    }
+    return DATA_BIND_OK;
+  case DATA_BIND_VALUE_NULL:
+    return DATA_BIND_ERR_TYPE_MISMATCH;
+  default:
+    return data_bind_csv_add_scalar(cells, path, value);
+  }
+}
+
+static int data_bind_csv_append_field(tstr_t *csv, const tstr_t field) {
+  size_t i;
+  size_t start = 0;
+  size_t len;
+  int quoted = 0;
+  if (csv == NULL || *csv == NULL || field == NULL) return 0;
+  len = tstr_len(field);
+  if ((len != 0 && (field[0] == ' ' || field[0] == '\t' || field[len - 1] == ' ' ||
+                    field[len - 1] == '\t')) ||
+      memchr(field, ',', len) != NULL || memchr(field, '"', len) != NULL ||
+      memchr(field, '\r', len) != NULL || memchr(field, '\n', len) != NULL)
+    quoted = 1;
+  if (!quoted) return data_bind_csv_tstr_append(csv, field, len);
+  if (!data_bind_csv_tstr_append(csv, "\"", 1u)) return 0;
+  for (i = 0; i < len; ++i) {
+    if (field[i] != '"') continue;
+    if (!data_bind_csv_tstr_append(csv, field + start, i - start) ||
+        !data_bind_csv_tstr_append(csv, "\"\"", 2u))
+      return 0;
+    start = i + 1;
+  }
+  return data_bind_csv_tstr_append(csv, field + start, len - start) &&
+         data_bind_csv_tstr_append(csv, "\"", 1u);
+}
+
+DataBindStatus data_bind_object_serialize_csv(const DataBindObject *object, char **out_csv,
+                                              size_t *out_len, DataBindError *error) {
+  data_bind_csv_cell_vec_t cells;
+  DataBindStatus status;
+  tstr_t csv = NULL;
+  size_t i;
+  if (out_csv != NULL) *out_csv = NULL;
+  if (out_len != NULL) *out_len = 0;
+  if (object == NULL || object->value == NULL || out_csv == NULL)
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1,
+                        "Invalid CSV serialize arguments");
+  if (object->value->kind == DATA_BIND_VALUE_LIST ||
+      object->value->kind == DATA_BIND_VALUE_SET || object->value->kind == DATA_BIND_VALUE_MAP)
+    return db_error_set(error, DATA_BIND_ERR_TYPE_MISMATCH, "csv", -1, -1,
+                        "A CSV object must contain one record or scalar value");
+  if (data_bind_csv_cell_vec_t_init(&cells) != TURBO_OK)
+    return db_error_set(error, DATA_BIND_ERR_OOM, "csv", -1, -1,
+                        "Out of memory creating CSV columns");
+  status = data_bind_csv_flatten_value(&cells, object->value, NULL, 0);
+  if (status != DATA_BIND_OK || data_bind_csv_cell_vec_t_empty(&cells)) {
+    data_bind_csv_cells_destroy(&cells);
+    return db_error_set(error, status != DATA_BIND_OK ? status : DATA_BIND_ERR_TYPE_MISMATCH,
+                        "csv", -1, -1,
+                        status == DATA_BIND_ERR_OOM
+                            ? "Out of memory flattening CSV columns"
+                            : "DataBind value cannot be represented losslessly as CSV");
+  }
+  csv = tstr_new();
+  if (csv == NULL) status = DATA_BIND_ERR_OOM;
+  for (i = 0; status == DATA_BIND_OK && i < data_bind_csv_cell_vec_t_size(&cells); ++i) {
+    const data_bind_csv_cell_t *cell = data_bind_csv_cell_vec_t_at_const(&cells, i);
+    if ((i != 0 && !data_bind_csv_tstr_append(&csv, ",", 1u)) ||
+        !data_bind_csv_append_field(&csv, cell->path))
+      status = DATA_BIND_ERR_OOM;
+  }
+  if (status == DATA_BIND_OK && !data_bind_csv_tstr_append(&csv, "\r\n", 2u))
+    status = DATA_BIND_ERR_OOM;
+  for (i = 0; status == DATA_BIND_OK && i < data_bind_csv_cell_vec_t_size(&cells); ++i) {
+    const data_bind_csv_cell_t *cell = data_bind_csv_cell_vec_t_at_const(&cells, i);
+    if ((i != 0 && !data_bind_csv_tstr_append(&csv, ",", 1u)) ||
+        !data_bind_csv_append_field(&csv, cell->text))
+      status = DATA_BIND_ERR_OOM;
+  }
+  if (status == DATA_BIND_OK && !data_bind_csv_tstr_append(&csv, "\r\n", 2u))
+    status = DATA_BIND_ERR_OOM;
+  if (status == DATA_BIND_OK) {
+    *out_csv = tstr_to_cstr(csv);
+    if (*out_csv == NULL) status = DATA_BIND_ERR_OOM;
+    else if (out_len != NULL) *out_len = tstr_len(csv);
+  }
+  tstr_free(csv);
+  data_bind_csv_cells_destroy(&cells);
+  if (status != DATA_BIND_OK)
+    return db_error_set(error, status, "csv", -1, -1, "Out of memory serializing CSV");
   db_error_clear(error);
   return DATA_BIND_OK;
 }
@@ -9136,6 +10070,11 @@ DataBindStatus data_bind_object_write_yaml(const DataBindObject *object, DataBin
 DataBindStatus data_bind_object_write_xml(const DataBindObject *object, DataBindWriteFn write,
                                           void *user, DataBindError *error) {
   return data_bind_object_write(object, write, user, error, data_bind_object_serialize_xml);
+}
+
+DataBindStatus data_bind_object_write_csv(const DataBindObject *object, DataBindWriteFn write,
+                                          void *user, DataBindError *error) {
+  return data_bind_object_write(object, write, user, error, data_bind_object_serialize_csv);
 }
 
 void data_bind_serialized_free(char *data) { turbo_json_serialize_free(data); }
@@ -9211,7 +10150,11 @@ DataBindMapEntry data_bind_value_map_entry_at(const DataBindValue *value, size_t
 int32_t data_bind_value_as_int(const DataBindValue *value) {
   if (value == NULL) return 0;
   if (value->kind == DATA_BIND_VALUE_INT) return value->data.int_val;
-  if (value->kind == DATA_BIND_VALUE_INT64) return (int32_t)value->data.int64_val;
+  if (value->kind == DATA_BIND_VALUE_INT64 && value->data.int64_val >= INT32_MIN &&
+      value->data.int64_val <= INT32_MAX)
+    return (int32_t)value->data.int64_val;
+  if (value->kind == DATA_BIND_VALUE_UINT64 && value->data.uint64_val <= INT32_MAX)
+    return (int32_t)value->data.uint64_val;
   if (value->kind == DATA_BIND_VALUE_DOUBLE) return (int32_t)value->data.double_val;
   if (value->kind == DATA_BIND_VALUE_BOOL) return value->data.bool_val ? 1 : 0;
   return 0;
@@ -9221,8 +10164,21 @@ int64_t data_bind_value_as_int64(const DataBindValue *value) {
   if (value == NULL) return 0;
   if (value->kind == DATA_BIND_VALUE_INT64) return value->data.int64_val;
   if (value->kind == DATA_BIND_VALUE_INT) return value->data.int_val;
+  if (value->kind == DATA_BIND_VALUE_UINT64 && value->data.uint64_val <= INT64_MAX)
+    return (int64_t)value->data.uint64_val;
   if (value->kind == DATA_BIND_VALUE_DOUBLE) return (int64_t)value->data.double_val;
   if (value->kind == DATA_BIND_VALUE_BOOL) return value->data.bool_val ? 1 : 0;
+  return 0;
+}
+
+uint64_t data_bind_value_as_uint64(const DataBindValue *value) {
+  if (value == NULL) return 0;
+  if (value->kind == DATA_BIND_VALUE_UINT64) return value->data.uint64_val;
+  if (value->kind == DATA_BIND_VALUE_INT64 && value->data.int64_val >= 0)
+    return (uint64_t)value->data.int64_val;
+  if (value->kind == DATA_BIND_VALUE_INT && value->data.int_val >= 0)
+    return (uint64_t)value->data.int_val;
+  if (value->kind == DATA_BIND_VALUE_BOOL) return value->data.bool_val ? 1u : 0u;
   return 0;
 }
 
@@ -9230,6 +10186,7 @@ double data_bind_value_as_double(const DataBindValue *value) {
   if (value == NULL) return 0.0;
   if (value->kind == DATA_BIND_VALUE_DOUBLE) return value->data.double_val;
   if (value->kind == DATA_BIND_VALUE_INT64) return (double)value->data.int64_val;
+  if (value->kind == DATA_BIND_VALUE_UINT64) return (double)value->data.uint64_val;
   if (value->kind == DATA_BIND_VALUE_INT) return (double)value->data.int_val;
   if (value->kind == DATA_BIND_VALUE_BOOL) return value->data.bool_val ? 1.0 : 0.0;
   return 0.0;
@@ -9240,6 +10197,7 @@ int data_bind_value_as_bool(const DataBindValue *value) {
   if (value->kind == DATA_BIND_VALUE_BOOL) return value->data.bool_val != 0;
   if (value->kind == DATA_BIND_VALUE_INT) return value->data.int_val != 0;
   if (value->kind == DATA_BIND_VALUE_INT64) return value->data.int64_val != 0;
+  if (value->kind == DATA_BIND_VALUE_UINT64) return value->data.uint64_val != 0;
   if (value->kind == DATA_BIND_VALUE_DOUBLE) return value->data.double_val != 0.0;
   return 0;
 }
@@ -9356,6 +10314,15 @@ DataBindStatus data_bind_value_get_int32(const DataBindValue *value, int32_t *ou
     *out = value->data.bool_val ? 1 : 0;
     return DATA_BIND_OK;
   }
+  if (value->kind == DATA_BIND_VALUE_INT64 && value->data.int64_val >= INT32_MIN &&
+      value->data.int64_val <= INT32_MAX) {
+    *out = (int32_t)value->data.int64_val;
+    return DATA_BIND_OK;
+  }
+  if (value->kind == DATA_BIND_VALUE_UINT64 && value->data.uint64_val <= INT32_MAX) {
+    *out = (int32_t)value->data.uint64_val;
+    return DATA_BIND_OK;
+  }
   return DATA_BIND_ERR_TYPE_MISMATCH;
 }
 
@@ -9374,6 +10341,31 @@ DataBindStatus data_bind_value_get_int64(const DataBindValue *value, int64_t *ou
     *out = value->data.bool_val ? 1 : 0;
     return DATA_BIND_OK;
   }
+  if (value->kind == DATA_BIND_VALUE_UINT64 && value->data.uint64_val <= INT64_MAX) {
+    *out = (int64_t)value->data.uint64_val;
+    return DATA_BIND_OK;
+  }
+  return DATA_BIND_ERR_TYPE_MISMATCH;
+}
+
+DataBindStatus data_bind_value_get_uint64(const DataBindValue *value, uint64_t *out) {
+  if (out == NULL || value == NULL) return DATA_BIND_ERR_INVALID_ARG;
+  if (value->kind == DATA_BIND_VALUE_UINT64) {
+    *out = value->data.uint64_val;
+    return DATA_BIND_OK;
+  }
+  if (value->kind == DATA_BIND_VALUE_INT64 && value->data.int64_val >= 0) {
+    *out = (uint64_t)value->data.int64_val;
+    return DATA_BIND_OK;
+  }
+  if (value->kind == DATA_BIND_VALUE_INT && value->data.int_val >= 0) {
+    *out = (uint64_t)value->data.int_val;
+    return DATA_BIND_OK;
+  }
+  if (value->kind == DATA_BIND_VALUE_BOOL) {
+    *out = value->data.bool_val ? 1u : 0u;
+    return DATA_BIND_OK;
+  }
   return DATA_BIND_ERR_TYPE_MISMATCH;
 }
 
@@ -9386,6 +10378,10 @@ DataBindStatus data_bind_value_get_double(const DataBindValue *value, double *ou
   }
   if (value->kind == DATA_BIND_VALUE_INT64) {
     *out = (double)value->data.int64_val;
+    return DATA_BIND_OK;
+  }
+  if (value->kind == DATA_BIND_VALUE_UINT64) {
+    *out = (double)value->data.uint64_val;
     return DATA_BIND_OK;
   }
   if (value->kind == DATA_BIND_VALUE_INT) {
@@ -9718,4 +10714,4 @@ int data_bind_library_version(void) { return DATA_BIND_VERSION; }
 
 int data_bind_abi_version(void) { return DATA_BIND_ABI_VERSION; }
 
-const char *data_bind_version_string(void) { return "1.10.0"; }
+const char *data_bind_version_string(void) { return "1.11.0"; }

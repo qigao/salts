@@ -101,7 +101,17 @@ value(A) ::= STRING(T). {
         }
     }
 }
-value(A) ::= NUMBER(T). { (void)ctx; A = json_value_number_arena(ctx->arena, T.num_value); }
+value(A) ::= NUMBER(T). {
+    A = json_value_number_arena(ctx->arena, T.num_value);
+    if (A) {
+        A->data.number_val.lexeme = json_arena_strdup(ctx->arena, T.value, T.length);
+        A->data.number_val.lexeme_len = T.length;
+        if (!A->data.number_val.lexeme) {
+            ctx->error = 1;
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg), "Out of memory");
+        }
+    }
+}
 value(A) ::= TRUE.  { (void)ctx; A = json_value_bool_arena(ctx->arena, 1); }
 value(A) ::= FALSE. { (void)ctx; A = json_value_bool_arena(ctx->arena, 0); }
 value(A) ::= NULL.  { (void)ctx; A = json_value_null_arena(ctx->arena); }

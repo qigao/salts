@@ -77,6 +77,8 @@ static void check_order(const Order_t *order) {
   if (order == NULL) return;
   check_int_eq(order->header.seq, 7);
   check_int_eq(order->id, 42);
+  check(order->min_value == INT64_MIN);
+  check(order->max_value == UINT64_MAX);
   check_int_eq(turbo_uuid_parse(TEST_ORDER_REQUEST_ID, &expected_request_id), TURBO_OK);
   check_true(turbo_uuid_equal(&order->request_id, &expected_request_id));
   check_int_eq(order->side, Side_Buy);
@@ -103,7 +105,8 @@ spec("generated typed Order") {
   static DataBindError error = DATA_BIND_ERROR_INIT;
   static Order_t order;
   const char *json = "{\"header\":{\"seq\":7},\"id\":42,\"request_id\":\"" TEST_ORDER_REQUEST_ID
-                     "\",\"side\":\"Buy\","
+                     "\",\"min_value\":-9223372036854775808,"
+                     "\"max_value\":18446744073709551615,\"side\":\"Buy\","
                      "\"fills\":[{\"price\":100,\"qty\":3},{\"price\":101,\"qty\":4}],"
                      "\"symbol\":\"ABC\",\"payload\":\"raw\"}";
 

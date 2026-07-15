@@ -15,22 +15,30 @@ int ltv_decode_varint(const uint8_t *data, size_t len, uint32_t *out) {
 
     for (size_t i = 0; i < len && i < LTV_MAX_VARINT_BYTES; i++) {
         uint8_t byte = data[i];
+
+        /* A uint32 varint has only four payload bits in its fifth byte. */
+        if (i == LTV_MAX_VARINT_BYTES - 1 && (byte & 0xF0) != 0)
+            return -1;
+
         result |= (uint32_t)(byte & 0x7F) << shift;
 
         if ((byte & 0x80) == 0) {
+            if (ltv_varint_size(result) != (int)(i + 1))
+                return -1;
             *out = result;
             return (int)(i + 1);
         }
 
         shift += 7;
-        if (shift >= 35)
-            return -1;  /* Overflow: more than 5 bytes */
     }
 
-    return 0;  /* Need more data */
+    return len >= LTV_MAX_VARINT_BYTES ? -1 : 0;
 }
 
 int ltv_encode_varint(uint32_t value, uint8_t *out) {
+    if (!out)
+        return 0;
+
     int i = 0;
 
     while (value >= 0x80) {
@@ -107,17 +115,20 @@ LtvParseResult ltv_parse(const uint8_t *data, size_t len, ltv_message_t *out) {
  * ============================================================================ */
 
 size_t ltv_wire_size(size_t value_size) {
-    uint32_t length = (uint32_t)(value_size + 1);  /* +1 for type byte */
+    if (value_size > LTV_MAX_PAYLOAD_SIZE)
+        return 0;
+
+    uint32_t length = (uint32_t)value_size + 1;  /* +1 for type byte */
     return ltv_varint_size(length) + length;
 }
 
 size_t ltv_build(uint8_t type, const uint8_t *value, size_t value_size,
                  uint8_t *out, size_t out_len) {
-    uint32_t length = (uint32_t)(value_size + 1);
-    size_t wire_size = ltv_varint_size(length) + length;
-
-    if (out_len < wire_size)
+    size_t wire_size = ltv_wire_size(value_size);
+    if (wire_size == 0 || !out || (value_size > 0 && !value) || out_len < wire_size)
         return 0;
+
+    uint32_t length = (uint32_t)value_size + 1;
 
     int header_size = ltv_encode_varint(length, out);
     out[header_size] = type;
@@ -138,7 +149,20 @@ struct ltv_stream_s {
     size_t   buffered;
     size_t   expected;
     size_t   header_size;
+    size_t   pending_consume;
 };
+
+static void ltv_stream_consume_completed(ltv_stream_t *s) {
+    if (s->pending_consume == 0)
+        return;
+
+    size_t remaining = s->buffered - s->pending_consume;
+    if (remaining > 0)
+        memmove(s->buffer, s->buffer + s->pending_consume, remaining);
+
+    s->buffered = remaining;
+    s->pending_consume = 0;
+}
 
 ltv_stream_t *ltv_stream_create(size_t buffer_size) {
     if (buffer_size == 0)
@@ -158,6 +182,7 @@ ltv_stream_t *ltv_stream_create(size_t buffer_size) {
     s->buffered = 0;
     s->expected = 0;
     s->header_size = 0;
+    s->pending_consume = 0;
 
     return s;
 }
@@ -166,10 +191,15 @@ LtvParseResult ltv_stream_feed(ltv_stream_t *s, const uint8_t *data,
                                size_t len, ltv_message_t *out) {
     if (!s || !out)
         return LTV_PARSE_INVALID_VARINT;
+    if (!data && len > 0)
+        return LTV_PARSE_INVALID_VARINT;
+
+    /* This call ends the lifetime of the previously returned zero-copy view. */
+    ltv_stream_consume_completed(s);
 
     /* Append new data */
     if (data && len > 0) {
-        if (s->buffered + len > s->buffer_size)
+        if (len > s->buffer_size - s->buffered)
             return LTV_PARSE_BUFFER_OVERFLOW;
 
         memcpy(s->buffer + s->buffered, data, len);
@@ -201,12 +231,8 @@ LtvParseResult ltv_stream_feed(ltv_stream_t *s, const uint8_t *data,
     if (result != LTV_PARSE_OK)
         return result;
 
-    /* Shift remaining data */
-    size_t remaining = s->buffered - s->expected;
-    if (remaining > 0)
-        memmove(s->buffer, s->buffer + s->expected, remaining);
-
-    s->buffered = remaining;
+    /* Defer compaction so out->value stays valid until the next stream call. */
+    s->pending_consume = s->expected;
     s->expected = 0;
     s->header_size = 0;
 
@@ -217,10 +243,11 @@ size_t ltv_stream_remaining(ltv_stream_t *s, const uint8_t **out_remaining) {
     if (!s)
         return 0;
 
+    size_t offset = s->pending_consume;
     if (out_remaining)
-        *out_remaining = s->buffer;
+        *out_remaining = s->buffer + offset;
 
-    return s->buffered;
+    return s->buffered - offset;
 }
 
 void ltv_stream_reset(ltv_stream_t *s) {
@@ -228,6 +255,7 @@ void ltv_stream_reset(ltv_stream_t *s) {
         s->buffered = 0;
         s->expected = 0;
         s->header_size = 0;
+        s->pending_consume = 0;
     }
 }
 

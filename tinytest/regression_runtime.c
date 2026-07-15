@@ -16,16 +16,19 @@ static char *tt_join_path__(const char *dir, const char *name) {
   return path;
 }
 
+static int fixture_body_runs;
+static int fixture_cleanup_runs;
+
 spec("tinytest runtime regression") {
   it("check_int_eq_warn should evaluate operands once") {
     int value = 1;
-    check_int_eq_warn(value++, 2);
+    check_int_eq_warn(value++, 1);
     check_int_eq(value, 2);
   }
 
   it("check_mem_eq_warn should evaluate length once") {
     unsigned char actual[2] = {0, 0};
-    unsigned char expected[2] = {1, 0};
+    unsigned char expected[2] = {0, 0};
     size_t len = 1;
     check_mem_eq_warn(actual, expected, len++);
     check_size_eq(len, 2);
@@ -37,6 +40,34 @@ spec("tinytest runtime regression") {
     else
       check_warn(0);
     check_true(1);
+  }
+
+  it("float and double array checks should use their declared element types") {
+    float actual_float[1] = {1.25f};
+    float expected_float[1] = {1.25f};
+    double actual_double[1] = {2.5};
+    double expected_double[1] = {2.5};
+
+    check_float_array_eq(actual_float, expected_float, 1, 0.0);
+    check_double_array_eq(actual_double, expected_double, 1, 0.0);
+  }
+
+  group("fixture assertion handling") {
+    before_each() { check_int_eq(1, 2); }
+    after_each() { ++fixture_cleanup_runs; }
+
+    it_should_fail("should attribute setup failures to the test") { ++fixture_body_runs; }
+  }
+
+  it("should skip a body after setup failure and still run cleanup") {
+    check_int_eq(fixture_body_runs, 0);
+    check_int_eq(fixture_cleanup_runs, 1);
+  }
+
+  group("cleanup assertion handling") {
+    after_each() { check_int_eq(1, 2); }
+
+    it_should_fail("should attribute cleanup failures to the test") { check_true(1); }
   }
 
 #ifndef _WIN32

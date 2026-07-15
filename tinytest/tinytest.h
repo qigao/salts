@@ -34,6 +34,7 @@
 
 /* C++ compatibility */
 #ifdef __cplusplus
+  #include <exception>
 extern "C" {
 #endif
 
@@ -624,6 +625,8 @@ typedef struct __bdd_test_step__ {
   char *failure_location;
   double execution_time_ms;
   char *full_path; /* Full hierarchical path like "Calculator.should add two numbers" */
+  __bdd_array__ *before_each_nodes;
+  __bdd_array__ *after_each_nodes;
 } __bdd_test_step__;
 
 typedef struct __bdd_bench_entry__ {
@@ -655,6 +658,7 @@ typedef struct __bdd_config_type__ {
   int id;
   size_t test_index;
   size_t test_tap_index;
+  int target_node_id;
   size_t failed_test_count;
   __bdd_test_step__ *current_test;
   __bdd_array__ *node_stack;
@@ -768,6 +772,8 @@ static inline __bdd_test_step__ *__bdd_test_step_create__(size_t level, __bdd_no
   step->failure_location = NULL;
   step->execution_time_ms = 0.0;
   step->full_path = NULL;
+  step->before_each_nodes = NULL;
+  step->after_each_nodes = NULL;
   return step;
 }
 
@@ -776,6 +782,8 @@ static inline void __bdd_test_step_free__(__bdd_test_step__ *step) {
     free(step->failure_message);
     free(step->failure_location);
     free(step->full_path);
+    __bdd_array_free__(step->before_each_nodes);
+    __bdd_array_free__(step->after_each_nodes);
     free(step);
   }
 }
@@ -857,22 +865,24 @@ static void __bdd_node_flatten_internal__(__bdd_config_type__ *config, size_t le
                                           __bdd_array__ *before_each_lists,
                                           __bdd_array__ *after_each_lists) {
   if (__bdd_node_is_leaf__(node)) {
+    __bdd_test_step__ *test_step = __bdd_test_step_create__(level, node);
+
     for (size_t listIndex = 0; listIndex < before_each_lists->size; ++listIndex) {
       __bdd_array__ *list = __BDD_CAST(__bdd_array__ *, before_each_lists->values[listIndex]);
       for (size_t i = 0; i < __bdd_array_size__(list); ++i) {
-        __bdd_array_push__(
-            steps, __bdd_test_step_create__(level, __BDD_CAST(__bdd_node__ *, list->values[i])));
+        __bdd_array_push__(__bdd_array_get_or_create__(&test_step->before_each_nodes),
+                           list->values[i]);
       }
     }
 
-    __bdd_array_push__(steps, __bdd_test_step_create__(level, node));
+    __bdd_array_push__(steps, test_step);
 
     for (size_t listIndex = 0; listIndex < after_each_lists->size; ++listIndex) {
       size_t reverseListIndex = after_each_lists->size - listIndex - 1;
       __bdd_array__ *list = __BDD_CAST(__bdd_array__ *, after_each_lists->values[reverseListIndex]);
       for (size_t i = 0; i < __bdd_array_size__(list); ++i) {
-        __bdd_array_push__(
-            steps, __bdd_test_step_create__(level, __BDD_CAST(__bdd_node__ *, list->values[i])));
+        __bdd_array_push__(__bdd_array_get_or_create__(&test_step->after_each_nodes),
+                           list->values[i]);
       }
     }
     return;
@@ -940,6 +950,7 @@ static inline void __bdd_test_main__(__bdd_config_type__ *config) {
   }
 }
 static char *__bdd_vformat__(const char *format, va_list va);
+static char *__bdd_format__(const char *format, ...);
 
 static void __bdd_indent__(FILE *fp, size_t level) {
   if (!fp) return;
@@ -1039,8 +1050,8 @@ static bool __bdd_enter_node__(__bdd_node_flags__ node_flags, __bdd_config_type_
     abort();
   }
 
-  __bdd_test_step__ *step = config->current_test;
-  bool should_enter = step->id >= node->id && step->id < node->next_node_id;
+  int target_node_id = config->target_node_id;
+  bool should_enter = target_node_id >= node->id && target_node_id < node->next_node_id;
   if (should_enter) {
     __bdd_array_push__(config->node_stack, node);
     config->id++;
@@ -1049,7 +1060,7 @@ static bool __bdd_enter_node__(__bdd_node_flags__ node_flags, __bdd_config_type_
   }
 #if defined(BDD_PRINT_TRACE)
   const char *color = config->use_color ? __BDD_COLOR_MAGENTA__ : "";
-  fprintf(stderr, "%s% 3d ", color, step->id);
+  fprintf(stderr, "%s% 3d ", color, target_node_id);
   __bdd_indent__(stderr, config->node_stack->size - 1 - (int)should_enter);
   const char *reset = config->use_color ? __BDD_COLOR_RESET__ : "";
   fprintf(stderr, "%s [%d, %d) %s%s\n", should_enter ? ">" : "|", node->id, node->next_node_id,
@@ -1171,6 +1182,54 @@ static void __bdd_report_fail__(__bdd_config_type__ *config, __bdd_test_step__ *
   }
 }
 
+#ifdef __cplusplus
+static void __bdd_record_unhandled_exception__(__bdd_config_type__ *config, const char *message) {
+  if (!config || config->error) return;
+  ++config->assertion_count;
+  ++config->assertion_failed_count;
+  snprintf(config->location_buf, sizeof(config->location_buf), "at unhandled C++ exception");
+  config->location = config->location_buf;
+  config->error = __bdd_format__("Unhandled C++ exception: %s", message ? message : "unknown");
+}
+#endif
+
+static void __bdd_execute_target__(__bdd_config_type__ *config, int target_node_id) {
+  config->node_stack->size = 1;
+  config->id = 0;
+  config->target_node_id = target_node_id;
+  if (setjmp(config->jump_buffer) != 0) return;
+#ifdef __cplusplus
+  try {
+    __bdd_test_main__(config);
+  } catch (const std::exception &e) {
+    __bdd_record_unhandled_exception__(config, e.what());
+  } catch (...) {
+    __bdd_record_unhandled_exception__(config, "non-standard exception");
+  }
+#else
+  __bdd_test_main__(config);
+#endif
+}
+
+static void __bdd_execute_cleanup_target__(__bdd_config_type__ *config, int target_node_id) {
+  char *primary_error = config->error;
+  char primary_location[sizeof(config->location_buf)];
+
+  primary_location[0] = '\0';
+  if (primary_error && config->location) {
+    snprintf(primary_location, sizeof(primary_location), "%s", config->location);
+  }
+  config->error = NULL;
+  config->location = NULL;
+  __bdd_execute_target__(config, target_node_id);
+  if (primary_error) {
+    free(config->error);
+    config->error = primary_error;
+    snprintf(config->location_buf, sizeof(config->location_buf), "%s", primary_location);
+    config->location = config->location_buf;
+  }
+}
+
 static void __bdd_run__(__bdd_config_type__ *config) {
   __bdd_test_step__ *step = config->current_test;
 
@@ -1223,15 +1282,27 @@ static void __bdd_run__(__bdd_config_type__ *config) {
         __bdd_bench_reset__(config);
       }
 
-      double start_time = __bdd_get_time_ms__();
-      if (setjmp(config->jump_buffer) == 0) {
-        __bdd_test_main__(config);
+      for (size_t i = 0; i < __bdd_array_size__(step->before_each_nodes); ++i) {
+        __bdd_node__ *hook =
+            __BDD_CAST(__bdd_node__ *, step->before_each_nodes->values[i]);
+        __bdd_execute_target__(config, hook->id);
+        if (config->error) break;
       }
-      /* If longjmp happens, node_stack might be unbalanced. TEST_RUN resets it in main(). */
-      double end_time = __bdd_get_time_ms__();
-      step->execution_time_ms = end_time - start_time;
+
+      if (!config->error) {
+        double start_time = __bdd_get_time_ms__();
+        __bdd_execute_target__(config, step->id);
+        double end_time = __bdd_get_time_ms__();
+        step->execution_time_ms = end_time - start_time;
+      }
+
       if (step->flags & __bdd_node_flags_benchmark__) {
         __bdd_bench_flush__(config, step->level + 1, config->use_color);
+      }
+
+      for (size_t i = 0; i < __bdd_array_size__(step->after_each_nodes); ++i) {
+        __bdd_node__ *hook = __BDD_CAST(__bdd_node__ *, step->after_each_nodes->values[i]);
+        __bdd_execute_cleanup_target__(config, hook->id);
       }
     }
 
@@ -1267,14 +1338,42 @@ static void __bdd_run__(__bdd_config_type__ *config) {
         step->passed = false;
         step->result = __BDD_RESULT_FAILED__;
         step->failure_message = strdup(config->error);
-        step->failure_location = strdup(config->location);
+        step->failure_location =
+            strdup(config->location ? config->location : "at unknown location");
         __bdd_report_fail__(config, step);
       }
       free(config->error);
       config->error = NULL;
     }
   } else if (!skipped) {
-    __bdd_test_main__(config);
+    if (config->error) {
+      free(config->error);
+      config->error = NULL;
+    }
+    config->location = NULL;
+    config->info_buffer[0] = '\0';
+    config->info_len = 0;
+    __bdd_execute_target__(config, step->id);
+    if (config->error) {
+      step->executed = true;
+      step->passed = false;
+      step->result = __BDD_RESULT_FAILED__;
+      step->failure_message = strdup(config->error);
+      step->failure_location =
+          strdup(config->location ? config->location : "at unknown location");
+      if (config->use_tap) {
+        ++config->failed_test_count;
+        printf("Bail out! fixture %s failed: %s\n", step->name, config->error);
+      } else {
+        __bdd_report_fail__(config, step);
+      }
+      free(config->error);
+      config->error = NULL;
+    } else {
+      step->executed = true;
+      step->passed = true;
+      step->result = __BDD_RESULT_PASSED__;
+    }
   }
 }
 
@@ -2419,8 +2518,20 @@ static inline bool __bdd_size_array_eq__(const size_t *actual, const size_t *exp
   return true;
 }
 
-static inline bool __bdd_float_array_eq__(const double *actual, const double *expected, size_t n,
+static inline bool __bdd_float_array_eq__(const float *actual, const float *expected, size_t n,
                                           double eps, size_t *fail_idx) {
+  for (size_t i = 0; i < n; i++) {
+    double d = __BDD_CAST(double, actual[i]) - __BDD_CAST(double, expected[i]);
+    if (d > eps || d < -eps) {
+      *fail_idx = i;
+      return false;
+    }
+  }
+  return true;
+}
+
+static inline bool __bdd_double_array_eq__(const double *actual, const double *expected, size_t n,
+                                           double eps, size_t *fail_idx) {
   for (size_t i = 0; i < n; i++) {
     double d = actual[i] - expected[i];
     if (d > eps || d < -eps) {
@@ -2517,29 +2628,55 @@ static inline bool __bdd_str_array_eq__(const char *const *actual, const char *c
 
 #define check_float_array_eq(actual, expected, n, epsilon)                                         \
   do {                                                                                             \
+    const float *__bdd_a__ = (const float *)(actual);                                              \
+    const float *__bdd_e__ = (const float *)(expected);                                            \
+    size_t __bdd_n__ = __BDD_CAST(size_t, (n));                                                    \
+    double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
     size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_float_array_eq__((const double *)(actual), (const double *)(expected), (n),         \
-                                (epsilon), &__bdd_fi__)) {                                         \
+    if (!__bdd_float_array_eq__(__bdd_a__, __bdd_e__, __bdd_n__, __bdd_eps__, &__bdd_fi__)) {     \
       __BDD_CHECK__(0, "array mismatch at [%zu]: expected %f but got %f (+/- %f)", __bdd_fi__,     \
-                    ((const double *)(expected))[__bdd_fi__],                                      \
-                    ((const double *)(actual))[__bdd_fi__], __BDD_CAST(double, (epsilon)));        \
+                    __BDD_CAST(double, __bdd_e__[__bdd_fi__]),                                     \
+                    __BDD_CAST(double, __bdd_a__[__bdd_fi__]), __bdd_eps__);                       \
     }                                                                                              \
   } while (0)
 #define check_float_array_eq_warn(actual, expected, n, epsilon)                                    \
   do {                                                                                             \
+    const float *__bdd_a__ = (const float *)(actual);                                              \
+    const float *__bdd_e__ = (const float *)(expected);                                            \
+    size_t __bdd_n__ = __BDD_CAST(size_t, (n));                                                    \
+    double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
     size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_float_array_eq__((const double *)(actual), (const double *)(expected), (n),         \
-                                (epsilon), &__bdd_fi__)) {                                         \
+    if (!__bdd_float_array_eq__(__bdd_a__, __bdd_e__, __bdd_n__, __bdd_eps__, &__bdd_fi__)) {     \
       __BDD_WARN__(0, "array mismatch at [%zu]: expected %f but got %f (+/- %f)", __bdd_fi__,      \
-                   ((const double *)(expected))[__bdd_fi__],                                       \
-                   ((const double *)(actual))[__bdd_fi__], __BDD_CAST(double, (epsilon)));         \
+                   __BDD_CAST(double, __bdd_e__[__bdd_fi__]),                                      \
+                   __BDD_CAST(double, __bdd_a__[__bdd_fi__]), __bdd_eps__);                        \
     }                                                                                              \
   } while (0)
 
 #define check_double_array_eq(actual, expected, n, epsilon)                                        \
-  check_float_array_eq(actual, expected, n, epsilon)
+  do {                                                                                             \
+    const double *__bdd_a__ = (const double *)(actual);                                            \
+    const double *__bdd_e__ = (const double *)(expected);                                          \
+    size_t __bdd_n__ = __BDD_CAST(size_t, (n));                                                    \
+    double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
+    size_t __bdd_fi__ = 0;                                                                         \
+    if (!__bdd_double_array_eq__(__bdd_a__, __bdd_e__, __bdd_n__, __bdd_eps__, &__bdd_fi__)) {    \
+      __BDD_CHECK__(0, "array mismatch at [%zu]: expected %f but got %f (+/- %f)", __bdd_fi__,     \
+                    __bdd_e__[__bdd_fi__], __bdd_a__[__bdd_fi__], __bdd_eps__);                   \
+    }                                                                                              \
+  } while (0)
 #define check_double_array_eq_warn(actual, expected, n, epsilon)                                   \
-  check_float_array_eq_warn(actual, expected, n, epsilon)
+  do {                                                                                             \
+    const double *__bdd_a__ = (const double *)(actual);                                            \
+    const double *__bdd_e__ = (const double *)(expected);                                          \
+    size_t __bdd_n__ = __BDD_CAST(size_t, (n));                                                    \
+    double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
+    size_t __bdd_fi__ = 0;                                                                         \
+    if (!__bdd_double_array_eq__(__bdd_a__, __bdd_e__, __bdd_n__, __bdd_eps__, &__bdd_fi__)) {    \
+      __BDD_WARN__(0, "array mismatch at [%zu]: expected %f but got %f (+/- %f)", __bdd_fi__,      \
+                   __bdd_e__[__bdd_fi__], __bdd_a__[__bdd_fi__], __bdd_eps__);                    \
+    }                                                                                              \
+  } while (0)
 
 #define check_ptr_array_eq(actual, expected, n)                                                    \
   do {                                                                                             \

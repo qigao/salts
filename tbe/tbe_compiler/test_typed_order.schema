@@ -17,6 +17,8 @@ group Fill {
 message Order {
     Header header;
     uint32 id;
+    int64 min_value;
+    uint64 max_value;
     uuid request_id;
     Side side;
     group<Fill> fills;

@@ -1,4 +1,5 @@
 #include "schema_parser_dsl.h"
+#include "schema_builtin_type.h"
 #include "schema_lexer.h"
 #include "schema_types.h"
 #include "schema_grammar_gen.h"
@@ -184,49 +185,8 @@ static size_t count_records_in_list(const Node *list) {
     return list->data.list.count;
 }
 
-typedef struct {
-    const char *name;
-    size_t size;
-    const char *wire_reader;
-    const char *host_type;
-} type_info_t;
-
-static const type_info_t TYPE_TABLE[] = {
-    {"bool",    1, "u8",  "uint8_t"},
-    {"uint8_t", 1, "u8",  "uint8_t"},
-    {"uint8",   1, "u8",  "uint8_t"},
-    {"byte",    1, "u8",  "uint8_t"},
-    {"int8_t",  1, "i8",  "int8_t"},
-    {"int8",    1, "i8",  "int8_t"},
-    {"uint16_t", 2, "u16", "uint16_t"},
-    {"uint16",   2, "u16", "uint16_t"},
-    {"int16_t",  2, "i16", "int16_t"},
-    {"int16",    2, "i16", "int16_t"},
-    {"uint32_t", 4, "u32", "uint32_t"},
-    {"uint32",   4, "u32", "uint32_t"},
-    {"int32_t",  4, "i32", "int32_t"},
-    {"int32",    4, "i32", "int32_t"},
-    {"float",    4, "f32", "float"},
-    {"uint64_t", 8, "u64", "uint64_t"},
-    {"uint64",   8, "u64", "uint64_t"},
-    {"int64_t",  8, "i64", "int64_t"},
-    {"int64",    8, "i64", "int64_t"},
-    {"double",   8, "f64", "double"},
-};
-
-static const type_info_t *find_type_info(const char *type_name) {
-    if (!type_name) return NULL;
-
-    for (size_t i = 0; i < sizeof(TYPE_TABLE) / sizeof(TYPE_TABLE[0]); i++) {
-        if (strcmp(type_name, TYPE_TABLE[i].name) == 0) {
-            return &TYPE_TABLE[i];
-        }
-    }
-    return NULL;
-}
-
 static int primitive_type_size(const char *type_name, size_t *out) {
-    const type_info_t *info = find_type_info(type_name);
+    const schema_builtin_type_info_t *info = schema_builtin_type_find(type_name);
     if (type_name && strcmp(type_name, "uuid") == 0 && out) {
         *out = 16;
         return 1;
@@ -237,14 +197,14 @@ static int primitive_type_size(const char *type_name, size_t *out) {
 }
 
 static int primitive_type_wire_reader(const char *type_name, const char **out) {
-    const type_info_t *info = find_type_info(type_name);
+    const schema_builtin_type_info_t *info = schema_builtin_type_find(type_name);
     if (!info || !info->wire_reader || !out) return 0;
     *out = info->wire_reader;
     return 1;
 }
 
 static int primitive_type_host_type(const char *type_name, const char **out) {
-    const type_info_t *info = find_type_info(type_name);
+    const schema_builtin_type_info_t *info = schema_builtin_type_find(type_name);
     if (!info || !info->host_type || !out) return 0;
     *out = info->host_type;
     return 1;

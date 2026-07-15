@@ -7,7 +7,7 @@ embedding TurboUtils scripts.
 
 `modules/parser` uses this library for TurboUtils-facing schema binding,
 strict boolean validation, and schema reflection. Parser remains responsible
-for script value conversion, JSON/CSV emit, and detailed `validate_ex` diagnostics.
+for script value conversion and detailed `validate_ex` diagnostics.
 DataBind owns format-aware path query APIs for JSONPath, XMLPath, and CSVPath.
 Format parsing inside `tbe/data_bind` uses TurboNet::Parser directly; it does
 not call into `modules/parser`.
@@ -99,6 +99,8 @@ data_bind_free(codec);
   with `data_bind_object_free`. They do not retain a schema codec.
 - Binary buffers returned by `data_bind_object_serialize_bin` are released with
   `data_bind_binary_free`.
+- Text returned by `data_bind_object_serialize_json`, `_yaml`, `_xml`, or `_csv`
+  is released with `data_bind_serialized_free`.
 - `data_bind_value_clone` creates an independent deep copy of the complete value
   tree. On success the caller owns the copy; source ownership is unchanged. On
   failure the output is `NULL`. Use this API when retry, fan-out, queue, or
@@ -199,15 +201,21 @@ err.message = "Unknown enum value: 'PENDING'"
   `data_bind_stream_json_create`, `data_bind_stream_json_all_create`,
   `data_bind_stream_json_path_create`,
   `data_bind_stream_json_path_all_create`,
+  `data_bind_stream_yaml_create`, `data_bind_stream_yaml_all_create`,
+  `data_bind_stream_yaml_path_create`,
+  `data_bind_stream_yaml_path_all_create`,
   `data_bind_stream_csv_all_create`, `data_bind_stream_csv_path_create`,
   `data_bind_stream_xml_create`, and
   `data_bind_stream_xml_path_all_create`. There is no stream mode or options
-  object. JSON root-array streams bind items incrementally; other JSONPath
-  expressions validate chunks incrementally with SAX and materialize the DOM
-  on finish. CSV streams process complete records incrementally and compile
+  object. JSON root-array streams bind items incrementally and preserve exact
+  signed/unsigned 64-bit number tokens; other JSONPath expressions validate
+  chunks incrementally with SAX and materialize the DOM on finish. CSV streams
+  process complete records incrementally and compile
   CSVPath after the header row. XML streams bind non-overlapping `//name`
   element matches incrementally; other XMLPath expressions validate chunks
-  incrementally with SAX and materialize the DOM on finish.
+  incrementally with SAX and materialize the DOM on finish. YAML streams also
+  validate syntax incrementally with SAX, then perform schema and YPATH binding
+  on finish.
 - `data_bind_stream_feed_file`: read a file in fixed-size chunks and feed it
   through an existing stream. Applications that own an asynchronous I/O loop
   should feed completed buffers with `data_bind_stream_feed`; DataBind does not
@@ -238,6 +246,40 @@ bound values and may skip invalid array items or CSV rows. Use
 `data_bind_validate_json_path`, `data_bind_validate_csv_path`,
 `data_bind_validate_xml_path` when the caller needs strict all-or-nothing input
 validation.
+
+## Text Output
+
+Owned objects can be serialized as JSON, YAML, XML, or CSV. The corresponding
+`data_bind_object_write_*` functions deliver the complete serialized document
+to a caller callback.
+
+JSON and YAML emit signed and unsigned 64-bit values as exact numeric tokens,
+including values outside the IEEE-754 exact-integer range. XML and CSV use
+canonical decimal text. UUID values use the canonical UUID string in every
+text format and bind back to `DATA_BIND_VALUE_UUID` / `turbo_uuid_t`.
+
+CSV output contains one RFC 4180 header row and one data row. It uses the same
+paths accepted by the CSV binder: nested objects use `header.seq`, collections
+use `values[0]`, and maps use `attrs.key`. Scalar cells use DataBind's canonical
+text representation, including exact signed/unsigned integer decimals,
+`true`/`false`, and the existing UUID, temporal, decimal, bigint, and money
+formats.
+
+```c
+char *csv = NULL;
+size_t csv_len = 0;
+
+if (data_bind_object_serialize_csv(order, &csv, &csv_len, &err) == DATA_BIND_OK) {
+  send_csv(csv, csv_len);
+}
+data_bind_serialized_free(csv);
+```
+
+CSV has no lossless single-row representation for an empty collection or map.
+Those values, `NULL`, paths longer than 255 bytes, non-UTF-8 text/bytes, bytes
+containing NUL, and map keys containing `.` or `[` fail with
+`DATA_BIND_ERR_TYPE_MISMATCH`; the serializer never drops a value or emits a
+partial row.
 
 ## Binary Output
 

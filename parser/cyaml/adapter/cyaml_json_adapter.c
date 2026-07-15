@@ -7,7 +7,6 @@
 
 #define CYAML_JSON_ADAPTER_MAX_DEPTH 256U
 #define CYAML_JSON_ADAPTER_MAP_INIT_CAP 8U
-#define CYAML_JSON_ADAPTER_MAX_EXACT_INTEGER 9007199254740992ULL
 
 /* Private CYAML helper used by this in-tree adapter for binary-safe scalars. */
 char* cyaml_scalar_strn(const cyaml_doc_t* doc, const cyaml_node_t* node,
@@ -281,19 +280,12 @@ static json_value_t* cyaml_json_from_integer(const cyaml_doc_t* doc,
     const cyaml_node_t* node)
 {
     int64_t signed_value = 0;
-    if (cyaml_as_int(doc, node, &signed_value)) {
-        uint64_t magnitude = signed_value < 0
-            ? (uint64_t)(-(signed_value + 1)) + 1U
-            : (uint64_t)signed_value;
-        return magnitude <= CYAML_JSON_ADAPTER_MAX_EXACT_INTEGER
-            ? json_create_number((double)signed_value)
-            : NULL;
-    }
+    if (cyaml_as_int(doc, node, &signed_value))
+        return json_create_int64(signed_value);
 
     uint64_t unsigned_value = 0;
     return cyaml_as_uint(doc, node, &unsigned_value)
-            && unsigned_value <= CYAML_JSON_ADAPTER_MAX_EXACT_INTEGER
-        ? json_create_number((double)unsigned_value)
+        ? json_create_uint64(unsigned_value)
         : NULL;
 }
 

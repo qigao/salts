@@ -528,6 +528,13 @@ double json_number(const json_value_t *value) {
   return value && value->type == JSON_NUMBER ? value->data.number_val.value : 0.0;
 }
 
+const char *json_number_text(const json_value_t *value, size_t *len) {
+  if (len) *len = 0;
+  if (!value || value->type != JSON_NUMBER || !value->data.number_val.lexeme) return NULL;
+  if (len) *len = value->data.number_val.lexeme_len;
+  return value->data.number_val.lexeme;
+}
+
 const char *json_string(const json_value_t *value) {
   return value && value->type == JSON_STRING ? value->data.string_val.str : NULL;
 }
@@ -985,8 +992,20 @@ json_value_t *json_create_string_n(const char *str, size_t len) {
 }
 
 json_value_t *json_create_number(double num) {
+  char text[64];
+  int len = snprintf(text, sizeof(text), "%.17g", num);
   json_value_t *value = json_create_root(JSON_NUMBER);
-  if (value) value->data.number_val.value = num;
+  if (!value || len <= 0 || (size_t)len >= sizeof(text)) {
+    json_free(value);
+    return NULL;
+  }
+  value->data.number_val.value = num;
+  value->data.number_val.lexeme = json_arena_strdup(value->arena, text, (size_t)len);
+  value->data.number_val.lexeme_len = (size_t)len;
+  if (!value->data.number_val.lexeme) {
+    json_free(value);
+    return NULL;
+  }
   return value;
 }
 
@@ -995,6 +1014,24 @@ json_value_t *json_create_int64(int64_t num) {
   int len = snprintf(text, sizeof(text), "%lld", (long long)num);
   json_value_t *value = json_create_root(JSON_NUMBER);
   if (!value) return NULL;
+  value->data.number_val.value = (double)num;
+  value->data.number_val.lexeme = json_arena_strdup(value->arena, text, (size_t)len);
+  value->data.number_val.lexeme_len = (size_t)len;
+  if (!value->data.number_val.lexeme) {
+    json_free(value);
+    return NULL;
+  }
+  return value;
+}
+
+json_value_t *json_create_uint64(uint64_t num) {
+  char text[32];
+  int len = snprintf(text, sizeof(text), "%llu", (unsigned long long)num);
+  json_value_t *value = json_create_root(JSON_NUMBER);
+  if (!value || len <= 0 || (size_t)len >= sizeof(text)) {
+    json_free(value);
+    return NULL;
+  }
   value->data.number_val.value = (double)num;
   value->data.number_val.lexeme = json_arena_strdup(value->arena, text, (size_t)len);
   value->data.number_val.lexeme_len = (size_t)len;
@@ -1145,6 +1182,7 @@ typedef enum {
 
 struct json_sax_parser_s {
   json_sax_handler_t handler;
+  int (*on_number_raw)(void *ctx, const char *val, size_t len);
   void *ctx;
   sax_state_t state_stack[SAX_MAX_DEPTH];
   int depth;
@@ -1359,8 +1397,10 @@ static int json_sax_process_token(json_sax_parser_t *parser, const json_token_t 
       break;
 
     case JSON_TOKEN_NUMBER:
-      if (parser->handler.on_number &&
-          parser->handler.on_number(parser->ctx, token->num_value) != 0) {
+      if ((parser->on_number_raw &&
+           parser->on_number_raw(parser->ctx, token->value, token->length) != 0) ||
+          (!parser->on_number_raw && parser->handler.on_number &&
+           parser->handler.on_number(parser->ctx, token->num_value) != 0)) {
         json_sax_set_error(parser, "SAX callback failed");
         return -1;
       }
@@ -1744,8 +1784,9 @@ static int json_sax_parser_run(json_sax_parser_t *parser, bool final) {
   return result < 0 ? -1 : 0;
 }
 
-json_sax_parser_t *json_sax_parser_create(const json_sax_handler_t *handler, void *ctx) {
-  if (!handler) {
+static json_sax_parser_t *json_sax_parser_create_common(
+    const json_sax_handler_t *handler, const json_sax_handler_raw_t *raw_handler, void *ctx) {
+  if ((handler == NULL) == (raw_handler == NULL)) {
     fmt(g_error, sizeof(g_error), "Invalid arguments");
     return NULL;
   }
@@ -1756,7 +1797,19 @@ json_sax_parser_t *json_sax_parser_create(const json_sax_handler_t *handler, voi
     return NULL;
   }
 
-  parser->handler = *handler;
+  if (handler != NULL) {
+    parser->handler = *handler;
+  } else {
+    parser->handler.on_null = raw_handler->on_null;
+    parser->handler.on_bool = raw_handler->on_bool;
+    parser->handler.on_string = raw_handler->on_string;
+    parser->handler.on_object_start = raw_handler->on_object_start;
+    parser->handler.on_object_key = raw_handler->on_object_key;
+    parser->handler.on_object_end = raw_handler->on_object_end;
+    parser->handler.on_array_start = raw_handler->on_array_start;
+    parser->handler.on_array_end = raw_handler->on_array_end;
+    parser->on_number_raw = raw_handler->on_number;
+  }
   parser->ctx = ctx;
   parser->state = SAX_STATE_VALUE;
   parser->buffer = tstr_new();
@@ -1766,6 +1819,14 @@ json_sax_parser_t *json_sax_parser_create(const json_sax_handler_t *handler, voi
     return NULL;
   }
   return parser;
+}
+
+json_sax_parser_t *json_sax_parser_create(const json_sax_handler_t *handler, void *ctx) {
+  return json_sax_parser_create_common(handler, NULL, ctx);
+}
+
+json_sax_parser_t *json_sax_parser_create_raw(const json_sax_handler_raw_t *handler, void *ctx) {
+  return json_sax_parser_create_common(NULL, handler, ctx);
 }
 
 int json_sax_parser_feed(json_sax_parser_t *parser, const char *data, size_t len) {
@@ -1833,6 +1894,22 @@ int json_parse_sax(const char *content, size_t len, const json_sax_handler_t *ha
   }
 
   json_sax_parser_t *parser = json_sax_parser_create(handler, ctx);
+  if (!parser) return -1;
+
+  int ret = json_sax_parser_feed(parser, content, len);
+  if (ret == 0) ret = json_sax_parser_finish(parser);
+  json_sax_parser_destroy(parser);
+  return ret;
+}
+
+int json_parse_sax_raw(const char *content, size_t len,
+                       const json_sax_handler_raw_t *handler, void *ctx) {
+  if (!content || len == 0 || !handler) {
+    fmt(g_error, sizeof(g_error), "Invalid arguments");
+    return -1;
+  }
+
+  json_sax_parser_t *parser = json_sax_parser_create_raw(handler, ctx);
   if (!parser) return -1;
 
   int ret = json_sax_parser_feed(parser, content, len);

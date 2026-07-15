@@ -42,6 +42,21 @@ typedef struct turbo_json_sax_handler_s {
   int (*on_array_end)(void *ctx);
 } turbo_json_sax_handler_t;
 
+/** JSON SAX callbacks with an exact, borrowed number token.
+ * The number slice is valid only for the duration of on_number().
+ */
+typedef struct turbo_json_sax_handler_raw_s {
+  int (*on_null)(void *ctx);
+  int (*on_bool)(void *ctx, bool val);
+  int (*on_number)(void *ctx, const char *val, size_t len);
+  int (*on_string)(void *ctx, const char *val, size_t len);
+  int (*on_object_start)(void *ctx);
+  int (*on_object_key)(void *ctx, const char *key, size_t len);
+  int (*on_object_end)(void *ctx);
+  int (*on_array_start)(void *ctx);
+  int (*on_array_end)(void *ctx);
+} turbo_json_sax_handler_raw_t;
+
 /**
  * @brief Parse JSON data.
  * @param data Input buffer.
@@ -64,6 +79,28 @@ CXX_C_API int turbo_parse_json(const uint8_t *data, size_t len, turbo_json_doc_t
 CXX_C_API int turbo_parse_json_sax(const uint8_t *data, size_t len,
                                    const turbo_json_sax_handler_t *handler, void *ctx);
 
+/**
+ * @brief Parse one complete JSON document while preserving exact number tokens.
+ * @param data JSON input buffer; must not be NULL.
+ * @param len Input length; must be non-zero.
+ * @param handler Raw-number callback table; must not be NULL.
+ * @param ctx User context passed unchanged to callbacks.
+ * @return 0 on success, -1 on invalid input, syntax error, allocation failure,
+ * or a non-zero callback result.
+ *
+ * Number callbacks receive a borrowed, non-NUL-terminated slice. Other callback
+ * values retain the same decoded semantics as turbo_json_sax_handler_t.
+ * @code
+ * static int number(void *ctx, const char *text, size_t len) {
+ *   return consume_exact_number(ctx, text, len);
+ * }
+ * turbo_json_sax_handler_raw_t h = {.on_number = number};
+ * turbo_parse_json_sax_raw(data, len, &h, user);
+ * @endcode
+ */
+CXX_C_API int turbo_parse_json_sax_raw(const uint8_t *data, size_t len,
+                                       const turbo_json_sax_handler_raw_t *handler, void *ctx);
+
 /* Incremental JSON SAX parser. Call feed() with any chunk size, then finish()
  * once at EOF.
  * Callback pointers are valid only for the duration of the
@@ -71,6 +108,15 @@ CXX_C_API int turbo_parse_json_sax(const uint8_t *data, size_t len,
  * callback stops parsing. */
 CXX_C_API turbo_json_sax_parser_t *
 turbo_json_sax_parser_create(const turbo_json_sax_handler_t *handler, void *ctx);
+/**
+ * @brief Create an incremental parser whose number callback receives exact JSON text.
+ * @param handler Raw-number callback table; must not be NULL and is copied.
+ * @param ctx User context passed unchanged to callbacks.
+ * @return Owned parser released by turbo_json_sax_parser_destroy(), or NULL on
+ * invalid arguments/allocation failure.
+ */
+CXX_C_API turbo_json_sax_parser_t *
+turbo_json_sax_parser_create_raw(const turbo_json_sax_handler_raw_t *handler, void *ctx);
 CXX_C_API int turbo_json_sax_parser_feed(turbo_json_sax_parser_t *parser, const char *data,
                                          size_t len);
 CXX_C_API int turbo_json_sax_parser_finish(turbo_json_sax_parser_t *parser);
@@ -111,6 +157,14 @@ CXX_C_API bool turbo_json_bool(const json_value_t *value);
  * @return The numeric value as a double.
  */
 CXX_C_API double turbo_json_number(const json_value_t *value);
+
+/**
+ * @brief Get the original JSON number token when available.
+ * @param value JSON number node.
+ * @param len Optional output length. Set to zero when no token is available.
+ * @return Borrowed token text, or NULL when value is not a number.
+ */
+CXX_C_API const char *turbo_json_number_text(const json_value_t *value, size_t *len);
 
 /**
  * @brief Get string value from a JSON string node.
@@ -329,6 +383,9 @@ CXX_C_API json_value_t *turbo_json_create_number(double num);
 
 /** Create a JSON integer whose serialized decimal form preserves all int64 bits. */
 CXX_C_API json_value_t *turbo_json_create_int64(int64_t num);
+
+/** Create a JSON integer whose serialized decimal form preserves all uint64 bits. */
+CXX_C_API json_value_t *turbo_json_create_uint64(uint64_t num);
 
 /**
  * @brief Create a JSON boolean node.
@@ -1308,6 +1365,8 @@ typedef struct ltv_message_s turbo_ltv_message_t;
  * @param data Input buffer.
  * @param len Buffer length.
  * @param out Address of a pointer (turbo_ltv_message_t **) to store the result.
+ * The parsed value borrows data and remains valid only while data is alive and
+ * unchanged. turbo_free_ltv() frees the message handle, not data.
  * @return 0 on success, error code otherwise.
  */
 CXX_C_API int turbo_parse_ltv(const uint8_t *data, size_t len, void *out);
@@ -1342,7 +1401,8 @@ CXX_C_API size_t turbo_ltv_value_len(const turbo_ltv_message_t *msg);
 /**
  * @brief Calculate the total wire size required for an LTV message with a given value size.
  * @param value_size Number of bytes in the value part.
- * @return Total size in bytes including header.
+ * @return Total size in bytes including header, or 0 when value_size exceeds
+ * the supported LTV payload limit.
  */
 CXX_C_API size_t turbo_ltv_wire_size(size_t value_size);
 
@@ -1353,7 +1413,8 @@ CXX_C_API size_t turbo_ltv_wire_size(size_t value_size);
  * @param value_size Length of value data.
  * @param out Output buffer.
  * @param out_len Maximum output buffer size.
- * @return Number of bytes written to the buffer.
+ * @return Number of bytes written, or 0 on invalid input, oversized value, or
+ * insufficient capacity. No partial message is written on failure.
  */
 CXX_C_API size_t turbo_ltv_build(uint8_t type, const uint8_t *value, size_t value_size,
                                  uint8_t *out, size_t out_len);
@@ -1391,6 +1452,8 @@ CXX_C_API void turbo_ltv_stream_destroy(turbo_ltv_stream_t *stream);
  * @param data New data to process.
  * @param len Length of new data.
  * @param out Pointer to store a pointer to the reassembled message when complete.
+ * The returned value borrows stream storage and remains valid until the next
+ * feed, reset, or destroy call on the stream.
  * @return 0 if a message was completed and stored in 'out', negative for error, positive if more
  * data is needed.
  */

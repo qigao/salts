@@ -24,7 +24,7 @@
 #define DATA_BIND_UUID_SIZE TURBO_UUID_SIZE
 
 #define DATA_BIND_VERSION_MAJOR 1
-#define DATA_BIND_VERSION_MINOR 10
+#define DATA_BIND_VERSION_MINOR 11
 #define DATA_BIND_VERSION_PATCH 0
 #define DATA_BIND_VERSION                                                                          \
   (DATA_BIND_VERSION_MAJOR * 10000 + DATA_BIND_VERSION_MINOR * 100 + DATA_BIND_VERSION_PATCH)
@@ -95,7 +95,8 @@ typedef enum DataBindValueKind {
   DATA_BIND_VALUE_DURATION,
   DATA_BIND_VALUE_DECIMAL,
   DATA_BIND_VALUE_BIGINT,
-  DATA_BIND_VALUE_MONEY
+  DATA_BIND_VALUE_MONEY,
+  DATA_BIND_VALUE_UINT64
 } DataBindValueKind;
 
 typedef struct DataBindDate {
@@ -327,7 +328,8 @@ DATA_BIND_API DataBindStatus data_bind_parse(DataBind *codec, const char *type_n
  * @brief Create stream handles for JSON inputs.
  *
  * The constructor name defines whether the whole document, every root-array
- * item, the first JSONPath match, or all JSONPath matches are bound.
+ * item, the first JSONPath match, or all JSONPath matches are bound. Incremental
+ * root-array binding preserves exact signed and unsigned 64-bit number tokens.
  */
 DATA_BIND_API data_bind_stream_t *data_bind_stream_json_create(DataBind *codec,
                                                                const char *type_name,
@@ -345,10 +347,11 @@ data_bind_stream_json_path_all_create(DataBind *codec, const char *type_name, co
                                       DataBindValue **out_value, DataBindError *error);
 
 /**
- * @brief Create buffered YAML streams for root, root sequence, or YPATH binding.
+ * @brief Create SAX-validated YAML streams for root, root sequence, or YPATH binding.
  *
- * YAML chunks are buffered and parsed at finish(); record callbacks are emitted
- * after successful schema binding.
+ * YAML syntax is validated incrementally as chunks are fed. Schema and YPATH
+ * binding still run at finish(); record callbacks are emitted after successful
+ * schema binding.
  */
 DATA_BIND_API data_bind_stream_t *data_bind_stream_yaml_create(DataBind *codec,
                                                                const char *type_name,
@@ -712,6 +715,19 @@ DATA_BIND_API DataBindStatus data_bind_object_serialize_yaml(const DataBindObjec
 DATA_BIND_API DataBindStatus data_bind_object_serialize_xml(const DataBindObject *object,
                                                             char **out_xml, size_t *out_len,
                                                             DataBindError *error);
+/**
+ * Serialize one object as an RFC 4180 CSV header and data row. Nested object,
+ * collection, and map values use the same dotted/indexed paths accepted by the
+ * CSV binder (for example, header.seq, values[0], and attrs.key). Scalar text
+ * uses the canonical DataBind representation. String and bytes cells must be
+ * valid UTF-8, and bytes cannot contain NUL. Empty containers and map keys
+ * containing '.' or '[' cannot be represented losslessly and fail with
+ * DATA_BIND_ERR_TYPE_MISMATCH. On success, release *out_csv with
+ * data_bind_serialized_free().
+ */
+DATA_BIND_API DataBindStatus data_bind_object_serialize_csv(const DataBindObject *object,
+                                                            char **out_csv, size_t *out_len,
+                                                            DataBindError *error);
 
 DATA_BIND_API DataBindStatus data_bind_object_write_json(const DataBindObject *object,
                                                          DataBindWriteFn write, void *user,
@@ -720,6 +736,9 @@ DATA_BIND_API DataBindStatus data_bind_object_write_yaml(const DataBindObject *o
                                                          DataBindWriteFn write, void *user,
                                                          DataBindError *error);
 DATA_BIND_API DataBindStatus data_bind_object_write_xml(const DataBindObject *object,
+                                                        DataBindWriteFn write, void *user,
+                                                        DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_object_write_csv(const DataBindObject *object,
                                                         DataBindWriteFn write, void *user,
                                                         DataBindError *error);
 
@@ -740,6 +759,8 @@ DATA_BIND_API DataBindMapEntry data_bind_value_map_entry_at(const DataBindValue 
                                                             size_t index);
 DATA_BIND_API int32_t data_bind_value_as_int(const DataBindValue *value);
 DATA_BIND_API int64_t data_bind_value_as_int64(const DataBindValue *value);
+/** Convert a non-negative integer-compatible value to uint64, or return zero on mismatch. */
+DATA_BIND_API uint64_t data_bind_value_as_uint64(const DataBindValue *value);
 DATA_BIND_API double data_bind_value_as_double(const DataBindValue *value);
 DATA_BIND_API int data_bind_value_as_bool(const DataBindValue *value);
 DATA_BIND_API const char *data_bind_value_as_string(const DataBindValue *value);
@@ -770,6 +791,8 @@ DATA_BIND_API const char *data_bind_value_as_money_string(const DataBindValue *v
                                                           size_t len);
 DATA_BIND_API DataBindStatus data_bind_value_get_int32(const DataBindValue *value, int32_t *out);
 DATA_BIND_API DataBindStatus data_bind_value_get_int64(const DataBindValue *value, int64_t *out);
+/** Read an exact non-negative integer into @p out, rejecting negative or non-integer values. */
+DATA_BIND_API DataBindStatus data_bind_value_get_uint64(const DataBindValue *value, uint64_t *out);
 DATA_BIND_API DataBindStatus data_bind_value_get_double(const DataBindValue *value, double *out);
 DATA_BIND_API DataBindStatus data_bind_value_get_bool(const DataBindValue *value, int *out);
 DATA_BIND_API DataBindStatus data_bind_value_get_string(const DataBindValue *value,

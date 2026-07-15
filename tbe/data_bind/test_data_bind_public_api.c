@@ -29,6 +29,12 @@ typedef struct serialized_output {
   size_t len;
 } serialized_output;
 
+typedef struct exact_record_state {
+  size_t count;
+  int64_t signed_values[2];
+  uint64_t unsigned_values[2];
+} exact_record_state;
+
 static int collect_serialized(const void *data, size_t len, void *user) {
   serialized_output *output = (serialized_output *)user;
   if (!output || !data || len > sizeof(output->data) - output->len - 1) return -1;
@@ -54,11 +60,25 @@ static DataBindRecordAction collect_record(void *user_data, const DataBindValue 
   return DATA_BIND_RECORD_CONTINUE;
 }
 
+static DataBindRecordAction collect_exact_record(void *user_data, const DataBindValue *record,
+                                                 uint64_t record_index) {
+  exact_record_state *state = (exact_record_state *)user_data;
+  if (state == NULL || record == NULL || record_index != state->count || state->count >= 2 ||
+      data_bind_value_get_int64(data_bind_value_get(record, "min_value"),
+                                &state->signed_values[state->count]) != DATA_BIND_OK ||
+      data_bind_value_get_uint64(data_bind_value_get(record, "max_value"),
+                                 &state->unsigned_values[state->count]) != DATA_BIND_OK) {
+    return DATA_BIND_RECORD_ERROR;
+  }
+  state->count++;
+  return DATA_BIND_RECORD_CONTINUE;
+}
+
 spec("data_bind public API") {
   it("should expose version and ABI metadata") {
     check_int_eq(data_bind_library_version(), DATA_BIND_VERSION);
     check_int_eq(data_bind_abi_version(), DATA_BIND_ABI_VERSION);
-    check_str_eq(data_bind_version_string(), "1.10.0");
+    check_str_eq(data_bind_version_string(), "1.11.0");
     check_str_eq(data_bind_status_name(DATA_BIND_ERR_TYPE_MISMATCH), "type_mismatch");
   }
 
@@ -389,7 +409,7 @@ spec("data_bind public API") {
     }
   }
 
-  it("should reject invalid JSON and XML stream chunks before binding") {
+  it("should reject invalid JSON YAML and XML stream chunks before binding") {
     const char *schema = "enum Side <uint8> { Buy = 1; Sell = 2; }\n"
                          "message Order { uint32 id; Side side; string symbol; }\n";
     DataBind *codec = NULL;
@@ -412,6 +432,19 @@ spec("data_bind public API") {
         if (status == DATA_BIND_OK) {
           status = data_bind_stream_finish(stream);
         }
+        check_int_eq(status, DATA_BIND_ERR_PARSE);
+        check_int_eq(err.code, DATA_BIND_ERR_PARSE);
+        data_bind_value_free(value);
+        value = NULL;
+        data_bind_stream_destroy(stream);
+        stream = NULL;
+      }
+
+      stream = data_bind_stream_yaml_create(codec, "Order", &value, &err);
+      check_not_null(stream);
+      if (stream) {
+        const char yaml_bad[] = {'i', 'd', ':', ' ', -128, '\0'};
+        status = data_bind_stream_feed(stream, yaml_bad, sizeof(yaml_bad));
         check_int_eq(status, DATA_BIND_ERR_PARSE);
         check_int_eq(err.code, DATA_BIND_ERR_PARSE);
         data_bind_value_free(value);
@@ -511,6 +544,7 @@ spec("data_bind public API") {
     DataBindObject *object = NULL;
     DataBindError err = DATA_BIND_ERROR_INIT;
     char *serialized = NULL;
+    DataBindObject *yaml_roundtrip = NULL;
     char *yaml = NULL;
     char *xml = NULL;
     size_t serialized_len = 0;
@@ -522,8 +556,6 @@ spec("data_bind public API") {
       check_int_eq(data_bind_object_from_json(codec, "Payload", json, strlen(json), &object, &err),
                    DATA_BIND_OK);
       check_not_null(object);
-      data_bind_free(codec);
-      codec = NULL;
     }
     if (object) {
       check_str_eq(data_bind_object_type_name(object), "Payload");
@@ -541,6 +573,17 @@ spec("data_bind public API") {
 
       check_int_eq(data_bind_object_serialize_yaml(object, &yaml, NULL, &err), DATA_BIND_OK);
       check_str_contains(yaml, "9007199254740993");
+      check_null(strstr(yaml, "\"9007199254740993\""));
+      check_int_eq(data_bind_object_from_yaml(codec, "Payload", yaml, strlen(yaml),
+                                              &yaml_roundtrip, &err),
+                   DATA_BIND_OK);
+      check_not_null(yaml_roundtrip);
+      if (yaml_roundtrip) {
+        check_long_eq(data_bind_value_as_int64(
+                          data_bind_value_get(data_bind_object_value(yaml_roundtrip), "id")),
+                      INT64_C(9007199254740993));
+      }
+      data_bind_object_free(yaml_roundtrip);
       data_bind_serialized_free(yaml);
 
       check_int_eq(data_bind_object_serialize_xml(object, &xml, NULL, &err), DATA_BIND_OK);
@@ -552,6 +595,148 @@ spec("data_bind public API") {
       check_str_contains(output.data, "9007199254740993");
       data_bind_object_free(object);
     }
+    data_bind_free(codec);
+  }
+
+  it("should serialize standard values to CSV and round trip nested paths") {
+    const char *schema =
+        "enum Side <u8> { Buy = 1; Sell = 2; } "
+        "composite Meta { i32 seq; } "
+        "message CsvRow { u64 id; bool active; double ratio; uuid uid; datetime created; "
+        "date day; time at; duration span; decimal price; bigint total; money cost; Meta meta; i16[2] fixed; "
+        "Side side; string note; bytes raw; list<u32> values; set<i8> tags; "
+        "map<string,i64> attrs; }";
+    const char *json =
+        "{\"id\":18446744073709551615,\"active\":true,\"ratio\":1.25,"
+        "\"uid\":\"01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001\","
+        "\"created\":\"Sat, 04 Mar 2006 13:27:54 GMT\","
+        "\"day\":\"2026-07-15\",\"at\":\"09:30:05.123\",\"span\":\"1h2m3s\","
+        "\"price\":\"12.3400\",\"total\":\"123456789012345678901234567890\","
+        "\"cost\":{\"amount\":\"12.34\",\"currency\":\"USD\"},"
+        "\"meta\":{\"seq\":7},\"fixed\":[-1,32767],\"side\":\"Sell\","
+        "\"note\":\"A,\\\"B\\\"\\nC\",\"raw\":\"Az\",\"values\":[1,4294967295],"
+        "\"tags\":[-128,127],\"attrs\":{\"min_value\":-9223372036854775808}}";
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindObject *roundtrip = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    serialized_output output = {0};
+    char *csv = NULL;
+    size_t csv_len = 0;
+    uint64_t unsigned_value = 0;
+    int64_t signed_value = 0;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    if (codec) {
+      check_int_eq(data_bind_object_from_json(codec, "CsvRow", json, strlen(json), &object, &err),
+                   DATA_BIND_OK);
+      check_not_null(object);
+    }
+    if (object) {
+      const DataBindValue *root;
+      DataBindMapEntry entry;
+      char text[128];
+      size_t bytes_len = 0;
+      check_int_eq(data_bind_object_serialize_csv(object, &csv, &csv_len, &err), DATA_BIND_OK);
+      check_not_null(csv);
+      check_size_eq(csv_len, strlen(csv));
+      check_str_contains(csv, "meta.seq");
+      check_str_contains(csv, "fixed[1]");
+      check_str_contains(csv, "values[1]");
+      check_str_contains(csv, "attrs.min_value");
+      check_str_contains(csv, "18446744073709551615");
+      check_str_contains(csv, "-9223372036854775808");
+      check_str_contains(csv, "\"A,\"\"B\"\"");
+      check(csv_len >= 2 && csv[csv_len - 2] == '\r' && csv[csv_len - 1] == '\n');
+
+      check_int_eq(data_bind_object_from_csv(codec, "CsvRow", csv, csv_len, 0, &roundtrip, &err),
+                   DATA_BIND_OK);
+      check_not_null(roundtrip);
+      root = data_bind_object_value(roundtrip);
+      check_int_eq(data_bind_value_get_uint64(data_bind_value_get(root, "id"), &unsigned_value),
+                   DATA_BIND_OK);
+      check(unsigned_value == UINT64_MAX);
+      check_true(data_bind_value_as_bool(data_bind_value_get(root, "active")));
+      check_double_eq(data_bind_value_as_double(data_bind_value_get(root, "ratio")), 1.25, 0.0);
+      check_str_eq(data_bind_value_as_uuid_string(data_bind_value_get(root, "uid"), text,
+                                                  sizeof(text)),
+                   "01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001");
+      check_str_eq(data_bind_value_as_datetime_string(data_bind_value_get(root, "created"), text,
+                                                      sizeof(text)),
+                   "Sat, 04 Mar 2006 13:27:54 GMT");
+      check_str_eq(data_bind_value_as_date_string(data_bind_value_get(root, "day"), text,
+                                                  sizeof(text)),
+                   "2026-07-15");
+      check_str_eq(data_bind_value_as_time_string(data_bind_value_get(root, "at"), text,
+                                                  sizeof(text)),
+                   "09:30:05.123");
+      check_int_eq((int)data_bind_value_as_duration_milliseconds(
+                       data_bind_value_get(root, "span")),
+                   3723000);
+      check_str_eq(data_bind_value_as_decimal_string(data_bind_value_get(root, "price"), text,
+                                                     sizeof(text)),
+                   "12.34");
+      check_str_eq(data_bind_value_as_bigint_string(data_bind_value_get(root, "total")),
+                   "123456789012345678901234567890");
+      check_str_eq(data_bind_value_as_money_string(data_bind_value_get(root, "cost"), text,
+                                                   sizeof(text)),
+                   "USD 12.34");
+      check_str_eq(data_bind_value_as_string(data_bind_value_get(root, "note")), "A,\"B\"\nC");
+      check_mem_eq(data_bind_value_as_bytes(data_bind_value_get(root, "raw"), &bytes_len), "Az",
+                   2u);
+      check_size_eq(bytes_len, 2u);
+      check_int_eq(data_bind_value_as_int(
+                       data_bind_value_get(data_bind_value_get(root, "meta"), "seq")),
+                   7);
+      check_int_eq(data_bind_value_as_int(data_bind_value_at(data_bind_value_get(root, "fixed"),
+                                                              1u)),
+                   32767);
+      check_int_eq(data_bind_value_get_uint64(
+                       data_bind_value_at(data_bind_value_get(root, "values"), 1u),
+                       &unsigned_value),
+                   DATA_BIND_OK);
+      check(unsigned_value == UINT32_MAX);
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(root, "side")), 2);
+      check_size_eq(data_bind_value_count(data_bind_value_get(root, "tags")), 2u);
+      entry = data_bind_value_map_entry_at(data_bind_value_get(root, "attrs"), 0u);
+      check_str_eq(entry.key, "min_value");
+      check_int_eq(data_bind_value_get_int64(entry.value, &signed_value), DATA_BIND_OK);
+      check(signed_value == INT64_MIN);
+
+      check_int_eq(data_bind_object_write_csv(object, collect_serialized, &output, &err),
+                   DATA_BIND_OK);
+      check_size_eq(output.len, csv_len);
+      check_str_eq(output.data, csv);
+      check_int_eq(data_bind_object_serialize_csv(object, NULL, NULL, &err),
+                   DATA_BIND_ERR_INVALID_ARG);
+    }
+    data_bind_serialized_free(csv);
+    data_bind_object_free(roundtrip);
+    data_bind_object_free(object);
+    data_bind_free(codec);
+  }
+
+  it("should reject CSV values that have no lossless column representation") {
+    const char *schema = "message Empty { list<i32> values; }";
+    const char *json = "{\"values\":[]}";
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    char *csv = NULL;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    if (codec) {
+      check_int_eq(data_bind_object_from_json(codec, "Empty", json, strlen(json), &object, &err),
+                   DATA_BIND_OK);
+    }
+    if (object) {
+      check_int_eq(data_bind_object_serialize_csv(object, &csv, NULL, &err),
+                   DATA_BIND_ERR_TYPE_MISMATCH);
+      check_null(csv);
+      check_str_contains(err.message, "losslessly");
+    }
+    data_bind_object_free(object);
+    data_bind_free(codec);
   }
 
   it("should create the same object handle from YAML and XML") {
@@ -601,6 +786,106 @@ spec("data_bind public API") {
       data_bind_object_free(object);
       data_bind_free(codec);
     }
+  }
+
+  it("should preserve uint64 max, reject fractional integers, parse time, and serialize bigint XML") {
+    const char *schema =
+        "message Exact { uint64 id; int32 count; time at; bigint huge; }\n";
+    const char *huge =
+        "12345678901234567890123456789012345678901234567890123456789012345678901234567890"
+        "12345678901234567890123456789012345678901234567890123456789012345678901234567890";
+    char json[512];
+    char fractional[512];
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindValue *value = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    const DataBindValue *id;
+    DataBindTime time = {0};
+    uint64_t exact = 0;
+    char *serialized = NULL;
+
+    snprintf(json, sizeof(json),
+             "{\"id\":18446744073709551615,\"count\":7,\"at\":\"09:30:05\",\"huge\":\"%s\"}",
+             huge);
+    snprintf(fractional, sizeof(fractional),
+             "{\"id\":1,\"count\":1.5,\"at\":\"09:30\",\"huge\":\"%s\"}", huge);
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    if (codec) {
+      check_int_eq(data_bind_object_from_json(codec, "Exact", json, strlen(json), &object, &err),
+                   DATA_BIND_OK);
+      check_not_null(object);
+      if (object) {
+        id = data_bind_value_get(data_bind_object_value(object), "id");
+        check(data_bind_value_kind(id) == DATA_BIND_VALUE_UINT64);
+        check_int_eq(data_bind_value_get_uint64(id, &exact), DATA_BIND_OK);
+        check(exact == UINT64_MAX);
+        check_int_eq(data_bind_value_get_time(
+                         data_bind_value_get(data_bind_object_value(object), "at"), &time),
+                     DATA_BIND_OK);
+        check_int_eq(time.hour, 9);
+        check_int_eq(time.minute, 30);
+        check_int_eq(time.second, 5);
+        check_int_eq(data_bind_object_serialize_xml(object, &serialized, NULL, &err), DATA_BIND_OK);
+        check_str_contains(serialized, huge);
+        data_bind_serialized_free(serialized);
+      }
+      check_int_eq(data_bind_parse_json(codec, "Exact", fractional, strlen(fractional), &value,
+                                        &err),
+                   DATA_BIND_ERR_TYPE_MISMATCH);
+      check_null(value);
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should keep live cached codecs valid after cache clear") {
+    const char *schema = "message Counter { uint64 value; }\n";
+    const uint8_t wire[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    DataBind *first = NULL;
+    DataBind *second = NULL;
+    DataBind *third = NULL;
+    DataBindValue *value = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    uint64_t exact = 0;
+
+    data_bind_set_cache_enabled(1);
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &first, &err), DATA_BIND_OK);
+    data_bind_clear_cache();
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &second, &err), DATA_BIND_OK);
+    data_bind_clear_cache();
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &third, &err), DATA_BIND_OK);
+    if (first) {
+      check_int_eq(data_bind_parse(first, "Counter", wire, sizeof(wire), &value, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_value_get_uint64(data_bind_value_get(value, "value"), &exact),
+                   DATA_BIND_OK);
+      check(exact == UINT64_MAX);
+      data_bind_value_free(value);
+      value = NULL;
+    }
+    if (second) {
+      check_int_eq(data_bind_parse(second, "Counter", wire, sizeof(wire), &value, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_value_get_uint64(data_bind_value_get(value, "value"), &exact),
+                   DATA_BIND_OK);
+      check(exact == UINT64_MAX);
+      data_bind_value_free(value);
+      value = NULL;
+    }
+    if (third) {
+      check_int_eq(data_bind_parse(third, "Counter", wire, sizeof(wire), &value, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_value_get_uint64(data_bind_value_get(value, "value"), &exact),
+                   DATA_BIND_OK);
+      check(exact == UINT64_MAX);
+      data_bind_value_free(value);
+    }
+    data_bind_free(third);
+    data_bind_free(second);
+    data_bind_free(first);
+    data_bind_clear_cache();
+    data_bind_clear_cache();
   }
 
   it("should own binary and CSV objects and deep clone them") {
@@ -659,6 +944,7 @@ spec("data_bind public API") {
                    DATA_BIND_OK);
       if (roundtrip) {
         const DataBindValue *value = data_bind_object_value(roundtrip);
+        check(data_bind_value_kind(data_bind_value_get(value, "id")) == DATA_BIND_VALUE_INT);
         check_int_eq(data_bind_value_as_int(data_bind_value_get(value, "id")), 7);
         check_int_eq(data_bind_value_as_int(data_bind_value_get(value, "side")), 1);
         check_int_eq(data_bind_value_as_bool(data_bind_value_get(value, "active")), 1);
@@ -673,9 +959,13 @@ spec("data_bind public API") {
 
   it("should round-trip binary fixed and variable collections") {
     const char *schema = "message Values { uint32[2] fixed; list<uint32> values; "
-                         "set<string> tags; map<string,int32> attrs; bytes raw; }\n";
-    const char *json = "{\"fixed\":[11,22],\"values\":[3,4,5],\"tags\":[\"A\",\"B\"],"
-                       "\"attrs\":{\"x\":30,\"y\":40},\"raw\":\"Az\"}";
+                         "set<uint32> ids; map<string,uint32> attrs; "
+                         "set<uint64> large_ids; map<string,uint64> large_attrs; bytes raw; }\n";
+    const char *json =
+        "{\"fixed\":[11,4294967295],\"values\":[3,4,4294967295],"
+        "\"ids\":[7,4294967295],\"attrs\":{\"max\":4294967295},"
+        "\"large_ids\":[9,18446744073709551615],"
+        "\"large_attrs\":{\"max\":18446744073709551615},\"raw\":\"Az\"}";
     DataBind *codec = NULL;
     DataBindObject *object = NULL;
     DataBindObject *roundtrip = NULL;
@@ -687,9 +977,12 @@ spec("data_bind public API") {
     if (codec) {
       const DataBindValue *root;
       const DataBindValue *values;
-      const DataBindValue *tags;
+      const DataBindValue *ids;
       const DataBindValue *attrs;
+      const DataBindValue *large_ids;
+      const DataBindValue *large_attrs;
       DataBindMapEntry entry;
+      uint64_t exact = 0;
       size_t raw_len = 0;
       check_int_eq(data_bind_object_from_json(codec, "Values", json, strlen(json), &object, &err),
                    DATA_BIND_OK);
@@ -699,19 +992,121 @@ spec("data_bind public API") {
                    DATA_BIND_OK);
       root = data_bind_object_value(roundtrip);
       values = data_bind_value_get(root, "values");
-      tags = data_bind_value_get(root, "tags");
+      ids = data_bind_value_get(root, "ids");
       attrs = data_bind_value_get(root, "attrs");
+      large_ids = data_bind_value_get(root, "large_ids");
+      large_attrs = data_bind_value_get(root, "large_attrs");
       check_size_eq(data_bind_value_count(data_bind_value_get(root, "fixed")), 2u);
-      check_int_eq(data_bind_value_as_int(data_bind_value_at(values, 2u)), 5);
-      check_str_eq(data_bind_value_as_string(data_bind_value_at(tags, 1u)), "B");
-      entry = data_bind_value_map_entry_at(attrs, 1u);
-      check_str_eq(entry.key, "y");
-      check_int_eq(data_bind_value_as_int(entry.value), 40);
+      check(data_bind_value_as_int64(data_bind_value_at(data_bind_value_get(root, "fixed"), 1u)) ==
+            INT64_C(4294967295));
+      check(data_bind_value_as_int64(data_bind_value_at(values, 2u)) == INT64_C(4294967295));
+      check(data_bind_value_as_int64(data_bind_value_at(ids, 1u)) == INT64_C(4294967295));
+      entry = data_bind_value_map_entry_at(attrs, 0u);
+      check_str_eq(entry.key, "max");
+      check(data_bind_value_as_int64(entry.value) == INT64_C(4294967295));
+      check_int_eq(data_bind_value_get_uint64(data_bind_value_at(large_ids, 1u), &exact),
+                   DATA_BIND_OK);
+      check(exact == UINT64_MAX);
+      entry = data_bind_value_map_entry_at(large_attrs, 0u);
+      check_str_eq(entry.key, "max");
+      check_int_eq(data_bind_value_get_uint64(entry.value, &exact), DATA_BIND_OK);
+      check(exact == UINT64_MAX);
       check_mem_eq(data_bind_value_as_bytes(data_bind_value_get(root, "raw"), &raw_len), "Az", 2u);
       check_size_eq(raw_len, 2u);
       data_bind_binary_free(wire);
       data_bind_object_free(roundtrip);
       data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should support all short integer aliases across text and binary containers") {
+    const char *schema =
+        "message Aliases { i8 a; u8 b; i16 c; u16 d; i32 e; u32 f; i64 g; u64 h; "
+        "u16[2] fixed; list<i16> signed_list; set<u32> unsigned_set; "
+        "map<string,i64> signed_map; }\n";
+    const char *json =
+        "{\"a\":-128,\"b\":255,\"c\":-32768,\"d\":65535,"
+        "\"e\":-2147483648,\"f\":4294967295,"
+        "\"g\":-9223372036854775808,\"h\":18446744073709551615,"
+        "\"fixed\":[1,65535],\"signed_list\":[-1,-32768],"
+        "\"unsigned_set\":[1,4294967295],\"signed_map\":{\"min\":-9223372036854775808}}";
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindObject *roundtrip = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    uint8_t *wire = NULL;
+    size_t wire_len = 0;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    if (codec) {
+      const DataBindValue *root;
+      const DataBindValue *fixed;
+      const DataBindValue *signed_list;
+      const DataBindValue *unsigned_set;
+      DataBindMapEntry entry;
+      int64_t signed_value = 0;
+      uint64_t unsigned_value = 0;
+
+      check_int_eq(data_bind_object_from_json(codec, "Aliases", json, strlen(json), &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_bin(codec, object, &wire, &wire_len, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_object_from_bin(codec, "Aliases", wire, wire_len, &roundtrip, &err),
+                   DATA_BIND_OK);
+
+      root = data_bind_object_value(roundtrip);
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(root, "a")), -128);
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(root, "b")), 255);
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(root, "c")), -32768);
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(root, "d")), 65535);
+      check_int_eq(data_bind_value_get_int64(data_bind_value_get(root, "e"), &signed_value),
+                   DATA_BIND_OK);
+      check(signed_value == INT64_C(-2147483648));
+      check_int_eq(data_bind_value_get_uint64(data_bind_value_get(root, "f"), &unsigned_value),
+                   DATA_BIND_OK);
+      check(unsigned_value == UINT64_C(4294967295));
+      check_int_eq(data_bind_value_get_int64(data_bind_value_get(root, "g"), &signed_value),
+                   DATA_BIND_OK);
+      check(signed_value == INT64_MIN);
+      check_int_eq(data_bind_value_get_uint64(data_bind_value_get(root, "h"), &unsigned_value),
+                   DATA_BIND_OK);
+      check(unsigned_value == UINT64_MAX);
+
+      fixed = data_bind_value_get(root, "fixed");
+      signed_list = data_bind_value_get(root, "signed_list");
+      unsigned_set = data_bind_value_get(root, "unsigned_set");
+      check_size_eq(data_bind_value_count(fixed), 2u);
+      check_int_eq(data_bind_value_as_int(data_bind_value_at(fixed, 1u)), 65535);
+      check_int_eq(data_bind_value_as_int(data_bind_value_at(signed_list, 1u)), -32768);
+      check_int_eq(data_bind_value_get_uint64(data_bind_value_at(unsigned_set, 1u),
+                                              &unsigned_value),
+                   DATA_BIND_OK);
+      check(unsigned_value == UINT64_C(4294967295));
+      entry = data_bind_value_map_entry_at(data_bind_value_get(root, "signed_map"), 0u);
+      check_str_eq(entry.key, "min");
+      check_int_eq(data_bind_value_get_int64(entry.value, &signed_value), DATA_BIND_OK);
+      check(signed_value == INT64_MIN);
+
+      data_bind_binary_free(wire);
+      data_bind_object_free(roundtrip);
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should reject a truncated map string value after reading its key") {
+    const char *schema = "message Values { map<string,string> attrs; }\n";
+    const uint8_t wire[] = {1, 0, 0, 0, 1, 0, 0, 0, 'k', 4, 0, 0, 0, 'a', 'b'};
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    if (codec) {
+      check(data_bind_object_from_bin(codec, "Values", wire, sizeof(wire), &object, &err) !=
+            DATA_BIND_OK);
+      check_null(object);
       data_bind_free(codec);
     }
   }
@@ -1102,6 +1497,43 @@ spec("data_bind public API") {
       }
       data_bind_free(codec);
     }
+  }
+
+  it("should preserve exact 64-bit integers in incremental JSON records") {
+    const char *schema = "message Exact { i64 min_value; u64 max_value; }\n";
+    const char *parts[] = {"[{\"min_value\":9007199254740",
+                           "993,\"max_value\":18446744073709551615},",
+                           "{\"min_value\":-9223372036854775808,"
+                           "\"max_value\":9007199254740993}]"};
+    DataBind *codec = NULL;
+    DataBindValue *value = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    exact_record_state state = {0};
+    data_bind_stream_t *stream;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    check_not_null(codec);
+    stream = data_bind_stream_json_all_create(codec, "Exact", &value, &err);
+    check_not_null(stream);
+    if (stream) {
+      check_int_eq(data_bind_stream_set_record_callback(stream, collect_exact_record, &state),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_stream_feed(stream, parts[0], strlen(parts[0])), DATA_BIND_OK);
+      check_size_eq(state.count, 0);
+      check_int_eq(data_bind_stream_feed(stream, parts[1], strlen(parts[1])), DATA_BIND_OK);
+      check_size_eq(state.count, 1);
+      check_int_eq(data_bind_stream_feed(stream, parts[2], strlen(parts[2])), DATA_BIND_OK);
+      check_size_eq(state.count, 2);
+      check_int_eq(data_bind_stream_finish(stream), DATA_BIND_OK);
+      check_size_eq(data_bind_value_count(value), 2);
+      check(state.signed_values[0] == INT64_C(9007199254740993));
+      check(state.unsigned_values[0] == UINT64_MAX);
+      check(state.signed_values[1] == INT64_MIN);
+      check(state.unsigned_values[1] == UINT64_C(9007199254740993));
+      data_bind_stream_destroy(stream);
+    }
+    data_bind_value_free(value);
+    data_bind_free(codec);
   }
 
   it("should enforce record callback stop error and setup state") {

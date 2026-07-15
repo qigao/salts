@@ -172,6 +172,7 @@ void tbe_typed_clear(const TbeTypedType *type, void *object) {
 static DataBindStatus typed_read_scalar(TbeTypedKind kind, const DataBindValue *value, void *out,
                                         const char *path, DataBindError *error) {
   int64_t signed_value = 0;
+  uint64_t unsigned_value = 0;
   double double_value = 0.0;
   int bool_value = 0;
   if (kind == TBE_TYPED_BOOL) {
@@ -188,6 +189,12 @@ static DataBindStatus typed_read_scalar(TbeTypedKind kind, const DataBindValue *
     return DATA_BIND_OK;
   }
   if (kind == TBE_TYPED_ENUM) kind = TBE_TYPED_I32;
+  if (kind == TBE_TYPED_U64) {
+    if (data_bind_value_get_uint64(value, &unsigned_value) != DATA_BIND_OK)
+      return typed_error(error, DATA_BIND_ERR_TYPE_MISMATCH, path, "Expected unsigned integer");
+    *(uint64_t *)out = unsigned_value;
+    return DATA_BIND_OK;
+  }
   if (!typed_is_integer(kind) || data_bind_value_get_int64(value, &signed_value) != DATA_BIND_OK)
     return typed_error(error, DATA_BIND_ERR_TYPE_MISMATCH, path, "Expected integer value");
   switch (kind) {
@@ -217,10 +224,6 @@ static DataBindStatus typed_read_scalar(TbeTypedKind kind, const DataBindValue *
     break;
   case TBE_TYPED_I64:
     *(int64_t *)out = signed_value;
-    break;
-  case TBE_TYPED_U64:
-    if (signed_value < 0) goto range_error;
-    *(uint64_t *)out = (uint64_t)signed_value;
     break;
   default:
     goto range_error;
@@ -417,8 +420,7 @@ static json_value_t *typed_scalar_json(TbeTypedKind kind, const void *ptr) {
   case TBE_TYPED_I64:
     return turbo_json_create_int64(*(const int64_t *)ptr);
   case TBE_TYPED_U64:
-    if (*(const uint64_t *)ptr > INT64_MAX) return NULL;
-    return turbo_json_create_int64((int64_t)*(const uint64_t *)ptr);
+    return turbo_json_create_uint64(*(const uint64_t *)ptr);
   default:
     return NULL;
   }
@@ -607,7 +609,11 @@ static int csv_flatten(const json_value_t *value, const char *path, tstr_t *head
                               turbo_json_bool(value) ? 4 : 5);
   if (kind == TURBO_JSON_NULL) return 1;
   {
+    const char *exact;
+    size_t exact_len = 0;
     char number[64];
+    exact = turbo_json_number_text(value, &exact_len);
+    if (exact != NULL) return csv_append_escaped(values, exact, exact_len);
     int len = snprintf(number, sizeof(number), "%.17g", turbo_json_number(value));
     return len > 0 && csv_append_escaped(values, number, (size_t)len);
   }

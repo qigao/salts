@@ -71,6 +71,30 @@ spec("ltv_parser") {
         int decoded = ltv_decode_varint(buf, 1, &out);
         check_int_eq(decoded, 0);  /* Need more data */
     }
+
+    it("should reject overlong and overflowing varints without changing output") {
+        const uint8_t overlong[] = {0x81, 0x00};
+        const uint8_t high_bits[] = {0xFF, 0xFF, 0xFF, 0xFF, 0x1F};
+        const uint8_t unterminated[] = {0x80, 0x80, 0x80, 0x80, 0x80};
+        uint32_t out = 1234;
+
+        check_int_eq(ltv_decode_varint(overlong, sizeof(overlong), &out), -1);
+        check_uint_eq(out, 1234);
+        check_int_eq(ltv_decode_varint(high_bits, sizeof(high_bits), &out), -1);
+        check_uint_eq(out, 1234);
+        check_int_eq(ltv_decode_varint(unterminated, sizeof(unterminated), &out), -1);
+        check_uint_eq(out, 1234);
+    }
+
+    it("should distinguish an incomplete four-byte prefix from an invalid fifth byte") {
+        const uint8_t incomplete[] = {0x80, 0x80, 0x80, 0x80};
+        const uint8_t maximum[] = {0xFF, 0xFF, 0xFF, 0xFF, 0x0F};
+        uint32_t out = 0;
+
+        check_int_eq(ltv_decode_varint(incomplete, sizeof(incomplete), &out), 0);
+        check_int_eq(ltv_decode_varint(maximum, sizeof(maximum), &out), 5);
+        check_uint_eq(out, UINT32_MAX);
+    }
   }
 
   describe("Message Parsing") {
@@ -189,6 +213,21 @@ spec("ltv_parser") {
         check_size_eq(ltv_wire_size(127), 130); /* 1 + 1 + 127 */
         check_size_eq(ltv_wire_size(128), 131); /* 2 + 1 + 128 */
     }
+
+    it("should reject invalid builders and oversized values without partial output") {
+        uint8_t buf[8];
+        const uint8_t value = 0x42;
+        memset(buf, 0xA5, sizeof(buf));
+
+        check_size_eq(ltv_wire_size((size_t)LTV_MAX_PAYLOAD_SIZE + 1), 0);
+        check_size_eq(ltv_wire_size(SIZE_MAX), 0);
+        check_size_eq(ltv_build(1, NULL, 1, buf, sizeof(buf)), 0);
+        check_size_eq(ltv_build(1, &value, 1, NULL, sizeof(buf)), 0);
+        check_size_eq(ltv_build(1, &value, (size_t)LTV_MAX_PAYLOAD_SIZE + 1,
+                                buf, sizeof(buf)), 0);
+        check_int_eq(buf[0], 0xA5);
+        check_int_eq(ltv_encode_varint(1, NULL), 0);
+    }
   }
 
   describe("Streaming Parser") {
@@ -249,12 +288,45 @@ spec("ltv_parser") {
         check_int_eq(result, LTV_PARSE_OK);
         check_int_eq(msg.type, 0x01);
         check_size_eq(msg.value_size, 2);
+        check_mem_eq(msg.value, "Hi", 2);
+
+        const uint8_t *remaining = NULL;
+        check_size_eq(ltv_stream_remaining(stream, &remaining), 4);
+        check_mem_eq(remaining, buf + 4, 4);
+        check_mem_eq(msg.value, "Hi", 2);
 
         /* Feed NULL to continue parsing remaining data */
         result = ltv_stream_feed(stream, NULL, 0, &msg);
         check_int_eq(result, LTV_PARSE_OK);
         check_int_eq(msg.type, 0x02);
         check_size_eq(msg.value_size, 2);
+        check_mem_eq(msg.value, "Ok", 2);
+
+        ltv_stream_destroy(stream);
+    }
+
+    it("should reclaim completed storage before appending the next message") {
+        ltv_stream_t *stream = ltv_stream_create(4);
+        const uint8_t first[] = {0x03, 0x01, 'H', 'i'};
+        const uint8_t second[] = {0x03, 0x02, 'O', 'k'};
+        ltv_message_t msg;
+
+        check_not_null(stream);
+        check_int_eq(ltv_stream_feed(stream, first, sizeof(first), &msg), LTV_PARSE_OK);
+        check_mem_eq(msg.value, "Hi", 2);
+        check_int_eq(ltv_stream_feed(stream, second, sizeof(second), &msg), LTV_PARSE_OK);
+        check_int_eq(msg.type, 0x02);
+        check_mem_eq(msg.value, "Ok", 2);
+
+        ltv_stream_destroy(stream);
+    }
+
+    it("should reject a nonzero feed length without input bytes") {
+        ltv_stream_t *stream = ltv_stream_create(16);
+        ltv_message_t msg;
+
+        check_not_null(stream);
+        check_int_eq(ltv_stream_feed(stream, NULL, 1, &msg), LTV_PARSE_INVALID_VARINT);
 
         ltv_stream_destroy(stream);
     }

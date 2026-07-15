@@ -17,6 +17,7 @@ typedef struct tbe_compiler_options_s {
   const char *source_output_path;
   const char *guest_output_path;
   const char *dsl_output_path;
+  const char *resource_dir;
   int64_t lang_enum;
 } tbe_compiler_options_t;
 

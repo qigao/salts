@@ -322,6 +322,50 @@ spec("tbe_compiler") {
       node_free(root);
     }
 
+    it("should map short integer aliases across language and typed metadata") {
+      const char *schema =
+          "enum ShortCode <u16> { One = 1; } "
+          "message Aliases { i8 a; u8 b; i16 c; u16 d; i32 e; u32 f; i64 g; u64 h; }";
+      const char *cpp_types[] = {"std::int8_t",  "std::uint8_t",  "std::int16_t", "std::uint16_t",
+                                 "std::int32_t", "std::uint32_t", "std::int64_t", "std::uint64_t"};
+      const char *go_types[] = {"int8", "uint8", "int16", "uint16",
+                                "int32", "uint32", "int64", "uint64"};
+      const char *rust_types[] = {"i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64"};
+      const char *typed_kinds[] = {"TBE_TYPED_I8",  "TBE_TYPED_U8",  "TBE_TYPED_I16",
+                                   "TBE_TYPED_U16", "TBE_TYPED_I32", "TBE_TYPED_U32",
+                                   "TBE_TYPED_I64", "TBE_TYPED_U64"};
+      Node *root = create_node_map(NULL);
+      int rc = parse_schema(schema, strlen(schema), root, NULL);
+
+      check_int_eq(rc, 0);
+      if (rc == 0) {
+        Node *messages;
+        Node *fields;
+        Node *enums;
+        size_t i;
+
+        tbe_compiler_annotate_language_types(root);
+        messages = find_child(root, "messages");
+        fields = find_child(messages->data.list.items[0], "fields");
+        enums = find_child(root, "enums");
+        for (i = 0; i < 8; ++i) {
+          Node *field = fields->data.list.items[i];
+          check_str_eq(find_child(field, "cpp_type")->data.string_val, cpp_types[i]);
+          check_str_eq(find_child(field, "go_type")->data.string_val, go_types[i]);
+          check_str_eq(find_child(field, "ts_type")->data.string_val, "number");
+          check_str_eq(find_child(field, "python_type")->data.string_val, "int");
+          check_str_eq(find_child(field, "rust_type")->data.string_val, rust_types[i]);
+          check_str_eq(find_child(field, "typed_kind")->data.string_val, typed_kinds[i]);
+        }
+        check_str_eq(find_child(enums->data.list.items[0], "cpp_underlying_type")->data.string_val,
+                     "std::uint16_t");
+        check_str_eq(find_child(enums->data.list.items[0], "rust_underlying_type")->data.string_val,
+                     "u16");
+      }
+
+      node_free(root);
+    }
+
     it("should fail on invalid syntax") {
       Node *root = create_node_map(NULL);
       const char *schema = "message Bad { uint32_t no_semi }";

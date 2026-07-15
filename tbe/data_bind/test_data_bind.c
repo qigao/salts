@@ -784,8 +784,8 @@ suite("Data Bind") {
           memset(buf, 0, sizeof(buf));
           buf[0] = 0xAB;
           write_u16_le(buf, 1, 0x1234);
-          write_u32_le(buf, 3, 42);
-          write_u64_le(buf, 7, 1000000ULL);
+          write_u32_le(buf, 3, UINT32_MAX);
+          write_u64_le(buf, 7, UINT64_MAX);
 
           v = data_bind_parse(codec, "Primitives", buf, sizeof(buf));
 
@@ -793,8 +793,13 @@ suite("Data Bind") {
           then("fields should contain parsed values") {
             check_int_eq(data_bind_value_as_int(require_field(v, "a")), 171);
             check_int_eq(data_bind_value_as_int(require_field(v, "b")), 4660);
-            check_int_eq(data_bind_value_as_int(require_field(v, "c")), 42);
-            check_int_eq(data_bind_value_as_int64(require_field(v, "d")), 1000000);
+            check(data_bind_value_kind(require_field(v, "c")) == DATA_BIND_VALUE_INT64);
+            check(data_bind_value_as_int64(require_field(v, "c")) == INT64_C(4294967295));
+            const DataBindValue *d = require_field(v, "d");
+            uint64_t exact = 0;
+            check(data_bind_value_kind(d) == DATA_BIND_VALUE_UINT64);
+            check_int_eq(data_bind_value_get_uint64(d, &exact), DATA_BIND_OK);
+            check(exact == UINT64_MAX);
           }
 
           data_bind_value_free(v);

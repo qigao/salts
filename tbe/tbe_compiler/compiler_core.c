@@ -5,6 +5,7 @@
 #include "schema_parser_dsl.h"
 #include "tbe_error.h"
 #include "data_bind.h"
+#include "turbo_fs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -106,17 +107,75 @@ static void tbe_compiler_pascal_identifier(const char *input, char *out, size_t 
   out[pos] = '\0';
 }
 
+typedef enum tbe_compiler_integer_kind {
+  TBE_COMPILER_I8,
+  TBE_COMPILER_U8,
+  TBE_COMPILER_I16,
+  TBE_COMPILER_U16,
+  TBE_COMPILER_I32,
+  TBE_COMPILER_U32,
+  TBE_COMPILER_I64,
+  TBE_COMPILER_U64
+} tbe_compiler_integer_kind_t;
+
+typedef struct tbe_compiler_integer_alias {
+  const char *name;
+  tbe_compiler_integer_kind_t kind;
+} tbe_compiler_integer_alias_t;
+
+typedef struct tbe_compiler_integer_type {
+  const char *c_type;
+  const char *cpp_type;
+  const char *go_type;
+  const char *rust_type;
+  const char *typed_kind;
+} tbe_compiler_integer_type_t;
+
+static const tbe_compiler_integer_alias_t TBE_COMPILER_INTEGER_ALIASES[] = {
+    {"int8_t", TBE_COMPILER_I8},   {"int8", TBE_COMPILER_I8},
+    {"i8", TBE_COMPILER_I8},       {"uint8_t", TBE_COMPILER_U8},
+    {"uint8", TBE_COMPILER_U8},    {"u8", TBE_COMPILER_U8},
+    {"byte", TBE_COMPILER_U8},     {"int16_t", TBE_COMPILER_I16},
+    {"int16", TBE_COMPILER_I16},   {"i16", TBE_COMPILER_I16},
+    {"uint16_t", TBE_COMPILER_U16}, {"uint16", TBE_COMPILER_U16},
+    {"u16", TBE_COMPILER_U16},     {"int32_t", TBE_COMPILER_I32},
+    {"int32", TBE_COMPILER_I32},   {"i32", TBE_COMPILER_I32},
+    {"uint32_t", TBE_COMPILER_U32}, {"uint32", TBE_COMPILER_U32},
+    {"u32", TBE_COMPILER_U32},     {"int64_t", TBE_COMPILER_I64},
+    {"int64", TBE_COMPILER_I64},   {"i64", TBE_COMPILER_I64},
+    {"uint64_t", TBE_COMPILER_U64}, {"uint64", TBE_COMPILER_U64},
+    {"u64", TBE_COMPILER_U64},
+};
+
+static const tbe_compiler_integer_type_t TBE_COMPILER_INTEGER_TYPES[] = {
+    {"int8_t", "std::int8_t", "int8", "i8", "TBE_TYPED_I8"},
+    {"uint8_t", "std::uint8_t", "uint8", "u8", "TBE_TYPED_U8"},
+    {"int16_t", "std::int16_t", "int16", "i16", "TBE_TYPED_I16"},
+    {"uint16_t", "std::uint16_t", "uint16", "u16", "TBE_TYPED_U16"},
+    {"int32_t", "std::int32_t", "int32", "i32", "TBE_TYPED_I32"},
+    {"uint32_t", "std::uint32_t", "uint32", "u32", "TBE_TYPED_U32"},
+    {"int64_t", "std::int64_t", "int64", "i64", "TBE_TYPED_I64"},
+    {"uint64_t", "std::uint64_t", "uint64", "u64", "TBE_TYPED_U64"},
+};
+
+static const tbe_compiler_integer_type_t *tbe_compiler_integer_type(const char *type) {
+  size_t i;
+  if (!type) return NULL;
+  for (i = 0; i < sizeof(TBE_COMPILER_INTEGER_ALIASES) /
+                          sizeof(TBE_COMPILER_INTEGER_ALIASES[0]);
+       ++i) {
+    if (strcmp(type, TBE_COMPILER_INTEGER_ALIASES[i].name) == 0)
+      return &TBE_COMPILER_INTEGER_TYPES[TBE_COMPILER_INTEGER_ALIASES[i].kind];
+  }
+  return NULL;
+}
+
 static const char *tbe_compiler_cpp_scalar_type(const char *type) {
+  const tbe_compiler_integer_type_t *integer_type;
   if (!type) return "std::any";
   if (strcmp(type, "bool") == 0) return "bool";
-  if (strcmp(type, "byte") == 0 || strcmp(type, "uint8") == 0 || strcmp(type, "uint8_t") == 0) return "std::uint8_t";
-  if (strcmp(type, "int8") == 0 || strcmp(type, "int8_t") == 0) return "std::int8_t";
-  if (strcmp(type, "uint16") == 0 || strcmp(type, "uint16_t") == 0) return "std::uint16_t";
-  if (strcmp(type, "int16") == 0 || strcmp(type, "int16_t") == 0) return "std::int16_t";
-  if (strcmp(type, "uint32") == 0 || strcmp(type, "uint32_t") == 0) return "std::uint32_t";
-  if (strcmp(type, "int32") == 0 || strcmp(type, "int32_t") == 0) return "std::int32_t";
-  if (strcmp(type, "uint64") == 0 || strcmp(type, "uint64_t") == 0) return "std::uint64_t";
-  if (strcmp(type, "int64") == 0 || strcmp(type, "int64_t") == 0) return "std::int64_t";
+  integer_type = tbe_compiler_integer_type(type);
+  if (integer_type) return integer_type->cpp_type;
   if (strcmp(type, "float") == 0) return "float";
   if (strcmp(type, "double") == 0) return "double";
   if (strcmp(type, "string") == 0) return "std::string";
@@ -126,16 +185,11 @@ static const char *tbe_compiler_cpp_scalar_type(const char *type) {
 }
 
 static const char *tbe_compiler_go_scalar_type(const char *type) {
+  const tbe_compiler_integer_type_t *integer_type;
   if (!type) return "any";
   if (strcmp(type, "bool") == 0) return "bool";
-  if (strcmp(type, "byte") == 0 || strcmp(type, "uint8") == 0 || strcmp(type, "uint8_t") == 0) return "uint8";
-  if (strcmp(type, "int8") == 0 || strcmp(type, "int8_t") == 0) return "int8";
-  if (strcmp(type, "uint16") == 0 || strcmp(type, "uint16_t") == 0) return "uint16";
-  if (strcmp(type, "int16") == 0 || strcmp(type, "int16_t") == 0) return "int16";
-  if (strcmp(type, "uint32") == 0 || strcmp(type, "uint32_t") == 0) return "uint32";
-  if (strcmp(type, "int32") == 0 || strcmp(type, "int32_t") == 0) return "int32";
-  if (strcmp(type, "uint64") == 0 || strcmp(type, "uint64_t") == 0) return "uint64";
-  if (strcmp(type, "int64") == 0 || strcmp(type, "int64_t") == 0) return "int64";
+  integer_type = tbe_compiler_integer_type(type);
+  if (integer_type) return integer_type->go_type;
   if (strcmp(type, "float") == 0) return "float32";
   if (strcmp(type, "double") == 0) return "float64";
   if (strcmp(type, "string") == 0) return "string";
@@ -147,7 +201,7 @@ static const char *tbe_compiler_go_scalar_type(const char *type) {
 static const char *tbe_compiler_ts_scalar_type(const char *type) {
   if (!type) return "unknown";
   if (strcmp(type, "bool") == 0) return "boolean";
-  if (strstr(type, "int") || strcmp(type, "byte") == 0 ||
+  if (tbe_compiler_integer_type(type) != NULL ||
       strcmp(type, "float") == 0 || strcmp(type, "double") == 0) {
     return "number";
   }
@@ -160,7 +214,7 @@ static const char *tbe_compiler_ts_scalar_type(const char *type) {
 static const char *tbe_compiler_python_scalar_type(const char *type) {
   if (!type) return "Any";
   if (strcmp(type, "bool") == 0) return "bool";
-  if (strstr(type, "int") || strcmp(type, "byte") == 0) return "int";
+  if (tbe_compiler_integer_type(type) != NULL) return "int";
   if (strcmp(type, "float") == 0 || strcmp(type, "double") == 0) return "float";
   if (strcmp(type, "string") == 0) return "str";
   if (strcmp(type, "bytes") == 0) return "bytes";
@@ -169,16 +223,11 @@ static const char *tbe_compiler_python_scalar_type(const char *type) {
 }
 
 static const char *tbe_compiler_rust_scalar_type(const char *type) {
+  const tbe_compiler_integer_type_t *integer_type;
   if (!type) return "()";
   if (strcmp(type, "bool") == 0) return "bool";
-  if (strcmp(type, "byte") == 0 || strcmp(type, "uint8") == 0 || strcmp(type, "uint8_t") == 0) return "u8";
-  if (strcmp(type, "int8") == 0 || strcmp(type, "int8_t") == 0) return "i8";
-  if (strcmp(type, "uint16") == 0 || strcmp(type, "uint16_t") == 0) return "u16";
-  if (strcmp(type, "int16") == 0 || strcmp(type, "int16_t") == 0) return "i16";
-  if (strcmp(type, "uint32") == 0 || strcmp(type, "uint32_t") == 0) return "u32";
-  if (strcmp(type, "int32") == 0 || strcmp(type, "int32_t") == 0) return "i32";
-  if (strcmp(type, "uint64") == 0 || strcmp(type, "uint64_t") == 0) return "u64";
-  if (strcmp(type, "int64") == 0 || strcmp(type, "int64_t") == 0) return "i64";
+  integer_type = tbe_compiler_integer_type(type);
+  if (integer_type) return integer_type->rust_type;
   if (strcmp(type, "float") == 0) return "f32";
   if (strcmp(type, "double") == 0) return "f64";
   if (strcmp(type, "string") == 0) return "String";
@@ -188,21 +237,11 @@ static const char *tbe_compiler_rust_scalar_type(const char *type) {
 }
 
 static const char *tbe_compiler_typed_kind(const char *type) {
+  const tbe_compiler_integer_type_t *integer_type;
   if (!type) return NULL;
   if (strcmp(type, "bool") == 0) return "TBE_TYPED_BOOL";
-  if (strcmp(type, "int8") == 0 || strcmp(type, "int8_t") == 0) return "TBE_TYPED_I8";
-  if (strcmp(type, "uint8") == 0 || strcmp(type, "uint8_t") == 0 ||
-      strcmp(type, "byte") == 0)
-    return "TBE_TYPED_U8";
-  if (strcmp(type, "int16") == 0 || strcmp(type, "int16_t") == 0) return "TBE_TYPED_I16";
-  if (strcmp(type, "uint16") == 0 || strcmp(type, "uint16_t") == 0)
-    return "TBE_TYPED_U16";
-  if (strcmp(type, "int32") == 0 || strcmp(type, "int32_t") == 0) return "TBE_TYPED_I32";
-  if (strcmp(type, "uint32") == 0 || strcmp(type, "uint32_t") == 0)
-    return "TBE_TYPED_U32";
-  if (strcmp(type, "int64") == 0 || strcmp(type, "int64_t") == 0) return "TBE_TYPED_I64";
-  if (strcmp(type, "uint64") == 0 || strcmp(type, "uint64_t") == 0)
-    return "TBE_TYPED_U64";
+  integer_type = tbe_compiler_integer_type(type);
+  if (integer_type) return integer_type->typed_kind;
   if (strcmp(type, "float") == 0) return "TBE_TYPED_F32";
   if (strcmp(type, "double") == 0) return "TBE_TYPED_F64";
   if (strcmp(type, "uuid") == 0) return "TBE_TYPED_UUID";
@@ -210,18 +249,11 @@ static const char *tbe_compiler_typed_kind(const char *type) {
 }
 
 static const char *tbe_compiler_typed_c_scalar(const char *type) {
+  const tbe_compiler_integer_type_t *integer_type;
   if (!type) return NULL;
   if (strcmp(type, "bool") == 0) return "uint8_t";
-  if (strcmp(type, "int8") == 0 || strcmp(type, "int8_t") == 0) return "int8_t";
-  if (strcmp(type, "uint8") == 0 || strcmp(type, "uint8_t") == 0 ||
-      strcmp(type, "byte") == 0)
-    return "uint8_t";
-  if (strcmp(type, "int16") == 0 || strcmp(type, "int16_t") == 0) return "int16_t";
-  if (strcmp(type, "uint16") == 0 || strcmp(type, "uint16_t") == 0) return "uint16_t";
-  if (strcmp(type, "int32") == 0 || strcmp(type, "int32_t") == 0) return "int32_t";
-  if (strcmp(type, "uint32") == 0 || strcmp(type, "uint32_t") == 0) return "uint32_t";
-  if (strcmp(type, "int64") == 0 || strcmp(type, "int64_t") == 0) return "int64_t";
-  if (strcmp(type, "uint64") == 0 || strcmp(type, "uint64_t") == 0) return "uint64_t";
+  integer_type = tbe_compiler_integer_type(type);
+  if (integer_type) return integer_type->c_type;
   if (strcmp(type, "float") == 0) return "float";
   if (strcmp(type, "double") == 0) return "double";
   if (strcmp(type, "uuid") == 0) return "turbo_uuid_t";
@@ -747,6 +779,24 @@ const char *tbe_compiler_resolve_template(const char *user_template,
   }
 }
 
+static const char *tbe_compiler_resolve_resource(const tbe_compiler_options_t *options,
+                                                 const char *relative_path, char *path,
+                                                 size_t path_size) {
+  const char *resource_dir = options->resource_dir;
+#ifdef TBE_COMPILER_RESOURCE_DIR
+  if (resource_dir == NULL || resource_dir[0] == '\0') resource_dir = TBE_COMPILER_RESOURCE_DIR;
+#endif
+  if (resource_dir == NULL || resource_dir[0] == '\0') {
+    fprintf(stderr, "Built-in template resource directory is unavailable\n");
+    return NULL;
+  }
+  if (turbo_fs_path_join(path, path_size, resource_dir, relative_path) != 0) {
+    fprintf(stderr, "Built-in template path is too long: %s\n", relative_path);
+    return NULL;
+  }
+  return path;
+}
+
 static int tbe_compiler_write_file_cb(const void *data, size_t len, void *user) {
   FILE *out = (FILE *)user;
   return out && fwrite(data, 1, len, out) == len ? 0 : -1;
@@ -859,6 +909,8 @@ cleanup:
 int tbe_compiler_run(const tbe_compiler_options_t *options) {
   Node *root = NULL;
   char *schema_data = NULL;
+  char template_path[TURBO_FS_MAX_PATH];
+  const char *resolved_template = NULL;
   int status = tbe_compiler_parse_schema_file(options->schema_path, &root,
                                               &schema_data);
   if (status != 0) return status;
@@ -944,26 +996,41 @@ int tbe_compiler_run(const tbe_compiler_options_t *options) {
         options->schema_path, options->output_path,
         options->lang_enum == TBE_COMPILER_LANG_BMIR);
   } else {
+    resolved_template = options->template_path;
+    if (resolved_template == NULL) {
+      resolved_template = tbe_compiler_resolve_resource(
+          options, tbe_compiler_resolve_template(NULL, options->lang_enum), template_path,
+          sizeof(template_path));
+      if (resolved_template == NULL) {
+        status = 1;
+        goto cleanup;
+      }
+    }
     status = tbe_compiler_render_file(
-        root,
-        tbe_compiler_resolve_template(options->template_path, options->lang_enum),
-        options->output_path);
+        root, resolved_template, options->output_path);
   }
 
   if (status == 0 && options->source_output_path) {
-    status = tbe_compiler_render_file(root, "templates/c_typed_source.mustache",
-                                      options->source_output_path);
+    resolved_template = tbe_compiler_resolve_resource(
+        options, "templates/c_typed_source.mustache", template_path, sizeof(template_path));
+    status = resolved_template != NULL
+                 ? tbe_compiler_render_file(root, resolved_template, options->source_output_path)
+                 : 1;
   }
 
   if (status == 0 && options->guest_output_path) {
-    status = tbe_compiler_render_file(root, "templates/c_guest_adapter.mustache",
-                                      options->guest_output_path);
+    resolved_template = tbe_compiler_resolve_resource(
+        options, "templates/c_guest_adapter.mustache", template_path, sizeof(template_path));
+    status = resolved_template != NULL
+                 ? tbe_compiler_render_file(root, resolved_template, options->guest_output_path)
+                 : 1;
   }
 
   if (status == 0 && options->dsl_output_path) {
-    if (tbe_compiler_render_file(root, "templates/rfl_types.mustache",
-                                 options->dsl_output_path)
-        != 0) {
+    resolved_template = tbe_compiler_resolve_resource(
+        options, "templates/rfl_types.mustache", template_path, sizeof(template_path));
+    if (resolved_template == NULL ||
+        tbe_compiler_render_file(root, resolved_template, options->dsl_output_path) != 0) {
       status = 1;
     }
   }

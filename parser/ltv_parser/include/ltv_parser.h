@@ -12,7 +12,8 @@
  *   +----------+------+----------+
  *
  * Length field encodes (type_size + value_size), so minimum length is 1.
- * Varint encoding: 7 bits per byte, MSB is continuation flag.
+ * Varint encoding: canonical unsigned LEB128, 7 bits per byte, MSB is the
+ * continuation flag. Overlong encodings are rejected.
  */
 
 #include <stddef.h>
@@ -55,7 +56,9 @@ typedef struct {
  * @param data   Input buffer
  * @param len    Buffer length
  * @param out    Output value
- * @return Bytes consumed (1-5), 0 if need more data, -1 if overflow
+ * @return Bytes consumed (1-5), 0 if more bytes are needed, or -1 for a
+ *         malformed, overlong, or overflowing encoding. out is unchanged
+ *         unless a canonical value is decoded.
  */
 int ltv_decode_varint(const uint8_t *data, size_t len, uint32_t *out);
 
@@ -63,7 +66,7 @@ int ltv_decode_varint(const uint8_t *data, size_t len, uint32_t *out);
  * @brief Encode value as varint
  * @param value  Value to encode
  * @param out    Output buffer (must have at least LTV_MAX_VARINT_BYTES space)
- * @return Bytes written (1-5)
+ * @return Bytes written (1-5), or 0 when out is NULL.
  */
 int ltv_encode_varint(uint32_t value, uint8_t *out);
 
@@ -115,7 +118,8 @@ LtvParseResult ltv_parse(const uint8_t *data, size_t len, ltv_message_t *out);
 /**
  * @brief Calculate wire size for message
  * @param value_size  Size of value data
- * @return Total wire size including header
+ * @return Total wire size including header, or 0 when value_size exceeds
+ *         LTV_MAX_PAYLOAD_SIZE.
  */
 size_t ltv_wire_size(size_t value_size);
 
@@ -126,7 +130,9 @@ size_t ltv_wire_size(size_t value_size);
  * @param value_size  Value data size
  * @param out         Output buffer
  * @param out_len     Output buffer size
- * @return Bytes written, 0 if buffer too small
+ * @return Bytes written, or 0 for an invalid value pointer, oversized value,
+ *         NULL output, or insufficient output capacity. No partial message is
+ *         written on failure.
  */
 size_t ltv_build(uint8_t type, const uint8_t *value, size_t value_size,
                  uint8_t *out, size_t out_len);
@@ -153,7 +159,8 @@ ltv_stream_t *ltv_stream_create(size_t buffer_size);
  * @return LTV_PARSE_OK when complete message parsed
  *
  * Call repeatedly with new data until LTV_PARSE_OK.
- * After LTV_PARSE_OK, call again to parse next message.
+ * After LTV_PARSE_OK, out->value remains valid until the next feed, reset, or
+ * destroy call on this stream. Call feed again to parse the next message.
  */
 LtvParseResult ltv_stream_feed(ltv_stream_t *stream, const uint8_t *data,
                                size_t len, ltv_message_t *out);
@@ -162,7 +169,8 @@ LtvParseResult ltv_stream_feed(ltv_stream_t *stream, const uint8_t *data,
  * @brief Get unconsumed input bytes
  * @param stream  Stream parser
  * @param out_remaining  Output: pointer to unconsumed data
- * @return Number of unconsumed bytes
+ * @return Number of bytes after the most recently returned message. The view
+ *         remains valid until the next feed, reset, or destroy call.
  */
 size_t ltv_stream_remaining(ltv_stream_t *stream, const uint8_t **out_remaining);
 

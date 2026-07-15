@@ -18,6 +18,7 @@
 
 %include {
 #include "schema_lexer.h"
+#include "schema_builtin_type.h"
 #include "schema_types.h"
 #include <stdio.h>
 #include <stdint.h>
@@ -242,6 +243,7 @@ static int validate_field_layout(schema_parse_ctx_t *ctx,
 static void annotate_field(Node *field_map, const char *field_type,
                            int is_collection, const char *collection_inner,
                            const char *length_field, int is_group_field) {
+    const schema_builtin_type_info_t *builtin_type = schema_builtin_type_find(field_type);
     int size = 0;
     int is_numeric = 0;
     int is_unsigned = 0;
@@ -262,37 +264,13 @@ static void annotate_field(Node *field_map, const char *field_type,
         map_add(field_map, create_node_string("ctype", "VARINT"));
         add_true(field_map, "is_varint");
         add_true(field_map, "is_variable_size");
-    } else if (strcmp(field_type, "uint8_t") == 0 || strcmp(field_type, "uint8") == 0 ||
-               strcmp(field_type, "byte") == 0) {
-        size = 1; is_numeric = 1; is_unsigned = 1;
-        host_type = "uint8_t"; wire_reader = "u8";
-    } else if (strcmp(field_type, "int8_t") == 0 || strcmp(field_type, "int8") == 0) {
-        size = 1; is_numeric = 1;
-        host_type = "int8_t"; wire_reader = "i8";
-    } else if (strcmp(field_type, "uint16_t") == 0 || strcmp(field_type, "uint16") == 0) {
-        size = 2; is_numeric = 1; is_unsigned = 1;
-        host_type = "uint16_t"; wire_reader = "u16";
-    } else if (strcmp(field_type, "int16_t") == 0 || strcmp(field_type, "int16") == 0) {
-        size = 2; is_numeric = 1;
-        host_type = "int16_t"; wire_reader = "i16";
-    } else if (strcmp(field_type, "uint32_t") == 0 || strcmp(field_type, "uint32") == 0) {
-        size = 4; is_numeric = 1; is_unsigned = 1;
-        host_type = "uint32_t"; wire_reader = "u32";
-    } else if (strcmp(field_type, "int32_t") == 0 || strcmp(field_type, "int32") == 0) {
-        size = 4; is_numeric = 1;
-        host_type = "int32_t"; wire_reader = "i32";
-    } else if (strcmp(field_type, "uint64_t") == 0 || strcmp(field_type, "uint64") == 0) {
-        size = 8; is_numeric = 1; is_unsigned = 1;
-        host_type = "uint64_t"; wire_reader = "u64";
-    } else if (strcmp(field_type, "int64_t") == 0 || strcmp(field_type, "int64") == 0) {
-        size = 8; is_numeric = 1;
-        host_type = "int64_t"; wire_reader = "i64";
-    } else if (strcmp(field_type, "float") == 0) {
-        size = 4; is_numeric = 1;
-        host_type = "float"; wire_reader = "f32";
-    } else if (strcmp(field_type, "double") == 0) {
-        size = 8; is_numeric = 1;
-        host_type = "double"; wire_reader = "f64";
+    } else if (builtin_type != NULL &&
+               (builtin_type->is_integer || builtin_type->is_float)) {
+        size = (int)builtin_type->size;
+        is_numeric = 1;
+        is_unsigned = builtin_type->is_unsigned;
+        host_type = builtin_type->host_type;
+        wire_reader = builtin_type->wire_reader;
     } else if (strcmp(field_type, "uuid") == 0) {
         size = 16; is_uuid = 1;
     }
@@ -326,10 +304,9 @@ static void annotate_field(Node *field_map, const char *field_type,
         add_true(field_map, "is_fixed_size");
     }
 
-    if (!is_group_field && strstr(field_type, "int") != NULL) {
+    if (!is_group_field && builtin_type != NULL && builtin_type->is_integer) {
         add_true(field_map, "is_integer");
-    } else if (!is_group_field &&
-               (strcmp(field_type, "float") == 0 || strcmp(field_type, "double") == 0)) {
+    } else if (!is_group_field && builtin_type != NULL && builtin_type->is_float) {
         add_true(field_map, "is_float");
     } else if (!is_group_field && strcmp(field_type, "bytes") == 0) {
         map_add(field_map, create_node_string("ctype", "BYTES"));
@@ -462,10 +439,10 @@ static void add_enum_item(schema_parse_ctx_t *ctx, const char *key, const char *
 %type attr_item {Node *}
 %type field_default {char *}
 %type field_qualifier {int}
-%destructor attribute_list { node_free($$); }
-%destructor attr_items { node_free($$); }
-%destructor field_default { free($$); }
-%destructor attr_item { node_free($$); }
+%destructor attribute_list { (void)ctx; node_free($$); }
+%destructor attr_items { (void)ctx; node_free($$); }
+%destructor field_default { (void)ctx; free($$); }
+%destructor attr_item { (void)ctx; node_free($$); }
 
 %token ENUM FLAGS NUMBER EQUALS IDENT LBRACE RBRACE SEMI LPAREN RPAREN LBRACKET RBRACKET LT GT COMMA MESSAGE COMPOSITE GROUP SCHEMA REQUIRED OPTIONAL DEFAULT STRING TRUE FALSE UNION.
 

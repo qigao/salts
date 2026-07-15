@@ -27,6 +27,20 @@ typedef struct csv_sax_capture {
   char values[8][32];
 } csv_sax_capture;
 
+typedef struct json_raw_number_capture {
+  size_t count;
+  char values[3][32];
+} json_raw_number_capture;
+
+static int capture_json_raw_number(void *user, const char *value, size_t value_len) {
+  json_raw_number_capture *capture = (json_raw_number_capture *)user;
+  if (capture == NULL || capture->count >= 3 || value_len >= sizeof(capture->values[0])) return -1;
+  memcpy(capture->values[capture->count], value, value_len);
+  capture->values[capture->count][value_len] = '\0';
+  capture->count++;
+  return 0;
+}
+
 static int capture_csv_write(const void *data, size_t len, void *user) {
   csv_write_capture *capture = (csv_write_capture *)user;
   size_t append_len = len < sizeof(capture->bytes) - capture->bytes_len - 1
@@ -127,6 +141,32 @@ spec("turbo_parser") {
 
       turbo_free_json(&result);
       check_null(result);
+    }
+
+    it("should expose exact raw JSON numbers through complete and incremental APIs") {
+      const turbo_json_sax_handler_raw_t handler = {.on_number = capture_json_raw_number};
+      json_raw_number_capture capture = {0};
+      turbo_json_sax_parser_t *parser;
+
+      check_int_eq(turbo_parse_json_sax_raw((const uint8_t *)"18446744073709551615", 20,
+                                            &handler, &capture),
+                   0);
+      check_str_eq(capture.values[0], "18446744073709551615");
+
+      memset(&capture, 0, sizeof(capture));
+      parser = turbo_json_sax_parser_create_raw(&handler, &capture);
+      check_not_null(parser);
+      check_int_eq(turbo_json_sax_parser_feed(parser, "[-922337203685",
+                                              strlen("[-922337203685")),
+                   0);
+      check_int_eq(turbo_json_sax_parser_feed(parser, "4775808,9007199254740993]",
+                                              strlen("4775808,9007199254740993]")),
+                   0);
+      check_int_eq(turbo_json_sax_parser_finish(parser), 0);
+      check_size_eq(capture.count, 2);
+      check_str_eq(capture.values[0], "-9223372036854775808");
+      check_str_eq(capture.values[1], "9007199254740993");
+      turbo_json_sax_parser_destroy(parser);
     }
 
     it("should build JSON correctly") {

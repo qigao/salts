@@ -20,6 +20,7 @@ typedef struct {
   int array_end_count;
   int key_count;
   double last_number;
+  char raw_numbers[4][32];
   char last_string[256];
   char last_key[256];
 } sax_test_ctx_t;
@@ -39,6 +40,15 @@ static int sax_on_number(void *ctx, double val) {
   sax_test_ctx_t *c = (sax_test_ctx_t *)ctx;
   c->number_count++;
   c->last_number = val;
+  return 0;
+}
+
+static int sax_on_number_raw(void *ctx, const char *val, size_t len) {
+  sax_test_ctx_t *c = (sax_test_ctx_t *)ctx;
+  if (c->number_count >= 4 || len >= sizeof(c->raw_numbers[0])) return -1;
+  memcpy(c->raw_numbers[c->number_count], val, len);
+  c->raw_numbers[c->number_count][len] = '\0';
+  c->number_count++;
   return 0;
 }
 
@@ -91,6 +101,17 @@ static json_sax_handler_t test_handler = {.on_null = sax_on_null,
                                           .on_object_end = sax_on_object_end,
                                           .on_array_start = sax_on_array_start,
                                           .on_array_end = sax_on_array_end};
+
+static json_sax_handler_raw_t test_raw_handler = {
+    .on_null = sax_on_null,
+    .on_bool = sax_on_bool,
+    .on_number = sax_on_number_raw,
+    .on_string = sax_on_string,
+    .on_object_start = sax_on_object_start,
+    .on_object_key = sax_on_object_key,
+    .on_object_end = sax_on_object_end,
+    .on_array_start = sax_on_array_start,
+    .on_array_end = sax_on_array_end};
 
 static int sax_fail_on_string(void *ctx, const char *val, size_t len) {
   (void)ctx;
@@ -156,6 +177,25 @@ spec("json_parser") {
       check_not_null(v);
       check_int_eq(json_type(v), JSON_NUMBER);
       check_float_eq(json_number(v), 1.5e10, 0.001);
+      json_free(v);
+    }
+
+    it("should preserve exact numeric lexemes and serialize uint64 max") {
+      const char *number = "18446744073709551615";
+      size_t len = 0;
+      char *serialized;
+      json_value_t *v = json_parse(number, strlen(number));
+      check_not_null(v);
+      check_str_eq(json_number_text(v, &len), number);
+      check_size_eq(len, strlen(number));
+      json_free(v);
+
+      v = json_create_uint64(UINT64_MAX);
+      check_not_null(v);
+      serialized = json_serialize(v, NULL);
+      check_not_null(serialized);
+      check_str_eq(serialized, number);
+      free(serialized);
       json_free(v);
     }
   }
@@ -765,6 +805,37 @@ spec("json_parser") {
       check_str_eq(ctx.last_string, "y");
 
       json_sax_parser_destroy(parser);
+    }
+
+    it("should preserve exact number tokens in raw SAX mode") {
+      const char *parts[] = {"[9007199254740", "993,-922337203685477", "5808,",
+                             "18446744073709551615]"};
+      sax_test_ctx_t ctx = {0};
+      json_sax_parser_t *parser = json_sax_parser_create_raw(&test_raw_handler, &ctx);
+      check_not_null(parser);
+
+      for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); ++i) {
+        check_int_eq(json_sax_parser_feed(parser, parts[i], strlen(parts[i])), 0);
+      }
+      check_int_eq(json_sax_parser_finish(parser), 0);
+      check_int_eq(ctx.number_count, 3);
+      check_str_eq(ctx.raw_numbers[0], "9007199254740993");
+      check_str_eq(ctx.raw_numbers[1], "-9223372036854775808");
+      check_str_eq(ctx.raw_numbers[2], "18446744073709551615");
+      json_sax_parser_destroy(parser);
+
+      memset(&ctx, 0, sizeof(ctx));
+      check_int_eq(json_parse_sax_raw("1.25e+9", 7, &test_raw_handler, &ctx), 0);
+      check_str_eq(ctx.raw_numbers[0], "1.25e+9");
+      check_null(json_sax_parser_create_raw(NULL, &ctx));
+      check_int_eq(json_parse_sax_raw(NULL, 0, &test_raw_handler, &ctx), -1);
+    }
+
+    it("should retain legacy double number callbacks") {
+      sax_test_ctx_t ctx = {0};
+      check_int_eq(json_parse_sax("9007199254740993", 16, &test_handler, &ctx), 0);
+      check_int_eq(ctx.number_count, 1);
+      check_double_within_abs(ctx.last_number, 9007199254740992.0, 0.0);
     }
 
     it("should SAX decode surrogate pairs across chunks") {

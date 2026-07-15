@@ -220,12 +220,10 @@ suite("cyaml json adapter") {
         cyaml_free(doc);
     }
 
-    it("rejects YAML values that the JSON DOM cannot represent exactly") {
+    it("rejects YAML values outside the JSON data model") {
         const char* invalid[] = {
             ".inf",
             ".nan",
-            "9007199254740993",
-            "-9007199254740993",
             "[key]: value",
             "key: 1\nkey: 2\n",
             "!custom value",
@@ -243,18 +241,25 @@ suite("cyaml json adapter") {
         check_null(json_value_from_cyaml(NULL));
     }
 
-    it("accepts the exact JSON double integer boundaries") {
-        const char* yaml = "[9007199254740992, -9007199254740992]";
+    it("preserves exact signed and unsigned 64-bit YAML integers") {
+        const char* yaml =
+            "[9223372036854775807, -9223372036854775808, 18446744073709551615]";
         cyaml_error_t error = { 0 };
         cyaml_doc_t* doc = cyaml_parse(yaml, strlen(yaml), NULL, &error);
         json_value_t* value = json_value_from_cyaml(doc);
+        size_t len = 0;
 
         check_not_null(doc);
         check_not_null(value);
-        check_double_within_abs(json_number(json_array_get(value, 0)),
-            9007199254740992.0, 0.0);
-        check_double_within_abs(json_number(json_array_get(value, 1)),
-            -9007199254740992.0, 0.0);
+        check_str_eq(json_number_text(json_array_get(value, 0), &len),
+            "9223372036854775807");
+        check_size_eq(len, 19);
+        check_str_eq(json_number_text(json_array_get(value, 1), &len),
+            "-9223372036854775808");
+        check_size_eq(len, 20);
+        check_str_eq(json_number_text(json_array_get(value, 2), &len),
+            "18446744073709551615");
+        check_size_eq(len, 20);
         json_free(value);
         cyaml_free(doc);
     }

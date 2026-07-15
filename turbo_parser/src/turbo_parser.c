@@ -69,6 +69,22 @@ static json_sax_handler_t turbo_json_sax_handler_to_raw(const turbo_json_sax_han
   return raw;
 }
 
+static json_sax_handler_raw_t
+turbo_json_sax_raw_handler_to_raw(const turbo_json_sax_handler_raw_t *handler) {
+  json_sax_handler_raw_t raw = {0};
+  if (!handler) return raw;
+  raw.on_null = handler->on_null;
+  raw.on_bool = handler->on_bool;
+  raw.on_number = handler->on_number;
+  raw.on_string = handler->on_string;
+  raw.on_object_start = handler->on_object_start;
+  raw.on_object_key = handler->on_object_key;
+  raw.on_object_end = handler->on_object_end;
+  raw.on_array_start = handler->on_array_start;
+  raw.on_array_end = handler->on_array_end;
+  return raw;
+}
+
 int turbo_parse_json_sax(const uint8_t *data, size_t len, const turbo_json_sax_handler_t *handler,
                          void *ctx) {
   if (!handler) return json_parse_sax((const char *)data, len, NULL, ctx);
@@ -76,11 +92,25 @@ int turbo_parse_json_sax(const uint8_t *data, size_t len, const turbo_json_sax_h
   return json_parse_sax((const char *)data, len, &raw, ctx);
 }
 
+int turbo_parse_json_sax_raw(const uint8_t *data, size_t len,
+                             const turbo_json_sax_handler_raw_t *handler, void *ctx) {
+  if (!handler) return json_parse_sax_raw((const char *)data, len, NULL, ctx);
+  json_sax_handler_raw_t raw = turbo_json_sax_raw_handler_to_raw(handler);
+  return json_parse_sax_raw((const char *)data, len, &raw, ctx);
+}
+
 turbo_json_sax_parser_t *turbo_json_sax_parser_create(const turbo_json_sax_handler_t *handler,
                                                       void *ctx) {
   if (!handler) return (turbo_json_sax_parser_t *)json_sax_parser_create(NULL, ctx);
   json_sax_handler_t raw = turbo_json_sax_handler_to_raw(handler);
   return (turbo_json_sax_parser_t *)json_sax_parser_create(&raw, ctx);
+}
+
+turbo_json_sax_parser_t *
+turbo_json_sax_parser_create_raw(const turbo_json_sax_handler_raw_t *handler, void *ctx) {
+  if (!handler) return (turbo_json_sax_parser_t *)json_sax_parser_create_raw(NULL, ctx);
+  json_sax_handler_raw_t raw = turbo_json_sax_raw_handler_to_raw(handler);
+  return (turbo_json_sax_parser_t *)json_sax_parser_create_raw(&raw, ctx);
 }
 
 int turbo_json_sax_parser_feed(turbo_json_sax_parser_t *parser, const char *data, size_t len) {
@@ -1443,6 +1473,10 @@ bool turbo_json_bool(const json_value_t *value) { return json_bool(value); }
 
 double turbo_json_number(const json_value_t *value) { return json_number(value); }
 
+const char *turbo_json_number_text(const json_value_t *value, size_t *len) {
+  return json_number_text(value, len);
+}
+
 const char *turbo_json_string(const json_value_t *value) { return json_string(value); }
 
 size_t turbo_json_string_len(const json_value_t *value) { return json_string_len(value); }
@@ -1520,6 +1554,7 @@ json_value_t *turbo_json_create_string_n(const char *str, size_t len) {
 }
 json_value_t *turbo_json_create_number(double num) { return json_create_number(num); }
 json_value_t *turbo_json_create_int64(int64_t num) { return json_create_int64(num); }
+json_value_t *turbo_json_create_uint64(uint64_t num) { return json_create_uint64(num); }
 json_value_t *turbo_json_create_bool(bool val) { return json_create_bool(val); }
 json_value_t *turbo_json_create_null(void) { return json_create_null(); }
 

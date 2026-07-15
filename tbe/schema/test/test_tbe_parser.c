@@ -211,6 +211,47 @@ suite("tbe_parser") {
       node_free(root);
     }
 
+    it("should normalize short integer aliases in fields arrays and enums") {
+      const char *schema =
+          "enum ShortCode <i16> { Zero = 0; Positive = 1; } "
+          "message Aliases { i8 a; u8 b; i16 c; u16 d; i32 e; u32 f; i64 g; u64 h; "
+          "u16[2] values; ShortCode code; }";
+      const char *host_types[] = {"int8_t",  "uint8_t",  "int16_t", "uint16_t",
+                                  "int32_t", "uint32_t", "int64_t", "uint64_t"};
+      const char *wire_readers[] = {"i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64"};
+      const char *sizes[] = {"1", "1", "2", "2", "4", "4", "8", "8"};
+      Node *root = create_node_map("root");
+      int rc = parse_schema(schema, strlen(schema), root, NULL);
+
+      check_int_eq(rc, 0);
+      if (rc == 0) {
+        Node *messages = find_child(root, "messages");
+        Node *aliases = messages->data.list.items[0];
+        Node *fields = find_child(aliases, "fields");
+        Node *values = fields->data.list.items[8];
+        Node *code = fields->data.list.items[9];
+        size_t i;
+
+        check_str_eq(find_child(aliases, "fixed_block_size")->data.string_val, "36");
+        for (i = 0; i < 8; ++i) {
+          Node *field = fields->data.list.items[i];
+          check_str_eq(find_child(field, "host_type")->data.string_val, host_types[i]);
+          check_str_eq(find_child(field, "wire_reader")->data.string_val, wire_readers[i]);
+          check_str_eq(find_child(field, "field_size_bytes")->data.string_val, sizes[i]);
+        }
+
+        check_str_eq(find_child(values, "element_size_bytes")->data.string_val, "2");
+        check_str_eq(find_child(values, "collection_element_host_type")->data.string_val,
+                     "uint16_t");
+        check_str_eq(find_child(values, "collection_element_wire_reader")->data.string_val,
+                     "u16");
+        check_str_eq(find_child(code, "enum_host_type")->data.string_val, "int16_t");
+        check_str_eq(find_child(code, "enum_wire_reader")->data.string_val, "i16");
+      }
+
+      node_free(root);
+    }
+
     it("should handle complex schemas with multiple declarations") {
       const char *schema = "enum State { IDLE = 0; ACTIVE = 1; } "
                            "composite Meta { int32 version; } "

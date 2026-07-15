@@ -50,7 +50,7 @@ add_custom_command(
 # Tests
 # =============================================================================
 
-cmake_add_executable(test_tbe_compiler
+cmake_add_test(test_tbe_compiler
   SOURCES test_tbe_compiler.c compiler_core.c mustache_helpers.c
   LIBS TurboUtils::TbeSchema TurboUtils::DataBind TurboUtils::TinyTest
        TurboUtils::Mustache
@@ -62,6 +62,7 @@ cmake_add_executable(test_tbe_compiler
     PYTHON_DATACLASS_TEMPLATE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/templates/python_dataclass.mustache"
     RUST_STRUCTS_TEMPLATE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/templates/rust_structs.mustache"
     TS_TYPES_TEMPLATE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/templates/ts_types.mustache"
+    TBE_COMPILER_RESOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
   FOLDER "tbe/tbe_compiler")
 tbe_copy_turbonet_runtime_deps(test_tbe_compiler)
 
