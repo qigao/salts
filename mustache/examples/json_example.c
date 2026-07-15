@@ -68,10 +68,15 @@ int main(void)
 
     /* Get and print result */
     char *result = mustache_string_renderer_get(&renderer);
-    if (result) {
-        printf("Rendered output:\n%s", result);
-        free(result);
+    if (!result) {
+        fprintf(stderr, "Failed to copy rendered output\n");
+        mustache_string_renderer_free(&renderer);
+        mustache_release(template);
+        json_free(json_data);
+        return 1;
     }
+    printf("Rendered output:\n%s", result);
+    free(result);
 
     /* Cleanup */
     mustache_string_renderer_free(&renderer);

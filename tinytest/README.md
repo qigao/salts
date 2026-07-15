@@ -205,14 +205,47 @@ Variables shared between setup and tests must be `static`.
 ```c
 spec("performance") {
     bench("parser") {
-        benchmark("parse_json", 10000, 1) {
+        benchmark_batch("parse_json", 10000) {
             parse_json(input, len);
+        }
+
+        benchmark_ops("parse_messages", 1000, message_count) {
+            for (size_t i = 0; i < message_count; ++i) {
+                parse_json(messages[i].data, messages[i].len);
+            }
+        }
+
+        benchmark_bytes("scan_64KiB", 1000, input_len) {
+            scan(input, input_len);
+        }
+
+        benchmark_io("parse_packet_batch", 1000, packet_count, batch_bytes) {
+            parse_packets(packets, packet_count);
         }
     }
 }
 ```
 
-Output: `parse_json: 10000 iters, avg=1.234 us, min=0.987 us, max=2.345 us`
+Choose the macro that describes the work performed by one timed sample:
+
+- `benchmark_batch(title, samples)` treats each block execution as one operation.
+- `benchmark_ops(title, samples, operations_per_sample)` reports batched operation latency and `ops/s`.
+- `benchmark_bytes(title, samples, bytes_per_sample)` reports `MiB/s` for byte-oriented work.
+- `benchmark_io(title, samples, operations_per_sample, bytes_per_sample)` reports both operation and byte throughput.
+
+The framework executes the block once per sample. It does not repeat the block
+`operations_per_sample` times, so the count must match the work actually done inside the block.
+Setup and allocation that are not part of the measurement should remain outside the benchmark block.
+Count arguments are evaluated once, converted to `size_t`, and must be greater than zero when the
+selected macro reports that unit. The macros return no value; an invalid count is a framework error.
+
+Output keeps timed samples separate from logical work: `samples`, `ops/sample`, `bytes/sample`,
+`avg/op(us)`, `min/sample(us)`, `max/sample(us)`, `ops/s`, and `MiB/s`. Sample min/max are not
+divided by the batch size because they are measurements of the complete timed block.
+
+The legacy `benchmark(title, samples, operations_per_sample)` macro remains available as a
+source-compatible alias of `benchmark_ops`, but new code should use an explicit macro. In
+particular, a zero legacy third argument now fails instead of silently acting as one operation.
 
 ## Custom Main
 

@@ -2,7 +2,7 @@
 
 spec("benchmark invalid input") {
   it("rejects zero iterations") {
-    benchmark("zero iterations", 0, 1) {
+    benchmark_batch("zero samples", 0) {
       check_true(1);
     }
   }

@@ -25,7 +25,10 @@ typedef struct mem_buffer_s mem_buffer_t;
 #define MUSTACHE_ERR_SECTIONOPENERHERE (9)
 #define MUSTACHE_ERR_INVALIDDELIMITERS (10)
 
-/** Default maximum number of nested partial/lambda expansions per render. */
+/**
+ * Default maximum number of nested partial/lambda expansions per render.
+ * Use mustache_process_ex() to select a different nonzero limit.
+ */
 #define MUSTACHE_DEFAULT_MAX_RENDER_DEPTH (128U)
 
 typedef struct MUSTACHE_PARSER {
@@ -154,7 +157,11 @@ typedef struct MUSTACHE_DATAPROVIDER {
  * @param parser Pointer to structure with parser callbacks. May be @c NULL.
  * @param parser_data Pointer just propagated into the parser callbacks.
  * @param flags Unused, use zero.
- * @return Pointer to the compiled template, or @c NULL on an error.
+ * The returned template owns a copy of the source and is immutable. It may be
+ * reused across renders and shared between threads.
+ *
+ * @return Pointer to the compiled template, or @c NULL on an invalid argument,
+ *         syntax error, integer overflow, or allocation failure.
  */
 CXX_C_API MUSTACHE_TEMPLATE *mustache_compile(const char *templ_data, size_t templ_size,
                                     const MUSTACHE_PARSER *parser, void *parser_data,
@@ -166,7 +173,9 @@ CXX_C_API MUSTACHE_TEMPLATE *mustache_compile(const char *templ_data, size_t tem
  * @param parser Pointer to structure with parser callbacks. May be @c NULL.
  * @param parser_data Pointer just propagated into the parser callbacks.
  * @param flags Unused, use zero.
- * @return Pointer to the compiled template, or @c NULL on an error.
+ * @return Pointer to an immutable compiled template that owns its source copy,
+ *         or @c NULL on an invalid argument, syntax error, integer overflow, or
+ *         allocation failure.
  */
 CXX_C_API MUSTACHE_TEMPLATE *mustache_compile_v(tstr_v templ, const MUSTACHE_PARSER *parser,
                                     void *parser_data, unsigned flags);
@@ -174,7 +183,7 @@ CXX_C_API MUSTACHE_TEMPLATE *mustache_compile_v(tstr_v templ, const MUSTACHE_PAR
 /**
  * Release the template compiled with @c mustache_compile().
  *
- * @param t The template.
+ * @param t The template. May be @c NULL.
  */
 CXX_C_API void mustache_release(MUSTACHE_TEMPLATE *t);
 
@@ -189,13 +198,14 @@ CXX_C_API void mustache_release(MUSTACHE_TEMPLATE *t);
  *
  * @param t The template.
  * @param renderer Pointer to structure with output callbacks.
- * @param render_data Pointer just propagated to the output callbacks.
+ * @param renderer_data Pointer just propagated to the output callbacks.
  * @param provider Pointer to structure with data-providing callbacks.
- * @param provider_dara Pointer just propagated to the data-providing callbacks.
- * @return Zero on success, non-zero on failure.
+ * @param provider_data Pointer just propagated to the data-providing callbacks.
+ * @return Zero on success; nonzero for invalid arguments, callback failure,
+ *         allocation failure, or expansion-depth exhaustion.
  *
- * Note this operation can fail only if any callback returns an error
- * and aborts the operation.
+ * Output is streaming and is not rolled back on failure. Bytes emitted before
+ * the error remain in the renderer target.
  */
 CXX_C_API int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDERER *renderer,
                       void *renderer_data, const MUSTACHE_DATAPROVIDER *provider,
@@ -210,7 +220,10 @@ CXX_C_API int mustache_process(const MUSTACHE_TEMPLATE *t, const MUSTACHE_RENDER
  * @param provider Data provider callbacks.
  * @param provider_data Data propagated to provider callbacks.
  * @param max_render_depth Maximum nested partial/lambda expansions; must be non-zero.
- * @return Zero on success, non-zero on callback, allocation, or depth-limit failure.
+ * @return Zero on success; nonzero for invalid arguments, callback failure,
+ *         allocation failure, or depth-limit exhaustion.
+ *
+ * Output is streaming and is not rolled back on failure.
  */
 CXX_C_API int mustache_process_ex(const MUSTACHE_TEMPLATE *t,
                                   const MUSTACHE_RENDERER *renderer,
@@ -235,9 +248,10 @@ typedef struct MUSTACHE_STRING_RENDERER {
 CXX_C_API int mustache_string_renderer_init(MUSTACHE_STRING_RENDERER *renderer);
 
 /**
- * Get the rendered string (caller must free)
+ * Copy the rendered bytes into a NUL-terminated allocation.
  * @param renderer The string renderer
- * @return Allocated string or NULL on error
+ * @return A @c malloc allocation that the caller must release with @c free(),
+ *         or @c NULL on invalid state or allocation failure.
  */
 CXX_C_API char *mustache_string_renderer_get(MUSTACHE_STRING_RENDERER *renderer);
 
@@ -258,7 +272,7 @@ typedef struct MUSTACHE_STRING_RENDERER_ARENA {
 /**
  * Initialize an arena-backed string renderer
  * @param renderer The renderer to initialize
- * @param arena Arena to allocate from
+ * @param arena Arena that owns backing allocations and must outlive the renderer
  * @param min_capacity Minimum buffer size
  * @return 0 on success, -1 on error
  */
@@ -267,14 +281,16 @@ CXX_C_API int mustache_string_renderer_init_arena(MUSTACHE_STRING_RENDERER_ARENA
                                                   size_t min_capacity);
 
 /**
- * Get the rendered string (arena-owned)
+ * Get a NUL-terminated borrowed view of the arena-backed output.
  * @param renderer The arena string renderer
- * @return Pointer to arena buffer data or NULL on error
+ * @return Borrowed pointer, or @c NULL on invalid state. Do not call @c free().
+ *         The pointer may change after further output and becomes invalid after
+ *         renderer release or arena destruction.
  */
 CXX_C_API char *mustache_string_renderer_get_arena(MUSTACHE_STRING_RENDERER_ARENA *renderer);
 
 /**
- * Free arena string renderer resources
+ * Release the renderer's buffer reference without destroying the arena.
  * @param renderer The renderer to free
  */
 CXX_C_API void mustache_string_renderer_free_arena(MUSTACHE_STRING_RENDERER_ARENA *renderer);

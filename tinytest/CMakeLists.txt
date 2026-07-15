@@ -63,6 +63,26 @@ cmake_add_executable(tinytest_benchmark_invalid
   SOURCES ${BENCHMARK_INVALID_SOURCES}
   FOLDER "tinytest")
 
+set(BENCHMARK_INVALID_OPS_SOURCES benchmark_invalid_ops_cases.c tinytest.h)
+cmake_add_executable(tinytest_benchmark_invalid_ops
+  SOURCES ${BENCHMARK_INVALID_OPS_SOURCES}
+  FOLDER "tinytest")
+
+set(BENCHMARK_INVALID_BYTES_SOURCES benchmark_invalid_bytes_cases.c tinytest.h)
+cmake_add_executable(tinytest_benchmark_invalid_bytes
+  SOURCES ${BENCHMARK_INVALID_BYTES_SOURCES}
+  FOLDER "tinytest")
+
+set(BENCHMARK_OUTPUT_SOURCES benchmark_output_cases.c tinytest.h)
+cmake_add_executable(tinytest_benchmark_output
+  SOURCES ${BENCHMARK_OUTPUT_SOURCES}
+  FOLDER "tinytest")
+cmake_add_executable(tinytest_benchmark_output_plain
+  SOURCES ${BENCHMARK_OUTPUT_SOURCES}
+  FOLDER "tinytest")
+target_compile_definitions(tinytest_benchmark_output_plain
+  PRIVATE BDD_BENCH_TABLE=0)
+
 add_test(
   NAME tinytest_focus_tap
   COMMAND ${CMAKE_COMMAND}
@@ -94,6 +114,33 @@ add_test(
   COMMAND ${CMAKE_COMMAND}
           -DTEST_EXE=$<TARGET_FILE:tinytest_benchmark_invalid>
           -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_benchmark_invalid.cmake)
+
+add_test(
+  NAME tinytest_benchmark_invalid_ops
+  COMMAND ${CMAKE_COMMAND}
+          -DTEST_EXE=$<TARGET_FILE:tinytest_benchmark_invalid_ops>
+          "-DEXPECTED_DETAIL=requires at least one operation per sample"
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_benchmark_invalid.cmake)
+
+add_test(
+  NAME tinytest_benchmark_invalid_bytes
+  COMMAND ${CMAKE_COMMAND}
+          -DTEST_EXE=$<TARGET_FILE:tinytest_benchmark_invalid_bytes>
+          "-DEXPECTED_DETAIL=requires at least one byte per sample"
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_benchmark_invalid.cmake)
+
+add_test(
+  NAME tinytest_benchmark_output
+  COMMAND ${CMAKE_COMMAND}
+          -DTEST_EXE=$<TARGET_FILE:tinytest_benchmark_output>
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_benchmark_output.cmake)
+
+add_test(
+  NAME tinytest_benchmark_output_plain
+  COMMAND ${CMAKE_COMMAND}
+          -DTEST_EXE=$<TARGET_FILE:tinytest_benchmark_output_plain>
+          -DPLAIN_OUTPUT=ON
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_benchmark_output.cmake)
 
 if(CMAKE_CXX_COMPILER OR CMAKE_CXX_COMPILER_ID)
   set(EXAMPLE_CPP_SOURCES example.cpp tinytest.h)

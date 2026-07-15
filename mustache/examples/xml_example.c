@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-int main() {
+int main(void) {
     const char *xml_data = 
         "<dashboard>"
         "  <project name=\"TurboUtils\">"
@@ -48,17 +48,33 @@ int main() {
     }
 
     /* Setup renderer */
-    MUSTACHE_STRING_RENDERER renderer;
-    mustache_string_renderer_init(&renderer);
+    MUSTACHE_STRING_RENDERER renderer = {0};
+    if (mustache_string_renderer_init(&renderer) != 0) {
+        fprintf(stderr, "Failed to initialize renderer\n");
+        mustache_release(templ);
+        cxml_root_node_free(root);
+        return 1;
+    }
 
     /* Render */
     if (mustache_render_xml(templ, root, &renderer.base, &renderer, NULL, NULL) != 0) {
         fprintf(stderr, "Failed to render template\n");
-    } else {
-        char *result = mustache_string_renderer_get(&renderer);
-        printf("Rendered result:\n---\n%s\n---\n", result);
-        free(result);
+        mustache_string_renderer_free(&renderer);
+        mustache_release(templ);
+        cxml_root_node_free(root);
+        return 1;
     }
+
+    char *result = mustache_string_renderer_get(&renderer);
+    if (!result) {
+        fprintf(stderr, "Failed to copy rendered output\n");
+        mustache_string_renderer_free(&renderer);
+        mustache_release(templ);
+        cxml_root_node_free(root);
+        return 1;
+    }
+    printf("Rendered result:\n---\n%s\n---\n", result);
+    free(result);
 
     /* Cleanup */
     mustache_string_renderer_free(&renderer);

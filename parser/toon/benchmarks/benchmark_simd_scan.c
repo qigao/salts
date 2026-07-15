@@ -29,13 +29,13 @@ suite("shared parser SIMD scan benchmark") {
   }
 
   bench("comment and value boundary scan") {
-    benchmark("scalar 64KiB scan", 1000, SCAN_BYTES) {
+    benchmark_bytes("scalar 64KiB scan", 1000, SCAN_BYTES) {
       check_ptr_eq(turbo_scalar_find_any4(input, input + SCAN_BYTES + 1,
                                            '\r', '\n', '#', '\0'),
                    input + SCAN_BYTES);
     }
 
-    benchmark("SIMDe 64KiB scan", 1000, SCAN_BYTES) {
+    benchmark_bytes("SIMDe 64KiB scan", 1000, SCAN_BYTES) {
       check_ptr_eq(turbo_simd_find_any4(input, input + SCAN_BYTES + 1,
                                          '\r', '\n', '#', '\0'),
                    input + SCAN_BYTES);

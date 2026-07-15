@@ -60,7 +60,7 @@ suite("CSV random access benchmark") {
   }
 
   bench("indexed row lookup") {
-    benchmark("100K pseudo-random rows", 3, LOOKUPS_PER_RUN) {
+    benchmark_ops("100K pseudo-random rows", 3, LOOKUPS_PER_RUN) {
       g_sink = read_random_rows(doc, BENCHMARK_ROWS, LOOKUPS_PER_RUN);
     }
   }

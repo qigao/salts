@@ -65,7 +65,7 @@ spec("FMT Bench") {
     }
 
     init_long_literal();
-    benchmark("scan_n literal 64KiB", FMT_LITERAL_ITERS, FMT_LITERAL_BYTES) {
+    benchmark_bytes("scan_n literal 64KiB", FMT_LITERAL_ITERS, FMT_LITERAL_BYTES) {
       const char *cur = long_literal;
       const char *end = long_literal + sizeof(long_literal);
       tstr_v tok = tstr_v_from_buf(NULL, 0);

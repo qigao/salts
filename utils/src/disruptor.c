@@ -158,6 +158,9 @@ static void *disruptor_aligned_malloc(size_t alignment, size_t size) {
 }
 
 static void disruptor_aligned_free(void *ptr) {
+  if (ptr == NULL) {
+    return;
+  }
 #ifdef _WIN32
   _aligned_free(ptr);
 #else
@@ -308,7 +311,9 @@ static void disruptor_init(disruptor_t *disruptor) {
   }
   for (s = 0; s < disruptor->capacity; ++s) {
     atomic_store_explicit(&disruptor->published_sequences[s], 0U, memory_order_relaxed);
-    atomic_store_explicit(&disruptor->worker_completed_sequences[s], 0U, memory_order_relaxed);
+    if (disruptor->mode == DISRUPTOR_MODE_WORKER_POOL) {
+      atomic_store_explicit(&disruptor->worker_completed_sequences[s], 0U, memory_order_relaxed);
+    }
   }
   memset(disruptor->consumer_dependencies, 0,
          sizeof(uint32_t) * disruptor->consumer_capacity * disruptor->consumer_capacity);
@@ -379,13 +384,15 @@ disruptor_t *disruptor_create(const disruptor_config_t *config) {
     disruptor_aligned_free(disruptor);
     return NULL;
   }
-  disruptor->worker_completed_sequences =
-      (atomic_uint_fast64_t *)disruptor_aligned_malloc(DISRUPTOR_CACHE_LINE_SIZE, published_bytes);
-  if (disruptor->worker_completed_sequences == NULL) {
-    disruptor_aligned_free((void *)disruptor->published_sequences);
-    disruptor_aligned_free(disruptor->consumer_cursors);
-    disruptor_aligned_free(disruptor);
-    return NULL;
+  if (config->mode == DISRUPTOR_MODE_WORKER_POOL) {
+    disruptor->worker_completed_sequences = (atomic_uint_fast64_t *)disruptor_aligned_malloc(
+        DISRUPTOR_CACHE_LINE_SIZE, published_bytes);
+    if (disruptor->worker_completed_sequences == NULL) {
+      disruptor_aligned_free((void *)disruptor->published_sequences);
+      disruptor_aligned_free(disruptor->consumer_cursors);
+      disruptor_aligned_free(disruptor);
+      return NULL;
+    }
   }
   disruptor->consumer_dependencies = (uint32_t *)calloc(1U, dependencies_bytes);
   if (disruptor->consumer_dependencies == NULL) {

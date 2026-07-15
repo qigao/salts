@@ -52,6 +52,21 @@ spec("tinytest runtime regression") {
     check_double_array_eq(actual_double, expected_double, 1, 0.0);
   }
 
+  it("benchmark metrics should keep samples, operations, and bytes distinct") {
+    __bdd_bench_entry__ entry =
+        __bdd_bench_make_entry__("batched io", 4, 8.0, 1.5, 2.5, 10, 1024 * 1024, true);
+
+    check_size_eq(entry.samples, 4);
+    check_size_eq(entry.operations_per_sample, 10);
+    check_size_eq(entry.bytes_per_sample, 1024 * 1024);
+    check_true(entry.tracks_bytes);
+    check_float_eq(entry.avg_op_us, 200.0, 0.001);
+    check_float_eq(entry.min_sample_us, 1500.0, 0.001);
+    check_float_eq(entry.max_sample_us, 2500.0, 0.001);
+    check_float_eq(entry.ops_s, 5000.0, 0.001);
+    check_float_eq(entry.mib_s, 500.0, 0.001);
+  }
+
   group("fixture assertion handling") {
     before_each() { check_int_eq(1, 2); }
     after_each() { ++fixture_cleanup_runs; }

@@ -1,6 +1,9 @@
 if(NOT DEFINED TEST_EXE)
   message(FATAL_ERROR "TEST_EXE is required")
 endif()
+if(NOT DEFINED EXPECTED_DETAIL)
+  set(EXPECTED_DETAIL "requires at least one sample")
+endif()
 
 execute_process(
   COMMAND "${TEST_EXE}"
@@ -13,6 +16,6 @@ if(NOT rc EQUAL 1)
 endif()
 
 string(REPLACE "\r" "" out "${out}")
-if(NOT out MATCHES "Framework error: benchmark \"zero iterations\" requires at least one iteration")
+if(NOT out MATCHES "${EXPECTED_DETAIL}")
   message(FATAL_ERROR "benchmark failure message missing:\n${out}")
 endif()

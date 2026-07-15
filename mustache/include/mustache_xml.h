@@ -34,8 +34,12 @@ typedef struct MUSTACHE_XML_PROVIDER {
 /**
  * Initialize an XML data provider
  * @param provider The provider to initialize
- * @param xml_node Root XML node (root node or element)
- * @param template_loader Optional template loader for partials (can be NULL)
+ * The provider borrows the XML tree; it must remain immutable and valid until
+ * rendering completes.
+ *
+ * @param xml_node Root XML node or element
+ * @param template_loader Optional partial lookup. Returned templates remain
+ *                        user-owned and valid until rendering completes.
  * @param user_data User data passed to template loader
  * @return 0 on success, -1 on error
  */
@@ -45,26 +49,31 @@ CXX_C_API int mustache_xml_provider_init(MUSTACHE_XML_PROVIDER *provider, void *
                                           void *user_data);
 
 /**
- * Free XML data provider resources (does not free XML nodes themselves)
+ * Free provider-owned surrogate lists. This does not free the borrowed XML tree
+ * or partial templates.
+ * @param provider Provider to free. May be @c NULL.
  */
 CXX_C_API void mustache_xml_provider_free(MUSTACHE_XML_PROVIDER *provider);
 
 /**
  * Return the provider status after direct use with mustache_process().
+ * @param provider Provider to inspect.
  * @return 0 when no provider allocation failed, -1 for NULL or a failed provider.
  */
 CXX_C_API int mustache_xml_provider_status(const MUSTACHE_XML_PROVIDER *provider);
 
 /**
  * Render a mustache template with XML data
- * @param template Compiled mustache template
- * @param xml_node XML node to use for rendering
+ * @param templ Compiled mustache template
+ * @param xml_node Borrowed XML node that remains immutable during rendering
  * @param renderer Output renderer
  * @param renderer_data Data for renderer callbacks
  * @param template_loader Optional partial lookup. Returned templates remain user-owned and must
  *                        stay valid until rendering completes.
  * @param user_data User data for template loader
- * @return 0 on success, -1 on error
+ * @return 0 on success; -1 on invalid arguments, callback failure, provider
+ *         allocation failure, or expansion-depth exhaustion. Partial output is
+ *         retained.
  */
 CXX_C_API int mustache_render_xml(const MUSTACHE_TEMPLATE *templ, void *xml_node,
                                    const MUSTACHE_RENDERER *renderer, void *renderer_data,

@@ -140,7 +140,7 @@ spec("String Bench") {
       sink_int += tstr_v_ieq(sv, upper);
     }
 
-    benchmark("ieq ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
+    benchmark_bytes("ieq ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
       sink_int += tstr_v_ieq(tstr_v_from_buf(ascii_case, sizeof(ascii_case)),
                              tstr_v_from_buf(utf8_ascii, sizeof(utf8_ascii)));
     }
@@ -183,12 +183,12 @@ spec("String Bench") {
       sink_size += trimmed.len;
     }
 
-    benchmark("trim ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
+    benchmark_bytes("trim ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
       tstr_v trimmed = tstr_v_trim(tstr_v_from_buf(trim_ascii, sizeof(trim_ascii)), " ");
       sink_size += trimmed.len;
     }
 
-    benchmark("find_any ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
+    benchmark_bytes("find_any ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
       sink_size += tstr_v_find_any(tstr_v_from_buf(delimiters_ascii, sizeof(delimiters_ascii)),
                                    tstr_v_from_cstr(",;"));
     }
@@ -260,19 +260,19 @@ spec("String Bench") {
   bench("utf8 validation and counting") {
     init_utf8_samples();
 
-    benchmark("validate ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
+    benchmark_bytes("validate ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
       sink_int += tstr_v_utf8_valid(tstr_v_from_buf(utf8_ascii, sizeof(utf8_ascii)));
     }
 
-    benchmark("count ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
+    benchmark_bytes("count ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
       sink_size += tstr_v_utf8_len(tstr_v_from_buf(utf8_ascii, sizeof(utf8_ascii)));
     }
 
-    benchmark("validate mixed UTF-8", UTF8_BENCH_ITERS, utf8_mixed_len) {
+    benchmark_bytes("validate mixed UTF-8", UTF8_BENCH_ITERS, utf8_mixed_len) {
       sink_int += tstr_v_utf8_valid(tstr_v_from_buf(utf8_mixed, utf8_mixed_len));
     }
 
-    benchmark("count mixed UTF-8", UTF8_BENCH_ITERS, utf8_mixed_len) {
+    benchmark_bytes("count mixed UTF-8", UTF8_BENCH_ITERS, utf8_mixed_len) {
       sink_size += tstr_v_utf8_len(tstr_v_from_buf(utf8_mixed, utf8_mixed_len));
     }
   }
@@ -287,13 +287,13 @@ spec("String Bench") {
     check_not_null(simd_case);
     check_not_null(scalar_case);
 
-    benchmark("SDS lower+upper 64KiB", ASCII_CASE_BENCH_ITERS, 2 * UTF8_BENCH_BYTES) {
+    benchmark_bytes("SDS lower+upper 64KiB", ASCII_CASE_BENCH_ITERS, 2 * UTF8_BENCH_BYTES) {
       sdstolower(scalar_case);
       sdstoupper(scalar_case);
       sink_size += sdslen(scalar_case);
     }
 
-    benchmark("SIMDe lower+upper 64KiB", ASCII_CASE_BENCH_ITERS, 2 * UTF8_BENCH_BYTES) {
+    benchmark_bytes("SIMDe lower+upper 64KiB", ASCII_CASE_BENCH_ITERS, 2 * UTF8_BENCH_BYTES) {
       tstr_lower(simd_case);
       tstr_upper(simd_case);
       sink_size += tstr_len(simd_case);

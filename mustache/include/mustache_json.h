@@ -29,8 +29,12 @@ typedef struct MUSTACHE_JSON_PROVIDER {
 /**
  * Initialize a JSON data provider
  * @param provider The provider to initialize
+ * The provider borrows the JSON tree; it must remain immutable and valid until
+ * rendering completes.
+ *
  * @param json_data Root JSON data
- * @param template_loader Optional template loader for partials (can be NULL)
+ * @param template_loader Optional partial lookup. Returned templates remain
+ *                        user-owned and valid until rendering completes.
  * @param user_data User data passed to template loader
  * @return 0 on success, -1 on error
  */
@@ -38,6 +42,19 @@ CXX_C_API int mustache_json_provider_init(MUSTACHE_JSON_PROVIDER *provider, json
                                           MUSTACHE_TEMPLATE *(*template_loader)(const char *,
                                                                                 size_t, void *),
                                           void *user_data);
+/**
+ * Initialize a JSON provider associated with an arena lifetime.
+ *
+ * The provider and JSON tree remain caller-owned. The non-NULL arena must stay
+ * valid until rendering completes.
+ *
+ * @param provider Provider to initialize.
+ * @param json_data Borrowed root JSON value.
+ * @param template_loader Optional partial lookup with user-owned results.
+ * @param user_data Data propagated to the partial lookup.
+ * @param arena Non-NULL arena that outlives the render.
+ * @return 0 on success, -1 for invalid arguments.
+ */
 CXX_C_API int mustache_json_provider_init_arena(MUSTACHE_JSON_PROVIDER *provider,
                                                 json_value_t *json_data,
                                                 MUSTACHE_TEMPLATE *(*template_loader)(const char *,
@@ -47,14 +64,15 @@ CXX_C_API int mustache_json_provider_init_arena(MUSTACHE_JSON_PROVIDER *provider
 
 /**
  * Render a mustache template with JSON data
- * @param template Compiled mustache template
- * @param json_data JSON data to use for rendering
+ * @param templ Compiled mustache template
+ * @param json_data Borrowed JSON data that remains immutable during rendering
  * @param renderer Output renderer
  * @param renderer_data Data for renderer callbacks
  * @param template_loader Optional partial lookup. Returned templates remain user-owned and must
  *                        stay valid until rendering completes.
  * @param user_data User data for template loader
- * @return 0 on success, -1 on error
+ * @return 0 on success; -1 on invalid arguments, callback failure, allocation
+ *         failure, or expansion-depth exhaustion. Partial output is retained.
  */
 CXX_C_API int mustache_render_json(const MUSTACHE_TEMPLATE *templ, json_value_t *json_data,
                                    const MUSTACHE_RENDERER *renderer, void *renderer_data,

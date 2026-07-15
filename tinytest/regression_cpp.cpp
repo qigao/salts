@@ -42,4 +42,11 @@ suite("tinytest cpp regression") {
   }
 
   it("should continue after an uncaught C++ exception") { check_true(true); }
+
+  bench("explicit benchmark units compile in C++") {
+    benchmark_io("C++ batched I/O", 1, 2, 8) {
+      volatile int value = 1;
+      value += 1;
+    }
+  }
 }
