@@ -13,6 +13,7 @@ A C library for parsing TOON (Token-Oriented Object Notation) by re2c/lemon, a c
   - [Querying](#querying)
   - [Memory Management](#memory-management)
   - [Output & Debugging](#output--debugging)
+  - [JSON DOM Adapter](#json-dom-adapter)
   - [Type Checking](#type-checking)
   - [Value Getters](#value-getters)
 - [Examples](#examples)
@@ -61,6 +62,7 @@ Here is a brief overview of the available examples:
 - **[03_tabular_data.c](examples/03_tabular_data.c)**: Shows how to parse and query tabular data, where each row is an object.
 - **[04_programmatic_creation.c](examples/04_programmatic_creation.c)**: Illustrates how to create a `toonObject` tree programmatically in memory.
 - **[05_json_conversion.c](examples/05_json_conversion.c)**: Shows how to convert a parsed TOON object into JSON format.
+- **[06_json_dom_adapter.c](examples/06_json_dom_adapter.c)**: Demonstrates independently owned TOON and JSON DOM conversions without a text round trip.
 
 ## Data Structures
 
@@ -519,7 +521,7 @@ void TOONc_printObject(toonObject *o, int depth);
 **Parameters:**
 
 - `o` - Object to print
-- `depth` - Initial indentation depth (usually 0)
+- `depth` - Reserved for source compatibility; pass `0`
 
 **Example:**
 
@@ -580,6 +582,46 @@ FILE *out = fopen("output.json", "w");
 TOONc_toJSON(root, out, 0);
 fclose(out);
 ```
+
+### JSON DOM Adapter
+
+`toon_json_adapter.h` converts between the TOON tree and the independent
+`json_value_t` DOM without a serialize/parse round trip. Both directions make
+an owned copy, so the source can be released immediately after conversion.
+
+```c
+#include "json_parser.h"
+#include "toon_json_adapter.h"
+
+json_value_t *json = NULL;
+toonObject *toon = TOONc_parseString("name: Ada\n");
+
+int rc = toon_json_to_value(toon, &json);
+TOONc_free(toon);
+if (rc != TURBO_OK) {
+    return rc;
+}
+
+toonObject *copy = NULL;
+rc = toon_json_from_value(json, &copy);
+json_free(json);
+if (rc != TURBO_OK) {
+    return rc;
+}
+
+TOONc_free(copy);
+```
+
+`toon_json_to_value()` rejects malformed/shared/cyclic TOON graphs, duplicate
+keys, invalid UTF-8, non-finite numbers, and unsupported node types.
+`toon_json_from_value()` rejects embedded-NUL object keys and integer tokens
+outside JSON's exact IEEE-754 integer range. Both functions cap nesting at
+`TOON_JSON_ADAPTER_MAX_DEPTH` and leave the output pointer as `NULL` on error.
+
+The existing `TOONc_toJSONString()` and `TOONc_fromJSONString()` functions are
+compatibility wrappers over this adapter. String output is allocated and must
+be released with `TOONc_serializeFree()`; a returned TOON tree must be released
+with `TOONc_free()`.
 
 ### Type Checking
 

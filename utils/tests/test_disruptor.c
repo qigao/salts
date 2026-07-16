@@ -55,6 +55,35 @@ spec("Disruptor Tests") {
     check_null(disruptor_create(&cfg2));
   }
 
+  it("should make every configured ring slot usable") {
+    disruptor_config_t cfg = {
+        .entry_size = sizeof(uint64_t), .capacity = 1, .consumer_capacity = 1};
+    disruptor_t *d = disruptor_create(&cfg);
+    disruptor_consumer_t consumer;
+    disruptor_cursor_t claimed = {0};
+    disruptor_cursor_t extra = {0};
+    disruptor_cursor_t read = {.sequence = 1};
+
+    check_not_null(d);
+    check_size_eq(disruptor_consumer_register(d, &consumer), 1);
+    check_int_eq(disruptor_publisher_try_claim(d, &claimed), 1);
+    check_size_eq(claimed.sequence, 1);
+    check_int_eq(disruptor_publisher_try_claim(d, &extra), 0);
+    *(uint64_t *)disruptor_acquire_entry(d, &claimed) = 17;
+    check_int_eq(disruptor_publisher_publish(d, &claimed), 1);
+    check_int_eq(disruptor_consumer_wait_for_nonblocking(d, &read), 1);
+    check_size_eq(*(const uint64_t *)disruptor_show_entry(d, &read), 17);
+    disruptor_consumer_release_entry(d, &consumer, &read);
+    check_int_eq(disruptor_publisher_try_claim(d, &claimed), 1);
+    check_size_eq(claimed.sequence, 2);
+    check_int_eq(disruptor_publisher_publish(d, &claimed), 1);
+    read.sequence = 2;
+    check_int_eq(disruptor_consumer_wait_for_nonblocking(d, &read), 1);
+    disruptor_consumer_release_entry(d, &consumer, &read);
+
+    disruptor_destroy(d);
+  }
+
   it("should publish and consume a single entry") {
     disruptor_config_t cfg = {
         .entry_size = sizeof(uint64_t), .capacity = 16, .consumer_capacity = 1};
@@ -62,11 +91,13 @@ spec("Disruptor Tests") {
     check_not_null(d);
 
     disruptor_consumer_t c;
+    disruptor_cursor_t w_cursor = {0};
     uint64_t next_seq;
     check_int_eq(disruptor_consumer_try_register(d, &c, &next_seq), 1);
     check_size_eq(next_seq, 1);
+    check_int_eq(disruptor_worker_try_claim(d, &w_cursor), 0);
 
-    disruptor_cursor_t w_cursor;
+    w_cursor.sequence = 0;
     check_int_eq(disruptor_publisher_try_claim(d, &w_cursor), 1);
     check_size_eq(w_cursor.sequence, 1);
 
@@ -155,6 +186,35 @@ spec("Disruptor Tests") {
     disruptor_destroy(d);
   }
 
+  it("should expose contiguous entries after an out-of-order publish closes the gap") {
+    disruptor_config_t cfg = {
+        .entry_size = sizeof(uint64_t), .capacity = 4, .consumer_capacity = 1};
+    disruptor_t *d = disruptor_create(&cfg);
+    disruptor_consumer_t consumer;
+    disruptor_cursor_t first = {0};
+    disruptor_cursor_t second = {0};
+    disruptor_cursor_t read = {.sequence = 1};
+
+    check_not_null(d);
+    check_size_eq(disruptor_consumer_register(d, &consumer), 1);
+    check_int_eq(disruptor_publisher_try_claim(d, &first), 1);
+    check_int_eq(disruptor_publisher_try_claim(d, &second), 1);
+    check_size_eq(first.sequence, 1);
+    check_size_eq(second.sequence, 2);
+    *(uint64_t *)disruptor_acquire_entry(d, &first) = 11;
+    *(uint64_t *)disruptor_acquire_entry(d, &second) = 22;
+
+    check_int_eq(disruptor_publisher_publish(d, &second), 1);
+    check_int_eq(disruptor_consumer_wait_for_nonblocking(d, &read), 0);
+    check_int_eq(disruptor_publisher_publish(d, &first), 1);
+    check_int_eq(disruptor_consumer_wait_for_nonblocking(d, &read), 1);
+    check_size_eq(read.sequence, 2);
+    check_size_eq(*(const uint64_t *)disruptor_show_entry(d, &second), 22);
+
+    disruptor_consumer_release_entry(d, &consumer, &read);
+    disruptor_destroy(d);
+  }
+
   it("should assign worker-pool entries to one worker only") {
     disruptor_config_t cfg = {.entry_size = sizeof(uint64_t),
                               .capacity = 16,
@@ -187,6 +247,26 @@ spec("Disruptor Tests") {
     for (int i = 1; i <= 4; ++i) {
       check(seen[i]);
     }
+
+    disruptor_destroy(d);
+  }
+
+  it("should reject broadcast APIs in worker-pool mode") {
+    disruptor_config_t cfg = {.entry_size = sizeof(uint64_t),
+                              .capacity = 4,
+                              .consumer_capacity = 1,
+                              .mode = DISRUPTOR_MODE_WORKER_POOL};
+    disruptor_t *d = disruptor_create(&cfg);
+    disruptor_consumer_t consumer = {0};
+    disruptor_cursor_t cursor = {.sequence = 1};
+    uint64_t next_sequence = 99;
+
+    check_not_null(d);
+    check_int_eq(disruptor_consumer_try_register(d, &consumer, &next_sequence), 0);
+    check_size_eq(next_sequence, 99);
+    check_size_eq(disruptor_consumer_register(d, &consumer), 0);
+    check_int_eq(disruptor_consumer_wait_for_nonblocking(d, &cursor), 0);
+    check_null(disruptor_topology_create(d));
 
     disruptor_destroy(d);
   }
@@ -281,6 +361,32 @@ spec("Disruptor Tests") {
     check_size_eq(*(const uint64_t *)disruptor_show_entry(d, &joined_cursor), 99);
 
     disruptor_consumer_release_entry(d, &joined, &joined_cursor);
+    disruptor_destroy(d);
+  }
+
+  it("should reject a cycle in direct consumer dependencies") {
+    disruptor_config_t cfg = {
+        .entry_size = sizeof(uint64_t), .capacity = 4, .consumer_capacity = 2};
+    disruptor_t *d = disruptor_create(&cfg);
+    disruptor_consumer_t first, second;
+    disruptor_cursor_t published = {0};
+    disruptor_cursor_t first_read = {.sequence = 1};
+    disruptor_cursor_t second_read = {.sequence = 1};
+
+    check_not_null(d);
+    check_size_eq(disruptor_consumer_register(d, &first), 1);
+    check_size_eq(disruptor_consumer_register(d, &second), 1);
+    check_int_eq(disruptor_consumer_set_dependencies(d, &first, &second, 1), 1);
+    check_int_eq(disruptor_consumer_set_dependencies(d, &second, &first, 1), 0);
+
+    check_int_eq(disruptor_publisher_try_claim(d, &published), 1);
+    check_int_eq(disruptor_publisher_publish(d, &published), 1);
+    check_int_eq(disruptor_consumer_wait_for_nonblocking_for(d, &first, &first_read), 0);
+    check_int_eq(disruptor_consumer_wait_for_nonblocking_for(d, &second, &second_read), 1);
+    disruptor_consumer_release_entry(d, &second, &second_read);
+    check_int_eq(disruptor_consumer_wait_for_nonblocking_for(d, &first, &first_read), 1);
+
+    disruptor_consumer_release_entry(d, &first, &first_read);
     disruptor_destroy(d);
   }
 

@@ -147,15 +147,28 @@ void TOONc_printRoot(toonObject *root);
  */
 void TOONc_free(toonObject *obj);
 
+/**
+ * Serialize a TOON tree as pretty-printed JSON.
+ * @param obj Root TOON value; must not have a key or sibling
+ * @param fp Output stream
+ * @param depth Reserved for source compatibility; pass 0
+ */
 void TOONc_toJSON(toonObject *obj, FILE *fp, int depth);
 
 /**
- * Convert TOON object to JSON string (allocated, free with TOONc_serializeFree)
+ * Convert a TOON tree to a pretty-printed JSON string.
+ * @param obj Root TOON value; must not have a key or sibling
+ * @param out_len Optional output byte length
+ * @return Allocated JSON string, or NULL on conversion/allocation failure;
+ *         release with TOONc_serializeFree()
  */
 char *TOONc_toJSONString(const toonObject *obj, size_t *out_len);
 
 /**
- * Parse JSON string into TOON object tree
+ * Parse a JSON string into an independently owned TOON tree.
+ * @param json JSON input buffer
+ * @param len Input byte length
+ * @return TOON root released with TOONc_free(), or NULL on failure
  */
 toonObject *TOONc_fromJSONString(const char *json, size_t len);
 

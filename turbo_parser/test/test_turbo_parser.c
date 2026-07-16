@@ -599,6 +599,53 @@ spec("turbo_parser") {
       turbo_free_toon(&toon);
       check_null(toon);
     }
+
+    it("should adapt independently owned TOON and JSON DOMs") {
+      static const char json_text[] =
+          "{\"name\":\"Ada\",\"items\":[1,true]}";
+      turbo_json_doc_t *json = NULL;
+      turbo_json_doc_t *roundtrip = NULL;
+      turbo_toon_node_t *toon = NULL;
+
+      check_int_eq(turbo_parse_json((const uint8_t *)json_text,
+                                    sizeof(json_text) - 1U, &json),
+                   TURBO_OK);
+      check_not_null(json);
+      check_int_eq(turbo_toon_from_json_doc(json, &toon), TURBO_OK);
+      check_not_null(toon);
+      turbo_free_json(&json);
+      check_null(json);
+
+      if (toon) {
+        check_str_eq(turbo_toon_string(turbo_toon_get(toon, "name")),
+                     "Ada");
+        check_int_eq(turbo_toon_to_json_doc(toon, &roundtrip), TURBO_OK);
+        check_not_null(roundtrip);
+      }
+      turbo_free_toon(&toon);
+      check_null(toon);
+
+      if (roundtrip) {
+        check_str_eq(turbo_json_get_string(roundtrip, "name"), "Ada");
+        check_size_eq(turbo_json_array_size(
+                          turbo_json_object_get(roundtrip, "items")),
+                      2U);
+      }
+      turbo_free_json(&roundtrip);
+      check_null(roundtrip);
+    }
+
+    it("should report invalid DOM adapter arguments") {
+      turbo_json_doc_t *json = (turbo_json_doc_t *)(uintptr_t)1;
+      turbo_toon_node_t *toon = (turbo_toon_node_t *)(uintptr_t)1;
+
+      check_int_eq(turbo_toon_from_json_doc(NULL, &toon), TURBO_EINVAL);
+      check_null(toon);
+      check_int_eq(turbo_toon_to_json_doc(NULL, &json), TURBO_EINVAL);
+      check_null(json);
+      check_int_eq(turbo_toon_from_json_doc(NULL, NULL), TURBO_EINVAL);
+      check_int_eq(turbo_toon_to_json_doc(NULL, NULL), TURBO_EINVAL);
+    }
   }
 
   describe("DotEnv") {

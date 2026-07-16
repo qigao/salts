@@ -132,6 +132,18 @@ spec("Bucket Priority Queue MPMC") {
     test_bucket_priority_queue_destroy(queue);
   }
 
+  it("handles a blocking push with one slot per bucket") {
+    bucket_priority_queue_mpmc_t *queue = test_bucket_priority_queue_create(1, 1);
+    bucket_priority_mpmc_value_t value;
+
+    check_not_null(queue);
+    bucket_priority_queue_mpmc_push_blocking(queue, BUCKET_PRIORITY_MPMC_HIGH, 101);
+    check(bucket_priority_queue_mpmc_try_pop(queue, &value));
+    check_size_eq(value, 101);
+
+    test_bucket_priority_queue_destroy(queue);
+  }
+
   it("works with multiple producers and consumers") {
     bucket_priority_queue_mpmc_t *queue = test_bucket_priority_queue_create(4096, NUM_CONSUMERS);
     check_not_null(queue);

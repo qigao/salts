@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <time.h>
+#include <turbo_error.h>
 #include <turbo_str_view.h>
 
 #ifdef __cplusplus
@@ -1844,6 +1845,26 @@ CXX_C_API void turbo_toon_serialize_json_free(char *str);
  * @return Pointer to the root TOON node.
  */
 CXX_C_API turbo_toon_node_t *turbo_toon_from_json(const char *json, size_t len);
+
+/**
+ * @brief Convert a JSON DOM into an independently owned TOON tree.
+ * @param json Borrowed JSON document; must not be mutated during conversion.
+ * @param out Receives a TOON root released with turbo_free_toon().
+ * @return TURBO_OK on success, otherwise a TURBO_E* error code. On failure,
+ *         *out is NULL.
+ */
+CXX_C_API int turbo_toon_from_json_doc(const turbo_json_doc_t *json,
+                                       turbo_toon_node_t **out);
+
+/**
+ * @brief Convert a TOON tree into an independently owned JSON DOM.
+ * @param toon Borrowed TOON root; must not be mutated during conversion.
+ * @param out Receives a JSON document released with turbo_free_json().
+ * @return TURBO_OK on success, otherwise a TURBO_E* error code. On failure,
+ *         *out is NULL.
+ */
+CXX_C_API int turbo_toon_to_json_doc(const turbo_toon_node_t *toon,
+                                     turbo_json_doc_t **out);
 
 /* CMD Parser */
 typedef struct turbo_cmd_parser_s turbo_cmd_parser_t;

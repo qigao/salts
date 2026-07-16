@@ -186,6 +186,11 @@ xit("skipped") { }
 it_should_fail("known bug #123") { check(broken()); }
 ```
 
+Focused and CLI-filtered cases that are not selected are hidden from normal console output and
+reported separately as `FILTERED` in the summary. TAP and JUnit still emit those discovered cases
+as skipped entries so their test plans remain complete. Explicit `xit` cases are also hidden from
+normal console output and counted as `SKIPPED`; use `--list`, `--tap`, or JUnit to inspect them.
+
 ## Setup / Teardown
 
 ```c

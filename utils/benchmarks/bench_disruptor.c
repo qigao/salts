@@ -165,7 +165,7 @@ static void run_bench(__bdd_config_type__ *__bdd_config__, const char *name, siz
     double dur_ms = (double)(end_time - start_time) / 1000000.0;
     double avg_ms = dur_ms / (double)total_messages;
     
-    __bdd_bench_add__(__bdd_config__, name, total_messages, dur_ms, avg_ms, avg_ms, 1.0);
+    __bdd_bench_add__(__bdd_config__, name, total_messages, dur_ms, avg_ms, avg_ms, 1, 0, false);
     
     for (size_t i = 0; i < num_cons; ++i) {
         disruptor_consumer_unregister(disruptor, &c_ctx[i].consumer);

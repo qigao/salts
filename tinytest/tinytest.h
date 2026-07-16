@@ -602,7 +602,8 @@ typedef enum __bdd_test_result__ {
   __BDD_RESULT_FAILED__ = 2,
   __BDD_RESULT_SKIPPED__ = 3,
   __BDD_RESULT_EXPECTED_FAIL__ = 4,
-  __BDD_RESULT_UNEXPECTED_PASS__ = 5
+  __BDD_RESULT_UNEXPECTED_PASS__ = 5,
+  __BDD_RESULT_FILTERED__ = 6
 } __bdd_test_result__;
 
 typedef enum __bdd_node_flags__ {
@@ -1123,17 +1124,9 @@ static inline const char *__bdd_skip_message__(const __bdd_test_step__ *step) {
 }
 
 static void __bdd_report_skip__(__bdd_config_type__ *config, __bdd_test_step__ *step) {
-  if (config->run == __BDD_TEST_RUN__) {
-    if (config->use_tap) {
-      if (config->test_tap_index) {
-        printf("ok %zu - %s # SKIP %s\n", config->test_tap_index, step->name,
-               __bdd_skip_message__(step));
-      }
-    } else {
-      __bdd_indent__(stdout, step->level);
-      printf("%s[ SKIP  ]%s\n", config->use_color ? __BDD_COLOR_YELLOW__ : "",
-             config->use_color ? __BDD_COLOR_RESET__ : "");
-    }
+  if (config->run == __BDD_TEST_RUN__ && config->use_tap && config->test_tap_index) {
+    printf("ok %zu - %s # SKIP %s\n", config->test_tap_index, step->name,
+           __bdd_skip_message__(step));
   }
 }
 
@@ -1285,6 +1278,7 @@ static void __bdd_run__(__bdd_config_type__ *config) {
   }
 
   bool skipped = false;
+  bool filtered = false;
   const char *skip_reason = NULL;
   if (step->type == __BDD_NODE_TEST__) {
     step->result = __BDD_RESULT_PENDING__;
@@ -1293,23 +1287,23 @@ static void __bdd_run__(__bdd_config_type__ *config) {
       skipped = true;
       skip_reason = "Test was skipped";
     } else if (config->has_focus_nodes && !(step->flags & __bdd_node_flags_focus__)) {
-      skipped = true;
+      filtered = true;
       skip_reason = "filtered by focus";
     } else if (config->filter && !strstr(step->name, config->filter) &&
                !(step->full_path && strstr(step->full_path, config->filter))) {
-      skipped = true;
+      filtered = true;
       skip_reason = "filtered out";
     }
     ++config->test_tap_index;
 
-    /* Print the step name before running the test so it is visible even if the test crashes */
-    if (config->run == __BDD_TEST_RUN__ && !config->use_tap) {
+    /* Print selected test names before execution so a crashing case remains identifiable. */
+    if (config->run == __BDD_TEST_RUN__ && !config->use_tap && !skipped && !filtered) {
       __bdd_indent__(stdout, step->level);
       printf("%s\n", step->name);
       fflush(stdout);
     }
 
-    if (!skipped) {
+    if (!skipped && !filtered) {
       if (config->error) {
         free(config->error);
         config->error = NULL;
@@ -1347,10 +1341,10 @@ static void __bdd_run__(__bdd_config_type__ *config) {
       }
     }
 
-    if (skipped) {
+    if (skipped || filtered) {
       step->executed = false;
       step->passed = false;
-      step->result = __BDD_RESULT_SKIPPED__;
+      step->result = filtered ? __BDD_RESULT_FILTERED__ : __BDD_RESULT_SKIPPED__;
       step->skip_reason = skip_reason;
       __bdd_report_skip__(config, step);
     } else if (config->error == NULL) {
@@ -1576,7 +1570,8 @@ static __bdd_result__ __bdd_generate_junit__(__bdd_config_type__ *config, __bdd_
   size_t skipped_count = 0;
   for (size_t i = 0; i < steps->size; ++i) {
     __bdd_test_step__ *step = __BDD_CAST(__bdd_test_step__ *, steps->values[i]);
-    if (step->type == __BDD_NODE_TEST__ && step->result == __BDD_RESULT_SKIPPED__) {
+    if (step->type == __BDD_NODE_TEST__ &&
+        (step->result == __BDD_RESULT_SKIPPED__ || step->result == __BDD_RESULT_FILTERED__)) {
       ++skipped_count;
     }
   }
@@ -1606,7 +1601,8 @@ static __bdd_result__ __bdd_generate_junit__(__bdd_config_type__ *config, __bdd_
       }
       fprintf(f, "\" time=\"%.6f\"", step->execution_time_ms / 1000.0); /* Convert ms to seconds */
 
-      bool is_skip = step->result == __BDD_RESULT_SKIPPED__;
+      bool is_skip =
+          step->result == __BDD_RESULT_SKIPPED__ || step->result == __BDD_RESULT_FILTERED__;
       bool is_fail =
           step->result == __BDD_RESULT_FAILED__ || step->result == __BDD_RESULT_UNEXPECTED_PASS__;
 
@@ -1866,12 +1862,15 @@ int main(int argc, char **argv) {
 
   size_t passed_count = 0;
   size_t skipped_count = 0;
+  size_t filtered_count = 0;
   size_t todo_count = 0;
   for (size_t i = 0; i < all_steps->size; ++i) {
     __bdd_test_step__ *step = __BDD_CAST(__bdd_test_step__ *, all_steps->values[i]);
     if (step->type != __BDD_NODE_TEST__) continue;
     if (step->result == __BDD_RESULT_SKIPPED__) {
       skipped_count++;
+    } else if (step->result == __BDD_RESULT_FILTERED__) {
+      filtered_count++;
     } else if (step->result == __BDD_RESULT_EXPECTED_FAIL__) {
       todo_count++;
     } else if (step->result == __BDD_RESULT_PASSED__) {
@@ -1893,13 +1892,15 @@ int main(int argc, char **argv) {
       printf("Total tests %s[WARNED]:\t%zu%s\n", c_ylw, config.warn_count, c_rst);
     }
     printf("Total tests %s[SKIPPED]:\t%zu%s\n", c_ylw, skipped_count, c_rst);
+    printf("Total tests %s[FILTERED]:\t%zu%s\n", c_ylw, filtered_count, c_rst);
     printf("Total tests %s[TODO]:   \t%zu%s\n", c_bld, todo_count, c_rst);
     printf("Assertions: %s%zu passed%s, %s%zu failed%s\n", c_grn,
            config.assertion_count - config.assertion_failed_count, c_rst,
            config.assertion_failed_count > 0 ? c_red : "", config.assertion_failed_count, c_rst);
 
-    printf("%zu passed, %zu failed, %zu skipped, %zu todo, %zu assertions. Finished in %f sec.\n",
-           passed_count, config.failed_test_count, skipped_count, todo_count,
+    printf("%zu passed, %zu failed, %zu skipped, %zu filtered, %zu todo, %zu assertions. "
+           "Finished in %f sec.\n",
+           passed_count, config.failed_test_count, skipped_count, filtered_count, todo_count,
            config.assertion_count, __bdd_duration__);
 
     if (config.failed_test_count == 0 && todo_count == 0) {

@@ -1,5 +1,5 @@
 #include "toonc.h"
-#include "json_parser.h"
+#include "toon_json_adapter.h"
 #include "toon_lexer.h"
 #include "toon_grammar_gen.h"
 
@@ -96,6 +96,7 @@ void tfree(void *ptr) {
 
 toonObject *TOONc_newObjectArena(void *arena, int kvtype) {
     toonObject *o = arena ? mem_alloc((mem_pool_t *)arena, sizeof(toonObject)) : tmalloc(sizeof(toonObject));
+    if (!o) return NULL;
     o->kvtype = kvtype;
     o->indent = 0;
     o->key = NULL;
@@ -109,28 +110,34 @@ toonObject *TOONc_newObjectArena(void *arena, int kvtype) {
 }
 
 toonObject *TOONc_newStringObjArena(void *arena, char *s, size_t len) {
+    if ((!s && len != 0) || len == SIZE_MAX) return NULL;
     toonObject *o = TOONc_newObjectArena(arena, KV_STRING);
+    if (!o) return NULL;
     o->str.ptr = arena ? mem_alloc((mem_pool_t *)arena, len + 1) : tmalloc(len + 1);
+    if (!o->str.ptr) return NULL;
     o->str.len = len;
-    memcpy(o->str.ptr, s, len);
+    if (len > 0) memcpy(o->str.ptr, s, len);
     o->str.ptr[len] = '\0';
     return o;
 }
 
 toonObject *TOONc_newIntObjArena(void *arena, int value) {
     toonObject *o = TOONc_newObjectArena(arena, KV_INT);
+    if (!o) return NULL;
     o->i = value;
     return o;
 }
 
 toonObject *TOONc_newDoubleObjArena(void *arena, double value) {
     toonObject *o = TOONc_newObjectArena(arena, KV_DOUBLE);
+    if (!o) return NULL;
     o->d = value;
     return o;
 }
 
 toonObject *TOONc_newBoolObjArena(void *arena, int value) {
     toonObject *o = TOONc_newObjectArena(arena, KV_BOOL);
+    if (!o) return NULL;
     o->boolean = !!value;
     return o;
 }
@@ -141,27 +148,34 @@ toonObject *TOONc_newNullObjArena(void *arena) {
 
 toonObject *TOONc_newListObjArena(void *arena, size_t initial_capacity) {
     toonObject *o = TOONc_newObjectArena(arena, KV_LIST);
+    if (!o) return NULL;
     if (initial_capacity > 0) {
         TOONc_listReserveArena(arena, o, initial_capacity);
+        if (o->array.capacity < initial_capacity) return NULL;
     }
     return o;
 }
 
 void TOONc_listPushArena(void *arena, toonObject *list, toonObject *item) {
-    if (list->kvtype != KV_LIST) return;
+    if (!list || !item || list->kvtype != KV_LIST) return;
     if (UNLIKELY(list->array.len >= list->array.capacity)) {
+        if (list->array.capacity > SIZE_MAX / 2) return;
         size_t new_cap = list->array.capacity == 0 ? 4 : list->array.capacity * 2;
         TOONc_listReserveArena(arena, list, new_cap);
+        if (list->array.len >= list->array.capacity) return;
     }
     list->array.items[list->array.len++] = item;
 }
 
 void TOONc_listReserveArena(void *arena, toonObject *list, size_t capacity) {
-    if (list->kvtype != KV_LIST) return;
+    if (!list || list->kvtype != KV_LIST) return;
     if (capacity <= list->array.capacity) return;
+    if (capacity > SIZE_MAX / sizeof(toonObject *)) return;
     
     if (arena) {
-        toonObject **new_items = mem_alloc((mem_pool_t *)arena, sizeof(toonObject *) * capacity);
+        toonObject **new_items = mem_alloc_array((mem_pool_t *)arena,
+            sizeof(toonObject *), capacity);
+        if (!new_items) return;
         if (list->array.items) {
             memcpy(new_items, list->array.items, sizeof(toonObject *) * list->array.len);
         }
@@ -479,164 +493,38 @@ void TOONc_serializeFree(char *str) {
  * JSON Conversion
  * -------------------------------------------------------------------------- */
 
-static void serialize_json_sb(const toonObject *obj, int depth, toon_sb_t *sb, bool is_list_item) {
-    if (!obj) return;
-    const toonObject *curr = obj;
-    bool first = true;
-    while (curr) {
-        if (!is_list_item) {
-            if (!first) sb_append(sb, ",\n");
-            for (int i = 0; i < depth; i++) sb_append(sb, "  ");
-            if (curr->key) sb_append(sb, "\"%s\": ", curr->key);
-        }
-
-        switch (curr->kvtype) {
-            case KV_STRING: sb_append(sb, "\"%s\"", curr->str.ptr); break;
-            case KV_INT:    sb_append(sb, "%d", curr->i); break;
-            case KV_DOUBLE: sb_append(sb, "%.17g", curr->d); break;
-            case KV_BOOL:   sb_append(sb, "%s", curr->boolean ? "true" : "false"); break;
-            case KV_NULL:   sb_append(sb, "null"); break;
-            case KV_LIST:
-                sb_append(sb, "[");
-                for (size_t i = 0; i < curr->array.len; i++) {
-                    serialize_json_sb(curr->array.items[i], 0, sb, true);
-                    if (i < curr->array.len - 1) sb_append(sb, ", ");
-                }
-                sb_append(sb, "]");
-                break;
-            case KV_OBJ:
-                sb_append(sb, "{\n");
-                if (curr->child) serialize_json_sb(curr->child, depth + 1, sb, false);
-                sb_append(sb, "\n");
-                for (int i = 0; i < depth; i++) sb_append(sb, "  ");
-                sb_append(sb, "}");
-                break;
-        }
-
-        if (is_list_item) break;
-        first = false;
-        curr = curr->next;
-    }
-}
-
 char *TOONc_toJSONString(const toonObject *obj, size_t *out_len) {
-    if (!obj) return NULL;
-    toon_sb_t sb = {0};
-    if (obj->kvtype == KV_OBJ && !obj->key) {
-        sb_append(&sb, "{\n");
-        serialize_json_sb(obj->child, 1, &sb, false);
-        sb_append(&sb, "\n}");
-    } else {
-        serialize_json_sb(obj, 0, &sb, false);
-    }
-    if (out_len) *out_len = sb.len;
-    return sb.buf;
+    json_value_t *value = NULL;
+    char *result;
+
+    if (out_len) *out_len = 0;
+    if (toon_json_to_value(obj, &value) != TURBO_OK) return NULL;
+    result = json_serialize_pretty(value, out_len);
+    json_free(value);
+    return result;
 }
 
 void TOONc_toJSON(toonObject *obj, FILE *fp, int depth) {
+    size_t len = 0;
+    char *json;
+
+    (void)depth;
     if (!obj || !fp) return;
-    toon_sb_t sb = {0};
-    if (obj->kvtype == KV_OBJ && !obj->key) {
-        sb_append(&sb, "{\n");
-        serialize_json_sb(obj->child, depth + 1, &sb, false);
-        sb_append(&sb, "\n}");
-    } else {
-        serialize_json_sb(obj, depth, &sb, false);
-    }
-    if (sb.buf) {
-        fwrite(sb.buf, 1, sb.len, fp);
-        tfree(sb.buf);
-    }
-}
-
-// JSON DOM adapter for fromJSONString.
-static int toon_json_number_fits_int(double value, int *out_value) {
-    if (value < (double)INT_MIN || value > (double)INT_MAX) return 0;
-    int int_value = (int)value;
-    if ((double)int_value != value) return 0;
-    *out_value = int_value;
-    return 1;
-}
-
-static char *toon_arena_strdup_len(void *arena, const char *str, size_t len) {
-    char *copy = mem_alloc((mem_pool_t *)arena, len + 1);
-    memcpy(copy, str, len);
-    copy[len] = '\0';
-    return copy;
-}
-
-static toonObject *toon_from_json_value(void *arena, const json_value_t *value) {
-    if (!value) return NULL;
-
-    switch (json_type(value)) {
-    case JSON_NULL:
-        return TOONc_newNullObjArena(arena);
-    case JSON_BOOL:
-        return TOONc_newBoolObjArena(arena, json_bool(value) ? 1 : 0);
-    case JSON_NUMBER: {
-        double number = json_number(value);
-        int int_value = 0;
-        if (toon_json_number_fits_int(number, &int_value)) {
-            return TOONc_newIntObjArena(arena, int_value);
-        }
-        return TOONc_newDoubleObjArena(arena, number);
-    }
-    case JSON_STRING:
-        return TOONc_newStringObjArena(arena, (char *)json_string(value), json_string_len(value));
-    case JSON_ARRAY: {
-        size_t count = json_array_size(value);
-        toonObject *list = TOONc_newListObjArena(arena, count);
-        for (size_t i = 0; i < count; ++i) {
-            toonObject *item = toon_from_json_value(arena, json_array_get(value, i));
-            if (!item) return NULL;
-            TOONc_listPushArena(arena, list, item);
-        }
-        return list;
-    }
-    case JSON_OBJECT: {
-        size_t count = json_object_size(value);
-        toonObject *obj = TOONc_newObjectArena(arena, KV_OBJ);
-        toonObject *last = NULL;
-        for (size_t i = 0; i < count; ++i) {
-            const char *key = json_object_key(value, i);
-            size_t key_len = json_object_key_len(value, i);
-            toonObject *child = toon_from_json_value(arena, json_object_value(value, i));
-            if (!child) return NULL;
-            child->key = toon_arena_strdup_len(arena, key, key_len);
-            if (last) {
-                last->next = child;
-            } else {
-                obj->child = child;
-            }
-            last = child;
-        }
-        return obj;
-    }
-    }
-
-    return NULL;
+    json = TOONc_toJSONString(obj, &len);
+    if (!json) return;
+    (void)fwrite(json, 1, len, fp);
+    TOONc_serializeFree(json);
 }
 
 toonObject *TOONc_fromJSONString(const char *json, size_t len) {
+    json_value_t *json_root;
+    toonObject *root = NULL;
+
     if (!json) return NULL;
-    void *arena = tmalloc(sizeof(mem_pool_t));
-    mem_init(arena, 32768);
-
-    json_value_t *json_root = json_parse(json, len);
-    if (!json_root) {
-        mem_destroy((mem_pool_t *)arena);
-        tfree(arena);
-        return NULL;
-    }
-
-    toonObject *root = toon_from_json_value(arena, json_root);
+    json_root = json_parse(json, len);
+    if (!json_root) return NULL;
+    (void)toon_json_from_value(json_root, &root);
     json_free(json_root);
-    if (root) {
-        root->arena = arena;
-    } else {
-        mem_destroy((mem_pool_t *)arena);
-        tfree(arena);
-    }
     return root;
 }
 

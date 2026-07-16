@@ -22,6 +22,7 @@
 #include "modbus_parser.h"
 #include "soa_parser.h"
 #include "toml.h"
+#include "toon_json_adapter.h"
 #include "toonc.h"
 #include "uri_parser.h"
 #include <fmt.h>
@@ -2579,6 +2580,16 @@ void turbo_toon_serialize_json_free(char *str) { TOONc_serializeFree(str); }
 
 turbo_toon_node_t *turbo_toon_from_json(const char *json, size_t len) {
   return TOONc_fromJSONString(json, len);
+}
+
+int turbo_toon_from_json_doc(const turbo_json_doc_t *json,
+                             turbo_toon_node_t **out) {
+  return toon_json_from_value(json, out);
+}
+
+int turbo_toon_to_json_doc(const turbo_toon_node_t *toon,
+                           turbo_json_doc_t **out) {
+  return toon_json_to_value(toon, out);
 }
 
 void turbo_cmd_parse(turbo_cmd_parser_t *parser, int argc, char **argv, bool colors) {

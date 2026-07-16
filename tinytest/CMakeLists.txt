@@ -96,6 +96,18 @@ add_test(
           -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_focus_console.cmake)
 
 add_test(
+  NAME tinytest_filter_console
+  COMMAND ${CMAKE_COMMAND}
+          -DTEST_EXE=$<TARGET_FILE:tinytest_filter_output>
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_filter_console.cmake)
+
+add_test(
+  NAME tinytest_skip_console
+  COMMAND ${CMAKE_COMMAND}
+          -DTEST_EXE=$<TARGET_FILE:tinytest_filter_output>
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_skip_console.cmake)
+
+add_test(
   NAME tinytest_filter_junit
   COMMAND ${CMAKE_COMMAND}
           -DTEST_EXE=$<TARGET_FILE:tinytest_filter_output>

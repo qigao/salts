@@ -58,7 +58,7 @@ struct disruptor_cursor_state_s {
 typedef struct disruptor_cursor_state_s disruptor_cursor_state_t;
 
 struct disruptor_s {
-  disruptor_count_t reduced_size;
+  disruptor_count_t ring_mask;
   disruptor_cursor_state_t slowest_consumer;
   disruptor_cursor_state_t max_read_cursor;
   disruptor_cursor_state_t write_cursor;
@@ -169,7 +169,7 @@ static void disruptor_aligned_free(void *ptr) {
 }
 
 static uint64_t disruptor_ring_index(const disruptor_t *disruptor, uint64_t sequence) {
-  return disruptor->reduced_size.count & sequence;
+  return disruptor->ring_mask.count & sequence;
 }
 
 static size_t disruptor_topology_index(uint32_t row, uint32_t col, uint32_t width) {
@@ -178,7 +178,16 @@ static size_t disruptor_topology_index(uint32_t row, uint32_t col, uint32_t widt
 
 static int disruptor_publisher_has_capacity(const disruptor_t *disruptor, uint64_t writer_sequence,
                                             uint64_t slowest_sequence) {
-  return (writer_sequence - slowest_sequence) <= disruptor->reduced_size.count;
+  return (writer_sequence - slowest_sequence) <= disruptor->capacity;
+}
+
+static int disruptor_consumer_is_registered(const disruptor_t *disruptor,
+                                            const disruptor_consumer_t *consumer) {
+  if (disruptor == NULL || consumer == NULL || consumer->slot >= disruptor->consumer_capacity) {
+    return 0;
+  }
+  return atomic_load_explicit(&disruptor->consumer_cursors[consumer->slot].sequence,
+                              memory_order_acquire) != DISRUPTOR_VACANT;
 }
 
 static uint64_t disruptor_refresh_slowest_reader(disruptor_t *disruptor, uint64_t target_sequence) {
@@ -320,7 +329,7 @@ static void disruptor_init(disruptor_t *disruptor) {
   memset(disruptor->consumer_dependency_counts, 0,
          sizeof(uint32_t) * disruptor->consumer_capacity);
 
-  disruptor->reduced_size.count = disruptor->capacity - 1U;
+  disruptor->ring_mask.count = disruptor->capacity - 1U;
   atomic_store_explicit(&disruptor->slowest_consumer.sequence, 0U, memory_order_relaxed);
   atomic_store_explicit(&disruptor->max_read_cursor.sequence, 0U, memory_order_relaxed);
   atomic_store_explicit(&disruptor->write_cursor.sequence, 0U, memory_order_relaxed);
@@ -508,7 +517,7 @@ int disruptor_consumer_try_register(disruptor_t *disruptor, disruptor_consumer_t
   uint64_t vacant;
   uint64_t start_sequence;
 
-  if (disruptor == NULL || consumer == NULL) {
+  if (disruptor == NULL || consumer == NULL || disruptor->mode != DISRUPTOR_MODE_BROADCAST) {
     return 0;
   }
 
@@ -534,7 +543,7 @@ uint64_t disruptor_consumer_register(disruptor_t *disruptor, disruptor_consumer_
   unsigned int wait_rounds = 0U;
   uint64_t next_sequence = 0U;
 
-  if (disruptor == NULL || consumer == NULL) {
+  if (disruptor == NULL || consumer == NULL || disruptor->mode != DISRUPTOR_MODE_BROADCAST) {
     return 0U;
   }
 
@@ -545,7 +554,8 @@ uint64_t disruptor_consumer_register(disruptor_t *disruptor, disruptor_consumer_
 }
 
 void disruptor_consumer_unregister(disruptor_t *disruptor, const disruptor_consumer_t *consumer) {
-  if (disruptor == NULL || consumer == NULL || consumer->slot >= disruptor->consumer_capacity) {
+  if (disruptor == NULL || disruptor->mode != DISRUPTOR_MODE_BROADCAST ||
+      !disruptor_consumer_is_registered(disruptor, consumer)) {
     return;
   }
 
@@ -590,7 +600,8 @@ int disruptor_consumer_wait_for_nonblocking_for(const disruptor_t *disruptor,
                                                 const disruptor_consumer_t *consumer,
                                                 disruptor_cursor_t *cursor) {
   uint64_t required_sequence;
-  if (disruptor == NULL || cursor == NULL) {
+  if (disruptor == NULL || cursor == NULL || disruptor->mode != DISRUPTOR_MODE_BROADCAST ||
+      (consumer != NULL && !disruptor_consumer_is_registered(disruptor, consumer))) {
     return 0;
   }
 
@@ -616,7 +627,8 @@ void disruptor_consumer_wait_for_blocking_for(const disruptor_t *disruptor,
   uint64_t required_sequence;
   unsigned int wait_rounds = 0U;
 
-  if (disruptor == NULL || cursor == NULL) {
+  if (disruptor == NULL || cursor == NULL || disruptor->mode != DISRUPTOR_MODE_BROADCAST ||
+      (consumer != NULL && !disruptor_consumer_is_registered(disruptor, consumer))) {
     return;
   }
 
@@ -630,13 +642,70 @@ void disruptor_consumer_wait_for_blocking_for(const disruptor_t *disruptor,
 
 void disruptor_consumer_release_entry(disruptor_t *disruptor, const disruptor_consumer_t *consumer,
                                       const disruptor_cursor_t *cursor) {
-  if (disruptor == NULL || consumer == NULL || cursor == NULL ||
-      consumer->slot >= disruptor->consumer_capacity) {
+  if (disruptor == NULL || cursor == NULL || disruptor->mode != DISRUPTOR_MODE_BROADCAST ||
+      !disruptor_consumer_is_registered(disruptor, consumer)) {
     return;
   }
 
   atomic_store_explicit(&disruptor->consumer_cursors[consumer->slot].sequence, cursor->sequence,
                         memory_order_release);
+}
+
+/* Dependency configuration is O(V + E) time and O(V) temporary space. */
+static int disruptor_dependencies_would_cycle(
+    const disruptor_t *disruptor, uint32_t proposed_slot,
+    const disruptor_consumer_t *proposed_dependencies, uint32_t proposed_dependency_count) {
+  uint32_t capacity = disruptor->consumer_capacity;
+  uint32_t *indegrees = (uint32_t *)calloc(capacity, sizeof(uint32_t));
+  uint32_t *queue = (uint32_t *)malloc(sizeof(uint32_t) * capacity);
+  uint32_t head = 0U;
+  uint32_t tail = 0U;
+  uint32_t visited = 0U;
+
+  if (indegrees == NULL || queue == NULL) {
+    free(queue);
+    free(indegrees);
+    return 1;
+  }
+
+  for (uint32_t slot = 0; slot < capacity; ++slot) {
+    uint32_t dependency_count = slot == proposed_slot
+                                    ? proposed_dependency_count
+                                    : disruptor->consumer_dependency_counts[slot];
+    for (uint32_t i = 0; i < dependency_count; ++i) {
+      uint32_t dependency_slot =
+          slot == proposed_slot
+              ? proposed_dependencies[i].slot
+              : disruptor->consumer_dependencies[(slot * capacity) + i];
+      ++indegrees[dependency_slot];
+    }
+  }
+  for (uint32_t slot = 0; slot < capacity; ++slot) {
+    if (indegrees[slot] == 0U) {
+      queue[tail++] = slot;
+    }
+  }
+
+  while (head < tail) {
+    uint32_t slot = queue[head++];
+    uint32_t dependency_count = slot == proposed_slot
+                                    ? proposed_dependency_count
+                                    : disruptor->consumer_dependency_counts[slot];
+    ++visited;
+    for (uint32_t i = 0; i < dependency_count; ++i) {
+      uint32_t dependency_slot =
+          slot == proposed_slot
+              ? proposed_dependencies[i].slot
+              : disruptor->consumer_dependencies[(slot * capacity) + i];
+      if (--indegrees[dependency_slot] == 0U) {
+        queue[tail++] = dependency_slot;
+      }
+    }
+  }
+
+  free(queue);
+  free(indegrees);
+  return visited != capacity;
 }
 
 int disruptor_consumer_set_dependencies(disruptor_t *disruptor,
@@ -645,7 +714,8 @@ int disruptor_consumer_set_dependencies(disruptor_t *disruptor,
                                         uint32_t dependency_count) {
   uint32_t base;
 
-  if (disruptor == NULL || consumer == NULL || consumer->slot >= disruptor->consumer_capacity) {
+  if (disruptor == NULL || disruptor->mode != DISRUPTOR_MODE_BROADCAST ||
+      !disruptor_consumer_is_registered(disruptor, consumer)) {
     return 0;
   }
   if (dependency_count > disruptor->consumer_capacity) {
@@ -657,10 +727,24 @@ int disruptor_consumer_set_dependencies(disruptor_t *disruptor,
 
   base = consumer->slot * disruptor->consumer_capacity;
   for (uint32_t i = 0; i < dependency_count; ++i) {
-    if (dependencies[i].slot >= disruptor->consumer_capacity ||
+    if (!disruptor_consumer_is_registered(disruptor, &dependencies[i]) ||
         dependencies[i].slot == consumer->slot) {
       return 0;
     }
+    for (uint32_t j = 0; j < i; ++j) {
+      if (dependencies[j].slot == dependencies[i].slot) {
+        return 0;
+      }
+    }
+  }
+  if (disruptor_dependencies_would_cycle(disruptor, consumer->slot, dependencies,
+                                         dependency_count)) {
+    return 0;
+  }
+
+  memset(&disruptor->consumer_dependencies[base], 0,
+         sizeof(uint32_t) * disruptor->consumer_capacity);
+  for (uint32_t i = 0; i < dependency_count; ++i) {
     disruptor->consumer_dependencies[base + i] = dependencies[i].slot;
   }
   disruptor->consumer_dependency_counts[consumer->slot] = dependency_count;
@@ -672,7 +756,8 @@ disruptor_topology_t *disruptor_topology_create(disruptor_t *disruptor) {
   uint32_t capacity;
   size_t matrix_bytes;
 
-  if (disruptor == NULL || disruptor->consumer_capacity == 0U) {
+  if (disruptor == NULL || disruptor->mode != DISRUPTOR_MODE_BROADCAST ||
+      disruptor->consumer_capacity == 0U) {
     return NULL;
   }
 
@@ -731,8 +816,7 @@ disruptor_stage_t disruptor_topology_stage(disruptor_topology_t *topology,
                                            const disruptor_consumer_t *consumer) {
   disruptor_stage_t stage;
 
-  if (topology == NULL || consumer == NULL ||
-      consumer->slot >= topology->disruptor->consumer_capacity ||
+  if (topology == NULL || !disruptor_consumer_is_registered(topology->disruptor, consumer) ||
       topology->stage_count >= topology->stage_capacity) {
     return DISRUPTOR_STAGE_INVALID;
   }
@@ -884,50 +968,52 @@ int disruptor_topology_chain(disruptor_topology_t *topology,
   return 1;
 }
 
-static int disruptor_topology_dfs_has_cycle(const disruptor_topology_t *topology,
-                                            uint32_t stage,
-                                            uint8_t *colors) {
-  uint32_t capacity = topology->stage_capacity;
-
-  colors[stage] = 1U;
-  for (uint32_t dep = 0; dep < topology->stage_count; ++dep) {
-    if (!topology->edges[disruptor_topology_index(stage, dep, capacity)]) {
-      continue;
-    }
-    if (colors[dep] == 1U) {
-      return 1;
-    }
-    if (colors[dep] == 0U && disruptor_topology_dfs_has_cycle(topology, dep, colors)) {
-      return 1;
-    }
-  }
-  colors[stage] = 2U;
-  return 0;
-}
-
+/* The topology uses an adjacency matrix, so Kahn validation is O(V^2) time and O(V) space. */
 static int disruptor_topology_has_cycle(const disruptor_topology_t *topology) {
-  uint8_t *colors;
-  int has_cycle = 0;
+  uint32_t count = topology->stage_count;
+  uint32_t capacity = topology->stage_capacity;
+  uint32_t *indegrees = (uint32_t *)calloc(count, sizeof(uint32_t));
+  uint32_t *queue = (uint32_t *)malloc(sizeof(uint32_t) * count);
+  uint32_t head = 0U;
+  uint32_t tail = 0U;
+  uint32_t visited = 0U;
 
-  colors = (uint8_t *)calloc(topology->stage_count, sizeof(uint8_t));
-  if (colors == NULL) {
+  if (indegrees == NULL || queue == NULL) {
+    free(queue);
+    free(indegrees);
     return 1;
   }
 
-  for (uint32_t stage = 0; stage < topology->stage_count; ++stage) {
-    if (colors[stage] == 0U && disruptor_topology_dfs_has_cycle(topology, stage, colors)) {
-      has_cycle = 1;
-      break;
+  for (uint32_t stage = 0; stage < count; ++stage) {
+    for (uint32_t dependency = 0; dependency < count; ++dependency) {
+      if (topology->edges[disruptor_topology_index(stage, dependency, capacity)]) {
+        ++indegrees[dependency];
+      }
+    }
+  }
+  for (uint32_t stage = 0; stage < count; ++stage) {
+    if (indegrees[stage] == 0U) {
+      queue[tail++] = stage;
+    }
+  }
+  while (head < tail) {
+    uint32_t stage = queue[head++];
+    ++visited;
+    for (uint32_t dependency = 0; dependency < count; ++dependency) {
+      if (topology->edges[disruptor_topology_index(stage, dependency, capacity)] &&
+          --indegrees[dependency] == 0U) {
+        queue[tail++] = dependency;
+      }
     }
   }
 
-  free(colors);
-  return has_cycle;
+  free(queue);
+  free(indegrees);
+  return visited != count;
 }
 
 int disruptor_topology_commit(disruptor_topology_t *topology) {
   uint32_t capacity;
-  disruptor_consumer_t *dependencies;
 
   if (topology == NULL || topology->stage_count == 0U) {
     return 0;
@@ -937,30 +1023,28 @@ int disruptor_topology_commit(disruptor_topology_t *topology) {
   }
 
   capacity = topology->stage_capacity;
-  dependencies =
-      (disruptor_consumer_t *)calloc(topology->stage_capacity, sizeof(disruptor_consumer_t));
-  if (dependencies == NULL) {
-    return 0;
-  }
-
   for (uint32_t stage = 0; stage < topology->stage_count; ++stage) {
-    uint32_t dependency_count = 0;
-    for (uint32_t dep = 0; dep < topology->stage_count; ++dep) {
-      if (topology->edges[disruptor_topology_index(stage, dep, capacity)]) {
-        dependencies[dependency_count++] = topology->stages[dep].consumer;
-      }
-    }
-
-    if (!disruptor_consumer_set_dependencies(topology->disruptor,
-                                             &topology->stages[stage].consumer,
-                                             dependencies,
-                                             dependency_count)) {
-      free(dependencies);
+    if (!disruptor_consumer_is_registered(topology->disruptor,
+                                          &topology->stages[stage].consumer)) {
       return 0;
     }
   }
 
-  free(dependencies);
+  for (uint32_t stage = 0; stage < topology->stage_count; ++stage) {
+    uint32_t slot = topology->stages[stage].consumer.slot;
+    uint32_t base = slot * capacity;
+    uint32_t dependency_count = 0;
+    memset(&topology->disruptor->consumer_dependencies[base], 0,
+           sizeof(uint32_t) * capacity);
+    for (uint32_t dep = 0; dep < topology->stage_count; ++dep) {
+      if (topology->edges[disruptor_topology_index(stage, dep, capacity)]) {
+        topology->disruptor->consumer_dependencies[base + dependency_count++] =
+            topology->stages[dep].consumer.slot;
+      }
+    }
+    topology->disruptor->consumer_dependency_counts[slot] = dependency_count;
+  }
+
   return 1;
 }
 
@@ -980,7 +1064,7 @@ static int disruptor_try_claim_range_internal(disruptor_t *disruptor, uint32_t c
   if (disruptor == NULL || range == NULL || count == 0U) {
     return 0;
   }
-  if ((uint64_t)count > disruptor->reduced_size.count) {
+  if ((uint64_t)count > disruptor->capacity) {
     return 0;
   }
 
@@ -1021,7 +1105,7 @@ static int disruptor_claim_range_blocking_internal(disruptor_t *disruptor, uint3
   if (disruptor == NULL || range == NULL || count == 0U) {
     return 0;
   }
-  if ((uint64_t)count > disruptor->reduced_size.count) {
+  if ((uint64_t)count > disruptor->capacity) {
     return 0;
   }
 
@@ -1071,7 +1155,12 @@ static int disruptor_publish_range_internal(disruptor_t *disruptor,
   if (atomic_compare_exchange_strong_explicit(&disruptor->max_read_cursor.sequence, &expected,
                                               range->last_sequence, memory_order_release,
                                               memory_order_relaxed)) {
+    (void)disruptor_try_advance_published_cursor(disruptor);
     disruptor_worker_notify(disruptor);
+    if (report_visibility) {
+      return atomic_load_explicit(&disruptor->max_read_cursor.sequence, memory_order_acquire) >=
+             range->last_sequence;
+    }
     return 1;
   }
 
@@ -1298,7 +1387,10 @@ void disruptor_consumer_run(disruptor_t *disruptor,
                             disruptor_should_run_fn should_run,
                             disruptor_batch_fn process_batch,
                             void *ctx) {
-  if (!disruptor || !consumer || !should_run || !process_batch) return;
+  if (!disruptor || disruptor->mode != DISRUPTOR_MODE_BROADCAST || !consumer || !should_run ||
+      !process_batch) {
+    return;
+  }
 
   uint64_t next_sequence = disruptor_consumer_register(disruptor, consumer);
 

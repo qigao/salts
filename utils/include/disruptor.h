@@ -13,6 +13,22 @@ extern "C" {
 typedef struct disruptor_s disruptor_t;
 typedef struct disruptor_topology_s disruptor_topology_t;
 
+/**
+ * @file disruptor.h
+ * @brief Fixed-entry MPMC ring with broadcast and worker-pool consumption modes.
+ *
+ * Producer claim/publish operations are thread-safe. Broadcast consumer handles
+ * are single-owner: register, wait, release, and unregister a handle from one
+ * consumer thread. Worker-pool claims may be made by multiple worker threads.
+ * Configuration, dependency, reset, and destroy operations require a quiescent
+ * ring with no concurrent producer or consumer calls.
+ *
+ * Every successful claim must be published exactly once. Entry pointers remain
+ * valid only until the corresponding consumer release permits that slot to be
+ * reused. Unless documented otherwise, int functions return 1 on success and 0
+ * for invalid arguments, mode mismatch, or an unavailable operation.
+ */
+
 #define DISRUPTOR_STAGE_INVALID UINT32_MAX
 #define DISRUPTOR_GROUP_INVALID UINT32_MAX
 
@@ -33,18 +49,18 @@ typedef struct {
 } disruptor_consumer_t;
 
 typedef enum {
-  DISRUPTOR_MODE_BROADCAST = 0,
-  DISRUPTOR_MODE_WORKER_POOL = 1
+  DISRUPTOR_MODE_BROADCAST = 0,  /**< Every registered consumer sees every entry. */
+  DISRUPTOR_MODE_WORKER_POOL = 1 /**< Each entry is claimed by one worker. */
 } disruptor_mode_t;
 
 /** Return non-zero while a blocking Disruptor operation should keep waiting. */
 typedef int (*disruptor_should_run_fn)(void *ctx);
 
 typedef struct {
-  size_t entry_size;
-  uint64_t capacity;
-  uint32_t consumer_capacity;
-  disruptor_mode_t mode;
+  size_t entry_size;            /**< Fixed entry size in bytes; must be non-zero. */
+  uint64_t capacity;            /**< Usable entry count; must be a power of two. */
+  uint32_t consumer_capacity;   /**< Maximum broadcast consumers; must be non-zero. */
+  disruptor_mode_t mode;        /**< Zero-initialization selects broadcast mode. */
 } disruptor_config_t;
 
 CXX_C_API disruptor_t *disruptor_create(const disruptor_config_t *config);
@@ -67,6 +83,14 @@ CXX_C_API void *disruptor_publisher_next_entry_and_acquire_blocking(disruptor_t 
                                                                     disruptor_cursor_t *cursor);
 CXX_C_API int disruptor_publisher_claim_n_blocking(disruptor_t *disruptor, uint32_t count,
                                                    disruptor_sequence_range_t *range);
+/**
+ * Publish a claimed entry without waiting for earlier producers.
+ *
+ * A zero return can mean that a valid claimed entry was committed out of order
+ * but is not visible yet. The caller must not modify or republish such an entry.
+ * Use disruptor_publisher_publish() when only acceptance, not immediate
+ * visibility, matters.
+ */
 CXX_C_API int disruptor_publisher_try_commit(disruptor_t *disruptor,
                                              const disruptor_cursor_t *cursor);
 CXX_C_API void disruptor_publisher_commit_entry_blocking(disruptor_t *disruptor,
@@ -77,9 +101,11 @@ CXX_C_API void disruptor_publisher_commit_range_blocking(disruptor_t *disruptor,
                                                          const disruptor_sequence_range_t *range);
 CXX_C_API int disruptor_publisher_publish(disruptor_t *disruptor, const disruptor_cursor_t *cursor);
 
+/** Broadcast-only consumer APIs. Wrong-mode calls fail or return without effect. */
 CXX_C_API int disruptor_consumer_try_register(disruptor_t *disruptor,
                                               disruptor_consumer_t *consumer,
                                               uint64_t *next_sequence);
+/** Wait until a broadcast slot is available; use try_register when cancellation is required. */
 CXX_C_API uint64_t disruptor_consumer_register(disruptor_t *disruptor,
                                                disruptor_consumer_t *consumer);
 CXX_C_API void disruptor_consumer_unregister(disruptor_t *disruptor,
@@ -100,12 +126,19 @@ CXX_C_API void disruptor_consumer_wait_for_blocking_for(
 CXX_C_API void disruptor_consumer_release_entry(disruptor_t *disruptor,
                                                 const disruptor_consumer_t *consumer,
                                                 const disruptor_cursor_t *cursor);
+/**
+ * Replace one broadcast consumer's dependency set.
+ *
+ * Dependencies must be distinct registered consumers from the same ring.
+ * Cycles are rejected, and failure leaves the previous dependency set intact.
+ */
 CXX_C_API int disruptor_consumer_set_dependencies(
     disruptor_t *disruptor,
     const disruptor_consumer_t *consumer,
     const disruptor_consumer_t *dependencies,
     uint32_t dependency_count);
 
+/** Broadcast-only topology builder. Commit rejects cycles and invalid consumer handles. */
 CXX_C_API disruptor_topology_t *disruptor_topology_create(disruptor_t *disruptor);
 CXX_C_API void disruptor_topology_destroy(disruptor_topology_t *topology);
 CXX_C_API disruptor_stage_t disruptor_topology_stage(disruptor_topology_t *topology,
@@ -136,6 +169,7 @@ CXX_C_API int disruptor_topology_chain(disruptor_topology_t *topology,
                                        uint32_t stage_count);
 CXX_C_API int disruptor_topology_commit(disruptor_topology_t *topology);
 
+/** Worker-pool-only claim and release APIs. Wrong-mode calls fail or return without effect. */
 CXX_C_API int disruptor_worker_try_claim(disruptor_t *disruptor, disruptor_cursor_t *cursor);
 CXX_C_API void disruptor_worker_claim_blocking(disruptor_t *disruptor,
                                                disruptor_cursor_t *cursor);

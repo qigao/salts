@@ -9,7 +9,11 @@ cmake_add_grammar(TOON
 # Library
 # =============================================================================
 
-add_library(${TARGET_NAME} STATIC toonc.c ${TOON_LEXER_GEN} ${TOON_GRAMMAR_GEN})
+add_library(${TARGET_NAME} STATIC
+  toonc.c
+  adapter/toon_json_adapter.c
+  ${TOON_LEXER_GEN}
+  ${TOON_GRAMMAR_GEN})
 add_dependencies(${TARGET_NAME} ${TOON_LEXER_TARGET} ${TOON_GRAMMAR_TARGET})
 
 cmake_config_target(${TARGET_NAME}
@@ -20,6 +24,7 @@ cmake_config_target(${TARGET_NAME}
 target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/adapter>
          $<INSTALL_INTERFACE:include>
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/parser ${CMAKE_CURRENT_SOURCE_DIR}/..
           ${CMAKE_CURRENT_BINARY_DIR}

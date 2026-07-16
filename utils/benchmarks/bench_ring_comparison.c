@@ -173,7 +173,7 @@ static void run_spsc_bench(__bdd_config_type__ *__bdd_config__,
 
     printf("  %s: %.2f MB/s, %.2f ns/op\n", name, throughput_mb, avg_ns);
     __bdd_bench_add__(__bdd_config__, name, count, dur_ms, avg_ns / 1000000.0,
-                      avg_ns / 1000000.0, 1.0);
+                      avg_ns / 1000000.0, 1, 0, false);
 
     free(data);
 }
