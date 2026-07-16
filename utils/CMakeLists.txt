@@ -43,7 +43,8 @@ endif()
 target_link_libraries(
   ${TARGET_NAME}
   PRIVATE ${FMT_LEXER_LIBRARY} TurboUtils::SDS # Simple Dynamic Strings
-          aklomp::base64 ${LOG_PATTERN_LEXER_LIBRARY} # Log pattern lexer
+          aklomp::base64 libzstd_static
+          ${LOG_PATTERN_LEXER_LIBRARY} # Log pattern lexer
 )
 
 if(WIN32)
