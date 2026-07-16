@@ -56,7 +56,7 @@ to create, resume, yield or destroy a coroutine.
 - The `mco_coro` object is not thread safe, you should use a mutex for manipulating it in multithread applications.
 - To use in multithread applications, you must compile with C compiler that supports `thread_local` qualifier.
 - Avoid using `thread_local` inside coroutine code, the compiler may cache thread local variables pointers which can be invalid when a coroutine switch threads.
-- Stack space is limited. By default it has 56KB of space, this can be changed on coroutine creation, or by enabling the virtual memory backed allocator to make it 2040KB.
+- Stack space is limited. By default it has 128KiB of space, this can be changed on coroutine creation, or by enabling the virtual memory backed allocator to make it 2040KiB.
 - Take care to not cause stack overflows (run out of stack space), otherwise your program may crash or not, the behavior is undefined.
 - On WebAssembly you must compile with Emscripten flag `-s ASYNCIFY=1`.
 - The WebAssembly Binaryen asyncify method can be used when explicitly enabled,
@@ -177,8 +177,8 @@ The new compile time option `MCO_USE_VMEM_ALLOCATOR` enables a virtual memory ba
 
 Every stackful coroutine usually have to reserve memory for its full stack,
 this typically makes the total memory usage very high when allocating thousands of coroutines,
-for example, an application with 100 thousands coroutine with stacks of 56KB would consume as high
-as 5GB of memory, however your application may not really full stack usage for every coroutine.
+for example, an application with 100 thousand coroutines with stacks of 128KiB could consume about
+12.8GB of memory, although your application may not use the full stack for every coroutine.
 
 Some developers often prefer stackless coroutines over stackful coroutines
 because of this problem, stackless memory footprint is low, therefore often considered more lightweight.
@@ -217,7 +217,7 @@ The following can be defined to change the library behavior:
 - `MCO_API`                   - Public API qualifier. Default is `extern`.
 - `MCO_MIN_STACK_SIZE`        - Minimum stack size when creating a coroutine. Default is 32768 (32KB).
 - `MCO_DEFAULT_STORAGE_SIZE`  - Size of coroutine storage buffer. Default is 1024.
-- `MCO_DEFAULT_STACK_SIZE`    - Default stack size when creating a coroutine. Default is 57344 (56KB). When `MCO_USE_VMEM_ALLOCATOR` is true the default is 2040KB (nearly 2MB).
+- `MCO_DEFAULT_STACK_SIZE`    - Default stack size when creating a coroutine. Default is 131072 (128KiB). When `MCO_USE_VMEM_ALLOCATOR` is true the default is 2040KiB (nearly 2MiB).
 - `MCO_ALLOC`                 - Default allocation function. Default is `calloc`.
 - `MCO_DEALLOC`               - Default deallocation function. Default is `free`.
 - `MCO_USE_VMEM_ALLOCATOR`    - Use virtual memory backed allocator, improving memory footprint per coroutine.

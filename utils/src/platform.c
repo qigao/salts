@@ -28,7 +28,9 @@
   #include <sys/utsname.h>
   #include <time.h>
   #include <unistd.h>
-  #if defined(__linux__)
+  #if defined(__ANDROID__)
+    /* arc4random_buf is available on Android API 21+ (Bionic); no additional header needed */
+  #elif defined(__linux__)
     #include <sys/random.h>
   #elif !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__OpenBSD__) && \
       !defined(__NetBSD__) && !defined(__DragonFly__)
@@ -221,6 +223,9 @@ int turbo_secure_random(void *buffer, size_t length) {
     cursor += chunk;
     length -= chunk;
   }
+#elif defined(__ANDROID__)
+  /* Android Bionic provides arc4random_buf since API 21 */
+  arc4random_buf(cursor, length);
 #elif defined(__linux__)
   while (length > 0U) {
     size_t chunk =
@@ -560,6 +565,9 @@ int turbo_platform_load_average(turbo_platform_load_average_t *info) {
   memset(info, 0, sizeof(*info));
 
 #ifdef _WIN32
+  return 0;
+#elif defined(__ANDROID__)
+  /* getloadavg is not available in Android Bionic; report all zeros */
   return 0;
 #else
   {

@@ -45,7 +45,7 @@ cmake_add_executable(production_example
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_BINARY_DIR}
   FOLDER "parser/tlv_parser/examples")
 if(UNIX)
-    target_link_libraries(production_example PRIVATE pthread)
+    target_link_libraries(production_example PRIVATE Threads::Threads)
 endif()
 
 # =============================================================================

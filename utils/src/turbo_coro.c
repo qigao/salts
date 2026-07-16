@@ -90,7 +90,10 @@ static void coro_scheduler_link_ready(coro_scheduler_t *sched, coro_t *co) {
 
 static void *coro_alloc_combined_block(size_t coro_size) {
   const size_t align = sizeof(void *) > 16 ? sizeof(void *) : 16;
-  const size_t total = sizeof(coro_t) + align - 1 + coro_size;
+  const size_t prefix = sizeof(coro_t) + align - 1;
+  size_t total;
+  if (coro_size > SIZE_MAX - prefix) return NULL;
+  total = prefix + coro_size;
   return calloc(1, total);
 }
 
@@ -102,6 +105,7 @@ static mco_coro *coro_block_to_mco(void *block) {
 
 coro_t *coro_create(coro_fn fn, void *arg, const coro_opts_t *opts) {
   if (!fn) return NULL;
+  if (opts && opts->stack_size > SIZE_MAX - 15u) return NULL;
 
   // Setup minicoro descriptor
   mco_desc desc =

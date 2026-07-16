@@ -3,7 +3,8 @@
   "version-semver": "0.1.0",
   "dependencies": [
     {
-      "name": "pkgconf"
+      "name": "pkgconf",
+      "host": true
     },
     {
       "name": "simde"

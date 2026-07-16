@@ -39,6 +39,33 @@
             }
         },
         {
+            "name": "android-win-paths",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_MAKE_PROGRAM": "C:/Users/lockg/scoop/shims/ninja.exe",
+                "CMAKE_INSTALL_PREFIX": "C:/projects/cpp/external/pkgs/turboutils-android",
+                "LEMON_EXECUTABLE": "${sourceDir}/build/Msvc-Release/bin/lemon.exe",
+                "PKG_CONFIG_EXECUTABLE": "${sourceDir}/vcpkg_installed/x64-windows/tools/pkgconf/pkgconf.exe"
+            },
+            "environment": {
+                "VCPKG_ROOT": "C:/tools/vcpkg",
+                "ANDROID_NDK_HOME": "C:/Users/lockg/AppData/Local/Android/Sdk/ndk/28.2.13676358"
+            }
+        },
+        {
+            "name": "android-linux-paths",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_MAKE_PROGRAM": "/usr/bin/ninja",
+                "CMAKE_INSTALL_PREFIX": "/root/dev/release-android",
+                "PKG_CONFIG_EXECUTABLE": "${sourceDir}/vcpkg_installed/x64-linux/tools/pkgconf/pkgconf"
+            },
+            "environment": {
+                "VCPKG_ROOT": "/opt/vcpkg",
+                "ANDROID_NDK_HOME": "/root/Android/Sdk/ndk/28.2.13676358"
+            }
+        },
+        {
             "name": "win-dev-user",
             "displayName": "Developer Build (Windows, User)",
             "cacheVariables": {
@@ -102,6 +129,71 @@
                 "release-linux-ninja",
                 "linux-paths"
             ]
+        },
+        {
+            "name": "android-arm64-v8a-debug-win",
+            "displayName": "Android arm64-v8a Debug (Windows Host)",
+            "description": "Developer build for Android arm64-v8a on Windows Host",
+            "cacheVariables": {
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/arm64-android/debug"
+            },
+            "inherits": [
+                "android-arm64-v8a-debug",
+                "android-win-paths"
+            ]
+        },
+        {
+            "name": "android-arm64-v8a-release-win",
+            "displayName": "Android arm64-v8a Release (Windows Host)",
+            "description": "Release build for Android arm64-v8a on Windows Host",
+            "cacheVariables": {
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/arm64-android"
+            },
+            "inherits": [
+                "android-arm64-v8a-release",
+                "android-win-paths"
+            ]
+        },
+        {
+            "name": "android-armeabi-v7a-release-win",
+            "displayName": "Android armeabi-v7a Release (Windows Host)",
+            "description": "Release build for Android armeabi-v7a on Windows Host",
+            "cacheVariables": {
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/arm-android"
+            },
+            "inherits": [
+                "android-armeabi-v7a-release",
+                "android-win-paths"
+            ]
+        },
+        {
+            "name": "android-x86_64-debug-win",
+            "displayName": "Android x86_64 Debug (Windows Host)",
+            "description": "Developer build for Android x86_64 emulator on Windows Host",
+            "cacheVariables": {
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/x64-android/debug"
+            },
+            "inherits": [
+                "android-x86_64-debug",
+                "android-win-paths"
+            ]
+        },
+        {
+            "name": "android-x86_64-release-win",
+            "displayName": "Android x86_64 Release (Windows Host)",
+            "description": "Release build for Android x86_64 emulator on Windows Host",
+            "cacheVariables": {
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/x64-android"
+            },
+            "inherits": [
+                "android-x86_64-release",
+                "android-win-paths"
+            ]
         }
     ],
     "buildPresets": [
@@ -124,6 +216,42 @@
         {
             "name": "linux-sdk-package",
             "configurePreset": "linux-sdk-package"
+        },
+        {
+            "name": "android-arm64-v8a-debug-win",
+            "configurePreset": "android-arm64-v8a-debug-win"
+        },
+        {
+            "name": "android-arm64-v8a-release-win",
+            "configurePreset": "android-arm64-v8a-release-win"
+        },
+        {
+            "name": "android-x86_64-debug-win",
+            "configurePreset": "android-x86_64-debug-win"
+        },
+        {
+            "name": "android-x86_64-release-win",
+            "configurePreset": "android-x86_64-release-win"
+        },
+        {
+            "name": "install-android-arm64-v8a-debug-win",
+            "configurePreset": "android-arm64-v8a-debug-win",
+            "targets": [ "install" ]
+        },
+        {
+            "name": "install-android-arm64-v8a-release-win",
+            "configurePreset": "android-arm64-v8a-release-win",
+            "targets": [ "install" ]
+        },
+        {
+            "name": "install-android-x86_64-debug-win",
+            "configurePreset": "android-x86_64-debug-win",
+            "targets": [ "install" ]
+        },
+        {
+            "name": "install-android-x86_64-release-win",
+            "configurePreset": "android-x86_64-release-win",
+            "targets": [ "install" ]
         }
     ],
     "testPresets": [

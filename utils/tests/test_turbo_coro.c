@@ -105,6 +105,13 @@ spec("Turbo Coro Primitive") {
         coro_destroy(co);
     }
 
+    it("rejects coroutine allocation size overflow") {
+        coro_opts_t opts = coro_OPTS_DEFAULT;
+        int times = 1;
+        opts.stack_size = SIZE_MAX;
+        check_null(coro_create(counter_coro, &times, &opts));
+    }
+
     it("runs scheduled coroutines to completion") {
         coro_scheduler_t *sched = coro_scheduler_create();
         int c1 = 0;

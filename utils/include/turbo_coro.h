@@ -33,7 +33,7 @@ typedef enum {
 
 /** Coroutine creation options */
 typedef struct {
-    size_t stack_size;        /**< Stack size (0 = default 56KB) */
+    size_t stack_size;        /**< Stack size (0 = default 128KiB) */
     size_t storage_size;      /**< Storage buffer size (0 = default 1KB) */
     void *user_data;          /**< User data accessible from coroutine */
 } coro_opts_t;
