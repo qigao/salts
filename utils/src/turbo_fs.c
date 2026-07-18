@@ -1426,9 +1426,15 @@ int turbo_fs_rename(const char *old_path, const char *new_path) {
     return -EINVAL;
   }
 
+#ifdef _WIN32
+  if (!MoveFileExA(old_path, new_path, MOVEFILE_REPLACE_EXISTING)) {
+    return err_from_win32(GetLastError());
+  }
+#else
   if (rename(old_path, new_path) != 0) {
     return err_from_errno();
   }
+#endif
   return 0;
 }
 

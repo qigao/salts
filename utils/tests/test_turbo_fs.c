@@ -274,6 +274,21 @@ spec("Turbo FS Tests") {
       check_int_lt(turbo_fs_stat(g_file, &st),  0); /* old gone */
       check_int_eq(turbo_fs_stat(g_file2, &st), 0); /* new exists */
     }
+
+    it("rename replaces an existing destination file") {
+      turbo_fs_buf_t source = turbo_fs_buf_init((char *)"replacement", 11);
+      turbo_fs_buf_t destination = turbo_fs_buf_init((char *)"stale", 5);
+      turbo_fs_buf_t actual = {0};
+
+      check_int_eq(turbo_fs_write_file(g_file, &source), 0);
+      check_int_eq(turbo_fs_write_file(g_file2, &destination), 0);
+      check_int_eq(turbo_fs_rename(g_file, g_file2), 0);
+      check_int_lt(turbo_fs_access(g_file, TURBO_FS_ACCESS_EXISTS), 0);
+      check_int_eq(turbo_fs_read_file(g_file2, &actual), 0);
+      check_size_eq(actual.len, source.len);
+      check_mem_eq(actual.base, source.base, source.len);
+      turbo_fs_buf_free(&actual);
+    }
   }
 
   /* ── Streaming open/read/write/close ────────────────────────────────────── */

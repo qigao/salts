@@ -528,11 +528,13 @@ CXX_C_API int turbo_fs_lock(turbo_file_t fd, int flags, int64_t offset, uint64_t
 CXX_C_API int turbo_fs_unlock(turbo_file_t fd, int64_t offset, uint64_t len);
 
 /**
- * @brief Rename/move a file
+ * @brief Rename/move a file, replacing an existing destination file
  *
  * @param old_path Current file path
  * @param new_path New file path
  * @return 0 on success, negative error code on failure
+ *
+ * @note The source and destination must be on the same filesystem.
  */
 CXX_C_API int turbo_fs_rename(const char *old_path, const char *new_path);
 
