@@ -1,6 +1,6 @@
 message(STATUS "JSON Parser generation enabled")
 message(STATUS "  re2c: ${RE2C_EXECUTABLE}")
-message(STATUS "  lemon: ${LEMON_EXECUTABLE}")
+message(STATUS "  lemon: in-tree target")
 message(STATUS "Parser module enabled")
 # =============================================================================
 # Submodules (must be added first so we can link to them)

@@ -56,6 +56,18 @@ function(cmake_add_grammar TARGET_NAME)
   cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
   string(TOLOWER "${TARGET_NAME}" target_name_lower)
 
+  if(ARG_LEXER_RE)
+    get_filename_component(ARG_LEXER_RE "${ARG_LEXER_RE}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+  endif()
+  if(ARG_GRAMMAR_Y)
+    get_filename_component(ARG_GRAMMAR_Y "${ARG_GRAMMAR_Y}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+  endif()
+  set(absolute_lexer_depends)
+  foreach(lexer_depend IN LISTS ARG_LEXER_DEPENDS)
+    get_filename_component(lexer_depend "${lexer_depend}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    list(APPEND absolute_lexer_depends "${lexer_depend}")
+  endforeach()
+
   if(ARG_GRAMMAR_Y)
     set(GRAMMAR_H "${CMAKE_CURRENT_BINARY_DIR}/${target_name_lower}_grammar_gen.h")
   endif()
@@ -66,7 +78,7 @@ function(cmake_add_grammar TARGET_NAME)
     else()
       set(LEXER_GEN "${CMAKE_CURRENT_BINARY_DIR}/${target_name_lower}_lexer_gen.c")
     endif()
-    set(lexer_depends ${ARG_LEXER_RE} ${ARG_LEXER_DEPENDS})
+    set(lexer_depends ${ARG_LEXER_RE} ${absolute_lexer_depends})
     if(ARG_LEXER_DEPENDS_ON_GRAMMAR)
       if(NOT ARG_GRAMMAR_Y)
         message(FATAL_ERROR "cmake_add_grammar: LEXER_DEPENDS_ON_GRAMMAR requires GRAMMAR_Y")
@@ -94,8 +106,8 @@ function(cmake_add_grammar TARGET_NAME)
     add_custom_command(
       OUTPUT ${GRAMMAR_GEN} ${GRAMMAR_H}
       COMMAND ${CMAKE_COMMAND} -E copy ${ARG_GRAMMAR_Y} ${GRAMMAR_Y_GEN}
-      COMMAND ${LEMON_EXECUTABLE} -T${LEMPAR} ${GRAMMAR_Y_GEN}
-      DEPENDS ${ARG_GRAMMAR_Y} ${LEMON_DEPENDS}
+      COMMAND $<TARGET_FILE:lemon> -T${LEMPAR} ${GRAMMAR_Y_GEN}
+      DEPENDS ${ARG_GRAMMAR_Y} lemon
       COMMENT "Generating ${TARGET_NAME} parser with lemon"
       VERBATIM)
     set(GRAMMAR_TARGET "${TARGET_NAME}_grammar_codegen")
@@ -183,11 +195,7 @@ function(cmake_add_test target_name)
     message(FATAL_ERROR "cmake_add_test: SOURCES is required for '${target_name}'")
   endif()
 
-  if(BUILD_TESTING)
-    add_executable(${target_name} ${ARG_SOURCES})
-  else()
-    add_executable(${target_name} EXCLUDE_FROM_ALL ${ARG_SOURCES})
-  endif()
+  add_executable(${target_name} ${ARG_SOURCES})
   if(ARG_LIBS)
     target_link_libraries(${target_name} PRIVATE ${ARG_LIBS})
   endif()
