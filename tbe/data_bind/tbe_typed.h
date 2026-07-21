@@ -104,6 +104,28 @@ DATA_BIND_API DataBindStatus tbe_typed_from_value(const TbeTypedType *type,
                                                   const DataBindValue *value, void *object,
                                                   DataBindError *error);
 
+/**
+ * Verify that a generated native descriptor matches a type in @p codec.
+ *
+ * This checks the record kind, field order, field names, optional flags, byte
+ * order, defined wire offsets, scalar kinds, and host-memory bounds. It does
+ * not retain @p codec.
+ */
+DATA_BIND_API DataBindStatus tbe_typed_validate_schema(DataBind *codec, const char *type_name,
+                                                       const TbeTypedType *type,
+                                                       DataBindError *error);
+
+/**
+ * Decode binary wire data directly into an initialized owning object.
+ *
+ * The descriptor must define a fixed binary block plus supported group or
+ * string/bytes tail fields. It is the binary layout contract. The previous
+ * object remains unchanged on failure. Call tbe_typed_validate_schema when the
+ * descriptor and codec were not generated from the same trusted schema.
+ */
+DATA_BIND_API DataBindStatus tbe_typed_parse_binary(const TbeTypedType *type, const void *data,
+                                                    size_t len, void *object, DataBindError *error);
+
 /** Convert an owning object to a newly allocated TurboParser JSON value. */
 DATA_BIND_API json_value_t *tbe_typed_to_json(const TbeTypedType *type, const void *object,
                                               DataBindError *error);

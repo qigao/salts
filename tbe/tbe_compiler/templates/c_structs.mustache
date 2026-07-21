@@ -46,6 +46,7 @@ typedef struct turbo_uuid_s {
 #define TBE_GENERATED_STRCMP strcmp
 #define TBE_GENERATED_STRLEN strlen
 #endif
+
 {{#typed_source_enabled}}
 #include "tbe_typed.h"
 
@@ -142,6 +143,10 @@ typedef struct tbe_guest_bridge_s {
 
 #endif /* TBE_GUEST_BRIDGE_V1_DEFINED */
 {{/guest_adapter_enabled}}
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* Schema {{schema.schema_name}} {{schema.schema_attributes_rendered}} */
 enum { {{schema.schema_name}}_WIRE_BIG_ENDIAN = {{schema.schema_wire_big_endian_value}} };
@@ -1953,6 +1958,103 @@ static inline uint8_t *{{name}}_payload_mut(uint8_t *buf, size_t size, size_t *p
 }
 
 {{/unions}}
+
+#ifdef __cplusplus
+} /* extern "C" */
+
+namespace {{schema.schema_name}}_typed {
+{{#typed_source_enabled}}
+template <typename Record,
+          void (*Init)(Record *),
+          void (*Clear)(Record *),
+          DataBindStatus (*FromBin)(DataBind *, Record *, const void *, size_t, DataBindError *),
+          DataBindStatus (*FromJson)(DataBind *, Record *, const char *, size_t, DataBindError *),
+          DataBindStatus (*FromYaml)(DataBind *, Record *, const char *, size_t, DataBindError *),
+          DataBindStatus (*FromCsv)(DataBind *, Record *, const char *, size_t, size_t,
+                                    DataBindError *),
+          DataBindStatus (*FromXml)(DataBind *, Record *, const char *, size_t, DataBindError *),
+          DataBindStatus (*ToBin)(const Record *, uint8_t **, size_t *, DataBindError *),
+          DataBindStatus (*ToJson)(const Record *, char **, size_t *, DataBindError *),
+          DataBindStatus (*ToYaml)(DataBind *, const Record *, char **, size_t *, DataBindError *),
+          DataBindStatus (*ToCsv)(const Record *, char **, size_t *, DataBindError *),
+          DataBindStatus (*ToXml)(DataBind *, const Record *, char **, size_t *, DataBindError *)>
+class Owner final {
+public:
+    Owner() noexcept { Init(&value_); }
+    ~Owner() { Clear(&value_); }
+    Owner(const Owner &) = delete;
+    Owner &operator=(const Owner &) = delete;
+    Owner(Owner &&) = delete;
+    Owner &operator=(Owner &&) = delete;
+
+    Record *get() noexcept { return &value_; }
+    const Record *get() const noexcept { return &value_; }
+    Record *operator->() noexcept { return &value_; }
+    const Record *operator->() const noexcept { return &value_; }
+
+    DataBindStatus from_bin(DataBind *codec, const void *data, size_t len,
+                            DataBindError *error) noexcept {
+        return FromBin(codec, &value_, data, len, error);
+    }
+    DataBindStatus from_json(DataBind *codec, const char *data, size_t len,
+                             DataBindError *error) noexcept {
+        return FromJson(codec, &value_, data, len, error);
+    }
+    DataBindStatus from_yaml(DataBind *codec, const char *data, size_t len,
+                             DataBindError *error) noexcept {
+        return FromYaml(codec, &value_, data, len, error);
+    }
+    DataBindStatus from_csv(DataBind *codec, const char *data, size_t len, size_t row,
+                            DataBindError *error) noexcept {
+        return FromCsv(codec, &value_, data, len, row, error);
+    }
+    DataBindStatus from_xml(DataBind *codec, const char *data, size_t len,
+                            DataBindError *error) noexcept {
+        return FromXml(codec, &value_, data, len, error);
+    }
+    DataBindStatus to_bin(uint8_t **out, size_t *out_len, DataBindError *error) const noexcept {
+        return ToBin(&value_, out, out_len, error);
+    }
+    DataBindStatus to_json(char **out, size_t *out_len, DataBindError *error) const noexcept {
+        return ToJson(&value_, out, out_len, error);
+    }
+    DataBindStatus to_yaml(DataBind *codec, char **out, size_t *out_len,
+                           DataBindError *error) const noexcept {
+        return ToYaml(codec, &value_, out, out_len, error);
+    }
+    DataBindStatus to_csv(char **out, size_t *out_len, DataBindError *error) const noexcept {
+        return ToCsv(&value_, out, out_len, error);
+    }
+    DataBindStatus to_xml(DataBind *codec, char **out, size_t *out_len,
+                          DataBindError *error) const noexcept {
+        return ToXml(codec, &value_, out, out_len, error);
+    }
+
+private:
+    Record value_{};
+};
+
+{{#composites}}
+using {{name}}Owner = Owner<{{name}}_t, {{name}}_init, {{name}}_clear, {{name}}_from_bin,
+                          {{name}}_from_json, {{name}}_from_yaml, {{name}}_from_csv,
+                          {{name}}_from_xml, {{name}}_to_bin, {{name}}_to_json,
+                          {{name}}_to_yaml, {{name}}_to_csv, {{name}}_to_xml>;
+{{/composites}}
+{{#groups}}
+using {{name}}Owner = Owner<{{name}}_t, {{name}}_init, {{name}}_clear, {{name}}_from_bin,
+                          {{name}}_from_json, {{name}}_from_yaml, {{name}}_from_csv,
+                          {{name}}_from_xml, {{name}}_to_bin, {{name}}_to_json,
+                          {{name}}_to_yaml, {{name}}_to_csv, {{name}}_to_xml>;
+{{/groups}}
+{{#messages}}
+using {{name}}Owner = Owner<{{name}}_t, {{name}}_init, {{name}}_clear, {{name}}_from_bin,
+                          {{name}}_from_json, {{name}}_from_yaml, {{name}}_from_csv,
+                          {{name}}_from_xml, {{name}}_to_bin, {{name}}_to_json,
+                          {{name}}_to_yaml, {{name}}_to_csv, {{name}}_to_xml>;
+{{/messages}}
+{{/typed_source_enabled}}
+} /* namespace {{schema.schema_name}}_typed */
+#endif
 
 #undef TBE_GENERATED_MEMCPY
 #undef TBE_GENERATED_STRCMP

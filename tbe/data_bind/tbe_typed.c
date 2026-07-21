@@ -55,6 +55,16 @@ static size_t typed_kind_size(TbeTypedKind kind) {
   }
 }
 
+static int typed_size_fits(size_t offset, size_t size, size_t capacity) {
+  return offset <= capacity && size <= capacity - offset;
+}
+
+static int typed_multiply_fits(size_t count, size_t size, size_t *total) {
+  if (total == NULL || (size != 0 && count > SIZE_MAX / size)) return 0;
+  *total = count * size;
+  return 1;
+}
+
 static int typed_optional_present(const TbeTypedType *type, const void *object,
                                   const TbeTypedField *field) {
   const uint8_t *presence;
@@ -516,6 +526,577 @@ json_value_t *tbe_typed_to_json(const TbeTypedType *type, const void *object,
   return root;
 }
 
+static int typed_scalar_kind_from_name(const char *name, TbeTypedKind *kind) {
+  if (name == NULL || kind == NULL) return 0;
+  if (strcmp(name, "bool") == 0) *kind = TBE_TYPED_BOOL;
+  else if (strcmp(name, "int8_t") == 0 || strcmp(name, "int8") == 0 || strcmp(name, "i8") == 0)
+    *kind = TBE_TYPED_I8;
+  else if (strcmp(name, "uint8_t") == 0 || strcmp(name, "uint8") == 0 || strcmp(name, "u8") == 0 ||
+           strcmp(name, "byte") == 0)
+    *kind = TBE_TYPED_U8;
+  else if (strcmp(name, "int16_t") == 0 || strcmp(name, "int16") == 0 || strcmp(name, "i16") == 0)
+    *kind = TBE_TYPED_I16;
+  else if (strcmp(name, "uint16_t") == 0 || strcmp(name, "uint16") == 0 || strcmp(name, "u16") == 0)
+    *kind = TBE_TYPED_U16;
+  else if (strcmp(name, "int32_t") == 0 || strcmp(name, "int32") == 0 || strcmp(name, "i32") == 0)
+    *kind = TBE_TYPED_I32;
+  else if (strcmp(name, "uint32_t") == 0 || strcmp(name, "uint32") == 0 || strcmp(name, "u32") == 0)
+    *kind = TBE_TYPED_U32;
+  else if (strcmp(name, "int64_t") == 0 || strcmp(name, "int64") == 0 || strcmp(name, "i64") == 0)
+    *kind = TBE_TYPED_I64;
+  else if (strcmp(name, "uint64_t") == 0 || strcmp(name, "uint64") == 0 || strcmp(name, "u64") == 0)
+    *kind = TBE_TYPED_U64;
+  else if (strcmp(name, "float") == 0) *kind = TBE_TYPED_F32;
+  else if (strcmp(name, "double") == 0) *kind = TBE_TYPED_F64;
+  else if (strcmp(name, "string") == 0) *kind = TBE_TYPED_STRING;
+  else if (strcmp(name, "bytes") == 0) *kind = TBE_TYPED_BYTES;
+  else if (strcmp(name, "uuid") == 0) *kind = TBE_TYPED_UUID;
+  else return 0;
+  return 1;
+}
+
+static int typed_named_kind_matches(DataBind *codec, const char *name, TbeTypedKind kind,
+                                    TbeTypedKind wire_kind, const TbeTypedType *object_type) {
+  TbeTypedKind schema_kind;
+  DataBindSchemaType schema_type = DATA_BIND_SCHEMA_TYPE_INIT;
+  if (kind == TBE_TYPED_OBJECT)
+    return object_type != NULL && name != NULL && strcmp(object_type->name, name) == 0;
+  if (kind != TBE_TYPED_ENUM)
+    return typed_scalar_kind_from_name(name, &schema_kind) && schema_kind == kind;
+  if (!data_bind_schema_find_type(codec, name, &schema_type) ||
+      (schema_type.kind != DATA_BIND_SCHEMA_ENUM && schema_type.kind != DATA_BIND_SCHEMA_FLAGS) ||
+      !typed_scalar_kind_from_name(schema_type.underlying_type, &schema_kind))
+    return 0;
+  return schema_kind == wire_kind;
+}
+
+static int typed_field_schema_matches(DataBind *codec, const TbeTypedField *field,
+                                      const DataBindSchemaField *schema) {
+  int descriptor_optional = (field->flags & TBE_TYPED_FIELD_OPTIONAL) != 0;
+  int descriptor_offset = (field->flags & TBE_TYPED_FIELD_WIRE_OFFSET) != 0;
+  if (field->name == NULL || schema->name == NULL || strcmp(field->name, schema->name) != 0 ||
+      descriptor_optional != (schema->is_optional != 0) ||
+      descriptor_offset != (schema->has_offset != 0) ||
+      (descriptor_offset && field->wire_offset != schema->offset))
+    return 0;
+  if ((field->flags & TBE_TYPED_FIELD_GROUP) != 0)
+    return schema->is_group && field->kind == TBE_TYPED_LIST && field->object_type != NULL &&
+           schema->group_type != NULL && strcmp(field->object_type->name, schema->group_type) == 0;
+  if (field->kind == TBE_TYPED_MAP)
+    return schema->is_map && schema->key_type != NULL && strcmp(schema->key_type, "string") == 0 &&
+           typed_named_kind_matches(codec, schema->value_type, field->map_value_kind,
+                                    field->map_value_wire_kind, field->map_value_type);
+  if (field->kind == TBE_TYPED_LIST || field->kind == TBE_TYPED_SET ||
+      field->kind == TBE_TYPED_FIXED_ARRAY) {
+    const char *expected_collection = field->kind == TBE_TYPED_FIXED_ARRAY
+                                          ? "array"
+                                          : (field->kind == TBE_TYPED_SET ? "set" : "list");
+    return schema->is_collection && schema->inner_type != NULL &&
+           (schema->collection_kind == NULL ||
+            strcmp(schema->collection_kind, expected_collection) == 0) &&
+           (field->kind != TBE_TYPED_FIXED_ARRAY || schema->is_fixed_size) &&
+           typed_named_kind_matches(codec, schema->inner_type, field->element_kind,
+                                    field->element_wire_kind, field->object_type);
+  }
+  if (field->kind == TBE_TYPED_FIXED_BYTES)
+    return schema->type != NULL && strcmp(schema->type, "bytes") == 0 && schema->is_fixed_size &&
+           schema->has_size_bytes && field->fixed_count == schema->size_bytes;
+  return typed_named_kind_matches(codec, schema->type, field->kind, field->wire_kind,
+                                  field->object_type);
+}
+
+static int typed_field_host_extent(const TbeTypedField *field, size_t *extent) {
+  if (field == NULL || extent == NULL) return 0;
+  switch (field->kind) {
+  case TBE_TYPED_STRING:
+    *extent = sizeof(tstr_t);
+    return 1;
+  case TBE_TYPED_BYTES:
+  case TBE_TYPED_LIST:
+  case TBE_TYPED_SET:
+  case TBE_TYPED_MAP:
+    *extent = sizeof(turbo_vec_t);
+    return 1;
+  case TBE_TYPED_FIXED_BYTES:
+    *extent = field->fixed_count;
+    return 1;
+  case TBE_TYPED_OBJECT:
+    if (field->object_type == NULL) return 0;
+    *extent = field->object_type->size;
+    return 1;
+  case TBE_TYPED_FIXED_ARRAY:
+    return field->element_size != 0 &&
+           typed_multiply_fits(field->fixed_count, field->element_size, extent);
+  default:
+    *extent = typed_kind_size(field->kind);
+    return *extent != 0;
+  }
+}
+
+static int typed_value_host_extent(TbeTypedKind kind, const TbeTypedType *object_type,
+                                   size_t *extent) {
+  if (extent == NULL) return 0;
+  if (kind == TBE_TYPED_STRING) *extent = sizeof(tstr_t);
+  else if (kind == TBE_TYPED_BYTES) *extent = sizeof(turbo_vec_t);
+  else if (kind == TBE_TYPED_OBJECT && object_type != NULL) *extent = object_type->size;
+  else *extent = typed_kind_size(kind);
+  return *extent != 0;
+}
+
+static int typed_field_wire_extent(const TbeTypedField *field, size_t *extent) {
+  size_t element_wire_size;
+  if (field == NULL || extent == NULL) return 0;
+  if (field->kind == TBE_TYPED_OBJECT) {
+    if (field->object_type == NULL) return 0;
+    *extent = field->object_type->fixed_block_size;
+    return 1;
+  }
+  if (field->kind == TBE_TYPED_FIXED_BYTES) {
+    *extent = field->fixed_count;
+    return 1;
+  }
+  if (field->kind == TBE_TYPED_FIXED_ARRAY) {
+    if (field->element_kind == TBE_TYPED_OBJECT) {
+      if (field->object_type == NULL) return 0;
+      element_wire_size = field->object_type->fixed_block_size;
+    } else {
+      element_wire_size = typed_kind_size(
+          field->element_kind == TBE_TYPED_ENUM ? field->element_wire_kind : field->element_kind);
+    }
+    return element_wire_size != 0 &&
+           typed_multiply_fits(field->fixed_count, element_wire_size, extent);
+  }
+  *extent = typed_kind_size(field->kind == TBE_TYPED_ENUM ? field->wire_kind : field->kind);
+  return *extent != 0;
+}
+
+static int typed_type_has_tail(const TbeTypedType *type) {
+  size_t i;
+  if (type == NULL) return 0;
+  for (i = 0; i < type->field_count; ++i)
+    if ((type->fields[i].flags & (TBE_TYPED_FIELD_GROUP | TBE_TYPED_FIELD_VAR_DATA)) != 0) return 1;
+  return 0;
+}
+
+static DataBindStatus typed_validate_descriptor_at(const TbeTypedType *type, unsigned depth,
+                                                   DataBindError *error) {
+  size_t i;
+  if (type == NULL || type->name == NULL || type->size == 0 ||
+      (type->field_count != 0 && type->fields == NULL))
+    return typed_error(error, DATA_BIND_ERR_INVALID_ARG, NULL, "Invalid typed descriptor");
+  if (depth > 32u)
+    return typed_error(error, DATA_BIND_ERR_SCHEMA, type->name,
+                       "Typed descriptor nesting exceeds the supported limit");
+  if (!typed_size_fits(type->presence_offset, type->presence_size, type->size))
+    return typed_error(error, DATA_BIND_ERR_SCHEMA, type->name,
+                       "Typed presence bitmap exceeds the host object");
+  for (i = 0; i < type->field_count; ++i) {
+    const TbeTypedField *field = &type->fields[i];
+    size_t host_extent;
+    const TbeTypedType *nested_type = NULL;
+    if (field->name == NULL || !typed_field_host_extent(field, &host_extent) ||
+        !typed_size_fits(field->offset, host_extent, type->size))
+      return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                         "Typed field exceeds the host object");
+    if ((field->flags & TBE_TYPED_FIELD_OPTIONAL) != 0 &&
+        (type->presence_size == 0 || field->optional_bit / 8u >= type->presence_size))
+      return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                         "Typed optional bit exceeds the presence bitmap");
+    if (field->kind == TBE_TYPED_OBJECT) {
+      nested_type = field->object_type;
+    } else if (field->kind == TBE_TYPED_FIXED_ARRAY || field->kind == TBE_TYPED_LIST ||
+               field->kind == TBE_TYPED_SET) {
+      size_t element_extent;
+      if (!typed_value_host_extent(field->element_kind, field->object_type, &element_extent) ||
+          field->element_size < element_extent)
+        return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                           "Typed collection element exceeds its host storage");
+      if (field->kind == TBE_TYPED_FIXED_ARRAY &&
+          !typed_multiply_fits(field->fixed_count, field->element_size, &host_extent))
+        return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                           "Typed collection size exceeds the host address space");
+      if (field->element_kind == TBE_TYPED_OBJECT) nested_type = field->object_type;
+    } else if (field->kind == TBE_TYPED_MAP) {
+      size_t value_extent;
+      if (field->map_entry_size == 0 || field->element_size != field->map_entry_size ||
+          !typed_size_fits(field->map_key_offset, sizeof(tstr_t), field->map_entry_size) ||
+          !typed_value_host_extent(field->map_value_kind, field->map_value_type, &value_extent) ||
+          !typed_size_fits(field->map_value_offset, value_extent, field->map_entry_size))
+        return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                           "Typed map entry exceeds its host storage");
+      if (field->map_value_kind == TBE_TYPED_OBJECT) nested_type = field->map_value_type;
+    }
+    if ((field->flags & TBE_TYPED_FIELD_GROUP) != 0 &&
+        (field->kind != TBE_TYPED_LIST || field->element_kind != TBE_TYPED_OBJECT ||
+         field->object_type == NULL || field->element_size != field->object_type->size))
+      return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                         "Typed group descriptor is not an owning record vector");
+    if ((field->flags & TBE_TYPED_FIELD_VAR_DATA) != 0 && field->kind != TBE_TYPED_STRING &&
+        field->kind != TBE_TYPED_BYTES)
+      return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                         "Typed variable data must be a string or byte vector");
+    if (nested_type != NULL) {
+      DataBindStatus status = typed_validate_descriptor_at(nested_type, depth + 1u, error);
+      if (status != DATA_BIND_OK) return status;
+    }
+  }
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus typed_validate_layout_at(const TbeTypedType *type, unsigned depth,
+                                               DataBindError *error) {
+  size_t i;
+  DataBindStatus status = typed_validate_descriptor_at(type, depth, error);
+  if (status != DATA_BIND_OK) return status;
+  for (i = 0; i < type->field_count; ++i) {
+    const TbeTypedField *field = &type->fields[i];
+    size_t wire_extent;
+    if ((field->flags & TBE_TYPED_FIELD_WIRE_OFFSET) != 0 &&
+        (!typed_field_wire_extent(field, &wire_extent) ||
+         !typed_size_fits(field->wire_offset, wire_extent, type->fixed_block_size)))
+      return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                         "Typed field exceeds the fixed wire block");
+    if (field->kind == TBE_TYPED_OBJECT) {
+      if ((field->flags & TBE_TYPED_FIELD_WIRE_OFFSET) == 0 ||
+          typed_type_has_tail(field->object_type))
+        return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                           "Nested binary objects must have a fixed wire layout");
+      status = typed_validate_layout_at(field->object_type, depth + 1u, error);
+      if (status != DATA_BIND_OK) return status;
+    } else if (field->kind == TBE_TYPED_FIXED_ARRAY && field->element_kind == TBE_TYPED_OBJECT) {
+      if (typed_type_has_tail(field->object_type))
+        return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                           "Nested binary arrays must have a fixed wire layout");
+      status = typed_validate_layout_at(field->object_type, depth + 1u, error);
+      if (status != DATA_BIND_OK) return status;
+    } else if ((field->flags & TBE_TYPED_FIELD_GROUP) != 0) {
+      if (typed_type_has_tail(field->object_type))
+        return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                           "Typed group entries must have a fixed wire layout");
+      status = typed_validate_layout_at(field->object_type, depth + 1u, error);
+      if (status != DATA_BIND_OK) return status;
+    } else if ((field->flags & TBE_TYPED_FIELD_WIRE_OFFSET) == 0 &&
+               (field->flags & (TBE_TYPED_FIELD_GROUP | TBE_TYPED_FIELD_VAR_DATA)) == 0) {
+      return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                         "Typed binary field has no wire location");
+    }
+  }
+  return DATA_BIND_OK;
+}
+
+static int typed_supports_direct_binary(const TbeTypedType *type) {
+  size_t i;
+  if (type == NULL) return 0;
+  for (i = 0; i < type->field_count; ++i) {
+    const TbeTypedField *field = &type->fields[i];
+    if (field->kind == TBE_TYPED_OBJECT ||
+        (field->kind == TBE_TYPED_FIXED_ARRAY && field->element_kind == TBE_TYPED_OBJECT) ||
+        (field->flags & TBE_TYPED_FIELD_GROUP) != 0) {
+      if (!typed_supports_direct_binary(field->object_type)) return 0;
+    }
+    if ((field->flags & TBE_TYPED_FIELD_WIRE_OFFSET) == 0 &&
+        (field->flags & (TBE_TYPED_FIELD_GROUP | TBE_TYPED_FIELD_VAR_DATA)) == 0)
+      return 0;
+  }
+  return 1;
+}
+
+static DataBindStatus typed_validate_schema_at(DataBind *codec, const char *type_name,
+                                               const TbeTypedType *type, unsigned depth,
+                                               DataBindError *error) {
+  DataBindSchemaType schema_type = DATA_BIND_SCHEMA_TYPE_INIT;
+  DataBindStatus status;
+  size_t i;
+  if (codec == NULL || type_name == NULL || type == NULL)
+    return typed_error(error, DATA_BIND_ERR_INVALID_ARG, type_name,
+                       "Invalid typed schema validation arguments");
+  if (depth > 32u)
+    return typed_error(error, DATA_BIND_ERR_SCHEMA, type_name,
+                       "Typed schema nesting exceeds the supported limit");
+  status = typed_validate_descriptor_at(type, 0u, error);
+  if (status != DATA_BIND_OK) return status;
+  if (type->name == NULL || strcmp(type->name, type_name) != 0)
+    return typed_error(error, DATA_BIND_ERR_SCHEMA, type_name,
+                       "Typed descriptor name does not match the requested type");
+  if (!data_bind_schema_find_type(codec, type_name, &schema_type))
+    return typed_error(error, DATA_BIND_ERR_TYPE_NOT_FOUND, type_name,
+                       "Typed schema type was not found");
+  if ((schema_type.kind != DATA_BIND_SCHEMA_MESSAGE &&
+       schema_type.kind != DATA_BIND_SCHEMA_COMPOSITE &&
+       schema_type.kind != DATA_BIND_SCHEMA_GROUP) ||
+      schema_type.field_count != type->field_count ||
+      (schema_type.has_fixed_block_size &&
+       schema_type.fixed_block_size != type->fixed_block_size) ||
+      (!schema_type.has_fixed_block_size && type->fixed_block_size != 0))
+    return typed_error(error, DATA_BIND_ERR_SCHEMA, type_name,
+                       "Typed descriptor does not match the schema record");
+  if (depth == 0u) {
+    const char *byte_order = data_bind_schema_attribute_get(codec, "byte_order");
+    int schema_big_endian = byte_order != NULL && strcmp(byte_order, "big") == 0;
+    if ((type->wire_big_endian != 0) != schema_big_endian)
+      return typed_error(error, DATA_BIND_ERR_SCHEMA, type_name,
+                         "Typed descriptor byte order does not match the schema");
+  }
+  for (i = 0; i < type->field_count; ++i) {
+    DataBindSchemaField schema_field = DATA_BIND_SCHEMA_FIELD_INIT;
+    const TbeTypedField *field = &type->fields[i];
+    const TbeTypedType *nested_type = NULL;
+    const char *nested_name = NULL;
+    if (!data_bind_schema_field_at(codec, type_name, i, &schema_field) ||
+        !typed_field_schema_matches(codec, field, &schema_field))
+      return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                         "Typed field descriptor does not match the schema");
+    if ((field->flags & TBE_TYPED_FIELD_GROUP) != 0) {
+      nested_type = field->object_type;
+      nested_name = schema_field.group_type;
+    } else if (field->kind == TBE_TYPED_OBJECT) {
+      nested_type = field->object_type;
+      nested_name = schema_field.type;
+    } else if ((field->kind == TBE_TYPED_FIXED_ARRAY || field->kind == TBE_TYPED_LIST ||
+                field->kind == TBE_TYPED_SET) &&
+               field->element_kind == TBE_TYPED_OBJECT) {
+      nested_type = field->object_type;
+      nested_name = schema_field.inner_type;
+    } else if (field->kind == TBE_TYPED_MAP && field->map_value_kind == TBE_TYPED_OBJECT) {
+      nested_type = field->map_value_type;
+      nested_name = schema_field.value_type;
+    }
+    if (nested_type != NULL) {
+      status = typed_validate_schema_at(codec, nested_name, nested_type, depth + 1u, error);
+      if (status != DATA_BIND_OK) return status;
+    }
+  }
+  if (error != NULL && error->size >= sizeof(*error)) error->code = DATA_BIND_OK;
+  return DATA_BIND_OK;
+}
+
+DataBindStatus tbe_typed_validate_schema(DataBind *codec, const char *type_name,
+                                         const TbeTypedType *type, DataBindError *error) {
+  return typed_validate_schema_at(codec, type_name, type, 0u, error);
+}
+
+static void typed_read_wire_scalar(TbeTypedKind kind, const uint8_t *source, int big_endian,
+                                   void *output) {
+  switch (kind) {
+  case TBE_TYPED_BOOL:
+    *(uint8_t *)output = (uint8_t)(tbe_wire_read_u8(source, big_endian) != 0);
+    break;
+  case TBE_TYPED_I8:
+    *(int8_t *)output = tbe_wire_read_i8(source, big_endian);
+    break;
+  case TBE_TYPED_U8:
+    *(uint8_t *)output = tbe_wire_read_u8(source, big_endian);
+    break;
+  case TBE_TYPED_I16:
+    *(int16_t *)output = tbe_wire_read_i16(source, big_endian);
+    break;
+  case TBE_TYPED_U16:
+    *(uint16_t *)output = tbe_wire_read_u16(source, big_endian);
+    break;
+  case TBE_TYPED_I32:
+    *(int32_t *)output = tbe_wire_read_i32(source, big_endian);
+    break;
+  case TBE_TYPED_U32:
+    *(uint32_t *)output = tbe_wire_read_u32(source, big_endian);
+    break;
+  case TBE_TYPED_I64:
+    *(int64_t *)output = tbe_wire_read_i64(source, big_endian);
+    break;
+  case TBE_TYPED_U64:
+    *(uint64_t *)output = tbe_wire_read_u64(source, big_endian);
+    break;
+  case TBE_TYPED_F32:
+    *(float *)output = tbe_wire_read_f32(source, big_endian);
+    break;
+  case TBE_TYPED_F64:
+    *(double *)output = tbe_wire_read_f64(source, big_endian);
+    break;
+  case TBE_TYPED_UUID:
+    memcpy(((turbo_uuid_t *)output)->bytes, source, TURBO_UUID_SIZE);
+    break;
+  default:
+    break;
+  }
+}
+
+static void typed_read_enum(TbeTypedKind wire_kind, const uint8_t *source, int big_endian,
+                            void *output) {
+  int32_t value;
+  switch (wire_kind) {
+  case TBE_TYPED_I8:
+    value = tbe_wire_read_i8(source, big_endian);
+    break;
+  case TBE_TYPED_U8:
+    value = tbe_wire_read_u8(source, big_endian);
+    break;
+  case TBE_TYPED_I16:
+    value = tbe_wire_read_i16(source, big_endian);
+    break;
+  case TBE_TYPED_U16:
+    value = tbe_wire_read_u16(source, big_endian);
+    break;
+  case TBE_TYPED_U32:
+    value = (int32_t)tbe_wire_read_u32(source, big_endian);
+    break;
+  default:
+    value = tbe_wire_read_i32(source, big_endian);
+    break;
+  }
+  *(int32_t *)output = value;
+}
+
+static DataBindStatus typed_read_fixed(const TbeTypedType *type, const uint8_t *data, size_t len,
+                                       void *object, DataBindError *error) {
+  size_t i;
+  if (len < type->fixed_block_size)
+    return typed_error(error, DATA_BIND_ERR_PARSE, type->name,
+                       "Binary input is shorter than the fixed block");
+  if (type->presence_size != 0)
+    memcpy((uint8_t *)object + type->presence_offset, data, type->presence_size);
+  for (i = 0; i < type->field_count; ++i) {
+    const TbeTypedField *field = &type->fields[i];
+    uint8_t *output = (uint8_t *)object + field->offset;
+    const uint8_t *source;
+    size_t j;
+    size_t element_wire_size;
+    if ((field->flags & TBE_TYPED_FIELD_WIRE_OFFSET) == 0) continue;
+    source = data + field->wire_offset;
+    if (!typed_optional_present(type, object, field)) continue;
+    if (field->kind == TBE_TYPED_OBJECT) {
+      DataBindStatus status =
+          typed_read_fixed(field->object_type, source, len - field->wire_offset, output, error);
+      if (status != DATA_BIND_OK) return status;
+    } else if (field->kind == TBE_TYPED_FIXED_BYTES) {
+      memcpy(output, source, field->fixed_count);
+    } else if (field->kind == TBE_TYPED_FIXED_ARRAY) {
+      element_wire_size =
+          field->element_kind == TBE_TYPED_OBJECT
+              ? field->object_type->fixed_block_size
+              : typed_kind_size(field->element_kind == TBE_TYPED_ENUM ? field->element_wire_kind
+                                                                      : field->element_kind);
+      for (j = 0; j < field->fixed_count; ++j) {
+        void *element = output + j * field->element_size;
+        const uint8_t *element_source = source + j * element_wire_size;
+        if (field->element_kind == TBE_TYPED_OBJECT) {
+          DataBindStatus status = typed_read_fixed(field->object_type, element_source,
+                                                   element_wire_size, element, error);
+          if (status != DATA_BIND_OK) return status;
+        } else if (field->element_kind == TBE_TYPED_ENUM) {
+          typed_read_enum(field->element_wire_kind, element_source, type->wire_big_endian, element);
+        } else {
+          typed_read_wire_scalar(field->element_kind, element_source, type->wire_big_endian,
+                                 element);
+        }
+      }
+    } else if (field->kind == TBE_TYPED_ENUM) {
+      typed_read_enum(field->wire_kind, source, type->wire_big_endian, output);
+    } else {
+      typed_read_wire_scalar(field->kind, source, type->wire_big_endian, output);
+    }
+  }
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus typed_read_tail(const TbeTypedType *type, const uint8_t *data, size_t len,
+                                      void *object, DataBindError *error) {
+  size_t cursor = type->fixed_block_size;
+  size_t i;
+  for (i = 0; i < type->field_count; ++i) {
+    const TbeTypedField *field = &type->fields[i];
+    uint8_t *output = (uint8_t *)object + field->offset;
+    int present = typed_optional_present(type, object, field);
+    if ((field->flags & TBE_TYPED_FIELD_GROUP) != 0) {
+      turbo_vec_t *vec = (turbo_vec_t *)output;
+      uint16_t block_length;
+      uint16_t count;
+      size_t payload_size;
+      size_t host_payload_size;
+      size_t j;
+      if (!typed_size_fits(cursor, 4u, len))
+        return typed_error(error, DATA_BIND_ERR_PARSE, field->name,
+                           "Binary group header is truncated");
+      block_length = tbe_wire_read_u16(data + cursor, type->wire_big_endian);
+      count = tbe_wire_read_u16(data + cursor + 2u, type->wire_big_endian);
+      cursor += 4u;
+      if (block_length < field->object_type->fixed_block_size ||
+          !typed_multiply_fits(count, block_length, &payload_size) ||
+          !typed_size_fits(cursor, payload_size, len))
+        return typed_error(error, DATA_BIND_ERR_PARSE, field->name,
+                           "Binary group payload is invalid");
+      if (present) {
+        if (!typed_multiply_fits(count, field->element_size, &host_payload_size))
+          return typed_error(error, DATA_BIND_ERR_SCHEMA, field->name,
+                             "Typed group size exceeds the host address space");
+        if (turbo_vec_resize(vec, count) != TURBO_OK)
+          return typed_error(error, DATA_BIND_ERR_OOM, field->name,
+                             "Out of memory resizing typed group");
+        memset(vec->data, 0, host_payload_size);
+        for (j = 0; j < count; ++j) {
+          void *element = (uint8_t *)vec->data + j * field->element_size;
+          DataBindStatus status = tbe_typed_init(field->object_type, element, error);
+          if (status == DATA_BIND_OK)
+            status = typed_read_fixed(field->object_type, data + cursor + j * block_length,
+                                      block_length, element, error);
+          if (status != DATA_BIND_OK) return status;
+        }
+      }
+      cursor += payload_size;
+    } else if ((field->flags & TBE_TYPED_FIELD_VAR_DATA) != 0) {
+      uint32_t value_size;
+      if (!typed_size_fits(cursor, 4u, len))
+        return typed_error(error, DATA_BIND_ERR_PARSE, field->name,
+                           "Binary variable-data header is truncated");
+      value_size = tbe_wire_read_u32(data + cursor, type->wire_big_endian);
+      cursor += 4u;
+      if (!typed_size_fits(cursor, value_size, len))
+        return typed_error(error, DATA_BIND_ERR_PARSE, field->name,
+                           "Binary variable-data payload is truncated");
+      if (present && field->kind == TBE_TYPED_STRING) {
+        *(tstr_t *)output = tstr_dup_len((const char *)data + cursor, value_size);
+        if (*(tstr_t *)output == NULL)
+          return typed_error(error, DATA_BIND_ERR_OOM, field->name,
+                             "Out of memory copying typed string");
+      } else if (present) {
+        turbo_vec_t *vec = (turbo_vec_t *)output;
+        if (turbo_vec_resize(vec, value_size) != TURBO_OK)
+          return typed_error(error, DATA_BIND_ERR_OOM, field->name,
+                             "Out of memory copying typed bytes");
+        if (value_size != 0) memcpy(vec->data, data + cursor, value_size);
+      }
+      cursor += value_size;
+    }
+  }
+  return DATA_BIND_OK;
+}
+
+DataBindStatus tbe_typed_parse_binary(const TbeTypedType *type, const void *data, size_t len,
+                                      void *object, DataBindError *error) {
+  void *temporary;
+  DataBindStatus status;
+  if (type == NULL || data == NULL || object == NULL)
+    return typed_error(error, DATA_BIND_ERR_INVALID_ARG, NULL,
+                       "Invalid typed binary parse arguments");
+  status = typed_validate_layout_at(type, 0u, error);
+  if (status != DATA_BIND_OK) return status;
+  temporary = calloc(1, type->size);
+  if (temporary == NULL)
+    return typed_error(error, DATA_BIND_ERR_OOM, type->name, "Out of memory creating typed object");
+  status = tbe_typed_init(type, temporary, error);
+  if (status == DATA_BIND_OK)
+    status = typed_read_fixed(type, (const uint8_t *)data, len, temporary, error);
+  if (status == DATA_BIND_OK)
+    status = typed_read_tail(type, (const uint8_t *)data, len, temporary, error);
+  if (status == DATA_BIND_OK) {
+    tbe_typed_clear(type, object);
+    memcpy(object, temporary, type->size);
+    memset(temporary, 0, type->size);
+    if (error != NULL && error->size >= sizeof(*error)) error->code = DATA_BIND_OK;
+  }
+  tbe_typed_clear(type, temporary);
+  free(temporary);
+  return status;
+}
+
 DataBindStatus tbe_typed_parse(DataBind *codec, const char *type_name, const TbeTypedType *type,
                                const char *format, const void *data, size_t len, size_t row,
                                void *object, DataBindError *error) {
@@ -525,9 +1106,13 @@ DataBindStatus tbe_typed_parse(DataBind *codec, const char *type_name, const Tbe
   if (codec == NULL || type_name == NULL || type == NULL || format == NULL || data == NULL ||
       object == NULL)
     return typed_error(error, DATA_BIND_ERR_INVALID_ARG, NULL, "Invalid typed parse arguments");
-  if (strcmp(format, "bin") == 0)
+  if (strcmp(format, "bin") == 0) {
+    status = tbe_typed_validate_schema(codec, type_name, type, error);
+    if (status != DATA_BIND_OK) return status;
+    if (typed_supports_direct_binary(type))
+      return tbe_typed_parse_binary(type, data, len, object, error);
     status = data_bind_parse(codec, type_name, (const uint8_t *)data, len, &value, error);
-  else if (strcmp(format, "json") == 0)
+  } else if (strcmp(format, "json") == 0)
     status = data_bind_parse_json(codec, type_name, (const char *)data, len, &value, error);
   else if (strcmp(format, "yaml") == 0)
     status = data_bind_parse_yaml(codec, type_name, (const char *)data, len, &value, error);

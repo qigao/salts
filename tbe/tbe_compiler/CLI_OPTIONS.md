@@ -94,6 +94,39 @@ add_executable(order_app main.c order.c)
 target_link_libraries(order_app PRIVATE TurboUtils::DataBind)
 ```
 
+The same generated header is C++ compatible. Its C functions use `extern "C"`, and
+the schema namespace provides non-copyable RAII owners that initialize and clear the
+generated C record automatically:
+
+```cpp
+#include "order.h"
+
+#include <string_view>
+
+int main() {
+    std::string_view input = R"({"id":42})";
+    DataBind *codec = nullptr;
+    DataBindError error = DATA_BIND_ERROR_INIT;
+    Orders_typed::OrderOwner order;
+    int result = 1;
+
+    if (Orders_codec_create(&codec, &error) == DATA_BIND_OK &&
+        order.from_json(codec, input.data(), input.size(), &error) == DATA_BIND_OK) {
+        result = 0;
+    }
+    data_bind_free(codec);
+    return result;
+}
+```
+
+Compile the companion `order.c` as C even when the application target is C++. Fixed-layout
+binary input is decoded directly through the generated native descriptor after validating
+it against the codec schema. Variable `list`/`set`/`map` layouts retain the existing dynamic
+binary parser as a compatibility path before committing into the owning struct. Text formats
+retain the schema binder so enum names, field formats, and extended scalar rules remain
+identical to the dynamic API. `--lang cpp` without `--source-output` continues to generate
+data-only `std::string`/`std::vector` types and does not provide these serialization functions.
+
 ### Example 2b: Generate a Wasm Guest Adapter
 
 ```bash

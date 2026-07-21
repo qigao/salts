@@ -4,8 +4,8 @@
 
 set(TARGET_NAME data_bind)
 
-add_library(${TARGET_NAME} SHARED data_bind.c data_bind.h tbe_typed.c tbe_typed.h re.c re.h
-                                  tbe_helpers.c)
+add_library(${TARGET_NAME} SHARED data_bind.c data_bind.h data_bind_record.c tbe_typed.c
+                                  tbe_typed.h re.c re.h tbe_helpers.c)
 
 
 
@@ -61,8 +61,18 @@ cmake_add_test(test_data_bind_public_api
   LIBS TurboUtils::DataBind TurboUtils::TinyTest
   FOLDER "tbe/data_bind")
 
+cmake_add_test(test_data_bind_record
+  SOURCES test_data_bind_record.c
+  LIBS TurboUtils::DataBind TurboUtils::TinyTest
+  FOLDER "tbe/data_bind")
+
 cmake_add_test(test_data_bind_pool
   SOURCES test_data_bind_pool.c
+  LIBS TurboUtils::DataBind TurboUtils::TinyTest
+  FOLDER "tbe/data_bind")
+
+cmake_add_test(test_tbe_typed
+  SOURCES test_tbe_typed.c
   LIBS TurboUtils::DataBind TurboUtils::TinyTest
   FOLDER "tbe/data_bind")
 

@@ -609,6 +609,8 @@ spec("tbe_compiler") {
       check_str_contains(output, "parse_Heartbeat");
       check_str_contains(output, "create_obj");
       check_str_contains(output, "read_varstr");
+      check(strstr(output, "parse_record_v1_") == NULL);
+      check(strstr(output, "record_set_slot_") == NULL);
 
       free(output);
       cleanup_test_file(output_path);

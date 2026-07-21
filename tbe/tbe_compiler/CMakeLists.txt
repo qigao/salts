@@ -104,6 +104,18 @@ cmake_add_test(test_tbe_typed_order
   FOLDER "tbe/tbe_compiler")
 tbe_copy_turbonet_runtime_deps(test_tbe_typed_order)
 
+cmake_add_test(test_tbe_typed_order_cpp
+  SOURCES
+    test_typed_order_cpp.cpp
+    "${TBE_TYPED_ORDER_SOURCE}"
+  LIBS TurboUtils::DataBind TurboUtils::TinyTest
+  INCLUDES "${TBE_TYPED_ORDER_GENERATED_DIR}"
+  FOLDER "tbe/tbe_compiler")
+set_target_properties(test_tbe_typed_order_cpp PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+tbe_copy_turbonet_runtime_deps(test_tbe_typed_order_cpp)
+
 find_program(TBE_WASM_GUEST_CLANG NAMES clang clang.exe)
 if(TBE_WASM_GUEST_CLANG)
   set(TBE_WASM_ORDER_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_wasm")

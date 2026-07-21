@@ -52,6 +52,7 @@ extern "C" {
 typedef struct DataBind DataBind;
 typedef struct DataBindValue DataBindValue;
 typedef struct DataBindObject DataBindObject;
+typedef struct DataBindObject DataBindRecord;
 
 typedef enum DataBindStatus {
   DATA_BIND_OK = 0,
@@ -126,6 +127,54 @@ typedef struct DataBindMapEntry {
   const char *key;
   const DataBindValue *value;
 } DataBindMapEntry;
+
+/** Borrowed handle to one immutable record field. */
+typedef struct DataBindRecordField {
+  size_t size;
+  const DataBindValue *owner;
+  const DataBindValue *value;
+  const char *name;
+  size_t index;
+} DataBindRecordField;
+
+/** Borrowed immutable object view. */
+typedef struct DataBindRecordView {
+  size_t size;
+  const DataBindValue *value;
+} DataBindRecordView;
+
+/** Borrowed immutable list or set view. */
+typedef struct DataBindListView {
+  size_t size;
+  const DataBindValue *value;
+} DataBindListView;
+
+/** Borrowed immutable map view. */
+typedef struct DataBindRecordMapView {
+  size_t size;
+  const DataBindValue *value;
+} DataBindRecordMapView;
+
+/** Borrowed byte-counted UTF-8 string view. */
+typedef struct DataBindStringView {
+  size_t size;
+  const char *data;
+  size_t length;
+} DataBindStringView;
+
+/** Borrowed byte view. */
+typedef struct DataBindBytesView {
+  size_t size;
+  const uint8_t *data;
+  size_t length;
+} DataBindBytesView;
+
+#define DATA_BIND_RECORD_FIELD_INIT {sizeof(DataBindRecordField), NULL, NULL, NULL, 0}
+#define DATA_BIND_RECORD_VIEW_INIT {sizeof(DataBindRecordView), NULL}
+#define DATA_BIND_LIST_VIEW_INIT {sizeof(DataBindListView), NULL}
+#define DATA_BIND_RECORD_MAP_VIEW_INIT {sizeof(DataBindRecordMapView), NULL}
+#define DATA_BIND_STRING_VIEW_INIT {sizeof(DataBindStringView), NULL, 0}
+#define DATA_BIND_BYTES_VIEW_INIT {sizeof(DataBindBytesView), NULL, 0}
 
 typedef struct data_bind_stream_t data_bind_stream_t;
 
@@ -741,6 +790,158 @@ DATA_BIND_API DataBindStatus data_bind_object_write_xml(const DataBindObject *ob
 DATA_BIND_API DataBindStatus data_bind_object_write_csv(const DataBindObject *object,
                                                         DataBindWriteFn write, void *user,
                                                         DataBindError *error);
+
+/**
+ * @brief Immutable schema-bound record API.
+ *
+ * DataBindRecord is the record-oriented name for the existing opaque owning
+ * DataBindObject. JSON/YAML/XML/CSV constructors use their native binders. The
+ * binary constructor uses the internal parse_record_v1_* MIR ABI, whose typed
+ * callbacks address prebuilt fields by numeric slot rather than by field-name
+ * strings. A successfully constructed record is immutable and does not borrow
+ * its schema layout from the codec. All field,
+ * string, bytes, object, list, and map views borrow from it and become invalid
+ * when data_bind_record_free() is called. Freeing a record must not race any
+ * getter using the record or one of its borrowed views.
+ *
+ * Initialize every field/view output with its DATA_BIND_*_INIT macro. Name
+ * getters return DATA_BIND_ERR_TYPE_MISMATCH for a missing field, wrong field
+ * type, or out-of-range numeric conversion. Invalid arguments, uninitialized
+ * outputs, and collection indexes outside the view return
+ * DATA_BIND_ERR_INVALID_ARG. Failed getters leave caller value outputs
+ * unchanged.
+ *
+ * Example:
+ * @code
+ * DataBindStatus read_order_id(DataBind *codec, const char *json, size_t json_len,
+ *                              uint32_t *out, DataBindError *error) {
+ *   DataBindRecord *record = NULL;
+ *   DataBindStatus status =
+ *       data_bind_record_from_json(codec, "Order", json, json_len, &record, error);
+ *   if (status == DATA_BIND_OK)
+ *     status = data_bind_record_get_u32(record, "id", out, error);
+ *   data_bind_record_free(record);
+ *   return status;
+ * }
+ * @endcode
+ */
+DATA_BIND_API DataBindStatus data_bind_record_from_bin(DataBind *codec, const char *type_name,
+                                                       const uint8_t *data, size_t len,
+                                                       DataBindRecord **out_record,
+                                                       DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_from_json(DataBind *codec, const char *type_name,
+                                                        const char *json, size_t len,
+                                                        DataBindRecord **out_record,
+                                                        DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_from_yaml(DataBind *codec, const char *type_name,
+                                                        const char *yaml, size_t len,
+                                                        DataBindRecord **out_record,
+                                                        DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_from_xml(DataBind *codec, const char *type_name,
+                                                       const char *xml, size_t len,
+                                                       DataBindRecord **out_record,
+                                                       DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_from_csv(DataBind *codec, const char *type_name,
+                                                       const char *csv, size_t len, size_t row,
+                                                       DataBindRecord **out_record,
+                                                       DataBindError *error);
+
+DATA_BIND_API const char *data_bind_record_type_name(const DataBindRecord *record);
+DATA_BIND_API void data_bind_record_free(DataBindRecord *record);
+
+DATA_BIND_API DataBindStatus data_bind_record_serialize_bin(
+    DataBind *codec, const DataBindRecord *record, uint8_t **out_bin, size_t *out_len,
+    DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_serialize_bin_into(
+    DataBind *codec, const DataBindRecord *record, uint8_t *output, size_t capacity,
+    size_t *out_len, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_serialize_json(
+    const DataBindRecord *record, char **out_json, size_t *out_len, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_serialize_yaml(
+    const DataBindRecord *record, char **out_yaml, size_t *out_len, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_serialize_xml(
+    const DataBindRecord *record, char **out_xml, size_t *out_len, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_serialize_csv(
+    const DataBindRecord *record, char **out_csv, size_t *out_len, DataBindError *error);
+
+/** Resolve a direct field name once. The returned handle borrows from the record. */
+DATA_BIND_API DataBindStatus data_bind_record_find_field(
+    const DataBindRecord *record, const char *name, DataBindRecordField *out_field,
+    DataBindError *error);
+
+/** Resolve a direct field name in a borrowed nested object view. */
+DATA_BIND_API DataBindStatus data_bind_record_view_find_field(
+    const DataBindRecordView *view, const char *name, DataBindRecordField *out_field,
+    DataBindError *error);
+
+/** Return the borrowed dynamic value for extended scalar inspection. */
+DATA_BIND_API const DataBindValue *
+data_bind_record_field_value(const DataBindRecordField *field);
+
+DATA_BIND_API DataBindStatus data_bind_record_field_get_i32(
+    const DataBindRecordField *field, int32_t *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_field_get_u32(
+    const DataBindRecordField *field, uint32_t *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_field_get_i64(
+    const DataBindRecordField *field, int64_t *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_field_get_u64(
+    const DataBindRecordField *field, uint64_t *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_field_get_double(
+    const DataBindRecordField *field, double *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_field_get_bool(
+    const DataBindRecordField *field, int *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_field_get_uuid(
+    const DataBindRecordField *field, uint8_t out[DATA_BIND_UUID_SIZE], DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_field_get_string(
+    const DataBindRecordField *field, DataBindStringView *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_field_get_bytes(
+    const DataBindRecordField *field, DataBindBytesView *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_field_get_object(
+    const DataBindRecordField *field, DataBindRecordView *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_field_get_list(
+    const DataBindRecordField *field, DataBindListView *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_field_get_map(
+    const DataBindRecordField *field, DataBindRecordMapView *out, DataBindError *error);
+
+DATA_BIND_API DataBindStatus data_bind_record_get_i32(
+    const DataBindRecord *record, const char *name, int32_t *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_get_u32(
+    const DataBindRecord *record, const char *name, uint32_t *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_get_i64(
+    const DataBindRecord *record, const char *name, int64_t *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_get_u64(
+    const DataBindRecord *record, const char *name, uint64_t *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_get_double(
+    const DataBindRecord *record, const char *name, double *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_get_bool(
+    const DataBindRecord *record, const char *name, int *out, DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_get_uuid(
+    const DataBindRecord *record, const char *name, uint8_t out[DATA_BIND_UUID_SIZE],
+    DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_get_string(
+    const DataBindRecord *record, const char *name, DataBindStringView *out,
+    DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_get_bytes(
+    const DataBindRecord *record, const char *name, DataBindBytesView *out,
+    DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_get_object(
+    const DataBindRecord *record, const char *name, DataBindRecordView *out,
+    DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_get_list(
+    const DataBindRecord *record, const char *name, DataBindListView *out,
+    DataBindError *error);
+DATA_BIND_API DataBindStatus data_bind_record_get_map(
+    const DataBindRecord *record, const char *name, DataBindRecordMapView *out,
+    DataBindError *error);
+
+DATA_BIND_API size_t data_bind_list_view_count(const DataBindListView *view);
+DATA_BIND_API DataBindStatus data_bind_list_view_at(
+    const DataBindListView *view, size_t index, DataBindRecordField *out_field,
+    DataBindError *error);
+DATA_BIND_API size_t data_bind_record_map_view_count(const DataBindRecordMapView *view);
+DATA_BIND_API DataBindStatus data_bind_record_map_view_at(
+    const DataBindRecordMapView *view, size_t index, DataBindStringView *out_key,
+    DataBindRecordField *out_value, DataBindError *error);
 
 DATA_BIND_API void data_bind_serialized_free(char *data);
 DATA_BIND_API void data_bind_binary_free(void *data);

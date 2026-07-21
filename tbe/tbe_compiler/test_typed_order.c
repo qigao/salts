@@ -141,6 +141,35 @@ spec("generated typed Order") {
     Order_clear(&decoded);
   }
 
+  it("should preserve the owning struct when direct binary decoding fails") {
+    uint8_t *encoded = NULL;
+    size_t encoded_len = 0;
+    check_status_ok(Order_to_bin(&order, &encoded, &encoded_len, &error), &error);
+    check_not_null(encoded);
+    check_size_gt(encoded_len, 1);
+    if (encoded != NULL && encoded_len > 1) {
+      check_int_eq(Order_from_bin(codec, &order, encoded, encoded_len - 1, &error),
+                   DATA_BIND_ERR_PARSE);
+      check_order(&order);
+    }
+    tbe_typed_serialized_free(encoded);
+  }
+
+  it("should reject a generated descriptor used with a different schema") {
+    static const char other_schema[] =
+        "schema Other [byte_order(little)]; message Order { uint32 id; }";
+    DataBind *other = NULL;
+    uint8_t wire[4] = {0};
+    check_int_eq(data_bind_create_from_text(other_schema, sizeof(other_schema) - 1, &other, &error),
+                 DATA_BIND_OK);
+    check_not_null(other);
+    if (other != NULL) {
+      check_int_eq(Order_from_bin(other, &order, wire, sizeof(wire), &error), DATA_BIND_ERR_SCHEMA);
+      check_order(&order);
+    }
+    data_bind_free(other);
+  }
+
   it("should round-trip JSON YAML CSV and XML") {
     static const char *formats[] = {"json", "yaml", "csv", "xml"};
     size_t i;
