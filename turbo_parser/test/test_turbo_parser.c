@@ -312,6 +312,61 @@ spec("turbo_parser") {
       check_null(doc);
     }
 
+    it("should look up mapping values and report node locations") {
+      const char *yaml_data = "name: turbo\nitems:\n  - one\n";
+      turbo_yaml_doc_t *doc = NULL;
+      turbo_yaml_node_t *root;
+      turbo_yaml_node_t *name;
+      turbo_yaml_location_t location = {0};
+      char *text;
+
+      check_int_eq(turbo_parse_yaml((const uint8_t *)yaml_data, strlen(yaml_data), &doc), 0);
+      root = turbo_yaml_root(doc);
+      check_true(turbo_yaml_mapping_contains(doc, root, "name"));
+      check_false(turbo_yaml_mapping_contains(doc, root, "missing"));
+      name = turbo_yaml_mapping_get(doc, root, "name");
+      check_not_null(name);
+      text = turbo_yaml_scalar_dup(doc, name);
+      check_str_eq(text, "turbo");
+      turbo_yaml_string_free(text);
+      check_true(turbo_yaml_node_location(name, &location));
+      check_uint_eq(location.start_line, 1);
+      check_uint_eq(location.start_column, 7);
+      check_false(turbo_yaml_node_location(NULL, &location));
+      turbo_free_yaml(&doc);
+    }
+
+    it("should return structured diagnostics for duplicate YAML keys") {
+      const char *yaml_data = "name: first\nname: second\n";
+      turbo_yaml_doc_t *doc = (turbo_yaml_doc_t *)(uintptr_t)1;
+      turbo_yaml_error_t error = {0};
+
+      check_int_ne(turbo_parse_yaml_ex((const uint8_t *)yaml_data, strlen(yaml_data), &doc, &error),
+                   0);
+      check_null(doc);
+      check_int_eq(error.code, TURBO_YAML_ERROR_DUPLICATE_KEY);
+      check_uint_eq(error.location.start_line, 2);
+      check(error.message[0] != '\0');
+    }
+
+    it("should expose resolved alias targets") {
+      const char *yaml_data = "defaults: &base\n  timeout: 10\ncopy: *base\n";
+      turbo_yaml_doc_t *doc = NULL;
+      turbo_yaml_node_t *root;
+      turbo_yaml_node_t *defaults;
+      turbo_yaml_node_t *alias;
+
+      check_int_eq(turbo_parse_yaml((const uint8_t *)yaml_data, strlen(yaml_data), &doc), 0);
+      root = turbo_yaml_root(doc);
+      defaults = turbo_yaml_mapping_get(doc, root, "defaults");
+      alias = turbo_yaml_mapping_get(doc, root, "copy");
+      check_not_null(defaults);
+      check_int_eq(turbo_yaml_node_type(alias), TURBO_YAML_NODE_ALIAS);
+      check_ptr_eq(turbo_yaml_alias_target(alias), defaults);
+      check_null(turbo_yaml_alias_target(defaults));
+      turbo_free_yaml(&doc);
+    }
+
     it("should emit YAML documents and selected nodes") {
       const char *yaml_data = "name: turbo\nitems: [1, 2]\n";
       turbo_yaml_doc_t *doc = NULL;

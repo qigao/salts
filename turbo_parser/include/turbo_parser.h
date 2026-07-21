@@ -88,9 +88,9 @@ CXX_C_API int turbo_parse_json_sax(const uint8_t *data, size_t len,
  * @param ctx User context passed unchanged to callbacks.
  * @return 0 on success, -1 on invalid input, syntax error, allocation failure,
  * or a non-zero callback result.
- *
  * Number callbacks receive a borrowed, non-NUL-terminated slice. Other callback
  * values retain the same decoded semantics as turbo_json_sax_handler_t.
+ *
  * @code
  * static int number(void *ctx, const char *text, size_t len) {
  *   return consume_exact_number(ctx, text, len);
@@ -474,6 +474,37 @@ typedef enum {
   TURBO_YAML_SCALAR_STRING
 } turbo_yaml_scalar_kind_t;
 
+typedef enum {
+  TURBO_YAML_ERROR_NONE = 0,
+  TURBO_YAML_ERROR_INVALID_ARGUMENT,
+  TURBO_YAML_ERROR_OUT_OF_MEMORY,
+  TURBO_YAML_ERROR_SYNTAX,
+  TURBO_YAML_ERROR_UNEXPECTED_END,
+  TURBO_YAML_ERROR_INDENTATION,
+  TURBO_YAML_ERROR_ESCAPE,
+  TURBO_YAML_ERROR_ANCHOR,
+  TURBO_YAML_ERROR_ALIAS,
+  TURBO_YAML_ERROR_TAG,
+  TURBO_YAML_ERROR_DUPLICATE_KEY,
+  TURBO_YAML_ERROR_IO,
+  TURBO_YAML_ERROR_INPUT_TOO_LARGE
+} turbo_yaml_error_code_t;
+
+typedef struct turbo_yaml_location_s {
+  size_t offset;
+  size_t length;
+  uint32_t start_line;
+  uint32_t start_column;
+  uint32_t end_line;
+  uint32_t end_column;
+} turbo_yaml_location_t;
+
+typedef struct turbo_yaml_error_s {
+  turbo_yaml_error_code_t code;
+  turbo_yaml_location_t location;
+  char message[128];
+} turbo_yaml_error_t;
+
 typedef struct turbo_yaml_sax_handler_s {
   int (*on_document_start)(void *ctx);
   int (*on_document_end)(void *ctx);
@@ -489,6 +520,13 @@ typedef struct turbo_yaml_sax_handler_s {
 
 /** Parse one YAML document into an owned document handle. */
 CXX_C_API int turbo_parse_yaml(const uint8_t *data, size_t len, turbo_yaml_doc_t **out);
+/**
+ * Parse one YAML document and copy diagnostics into caller-owned storage.
+ * On failure, out is set to NULL and error contains a stable code, location,
+ * and message. error may be NULL when diagnostics are not needed.
+ */
+CXX_C_API int turbo_parse_yaml_ex(const uint8_t *data, size_t len, turbo_yaml_doc_t **out,
+                                  turbo_yaml_error_t *error);
 CXX_C_API int turbo_parse_yaml_sax(const uint8_t *data, size_t len,
                                    const turbo_yaml_sax_handler_t *handler, void *ctx);
 /**
@@ -519,6 +557,17 @@ CXX_C_API turbo_yaml_node_t *turbo_yaml_sequence_get(const turbo_yaml_node_t *no
 CXX_C_API size_t turbo_yaml_mapping_size(const turbo_yaml_node_t *node);
 CXX_C_API turbo_yaml_node_t *turbo_yaml_mapping_key(const turbo_yaml_node_t *node, size_t index);
 CXX_C_API turbo_yaml_node_t *turbo_yaml_mapping_value(const turbo_yaml_node_t *node, size_t index);
+/** Return a borrowed mapping value for an exact, null-terminated key. */
+CXX_C_API turbo_yaml_node_t *turbo_yaml_mapping_get(const turbo_yaml_doc_t *doc,
+                                                    const turbo_yaml_node_t *node, const char *key);
+CXX_C_API bool turbo_yaml_mapping_contains(const turbo_yaml_doc_t *doc,
+                                           const turbo_yaml_node_t *node, const char *key);
+
+/** Copy source coordinates for a borrowed node into caller-owned storage. */
+CXX_C_API bool turbo_yaml_node_location(const turbo_yaml_node_t *node,
+                                        turbo_yaml_location_t *location);
+/** Return the borrowed resolved target of an alias node, or NULL. */
+CXX_C_API turbo_yaml_node_t *turbo_yaml_alias_target(const turbo_yaml_node_t *node);
 
 /** Execute a YPATH expression relative to context, or the root when context is NULL. */
 CXX_C_API turbo_yaml_path_result_t *turbo_yaml_path_query(const turbo_yaml_doc_t *doc,

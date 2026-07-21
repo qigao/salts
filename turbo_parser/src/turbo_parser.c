@@ -175,28 +175,102 @@ struct turbo_yaml_sax_parser_s {
   char error[256];
 };
 
-int turbo_parse_yaml(const uint8_t *data, size_t len, turbo_yaml_doc_t **out) {
+static void turbo_yaml_copy_location(turbo_yaml_location_t *destination,
+                                     const cyaml_span_t *source) {
+  if (!destination) return;
+  memset(destination, 0, sizeof(*destination));
+  if (!source) return;
+  destination->offset = source->off;
+  destination->length = source->len;
+  destination->start_line = source->start_line;
+  destination->start_column = source->start_col;
+  destination->end_line = source->end_line;
+  destination->end_column = source->end_col;
+}
+
+static turbo_yaml_error_code_t turbo_yaml_error_code(cyaml_err_t code) {
+  switch (code) {
+  case CYAML_OK:
+    return TURBO_YAML_ERROR_NONE;
+  case CYAML_ERR_NOMEM:
+    return TURBO_YAML_ERROR_OUT_OF_MEMORY;
+  case CYAML_ERR_SYNTAX:
+    return TURBO_YAML_ERROR_SYNTAX;
+  case CYAML_ERR_EOF:
+    return TURBO_YAML_ERROR_UNEXPECTED_END;
+  case CYAML_ERR_INDENT:
+    return TURBO_YAML_ERROR_INDENTATION;
+  case CYAML_ERR_ESCAPE:
+    return TURBO_YAML_ERROR_ESCAPE;
+  case CYAML_ERR_ANCHOR:
+    return TURBO_YAML_ERROR_ANCHOR;
+  case CYAML_ERR_ALIAS:
+    return TURBO_YAML_ERROR_ALIAS;
+  case CYAML_ERR_TAG:
+    return TURBO_YAML_ERROR_TAG;
+  case CYAML_ERR_DUP_KEY:
+    return TURBO_YAML_ERROR_DUPLICATE_KEY;
+  case CYAML_ERR_IO:
+    return TURBO_YAML_ERROR_IO;
+  default:
+    return TURBO_YAML_ERROR_SYNTAX;
+  }
+}
+
+static void turbo_yaml_set_error(turbo_yaml_error_t *error, turbo_yaml_error_code_t code,
+                                 const cyaml_span_t *location, const char *message) {
+  if (!error) return;
+  memset(error, 0, sizeof(*error));
+  error->code = code;
+  turbo_yaml_copy_location(&error->location, location);
+  if (message) snprintf(error->message, sizeof(error->message), "%s", message);
+}
+
+int turbo_parse_yaml_ex(const uint8_t *data, size_t len, turbo_yaml_doc_t **out,
+                        turbo_yaml_error_t *error) {
   turbo_yaml_doc_t *yaml;
-  cyaml_error_t error = {0};
-  if (!data || !out || len > UINT32_MAX) return -1;
+  cyaml_error_t parse_error = {0};
+  turbo_yaml_set_error(error, TURBO_YAML_ERROR_NONE, NULL, NULL);
+  if (out) *out = NULL;
+  if (!data || !out) {
+    turbo_yaml_set_error(error, TURBO_YAML_ERROR_INVALID_ARGUMENT, NULL,
+                         "YAML input and output are required");
+    return -1;
+  }
+  if (len > UINT32_MAX) {
+    turbo_yaml_set_error(error, TURBO_YAML_ERROR_INPUT_TOO_LARGE, NULL,
+                         "YAML input exceeds the supported size");
+    return -1;
+  }
   *out = NULL;
   yaml = (turbo_yaml_doc_t *)calloc(1, sizeof(*yaml));
-  if (!yaml) return -1;
+  if (!yaml) {
+    turbo_yaml_set_error(error, TURBO_YAML_ERROR_OUT_OF_MEMORY, NULL, "Out of memory");
+    return -1;
+  }
   yaml->source = (char *)malloc(len + 1);
   if (!yaml->source) {
     free(yaml);
+    turbo_yaml_set_error(error, TURBO_YAML_ERROR_OUT_OF_MEMORY, NULL, "Out of memory");
     return -1;
   }
   memcpy(yaml->source, data, len);
   yaml->source[len] = '\0';
-  yaml->doc = cyaml_parse(yaml->source, len, NULL, &error);
+  yaml->doc = cyaml_parse(yaml->source, len, NULL, &parse_error);
   if (!yaml->doc) {
+    const char *message = parse_error.msg[0] ? parse_error.msg : cyaml_strerror(parse_error.code);
+    turbo_yaml_set_error(error, turbo_yaml_error_code(parse_error.code), &parse_error.span,
+                         message);
     free(yaml->source);
     free(yaml);
     return -1;
   }
   *out = yaml;
   return 0;
+}
+
+int turbo_parse_yaml(const uint8_t *data, size_t len, turbo_yaml_doc_t **out) {
+  return turbo_parse_yaml_ex(data, len, out, NULL);
 }
 
 static turbo_yaml_scalar_kind_t turbo_yaml_sax_kind(cyaml_scalar_kind_t kind) {
@@ -416,6 +490,30 @@ turbo_yaml_node_t *turbo_yaml_mapping_value(const turbo_yaml_node_t *node, size_
   if (index > UINT32_MAX) return NULL;
   pair = cyaml_map_at((const cyaml_node_t *)node, (uint32_t)index);
   return pair ? (turbo_yaml_node_t *)pair->val : NULL;
+}
+
+turbo_yaml_node_t *turbo_yaml_mapping_get(const turbo_yaml_doc_t *doc,
+                                          const turbo_yaml_node_t *node, const char *key) {
+  return (doc && node && key)
+             ? (turbo_yaml_node_t *)cyaml_get(doc->doc, (const cyaml_node_t *)node, key)
+             : NULL;
+}
+
+bool turbo_yaml_mapping_contains(const turbo_yaml_doc_t *doc, const turbo_yaml_node_t *node,
+                                 const char *key) {
+  return turbo_yaml_mapping_get(doc, node, key) != NULL;
+}
+
+bool turbo_yaml_node_location(const turbo_yaml_node_t *node, turbo_yaml_location_t *location) {
+  const cyaml_node_t *raw = (const cyaml_node_t *)node;
+  if (!raw || !location) return false;
+  turbo_yaml_copy_location(location, &raw->span);
+  return true;
+}
+
+turbo_yaml_node_t *turbo_yaml_alias_target(const turbo_yaml_node_t *node) {
+  const cyaml_node_t *raw = (const cyaml_node_t *)node;
+  return raw && raw->type == CYAML_ALIAS ? (turbo_yaml_node_t *)raw->alias.target : NULL;
 }
 
 turbo_yaml_path_result_t *turbo_yaml_path_query(const turbo_yaml_doc_t *doc,

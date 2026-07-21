@@ -104,6 +104,106 @@ void test_cyaml_parse_with_options(void)
     cyaml_free(doc);
 }
 
+void test_cyaml_parse_rejects_duplicate_keys_by_default(void)
+{
+    const char* yaml = "name: first\nname: second\n";
+    cyaml_error_t err;
+    cyaml_doc_t* doc = cyaml_parse(yaml, strlen(yaml), NULL, &err);
+    check_null(doc);
+    check_int_eq(err.code, CYAML_ERR_DUP_KEY);
+    check_uint_eq(err.span.start_line, 2);
+    check_true(err.msg[0] != '\0');
+}
+
+void test_cyaml_parse_rejects_duplicate_keys_when_disabled(void)
+{
+    const char* yaml = "name: first\nname: second\n";
+    cyaml_opts_t opts = CYAML_OPTS_DEFAULT;
+    cyaml_error_t err;
+    opts.dup_keys = false;
+    cyaml_doc_t* doc = cyaml_parse(yaml, strlen(yaml), &opts, &err);
+    check_null(doc);
+    check_int_eq(err.code, CYAML_ERR_DUP_KEY);
+}
+
+void test_cyaml_parse_rejects_duplicate_keys_without_error_output(void)
+{
+    const char* yaml = "name: first\nname: second\n";
+    check_null(cyaml_parse(yaml, strlen(yaml), NULL, NULL));
+}
+
+void test_cyaml_parse_allows_duplicate_keys_when_enabled(void)
+{
+    const char* yaml = "name: first\nname: second\n";
+    cyaml_opts_t opts = CYAML_OPTS_DEFAULT;
+    cyaml_error_t err;
+    opts.dup_keys = true;
+    cyaml_doc_t* doc = cyaml_parse(yaml, strlen(yaml), &opts, &err);
+    check_not_null(doc);
+    check_uint_eq(cyaml_map_len(cyaml_root(doc)), 2);
+    cyaml_free(doc);
+}
+
+void test_cyaml_parse_rejects_nested_duplicate_keys(void)
+{
+    const char* yaml = "outer:\n  name: first\n  name: second\n";
+    cyaml_error_t err;
+    cyaml_doc_t* doc = cyaml_parse(yaml, strlen(yaml), NULL, &err);
+    check_null(doc);
+    check_int_eq(err.code, CYAML_ERR_DUP_KEY);
+    check_uint_eq(err.span.start_line, 3);
+}
+
+void test_cyaml_parse_rejects_equivalent_quoted_key(void)
+{
+    const char* yaml = "name: first\n\"name\": second\n";
+    cyaml_error_t err;
+    cyaml_doc_t* doc = cyaml_parse(yaml, strlen(yaml), NULL, &err);
+    check_null(doc);
+    check_int_eq(err.code, CYAML_ERR_DUP_KEY);
+    check_uint_eq(err.span.start_line, 2);
+}
+
+void test_cyaml_parse_rejects_duplicate_complex_keys(void)
+{
+    const char* yaml = "? [one, two]\n: first\n? [one, two]\n: second\n";
+    cyaml_error_t err;
+    cyaml_doc_t* doc = cyaml_parse(yaml, strlen(yaml), NULL, &err);
+    check_null(doc);
+    check_int_eq(err.code, CYAML_ERR_DUP_KEY);
+    check_uint_eq(err.span.start_line, 3);
+}
+
+void test_cyaml_parse_rejects_duplicate_recursive_alias_keys(void)
+{
+    const char* yaml = "? &first [*first]\n: one\n? &second [*second]\n: two\n";
+    cyaml_error_t err;
+    cyaml_doc_t* doc = cyaml_parse(yaml, strlen(yaml), NULL, &err);
+    check_null(doc);
+    check_int_eq(err.code, CYAML_ERR_DUP_KEY);
+    check_uint_eq(err.span.start_line, 3);
+}
+
+void test_cyaml_parse_accepts_distinct_keys(void)
+{
+    const char* yaml = "first: one\nsecond: two\n";
+    cyaml_error_t err;
+    cyaml_doc_t* doc = cyaml_parse(yaml, strlen(yaml), NULL, &err);
+    check_not_null(doc);
+    check_uint_eq(cyaml_map_len(cyaml_root(doc)), 2);
+    cyaml_free(doc);
+}
+
+void test_cyaml_parse_accepts_distinct_typed_keys(void)
+{
+    const char* yaml = "\"1\": text\n1: number\n";
+    cyaml_error_t err;
+    cyaml_doc_t* doc = cyaml_parse(yaml, strlen(yaml), NULL, &err);
+    check_not_null(doc);
+    check_uint_eq(cyaml_map_len(cyaml_root(doc)), 2);
+    cyaml_free(doc);
+}
+
 void test_cyaml_parse_syntax_error(void)
 {
     const char* yaml = ":\n  invalid";
@@ -2284,6 +2384,16 @@ suite("cyaml API") {
         CYAML_CASE(cyaml_parse_simple_map);
         CYAML_CASE(cyaml_parse_simple_seq);
         CYAML_CASE(cyaml_parse_with_options);
+        CYAML_CASE(cyaml_parse_rejects_duplicate_keys_by_default);
+        CYAML_CASE(cyaml_parse_rejects_duplicate_keys_when_disabled);
+        CYAML_CASE(cyaml_parse_rejects_duplicate_keys_without_error_output);
+        CYAML_CASE(cyaml_parse_allows_duplicate_keys_when_enabled);
+        CYAML_CASE(cyaml_parse_rejects_nested_duplicate_keys);
+        CYAML_CASE(cyaml_parse_rejects_equivalent_quoted_key);
+        CYAML_CASE(cyaml_parse_rejects_duplicate_complex_keys);
+        CYAML_CASE(cyaml_parse_rejects_duplicate_recursive_alias_keys);
+        CYAML_CASE(cyaml_parse_accepts_distinct_keys);
+        CYAML_CASE(cyaml_parse_accepts_distinct_typed_keys);
         CYAML_CASE(cyaml_parse_syntax_error);
         CYAML_CASE(cyaml_free_null);
         CYAML_CASE(cyaml_parse_stream_single_doc);

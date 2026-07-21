@@ -1,4 +1,5 @@
 #include "cyaml_internal.h"
+#include <math.h>
 
 // #region Token Types
 
@@ -2465,6 +2466,8 @@ static bool parse_event(yaml_parser_t* p, event_t* event)
 typedef struct {
     yaml_parser_t* parser;
     cyaml_doc_t* doc;
+    bool allow_duplicate_keys;
+    bool failed;
     struct {
         cyaml_span_t name;
         cyaml_node_t* node;
@@ -2555,6 +2558,214 @@ static bool seq_append(cyaml_node_t* seq, cyaml_node_t* item)
     return true;
 }
 
+typedef enum {
+    NODE_COMPARE_ERROR = -1,
+    NODE_COMPARE_DIFFERENT = 0,
+    NODE_COMPARE_EQUAL = 1
+} node_compare_t;
+
+typedef struct {
+    const cyaml_node_t* lhs;
+    const cyaml_node_t* rhs;
+} compared_node_pair_t;
+
+typedef struct {
+    const cyaml_doc_t* doc;
+    compared_node_pair_t* pairs;
+    size_t count;
+    size_t cap;
+} node_compare_ctx_t;
+
+static node_compare_t node_equal_impl(node_compare_ctx_t* ctx,
+    const cyaml_node_t* lhs, const cyaml_node_t* rhs);
+
+static node_compare_t scalar_equal(const cyaml_doc_t* doc,
+    const cyaml_node_t* lhs, const cyaml_node_t* rhs)
+{
+    cyaml_scalar_kind_t lhs_kind = cyaml_scalar_kind(doc, lhs);
+    cyaml_scalar_kind_t rhs_kind = cyaml_scalar_kind(doc, rhs);
+    if (lhs_kind != rhs_kind)
+        return NODE_COMPARE_DIFFERENT;
+
+    const char* src = cyaml_src(doc);
+    if (lhs->span.len == rhs->span.len
+        && memcmp(src + lhs->span.off, src + rhs->span.off, lhs->span.len) == 0)
+        return NODE_COMPARE_EQUAL;
+
+    switch (lhs_kind) {
+    case CYAML_KIND_BOOL: {
+        bool lhs_value;
+        bool rhs_value;
+        return cyaml_as_bool(doc, lhs, &lhs_value)
+                && cyaml_as_bool(doc, rhs, &rhs_value)
+            ? (lhs_value == rhs_value ? NODE_COMPARE_EQUAL : NODE_COMPARE_DIFFERENT)
+            : NODE_COMPARE_DIFFERENT;
+    }
+    case CYAML_KIND_INT: {
+        int64_t lhs_value;
+        int64_t rhs_value;
+        if (cyaml_as_int(doc, lhs, &lhs_value) && cyaml_as_int(doc, rhs, &rhs_value))
+            return lhs_value == rhs_value ? NODE_COMPARE_EQUAL : NODE_COMPARE_DIFFERENT;
+        uint64_t lhs_unsigned;
+        uint64_t rhs_unsigned;
+        if (cyaml_as_uint(doc, lhs, &lhs_unsigned) && cyaml_as_uint(doc, rhs, &rhs_unsigned))
+            return lhs_unsigned == rhs_unsigned ? NODE_COMPARE_EQUAL : NODE_COMPARE_DIFFERENT;
+        break;
+    }
+    case CYAML_KIND_FLOAT: {
+        double lhs_value;
+        double rhs_value;
+        if (cyaml_as_float(doc, lhs, &lhs_value) && cyaml_as_float(doc, rhs, &rhs_value)) {
+            if (isnan(lhs_value) && isnan(rhs_value))
+                return NODE_COMPARE_EQUAL;
+            return lhs_value == rhs_value ? NODE_COMPARE_EQUAL : NODE_COMPARE_DIFFERENT;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    size_t lhs_len;
+    size_t rhs_len;
+    char* lhs_value = cyaml_scalar_strn(doc, lhs, &lhs_len);
+    if (!lhs_value)
+        return NODE_COMPARE_ERROR;
+    char* rhs_value = cyaml_scalar_strn(doc, rhs, &rhs_len);
+    if (!rhs_value) {
+        free(lhs_value);
+        return NODE_COMPARE_ERROR;
+    }
+    node_compare_t result = lhs_len == rhs_len
+            && memcmp(lhs_value, rhs_value, lhs_len) == 0
+        ? NODE_COMPARE_EQUAL
+        : NODE_COMPARE_DIFFERENT;
+    free(rhs_value);
+    free(lhs_value);
+    return result;
+}
+
+static node_compare_t remember_node_pair(node_compare_ctx_t* ctx,
+    const cyaml_node_t* lhs, const cyaml_node_t* rhs)
+{
+    for (size_t i = 0; i < ctx->count; i++) {
+        if (ctx->pairs[i].lhs == lhs && ctx->pairs[i].rhs == rhs)
+            return NODE_COMPARE_EQUAL;
+    }
+    if (ctx->count >= ctx->cap) {
+        size_t new_cap = ctx->cap ? ctx->cap * 2 : COMPOSE_STACK_INIT_CAP;
+        compared_node_pair_t* pairs = realloc(ctx->pairs, new_cap * sizeof(*pairs));
+        if (!pairs)
+            return NODE_COMPARE_ERROR;
+        ctx->pairs = pairs;
+        ctx->cap = new_cap;
+    }
+    ctx->pairs[ctx->count++] = (compared_node_pair_t) { lhs, rhs };
+    return NODE_COMPARE_DIFFERENT;
+}
+
+static node_compare_t node_equal_impl(node_compare_ctx_t* ctx,
+    const cyaml_node_t* lhs, const cyaml_node_t* rhs)
+{
+    if (lhs == rhs)
+        return NODE_COMPARE_EQUAL;
+    if (!lhs || !rhs)
+        return NODE_COMPARE_DIFFERENT;
+    if (lhs->type == CYAML_ALIAS && lhs->alias.target)
+        return node_equal_impl(ctx, lhs->alias.target, rhs);
+    if (rhs->type == CYAML_ALIAS && rhs->alias.target)
+        return node_equal_impl(ctx, lhs, rhs->alias.target);
+    if (lhs->type != rhs->type)
+        return NODE_COMPARE_DIFFERENT;
+
+    if (lhs->tag.len != rhs->tag.len
+        || (lhs->tag.len > 0
+            && memcmp(cyaml_src(ctx->doc) + lhs->tag.off,
+                   cyaml_src(ctx->doc) + rhs->tag.off, lhs->tag.len)
+                != 0))
+        return NODE_COMPARE_DIFFERENT;
+
+    switch (lhs->type) {
+    case CYAML_NULL:
+        return NODE_COMPARE_EQUAL;
+    case CYAML_SCALAR:
+        return scalar_equal(ctx->doc, lhs, rhs);
+    case CYAML_ALIAS:
+        return lhs->anchor.len == rhs->anchor.len
+                && memcmp(cyaml_src(ctx->doc) + lhs->anchor.off,
+                       cyaml_src(ctx->doc) + rhs->anchor.off, lhs->anchor.len)
+                    == 0
+            ? NODE_COMPARE_EQUAL
+            : NODE_COMPARE_DIFFERENT;
+    case CYAML_SEQ:
+        if (lhs->seq.count != rhs->seq.count)
+            return NODE_COMPARE_DIFFERENT;
+        size_t seq_checkpoint = ctx->count;
+        {
+            node_compare_t remembered = remember_node_pair(ctx, lhs, rhs);
+            if (remembered != NODE_COMPARE_DIFFERENT)
+                return remembered;
+        }
+        for (uint32_t i = 0; i < lhs->seq.count; i++) {
+            node_compare_t result = node_equal_impl(ctx, lhs->seq.items[i], rhs->seq.items[i]);
+            if (result != NODE_COMPARE_EQUAL) {
+                ctx->count = seq_checkpoint;
+                return result;
+            }
+        }
+        ctx->count = seq_checkpoint;
+        return NODE_COMPARE_EQUAL;
+    case CYAML_MAP:
+        if (lhs->map.count != rhs->map.count)
+            return NODE_COMPARE_DIFFERENT;
+        size_t map_checkpoint = ctx->count;
+        {
+            node_compare_t remembered = remember_node_pair(ctx, lhs, rhs);
+            if (remembered != NODE_COMPARE_DIFFERENT)
+                return remembered;
+        }
+        for (uint32_t i = 0; i < lhs->map.count; i++) {
+            bool found = false;
+            for (uint32_t j = 0; j < rhs->map.count; j++) {
+                node_compare_t keys = node_equal_impl(ctx,
+                    lhs->map.pairs[i].key, rhs->map.pairs[j].key);
+                if (keys == NODE_COMPARE_ERROR) {
+                    ctx->count = map_checkpoint;
+                    return NODE_COMPARE_ERROR;
+                }
+                if (keys != NODE_COMPARE_EQUAL)
+                    continue;
+                node_compare_t values = node_equal_impl(ctx,
+                    lhs->map.pairs[i].val, rhs->map.pairs[j].val);
+                if (values == NODE_COMPARE_ERROR) {
+                    ctx->count = map_checkpoint;
+                    return NODE_COMPARE_ERROR;
+                }
+                if (values == NODE_COMPARE_EQUAL) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                ctx->count = map_checkpoint;
+                return NODE_COMPARE_DIFFERENT;
+            }
+        }
+        ctx->count = map_checkpoint;
+        return NODE_COMPARE_EQUAL;
+    }
+    return NODE_COMPARE_DIFFERENT;
+}
+
+static node_compare_t node_equal(const cyaml_doc_t* doc,
+    const cyaml_node_t* lhs, const cyaml_node_t* rhs)
+{
+    node_compare_ctx_t ctx = { .doc = doc };
+    node_compare_t result = node_equal_impl(&ctx, lhs, rhs);
+    free(ctx.pairs);
+    return result;
+}
+
 static bool map_append(cyaml_node_t* map, cyaml_node_t* key, cyaml_node_t* val)
 {
     if (map->map.count >= map->map.cap) {
@@ -2569,6 +2780,36 @@ static bool map_append(cyaml_node_t* map, cyaml_node_t* key, cyaml_node_t* val)
     map->map.pairs[map->map.count].val = val;
     map->map.count++;
     return true;
+}
+
+static bool map_commit(composer_t* c, cyaml_node_t* map,
+    cyaml_node_t* key, cyaml_node_t* val)
+{
+    if (!c->allow_duplicate_keys) {
+        for (uint32_t i = 0; i < map->map.count; i++) {
+            node_compare_t result = node_equal(c->doc, map->map.pairs[i].key, key);
+            if (result == NODE_COMPARE_ERROR) {
+                c->failed = true;
+                set_synerr(c->parser->scanner, SYNERR_NOMEM);
+                return false;
+            }
+            if (result == NODE_COMPARE_EQUAL) {
+                c->failed = true;
+                cyaml_error_t* err = c->parser->scanner->err;
+                if (err) {
+                    err->code = CYAML_ERR_DUP_KEY;
+                    err->span = key->span;
+                    snprintf(err->msg, sizeof(err->msg), "Duplicate mapping key");
+                }
+                return false;
+            }
+        }
+    }
+    if (map_append(map, key, val))
+        return true;
+    c->failed = true;
+    set_synerr(c->parser->scanner, SYNERR_NOMEM);
+    return false;
 }
 
 static cyaml_node_t* compose_alias(composer_t* c, event_t* evt)
@@ -2672,7 +2913,7 @@ static cyaml_node_t* compose_node(composer_t* c)
                 parent->pending_key = completed;
                 parent->state = FRAME_MAP_VAL;
             } else {
-                if (!map_append(parent->node, parent->pending_key, completed))
+                if (!map_commit(c, parent->node, parent->pending_key, completed))
                     goto cleanup;
                 parent->pending_key = NULL;
                 parent->state = FRAME_MAP_KEY;
@@ -2726,7 +2967,7 @@ static cyaml_node_t* compose_node(composer_t* c)
                 frame->pending_key = node;
                 frame->state = FRAME_MAP_VAL;
             } else {
-                if (!map_append(frame->node, frame->pending_key, node))
+                if (!map_commit(c, frame->node, frame->pending_key, node))
                     goto cleanup;
                 frame->pending_key = NULL;
                 frame->state = FRAME_MAP_KEY;
@@ -2741,10 +2982,13 @@ cleanup:
 
 // #region Document Parsing
 
-static cyaml_doc_t* parse_document_internal(scanner_t* scanner, yaml_parser_t* parser, const cyaml_opts_t* opts)
+static cyaml_doc_t* parse_document_internal(scanner_t* scanner, yaml_parser_t* parser,
+    const cyaml_opts_t* opts, bool* failed)
 {
+    *failed = false;
     cyaml_doc_t* doc = calloc(1, sizeof(cyaml_doc_t));
     if (!doc) {
+        *failed = true;
         set_synerr(scanner, SYNERR_NOMEM);
         return NULL;
     }
@@ -2776,6 +3020,7 @@ static cyaml_doc_t* parse_document_internal(scanner_t* scanner, yaml_parser_t* p
     event_t evt;
     while (true) {
         if (!parse_event(parser, &evt)) {
+            *failed = true;
             cyaml_free(doc);
             return NULL;
         }
@@ -2795,10 +3040,26 @@ static cyaml_doc_t* parse_document_internal(scanner_t* scanner, yaml_parser_t* p
         }
     }
 
-    composer_t composer = { .parser = parser, .doc = doc, .anchor_count = 0 };
+    composer_t composer = {
+        .parser = parser,
+        .doc = doc,
+        .allow_duplicate_keys = opts && opts->dup_keys,
+        .failed = false,
+        .anchor_count = 0
+    };
     doc->root = compose_node(&composer);
+    if (!doc->root || composer.failed) {
+        *failed = true;
+        cyaml_free(doc);
+        return NULL;
+    }
 
-    if (parse_event(parser, &evt) && evt.type == EVT_DOC_END && !evt.implicit)
+    if (!parse_event(parser, &evt)) {
+        *failed = true;
+        cyaml_free(doc);
+        return NULL;
+    }
+    if (evt.type == EVT_DOC_END && !evt.implicit)
         doc->flags |= CYAML_DOC_END;
 
     return doc;
@@ -2828,12 +3089,13 @@ CYAML_API cyaml_doc_t* cyaml_parse(const char* src, size_t len,
         err->msg[0] = C_NUL;
     }
 
-    cyaml_doc_t* doc = parse_document_internal(&scanner, &parser, opts);
+    bool failed;
+    cyaml_doc_t* doc = parse_document_internal(&scanner, &parser, opts, &failed);
 
     FREE_SCANNER(scanner);
     FREE_PARSER(parser);
 
-    if (err && err->code != CYAML_OK) {
+    if (failed || (err && err->code != CYAML_OK)) {
         cyaml_free(doc);
         return NULL;
     }
@@ -2878,9 +3140,10 @@ CYAML_API cyaml_stream_t* cyaml_parse_stream(const char* src, size_t len,
     }
 
     while (true) {
-        cyaml_doc_t* doc = parse_document_internal(&scanner, &parser, opts);
+        bool failed;
+        cyaml_doc_t* doc = parse_document_internal(&scanner, &parser, opts, &failed);
         if (!doc) {
-            if (err && err->code != CYAML_OK) {
+            if (failed || (err && err->code != CYAML_OK)) {
                 FREE_SCANNER(scanner);
                 FREE_PARSER(parser);
                 cyaml_stream_free(stream);
