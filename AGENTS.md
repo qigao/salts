@@ -13,7 +13,8 @@
 
 本文件保留核心约束与原则。详细技术规范已迁移为全局 Codex skills，按需激活：
 
-- **`turboutils`** - TurboUtils 完整 API 参考（内存管理、字符串、文件、日志、并发、无锁数据结构）
+- **`turboutils`** - TurboUtils 共享 API 参考（错误、字符串、容器、文件、内存映射、平台安全、线程、协程、链接）
+- **`memory-design-protocols`** - 内存、buffer、ring、Disruptor、queue、pool 与零拷贝 API/设计协议（所有权、容量、背压、关闭、验证）
 - **`cmake-presets`** - CMake Presets 构建测试指南（configure/build/test preset、target 构建、build tree 恢复）
 - **`c-design-patterns`** - C 语言设计模式实现指南（12 种模式、SOLID 原则、反模式警告）
 - **`performance-optimization`** - 性能优化专项指南（热路径识别、SIMD、缓存优化、性能测试）
@@ -21,7 +22,7 @@
 - **`plugin-system`** - 插件系统开发规范（架构设计、隔离机制、热重载、安全）
 - **`tinytest`** - TinyTest 测试框架指南（C/C++ 测试结构、断言、fixture、JUnit/TAP、benchmark）
 
-激活方式：在任务中涉及对应主题时使用相应全局 skill；需要显式指定时使用 `$turboutils`、`$cmake-presets`、`$c-design-patterns`、`$performance-optimization`、`$logging-guide`、`$plugin-system` 或 `$tinytest`。
+激活方式：在任务中涉及对应主题时使用相应全局 skill；需要显式指定时使用 `$turboutils`、`$memory-design-protocols`、`$cmake-presets`、`$c-design-patterns`、`$performance-optimization`、`$logging-guide`、`$plugin-system` 或 `$tinytest`。
 
 ---
 
@@ -204,7 +205,7 @@
 
 ### 标准库与成熟算法优先
 
-> **详细 API 参见**: 全局 skill `turboutils`
+> **共享 API 参见**: 全局 skill `turboutils`；内存、buffer、queue 与 pool 的 API、选择和协议参见 `memory-design-protocols`
 
 #### 库优先级顺序（从高到低）
 
@@ -225,15 +226,15 @@
 
 #### 避免重复造轮子（强制规则）
 
-- ❌ **禁止手写**：动态数组 → 用 `turbo_vec_t` / `TURBO_VEC_DEFINE`，临时数组可用 `mem_pool_t`
+- ❌ **禁止手写**：动态数组 → 用 `turbo_vec_t` / `TURBO_VEC_DEFINE`；统一生命周期的临时数组按协议选 `MemoryPool` 或 `mem_pool_t`
 - ❌ **禁止手写**：字符串拼接 → 用 `tstr_t`（TurboUtils）或 `sds`（vendor）
 - ❌ **禁止手写**：哈希表/集合 → 用 `turbo_hash_map_t` / `TURBO_HASH_MAP_DEFINE` 或 `turbo_set_t` / `TURBO_SET_DEFINE`
 - ❌ **禁止手写**：双端队列 → 用 `turbo_deque_t` / `TURBO_DEQUE_DEFINE`
 - ❌ **禁止手写**：文件读写 → 用 `turbo_fs`（TurboUtils）
-- ❌ **禁止手写**：日志系统 → 用 `tlog`（TurboUtils）
+- ❌ **禁止手写**：日志系统 → 使用 TurboUtils `tlog`，API、数量、交付与生产协议参见 `logging-guide`
 - ❌ **禁止手写**：线程池 → 用 `turbo_threadpool`（TurboUtils）
-- ❌ **禁止手写**：无锁队列 → 用 `disruptor` 或 `ring_buffer_spsc`（TurboUtils）
-- ❌ **禁止手写**：内存池 → 用 `mem_pool_t` 或 `object_pool_t`（TurboUtils）
+- ❌ **禁止手写**：并发 ring/queue → 按拓扑与消费语义选择 `ring_buffer_spsc`、`disruptor`、`turbo_threadpool` 或 bucket priority queue（TurboUtils）
+- ❌ **禁止手写**：arena/slab/object pool → 按生命周期选择 `MemoryPool`、`mem_pool_t`、`mem_buffer_t` / `mem_slice_t` 或 `object_pool_t`（TurboUtils）
 
 ### 依赖管理与接口设计
 
@@ -291,6 +292,20 @@
 - 若新增依赖会改变构建、部署、许可、二进制体积或公开 API，必须先说明影响；高风险或不可逆时先问用户
 - 对外部库要做薄适配层，避免把第三方类型、错误码和生命周期规则扩散到领域核心
 
+## 内存、Buffer 与 Queue 设计协议
+
+> **内存与数据路径 API/设计协议参见**: 全局 skill `memory-design-protocols`；共享错误、线程与链接 API 参见 `turboutils`；性能收益验证参见 `performance-optimization`
+
+- 新增或修改跨模块、跨线程、零拷贝、池化或有界数据路径前，必须写明：数据单元、事实源、所有权、生命周期、线程拓扑、顺序、容量、背压、失败、关闭与观测协议
+- 零拷贝是生命周期协议，不是禁止复制；若复制能隔离所有权、限制大 buffer 滞留或消除危险借用，应选择有界复制并用 benchmark 验证成本
+- 所有可增长结构必须有硬上限、checked arithmetic、满额行为和用户可见错误；禁止用无界扩容代替背压
+- borrowed view 必须标明失效点；不得跨 append、consume、reset、resize、release、callback、协程挂起或 slot 复用保存裸指针，除非来源契约明确保证有效
+- acquire/claim、commit/publish、observe 与 release 必须作为状态机设计；每次成功 claim 必须恰好进入一个公开契约允许的终态
+- 并发 cardinality 必须精确到 single-threaded、SPSC、MPSC、SPMC 或 MPMC；不得只写“线程安全”
+- 满/空、timeout、关闭和模式不匹配必须是可区分结果；不得静默丢弃、覆盖、永久自旋或在资源满时隐式转为无界分配
+- init/reset/trim/resize/topology change/destroy 默认属于控制面，要求数据面 quiescent；若 API 支持并发生命周期变更，必须引用其明确契约和测试
+- 容量预算必须同时计算 slot、对齐、metadata 和 retained payload；以峰值流入、最坏 consumer stall、最大 batch 和 shutdown drain 场景验证
+
 ## 并发与线程安全
 
 - 共享状态默认假设单线程访问；需跨线程时必须说明同步机制（mutex/atomic/lock-free/immutable）
@@ -305,10 +320,11 @@
   - 锁持有期间禁止：分配内存、I/O 操作、调用回调、获取其他锁（除非文档化顺序）
   - 可重入锁仅用于递归调用且无法重构时；普通 mutex 为默认
 - 无锁数据结构适用边界：
-  - 只在 profiling 证明锁竞争是瓶颈后考虑
-  - 必须提供带锁版本作为验证基准
-  - 必须处理 ABA 问题：hazard pointer、epoch-based reclamation 或引用计数
-  - 限于队列、栈、计数器等简单结构；复杂状态机仍用锁保护
+  - 只在 profiling 证明锁竞争是瓶颈，或既有架构明确要求对应 SPSC/MPMC 拓扑时考虑
+  - 优先复用 TurboUtils 已有实现；性能验证以现有实现或简单带锁实现为基线
+  - 只有算法实际存在地址复用与并发回收时，才设计 hazard pointer、epoch reclamation 或引用计数等 ABA/回收协议；固定槽位 ring 不机械套用
+  - 线程角色、memory ordering、容量、背压、claim/publish/release 和 shutdown 以 `memory-design-protocols` 为准
+  - 复杂共享状态机仍优先用锁或单 owner 消息传递
 - 线程安全保证传播：
   - `const` 方法不保证线程安全，除非类型明确标注 `thread-safe`
   - 不可变对象可安全共享；可变对象需明确所有权转移或同步协议
@@ -321,12 +337,12 @@
 
 ## 性能与资源约束
 
-> **详细优化指南参见**: 全局 skill `performance-optimization`
+> **详细优化指南参见**: 全局 skill `performance-optimization`；内存与数据路径协议参见 `memory-design-protocols`
 
 - 热路径识别：每秒 >1000 次或占比 >20%（以 profiling 为准）
 - 热路径禁止：动态分配、函数指针间接调用、字符串拷贝
 - 算法复杂度：必须标注时间/空间复杂度；O(n²) 以上需说明数据规模
-- 内存管理：默认 malloc/free + 明确所有权；热路径用 arena/对象池
+- 内存管理：普通路径默认使用既有 allocator + 明确所有权；只有测量证明分配或生命周期是瓶颈时，才按 `memory-design-protocols` 选择 arena/slab/object pool/retained buffer
 - SIMD 与向量化：默认 fail fast；仅当需求明确要求跨平台兼容路径时，提供同语义标量实现并测试
 - 缓存策略：定义容量上限、失效策略（LRU/TTL）、命中率 >60%
 - 资源配额：可增长结构必须设置上限（容器、递归、句柄、内存）
