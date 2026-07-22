@@ -46,6 +46,10 @@ install(
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES data_bind.h tbe_typed.h DESTINATION include)
 
+if(BUILD_EXAMPLES)
+  add_subdirectory(examples)
+endif()
+
 # =============================================================================
 # Tests
 # =============================================================================

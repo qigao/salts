@@ -98,6 +98,10 @@ typedef struct mir_cache_entry {
 /* Small object pool for frequently allocated DataBindValue nodes */
 #define VALUE_POOL_SIZE 64
 #define DATA_BIND_FILE_STREAM_CHUNK_SIZE 65536
+#define DATA_BIND_MIR_PARSER_ABI_VERSION UINT32_C(1)
+#define DATA_BIND_MIR_MODULE_NAME "data_bind_binary"
+#define DATA_BIND_MIR_ABI_ITEM_NAME "__data_bind_mir_abi"
+#define DATA_BIND_MIR_SCHEMA_ITEM_NAME "__data_bind_schema_fingerprint"
 
 /*
  * Fixed atomic slots avoid the ABA reclamation problem of a shared lock-free
@@ -123,6 +127,14 @@ static turbo_once_t g_value_pool_once = TURBO_ONCE_INIT;
 static TURBO_THREAD_LOCAL size_t g_value_pool_take_cursor;
 static TURBO_THREAD_LOCAL size_t g_value_pool_put_cursor;
 static TURBO_THREAD_LOCAL int g_dynamic_runtime_oom;
+
+typedef struct data_bind_bmir_input {
+  const uint8_t *data;
+  size_t len;
+  size_t offset;
+} data_bind_bmir_input_t;
+
+static TURBO_THREAD_LOCAL data_bind_bmir_input_t *g_data_bind_bmir_input;
 
 static void value_pool_init_once(void) { turbo_mutex_init(&g_value_pool_control_mutex); }
 
@@ -2010,6 +2022,13 @@ static void compute_schema_hash(const char *schema_text, size_t len, char *hash_
   }
 
   snprintf(hash_out, 65, "%016llx", (unsigned long long)hash);
+}
+
+static int data_bind_bmir_read_byte(MIR_context_t ctx) {
+  data_bind_bmir_input_t *input = g_data_bind_bmir_input;
+  (void)ctx;
+  if (input == NULL || input->offset >= input->len) return EOF;
+  return input->data[input->offset++];
 }
 
 static mir_cache_entry_t *mir_cache_find(const char *schema_hash) {
@@ -6675,27 +6694,6 @@ static Node *parse_schema_text_to_root(const char *schema_text, size_t len, cons
   return root;
 }
 
-static Node *load_and_parse_schema(const char *schema_path, char *error_buf, size_t error_size,
-                                   DataBindError *error) {
-  turbo_fs_buf_t buf;
-  Node *root;
-  if (schema_path == NULL) {
-    if (error_buf != NULL && error_size > 0) snprintf(error_buf, error_size, "Invalid schema path");
-    db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1, "Invalid schema path");
-    return NULL;
-  }
-  if (turbo_fs_read_file(schema_path, &buf) != 0) {
-    if (error_buf != NULL && error_size > 0)
-      snprintf(error_buf, error_size, "Cannot read schema: %s", schema_path);
-    db_error_set(error, DATA_BIND_ERR_IO, schema_path, -1, -1, "Cannot read schema: %s",
-                 schema_path);
-    return NULL;
-  }
-  root = parse_schema_text_to_root(buf.base, buf.len, schema_path, error_buf, error_size, error);
-  turbo_fs_buf_free(&buf);
-  return root;
-}
-
 static void data_bind_free_contents(DataBind *codec) {
   mir_func_node_t *func_node;
   owned_alloc_node_t *alloc_node;
@@ -6744,6 +6742,34 @@ static void data_bind_free_contents(DataBind *codec) {
   }
 }
 
+static int data_bind_add_mir_metadata(DataBind *codec) {
+  uint32_t abi_version = DATA_BIND_MIR_PARSER_ABI_VERSION;
+  size_t fingerprint_len;
+
+  if (codec->schema_hash[0] == '\0')
+    return set_codec_error(codec, "Cannot generate MIR without a schema fingerprint");
+  fingerprint_len = strlen(codec->schema_hash) + 1;
+  if (MIR_new_data(codec->ctx, DATA_BIND_MIR_ABI_ITEM_NAME, MIR_T_U32, 1, &abi_version) == NULL ||
+      MIR_new_data(codec->ctx, DATA_BIND_MIR_SCHEMA_ITEM_NAME, MIR_T_U8, fingerprint_len,
+                   codec->schema_hash) == NULL)
+    return set_codec_error(codec, "Failed to add MIR parser metadata");
+  return 1;
+}
+
+static void data_bind_move_mir_data_before_functions(MIR_module_t module) {
+  MIR_item_t first_item = DLIST_HEAD(MIR_item_t, module->items);
+  MIR_item_t item = DLIST_TAIL(MIR_item_t, module->items);
+  while (item != NULL) {
+    MIR_item_t previous = DLIST_PREV(MIR_item_t, item);
+    if (item->item_type == MIR_data_item) {
+      DLIST_REMOVE(MIR_item_t, module->items, item);
+      DLIST_PREPEND(MIR_item_t, module->items, item);
+    }
+    if (item == first_item) break;
+    item = previous;
+  }
+}
+
 static MIR_module_t generate_parser_module(DataBind *codec, int include_record_v1) {
   mir_builder_t builder;
   Node *messages_node;
@@ -6759,8 +6785,14 @@ static MIR_module_t generate_parser_module(DataBind *codec, int include_record_v
   memset(&builder, 0, sizeof(builder));
   builder.codec = codec;
   builder.ctx = codec->ctx;
-  builder.module = MIR_new_module(codec->ctx, "data_bind_binary");
+  builder.module = MIR_new_module(codec->ctx, DATA_BIND_MIR_MODULE_NAME);
   builder.include_record_v1 = include_record_v1 != 0;
+  if (!data_bind_add_mir_metadata(codec)) {
+    MIR_finish_module(codec->ctx);
+    MIR_finish(codec->ctx);
+    codec->ctx = NULL;
+    return NULL;
+  }
   init_externals(&builder);
   for (i = 0; i < messages_node->data.list.count; i++)
     if (!generate_message_function(&builder, messages_node->data.list.items[i], codec->schema_root,
@@ -6770,6 +6802,7 @@ static MIR_module_t generate_parser_module(DataBind *codec, int include_record_v
       codec->ctx = NULL;
       return NULL;
     }
+  data_bind_move_mir_data_before_functions(builder.module);
   MIR_finish_module(codec->ctx);
   return builder.module;
 }
@@ -6939,10 +6972,52 @@ static int link_module(DataBind *codec, MIR_module_t module) {
   return 1;
 }
 
-static void register_parse_functions(DataBind *codec, MIR_module_t module) {
+static MIR_module_t data_bind_validate_loaded_mir(DataBind *codec) {
+  MIR_module_t module;
+  MIR_item_t item;
+  int found_abi = 0;
+  int found_fingerprint = 0;
+
+  module = DLIST_HEAD(MIR_module_t, *MIR_get_module_list(codec->ctx));
+  if (module == NULL || DLIST_NEXT(MIR_module_t, module) != NULL)
+    return set_codec_error(codec, "MIR artifact must contain exactly one module"), NULL;
+  if (module->name == NULL || strcmp(module->name, DATA_BIND_MIR_MODULE_NAME) != 0)
+    return set_codec_error(codec, "Unexpected MIR module name '%s'",
+                           module->name != NULL ? module->name : "<null>"),
+           NULL;
+
+  for (item = DLIST_HEAD(MIR_item_t, module->items); item != NULL;
+       item = DLIST_NEXT(MIR_item_t, item)) {
+    MIR_data_t data;
+    if (item->item_type != MIR_data_item) continue;
+    data = item->u.data;
+    if (data == NULL || data->name == NULL) continue;
+    if (strcmp(data->name, DATA_BIND_MIR_ABI_ITEM_NAME) == 0) {
+      uint32_t abi_version = 0;
+      if (found_abi || data->el_type != MIR_T_U32 || data->nel != 1)
+        return set_codec_error(codec, "Invalid MIR parser ABI metadata"), NULL;
+      memcpy(&abi_version, data->u.els, sizeof(abi_version));
+      if (abi_version != DATA_BIND_MIR_PARSER_ABI_VERSION)
+        return set_codec_error(codec, "Unsupported MIR parser ABI: %u", abi_version), NULL;
+      found_abi = 1;
+    } else if (strcmp(data->name, DATA_BIND_MIR_SCHEMA_ITEM_NAME) == 0) {
+      size_t expected_len = strlen(codec->schema_hash) + 1;
+      if (found_fingerprint || data->el_type != MIR_T_U8 || data->nel != expected_len ||
+          memcmp(data->u.els, codec->schema_hash, expected_len) != 0)
+        return set_codec_error(codec, "MIR artifact does not match the supplied schema"), NULL;
+      found_fingerprint = 1;
+    }
+  }
+  if (!found_abi || !found_fingerprint)
+    return set_codec_error(codec, "MIR artifact is missing DataBind metadata"), NULL;
+  return module;
+}
+
+static int register_parse_functions(DataBind *codec, MIR_module_t module) {
   Node *messages_node = find_child(codec->schema_root, "messages");
   size_t i;
-  if (messages_node == NULL || messages_node->type != NODE_LIST) return;
+  if (messages_node == NULL || messages_node->type != NODE_LIST)
+    return set_codec_error(codec, "Schema contains no message list");
   for (i = 0; i < messages_node->data.list.count; i++) {
     Node *msg = messages_node->data.list.items[i];
     const char *msg_name = get_string_val(find_child(msg, "name"));
@@ -6951,23 +7026,27 @@ static void register_parse_functions(DataBind *codec, MIR_module_t module) {
     MIR_item_t item;
     void *parse_fn = NULL;
     void *parse_record_fn = NULL;
-    if (msg_name == NULL) continue;
-    snprintf(func_name, sizeof(func_name), "parse_%s", msg_name);
-    snprintf(record_func_name, sizeof(record_func_name), "parse_record_v1_%s", msg_name);
+    if (msg_name == NULL) return set_codec_error(codec, "Schema message has no name");
+    if (snprintf(func_name, sizeof(func_name), "parse_%s", msg_name) >= (int)sizeof(func_name) ||
+        snprintf(record_func_name, sizeof(record_func_name), "parse_record_v1_%s", msg_name) >=
+            (int)sizeof(record_func_name))
+      return set_codec_error(codec, "Parser function name is too long for message '%s'", msg_name);
     for (item = DLIST_HEAD(MIR_item_t, module->items); item != NULL;
          item = DLIST_NEXT(MIR_item_t, item)) {
       if (item->item_type != MIR_func_item) continue;
       if (strcmp(item->u.func->name, func_name) == 0) parse_fn = item->addr;
       else if (strcmp(item->u.func->name, record_func_name) == 0) parse_record_fn = item->addr;
     }
-    if (parse_fn != NULL) {
+    if (parse_fn == NULL)
+      return set_codec_error(codec, "MIR module is missing parser function '%s'", func_name);
+    {
       mir_func_node_t *node = (mir_func_node_t *)calloc(1, sizeof(*node));
-      if (node == NULL) return;
+      if (node == NULL) return set_codec_error(codec, "Out of memory registering '%s'", func_name);
       /* type_name is freed individually in data_bind_free; not tracked by codec_alloc */
       node->type_name = strdup(msg_name);
       if (node->type_name == NULL) {
         free(node);
-        return;
+        return set_codec_error(codec, "Out of memory registering '%s'", func_name);
       }
       node->parse_fn = parse_fn;
       node->parse_record_fn = parse_record_fn;
@@ -6975,6 +7054,7 @@ static void register_parse_functions(DataBind *codec, MIR_module_t module) {
       codec->func_head = node;
     }
   }
+  return 1;
 }
 
 static DataBindStatus data_bind_finish_codec(DataBind *codec, DataBindError *error,
@@ -7020,7 +7100,13 @@ static DataBindStatus data_bind_finish_codec(DataBind *codec, DataBindError *err
     db_error_clear(error);
     return DATA_BIND_OK;
   }
-  register_parse_functions(codec, module);
+  if (!register_parse_functions(codec, module)) {
+    snprintf(codec->binary_error, sizeof(codec->binary_error), "%s",
+             codec->error[0] != '\0' ? codec->error : "Failed to register parser functions");
+    codec->error[0] = '\0';
+    db_error_clear(error);
+    return DATA_BIND_OK;
+  }
 
   /* Cache the MIR context if hashing was successful */
   if (codec->schema_hash[0] != '\0') {
@@ -7115,6 +7201,104 @@ DataBindStatus data_bind_create_from_text(const char *schema_text, size_t len, D
                                              schema_text, len);
 }
 
+static DataBindStatus data_bind_create_from_mir_artifact(
+    const char *schema_text, size_t schema_len, const void *artifact, size_t artifact_len,
+    int binary_input, DataBind **out_codec, DataBindError *error) {
+  Node *schema_root;
+  DataBind *codec;
+  MIR_module_t module;
+  char *mir_text = NULL;
+
+  if (out_codec != NULL) *out_codec = NULL;
+  if (schema_text == NULL || schema_len == 0 || artifact == NULL || artifact_len == 0 ||
+      out_codec == NULL)
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1,
+                        "Invalid MIR codec arguments");
+  if (!binary_input && memchr(artifact, '\0', artifact_len) != NULL)
+    return db_error_set(error, DATA_BIND_ERR_PARSE, NULL, -1, -1,
+                        "Textual MIR contains an embedded NUL byte");
+
+  schema_root = parse_schema_text_to_root(schema_text, schema_len, NULL, NULL, 0, error);
+  if (schema_root == NULL)
+    return error != NULL && error->code != DATA_BIND_OK ? error->code : DATA_BIND_ERR_SCHEMA;
+  codec = (DataBind *)calloc(1, sizeof(*codec));
+  if (codec == NULL) {
+    node_free(schema_root);
+    return db_error_set(error, DATA_BIND_ERR_OOM, NULL, -1, -1, "Out of memory");
+  }
+  codec->api = DYNAMIC_VALUE_API;
+  codec->schema_root = schema_root;
+  compute_schema_hash(schema_text, schema_len, codec->schema_hash);
+  codec->ctx = MIR_init();
+  if (codec->ctx == NULL) {
+    data_bind_free(codec);
+    return db_error_set(error, DATA_BIND_ERR_OOM, NULL, -1, -1,
+                        "Failed to initialize MIR context");
+  }
+
+  if (binary_input) {
+    data_bind_bmir_input_t input = {(const uint8_t *)artifact, artifact_len, 0};
+    if (g_data_bind_bmir_input != NULL) {
+      data_bind_free(codec);
+      return db_error_set(error, DATA_BIND_ERR_RUNTIME, NULL, -1, -1,
+                          "Nested BMIR loading is not supported");
+    }
+    g_data_bind_bmir_input = &input;
+    MIR_read_with_func(codec->ctx, data_bind_bmir_read_byte);
+    g_data_bind_bmir_input = NULL;
+  } else {
+    if (artifact_len == SIZE_MAX) {
+      data_bind_free(codec);
+      return db_error_set(error, DATA_BIND_ERR_OOM, NULL, -1, -1,
+                          "Textual MIR is too large");
+    }
+    mir_text = (char *)malloc(artifact_len + 1);
+    if (mir_text == NULL) {
+      data_bind_free(codec);
+      return db_error_set(error, DATA_BIND_ERR_OOM, NULL, -1, -1,
+                          "Out of memory loading textual MIR");
+    }
+    memcpy(mir_text, artifact, artifact_len);
+    mir_text[artifact_len] = '\0';
+    MIR_scan_string(codec->ctx, mir_text);
+    free(mir_text);
+  }
+
+  module = data_bind_validate_loaded_mir(codec);
+  if (module == NULL) {
+    DataBindStatus status = db_error_set(error, DATA_BIND_ERR_SCHEMA, NULL, -1, -1, "%s",
+                                         codec->error[0] != '\0' ? codec->error
+                                                                  : "Invalid MIR artifact");
+    data_bind_free(codec);
+    return status;
+  }
+  if (!link_module(codec, module) || !register_parse_functions(codec, module)) {
+    DataBindStatus status = db_error_set(error, DATA_BIND_ERR_RUNTIME, NULL, -1, -1, "%s",
+                                         codec->error[0] != '\0' ? codec->error
+                                                                  : "Failed to link MIR artifact");
+    data_bind_free(codec);
+    return status;
+  }
+
+  db_error_clear(error);
+  *out_codec = codec;
+  return DATA_BIND_OK;
+}
+
+DataBindStatus data_bind_create_from_mir(const char *schema_text, size_t schema_len,
+                                         const char *mir_text, size_t mir_len,
+                                         DataBind **out_codec, DataBindError *error) {
+  return data_bind_create_from_mir_artifact(schema_text, schema_len, mir_text, mir_len, 0,
+                                            out_codec, error);
+}
+
+DataBindStatus data_bind_create_from_bmir(const char *schema_text, size_t schema_len,
+                                          const void *bmir_data, size_t bmir_len,
+                                          DataBind **out_codec, DataBindError *error) {
+  return data_bind_create_from_mir_artifact(schema_text, schema_len, bmir_data, bmir_len, 1,
+                                            out_codec, error);
+}
+
 void data_bind_free(DataBind *codec) {
   if (codec == NULL) return;
   data_bind_free_contents(codec);
@@ -7199,6 +7383,7 @@ DataBindStatus data_bind_generate_mir(const char *schema_path, DataBindWriteFn w
   DataBind codec;
   MIR_module_t module = NULL;
   FILE *tmp = NULL;
+  turbo_fs_buf_t schema_buf = {NULL, 0};
   DataBindStatus status = DATA_BIND_ERR_RUNTIME;
 
   db_error_clear(error);
@@ -7208,8 +7393,15 @@ DataBindStatus data_bind_generate_mir(const char *schema_path, DataBindWriteFn w
 
   memset(&codec, 0, sizeof(codec));
   codec.api = MIR_OUTPUT_API;
-  codec.schema_root = load_and_parse_schema(schema_path, codec.error, sizeof(codec.error), error);
+  if (turbo_fs_read_file(schema_path, &schema_buf) != 0) {
+    status = db_error_set(error, DATA_BIND_ERR_IO, schema_path, -1, -1,
+                          "Cannot read schema: %s", schema_path);
+    goto cleanup;
+  }
+  codec.schema_root = parse_schema_text_to_root(schema_buf.base, schema_buf.len, schema_path,
+                                                codec.error, sizeof(codec.error), error);
   if (codec.schema_root == NULL) goto cleanup;
+  compute_schema_hash(schema_buf.base, schema_buf.len, codec.schema_hash);
 
   module = generate_parser_module(&codec, 0);
   if (module == NULL) {
@@ -7235,6 +7427,7 @@ DataBindStatus data_bind_generate_mir(const char *schema_path, DataBindWriteFn w
 cleanup:
   if (tmp != NULL) fclose(tmp);
   data_bind_free_contents(&codec);
+  turbo_fs_buf_free(&schema_buf);
   return status;
 }
 
@@ -11289,4 +11482,4 @@ int data_bind_library_version(void) { return DATA_BIND_VERSION; }
 
 int data_bind_abi_version(void) { return DATA_BIND_ABI_VERSION; }
 
-const char *data_bind_version_string(void) { return "1.11.0"; }
+const char *data_bind_version_string(void) { return "1.12.0"; }

@@ -263,4 +263,10 @@ tbe_compiler order.schema --lang bmir --output order.bmir
 - `--guest-output` adds allocation-free adapters over the zero-copy wire views. It does not
   embed JSON/YAML/CSV/XML parsers into Wasm and does not require `--source-output`.
 - C++, Go, Rust, Python, and TypeScript outputs currently generate schema type definitions, not complete wire codecs.
-- MIR outputs are loadable modules, not standalone executables. The host must bind runtime callbacks such as `create_obj`, `set_int`, `set_dbl`, `set_str`, and `read_varstr`, then link or JIT the module before calling generated functions such as `parse_Order`.
+- MIR outputs are loadable modules, not standalone executables. DataBind hosts can use
+  `data_bind_create_from_mir()` or `data_bind_create_from_bmir()` with the exact schema
+  text used for generation, then call `data_bind_object_from_bin()` and the normal object
+  serializers. See `tbe/data_bind/examples/bmir_runtime.c` for a complete generate, load,
+  field-access, and JSON serialization flow. Custom hosts may instead bind callbacks such as `create_obj`, `set_int`,
+  `set_dbl`, `set_str`, and `read_varstr`, link or JIT the module, and call generated
+  functions such as `parse_Order`.

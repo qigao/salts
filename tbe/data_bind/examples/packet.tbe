@@ -1,0 +1,4 @@
+message Packet {
+  uint32 id;
+  string name;
+}

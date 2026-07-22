@@ -47,8 +47,11 @@ reported as `DATA_BIND_ERR_OOM`.
   composite field names such as `header.seq`.
 - `data_bind_record_from_bin()` calls `parse_record_v1_<Type>` and exposes a
   nested `header` object.
-- `data_bind_generate_mir()` continues to emit the legacy module only. Existing
-  textual MIR and BMIR consumers do not gain new imports or ABI requirements.
+- `data_bind_generate_mir()` continues to emit only the dynamic `parse_<Type>`
+  callback ABI. Additive data items identify the parser ABI and exact schema
+  fingerprint so `data_bind_create_from_mir()` and
+  `data_bind_create_from_bmir()` can validate and load the module. Existing
+  hosts do not gain new imports.
 - JSON, YAML, XML, and CSV Record constructors continue to use native binders.
   All Record serializers continue to use the existing native writers.
 - No public structure layout or exported callback table changes.
@@ -57,9 +60,9 @@ reported as `DATA_BIND_ERR_OOM`.
 
 Changing `parse_<Type>` in place was rejected because it would break existing
 MIR/BMIR hosts. Generating C or C++ structs was rejected because it introduces a
-source compiler and per-schema binary ABI. A standalone Record BMIR file format
-was deferred because native text binding also requires schema metadata, and the
-repository currently has no external BMIR loader contract that carries it.
+source compiler and per-schema binary ABI. Loaded MIR/BMIR therefore uses the
+dynamic object parser and existing object serializers; the slot-oriented Record
+parser remains available only on codecs generated in-process.
 
 ## Migration And Rollback
 

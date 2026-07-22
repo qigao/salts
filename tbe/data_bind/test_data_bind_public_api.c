@@ -10,7 +10,7 @@
 #include <string.h>
 
 static void write_schema_file(const char *path, const char *content) {
-  FILE *f = fopen(path, "w");
+  FILE *f = fopen(path, "wb");
   check_not_null(f);
   if (!f) return;
   fwrite(content, 1, strlen(content), f);
@@ -42,6 +42,11 @@ static int collect_serialized(const void *data, size_t len, void *user) {
   output->len += len;
   output->data[output->len] = '\0';
   return 0;
+}
+
+static int write_generated_mir(const void *data, size_t len, void *user) {
+  FILE *file = (FILE *)user;
+  return file != NULL && fwrite(data, 1, len, file) == len ? 0 : -1;
 }
 
 static DataBindRecordAction collect_record(void *user_data, const DataBindValue *record,
@@ -78,8 +83,88 @@ spec("data_bind public API") {
   it("should expose version and ABI metadata") {
     check_int_eq(data_bind_library_version(), DATA_BIND_VERSION);
     check_int_eq(data_bind_abi_version(), DATA_BIND_ABI_VERSION);
-    check_str_eq(data_bind_version_string(), "1.11.0");
+    check_str_eq(data_bind_version_string(), "1.12.0");
     check_str_eq(data_bind_status_name(DATA_BIND_ERR_TYPE_MISMATCH), "type_mismatch");
+  }
+
+  it("should load generated MIR and BMIR and reuse object serializers") {
+    const char *schema = "message Packet { uint32 id; string name; }\n";
+    const char *mismatched_schema = "message Packet { uint32 id; string label; }\n";
+    const uint8_t wire[] = {42, 0, 0, 0, 5, 0, 0, 0, 'T', 'u', 'r', 'b', 'o'};
+    const char *artifact_paths[] = {"test_public_loader.mir", "test_public_loader.bmir"};
+    int binary_output;
+
+    write_schema_file("test_public_loader.tbe", schema);
+    for (binary_output = 0; binary_output <= 1; ++binary_output) {
+      const char *artifact_path = artifact_paths[binary_output];
+      DataBindError err = DATA_BIND_ERROR_INIT;
+      DataBind *codec = NULL;
+      DataBind *mismatched_codec = NULL;
+      DataBindObject *object = NULL;
+      FILE *artifact_file = fopen(artifact_path, "wb");
+      char *artifact = NULL;
+      char *json = NULL;
+      uint8_t *roundtrip_wire = NULL;
+      size_t artifact_len = 0;
+      size_t json_len = 0;
+      size_t roundtrip_len = 0;
+
+      check_not_null(artifact_file);
+      if (artifact_file != NULL) {
+        check_int_eq(data_bind_generate_mir("test_public_loader.tbe", write_generated_mir,
+                                            artifact_file, binary_output, &err),
+                     DATA_BIND_OK);
+        fclose(artifact_file);
+      }
+      artifact = tt_read_file(artifact_path, &artifact_len);
+      check_not_null(artifact);
+      check(artifact_len > 0);
+
+      if (artifact != NULL) {
+        DataBindStatus load_status =
+            binary_output
+                ? data_bind_create_from_bmir(schema, strlen(schema), artifact, artifact_len,
+                                             &codec, &err)
+                : data_bind_create_from_mir(schema, strlen(schema), artifact, artifact_len,
+                                            &codec, &err);
+        check_int_eq(load_status, DATA_BIND_OK);
+        check_not_null(codec);
+      }
+      if (codec != NULL) {
+        check_int_eq(data_bind_object_from_bin(codec, "Packet", wire, sizeof(wire), &object, &err),
+                     DATA_BIND_OK);
+        check_not_null(object);
+      }
+      if (object != NULL) {
+        check_int_eq(data_bind_object_serialize_json(object, &json, &json_len, &err), DATA_BIND_OK);
+        check_str_eq(json, "{\"id\":42,\"name\":\"Turbo\"}");
+        check_int_eq(data_bind_object_serialize_bin(codec, object, &roundtrip_wire, &roundtrip_len,
+                                                    &err),
+                     DATA_BIND_OK);
+        check_int_eq(roundtrip_len, sizeof(wire));
+        check(memcmp(roundtrip_wire, wire, sizeof(wire)) == 0);
+      }
+
+      if (artifact != NULL) {
+        DataBindStatus mismatch_status =
+            binary_output
+                ? data_bind_create_from_bmir(mismatched_schema, strlen(mismatched_schema), artifact,
+                                             artifact_len, &mismatched_codec, &err)
+                : data_bind_create_from_mir(mismatched_schema, strlen(mismatched_schema), artifact,
+                                            artifact_len, &mismatched_codec, &err);
+        check_int_eq(mismatch_status, DATA_BIND_ERR_SCHEMA);
+        check_null(mismatched_codec);
+      }
+
+      data_bind_binary_free(roundtrip_wire);
+      data_bind_serialized_free(json);
+      data_bind_object_free(object);
+      data_bind_free(codec);
+      data_bind_free(mismatched_codec);
+      free(artifact);
+      remove(artifact_path);
+    }
+    remove("test_public_loader.tbe");
   }
 
   it("should bind JSON and XML through public opaque handles") {
