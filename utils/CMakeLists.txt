@@ -3,6 +3,7 @@ set(TARGET_NAME turbo_utils)
 add_subdirectory(parser)
 cmake_add_source(SOURCE_FILES RECURSE)
 find_path(SIMDE_INCLUDE_DIRS "simde/x86/sse2.h" REQUIRED)
+find_package(zstd CONFIG REQUIRED)
 
 add_library(${TARGET_NAME} SHARED ${SOURCE_FILES})
 # Configure target
@@ -43,7 +44,7 @@ endif()
 target_link_libraries(
   ${TARGET_NAME}
   PRIVATE ${FMT_LEXER_LIBRARY} TurboUtils::SDS # Simple Dynamic Strings
-          aklomp::base64 libzstd_static
+          aklomp::base64 zstd::libzstd
           ${LOG_PATTERN_LEXER_LIBRARY} # Log pattern lexer
 )
 

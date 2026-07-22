@@ -225,7 +225,6 @@ suite("cyaml json adapter") {
             ".inf",
             ".nan",
             "[key]: value",
-            "key: 1\nkey: 2\n",
             "!custom value",
             "!!int nope"
         };
@@ -239,6 +238,19 @@ suite("cyaml json adapter") {
             cyaml_free(doc);
         }
         check_null(json_value_from_cyaml(NULL));
+    }
+
+    it("rejects duplicate YAML keys when parsing permits them") {
+        const char* yaml = "key: 1\nkey: 2\n";
+        cyaml_opts_t opts = CYAML_OPTS_DEFAULT;
+        cyaml_error_t error = { 0 };
+        opts.dup_keys = true;
+
+        cyaml_doc_t* doc = cyaml_parse(yaml, strlen(yaml), &opts, &error);
+
+        check_not_null(doc);
+        check_null(json_value_from_cyaml(doc));
+        cyaml_free(doc);
     }
 
     it("preserves exact signed and unsigned 64-bit YAML integers") {

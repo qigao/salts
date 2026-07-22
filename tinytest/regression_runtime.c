@@ -1,5 +1,9 @@
 #include "tinytest.h"
 
+#if defined(columns) || defined(lines) || defined(buttons) || defined(tab)
+#error "tinytest.h must not leak terminal capability macros"
+#endif
+
 #ifndef _WIN32
 #include <unistd.h>
 #endif

@@ -57,12 +57,6 @@ extern "C" {
   #include <stdio.h>
   #include <sys/stat.h>
   #include <unistd.h>
-  /* term.h may not be available on all systems */
-  #ifdef __has_include
-    #if __has_include(<term.h>)
-      #include <term.h>
-    #endif
-  #endif
   #define __BDD_IS_ATTY__() isatty(fileno(stdout))
 #endif
 
