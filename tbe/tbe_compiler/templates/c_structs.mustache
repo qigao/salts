@@ -1257,7 +1257,6 @@ TURBO_VEC_DEFINE({{typed_vector_type}}, {{typed_element_c_type}})
 {{/typed_needs_vector}}
 {{/fields}}
 {{/typed_source_enabled}}
-{{^guest_adapter_only}}
 /**
  * @brief {{decl_kind}} {{name}}
  * Attributes: {{#attributes}}[ {{name}}: {{value}} ] {{/attributes}}
@@ -1273,6 +1272,7 @@ typedef enum {
 } {{name}}_optional_field_t;
 
 {{/has_optional_fields}}
+{{^guest_adapter_only}}
 typedef struct {{name}}_s {
 {{#typed_source_enabled}}
 {{#has_optional_fields}}
@@ -1372,14 +1372,17 @@ typedef struct {{name}}_builder_s {
  */
 static inline bool {{name}}_has_optional_field(const {{name}}_view_t *view, 
                                                {{name}}_optional_field_t field) {
-    if (!view || !view->data || field >= {{name}}_OPTIONAL_FIELD_COUNT) {
+    size_t byte_index;
+    uint8_t bit_mask;
+
+    if (!view || !view->data || view->size < {{name}}_PRESENCE_BITMAP_SIZE ||
+        field < 0 || field >= {{name}}_OPTIONAL_FIELD_COUNT) {
         return false;
     }
-    
-    const uint8_t *bitmap = view->data;  // 位图在消息开头
-    uint8_t byte_index = field / 8;
-    uint8_t bit_index = field % 8;
-    return (bitmap[byte_index] & (1 << bit_index)) != 0;
+
+    byte_index = (size_t)field / 8u;
+    bit_mask = (uint8_t)(1u << ((unsigned int)field % 8u));
+    return (view->data[byte_index] & bit_mask) != 0;
 }
 
 /**
@@ -1387,13 +1390,17 @@ static inline bool {{name}}_has_optional_field(const {{name}}_view_t *view,
  */
 static inline void {{name}}_set_optional_field({{name}}_builder_t *builder,
                                               {{name}}_optional_field_t field) {
-    if (!builder || field >= {{name}}_OPTIONAL_FIELD_COUNT) {
+    size_t byte_index;
+    uint8_t bit_mask;
+
+    if (!builder || !builder->data || builder->size < {{name}}_PRESENCE_BITMAP_SIZE ||
+        field < 0 || field >= {{name}}_OPTIONAL_FIELD_COUNT) {
         return;
     }
-    
-    uint8_t byte_index = field / 8;
-    uint8_t bit_index = field % 8;
-    builder->data[byte_index] |= (1 << bit_index);
+
+    byte_index = (size_t)field / 8u;
+    bit_mask = (uint8_t)(1u << ((unsigned int)field % 8u));
+    builder->data[byte_index] |= bit_mask;
 }
 
 /**
@@ -1401,13 +1408,17 @@ static inline void {{name}}_set_optional_field({{name}}_builder_t *builder,
  */
 static inline void {{name}}_clear_optional_field({{name}}_builder_t *builder,
                                                 {{name}}_optional_field_t field) {
-    if (!builder || field >= {{name}}_OPTIONAL_FIELD_COUNT) {
+    size_t byte_index;
+    uint8_t bit_mask;
+
+    if (!builder || !builder->data || builder->size < {{name}}_PRESENCE_BITMAP_SIZE ||
+        field < 0 || field >= {{name}}_OPTIONAL_FIELD_COUNT) {
         return;
     }
-    
-    uint8_t byte_index = field / 8;
-    uint8_t bit_index = field % 8;
-    builder->data[byte_index] &= ~(1 << bit_index);
+
+    byte_index = (size_t)field / 8u;
+    bit_mask = (uint8_t)(1u << ((unsigned int)field % 8u));
+    builder->data[byte_index] &= (uint8_t)~bit_mask;
 }
 
 {{/has_optional_fields}}

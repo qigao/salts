@@ -80,6 +80,9 @@ tbe_compiler order.schema --lang c --output order.h --source-output order.c
 
 The generated API includes `Order_t`, `Order_init`/`Order_clear`, schema codec creation,
 and `Order_from_*`/`Order_to_*` functions for `bin`, `json`, `yaml`, `csv`, and `xml`.
+Optional fields receive a generated `_presence` bitmap, stable per-field bit constants, and
+bounded view/builder helpers. Text decoding sets presence only for supplied fields, text
+serialization omits absent fields, and binary round trips preserve the bitmap.
 An owning C member can be renamed without changing its schema or wire name:
 
 ```text

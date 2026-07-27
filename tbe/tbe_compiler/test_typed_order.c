@@ -106,10 +106,16 @@ spec("generated typed Order") {
   static Order_t order;
   const char *json =
       "{\"header\":{\"seq\":7},\"legacyId\":42,\"request_id\":\"" TEST_ORDER_REQUEST_ID
-                     "\",\"min_value\":-9223372036854775808,"
-                     "\"max_value\":18446744073709551615,\"side\":\"Buy\","
-                     "\"fills\":[{\"price\":100,\"qty\":3},{\"price\":101,\"qty\":4}],"
-                     "\"symbol\":\"ABC\",\"payload\":\"raw\"}";
+      "\",\"min_value\":-9223372036854775808,"
+      "\"max_value\":18446744073709551615,\"side\":\"Buy\","
+      "\"fills\":[{\"price\":100,\"qty\":3},{\"price\":101,\"qty\":4}],"
+      "\"symbol\":\"ABC\",\"payload\":\"raw\"}";
+  const char *optional_json =
+      "{\"header\":{\"seq\":7},\"legacyId\":42,\"request_id\":\"" TEST_ORDER_REQUEST_ID
+      "\",\"min_value\":-9223372036854775808,"
+      "\"max_value\":18446744073709551615,\"side\":\"Buy\",\"routing_hint\":9,"
+      "\"fills\":[{\"price\":100,\"qty\":3},{\"price\":101,\"qty\":4}],"
+      "\"symbol\":\"ABC\",\"client_tag\":\"edge-a\",\"payload\":\"raw\"}";
 
   before_each() {
     Order_init(&order);
@@ -125,6 +131,73 @@ spec("generated typed Order") {
   }
 
   it("should deserialize JSON into strong fields") { check_order(&order); }
+
+  it("should leave omitted optional fields absent") {
+    char *encoded = NULL;
+    size_t encoded_len = 0;
+
+    check_uint_eq(order._presence[0], 0u);
+    check_status_ok(Order_to_json(codec, &order, &encoded, &encoded_len, &error), &error);
+    check_not_null(encoded);
+    if (encoded != NULL) {
+      check_null(strstr(encoded, "\"routing_hint\""));
+      check_null(strstr(encoded, "\"client_tag\""));
+    }
+    tbe_typed_serialized_free(encoded);
+  }
+
+  it("should bound optional presence helpers by field and bitmap size") {
+    uint8_t presence[Order_PRESENCE_BITMAP_SIZE] = {0};
+    Order_view_t view = {presence, sizeof(presence)};
+    Order_builder_t builder = {presence, sizeof(presence)};
+
+    check_false(Order_has_optional_field(&view, Order_OPTIONAL_client_tag));
+    Order_set_optional_field(&builder, Order_OPTIONAL_client_tag);
+    check_true(Order_has_optional_field(&view, Order_OPTIONAL_client_tag));
+    Order_clear_optional_field(&builder, Order_OPTIONAL_client_tag);
+    check_false(Order_has_optional_field(&view, Order_OPTIONAL_client_tag));
+
+    Order_set_optional_field(&builder, (Order_optional_field_t)-1);
+    Order_set_optional_field(&builder, (Order_optional_field_t)Order_OPTIONAL_FIELD_COUNT);
+    check_uint_eq(presence[0], 0u);
+
+    view.size = 0;
+    builder.size = 0;
+    Order_set_optional_field(&builder, Order_OPTIONAL_routing_hint);
+    check_false(Order_has_optional_field(&view, Order_OPTIONAL_routing_hint));
+    check_uint_eq(presence[0], 0u);
+  }
+
+  it("should preserve optional presence through text and binary bindings") {
+    Order_t present;
+    Order_t decoded;
+    uint8_t *wire = NULL;
+    char *encoded = NULL;
+    size_t wire_len = 0;
+    size_t encoded_len = 0;
+
+    Order_init(&present);
+    Order_init(&decoded);
+    check_status_ok(Order_from_json(codec, &present, optional_json, strlen(optional_json), &error),
+                    &error);
+    check_uint_eq(present._presence[0],
+                  (1u << Order_OPTIONAL_routing_hint) | (1u << Order_OPTIONAL_client_tag));
+    check_uint_eq(present.routing_hint, 9u);
+    check_str_eq(present.client_tag, "edge-a");
+    check_status_ok(Order_to_json(codec, &present, &encoded, &encoded_len, &error), &error);
+    check_str_contains(encoded, "\"routing_hint\":9");
+    check_str_contains(encoded, "\"client_tag\":\"edge-a\"");
+    check_status_ok(Order_to_bin(&present, &wire, &wire_len, &error), &error);
+    check_status_ok(Order_from_bin(codec, &decoded, wire, wire_len, &error), &error);
+    check_uint_eq(decoded._presence[0], present._presence[0]);
+    check_uint_eq(decoded.routing_hint, 9u);
+    check_str_eq(decoded.client_tag, "edge-a");
+
+    tbe_typed_serialized_free(wire);
+    tbe_typed_serialized_free(encoded);
+    Order_clear(&decoded);
+    Order_clear(&present);
+  }
 
   it("should round-trip the binary wire format") {
     uint8_t *encoded = NULL;

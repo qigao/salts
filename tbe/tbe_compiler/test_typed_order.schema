@@ -21,7 +21,9 @@ message Order {
     uint64 max_value;
     uuid request_id;
     Side side;
+    optional uint32 routing_hint;
     group<Fill> fills;
     string symbol;
+    optional string client_tag;
     bytes payload;
 }

@@ -385,6 +385,42 @@ spec("tbe_compiler") {
       node_free(root);
     }
 
+    it("should annotate optional bit indexes on the original typed fields") {
+      const char *schema =
+          "message OptionalBits { "
+          "optional uint32 f0; optional uint32 f1; optional uint32 f2; "
+          "optional uint32 f3; optional uint32 f4; optional uint32 f5; "
+          "optional uint32 f6; optional uint32 f7; optional uint32 f8; "
+          "}";
+      Node *root = create_node_map(NULL);
+      int rc = parse_schema(schema, strlen(schema), root, NULL);
+
+      check_int_eq(rc, 0);
+      if (rc == 0) {
+        Node *messages = find_child(root, "messages");
+        Node *record = messages ? messages->data.list.items[0] : NULL;
+        Node *fields = find_child(record, "fields");
+        Node *bitmap_size = find_child(record, "presence_bitmap_bytes");
+        size_t i;
+
+        check_not_null(fields);
+        check_not_null(bitmap_size);
+        if (fields != NULL && bitmap_size != NULL) {
+          check_size_eq(fields->data.list.count, 9u);
+          check_str_eq(bitmap_size->data.string_val, "2");
+          for (i = 0; i < fields->data.list.count; ++i) {
+            Node *bit = find_child(fields->data.list.items[i], "optional_bit_index");
+            char expected[16];
+            snprintf(expected, sizeof(expected), "%zu", i);
+            check_not_null(bit);
+            if (bit != NULL) check_str_eq(bit->data.string_val, expected);
+          }
+        }
+      }
+
+      node_free(root);
+    }
+
     it("should fail on invalid syntax") {
       Node *root = create_node_map(NULL);
       const char *schema = "message Bad { uint32_t no_semi }";

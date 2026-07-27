@@ -709,6 +709,8 @@ static void annotate_optional_fields(Node *root) {
                         
                         char bit_index_str[32];
                         snprintf(bit_index_str, sizeof(bit_index_str), "%zu", optional_index);
+                        map_remove_named_children(field, "optional_bit_index");
+                        map_add(field, create_node_string("optional_bit_index", bit_index_str));
                         map_add(optional_field, create_node_string("optional_bit_index", bit_index_str));
                         
                         // 添加last标记

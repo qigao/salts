@@ -11,9 +11,9 @@ struct CppMacroRecord {
   std::uint32_t id;
 };
 
-TBE_TYPED_DEFINE_STRUCT(
-    CPP_MACRO_RECORD_BINDING, CppMacroRecord, "CppMacroRecord",
-    TBE_TYPED_FIELD(CppMacroRecord, id, "id", TBE_TYPED_U32, TBE_TYPED_REQUIRED));
+TBE_TYPED_DEFINE_STRUCT(CPP_MACRO_RECORD_BINDING, CppMacroRecord, "CppMacroRecord",
+                        TBE_TYPED_FIELD(CppMacroRecord, id, "id", TBE_TYPED_U32,
+                                        TBE_TYPED_REQUIRED));
 
 spec("generated typed Order C++ owner") {
   it("should expose the C struct API through an owning RAII wrapper") {
@@ -23,7 +23,8 @@ spec("generated typed Order C++ owner") {
     const char *json = "{\"header\":{\"seq\":7},\"id\":42,"
                        "\"request_id\":\"01890f3e-5c5a-7cc2-9f2b-8b7f47f0c001\","
                        "\"min_value\":-9223372036854775808,\"max_value\":18446744073709551615,"
-                       "\"side\":\"Buy\",\"fills\":[],\"symbol\":\"ABC\",\"payload\":\"raw\"}";
+                       "\"side\":\"Buy\",\"routing_hint\":12,\"fills\":[],\"symbol\":\"ABC\","
+                       "\"client_tag\":\"cpp\",\"payload\":\"raw\"}";
     DataBindError error = DATA_BIND_ERROR_INIT;
     DataBind *codec = nullptr;
     Orders_typed::OrderOwner order;
@@ -40,6 +41,10 @@ spec("generated typed Order C++ owner") {
       check_uint_eq(order->order_id, 42u);
       check_uint_eq(order->header.seq, 7u);
       check_str_eq(order->symbol, "ABC");
+      check_uint_eq(order->_presence[0],
+                    (1u << Order_OPTIONAL_routing_hint) | (1u << Order_OPTIONAL_client_tag));
+      check_uint_eq(order->routing_hint, 12u);
+      check_str_eq(order->client_tag, "cpp");
       check_int_eq(order.to_json(codec, &serialized, &serialized_len, &error), DATA_BIND_OK);
       check_not_null(serialized);
       check_size_gt(serialized_len, 0);
@@ -50,6 +55,9 @@ spec("generated typed Order C++ owner") {
         check_int_eq(decoded.from_bin(codec, wire, wire_len, &error), DATA_BIND_OK);
         check_uint_eq(decoded->order_id, 42u);
         check_str_eq(decoded->symbol, "ABC");
+        check_uint_eq(decoded->_presence[0], order->_presence[0]);
+        check_uint_eq(decoded->routing_hint, 12u);
+        check_str_eq(decoded->client_tag, "cpp");
       }
       tbe_typed_serialized_free(serialized);
       tbe_typed_serialized_free(wire);

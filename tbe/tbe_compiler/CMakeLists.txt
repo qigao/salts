@@ -2,11 +2,23 @@
 # Executable
 # =============================================================================
 
+set(TBE_COMPILER_TEMPLATE_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/templates/c_guest_adapter.mustache"
+    "${CMAKE_CURRENT_SOURCE_DIR}/templates/c_structs.mustache"
+    "${CMAKE_CURRENT_SOURCE_DIR}/templates/c_typed_source.mustache"
+    "${CMAKE_CURRENT_SOURCE_DIR}/templates/cpp_types.mustache"
+    "${CMAKE_CURRENT_SOURCE_DIR}/templates/go_types.mustache"
+    "${CMAKE_CURRENT_SOURCE_DIR}/templates/python_dataclass.mustache"
+    "${CMAKE_CURRENT_SOURCE_DIR}/templates/rust_structs.mustache"
+    "${CMAKE_CURRENT_SOURCE_DIR}/templates/ts_types.mustache")
+
 cmake_add_executable(tbe_compiler
-  SOURCES main.c compiler_core.c mustache_helpers.c
+  SOURCES main.c compiler_core.c mustache_helpers.c ${TBE_COMPILER_TEMPLATE_FILES}
   LIBS TurboUtils::TbeSchema TurboUtils::Parser TurboUtils::Mustache
   INCLUDES ${PROJECT_SOURCE_DIR}/shared/utils/include
   FOLDER "tbe/tbe_compiler")
+set_property(TARGET tbe_compiler APPEND PROPERTY LINK_DEPENDS
+             ${TBE_COMPILER_TEMPLATE_FILES})
 
 function(tbe_copy_turbonet_runtime_deps target_name)
   if(WIN32)

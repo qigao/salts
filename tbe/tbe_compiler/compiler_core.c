@@ -6,6 +6,7 @@
 #include "tbe_error.h"
 #include "turbo_fs.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,18 @@ static const char *tbe_compiler_string_value(Node *parent, const char *name) {
   Node *child = tbe_compiler_find_child(parent, name);
   if (!child || child->type != NODE_STRING) return NULL;
   return child->data.string_val;
+}
+
+static int tbe_compiler_parse_size(const char *text, size_t *out) {
+  char *end = NULL;
+  unsigned long long value;
+
+  if (!text || !text[0] || text[0] == '-' || !out) return 0;
+  errno = 0;
+  value = strtoull(text, &end, 10);
+  if (errno == ERANGE || !end || *end != '\0' || value > SIZE_MAX) return 0;
+  *out = (size_t)value;
+  return 1;
 }
 
 static const char *tbe_compiler_attribute_value(Node *owner, const char *name) {
@@ -751,7 +764,8 @@ static int tbe_compiler_typed_list_supported(Node *root, const char *list_name) 
   size_t i;
   if (!list || list->type != NODE_LIST) return 1;
   for (i = 0; i < list->data.list.count; ++i) {
-    Node *fields = tbe_compiler_find_child(list->data.list.items[i], "fields");
+    Node *record = list->data.list.items[i];
+    Node *fields = tbe_compiler_find_child(record, "fields");
     size_t j;
     if (!fields || fields->type != NODE_LIST) continue;
     for (j = 0; j < fields->data.list.count; ++j) {
@@ -776,6 +790,20 @@ static int tbe_compiler_typed_list_supported(Node *root, const char *list_name) 
                 tbe_compiler_string_value(field, "owner_name"),
                 tbe_compiler_string_value(field, "name"), c_name ? c_name : "(null)");
         return 0;
+      }
+      if (tbe_compiler_has_child(field, "is_optional")) {
+        const char *bit_text = tbe_compiler_string_value(field, "optional_bit_index");
+        const char *bitmap_text = tbe_compiler_string_value(record, "presence_bitmap_bytes");
+        size_t bit;
+        size_t bitmap_size;
+        if (!tbe_compiler_parse_size(bit_text, &bit) ||
+            !tbe_compiler_parse_size(bitmap_text, &bitmap_size) || bitmap_size == 0u ||
+            bit / 8u >= bitmap_size) {
+          fprintf(stderr, "Typed C optional field %s.%s has invalid presence metadata\n",
+                  tbe_compiler_string_value(field, "owner_name"),
+                  tbe_compiler_string_value(field, "name"));
+          return 0;
+        }
       }
       if (c_name && strcmp(c_name, "_presence") == 0) {
         fprintf(stderr, "Typed C field %s.%s uses reserved member name _presence\n",
