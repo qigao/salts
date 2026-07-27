@@ -1,6 +1,6 @@
 # TBE As A General Schema Format
 
-Updated: 2026-06-27
+Updated: 2026-07-26
 
 ## Summary
 
@@ -12,7 +12,7 @@ Its best fit is still:
 - deterministic fixed-prefix layouts
 - generated type-safe accessors
 - compact wire representation
-- optional runtime parser generation through MIR
+- pure C runtime schema binding through DataBind
 
 ## Current Capabilities
 
@@ -29,7 +29,7 @@ TBE currently supports:
 - C wire-access generation
 - C++ / Go / Rust / Python / TypeScript type generation
 - RulesForge `.rfl` declaration output
-- MIR / BMIR parser module output
+- generated C owning bindings and pure C dynamic runtime binding
 
 ## Deliberate Constraints
 
@@ -84,7 +84,7 @@ This split is intentional for now:
 | Optional fields | Supported | Supported | Supported |
 | Union-like tagged values | Supported | Supported | Schema-dependent |
 | Flexible field ordering | Constrained | Supported | Supported |
-| Runtime reflection | Limited | Strong | Strong |
+| Runtime reflection | Schema-driven DataBind | Strong | Strong |
 | Human-readable payload | No | No | Yes |
 | Full multi-language codecs | C complete, others type-only | Strong | Library-dependent |
 
@@ -111,7 +111,8 @@ Avoid TBE for:
 Recommended boundaries:
 
 - Use TBE C generation for native high-performance codecs.
-- Use MIR/BMIR output where runtime schema binding is needed.
+- Use DataBind dynamic objects where runtime schema binding is needed.
+- Use `TBE_TYPED_*` descriptors to map a schema onto existing C structs.
 - Use C++/Go/Rust/Python/TypeScript type outputs for adapters and typed client surfaces.
 - Use RulesForge output when a TBE schema should describe data consumed by rules.
 

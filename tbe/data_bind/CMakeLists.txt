@@ -5,7 +5,7 @@
 set(TARGET_NAME data_bind)
 
 add_library(${TARGET_NAME} SHARED data_bind.c data_bind.h data_bind_record.c tbe_typed.c
-                                  tbe_typed.h re.c re.h tbe_helpers.c)
+                                  tbe_typed.h re.c re.h)
 
 
 
@@ -19,14 +19,11 @@ target_include_directories(${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
          $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/tbe/schema/include>
          $<INSTALL_INTERFACE:include>
-  PRIVATE
-    ${CMAKE_SOURCE_DIR}/vendor/mir
 )
 
 target_link_libraries(${TARGET_NAME}
   PRIVATE
     TurboUtils::TbeSchema
-    mir_static
   PUBLIC
     TurboUtils::Core
     TurboUtils::Parser
@@ -46,16 +43,12 @@ install(
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES data_bind.h tbe_typed.h DESTINATION include)
 
-if(BUILD_EXAMPLES)
-  add_subdirectory(examples)
-endif()
-
 # =============================================================================
 # Tests
 # =============================================================================
 
 cmake_add_test(test_data_bind
-  SOURCES test_data_bind.c tbe_helpers.c
+  SOURCES test_data_bind.c
   LIBS TurboUtils::DataBind TurboUtils::TinyTest
   INCLUDES ${CMAKE_SOURCE_DIR}/tbe/schema/include
   FOLDER "tbe/data_bind")

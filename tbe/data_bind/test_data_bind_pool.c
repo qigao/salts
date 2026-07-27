@@ -93,7 +93,6 @@ spec("DataBind value pool") {
 
     data_bind_pool_write_schema();
     data_bind_pool_build_json(json, sizeof(json));
-    data_bind_set_cache_enabled(0);
     data_bind_set_value_pool_enabled(1);
     data_bind_get_value_pool_stats(&allocated_before, &reused_before);
 
@@ -144,7 +143,6 @@ spec("DataBind value pool") {
 
     data_bind_pool_write_schema();
     data_bind_pool_build_json(json, sizeof(json));
-    data_bind_set_cache_enabled(0);
     data_bind_set_value_pool_enabled(1);
 
     for (i = 0; i < DATA_BIND_POOL_TEST_THREADS; ++i) {

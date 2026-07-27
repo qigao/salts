@@ -80,6 +80,155 @@ struct TbeTypedType {
   int wire_big_endian;
 };
 
+/**
+ * Header-only descriptors for binding an existing C struct.
+ *
+ * These macros create the same TbeTypedField/TbeTypedType metadata emitted by
+ * tbe_compiler, without generating a header or source file. Schema names are
+ * canonical names; `[name(...)]` and `[alias(...)]` remain schema concerns.
+ *
+ * A requirement argument is either TBE_TYPED_REQUIRED or
+ * TBE_TYPED_OPTIONAL(bit). Optional fields require a descriptor created with
+ * TBE_TYPED_DEFINE_STRUCT_WITH_PRESENCE or TBE_TYPED_DEFINE_STRUCT_EX.
+ */
+#define TBE_TYPED_REQUIRED 0u, 0u
+#define TBE_TYPED_OPTIONAL(BIT) (unsigned)(BIT), TBE_TYPED_FIELD_OPTIONAL
+
+#define TBE_TYPED_FIELD_EX(                                                              \
+    C_TYPE, MEMBER, SCHEMA_NAME, KIND, WIRE_KIND, ELEMENT_KIND, ELEMENT_WIRE_KIND,       \
+    ELEMENT_SIZE, FIXED_COUNT, OBJECT_TYPE, MAP_ENTRY_SIZE, MAP_KEY_OFFSET,               \
+    MAP_VALUE_OFFSET, MAP_VALUE_KIND, MAP_VALUE_WIRE_KIND, MAP_VALUE_TYPE, WIRE_OFFSET,   \
+    WIRE_SIZE, OPTIONAL_BIT, FLAGS)                                                       \
+  {                                                                                      \
+    (SCHEMA_NAME), (KIND), (WIRE_KIND), offsetof(C_TYPE, MEMBER), (ELEMENT_KIND),         \
+        (ELEMENT_WIRE_KIND), (ELEMENT_SIZE), (FIXED_COUNT), (OBJECT_TYPE),                \
+        (MAP_ENTRY_SIZE), (MAP_KEY_OFFSET), (MAP_VALUE_OFFSET), (MAP_VALUE_KIND),         \
+        (MAP_VALUE_WIRE_KIND), (MAP_VALUE_TYPE), (WIRE_OFFSET), (WIRE_SIZE),              \
+        (OPTIONAL_BIT), (FLAGS)                                                           \
+  }
+
+#define TBE_TYPED_PRIVATE_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, KIND, OPTIONAL_BIT, FLAGS)   \
+  TBE_TYPED_FIELD_EX(C_TYPE, MEMBER, SCHEMA_NAME, KIND, KIND, TBE_TYPED_BOOL,             \
+                     TBE_TYPED_BOOL, 0u, 0u, NULL, 0u, 0u, 0u, TBE_TYPED_BOOL,            \
+                     TBE_TYPED_BOOL, NULL, 0u, 0u, OPTIONAL_BIT, FLAGS)
+
+/** Bind a scalar, enum, UUID, tstr_t string, or tbe_bytes_t member. */
+#define TBE_TYPED_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, KIND, REQUIREMENT)                    \
+  TBE_TYPED_PRIVATE_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, KIND, REQUIREMENT)
+
+#define TBE_TYPED_PRIVATE_OBJECT_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, OBJECT_TYPE,           \
+                                       OPTIONAL_BIT, FLAGS)                                \
+  TBE_TYPED_FIELD_EX(C_TYPE, MEMBER, SCHEMA_NAME, TBE_TYPED_OBJECT, TBE_TYPED_OBJECT,      \
+                     TBE_TYPED_BOOL, TBE_TYPED_BOOL, 0u, 0u, OBJECT_TYPE, 0u, 0u, 0u,     \
+                     TBE_TYPED_BOOL, TBE_TYPED_BOOL, NULL, 0u, 0u, OPTIONAL_BIT, FLAGS)
+
+/** Bind an inline nested C struct using another descriptor. */
+#define TBE_TYPED_OBJECT_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, OBJECT_TYPE, REQUIREMENT)       \
+  TBE_TYPED_PRIVATE_OBJECT_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, OBJECT_TYPE, REQUIREMENT)
+
+#define TBE_TYPED_PRIVATE_COLLECTION_FIELD(                                                \
+    C_TYPE, MEMBER, SCHEMA_NAME, KIND, ELEMENT_KIND, ELEMENT_C_TYPE, OBJECT_TYPE,          \
+    FIXED_COUNT, OPTIONAL_BIT, FLAGS)                                                       \
+  TBE_TYPED_FIELD_EX(C_TYPE, MEMBER, SCHEMA_NAME, KIND, KIND, ELEMENT_KIND, ELEMENT_KIND,  \
+                     sizeof(ELEMENT_C_TYPE), FIXED_COUNT, OBJECT_TYPE, 0u, 0u, 0u,         \
+                     TBE_TYPED_BOOL, TBE_TYPED_BOOL, NULL, 0u, 0u, OPTIONAL_BIT, FLAGS)
+
+/** Bind a TURBO_VEC_DEFINE-compatible list member. */
+#define TBE_TYPED_LIST_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, ELEMENT_KIND, ELEMENT_C_TYPE,     \
+                             OBJECT_TYPE, REQUIREMENT)                                      \
+  TBE_TYPED_PRIVATE_COLLECTION_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, TBE_TYPED_LIST,          \
+                                     ELEMENT_KIND, ELEMENT_C_TYPE, OBJECT_TYPE, 0u,         \
+                                     REQUIREMENT)
+
+/** Bind a TURBO_VEC_DEFINE-compatible set member. */
+#define TBE_TYPED_SET_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, ELEMENT_KIND, ELEMENT_C_TYPE,      \
+                            OBJECT_TYPE, REQUIREMENT)                                       \
+  TBE_TYPED_PRIVATE_COLLECTION_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, TBE_TYPED_SET,           \
+                                     ELEMENT_KIND, ELEMENT_C_TYPE, OBJECT_TYPE, 0u,         \
+                                     REQUIREMENT)
+
+/** Bind a fixed C array; its element count is derived from the member. */
+#define TBE_TYPED_FIXED_ARRAY_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, ELEMENT_KIND,              \
+                                    ELEMENT_C_TYPE, OBJECT_TYPE, REQUIREMENT)                \
+  TBE_TYPED_PRIVATE_COLLECTION_FIELD(                                                       \
+      C_TYPE, MEMBER, SCHEMA_NAME, TBE_TYPED_FIXED_ARRAY, ELEMENT_KIND, ELEMENT_C_TYPE,     \
+      OBJECT_TYPE, sizeof(((C_TYPE *)0)->MEMBER) / sizeof(((C_TYPE *)0)->MEMBER[0]),        \
+      REQUIREMENT)
+
+/** Bind a fixed uint8_t byte array; its byte count is derived from the member. */
+#define TBE_TYPED_FIXED_BYTES_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, REQUIREMENT)                \
+  TBE_TYPED_FIELD_EX(C_TYPE, MEMBER, SCHEMA_NAME, TBE_TYPED_FIXED_BYTES,                    \
+                     TBE_TYPED_FIXED_BYTES, TBE_TYPED_U8, TBE_TYPED_U8, sizeof(uint8_t),    \
+                     sizeof(((C_TYPE *)0)->MEMBER), NULL, 0u, 0u, 0u, TBE_TYPED_BOOL,      \
+                     TBE_TYPED_BOOL, NULL, 0u, 0u, REQUIREMENT)
+
+#define TBE_TYPED_PRIVATE_MAP_FIELD(                                                        \
+    C_TYPE, MEMBER, SCHEMA_NAME, ENTRY_TYPE, KEY_MEMBER, VALUE_MEMBER, VALUE_KIND,          \
+    VALUE_TYPE, OPTIONAL_BIT, FLAGS)                                                        \
+  TBE_TYPED_FIELD_EX(                                                                       \
+      C_TYPE, MEMBER, SCHEMA_NAME, TBE_TYPED_MAP, TBE_TYPED_MAP, TBE_TYPED_BOOL,            \
+      TBE_TYPED_BOOL, sizeof(ENTRY_TYPE), 0u, NULL, sizeof(ENTRY_TYPE),                     \
+      offsetof(ENTRY_TYPE, KEY_MEMBER), offsetof(ENTRY_TYPE, VALUE_MEMBER), VALUE_KIND,     \
+      VALUE_KIND, VALUE_TYPE, 0u, 0u, OPTIONAL_BIT, FLAGS)
+
+/**
+ * Bind a TURBO_VEC_DEFINE-compatible map member.
+ * ENTRY_TYPE::KEY_MEMBER must be tstr_t; VALUE_TYPE is NULL except for objects.
+ */
+#define TBE_TYPED_MAP_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, ENTRY_TYPE, KEY_MEMBER,             \
+                            VALUE_MEMBER, VALUE_KIND, VALUE_TYPE, REQUIREMENT)                \
+  TBE_TYPED_PRIVATE_MAP_FIELD(C_TYPE, MEMBER, SCHEMA_NAME, ENTRY_TYPE, KEY_MEMBER,          \
+                              VALUE_MEMBER, VALUE_KIND, VALUE_TYPE, REQUIREMENT)
+
+#define TBE_TYPED_PRIVATE_DEFINE_STRUCT(                                                    \
+    BINDING, C_TYPE, SCHEMA_NAME, FIXED_BLOCK_SIZE, PRESENCE_OFFSET, PRESENCE_SIZE,         \
+    WIRE_BIG_ENDIAN, ...)                                                                   \
+  static const TbeTypedField BINDING##_fields[] = {__VA_ARGS__};                           \
+  static const TbeTypedType BINDING = {                                                     \
+      (SCHEMA_NAME),                                                                        \
+      sizeof(C_TYPE),                                                                       \
+      BINDING##_fields,                                                                     \
+      sizeof(BINDING##_fields) / sizeof(BINDING##_fields[0]),                              \
+      (FIXED_BLOCK_SIZE),                                                                   \
+      (PRESENCE_OFFSET),                                                                    \
+      (PRESENCE_SIZE),                                                                      \
+      (WIRE_BIG_ENDIAN)}
+
+/** Define a text-format binding for a C struct with no optional fields. */
+#define TBE_TYPED_DEFINE_STRUCT(BINDING, C_TYPE, SCHEMA_NAME, ...)                          \
+  TBE_TYPED_PRIVATE_DEFINE_STRUCT(BINDING, C_TYPE, SCHEMA_NAME, 0u, 0u, 0u, 0,            \
+                                  __VA_ARGS__)
+
+/** Define a text-format binding whose presence member is a byte bitmap. */
+#define TBE_TYPED_DEFINE_STRUCT_WITH_PRESENCE(BINDING, C_TYPE, SCHEMA_NAME,                 \
+                                              PRESENCE_MEMBER, ...)                         \
+  TBE_TYPED_PRIVATE_DEFINE_STRUCT(                                                          \
+      BINDING, C_TYPE, SCHEMA_NAME, 0u, offsetof(C_TYPE, PRESENCE_MEMBER),                 \
+      sizeof(((C_TYPE *)0)->PRESENCE_MEMBER), 0, __VA_ARGS__)
+
+/**
+ * Define a descriptor with an explicit binary layout.
+ * Field initializers must provide matching wire offsets/flags through
+ * TBE_TYPED_FIELD_EX. Invalid or incomplete layouts fail descriptor/schema
+ * validation; no layout is inferred from the host C struct.
+ */
+#define TBE_TYPED_DEFINE_STRUCT_EX(BINDING, C_TYPE, SCHEMA_NAME, FIXED_BLOCK_SIZE,           \
+                                   PRESENCE_OFFSET, PRESENCE_SIZE, WIRE_BIG_ENDIAN, ...)     \
+  TBE_TYPED_PRIVATE_DEFINE_STRUCT(BINDING, C_TYPE, SCHEMA_NAME, FIXED_BLOCK_SIZE,           \
+                                  PRESENCE_OFFSET, PRESENCE_SIZE, WIRE_BIG_ENDIAN,           \
+                                  __VA_ARGS__)
+
+/** Convenience calls using the schema/type name stored in a macro descriptor. */
+#define TBE_TYPED_BIND_INIT(BINDING, OBJECT, ERROR)                                         \
+  tbe_typed_init(&(BINDING), (OBJECT), (ERROR))
+#define TBE_TYPED_BIND_CLEAR(BINDING, OBJECT) tbe_typed_clear(&(BINDING), (OBJECT))
+#define TBE_TYPED_BIND_PARSE(CODEC, BINDING, FORMAT, DATA, LEN, ROW, OBJECT, ERROR)          \
+  tbe_typed_parse((CODEC), (BINDING).name, &(BINDING), (FORMAT), (DATA), (LEN), (ROW),      \
+                  (OBJECT), (ERROR))
+#define TBE_TYPED_BIND_SERIALIZE(CODEC, BINDING, OBJECT, FORMAT, OUT, OUT_LEN, ERROR)        \
+  tbe_typed_serialize((CODEC), (BINDING).name, &(BINDING), (OBJECT), (FORMAT), (OUT),       \
+                      (OUT_LEN), (ERROR))
+
 TURBO_VEC_DEFINE(tbe_bytes_t, uint8_t)
 
 /**
@@ -95,6 +244,13 @@ DATA_BIND_API DataBindStatus tbe_typed_init(const TbeTypedType *type, void *obje
 
 /** Release all owned strings, byte vectors, containers, and nested objects. */
 DATA_BIND_API void tbe_typed_clear(const TbeTypedType *type, void *object);
+
+/**
+ * Validate host-memory bounds, collection metadata, optional presence bits,
+ * and nested descriptors without requiring a schema codec.
+ */
+DATA_BIND_API DataBindStatus tbe_typed_validate_descriptor(const TbeTypedType *type,
+                                                           DataBindError *error);
 
 /**
  * Populate an initialized object from a schema-bound dynamic value.
@@ -141,8 +297,10 @@ DATA_BIND_API DataBindStatus tbe_typed_parse(DataBind *codec, const char *type_n
                                              DataBindError *error);
 
 /**
- * Serialize to `json`, `yaml`, `csv`, or `xml`.
- * @param codec Required for YAML and XML; ignored for JSON and CSV.
+ * Serialize to `json`, `yaml`, `csv`, or `xml` using schema field mappings.
+ * The primary `[name(...)]` annotation is used for output; `[alias(...)]`
+ * annotations are input-only.
+ * @param codec Required for every text format.
  * @param out Receives an allocated buffer released by `tbe_typed_serialized_free`.
  */
 DATA_BIND_API DataBindStatus tbe_typed_serialize(DataBind *codec, const char *type_name,

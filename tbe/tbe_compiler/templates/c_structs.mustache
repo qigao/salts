@@ -5,6 +5,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef TBE_GENERATED_API
+#if defined(_WIN32) && defined(TBE_GENERATED_BUILD_SHARED)
+#define TBE_GENERATED_API __declspec(dllexport)
+#elif defined(_WIN32) && defined(TBE_GENERATED_USE_SHARED)
+#define TBE_GENERATED_API __declspec(dllimport)
+#elif defined(__GNUC__) && defined(TBE_GENERATED_BUILD_SHARED)
+#define TBE_GENERATED_API __attribute__((visibility("default")))
+#else
+#define TBE_GENERATED_API
+#endif
+#endif
+
 #include "tbe_wire.h"
 #if defined(TBE_WASM_GUEST)
 static inline void *tbe_generated_memcpy(void *destination, const void *source, size_t size) {
@@ -151,9 +163,9 @@ extern "C" {
 /* Schema {{schema.schema_name}} {{schema.schema_attributes_rendered}} */
 enum { {{schema.schema_name}}_WIRE_BIG_ENDIAN = {{schema.schema_wire_big_endian_value}} };
 {{#typed_source_enabled}}
-DataBindStatus {{schema.schema_name}}_codec_create(DataBind **out_codec, DataBindError *error);
-const char *{{schema.schema_name}}_schema_text(void);
-const tbe_schema_codec_v1_t *{{schema.schema_name}}_schema_codec(void);
+TBE_GENERATED_API DataBindStatus {{schema.schema_name}}_codec_create(DataBind **out_codec, DataBindError *error);
+TBE_GENERATED_API const char *{{schema.schema_name}}_schema_text(void);
+TBE_GENERATED_API const tbe_schema_codec_v1_t *{{schema.schema_name}}_schema_codec(void);
 {{/typed_source_enabled}}
 {{#schema.has_schema_version}}
 #define {{schema.schema_name}}_SCHEMA_VERSION {{schema.schema_version}}
@@ -362,19 +374,19 @@ typedef struct {{name}}_s {
 
 {{#typed_source_enabled}}
 /** Owning lifecycle and schema serialization API; serialized buffers use tbe_typed_serialized_free. */
-void {{name}}_init({{name}}_t *object);
-void {{name}}_clear({{name}}_t *object);
-DataBindStatus {{name}}_from_bin(DataBind *codec, {{name}}_t *object, const void *data, size_t len, DataBindError *error);
-DataBindStatus {{name}}_from_json(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
-DataBindStatus {{name}}_from_yaml(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
-DataBindStatus {{name}}_from_csv(DataBind *codec, {{name}}_t *object, const char *data, size_t len, size_t row, DataBindError *error);
-DataBindStatus {{name}}_from_xml(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
-DataBindStatus {{name}}_to_bin(const {{name}}_t *object, uint8_t **out, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_bin_into(const {{name}}_t *object, uint8_t *output, size_t output_capacity, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_json(const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_yaml(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_csv(const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_xml(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API void {{name}}_init({{name}}_t *object);
+TBE_GENERATED_API void {{name}}_clear({{name}}_t *object);
+TBE_GENERATED_API DataBindStatus {{name}}_from_bin(DataBind *codec, {{name}}_t *object, const void *data, size_t len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_from_json(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_from_yaml(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_from_csv(DataBind *codec, {{name}}_t *object, const char *data, size_t len, size_t row, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_from_xml(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_bin(const {{name}}_t *object, uint8_t **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_bin_into(const {{name}}_t *object, uint8_t *output, size_t output_capacity, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_json(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_yaml(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_csv(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_xml(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
 {{/typed_source_enabled}}
 {{/guest_adapter_only}}
 
@@ -711,19 +723,19 @@ typedef struct {{name}}_s {
 
 {{#typed_source_enabled}}
 /** Owning lifecycle and schema serialization API; serialized buffers use tbe_typed_serialized_free. */
-void {{name}}_init({{name}}_t *object);
-void {{name}}_clear({{name}}_t *object);
-DataBindStatus {{name}}_from_bin(DataBind *codec, {{name}}_t *object, const void *data, size_t len, DataBindError *error);
-DataBindStatus {{name}}_from_json(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
-DataBindStatus {{name}}_from_yaml(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
-DataBindStatus {{name}}_from_csv(DataBind *codec, {{name}}_t *object, const char *data, size_t len, size_t row, DataBindError *error);
-DataBindStatus {{name}}_from_xml(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
-DataBindStatus {{name}}_to_bin(const {{name}}_t *object, uint8_t **out, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_bin_into(const {{name}}_t *object, uint8_t *output, size_t output_capacity, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_json(const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_yaml(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_csv(const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_xml(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API void {{name}}_init({{name}}_t *object);
+TBE_GENERATED_API void {{name}}_clear({{name}}_t *object);
+TBE_GENERATED_API DataBindStatus {{name}}_from_bin(DataBind *codec, {{name}}_t *object, const void *data, size_t len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_from_json(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_from_yaml(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_from_csv(DataBind *codec, {{name}}_t *object, const char *data, size_t len, size_t row, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_from_xml(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_bin(const {{name}}_t *object, uint8_t **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_bin_into(const {{name}}_t *object, uint8_t *output, size_t output_capacity, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_json(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_yaml(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_csv(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_xml(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
 {{/typed_source_enabled}}
 {{/guest_adapter_only}}
 
@@ -1303,19 +1315,19 @@ typedef struct {{name}}_s {
 
 {{#typed_source_enabled}}
 /** Owning lifecycle and schema serialization API; serialized buffers use tbe_typed_serialized_free. */
-void {{name}}_init({{name}}_t *object);
-void {{name}}_clear({{name}}_t *object);
-DataBindStatus {{name}}_from_bin(DataBind *codec, {{name}}_t *object, const void *data, size_t len, DataBindError *error);
-DataBindStatus {{name}}_from_json(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
-DataBindStatus {{name}}_from_yaml(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
-DataBindStatus {{name}}_from_csv(DataBind *codec, {{name}}_t *object, const char *data, size_t len, size_t row, DataBindError *error);
-DataBindStatus {{name}}_from_xml(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
-DataBindStatus {{name}}_to_bin(const {{name}}_t *object, uint8_t **out, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_bin_into(const {{name}}_t *object, uint8_t *output, size_t output_capacity, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_json(const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_yaml(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_csv(const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
-DataBindStatus {{name}}_to_xml(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API void {{name}}_init({{name}}_t *object);
+TBE_GENERATED_API void {{name}}_clear({{name}}_t *object);
+TBE_GENERATED_API DataBindStatus {{name}}_from_bin(DataBind *codec, {{name}}_t *object, const void *data, size_t len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_from_json(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_from_yaml(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_from_csv(DataBind *codec, {{name}}_t *object, const char *data, size_t len, size_t row, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_from_xml(DataBind *codec, {{name}}_t *object, const char *data, size_t len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_bin(const {{name}}_t *object, uint8_t **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_bin_into(const {{name}}_t *object, uint8_t *output, size_t output_capacity, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_json(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_yaml(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_csv(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
+TBE_GENERATED_API DataBindStatus {{name}}_to_xml(DataBind *codec, const {{name}}_t *object, char **out, size_t *out_len, DataBindError *error);
 {{/typed_source_enabled}}
 {{/guest_adapter_only}}
 
@@ -1974,9 +1986,9 @@ template <typename Record,
                                     DataBindError *),
           DataBindStatus (*FromXml)(DataBind *, Record *, const char *, size_t, DataBindError *),
           DataBindStatus (*ToBin)(const Record *, uint8_t **, size_t *, DataBindError *),
-          DataBindStatus (*ToJson)(const Record *, char **, size_t *, DataBindError *),
+          DataBindStatus (*ToJson)(DataBind *, const Record *, char **, size_t *, DataBindError *),
           DataBindStatus (*ToYaml)(DataBind *, const Record *, char **, size_t *, DataBindError *),
-          DataBindStatus (*ToCsv)(const Record *, char **, size_t *, DataBindError *),
+          DataBindStatus (*ToCsv)(DataBind *, const Record *, char **, size_t *, DataBindError *),
           DataBindStatus (*ToXml)(DataBind *, const Record *, char **, size_t *, DataBindError *)>
 class Owner final {
 public:
@@ -2015,15 +2027,17 @@ public:
     DataBindStatus to_bin(uint8_t **out, size_t *out_len, DataBindError *error) const noexcept {
         return ToBin(&value_, out, out_len, error);
     }
-    DataBindStatus to_json(char **out, size_t *out_len, DataBindError *error) const noexcept {
-        return ToJson(&value_, out, out_len, error);
+    DataBindStatus to_json(DataBind *codec, char **out, size_t *out_len,
+                           DataBindError *error) const noexcept {
+        return ToJson(codec, &value_, out, out_len, error);
     }
     DataBindStatus to_yaml(DataBind *codec, char **out, size_t *out_len,
                            DataBindError *error) const noexcept {
         return ToYaml(codec, &value_, out, out_len, error);
     }
-    DataBindStatus to_csv(char **out, size_t *out_len, DataBindError *error) const noexcept {
-        return ToCsv(&value_, out, out_len, error);
+    DataBindStatus to_csv(DataBind *codec, char **out, size_t *out_len,
+                          DataBindError *error) const noexcept {
+        return ToCsv(codec, &value_, out, out_len, error);
     }
     DataBindStatus to_xml(DataBind *codec, char **out, size_t *out_len,
                           DataBindError *error) const noexcept {

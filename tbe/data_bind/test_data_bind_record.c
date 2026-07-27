@@ -4,7 +4,7 @@
 #include <string.h>
 
 spec("data_bind record API") {
-  it("reads native text formats and MIR binary records") {
+  it("reads native text formats and pure C binary records") {
     static const char schema[] = "message Order { uint32 id; string symbol; }";
     static const char json[] = "{\"id\":7,\"symbol\":\"JSON\"}";
     static const char yaml[] = "id: 8\nsymbol: YAML\n";
@@ -43,19 +43,23 @@ spec("data_bind record API") {
     check_int_eq(data_bind_record_field_get_u32(&id_field, &id, &error), DATA_BIND_OK);
     check_uint_eq(id, 7);
 
-    check_int_eq(data_bind_record_serialize_json(record, &text, &text_len, &error), DATA_BIND_OK);
+    check_int_eq(data_bind_record_serialize_json(codec, record, &text, &text_len, &error),
+                 DATA_BIND_OK);
     check_str_contains(text, "\"id\":7");
     data_bind_serialized_free(text);
     text = NULL;
-    check_int_eq(data_bind_record_serialize_yaml(record, &text, &text_len, &error), DATA_BIND_OK);
+    check_int_eq(data_bind_record_serialize_yaml(codec, record, &text, &text_len, &error),
+                 DATA_BIND_OK);
     check_str_contains(text, "\"id\": 7");
     data_bind_serialized_free(text);
     text = NULL;
-    check_int_eq(data_bind_record_serialize_xml(record, &text, &text_len, &error), DATA_BIND_OK);
+    check_int_eq(data_bind_record_serialize_xml(codec, record, &text, &text_len, &error),
+                 DATA_BIND_OK);
     check_str_contains(text, "<id>7</id>");
     data_bind_serialized_free(text);
     text = NULL;
-    check_int_eq(data_bind_record_serialize_csv(record, &text, &text_len, &error), DATA_BIND_OK);
+    check_int_eq(data_bind_record_serialize_csv(codec, record, &text, &text_len, &error),
+                 DATA_BIND_OK);
     check_str_contains(text, "id,symbol");
     check_str_contains(text, "7,JSON");
     data_bind_serialized_free(text);
@@ -168,7 +172,7 @@ spec("data_bind record API") {
     data_bind_free(codec);
   }
 
-  it("uses slot-backed binary records while preserving the legacy parser") {
+  it("uses the pure C binary parser for records and dynamic values") {
     static const char schema[] =
         "composite Header { uint32 seq; }"
         "group Fill { int32 price; uint32 qty; }"
@@ -180,7 +184,7 @@ spec("data_bind record API") {
     DataBindRecord *source = NULL;
     DataBindRecord *decoded = NULL;
     DataBindRecord *failed = NULL;
-    DataBindValue *legacy = NULL;
+    DataBindValue *dynamic = NULL;
     DataBindRecordView header = DATA_BIND_RECORD_VIEW_INIT;
     DataBindRecordView fill = DATA_BIND_RECORD_VIEW_INIT;
     DataBindListView fills = DATA_BIND_LIST_VIEW_INIT;
@@ -217,15 +221,14 @@ spec("data_bind record API") {
     check_int_eq(data_bind_record_view_find_field(&fill, "price", &field, &error), DATA_BIND_OK);
     check_int_eq(data_bind_record_field_get_i32(&field, &i32, &error), DATA_BIND_OK);
     check_int_eq(i32, 101);
-    check_int_eq(data_bind_record_serialize_json(decoded, &roundtrip_json, &roundtrip_json_len,
-                                                 &error),
+    check_int_eq(data_bind_record_serialize_json(codec, decoded, &roundtrip_json,
+                                                 &roundtrip_json_len, &error),
                  DATA_BIND_OK);
     check_str_contains(roundtrip_json, "\"header\":{\"seq\":3}");
     check_str_contains(roundtrip_json, "\"fills\":[{\"price\":100,\"qty\":2}");
 
-    check_int_eq(data_bind_parse(codec, "Order", wire, wire_len, &legacy, &error), DATA_BIND_OK);
-    check_not_null(data_bind_value_get(legacy, "header.seq"));
-    check_null(data_bind_value_get(legacy, "header"));
+    check_int_eq(data_bind_parse(codec, "Order", wire, wire_len, &dynamic, &error), DATA_BIND_OK);
+    check_not_null(data_bind_value_get(data_bind_value_get(dynamic, "header"), "seq"));
 
     check_int_eq(data_bind_record_from_bin(codec, "Order", wire, wire_len - 1, &failed, &error),
                  DATA_BIND_ERR_PARSE);
@@ -240,7 +243,7 @@ spec("data_bind record API") {
     check_int_eq(data_bind_record_field_get_u32(&field, &u32, &error), DATA_BIND_OK);
     check_uint_eq(u32, 3);
 
-    data_bind_value_free(legacy);
+    data_bind_value_free(dynamic);
     data_bind_serialized_free(roundtrip_json);
     data_bind_record_free(decoded);
     data_bind_binary_free(wire);

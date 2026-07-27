@@ -28,7 +28,7 @@ static const TbeTypedField {{name}}_TYPED_FIELDS[] = {
         .name = "{{name}}",
         .kind = {{typed_kind}},
         .wire_kind = {{#typed_wire_kind}}{{typed_wire_kind}}{{/typed_wire_kind}}{{^typed_wire_kind}}{{typed_kind}}{{/typed_wire_kind}},
-        .offset = offsetof({{owner_name}}_t, {{name}}),
+        .offset = offsetof({{owner_name}}_t, {{c_name}}),
         .element_kind = {{#typed_element_kind}}{{typed_element_kind}}{{/typed_element_kind}}{{^typed_element_kind}}TBE_TYPED_BOOL{{/typed_element_kind}},
         .element_wire_kind = {{#typed_element_wire_kind}}{{typed_element_wire_kind}}{{/typed_element_wire_kind}}{{^typed_element_wire_kind}}{{#typed_element_kind}}{{typed_element_kind}}{{/typed_element_kind}}{{^typed_element_kind}}TBE_TYPED_BOOL{{/typed_element_kind}}{{/typed_element_wire_kind}},
         .element_size = {{#typed_element_c_type}}sizeof({{typed_element_c_type}}){{/typed_element_c_type}}{{^typed_element_c_type}}0{{/typed_element_c_type}},
@@ -64,7 +64,7 @@ static TbeTypedType {{name}}_TYPED_TYPE = {
 static const TbeTypedField {{name}}_TYPED_FIELDS[] = {
 {{#fields}}
     { .name = "{{name}}", .kind = {{typed_kind}},
-      .wire_kind = {{#typed_wire_kind}}{{typed_wire_kind}}{{/typed_wire_kind}}{{^typed_wire_kind}}{{typed_kind}}{{/typed_wire_kind}}, .offset = offsetof({{owner_name}}_t, {{name}}),
+      .wire_kind = {{#typed_wire_kind}}{{typed_wire_kind}}{{/typed_wire_kind}}{{^typed_wire_kind}}{{typed_kind}}{{/typed_wire_kind}}, .offset = offsetof({{owner_name}}_t, {{c_name}}),
       .element_kind = {{#typed_element_kind}}{{typed_element_kind}}{{/typed_element_kind}}{{^typed_element_kind}}TBE_TYPED_BOOL{{/typed_element_kind}},
       .element_wire_kind = {{#typed_element_wire_kind}}{{typed_element_wire_kind}}{{/typed_element_wire_kind}}{{^typed_element_wire_kind}}{{#typed_element_kind}}{{typed_element_kind}}{{/typed_element_kind}}{{^typed_element_kind}}TBE_TYPED_BOOL{{/typed_element_kind}}{{/typed_element_wire_kind}},
       .element_size = {{#typed_element_c_type}}sizeof({{typed_element_c_type}}){{/typed_element_c_type}}{{^typed_element_c_type}}0{{/typed_element_c_type}},
@@ -96,7 +96,7 @@ static TbeTypedType {{name}}_TYPED_TYPE = {
 static const TbeTypedField {{name}}_TYPED_FIELDS[] = {
 {{#fields}}
     { .name = "{{name}}", .kind = {{typed_kind}},
-      .wire_kind = {{#typed_wire_kind}}{{typed_wire_kind}}{{/typed_wire_kind}}{{^typed_wire_kind}}{{typed_kind}}{{/typed_wire_kind}}, .offset = offsetof({{owner_name}}_t, {{name}}),
+      .wire_kind = {{#typed_wire_kind}}{{typed_wire_kind}}{{/typed_wire_kind}}{{^typed_wire_kind}}{{typed_kind}}{{/typed_wire_kind}}, .offset = offsetof({{owner_name}}_t, {{c_name}}),
       .element_kind = {{#typed_element_kind}}{{typed_element_kind}}{{/typed_element_kind}}{{^typed_element_kind}}TBE_TYPED_BOOL{{/typed_element_kind}},
       .element_wire_kind = {{#typed_element_wire_kind}}{{typed_element_wire_kind}}{{/typed_element_wire_kind}}{{^typed_element_wire_kind}}{{#typed_element_kind}}{{typed_element_kind}}{{/typed_element_kind}}{{^typed_element_kind}}TBE_TYPED_BOOL{{/typed_element_kind}}{{/typed_element_wire_kind}},
       .element_size = {{#typed_element_c_type}}sizeof({{typed_element_c_type}}){{/typed_element_c_type}}{{^typed_element_c_type}}0{{/typed_element_c_type}},
@@ -150,14 +150,14 @@ static TbeTypedType {{name}}_TYPED_TYPE = {
     DataBindStatus name##_to_bin_into(const name##_t *object, uint8_t *output, size_t output_capacity, size_t *out_len, DataBindError *error) { \
         return tbe_typed_serialize_binary_into(&name##_TYPED_TYPE, object, output, output_capacity, out_len, error); \
     } \
-    DataBindStatus name##_to_json(const name##_t *object, char **out, size_t *out_len, DataBindError *error) { \
-        return tbe_typed_serialize(NULL, #name, &name##_TYPED_TYPE, object, "json", out, out_len, error); \
+    DataBindStatus name##_to_json(DataBind *codec, const name##_t *object, char **out, size_t *out_len, DataBindError *error) { \
+        return tbe_typed_serialize(codec, #name, &name##_TYPED_TYPE, object, "json", out, out_len, error); \
     } \
     DataBindStatus name##_to_yaml(DataBind *codec, const name##_t *object, char **out, size_t *out_len, DataBindError *error) { \
         return tbe_typed_serialize(codec, #name, &name##_TYPED_TYPE, object, "yaml", out, out_len, error); \
     } \
-    DataBindStatus name##_to_csv(const name##_t *object, char **out, size_t *out_len, DataBindError *error) { \
-        return tbe_typed_serialize(NULL, #name, &name##_TYPED_TYPE, object, "csv", out, out_len, error); \
+    DataBindStatus name##_to_csv(DataBind *codec, const name##_t *object, char **out, size_t *out_len, DataBindError *error) { \
+        return tbe_typed_serialize(codec, #name, &name##_TYPED_TYPE, object, "csv", out, out_len, error); \
     } \
     DataBindStatus name##_to_xml(DataBind *codec, const name##_t *object, char **out, size_t *out_len, DataBindError *error) { \
         return tbe_typed_serialize(codec, #name, &name##_TYPED_TYPE, object, "xml", out, out_len, error); \
@@ -250,13 +250,13 @@ static DataBindStatus {{schema.schema_name}}_binary_to_text(
         if (status == DATA_BIND_OK) { \
             switch (format) { \
             case TBE_SCHEMA_FORMAT_JSON: \
-                status = name##_to_json(&object, out, out_len, error); \
+                status = name##_to_json(codec, &object, out, out_len, error); \
                 break; \
             case TBE_SCHEMA_FORMAT_YAML: \
                 status = name##_to_yaml(codec, &object, out, out_len, error); \
                 break; \
             case TBE_SCHEMA_FORMAT_CSV: \
-                status = name##_to_csv(&object, out, out_len, error); \
+                status = name##_to_csv(codec, &object, out, out_len, error); \
                 break; \
             case TBE_SCHEMA_FORMAT_XML: \
                 status = name##_to_xml(codec, &object, out, out_len, error); \

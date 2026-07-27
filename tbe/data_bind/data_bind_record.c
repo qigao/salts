@@ -135,24 +135,28 @@ DataBindStatus data_bind_record_serialize_bin_into(DataBind *codec, const DataBi
   return data_bind_object_serialize_bin_into(codec, record, output, capacity, out_len, error);
 }
 
-DataBindStatus data_bind_record_serialize_json(const DataBindRecord *record, char **out_json,
-                                               size_t *out_len, DataBindError *error) {
-  return data_bind_object_serialize_json(record, out_json, out_len, error);
+DataBindStatus data_bind_record_serialize_json(DataBind *codec, const DataBindRecord *record,
+                                               char **out_json, size_t *out_len,
+                                               DataBindError *error) {
+  return data_bind_object_serialize_json(codec, record, out_json, out_len, error);
 }
 
-DataBindStatus data_bind_record_serialize_yaml(const DataBindRecord *record, char **out_yaml,
-                                               size_t *out_len, DataBindError *error) {
-  return data_bind_object_serialize_yaml(record, out_yaml, out_len, error);
+DataBindStatus data_bind_record_serialize_yaml(DataBind *codec, const DataBindRecord *record,
+                                               char **out_yaml, size_t *out_len,
+                                               DataBindError *error) {
+  return data_bind_object_serialize_yaml(codec, record, out_yaml, out_len, error);
 }
 
-DataBindStatus data_bind_record_serialize_xml(const DataBindRecord *record, char **out_xml,
-                                              size_t *out_len, DataBindError *error) {
-  return data_bind_object_serialize_xml(record, out_xml, out_len, error);
+DataBindStatus data_bind_record_serialize_xml(DataBind *codec, const DataBindRecord *record,
+                                              char **out_xml, size_t *out_len,
+                                              DataBindError *error) {
+  return data_bind_object_serialize_xml(codec, record, out_xml, out_len, error);
 }
 
-DataBindStatus data_bind_record_serialize_csv(const DataBindRecord *record, char **out_csv,
-                                              size_t *out_len, DataBindError *error) {
-  return data_bind_object_serialize_csv(record, out_csv, out_len, error);
+DataBindStatus data_bind_record_serialize_csv(DataBind *codec, const DataBindRecord *record,
+                                              char **out_csv, size_t *out_len,
+                                              DataBindError *error) {
+  return data_bind_object_serialize_csv(codec, record, out_csv, out_len, error);
 }
 
 DataBindStatus data_bind_record_find_field(const DataBindRecord *record, const char *name,

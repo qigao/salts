@@ -44,11 +44,6 @@ static int collect_serialized(const void *data, size_t len, void *user) {
   return 0;
 }
 
-static int write_generated_mir(const void *data, size_t len, void *user) {
-  FILE *file = (FILE *)user;
-  return file != NULL && fwrite(data, 1, len, file) == len ? 0 : -1;
-}
-
 static DataBindRecordAction collect_record(void *user_data, const DataBindValue *record,
                                            uint64_t record_index) {
   record_callback_state *state = (record_callback_state *)user_data;
@@ -83,88 +78,8 @@ spec("data_bind public API") {
   it("should expose version and ABI metadata") {
     check_int_eq(data_bind_library_version(), DATA_BIND_VERSION);
     check_int_eq(data_bind_abi_version(), DATA_BIND_ABI_VERSION);
-    check_str_eq(data_bind_version_string(), "1.12.0");
+    check_str_eq(data_bind_version_string(), "2.0.0");
     check_str_eq(data_bind_status_name(DATA_BIND_ERR_TYPE_MISMATCH), "type_mismatch");
-  }
-
-  it("should load generated MIR and BMIR and reuse object serializers") {
-    const char *schema = "message Packet { uint32 id; string name; }\n";
-    const char *mismatched_schema = "message Packet { uint32 id; string label; }\n";
-    const uint8_t wire[] = {42, 0, 0, 0, 5, 0, 0, 0, 'T', 'u', 'r', 'b', 'o'};
-    const char *artifact_paths[] = {"test_public_loader.mir", "test_public_loader.bmir"};
-    int binary_output;
-
-    write_schema_file("test_public_loader.tbe", schema);
-    for (binary_output = 0; binary_output <= 1; ++binary_output) {
-      const char *artifact_path = artifact_paths[binary_output];
-      DataBindError err = DATA_BIND_ERROR_INIT;
-      DataBind *codec = NULL;
-      DataBind *mismatched_codec = NULL;
-      DataBindObject *object = NULL;
-      FILE *artifact_file = fopen(artifact_path, "wb");
-      char *artifact = NULL;
-      char *json = NULL;
-      uint8_t *roundtrip_wire = NULL;
-      size_t artifact_len = 0;
-      size_t json_len = 0;
-      size_t roundtrip_len = 0;
-
-      check_not_null(artifact_file);
-      if (artifact_file != NULL) {
-        check_int_eq(data_bind_generate_mir("test_public_loader.tbe", write_generated_mir,
-                                            artifact_file, binary_output, &err),
-                     DATA_BIND_OK);
-        fclose(artifact_file);
-      }
-      artifact = tt_read_file(artifact_path, &artifact_len);
-      check_not_null(artifact);
-      check(artifact_len > 0);
-
-      if (artifact != NULL) {
-        DataBindStatus load_status =
-            binary_output
-                ? data_bind_create_from_bmir(schema, strlen(schema), artifact, artifact_len,
-                                             &codec, &err)
-                : data_bind_create_from_mir(schema, strlen(schema), artifact, artifact_len,
-                                            &codec, &err);
-        check_int_eq(load_status, DATA_BIND_OK);
-        check_not_null(codec);
-      }
-      if (codec != NULL) {
-        check_int_eq(data_bind_object_from_bin(codec, "Packet", wire, sizeof(wire), &object, &err),
-                     DATA_BIND_OK);
-        check_not_null(object);
-      }
-      if (object != NULL) {
-        check_int_eq(data_bind_object_serialize_json(object, &json, &json_len, &err), DATA_BIND_OK);
-        check_str_eq(json, "{\"id\":42,\"name\":\"Turbo\"}");
-        check_int_eq(data_bind_object_serialize_bin(codec, object, &roundtrip_wire, &roundtrip_len,
-                                                    &err),
-                     DATA_BIND_OK);
-        check_int_eq(roundtrip_len, sizeof(wire));
-        check(memcmp(roundtrip_wire, wire, sizeof(wire)) == 0);
-      }
-
-      if (artifact != NULL) {
-        DataBindStatus mismatch_status =
-            binary_output
-                ? data_bind_create_from_bmir(mismatched_schema, strlen(mismatched_schema), artifact,
-                                             artifact_len, &mismatched_codec, &err)
-                : data_bind_create_from_mir(mismatched_schema, strlen(mismatched_schema), artifact,
-                                            artifact_len, &mismatched_codec, &err);
-        check_int_eq(mismatch_status, DATA_BIND_ERR_SCHEMA);
-        check_null(mismatched_codec);
-      }
-
-      data_bind_binary_free(roundtrip_wire);
-      data_bind_serialized_free(json);
-      data_bind_object_free(object);
-      data_bind_free(codec);
-      data_bind_free(mismatched_codec);
-      free(artifact);
-      remove(artifact_path);
-    }
-    remove("test_public_loader.tbe");
   }
 
   it("should bind JSON and XML through public opaque handles") {
@@ -647,7 +562,8 @@ spec("data_bind public API") {
       check_long_eq(
           data_bind_value_as_int64(data_bind_value_get(data_bind_object_value(object), "id")),
           INT64_C(9007199254740993));
-      check_int_eq(data_bind_object_serialize_json(object, &serialized, &serialized_len, &err),
+      check_int_eq(data_bind_object_serialize_json(codec, object, &serialized, &serialized_len,
+                                                   &err),
                    DATA_BIND_OK);
       check_not_null(serialized);
       check_str_contains(serialized, "\"id\":9007199254740993");
@@ -656,7 +572,7 @@ spec("data_bind public API") {
       check(serialized_len == strlen(serialized));
       data_bind_serialized_free(serialized);
 
-      check_int_eq(data_bind_object_serialize_yaml(object, &yaml, NULL, &err), DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_yaml(codec, object, &yaml, NULL, &err), DATA_BIND_OK);
       check_str_contains(yaml, "9007199254740993");
       check_null(strstr(yaml, "\"9007199254740993\""));
       check_int_eq(data_bind_object_from_yaml(codec, "Payload", yaml, strlen(yaml),
@@ -671,11 +587,11 @@ spec("data_bind public API") {
       data_bind_object_free(yaml_roundtrip);
       data_bind_serialized_free(yaml);
 
-      check_int_eq(data_bind_object_serialize_xml(object, &xml, NULL, &err), DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_xml(codec, object, &xml, NULL, &err), DATA_BIND_OK);
       check_str_contains(xml, "<id>9007199254740993</id>");
       data_bind_serialized_free(xml);
 
-      check_int_eq(data_bind_object_write_json(object, collect_serialized, &output, &err),
+      check_int_eq(data_bind_object_write_json(codec, object, collect_serialized, &output, &err),
                    DATA_BIND_OK);
       check_str_contains(output.data, "9007199254740993");
       data_bind_object_free(object);
@@ -722,7 +638,8 @@ spec("data_bind public API") {
       DataBindMapEntry entry;
       char text[128];
       size_t bytes_len = 0;
-      check_int_eq(data_bind_object_serialize_csv(object, &csv, &csv_len, &err), DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_csv(codec, object, &csv, &csv_len, &err),
+                   DATA_BIND_OK);
       check_not_null(csv);
       check_size_eq(csv_len, strlen(csv));
       check_str_contains(csv, "meta.seq");
@@ -788,11 +705,11 @@ spec("data_bind public API") {
       check_int_eq(data_bind_value_get_int64(entry.value, &signed_value), DATA_BIND_OK);
       check(signed_value == INT64_MIN);
 
-      check_int_eq(data_bind_object_write_csv(object, collect_serialized, &output, &err),
+      check_int_eq(data_bind_object_write_csv(codec, object, collect_serialized, &output, &err),
                    DATA_BIND_OK);
       check_size_eq(output.len, csv_len);
       check_str_eq(output.data, csv);
-      check_int_eq(data_bind_object_serialize_csv(object, NULL, NULL, &err),
+      check_int_eq(data_bind_object_serialize_csv(codec, object, NULL, NULL, &err),
                    DATA_BIND_ERR_INVALID_ARG);
     }
     data_bind_serialized_free(csv);
@@ -815,7 +732,7 @@ spec("data_bind public API") {
                    DATA_BIND_OK);
     }
     if (object) {
-      check_int_eq(data_bind_object_serialize_csv(object, &csv, NULL, &err),
+      check_int_eq(data_bind_object_serialize_csv(codec, object, &csv, NULL, &err),
                    DATA_BIND_ERR_TYPE_MISMATCH);
       check_null(csv);
       check_str_contains(err.message, "losslessly");
@@ -841,7 +758,8 @@ spec("data_bind public API") {
       check_str_eq(
           data_bind_value_as_string(data_bind_value_get(data_bind_object_value(object), "name")),
           "yaml");
-      check_int_eq(data_bind_object_serialize_yaml(object, &serialized, NULL, &err), DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_yaml(codec, object, &serialized, NULL, &err),
+                   DATA_BIND_OK);
       check_int_eq(data_bind_object_from_yaml(codec, "Item", serialized, strlen(serialized),
                                               &roundtrip, &err),
                    DATA_BIND_OK);
@@ -859,7 +777,8 @@ spec("data_bind public API") {
       check_str_eq(
           data_bind_value_as_string(data_bind_value_get(data_bind_object_value(object), "name")),
           "xml");
-      check_int_eq(data_bind_object_serialize_xml(object, &serialized, NULL, &err), DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_xml(codec, object, &serialized, NULL, &err),
+                   DATA_BIND_OK);
       check_int_eq(data_bind_object_from_xml(codec, "Item", serialized, strlen(serialized),
                                              &roundtrip, &err),
                    DATA_BIND_OK);
@@ -911,7 +830,8 @@ spec("data_bind public API") {
         check_int_eq(time.hour, 9);
         check_int_eq(time.minute, 30);
         check_int_eq(time.second, 5);
-        check_int_eq(data_bind_object_serialize_xml(object, &serialized, NULL, &err), DATA_BIND_OK);
+        check_int_eq(data_bind_object_serialize_xml(codec, object, &serialized, NULL, &err),
+                     DATA_BIND_OK);
         check_str_contains(serialized, huge);
         data_bind_serialized_free(serialized);
       }
@@ -922,55 +842,6 @@ spec("data_bind public API") {
       data_bind_object_free(object);
       data_bind_free(codec);
     }
-  }
-
-  it("should keep live cached codecs valid after cache clear") {
-    const char *schema = "message Counter { uint64 value; }\n";
-    const uint8_t wire[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-    DataBind *first = NULL;
-    DataBind *second = NULL;
-    DataBind *third = NULL;
-    DataBindValue *value = NULL;
-    DataBindError err = DATA_BIND_ERROR_INIT;
-    uint64_t exact = 0;
-
-    data_bind_set_cache_enabled(1);
-    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &first, &err), DATA_BIND_OK);
-    data_bind_clear_cache();
-    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &second, &err), DATA_BIND_OK);
-    data_bind_clear_cache();
-    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &third, &err), DATA_BIND_OK);
-    if (first) {
-      check_int_eq(data_bind_parse(first, "Counter", wire, sizeof(wire), &value, &err),
-                   DATA_BIND_OK);
-      check_int_eq(data_bind_value_get_uint64(data_bind_value_get(value, "value"), &exact),
-                   DATA_BIND_OK);
-      check(exact == UINT64_MAX);
-      data_bind_value_free(value);
-      value = NULL;
-    }
-    if (second) {
-      check_int_eq(data_bind_parse(second, "Counter", wire, sizeof(wire), &value, &err),
-                   DATA_BIND_OK);
-      check_int_eq(data_bind_value_get_uint64(data_bind_value_get(value, "value"), &exact),
-                   DATA_BIND_OK);
-      check(exact == UINT64_MAX);
-      data_bind_value_free(value);
-      value = NULL;
-    }
-    if (third) {
-      check_int_eq(data_bind_parse(third, "Counter", wire, sizeof(wire), &value, &err),
-                   DATA_BIND_OK);
-      check_int_eq(data_bind_value_get_uint64(data_bind_value_get(value, "value"), &exact),
-                   DATA_BIND_OK);
-      check(exact == UINT64_MAX);
-      data_bind_value_free(value);
-    }
-    data_bind_free(third);
-    data_bind_free(second);
-    data_bind_free(first);
-    data_bind_clear_cache();
-    data_bind_clear_cache();
   }
 
   it("should own binary and CSV objects and deep clone them") {
@@ -1222,8 +1093,12 @@ spec("data_bind public API") {
                    DATA_BIND_OK);
       root = data_bind_object_value(roundtrip);
       bids = data_bind_value_get(root, "bids");
-      check_int_eq(data_bind_value_as_int(data_bind_value_get(root, "header.seq")), 7);
-      check_int_eq(data_bind_value_as_int64(data_bind_value_get(root, "header.ts")), 9);
+      check_int_eq(data_bind_value_as_int(
+                       data_bind_value_get(data_bind_value_get(root, "header"), "seq")),
+                   7);
+      check_int_eq(data_bind_value_as_int64(
+                       data_bind_value_get(data_bind_value_get(root, "header"), "ts")),
+                   9);
       check_size_eq(data_bind_value_count(bids), 2u);
       check_int_eq(data_bind_value_as_int64(
                        data_bind_value_get(data_bind_value_at(bids, 1u), "price")),
@@ -1858,6 +1733,255 @@ spec("data_bind public API") {
       data_bind_value_free(invoice);
       data_bind_free(codec);
     }
+  }
+
+  it("should bind schema field names and aliases while keeping canonical object names") {
+    const char *schema =
+        "message Order { [name(\"order-id\"), alias(\"legacy-id\"), alias(\"old-id\")] uint32 id; "
+        "[name(displayName)] string name; }\n";
+    const char *json = "{\"order-id\":7,\"displayName\":\"JSON\"}";
+    const char *legacy_json = "{\"old-id\":8,\"displayName\":\"Legacy\"}";
+    const char *yaml = "order-id: 9\ndisplayName: YAML\n";
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    check_not_null(codec);
+    if (codec != NULL) {
+      check_int_eq(data_bind_object_from_json(codec, "Order", json, strlen(json), &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_value_as_int(
+                       data_bind_value_get(data_bind_object_value(object), "id")),
+                   7);
+      check_str_eq(data_bind_value_as_string(
+                       data_bind_value_get(data_bind_object_value(object), "name")),
+                   "JSON");
+      data_bind_object_free(object);
+      object = NULL;
+
+      check_int_eq(data_bind_object_from_json(codec, "Order", legacy_json, strlen(legacy_json),
+                                              &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_value_as_int(
+                       data_bind_value_get(data_bind_object_value(object), "id")),
+                   8);
+      data_bind_object_free(object);
+      object = NULL;
+
+      check_int_eq(data_bind_object_from_yaml(codec, "Order", yaml, strlen(yaml), &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_value_as_int(
+                       data_bind_value_get(data_bind_object_value(object), "id")),
+                   9);
+      check_str_eq(data_bind_value_as_string(
+                       data_bind_value_get(data_bind_object_value(object), "name")),
+                   "YAML");
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should bind mapped XML and CSV field names") {
+    const char *schema =
+        "message Order { [name(\"order-id\"), alias(\"legacy-id\"), alias(\"old-id\")] uint32 id; "
+        "[name(displayName)] string name; }\n";
+    const char *xml =
+        "<order><order-id>10</order-id><displayName>XML</displayName></order>";
+    const char *csv = "old-id,displayName\n11,CSV\n";
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    check_not_null(codec);
+    if (codec != NULL) {
+      check_int_eq(data_bind_object_from_xml(codec, "Order", xml, strlen(xml), &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_value_as_int(
+                       data_bind_value_get(data_bind_object_value(object), "id")),
+                   10);
+      check_str_eq(data_bind_value_as_string(
+                       data_bind_value_get(data_bind_object_value(object), "name")),
+                   "XML");
+      data_bind_object_free(object);
+      object = NULL;
+
+      check_int_eq(data_bind_object_from_csv(codec, "Order", csv, strlen(csv), 0, &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_value_as_int(
+                       data_bind_value_get(data_bind_object_value(object), "id")),
+                   11);
+      check_str_eq(data_bind_value_as_string(
+                       data_bind_value_get(data_bind_object_value(object), "name")),
+                   "CSV");
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should serialize schema names by default without mutating the object") {
+    const char *schema =
+        "composite Address { [name(postalCode)] uint32 zip; }"
+        "message Order { [name(orderId)] uint32 id; [name(shipping)] Address address; }\n";
+    const char *json = "{\"id\":12,\"address\":{\"zip\":90210}}";
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    char *json_output = NULL;
+    char *yaml_output = NULL;
+    char *xml_output = NULL;
+    char *csv_output = NULL;
+    size_t output_len = 0;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    check_not_null(codec);
+    if (codec != NULL) {
+      check_int_eq(data_bind_object_from_json(codec, "Order", json, strlen(json), &object, &err),
+                   DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_json(codec, object, &json_output, &output_len, &err),
+                   DATA_BIND_OK);
+      check_str_contains(json_output, "\"orderId\":12");
+      check_str_contains(json_output, "\"shipping\"");
+      check_str_contains(json_output, "\"postalCode\":90210");
+      check_null(strstr(json_output, "\"id\""));
+      check_int_eq(data_bind_object_serialize_yaml(codec, object, &yaml_output, &output_len, &err),
+                   DATA_BIND_OK);
+      check_str_contains(yaml_output, "orderId");
+      check_str_contains(yaml_output, "postalCode");
+      check_int_eq(data_bind_object_serialize_xml(codec, object, &xml_output, &output_len, &err),
+                   DATA_BIND_OK);
+      check_str_contains(xml_output, "<orderId>12</orderId>");
+      check_str_contains(xml_output, "<postalCode>90210</postalCode>");
+      check_int_eq(data_bind_object_serialize_csv(codec, object, &csv_output, &output_len, &err),
+                   DATA_BIND_OK);
+      check_str_contains(csv_output, "orderId");
+      check_str_contains(csv_output, "shipping.postalCode");
+
+      check_not_null(data_bind_value_get(data_bind_object_value(object), "id"));
+      check_null(data_bind_value_get(data_bind_object_value(object), "orderId"));
+      data_bind_serialized_free(json_output);
+      data_bind_serialized_free(yaml_output);
+      data_bind_serialized_free(xml_output);
+      data_bind_serialized_free(csv_output);
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should bind mapped and aliased union variant names in every text format") {
+    const char *schema =
+        "union Choice { [name(buyOrder), alias(oldBuy), alias(legacyBuy)] uint32 buy; "
+        "[name(sellOrder)] string sell; }"
+        "message Envelope { [name(payload)] Choice choice; }\n";
+    const char *json = "{\"payload\":{\"legacyBuy\":21}}";
+    const char *yaml = "payload:\n  legacyBuy: 22\n";
+    const char *xml =
+        "<envelope><payload><legacyBuy>23</legacyBuy></payload></envelope>";
+    const char *csv = "payload.legacyBuy\n24\n";
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    const DataBindValue *choice;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    check_not_null(codec);
+    if (codec != NULL) {
+      check_int_eq(
+          data_bind_object_from_json(codec, "Envelope", json, strlen(json), &object, &err),
+          DATA_BIND_OK);
+      choice = data_bind_value_get(data_bind_object_value(object), "choice");
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(choice, "buy")), 21);
+      data_bind_object_free(object);
+      object = NULL;
+
+      check_int_eq(
+          data_bind_object_from_yaml(codec, "Envelope", yaml, strlen(yaml), &object, &err),
+          DATA_BIND_OK);
+      choice = data_bind_value_get(data_bind_object_value(object), "choice");
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(choice, "buy")), 22);
+      data_bind_object_free(object);
+      object = NULL;
+
+      check_int_eq(
+          data_bind_object_from_xml(codec, "Envelope", xml, strlen(xml), &object, &err),
+          DATA_BIND_OK);
+      choice = data_bind_value_get(data_bind_object_value(object), "choice");
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(choice, "buy")), 23);
+      data_bind_object_free(object);
+      object = NULL;
+
+      check_int_eq(
+          data_bind_object_from_csv(codec, "Envelope", csv, strlen(csv), 0, &object, &err),
+          DATA_BIND_OK);
+      choice = data_bind_value_get(data_bind_object_value(object), "choice");
+      check_int_eq(data_bind_value_as_int(data_bind_value_get(choice, "buy")), 24);
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should recursively serialize schema union variant names") {
+    const char *schema =
+        "union Choice { [name(buyOrder)] uint32 buy; [name(sellOrder)] string sell; }"
+        "message Envelope { [name(payload)] Choice choice; }\n";
+    const char *json = "{\"choice\":{\"buy\":25}}";
+    DataBind *codec = NULL;
+    DataBindObject *object = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+    char *mapped_json = NULL;
+    char *mapped_xml = NULL;
+    char *mapped_csv = NULL;
+    size_t output_len = 0;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err), DATA_BIND_OK);
+    check_not_null(codec);
+    if (codec != NULL) {
+      check_int_eq(
+          data_bind_object_from_json(codec, "Envelope", json, strlen(json), &object, &err),
+          DATA_BIND_OK);
+      check_int_eq(data_bind_object_serialize_json(codec, object, &mapped_json, &output_len, &err),
+                   DATA_BIND_OK);
+      check_str_contains(mapped_json, "\"payload\":{\"buyOrder\":25}");
+      check_int_eq(data_bind_object_serialize_xml(codec, object, &mapped_xml, &output_len, &err),
+                   DATA_BIND_OK);
+      check_str_contains(mapped_xml, "<buyOrder>25</buyOrder>");
+      check_int_eq(data_bind_object_serialize_csv(codec, object, &mapped_csv, &output_len, &err),
+                   DATA_BIND_OK);
+      check_str_contains(mapped_csv, "payload.buyOrder");
+
+      data_bind_serialized_free(mapped_json);
+      data_bind_serialized_free(mapped_xml);
+      data_bind_serialized_free(mapped_csv);
+      data_bind_object_free(object);
+      data_bind_free(codec);
+    }
+  }
+
+  it("should reject ambiguous schema field bindings") {
+    const char *schema =
+        "union Collision { [name(shared)] uint32 first; "
+        "[alias(other), alias(shared)] uint32 second; }\n";
+    DataBind *codec = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err),
+                 DATA_BIND_ERR_SCHEMA);
+    check_null(codec);
+    check_str_eq(err.path, "Collision.first");
+    check_str_contains(err.message, "shared");
+  }
+
+  it("should reject non-portable generic binding names") {
+    const char *schema = "message Invalid { [name(\"nested.value\")] uint32 value; }\n";
+    DataBind *codec = NULL;
+    DataBindError err = DATA_BIND_ERROR_INIT;
+
+    check_int_eq(data_bind_create_from_text(schema, strlen(schema), &codec, &err),
+                 DATA_BIND_ERR_SCHEMA);
+    check_null(codec);
+    check_str_eq(err.path, "Invalid.value");
+    check_str_contains(err.message, "not portable");
   }
 
   it("should honor reflection struct size guards") {

@@ -1,12 +1,10 @@
 /**
  * @file data_bind.c
- * @brief Direct MIR runtime binary codec
+ * @brief Schema-driven pure C data binding and serialization
  */
 
 #include "data_bind.h"
 #include "fmt.h"
-#include "mir-gen.h"
-#include "mir.h"
 #include "node_tree.h"
 #include "re.h"
 #include "schema_parser_dsl.h"
@@ -31,77 +29,49 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern char *tbe_read_varstring(const uint8_t *buf, size_t offset, size_t buf_remaining);
+typedef enum data_bind_wire_type {
+  DB_WIRE_UNDEFINED,
+  DB_WIRE_U8,
+  DB_WIRE_I8,
+  DB_WIRE_U16,
+  DB_WIRE_I16,
+  DB_WIRE_U32,
+  DB_WIRE_I32,
+  DB_WIRE_U64,
+  DB_WIRE_I64,
+  DB_WIRE_F32,
+  DB_WIRE_F64
+} data_bind_wire_type_t;
 
 typedef struct {
   const char *name;
   int size;
-  MIR_type_t mir_type;
+  data_bind_wire_type_t wire_type;
   unsigned char is_float : 1;
   unsigned char is_64 : 1;
 } type_meta_t;
 static const type_meta_t TYPE_METAS[] = {
-    {"uint8_t", 1, MIR_T_U8, 0, 0},   {"uint8", 1, MIR_T_U8, 0, 0},
-    {"u8", 1, MIR_T_U8, 0, 0},        {"byte", 1, MIR_T_U8, 0, 0},
-    {"int8_t", 1, MIR_T_I8, 0, 0},    {"int8", 1, MIR_T_I8, 0, 0},
-    {"i8", 1, MIR_T_I8, 0, 0},
-    {"uint16_t", 2, MIR_T_U16, 0, 0}, {"uint16", 2, MIR_T_U16, 0, 0},
-    {"u16", 2, MIR_T_U16, 0, 0},      {"int16_t", 2, MIR_T_I16, 0, 0},
-    {"int16", 2, MIR_T_I16, 0, 0},    {"i16", 2, MIR_T_I16, 0, 0},
-    {"uint32_t", 4, MIR_T_U32, 0, 0},
-    {"uint32", 4, MIR_T_U32, 0, 0},   {"u32", 4, MIR_T_U32, 0, 0},
-    {"int32_t", 4, MIR_T_I32, 0, 0},  {"int32", 4, MIR_T_I32, 0, 0},
-    {"i32", 4, MIR_T_I32, 0, 0},      {"uint64_t", 8, MIR_T_U64, 0, 1},
-    {"uint64", 8, MIR_T_U64, 0, 1},   {"u64", 8, MIR_T_U64, 0, 1},
-    {"int64_t", 8, MIR_T_I64, 0, 1},  {"int64", 8, MIR_T_I64, 0, 1},
-    {"i64", 8, MIR_T_I64, 0, 1},
-    {"float", 4, MIR_T_F, 1, 0},      {"f32", 4, MIR_T_F, 1, 0},
-    {"double", 8, MIR_T_D, 1, 0},     {"f64", 8, MIR_T_D, 1, 0},
-    {"bool", 1, MIR_T_U8, 0, 0},      {NULL, 0, MIR_T_UNDEF, 0, 0}};
-
-typedef struct owned_alloc_node {
-  void *ptr;
-  struct owned_alloc_node *next;
-} owned_alloc_node_t;
-typedef struct mir_func_node {
-  char *type_name;
-  void *parse_fn;
-  void *parse_record_fn;
-  struct mir_func_node *next;
-} mir_func_node_t;
-
-typedef struct data_bind_record_layout data_bind_record_layout_t;
-typedef struct data_bind_record_layout_field {
-  char *name;
-  data_bind_record_layout_t *child;
-} data_bind_record_layout_field_t;
-struct data_bind_record_layout {
-  data_bind_record_layout_field_t *fields;
-  size_t count;
-};
-
-typedef struct data_bind_record_plan {
-  char *type_name;
-  data_bind_record_layout_t *layout;
-  struct data_bind_record_plan *next;
-} data_bind_record_plan_t;
-
-typedef struct mir_cache_entry {
-  char schema_hash[65];
-  MIR_context_t shared_ctx;
-  mir_func_node_t *func_head;
-  int ref_count;
-  int evicted;
-  struct mir_cache_entry *next;
-} mir_cache_entry_t;
+    {"uint8_t", 1, DB_WIRE_U8, 0, 0},   {"uint8", 1, DB_WIRE_U8, 0, 0},
+    {"u8", 1, DB_WIRE_U8, 0, 0},        {"byte", 1, DB_WIRE_U8, 0, 0},
+    {"int8_t", 1, DB_WIRE_I8, 0, 0},    {"int8", 1, DB_WIRE_I8, 0, 0},
+    {"i8", 1, DB_WIRE_I8, 0, 0},
+    {"uint16_t", 2, DB_WIRE_U16, 0, 0}, {"uint16", 2, DB_WIRE_U16, 0, 0},
+    {"u16", 2, DB_WIRE_U16, 0, 0},      {"int16_t", 2, DB_WIRE_I16, 0, 0},
+    {"int16", 2, DB_WIRE_I16, 0, 0},    {"i16", 2, DB_WIRE_I16, 0, 0},
+    {"uint32_t", 4, DB_WIRE_U32, 0, 0},
+    {"uint32", 4, DB_WIRE_U32, 0, 0},   {"u32", 4, DB_WIRE_U32, 0, 0},
+    {"int32_t", 4, DB_WIRE_I32, 0, 0},  {"int32", 4, DB_WIRE_I32, 0, 0},
+    {"i32", 4, DB_WIRE_I32, 0, 0},      {"uint64_t", 8, DB_WIRE_U64, 0, 1},
+    {"uint64", 8, DB_WIRE_U64, 0, 1},   {"u64", 8, DB_WIRE_U64, 0, 1},
+    {"int64_t", 8, DB_WIRE_I64, 0, 1},  {"int64", 8, DB_WIRE_I64, 0, 1},
+    {"i64", 8, DB_WIRE_I64, 0, 1},
+    {"float", 4, DB_WIRE_F32, 1, 0},    {"f32", 4, DB_WIRE_F32, 1, 0},
+    {"double", 8, DB_WIRE_F64, 1, 0},   {"f64", 8, DB_WIRE_F64, 1, 0},
+    {"bool", 1, DB_WIRE_U8, 0, 0},      {NULL, 0, DB_WIRE_UNDEFINED, 0, 0}};
 
 /* Small object pool for frequently allocated DataBindValue nodes */
 #define VALUE_POOL_SIZE 64
 #define DATA_BIND_FILE_STREAM_CHUNK_SIZE 65536
-#define DATA_BIND_MIR_PARSER_ABI_VERSION UINT32_C(1)
-#define DATA_BIND_MIR_MODULE_NAME "data_bind_binary"
-#define DATA_BIND_MIR_ABI_ITEM_NAME "__data_bind_mir_abi"
-#define DATA_BIND_MIR_SCHEMA_ITEM_NAME "__data_bind_schema_fingerprint"
 
 /*
  * Fixed atomic slots avoid the ABA reclamation problem of a shared lock-free
@@ -126,15 +96,6 @@ static atomic_size_t g_value_pool_reused_count;
 static turbo_once_t g_value_pool_once = TURBO_ONCE_INIT;
 static TURBO_THREAD_LOCAL size_t g_value_pool_take_cursor;
 static TURBO_THREAD_LOCAL size_t g_value_pool_put_cursor;
-static TURBO_THREAD_LOCAL int g_dynamic_runtime_oom;
-
-typedef struct data_bind_bmir_input {
-  const uint8_t *data;
-  size_t len;
-  size_t offset;
-} data_bind_bmir_input_t;
-
-static TURBO_THREAD_LOCAL data_bind_bmir_input_t *g_data_bind_bmir_input;
 
 static void value_pool_init_once(void) { turbo_mutex_init(&g_value_pool_control_mutex); }
 
@@ -199,64 +160,9 @@ static int value_pool_put(DataBindValue *value) {
   return 0;
 }
 
-static mir_cache_entry_t *g_mir_cache_head = NULL;
-static int g_mir_cache_enabled = 1;
-
-typedef struct data_bind_runtime_api {
-  DataBindValue *(*create_object)(void);
-  void (*free_value)(DataBindValue *value);
-  int (*set_field_int)(DataBindValue *obj, const char *name, int32_t val);
-  int (*set_field_uint32)(DataBindValue *obj, const char *name, uint32_t val);
-  int (*set_field_int64)(DataBindValue *obj, const char *name, int64_t val);
-  int (*set_field_uint64)(DataBindValue *obj, const char *name, uint64_t val);
-  int (*set_field_double)(DataBindValue *obj, const char *name, double val);
-  int (*set_field_bool)(DataBindValue *obj, const char *name, int val);
-  int (*set_field_string)(DataBindValue *obj, const char *name, const char *val);
-  int (*set_field_bytes)(DataBindValue *obj, const char *name, const uint8_t *data, size_t len);
-  int (*set_field_uuid)(DataBindValue *obj, const char *name, const uint8_t *data);
-  DataBindValue *(*create_list)(void);
-  int (*add_list_item_int)(DataBindValue *list, int32_t val);
-  int (*add_list_item_uint32)(DataBindValue *list, uint32_t val);
-  int (*add_list_item_int64)(DataBindValue *list, int64_t val);
-  int (*add_list_item_uint64)(DataBindValue *list, uint64_t val);
-  int (*add_list_item_double)(DataBindValue *list, double val);
-  int (*add_list_item_bool)(DataBindValue *list, int val);
-  int (*add_list_item_string)(DataBindValue *list, const char *val);
-  int (*add_list_item_object)(DataBindValue *list, DataBindValue *obj);
-  int (*set_field_list)(DataBindValue *obj, const char *name, DataBindValue *list);
-  int (*set_field_object)(DataBindValue *obj, const char *name, DataBindValue *child);
-  DataBindValue *(*create_set)(void);
-  int (*add_set_item_int)(DataBindValue *set, int32_t val);
-  int (*add_set_item_uint32)(DataBindValue *set, uint32_t val);
-  int (*add_set_item_int64)(DataBindValue *set, int64_t val);
-  int (*add_set_item_uint64)(DataBindValue *set, uint64_t val);
-  int (*add_set_item_double)(DataBindValue *set, double val);
-  int (*add_set_item_bool)(DataBindValue *set, int val);
-  int (*add_set_item_string)(DataBindValue *set, const char *val);
-  int (*set_field_set)(DataBindValue *obj, const char *name, DataBindValue *set);
-  DataBindValue *(*create_map)(void);
-  int (*add_map_entry_string_string)(DataBindValue *map, const char *key, const char *val);
-  int (*add_map_entry_string_int)(DataBindValue *map, const char *key, int32_t val);
-  int (*add_map_entry_string_uint32)(DataBindValue *map, const char *key, uint32_t val);
-  int (*add_map_entry_string_int64)(DataBindValue *map, const char *key, int64_t val);
-  int (*add_map_entry_string_uint64)(DataBindValue *map, const char *key, uint64_t val);
-  int (*add_map_entry_string_double)(DataBindValue *map, const char *key, double val);
-  int (*add_map_entry_string_bool)(DataBindValue *map, const char *key, int val);
-  int (*set_field_map)(DataBindValue *obj, const char *name, DataBindValue *map);
-} data_bind_runtime_api_t;
-
 struct DataBind {
-  MIR_context_t ctx;
   Node *schema_root;
-  mir_func_node_t *func_head;
-  owned_alloc_node_t *owned_allocs;
   char error[256];
-  char binary_error[256];
-  data_bind_runtime_api_t api;
-  char schema_hash[65]; /* SHA-256 hash of schema for caching */
-  int is_cloned;        /* Whether this codec shares MIR context with another */
-  int mir_gen_initialized;
-  data_bind_record_plan_t *record_plans;
 };
 
 typedef struct data_bind_json_stream_frame {
@@ -361,7 +267,6 @@ typedef struct data_bind_value_map_array {
 
 struct DataBindValue {
   DataBindValueKind kind;
-  const data_bind_record_layout_t *record_layout;
   union {
     int32_t int_val;
     int64_t int64_val;
@@ -443,7 +348,7 @@ struct emit_field {
   char *name;
   emit_kind_t kind;
   int size;
-  MIR_type_t mir_type;
+  data_bind_wire_type_t wire_type;
   unsigned char is_float : 1;
   unsigned char is_64 : 1;
   unsigned char has_set_bytes : 1;
@@ -451,47 +356,6 @@ struct emit_field {
   int group_dim;
   emit_field_array_t children;
 };
-
-typedef struct {
-  MIR_item_t import_item;
-  MIR_item_t proto_item;
-} external_ref_t;
-typedef struct {
-  external_ref_t create_obj, free_value, set_int, set_u32, set_i64, set_u64, set_dbl, set_bool,
-      set_str, set_bytes;
-  external_ref_t set_uuid;
-  external_ref_t create_list, add_list_int, add_list_u32, add_list_i64, add_list_u64, add_list_dbl,
-      add_list_bool, add_list_str, add_list_obj, set_list;
-  external_ref_t create_set, add_set_int, add_set_u32, add_set_i64, add_set_u64, add_set_dbl,
-      add_set_bool, add_set_str, set_set;
-  external_ref_t create_map, add_map_str_str, add_map_str_int, add_map_str_u32, add_map_str_i64,
-      add_map_str_u64, add_map_str_dbl, add_map_str_bool, set_map;
-  external_ref_t read_varstr, free_fn;
-  external_ref_t create_record_child_v1, create_record_field_v1, set_slot_int_v1, set_slot_u32_v1,
-      set_slot_i64_v1, set_slot_u64_v1, set_slot_dbl_v1, set_slot_bool_v1, set_slot_str_v1,
-      set_slot_bytes_v1, set_slot_uuid_v1, set_slot_list_v1, set_slot_set_v1, set_slot_map_v1;
-} external_items_t;
-
-typedef struct {
-  DataBind *codec;
-  MIR_context_t ctx;
-  MIR_module_t module;
-  external_items_t ext;
-  size_t temp_name_id;
-  size_t data_name_id;
-  int include_record_v1;
-} mir_builder_t;
-typedef struct {
-  mir_builder_t *builder;
-  MIR_item_t func_item;
-  MIR_func_t func;
-  MIR_reg_t buf_reg;
-  MIR_reg_t len_reg;
-  MIR_reg_t off_reg;
-  MIR_reg_t obj_reg;
-  MIR_label_t fail_label;
-  int slot_mode;
-} mir_emitter_t;
 
 static const type_meta_t *find_type_meta(const char *type) {
   const type_meta_t *m;
@@ -501,69 +365,12 @@ static const type_meta_t *find_type_meta(const char *type) {
   return NULL;
 }
 
-static int set_i64_noop(DataBindValue *o, const char *n, int64_t v) {
-  (void)o;
-  (void)n;
-  (void)v;
-  return 1;
-}
-static int set_u64_noop(DataBindValue *o, const char *n, uint64_t v) {
-  (void)o;
-  (void)n;
-  (void)v;
-  return 1;
-}
-static int set_bytes_noop(DataBindValue *o, const char *n, const uint8_t *d, size_t l) {
-  (void)o;
-  (void)n;
-  (void)d;
-  (void)l;
-  return 1;
-}
-static int set_uuid_noop(DataBindValue *o, const char *n, const uint8_t *d) {
-  (void)o;
-  (void)n;
-  (void)d;
-  return 1;
-}
-static int set_i32_noop(DataBindValue *o, const char *n, int32_t v) {
-  (void)o;
-  (void)n;
-  (void)v;
-  return 1;
-}
-static int set_u32_noop(DataBindValue *o, const char *n, uint32_t v) {
-  (void)o;
-  (void)n;
-  (void)v;
-  return 1;
-}
-static int set_dbl_noop(DataBindValue *o, const char *n, double v) {
-  (void)o;
-  (void)n;
-  (void)v;
-  return 1;
-}
-static int set_bool_noop(DataBindValue *o, const char *n, int v) {
-  (void)o;
-  (void)n;
-  (void)v;
-  return 1;
-}
-static int set_str_noop(DataBindValue *o, const char *n, const char *v) {
-  (void)o;
-  (void)n;
-  (void)v;
-  return 1;
-}
-
 static char *dbv_strdup(const char *src) {
   size_t len;
   char *dst;
   if (src == NULL) return NULL;
   len = strlen(src) + 1;
   dst = (char *)malloc(len);
-  if (dst == NULL) g_dynamic_runtime_oom = 1;
   if (dst == NULL) return NULL;
   memcpy(dst, src, len);
   return dst;
@@ -588,7 +395,6 @@ static DataBindValue *dbv_new(DataBindValueKind kind) {
     }
   }
 
-  if (value == NULL) g_dynamic_runtime_oom = 1;
   if (value != NULL) value->kind = kind;
   return value;
 }
@@ -625,7 +431,6 @@ static int dbv_array_reserve(data_bind_value_array_t *array, size_t min_capacity
     return 0;
   items = (DataBindValue **)realloc(array->items, capacity * sizeof(*items));
   if (items == NULL) {
-    g_dynamic_runtime_oom = 1;
     return 0;
   }
   array->items = items;
@@ -644,7 +449,6 @@ static int dbv_object_reserve(DataBindValue *obj, size_t min_capacity) {
     return 0;
   items = (data_bind_value_field_t *)realloc(fields->items, capacity * sizeof(*items));
   if (items == NULL) {
-    g_dynamic_runtime_oom = 1;
     return 0;
   }
   fields->items = items;
@@ -663,7 +467,6 @@ static int dbv_map_reserve(DataBindValue *map, size_t min_capacity) {
     return 0;
   items = (data_bind_value_map_entry_t *)realloc(entries->items, capacity * sizeof(*items));
   if (items == NULL) {
-    g_dynamic_runtime_oom = 1;
     return 0;
   }
   entries->items = items;
@@ -804,7 +607,6 @@ static DataBindValue *dbv_bytes(const uint8_t *data, size_t len) {
   if (len > 0) {
     v->data.bytes_val.ptr = (uint8_t *)malloc(len);
     if (v->data.bytes_val.ptr == NULL) {
-      g_dynamic_runtime_oom = 1;
       data_bind_value_free(v);
       return NULL;
     }
@@ -812,12 +614,6 @@ static DataBindValue *dbv_bytes(const uint8_t *data, size_t len) {
   }
   v->data.bytes_val.len = len;
   return v;
-}
-
-static char *data_bind_read_varstring(const uint8_t *buf, size_t offset, size_t buf_remaining) {
-  char *value = tbe_read_varstring(buf, offset, buf_remaining);
-  if (value == NULL) g_dynamic_runtime_oom = 1;
-  return value;
 }
 
 static DataBindValue *dbv_uuid_bytes(const uint8_t *data) {
@@ -1441,534 +1237,6 @@ DataBindStatus data_bind_value_clone(const DataBindValue *value, DataBindValue *
   return dbv_clone_tree(value, 0u, out_value);
 }
 
-static DataBindValue *dynamic_create_object(void) {
-  return (DataBindValue *)dbv_new(DATA_BIND_VALUE_OBJECT);
-}
-static DataBindValue *dynamic_create_list(void) {
-  return (DataBindValue *)dbv_new(DATA_BIND_VALUE_LIST);
-}
-static DataBindValue *dynamic_create_set(void) {
-  return (DataBindValue *)dbv_new(DATA_BIND_VALUE_SET);
-}
-static DataBindValue *dynamic_create_map(void) {
-  return (DataBindValue *)dbv_new(DATA_BIND_VALUE_MAP);
-}
-
-static DataBindValue *record_create_from_layout_v1(const data_bind_record_layout_t *layout) {
-  DataBindValue *value;
-  size_t i;
-  if (layout == NULL || layout->count > UINT32_MAX) return NULL;
-  value = dbv_new(DATA_BIND_VALUE_OBJECT);
-  if (value == NULL) return NULL;
-  value->record_layout = layout;
-  if (layout->count == 0) return value;
-  value->data.object_val.items =
-      (data_bind_value_field_t *)calloc(layout->count, sizeof(*value->data.object_val.items));
-  if (value->data.object_val.items == NULL) {
-    g_dynamic_runtime_oom = 1;
-    data_bind_value_free(value);
-    return NULL;
-  }
-  value->data.object_val.capacity = layout->count;
-  for (i = 0; i < layout->count; ++i) {
-    value->data.object_val.items[i].name = dbv_strdup(layout->fields[i].name);
-    if (value->data.object_val.items[i].name == NULL) {
-      value->data.object_val.count = i;
-      data_bind_value_free(value);
-      return NULL;
-    }
-    value->data.object_val.count = i + 1;
-  }
-  return value;
-}
-
-static DataBindValue *record_create_child_v1(DataBindValue *container) {
-  if (container == NULL ||
-      (container->kind != DATA_BIND_VALUE_LIST && container->kind != DATA_BIND_VALUE_SET))
-    return NULL;
-  return record_create_from_layout_v1(container->record_layout);
-}
-
-static int record_set_slot_value_v1(DataBindValue *obj, uint32_t slot, DataBindValue *child) {
-  const data_bind_record_layout_field_t *field;
-  if (obj == NULL || obj->kind != DATA_BIND_VALUE_OBJECT || obj->record_layout == NULL ||
-      child == NULL || (size_t)slot >= obj->data.object_val.count ||
-      obj->data.object_val.items[slot].value != NULL) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  field = &obj->record_layout->fields[slot];
-  child->record_layout = field->child;
-  obj->data.object_val.items[slot].value = child;
-  return 1;
-}
-
-static DataBindValue *record_create_field_v1(DataBindValue *obj, uint32_t slot) {
-  DataBindValue *child;
-  if (obj == NULL || obj->kind != DATA_BIND_VALUE_OBJECT || obj->record_layout == NULL ||
-      (size_t)slot >= obj->data.object_val.count)
-    return NULL;
-  child = record_create_from_layout_v1(obj->record_layout->fields[slot].child);
-  if (child == NULL) return NULL;
-  if (!record_set_slot_value_v1(obj, slot, child)) return NULL;
-  return child;
-}
-
-static int record_set_slot_int_v1(DataBindValue *obj, uint32_t slot, int32_t val) {
-  return record_set_slot_value_v1(obj, slot, dbv_int(val));
-}
-
-static int record_set_slot_uint32_v1(DataBindValue *obj, uint32_t slot, uint32_t val) {
-  return record_set_slot_value_v1(obj, slot, dbv_uint32_compat(val));
-}
-
-static int record_set_slot_int64_v1(DataBindValue *obj, uint32_t slot, int64_t val) {
-  return record_set_slot_value_v1(obj, slot, dbv_int64(val));
-}
-
-static int record_set_slot_uint64_v1(DataBindValue *obj, uint32_t slot, uint64_t val) {
-  return record_set_slot_value_v1(obj, slot, dbv_uint64(val));
-}
-
-static int record_set_slot_double_v1(DataBindValue *obj, uint32_t slot, double val) {
-  return record_set_slot_value_v1(obj, slot, dbv_double(val));
-}
-
-static int record_set_slot_bool_v1(DataBindValue *obj, uint32_t slot, int val) {
-  return record_set_slot_value_v1(obj, slot, dbv_bool(val));
-}
-
-static int record_set_slot_string_v1(DataBindValue *obj, uint32_t slot, const char *val) {
-  return record_set_slot_value_v1(obj, slot, dbv_string(val));
-}
-
-static int record_set_slot_bytes_v1(DataBindValue *obj, uint32_t slot, const uint8_t *data,
-                                    size_t len) {
-  return record_set_slot_value_v1(obj, slot, dbv_bytes(data, len));
-}
-
-static int record_set_slot_uuid_v1(DataBindValue *obj, uint32_t slot, const uint8_t *data) {
-  return record_set_slot_value_v1(obj, slot, dbv_uuid_bytes(data));
-}
-
-static int record_set_slot_list_v1(DataBindValue *obj, uint32_t slot, DataBindValue *list) {
-  if (list == NULL || list->kind != DATA_BIND_VALUE_LIST) {
-    data_bind_value_free(list);
-    return 0;
-  }
-  return record_set_slot_value_v1(obj, slot, list);
-}
-
-static int record_set_slot_set_v1(DataBindValue *obj, uint32_t slot, DataBindValue *set) {
-  if (set == NULL || set->kind != DATA_BIND_VALUE_SET) {
-    data_bind_value_free(set);
-    return 0;
-  }
-  return record_set_slot_value_v1(obj, slot, set);
-}
-
-static int record_set_slot_map_v1(DataBindValue *obj, uint32_t slot, DataBindValue *map) {
-  if (map == NULL || map->kind != DATA_BIND_VALUE_MAP) {
-    data_bind_value_free(map);
-    return 0;
-  }
-  return record_set_slot_value_v1(obj, slot, map);
-}
-
-static void record_clear_layout_v1(DataBindValue *value) {
-  size_t i;
-  if (value == NULL) return;
-  value->record_layout = NULL;
-  if (value->kind == DATA_BIND_VALUE_OBJECT) {
-    for (i = 0; i < value->data.object_val.count; ++i)
-      record_clear_layout_v1(value->data.object_val.items[i].value);
-  } else if (value->kind == DATA_BIND_VALUE_LIST || value->kind == DATA_BIND_VALUE_SET) {
-    for (i = 0; i < value->data.array_val.count; ++i)
-      record_clear_layout_v1(value->data.array_val.items[i]);
-  } else if (value->kind == DATA_BIND_VALUE_MAP) {
-    for (i = 0; i < value->data.map_val.count; ++i)
-      record_clear_layout_v1(value->data.map_val.items[i].value);
-  }
-}
-
-static int dynamic_set_field_int(DataBindValue *obj, const char *name, int32_t val) {
-  DataBindValue *child = dbv_int(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_set_field_uint32(DataBindValue *obj, const char *name, uint32_t val) {
-  DataBindValue *child = dbv_uint32_compat(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_set_field_int64(DataBindValue *obj, const char *name, int64_t val) {
-  DataBindValue *child = dbv_int64(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_set_field_uint64(DataBindValue *obj, const char *name, uint64_t val) {
-  DataBindValue *child = dbv_uint64(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_set_field_double(DataBindValue *obj, const char *name, double val) {
-  DataBindValue *child = dbv_double(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_set_field_bool(DataBindValue *obj, const char *name, int val) {
-  DataBindValue *child = dbv_bool(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_set_field_string(DataBindValue *obj, const char *name, const char *val) {
-  DataBindValue *child = dbv_string(val);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_set_field_bytes(DataBindValue *obj, const char *name, const uint8_t *data,
-                                   size_t len) {
-  DataBindValue *child = dbv_bytes(data, len);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_set_field_uuid(DataBindValue *obj, const char *name, const uint8_t *data) {
-  DataBindValue *child = dbv_uuid_bytes(data);
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_set_field_value(DataBindValue *obj, const char *name, DataBindValue *child) {
-  if (child == NULL || !dbv_object_set((DataBindValue *)obj, name, (DataBindValue *)child)) {
-    data_bind_value_free((DataBindValue *)child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_list_item_int(DataBindValue *list, int32_t val) {
-  DataBindValue *child = dbv_int(val);
-  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_list_item_uint32(DataBindValue *list, uint32_t val) {
-  DataBindValue *child = dbv_uint32_compat(val);
-  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_list_item_int64(DataBindValue *list, int64_t val) {
-  DataBindValue *child = dbv_int64(val);
-  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_list_item_uint64(DataBindValue *list, uint64_t val) {
-  DataBindValue *child = dbv_uint64(val);
-  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_list_item_double(DataBindValue *list, double val) {
-  DataBindValue *child = dbv_double(val);
-  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_list_item_bool(DataBindValue *list, int val) {
-  DataBindValue *child = dbv_bool(val);
-  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_list_item_string(DataBindValue *list, const char *val) {
-  DataBindValue *child = dbv_string(val);
-  if (child == NULL || !dbv_array_push(&((DataBindValue *)list)->data.array_val, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_list_item_object(DataBindValue *list, DataBindValue *obj) {
-  if (obj == NULL ||
-      !dbv_array_push(&((DataBindValue *)list)->data.array_val, (DataBindValue *)obj)) {
-    data_bind_value_free((DataBindValue *)obj);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_map_entry_string_string(DataBindValue *map, const char *key,
-                                               const char *val) {
-  DataBindValue *child = dbv_string(val);
-  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_map_entry_string_int(DataBindValue *map, const char *key, int32_t val) {
-  DataBindValue *child = dbv_int(val);
-  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_map_entry_string_uint32(DataBindValue *map, const char *key, uint32_t val) {
-  DataBindValue *child = dbv_uint32_compat(val);
-  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_map_entry_string_int64(DataBindValue *map, const char *key, int64_t val) {
-  DataBindValue *child = dbv_int64(val);
-  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_map_entry_string_uint64(DataBindValue *map, const char *key, uint64_t val) {
-  DataBindValue *child = dbv_uint64(val);
-  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_map_entry_string_double(DataBindValue *map, const char *key, double val) {
-  DataBindValue *child = dbv_double(val);
-  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-static int dynamic_add_map_entry_string_bool(DataBindValue *map, const char *key, int val) {
-  DataBindValue *child = dbv_bool(val);
-  if (child == NULL || !dbv_map_set((DataBindValue *)map, key, child)) {
-    data_bind_value_free(child);
-    return 0;
-  }
-  return 1;
-}
-
-static const data_bind_runtime_api_t DYNAMIC_VALUE_API = {
-    .create_object = dynamic_create_object,
-    .free_value = data_bind_value_free,
-    .set_field_int = dynamic_set_field_int,
-    .set_field_uint32 = dynamic_set_field_uint32,
-    .set_field_int64 = dynamic_set_field_int64,
-    .set_field_uint64 = dynamic_set_field_uint64,
-    .set_field_double = dynamic_set_field_double,
-    .set_field_bool = dynamic_set_field_bool,
-    .set_field_string = dynamic_set_field_string,
-    .set_field_bytes = dynamic_set_field_bytes,
-    .set_field_uuid = dynamic_set_field_uuid,
-    .create_list = dynamic_create_list,
-    .add_list_item_int = dynamic_add_list_item_int,
-    .add_list_item_uint32 = dynamic_add_list_item_uint32,
-    .add_list_item_int64 = dynamic_add_list_item_int64,
-    .add_list_item_uint64 = dynamic_add_list_item_uint64,
-    .add_list_item_double = dynamic_add_list_item_double,
-    .add_list_item_bool = dynamic_add_list_item_bool,
-    .add_list_item_string = dynamic_add_list_item_string,
-    .add_list_item_object = dynamic_add_list_item_object,
-    .set_field_list = dynamic_set_field_value,
-    .set_field_object = dynamic_set_field_value,
-    .create_set = dynamic_create_set,
-    .add_set_item_int = dynamic_add_list_item_int,
-    .add_set_item_uint32 = dynamic_add_list_item_uint32,
-    .add_set_item_int64 = dynamic_add_list_item_int64,
-    .add_set_item_uint64 = dynamic_add_list_item_uint64,
-    .add_set_item_double = dynamic_add_list_item_double,
-    .add_set_item_bool = dynamic_add_list_item_bool,
-    .add_set_item_string = dynamic_add_list_item_string,
-    .set_field_set = dynamic_set_field_value,
-    .create_map = dynamic_create_map,
-    .add_map_entry_string_string = dynamic_add_map_entry_string_string,
-    .add_map_entry_string_int = dynamic_add_map_entry_string_int,
-    .add_map_entry_string_uint32 = dynamic_add_map_entry_string_uint32,
-    .add_map_entry_string_int64 = dynamic_add_map_entry_string_int64,
-    .add_map_entry_string_uint64 = dynamic_add_map_entry_string_uint64,
-    .add_map_entry_string_double = dynamic_add_map_entry_string_double,
-    .add_map_entry_string_bool = dynamic_add_map_entry_string_bool,
-    .set_field_map = dynamic_set_field_value};
-
-static DataBindValue *container_noop(void) { return NULL; }
-static int add_i32_noop(DataBindValue *v, int32_t x) {
-  (void)v;
-  (void)x;
-  return 1;
-}
-static int add_u32_noop(DataBindValue *v, uint32_t x) {
-  (void)v;
-  (void)x;
-  return 1;
-}
-static int add_i64_noop(DataBindValue *v, int64_t x) {
-  (void)v;
-  (void)x;
-  return 1;
-}
-static int add_u64_noop(DataBindValue *v, uint64_t x) {
-  (void)v;
-  (void)x;
-  return 1;
-}
-static int add_dbl_noop(DataBindValue *v, double x) {
-  (void)v;
-  (void)x;
-  return 1;
-}
-static int add_bool_noop(DataBindValue *v, int x) {
-  (void)v;
-  (void)x;
-  return 1;
-}
-static int add_str_noop(DataBindValue *v, const char *s) {
-  (void)v;
-  (void)s;
-  return 1;
-}
-static int add_obj_noop(DataBindValue *v, DataBindValue *o) {
-  (void)v;
-  (void)o;
-  return 1;
-}
-static int set_container_noop(DataBindValue *o, const char *n, DataBindValue *v) {
-  (void)o;
-  (void)n;
-  (void)v;
-  return 1;
-}
-static int add_map_str_str_noop(DataBindValue *m, const char *k, const char *v) {
-  (void)m;
-  (void)k;
-  (void)v;
-  return 1;
-}
-static int add_map_str_int_noop(DataBindValue *m, const char *k, int32_t v) {
-  (void)m;
-  (void)k;
-  (void)v;
-  return 1;
-}
-static int add_map_str_u32_noop(DataBindValue *m, const char *k, uint32_t v) {
-  (void)m;
-  (void)k;
-  (void)v;
-  return 1;
-}
-static int add_map_str_i64_noop(DataBindValue *m, const char *k, int64_t v) {
-  (void)m;
-  (void)k;
-  (void)v;
-  return 1;
-}
-static int add_map_str_u64_noop(DataBindValue *m, const char *k, uint64_t v) {
-  (void)m;
-  (void)k;
-  (void)v;
-  return 1;
-}
-static int add_map_str_dbl_noop(DataBindValue *m, const char *k, double v) {
-  (void)m;
-  (void)k;
-  (void)v;
-  return 1;
-}
-static int add_map_str_bool_noop(DataBindValue *m, const char *k, int v) {
-  (void)m;
-  (void)k;
-  (void)v;
-  return 1;
-}
-static DataBindValue *create_value_noop(void) { return NULL; }
-static void free_value_noop(DataBindValue *value) { (void)value; }
-
-static const data_bind_runtime_api_t MIR_OUTPUT_API = {
-    .create_object = create_value_noop,
-    .free_value = free_value_noop,
-    .set_field_int = set_i32_noop,
-    .set_field_uint32 = set_u32_noop,
-    .set_field_int64 = set_i64_noop,
-    .set_field_uint64 = set_u64_noop,
-    .set_field_double = set_dbl_noop,
-    .set_field_bool = set_bool_noop,
-    .set_field_string = set_str_noop,
-    .set_field_bytes = set_bytes_noop,
-    .set_field_uuid = set_uuid_noop,
-    .create_list = create_value_noop,
-    .add_list_item_int = add_i32_noop,
-    .add_list_item_uint32 = add_u32_noop,
-    .add_list_item_int64 = add_i64_noop,
-    .add_list_item_uint64 = add_u64_noop,
-    .add_list_item_double = add_dbl_noop,
-    .add_list_item_bool = add_bool_noop,
-    .add_list_item_string = add_str_noop,
-    .add_list_item_object = add_obj_noop,
-    .set_field_list = set_container_noop,
-    .set_field_object = set_container_noop,
-    .create_set = create_value_noop,
-    .add_set_item_int = add_i32_noop,
-    .add_set_item_uint32 = add_u32_noop,
-    .add_set_item_int64 = add_i64_noop,
-    .add_set_item_uint64 = add_u64_noop,
-    .add_set_item_double = add_dbl_noop,
-    .add_set_item_bool = add_bool_noop,
-    .add_set_item_string = add_str_noop,
-    .set_field_set = set_container_noop,
-    .create_map = create_value_noop,
-    .add_map_entry_string_string = add_map_str_str_noop,
-    .add_map_entry_string_int = add_map_str_int_noop,
-    .add_map_entry_string_uint32 = add_map_str_u32_noop,
-    .add_map_entry_string_int64 = add_map_str_i64_noop,
-    .add_map_entry_string_uint64 = add_map_str_u64_noop,
-    .add_map_entry_string_double = add_map_str_dbl_noop,
-    .add_map_entry_string_bool = add_map_str_bool_noop,
-    .set_field_map = set_container_noop};
-
 typedef enum data_bind_text_kind {
   DB_TEXT_NUMBER,
   DB_TEXT_INTEGER,
@@ -1997,108 +1265,6 @@ typedef struct data_bind_index_list {
   size_t count;
   size_t capacity;
 } data_bind_index_list_t;
-
-static int set_codec_error(DataBind *codec, const char *fmt, ...) {
-  va_list ap;
-  if (codec == NULL) return 0;
-  va_start(ap, fmt);
-  vsnprintf(codec->error, sizeof(codec->error), fmt, ap);
-  va_end(ap);
-  return 0;
-}
-
-/**
- * @brief Compute a simple hash of schema text for caching.
- * Uses FNV-1a hash algorithm for simplicity.
- */
-static void compute_schema_hash(const char *schema_text, size_t len, char *hash_out) {
-  uint64_t hash = 14695981039346656037ULL; /* FNV offset basis */
-  size_t i;
-  if (schema_text == NULL || hash_out == NULL) return;
-
-  for (i = 0; i < len; i++) {
-    hash ^= (uint64_t)(unsigned char)schema_text[i];
-    hash *= 1099511628211ULL; /* FNV prime */
-  }
-
-  snprintf(hash_out, 65, "%016llx", (unsigned long long)hash);
-}
-
-static int data_bind_bmir_read_byte(MIR_context_t ctx) {
-  data_bind_bmir_input_t *input = g_data_bind_bmir_input;
-  (void)ctx;
-  if (input == NULL || input->offset >= input->len) return EOF;
-  return input->data[input->offset++];
-}
-
-static mir_cache_entry_t *mir_cache_find(const char *schema_hash) {
-  mir_cache_entry_t *entry;
-  if (!g_mir_cache_enabled || schema_hash == NULL) return NULL;
-
-  for (entry = g_mir_cache_head; entry != NULL; entry = entry->next) {
-    if (!entry->evicted && strcmp(entry->schema_hash, schema_hash) == 0) {
-      return entry;
-    }
-  }
-  return NULL;
-}
-
-static mir_cache_entry_t *mir_cache_insert(const char *schema_hash, MIR_context_t ctx,
-                                           mir_func_node_t *func_head) {
-  mir_cache_entry_t *entry;
-  if (!g_mir_cache_enabled || schema_hash == NULL || ctx == NULL) return NULL;
-
-  entry = (mir_cache_entry_t *)malloc(sizeof(*entry));
-  if (entry == NULL) return NULL;
-
-  snprintf(entry->schema_hash, sizeof(entry->schema_hash), "%s", schema_hash);
-  entry->shared_ctx = ctx;
-  entry->func_head = func_head;
-  entry->ref_count = 1;
-  entry->evicted = 0;
-  entry->next = g_mir_cache_head;
-  g_mir_cache_head = entry;
-
-  return entry;
-}
-
-static void mir_cache_entry_destroy(mir_cache_entry_t *entry) {
-  mir_func_node_t *func_node;
-  if (entry == NULL) return;
-  if (entry->shared_ctx != NULL) {
-    MIR_gen_finish(entry->shared_ctx);
-    MIR_finish(entry->shared_ctx);
-  }
-  func_node = entry->func_head;
-  while (func_node != NULL) {
-    mir_func_node_t *next = func_node->next;
-    free(func_node->type_name);
-    free(func_node);
-    func_node = next;
-  }
-  free(entry);
-}
-
-static void mir_cache_release(const char *schema_hash, MIR_context_t shared_ctx) {
-  mir_cache_entry_t **prev_ptr = &g_mir_cache_head;
-  mir_cache_entry_t *entry;
-
-  if (schema_hash == NULL) return;
-
-  entry = g_mir_cache_head;
-  while (entry != NULL) {
-    if (entry->shared_ctx == shared_ctx && strcmp(entry->schema_hash, schema_hash) == 0) {
-      entry->ref_count--;
-      if (entry->ref_count <= 0) {
-        *prev_ptr = entry->next;
-        mir_cache_entry_destroy(entry);
-      }
-      return;
-    }
-    prev_ptr = &entry->next;
-    entry = entry->next;
-  }
-}
 
 static void db_error_clear(DataBindError *error) {
   if (error == NULL || error->size < offsetof(DataBindError, message)) return;
@@ -2159,40 +1325,6 @@ static DataBindStatus db_codec_error(DataBind *codec, DataBindError *error, Data
   return db_error_set(error, code, NULL, -1, -1, "%s", msg);
 }
 
-static void *codec_alloc(DataBind *codec, size_t size) {
-  owned_alloc_node_t *node = NULL;
-  void *ptr = calloc(1, size);
-  if (ptr == NULL) return NULL;
-  node = (owned_alloc_node_t *)malloc(sizeof(*node));
-  if (node == NULL) {
-    free(ptr);
-    return NULL;
-  }
-  node->ptr = ptr;
-  node->next = codec->owned_allocs;
-  codec->owned_allocs = node;
-  return ptr;
-}
-
-static char *codec_strdup(DataBind *codec, const char *src) {
-  size_t len;
-  char *dst;
-  if (src == NULL) return NULL;
-  len = strlen(src) + 1;
-  dst = (char *)codec_alloc(codec, len);
-  if (dst == NULL) return NULL;
-  memcpy(dst, src, len);
-  return dst;
-}
-
-static char *codec_strdup_n(DataBind *codec, const char *src, size_t len) {
-  char *dst = (char *)codec_alloc(codec, len + 1);
-  if (dst == NULL) return NULL;
-  memcpy(dst, src, len);
-  dst[len] = '\0';
-  return dst;
-}
-
 static Node *find_child(Node *parent, const char *name) {
   size_t i;
   if (parent == NULL || parent->type != NODE_MAP) return NULL;
@@ -2211,22 +1343,85 @@ static int field_flag(Node *field_node, const char *name) {
 
 static int record_flag(Node *node, const char *name) { return field_flag(node, name); }
 
-static const char *node_attribute_value(Node *node, const char *name) {
+static const char *node_attribute_value_at(Node *node, const char *name, size_t index) {
   Node *attrs;
-  size_t i;
+  size_t i, match = 0;
   if (node == NULL || name == NULL) return NULL;
   attrs = find_child(node, "attributes");
   if (attrs == NULL || attrs->type != NODE_LIST) return NULL;
   for (i = 0; i < attrs->data.list.count; i++) {
     Node *attr = attrs->data.list.items[i];
     const char *attr_name = get_string_val(find_child(attr, "name"));
-    if (attr_name != NULL && strcmp(attr_name, name) == 0)
-      return get_string_val(find_child(attr, "value"));
+    if (attr_name != NULL && strcmp(attr_name, name) == 0) {
+      if (match == index) return get_string_val(find_child(attr, "value"));
+      ++match;
+    }
   }
   return NULL;
 }
 
+static size_t node_attribute_count(Node *node, const char *name) {
+  size_t count = 0;
+  while (node_attribute_value_at(node, name, count) != NULL) ++count;
+  return count;
+}
+
+static const char *node_attribute_value(Node *node, const char *name) {
+  return node_attribute_value_at(node, name, 0);
+}
+
 static const char *field_format(Node *field) { return node_attribute_value(field, "format"); }
+
+static const char *field_binding_name(Node *field) {
+  const char *mapped = node_attribute_value(field, "name");
+  const char *canonical = get_string_val(find_child(field, "name"));
+  return mapped != NULL && mapped[0] != '\0' ? mapped : canonical;
+}
+
+static size_t field_input_name_count(Node *field) {
+  return node_attribute_count(field, "alias") + 2u;
+}
+
+static const char *field_input_name_at(Node *field, size_t index) {
+  size_t aliases = node_attribute_count(field, "alias");
+  if (index == 0) return field_binding_name(field);
+  if (index <= aliases) return node_attribute_value_at(field, "alias", index - 1u);
+  if (index == aliases + 1u) return get_string_val(find_child(field, "name"));
+  return NULL;
+}
+
+static int field_input_name_is_duplicate(Node *field, size_t index, const char *candidate) {
+  size_t i;
+  if (candidate == NULL) return 1;
+  for (i = 0; i < index; ++i) {
+    const char *previous = field_input_name_at(field, i);
+    if (previous != NULL && strcmp(previous, candidate) == 0) return 1;
+  }
+  return 0;
+}
+
+static int field_accepts_name(Node *field, const char *candidate) {
+  size_t i;
+  if (candidate == NULL) return 0;
+  for (i = 0; i < field_input_name_count(field); ++i) {
+    const char *accepted = field_input_name_at(field, i);
+    if (accepted != NULL && strcmp(accepted, candidate) == 0) return 1;
+  }
+  return 0;
+}
+
+static json_value_t *json_field_value(Node *field, json_value_t *object) {
+  size_t i;
+  if (object == NULL) return NULL;
+  for (i = 0; i < field_input_name_count(field); ++i) {
+    const char *candidate = field_input_name_at(field, i);
+    json_value_t *value;
+    if (field_input_name_is_duplicate(field, i, candidate)) continue;
+    value = turbo_json_object_get(object, candidate);
+    if (value != NULL) return value;
+  }
+  return NULL;
+}
 
 static int db_text_is_empty(const char *text) { return text == NULL || text[0] == '\0'; }
 
@@ -2997,38 +2192,38 @@ static DataBindValue *dbv_integer_text(Node *schema_root, const char *type_name,
                                                                : dbv_int64(named_value);
   meta = find_scalar_meta(schema_root, type_name);
   if (meta == NULL || meta->is_float) return NULL;
-  switch (meta->mir_type) {
-  case MIR_T_U8: max_value = UINT8_MAX; break;
-  case MIR_T_U16: max_value = UINT16_MAX; break;
-  case MIR_T_U32: max_value = UINT32_MAX; break;
-  case MIR_T_U64: max_value = UINT64_MAX; break;
-  case MIR_T_I8: max_value = (uint64_t)INT8_MAX + 1u; break;
-  case MIR_T_I16: max_value = (uint64_t)INT16_MAX + 1u; break;
-  case MIR_T_I32: max_value = (uint64_t)INT32_MAX + 1u; break;
-  case MIR_T_I64: max_value = (uint64_t)INT64_MAX + 1u; break;
+  switch (meta->wire_type) {
+  case DB_WIRE_U8: max_value = UINT8_MAX; break;
+  case DB_WIRE_U16: max_value = UINT16_MAX; break;
+  case DB_WIRE_U32: max_value = UINT32_MAX; break;
+  case DB_WIRE_U64: max_value = UINT64_MAX; break;
+  case DB_WIRE_I8: max_value = (uint64_t)INT8_MAX + 1u; break;
+  case DB_WIRE_I16: max_value = (uint64_t)INT16_MAX + 1u; break;
+  case DB_WIRE_I32: max_value = (uint64_t)INT32_MAX + 1u; break;
+  case DB_WIRE_I64: max_value = (uint64_t)INT64_MAX + 1u; break;
   default: return NULL;
   }
-  if (!db_parse_integer_magnitude(text, len, max_value, meta->mir_type == MIR_T_I8 ||
-                                                             meta->mir_type == MIR_T_I16 ||
-                                                             meta->mir_type == MIR_T_I32 ||
-                                                             meta->mir_type == MIR_T_I64,
+  if (!db_parse_integer_magnitude(text, len, max_value, meta->wire_type == DB_WIRE_I8 ||
+                                                             meta->wire_type == DB_WIRE_I16 ||
+                                                             meta->wire_type == DB_WIRE_I32 ||
+                                                             meta->wire_type == DB_WIRE_I64,
                                   &magnitude, &negative))
     return NULL;
-  if (meta->mir_type == MIR_T_U64) return dbv_uint64(magnitude);
+  if (meta->wire_type == DB_WIRE_U64) return dbv_uint64(magnitude);
   if (negative) {
     int64_t signed_value = magnitude == (uint64_t)INT64_MAX + 1u
                                ? INT64_MIN
                                : -(int64_t)magnitude;
-    if (meta->mir_type == MIR_T_I8 && signed_value < INT8_MIN) return NULL;
-    if (meta->mir_type == MIR_T_I16 && signed_value < INT16_MIN) return NULL;
-    if (meta->mir_type == MIR_T_I32 && signed_value < INT32_MIN) return NULL;
+    if (meta->wire_type == DB_WIRE_I8 && signed_value < INT8_MIN) return NULL;
+    if (meta->wire_type == DB_WIRE_I16 && signed_value < INT16_MIN) return NULL;
+    if (meta->wire_type == DB_WIRE_I32 && signed_value < INT32_MIN) return NULL;
     return signed_value >= INT32_MIN ? dbv_int((int32_t)signed_value)
                                      : dbv_int64(signed_value);
   }
-  if (meta->mir_type == MIR_T_I8 && magnitude > INT8_MAX) return NULL;
-  if (meta->mir_type == MIR_T_I16 && magnitude > INT16_MAX) return NULL;
-  if (meta->mir_type == MIR_T_I32 && magnitude > INT32_MAX) return NULL;
-  if (meta->mir_type == MIR_T_I64 && magnitude > INT64_MAX) return NULL;
+  if (meta->wire_type == DB_WIRE_I8 && magnitude > INT8_MAX) return NULL;
+  if (meta->wire_type == DB_WIRE_I16 && magnitude > INT16_MAX) return NULL;
+  if (meta->wire_type == DB_WIRE_I32 && magnitude > INT32_MAX) return NULL;
+  if (meta->wire_type == DB_WIRE_I64 && magnitude > INT64_MAX) return NULL;
   return magnitude <= INT32_MAX ? dbv_int((int32_t)magnitude) : dbv_int64((int64_t)magnitude);
 }
 
@@ -3270,6 +2465,17 @@ static Node *union_variant(Node *union_node, const char *variant_name) {
   return NULL;
 }
 
+static Node *union_variant_binding(Node *union_node, const char *variant_name) {
+  Node *fields = fields_node_for_record(union_node);
+  size_t i;
+  if (fields == NULL || variant_name == NULL) return NULL;
+  for (i = 0; i < fields->data.list.count; ++i) {
+    Node *field = fields->data.list.items[i];
+    if (field_accepts_name(field, variant_name)) return field;
+  }
+  return NULL;
+}
+
 static DataBindValue *bind_json_typed_value(Node *schema_root, const char *type_name,
                                             json_value_t *value);
 
@@ -3376,9 +2582,11 @@ static DataBindValue *bind_json_union(Node *schema_root, Node *union_node, json_
     return NULL;
   variant_name = turbo_json_object_key(object, 0);
   payload = turbo_json_object_value(object, 0);
-  variant = union_variant(union_node, variant_name);
+  variant = union_variant_binding(union_node, variant_name);
+  if (variant == NULL || payload == NULL) return NULL;
+  variant_name = get_string_val(find_child(variant, "name"));
   variant_type = get_string_val(find_child(variant, "type"));
-  if (variant == NULL || variant_type == NULL || payload == NULL) return NULL;
+  if (variant_name == NULL || variant_type == NULL) return NULL;
   if (find_data_record(schema_root, variant_type) != NULL ||
       find_union_record(schema_root, variant_type) != NULL)
     bound = bind_json_typed_value(schema_root, variant_type, payload);
@@ -3413,7 +2621,7 @@ static DataBindValue *bind_json_object(Node *schema_root, Node *record, json_val
     DataBindValue *bound = NULL;
     data_bind_text_kind_t kind;
     if (name == NULL) continue;
-    value = turbo_json_object_get(object, name);
+    value = json_field_value(field, object);
     if (value == NULL) {
       bound = bind_field_default(schema_root, field);
       if (bound != NULL && db_value_matches_field_format(field, bound)) {
@@ -3522,6 +2730,17 @@ static int xml_field_path(turbo_xml_doc_t *doc, const char *prefix, const char *
   if (xml_path_exists(doc, attr)) {
     snprintf(out, out_size, "%s", attr);
     return out[0] != '\0' && strlen(out) < out_size;
+  }
+  return 0;
+}
+
+static int xml_field_binding_path(Node *field, turbo_xml_doc_t *doc, const char *prefix, char *out,
+                                  size_t out_size) {
+  size_t i;
+  for (i = 0; i < field_input_name_count(field); ++i) {
+    const char *candidate = field_input_name_at(field, i);
+    if (field_input_name_is_duplicate(field, i, candidate)) continue;
+    if (xml_field_path(doc, prefix, candidate, out, out_size)) return 1;
   }
   return 0;
 }
@@ -3660,7 +2879,7 @@ static DataBindValue *bind_xml_union_at_path(Node *schema_root, Node *union_node
       data_bind_value_free(result);
       return NULL;
     }
-    if (!xml_field_path(doc, path, name, item_path, sizeof(item_path))) continue;
+    if (!xml_field_binding_path(variant, doc, path, item_path, sizeof(item_path))) continue;
     if (find_data_record(schema_root, variant_type) != NULL ||
         find_union_record(schema_root, variant_type) != NULL)
       item = bind_xml_typed_value(schema_root, variant_type, doc, item_path);
@@ -3693,24 +2912,27 @@ static DataBindValue *bind_xml_record_at_path(Node *schema_root, Node *record, t
     const char *field_type = get_string_val(find_child(field, "type"));
     char field_path[256];
     DataBindValue *bound = NULL;
+    int has_field_path;
     if (name == NULL) continue;
+    has_field_path =
+        xml_field_binding_path(field, doc, path, field_path, sizeof(field_path));
     if (field_flag(field, "is_group_field")) {
-      if (xml_join_path(field_path, sizeof(field_path), path, name))
+      if (has_field_path)
         bound = bind_xml_list_at_path(schema_root, field, doc, field_path, DATA_BIND_VALUE_LIST);
     } else if (field_flag(field, "is_map")) {
-      if (xml_join_path(field_path, sizeof(field_path), path, name))
+      if (has_field_path)
         bound = bind_xml_map_at_path(schema_root, field, doc, field_path);
     } else if (field_flag(field, "is_collection")) {
-      if (xml_join_path(field_path, sizeof(field_path), path, name))
+      if (has_field_path)
         bound = bind_xml_list_at_path(schema_root, field, doc, field_path,
                                       field_flag(field, "is_set") ? DATA_BIND_VALUE_SET
                                                                   : DATA_BIND_VALUE_LIST);
     } else if (field_flag(field, "is_composite_ref") ||
                find_union_record(schema_root, field_type)) {
-      if (xml_join_path(field_path, sizeof(field_path), path, name))
+      if (has_field_path)
         bound = bind_xml_typed_value(schema_root, field_type, doc, field_path);
     } else {
-      if (xml_field_path(doc, path, name, field_path, sizeof(field_path)))
+      if (has_field_path)
         bound = bind_xml_scalar_at_path(schema_root, field_type,
                                         bind_field_kind(schema_root, field), doc, field_path);
     }
@@ -3952,25 +3174,29 @@ static int csv_collect_indexes(const data_bind_csv_headers_t *headers, const cha
   return indexes->count > 0;
 }
 
+static int csv_header_matches_path(const char *header, const char *path);
+
 static int csv_headers_have_path(const data_bind_csv_headers_t *headers, const char *path) {
-  char sanitized[256];
-  size_t path_len, sanitized_len, i;
+  size_t i;
   if (headers == NULL || path == NULL) return 0;
-  path_len = strlen(path);
-  csv_sanitize_path(path, sanitized, sizeof(sanitized));
-  sanitized_len = strlen(sanitized);
   for (i = 0; i < headers->count; i++) {
     const char *header = headers->names[i];
-    if (header == NULL) continue;
-    if (strcmp(header, path) == 0) return 1;
-    if (path_len > 0 && strncmp(header, path, path_len) == 0 &&
-        (header[path_len] == '.' || header[path_len] == '['))
-      return 1;
-    if (sanitized_len > 0 && strcmp(header, sanitized) == 0) return 1;
-    if (sanitized_len > 0 && strncmp(header, sanitized, sanitized_len) == 0 &&
-        header[sanitized_len] == '_')
+    if (csv_header_matches_path(header, path)) return 1;
+  }
+  return 0;
+}
+
+static int csv_field_binding_path(Node *field, const data_bind_csv_headers_t *headers,
+                                  const char *prefix, char *out, size_t out_size) {
+  size_t i;
+  for (i = 0; i < field_input_name_count(field); ++i) {
+    const char *candidate = field_input_name_at(field, i);
+    if (field_input_name_is_duplicate(field, i, candidate)) continue;
+    if (csv_join_path(out, out_size, prefix, candidate) &&
+        csv_headers_have_path(headers, out))
       return 1;
   }
+  if (out != NULL && out_size != 0) out[0] = '\0';
   return 0;
 }
 
@@ -4178,12 +3404,13 @@ static DataBindValue *bind_csv_union_at_path(Node *schema_root, Node *union_node
     const char *variant_type = get_string_val(find_child(variant, "type"));
     char item_path[256];
     DataBindValue *item;
-    if (name == NULL || variant_type == NULL ||
-        !csv_join_path(item_path, sizeof(item_path), path, name)) {
+    if (name == NULL || variant_type == NULL) {
       data_bind_value_free(result);
       return NULL;
     }
-    if (!csv_row_has_nonempty_path(doc, row, headers, item_path)) continue;
+    if (!csv_field_binding_path(variant, headers, path, item_path, sizeof(item_path)) ||
+        !csv_row_has_nonempty_path(doc, row, headers, item_path))
+      continue;
     item = bind_csv_typed_value(schema_root, variant_type, doc, row, headers, item_path);
     if (item == NULL || !dbv_object_set(result, name, item)) {
       data_bind_value_free(item);
@@ -4215,26 +3442,34 @@ static DataBindValue *bind_csv_record_at_path(Node *schema_root, Node *record, t
     const char *field_type = get_string_val(find_child(field, "type"));
     char path[256];
     DataBindValue *bound = NULL;
-    if (name == NULL || !csv_join_path(path, sizeof(path), prefix, name)) continue;
+    int has_field_path;
+    if (name == NULL) continue;
+    has_field_path =
+        csv_field_binding_path(field, headers, prefix, path, sizeof(path));
     if (field_flag(field, "is_group_field")) {
-      bound =
-          bind_csv_list_at_path(schema_root, field, doc, row, headers, path, DATA_BIND_VALUE_LIST);
+      if (has_field_path)
+        bound =
+            bind_csv_list_at_path(schema_root, field, doc, row, headers, path, DATA_BIND_VALUE_LIST);
     } else if (field_flag(field, "is_map")) {
-      bound = bind_csv_map_at_path(schema_root, field, doc, row, headers, path);
+      if (has_field_path) bound = bind_csv_map_at_path(schema_root, field, doc, row, headers, path);
     } else if (field_flag(field, "is_collection")) {
-      bound = bind_csv_list_at_path(schema_root, field, doc, row, headers, path,
-                                    field_flag(field, "is_set") ? DATA_BIND_VALUE_SET
-                                                                : DATA_BIND_VALUE_LIST);
+      if (has_field_path)
+        bound = bind_csv_list_at_path(schema_root, field, doc, row, headers, path,
+                                      field_flag(field, "is_set") ? DATA_BIND_VALUE_SET
+                                                                  : DATA_BIND_VALUE_LIST);
     } else if (field_flag(field, "is_composite_ref") ||
                find_union_record(schema_root, field_type)) {
-      bound = bind_csv_typed_value(schema_root, field_type, doc, row, headers, path);
+      if (has_field_path)
+        bound = bind_csv_typed_value(schema_root, field_type, doc, row, headers, path);
     } else {
-      bound = bind_csv_scalar_at_path(schema_root, field_type, bind_field_kind(schema_root, field),
-                                      doc, row, path);
+      if (has_field_path)
+        bound = bind_csv_scalar_at_path(schema_root, field_type,
+                                        bind_field_kind(schema_root, field), doc, row, path);
     }
     if (bound == NULL) bound = bind_field_default(schema_root, field);
     if (bound == NULL) {
-      if (bind_field_missing_allowed(field) && !csv_row_has_nonempty_path(doc, row, headers, path))
+      if (bind_field_missing_allowed(field) &&
+          (!has_field_path || !csv_row_has_nonempty_path(doc, row, headers, path)))
         continue;
       data_bind_value_free(result);
       return NULL;
@@ -4282,6 +3517,97 @@ static DataBindSchemaKind schema_record_kind(const char *list_name, Node *record
 static Node *fields_node_for_record(Node *record) {
   Node *fields = find_child(record, "fields");
   return fields != NULL && fields->type == NODE_LIST ? fields : NULL;
+}
+
+static int binding_name_is_portable(const char *name) {
+  size_t i;
+  if (name == NULL ||
+      !((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= 'a' && name[0] <= 'z') ||
+        name[0] == '_'))
+    return 0;
+  for (i = 1; name[i] != '\0'; ++i)
+    if (!((name[i] >= 'A' && name[i] <= 'Z') || (name[i] >= 'a' && name[i] <= 'z') ||
+          (name[i] >= '0' && name[i] <= '9') || name[i] == '_' || name[i] == '-'))
+      return 0;
+  return 1;
+}
+
+static DataBindStatus validate_field_binding_attributes(const char *record_name, Node *field,
+                                                        DataBindError *error) {
+  static const char *const attributes[] = {"name", "alias"};
+  const char *field_name = get_string_val(find_child(field, "name"));
+  size_t attribute_index;
+  if (node_attribute_count(field, "name") > 1u) {
+    char path[260];
+    snprintf(path, sizeof(path), "%s.%s", record_name != NULL ? record_name : "",
+             field_name != NULL ? field_name : "");
+    return db_error_set(error, DATA_BIND_ERR_SCHEMA, path, -1, -1,
+                        "Field has multiple name mappings");
+  }
+  for (attribute_index = 0;
+       attribute_index < sizeof(attributes) / sizeof(attributes[0]); ++attribute_index) {
+    const char *attribute = attributes[attribute_index];
+    size_t value_index;
+    for (value_index = 0; value_index < node_attribute_count(field, attribute); ++value_index) {
+      const char *value = node_attribute_value_at(field, attribute, value_index);
+      if (!binding_name_is_portable(value)) {
+        char path[260];
+        snprintf(path, sizeof(path), "%s.%s", record_name != NULL ? record_name : "",
+                 field_name != NULL ? field_name : "");
+        return db_error_set(error, DATA_BIND_ERR_SCHEMA, path, -1, -1,
+                            "Binding %s '%s' is not portable across JSON/YAML/XML/CSV",
+                            attribute, value != NULL ? value : "");
+      }
+    }
+  }
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus validate_record_binding_names(Node *record, DataBindError *error) {
+  Node *fields = fields_node_for_record(record);
+  const char *record_name = get_string_val(find_child(record, "name"));
+  size_t i;
+  if (fields == NULL) return DATA_BIND_OK;
+  for (i = 0; i < fields->data.list.count; ++i) {
+    Node *left = fields->data.list.items[i];
+    const char *left_canonical = get_string_val(find_child(left, "name"));
+    size_t j;
+    DataBindStatus attribute_status =
+        validate_field_binding_attributes(record_name, left, error);
+    if (attribute_status != DATA_BIND_OK) return attribute_status;
+    for (j = i + 1; j < fields->data.list.count; ++j) {
+      Node *right = fields->data.list.items[j];
+      size_t k;
+      for (k = 0; k < field_input_name_count(left); ++k) {
+        const char *accepted = field_input_name_at(left, k);
+        if (!field_input_name_is_duplicate(left, k, accepted) &&
+            field_accepts_name(right, accepted)) {
+          char path[260];
+          snprintf(path, sizeof(path), "%s.%s", record_name != NULL ? record_name : "",
+                   left_canonical != NULL ? left_canonical : "");
+          return db_error_set(error, DATA_BIND_ERR_SCHEMA, path, -1, -1,
+                              "Binding name '%s' is shared by multiple fields",
+                              accepted);
+        }
+      }
+    }
+  }
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus validate_schema_binding_names(Node *schema_root, DataBindError *error) {
+  static const char *const record_lists[] = {"messages", "composites", "groups", "unions"};
+  size_t i;
+  for (i = 0; i < sizeof(record_lists) / sizeof(record_lists[0]); ++i) {
+    Node *records = find_child(schema_root, record_lists[i]);
+    size_t j;
+    if (records == NULL || records->type != NODE_LIST) continue;
+    for (j = 0; j < records->data.list.count; ++j) {
+      DataBindStatus status = validate_record_binding_names(records->data.list.items[j], error);
+      if (status != DATA_BIND_OK) return status;
+    }
+  }
+  return DATA_BIND_OK;
 }
 
 static Node *items_node_for_enum(Node *record) {
@@ -4465,7 +3791,7 @@ static int append_emit_field(emit_field_array_t *fields, const char *name, emit_
   memcpy(field.name, name, name_len + 1);
   field.kind = kind;
   field.size = size;
-  field.mir_type = meta != NULL ? meta->mir_type : MIR_T_UNDEF;
+  field.wire_type = meta != NULL ? meta->wire_type : DB_WIRE_UNDEFINED;
   field.is_float = meta != NULL ? meta->is_float : 0;
   field.is_64 = meta != NULL ? meta->is_64 : 0;
   field.has_set_bytes = (unsigned char)has_set_bytes;
@@ -4718,9 +4044,9 @@ static int build_map_collection_emit_field(emit_field_array_t *fields, Node *fie
     return append_emit_field(fields, full_name, EF_MAP_STR_DBL, meta, meta->size, 0, 0, 0, NULL);
   return append_emit_field(
       fields, full_name,
-      meta->mir_type == MIR_T_U64
+      meta->wire_type == DB_WIRE_U64
           ? EF_MAP_STR_U64
-          : (meta->mir_type == MIR_T_U32 ? EF_MAP_STR_U32
+          : (meta->wire_type == DB_WIRE_U32 ? EF_MAP_STR_U32
                                          : (meta->is_64 ? EF_MAP_STR_I64 : EF_MAP_STR_INT)),
       meta, meta->size, 0, 0, 0, NULL);
 }
@@ -4774,8 +4100,8 @@ static int build_list_or_set_collection_emit_field(emit_field_array_t *fields, N
     emit_kind_t kind;
     if (meta->is_float) kind = EF_SET_DBL;
     else if (strcmp(inner_type, "bool") == 0) kind = EF_SET_BOOL;
-    else if (meta->mir_type == MIR_T_U64) kind = EF_SET_U64;
-    else if (meta->mir_type == MIR_T_U32) kind = EF_SET_U32;
+    else if (meta->wire_type == DB_WIRE_U64) kind = EF_SET_U64;
+    else if (meta->wire_type == DB_WIRE_U32) kind = EF_SET_U32;
     else if (meta->is_64) kind = EF_SET_I64;
     else kind = EF_SET_INT;
     return append_emit_field(fields, full_name, kind, meta, meta->size, 0, 0, 0, NULL);
@@ -4787,8 +4113,8 @@ static int build_list_or_set_collection_emit_field(emit_field_array_t *fields, N
           ? EF_LIST_BOOL
           : (meta->is_float
                  ? EF_LIST_DBL
-                 : (meta->mir_type == MIR_T_U64 ? EF_LIST_U64
-                                                : (meta->mir_type == MIR_T_U32
+                 : (meta->wire_type == DB_WIRE_U64 ? EF_LIST_U64
+                                                   : (meta->wire_type == DB_WIRE_U32
                                                        ? EF_LIST_U32
                                                        : (meta->is_64 ? EF_LIST_I64
                                                                       : EF_LIST_INT)))),
@@ -4833,8 +4159,8 @@ static int build_var_or_scalar_emit_field(emit_field_array_t *fields, Node *fiel
     const type_meta_t *meta = find_enum_meta(schema_root, field_type);
     if (meta == NULL) return 1;
     return append_emit_field(fields, full_name,
-                             meta->mir_type == MIR_T_U64 ? EF_U64
-                                                        : (meta->mir_type == MIR_T_U32
+                             meta->wire_type == DB_WIRE_U64 ? EF_U64
+                                                           : (meta->wire_type == DB_WIRE_U32
                                                                ? EF_U32
                                                                : (meta->is_64 ? EF_I64 : EF_INT)),
                              meta, meta->size, 0, 0, 0, NULL);
@@ -4848,9 +4174,9 @@ static int build_var_or_scalar_emit_field(emit_field_array_t *fields, Node *fiel
                                  ? EF_BOOL
                                  : (meta->is_float
                                         ? EF_DBL
-                                        : (meta->mir_type == MIR_T_U64
+                                        : (meta->wire_type == DB_WIRE_U64
                                                ? EF_U64
-                                               : (meta->mir_type == MIR_T_U32
+                                               : (meta->wire_type == DB_WIRE_U32
                                                       ? EF_U32
                                                       : (meta->is_64 ? EF_I64 : EF_INT)))),
                              meta, meta->size, 0, 0, 0, NULL);
@@ -4902,112 +4228,6 @@ static int build_fields(emit_field_array_t *fields, Node *src_fields, Node *sche
 static int build_record_fields_v1(emit_field_array_t *fields, Node *src_fields, Node *schema_root,
                                   const char *prefix, int has_set_bytes) {
   return build_fields_mode_v1(fields, src_fields, schema_root, prefix, has_set_bytes, 1);
-}
-
-static void record_layout_free_v1(data_bind_record_layout_t *layout) {
-  size_t i;
-  if (layout == NULL) return;
-  for (i = 0; i < layout->count; ++i) {
-    free(layout->fields[i].name);
-    record_layout_free_v1(layout->fields[i].child);
-  }
-  free(layout->fields);
-  free(layout);
-}
-
-static data_bind_record_layout_t *record_layout_from_emit_fields_v1(
-    const emit_field_array_t *fields) {
-  data_bind_record_layout_t *layout;
-  size_t i;
-  if (fields == NULL) return NULL;
-  layout = (data_bind_record_layout_t *)calloc(1, sizeof(*layout));
-  if (layout == NULL) return NULL;
-  layout->count = fields->count;
-  if (layout->count == 0) return layout;
-  layout->fields = (data_bind_record_layout_field_t *)calloc(layout->count,
-                                                              sizeof(*layout->fields));
-  if (layout->fields == NULL) {
-    free(layout);
-    return NULL;
-  }
-  for (i = 0; i < layout->count; ++i) {
-    const emit_field_t *source = &fields->items[i];
-    size_t name_len = strlen(source->name);
-    layout->fields[i].name = (char *)malloc(name_len + 1);
-    if (layout->fields[i].name == NULL) {
-      record_layout_free_v1(layout);
-      return NULL;
-    }
-    memcpy(layout->fields[i].name, source->name, name_len + 1);
-    if (source->children.count > 0) {
-      layout->fields[i].child = record_layout_from_emit_fields_v1(&source->children);
-      if (layout->fields[i].child == NULL) {
-        record_layout_free_v1(layout);
-        return NULL;
-      }
-    }
-  }
-  return layout;
-}
-
-static void data_bind_record_plans_free_v1(DataBind *codec) {
-  data_bind_record_plan_t *plan;
-  if (codec == NULL) return;
-  plan = codec->record_plans;
-  while (plan != NULL) {
-    data_bind_record_plan_t *next = plan->next;
-    free(plan->type_name);
-    record_layout_free_v1(plan->layout);
-    free(plan);
-    plan = next;
-  }
-  codec->record_plans = NULL;
-}
-
-static data_bind_record_plan_t *data_bind_record_plan_find_v1(const DataBind *codec,
-                                                               const char *type_name) {
-  data_bind_record_plan_t *plan;
-  if (codec == NULL || type_name == NULL) return NULL;
-  for (plan = codec->record_plans; plan != NULL; plan = plan->next)
-    if (strcmp(plan->type_name, type_name) == 0) return plan;
-  return NULL;
-}
-
-static int data_bind_record_plans_build_v1(DataBind *codec) {
-  Node *messages_node;
-  size_t i;
-  if (codec == NULL) return 0;
-  messages_node = find_child(codec->schema_root, "messages");
-  if (messages_node == NULL || messages_node->type != NODE_LIST) return 1;
-  for (i = 0; i < messages_node->data.list.count; ++i) {
-    Node *message = messages_node->data.list.items[i];
-    const char *name = get_string_val(find_child(message, "name"));
-    emit_field_array_t fields = {0};
-    data_bind_record_plan_t *plan;
-    if (name == NULL) continue;
-    if (!build_record_fields_v1(&fields, find_child(message, "fields"), codec->schema_root, NULL,
-                                codec->api.set_field_bytes != NULL)) {
-      emit_field_array_free(&fields);
-      return 0;
-    }
-    plan = (data_bind_record_plan_t *)calloc(1, sizeof(*plan));
-    if (plan != NULL) {
-      plan->type_name = dbv_strdup(name);
-      plan->layout = record_layout_from_emit_fields_v1(&fields);
-    }
-    emit_field_array_free(&fields);
-    if (plan == NULL || plan->type_name == NULL || plan->layout == NULL) {
-      if (plan != NULL) {
-        free(plan->type_name);
-        record_layout_free_v1(plan->layout);
-        free(plan);
-      }
-      return 0;
-    }
-    plan->next = codec->record_plans;
-    codec->record_plans = plan;
-  }
-  return 1;
 }
 
 typedef struct data_bind_binary_writer {
@@ -5112,36 +4332,37 @@ static int db_binary_integer_value(const DataBindValue *value, int64_t *out) {
   return 0;
 }
 
-static int db_binary_integer_fits(MIR_type_t type, int64_t value) {
+static int db_binary_integer_fits(data_bind_wire_type_t type, int64_t value) {
   switch (type) {
-  case MIR_T_U8:
+  case DB_WIRE_U8:
     return value >= 0 && (uint64_t)value <= UINT8_MAX;
-  case MIR_T_I8:
+  case DB_WIRE_I8:
     return value >= INT8_MIN && value <= INT8_MAX;
-  case MIR_T_U16:
+  case DB_WIRE_U16:
     return value >= 0 && (uint64_t)value <= UINT16_MAX;
-  case MIR_T_I16:
+  case DB_WIRE_I16:
     return value >= INT16_MIN && value <= INT16_MAX;
-  case MIR_T_U32:
+  case DB_WIRE_U32:
     return value >= 0 && (uint64_t)value <= UINT32_MAX;
-  case MIR_T_I32:
+  case DB_WIRE_I32:
     return value >= INT32_MIN && value <= INT32_MAX;
-  case MIR_T_U64:
+  case DB_WIRE_U64:
     return value >= 0;
-  case MIR_T_I64:
+  case DB_WIRE_I64:
     return 1;
   default:
     return 0;
   }
 }
 
-static DataBindStatus db_binary_write_integer(data_bind_binary_writer_t *writer, MIR_type_t type,
+static DataBindStatus db_binary_write_integer(data_bind_binary_writer_t *writer,
+                                              data_bind_wire_type_t type,
                                               int size, const DataBindValue *value,
                                               const char *path) {
   uint8_t *dst = NULL;
   int64_t integer;
   DataBindStatus status;
-  if (type == MIR_T_U64 && value != NULL && value->kind == DATA_BIND_VALUE_UINT64) {
+  if (type == DB_WIRE_U64 && value != NULL && value->kind == DATA_BIND_VALUE_UINT64) {
     status = db_binary_writer_reserve(writer, (size_t)size, path, &dst);
     if (status == DATA_BIND_OK && dst != NULL)
       tbe_wire_write_u64(dst, 0, value->data.uint64_val);
@@ -5153,28 +4374,28 @@ static DataBindStatus db_binary_write_integer(data_bind_binary_writer_t *writer,
   status = db_binary_writer_reserve(writer, (size_t)size, path, &dst);
   if (status != DATA_BIND_OK || dst == NULL) return status;
   switch (type) {
-  case MIR_T_U8:
+  case DB_WIRE_U8:
     tbe_wire_write_u8(dst, 0, (uint8_t)integer);
     break;
-  case MIR_T_I8:
+  case DB_WIRE_I8:
     tbe_wire_write_i8(dst, 0, (int8_t)integer);
     break;
-  case MIR_T_U16:
+  case DB_WIRE_U16:
     tbe_wire_write_u16(dst, 0, (uint16_t)integer);
     break;
-  case MIR_T_I16:
+  case DB_WIRE_I16:
     tbe_wire_write_i16(dst, 0, (int16_t)integer);
     break;
-  case MIR_T_U32:
+  case DB_WIRE_U32:
     tbe_wire_write_u32(dst, 0, (uint32_t)integer);
     break;
-  case MIR_T_I32:
+  case DB_WIRE_I32:
     tbe_wire_write_i32(dst, 0, (int32_t)integer);
     break;
-  case MIR_T_U64:
+  case DB_WIRE_U64:
     tbe_wire_write_u64(dst, 0, (uint64_t)integer);
     break;
-  case MIR_T_I64:
+  case DB_WIRE_I64:
     tbe_wire_write_i64(dst, 0, integer);
     break;
   default:
@@ -5194,12 +4415,12 @@ static DataBindStatus db_binary_write_number(data_bind_binary_writer_t *writer,
     return db_error_set(writer->error, DATA_BIND_ERR_TYPE_MISMATCH, field->name, -1, -1,
                         "Floating-point field requires a finite number");
   number = value->data.double_val;
-  if (field->mir_type == MIR_T_F && (number < -FLT_MAX || number > FLT_MAX))
+  if (field->wire_type == DB_WIRE_F32 && (number < -FLT_MAX || number > FLT_MAX))
     return db_error_set(writer->error, DATA_BIND_ERR_TYPE_MISMATCH, field->name, -1, -1,
                         "Floating-point value does not fit float32");
   status = db_binary_writer_reserve(writer, (size_t)field->size, field->name, &dst);
   if (status != DATA_BIND_OK || dst == NULL) return status;
-  if (field->mir_type == MIR_T_F) tbe_wire_write_f32(dst, 0, (float)number);
+  if (field->wire_type == DB_WIRE_F32) tbe_wire_write_f32(dst, 0, (float)number);
   else tbe_wire_write_f64(dst, 0, number);
   return DATA_BIND_OK;
 }
@@ -5229,7 +4450,7 @@ static DataBindStatus db_binary_write_scalar(data_bind_binary_writer_t *writer,
   case EF_U32:
   case EF_I64:
   case EF_U64:
-    return db_binary_write_integer(writer, field->mir_type, field->size, value, field->name);
+    return db_binary_write_integer(writer, field->wire_type, field->size, value, field->name);
   case EF_BOOL: {
     uint8_t boolean;
     if (value->kind != DATA_BIND_VALUE_BOOL)
@@ -5435,6 +4656,309 @@ static DataBindStatus db_binary_write_fields(data_bind_binary_writer_t *writer,
   return DATA_BIND_OK;
 }
 
+typedef struct data_bind_binary_reader {
+  const uint8_t *data;
+  size_t length;
+  size_t offset;
+  DataBindError *error;
+} data_bind_binary_reader_t;
+
+static DataBindStatus db_binary_reader_take(data_bind_binary_reader_t *reader, size_t size,
+                                            const char *path, const uint8_t **out) {
+  if (out != NULL) *out = NULL;
+  if (reader == NULL || size > reader->length - (reader->offset <= reader->length
+                                                     ? reader->offset
+                                                     : reader->length))
+    return db_error_set(reader != NULL ? reader->error : NULL, DATA_BIND_ERR_PARSE, path, -1, -1,
+                        "Binary input is truncated");
+  if (out != NULL) *out = reader->data + reader->offset;
+  reader->offset += size;
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus db_binary_read_u32(data_bind_binary_reader_t *reader, const char *path,
+                                         uint32_t *out) {
+  const uint8_t *data;
+  DataBindStatus status;
+  if (out == NULL)
+    return db_error_set(reader != NULL ? reader->error : NULL, DATA_BIND_ERR_INVALID_ARG, path, -1,
+                        -1, "Invalid binary integer output");
+  status = db_binary_reader_take(reader, sizeof(uint32_t), path, &data);
+  if (status == DATA_BIND_OK) *out = tbe_wire_read_u32(data, 0);
+  return status;
+}
+
+static DataBindStatus db_binary_read_scalar(data_bind_binary_reader_t *reader,
+                                            const emit_field_t *field, DataBindValue **out_value) {
+  const uint8_t *data = NULL;
+  DataBindValue *value = NULL;
+  DataBindStatus status;
+  uint32_t length;
+  if (out_value != NULL) *out_value = NULL;
+  if (reader == NULL || field == NULL || out_value == NULL)
+    return db_error_set(reader != NULL ? reader->error : NULL, DATA_BIND_ERR_INVALID_ARG, NULL, -1,
+                        -1, "Invalid binary scalar arguments");
+
+  if (field->kind == EF_STR || field->kind == EF_VAR_BYTES) {
+    status = db_binary_read_u32(reader, field->name, &length);
+    if (status != DATA_BIND_OK) return status;
+    status = db_binary_reader_take(reader, length, field->name, &data);
+    if (status != DATA_BIND_OK) return status;
+    if (field->kind == EF_VAR_BYTES)
+      value = dbv_bytes(data, length);
+    else {
+      char *text = (char *)malloc((size_t)length + 1u);
+      if (text != NULL) {
+        memcpy(text, data, length);
+        text[length] = '\0';
+        value = dbv_string(text);
+        free(text);
+      }
+    }
+  } else {
+    status = db_binary_reader_take(reader, (size_t)field->size, field->name, &data);
+    if (status != DATA_BIND_OK) return status;
+    switch (field->kind) {
+    case EF_INT:
+    case EF_U32:
+    case EF_I64:
+    case EF_U64:
+      switch (field->wire_type) {
+      case DB_WIRE_U8: value = dbv_int((int32_t)tbe_wire_read_u8(data, 0)); break;
+      case DB_WIRE_I8: value = dbv_int((int32_t)tbe_wire_read_i8(data, 0)); break;
+      case DB_WIRE_U16: value = dbv_int((int32_t)tbe_wire_read_u16(data, 0)); break;
+      case DB_WIRE_I16: value = dbv_int((int32_t)tbe_wire_read_i16(data, 0)); break;
+      case DB_WIRE_U32: value = dbv_uint32_compat(tbe_wire_read_u32(data, 0)); break;
+      case DB_WIRE_I32: value = dbv_int(tbe_wire_read_i32(data, 0)); break;
+      case DB_WIRE_U64: value = dbv_uint64(tbe_wire_read_u64(data, 0)); break;
+      case DB_WIRE_I64: value = dbv_int64(tbe_wire_read_i64(data, 0)); break;
+      default:
+        return db_error_set(reader->error, DATA_BIND_ERR_SCHEMA, field->name, -1, -1,
+                            "Unsupported integer wire type");
+      }
+      break;
+    case EF_BOOL: value = dbv_bool(tbe_wire_read_u8(data, 0) != 0); break;
+    case EF_DBL:
+      value = dbv_double(field->wire_type == DB_WIRE_F32
+                             ? (double)tbe_wire_read_f32(data, 0)
+                             : tbe_wire_read_f64(data, 0));
+      break;
+    case EF_UUID: value = dbv_uuid_bytes(data); break;
+    case EF_FIX_BYTES: value = dbv_bytes(data, (size_t)field->size); break;
+    default:
+      return db_error_set(reader->error, DATA_BIND_ERR_SCHEMA, field->name, -1, -1,
+                          "Unsupported scalar binary field");
+    }
+  }
+  if (value == NULL)
+    return db_error_set(reader->error, DATA_BIND_ERR_OOM, field->name, -1, -1,
+                        "Out of memory parsing binary field");
+  *out_value = value;
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus db_binary_read_fields(data_bind_binary_reader_t *reader,
+                                            const emit_field_array_t *fields,
+                                            DataBindValue **out_object);
+
+static DataBindStatus db_binary_read_collection_item(data_bind_binary_reader_t *reader,
+                                                     const emit_field_t *field,
+                                                     DataBindValue **out_value) {
+  emit_field_t scalar = *field;
+  switch (field->kind) {
+  case EF_LIST_INT:
+  case EF_SET_INT: scalar.kind = EF_INT; break;
+  case EF_LIST_U32:
+  case EF_SET_U32: scalar.kind = EF_U32; break;
+  case EF_LIST_I64:
+  case EF_SET_I64: scalar.kind = EF_I64; break;
+  case EF_LIST_U64:
+  case EF_SET_U64: scalar.kind = EF_U64; break;
+  case EF_LIST_DBL:
+  case EF_SET_DBL: scalar.kind = EF_DBL; break;
+  case EF_LIST_BOOL:
+  case EF_SET_BOOL: scalar.kind = EF_BOOL; break;
+  case EF_LIST_STR:
+  case EF_SET_STR: scalar.kind = EF_STR; break;
+  case EF_LIST_OBJ: return db_binary_read_fields(reader, &field->children, out_value);
+  default:
+    return db_error_set(reader->error, DATA_BIND_ERR_SCHEMA, field->name, -1, -1,
+                        "Unsupported binary collection item");
+  }
+  return db_binary_read_scalar(reader, &scalar, out_value);
+}
+
+static DataBindStatus db_binary_read_collection(data_bind_binary_reader_t *reader,
+                                                const emit_field_t *field,
+                                                DataBindValue **out_value) {
+  DataBindValue *collection;
+  DataBindStatus status;
+  uint32_t encoded_count = 0;
+  size_t count;
+  size_t i;
+  if (field->fixed_count != 0)
+    count = field->fixed_count;
+  else {
+    status = db_binary_read_u32(reader, field->name, &encoded_count);
+    if (status != DATA_BIND_OK) return status;
+    count = encoded_count;
+  }
+  collection =
+      dbv_new(db_binary_is_set_kind(field->kind) ? DATA_BIND_VALUE_SET : DATA_BIND_VALUE_LIST);
+  if (collection == NULL)
+    return db_error_set(reader->error, DATA_BIND_ERR_OOM, field->name, -1, -1,
+                        "Out of memory parsing binary collection");
+  for (i = 0; i < count; ++i) {
+    DataBindValue *item = NULL;
+    status = db_binary_read_collection_item(reader, field, &item);
+    if (status != DATA_BIND_OK || !dbv_array_push(&collection->data.array_val, item)) {
+      if (status == DATA_BIND_OK)
+        status = db_error_set(reader->error, DATA_BIND_ERR_OOM, field->name, -1, -1,
+                              "Out of memory storing binary collection item");
+      data_bind_value_free(item);
+      data_bind_value_free(collection);
+      return status;
+    }
+  }
+  *out_value = collection;
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus db_binary_read_map(data_bind_binary_reader_t *reader,
+                                         const emit_field_t *field, DataBindValue **out_value) {
+  DataBindValue *map = dbv_new(DATA_BIND_VALUE_MAP);
+  DataBindStatus status;
+  uint32_t count;
+  uint32_t i;
+  emit_field_t scalar = *field;
+  if (map == NULL)
+    return db_error_set(reader->error, DATA_BIND_ERR_OOM, field->name, -1, -1,
+                        "Out of memory parsing binary map");
+  status = db_binary_read_u32(reader, field->name, &count);
+  for (i = 0; status == DATA_BIND_OK && i < count; ++i) {
+    const uint8_t *key_data = NULL;
+    uint32_t key_length;
+    char *key = NULL;
+    DataBindValue *item = NULL;
+    status = db_binary_read_u32(reader, field->name, &key_length);
+    if (status == DATA_BIND_OK)
+      status = db_binary_reader_take(reader, key_length, field->name, &key_data);
+    if (status != DATA_BIND_OK) break;
+    key = (char *)malloc((size_t)key_length + 1u);
+    if (key == NULL) {
+      status = db_error_set(reader->error, DATA_BIND_ERR_OOM, field->name, -1, -1,
+                            "Out of memory parsing binary map key");
+      break;
+    }
+    memcpy(key, key_data, key_length);
+    key[key_length] = '\0';
+    if (field->kind == EF_MAP_STR_STR) scalar.kind = EF_STR;
+    else if (field->kind == EF_MAP_STR_INT) scalar.kind = EF_INT;
+    else if (field->kind == EF_MAP_STR_U32) scalar.kind = EF_U32;
+    else if (field->kind == EF_MAP_STR_I64) scalar.kind = EF_I64;
+    else if (field->kind == EF_MAP_STR_U64) scalar.kind = EF_U64;
+    else if (field->kind == EF_MAP_STR_DBL) scalar.kind = EF_DBL;
+    else scalar.kind = EF_BOOL;
+    status = db_binary_read_scalar(reader, &scalar, &item);
+    if (status == DATA_BIND_OK && !dbv_map_set(map, key, item)) {
+      data_bind_value_free(item);
+      status = db_error_set(reader->error, DATA_BIND_ERR_OOM, field->name, -1, -1,
+                            "Out of memory storing binary map item");
+    }
+    free(key);
+  }
+  if (status != DATA_BIND_OK) {
+    data_bind_value_free(map);
+    return status;
+  }
+  *out_value = map;
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus db_binary_read_group(data_bind_binary_reader_t *reader,
+                                           const emit_field_t *field, DataBindValue **out_value) {
+  const uint8_t *dimension;
+  DataBindValue *list = NULL;
+  DataBindStatus status;
+  uint16_t block_length;
+  uint16_t count;
+  size_t i;
+  if (field->group_dim < 4)
+    return db_error_set(reader->error, DATA_BIND_ERR_SCHEMA, field->name, -1, -1,
+                        "Invalid group dimension size");
+  status = db_binary_reader_take(reader, (size_t)field->group_dim, field->name, &dimension);
+  if (status != DATA_BIND_OK) return status;
+  block_length = tbe_wire_read_u16(dimension, 0);
+  count = tbe_wire_read_u16(dimension + 2u, 0);
+  if (block_length < (uint16_t)field->size)
+    return db_error_set(reader->error, DATA_BIND_ERR_PARSE, field->name, -1, -1,
+                        "Group block length is smaller than the schema layout");
+  list = dbv_new(DATA_BIND_VALUE_LIST);
+  if (list == NULL)
+    return db_error_set(reader->error, DATA_BIND_ERR_OOM, field->name, -1, -1,
+                        "Out of memory parsing binary group");
+  for (i = 0; i < count; ++i) {
+    size_t start = reader->offset;
+    DataBindValue *entry = NULL;
+    status = db_binary_read_fields(reader, &field->children, &entry);
+    if (status == DATA_BIND_OK && reader->offset - start > block_length)
+      status = db_error_set(reader->error, DATA_BIND_ERR_PARSE, field->name, -1, -1,
+                            "Group fields exceed the encoded block length");
+    if (status == DATA_BIND_OK)
+      status = db_binary_reader_take(reader, block_length - (reader->offset - start), field->name,
+                                     NULL);
+    if (status != DATA_BIND_OK || !dbv_array_push(&list->data.array_val, entry)) {
+      if (status == DATA_BIND_OK)
+        status = db_error_set(reader->error, DATA_BIND_ERR_OOM, field->name, -1, -1,
+                              "Out of memory storing binary group entry");
+      data_bind_value_free(entry);
+      data_bind_value_free(list);
+      return status;
+    }
+  }
+  *out_value = list;
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus db_binary_read_fields(data_bind_binary_reader_t *reader,
+                                            const emit_field_array_t *fields,
+                                            DataBindValue **out_object) {
+  DataBindValue *object = dbv_new(DATA_BIND_VALUE_OBJECT);
+  DataBindStatus status = DATA_BIND_OK;
+  size_t i;
+  if (out_object != NULL) *out_object = NULL;
+  if (object == NULL)
+    return db_error_set(reader->error, DATA_BIND_ERR_OOM, "binary", -1, -1,
+                        "Out of memory parsing binary object");
+  for (i = 0; i < fields->count; ++i) {
+    const emit_field_t *field = &fields->items[i];
+    DataBindValue *value = NULL;
+    if (field->kind <= EF_VAR_BYTES)
+      status = db_binary_read_scalar(reader, field, &value);
+    else if (field->kind == EF_OBJECT)
+      status = db_binary_read_fields(reader, &field->children, &value);
+    else if (db_binary_is_list_kind(field->kind) || db_binary_is_set_kind(field->kind))
+      status = db_binary_read_collection(reader, field, &value);
+    else if (field->kind >= EF_MAP_STR_STR && field->kind <= EF_MAP_STR_BOOL)
+      status = db_binary_read_map(reader, field, &value);
+    else if (field->kind == EF_GROUP)
+      status = db_binary_read_group(reader, field, &value);
+    else
+      status = db_error_set(reader->error, DATA_BIND_ERR_SCHEMA, field->name, -1, -1,
+                            "Unsupported binary field kind");
+    if (status != DATA_BIND_OK || !dbv_object_set(object, field->name, value)) {
+      if (status == DATA_BIND_OK)
+        status = db_error_set(reader->error, DATA_BIND_ERR_OOM, field->name, -1, -1,
+                              "Out of memory storing binary field");
+      data_bind_value_free(value);
+      data_bind_value_free(object);
+      return status;
+    }
+  }
+  *out_object = object;
+  return DATA_BIND_OK;
+}
+
 static int db_binary_field_supported(Node *schema_root, Node *field) {
   const char *type = get_string_val(find_child(field, "type"));
   if (type == NULL || field_flag(field, "is_optional")) return 0;
@@ -5527,10 +5051,42 @@ static DataBindStatus db_binary_plan(DataBind *codec, const DataBindObject *obje
       return db_error_set(error, DATA_BIND_ERR_SCHEMA, get_string_val(find_child(field, "name")),
                           -1, -1, "Schema field has no supported dynamic binary representation");
   }
-  if (!build_fields(fields, schema_fields, codec->schema_root, NULL,
-                    codec->api.set_field_bytes != NULL))
+  if (!build_fields(fields, schema_fields, codec->schema_root, NULL, 1))
     return db_error_set(error, DATA_BIND_ERR_OOM, object->type_name, -1, -1,
                         "Out of memory building binary serialization plan");
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus db_binary_read_plan(DataBind *codec, const char *type_name,
+                                          emit_field_array_t *fields, DataBindError *error) {
+  Node *message;
+  Node *schema_fields;
+  const char *byte_order;
+  size_t i;
+  if (codec == NULL || type_name == NULL || fields == NULL)
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, "binary", -1, -1,
+                        "Invalid binary parse arguments");
+  message = find_named_record(codec->schema_root, "messages", type_name);
+  if (message == NULL)
+    return db_error_set(error, DATA_BIND_ERR_TYPE_NOT_FOUND, type_name, -1, -1,
+                        "Binary schema message '%s' was not found", type_name);
+  byte_order = get_string_val(find_child(codec->schema_root, "wire_byte_order"));
+  if (byte_order != NULL && strcmp(byte_order, "little") != 0)
+    return db_error_set(error, DATA_BIND_ERR_SCHEMA, type_name, -1, -1,
+                        "Dynamic binary codec currently requires little-endian schema order");
+  schema_fields = find_child(message, "fields");
+  if (schema_fields == NULL || schema_fields->type != NODE_LIST)
+    return db_error_set(error, DATA_BIND_ERR_SCHEMA, type_name, -1, -1,
+                        "Binary schema message has no field list");
+  for (i = 0; i < schema_fields->data.list.count; ++i) {
+    Node *field = schema_fields->data.list.items[i];
+    if (!db_binary_field_supported(codec->schema_root, field))
+      return db_error_set(error, DATA_BIND_ERR_SCHEMA, get_string_val(find_child(field, "name")),
+                          -1, -1, "Schema field has no supported dynamic binary representation");
+  }
+  if (!build_record_fields_v1(fields, schema_fields, codec->schema_root, NULL, 1))
+    return db_error_set(error, DATA_BIND_ERR_OOM, type_name, -1, -1,
+                        "Out of memory building binary parse plan");
   return DATA_BIND_OK;
 }
 
@@ -5541,1130 +5097,6 @@ static DataBindStatus db_binary_measure(const emit_field_array_t *fields,
   DataBindStatus status = db_binary_write_fields(&writer, fields, value);
   if (out_len != NULL) *out_len = status == DATA_BIND_OK ? writer.offset : 0;
   return status;
-}
-
-static int validate_fields_api(DataBind *codec, const char *message_name,
-                               const emit_field_array_t *fields) {
-  size_t i;
-  for (i = 0; i < fields->count; i++) {
-    const emit_field_t *field = &fields->items[i];
-    if ((field->kind == EF_LIST_INT &&
-         (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
-          codec->api.add_list_item_int == NULL)) ||
-        (field->kind == EF_LIST_U32 &&
-         (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
-          codec->api.add_list_item_uint32 == NULL)) ||
-        (field->kind == EF_LIST_I64 &&
-         (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
-          codec->api.add_list_item_int64 == NULL)) ||
-        (field->kind == EF_LIST_U64 &&
-         (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
-          codec->api.add_list_item_uint64 == NULL)) ||
-        (field->kind == EF_LIST_DBL &&
-         (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
-          codec->api.add_list_item_double == NULL)) ||
-        (field->kind == EF_LIST_BOOL &&
-         (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
-          codec->api.add_list_item_bool == NULL)) ||
-        (field->kind == EF_LIST_STR &&
-         (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
-          codec->api.add_list_item_string == NULL)) ||
-        ((field->kind == EF_LIST_OBJ || field->kind == EF_GROUP) &&
-         (codec->api.create_list == NULL || codec->api.set_field_list == NULL ||
-          codec->api.add_list_item_object == NULL)) ||
-        (field->kind == EF_SET_INT &&
-         (codec->api.create_set == NULL || codec->api.set_field_set == NULL ||
-          codec->api.add_set_item_int == NULL)) ||
-        (field->kind == EF_SET_U32 &&
-         (codec->api.create_set == NULL || codec->api.set_field_set == NULL ||
-          codec->api.add_set_item_uint32 == NULL)) ||
-        (field->kind == EF_SET_I64 &&
-         (codec->api.create_set == NULL || codec->api.set_field_set == NULL ||
-          codec->api.add_set_item_int64 == NULL)) ||
-        (field->kind == EF_SET_U64 &&
-         (codec->api.create_set == NULL || codec->api.set_field_set == NULL ||
-          codec->api.add_set_item_uint64 == NULL)) ||
-        (field->kind == EF_SET_DBL &&
-         (codec->api.create_set == NULL || codec->api.set_field_set == NULL ||
-          codec->api.add_set_item_double == NULL)) ||
-        (field->kind == EF_SET_BOOL &&
-         (codec->api.create_set == NULL || codec->api.set_field_set == NULL ||
-          codec->api.add_set_item_bool == NULL)) ||
-        (field->kind == EF_SET_STR &&
-         (codec->api.create_set == NULL || codec->api.set_field_set == NULL ||
-          codec->api.add_set_item_string == NULL)) ||
-        (field->kind == EF_MAP_STR_STR &&
-         (codec->api.create_map == NULL || codec->api.set_field_map == NULL ||
-          codec->api.add_map_entry_string_string == NULL)) ||
-        (field->kind == EF_MAP_STR_INT &&
-         (codec->api.create_map == NULL || codec->api.set_field_map == NULL ||
-          codec->api.add_map_entry_string_int == NULL)) ||
-        (field->kind == EF_MAP_STR_U32 &&
-         (codec->api.create_map == NULL || codec->api.set_field_map == NULL ||
-          codec->api.add_map_entry_string_uint32 == NULL)) ||
-        (field->kind == EF_MAP_STR_I64 &&
-         (codec->api.create_map == NULL || codec->api.set_field_map == NULL ||
-          codec->api.add_map_entry_string_int64 == NULL)) ||
-        (field->kind == EF_MAP_STR_U64 &&
-         (codec->api.create_map == NULL || codec->api.set_field_map == NULL ||
-          codec->api.add_map_entry_string_uint64 == NULL)) ||
-        (field->kind == EF_MAP_STR_DBL &&
-         (codec->api.create_map == NULL || codec->api.set_field_map == NULL ||
-          codec->api.add_map_entry_string_double == NULL)) ||
-        (field->kind == EF_MAP_STR_BOOL &&
-         (codec->api.create_map == NULL || codec->api.set_field_map == NULL ||
-          codec->api.add_map_entry_string_bool == NULL))) {
-      return set_codec_error(codec, "Schema field '%s.%s' requires container API callbacks",
-                             message_name, field->name);
-    }
-    if (field->kind == EF_UUID && codec->api.set_field_uuid == NULL) {
-      return set_codec_error(codec, "Schema field '%s.%s' requires uuid API callback", message_name,
-                             field->name);
-    }
-    if (field->kind == EF_U32 && codec->api.set_field_uint32 == NULL) {
-      return set_codec_error(codec, "Schema field '%s.%s' requires uint32 API callback",
-                             message_name, field->name);
-    }
-    if (field->kind == EF_U64 && codec->api.set_field_uint64 == NULL) {
-      return set_codec_error(codec, "Schema field '%s.%s' requires uint64 API callback",
-                             message_name, field->name);
-    }
-    if (field->children.count > 0 && !validate_fields_api(codec, message_name, &field->children))
-      return 0;
-  }
-  return 1;
-}
-
-static char *builder_make_name(mir_builder_t *builder, const char *prefix, size_t id) {
-  char buffer[128];
-  snprintf(buffer, sizeof(buffer), "%s_%zu", prefix, id);
-  return codec_strdup(builder->codec, buffer);
-}
-
-static MIR_item_t builder_make_string_data(mir_builder_t *builder, const char *value) {
-  char *item_name = builder_make_name(builder, "__db_str", builder->data_name_id++);
-  char *bytes = NULL;
-  size_t len;
-  if (item_name == NULL) return NULL;
-  len = strlen(value);
-  bytes = codec_strdup_n(builder->codec, value, len);
-  if (bytes == NULL) return NULL;
-  return MIR_new_data(builder->ctx, item_name, MIR_T_U8, len + 1, bytes);
-}
-
-static void declare_external(mir_builder_t *builder, external_ref_t *ref, const char *name,
-                             size_t nres, MIR_type_t *res_types, size_t nargs, MIR_var_t *args) {
-  char proto_name[128];
-  ref->import_item = MIR_new_import(builder->ctx, name);
-  snprintf(proto_name, sizeof(proto_name), "p_%s", name);
-  ref->proto_item = MIR_new_proto_arr(builder->ctx, codec_strdup(builder->codec, proto_name), nres,
-                                      res_types, nargs, args);
-}
-
-static void init_externals(mir_builder_t *builder) {
-  MIR_type_t ptr_result = MIR_T_P;
-  MIR_type_t status_result = MIR_T_I32;
-  MIR_var_t set_int_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_I32, "value", 0}};
-  MIR_var_t set_u32_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_U32, "value", 0}};
-  MIR_var_t set_i64_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_I64, "value", 0}};
-  MIR_var_t set_u64_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_U64, "value", 0}};
-  MIR_var_t set_dbl_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_D, "value", 0}};
-  MIR_var_t set_bool_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_I32, "value", 0}};
-  MIR_var_t set_str_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_P, "value", 0}};
-  MIR_var_t set_bytes_args[] = {
-      {MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_P, "data", 0}, {MIR_T_I64, "len", 0}};
-  MIR_var_t set_uuid_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_P, "data", 0}};
-  MIR_var_t list_i32_args[] = {{MIR_T_P, "list", 0}, {MIR_T_I32, "value", 0}};
-  MIR_var_t list_u32_args[] = {{MIR_T_P, "list", 0}, {MIR_T_U32, "value", 0}};
-  MIR_var_t list_i64_args[] = {{MIR_T_P, "list", 0}, {MIR_T_I64, "value", 0}};
-  MIR_var_t list_u64_args[] = {{MIR_T_P, "list", 0}, {MIR_T_U64, "value", 0}};
-  MIR_var_t list_dbl_args[] = {{MIR_T_P, "list", 0}, {MIR_T_D, "value", 0}};
-  MIR_var_t list_bool_args[] = {{MIR_T_P, "list", 0}, {MIR_T_I32, "value", 0}};
-  MIR_var_t list_str_args[] = {{MIR_T_P, "list", 0}, {MIR_T_P, "value", 0}};
-  MIR_var_t list_obj_args[] = {{MIR_T_P, "list", 0}, {MIR_T_P, "value", 0}};
-  MIR_var_t set_list_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_P, "name", 0}, {MIR_T_P, "list", 0}};
-  MIR_var_t map_str_str_args[] = {{MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_P, "value", 0}};
-  MIR_var_t map_str_int_args[] = {
-      {MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_I32, "value", 0}};
-  MIR_var_t map_str_u32_args[] = {
-      {MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_U32, "value", 0}};
-  MIR_var_t map_str_i64_args[] = {
-      {MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_I64, "value", 0}};
-  MIR_var_t map_str_u64_args[] = {
-      {MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_U64, "value", 0}};
-  MIR_var_t map_str_dbl_args[] = {{MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_D, "value", 0}};
-  MIR_var_t map_str_bool_args[] = {
-      {MIR_T_P, "map", 0}, {MIR_T_P, "key", 0}, {MIR_T_I32, "value", 0}};
-  MIR_var_t read_varstr_args[] = {
-      {MIR_T_P, "buf", 0}, {MIR_T_I64, "offset", 0}, {MIR_T_I64, "remaining", 0}};
-  MIR_var_t free_args[] = {{MIR_T_P, "ptr", 0}};
-  MIR_var_t create_record_child_args[] = {{MIR_T_P, "container", 0}};
-  MIR_var_t create_record_field_args[] = {
-      {MIR_T_P, "obj", 0}, {MIR_T_U32, "slot", 0}};
-  MIR_var_t set_slot_i32_args[] = {
-      {MIR_T_P, "obj", 0}, {MIR_T_U32, "slot", 0}, {MIR_T_I32, "value", 0}};
-  MIR_var_t set_slot_u32_args[] = {
-      {MIR_T_P, "obj", 0}, {MIR_T_U32, "slot", 0}, {MIR_T_U32, "value", 0}};
-  MIR_var_t set_slot_i64_args[] = {
-      {MIR_T_P, "obj", 0}, {MIR_T_U32, "slot", 0}, {MIR_T_I64, "value", 0}};
-  MIR_var_t set_slot_u64_args[] = {
-      {MIR_T_P, "obj", 0}, {MIR_T_U32, "slot", 0}, {MIR_T_U64, "value", 0}};
-  MIR_var_t set_slot_dbl_args[] = {
-      {MIR_T_P, "obj", 0}, {MIR_T_U32, "slot", 0}, {MIR_T_D, "value", 0}};
-  MIR_var_t set_slot_str_args[] = {
-      {MIR_T_P, "obj", 0}, {MIR_T_U32, "slot", 0}, {MIR_T_P, "value", 0}};
-  MIR_var_t set_slot_bytes_args[] = {{MIR_T_P, "obj", 0}, {MIR_T_U32, "slot", 0},
-                                     {MIR_T_P, "data", 0}, {MIR_T_I64, "len", 0}};
-
-  declare_external(builder, &builder->ext.create_obj, "create_obj", 1, &ptr_result, 0, NULL);
-  declare_external(builder, &builder->ext.free_value, "free_value", 0, NULL, 1, free_args);
-  declare_external(builder, &builder->ext.set_int, "set_int", 1, &status_result, 3, set_int_args);
-  declare_external(builder, &builder->ext.set_u32, "set_uint32", 1, &status_result, 3,
-                   set_u32_args);
-  declare_external(builder, &builder->ext.set_i64, "set_int64", 1, &status_result, 3, set_i64_args);
-  declare_external(builder, &builder->ext.set_u64, "set_uint64", 1, &status_result, 3, set_u64_args);
-  declare_external(builder, &builder->ext.set_dbl, "set_dbl", 1, &status_result, 3, set_dbl_args);
-  declare_external(builder, &builder->ext.set_bool, "set_bool", 1, &status_result, 3, set_bool_args);
-  declare_external(builder, &builder->ext.set_str, "set_str", 1, &status_result, 3, set_str_args);
-  declare_external(builder, &builder->ext.set_bytes, "set_bytes", 1, &status_result, 4, set_bytes_args);
-  declare_external(builder, &builder->ext.set_uuid, "set_uuid", 1, &status_result, 3, set_uuid_args);
-  declare_external(builder, &builder->ext.create_list, "create_list", 1, &ptr_result, 0, NULL);
-  declare_external(builder, &builder->ext.add_list_int, "add_list_int", 1, &status_result, 2, list_i32_args);
-  declare_external(builder, &builder->ext.add_list_u32, "add_list_uint32", 1, &status_result, 2,
-                   list_u32_args);
-  declare_external(builder, &builder->ext.add_list_i64, "add_list_int64", 1, &status_result, 2,
-                   list_i64_args);
-  declare_external(builder, &builder->ext.add_list_u64, "add_list_uint64", 1, &status_result, 2,
-                   list_u64_args);
-  declare_external(builder, &builder->ext.add_list_dbl, "add_list_dbl", 1, &status_result, 2, list_dbl_args);
-  declare_external(builder, &builder->ext.add_list_bool, "add_list_bool", 1, &status_result, 2,
-                   list_bool_args);
-  declare_external(builder, &builder->ext.add_list_str, "add_list_str", 1, &status_result, 2, list_str_args);
-  declare_external(builder, &builder->ext.add_list_obj, "add_list_obj", 1, &status_result, 2, list_obj_args);
-  declare_external(builder, &builder->ext.set_list, "set_list", 1, &status_result, 3, set_list_args);
-  declare_external(builder, &builder->ext.create_set, "create_set", 1, &ptr_result, 0, NULL);
-  declare_external(builder, &builder->ext.add_set_int, "add_set_int", 1, &status_result, 2, list_i32_args);
-  declare_external(builder, &builder->ext.add_set_u32, "add_set_uint32", 1, &status_result, 2,
-                   list_u32_args);
-  declare_external(builder, &builder->ext.add_set_i64, "add_set_int64", 1, &status_result, 2,
-                   list_i64_args);
-  declare_external(builder, &builder->ext.add_set_u64, "add_set_uint64", 1, &status_result, 2,
-                   list_u64_args);
-  declare_external(builder, &builder->ext.add_set_dbl, "add_set_dbl", 1, &status_result, 2, list_dbl_args);
-  declare_external(builder, &builder->ext.add_set_bool, "add_set_bool", 1, &status_result, 2, list_bool_args);
-  declare_external(builder, &builder->ext.add_set_str, "add_set_str", 1, &status_result, 2, list_str_args);
-  declare_external(builder, &builder->ext.set_set, "set_set", 1, &status_result, 3, set_list_args);
-  declare_external(builder, &builder->ext.create_map, "create_map", 1, &ptr_result, 0, NULL);
-  declare_external(builder, &builder->ext.add_map_str_str, "add_map_str_str", 1, &status_result, 3,
-                   map_str_str_args);
-  declare_external(builder, &builder->ext.add_map_str_int, "add_map_str_int", 1, &status_result, 3,
-                   map_str_int_args);
-  declare_external(builder, &builder->ext.add_map_str_u32, "add_map_str_uint32", 1,
-                   &status_result, 3, map_str_u32_args);
-  declare_external(builder, &builder->ext.add_map_str_i64, "add_map_str_int64", 1, &status_result,
-                   3, map_str_i64_args);
-  declare_external(builder, &builder->ext.add_map_str_u64, "add_map_str_uint64", 1,
-                   &status_result, 3, map_str_u64_args);
-  declare_external(builder, &builder->ext.add_map_str_dbl, "add_map_str_dbl", 1, &status_result, 3,
-                   map_str_dbl_args);
-  declare_external(builder, &builder->ext.add_map_str_bool, "add_map_str_bool", 1, &status_result, 3,
-                   map_str_bool_args);
-  declare_external(builder, &builder->ext.set_map, "set_map", 1, &status_result, 3, set_list_args);
-  declare_external(builder, &builder->ext.read_varstr, "read_varstr", 1, &ptr_result, 3,
-                   read_varstr_args);
-  declare_external(builder, &builder->ext.free_fn, "free", 0, NULL, 1, free_args);
-  if (builder->include_record_v1) {
-    declare_external(builder, &builder->ext.create_record_child_v1, "record_create_child_v1", 1,
-                     &ptr_result, 1, create_record_child_args);
-    declare_external(builder, &builder->ext.create_record_field_v1, "record_create_field_v1", 1,
-                     &ptr_result, 2, create_record_field_args);
-    declare_external(builder, &builder->ext.set_slot_int_v1, "record_set_slot_int_v1", 1,
-                     &status_result, 3, set_slot_i32_args);
-    declare_external(builder, &builder->ext.set_slot_u32_v1, "record_set_slot_uint32_v1", 1,
-                     &status_result, 3, set_slot_u32_args);
-    declare_external(builder, &builder->ext.set_slot_i64_v1, "record_set_slot_int64_v1", 1,
-                     &status_result, 3, set_slot_i64_args);
-    declare_external(builder, &builder->ext.set_slot_u64_v1, "record_set_slot_uint64_v1", 1,
-                     &status_result, 3, set_slot_u64_args);
-    declare_external(builder, &builder->ext.set_slot_dbl_v1, "record_set_slot_double_v1", 1,
-                     &status_result, 3, set_slot_dbl_args);
-    declare_external(builder, &builder->ext.set_slot_bool_v1, "record_set_slot_bool_v1", 1,
-                     &status_result, 3, set_slot_i32_args);
-    declare_external(builder, &builder->ext.set_slot_str_v1, "record_set_slot_string_v1", 1,
-                     &status_result, 3, set_slot_str_args);
-    declare_external(builder, &builder->ext.set_slot_bytes_v1, "record_set_slot_bytes_v1", 1,
-                     &status_result, 4, set_slot_bytes_args);
-    declare_external(builder, &builder->ext.set_slot_uuid_v1, "record_set_slot_uuid_v1", 1,
-                     &status_result, 3, set_slot_str_args);
-    declare_external(builder, &builder->ext.set_slot_list_v1, "record_set_slot_list_v1", 1,
-                     &status_result, 3, set_slot_str_args);
-    declare_external(builder, &builder->ext.set_slot_set_v1, "record_set_slot_set_v1", 1,
-                     &status_result, 3, set_slot_str_args);
-    declare_external(builder, &builder->ext.set_slot_map_v1, "record_set_slot_map_v1", 1,
-                     &status_result, 3, set_slot_str_args);
-  }
-}
-
-static MIR_reg_t emitter_new_reg(mir_emitter_t *e, MIR_type_t type, const char *base_name) {
-  char *name = builder_make_name(e->builder, base_name, e->builder->temp_name_id++);
-  return MIR_new_func_reg(e->builder->ctx, e->func, type, name);
-}
-static MIR_op_t emitter_reg(mir_emitter_t *e, MIR_reg_t reg) {
-  return MIR_new_reg_op(e->builder->ctx, reg);
-}
-static MIR_op_t emitter_label(mir_emitter_t *e, MIR_label_t label) {
-  return MIR_new_label_op(e->builder->ctx, label);
-}
-static void emitter_append(mir_emitter_t *e, MIR_insn_t insn) {
-  MIR_append_insn(e->builder->ctx, e->func_item, insn);
-}
-
-static void emitter_call(mir_emitter_t *e, external_ref_t *ref, MIR_op_t *args, size_t nargs) {
-  MIR_op_t ops[8];
-  size_t i;
-  ops[0] = MIR_new_ref_op(e->builder->ctx, ref->proto_item);
-  ops[1] = MIR_new_ref_op(e->builder->ctx, ref->import_item);
-  for (i = 0; i < nargs; i++)
-    ops[i + 2] = args[i];
-  emitter_append(e, MIR_new_insn_arr(e->builder->ctx, MIR_CALL, nargs + 2, ops));
-}
-
-static void emitter_call_result(mir_emitter_t *e, external_ref_t *ref, MIR_reg_t result_reg,
-                                MIR_op_t *args, size_t nargs) {
-  MIR_op_t ops[8];
-  size_t i;
-  ops[0] = MIR_new_ref_op(e->builder->ctx, ref->proto_item);
-  ops[1] = MIR_new_ref_op(e->builder->ctx, ref->import_item);
-  ops[2] = emitter_reg(e, result_reg);
-  for (i = 0; i < nargs; i++)
-    ops[i + 3] = args[i];
-  emitter_append(e, MIR_new_insn_arr(e->builder->ctx, MIR_CALL, nargs + 3, ops));
-}
-
-static MIR_reg_t emitter_call_status(mir_emitter_t *e, external_ref_t *ref, MIR_op_t *args,
-                                     size_t nargs) {
-  MIR_reg_t status_reg = emitter_new_reg(e, MIR_T_I64, "__mutation_status");
-  emitter_call_result(e, ref, status_reg, args, nargs);
-  return status_reg;
-}
-
-static void emitter_branch_on_failure(mir_emitter_t *e, MIR_reg_t status_reg) {
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
-                                 emitter_reg(e, status_reg), MIR_new_int_op(e->builder->ctx, 0)));
-}
-
-static void emitter_call_checked(mir_emitter_t *e, external_ref_t *ref, MIR_op_t *args,
-                                 size_t nargs) {
-  emitter_branch_on_failure(e, emitter_call_status(e, ref, args, nargs));
-}
-
-static MIR_op_t emitter_mem(mir_emitter_t *e, MIR_type_t type, MIR_reg_t off_reg, int disp) {
-  return MIR_new_mem_op(e->builder->ctx, type, disp, e->buf_reg, off_reg, 1);
-}
-static void emitter_advance_const(mir_emitter_t *e, MIR_reg_t off_reg, int delta) {
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, off_reg),
-                                 emitter_reg(e, off_reg), MIR_new_int_op(e->builder->ctx, delta)));
-}
-static void emitter_advance_reg(mir_emitter_t *e, MIR_reg_t off_reg, MIR_reg_t delta_reg) {
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, off_reg),
-                                 emitter_reg(e, off_reg), emitter_reg(e, delta_reg)));
-}
-
-static void emitter_bounds_check_const(mir_emitter_t *e, MIR_reg_t off_reg, int needed,
-                                       MIR_label_t fail_label) {
-  MIR_reg_t end_reg = emitter_new_reg(e, MIR_T_I64, "__end");
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, end_reg),
-                                 emitter_reg(e, off_reg), MIR_new_int_op(e->builder->ctx, needed)));
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UBGT, emitter_label(e, fail_label),
-                                 emitter_reg(e, end_reg), emitter_reg(e, e->len_reg)));
-}
-
-static void emitter_bounds_check_reg(mir_emitter_t *e, MIR_reg_t off_reg, MIR_reg_t needed_reg,
-                                     MIR_label_t fail_label) {
-  MIR_reg_t end_reg = emitter_new_reg(e, MIR_T_I64, "__end");
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, end_reg),
-                                 emitter_reg(e, off_reg), emitter_reg(e, needed_reg)));
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UBGT, emitter_label(e, fail_label),
-                                 emitter_reg(e, end_reg), emitter_reg(e, e->len_reg)));
-}
-
-static MIR_reg_t emitter_load_u16(mir_emitter_t *e, MIR_reg_t off_reg, int disp) {
-  MIR_reg_t reg = emitter_new_reg(e, MIR_T_I64, "__u16");
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UEXT16, emitter_reg(e, reg),
-                                 emitter_mem(e, MIR_T_U16, off_reg, disp)));
-  return reg;
-}
-
-static MIR_reg_t emitter_load_u32(mir_emitter_t *e, MIR_reg_t off_reg, int disp) {
-  MIR_reg_t reg = emitter_new_reg(e, MIR_T_I64, "__u32");
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UEXT32, emitter_reg(e, reg),
-                                 emitter_mem(e, MIR_T_U32, off_reg, disp)));
-  return reg;
-}
-
-static MIR_reg_t emitter_ptr_from_off(mir_emitter_t *e, MIR_reg_t off_reg, int disp,
-                                      const char *name) {
-  MIR_reg_t reg = emitter_new_reg(e, MIR_T_I64, name);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, reg),
-                                 emitter_reg(e, e->buf_reg), emitter_reg(e, off_reg)));
-  if (disp != 0)
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, reg),
-                                   emitter_reg(e, reg), MIR_new_int_op(e->builder->ctx, disp)));
-  return reg;
-}
-
-static MIR_op_t emitter_int32_value(mir_emitter_t *e, const emit_field_t *field,
-                                    MIR_reg_t off_reg) {
-  MIR_reg_t reg;
-  switch (field->mir_type) {
-  case MIR_T_I8:
-    reg = emitter_new_reg(e, MIR_T_I64, "__i8");
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_EXT8, emitter_reg(e, reg),
-                                   emitter_mem(e, MIR_T_I8, off_reg, 0)));
-    return emitter_reg(e, reg);
-  case MIR_T_U8:
-    reg = emitter_new_reg(e, MIR_T_I64, "__u8");
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UEXT8, emitter_reg(e, reg),
-                                   emitter_mem(e, MIR_T_U8, off_reg, 0)));
-    return emitter_reg(e, reg);
-  case MIR_T_I16:
-    reg = emitter_new_reg(e, MIR_T_I64, "__i16");
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_EXT16, emitter_reg(e, reg),
-                                   emitter_mem(e, MIR_T_I16, off_reg, 0)));
-    return emitter_reg(e, reg);
-  case MIR_T_U16:
-    reg = emitter_new_reg(e, MIR_T_I64, "__u16v");
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UEXT16, emitter_reg(e, reg),
-                                   emitter_mem(e, MIR_T_U16, off_reg, 0)));
-    return emitter_reg(e, reg);
-  case MIR_T_U32:
-    reg = emitter_new_reg(e, MIR_T_I64, "__u32v");
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UEXT32, emitter_reg(e, reg),
-                                   emitter_mem(e, MIR_T_U32, off_reg, 0)));
-    return emitter_reg(e, reg);
-  case MIR_T_I32:
-  default:
-    return emitter_mem(e, MIR_T_I32, off_reg, 0);
-  }
-}
-
-static MIR_op_t emitter_bool_value(mir_emitter_t *e, MIR_reg_t off_reg) {
-  MIR_reg_t reg = emitter_new_reg(e, MIR_T_I64, "__bool");
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UEXT8, emitter_reg(e, reg),
-                                 emitter_mem(e, MIR_T_U8, off_reg, 0)));
-  return emitter_reg(e, reg);
-}
-
-static MIR_op_t emitter_float_to_double(mir_emitter_t *e, MIR_reg_t off_reg) {
-  MIR_reg_t reg = emitter_new_reg(e, MIR_T_D, "__dbl");
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_F2D, emitter_reg(e, reg),
-                                 emitter_mem(e, MIR_T_F, off_reg, 0)));
-  return emitter_reg(e, reg);
-}
-
-static MIR_op_t emitter_field_key_v1(mir_emitter_t *e, MIR_item_t field_name_item,
-                                     uint32_t field_slot) {
-  return e->slot_mode ? MIR_new_uint_op(e->builder->ctx, field_slot)
-                      : MIR_new_ref_op(e->builder->ctx, field_name_item);
-}
-
-static external_ref_t *emitter_field_external_v1(mir_emitter_t *e, external_ref_t *legacy,
-                                                  external_ref_t *slot_v1) {
-  return e->slot_mode ? slot_v1 : legacy;
-}
-
-static void emit_fields_into_object(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
-                                    const emit_field_array_t *fields);
-
-static void emit_scalar_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
-                               const emit_field_t *field, MIR_item_t field_name_item,
-                               uint32_t field_slot) {
-  MIR_op_t args[4];
-  if (field->kind == EF_INT || field->kind == EF_U32 || field->kind == EF_I64 ||
-      field->kind == EF_U64 || field->kind == EF_DBL ||
-      field->kind == EF_BOOL) {
-    emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
-    args[0] = emitter_reg(e, target_obj_reg);
-    args[1] = emitter_field_key_v1(e, field_name_item, field_slot);
-    if (field->kind == EF_INT) {
-      args[2] = emitter_int32_value(e, field, off_reg);
-      emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_int,
-                                                        &e->builder->ext.set_slot_int_v1),
-                           args, 3);
-    } else if (field->kind == EF_U32) {
-      args[2] = emitter_mem(e, MIR_T_U32, off_reg, 0);
-      emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_u32,
-                                                        &e->builder->ext.set_slot_u32_v1),
-                           args, 3);
-    } else if (field->kind == EF_I64) {
-      args[2] = emitter_mem(e, field->mir_type, off_reg, 0);
-      emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_i64,
-                                                        &e->builder->ext.set_slot_i64_v1),
-                           args, 3);
-    } else if (field->kind == EF_U64) {
-      args[2] = emitter_mem(e, MIR_T_U64, off_reg, 0);
-      emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_u64,
-                                                        &e->builder->ext.set_slot_u64_v1),
-                           args, 3);
-    } else if (field->kind == EF_BOOL) {
-      args[2] = emitter_bool_value(e, off_reg);
-      emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_bool,
-                                                        &e->builder->ext.set_slot_bool_v1),
-                           args, 3);
-    } else {
-      args[2] = field->mir_type == MIR_T_F ? emitter_float_to_double(e, off_reg)
-                                           : emitter_mem(e, MIR_T_D, off_reg, 0);
-      emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_dbl,
-                                                        &e->builder->ext.set_slot_dbl_v1),
-                           args, 3);
-    }
-    emitter_advance_const(e, off_reg, field->size);
-    return;
-  }
-  if (field->kind == EF_FIX_BYTES) {
-    emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
-    if (field->has_set_bytes) {
-      MIR_reg_t ptr_reg = emitter_ptr_from_off(e, off_reg, 0, "__bytes");
-      args[0] = emitter_reg(e, target_obj_reg);
-      args[1] = emitter_field_key_v1(e, field_name_item, field_slot);
-      args[2] = emitter_reg(e, ptr_reg);
-      args[3] = MIR_new_int_op(e->builder->ctx, field->size);
-      emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_bytes,
-                                                        &e->builder->ext.set_slot_bytes_v1),
-                           args, 4);
-    }
-    emitter_advance_const(e, off_reg, field->size);
-    return;
-  }
-  if (field->kind == EF_UUID) {
-    MIR_reg_t ptr_reg;
-    emitter_bounds_check_const(e, off_reg, 16, e->fail_label);
-    ptr_reg = emitter_ptr_from_off(e, off_reg, 0, "__uuid");
-    args[0] = emitter_reg(e, target_obj_reg);
-    args[1] = emitter_field_key_v1(e, field_name_item, field_slot);
-    args[2] = emitter_reg(e, ptr_reg);
-    emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_uuid,
-                                                      &e->builder->ext.set_slot_uuid_v1),
-                         args, 3);
-    emitter_advance_const(e, off_reg, 16);
-    return;
-  }
-  if (field->kind == EF_STR || field->kind == EF_VAR_BYTES) {
-    MIR_reg_t len_reg, total_reg;
-    emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
-    len_reg = emitter_load_u32(e, off_reg, 0);
-    total_reg = emitter_new_reg(e, MIR_T_I64, "__var_total");
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, total_reg),
-                                   emitter_reg(e, len_reg), MIR_new_int_op(e->builder->ctx, 4)));
-    emitter_bounds_check_reg(e, off_reg, total_reg, e->fail_label);
-    if (field->kind == EF_STR) {
-      MIR_reg_t str_reg = emitter_new_reg(e, MIR_T_I64, "__str");
-      MIR_reg_t remaining_reg = emitter_new_reg(e, MIR_T_I64, "__str_rem");
-      MIR_reg_t status_reg;
-      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_SUB, emitter_reg(e, remaining_reg),
-                                     emitter_reg(e, e->len_reg), emitter_reg(e, off_reg)));
-      args[0] = emitter_reg(e, e->buf_reg);
-      args[1] = emitter_reg(e, off_reg);
-      args[2] = emitter_reg(e, remaining_reg);
-      emitter_call_result(e, &e->builder->ext.read_varstr, str_reg, args, 3);
-      emitter_advance_reg(e, off_reg, total_reg);
-      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
-                                     emitter_reg(e, str_reg), MIR_new_int_op(e->builder->ctx, 0)));
-      args[0] = emitter_reg(e, target_obj_reg);
-      args[1] = emitter_field_key_v1(e, field_name_item, field_slot);
-      args[2] = emitter_reg(e, str_reg);
-      status_reg = emitter_call_status(
-          e, emitter_field_external_v1(e, &e->builder->ext.set_str,
-                                       &e->builder->ext.set_slot_str_v1),
-          args, 3);
-      args[0] = emitter_reg(e, str_reg);
-      emitter_call(e, &e->builder->ext.free_fn, args, 1);
-      emitter_branch_on_failure(e, status_reg);
-    } else {
-      if (field->has_set_bytes) {
-        MIR_reg_t ptr_reg = emitter_ptr_from_off(e, off_reg, 4, "__var_bytes");
-        args[0] = emitter_reg(e, target_obj_reg);
-        args[1] = emitter_field_key_v1(e, field_name_item, field_slot);
-        args[2] = emitter_reg(e, ptr_reg);
-        args[3] = emitter_reg(e, len_reg);
-        emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_bytes,
-                                                          &e->builder->ext.set_slot_bytes_v1),
-                             args, 4);
-      }
-      emitter_advance_reg(e, off_reg, total_reg);
-    }
-  }
-}
-
-static void emit_list_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
-                             const emit_field_t *field, MIR_item_t field_name_item,
-                             uint32_t field_slot) {
-  MIR_reg_t list_reg = emitter_new_reg(e, MIR_T_I64, "__list"),
-            count_reg = emitter_new_reg(e, MIR_T_I64, "__count"),
-            index_reg = emitter_new_reg(e, MIR_T_I64, "__idx");
-  MIR_label_t loop_label = MIR_new_label(e->builder->ctx),
-              done_label = MIR_new_label(e->builder->ctx);
-  MIR_op_t args[4];
-  emitter_call_result(e, &e->builder->ext.create_list, list_reg, NULL, 0);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
-                                 emitter_reg(e, list_reg), MIR_new_int_op(e->builder->ctx, 0)));
-  args[0] = emitter_reg(e, target_obj_reg);
-  args[1] = emitter_field_key_v1(e, field_name_item, field_slot);
-  args[2] = emitter_reg(e, list_reg);
-  emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_list,
-                                                    &e->builder->ext.set_slot_list_v1),
-                       args, 3);
-  if (field->fixed_count > 0) {
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, count_reg),
-                                   MIR_new_int_op(e->builder->ctx, field->fixed_count)));
-  } else {
-    emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, count_reg),
-                                   emitter_reg(e, emitter_load_u32(e, off_reg, 0))));
-    emitter_advance_const(e, off_reg, 4);
-  }
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, index_reg),
-                                 MIR_new_int_op(e->builder->ctx, 0)));
-  emitter_append(e, loop_label);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UBGE, emitter_label(e, done_label),
-                                 emitter_reg(e, index_reg), emitter_reg(e, count_reg)));
-  if (field->kind == EF_LIST_INT || field->kind == EF_LIST_U32 ||
-      field->kind == EF_LIST_I64 || field->kind == EF_LIST_U64 ||
-      field->kind == EF_LIST_DBL || field->kind == EF_LIST_BOOL) {
-    emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
-    args[0] = emitter_reg(e, list_reg);
-    if (field->kind == EF_LIST_INT) {
-      args[1] = emitter_int32_value(e, field, off_reg);
-      emitter_call_checked(e, &e->builder->ext.add_list_int, args, 2);
-    } else if (field->kind == EF_LIST_U32) {
-      args[1] = emitter_mem(e, MIR_T_U32, off_reg, 0);
-      emitter_call_checked(e, &e->builder->ext.add_list_u32, args, 2);
-    } else if (field->kind == EF_LIST_I64) {
-      args[1] = emitter_mem(e, field->mir_type, off_reg, 0);
-      emitter_call_checked(e, &e->builder->ext.add_list_i64, args, 2);
-    } else if (field->kind == EF_LIST_U64) {
-      args[1] = emitter_mem(e, MIR_T_U64, off_reg, 0);
-      emitter_call_checked(e, &e->builder->ext.add_list_u64, args, 2);
-    } else if (field->kind == EF_LIST_BOOL) {
-      args[1] = emitter_bool_value(e, off_reg);
-      emitter_call_checked(e, &e->builder->ext.add_list_bool, args, 2);
-    } else {
-      args[1] = field->mir_type == MIR_T_F ? emitter_float_to_double(e, off_reg)
-                                           : emitter_mem(e, MIR_T_D, off_reg, 0);
-      emitter_call_checked(e, &e->builder->ext.add_list_dbl, args, 2);
-    }
-    emitter_advance_const(e, off_reg, field->size);
-  } else if (field->kind == EF_LIST_STR) {
-    MIR_reg_t len_reg, total_reg, str_reg;
-    MIR_reg_t status_reg;
-    emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
-    len_reg = emitter_load_u32(e, off_reg, 0);
-    total_reg = emitter_new_reg(e, MIR_T_I64, "__list_str_total");
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, total_reg),
-                                   emitter_reg(e, len_reg), MIR_new_int_op(e->builder->ctx, 4)));
-    emitter_bounds_check_reg(e, off_reg, total_reg, e->fail_label);
-    str_reg = emitter_new_reg(e, MIR_T_I64, "__list_str");
-    {
-      MIR_reg_t lrem_reg = emitter_new_reg(e, MIR_T_I64, "__list_str_rem");
-      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_SUB, emitter_reg(e, lrem_reg),
-                                     emitter_reg(e, e->len_reg), emitter_reg(e, off_reg)));
-      args[0] = emitter_reg(e, e->buf_reg);
-      args[1] = emitter_reg(e, off_reg);
-      args[2] = emitter_reg(e, lrem_reg);
-      emitter_call_result(e, &e->builder->ext.read_varstr, str_reg, args, 3);
-    }
-    emitter_advance_reg(e, off_reg, total_reg);
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
-                                   emitter_reg(e, str_reg), MIR_new_int_op(e->builder->ctx, 0)));
-    args[0] = emitter_reg(e, list_reg);
-    args[1] = emitter_reg(e, str_reg);
-    status_reg = emitter_call_status(e, &e->builder->ext.add_list_str, args, 2);
-    args[0] = emitter_reg(e, str_reg);
-    emitter_call(e, &e->builder->ext.free_fn, args, 1);
-    emitter_branch_on_failure(e, status_reg);
-  } else if (field->kind == EF_LIST_OBJ) {
-    MIR_reg_t child_reg = emitter_new_reg(e, MIR_T_I64, "__child"),
-              child_off_reg = emitter_new_reg(e, MIR_T_I64, "__child_off");
-    if (e->slot_mode) {
-      args[0] = emitter_reg(e, list_reg);
-      emitter_call_result(e, &e->builder->ext.create_record_child_v1, child_reg, args, 1);
-    } else {
-      emitter_call_result(e, &e->builder->ext.create_obj, child_reg, NULL, 0);
-    }
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
-                                   emitter_reg(e, child_reg), MIR_new_int_op(e->builder->ctx, 0)));
-    args[0] = emitter_reg(e, list_reg);
-    args[1] = emitter_reg(e, child_reg);
-    emitter_call_checked(e, &e->builder->ext.add_list_obj, args, 2);
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, child_off_reg),
-                                   emitter_reg(e, off_reg)));
-    emit_fields_into_object(e, child_reg, child_off_reg, &field->children);
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, off_reg),
-                                   emitter_reg(e, child_off_reg)));
-  }
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, index_reg),
-                                 emitter_reg(e, index_reg), MIR_new_int_op(e->builder->ctx, 1)));
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, loop_label)));
-  emitter_append(e, done_label);
-}
-
-static void emit_set_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
-                           const emit_field_t *field, MIR_item_t field_name_item,
-                           uint32_t field_slot) {
-  MIR_reg_t set_reg = emitter_new_reg(e, MIR_T_I64, "__set"),
-            count_reg = emitter_new_reg(e, MIR_T_I64, "__count"),
-            index_reg = emitter_new_reg(e, MIR_T_I64, "__idx");
-  MIR_label_t loop_label = MIR_new_label(e->builder->ctx),
-              done_label = MIR_new_label(e->builder->ctx);
-  MIR_op_t args[4];
-  emitter_call_result(e, &e->builder->ext.create_set, set_reg, NULL, 0);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
-                                 emitter_reg(e, set_reg), MIR_new_int_op(e->builder->ctx, 0)));
-  args[0] = emitter_reg(e, target_obj_reg);
-  args[1] = emitter_field_key_v1(e, field_name_item, field_slot);
-  args[2] = emitter_reg(e, set_reg);
-  emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_set,
-                                                    &e->builder->ext.set_slot_set_v1),
-                       args, 3);
-  emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, count_reg),
-                                 emitter_reg(e, emitter_load_u32(e, off_reg, 0))));
-  emitter_advance_const(e, off_reg, 4);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, index_reg),
-                                 MIR_new_int_op(e->builder->ctx, 0)));
-  emitter_append(e, loop_label);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UBGE, emitter_label(e, done_label),
-                                 emitter_reg(e, index_reg), emitter_reg(e, count_reg)));
-  args[0] = emitter_reg(e, set_reg);
-  if (field->kind == EF_SET_INT) {
-    emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
-    args[1] = emitter_int32_value(e, field, off_reg);
-    emitter_call_checked(e, &e->builder->ext.add_set_int, args, 2);
-    emitter_advance_const(e, off_reg, field->size);
-  } else if (field->kind == EF_SET_U32) {
-    emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
-    args[1] = emitter_mem(e, MIR_T_U32, off_reg, 0);
-    emitter_call_checked(e, &e->builder->ext.add_set_u32, args, 2);
-    emitter_advance_const(e, off_reg, field->size);
-  } else if (field->kind == EF_SET_I64) {
-    emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
-    args[1] = emitter_mem(e, field->mir_type, off_reg, 0);
-    emitter_call_checked(e, &e->builder->ext.add_set_i64, args, 2);
-    emitter_advance_const(e, off_reg, field->size);
-  } else if (field->kind == EF_SET_U64) {
-    emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
-    args[1] = emitter_mem(e, MIR_T_U64, off_reg, 0);
-    emitter_call_checked(e, &e->builder->ext.add_set_u64, args, 2);
-    emitter_advance_const(e, off_reg, field->size);
-  } else if (field->kind == EF_SET_DBL) {
-    emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
-    args[1] = field->mir_type == MIR_T_F ? emitter_float_to_double(e, off_reg)
-                                         : emitter_mem(e, MIR_T_D, off_reg, 0);
-    emitter_call_checked(e, &e->builder->ext.add_set_dbl, args, 2);
-    emitter_advance_const(e, off_reg, field->size);
-  } else if (field->kind == EF_SET_BOOL) {
-    emitter_bounds_check_const(e, off_reg, field->size, e->fail_label);
-    args[1] = emitter_bool_value(e, off_reg);
-    emitter_call_checked(e, &e->builder->ext.add_set_bool, args, 2);
-    emitter_advance_const(e, off_reg, field->size);
-  } else if (field->kind == EF_SET_STR) {
-    MIR_reg_t len_reg, total_reg, str_reg;
-    MIR_reg_t status_reg;
-    emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
-    len_reg = emitter_load_u32(e, off_reg, 0);
-    total_reg = emitter_new_reg(e, MIR_T_I64, "__set_str_total");
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, total_reg),
-                                   emitter_reg(e, len_reg), MIR_new_int_op(e->builder->ctx, 4)));
-    emitter_bounds_check_reg(e, off_reg, total_reg, e->fail_label);
-    str_reg = emitter_new_reg(e, MIR_T_I64, "__set_str");
-    {
-      MIR_reg_t srem_reg = emitter_new_reg(e, MIR_T_I64, "__set_str_rem");
-      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_SUB, emitter_reg(e, srem_reg),
-                                     emitter_reg(e, e->len_reg), emitter_reg(e, off_reg)));
-      args[0] = emitter_reg(e, e->buf_reg);
-      args[1] = emitter_reg(e, off_reg);
-      args[2] = emitter_reg(e, srem_reg);
-      emitter_call_result(e, &e->builder->ext.read_varstr, str_reg, args, 3);
-    }
-    emitter_advance_reg(e, off_reg, total_reg);
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
-                                   emitter_reg(e, str_reg), MIR_new_int_op(e->builder->ctx, 0)));
-    args[0] = emitter_reg(e, set_reg);
-    args[1] = emitter_reg(e, str_reg);
-    status_reg = emitter_call_status(e, &e->builder->ext.add_set_str, args, 2);
-    args[0] = emitter_reg(e, str_reg);
-    emitter_call(e, &e->builder->ext.free_fn, args, 1);
-    emitter_branch_on_failure(e, status_reg);
-  }
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, index_reg),
-                                 emitter_reg(e, index_reg), MIR_new_int_op(e->builder->ctx, 1)));
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, loop_label)));
-  emitter_append(e, done_label);
-}
-
-static void emit_map_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
-                           const emit_field_t *field, MIR_item_t field_name_item,
-                           uint32_t field_slot) {
-  MIR_reg_t map_reg = emitter_new_reg(e, MIR_T_I64, "__map"),
-            count_reg = emitter_new_reg(e, MIR_T_I64, "__count"),
-            index_reg = emitter_new_reg(e, MIR_T_I64, "__idx");
-  MIR_label_t loop_label = MIR_new_label(e->builder->ctx),
-              done_label = MIR_new_label(e->builder->ctx);
-  MIR_op_t args[4];
-  emitter_call_result(e, &e->builder->ext.create_map, map_reg, NULL, 0);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
-                                 emitter_reg(e, map_reg), MIR_new_int_op(e->builder->ctx, 0)));
-  args[0] = emitter_reg(e, target_obj_reg);
-  args[1] = emitter_field_key_v1(e, field_name_item, field_slot);
-  args[2] = emitter_reg(e, map_reg);
-  emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_map,
-                                                    &e->builder->ext.set_slot_map_v1),
-                       args, 3);
-  emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, count_reg),
-                                 emitter_reg(e, emitter_load_u32(e, off_reg, 0))));
-  emitter_advance_const(e, off_reg, 4);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, index_reg),
-                                 MIR_new_int_op(e->builder->ctx, 0)));
-  emitter_append(e, loop_label);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UBGE, emitter_label(e, done_label),
-                                 emitter_reg(e, index_reg), emitter_reg(e, count_reg)));
-  {
-    MIR_reg_t key_len_reg, key_total_reg, key_reg;
-    MIR_label_t cleanup_key_label = MIR_new_label(e->builder->ctx);
-    MIR_label_t item_done_label = MIR_new_label(e->builder->ctx);
-    emitter_bounds_check_const(e, off_reg, 4, e->fail_label);
-    key_len_reg = emitter_load_u32(e, off_reg, 0);
-    key_total_reg = emitter_new_reg(e, MIR_T_I64, "__key_total");
-    emitter_append(e,
-                   MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, key_total_reg),
-                                emitter_reg(e, key_len_reg), MIR_new_int_op(e->builder->ctx, 4)));
-    emitter_bounds_check_reg(e, off_reg, key_total_reg, e->fail_label);
-    key_reg = emitter_new_reg(e, MIR_T_I64, "__key");
-    {
-      MIR_reg_t krem_reg = emitter_new_reg(e, MIR_T_I64, "__key_rem");
-      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_SUB, emitter_reg(e, krem_reg),
-                                     emitter_reg(e, e->len_reg), emitter_reg(e, off_reg)));
-      args[0] = emitter_reg(e, e->buf_reg);
-      args[1] = emitter_reg(e, off_reg);
-      args[2] = emitter_reg(e, krem_reg);
-      emitter_call_result(e, &e->builder->ext.read_varstr, key_reg, args, 3);
-    }
-    emitter_advance_reg(e, off_reg, key_total_reg);
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
-                                   emitter_reg(e, key_reg), MIR_new_int_op(e->builder->ctx, 0)));
-    if (field->kind == EF_MAP_STR_STR) {
-      MIR_reg_t val_len_reg, val_total_reg, val_reg, status_reg;
-      emitter_bounds_check_const(e, off_reg, 4, cleanup_key_label);
-      val_len_reg = emitter_load_u32(e, off_reg, 0);
-      val_total_reg = emitter_new_reg(e, MIR_T_I64, "__val_total");
-      emitter_append(e,
-                     MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, val_total_reg),
-                                  emitter_reg(e, val_len_reg), MIR_new_int_op(e->builder->ctx, 4)));
-      emitter_bounds_check_reg(e, off_reg, val_total_reg, cleanup_key_label);
-      val_reg = emitter_new_reg(e, MIR_T_I64, "__val");
-      {
-        MIR_reg_t vrem_reg = emitter_new_reg(e, MIR_T_I64, "__val_rem");
-        emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_SUB, emitter_reg(e, vrem_reg),
-                                       emitter_reg(e, e->len_reg), emitter_reg(e, off_reg)));
-        args[0] = emitter_reg(e, e->buf_reg);
-        args[1] = emitter_reg(e, off_reg);
-        args[2] = emitter_reg(e, vrem_reg);
-        emitter_call_result(e, &e->builder->ext.read_varstr, val_reg, args, 3);
-      }
-      emitter_advance_reg(e, off_reg, val_total_reg);
-      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ,
-                                     emitter_label(e, cleanup_key_label),
-                                     emitter_reg(e, val_reg),
-                                     MIR_new_int_op(e->builder->ctx, 0)));
-      args[0] = emitter_reg(e, map_reg);
-      args[1] = emitter_reg(e, key_reg);
-      args[2] = emitter_reg(e, val_reg);
-      status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_str, args, 3);
-      args[0] = emitter_reg(e, key_reg);
-      emitter_call(e, &e->builder->ext.free_fn, args, 1);
-      args[0] = emitter_reg(e, val_reg);
-      emitter_call(e, &e->builder->ext.free_fn, args, 1);
-      emitter_branch_on_failure(e, status_reg);
-      emitter_append(e,
-                     MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, item_done_label)));
-    } else if (field->kind == EF_MAP_STR_INT || field->kind == EF_MAP_STR_U32 ||
-               field->kind == EF_MAP_STR_I64 || field->kind == EF_MAP_STR_U64 ||
-               field->kind == EF_MAP_STR_DBL || field->kind == EF_MAP_STR_BOOL) {
-      MIR_reg_t status_reg;
-      args[0] = emitter_reg(e, map_reg);
-      args[1] = emitter_reg(e, key_reg);
-      if (field->kind == EF_MAP_STR_INT) {
-        emitter_bounds_check_const(e, off_reg, field->size, cleanup_key_label);
-        args[2] = emitter_int32_value(e, field, off_reg);
-        status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_int, args, 3);
-        emitter_advance_const(e, off_reg, field->size);
-      } else if (field->kind == EF_MAP_STR_U32) {
-        emitter_bounds_check_const(e, off_reg, field->size, cleanup_key_label);
-        args[2] = emitter_mem(e, MIR_T_U32, off_reg, 0);
-        status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_u32, args, 3);
-        emitter_advance_const(e, off_reg, field->size);
-      } else if (field->kind == EF_MAP_STR_I64) {
-        emitter_bounds_check_const(e, off_reg, field->size, cleanup_key_label);
-        args[2] = emitter_mem(e, field->mir_type, off_reg, 0);
-        status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_i64, args, 3);
-        emitter_advance_const(e, off_reg, field->size);
-      } else if (field->kind == EF_MAP_STR_U64) {
-        emitter_bounds_check_const(e, off_reg, field->size, cleanup_key_label);
-        args[2] = emitter_mem(e, MIR_T_U64, off_reg, 0);
-        status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_u64, args, 3);
-        emitter_advance_const(e, off_reg, field->size);
-      } else if (field->kind == EF_MAP_STR_BOOL) {
-        emitter_bounds_check_const(e, off_reg, field->size, cleanup_key_label);
-        args[2] = emitter_bool_value(e, off_reg);
-        status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_bool, args, 3);
-        emitter_advance_const(e, off_reg, field->size);
-      } else {
-        emitter_bounds_check_const(e, off_reg, field->size, cleanup_key_label);
-        args[2] = field->mir_type == MIR_T_F ? emitter_float_to_double(e, off_reg)
-                                             : emitter_mem(e, MIR_T_D, off_reg, 0);
-        status_reg = emitter_call_status(e, &e->builder->ext.add_map_str_dbl, args, 3);
-        emitter_advance_const(e, off_reg, field->size);
-      }
-      args[0] = emitter_reg(e, key_reg);
-      emitter_call(e, &e->builder->ext.free_fn, args, 1);
-      emitter_branch_on_failure(e, status_reg);
-      emitter_append(e,
-                     MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, item_done_label)));
-    }
-    emitter_append(e, cleanup_key_label);
-    args[0] = emitter_reg(e, key_reg);
-    emitter_call(e, &e->builder->ext.free_fn, args, 1);
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, e->fail_label)));
-    emitter_append(e, item_done_label);
-  }
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, index_reg),
-                                 emitter_reg(e, index_reg), MIR_new_int_op(e->builder->ctx, 1)));
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, loop_label)));
-  emitter_append(e, done_label);
-}
-
-static void emit_group_field(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
-                             const emit_field_t *field, MIR_item_t field_name_item,
-                             uint32_t field_slot) {
-  MIR_reg_t block_len_reg, count_reg, entries_size_reg, total_reg, list_reg, entries_off_reg,
-      index_reg;
-  MIR_label_t loop_label, done_label;
-  MIR_op_t args[4];
-  emitter_bounds_check_const(e, off_reg, field->group_dim, e->fail_label);
-  block_len_reg = emitter_load_u16(e, off_reg, 0);
-  count_reg = emitter_load_u16(e, off_reg, 2);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UBGT, emitter_label(e, e->fail_label),
-                                 MIR_new_int_op(e->builder->ctx, field->size),
-                                 emitter_reg(e, block_len_reg)));
-  entries_size_reg = emitter_new_reg(e, MIR_T_I64, "__entries_size");
-  total_reg = emitter_new_reg(e, MIR_T_I64, "__group_total");
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MUL, emitter_reg(e, entries_size_reg),
-                                 emitter_reg(e, block_len_reg), emitter_reg(e, count_reg)));
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, total_reg),
-                                 emitter_reg(e, entries_size_reg),
-                                 MIR_new_int_op(e->builder->ctx, field->group_dim)));
-  emitter_bounds_check_reg(e, off_reg, total_reg, e->fail_label);
-  list_reg = emitter_new_reg(e, MIR_T_I64, "__group_list");
-  emitter_call_result(e, &e->builder->ext.create_list, list_reg, NULL, 0);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
-                                 emitter_reg(e, list_reg), MIR_new_int_op(e->builder->ctx, 0)));
-  args[0] = emitter_reg(e, target_obj_reg);
-  args[1] = emitter_field_key_v1(e, field_name_item, field_slot);
-  args[2] = emitter_reg(e, list_reg);
-  emitter_call_checked(e, emitter_field_external_v1(e, &e->builder->ext.set_list,
-                                                    &e->builder->ext.set_slot_list_v1),
-                       args, 3);
-  entries_off_reg = emitter_new_reg(e, MIR_T_I64, "__entries_off");
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, entries_off_reg),
-                                 emitter_reg(e, off_reg)));
-  emitter_advance_const(e, entries_off_reg, field->group_dim);
-  index_reg = emitter_new_reg(e, MIR_T_I64, "__group_idx");
-  loop_label = MIR_new_label(e->builder->ctx);
-  done_label = MIR_new_label(e->builder->ctx);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, index_reg),
-                                 MIR_new_int_op(e->builder->ctx, 0)));
-  emitter_append(e, loop_label);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_UBGE, emitter_label(e, done_label),
-                                 emitter_reg(e, index_reg), emitter_reg(e, count_reg)));
-  {
-    MIR_reg_t stride_reg = emitter_new_reg(e, MIR_T_I64, "__stride"),
-              entry_off_reg = emitter_new_reg(e, MIR_T_I64, "__entry_off"),
-              child_reg = emitter_new_reg(e, MIR_T_I64, "__group_child"),
-              child_off_reg = emitter_new_reg(e, MIR_T_I64, "__group_child_off");
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MUL, emitter_reg(e, stride_reg),
-                                   emitter_reg(e, block_len_reg), emitter_reg(e, index_reg)));
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, entry_off_reg),
-                                   emitter_reg(e, entries_off_reg), emitter_reg(e, stride_reg)));
-    if (e->slot_mode) {
-      args[0] = emitter_reg(e, list_reg);
-      emitter_call_result(e, &e->builder->ext.create_record_child_v1, child_reg, args, 1);
-    } else {
-      emitter_call_result(e, &e->builder->ext.create_obj, child_reg, NULL, 0);
-    }
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
-                                   emitter_reg(e, child_reg), MIR_new_int_op(e->builder->ctx, 0)));
-    args[0] = emitter_reg(e, list_reg);
-    args[1] = emitter_reg(e, child_reg);
-    emitter_call_checked(e, &e->builder->ext.add_list_obj, args, 2);
-    emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_MOV, emitter_reg(e, child_off_reg),
-                                   emitter_reg(e, entry_off_reg)));
-    emit_fields_into_object(e, child_reg, child_off_reg, &field->children);
-  }
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_ADD, emitter_reg(e, index_reg),
-                                 emitter_reg(e, index_reg), MIR_new_int_op(e->builder->ctx, 1)));
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, loop_label)));
-  emitter_append(e, done_label);
-  emitter_advance_reg(e, off_reg, total_reg);
-}
-
-static void emit_object_field_v1(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
-                                 const emit_field_t *field, uint32_t field_slot) {
-  MIR_reg_t child_reg = emitter_new_reg(e, MIR_T_I64, "__record_child");
-  MIR_op_t args[2];
-  args[0] = emitter_reg(e, target_obj_reg);
-  args[1] = MIR_new_uint_op(e->builder->ctx, field_slot);
-  emitter_call_result(e, &e->builder->ext.create_record_field_v1, child_reg, args, 2);
-  emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_BEQ, emitter_label(e, e->fail_label),
-                                 emitter_reg(e, child_reg), MIR_new_int_op(e->builder->ctx, 0)));
-  emit_fields_into_object(e, child_reg, off_reg, &field->children);
-}
-
-static void emit_field_code(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
-                             const emit_field_t *field, uint32_t field_slot) {
-  MIR_item_t field_name_item = NULL;
-  if (!e->slot_mode) {
-    field_name_item = builder_make_string_data(e->builder, field->name);
-    if (field_name_item == NULL) {
-      emitter_append(e, MIR_new_insn(e->builder->ctx, MIR_JMP, emitter_label(e, e->fail_label)));
-      return;
-    }
-  }
-  if (field->kind == EF_INT || field->kind == EF_U32 || field->kind == EF_I64 ||
-      field->kind == EF_U64 || field->kind == EF_DBL ||
-      field->kind == EF_BOOL || field->kind == EF_UUID || field->kind == EF_STR ||
-      field->kind == EF_FIX_BYTES || field->kind == EF_VAR_BYTES)
-    emit_scalar_field(e, target_obj_reg, off_reg, field, field_name_item, field_slot);
-  else if (field->kind == EF_LIST_INT || field->kind == EF_LIST_U32 ||
-           field->kind == EF_LIST_I64 || field->kind == EF_LIST_U64 || field->kind == EF_LIST_DBL ||
-           field->kind == EF_LIST_BOOL || field->kind == EF_LIST_STR || field->kind == EF_LIST_OBJ)
-    emit_list_field(e, target_obj_reg, off_reg, field, field_name_item, field_slot);
-  else if (field->kind == EF_SET_INT || field->kind == EF_SET_U32 ||
-           field->kind == EF_SET_I64 || field->kind == EF_SET_U64 || field->kind == EF_SET_DBL ||
-           field->kind == EF_SET_BOOL || field->kind == EF_SET_STR)
-    emit_set_field(e, target_obj_reg, off_reg, field, field_name_item, field_slot);
-  else if (field->kind == EF_MAP_STR_STR || field->kind == EF_MAP_STR_INT ||
-           field->kind == EF_MAP_STR_U32 || field->kind == EF_MAP_STR_I64 ||
-           field->kind == EF_MAP_STR_U64 ||
-           field->kind == EF_MAP_STR_DBL || field->kind == EF_MAP_STR_BOOL)
-    emit_map_field(e, target_obj_reg, off_reg, field, field_name_item, field_slot);
-  else if (field->kind == EF_GROUP)
-    emit_group_field(e, target_obj_reg, off_reg, field, field_name_item, field_slot);
-  else if (field->kind == EF_OBJECT && e->slot_mode)
-    emit_object_field_v1(e, target_obj_reg, off_reg, field, field_slot);
-}
-
-static void emit_fields_into_object(mir_emitter_t *e, MIR_reg_t target_obj_reg, MIR_reg_t off_reg,
-                                    const emit_field_array_t *fields) {
-  size_t i;
-  for (i = 0; i < fields->count; i++)
-    emit_field_code(e, target_obj_reg, off_reg, &fields->items[i], (uint32_t)i);
-}
-
-static int generate_message_function(mir_builder_t *builder, Node *message_node, Node *schema_root,
-                                     int has_set_bytes) {
-  const char *message_name = get_string_val(find_child(message_node, "name"));
-  Node *fields_node = find_child(message_node, "fields");
-  emit_field_array_t fields = {0};
-  emit_field_array_t record_fields = {0};
-  schema_validation_context_t validation_ctx = {0};
-  MIR_type_t result_type = MIR_T_P;
-  MIR_var_t args[] = {{MIR_T_P, "buf", 0}, {MIR_T_I64, "len", 0}};
-  MIR_var_t record_args[] = {
-      {MIR_T_P, "buf", 0}, {MIR_T_I64, "len", 0}, {MIR_T_P, "record", 0}};
-  char func_name[256];
-  mir_emitter_t e;
-  if (message_name == NULL) return 0;
-
-  /* Validate schema structure before code generation */
-  if (!validate_schema_fields(&validation_ctx, fields_node, schema_root, message_name)) {
-    set_codec_error(builder->codec, "Schema validation failed for %s: %s", message_name,
-                    validation_ctx.error);
-    return 0;
-  }
-
-  if (!build_fields(&fields, fields_node, schema_root, NULL, has_set_bytes)) {
-    emit_field_array_free(&fields);
-    return 0;
-  }
-  if (!validate_fields_api(builder->codec, message_name, &fields)) {
-    emit_field_array_free(&fields);
-    return 0;
-  }
-  if (builder->include_record_v1 &&
-      (!build_record_fields_v1(&record_fields, fields_node, schema_root, NULL, has_set_bytes) ||
-       !validate_fields_api(builder->codec, message_name, &record_fields))) {
-    emit_field_array_free(&record_fields);
-    emit_field_array_free(&fields);
-    return 0;
-  }
-  snprintf(func_name, sizeof(func_name), "parse_%s", message_name);
-  memset(&e, 0, sizeof(e));
-  e.builder = builder;
-  e.func_item = MIR_new_func_arr(builder->ctx, codec_strdup(builder->codec, func_name), 1,
-                                 &result_type, 2, args);
-  e.func = e.func_item->u.func;
-  e.buf_reg = MIR_reg(builder->ctx, "buf", e.func);
-  e.len_reg = MIR_reg(builder->ctx, "len", e.func);
-  e.off_reg = emitter_new_reg(&e, MIR_T_I64, "__off");
-  e.obj_reg = emitter_new_reg(&e, MIR_T_I64, "__obj");
-  e.fail_label = MIR_new_label(builder->ctx);
-  e.slot_mode = 0;
-  emitter_append(&e, MIR_new_insn(builder->ctx, MIR_MOV, emitter_reg(&e, e.off_reg),
-                                  MIR_new_int_op(builder->ctx, 0)));
-  emitter_call_result(&e, &builder->ext.create_obj, e.obj_reg, NULL, 0);
-  emitter_append(&e, MIR_new_insn(builder->ctx, MIR_BEQ, emitter_label(&e, e.fail_label),
-                                  emitter_reg(&e, e.obj_reg), MIR_new_int_op(builder->ctx, 0)));
-  emit_fields_into_object(&e, e.obj_reg, e.off_reg, &fields);
-  emitter_append(&e, MIR_new_ret_insn(builder->ctx, 1, emitter_reg(&e, e.obj_reg)));
-  emitter_append(&e, e.fail_label);
-  {
-    MIR_op_t free_args[1] = {emitter_reg(&e, e.obj_reg)};
-    emitter_call(&e, &builder->ext.free_value, free_args, 1);
-  }
-  emitter_append(&e, MIR_new_ret_insn(builder->ctx, 1, MIR_new_int_op(builder->ctx, 0)));
-  MIR_finish_func(builder->ctx);
-
-  if (builder->include_record_v1) {
-    snprintf(func_name, sizeof(func_name), "parse_record_v1_%s", message_name);
-    memset(&e, 0, sizeof(e));
-    e.builder = builder;
-    e.func_item = MIR_new_func_arr(builder->ctx, codec_strdup(builder->codec, func_name), 1,
-                                   &result_type, 3, record_args);
-    e.func = e.func_item->u.func;
-    e.buf_reg = MIR_reg(builder->ctx, "buf", e.func);
-    e.len_reg = MIR_reg(builder->ctx, "len", e.func);
-    e.obj_reg = MIR_reg(builder->ctx, "record", e.func);
-    e.off_reg = emitter_new_reg(&e, MIR_T_I64, "__record_off");
-    e.fail_label = MIR_new_label(builder->ctx);
-    e.slot_mode = 1;
-    emitter_append(&e, MIR_new_insn(builder->ctx, MIR_MOV, emitter_reg(&e, e.off_reg),
-                                    MIR_new_int_op(builder->ctx, 0)));
-    emitter_append(&e, MIR_new_insn(builder->ctx, MIR_BEQ, emitter_label(&e, e.fail_label),
-                                    emitter_reg(&e, e.obj_reg), MIR_new_int_op(builder->ctx, 0)));
-    emit_fields_into_object(&e, e.obj_reg, e.off_reg, &record_fields);
-    emitter_append(&e, MIR_new_ret_insn(builder->ctx, 1, emitter_reg(&e, e.obj_reg)));
-    emitter_append(&e, e.fail_label);
-    {
-      MIR_op_t free_args[1] = {emitter_reg(&e, e.obj_reg)};
-      emitter_call(&e, &builder->ext.free_value, free_args, 1);
-    }
-    emitter_append(&e, MIR_new_ret_insn(builder->ctx, 1, MIR_new_int_op(builder->ctx, 0)));
-    MIR_finish_func(builder->ctx);
-  }
-  emit_field_array_free(&record_fields);
-  emit_field_array_free(&fields);
-  return 1;
 }
 
 static Node *parse_schema_text_to_root(const char *schema_text, size_t len, const char *path,
@@ -6694,631 +5126,72 @@ static Node *parse_schema_text_to_root(const char *schema_text, size_t len, cons
   return root;
 }
 
-static void data_bind_free_contents(DataBind *codec) {
-  mir_func_node_t *func_node;
-  owned_alloc_node_t *alloc_node;
-  if (codec == NULL) return;
-
-  /* Only free func_head if this codec owns it (not from cache) */
-  if (!codec->is_cloned) {
-    func_node = codec->func_head;
-    while (func_node != NULL) {
-      mir_func_node_t *next = func_node->next;
-      free(func_node->type_name);
-      free(func_node);
-      func_node = next;
-    }
-  }
-  codec->func_head = NULL;
-
-  alloc_node = codec->owned_allocs;
-  while (alloc_node != NULL) {
-    owned_alloc_node_t *next = alloc_node->next;
-    free(alloc_node->ptr);
-    free(alloc_node);
-    alloc_node = next;
-  }
-  codec->owned_allocs = NULL;
-
-  data_bind_record_plans_free_v1(codec);
-
-  /* Handle MIR context based on whether this is a cloned codec */
-  if (codec->ctx != NULL) {
-    if (codec->is_cloned && codec->schema_hash[0] != '\0') {
-      /* Release cache reference - context will be freed by cache when ref_count reaches 0 */
-      mir_cache_release(codec->schema_hash, codec->ctx);
-    } else if (!codec->is_cloned) {
-      /* Owned context not in cache, can be destroyed directly */
-      if (codec->mir_gen_initialized) MIR_gen_finish(codec->ctx);
-      MIR_finish(codec->ctx);
-    }
-    codec->ctx = NULL;
-    codec->mir_gen_initialized = 0;
-  }
-
-  if (codec->schema_root != NULL) {
-    node_free(codec->schema_root);
-    codec->schema_root = NULL;
-  }
-}
-
-static int data_bind_add_mir_metadata(DataBind *codec) {
-  uint32_t abi_version = DATA_BIND_MIR_PARSER_ABI_VERSION;
-  size_t fingerprint_len;
-
-  if (codec->schema_hash[0] == '\0')
-    return set_codec_error(codec, "Cannot generate MIR without a schema fingerprint");
-  fingerprint_len = strlen(codec->schema_hash) + 1;
-  if (MIR_new_data(codec->ctx, DATA_BIND_MIR_ABI_ITEM_NAME, MIR_T_U32, 1, &abi_version) == NULL ||
-      MIR_new_data(codec->ctx, DATA_BIND_MIR_SCHEMA_ITEM_NAME, MIR_T_U8, fingerprint_len,
-                   codec->schema_hash) == NULL)
-    return set_codec_error(codec, "Failed to add MIR parser metadata");
-  return 1;
-}
-
-static void data_bind_move_mir_data_before_functions(MIR_module_t module) {
-  MIR_item_t first_item = DLIST_HEAD(MIR_item_t, module->items);
-  MIR_item_t item = DLIST_TAIL(MIR_item_t, module->items);
-  while (item != NULL) {
-    MIR_item_t previous = DLIST_PREV(MIR_item_t, item);
-    if (item->item_type == MIR_data_item) {
-      DLIST_REMOVE(MIR_item_t, module->items, item);
-      DLIST_PREPEND(MIR_item_t, module->items, item);
-    }
-    if (item == first_item) break;
-    item = previous;
-  }
-}
-
-static MIR_module_t generate_parser_module(DataBind *codec, int include_record_v1) {
-  mir_builder_t builder;
-  Node *messages_node;
-  size_t i;
-  messages_node = find_child(codec->schema_root, "messages");
-  if (messages_node == NULL || messages_node->type != NODE_LIST ||
-      messages_node->data.list.count == 0) {
-    set_codec_error(codec, "No messages found in schema");
-    return NULL;
-  }
-  codec->ctx = MIR_init();
-  if (codec->ctx == NULL) return NULL;
-  memset(&builder, 0, sizeof(builder));
-  builder.codec = codec;
-  builder.ctx = codec->ctx;
-  builder.module = MIR_new_module(codec->ctx, DATA_BIND_MIR_MODULE_NAME);
-  builder.include_record_v1 = include_record_v1 != 0;
-  if (!data_bind_add_mir_metadata(codec)) {
-    MIR_finish_module(codec->ctx);
-    MIR_finish(codec->ctx);
-    codec->ctx = NULL;
-    return NULL;
-  }
-  init_externals(&builder);
-  for (i = 0; i < messages_node->data.list.count; i++)
-    if (!generate_message_function(&builder, messages_node->data.list.items[i], codec->schema_root,
-                                   codec->api.set_field_bytes != NULL)) {
-      if (codec->error[0] == '\0') set_codec_error(codec, "Failed to generate parser function");
-      MIR_finish(codec->ctx);
-      codec->ctx = NULL;
-      return NULL;
-    }
-  data_bind_move_mir_data_before_functions(builder.module);
-  MIR_finish_module(codec->ctx);
-  return builder.module;
-}
-
-typedef struct data_bind_mir_external {
-  const char *name;
-  const void *function_pointer;
-  size_t function_pointer_size;
-} data_bind_mir_external_t;
-
-static int load_mir_function_external(DataBind *codec,
-                                      const data_bind_mir_external_t *external) {
-  void *address = NULL;
-
-  if (external->function_pointer_size != sizeof(address))
-    return set_codec_error(codec, "Cannot link external function '%s': incompatible pointer size",
-                           external->name);
-
-  /* MIR uses void * for both function and data symbols.  Copy the representation here so callers
-     do not rely on a non-standard implicit function-to-object pointer conversion. */
-  memcpy(&address, external->function_pointer, sizeof(address));
-  if (address == NULL)
-    return set_codec_error(codec, "Cannot link external function '%s': null address",
-                           external->name);
-
-  MIR_load_external(codec->ctx, external->name, address);
-  return 1;
-}
-
-static int link_module(DataBind *codec, MIR_module_t module) {
-  data_bind_runtime_api_t api = codec->api;
-  char *(*read_varstr_fn)(const uint8_t *, size_t, size_t) = data_bind_read_varstring;
-  void (*free_fn)(void *) = free;
-  DataBindValue *(*record_create_child_fn)(DataBindValue *) = record_create_child_v1;
-  DataBindValue *(*record_create_field_fn)(DataBindValue *, uint32_t) = record_create_field_v1;
-  int (*record_set_slot_int_fn)(DataBindValue *, uint32_t, int32_t) = record_set_slot_int_v1;
-  int (*record_set_slot_u32_fn)(DataBindValue *, uint32_t, uint32_t) =
-      record_set_slot_uint32_v1;
-  int (*record_set_slot_i64_fn)(DataBindValue *, uint32_t, int64_t) = record_set_slot_int64_v1;
-  int (*record_set_slot_u64_fn)(DataBindValue *, uint32_t, uint64_t) = record_set_slot_uint64_v1;
-  int (*record_set_slot_double_fn)(DataBindValue *, uint32_t, double) = record_set_slot_double_v1;
-  int (*record_set_slot_bool_fn)(DataBindValue *, uint32_t, int) = record_set_slot_bool_v1;
-  int (*record_set_slot_string_fn)(DataBindValue *, uint32_t, const char *) =
-      record_set_slot_string_v1;
-  int (*record_set_slot_bytes_fn)(DataBindValue *, uint32_t, const uint8_t *, size_t) =
-      record_set_slot_bytes_v1;
-  int (*record_set_slot_uuid_fn)(DataBindValue *, uint32_t, const uint8_t *) =
-      record_set_slot_uuid_v1;
-  int (*record_set_slot_list_fn)(DataBindValue *, uint32_t, DataBindValue *) =
-      record_set_slot_list_v1;
-  int (*record_set_slot_set_fn)(DataBindValue *, uint32_t, DataBindValue *) =
-      record_set_slot_set_v1;
-  int (*record_set_slot_map_fn)(DataBindValue *, uint32_t, DataBindValue *) =
-      record_set_slot_map_v1;
-  size_t i;
-
-  if (api.set_field_uint32 == NULL) api.set_field_uint32 = set_u32_noop;
-  if (api.set_field_int64 == NULL) api.set_field_int64 = set_i64_noop;
-  if (api.set_field_uint64 == NULL) api.set_field_uint64 = set_u64_noop;
-  if (api.set_field_bool == NULL) api.set_field_bool = set_bool_noop;
-  if (api.set_field_bytes == NULL) api.set_field_bytes = set_bytes_noop;
-  if (api.set_field_uuid == NULL) api.set_field_uuid = set_uuid_noop;
-  if (api.create_list == NULL) api.create_list = container_noop;
-  if (api.add_list_item_int == NULL) api.add_list_item_int = add_i32_noop;
-  if (api.add_list_item_uint32 == NULL) api.add_list_item_uint32 = add_u32_noop;
-  if (api.add_list_item_int64 == NULL) api.add_list_item_int64 = add_i64_noop;
-  if (api.add_list_item_uint64 == NULL) api.add_list_item_uint64 = add_u64_noop;
-  if (api.add_list_item_double == NULL) api.add_list_item_double = add_dbl_noop;
-  if (api.add_list_item_bool == NULL) api.add_list_item_bool = add_bool_noop;
-  if (api.add_list_item_string == NULL) api.add_list_item_string = add_str_noop;
-  if (api.add_list_item_object == NULL) api.add_list_item_object = add_obj_noop;
-  if (api.set_field_list == NULL) api.set_field_list = set_container_noop;
-  if (api.create_set == NULL) api.create_set = container_noop;
-  if (api.add_set_item_int == NULL) api.add_set_item_int = add_i32_noop;
-  if (api.add_set_item_uint32 == NULL) api.add_set_item_uint32 = add_u32_noop;
-  if (api.add_set_item_int64 == NULL) api.add_set_item_int64 = add_i64_noop;
-  if (api.add_set_item_uint64 == NULL) api.add_set_item_uint64 = add_u64_noop;
-  if (api.add_set_item_double == NULL) api.add_set_item_double = add_dbl_noop;
-  if (api.add_set_item_bool == NULL) api.add_set_item_bool = add_bool_noop;
-  if (api.add_set_item_string == NULL) api.add_set_item_string = add_str_noop;
-  if (api.set_field_set == NULL) api.set_field_set = set_container_noop;
-  if (api.create_map == NULL) api.create_map = container_noop;
-  if (api.add_map_entry_string_string == NULL)
-    api.add_map_entry_string_string = add_map_str_str_noop;
-  if (api.add_map_entry_string_int == NULL) api.add_map_entry_string_int = add_map_str_int_noop;
-  if (api.add_map_entry_string_uint32 == NULL)
-    api.add_map_entry_string_uint32 = add_map_str_u32_noop;
-  if (api.add_map_entry_string_int64 == NULL)
-    api.add_map_entry_string_int64 = add_map_str_i64_noop;
-  if (api.add_map_entry_string_uint64 == NULL)
-    api.add_map_entry_string_uint64 = add_map_str_u64_noop;
-  if (api.add_map_entry_string_double == NULL)
-    api.add_map_entry_string_double = add_map_str_dbl_noop;
-  if (api.add_map_entry_string_bool == NULL)
-    api.add_map_entry_string_bool = add_map_str_bool_noop;
-  if (api.set_field_map == NULL) api.set_field_map = set_container_noop;
-
-#define MIR_FUNCTION_EXTERNAL(external_name, function_pointer)                                      \
-  { external_name, &(function_pointer), sizeof(function_pointer) }
-  {
-    const data_bind_mir_external_t externals[] = {
-        MIR_FUNCTION_EXTERNAL("create_obj", api.create_object),
-        MIR_FUNCTION_EXTERNAL("free_value", api.free_value),
-        MIR_FUNCTION_EXTERNAL("set_int", api.set_field_int),
-        MIR_FUNCTION_EXTERNAL("set_uint32", api.set_field_uint32),
-        MIR_FUNCTION_EXTERNAL("set_int64", api.set_field_int64),
-        MIR_FUNCTION_EXTERNAL("set_uint64", api.set_field_uint64),
-        MIR_FUNCTION_EXTERNAL("set_dbl", api.set_field_double),
-        MIR_FUNCTION_EXTERNAL("set_bool", api.set_field_bool),
-        MIR_FUNCTION_EXTERNAL("set_str", api.set_field_string),
-        MIR_FUNCTION_EXTERNAL("set_bytes", api.set_field_bytes),
-        MIR_FUNCTION_EXTERNAL("set_uuid", api.set_field_uuid),
-        MIR_FUNCTION_EXTERNAL("create_list", api.create_list),
-        MIR_FUNCTION_EXTERNAL("add_list_int", api.add_list_item_int),
-        MIR_FUNCTION_EXTERNAL("add_list_uint32", api.add_list_item_uint32),
-        MIR_FUNCTION_EXTERNAL("add_list_int64", api.add_list_item_int64),
-        MIR_FUNCTION_EXTERNAL("add_list_uint64", api.add_list_item_uint64),
-        MIR_FUNCTION_EXTERNAL("add_list_dbl", api.add_list_item_double),
-        MIR_FUNCTION_EXTERNAL("add_list_bool", api.add_list_item_bool),
-        MIR_FUNCTION_EXTERNAL("add_list_str", api.add_list_item_string),
-        MIR_FUNCTION_EXTERNAL("add_list_obj", api.add_list_item_object),
-        MIR_FUNCTION_EXTERNAL("set_list", api.set_field_list),
-        MIR_FUNCTION_EXTERNAL("create_set", api.create_set),
-        MIR_FUNCTION_EXTERNAL("add_set_int", api.add_set_item_int),
-        MIR_FUNCTION_EXTERNAL("add_set_uint32", api.add_set_item_uint32),
-        MIR_FUNCTION_EXTERNAL("add_set_int64", api.add_set_item_int64),
-        MIR_FUNCTION_EXTERNAL("add_set_uint64", api.add_set_item_uint64),
-        MIR_FUNCTION_EXTERNAL("add_set_dbl", api.add_set_item_double),
-        MIR_FUNCTION_EXTERNAL("add_set_bool", api.add_set_item_bool),
-        MIR_FUNCTION_EXTERNAL("add_set_str", api.add_set_item_string),
-        MIR_FUNCTION_EXTERNAL("set_set", api.set_field_set),
-        MIR_FUNCTION_EXTERNAL("create_map", api.create_map),
-        MIR_FUNCTION_EXTERNAL("add_map_str_str", api.add_map_entry_string_string),
-        MIR_FUNCTION_EXTERNAL("add_map_str_int", api.add_map_entry_string_int),
-        MIR_FUNCTION_EXTERNAL("add_map_str_uint32", api.add_map_entry_string_uint32),
-        MIR_FUNCTION_EXTERNAL("add_map_str_int64", api.add_map_entry_string_int64),
-        MIR_FUNCTION_EXTERNAL("add_map_str_uint64", api.add_map_entry_string_uint64),
-        MIR_FUNCTION_EXTERNAL("add_map_str_dbl", api.add_map_entry_string_double),
-        MIR_FUNCTION_EXTERNAL("add_map_str_bool", api.add_map_entry_string_bool),
-        MIR_FUNCTION_EXTERNAL("set_map", api.set_field_map),
-        MIR_FUNCTION_EXTERNAL("record_create_child_v1", record_create_child_fn),
-        MIR_FUNCTION_EXTERNAL("record_create_field_v1", record_create_field_fn),
-        MIR_FUNCTION_EXTERNAL("record_set_slot_int_v1", record_set_slot_int_fn),
-        MIR_FUNCTION_EXTERNAL("record_set_slot_uint32_v1", record_set_slot_u32_fn),
-        MIR_FUNCTION_EXTERNAL("record_set_slot_int64_v1", record_set_slot_i64_fn),
-        MIR_FUNCTION_EXTERNAL("record_set_slot_uint64_v1", record_set_slot_u64_fn),
-        MIR_FUNCTION_EXTERNAL("record_set_slot_double_v1", record_set_slot_double_fn),
-        MIR_FUNCTION_EXTERNAL("record_set_slot_bool_v1", record_set_slot_bool_fn),
-        MIR_FUNCTION_EXTERNAL("record_set_slot_string_v1", record_set_slot_string_fn),
-        MIR_FUNCTION_EXTERNAL("record_set_slot_bytes_v1", record_set_slot_bytes_fn),
-        MIR_FUNCTION_EXTERNAL("record_set_slot_uuid_v1", record_set_slot_uuid_fn),
-        MIR_FUNCTION_EXTERNAL("record_set_slot_list_v1", record_set_slot_list_fn),
-        MIR_FUNCTION_EXTERNAL("record_set_slot_set_v1", record_set_slot_set_fn),
-        MIR_FUNCTION_EXTERNAL("record_set_slot_map_v1", record_set_slot_map_fn),
-        MIR_FUNCTION_EXTERNAL("read_varstr", read_varstr_fn),
-        MIR_FUNCTION_EXTERNAL("free", free_fn),
-    };
-#undef MIR_FUNCTION_EXTERNAL
-
-    MIR_load_module(codec->ctx, module);
-    for (i = 0; i < sizeof(externals) / sizeof(externals[0]); ++i)
-      if (!load_mir_function_external(codec, &externals[i])) return 0;
-  }
-  MIR_gen_init(codec->ctx);
-  codec->mir_gen_initialized = 1;
-  MIR_link(codec->ctx, MIR_set_gen_interface, NULL);
-  return 1;
-}
-
-static MIR_module_t data_bind_validate_loaded_mir(DataBind *codec) {
-  MIR_module_t module;
-  MIR_item_t item;
-  int found_abi = 0;
-  int found_fingerprint = 0;
-
-  module = DLIST_HEAD(MIR_module_t, *MIR_get_module_list(codec->ctx));
-  if (module == NULL || DLIST_NEXT(MIR_module_t, module) != NULL)
-    return set_codec_error(codec, "MIR artifact must contain exactly one module"), NULL;
-  if (module->name == NULL || strcmp(module->name, DATA_BIND_MIR_MODULE_NAME) != 0)
-    return set_codec_error(codec, "Unexpected MIR module name '%s'",
-                           module->name != NULL ? module->name : "<null>"),
-           NULL;
-
-  for (item = DLIST_HEAD(MIR_item_t, module->items); item != NULL;
-       item = DLIST_NEXT(MIR_item_t, item)) {
-    MIR_data_t data;
-    if (item->item_type != MIR_data_item) continue;
-    data = item->u.data;
-    if (data == NULL || data->name == NULL) continue;
-    if (strcmp(data->name, DATA_BIND_MIR_ABI_ITEM_NAME) == 0) {
-      uint32_t abi_version = 0;
-      if (found_abi || data->el_type != MIR_T_U32 || data->nel != 1)
-        return set_codec_error(codec, "Invalid MIR parser ABI metadata"), NULL;
-      memcpy(&abi_version, data->u.els, sizeof(abi_version));
-      if (abi_version != DATA_BIND_MIR_PARSER_ABI_VERSION)
-        return set_codec_error(codec, "Unsupported MIR parser ABI: %u", abi_version), NULL;
-      found_abi = 1;
-    } else if (strcmp(data->name, DATA_BIND_MIR_SCHEMA_ITEM_NAME) == 0) {
-      size_t expected_len = strlen(codec->schema_hash) + 1;
-      if (found_fingerprint || data->el_type != MIR_T_U8 || data->nel != expected_len ||
-          memcmp(data->u.els, codec->schema_hash, expected_len) != 0)
-        return set_codec_error(codec, "MIR artifact does not match the supplied schema"), NULL;
-      found_fingerprint = 1;
-    }
-  }
-  if (!found_abi || !found_fingerprint)
-    return set_codec_error(codec, "MIR artifact is missing DataBind metadata"), NULL;
-  return module;
-}
-
-static int register_parse_functions(DataBind *codec, MIR_module_t module) {
-  Node *messages_node = find_child(codec->schema_root, "messages");
-  size_t i;
-  if (messages_node == NULL || messages_node->type != NODE_LIST)
-    return set_codec_error(codec, "Schema contains no message list");
-  for (i = 0; i < messages_node->data.list.count; i++) {
-    Node *msg = messages_node->data.list.items[i];
-    const char *msg_name = get_string_val(find_child(msg, "name"));
-    char func_name[256];
-    char record_func_name[256];
-    MIR_item_t item;
-    void *parse_fn = NULL;
-    void *parse_record_fn = NULL;
-    if (msg_name == NULL) return set_codec_error(codec, "Schema message has no name");
-    if (snprintf(func_name, sizeof(func_name), "parse_%s", msg_name) >= (int)sizeof(func_name) ||
-        snprintf(record_func_name, sizeof(record_func_name), "parse_record_v1_%s", msg_name) >=
-            (int)sizeof(record_func_name))
-      return set_codec_error(codec, "Parser function name is too long for message '%s'", msg_name);
-    for (item = DLIST_HEAD(MIR_item_t, module->items); item != NULL;
-         item = DLIST_NEXT(MIR_item_t, item)) {
-      if (item->item_type != MIR_func_item) continue;
-      if (strcmp(item->u.func->name, func_name) == 0) parse_fn = item->addr;
-      else if (strcmp(item->u.func->name, record_func_name) == 0) parse_record_fn = item->addr;
-    }
-    if (parse_fn == NULL)
-      return set_codec_error(codec, "MIR module is missing parser function '%s'", func_name);
-    {
-      mir_func_node_t *node = (mir_func_node_t *)calloc(1, sizeof(*node));
-      if (node == NULL) return set_codec_error(codec, "Out of memory registering '%s'", func_name);
-      /* type_name is freed individually in data_bind_free; not tracked by codec_alloc */
-      node->type_name = strdup(msg_name);
-      if (node->type_name == NULL) {
-        free(node);
-        return set_codec_error(codec, "Out of memory registering '%s'", func_name);
-      }
-      node->parse_fn = parse_fn;
-      node->parse_record_fn = parse_record_fn;
-      node->next = codec->func_head;
-      codec->func_head = node;
-    }
-  }
-  return 1;
-}
-
-static DataBindStatus data_bind_finish_codec(DataBind *codec, DataBindError *error,
-                                              const char *schema_text, size_t schema_len) {
-  MIR_module_t module;
-  mir_cache_entry_t *cache_entry = NULL;
-
-  if (!data_bind_record_plans_build_v1(codec))
-    return db_error_set(error, DATA_BIND_ERR_OOM, NULL, -1, -1,
-                        "Out of memory creating binary Record layouts");
-
-  /* Compute schema hash for caching */
-  if (schema_text != NULL && schema_len > 0) {
-    compute_schema_hash(schema_text, schema_len, codec->schema_hash);
-    cache_entry = mir_cache_find(codec->schema_hash);
-  }
-
-  /* Use cached MIR context if available */
-  if (cache_entry != NULL && cache_entry->shared_ctx != NULL) {
-    codec->ctx = cache_entry->shared_ctx;
-    codec->func_head = cache_entry->func_head;
-    codec->is_cloned = 1;
-    cache_entry->ref_count++;
-    db_error_clear(error);
-    codec->error[0] = '\0';
-    codec->binary_error[0] = '\0';
-    return DATA_BIND_OK;
-  }
-
-  /* Generate new MIR module */
-  module = generate_parser_module(codec, 1);
-  if (module == NULL) {
-    snprintf(codec->binary_error, sizeof(codec->binary_error), "%s",
-             codec->error[0] != '\0' ? codec->error : "Failed to generate parser module");
-    codec->error[0] = '\0';
-    db_error_clear(error);
-    return DATA_BIND_OK;
-  }
-  if (!link_module(codec, module)) {
-    snprintf(codec->binary_error, sizeof(codec->binary_error), "%s",
-             codec->error[0] != '\0' ? codec->error : "Failed to link parser module");
-    codec->error[0] = '\0';
-    db_error_clear(error);
-    return DATA_BIND_OK;
-  }
-  if (!register_parse_functions(codec, module)) {
-    snprintf(codec->binary_error, sizeof(codec->binary_error), "%s",
-             codec->error[0] != '\0' ? codec->error : "Failed to register parser functions");
-    codec->error[0] = '\0';
-    db_error_clear(error);
-    return DATA_BIND_OK;
-  }
-
-  /* Cache the MIR context if hashing was successful */
-  if (codec->schema_hash[0] != '\0') {
-    cache_entry = mir_cache_insert(codec->schema_hash, codec->ctx, codec->func_head);
-    if (cache_entry != NULL) {
-      codec->is_cloned = 1; /* Mark as using cached context */
-    } else {
-      codec->is_cloned = 0; /* Cache failed, codec owns the context */
-    }
-  } else {
-    codec->is_cloned = 0; /* No hash, codec owns the context */
-  }
-
-  db_error_clear(error);
-  codec->error[0] = '\0';
-  codec->binary_error[0] = '\0';
-  return DATA_BIND_OK;
-}
-
-static DataBindStatus
-data_bind_create_with_api_from_root(Node *schema_root, const data_bind_runtime_api_t *api,
-                                    DataBind **out_codec, DataBindError *error,
-                                    const char *schema_text, size_t schema_len) {
+static DataBindStatus data_bind_create_from_root(Node *schema_root, DataBind **out_codec,
+                                                 DataBindError *error) {
   DataBind *codec;
   DataBindStatus status;
   if (out_codec != NULL) *out_codec = NULL;
-  if (api == NULL || api->create_object == NULL || api->free_value == NULL ||
-      api->set_field_int == NULL || api->set_field_double == NULL || api->set_field_string == NULL)
-    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1, "Invalid runtime API");
-  if (schema_root == NULL || out_codec == NULL)
+  if (schema_root == NULL || out_codec == NULL) {
+    node_free(schema_root);
     return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1,
                         "Invalid codec create arguments");
+  }
   codec = (DataBind *)calloc(1, sizeof(*codec));
   if (codec == NULL) {
     node_free(schema_root);
     return db_error_set(error, DATA_BIND_ERR_OOM, NULL, -1, -1, "Out of memory");
   }
-  codec->api = *api;
   codec->schema_root = schema_root;
-  codec->is_cloned = 0;
-  codec->schema_hash[0] = '\0';
-  status = data_bind_finish_codec(codec, error, schema_text, schema_len);
+  status = validate_schema_binding_names(schema_root, error);
   if (status != DATA_BIND_OK) {
-    data_bind_free(codec);
+    node_free(schema_root);
+    free(codec);
     return status;
   }
+  db_error_clear(error);
   *out_codec = codec;
   return DATA_BIND_OK;
-}
-
-static DataBindStatus data_bind_create_with_api(const char *schema_path,
-                                                const data_bind_runtime_api_t *api,
-                                                DataBind **out_codec, DataBindError *error) {
-  Node *schema_root;
-  turbo_fs_buf_t schema_buf = {NULL, 0};
-  DataBindStatus status;
-
-  if (out_codec != NULL) *out_codec = NULL;
-
-  /* Load schema file to get both parsed AST and raw text for hashing */
-  if (turbo_fs_read_file(schema_path, &schema_buf) != 0) {
-    return db_error_set(error, DATA_BIND_ERR_IO, schema_path, -1, -1, "Cannot read schema: %s",
-                        schema_path);
-  }
-
-  schema_root =
-      parse_schema_text_to_root(schema_buf.base, schema_buf.len, schema_path, NULL, 0, error);
-  if (schema_root == NULL) {
-    turbo_fs_buf_free(&schema_buf);
-    return error != NULL && error->code != DATA_BIND_OK ? error->code : DATA_BIND_ERR_SCHEMA;
-  }
-
-  status = data_bind_create_with_api_from_root(schema_root, api, out_codec, error, schema_buf.base,
-                                               schema_buf.len);
-  turbo_fs_buf_free(&schema_buf);
-  return status;
 }
 
 DataBindStatus data_bind_create(const char *schema_path, DataBind **out_codec,
                                 DataBindError *error) {
-  return data_bind_create_with_api(schema_path, &DYNAMIC_VALUE_API, out_codec, error);
+  turbo_fs_buf_t schema = {NULL, 0};
+  Node *schema_root;
+  DataBindStatus status;
+  if (out_codec != NULL) *out_codec = NULL;
+  if (schema_path == NULL || out_codec == NULL)
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, schema_path, -1, -1,
+                        "Invalid codec create arguments");
+  if (turbo_fs_read_file(schema_path, &schema) != 0)
+    return db_error_set(error, DATA_BIND_ERR_IO, schema_path, -1, -1,
+                        "Cannot read schema: %s", schema_path);
+  schema_root =
+      parse_schema_text_to_root(schema.base, schema.len, schema_path, NULL, 0, error);
+  status = schema_root != NULL
+               ? data_bind_create_from_root(schema_root, out_codec, error)
+               : (error != NULL && error->code != DATA_BIND_OK ? error->code
+                                                                : DATA_BIND_ERR_SCHEMA);
+  turbo_fs_buf_free(&schema);
+  return status;
 }
 
-DataBindStatus data_bind_create_from_text(const char *schema_text, size_t len, DataBind **out_codec,
-                                          DataBindError *error) {
+DataBindStatus data_bind_create_from_text(const char *schema_text, size_t len,
+                                          DataBind **out_codec, DataBindError *error) {
   Node *schema_root;
   if (out_codec != NULL) *out_codec = NULL;
+  if (schema_text == NULL || out_codec == NULL)
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1,
+                        "Invalid codec create arguments");
   schema_root = parse_schema_text_to_root(schema_text, len, NULL, NULL, 0, error);
   if (schema_root == NULL)
     return error != NULL && error->code != DATA_BIND_OK ? error->code : DATA_BIND_ERR_SCHEMA;
-  return data_bind_create_with_api_from_root(schema_root, &DYNAMIC_VALUE_API, out_codec, error,
-                                             schema_text, len);
-}
-
-static DataBindStatus data_bind_create_from_mir_artifact(
-    const char *schema_text, size_t schema_len, const void *artifact, size_t artifact_len,
-    int binary_input, DataBind **out_codec, DataBindError *error) {
-  Node *schema_root;
-  DataBind *codec;
-  MIR_module_t module;
-  char *mir_text = NULL;
-
-  if (out_codec != NULL) *out_codec = NULL;
-  if (schema_text == NULL || schema_len == 0 || artifact == NULL || artifact_len == 0 ||
-      out_codec == NULL)
-    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1,
-                        "Invalid MIR codec arguments");
-  if (!binary_input && memchr(artifact, '\0', artifact_len) != NULL)
-    return db_error_set(error, DATA_BIND_ERR_PARSE, NULL, -1, -1,
-                        "Textual MIR contains an embedded NUL byte");
-
-  schema_root = parse_schema_text_to_root(schema_text, schema_len, NULL, NULL, 0, error);
-  if (schema_root == NULL)
-    return error != NULL && error->code != DATA_BIND_OK ? error->code : DATA_BIND_ERR_SCHEMA;
-  codec = (DataBind *)calloc(1, sizeof(*codec));
-  if (codec == NULL) {
-    node_free(schema_root);
-    return db_error_set(error, DATA_BIND_ERR_OOM, NULL, -1, -1, "Out of memory");
-  }
-  codec->api = DYNAMIC_VALUE_API;
-  codec->schema_root = schema_root;
-  compute_schema_hash(schema_text, schema_len, codec->schema_hash);
-  codec->ctx = MIR_init();
-  if (codec->ctx == NULL) {
-    data_bind_free(codec);
-    return db_error_set(error, DATA_BIND_ERR_OOM, NULL, -1, -1,
-                        "Failed to initialize MIR context");
-  }
-
-  if (binary_input) {
-    data_bind_bmir_input_t input = {(const uint8_t *)artifact, artifact_len, 0};
-    if (g_data_bind_bmir_input != NULL) {
-      data_bind_free(codec);
-      return db_error_set(error, DATA_BIND_ERR_RUNTIME, NULL, -1, -1,
-                          "Nested BMIR loading is not supported");
-    }
-    g_data_bind_bmir_input = &input;
-    MIR_read_with_func(codec->ctx, data_bind_bmir_read_byte);
-    g_data_bind_bmir_input = NULL;
-  } else {
-    if (artifact_len == SIZE_MAX) {
-      data_bind_free(codec);
-      return db_error_set(error, DATA_BIND_ERR_OOM, NULL, -1, -1,
-                          "Textual MIR is too large");
-    }
-    mir_text = (char *)malloc(artifact_len + 1);
-    if (mir_text == NULL) {
-      data_bind_free(codec);
-      return db_error_set(error, DATA_BIND_ERR_OOM, NULL, -1, -1,
-                          "Out of memory loading textual MIR");
-    }
-    memcpy(mir_text, artifact, artifact_len);
-    mir_text[artifact_len] = '\0';
-    MIR_scan_string(codec->ctx, mir_text);
-    free(mir_text);
-  }
-
-  module = data_bind_validate_loaded_mir(codec);
-  if (module == NULL) {
-    DataBindStatus status = db_error_set(error, DATA_BIND_ERR_SCHEMA, NULL, -1, -1, "%s",
-                                         codec->error[0] != '\0' ? codec->error
-                                                                  : "Invalid MIR artifact");
-    data_bind_free(codec);
-    return status;
-  }
-  if (!link_module(codec, module) || !register_parse_functions(codec, module)) {
-    DataBindStatus status = db_error_set(error, DATA_BIND_ERR_RUNTIME, NULL, -1, -1, "%s",
-                                         codec->error[0] != '\0' ? codec->error
-                                                                  : "Failed to link MIR artifact");
-    data_bind_free(codec);
-    return status;
-  }
-
-  db_error_clear(error);
-  *out_codec = codec;
-  return DATA_BIND_OK;
-}
-
-DataBindStatus data_bind_create_from_mir(const char *schema_text, size_t schema_len,
-                                         const char *mir_text, size_t mir_len,
-                                         DataBind **out_codec, DataBindError *error) {
-  return data_bind_create_from_mir_artifact(schema_text, schema_len, mir_text, mir_len, 0,
-                                            out_codec, error);
-}
-
-DataBindStatus data_bind_create_from_bmir(const char *schema_text, size_t schema_len,
-                                          const void *bmir_data, size_t bmir_len,
-                                          DataBind **out_codec, DataBindError *error) {
-  return data_bind_create_from_mir_artifact(schema_text, schema_len, bmir_data, bmir_len, 1,
-                                            out_codec, error);
+  return data_bind_create_from_root(schema_root, out_codec, error);
 }
 
 void data_bind_free(DataBind *codec) {
   if (codec == NULL) return;
-  data_bind_free_contents(codec);
+  node_free(codec->schema_root);
   free(codec);
-}
-
-void data_bind_set_cache_enabled(int enabled) { g_mir_cache_enabled = enabled != 0; }
-
-void data_bind_clear_cache(void) {
-  mir_cache_entry_t **entry_ptr = &g_mir_cache_head;
-  while (*entry_ptr != NULL) {
-    mir_cache_entry_t *entry = *entry_ptr;
-    entry->evicted = 1;
-    if (entry->ref_count <= 0) {
-      *entry_ptr = entry->next;
-      mir_cache_entry_destroy(entry);
-    } else {
-      entry_ptr = &entry->next;
-    }
-  }
 }
 
 void data_bind_set_value_pool_enabled(int enabled) {
@@ -7363,157 +5236,40 @@ void data_bind_get_value_pool_stats(size_t *allocated, size_t *reused) {
     *reused = atomic_load_explicit(&g_value_pool_reused_count, memory_order_relaxed);
 }
 
-static DataBindStatus data_bind_emit_file_to_writer(FILE *file, DataBindWriteFn write, void *user,
-                                                    DataBindError *error) {
-  unsigned char buf[4096];
-  size_t n;
-  if (fflush(file) != 0 || fseek(file, 0, SEEK_SET) != 0)
-    return db_error_set(error, DATA_BIND_ERR_IO, NULL, -1, -1, "Failed to rewind MIR output");
-  while ((n = fread(buf, 1, sizeof(buf), file)) > 0) {
-    if (write(buf, n, user) != 0)
-      return db_error_set(error, DATA_BIND_ERR_IO, NULL, -1, -1, "MIR write callback failed");
-  }
-  if (ferror(file))
-    return db_error_set(error, DATA_BIND_ERR_IO, NULL, -1, -1, "Failed to read MIR output");
-  return DATA_BIND_OK;
-}
-
-DataBindStatus data_bind_generate_mir(const char *schema_path, DataBindWriteFn write, void *user,
-                                      int binary_output, DataBindError *error) {
-  DataBind codec;
-  MIR_module_t module = NULL;
-  FILE *tmp = NULL;
-  turbo_fs_buf_t schema_buf = {NULL, 0};
-  DataBindStatus status = DATA_BIND_ERR_RUNTIME;
-
-  db_error_clear(error);
-  if (schema_path == NULL || write == NULL)
-    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, schema_path, -1, -1,
-                        "Invalid MIR output arguments");
-
-  memset(&codec, 0, sizeof(codec));
-  codec.api = MIR_OUTPUT_API;
-  if (turbo_fs_read_file(schema_path, &schema_buf) != 0) {
-    status = db_error_set(error, DATA_BIND_ERR_IO, schema_path, -1, -1,
-                          "Cannot read schema: %s", schema_path);
-    goto cleanup;
-  }
-  codec.schema_root = parse_schema_text_to_root(schema_buf.base, schema_buf.len, schema_path,
-                                                codec.error, sizeof(codec.error), error);
-  if (codec.schema_root == NULL) goto cleanup;
-  compute_schema_hash(schema_buf.base, schema_buf.len, codec.schema_hash);
-
-  module = generate_parser_module(&codec, 0);
-  if (module == NULL) {
-    status = db_error_set(error, DATA_BIND_ERR_SCHEMA, schema_path, -1, -1, "%s",
-                          codec.error[0] != '\0' ? codec.error : "MIR generation failed");
-    goto cleanup;
-  }
-
-  tmp = tmpfile();
-  if (tmp == NULL) {
-    status = db_error_set(error, DATA_BIND_ERR_IO, schema_path, -1, -1,
-                          "Failed to create temporary MIR output");
-    goto cleanup;
-  }
-  if (binary_output) MIR_write_module(codec.ctx, tmp, module);
-  else MIR_output_module(codec.ctx, tmp, module);
-  if (ferror(tmp)) {
-    status = db_error_set(error, DATA_BIND_ERR_IO, schema_path, -1, -1, "MIR output failed");
-    goto cleanup;
-  }
-  status = data_bind_emit_file_to_writer(tmp, write, user, error);
-
-cleanup:
-  if (tmp != NULL) fclose(tmp);
-  data_bind_free_contents(&codec);
-  turbo_fs_buf_free(&schema_buf);
-  return status;
-}
-
 DataBindStatus data_bind_parse(DataBind *codec, const char *type_name, const uint8_t *buf,
                                size_t len, DataBindValue **out_value, DataBindError *error) {
-  mir_func_node_t *node;
-  DataBindValue *(*parse_fn)(const uint8_t *, int64_t);
-  DataBindValue *result;
-  char error_path[64];
+  emit_field_array_t fields = {0};
+  data_bind_binary_reader_t reader;
+  DataBindValue *result = NULL;
+  DataBindStatus status;
   if (out_value != NULL) *out_value = NULL;
   if (codec == NULL || type_name == NULL || buf == NULL || out_value == NULL)
     return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG, "Invalid binary bind arguments");
-  if (codec->func_head == NULL) {
-    db_error_format_path(error_path, sizeof(error_path), "binary", NULL);
-    return db_error_set(error, DATA_BIND_ERR_RUNTIME, error_path, -1, -1, "%s",
-                        codec->binary_error[0] != '\0'
-                            ? codec->binary_error
-                            : "Binary parser is unavailable for this schema");
+  status = db_binary_read_plan(codec, type_name, &fields, error);
+  if (status != DATA_BIND_OK) return status;
+  reader.data = buf;
+  reader.length = len;
+  reader.offset = 0;
+  reader.error = error;
+  status = db_binary_read_fields(&reader, &fields, &result);
+  if (status == DATA_BIND_OK && reader.offset != len)
+    status = db_error_set(error, DATA_BIND_ERR_PARSE, "binary", -1, -1,
+                          "Binary input has trailing bytes");
+  if (status == DATA_BIND_OK) {
+    *out_value = result;
+    result = NULL;
+    db_error_clear(error);
   }
-  for (node = codec->func_head; node != NULL; node = node->next) {
-    if (strcmp(node->type_name, type_name) == 0) {
-      parse_fn = (DataBindValue * (*)(const uint8_t *, int64_t)) node->parse_fn;
-      codec->error[0] = '\0';
-      g_dynamic_runtime_oom = 0;
-      result = parse_fn(buf, (int64_t)len);
-      if (result == NULL) {
-        db_error_format_path(error_path, sizeof(error_path), "binary", "parse failed");
-        if (g_dynamic_runtime_oom)
-          return db_error_set(error, DATA_BIND_ERR_OOM, error_path, -1, -1,
-                              "Out of memory binding binary type: %s", type_name);
-        return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1,
-                            "Binary bind failed for type: %s", type_name);
-      }
-      *out_value = result;
-      db_error_clear(error);
-      return DATA_BIND_OK;
-    }
-  }
-  return db_codec_error(codec, error, DATA_BIND_ERR_TYPE_NOT_FOUND, "Type not found: %s",
-                        type_name);
+  data_bind_value_free(result);
+  emit_field_array_free(&fields);
+  return status;
 }
 
 static DataBindStatus data_bind_parse_record_v1(DataBind *codec, const char *type_name,
                                                  const uint8_t *buf, size_t len,
                                                  DataBindValue **out_value,
                                                  DataBindError *error) {
-  data_bind_record_plan_t *plan;
-  mir_func_node_t *node;
-  DataBindValue *record;
-  DataBindValue *result;
-  DataBindValue *(*parse_fn)(const uint8_t *, int64_t, DataBindValue *);
-  char error_path[64];
-  if (out_value != NULL) *out_value = NULL;
-  if (codec == NULL || type_name == NULL || buf == NULL || out_value == NULL || len > INT64_MAX)
-    return db_codec_error(codec, error, DATA_BIND_ERR_INVALID_ARG,
-                          "Invalid binary Record bind arguments");
-  plan = data_bind_record_plan_find_v1(codec, type_name);
-  if (plan == NULL)
-    return db_codec_error(codec, error, DATA_BIND_ERR_TYPE_NOT_FOUND, "Type not found: %s",
-                          type_name);
-  for (node = codec->func_head; node != NULL; node = node->next)
-    if (strcmp(node->type_name, type_name) == 0) break;
-  if (node == NULL || node->parse_record_fn == NULL) {
-    db_error_format_path(error_path, sizeof(error_path), "binary", NULL);
-    return db_error_set(error, DATA_BIND_ERR_RUNTIME, error_path, -1, -1,
-                        "Binary Record parser v1 is unavailable for type: %s", type_name);
-  }
-  g_dynamic_runtime_oom = 0;
-  record = record_create_from_layout_v1(plan->layout);
-  if (record == NULL)
-    return db_error_set(error, DATA_BIND_ERR_OOM, "binary", -1, -1,
-                        "Out of memory creating binary Record: %s", type_name);
-  parse_fn = (DataBindValue * (*)(const uint8_t *, int64_t, DataBindValue *))node->parse_record_fn;
-  result = parse_fn(buf, (int64_t)len, record);
-  if (result == NULL) {
-    db_error_format_path(error_path, sizeof(error_path), "binary", "record parse failed");
-    if (g_dynamic_runtime_oom)
-      return db_error_set(error, DATA_BIND_ERR_OOM, error_path, -1, -1,
-                          "Out of memory binding binary Record type: %s", type_name);
-    return db_error_set(error, DATA_BIND_ERR_PARSE, error_path, -1, -1,
-                        "Binary Record bind failed for type: %s", type_name);
-  }
-  record_clear_layout_v1(result);
-  *out_value = result;
-  db_error_clear(error);
-  return DATA_BIND_OK;
+  return data_bind_parse(codec, type_name, buf, len, out_value, error);
 }
 
 static int data_bind_stream_json_path_is_root_array(const char *path) {
@@ -10158,8 +7914,142 @@ cleanup:
   return status;
 }
 
+static DataBindValue *object_field_value_mutable(DataBindValue *object, const char *name,
+                                                 data_bind_value_field_t **out_field) {
+  size_t i;
+  if (out_field != NULL) *out_field = NULL;
+  if (object == NULL || object->kind != DATA_BIND_VALUE_OBJECT || name == NULL) return NULL;
+  for (i = 0; i < object->data.object_val.count; ++i) {
+    data_bind_value_field_t *field = &object->data.object_val.items[i];
+    if (strcmp(field->name, name) == 0) {
+      if (out_field != NULL) *out_field = field;
+      return field->value;
+    }
+  }
+  return NULL;
+}
+
+static DataBindStatus apply_mapped_names(Node *schema_root, const char *type_name,
+                                         DataBindValue *value, unsigned depth,
+                                         DataBindError *error) {
+  Node *record = find_data_record(schema_root, type_name);
+  Node *union_node = find_union_record(schema_root, type_name);
+  Node *fields;
+  size_t i;
+  if (value == NULL || (record == NULL && union_node == NULL)) return DATA_BIND_OK;
+  if (depth > DATA_BIND_JSON_MAX_DEPTH)
+    return db_error_set(error, DATA_BIND_ERR_RUNTIME, type_name, -1, -1,
+                        "Mapped serialization nesting limit exceeded");
+  if (value->kind != DATA_BIND_VALUE_OBJECT)
+    return db_error_set(error, DATA_BIND_ERR_TYPE_MISMATCH, type_name, -1, -1,
+                        "Mapped serialization expected an object");
+  if (union_node != NULL) {
+    data_bind_value_field_t *owned_field;
+    Node *variant;
+    const char *mapped;
+    const char *variant_type;
+    DataBindStatus status = DATA_BIND_OK;
+    if (value->data.object_val.count != 1)
+      return db_error_set(error, DATA_BIND_ERR_TYPE_MISMATCH, type_name, -1, -1,
+                          "Mapped serialization expected one union variant");
+    owned_field = &value->data.object_val.items[0];
+    variant = union_variant(union_node, owned_field->name);
+    if (variant == NULL)
+      return db_error_set(error, DATA_BIND_ERR_TYPE_MISMATCH, type_name, -1, -1,
+                          "Mapped serialization found an unknown union variant");
+    mapped = field_binding_name(variant);
+    variant_type = get_string_val(find_child(variant, "type"));
+    if (variant_type != NULL &&
+        (find_data_record(schema_root, variant_type) != NULL ||
+         find_union_record(schema_root, variant_type) != NULL))
+      status = apply_mapped_names(schema_root, variant_type, owned_field->value, depth + 1u, error);
+    if (status != DATA_BIND_OK) return status;
+    if (mapped != NULL && strcmp(mapped, owned_field->name) != 0) {
+      char *copy = dbv_strdup(mapped);
+      if (copy == NULL)
+        return db_error_set(error, DATA_BIND_ERR_OOM, owned_field->name, -1, -1,
+                            "Out of memory applying union variant mapping");
+      free(owned_field->name);
+      owned_field->name = copy;
+    }
+    return DATA_BIND_OK;
+  }
+  fields = fields_node_for_record(record);
+  if (fields == NULL) return DATA_BIND_OK;
+  for (i = 0; i < fields->data.list.count; ++i) {
+    Node *schema_field = fields->data.list.items[i];
+    const char *canonical = get_string_val(find_child(schema_field, "name"));
+    const char *mapped = field_binding_name(schema_field);
+    const char *nested_type = NULL;
+    data_bind_value_field_t *owned_field = NULL;
+    DataBindValue *child = object_field_value_mutable(value, canonical, &owned_field);
+    DataBindStatus status = DATA_BIND_OK;
+    size_t j;
+    if (canonical == NULL || child == NULL || owned_field == NULL) continue;
+    if (field_flag(schema_field, "is_group_field"))
+      nested_type = get_string_val(find_child(schema_field, "group_type"));
+    else if (field_flag(schema_field, "is_map"))
+      nested_type = get_string_val(find_child(schema_field, "value_type"));
+    else if (field_flag(schema_field, "is_collection"))
+      nested_type = get_string_val(find_child(schema_field, "inner_type"));
+    else
+      nested_type = get_string_val(find_child(schema_field, "type"));
+
+    if (nested_type != NULL &&
+        (find_data_record(schema_root, nested_type) != NULL ||
+         find_union_record(schema_root, nested_type) != NULL)) {
+      if (child->kind == DATA_BIND_VALUE_LIST || child->kind == DATA_BIND_VALUE_SET) {
+        for (j = 0; j < child->data.array_val.count && status == DATA_BIND_OK; ++j)
+          status = apply_mapped_names(schema_root, nested_type, child->data.array_val.items[j],
+                                      depth + 1u, error);
+      } else if (child->kind == DATA_BIND_VALUE_MAP) {
+        for (j = 0; j < child->data.map_val.count && status == DATA_BIND_OK; ++j)
+          status = apply_mapped_names(schema_root, nested_type, child->data.map_val.items[j].value,
+                                      depth + 1u, error);
+      } else {
+        status = apply_mapped_names(schema_root, nested_type, child, depth + 1u, error);
+      }
+    }
+    if (status != DATA_BIND_OK) return status;
+    if (mapped != NULL && strcmp(mapped, canonical) != 0) {
+      char *copy = dbv_strdup(mapped);
+      if (copy == NULL)
+        return db_error_set(error, DATA_BIND_ERR_OOM, canonical, -1, -1,
+                            "Out of memory applying field mapping");
+      free(owned_field->name);
+      owned_field->name = copy;
+    }
+  }
+  return DATA_BIND_OK;
+}
+
+static DataBindStatus create_mapped_object(DataBind *codec, const DataBindObject *object,
+                                           DataBindObject *mapped, DataBindError *error) {
+  DataBindStatus status;
+  if (mapped != NULL) memset(mapped, 0, sizeof(*mapped));
+  if (codec == NULL || codec->schema_root == NULL || object == NULL || object->type_name == NULL ||
+      object->value == NULL || mapped == NULL)
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1,
+                        "Invalid mapped serialize arguments");
+  if (find_data_record(codec->schema_root, object->type_name) == NULL &&
+      find_union_record(codec->schema_root, object->type_name) == NULL)
+    return db_error_set(error, DATA_BIND_ERR_TYPE_NOT_FOUND, object->type_name, -1, -1,
+                        "Mapped serializer type not found");
+  status = data_bind_value_clone(object->value, &mapped->value);
+  if (status != DATA_BIND_OK)
+    return db_error_set(error, status, object->type_name, -1, -1,
+                        "Failed to clone object for mapped serialization");
+  mapped->type_name = object->type_name;
+  status = apply_mapped_names(codec->schema_root, object->type_name, mapped->value, 0u, error);
+  if (status != DATA_BIND_OK) {
+    data_bind_value_free(mapped->value);
+    mapped->value = NULL;
+  }
+  return status;
+}
+
 static json_value_t *data_bind_value_to_json(const DataBindValue *value, unsigned depth,
-                                             DataBindStatus *status) {
+                                              DataBindStatus *status) {
   json_value_t *json = NULL;
   size_t i;
   char text[128];
@@ -10333,8 +8223,8 @@ static json_value_t *data_bind_value_to_json(const DataBindValue *value, unsigne
   return json;
 }
 
-DataBindStatus data_bind_object_serialize_json(const DataBindObject *object, char **out_json,
-                                               size_t *out_len, DataBindError *error) {
+static DataBindStatus data_bind_object_serialize_json_canonical(
+    const DataBindObject *object, char **out_json, size_t *out_len, DataBindError *error) {
   DataBindStatus status = DATA_BIND_OK;
   json_value_t *json;
 
@@ -10358,8 +8248,8 @@ DataBindStatus data_bind_object_serialize_json(const DataBindObject *object, cha
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_object_serialize_yaml(const DataBindObject *object, char **out_yaml,
-                                               size_t *out_len, DataBindError *error) {
+static DataBindStatus data_bind_object_serialize_yaml_canonical(
+    const DataBindObject *object, char **out_yaml, size_t *out_len, DataBindError *error) {
   DataBindStatus status = DATA_BIND_OK;
   json_value_t *json;
   turbo_yaml_doc_t *yaml;
@@ -10491,8 +8381,8 @@ static int data_bind_value_to_xml(const DataBindValue *value, turbo_xml_node_t *
   }
 }
 
-DataBindStatus data_bind_object_serialize_xml(const DataBindObject *object, char **out_xml,
-                                              size_t *out_len, DataBindError *error) {
+static DataBindStatus data_bind_object_serialize_xml_canonical(
+    const DataBindObject *object, char **out_xml, size_t *out_len, DataBindError *error) {
   turbo_xml_doc_t *xml;
   turbo_xml_node_t *root;
   if (out_xml != NULL) *out_xml = NULL;
@@ -10745,8 +8635,8 @@ static int data_bind_csv_append_field(tstr_t *csv, const tstr_t field) {
          data_bind_csv_tstr_append(csv, "\"", 1u);
 }
 
-DataBindStatus data_bind_object_serialize_csv(const DataBindObject *object, char **out_csv,
-                                              size_t *out_len, DataBindError *error) {
+static DataBindStatus data_bind_object_serialize_csv_canonical(
+    const DataBindObject *object, char **out_csv, size_t *out_len, DataBindError *error) {
   data_bind_csv_cell_vec_t cells;
   DataBindStatus status;
   tstr_t csv = NULL;
@@ -10803,18 +8693,66 @@ DataBindStatus data_bind_object_serialize_csv(const DataBindObject *object, char
   return DATA_BIND_OK;
 }
 
-typedef DataBindStatus (*data_bind_object_serialize_fn)(const DataBindObject *, char **, size_t *,
+typedef DataBindStatus (*data_bind_mapped_serialize_fn)(const DataBindObject *, char **, size_t *,
                                                         DataBindError *);
 
-static DataBindStatus data_bind_object_write(const DataBindObject *object, DataBindWriteFn write,
-                                             void *user, DataBindError *error,
+static DataBindStatus data_bind_object_serialize_with_schema_names(
+    DataBind *codec, const DataBindObject *object, char **out, size_t *out_len,
+    DataBindError *error, data_bind_mapped_serialize_fn serialize) {
+  DataBindObject mapped = {0};
+  DataBindStatus status;
+  if (out != NULL) *out = NULL;
+  if (out_len != NULL) *out_len = 0;
+  if (serialize == NULL)
+    return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1,
+                        "Invalid schema-aware serializer");
+  status = create_mapped_object(codec, object, &mapped, error);
+  if (status == DATA_BIND_OK) status = serialize(&mapped, out, out_len, error);
+  data_bind_value_free(mapped.value);
+  return status;
+}
+
+DataBindStatus data_bind_object_serialize_json(DataBind *codec, const DataBindObject *object,
+                                               char **out_json, size_t *out_len,
+                                               DataBindError *error) {
+  return data_bind_object_serialize_with_schema_names(
+      codec, object, out_json, out_len, error, data_bind_object_serialize_json_canonical);
+}
+
+DataBindStatus data_bind_object_serialize_yaml(DataBind *codec, const DataBindObject *object,
+                                               char **out_yaml, size_t *out_len,
+                                               DataBindError *error) {
+  return data_bind_object_serialize_with_schema_names(
+      codec, object, out_yaml, out_len, error, data_bind_object_serialize_yaml_canonical);
+}
+
+DataBindStatus data_bind_object_serialize_xml(DataBind *codec, const DataBindObject *object,
+                                              char **out_xml, size_t *out_len,
+                                              DataBindError *error) {
+  return data_bind_object_serialize_with_schema_names(
+      codec, object, out_xml, out_len, error, data_bind_object_serialize_xml_canonical);
+}
+
+DataBindStatus data_bind_object_serialize_csv(DataBind *codec, const DataBindObject *object,
+                                              char **out_csv, size_t *out_len,
+                                              DataBindError *error) {
+  return data_bind_object_serialize_with_schema_names(
+      codec, object, out_csv, out_len, error, data_bind_object_serialize_csv_canonical);
+}
+
+typedef DataBindStatus (*data_bind_object_serialize_fn)(DataBind *, const DataBindObject *, char **,
+                                                        size_t *, DataBindError *);
+
+static DataBindStatus data_bind_object_write(DataBind *codec, const DataBindObject *object,
+                                             DataBindWriteFn write, void *user,
+                                             DataBindError *error,
                                              data_bind_object_serialize_fn serialize) {
   char *text = NULL;
   size_t len = 0;
   DataBindStatus status;
   if (!write)
     return db_error_set(error, DATA_BIND_ERR_INVALID_ARG, NULL, -1, -1, "Invalid serialize writer");
-  status = serialize(object, &text, &len, error);
+  status = serialize(codec, object, &text, &len, error);
   if (status != DATA_BIND_OK) return status;
   if (write(text, len, user) != 0) {
     data_bind_serialized_free(text);
@@ -10825,24 +8763,32 @@ static DataBindStatus data_bind_object_write(const DataBindObject *object, DataB
   return DATA_BIND_OK;
 }
 
-DataBindStatus data_bind_object_write_json(const DataBindObject *object, DataBindWriteFn write,
-                                           void *user, DataBindError *error) {
-  return data_bind_object_write(object, write, user, error, data_bind_object_serialize_json);
+DataBindStatus data_bind_object_write_json(DataBind *codec, const DataBindObject *object,
+                                           DataBindWriteFn write, void *user,
+                                           DataBindError *error) {
+  return data_bind_object_write(codec, object, write, user, error,
+                                data_bind_object_serialize_json);
 }
 
-DataBindStatus data_bind_object_write_yaml(const DataBindObject *object, DataBindWriteFn write,
-                                           void *user, DataBindError *error) {
-  return data_bind_object_write(object, write, user, error, data_bind_object_serialize_yaml);
+DataBindStatus data_bind_object_write_yaml(DataBind *codec, const DataBindObject *object,
+                                           DataBindWriteFn write, void *user,
+                                           DataBindError *error) {
+  return data_bind_object_write(codec, object, write, user, error,
+                                data_bind_object_serialize_yaml);
 }
 
-DataBindStatus data_bind_object_write_xml(const DataBindObject *object, DataBindWriteFn write,
-                                          void *user, DataBindError *error) {
-  return data_bind_object_write(object, write, user, error, data_bind_object_serialize_xml);
+DataBindStatus data_bind_object_write_xml(DataBind *codec, const DataBindObject *object,
+                                          DataBindWriteFn write, void *user,
+                                          DataBindError *error) {
+  return data_bind_object_write(codec, object, write, user, error,
+                                data_bind_object_serialize_xml);
 }
 
-DataBindStatus data_bind_object_write_csv(const DataBindObject *object, DataBindWriteFn write,
-                                          void *user, DataBindError *error) {
-  return data_bind_object_write(object, write, user, error, data_bind_object_serialize_csv);
+DataBindStatus data_bind_object_write_csv(DataBind *codec, const DataBindObject *object,
+                                          DataBindWriteFn write, void *user,
+                                          DataBindError *error) {
+  return data_bind_object_write(codec, object, write, user, error,
+                                data_bind_object_serialize_csv);
 }
 
 void data_bind_serialized_free(char *data) { turbo_json_serialize_free(data); }
@@ -11482,4 +9428,4 @@ int data_bind_library_version(void) { return DATA_BIND_VERSION; }
 
 int data_bind_abi_version(void) { return DATA_BIND_ABI_VERSION; }
 
-const char *data_bind_version_string(void) { return "1.12.0"; }
+const char *data_bind_version_string(void) { return "2.0.0"; }

@@ -26,8 +26,8 @@ tbe_compiler <schema_file> [options]
   - Example: `--output order.h`
 
 - `--lang <language>` or `-l <language>`
-  - Target language or module artifact format
-  - Options: `c`, `cpp`, `go`, `rust`, `python`, `py`, `ts`, `typescript`, `mir`, `bmir`
+  - Target source language
+  - Options: `c`, `cpp`, `go`, `rust`, `python`, `py`, `ts`, `typescript`
   - Default: `c`
   - Example: `--lang c`
 
@@ -80,6 +80,31 @@ tbe_compiler order.schema --lang c --output order.h --source-output order.c
 
 The generated API includes `Order_t`, `Order_init`/`Order_clear`, schema codec creation,
 and `Order_from_*`/`Order_to_*` functions for `bin`, `json`, `yaml`, `csv`, and `xml`.
+An owning C member can be renamed without changing its schema or wire name:
+
+```text
+message Order {
+  [name("order-id"), alias("legacy-id"), alias("old-id"), c(order_id)] uint32 id;
+}
+```
+
+Here the generated member is `order_id`, while the native descriptor still identifies the
+schema field as `id`. DataBind text input accepts `order-id`, then aliases in declaration
+order (`legacy-id`, `old-id`), then `id`. Generated `Order_to_json`, `Order_to_yaml`,
+`Order_to_csv`, and `Order_to_xml` require the codec and always output `order-id`.
+Typed C generation rejects duplicate `[c(...)]` member names and the reserved `_presence`
+member. Multiple `[alias(...)]` attributes are accepted in declaration order. Union variants
+accept the same `[name(...)]` and `[alias(...)]` annotations as record fields.
+
+DataBind has two typed routes: generate owning `.h/.c` from schema, or map the same schema
+to an existing C struct. Code generation is optional for the second route. Include
+`tbe_typed.h`, declare fields with `TBE_TYPED_FIELD` and related collection/object macros,
+then create a static descriptor with `TBE_TYPED_DEFINE_STRUCT` or
+`TBE_TYPED_DEFINE_STRUCT_WITH_PRESENCE`. `TBE_TYPED_BIND_PARSE` and
+`TBE_TYPED_BIND_SERIALIZE` use that descriptor directly and apply schema names automatically.
+These convenience descriptors do not infer a binary wire layout; use the explicit `_EX`
+macros or generated code when direct TBE binary encoding is required.
+
 `Orders_schema_codec()` exposes a schema-specific dispatch table for trusted host providers.
 Its `text_to_binary_into` operation binds JSON/YAML/CSV/XML directly into caller-owned,
 capacity-bounded wire storage, so a runtime can enforce its output quota before conversion.
@@ -121,8 +146,8 @@ int main() {
 
 Compile the companion `order.c` as C even when the application target is C++. Fixed-layout
 binary input is decoded directly through the generated native descriptor after validating
-it against the codec schema. Variable `list`/`set`/`map` layouts retain the existing dynamic
-binary parser as a compatibility path before committing into the owning struct. Text formats
+it against the codec schema. Variable `list`/`set`/`map` layouts use the dynamic binary
+parser before committing into the owning struct. Text formats
 retain the schema binder so enum names, field formats, and extended scalar rules remain
 identical to the dynamic API. `--lang cpp` without `--source-output` continues to generate
 data-only `std::string`/`std::vector` types and does not provide these serialization functions.
@@ -174,7 +199,7 @@ int result = 1;
 Order_init(&order);
 if (Orders_codec_create(&codec, &error) == DATA_BIND_OK &&
     Order_from_json(codec, &order, input, strlen(input), &error) == DATA_BIND_OK &&
-    Order_to_json(&order, &json, &json_len, &error) == DATA_BIND_OK) {
+    Order_to_json(codec, &order, &json, &json_len, &error) == DATA_BIND_OK) {
     result = 0;
 }
 tbe_typed_serialized_free(json);
@@ -231,16 +256,21 @@ tbe_compiler order.schema --lang rust --output order.rs
 tbe_compiler order.schema --lang py --output order.py
 ```
 
-### Example 9: Generate MIR IR Module
+### Example 9: Compile Generated C as a Static Library
 
-```bash
-tbe_compiler order.schema --lang mir --output order.mir
+```cmake
+add_library(order_schema STATIC order.c)
+target_include_directories(order_schema PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(order_schema PUBLIC TurboUtils::DataBind)
 ```
 
-### Example 10: Generate Binary MIR Module
+### Example 10: Compile Generated C as a Shared Library
 
-```bash
-tbe_compiler order.schema --lang bmir --output order.bmir
+```cmake
+add_library(order_schema SHARED order.c)
+target_compile_definitions(order_schema PRIVATE TBE_GENERATED_BUILD_SHARED)
+target_include_directories(order_schema PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(order_schema PUBLIC TurboUtils::DataBind)
 ```
 
 ## Removed Options
@@ -263,10 +293,8 @@ tbe_compiler order.schema --lang bmir --output order.bmir
 - `--guest-output` adds allocation-free adapters over the zero-copy wire views. It does not
   embed JSON/YAML/CSV/XML parsers into Wasm and does not require `--source-output`.
 - C++, Go, Rust, Python, and TypeScript outputs currently generate schema type definitions, not complete wire codecs.
-- MIR outputs are loadable modules, not standalone executables. DataBind hosts can use
-  `data_bind_create_from_mir()` or `data_bind_create_from_bmir()` with the exact schema
-  text used for generation, then call `data_bind_object_from_bin()` and the normal object
-  serializers. See `tbe/data_bind/examples/bmir_runtime.c` for a complete generate, load,
-  field-access, and JSON serialization flow. Custom hosts may instead bind callbacks such as `create_obj`, `set_int`,
-  `set_dbl`, `set_str`, and `read_varstr`, link or JIT the module, and call generated
-  functions such as `parse_Order`.
+- The compiler is a build-time tool. Generated C links DataBind, but a deployed
+  RulesForge/TurboScript process loads only DataBind and any prebuilt schema
+  libraries; it does not need an external C compiler.
+- Dynamic schema hosts may skip code generation and use `DataBindObject`. Existing
+  C structs use `TBE_TYPED_*` macro descriptors and also do not invoke the compiler.

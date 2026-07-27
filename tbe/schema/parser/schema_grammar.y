@@ -474,6 +474,7 @@ attr_items(A) ::= attr_item(B). {
 
 attr_item(A) ::= IDENT(K) LPAREN IDENT(V) RPAREN. { A = create_attribute_node(K, V); }
 attr_item(A) ::= IDENT(K) LPAREN NUMBER(V) RPAREN. { A = create_attribute_node(K, V); }
+attr_item(A) ::= IDENT(K) LPAREN STRING(V) RPAREN. { A = create_attribute_node(K, V); }
 
 schema_decl ::= SCHEMA IDENT(N) attribute_list(A) SEMI. {
     if (ctx->schema_node != NULL) {
@@ -636,10 +637,10 @@ union_header ::= UNION IDENT(N) LBRACE. {
 union_body ::= union_body union_variant.
 union_body ::= .
 
-union_variant ::= IDENT(T) IDENT(N) SEMI. {
+union_variant ::= attribute_list(A) IDENT(T) IDENT(N) SEMI. {
     char *type_name = tok_strdup(T);
     char *field_name = tok_strdup(N);
-    add_field(ctx, type_name, field_name, 0, "", "", NULL, 0, 0, NULL);
+    add_field(ctx, type_name, field_name, 0, "", "", A, 0, 0, NULL);
     free(type_name);
     free(field_name);
 }

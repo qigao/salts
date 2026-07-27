@@ -1,80 +1,53 @@
-# DataBind Record MIR ABI v1
+# DataBind 2.0 ABI
 
-## Context
+DataBind 2.0 使用纯 C schema parser、动态值树和 typed descriptor。运行时不加载
+中间代码、不生成机器码，也不要求宿主进程提供编译器。
 
-The legacy binary parser emits `parse_<Type>(data, length)` and calls runtime
-setters with field-name strings. That ABI remains the compatibility path for
-`data_bind_parse()` and generated MIR/BMIR files.
+## 版本边界
 
-`DataBindRecord` needs a schema-shaped object while avoiding field-name lookup
-in the binary parse hot path. JSON, YAML, XML, and CSV already have native
-parsers and writers, so they do not use this ABI.
+- 库版本：`2.0.0`
+- C ABI：`8`
+- schema codec provider ABI：`tbe_schema_codec_v1_t`
+- 旧的运行时 IR、缓存和产物加载接口已删除，不提供兼容层
 
-## Decision
+调用方必须在加载动态库后检查 `data_bind_abi_version()`。ABI 不等于
+`DATA_BIND_ABI_VERSION` 时应立即拒绝使用，不能继续解析或释放跨 ABI 对象。
 
-Runtime codec creation emits an additional function per message:
+## 对象与所有权
 
-```c
-DataBindValue *parse_record_v1_Type(const uint8_t *data, int64_t length,
-                                    DataBindValue *record);
-```
+- `DataBind` 持有解析后的 schema AST；`data_bind_free()` 释放它。
+- `DataBindValue`、`DataBindObject` 和 `DataBindRecord` 是拥有型结果，不借用
+  schema AST；按各自的 `*_free()` API 释放。
+- `DataBindFieldView` 等 view 只借用所属 record；record 释放后 view 立即失效。
+- 文本和二进制序列化结果必须使用 DataBind 对应的释放函数，不跨 CRT 直接
+  `free()`。
 
-The caller creates `record` from a codec-owned immutable layout. The layout
-defines field order, field names, and child layouts. The MIR function writes
-through typed callbacks such as:
+## 两条强类型路线
 
-```c
-int record_set_slot_uint32_v1(DataBindValue *record, uint32_t slot,
-                              uint32_t value);
-```
+1. schema 生成 `.h/.c`：生成代码公开 owning struct、typed descriptor 和格式
+   入口。生成源可编译进静态库或动态库。
+2. schema 映射现有 C struct：应用通过 `TBE_TYPED_*` 宏声明 descriptor，
+   不生成业务头文件，仍复用相同 DataBind 格式适配器。
 
-Slots are constants in generated MIR. Setters validate the slot and reject a
-second write. Composite fields retain their object hierarchy. Lists and groups
-receive their element layout before child records are created.
+两条路线都以 schema 为格式与名称的唯一事实源。`[name]` 和 `[alias]` 决定
+外部名称与反序列化别名；`[c]` 决定生成代码的成员名，宏 descriptor 则直接
+指定现有 struct 成员。
 
-On success, the parser returns the same owning pointer it received. On any
-parse or setter failure, the parser frees the complete partially built tree and
-returns `NULL`. A successful result clears all internal layout pointers before
-it is returned. Field names are owned copies, so a Record may outlive its codec.
+## 生成动态库
 
-The codec owns layouts for its lifetime. Layouts are read-only after codec
-creation. Parsing does not mutate a layout, and runtime allocation failure is
-reported as `DATA_BIND_ERR_OOM`.
+生成头定义 `TBE_GENERATED_API`：
 
-## Compatibility
+- 构建 Windows DLL 或 ELF shared object 时定义 `TBE_GENERATED_BUILD_SHARED`。
+- 使用 Windows DLL 时定义 `TBE_GENERATED_USE_SHARED`。
+- 构建或使用静态库时无需定义二者。
 
-- `data_bind_parse()` continues to call `parse_<Type>` and preserves flattened
-  composite field names such as `header.seq`.
-- `data_bind_record_from_bin()` calls `parse_record_v1_<Type>` and exposes a
-  nested `header` object.
-- `data_bind_generate_mir()` continues to emit only the dynamic `parse_<Type>`
-  callback ABI. Additive data items identify the parser ABI and exact schema
-  fingerprint so `data_bind_create_from_mir()` and
-  `data_bind_create_from_bmir()` can validate and load the module. Existing
-  hosts do not gain new imports.
-- JSON, YAML, XML, and CSV Record constructors continue to use native binders.
-  All Record serializers continue to use the existing native writers.
-- No public structure layout or exported callback table changes.
+生成库仍链接 `TurboUtils::DataBind`；它不包含 C 编译器，也不在运行时编译
+schema。
 
-## Alternatives
+## RulesForge/TurboScript 集成
 
-Changing `parse_<Type>` in place was rejected because it would break existing
-MIR/BMIR hosts. Generating C or C++ structs was rejected because it introduces a
-source compiler and per-schema binary ABI. Loaded MIR/BMIR therefore uses the
-dynamic object parser and existing object serializers; the slot-oriented Record
-parser remains available only on codecs generated in-process.
-
-## Migration And Rollback
-
-Callers opt into the slot path by using `data_bind_record_from_bin()`. Existing
-`data_bind_parse()` and `data_bind_object_from_bin()` callers require no change.
-Rollback consists of routing `data_bind_record_from_bin()` back through the
-object parser and removing the runtime-only v1 function generation; wire data,
-generated legacy BMIR, and public types remain unchanged.
-
-## Verification
-
-Record tests cover scalar fields, nested composites, repeating group objects,
-legacy parser compatibility, truncated-input cleanup, native JSON output, and
-Record access after codec destruction. Compiler tests verify that legacy MIR
-output contains neither `parse_record_v1_` nor `record_set_slot_` imports.
+运行时可直接保存 `DataBind *`，调用动态 `DataBindObject` API；这种方式只部署
+schema 和 DataBind 动态/静态库。若需要 `order.id` 一类原生 C 成员访问，则在
+RulesForge/TurboScript 的构建或发布阶段生成并编译 schema library，运行时加载
+已构建的 library 和 `tbe_schema_codec_v1_t` provider。编译器是构建工具，不是
+运行时依赖。

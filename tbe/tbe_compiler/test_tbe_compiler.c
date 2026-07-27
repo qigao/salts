@@ -569,6 +569,97 @@ spec("tbe_compiler") {
       cleanup_test_file(guest_path);
     }
 
+    it("should honor c field annotations in typed C output") {
+      const char *schema_path = "test_tbe_compiler_c_name.tbe";
+      const char *header_path = "test_tbe_compiler_c_name.h";
+      const char *source_path = "test_tbe_compiler_c_name.c";
+      const char *schema =
+          "schema Annotated;"
+          "message Order { [c(order_id)] uint32 id; string symbol; }";
+      size_t header_size = 0;
+      size_t source_size = 0;
+      char *header = NULL;
+      char *source = NULL;
+      tbe_compiler_options_t options = {
+          .schema_path = schema_path,
+          .template_path = NULL,
+          .output_path = header_path,
+          .source_output_path = source_path,
+          .lang_enum = TBE_COMPILER_LANG_C,
+      };
+
+      cleanup_test_file(schema_path);
+      cleanup_test_file(header_path);
+      cleanup_test_file(source_path);
+      check_int_eq(write_test_file(schema_path, schema), 0);
+      check_int_eq(tbe_compiler_run(&options), 0);
+      header = tt_read_file(header_path, &header_size);
+      source = tt_read_file(source_path, &source_size);
+      check_not_null(header);
+      check_not_null(source);
+      if (header != NULL) check_str_contains(header, "uint32_t order_id;");
+      if (source != NULL) {
+        check_str_contains(source, ".name = \"id\"");
+        check_str_contains(source, "offsetof(Order_t, order_id)");
+      }
+
+      free(header);
+      free(source);
+      cleanup_test_file(schema_path);
+      cleanup_test_file(header_path);
+      cleanup_test_file(source_path);
+    }
+
+    it("should reject duplicate c field annotations in typed C output") {
+      const char *schema_path = "test_tbe_compiler_c_collision.tbe";
+      const char *header_path = "test_tbe_compiler_c_collision.h";
+      const char *source_path = "test_tbe_compiler_c_collision.c";
+      const char *schema =
+          "schema Annotated;"
+          "message Order { [c(value)] uint32 id; [c(value)] string symbol; }";
+      tbe_compiler_options_t options = {
+          .schema_path = schema_path,
+          .template_path = NULL,
+          .output_path = header_path,
+          .source_output_path = source_path,
+          .lang_enum = TBE_COMPILER_LANG_C,
+      };
+
+      cleanup_test_file(schema_path);
+      cleanup_test_file(header_path);
+      cleanup_test_file(source_path);
+      check_int_eq(write_test_file(schema_path, schema), 0);
+      check(tbe_compiler_run(&options) != 0);
+      cleanup_test_file(schema_path);
+      cleanup_test_file(header_path);
+      cleanup_test_file(source_path);
+    }
+
+    it("should reject invalid c identifiers in typed C output") {
+      const char *schema_path = "test_tbe_compiler_c_invalid.tbe";
+      const char *header_path = "test_tbe_compiler_c_invalid.h";
+      const char *source_path = "test_tbe_compiler_c_invalid.c";
+      const char *schema =
+          "schema Annotated;"
+          "message Order { [c(\"order-id\")] uint32 id; }";
+      tbe_compiler_options_t options = {
+          .schema_path = schema_path,
+          .template_path = NULL,
+          .output_path = header_path,
+          .source_output_path = source_path,
+          .lang_enum = TBE_COMPILER_LANG_C,
+      };
+
+      cleanup_test_file(schema_path);
+      cleanup_test_file(header_path);
+      cleanup_test_file(source_path);
+      check_int_eq(write_test_file(schema_path, schema), 0);
+      check(tbe_compiler_run(&options) != 0);
+      cleanup_test_file(schema_path);
+      cleanup_test_file(header_path);
+      cleanup_test_file(source_path);
+    }
+
     it("should reject guest adapter output outside the built-in C generator") {
       const char *output_path = "test_tbe_compiler_guest_invalid.out";
       tbe_compiler_options_t options = {
@@ -584,59 +675,6 @@ spec("tbe_compiler") {
       check(tbe_compiler_run(&options) != 0);
       cleanup_test_file(output_path);
       cleanup_test_file(options.guest_output_path);
-    }
-
-    it("should generate textual MIR parser modules") {
-      const char *output_path = "test_tbe_compiler_mir.out";
-      size_t output_size = 0;
-      char *output = NULL;
-      tbe_compiler_options_t options = {
-          .schema_path = SCHEMA_EXAMPLE_FILE,
-          .template_path = NULL,
-          .output_path = output_path,
-          .dsl_output_path = NULL,
-          .lang_enum = TBE_COMPILER_LANG_MIR,
-      };
-
-      cleanup_test_file(output_path);
-      check_int_eq(tbe_compiler_run(&options), 0);
-
-      output = tt_read_file(output_path, &output_size);
-      check_not_null(output);
-      check(output_size > 0);
-      check_str_contains(output, "data_bind_binary");
-      check_str_contains(output, "parse_LoginMessage");
-      check_str_contains(output, "parse_Heartbeat");
-      check_str_contains(output, "create_obj");
-      check_str_contains(output, "read_varstr");
-      check(strstr(output, "parse_record_v1_") == NULL);
-      check(strstr(output, "record_set_slot_") == NULL);
-
-      free(output);
-      cleanup_test_file(output_path);
-    }
-
-    it("should generate binary MIR parser modules") {
-      const char *output_path = "test_tbe_compiler_bmir.out";
-      size_t output_size = 0;
-      char *output = NULL;
-      tbe_compiler_options_t options = {
-          .schema_path = SCHEMA_EXAMPLE_FILE,
-          .template_path = NULL,
-          .output_path = output_path,
-          .dsl_output_path = NULL,
-          .lang_enum = TBE_COMPILER_LANG_BMIR,
-      };
-
-      cleanup_test_file(output_path);
-      check_int_eq(tbe_compiler_run(&options), 0);
-
-      output = tt_read_file(output_path, &output_size);
-      check_not_null(output);
-      check(output_size > 0);
-
-      free(output);
-      cleanup_test_file(output_path);
     }
 
     it("should render C++ Go Python Rust and TypeScript type outputs") {

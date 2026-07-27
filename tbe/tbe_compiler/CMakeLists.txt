@@ -4,8 +4,7 @@
 
 cmake_add_executable(tbe_compiler
   SOURCES main.c compiler_core.c mustache_helpers.c
-  LIBS TurboUtils::TbeSchema TurboUtils::DataBind TurboUtils::Parser
-       TurboUtils::Mustache
+  LIBS TurboUtils::TbeSchema TurboUtils::Parser TurboUtils::Mustache
   INCLUDES ${PROJECT_SOURCE_DIR}/shared/utils/include
   FOLDER "tbe/tbe_compiler")
 
@@ -14,8 +13,10 @@ function(tbe_copy_turbonet_runtime_deps target_name)
     set(runtime_deps
         $<TARGET_FILE:TurboUtils::Parser>
         $<TARGET_FILE:TurboUtils::Mustache>
-        $<TARGET_FILE:TurboUtils::DataBind>
         $<TARGET_FILE:TurboUtils::Core>)
+    if(ARGC GREATER 1 AND ARGV1 STREQUAL "WITH_DATABIND")
+      list(APPEND runtime_deps $<TARGET_FILE:TurboUtils::DataBind>)
+    endif()
     if(TARGET aklomp::base64)
       list(APPEND runtime_deps $<TARGET_FILE:aklomp::base64>)
     endif()
@@ -52,8 +53,7 @@ add_custom_command(
 
 cmake_add_test(test_tbe_compiler
   SOURCES test_tbe_compiler.c compiler_core.c mustache_helpers.c
-  LIBS TurboUtils::TbeSchema TurboUtils::DataBind TurboUtils::TinyTest
-       TurboUtils::Mustache
+  LIBS TurboUtils::TbeSchema TurboUtils::TinyTest TurboUtils::Mustache
   DEFS
     SCHEMA_EXAMPLE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/example.schema"
     C_STRUCT_TEMPLATE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/templates/c_structs.mustache"
@@ -94,27 +94,36 @@ add_custom_command(
   COMMENT "Generating strong typed Order C bindings"
   VERBATIM)
 
+add_library(test_tbe_typed_order_static STATIC "${TBE_TYPED_ORDER_SOURCE}")
+target_include_directories(test_tbe_typed_order_static
+  PUBLIC "${TBE_TYPED_ORDER_GENERATED_DIR}")
+target_link_libraries(test_tbe_typed_order_static PUBLIC TurboUtils::DataBind)
+set_target_properties(test_tbe_typed_order_static PROPERTIES FOLDER "tbe/tbe_compiler")
+
+add_library(test_tbe_typed_order_shared SHARED "${TBE_TYPED_ORDER_SOURCE}")
+target_compile_definitions(test_tbe_typed_order_shared PRIVATE TBE_GENERATED_BUILD_SHARED)
+target_include_directories(test_tbe_typed_order_shared
+  PUBLIC "${TBE_TYPED_ORDER_GENERATED_DIR}")
+target_link_libraries(test_tbe_typed_order_shared PUBLIC TurboUtils::DataBind)
+set_target_properties(test_tbe_typed_order_shared PROPERTIES FOLDER "tbe/tbe_compiler")
+
 cmake_add_test(test_tbe_typed_order
-  SOURCES
-    test_typed_order.c
-    "${TBE_TYPED_ORDER_SOURCE}"
-    "${TBE_TYPED_ORDER_GUEST_SOURCE}"
-  LIBS TurboUtils::DataBind TurboUtils::TinyTest
+  SOURCES test_typed_order.c "${TBE_TYPED_ORDER_GUEST_SOURCE}"
+  LIBS test_tbe_typed_order_static TurboUtils::TinyTest
   INCLUDES "${TBE_TYPED_ORDER_GENERATED_DIR}"
   FOLDER "tbe/tbe_compiler")
-tbe_copy_turbonet_runtime_deps(test_tbe_typed_order)
+tbe_copy_turbonet_runtime_deps(test_tbe_typed_order WITH_DATABIND)
 
 cmake_add_test(test_tbe_typed_order_cpp
-  SOURCES
-    test_typed_order_cpp.cpp
-    "${TBE_TYPED_ORDER_SOURCE}"
-  LIBS TurboUtils::DataBind TurboUtils::TinyTest
+  SOURCES test_typed_order_cpp.cpp
+  LIBS test_tbe_typed_order_shared TurboUtils::TinyTest
   INCLUDES "${TBE_TYPED_ORDER_GENERATED_DIR}"
   FOLDER "tbe/tbe_compiler")
+target_compile_definitions(test_tbe_typed_order_cpp PRIVATE TBE_GENERATED_USE_SHARED)
 set_target_properties(test_tbe_typed_order_cpp PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
-tbe_copy_turbonet_runtime_deps(test_tbe_typed_order_cpp)
+tbe_copy_turbonet_runtime_deps(test_tbe_typed_order_cpp WITH_DATABIND)
 
 find_program(TBE_WASM_GUEST_CLANG NAMES clang clang.exe)
 if(TBE_WASM_GUEST_CLANG)

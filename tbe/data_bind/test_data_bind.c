@@ -186,7 +186,6 @@ suite("Data Bind") {
   }
 
   after_all() {
-    data_bind_clear_cache();
   }
 
   section("Codec Creation") {
@@ -912,10 +911,13 @@ suite("Data Bind") {
 
           v = data_bind_parse(codec, "Msg", buf, sizeof(buf));
 
-          then("flattened composite fields should be exposed") {
+          then("composite fields should be exposed as a nested object") {
+            const DataBindValue *header;
             check_not_null(v);
-            check_int_eq(data_bind_value_as_int(require_field(v, "header.version")), 3);
-            check_int_eq(data_bind_value_as_int(require_field(v, "header.seq")), 99);
+            header = require_field(v, "header");
+            check(data_bind_value_kind(header) == DATA_BIND_VALUE_OBJECT);
+            check_int_eq(data_bind_value_as_int(require_field(header, "version")), 3);
+            check_int_eq(data_bind_value_as_int(require_field(header, "seq")), 99);
             check_int_eq(data_bind_value_as_int(require_field(v, "payload")), 7777);
           }
 

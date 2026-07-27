@@ -27,9 +27,7 @@ enum {
   TBE_COMPILER_LANG_RUST = 2,
   TBE_COMPILER_LANG_CPP = 3,
   TBE_COMPILER_LANG_GO = 4,
-  TBE_COMPILER_LANG_TS = 5,
-  TBE_COMPILER_LANG_MIR = 6,
-  TBE_COMPILER_LANG_BMIR = 7
+  TBE_COMPILER_LANG_TS = 5
 };
 
 char *tbe_compiler_read_file(const char *filename);

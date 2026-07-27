@@ -4,7 +4,6 @@
 #include "mustache_helpers.h"
 #include "schema_parser_dsl.h"
 #include "tbe_error.h"
-#include "data_bind.h"
 #include "turbo_fs.h"
 
 #include <stdio.h>
@@ -33,6 +32,36 @@ static const char *tbe_compiler_string_value(Node *parent, const char *name) {
   Node *child = tbe_compiler_find_child(parent, name);
   if (!child || child->type != NODE_STRING) return NULL;
   return child->data.string_val;
+}
+
+static const char *tbe_compiler_attribute_value(Node *owner, const char *name) {
+  Node *attributes;
+  size_t i;
+
+  if (!owner || !name) return NULL;
+  attributes = tbe_compiler_find_child(owner, "attributes");
+  if (!attributes || attributes->type != NODE_LIST) return NULL;
+  for (i = 0; i < attributes->data.list.count; ++i) {
+    Node *attribute = attributes->data.list.items[i];
+    const char *attribute_name = tbe_compiler_string_value(attribute, "name");
+    if (attribute_name && strcmp(attribute_name, name) == 0)
+      return tbe_compiler_string_value(attribute, "value");
+  }
+  return NULL;
+}
+
+static size_t tbe_compiler_attribute_count(Node *owner, const char *name) {
+  Node *attributes;
+  size_t i, count = 0;
+  if (!owner || !name) return 0;
+  attributes = tbe_compiler_find_child(owner, "attributes");
+  if (!attributes || attributes->type != NODE_LIST) return 0;
+  for (i = 0; i < attributes->data.list.count; ++i) {
+    Node *attribute = attributes->data.list.items[i];
+    const char *attribute_name = tbe_compiler_string_value(attribute, "name");
+    if (attribute_name && strcmp(attribute_name, name) == 0) ++count;
+  }
+  return count;
 }
 
 static int tbe_compiler_has_child(Node *parent, const char *name) {
@@ -105,6 +134,31 @@ static void tbe_compiler_pascal_identifier(const char *input, char *out, size_t 
 
   if (pos == 0) out[pos++] = 'F';
   out[pos] = '\0';
+}
+
+static int tbe_compiler_c_identifier_valid(const char *identifier) {
+  static const char *const keywords[] = {
+      "auto",     "break",   "case",     "char",    "const",    "continue",
+      "default",  "do",      "double",   "else",    "enum",     "extern",
+      "float",    "for",     "goto",     "if",      "inline",   "int",
+      "long",     "register", "restrict", "return",  "short",    "signed",
+      "sizeof",   "static",  "struct",   "switch",  "typedef",  "union",
+      "unsigned", "void",    "volatile", "while",   "_Alignas", "_Alignof",
+      "_Atomic",  "_Bool",   "_Complex", "_Generic", "_Imaginary", "_Noreturn",
+      "_Static_assert", "_Thread_local"};
+  size_t i;
+  if (identifier == NULL ||
+      !((identifier[0] >= 'A' && identifier[0] <= 'Z') ||
+        (identifier[0] >= 'a' && identifier[0] <= 'z') || identifier[0] == '_'))
+    return 0;
+  for (i = 1; identifier[i] != '\0'; ++i)
+    if (!((identifier[i] >= 'A' && identifier[i] <= 'Z') ||
+          (identifier[i] >= 'a' && identifier[i] <= 'z') ||
+          (identifier[i] >= '0' && identifier[i] <= '9') || identifier[i] == '_'))
+      return 0;
+  for (i = 0; i < sizeof(keywords) / sizeof(keywords[0]); ++i)
+    if (strcmp(identifier, keywords[i]) == 0) return 0;
+  return 1;
 }
 
 typedef enum tbe_compiler_integer_kind {
@@ -387,6 +441,7 @@ static void tbe_compiler_field_type(Node *field,
 
 static void tbe_compiler_annotate_typed_field(Node *root, Node *field) {
   const char *name = tbe_compiler_string_value(field, "name");
+  const char *c_name = tbe_compiler_attribute_value(field, "c");
   const char *owner = tbe_compiler_string_value(field, "owner_name");
   const char *type = tbe_compiler_string_value(field, "type");
   char c_type[256] = {0};
@@ -396,12 +451,14 @@ static void tbe_compiler_annotate_typed_field(Node *root, Node *field) {
   const char *kind = NULL;
 
   if (!name || !owner) return;
+  if (!c_name || !c_name[0]) c_name = name;
+  tbe_compiler_set_string(field, "c_name", c_name);
   if (tbe_compiler_has_child(field, "is_group_field")) {
     const char *group_type = tbe_compiler_string_value(field, "group_type");
     snprintf(c_type, sizeof(c_type), "%s_t", group_type ? group_type : "unknown");
     snprintf(descriptor, sizeof(descriptor), "&%s_TYPED_TYPE", group_type ? group_type : "unknown");
     snprintf(vector_type, sizeof(vector_type), "%s_%s_vec_t", owner, name);
-    snprintf(declaration, sizeof(declaration), "%s %s;", vector_type, name);
+    snprintf(declaration, sizeof(declaration), "%s %s;", vector_type, c_name);
     tbe_compiler_set_string(field, "typed_kind", "TBE_TYPED_LIST");
     tbe_compiler_set_string(field, "typed_element_kind", "TBE_TYPED_OBJECT");
     tbe_compiler_set_string(field, "typed_element_wire_kind", "TBE_TYPED_OBJECT");
@@ -416,11 +473,12 @@ static void tbe_compiler_annotate_typed_field(Node *root, Node *field) {
   if (tbe_compiler_has_child(field, "is_bytes")) {
     if (tbe_compiler_has_child(field, "is_fixed_size")) {
       const char *count = tbe_compiler_string_value(field, "size_bytes");
-      snprintf(declaration, sizeof(declaration), "uint8_t %s[%s];", name, count ? count : "0");
+      snprintf(declaration, sizeof(declaration), "uint8_t %s[%s];", c_name,
+               count ? count : "0");
       tbe_compiler_set_string(field, "typed_kind", "TBE_TYPED_FIXED_BYTES");
       tbe_compiler_set_string(field, "typed_fixed_count", count ? count : "0");
     } else {
-      snprintf(declaration, sizeof(declaration), "tbe_bytes_t %s;", name);
+      snprintf(declaration, sizeof(declaration), "tbe_bytes_t %s;", c_name);
       tbe_compiler_set_string(field, "typed_kind", "TBE_TYPED_BYTES");
       tbe_compiler_set_string(field, "typed_is_var_data", "1");
     }
@@ -432,7 +490,7 @@ static void tbe_compiler_annotate_typed_field(Node *root, Node *field) {
     kind = tbe_compiler_typed_named_kind(root, inner, c_type, sizeof(c_type), descriptor,
                                          sizeof(descriptor));
     if (!kind) {
-      snprintf(declaration, sizeof(declaration), "%s_t %s;", inner ? inner : "unknown", name);
+      snprintf(declaration, sizeof(declaration), "%s_t %s;", inner ? inner : "unknown", c_name);
       tbe_compiler_set_string(field, "typed_declaration", declaration);
       return;
     }
@@ -443,7 +501,8 @@ static void tbe_compiler_annotate_typed_field(Node *root, Node *field) {
     if (descriptor[0]) tbe_compiler_set_string(field, "typed_object_descriptor", descriptor);
     if (tbe_compiler_has_child(field, "is_fixed_size")) {
       const char *count = tbe_compiler_string_value(field, "length_field");
-      snprintf(declaration, sizeof(declaration), "%s %s[%s];", c_type, name, count ? count : "0");
+      snprintf(declaration, sizeof(declaration), "%s %s[%s];", c_type, c_name,
+               count ? count : "0");
       tbe_compiler_set_string(field, "typed_kind", "TBE_TYPED_FIXED_ARRAY");
       tbe_compiler_set_string(field, "typed_fixed_count", count ? count : "0");
     } else if (tbe_compiler_has_child(field, "is_map")) {
@@ -457,13 +516,13 @@ static void tbe_compiler_annotate_typed_field(Node *root, Node *field) {
       char entry_type[256];
       if (!value_kind || !key_type || strcmp(key_type, "string") != 0) {
         snprintf(declaration, sizeof(declaration), "/* unsupported map field %s */ uint8_t %s;",
-                 name, name);
+                 name, c_name);
         tbe_compiler_set_string(field, "typed_declaration", declaration);
         return;
       }
       snprintf(entry_type, sizeof(entry_type), "%s_%s_entry_t", owner, name);
       snprintf(vector_type, sizeof(vector_type), "%s_%s_vec_t", owner, name);
-      snprintf(declaration, sizeof(declaration), "%s %s;", vector_type, name);
+      snprintf(declaration, sizeof(declaration), "%s %s;", vector_type, c_name);
       tbe_compiler_set_string(field, "typed_kind", "TBE_TYPED_MAP");
       tbe_compiler_set_string(field, "typed_map_entry_type", entry_type);
       tbe_compiler_set_string(field, "typed_map_value_kind", value_kind);
@@ -478,7 +537,7 @@ static void tbe_compiler_annotate_typed_field(Node *root, Node *field) {
       tbe_compiler_set_string(field, "typed_needs_map_vector", "1");
     } else {
       snprintf(vector_type, sizeof(vector_type), "%s_%s_vec_t", owner, name);
-      snprintf(declaration, sizeof(declaration), "%s %s;", vector_type, name);
+      snprintf(declaration, sizeof(declaration), "%s %s;", vector_type, c_name);
       tbe_compiler_set_string(field, "typed_kind",
                               tbe_compiler_has_child(field, "is_set") ? "TBE_TYPED_SET"
                                                                       : "TBE_TYPED_LIST");
@@ -489,7 +548,7 @@ static void tbe_compiler_annotate_typed_field(Node *root, Node *field) {
     return;
   }
   if (tbe_compiler_has_child(field, "is_var_data") && type && strcmp(type, "string") == 0) {
-    snprintf(declaration, sizeof(declaration), "tstr_t %s;", name);
+    snprintf(declaration, sizeof(declaration), "tstr_t %s;", c_name);
     tbe_compiler_set_string(field, "typed_kind", "TBE_TYPED_STRING");
     tbe_compiler_set_string(field, "typed_is_var_data", "1");
     tbe_compiler_set_string(field, "typed_declaration", declaration);
@@ -498,11 +557,11 @@ static void tbe_compiler_annotate_typed_field(Node *root, Node *field) {
   kind = tbe_compiler_typed_named_kind(root, type, c_type, sizeof(c_type), descriptor,
                                        sizeof(descriptor));
   if (!kind) {
-    snprintf(declaration, sizeof(declaration), "%s_t %s;", type ? type : "unknown", name);
+    snprintf(declaration, sizeof(declaration), "%s_t %s;", type ? type : "unknown", c_name);
     tbe_compiler_set_string(field, "typed_declaration", declaration);
     return;
   }
-  snprintf(declaration, sizeof(declaration), "%s %s;", c_type, name);
+  snprintf(declaration, sizeof(declaration), "%s %s;", c_type, c_name);
   tbe_compiler_set_string(field, "typed_kind", kind);
   tbe_compiler_set_string(field, "typed_wire_kind",
                           tbe_compiler_typed_wire_kind(root, type, kind));
@@ -697,12 +756,43 @@ static int tbe_compiler_typed_list_supported(Node *root, const char *list_name) 
     if (!fields || fields->type != NODE_LIST) continue;
     for (j = 0; j < fields->data.list.count; ++j) {
       Node *field = fields->data.list.items[j];
+      const char *c_name = tbe_compiler_string_value(field, "c_name");
+      size_t k;
       if (!tbe_compiler_string_value(field, "typed_kind")) {
         fprintf(stderr, "Typed C serde does not support field %s.%s of type %s\n",
                 tbe_compiler_string_value(field, "owner_name"),
                 tbe_compiler_string_value(field, "name"),
                 tbe_compiler_string_value(field, "type"));
         return 0;
+      }
+      if (tbe_compiler_attribute_count(field, "c") > 1u) {
+        fprintf(stderr, "Typed C field %s.%s has multiple c member mappings\n",
+                tbe_compiler_string_value(field, "owner_name"),
+                tbe_compiler_string_value(field, "name"));
+        return 0;
+      }
+      if (!tbe_compiler_c_identifier_valid(c_name)) {
+        fprintf(stderr, "Typed C field %s.%s uses invalid member name %s\n",
+                tbe_compiler_string_value(field, "owner_name"),
+                tbe_compiler_string_value(field, "name"), c_name ? c_name : "(null)");
+        return 0;
+      }
+      if (c_name && strcmp(c_name, "_presence") == 0) {
+        fprintf(stderr, "Typed C field %s.%s uses reserved member name _presence\n",
+                tbe_compiler_string_value(field, "owner_name"),
+                tbe_compiler_string_value(field, "name"));
+        return 0;
+      }
+      for (k = j + 1; k < fields->data.list.count; ++k) {
+        const char *other_c_name =
+            tbe_compiler_string_value(fields->data.list.items[k], "c_name");
+        if (c_name && other_c_name && strcmp(c_name, other_c_name) == 0) {
+          fprintf(stderr, "Typed C fields %s.%s and %s share member name %s\n",
+                  tbe_compiler_string_value(field, "owner_name"),
+                  tbe_compiler_string_value(field, "name"),
+                  tbe_compiler_string_value(fields->data.list.items[k], "name"), c_name);
+          return 0;
+        }
       }
     }
   }
@@ -795,36 +885,6 @@ static const char *tbe_compiler_resolve_resource(const tbe_compiler_options_t *o
     return NULL;
   }
   return path;
-}
-
-static int tbe_compiler_write_file_cb(const void *data, size_t len, void *user) {
-  FILE *out = (FILE *)user;
-  return out && fwrite(data, 1, len, out) == len ? 0 : -1;
-}
-
-static int tbe_compiler_render_mir_file(const char *schema_path, const char *output_path,
-                                        int binary_output) {
-  FILE *out_file = stdout;
-  DataBindError error = DATA_BIND_ERROR_INIT;
-  DataBindStatus status;
-
-  if (output_path) {
-    out_file = fopen(output_path, "wb");
-    if (!out_file) {
-      fprintf(stderr, "Failed to open output file: %s\n", output_path);
-      return 1;
-    }
-  }
-
-  status = data_bind_generate_mir(schema_path, tbe_compiler_write_file_cb, out_file,
-                                  binary_output, &error);
-  if (out_file != stdout) fclose(out_file);
-  if (status != DATA_BIND_OK) {
-    fprintf(stderr, "Failed to generate MIR output: %s\n",
-            error.message[0] != '\0' ? error.message : data_bind_status_name(status));
-    return 1;
-  }
-  return 0;
 }
 
 int tbe_compiler_parse_schema_file(const char *schema_path, Node **out_root,
@@ -989,26 +1049,17 @@ int tbe_compiler_run(const tbe_compiler_options_t *options) {
     }
   }
 
-  if (options->template_path == NULL &&
-      (options->lang_enum == TBE_COMPILER_LANG_MIR ||
-       options->lang_enum == TBE_COMPILER_LANG_BMIR)) {
-    status = tbe_compiler_render_mir_file(
-        options->schema_path, options->output_path,
-        options->lang_enum == TBE_COMPILER_LANG_BMIR);
-  } else {
-    resolved_template = options->template_path;
+  resolved_template = options->template_path;
+  if (resolved_template == NULL) {
+    resolved_template = tbe_compiler_resolve_resource(
+        options, tbe_compiler_resolve_template(NULL, options->lang_enum), template_path,
+        sizeof(template_path));
     if (resolved_template == NULL) {
-      resolved_template = tbe_compiler_resolve_resource(
-          options, tbe_compiler_resolve_template(NULL, options->lang_enum), template_path,
-          sizeof(template_path));
-      if (resolved_template == NULL) {
-        status = 1;
-        goto cleanup;
-      }
+      status = 1;
+      goto cleanup;
     }
-    status = tbe_compiler_render_file(
-        root, resolved_template, options->output_path);
   }
+  status = tbe_compiler_render_file(root, resolved_template, options->output_path);
 
   if (status == 0 && options->source_output_path) {
     resolved_template = tbe_compiler_resolve_resource(

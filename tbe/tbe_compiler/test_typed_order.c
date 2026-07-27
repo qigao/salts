@@ -76,7 +76,7 @@ static void check_order(const Order_t *order) {
   check_not_null(order);
   if (order == NULL) return;
   check_int_eq(order->header.seq, 7);
-  check_int_eq(order->id, 42);
+  check_int_eq(order->order_id, 42);
   check(order->min_value == INT64_MIN);
   check(order->max_value == UINT64_MAX);
   check_int_eq(turbo_uuid_parse(TEST_ORDER_REQUEST_ID, &expected_request_id), TURBO_OK);
@@ -104,7 +104,8 @@ spec("generated typed Order") {
   static DataBind *codec = NULL;
   static DataBindError error = DATA_BIND_ERROR_INIT;
   static Order_t order;
-  const char *json = "{\"header\":{\"seq\":7},\"id\":42,\"request_id\":\"" TEST_ORDER_REQUEST_ID
+  const char *json =
+      "{\"header\":{\"seq\":7},\"legacyId\":42,\"request_id\":\"" TEST_ORDER_REQUEST_ID
                      "\",\"min_value\":-9223372036854775808,"
                      "\"max_value\":18446744073709551615,\"side\":\"Buy\","
                      "\"fills\":[{\"price\":100,\"qty\":3},{\"price\":101,\"qty\":4}],"
@@ -180,7 +181,7 @@ spec("generated typed Order") {
       DataBindStatus status;
       Order_init(&decoded);
       if (strcmp(formats[i], "json") == 0) {
-        status = Order_to_json(&order, &encoded, &encoded_len, &error);
+        status = Order_to_json(codec, &order, &encoded, &encoded_len, &error);
         if (status == DATA_BIND_OK)
           status = Order_from_json(codec, &decoded, encoded, encoded_len, &error);
       } else if (strcmp(formats[i], "yaml") == 0) {
@@ -188,7 +189,7 @@ spec("generated typed Order") {
         if (status == DATA_BIND_OK)
           status = Order_from_yaml(codec, &decoded, encoded, encoded_len, &error);
       } else if (strcmp(formats[i], "csv") == 0) {
-        status = Order_to_csv(&order, &encoded, &encoded_len, &error);
+        status = Order_to_csv(codec, &order, &encoded, &encoded_len, &error);
         if (status == DATA_BIND_OK)
           status = Order_from_csv(codec, &decoded, encoded, encoded_len, 0, &error);
       } else {
@@ -202,6 +203,28 @@ spec("generated typed Order") {
       tbe_typed_serialized_free(encoded);
       Order_clear(&decoded);
     }
+  }
+
+  it("should apply schema names in generated serializers") {
+    char *json_output = NULL;
+    char *yaml_output = NULL;
+    char *csv_output = NULL;
+    char *xml_output = NULL;
+    size_t output_len = 0;
+
+    check_status_ok(Order_to_json(codec, &order, &json_output, &output_len, &error), &error);
+    check_str_contains(json_output, "\"orderId\":42");
+    check_status_ok(Order_to_yaml(codec, &order, &yaml_output, &output_len, &error), &error);
+    check_str_contains(yaml_output, "orderId");
+    check_status_ok(Order_to_csv(codec, &order, &csv_output, &output_len, &error), &error);
+    check_str_contains(csv_output, "orderId");
+    check_status_ok(Order_to_xml(codec, &order, &xml_output, &output_len, &error), &error);
+    check_str_contains(xml_output, "<orderId>42</orderId>");
+
+    tbe_typed_serialized_free(json_output);
+    tbe_typed_serialized_free(yaml_output);
+    tbe_typed_serialized_free(csv_output);
+    tbe_typed_serialized_free(xml_output);
   }
 
   it("should expose a schema-specific host codec for runtime providers") {

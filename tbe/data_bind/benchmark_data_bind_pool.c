@@ -94,7 +94,6 @@ static void data_bind_pool_bench_prepare(void) {
   }
   (void)snprintf(g_pool_bench_json + offset, sizeof(g_pool_bench_json) - offset, "]}");
 
-  data_bind_set_cache_enabled(0);
   for (codec_index = 0; codec_index < DATA_BIND_POOL_BENCH_MAX_THREADS; ++codec_index) {
     check_int_eq(data_bind_create("benchmark_data_bind_pool.tbe",
                                   &g_pool_bench_codecs[codec_index], NULL),

@@ -7,7 +7,7 @@
  * template files (built-in or custom).
  *
  * CLI (via cmd_arger):
- *   tbe_compiler <file> [--template <file>] [--lang c|cpp|go|rust|python|py|ts|mir|bmir]
+ *   tbe_compiler <file> [--template <file>] [--lang c|cpp|go|rust|python|py|ts]
  *              [--output <file>] [--source-output <file>] [--dsl-output <file>]
  */
 
@@ -92,8 +92,6 @@ int main(int argc, char **argv) {
         { "py",     "Python dataclass output",         TBE_COMPILER_LANG_PYTHON },
         { "ts",     "TypeScript type output",          TBE_COMPILER_LANG_TS },
         { "typescript", "TypeScript type output",      TBE_COMPILER_LANG_TS },
-        { "mir",    "MIR textual IR output",           TBE_COMPILER_LANG_MIR },
-        { "bmir",   "MIR binary IR output",            TBE_COMPILER_LANG_BMIR },
     };
     
     turbo_cmd_add_enum(parser, &lang_enum, "lang", "l",

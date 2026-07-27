@@ -65,6 +65,9 @@ static int typed_multiply_fits(size_t count, size_t size, size_t *total) {
   return 1;
 }
 
+static DataBindStatus typed_validate_descriptor_at(const TbeTypedType *type, unsigned depth,
+                                                   DataBindError *error);
+
 static int typed_optional_present(const TbeTypedType *type, const void *object,
                                   const TbeTypedField *field) {
   const uint8_t *presence;
@@ -104,8 +107,11 @@ static DataBindStatus typed_init_value(TbeTypedKind kind, const TbeTypedType *ob
 
 DataBindStatus tbe_typed_init(const TbeTypedType *type, void *object, DataBindError *error) {
   size_t i;
+  DataBindStatus descriptor_status;
   if (type == NULL || object == NULL)
     return typed_error(error, DATA_BIND_ERR_INVALID_ARG, NULL, "Invalid typed object");
+  descriptor_status = typed_validate_descriptor_at(type, 0u, error);
+  if (descriptor_status != DATA_BIND_OK) return descriptor_status;
   memset(object, 0, type->size);
   for (i = 0; i < type->field_count; ++i) {
     const TbeTypedField *field = &type->fields[i];
@@ -151,6 +157,7 @@ static void typed_clear_value(TbeTypedKind kind, const TbeTypedType *object_type
 void tbe_typed_clear(const TbeTypedType *type, void *object) {
   size_t i;
   if (type == NULL || object == NULL) return;
+  if (typed_validate_descriptor_at(type, 0u, NULL) != DATA_BIND_OK) return;
   for (i = 0; i < type->field_count; ++i) {
     const TbeTypedField *field = &type->fields[i];
     void *ptr = (uint8_t *)object + field->offset;
@@ -397,6 +404,11 @@ static DataBindStatus typed_from_value_at(const TbeTypedType *type, const DataBi
 
 DataBindStatus tbe_typed_from_value(const TbeTypedType *type, const DataBindValue *value,
                                     void *object, DataBindError *error) {
+  DataBindStatus status;
+  if (value == NULL || object == NULL)
+    return typed_error(error, DATA_BIND_ERR_INVALID_ARG, NULL, "Invalid typed value");
+  status = typed_validate_descriptor_at(type, 0u, error);
+  if (status != DATA_BIND_OK) return status;
   return typed_from_value_at(type, value, object, "", error);
 }
 
@@ -454,6 +466,7 @@ json_value_t *tbe_typed_to_json(const TbeTypedType *type, const void *object,
     typed_error(error, DATA_BIND_ERR_INVALID_ARG, NULL, "Invalid typed object");
     return NULL;
   }
+  if (typed_validate_descriptor_at(type, 0u, error) != DATA_BIND_OK) return NULL;
   root = turbo_json_create_object();
   if (root == NULL) {
     typed_error(error, DATA_BIND_ERR_OOM, type->name, "Out of memory creating JSON object");
@@ -741,6 +754,10 @@ static DataBindStatus typed_validate_descriptor_at(const TbeTypedType *type, uns
     }
   }
   return DATA_BIND_OK;
+}
+
+DataBindStatus tbe_typed_validate_descriptor(const TbeTypedType *type, DataBindError *error) {
+  return typed_validate_descriptor_at(type, 0u, error);
 }
 
 static DataBindStatus typed_validate_layout_at(const TbeTypedType *type, unsigned depth,
@@ -1140,136 +1157,40 @@ DataBindStatus tbe_typed_parse(DataBind *codec, const char *type_name, const Tbe
   return status;
 }
 
-static int csv_append_escaped(tstr_t *out, const char *text, size_t len) {
-  size_t i;
-  int quote = 0;
-  for (i = 0; i < len; ++i)
-    if (text[i] == ',' || text[i] == '"' || text[i] == '\r' || text[i] == '\n') quote = 1;
-  if (quote) *out = tstr_cat(*out, "\"");
-  for (i = 0; *out != NULL && i < len; ++i) {
-    if (text[i] == '"') *out = tstr_cat(*out, "\"");
-    *out = tstr_cat_len(*out, &text[i], 1);
-  }
-  if (quote && *out != NULL) *out = tstr_cat(*out, "\"");
-  return *out != NULL;
-}
-
-static int csv_flatten(const json_value_t *value, const char *path, tstr_t *headers, tstr_t *values,
-                       int *first) {
-  turbo_json_type_t kind = turbo_json_type(value);
-  size_t i;
-  if (kind == TURBO_JSON_OBJECT) {
-    for (i = 0; i < turbo_json_object_size(value); ++i) {
-      const char *key = turbo_json_object_key(value, i);
-      const json_value_t *child = turbo_json_object_value(value, i);
-      tstr_t child_path = path && path[0] ? tstr_format("{}.{}", path, key) : tstr_dup(key);
-      int ok = child_path != NULL && csv_flatten(child, child_path, headers, values, first);
-      tstr_free(child_path);
-      if (!ok) return 0;
-    }
-    return 1;
-  }
-  if (kind == TURBO_JSON_ARRAY) {
-    for (i = 0; i < turbo_json_array_size(value); ++i) {
-      tstr_t child_path = tstr_format("{}[{}]", path ? path : "", i);
-      int ok = child_path != NULL &&
-               csv_flatten(turbo_json_array_get(value, i), child_path, headers, values, first);
-      tstr_free(child_path);
-      if (!ok) return 0;
-    }
-    return 1;
-  }
-  if (!*first) {
-    *headers = tstr_cat(*headers, ",");
-    *values = tstr_cat(*values, ",");
-  }
-  *first = 0;
-  if (!csv_append_escaped(headers, path ? path : "", path ? strlen(path) : 0)) return 0;
-  if (kind == TURBO_JSON_STRING) {
-    const char *text = turbo_json_string(value);
-    return csv_append_escaped(values, text, turbo_json_string_len(value));
-  }
-  if (kind == TURBO_JSON_BOOL)
-    return csv_append_escaped(values, turbo_json_bool(value) ? "true" : "false",
-                              turbo_json_bool(value) ? 4 : 5);
-  if (kind == TURBO_JSON_NULL) return 1;
-  {
-    const char *exact;
-    size_t exact_len = 0;
-    char number[64];
-    exact = turbo_json_number_text(value, &exact_len);
-    if (exact != NULL) return csv_append_escaped(values, exact, exact_len);
-    int len = snprintf(number, sizeof(number), "%.17g", turbo_json_number(value));
-    return len > 0 && csv_append_escaped(values, number, (size_t)len);
-  }
-}
-
 DataBindStatus tbe_typed_serialize(DataBind *codec, const char *type_name, const TbeTypedType *type,
                                    const void *object, const char *format, char **out,
                                    size_t *out_len, DataBindError *error) {
-  json_value_t *json;
+  json_value_t *json = NULL;
   char *json_text = NULL;
   size_t json_len = 0;
-  DataBindStatus status = DATA_BIND_OK;
+  DataBindObject *bound = NULL;
+  DataBindStatus status;
   if (out != NULL) *out = NULL;
   if (out_len != NULL) *out_len = 0;
-  if (type == NULL || object == NULL || format == NULL || out == NULL)
+  if (codec == NULL || type_name == NULL || type == NULL || object == NULL || format == NULL ||
+      out == NULL)
     return typed_error(error, DATA_BIND_ERR_INVALID_ARG, NULL, "Invalid typed serialize arguments");
+  if (strcmp(format, "json") != 0 && strcmp(format, "yaml") != 0 &&
+      strcmp(format, "csv") != 0 && strcmp(format, "xml") != 0)
+    return typed_error(error, DATA_BIND_ERR_INVALID_ARG, format, "Unknown typed output format");
   json = tbe_typed_to_json(type, object, error);
   if (json == NULL) return error ? error->code : DATA_BIND_ERR_TYPE_MISMATCH;
-  if (strcmp(format, "csv") == 0) {
-    tstr_t headers = tstr_new();
-    tstr_t values = tstr_new();
-    int first = 1;
-    if (headers == NULL || values == NULL || !csv_flatten(json, "", &headers, &values, &first)) {
-      tstr_free(headers);
-      tstr_free(values);
-      turbo_free_json(&json);
-      return typed_error(error, DATA_BIND_ERR_OOM, "csv", "Failed to serialize typed CSV");
-    }
-    headers = tstr_cat(headers, "\n");
-    headers = tstr_cat_str(headers, values);
-    headers = tstr_cat(headers, "\n");
-    tstr_free(values);
-    if (headers == NULL) {
-      turbo_free_json(&json);
-      return typed_error(error, DATA_BIND_ERR_OOM, "csv", "Failed to serialize typed CSV");
-    }
-    *out = tstr_to_cstr(headers);
-    if (out_len != NULL) *out_len = tstr_len(headers);
-    tstr_free(headers);
-    turbo_free_json(&json);
-    return *out != NULL
-               ? DATA_BIND_OK
-               : typed_error(error, DATA_BIND_ERR_OOM, "csv", "Out of memory returning typed CSV");
-  }
   json_text = turbo_json_serialize(json, &json_len);
   turbo_free_json(&json);
   if (json_text == NULL)
-    return typed_error(error, DATA_BIND_ERR_OOM, format, "Failed to serialize typed JSON");
-  if (strcmp(format, "json") == 0) {
-    *out = json_text;
-    if (out_len != NULL) *out_len = json_len;
-    return DATA_BIND_OK;
-  }
-  if (codec == NULL || type_name == NULL) {
-    turbo_json_serialize_free(json_text);
-    return typed_error(error, DATA_BIND_ERR_INVALID_ARG, format,
-                       "A schema codec is required for this format");
-  }
-  {
-    DataBindObject *bound = NULL;
-    status = data_bind_object_from_json(codec, type_name, json_text, json_len, &bound, error);
-    turbo_json_serialize_free(json_text);
-    if (status != DATA_BIND_OK) return status;
-    if (strcmp(format, "yaml") == 0)
-      status = data_bind_object_serialize_yaml(bound, out, out_len, error);
-    else if (strcmp(format, "xml") == 0)
-      status = data_bind_object_serialize_xml(bound, out, out_len, error);
-    else
-      status = typed_error(error, DATA_BIND_ERR_INVALID_ARG, format, "Unknown typed output format");
-    data_bind_object_free(bound);
-  }
+    return typed_error(error, DATA_BIND_ERR_OOM, format, "Failed to serialize typed object");
+  status = data_bind_object_from_json(codec, type_name, json_text, json_len, &bound, error);
+  turbo_json_serialize_free(json_text);
+  if (status != DATA_BIND_OK) return status;
+  if (strcmp(format, "json") == 0)
+    status = data_bind_object_serialize_json(codec, bound, out, out_len, error);
+  else if (strcmp(format, "yaml") == 0)
+    status = data_bind_object_serialize_yaml(codec, bound, out, out_len, error);
+  else if (strcmp(format, "csv") == 0)
+    status = data_bind_object_serialize_csv(codec, bound, out, out_len, error);
+  else if (strcmp(format, "xml") == 0)
+    status = data_bind_object_serialize_xml(codec, bound, out, out_len, error);
+  data_bind_object_free(bound);
   return status;
 }
 

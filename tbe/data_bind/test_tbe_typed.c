@@ -112,6 +112,83 @@ static const TbeTypedType TEST_TEXT_TYPE = {
     .field_count = sizeof(TEST_TEXT_FIELDS) / sizeof(TEST_TEXT_FIELDS[0]),
 };
 
+TURBO_VEC_DEFINE(macro_u32_vec_t, uint32_t)
+
+typedef struct MacroOrder {
+  uint32_t order_id;
+  tstr_t note;
+  macro_u32_vec_t values;
+  uint8_t presence[1];
+} MacroOrder;
+
+TBE_TYPED_DEFINE_STRUCT_WITH_PRESENCE(
+    MACRO_ORDER_BINDING, MacroOrder, "MacroOrder", presence,
+    TBE_TYPED_FIELD(MacroOrder, order_id, "id", TBE_TYPED_U32, TBE_TYPED_REQUIRED),
+    TBE_TYPED_FIELD(MacroOrder, note, "note", TBE_TYPED_STRING, TBE_TYPED_OPTIONAL(0)),
+    TBE_TYPED_LIST_FIELD(MacroOrder, values, "values", TBE_TYPED_U32, uint32_t, NULL,
+                         TBE_TYPED_REQUIRED));
+
+typedef struct InvalidMacroOrder {
+  tstr_t note;
+} InvalidMacroOrder;
+
+TBE_TYPED_DEFINE_STRUCT(
+    INVALID_MACRO_ORDER_BINDING, InvalidMacroOrder, "MacroOrder",
+    TBE_TYPED_FIELD(InvalidMacroOrder, note, "note", TBE_TYPED_STRING,
+                    TBE_TYPED_OPTIONAL(0)));
+
+typedef struct MacroChild {
+  uint16_t code;
+} MacroChild;
+
+TBE_TYPED_DEFINE_STRUCT(
+    MACRO_CHILD_BINDING, MacroChild, "MacroChild",
+    TBE_TYPED_FIELD(MacroChild, code, "code", TBE_TYPED_U16, TBE_TYPED_REQUIRED));
+
+TURBO_VEC_DEFINE(macro_child_vec_t, MacroChild)
+
+typedef struct MacroChildMapEntry {
+  tstr_t key;
+  MacroChild value;
+} MacroChildMapEntry;
+
+TURBO_VEC_DEFINE(macro_child_map_vec_t, MacroChildMapEntry)
+
+typedef struct MacroCollections {
+  MacroChild child;
+  uint16_t fixed_values[2];
+  uint8_t fixed_bytes[4];
+  macro_child_vec_t children;
+  macro_child_vec_t unique_children;
+  macro_child_map_vec_t children_by_name;
+} MacroCollections;
+
+TBE_TYPED_DEFINE_STRUCT(
+    MACRO_COLLECTIONS_BINDING, MacroCollections, "MacroCollections",
+    TBE_TYPED_OBJECT_FIELD(MacroCollections, child, "child", &MACRO_CHILD_BINDING,
+                           TBE_TYPED_REQUIRED),
+    TBE_TYPED_FIXED_ARRAY_FIELD(MacroCollections, fixed_values, "fixed_values", TBE_TYPED_U16,
+                                uint16_t, NULL, TBE_TYPED_REQUIRED),
+    TBE_TYPED_FIXED_BYTES_FIELD(MacroCollections, fixed_bytes, "fixed_bytes",
+                                TBE_TYPED_REQUIRED),
+    TBE_TYPED_LIST_FIELD(MacroCollections, children, "children", TBE_TYPED_OBJECT, MacroChild,
+                         &MACRO_CHILD_BINDING, TBE_TYPED_REQUIRED),
+    TBE_TYPED_SET_FIELD(MacroCollections, unique_children, "unique_children", TBE_TYPED_OBJECT,
+                        MacroChild, &MACRO_CHILD_BINDING, TBE_TYPED_REQUIRED),
+    TBE_TYPED_MAP_FIELD(MacroCollections, children_by_name, "children_by_name",
+                        MacroChildMapEntry, key, value, TBE_TYPED_OBJECT, &MACRO_CHILD_BINDING,
+                        TBE_TYPED_REQUIRED));
+
+typedef struct MacroWire {
+  uint32_t id;
+} MacroWire;
+
+TBE_TYPED_DEFINE_STRUCT_EX(
+    MACRO_WIRE_BINDING, MacroWire, "MacroWire", 4u, 0u, 0u, 0,
+    TBE_TYPED_FIELD_EX(MacroWire, id, "id", TBE_TYPED_U32, TBE_TYPED_U32, TBE_TYPED_BOOL,
+                       TBE_TYPED_BOOL, 0u, 0u, NULL, 0u, 0u, 0u, TBE_TYPED_BOOL,
+                       TBE_TYPED_BOOL, NULL, 0u, 4u, 0u, TBE_TYPED_FIELD_WIRE_OFFSET));
+
 spec("typed DataBind binary") {
   it("round-trips an optional big-endian owning struct directly") {
     static const char schema[] =
@@ -260,5 +337,111 @@ spec("typed DataBind binary") {
                  DATA_BIND_OK);
     check_str_eq(text.text, "abc");
     tbe_typed_clear(&TEST_TEXT_TYPE, &text);
+  }
+
+  it("serializes typed records with schema field mappings") {
+    static const char schema[] =
+        "message Text { [name(displayText), alias(oldText)] string text; }";
+    DataBindError error = DATA_BIND_ERROR_INIT;
+    DataBind *codec = NULL;
+    TestText text;
+    char *json = NULL;
+    size_t json_len = 0;
+
+    check_int_eq(data_bind_create_from_text(schema, sizeof(schema) - 1, &codec, &error),
+                 DATA_BIND_OK);
+    check_int_eq(tbe_typed_init(&TEST_TEXT_TYPE, &text, &error), DATA_BIND_OK);
+    text.text = tstr_dup("mapped");
+    check_not_null(text.text);
+    if (codec != NULL && text.text != NULL) {
+      check_int_eq(tbe_typed_serialize(codec, "Text", &TEST_TEXT_TYPE, &text, "json", &json,
+                                      &json_len, &error),
+                   DATA_BIND_OK);
+      check_str_eq(json, "{\"displayText\":\"mapped\"}");
+      check_size_eq(json_len, strlen(json));
+    }
+    tbe_typed_serialized_free(json);
+    tbe_typed_clear(&TEST_TEXT_TYPE, &text);
+    data_bind_free(codec);
+  }
+
+  it("binds an existing C struct through header-only macros") {
+    static const char schema[] =
+        "message MacroOrder { "
+        "[name(orderId), alias(legacyId)] uint32 id; "
+        "optional string note; "
+        "list<uint32> values; "
+        "}";
+    static const char json[] = "{\"legacyId\":42,\"note\":\"macro\",\"values\":[7,9]}";
+    DataBindError error = DATA_BIND_ERROR_INIT;
+    DataBind *codec = NULL;
+    MacroOrder order;
+    const uint32_t *values;
+    char *mapped = NULL;
+    size_t mapped_len = 0;
+
+    check_int_eq(data_bind_create_from_text(schema, sizeof(schema) - 1, &codec, &error),
+                 DATA_BIND_OK);
+    check_int_eq(TBE_TYPED_BIND_INIT(MACRO_ORDER_BINDING, &order, &error), DATA_BIND_OK);
+    if (codec != NULL) {
+      check_int_eq(TBE_TYPED_BIND_PARSE(codec, MACRO_ORDER_BINDING, "json", json,
+                                        sizeof(json) - 1, 0, &order, &error),
+                   DATA_BIND_OK);
+      check_uint_eq(order.order_id, 42u);
+      check_str_eq(order.note, "macro");
+      check_uint_eq(order.presence[0], 1u);
+      check_size_eq(macro_u32_vec_t_size(&order.values), 2u);
+      values = macro_u32_vec_t_data_const(&order.values);
+      if (macro_u32_vec_t_size(&order.values) == 2u) {
+        check_uint_eq(values[0], 7u);
+        check_uint_eq(values[1], 9u);
+      }
+      check_int_eq(TBE_TYPED_BIND_SERIALIZE(codec, MACRO_ORDER_BINDING, &order, "json", &mapped,
+                                           &mapped_len, &error),
+                   DATA_BIND_OK);
+      check_str_eq(mapped, "{\"orderId\":42,\"note\":\"macro\",\"values\":[7,9]}");
+      check_size_eq(mapped_len, strlen(mapped));
+    }
+    tbe_typed_serialized_free(mapped);
+    TBE_TYPED_BIND_CLEAR(MACRO_ORDER_BINDING, &order);
+    data_bind_free(codec);
+  }
+
+  it("rejects an optional macro field without a presence bitmap") {
+    DataBindError error = DATA_BIND_ERROR_INIT;
+    InvalidMacroOrder order;
+
+    check_int_eq(TBE_TYPED_BIND_INIT(INVALID_MACRO_ORDER_BINDING, &order, &error),
+                 DATA_BIND_ERR_SCHEMA);
+    check_str_contains(error.message, "presence bitmap");
+  }
+
+  it("validates all composite macro field families") {
+    DataBindError error = DATA_BIND_ERROR_INIT;
+    MacroCollections collections;
+
+    check_int_eq(tbe_typed_validate_descriptor(&MACRO_COLLECTIONS_BINDING, &error),
+                 DATA_BIND_OK);
+    check_int_eq(TBE_TYPED_BIND_INIT(MACRO_COLLECTIONS_BINDING, &collections, &error),
+                 DATA_BIND_OK);
+    check_size_eq(macro_child_vec_t_size(&collections.children), 0u);
+    check_size_eq(macro_child_vec_t_size(&collections.unique_children), 0u);
+    check_size_eq(macro_child_map_vec_t_size(&collections.children_by_name), 0u);
+    TBE_TYPED_BIND_CLEAR(MACRO_COLLECTIONS_BINDING, &collections);
+  }
+
+  it("uses explicit macro metadata for direct binary layout") {
+    static const uint8_t expected[] = {0x78, 0x56, 0x34, 0x12};
+    DataBindError error = DATA_BIND_ERROR_INIT;
+    MacroWire wire = {UINT32_C(0x12345678)};
+    uint8_t *encoded = NULL;
+    size_t encoded_len = 0;
+
+    check_int_eq(tbe_typed_serialize_binary(&MACRO_WIRE_BINDING, &wire, &encoded, &encoded_len,
+                                            &error),
+                 DATA_BIND_OK);
+    check_size_eq(encoded_len, sizeof(expected));
+    check_mem_eq(encoded, expected, sizeof(expected));
+    tbe_typed_serialized_free(encoded);
   }
 }
