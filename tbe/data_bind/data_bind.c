@@ -9083,6 +9083,26 @@ DataBindStatus data_bind_value_get_uint64(const DataBindValue *value, uint64_t *
   return DATA_BIND_ERR_TYPE_MISMATCH;
 }
 
+DataBindStatus data_bind_value_has_any_bits(const DataBindValue *value, uint64_t mask, int *out) {
+  uint64_t bits;
+  DataBindStatus status;
+  if (out == NULL || mask == 0) return DATA_BIND_ERR_INVALID_ARG;
+  status = data_bind_value_get_uint64(value, &bits);
+  if (status != DATA_BIND_OK) return status;
+  *out = (bits & mask) != 0;
+  return DATA_BIND_OK;
+}
+
+DataBindStatus data_bind_value_has_all_bits(const DataBindValue *value, uint64_t mask, int *out) {
+  uint64_t bits;
+  DataBindStatus status;
+  if (out == NULL || mask == 0) return DATA_BIND_ERR_INVALID_ARG;
+  status = data_bind_value_get_uint64(value, &bits);
+  if (status != DATA_BIND_OK) return status;
+  *out = (bits & mask) == mask;
+  return DATA_BIND_OK;
+}
+
 DataBindStatus data_bind_value_get_double(const DataBindValue *value, double *out) {
   if (out == NULL) return DATA_BIND_ERR_INVALID_ARG;
   if (value == NULL) return DATA_BIND_ERR_INVALID_ARG;
@@ -9428,4 +9448,4 @@ int data_bind_library_version(void) { return DATA_BIND_VERSION; }
 
 int data_bind_abi_version(void) { return DATA_BIND_ABI_VERSION; }
 
-const char *data_bind_version_string(void) { return "2.0.0"; }
+const char *data_bind_version_string(void) { return "2.1.0"; }

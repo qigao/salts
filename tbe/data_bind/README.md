@@ -212,5 +212,5 @@ if (data_bind_abi_version() != DATA_BIND_ABI_VERSION) {
 }
 ```
 
-DataBind 2.0 的 ABI 版本为 8。详细所有权与生成库边界见
+DataBind 2.1 的 ABI 版本为 8。详细所有权与生成库边界见
 [`RECORD_ABI.md`](RECORD_ABI.md)。

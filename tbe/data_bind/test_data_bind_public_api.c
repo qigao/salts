@@ -78,7 +78,7 @@ spec("data_bind public API") {
   it("should expose version and ABI metadata") {
     check_int_eq(data_bind_library_version(), DATA_BIND_VERSION);
     check_int_eq(data_bind_abi_version(), DATA_BIND_ABI_VERSION);
-    check_str_eq(data_bind_version_string(), "2.0.0");
+    check_str_eq(data_bind_version_string(), "2.1.0");
     check_str_eq(data_bind_status_name(DATA_BIND_ERR_TYPE_MISMATCH), "type_mismatch");
   }
 
@@ -807,6 +807,7 @@ spec("data_bind public API") {
     const DataBindValue *id;
     DataBindTime time = {0};
     uint64_t exact = 0;
+    int has_bits = 0;
     char *serialized = NULL;
 
     snprintf(json, sizeof(json),
@@ -824,6 +825,12 @@ spec("data_bind public API") {
         check(data_bind_value_kind(id) == DATA_BIND_VALUE_UINT64);
         check_int_eq(data_bind_value_get_uint64(id, &exact), DATA_BIND_OK);
         check(exact == UINT64_MAX);
+        check_int_eq(data_bind_value_has_any_bits(id, UINT64_C(1) << 63, &has_bits), DATA_BIND_OK);
+        check_true(has_bits);
+        check_int_eq(data_bind_value_has_all_bits(id, UINT64_C(0x8000000000000001), &has_bits),
+                     DATA_BIND_OK);
+        check_true(has_bits);
+        check_int_eq(data_bind_value_has_all_bits(id, 0, &has_bits), DATA_BIND_ERR_INVALID_ARG);
         check_int_eq(data_bind_value_get_time(
                          data_bind_value_get(data_bind_object_value(object), "at"), &time),
                      DATA_BIND_OK);

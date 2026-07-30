@@ -23,7 +23,7 @@
 #define DATA_BIND_UUID_SIZE TURBO_UUID_SIZE
 
 #define DATA_BIND_VERSION_MAJOR 2
-#define DATA_BIND_VERSION_MINOR 0
+#define DATA_BIND_VERSION_MINOR 1
 #define DATA_BIND_VERSION_PATCH 0
 #define DATA_BIND_VERSION                                                                          \
   (DATA_BIND_VERSION_MAJOR * 10000 + DATA_BIND_VERSION_MINOR * 100 + DATA_BIND_VERSION_PATCH)
@@ -977,6 +977,20 @@ DATA_BIND_API DataBindStatus data_bind_value_get_int32(const DataBindValue *valu
 DATA_BIND_API DataBindStatus data_bind_value_get_int64(const DataBindValue *value, int64_t *out);
 /** Read an exact non-negative integer into @p out, rejecting negative or non-integer values. */
 DATA_BIND_API DataBindStatus data_bind_value_get_uint64(const DataBindValue *value, uint64_t *out);
+/**
+ * Test whether at least one bit from a non-zero mask is set.
+ *
+ * The value must be an exact non-negative integer. `mask == 0` is rejected.
+ */
+DATA_BIND_API DataBindStatus data_bind_value_has_any_bits(const DataBindValue *value, uint64_t mask,
+                                                          int *out);
+/**
+ * Test whether every bit from a non-zero mask is set.
+ *
+ * The value must be an exact non-negative integer. `mask == 0` is rejected.
+ */
+DATA_BIND_API DataBindStatus data_bind_value_has_all_bits(const DataBindValue *value, uint64_t mask,
+                                                          int *out);
 DATA_BIND_API DataBindStatus data_bind_value_get_double(const DataBindValue *value, double *out);
 DATA_BIND_API DataBindStatus data_bind_value_get_bool(const DataBindValue *value, int *out);
 DATA_BIND_API DataBindStatus data_bind_value_get_string(const DataBindValue *value,
