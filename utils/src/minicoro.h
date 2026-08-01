@@ -301,6 +301,8 @@ struct mco_coro {
   size_t bytes_stored;
   size_t storage_size;
   void* asan_prev_stack; /* Used by address sanitizer. */
+  const void* asan_back_stack_base; /* Previous stack bounds used when yielding. */
+  size_t asan_back_stack_size;
   void* tsan_prev_fiber; /* Used by thread sanitizer. */
   void* tsan_fiber; /* Used by thread sanitizer. */
   size_t magic_number; /* Used to check stack overflow. */
@@ -542,6 +544,16 @@ extern "C" {
 #if defined(__SANITIZE_ADDRESS__)
   #define _MCO_USE_ASAN
 #endif
+#ifdef _MCO_USE_ASAN
+  #if defined(_MSC_VER)
+    #include <intrin.h>
+    #define _MCO_NO_ASAN __declspec(no_sanitize_address)
+  #elif defined(__GNUC__) || defined(__clang__)
+    #define _MCO_NO_ASAN __attribute__((no_sanitize_address))
+  #else
+    #define _MCO_NO_ASAN
+  #endif
+#endif
 #if defined(__SANITIZE_THREAD__)
   #define _MCO_USE_TSAN
 #endif
@@ -549,7 +561,7 @@ extern "C" {
 void __sanitizer_start_switch_fiber(void** fake_stack_save, const void *bottom, size_t size);
 void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void **bottom_old, size_t *size_old);
 #endif
-#if defined(_MCO_USE_ASAN) && !(defined(_WIN32) && defined(MCO_USE_FIBERS))
+#if defined(_MCO_USE_ASAN) && (defined(MCO_USE_UCONTEXT) || defined(MCO_USE_ASM))
 #define _MCO_USE_ASAN_PREPARE_SWITCH
 #endif
 #if defined(_MCO_USE_ASAN) && defined(_WIN32) && defined(MCO_USE_FIBERS) && !defined(_MSC_VER)
@@ -572,6 +584,54 @@ static MCO_FORCE_INLINE size_t _mco_align_forward(size_t addr, size_t align) {
 /* Variable holding the current running coroutine per thread. */
 static MCO_THREAD_LOCAL mco_coro* mco_current_co = NULL;
 
+#ifdef _MCO_USE_ASAN
+static _MCO_NO_ASAN MCO_NO_INLINE size_t _mco_current_stack_address(void) {
+#if defined(_MSC_VER)
+  return (size_t)_AddressOfReturnAddress();
+#elif defined(__GNUC__) || defined(__clang__)
+  return (size_t)__builtin_frame_address(0);
+#else
+  volatile size_t marker = 0;
+  return (size_t)&marker;
+#endif
+}
+#endif
+
+#ifdef _MCO_USE_ASAN_PREPARE_SWITCH
+/* The main thread stack has no mco_coro object in which to keep its fake stack. */
+static MCO_THREAD_LOCAL void* mco_asan_thread_fake_stack = NULL;
+
+static MCO_FORCE_INLINE void _mco_asan_start_jumpin(mco_coro* co, mco_coro* prev_co) {
+  void** fake_stack_save = prev_co ? &prev_co->asan_prev_stack : &mco_asan_thread_fake_stack;
+  __sanitizer_start_switch_fiber(fake_stack_save, co->stack_base, co->stack_size);
+}
+
+static MCO_FORCE_INLINE void _mco_asan_finish_jumpin(mco_coro* co) {
+  __sanitizer_finish_switch_fiber(co->asan_prev_stack,
+                                  &co->asan_back_stack_base,
+                                  &co->asan_back_stack_size);
+  co->asan_prev_stack = NULL;
+}
+
+static MCO_FORCE_INLINE void _mco_asan_start_jumpout(mco_coro* co) {
+  void** fake_stack_save = co->state == MCO_DEAD ? NULL : &co->asan_prev_stack;
+  if(fake_stack_save == NULL) {
+    co->asan_prev_stack = NULL;
+  }
+  __sanitizer_start_switch_fiber(fake_stack_save,
+                                 co->asan_back_stack_base,
+                                 co->asan_back_stack_size);
+}
+
+static MCO_FORCE_INLINE void _mco_asan_finish_jumpout(mco_coro* co) {
+  mco_coro* target_co = mco_running();
+  void** target_fake_stack = target_co ? &target_co->asan_prev_stack : &mco_asan_thread_fake_stack;
+  __sanitizer_finish_switch_fiber(*target_fake_stack, NULL, NULL);
+  *target_fake_stack = NULL;
+  _MCO_UNUSED(co);
+}
+#endif
+
 static MCO_FORCE_INLINE void _mco_prepare_jumpin(mco_coro* co) {
   /* Set the old coroutine to normal state and update it. */
   mco_coro* prev_co = mco_running(); /* Must access through `mco_running`. */
@@ -583,13 +643,7 @@ static MCO_FORCE_INLINE void _mco_prepare_jumpin(mco_coro* co) {
   }
   mco_current_co = co;
 #ifdef _MCO_USE_ASAN_PREPARE_SWITCH
-  if(prev_co) {
-    void* bottom_old = NULL;
-    size_t size_old = 0;
-    __sanitizer_finish_switch_fiber(prev_co->asan_prev_stack, (const void**)&bottom_old, &size_old);
-    prev_co->asan_prev_stack = NULL;
-  }
-  __sanitizer_start_switch_fiber(&co->asan_prev_stack, co->stack_base, co->stack_size);
+  _mco_asan_start_jumpin(co, prev_co);
 #endif
 #ifdef _MCO_USE_TSAN
   co->tsan_prev_fiber = __tsan_get_current_fiber();
@@ -608,13 +662,7 @@ static MCO_FORCE_INLINE void _mco_prepare_jumpout(mco_coro* co) {
   }
   mco_current_co = prev_co;
 #ifdef _MCO_USE_ASAN_PREPARE_SWITCH
-  void* bottom_old = NULL;
-  size_t size_old = 0;
-  __sanitizer_finish_switch_fiber(co->asan_prev_stack, (const void**)&bottom_old, &size_old);
-  co->asan_prev_stack = NULL;
-  if(prev_co) {
-    __sanitizer_start_switch_fiber(&prev_co->asan_prev_stack, bottom_old, size_old);
-  }
+  _mco_asan_start_jumpout(co);
 #endif
 #ifdef _MCO_USE_TSAN
   void* tsan_prev_fiber = co->tsan_prev_fiber;
@@ -627,6 +675,9 @@ static void _mco_jumpin(mco_coro* co);
 static void _mco_jumpout(mco_coro* co);
 
 static MCO_NO_INLINE void _mco_main(mco_coro* co) {
+#ifdef _MCO_USE_ASAN_PREPARE_SWITCH
+  _mco_asan_finish_jumpin(co);
+#endif
   co->func(co); /* Run the coroutine function. */
   co->state = MCO_DEAD; /* Coroutine finished successfully, set state to dead. */
   _mco_jumpout(co); /* Jump back to the old context .*/
@@ -1325,12 +1376,18 @@ static void _mco_jumpin(mco_coro* co) {
   _mco_context* context = (_mco_context*)co->context;
   _mco_prepare_jumpin(co);
   _mco_switch(&context->back_ctx, &context->ctx); /* Do the context switch. */
+#ifdef _MCO_USE_ASAN_PREPARE_SWITCH
+  _mco_asan_finish_jumpout(co);
+#endif
 }
 
 static void _mco_jumpout(mco_coro* co) {
   _mco_context* context = (_mco_context*)co->context;
   _mco_prepare_jumpout(co);
   _mco_switch(&context->ctx, &context->back_ctx); /* Do the context switch. */
+#ifdef _MCO_USE_ASAN_PREPARE_SWITCH
+  _mco_asan_finish_jumpin(co);
+#endif
 }
 
 static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
@@ -1874,8 +1931,12 @@ mco_result mco_yield(mco_coro* co) {
   /* Asyncify already checks for stack overflow. */
 #else
   /* This check happens when the stack overflow already happened, but better later than never. */
+#ifdef _MCO_USE_ASAN
+  size_t stack_addr = _mco_current_stack_address();
+#else
   volatile size_t dummy;
   size_t stack_addr = (size_t)&dummy;
+#endif
   size_t stack_min = (size_t)co->stack_base;
   size_t stack_max = stack_min + co->stack_size;
   if(co->magic_number != MCO_MAGIC_NUMBER || stack_addr < stack_min || stack_addr > stack_max) { /* Stack overflow. */

@@ -7,6 +7,28 @@
 #include "turbo_coro.h"
 #include "turbo_coro_pool.h"
 
+#include <stdint.h>
+#include <string.h>
+
+enum {
+    CORO_STACK_WORK_BYTES = 2048,
+    CORO_STACK_WORK_ROUNDS = 4
+};
+
+typedef struct coro_stack_work_state_s {
+    uint32_t checksum;
+    int rounds;
+    int mismatch;
+} coro_stack_work_state_t;
+
+typedef struct coro_nested_stack_state_s {
+    coro_stack_work_state_t child;
+    int parent_resumes;
+    int allocation_failed;
+    int resume_failed;
+    int parent_stack_mismatch;
+} coro_nested_stack_state_t;
+
 static int g_counter = 0;
 static int g_discard_count = 0;
 
@@ -43,6 +65,58 @@ static void sched_fast(coro_t *co, void *arg) {
     UNUSED(co);
     int *counter = (int *)arg;
     (*counter) += 10;
+}
+
+static void stack_work_coro(coro_t *co, void *arg) {
+    coro_stack_work_state_t *state = (coro_stack_work_state_t *)arg;
+    uint8_t source[CORO_STACK_WORK_BYTES];
+    uint8_t copy[CORO_STACK_WORK_BYTES];
+    UNUSED(co);
+
+    for (int round = 0; round < CORO_STACK_WORK_ROUNDS; ++round) {
+        uint8_t value = (uint8_t)(0x31 + round);
+        memset(source, value, sizeof(source));
+        memcpy(copy, source, sizeof(copy));
+        if (memcmp(copy, source, sizeof(copy)) != 0) {
+            state->mismatch = 1;
+        }
+        for (size_t i = 0; i < sizeof(copy); ++i) {
+            state->checksum += copy[i];
+        }
+        state->rounds++;
+        coro_yield();
+    }
+}
+
+static void nested_stack_work_coro(coro_t *co, void *arg) {
+    coro_nested_stack_state_t *state = (coro_nested_stack_state_t *)arg;
+    uint8_t parent_stack[CORO_STACK_WORK_BYTES];
+    coro_t *child = NULL;
+    UNUSED(co);
+
+    memset(parent_stack, 0x5a, sizeof(parent_stack));
+    child = coro_create(stack_work_coro, &state->child, NULL);
+    if (!child) {
+        state->allocation_failed = 1;
+        return;
+    }
+
+    while (coro_alive(child)) {
+        if (coro_resume(child) != 0) {
+            state->resume_failed = 1;
+            break;
+        }
+        for (size_t i = 0; i < sizeof(parent_stack); ++i) {
+            if (parent_stack[i] != 0x5a) {
+                state->parent_stack_mismatch = 1;
+                break;
+            }
+        }
+        state->parent_resumes++;
+        coro_yield();
+    }
+
+    coro_destroy(child);
 }
 
 static void discard_callback(coro_t *co, void *arg) {
@@ -86,6 +160,43 @@ spec("Turbo Coro Primitive") {
         check_int_eq(output, 42);
 
         coro_destroy(co);
+    }
+
+    it("keeps stack memory valid across repeated context switches") {
+        coro_stack_work_state_t state = {0};
+        uint32_t expected = 0;
+        coro_t *co = coro_create(stack_work_coro, &state, NULL);
+
+        check_not_null(co);
+        while (coro_alive(co)) {
+            check_int_eq(coro_resume(co), 0);
+        }
+        for (int round = 0; round < CORO_STACK_WORK_ROUNDS; ++round) {
+            expected += (uint32_t)(0x31 + round) * CORO_STACK_WORK_BYTES;
+        }
+        check_int_eq(state.rounds, CORO_STACK_WORK_ROUNDS);
+        check_int_eq(state.mismatch, 0);
+        check_uint_eq(state.checksum, expected);
+
+        coro_destroy(co);
+    }
+
+    it("keeps parent and child stacks valid across nested context switches") {
+        coro_nested_stack_state_t state = {0};
+        coro_t *parent = coro_create(nested_stack_work_coro, &state, NULL);
+
+        check_not_null(parent);
+        while (coro_alive(parent)) {
+            check_int_eq(coro_resume(parent), 0);
+        }
+        check_int_eq(state.allocation_failed, 0);
+        check_int_eq(state.resume_failed, 0);
+        check_int_eq(state.parent_stack_mismatch, 0);
+        check_int_eq(state.parent_resumes, CORO_STACK_WORK_ROUNDS + 1);
+        check_int_eq(state.child.rounds, CORO_STACK_WORK_ROUNDS);
+        check_int_eq(state.child.mismatch, 0);
+
+        coro_destroy(parent);
     }
 
     it("stores user data") {
