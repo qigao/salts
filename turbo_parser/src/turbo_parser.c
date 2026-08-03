@@ -14,6 +14,7 @@
 #include "cyaml_json_adapter.h"
 #include "datetime_parser.h"
 #include "dotenv.h"
+#include "dotenv_environment_internal.h"
 #include "dsv_filter.h"
 #include "frame_parser.h" // for TLV
 #include "ini_parser.h"
@@ -2380,6 +2381,25 @@ struct turbo_cmd_parser_s {
   uint32_t subcommand_capacity;
 };
 
+static void turbo_cmd_sync_environment(turbo_cmd_parser_t *parser) {
+#if defined(_WIN32)
+  if (!parser) return;
+  for (uint32_t index = 0; index < parser->optional_count; ++index) {
+    if (parser->optional_args[index].env_var)
+      (void)dotenv_environment_sync_crt(parser->optional_args[index].env_var);
+  }
+  for (uint32_t sub_index = 0; sub_index < parser->subcommand_count; ++sub_index) {
+    turbo_cmd_subcommand_t *subcommand = &parser->subcommands[sub_index];
+    for (uint32_t index = 0; index < subcommand->optional_count; ++index) {
+      if (subcommand->optional_args[index].env_var)
+        (void)dotenv_environment_sync_crt(subcommand->optional_args[index].env_var);
+    }
+  }
+#else
+  (void)parser;
+#endif
+}
+
 turbo_cmd_parser_t *turbo_cmd_create(const char *app_name, const char *version) {
   turbo_cmd_parser_t *parser = (turbo_cmd_parser_t *)calloc(1, sizeof(turbo_cmd_parser_t));
   if (!parser) return NULL;
@@ -2693,6 +2713,8 @@ int turbo_toon_to_json_doc(const turbo_toon_node_t *toon,
 void turbo_cmd_parse(turbo_cmd_parser_t *parser, int argc, char **argv, bool colors) {
   if (!parser) return;
 
+  turbo_cmd_sync_environment(parser);
+
   char app_ver[256];
   if (parser->app_name && parser->version) {
     fmt(app_ver, sizeof(app_ver), "{} {}", parser->app_name, parser->version);
@@ -2708,6 +2730,8 @@ void turbo_cmd_parse(turbo_cmd_parser_t *parser, int argc, char **argv, bool col
 
 int turbo_cmd_parse_subcommand(turbo_cmd_parser_t *parser, int argc, char **argv, bool colors) {
   if (!parser || parser->subcommand_count == 0) return -1;
+
+  turbo_cmd_sync_environment(parser);
 
   char app_ver[256];
   if (parser->app_name && parser->version) {

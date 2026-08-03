@@ -11,6 +11,7 @@ cmake_add_grammar(DOTENV
 
 add_library(${TARGET_NAME} STATIC
     ${DOTENV_LEXER_GEN}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/dotenv_environment.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/dotenv.c
 )
 add_dependencies(${TARGET_NAME} ${DOTENV_LEXER_TARGET})

@@ -4,6 +4,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
+static int test_process_environment_set(const char *name, const char *value) {
+#if defined(_WIN32)
+  return SetEnvironmentVariableA(name, value) ? 0 : -1;
+#else
+  return value ? setenv(name, value, 1) : unsetenv(name);
+#endif
+}
+
 typedef struct yaml_sax_counts {
   int documents;
   int mappings;
@@ -720,6 +735,32 @@ spec("turbo_parser") {
       check_str_eq(val, "success");
 
       remove(env_file);
+    }
+
+    it("should preserve process environment across the parser DLL boundary") {
+      static const char name[] = "TURBO_PARSER_PROCESS_ENV_TEST";
+      static const char content[] = "TURBO_PARSER_PROCESS_ENV_TEST=dotenv-value\n";
+      turbo_cmd_parser_t *parser = NULL;
+      char *resolved = NULL;
+      char *path = tt_make_temp_file("turbo-parser-process-env", ".env");
+      char *argv[] = {"turbo-parser-test"};
+
+      check_not_null(path);
+      check_int_eq(tt_write_file(path, content, sizeof(content) - 1u), 0);
+      check_int_eq(test_process_environment_set(name, "process-value"), 0);
+      check_int_eq(turbo_dotenv_load(path, false), 0);
+
+      parser = turbo_cmd_create("turbo-parser-test", "1.0");
+      check_not_null(parser);
+      turbo_cmd_add_string(parser, &resolved, "value", NULL, "Environment-backed value");
+      turbo_cmd_set_env(parser, turbo_cmd_last_index(parser), name);
+      turbo_cmd_parse(parser, 1, argv, false);
+      check_str_eq(resolved, "process-value");
+
+      turbo_cmd_destroy(parser);
+      check_int_eq(test_process_environment_set(name, NULL), 0);
+      check_int_eq(tt_remove_file(path), 0);
+      free(path);
     }
   }
 

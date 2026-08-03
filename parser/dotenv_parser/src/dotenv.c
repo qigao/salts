@@ -1,4 +1,5 @@
 #include "dotenv.h"
+#include "dotenv_environment_internal.h"
 #include "dotenv_lexer.h"
 #include "turbo_str.h"
 #include <fmt.h>
@@ -6,27 +7,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
-
-#if defined(_WIN32)
-#if defined(_MSC_VER)
-#ifndef strdup
-#define strdup _strdup
-#endif
-#endif
-
-static int setenv(const char *name, const char *value, int overwrite)
-{
-    int errcode = 0;
-    if (!overwrite)
-    {
-        size_t envsize = 0;
-        errcode = getenv_s(&envsize, NULL, 0, name);
-        if (errcode || envsize)
-            return errcode;
-    }
-    return _putenv_s(name, value);
-}
-#endif
 
 static tstr_t concat(tstr_t buffer, const char *string)
 {
@@ -63,10 +43,11 @@ static tstr_t resolve_nested(const char *value)
         tstr_t name = tstr_dup_len(start + 2, name_len);
         if (!name) break;
 
-        const char *env_val = getenv(name);
-        if (env_val) {
+        char *env_val = NULL;
+        if (dotenv_environment_get_copy(name, &env_val) > 0) {
             result = concat(result, env_val);
         }
+        free(env_val);
         tstr_free(name);
         ptr = end + 1;
     }
@@ -133,7 +114,7 @@ int dotenv_load(const char *path, bool overwrite)
                 }
 
                 tstr_t final_val = resolve_nested(raw_val);
-                setenv(current_key, final_val, overwrite ? 1 : 0);
+                dotenv_environment_set(current_key, final_val, overwrite ? 1 : 0);
 
                 tstr_free(raw_val);
                 tstr_free(final_val);
