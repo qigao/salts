@@ -1,5 +1,5 @@
-#ifndef SCHEMA_GENERATED_H
-#define SCHEMA_GENERATED_H
+#ifndef {{schema.schema_name}}_GENERATED_H
+#define {{schema.schema_name}}_GENERATED_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -167,9 +167,6 @@ TBE_GENERATED_API DataBindStatus {{schema.schema_name}}_codec_create(DataBind **
 TBE_GENERATED_API const char *{{schema.schema_name}}_schema_text(void);
 TBE_GENERATED_API const tbe_schema_codec_v1_t *{{schema.schema_name}}_schema_codec(void);
 {{/typed_source_enabled}}
-{{#schema.has_schema_version}}
-#define {{schema.schema_name}}_SCHEMA_VERSION {{schema.schema_version}}
-{{/schema.has_schema_version}}
 
 /* ========================================================================= */
 /* Enums                                                                     */
@@ -252,7 +249,7 @@ static inline {{enum_name}}_t {{enum_name}}_max(void) {
  * @brief Flags {{enum_name}}
  * Attributes: {{#attributes}}[ {{name}}: {{value}} ] {{/attributes}}
  */
-typedef {{#underlying_type}}{{underlying_type}}{{/underlying_type}}{{^underlying_type}}uint32_t{{/underlying_type}} {{enum_name}}_t;
+typedef {{#c_underlying_type}}{{c_underlying_type}}{{/c_underlying_type}}{{^c_underlying_type}}uint32_t{{/c_underlying_type}} {{enum_name}}_t;
 
 enum {
 {{#items}}
@@ -2085,4 +2082,4 @@ using {{name}}Owner = Owner<{{name}}_t, {{name}}_init, {{name}}_clear, {{name}}_
 #undef TBE_GENERATED_STRCMP
 #undef TBE_GENERATED_STRLEN
 
-#endif /* SCHEMA_GENERATED_H */
+#endif /* {{schema.schema_name}}_GENERATED_H */
