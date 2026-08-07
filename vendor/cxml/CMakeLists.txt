@@ -120,7 +120,10 @@ endif()
 if(MSVC)
   list(APPEND CXML_WARN_FLAGS "/W4")
 else()
-  list(APPEND CXML_WARN_FLAGS "-Wall" "-Wextra" "-pedantic" "-Werror")
+  # Local patch: drop -Werror. Clang 21 enables several new warnings
+  # (strict-prototypes, uninitialized-const-pointer, ...) that the vendored
+  # C code trips; warnings stay visible but no longer break the build.
+  list(APPEND CXML_WARN_FLAGS "-Wall" "-Wextra" "-pedantic")
 endif()
 
 include(CheckLibraryExists)

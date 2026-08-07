@@ -1514,7 +1514,7 @@ static void _partition_nodeset(cxml_list* nodelist, cxml_list* gather){
      * has 2 properties: size & position.
      */
     cxml_grp_table table = new_cxml_grp_table();
-    struct _cx_obj_node obj;
+    struct _cx_obj_node obj = {0};
     cxml_for_each(node, nodelist)
     {
         if (_cxml_node_type(node) != CXML_ROOT_NODE){

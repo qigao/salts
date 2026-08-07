@@ -32,6 +32,24 @@
                 "dev-linux-ninja",
                 "pkg-vcpkg"
             ]
+        },
+        {
+            "name": "base-win-dev-clang-user",
+            "hidden": true,
+            "displayName": "Developer Build (Windows, Clang, Base)",
+            "inherits": [
+                "dev-win-clang-ninja",
+                "pkg-vcpkg"
+            ]
+        },
+        {
+            "name": "base-win-release-clang-user",
+            "hidden": true,
+            "displayName": "Release Build (Windows, Clang, Base)",
+            "inherits": [
+                "release-win-clang-ninja",
+                "pkg-vcpkg"
+            ]
         }
     ]
 }

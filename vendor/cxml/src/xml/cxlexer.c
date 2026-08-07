@@ -960,6 +960,7 @@ static _cxml_token lex_dtd(_cxml_lexer *lexer){
     }else{
         // first 20 chars
         _err(lexer, "Invalid DTD NAME");
+        abort();
     }
 }
 

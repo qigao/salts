@@ -8,7 +8,7 @@
     "configurePresets": [
         {
             "name": "Msvc",
-            "hidden": true, 
+            "hidden": true,
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "$env{MSVC_ROOT}/bin/Hostx64/x64/cl.exe",
                 "CMAKE_CXX_COMPILER": "$env{MSVC_ROOT}/bin/Hostx64/x64/cl.exe",

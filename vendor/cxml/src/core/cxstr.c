@@ -56,7 +56,21 @@ cxml_string new_cxml_string_s(const char* raw){
 // mutating function.
 // mutates the original cxml_string object str
 void cxml_string_append(cxml_string *str, const char *raw, unsigned int len) {
-    if (!str || !raw || !len) return;
+    if (!str || !raw) return;
+    if (!len) {
+        // a live string must own a NUL-terminated buffer so
+        // cxml_string_as_raw() never returns NULL for an empty value
+        if (!str->_cap) {
+            str->_cap = GROW_CXSTR_CAP(0u, 1u);
+            str->_raw_chars = RALLOC(char, str->_raw_chars, str->_cap);
+            if (!str->_raw_chars) {
+                str->_cap = 0;
+                return;
+            }
+            str->_raw_chars[0] = '\0';
+        }
+        return;
+    }
     if ((str->_len + len + 1) >= str->_cap) {
         str->_cap = GROW_CXSTR_CAP((str->_cap + 1), (len));
         str->_raw_chars = RALLOC(char, str->_raw_chars, str->_cap);

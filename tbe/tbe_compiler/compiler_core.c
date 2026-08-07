@@ -632,6 +632,16 @@ static void tbe_compiler_annotate_record_list_types(Node *root, const char *list
   }
 }
 
+static const char *tbe_compiler_c_enum_underlying_type(const char *type, int is_flags) {
+  const tbe_compiler_integer_type_t *integer_type;
+  const char *fallback = is_flags ? "uint32_t" : "int32_t";
+
+  if (!type || !type[0]) return fallback;
+  integer_type = tbe_compiler_integer_type(type);
+  if (integer_type) return integer_type->c_type;
+  return fallback;
+}
+
 static void tbe_compiler_annotate_enum_types(Node *root) {
   Node *enums = tbe_compiler_find_child(root, "enums");
   if (!enums || enums->type != NODE_LIST) return;
@@ -639,11 +649,14 @@ static void tbe_compiler_annotate_enum_types(Node *root) {
   for (size_t i = 0; i < enums->data.list.count; ++i) {
     Node *enum_node = enums->data.list.items[i];
     const char *underlying = tbe_compiler_string_value(enum_node, "underlying_type");
+    const int is_flags = tbe_compiler_has_child(enum_node, "is_flags");
 
     tbe_compiler_set_string(enum_node, "cpp_underlying_type",
                             tbe_compiler_cpp_enum_underlying_type(underlying));
     tbe_compiler_set_string(enum_node, "rust_underlying_type",
                             tbe_compiler_rust_enum_underlying_type(underlying));
+    tbe_compiler_set_string(enum_node, "c_underlying_type",
+                            tbe_compiler_c_enum_underlying_type(underlying, is_flags));
   }
 }
 

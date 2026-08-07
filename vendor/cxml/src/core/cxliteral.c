@@ -121,6 +121,7 @@ Digit       :=  [0-9]
  */
 
 int _cxml_is_integer(const char* current, int len){
+    if (!current || len <= 0) return 0;
     const char* end = current + len - 1;
     _cxml_clean_string(&current, &end);
     if (*current == '+' || *current == '-') current++;
@@ -149,6 +150,7 @@ Digit           :=  [0-9]
  */
 
 int _cxml_is_double(const char *current, int _len) {
+    if (!current || _len <= 0) return 0;
     const char* end = current + _len - 1;
     _cxml_clean_string(&current, &end);
     unsigned int digit_count = 0, sign_count = 0;

@@ -794,6 +794,12 @@ static void annotate_enum_helpers(Node *root) {
         snprintf(count_str, sizeof(count_str), "%zu", items->data.list.count);
         map_add(enum_node, create_node_string("items_count", count_str));
 
+        // 标记最后一个枚举项，模板据此省略末尾逗号
+        if (items->data.list.count > 0) {
+            Node *last_item = items->data.list.items[items->data.list.count - 1];
+            map_add(last_item, create_node_string("last", "1"));
+        }
+
         // 找出最小值和最大值
         int min_val = INT_MAX;
         int max_val = INT_MIN;

@@ -1362,6 +1362,9 @@ const char *turbo_xml_get_text(const turbo_xml_doc_t *doc, const char *xpath) {
         text = cxml_string_as_raw(&txt->value);
       }
     }
+    /* an existing element without text binds as an empty string so
+       round-trips of empty fields (e.g. error_code="") parse back */
+    if (!text) text = "";
     break;
   }
   case CXML_TEXT_NODE: {

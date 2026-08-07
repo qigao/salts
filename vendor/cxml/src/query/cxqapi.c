@@ -536,6 +536,9 @@ inline static cxml_literal_t _get_literal_type(cxml_string *v){
     int ret;
     char *raw = cxml_string_as_raw(v);
     int len = _cxml_int_cast cxml_string_len(v);
+    if (!raw || len <= 0) {
+        return CXML_STRING_LITERAL;
+    }
     if ((ret = _cxml_is_integer(raw, len))){
         return ret == 1 ? CXML_INTEGER_LITERAL : CXML_XINTEGER_LITERAL;
     }else if (_cxml_is_double(raw, len)){

@@ -788,7 +788,8 @@ spec("tbe_compiler") {
       check_not_null(output);
       check_str_contains(output, "Color_Red = 0,");
       check_str_contains(output, "Color_Green = 5,");
-      check_str_contains(output, "Color_Blue = 6,");
+      check_str_contains(output, "Color_Blue = 6");
+      check(strstr(output, "Color_Blue = 6,") == NULL);
       check_str_contains(output, "bytes payload;");
       check_str_contains(output, "uint8_t digest[16];");
       check_str_contains(output, "typedef struct Blob_builder_s {");
@@ -816,6 +817,34 @@ spec("tbe_compiler") {
       check_str_contains(output, "const turbo_uuid_t *value");
       check_str_contains(output, "static inline bool Event_request_id_get(");
       check_str_contains(output, "turbo_uuid_t *value");
+
+      free(output);
+    }
+
+    it("should emit valid C underlying types for flags and no trailing enum commas") {
+      const char *schema = "schema GuardTest [id(1), version(1)]; "
+                           "enum Side <uint8> { Buy = 1; Sell = 2; } "
+                           "flags Perms <uint16> { Read = 1; Write = 2; Execute = 4; }";
+      const char *guard_end = "#endif /* GuardTest_GENERATED_H */";
+      char *output = render_c_template(schema);
+      size_t output_len = output ? strlen(output) : 0;
+      size_t guard_end_len = strlen(guard_end);
+
+      while (output_len > 0 && (output[output_len - 1] == '\r' || output[output_len - 1] == '\n'))
+        --output_len;
+
+      check_not_null(output);
+      check_str_contains(output, "#ifndef GuardTest_GENERATED_H");
+      check_str_contains(output, "#define GuardTest_GENERATED_H");
+      check_size_ge(output_len, guard_end_len);
+      if (output_len >= guard_end_len)
+        check_mem_eq(output + output_len - guard_end_len, guard_end, guard_end_len);
+      check_str_contains(output, "typedef uint16_t Perms_t;");
+      check(strstr(output, "typedef uint16 Perms_t;") == NULL);
+      check(strstr(output, "Side_Sell = 2,") == NULL);
+      check(strstr(output, "Perms_Execute = 4,") == NULL);
+      check_str_contains(output, "static inline bool Perms_has(");
+      check_str_contains(output, "static inline bool Side_is_valid(");
 
       free(output);
     }
