@@ -8,6 +8,22 @@ typedef struct {
     char last_row_text[256];
 } run_ctx_t;
 
+typedef struct {
+    size_t count;
+    int64_t sum;
+} scan_ctx_t;
+
+static int on_scan_match(void *user_data, size_t row_index,
+                         const csv_scan_value_t *values, size_t value_count) {
+    scan_ctx_t *ctx = (scan_ctx_t *)user_data;
+    (void)row_index;
+    if (!ctx || !values || value_count != 1 || values[0].type != CSV_SCAN_VALUE_INT64)
+        return -1;
+    ctx->count++;
+    ctx->sum += values[0].value.integer;
+    return 0;
+}
+
 static void on_row(void *user_data, size_t row_index, const char *rendered_row) {
     run_ctx_t *ctx = (run_ctx_t *)user_data;
     ctx->count++;
@@ -87,6 +103,38 @@ spec("dsv_filter") {
             check_int_eq(dsv_filter_check_values(f, row2, 3), 1);
 
             dsv_filter_destroy(f);
+            csv_free(doc);
+        }
+
+        it("should scan raw CSV through a compiled simple filter") {
+            const char *header = "age_n,country_s,score_n\n";
+            const char *csv = "age_n,country_s,score_n\n"
+                              "21,CN,91\n"
+                              "22,US,99\n"
+                              "23,CN,90\n"
+                              "24,CN,92\n";
+            const csv_scan_projection_t projection = {
+                .column = 0,
+                .type = CSV_SCAN_VALUE_INT64,
+            };
+            csv_options_t opts = CSV_OPTIONS_DEFAULT;
+            scan_ctx_t ctx = {0};
+            size_t matches = 0;
+            csv_doc_t *doc = csv_parse(header, strlen(header));
+            dsv_filter_t *filter;
+
+            check_not_null(doc);
+            filter = dsv_filter_create(doc, 0);
+            check_not_null(filter);
+            check(dsv_filter_compile(filter, "score > 90 and country == \"CN\""));
+            opts.has_header = true;
+            check_int_eq(dsv_filter_scan(filter, csv, strlen(csv), &opts, &projection, 1,
+                                         on_scan_match, &ctx, &matches), 0);
+            check_size_eq(matches, 2);
+            check_size_eq(ctx.count, 2);
+            check_int_eq(ctx.sum, 45);
+
+            dsv_filter_destroy(filter);
             csv_free(doc);
         }
 
@@ -312,6 +360,27 @@ spec("dsv_filter") {
     }
 
     describe("Error Handling") {
+
+        it("should reject OR expressions in direct scan mode") {
+            const char *header = "score_n,country_s\n";
+            const char *csv = "91,CN\n99,US\n";
+            size_t matches = 0;
+            csv_doc_t *doc = csv_parse(header, strlen(header));
+            dsv_filter_t *filter;
+
+            check_not_null(doc);
+            filter = dsv_filter_create(doc, 0);
+            check_not_null(filter);
+            check(dsv_filter_compile(filter, "score > 90 or country == \"CN\""));
+            check_int_eq(dsv_filter_scan(filter, csv, strlen(csv), NULL, NULL, 0,
+                                         NULL, NULL, &matches), -1);
+            check_str_contains(dsv_filter_error(filter), "simple predicates");
+            check_size_eq(matches, 0);
+
+            dsv_filter_destroy(filter);
+            csv_free(doc);
+        }
+
         it("should return -1 when row check is called before compile") {
             const char *csv = "x_n\n1\n";
             csv_doc_t *doc = csv_parse(csv, strlen(csv));

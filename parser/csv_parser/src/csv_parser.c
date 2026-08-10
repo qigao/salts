@@ -186,6 +186,138 @@ static csv_row_node_t *get_row_at(const csv_doc_t *doc, size_t row_idx) {
     return entry ? (csv_row_node_t *)*entry : NULL;
 }
 
+struct csv_cursor_s {
+    const csv_doc_t *doc;
+    turbo_vec_t fields;
+    csv_row_node_t *current_row_node;
+    csv_field_node_t *current_fields;
+    size_t current_field_count;
+    size_t next_row;
+    size_t current_row;
+    int fields_valid;
+    int error;
+};
+
+csv_cursor_t *csv_cursor_new(const csv_doc_t *doc, size_t first_row) {
+    csv_cursor_t *cursor;
+    if (!doc || first_row > doc->row_count) return NULL;
+    cursor = (csv_cursor_t *)calloc(1, sizeof(*cursor));
+    if (!cursor) return NULL;
+    if (turbo_vec_init(&cursor->fields, sizeof(tstr_v)) != TURBO_OK) {
+        free(cursor);
+        return NULL;
+    }
+    cursor->doc = doc;
+    cursor->next_row = first_row;
+    cursor->current_row = (size_t)-1;
+    cursor->current_row_node = NULL;
+    return cursor;
+}
+
+void csv_cursor_free(csv_cursor_t *cursor) {
+    if (!cursor) return;
+    turbo_vec_destroy(&cursor->fields);
+    free(cursor);
+}
+
+int csv_cursor_rewind(csv_cursor_t *cursor, size_t first_row) {
+    if (!cursor || !cursor->doc || first_row > cursor->doc->row_count) return -1;
+    cursor->next_row = first_row;
+    cursor->current_row = (size_t)-1;
+    cursor->current_row_node = NULL;
+    cursor->current_fields = NULL;
+    cursor->current_field_count = 0;
+    cursor->fields_valid = 0;
+    cursor->error = 0;
+    turbo_vec_clear(&cursor->fields);
+    return 0;
+}
+
+int csv_cursor_next(csv_cursor_t *cursor) {
+    csv_row_node_t *row;
+    csv_field_node_t *field;
+    if (!cursor || cursor->error) return -1;
+    if (cursor->next_row >= cursor->doc->row_count) {
+        cursor->current_row = (size_t)-1;
+        cursor->current_row_node = NULL;
+        cursor->current_fields = NULL;
+        cursor->current_field_count = 0;
+        cursor->fields_valid = 0;
+        turbo_vec_clear(&cursor->fields);
+        return 0;
+    }
+
+    row = cursor->current_row_node ? cursor->current_row_node->next
+                                   : get_row_at(cursor->doc, cursor->next_row);
+    if (!row) {
+        cursor->error = 1;
+        return -1;
+    }
+    field = row->fields;
+    cursor->current_row = cursor->next_row++;
+    cursor->current_row_node = row;
+    cursor->current_fields = field;
+    cursor->current_field_count = row->field_count;
+    cursor->fields_valid = 0;
+    turbo_vec_clear(&cursor->fields);
+    return 1;
+}
+
+int csv_cursor_error(const csv_cursor_t *cursor) {
+    return cursor ? cursor->error : 1;
+}
+
+size_t csv_cursor_row_index(const csv_cursor_t *cursor) {
+    return cursor ? cursor->current_row : (size_t)-1;
+}
+
+const tstr_v *csv_cursor_fields(const csv_cursor_t *cursor, size_t *field_count) {
+    csv_cursor_t *mutable_cursor = (csv_cursor_t *)cursor;
+    csv_field_node_t *field;
+    tstr_v *views;
+    size_t index;
+    if (!cursor || cursor->error || cursor->current_row == (size_t)-1) {
+        if (field_count) *field_count = 0;
+        return NULL;
+    }
+    if (!cursor->fields_valid) {
+        if (turbo_vec_resize(&mutable_cursor->fields, cursor->current_field_count) != TURBO_OK) {
+            mutable_cursor->error = 1;
+            if (field_count) *field_count = 0;
+            return NULL;
+        }
+        views = (tstr_v *)turbo_vec_data(&mutable_cursor->fields);
+        field = cursor->current_fields;
+        for (index = 0; index < turbo_vec_size(&cursor->fields); ++index) {
+            if (!field) {
+                mutable_cursor->error = 1;
+                turbo_vec_clear(&mutable_cursor->fields);
+                if (field_count) *field_count = 0;
+                return NULL;
+            }
+            views[index] = tstr_v_from_buf(field->value, field->length);
+            field = field->next;
+        }
+        mutable_cursor->fields_valid = 1;
+    }
+    if (field_count) *field_count = turbo_vec_size(&cursor->fields);
+    if (turbo_vec_empty(&cursor->fields)) return NULL;
+    return (const tstr_v *)turbo_vec_data_const(&cursor->fields);
+}
+
+tstr_v csv_cursor_field_v(const csv_cursor_t *cursor, size_t col) {
+    csv_field_node_t *field;
+    if (!cursor || cursor->error || cursor->current_row == (size_t)-1) {
+        return tstr_v_from_buf(NULL, 0);
+    }
+    field = cursor->current_fields;
+    while (field && col > 0) {
+        field = field->next;
+        --col;
+    }
+    return field ? tstr_v_from_buf(field->value, field->length) : tstr_v_from_buf(NULL, 0);
+}
+
 /* ============================================================================
  * Parser Core - Direct lexer-based parsing (no lemon needed for simple CSV)
  * ============================================================================ */
@@ -1006,6 +1138,372 @@ int csv_parse_stream_opts(const char *content, size_t len,
         fmt(g_error_msg, sizeof(g_error_msg), "{}", csv_sax_parser_error(parser));
     csv_sax_parser_destroy(parser);
     return rc;
+}
+
+/* ============================================================================
+ * Direct scan API
+ * ============================================================================ */
+
+typedef struct {
+    tstr_v value;
+    int    needs_unescape;
+    int    present;
+} csv_scan_field_t;
+
+typedef struct {
+    char  *data;
+    size_t capacity;
+} csv_scan_decode_buffer_t;
+
+static int csv_scan_fail(const char *message) {
+    fmt(g_error_msg, sizeof(g_error_msg), "csv scan: {}", message);
+    return -1;
+}
+
+static int csv_scan_parse_int64(tstr_v text, int64_t *value) {
+    uint64_t magnitude = 0;
+    uint64_t limit = (uint64_t)INT64_MAX;
+    size_t index = 0;
+    int negative = 0;
+
+    if (!value || !text.data || text.len == 0) return -1;
+    if (text.data[index] == '-' || text.data[index] == '+') {
+        negative = text.data[index] == '-';
+        ++index;
+    }
+    if (index == text.len) return -1;
+    if (negative) ++limit;
+
+    for (; index < text.len; ++index) {
+        unsigned int digit;
+        unsigned char ch = (unsigned char)text.data[index];
+        if (ch < '0' || ch > '9') return -1;
+        digit = (unsigned int)(ch - '0');
+        if (magnitude > (limit - digit) / 10U) return -1;
+        magnitude = magnitude * 10U + digit;
+    }
+
+    if (negative) {
+        *value = magnitude == (uint64_t)INT64_MAX + 1U ? INT64_MIN : -(int64_t)magnitude;
+    } else {
+        *value = (int64_t)magnitude;
+    }
+    return 0;
+}
+
+static int csv_scan_parse_double(tstr_v text, double *value) {
+    const char *cursor;
+    const char *end;
+    uint64_t mantissa = 0;
+    int fraction_digits = 0;
+    int negative = 0;
+    int digits = 0;
+    double result;
+    static const double powers_of_ten[] = {
+        1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9,
+        1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18,
+    };
+
+    if (!value || !text.data || text.len == 0) return -1;
+    cursor = text.data;
+    end = text.data + text.len;
+    if (*cursor == '-' || *cursor == '+') {
+        negative = *cursor == '-';
+        ++cursor;
+    }
+    while (cursor < end && *cursor >= '0' && *cursor <= '9') {
+        if (mantissa > (UINT64_MAX - (uint64_t)(*cursor - '0')) / 10U) return -1;
+        mantissa = mantissa * 10U + (uint64_t)(*cursor++ - '0');
+        ++digits;
+    }
+    if (cursor < end && *cursor == '.') {
+        ++cursor;
+        while (cursor < end && *cursor >= '0' && *cursor <= '9') {
+            if (mantissa > (UINT64_MAX - (uint64_t)(*cursor - '0')) / 10U) return -1;
+            mantissa = mantissa * 10U + (uint64_t)(*cursor++ - '0');
+            ++fraction_digits;
+            ++digits;
+        }
+    }
+    if (digits == 0 || cursor != end) return -1;
+    result = (double)mantissa;
+    if (fraction_digits > 0) {
+        if (fraction_digits < (int)(sizeof(powers_of_ten) / sizeof(powers_of_ten[0]))) {
+            result /= powers_of_ten[fraction_digits];
+        } else {
+            while (fraction_digits-- > 0) result /= 10.0;
+        }
+    }
+    *value = negative ? -result : result;
+    return 0;
+}
+
+static int csv_scan_text_compare(csv_scan_field_t field, tstr_v rhs) {
+    size_t source_index = 0;
+    size_t rhs_index = 0;
+
+    if (!field.value.data || !rhs.data) {
+        if (!field.value.data && !rhs.data) return 0;
+        return field.value.data ? 1 : -1;
+    }
+    if (!field.needs_unescape) {
+        size_t shared = field.value.len < rhs.len ? field.value.len : rhs.len;
+        int result = memcmp(field.value.data, rhs.data, shared);
+        if (result != 0) return result;
+        return field.value.len == rhs.len ? 0 : (field.value.len < rhs.len ? -1 : 1);
+    }
+
+    while (source_index < field.value.len && rhs_index < rhs.len) {
+        char source = field.value.data[source_index++];
+        if (source == '"' && source_index < field.value.len &&
+            field.value.data[source_index] == '"') {
+            ++source_index;
+        }
+        if (source != rhs.data[rhs_index])
+            return (unsigned char)source < (unsigned char)rhs.data[rhs_index] ? -1 : 1;
+        ++rhs_index;
+    }
+    if (source_index == field.value.len && rhs_index == rhs.len) return 0;
+    return source_index == field.value.len ? -1 : 1;
+}
+
+static int csv_scan_compare_result(csv_scan_op_t op, int comparison) {
+    switch (op) {
+        case CSV_SCAN_OP_EQ: return comparison == 0;
+        case CSV_SCAN_OP_NE: return comparison != 0;
+        case CSV_SCAN_OP_GT: return comparison > 0;
+        case CSV_SCAN_OP_GE: return comparison >= 0;
+        case CSV_SCAN_OP_LT: return comparison < 0;
+        case CSV_SCAN_OP_LE: return comparison <= 0;
+        default: return 0;
+    }
+}
+
+static int csv_scan_predicate_matches(const csv_scan_predicate_t *predicate,
+                                      csv_scan_field_t field, int *matches) {
+    int comparison;
+
+    if (!predicate || !matches) return -1;
+    if (predicate->type == CSV_SCAN_VALUE_INT64) {
+        int64_t integer;
+        if (field.needs_unescape || csv_scan_parse_int64(field.value, &integer) != 0)
+            return -1;
+        comparison = integer == predicate->integer ? 0 :
+                     (integer < predicate->integer ? -1 : 1);
+    } else if (predicate->type == CSV_SCAN_VALUE_DOUBLE) {
+        double number;
+        if (field.needs_unescape || csv_scan_parse_double(field.value, &number) != 0)
+            return -1;
+        comparison = number == predicate->number ? 0 :
+                     (number < predicate->number ? -1 : 1);
+    } else if (predicate->type == CSV_SCAN_VALUE_TEXT) {
+        comparison = csv_scan_text_compare(field, predicate->text);
+    } else {
+        return -1;
+    }
+    *matches = csv_scan_compare_result(predicate->op, comparison);
+    return 0;
+}
+
+static int csv_scan_decode(csv_scan_decode_buffer_t *buffer, csv_scan_field_t field,
+                           tstr_v *value) {
+    size_t source_index;
+    size_t output_index = 0;
+
+    if (!buffer || !value) return -1;
+    if (!field.needs_unescape) {
+        *value = field.value;
+        return 0;
+    }
+    if (field.value.len == SIZE_MAX) return -1;
+    if (buffer->capacity < field.value.len + 1U) {
+        char *data = (char *)realloc(buffer->data, field.value.len + 1U);
+        if (!data) return -1;
+        buffer->data = data;
+        buffer->capacity = field.value.len + 1U;
+    }
+    for (source_index = 0; source_index < field.value.len; ++source_index) {
+        buffer->data[output_index++] = field.value.data[source_index];
+        if (field.value.data[source_index] == '"' && source_index + 1 < field.value.len &&
+            field.value.data[source_index + 1] == '"') {
+            ++source_index;
+        }
+    }
+    *value = tstr_v_from_buf(buffer->data, output_index);
+    return 0;
+}
+
+static int csv_scan_finalize_row(const csv_scan_plan_t *plan, size_t row_index,
+                                 csv_scan_field_t *predicates, csv_scan_field_t *projections,
+                                 csv_scan_decode_buffer_t *decode_buffers,
+                                 csv_scan_value_t *values, size_t *match_count) {
+    size_t index;
+    int matches = 1;
+
+    for (index = 0; index < plan->predicate_count; ++index) {
+        int predicate_matches;
+        csv_scan_field_t field = predicates[index];
+        if (!field.present) field.value = tstr_v_from_buf("", 0);
+        if (csv_scan_predicate_matches(&plan->predicates[index], field, &predicate_matches) != 0)
+            return csv_scan_fail("invalid integer predicate field");
+        if (!predicate_matches) {
+            matches = 0;
+            break;
+        }
+    }
+    if (!matches) return 0;
+
+    for (index = 0; index < plan->projection_count; ++index) {
+        csv_scan_field_t field = projections[index];
+        if (!field.present) field.value = tstr_v_from_buf("", 0);
+        values[index].type = plan->projections[index].type;
+        if (values[index].type == CSV_SCAN_VALUE_INT64) {
+            if (field.needs_unescape ||
+                csv_scan_parse_int64(field.value, &values[index].value.integer) != 0)
+                return csv_scan_fail("invalid integer projection field");
+        } else if (values[index].type == CSV_SCAN_VALUE_DOUBLE) {
+            if (field.needs_unescape ||
+                csv_scan_parse_double(field.value, &values[index].value.number) != 0)
+                return csv_scan_fail("invalid numeric projection field");
+        } else if (values[index].type == CSV_SCAN_VALUE_TEXT) {
+            if (csv_scan_decode(&decode_buffers[index], field, &values[index].value.text) != 0)
+                return csv_scan_fail("out of memory decoding projection field");
+        } else {
+            return csv_scan_fail("invalid projection type");
+        }
+    }
+
+    if (plan->on_match &&
+        plan->on_match(plan->ctx, row_index, values, plan->projection_count) != 0)
+        return csv_scan_fail("match callback failed");
+    ++*match_count;
+    return 0;
+}
+
+int csv_filter_scan_opts(const char *content, size_t len, const csv_options_t *opts,
+                         const csv_scan_plan_t *plan, size_t *matched_count) {
+    int predicate_columns[CSV_SCAN_MAX_COLUMNS];
+    int predicate_next[CSV_SCAN_MAX_PREDICATES];
+    int projection_column[CSV_SCAN_MAX_COLUMNS];
+    csv_scan_field_t predicate_fields[CSV_SCAN_MAX_PREDICATES];
+    csv_scan_field_t projection_fields[CSV_SCAN_MAX_COLUMNS];
+    csv_scan_decode_buffer_t decode_buffers[CSV_SCAN_MAX_COLUMNS] = {{0}};
+    csv_scan_value_t values[CSV_SCAN_MAX_COLUMNS];
+    csv_lexer_t lexer;
+    csv_token_t token;
+    size_t column = 0;
+    size_t row_index = 0;
+    size_t matches = 0;
+    size_t max_selected_column = 0;
+    size_t index;
+    int has_field = 0;
+    int has_selected_columns;
+    int lexer_rc;
+    int skip_header = opts && opts->has_header;
+
+    if (matched_count) *matched_count = 0;
+    if (!content || !plan || (plan->predicate_count && !plan->predicates) ||
+        (plan->projection_count && !plan->projections) ||
+        plan->predicate_count > CSV_SCAN_MAX_PREDICATES ||
+        plan->projection_count > CSV_SCAN_MAX_COLUMNS ||
+        (opts && ((opts->delimiter && opts->delimiter != ',') ||
+                  (opts->quote && opts->quote != '"')))) {
+        return csv_scan_fail("invalid plan or unsupported parser options");
+    }
+
+    for (index = 0; index < CSV_SCAN_MAX_COLUMNS; ++index) {
+        predicate_columns[index] = -1;
+        projection_column[index] = -1;
+    }
+    for (index = 0; index < plan->predicate_count; ++index) {
+        const csv_scan_predicate_t *predicate = &plan->predicates[index];
+        if (predicate->column >= CSV_SCAN_MAX_COLUMNS ||
+            (predicate->type == CSV_SCAN_VALUE_TEXT && !predicate->text.data) ||
+            (predicate->type != CSV_SCAN_VALUE_TEXT &&
+             predicate->type != CSV_SCAN_VALUE_INT64 &&
+             predicate->type != CSV_SCAN_VALUE_DOUBLE) ||
+            predicate->op < CSV_SCAN_OP_EQ || predicate->op > CSV_SCAN_OP_LE) {
+            return csv_scan_fail("invalid predicate");
+        }
+        predicate_next[index] = predicate_columns[predicate->column];
+        predicate_columns[predicate->column] = (int)index;
+        if (predicate->column > max_selected_column) max_selected_column = predicate->column;
+    }
+    for (index = 0; index < plan->projection_count; ++index) {
+        const csv_scan_projection_t *projection = &plan->projections[index];
+        if (projection->column >= CSV_SCAN_MAX_COLUMNS ||
+            projection_column[projection->column] != -1 ||
+            (projection->type != CSV_SCAN_VALUE_TEXT &&
+             projection->type != CSV_SCAN_VALUE_INT64 &&
+             projection->type != CSV_SCAN_VALUE_DOUBLE)) {
+            return csv_scan_fail("invalid projection");
+        }
+        projection_column[projection->column] = (int)index;
+        if (projection->column > max_selected_column) max_selected_column = projection->column;
+    }
+    has_selected_columns = plan->predicate_count != 0 || plan->projection_count != 0;
+
+    csv_lexer_init(&lexer, content, len);
+    csv_lexer_reset_state();
+    memset(predicate_fields, 0, sizeof(predicate_fields));
+    memset(projection_fields, 0, sizeof(projection_fields));
+
+    while ((lexer_rc = csv_lexer_next(&lexer, &token)) > 0) {
+        if (token.type == CSV_TOKEN_FIELD) {
+            if (has_selected_columns && column <= max_selected_column) {
+                int predicate_index = predicate_columns[column];
+                int projection_index = projection_column[column];
+                if (predicate_index >= 0 || projection_index >= 0) {
+                    csv_scan_field_t field = {
+                        .value = tstr_v_from_buf(token.value, token.length),
+                        .needs_unescape = token.needs_unescape,
+                        .present = 1,
+                    };
+                    while (predicate_index >= 0) {
+                        predicate_fields[predicate_index] = field;
+                        predicate_index = predicate_next[predicate_index];
+                    }
+                    if (projection_index >= 0) projection_fields[projection_index] = field;
+                }
+            }
+            ++column;
+            has_field = 1;
+        } else if (token.type == CSV_TOKEN_NEWLINE && has_field) {
+            if (!skip_header) {
+                if (csv_scan_finalize_row(plan, row_index, predicate_fields, projection_fields,
+                                          decode_buffers, values, &matches) != 0)
+                    goto cleanup;
+                ++row_index;
+            } else {
+                skip_header = 0;
+            }
+            column = 0;
+            has_field = 0;
+            memset(predicate_fields, 0, plan->predicate_count * sizeof(*predicate_fields));
+            memset(projection_fields, 0, plan->projection_count * sizeof(*projection_fields));
+        }
+    }
+
+    if (lexer_rc < 0) {
+        csv_scan_fail(lexer.error);
+        goto cleanup;
+    }
+    if (has_field) {
+        if (!skip_header) {
+            if (csv_scan_finalize_row(plan, row_index, predicate_fields, projection_fields,
+                                      decode_buffers, values, &matches) != 0)
+                goto cleanup;
+        }
+    }
+
+    for (index = 0; index < plan->projection_count; ++index) free(decode_buffers[index].data);
+    if (matched_count) *matched_count = matches;
+    g_error_msg[0] = '\0';
+    return 0;
+
+cleanup:
+    for (index = 0; index < plan->projection_count; ++index) free(decode_buffers[index].data);
+    return -1;
 }
 
 /* ============================================================================

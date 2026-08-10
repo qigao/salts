@@ -1,5 +1,6 @@
 #include "dsv_filter.h"
 #include "dsv_filter_expr_parser.h"
+#include <turbo_str.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -51,6 +52,8 @@ struct dsv_filter_s {
     dsv_join_t *joins;
     size_t clause_count;
     int compiled;
+    csv_scan_predicate_t *scan_predicates;
+    int scan_plan_compatible;
 
     char output_delim;
     char error_msg[256];
@@ -156,10 +159,13 @@ static void free_plan(dsv_filter_t *filter) {
     }
     free(filter->clauses);
     free(filter->joins);
+    free(filter->scan_predicates);
     filter->clauses = NULL;
     filter->joins = NULL;
+    filter->scan_predicates = NULL;
     filter->clause_count = 0;
     filter->compiled = 0;
+    filter->scan_plan_compatible = 0;
 }
 
 static void skip_ws(const char **cur, const char *end) {
@@ -652,6 +658,39 @@ void dsv_filter_destroy(dsv_filter_t *filter) {
     free(filter);
 }
 
+static int build_direct_scan_plan(dsv_filter_t *filter) {
+    size_t i;
+    csv_scan_predicate_t *predicates;
+
+    filter->scan_plan_compatible = 0;
+    if (filter->clause_count == 0) return 0;
+    for (i = 0; i + 1 < filter->clause_count; ++i) {
+        if (filter->joins[i] != DSV_JOIN_AND) return 0;
+    }
+    for (i = 0; i < filter->clause_count; ++i) {
+        if (!filter->clauses[i].lhs_is_simple_col || filter->clauses[i].lhs_has_arith)
+            return 0;
+    }
+
+    predicates = (csv_scan_predicate_t *)calloc(filter->clause_count, sizeof(*predicates));
+    if (!predicates) return -1;
+    for (i = 0; i < filter->clause_count; ++i) {
+        const dsv_clause_t *clause = &filter->clauses[i];
+        predicates[i].column = clause->col_idx;
+        predicates[i].op = (csv_scan_op_t)clause->op;
+        if (clause->rhs_is_string) {
+            predicates[i].type = CSV_SCAN_VALUE_TEXT;
+            predicates[i].text = tstr_v_from_buf(clause->rhs_str, clause->rhs_str_len);
+        } else {
+            predicates[i].type = CSV_SCAN_VALUE_DOUBLE;
+            predicates[i].number = clause->rhs_num;
+        }
+    }
+    filter->scan_predicates = predicates;
+    filter->scan_plan_compatible = 1;
+    return 1;
+}
+
 bool dsv_filter_compile(dsv_filter_t *filter, const char *expression) {
     const char *cur;
     const char *end;
@@ -823,6 +862,11 @@ bool dsv_filter_compile(dsv_filter_t *filter, const char *expression) {
     }
 
     filter->compiled = 1;
+    if (build_direct_scan_plan(filter) < 0) {
+        set_error(filter, "oom compiling direct scan plan");
+        free_plan(filter);
+        return false;
+    }
     return true;
 }
 
@@ -859,6 +903,39 @@ static void dsv_render_field(char *dst, size_t *offset, tstr_v value, char delim
         dst[(*offset)++] = value.data[i];
     }
     if (quote) dst[(*offset)++] = '"';
+}
+
+static int dsv_render_values(const dsv_filter_t *filter, const tstr_v *fields,
+                             size_t field_count, tstr_t *buffer) {
+    size_t total = 0;
+    size_t col;
+    tstr_t next;
+
+    for (col = 0; col < filter->col_count; ++col) {
+        tstr_v value = dsv_value_at(fields, field_count, col);
+        size_t field_len = dsv_rendered_field_len(value, filter->output_delim);
+        size_t separator_len = col > 0 ? 1 : 0;
+        if (field_len > (size_t)-1 - separator_len ||
+            total > (size_t)-1 - separator_len - field_len) {
+            return 0;
+        }
+        total += separator_len + field_len;
+    }
+
+    next = tstr_reserve(*buffer, total);
+    if (!next) return 0;
+    *buffer = next;
+
+    {
+        size_t offset = 0;
+        for (col = 0; col < filter->col_count; ++col) {
+            tstr_v value = dsv_value_at(fields, field_count, col);
+            if (col > 0) (*buffer)[offset++] = filter->output_delim;
+            dsv_render_field(*buffer, &offset, value, filter->output_delim);
+        }
+        if (!tstr_set_len_checked(*buffer, offset)) return 0;
+    }
+    return 1;
 }
 
 int dsv_filter_check_row(dsv_filter_t *filter, size_t row_index) {
@@ -927,40 +1004,290 @@ int dsv_filter_check_values(dsv_filter_t *filter, const tstr_v *fields, size_t f
 }
 
 void dsv_filter_run(dsv_filter_t *filter, dsv_row_callback_t callback, void *user_data) {
+    csv_cursor_t *cursor;
+    tstr_t rendered = NULL;
+    int rc;
     if (!filter || !callback) return;
 
-    size_t rows = csv_row_count(filter->doc);
-    for (size_t i = filter->header_row + 1; i < rows; ++i) {
-        int match = dsv_filter_check_row(filter, i);
-        if (match == 1) {
-            size_t buf_cap = 1;
-            size_t buf_len = 0;
-            size_t cols = csv_column_count(filter->doc);
-            for (size_t c = 0; c < cols; ++c) {
-                tstr_v val = csv_get_v(filter->doc, i, c);
-                size_t field_len = dsv_rendered_field_len(val, filter->output_delim);
-                size_t add_len = field_len + (c > 0 ? 1 : 0);
-                if (field_len > add_len || add_len > (size_t)-1 - buf_cap) {
-                    set_error(filter, "oom rendering row");
-                    return;
-                }
-                buf_cap += add_len;
-            }
-            char *buf = (char*)malloc(buf_cap);
-            if (!buf) {
-                set_error(filter, "oom rendering row");
-                return;
-            }
-            for (size_t c = 0; c < cols; ++c) {
-                tstr_v val = csv_get_v(filter->doc, i, c);
-                if (c > 0) buf[buf_len++] = filter->output_delim;
-                dsv_render_field(buf, &buf_len, val, filter->output_delim);
-            }
-            buf[buf_len] = '\0';
+    cursor = csv_cursor_new(filter->doc, filter->header_row + 1);
+    if (!cursor) {
+        set_error(filter, "oom creating CSV cursor");
+        return;
+    }
 
-            callback(user_data, i, buf);
+    while ((rc = csv_cursor_next(cursor)) > 0) {
+        size_t field_count = 0;
+        const tstr_v *fields = csv_cursor_fields(cursor, &field_count);
+        int match = dsv_filter_check_values(filter, fields, field_count);
+        if (match != 1) continue;
+        if (!dsv_render_values(filter, fields, field_count, &rendered)) {
+            set_error(filter, "oom rendering row");
+            break;
+        }
+        callback(user_data, csv_cursor_row_index(cursor), rendered);
+    }
 
-            free(buf);
+    if (rc < 0 || csv_cursor_error(cursor)) set_error(filter, "CSV cursor error");
+    tstr_free(rendered);
+    csv_cursor_free(cursor);
+}
+
+int dsv_filter_scan(dsv_filter_t *filter, const char *content, size_t len,
+                    const csv_options_t *opts,
+                    const csv_scan_projection_t *projections, size_t projection_count,
+                    csv_scan_match_fn on_match, void *ctx, size_t *matched_count) {
+    csv_scan_plan_t plan;
+    int rc;
+
+    if (matched_count) *matched_count = 0;
+    if (!filter || !filter->compiled || !content) return -1;
+    if (!filter->scan_plan_compatible) {
+        set_error(filter, "direct scan requires simple predicates joined only by AND");
+        return -1;
+    }
+
+    memset(&plan, 0, sizeof(plan));
+    plan.predicates = filter->scan_predicates;
+    plan.predicate_count = filter->clause_count;
+    plan.projections = projections;
+    plan.projection_count = projection_count;
+    plan.on_match = on_match;
+    plan.ctx = ctx;
+    rc = csv_filter_scan_opts(content, len, opts, &plan, matched_count);
+    if (rc != 0) {
+        set_error(filter, csv_get_error());
+        return -1;
+    }
+    set_error(filter, NULL);
+    return 0;
+}
+
+static void dsv_index_apply_lower(dsv_index_query_t *query, double value, bool inclusive) {
+    if (!query->has_lower_number || value > query->lower_number ||
+        (value == query->lower_number && !inclusive && query->lower_inclusive)) {
+        query->has_lower_number = true;
+        query->lower_number = value;
+        query->lower_inclusive = inclusive;
+    }
+}
+
+static void dsv_index_apply_upper(dsv_index_query_t *query, double value, bool inclusive) {
+    if (!query->has_upper_number || value < query->upper_number ||
+        (value == query->upper_number && !inclusive && query->upper_inclusive)) {
+        query->has_upper_number = true;
+        query->upper_number = value;
+        query->upper_inclusive = inclusive;
+    }
+}
+
+typedef struct {
+    dsv_index_query_t query;
+    int has_text;
+} dsv_index_plan_range_t;
+
+static int dsv_index_query_is_empty(const dsv_index_query_t *query) {
+    return query->has_lower_number && query->has_upper_number &&
+           (query->lower_number > query->upper_number ||
+            (query->lower_number == query->upper_number &&
+             (!query->lower_inclusive || !query->upper_inclusive)));
+}
+
+static int dsv_index_plan_append(dsv_index_plan_range_t *ranges, size_t *count,
+                                 const dsv_index_plan_range_t *range) {
+    if (dsv_index_query_is_empty(&range->query)) return 1;
+    if (*count >= DSV_INDEX_MAX_QUERY_RANGES) return 0;
+    ranges[(*count)++] = *range;
+    return 1;
+}
+
+static int dsv_index_plan_intersect_text(dsv_filter_t *filter,
+                                         dsv_index_plan_range_t *ranges,
+                                         size_t *range_count,
+                                         const dsv_clause_t *clause) {
+    tstr_v value = tstr_v_from_buf(clause->rhs_str, clause->rhs_str_len);
+    size_t input;
+    size_t output = 0;
+    if (clause->op != DSV_OP_EQ && clause->op != DSV_OP_NE) {
+        set_error(filter, "text index predicates support only == and !=");
+        return 0;
+    }
+    for (input = 0; input < *range_count; ++input) {
+        dsv_index_plan_range_t range = ranges[input];
+        if (!range.has_text) {
+            if (clause->op == DSV_OP_NE) {
+                set_error(filter, "text != requires an existing equality-constrained index prefix");
+                return 0;
+            }
+            range.query.text_equals = value;
+            range.has_text = 1;
+            ranges[output++] = range;
+        } else {
+            int equal = tstr_v_eq(range.query.text_equals, value);
+            if ((clause->op == DSV_OP_EQ && equal) ||
+                (clause->op == DSV_OP_NE && !equal))
+                ranges[output++] = range;
         }
     }
+    *range_count = output;
+    return 1;
+}
+
+static int dsv_index_plan_intersect_number(dsv_filter_t *filter,
+                                           dsv_index_plan_range_t *ranges,
+                                           size_t *range_count,
+                                           const dsv_clause_t *clause) {
+    dsv_index_plan_range_t next[DSV_INDEX_MAX_QUERY_RANGES];
+    size_t next_count = 0;
+    size_t i;
+    for (i = 0; i < *range_count; ++i) {
+        dsv_index_plan_range_t range = ranges[i];
+        switch (clause->op) {
+            case DSV_OP_EQ:
+                dsv_index_apply_lower(&range.query, clause->rhs_num, true);
+                dsv_index_apply_upper(&range.query, clause->rhs_num, true);
+                if (!dsv_index_plan_append(next, &next_count, &range)) goto capacity;
+                break;
+            case DSV_OP_NE: {
+                dsv_index_plan_range_t lower = range;
+                dsv_index_plan_range_t upper = range;
+                dsv_index_apply_upper(&lower.query, clause->rhs_num, false);
+                dsv_index_apply_lower(&upper.query, clause->rhs_num, false);
+                if (!dsv_index_plan_append(next, &next_count, &lower) ||
+                    !dsv_index_plan_append(next, &next_count, &upper))
+                    goto capacity;
+                break;
+            }
+            case DSV_OP_GT:
+                dsv_index_apply_lower(&range.query, clause->rhs_num, false);
+                if (!dsv_index_plan_append(next, &next_count, &range)) goto capacity;
+                break;
+            case DSV_OP_GE:
+                dsv_index_apply_lower(&range.query, clause->rhs_num, true);
+                if (!dsv_index_plan_append(next, &next_count, &range)) goto capacity;
+                break;
+            case DSV_OP_LT:
+                dsv_index_apply_upper(&range.query, clause->rhs_num, false);
+                if (!dsv_index_plan_append(next, &next_count, &range)) goto capacity;
+                break;
+            case DSV_OP_LE:
+                dsv_index_apply_upper(&range.query, clause->rhs_num, true);
+                if (!dsv_index_plan_append(next, &next_count, &range)) goto capacity;
+                break;
+            default:
+                set_error(filter, "numeric index predicate is unsupported");
+                return 0;
+        }
+    }
+    memcpy(ranges, next, next_count * sizeof(next[0]));
+    *range_count = next_count;
+    return 1;
+
+capacity:
+    set_error(filter, "index predicate exceeds DSV_INDEX_MAX_QUERY_RANGES");
+    return 0;
+}
+
+static int dsv_index_plan_intersect_clause(dsv_filter_t *filter,
+                                           dsv_index_plan_range_t *ranges,
+                                           size_t *range_count,
+                                           const dsv_clause_t *clause,
+                                           size_t text_column,
+                                           size_t number_column) {
+    if (clause->col_idx == text_column && clause->rhs_is_string)
+        return dsv_index_plan_intersect_text(filter, ranges, range_count, clause);
+    if (clause->col_idx == number_column && !clause->rhs_is_string)
+        return dsv_index_plan_intersect_number(filter, ranges, range_count, clause);
+    set_error(filter, "filter contains a predicate not covered by this index");
+    return 0;
+}
+
+static int dsv_index_plan_union_clause(dsv_filter_t *filter,
+                                       dsv_index_plan_range_t *ranges,
+                                       size_t *range_count,
+                                       const dsv_clause_t *clause,
+                                       size_t text_column,
+                                       size_t number_column) {
+    dsv_index_plan_range_t range;
+    memset(&range, 0, sizeof(range));
+    if (clause->col_idx == text_column && clause->rhs_is_string) {
+        if (clause->op != DSV_OP_EQ) {
+            set_error(filter, "OR on the text index prefix requires equality");
+            return 0;
+        }
+        range.has_text = 1;
+        range.query.text_equals = tstr_v_from_buf(clause->rhs_str, clause->rhs_str_len);
+        if (!dsv_index_plan_append(ranges, range_count, &range)) goto capacity;
+        return 1;
+    }
+    if (clause->col_idx == number_column && !clause->rhs_is_string) {
+        dsv_index_plan_range_t additions[DSV_INDEX_MAX_QUERY_RANGES];
+        size_t addition_count = 1;
+        additions[0] = range;
+        if (!dsv_index_plan_intersect_number(filter, additions, &addition_count, clause))
+            return 0;
+        if (*range_count > DSV_INDEX_MAX_QUERY_RANGES - addition_count) goto capacity;
+        memcpy(ranges + *range_count, additions, addition_count * sizeof(additions[0]));
+        *range_count += addition_count;
+        return 1;
+    }
+    set_error(filter, "filter contains an OR predicate not covered by this index");
+    return 0;
+
+capacity:
+    set_error(filter, "index predicate exceeds DSV_INDEX_MAX_QUERY_RANGES");
+    return 0;
+}
+
+int dsv_filter_index_seek(dsv_filter_t *filter, const dsv_index_t *index,
+                          dsv_index_cursor_t *cursor) {
+    dsv_index_plan_range_t ranges[DSV_INDEX_MAX_QUERY_RANGES];
+    dsv_index_query_t queries[DSV_INDEX_MAX_QUERY_RANGES];
+    size_t text_column;
+    size_t number_column;
+    size_t range_count = 1;
+    size_t i;
+
+    if (!filter || !filter->compiled || !index || !cursor) return -1;
+    text_column = dsv_index_text_column(index);
+    number_column = dsv_index_number_column(index);
+    if (text_column == DSV_INDEX_NO_COLUMN || number_column == DSV_INDEX_NO_COLUMN) {
+        set_error(filter, "index is not open");
+        return -1;
+    }
+
+    memset(ranges, 0, sizeof(ranges));
+    for (i = 0; i < filter->clause_count; ++i) {
+        const dsv_clause_t *clause = &filter->clauses[i];
+        int ok;
+        if (!clause->lhs_is_simple_col || clause->lhs_has_arith) {
+            set_error(filter, "index seek requires simple column predicates");
+            return -1;
+        }
+        if (i == 0 || filter->joins[i - 1] == DSV_JOIN_AND) {
+            ok = dsv_index_plan_intersect_clause(filter, ranges, &range_count,
+                                                 clause, text_column, number_column);
+        } else {
+            ok = dsv_index_plan_union_clause(filter, ranges, &range_count,
+                                             clause, text_column, number_column);
+        }
+        if (!ok) return -1;
+    }
+    for (i = 0; i < range_count; ++i) {
+        if (!ranges[i].has_text) {
+            set_error(filter, "every OR range must constrain the leading text index column");
+            return -1;
+        }
+        queries[i] = ranges[i].query;
+    }
+    if (range_count == 0) {
+        memset(cursor, 0, sizeof(*cursor));
+        set_error(filter, NULL);
+        return 0;
+    }
+    if (dsv_index_seek_many(index, queries, range_count, cursor) != 0) {
+        set_error(filter, "failed to seek DSV index");
+        return -1;
+    }
+    set_error(filter, NULL);
+    return 0;
 }

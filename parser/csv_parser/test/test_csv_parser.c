@@ -35,6 +35,28 @@ typedef struct {
   char last_field[256];
 } stream_test_ctx_t;
 
+typedef struct {
+  size_t count;
+  size_t last_row;
+  int64_t age_sum;
+  char note[32];
+} scan_test_ctx_t;
+
+static int capture_scan_match(void *ctx, size_t row_index,
+                              const csv_scan_value_t *values, size_t value_count) {
+  scan_test_ctx_t *state = (scan_test_ctx_t *)ctx;
+  if (!state || !values || value_count != 2 ||
+      values[0].type != CSV_SCAN_VALUE_INT64 || values[1].type != CSV_SCAN_VALUE_TEXT)
+    return -1;
+  state->count++;
+  state->last_row = row_index;
+  state->age_sum += values[0].value.integer;
+  if (values[1].value.text.len >= sizeof(state->note)) return -1;
+  memcpy(state->note, values[1].value.text.data, values[1].value.text.len);
+  state->note[values[1].value.text.len] = '\0';
+  return 0;
+}
+
 static int on_row_start(void *ctx, size_t row_index) {
   (void)row_index;
   stream_test_ctx_t *tc = (stream_test_ctx_t *)ctx;
@@ -696,6 +718,76 @@ spec("csv_parser") {
       check_int_eq(csv_write_records(doc, capture_csv_record, &state), -1);
       check_size_eq(state.count, 2);
       csv_free(doc);
+    }
+
+    it("should iterate rows with reusable cursor field views") {
+      const char *csv = "a,b\n1,2\n3,4\n";
+      csv_doc_t *doc = csv_parse(csv, strlen(csv));
+      csv_cursor_t *cursor;
+      size_t field_count = 0;
+      const tstr_v *fields;
+
+      check_not_null(doc);
+      cursor = csv_cursor_new(doc, 1);
+      check_not_null(cursor);
+
+      check_int_eq(csv_cursor_next(cursor), 1);
+      check_size_eq(csv_cursor_row_index(cursor), 1);
+      fields = csv_cursor_fields(cursor, &field_count);
+      check_size_eq(field_count, 2);
+      check_str_eq(fields[0].data, "1");
+      check_str_eq(csv_cursor_field_v(cursor, 1).data, "2");
+
+      check_int_eq(csv_cursor_next(cursor), 1);
+      check_size_eq(csv_cursor_row_index(cursor), 2);
+      fields = csv_cursor_fields(cursor, &field_count);
+      check_size_eq(field_count, 2);
+      check_str_eq(fields[0].data, "3");
+      check_int_eq(csv_cursor_next(cursor), 0);
+      check_null(csv_cursor_fields(cursor, &field_count));
+      check_size_eq(field_count, 0);
+
+      csv_cursor_free(cursor);
+      csv_free(doc);
+    }
+
+    it("should scan selected fields without building a document") {
+      const char *csv = "id,age,country,score,note\n"
+                        "1,21,CN,91,\"say \"\"hi\"\"\"\n"
+                        "2,22,US,99,skip\n"
+                        "3,23,CN,90,skip\n"
+                        "4,24,CN,92,ok\n";
+      const csv_scan_predicate_t predicates[] = {
+          {.column = 2, .type = CSV_SCAN_VALUE_TEXT, .op = CSV_SCAN_OP_EQ,
+           .text = {.data = "CN", .len = 2}},
+          {.column = 3, .type = CSV_SCAN_VALUE_INT64, .op = CSV_SCAN_OP_GT,
+           .integer = 90},
+          {.column = 3, .type = CSV_SCAN_VALUE_INT64, .op = CSV_SCAN_OP_LE,
+           .integer = 92},
+      };
+      const csv_scan_projection_t projections[] = {
+          {.column = 1, .type = CSV_SCAN_VALUE_INT64},
+          {.column = 4, .type = CSV_SCAN_VALUE_TEXT},
+      };
+      csv_scan_plan_t plan = {
+          .predicates = predicates,
+          .predicate_count = sizeof(predicates) / sizeof(predicates[0]),
+          .projections = projections,
+          .projection_count = sizeof(projections) / sizeof(projections[0]),
+          .on_match = capture_scan_match,
+      };
+      csv_options_t opts = CSV_OPTIONS_DEFAULT;
+      scan_test_ctx_t state = {0};
+      size_t matches = 0;
+
+      opts.has_header = true;
+      plan.ctx = &state;
+      check_int_eq(csv_filter_scan_opts(csv, strlen(csv), &opts, &plan, &matches), 0);
+      check_size_eq(matches, 2);
+      check_size_eq(state.count, 2);
+      check_size_eq(state.last_row, 3);
+      check_int_eq(state.age_sum, 45);
+      check_str_eq(state.note, "ok");
     }
   }
 }

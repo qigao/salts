@@ -13,9 +13,29 @@ cmake_add_test(test_dsv_filter
   LIBS TurboUtils::TinyTest csv_parser ${TARGET_NAME_LIB}
   FOLDER "parser/csv_parser")
 
+cmake_add_test(test_dsv_index
+  SOURCES test_dsv_index.c
+  LIBS TurboUtils::TinyTest csv_parser
+  FOLDER "parser/csv_parser")
+
 if(BUILD_BENCHMARKS)
   cmake_add_benchmark(benchmark_csv_random_access
     SOURCES benchmark_csv_random_access.c
+    LIBS TurboUtils::TinyTest csv_parser
+    FOLDER "parser/csv_parser/benchmarks")
+
+  cmake_add_benchmark(benchmark_csv_direct_scan
+    SOURCES benchmark_csv_direct_scan.c
+    LIBS TurboUtils::TinyTest csv_parser
+    FOLDER "parser/csv_parser/benchmarks")
+
+  cmake_add_benchmark(benchmark_dsv_filter_scan
+    SOURCES benchmark_dsv_filter_scan.c
+    LIBS TurboUtils::TinyTest csv_parser
+    FOLDER "parser/csv_parser/benchmarks")
+
+  cmake_add_benchmark(benchmark_dsv_index
+    SOURCES benchmark_dsv_index.c
     LIBS TurboUtils::TinyTest csv_parser
     FOLDER "parser/csv_parser/benchmarks")
 
