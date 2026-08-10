@@ -45,6 +45,20 @@ typedef struct json_pair_s {
   struct json_pair_s *next;
 } json_pair_t;
 
+typedef struct json_object_index_slot_s {
+  const char *key;
+  size_t key_len;
+  json_pair_t *pair;
+} json_object_index_slot_t;
+
+typedef struct json_object_index_s {
+  json_pair_t **members;
+  size_t members_capacity;
+  json_object_index_slot_t *lookup;
+  size_t lookup_capacity;
+  size_t lookup_count;
+} json_object_index_t;
+
 typedef struct json_element_s {
   struct json_value_s *value;
   struct json_element_s *next;
@@ -68,6 +82,7 @@ struct json_value_s {
     struct {
       json_pair_t *pairs;
       json_pair_t *pairs_tail;
+      json_object_index_t *index;
       size_t count;
     } object_val;
     struct {
@@ -110,6 +125,10 @@ bool json_object_set_arena(json_arena_t *arena, json_value_t *obj, const char *k
                            json_value_t *val);
 bool json_object_set_arena_ex(json_arena_t *arena, json_value_t *obj, const char *key,
                               size_t key_len, int key_owned, json_value_t *val);
+bool json_object_build_index(json_arena_t *arena, json_value_t *obj);
+size_t json_object_key_hash(const char *key, size_t key_len);
+json_value_t *json_object_get_hashed_v(const json_value_t *obj, tstr_v key,
+                                       size_t key_hash);
 
 #ifdef __cplusplus
 }

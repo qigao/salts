@@ -20,6 +20,7 @@ typedef struct jsonpath_opcode_s {
   char *str;
   int num;
   double number;
+  size_t compiled_index_plus_one;
 } jsonpath_opcode_t;
 
 typedef struct jsonpath_parse_ctx_s {

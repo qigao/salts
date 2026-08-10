@@ -82,3 +82,8 @@ cmake_add_benchmark(benchmark_data_bind_pool
   SOURCES benchmark_data_bind_pool.c
   LIBS TurboUtils::DataBind TurboUtils::TinyTest
   FOLDER "tbe/data_bind")
+
+cmake_add_benchmark(benchmark_data_bind_json_path
+  SOURCES benchmark_data_bind_json_path.c
+  LIBS TurboUtils::DataBind TurboUtils::TinyTest
+  FOLDER "tbe/data_bind")

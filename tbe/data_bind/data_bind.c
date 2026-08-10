@@ -72,6 +72,13 @@ static const type_meta_t TYPE_METAS[] = {
 /* Small object pool for frequently allocated DataBindValue nodes */
 #define VALUE_POOL_SIZE 64
 #define DATA_BIND_FILE_STREAM_CHUNK_SIZE 65536
+#define DATA_BIND_JSON_STREAM_MAX_DEPTH 256U
+
+enum data_bind_json_path_stream_mode {
+  DATA_BIND_JSON_PATH_STREAM_NONE = 0,
+  DATA_BIND_JSON_PATH_STREAM_FIRST,
+  DATA_BIND_JSON_PATH_STREAM_ALL
+};
 
 /*
  * Fixed atomic slots avoid the ABA reclamation problem of a shared lock-free
@@ -206,6 +213,9 @@ struct data_bind_stream_t {
   DataBindValue *csv_values;
   DataBindValue *stream_values;
   turbo_json_sax_parser_t *json_sax;
+  turbo_json_path_program_t *json_path_program;
+  turbo_json_path_stream_t *json_path_stream;
+  json_value_t *json_match_value;
   turbo_yaml_sax_parser_t *yaml_sax;
   turbo_xml_sax_parser_t *xml_sax;
   data_bind_json_stream_frame_t *json_frames;
@@ -224,6 +234,7 @@ struct data_bind_stream_t {
   int sax_failed;
   int is_csv;
   int json_stream_candidate;
+  int json_path_stream_mode;
   int json_stream_active;
   int json_stream_done;
   int json_root_seen;
@@ -5272,12 +5283,14 @@ static DataBindStatus data_bind_parse_record_v1(DataBind *codec, const char *typ
   return data_bind_parse(codec, type_name, buf, len, out_value, error);
 }
 
-static int data_bind_stream_json_path_is_root_array(const char *path) {
-  return path == NULL || path[0] == '\0' || strcmp(path, "$[*]") == 0;
-}
-
 static int data_bind_stream_xml_name_char(char ch) {
   return isalnum((unsigned char)ch) || ch == '_' || ch == '-' || ch == ':' || ch == '.';
+}
+
+/* Unbounded wildcards can produce one temporary DOM per match; keep those all-match
+ * paths on the existing buffered path until a direct schema SAX binder is available. */
+static int data_bind_stream_json_path_is_bounded(const char *path) {
+  return path != NULL && strchr(path, '*') == NULL;
 }
 
 static int data_bind_stream_xml_path_is_simple_descendant(const char *path) {
@@ -5394,6 +5407,17 @@ static int data_bind_stream_json_bind_value(data_bind_stream_t *parser, json_val
     data_bind_stream_error_msg(parser, "JSON stream item bind failed");
     return -1;
   }
+  if (parser->json_path_stream_mode == DATA_BIND_JSON_PATH_STREAM_FIRST) {
+    if (parser->stream_values != NULL || data_bind_stream_emit_record(parser, item) != 0) {
+      data_bind_value_free(item);
+      if (parser->stream_values != NULL)
+        data_bind_stream_error_msg(parser, "JSONPath stream selected multiple first values");
+      return -1;
+    }
+    parser->stream_values = item;
+    parser->json_stream_done = 1;
+    return 0;
+  }
   return data_bind_stream_values_push(parser, item, "JSON stream item append failed");
 }
 
@@ -5401,7 +5425,13 @@ static int data_bind_stream_json_frame_reserve(data_bind_stream_t *parser) {
   data_bind_json_stream_frame_t *grown;
   size_t next_capacity;
   if (parser->json_frame_count < parser->json_frame_capacity) return 0;
+  if (parser->json_frame_count >= DATA_BIND_JSON_STREAM_MAX_DEPTH) {
+    data_bind_stream_error_msg(parser, "JSON stream nesting too deep");
+    return -1;
+  }
   next_capacity = parser->json_frame_capacity == 0 ? 8 : parser->json_frame_capacity * 2;
+  if (next_capacity > DATA_BIND_JSON_STREAM_MAX_DEPTH)
+    next_capacity = DATA_BIND_JSON_STREAM_MAX_DEPTH;
   if (next_capacity <= parser->json_frame_capacity) {
     data_bind_stream_error_msg(parser, "JSON stream nesting too deep");
     return -1;
@@ -5426,11 +5456,17 @@ static int data_bind_stream_json_attach_value(data_bind_stream_t *parser, json_v
       data_bind_stream_error_msg(parser, "JSON stream object value without key");
       return -1;
     }
-    turbo_json_object_add(parent->value, parent->pending_key, value);
+    if (!turbo_json_object_add_checked(parent->value, parent->pending_key, value)) {
+      data_bind_stream_error_msg(parser, "Out of memory appending JSON stream object value");
+      return -1;
+    }
     free(parent->pending_key);
     parent->pending_key = NULL;
   } else {
-    turbo_json_array_add(parent->value, value);
+    if (!turbo_json_array_add_checked(parent->value, value)) {
+      data_bind_stream_error_msg(parser, "Out of memory appending JSON stream array value");
+      return -1;
+    }
   }
   return 0;
 }
@@ -5473,8 +5509,8 @@ static int data_bind_stream_json_container_start(data_bind_stream_t *parser, jso
     turbo_free_json(&value);
     return 0;
   }
-  if (data_bind_stream_json_attach_value(parser, value) != 0 ||
-      data_bind_stream_json_frame_reserve(parser) != 0) {
+  if (data_bind_stream_json_frame_reserve(parser) != 0 ||
+      data_bind_stream_json_attach_value(parser, value) != 0) {
     turbo_free_json(&value);
     return -1;
   }
@@ -5602,6 +5638,170 @@ static int data_bind_stream_json_on_array_end(void *ctx) {
   }
   parser->json_sax_depth--;
   return rc;
+}
+
+static int data_bind_stream_json_path_match_start(void *ctx, turbo_json_type_t type) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  (void)type;
+  if (parser == NULL) return -1;
+  if (parser->json_path_stream_mode == DATA_BIND_JSON_PATH_STREAM_FIRST &&
+      parser->json_stream_done) {
+    parser->json_stream_active = 0;
+    return 0;
+  }
+  if (parser->json_stream_active || parser->json_frame_count != 0 ||
+      parser->json_match_value != NULL) {
+    data_bind_stream_error_msg(parser, "Overlapping JSONPath stream matches are unsupported");
+    return -1;
+  }
+  parser->json_stream_active = 1;
+  return 0;
+}
+
+static int data_bind_stream_json_path_scalar(data_bind_stream_t *parser, json_value_t *value) {
+  if (value == NULL) {
+    data_bind_stream_error_msg(parser, "Out of memory creating JSONPath stream value");
+    return -1;
+  }
+  if (parser == NULL || !parser->json_stream_active) {
+    turbo_free_json(&value);
+    return 0;
+  }
+  if (parser->json_frame_count != 0) {
+    if (data_bind_stream_json_attach_value(parser, value) != 0) {
+      turbo_free_json(&value);
+      return -1;
+    }
+  } else if (parser->json_match_value == NULL) {
+    parser->json_match_value = value;
+  } else {
+    turbo_free_json(&value);
+    data_bind_stream_error_msg(parser, "JSONPath stream match has multiple root values");
+    return -1;
+  }
+  return 0;
+}
+
+static int data_bind_stream_json_path_container_start(data_bind_stream_t *parser,
+                                                      json_value_t *value, int is_object) {
+  data_bind_json_stream_frame_t *frame;
+  if (value == NULL) {
+    data_bind_stream_error_msg(parser, "Out of memory creating JSONPath stream container");
+    return -1;
+  }
+  if (parser == NULL || !parser->json_stream_active) {
+    turbo_free_json(&value);
+    return 0;
+  }
+  if (data_bind_stream_json_frame_reserve(parser) != 0) {
+    turbo_free_json(&value);
+    return -1;
+  }
+  if (parser->json_frame_count != 0) {
+    if (data_bind_stream_json_attach_value(parser, value) != 0) {
+      turbo_free_json(&value);
+      return -1;
+    }
+  } else if (parser->json_match_value == NULL) {
+    parser->json_match_value = value;
+  } else {
+    turbo_free_json(&value);
+    data_bind_stream_error_msg(parser, "JSONPath stream match has multiple root containers");
+    return -1;
+  }
+  frame = &parser->json_frames[parser->json_frame_count++];
+  frame->value = value;
+  frame->pending_key = NULL;
+  frame->is_object = is_object;
+  return 0;
+}
+
+static int data_bind_stream_json_path_container_end(data_bind_stream_t *parser, int is_object) {
+  data_bind_json_stream_frame_t *frame;
+  if (parser == NULL || !parser->json_stream_active) return 0;
+  if (parser->json_frame_count == 0) {
+    data_bind_stream_error_msg(parser, "JSONPath stream container stack underflow");
+    return -1;
+  }
+  frame = &parser->json_frames[parser->json_frame_count - 1U];
+  if (frame->is_object != is_object) {
+    data_bind_stream_error_msg(parser, "JSONPath stream container mismatch");
+    return -1;
+  }
+  free(frame->pending_key);
+  frame->pending_key = NULL;
+  parser->json_frame_count--;
+  return 0;
+}
+
+static int data_bind_stream_json_path_match_end(void *ctx, turbo_json_type_t type) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  json_value_t *matched;
+  (void)type;
+  if (parser == NULL) return -1;
+  if (!parser->json_stream_active) return 0;
+  if (parser->json_frame_count != 0 || parser->json_match_value == NULL) {
+    data_bind_stream_error_msg(parser, "Incomplete JSONPath stream match");
+    return -1;
+  }
+  matched = parser->json_match_value;
+  parser->json_match_value = NULL;
+  parser->json_stream_active = 0;
+  return data_bind_stream_json_bind_value(parser, matched);
+}
+
+static int data_bind_stream_json_path_on_null(void *ctx) {
+  return data_bind_stream_json_path_scalar((data_bind_stream_t *)ctx,
+                                           turbo_json_create_null());
+}
+
+static int data_bind_stream_json_path_on_bool(void *ctx, bool value) {
+  return data_bind_stream_json_path_scalar((data_bind_stream_t *)ctx,
+                                           turbo_json_create_bool(value));
+}
+
+static int data_bind_stream_json_path_on_number(void *ctx, const char *value, size_t len) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  turbo_json_doc_t *number = NULL;
+  if (value == NULL || len == 0 ||
+      turbo_parse_json((const uint8_t *)value, len, &number) != 0 ||
+      turbo_json_type(number) != TURBO_JSON_NUMBER) {
+    turbo_free_json(&number);
+    data_bind_stream_error_msg(parser, "Failed to preserve exact JSONPath stream number");
+    return -1;
+  }
+  return data_bind_stream_json_path_scalar(parser, number);
+}
+
+static int data_bind_stream_json_path_on_string(void *ctx, const char *value, size_t len) {
+  data_bind_stream_t *parser = (data_bind_stream_t *)ctx;
+  char *copy = data_bind_stream_copy_slice(value, len);
+  json_value_t *string;
+  if (copy == NULL) {
+    data_bind_stream_error_msg(parser, "Out of memory copying JSONPath stream string");
+    return -1;
+  }
+  string = turbo_json_create_string(copy);
+  free(copy);
+  return data_bind_stream_json_path_scalar(parser, string);
+}
+
+static int data_bind_stream_json_path_on_object_start(void *ctx) {
+  return data_bind_stream_json_path_container_start((data_bind_stream_t *)ctx,
+                                                    turbo_json_create_object(), 1);
+}
+
+static int data_bind_stream_json_path_on_array_start(void *ctx) {
+  return data_bind_stream_json_path_container_start((data_bind_stream_t *)ctx,
+                                                    turbo_json_create_array(), 0);
+}
+
+static int data_bind_stream_json_path_on_object_end(void *ctx) {
+  return data_bind_stream_json_path_container_end((data_bind_stream_t *)ctx, 1);
+}
+
+static int data_bind_stream_json_path_on_array_end(void *ctx) {
+  return data_bind_stream_json_path_container_end((data_bind_stream_t *)ctx, 0);
 }
 
 static int data_bind_stream_xml_append(data_bind_stream_t *parser, const char *text, size_t len) {
@@ -5747,6 +5947,19 @@ static const turbo_json_sax_handler_raw_t DATA_BIND_JSON_STREAM_HANDLER = {
     data_bind_stream_json_on_object_end,   data_bind_stream_json_on_array_start,
     data_bind_stream_json_on_array_end};
 
+static const turbo_json_path_stream_handler_t DATA_BIND_JSON_PATH_STREAM_HANDLER = {
+    data_bind_stream_json_path_match_start,
+    data_bind_stream_json_path_match_end,
+    {data_bind_stream_json_path_on_null,
+     data_bind_stream_json_path_on_bool,
+     data_bind_stream_json_path_on_number,
+     data_bind_stream_json_path_on_string,
+     data_bind_stream_json_path_on_object_start,
+     data_bind_stream_json_on_object_key,
+     data_bind_stream_json_path_on_object_end,
+     data_bind_stream_json_path_on_array_start,
+     data_bind_stream_json_path_on_array_end}};
+
 static const turbo_xml_sax_handler_t DATA_BIND_XML_STREAM_HANDLER = {
     NULL,
     NULL,
@@ -5770,6 +5983,9 @@ static DataBindStatus data_bind_stream_sax_error(data_bind_stream_t *parser, Dat
   if (parser != NULL) {
     if (parser->stream_error[0] != '\0') {
       message = parser->stream_error;
+    } else if (parser->json_path_stream != NULL) {
+      message = turbo_json_path_stream_error(parser->json_path_stream);
+      path = "json";
     } else if (parser->json_sax != NULL) {
       message = turbo_json_sax_parser_error(parser->json_sax);
       path = "json";
@@ -5794,7 +6010,11 @@ static DataBindStatus data_bind_stream_sax_feed(data_bind_stream_t *parser, cons
   if (parser == NULL || parser->sax_failed) {
     return data_bind_stream_sax_error(parser, error, "stream feed");
   }
-  if (parser->json_sax != NULL) {
+  if (parser->json_path_stream != NULL) {
+    if (turbo_json_path_stream_feed(parser->json_path_stream, data, len) != 0) {
+      return data_bind_stream_sax_error(parser, error, "JSONPath stream feed");
+    }
+  } else if (parser->json_sax != NULL) {
     if (turbo_json_sax_parser_feed(parser->json_sax, data, len) != 0) {
       return data_bind_stream_sax_error(parser, error, "JSON stream feed");
     }
@@ -5815,7 +6035,11 @@ static DataBindStatus data_bind_stream_sax_finish(data_bind_stream_t *parser,
   if (parser == NULL || parser->sax_failed) {
     return data_bind_stream_sax_error(parser, error, "stream finish");
   }
-  if (parser->json_sax != NULL) {
+  if (parser->json_path_stream != NULL) {
+    if (turbo_json_path_stream_finish(parser->json_path_stream) != 0) {
+      return data_bind_stream_sax_error(parser, error, "JSONPath stream finish");
+    }
+  } else if (parser->json_sax != NULL) {
     if (turbo_json_sax_parser_finish(parser->json_sax) != 0) {
       return data_bind_stream_sax_error(parser, error, "JSON stream finish");
     }
@@ -6193,7 +6417,8 @@ static data_bind_stream_t *data_bind_stream_create_common(
     DataBindStatus (*finish_fn)(data_bind_stream_t *, DataBindValue **, DataBindError *),
     DataBindStatus (*bind_fn)(DataBind *, const char *, const char *, size_t, const char *,
                               DataBindValue **, DataBindError *),
-    int is_csv, int json_stream_candidate, int xml_stream_candidate) {
+    int is_csv, int json_stream_candidate, int json_path_stream_mode,
+    int xml_stream_candidate) {
   data_bind_stream_t *parser = NULL;
   size_t type_name_len;
   size_t path_len;
@@ -6266,6 +6491,9 @@ static data_bind_stream_t *data_bind_stream_create_common(
   parser->csv_values = NULL;
   parser->stream_values = NULL;
   parser->json_sax = NULL;
+  parser->json_path_program = NULL;
+  parser->json_path_stream = NULL;
+  parser->json_match_value = NULL;
   parser->yaml_sax = NULL;
   parser->xml_sax = NULL;
   parser->json_frames = NULL;
@@ -6284,6 +6512,7 @@ static data_bind_stream_t *data_bind_stream_create_common(
   parser->sax_failed = 0;
   parser->is_csv = is_csv;
   parser->json_stream_candidate = json_stream_candidate;
+  parser->json_path_stream_mode = json_path_stream_mode;
   parser->json_stream_active = 0;
   parser->json_stream_done = 0;
   parser->json_root_seen = 0;
@@ -6306,7 +6535,8 @@ static data_bind_stream_t *data_bind_stream_create_common(
       return NULL;
     }
   } else if (finish_fn == data_bind_stream_json_finish) {
-    if (parser->json_stream_candidate) {
+    if (parser->json_stream_candidate ||
+        parser->json_path_stream_mode == DATA_BIND_JSON_PATH_STREAM_ALL) {
       parser->stream_values = dbv_new(DATA_BIND_VALUE_LIST);
       if (parser->stream_values == NULL) {
         free(parser->path_or_expr);
@@ -6317,13 +6547,48 @@ static data_bind_stream_t *data_bind_stream_create_common(
         return NULL;
       }
     }
-    parser->json_sax = parser->json_stream_candidate
-                           ? turbo_json_sax_parser_create_raw(&DATA_BIND_JSON_STREAM_HANDLER,
-                                                             parser)
-                           : turbo_json_sax_parser_create(&DATA_BIND_JSON_SAX_VALIDATE_HANDLER,
-                                                         parser);
-    if (parser->json_sax == NULL) {
+    if (parser->json_path_stream_mode != DATA_BIND_JSON_PATH_STREAM_NONE) {
+      const char *path_error;
+      parser->json_path_program = turbo_json_path_compile(parser->path_or_expr);
+      if (parser->json_path_program == NULL) {
+        parser->json_path_stream_mode = DATA_BIND_JSON_PATH_STREAM_NONE;
+        data_bind_value_free(parser->stream_values);
+        parser->stream_values = NULL;
+      } else {
+        parser->json_path_stream = turbo_json_path_stream_create(
+            parser->json_path_program, &DATA_BIND_JSON_PATH_STREAM_HANDLER, parser);
+      }
+      if (parser->json_path_program != NULL && parser->json_path_stream == NULL) {
+        path_error = turbo_json_path_stream_error(NULL);
+        if (path_error != NULL && strstr(path_error, "not streamable") != NULL) {
+          turbo_json_path_program_free(parser->json_path_program);
+          parser->json_path_program = NULL;
+          parser->json_path_stream_mode = DATA_BIND_JSON_PATH_STREAM_NONE;
+          data_bind_value_free(parser->stream_values);
+          parser->stream_values = NULL;
+        } else {
+          turbo_json_path_program_free(parser->json_path_program);
+          data_bind_value_free(parser->stream_values);
+          free(parser->path_or_expr);
+          free(parser->type_name);
+          free(parser);
+          db_error_set(error, DATA_BIND_ERR_OOM, "json", -1, -1,
+                       "Unable to create JSONPath stream: %s",
+                       path_error != NULL ? path_error : "out of memory");
+          return NULL;
+        }
+      }
+    }
+    if (parser->json_path_stream == NULL) {
+      parser->json_sax = parser->json_stream_candidate
+                             ? turbo_json_sax_parser_create_raw(&DATA_BIND_JSON_STREAM_HANDLER,
+                                                               parser)
+                             : turbo_json_sax_parser_create(&DATA_BIND_JSON_SAX_VALIDATE_HANDLER,
+                                                           parser);
+    }
+    if (parser->json_path_stream == NULL && parser->json_sax == NULL) {
       data_bind_value_free(parser->stream_values);
+      turbo_json_path_program_free(parser->json_path_program);
       free(parser->path_or_expr);
       free(parser->type_name);
       free(parser);
@@ -6459,7 +6724,8 @@ data_bind_stream_t *data_bind_stream_json_create(DataBind *codec, const char *ty
                                                  DataBindValue **out_value, DataBindError *error) {
   return data_bind_stream_create_common(codec, type_name, NULL, out_value, error,
                                         data_bind_stream_text_feed, data_bind_stream_json_finish,
-                                        data_bind_stream_bind_json, 0, 0, 0);
+                                        data_bind_stream_bind_json, 0, 0,
+                                        DATA_BIND_JSON_PATH_STREAM_NONE, 0);
 }
 
 data_bind_stream_t *data_bind_stream_json_all_create(DataBind *codec, const char *type_name,
@@ -6467,7 +6733,8 @@ data_bind_stream_t *data_bind_stream_json_all_create(DataBind *codec, const char
                                                      DataBindError *error) {
   return data_bind_stream_create_common(codec, type_name, NULL, out_value, error,
                                         data_bind_stream_text_feed, data_bind_stream_json_finish,
-                                        data_bind_stream_bind_json_all, 0, 1, 0);
+                                        data_bind_stream_bind_json_all, 0, 1,
+                                        DATA_BIND_JSON_PATH_STREAM_NONE, 0);
 }
 
 data_bind_stream_t *data_bind_stream_json_path_create(DataBind *codec, const char *type_name,
@@ -6481,7 +6748,8 @@ data_bind_stream_t *data_bind_stream_json_path_create(DataBind *codec, const cha
   }
   return data_bind_stream_create_common(codec, type_name, json_path, out_value, error,
                                         data_bind_stream_text_feed, data_bind_stream_json_finish,
-                                        data_bind_stream_bind_json_path, 0, 0, 0);
+                                        data_bind_stream_bind_json_path, 0, 0,
+                                        DATA_BIND_JSON_PATH_STREAM_FIRST, 0);
 }
 
 data_bind_stream_t *data_bind_stream_json_path_all_create(DataBind *codec, const char *type_name,
@@ -6496,14 +6764,21 @@ data_bind_stream_t *data_bind_stream_json_path_all_create(DataBind *codec, const
   return data_bind_stream_create_common(codec, type_name, json_path, out_value, error,
                                         data_bind_stream_text_feed, data_bind_stream_json_finish,
                                         data_bind_stream_bind_json_path_all, 0,
-                                        data_bind_stream_json_path_is_root_array(json_path), 0);
+                                        strcmp(json_path, "$[*]") == 0 ? 1 : 0,
+                                        strcmp(json_path, "$[*]") == 0
+                                            ? DATA_BIND_JSON_PATH_STREAM_NONE
+                                            : (data_bind_stream_json_path_is_bounded(json_path)
+                                                   ? DATA_BIND_JSON_PATH_STREAM_ALL
+                                                   : DATA_BIND_JSON_PATH_STREAM_NONE),
+                                        0);
 }
 
 data_bind_stream_t *data_bind_stream_yaml_create(DataBind *codec, const char *type_name,
                                                  DataBindValue **out_value, DataBindError *error) {
   return data_bind_stream_create_common(
       codec, type_name, NULL, out_value, error, data_bind_stream_text_feed,
-      data_bind_stream_buffered_finish, data_bind_stream_bind_yaml, 0, 0, 0);
+      data_bind_stream_buffered_finish, data_bind_stream_bind_yaml, 0, 0,
+      DATA_BIND_JSON_PATH_STREAM_NONE, 0);
 }
 
 data_bind_stream_t *data_bind_stream_yaml_all_create(DataBind *codec, const char *type_name,
@@ -6511,7 +6786,8 @@ data_bind_stream_t *data_bind_stream_yaml_all_create(DataBind *codec, const char
                                                      DataBindError *error) {
   return data_bind_stream_create_common(
       codec, type_name, NULL, out_value, error, data_bind_stream_text_feed,
-      data_bind_stream_buffered_finish, data_bind_stream_bind_yaml_all, 0, 0, 0);
+      data_bind_stream_buffered_finish, data_bind_stream_bind_yaml_all, 0, 0,
+      DATA_BIND_JSON_PATH_STREAM_NONE, 0);
 }
 
 data_bind_stream_t *data_bind_stream_yaml_path_create(DataBind *codec, const char *type_name,
@@ -6525,7 +6801,8 @@ data_bind_stream_t *data_bind_stream_yaml_path_create(DataBind *codec, const cha
   }
   return data_bind_stream_create_common(
       codec, type_name, yaml_path, out_value, error, data_bind_stream_text_feed,
-      data_bind_stream_buffered_finish, data_bind_stream_bind_yaml_path, 0, 0, 0);
+      data_bind_stream_buffered_finish, data_bind_stream_bind_yaml_path, 0, 0,
+      DATA_BIND_JSON_PATH_STREAM_NONE, 0);
 }
 
 data_bind_stream_t *data_bind_stream_yaml_path_all_create(DataBind *codec, const char *type_name,
@@ -6539,7 +6816,8 @@ data_bind_stream_t *data_bind_stream_yaml_path_all_create(DataBind *codec, const
   }
   return data_bind_stream_create_common(
       codec, type_name, yaml_path, out_value, error, data_bind_stream_text_feed,
-      data_bind_stream_buffered_finish, data_bind_stream_bind_yaml_path_all, 0, 0, 0);
+      data_bind_stream_buffered_finish, data_bind_stream_bind_yaml_path_all, 0, 0,
+      DATA_BIND_JSON_PATH_STREAM_NONE, 0);
 }
 
 data_bind_stream_t *data_bind_stream_csv_all_create(DataBind *codec, const char *type_name,
@@ -6547,7 +6825,7 @@ data_bind_stream_t *data_bind_stream_csv_all_create(DataBind *codec, const char 
                                                     DataBindError *error) {
   return data_bind_stream_create_common(codec, type_name, NULL, out_value, error,
                                         data_bind_stream_csv_feed, data_bind_stream_csv_finish,
-                                        NULL, 1, 0, 0);
+                                        NULL, 1, 0, DATA_BIND_JSON_PATH_STREAM_NONE, 0);
 }
 
 data_bind_stream_t *data_bind_stream_csv_path_create(DataBind *codec, const char *type_name,
@@ -6561,14 +6839,15 @@ data_bind_stream_t *data_bind_stream_csv_path_create(DataBind *codec, const char
   }
   return data_bind_stream_create_common(codec, type_name, csv_path, out_value, error,
                                         data_bind_stream_csv_feed, data_bind_stream_csv_finish,
-                                        NULL, 1, 0, 0);
+                                        NULL, 1, 0, DATA_BIND_JSON_PATH_STREAM_NONE, 0);
 }
 
 data_bind_stream_t *data_bind_stream_xml_create(DataBind *codec, const char *type_name,
                                                 DataBindValue **out_value, DataBindError *error) {
   return data_bind_stream_create_common(codec, type_name, NULL, out_value, error,
                                         data_bind_stream_text_feed, data_bind_stream_xml_finish,
-                                        data_bind_stream_bind_xml, 0, 0, 0);
+                                        data_bind_stream_bind_xml, 0, 0,
+                                        DATA_BIND_JSON_PATH_STREAM_NONE, 0);
 }
 
 data_bind_stream_t *data_bind_stream_xml_path_all_create(DataBind *codec, const char *type_name,
@@ -6583,6 +6862,7 @@ data_bind_stream_t *data_bind_stream_xml_path_all_create(DataBind *codec, const 
   return data_bind_stream_create_common(codec, type_name, xml_path, out_value, error,
                                         data_bind_stream_text_feed, data_bind_stream_xml_finish,
                                         data_bind_stream_bind_xml_path_all, 0, 0,
+                                        DATA_BIND_JSON_PATH_STREAM_NONE,
                                         data_bind_stream_xml_can_bind_incrementally(xml_path));
 }
 
@@ -6623,7 +6903,8 @@ static DataBindStatus data_bind_stream_text_feed(data_bind_stream_t *parser, con
   status = data_bind_stream_sax_feed(parser, data, len, error);
   if (status != DATA_BIND_OK) return status;
 
-  if ((parser->json_stream_candidate && parser->json_stream_active) ||
+  if (parser->json_path_stream != NULL ||
+      (parser->json_stream_candidate && parser->json_stream_active) ||
       parser->xml_stream_candidate) {
     parser->started = 1;
     db_error_clear(error);
@@ -6735,8 +7016,16 @@ static DataBindStatus data_bind_stream_json_finish(data_bind_stream_t *parser,
     parser->finished = 1;
     return status;
   }
-  if ((parser->json_stream_candidate && parser->json_stream_active) ||
+  if (parser->json_path_stream != NULL ||
+      (parser->json_stream_candidate && parser->json_stream_active) ||
       parser->xml_stream_candidate) {
+    if (parser->json_path_stream != NULL &&
+        parser->json_path_stream_mode == DATA_BIND_JSON_PATH_STREAM_FIRST &&
+        parser->stream_values == NULL) {
+      parser->finished = 1;
+      return db_error_set(error, DATA_BIND_ERR_TYPE_MISMATCH, path, -1, -1,
+                          "JSONPath selected no value for type: %s", parser->type_name);
+    }
     *out_value = parser->stream_values;
     parser->stream_values = NULL;
     parser->finished = 1;
@@ -6878,9 +7167,19 @@ void data_bind_stream_destroy(data_bind_stream_t *stream) {
   free(parser->csv_fields);
   free(parser->csv_field_storage);
   if (parser->csv_filter != NULL) turbo_dsv_filter_destroy(parser->csv_filter);
+  if (parser->json_path_stream != NULL)
+    turbo_json_path_stream_destroy(parser->json_path_stream);
+  if (parser->json_path_program != NULL)
+    turbo_json_path_program_free(parser->json_path_program);
   if (parser->json_sax != NULL) turbo_json_sax_parser_destroy(parser->json_sax);
   if (parser->yaml_sax != NULL) turbo_yaml_sax_parser_destroy(parser->yaml_sax);
   if (parser->xml_sax != NULL) turbo_xml_sax_parser_destroy(parser->xml_sax);
+  if (parser->json_match_value != NULL) {
+    turbo_free_json(&parser->json_match_value);
+  } else if (parser->json_frame_count != 0 && parser->json_frames[0].value != NULL) {
+    json_value_t *partial = parser->json_frames[0].value;
+    turbo_free_json(&partial);
+  }
   for (i = 0; i < parser->json_frame_count; ++i) {
     free(parser->json_frames[i].pending_key);
   }

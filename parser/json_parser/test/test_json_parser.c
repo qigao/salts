@@ -120,6 +120,94 @@ static int sax_fail_on_string(void *ctx, const char *val, size_t len) {
   return -1;
 }
 
+typedef struct {
+  size_t match_starts;
+  size_t match_ends;
+  json_type_t last_match_type;
+  size_t strings;
+  size_t numbers;
+  size_t objects_started;
+  size_t objects_ended;
+  size_t arrays_started;
+  size_t arrays_ended;
+  size_t keys;
+  char string_values[8][64];
+  char number_values[8][64];
+} json_path_stream_test_ctx_t;
+
+static int json_path_stream_match_start(void *ctx, json_type_t type) {
+  json_path_stream_test_ctx_t *capture = (json_path_stream_test_ctx_t *)ctx;
+  capture->match_starts++;
+  capture->last_match_type = type;
+  return 0;
+}
+
+static int json_path_stream_match_end(void *ctx, json_type_t type) {
+  json_path_stream_test_ctx_t *capture = (json_path_stream_test_ctx_t *)ctx;
+  capture->match_ends++;
+  capture->last_match_type = type;
+  return 0;
+}
+
+static int json_path_stream_string(void *ctx, const char *value, size_t len) {
+  json_path_stream_test_ctx_t *capture = (json_path_stream_test_ctx_t *)ctx;
+  if (capture->strings >= 8 || len >= sizeof(capture->string_values[0])) return -1;
+  memcpy(capture->string_values[capture->strings], value, len);
+  capture->string_values[capture->strings][len] = '\0';
+  capture->strings++;
+  return 0;
+}
+
+static int json_path_stream_number(void *ctx, const char *value, size_t len) {
+  json_path_stream_test_ctx_t *capture = (json_path_stream_test_ctx_t *)ctx;
+  if (capture->numbers >= 8 || len >= sizeof(capture->number_values[0])) return -1;
+  memcpy(capture->number_values[capture->numbers], value, len);
+  capture->number_values[capture->numbers][len] = '\0';
+  capture->numbers++;
+  return 0;
+}
+
+static int json_path_stream_object_start(void *ctx) {
+  ((json_path_stream_test_ctx_t *)ctx)->objects_started++;
+  return 0;
+}
+
+static int json_path_stream_object_end(void *ctx) {
+  ((json_path_stream_test_ctx_t *)ctx)->objects_ended++;
+  return 0;
+}
+
+static int json_path_stream_array_start(void *ctx) {
+  ((json_path_stream_test_ctx_t *)ctx)->arrays_started++;
+  return 0;
+}
+
+static int json_path_stream_array_end(void *ctx) {
+  ((json_path_stream_test_ctx_t *)ctx)->arrays_ended++;
+  return 0;
+}
+
+static int json_path_stream_key(void *ctx, const char *key, size_t len) {
+  (void)key;
+  (void)len;
+  ((json_path_stream_test_ctx_t *)ctx)->keys++;
+  return 0;
+}
+
+static json_path_stream_handler_t json_path_stream_test_handler(void) {
+  json_path_stream_handler_t handler = {0};
+  handler.on_match_start = json_path_stream_match_start;
+  handler.on_match_end = json_path_stream_match_end;
+  handler.events.on_number = json_path_stream_number;
+  handler.events.on_string = json_path_stream_string;
+  handler.events.on_object_start = json_path_stream_object_start;
+  handler.events.on_object_key = json_path_stream_key;
+  handler.events.on_object_end = json_path_stream_object_end;
+  handler.events.on_array_start = json_path_stream_array_start;
+  handler.events.on_array_end = json_path_stream_array_end;
+  return handler;
+}
+
 spec("json_parser") {
   describe("Basic Types") {
     it("should parse null correctly") {
@@ -376,6 +464,83 @@ spec("json_parser") {
       json_value_t *settings = json_object_get(v, "settings");
       check_int_eq(json_get_int(settings, "max_clients", 0), 10000);
 
+      json_free(v);
+    }
+
+    it("should index large parsed objects for key and JSONPath lookup") {
+      enum { KEY_COUNT = 128, BUFFER_CAPACITY = 4096 };
+      char *json = (char *)malloc(BUFFER_CAPACITY);
+      size_t offset = 0;
+      json_value_t *v;
+
+      check_not_null(json);
+      json[offset++] = '{';
+      for (int i = 0; i < KEY_COUNT; ++i) {
+        int written = snprintf(json + offset, BUFFER_CAPACITY - offset,
+                               "%s\"key_%d\":%d", i == 0 ? "" : ",", i, i);
+        check_int_gt(written, 0);
+        check((size_t)written < BUFFER_CAPACITY - offset);
+        offset += (size_t)written;
+      }
+      json[offset++] = '}';
+      json[offset] = '\0';
+
+      v = json_parse(json, offset);
+      check_not_null(v);
+      check_size_eq(json_object_size(v), KEY_COUNT);
+      check_int_eq(json_get_int(v, "key_0", -1), 0);
+      check_int_eq(json_get_int(v, "key_63", -1), 63);
+      check_int_eq(json_get_int(v, "key_127", -1), 127);
+      check_null(json_object_get(v, "missing"));
+      check_str_eq(json_object_key(v, KEY_COUNT - 1), "key_127");
+      check_int_eq((int)json_number(json_path_get(v, "$.key_127")), 127);
+
+      json_free(v);
+      free(json);
+    }
+
+    it("should keep indexes coherent when builder objects grow and update") {
+      enum { INITIAL_KEYS = 40 };
+      json_value_t *obj = json_create_object();
+      char key[32];
+
+      check_not_null(obj);
+      for (int i = 0; i < INITIAL_KEYS; ++i) {
+        int written = snprintf(key, sizeof(key), "key_%d", i);
+        check_int_gt(written, 0);
+        json_object_set_number(obj, key, (double)i);
+      }
+      json_object_set_number(obj, "key_31", 999.0);
+      json_object_set_number(obj, "key_40", 40.0);
+
+      check_size_eq(json_object_size(obj), INITIAL_KEYS + 1);
+      check_float_eq(json_get_double(obj, "key_31", -1.0), 999.0, 0.001);
+      check_float_eq(json_get_double(obj, "key_40", -1.0), 40.0, 0.001);
+      check_str_eq(json_object_key(obj, 31), "key_31");
+      check_str_eq(json_object_key(obj, INITIAL_KEYS), "key_40");
+      json_free(obj);
+    }
+
+    it("should preserve first-member semantics for indexed duplicate keys") {
+      const char *json =
+          "{\"dup\":1,\"k1\":1,\"k2\":2,\"k3\":3,\"k4\":4,"
+          "\"k5\":5,\"k6\":6,\"k7\":7,\"k8\":8,\"k9\":9,"
+          "\"k10\":10,\"k11\":11,\"k12\":12,\"k13\":13,"
+          "\"k14\":14,\"k15\":15,\"dup\":2}";
+      json_value_t *v = json_parse(json, strlen(json));
+      char *serialized;
+
+      check_not_null(v);
+      check_size_eq(json_object_size(v), 17);
+      check_int_eq((int)json_number(json_object_get(v, "dup")), 1);
+      serialized = json_serialize(v, NULL);
+      check_not_null(serialized);
+      check_str_eq(serialized, json);
+      json_serialize_free(serialized);
+      json_object_set_number(v, "dup", 7.0);
+      check_size_eq(json_object_size(v), 17);
+      check_int_eq((int)json_number(json_object_get(v, "dup")), 7);
+      check_int_eq((int)json_number(json_object_value(v, 16)), 2);
       json_free(v);
     }
   }
@@ -660,6 +825,201 @@ spec("json_parser") {
 
       json_free(v);
       free(json);
+    }
+
+    it("should reuse a compiled JSONPath after its source expression changes") {
+      char expr[] = "$.listeners[-1].transport";
+      const char *first_json =
+          "{\"listeners\":[{\"transport\":\"tcp\"},{\"transport\":\"tls\"}]}";
+      const char *second_json =
+          "{\"listeners\":[{\"transport\":\"quic\"},{\"transport\":\"ws\"}]}";
+      json_path_program_t *program = json_path_compile(expr);
+      json_value_t *first = json_parse(first_json, strlen(first_json));
+      json_value_t *second = json_parse(second_json, strlen(second_json));
+
+      check_not_null(program);
+      check_not_null(first);
+      check_not_null(second);
+      memset(expr, 'x', sizeof(expr) - 1U);
+      check_str_eq(json_string(json_path_get_compiled(first, program)), "tls");
+      check_str_eq(json_string(json_path_get_compiled(second, program)), "ws");
+
+      json_free(second);
+      json_free(first);
+      json_path_program_free(program);
+    }
+
+    it("should execute compiled filters and unions without reparsing") {
+      const char *json =
+          "{\"listeners\":[{\"port\":1883,\"transport\":\"tcp\"},"
+          "{\"port\":8883,\"transport\":\"tls\"},"
+          "{\"port\":8080,\"transport\":\"ws\"}],"
+          "\"settings\":{\"max_clients\":10000,\"connect_timeout_ms\":5000}}";
+      json_value_t *root = json_parse(json, strlen(json));
+      json_path_program_t *filter = json_path_compile(
+          "$.listeners[@.port >= 8000].transport");
+      json_path_program_t *union_program = json_path_compile(
+          "$.settings['max_clients','connect_timeout_ms']");
+      json_path_result_t *filtered;
+      json_path_result_t *union_result;
+
+      check_not_null(root);
+      check_not_null(filter);
+      check_not_null(union_program);
+      filtered = json_path_query_compiled(root, filter);
+      union_result = json_path_query_compiled(root, union_program);
+      check_not_null(filtered);
+      check_not_null(union_result);
+      check_size_eq(json_path_result_size(filtered), 2);
+      check_str_eq(json_string(json_path_result_get(filtered, 0)), "tls");
+      check_str_eq(json_string(json_path_result_get(filtered, 1)), "ws");
+      check_size_eq(json_path_result_size(union_result), 2);
+      check_int_eq((int)json_number(json_path_result_get(union_result, 0)), 10000);
+      check_int_eq((int)json_number(json_path_result_get(union_result, 1)), 5000);
+
+      json_path_result_free(union_result);
+      json_path_result_free(filtered);
+      json_path_program_free(union_program);
+      json_path_program_free(filter);
+      json_free(root);
+    }
+
+    it("should reject invalid compiled JSONPath expressions") {
+      json_path_program_t *program;
+      check_null(json_path_compile("$.listeners["));
+      check_not_null(json_path_get_error());
+      program = json_path_compile("$.listeners");
+      check_not_null(program);
+      check_null(json_path_get_error());
+      json_path_program_free(program);
+    }
+
+    it("should stream wildcard scalar matches without building a DOM") {
+      const char *json =
+          "{\"items\":[{\"name\":\"Alice\"},{\"name\":\"Bob\"}]}";
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.items[*].name");
+      json_path_stream_t *stream = json_path_stream_create(program, &handler, &capture);
+
+      check_not_null(program);
+      check_not_null(stream);
+      for (size_t i = 0; i < strlen(json); ++i)
+        check_int_eq(json_path_stream_feed(stream, json + i, 1), 0);
+      check_int_eq(json_path_stream_finish(stream), 0);
+      check_null(json_path_stream_error(stream));
+      check_size_eq(json_path_stream_match_count(stream), 2);
+      check_size_eq(capture.match_starts, 2);
+      check_size_eq(capture.match_ends, 2);
+      check_size_eq(capture.strings, 2);
+      check_str_eq(capture.string_values[0], "Alice");
+      check_str_eq(capture.string_values[1], "Bob");
+
+      json_path_stream_destroy(stream);
+      json_path_program_free(program);
+    }
+
+    it("should stream a selected object as balanced SAX events") {
+      const char *json =
+          "{\"items\":[{\"name\":\"A\",\"id\":1},{\"name\":\"B\",\"id\":2}]}";
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.items[1]");
+      json_path_stream_t *stream = json_path_stream_create(program, &handler, &capture);
+
+      check_not_null(program);
+      check_not_null(stream);
+      check_int_eq(json_path_stream_feed(stream, json, strlen(json)), 0);
+      check_int_eq(json_path_stream_finish(stream), 0);
+      check_size_eq(json_path_stream_match_count(stream), 1);
+      check_int_eq(capture.last_match_type, JSON_OBJECT);
+      check_size_eq(capture.objects_started, 1);
+      check_size_eq(capture.objects_ended, 1);
+      check_size_eq(capture.keys, 2);
+      check_size_eq(capture.strings, 1);
+      check_size_eq(capture.numbers, 1);
+      check_str_eq(capture.string_values[0], "B");
+      check_str_eq(capture.number_values[0], "2");
+
+      json_path_stream_destroy(stream);
+      json_path_program_free(program);
+    }
+
+    it("should stream object key unions with exact number tokens") {
+      const char *json = "{\"settings\":{\"a\":100,\"skip\":0,\"b\":200}}";
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.settings['a','b']");
+      json_path_stream_t *stream = json_path_stream_create(program, &handler, &capture);
+
+      check_not_null(program);
+      check_not_null(stream);
+      check_int_eq(json_path_stream_feed(stream, json, 11), 0);
+      check_int_eq(json_path_stream_feed(stream, json + 11, strlen(json) - 11), 0);
+      check_int_eq(json_path_stream_finish(stream), 0);
+      check_size_eq(json_path_stream_match_count(stream), 2);
+      check_size_eq(capture.numbers, 2);
+      check_str_eq(capture.number_values[0], "100");
+      check_str_eq(capture.number_values[1], "200");
+
+      json_path_stream_destroy(stream);
+      json_path_program_free(program);
+    }
+
+    it("should stream array index unions") {
+      const char *json = "{\"items\":[10,20,30]}";
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.items[0,2]");
+      json_path_stream_t *stream = json_path_stream_create(program, &handler, &capture);
+
+      check_not_null(program);
+      check_not_null(stream);
+      check_int_eq(json_path_stream_feed(stream, json, strlen(json)), 0);
+      check_int_eq(json_path_stream_finish(stream), 0);
+      check_size_eq(json_path_stream_match_count(stream), 2);
+      check_size_eq(capture.numbers, 2);
+      check_str_eq(capture.number_values[0], "10");
+      check_str_eq(capture.number_values[1], "30");
+
+      json_path_stream_destroy(stream);
+      json_path_program_free(program);
+    }
+
+    it("should reject non-streamable filters and negative indexes") {
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *filter =
+          json_path_compile("$.items[@.port >= 8000].transport");
+      json_path_program_t *negative = json_path_compile("$.items[-1]");
+
+      check_not_null(filter);
+      check_not_null(negative);
+      check_null(json_path_stream_create(filter, &handler, &capture));
+      check_str_contains(json_path_get_error(), "not streamable");
+      check_null(json_path_stream_create(negative, &handler, &capture));
+      check_str_contains(json_path_get_error(), "not streamable");
+
+      json_path_program_free(negative);
+      json_path_program_free(filter);
+    }
+
+    it("should stop a JSONPath stream when a selected callback fails") {
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.name");
+      json_path_stream_t *stream;
+      handler.events.on_string = sax_fail_on_string;
+      stream = json_path_stream_create(program, &handler, &capture);
+
+      check_not_null(program);
+      check_not_null(stream);
+      check_int_eq(json_path_stream_feed(stream, "{\"name\":\"stop\"}", 15), -1);
+      check_str_contains(json_path_stream_error(stream), "callback");
+      check_size_eq(json_path_stream_match_count(stream), 0);
+
+      json_path_stream_destroy(stream);
+      json_path_program_free(program);
     }
   }
 

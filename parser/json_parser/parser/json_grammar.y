@@ -118,8 +118,9 @@ value(A) ::= NULL.  { (void)ctx; A = json_value_null_arena(ctx->arena); }
 
 object(A) ::= LBRACE RBRACE. { (void)ctx; A = json_value_object_arena(ctx->arena); }
 object(A) ::= LBRACE members(M) RBRACE. {
-    (void)ctx;
     A = M;
+    /* Indexes are derived; the linked pair order remains authoritative. */
+    (void)json_object_build_index(ctx->arena, A);
 }
 
 members(A) ::= pair(P). {

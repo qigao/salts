@@ -291,6 +291,66 @@ spec("data_bind public API") {
         data_bind_stream_destroy(stream);
       }
 
+      stream = data_bind_stream_json_path_all_create(codec, "Order", "$.orders[0,1]", &value,
+                                                     &err);
+      check_not_null(stream);
+      if (stream) {
+        const char *nested_front =
+            "{\"orders\":[{\"id\":7,\"side\":\"Buy\",\"symbol\":\"N1\"},";
+        const char *nested_back =
+            "{\"id\":8,\"side\":\"Sell\",\"symbol\":\"N2\"}],\"ignored\":true}";
+        check_int_eq(data_bind_stream_feed(stream, nested_front, strlen(nested_front)),
+                     DATA_BIND_OK);
+        check_int_eq(data_bind_stream_feed(stream, nested_back, strlen(nested_back)),
+                     DATA_BIND_OK);
+        check_int_eq(data_bind_stream_finish(stream), DATA_BIND_OK);
+        check_not_null(value);
+        check_size_eq(data_bind_value_count(value), 2);
+        check_int_eq(data_bind_value_as_int(
+                         data_bind_value_get(data_bind_value_at(value, 0), "id")),
+                     7);
+        check_int_eq(data_bind_value_as_int(
+                         data_bind_value_get(data_bind_value_at(value, 1), "id")),
+                     8);
+        data_bind_value_free(value);
+        value = NULL;
+        data_bind_stream_destroy(stream);
+      }
+
+      stream = data_bind_stream_json_path_create(codec, "Order", "$.orders[1]", &value, &err);
+      check_not_null(stream);
+      if (stream) {
+        const char *nested =
+            "{\"orders\":[{\"id\":9,\"side\":\"Buy\",\"symbol\":\"N3\"},"
+            "{\"id\":10,\"side\":\"Sell\",\"symbol\":\"N4\"}]}";
+        check_int_eq(data_bind_stream_feed(stream, nested, strlen(nested)), DATA_BIND_OK);
+        check_int_eq(data_bind_stream_finish(stream), DATA_BIND_OK);
+        check_not_null(value);
+        check_int_eq(data_bind_value_as_int(data_bind_value_get(value, "id")), 10);
+        data_bind_value_free(value);
+        value = NULL;
+        data_bind_stream_destroy(stream);
+      }
+
+      stream = data_bind_stream_json_path_all_create(codec, "Order",
+                                                     "$.orders[@.id >= 12]", &value, &err);
+      check_not_null(stream);
+      if (stream) {
+        const char *filtered =
+            "{\"orders\":[{\"id\":11,\"side\":\"Buy\",\"symbol\":\"F1\"},"
+            "{\"id\":12,\"side\":\"Sell\",\"symbol\":\"F2\"}]}";
+        check_int_eq(data_bind_stream_feed(stream, filtered, strlen(filtered)), DATA_BIND_OK);
+        check_int_eq(data_bind_stream_finish(stream), DATA_BIND_OK);
+        check_not_null(value);
+        check_size_eq(data_bind_value_count(value), 1);
+        check_int_eq(data_bind_value_as_int(
+                         data_bind_value_get(data_bind_value_at(value, 0), "id")),
+                     12);
+        data_bind_value_free(value);
+        value = NULL;
+        data_bind_stream_destroy(stream);
+      }
+
       stream = data_bind_stream_json_all_create(codec, "Order", &value, &err);
       check_not_null(stream);
       if (stream) {
@@ -436,6 +496,19 @@ spec("data_bind public API") {
         check_int_eq(err.code, DATA_BIND_ERR_PARSE);
         data_bind_value_free(value);
         value = NULL;
+        data_bind_stream_destroy(stream);
+        stream = NULL;
+      }
+
+      stream = data_bind_stream_json_path_create(codec, "Order", "$.orders[", &value, &err);
+      check_not_null(stream);
+      if (stream) {
+        const char *valid_json =
+            "{\"orders\":[{\"id\":1,\"side\":\"Buy\",\"symbol\":\"A\"}]}";
+        check_int_eq(data_bind_stream_feed(stream, valid_json, strlen(valid_json)), DATA_BIND_OK);
+        check_int_eq(data_bind_stream_finish(stream), DATA_BIND_ERR_PARSE);
+        check_int_eq(err.code, DATA_BIND_ERR_PARSE);
+        check_null(value);
         data_bind_stream_destroy(stream);
         stream = NULL;
       }

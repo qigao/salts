@@ -17,7 +17,9 @@ extern "C" {
 
 typedef struct json_value_s json_value_t;
 typedef struct json_path_result_s json_path_result_t;
+typedef struct json_path_program_s json_path_program_t;
 typedef struct json_sax_parser_s json_sax_parser_t;
+typedef struct json_path_stream_s json_path_stream_t;
 
 typedef enum {
   JSON_NULL,
@@ -82,6 +84,37 @@ void json_serialize_free(char *str);
 
 json_value_t *json_path_get(const json_value_t *root, const char *expr);
 json_path_result_t *json_path_query(const json_value_t *root, const char *expr);
+
+/** Compile a JSONPath expression into an immutable reusable program.
+ * @param expr NUL-terminated JSONPath expression; copied by this call.
+ * @return Owned program, or NULL for invalid syntax, resource limits, or OOM.
+ * Inspect json_path_get_error() after failure. The program does not retain expr.
+ */
+json_path_program_t *json_path_compile(const char *expr);
+
+/** Execute a compiled JSONPath and return its first match.
+ * @param root Borrowed JSON tree, which must remain alive for the call.
+ * @param program Borrowed immutable program, reusable across JSON trees.
+ * @return Borrowed value from root, or NULL when there is no match or arguments
+ * are invalid. The returned value is invalidated when root is freed.
+ */
+json_value_t *json_path_get_compiled(const json_value_t *root,
+                                     const json_path_program_t *program);
+
+/** Execute a compiled JSONPath and collect every match.
+ * @param root Borrowed JSON tree, which must remain alive until result use ends.
+ * @param program Borrowed immutable program; do not free it during execution.
+ * @return Owned result handle, including an empty result for no matches, or NULL
+ * for invalid arguments/OOM. Result values are borrowed from root.
+ */
+json_path_result_t *json_path_query_compiled(
+    const json_value_t *root, const json_path_program_t *program);
+
+/** Free a compiled JSONPath program. NULL is accepted.
+ * The caller must ensure no execution is using program concurrently.
+ */
+void json_path_program_free(json_path_program_t *program);
+
 size_t json_path_result_size(const json_path_result_t *result);
 json_value_t *json_path_result_get(const json_path_result_t *result, size_t index);
 void json_path_result_free(json_path_result_t *result);
@@ -141,7 +174,7 @@ void json_object_set_bool(json_value_t *obj, const char *key, bool val);
 void json_object_set_null(json_value_t *obj, const char *key);
 
 /* ============================================================================
- * SAX/Stream API - O(1) memory, callback-based parsing
+ * SAX/Stream API - callback-based parsing without a retained DOM
  * ============================================================================ */
 
 typedef struct json_sax_handler_s {
@@ -171,6 +204,21 @@ typedef struct json_sax_handler_raw_s {
   int (*on_array_end)(void *ctx);
 } json_sax_handler_raw_t;
 
+/** Stream callbacks for a compiled, streamable JSONPath program.
+ *
+ * Only the selected subtrees are delivered. on_match_start() is called before
+ * the matching value's event, and on_match_end() is called after its closing
+ * event. The embedded SAX callbacks are borrowed-event callbacks: strings,
+ * object keys, and raw numbers are valid only for the duration of the callback.
+ * Stream programs support root/key/index/wildcard paths and key/index unions;
+ * filter and recursive expressions must use the DOM JSONPath API.
+ */
+typedef struct json_path_stream_handler_s {
+  int (*on_match_start)(void *ctx, json_type_t type);
+  int (*on_match_end)(void *ctx, json_type_t type);
+  json_sax_handler_raw_t events;
+} json_path_stream_handler_t;
+
 int json_parse_sax(const char *content, size_t len, const json_sax_handler_t *handler, void *ctx);
 /** Parse one document while delivering exact JSON number tokens.
  * @param content JSON input; must not be NULL.
@@ -183,9 +231,9 @@ int json_parse_sax(const char *content, size_t len, const json_sax_handler_t *ha
 int json_parse_sax_raw(const char *content, size_t len,
                        const json_sax_handler_raw_t *handler, void *ctx);
 
-/* Incremental SAX parser. Call feed() with any chunk size, then finish() once at EOF.
- * Callback
- * pointers are valid only for the duration of the callback. */
+/* Incremental SAX parser. Call feed() with any chunk size, then finish() once at
+ * EOF. Memory is O(depth + longest incomplete token + unconsumed input).
+ * Callback pointers are valid only for the duration of the callback. */
 json_sax_parser_t *json_sax_parser_create(const json_sax_handler_t *handler, void *ctx);
 /** Create an incremental parser that preserves exact number tokens.
  * @param handler Raw-number callback table; must not be NULL and is copied.
@@ -198,6 +246,49 @@ int json_sax_parser_feed(json_sax_parser_t *parser, const char *data, size_t len
 int json_sax_parser_finish(json_sax_parser_t *parser);
 const char *json_sax_parser_error(const json_sax_parser_t *parser);
 void json_sax_parser_destroy(json_sax_parser_t *parser);
+
+/** Create a matcher for a streamable compiled JSONPath program.
+ * The program is borrowed and must remain alive until the stream is destroyed.
+ * @param program Borrowed immutable program from json_path_compile().
+ * @param handler Callback table copied by this call; individual callbacks are optional.
+ * @param ctx User context passed unchanged to callbacks.
+ * @return Owned stream matcher, or NULL on invalid arguments, unsupported
+ * expression, resource limit, or OOM.
+ * The failure reason is available through json_path_get_error().
+ * @code
+ * json_path_program_t *program = json_path_compile("$.items[*].id");
+ * json_path_stream_handler_t handler = {0};
+ * handler.events.on_number = consume_number_token;
+ * json_path_stream_t *stream = json_path_stream_create(program, &handler, ctx);
+ * json_path_stream_feed(stream, chunk, chunk_len);
+ * json_path_stream_finish(stream);
+ * json_path_stream_destroy(stream);
+ * json_path_program_free(program);
+ * @endcode
+ */
+json_path_stream_t *json_path_stream_create(const json_path_program_t *program,
+                                             const json_path_stream_handler_t *handler,
+                                             void *ctx);
+
+/** Feed an arbitrary input chunk. The chunk is borrowed only for this call.
+ * @return 0 on success, -1 on invalid state, JSON syntax, allocation, resource,
+ * or callback failure.
+ */
+int json_path_stream_feed(json_path_stream_t *stream, const char *data, size_t len);
+
+/** Finish the one-document stream at EOF.
+ * @return 0 on success, -1 on incomplete input, invalid state, or callback failure.
+ */
+int json_path_stream_finish(json_path_stream_t *stream);
+
+/** Return the number of completed matches observed by the stream. */
+size_t json_path_stream_match_count(const json_path_stream_t *stream);
+
+/** Return the stream-local error, or NULL when no error has occurred. */
+const char *json_path_stream_error(const json_path_stream_t *stream);
+
+/** Destroy a stream matcher. NULL is accepted. */
+void json_path_stream_destroy(json_path_stream_t *stream);
 
 #ifdef __cplusplus
 }

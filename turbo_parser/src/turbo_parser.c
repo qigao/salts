@@ -47,6 +47,12 @@ static const char *turbo_cxml_string_raw(const cxml_string *str) {
 }
 
 /* JSON */
+struct turbo_json_path_stream_s {
+  json_path_stream_t *stream;
+  turbo_json_path_stream_handler_t handler;
+  void *ctx;
+};
+
 int turbo_parse_json(const uint8_t *data, size_t len, turbo_json_doc_t **out) {
   if (!data || !out) return -1;
   *out = NULL;
@@ -143,6 +149,169 @@ json_value_t *turbo_json_path_get(const json_value_t *root, const char *expr) {
 
 turbo_json_path_result_t *turbo_json_path_query(const json_value_t *root, const char *expr) {
   return (turbo_json_path_result_t *)json_path_query(root, expr);
+}
+
+turbo_json_path_program_t *turbo_json_path_compile(const char *expr) {
+  return (turbo_json_path_program_t *)json_path_compile(expr);
+}
+
+json_value_t *turbo_json_path_get_compiled(
+    const json_value_t *root, const turbo_json_path_program_t *program) {
+  return json_path_get_compiled(root, (const json_path_program_t *)program);
+}
+
+turbo_json_path_result_t *turbo_json_path_query_compiled(
+    const json_value_t *root, const turbo_json_path_program_t *program) {
+  return (turbo_json_path_result_t *)json_path_query_compiled(
+      root, (const json_path_program_t *)program);
+}
+
+void turbo_json_path_program_free(turbo_json_path_program_t *program) {
+  json_path_program_free((json_path_program_t *)program);
+}
+
+static int turbo_json_path_stream_match_start(void *ctx, json_type_t type) {
+  turbo_json_path_stream_t *stream = (turbo_json_path_stream_t *)ctx;
+  return stream->handler.on_match_start
+             ? stream->handler.on_match_start(stream->ctx, (turbo_json_type_t)type)
+             : 0;
+}
+
+static int turbo_json_path_stream_match_end(void *ctx, json_type_t type) {
+  turbo_json_path_stream_t *stream = (turbo_json_path_stream_t *)ctx;
+  return stream->handler.on_match_end
+             ? stream->handler.on_match_end(stream->ctx, (turbo_json_type_t)type)
+             : 0;
+}
+
+static int turbo_json_path_stream_null(void *ctx) {
+  turbo_json_path_stream_t *stream = (turbo_json_path_stream_t *)ctx;
+  return stream->handler.events.on_null
+             ? stream->handler.events.on_null(stream->ctx)
+             : 0;
+}
+
+static int turbo_json_path_stream_bool(void *ctx, bool value) {
+  turbo_json_path_stream_t *stream = (turbo_json_path_stream_t *)ctx;
+  return stream->handler.events.on_bool
+             ? stream->handler.events.on_bool(stream->ctx, value)
+             : 0;
+}
+
+static int turbo_json_path_stream_number(void *ctx, const char *value, size_t len) {
+  turbo_json_path_stream_t *stream = (turbo_json_path_stream_t *)ctx;
+  return stream->handler.events.on_number
+             ? stream->handler.events.on_number(stream->ctx, value, len)
+             : 0;
+}
+
+static int turbo_json_path_stream_string(void *ctx, const char *value, size_t len) {
+  turbo_json_path_stream_t *stream = (turbo_json_path_stream_t *)ctx;
+  return stream->handler.events.on_string
+             ? stream->handler.events.on_string(stream->ctx, value, len)
+             : 0;
+}
+
+static int turbo_json_path_stream_object_start(void *ctx) {
+  turbo_json_path_stream_t *stream = (turbo_json_path_stream_t *)ctx;
+  return stream->handler.events.on_object_start
+             ? stream->handler.events.on_object_start(stream->ctx)
+             : 0;
+}
+
+static int turbo_json_path_stream_object_key(void *ctx, const char *key, size_t len) {
+  turbo_json_path_stream_t *stream = (turbo_json_path_stream_t *)ctx;
+  return stream->handler.events.on_object_key
+             ? stream->handler.events.on_object_key(stream->ctx, key, len)
+             : 0;
+}
+
+static int turbo_json_path_stream_object_end(void *ctx) {
+  turbo_json_path_stream_t *stream = (turbo_json_path_stream_t *)ctx;
+  return stream->handler.events.on_object_end
+             ? stream->handler.events.on_object_end(stream->ctx)
+             : 0;
+}
+
+static int turbo_json_path_stream_array_start(void *ctx) {
+  turbo_json_path_stream_t *stream = (turbo_json_path_stream_t *)ctx;
+  return stream->handler.events.on_array_start
+             ? stream->handler.events.on_array_start(stream->ctx)
+             : 0;
+}
+
+static int turbo_json_path_stream_array_end(void *ctx) {
+  turbo_json_path_stream_t *stream = (turbo_json_path_stream_t *)ctx;
+  return stream->handler.events.on_array_end
+             ? stream->handler.events.on_array_end(stream->ctx)
+             : 0;
+}
+
+turbo_json_path_stream_t *turbo_json_path_stream_create(
+    const turbo_json_path_program_t *program,
+    const turbo_json_path_stream_handler_t *handler, void *ctx) {
+  json_path_stream_handler_t raw = {0};
+  turbo_json_path_stream_t *stream;
+  if (!program || !handler) return NULL;
+  stream = (turbo_json_path_stream_t *)calloc(1, sizeof(*stream));
+  if (!stream) return NULL;
+  stream->handler = *handler;
+  stream->ctx = ctx;
+  raw.on_match_start = handler->on_match_start
+                           ? turbo_json_path_stream_match_start
+                           : NULL;
+  raw.on_match_end = handler->on_match_end ? turbo_json_path_stream_match_end : NULL;
+  raw.events.on_null = handler->events.on_null ? turbo_json_path_stream_null : NULL;
+  raw.events.on_bool = handler->events.on_bool ? turbo_json_path_stream_bool : NULL;
+  raw.events.on_number = handler->events.on_number ? turbo_json_path_stream_number : NULL;
+  raw.events.on_string = handler->events.on_string ? turbo_json_path_stream_string : NULL;
+  raw.events.on_object_start = handler->events.on_object_start
+                                   ? turbo_json_path_stream_object_start
+                                   : NULL;
+  raw.events.on_object_key = handler->events.on_object_key
+                                 ? turbo_json_path_stream_object_key
+                                 : NULL;
+  raw.events.on_object_end = handler->events.on_object_end
+                                 ? turbo_json_path_stream_object_end
+                                 : NULL;
+  raw.events.on_array_start = handler->events.on_array_start
+                                  ? turbo_json_path_stream_array_start
+                                  : NULL;
+  raw.events.on_array_end = handler->events.on_array_end
+                                ? turbo_json_path_stream_array_end
+                                : NULL;
+  stream->stream = json_path_stream_create(
+      (const json_path_program_t *)program, &raw, stream);
+  if (!stream->stream) {
+    free(stream);
+    return NULL;
+  }
+  return stream;
+}
+
+int turbo_json_path_stream_feed(turbo_json_path_stream_t *stream,
+                                const char *data, size_t len) {
+  return stream ? json_path_stream_feed(stream->stream, data, len) : -1;
+}
+
+int turbo_json_path_stream_finish(turbo_json_path_stream_t *stream) {
+  return stream ? json_path_stream_finish(stream->stream) : -1;
+}
+
+size_t turbo_json_path_stream_match_count(
+    const turbo_json_path_stream_t *stream) {
+  return stream ? json_path_stream_match_count(stream->stream) : 0;
+}
+
+const char *turbo_json_path_stream_error(
+    const turbo_json_path_stream_t *stream) {
+  return stream ? json_path_stream_error(stream->stream) : json_path_get_error();
+}
+
+void turbo_json_path_stream_destroy(turbo_json_path_stream_t *stream) {
+  if (!stream) return;
+  json_path_stream_destroy(stream->stream);
+  free(stream);
 }
 
 size_t turbo_json_path_result_size(const turbo_json_path_result_t *result) {

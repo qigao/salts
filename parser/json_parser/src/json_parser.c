@@ -16,11 +16,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <turbo_hash.h>
 #include <turbo_str.h>
 
 #define MAX_ERROR_LEN 512
 #define JSON_ARRAY_INDEX_THRESHOLD 8U
+#define JSON_OBJECT_INDEX_THRESHOLD 16U
+#define JSON_OBJECT_INDEX_MIN_CAPACITY 16U
 static char g_error[MAX_ERROR_LEN] = {0};
+
+_Static_assert(sizeof(((json_value_t *)0)->data.object_val) <=
+                   sizeof(((json_value_t *)0)->data.array_val),
+               "object indexes must not increase json_value_t size");
 
 /* ============================================================================
  * Arena Allocator using object pools + blob chunks
@@ -344,17 +351,216 @@ bool json_array_append_arena(json_arena_t *arena, json_value_t *arr, json_value_
   return true;
 }
 
+size_t json_object_key_hash(const char *key, size_t key_len) {
+  size_t hash = turbo_hash_bytes(key, key_len, NULL);
+  return hash == 0 ? 1U : hash;
+}
+
+static int json_object_index_capacity_for(size_t count, size_t *capacity) {
+  size_t wanted;
+  size_t value = JSON_OBJECT_INDEX_MIN_CAPACITY;
+  if (!capacity || count > (SIZE_MAX - 1U) / 10U) return 0;
+  wanted = (count * 10U) / 7U + 1U;
+  while (value < wanted) {
+    if (value > SIZE_MAX / 2U) return 0;
+    value *= 2U;
+  }
+  *capacity = value;
+  return 1;
+}
+
+static json_pair_t *json_object_index_find_hashed(
+    const json_object_index_slot_t *slots, size_t capacity, const char *key,
+    size_t key_len, size_t hash) {
+  size_t mask;
+  size_t i;
+  if (!slots || capacity == 0 || !key || hash == 0) return NULL;
+  mask = capacity - 1U;
+  for (i = 0; i < capacity; ++i) {
+    const json_object_index_slot_t *slot = &slots[(hash + i) & mask];
+    if (!slot->pair) return NULL;
+    if (slot->key_len == key_len && memcmp(slot->key, key, key_len) == 0)
+      return slot->pair;
+  }
+  return NULL;
+}
+
+static json_pair_t *json_object_index_find(const json_object_index_slot_t *slots,
+                                           size_t capacity, const char *key,
+                                           size_t key_len) {
+  return json_object_index_find_hashed(slots, capacity, key, key_len,
+                                       json_object_key_hash(key, key_len));
+}
+
+static int json_object_index_insert(json_object_index_slot_t *slots, size_t capacity,
+                                    const char *key, size_t key_len, json_pair_t *pair,
+                                    size_t *entry_count) {
+  size_t hash;
+  size_t mask;
+  size_t i;
+  if (!slots || capacity == 0 || !key || !pair) return 0;
+  hash = json_object_key_hash(key, key_len);
+  mask = capacity - 1U;
+  for (i = 0; i < capacity; ++i) {
+    json_object_index_slot_t *slot = &slots[(hash + i) & mask];
+    if (!slot->pair) {
+      slot->key = key;
+      slot->key_len = key_len;
+      slot->pair = pair;
+      if (entry_count) ++*entry_count;
+      return 1;
+    }
+    /* Duplicate JSON members retain the first member, matching list lookup. */
+    if (slot->key_len == key_len && memcmp(slot->key, key, key_len) == 0)
+      return 1;
+  }
+  return 0;
+}
+
+static void json_object_index_invalidate(json_value_t *obj) {
+  obj->data.object_val.index = NULL;
+}
+
+static int json_object_index_rehash(json_arena_t *arena, json_value_t *obj,
+                                    size_t capacity) {
+  json_object_index_t *index = obj->data.object_val.index;
+  json_object_index_slot_t *slots;
+  size_t i;
+  size_t entries = 0;
+  if (!arena || !obj || obj->type != JSON_OBJECT || !index || capacity == 0 ||
+      capacity > SIZE_MAX / sizeof(*slots))
+    return 0;
+  slots = (json_object_index_slot_t *)json_arena_alloc(arena,
+                                                       capacity * sizeof(*slots));
+  if (!slots) return 0;
+  memset(slots, 0, capacity * sizeof(*slots));
+  for (i = 0; i < obj->data.object_val.count; ++i) {
+    json_pair_t *pair = index->members[i];
+    if (!pair) return 0;
+    if (!json_object_index_insert(slots, capacity, pair->key, pair->key_len,
+                                  pair, &entries))
+      return 0;
+  }
+  index->lookup = slots;
+  index->lookup_capacity = capacity;
+  index->lookup_count = entries;
+  return 1;
+}
+
+bool json_object_build_index(json_arena_t *arena, json_value_t *obj) {
+  json_object_index_t *index;
+  json_pair_t **members;
+  json_object_index_slot_t *slots;
+  size_t capacity;
+  size_t i = 0;
+  size_t entries = 0;
+  json_pair_t *pair;
+
+  if (!arena || !obj || obj->type != JSON_OBJECT) return false;
+  if (obj->data.object_val.count < JSON_OBJECT_INDEX_THRESHOLD) return true;
+  if (obj->data.object_val.index) return true;
+  if (obj->data.object_val.count > SIZE_MAX / sizeof(*members) ||
+      !json_object_index_capacity_for(obj->data.object_val.count, &capacity) ||
+      capacity > SIZE_MAX / sizeof(*slots))
+    return false;
+
+  index = (json_object_index_t *)json_arena_alloc(arena, sizeof(*index));
+  members = (json_pair_t **)json_arena_alloc(
+      arena, obj->data.object_val.count * sizeof(*members));
+  slots = (json_object_index_slot_t *)json_arena_alloc(arena,
+                                                       capacity * sizeof(*slots));
+  if (!index || !members || !slots) return false;
+  memset(index, 0, sizeof(*index));
+  memset(slots, 0, capacity * sizeof(*slots));
+  for (pair = obj->data.object_val.pairs; pair; pair = pair->next) {
+    if (i >= obj->data.object_val.count ||
+        !json_object_index_insert(slots, capacity, pair->key, pair->key_len,
+                                  pair, &entries))
+      return false;
+    members[i++] = pair;
+  }
+  if (i != obj->data.object_val.count) return false;
+  index->members = members;
+  index->members_capacity = obj->data.object_val.count;
+  index->lookup = slots;
+  index->lookup_capacity = capacity;
+  index->lookup_count = entries;
+  obj->data.object_val.index = index;
+  return true;
+}
+
+static void json_object_index_append(json_arena_t *arena, json_value_t *obj,
+                                     json_pair_t *pair) {
+  json_object_index_t *index = obj->data.object_val.index;
+  json_pair_t **members;
+  size_t capacity;
+  if (!arena || !obj || !pair) return;
+  if (!index) {
+    (void)json_object_build_index(arena, obj);
+    return;
+  }
+  if (obj->data.object_val.count > index->members_capacity) {
+    if (index->members_capacity > SIZE_MAX / 2U) {
+      json_object_index_invalidate(obj);
+      return;
+    }
+    capacity = index->members_capacity
+                   ? index->members_capacity * 2U
+                   : JSON_OBJECT_INDEX_THRESHOLD;
+    if (capacity < obj->data.object_val.count ||
+        capacity > SIZE_MAX / sizeof(*members)) {
+      json_object_index_invalidate(obj);
+      return;
+    }
+    members = (json_pair_t **)json_arena_alloc(arena, capacity * sizeof(*members));
+    if (!members) {
+      json_object_index_invalidate(obj);
+      return;
+    }
+    memcpy(members, index->members,
+           (obj->data.object_val.count - 1U) * sizeof(*members));
+    index->members = members;
+    index->members_capacity = capacity;
+  }
+  index->members[obj->data.object_val.count - 1U] = pair;
+
+  if (index->lookup_count == SIZE_MAX ||
+      index->lookup_count + 1U >
+          index->lookup_capacity - index->lookup_capacity / 4U) {
+    if (index->lookup_capacity > SIZE_MAX / 2U ||
+        !json_object_index_rehash(arena, obj,
+                                  index->lookup_capacity * 2U)) {
+      json_object_index_invalidate(obj);
+      return;
+    }
+  } else if (!json_object_index_insert(index->lookup,
+                                       index->lookup_capacity,
+                                       pair->key, pair->key_len, pair,
+                                       &index->lookup_count)) {
+    json_object_index_invalidate(obj);
+  }
+}
+
 bool json_object_set_arena_ex(json_arena_t *arena, json_value_t *obj, const char *key,
                               size_t key_len, int key_owned, json_value_t *val) {
   json_pair_t *existing;
 
   if (!arena || !obj || obj->type != JSON_OBJECT || !key || !val) return false;
 
-  for (existing = obj->data.object_val.pairs; existing; existing = existing->next) {
-    if (existing->key_len == key_len && memcmp(existing->key, key, key_len) == 0) {
-      existing->value = val;
-      return true;
+  existing = obj->data.object_val.index
+                 ? json_object_index_find(obj->data.object_val.index->lookup,
+                                          obj->data.object_val.index->lookup_capacity,
+                                          key, key_len)
+                 : NULL;
+  if (!existing) {
+    for (existing = obj->data.object_val.pairs; existing; existing = existing->next) {
+      if (existing->key_len == key_len && memcmp(existing->key, key, key_len) == 0)
+        break;
     }
+  }
+  if (existing) {
+    existing->value = val;
+    return true;
   }
 
   json_pair_t *pair = (json_pair_t *)json_arena_alloc(arena, sizeof(json_pair_t));
@@ -373,6 +579,8 @@ bool json_object_set_arena_ex(json_arena_t *arena, json_value_t *obj, const char
   }
   obj->data.object_val.pairs_tail = pair;
   obj->data.object_val.count++;
+  if (obj->data.object_val.count >= JSON_OBJECT_INDEX_THRESHOLD)
+    json_object_index_append(arena, obj, pair);
   return true;
 }
 
@@ -554,6 +762,9 @@ size_t json_object_size(const json_value_t *obj) {
 
 const char *json_object_key(const json_value_t *obj, size_t index) {
   if (!obj || obj->type != JSON_OBJECT) return NULL;
+  if (index >= obj->data.object_val.count) return NULL;
+  if (obj->data.object_val.index)
+    return obj->data.object_val.index->members[index]->key;
 
   json_pair_t *pair = obj->data.object_val.pairs;
   for (size_t i = 0; pair && i < index; i++) {
@@ -564,6 +775,9 @@ const char *json_object_key(const json_value_t *obj, size_t index) {
 
 size_t json_object_key_len(const json_value_t *obj, size_t index) {
   if (!obj || obj->type != JSON_OBJECT) return 0;
+  if (index >= obj->data.object_val.count) return 0;
+  if (obj->data.object_val.index)
+    return obj->data.object_val.index->members[index]->key_len;
 
   json_pair_t *pair = obj->data.object_val.pairs;
   for (size_t i = 0; pair && i < index; i++) {
@@ -574,6 +788,11 @@ size_t json_object_key_len(const json_value_t *obj, size_t index) {
 
 tstr_v json_object_key_v(const json_value_t *obj, size_t index) {
   if (!obj || obj->type != JSON_OBJECT) return tstr_v_from_buf(NULL, 0);
+  if (index >= obj->data.object_val.count) return tstr_v_from_buf(NULL, 0);
+  if (obj->data.object_val.index) {
+    const json_pair_t *pair = obj->data.object_val.index->members[index];
+    return tstr_v_from_buf(pair->key, pair->key_len);
+  }
 
   json_pair_t *pair = obj->data.object_val.pairs;
   for (size_t i = 0; pair && i < index; i++) {
@@ -584,6 +803,9 @@ tstr_v json_object_key_v(const json_value_t *obj, size_t index) {
 
 json_value_t *json_object_value(const json_value_t *obj, size_t index) {
   if (!obj || obj->type != JSON_OBJECT) return NULL;
+  if (index >= obj->data.object_val.count) return NULL;
+  if (obj->data.object_val.index)
+    return obj->data.object_val.index->members[index]->value;
 
   json_pair_t *pair = obj->data.object_val.pairs;
   for (size_t i = 0; pair && i < index; i++) {
@@ -599,6 +821,28 @@ json_value_t *json_object_get(const json_value_t *obj, const char *key) {
 
 json_value_t *json_object_get_v(const json_value_t *obj, tstr_v key) {
   if (!obj || obj->type != JSON_OBJECT || !key.data) return NULL;
+  if (obj->data.object_val.index)
+    return json_object_get_hashed_v(obj, key,
+                                    json_object_key_hash(key.data, key.len));
+  for (json_pair_t *pair = obj->data.object_val.pairs; pair; pair = pair->next) {
+    if (pair->key_len == key.len && memcmp(pair->key, key.data, key.len) == 0)
+      return pair->value;
+  }
+  return NULL;
+}
+
+json_value_t *json_object_get_hashed_v(const json_value_t *obj, tstr_v key,
+                                       size_t key_hash) {
+  json_pair_t *indexed;
+  if (!obj || obj->type != JSON_OBJECT || !key.data) return NULL;
+
+  if (obj->data.object_val.index) {
+    indexed = json_object_index_find_hashed(
+        obj->data.object_val.index->lookup,
+        obj->data.object_val.index->lookup_capacity, key.data, key.len,
+        key_hash);
+    return indexed ? indexed->value : NULL;
+  }
 
   for (json_pair_t *pair = obj->data.object_val.pairs; pair; pair = pair->next) {
     if (pair->key_len == key.len && memcmp(pair->key, key.data, key.len) == 0) {
@@ -1163,7 +1407,8 @@ void json_object_set_null(json_value_t *obj, const char *key) {
 }
 
 /* ============================================================================
- * SAX/Stream Parser - O(1) memory
+ * SAX/Stream Parser - no retained DOM; memory follows parser depth and pending
+ * token/input size.
  * ============================================================================ */
 
 #include "json_grammar_gen.h"

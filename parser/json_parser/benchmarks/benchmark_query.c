@@ -2,8 +2,7 @@
  * @file benchmark_query.c
  * @brief Benchmark for json_object_get() query performance
  *
- * Tests the real-world impact of O(n) linear search in json_object_get()
- * to determine if hash table optimization is worth the complexity.
+ * Compares short-list and indexed json_object_get() query workloads.
  */
 
 #include "json_parser.h"
@@ -28,6 +27,15 @@ static double get_time_ms(void) {
   return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
 }
 #endif
+
+static volatile size_t g_stream_match_sink = 0;
+
+static int benchmark_stream_number(void *ctx, const char *value, size_t len) {
+  (void)ctx;
+  (void)value;
+  (void)len;
+  return 0;
+}
 
 // Generate JSON object with N keys
 static char *generate_object_with_keys(size_t num_keys) {
@@ -222,8 +230,8 @@ int main(int argc, char **argv) {
 
   printf("JSON Query Benchmark\n");
   printf("====================\n\n");
-  printf("Purpose: Measure json_object_get() performance to determine if O(n)\n");
-  printf("         linear search is a real bottleneck worth optimizing.\n\n");
+  printf("Purpose: Measure json_object_get() throughput for short-list and\n");
+  printf("         indexed object lookup paths.\n\n");
 
   // Test configurations
   size_t key_counts[] = {10, 50, 100, 500, 1000};
@@ -355,12 +363,122 @@ int main(int argc, char **argv) {
 
   free(json_str);
 
-  printf("Conclusion:\n");
+  printf("Interpretation:\n");
   printf("----------------------------------------------------------------\n");
-  printf("If query overhead is < 5%%, hash table optimization is NOT worth it.\n");
-  printf("If query overhead is > 20%%, consider optimization.\n");
-  printf("\nNote: This measures worst-case O(n) search. Most real-world configs\n");
-  printf("      have frequently-accessed keys at the beginning, reducing impact.\n");
+  printf("Objects below the index threshold exercise linked-list lookup.\n");
+  printf("Larger objects exercise the derived hash index while preserving order.\n");
+
+  printf("\nTest 5: Compile-once JSONPath execution\n");
+  printf("----------------------------------------------------------------\n");
+  {
+    const int iterations = quick ? 10000 : 100000;
+    char *object_json = generate_object_with_keys(1000);
+    size_t object_len = object_json ? strlen(object_json) : 0;
+    json_value_t *object = object_json ? json_parse(object_json, object_len) : NULL;
+    json_path_program_t *program = json_path_compile("$.key_999");
+    double legacy_start;
+    double compiled_start;
+    double legacy_elapsed;
+    double compiled_elapsed;
+
+    if (!object || !program) {
+      printf("  Setup failed\n");
+      json_path_program_free(program);
+      json_free(object);
+      free(object_json);
+      return 1;
+    }
+    legacy_start = get_time_ms();
+    for (int i = 0; i < iterations; ++i) {
+      if (!json_path_get(object, "$.key_999")) {
+        printf("  Legacy execution failed\n");
+        break;
+      }
+    }
+    legacy_elapsed = get_time_ms() - legacy_start;
+
+    compiled_start = get_time_ms();
+    for (int i = 0; i < iterations; ++i) {
+      if (!json_path_get_compiled(object, program)) {
+        printf("  Compiled execution failed\n");
+        break;
+      }
+    }
+    compiled_elapsed = get_time_ms() - compiled_start;
+    printf("  Legacy parse+execute:     %8.2f ms\n", legacy_elapsed);
+    printf("  Compile-once execute:     %8.2f ms\n", compiled_elapsed);
+    if (compiled_elapsed > 0.0)
+      printf("  Speedup:                  %8.2fx\n", legacy_elapsed / compiled_elapsed);
+    json_path_program_free(program);
+    json_free(object);
+    free(object_json);
+  }
+
+  printf("\nTest 6: DOM parse+query versus streaming JSONPath\n");
+  printf("----------------------------------------------------------------\n");
+  {
+    const int iterations = quick ? 50 : 500;
+    char *document = generate_mqtt_config(1000, 100, 100);
+    size_t document_len = document ? strlen(document) : 0;
+    json_path_program_t *program = json_path_compile("$.listeners[*].port");
+    const json_path_stream_handler_t handler = {
+        .events = {.on_number = benchmark_stream_number}};
+    double dom_start;
+    double stream_start;
+    double dom_elapsed;
+    double stream_elapsed;
+
+    if (!document || !program) {
+      printf("  Setup failed\n");
+      json_path_program_free(program);
+      free(document);
+      return 1;
+    }
+
+    dom_start = get_time_ms();
+    for (int i = 0; i < iterations; ++i) {
+      json_value_t *root = json_parse(document, document_len);
+      json_path_result_t *result =
+          root ? json_path_query_compiled(root, program) : NULL;
+      if (!result) {
+        printf("  DOM execution failed\n");
+        json_free(root);
+        break;
+      }
+      g_stream_match_sink += json_path_result_size(result);
+      json_path_result_free(result);
+      json_free(root);
+    }
+    dom_elapsed = get_time_ms() - dom_start;
+
+    stream_start = get_time_ms();
+    for (int i = 0; i < iterations; ++i) {
+      json_path_stream_t *stream =
+          json_path_stream_create(program, &handler, NULL);
+      if (!stream || json_path_stream_feed(stream, document, document_len) != 0 ||
+          json_path_stream_finish(stream) != 0) {
+        const char *error =
+            stream ? json_path_stream_error(stream) : json_path_get_error();
+        printf("  Stream execution failed: %s\n",
+               error ? error : "unknown error");
+        json_path_stream_destroy(stream);
+        break;
+      }
+      g_stream_match_sink += json_path_stream_match_count(stream);
+      json_path_stream_destroy(stream);
+    }
+    stream_elapsed = get_time_ms() - stream_start;
+
+    printf("  Documents:                 %8d\n", iterations);
+    printf("  Document bytes:            %8zu\n", document_len);
+    printf("  DOM parse+query:           %8.2f ms\n", dom_elapsed);
+    printf("  Stream parse+query:        %8.2f ms\n", stream_elapsed);
+    if (stream_elapsed > 0.0)
+      printf("  Stream speedup:            %8.2fx\n", dom_elapsed / stream_elapsed);
+
+    json_path_program_free(program);
+    free(document);
+  }
 
   return 0;
 }

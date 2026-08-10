@@ -290,6 +290,46 @@ spec("turbo_parser") {
       turbo_json_path_result_free(ports);
       turbo_free_json(&root);
     }
+
+    it("should compile and reuse JSONPath through the facade") {
+      const char *json_data =
+          "{\"users\":[{\"name\":\"Alice\"},{\"name\":\"Bob\"}]}";
+      json_value_t *root = NULL;
+      turbo_json_path_program_t *program;
+      int rc = turbo_parse_json((const uint8_t *)json_data, strlen(json_data), &root);
+
+      check_int_eq(rc, 0);
+      check_not_null(root);
+      program = turbo_json_path_compile("$.users[1].name");
+      check_not_null(program);
+      check_str_eq(turbo_json_string(turbo_json_path_get_compiled(root, program)), "Bob");
+      turbo_json_path_program_free(program);
+      turbo_free_json(&root);
+    }
+
+    it("should stream compiled JSONPath matches through the facade") {
+      const char *json_data = "{\"items\":[1,9007199254740993,3]}";
+      const turbo_json_path_stream_handler_t handler = {
+          .events = {.on_number = capture_json_raw_number}};
+      json_raw_number_capture capture = {0};
+      turbo_json_path_program_t *program = turbo_json_path_compile("$.items[*]");
+      turbo_json_path_stream_t *stream =
+          turbo_json_path_stream_create(program, &handler, &capture);
+
+      check_not_null(program);
+      check_not_null(stream);
+      check_int_eq(turbo_json_path_stream_feed(stream, json_data, 10), 0);
+      check_int_eq(turbo_json_path_stream_feed(stream, json_data + 10,
+                                               strlen(json_data) - 10),
+                   0);
+      check_int_eq(turbo_json_path_stream_finish(stream), 0);
+      check_size_eq(turbo_json_path_stream_match_count(stream), 3);
+      check_size_eq(capture.count, 3);
+      check_str_eq(capture.values[1], "9007199254740993");
+
+      turbo_json_path_stream_destroy(stream);
+      turbo_json_path_program_free(program);
+    }
   }
 
   describe("YAML") {

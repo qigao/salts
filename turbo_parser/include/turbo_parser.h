@@ -20,7 +20,9 @@ typedef int (*turbo_write_fn)(const void *data, size_t len, void *user);
 typedef struct json_value_s json_value_t;
 typedef struct json_value_s turbo_json_doc_t;
 typedef struct json_path_result_s turbo_json_path_result_t;
+typedef struct json_path_program_s turbo_json_path_program_t;
 typedef struct turbo_json_sax_parser_s turbo_json_sax_parser_t;
+typedef struct turbo_json_path_stream_s turbo_json_path_stream_t;
 
 typedef enum {
   TURBO_JSON_NULL,
@@ -57,6 +59,13 @@ typedef struct turbo_json_sax_handler_raw_s {
   int (*on_array_start)(void *ctx);
   int (*on_array_end)(void *ctx);
 } turbo_json_sax_handler_raw_t;
+
+/** Events emitted only for subtrees selected by a streamable JSONPath program. */
+typedef struct turbo_json_path_stream_handler_s {
+  int (*on_match_start)(void *ctx, turbo_json_type_t type);
+  int (*on_match_end)(void *ctx, turbo_json_type_t type);
+  turbo_json_sax_handler_raw_t events;
+} turbo_json_path_stream_handler_t;
 
 /**
  * @brief Parse JSON data.
@@ -322,6 +331,33 @@ CXX_C_API json_value_t *turbo_json_path_get(const json_value_t *root, const char
  */
 CXX_C_API turbo_json_path_result_t *turbo_json_path_query(const json_value_t *root,
                                                           const char *expr);
+
+/** Compile an owned, reusable JSONPath program. */
+CXX_C_API turbo_json_path_program_t *turbo_json_path_compile(const char *expr);
+
+/** Execute a compiled program and return a borrowed first match. */
+CXX_C_API json_value_t *turbo_json_path_get_compiled(
+    const json_value_t *root, const turbo_json_path_program_t *program);
+
+/** Execute a compiled program and return an owned result handle. */
+CXX_C_API turbo_json_path_result_t *turbo_json_path_query_compiled(
+    const json_value_t *root, const turbo_json_path_program_t *program);
+
+/** Free a compiled program after all executions have stopped. */
+CXX_C_API void turbo_json_path_program_free(turbo_json_path_program_t *program);
+
+/** Create a no-DOM matcher for key/index/wildcard/union JSONPath programs. */
+CXX_C_API turbo_json_path_stream_t *turbo_json_path_stream_create(
+    const turbo_json_path_program_t *program,
+    const turbo_json_path_stream_handler_t *handler, void *ctx);
+CXX_C_API int turbo_json_path_stream_feed(turbo_json_path_stream_t *stream,
+                                          const char *data, size_t len);
+CXX_C_API int turbo_json_path_stream_finish(turbo_json_path_stream_t *stream);
+CXX_C_API size_t
+turbo_json_path_stream_match_count(const turbo_json_path_stream_t *stream);
+CXX_C_API const char *
+turbo_json_path_stream_error(const turbo_json_path_stream_t *stream);
+CXX_C_API void turbo_json_path_stream_destroy(turbo_json_path_stream_t *stream);
 
 /**
  * @brief Get number of values in a JSONPath result.

@@ -354,6 +354,9 @@ DATA_BIND_API DataBindStatus data_bind_parse(DataBind *codec, const char *type_n
  * The constructor name defines whether the whole document, every root-array
  * item, the first JSONPath match, or all JSONPath matches are bound. Incremental
  * root-array binding preserves exact signed and unsigned 64-bit number tokens.
+ * First-match paths and bounded key/index/union paths are compiled once and
+ * matched without retaining the unrelated document. Unbounded all-match paths
+ * retain the existing buffered finish-time binding semantics.
  */
 DATA_BIND_API data_bind_stream_t *data_bind_stream_json_create(DataBind *codec,
                                                                const char *type_name,
