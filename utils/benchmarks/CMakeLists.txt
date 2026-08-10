@@ -1,5 +1,7 @@
 # Common module benchmarks
 
+find_package(unofficial-sqlite3 CONFIG REQUIRED)
+
 cmake_add_source(BENCHMARK_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR}
                  PATTERNS "bench_*.c" "test_*_bench.c")
 
@@ -27,3 +29,12 @@ foreach(tgt test_str_bench)
     target_link_libraries(${tgt} PRIVATE TurboUtils::SDS)
   endif()
 endforeach()
+
+target_link_libraries(bench_sqlite_index_reference
+                      PRIVATE unofficial::sqlite3::sqlite3)
+
+target_link_libraries(bench_sqlite_csv_vdbe
+                      PRIVATE unofficial::sqlite3::sqlite3 csv_parser)
+target_include_directories(bench_sqlite_csv_vdbe
+                           PRIVATE ${CMAKE_SOURCE_DIR}/parser/csv_parser/parser
+                                   ${CMAKE_BINARY_DIR}/parser/csv_parser)
