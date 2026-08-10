@@ -22,7 +22,8 @@ typedef enum{
     CXML_XP_AST_STR_LITERAL_NODE,
     CXML_XP_AST_STEP_NODE,
     CXML_XP_AST_NODETEST_NODE,
-    CXML_XP_AST_PATH_NODE
+    CXML_XP_AST_PATH_NODE,
+    CXML_XP_AST_IF_NODE // 'if (c) then a else b' (dialect extension)
 }cxml_xp_ast_t;
 
 
@@ -31,6 +32,7 @@ typedef enum{
     CXML_XP_OP_MINUS, // '-'
     CXML_XP_OP_MULT,  // '*'
     CXML_XP_OP_DIV,  // 'div'
+    CXML_XP_OP_IDIV, // 'idiv' (dialect extension)
     CXML_XP_OP_MOD,  // 'mod'
     CXML_XP_OP_EQ,   // '=' (conditional)
     CXML_XP_OP_NEQ,  // !=
@@ -104,6 +106,13 @@ typedef struct{
 
 typedef struct{
     cxml_xp_ast_t type;
+    struct cxml_xp_astnode* cond;
+    struct cxml_xp_astnode* then_node;
+    struct cxml_xp_astnode* else_node;
+}cxml_xp_if;
+
+typedef struct{
+    cxml_xp_ast_t type;
     cxml_string val;
 }cxml_xp_num;
 
@@ -173,6 +182,7 @@ typedef struct cxml_xp_astnode{  // cxml xpath ast node
         cxml_xp_string* str_literal;
         cxml_xp_step* step;
         cxml_xp_path* path;
+        cxml_xp_if* if_node;
     }wrapped_node;
 }cxml_xp_astnode;
 

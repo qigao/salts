@@ -1,5 +1,9 @@
 #include "re.h"
+#include "re_scan.h"
 #include "tinytest.h"
+
+#include <stdint.h>
+#include <string.h>
 
 static void check_match_at(const char *pattern, const char *text, int expected_idx,
                            int expected_len) {
@@ -133,6 +137,119 @@ suite("bounded regex") {
     it("returns stable diagnostics") {
       check_str_eq(re_status_string(RE_STATUS_STEP_LIMIT), "step limit exceeded");
       check_str_eq(re_status_string((re_status_t)99), "unknown regex status");
+    }
+  }
+
+  group("prefix scanning") {
+    it("matches mandatory literal prefixes at the correct offset") {
+      check_match_at("alpha", "xxalpha-yy", 2, 5);
+      check_match_at("alpha$", "xxalpha", 2, 5);
+      check_no_match("alpha$", "xxalphas");
+      check_match_at("abc[0-9]+", "zzabc123", 2, 6);
+      check_no_match("abc[0-9]+", "zzabcd123");
+    }
+
+    it("probes past failed candidates before a real match") {
+      check_match_at("alpha", "xxalxalpha", 5, 5);
+      check_no_match("alpha", "zzalzz");
+      check_match_at("needle", "xnxxneedle", 4, 6);
+    }
+
+    it("keeps branches and quantified first atoms working") {
+      check_match_at("foo|bar", "xxbarzz", 2, 3);
+      check_match_at("a*", "", 0, 0);
+      check_match_at("a*", "bb", 0, 0);
+      check_match_at("a+b", "xaab", 1, 3);
+      check_match_at("^alpha", "alpha-1", 0, 5);
+      check_no_match("^alpha", "xalpha");
+      check_match_at("(a|b)+c", "zzbac", 2, 3);
+    }
+
+    it("finds first bytes identically with SIMDe and scalar scans") {
+      static const char alphabet[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      enum { BUF_LEN = 4096 };
+      char buf[BUF_LEN + 1];
+      size_t i;
+      for (i = 0; i < BUF_LEN; ++i) buf[i] = alphabet[i % (sizeof(alphabet) - 1)];
+      buf[BUF_LEN] = '\0';
+      for (i = 1; i < BUF_LEN; i = i * 3 + 7) {
+        const char *scalar = re_scan_first_byte_scalar(buf, buf + i, (unsigned char)'q');
+        const char *simde = re_scan_first_byte_simde(buf, buf + i, (unsigned char)'q');
+        check_ptr_eq(scalar, simde);
+      }
+      check_null(re_scan_first_byte_scalar(buf, buf + BUF_LEN, (unsigned char)'~'));
+      check_null(re_scan_first_byte_simde(buf, buf + BUF_LEN, (unsigned char)'~'));
+      check_null(re_scan_first_byte_simde(buf, buf, (unsigned char)'a'));
+
+      check_ptr_eq(re_scan_first_byte_simde(buf, buf + 1, (unsigned char)'a'), buf);
+    }
+  }
+
+  group("extended syntax") {
+    it("matches non-capturing groups without retaining captures") {
+      check_match_at("^(?:ab)+$", "abab", 0, 4);
+      check_no_match("^(?:ab)+$", "abac");
+      check_match_at("(?:a|b)+c", "zbbac", 1, 4);
+      check_match_at("(?:)", "", 0, 0);
+    }
+
+    it("matches word boundaries") {
+      check_match_at("\\bcat\\b", "a cat", 2, 3);
+      check_no_match("\\bcat\\b", "scat");
+      check_match_at("\\Bcat\\B", "scatter", 1, 3);
+      check_no_match("\\Bcat\\B", "cat");
+      check_match_at("\\bword$", "word", 0, 4);
+      check_match_at("^\\bword\\b$", "word", 0, 4);
+    }
+
+    it("matches interval quantifiers") {
+      check_match_at("^a{2,4}$", "aaa", 0, 3);
+      check_no_match("^a{2,4}$", "a");
+      check_no_match("^a{2,4}$", "aaaaa");
+      check_match_at("a{3}", "aaaa", 0, 3);
+      check_match_at("a{2,}", "aaaaa", 0, 5);
+      check_match_at("a{0}", "aaa", 0, 0);
+      check_match_at("a{1,3}b", "aab", 0, 3);
+      check_no_match("a{2}", "a");
+    }
+
+    it("keeps braces without a valid interval as literals") {
+      check_match_at("a{b}", "a{b}", 0, 4);
+      check_match_at("x{", "x{", 0, 2);
+    }
+
+    it("rejects malformed interval quantifiers") {
+      re_limits_t limits = re_limits_default();
+      check_int_eq(re_validate_n("a{2,1}", 6, &limits), RE_STATUS_INVALID_PATTERN);
+      check_int_eq(re_validate_n("a{2", 3, &limits), RE_STATUS_INVALID_PATTERN);
+      check_int_eq(re_validate_n("a{1,2,3}", 8, &limits), RE_STATUS_INVALID_PATTERN);
+      check_null(re_compile("a{2,1}"));
+    }
+
+    it("matches lazy quantifiers") {
+      check_match_at("a.*?b", "axxbyyb", 0, 4);
+      check_match_at("a.*b", "axxbyyb", 0, 7);
+      check_match_at("a+?b", "aab", 0, 3);
+      check_match_at("a??", "a", 0, 0);
+      check_match_at("a?", "a", 0, 1);
+      check_match_at("a??b", "b", 0, 1);
+      check_match_at("a{2,4}?", "aaaa", 0, 2);
+    }
+
+    it("matches positive and negative lookahead without consuming") {
+      check_match_at("foo(?=bar)", "foobar", 0, 3);
+      check_no_match("foo(?=bar)", "foobaz");
+      check_match_at("foo(?!bar)", "foobaz", 0, 3);
+      check_no_match("foo(?!bar)", "foobar");
+      check_match_at("(?=abc)abc", "abc", 0, 3);
+      check_match_at("(?=abc)ab", "abc", 0, 2);
+      check_match_at("^(?![0-9])[a-z]+$", "abc", 0, 3);
+      check_no_match("^(?![0-9])[a-z]+$", "1abc");
+    }
+
+    it("rejects unsupported group prefixes") {
+      check_null(re_compile("(?i)"));
+      check_null(re_compile("(?<name>a)"));
     }
   }
 }

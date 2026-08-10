@@ -130,6 +130,7 @@ include(CheckLibraryExists)
 check_library_exists(m fmax "" LIBM_EXISTS)
 
 target_include_directories(cxml PUBLIC include)
+target_link_libraries(cxml PRIVATE TurboUtils::Core TurboUtils::QueryVM)
 target_compile_options(cxml PRIVATE ${CXML_WARN_FLAGS})
 target_compile_definitions(cxml PUBLIC ${CXML_BUILD_OPTIONS})
 
@@ -176,6 +177,37 @@ target_link_libraries(cxml_tests PRIVATE cxml)
 # Add include directories (tests) to a target (cxml_tests).
 target_include_directories(cxml_tests PRIVATE tests)
 set_target_properties(cxml_tests PROPERTIES FOLDER vendor/cxml)
+
+if(CXML_USE_XPATH_MOD)
+  add_executable(cxml_xpath_tests
+    tests/xpath_test_main.c
+    tests/xpath/cxxpath_test.c
+    tests/cxfixture.c)
+  target_compile_definitions(cxml_xpath_tests PRIVATE ${CXML_BUILD_OPTIONS})
+  target_link_libraries(cxml_xpath_tests PRIVATE cxml)
+  target_include_directories(cxml_xpath_tests PRIVATE tests)
+  set_target_properties(cxml_xpath_tests PROPERTIES FOLDER vendor/cxml)
+  if(BUILD_TESTING)
+    add_test(NAME cxml_xpath_tests COMMAND cxml_xpath_tests)
+    set_tests_properties(cxml_xpath_tests PROPERTIES LABELS "cxml;xpath")
+  endif()
+endif()
+
+if(CXML_USE_QUERY_MOD)
+  add_executable(cxml_query_tests
+    tests/query_test_main.c
+    tests/query/cxqapi_test.c
+    tests/cxfixture.c)
+  target_compile_definitions(cxml_query_tests
+    PRIVATE ${CXML_BUILD_OPTIONS} CXML_T_NO_SUITE_TEST_SHUFFLE)
+  target_link_libraries(cxml_query_tests PRIVATE cxml)
+  target_include_directories(cxml_query_tests PRIVATE tests)
+  set_target_properties(cxml_query_tests PROPERTIES FOLDER vendor/cxml)
+  if(BUILD_TESTING)
+    add_test(NAME cxml_query_tests COMMAND cxml_query_tests)
+    set_tests_properties(cxml_query_tests PROPERTIES LABELS "cxml;query")
+  endif()
+endif()
 
 
 # install(TARGETS cxml DESTINATION cxml/lib)

@@ -1183,3 +1183,119 @@ tests:
         - x: 1
     path: /items[?@.x <> 1]
     error: syntax
+---
+suite: extensions
+description: Dialect extension tests (bitwise, ternary, idiv, matches)
+
+tests:
+
+  - id: ext-bitand-001
+    description: Bitwise AND selects nodes by parity
+    document:
+      items:
+        - name: a
+          n: 1
+        - name: b
+          n: 2
+        - name: c
+          n: 3
+    path: "/items[?(@.n & 1) == 1]"
+    result:
+      - {name: a, n: 1}
+      - {name: c, n: 3}
+
+  - id: ext-bor-001
+    description: Bitwise OR on literals
+    document:
+      values:
+        - 1
+    path: "/values[?(1 | 2) == 3]"
+    result:
+      - 1
+
+  - id: ext-bxor-001
+    description: Bitwise XOR on literals
+    document:
+      values:
+        - 1
+    path: "/values[?(6 ^ 3) == 5]"
+    result:
+      - 1
+
+  - id: ext-lshift-001
+    description: Left shift on literals
+    document:
+      values:
+        - 1
+    path: "/values[?(1 << 4) == 16]"
+    result:
+      - 1
+
+  - id: ext-rshift-001
+    description: Right shift on literals
+    document:
+      values:
+        - 1
+    path: "/values[?(16 >> 2) == 4]"
+    result:
+      - 1
+
+  - id: ext-bnot-001
+    description: Bitwise NOT
+    document:
+      values:
+        - 1
+    path: "/values[?~0 == -1]"
+    result:
+      - 1
+
+  - id: ext-cond-001
+    description: Ternary picks the branch selected by the condition
+    document:
+      items:
+        - name: a
+          n: 1
+        - name: b
+          n: -1
+    path: "/items[?@.n > 0 ? @.n == 1 : @.n == -1]"
+    result:
+      - {name: a, n: 1}
+      - {name: b, n: -1}
+
+  - id: ext-cond-002
+    description: Ternary with literal branches
+    document:
+      values:
+        - 1
+    path: "/values[?(1 == 1 ? true : false)]"
+    result:
+      - 1
+
+  - id: ext-idiv-001
+    description: Integer division truncates toward zero
+    document:
+      values:
+        - 1
+    path: "/values[?(7 idiv 2) == 3]"
+    result:
+      - 1
+
+  - id: ext-matches-001
+    description: matches() filters nodes by regex
+    document:
+      items:
+        - name: apple
+        - name: banana
+    path: "/items[?matches(@.name, '^a')]"
+    result:
+      - {name: apple}
+
+  - id: ext-matches-002
+    description: matches() supports lookahead through the re engine
+    document:
+      items:
+        - name: apple
+        - name: banana
+    path: "/items[?matches(@.name, 'an(?=a)')]"
+    result:
+      - {name: banana}

@@ -4,7 +4,9 @@
  */
 
 #include "xpath/cxxplib.h"
+#include "re.h"
 #include <math.h>
+#include <string.h>
 
 
 /**
@@ -59,6 +61,14 @@ static void __cxml_xp_contains_fn(cxml_xp_functioncall *node,
                                   _cxml_xp_data *(*_pop)(void),
                                   void (*_push)(_cxml_xp_data *));
 
+static void __cxml_xp_ends_with_fn(cxml_xp_functioncall *node,
+                                   _cxml_xp_data *(*_pop)(void),
+                                   void (*_push)(_cxml_xp_data *));
+
+static void __cxml_xp_matches_fn(cxml_xp_functioncall *node,
+                                 _cxml_xp_data *(*_pop)(void),
+                                 void (*_push)(_cxml_xp_data *));
+
 static void __cxml_xp_sum_fn(cxml_xp_functioncall *node,
                              _cxml_xp_data *(*_pop)(void),
                              void (*_push)(_cxml_xp_data *));
@@ -103,11 +113,13 @@ struct _cxml_xp_func_LU fn_LU_table[] = {
         {"concat",         -2,      0,      CXML_XP_RET_STRING,     __cxml_xp_concat_fn},  // -2 -> variadic function requiring at least 2 arguments
         {"contains",        2,      0,      CXML_XP_RET_BOOLEAN,    __cxml_xp_contains_fn},
         {"count",           1,      0,      CXML_XP_RET_NUMBER,     __cxml_xp_count_fn},
+        {"ends-with",       2,      0,      CXML_XP_RET_BOOLEAN,    __cxml_xp_ends_with_fn},
         {"false",           0,      0,      CXML_XP_RET_BOOLEAN,    __cxml_xp_false_fn},
         {"floor",           0,      0,      CXML_XP_RET_NUMBER,     __cxml_xp_floor_fn},
         {"lang",            1,      0,      CXML_XP_RET_BOOLEAN,    __cxml_xp_lang_fn},
         {"last",            0,      0,      CXML_XP_RET_NUMBER,     __cxml_xp_last_fn},
         {"local-name",      1,      1,      CXML_XP_RET_STRING,     __cxml_xp_lname_fn},
+        {"matches",         2,      0,      CXML_XP_RET_BOOLEAN,    __cxml_xp_matches_fn},
         {"name",            1,      1,      CXML_XP_RET_STRING,     __cxml_xp_name_fn},
         {"namespace-uri",   1,      1,      CXML_XP_RET_STRING,     __cxml_xp_namespace_uri_fn},
         {"not",             1,      0,      CXML_XP_RET_BOOLEAN,    __cxml_xp_not_fn},
@@ -557,6 +569,88 @@ void __cxml_xp_contains_fn(cxml_xp_functioncall *node,
     free_r_str ? cxml_string_free(&r_str) : (void)0;
     left->type = CXML_XP_DATA_BOOLEAN;
     left->boolean = contains;
+    _push(left);
+}
+
+void __cxml_xp_ends_with_fn(cxml_xp_functioncall *node,
+                            _cxml_xp_data *(*_pop)(void),
+                            void (*_push)(_cxml_xp_data *))
+{
+    /* ends-with(string, string) -> boolean (XPath 2.0 dialect extension) */
+    cxml_for_each(arg, &node->args){
+        cxml_xp_visit(arg);
+    }
+    _cxml_xp_data *right = _pop();
+    _cxml_xp_data *left = _pop();
+    cxml_string l_str = new_cxml_string(),
+                r_str = new_cxml_string();
+    bool free_l_str = 1, free_r_str = 1;
+    if (left->type == CXML_XP_DATA_STRING){
+        l_str = left->str;
+        free_l_str = 0;
+    }else{
+        _cxml_xp_data_to_string(left, &l_str);
+    }
+    if (right->type == CXML_XP_DATA_STRING){
+        r_str = right->str;
+        free_r_str = 0;
+    }else{
+        _cxml_xp_data_to_string(right, &r_str);
+    }
+    unsigned int l_len = cxml_string_len(&l_str);
+    unsigned int r_len = cxml_string_len(&r_str);
+    bool ends_with = r_len <= l_len &&
+        memcmp(cxml_string_as_raw(&l_str) + l_len - r_len,
+               cxml_string_as_raw(&r_str), r_len) == 0;
+    _cxml_xp_data_clear(left);
+    _cxml_xp_data_clear(right);
+    free_l_str ? cxml_string_free(&l_str) : (void)0;
+    free_r_str ? cxml_string_free(&r_str) : (void)0;
+    left->type = CXML_XP_DATA_BOOLEAN;
+    left->boolean = ends_with;
+    _push(left);
+}
+
+void __cxml_xp_matches_fn(cxml_xp_functioncall *node,
+                          _cxml_xp_data *(*_pop)(void),
+                          void (*_push)(_cxml_xp_data *))
+{
+    /* matches(string, pattern) -> boolean
+     * Dialect extension: two arguments, no flags; the pattern is evaluated by
+     * the bounded TurboUtils re engine (re.h), not XSD regex. Invalid or
+     * over-budget patterns evaluate to false. */
+    cxml_for_each(arg, &node->args){
+        cxml_xp_visit(arg);
+    }
+    _cxml_xp_data *right = _pop();
+    _cxml_xp_data *left = _pop();
+    cxml_string l_str = new_cxml_string(),
+                r_str = new_cxml_string();
+    bool free_l_str = 1, free_r_str = 1;
+    if (left->type == CXML_XP_DATA_STRING){
+        l_str = left->str;
+        free_l_str = 0;
+    }else{
+        _cxml_xp_data_to_string(left, &l_str);
+    }
+    if (right->type == CXML_XP_DATA_STRING){
+        r_str = right->str;
+        free_r_str = 0;
+    }else{
+        _cxml_xp_data_to_string(right, &r_str);
+    }
+    re_match_result_t match;
+    bool matched = re_match_n(cxml_string_as_raw(&r_str),
+                              (size_t)cxml_string_len(&r_str),
+                              cxml_string_as_raw(&l_str),
+                              (size_t)cxml_string_len(&l_str),
+                              NULL, &match) == RE_STATUS_OK;
+    _cxml_xp_data_clear(left);
+    _cxml_xp_data_clear(right);
+    free_l_str ? cxml_string_free(&l_str) : (void)0;
+    free_r_str ? cxml_string_free(&r_str) : (void)0;
+    left->type = CXML_XP_DATA_BOOLEAN;
+    left->boolean = matched;
     _push(left);
 }
 

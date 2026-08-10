@@ -23,10 +23,31 @@
 
 #define alloc_op(type, num, number, str, ...) \
   jsonpath_alloc_op(ctx, type, num, number, str, ##__VA_ARGS__, NULL)
+
+static jsonpath_opcode_t *jsonpath_slice_op(jsonpath_parse_ctx_t *ctx,
+                                            jsonpath_opcode_t *start,
+                                            jsonpath_opcode_t *end,
+                                            jsonpath_opcode_t *step) {
+  jsonpath_opcode_t *op = jsonpath_alloc_op(ctx, JSONPATH_TOKEN_SLICE, 0, 0.0, NULL, NULL);
+  if (!op) return NULL;
+  if (start) {
+    op->num = start->num;
+    op->slice_mask |= JSONPATH_SLICE_HAS_START;
+  }
+  if (end) {
+    op->num2 = end->num;
+    op->slice_mask |= JSONPATH_SLICE_HAS_END;
+  }
+  if (step) {
+    op->num3 = step->num;
+    op->slice_mask |= JSONPATH_SLICE_HAS_STEP;
+  }
+  return op;
+}
 }
 
-%token AND OR UNION EQ NE GT GE LT LE MATCH NOT.
-%token LABEL ROOT THIS DOT WILDCARD REGEXP BROPEN BRCLOSE BOOL NUMBER STRING POPEN PCLOSE.
+%token AND OR UNION EQ NE GT GE LT LE MATCH CONTAINS CONTAINS_CI NOT LENGTH COUNT MATCHFUNC SEARCHFUNC.
+%token LABEL ROOT THIS DOT DESCENDANT WILDCARD REGEXP BROPEN BRCLOSE BOOL NUMBER STRING POPEN PCLOSE COLON QMARK.
 
 %start_symbol input
 
@@ -45,7 +66,13 @@ segments(A) ::= segment(B).             { A = B; }
 
 segment(A) ::= DOT LABEL(B).                  { A = B; }
 segment(A) ::= DOT WILDCARD(B).               { A = B; }
-segment(A) ::= BROPEN union_exps(B) BRCLOSE.  { A = B; }
+segment(A) ::= BROPEN union_exps(B) BRCLOSE.  { A = B; if (B) B->is_selector = 1; }
+segment(A) ::= BROPEN slice_exp(B) BRCLOSE.   { A = B; }
+segment(A) ::= BROPEN QMARK or_exps(B) BRCLOSE. { A = B; if (B) B->is_selector = 1; }
+segment(A) ::= DESCENDANT LABEL(B).           { A = alloc_op(JSONPATH_TOKEN_DESCENDANT, 0, 0.0, NULL, B); }
+segment(A) ::= DESCENDANT WILDCARD(B).        { A = alloc_op(JSONPATH_TOKEN_DESCENDANT, 0, 0.0, NULL, B); }
+segment(A) ::= DESCENDANT BROPEN union_exps(B) BRCLOSE.
+    { A = alloc_op(JSONPATH_TOKEN_DESCENDANT, 0, 0.0, NULL, B); }
 
 union_exps(A) ::= union_exp(B). { A = B->sibling ? alloc_op(JSONPATH_TOKEN_UNION, 0, 0.0, NULL, B) : B; }
 
@@ -77,8 +104,26 @@ unary_exp(A) ::= STRING(B).               { A = B; }
 unary_exp(A) ::= REGEXP(B).               { A = B; }
 unary_exp(A) ::= WILDCARD(B).             { A = B; }
 unary_exp(A) ::= POPEN or_exps(B) PCLOSE. { A = B; }
+unary_exp(A) ::= LENGTH POPEN or_exps(B) PCLOSE. { A = alloc_op(JSONPATH_TOKEN_LENGTH, 0, 0.0, NULL, B); }
+unary_exp(A) ::= LENGTH POPEN PCLOSE.             { A = alloc_op(JSONPATH_TOKEN_LENGTH, 0, 0.0, NULL, NULL); }
+unary_exp(A) ::= COUNT POPEN or_exps(B) PCLOSE.   { A = alloc_op(JSONPATH_TOKEN_COUNT, 0, 0.0, NULL, B); }
+unary_exp(A) ::= MATCHFUNC POPEN or_exps(B) UNION or_exps(C) PCLOSE.
+    { A = alloc_op(JSONPATH_TOKEN_MATCHFUNC, 0, 0.0, NULL, B, C); }
+unary_exp(A) ::= SEARCHFUNC POPEN or_exps(B) UNION or_exps(C) PCLOSE.
+    { A = alloc_op(JSONPATH_TOKEN_SEARCHFUNC, 0, 0.0, NULL, B, C); }
+unary_exp(A) ::= CONTAINS POPEN or_exps(B) UNION or_exps(C) PCLOSE.
+    { A = alloc_op(JSONPATH_TOKEN_CONTAINS, 0, 0.0, NULL, B, C); }
+unary_exp(A) ::= CONTAINS_CI POPEN or_exps(B) UNION or_exps(C) PCLOSE.
+    { A = alloc_op(JSONPATH_TOKEN_CONTAINS_CI, 0, 0.0, NULL, B, C); }
 unary_exp(A) ::= NOT unary_exp(B).        { A = alloc_op(JSONPATH_TOKEN_NOT, 0, 0.0, NULL, B); }
 unary_exp(A) ::= path(B).                 { A = B; }
+
+slice_exp(A) ::= slice_opt(B) COLON slice_opt(C).
+    { A = jsonpath_slice_op(ctx, B, C, NULL); }
+slice_exp(A) ::= slice_opt(B) COLON slice_opt(C) COLON slice_opt(D).
+    { A = jsonpath_slice_op(ctx, B, C, D); }
+slice_opt(A) ::= NUMBER(B). { A = B; }
+slice_opt(A) ::= .          { A = NULL; }
 
 %syntax_error {
   ctx->error_code = 1;

@@ -33,3 +33,10 @@ foreach(tgt test_turbo_str)
     target_link_libraries(${tgt} PRIVATE TurboUtils::SDS)
   endif()
 endforeach()
+
+# test_re exercises the internal SIMDe first-byte scanner (utils/src/re_scan.h)
+if(TARGET test_re)
+  target_include_directories(test_re PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${SIMDE_INCLUDE_DIRS})
+endif()

@@ -5,7 +5,7 @@
 set(TARGET_NAME data_bind)
 
 add_library(${TARGET_NAME} SHARED data_bind.c data_bind.h data_bind_record.c tbe_typed.c
-                                  tbe_typed.h re.c re.h)
+                                  tbe_typed.h)
 
 
 
@@ -71,11 +71,6 @@ cmake_add_test(test_data_bind_pool
 cmake_add_test(test_tbe_typed
   SOURCES test_tbe_typed.c
   LIBS TurboUtils::DataBind TurboUtils::TinyTest
-  FOLDER "tbe/data_bind")
-
-cmake_add_test(test_re
-  SOURCES test_re.c re.c
-  LIBS TurboUtils::TinyTest
   FOLDER "tbe/data_bind")
 
 cmake_add_benchmark(benchmark_data_bind_pool

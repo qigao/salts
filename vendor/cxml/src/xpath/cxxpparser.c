@@ -55,6 +55,8 @@ static void num();
 
 static void group();
 
+static void if_expr();
+
 static void str_literal();
 
 static void _cxml_xp__err(
@@ -271,6 +273,10 @@ struct _cxml_xp_binding_power_LU bpow_LUTable[] = {
         {Twenty, function_call, binary},                // CXML_XP_TOKEN_OR
         {Sixty, function_call, binary},                 // CXML_XP_TOKEN_MOD
         {Sixty, function_call, binary},                 // CXML_XP_TOKEN_DIV
+        {Sixty, function_call, binary},                 // CXML_XP_TOKEN_IDIV
+        {None, if_expr, NULL},                          // CXML_XP_TOKEN_IF
+        {None, NULL, NULL},                             // CXML_XP_TOKEN_THEN
+        {None, NULL, NULL},                             // CXML_XP_TOKEN_ELSE
         {None, relative_location_path, NULL},           // CXML_XP_TOKEN_TEXT_F
         {None, relative_location_path, NULL},           // CXML_XP_TOKEN_COMMENT_F
         {None,  relative_location_path, NULL},          // CXML_XP_TOKEN_PI_F
@@ -300,6 +306,7 @@ cxml_xp_op _cxml_xp_get_op(_cxml_xp_token_t type){
         case CXML_XP_TOKEN_STAR:        return CXML_XP_OP_MULT;
         case CXML_XP_TOKEN_EQ:          return CXML_XP_OP_EQ;
         case CXML_XP_TOKEN_DIV:         return CXML_XP_OP_DIV;
+        case CXML_XP_TOKEN_IDIV:       return CXML_XP_OP_IDIV;
         case CXML_XP_TOKEN_MOD:         return CXML_XP_OP_MOD;
         case CXML_XP_TOKEN_LTHAN_EQ:    return CXML_XP_OP_LEQ;
         case CXML_XP_TOKEN_GTHAN_EQ:    return CXML_XP_OP_GEQ;
@@ -392,6 +399,15 @@ static cxml_xp_binaryop* new_binary(){
     return binary;
 }
 
+static cxml_xp_if* new_if(){
+    cxml_xp_if* ifnode = ALLOC(cxml_xp_if, 1);
+    ifnode->type = CXML_XP_AST_IF_NODE;
+    ifnode->cond = NULL;
+    ifnode->then_node = NULL;
+    ifnode->else_node = NULL;
+    return ifnode;
+}
+
 /*** symbols & productions ***/
 
 void num(){
@@ -455,6 +471,40 @@ void binary(){
     _cxml_xp_p__push(node);
 }
 
+void if_expr(){
+    cxml_xp_astnode* node = new_astnode();
+    _cxml_xp_p__consume(CXML_XP_TOKEN_IF);
+    if (_xpath_parser.current_tok.type != CXML_XP_TOKEN_L_BRACKET){
+        _cxml_xp__err(&_xpath_parser.current_tok, "Expected '(' after 'if'.", NULL, NULL);
+    }
+    _cxml_xp_p__consume(CXML_XP_TOKEN_L_BRACKET);
+    expression(0);
+    cxml_xp_astnode* cond = _cxml_xp_p__pop();
+    if (_xpath_parser.current_tok.type != CXML_XP_TOKEN_R_BRACKET){
+        _cxml_xp__err(&_xpath_parser.current_tok, "Expected ')' after the condition.", NULL, NULL);
+    }
+    _cxml_xp_p__consume(CXML_XP_TOKEN_R_BRACKET);
+    if (_xpath_parser.current_tok.type != CXML_XP_TOKEN_THEN){
+        _cxml_xp__err(&_xpath_parser.current_tok, "Expected 'then'.", NULL, NULL);
+    }
+    _cxml_xp_p__consume(CXML_XP_TOKEN_THEN);
+    expression(0);
+    cxml_xp_astnode* then_node = _cxml_xp_p__pop();
+    if (_xpath_parser.current_tok.type != CXML_XP_TOKEN_ELSE){
+        _cxml_xp__err(&_xpath_parser.current_tok, "Expected 'else'.", NULL, NULL);
+    }
+    _cxml_xp_p__consume(CXML_XP_TOKEN_ELSE);
+    expression(0);
+    cxml_xp_astnode* else_node = _cxml_xp_p__pop();
+    cxml_xp_if* ifnode = new_if();
+    ifnode->cond = cond;
+    ifnode->then_node = then_node;
+    ifnode->else_node = else_node;
+    node->wrapped_node.if_node = ifnode;
+    node->wrapped_type = CXML_XP_AST_IF_NODE;
+    _cxml_xp_p__push(node);
+}
+
 void group(){
     _cxml_xp_p__consume(CXML_XP_TOKEN_L_BRACKET);
     expression(0);
@@ -495,7 +545,11 @@ inline static bool _is_kwd_token(_cxml_xp_token *token){
     return (token->type == CXML_XP_TOKEN_AND
             || token->type == CXML_XP_TOKEN_MOD
             || token->type == CXML_XP_TOKEN_OR
-            || token->type == CXML_XP_TOKEN_DIV);
+            || token->type == CXML_XP_TOKEN_DIV
+            || token->type == CXML_XP_TOKEN_IDIV
+            || token->type == CXML_XP_TOKEN_IF
+            || token->type == CXML_XP_TOKEN_THEN
+            || token->type == CXML_XP_TOKEN_ELSE);
 }
 
 

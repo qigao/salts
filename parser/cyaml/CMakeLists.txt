@@ -36,6 +36,7 @@ cmake_config_target(${TARGET_NAME}
   EXPORT_NAME CYaml
   FOLDER "${TARGET_FOLDER}")
 add_library(cyaml::cyaml ALIAS ${TARGET_NAME})
+target_link_libraries(${TARGET_NAME} PRIVATE TurboUtils::Core TurboUtils::QueryVM)
 
 target_include_directories(${TARGET_NAME}
   PUBLIC
@@ -85,7 +86,7 @@ if(BUILD_TESTING)
 
   cmake_add_test(test_ypath_ast
     SOURCES tests/test_ypath_ast.c
-    LIBS ${TARGET_NAME} TurboUtils::TinyTest
+    LIBS ${TARGET_NAME} TurboUtils::QueryVM TurboUtils::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src
     FOLDER "${TARGET_FOLDER}/tests")
 

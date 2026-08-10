@@ -57,6 +57,10 @@ typedef enum{
     CXML_XP_TOKEN_OR,           // 'or'
     CXML_XP_TOKEN_MOD,  // 'mod'
     CXML_XP_TOKEN_DIV,   // 'div'
+    CXML_XP_TOKEN_IDIV,  // 'idiv' (dialect extension)
+    CXML_XP_TOKEN_IF,    // 'if' (dialect extension)
+    CXML_XP_TOKEN_THEN,  // 'then' (dialect extension)
+    CXML_XP_TOKEN_ELSE,  // 'else' (dialect extension)
     /* *****  */
 
     // node type

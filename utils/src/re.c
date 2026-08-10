@@ -1,4 +1,21 @@
+/**
+ * @file re.c
+ * @brief Bounded byte-oriented regex engine backing the public re.h API.
+ *
+ * Single implementation owned by TurboUtils (utils/src/re.c); JSONPath and
+ * TBE data_bind consume it from TurboUtils::Core.
+ *
+ * re_match_borrowed() accelerates patterns whose first atom is a mandatory
+ * single literal byte: candidate start positions are located with a SIMDe
+ * 16-byte first-byte scan (re_scan.h) instead of probing every offset. The
+ * scalar loop remains for all other patterns, so matching results are
+ * unchanged; the only observable difference is that large no-match texts
+ * finish with RE_STATUS_NO_MATCH instead of exhausting the step budget first
+ * (JSONPath treats both as "no match").
+ */
+
 #include "re.h"
+#include "re_scan.h"
 
 #include <limits.h>
 
@@ -37,6 +54,11 @@ static int re_validate_expr(re_exec_t *exec, size_t start, size_t end);
 static int re_validate_sequence(re_exec_t *exec, size_t start, size_t end);
 static int re_atom_end_at(re_exec_t *exec, size_t start, size_t end, int validate_nested,
                           size_t *out);
+static int re_group_prefix_valid(const char *pattern, size_t start, size_t end);
+static size_t re_group_content_start(const char *pattern, size_t start, size_t end);
+static int re_quantifier_at(re_exec_t *exec, size_t i, size_t end, size_t *out_min,
+                            size_t *out_max, int *out_lazy, size_t *out_consumed,
+                            int *out_invalid);
 static int re_match_expr(re_exec_t *exec, size_t start, size_t end, size_t pos, size_t *out_pos);
 static int re_match_sequence(re_exec_t *exec, size_t start, size_t end, size_t pos,
                              size_t *out_pos);
@@ -248,8 +270,12 @@ static int re_atom_end_at(re_exec_t *exec, size_t start, size_t end, int validat
     return 1;
   }
   if (exec->pattern[start] == '(') {
+    if (!re_group_prefix_valid(exec->pattern, start, end)) return 0;
     if (!re_find_group_end(exec, start, end, &nested_end)) return 0;
-    if (validate_nested && !re_validate_expr(exec, start + 1, nested_end)) return 0;
+    if (validate_nested &&
+        !re_validate_expr(exec, re_group_content_start(exec->pattern, start, end),
+                          nested_end))
+      return 0;
     *out = nested_end + 1;
     return 1;
   }
@@ -271,10 +297,19 @@ static int re_validate_sequence(re_exec_t *exec, size_t start, size_t end) {
   if (!re_enter(exec)) return 0;
   while (i < end) {
     size_t atom_end;
+    size_t q_min;
+    size_t q_max;
+    size_t q_consumed;
+    int q_lazy;
+    int q_invalid = 0;
     if (!re_atom_end_at(exec, i, end, 1, &atom_end)) goto cleanup;
-    if (atom_end < end && re_is_quantifier(exec->pattern[atom_end])) {
+    if (atom_end < end &&
+        re_quantifier_at(exec, atom_end, end, &q_min, &q_max, &q_lazy, &q_consumed,
+                         &q_invalid)) {
       if (exec->pattern[i] == '^' || exec->pattern[i] == '$') goto cleanup;
-      ++atom_end;
+      atom_end += q_consumed;
+    } else if (q_invalid) {
+      goto cleanup;
     }
     i = atom_end;
   }
@@ -388,6 +423,100 @@ static int re_match_char_class(re_exec_t *exec, unsigned char c, size_t start, s
   return 0;
 }
 
+/* Group prefixes: plain ( ... ), non-capturing (?: ... ), positive lookahead
+ * (?= ... ) and negative lookahead (?! ... ). A '(' immediately followed by
+ * '?' with any other third byte is invalid. */
+static int re_group_prefix_valid(const char *pattern, size_t start, size_t end) {
+  if (start + 1 < end && pattern[start + 1] == '?')
+    return start + 2 < end &&
+           (pattern[start + 2] == ':' || pattern[start + 2] == '=' ||
+            pattern[start + 2] == '!');
+  return 1;
+}
+
+static size_t re_group_content_start(const char *pattern, size_t start, size_t end) {
+  if (start + 1 < end && pattern[start + 1] == '?') return start + 3;
+  return start + 1;
+}
+
+/* Parses the quantifier starting at pattern[i]. Fills min/max (max == SIZE_MAX
+ * means unbounded, bounded by the text length at match time), the lazy flag,
+ * and the number of bytes consumed. Returns 1 for a real quantifier
+ * (* + ? {m} {m,} {m,n}, each optionally followed by '?'); returns 0 when
+ * pattern[i] is not a quantifier (a literal '{' that is not a valid interval
+ * is treated as a literal and returns 0 with *out_invalid unchanged).
+ * An interval that starts with a digit but is structurally invalid (unclosed,
+ * overflowing, or m > n) sets *out_invalid. */
+static int re_quantifier_at(re_exec_t *exec, size_t i, size_t end, size_t *out_min,
+                            size_t *out_max, int *out_lazy, size_t *out_consumed,
+                            int *out_invalid) {
+  char c;
+  if (i >= end) return 0;
+  c = exec->pattern[i];
+  if (c == '*' || c == '+' || c == '?') {
+    *out_min = (c == '+') ? 1 : 0;
+    *out_max = (size_t)-1;
+    *out_lazy = 0;
+    *out_consumed = 1;
+    if (i + 1 < end && exec->pattern[i + 1] == '?') {
+      *out_lazy = 1;
+      *out_consumed = 2;
+    }
+    return 1;
+  }
+  if (c == '{') {
+    size_t min = 0;
+    size_t max = 0;
+    int has_max = 0;
+    int max_specified = 0;
+    size_t p = i + 1;
+    if (p >= end || !re_is_digit((unsigned char)exec->pattern[p])) return 0;
+    while (p < end && re_is_digit((unsigned char)exec->pattern[p])) {
+      if (!re_step(exec)) return 0;
+      if (min > (((size_t)-1) - 9U) / 10U) {
+        *out_invalid = 1;
+        return 0;
+      }
+      min = min * 10U + (size_t)(exec->pattern[p] - '0');
+      ++p;
+    }
+    if (p < end && exec->pattern[p] == ',') {
+      ++p;
+      has_max = 1;
+      while (p < end && re_is_digit((unsigned char)exec->pattern[p])) {
+        if (!re_step(exec)) return 0;
+        if (max > (((size_t)-1) - 9U) / 10U) {
+          *out_invalid = 1;
+          return 0;
+        }
+        max = max * 10U + (size_t)(exec->pattern[p] - '0');
+        ++p;
+        max_specified = 1;
+      }
+    }
+    if (p >= end || exec->pattern[p] != '}') {
+      *out_invalid = 1;
+      return 0;
+    }
+    ++p;
+    if (has_max && max_specified && max < min) {
+      *out_invalid = 1;
+      return 0;
+    }
+    *out_min = min;
+    /* {m} is exact; {m,} is unbounded; {m,n} is bounded. */
+    *out_max = has_max ? (max_specified ? max : (size_t)-1) : min;
+    *out_lazy = 0;
+    *out_consumed = p - i;
+    if (p < end && exec->pattern[p] == '?') {
+      *out_lazy = 1;
+      ++*out_consumed;
+    }
+    return 1;
+  }
+  return 0;
+}
+
 static int re_match_atom_once(re_exec_t *exec, size_t start, size_t atom_end, size_t pos,
                               size_t *out_pos) {
   if (!re_step(exec)) return 0;
@@ -401,8 +530,42 @@ static int re_match_atom_once(re_exec_t *exec, size_t start, size_t atom_end, si
   }
   if (exec->pattern[start] == '(') {
     size_t group_end;
+    size_t content_start;
+    if (!re_group_prefix_valid(exec->pattern, start, atom_end)) return 0;
     if (!re_find_group_end(exec, start, atom_end, &group_end)) return 0;
-    return re_match_expr(exec, start + 1, group_end, pos, out_pos);
+    content_start = re_group_content_start(exec->pattern, start, atom_end);
+    if (start + 1 < atom_end && exec->pattern[start + 1] == '?') {
+      if (start + 2 < atom_end && exec->pattern[start + 2] == '=') {
+        size_t probe = pos;
+        int ok = re_match_expr(exec, content_start, group_end, pos, &probe);
+        if (exec->status != RE_STATUS_OK) return 0;
+        if (!ok) return 0;
+        *out_pos = pos;
+        return 1;
+      }
+      if (start + 2 < atom_end && exec->pattern[start + 2] == '!') {
+        size_t probe = pos;
+        int ok = re_match_expr(exec, content_start, group_end, pos, &probe);
+        if (exec->status != RE_STATUS_OK) return 0;
+        if (ok) return 0;
+        *out_pos = pos;
+        return 1;
+      }
+    }
+    return re_match_expr(exec, content_start, group_end, pos, out_pos);
+  }
+  if (exec->pattern[start] == '\\' && start + 1 < atom_end &&
+      (exec->pattern[start + 1] == 'b' || exec->pattern[start + 1] == 'B')) {
+    int left_word;
+    int right_word;
+    int boundary;
+    if (!re_step(exec)) return 0;
+    left_word = pos > 0 && re_is_alphanum((unsigned char)exec->text[pos - 1]);
+    right_word = pos < exec->text_len && re_is_alphanum((unsigned char)exec->text[pos]);
+    boundary = left_word != right_word;
+    if (exec->pattern[start + 1] == 'B') boundary = !boundary;
+    *out_pos = pos;
+    return boundary;
   }
   if (pos >= exec->text_len) return 0;
   if (exec->pattern[start] == '.') {
@@ -435,11 +598,89 @@ static int re_match_atom_once(re_exec_t *exec, size_t start, size_t atom_end, si
   return 1;
 }
 
+/* Greedy repetition of [start, atom_end) between min and max times (max is
+ * SIZE_MAX when unbounded). Matches as many occurrences as fit, then backtracks
+ * through recorded positions until the tail succeeds. Mirrors the original
+ * * / + behavior and extends it to {m,n}. */
+static int re_match_repeat_greedy(re_exec_t *exec, size_t start, size_t atom_end,
+                                  size_t rest_start, size_t end, size_t pos,
+                                  size_t min, size_t max, size_t *out_pos) {
+  size_t repeat_count = 0;
+  size_t capacity = exec->text_len - pos + 1;
+  size_t *positions;
+  size_t positions_size;
+  size_t current_pos = pos;
+  size_t max_repeat;
+  int matched = 0;
+  if (capacity > ((size_t)-1) / sizeof(*positions)) {
+    re_fail(exec, RE_STATUS_WORKSPACE_LIMIT);
+    return 0;
+  }
+  positions_size = capacity * sizeof(*positions);
+  positions = (size_t *)re_workspace_alloc(exec, positions_size);
+  if (positions == NULL) return 0;
+  positions[0] = pos;
+  max_repeat = max == (size_t)-1 ? capacity - 1 : (max < capacity - 1 ? max : capacity - 1);
+  while (repeat_count + 1 < capacity && repeat_count < max_repeat) {
+    size_t next_pos;
+    if (!re_match_atom_once(exec, start, atom_end, current_pos, &next_pos) ||
+        next_pos == current_pos)
+      break;
+    current_pos = next_pos;
+    positions[++repeat_count] = current_pos;
+  }
+  if (exec->status == RE_STATUS_OK) {
+    while (repeat_count >= min) {
+      if (re_match_sequence(exec, rest_start, end, positions[repeat_count], out_pos)) {
+        matched = 1;
+        break;
+      }
+      if (exec->status != RE_STATUS_OK || repeat_count == 0) break;
+      --repeat_count;
+    }
+  }
+  re_workspace_free(exec, positions, positions_size);
+  return matched;
+}
+
+/* Lazy repetition between min and max times: consumes the minimum first, then
+ * tries the tail after every extra occurrence without backtracking. */
+static int re_match_repeat_lazy(re_exec_t *exec, size_t start, size_t atom_end,
+                                size_t rest_start, size_t end, size_t pos,
+                                size_t min, size_t max, size_t *out_pos) {
+  size_t count = 0;
+  size_t current_pos = pos;
+  int matched = 0;
+  while (count < min) {
+    size_t next_pos;
+    if (!re_match_atom_once(exec, start, atom_end, current_pos, &next_pos) ||
+        next_pos == current_pos)
+      return 0;
+    current_pos = next_pos;
+    ++count;
+  }
+  while (exec->status == RE_STATUS_OK) {
+    if (re_match_sequence(exec, rest_start, end, current_pos, out_pos)) {
+      matched = 1;
+      break;
+    }
+    if (exec->status != RE_STATUS_OK || count >= max) break;
+    {
+      size_t next_pos;
+      if (!re_match_atom_once(exec, start, atom_end, current_pos, &next_pos) ||
+          next_pos == current_pos)
+        break;
+      current_pos = next_pos;
+      ++count;
+    }
+  }
+  return matched;
+}
+
 static int re_match_sequence(re_exec_t *exec, size_t start, size_t end, size_t pos,
                              size_t *out_pos) {
   size_t atom_end;
   size_t rest_start;
-  char quantifier = 0;
   int matched = 0;
   if (!re_enter(exec)) return 0;
   if (start >= end) {
@@ -449,59 +690,64 @@ static int re_match_sequence(re_exec_t *exec, size_t start, size_t end, size_t p
   }
   if (!re_atom_end_at(exec, start, end, 0, &atom_end)) goto cleanup;
   rest_start = atom_end;
-  if (rest_start < end && re_is_quantifier(exec->pattern[rest_start]))
-    quantifier = exec->pattern[rest_start++];
-  if (quantifier == 0) {
-    size_t next_pos;
-    matched = re_match_atom_once(exec, start, atom_end, pos, &next_pos) &&
-              re_match_sequence(exec, rest_start, end, next_pos, out_pos);
-    goto cleanup;
-  }
-  if (quantifier == '?') {
-    size_t next_pos;
-    if (re_match_sequence(exec, rest_start, end, pos, out_pos)) {
-      matched = 1;
+  if (rest_start < end) {
+    size_t q_min;
+    size_t q_max;
+    size_t q_consumed;
+    int q_lazy;
+    int q_invalid = 0;
+    if (re_quantifier_at(exec, rest_start, end, &q_min, &q_max, &q_lazy, &q_consumed,
+                         &q_invalid)) {
+      rest_start += q_consumed;
+      if (q_max == 0) {
+        /* {0} / {0,0}: skip the atom entirely. */
+        matched = re_match_sequence(exec, rest_start, end, pos, out_pos);
+        goto cleanup;
+      }
+      if (q_min == 0 && q_max == 1) {
+        /* ? is greedy (one then zero); ?? is lazy (zero then one). */
+        if (q_lazy) {
+          if (re_match_sequence(exec, rest_start, end, pos, out_pos)) {
+            matched = 1;
+            goto cleanup;
+          }
+          if (exec->status != RE_STATUS_OK) goto cleanup;
+          {
+            size_t next_pos;
+            matched = re_match_atom_once(exec, start, atom_end, pos, &next_pos) &&
+                      re_match_sequence(exec, rest_start, end, next_pos, out_pos);
+          }
+        } else {
+          {
+            size_t next_pos;
+            if (re_match_atom_once(exec, start, atom_end, pos, &next_pos) &&
+                re_match_sequence(exec, rest_start, end, next_pos, out_pos)) {
+              matched = 1;
+              goto cleanup;
+            }
+          }
+          if (exec->status != RE_STATUS_OK) goto cleanup;
+          matched = re_match_sequence(exec, rest_start, end, pos, out_pos);
+        }
+        goto cleanup;
+      }
+      if (q_lazy)
+        matched = re_match_repeat_lazy(exec, start, atom_end, rest_start, end, pos, q_min,
+                                       q_max, out_pos);
+      else
+        matched = re_match_repeat_greedy(exec, start, atom_end, rest_start, end, pos, q_min,
+                                         q_max, out_pos);
       goto cleanup;
     }
-    if (exec->status != RE_STATUS_OK) goto cleanup;
-    matched = re_match_atom_once(exec, start, atom_end, pos, &next_pos) &&
-              re_match_sequence(exec, rest_start, end, next_pos, out_pos);
-    goto cleanup;
+    if (q_invalid) {
+      re_fail(exec, RE_STATUS_INVALID_PATTERN);
+      goto cleanup;
+    }
   }
   {
-    size_t repeat_count = 0;
-    size_t repeat_capacity = exec->text_len - pos + 1;
-    size_t *positions;
-    size_t positions_size;
-    size_t current_pos = pos;
-    size_t min_count = quantifier == '+' ? 1 : 0;
-    if (repeat_capacity > ((size_t)-1) / sizeof(*positions)) {
-      re_fail(exec, RE_STATUS_WORKSPACE_LIMIT);
-      goto cleanup;
-    }
-    positions_size = repeat_capacity * sizeof(*positions);
-    positions = (size_t *)re_workspace_alloc(exec, positions_size);
-    if (positions == NULL) goto cleanup;
-    positions[0] = pos;
-    while (repeat_count + 1 < repeat_capacity) {
-      size_t next_pos;
-      if (!re_match_atom_once(exec, start, atom_end, current_pos, &next_pos) ||
-          next_pos == current_pos)
-        break;
-      current_pos = next_pos;
-      positions[++repeat_count] = current_pos;
-    }
-    if (exec->status == RE_STATUS_OK) {
-      while (repeat_count >= min_count) {
-        if (re_match_sequence(exec, rest_start, end, positions[repeat_count], out_pos)) {
-          matched = 1;
-          break;
-        }
-        if (exec->status != RE_STATUS_OK || repeat_count == 0) break;
-        --repeat_count;
-      }
-    }
-    re_workspace_free(exec, positions, positions_size);
+    size_t next_pos;
+    matched = re_match_atom_once(exec, start, atom_end, pos, &next_pos) &&
+              re_match_sequence(exec, rest_start, end, next_pos, out_pos);
   }
 
 cleanup:
@@ -529,11 +775,66 @@ cleanup:
   return matched;
 }
 
+/* Returns 1 when the pattern contains a top-level alternation (a '|' outside
+ * groups and character classes); such a pattern cannot rely on its first
+ * literal byte being mandatory. */
+static int re_pattern_top_level_alternation(const char *pattern, size_t len) {
+  size_t i = 0;
+  int group_depth = 0;
+  while (i < len) {
+    unsigned char c = (unsigned char)pattern[i];
+    if (c == '\\') {
+      i += 2;
+      continue;
+    }
+    if (c == '[') {
+      ++i;
+      while (i < len) {
+        if (pattern[i] == '\\') {
+          i += 2;
+          continue;
+        }
+        if (pattern[i] == ']') break;
+        ++i;
+      }
+      continue;
+    }
+    if (c == '(') {
+      ++group_depth;
+      ++i;
+      continue;
+    }
+    if (c == ')') {
+      if (group_depth > 0) --group_depth;
+      ++i;
+      continue;
+    }
+    if (c == '|' && group_depth == 0) return 1;
+    ++i;
+  }
+  return 0;
+}
+
+/* When the first atom is a single mandatory literal byte (the pattern starts
+ * with a plain byte, the byte is not quantified, and there is no top-level
+ * alternation), a match can only start at a text position holding that byte.
+ * Returns 1 and stores the byte, otherwise returns 0. */
+static int re_match_prefix_first_byte(const char *pattern, size_t pattern_len,
+                                      unsigned char *out_byte) {
+  const char *metachar = ".^$[()|*+?{\\";
+  if (pattern_len == 0 || strchr(metachar, pattern[0]) != NULL) return 0;
+  if (pattern_len > 1 && re_is_quantifier((unsigned char)pattern[1])) return 0;
+  if (re_pattern_top_level_alternation(pattern, pattern_len)) return 0;
+  *out_byte = (unsigned char)pattern[0];
+  return 1;
+}
+
 static re_status_t re_match_borrowed(const char *pattern, size_t pattern_len, const char *text,
                                      size_t text_len, const re_limits_t *limits,
                                      re_match_result_t *out_match) {
   re_exec_t exec;
   size_t index;
+  unsigned char prefix_byte = 0;
   out_match->index = RE_NPOS;
   out_match->length = 0;
   if (pattern_len > limits->max_pattern_bytes) return RE_STATUS_PATTERN_LIMIT;
@@ -547,6 +848,32 @@ static re_status_t re_match_borrowed(const char *pattern, size_t pattern_len, co
   exec.workspace_used = 0;
   exec.depth = 0;
   exec.status = RE_STATUS_OK;
+  /* When the first atom is a mandatory literal byte, probe only text
+   * positions holding that byte (found with a SIMDe byte scan instead of
+   * testing every offset). Skipped offsets provably cannot start a match, so
+   * the first match found is identical to the scalar loop below. */
+  if (re_match_prefix_first_byte(pattern, pattern_len, &prefix_byte)) {
+    const char *cursor = text;
+    const char *end = text_len == 0 ? text : text + text_len;
+    while (cursor != NULL) {
+      const char *candidate = re_scan_first_byte_simde(cursor, end, prefix_byte);
+      if (candidate == NULL) break;
+      index = (size_t)(candidate - text);
+      {
+        size_t out_pos = index;
+        if (!re_step(&exec)) return exec.status;
+        if (re_match_expr(&exec, 0, pattern_len, index, &out_pos)) {
+          out_match->index = index;
+          out_match->length = out_pos - index;
+          return RE_STATUS_OK;
+        }
+        if (exec.status != RE_STATUS_OK) return exec.status;
+      }
+      cursor = candidate + 1;
+    }
+    return RE_STATUS_NO_MATCH;
+  }
+
   for (index = 0; index <= text_len; ++index) {
     size_t out_pos = index;
     if (!re_step(&exec)) return exec.status;

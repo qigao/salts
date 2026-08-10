@@ -26,6 +26,8 @@ static void cxml_xp_bvisit_UnaryOp(cxml_xp_unaryop *node, cxml_string *acc);
 
 static void cxml_xp_bvisit_BinaryOp(cxml_xp_binaryop *node, cxml_string *acc);
 
+static void cxml_xp_bvisit_If(cxml_xp_if *node, cxml_string *acc);
+
 static void cxml_xp_bvisit_NodeTest(cxml_xp_nodetest *node, cxml_string *acc);
 
 /********************************/
@@ -52,6 +54,8 @@ static void cxml_xp_dvisit_FunctionCall(cxml_xp_functioncall *node);
 static void cxml_xp_dvisit_UnaryOp(cxml_xp_unaryop *node);
 
 static void cxml_xp_dvisit_BinaryOp(cxml_xp_binaryop *node);
+
+static void cxml_xp_dvisit_If(cxml_xp_if *node);
 
 static void cxml_xp_dvisit_NodeTest(cxml_xp_nodetest *node);
 
@@ -80,6 +84,8 @@ static void cxml_xp_fvisit_UnaryOp(cxml_xp_unaryop *node);
 
 static void cxml_xp_fvisit_BinaryOp(cxml_xp_binaryop *node);
 
+static void cxml_xp_fvisit_If(cxml_xp_if *node);
+
 static void cxml_xp_fvisit_NodeTest(cxml_xp_nodetest *node);
 
 /********************************/
@@ -92,6 +98,9 @@ void cxml_xp_dvisit(cxml_xp_astnode * ast_node){  // generic cxml_xp_visit
             break;
         case CXML_XP_AST_BINOP_NODE:
             cxml_xp_dvisit_BinaryOp(ast_node->wrapped_node.binary);
+            break;
+        case CXML_XP_AST_IF_NODE:
+            cxml_xp_dvisit_If(ast_node->wrapped_node.if_node);
             break;
         case CXML_XP_AST_PREDICATE_NODE:
             cxml_xp_dvisit_Predicate(ast_node->wrapped_node.predicate);
@@ -305,6 +314,9 @@ void cxml_xp_fvisit(cxml_xp_astnode * ast_node){  // generic cxml_xp_visit
         case CXML_XP_AST_BINOP_NODE:
             cxml_xp_fvisit_BinaryOp(ast_node->wrapped_node.binary);
             break;
+        case CXML_XP_AST_IF_NODE:
+            cxml_xp_fvisit_If(ast_node->wrapped_node.if_node);
+            break;
         case CXML_XP_AST_PREDICATE_NODE:
             cxml_xp_fvisit_Predicate(ast_node->wrapped_node.predicate);
             break;
@@ -478,6 +490,14 @@ void cxml_xp_fvisit_UnaryOp(cxml_xp_unaryop* node){
 }
 
 // F
+void cxml_xp_fvisit_If(cxml_xp_if* node){
+    _cxml_dprint("<--FREEING (cxml_xp_if) node-->\n")
+    cxml_xp_fvisit(node->cond);
+    cxml_xp_fvisit(node->then_node);
+    cxml_xp_fvisit(node->else_node);
+    FREE(node);
+}
+
 void cxml_xp_fvisit_BinaryOp(cxml_xp_binaryop* node){
     _cxml_dprint("<--FREEING (cxml_xp_binaryop) node-->\n")
     cxml_xp_fvisit(node->l_node);
@@ -541,6 +561,9 @@ void cxml_xp_bvisit(cxml_xp_astnode * ast_node, cxml_string *acc){
             break;
         case CXML_XP_AST_BINOP_NODE:
             cxml_xp_bvisit_BinaryOp(ast_node->wrapped_node.binary, acc);
+            break;
+        case CXML_XP_AST_IF_NODE:
+            cxml_xp_bvisit_If(ast_node->wrapped_node.if_node, acc);
             break;
         case CXML_XP_AST_PREDICATE_NODE:
             cxml_xp_bvisit_Predicate(ast_node->wrapped_node.predicate, acc);
@@ -694,6 +717,22 @@ void cxml_xp_bvisit_FunctionCall(cxml_xp_functioncall* node, cxml_string *acc){
 void cxml_xp_bvisit_UnaryOp(cxml_xp_unaryop* node, cxml_string *acc){
     cxml_string_append(acc, node->op == CXML_XP_OP_MINUS ? " -" : " +", 2);
     cxml_xp_bvisit(node->node, acc);
+}
+
+void cxml_xp_dvisit_If(cxml_xp_if* node){
+    _cxml_dprint("<--In cxml_xp_if node-->\n")
+    cxml_xp_dvisit(node->cond);
+    cxml_xp_dvisit(node->then_node);
+    cxml_xp_dvisit(node->else_node);
+}
+
+void cxml_xp_bvisit_If(cxml_xp_if* node, cxml_string *acc){
+    cxml_string_append(acc, "if (", 4);
+    cxml_xp_bvisit(node->cond, acc);
+    cxml_string_append(acc, ") then ", 7);
+    cxml_xp_bvisit(node->then_node, acc);
+    cxml_string_append(acc, " else ", 6);
+    cxml_xp_bvisit(node->else_node, acc);
 }
 
 void cxml_xp_bvisit_BinaryOp(cxml_xp_binaryop* node, cxml_string *acc){

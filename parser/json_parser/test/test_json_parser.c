@@ -131,8 +131,8 @@ typedef struct {
   size_t arrays_started;
   size_t arrays_ended;
   size_t keys;
-  char string_values[8][64];
-  char number_values[8][64];
+  char string_values[8][128];
+  char number_values[8][128];
 } json_path_stream_test_ctx_t;
 
 static int json_path_stream_match_start(void *ctx, json_type_t type) {
@@ -884,6 +884,369 @@ spec("json_parser") {
       json_free(root);
     }
 
+    it("should match filter regex with string patterns") {
+      const char *json = "{\"items\":[{\"name\":\"alpha-1\"},{\"name\":\"beta-2\"},"
+                         "{\"name\":\"gamma\"}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result =
+          json_path_query(v, "$.items[@.name ~ '^[a-z]+-[0-9]+$'].name");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "alpha-1");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "beta-2");
+
+      json_path_result_t *anchored =
+          json_path_query(v, "$.items[@.name ~ '^alpha'].name");
+      check_not_null(anchored);
+      check_size_eq(json_path_result_size(anchored), 1);
+      check_str_eq(json_string(json_path_result_get(anchored, 0)), "alpha-1");
+
+      json_path_result_free(anchored);
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should match filter regex with slash-delimited patterns") {
+      const char *json =
+          "{\"items\":[{\"code\":\"A-1\"},{\"code\":\"B-22\"},{\"code\":\"C\"}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result =
+          json_path_query(v, "$.items[@.code ~ /^[A-C]-[0-9]+$/].code");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "A-1");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "B-22");
+
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should match filter contains as literal substring") {
+      const char *json = "{\"items\":[{\"name\":\"alpha-1\"},{\"name\":\"beta\"},"
+                         "{\"name\":\"alphabet\"}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result =
+          json_path_query(v, "$.items[contains(@.name, 'alph')].name");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "alpha-1");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "alphabet");
+
+      json_path_result_t *missing =
+          json_path_query(v, "$.items[contains(@.name, 'xyz')].name");
+      check_not_null(missing);
+      check_size_eq(json_path_result_size(missing), 0);
+
+      json_path_result_free(missing);
+      json_path_result_free(result);
+      json_free(v);
+    }
+    it("should handle contains edge cases like empty needles") {
+      const char *json = "{\"items\":[{\"name\":\"alpha-1\"},{\"name\":\"\"},"
+                         "{\"name\":\"beta\"}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *empty = json_path_query(v, "$.items[contains(@.name, '')].name");
+      check_not_null(empty);
+      check_size_eq(json_path_result_size(empty), 3);
+
+      json_path_result_t *whole = json_path_query(v, "$.items[contains(@.name, 'alpha-1')].name");
+      check_not_null(whole);
+      check_size_eq(json_path_result_size(whole), 1);
+      check_str_eq(json_string(json_path_result_get(whole, 0)), "alpha-1");
+
+      json_path_result_t *tail = json_path_query(v, "$.items[contains(@.name, 'eta')].name");
+      check_not_null(tail);
+      check_size_eq(json_path_result_size(tail), 1);
+      check_str_eq(json_string(json_path_result_get(tail, 0)), "beta");
+
+      json_path_result_free(tail);
+      json_path_result_free(whole);
+      json_path_result_free(empty);
+      json_free(v);
+    }
+
+    it("should keep plain contains member names as labels") {
+      const char *json = "{\"contains\":\"payload\",\"items\":[1]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      check_str_eq(json_string(json_path_get(v, "$.contains")), "payload");
+      json_free(v);
+    }
+
+    it("should treat malformed filter regex as no match") {
+      const char *json = "{\"items\":[{\"name\":\"alpha\"},{\"name\":\"beta\"}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result = json_path_query(v, "$.items[@.name ~ '['].name");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 0);
+
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+
+    it("should collect descendant member values in document order") {
+      const char *json = "{\"store\":{\"book\":[{\"category\":\"reference\","
+                         "\"author\":\"Nigel Rees\",\"title\":\"Sayings of the Century\","
+                         "\"price\":8.95},"
+                         "{\"category\":\"fiction\",\"author\":\"Evelyn Waugh\","
+                         "\"title\":\"Sword of Honour\",\"price\":12.99},"
+                         "{\"category\":\"fiction\",\"author\":\"Herman Melville\","
+                         "\"title\":\"Moby Dick\",\"isbn\":\"0-553-21311-3\",\"price\":8.99},"
+                         "{\"category\":\"fiction\",\"author\":\"J. R. R. Tolkien\","
+                         "\"title\":\"The Lord of the Rings\",\"isbn\":\"0-395-19395-8\","
+                         "\"price\":22.99}],\"bicycle\":{\"color\":\"red\",\"price\":19.95}}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result = json_path_query(v, "$.store..price");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 5);
+      check_float_eq(json_number(json_path_result_get(result, 0)), 8.95, 0.001);
+      check_float_eq(json_number(json_path_result_get(result, 1)), 12.99, 0.001);
+      check_float_eq(json_number(json_path_result_get(result, 2)), 8.99, 0.001);
+      check_float_eq(json_number(json_path_result_get(result, 3)), 22.99, 0.001);
+      check_float_eq(json_number(json_path_result_get(result, 4)), 19.95, 0.001);
+
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should collect descendant member values across the whole document") {
+      const char *json = "{\"store\":{\"book\":[{\"category\":\"reference\","
+                         "\"author\":\"Nigel Rees\",\"title\":\"Sayings of the Century\","
+                         "\"price\":8.95},"
+                         "{\"category\":\"fiction\",\"author\":\"Evelyn Waugh\","
+                         "\"title\":\"Sword of Honour\",\"price\":12.99},"
+                         "{\"category\":\"fiction\",\"author\":\"Herman Melville\","
+                         "\"title\":\"Moby Dick\",\"isbn\":\"0-553-21311-3\",\"price\":8.99},"
+                         "{\"category\":\"fiction\",\"author\":\"J. R. R. Tolkien\","
+                         "\"title\":\"The Lord of the Rings\",\"isbn\":\"0-395-19395-8\","
+                         "\"price\":22.99}],\"bicycle\":{\"color\":\"red\",\"price\":19.95}}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result = json_path_query(v, "$..author");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 4);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "Nigel Rees");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "Evelyn Waugh");
+      check_str_eq(json_string(json_path_result_get(result, 2)), "Herman Melville");
+      check_str_eq(json_string(json_path_result_get(result, 3)), "J. R. R. Tolkien");
+
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should index into descendant arrays") {
+      const char *json = "{\"store\":{\"book\":[{\"title\":\"Sayings of the Century\"},"
+                         "{\"title\":\"Sword of Honour\"},{\"title\":\"Moby Dick\"},"
+                         "{\"title\":\"The Lord of the Rings\"}]}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *by_index = json_path_query(v, "$..book[2]");
+      check_not_null(by_index);
+      check_size_eq(json_path_result_size(by_index), 1);
+      check_str_eq(json_string(json_path_get(json_path_result_get(by_index, 0), "$.title")),
+                   "Moby Dick");
+
+      json_path_result_t *by_negative = json_path_query(v, "$..book[-1]");
+      check_not_null(by_negative);
+      check_size_eq(json_path_result_size(by_negative), 1);
+      check_str_eq(json_string(json_path_get(json_path_result_get(by_negative, 0), "$.title")),
+                   "The Lord of the Rings");
+
+      json_path_result_free(by_negative);
+      json_path_result_free(by_index);
+      json_free(v);
+    }
+
+    it("should expand descendant wildcard to all member values and array elements") {
+      const char *json = "{\"store\":{\"book\":[{\"category\":\"reference\","
+                         "\"author\":\"Nigel Rees\",\"title\":\"Sayings of the Century\","
+                         "\"price\":8.95},"
+                         "{\"category\":\"fiction\",\"author\":\"Evelyn Waugh\","
+                         "\"title\":\"Sword of Honour\",\"price\":12.99},"
+                         "{\"category\":\"fiction\",\"author\":\"Herman Melville\","
+                         "\"title\":\"Moby Dick\",\"isbn\":\"0-553-21311-3\",\"price\":8.99},"
+                         "{\"category\":\"fiction\",\"author\":\"J. R. R. Tolkien\","
+                         "\"title\":\"The Lord of the Rings\",\"isbn\":\"0-395-19395-8\","
+                         "\"price\":22.99}],\"bicycle\":{\"color\":\"red\",\"price\":19.95}}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result = json_path_query(v, "$..*");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 27);
+      check_int_eq((int)json_type(json_path_result_get(result, 0)), (int)JSON_OBJECT);
+      check_int_eq((int)json_type(json_path_result_get(result, 1)), (int)JSON_ARRAY);
+      check_str_eq(json_string(json_path_result_get(result, 9)), "Sayings of the Century");
+      check_float_eq(json_number(json_path_result_get(result, 26)), 19.95, 0.001);
+
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should treat descendant shorthand and bracket names as equivalent") {
+      const char *json = "{\"store\":{\"book\":[{\"price\":8.95},{\"price\":12.99}],"
+                         "\"bicycle\":{\"price\":19.95}}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *shorthand = json_path_query(v, "$..price");
+      json_path_result_t *bracket = json_path_query(v, "$..['price']");
+      check_not_null(shorthand);
+      check_not_null(bracket);
+      check_size_eq(json_path_result_size(shorthand), 3);
+      check_size_eq(json_path_result_size(bracket), 3);
+      for (size_t i = 0; i < 3; ++i) {
+        check_float_eq(json_number(json_path_result_get(shorthand, i)),
+                       json_number(json_path_result_get(bracket, i)), 0.001);
+      }
+
+      json_path_result_free(bracket);
+      json_path_result_free(shorthand);
+      json_free(v);
+    }
+
+    it("should apply descendant union selectors per visited node") {
+      const char *json = "{\"store\":{\"book\":[{\"price\":8.95,\"author\":\"Nigel Rees\"},"
+                         "{\"price\":12.99,\"author\":\"Evelyn Waugh\"}],"
+                         "\"bicycle\":{\"price\":19.95}}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result = json_path_query(v, "$..['price','author']");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 5);
+      check_float_eq(json_number(json_path_result_get(result, 0)), 8.95, 0.001);
+      check_str_eq(json_string(json_path_result_get(result, 1)), "Nigel Rees");
+      check_float_eq(json_number(json_path_result_get(result, 2)), 12.99, 0.001);
+      check_str_eq(json_string(json_path_result_get(result, 3)), "Evelyn Waugh");
+      check_float_eq(json_number(json_path_result_get(result, 4)), 19.95, 0.001);
+
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should order object union results by selector order") {
+      const char *json = "{\"a\":1,\"b\":2}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result = json_path_query(v, "$['b','a']");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_int_eq((int)json_number(json_path_result_get(result, 0)), 2);
+      check_int_eq((int)json_number(json_path_result_get(result, 1)), 1);
+
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should order array union results by selector order") {
+      const char *json = "{\"items\":[10,20,30]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result = json_path_query(v, "$.items[1,0]");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_int_eq((int)json_number(json_path_result_get(result, 0)), 20);
+      check_int_eq((int)json_number(json_path_result_get(result, 1)), 10);
+
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should keep duplicate union selectors in the result") {
+      const char *json = "{\"settings\":{\"price\":19.95,\"name\":\"edge\"}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result = json_path_query(v, "$.settings['price','price']");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_float_eq(json_number(json_path_result_get(result, 0)), 19.95, 0.001);
+      check_float_eq(json_number(json_path_result_get(result, 1)), 19.95, 0.001);
+
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should order descendant union results by selector per node") {
+      const char *json = "{\"store\":{\"book\":[{\"price\":8.95,\"author\":\"Nigel Rees\"},"
+                         "{\"price\":12.99,\"author\":\"Evelyn Waugh\"}],"
+                         "\"bicycle\":{\"price\":19.95}}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result = json_path_query(v, "$..['author','price']");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 5);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "Nigel Rees");
+      check_float_eq(json_number(json_path_result_get(result, 1)), 8.95, 0.001);
+      check_str_eq(json_string(json_path_result_get(result, 2)), "Evelyn Waugh");
+      check_float_eq(json_number(json_path_result_get(result, 3)), 12.99, 0.001);
+      check_float_eq(json_number(json_path_result_get(result, 4)), 19.95, 0.001);
+
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should apply remaining segments per union selector result") {
+      const char *json = "{\"store\":{\"book\":{\"title\":\"A\"},"
+                         "\"bicycle\":{\"title\":\"B\"}}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *result = json_path_query(v, "$.store['bicycle','book'].title");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "B");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "A");
+
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should return the first descendant match for single-value lookups") {
+      const char *json = "{\"store\":{\"book\":[{\"price\":8.95},{\"price\":12.99}],"
+                         "\"bicycle\":{\"price\":19.95}}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_value_t *price = json_path_get(v, "$..price");
+      check_not_null(price);
+      check_float_eq(json_number(price), 8.95, 0.001);
+
+      json_free(v);
+    }
+
+    it("should reject descendant paths in stream matchers") {
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$..name");
+
+      check_not_null(program);
+      check_null(json_path_stream_create(program, &handler, &capture));
+      check_str_contains(json_path_get_error(), "not streamable");
+
+      json_path_program_free(program);
+    }
+
+
     it("should reject invalid compiled JSONPath expressions") {
       json_path_program_t *program;
       check_null(json_path_compile("$.listeners["));
@@ -1017,6 +1380,730 @@ spec("json_parser") {
       check_int_eq(json_path_stream_feed(stream, "{\"name\":\"stop\"}", 15), -1);
       check_str_contains(json_path_stream_error(stream), "callback");
       check_size_eq(json_path_stream_match_count(stream), 0);
+
+      json_path_stream_destroy(stream);
+      json_path_program_free(program);
+    }
+
+    it("should slice arrays with start and end bounds") {
+      const char *json = "{\"arr\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\"]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.arr[1:3]");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "b");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "c");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should slice arrays with an omitted end bound") {
+      const char *json = "{\"arr\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\"]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.arr[5:]");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "f");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "g");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should slice arrays with a positive step") {
+      const char *json = "{\"arr\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\"]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.arr[1:5:2]");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "b");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "d");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should slice arrays with a negative step in descending order") {
+      const char *json = "{\"arr\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\"]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.arr[5:1:-2]");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "f");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "d");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should reverse arrays with an all-omitted negative slice") {
+      const char *json = "{\"arr\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\"]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.arr[::-1]");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 7);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "g");
+      check_str_eq(json_string(json_path_result_get(result, 3)), "d");
+      check_str_eq(json_string(json_path_result_get(result, 6)), "a");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should step through a whole array when both bounds are omitted") {
+      const char *json = "{\"arr\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\"]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.arr[::2]");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 4);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "a");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "c");
+      check_str_eq(json_string(json_path_result_get(result, 2)), "e");
+      check_str_eq(json_string(json_path_result_get(result, 3)), "g");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should treat a zero step as an empty slice") {
+      const char *json = "{\"arr\":[\"a\",\"b\",\"c\"]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.arr[::0]");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 0);
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should return an empty list when the slice range is inverted") {
+      const char *json = "{\"arr\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\"]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.arr[3:1]");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 0);
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should support negative slice bounds") {
+      const char *json = "{\"arr\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\"]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.arr[-3:-1]");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "e");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "f");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should support an omitted start with a negative end") {
+      const char *json = "{\"arr\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\"]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.arr[:-2]");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 5);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "a");
+      check_str_eq(json_string(json_path_result_get(result, 4)), "e");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should slice the root array") {
+      const char *json = "[\"a\",\"b\",\"c\",\"d\"]";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$[1:3]");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "b");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "c");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should return the first sliced element for single-value lookups") {
+      const char *json = "{\"arr\":[\"a\",\"b\",\"c\",\"d\",\"e\"]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_value_t *value = json_path_get(v, "$.arr[2:4]");
+      check_not_null(value);
+      check_str_eq(json_string(value), "c");
+      json_free(v);
+    }
+
+    it("should apply remaining segments per sliced element") {
+      const char *json = "{\"store\":{\"book\":[{\"title\":\"a\"},{\"title\":\"b\"},"
+                         "{\"title\":\"c\"}]}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.store.book[0:2].title");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "a");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "b");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should slice descendants and return nothing for non-arrays") {
+      const char *json = "{\"x\":{\"arr\":[1,2,3]},\"obj\":{\"a\":1}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *sliced = json_path_query(v, "$..arr[0:2]");
+      check_not_null(sliced);
+      check_size_eq(json_path_result_size(sliced), 2);
+      check_int_eq((int)json_number(json_path_result_get(sliced, 0)), 1);
+      check_int_eq((int)json_number(json_path_result_get(sliced, 1)), 2);
+      json_path_result_t *object_slice = json_path_query(v, "$.obj[0:2]");
+      check_not_null(object_slice);
+      check_size_eq(json_path_result_size(object_slice), 0);
+      json_path_result_free(object_slice);
+      json_path_result_free(sliced);
+      json_free(v);
+    }
+
+    it("should support standard ? filter syntax on arrays") {
+      const char *json = "{\"items\":[{\"name\":\"a\",\"price\":5},"
+                         "{\"name\":\"b\",\"price\":15},"
+                         "{\"name\":\"c\",\"price\":8}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.items[?@.price < 10].name");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "a");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "c");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should keep the parenthesized filter form equivalent to ? syntax") {
+      const char *json = "{\"items\":[{\"name\":\"a\",\"price\":5},"
+                         "{\"name\":\"b\",\"price\":15},"
+                         "{\"name\":\"c\",\"price\":8}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *qmark = json_path_query(v, "$.items[? @.price < 10].name");
+      json_path_result_t *paren = json_path_query(v, "$.items[(@.price < 10)].name");
+      check_not_null(qmark);
+      check_not_null(paren);
+      check_size_eq(json_path_result_size(qmark), 2);
+      check_size_eq(json_path_result_size(paren), 2);
+      check_str_eq(json_string(json_path_result_get(qmark, 0)),
+                   json_string(json_path_result_get(paren, 0)));
+      check_str_eq(json_string(json_path_result_get(qmark, 1)),
+                   json_string(json_path_result_get(paren, 1)));
+      json_path_result_free(paren);
+      json_path_result_free(qmark);
+      json_free(v);
+    }
+
+    it("should filter by member existence with ? syntax") {
+      const char *json = "{\"items\":[{\"name\":\"a\",\"isbn\":\"x\"},"
+                         "{\"name\":\"b\"},"
+                         "{\"name\":\"c\",\"isbn\":\"y\"}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.items[?@.isbn].name");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "a");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "c");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should support boolean expressions inside ? filters") {
+      const char *json = "{\"items\":[{\"name\":\"a\",\"price\":5,\"stock\":0},"
+                         "{\"name\":\"b\",\"price\":15,\"stock\":3},"
+                         "{\"name\":\"c\",\"price\":8,\"stock\":2}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result =
+          json_path_query(v, "$.items[?(@.price < 10 && @.stock > 0)].name");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 1);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "c");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should apply ? filters to descendants") {
+      const char *json = "{\"store\":{\"book\":[{\"title\":\"t1\",\"price\":8.95},"
+                         "{\"title\":\"t2\",\"price\":12.99},"
+                         "{\"title\":\"t3\",\"price\":9.5}],"
+                         "\"bicycle\":{\"price\":19.95}}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$..book[?@.price < 10].title");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "t1");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "t3");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should support reversed literal comparisons in filters") {
+      const char *json = "{\"items\":[{\"port\":1,\"name\":\"a\"},"
+                         "{\"port\":5,\"name\":\"b\"},"
+                         "{\"port\":9,\"name\":\"c\"}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.items[?2 < @.port].name");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "b");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "c");
+
+      json_path_result_t *strings =
+          json_path_query(v, "$.items[?'b' == @.name].port");
+      check_not_null(strings);
+      check_size_eq(json_path_result_size(strings), 1);
+      check_int_eq((int)json_number(json_path_result_get(strings, 0)), 5);
+
+      json_path_result_free(strings);
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should filter by member absence with negated existence") {
+      const char *json = "{\"items\":[{\"name\":\"a\",\"isbn\":\"x\"},"
+                         "{\"name\":\"b\"},"
+                         "{\"name\":\"c\",\"isbn\":\"y\"}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.items[?!@.isbn].name");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 1);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "b");
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should compare string members inside ? filters") {
+      const char *json = "{\"items\":[{\"name\":\"alpha\",\"price\":5},"
+                         "{\"name\":\"beta\",\"price\":15}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result = json_path_query(v, "$.items[?@.name == 'alpha'].price");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 1);
+      check_int_eq((int)json_number(json_path_result_get(result, 0)), 5);
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should reject slice selectors in stream matchers") {
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.items[0:2]");
+
+      check_not_null(program);
+      check_null(json_path_stream_create(program, &handler, &capture));
+      check_str_contains(json_path_get_error(), "not streamable");
+
+      json_path_program_free(program);
+    }
+
+    it("should reject standard ? filter syntax in stream matchers") {
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.items[?@.price < 10].name");
+
+      check_not_null(program);
+      check_null(json_path_stream_create(program, &handler, &capture));
+      check_str_contains(json_path_get_error(), "not streamable");
+
+      json_path_program_free(program);
+    }
+
+    it("should count duplicate union fanout alternatives in streams") {
+      const char *json = "{\"settings\":{\"a\":100}}";
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.settings['a','a']");
+      json_path_stream_t *stream = json_path_stream_create(program, &handler, &capture);
+
+      check_not_null(program);
+      check_not_null(stream);
+      check_int_eq(json_path_stream_feed(stream, json, strlen(json)), 0);
+      check_int_eq(json_path_stream_finish(stream), 0);
+      check_null(json_path_stream_error(stream));
+      check_size_eq(json_path_stream_match_count(stream), 2);
+      check_size_eq(capture.match_starts, 1);
+      check_size_eq(capture.match_ends, 1);
+      check_size_eq(capture.numbers, 1);
+      check_str_eq(capture.number_values[0], "100");
+
+      json_path_stream_destroy(stream);
+      json_path_program_free(program);
+    }
+
+    it("should filter with length() on array and object members") {
+      const char *json = "{\"store\":{\"book\":["
+                         "{\"title\":\"abc\",\"authors\":[\"x\"],\"meta\":{\"a\":1,\"b\":2}},"
+                         "{\"title\":\"a very long title here\",\"authors\":[\"x\",\"y\"],\"meta\":{\"a\":1}},"
+                         "{\"title\":\"xy\",\"authors\":[\"x\",\"y\",\"z\"],\"meta\":{\"a\":1,\"b\":2,\"c\":3}}]}}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *long_title = json_path_query(v, "$.store.book[?length(@.title) > 10].title");
+      check_not_null(long_title);
+      check_size_eq(json_path_result_size(long_title), 1);
+      check_str_eq(json_string(json_path_result_get(long_title, 0)), "a very long title here");
+
+      json_path_result_t *two_authors = json_path_query(v, "$.store.book[?count(@.authors[*]) > 1].title");
+      check_not_null(two_authors);
+      check_size_eq(json_path_result_size(two_authors), 2);
+      check_str_eq(json_string(json_path_result_get(two_authors, 0)), "a very long title here");
+      check_str_eq(json_string(json_path_result_get(two_authors, 1)), "xy");
+
+      json_path_result_t *two_members = json_path_query(v, "$.store.book[?length(@.meta) == 2].title");
+      check_not_null(two_members);
+      check_size_eq(json_path_result_size(two_members), 1);
+      check_str_eq(json_string(json_path_result_get(two_members, 0)), "abc");
+
+      json_path_result_t *exact_count = json_path_query(v, "$.store.book[?count(@.authors[*]) == 3].title");
+      check_not_null(exact_count);
+      check_size_eq(json_path_result_size(exact_count), 1);
+      check_str_eq(json_string(json_path_result_get(exact_count, 0)), "xy");
+
+      json_path_result_free(exact_count);
+      json_path_result_free(two_members);
+      json_path_result_free(two_authors);
+      json_path_result_free(long_title);
+      json_free(v);
+    }
+
+    it("should support no-argument length() on the current node") {
+      const char *json = "{\"groups\":[[\"a\",\"b\",\"c\"],[\"a\"],[\"a\",\"b\"]],\"solo\":[[\"a\"]]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *big = json_path_query(v, "$.groups[?length() > 2]");
+      check_not_null(big);
+      check_size_eq(json_path_result_size(big), 1);
+      check_str_eq(json_string(json_array_get(json_path_result_get(big, 0), 0)), "a");
+      check_str_eq(json_string(json_array_get(json_path_result_get(big, 0), 2)), "c");
+
+      json_path_result_t *solo = json_path_query(v, "$.solo[?length() == 1]");
+      check_not_null(solo);
+      check_size_eq(json_path_result_size(solo), 1);
+      check_str_eq(json_string(json_array_get(json_path_result_get(solo, 0), 0)), "a");
+
+      json_path_result_free(solo);
+      json_path_result_free(big);
+      json_free(v);
+    }
+
+    it("should count UTF-8 characters for string length()") {
+      const char *json = "{\"items\":[{\"name\":\"中文\"},{\"name\":\"hello\"},{\"name\":\"é\"}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      json_path_result_t *two_chars = json_path_query(v, "$.items[?length(@.name) == 2].name");
+      check_not_null(two_chars);
+      check_size_eq(json_path_result_size(two_chars), 1);
+      check_str_eq(json_string(json_path_result_get(two_chars, 0)), "中文");
+
+      json_path_result_t *one_char = json_path_query(v, "$.items[?length(@.name) == 1].name");
+      check_not_null(one_char);
+      check_size_eq(json_path_result_size(one_char), 1);
+      check_str_eq(json_string(json_path_result_get(one_char, 0)), "é");
+
+      json_path_result_free(one_char);
+      json_path_result_free(two_chars);
+      json_free(v);
+    }
+
+    it("should support match() and search() regex functions") {
+      const char *json = "{\"items\":[{\"code\":\"A-1\",\"name\":\"alpha\"},"
+                         "{\"code\":\"B-22\",\"name\":\"beta\"},"
+                         "{\"code\":\"XA-1\",\"name\":\"gamma\"}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+
+      /* match() requires the whole string to match the pattern. */
+      json_path_result_t *full = json_path_query(v, "$.items[?match(@.code, 'A-1')].name");
+      check_not_null(full);
+      check_size_eq(json_path_result_size(full), 1);
+      check_str_eq(json_string(json_path_result_get(full, 0)), "alpha");
+
+      /* search() finds the pattern anywhere in the string. */
+      json_path_result_t *any = json_path_query(v, "$.items[?search(@.code, 'A-1')].name");
+      check_not_null(any);
+      check_size_eq(json_path_result_size(any), 2);
+      check_str_eq(json_string(json_path_result_get(any, 0)), "alpha");
+      check_str_eq(json_string(json_path_result_get(any, 1)), "gamma");
+
+      /* Anchored patterns work with both forms. */
+      json_path_result_t *anchored =
+          json_path_query(v, "$.items[?match(@.code, '^[A-C]-[0-9]+$')].name");
+      check_not_null(anchored);
+      check_size_eq(json_path_result_size(anchored), 2);
+      check_str_eq(json_string(json_path_result_get(anchored, 0)), "alpha");
+      check_str_eq(json_string(json_path_result_get(anchored, 1)), "beta");
+
+      json_path_result_free(anchored);
+      json_path_result_free(any);
+      json_path_result_free(full);
+      json_free(v);
+    }
+
+    it("should support case-insensitive contains_ci()") {
+      const char *json = "{\"items\":[{\"name\":\"Alpha-1\"},{\"name\":\"beta\"},"
+                         "{\"name\":\"ALPHABET\"}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *result =
+          json_path_query(v, "$.items[?contains_ci(@.name, 'alph')].name");
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 2);
+      check_str_eq(json_string(json_path_result_get(result, 0)), "Alpha-1");
+      check_str_eq(json_string(json_path_result_get(result, 1)), "ALPHABET");
+
+      json_path_result_t *missing = json_path_query(v, "$.items[?contains_ci(@.name, 'zzz')].name");
+      check_not_null(missing);
+      check_size_eq(json_path_result_size(missing), 0);
+
+      json_path_result_free(missing);
+      json_path_result_free(result);
+      json_free(v);
+    }
+
+    it("should keep contains_ci usable as a plain member name") {
+      const char *json = "{\"contains_ci\":42}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_value_t *value = json_path_get(v, "$.contains_ci");
+      check_not_null(value);
+      check_int_eq((int)json_number(value), 42);
+      json_free(v);
+    }
+
+    it("should keep match and search usable as plain member names") {
+      const char *json = "{\"match\":1,\"search\":2}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_value_t *m = json_path_get(v, "$.match");
+      check_not_null(m);
+      check_int_eq((int)json_number(m), 1);
+      json_value_t *s = json_path_get(v, "$.search");
+      check_not_null(s);
+      check_int_eq((int)json_number(s), 2);
+      json_free(v);
+    }
+
+    it("should keep length and count usable as plain member names") {
+      const char *json = "{\"length\":5,\"count\":7}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_value_t *length = json_path_get(v, "$.length");
+      check_not_null(length);
+      check_int_eq((int)json_number(length), 5);
+      json_value_t *count = json_path_get(v, "$.count");
+      check_not_null(count);
+      check_int_eq((int)json_number(count), 7);
+      json_free(v);
+    }
+
+    it("should fall back to recursive evaluation for very deep filters") {
+      char expr[4096];
+      size_t pos = 0;
+      int i;
+      pos += (size_t)snprintf(expr + pos, sizeof(expr) - pos, "$.items[?@.a == ");
+      for (i = 0; i < 70; ++i)
+        pos += (size_t)snprintf(expr + pos, sizeof(expr) - pos, "(@.a == ");
+      pos += (size_t)snprintf(expr + pos, sizeof(expr) - pos, "1");
+      for (i = 0; i < 70; ++i)
+        pos += (size_t)snprintf(expr + pos, sizeof(expr) - pos, ")");
+      pos += (size_t)snprintf(expr + pos, sizeof(expr) - pos, "]");
+
+      const char *json = "{\"items\":[{\"a\":1},{\"a\":2}]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_program_t *program = json_path_compile(expr);
+      check_not_null(program);
+      json_path_result_t *result = json_path_query_compiled(v, program);
+      check_not_null(result);
+      check_size_eq(json_path_result_size(result), 0);
+      json_path_result_free(result);
+      json_path_program_free(program);
+      json_free(v);
+    }
+
+    it("should treat literal booleans as filter truth values") {
+      const char *json = "{\"items\":[1,2,3]}";
+      json_value_t *v = json_parse(json, strlen(json));
+      check_not_null(v);
+      json_path_result_t *all = json_path_query(v, "$.items[?true]");
+      check_not_null(all);
+      check_size_eq(json_path_result_size(all), 3);
+      json_path_result_t *none = json_path_query(v, "$.items[?false]");
+      check_not_null(none);
+      check_size_eq(json_path_result_size(none), 0);
+      json_path_result_free(none);
+      json_path_result_free(all);
+      json_free(v);
+    }
+
+    it("should stream scalar array filters with zero buffering") {
+      const char *json = "{\"nums\":[1,2,3,4,5]}";
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.nums[?@ > 2]");
+      json_path_stream_t *stream = json_path_stream_create(program, &handler, &capture);
+
+      check_not_null(program);
+      check_not_null(stream);
+      check_int_eq(json_path_stream_feed(stream, json, strlen(json)), 0);
+      check_int_eq(json_path_stream_finish(stream), 0);
+      check_null(json_path_stream_error(stream));
+      check_size_eq(json_path_stream_match_count(stream), 3);
+      check_size_eq(capture.match_starts, 3);
+      check_size_eq(capture.match_ends, 3);
+      check_size_eq(capture.numbers, 3);
+      check_str_eq(capture.number_values[0], "3");
+      check_str_eq(capture.number_values[1], "4");
+      check_str_eq(capture.number_values[2], "5");
+
+      json_path_stream_destroy(stream);
+      json_path_program_free(program);
+    }
+
+    it("should stream scalar equality filters and reversed comparisons") {
+      const char *json = "{\"nums\":[1,2,3]}";
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *eq = json_path_compile("$.nums[?@ == 2]");
+      json_path_stream_t *stream = json_path_stream_create(eq, &handler, &capture);
+
+      check_not_null(eq);
+      check_not_null(stream);
+      check_int_eq(json_path_stream_feed(stream, json, strlen(json)), 0);
+      check_int_eq(json_path_stream_finish(stream), 0);
+      check_size_eq(json_path_stream_match_count(stream), 1);
+      check_str_eq(capture.number_values[0], "2");
+
+      json_path_stream_destroy(stream);
+      json_path_program_free(eq);
+
+      capture = (json_path_stream_test_ctx_t){0};
+      json_path_program_t *reversed = json_path_compile("$.nums[?2 < @]");
+      json_path_stream_t *rstream = json_path_stream_create(reversed, &handler, &capture);
+      check_not_null(reversed);
+      check_not_null(rstream);
+      check_int_eq(json_path_stream_feed(rstream, json, strlen(json)), 0);
+      check_int_eq(json_path_stream_finish(rstream), 0);
+      check_size_eq(json_path_stream_match_count(rstream), 1);
+      check_str_eq(capture.number_values[0], "3");
+
+      json_path_stream_destroy(rstream);
+      json_path_program_free(reversed);
+    }
+
+    it("should stream object member value filters and string predicates") {
+      const char *json = "{\"cfg\":{\"a\":\"on\",\"b\":\"off\",\"c\":\"on\"}}";
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.cfg[?@ == 'on']");
+      json_path_stream_t *stream = json_path_stream_create(program, &handler, &capture);
+
+      check_not_null(program);
+      check_not_null(stream);
+      check_int_eq(json_path_stream_feed(stream, json, strlen(json)), 0);
+      check_int_eq(json_path_stream_finish(stream), 0);
+      check_size_eq(json_path_stream_match_count(stream), 2);
+      check_size_eq(capture.strings, 2);
+      check_str_eq(capture.string_values[0], "on");
+      check_str_eq(capture.string_values[1], "on");
+
+      json_path_stream_destroy(stream);
+      json_path_program_free(program);
+    }
+
+    it("should stream boolean value filters") {
+      const char *json = "{\"flags\":[true,false,true]}";
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.flags[?@ == true]");
+      json_path_stream_t *stream = json_path_stream_create(program, &handler, &capture);
+
+      check_not_null(program);
+      check_not_null(stream);
+      check_int_eq(json_path_stream_feed(stream, json, strlen(json)), 0);
+      check_int_eq(json_path_stream_finish(stream), 0);
+      check_size_eq(json_path_stream_match_count(stream), 2);
+      check_size_eq(capture.match_starts, 2);
+      check_size_eq(capture.match_ends, 2);
+
+      json_path_stream_destroy(stream);
+      json_path_program_free(program);
+    }
+
+    it("should stream long string filter candidates via the transient buffer") {
+      const char *long_value = "a very long string value that exceeds the inline sixty four byte buffer";
+      char json[256];
+      snprintf(json, sizeof(json), "{\"words\":[\"short\",\"%s\"]}", long_value);
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.words[?@ == 'a very long string value that exceeds the inline sixty four byte buffer']");
+      json_path_stream_t *stream = json_path_stream_create(program, &handler, &capture);
+
+      check_not_null(program);
+      check_not_null(stream);
+      check_int_eq(json_path_stream_feed(stream, json, strlen(json)), 0);
+      check_int_eq(json_path_stream_finish(stream), 0);
+      check_null(json_path_stream_error(stream));
+      check_size_eq(json_path_stream_match_count(stream), 1);
+      check_size_eq(capture.strings, 1);
+      check_str_eq(capture.string_values[0], long_value);
+
+      json_path_stream_destroy(stream);
+      json_path_program_free(program);
+    }
+
+    it("should reject non-terminal and boolean stream filters") {
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *continued = json_path_compile("$.nums[?@ > 2].x");
+      json_path_program_t *boolean = json_path_compile("$.nums[?@ > 2 && @ < 5]");
+
+      check_not_null(continued);
+      check_not_null(boolean);
+      check_null(json_path_stream_create(continued, &handler, &capture));
+      check_str_contains(json_path_get_error(), "not streamable");
+      check_null(json_path_stream_create(boolean, &handler, &capture));
+      check_str_contains(json_path_get_error(), "not streamable");
+
+      json_path_program_free(boolean);
+      json_path_program_free(continued);
+    }
+
+    it("should count duplicate array index union alternatives in streams") {
+      const char *json = "{\"items\":[10,20]}";
+      json_path_stream_test_ctx_t capture = {0};
+      json_path_stream_handler_t handler = json_path_stream_test_handler();
+      json_path_program_t *program = json_path_compile("$.items[0,0]");
+      json_path_stream_t *stream = json_path_stream_create(program, &handler, &capture);
+
+      check_not_null(program);
+      check_not_null(stream);
+      check_int_eq(json_path_stream_feed(stream, json, strlen(json)), 0);
+      check_int_eq(json_path_stream_finish(stream), 0);
+      check_null(json_path_stream_error(stream));
+      check_size_eq(json_path_stream_match_count(stream), 2);
+      check_size_eq(capture.match_starts, 1);
+      check_size_eq(capture.match_ends, 1);
+      check_size_eq(capture.numbers, 1);
+      check_str_eq(capture.number_values[0], "10");
 
       json_path_stream_destroy(stream);
       json_path_program_free(program);

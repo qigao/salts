@@ -115,26 +115,23 @@ scan:
         "@" { lexer->tok.type = YPATH_TOK_AT; goto token_done; }
         "+" { lexer->tok.type = YPATH_TOK_PLUS; goto token_done; }
         "-" { lexer->tok.type = YPATH_TOK_MINUS; goto token_done; }
+        "^" { lexer->tok.type = YPATH_TOK_CARET; goto token_done; }
+        "~" { lexer->tok.type = YPATH_TOK_TILDE; goto token_done; }
+        "," { lexer->tok.type = YPATH_TOK_COMMA; goto token_done; }
         "||" { lexer->tok.type = YPATH_TOK_OR; goto token_done; }
         "&&" { lexer->tok.type = YPATH_TOK_AND; goto token_done; }
         "==" { lexer->tok.type = YPATH_TOK_EQ; goto token_done; }
         "!=" { lexer->tok.type = YPATH_TOK_NE; goto token_done; }
         "!" { lexer->tok.type = YPATH_TOK_BANG; goto token_done; }
+        "<<" { lexer->tok.type = YPATH_TOK_LSHIFT; goto token_done; }
+        ">>" { lexer->tok.type = YPATH_TOK_RSHIFT; goto token_done; }
         "<=" { lexer->tok.type = YPATH_TOK_LE; goto token_done; }
         "<" { lexer->tok.type = YPATH_TOK_LT; goto token_done; }
         ">=" { lexer->tok.type = YPATH_TOK_GE; goto token_done; }
         ">" { lexer->tok.type = YPATH_TOK_GT; goto token_done; }
 
-        "|" {
-            lexer->tok.type = YPATH_TOK_ERROR;
-            lexer->error = "expected ||";
-            goto token_done;
-        }
-        "&" {
-            lexer->tok.type = YPATH_TOK_ERROR;
-            lexer->error = "expected &&";
-            goto token_done;
-        }
+        "|" { lexer->tok.type = YPATH_TOK_BOR; goto token_done; }
+        "&" { lexer->tok.type = YPATH_TOK_BAND; goto token_done; }
         "=" {
             lexer->tok.type = YPATH_TOK_ERROR;
             lexer->error = "expected ==";
@@ -144,6 +141,14 @@ scan:
         "true" { lexer->tok.type = YPATH_TOK_TRUE; goto token_done; }
         "false" { lexer->tok.type = YPATH_TOK_FALSE; goto token_done; }
         "null" { lexer->tok.type = YPATH_TOK_NULL; goto token_done; }
+        "idiv" {
+            lexer->tok.type = lexer->in_filter ? YPATH_TOK_IDIV : YPATH_TOK_IDENT;
+            goto token_done;
+        }
+        "matches" {
+            lexer->tok.type = lexer->in_filter ? YPATH_TOK_MATCHES : YPATH_TOK_IDENT;
+            goto token_done;
+        }
 
         dstring | sstring {
             lexer->tok.type = YPATH_TOK_STRING;

@@ -17,6 +17,23 @@ suite("cyaml YPATH re2c lexer") {
         check_int_eq(lexer.tok.type, YPATH_TOK_DIV);
     }
 
+    it("recognizes idiv and matches only inside filters") {
+        ypath_lexer_t lexer;
+
+        ypath_lex_init(&lexer, "idiv matches");
+        ypath_lex_next(&lexer);
+        check_int_eq(lexer.tok.type, YPATH_TOK_IDENT);
+        ypath_lex_next(&lexer);
+        check_int_eq(lexer.tok.type, YPATH_TOK_IDENT);
+
+        ypath_lex_init(&lexer, "idiv matches");
+        lexer.in_filter = true;
+        ypath_lex_next(&lexer);
+        check_int_eq(lexer.tok.type, YPATH_TOK_IDIV);
+        ypath_lex_next(&lexer);
+        check_int_eq(lexer.tok.type, YPATH_TOK_MATCHES);
+    }
+
     it("keeps keyword prefixes as identifiers") {
         ypath_lexer_t lexer;
 
@@ -70,12 +87,26 @@ suite("cyaml YPATH re2c lexer") {
         check_uint_eq(lexer.tok.len, 5);
     }
 
-    it("reports incomplete boolean operators") {
+    it("tokenizes single | and & as bitwise operators") {
         ypath_lexer_t lexer;
 
         ypath_lex_init(&lexer, "|");
         ypath_lex_next(&lexer);
-        check_int_eq(lexer.tok.type, YPATH_TOK_ERROR);
-        check_str_eq(lexer.error, "expected ||");
+        check_int_eq(lexer.tok.type, YPATH_TOK_BOR);
+        ypath_lex_init(&lexer, "&");
+        ypath_lex_next(&lexer);
+        check_int_eq(lexer.tok.type, YPATH_TOK_BAND);
+        ypath_lex_init(&lexer, "^");
+        ypath_lex_next(&lexer);
+        check_int_eq(lexer.tok.type, YPATH_TOK_CARET);
+        ypath_lex_init(&lexer, "<< >> ~ ,");
+        ypath_lex_next(&lexer);
+        check_int_eq(lexer.tok.type, YPATH_TOK_LSHIFT);
+        ypath_lex_next(&lexer);
+        check_int_eq(lexer.tok.type, YPATH_TOK_RSHIFT);
+        ypath_lex_next(&lexer);
+        check_int_eq(lexer.tok.type, YPATH_TOK_TILDE);
+        ypath_lex_next(&lexer);
+        check_int_eq(lexer.tok.type, YPATH_TOK_COMMA);
     }
 }

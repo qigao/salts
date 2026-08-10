@@ -1004,6 +1004,15 @@ _cxml_xp_resolve_arithmetic_operation(
             res = l_val / r_val;
             break;
         }
+        case CXML_XP_OP_IDIV:
+        {
+            // integer division, truncating toward zero (dialect extension)
+            if (r_val == 0){
+                _cxml_xp_eval_err("Integer division by Zero.");
+            }
+            res = (double)((long)l_val / (long)r_val);
+            break;
+        }
         case CXML_XP_OP_MOD:
         {
             // Err if any of the value is 0

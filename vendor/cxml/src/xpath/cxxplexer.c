@@ -86,8 +86,16 @@ static _cxml_xp_token_t _cx_id_type(_cxml_xp_lexer *xplexer){
         case 'a': return _cx_expect(xplexer, "nd", 1, 2, CXML_XP_TOKEN_AND, 0); // and
         case 'o': return _cx_expect(xplexer, "r", 1, 1, CXML_XP_TOKEN_OR, 0);  // or
         case 'd': return _cx_expect(xplexer, "iv", 1, 2, CXML_XP_TOKEN_DIV, 0); //div
+        case 'e': return _cx_expect(xplexer, "lse", 1, 3, CXML_XP_TOKEN_ELSE, 0); //else (dialect extension)
+        case 'i':
+            if (xplexer->current - xplexer->start >= 2 && xplexer->start[1] == 'f')
+                return _cx_expect(xplexer, "", 2, 0, CXML_XP_TOKEN_IF, 0); //if (dialect extension)
+            return _cx_expect(xplexer, "div", 1, 3, CXML_XP_TOKEN_IDIV, 0); //idiv (dialect extension)
         case 'm': return _cx_expect(xplexer, "od", 1, 2, CXML_XP_TOKEN_MOD, 0); //mod
-        case 't': return _cx_expect(xplexer, "ext", 1, 3, CXML_XP_TOKEN_TEXT_F, 1); // text
+        case 't':
+            if (xplexer->current - xplexer->start >= 2 && xplexer->start[1] == 'h')
+                return _cx_expect(xplexer, "hen", 1, 3, CXML_XP_TOKEN_THEN, 0); //then (dialect extension)
+            return _cx_expect(xplexer, "ext", 1, 3, CXML_XP_TOKEN_TEXT_F, 1); // text
         case 'n': return _cx_expect(xplexer, "ode", 1, 3, CXML_XP_TOKEN_NODE_F, 1); // node
         case 'p': return _cx_expect(xplexer, "rocessing-instruction", 1, 21, CXML_XP_TOKEN_PI_F, 1); // p-i
         case 'c': return _cx_expect(xplexer, "omment", 1, 6, CXML_XP_TOKEN_COMMENT_F, 1); // comment

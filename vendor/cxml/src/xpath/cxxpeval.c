@@ -4,6 +4,7 @@
  */
 
 #include "xpath/cxxpeval.h"
+#include "query_vm.h"
 
 
 #define _CXML_MAX_CACHEABLE_SET_SIZE (500000)
@@ -17,6 +18,8 @@ extern void cxml_set__init_with(cxml_set *recipient, cxml_set *donor);
 static bool is_not_prolog_type(_cxml_node_t node_type);
 
 static bool _evaluate_predicate_expr(_cxml_xp_data *res_d);
+
+static void cxml_xp_visit_If(cxml_xp_if* node);
 
 inline static void
 _process_nametest(cxml_elem_node *elem,
@@ -1688,65 +1691,266 @@ static void cxml_xp_visit_FunctionCall(cxml_xp_functioncall* node){
     (*fn_LU_table[node->pos].fn)(node, _cxml_xp__e_pop, _cxml_xp__e_push);
 }
 
-static void cxml_xp_visit_BinaryOp(cxml_xp_binaryop* node){
-    cxml_xp_visit(node->l_node);
-    cxml_xp_visit(node->r_node);
-    _cxml_xp_data* right = _cxml_xp__e_pop();
-    _cxml_xp_data* left = _cxml_xp__e_pop();
-    switch(node->op){
-        case CXML_XP_OP_PLUS:
-        case CXML_XP_OP_MINUS:
-        case CXML_XP_OP_MULT:
-        case CXML_XP_OP_DIV:
-        case CXML_XP_OP_MOD:
-            _cxml_xp_resolve_arithmetic_operation(left, right, _cxml_xp__e_push, node->op);
-            break;
-        case CXML_XP_OP_EQ:
-        case CXML_XP_OP_LEQ:
-        case CXML_XP_OP_GEQ:
-        case CXML_XP_OP_NEQ:
-        case CXML_XP_OP_GT:
-        case CXML_XP_OP_LT:
-            _cxml_xp_resolve_relative_operation(left, right, _cxml_xp__e_push, node->op);
-            break;
-        case CXML_XP_OP_AND:
-        case CXML_XP_OP_OR:
-            _cxml_xp_resolve_and_or_operation(left, right, _cxml_xp__e_push, node->op);
-            break;
-        case CXML_XP_OP_PIPE:
-            _cxml_xp_resolve_pipe_operation(left, right, _sort_nodeset_by_pos, _cxml_xp__e_push);
-            break;
-        default:
-            break;
-    }
+#define CXML_XP_QVM_CAPACITY 256U
+
+typedef struct {
+    qvm_instruction_t instructions[CXML_XP_QVM_CAPACITY];
+    cxml_xp_astnode* operands[CXML_XP_QVM_CAPACITY];
+    uint32_t instruction_count;
+    uint32_t operand_count;
+} cxml_xp_qvm_program_t;
+
+static bool cxml_xp_qvm_emit(cxml_xp_qvm_program_t* program, qvm_opcode_t op,
+                             uint16_t dst, uint32_t arg, uint32_t src1,
+                             uint32_t src2)
+{
+    if (program->instruction_count >= CXML_XP_QVM_CAPACITY)
+        return false;
+    program->instructions[program->instruction_count++] =
+        (qvm_instruction_t){ (uint8_t)op, 0, dst, arg, src1, src2 };
+    return true;
 }
 
-static void cxml_xp_visit_UnaryOp(cxml_xp_unaryop *node){
-    cxml_xp_op op = node->op;
-    cxml_xp_visit(node->node);
-    _cxml_xp_data *r_node = _cxml_xp__e_pop();
-    cxml_number num = new_cxml_number();
-    _cxml_xp_data_to_numeric(r_node, &num);
-    if (op == CXML_XP_OP_MINUS){
-        if(num.type == CXML_NUMERIC_DOUBLE_T)
-        {
-            num.dec_val = -num.dec_val;
-        }
+static bool cxml_xp_qvm_compile(cxml_xp_qvm_program_t* program,
+                                cxml_xp_astnode* node, uint16_t dst,
+                                uint16_t* next_register)
+{
+    uint32_t operand;
+    uint16_t left_register;
+    uint16_t right_register;
+    if (!node)
+        return false;
+    if (node->wrapped_type == CXML_XP_AST_BINOP_NODE) {
+        cxml_xp_binaryop* binary = node->wrapped_node.binary;
+        qvm_opcode_t op;
+        if (*next_register + 1 >= QVM_MAX_REGISTERS)
+            return false;
+        left_register = (*next_register)++;
+        if (!cxml_xp_qvm_compile(program, binary->l_node, left_register,
+                                 next_register))
+            return false;
+        right_register = (*next_register)++;
+        if (!cxml_xp_qvm_compile(program, binary->r_node, right_register,
+                                 next_register))
+            return false;
+        op = binary->op == CXML_XP_OP_PLUS    ? QVM_OP_ADD
+             : binary->op == CXML_XP_OP_MINUS ? QVM_OP_SUB
+             : binary->op == CXML_XP_OP_MULT  ? QVM_OP_MUL
+             : binary->op == CXML_XP_OP_DIV   ? QVM_OP_DIV
+             : binary->op == CXML_XP_OP_IDIV  ? QVM_OP_DIV
+             : binary->op == CXML_XP_OP_MOD   ? QVM_OP_MOD
+             : binary->op == CXML_XP_OP_PIPE  ? QVM_OP_UNION
+                                               : QVM_OP_CMP;
+        return cxml_xp_qvm_emit(program, op, dst, (uint32_t)binary->op,
+                                left_register, right_register);
     }
-    _cxml_xp_data_clear(r_node);
+    if (node->wrapped_type == CXML_XP_AST_UNARYOP_NODE) {
+        cxml_xp_unaryop* unary = node->wrapped_node.unary;
+        if (*next_register >= QVM_MAX_REGISTERS)
+            return false;
+        left_register = (*next_register)++;
+        if (!cxml_xp_qvm_compile(program, unary->node, left_register,
+                                 next_register))
+            return false;
+        return cxml_xp_qvm_emit(program, QVM_OP_NEG, dst, (uint32_t)unary->op,
+                                left_register, QVM_NO_OPERAND);
+    }
+    if (program->operand_count >= CXML_XP_QVM_CAPACITY)
+        return false;
+    operand = program->operand_count++;
+    program->operands[operand] = node;
+    return cxml_xp_qvm_emit(program, QVM_OP_LOAD_CONST, dst,
+                            QVM_NO_OPERAND, operand, QVM_NO_OPERAND);
+}
 
-    r_node->type = CXML_XP_DATA_NUMERIC;
-    r_node->number = num;
-    _cxml_xp__e_push(r_node);
+static int cxml_xp_qvm_resolve(void* opaque, uint32_t operand,
+                               qvm_value_t* out)
+{
+    cxml_xp_qvm_program_t* program = opaque;
+    _cxml_xp_data* data;
+    if (operand >= program->operand_count)
+        return 0;
+    cxml_xp_visit(program->operands[operand]);
+    data = _cxml_xp__e_pop();
+    if (!data)
+        return 0;
+    memset(out, 0, sizeof(*out));
+    out->type = data->type;
+    out->opaque = data;
+    return 1;
+}
+
+static int cxml_xp_qvm_truthy(void* opaque, const qvm_value_t* value)
+{
+    _cxml_xp_data* data = value->opaque;
+    bool result = false;
+    (void)opaque;
+    if (!data)
+        return 0;
+    _cxml_xp_data_to_boolean(data, &result);
+    return result;
+}
+
+static int cxml_xp_qvm_binary(void* opaque, qvm_opcode_t op, uint32_t arg,
+                              const qvm_value_t* left,
+                              const qvm_value_t* right, qvm_value_t* out)
+{
+    _cxml_xp_data* lhs = left->opaque;
+    _cxml_xp_data* rhs = right->opaque;
+    _cxml_xp_data* result;
+    (void)opaque;
+    if (!lhs || !rhs)
+        return 0;
+    switch (op) {
+    case QVM_OP_ADD:
+    case QVM_OP_SUB:
+    case QVM_OP_MUL:
+    case QVM_OP_DIV:
+    case QVM_OP_MOD:
+        _cxml_xp_resolve_arithmetic_operation(lhs, rhs, _cxml_xp__e_push,
+                                              (cxml_xp_op)arg);
+        break;
+    case QVM_OP_CMP:
+        if (arg == CXML_XP_OP_AND || arg == CXML_XP_OP_OR)
+            _cxml_xp_resolve_and_or_operation(lhs, rhs, _cxml_xp__e_push,
+                                              (cxml_xp_op)arg);
+        else
+            _cxml_xp_resolve_relative_operation(lhs, rhs, _cxml_xp__e_push,
+                                                 (cxml_xp_op)arg);
+        break;
+    case QVM_OP_UNION:
+        _cxml_xp_resolve_pipe_operation(lhs, rhs, _sort_nodeset_by_pos,
+                                        _cxml_xp__e_push);
+        break;
+    default:
+        return 0;
+    }
+    result = _cxml_xp__e_pop();
+    if (!result)
+        return 0;
+    memset(out, 0, sizeof(*out));
+    out->type = result->type;
+    out->opaque = result;
+    return 1;
+}
+
+static int cxml_xp_qvm_unary(void* opaque, qvm_opcode_t op,
+                             const qvm_value_t* input, qvm_value_t* out)
+{
+    _cxml_xp_data* data = input->opaque;
+    cxml_number number;
+    (void)opaque;
+    if (!data || op != QVM_OP_NEG)
+        return 0;
+    number = new_cxml_number();
+    _cxml_xp_data_to_numeric(data, &number);
+    if (number.type == CXML_NUMERIC_DOUBLE_T)
+        number.dec_val = -number.dec_val;
+    _cxml_xp_data_clear(data);
+    data->type = CXML_XP_DATA_NUMERIC;
+    data->number = number;
+    memset(out, 0, sizeof(*out));
+    out->type = data->type;
+    out->opaque = data;
+    return 1;
+}
+
+static void cxml_xp_qvm_make_invalid(void* opaque, qvm_value_t* out)
+{
+    (void)opaque;
+    memset(out, 0, sizeof(*out));
+    out->type = CXML_XP_DATA_NIL;
+}
+
+static void cxml_xp_qvm_make_bool(void* opaque, int value, qvm_value_t* out)
+{
+    _cxml_xp_data* data = _cxml_xp_new_data();
+    (void)opaque;
+    data->type = CXML_XP_DATA_BOOLEAN;
+    data->boolean = value != 0;
+    memset(out, 0, sizeof(*out));
+    out->type = data->type;
+    out->opaque = data;
+}
+
+static void cxml_xp_qvm_make_number(void* opaque, double value,
+                                    qvm_value_t* out)
+{
+    _cxml_xp_data* data = _cxml_xp_new_data();
+    (void)opaque;
+    data->type = CXML_XP_DATA_NUMERIC;
+    data->number = new_cxml_number();
+    data->number.type = CXML_NUMERIC_DOUBLE_T;
+    data->number.dec_val = value;
+    memset(out, 0, sizeof(*out));
+    out->type = data->type;
+    out->opaque = data;
+}
+
+static void cxml_xp_qvm_make_string(void* opaque, const char* value, size_t len,
+                                    qvm_value_t* out)
+{
+    _cxml_xp_data* data = _cxml_xp_new_data();
+    (void)opaque;
+    data->type = CXML_XP_DATA_STRING;
+    cxml_string_append(&data->str, value, (unsigned int)len);
+    memset(out, 0, sizeof(*out));
+    out->type = data->type;
+    out->opaque = data;
+}
+
+static const qvm_exec_ops_t cxml_xp_qvm_ops = {
+    cxml_xp_qvm_resolve,      cxml_xp_qvm_truthy,
+    cxml_xp_qvm_binary,       cxml_xp_qvm_unary,
+    NULL,                     NULL,
+    NULL,                     NULL,
+    cxml_xp_qvm_make_invalid, cxml_xp_qvm_make_bool,
+    cxml_xp_qvm_make_number,  cxml_xp_qvm_make_string};
+
+static void cxml_xp_visit_QVM(cxml_xp_astnode* root)
+{
+    cxml_xp_qvm_program_t program = { 0 };
+    uint16_t next_register = 1;
+    qvm_verify_error_t error;
+    qvm_value_t result;
+    if (!cxml_xp_qvm_compile(&program, root, 0, &next_register) ||
+        qvm_verify_slice(program.instructions, program.instruction_count, 0,
+                         program.instruction_count, next_register,
+                         program.operand_count, 0, &error) != QVM_STATUS_OK ||
+        qvm_execute(program.instructions, program.instruction_count, 0,
+                     program.instruction_count, &cxml_xp_qvm_ops, &program,
+                     NULL, &result) != QVM_STATUS_OK) {
+        _cxml_xp_eval_err("XPath expression cannot be executed by query VM");
+        return;
+    }
+    _cxml_xp__e_push(result.opaque);
+}
+
+static void cxml_xp_visit_If(cxml_xp_if* node){
+    /* Lazy: only the selected branch is evaluated. The condition uses
+     * truthiness (dialect: XPath 2.0 requires a boolean condition). */
+    cxml_xp_visit(node->cond);
+    _cxml_xp_data* cond = _cxml_xp__e_pop();
+    bool branch = false;
+    _cxml_xp_data_to_boolean(cond, &branch);
+    _cxml_xp_data_clear(cond); /* data structs are freed by the parser */
+    if (branch){
+        cxml_xp_visit(node->then_node);
+    }else{
+        cxml_xp_visit(node->else_node);
+    }
 }
 
 void cxml_xp_visit(cxml_xp_astnode * ast_node){  // generic cxml_xp_visit
     switch(ast_node->wrapped_type){
         case CXML_XP_AST_UNARYOP_NODE:
-            cxml_xp_visit_UnaryOp(ast_node->wrapped_node.unary);
+            cxml_xp_visit_QVM(ast_node);
             break;
         case CXML_XP_AST_BINOP_NODE:
-            cxml_xp_visit_BinaryOp(ast_node->wrapped_node.binary);
+            cxml_xp_visit_QVM(ast_node);
+            break;
+        case CXML_XP_AST_IF_NODE:
+            cxml_xp_visit_If(ast_node->wrapped_node.if_node);
             break;
         case CXML_XP_AST_PREDICATE_NODE:
             cxml_xp_visit_Predicate(ast_node->wrapped_node.predicate);

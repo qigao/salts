@@ -3,11 +3,13 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "query_vm.h"
 
 #define YPATH_MAX_STEPS 64
 #define YPATH_MAX_DEPTH 16
 #define YPATH_POOL_EXPR_CAP 128
 #define YPATH_POOL_STEP_CAP 256
+#define YPATH_VM_INSN_CAP 256
 
 #define YPATH_SLICE_HAS_START 0x01
 #define YPATH_SLICE_HAS_END 0x02
@@ -33,7 +35,8 @@ typedef enum {
     YPATH_EXPR_NULL,
     YPATH_EXPR_PATH,
     YPATH_EXPR_UNARY,
-    YPATH_EXPR_BINARY
+    YPATH_EXPR_BINARY,
+    YPATH_EXPR_COND
 } ypath_expr_type_t;
 
 typedef enum {
@@ -50,7 +53,15 @@ typedef enum {
     YPATH_OP_MUL,
     YPATH_OP_DIV,
     YPATH_OP_NEG,
-    YPATH_OP_NOT
+    YPATH_OP_NOT,
+    YPATH_OP_BAND,
+    YPATH_OP_BOR,
+    YPATH_OP_BXOR,
+    YPATH_OP_LSHIFT,
+    YPATH_OP_RSHIFT,
+    YPATH_OP_BNOT,
+    YPATH_OP_IDIV,
+    YPATH_OP_MATCHES
 } ypath_op_t;
 
 typedef struct ypath_expr ypath_expr_t;
@@ -71,6 +82,12 @@ struct ypath_step {
             uint8_t flags;
         } slice;
         ypath_expr_t* filter;
+        struct {
+            ypath_expr_t* expr;
+            uint32_t vm_offset;
+            uint32_t vm_len;
+            uint32_t vm_register_count;
+        } filter_vm;
     } v;
 };
 
@@ -97,6 +114,11 @@ struct ypath_expr {
             ypath_expr_t* left;
             ypath_expr_t* right;
         } binary;
+        struct {
+            ypath_expr_t* cond;
+            ypath_expr_t* then_expr;
+            ypath_expr_t* else_expr;
+        } cond;
     } v;
 };
 
@@ -118,6 +140,8 @@ typedef struct {
     const char* source;
     ypath_path_t path;
     ypath_ast_storage_t storage;
+    qvm_instruction_t vm[YPATH_VM_INSN_CAP];
+    uint32_t vm_count;
     const char* error;
     uint32_t error_pos;
 } ypath_ast_t;

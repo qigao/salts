@@ -3,7 +3,9 @@
 #include "cyaml_ypath_expr_parser.h"
 #include "cyaml_ypath_lexer.h"
 #include "cyaml_ypath_grammar_gen.h"
+#include "re.h"
 #include <math.h>
+#include <string.h>
 
 // #region Constants
 
@@ -128,8 +130,8 @@ static bool ypath_parse_bracket(ypath_parser_t* p, ypath_path_t* path)
     ypath_lex_next(&p->lex);
 
     if (p->lex.tok.type == YPATH_TOK_QUESTION) {
-        ypath_lex_next(&p->lex);
         p->lex.in_filter = true;
+        ypath_lex_next(&p->lex);
         ypath_expr_t* f = ypath_parse_expr(p);
         p->lex.in_filter = false;
         if (!f)
@@ -366,6 +368,21 @@ ypath_expr_t* cyaml_ypath_expr_make_binary(
     return expr;
 }
 
+ypath_expr_t* cyaml_ypath_expr_make_cond(
+    ypath_expr_parse_ctx_t* ctx, ypath_expr_t* cond, ypath_expr_t* then_expr,
+    ypath_expr_t* else_expr)
+{
+    ypath_expr_t* expr = ypath_pool_expr(ctx->storage, YPATH_EXPR_COND);
+    if (!expr) {
+        cyaml_ypath_expr_set_error(ctx, "expression too complex");
+        return NULL;
+    }
+    expr->v.cond.cond = cond;
+    expr->v.cond.then_expr = then_expr;
+    expr->v.cond.else_expr = else_expr;
+    return expr;
+}
+
 void cyaml_ypath_expr_set_error(ypath_expr_parse_ctx_t* ctx, const char* error)
 {
     if (!ctx->error) {
@@ -392,6 +409,17 @@ static int ypath_expr_token_id(ypath_tok_t token)
     case YPATH_TOK_BANG: return YPATH_EXPR_TOKEN_BANG;
     case YPATH_TOK_LPAREN: return YPATH_EXPR_TOKEN_LPAREN;
     case YPATH_TOK_RPAREN: return YPATH_EXPR_TOKEN_RPAREN;
+    case YPATH_TOK_BAND: return YPATH_EXPR_TOKEN_BAND;
+    case YPATH_TOK_BOR: return YPATH_EXPR_TOKEN_BOR;
+    case YPATH_TOK_CARET: return YPATH_EXPR_TOKEN_CARET;
+    case YPATH_TOK_LSHIFT: return YPATH_EXPR_TOKEN_LSHIFT;
+    case YPATH_TOK_RSHIFT: return YPATH_EXPR_TOKEN_RSHIFT;
+    case YPATH_TOK_TILDE: return YPATH_EXPR_TOKEN_TILDE;
+    case YPATH_TOK_QUESTION: return YPATH_EXPR_TOKEN_QUESTION;
+    case YPATH_TOK_COLON: return YPATH_EXPR_TOKEN_COLON;
+    case YPATH_TOK_COMMA: return YPATH_EXPR_TOKEN_COMMA;
+    case YPATH_TOK_IDIV: return YPATH_EXPR_TOKEN_IDIV;
+    case YPATH_TOK_MATCHES: return YPATH_EXPR_TOKEN_MATCHES;
     default: return 0;
     }
 }
@@ -451,6 +479,197 @@ static bool ypath_parse_path(ypath_parser_t* p, ypath_path_t* path)
     return ypath_parse_path_steps(p, path);
 }
 
+static bool ypath_compile_path(ypath_ast_t* ast, ypath_step_t* steps,
+                               uint32_t count);
+
+static bool ypath_expr_index(const ypath_ast_t* ast, const ypath_expr_t* expr,
+                             uint32_t* out)
+{
+    if (!ast || !expr || expr < ast->storage.exprs ||
+        expr >= ast->storage.exprs + YPATH_POOL_EXPR_CAP)
+        return false;
+    *out = (uint32_t)(expr - ast->storage.exprs);
+    return *out < ast->storage.expr_count;
+}
+
+static bool ypath_vm_emit(ypath_ast_t* ast, qvm_opcode_t op, uint16_t dst,
+                          uint32_t arg, uint32_t src1, uint32_t src2,
+                          uint32_t* out)
+{
+    if (ast->vm_count >= YPATH_VM_INSN_CAP)
+        return false;
+    ast->vm[ast->vm_count] = (qvm_instruction_t){
+        (uint8_t)op, 0, dst, arg, src1, src2};
+    if (out)
+        *out = ast->vm_count;
+    ast->vm_count++;
+    return true;
+}
+
+static bool ypath_compile_expr(ypath_ast_t* ast, const ypath_expr_t* expr,
+                               uint16_t dst, uint16_t* next)
+{
+    uint32_t operand;
+    uint32_t jump;
+    uint32_t end_jump;
+    uint16_t left_reg;
+    uint16_t right_reg;
+    if (!ypath_expr_index(ast, expr, &operand))
+        return false;
+    switch (expr->type) {
+    case YPATH_EXPR_INT:
+    case YPATH_EXPR_FLOAT:
+    case YPATH_EXPR_STRING:
+    case YPATH_EXPR_BOOL:
+    case YPATH_EXPR_NULL:
+    case YPATH_EXPR_PATH:
+        return ypath_vm_emit(ast, QVM_OP_LOAD_CONST, dst, QVM_NO_OPERAND,
+                             operand, QVM_NO_OPERAND, NULL);
+    case YPATH_EXPR_UNARY:
+        if (*next >= QVM_MAX_REGISTERS)
+            return false;
+        left_reg = (*next)++;
+        if (!ypath_compile_expr(ast, expr->v.unary.arg, left_reg, next))
+            return false;
+        return ypath_vm_emit(ast,
+                             expr->v.unary.op == YPATH_OP_NEG  ? QVM_OP_NEG
+                             : expr->v.unary.op == YPATH_OP_BNOT ? QVM_OP_BNOT
+                                                                 : QVM_OP_NOT,
+                             dst, QVM_NO_OPERAND, left_reg, QVM_NO_OPERAND,
+                             NULL);
+    case YPATH_EXPR_BINARY:
+        if (*next >= QVM_MAX_REGISTERS)
+            return false;
+        left_reg = (*next)++;
+        if (!ypath_compile_expr(ast, expr->v.binary.left, left_reg, next))
+            return false;
+        if (expr->v.binary.op == YPATH_OP_AND ||
+            expr->v.binary.op == YPATH_OP_OR) {
+            if (!ypath_vm_emit(ast,
+                               expr->v.binary.op == YPATH_OP_AND
+                                   ? QVM_OP_JMP_FALSE
+                                   : QVM_OP_JMP_TRUE,
+                               0, QVM_NO_OPERAND, left_reg, QVM_NO_OPERAND,
+                               &jump))
+                return false;
+            if (*next >= QVM_MAX_REGISTERS)
+                return false;
+            right_reg = (*next)++;
+            if (!ypath_compile_expr(ast, expr->v.binary.right, right_reg,
+                                    next))
+                return false;
+            if (!ypath_vm_emit(ast, QVM_OP_CMP, dst,
+                               (uint32_t)expr->v.binary.op, left_reg, right_reg,
+                               NULL))
+                return false;
+            if (!ypath_vm_emit(ast, QVM_OP_JMP,
+                               0, QVM_NO_OPERAND, QVM_NO_OPERAND,
+                               QVM_NO_OPERAND, &end_jump))
+                return false;
+            ast->vm[jump].arg = ast->vm_count;
+            if (!ypath_vm_emit(ast,
+                               expr->v.binary.op == YPATH_OP_AND ? QVM_OP_FALSE
+                                                                  : QVM_OP_TRUE,
+                               dst, QVM_NO_OPERAND, QVM_NO_OPERAND,
+                               QVM_NO_OPERAND, NULL))
+                return false;
+            ast->vm[end_jump].arg = ast->vm_count;
+            return true;
+        }
+        if (*next >= QVM_MAX_REGISTERS)
+            return false;
+        right_reg = (*next)++;
+        if (!ypath_compile_expr(ast, expr->v.binary.right, right_reg, next))
+            return false;
+        return ypath_vm_emit(
+            ast,
+            expr->v.binary.op == YPATH_OP_ADD     ? QVM_OP_ADD
+            : expr->v.binary.op == YPATH_OP_SUB   ? QVM_OP_SUB
+            : expr->v.binary.op == YPATH_OP_MUL   ? QVM_OP_MUL
+            : expr->v.binary.op == YPATH_OP_DIV   ? QVM_OP_DIV
+            : expr->v.binary.op == YPATH_OP_IDIV  ? QVM_OP_DIV
+            : expr->v.binary.op == YPATH_OP_BAND  ? QVM_OP_BAND
+            : expr->v.binary.op == YPATH_OP_BOR   ? QVM_OP_BOR
+            : expr->v.binary.op == YPATH_OP_BXOR  ? QVM_OP_BXOR
+            : expr->v.binary.op == YPATH_OP_LSHIFT ? QVM_OP_LSHIFT
+            : expr->v.binary.op == YPATH_OP_RSHIFT ? QVM_OP_RSHIFT
+            : expr->v.binary.op == YPATH_OP_MATCHES ? QVM_OP_CMP
+                                                    : QVM_OP_CMP,
+            dst, (uint32_t)expr->v.binary.op, left_reg, right_reg, NULL);
+    case YPATH_EXPR_COND: {
+        uint16_t cond_reg;
+        uint16_t then_reg;
+        uint16_t else_reg;
+        if (*next >= QVM_MAX_REGISTERS)
+            return false;
+        cond_reg = (*next)++;
+        if (!ypath_compile_expr(ast, expr->v.cond.cond, cond_reg, next))
+            return false;
+        if (*next >= QVM_MAX_REGISTERS)
+            return false;
+        then_reg = (*next)++;
+        if (!ypath_compile_expr(ast, expr->v.cond.then_expr, then_reg, next))
+            return false;
+        if (*next >= QVM_MAX_REGISTERS)
+            return false;
+        else_reg = (*next)++;
+        if (!ypath_compile_expr(ast, expr->v.cond.else_expr, else_reg, next))
+            return false;
+        return ypath_vm_emit(ast, QVM_OP_SELECT, dst, else_reg, cond_reg,
+                             then_reg, NULL);
+    }
+    }
+    return false;
+}
+
+static bool ypath_compile_nested_filters(ypath_ast_t* ast,
+                                         const ypath_expr_t* expr)
+{
+    switch (expr->type) {
+    case YPATH_EXPR_PATH:
+        return ypath_compile_path(ast, expr->v.path.steps, expr->v.path.count);
+    case YPATH_EXPR_UNARY:
+        return ypath_compile_nested_filters(ast, expr->v.unary.arg);
+    case YPATH_EXPR_BINARY:
+        return ypath_compile_nested_filters(ast, expr->v.binary.left) &&
+               ypath_compile_nested_filters(ast, expr->v.binary.right);
+    case YPATH_EXPR_COND:
+        return ypath_compile_nested_filters(ast, expr->v.cond.cond) &&
+               ypath_compile_nested_filters(ast, expr->v.cond.then_expr) &&
+               ypath_compile_nested_filters(ast, expr->v.cond.else_expr);
+    default:
+        return true;
+    }
+}
+
+static bool ypath_compile_path(ypath_ast_t* ast, ypath_step_t* steps,
+                               uint32_t count)
+{
+    for (uint32_t i = 0; i < count; ++i) {
+        ypath_step_t* step = &steps[i];
+        uint16_t register_count = 1;
+        qvm_verify_error_t error;
+        uint32_t offset;
+        if (step->type != YPATH_STEP_FILTER)
+            continue;
+        if (!ypath_compile_nested_filters(ast, step->v.filter))
+            return false;
+        offset = ast->vm_count;
+        if (!ypath_compile_expr(ast, step->v.filter, 0, &register_count))
+            return false;
+        step->v.filter_vm.expr = step->v.filter;
+        step->v.filter_vm.vm_offset = offset;
+        step->v.filter_vm.vm_len = ast->vm_count - offset;
+        step->v.filter_vm.vm_register_count = register_count;
+        if (qvm_verify_slice(ast->vm, ast->vm_count, offset,
+                             step->v.filter_vm.vm_len, register_count,
+                             ast->storage.expr_count, 0, &error) !=
+            QVM_STATUS_OK)
+            return false;
+    }
+    return true;
+}
+
 bool cyaml_ypath_parse(const char* source, ypath_ast_t* ast)
 {
     if (!ast)
@@ -479,6 +698,12 @@ bool cyaml_ypath_parse(const char* source, ypath_ast_t* ast)
         return false;
     }
 
+    if (!ypath_compile_path(ast, ast->path.steps, ast->path.count)) {
+        ast->error = "YPATH expression exceeds query VM limits";
+        ast->error_pos = 0;
+        return false;
+    }
+
     return true;
 }
 
@@ -495,6 +720,7 @@ typedef struct {
     const cyaml_node_t* root;
     const cyaml_node_t* current;
     const char* src;
+    const ypath_ast_t* ast;
 } ypath_ctx_t;
 
 typedef struct {
@@ -503,29 +729,13 @@ typedef struct {
     uint8_t phase;
 } ypath_trav_frame_t;
 
-typedef enum {
-    YPATH_FRAME_EXPR,
-    YPATH_FRAME_PATH
-} ypath_frame_type_t;
-
 typedef struct {
-    ypath_frame_type_t type;
-    uint8_t phase;
-    union {
-        struct {
-            const ypath_expr_t* expr;
-            const cyaml_node_t* saved_current;
-        } e;
-        struct {
-            const ypath_step_t* steps;
-            uint32_t step_count, step_idx, node_idx, child_idx;
-            ypath_nodebuf_t in, out;
-            cyaml_node_t* filter_node;
-            cyaml_node_t* filter_child;
-            const ypath_expr_t* filter_expr;
-            const cyaml_node_t* saved_current;
-        } p;
-    };
+    struct {
+        const ypath_step_t* steps;
+        uint32_t step_count, step_idx, node_idx, child_idx;
+        ypath_nodebuf_t in, out;
+        const cyaml_node_t* saved_current;
+    } p;
 } ypath_frame_t;
 
 #define YPATH_TRAV_INIT(stk, cnt, cap, on_fail)                            \
@@ -819,6 +1029,51 @@ static double ypath_val_float(const ypath_val_t* v, const char* src)
     }
 }
 
+static int64_t ypath_val_int(const ypath_val_t* v, const char* src)
+{
+    switch (v->type) {
+    case YPATH_VAL_INT:
+        return v->v.i;
+    case YPATH_VAL_FLOAT:
+        return (int64_t)v->v.f;
+    case YPATH_VAL_STR: {
+        char buf[YPATH_NUM_BUF_SIZE];
+        double f = 0.0;
+        uint32_t len = v->v.str.len < YPATH_NUM_BUF_SIZE - 1 ? v->v.str.len
+                                                            : YPATH_NUM_BUF_SIZE - 1;
+        memcpy(buf, v->v.str.s, len);
+        buf[len] = 0;
+        cyaml_str_to_f64(buf, NULL, &f);
+        return (int64_t)f;
+    }
+    case YPATH_VAL_NODES:
+        return (int64_t)ypath_val_float(v, src);
+    default:
+        return 0;
+    }
+}
+
+static bool ypath_val_string(const ypath_val_t* v, const char* src,
+                             const char** out_s, uint32_t* out_len)
+{
+    switch (v->type) {
+    case YPATH_VAL_STR:
+        *out_s = v->v.str.s;
+        *out_len = v->v.str.len;
+        return true;
+    case YPATH_VAL_NODES:
+        if (v->v.nodes.count == 1 && v->v.nodes.nodes[0]->type == CYAML_SCALAR) {
+            cyaml_node_t* n = v->v.nodes.nodes[0];
+            *out_s = src + n->span.off;
+            *out_len = n->span.len;
+            return true;
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
 static bool ypath_val_eq(const ypath_val_t* a, const ypath_val_t* b, const char* src)
 {
     ypath_val_t ta = *a, tb = *b;
@@ -889,6 +1144,271 @@ static inline void ypath_val_free(ypath_val_t* v)
         ypath_nodebuf_free(&v->v.nodes);
 }
 
+static ypath_val_t ypath_eval(ypath_ctx_t* ctx, cyaml_node_t* start,
+                              const ypath_step_t* steps, uint32_t count);
+
+typedef struct {
+    ypath_ctx_t* path;
+    ypath_nodebuf_t owned[YPATH_VM_INSN_CAP];
+    uint32_t owned_count;
+} ypath_qvm_context_t;
+
+static ypath_val_t ypath_qvm_value(const qvm_value_t* value)
+{
+    ypath_val_t out = { .type = (ypath_val_type_t)value->type };
+    switch (out.type) {
+    case YPATH_VAL_BOOL:
+        out.v.b = value->boolean != 0;
+        break;
+    case YPATH_VAL_INT:
+        out.v.i = value->integer;
+        break;
+    case YPATH_VAL_FLOAT:
+        out.v.f = value->number;
+        break;
+    case YPATH_VAL_STR:
+        out.v.str.s = value->str;
+        out.v.str.len = (uint32_t)value->length;
+        break;
+    case YPATH_VAL_NODES:
+        out.v.nodes.nodes = (cyaml_node_t**)value->opaque;
+        out.v.nodes.count = (uint32_t)value->length;
+        out.v.nodes.cap = out.v.nodes.count;
+        break;
+    case YPATH_VAL_NULL:
+        break;
+    }
+    return out;
+}
+
+static int ypath_qvm_resolve(void* opaque, uint32_t operand, qvm_value_t* out)
+{
+    ypath_qvm_context_t* qctx = opaque;
+    const ypath_ast_t* ast = qctx->path->ast;
+    const ypath_expr_t* expr;
+    ypath_val_t nodes;
+    if (!ast || operand >= ast->storage.expr_count)
+        return 0;
+    expr = &ast->storage.exprs[operand];
+    memset(out, 0, sizeof(*out));
+    out->type = expr->type == YPATH_EXPR_INT      ? YPATH_VAL_INT
+                : expr->type == YPATH_EXPR_FLOAT ? YPATH_VAL_FLOAT
+                : expr->type == YPATH_EXPR_STRING ? YPATH_VAL_STR
+                : expr->type == YPATH_EXPR_BOOL   ? YPATH_VAL_BOOL
+                                                  : YPATH_VAL_NULL;
+    switch (expr->type) {
+    case YPATH_EXPR_INT:
+        out->integer = expr->v.i;
+        return 1;
+    case YPATH_EXPR_FLOAT:
+        out->number = expr->v.f;
+        return 1;
+    case YPATH_EXPR_STRING:
+        out->str = expr->v.str.s;
+        out->length = expr->v.str.len;
+        return 1;
+    case YPATH_EXPR_BOOL:
+        out->boolean = expr->v.b;
+        return 1;
+    case YPATH_EXPR_NULL:
+        return 1;
+    case YPATH_EXPR_PATH:
+        if (!qctx->path->current || qctx->owned_count >= YPATH_VM_INSN_CAP)
+            return 0;
+        nodes = ypath_eval(qctx->path, (cyaml_node_t*)qctx->path->current,
+                           expr->v.path.steps, expr->v.path.count);
+        if (nodes.type != YPATH_VAL_NODES)
+            return 0;
+        qctx->owned[qctx->owned_count] = nodes.v.nodes;
+        out->type = YPATH_VAL_NODES;
+        out->opaque = nodes.v.nodes.nodes;
+        out->length = nodes.v.nodes.count;
+        qctx->owned_count++;
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int ypath_qvm_truthy(void* opaque, const qvm_value_t* value)
+{
+    ypath_qvm_context_t* qctx = opaque;
+    ypath_val_t converted = ypath_qvm_value(value);
+    return ypath_val_truthy(&converted, qctx->path->src);
+}
+
+static int ypath_qvm_binary(void* opaque, qvm_opcode_t op, uint32_t arg,
+                            const qvm_value_t* left,
+                            const qvm_value_t* right, qvm_value_t* out)
+{
+    ypath_qvm_context_t* qctx = opaque;
+    ypath_val_t lhs = ypath_qvm_value(left);
+    ypath_val_t rhs = ypath_qvm_value(right);
+    ypath_op_t operation = (ypath_op_t)arg;
+    memset(out, 0, sizeof(*out));
+    if (op == QVM_OP_ADD || op == QVM_OP_SUB || op == QVM_OP_MUL ||
+        op == QVM_OP_DIV) {
+        if (op == QVM_OP_DIV && operation == YPATH_OP_IDIV) {
+            int64_t right_int = ypath_val_int(&rhs, qctx->path->src);
+            out->type = YPATH_VAL_INT;
+            out->integer = right_int != 0
+                               ? ypath_val_int(&lhs, qctx->path->src) / right_int
+                               : 0;
+            return 1;
+        }
+        double left_number = ypath_val_float(&lhs, qctx->path->src);
+        double right_number = ypath_val_float(&rhs, qctx->path->src);
+        out->type = YPATH_VAL_FLOAT;
+        out->number = op == QVM_OP_ADD   ? left_number + right_number
+                      : op == QVM_OP_SUB ? left_number - right_number
+                      : op == QVM_OP_MUL ? left_number * right_number
+                      : right_number != 0.0 ? left_number / right_number
+                                            : 0.0;
+        return 1;
+    }
+    if (op == QVM_OP_BAND || op == QVM_OP_BOR || op == QVM_OP_BXOR ||
+        op == QVM_OP_LSHIFT || op == QVM_OP_RSHIFT) {
+        const int64_t left_int = ypath_val_int(&lhs, qctx->path->src);
+        const int64_t right_int = ypath_val_int(&rhs, qctx->path->src);
+        int64_t result;
+        switch (op) {
+        case QVM_OP_BAND: result = left_int & right_int; break;
+        case QVM_OP_BOR: result = left_int | right_int; break;
+        case QVM_OP_BXOR: result = left_int ^ right_int; break;
+        case QVM_OP_LSHIFT: result = left_int << (right_int & 63); break;
+        default: result = (int64_t)((uint64_t)left_int >> (right_int & 63)); break;
+        }
+        out->type = YPATH_VAL_INT;
+        out->integer = result;
+        return 1;
+    }
+    if (op != QVM_OP_CMP)
+        return 0;
+    out->type = YPATH_VAL_BOOL;
+    switch (operation) {
+    case YPATH_OP_OR:
+        out->boolean = ypath_val_truthy(&lhs, qctx->path->src) ||
+                       ypath_val_truthy(&rhs, qctx->path->src);
+        break;
+    case YPATH_OP_AND:
+        out->boolean = ypath_val_truthy(&lhs, qctx->path->src) &&
+                       ypath_val_truthy(&rhs, qctx->path->src);
+        break;
+    case YPATH_OP_EQ:
+    case YPATH_OP_NE:
+        out->boolean = ypath_val_eq(&lhs, &rhs, qctx->path->src);
+        if (operation == YPATH_OP_NE)
+            out->boolean = !out->boolean;
+        break;
+    case YPATH_OP_LT:
+        out->boolean = ypath_val_float(&lhs, qctx->path->src) <
+                       ypath_val_float(&rhs, qctx->path->src);
+        break;
+    case YPATH_OP_LE:
+        out->boolean = ypath_val_float(&lhs, qctx->path->src) <=
+                       ypath_val_float(&rhs, qctx->path->src);
+        break;
+    case YPATH_OP_GT:
+        out->boolean = ypath_val_float(&lhs, qctx->path->src) >
+                       ypath_val_float(&rhs, qctx->path->src);
+        break;
+    case YPATH_OP_GE:
+        out->boolean = ypath_val_float(&lhs, qctx->path->src) >=
+                       ypath_val_float(&rhs, qctx->path->src);
+        break;
+    case YPATH_OP_MATCHES: {
+        const char* text;
+        const char* pattern;
+        uint32_t text_len;
+        uint32_t pattern_len;
+        re_match_result_t match;
+        out->boolean = false;
+        if (ypath_val_string(&lhs, qctx->path->src, &text, &text_len) &&
+            ypath_val_string(&rhs, qctx->path->src, &pattern, &pattern_len) &&
+            re_match_n(pattern, pattern_len, text, text_len, NULL, &match) ==
+                RE_STATUS_OK) {
+            out->boolean = true;
+        }
+        break;
+    }
+    default:
+        return 0;
+    }
+    return 1;
+}
+
+static int ypath_qvm_unary(void* opaque, qvm_opcode_t op,
+                           const qvm_value_t* input, qvm_value_t* out)
+{
+    ypath_qvm_context_t* qctx = opaque;
+    ypath_val_t value = ypath_qvm_value(input);
+    memset(out, 0, sizeof(*out));
+    if (op == QVM_OP_NEG) {
+        out->type = YPATH_VAL_FLOAT;
+        out->number = -ypath_val_float(&value, qctx->path->src);
+        return 1;
+    }
+    if (op == QVM_OP_BNOT) {
+        out->type = YPATH_VAL_INT;
+        out->integer = ~ypath_val_int(&value, qctx->path->src);
+        return 1;
+    }
+    return 0;
+}
+
+static void ypath_qvm_make_invalid(void* opaque, qvm_value_t* out)
+{
+    (void)opaque;
+    memset(out, 0, sizeof(*out));
+    out->type = YPATH_VAL_NULL;
+}
+
+static void ypath_qvm_make_bool(void* opaque, int value, qvm_value_t* out)
+{
+    (void)opaque;
+    memset(out, 0, sizeof(*out));
+    out->type = YPATH_VAL_BOOL;
+    out->boolean = value != 0;
+}
+
+static void ypath_qvm_make_number(void* opaque, double value, qvm_value_t* out)
+{
+    (void)opaque;
+    memset(out, 0, sizeof(*out));
+    out->type = YPATH_VAL_FLOAT;
+    out->number = value;
+}
+
+static void ypath_qvm_make_string(void* opaque, const char* value, size_t len,
+                                  qvm_value_t* out)
+{
+    (void)opaque;
+    memset(out, 0, sizeof(*out));
+    out->type = YPATH_VAL_STR;
+    out->str = value;
+    out->length = len;
+}
+
+static const qvm_exec_ops_t ypath_qvm_ops = {
+    ypath_qvm_resolve,      ypath_qvm_truthy,     ypath_qvm_binary,
+    ypath_qvm_unary,        NULL,                 NULL,
+    NULL,                   NULL,                 ypath_qvm_make_invalid,
+    ypath_qvm_make_bool,    ypath_qvm_make_number, ypath_qvm_make_string};
+
+static bool ypath_qvm_filter(ypath_ctx_t* ctx, const ypath_step_t* step)
+{
+    ypath_qvm_context_t qctx = { .path = ctx };
+    qvm_value_t result;
+    int status = qvm_execute(ctx->ast->vm, ctx->ast->vm_count,
+                             step->v.filter_vm.vm_offset,
+                             step->v.filter_vm.vm_len, &ypath_qvm_ops, &qctx,
+                             NULL, &result);
+    bool matched = status == QVM_STATUS_OK && ypath_qvm_truthy(&qctx, &result);
+    for (uint32_t i = 0; i < qctx.owned_count; ++i)
+        ypath_nodebuf_free(&qctx.owned[i]);
+    return matched;
+}
+
 static ypath_val_t ypath_eval(ypath_ctx_t* ctx, cyaml_node_t* start, const ypath_step_t* steps, uint32_t count)
 {
     size_t stack_cap = YPATH_STACK_INIT_CAP, vals_cap = YPATH_STACK_INIT_CAP;
@@ -901,7 +1421,7 @@ static ypath_val_t ypath_eval(ypath_ctx_t* ctx, cyaml_node_t* start, const ypath
     }
     int sp = 0, vp = 0;
 
-    ypath_frame_t init = { .type = YPATH_FRAME_PATH, .phase = 0 };
+    ypath_frame_t init = { 0 };
     init.p.steps = steps;
     init.p.step_count = count;
     init.p.step_idx = 0;
@@ -909,9 +1429,6 @@ static ypath_val_t ypath_eval(ypath_ctx_t* ctx, cyaml_node_t* start, const ypath
     init.p.child_idx = 0;
     init.p.in = (ypath_nodebuf_t) { 0 };
     init.p.out = (ypath_nodebuf_t) { 0 };
-    init.p.filter_node = NULL;
-    init.p.filter_child = NULL;
-    init.p.filter_expr = NULL;
     init.p.saved_current = ctx->current;
     ypath_nodebuf_add(&init.p.in, start);
     YPATH_PUSH_FRAME(stack, sp, stack_cap, init);
@@ -919,166 +1436,7 @@ static ypath_val_t ypath_eval(ypath_ctx_t* ctx, cyaml_node_t* start, const ypath
     while (sp > 0) {
         ypath_frame_t* f = &stack[sp - 1];
 
-        if (f->type == YPATH_FRAME_EXPR) {
-            const ypath_expr_t* cur = f->e.expr;
-            switch (cur->type) {
-            case YPATH_EXPR_INT:
-                sp--;
-                YPATH_PUSH_VAL(vals, vp, vals_cap, ((ypath_val_t) { .type = YPATH_VAL_INT, .v.i = cur->v.i }));
-                break;
-            case YPATH_EXPR_FLOAT:
-                sp--;
-                YPATH_PUSH_VAL(vals, vp, vals_cap, ((ypath_val_t) { .type = YPATH_VAL_FLOAT, .v.f = cur->v.f }));
-                break;
-            case YPATH_EXPR_STRING:
-                sp--;
-                YPATH_PUSH_VAL(vals, vp, vals_cap, ((ypath_val_t) { .type = YPATH_VAL_STR, .v.str = { cur->v.str.s, cur->v.str.len } }));
-                break;
-            case YPATH_EXPR_BOOL:
-                sp--;
-                YPATH_PUSH_VAL(vals, vp, vals_cap, ((ypath_val_t) { .type = YPATH_VAL_BOOL, .v.b = cur->v.b }));
-                break;
-            case YPATH_EXPR_NULL:
-                sp--;
-                YPATH_PUSH_VAL(vals, vp, vals_cap, ((ypath_val_t) { .type = YPATH_VAL_NULL }));
-                break;
-            case YPATH_EXPR_PATH:
-                if (!ctx->current) {
-                    sp--;
-                    YPATH_PUSH_VAL(vals, vp, vals_cap, ((ypath_val_t) { .type = YPATH_VAL_NULL }));
-                } else {
-                    f->type = YPATH_FRAME_PATH;
-                    f->phase = 0;
-                    f->p.steps = cur->v.path.steps;
-                    f->p.step_count = cur->v.path.count;
-                    f->p.step_idx = 0;
-                    f->p.node_idx = 0;
-                    f->p.child_idx = 0;
-                    f->p.in = (ypath_nodebuf_t) { 0 };
-                    f->p.out = (ypath_nodebuf_t) { 0 };
-                    f->p.filter_node = NULL;
-                    f->p.filter_child = NULL;
-                    f->p.filter_expr = NULL;
-                    f->p.saved_current = ctx->current;
-                    ypath_nodebuf_add(&f->p.in, (cyaml_node_t*)ctx->current);
-                }
-                break;
-            case YPATH_EXPR_UNARY:
-                if (f->phase == 0) {
-                    f->phase = 1;
-                    ypath_frame_t nf = { .type = YPATH_FRAME_EXPR, .phase = 0 };
-                    nf.e.expr = cur->v.unary.arg;
-                    nf.e.saved_current = f->e.saved_current;
-                    YPATH_PUSH_FRAME(stack, sp, stack_cap, nf);
-                } else {
-                    sp--;
-                    ypath_val_t arg = vals[--vp];
-                    ypath_val_t r;
-                    if (cur->v.unary.op == YPATH_OP_NEG) {
-                        r.type = YPATH_VAL_FLOAT;
-                        r.v.f = -ypath_val_float(&arg, ctx->src);
-                    } else {
-                        r.type = YPATH_VAL_BOOL;
-                        r.v.b = !ypath_val_truthy(&arg, ctx->src);
-                    }
-                    ypath_val_free(&arg);
-                    YPATH_PUSH_VAL(vals, vp, vals_cap, r);
-                }
-                break;
-            case YPATH_EXPR_BINARY:
-                if (f->phase == 0) {
-                    f->phase = 1;
-                    ypath_frame_t nf = { .type = YPATH_FRAME_EXPR, .phase = 0 };
-                    nf.e.expr = cur->v.binary.left;
-                    nf.e.saved_current = f->e.saved_current;
-                    YPATH_PUSH_FRAME(stack, sp, stack_cap, nf);
-                } else if (f->phase == 1) {
-                    ypath_val_t left = vals[vp - 1];
-                    bool lt = ypath_val_truthy(&left, ctx->src);
-                    if (cur->v.binary.op == YPATH_OP_AND && !lt) {
-                        sp--;
-                        ypath_val_free(&vals[vp - 1]);
-                        vals[vp - 1] = (ypath_val_t) { .type = YPATH_VAL_BOOL, .v.b = false };
-                    } else if (cur->v.binary.op == YPATH_OP_OR && lt) {
-                        sp--;
-                        ypath_val_free(&vals[vp - 1]);
-                        vals[vp - 1] = (ypath_val_t) { .type = YPATH_VAL_BOOL, .v.b = true };
-                    } else {
-                        f->phase = 2;
-                        ypath_frame_t nf = { .type = YPATH_FRAME_EXPR, .phase = 0 };
-                        nf.e.expr = cur->v.binary.right;
-                        nf.e.saved_current = f->e.saved_current;
-                        YPATH_PUSH_FRAME(stack, sp, stack_cap, nf);
-                    }
-                } else {
-                    sp--;
-                    ypath_val_t right = vals[--vp];
-                    ypath_val_t left = vals[--vp];
-                    ypath_val_t r = { .type = YPATH_VAL_BOOL };
-                    switch (cur->v.binary.op) {
-                    case YPATH_OP_OR:
-                        r.v.b = ypath_val_truthy(&left, ctx->src) || ypath_val_truthy(&right, ctx->src);
-                        break;
-                    case YPATH_OP_AND:
-                        r.v.b = ypath_val_truthy(&left, ctx->src) && ypath_val_truthy(&right, ctx->src);
-                        break;
-                    case YPATH_OP_EQ:
-                        r.v.b = ypath_val_eq(&left, &right, ctx->src);
-                        break;
-                    case YPATH_OP_NE:
-                        r.v.b = !ypath_val_eq(&left, &right, ctx->src);
-                        break;
-                    case YPATH_OP_LT:
-                        r.v.b = ypath_val_float(&left, ctx->src) < ypath_val_float(&right, ctx->src);
-                        break;
-                    case YPATH_OP_LE:
-                        r.v.b = ypath_val_float(&left, ctx->src) <= ypath_val_float(&right, ctx->src);
-                        break;
-                    case YPATH_OP_GT:
-                        r.v.b = ypath_val_float(&left, ctx->src) > ypath_val_float(&right, ctx->src);
-                        break;
-                    case YPATH_OP_GE:
-                        r.v.b = ypath_val_float(&left, ctx->src) >= ypath_val_float(&right, ctx->src);
-                        break;
-                    case YPATH_OP_ADD:
-                        r.type = YPATH_VAL_FLOAT;
-                        r.v.f = ypath_val_float(&left, ctx->src) + ypath_val_float(&right, ctx->src);
-                        break;
-                    case YPATH_OP_SUB:
-                        r.type = YPATH_VAL_FLOAT;
-                        r.v.f = ypath_val_float(&left, ctx->src) - ypath_val_float(&right, ctx->src);
-                        break;
-                    case YPATH_OP_MUL:
-                        r.type = YPATH_VAL_FLOAT;
-                        r.v.f = ypath_val_float(&left, ctx->src) * ypath_val_float(&right, ctx->src);
-                        break;
-                    case YPATH_OP_DIV: {
-                        double d = ypath_val_float(&right, ctx->src);
-                        r.type = YPATH_VAL_FLOAT;
-                        r.v.f = d != 0.0 ? ypath_val_float(&left, ctx->src) / d : 0.0;
-                        break;
-                    }
-                    default:
-                        break;
-                    }
-                    ypath_val_free(&left);
-                    ypath_val_free(&right);
-                    YPATH_PUSH_VAL(vals, vp, vals_cap, r);
-                }
-                break;
-            }
-        } else {
-            if (f->phase == 1) {
-                ypath_val_t fv = vals[--vp];
-                ctx->current = f->p.saved_current;
-                if (ypath_val_truthy(&fv, ctx->src))
-                    ypath_nodebuf_add(&f->p.out, f->p.filter_child);
-                ypath_val_free(&fv);
-                f->p.child_idx++;
-                f->phase = 0;
-            }
-
-            while (f->p.step_idx < f->p.step_count) {
+        while (f->p.step_idx < f->p.step_count) {
                 const ypath_step_t* s = &f->p.steps[f->p.step_idx];
 
                 while (f->p.node_idx < f->p.in.count) {
@@ -1101,18 +1459,13 @@ static ypath_val_t ypath_eval(ypath_ctx_t* ctx, cyaml_node_t* start, const ypath
                             else
                                 child = n;
 
-                            f->p.filter_node = n;
-                            f->p.filter_child = child;
-                            f->p.filter_expr = s->v.filter;
                             f->p.saved_current = ctx->current;
                             ctx->current = child;
-                            f->phase = 1;
-
-                            ypath_frame_t ef = { .type = YPATH_FRAME_EXPR, .phase = 0 };
-                            ef.e.expr = s->v.filter;
-                            ef.e.saved_current = child;
-                            YPATH_PUSH_FRAME(stack, sp, stack_cap, ef);
-                            goto next_iter;
+                            if (ypath_qvm_filter(ctx, s))
+                                ypath_nodebuf_add(&f->p.out, child);
+                            ctx->current = f->p.saved_current;
+                            f->p.child_idx++;
+                            continue;
                         }
                         f->p.child_idx = 0;
                         f->p.node_idx++;
@@ -1210,8 +1563,6 @@ static ypath_val_t ypath_eval(ypath_ctx_t* ctx, cyaml_node_t* start, const ypath
             ypath_val_t result = { .type = YPATH_VAL_NODES, .v.nodes = f->p.in };
             sp--;
             YPATH_PUSH_VAL(vals, vp, vals_cap, result);
-        }
-    next_iter:;
     }
 
     ypath_val_t result = vp > 0 ? vals[0] : (ypath_val_t) { .type = YPATH_VAL_NULL };
@@ -1222,11 +1573,10 @@ static ypath_val_t ypath_eval(ypath_ctx_t* ctx, cyaml_node_t* start, const ypath
 cleanup:
     while (vp > 0)
         ypath_val_free(&vals[--vp]);
-    for (int i = 0; i < sp; i++)
-        if (stack[i].type == YPATH_FRAME_PATH) {
-            ypath_nodebuf_free(&stack[i].p.in);
-            ypath_nodebuf_free(&stack[i].p.out);
-        }
+    for (int i = 0; i < sp; i++) {
+        ypath_nodebuf_free(&stack[i].p.in);
+        ypath_nodebuf_free(&stack[i].p.out);
+    }
     free(stack);
     free(vals);
     return (ypath_val_t) { .type = YPATH_VAL_NULL };
@@ -1258,7 +1608,11 @@ CYAML_API cyaml_path_result_t cyaml_path_query(const cyaml_doc_t* doc, const cya
         return result;
     }
 
-    ypath_ctx_t ctx = { .doc = doc, .root = doc->root, .current = context, .src = cyaml_src(doc) };
+    ypath_ctx_t ctx = { .doc = doc,
+                        .root = doc->root,
+                        .current = context,
+                        .src = cyaml_src(doc),
+                        .ast = &ast };
     cyaml_node_t* start = ast.path.absolute ? (cyaml_node_t*)doc->root : (cyaml_node_t*)context;
     ypath_val_t val = ypath_eval(&ctx, start, ast.path.steps, ast.path.count);
 

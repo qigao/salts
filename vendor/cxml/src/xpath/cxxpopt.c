@@ -56,6 +56,8 @@ static void cxml_xp_ovisit_UnaryOp(cxml_xp_unaryop *node, _cxml_xp_ret_t *ret_ty
 
 static void cxml_xp_ovisit_BinaryOp(cxml_xp_binaryop *node, _cxml_xp_ret_t *ret_type);
 
+static void cxml_xp_ovisit_If(cxml_xp_if *node, _cxml_xp_ret_t *ret_type);
+
 
 inline static bool _is_arithmetic_op(cxml_xp_op op){
     switch (op)
@@ -112,6 +114,9 @@ void cxml_xp_ovisit(cxml_xp_astnode * ast_node, _cxml_xp_ret_t *ret_type){
             break;
         case CXML_XP_AST_BINOP_NODE:
             cxml_xp_ovisit_BinaryOp(ast_node->wrapped_node.binary, ret_type);
+            break;
+        case CXML_XP_AST_IF_NODE:
+            cxml_xp_ovisit_If(ast_node->wrapped_node.if_node, ret_type);
             break;
         case CXML_XP_AST_PREDICATE_NODE:
             cxml_xp_ovisit_Predicate(ast_node->wrapped_node.predicate, ret_type);
@@ -202,6 +207,26 @@ void cxml_xp_ovisit_UnaryOp(cxml_xp_unaryop* node, _cxml_xp_ret_t *ret_type){
     // return immediately we discover the expression is no longer optimizable
     if (*ret_type == _CXML_XP_PS_POISON) return;
     cxml_xp_ovisit(node->node, ret_type);
+}
+
+void cxml_xp_ovisit_If(cxml_xp_if* node, _cxml_xp_ret_t *ret_type){
+    _cxml_xp_ret_t c_type, t_type, e_type;
+    cxml_xp_ovisit(node->cond, &c_type);
+    if (c_type == _CXML_XP_PS_POISON){
+        *ret_type = _CXML_XP_PS_POISON;
+        return;
+    }
+    cxml_xp_ovisit(node->then_node, &t_type);
+    if (t_type == _CXML_XP_PS_POISON){
+        *ret_type = _CXML_XP_PS_POISON;
+        return;
+    }
+    cxml_xp_ovisit(node->else_node, &e_type);
+    if (e_type == _CXML_XP_PS_POISON){
+        *ret_type = _CXML_XP_PS_POISON;
+        return;
+    }
+    *ret_type = t_type;
 }
 
 void cxml_xp_ovisit_BinaryOp(cxml_xp_binaryop* node, _cxml_xp_ret_t *ret_type){

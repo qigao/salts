@@ -27,10 +27,11 @@ target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include> $<INSTALL_INTERFACE:include/json_parser>
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/parser ${CMAKE_CURRENT_BINARY_DIR})
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/parser ${CMAKE_CURRENT_BINARY_DIR}
+          ${PROJECT_SOURCE_DIR}/utils/src) # jsonpath_contains.h reuses re_scan.h
 find_path(SIMDE_INCLUDE_DIRS NAMES simde/x86/sse2.h REQUIRED)
 target_include_directories(${TARGET_NAME} PRIVATE ${SIMDE_INCLUDE_DIRS})
-target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::Core)
+target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::Core TurboUtils::QueryVM)
 
 add_subdirectory(test)
 if(BUILD_BENCHMARKS)

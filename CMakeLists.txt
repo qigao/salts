@@ -52,6 +52,7 @@ find_package(PkgConfig REQUIRED)
 # Additional components
 add_subdirectory(tools)
 include(FindTools)
+add_subdirectory(parser/query_vm)
 add_subdirectory(vendor)
 add_subdirectory(tinytest)
 add_subdirectory(parser)
