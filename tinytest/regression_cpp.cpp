@@ -50,3 +50,26 @@ suite("tinytest cpp regression") {
     }
   }
 }
+namespace {
+/* Destructor probe ... */
+struct unwind_probe {
+  static int count;
+  unwind_probe() {}
+  ~unwind_probe() { ++count; }
+};
+int unwind_probe::count = 0;
+} /* namespace */
+
+suite("tinytest cpp unwind") {
+  it_should_fail("runs destructors when an assertion fails") {
+    unwind_probe p;
+    check_int_eq(1, 2);
+  }
+  it("observed the destructor running during unwind") {
+    check_int_eq(unwind_probe::count, 1);
+  }
+
+  it_should_fail("propagates a sub-assertion failure out of check_throws") {
+    check_throws([] { check_int_eq(1, 2); });
+  }
+}

@@ -69,6 +69,10 @@ check_size_eq(actual, expected);   check_size_ne(actual, expected);
 check_size_gt(actual, expected);   check_size_ge(actual, expected);
 check_size_lt(actual, expected);   check_size_le(actual, expected);
 check_long_eq(actual, expected);
+check_ll_eq(actual, expected);     check_ll_ne(actual, expected);
+check_ll_gt(actual, expected);     check_ll_ge(actual, expected);
+check_ll_lt(actual, expected);     check_ll_le(actual, expected);
+check_ull_eq(actual, expected);    check_ull_ne(actual, expected);
 ```
 
 #### Float / Double
@@ -140,6 +144,9 @@ spec("my module") {
     }
 }
 ```
+
+> Test and group names passed as a single argument are treated as literal strings, never printf formats, so names may contain `%` safely.
+> To build a name from a format string, pass the format plus its arguments, e.g. `it("row %zu", index)`.
 
 ### TEST_CASE / SECTION (TDD style)
 
@@ -354,6 +361,15 @@ spec("exception tests") {
     }
 }
 ```
+
+## Known Limitations
+
+- On C++ tests, a failed `check_*` assertion unwinds via an internal C++ exception so destructors of stack objects in the failing test body run, and is caught at the test boundary. The framework's `check_throws*`/`check_nothrow*` macros rethrow that internal exception so a failed sub-assertion is never misclassified as a thrown user exception. C builds use `setjmp`/`longjmp` instead.
+
+- `check_warn(...)` failures are diagnostics only: they neither fail the test nor count toward the assertion totals.
+
+- `check_int_*`/`check_uint_*` operate on 32-bit values; use `check_ll_*`/`check_ull_*` for 64-bit integers to avoid silent truncation.
+
 
 ## License
 

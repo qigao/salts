@@ -42,6 +42,11 @@ cmake_add_executable(group_suite_example SOURCES ${GROUP_SUITE_SOURCES}
                      FOLDER "tinytest")
 
 set(REGRESSION_RUNTIME_SOURCES regression_runtime.c tinytest.h)
+set(REGRESSION_FIXES_SOURCES regression_fixes.c tinytest.h)
+cmake_add_test(tinytest_regression_fixes
+  SOURCES ${REGRESSION_FIXES_SOURCES}
+  FOLDER "tinytest")
+
 cmake_add_test(tinytest_regression_runtime
   SOURCES ${REGRESSION_RUNTIME_SOURCES}
   FOLDER "tinytest")
