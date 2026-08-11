@@ -1,5 +1,6 @@
 #include "dsv_filter.h"
 #include "dsv_filter_expr_parser.h"
+#include "query_vm.h"
 #include <turbo_str.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +31,29 @@ typedef struct {
     size_t rhs_str_len;
 } dsv_clause_t;
 
+typedef enum {
+    DSV_OPERAND_COLUMN = 0,
+    DSV_OPERAND_NUMBER,
+    DSV_OPERAND_STRING
+} dsv_operand_kind_t;
+
+typedef struct {
+    dsv_operand_kind_t kind;
+    size_t col_idx;
+    int as_number;
+    double num;
+    const char *str;
+    size_t str_len;
+} dsv_operand_t;
+
+/* DSV qvm_value_t type tags used by the QVM execution callbacks. */
+enum {
+    DSV_QVM_INVALID = 0,
+    DSV_QVM_NUMBER = 1,
+    DSV_QVM_STRING = 2,
+    DSV_QVM_BOOL = 3
+};
+
 static char *dsv_strndup(const char *s, size_t n) {
     size_t len = 0;
     while (len < n && s[len]) len++;
@@ -54,6 +78,12 @@ struct dsv_filter_s {
     int compiled;
     csv_scan_predicate_t *scan_predicates;
     int scan_plan_compatible;
+
+    qvm_instruction_t *expr_vm;
+    uint32_t expr_vm_count;
+    dsv_operand_t *operands;
+    size_t operand_count;
+    int qvm_ready;
 
     char output_delim;
     char error_msg[256];
@@ -160,12 +190,19 @@ static void free_plan(dsv_filter_t *filter) {
     free(filter->clauses);
     free(filter->joins);
     free(filter->scan_predicates);
+    free(filter->expr_vm);
+    free(filter->operands);
     filter->clauses = NULL;
     filter->joins = NULL;
     filter->scan_predicates = NULL;
+    filter->expr_vm = NULL;
+    filter->operands = NULL;
     filter->clause_count = 0;
     filter->compiled = 0;
     filter->scan_plan_compatible = 0;
+    filter->expr_vm_count = 0;
+    filter->operand_count = 0;
+    filter->qvm_ready = 0;
 }
 
 static void skip_ws(const char **cur, const char *end) {
@@ -609,6 +646,465 @@ done:
     return ok;
 }
 
+/* ---------------------------------------------------------------------------
+ * QVM execution: DSV filter expressions are lowered to query_vm bytecode. The
+ * VM owns register/operand verification and dispatch; this frontend owns
+ * column resolution, numeric coercion and comparison semantics through
+ * qvm_exec_ops_t. If lowering is impossible (register overflow, allocation
+ * failure) the native evaluators remain the fallback, so user-visible
+ * behavior is unchanged.
+ * ------------------------------------------------------------------------- */
+
+typedef struct {
+    qvm_instruction_t *insns;
+    size_t count;
+    size_t capacity;
+    dsv_operand_t *operands;
+    size_t operand_count;
+    size_t operand_capacity;
+    int overflow;
+} dsv_qvm_builder_t;
+
+static int dsv_qvm_emit(dsv_qvm_builder_t *builder, uint8_t op, uint16_t dst,
+                        uint32_t arg, uint32_t src1, uint32_t src2) {
+    qvm_instruction_t *insns;
+    size_t new_capacity;
+    if (builder->overflow) return 0;
+    if (builder->count == builder->capacity) {
+        new_capacity = builder->capacity ? builder->capacity * 2U : 32U;
+        if (new_capacity > QVM_DEFAULT_MAX_INSTRUCTIONS) {
+            builder->overflow = 1;
+            return 0;
+        }
+        insns = (qvm_instruction_t *)realloc(builder->insns,
+                                             new_capacity * sizeof(*insns));
+        if (!insns) {
+            builder->overflow = 1;
+            return 0;
+        }
+        builder->insns = insns;
+        builder->capacity = new_capacity;
+    }
+    builder->insns[builder->count].op = op;
+    builder->insns[builder->count].reserved = 0;
+    builder->insns[builder->count].dst = dst;
+    builder->insns[builder->count].arg = arg;
+    builder->insns[builder->count].src1 = src1;
+    builder->insns[builder->count].src2 = src2;
+    builder->count++;
+    return 1;
+}
+
+static uint32_t dsv_qvm_add_operand(dsv_qvm_builder_t *builder,
+                                    const dsv_operand_t *operand) {
+    dsv_operand_t *operands;
+    size_t new_capacity;
+    if (builder->overflow || !operand) return UINT32_MAX;
+    if (builder->operand_count == builder->operand_capacity) {
+        new_capacity = builder->operand_capacity ? builder->operand_capacity * 2U : 8U;
+        if (new_capacity > QVM_DEFAULT_MAX_OPERANDS) {
+            builder->overflow = 1;
+            return UINT32_MAX;
+        }
+        operands = (dsv_operand_t *)realloc(builder->operands,
+                                            new_capacity * sizeof(*operands));
+        if (!operands) {
+            builder->overflow = 1;
+            return UINT32_MAX;
+        }
+        builder->operands = operands;
+        builder->operand_capacity = new_capacity;
+    }
+    if (builder->operand_count >= UINT32_MAX) {
+        builder->overflow = 1;
+        return UINT32_MAX;
+    }
+    builder->operands[builder->operand_count] = *operand;
+    builder->operand_count++;
+    return (uint32_t)(builder->operand_count - 1);
+}
+
+static uint32_t dsv_qvm_add_operand_number(dsv_qvm_builder_t *builder, double num) {
+    dsv_operand_t operand;
+    memset(&operand, 0, sizeof(operand));
+    operand.kind = DSV_OPERAND_NUMBER;
+    operand.num = num;
+    return dsv_qvm_add_operand(builder, &operand);
+}
+
+static uint32_t dsv_qvm_add_operand_string(dsv_qvm_builder_t *builder,
+                                           const char *str, size_t len) {
+    dsv_operand_t operand;
+    memset(&operand, 0, sizeof(operand));
+    operand.kind = DSV_OPERAND_STRING;
+    operand.str = str;
+    operand.str_len = len;
+    return dsv_qvm_add_operand(builder, &operand);
+}
+
+static uint32_t dsv_qvm_add_operand_column(dsv_qvm_builder_t *builder,
+                                           size_t col_idx, int as_number) {
+    dsv_operand_t operand;
+    memset(&operand, 0, sizeof(operand));
+    operand.kind = DSV_OPERAND_COLUMN;
+    operand.col_idx = col_idx;
+    operand.as_number = as_number;
+    return dsv_qvm_add_operand(builder, &operand);
+}
+
+static uint8_t dsv_qvm_arith_opcode(int kind) {
+    switch (kind) {
+        case DSV_EXPR_ITEM_ADD: return QVM_OP_ADD;
+        case DSV_EXPR_ITEM_SUB: return QVM_OP_SUB;
+        case DSV_EXPR_ITEM_MUL: return QVM_OP_MUL;
+        case DSV_EXPR_ITEM_DIV: return QVM_OP_DIV;
+        default: return QVM_OP_COUNT_VALUE;
+    }
+}
+
+/* Lower a numeric LHS expression (postfix item stream) into QVM registers.
+ * Register 0 is the clause result; temporaries start at register 1. */
+static int dsv_qvm_lower_arith(dsv_qvm_builder_t *builder,
+                               const dsv_clause_t *clause) {
+    uint16_t regs[QVM_MAX_REGISTERS];
+    size_t sp = 0;
+    uint16_t free_regs[QVM_MAX_REGISTERS];
+    size_t free_count = 0;
+    uint16_t next_reg = 1;
+    size_t i;
+
+    for (i = 0; i < clause->lhs_expr_count; i++) {
+        const dsv_expr_item_t *item = &clause->lhs_expr[i];
+        if (item->kind == DSV_EXPR_ITEM_NUMBER ||
+            item->kind == DSV_EXPR_ITEM_IDENT) {
+            uint16_t reg;
+            uint32_t operand;
+            uint8_t load_op;
+            if (sp >= QVM_MAX_REGISTERS) return 0;
+            if (free_count > 0) reg = free_regs[--free_count];
+            else if (next_reg < QVM_MAX_REGISTERS) reg = next_reg++;
+            else return 0;
+            if (item->kind == DSV_EXPR_ITEM_NUMBER) {
+                operand = dsv_qvm_add_operand_number(builder, item->num);
+                load_op = QVM_OP_LOAD_CONST;
+            } else {
+                operand = dsv_qvm_add_operand_column(builder, item->col_idx, 1);
+                load_op = QVM_OP_LOAD_PATH;
+            }
+            if (operand == UINT32_MAX) return 0;
+            if (!dsv_qvm_emit(builder, load_op, reg, 0, operand, 0)) return 0;
+            regs[sp++] = reg;
+        } else if (item->kind == DSV_EXPR_ITEM_NEG) {
+            uint16_t reg;
+            if (sp == 0) return 0;
+            reg = regs[--sp];
+            if (!dsv_qvm_emit(builder, QVM_OP_NEG, reg, 0, reg, 0)) return 0;
+            regs[sp++] = reg;
+        } else {
+            uint8_t opcode = dsv_qvm_arith_opcode(item->kind);
+            uint16_t rhs;
+            uint16_t lhs;
+            if (opcode == QVM_OP_COUNT_VALUE || sp < 2) return 0;
+            rhs = regs[--sp];
+            lhs = regs[--sp];
+            if (free_count < QVM_MAX_REGISTERS) free_regs[free_count++] = rhs;
+            if (!dsv_qvm_emit(builder, opcode, lhs, 0, lhs, rhs)) return 0;
+            regs[sp++] = lhs;
+        }
+    }
+    if (sp != 1 || builder->overflow) return 0;
+
+    {
+        uint32_t operand = dsv_qvm_add_operand_number(builder, clause->rhs_num);
+        uint16_t rhs_reg;
+        if (operand == UINT32_MAX) return 0;
+        if (free_count > 0) rhs_reg = free_regs[--free_count];
+        else if (next_reg < QVM_MAX_REGISTERS) rhs_reg = next_reg++;
+        else return 0;
+        if (!dsv_qvm_emit(builder, QVM_OP_LOAD_CONST, rhs_reg, 0, operand, 0)) return 0;
+        if (!dsv_qvm_emit(builder, QVM_OP_CMP, 0, (uint32_t)clause->op,
+                          regs[0], rhs_reg)) return 0;
+    }
+    return 1;
+}
+
+static int dsv_qvm_lower_simple(dsv_qvm_builder_t *builder,
+                                const dsv_clause_t *clause) {
+    uint32_t lhs_operand;
+    uint32_t rhs_operand;
+    uint8_t opcode;
+    if (clause->rhs_is_string) {
+        lhs_operand = dsv_qvm_add_operand_column(builder, clause->col_idx, 0);
+        rhs_operand = dsv_qvm_add_operand_string(builder, clause->rhs_str,
+                                                 clause->rhs_str_len);
+        opcode = QVM_OP_CMP_LEAF_STRING;
+    } else {
+        lhs_operand = dsv_qvm_add_operand_column(builder, clause->col_idx, 1);
+        rhs_operand = dsv_qvm_add_operand_number(builder, clause->rhs_num);
+        opcode = QVM_OP_CMP_LEAF_NUMBER;
+    }
+    if (lhs_operand == UINT32_MAX || rhs_operand == UINT32_MAX) return 0;
+    return dsv_qvm_emit(builder, opcode, 0, (uint32_t)clause->op,
+                        lhs_operand, rhs_operand);
+}
+
+/* Highest register index + 1 referenced by the emitted slice. Mirrors the
+ * verifier's register classification in query_vm.c. */
+static uint32_t dsv_qvm_register_count(const qvm_instruction_t *insns,
+                                       uint32_t count) {
+    uint32_t max_register = 1;
+    uint32_t i;
+    for (i = 0; i < count; i++) {
+        const qvm_instruction_t *insn = &insns[i];
+        uint8_t op = insn->op;
+        if (op != QVM_OP_JMP && op != QVM_OP_JMP_FALSE &&
+            op != QVM_OP_JMP_TRUE && insn->dst + 1U > max_register)
+            max_register = insn->dst + 1U;
+        if (op == QVM_OP_CMP || op == QVM_OP_ADD || op == QVM_OP_SUB ||
+            op == QVM_OP_MUL || op == QVM_OP_DIV) {
+            if (insn->src1 + 1U > max_register) max_register = insn->src1 + 1U;
+            if (insn->src2 + 1U > max_register) max_register = insn->src2 + 1U;
+        }
+        if (op == QVM_OP_NEG || op == QVM_OP_JMP_FALSE ||
+            op == QVM_OP_JMP_TRUE) {
+            if (insn->src1 + 1U > max_register) max_register = insn->src1 + 1U;
+        }
+    }
+    if (max_register > QVM_MAX_REGISTERS) max_register = QVM_MAX_REGISTERS;
+    return max_register;
+}
+
+/* Lower the whole clause/join expression into one verified slice. Returns 1
+ * when the slice is ready; otherwise the native evaluators stay in charge. */
+static int dsv_lower_to_qvm(dsv_filter_t *filter) {
+    dsv_qvm_builder_t builder;
+    qvm_verify_error_t verify_error;
+    size_t i;
+    int pending_jump = -1;
+    uint32_t register_count;
+
+    if (!filter || filter->clause_count == 0) return 0;
+    memset(&builder, 0, sizeof(builder));
+
+    for (i = 0; i < filter->clause_count; i++) {
+        const dsv_clause_t *clause = &filter->clauses[i];
+        if (clause->lhs_has_arith) {
+            if (!dsv_qvm_lower_arith(&builder, clause)) goto fallback;
+        } else {
+            if (!dsv_qvm_lower_simple(&builder, clause)) goto fallback;
+        }
+        if (pending_jump >= 0) {
+            builder.insns[pending_jump].arg = (uint32_t)builder.count;
+            pending_jump = -1;
+        }
+        if (i + 1 < filter->clause_count) {
+            uint8_t op = filter->joins[i] == DSV_JOIN_AND
+                             ? QVM_OP_JMP_FALSE
+                             : QVM_OP_JMP_TRUE;
+            if (!dsv_qvm_emit(&builder, op, 0, 0, 0, 0)) goto fallback;
+            pending_jump = (int)(builder.count - 1);
+        }
+    }
+    if (pending_jump >= 0)
+        builder.insns[pending_jump].arg = (uint32_t)builder.count;
+    if (builder.overflow || builder.count == 0 || builder.operand_count == 0)
+        goto fallback;
+
+    register_count = dsv_qvm_register_count(builder.insns, (uint32_t)builder.count);
+    if (qvm_verify_slice(builder.insns, (uint32_t)builder.count, 0,
+                         (uint32_t)builder.count, register_count,
+                         (uint32_t)builder.operand_count, 0,
+                         &verify_error) != QVM_STATUS_OK)
+        goto fallback;
+
+    filter->expr_vm = builder.insns;
+    filter->expr_vm_count = (uint32_t)builder.count;
+    filter->operands = builder.operands;
+    filter->operand_count = builder.operand_count;
+    filter->qvm_ready = 1;
+    return 1;
+
+fallback:
+    free(builder.insns);
+    free(builder.operands);
+    filter->qvm_ready = 0;
+    return 0;
+}
+
+typedef struct {
+    const dsv_filter_t *filter;
+    const tstr_v *fields;
+    size_t field_count;
+    size_t row_index;
+} dsv_qvm_ctx_t;
+
+static void dsv_qvm_make_invalid(void *opaque, qvm_value_t *out) {
+    (void)opaque;
+    memset(out, 0, sizeof(*out));
+    out->type = DSV_QVM_INVALID;
+}
+
+static void dsv_qvm_make_bool(void *opaque, int value, qvm_value_t *out) {
+    (void)opaque;
+    memset(out, 0, sizeof(*out));
+    out->type = DSV_QVM_BOOL;
+    out->num = value ? 1 : 0;
+}
+
+static void dsv_qvm_make_number(void *opaque, double value, qvm_value_t *out) {
+    (void)opaque;
+    memset(out, 0, sizeof(*out));
+    out->type = DSV_QVM_NUMBER;
+    out->number = value;
+}
+
+static void dsv_qvm_make_string(void *opaque, const char *value, size_t len,
+                                qvm_value_t *out) {
+    (void)opaque;
+    memset(out, 0, sizeof(*out));
+    out->type = DSV_QVM_STRING;
+    out->str = value ? value : "";
+    out->length = value ? len : 0;
+}
+
+static int dsv_qvm_resolve_value(const dsv_qvm_ctx_t *ctx, uint32_t operand,
+                                 qvm_value_t *out) {
+    const dsv_filter_t *filter = ctx->filter;
+    const dsv_operand_t *op;
+    if (!filter || operand >= filter->operand_count) return 0;
+    op = &filter->operands[operand];
+    switch (op->kind) {
+        case DSV_OPERAND_COLUMN:
+            if (op->as_number) {
+                double value;
+                if (ctx->fields)
+                    value = dsv_value_double_at(ctx->fields, ctx->field_count, op->col_idx);
+                else
+                    value = csv_get_double(filter->doc, ctx->row_index, op->col_idx, 0.0);
+                dsv_qvm_make_number(NULL, value, out);
+            } else {
+                tstr_v value;
+                if (ctx->fields)
+                    value = dsv_value_at(ctx->fields, ctx->field_count, op->col_idx);
+                else
+                    value = csv_get_v(filter->doc, ctx->row_index, op->col_idx);
+                dsv_qvm_make_string(NULL, value.data, value.len, out);
+            }
+            return 1;
+        case DSV_OPERAND_NUMBER:
+            dsv_qvm_make_number(NULL, op->num, out);
+            return 1;
+        case DSV_OPERAND_STRING:
+            dsv_qvm_make_string(NULL, op->str, op->str_len, out);
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static int dsv_qvm_resolve(void *opaque, uint32_t operand, qvm_value_t *out) {
+    return dsv_qvm_resolve_value((const dsv_qvm_ctx_t *)opaque, operand, out);
+}
+
+static int dsv_qvm_truthy(void *opaque, const qvm_value_t *value) {
+    (void)opaque;
+    if (!value) return 0;
+    switch (value->type) {
+        case DSV_QVM_BOOL: return value->num != 0;
+        case DSV_QVM_NUMBER: return value->number != 0.0;
+        case DSV_QVM_STRING: return value->length > 0;
+        default: return 0;
+    }
+}
+
+static int dsv_qvm_binary(void *opaque, qvm_opcode_t op, uint32_t arg,
+                          const qvm_value_t *left, const qvm_value_t *right,
+                          qvm_value_t *out) {
+    (void)opaque;
+    switch (op) {
+        case QVM_OP_ADD:
+        case QVM_OP_SUB:
+        case QVM_OP_MUL:
+        case QVM_OP_DIV: {
+            /* out may alias left/right (dst == src1 register reuse), so read
+             * the operands before writing the result. */
+            double lhs_number;
+            double rhs_number;
+            double result;
+            if (!left || !right || left->type != DSV_QVM_NUMBER ||
+                right->type != DSV_QVM_NUMBER)
+                return 0;
+            lhs_number = left->number;
+            rhs_number = right->number;
+            switch (op) {
+                case QVM_OP_ADD: result = lhs_number + rhs_number; break;
+                case QVM_OP_SUB: result = lhs_number - rhs_number; break;
+                case QVM_OP_MUL: result = lhs_number * rhs_number; break;
+                case QVM_OP_DIV: result = lhs_number / rhs_number; break;
+                default: result = 0.0; break;
+            }
+            dsv_qvm_make_number(NULL, result, out);
+            return 1;
+        }
+        case QVM_OP_CMP:
+            if (!left || !right) return 0;
+            if (left->type == DSV_QVM_NUMBER && right->type == DSV_QVM_NUMBER) {
+                dsv_qvm_make_bool(NULL, eval_num((dsv_op_t)arg, left->number, right->number), out);
+                return 1;
+            }
+            if (left->type == DSV_QVM_STRING && right->type == DSV_QVM_STRING) {
+                dsv_qvm_make_bool(NULL,
+                                  eval_str((dsv_op_t)arg,
+                                           tstr_v_from_buf(left->str, left->length),
+                                           right->str, right->length),
+                                  out);
+                return 1;
+            }
+            return 0;
+        default:
+            return 0;
+    }
+}
+
+static int dsv_qvm_unary(void *opaque, qvm_opcode_t op, const qvm_value_t *input,
+                         qvm_value_t *out) {
+    (void)opaque;
+    if (op != QVM_OP_NEG) return 0;
+    if (!input || input->type != DSV_QVM_NUMBER) return 0;
+    dsv_qvm_make_number(NULL, -input->number, out);
+    return 1;
+}
+
+static int dsv_qvm_leaf(void *opaque, qvm_opcode_t op, uint32_t arg,
+                        uint32_t src1, uint32_t src2, qvm_value_t *out) {
+    const dsv_qvm_ctx_t *ctx = (const dsv_qvm_ctx_t *)opaque;
+    qvm_value_t lhs;
+    qvm_value_t rhs;
+    int result;
+    if (!ctx || (op != QVM_OP_CMP_LEAF_NUMBER && op != QVM_OP_CMP_LEAF_STRING))
+        return 0;
+    if (!dsv_qvm_resolve_value(ctx, src1, &lhs)) return 0;
+    if (!dsv_qvm_resolve_value(ctx, src2, &rhs)) return 0;
+    if (op == QVM_OP_CMP_LEAF_NUMBER) {
+        if (lhs.type != DSV_QVM_NUMBER || rhs.type != DSV_QVM_NUMBER) return 0;
+        result = eval_num((dsv_op_t)arg, lhs.number, rhs.number);
+    } else {
+        if (lhs.type != DSV_QVM_STRING || rhs.type != DSV_QVM_STRING) return 0;
+        result = eval_str((dsv_op_t)arg, tstr_v_from_buf(lhs.str, lhs.length),
+                          rhs.str, rhs.length);
+    }
+    dsv_qvm_make_bool(NULL, result, out);
+    return 1;
+}
+
+static const qvm_exec_ops_t dsv_qvm_ops = {
+    dsv_qvm_resolve,      dsv_qvm_truthy,
+    dsv_qvm_binary,       dsv_qvm_unary,
+    NULL,                 NULL,
+    NULL,                 dsv_qvm_leaf,
+    dsv_qvm_make_invalid, dsv_qvm_make_bool,
+    dsv_qvm_make_number,  dsv_qvm_make_string};
+
 dsv_filter_t *dsv_filter_create(const csv_doc_t *doc, size_t header_row_index) {
     if (!doc) return NULL;
     if (header_row_index >= csv_row_count(doc)) return NULL;
@@ -867,6 +1363,7 @@ bool dsv_filter_compile(dsv_filter_t *filter, const char *expression) {
         free_plan(filter);
         return false;
     }
+    (void)dsv_lower_to_qvm(filter);
     return true;
 }
 
@@ -938,7 +1435,7 @@ static int dsv_render_values(const dsv_filter_t *filter, const tstr_v *fields,
     return 1;
 }
 
-int dsv_filter_check_row(dsv_filter_t *filter, size_t row_index) {
+static int dsv_filter_check_row_native(dsv_filter_t *filter, size_t row_index) {
     size_t i;
     int result = 0;
     if (!filter || !filter->compiled) return -1;
@@ -971,7 +1468,7 @@ int dsv_filter_check_row(dsv_filter_t *filter, size_t row_index) {
     return result ? 1 : 0;
 }
 
-int dsv_filter_check_values(dsv_filter_t *filter, const tstr_v *fields, size_t field_count) {
+static int dsv_filter_check_values_native(dsv_filter_t *filter, const tstr_v *fields, size_t field_count) {
     size_t i;
     int result = 0;
     if (!filter || !filter->compiled || !fields) return -1;
@@ -1001,6 +1498,48 @@ int dsv_filter_check_values(dsv_filter_t *filter, const tstr_v *fields, size_t f
     }
 
     return result ? 1 : 0;
+}
+
+static int dsv_qvm_run(const dsv_filter_t *filter, dsv_qvm_ctx_t *ctx,
+                       qvm_value_t *result) {
+    return qvm_execute(filter->expr_vm, filter->expr_vm_count, 0,
+                       filter->expr_vm_count, &dsv_qvm_ops, ctx, NULL, result) ==
+           QVM_STATUS_OK;
+}
+
+int dsv_filter_check_row(dsv_filter_t *filter, size_t row_index) {
+    dsv_qvm_ctx_t ctx;
+    qvm_value_t result;
+    if (!filter || !filter->compiled) return -1;
+    if (row_index >= csv_row_count(filter->doc)) return -1;
+    if (!filter->qvm_ready || !filter->expr_vm)
+        return dsv_filter_check_row_native(filter, row_index);
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.filter = filter;
+    ctx.row_index = row_index;
+    if (!dsv_qvm_run(filter, &ctx, &result)) {
+        set_error(filter, "filter evaluation failed");
+        return -1;
+    }
+    return dsv_qvm_truthy(&ctx, &result) ? 1 : 0;
+}
+
+int dsv_filter_check_values(dsv_filter_t *filter, const tstr_v *fields,
+                            size_t field_count) {
+    dsv_qvm_ctx_t ctx;
+    qvm_value_t result;
+    if (!filter || !filter->compiled || !fields) return -1;
+    if (!filter->qvm_ready || !filter->expr_vm)
+        return dsv_filter_check_values_native(filter, fields, field_count);
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.filter = filter;
+    ctx.fields = fields;
+    ctx.field_count = field_count;
+    if (!dsv_qvm_run(filter, &ctx, &result)) {
+        set_error(filter, "filter evaluation failed");
+        return -1;
+    }
+    return dsv_qvm_truthy(&ctx, &result) ? 1 : 0;
 }
 
 void dsv_filter_run(dsv_filter_t *filter, dsv_row_callback_t callback, void *user_data) {

@@ -41,6 +41,8 @@ target_include_directories(${TARGET_NAME} PRIVATE ${SIMDE_INCLUDE_DIRS})
 
 target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::Core)
 
+target_link_libraries(${TARGET_NAME} PRIVATE TurboUtils::QueryVM)
+
 # =============================================================================
 # Tests
 # =============================================================================

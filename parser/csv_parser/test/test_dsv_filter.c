@@ -1,5 +1,6 @@
 #include "dsv_filter.h"
 #include "tinytest.h"
+#include <stdio.h>
 #include <string.h>
 
 typedef struct {
@@ -353,6 +354,134 @@ spec("dsv_filter") {
             check_int_eq(dsv_filter_check_row(f, 1), 0);
             check_int_eq(dsv_filter_check_row(f, 2), 1);
             check_int_eq(dsv_filter_check_row(f, 3), 0);
+
+            dsv_filter_destroy(f);
+            csv_free(doc);
+        }
+
+        it("should evaluate mixed and/or joins with left-associative semantics") {
+            const char *csv = "a_n,b_n,c_n\n"
+                              "2,1,4\n"
+                              "0,3,4\n"
+                              "0,1,4\n"
+                              "2,1,2\n"
+                              "0,3,2\n";
+            csv_doc_t *doc = csv_parse(csv, strlen(csv));
+            check_not_null(doc);
+
+            dsv_filter_t *f = dsv_filter_create(doc, 0);
+            check_not_null(f);
+            check(dsv_filter_compile(f, "a > 1 or b > 2 and c > 3"));
+
+            check_int_eq(dsv_filter_check_row(f, 1), 1);
+            check_int_eq(dsv_filter_check_row(f, 2), 1);
+            check_int_eq(dsv_filter_check_row(f, 3), 0);
+            check_int_eq(dsv_filter_check_row(f, 4), 0);
+            check_int_eq(dsv_filter_check_row(f, 5), 0);
+
+            dsv_filter_destroy(f);
+            csv_free(doc);
+        }
+
+        it("should reuse a dynamic column as number and as string") {
+            const char *csv = "code,flag_n\n"
+                              "3,1\n"
+                              "2,1\n"
+                              "1,1\n";
+            csv_doc_t *doc = csv_parse(csv, strlen(csv));
+            check_not_null(doc);
+
+            dsv_filter_t *f = dsv_filter_create(doc, 0);
+            check_not_null(f);
+            check(dsv_filter_compile(f, "code > 1 and code == \"3\""));
+
+            check_int_eq(dsv_filter_check_row(f, 1), 1);
+            check_int_eq(dsv_filter_check_row(f, 2), 0);
+            check_int_eq(dsv_filter_check_row(f, 3), 0);
+
+            dsv_filter_destroy(f);
+            csv_free(doc);
+        }
+
+        it("should evaluate a long AND chain through the VM") {
+            const char *csv = "a_n,b_n\n"
+                              "2,3\n"
+                              "5,3\n"
+                              "1,3\n"
+                              "2,0\n";
+            csv_doc_t *doc = csv_parse(csv, strlen(csv));
+            check_not_null(doc);
+
+            dsv_filter_t *f = dsv_filter_create(doc, 0);
+            check_not_null(f);
+            check(dsv_filter_compile(f,
+                "a > 0 and b > 0 and a < 10 and b < 10 and "
+                "a >= 2 and b >= 2 and a != 5 and b != 5"));
+
+            check_int_eq(dsv_filter_check_row(f, 1), 1);
+            check_int_eq(dsv_filter_check_row(f, 2), 0);
+            check_int_eq(dsv_filter_check_row(f, 3), 0);
+            check_int_eq(dsv_filter_check_row(f, 4), 0);
+
+            dsv_filter_destroy(f);
+            csv_free(doc);
+        }
+
+        it("should fall back to the native evaluator when VM registers overflow") {
+            const char *csv = "a_n\n"
+                              "1\n"
+                              "2\n";
+            char expr[2048];
+            size_t off = 0;
+            int i;
+            csv_doc_t *doc;
+            dsv_filter_t *f;
+
+            expr[off++] = 'a';
+            for (i = 0; i < 69; i++) {
+                int n = snprintf(expr + off, sizeof(expr) - off, "+1");
+                check(n > 0 && (size_t)n < sizeof(expr) - off);
+                off += (size_t)n;
+            }
+            {
+                int n = snprintf(expr + off, sizeof(expr) - off, "==70");
+                check(n > 0 && (size_t)n < sizeof(expr) - off);
+                off += (size_t)n;
+            }
+
+            doc = csv_parse(csv, strlen(csv));
+            check_not_null(doc);
+            f = dsv_filter_create(doc, 0);
+            check_not_null(f);
+            check(dsv_filter_compile(f, expr));
+            check_int_eq(dsv_filter_check_row(f, 1), 1);
+            check_int_eq(dsv_filter_check_row(f, 2), 0);
+
+            dsv_filter_destroy(f);
+            csv_free(doc);
+        }
+
+        it("should evaluate lhs arithmetic on field views") {
+            const char *csv = "left_n,right_n,sym_s\n";
+            tstr_v row1[] = {
+                tstr_v_from_buf("5", 1),
+                tstr_v_from_buf("3", 1),
+                tstr_v_from_buf("A", 1),
+            };
+            tstr_v row2[] = {
+                tstr_v_from_buf("4", 1),
+                tstr_v_from_buf("2", 1),
+                tstr_v_from_buf("B", 1),
+            };
+            csv_doc_t *doc = csv_parse(csv, strlen(csv));
+            check_not_null(doc);
+
+            dsv_filter_t *f = dsv_filter_create(doc, 0);
+            check_not_null(f);
+            check(dsv_filter_compile(f, "left + right == 8"));
+
+            check_int_eq(dsv_filter_check_values(f, row1, 3), 1);
+            check_int_eq(dsv_filter_check_values(f, row2, 3), 0);
 
             dsv_filter_destroy(f);
             csv_free(doc);

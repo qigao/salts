@@ -4,6 +4,7 @@ add_subdirectory(parser)
 cmake_add_source(SOURCE_FILES RECURSE)
 find_path(SIMDE_INCLUDE_DIRS "simde/x86/sse2.h" REQUIRED)
 find_package(zstd CONFIG REQUIRED)
+find_package(base64 CONFIG REQUIRED)
 
 add_library(${TARGET_NAME} SHARED ${SOURCE_FILES})
 # Configure target

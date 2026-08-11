@@ -1,0 +1,4 @@
+base64 provides CMake targets:
+
+  find_package(base64 CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE aklomp::base64)

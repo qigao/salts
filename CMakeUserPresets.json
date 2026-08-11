@@ -207,8 +207,7 @@
             "name": "win-clang-user",
             "cacheVariables": {
                 "ENABLE_SANITIZER_ADDRESS": "OFF",
-                "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/x64-windows/debug",
-                "BASE64_WERROR": "OFF"
+                "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/x64-windows/debug"
             },
             "environment": {
                 "PATH": "${sourceDir}/vcpkg_installed/x64-windows/debug/bin${pathListSep}$penv{PATH}"
@@ -223,8 +222,7 @@
             "cacheVariables": {
                 "ENABLE_SANITIZER_ADDRESS": "OFF",
                 "ENABLE_TESTS": "ON",
-                "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/x64-windows",
-                "BASE64_WERROR": "OFF"
+                "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/x64-windows"
             },
             "environment": {
                 "PATH": "${sourceDir}/vcpkg_installed/x64-windows/bin${pathListSep}$penv{PATH}"

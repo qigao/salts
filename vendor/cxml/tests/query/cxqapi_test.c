@@ -1888,13 +1888,11 @@ cts test_cxml_drop_elements(){
     cxml_assert__zero(cxml_list_size(&root->root_element->children))
     cxml_assert__false(root->root_element->has_child)
     cxml_assert__true(root->root_element->is_self_enclosing)
-    cxml_destroy(root);
-    FREE(got);
-    cxml_list_free(&list);
-
     cxml_assert__false(cxml_drop_elements(NULL, &list))
     cxml_assert__false(cxml_drop_elements(root, NULL))
     cxml_destroy(root);
+    FREE(got);
+    cxml_list_free(&list);
     cxml_pass()
 }
 
@@ -1915,14 +1913,12 @@ cts test_cxml_drop_elements_by_query(){
     cxml_assert__zero(cxml_list_size(&root->root_element->children))
     cxml_assert__false(root->root_element->has_child)
     cxml_assert__true(root->root_element->is_self_enclosing)
-    cxml_destroy(root);
-    FREE(got);
-    cxml_list_free(&list);
-
     cxml_assert__false(cxml_drop_elements_by_query(root->root_element, NULL, &list))
     cxml_assert__false(cxml_drop_elements_by_query(root->root_element, "<name>/", NULL))
     cxml_assert__false(cxml_drop_elements_by_query(NULL, "<name>/", &list))
     cxml_destroy(root);
+    FREE(got);
+    cxml_list_free(&list);
     cxml_pass()
 }
 
