@@ -51,16 +51,10 @@ find_package(PkgConfig REQUIRED)
 
 # Additional components
 add_subdirectory(tools)
-include(FindTools)
-add_subdirectory(parser/query_vm)
+include(FindTools) 
 add_subdirectory(vendor)
-add_subdirectory(tinytest)
-add_subdirectory(parser)
-add_subdirectory(turbo_parser)
-add_subdirectory(mustache)
+add_subdirectory(tinytest) 
 add_subdirectory(utils)
-add_subdirectory(cron)
-add_subdirectory(tbe)
 
 # Package Configuration
 include(CMakePackageConfigHelpers)

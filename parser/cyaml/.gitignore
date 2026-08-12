@@ -1,7 +1,0 @@
-refs/*
-!refs/ypath/
-ref/
-build/
-.DS_Store
-*.dSYM/
-fuzz/build/

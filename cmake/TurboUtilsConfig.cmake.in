@@ -5,8 +5,4 @@ include(CMakeFindDependencyMacro)
 
 include("${CMAKE_CURRENT_LIST_DIR}/TurboUtilsTargets.cmake")
 
-if(TARGET TurboUtils::TbeSchema AND NOT TARGET TurboUtils::SchemaBE)
-  add_library(TurboUtils::SchemaBE ALIAS TurboUtils::TbeSchema)
-endif()
-
 check_required_components(TurboUtils)

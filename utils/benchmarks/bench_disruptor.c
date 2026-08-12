@@ -110,7 +110,8 @@ static void consumer_thread(void *arg) {
     }
 }
 
-static void run_bench(__bdd_config_type__ *__bdd_config__, const char *name, size_t count, size_t batch, size_t entry_size, bool use_memcpy, size_t num_prods, size_t num_cons) {
+static void run_bench(size_t count, size_t batch, size_t entry_size, bool use_memcpy,
+                      size_t num_prods, size_t num_cons) {
     if (num_cons > 8 || num_prods > 8 || num_cons == 0 || num_prods == 0) return;
     
     disruptor_config_t d_cfg = {
@@ -150,7 +151,6 @@ static void run_bench(__bdd_config_type__ *__bdd_config__, const char *name, siz
     }
 
     turbo_sleep_ms(50);
-    uint64_t start_time = turbo_hrtime();
     atomic_store(&start_flag, 1);
 
     for (size_t i = 0; i < num_prods; ++i) {
@@ -159,13 +159,6 @@ static void run_bench(__bdd_config_type__ *__bdd_config__, const char *name, siz
     for (size_t i = 0; i < num_cons; ++i) {
         turbo_thread_join(&cons[i]);
     }
-    
-    uint64_t end_time = turbo_hrtime();
-
-    double dur_ms = (double)(end_time - start_time) / 1000000.0;
-    double avg_ms = dur_ms / (double)total_messages;
-    
-    __bdd_bench_add__(__bdd_config__, name, total_messages, dur_ms, avg_ms, avg_ms, 1, 0, false);
     
     for (size_t i = 0; i < num_cons; ++i) {
         disruptor_consumer_unregister(disruptor, &c_ctx[i].consumer);
@@ -195,13 +188,12 @@ spec("Turbo Disruptor Benchmarks") {
 
     bench("Single Threaded Operations") {
 
-        benchmark_titles("benchmark", "input", "iters", "avg(us)", NULL, "min(us)", "max(us)", "ops/s", NULL, NULL);
-        benchmark("ReadAcquire (Empty)", BENCH_ITERS, 1) {
+        benchmark_batch("ReadAcquire (Empty)", BENCH_ITERS) {
             disruptor_cursor_t rc = { .sequence = global_seq };
             (void)disruptor_consumer_wait_for_nonblocking(bench_disruptor, &rc);
         }
 
-        benchmark("Write+Read (64 bytes)", BENCH_ITERS, 1) {
+        benchmark_batch("Write+Read (64 bytes)", BENCH_ITERS) {
             disruptor_cursor_t wc;
             if (disruptor_publisher_try_claim(bench_disruptor, &wc)) {
                 disruptor_publisher_publish(bench_disruptor, &wc);
@@ -218,27 +210,48 @@ spec("Turbo Disruptor Benchmarks") {
 
     bench("SPSC Multithreaded Detailed Benchmarks") {
 
-        benchmark_titles("benchmark", "input", "iters", "avg(us)", NULL, "min(us)", "max(us)", "ops/s", NULL, NULL);
-        run_bench(__bdd_config__, "SPSC (Batch 64)", BENCH_ITERS, 64, 64, false, 1, 1);
-        run_bench(__bdd_config__, "SPSC No Batching (Batch 1)", 100000, 1, 64, false, 1, 1);
-        run_bench(__bdd_config__, "SPSC High Cont (Batch 128)", BENCH_ITERS_LARGE, 128, 64, false, 1, 1);
-        run_bench(__bdd_config__, "SPSC with Memcpy (Batch 512)", BENCH_ITERS, 512, 64, true, 1, 1);
-        run_bench(__bdd_config__, "SPSC with Memcpy (1K)", BENCH_ITERS, 1024, 64, true, 1, 1);
-        run_bench(__bdd_config__, "SPSC with Memcpy (4K)", BENCH_ITERS, 4096, 64, true, 1, 1);
+        benchmark_ops("SPSC (Batch 64)", 1, BENCH_ITERS) {
+            run_bench(BENCH_ITERS, 64, 64, false, 1, 1);
+        }
+        benchmark_ops("SPSC No Batching (Batch 1)", 1, 100000) {
+            run_bench(100000, 1, 64, false, 1, 1);
+        }
+        benchmark_ops("SPSC High Cont (Batch 128)", 1, BENCH_ITERS_LARGE) {
+            run_bench(BENCH_ITERS_LARGE, 128, 64, false, 1, 1);
+        }
+        benchmark_ops("SPSC with Memcpy (Batch 512)", 1, BENCH_ITERS) {
+            run_bench(BENCH_ITERS, 512, 64, true, 1, 1);
+        }
+        benchmark_ops("SPSC with Memcpy (1K)", 1, BENCH_ITERS) {
+            run_bench(BENCH_ITERS, 1024, 64, true, 1, 1);
+        }
+        benchmark_ops("SPSC with Memcpy (4K)", 1, BENCH_ITERS) {
+            run_bench(BENCH_ITERS, 4096, 64, true, 1, 1);
+        }
     }
 
     bench("MPMC Multithreaded Detailed Benchmarks") {
 
-        benchmark_titles("benchmark", "input", "iters", "avg(us)", NULL, "min(us)", "max(us)", "ops/s", NULL, NULL);
-        run_bench(__bdd_config__, "MPSC 2P 1C (Batch 64)", BENCH_ITERS, 64, 64, false, 2, 1);
-        run_bench(__bdd_config__, "MPSC 4P 1C (Batch 64)", BENCH_ITERS, 64, 64, false, 4, 1);
-        
-        run_bench(__bdd_config__, "SPMC 1P 2C (Batch 64)", BENCH_ITERS, 64, 64, false, 1, 2);
-        run_bench(__bdd_config__, "SPMC 1P 4C (Batch 64)", BENCH_ITERS, 64, 64, false, 1, 4);
-
-        run_bench(__bdd_config__, "MPMC 2P 2C (Batch 64)", BENCH_ITERS, 64, 64, false, 2, 2);
-        run_bench(__bdd_config__, "MPMC 4P 4C (Batch 64)", BENCH_ITERS, 64, 64, false, 4, 4);
-        
-        run_bench(__bdd_config__, "MPMC 4P 4C with Memcpy (Batch 512)", BENCH_ITERS/4, 512, 64, true, 4, 4);
+        benchmark_ops("MPSC 2P 1C (Batch 64)", 1, BENCH_ITERS * 2) {
+            run_bench(BENCH_ITERS, 64, 64, false, 2, 1);
+        }
+        benchmark_ops("MPSC 4P 1C (Batch 64)", 1, BENCH_ITERS * 4) {
+            run_bench(BENCH_ITERS, 64, 64, false, 4, 1);
+        }
+        benchmark_ops("SPMC 1P 2C (Batch 64)", 1, BENCH_ITERS) {
+            run_bench(BENCH_ITERS, 64, 64, false, 1, 2);
+        }
+        benchmark_ops("SPMC 1P 4C (Batch 64)", 1, BENCH_ITERS) {
+            run_bench(BENCH_ITERS, 64, 64, false, 1, 4);
+        }
+        benchmark_ops("MPMC 2P 2C (Batch 64)", 1, BENCH_ITERS * 2) {
+            run_bench(BENCH_ITERS, 64, 64, false, 2, 2);
+        }
+        benchmark_ops("MPMC 4P 4C (Batch 64)", 1, BENCH_ITERS * 4) {
+            run_bench(BENCH_ITERS, 64, 64, false, 4, 4);
+        }
+        benchmark_ops("MPMC 4P 4C with Memcpy (Batch 512)", 1, BENCH_ITERS) {
+            run_bench(BENCH_ITERS / 4, 512, 64, true, 4, 4);
+        }
     }
 }

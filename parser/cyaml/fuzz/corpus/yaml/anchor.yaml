@@ -1,5 +1,0 @@
-default: &def
-  timeout: 30
-server:
-  <<: *def
-  port: 8080

@@ -174,15 +174,3 @@ if(CMAKE_CXX_COMPILER OR CMAKE_CXX_COMPILER_ID)
                                                            CXX_STANDARD_REQUIRED ON)
 endif()
 
-# JUnit to HTML Dashboard Tool
-set(JUNIT_TO_HTML_SOURCES tools/junit_to_html.c)
-cmake_add_executable(junit_to_html
-  SOURCES ${JUNIT_TO_HTML_SOURCES}
-  LIBS TurboUtils::Core TurboUtils::Mustache TurboUtils::JsonParser
-       TurboUtils::CmdParser cxml
-  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
-           ${CMAKE_SOURCE_DIR}/mustache/include
-           ${CMAKE_SOURCE_DIR}/parser/internal/json_parser/include
-           ${CMAKE_SOURCE_DIR}/parser/internal/cmd_parser/include
-           ${CMAKE_SOURCE_DIR}/vendor/cxml/include
-  FOLDER "tinytest")

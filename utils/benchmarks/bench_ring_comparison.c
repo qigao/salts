@@ -31,10 +31,9 @@ spec("Ring Buffer - Single Threaded") {
 
     bench("Single Threaded Operations") {
 
-        benchmark_titles("benchmark", "input", "iters", "avg(us)", NULL, "min(us)", "max(us)", "ops/s", NULL, NULL);
         printf("\n=== Single-Threaded (ring_buffer.c) ===\n");
 
-        benchmark("Write+Read (64 bytes)", BENCH_ITERS, 1) {
+        benchmark_batch("Write+Read (64 bytes)", BENCH_ITERS) {
             uint8_t *p = ring_write_acquire(&st_ring, 64);
             if (p) {
                 ring_write_release(&st_ring, 64);
@@ -46,7 +45,7 @@ spec("Ring Buffer - Single Threaded") {
             }
         }
 
-        benchmark("Write+Read (256 bytes)", BENCH_ITERS, 1) {
+        benchmark_batch("Write+Read (256 bytes)", BENCH_ITERS) {
             uint8_t *p = ring_write_acquire(&st_ring, 256);
             if (p) {
                 ring_write_release(&st_ring, 256);
@@ -58,7 +57,7 @@ spec("Ring Buffer - Single Threaded") {
             }
         }
 
-        benchmark("Write+Read (1KB)", BENCH_ITERS, 1) {
+        benchmark_batch("Write+Read (1KB)", BENCH_ITERS) {
             uint8_t *p = ring_write_acquire(&st_ring, 1024);
             if (p) {
                 ring_write_release(&st_ring, 1024);
@@ -137,8 +136,7 @@ static void spsc_consumer_thread(void *arg) {
     }
 }
 
-static void run_spsc_bench(__bdd_config_type__ *__bdd_config__,
-                          const char *name, size_t count, size_t batch, bool use_memcpy) {
+static void run_spsc_bench(size_t count, size_t batch, bool use_memcpy) {
     uint8_t *data = (uint8_t *)malloc(BUFFER_SIZE);
     ring_spsc_t ring;
 
@@ -160,35 +158,37 @@ static void run_spsc_bench(__bdd_config_type__ *__bdd_config__,
     turbo_thread_create(&cons, spsc_consumer_thread, &ctx);
 
     turbo_sleep_ms(50);
-    uint64_t start_time = turbo_hrtime();
     atomic_store(&ctx.start, 1);
 
     turbo_thread_join(&prod);
     turbo_thread_join(&cons);
-    uint64_t end_time = turbo_hrtime();
-
-    double dur_ms = (double)(end_time - start_time) / 1000000.0;
-    double throughput_mb = (double)count / (1024.0 * 1024.0) / (dur_ms / 1000.0);
-    double avg_ns = (dur_ms * 1000000.0) / (double)count;
-
-    printf("  %s: %.2f MB/s, %.2f ns/op\n", name, throughput_mb, avg_ns);
-    __bdd_bench_add__(__bdd_config__, name, count, dur_ms, avg_ns / 1000000.0,
-                      avg_ns / 1000000.0, 1, 0, false);
-
     free(data);
 }
 
 spec("Ring Buffer SPSC - Multithreaded") {
     bench("SPSC Thread-Safe Benchmarks") {
-        benchmark_titles("benchmark", "input", "iters", "avg(us)", NULL, "min(us)", "max(us)", "ops/s", NULL, NULL);
         printf("\n=== SPSC (Single-Producer Single-Consumer) ===\n");
-        run_spsc_bench(__bdd_config__, "SPSC Batch 64B", BENCH_ITERS, 64, false);
-        run_spsc_bench(__bdd_config__, "SPSC Batch 256B", BENCH_ITERS, 256, false);
-        run_spsc_bench(__bdd_config__, "SPSC Batch 1KB", BENCH_ITERS, 1024, false);
-        run_spsc_bench(__bdd_config__, "SPSC No Batch (1B)", 100000, 1, false);
-        run_spsc_bench(__bdd_config__, "SPSC High Throughput (128B)", BENCH_ITERS_LARGE, 128, false);
-        run_spsc_bench(__bdd_config__, "SPSC with Memcpy (512B)", BENCH_ITERS, 512, true);
-        run_spsc_bench(__bdd_config__, "SPSC with Memcpy (4KB)", BENCH_ITERS, 4096, true);
+        benchmark_ops("SPSC Batch 64B", 1, BENCH_ITERS) {
+            run_spsc_bench(BENCH_ITERS, 64, false);
+        }
+        benchmark_ops("SPSC Batch 256B", 1, BENCH_ITERS) {
+            run_spsc_bench(BENCH_ITERS, 256, false);
+        }
+        benchmark_ops("SPSC Batch 1KB", 1, BENCH_ITERS) {
+            run_spsc_bench(BENCH_ITERS, 1024, false);
+        }
+        benchmark_ops("SPSC No Batch (1B)", 1, 100000) {
+            run_spsc_bench(100000, 1, false);
+        }
+        benchmark_ops("SPSC High Throughput (128B)", 1, BENCH_ITERS_LARGE) {
+            run_spsc_bench(BENCH_ITERS_LARGE, 128, false);
+        }
+        benchmark_ops("SPSC with Memcpy (512B)", 1, BENCH_ITERS) {
+            run_spsc_bench(BENCH_ITERS, 512, true);
+        }
+        benchmark_ops("SPSC with Memcpy (4KB)", 1, BENCH_ITERS) {
+            run_spsc_bench(BENCH_ITERS, 4096, true);
+        }
     }
 }
 

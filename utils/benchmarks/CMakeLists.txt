@@ -15,7 +15,7 @@ foreach(benchmark_source ${BENCHMARK_SOURCES})
   cmake_add_benchmark(${benchmark_name}
     SOURCES ${benchmark_source}
     FOLDER "utils/benchmarks"
-    LIBS ${COMMON_LIBS} uri_parser)
+    LIBS ${COMMON_LIBS})
 endforeach()
 
 foreach(tgt test_fmt_bench)
@@ -32,9 +32,3 @@ endforeach()
 
 target_link_libraries(bench_sqlite_index_reference
                       PRIVATE unofficial::sqlite3::sqlite3)
-
-target_link_libraries(bench_sqlite_csv_vdbe
-                      PRIVATE unofficial::sqlite3::sqlite3 csv_parser)
-target_include_directories(bench_sqlite_csv_vdbe
-                           PRIVATE ${CMAKE_SOURCE_DIR}/parser/csv_parser/parser
-                                   ${CMAKE_BINARY_DIR}/parser/csv_parser)

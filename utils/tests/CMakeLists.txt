@@ -18,7 +18,7 @@ foreach(test_source ${TEST_SOURCES} ${CXX_TEST_SOURCES})
   cmake_add_test(${test_name}
     SOURCES ${test_source}
     FOLDER "utils/tests"
-    LIBS ${COMMON_LIBS} uri_parser)
+    LIBS ${COMMON_LIBS})
 endforeach()
 
 # Link specific libraries for certain tests
