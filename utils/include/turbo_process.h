@@ -39,7 +39,9 @@ typedef enum {
 typedef enum {
   TURBO_PROCESS_PIPE_STDIN = 1U << 0,
   TURBO_PROCESS_CAPTURE_STDOUT = 1U << 1,
-  TURBO_PROCESS_CAPTURE_STDERR = 1U << 2
+  TURBO_PROCESS_CAPTURE_STDERR = 1U << 2,
+  /** Do not inherit parent variables; env becomes the complete child environment. */
+  TURBO_PROCESS_CLEAN_ENVIRONMENT = 1U << 3
 } turbo_process_flags_t;
 
 typedef struct {
@@ -49,7 +51,9 @@ typedef struct {
   const char *const *args;
   /**
    * NULL inherits the parent environment. A non-NULL, NULL-terminated list of
-   * KEY=VALUE entries overrides matching parent variables.
+   * KEY=VALUE entries overrides matching parent variables. With
+   * TURBO_PROCESS_CLEAN_ENVIRONMENT, this list is the complete child
+   * environment and NULL creates an empty environment.
    */
   const char *const *env;
   /** Child working directory, or NULL to inherit the current directory. */

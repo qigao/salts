@@ -79,7 +79,8 @@ static int process_state_terminal(turbo_process_state_t state) {
 
 static int process_validate_options(const turbo_process_options_t *options) {
   const unsigned int known_flags =
-      TURBO_PROCESS_PIPE_STDIN | TURBO_PROCESS_CAPTURE_STDOUT | TURBO_PROCESS_CAPTURE_STDERR;
+      TURBO_PROCESS_PIPE_STDIN | TURBO_PROCESS_CAPTURE_STDOUT | TURBO_PROCESS_CAPTURE_STDERR |
+      TURBO_PROCESS_CLEAN_ENVIRONMENT;
   if (!options || !options->program || options->program[0] == '\0') return TURBO_EINVAL;
   if ((options->flags & ~known_flags) != 0U) return TURBO_EINVAL;
   return TURBO_OK;
@@ -489,8 +490,9 @@ static int windows_env_entry_compare(const void *left, const void *right) {
   return _wcsicmp(*left_entry, *right_entry);
 }
 
-static int build_windows_environment(const char *const *env, wchar_t **out_environment) {
-  LPWCH parent_block;
+static int build_windows_environment(const char *const *env, int clean_environment,
+                                     wchar_t **out_environment) {
+  LPWCH parent_block = NULL;
   wchar_t **overrides = NULL;
   wchar_t **entries = NULL;
   size_t override_count = 0;
@@ -501,13 +503,15 @@ static int build_windows_environment(const char *const *env, wchar_t **out_envir
   wchar_t *block = NULL;
   wchar_t *cursor;
   int rc = TURBO_OK;
-  if (!env) {
+  if (!env && !clean_environment) {
     *out_environment = NULL;
     return TURBO_OK;
   }
 
-  while (env[override_count])
-    ++override_count;
+  if (env) {
+    while (env[override_count])
+      ++override_count;
+  }
   overrides = (wchar_t **)calloc(override_count, sizeof(*overrides));
   if (override_count != 0 && !overrides) return TURBO_ENOMEM;
   for (i = 0; i < override_count; ++i) {
@@ -526,43 +530,45 @@ static int build_windows_environment(const char *const *env, wchar_t **out_envir
     }
   }
 
-  parent_block = GetEnvironmentStringsW();
-  if (!parent_block) {
-    rc = win32_error();
-    goto cleanup;
+  if (!clean_environment) {
+    parent_block = GetEnvironmentStringsW();
+    if (!parent_block) {
+      rc = win32_error();
+      goto cleanup;
+    }
+    for (cursor = parent_block; *cursor; cursor += wcslen(cursor) + 1)
+      ++parent_count;
   }
-  for (cursor = parent_block; *cursor; cursor += wcslen(cursor) + 1)
-    ++parent_count;
   if (override_count > SIZE_MAX - parent_count ||
       parent_count + override_count > SIZE_MAX / sizeof(*entries)) {
     rc = TURBO_ENOMEM;
-    FreeEnvironmentStringsW(parent_block);
     goto cleanup;
   }
   entries = (wchar_t **)calloc(parent_count + override_count, sizeof(*entries));
   if (parent_count + override_count != 0 && !entries) {
     rc = TURBO_ENOMEM;
-    FreeEnvironmentStringsW(parent_block);
     goto cleanup;
   }
-  for (cursor = parent_block; *cursor; cursor += wcslen(cursor) + 1) {
-    int overridden = 0;
-    for (i = 0; i < override_count; ++i) {
-      if (windows_env_key_equal(cursor, overrides[i])) {
-        overridden = 1;
-        break;
+  if (parent_block) {
+    for (cursor = parent_block; *cursor; cursor += wcslen(cursor) + 1) {
+      int overridden = 0;
+      for (i = 0; i < override_count; ++i) {
+        if (windows_env_key_equal(cursor, overrides[i])) {
+          overridden = 1;
+          break;
+        }
       }
+      if (!overridden) entries[entry_count++] = cursor;
     }
-    if (!overridden) entries[entry_count++] = cursor;
   }
   for (i = 0; i < override_count; ++i)
     entries[entry_count++] = overrides[i];
-  qsort(entries, entry_count, sizeof(*entries), windows_env_entry_compare);
+  if (entry_count > 1) qsort(entries, entry_count, sizeof(*entries), windows_env_entry_compare);
+  if (entry_count == 0) total = 2;
   for (i = 0; i < entry_count; ++i) {
     size_t length = wcslen(entries[i]) + 1U;
     if (length > TURBO_PROCESS_WINDOWS_BLOCK_MAX - total) {
       rc = TURBO_EINVAL;
-      FreeEnvironmentStringsW(parent_block);
       goto cleanup;
     }
     total += length;
@@ -570,7 +576,6 @@ static int build_windows_environment(const char *const *env, wchar_t **out_envir
   block = (wchar_t *)calloc(total, sizeof(wchar_t));
   if (!block) {
     rc = TURBO_ENOMEM;
-    FreeEnvironmentStringsW(parent_block);
     goto cleanup;
   }
   cursor = block;
@@ -580,10 +585,10 @@ static int build_windows_environment(const char *const *env, wchar_t **out_envir
     cursor += length;
   }
   *cursor = L'\0';
-  FreeEnvironmentStringsW(parent_block);
   *out_environment = block;
 
 cleanup:
+  if (parent_block) FreeEnvironmentStringsW(parent_block);
   for (i = 0; i < override_count; ++i)
     free(overrides[i]);
   free(overrides);
@@ -753,7 +758,9 @@ static int process_platform_spawn(turbo_process_t *process,
 
   rc = build_windows_command(options, &command);
   if (rc == TURBO_OK) rc = utf8_to_utf16(options->cwd, &cwd);
-  if (rc == TURBO_OK) rc = build_windows_environment(options->env, &environment);
+  if (rc == TURBO_OK)
+    rc = build_windows_environment(
+        options->env, (options->flags & TURBO_PROCESS_CLEAN_ENVIRONMENT) != 0U, &environment);
   if (rc != TURBO_OK) goto cleanup;
 
   if ((options->flags & TURBO_PROCESS_PIPE_STDIN) != 0U) {
@@ -933,14 +940,14 @@ static void close_pipe(int fds[2]) {
   close_fd(&fds[1]);
 }
 
-static const char *environment_path(const char *const *env) {
+static const char *environment_path(const char *const *env, int clean_environment) {
   size_t i;
   if (env) {
     for (i = 0; env[i]; ++i) {
       if (strncmp(env[i], "PATH=", 5) == 0) return env[i] + 5;
     }
   }
-  return getenv("PATH");
+  return clean_environment ? NULL : getenv("PATH");
 }
 
 static char **build_argv(const turbo_process_options_t *options) {
@@ -971,7 +978,8 @@ static int posix_env_key_equal(const char *left, const char *right) {
   return left_length != 0 && left_length == right_length && memcmp(left, right, left_length) == 0;
 }
 
-static int build_posix_environment(const char *const *overrides, char ***out_environment) {
+static int build_posix_environment(const char *const *overrides, int clean_environment,
+                                   char ***out_environment) {
   size_t parent_count = 0;
   size_t override_count = 0;
   size_t entry_count = 0;
@@ -979,31 +987,37 @@ static int build_posix_environment(const char *const *overrides, char ***out_env
   size_t i;
 
   *out_environment = NULL;
-  if (!overrides) return TURBO_OK;
-  while (environ[parent_count])
-    ++parent_count;
-  while (overrides[override_count]) {
-    if (posix_env_key_length(overrides[override_count]) == 0) return TURBO_EINVAL;
-    for (size_t j = 0; j < override_count; ++j) {
-      if (posix_env_key_equal(overrides[override_count], overrides[j])) return TURBO_EINVAL;
+  if (!overrides && !clean_environment) return TURBO_OK;
+  if (!clean_environment) {
+    while (environ[parent_count])
+      ++parent_count;
+  }
+  if (overrides) {
+    while (overrides[override_count]) {
+      if (posix_env_key_length(overrides[override_count]) == 0) return TURBO_EINVAL;
+      for (size_t j = 0; j < override_count; ++j) {
+        if (posix_env_key_equal(overrides[override_count], overrides[j])) return TURBO_EINVAL;
+      }
+      if (override_count == SIZE_MAX) return TURBO_ENOMEM;
+      ++override_count;
     }
-    if (override_count == SIZE_MAX) return TURBO_ENOMEM;
-    ++override_count;
   }
   if (override_count > SIZE_MAX - parent_count - 1U ||
       parent_count + override_count + 1U > SIZE_MAX / sizeof(*environment))
     return TURBO_ENOMEM;
   environment = (char **)calloc(parent_count + override_count + 1, sizeof(*environment));
   if (!environment) return TURBO_ENOMEM;
-  for (i = 0; i < parent_count; ++i) {
-    int overridden = 0;
-    for (size_t j = 0; j < override_count; ++j) {
-      if (posix_env_key_equal(environ[i], overrides[j])) {
-        overridden = 1;
-        break;
+  if (!clean_environment) {
+    for (i = 0; i < parent_count; ++i) {
+      int overridden = 0;
+      for (size_t j = 0; j < override_count; ++j) {
+        if (posix_env_key_equal(environ[i], overrides[j])) {
+          overridden = 1;
+          break;
+        }
       }
+      if (!overridden) environment[entry_count++] = environ[i];
     }
-    if (!overridden) environment[entry_count++] = environ[i];
   }
   for (i = 0; i < override_count; ++i)
     environment[entry_count++] = (char *)overrides[i];
@@ -1028,7 +1042,8 @@ static char **build_program_candidates(const turbo_process_options_t *options, s
     *out_count = 1;
     return candidates;
   }
-  path = environment_path(options->env);
+  path = environment_path(options->env,
+                          (options->flags & TURBO_PROCESS_CLEAN_ENVIRONMENT) != 0U);
   if (!path || path[0] == '\0') path = "/usr/local/bin:/usr/bin:/bin";
   for (cursor = path; *cursor; ++cursor)
     if (*cursor == ':') ++count;
@@ -1265,7 +1280,8 @@ static int process_platform_spawn(turbo_process_t *process,
     goto cleanup;
   }
   argv = build_argv(options);
-  rc = build_posix_environment(options->env, &environment);
+  rc = build_posix_environment(
+      options->env, (options->flags & TURBO_PROCESS_CLEAN_ENVIRONMENT) != 0U, &environment);
   if (rc != TURBO_OK) goto cleanup;
   candidates = build_program_candidates(options, &candidate_count);
   if (!argv || !candidates) {

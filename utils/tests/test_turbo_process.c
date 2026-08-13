@@ -175,6 +175,51 @@ spec("turbo_process") {
       free(directory);
     }
 
+    it("can replace the inherited environment with explicit entries") {
+      turbo_process_options_t options;
+      turbo_process_t *process = NULL;
+      turbo_process_result_t result;
+      char output[256];
+      size_t output_size = 0;
+      const char *env[] = {"TURBO_PROCESS_VALUE=clean-value", NULL};
+#ifdef _WIN32
+      init_shell_options(&options,
+                         "set PATH 2>nul & echo marker=%TURBO_PROCESS_VALUE%");
+#else
+      init_shell_options(
+          &options,
+          "printf 'path=%s|marker=%s' \"${PATH-unset}\" \"$TURBO_PROCESS_VALUE\"");
+#endif
+      options.env = env;
+      options.flags |= TURBO_PROCESS_CLEAN_ENVIRONMENT;
+
+      check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_int_eq(turbo_process_wait(process, &result), TURBO_OK);
+      check_int_eq(result.exit_code, 0);
+      read_all(process, 1, output, sizeof(output), &output_size);
+#ifdef _WIN32
+      check_false(strstr(output, "PATH=") != NULL);
+      check_str_contains(output, "marker=clean-value");
+#else
+      check_str_eq(output, "path=unset|marker=clean-value");
+#endif
+
+      turbo_process_destroy(process);
+      process = NULL;
+      options.env = NULL;
+      check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_int_eq(turbo_process_wait(process, &result), TURBO_OK);
+      check_int_eq(result.exit_code, 0);
+      read_all(process, 1, output, sizeof(output), &output_size);
+#ifdef _WIN32
+      check_false(strstr(output, "PATH=") != NULL);
+      check_false(strstr(output, "clean-value") != NULL);
+#else
+      check_str_eq(output, "path=unset|marker=");
+#endif
+      turbo_process_destroy(process);
+    }
+
     it("pumps large stdin and stdout without pipe deadlock") {
       turbo_process_options_t options;
       turbo_process_t *process = NULL;
