@@ -41,12 +41,6 @@ namespace ttest_cpp__ {
   #endif
   }
 
-  template <typename T, typename = void> struct is_container_like : std::false_type {};
-  template <typename T>
-  struct is_container_like<
-      T, std::void_t<decltype(std::declval<const T &>().begin()), decltype(std::declval<const T &>().end()),
-                     decltype(std::declval<const T &>().size())>> : std::true_type {};
-
   template <typename Container>
   std::string container_to_string(const Container &c, size_t max_items = 8) {
     std::ostringstream os;
@@ -103,7 +97,7 @@ namespace ttest_cpp__ {
 
 } /* namespace ttest_cpp__ */
 
-  #define check_eq(actual, expected)                                                               \
+  #define check_eq_container(actual, expected)                                                      \
     do {                                                                                           \
       size_t ttest_fi__ = 0;                                                                       \
       bool ttest_sm__ = false;                                                                     \
@@ -120,7 +114,7 @@ namespace ttest_cpp__ {
         }                                                                                          \
       }                                                                                            \
     } while (0)
-  #define check_eq_warn(actual, expected)                                                          \
+  #define check_eq_container_warn(actual, expected)                                                 \
     do {                                                                                           \
       size_t ttest_fi__ = 0;                                                                       \
       bool ttest_sm__ = false;                                                                     \
@@ -351,10 +345,7 @@ namespace ttest_cpp__ {
     do {                                                                                           \
       const auto &ttest_a_ref__ = (actual);                                                        \
       const auto &ttest_e_ref__ = (expected);                                                      \
-      if constexpr (ttest_cpp__::is_container_like<decltype(ttest_a_ref__)>::value &&                  \
-                    ttest_cpp__::is_container_like<decltype(ttest_e_ref__)>::value) {                \
-        check_eq(ttest_a_ref__, ttest_e_ref__);                                                    \
-      } else if (!ttest_eval_bool__(!!(ttest_cpp__::ttest_equal__(ttest_a_ref__, ttest_e_ref__)))) { \
+      if (!ttest_eval_bool__(!!(ttest_cpp__::ttest_equal__(ttest_a_ref__, ttest_e_ref__)))) {        \
         std::string __a = ttest_cpp__::to_string_safe(ttest_a_ref__);                              \
         std::string __e = ttest_cpp__::to_string_safe(ttest_e_ref__);                              \
         TTEST_CHECK__(0, "expected %s but got %s", __e.c_str(), __a.c_str());                      \
@@ -366,10 +357,7 @@ namespace ttest_cpp__ {
     do {                                                                                           \
       const auto &ttest_a_ref__ = (actual);                                                        \
       const auto &ttest_e_ref__ = (expected);                                                      \
-      if constexpr (ttest_cpp__::is_container_like<decltype(ttest_a_ref__)>::value &&                  \
-                    ttest_cpp__::is_container_like<decltype(ttest_e_ref__)>::value) {                \
-        check_eq_warn(ttest_a_ref__, ttest_e_ref__);                                               \
-      } else if (!ttest_eval_bool__(!!(ttest_cpp__::ttest_equal__(ttest_a_ref__, ttest_e_ref__)))) { \
+      if (!ttest_eval_bool__(!!(ttest_cpp__::ttest_equal__(ttest_a_ref__, ttest_e_ref__)))) {        \
         std::string __a = ttest_cpp__::to_string_safe(ttest_a_ref__);                              \
         std::string __e = ttest_cpp__::to_string_safe(ttest_e_ref__);                              \
         TTEST_WARN__(0, "expected %s but got %s", __e.c_str(), __a.c_str());                       \

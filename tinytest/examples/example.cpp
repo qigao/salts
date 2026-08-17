@@ -98,7 +98,7 @@ suite("tinytest C++ Example") {
       it("should compare vectors") {
         std::vector<int> actual = {1, 2, 3, 4, 5};
         std::vector<int> expected = {1, 2, 3, 4, 5};
-        check_eq(actual, expected);
+        check_eq_container(actual, expected);
       }
 
       it("should check size and membership") {
@@ -114,7 +114,7 @@ suite("tinytest C++ Example") {
       it("should compare lists") {
         std::list<std::string> actual = {"a", "b", "c"};
         std::list<std::string> expected = {"a", "b", "c"};
-        check_eq(actual, expected);
+        check_eq_container(actual, expected);
       }
     }
 
@@ -122,7 +122,7 @@ suite("tinytest C++ Example") {
       it("should compare sets") {
         std::set<int> actual = {3, 1, 2};
         std::set<int> expected = {1, 2, 3};
-        check_eq(actual, expected);
+        check_eq_container(actual, expected);
       }
 
       it("should check membership") {
@@ -164,7 +164,7 @@ suite("tinytest C++ Example") {
     it("should split by delimiter") {
       auto tokens = parser.split("one,two,three", ',');
       std::vector<std::string> expected = {"one", "two", "three"};
-      check_eq(tokens, expected);
+      check_eq_container(tokens, expected);
     }
 
     it("should handle single token") {

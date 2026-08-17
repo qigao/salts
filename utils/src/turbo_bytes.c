@@ -1,4 +1,4 @@
-#include "turbo_byte_buffer.h"
+#include "turbo_bytes.h"
 
 #include "turbo_error.h"
 
@@ -6,24 +6,24 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TURBO_BYTE_BUFFER_MIN_CAPACITY 256u
+#define turbo_bytes_MIN_CAPACITY 256u
 
-static int turbo_byte_buffer_valid(const turbo_byte_buffer_t *buffer) {
+static int turbo_bytes_valid(const turbo_bytes_t *buffer) {
   if (!buffer || buffer->max_bytes == 0u || buffer->read_pos > buffer->write_pos ||
       buffer->write_pos > buffer->capacity || buffer->capacity > buffer->max_bytes)
     return 0;
   return (buffer->capacity == 0u) == (buffer->data == NULL);
 }
 
-static size_t turbo_byte_buffer_unread(const turbo_byte_buffer_t *buffer) {
+static size_t turbo_bytes_unread(const turbo_bytes_t *buffer) {
   return buffer->write_pos - buffer->read_pos;
 }
 
-static size_t turbo_byte_buffer_growth(const turbo_byte_buffer_t *buffer, size_t required) {
+static size_t turbo_bytes_growth(const turbo_bytes_t *buffer, size_t required) {
   size_t grown;
 
   if (buffer->capacity == 0u) {
-    grown = TURBO_BYTE_BUFFER_MIN_CAPACITY;
+    grown = turbo_bytes_MIN_CAPACITY;
   } else if (buffer->capacity > buffer->max_bytes - buffer->capacity / 2u) {
     grown = buffer->max_bytes;
   } else {
@@ -34,7 +34,7 @@ static size_t turbo_byte_buffer_growth(const turbo_byte_buffer_t *buffer, size_t
   return grown;
 }
 
-static int turbo_byte_buffer_source(const turbo_byte_buffer_t *buffer, const void *data,
+static int turbo_bytes_source(const turbo_bytes_t *buffer, const void *data,
                                     size_t size, size_t *unread_offset, int *aliases) {
   uintptr_t base;
   uintptr_t end;
@@ -60,44 +60,44 @@ static int turbo_byte_buffer_source(const turbo_byte_buffer_t *buffer, const voi
   return TURBO_OK;
 }
 
-int turbo_byte_buffer_init(turbo_byte_buffer_t *buffer, size_t max_bytes) {
+int turbo_bytes_init(turbo_bytes_t *buffer, size_t max_bytes) {
   if (!buffer || max_bytes == 0u) return TURBO_EINVAL;
   memset(buffer, 0, sizeof(*buffer));
   buffer->max_bytes = max_bytes;
   return TURBO_OK;
 }
 
-void turbo_byte_buffer_destroy(turbo_byte_buffer_t *buffer) {
+void turbo_bytes_destroy(turbo_bytes_t *buffer) {
   if (!buffer) return;
   free(buffer->data);
   memset(buffer, 0, sizeof(*buffer));
 }
 
-size_t turbo_byte_buffer_size(const turbo_byte_buffer_t *buffer) {
-  return turbo_byte_buffer_valid(buffer) ? turbo_byte_buffer_unread(buffer) : 0u;
+size_t turbo_bytes_size(const turbo_bytes_t *buffer) {
+  return turbo_bytes_valid(buffer) ? turbo_bytes_unread(buffer) : 0u;
 }
 
-size_t turbo_byte_buffer_available(const turbo_byte_buffer_t *buffer) {
-  return turbo_byte_buffer_valid(buffer) ? buffer->max_bytes - turbo_byte_buffer_unread(buffer)
+size_t turbo_bytes_available(const turbo_bytes_t *buffer) {
+  return turbo_bytes_valid(buffer) ? buffer->max_bytes - turbo_bytes_unread(buffer)
                                          : 0u;
 }
 
-size_t turbo_byte_buffer_capacity(const turbo_byte_buffer_t *buffer) {
-  return turbo_byte_buffer_valid(buffer) ? buffer->capacity : 0u;
+size_t turbo_bytes_capacity(const turbo_bytes_t *buffer) {
+  return turbo_bytes_valid(buffer) ? buffer->capacity : 0u;
 }
 
-int turbo_byte_buffer_append(turbo_byte_buffer_t *buffer, const void *data, size_t size) {
+int turbo_bytes_append(turbo_bytes_t *buffer, const void *data, size_t size) {
   size_t unread;
   size_t source_offset;
   int aliases;
   int rc;
 
-  if (!turbo_byte_buffer_valid(buffer) || (!data && size != 0u)) return TURBO_EINVAL;
-  unread = turbo_byte_buffer_unread(buffer);
+  if (!turbo_bytes_valid(buffer) || (!data && size != 0u)) return TURBO_EINVAL;
+  unread = turbo_bytes_unread(buffer);
   if (size > buffer->max_bytes - unread) return TURBO_ENOSPC;
   if (size == 0u) return TURBO_OK;
 
-  rc = turbo_byte_buffer_source(buffer, data, size, &source_offset, &aliases);
+  rc = turbo_bytes_source(buffer, data, size, &source_offset, &aliases);
   if (rc != TURBO_OK) return rc;
 
   if (size <= buffer->capacity - buffer->write_pos) {
@@ -117,7 +117,7 @@ int turbo_byte_buffer_append(turbo_byte_buffer_t *buffer, const void *data, size
 
   {
     size_t required = unread + size;
-    size_t new_capacity = turbo_byte_buffer_growth(buffer, required);
+    size_t new_capacity = turbo_bytes_growth(buffer, required);
     uint8_t *next = (uint8_t *)malloc(new_capacity);
     if (!next) return TURBO_ENOMEM;
 
@@ -133,23 +133,23 @@ int turbo_byte_buffer_append(turbo_byte_buffer_t *buffer, const void *data, size
   return TURBO_OK;
 }
 
-int turbo_byte_buffer_view(const turbo_byte_buffer_t *buffer, turbo_byte_buffer_view_t *out) {
-  turbo_byte_buffer_view_t view;
+int turbo_bytes_view(const turbo_bytes_t *buffer, turbo_bytes_view_t *out) {
+  turbo_bytes_view_t view;
   size_t unread;
 
-  if (!turbo_byte_buffer_valid(buffer) || !out) return TURBO_EINVAL;
-  unread = turbo_byte_buffer_unread(buffer);
+  if (!turbo_bytes_valid(buffer) || !out) return TURBO_EINVAL;
+  unread = turbo_bytes_unread(buffer);
   view.data = unread != 0u ? buffer->data + buffer->read_pos : NULL;
   view.size = unread;
   *out = view;
   return TURBO_OK;
 }
 
-int turbo_byte_buffer_consume(turbo_byte_buffer_t *buffer, size_t size) {
+int turbo_bytes_consume(turbo_bytes_t *buffer, size_t size) {
   size_t unread;
 
-  if (!turbo_byte_buffer_valid(buffer)) return TURBO_EINVAL;
-  unread = turbo_byte_buffer_unread(buffer);
+  if (!turbo_bytes_valid(buffer)) return TURBO_EINVAL;
+  unread = turbo_bytes_unread(buffer);
   if (size > unread) return TURBO_ERANGE;
   if (size == unread) {
     buffer->read_pos = 0u;
@@ -160,8 +160,8 @@ int turbo_byte_buffer_consume(turbo_byte_buffer_t *buffer, size_t size) {
   return TURBO_OK;
 }
 
-void turbo_byte_buffer_reset(turbo_byte_buffer_t *buffer) {
-  if (!turbo_byte_buffer_valid(buffer)) return;
+void turbo_bytes_reset(turbo_bytes_t *buffer) {
+  if (!turbo_bytes_valid(buffer)) return;
   buffer->read_pos = 0u;
   buffer->write_pos = 0u;
 }

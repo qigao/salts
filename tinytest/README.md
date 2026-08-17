@@ -294,7 +294,7 @@ Include `tinytest.hpp` to enable the C++-only container, string, generic, and
 exception assertions.
 
 ```cpp
-check_eq(vec_a, vec_b);                /* any iterable container */
+check_eq_container(vec_a, vec_b);       /* any iterable container */
 check_map_eq(map_a, map_b);           /* maps with key/value diff */
 check_contains(vec, value);
 check_not_contains(vec, value);

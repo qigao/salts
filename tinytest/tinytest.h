@@ -48,7 +48,7 @@ extern "C" {
   #include <direct.h>
   #include <io.h>
   #include <sys/stat.h>
-  #define TTEST_IS_ATTY_() _isatty(_fileno(stdout))
+  #define TTEST_IS_ATTY__() _isatty(_fileno(stdout))
 #else
   #ifndef _POSIX_C_SOURCE
     /* This definition is required for `fileno` to be defined */
@@ -58,7 +58,7 @@ extern "C" {
   #include <stdio.h>
   #include <sys/stat.h>
   #include <unistd.h>
-  #define TTEST_IS_ATTY_() isatty(fileno(stdout))
+  #define TTEST_IS_ATTY__() isatty(fileno(stdout))
 #endif
 
 #include <float.h>
