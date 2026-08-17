@@ -1,5 +1,5 @@
-#ifndef BDD_ARRAY_H
-#define BDD_ARRAY_H
+#ifndef TT_ARRAY_H
+#define TT_ARRAY_H
 
 #include "stdlib.h"
 
@@ -56,4 +56,4 @@ void _bdd_array_free(_bdd_array* arr) {
     free(arr);
 }
 
-#endif //BDD_ARRAY_H
+#endif //TT_ARRAY_H

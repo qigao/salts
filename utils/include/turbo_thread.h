@@ -70,7 +70,39 @@ extern "C" {
 
 /**
  * @brief Initialize a mutex
- * @param mutex Mutex to initialize
+ * @param mutex Pointer to an uninitialized mutex variable
+ * 
+ * IMPORTANT: turbo_mutex_t is an opaque handle that MUST be initialized before use.
+ *            Zero-initialization or static initialization is INVALID.
+ * 
+ * THREAD SAFETY: Safe to call concurrently for different mutexes.
+ * 
+ * CORRECT USAGE:
+ *   turbo_mutex_t mutex;              // Declare (uninitialized)
+ *   turbo_mutex_init(&mutex);         // Initialize
+ *   turbo_mutex_lock(&mutex);         // Use
+ *   turbo_mutex_destroy(&mutex);      // Clean up
+ * 
+ * INCORRECT USAGE:
+ *   turbo_mutex_t mutex = {0};        // ❌ Invalid initialization!
+ *   turbo_mutex_t mutex = NULL;       // ❌ Invalid initialization!
+ *   static turbo_mutex_t mutex;       // ❌ Zero-init in static storage!
+ *   turbo_mutex_lock(&mutex);         // ❌ Crashes with NULL pointer!
+ * 
+ * For file-scope or static mutexes, use turbo_once():
+ *   static turbo_mutex_t file_lock;
+ *   static turbo_once_t init_guard = TURBO_ONCE_INIT;
+ *   
+ *   void init_file_lock(void) {
+ *     turbo_mutex_init(&file_lock);
+ *   }
+ *   
+ *   void use_file_lock(void) {
+ *     turbo_once(&init_guard, init_file_lock);
+ *     turbo_mutex_lock(&file_lock);
+ *     // ... critical section ...
+ *     turbo_mutex_unlock(&file_lock);
+ *   }
  */
 CXX_C_API void turbo_mutex_init(turbo_mutex_t *mutex);
 
@@ -149,7 +181,24 @@ CXX_C_API void turbo_rwlock_wrunlock(turbo_rwlock_t *lock);
 
 /**
  * @brief Initialize a condition variable
- * @param cond Condition variable to initialize
+ * @param cond Pointer to an uninitialized condition variable
+ * 
+ * IMPORTANT: turbo_cond_t is an opaque handle that MUST be initialized before use.
+ *            Zero-initialization is INVALID (same as turbo_mutex_t).
+ * 
+ * THREAD SAFETY: Safe to call concurrently for different condition variables.
+ * 
+ * CORRECT USAGE:
+ *   turbo_cond_t cond;
+ *   turbo_cond_init(&cond);
+ *   turbo_cond_wait(&cond, &mutex);
+ *   turbo_cond_destroy(&cond);
+ * 
+ * INCORRECT USAGE:
+ *   turbo_cond_t cond = {0};          // ❌ Invalid!
+ *   static turbo_cond_t cond;         // ❌ Zero-init invalid!
+ * 
+ * For static condition variables, use turbo_once() (similar to mutex example).
  */
 CXX_C_API void turbo_cond_init(turbo_cond_t *cond);
 
@@ -193,10 +242,28 @@ CXX_C_API int turbo_cond_timedwait(turbo_cond_t *cond, turbo_mutex_t *mutex, uin
 
 /**
  * @brief Create a new thread
- * @param thread Thread handle
+ * @param thread Pointer to uninitialized thread handle
  * @param entry Entry point function
  * @param arg Argument passed to entry point
  * @return 0 on success, < 0 on failure
+ * 
+ * IMPORTANT: turbo_thread_t is an opaque handle. After turbo_thread_create()
+ *            succeeds, you MUST call either turbo_thread_join() or
+ *            turbo_thread_destroy() to avoid resource leaks.
+ * 
+ * THREAD SAFETY: Safe to call concurrently for different threads.
+ * 
+ * CORRECT USAGE:
+ *   turbo_thread_t thread;
+ *   if (turbo_thread_create(&thread, worker_fn, arg) == 0) {
+ *     turbo_thread_join(&thread);     // Wait for completion
+ *   }
+ * 
+ * DETACH USAGE:
+ *   turbo_thread_t thread;
+ *   if (turbo_thread_create(&thread, worker_fn, arg) == 0) {
+ *     turbo_thread_destroy(&thread);  // Detach, runs independently
+ *   }
  */
 CXX_C_API int turbo_thread_create(turbo_thread_t *thread, turbo_thread_cb entry, void *arg);
 

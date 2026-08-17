@@ -1,3 +1,21 @@
+/**
+ * @file turbo_vec.h
+ * @brief Dynamic array implementation
+ * 
+ * THREAD SAFETY: NOT thread-safe. Each turbo_vec_t instance must be accessed
+ *                by only one thread at a time. Use external synchronization
+ *                (e.g., mutex) for shared vectors.
+ * 
+ * CONCURRENCY MODEL: Single-owner model. For multi-threaded scenarios:
+ *                    - Use one vec per thread (thread-local), or
+ *                    - Protect shared vec with external mutex, or
+ *                    - Use read-write lock for concurrent reads + exclusive writes
+ * 
+ * CONCURRENT READS: Multiple threads may safely read a const turbo_vec_t
+ *                   (using turbo_vec_at_const, turbo_vec_size, etc.) if no
+ *                   thread is modifying it. Reallocation invalidates pointers.
+ */
+
 #ifndef TURBO_VEC_H
 #define TURBO_VEC_H
 

@@ -57,8 +57,8 @@ spec("tinytest runtime regression") {
   }
 
   it("benchmark metrics should keep samples, operations, and bytes distinct") {
-    __bdd_bench_entry__ entry =
-        __bdd_bench_make_entry__("batched io", 4, 8.0, 1.5, 2.5, 10, 1024 * 1024, true);
+    ttest_bench_entry__ entry =
+        ttest_bench_make_entry__("batched io", 4, 8.0, 1.5, 2.5, 10, 1024 * 1024, true);
 
     check_size_eq(entry.samples, 4);
     check_size_eq(entry.operations_per_sample, 10);

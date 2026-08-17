@@ -241,7 +241,7 @@ int ac_automaton_build(ac_automaton_t *ac) {
 int ac_automaton_match(const ac_automaton_t *ac, tstr_v text, ac_match_cb cb, void *user_data) {
   int32_t state = 0;
 
-  if (!ac || !ac->initialized || !text.data && text.len != 0U || !cb) return TURBO_EINVAL;
+  if (!ac || !ac->initialized || !cb || (text.len != 0U && !text.data)) return TURBO_EINVAL;
   if (!ac->built) return TURBO_EINVAL;
 
   for (size_t pos = 0; pos < text.len; ++pos) {
@@ -284,10 +284,6 @@ static ac_utf8_node_t *ac_utf8_node_at(ac_utf8_automaton_t *ac, int32_t index) {
 
 static const ac_utf8_node_t *ac_utf8_node_at_const(const ac_utf8_automaton_t *ac, int32_t index) {
   return (const ac_utf8_node_t *)turbo_vec_at_const(&ac->nodes, (size_t)index);
-}
-
-static ac_utf8_edge_t *ac_utf8_edge_at(ac_utf8_automaton_t *ac, int32_t index) {
-  return (ac_utf8_edge_t *)turbo_vec_at(&ac->edges, (size_t)index);
 }
 
 static const ac_utf8_edge_t *ac_utf8_edge_at_const(const ac_utf8_automaton_t *ac, int32_t index) {
@@ -538,7 +534,7 @@ int ac_utf8_automaton_match(const ac_utf8_automaton_t *ac, tstr_v text, ac_match
   tstr_v rest = text;
   uint32_t cp = 0U;
 
-  if (!ac || !ac->initialized || !cb || !text.data && text.len != 0U || !ac->built)
+  if (!ac || !ac->initialized || !cb || !ac->built || (text.len != 0U && !text.data))
     return TURBO_EINVAL;
   if (!tstr_v_utf8_valid(text)) return TURBO_EINVAL;
 

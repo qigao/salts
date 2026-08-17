@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: MIT
+
+cmake_minimum_required(VERSION 3.20)
+
+set(TARGET_NAME turbo_serial)
+set(EXAMPLES_TARGET_NAME ${TARGET_NAME}_examples)
+set(TURBO_SERIAL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+set(TURBO_SERIAL_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+
+set(TURBOSERIAL_SOURCES
+    turbo_serial.c)
+
+set(TURBOSERIAL_PLATFORM_LIBS)
+set(TURBOSERIAL_INSTALL_HEADERS turbo_serial.h)
+
+if(WIN32)
+  list(APPEND TURBOSERIAL_SOURCES backend_win32.c)
+  list(APPEND TURBOSERIAL_PLATFORM_LIBS setupapi cfgmgr32)
+else()
+  list(APPEND TURBOSERIAL_SOURCES backend_posix.c)
+endif()
+
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/turbo_serial.h
+  ${CMAKE_CURRENT_BINARY_DIR}/include/turbo_serial.h
+  COPYONLY)
+
+add_library(${TARGET_NAME} SHARED
+  ${TURBOSERIAL_SOURCES}
+  ${TURBOSERIAL_INSTALL_HEADERS})
+add_library(TurboUtils::turbo_serial ALIAS ${TARGET_NAME})
+
+target_include_directories(${TARGET_NAME}
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(${TARGET_NAME}
+  PUBLIC TurboUtils::Core
+  PRIVATE ${TURBOSERIAL_PLATFORM_LIBS})
+
+set_target_properties(${TARGET_NAME} PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  DEFINE_SYMBOL TURBO_SERIAL_EXPORTS
+  OUTPUT_NAME turbo_serial
+  C_VISIBILITY_PRESET hidden
+  VISIBILITY_INLINES_HIDDEN ON
+  POSITION_INDEPENDENT_CODE ON)
+
+if(MSVC)
+  target_compile_options(${TARGET_NAME} PRIVATE /wd4996)
+else()
+  target_compile_options(${TARGET_NAME} PRIVATE -Wall -Wextra)
+endif()
+
+cmake_config_target(
+  ${TARGET_NAME}
+  FOLDER "turbo_serial"
+  EXPORT_NAME turbo_serial)
+
+install(
+  TARGETS ${TARGET_NAME}
+  EXPORT TurboUtilsTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+install(FILES ${TURBOSERIAL_INSTALL_HEADERS} DESTINATION include)
+
+if(BUILD_TESTS AND ENABLE_TESTS)
+  add_subdirectory(test)
+endif()
+
+if(BUILD_EXAMPLES)
+  add_subdirectory(examples)
+endif()

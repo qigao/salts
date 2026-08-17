@@ -8,14 +8,15 @@
  *   - BDD syntax:  spec/describe/it/before/after/before_each/after_each
  *   - TDD syntax:  suite/section/it/check macros
  *   - Typed assertions: check_int_eq, check_str_eq, check_float_eq, etc.
- *   - C++ templates: check_equal<T>, check_not_equal<T>, check_greater<T>, check_less<T>
- *   - Exception testing: check_throws, check_throws_as, check_nothrow, etc.
+ *   - C++ template, container, string, and exception assertions are provided by
+ *     tinytest.hpp; include that header from C++ tests.
  *   - Benchmarking: benchmark_batch/benchmark_ops/benchmark_bytes/benchmark_io
  *   - Output formats: colored console, TAP, JUnit XML
  *   - Test filtering: --filter, --list, focus (fit/it_only), skip (xit)
  *
  * Usage:
- *   #include "tinytest.h"
+ *   #include "tinytest.h" (C tests)
+ *   #include "tinytest.hpp" (C++ tests)
  *
  *   spec("my module") {
  *       describe("feature") {
@@ -47,7 +48,7 @@ extern "C" {
   #include <direct.h>
   #include <io.h>
   #include <sys/stat.h>
-  #define __BDD_IS_ATTY__() _isatty(_fileno(stdout))
+  #define TTEST_IS_ATTY_() _isatty(_fileno(stdout))
 #else
   #ifndef _POSIX_C_SOURCE
     /* This definition is required for `fileno` to be defined */
@@ -57,9 +58,10 @@ extern "C" {
   #include <stdio.h>
   #include <sys/stat.h>
   #include <unistd.h>
-  #define __BDD_IS_ATTY__() isatty(fileno(stdout))
+  #define TTEST_IS_ATTY_() isatty(fileno(stdout))
 #endif
 
+#include <float.h>
 #include <math.h>
 #include <setjmp.h>
 #include <stdarg.h>
@@ -81,209 +83,231 @@ extern "C" {
       disable : 4127) /* conditional expression is constant (check macros with constant args) */
 #endif
 
-#ifndef BDD_USE_COLOR
-  #define BDD_USE_COLOR 1
+#ifndef TT_USE_COLOR
+  #define TT_USE_COLOR 1
 #endif
 
-#ifndef BDD_USE_TAP
-  #define BDD_USE_TAP 0
+#ifndef TT_USE_TAP
+  #define TT_USE_TAP 0
 #endif
 
-#ifndef BDD_BENCH_NAME_WIDTH
-  #define BDD_BENCH_NAME_WIDTH 32
+#ifndef TT_BENCH_NAME_WIDTH
+  #define TT_BENCH_NAME_WIDTH 32
 #endif
 
-#ifndef BDD_BENCH_TABLE
-  #define BDD_BENCH_TABLE 1
+#ifndef TT_BENCH_TABLE
+  #define TT_BENCH_TABLE 1
 #endif
 
 #if defined(__clang__)
-  #define __BDD_NO_SANITIZE_ADDRESS__ __attribute__((no_sanitize("address")))
+  #define TTEST_NO_SANITIZE_ADDRESS__ __attribute__((no_sanitize("address")))
 #elif defined(__GNUC__)
-  #define __BDD_NO_SANITIZE_ADDRESS__ __attribute__((no_sanitize_address))
+  #define TTEST_NO_SANITIZE_ADDRESS__ __attribute__((no_sanitize_address))
 #else
-  #define __BDD_NO_SANITIZE_ADDRESS__
+  #define TTEST_NO_SANITIZE_ADDRESS__
+#endif
+
+/* _Pragma-based diagnostic suppression for GCC/Clang.
+ * Applied around macro bodies that declare internal variables (to suppress
+ * -Wshadow when expanded inside user scopes) and that use !!(x) expressions
+ * (to suppress -Wunused-value on some compilers).
+ * MSVC diagnostic suppression is handled by the file-level #pragma warning above. */
+#if defined(__clang__)
+  #define TTEST_DIAG_PUSH__                _Pragma("clang diagnostic push")
+  #define TTEST_DIAG_POP__                 _Pragma("clang diagnostic pop")
+  #define TTEST_DIAG_IGNORE_SHADOW__       _Pragma("clang diagnostic ignored \"-Wshadow\"")
+  #define TTEST_DIAG_IGNORE_UNUSED_VALUE__ _Pragma("clang diagnostic ignored \"-Wunused-value\"")
+#elif defined(__GNUC__)
+  #define TTEST_DIAG_PUSH__                _Pragma("GCC diagnostic push")
+  #define TTEST_DIAG_POP__                 _Pragma("GCC diagnostic pop")
+  #define TTEST_DIAG_IGNORE_SHADOW__       _Pragma("GCC diagnostic ignored \"-Wshadow\"")
+  #define TTEST_DIAG_IGNORE_UNUSED_VALUE__ _Pragma("GCC diagnostic ignored \"-Wunused-value\"")
+#else
+  #define TTEST_DIAG_PUSH__
+  #define TTEST_DIAG_POP__
+  #define TTEST_DIAG_IGNORE_SHADOW__
+  #define TTEST_DIAG_IGNORE_UNUSED_VALUE__
 #endif
 
 /* Cast macros to avoid -Wold-style-cast in C++ */
 #ifdef __cplusplus
-  #define __BDD_CAST(type, expr) static_cast<type>(expr)
-  #define __BDD_REINTERPRET_CAST(type, expr) reinterpret_cast<type>(expr)
-  #define __BDD_CONST_CAST(type, expr) const_cast<type>(expr)
+  #define TTEST_CAST(type, expr) static_cast<type>(expr)
+  #define TTEST_REINTERPRET_CAST(type, expr) reinterpret_cast<type>(expr)
+  #define TTEST_CONST_CAST(type, expr) const_cast<type>(expr)
 #else
-  #define __BDD_CAST(type, expr) ((type)(expr))
-  #define __BDD_REINTERPRET_CAST(type, expr) ((type)(expr))
-  #define __BDD_CONST_CAST(type, expr) ((type)(expr))
+  #define TTEST_CAST(type, expr) ((type)(expr))
+  #define TTEST_REINTERPRET_CAST(type, expr) ((type)(expr))
+  #define TTEST_CONST_CAST(type, expr) ((type)(expr))
 #endif
 
-#define __BDD_COLOR_RESET__ "\x1B[0m"
-#define __BDD_COLOR_RED__ "\x1B[31m"
-#define __BDD_COLOR_GREEN__ "\x1B[32m"
-#define __BDD_COLOR_YELLOW__ "\x1B[33m"
-#define __BDD_COLOR_BOLD__ "\x1B[1m"
-#define __BDD_COLOR_MAGENTA__ "\x1B[35m"
+#define TTEST_COLOR_RESET__ "\x1B[0m"
+#define TTEST_COLOR_RED__ "\x1B[31m"
+#define TTEST_COLOR_GREEN__ "\x1B[32m"
+#define TTEST_COLOR_YELLOW__ "\x1B[33m"
+#define TTEST_COLOR_BOLD__ "\x1B[1m"
+#define TTEST_COLOR_MAGENTA__ "\x1B[35m"
 
-#ifndef __BDD_TLS
+#ifndef TTEST_TLS
   #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_THREADS__)
-    #define __BDD_TLS _Thread_local
+    #define TTEST_TLS _Thread_local
   #elif defined(_MSC_VER)
-    #define __BDD_TLS __declspec(thread)
+    #define TTEST_TLS __declspec(thread)
   #elif defined(__GNUC__) || defined(__clang__)
-    #define __BDD_TLS __thread
+    #define TTEST_TLS __thread
   #else
-    #define __BDD_TLS
+    #define TTEST_TLS
   #endif
 #endif
 
 /* Cross-TU shared globals for header-only library */
 #if defined(_MSC_VER)
-  #define __BDD_SELECTANY __declspec(selectany)
+  #define TTEST_SELECTANY __declspec(selectany)
 #else
-  #define __BDD_SELECTANY __attribute__((weak))
+  #define TTEST_SELECTANY __attribute__((weak))
 #endif
 
 /* Cross-platform high-resolution timer */
-static inline double __bdd_get_time_ms__(void) {
+static inline double ttest_get_time_ms__(void) {
 #ifdef _WIN32
   LARGE_INTEGER frequency, counter;
   QueryPerformanceFrequency(&frequency);
   QueryPerformanceCounter(&counter);
-  return __BDD_CAST(double, counter.QuadPart) * 1000.0 / __BDD_CAST(double, frequency.QuadPart);
+  return TTEST_CAST(double, counter.QuadPart) * 1000.0 / TTEST_CAST(double, frequency.QuadPart);
 #else
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
-  return __BDD_CAST(double, ts.tv_sec) * 1000.0 + __BDD_CAST(double, ts.tv_nsec) / 1000000.0;
+  return TTEST_CAST(double, ts.tv_sec) * 1000.0 + TTEST_CAST(double, ts.tv_nsec) / 1000000.0;
 #endif
 }
 
-static void __bdd_indent__(FILE *fp, size_t level);
+static void ttest_indent__(FILE *fp, size_t level);
 
-typedef struct __bdd_config_type__ __bdd_config_type__;
-typedef void (*__bdd_spec_fn__)(__bdd_config_type__ *__bdd_config__);
+typedef struct ttest_config_type__ ttest_config_type__;
+typedef void (*ttest_spec_fn__)(ttest_config_type__ *ttest_config__);
 
-typedef enum __bdd_error_code__ {
-  __BDD_ERR_OK__ = 0,
-  __BDD_ERR_IO__ = -1,
-  __BDD_ERR_TIME__ = -2,
-  __BDD_ERR_FORMAT__ = -3
-} __bdd_error_code__;
+typedef enum ttest_error_code__ {
+  TTEST_ERR_OK__ = 0,
+  TTEST_ERR_IO__ = -1,
+  TTEST_ERR_TIME__ = -2,
+  TTEST_ERR_FORMAT__ = -3
+} ttest_error_code__;
 
-typedef struct __bdd_result__ {
+typedef struct ttest_result__ {
   bool ok;
-  __bdd_error_code__ error;
+  ttest_error_code__ error;
   const char *message;
-} __bdd_result__;
+} ttest_result__;
 
-static inline __bdd_result__ __bdd_result_ok__(void) {
-  __bdd_result__ result = {true, __BDD_ERR_OK__, NULL};
+static inline ttest_result__ ttest_result_ok__(void) {
+  ttest_result__ result = {true, TTEST_ERR_OK__, NULL};
   return result;
 }
 
-static inline __bdd_result__ __bdd_result_error__(__bdd_error_code__ error, const char *message) {
-  __bdd_result__ result = {false, error, message};
+static inline ttest_result__ ttest_result_error__(ttest_error_code__ error, const char *message) {
+  ttest_result__ result = {false, error, message};
   return result;
 }
 
-typedef struct __bdd_spec_entry__ {
+typedef struct ttest_spec_entry__ {
   const char *name;
-  __bdd_spec_fn__ fn;
-  struct __bdd_spec_entry__ *next;
-} __bdd_spec_entry__;
+  ttest_spec_fn__ fn;
+  struct ttest_spec_entry__ *next;
+} ttest_spec_entry__;
 
-__BDD_SELECTANY __bdd_spec_entry__ *__bdd_specs__ = NULL;
-__BDD_SELECTANY size_t __bdd_spec_count__ = 0;
+TTEST_SELECTANY ttest_spec_entry__ *ttest_specs__ = NULL;
+TTEST_SELECTANY size_t ttest_spec_count__ = 0;
 
-static void __bdd_register_spec__(const char *name, __bdd_spec_fn__ fn) {
-  __bdd_spec_entry__ *e = __BDD_CAST(__bdd_spec_entry__ *, malloc(sizeof(__bdd_spec_entry__)));
+static void ttest_register_spec__(const char *name, ttest_spec_fn__ fn) {
+  ttest_spec_entry__ *e = TTEST_CAST(ttest_spec_entry__ *, malloc(sizeof(ttest_spec_entry__)));
   if (!e) {
     perror("malloc(spec)");
     abort();
   }
   e->name = name;
   e->fn = fn;
-  e->next = __bdd_specs__;
-  __bdd_specs__ = e;
-  __bdd_spec_count__++;
+  e->next = ttest_specs__;
+  ttest_specs__ = e;
+  ttest_spec_count__++;
 }
 
-static __bdd_spec_entry__ *__bdd_get_spec_entry__(size_t index) {
-  __bdd_spec_entry__ *e = __bdd_specs__;
+static ttest_spec_entry__ *ttest_get_spec_entry__(size_t index) {
+  ttest_spec_entry__ *e = ttest_specs__;
   for (size_t i = 0; i < index && e; ++i) {
     e = e->next;
   }
   return e;
 }
 
-static void __bdd_cleanup_specs__(void) {
-  __bdd_spec_entry__ *e = __bdd_specs__;
+static void ttest_cleanup_specs__(void) {
+  ttest_spec_entry__ *e = ttest_specs__;
   while (e) {
-    __bdd_spec_entry__ *next = e->next;
+    ttest_spec_entry__ *next = e->next;
     free(e);
     e = next;
   }
-  __bdd_specs__ = NULL;
-  __bdd_spec_count__ = 0;
+  ttest_specs__ = NULL;
+  ttest_spec_count__ = 0;
 }
 
 #if defined(__cplusplus)
-  #define __BDD_CONSTRUCTOR__(fn)                                                                  \
+  #define TTEST_CONSTRUCTOR__(fn)                                                                  \
     static void fn(void);                                                                          \
     namespace {                                                                                    \
-      struct __BDD_CAT2(__bdd_ctor_struct_, fn) {                                                  \
-        __BDD_CAT2(__bdd_ctor_struct_, fn)() { fn(); }                                             \
+      struct TTEST_CAT2(ttest_ctor_struct_, fn) {                                                  \
+        TTEST_CAT2(ttest_ctor_struct_, fn)() { fn(); }                                             \
       };                                                                                           \
-      static __BDD_CAT2(__bdd_ctor_struct_, fn) __BDD_CAT2(__bdd_ctor_obj_, fn);                   \
+      static TTEST_CAT2(ttest_ctor_struct_, fn) TTEST_CAT2(ttest_ctor_obj_, fn);                   \
     }                                                                                              \
     static void fn(void)
 #elif defined(_WIN32) && defined(__clang__)
   #ifdef read
     #pragma push_macro("read")
     #undef read
-    #define __BDD_POP_READ__ 1
+    #define TTEST_POP_READ__ 1
   #endif
   #pragma section(".CRT$XCU", read)
-  #ifdef __BDD_POP_READ__
+  #ifdef TTEST_POP_READ__
     #pragma pop_macro("read")
-    #undef __BDD_POP_READ__
+    #undef TTEST_POP_READ__
   #endif
-typedef void(__cdecl *__bdd_ctor_fn__)(void);
-  #define __BDD_CONSTRUCTOR__(fn)                                                                  \
+typedef void(__cdecl *ttest_ctor_fn__)(void);
+  #define TTEST_CONSTRUCTOR__(fn)                                                                  \
     static void __cdecl fn(void);                                                                  \
     __declspec(allocate(".CRT$XCU"))                                                               \
-    __attribute__((used)) static __bdd_ctor_fn__ __BDD_CAT2(__bdd_ctor_, fn) = fn;                 \
+    __attribute__((used)) static ttest_ctor_fn__ TTEST_CAT2(ttest_ctor_, fn) = fn;                 \
     static void __cdecl fn(void)
 #elif defined(_MSC_VER)
   #ifdef read
     #pragma push_macro("read")
     #undef read
-    #define __BDD_POP_READ__ 1
+    #define TTEST_POP_READ__ 1
   #endif
   #pragma section(".CRT$XCU", read)
-  #ifdef __BDD_POP_READ__
+  #ifdef TTEST_POP_READ__
     #pragma pop_macro("read")
-    #undef __BDD_POP_READ__
+    #undef TTEST_POP_READ__
   #endif
-typedef void(__cdecl *__bdd_ctor_fn__)(void);
-  #define __BDD_CONSTRUCTOR__(fn)                                                                  \
+typedef void(__cdecl *ttest_ctor_fn__)(void);
+  #define TTEST_CONSTRUCTOR__(fn)                                                                  \
     static void __cdecl fn(void);                                                                  \
-    __declspec(allocate(".CRT$XCU")) static __bdd_ctor_fn__ __BDD_CAT2(__bdd_ctor_, fn) = fn;      \
+    __declspec(allocate(".CRT$XCU")) static ttest_ctor_fn__ TTEST_CAT2(ttest_ctor_, fn) = fn;      \
     static void __cdecl fn(void)
 #elif defined(__GNUC__) || defined(__clang__)
-  #define __BDD_CONSTRUCTOR__(fn)                                                                  \
+  #define TTEST_CONSTRUCTOR__(fn)                                                                  \
     static void fn(void) __attribute__((constructor));                                             \
     static void fn(void)
 #else
-  #define __BDD_CONSTRUCTOR__(fn) static void fn(void)
+  #define TTEST_CONSTRUCTOR__(fn) static void fn(void)
 #endif
 
-static inline void __bdd_bench_print_header__(__bdd_config_type__ *config, size_t level);
+static inline void ttest_bench_print_header__(ttest_config_type__ *config, size_t level);
 
-static inline void __bdd_bench_print__(
-    __bdd_config_type__ *config, const char *title, size_t samples, double sum_ms, double min_ms,
+static inline void ttest_bench_print__(
+    ttest_config_type__ *config, const char *title, size_t samples, double sum_ms, double min_ms,
     double max_ms, size_t operations_per_sample, size_t bytes_per_sample, bool tracks_bytes,
     size_t level, bool use_color);
 
-static inline void __bdd_bench_reset__(__bdd_config_type__ *config);
+static inline void ttest_bench_reset__(ttest_config_type__ *config);
 
 /* Simple file helpers (cross-platform) */
 static inline char *tt_temp_dir(void) {
@@ -294,11 +318,11 @@ static inline char *tt_temp_dir(void) {
     const char *env = getenv("TEMP");
     if (!env) env = getenv("TMP");
     if (!env) env = ".";
-    char *res = __BDD_CAST(char *, malloc(strlen(env) + 1));
+    char *res = TTEST_CAST(char *, malloc(strlen(env) + 1));
     if (res) strcpy(res, env);
     return res;
   }
-  char *res = __BDD_CAST(char *, malloc(strlen(path) + 1));
+  char *res = TTEST_CAST(char *, malloc(strlen(path) + 1));
   if (res) strcpy(res, path);
   return res;
 #else
@@ -306,7 +330,7 @@ static inline char *tt_temp_dir(void) {
   if (!tmp) tmp = getenv("TMP");
   if (!tmp) tmp = getenv("TEMP");
   if (!tmp) tmp = "/tmp";
-  char *res = __BDD_CAST(char *, malloc(strlen(tmp) + 1));
+  char *res = TTEST_CAST(char *, malloc(strlen(tmp) + 1));
   if (res) strcpy(res, tmp);
   return res;
 #endif
@@ -330,7 +354,7 @@ static inline char *tt_read_file(const char *path, size_t *out_size) {
     fclose(fp);
     return NULL;
   }
-  buf = __BDD_CAST(char *, malloc((size_t)size + 1));
+  buf = TTEST_CAST(char *, malloc((size_t)size + 1));
   if (!buf) {
     fclose(fp);
     return NULL;
@@ -512,21 +536,21 @@ static inline int tt_remove_tree(const char *path) {
 #endif
 }
 
-typedef struct __bdd_array__ {
+typedef struct ttest_array__ {
   void **values;
   size_t capacity;
   size_t size;
-} __bdd_array__;
+} ttest_array__;
 
-static inline __bdd_array__ *__bdd_array_create__(void) {
-  __bdd_array__ *arr = __BDD_CAST(__bdd_array__ *, malloc(sizeof(__bdd_array__)));
+static inline ttest_array__ *ttest_array_create__(void) {
+  ttest_array__ *arr = TTEST_CAST(ttest_array__ *, malloc(sizeof(ttest_array__)));
   if (!arr) {
     perror("malloc(array)");
     abort();
   }
   arr->capacity = 4;
   arr->size = 0;
-  arr->values = __BDD_CAST(void **, calloc(arr->capacity, sizeof(void *)));
+  arr->values = TTEST_CAST(void **, calloc(arr->capacity, sizeof(void *)));
   if (!arr->values) {
     perror("calloc(array->values)");
     free(arr);
@@ -535,10 +559,10 @@ static inline __bdd_array__ *__bdd_array_create__(void) {
   return arr;
 }
 
-static inline void *__bdd_array_push__(__bdd_array__ *arr, void *item) {
+static inline void *ttest_array_push__(ttest_array__ *arr, void *item) {
   if (arr->size == arr->capacity) {
     arr->capacity *= 2;
-    void **v = __BDD_CAST(void **, realloc(arr->values, sizeof(void *) * arr->capacity));
+    void **v = TTEST_CAST(void **, realloc(arr->values, sizeof(void *) * arr->capacity));
     if (!v) {
       perror("realloc(array)");
       abort();
@@ -549,14 +573,14 @@ static inline void *__bdd_array_push__(__bdd_array__ *arr, void *item) {
   return item;
 }
 
-static inline void *__bdd_array_last__(__bdd_array__ *arr) {
+static inline void *ttest_array_last__(ttest_array__ *arr) {
   if (arr->size == 0) {
     return NULL;
   }
   return arr->values[arr->size - 1];
 }
 
-static inline void *__bdd_array_pop__(__bdd_array__ *arr) {
+static inline void *ttest_array_pop__(ttest_array__ *arr) {
   if (arr->size == 0) {
     return NULL;
   }
@@ -565,65 +589,117 @@ static inline void *__bdd_array_pop__(__bdd_array__ *arr) {
   return result;
 }
 
-static inline void __bdd_array_free__(__bdd_array__ *arr) {
+static inline void ttest_array_free__(ttest_array__ *arr) {
   if (arr) {
     free(arr->values);
     free(arr);
   }
 }
 
-static inline __bdd_array__ *__bdd_array_get_or_create__(__bdd_array__ **arr_ptr) {
+static inline ttest_array__ *ttest_array_get_or_create__(ttest_array__ **arr_ptr) {
   if (!*arr_ptr) {
-    *arr_ptr = __bdd_array_create__();
+    *arr_ptr = ttest_array_create__();
   }
   return *arr_ptr;
 }
 
-static inline size_t __bdd_array_size__(__bdd_array__ *arr) { return arr ? arr->size : 0; }
+static inline size_t ttest_array_size__(ttest_array__ *arr) { return arr ? arr->size : 0; }
 
-typedef enum __bdd_node_type__ {
-  __BDD_NODE_GROUP__ = 1,
-  __BDD_NODE_TEST__ = 2,
-  __BDD_NODE_INTERIM__ = 3
-} __bdd_node_type__;
+typedef enum ttest_node_type__ {
+  TTEST_NODE_GROUP__ = 1,
+  TTEST_NODE_TEST__ = 2,
+  TTEST_NODE_INTERIM__ = 3
+} ttest_node_type__;
 
-typedef enum __bdd_test_result__ {
-  __BDD_RESULT_PENDING__ = 0,
-  __BDD_RESULT_PASSED__ = 1,
-  __BDD_RESULT_FAILED__ = 2,
-  __BDD_RESULT_SKIPPED__ = 3,
-  __BDD_RESULT_EXPECTED_FAIL__ = 4,
-  __BDD_RESULT_UNEXPECTED_PASS__ = 5,
-  __BDD_RESULT_FILTERED__ = 6
-} __bdd_test_result__;
+enum {
+  TTEST_RESULT_CATEGORY_NONE__ = 0,
+  TTEST_RESULT_CATEGORY_PASS__,
+  TTEST_RESULT_CATEGORY_FAIL__,
+  TTEST_RESULT_CATEGORY_SKIP__,
+  TTEST_RESULT_CATEGORY_FILTER__,
+  TTEST_RESULT_CATEGORY_TODO__
+};
 
-typedef enum __bdd_node_flags__ {
-  __bdd_node_flags_none__ = 0,
-  __bdd_node_flags_focus__ = 1 << 0,
-  __bdd_node_flags_skip__ = 1 << 1,
-  __bdd_node_flags_expected_fail__ = 1 << 2,
-  __bdd_node_flags_benchmark__ = 1 << 3,
-} __bdd_node_flags__;
+/*
+ * Single source of truth for test-result enum values, display names, and
+ * downstream classification (JUnit, TAP, and console summaries).
+ */
+#define TTEST_TEST_RESULT_X__                                                                     \
+  X(PENDING, 0, "pending", TTEST_RESULT_CATEGORY_NONE__)                                          \
+  X(PASSED, 1, "passed", TTEST_RESULT_CATEGORY_PASS__)                                            \
+  X(FAILED, 2, "failed", TTEST_RESULT_CATEGORY_FAIL__)                                            \
+  X(SKIPPED, 3, "skipped", TTEST_RESULT_CATEGORY_SKIP__)                                         \
+  X(EXPECTED_FAIL, 4, "expected_fail", TTEST_RESULT_CATEGORY_PASS__)                              \
+  X(UNEXPECTED_PASS, 5, "unexpected_pass", TTEST_RESULT_CATEGORY_TODO__)                          \
+  X(FILTERED, 6, "filtered", TTEST_RESULT_CATEGORY_FILTER__)
 
-typedef struct __bdd_test_step__ {
+typedef enum ttest_test_result__ {
+#define X(name, value, label, category) TTEST_RESULT_##name##__ = value,
+  TTEST_TEST_RESULT_X__
+#undef X
+} ttest_test_result__;
+
+static inline const char *ttest_test_result_name__(ttest_test_result__ result) {
+  switch (result) {
+#define X(name, value, label, category)                                                          \
+    case TTEST_RESULT_##name##__:                                                                \
+      return label;
+    TTEST_TEST_RESULT_X__
+#undef X
+    default:
+      return "unknown";
+  }
+}
+
+static inline int ttest_test_result_category__(ttest_test_result__ result) {
+  switch (result) {
+#define X(name, value, label, category)                                                          \
+    case TTEST_RESULT_##name##__:                                                                \
+      return category;
+    TTEST_TEST_RESULT_X__
+#undef X
+    default:
+      return TTEST_RESULT_CATEGORY_NONE__;
+  }
+}
+
+static inline bool ttest_test_result_is_skip__(ttest_test_result__ result) {
+  const int category = ttest_test_result_category__(result);
+  return category == TTEST_RESULT_CATEGORY_SKIP__ || category == TTEST_RESULT_CATEGORY_FILTER__;
+}
+
+static inline bool ttest_test_result_is_fail__(ttest_test_result__ result) {
+  const int category = ttest_test_result_category__(result);
+  return category == TTEST_RESULT_CATEGORY_FAIL__ || category == TTEST_RESULT_CATEGORY_TODO__;
+}
+
+typedef enum ttest_node_flags__ {
+  ttest_node_flags_none__ = 0,
+  ttest_node_flags_focus__ = 1 << 0,
+  ttest_node_flags_skip__ = 1 << 1,
+  ttest_node_flags_expected_fail__ = 1 << 2,
+  ttest_node_flags_benchmark__ = 1 << 3,
+} ttest_node_flags__;
+
+typedef struct ttest_test_step__ {
   size_t level;
   int id;
   char *name;
-  __bdd_node_type__ type;
-  __bdd_node_flags__ flags;
+  ttest_node_type__ type;
+  ttest_node_flags__ flags;
   bool executed;
   bool passed;
-  __bdd_test_result__ result;
+  ttest_test_result__ result;
   const char *skip_reason;
   char *failure_message;
   char *failure_location;
   double execution_time_ms;
   char *full_path; /* Full hierarchical path like "Calculator.should add two numbers" */
-  __bdd_array__ *before_each_nodes;
-  __bdd_array__ *after_each_nodes;
-} __bdd_test_step__;
+  ttest_array__ *before_each_nodes;
+  ttest_array__ *after_each_nodes;
+} ttest_test_step__;
 
-typedef struct __bdd_bench_entry__ {
+typedef struct ttest_bench_entry__ {
   const char *title;
   size_t samples;
   size_t operations_per_sample;
@@ -634,33 +710,33 @@ typedef struct __bdd_bench_entry__ {
   double max_sample_us;
   double ops_s;
   double mib_s;
-} __bdd_bench_entry__;
+} ttest_bench_entry__;
 
-typedef struct __bdd_node__ {
+typedef struct ttest_node__ {
   int id;
   int next_node_id;
   char *name;
-  __bdd_node_flags__ flags;
-  __bdd_node_type__ type;
-  __bdd_array__ *list_before;
-  __bdd_array__ *list_after;
-  __bdd_array__ *list_before_each;
-  __bdd_array__ *list_after_each;
-  __bdd_array__ *list_children;
-} __bdd_node__;
+  ttest_node_flags__ flags;
+  ttest_node_type__ type;
+  ttest_array__ *list_before;
+  ttest_array__ *list_after;
+  ttest_array__ *list_before_each;
+  ttest_array__ *list_after_each;
+  ttest_array__ *list_children;
+} ttest_node__;
 
-enum __bdd_run_type__ { __BDD_INIT_RUN__ = 1, __BDD_TEST_RUN__ = 2 };
+enum ttest_run_type__ { TTEST_INIT_RUN__ = 1, TTEST_TEST_RUN__ = 2 };
 
-typedef struct __bdd_config_type__ {
-  enum __bdd_run_type__ run;
+typedef struct ttest_config_type__ {
+  enum ttest_run_type__ run;
   int id;
   size_t test_index;
   size_t test_tap_index;
   int target_node_id;
   size_t failed_test_count;
-  __bdd_test_step__ *current_test;
-  __bdd_array__ *node_stack;
-  __bdd_array__ *nodes;
+  ttest_test_step__ *current_test;
+  ttest_array__ *node_stack;
+  ttest_array__ *nodes;
   char *error;
   char *location;
   bool use_color;
@@ -677,9 +753,9 @@ typedef struct __bdd_config_type__ {
   bool skip_subsequent;
   bool list_only;
   const char *filter;
-  int bench_header_printed;  /* replaces static __bdd_bench_header_printed__ */
-  size_t bench_header_level; /* replaces static __bdd_bench_header_level__   */
-} __bdd_config_type__;
+  int bench_header_printed;  /* replaces static ttest_bench_header_printed__ */
+  size_t bench_header_level; /* replaces static ttest_bench_header_level__   */
+} ttest_config_type__;
 
 #ifdef __cplusplus
 /* Internal control-flow exception. A failed assertion unwinds C++ frames so
@@ -687,10 +763,10 @@ typedef struct __bdd_config_type__ {
  * not derive from std::exception so that user catch(...) blocks in tested
  * expressions do not silently absorb it; the framework's own exception
  * macros rethrow it explicitly. */
-class __bdd_fail_exception__ {};
+class ttest_fail_exception__ {};
 #endif
 
-static __BDD_NO_SANITIZE_ADDRESS__ void __bdd_longjmp_fail__(__bdd_config_type__ *config)
+static TTEST_NO_SANITIZE_ADDRESS__ void ttest_longjmp_fail__(ttest_config_type__ *config)
 #ifdef __cplusplus
     noexcept(false) /* this extern "C" helper intentionally throws */
 #endif
@@ -699,24 +775,24 @@ static __BDD_NO_SANITIZE_ADDRESS__ void __bdd_longjmp_fail__(__bdd_config_type__
     abort();
   }
 #ifdef __cplusplus
-  throw __bdd_fail_exception__();
+  throw ttest_fail_exception__();
 #else
   longjmp(config->jump_buffer, 1);
 #endif
 }
 
-static inline void __bdd_bench_reset__(__bdd_config_type__ *config) {
+static inline void ttest_bench_reset__(ttest_config_type__ *config) {
   config->bench_header_printed = 0;
   config->bench_header_level = 0;
 }
 
-static inline __bdd_bench_entry__ __bdd_bench_make_entry__(
+static inline ttest_bench_entry__ ttest_bench_make_entry__(
     const char *title, size_t samples, double sum_ms, double min_ms, double max_ms,
     size_t operations_per_sample, size_t bytes_per_sample, bool tracks_bytes) {
   const double bytes_per_mib = 1024.0 * 1024.0;
   const double elapsed_s = sum_ms / 1000.0;
   const double total_operations = (double)samples * (double)operations_per_sample;
-  __bdd_bench_entry__ entry;
+  ttest_bench_entry__ entry;
 
   memset(&entry, 0, sizeof(entry));
   entry.title = title;
@@ -734,7 +810,7 @@ static inline __bdd_bench_entry__ __bdd_bench_make_entry__(
   return entry;
 }
 
-static inline void __bdd_bench_format_optional_metrics__(const __bdd_bench_entry__ *entry,
+static inline void ttest_bench_format_optional_metrics__(const ttest_bench_entry__ *entry,
                                                          char *bytes, size_t bytes_cap, char *mib_s,
                                                          size_t mib_s_cap) {
   if (entry->tracks_bytes) {
@@ -746,8 +822,8 @@ static inline void __bdd_bench_format_optional_metrics__(const __bdd_bench_entry
   }
 }
 
-static inline __bdd_test_step__ *__bdd_test_step_create__(size_t level, __bdd_node__ *node) {
-  __bdd_test_step__ *step = __BDD_CAST(__bdd_test_step__ *, malloc(sizeof(__bdd_test_step__)));
+static inline ttest_test_step__ *ttest_test_step_create__(size_t level, ttest_node__ *node) {
+  ttest_test_step__ *step = TTEST_CAST(ttest_test_step__ *, malloc(sizeof(ttest_test_step__)));
   if (!step) {
     perror("malloc(step)");
     abort();
@@ -759,7 +835,7 @@ static inline __bdd_test_step__ *__bdd_test_step_create__(size_t level, __bdd_no
   step->flags = node->flags;
   step->executed = false;
   step->passed = false;
-  step->result = __BDD_RESULT_PENDING__;
+  step->result = TTEST_RESULT_PENDING__;
   step->skip_reason = NULL;
   step->failure_message = NULL;
   step->failure_location = NULL;
@@ -770,18 +846,18 @@ static inline __bdd_test_step__ *__bdd_test_step_create__(size_t level, __bdd_no
   return step;
 }
 
-static inline void __bdd_test_step_free__(__bdd_test_step__ *step) {
+static inline void ttest_test_step_free__(ttest_test_step__ *step) {
   if (step) {
     free(step->failure_message);
     free(step->failure_location);
     free(step->full_path);
-    __bdd_array_free__(step->before_each_nodes);
-    __bdd_array_free__(step->after_each_nodes);
+    ttest_array_free__(step->before_each_nodes);
+    ttest_array_free__(step->after_each_nodes);
     free(step);
   }
 }
 
-static char *__bdd_build_full_path__(__bdd_test_step__ **group_stack, int stack_depth,
+static char *ttest_build_full_path__(ttest_test_step__ **group_stack, int stack_depth,
                                      const char *test_name) {
   size_t total_len = 0;
   char *path;
@@ -801,7 +877,7 @@ static char *__bdd_build_full_path__(__bdd_test_step__ **group_stack, int stack_
 
   if (total_len == 0) return NULL;
 
-  path = __BDD_CAST(char *, malloc(total_len + 1));
+  path = TTEST_CAST(char *, malloc(total_len + 1));
   if (!path) {
     perror("malloc(full_path)");
     abort();
@@ -829,16 +905,16 @@ static char *__bdd_build_full_path__(__bdd_test_step__ **group_stack, int stack_
   return path;
 }
 
-static inline __bdd_node__ *__bdd_node_create__(int id, const char *name, __bdd_node_type__ type,
-                                                __bdd_node_flags__ flags) {
-  __bdd_node__ *n = __BDD_CAST(__bdd_node__ *, malloc(sizeof(__bdd_node__)));
+static inline ttest_node__ *ttest_node_create__(int id, const char *name, ttest_node_type__ type,
+                                                ttest_node_flags__ flags) {
+  ttest_node__ *n = TTEST_CAST(ttest_node__ *, malloc(sizeof(ttest_node__)));
   if (!n) {
     perror("malloc(node)");
     abort();
   }
   n->id = id;
   n->next_node_id = id + 1;
-  n->name = __BDD_CONST_CAST(char *, name); /* node takes ownership of name */
+  n->name = TTEST_CONST_CAST(char *, name); /* node takes ownership of name */
   n->type = type;
   n->flags = flags;
   n->list_before = NULL;
@@ -849,165 +925,165 @@ static inline __bdd_node__ *__bdd_node_create__(int id, const char *name, __bdd_
   return n;
 }
 
-static inline bool __bdd_node_is_leaf__(__bdd_node__ *node) {
+static inline bool ttest_node_is_leaf__(ttest_node__ *node) {
   return !node->list_children || node->list_children->size == 0;
 }
 
-static void __bdd_node_flatten_internal__(__bdd_config_type__ *config, size_t level,
-                                          __bdd_node__ *node, __bdd_array__ *steps,
-                                          __bdd_array__ *before_each_lists,
-                                          __bdd_array__ *after_each_lists) {
-  if (__bdd_node_is_leaf__(node)) {
-    __bdd_test_step__ *test_step = __bdd_test_step_create__(level, node);
+static void ttest_node_flatten_internal__(ttest_config_type__ *config, size_t level,
+                                          ttest_node__ *node, ttest_array__ *steps,
+                                          ttest_array__ *before_each_lists,
+                                          ttest_array__ *after_each_lists) {
+  if (ttest_node_is_leaf__(node)) {
+    ttest_test_step__ *test_step = ttest_test_step_create__(level, node);
 
     for (size_t listIndex = 0; listIndex < before_each_lists->size; ++listIndex) {
-      __bdd_array__ *list = __BDD_CAST(__bdd_array__ *, before_each_lists->values[listIndex]);
-      for (size_t i = 0; i < __bdd_array_size__(list); ++i) {
-        __bdd_array_push__(__bdd_array_get_or_create__(&test_step->before_each_nodes),
+      ttest_array__ *list = TTEST_CAST(ttest_array__ *, before_each_lists->values[listIndex]);
+      for (size_t i = 0; i < ttest_array_size__(list); ++i) {
+        ttest_array_push__(ttest_array_get_or_create__(&test_step->before_each_nodes),
                            list->values[i]);
       }
     }
 
-    __bdd_array_push__(steps, test_step);
+    ttest_array_push__(steps, test_step);
 
     for (size_t listIndex = 0; listIndex < after_each_lists->size; ++listIndex) {
       size_t reverseListIndex = after_each_lists->size - listIndex - 1;
-      __bdd_array__ *list = __BDD_CAST(__bdd_array__ *, after_each_lists->values[reverseListIndex]);
-      for (size_t i = 0; i < __bdd_array_size__(list); ++i) {
-        __bdd_array_push__(__bdd_array_get_or_create__(&test_step->after_each_nodes),
+      ttest_array__ *list = TTEST_CAST(ttest_array__ *, after_each_lists->values[reverseListIndex]);
+      for (size_t i = 0; i < ttest_array_size__(list); ++i) {
+        ttest_array_push__(ttest_array_get_or_create__(&test_step->after_each_nodes),
                            list->values[i]);
       }
     }
     return;
   }
 
-  __bdd_array_push__(steps, __bdd_test_step_create__(level, node));
+  ttest_array_push__(steps, ttest_test_step_create__(level, node));
 
-  for (size_t i = 0; i < __bdd_array_size__(node->list_before); ++i) {
-    __bdd_array_push__(
-        steps, __bdd_test_step_create__(level + 1,
-                                        __BDD_CAST(__bdd_node__ *, node->list_before->values[i])));
+  for (size_t i = 0; i < ttest_array_size__(node->list_before); ++i) {
+    ttest_array_push__(
+        steps, ttest_test_step_create__(level + 1,
+                                        TTEST_CAST(ttest_node__ *, node->list_before->values[i])));
   }
 
-  __bdd_array_push__(before_each_lists, node->list_before_each);
-  __bdd_array_push__(after_each_lists, node->list_after_each);
+  ttest_array_push__(before_each_lists, node->list_before_each);
+  ttest_array_push__(after_each_lists, node->list_after_each);
 
-  for (size_t i = 0; i < __bdd_array_size__(node->list_children); ++i) {
-    __bdd_node_flatten_internal__(config, level + 1,
-                                  __BDD_CAST(__bdd_node__ *, node->list_children->values[i]), steps,
+  for (size_t i = 0; i < ttest_array_size__(node->list_children); ++i) {
+    ttest_node_flatten_internal__(config, level + 1,
+                                  TTEST_CAST(ttest_node__ *, node->list_children->values[i]), steps,
                                   before_each_lists, after_each_lists);
   }
 
-  __bdd_array_pop__(before_each_lists);
-  __bdd_array_pop__(after_each_lists);
+  ttest_array_pop__(before_each_lists);
+  ttest_array_pop__(after_each_lists);
 
-  for (size_t i = 0; i < __bdd_array_size__(node->list_after); ++i) {
-    __bdd_array_push__(
-        steps, __bdd_test_step_create__(level + 1,
-                                        __BDD_CAST(__bdd_node__ *, node->list_after->values[i])));
+  for (size_t i = 0; i < ttest_array_size__(node->list_after); ++i) {
+    ttest_array_push__(
+        steps, ttest_test_step_create__(level + 1,
+                                        TTEST_CAST(ttest_node__ *, node->list_after->values[i])));
   }
 }
 
-static __bdd_array__ *__bdd_node_flatten__(__bdd_config_type__ *config, __bdd_node__ *node,
-                                           __bdd_array__ *steps) {
+static ttest_array__ *ttest_node_flatten__(ttest_config_type__ *config, ttest_node__ *node,
+                                           ttest_array__ *steps) {
   if (node == NULL) {
     return steps;
   }
 
-  __bdd_array__ *before_each_lists = __bdd_array_create__();
-  __bdd_array__ *after_each_lists = __bdd_array_create__();
-  __bdd_node_flatten_internal__(config, 0, node, steps, before_each_lists, after_each_lists);
-  __bdd_array_free__(before_each_lists);
-  __bdd_array_free__(after_each_lists);
+  ttest_array__ *before_each_lists = ttest_array_create__();
+  ttest_array__ *after_each_lists = ttest_array_create__();
+  ttest_node_flatten_internal__(config, 0, node, steps, before_each_lists, after_each_lists);
+  ttest_array_free__(before_each_lists);
+  ttest_array_free__(after_each_lists);
 
   return steps;
 }
 
-static void __bdd_node_free__(__bdd_node__ *n) {
+static void ttest_node_free__(ttest_node__ *n) {
   free(n->name);
-  __bdd_array_free__(n->list_before);
-  __bdd_array_free__(n->list_after);
-  __bdd_array_free__(n->list_before_each);
-  __bdd_array_free__(n->list_after_each);
-  __bdd_array_free__(n->list_children);
+  ttest_array_free__(n->list_before);
+  ttest_array_free__(n->list_after);
+  ttest_array_free__(n->list_before_each);
+  ttest_array_free__(n->list_after_each);
+  ttest_array_free__(n->list_children);
   free(n);
 }
 
-__BDD_SELECTANY __BDD_TLS __bdd_spec_fn__ __bdd_current_spec_fn__ = NULL;
-__BDD_SELECTANY __BDD_TLS __bdd_config_type__ *__bdd_active_config__ = NULL;
+TTEST_SELECTANY TTEST_TLS ttest_spec_fn__ ttest_current_spec_fn__ = NULL;
+TTEST_SELECTANY TTEST_TLS ttest_config_type__ *ttest_active_config__ = NULL;
 
-static inline void __bdd_test_main__(__bdd_config_type__ *config) {
-  __bdd_active_config__ = config;
-  if (__bdd_current_spec_fn__) {
-    __bdd_current_spec_fn__(config);
+static inline void ttest_test_main__(ttest_config_type__ *config) {
+  ttest_active_config__ = config;
+  if (ttest_current_spec_fn__) {
+    ttest_current_spec_fn__(config);
   }
 }
-static char *__bdd_vformat__(const char *format, va_list va);
-static char *__bdd_format__(const char *format, ...);
-static void __bdd_tap_failure_diagnostic__(const char *message);
+static char *ttest_vformat__(const char *format, va_list va);
+static char *ttest_format__(const char *format, ...);
+static void ttest_tap_failure_diagnostic__(const char *message);
 
-static void __bdd_indent__(FILE *fp, size_t level) {
+static void ttest_indent__(FILE *fp, size_t level) {
   if (!fp) return;
   for (size_t i = 0; i < level; ++i) {
     fprintf(fp, "  ");
   }
 }
 
-static inline void __bdd_bench_print_header__(__bdd_config_type__ *config, size_t level) {
+static inline void ttest_bench_print_header__(ttest_config_type__ *config, size_t level) {
   (void)config;
-#if BDD_BENCH_TABLE
+#if TT_BENCH_TABLE
   if (!config) return;
   if (config->bench_header_printed && config->bench_header_level == level) return;
   config->bench_header_printed = 1;
   config->bench_header_level = level;
-  __bdd_indent__(stdout, level);
-  printf("  %-*s  %8s  %10s  %12s  %11s  %14s  %14s  %11s  %11s\n", BDD_BENCH_NAME_WIDTH,
+  ttest_indent__(stdout, level);
+  printf("  %-*s  %8s  %10s  %12s  %11s  %14s  %14s  %11s  %11s\n", TT_BENCH_NAME_WIDTH,
          "benchmark", "samples", "ops/sample", "bytes/sample", "avg/op(us)", "min/sample(us)",
          "max/sample(us)", "ops/s", "MiB/s");
-  __bdd_indent__(stdout, level);
-  printf("  %-*s  %8s  %10s  %12s  %11s  %14s  %14s  %11s  %11s\n", BDD_BENCH_NAME_WIDTH,
+  ttest_indent__(stdout, level);
+  printf("  %-*s  %8s  %10s  %12s  %11s  %14s  %14s  %11s  %11s\n", TT_BENCH_NAME_WIDTH,
          "---------", "-------", "----------", "------------", "----------", "--------------",
          "--------------", "-----", "-----");
 #endif
 }
 
-static inline void __bdd_bench_print__(
-    __bdd_config_type__ *config, const char *title, size_t samples, double sum_ms, double min_ms,
+static inline void ttest_bench_print__(
+    ttest_config_type__ *config, const char *title, size_t samples, double sum_ms, double min_ms,
     double max_ms, size_t operations_per_sample, size_t bytes_per_sample, bool tracks_bytes,
     size_t level, bool use_color) {
-  __bdd_bench_entry__ e =
-      __bdd_bench_make_entry__(title, samples, sum_ms, min_ms, max_ms, operations_per_sample,
+  ttest_bench_entry__ e =
+      ttest_bench_make_entry__(title, samples, sum_ms, min_ms, max_ms, operations_per_sample,
                                bytes_per_sample, tracks_bytes);
   char bytes[32];
   char mib_s[32];
 
-  __bdd_bench_format_optional_metrics__(&e, bytes, sizeof(bytes), mib_s, sizeof(mib_s));
+  ttest_bench_format_optional_metrics__(&e, bytes, sizeof(bytes), mib_s, sizeof(mib_s));
 
-  __bdd_bench_print_header__(config, level);
-  __bdd_indent__(stdout, level);
-#if BDD_BENCH_TABLE
+  ttest_bench_print_header__(config, level);
+  ttest_indent__(stdout, level);
+#if TT_BENCH_TABLE
   printf("  %s%-*s%s  %8zu  %10zu  %12s  %11.3f  %14.3f  %14.3f  %11.0f  %11s\n",
-         use_color ? __BDD_COLOR_MAGENTA__ : "", BDD_BENCH_NAME_WIDTH, e.title,
-         use_color ? __BDD_COLOR_RESET__ : "", e.samples, e.operations_per_sample, bytes, e.avg_op_us,
+         use_color ? TTEST_COLOR_MAGENTA__ : "", TT_BENCH_NAME_WIDTH, e.title,
+         use_color ? TTEST_COLOR_RESET__ : "", e.samples, e.operations_per_sample, bytes, e.avg_op_us,
          e.min_sample_us, e.max_sample_us, e.ops_s, mib_s);
 #else
   printf("%s%-*s%s  samples=%zu  ops/sample=%zu  bytes/sample=%s  avg/op=%9.3f us  "
          "min/sample=%9.3f us  max/sample=%9.3f us  ops/s=%9.0f  MiB/s=%s\n",
-         use_color ? __BDD_COLOR_MAGENTA__ : "", BDD_BENCH_NAME_WIDTH, e.title,
-         use_color ? __BDD_COLOR_RESET__ : "", e.samples, e.operations_per_sample, bytes, e.avg_op_us,
+         use_color ? TTEST_COLOR_MAGENTA__ : "", TT_BENCH_NAME_WIDTH, e.title,
+         use_color ? TTEST_COLOR_RESET__ : "", e.samples, e.operations_per_sample, bytes, e.avg_op_us,
          e.min_sample_us, e.max_sample_us, e.ops_s, mib_s);
 #endif
 }
 
-static bool __bdd_enter_node__(__bdd_node_flags__ node_flags, __bdd_config_type__ *config,
-                               __bdd_node_type__ type, ptrdiff_t list_offset, bool format_name,
+static bool ttest_enter_node__(ttest_node_flags__ node_flags, ttest_config_type__ *config,
+                               ttest_node_type__ type, ptrdiff_t list_offset, bool format_name,
                                const char *fmt, ...) {
-  if (config->run == __BDD_INIT_RUN__) {
+  if (config->run == TTEST_INIT_RUN__) {
     char *name;
     if (format_name) {
       va_list va;
       va_start(va, fmt);
-      name = __bdd_vformat__(fmt, va);
+      name = ttest_vformat__(fmt, va);
       va_end(va);
     } else {
       name = strdup(fmt);
@@ -1017,25 +1093,25 @@ static bool __bdd_enter_node__(__bdd_node_flags__ node_flags, __bdd_config_type_
       }
     }
 
-    __bdd_node__ *top = __BDD_CAST(__bdd_node__ *, __bdd_array_last__(config->node_stack));
+    ttest_node__ *top = TTEST_CAST(ttest_node__ *, ttest_array_last__(config->node_stack));
     if (!top) {
       fprintf(stderr, "error: node_stack is empty\n");
       abort();
     }
-    __bdd_array__ **list_ptr = __BDD_REINTERPRET_CAST(
-        __bdd_array__ **, __BDD_REINTERPRET_CAST(unsigned char *, top) + list_offset);
-    __bdd_array__ *list = __bdd_array_get_or_create__(list_ptr);
+    ttest_array__ **list_ptr = TTEST_REINTERPRET_CAST(
+        ttest_array__ **, TTEST_REINTERPRET_CAST(unsigned char *, top) + list_offset);
+    ttest_array__ *list = ttest_array_get_or_create__(list_ptr);
 
     int id = config->id++;
-    __bdd_node__ *node = __bdd_node_create__(id, name, type, node_flags);
-    if (node_flags & __bdd_node_flags_focus__) {
-      top->flags = (__bdd_node_flags__)(top->flags | (node_flags & __bdd_node_flags_focus__));
+    ttest_node__ *node = ttest_node_create__(id, name, type, node_flags);
+    if (node_flags & ttest_node_flags_focus__) {
+      top->flags = (ttest_node_flags__)(top->flags | (node_flags & ttest_node_flags_focus__));
       config->has_focus_nodes = true;
     }
-    __bdd_array_push__(list, node);
-    __bdd_array_push__(config->nodes, node);
-    if (type == __BDD_NODE_GROUP__) {
-      __bdd_array_push__(config->node_stack, node);
+    ttest_array_push__(list, node);
+    ttest_array_push__(config->nodes, node);
+    if (type == TTEST_NODE_GROUP__) {
+      ttest_array_push__(config->node_stack, node);
       return true;
     }
     return false;
@@ -1050,7 +1126,7 @@ static bool __bdd_enter_node__(__bdd_node_flags__ node_flags, __bdd_config_type_
     fprintf(stderr, "error: config->nodes is invalid\n");
     abort();
   }
-  __bdd_node__ *node = __BDD_CAST(__bdd_node__ *, config->nodes->values[config->id]);
+  ttest_node__ *node = TTEST_CAST(ttest_node__ *, config->nodes->values[config->id]);
   if (!node) {
     fprintf(stderr, "error: node at %d is NULL\n", config->id);
     abort();
@@ -1059,54 +1135,54 @@ static bool __bdd_enter_node__(__bdd_node_flags__ node_flags, __bdd_config_type_
   int target_node_id = config->target_node_id;
   bool should_enter = target_node_id >= node->id && target_node_id < node->next_node_id;
   if (should_enter) {
-    __bdd_array_push__(config->node_stack, node);
+    ttest_array_push__(config->node_stack, node);
     config->id++;
   } else {
     config->id = node->next_node_id;
   }
-#if defined(BDD_PRINT_TRACE)
-  const char *color = config->use_color ? __BDD_COLOR_MAGENTA__ : "";
+#if defined(TT_PRINT_TRACE)
+  const char *color = config->use_color ? TTEST_COLOR_MAGENTA__ : "";
   fprintf(stderr, "%s% 3d ", color, target_node_id);
-  __bdd_indent__(stderr, config->node_stack->size - 1 - (int)should_enter);
-  const char *reset = config->use_color ? __BDD_COLOR_RESET__ : "";
+  ttest_indent__(stderr, config->node_stack->size - 1 - (int)should_enter);
+  const char *reset = config->use_color ? TTEST_COLOR_RESET__ : "";
   fprintf(stderr, "%s [%d, %d) %s%s\n", should_enter ? ">" : "|", node->id, node->next_node_id,
           node->name, reset);
 #endif
   return should_enter;
 }
 
-static void __bdd_exit_node__(__bdd_config_type__ *config) {
-  __bdd_node__ *top = __BDD_CAST(__bdd_node__ *, __bdd_array_pop__(config->node_stack));
-  if (top && config->run == __BDD_INIT_RUN__) {
+static void ttest_exit_node__(ttest_config_type__ *config) {
+  ttest_node__ *top = TTEST_CAST(ttest_node__ *, ttest_array_pop__(config->node_stack));
+  if (top && config->run == TTEST_INIT_RUN__) {
     top->next_node_id = config->id;
   }
 }
 
-static inline const char *__bdd_skip_message__(const __bdd_test_step__ *step) {
+static inline const char *ttest_skip_message__(const ttest_test_step__ *step) {
   return (step && step->skip_reason && step->skip_reason[0] != '\0') ? step->skip_reason
                                                                      : "Test was skipped";
 }
 
-static void __bdd_report_skip__(__bdd_config_type__ *config, __bdd_test_step__ *step) {
-  if (config->run == __BDD_TEST_RUN__ && config->use_tap && config->test_tap_index) {
+static void ttest_report_skip__(ttest_config_type__ *config, ttest_test_step__ *step) {
+  if (config->run == TTEST_TEST_RUN__ && config->use_tap && config->test_tap_index) {
     printf("ok %zu - %s # SKIP %s\n", config->test_tap_index, step->name,
-           __bdd_skip_message__(step));
+           ttest_skip_message__(step));
   }
 }
 
-static void __bdd_report_pass__(__bdd_config_type__ *config, __bdd_test_step__ *step) {
-  if (config->run == __BDD_TEST_RUN__) {
+static void ttest_report_pass__(ttest_config_type__ *config, ttest_test_step__ *step) {
+  if (config->run == TTEST_TEST_RUN__) {
     if (config->use_tap) {
       if (config->test_tap_index) {
         printf("ok %zu - %s\n", config->test_tap_index, step->name);
       }
     } else {
-      if (step->flags & __bdd_node_flags_benchmark__) {
+      if (step->flags & ttest_node_flags_benchmark__) {
         return;
       }
-      __bdd_indent__(stdout, step->level);
-      printf("%s[ OK    ]%s", config->use_color ? __BDD_COLOR_GREEN__ : "",
-             config->use_color ? __BDD_COLOR_RESET__ : "");
+      ttest_indent__(stdout, step->level);
+      printf("%s[ OK    ]%s", config->use_color ? TTEST_COLOR_GREEN__ : "",
+             config->use_color ? TTEST_COLOR_RESET__ : "");
       if (step->execution_time_ms > 0.0) {
         printf(" (%.2fms)", step->execution_time_ms);
       }
@@ -1115,38 +1191,38 @@ static void __bdd_report_pass__(__bdd_config_type__ *config, __bdd_test_step__ *
   }
 }
 
-static void __bdd_report_unexpected_pass__(__bdd_config_type__ *config, __bdd_test_step__ *step) {
+static void ttest_report_unexpected_pass__(ttest_config_type__ *config, ttest_test_step__ *step) {
   ++config->failed_test_count;
-  if (config->run == __BDD_TEST_RUN__) {
+  if (config->run == TTEST_TEST_RUN__) {
     if (config->use_tap) {
       if (config->test_tap_index) {
         printf("not ok %zu - %s # TODO was expected to fail but passed\n", config->test_tap_index,
                step->name);
       }
     } else {
-      __bdd_indent__(stdout, step->level);
-      printf("%s[ UPASS ]%s", config->use_color ? __BDD_COLOR_YELLOW__ : "",
-             config->use_color ? __BDD_COLOR_RESET__ : "");
+      ttest_indent__(stdout, step->level);
+      printf("%s[ UPASS ]%s", config->use_color ? TTEST_COLOR_YELLOW__ : "",
+             config->use_color ? TTEST_COLOR_RESET__ : "");
       if (step->execution_time_ms > 0.0) {
         printf(" (%.2fms)", step->execution_time_ms);
       }
       printf("\n");
-      __bdd_indent__(stdout, step->level + 1);
+      ttest_indent__(stdout, step->level + 1);
       printf("This test was expected to fail but passed\n");
     }
   }
 }
 
-static void __bdd_report_expected_fail__(__bdd_config_type__ *config, __bdd_test_step__ *step) {
-  if (config->run == __BDD_TEST_RUN__) {
+static void ttest_report_expected_fail__(ttest_config_type__ *config, ttest_test_step__ *step) {
+  if (config->run == TTEST_TEST_RUN__) {
     if (config->use_tap) {
       if (config->test_tap_index) {
         printf("ok %zu - %s # TODO expected failure\n", config->test_tap_index, step->name);
       }
     } else {
-      __bdd_indent__(stdout, step->level);
-      printf("%s[ XFAIL ]%s", config->use_color ? __BDD_COLOR_GREEN__ : "",
-             config->use_color ? __BDD_COLOR_RESET__ : "");
+      ttest_indent__(stdout, step->level);
+      printf("%s[ XFAIL ]%s", config->use_color ? TTEST_COLOR_GREEN__ : "",
+             config->use_color ? TTEST_COLOR_RESET__ : "");
       if (step->execution_time_ms > 0.0) {
         printf(" (%.2fms)", step->execution_time_ms);
       }
@@ -1155,65 +1231,68 @@ static void __bdd_report_expected_fail__(__bdd_config_type__ *config, __bdd_test
   }
 }
 
-static void __bdd_report_fail__(__bdd_config_type__ *config, __bdd_test_step__ *step) {
+static void ttest_report_fail__(ttest_config_type__ *config, ttest_test_step__ *step) {
   ++config->failed_test_count;
   if (config->use_tap) {
     if (config->test_tap_index) {
       printf("not ok %zu - %s", config->test_tap_index, step->name);
-      __bdd_tap_failure_diagnostic__(config->error);
+      ttest_tap_failure_diagnostic__(config->error);
       printf("\n");
     }
   } else {
-    __bdd_indent__(stdout, step->level);
-    printf("%s[ FAIL  ]%s", config->use_color ? __BDD_COLOR_RED__ : "",
-           config->use_color ? __BDD_COLOR_RESET__ : "");
+    ttest_indent__(stdout, step->level);
+    printf("%s[ FAIL  ]%s", config->use_color ? TTEST_COLOR_RED__ : "",
+           config->use_color ? TTEST_COLOR_RESET__ : "");
     if (step->execution_time_ms > 0.0) {
       printf(" (%.2fms)", step->execution_time_ms);
     }
     printf("\n");
     if (config->info_len > 0) {
-      __bdd_indent__(stdout, step->level + 1);
+      ttest_indent__(stdout, step->level + 1);
       printf("with info: %s\n", config->info_buffer);
     }
-    __bdd_indent__(stdout, step->level + 1);
+    ttest_indent__(stdout, step->level + 1);
     printf("%s\n", config->error);
-    __bdd_indent__(stdout, step->level + 2);
+    ttest_indent__(stdout, step->level + 2);
     printf("%s\n", config->location);
   }
 }
 
 #ifdef __cplusplus
-static void __bdd_record_unhandled_exception__(__bdd_config_type__ *config, const char *message) {
+static void ttest_record_unhandled_exception__(ttest_config_type__ *config, const char *message) {
   if (!config || config->error) return;
   ++config->assertion_count;
-  ++config->assertion_failed_count;
+  if (!config->current_test ||
+      !(config->current_test->flags & ttest_node_flags_expected_fail__)) {
+    ++config->assertion_failed_count;
+  }
   snprintf(config->location_buf, sizeof(config->location_buf), "at unhandled C++ exception");
   config->location = config->location_buf;
-  config->error = __bdd_format__("Unhandled C++ exception: %s", message ? message : "unknown");
+  config->error = ttest_format__("Unhandled C++ exception: %s", message ? message : "unknown");
 }
 #endif
 
-static void __bdd_execute_target__(__bdd_config_type__ *config, int target_node_id) {
+static void ttest_execute_target__(ttest_config_type__ *config, int target_node_id) {
   config->node_stack->size = 1;
   config->id = 0;
   config->target_node_id = target_node_id;
 #ifdef __cplusplus
   try {
-    __bdd_test_main__(config);
-  } catch (const __bdd_fail_exception__ &) {
+    ttest_test_main__(config);
+  } catch (const ttest_fail_exception__ &) {
     /* Assertion failure already recorded in config->error. */
   } catch (const std::exception &e) {
-    __bdd_record_unhandled_exception__(config, e.what());
+    ttest_record_unhandled_exception__(config, e.what());
   } catch (...) {
-    __bdd_record_unhandled_exception__(config, "non-standard exception");
+    ttest_record_unhandled_exception__(config, "non-standard exception");
   }
 #else
   if (setjmp(config->jump_buffer) != 0) return;
-  __bdd_test_main__(config);
+  ttest_test_main__(config);
 #endif
 }
 
-static void __bdd_execute_cleanup_target__(__bdd_config_type__ *config, int target_node_id) {
+static void ttest_execute_cleanup_target__(ttest_config_type__ *config, int target_node_id) {
   char *primary_error = config->error;
   char primary_location[sizeof(config->location_buf)];
 
@@ -1223,7 +1302,7 @@ static void __bdd_execute_cleanup_target__(__bdd_config_type__ *config, int targ
   }
   config->error = NULL;
   config->location = NULL;
-  __bdd_execute_target__(config, target_node_id);
+  ttest_execute_target__(config, target_node_id);
   if (primary_error) {
     free(config->error);
     config->error = primary_error;
@@ -1232,29 +1311,29 @@ static void __bdd_execute_cleanup_target__(__bdd_config_type__ *config, int targ
   }
 }
 
-static void __bdd_run__(__bdd_config_type__ *config) {
-  __bdd_test_step__ *step = config->current_test;
+static void ttest_run__(ttest_config_type__ *config) {
+  ttest_test_step__ *step = config->current_test;
 
-  if (step->type == __BDD_NODE_GROUP__ && !config->use_tap) {
-    if (config->has_focus_nodes && !(step->flags & __bdd_node_flags_focus__)) {
+  if (step->type == TTEST_NODE_GROUP__ && !config->use_tap) {
+    if (config->has_focus_nodes && !(step->flags & ttest_node_flags_focus__)) {
       return;
     }
-    __bdd_indent__(stdout, step->level);
-    printf("%s%s%s\n", config->use_color ? __BDD_COLOR_BOLD__ : "", step->name,
-           config->use_color ? __BDD_COLOR_RESET__ : "");
+    ttest_indent__(stdout, step->level);
+    printf("%s%s%s\n", config->use_color ? TTEST_COLOR_BOLD__ : "", step->name,
+           config->use_color ? TTEST_COLOR_RESET__ : "");
     return;
   }
 
   bool skipped = false;
   bool filtered = false;
   const char *skip_reason = NULL;
-  if (step->type == __BDD_NODE_TEST__) {
-    step->result = __BDD_RESULT_PENDING__;
+  if (step->type == TTEST_NODE_TEST__) {
+    step->result = TTEST_RESULT_PENDING__;
     step->skip_reason = NULL;
-    if (step->flags & __bdd_node_flags_skip__) {
+    if (step->flags & ttest_node_flags_skip__) {
       skipped = true;
       skip_reason = "Test was skipped";
-    } else if (config->has_focus_nodes && !(step->flags & __bdd_node_flags_focus__)) {
+    } else if (config->has_focus_nodes && !(step->flags & ttest_node_flags_focus__)) {
       filtered = true;
       skip_reason = "filtered by focus";
     } else if (config->filter && !strstr(step->name, config->filter) &&
@@ -1265,8 +1344,8 @@ static void __bdd_run__(__bdd_config_type__ *config) {
     ++config->test_tap_index;
 
     /* Print selected test names before execution so a crashing case remains identifiable. */
-    if (config->run == __BDD_TEST_RUN__ && !config->use_tap && !skipped && !filtered) {
-      __bdd_indent__(stdout, step->level);
+    if (config->run == TTEST_TEST_RUN__ && !config->use_tap && !skipped && !filtered) {
+      ttest_indent__(stdout, step->level);
       printf("%s\n", step->name);
       fflush(stdout);
     }
@@ -1281,65 +1360,65 @@ static void __bdd_run__(__bdd_config_type__ *config) {
       config->info_len = 0;
       config->skip_subsequent = false;
 
-      if (step->flags & __bdd_node_flags_benchmark__) {
-        __bdd_bench_reset__(config);
+      if (step->flags & ttest_node_flags_benchmark__) {
+        ttest_bench_reset__(config);
       }
 
-      for (size_t i = 0; i < __bdd_array_size__(step->before_each_nodes); ++i) {
-        __bdd_node__ *hook =
-            __BDD_CAST(__bdd_node__ *, step->before_each_nodes->values[i]);
-        __bdd_execute_target__(config, hook->id);
+      for (size_t i = 0; i < ttest_array_size__(step->before_each_nodes); ++i) {
+        ttest_node__ *hook =
+            TTEST_CAST(ttest_node__ *, step->before_each_nodes->values[i]);
+        ttest_execute_target__(config, hook->id);
         if (config->error) break;
       }
 
       if (!config->error) {
-        double start_time = __bdd_get_time_ms__();
-        __bdd_execute_target__(config, step->id);
-        double end_time = __bdd_get_time_ms__();
+        double start_time = ttest_get_time_ms__();
+        ttest_execute_target__(config, step->id);
+        double end_time = ttest_get_time_ms__();
         step->execution_time_ms = end_time - start_time;
       }
 
-      for (size_t i = 0; i < __bdd_array_size__(step->after_each_nodes); ++i) {
-        __bdd_node__ *hook = __BDD_CAST(__bdd_node__ *, step->after_each_nodes->values[i]);
-        __bdd_execute_cleanup_target__(config, hook->id);
+      for (size_t i = 0; i < ttest_array_size__(step->after_each_nodes); ++i) {
+        ttest_node__ *hook = TTEST_CAST(ttest_node__ *, step->after_each_nodes->values[i]);
+        ttest_execute_cleanup_target__(config, hook->id);
       }
     }
 
     if (skipped || filtered) {
       step->executed = false;
       step->passed = false;
-      step->result = filtered ? __BDD_RESULT_FILTERED__ : __BDD_RESULT_SKIPPED__;
+      step->result = filtered ? TTEST_RESULT_FILTERED__ : TTEST_RESULT_SKIPPED__;
       step->skip_reason = skip_reason;
-      __bdd_report_skip__(config, step);
+      ttest_report_skip__(config, step);
     } else if (config->error == NULL) {
       /* Test passed */
       step->executed = true;
-      bool is_expected_fail = (step->flags & __bdd_node_flags_expected_fail__);
+      bool is_expected_fail = (step->flags & ttest_node_flags_expected_fail__);
       if (is_expected_fail) {
         step->passed = false;
-        step->result = __BDD_RESULT_UNEXPECTED_PASS__;
+        step->result = TTEST_RESULT_UNEXPECTED_PASS__;
         step->failure_message = strdup("Expected to fail but passed");
-        __bdd_report_unexpected_pass__(config, step);
+        ttest_report_unexpected_pass__(config, step);
       } else {
         step->passed = true;
-        step->result = __BDD_RESULT_PASSED__;
-        __bdd_report_pass__(config, step);
+        step->result = TTEST_RESULT_PASSED__;
+        ttest_report_pass__(config, step);
       }
     } else {
       /* Test failed */
       step->executed = true;
-      bool is_expected_fail = (step->flags & __bdd_node_flags_expected_fail__);
+      bool is_expected_fail = (step->flags & ttest_node_flags_expected_fail__);
       if (is_expected_fail) {
         step->passed = true; /* Expected failure counts as pass */
-        step->result = __BDD_RESULT_EXPECTED_FAIL__;
-        __bdd_report_expected_fail__(config, step);
+        step->result = TTEST_RESULT_EXPECTED_FAIL__;
+        ttest_report_expected_fail__(config, step);
       } else {
         step->passed = false;
-        step->result = __BDD_RESULT_FAILED__;
+        step->result = TTEST_RESULT_FAILED__;
         step->failure_message = strdup(config->error);
         step->failure_location =
             strdup(config->location ? config->location : "at unknown location");
-        __bdd_report_fail__(config, step);
+        ttest_report_fail__(config, step);
       }
       free(config->error);
       config->error = NULL;
@@ -1352,11 +1431,11 @@ static void __bdd_run__(__bdd_config_type__ *config) {
     config->location = NULL;
     config->info_buffer[0] = '\0';
     config->info_len = 0;
-    __bdd_execute_target__(config, step->id);
+    ttest_execute_target__(config, step->id);
     if (config->error) {
       step->executed = true;
       step->passed = false;
-      step->result = __BDD_RESULT_FAILED__;
+      step->result = TTEST_RESULT_FAILED__;
       step->failure_message = strdup(config->error);
       step->failure_location =
           strdup(config->location ? config->location : "at unknown location");
@@ -1364,19 +1443,19 @@ static void __bdd_run__(__bdd_config_type__ *config) {
         ++config->failed_test_count;
         printf("Bail out! fixture %s failed: %s\n", step->name, config->error);
       } else {
-        __bdd_report_fail__(config, step);
+        ttest_report_fail__(config, step);
       }
       free(config->error);
       config->error = NULL;
     } else {
       step->executed = true;
       step->passed = true;
-      step->result = __BDD_RESULT_PASSED__;
+      step->result = TTEST_RESULT_PASSED__;
     }
   }
 }
 
-static char *__bdd_vformat__(const char *format, va_list va) {
+static char *ttest_vformat__(const char *format, va_list va) {
   va_list va2;
   va_copy(va2, va);
   int len = vsnprintf(NULL, 0, format, va2);
@@ -1386,7 +1465,7 @@ static char *__bdd_vformat__(const char *format, va_list va) {
     abort();
   }
 
-  char *result = __BDD_CAST(char *, malloc((size_t)len + 1));
+  char *result = TTEST_CAST(char *, malloc((size_t)len + 1));
   if (!result) {
     perror("malloc(result)");
     abort();
@@ -1400,15 +1479,15 @@ static char *__bdd_vformat__(const char *format, va_list va) {
   return result;
 }
 
-static char *__bdd_format__(const char *format, ...) {
+static char *ttest_format__(const char *format, ...) {
   va_list va;
   va_start(va, format);
-  char *buf = __bdd_vformat__(format, va);
+  char *buf = ttest_vformat__(format, va);
   va_end(va);
   return buf;
 }
 
-static bool __bdd_is_supported_term__(void) {
+static bool ttest_is_supported_term__(void) {
   bool result;
   const char *term = getenv("TERM");
   result = term && strcmp(term, "") != 0;
@@ -1440,11 +1519,11 @@ static bool __bdd_is_supported_term__(void) {
 #endif
 }
 
-static inline int __bdd_is_xml_char__(unsigned char c) {
+static inline int ttest_is_xml_char__(unsigned char c) {
   return c == '\t' || c == '\n' || c == '\r' || c >= 0x20;
 }
 
-static const char *__bdd_skip_ansi_escape__(const char *p) {
+static const char *ttest_skip_ansi_escape__(const char *p) {
   if (!p || p[0] != '\x1B') return p;
   ++p;
   if (*p == '[') {
@@ -1474,7 +1553,7 @@ static const char *__bdd_skip_ansi_escape__(const char *p) {
   return p;
 }
 
-static void __bdd_tap_failure_diagnostic__(const char *message) {
+static void ttest_tap_failure_diagnostic__(const char *message) {
   /* Append a single-line, ANSI-free diagnostic to a TAP failure line. */
   if (!message || !message[0]) return;
   printf(" # ");
@@ -1485,7 +1564,7 @@ static void __bdd_tap_failure_diagnostic__(const char *message) {
       continue;
     }
     if (*p == '\x1B') {
-      p = __bdd_skip_ansi_escape__(p);
+      p = ttest_skip_ansi_escape__(p);
       continue;
     }
     fputc(*p, stdout);
@@ -1493,15 +1572,15 @@ static void __bdd_tap_failure_diagnostic__(const char *message) {
   }
 }
 
-static void __bdd_xml_escape__(FILE *f, const char *str) {
+static void ttest_xml_escape__(FILE *f, const char *str) {
   if (!str) return;
   for (const char *p = str; *p;) {
     unsigned char c = (unsigned char)*p;
     if (c == 0x1B) {
-      p = __bdd_skip_ansi_escape__(p);
+      p = ttest_skip_ansi_escape__(p);
       continue;
     }
-    if (!__bdd_is_xml_char__(c)) {
+    if (!ttest_is_xml_char__(c)) {
       ++p;
       continue;
     }
@@ -1529,11 +1608,11 @@ static void __bdd_xml_escape__(FILE *f, const char *str) {
   }
 }
 
-static __bdd_result__ __bdd_generate_junit__(__bdd_config_type__ *config, __bdd_array__ *steps,
+static ttest_result__ ttest_generate_junit__(ttest_config_type__ *config, ttest_array__ *steps,
                                              size_t test_count) {
   FILE *f = fopen(config->junit_file, "w");
   if (!f) {
-    return __bdd_result_error__(__BDD_ERR_IO__, "could not open JUnit output file");
+    return ttest_result_error__(TTEST_ERR_IO__, "could not open JUnit output file");
   }
 
   /* Get current timestamp in ISO 8601 format */
@@ -1541,20 +1620,19 @@ static __bdd_result__ __bdd_generate_junit__(__bdd_config_type__ *config, __bdd_
   struct tm *tm_info = gmtime(&now);
   if (!tm_info) {
     fclose(f);
-    return __bdd_result_error__(__BDD_ERR_TIME__, "could not build JUnit timestamp");
+    return ttest_result_error__(TTEST_ERR_TIME__, "could not build JUnit timestamp");
   }
   char timestamp[32];
   if (strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S", tm_info) == 0) {
     fclose(f);
-    return __bdd_result_error__(__BDD_ERR_TIME__, "could not format JUnit timestamp");
+    return ttest_result_error__(TTEST_ERR_TIME__, "could not format JUnit timestamp");
   }
 
   /* Count skipped tests */
   size_t skipped_count = 0;
   for (size_t i = 0; i < steps->size; ++i) {
-    __bdd_test_step__ *step = __BDD_CAST(__bdd_test_step__ *, steps->values[i]);
-    if (step->type == __BDD_NODE_TEST__ &&
-        (step->result == __BDD_RESULT_SKIPPED__ || step->result == __BDD_RESULT_FILTERED__)) {
+    ttest_test_step__ *step = TTEST_CAST(ttest_test_step__ *, steps->values[i]);
+    if (step->type == TTEST_NODE_TEST__ && ttest_test_result_is_skip__(step->result)) {
       ++skipped_count;
     }
   }
@@ -1571,28 +1649,26 @@ static __bdd_result__ __bdd_generate_junit__(__bdd_config_type__ *config, __bdd_
           test_count, config->failed_test_count, skipped_count, timestamp);
 
   for (size_t i = 0; i < steps->size; ++i) {
-    __bdd_test_step__ *step = __BDD_CAST(__bdd_test_step__ *, steps->values[i]);
-    if (step->type == __BDD_NODE_TEST__) {
+    ttest_test_step__ *step = TTEST_CAST(ttest_test_step__ *, steps->values[i]);
+    if (step->type == TTEST_NODE_TEST__) {
       fprintf(f, "    <testcase name=\"");
-      __bdd_xml_escape__(f, step->name);
+      ttest_xml_escape__(f, step->name);
       fprintf(f, "\" classname=\"");
       /* Use full hierarchical path if available, otherwise use a generic name */
       if (step->full_path) {
-        __bdd_xml_escape__(f, step->full_path);
+        ttest_xml_escape__(f, step->full_path);
       } else {
-        __bdd_xml_escape__(f, "tinytest");
+        ttest_xml_escape__(f, "tinytest");
       }
       fprintf(f, "\" time=\"%.6f\"", step->execution_time_ms / 1000.0); /* Convert ms to seconds */
 
-      bool is_skip =
-          step->result == __BDD_RESULT_SKIPPED__ || step->result == __BDD_RESULT_FILTERED__;
-      bool is_fail =
-          step->result == __BDD_RESULT_FAILED__ || step->result == __BDD_RESULT_UNEXPECTED_PASS__;
+      bool is_skip = ttest_test_result_is_skip__(step->result);
+      bool is_fail = ttest_test_result_is_fail__(step->result);
 
       if (is_skip) {
         fprintf(f, ">\n");
         fprintf(f, "      <skipped message=\"");
-        __bdd_xml_escape__(f, __bdd_skip_message__(step));
+        ttest_xml_escape__(f, ttest_skip_message__(step));
         fprintf(f, "\" />\n");
         fprintf(f, "    </testcase>\n");
       } else if (is_fail) {
@@ -1600,18 +1676,18 @@ static __bdd_result__ __bdd_generate_junit__(__bdd_config_type__ *config, __bdd_
         fprintf(f, ">\n");
         fprintf(f, "      <failure message=\"");
         if (step->failure_message) {
-          __bdd_xml_escape__(f, step->failure_message);
+          ttest_xml_escape__(f, step->failure_message);
         } else {
           fprintf(f, "Test failed");
         }
         fprintf(f, "\" type=\"AssertionError\">");
         if (step->failure_location) {
           fprintf(f, "\n");
-          __bdd_xml_escape__(f, step->failure_location);
+          ttest_xml_escape__(f, step->failure_location);
         }
         if (step->failure_message) {
           fprintf(f, "\n");
-          __bdd_xml_escape__(f, step->failure_message);
+          ttest_xml_escape__(f, step->failure_message);
         }
         fprintf(f, "\n      </failure>\n");
         fprintf(f, "    </testcase>\n");
@@ -1626,12 +1702,12 @@ static __bdd_result__ __bdd_generate_junit__(__bdd_config_type__ *config, __bdd_
   fprintf(f, "</testsuites>\n");
   if (ferror(f)) {
     fclose(f);
-    return __bdd_result_error__(__BDD_ERR_IO__, "could not write complete JUnit output");
+    return ttest_result_error__(TTEST_ERR_IO__, "could not write complete JUnit output");
   }
   if (fclose(f) != 0) {
-    return __bdd_result_error__(__BDD_ERR_IO__, "could not close JUnit output file");
+    return ttest_result_error__(TTEST_ERR_IO__, "could not close JUnit output file");
   }
-  return __bdd_result_ok__();
+  return ttest_result_ok__();
 }
 
 #ifdef __cplusplus
@@ -1645,10 +1721,10 @@ int main(int argc, char **argv) {
   SetConsoleOutputCP(CP_UTF8);
   #endif
 
-  double __bdd_start_time__ = __bdd_get_time_ms__();
-  struct __bdd_config_type__ config;
+  double ttest_start_time__ = ttest_get_time_ms__();
+  struct ttest_config_type__ config;
   memset(&config, 0, sizeof(config));
-  config.run = __BDD_INIT_RUN__;
+  config.run = TTEST_INIT_RUN__;
 
   /* Parse command-line arguments */
   for (int i = 1; i < argc; ++i) {
@@ -1692,128 +1768,128 @@ int main(int argc, char **argv) {
     }
   }
 
-  const char *tap_env = getenv("BDD_USE_TAP");
+  const char *tap_env = getenv("TT_USE_TAP");
   if (!config.use_tap &&
-      (BDD_USE_TAP || (tap_env && strcmp(tap_env, "") != 0 && strcmp(tap_env, "0") != 0))) {
+      (TT_USE_TAP || (tap_env && strcmp(tap_env, "") != 0 && strcmp(tap_env, "0") != 0))) {
     config.use_tap = 1;
   }
 
-  if (!config.use_tap && !config.use_color && BDD_USE_COLOR && __BDD_IS_ATTY__() &&
-      __bdd_is_supported_term__()) {
+  if (!config.use_tap && !config.use_color && TT_USE_COLOR && TTEST_IS_ATTY__() &&
+      ttest_is_supported_term__()) {
     config.use_color = 1;
   }
 
-  if (__bdd_spec_count__ == 0) {
+  if (ttest_spec_count__ == 0) {
     fprintf(stderr, "tinytest: no specs registered\n");
     return 1;
   }
 
-  __bdd_array__ *all_steps = __bdd_array_create__();
-  __bdd_array__ *all_step_arrays = __bdd_array_create__();
-  __bdd_array__ *all_roots = __bdd_array_create__();
-  __bdd_array__ *all_nodes = __bdd_array_create__();
-  __bdd_array__ *all_stacks = __bdd_array_create__();
-  __bdd_array__ *all_specs = __bdd_array_create__();
+  ttest_array__ *all_steps = ttest_array_create__();
+  ttest_array__ *all_step_arrays = ttest_array_create__();
+  ttest_array__ *all_roots = ttest_array_create__();
+  ttest_array__ *all_nodes = ttest_array_create__();
+  ttest_array__ *all_stacks = ttest_array_create__();
+  ttest_array__ *all_specs = ttest_array_create__();
 
   bool has_focus_any = false;
   size_t total_test_count = 0;
 
-  for (size_t s = 0; s < __bdd_spec_count__; ++s) {
-    __bdd_spec_entry__ *spec = __bdd_get_spec_entry__(s);
+  for (size_t s = 0; s < ttest_spec_count__; ++s) {
+    ttest_spec_entry__ *spec = ttest_get_spec_entry__(s);
     if (!spec) continue;
 
-    config.run = __BDD_INIT_RUN__;
+    config.run = TTEST_INIT_RUN__;
     config.id = 0;
     config.has_focus_nodes = false;
-    config.nodes = __bdd_array_create__();
-    config.node_stack = __bdd_array_create__();
+    config.nodes = ttest_array_create__();
+    config.node_stack = ttest_array_create__();
 
-    __bdd_node__ *root =
-        __bdd_node_create__(-1, spec->name, __BDD_NODE_GROUP__, __bdd_node_flags_none__);
-    __bdd_array_push__(config.node_stack, root);
+    ttest_node__ *root =
+        ttest_node_create__(-1, spec->name, TTEST_NODE_GROUP__, ttest_node_flags_none__);
+    ttest_array_push__(config.node_stack, root);
 
-    __bdd_current_spec_fn__ = spec->fn;
-    __bdd_test_main__(&config);
+    ttest_current_spec_fn__ = spec->fn;
+    ttest_test_main__(&config);
 
     if (config.has_focus_nodes) {
       has_focus_any = true;
     }
 
-    __bdd_array__ *steps = __bdd_array_create__();
-    __bdd_node_flatten__(&config, root, steps);
+    ttest_array__ *steps = ttest_array_create__();
+    ttest_node_flatten__(&config, root, steps);
 
-    enum { __BDD_MAX_GROUP_DEPTH__ = 128 };
-    __bdd_test_step__ *group_stack[__BDD_MAX_GROUP_DEPTH__];
+    enum { TTEST_MAX_GROUP_DEPTH__ = 128 };
+    ttest_test_step__ *group_stack[TTEST_MAX_GROUP_DEPTH__];
     int stack_depth = 0;
 
     for (size_t i = 0; i < steps->size; ++i) {
-      __bdd_test_step__ *step = __BDD_CAST(__bdd_test_step__ *, steps->values[i]);
+      ttest_test_step__ *step = TTEST_CAST(ttest_test_step__ *, steps->values[i]);
 
       while (stack_depth > 0 && group_stack[stack_depth - 1]->level >= step->level) {
         stack_depth--;
       }
 
-      if (step->type == __BDD_NODE_GROUP__) {
-        if (stack_depth < __BDD_MAX_GROUP_DEPTH__) {
+      if (step->type == TTEST_NODE_GROUP__) {
+        if (stack_depth < TTEST_MAX_GROUP_DEPTH__) {
           group_stack[stack_depth++] = step;
         }
-      } else if (step->type == __BDD_NODE_TEST__) {
-        step->full_path = __bdd_build_full_path__(group_stack, stack_depth, step->name);
+      } else if (step->type == TTEST_NODE_TEST__) {
+        step->full_path = ttest_build_full_path__(group_stack, stack_depth, step->name);
         ++total_test_count;
       }
     }
 
-    __bdd_array_push__(all_roots, root);
-    __bdd_array_push__(all_nodes, config.nodes);
-    __bdd_array_push__(all_stacks, config.node_stack);
-    __bdd_array_push__(all_step_arrays, steps);
-    __bdd_array_push__(all_specs, spec);
+    ttest_array_push__(all_roots, root);
+    ttest_array_push__(all_nodes, config.nodes);
+    ttest_array_push__(all_stacks, config.node_stack);
+    ttest_array_push__(all_step_arrays, steps);
+    ttest_array_push__(all_specs, spec);
 
     for (size_t i = 0; i < steps->size; ++i) {
-      __bdd_array_push__(all_steps, steps->values[i]);
+      ttest_array_push__(all_steps, steps->values[i]);
     }
   }
 
   if (config.list_only) {
     for (size_t i = 0; i < all_steps->size; ++i) {
-      __bdd_test_step__ *step = __BDD_CAST(__bdd_test_step__ *, all_steps->values[i]);
-      if (step->type == __BDD_NODE_GROUP__) {
-        __bdd_indent__(stdout, step->level);
+      ttest_test_step__ *step = TTEST_CAST(ttest_test_step__ *, all_steps->values[i]);
+      if (step->type == TTEST_NODE_GROUP__) {
+        ttest_indent__(stdout, step->level);
         printf("%s\n", step->name);
-      } else if (step->type == __BDD_NODE_TEST__) {
-        __bdd_indent__(stdout, step->level);
+      } else if (step->type == TTEST_NODE_TEST__) {
+        ttest_indent__(stdout, step->level);
         const char *tag = "";
-        if (step->flags & __bdd_node_flags_skip__) tag = " [skip]";
-        else if (step->flags & __bdd_node_flags_focus__) tag = " [focus]";
-        else if (step->flags & __bdd_node_flags_expected_fail__) tag = " [should_fail]";
+        if (step->flags & ttest_node_flags_skip__) tag = " [skip]";
+        else if (step->flags & ttest_node_flags_focus__) tag = " [focus]";
+        else if (step->flags & ttest_node_flags_expected_fail__) tag = " [should_fail]";
         printf("%s%s\n", step->name, tag);
       }
     }
 
     for (size_t i = 0; i < all_nodes->size; ++i) {
-      __bdd_array__ *nodes = __BDD_CAST(__bdd_array__ *, all_nodes->values[i]);
+      ttest_array__ *nodes = TTEST_CAST(ttest_array__ *, all_nodes->values[i]);
       for (size_t j = 0; j < nodes->size; ++j) {
-        __bdd_node_free__(__BDD_CAST(__bdd_node__ *, nodes->values[j]));
+        ttest_node_free__(TTEST_CAST(ttest_node__ *, nodes->values[j]));
       }
-      __bdd_array_free__(nodes);
-      __bdd_array_free__(__BDD_CAST(__bdd_array__ *, all_stacks->values[i]));
-      __bdd_node__ *root = __BDD_CAST(__bdd_node__ *, all_roots->values[i]);
+      ttest_array_free__(nodes);
+      ttest_array_free__(TTEST_CAST(ttest_array__ *, all_stacks->values[i]));
+      ttest_node__ *root = TTEST_CAST(ttest_node__ *, all_roots->values[i]);
       root->name = NULL;
-      __bdd_node_free__(root);
+      ttest_node_free__(root);
     }
     for (size_t i = 0; i < all_steps->size; ++i) {
-      __bdd_test_step_free__(__BDD_CAST(__bdd_test_step__ *, all_steps->values[i]));
+      ttest_test_step_free__(TTEST_CAST(ttest_test_step__ *, all_steps->values[i]));
     }
     for (size_t i = 0; i < all_step_arrays->size; ++i) {
-      __bdd_array_free__(__BDD_CAST(__bdd_array__ *, all_step_arrays->values[i]));
+      ttest_array_free__(TTEST_CAST(ttest_array__ *, all_step_arrays->values[i]));
     }
-    __bdd_array_free__(all_roots);
-    __bdd_array_free__(all_nodes);
-    __bdd_array_free__(all_stacks);
-    __bdd_array_free__(all_step_arrays);
-    __bdd_array_free__(all_specs);
-    __bdd_array_free__(all_steps);
-    __bdd_cleanup_specs__();
+    ttest_array_free__(all_roots);
+    ttest_array_free__(all_nodes);
+    ttest_array_free__(all_stacks);
+    ttest_array_free__(all_step_arrays);
+    ttest_array_free__(all_specs);
+    ttest_array_free__(all_steps);
+    ttest_cleanup_specs__();
     return 0;
   }
 
@@ -1821,17 +1897,17 @@ int main(int argc, char **argv) {
     printf("TAP version 13\n1..%zu\n", total_test_count);
   }
 
-  config.run = __BDD_TEST_RUN__;
+  config.run = TTEST_TEST_RUN__;
   config.has_focus_nodes = has_focus_any;
 
   for (size_t i = 0; i < all_step_arrays->size; ++i) {
-    __bdd_array__ *steps = __BDD_CAST(__bdd_array__ *, all_step_arrays->values[i]);
-    __bdd_spec_entry__ *spec = __BDD_CAST(__bdd_spec_entry__ *, all_specs->values[i]);
-    __bdd_current_spec_fn__ = spec ? spec->fn : NULL;
-    config.node_stack = __BDD_CAST(__bdd_array__ *, all_stacks->values[i]);
-    config.nodes = __BDD_CAST(__bdd_array__ *, all_nodes->values[i]);
+    ttest_array__ *steps = TTEST_CAST(ttest_array__ *, all_step_arrays->values[i]);
+    ttest_spec_entry__ *spec = TTEST_CAST(ttest_spec_entry__ *, all_specs->values[i]);
+    ttest_current_spec_fn__ = spec ? spec->fn : NULL;
+    config.node_stack = TTEST_CAST(ttest_array__ *, all_stacks->values[i]);
+    config.nodes = TTEST_CAST(ttest_array__ *, all_nodes->values[i]);
     for (size_t j = 0; j < steps->size; ++j) {
-      __bdd_test_step__ *step = __BDD_CAST(__bdd_test_step__ *, steps->values[j]);
+      ttest_test_step__ *step = TTEST_CAST(ttest_test_step__ *, steps->values[j]);
       config.node_stack->size = 1;
       config.id = 0;
       if (config.error) {
@@ -1840,37 +1916,44 @@ int main(int argc, char **argv) {
       }
       config.location = NULL;
       config.current_test = step;
-      __bdd_run__(&config);
+      ttest_run__(&config);
     }
   }
 
-  double __bdd_end_time__ = __bdd_get_time_ms__();
-  double __bdd_duration__ = (__bdd_end_time__ - __bdd_start_time__) / 1000.0;
+  double ttest_end_time__ = ttest_get_time_ms__();
+  double ttest_duration__ = (ttest_end_time__ - ttest_start_time__) / 1000.0;
 
   size_t passed_count = 0;
   size_t skipped_count = 0;
   size_t filtered_count = 0;
   size_t todo_count = 0;
   for (size_t i = 0; i < all_steps->size; ++i) {
-    __bdd_test_step__ *step = __BDD_CAST(__bdd_test_step__ *, all_steps->values[i]);
-    if (step->type != __BDD_NODE_TEST__) continue;
-    if (step->result == __BDD_RESULT_SKIPPED__) {
-      skipped_count++;
-    } else if (step->result == __BDD_RESULT_FILTERED__) {
-      filtered_count++;
-    } else if (step->result == __BDD_RESULT_EXPECTED_FAIL__) {
-      todo_count++;
-    } else if (step->result == __BDD_RESULT_PASSED__) {
-      passed_count++;
+    ttest_test_step__ *step = TTEST_CAST(ttest_test_step__ *, all_steps->values[i]);
+    if (step->type != TTEST_NODE_TEST__) continue;
+    switch (ttest_test_result_category__(step->result)) {
+      case TTEST_RESULT_CATEGORY_PASS__:
+        passed_count++;
+        break;
+      case TTEST_RESULT_CATEGORY_SKIP__:
+        skipped_count++;
+        break;
+      case TTEST_RESULT_CATEGORY_FILTER__:
+        filtered_count++;
+        break;
+      case TTEST_RESULT_CATEGORY_TODO__:
+        todo_count++;
+        break;
+      default:
+        break;
     }
   }
 
   if (!config.use_tap) {
-    const char *c_rst = config.use_color ? __BDD_COLOR_RESET__ : "";
-    const char *c_red = config.use_color ? __BDD_COLOR_RED__ : "";
-    const char *c_grn = config.use_color ? __BDD_COLOR_GREEN__ : "";
-    const char *c_ylw = config.use_color ? __BDD_COLOR_YELLOW__ : "";
-    const char *c_bld = config.use_color ? __BDD_COLOR_BOLD__ : "";
+    const char *c_rst = config.use_color ? TTEST_COLOR_RESET__ : "";
+    const char *c_red = config.use_color ? TTEST_COLOR_RED__ : "";
+    const char *c_grn = config.use_color ? TTEST_COLOR_GREEN__ : "";
+    const char *c_ylw = config.use_color ? TTEST_COLOR_YELLOW__ : "";
+    const char *c_bld = config.use_color ? TTEST_COLOR_BOLD__ : "";
 
     printf("\n==All Tests Summary==\n");
     printf("Total tests %s[PASSED]:\t%zu%s\n", c_grn, passed_count, c_rst);
@@ -1888,10 +1971,10 @@ int main(int argc, char **argv) {
     printf("%zu passed, %zu failed, %zu skipped, %zu filtered, %zu todo, %zu assertions. "
            "Finished in %f sec.\n",
            passed_count, config.failed_test_count, skipped_count, filtered_count, todo_count,
-           config.assertion_count, __bdd_duration__);
+           config.assertion_count, ttest_duration__);
 
     if (config.failed_test_count == 0 && todo_count == 0) {
-      printf("%sAll tests passed in %f sec.%s\n\n", c_grn, __bdd_duration__, c_rst);
+      printf("%sAll tests passed in %f sec.%s\n\n", c_grn, ttest_duration__, c_rst);
     } else {
       printf("\n");
     }
@@ -1900,7 +1983,7 @@ int main(int argc, char **argv) {
   /* Generate JUnit XML report if requested - must be done before freeing steps */
   int exit_code = config.failed_test_count > 0 ? 1 : 0;
   if (config.junit_file) {
-    __bdd_result__ junit_result = __bdd_generate_junit__(&config, all_steps, total_test_count);
+    ttest_result__ junit_result = ttest_generate_junit__(&config, all_steps, total_test_count);
     if (!junit_result.ok) {
       fprintf(stderr, "Error: %s: %s\n", junit_result.message, config.junit_file);
       exit_code = 1;
@@ -1908,384 +1991,406 @@ int main(int argc, char **argv) {
   }
 
   for (size_t i = 0; i < all_nodes->size; ++i) {
-    __bdd_array__ *nodes = __BDD_CAST(__bdd_array__ *, all_nodes->values[i]);
+    ttest_array__ *nodes = TTEST_CAST(ttest_array__ *, all_nodes->values[i]);
     for (size_t j = 0; j < nodes->size; ++j) {
-      __bdd_node_free__(__BDD_CAST(__bdd_node__ *, nodes->values[j]));
+      ttest_node_free__(TTEST_CAST(ttest_node__ *, nodes->values[j]));
     }
-    __bdd_array_free__(nodes);
-    __bdd_array_free__(__BDD_CAST(__bdd_array__ *, all_stacks->values[i]));
-    __bdd_node__ *root = __BDD_CAST(__bdd_node__ *, all_roots->values[i]);
+    ttest_array_free__(nodes);
+    ttest_array_free__(TTEST_CAST(ttest_array__ *, all_stacks->values[i]));
+    ttest_node__ *root = TTEST_CAST(ttest_node__ *, all_roots->values[i]);
     root->name = NULL;
-    __bdd_node_free__(root);
+    ttest_node_free__(root);
   }
   for (size_t i = 0; i < all_step_arrays->size; ++i) {
-    __bdd_array_free__(__BDD_CAST(__bdd_array__ *, all_step_arrays->values[i]));
+    ttest_array_free__(TTEST_CAST(ttest_array__ *, all_step_arrays->values[i]));
   }
-  __bdd_array_free__(all_roots);
-  __bdd_array_free__(all_nodes);
-  __bdd_array_free__(all_stacks);
-  __bdd_array_free__(all_step_arrays);
-  __bdd_array_free__(all_specs);
+  ttest_array_free__(all_roots);
+  ttest_array_free__(all_nodes);
+  ttest_array_free__(all_stacks);
+  ttest_array_free__(all_step_arrays);
+  ttest_array_free__(all_specs);
   for (size_t i = 0; i < all_steps->size; ++i) {
-    __bdd_test_step_free__(__BDD_CAST(__bdd_test_step__ *, all_steps->values[i]));
+    ttest_test_step_free__(TTEST_CAST(ttest_test_step__ *, all_steps->values[i]));
   }
-  __bdd_array_free__(all_steps);
-  __bdd_cleanup_specs__();
+  ttest_array_free__(all_steps);
+  ttest_cleanup_specs__();
 
   return exit_code;
 }
 #endif /* TINYTEST_NO_MAIN */
 
 #if defined(__GNUC__) || defined(__clang__)
-  #define __BDD_UNUSED_PARAM__ __attribute__((unused))
+  #define TTEST_UNUSED_PARAM__ __attribute__((unused))
 #else
-  #define __BDD_UNUSED_PARAM__
+  #define TTEST_UNUSED_PARAM__
 #endif
 
 #define spec(name)                                                                                 \
-  static void __BDD_CAT2(__bdd_spec_fn_,                                                           \
-                         __LINE__)(__BDD_UNUSED_PARAM__ __bdd_config_type__ * __bdd_config__);     \
-  __BDD_CONSTRUCTOR__(__BDD_CAT2(__bdd_spec_reg_, __LINE__)) {                                     \
-    __bdd_register_spec__((name), __BDD_CAT2(__bdd_spec_fn_, __LINE__));                           \
+  static void TTEST_CAT2(ttest_spec_fn_,                                                           \
+                         __LINE__)(TTEST_UNUSED_PARAM__ ttest_config_type__ * ttest_config__);     \
+  TTEST_CONSTRUCTOR__(TTEST_CAT2(ttest_spec_reg_, __LINE__)) {                                     \
+    ttest_register_spec__((name), TTEST_CAT2(ttest_spec_fn_, __LINE__));                           \
   }                                                                                                \
-  static void __BDD_CAT2(__bdd_spec_fn_,                                                           \
-                         __LINE__)(__BDD_UNUSED_PARAM__ __bdd_config_type__ * __bdd_config__)
+  static void TTEST_CAT2(ttest_spec_fn_,                                                           \
+                         __LINE__)(TTEST_UNUSED_PARAM__ ttest_config_type__ * ttest_config__)
 
-#define __BDD_CAT(a, b) a##b
-#define __BDD_CAT2(a, b) __BDD_CAT(a, b)
+#define TTEST_CAT(a, b) a##b
+#define TTEST_CAT2(a, b) TTEST_CAT(a, b)
 
-#define __BDD_NODE_IMPL__(flags, node_list, type, format_name, ...)                                \
-  for (bool __BDD_CAT2(__bdd_has_run_, __LINE__) = 0;                                              \
-       (!__BDD_CAT2(__bdd_has_run_, __LINE__) &&                                                   \
-        __bdd_enter_node__(flags, __bdd_active_config__, (type),                                   \
-                           offsetof(struct __bdd_node__, node_list), (format_name), __VA_ARGS__)); \
-       __bdd_exit_node__(__bdd_active_config__), __BDD_CAT2(__bdd_has_run_, __LINE__) = 1)
+#define TTEST_NODE_IMPL__(flags, node_list, type, format_name, ...)                                \
+  for (bool TTEST_CAT2(ttest_has_run_, __LINE__) = 0;                                              \
+       (!TTEST_CAT2(ttest_has_run_, __LINE__) &&                                                   \
+        ttest_enter_node__(flags, ttest_active_config__, (type),                                   \
+                           offsetof(struct ttest_node__, node_list), (format_name), __VA_ARGS__)); \
+       ttest_exit_node__(ttest_active_config__), TTEST_CAT2(ttest_has_run_, __LINE__) = 1)
 
 /* A single name argument is a literal string and is never interpreted as a
  * printf format, so names containing '%' are safe. Two or more arguments
  * select printf formatting (e.g. it("row %zu", i)). */
-#define __BDD_NODE_DISPATCH_ONE__(flags, node_list, type, name)                                    \
-  __BDD_NODE_IMPL__(flags, node_list, type, false, name)
-#define __BDD_NODE_DISPATCH__(flags, node_list, type, ...)                                         \
-  __BDD_NODE_IMPL__(flags, node_list, type, true, __VA_ARGS__)
+#define TTEST_NODE_DISPATCH_ONE__(flags, node_list, type, name)                                    \
+  TTEST_NODE_IMPL__(flags, node_list, type, false, name)
+#define TTEST_NODE_DISPATCH__(flags, node_list, type, ...)                                         \
+  TTEST_NODE_IMPL__(flags, node_list, type, true, __VA_ARGS__)
 
-#define __BDD_NODE__(flags, node_list, type, ...)                                                  \
-  __BDD_OVERLOAD__(__BDD_NODE_DISPATCH_, __BDD_COUNT_ARGS__(__VA_ARGS__))(flags, node_list, type,   \
+#define TTEST_NODE__(flags, node_list, type, ...)                                                  \
+  TTEST_OVERLOAD__(TTEST_NODE_DISPATCH_, TTEST_COUNT_ARGS__(__VA_ARGS__))(flags, node_list, type,   \
                                                                           __VA_ARGS__)
 
 #define describe(...)                                                                              \
-  __BDD_NODE__(__bdd_node_flags_none__, list_children, __BDD_NODE_GROUP__, __VA_ARGS__)
+  TTEST_NODE__(ttest_node_flags_none__, list_children, TTEST_NODE_GROUP__, __VA_ARGS__)
 #define group(...) describe(__VA_ARGS__)
 #define suite(...) spec(__VA_ARGS__)
-#define it(...) __BDD_NODE__(__bdd_node_flags_none__, list_children, __BDD_NODE_TEST__, __VA_ARGS__)
+#define it(...) TTEST_NODE__(ttest_node_flags_none__, list_children, TTEST_NODE_TEST__, __VA_ARGS__)
 #define bench(...)                                                                                 \
-  __BDD_NODE__(__bdd_node_flags_benchmark__, list_children, __BDD_NODE_TEST__, __VA_ARGS__)
+  TTEST_NODE__(ttest_node_flags_benchmark__, list_children, TTEST_NODE_TEST__, __VA_ARGS__)
 #define it_only(...)                                                                               \
-  __BDD_NODE__(__bdd_node_flags_focus__, list_children, __BDD_NODE_TEST__, __VA_ARGS__)
+  TTEST_NODE__(ttest_node_flags_focus__, list_children, TTEST_NODE_TEST__, __VA_ARGS__)
 #define fit(...) it_only(__VA_ARGS__)
 #define it_skip(...)                                                                               \
-  __BDD_NODE__(__bdd_node_flags_skip__, list_children, __BDD_NODE_TEST__, __VA_ARGS__)
+  TTEST_NODE__(ttest_node_flags_skip__, list_children, TTEST_NODE_TEST__, __VA_ARGS__)
 #define xit(...) it_skip(__VA_ARGS__)
 #define it_should_fail(...)                                                                        \
-  __BDD_NODE__(__bdd_node_flags_expected_fail__, list_children, __BDD_NODE_TEST__, __VA_ARGS__)
+  TTEST_NODE__(ttest_node_flags_expected_fail__, list_children, TTEST_NODE_TEST__, __VA_ARGS__)
 #define before_each()                                                                              \
-  __BDD_NODE__(__bdd_node_flags_none__, list_before_each, __BDD_NODE_INTERIM__, "before_each")
+  TTEST_NODE__(ttest_node_flags_none__, list_before_each, TTEST_NODE_INTERIM__, "before_each")
 #define after_each()                                                                               \
-  __BDD_NODE__(__bdd_node_flags_none__, list_after_each, __BDD_NODE_INTERIM__, "after_each")
+  TTEST_NODE__(ttest_node_flags_none__, list_after_each, TTEST_NODE_INTERIM__, "after_each")
 
-#ifndef BDD_NO_CONTEXT_KEYWORD
+#ifndef TT_NO_CONTEXT_KEYWORD
   #define context(name) describe(name)
 #endif
 
-#define bdd_invoke(func, ...) func(__bdd_active_config__, ##__VA_ARGS__)
+/* TT_invoke: ##__VA_ARGS__ elides the comma when ... is empty.
+ * This is a GCC/Clang extension, standardised as __VA_OPT__(,) in C23 and C++20.
+ * MSVC traditional preprocessor implements the same comma-elision extension
+ * natively; /Zc:preprocessor mode requires C23/C++20 standard __VA_OPT__. */
+#if (defined(__cplusplus) && __cplusplus >= 202002L) || \
+    (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L)
+  #define TT_invoke(func, ...) func(ttest_active_config__ __VA_OPT__(,) __VA_ARGS__)
+#else
+  #define TT_invoke(func, ...) func(ttest_active_config__, ##__VA_ARGS__)
+#endif
 
-#define __BDD_MACRO__(M, ...) __BDD_OVERLOAD__(M, __BDD_COUNT_ARGS__(__VA_ARGS__))(__VA_ARGS__)
-#define __BDD_OVERLOAD__(macro_name, suffix) __BDD_EXPAND_OVERLOAD__(macro_name, suffix)
-#define __BDD_EXPAND_OVERLOAD__(macro_name, suffix) macro_name##suffix
+#define TTEST_MACRO__(M, ...) TTEST_OVERLOAD__(M, TTEST_COUNT_ARGS__(__VA_ARGS__))(__VA_ARGS__)
+#define TTEST_OVERLOAD__(macro_name, suffix) TTEST_EXPAND_OVERLOAD__(macro_name, suffix)
+#define TTEST_EXPAND_OVERLOAD__(macro_name, suffix) macro_name##suffix
 
-#define __BDD_COUNT_ARGS__(...) __BDD_PATTERN_MATCH__(__VA_ARGS__, _, _, _, _, _, _, _, _, _, ONE__)
-#define __BDD_PATTERN_MATCH__(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, N, ...) N
+#define TTEST_COUNT_ARGS__(...) TTEST_PATTERN_MATCH__(__VA_ARGS__, _, _, _, _, _, _, _, _, _, ONE__)
+#define TTEST_PATTERN_MATCH__(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, N, ...) N
 
-#define __BDD_STRING_HELPER__(x) #x
-#define __BDD_STRING__(x) __BDD_STRING_HELPER__(x)
-#define __STRING__LINE__ __BDD_STRING__(__LINE__)
+#define TTEST_STRING_HELPER__(x) #x
+#define TTEST_STRING__(x) TTEST_STRING_HELPER__(x)
+/* Two-level stringify: outer macro forces argument expansion before # operator. */
+#define TTEST_STRINGIZE_LINE__ TTEST_STRING__(__LINE__)
+#define __STRING__LINE__ TTEST_STRINGIZE_LINE__ /* backward-compatible alias */
 
-#define __BDD_FMT_COLOR__ __BDD_COLOR_RED__ "Check failed:" __BDD_COLOR_RESET__ " %s"
-#define __BDD_FMT_PLAIN__ "Check failed: %s"
+#define TTEST_FMT_COLOR__ TTEST_COLOR_RED__ "Check failed:" TTEST_COLOR_RESET__ " %s"
+#define TTEST_FMT_PLAIN__ "Check failed: %s"
 
-static inline int __bdd_eval_bool__(int v) { return v; }
+static inline int ttest_eval_bool__(int v) { return v; }
 
-/* Internal implementation that takes file and line */
-#define __BDD_CHECK_IMPL__(condition, file, line, ...)                                             \
+/* Internal implementation that takes file and line.
+ * Diagnostic guards suppress -Wshadow (internal ttest_xxx__ locals) and
+ * -Wunused-value (!!(condition) double-negation pattern) at expansion sites. */
+#define TTEST_CHECK_IMPL__(condition, file, line, ...)                                              \
+  TTEST_DIAG_PUSH__                                                                                \
+  TTEST_DIAG_IGNORE_SHADOW__                                                                       \
+  TTEST_DIAG_IGNORE_UNUSED_VALUE__                                                                 \
   do {                                                                                             \
-    if (!__bdd_eval_bool__(!!(condition))) {                                                       \
-      if (__bdd_active_config__) {                                                                 \
-        ++__bdd_active_config__->assertion_count;                                                  \
-        ++__bdd_active_config__->assertion_failed_count;                                           \
-        if (__bdd_active_config__->run == __BDD_TEST_RUN__ && !__bdd_active_config__->error) {     \
-          char *__bdd_message__ = __bdd_format__(__VA_ARGS__);                                     \
+    if (!ttest_eval_bool__(!!(condition))) {                                                       \
+      if (ttest_active_config__) {                                                                 \
+        bool ttest_expected_fail__ = (ttest_active_config__->current_test &&                               \
+                                     (ttest_active_config__->current_test->flags &                         \
+                                      ttest_node_flags_expected_fail__));                              \
+        ++ttest_active_config__->assertion_count;                                                  \
+        if (!ttest_expected_fail__) {                                                              \
+          ++ttest_active_config__->assertion_failed_count;                                         \
+        }                                                                                          \
+        if (ttest_active_config__->run == TTEST_TEST_RUN__ && !ttest_active_config__->error) {        \
+          char *ttest_message__ = ttest_format__(__VA_ARGS__);                                     \
           const char *fmt =                                                                        \
-              __bdd_active_config__->use_color ? __BDD_FMT_COLOR__ : __BDD_FMT_PLAIN__;            \
-          snprintf(__bdd_active_config__->location_buf,                                            \
-                   sizeof(__bdd_active_config__->location_buf), "at %s:%s", file, line);           \
-          __bdd_active_config__->location = __bdd_active_config__->location_buf;                   \
-          size_t bufflen = strlen(fmt) + strlen(__bdd_message__) + 1;                              \
-          __bdd_active_config__->error = __BDD_CAST(char *, calloc(bufflen, sizeof(char)));        \
-          if (__bdd_active_config__->use_color) {                                                  \
-            snprintf(__bdd_active_config__->error, bufflen, __BDD_FMT_COLOR__, __bdd_message__);   \
+              ttest_active_config__->use_color ? TTEST_FMT_COLOR__ : TTEST_FMT_PLAIN__;            \
+          snprintf(ttest_active_config__->location_buf,                                            \
+                   sizeof(ttest_active_config__->location_buf), "at %s:%s", file, line);           \
+          ttest_active_config__->location = ttest_active_config__->location_buf;                   \
+          size_t bufflen = strlen(fmt) + strlen(ttest_message__) + 1;                              \
+          ttest_active_config__->error = TTEST_CAST(char *, calloc(bufflen, sizeof(char)));        \
+          if (ttest_active_config__->use_color) {                                                  \
+            snprintf(ttest_active_config__->error, bufflen, TTEST_FMT_COLOR__, ttest_message__);   \
           } else {                                                                                 \
-            snprintf(__bdd_active_config__->error, bufflen, __BDD_FMT_PLAIN__, __bdd_message__);   \
+            snprintf(ttest_active_config__->error, bufflen, TTEST_FMT_PLAIN__, ttest_message__);   \
           }                                                                                        \
-          free(__bdd_message__);                                                                   \
-          __bdd_longjmp_fail__(__bdd_active_config__);                                             \
+          free(ttest_message__);                                                                   \
+          ttest_longjmp_fail__(ttest_active_config__);                                             \
         }                                                                                          \
       }                                                                                            \
     } else {                                                                                       \
-      if (__bdd_active_config__) ++__bdd_active_config__->assertion_count;                         \
+      if (ttest_active_config__) ++ttest_active_config__->assertion_count;                         \
     }                                                                                              \
-  } while (0)
+  } while (0)                                                                                      \
+  TTEST_DIAG_POP__
 
 /* Wrapper that captures __FILE__ and __LINE__ */
-#define __BDD_CHECK__(condition, ...)                                                              \
-  __BDD_CHECK_IMPL__(condition, __FILE__, __STRING__LINE__, __VA_ARGS__)
+#define TTEST_CHECK__(condition, ...)                                                              \
+  TTEST_CHECK_IMPL__(condition, __FILE__, __STRING__LINE__, __VA_ARGS__)
 
-#define __BDD_CHECK_ONE__(condition)                                                               \
-  __BDD_CHECK_IMPL__(condition, __FILE__, __STRING__LINE__, #condition)
+#define TTEST_CHECK_ONE__(condition)                                                               \
+  TTEST_CHECK_IMPL__(condition, __FILE__, __STRING__LINE__, #condition)
 
-#define check(...) __BDD_MACRO__(__BDD_CHECK_, __VA_ARGS__)
+#define check(...) TTEST_MACRO__(TTEST_CHECK_, __VA_ARGS__)
 
-#define __BDD_INT_COMPARE__(emitter, actual, expected, op, fmt)                                    \
+#define TTEST_INT_COMPARE__(emitter, actual, expected, op, fmt)                                    \
   do {                                                                                             \
-    int __bdd_a__ = __BDD_CAST(int, (actual));                                                     \
-    int __bdd_e__ = __BDD_CAST(int, (expected));                                                   \
-    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                    \
+    int ttest_a__ = TTEST_CAST(int, (actual));                                                     \
+    int ttest_e__ = TTEST_CAST(int, (expected));                                                   \
+    emitter(ttest_a__ op ttest_e__, fmt, ttest_e__, ttest_a__);                                    \
   } while (0)
 
-#define __BDD_UINT_COMPARE__(emitter, actual, expected, op, fmt)                                   \
+#define TTEST_UINT_COMPARE__(emitter, actual, expected, op, fmt)                                   \
   do {                                                                                             \
-    unsigned __bdd_a__ = __BDD_CAST(unsigned, (actual));                                           \
-    unsigned __bdd_e__ = __BDD_CAST(unsigned, (expected));                                         \
-    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                    \
+    unsigned ttest_a__ = TTEST_CAST(unsigned, (actual));                                           \
+    unsigned ttest_e__ = TTEST_CAST(unsigned, (expected));                                         \
+    emitter(ttest_a__ op ttest_e__, fmt, ttest_e__, ttest_a__);                                    \
   } while (0)
 
-#define __BDD_SIZE_COMPARE__(emitter, actual, expected, op, fmt)                                   \
+#define TTEST_SIZE_COMPARE__(emitter, actual, expected, op, fmt)                                   \
   do {                                                                                             \
-    size_t __bdd_a__ = __BDD_CAST(size_t, (actual));                                               \
-    size_t __bdd_e__ = __BDD_CAST(size_t, (expected));                                             \
-    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                    \
+    size_t ttest_a__ = TTEST_CAST(size_t, (actual));                                               \
+    size_t ttest_e__ = TTEST_CAST(size_t, (expected));                                             \
+    emitter(ttest_a__ op ttest_e__, fmt, ttest_e__, ttest_a__);                                    \
   } while (0)
 
-#define __BDD_LLONG_COMPARE__(emitter, actual, expected, op, fmt)                                  \
+#define TTEST_LLONG_COMPARE__(emitter, actual, expected, op, fmt)                                  \
   do {                                                                                             \
-    long long __bdd_a__ = __BDD_CAST(long long, (actual));                                         \
-    long long __bdd_e__ = __BDD_CAST(long long, (expected));                                       \
-    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                    \
+    long long ttest_a__ = TTEST_CAST(long long, (actual));                                         \
+    long long ttest_e__ = TTEST_CAST(long long, (expected));                                       \
+    emitter(ttest_a__ op ttest_e__, fmt, ttest_e__, ttest_a__);                                    \
   } while (0)
 
-#define __BDD_ULLONG_COMPARE__(emitter, actual, expected, op, fmt)                                 \
+#define TTEST_ULLONG_COMPARE__(emitter, actual, expected, op, fmt)                                 \
   do {                                                                                             \
-    unsigned long long __bdd_a__ = __BDD_CAST(unsigned long long, (actual));                       \
-    unsigned long long __bdd_e__ = __BDD_CAST(unsigned long long, (expected));                     \
-    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                    \
+    unsigned long long ttest_a__ = TTEST_CAST(unsigned long long, (actual));                       \
+    unsigned long long ttest_e__ = TTEST_CAST(unsigned long long, (expected));                     \
+    emitter(ttest_a__ op ttest_e__, fmt, ttest_e__, ttest_a__);                                    \
   } while (0)
 
-#define __BDD_DOUBLE_COMPARE__(emitter, actual, expected, op, fmt)                                 \
+#define TTEST_DOUBLE_COMPARE__(emitter, actual, expected, op, fmt)                                 \
   do {                                                                                             \
-    double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
-    double __bdd_e__ = __BDD_CAST(double, (expected));                                             \
-    emitter(__bdd_a__ op __bdd_e__, fmt, __bdd_e__, __bdd_a__);                                    \
+    double ttest_a__ = TTEST_CAST(double, (actual));                                               \
+    double ttest_e__ = TTEST_CAST(double, (expected));                                             \
+    emitter(ttest_a__ op ttest_e__, fmt, ttest_e__, ttest_a__);                                    \
   } while (0)
 
 /* --- Typed assertion macros --- */
 
 /* Integer comparisons */
 #define check_int_eq(actual, expected)                                                             \
-  __BDD_INT_COMPARE__(__BDD_CHECK__, actual, expected, ==, "expected %d but got %d")
+  TTEST_INT_COMPARE__(TTEST_CHECK__, actual, expected, ==, "expected %d but got %d")
 #define check_int_eq_warn(actual, expected)                                                        \
-  __BDD_INT_COMPARE__(__BDD_WARN__, actual, expected, ==, "expected %d but got %d")
+  TTEST_INT_COMPARE__(TTEST_WARN__, actual, expected, ==, "expected %d but got %d")
 
 #define check_int_ne(actual, expected)                                                             \
-  __BDD_INT_COMPARE__(__BDD_CHECK__, actual, expected, !=, "expected != %d but got %d")
+  TTEST_INT_COMPARE__(TTEST_CHECK__, actual, expected, !=, "expected != %d but got %d")
 #define check_int_ne_warn(actual, expected)                                                        \
-  __BDD_INT_COMPARE__(__BDD_WARN__, actual, expected, !=, "expected != %d but got %d")
+  TTEST_INT_COMPARE__(TTEST_WARN__, actual, expected, !=, "expected != %d but got %d")
 
 #define check_int_gt(actual, expected)                                                             \
-  __BDD_INT_COMPARE__(__BDD_CHECK__, actual, expected, >, "expected > %d but got %d")
+  TTEST_INT_COMPARE__(TTEST_CHECK__, actual, expected, >, "expected > %d but got %d")
 #define check_int_gt_warn(actual, expected)                                                        \
-  __BDD_INT_COMPARE__(__BDD_WARN__, actual, expected, >, "expected > %d but got %d")
+  TTEST_INT_COMPARE__(TTEST_WARN__, actual, expected, >, "expected > %d but got %d")
 
 #define check_int_ge(actual, expected)                                                             \
-  __BDD_INT_COMPARE__(__BDD_CHECK__, actual, expected, >=, "expected >= %d but got %d")
+  TTEST_INT_COMPARE__(TTEST_CHECK__, actual, expected, >=, "expected >= %d but got %d")
 #define check_int_ge_warn(actual, expected)                                                        \
-  __BDD_INT_COMPARE__(__BDD_WARN__, actual, expected, >=, "expected >= %d but got %d")
+  TTEST_INT_COMPARE__(TTEST_WARN__, actual, expected, >=, "expected >= %d but got %d")
 
 #define check_int_lt(actual, expected)                                                             \
-  __BDD_INT_COMPARE__(__BDD_CHECK__, actual, expected, <, "expected < %d but got %d")
+  TTEST_INT_COMPARE__(TTEST_CHECK__, actual, expected, <, "expected < %d but got %d")
 #define check_int_lt_warn(actual, expected)                                                        \
-  __BDD_INT_COMPARE__(__BDD_WARN__, actual, expected, <, "expected < %d but got %d")
+  TTEST_INT_COMPARE__(TTEST_WARN__, actual, expected, <, "expected < %d but got %d")
 
 #define check_int_le(actual, expected)                                                             \
-  __BDD_INT_COMPARE__(__BDD_CHECK__, actual, expected, <=, "expected <= %d but got %d")
+  TTEST_INT_COMPARE__(TTEST_CHECK__, actual, expected, <=, "expected <= %d but got %d")
 #define check_int_le_warn(actual, expected)                                                        \
-  __BDD_INT_COMPARE__(__BDD_WARN__, actual, expected, <=, "expected <= %d but got %d")
+  TTEST_INT_COMPARE__(TTEST_WARN__, actual, expected, <=, "expected <= %d but got %d")
 
 /* Unsigned integer comparisons */
 #define check_uint_eq(actual, expected)                                                            \
-  __BDD_UINT_COMPARE__(__BDD_CHECK__, actual, expected, ==, "expected %u but got %u")
+  TTEST_UINT_COMPARE__(TTEST_CHECK__, actual, expected, ==, "expected %u but got %u")
 #define check_uint_eq_warn(actual, expected)                                                       \
-  __BDD_UINT_COMPARE__(__BDD_WARN__, actual, expected, ==, "expected %u but got %u")
+  TTEST_UINT_COMPARE__(TTEST_WARN__, actual, expected, ==, "expected %u but got %u")
 
 #define check_uint_ne(actual, expected)                                                            \
-  __BDD_UINT_COMPARE__(__BDD_CHECK__, actual, expected, !=, "expected != %u but got %u")
+  TTEST_UINT_COMPARE__(TTEST_CHECK__, actual, expected, !=, "expected != %u but got %u")
 #define check_uint_ne_warn(actual, expected)                                                       \
-  __BDD_UINT_COMPARE__(__BDD_WARN__, actual, expected, !=, "expected != %u but got %u")
+  TTEST_UINT_COMPARE__(TTEST_WARN__, actual, expected, !=, "expected != %u but got %u")
 
 /* Size_t comparisons */
 #define check_size_eq(actual, expected)                                                            \
-  __BDD_SIZE_COMPARE__(__BDD_CHECK__, actual, expected, ==, "expected %zu but got %zu")
+  TTEST_SIZE_COMPARE__(TTEST_CHECK__, actual, expected, ==, "expected %zu but got %zu")
 #define check_size_eq_warn(actual, expected)                                                       \
-  __BDD_SIZE_COMPARE__(__BDD_WARN__, actual, expected, ==, "expected %zu but got %zu")
+  TTEST_SIZE_COMPARE__(TTEST_WARN__, actual, expected, ==, "expected %zu but got %zu")
 
 #define check_size_ne(actual, expected)                                                            \
-  __BDD_SIZE_COMPARE__(__BDD_CHECK__, actual, expected, !=, "expected != %zu but got %zu")
+  TTEST_SIZE_COMPARE__(TTEST_CHECK__, actual, expected, !=, "expected != %zu but got %zu")
 #define check_size_ne_warn(actual, expected)                                                       \
-  __BDD_SIZE_COMPARE__(__BDD_WARN__, actual, expected, !=, "expected != %zu but got %zu")
+  TTEST_SIZE_COMPARE__(TTEST_WARN__, actual, expected, !=, "expected != %zu but got %zu")
 
 #define check_size_gt(actual, expected)                                                            \
-  __BDD_SIZE_COMPARE__(__BDD_CHECK__, actual, expected, >, "expected > %zu but got %zu")
+  TTEST_SIZE_COMPARE__(TTEST_CHECK__, actual, expected, >, "expected > %zu but got %zu")
 #define check_size_gt_warn(actual, expected)                                                       \
-  __BDD_SIZE_COMPARE__(__BDD_WARN__, actual, expected, >, "expected > %zu but got %zu")
+  TTEST_SIZE_COMPARE__(TTEST_WARN__, actual, expected, >, "expected > %zu but got %zu")
 
 #define check_size_ge(actual, expected)                                                            \
-  __BDD_SIZE_COMPARE__(__BDD_CHECK__, actual, expected, >=, "expected >= %zu but got %zu")
+  TTEST_SIZE_COMPARE__(TTEST_CHECK__, actual, expected, >=, "expected >= %zu but got %zu")
 #define check_size_ge_warn(actual, expected)                                                       \
-  __BDD_SIZE_COMPARE__(__BDD_WARN__, actual, expected, >=, "expected >= %zu but got %zu")
+  TTEST_SIZE_COMPARE__(TTEST_WARN__, actual, expected, >=, "expected >= %zu but got %zu")
 
 #define check_size_lt(actual, expected)                                                            \
-  __BDD_SIZE_COMPARE__(__BDD_CHECK__, actual, expected, <, "expected < %zu but got %zu")
+  TTEST_SIZE_COMPARE__(TTEST_CHECK__, actual, expected, <, "expected < %zu but got %zu")
 #define check_size_lt_warn(actual, expected)                                                       \
-  __BDD_SIZE_COMPARE__(__BDD_WARN__, actual, expected, <, "expected < %zu but got %zu")
+  TTEST_SIZE_COMPARE__(TTEST_WARN__, actual, expected, <, "expected < %zu but got %zu")
 
 #define check_size_le(actual, expected)                                                            \
-  __BDD_SIZE_COMPARE__(__BDD_CHECK__, actual, expected, <=, "expected <= %zu but got %zu")
+  TTEST_SIZE_COMPARE__(TTEST_CHECK__, actual, expected, <=, "expected <= %zu but got %zu")
 #define check_size_le_warn(actual, expected)                                                       \
-  __BDD_SIZE_COMPARE__(__BDD_WARN__, actual, expected, <=, "expected <= %zu but got %zu")
+  TTEST_SIZE_COMPARE__(TTEST_WARN__, actual, expected, <=, "expected <= %zu but got %zu")
 
 /* Long / 64-bit comparisons */
 #define check_long_eq(actual, expected)                                                            \
-  __BDD_LLONG_COMPARE__(__BDD_CHECK__, actual, expected, ==, "expected %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_CHECK__, actual, expected, ==, "expected %lld but got %lld")
 
 /* Explicit 64-bit comparisons. check_int_* and check_uint_* operate on
  * 32-bit values; passing int64_t/uint64_t there silently truncates the
  * upper bits. */
 #define check_ll_eq(actual, expected)                                                              \
-  __BDD_LLONG_COMPARE__(__BDD_CHECK__, actual, expected, ==, "expected %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_CHECK__, actual, expected, ==, "expected %lld but got %lld")
 #define check_ll_eq_warn(actual, expected)                                                         \
-  __BDD_LLONG_COMPARE__(__BDD_WARN__, actual, expected, ==, "expected %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_WARN__, actual, expected, ==, "expected %lld but got %lld")
 #define check_ll_ne(actual, expected)                                                              \
-  __BDD_LLONG_COMPARE__(__BDD_CHECK__, actual, expected, !=, "expected != %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_CHECK__, actual, expected, !=, "expected != %lld but got %lld")
 #define check_ll_ne_warn(actual, expected)                                                         \
-  __BDD_LLONG_COMPARE__(__BDD_WARN__, actual, expected, !=, "expected != %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_WARN__, actual, expected, !=, "expected != %lld but got %lld")
 #define check_ll_gt(actual, expected)                                                              \
-  __BDD_LLONG_COMPARE__(__BDD_CHECK__, actual, expected, >, "expected > %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_CHECK__, actual, expected, >, "expected > %lld but got %lld")
 #define check_ll_gt_warn(actual, expected)                                                         \
-  __BDD_LLONG_COMPARE__(__BDD_WARN__, actual, expected, >, "expected > %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_WARN__, actual, expected, >, "expected > %lld but got %lld")
 #define check_ll_ge(actual, expected)                                                              \
-  __BDD_LLONG_COMPARE__(__BDD_CHECK__, actual, expected, >=, "expected >= %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_CHECK__, actual, expected, >=, "expected >= %lld but got %lld")
 #define check_ll_ge_warn(actual, expected)                                                         \
-  __BDD_LLONG_COMPARE__(__BDD_WARN__, actual, expected, >=, "expected >= %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_WARN__, actual, expected, >=, "expected >= %lld but got %lld")
 #define check_ll_lt(actual, expected)                                                              \
-  __BDD_LLONG_COMPARE__(__BDD_CHECK__, actual, expected, <, "expected < %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_CHECK__, actual, expected, <, "expected < %lld but got %lld")
 #define check_ll_lt_warn(actual, expected)                                                         \
-  __BDD_LLONG_COMPARE__(__BDD_WARN__, actual, expected, <, "expected < %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_WARN__, actual, expected, <, "expected < %lld but got %lld")
 #define check_ll_le(actual, expected)                                                              \
-  __BDD_LLONG_COMPARE__(__BDD_CHECK__, actual, expected, <=, "expected <= %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_CHECK__, actual, expected, <=, "expected <= %lld but got %lld")
 #define check_ll_le_warn(actual, expected)                                                         \
-  __BDD_LLONG_COMPARE__(__BDD_WARN__, actual, expected, <=, "expected <= %lld but got %lld")
+  TTEST_LLONG_COMPARE__(TTEST_WARN__, actual, expected, <=, "expected <= %lld but got %lld")
 #define check_ull_eq(actual, expected)                                                             \
-  __BDD_ULLONG_COMPARE__(__BDD_CHECK__, actual, expected, ==, "expected %llu but got %llu")
+  TTEST_ULLONG_COMPARE__(TTEST_CHECK__, actual, expected, ==, "expected %llu but got %llu")
 #define check_ull_eq_warn(actual, expected)                                                        \
-  __BDD_ULLONG_COMPARE__(__BDD_WARN__, actual, expected, ==, "expected %llu but got %llu")
+  TTEST_ULLONG_COMPARE__(TTEST_WARN__, actual, expected, ==, "expected %llu but got %llu")
 #define check_ull_ne(actual, expected)                                                             \
-  __BDD_ULLONG_COMPARE__(__BDD_CHECK__, actual, expected, !=, "expected != %llu but got %llu")
+  TTEST_ULLONG_COMPARE__(TTEST_CHECK__, actual, expected, !=, "expected != %llu but got %llu")
 #define check_ull_ne_warn(actual, expected)                                                        \
-  __BDD_ULLONG_COMPARE__(__BDD_WARN__, actual, expected, !=, "expected != %llu but got %llu")
+  TTEST_ULLONG_COMPARE__(TTEST_WARN__, actual, expected, !=, "expected != %llu but got %llu")
 
 /* Float/double comparisons with epsilon */
 #define check_float_eq(actual, expected, epsilon)                                                  \
   do {                                                                                             \
-    double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
-    double __bdd_e__ = __BDD_CAST(double, (expected));                                             \
-    double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
-    __BDD_CHECK__(fabs(__bdd_a__ - __bdd_e__) <= __bdd_eps__, "expected %f (+/- %f) but got %f",   \
-                  __bdd_e__, __bdd_eps__, __bdd_a__);                                              \
+    double ttest_a__ = TTEST_CAST(double, (actual));                                               \
+    double ttest_e__ = TTEST_CAST(double, (expected));                                             \
+    double ttest_eps__ = TTEST_CAST(double, (epsilon));                                            \
+    TTEST_CHECK__(fabs(ttest_a__ - ttest_e__) <= ttest_eps__, "expected %f (+/- %f) but got %f",   \
+                  ttest_e__, ttest_eps__, ttest_a__);                                              \
   } while (0)
 #define check_float_eq_warn(actual, expected, epsilon)                                             \
   do {                                                                                             \
-    double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
-    double __bdd_e__ = __BDD_CAST(double, (expected));                                             \
-    double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
-    __BDD_WARN__(fabs(__bdd_a__ - __bdd_e__) <= __bdd_eps__, "expected %f (+/- %f) but got %f",    \
-                 __bdd_e__, __bdd_eps__, __bdd_a__);                                               \
+    double ttest_a__ = TTEST_CAST(double, (actual));                                               \
+    double ttest_e__ = TTEST_CAST(double, (expected));                                             \
+    double ttest_eps__ = TTEST_CAST(double, (epsilon));                                            \
+    TTEST_WARN__(fabs(ttest_a__ - ttest_e__) <= ttest_eps__, "expected %f (+/- %f) but got %f",    \
+                 ttest_e__, ttest_eps__, ttest_a__);                                               \
   } while (0)
 
 #define check_float_ne(actual, expected, epsilon)                                                  \
   do {                                                                                             \
-    double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
-    double __bdd_e__ = __BDD_CAST(double, (expected));                                             \
-    double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
-    __BDD_CHECK__(fabs(__bdd_a__ - __bdd_e__) > __bdd_eps__, "expected != %f (+/- %f) but got %f", \
-                  __bdd_e__, __bdd_eps__, __bdd_a__);                                              \
+    double ttest_a__ = TTEST_CAST(double, (actual));                                               \
+    double ttest_e__ = TTEST_CAST(double, (expected));                                             \
+    double ttest_eps__ = TTEST_CAST(double, (epsilon));                                            \
+    TTEST_CHECK__(fabs(ttest_a__ - ttest_e__) > ttest_eps__, "expected != %f (+/- %f) but got %f", \
+                  ttest_e__, ttest_eps__, ttest_a__);                                              \
   } while (0)
 #define check_float_ne_warn(actual, expected, epsilon)                                             \
   do {                                                                                             \
-    double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
-    double __bdd_e__ = __BDD_CAST(double, (expected));                                             \
-    double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
-    __BDD_WARN__(fabs(__bdd_a__ - __bdd_e__) > __bdd_eps__, "expected != %f (+/- %f) but got %f",  \
-                 __bdd_e__, __bdd_eps__, __bdd_a__);                                               \
+    double ttest_a__ = TTEST_CAST(double, (actual));                                               \
+    double ttest_e__ = TTEST_CAST(double, (expected));                                             \
+    double ttest_eps__ = TTEST_CAST(double, (epsilon));                                            \
+    TTEST_WARN__(fabs(ttest_a__ - ttest_e__) > ttest_eps__, "expected != %f (+/- %f) but got %f",  \
+                 ttest_e__, ttest_eps__, ttest_a__);                                               \
   } while (0)
 
 #define check_float_gt(actual, expected)                                                           \
-  __BDD_DOUBLE_COMPARE__(__BDD_CHECK__, actual, expected, >, "expected > %f but got %f")
+  TTEST_DOUBLE_COMPARE__(TTEST_CHECK__, actual, expected, >, "expected > %f but got %f")
 #define check_float_gt_warn(actual, expected)                                                      \
-  __BDD_DOUBLE_COMPARE__(__BDD_WARN__, actual, expected, >, "expected > %f but got %f")
+  TTEST_DOUBLE_COMPARE__(TTEST_WARN__, actual, expected, >, "expected > %f but got %f")
 
 #define check_float_lt(actual, expected)                                                           \
-  __BDD_DOUBLE_COMPARE__(__BDD_CHECK__, actual, expected, <, "expected < %f but got %f")
+  TTEST_DOUBLE_COMPARE__(TTEST_CHECK__, actual, expected, <, "expected < %f but got %f")
 #define check_float_lt_warn(actual, expected)                                                      \
-  __BDD_DOUBLE_COMPARE__(__BDD_WARN__, actual, expected, <, "expected < %f but got %f")
+  TTEST_DOUBLE_COMPARE__(TTEST_WARN__, actual, expected, <, "expected < %f but got %f")
 
 #define check_float_ge(actual, expected)                                                           \
-  __BDD_DOUBLE_COMPARE__(__BDD_CHECK__, actual, expected, >=, "expected >= %f but got %f")
+  TTEST_DOUBLE_COMPARE__(TTEST_CHECK__, actual, expected, >=, "expected >= %f but got %f")
 #define check_float_ge_warn(actual, expected)                                                      \
-  __BDD_DOUBLE_COMPARE__(__BDD_WARN__, actual, expected, >=, "expected >= %f but got %f")
+  TTEST_DOUBLE_COMPARE__(TTEST_WARN__, actual, expected, >=, "expected >= %f but got %f")
 
 #define check_float_le(actual, expected)                                                           \
-  __BDD_DOUBLE_COMPARE__(__BDD_CHECK__, actual, expected, <=, "expected <= %f but got %f")
+  TTEST_DOUBLE_COMPARE__(TTEST_CHECK__, actual, expected, <=, "expected <= %f but got %f")
 #define check_float_le_warn(actual, expected)                                                      \
-  __BDD_DOUBLE_COMPARE__(__BDD_WARN__, actual, expected, <=, "expected <= %f but got %f")
+  TTEST_DOUBLE_COMPARE__(TTEST_WARN__, actual, expected, <=, "expected <= %f but got %f")
 
 /* Relative tolerance: |actual - expected| <= rel * |expected| */
 #define check_float_within_rel(actual, expected, rel)                                              \
   do {                                                                                             \
-    double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
-    double __bdd_e__ = __BDD_CAST(double, (expected));                                             \
-    double __bdd_rel__ = __BDD_CAST(double, (rel));                                                \
-    double __bdd_delta__ = fabs(__bdd_a__ - __bdd_e__);                                            \
-    __BDD_CHECK__(__bdd_delta__ <= __bdd_rel__ * fabs(__bdd_e__),                                  \
-                  "expected %f within %f%% of %f, delta was %f", __bdd_a__, __bdd_rel__ * 100.0,   \
-                  __bdd_e__, __bdd_delta__);                                                       \
+    double ttest_a__ = TTEST_CAST(double, (actual));                                               \
+    double ttest_e__ = TTEST_CAST(double, (expected));                                             \
+    double ttest_rel__ = TTEST_CAST(double, (rel));                                                \
+    double ttest_delta__ = fabs(ttest_a__ - ttest_e__);                                            \
+    TTEST_CHECK__(ttest_delta__ <= ttest_rel__ * fabs(ttest_e__),                                  \
+                  "expected %f within %f%% of %f, delta was %f", ttest_a__, ttest_rel__ * 100.0,   \
+                  ttest_e__, ttest_delta__);                                                       \
   } while (0)
 #define check_float_within_rel_warn(actual, expected, rel)                                         \
   do {                                                                                             \
-    double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
-    double __bdd_e__ = __BDD_CAST(double, (expected));                                             \
-    double __bdd_rel__ = __BDD_CAST(double, (rel));                                                \
-    double __bdd_delta__ = fabs(__bdd_a__ - __bdd_e__);                                            \
-    __BDD_WARN__(__bdd_delta__ <= __bdd_rel__ * fabs(__bdd_e__),                                   \
-                 "expected %f within %f%% of %f, delta was %f", __bdd_a__, __bdd_rel__ * 100.0,    \
-                 __bdd_e__, __bdd_delta__);                                                        \
+    double ttest_a__ = TTEST_CAST(double, (actual));                                               \
+    double ttest_e__ = TTEST_CAST(double, (expected));                                             \
+    double ttest_rel__ = TTEST_CAST(double, (rel));                                                \
+    double ttest_delta__ = fabs(ttest_a__ - ttest_e__);                                            \
+    TTEST_WARN__(ttest_delta__ <= ttest_rel__ * fabs(ttest_e__),                                   \
+                 "expected %f within %f%% of %f, delta was %f", ttest_a__, ttest_rel__ * 100.0,    \
+                 ttest_e__, ttest_delta__);                                                        \
   } while (0)
 
 /* Absolute tolerance — same as check_float_eq but named for clarity
@@ -2324,20 +2429,30 @@ static inline int __bdd_eval_bool__(int v) { return v; }
 #define check_double_within_abs_warn(actual, expected, margin)                                     \
   check_float_within_abs_warn(actual, expected, margin)
 
+/* gtest-style compatibility aliases */
+#define check_close(actual, expected, epsilon)                                                      \
+  check_float_eq((actual), (expected), (epsilon))
+#define check_close_warn(actual, expected, epsilon)                                                \
+  check_float_eq_warn((actual), (expected), (epsilon))
+#define check_almost_equal(actual, expected, epsilon)                                              \
+  check_float_eq((actual), (expected), (epsilon))
+#define check_almost_equal_warn(actual, expected, epsilon)                                          \
+  check_float_eq_warn((actual), (expected), (epsilon))
+
 /* String comparisons */
-static inline int __bdd_str_eq__(const char *a, const char *b) {
+static inline int ttest_str_eq__(const char *a, const char *b) {
   return a && b && strcmp(a, b) == 0;
 }
-static inline int __bdd_str_ne__(const char *a, const char *b) {
+static inline int ttest_str_ne__(const char *a, const char *b) {
   return !a || !b || strcmp(a, b) != 0;
 }
-static inline int __bdd_str_contains__(const char *haystack, const char *needle) {
+static inline int ttest_str_contains__(const char *haystack, const char *needle) {
   return haystack && needle && strstr(haystack, needle) != NULL;
 }
-static inline int __bdd_str_starts_with__(const char *s, const char *prefix) {
+static inline int ttest_str_starts_with__(const char *s, const char *prefix) {
   return s && prefix && strncmp(s, prefix, strlen(prefix)) == 0;
 }
-static inline int __bdd_str_ends_with__(const char *s, const char *suffix) {
+static inline int ttest_str_ends_with__(const char *s, const char *suffix) {
   size_t slen;
   size_t suflen;
   if (!s || !suffix) return 0;
@@ -2346,207 +2461,214 @@ static inline int __bdd_str_ends_with__(const char *s, const char *suffix) {
   return slen >= suflen && strcmp(s + slen - suflen, suffix) == 0;
 }
 
-static inline const char *__bdd_cstr_or_null__(const char *s) { return s ? s : "(null)"; }
+static inline const char *ttest_cstr_or_null__(const char *s) { return s ? s : "(null)"; }
 
 #define check_str_eq(actual, expected)                                                             \
   do {                                                                                             \
-    const char *__bdd_a__ = (const char *)(actual);                                                \
-    const char *__bdd_e__ = (const char *)(expected);                                              \
-    __BDD_CHECK__(__bdd_str_eq__(__bdd_a__, __bdd_e__), "expected \"%s\" but got \"%s\"",          \
-                  __bdd_cstr_or_null__(__bdd_e__), __bdd_cstr_or_null__(__bdd_a__));               \
+    const char *ttest_a__ = (const char *)(actual);                                                \
+    const char *ttest_e__ = (const char *)(expected);                                              \
+    TTEST_CHECK__(ttest_str_eq__(ttest_a__, ttest_e__), "expected \"%s\" but got \"%s\"",          \
+                  ttest_cstr_or_null__(ttest_e__), ttest_cstr_or_null__(ttest_a__));               \
   } while (0)
 #define check_str_eq_warn(actual, expected)                                                        \
   do {                                                                                             \
-    const char *__bdd_a__ = (const char *)(actual);                                                \
-    const char *__bdd_e__ = (const char *)(expected);                                              \
-    __BDD_WARN__(__bdd_str_eq__(__bdd_a__, __bdd_e__), "expected \"%s\" but got \"%s\"",           \
-                 __bdd_cstr_or_null__(__bdd_e__), __bdd_cstr_or_null__(__bdd_a__));                \
+    const char *ttest_a__ = (const char *)(actual);                                                \
+    const char *ttest_e__ = (const char *)(expected);                                              \
+    TTEST_WARN__(ttest_str_eq__(ttest_a__, ttest_e__), "expected \"%s\" but got \"%s\"",           \
+                 ttest_cstr_or_null__(ttest_e__), ttest_cstr_or_null__(ttest_a__));                \
   } while (0)
 
 #define check_str_ne(actual, expected)                                                             \
   do {                                                                                             \
-    const char *__bdd_a__ = (const char *)(actual);                                                \
-    const char *__bdd_e__ = (const char *)(expected);                                              \
-    __BDD_CHECK__(__bdd_str_ne__(__bdd_a__, __bdd_e__), "expected != \"%s\" but got \"%s\"",       \
-                  __bdd_cstr_or_null__(__bdd_e__), __bdd_cstr_or_null__(__bdd_a__));               \
+    const char *ttest_a__ = (const char *)(actual);                                                \
+    const char *ttest_e__ = (const char *)(expected);                                              \
+    TTEST_CHECK__(ttest_str_ne__(ttest_a__, ttest_e__), "expected != \"%s\" but got \"%s\"",       \
+                  ttest_cstr_or_null__(ttest_e__), ttest_cstr_or_null__(ttest_a__));               \
   } while (0)
 #define check_str_ne_warn(actual, expected)                                                        \
   do {                                                                                             \
-    const char *__bdd_a__ = (const char *)(actual);                                                \
-    const char *__bdd_e__ = (const char *)(expected);                                              \
-    __BDD_WARN__(__bdd_str_ne__(__bdd_a__, __bdd_e__), "expected != \"%s\" but got \"%s\"",        \
-                 __bdd_cstr_or_null__(__bdd_e__), __bdd_cstr_or_null__(__bdd_a__));                \
+    const char *ttest_a__ = (const char *)(actual);                                                \
+    const char *ttest_e__ = (const char *)(expected);                                              \
+    TTEST_WARN__(ttest_str_ne__(ttest_a__, ttest_e__), "expected != \"%s\" but got \"%s\"",        \
+                 ttest_cstr_or_null__(ttest_e__), ttest_cstr_or_null__(ttest_a__));                \
   } while (0)
 
 #define check_str_contains(haystack, needle)                                                       \
   do {                                                                                             \
-    const char *__bdd_h__ = (const char *)(haystack);                                              \
-    const char *__bdd_n__ = (const char *)(needle);                                                \
-    __BDD_CHECK__(__bdd_str_contains__(__bdd_h__, __bdd_n__), "expected \"%s\" to contain \"%s\"", \
-                  __bdd_cstr_or_null__(__bdd_h__), __bdd_cstr_or_null__(__bdd_n__));               \
+    const char *ttest_h__ = (const char *)(haystack);                                              \
+    const char *ttest_n__ = (const char *)(needle);                                                \
+    TTEST_CHECK__(ttest_str_contains__(ttest_h__, ttest_n__), "expected \"%s\" to contain \"%s\"", \
+                  ttest_cstr_or_null__(ttest_h__), ttest_cstr_or_null__(ttest_n__));               \
   } while (0)
 #define check_str_contains_warn(haystack, needle)                                                  \
   do {                                                                                             \
-    const char *__bdd_h__ = (const char *)(haystack);                                              \
-    const char *__bdd_n__ = (const char *)(needle);                                                \
-    __BDD_WARN__(__bdd_str_contains__(__bdd_h__, __bdd_n__), "expected \"%s\" to contain \"%s\"",  \
-                 __bdd_cstr_or_null__(__bdd_h__), __bdd_cstr_or_null__(__bdd_n__));                \
+    const char *ttest_h__ = (const char *)(haystack);                                              \
+    const char *ttest_n__ = (const char *)(needle);                                                \
+    TTEST_WARN__(ttest_str_contains__(ttest_h__, ttest_n__), "expected \"%s\" to contain \"%s\"",  \
+                 ttest_cstr_or_null__(ttest_h__), ttest_cstr_or_null__(ttest_n__));                \
   } while (0)
+
+#if !defined(__cplusplus)
+#define check_contains(haystack, needle) check_str_contains((haystack), (needle))
+#define check_contains_warn(haystack, needle) check_str_contains_warn((haystack), (needle))
+#endif
 
 #define check_str_starts_with(str, prefix)                                                         \
   do {                                                                                             \
-    const char *__bdd_s__ = (const char *)(str);                                                   \
-    const char *__bdd_p__ = (const char *)(prefix);                                                \
-    __BDD_CHECK__(__bdd_str_starts_with__(__bdd_s__, __bdd_p__),                                   \
-                  "expected \"%s\" to start with \"%s\"", __bdd_cstr_or_null__(__bdd_s__),         \
-                  __bdd_cstr_or_null__(__bdd_p__));                                                \
+    const char *ttest_s__ = (const char *)(str);                                                   \
+    const char *ttest_p__ = (const char *)(prefix);                                                \
+    TTEST_CHECK__(ttest_str_starts_with__(ttest_s__, ttest_p__),                                   \
+                  "expected \"%s\" to start with \"%s\"", ttest_cstr_or_null__(ttest_s__),         \
+                  ttest_cstr_or_null__(ttest_p__));                                                \
   } while (0)
 #define check_str_starts_with_warn(str, prefix)                                                    \
   do {                                                                                             \
-    const char *__bdd_s__ = (const char *)(str);                                                   \
-    const char *__bdd_p__ = (const char *)(prefix);                                                \
-    __BDD_WARN__(__bdd_str_starts_with__(__bdd_s__, __bdd_p__),                                    \
-                 "expected \"%s\" to start with \"%s\"", __bdd_cstr_or_null__(__bdd_s__),          \
-                 __bdd_cstr_or_null__(__bdd_p__));                                                 \
+    const char *ttest_s__ = (const char *)(str);                                                   \
+    const char *ttest_p__ = (const char *)(prefix);                                                \
+    TTEST_WARN__(ttest_str_starts_with__(ttest_s__, ttest_p__),                                    \
+                 "expected \"%s\" to start with \"%s\"", ttest_cstr_or_null__(ttest_s__),          \
+                 ttest_cstr_or_null__(ttest_p__));                                                 \
   } while (0)
 
 #define check_str_ends_with(str, suffix)                                                           \
   do {                                                                                             \
-    const char *__bdd_s__ = (const char *)(str);                                                   \
-    const char *__bdd_x__ = (const char *)(suffix);                                                \
-    __BDD_CHECK__(__bdd_str_ends_with__(__bdd_s__, __bdd_x__),                                     \
-                  "expected \"%s\" to end with \"%s\"", __bdd_cstr_or_null__(__bdd_s__),           \
-                  __bdd_cstr_or_null__(__bdd_x__));                                                \
+    const char *ttest_s__ = (const char *)(str);                                                   \
+    const char *ttest_x__ = (const char *)(suffix);                                                \
+    TTEST_CHECK__(ttest_str_ends_with__(ttest_s__, ttest_x__),                                     \
+                  "expected \"%s\" to end with \"%s\"", ttest_cstr_or_null__(ttest_s__),           \
+                  ttest_cstr_or_null__(ttest_x__));                                                \
   } while (0)
 #define check_str_ends_with_warn(str, suffix)                                                      \
   do {                                                                                             \
-    const char *__bdd_s__ = (const char *)(str);                                                   \
-    const char *__bdd_x__ = (const char *)(suffix);                                                \
-    __BDD_WARN__(__bdd_str_ends_with__(__bdd_s__, __bdd_x__),                                      \
-                 "expected \"%s\" to end with \"%s\"", __bdd_cstr_or_null__(__bdd_s__),            \
-                 __bdd_cstr_or_null__(__bdd_x__));                                                 \
+    const char *ttest_s__ = (const char *)(str);                                                   \
+    const char *ttest_x__ = (const char *)(suffix);                                                \
+    TTEST_WARN__(ttest_str_ends_with__(ttest_s__, ttest_x__),                                      \
+                 "expected \"%s\" to end with \"%s\"", ttest_cstr_or_null__(ttest_s__),            \
+                 ttest_cstr_or_null__(ttest_x__));                                                 \
   } while (0)
 
 /* Memory comparisons */
 #define check_mem_eq(actual, expected, len)                                                        \
   do {                                                                                             \
-    const void *__bdd_a__ = (const void *)(actual);                                                \
-    const void *__bdd_e__ = (const void *)(expected);                                              \
-    size_t __bdd_n__ = __BDD_CAST(size_t, (len));                                                  \
-    __BDD_CHECK__(memcmp(__bdd_a__, __bdd_e__, __bdd_n__) == 0, "memory mismatch at %zu bytes",    \
-                  __bdd_n__);                                                                      \
+    const void *ttest_a__ = (const void *)(actual);                                                \
+    const void *ttest_e__ = (const void *)(expected);                                              \
+    size_t ttest_n__ = TTEST_CAST(size_t, (len));                                                  \
+    TTEST_CHECK__(memcmp(ttest_a__, ttest_e__, ttest_n__) == 0, "memory mismatch at %zu bytes",    \
+                  ttest_n__);                                                                      \
   } while (0)
 #define check_mem_eq_warn(actual, expected, len)                                                   \
   do {                                                                                             \
-    const void *__bdd_a__ = (const void *)(actual);                                                \
-    const void *__bdd_e__ = (const void *)(expected);                                              \
-    size_t __bdd_n__ = __BDD_CAST(size_t, (len));                                                  \
-    __BDD_WARN__(memcmp(__bdd_a__, __bdd_e__, __bdd_n__) == 0, "memory mismatch at %zu bytes",     \
-                 __bdd_n__);                                                                       \
+    const void *ttest_a__ = (const void *)(actual);                                                \
+    const void *ttest_e__ = (const void *)(expected);                                              \
+    size_t ttest_n__ = TTEST_CAST(size_t, (len));                                                  \
+    TTEST_WARN__(memcmp(ttest_a__, ttest_e__, ttest_n__) == 0, "memory mismatch at %zu bytes",     \
+                 ttest_n__);                                                                       \
   } while (0)
 
 #define check_mem_ne(actual, expected, len)                                                        \
   do {                                                                                             \
-    const void *__bdd_a__ = (const void *)(actual);                                                \
-    const void *__bdd_e__ = (const void *)(expected);                                              \
-    size_t __bdd_n__ = __BDD_CAST(size_t, (len));                                                  \
-    __BDD_CHECK__(memcmp(__bdd_a__, __bdd_e__, __bdd_n__) != 0,                                    \
-                  "expected memory to differ at %zu bytes", __bdd_n__);                            \
+    const void *ttest_a__ = (const void *)(actual);                                                \
+    const void *ttest_e__ = (const void *)(expected);                                              \
+    size_t ttest_n__ = TTEST_CAST(size_t, (len));                                                  \
+    TTEST_CHECK__(memcmp(ttest_a__, ttest_e__, ttest_n__) != 0,                                    \
+                  "expected memory to differ at %zu bytes", ttest_n__);                            \
   } while (0)
 #define check_mem_ne_warn(actual, expected, len)                                                   \
   do {                                                                                             \
-    const void *__bdd_a__ = (const void *)(actual);                                                \
-    const void *__bdd_e__ = (const void *)(expected);                                              \
-    size_t __bdd_n__ = __BDD_CAST(size_t, (len));                                                  \
-    __BDD_WARN__(memcmp(__bdd_a__, __bdd_e__, __bdd_n__) != 0,                                     \
-                 "expected memory to differ at %zu bytes", __bdd_n__);                             \
+    const void *ttest_a__ = (const void *)(actual);                                                \
+    const void *ttest_e__ = (const void *)(expected);                                              \
+    size_t ttest_n__ = TTEST_CAST(size_t, (len));                                                  \
+    TTEST_WARN__(memcmp(ttest_a__, ttest_e__, ttest_n__) != 0,                                     \
+                 "expected memory to differ at %zu bytes", ttest_n__);                             \
   } while (0)
 
 /* Pointer checks */
 #define check_not_null(ptr)                                                                        \
   do {                                                                                             \
-    const void *__bdd_ptr__ = (const void *)(ptr);                                                 \
-    __BDD_CHECK__(__bdd_ptr__ != NULL, "expected non-null but got NULL");                          \
+    const void *ttest_ptr__ = (const void *)(ptr);                                                 \
+    TTEST_CHECK__(ttest_ptr__ != NULL, "expected non-null but got NULL");                          \
   } while (0)
 #define check_not_null_warn(ptr)                                                                   \
   do {                                                                                             \
-    const void *__bdd_ptr__ = (const void *)(ptr);                                                 \
-    __BDD_WARN__(__bdd_ptr__ != NULL, "expected non-null but got NULL");                           \
+    const void *ttest_ptr__ = (const void *)(ptr);                                                 \
+    TTEST_WARN__(ttest_ptr__ != NULL, "expected non-null but got NULL");                           \
   } while (0)
 
 #define check_null(ptr)                                                                            \
   do {                                                                                             \
-    const void *__bdd_ptr__ = (const void *)(ptr);                                                 \
-    __BDD_CHECK__(__bdd_ptr__ == NULL, "expected NULL but got %p", __bdd_ptr__);                   \
+    const void *ttest_ptr__ = (const void *)(ptr);                                                 \
+    TTEST_CHECK__(ttest_ptr__ == NULL, "expected NULL but got %p", ttest_ptr__);                   \
   } while (0)
 #define check_null_warn(ptr)                                                                       \
   do {                                                                                             \
-    const void *__bdd_ptr__ = (const void *)(ptr);                                                 \
-    __BDD_WARN__(__bdd_ptr__ == NULL, "expected NULL but got %p", __bdd_ptr__);                    \
+    const void *ttest_ptr__ = (const void *)(ptr);                                                 \
+    TTEST_WARN__(ttest_ptr__ == NULL, "expected NULL but got %p", ttest_ptr__);                    \
   } while (0)
+#define check_is_null(ptr) check_null((ptr))
+#define check_is_null_warn(ptr) check_null_warn((ptr))
 
 /* Hex comparisons */
 #define check_hex_eq(actual, expected)                                                             \
-  __BDD_UINT_COMPARE__(__BDD_CHECK__, actual, expected, ==, "expected 0x%x but got 0x%x")
+  TTEST_UINT_COMPARE__(TTEST_CHECK__, actual, expected, ==, "expected 0x%x but got 0x%x")
 
 #define check_hex64_eq(actual, expected)                                                           \
   do {                                                                                             \
-    unsigned long long __bdd_a__ = __BDD_CAST(unsigned long long, (actual));                       \
-    unsigned long long __bdd_e__ = __BDD_CAST(unsigned long long, (expected));                     \
-    __BDD_CHECK__(__bdd_a__ == __bdd_e__, "expected 0x%llx but got 0x%llx", __bdd_e__, __bdd_a__); \
+    unsigned long long ttest_a__ = TTEST_CAST(unsigned long long, (actual));                       \
+    unsigned long long ttest_e__ = TTEST_CAST(unsigned long long, (expected));                     \
+    TTEST_CHECK__(ttest_a__ == ttest_e__, "expected 0x%llx but got 0x%llx", ttest_e__, ttest_a__); \
   } while (0)
 
 /* Boolean assertions */
-#define check_true(actual) __BDD_CHECK__((actual), "expected true but got false")
+#define check_true(actual) TTEST_CHECK__((actual), "expected true but got false")
 
-#define check_false(actual) __BDD_CHECK__(!(actual), "expected false but got true")
+#define check_false(actual) TTEST_CHECK__(!(actual), "expected false but got true")
 
 /* Pointer address comparisons */
 #define check_ptr_eq(actual, expected)                                                             \
   do {                                                                                             \
-    const void *__bdd_a__ = (const void *)(actual);                                                \
-    const void *__bdd_e__ = (const void *)(expected);                                              \
-    __BDD_CHECK__(__bdd_a__ == __bdd_e__, "expected %p but got %p", __bdd_e__, __bdd_a__);         \
+    const void *ttest_a__ = (const void *)(actual);                                                \
+    const void *ttest_e__ = (const void *)(expected);                                              \
+    TTEST_CHECK__(ttest_a__ == ttest_e__, "expected %p but got %p", ttest_e__, ttest_a__);         \
   } while (0)
 
 #define check_ptr_ne(actual, expected)                                                             \
   do {                                                                                             \
-    const void *__bdd_a__ = (const void *)(actual);                                                \
-    const void *__bdd_e__ = (const void *)(expected);                                              \
-    __BDD_CHECK__(__bdd_a__ != __bdd_e__, "expected != %p but got %p", __bdd_e__, __bdd_a__);      \
+    const void *ttest_a__ = (const void *)(actual);                                                \
+    const void *ttest_e__ = (const void *)(expected);                                              \
+    TTEST_CHECK__(ttest_a__ != ttest_e__, "expected != %p but got %p", ttest_e__, ttest_a__);      \
   } while (0)
 
 /* Range assertion: lo <= actual <= hi */
 #define check_int_range(actual, lo, hi)                                                            \
   do {                                                                                             \
-    int __bdd_a__ = __BDD_CAST(int, (actual));                                                     \
-    int __bdd_lo__ = __BDD_CAST(int, (lo));                                                        \
-    int __bdd_hi__ = __BDD_CAST(int, (hi));                                                        \
-    __BDD_CHECK__(__bdd_a__ >= __bdd_lo__ && __bdd_a__ <= __bdd_hi__,                              \
-                  "expected %d in range [%d, %d]", __bdd_a__, __bdd_lo__, __bdd_hi__);             \
+    int ttest_a__ = TTEST_CAST(int, (actual));                                                     \
+    int ttest_lo__ = TTEST_CAST(int, (lo));                                                        \
+    int ttest_hi__ = TTEST_CAST(int, (hi));                                                        \
+    TTEST_CHECK__(ttest_a__ >= ttest_lo__ && ttest_a__ <= ttest_hi__,                              \
+                  "expected %d in range [%d, %d]", ttest_a__, ttest_lo__, ttest_hi__);             \
   } while (0)
 
 /* Float special value assertions */
 #define check_float_nan(actual)                                                                    \
   do {                                                                                             \
-    double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
-    __BDD_CHECK__(isnan(__bdd_a__), "expected NaN but got %f", __bdd_a__);                         \
+    double ttest_a__ = TTEST_CAST(double, (actual));                                               \
+    TTEST_CHECK__(isnan(ttest_a__), "expected NaN but got %f", ttest_a__);                         \
   } while (0)
 #define check_float_nan_warn(actual)                                                               \
   do {                                                                                             \
-    double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
-    __BDD_WARN__(isnan(__bdd_a__), "expected NaN but got %f", __bdd_a__);                          \
+    double ttest_a__ = TTEST_CAST(double, (actual));                                               \
+    TTEST_WARN__(isnan(ttest_a__), "expected NaN but got %f", ttest_a__);                          \
   } while (0)
 
 #define check_float_inf(actual)                                                                    \
   do {                                                                                             \
-    double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
-    __BDD_CHECK__(isinf(__bdd_a__), "expected Inf but got %f", __bdd_a__);                         \
+    double ttest_a__ = TTEST_CAST(double, (actual));                                               \
+    TTEST_CHECK__(isinf(ttest_a__), "expected Inf but got %f", ttest_a__);                         \
   } while (0)
 #define check_float_inf_warn(actual)                                                               \
   do {                                                                                             \
-    double __bdd_a__ = __BDD_CAST(double, (actual));                                               \
-    __BDD_WARN__(isinf(__bdd_a__), "expected Inf but got %f", __bdd_a__);                          \
+    double ttest_a__ = TTEST_CAST(double, (actual));                                               \
+    TTEST_WARN__(isinf(ttest_a__), "expected Inf but got %f", ttest_a__);                          \
   } while (0)
 
 #define check_double_nan(actual) check_float_nan(actual)
@@ -2558,16 +2680,16 @@ static inline const char *__bdd_cstr_or_null__(const char *s) { return s ? s : "
 /* Bitmask assertion: (val & mask) == mask */
 #define check_bits(actual, mask)                                                                   \
   do {                                                                                             \
-    unsigned long long __bdd_a__ = __BDD_CAST(unsigned long long, (actual));                       \
-    unsigned long long __bdd_m__ = __BDD_CAST(unsigned long long, (mask));                         \
-    unsigned long long __bdd_got__ = __bdd_a__ & __bdd_m__;                                        \
-    __BDD_CHECK__(__bdd_got__ == __bdd_m__, "expected bits 0x%llx set in 0x%llx, got 0x%llx",      \
-                  __bdd_m__, __bdd_a__, __bdd_got__);                                              \
+    unsigned long long ttest_a__ = TTEST_CAST(unsigned long long, (actual));                       \
+    unsigned long long ttest_m__ = TTEST_CAST(unsigned long long, (mask));                         \
+    unsigned long long ttest_got__ = ttest_a__ & ttest_m__;                                        \
+    TTEST_CHECK__(ttest_got__ == ttest_m__, "expected bits 0x%llx set in 0x%llx, got 0x%llx",      \
+                  ttest_m__, ttest_a__, ttest_got__);                                              \
   } while (0)
 
 /* --- Array comparison helpers --- */
 
-static inline bool __bdd_int_array_eq__(const int *actual, const int *expected, size_t n,
+static inline bool ttest_int_array_eq__(const int *actual, const int *expected, size_t n,
                                         size_t *fail_idx) {
   for (size_t i = 0; i < n; i++) {
     if (actual[i] != expected[i]) {
@@ -2578,7 +2700,7 @@ static inline bool __bdd_int_array_eq__(const int *actual, const int *expected, 
   return true;
 }
 
-static inline bool __bdd_uint8_array_eq__(const unsigned char *actual,
+static inline bool ttest_uint8_array_eq__(const unsigned char *actual,
                                           const unsigned char *expected, size_t n,
                                           size_t *fail_idx) {
   for (size_t i = 0; i < n; i++) {
@@ -2590,7 +2712,7 @@ static inline bool __bdd_uint8_array_eq__(const unsigned char *actual,
   return true;
 }
 
-static inline bool __bdd_size_array_eq__(const size_t *actual, const size_t *expected, size_t n,
+static inline bool ttest_size_array_eq__(const size_t *actual, const size_t *expected, size_t n,
                                          size_t *fail_idx) {
   for (size_t i = 0; i < n; i++) {
     if (actual[i] != expected[i]) {
@@ -2601,10 +2723,10 @@ static inline bool __bdd_size_array_eq__(const size_t *actual, const size_t *exp
   return true;
 }
 
-static inline bool __bdd_float_array_eq__(const float *actual, const float *expected, size_t n,
+static inline bool ttest_float_array_eq__(const float *actual, const float *expected, size_t n,
                                           double eps, size_t *fail_idx) {
   for (size_t i = 0; i < n; i++) {
-    double d = __BDD_CAST(double, actual[i]) - __BDD_CAST(double, expected[i]);
+    double d = TTEST_CAST(double, actual[i]) - TTEST_CAST(double, expected[i]);
     /* Match scalar check_float_eq semantics: NaN never compares equal. */
     if (!(fabs(d) <= eps)) {
       *fail_idx = i;
@@ -2614,7 +2736,7 @@ static inline bool __bdd_float_array_eq__(const float *actual, const float *expe
   return true;
 }
 
-static inline bool __bdd_double_array_eq__(const double *actual, const double *expected, size_t n,
+static inline bool ttest_double_array_eq__(const double *actual, const double *expected, size_t n,
                                            double eps, size_t *fail_idx) {
   for (size_t i = 0; i < n; i++) {
     double d = actual[i] - expected[i];
@@ -2627,7 +2749,7 @@ static inline bool __bdd_double_array_eq__(const double *actual, const double *e
   return true;
 }
 
-static inline bool __bdd_ptr_array_eq__(const void *const *actual, const void *const *expected,
+static inline bool ttest_ptr_array_eq__(const void *const *actual, const void *const *expected,
                                         size_t n, size_t *fail_idx) {
   for (size_t i = 0; i < n; i++) {
     if (actual[i] != expected[i]) {
@@ -2638,7 +2760,7 @@ static inline bool __bdd_ptr_array_eq__(const void *const *actual, const void *c
   return true;
 }
 
-static inline bool __bdd_str_array_eq__(const char *const *actual, const char *const *expected,
+static inline bool ttest_str_array_eq__(const char *const *actual, const char *const *expected,
                                         size_t n, size_t *fail_idx) {
   for (size_t i = 0; i < n; i++) {
     if (actual[i] == NULL && expected[i] == NULL) continue;
@@ -2654,208 +2776,214 @@ static inline bool __bdd_str_array_eq__(const char *const *actual, const char *c
 
 #define check_int_array_eq(actual, expected, n)                                                    \
   do {                                                                                             \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_int_array_eq__((const int *)(actual), (const int *)(expected), (n), &__bdd_fi__)) { \
-      __BDD_CHECK__(0, "array mismatch at [%zu]: expected %d but got %d", __bdd_fi__,              \
-                    ((const int *)(expected))[__bdd_fi__], ((const int *)(actual))[__bdd_fi__]);   \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_int_array_eq__((const int *)(actual), (const int *)(expected), (n), &ttest_fi__)) { \
+      TTEST_CHECK__(0, "array mismatch at [%zu]: expected %d but got %d", ttest_fi__,              \
+                    ((const int *)(expected))[ttest_fi__], ((const int *)(actual))[ttest_fi__]);   \
     }                                                                                              \
   } while (0)
 #define check_int_array_eq_warn(actual, expected, n)                                               \
   do {                                                                                             \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_int_array_eq__((const int *)(actual), (const int *)(expected), (n), &__bdd_fi__)) { \
-      __BDD_WARN__(0, "array mismatch at [%zu]: expected %d but got %d", __bdd_fi__,               \
-                   ((const int *)(expected))[__bdd_fi__], ((const int *)(actual))[__bdd_fi__]);    \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_int_array_eq__((const int *)(actual), (const int *)(expected), (n), &ttest_fi__)) { \
+      TTEST_WARN__(0, "array mismatch at [%zu]: expected %d but got %d", ttest_fi__,               \
+                   ((const int *)(expected))[ttest_fi__], ((const int *)(actual))[ttest_fi__]);    \
     }                                                                                              \
   } while (0)
 
 #define check_uint8_array_eq(actual, expected, n)                                                  \
   do {                                                                                             \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_uint8_array_eq__((const unsigned char *)(actual),                                   \
-                                (const unsigned char *)(expected), (n), &__bdd_fi__)) {            \
-      __BDD_CHECK__(0, "array mismatch at [%zu]: expected 0x%02x but got 0x%02x", __bdd_fi__,      \
-                    ((const unsigned char *)(expected))[__bdd_fi__],                               \
-                    ((const unsigned char *)(actual))[__bdd_fi__]);                                \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_uint8_array_eq__((const unsigned char *)(actual),                                   \
+                                (const unsigned char *)(expected), (n), &ttest_fi__)) {            \
+      TTEST_CHECK__(0, "array mismatch at [%zu]: expected 0x%02x but got 0x%02x", ttest_fi__,      \
+                    ((const unsigned char *)(expected))[ttest_fi__],                               \
+                    ((const unsigned char *)(actual))[ttest_fi__]);                                \
     }                                                                                              \
   } while (0)
 #define check_uint8_array_eq_warn(actual, expected, n)                                             \
   do {                                                                                             \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_uint8_array_eq__((const unsigned char *)(actual),                                   \
-                                (const unsigned char *)(expected), (n), &__bdd_fi__)) {            \
-      __BDD_WARN__(0, "array mismatch at [%zu]: expected 0x%02x but got 0x%02x", __bdd_fi__,       \
-                   ((const unsigned char *)(expected))[__bdd_fi__],                                \
-                   ((const unsigned char *)(actual))[__bdd_fi__]);                                 \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_uint8_array_eq__((const unsigned char *)(actual),                                   \
+                                (const unsigned char *)(expected), (n), &ttest_fi__)) {            \
+      TTEST_WARN__(0, "array mismatch at [%zu]: expected 0x%02x but got 0x%02x", ttest_fi__,       \
+                   ((const unsigned char *)(expected))[ttest_fi__],                                \
+                   ((const unsigned char *)(actual))[ttest_fi__]);                                 \
     }                                                                                              \
   } while (0)
 
 #define check_size_array_eq(actual, expected, n)                                                   \
   do {                                                                                             \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_size_array_eq__((const size_t *)(actual), (const size_t *)(expected), (n),          \
-                               &__bdd_fi__)) {                                                     \
-      __BDD_CHECK__(0, "array mismatch at [%zu]: expected %zu but got %zu", __bdd_fi__,            \
-                    ((const size_t *)(expected))[__bdd_fi__],                                      \
-                    ((const size_t *)(actual))[__bdd_fi__]);                                       \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_size_array_eq__((const size_t *)(actual), (const size_t *)(expected), (n),          \
+                               &ttest_fi__)) {                                                     \
+      TTEST_CHECK__(0, "array mismatch at [%zu]: expected %zu but got %zu", ttest_fi__,            \
+                    ((const size_t *)(expected))[ttest_fi__],                                      \
+                    ((const size_t *)(actual))[ttest_fi__]);                                       \
     }                                                                                              \
   } while (0)
 #define check_size_array_eq_warn(actual, expected, n)                                              \
   do {                                                                                             \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_size_array_eq__((const size_t *)(actual), (const size_t *)(expected), (n),          \
-                               &__bdd_fi__)) {                                                     \
-      __BDD_WARN__(0, "array mismatch at [%zu]: expected %zu but got %zu", __bdd_fi__,             \
-                   ((const size_t *)(expected))[__bdd_fi__],                                       \
-                   ((const size_t *)(actual))[__bdd_fi__]);                                        \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_size_array_eq__((const size_t *)(actual), (const size_t *)(expected), (n),          \
+                               &ttest_fi__)) {                                                     \
+      TTEST_WARN__(0, "array mismatch at [%zu]: expected %zu but got %zu", ttest_fi__,             \
+                   ((const size_t *)(expected))[ttest_fi__],                                       \
+                   ((const size_t *)(actual))[ttest_fi__]);                                        \
     }                                                                                              \
   } while (0)
 
 #define check_float_array_eq(actual, expected, n, epsilon)                                         \
   do {                                                                                             \
-    const float *__bdd_a__ = (const float *)(actual);                                              \
-    const float *__bdd_e__ = (const float *)(expected);                                            \
-    size_t __bdd_n__ = __BDD_CAST(size_t, (n));                                                    \
-    double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_float_array_eq__(__bdd_a__, __bdd_e__, __bdd_n__, __bdd_eps__, &__bdd_fi__)) {     \
-      __BDD_CHECK__(0, "array mismatch at [%zu]: expected %f but got %f (+/- %f)", __bdd_fi__,     \
-                    __BDD_CAST(double, __bdd_e__[__bdd_fi__]),                                     \
-                    __BDD_CAST(double, __bdd_a__[__bdd_fi__]), __bdd_eps__);                       \
+    const float *ttest_a__ = (const float *)(actual);                                              \
+    const float *ttest_e__ = (const float *)(expected);                                            \
+    size_t ttest_n__ = TTEST_CAST(size_t, (n));                                                    \
+    double ttest_eps__ = TTEST_CAST(double, (epsilon));                                            \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_float_array_eq__(ttest_a__, ttest_e__, ttest_n__, ttest_eps__, &ttest_fi__)) {     \
+      TTEST_CHECK__(0, "array mismatch at [%zu]: expected %f but got %f (+/- %f)", ttest_fi__,     \
+                    TTEST_CAST(double, ttest_e__[ttest_fi__]),                                     \
+                    TTEST_CAST(double, ttest_a__[ttest_fi__]), ttest_eps__);                       \
     }                                                                                              \
   } while (0)
 #define check_float_array_eq_warn(actual, expected, n, epsilon)                                    \
   do {                                                                                             \
-    const float *__bdd_a__ = (const float *)(actual);                                              \
-    const float *__bdd_e__ = (const float *)(expected);                                            \
-    size_t __bdd_n__ = __BDD_CAST(size_t, (n));                                                    \
-    double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_float_array_eq__(__bdd_a__, __bdd_e__, __bdd_n__, __bdd_eps__, &__bdd_fi__)) {     \
-      __BDD_WARN__(0, "array mismatch at [%zu]: expected %f but got %f (+/- %f)", __bdd_fi__,      \
-                   __BDD_CAST(double, __bdd_e__[__bdd_fi__]),                                      \
-                   __BDD_CAST(double, __bdd_a__[__bdd_fi__]), __bdd_eps__);                        \
+    const float *ttest_a__ = (const float *)(actual);                                              \
+    const float *ttest_e__ = (const float *)(expected);                                            \
+    size_t ttest_n__ = TTEST_CAST(size_t, (n));                                                    \
+    double ttest_eps__ = TTEST_CAST(double, (epsilon));                                            \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_float_array_eq__(ttest_a__, ttest_e__, ttest_n__, ttest_eps__, &ttest_fi__)) {     \
+      TTEST_WARN__(0, "array mismatch at [%zu]: expected %f but got %f (+/- %f)", ttest_fi__,      \
+                   TTEST_CAST(double, ttest_e__[ttest_fi__]),                                      \
+                   TTEST_CAST(double, ttest_a__[ttest_fi__]), ttest_eps__);                        \
     }                                                                                              \
   } while (0)
 
 #define check_double_array_eq(actual, expected, n, epsilon)                                        \
   do {                                                                                             \
-    const double *__bdd_a__ = (const double *)(actual);                                            \
-    const double *__bdd_e__ = (const double *)(expected);                                          \
-    size_t __bdd_n__ = __BDD_CAST(size_t, (n));                                                    \
-    double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_double_array_eq__(__bdd_a__, __bdd_e__, __bdd_n__, __bdd_eps__, &__bdd_fi__)) {    \
-      __BDD_CHECK__(0, "array mismatch at [%zu]: expected %f but got %f (+/- %f)", __bdd_fi__,     \
-                    __bdd_e__[__bdd_fi__], __bdd_a__[__bdd_fi__], __bdd_eps__);                   \
+    const double *ttest_a__ = (const double *)(actual);                                            \
+    const double *ttest_e__ = (const double *)(expected);                                          \
+    size_t ttest_n__ = TTEST_CAST(size_t, (n));                                                    \
+    double ttest_eps__ = TTEST_CAST(double, (epsilon));                                            \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_double_array_eq__(ttest_a__, ttest_e__, ttest_n__, ttest_eps__, &ttest_fi__)) {    \
+      TTEST_CHECK__(0, "array mismatch at [%zu]: expected %f but got %f (+/- %f)", ttest_fi__,     \
+                    ttest_e__[ttest_fi__], ttest_a__[ttest_fi__], ttest_eps__);                   \
     }                                                                                              \
   } while (0)
 #define check_double_array_eq_warn(actual, expected, n, epsilon)                                   \
   do {                                                                                             \
-    const double *__bdd_a__ = (const double *)(actual);                                            \
-    const double *__bdd_e__ = (const double *)(expected);                                          \
-    size_t __bdd_n__ = __BDD_CAST(size_t, (n));                                                    \
-    double __bdd_eps__ = __BDD_CAST(double, (epsilon));                                            \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_double_array_eq__(__bdd_a__, __bdd_e__, __bdd_n__, __bdd_eps__, &__bdd_fi__)) {    \
-      __BDD_WARN__(0, "array mismatch at [%zu]: expected %f but got %f (+/- %f)", __bdd_fi__,      \
-                   __bdd_e__[__bdd_fi__], __bdd_a__[__bdd_fi__], __bdd_eps__);                    \
+    const double *ttest_a__ = (const double *)(actual);                                            \
+    const double *ttest_e__ = (const double *)(expected);                                          \
+    size_t ttest_n__ = TTEST_CAST(size_t, (n));                                                    \
+    double ttest_eps__ = TTEST_CAST(double, (epsilon));                                            \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_double_array_eq__(ttest_a__, ttest_e__, ttest_n__, ttest_eps__, &ttest_fi__)) {    \
+      TTEST_WARN__(0, "array mismatch at [%zu]: expected %f but got %f (+/- %f)", ttest_fi__,      \
+                   ttest_e__[ttest_fi__], ttest_a__[ttest_fi__], ttest_eps__);                    \
     }                                                                                              \
   } while (0)
 
 #define check_ptr_array_eq(actual, expected, n)                                                    \
   do {                                                                                             \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_ptr_array_eq__((const void *const *)(actual), (const void *const *)(expected), (n), \
-                              &__bdd_fi__)) {                                                      \
-      __BDD_CHECK__(0, "array mismatch at [%zu]: expected %p but got %p", __bdd_fi__,              \
-                    ((const void *const *)(expected))[__bdd_fi__],                                 \
-                    ((const void *const *)(actual))[__bdd_fi__]);                                  \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_ptr_array_eq__((const void *const *)(actual), (const void *const *)(expected), (n), \
+                              &ttest_fi__)) {                                                      \
+      TTEST_CHECK__(0, "array mismatch at [%zu]: expected %p but got %p", ttest_fi__,              \
+                    ((const void *const *)(expected))[ttest_fi__],                                 \
+                    ((const void *const *)(actual))[ttest_fi__]);                                  \
     }                                                                                              \
   } while (0)
 #define check_ptr_array_eq_warn(actual, expected, n)                                               \
   do {                                                                                             \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_ptr_array_eq__((const void *const *)(actual), (const void *const *)(expected), (n), \
-                              &__bdd_fi__)) {                                                      \
-      __BDD_WARN__(0, "array mismatch at [%zu]: expected %p but got %p", __bdd_fi__,               \
-                   ((const void *const *)(expected))[__bdd_fi__],                                  \
-                   ((const void *const *)(actual))[__bdd_fi__]);                                   \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_ptr_array_eq__((const void *const *)(actual), (const void *const *)(expected), (n), \
+                              &ttest_fi__)) {                                                      \
+      TTEST_WARN__(0, "array mismatch at [%zu]: expected %p but got %p", ttest_fi__,               \
+                   ((const void *const *)(expected))[ttest_fi__],                                  \
+                   ((const void *const *)(actual))[ttest_fi__]);                                   \
     }                                                                                              \
   } while (0)
 
 #define check_str_array_eq(actual, expected, n)                                                    \
   do {                                                                                             \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_str_array_eq__((const char *const *)(actual), (const char *const *)(expected), (n), \
-                              &__bdd_fi__)) {                                                      \
-      __BDD_CHECK__(0, "array mismatch at [%zu]: expected \"%s\" but got \"%s\"", __bdd_fi__,      \
-                    ((const char *const *)(expected))[__bdd_fi__]                                  \
-                        ? ((const char *const *)(expected))[__bdd_fi__]                            \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_str_array_eq__((const char *const *)(actual), (const char *const *)(expected), (n), \
+                              &ttest_fi__)) {                                                      \
+      TTEST_CHECK__(0, "array mismatch at [%zu]: expected \"%s\" but got \"%s\"", ttest_fi__,      \
+                    ((const char *const *)(expected))[ttest_fi__]                                  \
+                        ? ((const char *const *)(expected))[ttest_fi__]                            \
                         : "(null)",                                                                \
-                    ((const char *const *)(actual))[__bdd_fi__]                                    \
-                        ? ((const char *const *)(actual))[__bdd_fi__]                              \
+                    ((const char *const *)(actual))[ttest_fi__]                                    \
+                        ? ((const char *const *)(actual))[ttest_fi__]                              \
                         : "(null)");                                                               \
     }                                                                                              \
   } while (0)
 #define check_str_array_eq_warn(actual, expected, n)                                               \
   do {                                                                                             \
-    size_t __bdd_fi__ = 0;                                                                         \
-    if (!__bdd_str_array_eq__((const char *const *)(actual), (const char *const *)(expected), (n), \
-                              &__bdd_fi__)) {                                                      \
-      __BDD_WARN__(0, "array mismatch at [%zu]: expected \"%s\" but got \"%s\"", __bdd_fi__,       \
-                   ((const char *const *)(expected))[__bdd_fi__]                                   \
-                       ? ((const char *const *)(expected))[__bdd_fi__]                             \
+    size_t ttest_fi__ = 0;                                                                         \
+    if (!ttest_str_array_eq__((const char *const *)(actual), (const char *const *)(expected), (n), \
+                              &ttest_fi__)) {                                                      \
+      TTEST_WARN__(0, "array mismatch at [%zu]: expected \"%s\" but got \"%s\"", ttest_fi__,       \
+                   ((const char *const *)(expected))[ttest_fi__]                                   \
+                       ? ((const char *const *)(expected))[ttest_fi__]                             \
                        : "(null)",                                                                 \
-                   ((const char *const *)(actual))[__bdd_fi__]                                     \
-                       ? ((const char *const *)(actual))[__bdd_fi__]                               \
+                   ((const char *const *)(actual))[ttest_fi__]                                     \
+                       ? ((const char *const *)(actual))[ttest_fi__]                               \
                        : "(null)");                                                                \
     }                                                                                              \
   } while (0)
 
 /* --- Non-fatal assertion --- */
-/* Internal implementation that takes file and line */
-#define __BDD_WARN_IMPL__(condition, file, line, ...)                                              \
+/* Internal implementation that takes file and line.
+ * Diagnostic guards mirror TTEST_CHECK_IMPL__: suppress -Wshadow and
+ * -Wunused-value at expansion sites. */
+#define TTEST_WARN_IMPL__(condition, file, line, ...)                                              \
+  TTEST_DIAG_PUSH__                                                                                \
+  TTEST_DIAG_IGNORE_SHADOW__                                                                       \
+  TTEST_DIAG_IGNORE_UNUSED_VALUE__                                                                 \
   do {                                                                                             \
-    if (__bdd_active_config__) {                                                                   \
-      if (!__bdd_eval_bool__(!!(condition))) {                                                     \
+    if (ttest_active_config__) {                                                                   \
+      if (!ttest_eval_bool__(!!(condition))) {                                                     \
         /* Warnings are diagnostics, not assertions; they must not count as   \
          * passed assertions in the summary. */                                \
-        char *__bdd_message__ = __bdd_format__(__VA_ARGS__);                                       \
-        ++__bdd_active_config__->warn_count;                                                       \
-        __bdd_indent__(stdout, __bdd_active_config__->current_test                                 \
-                                   ? __bdd_active_config__->current_test->level + 1                \
+        char *ttest_message__ = ttest_format__(__VA_ARGS__);                                       \
+        ++ttest_active_config__->warn_count;                                                       \
+        ttest_indent__(stdout, ttest_active_config__->current_test                                 \
+                                   ? ttest_active_config__->current_test->level + 1                \
                                    : 1);                                                           \
-        if (__bdd_active_config__->use_color) {                                                    \
-          printf(__BDD_COLOR_YELLOW__ "Warning:" __BDD_COLOR_RESET__ " %s", __bdd_message__);      \
+        if (ttest_active_config__->use_color) {                                                    \
+          printf(TTEST_COLOR_YELLOW__ "Warning:" TTEST_COLOR_RESET__ " %s", ttest_message__);      \
         } else {                                                                                   \
-          printf("Warning: %s", __bdd_message__);                                                  \
+          printf("Warning: %s", ttest_message__);                                                  \
         }                                                                                          \
         printf(" at %s:%s\n", file, line);                                                         \
-        free(__bdd_message__);                                                                     \
+        free(ttest_message__);                                                                     \
       }                                                                                            \
     }                                                                                              \
-  } while (0)
+  } while (0)                                                                                      \
+  TTEST_DIAG_POP__
 
 /* Wrapper that captures __FILE__ and __LINE__ */
-#define __BDD_WARN__(condition, ...)                                                               \
-  __BDD_WARN_IMPL__(condition, __FILE__, __STRING__LINE__, __VA_ARGS__)
+#define TTEST_WARN__(condition, ...)                                                               \
+  TTEST_WARN_IMPL__(condition, __FILE__, __STRING__LINE__, __VA_ARGS__)
 
-#define __BDD_WARN_ONE__(condition)                                                                \
-  __BDD_WARN_IMPL__(condition, __FILE__, __STRING__LINE__, #condition)
+#define TTEST_WARN_ONE__(condition)                                                                \
+  TTEST_WARN_IMPL__(condition, __FILE__, __STRING__LINE__, #condition)
 
-#define check_warn(...) __BDD_MACRO__(__BDD_WARN_, __VA_ARGS__)
+#define check_warn(...) TTEST_MACRO__(TTEST_WARN_, __VA_ARGS__)
 
-static inline void __bdd_fail_framework__(__bdd_config_type__ *config, const char *file,
+static inline void ttest_fail_framework__(ttest_config_type__ *config, const char *file,
                                           const char *line, const char *format, ...) {
-  if (!config || config->run != __BDD_TEST_RUN__ || !config->current_test) {
+  if (!config || config->run != TTEST_TEST_RUN__ || !config->current_test) {
     fprintf(stderr, "tinytest: framework failure outside an active test\n");
     abort();
   }
 
   va_list va;
   va_start(va, format);
-  char *message = __bdd_vformat__(format, va);
+  char *message = ttest_vformat__(format, va);
   va_end(va);
 
   ++config->assertion_count;
@@ -2865,7 +2993,7 @@ static inline void __bdd_fail_framework__(__bdd_config_type__ *config, const cha
 
   const char *prefix = "Framework error: ";
   size_t bufflen = strlen(prefix) + strlen(message) + 1;
-  config->error = __BDD_CAST(char *, calloc(bufflen, sizeof(char)));
+  config->error = TTEST_CAST(char *, calloc(bufflen, sizeof(char)));
   if (!config->error) {
     free(message);
     perror("calloc(config->error)");
@@ -2873,27 +3001,27 @@ static inline void __bdd_fail_framework__(__bdd_config_type__ *config, const cha
   }
   snprintf(config->error, bufflen, "%s%s", prefix, message);
   free(message);
-  __bdd_longjmp_fail__(config);
+  ttest_longjmp_fail__(config);
 }
 
-static inline bool __bdd_bench_require_work__(__bdd_config_type__ *config, const char *title,
+static inline bool ttest_bench_require_work__(ttest_config_type__ *config, const char *title,
                                               size_t samples, size_t operations_per_sample,
                                               size_t bytes_per_sample, bool tracks_bytes,
                                               const char *file, const char *line) {
   const char *safe_title = title ? title : "(null)";
   if (samples == 0) {
-    __bdd_fail_framework__(config, file, line, "benchmark \"%s\" requires at least one sample",
+    ttest_fail_framework__(config, file, line, "benchmark \"%s\" requires at least one sample",
                            safe_title);
     return false;
   }
   if (operations_per_sample == 0) {
-    __bdd_fail_framework__(config, file, line,
+    ttest_fail_framework__(config, file, line,
                            "benchmark \"%s\" requires at least one operation per sample",
                            safe_title);
     return false;
   }
   if (tracks_bytes && bytes_per_sample == 0) {
-    __bdd_fail_framework__(config, file, line,
+    ttest_fail_framework__(config, file, line,
                            "benchmark \"%s\" requires at least one byte per sample", safe_title);
     return false;
   }
@@ -2903,19 +3031,19 @@ static inline bool __bdd_bench_require_work__(__bdd_config_type__ *config, const
 /* --- Info context --- */
 #define info(...)                                                                                  \
   do {                                                                                             \
-    char *__bdd_info_msg__ = __bdd_format__(__VA_ARGS__);                                          \
-    size_t __bdd_info_msg_len__ = strlen(__bdd_info_msg__);                                        \
-    if (__bdd_active_config__->info_len + __bdd_info_msg_len__ + 2 <                               \
-        sizeof(__bdd_active_config__->info_buffer)) {                                              \
-      if (__bdd_active_config__->info_len > 0) {                                                   \
-        __bdd_active_config__->info_buffer[__bdd_active_config__->info_len++] = ' ';               \
+    char *ttest_info_msg__ = ttest_format__(__VA_ARGS__);                                          \
+    size_t ttest_info_msg_len__ = strlen(ttest_info_msg__);                                        \
+    if (ttest_active_config__->info_len + ttest_info_msg_len__ + 2 <                               \
+        sizeof(ttest_active_config__->info_buffer)) {                                              \
+      if (ttest_active_config__->info_len > 0) {                                                   \
+        ttest_active_config__->info_buffer[ttest_active_config__->info_len++] = ' ';               \
       }                                                                                            \
-      memcpy(__bdd_active_config__->info_buffer + __bdd_active_config__->info_len,                 \
-             __bdd_info_msg__, __bdd_info_msg_len__);                                              \
-      __bdd_active_config__->info_len += __bdd_info_msg_len__;                                     \
-      __bdd_active_config__->info_buffer[__bdd_active_config__->info_len] = '\0';                  \
+      memcpy(ttest_active_config__->info_buffer + ttest_active_config__->info_len,                 \
+             ttest_info_msg__, ttest_info_msg_len__);                                              \
+      ttest_active_config__->info_len += ttest_info_msg_len__;                                     \
+      ttest_active_config__->info_buffer[ttest_active_config__->info_len] = '\0';                  \
     }                                                                                              \
-    free(__bdd_info_msg__);                                                                        \
+    free(ttest_info_msg__);                                                                        \
   } while (0)
 
 #define capture(var, fmt) info(#var "=" fmt, (var))
@@ -2943,7 +3071,7 @@ static inline bool __bdd_bench_require_work__(__bdd_config_type__ *config, const
                          max_title, ops_title, size_title, bw_title)                               \
   if (1)
 
-#define __BDD_BENCHMARK_IMPL__(title, sample_count, operation_count, byte_count, track_bytes)      \
+#define TTEST_BENCHMARK_IMPL__(title, sample_count, operation_count, byte_count, track_bytes)      \
   for (                                                                                            \
       struct {                                                                                     \
         int __done;                                                                                \
@@ -2955,627 +3083,547 @@ static inline bool __bdd_bench_require_work__(__bdd_config_type__ *config, const
         double __max;                                                                              \
         double __sum;                                                                              \
         const char *__title;                                                                       \
-      } __bdd_bm__ = {0,                                                                           \
-                      __BDD_CAST(size_t, (sample_count)),                                          \
-                      __BDD_CAST(size_t, (operation_count)),                                       \
-                      __BDD_CAST(size_t, (byte_count)),                                            \
-                      __BDD_CAST(bool, (track_bytes)),                                             \
+      } ttest_bm__ = {0,                                                                           \
+                      TTEST_CAST(size_t, (sample_count)),                                          \
+                      TTEST_CAST(size_t, (operation_count)),                                       \
+                      TTEST_CAST(size_t, (byte_count)),                                            \
+                      TTEST_CAST(bool, (track_bytes)),                                             \
                       1e18,                                                                        \
                       0.0,                                                                         \
                       0.0,                                                                         \
                       (title)};                                                                    \
-      !__bdd_bm__.__done &&                                                                        \
-      __bdd_bench_require_work__(                                                                  \
-          __bdd_active_config__, __bdd_bm__.__title, __bdd_bm__.__samples,                         \
-          __bdd_bm__.__operations_per_sample, __bdd_bm__.__bytes_per_sample,                       \
-          __bdd_bm__.__tracks_bytes, __FILE__, __STRING__LINE__);                                  \
-      __bdd_bm__.__done = 1,                                                                       \
-        __bdd_bench_print__(                                                                       \
-            __bdd_active_config__, __bdd_bm__.__title, __bdd_bm__.__samples, __bdd_bm__.__sum,     \
-            __bdd_bm__.__min, __bdd_bm__.__max, __bdd_bm__.__operations_per_sample,                \
-            __bdd_bm__.__bytes_per_sample, __bdd_bm__.__tracks_bytes,                              \
-            __bdd_active_config__->current_test ? __bdd_active_config__->current_test->level + 1   \
+      !ttest_bm__.__done &&                                                                        \
+      ttest_bench_require_work__(                                                                  \
+          ttest_active_config__, ttest_bm__.__title, ttest_bm__.__samples,                         \
+          ttest_bm__.__operations_per_sample, ttest_bm__.__bytes_per_sample,                       \
+          ttest_bm__.__tracks_bytes, __FILE__, __STRING__LINE__);                                  \
+      ttest_bm__.__done = 1,                                                                       \
+        ttest_bench_print__(                                                                       \
+            ttest_active_config__, ttest_bm__.__title, ttest_bm__.__samples, ttest_bm__.__sum,     \
+            ttest_bm__.__min, ttest_bm__.__max, ttest_bm__.__operations_per_sample,                \
+            ttest_bm__.__bytes_per_sample, ttest_bm__.__tracks_bytes,                              \
+            ttest_active_config__->current_test ? ttest_active_config__->current_test->level + 1   \
                                                 : 1,                                               \
-            __bdd_active_config__->use_color))                                                     \
-    for (size_t __bdd_bm_i__ = 0; __bdd_bm_i__ < __bdd_bm__.__samples; ++__bdd_bm_i__)             \
+            ttest_active_config__->use_color))                                                     \
+    for (size_t ttest_bm_i__ = 0; ttest_bm_i__ < ttest_bm__.__samples; ++ttest_bm_i__)             \
       for (struct {                                                                                \
              int __done;                                                                           \
              double __started_ms;                                                                  \
              double __elapsed_ms;                                                                  \
-           } __bdd_bm_timer__ = {0, __bdd_get_time_ms__(), 0.0};                                  \
-           !__bdd_bm_timer__.__done;                                                               \
-           __bdd_bm_timer__.__done = 1,                                                            \
-                 __bdd_bm_timer__.__elapsed_ms =                                                   \
-                     __bdd_get_time_ms__() - __bdd_bm_timer__.__started_ms,                        \
-                 __bdd_bm__.__sum += __bdd_bm_timer__.__elapsed_ms,                                \
-                 __bdd_bm__.__min = __bdd_bm_timer__.__elapsed_ms < __bdd_bm__.__min               \
-                                        ? __bdd_bm_timer__.__elapsed_ms                             \
-                                        : __bdd_bm__.__min,                                        \
-                 __bdd_bm__.__max = __bdd_bm_timer__.__elapsed_ms > __bdd_bm__.__max               \
-                                        ? __bdd_bm_timer__.__elapsed_ms                             \
-                                        : __bdd_bm__.__max)
+           } ttest_bm_timer__ = {0, ttest_get_time_ms__(), 0.0};                                  \
+           !ttest_bm_timer__.__done;                                                               \
+           ttest_bm_timer__.__done = 1,                                                            \
+                 ttest_bm_timer__.__elapsed_ms =                                                   \
+                     ttest_get_time_ms__() - ttest_bm_timer__.__started_ms,                        \
+                 ttest_bm__.__sum += ttest_bm_timer__.__elapsed_ms,                                \
+                 ttest_bm__.__min = ttest_bm_timer__.__elapsed_ms < ttest_bm__.__min               \
+                                        ? ttest_bm_timer__.__elapsed_ms                             \
+                                        : ttest_bm__.__min,                                        \
+                 ttest_bm__.__max = ttest_bm_timer__.__elapsed_ms > ttest_bm__.__max               \
+                                        ? ttest_bm_timer__.__elapsed_ms                             \
+                                        : ttest_bm__.__max)
 
-#define benchmark_batch(title, samples) __BDD_BENCHMARK_IMPL__(title, samples, 1, 0, false)
+#define benchmark_batch(title, samples) TTEST_BENCHMARK_IMPL__(title, samples, 1, 0, false)
 #define benchmark_ops(title, samples, operations_per_sample)                                       \
-  __BDD_BENCHMARK_IMPL__(title, samples, operations_per_sample, 0, false)
+  TTEST_BENCHMARK_IMPL__(title, samples, operations_per_sample, 0, false)
 #define benchmark_bytes(title, samples, bytes_per_sample)                                          \
-  __BDD_BENCHMARK_IMPL__(title, samples, 1, bytes_per_sample, true)
+  TTEST_BENCHMARK_IMPL__(title, samples, 1, bytes_per_sample, true)
 #define benchmark_io(title, samples, operations_per_sample, bytes_per_sample)                       \
-  __BDD_BENCHMARK_IMPL__(title, samples, operations_per_sample, bytes_per_sample, true)
+  TTEST_BENCHMARK_IMPL__(title, samples, operations_per_sample, bytes_per_sample, true)
 
 /* Source-compatible legacy alias. Prefer an explicit benchmark_* macro in new code. */
 #define benchmark(title, samples, operations_per_sample)                                           \
   benchmark_ops(title, samples, operations_per_sample)
 
-/* --- C++ container assertions (only available in C++ mode) --- */
-#ifdef __cplusplus
-  #include <algorithm>
-  #include <iterator>
-  #include <sstream>
-  #include <stdexcept>
+#ifndef __cplusplus
 
-namespace __bdd_cpp__ {
-
-  template <typename T, typename U> inline bool __bdd_equal__(const T &a, const U &b) {
-  #if defined(__GNUC__) || defined(__clang__)
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wfloat-equal"
+/* --- C11 _Generic generic assertions for C mode --- */
+#if !defined(TTEST_HAS_C11_GENERIC__)
+  /* _Generic is part of C11 (§6.5.1.1) and is implemented by GCC, Clang,
+   * and MSVC cl.exe starting with VS 2019 v16.8 (_MSC_VER >= 1928) when
+   * compiled with /std:c11 or /std:c17 (__STDC_VERSION__ >= 201112L). */
+  #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+    #if !defined(_MSC_VER) || (_MSC_VER >= 1928)
+      #define TTEST_HAS_C11_GENERIC__ 1
+    #endif
   #endif
-    return a == b;
-  #if defined(__GNUC__) || defined(__clang__)
-    #pragma GCC diagnostic pop
-  #endif
-  }
+#endif
 
-  template <typename T, typename U> inline bool __bdd_not_equal__(const T &a, const U &b) {
-  #if defined(__GNUC__) || defined(__clang__)
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wfloat-equal"
-  #endif
-    return a != b;
-  #if defined(__GNUC__) || defined(__clang__)
-    #pragma GCC diagnostic pop
-  #endif
-  }
+#if defined(TTEST_HAS_C11_GENERIC__)
 
-  template <typename Container>
-  std::string container_to_string(const Container &c, size_t max_items = 8) {
-    std::ostringstream os;
-    os << "[";
-    size_t i = 0;
-    for (auto it = c.begin(); it != c.end() && i < max_items; ++it, ++i) {
-      if (i > 0) os << ", ";
-      os << *it;
-    }
-    if (c.size() > max_items) os << ", ...(" << c.size() << " total)";
-    os << "]";
-    return os.str();
-  }
+static inline void ttest_c11_check_eq_int(long long actual, long long expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual == expected, file, line, "expected %lld but got %lld", expected, actual);
+}
+static inline void ttest_c11_check_eq_int_warn(long long actual, long long expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual == expected, file, line, "expected %lld but got %lld", expected, actual);
+}
 
-  template <typename Container>
-  bool containers_equal(const Container &actual, const Container &expected, size_t &fail_idx,
-                        bool &size_mismatch) {
-    size_mismatch = (actual.size() != expected.size());
-    if (size_mismatch) return false;
-    auto a = actual.begin();
-    auto e = expected.begin();
-    for (fail_idx = 0; a != actual.end(); ++a, ++e, ++fail_idx) {
-      if (!(*a == *e)) return false;
-    }
-    return true;
-  }
+static inline void ttest_c11_check_eq_uint(unsigned long long actual, unsigned long long expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual == expected, file, line, "expected %llu but got %llu", expected, actual);
+}
+static inline void ttest_c11_check_eq_uint_warn(unsigned long long actual, unsigned long long expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual == expected, file, line, "expected %llu but got %llu", expected, actual);
+}
 
-  template <typename Map>
-  bool maps_equal(const Map &actual, const Map &expected, std::string &detail) {
-    if (actual.size() != expected.size()) {
-      std::ostringstream os;
-      os << "size mismatch: expected " << expected.size() << " but got " << actual.size();
-      detail = os.str();
-      return false;
-    }
-    for (auto it = expected.begin(); it != expected.end(); ++it) {
-      auto found = actual.find(it->first);
-      if (found == actual.end()) {
-        std::ostringstream os;
-        os << "missing key: " << it->first;
-        detail = os.str();
-        return false;
-      }
-      if (!(found->second == it->second)) {
-        std::ostringstream os;
-        os << "value mismatch at key " << it->first << ": expected " << it->second << " but got "
-           << found->second;
-        detail = os.str();
-        return false;
-      }
-    }
-    return true;
-  }
+static inline void ttest_c11_check_eq_bool(bool actual, bool expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__((expected ? 1 : 0) == (actual ? 1 : 0), file, line, "expected %d but got %d",
+                     (expected ? 1 : 0), (actual ? 1 : 0));
+}
+static inline void ttest_c11_check_eq_bool_warn(bool actual, bool expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__((expected ? 1 : 0) == (actual ? 1 : 0), file, line, "expected %d but got %d",
+                    (expected ? 1 : 0), (actual ? 1 : 0));
+}
 
-} /* namespace __bdd_cpp__ */
+static inline void ttest_c11_check_eq_double(double actual, double expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(fabs(actual - expected) <= 1e-9, file, line, "expected %f (+/- 1e-9) but got %f", expected, actual);
+}
+static inline void ttest_c11_check_eq_double_warn(double actual, double expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(fabs(actual - expected) <= 1e-9, file, line, "expected %f (+/- 1e-9) but got %f", expected, actual);
+}
 
-  #define check_eq(actual, expected)                                                               \
-    do {                                                                                           \
-      size_t __bdd_fi__ = 0;                                                                       \
-      bool __bdd_sm__ = false;                                                                     \
-      if (!__bdd_cpp__::containers_equal((actual), (expected), __bdd_fi__, __bdd_sm__)) {          \
-        if (__bdd_sm__) {                                                                          \
-          std::string __a = __bdd_cpp__::container_to_string((actual));                            \
-          std::string __e = __bdd_cpp__::container_to_string((expected));                          \
-          __BDD_CHECK__(                                                                           \
-              0,                                                                                   \
-              "size mismatch: expected %zu elements but got %zu\n  expected: %s\n  actual:   %s",  \
-              (expected).size(), (actual).size(), __e.c_str(), __a.c_str());                       \
-        } else {                                                                                   \
-          __BDD_CHECK__(0, "mismatch at index %zu", __bdd_fi__);                                   \
-        }                                                                                          \
-      }                                                                                            \
-    } while (0)
-  #define check_eq_warn(actual, expected)                                                          \
-    do {                                                                                           \
-      size_t __bdd_fi__ = 0;                                                                       \
-      bool __bdd_sm__ = false;                                                                     \
-      if (!__bdd_cpp__::containers_equal((actual), (expected), __bdd_fi__, __bdd_sm__)) {          \
-        if (__bdd_sm__) {                                                                          \
-          std::string __a = __bdd_cpp__::container_to_string((actual));                            \
-          std::string __e = __bdd_cpp__::container_to_string((expected));                          \
-          __BDD_WARN__(                                                                            \
-              0,                                                                                   \
-              "size mismatch: expected %zu elements but got %zu\n  expected: %s\n  actual:   %s",  \
-              (expected).size(), (actual).size(), __e.c_str(), __a.c_str());                       \
-        } else {                                                                                   \
-          __BDD_WARN__(0, "mismatch at index %zu", __bdd_fi__);                                    \
-        }                                                                                          \
-      }                                                                                            \
-    } while (0)
+static inline void ttest_c11_check_eq_long_double(long double actual, long double expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(fabsl(actual - expected) <= 1e-18L, file, line, "expected %Lf (+/- 1e-18) but got %Lf", expected, actual);
+}
+static inline void ttest_c11_check_eq_long_double_warn(long double actual, long double expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(fabsl(actual - expected) <= 1e-18L, file, line, "expected %Lf (+/- 1e-18) but got %Lf", expected, actual);
+}
 
-  #define check_map_eq(actual, expected)                                                           \
-    do {                                                                                           \
-      std::string __bdd_detail__;                                                                  \
-      if (!__bdd_cpp__::maps_equal((actual), (expected), __bdd_detail__)) {                        \
-        __BDD_CHECK__(0, "%s", __bdd_detail__.c_str());                                            \
-      }                                                                                            \
-    } while (0)
-  #define check_map_eq_warn(actual, expected)                                                      \
-    do {                                                                                           \
-      std::string __bdd_detail__;                                                                  \
-      if (!__bdd_cpp__::maps_equal((actual), (expected), __bdd_detail__)) {                        \
-        __BDD_WARN__(0, "%s", __bdd_detail__.c_str());                                             \
-      }                                                                                            \
-    } while (0)
+/* float: dedicated handler uses fabsf and a float-appropriate tolerance (8 * FLT_EPSILON ~ 1e-6).
+ * Routing float to the double handler was imprecise: fabs promotes to double,
+ * and the 1e-9 threshold is tighter than meaningful float resolution. */
+static inline void ttest_c11_check_eq_float(float actual, float expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(fabsf(actual - expected) <= 8.0f * FLT_EPSILON * (fabsf(actual) > 1.0f ? fabsf(actual) : 1.0f),
+                     file, line, "expected %f (+/- 8*FLT_EPSILON*|v|) but got %f", expected, actual);
+}
+static inline void ttest_c11_check_eq_float_warn(float actual, float expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(fabsf(actual - expected) <= 8.0f * FLT_EPSILON * (fabsf(actual) > 1.0f ? fabsf(actual) : 1.0f),
+                    file, line, "expected %f (+/- 8*FLT_EPSILON*|v|) but got %f", expected, actual);
+}
 
-  #define check_contains(container, value)                                                         \
-    __BDD_CHECK__(std::find((container).begin(), (container).end(), (value)) != (container).end(), \
-                  "container does not contain expected value")
-  #define check_contains_warn(container, value)                                                    \
-    __BDD_WARN__(std::find((container).begin(), (container).end(), (value)) != (container).end(),  \
-                 "container does not contain expected value")
+static inline void ttest_c11_check_eq_str(const char *actual, const char *expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(ttest_str_eq__(actual, expected), file, line, "expected \"%s\" but got \"%s\"",
+                     ttest_cstr_or_null__(expected), ttest_cstr_or_null__(actual));
+}
+static inline void ttest_c11_check_eq_str_warn(const char *actual, const char *expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(ttest_str_eq__(actual, expected), file, line, "expected \"%s\" but got \"%s\"",
+                    ttest_cstr_or_null__(expected), ttest_cstr_or_null__(actual));
+}
 
-  #define check_not_contains(container, value)                                                     \
-    __BDD_CHECK__(std::find((container).begin(), (container).end(), (value)) == (container).end(), \
-                  "container contains unexpected value")
-  #define check_not_contains_warn(container, value)                                                \
-    __BDD_WARN__(std::find((container).begin(), (container).end(), (value)) == (container).end(),  \
-                 "container contains unexpected value")
+static inline void ttest_c11_check_eq_ptr(const void *actual, const void *expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual == expected, file, line, "expected %p but got %p", expected, actual);
+}
+static inline void ttest_c11_check_eq_ptr_warn(const void *actual, const void *expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual == expected, file, line, "expected %p but got %p", expected, actual);
+}
 
-  #define check_size(container, expected_size)                                                     \
-    __BDD_CHECK__((container).size() == __BDD_CAST(size_t, (expected_size)),                       \
-                  "expected size %zu but got %zu", __BDD_CAST(size_t, (expected_size)),            \
-                  __BDD_CAST(size_t, (container).size()))
-  #define check_size_warn(container, expected_size)                                                \
-    __BDD_WARN__((container).size() == __BDD_CAST(size_t, (expected_size)),                        \
-                 "expected size %zu but got %zu", __BDD_CAST(size_t, (expected_size)),             \
-                 __BDD_CAST(size_t, (container).size()))
+static inline void ttest_c11_check_ne_int(long long actual, long long expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual != expected, file, line, "expected != %lld but got %lld", expected, actual);
+}
+static inline void ttest_c11_check_ne_int_warn(long long actual, long long expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual != expected, file, line, "expected != %lld but got %lld", expected, actual);
+}
 
-  #define check_empty(container)                                                                   \
-    __BDD_CHECK__((container).empty(), "expected empty but got %zu elements",                      \
-                  __BDD_CAST(size_t, (container).size()))
-  #define check_empty_warn(container)                                                              \
-    __BDD_WARN__((container).empty(), "expected empty but got %zu elements",                       \
-                 __BDD_CAST(size_t, (container).size()))
+static inline void ttest_c11_check_ne_uint(unsigned long long actual, unsigned long long expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual != expected, file, line, "expected != %llu but got %llu", expected, actual);
+}
+static inline void ttest_c11_check_ne_uint_warn(unsigned long long actual, unsigned long long expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual != expected, file, line, "expected != %llu but got %llu", expected, actual);
+}
 
-  #define check_not_empty(container)                                                               \
-    __BDD_CHECK__(!(container).empty(), "expected non-empty container")
-  #define check_not_empty_warn(container)                                                          \
-    __BDD_WARN__(!(container).empty(), "expected non-empty container")
+static inline void ttest_c11_check_ne_bool(bool actual, bool expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__((expected ? 1 : 0) != (actual ? 1 : 0), file, line, "expected != %d but got %d",
+                     (expected ? 1 : 0), (actual ? 1 : 0));
+}
+static inline void ttest_c11_check_ne_bool_warn(bool actual, bool expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__((expected ? 1 : 0) != (actual ? 1 : 0), file, line, "expected != %d but got %d",
+                    (expected ? 1 : 0), (actual ? 1 : 0));
+}
 
-  #define check_map_has_key(map, key)                                                              \
-    __BDD_CHECK__((map).find((key)) != (map).end(), "map does not contain expected key")
-  #define check_map_has_key_warn(map, key)                                                         \
-    __BDD_WARN__((map).find((key)) != (map).end(), "map does not contain expected key")
+static inline void ttest_c11_check_ne_double(double actual, double expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(fabs(actual - expected) > 1e-9, file, line, "expected != %f (+/- 1e-9) but got %f", expected, actual);
+}
+static inline void ttest_c11_check_ne_double_warn(double actual, double expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(fabs(actual - expected) > 1e-9, file, line, "expected != %f (+/- 1e-9) but got %f", expected, actual);
+}
 
-  #define check_map_not_has_key(map, key)                                                          \
-    __BDD_CHECK__((map).find((key)) == (map).end(), "map contains unexpected key")
-  #define check_map_not_has_key_warn(map, key)                                                     \
-    __BDD_WARN__((map).find((key)) == (map).end(), "map contains unexpected key")
+static inline void ttest_c11_check_ne_long_double(long double actual, long double expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(fabsl(actual - expected) > 1e-18L, file, line, "expected != %Lf (+/- 1e-18) but got %Lf", expected, actual);
+}
+static inline void ttest_c11_check_ne_long_double_warn(long double actual, long double expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(fabsl(actual - expected) > 1e-18L, file, line, "expected != %Lf (+/- 1e-18) but got %Lf", expected, actual);
+}
 
-/* std::string assertions */
-namespace __bdd_cpp__ {
+/* float: dedicated ne handler mirrors check_eq_float, using relative tolerance. */
+static inline void ttest_c11_check_ne_float(float actual, float expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(fabsf(actual - expected) > 8.0f * FLT_EPSILON * (fabsf(actual) > 1.0f ? fabsf(actual) : 1.0f),
+                     file, line, "expected != %f (+/- 8*FLT_EPSILON*|v|) but got %f", expected, actual);
+}
+static inline void ttest_c11_check_ne_float_warn(float actual, float expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(fabsf(actual - expected) > 8.0f * FLT_EPSILON * (fabsf(actual) > 1.0f ? fabsf(actual) : 1.0f),
+                    file, line, "expected != %f (+/- 8*FLT_EPSILON*|v|) but got %f", expected, actual);
+}
 
-  template <typename T> std::string to_string_safe(const T &val) {
-    std::ostringstream os;
-    os << val;
-    return os.str();
-  }
+static inline void ttest_c11_check_ne_str(const char *actual, const char *expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(ttest_str_ne__(actual, expected), file, line, "expected != \"%s\" but got \"%s\"",
+                     ttest_cstr_or_null__(expected), ttest_cstr_or_null__(actual));
+}
+static inline void ttest_c11_check_ne_str_warn(const char *actual, const char *expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(ttest_str_ne__(actual, expected), file, line, "expected != \"%s\" but got \"%s\"",
+                    ttest_cstr_or_null__(expected), ttest_cstr_or_null__(actual));
+}
 
-  /* Safely convert to std::string for assertions, handling NULL pointers */
-  inline std::string stringify_safe(const char *s) { return s ? s : "(null)"; }
-  inline std::string stringify_safe(const std::string &s) { return s; }
-  inline std::string stringify_safe(std::nullptr_t) { return "(null)"; }
+static inline void ttest_c11_check_ne_ptr(const void *actual, const void *expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual != expected, file, line, "expected != %p but got %p", expected, actual);
+}
+static inline void ttest_c11_check_ne_ptr_warn(const void *actual, const void *expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual != expected, file, line, "expected != %p but got %p", expected, actual);
+}
 
-} /* namespace __bdd_cpp__ */
+static inline void ttest_c11_check_gt_int(long long actual, long long expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual > expected, file, line, "expected > %lld but got %lld", expected, actual);
+}
+static inline void ttest_c11_check_gt_int_warn(long long actual, long long expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual > expected, file, line, "expected > %lld but got %lld", expected, actual);
+}
 
-  #define check_string_eq(actual, expected)                                                        \
-    do {                                                                                           \
-      std::string __a = __bdd_cpp__::stringify_safe(actual);                                       \
-      std::string __e = __bdd_cpp__::stringify_safe(expected);                                     \
-      __BDD_CHECK__(__a == __e, "expected \"%s\" but got \"%s\"", __e.c_str(), __a.c_str());       \
-    } while (0)
-  #define check_string_eq_warn(actual, expected)                                                   \
-    do {                                                                                           \
-      std::string __a = __bdd_cpp__::stringify_safe(actual);                                       \
-      std::string __e = __bdd_cpp__::stringify_safe(expected);                                     \
-      __BDD_WARN__(__a == __e, "expected \"%s\" but got \"%s\"", __e.c_str(), __a.c_str());        \
-    } while (0)
+static inline void ttest_c11_check_gt_uint(unsigned long long actual, unsigned long long expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual > expected, file, line, "expected > %llu but got %llu", expected, actual);
+}
+static inline void ttest_c11_check_gt_uint_warn(unsigned long long actual, unsigned long long expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual > expected, file, line, "expected > %llu but got %llu", expected, actual);
+}
 
-  #define check_string_ne(actual, expected)                                                        \
-    do {                                                                                           \
-      std::string __a = __bdd_cpp__::stringify_safe(actual);                                       \
-      std::string __e = __bdd_cpp__::stringify_safe(expected);                                     \
-      __BDD_CHECK__(__a != __e, "expected != \"%s\" but got \"%s\"", __e.c_str(), __a.c_str());    \
-    } while (0)
-  #define check_string_ne_warn(actual, expected)                                                   \
-    do {                                                                                           \
-      std::string __a = __bdd_cpp__::stringify_safe(actual);                                       \
-      std::string __e = __bdd_cpp__::stringify_safe(expected);                                     \
-      __BDD_WARN__(__a != __e, "expected != \"%s\" but got \"%s\"", __e.c_str(), __a.c_str());     \
-    } while (0)
+static inline void ttest_c11_check_gt_double(double actual, double expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual > expected, file, line, "expected > %f but got %f", expected, actual);
+}
+static inline void ttest_c11_check_gt_double_warn(double actual, double expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual > expected, file, line, "expected > %f but got %f", expected, actual);
+}
 
-  #define check_string_contains(haystack, needle)                                                  \
-    do {                                                                                           \
-      std::string __h = __bdd_cpp__::stringify_safe(haystack);                                     \
-      std::string __n = __bdd_cpp__::stringify_safe(needle);                                       \
-      __BDD_CHECK__(__h.find(__n) != std::string::npos, "expected \"%s\" to contain \"%s\"",       \
-                    __h.c_str(), __n.c_str());                                                     \
-    } while (0)
-  #define check_string_contains_warn(haystack, needle)                                             \
-    do {                                                                                           \
-      std::string __h = __bdd_cpp__::stringify_safe(haystack);                                     \
-      std::string __n = __bdd_cpp__::stringify_safe(needle);                                       \
-      __BDD_WARN__(__h.find(__n) != std::string::npos, "expected \"%s\" to contain \"%s\"",        \
-                   __h.c_str(), __n.c_str());                                                      \
-    } while (0)
+static inline void ttest_c11_check_gt_long_double(long double actual, long double expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual > expected, file, line, "expected > %Lf but got %Lf", expected, actual);
+}
+static inline void ttest_c11_check_gt_long_double_warn(long double actual, long double expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual > expected, file, line, "expected > %Lf but got %Lf", expected, actual);
+}
 
-  #define check_string_starts_with(str, prefix)                                                    \
-    do {                                                                                           \
-      std::string __s = __bdd_cpp__::stringify_safe(str);                                          \
-      std::string __p = __bdd_cpp__::stringify_safe(prefix);                                       \
-      __BDD_CHECK__(__s.size() >= __p.size() && __s.compare(0, __p.size(), __p) == 0,              \
-                    "expected \"%s\" to start with \"%s\"", __s.c_str(), __p.c_str());             \
-    } while (0)
-  #define check_string_starts_with_warn(str, prefix)                                               \
-    do {                                                                                           \
-      std::string __s = __bdd_cpp__::stringify_safe(str);                                          \
-      std::string __p = __bdd_cpp__::stringify_safe(prefix);                                       \
-      __BDD_WARN__(__s.size() >= __p.size() && __s.compare(0, __p.size(), __p) == 0,               \
-                   "expected \"%s\" to start with \"%s\"", __s.c_str(), __p.c_str());              \
-    } while (0)
+static inline void ttest_c11_check_lt_int(long long actual, long long expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual < expected, file, line, "expected < %lld but got %lld", expected, actual);
+}
+static inline void ttest_c11_check_lt_int_warn(long long actual, long long expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual < expected, file, line, "expected < %lld but got %lld", expected, actual);
+}
 
-  #define check_string_ends_with(str, suffix)                                                      \
-    do {                                                                                           \
-      std::string __s = __bdd_cpp__::stringify_safe(str);                                          \
-      std::string __x = __bdd_cpp__::stringify_safe(suffix);                                       \
-      __BDD_CHECK__(__s.size() >= __x.size() &&                                                    \
-                        __s.compare(__s.size() - __x.size(), __x.size(), __x) == 0,                \
-                    "expected \"%s\" to end with \"%s\"", __s.c_str(), __x.c_str());               \
-    } while (0)
-  #define check_string_ends_with_warn(str, suffix)                                                 \
-    do {                                                                                           \
-      std::string __s = __bdd_cpp__::stringify_safe(str);                                          \
-      std::string __x = __bdd_cpp__::stringify_safe(suffix);                                       \
-      __BDD_WARN__(__s.size() >= __x.size() &&                                                     \
-                       __s.compare(__s.size() - __x.size(), __x.size(), __x) == 0,                 \
-                   "expected \"%s\" to end with \"%s\"", __s.c_str(), __x.c_str());                \
-    } while (0)
+static inline void ttest_c11_check_lt_uint(unsigned long long actual, unsigned long long expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual < expected, file, line, "expected < %llu but got %llu", expected, actual);
+}
+static inline void ttest_c11_check_lt_uint_warn(unsigned long long actual, unsigned long long expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual < expected, file, line, "expected < %llu but got %llu", expected, actual);
+}
 
-  #define check_string_empty(str)                                                                  \
-    do {                                                                                           \
-      std::string __s = __bdd_cpp__::stringify_safe(str);                                          \
-      __BDD_CHECK__(__s.empty(), "expected empty string but got \"%s\"", __s.c_str());             \
-    } while (0)
-  #define check_string_empty_warn(str)                                                             \
-    do {                                                                                           \
-      std::string __s = __bdd_cpp__::stringify_safe(str);                                          \
-      __BDD_WARN__(__s.empty(), "expected empty string but got \"%s\"", __s.c_str());              \
-    } while (0)
+static inline void ttest_c11_check_lt_double(double actual, double expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual < expected, file, line, "expected < %f but got %f", expected, actual);
+}
+static inline void ttest_c11_check_lt_double_warn(double actual, double expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual < expected, file, line, "expected < %f but got %f", expected, actual);
+}
 
-  #define check_string_not_empty(str)                                                              \
-    do {                                                                                           \
-      std::string __s = __bdd_cpp__::stringify_safe(str);                                          \
-      __BDD_CHECK__(!__s.empty(), "expected non-empty string");                                    \
-    } while (0)
-  #define check_string_not_empty_warn(str)                                                         \
-    do {                                                                                           \
-      std::string __s = __bdd_cpp__::stringify_safe(str);                                          \
-      __BDD_WARN__(!__s.empty(), "expected non-empty string");                                     \
-    } while (0)
+static inline void ttest_c11_check_lt_long_double(long double actual, long double expected, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual < expected, file, line, "expected < %Lf but got %Lf", expected, actual);
+}
+static inline void ttest_c11_check_lt_long_double_warn(long double actual, long double expected, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual < expected, file, line, "expected < %Lf but got %Lf", expected, actual);
+}
 
-  /* --- Template-based generic assertions --- */
+static inline void ttest_c11_check_in_range_int(long long actual, long long min, long long max, const char *file,
+                                                const char *line) {
+  TTEST_CHECK_IMPL__(actual >= min && actual <= max, file, line,
+                     "expected %lld in range [%lld, %lld], got %lld", min, max, actual);
+}
+static inline void ttest_c11_check_in_range_int_warn(long long actual, long long min, long long max, const char *file,
+                                                     const char *line) {
+  TTEST_WARN_IMPL__(actual >= min && actual <= max, file, line,
+                    "expected %lld in range [%lld, %lld], got %lld", min, max, actual);
+}
 
-  #define check_equal(actual, expected)                                                            \
-    do {                                                                                           \
-      const auto &__bdd_a_ref__ = (actual);                                                        \
-      const auto &__bdd_e_ref__ = (expected);                                                      \
-      if (!__bdd_eval_bool__(!!(__bdd_cpp__::__bdd_equal__(__bdd_a_ref__, __bdd_e_ref__)))) {      \
-        std::string __a = __bdd_cpp__::to_string_safe(__bdd_a_ref__);                              \
-        std::string __e = __bdd_cpp__::to_string_safe(__bdd_e_ref__);                              \
-        __BDD_CHECK__(0, "expected %s but got %s", __e.c_str(), __a.c_str());                      \
-      } else {                                                                                     \
-        ++__bdd_active_config__->assertion_count;                                                  \
-      }                                                                                            \
-    } while (0)
-  #define check_equal_warn(actual, expected)                                                       \
-    do {                                                                                           \
-      const auto &__bdd_a_ref__ = (actual);                                                        \
-      const auto &__bdd_e_ref__ = (expected);                                                      \
-      if (!__bdd_eval_bool__(!!(__bdd_cpp__::__bdd_equal__(__bdd_a_ref__, __bdd_e_ref__)))) {      \
-        std::string __a = __bdd_cpp__::to_string_safe(__bdd_a_ref__);                              \
-        std::string __e = __bdd_cpp__::to_string_safe(__bdd_e_ref__);                              \
-        __BDD_WARN__(0, "expected %s but got %s", __e.c_str(), __a.c_str());                       \
-      } else {                                                                                     \
-        ++__bdd_active_config__->assertion_count;                                                  \
-      }                                                                                            \
-    } while (0)
+static inline void ttest_c11_check_in_range_uint(unsigned long long actual, unsigned long long min,
+                                                unsigned long long max, const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual >= min && actual <= max, file, line,
+                     "expected %llu in range [%llu, %llu], got %llu", min, max, actual);
+}
+static inline void ttest_c11_check_in_range_uint_warn(unsigned long long actual, unsigned long long min,
+                                                     unsigned long long max, const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual >= min && actual <= max, file, line,
+                    "expected %llu in range [%llu, %llu], got %llu", min, max, actual);
+}
 
-  #define check_not_equal(actual, expected)                                                        \
-    do {                                                                                           \
-      const auto &__bdd_a_ref__ = (actual);                                                        \
-      const auto &__bdd_e_ref__ = (expected);                                                      \
-      if (!__bdd_eval_bool__(!!(__bdd_cpp__::__bdd_not_equal__(__bdd_a_ref__, __bdd_e_ref__)))) {  \
-        std::string __a = __bdd_cpp__::to_string_safe(__bdd_a_ref__);                              \
-        std::string __e = __bdd_cpp__::to_string_safe(__bdd_e_ref__);                              \
-        __BDD_CHECK__(0, "expected != %s but got %s", __e.c_str(), __a.c_str());                   \
-      } else {                                                                                     \
-        ++__bdd_active_config__->assertion_count;                                                  \
-      }                                                                                            \
-    } while (0)
-  #define check_not_equal_warn(actual, expected)                                                   \
-    do {                                                                                           \
-      const auto &__bdd_a_ref__ = (actual);                                                        \
-      const auto &__bdd_e_ref__ = (expected);                                                      \
-      if (!__bdd_eval_bool__(!!(__bdd_cpp__::__bdd_not_equal__(__bdd_a_ref__, __bdd_e_ref__)))) {  \
-        std::string __a = __bdd_cpp__::to_string_safe(__bdd_a_ref__);                              \
-        std::string __e = __bdd_cpp__::to_string_safe(__bdd_e_ref__);                              \
-        __BDD_WARN__(0, "expected != %s but got %s", __e.c_str(), __a.c_str());                    \
-      } else {                                                                                     \
-        ++__bdd_active_config__->assertion_count;                                                  \
-      }                                                                                            \
-    } while (0)
+static inline void ttest_c11_check_in_range_double(double actual, double min, double max, const char *file,
+                                                  const char *line) {
+  TTEST_CHECK_IMPL__(actual >= min && actual <= max, file, line,
+                     "expected %f in range [%f, %f], got %f", min, max, actual);
+}
+static inline void ttest_c11_check_in_range_double_warn(double actual, double min, double max, const char *file,
+                                                       const char *line) {
+  TTEST_WARN_IMPL__(actual >= min && actual <= max, file, line,
+                    "expected %f in range [%f, %f], got %f", min, max, actual);
+}
 
-  #define check_greater(actual, expected)                                                          \
-    do {                                                                                           \
-      const auto &__bdd_a_ref__ = (actual);                                                        \
-      const auto &__bdd_e_ref__ = (expected);                                                      \
-      if (!__bdd_eval_bool__(!!(__bdd_a_ref__ > __bdd_e_ref__))) {                                 \
-        std::string __a = __bdd_cpp__::to_string_safe(__bdd_a_ref__);                              \
-        std::string __e = __bdd_cpp__::to_string_safe(__bdd_e_ref__);                              \
-        __BDD_CHECK__(0, "expected > %s but got %s", __e.c_str(), __a.c_str());                    \
-      } else {                                                                                     \
-        ++__bdd_active_config__->assertion_count;                                                  \
-      }                                                                                            \
-    } while (0)
-  #define check_greater_warn(actual, expected)                                                     \
-    do {                                                                                           \
-      const auto &__bdd_a_ref__ = (actual);                                                        \
-      const auto &__bdd_e_ref__ = (expected);                                                      \
-      if (!__bdd_eval_bool__(!!(__bdd_a_ref__ > __bdd_e_ref__))) {                                 \
-        std::string __a = __bdd_cpp__::to_string_safe(__bdd_a_ref__);                              \
-        std::string __e = __bdd_cpp__::to_string_safe(__bdd_e_ref__);                              \
-        __BDD_WARN__(0, "expected > %s but got %s", __e.c_str(), __a.c_str());                     \
-      } else {                                                                                     \
-        ++__bdd_active_config__->assertion_count;                                                  \
-      }                                                                                            \
-    } while (0)
+static inline void ttest_c11_check_in_range_long_double(long double actual, long double min, long double max,
+                                                       const char *file, const char *line) {
+  TTEST_CHECK_IMPL__(actual >= min && actual <= max, file, line,
+                     "expected %Lf in range [%Lf, %Lf], got %Lf", min, max, actual);
+}
+static inline void ttest_c11_check_in_range_long_double_warn(long double actual, long double min, long double max,
+                                                            const char *file, const char *line) {
+  TTEST_WARN_IMPL__(actual >= min && actual <= max, file, line,
+                    "expected %Lf in range [%Lf, %Lf], got %Lf", min, max, actual);
+}
 
-  #define check_less(actual, expected)                                                             \
-    do {                                                                                           \
-      const auto &__bdd_a_ref__ = (actual);                                                        \
-      const auto &__bdd_e_ref__ = (expected);                                                      \
-      if (!__bdd_eval_bool__(!!(__bdd_a_ref__ < __bdd_e_ref__))) {                                 \
-        std::string __a = __bdd_cpp__::to_string_safe(__bdd_a_ref__);                              \
-        std::string __e = __bdd_cpp__::to_string_safe(__bdd_e_ref__);                              \
-        __BDD_CHECK__(0, "expected < %s but got %s", __e.c_str(), __a.c_str());                    \
-      } else {                                                                                     \
-        ++__bdd_active_config__->assertion_count;                                                  \
-      }                                                                                            \
-    } while (0)
-  #define check_less_warn(actual, expected)                                                        \
-    do {                                                                                           \
-      const auto &__bdd_a_ref__ = (actual);                                                        \
-      const auto &__bdd_e_ref__ = (expected);                                                      \
-      if (!__bdd_eval_bool__(!!(__bdd_a_ref__ < __bdd_e_ref__))) {                                 \
-        std::string __a = __bdd_cpp__::to_string_safe(__bdd_a_ref__);                              \
-        std::string __e = __bdd_cpp__::to_string_safe(__bdd_e_ref__);                              \
-        __BDD_WARN__(0, "expected < %s but got %s", __e.c_str(), __a.c_str());                     \
-      } else {                                                                                     \
-        ++__bdd_active_config__->assertion_count;                                                  \
-      }                                                                                            \
-    } while (0)
+#define check_equal(actual, expected) \
+  _Generic((actual), \
+    char:               ttest_c11_check_eq_int, \
+    signed char:        ttest_c11_check_eq_int, \
+    unsigned char:      ttest_c11_check_eq_uint, \
+    short:              ttest_c11_check_eq_int, \
+    unsigned short:     ttest_c11_check_eq_uint, \
+    int:                ttest_c11_check_eq_int, \
+    unsigned int:       ttest_c11_check_eq_uint, \
+    long:               ttest_c11_check_eq_int, \
+    unsigned long:      ttest_c11_check_eq_uint, \
+    long long:          ttest_c11_check_eq_int, \
+    unsigned long long: ttest_c11_check_eq_uint, \
+    bool:               ttest_c11_check_eq_bool, \
+    float:              ttest_c11_check_eq_float, \
+    double:             ttest_c11_check_eq_double, \
+    long double:        ttest_c11_check_eq_long_double, \
+    char*:              ttest_c11_check_eq_str, \
+    const char*:        ttest_c11_check_eq_str, \
+    void*:              ttest_c11_check_eq_ptr, \
+    const void*:        ttest_c11_check_eq_ptr, \
+    default:            ttest_c11_check_eq_int \
+  )((actual), (expected), __FILE__, __STRING__LINE__)
 
-  /* --- Exception testing macros --- */
+#define check_equal_warn(actual, expected) \
+  _Generic((actual), \
+    char:               ttest_c11_check_eq_int_warn, \
+    signed char:        ttest_c11_check_eq_int_warn, \
+    unsigned char:      ttest_c11_check_eq_uint_warn, \
+    short:              ttest_c11_check_eq_int_warn, \
+    unsigned short:     ttest_c11_check_eq_uint_warn, \
+    int:                ttest_c11_check_eq_int_warn, \
+    unsigned int:       ttest_c11_check_eq_uint_warn, \
+    long:               ttest_c11_check_eq_int_warn, \
+    unsigned long:      ttest_c11_check_eq_uint_warn, \
+    long long:          ttest_c11_check_eq_int_warn, \
+    unsigned long long: ttest_c11_check_eq_uint_warn, \
+    bool:               ttest_c11_check_eq_bool_warn, \
+    float:              ttest_c11_check_eq_float_warn, \
+    double:             ttest_c11_check_eq_double_warn, \
+    long double:        ttest_c11_check_eq_long_double_warn, \
+    char*:              ttest_c11_check_eq_str_warn, \
+    const char*:        ttest_c11_check_eq_str_warn, \
+    void*:              ttest_c11_check_eq_ptr_warn, \
+    const void*:        ttest_c11_check_eq_ptr_warn, \
+    default:            ttest_c11_check_eq_int_warn \
+  )((actual), (expected), __FILE__, __STRING__LINE__)
 
-  /* check_throws(expr) — must throw any exception */
-  #define check_throws(expr)                                                                       \
-    do {                                                                                           \
-      bool __bdd_threw__ = false;                                                                  \
-      try {                                                                                        \
-        (void)(expr);                                                                              \
-      } catch (const __bdd_fail_exception__ &) {                                                   \
-        throw;                                                                                     \
-      } catch (...) {                                                                              \
-        __bdd_threw__ = true;                                                                      \
-      }                                                                                            \
-      __BDD_CHECK__(__bdd_threw__, "expected exception but none was thrown");                      \
-    } while (0)
+#define check_not_equal(actual, expected) \
+  _Generic((actual), \
+    char:               ttest_c11_check_ne_int, \
+    signed char:        ttest_c11_check_ne_int, \
+    unsigned char:      ttest_c11_check_ne_uint, \
+    short:              ttest_c11_check_ne_int, \
+    unsigned short:     ttest_c11_check_ne_uint, \
+    int:                ttest_c11_check_ne_int, \
+    unsigned int:       ttest_c11_check_ne_uint, \
+    long:               ttest_c11_check_ne_int, \
+    unsigned long:      ttest_c11_check_ne_uint, \
+    long long:          ttest_c11_check_ne_int, \
+    unsigned long long: ttest_c11_check_ne_uint, \
+    bool:               ttest_c11_check_ne_bool, \
+    float:              ttest_c11_check_ne_float, \
+    double:             ttest_c11_check_ne_double, \
+    long double:        ttest_c11_check_ne_long_double, \
+    char*:              ttest_c11_check_ne_str, \
+    const char*:        ttest_c11_check_ne_str, \
+    void*:              ttest_c11_check_ne_ptr, \
+    const void*:        ttest_c11_check_ne_ptr, \
+    default:            ttest_c11_check_ne_int \
+  )((actual), (expected), __FILE__, __STRING__LINE__)
 
-  /* check_throws_as(expr, ExType) — must throw specific type */
-  #define check_throws_as(expr, ExType)                                                            \
-    do {                                                                                           \
-      bool __bdd_threw_correct__ = false;                                                          \
-      bool __bdd_threw_other__ = false;                                                            \
-      try {                                                                                        \
-        (void)(expr);                                                                              \
-      } catch (const __bdd_fail_exception__ &) {                                                   \
-        throw;                                                                                     \
-      } catch (const ExType &) {                                                                   \
-        __bdd_threw_correct__ = true;                                                              \
-      } catch (...) {                                                                              \
-        __bdd_threw_other__ = true;                                                                \
-      }                                                                                            \
-      if (__bdd_threw_other__) {                                                                   \
-        __BDD_CHECK__(0, "expected " #ExType " but got a different exception");                    \
-      } else {                                                                                     \
-        __BDD_CHECK__(__bdd_threw_correct__, "expected " #ExType " but no exception was thrown");  \
-      }                                                                                            \
-    } while (0)
+#define check_not_equal_warn(actual, expected) \
+  _Generic((actual), \
+    char:               ttest_c11_check_ne_int_warn, \
+    signed char:        ttest_c11_check_ne_int_warn, \
+    unsigned char:      ttest_c11_check_ne_uint_warn, \
+    short:              ttest_c11_check_ne_int_warn, \
+    unsigned short:     ttest_c11_check_ne_uint_warn, \
+    int:                ttest_c11_check_ne_int_warn, \
+    unsigned int:       ttest_c11_check_ne_uint_warn, \
+    long:               ttest_c11_check_ne_int_warn, \
+    unsigned long:      ttest_c11_check_ne_uint_warn, \
+    long long:          ttest_c11_check_ne_int_warn, \
+    unsigned long long: ttest_c11_check_ne_uint_warn, \
+    bool:               ttest_c11_check_ne_bool_warn, \
+    float:              ttest_c11_check_ne_float_warn, \
+    double:             ttest_c11_check_ne_double_warn, \
+    long double:        ttest_c11_check_ne_long_double_warn, \
+    char*:              ttest_c11_check_ne_str_warn, \
+    const char*:        ttest_c11_check_ne_str_warn, \
+    void*:              ttest_c11_check_ne_ptr_warn, \
+    const void*:        ttest_c11_check_ne_ptr_warn, \
+    default:            ttest_c11_check_ne_int_warn \
+  )((actual), (expected), __FILE__, __STRING__LINE__)
 
-  /* check_throws_with(expr, msg) — must throw with what() containing msg */
-  #define check_throws_with(expr, msg)                                                             \
-    do {                                                                                           \
-      bool __bdd_threw__ = false;                                                                  \
-      std::string __bdd_what__;                                                                    \
-      try {                                                                                        \
-        (void)(expr);                                                                              \
-      } catch (const __bdd_fail_exception__ &) {                                                   \
-        throw;                                                                                     \
-      } catch (const std::exception &__e) {                                                        \
-        __bdd_threw__ = true;                                                                      \
-        __bdd_what__ = __e.what();                                                                 \
-      } catch (...) {                                                                              \
-        __bdd_threw__ = true;                                                                      \
-        __bdd_what__ = "(non-std exception)";                                                      \
-      }                                                                                            \
-      if (!__bdd_threw__) {                                                                        \
-        __BDD_CHECK__(0, "expected exception with message \"%s\" but none was thrown", (msg));     \
-      } else {                                                                                     \
-        __BDD_CHECK__(__bdd_what__.find(msg) != std::string::npos,                                 \
-                      "expected exception message containing \"%s\" but got \"%s\"", (msg),        \
-                      __bdd_what__.c_str());                                                       \
-      }                                                                                            \
-    } while (0)
+#define check_greater(actual, expected) \
+  _Generic((actual), \
+    char:               ttest_c11_check_gt_int, \
+    signed char:        ttest_c11_check_gt_int, \
+    unsigned char:      ttest_c11_check_gt_uint, \
+    short:              ttest_c11_check_gt_int, \
+    unsigned short:     ttest_c11_check_gt_uint, \
+    int:                ttest_c11_check_gt_int, \
+    unsigned int:       ttest_c11_check_gt_uint, \
+    long:               ttest_c11_check_gt_int, \
+    unsigned long:      ttest_c11_check_gt_uint, \
+    long long:          ttest_c11_check_gt_int, \
+    unsigned long long: ttest_c11_check_gt_uint, \
+    bool:               ttest_c11_check_gt_int, \
+    float:              ttest_c11_check_gt_double, \
+    double:             ttest_c11_check_gt_double, \
+    long double:        ttest_c11_check_gt_long_double, \
+    default:            ttest_c11_check_gt_int \
+  )((actual), (expected), __FILE__, __STRING__LINE__)
 
-  /* check_nothrow(expr) — must not throw */
-  #define check_nothrow(expr)                                                                      \
-    do {                                                                                           \
-      bool __bdd_threw__ = false;                                                                  \
-      std::string __bdd_what__;                                                                    \
-      try {                                                                                        \
-        (void)(expr);                                                                              \
-      } catch (const __bdd_fail_exception__ &) {                                                   \
-        throw;                                                                                     \
-      } catch (const std::exception &__e) {                                                        \
-        __bdd_threw__ = true;                                                                      \
-        __bdd_what__ = __e.what();                                                                 \
-      } catch (...) {                                                                              \
-        __bdd_threw__ = true;                                                                      \
-        __bdd_what__ = "(non-std exception)";                                                      \
-      }                                                                                            \
-      if (__bdd_threw__) {                                                                         \
-        __BDD_CHECK__(0, "expected no exception but got: %s", __bdd_what__.c_str());               \
-      } else {                                                                                     \
-        ++__bdd_active_config__->assertion_count;                                                  \
-      }                                                                                            \
-    } while (0)
+#define check_greater_warn(actual, expected) \
+  _Generic((actual), \
+    char:               ttest_c11_check_gt_int_warn, \
+    signed char:        ttest_c11_check_gt_int_warn, \
+    unsigned char:      ttest_c11_check_gt_uint_warn, \
+    short:              ttest_c11_check_gt_int_warn, \
+    unsigned short:     ttest_c11_check_gt_uint_warn, \
+    int:                ttest_c11_check_gt_int_warn, \
+    unsigned int:       ttest_c11_check_gt_uint_warn, \
+    long:               ttest_c11_check_gt_int_warn, \
+    unsigned long:      ttest_c11_check_gt_uint_warn, \
+    long long:          ttest_c11_check_gt_int_warn, \
+    unsigned long long: ttest_c11_check_gt_uint_warn, \
+    bool:               ttest_c11_check_gt_int_warn, \
+    float:              ttest_c11_check_gt_double_warn, \
+    double:             ttest_c11_check_gt_double_warn, \
+    long double:        ttest_c11_check_gt_long_double_warn, \
+    default:            ttest_c11_check_gt_int_warn \
+  )((actual), (expected), __FILE__, __STRING__LINE__)
 
-  /* Non-fatal versions */
-  #define check_throws_warn(expr)                                                                  \
-    do {                                                                                           \
-      bool __bdd_threw__ = false;                                                                  \
-      try {                                                                                        \
-        (void)(expr);                                                                              \
-      } catch (const __bdd_fail_exception__ &) {                                                   \
-        throw;                                                                                     \
-      } catch (...) {                                                                              \
-        __bdd_threw__ = true;                                                                      \
-      }                                                                                            \
-      __BDD_WARN__(__bdd_threw__, "expected exception but none was thrown");                       \
-    } while (0)
+#define check_less(actual, expected) \
+  _Generic((actual), \
+    char:               ttest_c11_check_lt_int, \
+    signed char:        ttest_c11_check_lt_int, \
+    unsigned char:      ttest_c11_check_lt_uint, \
+    short:              ttest_c11_check_lt_int, \
+    unsigned short:     ttest_c11_check_lt_uint, \
+    int:                ttest_c11_check_lt_int, \
+    unsigned int:       ttest_c11_check_lt_uint, \
+    long:               ttest_c11_check_lt_int, \
+    unsigned long:      ttest_c11_check_lt_uint, \
+    long long:          ttest_c11_check_lt_int, \
+    unsigned long long: ttest_c11_check_lt_uint, \
+    bool:               ttest_c11_check_lt_int, \
+    float:              ttest_c11_check_lt_double, \
+    double:             ttest_c11_check_lt_double, \
+    long double:        ttest_c11_check_lt_long_double, \
+    default:            ttest_c11_check_lt_int \
+  )((actual), (expected), __FILE__, __STRING__LINE__)
 
-  #define check_throws_as_warn(expr, ExType)                                                       \
-    do {                                                                                           \
-      bool __bdd_threw_correct__ = false;                                                          \
-      bool __bdd_threw_other__ = false;                                                            \
-      try {                                                                                        \
-        (void)(expr);                                                                              \
-      } catch (const __bdd_fail_exception__ &) {                                                   \
-        throw;                                                                                     \
-      } catch (const ExType &) {                                                                   \
-        __bdd_threw_correct__ = true;                                                              \
-      } catch (...) {                                                                              \
-        __bdd_threw_other__ = true;                                                                \
-      }                                                                                            \
-      if (__bdd_threw_other__) {                                                                   \
-        __BDD_WARN__(0, "expected " #ExType " but got a different exception");                     \
-      } else {                                                                                     \
-        __BDD_WARN__(__bdd_threw_correct__, "expected " #ExType " but no exception was thrown");   \
-      }                                                                                            \
-    } while (0)
+#define check_less_warn(actual, expected) \
+  _Generic((actual), \
+    char:               ttest_c11_check_lt_int_warn, \
+    signed char:        ttest_c11_check_lt_int_warn, \
+    unsigned char:      ttest_c11_check_lt_uint_warn, \
+    short:              ttest_c11_check_lt_int_warn, \
+    unsigned short:     ttest_c11_check_lt_uint_warn, \
+    int:                ttest_c11_check_lt_int_warn, \
+    unsigned int:       ttest_c11_check_lt_uint_warn, \
+    long:               ttest_c11_check_lt_int_warn, \
+    unsigned long:      ttest_c11_check_lt_uint_warn, \
+    long long:          ttest_c11_check_lt_int_warn, \
+    unsigned long long: ttest_c11_check_lt_uint_warn, \
+    bool:               ttest_c11_check_lt_int_warn, \
+    float:              ttest_c11_check_lt_double_warn, \
+    double:             ttest_c11_check_lt_double_warn, \
+    long double:        ttest_c11_check_lt_long_double_warn, \
+    default:            ttest_c11_check_lt_int_warn \
+  )((actual), (expected), __FILE__, __STRING__LINE__)
 
-  #define check_throws_with_warn(expr, msg)                                                        \
-    do {                                                                                           \
-      bool __bdd_threw__ = false;                                                                  \
-      std::string __bdd_what__;                                                                    \
-      try {                                                                                        \
-        (void)(expr);                                                                              \
-      } catch (const __bdd_fail_exception__ &) {                                                   \
-        throw;                                                                                     \
-      } catch (const std::exception &__e) {                                                        \
-        __bdd_threw__ = true;                                                                      \
-        __bdd_what__ = __e.what();                                                                 \
-      } catch (...) {                                                                              \
-        __bdd_threw__ = true;                                                                      \
-        __bdd_what__ = "(non-std exception)";                                                      \
-      }                                                                                            \
-      if (!__bdd_threw__) {                                                                        \
-        __BDD_WARN__(0, "expected exception with message \"%s\" but none was thrown", (msg));      \
-      } else {                                                                                     \
-        __BDD_WARN__(__bdd_what__.find(msg) != std::string::npos,                                  \
-                     "expected exception message containing \"%s\" but got \"%s\"", (msg),         \
-                     __bdd_what__.c_str());                                                        \
-      }                                                                                            \
-    } while (0)
+#define check_in_range(actual, min, max) \
+  _Generic((actual), \
+    char:               ttest_c11_check_in_range_int, \
+    signed char:        ttest_c11_check_in_range_int, \
+    unsigned char:      ttest_c11_check_in_range_uint, \
+    short:              ttest_c11_check_in_range_int, \
+    unsigned short:     ttest_c11_check_in_range_uint, \
+    int:                ttest_c11_check_in_range_int, \
+    unsigned int:       ttest_c11_check_in_range_uint, \
+    long:               ttest_c11_check_in_range_int, \
+    unsigned long:      ttest_c11_check_in_range_uint, \
+    long long:          ttest_c11_check_in_range_int, \
+    unsigned long long: ttest_c11_check_in_range_uint, \
+    bool:               ttest_c11_check_in_range_int, \
+    float:              ttest_c11_check_in_range_double, \
+    double:             ttest_c11_check_in_range_double, \
+    long double:        ttest_c11_check_in_range_long_double, \
+    default:            ttest_c11_check_in_range_int \
+  )((actual), (min), (max), __FILE__, __STRING__LINE__)
 
-  #define check_nothrow_warn(expr)                                                                 \
-    do {                                                                                           \
-      bool __bdd_threw__ = false;                                                                  \
-      std::string __bdd_what__;                                                                    \
-      try {                                                                                        \
-        (void)(expr);                                                                              \
-      } catch (const __bdd_fail_exception__ &) {                                                   \
-        throw;                                                                                     \
-      } catch (const std::exception &__e) {                                                        \
-        __bdd_threw__ = true;                                                                      \
-        __bdd_what__ = __e.what();                                                                 \
-      } catch (...) {                                                                              \
-        __bdd_threw__ = true;                                                                      \
-        __bdd_what__ = "(non-std exception)";                                                      \
-      }                                                                                            \
-      if (__bdd_threw__) {                                                                         \
-        __BDD_WARN__(0, "expected no exception but got: %s", __bdd_what__.c_str());                \
-      } else {                                                                                     \
-        ++__bdd_active_config__->assertion_count;                                                  \
-      }                                                                                            \
-    } while (0)
+#define check_in_range_warn(actual, min, max) \
+  _Generic((actual), \
+    char:               ttest_c11_check_in_range_int_warn, \
+    signed char:        ttest_c11_check_in_range_int_warn, \
+    unsigned char:      ttest_c11_check_in_range_uint_warn, \
+    short:              ttest_c11_check_in_range_int_warn, \
+    unsigned short:     ttest_c11_check_in_range_uint_warn, \
+    int:                ttest_c11_check_in_range_int_warn, \
+    unsigned int:       ttest_c11_check_in_range_uint_warn, \
+    long:               ttest_c11_check_in_range_int_warn, \
+    unsigned long:      ttest_c11_check_in_range_uint_warn, \
+    long long:          ttest_c11_check_in_range_int_warn, \
+    unsigned long long: ttest_c11_check_in_range_uint_warn, \
+    bool:               ttest_c11_check_in_range_int_warn, \
+    float:              ttest_c11_check_in_range_double_warn, \
+    double:             ttest_c11_check_in_range_double_warn, \
+    long double:        ttest_c11_check_in_range_long_double_warn, \
+    default:            ttest_c11_check_in_range_int_warn \
+  )((actual), (min), (max), __FILE__, __STRING__LINE__)
 
-#endif /* __cplusplus */
+#define check_between(actual, min, max) \
+  check_in_range((actual), (min), (max))
+#define check_between_warn(actual, min, max) \
+  check_in_range_warn((actual), (min), (max))
+
+#else
+
+/* Pre-C11 C fallback */
+#define check_equal(actual, expected) check_int_eq(actual, expected)
+#define check_equal_warn(actual, expected) check_int_eq_warn(actual, expected)
+#define check_not_equal(actual, expected) check_int_ne(actual, expected)
+#define check_not_equal_warn(actual, expected) check_int_ne_warn(actual, expected)
+#define check_greater(actual, expected) check_int_gt(actual, expected)
+#define check_greater_warn(actual, expected) check_int_gt_warn(actual, expected)
+#define check_less(actual, expected) check_int_lt(actual, expected)
+#define check_less_warn(actual, expected) check_int_lt_warn(actual, expected)
+#define check_in_range(actual, min, max) check_int_range((actual), (min), (max))
+#define check_between(actual, min, max) check_in_range((actual), (min), (max))
+
+#endif /* C11 check */
+#endif /* !__cplusplus */
 
 /* Use before_all()/after_all() as the cross-language names for one-time setup/teardown hooks. */
 #define before_all()                                                                               \
-  __BDD_NODE__(__bdd_node_flags_none__, list_before, __BDD_NODE_INTERIM__, "before")
-#define after_all() __BDD_NODE__(__bdd_node_flags_none__, list_after, __BDD_NODE_INTERIM__, "after")
+  TTEST_NODE__(ttest_node_flags_none__, list_before, TTEST_NODE_INTERIM__, "before")
+#define after_all() TTEST_NODE__(ttest_node_flags_none__, list_after, TTEST_NODE_INTERIM__, "after")
 
 #ifdef _MSC_VER
   #pragma warning(pop)
 #endif
 
-#endif /*TINYTEST_H*/
+#endif /* TINYTEST_H */

@@ -27,23 +27,28 @@ extern "C" {
  * Type Tags
  * ============================================================================ */
 
+#define FMT_TYPE_ITEMS(X)                                                                        \
+  X(FMT_TYPE_CHAR, char, c, char)                                                              \
+  X(FMT_TYPE_INT, int, i, int)                                                                  \
+  X(FMT_TYPE_UINT, unsigned int, u, uint)                                                        \
+  X(FMT_TYPE_LONG, long, l, long)                                                                \
+  X(FMT_TYPE_ULONG, unsigned long, ul, ulong)                                                    \
+  X(FMT_TYPE_LLONG, long long, ll, llong)                                                        \
+  X(FMT_TYPE_ULLONG, unsigned long long, ull, ullong)                                            \
+  X(FMT_TYPE_DOUBLE, double, f, double)                                                           \
+  X(FMT_TYPE_STR, const char *, s, str)                                                           \
+  X(FMT_TYPE_PTR, const void *, p, ptr)                                                           \
+  X(FMT_TYPE_SIZE, size_t, sz, size)                                                              \
+  X(FMT_TYPE_BOOL, int, b, bool)                                                                  \
+  X(FMT_TYPE_STRV, tstr_v, sv, strv)                                                              \
+  X(FMT_TYPE_TIME, turbo_timeval_t, tv, timeval)
+
+#define FMT_TYPE_ITEM(name, type, member, suffix) name,
 typedef enum {
   FMT_TYPE_NONE = 0,
-  FMT_TYPE_CHAR,
-  FMT_TYPE_INT,
-  FMT_TYPE_UINT,
-  FMT_TYPE_LONG,
-  FMT_TYPE_ULONG,
-  FMT_TYPE_LLONG,
-  FMT_TYPE_ULLONG,
-  FMT_TYPE_DOUBLE,
-  FMT_TYPE_STR,
-  FMT_TYPE_PTR,
-  FMT_TYPE_SIZE,
-  FMT_TYPE_BOOL,
-  FMT_TYPE_STRV,
-  FMT_TYPE_TIME
+  FMT_TYPE_ITEMS(FMT_TYPE_ITEM)
 } fmt_type_t;
+#undef FMT_TYPE_ITEM
 
 /* ============================================================================
  * Tagged Argument Structure
@@ -94,22 +99,12 @@ typedef struct {
   #define FMT_MAKE_ARG(t, m, v) return (fmt_arg_t){t, {.m = v}};
 #endif
 
-static inline fmt_arg_t fmt_arg_char(char x) { FMT_MAKE_ARG(FMT_TYPE_CHAR, c, x) }
-static inline fmt_arg_t fmt_arg_int(int x) { FMT_MAKE_ARG(FMT_TYPE_INT, i, x) }
-static inline fmt_arg_t fmt_arg_uint(unsigned int x) { FMT_MAKE_ARG(FMT_TYPE_UINT, u, x) }
-static inline fmt_arg_t fmt_arg_long(long x) { FMT_MAKE_ARG(FMT_TYPE_LONG, l, x) }
-static inline fmt_arg_t fmt_arg_ulong(unsigned long x) { FMT_MAKE_ARG(FMT_TYPE_ULONG, ul, x) }
-static inline fmt_arg_t fmt_arg_llong(long long x) { FMT_MAKE_ARG(FMT_TYPE_LLONG, ll, x) }
-static inline fmt_arg_t fmt_arg_ullong(unsigned long long x) {
-  FMT_MAKE_ARG(FMT_TYPE_ULLONG, ull, x)
-}
-static inline fmt_arg_t fmt_arg_double(double x) { FMT_MAKE_ARG(FMT_TYPE_DOUBLE, f, x) }
-static inline fmt_arg_t fmt_arg_str(const char *x) { FMT_MAKE_ARG(FMT_TYPE_STR, s, x) }
-static inline fmt_arg_t fmt_arg_ptr(const void *x) { FMT_MAKE_ARG(FMT_TYPE_PTR, p, x) }
-static inline fmt_arg_t fmt_arg_bool(int x) { FMT_MAKE_ARG(FMT_TYPE_BOOL, b, x) }
-static inline fmt_arg_t fmt_arg_size(size_t x) { FMT_MAKE_ARG(FMT_TYPE_SIZE, sz, x) }
-static inline fmt_arg_t fmt_arg_strv(tstr_v x) { FMT_MAKE_ARG(FMT_TYPE_STRV, sv, x) }
-static inline fmt_arg_t fmt_arg_timeval(turbo_timeval_t x) { FMT_MAKE_ARG(FMT_TYPE_TIME, tv, x) }
+#define FMT_MAKE_FN(name, type, member, suffix)                                                    \
+  static inline fmt_arg_t fmt_arg_ ## suffix(type x) { FMT_MAKE_ARG(name, member, x) }
+
+FMT_TYPE_ITEMS(FMT_MAKE_FN)
+#undef FMT_MAKE_FN
+#undef FMT_TYPE_ITEMS
 
 static inline fmt_arg_t fmt_arg_time(time_t x) {
 #ifdef __cplusplus
@@ -218,56 +213,58 @@ extern "C" { /* Re-open extern "C" */
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
   #define FMT_HAS_GENERIC 1
 
-  #ifdef _MSC_VER
+#ifdef _MSC_VER
+
     /* MSVC-specific cascading _Generic */
     #define FMT_ARG(x)                                                                             \
       (_Generic((x),                                                                               \
-           char *: fmt_arg_str,                                                                    \
-           const char *: fmt_arg_str,                                                              \
-           double: fmt_arg_double,                                                                 \
-           float: fmt_arg_double,                                                                  \
-           void *: fmt_arg_ptr,                                                                    \
-           const void *: fmt_arg_ptr,                                                              \
-           tstr_v: fmt_arg_strv,                                                                   \
-           turbo_timeval_t: fmt_arg_timeval,                                                       \
-           char: fmt_arg_char,                                                                     \
-           int: fmt_arg_int,                                                                       \
-           unsigned int: fmt_arg_uint,                                                             \
-           long long: fmt_arg_llong,                                                               \
-           unsigned long long: fmt_arg_ullong,                                                     \
-           default: _Generic((x),                                                                  \
-               signed char: fmt_arg_char,                                                          \
-               unsigned char: fmt_arg_char,                                                        \
-               short: fmt_arg_int,                                                                 \
-               unsigned short: fmt_arg_uint,                                                       \
-               long: fmt_arg_long,                                                                 \
-               unsigned long: fmt_arg_ulong,                                                       \
-               default: fmt_arg_ptr))(x))
-  #else
+                char *: fmt_arg_str,                                                                \
+                const char *: fmt_arg_str,                                                          \
+                double: fmt_arg_double,                                                             \
+                float: fmt_arg_double,                                                              \
+                void *: fmt_arg_ptr,                                                                \
+                const void *: fmt_arg_ptr,                                                          \
+                tstr_v: fmt_arg_strv,                                                               \
+                turbo_timeval_t: fmt_arg_timeval,                                                    \
+                char: fmt_arg_char,                                                                 \
+                int: fmt_arg_int,                                                                   \
+                unsigned int: fmt_arg_uint,                                                          \
+                long long: fmt_arg_llong,                                                            \
+                unsigned long long: fmt_arg_ullong,                                                  \
+                default: _Generic((x),                                                              \
+                                   signed char: fmt_arg_char,                                          \
+                                   unsigned char: fmt_arg_char,                                        \
+                                   short: fmt_arg_int,                                                 \
+                                   unsigned short: fmt_arg_uint,                                        \
+                                   long: fmt_arg_long,                                                  \
+                                   unsigned long: fmt_arg_ulong,                                        \
+                                   default: fmt_arg_ptr))(x))
+
+#else
     /* Standard C11 _Generic */
     #define FMT_ARG(x)                                                                             \
       _Generic((x),                                                                                \
-          char: fmt_arg_char,                                                                      \
-          signed char: fmt_arg_char,                                                               \
-          unsigned char: fmt_arg_char,                                                             \
-          short: fmt_arg_int,                                                                      \
-          unsigned short: fmt_arg_uint,                                                            \
-          int: fmt_arg_int,                                                                        \
-          unsigned int: fmt_arg_uint,                                                              \
-          long: fmt_arg_long,                                                                      \
-          unsigned long: fmt_arg_ulong,                                                            \
-          long long: fmt_arg_llong,                                                                \
-          unsigned long long: fmt_arg_ullong,                                                      \
-          float: fmt_arg_double,                                                                   \
-          double: fmt_arg_double,                                                                  \
-          char *: fmt_arg_str,                                                                     \
-          const char *: fmt_arg_str,                                                               \
-          void *: fmt_arg_ptr,                                                                     \
-          const void *: fmt_arg_ptr,                                                               \
-          tstr_v: fmt_arg_strv,                                                                    \
-          turbo_timeval_t: fmt_arg_timeval,                                                        \
-          _Bool: fmt_arg_bool,                                                                     \
-          default: fmt_arg_ptr)(x)
+               char: fmt_arg_char,                                                                 \
+               signed char: fmt_arg_char,                                                          \
+               unsigned char: fmt_arg_char,                                                        \
+               short: fmt_arg_int,                                                                 \
+               unsigned short: fmt_arg_uint,                                                        \
+               int: fmt_arg_int,                                                                   \
+               unsigned int: fmt_arg_uint,                                                         \
+               long: fmt_arg_long,                                                                 \
+               unsigned long: fmt_arg_ulong,                                                       \
+               long long: fmt_arg_llong,                                                           \
+               unsigned long long: fmt_arg_ullong,                                                  \
+               float: fmt_arg_double,                                                              \
+               double: fmt_arg_double,                                                             \
+               char *: fmt_arg_str,                                                                \
+               const char *: fmt_arg_str,                                                          \
+               void *: fmt_arg_ptr,                                                                \
+               const void *: fmt_arg_ptr,                                                          \
+               tstr_v: fmt_arg_strv,                                                               \
+               turbo_timeval_t: fmt_arg_timeval,                                                    \
+               _Bool: fmt_arg_bool,                                                                \
+               default: fmt_arg_ptr)(x)
   #endif
 #else
   #define FMT_HAS_GENERIC 0

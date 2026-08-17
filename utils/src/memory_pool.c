@@ -23,19 +23,48 @@ MemoryPool* pool_create(size_t size) {
 
 void* pool_alloc(MemoryPool *pool, size_t size) {
     if (!pool || !size) return NULL;
-    
-    // Align to 8 bytes
-    if (size > SIZE_MAX - 7) {
+
+    return pool_alloc_aligned(pool, size, MEMORY_POOL_DEFAULT_ALIGNMENT);
+}
+
+void pool_reset(MemoryPool *pool) {
+    if (pool) {
+        pool->used = 0;
+    }
+}
+
+void* pool_alloc_aligned(MemoryPool *pool, size_t size, size_t alignment) {
+    if (!pool || !size) return NULL;
+
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
         return NULL;
     }
-    size = (size + 7) & ~7;
-    
-    if (size > pool->size || pool->used > pool->size - size) {
-        return NULL;  // Pool exhausted
+
+    if (pool->used > pool->size) {
+        return NULL;
     }
-    
-    void *ptr = (char *)pool->pool + pool->used;
-    pool->used += size;
+
+    if (pool->used > SIZE_MAX - (alignment - 1U)) {
+        return NULL;
+    }
+
+    size_t mask = alignment - 1U;
+    size_t aligned_offset = (pool->used + mask) & ~mask;
+
+    if (aligned_offset > pool->size) {
+        return NULL;
+    }
+
+    if (size > pool->size - aligned_offset) {
+        return NULL;
+    }
+
+    size_t new_used = aligned_offset + size;
+
+    if (new_used < pool->used) return NULL;
+
+    void *ptr = (char *)pool->pool + aligned_offset;
+    pool->used = new_used;
     pool->alloc_count++;
     
     // Update peak usage
@@ -44,12 +73,6 @@ void* pool_alloc(MemoryPool *pool, size_t size) {
     }
     
     return ptr;
-}
-
-void pool_reset(MemoryPool *pool) {
-    if (pool) {
-        pool->used = 0;
-    }
 }
 
 size_t pool_get_used(MemoryPool *pool) {

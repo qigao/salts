@@ -7,8 +7,11 @@
 
 TURBO_VEC_DEFINE(int_vec_t, int)
 TURBO_HASH_MAP_DEFINE(u64_int_map_t, uint64_t, int)
+TURBO_MAP_DEFINE(u64_int_map_alias_t, uint64_t, int)
 TURBO_SET_DEFINE(u64_set_t, uint64_t)
 TURBO_DEQUE_DEFINE(int_deque_t, int)
+TURBO_LIST_DEFINE(int_list_t, int)
+TURBO_MULTI_MAP_DEFINE(u64_multi_map_t, uint64_t, int)
 
 static int int_min_compare(const void *left, const void *right, void *ctx) {
   int a = *(const int *)left;
@@ -29,7 +32,16 @@ static int large_heap_item_compare(const void *left, const void *right, void *ct
   return (a->priority > b->priority) - (a->priority < b->priority);
 }
 
+static int int_tree_map_compare(const void *left, const void *right, void *ctx) {
+  int a = *(const int *)left;
+  int b = *(const int *)right;
+  (void)ctx;
+  return (a > b) - (a < b);
+}
+
 TURBO_HEAP_DEFINE(int_heap_t, int, int_min_compare)
+TURBO_TREE_MAP_DEFINE(int_tree_map_t, int, int, int_tree_map_compare)
+TURBO_BPLUS_TREE_DEFINE(int_bplus_tree_t, int, int, int_tree_map_compare)
 
 suite("Turbo Containers") {
   group("Vec") {
@@ -328,6 +340,373 @@ suite("Turbo Containers") {
       }
       check_true(int_deque_t_empty(&deque));
       int_deque_t_destroy(&deque);
+    }
+  }
+
+  group("Map") {
+    it("reuses map wrappers with clear typed names") {
+      u64_int_map_alias_t map;
+      uint64_t key = 7;
+      int value = 70;
+      int out = 0;
+
+      check_int_eq(u64_int_map_alias_t_init(&map), TURBO_OK);
+      check_int_eq(u64_int_map_alias_t_put(&map, key, value), TURBO_OK);
+      check_size_eq(u64_int_map_alias_t_size(&map), 1U);
+      check_true(u64_int_map_alias_t_contains(&map, key));
+      value = 77;
+      check_int_eq(u64_int_map_alias_t_put(&map, key, value), TURBO_OK);
+      check_int_eq(*u64_int_map_alias_t_get(&map, key), 77);
+      check_int_eq(u64_int_map_alias_t_remove(&map, key, &out), TURBO_OK);
+      check_int_eq(out, 77);
+      check_size_eq(u64_int_map_alias_t_size(&map), 0U);
+      u64_int_map_alias_t_destroy(&map);
+    }
+  }
+
+  group("List") {
+    it("behaves like a deque-backed list") {
+      int_list_t list;
+      int value = 0;
+      int out = 0;
+
+      check_int_eq(int_list_t_init(&list), TURBO_OK);
+      check_int_eq(int_list_t_push_back(&list, 1), TURBO_OK);
+      check_int_eq(int_list_t_push_back(&list, 3), TURBO_OK);
+      check_int_eq(int_list_t_push_front(&list, 0), TURBO_OK);
+      check_int_eq(int_list_t_reserve(&list, 8), TURBO_OK);
+
+      check_size_eq(int_list_t_size(&list), 3U);
+      check_size_eq(int_list_t_capacity(&list), 8U);
+      check_int_eq(*int_list_t_front(&list), 0);
+      check_int_eq(*int_list_t_back(&list), 3);
+      check_int_eq(*int_list_t_at(&list, 1), 1);
+
+      value = 2;
+      check_true(int_list_t_pop_front(&list, &out));
+      check_int_eq(out, 0);
+      check_true(int_list_t_pop_back(&list, &out));
+      check_int_eq(out, 3);
+      check_size_eq(int_list_t_size(&list), 1U);
+      check_int_eq(*int_list_t_at(&list, 0), 1);
+      int_list_t_destroy(&list);
+    }
+  }
+
+  group("Multi-map") {
+    it("stores repeated keys and removes per-value safely") {
+      u64_multi_map_t mm;
+      const turbo_vec_t *values = NULL;
+      int removed = 0;
+
+      check_int_eq(u64_multi_map_t_init(&mm), TURBO_OK);
+      check_int_eq(u64_multi_map_t_put(&mm, 42U, 100), TURBO_OK);
+      check_int_eq(u64_multi_map_t_put(&mm, 42U, 200), TURBO_OK);
+      check_int_eq(u64_multi_map_t_put(&mm, 7U, 10), TURBO_OK);
+
+      check_size_eq(u64_multi_map_t_size(&mm), 3U);
+      check_size_eq(u64_multi_map_t_count(&mm, 42U), 2U);
+      check_true(u64_multi_map_t_contains(&mm, 42U));
+      values = u64_multi_map_t_values_const(&mm, 42U);
+      check_not_null(values);
+      check_int_eq(*(const int *)turbo_vec_at_const(values, 0), 100);
+      check_int_eq(*(const int *)turbo_vec_at_const(values, 1), 200);
+
+      check_true(u64_multi_map_t_remove(&mm, 42U, &removed));
+      check_int_eq(removed, 200);
+      check_size_eq(u64_multi_map_t_size(&mm), 2U);
+      check_size_eq(u64_multi_map_t_count(&mm, 42U), 1U);
+      check_size_eq(u64_multi_map_t_erase(&mm, 42U), 1U);
+      check_size_eq(u64_multi_map_t_size(&mm), 1U);
+      check_false(u64_multi_map_t_contains(&mm, 42U));
+      u64_multi_map_t_destroy(&mm);
+    }
+
+    it("supports clear and reuse correctly") {
+      u64_multi_map_t mm;
+      const turbo_vec_t *values = NULL;
+
+      check_int_eq(u64_multi_map_t_init(&mm), TURBO_OK);
+      check_int_eq(u64_multi_map_t_put(&mm, 1U, 10), TURBO_OK);
+      check_int_eq(u64_multi_map_t_put(&mm, 1U, 20), TURBO_OK);
+      check_int_eq(u64_multi_map_t_size(&mm), 2U);
+
+      u64_multi_map_t_clear(&mm);
+      check_size_eq(u64_multi_map_t_size(&mm), 0U);
+      check_false(u64_multi_map_t_contains(&mm, 1U));
+      values = u64_multi_map_t_values_const(&mm, 1U);
+      check_true(values == NULL);
+
+      check_int_eq(u64_multi_map_t_put(&mm, 1U, 30), TURBO_OK);
+      check_size_eq(u64_multi_map_t_size(&mm), 1U);
+      values = u64_multi_map_t_values_const(&mm, 1U);
+      check_not_null(values);
+      check_int_eq(*(const int *)turbo_vec_at_const(values, 0), 30);
+      u64_multi_map_t_destroy(&mm);
+    }
+
+    it("returns false when removing missing keys and keeps size stable") {
+      u64_multi_map_t mm;
+      int removed = 0;
+
+      check_int_eq(u64_multi_map_t_init(&mm), TURBO_OK);
+      check_int_eq(u64_multi_map_t_put(&mm, 1U, 11), TURBO_OK);
+      check_size_eq(u64_multi_map_t_size(&mm), 1U);
+      check_false(u64_multi_map_t_remove(&mm, 2U, &removed));
+      check_size_eq(u64_multi_map_t_size(&mm), 1U);
+      check_int_eq(u64_multi_map_t_erase(&mm, 2U), 0U);
+      check_size_eq(u64_multi_map_t_size(&mm), 1U);
+      u64_multi_map_t_destroy(&mm);
+    }
+  }
+
+  group("Tree map") {
+    it("keeps keys ordered and supports replace/remove by ordered lookup") {
+      int_tree_map_t map;
+      int value = 0;
+      bool found = false;
+
+      check_int_eq(int_tree_map_t_init(&map), TURBO_OK);
+      check_int_eq(int_tree_map_t_put(&map, 5, 50), TURBO_OK);
+      check_int_eq(int_tree_map_t_put(&map, 1, 10), TURBO_OK);
+      check_int_eq(int_tree_map_t_put(&map, 3, 30), TURBO_OK);
+      check_size_eq(int_tree_map_t_size(&map), 3U);
+
+      check_int_eq(*int_tree_map_t_get(&map, 1), 10);
+      check_int_eq(*int_tree_map_t_get(&map, 3), 30);
+      check_true(int_tree_map_t_contains(&map, 5));
+      check_false(int_tree_map_t_contains(&map, 2));
+      check_int_eq(*int_tree_map_t_key_at(&map, 0), 1);
+      check_int_eq(*int_tree_map_t_value_at(&map, 1), 30);
+      check_int_eq(*int_tree_map_t_key_at(&map, 2), 5);
+
+      check_int_eq(int_tree_map_t_put(&map, 3, 33), TURBO_OK);
+      check_int_eq(*int_tree_map_t_get(&map, 3), 33);
+      check_true(int_tree_map_t_remove(&map, 5, &value));
+      check_int_eq(value, 50);
+      check_false(int_tree_map_t_contains(&map, 5));
+      check_size_eq(int_tree_map_t_size(&map), 2U);
+
+      check_size_eq(int_tree_map_t_find_slot(&map, 1, &found), 0U);
+      check_true(found);
+      check_size_eq(int_tree_map_t_find_slot(&map, 2, &found), 1U);
+      check_false(found);
+      check_size_eq(int_tree_map_t_find_slot(&map, 4, &found), 2U);
+      check_false(found);
+      int_tree_map_t_destroy(&map);
+    }
+
+    it("keeps ordered slots after internal rebalancing deletions") {
+      int_tree_map_t map;
+      int out = 0;
+      bool found = false;
+
+      check_int_eq(int_tree_map_t_init(&map), TURBO_OK);
+      check_int_eq(int_tree_map_t_put(&map, 10, 1), TURBO_OK);
+      check_int_eq(int_tree_map_t_put(&map, 20, 2), TURBO_OK);
+      check_int_eq(int_tree_map_t_put(&map, 30, 3), TURBO_OK);
+      check_int_eq(int_tree_map_t_put(&map, 40, 4), TURBO_OK);
+      check_int_eq(int_tree_map_t_put(&map, 50, 5), TURBO_OK);
+      check_int_eq(int_tree_map_t_find_slot(&map, 30, &found), 2U);
+      check_true(found);
+
+      check_true(int_tree_map_t_remove(&map, 10, &out));
+      check_int_eq(out, 1);
+      check_size_eq(int_tree_map_t_size(&map), 4U);
+      check_size_eq(int_tree_map_t_find_slot(&map, 20, &found), 0U);
+      check_true(found);
+
+      check_true(int_tree_map_t_remove(&map, 40, &out));
+      check_int_eq(out, 4);
+      check_size_eq(int_tree_map_t_size(&map), 3U);
+      check_size_eq(int_tree_map_t_find_slot(&map, 50, &found), 2U);
+      check_true(found);
+      int_tree_map_t_destroy(&map);
+    }
+
+    it("keeps in-order invariants through complex multi-key removals") {
+      int_tree_map_t map;
+      int keys[] = {8, 4, 12, 2, 6, 10, 14, 1, 3, 5, 7, 9, 11, 13, 15};
+      int remove_order[] = {8, 6, 14, 1, 10, 2, 12, 13, 3, 15, 4, 5, 7, 9, 11};
+      bool present[16] = {false};
+      size_t i = 0;
+      size_t remaining;
+      size_t j = 0;
+      bool found = false;
+
+      check_int_eq(int_tree_map_t_init(&map), TURBO_OK);
+      for (i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
+        check_int_eq(int_tree_map_t_put(&map, keys[i], keys[i] * 10), TURBO_OK);
+        present[keys[i]] = true;
+        check_size_eq(int_tree_map_t_size(&map), i + 1U);
+      }
+
+      for (i = 0; i < sizeof(remove_order) / sizeof(remove_order[0]); ++i) {
+        check_true(int_tree_map_t_contains(&map, remove_order[i]));
+        check_true(int_tree_map_t_remove(&map, remove_order[i], NULL));
+        present[remove_order[i]] = false;
+
+        remaining = 0U;
+        for (j = 0; j < sizeof(present) / sizeof(present[0]); ++j) {
+          if (present[j]) {
+            const int *k = int_tree_map_t_key_at_const(&map, remaining);
+            check_not_null(k);
+            check_int_eq(*k, (int)j);
+            check_size_eq(int_tree_map_t_find_slot(&map, (int)j, &found), remaining);
+            check_true(found);
+            ++remaining;
+          } else {
+            check_size_eq(int_tree_map_t_find_slot(&map, (int)j, &found), remaining);
+            check_false(found);
+          }
+        }
+        check_size_eq(int_tree_map_t_size(&map), remaining);
+      }
+
+      check_true(int_tree_map_t_empty(&map));
+      int_tree_map_t_destroy(&map);
+    }
+
+    it("handles empty and single-node operations safely") {
+      int_tree_map_t map;
+      int value = 0;
+      bool found = false;
+
+      check_int_eq(int_tree_map_t_init(&map), TURBO_OK);
+      check_size_eq(int_tree_map_t_size(&map), 0U);
+      check_size_eq(int_tree_map_t_find_slot(&map, 1, &found), 0U);
+      check_false(found);
+      check_null(int_tree_map_t_get(&map, 1));
+      check_false(int_tree_map_t_contains(&map, 1));
+      check_false(int_tree_map_t_remove(&map, 1, &value));
+
+      check_int_eq(int_tree_map_t_put(&map, 7, 70), TURBO_OK);
+      check_size_eq(int_tree_map_t_size(&map), 1U);
+      check_true(int_tree_map_t_contains(&map, 7));
+      check_int_eq(*int_tree_map_t_get(&map, 7), 70);
+
+      check_int_eq(int_tree_map_t_put(&map, 7, 77), TURBO_OK);
+      check_size_eq(int_tree_map_t_size(&map), 1U);
+      check_int_eq(*int_tree_map_t_get(&map, 7), 77);
+
+      check_true(int_tree_map_t_remove(&map, 7, &value));
+      check_int_eq(value, 77);
+      check_true(int_tree_map_t_empty(&map));
+      check_false(int_tree_map_t_remove(&map, 7, &value));
+      int_tree_map_t_destroy(&map);
+    }
+  }
+
+  group("B+ tree") {
+    it("keeps sorted keys and supports replacement semantics") {
+      int_bplus_tree_t map;
+      bool found = false;
+
+      check_int_eq(int_bplus_tree_t_init(&map), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 50, 500), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 20, 200), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 70, 700), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 10, 100), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 40, 400), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 60, 600), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 80, 800), TURBO_OK);
+      check_size_eq(int_bplus_tree_t_size(&map), 7U);
+
+      check_int_eq(*int_bplus_tree_t_key_at(&map, 0), 10);
+      check_int_eq(*int_bplus_tree_t_key_at(&map, 2), 40);
+      check_int_eq(*int_bplus_tree_t_key_at(&map, 6), 80);
+      check_int_eq(*int_bplus_tree_t_value_at(&map, 3), 500);
+      check_true(int_bplus_tree_t_contains(&map, 20));
+      check_false(int_bplus_tree_t_contains(&map, 99));
+      check_true(int_bplus_tree_t_get(&map, 40) != NULL);
+      check_int_eq(*int_bplus_tree_t_get(&map, 40), 400);
+
+      check_size_eq(int_bplus_tree_t_find_slot(&map, 40, &found), 2U);
+      check_true(found);
+      check_size_eq(int_bplus_tree_t_find_slot(&map, 41, &found), 3U);
+      check_false(found);
+      check_size_eq(int_bplus_tree_t_find_slot(&map, 1, &found), 0U);
+      check_false(found);
+
+      check_int_eq(int_bplus_tree_t_put(&map, 40, 441), TURBO_OK);
+      check_int_eq(*int_bplus_tree_t_get(&map, 40), 441);
+      int_bplus_tree_t_destroy(&map);
+    }
+
+    it("removes keys and keeps leaf order intact") {
+      int_bplus_tree_t map;
+      int value = 0;
+
+      check_int_eq(int_bplus_tree_t_init(&map), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 1, 10), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 2, 20), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 3, 30), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 4, 40), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 5, 50), TURBO_OK);
+      check_int_eq(int_bplus_tree_t_put(&map, 6, 60), TURBO_OK);
+
+      check_int_eq(int_bplus_tree_t_remove(&map, 4, &value), true);
+      check_int_eq(value, 40);
+      check_size_eq(int_bplus_tree_t_size(&map), 5U);
+      check_false(int_bplus_tree_t_contains(&map, 4));
+      check_int_eq(*int_bplus_tree_t_key_at(&map, 2), 3);
+      check_int_eq(*int_bplus_tree_t_key_at(&map, 3), 5);
+
+      check_false(int_bplus_tree_t_remove(&map, 100, &value));
+      check_size_eq(int_bplus_tree_t_size(&map), 5U);
+      int_bplus_tree_t_destroy(&map);
+    }
+
+    it("preserves order through large batched updates") {
+      int_bplus_tree_t map;
+      int value = 0;
+      size_t i;
+      bool found = false;
+
+      check_int_eq(int_bplus_tree_t_init(&map), TURBO_OK);
+      for (i = 0; i < 200U; ++i) {
+        check_int_eq(int_bplus_tree_t_put(&map, (int)i, (int)(i * 10)), TURBO_OK);
+      }
+      check_size_eq(int_bplus_tree_t_size(&map), 200U);
+      for (i = 0; i < 200U; ++i) {
+        bool found = false;
+        check_size_eq(int_bplus_tree_t_find_slot(&map, (int)i, &found), i);
+        check_true(found);
+        check_int_eq(*int_bplus_tree_t_key_at(&map, i), (int)i);
+      }
+
+      for (i = 0; i < 200U; i += 2U) {
+        check_true(int_bplus_tree_t_remove(&map, (int)i, &value));
+        check_int_eq(value, (int)i * 10);
+      }
+      check_size_eq(int_bplus_tree_t_size(&map), 100U);
+      check_false(int_bplus_tree_t_contains(&map, 0));
+      check_true(int_bplus_tree_t_contains(&map, 199));
+      found = false;
+      check_size_eq(int_bplus_tree_t_find_slot(&map, 0, &found), 0U);
+      check_false(found);
+      found = false;
+      check_size_eq(int_bplus_tree_t_find_slot(&map, 200, &found), 100U);
+      check_false(found);
+      found = false;
+      check_size_eq(int_bplus_tree_t_find_slot(&map, 102, &found), 51U);
+      check_false(found);
+
+      for (i = 1; i < 200U; i += 2U) {
+        check_int_eq(*int_bplus_tree_t_key_at(&map, i / 2U), (int)i);
+      }
+
+      for (i = 0; i < 200U; i += 2U) {
+        check_int_eq(int_bplus_tree_t_put(&map, (int)i, (int)(i * 10)), TURBO_OK);
+      }
+      check_size_eq(int_bplus_tree_t_size(&map), 200U);
+      for (i = 0; i < 200U; ++i) {
+        check_int_eq(*int_bplus_tree_t_key_at(&map, i), (int)i);
+      }
+
+      check_false(int_bplus_tree_t_remove(&map, 1000, &value));
+      check_size_eq(int_bplus_tree_t_size(&map), 200U);
+      int_bplus_tree_t_destroy(&map);
     }
   }
 }

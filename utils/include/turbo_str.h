@@ -23,6 +23,27 @@
  *   assign it back, e.g. s = tstr_cat(s, "text")
  * - Use tstr_free() or tstr_freep() to release ownership.
  * - tstr_to_cstr() returns a malloc'd copy; use free().
+ * 
+ * THREAD SAFETY: Single-owner model. One tstr_t instance must NOT be shared
+ *                across threads without external synchronization. Use tstr_clone()
+ *                to create independent copies for other threads.
+ * 
+ * CONCURRENCY MODEL:
+ * - Multiple threads may safely READ a const tstr_t if no thread is modifying it
+ * - Functions returning tstr_t may reallocate: old pointer becomes invalid
+ * - For shared strings: protect with mutex or use immutable tstr_v views
+ * 
+ * CRITICAL: Functions returning tstr_t may reallocate the string buffer.
+ *           ALWAYS reassign the return value:
+ * 
+ *           CORRECT:
+ *             s = tstr_cat(s, "text");  // ✅
+ *           
+ *           INCORRECT:
+ *             tstr_cat(s, "text");      // ❌ Memory leak or dangling pointer!
+ *           
+ *           The old pointer becomes invalid after reallocation. Continuing to
+ *           use it is undefined behavior (use-after-free).
  */
 
 #ifndef TURBO_STR_H

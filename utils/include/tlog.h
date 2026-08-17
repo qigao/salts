@@ -29,13 +29,21 @@ extern "C" {
 // Log Levels
 // =============================================================================
 
+#define TURBO_LOG_LEVEL_ITEMS(X)                                                                   \
+  X(TURBO_LOG_LEVEL_DEBUG, 0, "DEBUG")                                                           \
+  X(TURBO_LOG_LEVEL_INFO, 1, "INFO")                                                             \
+  X(TURBO_LOG_LEVEL_WARN, 2, "WARN")                                                             \
+  X(TURBO_LOG_LEVEL_ERROR, 3, "ERROR")                                                           \
+  X(TURBO_LOG_LEVEL_FATAL, 4, "FATAL")
+
+#define TURBO_LOG_LEVEL_ENUM_ITEM(name, value, str) name = value,
+
 typedef enum {
-  TURBO_LOG_LEVEL_DEBUG = 0,
-  TURBO_LOG_LEVEL_INFO,
-  TURBO_LOG_LEVEL_WARN,
-  TURBO_LOG_LEVEL_ERROR,
-  TURBO_LOG_LEVEL_FATAL
+  TURBO_LOG_LEVEL_ITEMS(TURBO_LOG_LEVEL_ENUM_ITEM)
 } turbo_log_level_t;
+
+#undef TURBO_LOG_LEVEL_ENUM_ITEM
+#undef TURBO_LOG_LEVEL_ITEMS
 
 // =============================================================================
 // Log Entry (passed to sinks)
@@ -270,11 +278,52 @@ CXX_C_API tlog_t *tlog_create(const tlog_config_t *config);
 CXX_C_API void tlog_destroy(tlog_t *logger);
 
 /**
- * @brief Add sink to logger (takes ownership)
- *
- * Ownership is transferred only on success. If this function returns -1, caller
- * is still responsible for destroying sink.
+ * @brief Add sink to logger and transfer ownership
+ * @param logger Target logger
+ * @param sink Sink to add (ownership transferred on success)
  * @return 0 on success, -1 on failure
+ * 
+ * OWNERSHIP SEMANTICS:
+ * - On SUCCESS (returns 0): Logger takes ownership. DO NOT call turbo_sink_destroy(sink).
+ *                           The sink will be destroyed automatically with the logger.
+ * - On FAILURE (returns -1): Caller retains ownership. MUST call turbo_sink_destroy(sink)
+ *                           to avoid memory leak.
+ * 
+ * THREAD SAFETY: NOT thread-safe. Do not call concurrently with other tlog_*
+ *                functions on the same logger.
+ * 
+ * CORRECT USAGE:
+ *   turbo_log_sink_t *sink = turbo_sink_console_create(NULL);
+ *   if (!sink) return -1;
+ *   
+ *   if (tlog_add_sink(logger, sink) != 0) {
+ *     turbo_sink_destroy(sink);  // ← Cleanup on failure
+ *     return -1;
+ *   }
+ *   // sink is now owned by logger, will be destroyed with logger
+ * 
+ * INCORRECT USAGE:
+ *   turbo_log_sink_t *sink = turbo_sink_console_create(NULL);
+ *   tlog_add_sink(logger, sink);  // ❌ Ignores error
+ *   turbo_sink_destroy(sink);     // ❌ Double-free if add succeeded!
+ * 
+ * MULTIPLE SINKS:
+ *   // Each sink is independently owned after successful add
+ *   turbo_log_sink_t *console = turbo_sink_console_create(NULL);
+ *   turbo_log_sink_t *file = turbo_sink_file_create(&file_opts);
+ *   
+ *   if (tlog_add_sink(logger, console) != 0) {
+ *     turbo_sink_destroy(console);
+ *     turbo_sink_destroy(file);  // ← Still our responsibility
+ *     return -1;
+ *   }
+ *   
+ *   if (tlog_add_sink(logger, file) != 0) {
+ *     turbo_sink_destroy(file);   // ← Still our responsibility
+ *     // console already owned by logger, will be cleaned up
+ *     return -1;
+ *   }
+ *   // Both sinks now owned by logger
  */
 CXX_C_API int tlog_add_sink(tlog_t *logger, turbo_log_sink_t *sink);
 

@@ -1,5 +1,6 @@
 #include "memory_pool.h"
 #include "tinytest.h"
+#include <stdalign.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -16,6 +17,22 @@ spec("Memory Pool Tests") {
     void *p1 = pool_alloc(pool, 100);
     check_not_null(p1);
     check_size_ge(pool_get_used(pool), 100);
+    check_size_eq((uintptr_t)p1 % MEMORY_POOL_DEFAULT_ALIGNMENT, 0);
+    pool_destroy(pool);
+  }
+
+  it("should enforce alignment on aligned allocations") {
+    MemoryPool *pool = pool_create(1024);
+    void *aligned = pool_alloc_aligned(pool, 16, 16);
+    check_not_null(aligned);
+    check_size_eq((uintptr_t)aligned % 16, 0);
+    pool_destroy(pool);
+  }
+
+  it("should reject invalid alignment") {
+    MemoryPool *pool = pool_create(1024);
+    void *invalid = pool_alloc_aligned(pool, 16, 3);
+    check_null(invalid);
     pool_destroy(pool);
   }
 

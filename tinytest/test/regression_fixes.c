@@ -34,15 +34,15 @@ suite("review fixes") {
     const float a[2] = {1.0f, (float)NAN};
     const float b[2] = {1.0f, (float)NAN};
     size_t idx = 0;
-    check_false(__bdd_float_array_eq__(a, b, 2, 0.0001, &idx));
+    check_false(ttest_float_array_eq__(a, b, 2, 0.0001, &idx));
     check_size_eq(idx, 1);
   }
 
   it("does not count warnings as assertions") {
-    size_t before = __bdd_active_config__->assertion_count;
-    size_t warn_before = __bdd_active_config__->warn_count;
+    size_t before = ttest_active_config__->assertion_count;
+    size_t warn_before = ttest_active_config__->warn_count;
     check_warn(1 == 2, "intentional warning");
-    check_size_eq(__bdd_active_config__->assertion_count, before);
-    check_size_eq(__bdd_active_config__->warn_count, warn_before + 1);
+    check_size_eq(ttest_active_config__->assertion_count, before);
+    check_size_eq(ttest_active_config__->warn_count, warn_before + 1);
   }
 }

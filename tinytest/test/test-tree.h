@@ -1,5 +1,5 @@
-#ifndef BDD_TEST_TREE_H
-#define BDD_TEST_TREE_H
+#ifndef TT_TEST_TREE_H
+#define TT_TEST_TREE_H
 
 #include <memory.h>
 #include <stdlib.h>
@@ -82,4 +82,4 @@ _bdd_array * _bdd_node_flatten(_bdd_node * node, _bdd_array * names) {
     return names;
 }
 
-#endif //BDD_TEST_TREE_H
+#endif //TT_TEST_TREE_H

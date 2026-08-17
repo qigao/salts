@@ -1,6 +1,7 @@
 # tinytest
 
-Single-header BDD/TDD testing framework for C and C++. Zero dependencies beyond libc.
+Header-only BDD/TDD testing framework for C and C++. Zero dependencies beyond libc.
+C tests include `tinytest.h`; C++ tests include `tinytest.hpp`.
 
 Features: spec/describe/it, given/when/then, TDD TEST_CASE/SECTION, check/check_warn, typed assertions, benchmarking, TAP, JUnit XML, color output, test filtering.
 
@@ -289,7 +290,8 @@ int main(int argc, char **argv) {
 
 ## C++ Container Assertions
 
-Available only when compiling as C++.
+Include `tinytest.hpp` to enable the C++-only container, string, generic, and
+exception assertions.
 
 ```cpp
 check_eq(vec_a, vec_b);                /* any iterable container */
@@ -341,7 +343,7 @@ check_nothrow_warn(expr);
 Example:
 
 ```cpp
-#include "tinytest.h"
+#include "tinytest.hpp"
 #include <stdexcept>
 
 int divide(int a, int b) {

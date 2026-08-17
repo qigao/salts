@@ -55,6 +55,7 @@ include(FindTools)
 add_subdirectory(vendor)
 add_subdirectory(tinytest) 
 add_subdirectory(utils)
+add_subdirectory(turbo_serial)
 
 # Package Configuration
 include(CMakePackageConfigHelpers)

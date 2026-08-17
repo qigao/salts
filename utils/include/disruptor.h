@@ -53,8 +53,13 @@ typedef enum {
   DISRUPTOR_MODE_WORKER_POOL = 1 /**< Each entry is claimed by one worker. */
 } disruptor_mode_t;
 
-/** Return non-zero while a blocking Disruptor operation should keep waiting. */
-typedef int (*disruptor_should_run_fn)(void *ctx);
+/** Predicate: return non-zero to continue blocking operations. */
+typedef int (*disruptor_keep_running_fn)(void *ctx);
+
+/**
+ * @deprecated Use disruptor_keep_running_fn for clearer intent.
+ */
+typedef disruptor_keep_running_fn disruptor_should_run_fn;
 
 typedef struct {
   size_t entry_size;            /**< Fixed entry size in bytes; must be non-zero. */
@@ -175,12 +180,12 @@ CXX_C_API void disruptor_worker_claim_blocking(disruptor_t *disruptor,
                                                disruptor_cursor_t *cursor);
 /**
  * Claim one published worker-pool entry, parking the thread while the ring is empty.
- * Returns 1 after claiming an entry, or 0 when should_run returns zero/arguments are invalid.
+ * Returns 1 after claiming an entry, or 0 when keep_running returns zero or arguments are invalid.
  * Call disruptor_worker_wake_all() after changing the predicate state.
  */
 CXX_C_API int disruptor_worker_claim_wait(disruptor_t *disruptor,
                                           disruptor_cursor_t *cursor,
-                                          disruptor_should_run_fn should_run,
+                                          disruptor_keep_running_fn keep_running,
                                           void *ctx);
 /** Wake parked worker claim calls so they can re-evaluate their stop predicate. */
 CXX_C_API void disruptor_worker_wake_all(disruptor_t *disruptor);
@@ -201,7 +206,7 @@ typedef void (*disruptor_batch_fn)(void *ctx, uint64_t first_seq, uint64_t last_
  */
 CXX_C_API void disruptor_consumer_run(disruptor_t *disruptor,
                                       disruptor_consumer_t *consumer,
-                                      disruptor_should_run_fn should_run,
+                                      disruptor_keep_running_fn keep_running,
                                       disruptor_batch_fn process_batch,
                                       void *ctx);
 

@@ -11,78 +11,12 @@
 
 #define TURBO_ERROR_MAX_CUSTOM_DOMAINS 64
 
-#define TURBO_ERROR_TABLE(X)                                                                        \
-  X(TURBO_EAI_ADDRFAMILY, "TURBO_EAI_ADDRFAMILY", "address family for hostname not supported")     \
-  X(TURBO_EAI_AGAIN, "TURBO_EAI_AGAIN", "temporary DNS failure")                                  \
-  X(TURBO_EAI_BADFLAGS, "TURBO_EAI_BADFLAGS", "bad DNS flags")                                    \
-  X(TURBO_EAI_FAIL, "TURBO_EAI_FAIL", "non-recoverable DNS failure")                              \
-  X(TURBO_EAI_FAMILY, "TURBO_EAI_FAMILY", "address family not supported by DNS result")            \
-  X(TURBO_EAI_MEMORY, "TURBO_EAI_MEMORY", "out of memory during DNS lookup")                       \
-  X(TURBO_EAI_NODATA, "TURBO_EAI_NODATA", "no DNS data")                                          \
-  X(TURBO_EAI_NONAME, "TURBO_EAI_NONAME", "hostname not found")                                   \
-  X(TURBO_EAI_SERVICE, "TURBO_EAI_SERVICE", "service not available for socket type")               \
-  X(TURBO_EAI_SOCKTYPE, "TURBO_EAI_SOCKTYPE", "socket type not supported")                         \
-  X(TURBO_EAI_SYSTEM, "TURBO_EAI_SYSTEM", "system error during DNS lookup")                        \
-  X(TURBO_EAI_CANCELED, "TURBO_EAI_CANCELED", "DNS lookup canceled")                              \
-  X(TURBO_EADDRINUSE, "TURBO_EADDRINUSE", "address already in use")                               \
-  X(TURBO_EADDRNOTAVAIL, "TURBO_EADDRNOTAVAIL", "address not available")                          \
-  X(TURBO_EAFNOSUPPORT, "TURBO_EAFNOSUPPORT", "address family not supported")                      \
-  X(TURBO_EALREADY, "TURBO_EALREADY", "operation already in progress")                            \
-  X(TURBO_EBADF, "TURBO_EBADF", "bad file descriptor")                                            \
-  X(TURBO_EBUSY, "TURBO_EBUSY", "resource busy or locked")                                        \
-  X(TURBO_ECANCELED, "TURBO_ECANCELED", "operation canceled")                                     \
-  X(TURBO_ECHARSET, "TURBO_ECHARSET", "invalid character set")                                    \
-  X(TURBO_ECONNABORTED, "TURBO_ECONNABORTED", "connection aborted")                               \
-  X(TURBO_ECONNREFUSED, "TURBO_ECONNREFUSED", "connection refused")                               \
-  X(TURBO_ECONNRESET, "TURBO_ECONNRESET", "connection reset by peer")                             \
-  X(TURBO_EDESTADDRREQ, "TURBO_EDESTADDRREQ", "destination address required")                      \
-  X(TURBO_EFAULT, "TURBO_EFAULT", "bad address")                                                  \
-  X(TURBO_EFBIG, "TURBO_EFBIG", "file too large")                                                 \
-  X(TURBO_EHOSTUNREACH, "TURBO_EHOSTUNREACH", "host is unreachable")                              \
-  X(TURBO_EINTR, "TURBO_EINTR", "operation interrupted")                                          \
-  X(TURBO_EINVAL, "TURBO_EINVAL", "invalid argument")                                             \
-  X(TURBO_EIO, "TURBO_EIO", "I/O error")                                                          \
-  X(TURBO_EISCONN, "TURBO_EISCONN", "socket is already connected")                                \
-  X(TURBO_EISDIR, "TURBO_EISDIR", "is a directory")                                               \
-  X(TURBO_ELOOP, "TURBO_ELOOP", "too many symbolic links")                                        \
-  X(TURBO_EMFILE, "TURBO_EMFILE", "too many open files")                                          \
-  X(TURBO_EMSGSIZE, "TURBO_EMSGSIZE", "message too long")                                         \
-  X(TURBO_ENAMETOOLONG, "TURBO_ENAMETOOLONG", "name too long")                                    \
-  X(TURBO_ENETDOWN, "TURBO_ENETDOWN", "network is down")                                          \
-  X(TURBO_ENETUNREACH, "TURBO_ENETUNREACH", "network is unreachable")                             \
-  X(TURBO_ENFILE, "TURBO_ENFILE", "too many open files in system")                                \
-  X(TURBO_ENOBUFS, "TURBO_ENOBUFS", "no buffer space available")                                  \
-  X(TURBO_ENODEV, "TURBO_ENODEV", "no such device")                                               \
-  X(TURBO_ENOENT, "TURBO_ENOENT", "no such file or directory")                                    \
-  X(TURBO_ENOMEM, "TURBO_ENOMEM", "not enough memory")                                            \
-  X(TURBO_ENONET, "TURBO_ENONET", "machine is not on the network")                                \
-  X(TURBO_ENOPROTOOPT, "TURBO_ENOPROTOOPT", "protocol option not available")                      \
-  X(TURBO_ENOSPC, "TURBO_ENOSPC", "no space left on device")                                      \
-  X(TURBO_ENOSYS, "TURBO_ENOSYS", "function not implemented")                                     \
-  X(TURBO_ENOTCONN, "TURBO_ENOTCONN", "socket is not connected")                                  \
-  X(TURBO_ENOTDIR, "TURBO_ENOTDIR", "not a directory")                                            \
-  X(TURBO_ENOTEMPTY, "TURBO_ENOTEMPTY", "directory not empty")                                    \
-  X(TURBO_ENOTSOCK, "TURBO_ENOTSOCK", "not a socket")                                             \
-  X(TURBO_ENOTSUP, "TURBO_ENOTSUP", "operation not supported")                                    \
-  X(TURBO_EPERM, "TURBO_EPERM", "operation not permitted")                                        \
-  X(TURBO_EPIPE, "TURBO_EPIPE", "broken pipe")                                                    \
-  X(TURBO_EPROTO, "TURBO_EPROTO", "protocol error")                                               \
-  X(TURBO_EPROTONOSUPPORT, "TURBO_EPROTONOSUPPORT", "protocol not supported")                     \
-  X(TURBO_EPROTOTYPE, "TURBO_EPROTOTYPE", "protocol wrong type for socket")                       \
-  X(TURBO_ERANGE, "TURBO_ERANGE", "result too large")                                             \
-  X(TURBO_EROFS, "TURBO_EROFS", "read-only file system")                                          \
-  X(TURBO_ESHUTDOWN, "TURBO_ESHUTDOWN", "cannot send after transport endpoint shutdown")          \
-  X(TURBO_ESPIPE, "TURBO_ESPIPE", "invalid seek")                                                 \
-  X(TURBO_ESRCH, "TURBO_ESRCH", "no such process")                                                \
-  X(TURBO_ETIMEDOUT, "TURBO_ETIMEDOUT", "operation timed out")                                    \
-  X(TURBO_ETXTBSY, "TURBO_ETXTBSY", "text file busy")                                             \
-  X(TURBO_EXDEV, "TURBO_EXDEV", "cross-device link")                                              \
-  X(TURBO_UNKNOWN, "TURBO_UNKNOWN", "unknown error")                                              \
-  X(TURBO_EOF, "TURBO_EOF", "end of file")
+#define TURBO_ERROR_TABLE_ITEM(code, value, name, message) {code, name, message},
 
-#define TURBO_ERROR_ENTRY(code, name, message) {code, name, message},
-
-static const turbo_error_entry_t turbo_error_table[] = {TURBO_ERROR_TABLE(TURBO_ERROR_ENTRY)};
+static const turbo_error_entry_t turbo_error_table[] = {
+  TURBO_ERROR_CODE_ITEMS(TURBO_ERROR_TABLE_ITEM)
+};
+#undef TURBO_ERROR_TABLE_ITEM
 
 static turbo_once_t turbo_error_registry_once = TURBO_ONCE_INIT;
 static turbo_mutex_t turbo_error_registry_mutex;

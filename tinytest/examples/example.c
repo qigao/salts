@@ -8,7 +8,7 @@ static void verify_even(int n) {
     }
 }
 
-static void check_in_range(int val, int min, int max) {
+static void verify_in_range(int val, int min, int max) {
     /* No 'it' block here, just a reusable assertion called inside a test */
     check(val >= min && val <= max, "expected %d to be in [%d, %d]", val, min, max);
 }
@@ -173,7 +173,7 @@ suite("tinytest C Example") {
 
         it("should allow calling functions WITH NO 'it' inside tests") {
             int score = 85;
-            check_in_range(score, 0, 100);
+            verify_in_range(score, 0, 100);
         }
     }
 

@@ -18,6 +18,7 @@
 #include "re_scan.h"
 
 #include <limits.h>
+#include <string.h>
 
 #if !defined(RE_MALLOC) || !defined(RE_FREE)
   #include <stdlib.h>

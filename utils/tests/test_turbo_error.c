@@ -41,6 +41,18 @@ suite("Turbo Error") {
       check_str_eq(info.name, "TURBO_ENOMEM");
       check_str_eq(info.message, "not enough memory");
     }
+
+    it("maps turbo_error_domain enum to and from string") {
+      turbo_error_domain_t domain = TURBO_ERROR_DOMAIN_UNKNOWN;
+
+      check_str_eq(turbo_error_domain_to_string(TURBO_ERROR_DOMAIN_NONE), "none");
+      check_str_eq(turbo_error_domain_to_string(TURBO_ERROR_DOMAIN_CUSTOM), "custom");
+      check_int_eq(turbo_error_domain_from_string("win32", &domain), 0);
+      check_int_eq(domain, TURBO_ERROR_DOMAIN_WIN32);
+      check_int_eq(turbo_error_domain_from_string("not_found", &domain), -1);
+      check_true(turbo_error_domain_is_valid(TURBO_ERROR_DOMAIN_TURBO));
+      check_false(turbo_error_domain_is_valid((turbo_error_domain_t)999));
+    }
   }
 
   group("Native codes") {

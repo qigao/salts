@@ -19,7 +19,7 @@ typedef struct disruptor_worker_wait_test_s {
   disruptor_cursor_t cursor;
 } disruptor_worker_wait_test_t;
 
-static int disruptor_test_should_run(void *ctx) {
+static int disruptor_test_keep_running(void *ctx) {
   disruptor_worker_wait_test_t *test = (disruptor_worker_wait_test_t *)ctx;
   atomic_store_explicit(&test->entered, 1, memory_order_release);
   return atomic_load_explicit(&test->running, memory_order_acquire);
@@ -28,7 +28,7 @@ static int disruptor_test_should_run(void *ctx) {
 static void disruptor_test_worker_wait(void *ctx) {
   disruptor_worker_wait_test_t *test = (disruptor_worker_wait_test_t *)ctx;
   int result = disruptor_worker_claim_wait(test->disruptor, &test->cursor,
-                                           disruptor_test_should_run, test);
+                                           disruptor_test_keep_running, test);
   atomic_store_explicit(&test->result, result, memory_order_release);
 }
 

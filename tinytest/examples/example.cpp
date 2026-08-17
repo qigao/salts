@@ -1,4 +1,4 @@
-#include "tinytest.h"
+#include "tinytest.hpp"
 #include <list>
 #include <map>
 #include <memory>

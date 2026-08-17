@@ -1324,17 +1324,17 @@ void disruptor_worker_claim_blocking(disruptor_t *disruptor, disruptor_cursor_t 
 }
 
 int disruptor_worker_claim_wait(disruptor_t *disruptor, disruptor_cursor_t *cursor,
-                                disruptor_should_run_fn should_run, void *ctx) {
+                                disruptor_keep_running_fn keep_running, void *ctx) {
   unsigned int wait_rounds = 0U;
 
-  if (disruptor == NULL || cursor == NULL || should_run == NULL ||
+  if (disruptor == NULL || cursor == NULL || keep_running == NULL ||
       disruptor->mode != DISRUPTOR_MODE_WORKER_POOL) {
     return 0;
   }
 
   while (wait_rounds < DISRUPTOR_WORKER_PARK_SPIN_ROUNDS) {
     if (disruptor_worker_try_claim(disruptor, cursor)) return 1;
-    if (!should_run(ctx)) return 0;
+    if (!keep_running(ctx)) return 0;
     ++wait_rounds;
     disruptor_spin_pause();
   }
@@ -1347,7 +1347,7 @@ int disruptor_worker_claim_wait(disruptor_t *disruptor, disruptor_cursor_t *curs
       turbo_mutex_unlock(&disruptor->worker_wait_mutex);
       return 1;
     }
-    if (!should_run(ctx)) {
+    if (!keep_running(ctx)) {
       atomic_fetch_sub_explicit(&disruptor->worker_waiters, 1U, memory_order_acq_rel);
       turbo_mutex_unlock(&disruptor->worker_wait_mutex);
       return 0;
@@ -1384,17 +1384,17 @@ static void disruptor_idle_sleep(void) {
 
 void disruptor_consumer_run(disruptor_t *disruptor,
                             disruptor_consumer_t *consumer,
-                            disruptor_should_run_fn should_run,
+                            disruptor_keep_running_fn keep_running,
                             disruptor_batch_fn process_batch,
                             void *ctx) {
-  if (!disruptor || disruptor->mode != DISRUPTOR_MODE_BROADCAST || !consumer || !should_run ||
+  if (!disruptor || disruptor->mode != DISRUPTOR_MODE_BROADCAST || !consumer || !keep_running ||
       !process_batch) {
     return;
   }
 
   uint64_t next_sequence = disruptor_consumer_register(disruptor, consumer);
 
-  while (should_run(ctx)) {
+  while (keep_running(ctx)) {
     disruptor_cursor_t cursor;
     cursor.sequence = next_sequence;
 
