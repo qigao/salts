@@ -23,8 +23,7 @@
     },
     {
       "name": "aklomp-base64"
-    },
-    "lua"
+    }
   ],
   "overrides": [
     {
