@@ -45,9 +45,22 @@
             "generator": "Ninja"
         },
         {
+            "name": "dev-mac-ninja",
+            "hidden": true,
+            "displayName": "Developer (Mac, Ninja)",
+            "inherits": [
+                "base-developer-mac",
+                "pkg-vcpkg"
+            ],
+            "generator": "Ninja"
+        },
+        {
             "name": "release-mac-ninja",
             "displayName": "Release (Mac, Ninja)",
-            "inherits": "base-release-mac",
+            "inherits": [
+                "base-release-mac",
+                "pkg-vcpkg"
+            ],
             "generator": "Ninja"
         },
         {

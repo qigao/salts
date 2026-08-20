@@ -52,6 +52,17 @@
             "binaryDir": "${sourceDir}/build/linux-gcc-debug"
         },
         {
+            "name": "base-developer-mac",
+            "hidden": true,
+            "inherits": [
+                "ISMac",
+                "developer-mode",
+                "Clang",
+                "flags-appleclang"
+            ],
+            "binaryDir": "${sourceDir}/build/mac-clang-debug"
+        },
+        {
             "name": "base-release-mac",
             "hidden": true,
             "inherits": [
