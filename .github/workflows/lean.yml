@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Reject proof placeholders
         shell: bash
         run: |
@@ -29,14 +30,42 @@ jobs:
             echo "Formal proof files must not contain axioms, constants, sorry, or admit."
             exit 1
           fi
+
+      - name: Install elan
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL \
+            https://github.com/leanprover/elan/releases/download/v4.2.2/elan-x86_64-unknown-linux-gnu.tar.gz \
+            | tar xz
+          ./elan-init -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Install pinned Lean toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          toolchain="$(cat formal/lean-toolchain)"
+          elan toolchain install "$toolchain"
+
+      - name: Verify Lean and Lake
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euo pipefail
+          lean --version
+          lake --version
+
+      - name: Generate Lake manifest
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euo pipefail
+          lake update
+
       - name: Build and kernel-check Lean proofs
-        uses: leanprover/lean-action@v1
-        with:
-          lake-package-directory: formal
-          auto-config: false
-          build: true
-          build-args: "--wfail"
-          test: false
-          lint: false
-          use-github-cache: false
-          use-mathlib-cache: false
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euo pipefail
+          lake build --wfail
