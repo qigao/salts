@@ -24,7 +24,13 @@ private theorem filter_length_le {α : Type} (pred : α → Bool) (xs : List α)
   induction xs with
   | nil => simp
   | cons x xs ih =>
-      cases h : pred x <;> simp [h, ih, Nat.le_succ]
+      cases h : pred x with
+      | false =>
+          simp [h]
+          exact Nat.le_trans ih (Nat.le_succ _)
+      | true =>
+          simp [h]
+          exact Nat.succ_le_succ ih
 
 private theorem flatMap_length_sum {α β : Type} (emit : α → List β)
     (xs : List α) :
@@ -38,14 +44,16 @@ private theorem flatMap_length_sum {α β : Type} (emit : α → List β)
 theorem ExecInst.filter_cardinality {T : CType} (pred : Callable1 T .bool)
     (xs : ValueVec T) :
     (ExecInst.run (.filter T pred) xs).length ≤ xs.length := by
-  simpa [ExecInst.run] using filter_length_le pred.run xs
+  change (xs.filter pred.run).length ≤ xs.length
+  exact filter_length_le pred.run xs
 
 /-- MAP preserves cardinality even when its implementation is a fused callback
     chain. -/
 theorem ExecInst.map_cardinality {A R : CType} (chain : MapChain A R)
     (xs : ValueVec A) :
     (ExecInst.run (.map A R chain) xs).length = xs.length := by
-  simpa [ExecInst.run] using ExecInst.map_length chain xs
+  change (xs.map chain.run).length = xs.length
+  exact ExecInst.map_length chain xs
 
 /-- FLAT_MAP cardinality is exactly the sum of the outputs produced for each
     input element by the completed generator traces. -/
@@ -53,7 +61,9 @@ theorem ExecInst.flatMap_cardinality {A R : CType}
     (gen : CompletedGenerator A R) (xs : ValueVec A) :
     (ExecInst.run (.flatMap A R gen) xs).length =
       (xs.map (fun x => (gen.generateAll x).length)).sum := by
-  simpa [ExecInst.run] using flatMap_length_sum gen.generateAll xs
+  change (xs.flatMap gen.generateAll).length =
+    (xs.map (fun x => (gen.generateAll x).length)).sum
+  exact flatMap_length_sum gen.generateAll xs
 
 /-- Count transfer function for REDUCE. -/
 def reduceCount : Nat → Nat
