@@ -9,3 +9,5 @@ import CMeta.Optimize
 import CMeta.Lowering
 import CMeta.Plan
 import CMeta.Execution
+import CMeta.Cardinality
+import CMeta.EndToEnd
