@@ -25,6 +25,18 @@ typed_raw(map, CMETA_EFFECT_PURE,
     return (double)x;
 }
 
+typed_raw(map, CMETA_EFFECT_PURE,
+          CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL | CMETA_PROP_NO_ALIAS,
+          int, conf_map_i_i_plus_one, (int x)) {
+    return x + 1;
+}
+
+typed_raw(map, CMETA_EFFECT_PURE,
+          CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL | CMETA_PROP_NO_ALIAS,
+          long, conf_map_i_l_twice, (int x)) {
+    return (long)x * 2L;
+}
+
 typed_raw(transform, CMETA_EFFECT_PURE,
           CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL | CMETA_PROP_NO_ALIAS,
           long, conf_transform_i_l, (int x)) {
@@ -36,10 +48,17 @@ typed_raw(flatMap, CMETA_EFFECT_PURE,
           cmeta_gen_status, conf_flat_i_l,
           (int x, long *out, size_t *cursor)) {
     if (!out || !cursor) return CMETA_GEN_ERROR;
-    if (*cursor != 0u) return CMETA_GEN_DONE;
-    *out = (long)x;
-    *cursor = 1u;
-    return CMETA_GEN_VALUE_AND_DONE;
+    if (*cursor == 0u) {
+        *out = (long)x;
+        *cursor = 1u;
+        return CMETA_GEN_VALUE;
+    }
+    if (*cursor == 1u) {
+        *out = (long)x + 10L;
+        *cursor = 2u;
+        return CMETA_GEN_VALUE_AND_DONE;
+    }
+    return CMETA_GEN_DONE;
 }
 
 typed_raw(reduce, CMETA_EFFECT_PURE,
@@ -122,6 +141,27 @@ static int emit_plan(const char *name, const cflow_plan *plan) {
     return 1;
 }
 
+static int emit_integral_values(const cmeta_type_desc *type,
+                                const void *data,
+                                size_t count) {
+    size_t i;
+    if (count && !data) return 0;
+    printf("[");
+    for (i = 0; i < count; ++i) {
+        long long value;
+        if (cmeta_type_equal(type, &cmeta_type_int))
+            value = (long long)((const int *)data)[i];
+        else if (cmeta_type_equal(type, &cmeta_type_long))
+            value = (long long)((const long *)data)[i];
+        else
+            return 0;
+        if (i) printf(", ");
+        printf("%lld", value);
+    }
+    printf("]");
+    return 1;
+}
+
 static int compile_filter(cflow_plan *plan) {
     cflow_graph graph = {0};
     int ok;
@@ -158,6 +198,17 @@ static int compile_fused_map(cflow_plan *plan) {
     cflow_graph_init(&graph, &cmeta_type_int);
     ok = cflow_graph_map(&graph, conf_map_i_l.fn) &&
          cflow_graph_map(&graph, conf_map_l_d.fn) &&
+         cflow_plan_compile_surface(plan, &graph, NULL);
+    cflow_graph_destroy(&graph);
+    return ok;
+}
+
+static int compile_fused_runtime_map(cflow_plan *plan) {
+    cflow_graph graph = {0};
+    int ok;
+    cflow_graph_init(&graph, &cmeta_type_int);
+    ok = cflow_graph_map(&graph, conf_map_i_i_plus_one.fn) &&
+         cflow_graph_map(&graph, conf_map_i_l_twice.fn) &&
          cflow_plan_compile_surface(plan, &graph, NULL);
     cflow_graph_destroy(&graph);
     return ok;
@@ -200,10 +251,68 @@ static int compile_and_emit(const char *name, compile_witness_fn compile) {
     return ok;
 }
 
+static int execute_and_emit(const char *name,
+                            compile_witness_fn compile,
+                            const cmeta_type_desc *input_type,
+                            const void *inputs,
+                            size_t input_count) {
+    cflow_plan plan = {0};
+    cflow_result result = {0};
+    const char *in_token;
+    const char *out_token;
+    int ok = compile(&plan);
+    if (!ok) {
+        fprintf(stderr, "failed to compile runtime witness %s: %s\n",
+                name, plan.error ? plan.error : "unknown error");
+        cflow_plan_destroy(&plan);
+        return 0;
+    }
+    if (!cmeta_type_equal(plan.input_type, input_type)) {
+        fprintf(stderr, "runtime witness %s has unexpected input type\n", name);
+        cflow_plan_destroy(&plan);
+        return 0;
+    }
+    if (!cflow_plan_eval_array(&plan, inputs, input_count, &result)) {
+        fprintf(stderr, "failed to execute runtime witness %s\n", name);
+        cflow_plan_destroy(&plan);
+        return 0;
+    }
+
+    in_token = type_token(plan.input_type);
+    out_token = type_token(result.type);
+    if (!in_token || !out_token) {
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&plan);
+        return 0;
+    }
+
+    printf("  { name := \"%s\", inputType := \"%s\", input := ", name, in_token);
+    if (!emit_integral_values(plan.input_type, inputs, input_count)) {
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&plan);
+        return 0;
+    }
+    printf(", outputType := \"%s\", count := %zu, output := ",
+           out_token, result.count);
+    if (!emit_integral_values(result.type, result.data, result.count)) {
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&plan);
+        return 0;
+    }
+    printf(" } ::\n");
+
+    cflow_result_destroy(&result);
+    cflow_plan_destroy(&plan);
+    return 1;
+}
+
 int main(void) {
+    static const int int_inputs[] = { -2, 0, 3 };
+    static const long reduce_inputs[] = { 2L, 3L, 5L };
+
     puts("import Std");
     puts("");
-    puts("/-! GENERATED by formal/cmeta_plan_conformance_gen.c using the real CFlow plan compiler. -/");
+    puts("/-! GENERATED by formal/cmeta_plan_conformance_gen.c using the real CFlow plan compiler/runtime. -/");
     puts("");
     puts("namespace CMeta.CPlanGenerated");
     puts("");
@@ -221,6 +330,15 @@ int main(void) {
     puts("  code : List PlanInstRow");
     puts("  deriving Repr, DecidableEq");
     puts("");
+    puts("structure RuntimeWitness where");
+    puts("  name : String");
+    puts("  inputType : String");
+    puts("  input : List Int");
+    puts("  outputType : String");
+    puts("  count : Nat");
+    puts("  output : List Int");
+    puts("  deriving Repr, DecidableEq");
+    puts("");
     puts("def witnesses : List PlanWitness :=");
 
     if (!compile_and_emit("filter_i", compile_filter) ||
@@ -229,6 +347,26 @@ int main(void) {
         !compile_and_emit("fused_map_i_l_d", compile_fused_map) ||
         !compile_and_emit("flat_map_i_l", compile_flat_map) ||
         !compile_and_emit("reduce_l", compile_reduce))
+        return EXIT_FAILURE;
+
+    puts("  []");
+    puts("");
+    puts("def runtimeWitnesses : List RuntimeWitness :=");
+
+    if (!execute_and_emit("filter_i", compile_filter,
+                          &cmeta_type_int, int_inputs, 3u) ||
+        !execute_and_emit("map_i_l", compile_map,
+                          &cmeta_type_int, int_inputs, 3u) ||
+        !execute_and_emit("transform_i_l", compile_transform,
+                          &cmeta_type_int, int_inputs, 3u) ||
+        !execute_and_emit("fused_map_i_i_l", compile_fused_runtime_map,
+                          &cmeta_type_int, int_inputs, 3u) ||
+        !execute_and_emit("flat_map_i_l", compile_flat_map,
+                          &cmeta_type_int, int_inputs, 3u) ||
+        !execute_and_emit("reduce_l", compile_reduce,
+                          &cmeta_type_long, reduce_inputs, 3u) ||
+        !execute_and_emit("reduce_l_empty", compile_reduce,
+                          &cmeta_type_long, NULL, 0u))
         return EXIT_FAILURE;
 
     puts("  []");
