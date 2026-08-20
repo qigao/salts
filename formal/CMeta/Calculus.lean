@@ -21,15 +21,16 @@ universe u v
 
 /-- Ordered Cartesian product, matching nested preprocessor foreach order. -/
 def product (xs : List α) (ys : List β) : List (α × β) :=
-  xs.flatMap (fun x => ys.map (fun y => (x, y)))
+  match xs with
+  | [] => []
+  | x :: xs => ys.map (fun y => (x, y)) ++ product xs ys
 
 theorem product_length (xs : List α) (ys : List β) :
     (product xs ys).length = xs.length * ys.length := by
   induction xs with
-  | nil => simp [product]
+  | nil => rfl
   | cons x xs ih =>
-      simp [product, ih, Nat.succ_mul, Nat.add_comm, Nat.add_left_comm,
-        Nat.add_assoc]
+      simp [product, ih, Nat.succ_mul]
 
 /-- A small typed algebra sufficient for the finite CMeta generators studied here. -/
 inductive CoreExpr : Type u → Type (u + 1) where
@@ -82,19 +83,19 @@ theorem product_cardinality (a : CoreExpr α) (b : CoreExpr β) :
 
 end CoreExpr
 
-/-- `repeat n` is semantically a map over the finite interval `[0,n)`. -/
-def repeat (n : Nat) (emit : Nat → α) : List α :=
+/-- `CMETA_PP_REPEAT(n, ...)` is semantically a map over `[0,n)`. -/
+def ppRepeat (n : Nat) (emit : Nat → α) : List α :=
   (List.range n).map emit
 
-theorem repeat_length (n : Nat) (emit : Nat → α) :
-    (repeat n emit).length = n := by
-  simp [repeat]
+theorem ppRepeat_length (n : Nat) (emit : Nat → α) :
+    (ppRepeat n emit).length = n := by
+  simp [ppRepeat]
 
-theorem repeat_index_domain (i n : Nat) :
+theorem ppRepeat_index_domain (i n : Nat) :
     i ∈ List.range n ↔ i < n := by
   exact List.mem_range
 
-theorem repeat_indices_unique (n : Nat) :
+theorem ppRepeat_indices_unique (n : Nat) :
     (List.range n).Nodup := by
   exact List.nodup_range
 
@@ -111,6 +112,11 @@ theorem replay_zip (left : α → β) (right : α → γ) (rows : List α) :
       rows.map (fun x => (left x, right x)) := by
   induction rows with
   | nil => rfl
-  | cons x xs ih => simp [replay, ih]
+  | cons x xs ih =>
+      have tail : List.zip (List.map left xs) (List.map right xs) =
+          List.map (fun y => (left y, right y)) xs := by
+        simpa [replay] using ih
+      simp only [replay, List.map_cons, List.zip_cons_cons]
+      exact congrArg (fun zs => (left x, right x) :: zs) tail
 
 end CMeta
