@@ -16,6 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgJsonGlob: vcpkg.json
       - name: Configure, build and test
         run: |
           cmake --preset ci-linux
@@ -28,6 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgJsonGlob: vcpkg.json
       - name: Configure, build and test
         shell: cmd
         run: |
@@ -44,6 +48,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgJsonGlob: vcpkg.json
       - name: Configure, build and test
         run: |
           cmake --preset ci-macos
@@ -56,6 +62,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgJsonGlob: vcpkg.json
       - uses: nttld/setup-ndk@v1
         id: ndk
         with:
