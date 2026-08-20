@@ -47,6 +47,11 @@ cmake_add_test(c11_generic_test
   LIBS TurboUtils::TinyTest
   FOLDER "tinytest/tests")
 
+cmake_add_test(tinytest_meta_test
+  SOURCES tinytest_meta_test.c
+  LIBS TurboUtils::TinyTest
+  FOLDER "tinytest/tests")
+
 cmake_add_test(tinytest_result_x_macro
   SOURCES result_x_macro_test.c
   LIBS TurboUtils::TinyTest

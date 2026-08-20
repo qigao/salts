@@ -12,12 +12,49 @@ TINYMOCk_MOCK2(int, tinymock_bad_arg, int, int)
 
 static int g_tinymock_mismatch_marker = 0;
 
+static bool tinymock_match_int_gt(const void *actual, void *context) {
+  const int threshold = *(const int *)context;
+  return *(const int *)actual > threshold;
+}
+
+static tinymock_value_t tinymock_answer_sum(size_t argc,
+                                            const void *const *actual_args,
+                                            void *context) {
+  int bias = context ? *(const int *)context : 0;
+  int result;
+  check_size_eq(argc, (size_t)2);
+  result = *(const int *)actual_args[0] + *(const int *)actual_args[1] + bias;
+  return TINYMOCk_RETURN(result);
+}
+
 suite("TinyMock") {
 
   it("should match int arguments and return mocked value") {
     mock_tinymock_add_reset();
     mock_tinymock_add_expect(TINYMOCk_ARG(2), TINYMOCk_ARG(3), TINYMOCk_RETURN(5));
     check_int_eq(tinymock_add(2, 3), 5);
+    mock_tinymock_add_verify();
+  }
+
+  it("should match arguments with a predicate matcher") {
+    int threshold = 10;
+
+    mock_tinymock_add_reset();
+    mock_tinymock_add_expect(TINYMOCk_ARG_THAT(tinymock_match_int_gt, &threshold),
+                             TINYMOCk_ARG(3), TINYMOCk_RETURN(14));
+
+    check_int_eq(tinymock_add(11, 3), 14);
+    mock_tinymock_add_verify();
+  }
+
+  it("should compute an answer from invocation arguments") {
+    int bias = 7;
+
+    mock_tinymock_add_reset();
+    mock_tinymock_add_expect(TINYMOCk_ARG(2), TINYMOCk_ARG(3),
+                             TINYMOCk_ANSWER(tinymock_answer_sum, &bias));
+
+    check_int_eq(tinymock_add(2, 3), 12);
     mock_tinymock_add_verify();
   }
 
