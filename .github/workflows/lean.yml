@@ -51,7 +51,8 @@ jobs:
           cmake --build --preset build-formal-linux \
             --target cmeta_plan_conformance_gen \
                      cmeta_structured_conformance_gen \
-                     cmeta_structured_policy_conformance_gen
+                     cmeta_structured_policy_conformance_gen \
+                     cmeta_optimizer_conformance_gen
 
       - name: Verify plan compiler conformance snapshot
         shell: bash
@@ -77,6 +78,15 @@ jobs:
             > /tmp/StructuredPolicyGeneratedC.lean
           diff -u formal/CMeta/StructuredPolicyGeneratedC.lean \
             /tmp/StructuredPolicyGeneratedC.lean
+
+      - name: Verify optimizer property conformance snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          build/formal-linux/bin/cmeta_optimizer_conformance_gen \
+            > /tmp/OptimizerGeneratedC.lean
+          diff -u formal/CMeta/OptimizerGeneratedC.lean \
+            /tmp/OptimizerGeneratedC.lean
 
       - name: Reject proof placeholders
         shell: bash
