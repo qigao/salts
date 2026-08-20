@@ -57,6 +57,7 @@ add_subdirectory(tinytest)
 add_subdirectory(utils)
 add_subdirectory(cmeta)
 add_subdirectory(cflow)
+add_subdirectory(formal)
 add_subdirectory(stream)
 add_subdirectory(turbo_serial)
 
