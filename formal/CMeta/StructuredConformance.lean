@@ -5,10 +5,14 @@ import CMeta.StructuredGeneratedC
 # Structured relation runtime conformance
 
 This module extends the executable formal model beyond the direct-plan subset
-with the concrete 1:1 `ALL + FOLD` relation semantics exercised by the C
-runtime witness.  Each source value is sent to every branch, branch results are
-materialized in branch order, and the homogeneous reducer folds them from left
-to right, matching `relation_exec.c::fold_values`.
+with the concrete structured semantics exercised by the C runtime witnesses:
+
+* homogeneous 1:1 `ALL + FOLD` relations;
+* heterogeneous surface ZIP lowered to `ALL + INVOKE`.
+
+The models preserve declaration order and mirror the value materialization used
+by `relation_exec.c` while keeping direct-plan rejection as an explicit
+capability boundary.
 -/
 
 namespace CMeta
@@ -42,6 +46,34 @@ theorem run_length {A R : CType} (rel : FoldRelationExec A R)
 
 end FoldRelationExec
 
+/-- Executable value semantics of the two heterogeneous branches created by ZIP
+    lowering and combined by RELATION(INVOKE). -/
+structure ZipInvokeExec (A L R O : CType) where
+  left : Callable1 A L
+  right : Callable1 A R
+  combine : Callable2 L R O
+
+namespace ZipInvokeExec
+
+/-- Execute one source value through both branches and invoke the binary
+    combiner with branch outputs in left/right order. -/
+def runOne {A L R O : CType} (zip : ZipInvokeExec A L R O)
+    (x : A.denote) : O.denote :=
+  zip.combine.run (zip.left.run x) (zip.right.run x)
+
+/-- The 1:1 ZIP witness produces one combined result per source value. -/
+def run {A L R O : CType} (zip : ZipInvokeExec A L R O)
+    (xs : ValueVec A) : ValueVec O :=
+  xs.map zip.runOne
+
+/-- ZIP with 1:1 branches preserves source cardinality. -/
+theorem run_length {A L R O : CType} (zip : ZipInvokeExec A L R O)
+    (xs : ValueVec A) :
+    (zip.run xs).length = xs.length := by
+  simp [run]
+
+end ZipInvokeExec
+
 private def relationLeft : Callable1 CType.int CType.long :=
   ⟨fun (x : Int) => x⟩
 
@@ -68,6 +100,34 @@ theorem StructuredRelationConformance.typed_relation_valid :
     checkRelation CType.int relationTyped.erase = some CType.long := by
   exact relationTyped.check_erase
 
+private def zipRight : Callable1 CType.int CType.double :=
+  ⟨fun (_ : Int) => (2.0 : Float)⟩
+
+private def zipCombine : Callable2 CType.long CType.double CType.double :=
+  ⟨fun (_ : Int) (right : Float) => right⟩
+
+private def zipExec : ZipInvokeExec CType.int CType.long CType.double CType.double :=
+  ⟨relationLeft, zipRight, zipCombine⟩
+
+private def zipLeftPipeline : Pipeline CType.int CType.long :=
+  .cons (.map CType.int CType.long) (.done CType.long)
+
+private def zipRightPipeline : Pipeline CType.int CType.double :=
+  .cons (.map CType.int CType.double) (.done CType.double)
+
+private def zipSurface : SurfaceZip CType.int CType.double :=
+  { leftOutput := CType.long,
+    rightOutput := CType.double,
+    left := zipLeftPipeline,
+    right := zipRightPipeline,
+    combine := zipCombine }
+
+/-- The actual ZIP witness has exactly the heterogeneous branch equation already
+    proved sound for surface ZIP lowering to RELATION(INVOKE). -/
+theorem StructuredZipConformance.lowering_type_valid :
+    checkInvokeRelation CType.int zipSurface.lower = some CType.double := by
+  exact zipSurface.lowering_preserves_type
+
 private def relationWitnessConforms
     (w : CStructuredGenerated.RelationWitness) : Bool :=
   w.name == "relation_all_fold_i_l" &&
@@ -80,20 +140,25 @@ private def relationWitnessConforms
   w.count == (relationExec.run w.input).length &&
   w.output == relationExec.run w.input
 
+private def zipWitnessConforms
+    (w : CStructuredGenerated.ZipWitness) : Bool :=
+  w.name == "zip_all_invoke_i_l_d_d" &&
+  w.inputType == "I" &&
+  w.outputType == "D" &&
+  w.coordination == "ALL" &&
+  w.result == "INVOKE" &&
+  w.branchCount == 2 &&
+  w.combine == "B_L_D_D" &&
+  w.count == (zipExec.run w.input).length &&
+  w.output == zipExec.run w.input
+
 /-- The normalized C relation descriptor has the exact type/coordination/result
     metadata modeled by the formal ALL/FOLD relation. -/
 theorem StructuredRelationConformance.generated_descriptor_matches :
     CStructuredGenerated.relationWitnesses.all relationWitnessConforms = true := by
   native_decide
 
-/-- Direct-plan capability remains intentionally narrower than the structured
-    runtime: the real plan compiler rejects every generated relation witness. -/
-theorem StructuredRelationConformance.direct_plan_rejects_relation :
-    CStructuredGenerated.relationWitnesses.all
-      (fun w => !w.directPlanAccepted) = true := by
-  native_decide
-
-/-- The real structured runtime returns exactly the values computed by the
+/-- The real structured FOLD runtime returns exactly the values computed by the
     formal ordered branch/FOLD semantics. -/
 theorem StructuredRelationConformance.runtime_matches_model :
     CStructuredGenerated.relationWitnesses.all
@@ -101,13 +166,33 @@ theorem StructuredRelationConformance.runtime_matches_model :
         w.output == relationExec.run w.input) = true := by
   native_decide
 
-/-- Public structured-backend gate combining descriptor shape, execution
-    semantics and the direct-plan rejection boundary. -/
-theorem CImplementationConformance.structured_relation_runtime :
-    CStructuredGenerated.relationWitnesses.all relationWitnessConforms = true ∧
+/-- The surface ZIP normalizes to the expected ALL/INVOKE descriptor and its
+    real structured runtime values match the formal left/right/combine model. -/
+theorem StructuredZipConformance.runtime_matches_lowered_model :
+    CStructuredGenerated.zipWitnesses.all zipWitnessConforms = true := by
+  native_decide
+
+/-- Direct-plan capability remains intentionally narrower than the structured
+    runtime: both ordinary relations and ZIP-lowered INVOKE relations are
+    rejected by the real direct-plan compiler. -/
+theorem StructuredRelationConformance.direct_plan_rejects_structured :
     CStructuredGenerated.relationWitnesses.all
+      (fun w => !w.directPlanAccepted) = true ∧
+    CStructuredGenerated.zipWitnesses.all
       (fun w => !w.directPlanAccepted) = true := by
+  constructor <;> native_decide
+
+/-- Public structured-backend gate combining typed lowering, descriptor shape,
+    execution semantics and the direct-plan rejection boundary. -/
+theorem CImplementationConformance.structured_runtime :
+    CStructuredGenerated.relationWitnesses.all relationWitnessConforms = true ∧
+    CStructuredGenerated.zipWitnesses.all zipWitnessConforms = true ∧
+    (CStructuredGenerated.relationWitnesses.all
+      (fun w => !w.directPlanAccepted) = true ∧
+     CStructuredGenerated.zipWitnesses.all
+      (fun w => !w.directPlanAccepted) = true) := by
   exact ⟨StructuredRelationConformance.generated_descriptor_matches,
-    StructuredRelationConformance.direct_plan_rejects_relation⟩
+    StructuredZipConformance.runtime_matches_lowered_model,
+    StructuredRelationConformance.direct_plan_rejects_structured⟩
 
 end CMeta
