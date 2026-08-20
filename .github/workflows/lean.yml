@@ -52,7 +52,8 @@ jobs:
             --target cmeta_plan_conformance_gen \
                      cmeta_structured_conformance_gen \
                      cmeta_structured_policy_conformance_gen \
-                     cmeta_optimizer_conformance_gen
+                     cmeta_optimizer_conformance_gen \
+                     cmeta_optimizer_gating_conformance_gen
 
       - name: Verify plan compiler conformance snapshot
         shell: bash
@@ -87,6 +88,15 @@ jobs:
             > /tmp/OptimizerGeneratedC.lean
           diff -u formal/CMeta/OptimizerGeneratedC.lean \
             /tmp/OptimizerGeneratedC.lean
+
+      - name: Verify optimizer gating conformance snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          build/formal-linux/bin/cmeta_optimizer_gating_conformance_gen \
+            > /tmp/OptimizerGatingGeneratedC.lean
+          diff -u formal/CMeta/OptimizerGatingGeneratedC.lean \
+            /tmp/OptimizerGatingGeneratedC.lean
 
       - name: Reject proof placeholders
         shell: bash
