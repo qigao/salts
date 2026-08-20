@@ -201,7 +201,8 @@ theorem cannot_target_incompatible {policy : OperatorPolicy}
   apply hbad
   calc
     bad = rule.sig := heq.symm
-    _ = s.node.signature := s.target_signature_safe wf rule hrule htarget
+    _ = s.node.signature :=
+      ResolvedStep.target_signature_safe wf s rule hrule htarget
 
 end ResolvedStep
 
