@@ -8,10 +8,15 @@ import CMeta.Execution
 `cflow_plan_eval_array`.  Each witness records the input logical type and
 values, the runtime result CType/count, and the returned values.
 
+`CPlanGenerated.differentialWitnesses` goes one step further: one surface Graph
+is executed through the general `cflow_eval_array` runtime and, without changing
+the surface program, through `cflow_plan_compile_surface` followed by
+`cflow_plan_eval_array`.
+
 The expected result below is not a second table of outputs: it is computed by
 `ExecProgram.run` using the same logical callbacks represented in the C
-witness.  The closed conformance theorem therefore differentially checks the
-real C direct-plan runtime against the already-proved Lean execution semantics.
+witnesses.  The closed conformance theorems therefore check both C backends
+against each other and against the already-proved Lean execution semantics.
 -/
 
 namespace CMeta
@@ -89,6 +94,26 @@ private def runtimeWitnessConforms
       w.output == expected.output
   | none => false
 
+private def differentialBackendsAgree
+    (w : CPlanGenerated.DifferentialWitness) : Bool :=
+  w.referenceOutputType == w.planOutputType &&
+  w.referenceCount == w.planCount &&
+  w.referenceOutput == w.planOutput
+
+private def differentialWitnessConforms
+    (w : CPlanGenerated.DifferentialWitness) : Bool :=
+  match runtimeModel w.name w.input with
+  | some expected =>
+      w.inputType == expected.inputType &&
+      w.referenceOutputType == expected.outputType &&
+      w.referenceCount == expected.output.length &&
+      w.referenceOutput == expected.output &&
+      w.planOutputType == expected.outputType &&
+      w.planCount == expected.output.length &&
+      w.planOutput == expected.output &&
+      differentialBackendsAgree w
+  | none => false
+
 /-- The executable runtime witness suite covers every direct execution opcode,
     TRANSFORM→MAP, an actual two-callback fused MAP, expansion, and the empty
     REDUCE edge case. -/
@@ -105,14 +130,46 @@ theorem CRuntimeConformance.matches_execution_model :
     CPlanGenerated.runtimeWitnesses.all runtimeWitnessConforms = true := by
   native_decide
 
+/-- The backend differential suite uses the same semantic coverage as the
+    direct runtime suite. -/
+theorem CBackendDifferential.coverage :
+    CPlanGenerated.differentialWitnesses.map (fun w => w.name) =
+      ["filter_i", "map_i_l", "transform_i_l", "fused_map_i_i_l",
+       "flat_map_i_l", "reduce_l", "reduce_l_empty"] := by
+  native_decide
+
+/-- Running one surface Graph through the general scheduler/runtime and through
+    the normalize/optimize/direct-plan backend yields identical logical CType,
+    cardinality and values for every differential witness. -/
+theorem CBackendDifferential.surface_and_plan_agree :
+    CPlanGenerated.differentialWitnesses.all differentialBackendsAgree = true := by
+  native_decide
+
+/-- Three-way conformance: both real C execution backends agree with each other
+    and with the result computed by the typed Lean `ExecProgram.run` model. -/
+theorem CBackendDifferential.surface_plan_and_model_agree :
+    CPlanGenerated.differentialWitnesses.all differentialWitnessConforms = true := by
+  native_decide
+
 /-- Public extension gate: the authoritative C type universe remains aligned
     and the real direct-plan runtime matches the typed execution model on the
-    generated differential suite.  Plan-compiler conformance remains exposed by
-    `CImplementationConformance.headers_and_plan_compiler`. -/
+    generated runtime suite. -/
 theorem CImplementationConformance.headers_and_runtime :
     CGenerated.builtinTypeTokens = ["B", "I", "L", "F", "D"] ∧
     CPlanGenerated.runtimeWitnesses.all runtimeWitnessConforms = true := by
   exact ⟨CImplementationConformance.headers_and_plan_compiler.1,
     CRuntimeConformance.matches_execution_model⟩
+
+/-- Strongest executable implementation gate currently modeled: the C header
+    universe is aligned, direct-plan execution matches the typed model, and the
+    general surface runtime agrees with the direct-plan backend and the same
+    formal semantics. -/
+theorem CImplementationConformance.headers_runtime_and_backend_differential :
+    CGenerated.builtinTypeTokens = ["B", "I", "L", "F", "D"] ∧
+    CPlanGenerated.runtimeWitnesses.all runtimeWitnessConforms = true ∧
+    CPlanGenerated.differentialWitnesses.all differentialWitnessConforms = true := by
+  exact ⟨CImplementationConformance.headers_and_runtime.1,
+    CImplementationConformance.headers_and_runtime.2,
+    CBackendDifferential.surface_plan_and_model_agree⟩
 
 end CMeta
