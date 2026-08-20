@@ -25,3 +25,10 @@ add_executable(cmeta_optimizer_conformance_gen EXCLUDE_FROM_ALL
 target_compile_features(cmeta_optimizer_conformance_gen PRIVATE c_std_11)
 target_link_libraries(cmeta_optimizer_conformance_gen PRIVATE TurboUtils::CFlow)
 set_target_properties(cmeta_optimizer_conformance_gen PROPERTIES FOLDER "formal")
+
+add_executable(cmeta_optimizer_gating_conformance_gen EXCLUDE_FROM_ALL
+  cmeta_optimizer_gating_conformance_gen.c)
+
+target_compile_features(cmeta_optimizer_gating_conformance_gen PRIVATE c_std_11)
+target_link_libraries(cmeta_optimizer_gating_conformance_gen PRIVATE TurboUtils::CFlow)
+set_target_properties(cmeta_optimizer_gating_conformance_gen PROPERTIES FOLDER "formal")
