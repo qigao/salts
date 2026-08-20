@@ -54,31 +54,31 @@ theorem erasure_signature (f : Lambda2 C A B R) :
 end Lambda2
 
 /-- Surface-level "anonymous" construction; names are irrelevant to semantics. -/
-def anonymous1 (capture : C.denote)
+def anonymous1 {C A R : CType} (capture : C.denote)
     (body : C.denote → A.denote → R.denote) : Lambda1 C A R :=
   ⟨capture, body⟩
 
-theorem anonymous1_beta (capture : C.denote)
+theorem anonymous1_beta {C A R : CType} (capture : C.denote)
     (body : C.denote → A.denote → R.denote) (x : A.denote) :
     (anonymous1 capture body).invoke x = body capture x := rfl
 
 /-- Partial application of the last argument, matching `cmeta_bind`. -/
-def bindLast (f : A.denote → B.denote → R.denote)
+def bindLast {A B R : CType} (f : A.denote → B.denote → R.denote)
     (bound : B.denote) : Callable1 A R :=
   ⟨fun a => f a bound⟩
 
-theorem bindLast_beta (f : A.denote → B.denote → R.denote)
+theorem bindLast_beta {A B R : CType} (f : A.denote → B.denote → R.denote)
     (bound : B.denote) (a : A.denote) :
     (bindLast f bound).run a = f a bound := rfl
 
 /-- Binding changes a binary semantic function into the exact unary ABI expected by CFlow. -/
-theorem bindLast_signature (f : A.denote → B.denote → R.denote)
+theorem bindLast_signature {A B R : CType} (f : A.denote → B.denote → R.denote)
     (bound : B.denote) :
     (erase1 (bindLast f bound)).sig = .unary A R := rfl
 
 /-- Capturing lambda and partial application are both ordinary closure formation. -/
-theorem lambda_bind_same_shape (f : A.denote → B.denote → R.denote)
-    (bound : B.denote) :
+theorem lambda_bind_same_shape {A B R : CType}
+    (f : A.denote → B.denote → R.denote) (bound : B.denote) :
     (bindLast f bound).run =
       (anonymous1 bound (fun cap a => f a cap)).asCallable.run := rfl
 
