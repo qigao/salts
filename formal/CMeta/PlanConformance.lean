@@ -76,9 +76,12 @@ private def decodeWitness
   let code ← decodeCode w.code
   pure { input, output, code }
 
+/-- Executable checker for one observed C compiler witness.  This is the
+    boolean form of `PlanWellTyped`, avoiding a Prop-level Decidable dependency
+    inside the snapshot decoder. -/
 private def witnessConforms (w : CPlanGenerated.PlanWitness) : Bool :=
   match decodeWitness w with
-  | some plan => decide (PlanWellTyped plan)
+  | some plan => checkPlan plan.input plan.code == some plan.output
   | none => false
 
 /-- The C witness suite deliberately exercises every direct-plan constructor
@@ -87,7 +90,7 @@ theorem CPlanCompilerConformance.coverage :
     CPlanGenerated.witnesses.map (fun w => w.name) =
       ["filter_i", "map_i_l", "transform_i_l", "fused_map_i_l_d",
        "flat_map_i_l", "reduce_l"] := by
-  decide
+  native_decide
 
 /-- Every descriptor sequence produced by the real C plan compiler witness
     suite decodes to a `PlanWellTyped` Lean plan.  In particular, this checks
@@ -95,19 +98,26 @@ theorem CPlanCompilerConformance.coverage :
     signature shape, and fused MAP callback order. -/
 theorem CPlanCompilerConformance.generated_plans_well_typed :
     CPlanGenerated.witnesses.all witnessConforms = true := by
-  decide
+  native_decide
+
+/-- A successfully decoded witness accepted by the boolean conformance checker
+    satisfies the propositional `PlanWellTyped` contract used by the rest of
+    the formal development. -/
+theorem CPlanCompilerConformance.witnessConforms_sound
+    (w : CPlanGenerated.PlanWitness) (plan : ErasedPlan)
+    (hdecode : decodeWitness w = some plan)
+    (hcheck : witnessConforms w = true) :
+    PlanWellTyped plan := by
+  simp [witnessConforms, hdecode, PlanWellTyped] at hcheck
+  exact hcheck
 
 /-- Compact conformance gate combining header-generation and real plan-compiler
     witnesses. -/
 theorem CImplementationConformance.headers_and_plan_compiler :
-    (CGenerated.builtinTypeTokens =
-      [.bool, .int, .long, .float, .double].map
-        (fun t => match t with
-          | .bool => "B" | .int => "I" | .long => "L"
-          | .float => "F" | .double => "D")) ∧
+    CGenerated.builtinTypeTokens = ["B", "I", "L", "F", "D"] ∧
     CPlanGenerated.witnesses.all witnessConforms = true := by
   constructor
-  · exact CHeaderConformance.type_universe
+  · native_decide
   · exact CPlanCompilerConformance.generated_plans_well_typed
 
 end CMeta
