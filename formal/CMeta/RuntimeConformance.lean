@@ -112,15 +112,14 @@ theorem CRuntimeConformance.matches_execution_model :
     CPlanGenerated.runtimeWitnesses.all runtimeWitnessConforms = true := by
   native_decide
 
-/-- Combined implementation gate: authoritative C headers, real plan compiler,
-    and real direct-plan runtime all satisfy their corresponding formal models
-    for the generated conformance suites. -/
-theorem CImplementationConformance.headers_plan_and_runtime :
+/-- Public extension gate: the authoritative C type universe remains aligned
+    and the real direct-plan runtime matches the typed execution model on the
+    generated differential suite.  Plan-compiler conformance remains exposed by
+    `CImplementationConformance.headers_and_plan_compiler`. -/
+theorem CImplementationConformance.headers_and_runtime :
     CGenerated.builtinTypeTokens = ["B", "I", "L", "F", "D"] ∧
-    CPlanGenerated.witnesses.all witnessConforms = true ∧
     CPlanGenerated.runtimeWitnesses.all runtimeWitnessConforms = true := by
   exact ⟨CImplementationConformance.headers_and_plan_compiler.1,
-    CImplementationConformance.headers_and_plan_compiler.2,
     CRuntimeConformance.matches_execution_model⟩
 
 end CMeta
