@@ -22,23 +22,25 @@ inductive TypedOp : CType → CType → Type where
 
 namespace TypedOp
 
-/-- Surface CFlow operator represented by this typed node. -/
-def operator {A R : CType} : TypedOp A R → Operator
-  | .filter _ => .filter
-  | .map _ _ => .map
-  | .transform _ _ => .transform
-  | .flatMap _ _ => .flatMap
-  | .reduce _ => .reduce
-  | .zip _ _ _ => .zip
+/-- Surface CFlow operator represented by this typed node.  The indices are
+    matched together with the node so constructors may refine them. -/
+def operator : {A R : CType} → TypedOp A R → Operator
+  | _, _, .filter _ => .filter
+  | _, _, .map _ _ => .map
+  | _, _, .transform _ _ => .transform
+  | _, _, .flatMap _ _ => .flatMap
+  | _, _, .reduce _ => .reduce
+  | _, _, .zip _ _ _ => .zip
 
-/-- Exact callable ABI required by a typed node. -/
-def signature {A R : CType} : TypedOp A R → Signature
-  | .filter t => .unary t .bool
-  | .map input output => .unary input output
-  | .transform input output => .unary input output
-  | .flatMap input output => .generator input output
-  | .reduce t => .binary t t t
-  | .zip left right output => .binary left right output
+/-- Exact callable ABI required by a typed node.  As with `operator`, matching
+    the indices explicitly enables dependent constructor refinement. -/
+def signature : {A R : CType} → TypedOp A R → Signature
+  | _, _, .filter t => .unary t .bool
+  | _, _, .map input output => .unary input output
+  | _, _, .transform input output => .unary input output
+  | _, _, .flatMap input output => .generator input output
+  | _, _, .reduce t => .binary t t t
+  | _, _, .zip left right output => .binary left right output
 
 end TypedOp
 
