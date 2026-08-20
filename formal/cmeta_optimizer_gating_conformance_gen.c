@@ -3,10 +3,12 @@
 #include <string.h>
 
 #include <cflow/adapters.h>
+#include <cflow/effect.h>
 #include <cflow/graph.h>
 #include <cflow/lower.h>
 #include <cflow/meta.h>
 #include <cflow/opt.h>
+#include <cflow/property.h>
 
 #define GATE_STABLE (CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL | CMETA_PROP_NO_ALIAS)
 
