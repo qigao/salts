@@ -18,6 +18,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # Normalize install prefix (remove trailing slashes)
 get_filename_component(CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}" ABSOLUTE)
+include(GNUInstallDirs)
 
 # Project description
 set(PROJECT_DESCRIPTION "common library for C/C++")
@@ -47,6 +48,18 @@ include(Sanitizers)
 include(CmakeUtils)
 
 find_package(Threads REQUIRED)
+
+# Minimal configuration used by the C→Lean conformance witness.  It deliberately
+# avoids unrelated package-manager/vendor dependencies while building the exact
+# production CMeta and CFlow library targets.
+option(TURBO_FORMAL_ONLY "Configure only CMeta/CFlow formal conformance targets" OFF)
+if(TURBO_FORMAL_ONLY)
+  add_subdirectory(cmeta)
+  add_subdirectory(cflow)
+  add_subdirectory(formal)
+  return()
+endif()
+
 find_package(PkgConfig REQUIRED)
 
 # Additional components
