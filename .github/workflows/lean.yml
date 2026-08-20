@@ -5,18 +5,20 @@ on:
     branches: [leanv4]
     paths:
       - "formal/**"
-      - "cmeta/include/cmeta/types.h"
-      - "cmeta/include/cmeta/signatures.h"
-      - "cflow/include/cflow/operators.h"
-      - "cflow/include/cflow/operator_policy.h"
+      - "cmeta/**"
+      - "cflow/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "presets/**"
       - ".github/workflows/lean.yml"
   pull_request:
     paths:
       - "formal/**"
-      - "cmeta/include/cmeta/types.h"
-      - "cmeta/include/cmeta/signatures.h"
-      - "cflow/include/cflow/operators.h"
-      - "cflow/include/cflow/operator_policy.h"
+      - "cmeta/**"
+      - "cflow/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "presets/**"
       - ".github/workflows/lean.yml"
   workflow_dispatch:
 
@@ -40,6 +42,22 @@ jobs:
             -o /tmp/cmeta_conformance_gen
           /tmp/cmeta_conformance_gen > /tmp/GeneratedC.lean
           diff -u formal/CMeta/GeneratedC.lean /tmp/GeneratedC.lean
+
+      - name: Build real CFlow plan conformance witness
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset formal-linux
+          cmake --build --preset build-formal-linux \
+            --target cmeta_plan_conformance_gen
+
+      - name: Verify plan compiler conformance snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          build/formal-linux/bin/cmeta_plan_conformance_gen \
+            > /tmp/PlanGeneratedC.lean
+          diff -u formal/CMeta/PlanGeneratedC.lean /tmp/PlanGeneratedC.lean
 
       - name: Reject proof placeholders
         shell: bash
