@@ -30,7 +30,7 @@ structure DispatchRule where
 def dispatch : List DispatchRule → Operator → Signature → Option Nat
   | [], _, _ => none
   | r :: rs, op, sig =>
-      if h : r.op = op ∧ r.sig = sig then some r.target
+      if r.op = op ∧ r.sig = sig then some r.target
       else dispatch rs op sig
 
 /-- Every successful dispatch comes from an actual matching finite rule. -/
