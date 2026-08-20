@@ -138,7 +138,7 @@ static int emit_fold_witness(void) {
     puts("    coordination := \"ALL\", result := \"FOLD\", branchCount := 2,");
     printf("    reducer := \"%s\", input := ", reducer_sig);
     if (!emit_integral_values(&cmeta_type_int, inputs, 3u)) goto done;
-    printf(", count := %zu, output := ", result.count);
+    printf(", count := %zu,\n    output := ", result.count);
     if (!emit_integral_values(result.type, result.data, result.count)) goto done;
     printf(", directPlanAccepted := false } ::\n");
     ok = 1;
