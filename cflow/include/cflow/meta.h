@@ -52,7 +52,7 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
     typed_raw(op, CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract), ret, name, params)
 
 /* CMeta owns the global typed(kind, ...) router. Uppercase registered generic
- * kinds are handled by CMeta/Turbo; lowercase CFlow operator names arrive here
+ * kinds are handled by CMeta/Container; lowercase CFlow operator names arrive here
  * through the fallback hook. */
 #undef CMETA_TYPED_FALLBACK
 #define CMETA_TYPED_FALLBACK(op, ...) CFLOW_TYPED(op, __VA_ARGS__)
