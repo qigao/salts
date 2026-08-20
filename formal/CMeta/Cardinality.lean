@@ -30,7 +30,7 @@ private theorem filter_length_le {α : Type} (pred : α → Bool) (xs : List α)
           exact Nat.le_trans ih (Nat.le_succ _)
       | true =>
           simp [h]
-          exact Nat.succ_le_succ ih
+          exact ih
 
 private theorem flatMap_length_sum {α β : Type} (emit : α → List β)
     (xs : List α) :
