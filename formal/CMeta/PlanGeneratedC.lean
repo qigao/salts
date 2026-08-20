@@ -27,6 +27,18 @@ structure RuntimeWitness where
   output : List Int
   deriving Repr, DecidableEq
 
+structure DifferentialWitness where
+  name : String
+  inputType : String
+  input : List Int
+  referenceOutputType : String
+  referenceCount : Nat
+  referenceOutput : List Int
+  planOutputType : String
+  planCount : Nat
+  planOutput : List Int
+  deriving Repr, DecidableEq
+
 def witnesses : List PlanWitness :=
   { name := "filter_i", input := "I", output := "I", code := [
     { opcode := "FILTER", input := "I", output := "I", callbacks := ["U_I_B"] }
@@ -56,6 +68,16 @@ def runtimeWitnesses : List RuntimeWitness :=
   { name := "flat_map_i_l", inputType := "I", input := [-2, 0, 3], outputType := "L", count := 6, output := [-2, 8, 0, 10, 3, 13] } ::
   { name := "reduce_l", inputType := "L", input := [2, 3, 5], outputType := "L", count := 1, output := [10] } ::
   { name := "reduce_l_empty", inputType := "L", input := [], outputType := "L", count := 0, output := [] } ::
+  []
+
+def differentialWitnesses : List DifferentialWitness :=
+  { name := "filter_i", inputType := "I", input := [-2, 0, 3], referenceOutputType := "I", referenceCount := 2, referenceOutput := [-2, 3], planOutputType := "I", planCount := 2, planOutput := [-2, 3] } ::
+  { name := "map_i_l", inputType := "I", input := [-2, 0, 3], referenceOutputType := "L", referenceCount := 3, referenceOutput := [-2, 0, 3], planOutputType := "L", planCount := 3, planOutput := [-2, 0, 3] } ::
+  { name := "transform_i_l", inputType := "I", input := [-2, 0, 3], referenceOutputType := "L", referenceCount := 3, referenceOutput := [-2, 0, 3], planOutputType := "L", planCount := 3, planOutput := [-2, 0, 3] } ::
+  { name := "fused_map_i_i_l", inputType := "I", input := [-2, 0, 3], referenceOutputType := "L", referenceCount := 3, referenceOutput := [-2, 2, 8], planOutputType := "L", planCount := 3, planOutput := [-2, 2, 8] } ::
+  { name := "flat_map_i_l", inputType := "I", input := [-2, 0, 3], referenceOutputType := "L", referenceCount := 6, referenceOutput := [-2, 8, 0, 10, 3, 13], planOutputType := "L", planCount := 6, planOutput := [-2, 8, 0, 10, 3, 13] } ::
+  { name := "reduce_l", inputType := "L", input := [2, 3, 5], referenceOutputType := "L", referenceCount := 1, referenceOutput := [10], planOutputType := "L", planCount := 1, planOutput := [10] } ::
+  { name := "reduce_l_empty", inputType := "L", input := [], referenceOutputType := "L", referenceCount := 0, referenceOutput := [], planOutputType := "L", planCount := 0, planOutput := [] } ::
   []
 
 end CMeta.CPlanGenerated
