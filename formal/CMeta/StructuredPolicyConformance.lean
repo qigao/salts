@@ -47,16 +47,6 @@ def run {A R : CType} (rel : LatestFold2Exec A R)
     (xs : ValueVec A) : ValueVec R :=
   xs.flatMap rel.runOne
 
-/-- The concrete two-value/two-branch LATEST witness emits three combinations
-    per source value. -/
-theorem run_length {A R : CType} (rel : LatestFold2Exec A R)
-    (xs : ValueVec A) :
-    (rel.run xs).length = xs.length * 3 := by
-  induction xs with
-  | nil => rfl
-  | cons x xs ih =>
-      simp [run, runOne, ih, Nat.add_mul]
-
 end LatestFold2Exec
 
 /-- Value semantics shared by IGNORE and TRY_NEXT witnesses: the first branch
