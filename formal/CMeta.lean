@@ -15,3 +15,5 @@ import CMeta.Conformance
 import CMeta.PlanGeneratedC
 import CMeta.PlanConformance
 import CMeta.RuntimeConformance
+import CMeta.StructuredGeneratedC
+import CMeta.StructuredConformance
