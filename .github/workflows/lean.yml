@@ -5,10 +5,18 @@ on:
     branches: [leanv4]
     paths:
       - "formal/**"
+      - "cmeta/include/cmeta/types.h"
+      - "cmeta/include/cmeta/signatures.h"
+      - "cflow/include/cflow/operators.h"
+      - "cflow/include/cflow/operator_policy.h"
       - ".github/workflows/lean.yml"
   pull_request:
     paths:
       - "formal/**"
+      - "cmeta/include/cmeta/types.h"
+      - "cmeta/include/cmeta/signatures.h"
+      - "cflow/include/cflow/operators.h"
+      - "cflow/include/cflow/operator_policy.h"
       - ".github/workflows/lean.yml"
   workflow_dispatch:
 
@@ -21,6 +29,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify C header conformance snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -Wall -Wextra -Werror \
+            -I cmeta/include -I cflow/include \
+            formal/cmeta_conformance_gen.c \
+            -o /tmp/cmeta_conformance_gen
+          /tmp/cmeta_conformance_gen > /tmp/GeneratedC.lean
+          diff -u formal/CMeta/GeneratedC.lean /tmp/GeneratedC.lean
 
       - name: Reject proof placeholders
         shell: bash
