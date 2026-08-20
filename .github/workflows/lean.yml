@@ -43,13 +43,13 @@ jobs:
           /tmp/cmeta_conformance_gen > /tmp/GeneratedC.lean
           diff -u formal/CMeta/GeneratedC.lean /tmp/GeneratedC.lean
 
-      - name: Build real CFlow plan conformance witness
+      - name: Build real CFlow conformance witnesses
         shell: bash
         run: |
           set -euo pipefail
           cmake --preset formal-linux
           cmake --build --preset build-formal-linux \
-            --target cmeta_plan_conformance_gen
+            --target cmeta_plan_conformance_gen cmeta_structured_conformance_gen
 
       - name: Verify plan compiler conformance snapshot
         shell: bash
@@ -58,6 +58,14 @@ jobs:
           build/formal-linux/bin/cmeta_plan_conformance_gen \
             > /tmp/PlanGeneratedC.lean
           diff -u formal/CMeta/PlanGeneratedC.lean /tmp/PlanGeneratedC.lean
+
+      - name: Verify structured relation conformance snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          build/formal-linux/bin/cmeta_structured_conformance_gen \
+            > /tmp/StructuredGeneratedC.lean
+          diff -u formal/CMeta/StructuredGeneratedC.lean /tmp/StructuredGeneratedC.lean
 
       - name: Reject proof placeholders
         shell: bash
