@@ -1,0 +1,40 @@
+name: Lean proofs
+
+on:
+  push:
+    branches: [leanv4]
+    paths:
+      - "formal/**"
+      - ".github/workflows/lean.yml"
+  pull_request:
+    paths:
+      - "formal/**"
+      - ".github/workflows/lean.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    name: Lean 4 / kernel check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject proof placeholders
+        shell: bash
+        run: |
+          if grep -R -nE '^[[:space:]]*(axiom|constant)[[:space:]]|\b(sorry|admit)\b' \
+              formal/CMeta.lean formal/CMeta/*.lean; then
+            echo "Formal proof files must not contain axioms, constants, sorry, or admit."
+            exit 1
+          fi
+      - name: Build and kernel-check Lean proofs
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal
+          build: true
+          build-args: "--wfail"
+          test: false
+          lint: false
+          use-mathlib-cache: false

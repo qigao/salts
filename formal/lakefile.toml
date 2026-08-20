@@ -1,0 +1,6 @@
+name = "cmeta_formal"
+version = "0.1.0"
+defaultTargets = ["CMeta"]
+
+[[lean_lib]]
+name = "CMeta"
