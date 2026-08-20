@@ -33,8 +33,10 @@ jobs:
         uses: leanprover/lean-action@v1
         with:
           lake-package-directory: formal
+          auto-config: false
           build: true
           build-args: "--wfail"
           test: false
           lint: false
+          use-github-cache: false
           use-mathlib-cache: false
