@@ -19,3 +19,5 @@ import CMeta.StructuredGeneratedC
 import CMeta.StructuredConformance
 import CMeta.StructuredPolicyGeneratedC
 import CMeta.StructuredPolicyConformance
+import CMeta.OptimizerGeneratedC
+import CMeta.OptimizerConformance
