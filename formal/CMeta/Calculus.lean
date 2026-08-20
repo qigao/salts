@@ -28,7 +28,7 @@ def product (xs : List α) (ys : List β) : List (α × β) :=
 theorem product_length (xs : List α) (ys : List β) :
     (product xs ys).length = xs.length * ys.length := by
   induction xs with
-  | nil => rfl
+  | nil => simp [product]
   | cons x xs ih =>
       simp [product, ih, Nat.succ_mul, Nat.add_comm]
 
