@@ -66,7 +66,7 @@ private theorem checkBranchTail_typed {A R : CType}
     their shared output type. -/
 theorem TypedBranches.check_erase {A R : CType} (b : TypedBranches A R) :
     checkBranches A b.erase = some R := by
-  unfold TypedBranches.erase checkBranches
+  simp only [TypedBranches.erase, checkBranches]
   rw [Pipeline.check_steps b.first]
   exact checkBranchTail_typed b.rest
 
