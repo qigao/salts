@@ -23,3 +23,5 @@ import CMeta.OptimizerGeneratedC
 import CMeta.OptimizerConformance
 import CMeta.OptimizerGatingGeneratedC
 import CMeta.OptimizerGatingConformance
+import CMeta.OptimizerTopologyGeneratedC
+import CMeta.OptimizerTopologyConformance
