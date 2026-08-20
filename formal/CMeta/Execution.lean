@@ -113,7 +113,7 @@ theorem runRuntimeInst_output (inst : RuntimeInst) (values out : PackedVec)
     out.1 = inst.output := by
   unfold runRuntimeInst at h
   split at h
-  · simp_all
+  · exact (congrArg (fun packed : PackedVec => packed.1) h).symm
   · simp_all
 
 /-- A typed instruction cannot fail its own runtime input-type guard. -/
@@ -163,7 +163,7 @@ theorem ExecProgram.runtime_execution_exact {A R : CType}
     (program : ExecProgram A R) (values : ValueVec A) :
     runRuntimePlan program.runtimeCode ⟨A, values⟩ =
       some ⟨R, program.run values⟩ := by
-  induction program generalizing values with
+  induction program with
   | done T => rfl
   | cons inst rest ih =>
       simp [ExecProgram.runtimeCode, runRuntimePlan,
