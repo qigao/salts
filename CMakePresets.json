@@ -50,6 +50,27 @@
                 "release-win-clang-ninja",
                 "pkg-vcpkg"
             ]
+        },
+        {
+            "name": "formal-linux",
+            "displayName": "Formal Conformance (Linux)",
+            "inherits": "base-release-linux",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/formal-linux",
+            "cacheVariables": {
+                "TURBO_FORMAL_ONLY": true,
+                "ENABLE_TESTS": false,
+                "BUILD_TESTS": false,
+                "BUILD_EXAMPLES": false,
+                "BUILD_BENCHMARKS": false
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "build-formal-linux",
+            "displayName": "Build Formal Conformance (Linux)",
+            "configurePreset": "formal-linux"
         }
     ]
 }
