@@ -113,7 +113,8 @@ theorem runRuntimeInst_output (inst : RuntimeInst) (values out : PackedVec)
     out.1 = inst.output := by
   unfold runRuntimeInst at h
   split at h
-  · exact (congrArg (fun packed : PackedVec => packed.1) h).symm
+  · have hp := Option.some.inj h
+    exact (congrArg (fun packed : PackedVec => packed.1) hp).symm
   · simp_all
 
 /-- A typed instruction cannot fail its own runtime input-type guard. -/
