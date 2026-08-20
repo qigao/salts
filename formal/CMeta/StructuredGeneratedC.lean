@@ -57,23 +57,17 @@ def relationWitnesses : List RelationWitness :=
   []
 
 def coordinationWitnesses : List CoordinationWitness :=
-  { name := "relation_any_select_i_l",
-    inputType := "I", outputType := "L",
+  { name := "relation_any_select_i_l", inputType := "I", outputType := "L",
     coordination := "ANY", completion := "COORDINATOR", result := "SELECT",
-    error := "FAIL_FAST", branchCount := 2, reducer := "",
-    input := [-2, 0, 3], count := 3,
+    error := "FAIL_FAST", branchCount := 2, reducer := "", input := [-2, 0, 3], count := 3,
     output := [-2, 0, 3], directPlanAccepted := false } ::
-  { name := "relation_sequence_select_i_l",
-    inputType := "I", outputType := "L",
+  { name := "relation_sequence_select_i_l", inputType := "I", outputType := "L",
     coordination := "SEQUENCE", completion := "COORDINATOR", result := "SELECT",
-    error := "FAIL_FAST", branchCount := 2, reducer := "",
-    input := [-2, 0, 3], count := 6,
+    error := "FAIL_FAST", branchCount := 2, reducer := "", input := [-2, 0, 3], count := 6,
     output := [-2, -20, 0, 0, 3, 30], directPlanAccepted := false } ::
-  { name := "relation_all_done_fold_i_l",
-    inputType := "I", outputType := "L",
+  { name := "relation_all_done_fold_i_l", inputType := "I", outputType := "L",
     coordination := "ALL", completion := "ALL_DONE", result := "FOLD",
-    error := "FAIL_FAST", branchCount := 2, reducer := "B_L_L_L",
-    input := [-2, 0, 3], count := 3,
+    error := "FAIL_FAST", branchCount := 2, reducer := "B_L_L_L", input := [-2, 0, 3], count := 3,
     output := [79, 101, 134], directPlanAccepted := false } ::
   []
 
