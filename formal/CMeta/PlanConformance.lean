@@ -108,7 +108,7 @@ theorem CPlanCompilerConformance.witnessConforms_sound
     (hdecode : decodeWitness w = some plan)
     (hcheck : witnessConforms w = true) :
     PlanWellTyped plan := by
-  simp [witnessConforms, hdecode, PlanWellTyped] at hcheck
+  simp [witnessConforms, hdecode] at hcheck
   exact hcheck
 
 /-- Compact conformance gate combining header-generation and real plan-compiler
