@@ -30,7 +30,7 @@ theorem product_length (xs : List α) (ys : List β) :
   induction xs with
   | nil => rfl
   | cons x xs ih =>
-      simp [product, ih, Nat.succ_mul]
+      simp [product, ih, Nat.succ_mul, Nat.add_comm]
 
 /-- A small typed algebra sufficient for the finite CMeta generators studied here. -/
 inductive CoreExpr : Type u → Type (u + 1) where
@@ -116,7 +116,8 @@ theorem replay_zip (left : α → β) (right : α → γ) (rows : List α) :
       have tail : List.zip (List.map left xs) (List.map right xs) =
           List.map (fun y => (left y, right y)) xs := by
         simpa [replay] using ih
-      simp only [replay, List.map_cons, List.zip_cons_cons]
+      show (left x, right x) :: List.zip (List.map left xs) (List.map right xs) =
+          (left x, right x) :: List.map (fun y => (left y, right y)) xs
       exact congrArg (fun zs => (left x, right x) :: zs) tail
 
 end CMeta
