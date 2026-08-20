@@ -95,7 +95,7 @@ An object initialized in one translation unit may store a descriptor pointer emi
 
 ## Typed container kinds
 
-Current Turbo integration covers:
+Current Container integration covers:
 
 ```text
 Vec        Deque      List

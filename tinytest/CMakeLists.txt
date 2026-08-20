@@ -15,8 +15,11 @@ target_include_directories(
 
 install(TARGETS tinytest EXPORT TurboUtilsTargets)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/tinytest.h
+               ${CMAKE_CURRENT_SOURCE_DIR}/tinytest_impl.h
+               ${CMAKE_CURRENT_SOURCE_DIR}/tinytest_meta.h
                ${CMAKE_CURRENT_SOURCE_DIR}/tinytest.hpp
                ${CMAKE_CURRENT_SOURCE_DIR}/tinymock.h
+               ${CMAKE_CURRENT_SOURCE_DIR}/tinymock_impl.h
         DESTINATION include)
 
 # Examples live in examples/ and are plain executables rather than CTest cases.

@@ -1,0 +1,188 @@
+#include <container/vec.h>
+
+#include <stdlib.h>
+#include <string.h>
+
+#define CONTAINER_VEC_MIN_CAPACITY 8U
+
+static int container_vec_valid(const container_vec_t *vec) {
+  return vec != NULL && vec->elem_size > 0;
+}
+
+static int container_vec_grow_to(container_vec_t *vec, size_t min_capacity) {
+  size_t new_capacity;
+  void *new_data;
+
+  if (!container_vec_valid(vec)) return TURBO_EINVAL;
+  if (min_capacity <= vec->capacity) return TURBO_OK;
+  if (vec->elem_size != 0 && min_capacity > SIZE_MAX / vec->elem_size) return TURBO_ENOMEM;
+
+  new_capacity = vec->capacity ? vec->capacity : CONTAINER_VEC_MIN_CAPACITY;
+  while (new_capacity < min_capacity) {
+    if (new_capacity > SIZE_MAX / 2U) {
+      new_capacity = min_capacity;
+      break;
+    }
+    new_capacity *= 2U;
+  }
+  if (new_capacity > SIZE_MAX / vec->elem_size) return TURBO_ENOMEM;
+
+  new_data = realloc(vec->data, new_capacity * vec->elem_size);
+  if (!new_data) return TURBO_ENOMEM;
+  vec->data = new_data;
+  vec->capacity = new_capacity;
+  return TURBO_OK;
+}
+
+int container_vec_init(container_vec_t *vec, size_t elem_size) {
+  if (!vec || elem_size == 0) return TURBO_EINVAL;
+  memset(vec, 0, sizeof(*vec));
+  vec->elem_size = elem_size;
+  return TURBO_OK;
+}
+
+int container_vec_from_array(container_vec_t *vec, const void *elements, size_t count,
+                         size_t elem_size) {
+  int rc;
+
+  if (!vec || elem_size == 0 || (count > 0 && !elements)) return TURBO_EINVAL;
+  rc = container_vec_init(vec, elem_size);
+  if (rc != TURBO_OK) return rc;
+  rc = container_vec_reserve(vec, count);
+  if (rc != TURBO_OK) {
+    container_vec_destroy(vec);
+    return rc;
+  }
+  if (count > 0) memcpy(vec->data, elements, count * elem_size);
+  vec->size = count;
+  return TURBO_OK;
+}
+
+void container_vec_destroy(container_vec_t *vec) {
+  if (!vec) return;
+  free(vec->data);
+  memset(vec, 0, sizeof(*vec));
+}
+
+void container_vec_clear(container_vec_t *vec) {
+  if (!vec) return;
+  vec->size = 0;
+}
+
+int container_vec_reserve(container_vec_t *vec, size_t min_capacity) {
+  return container_vec_grow_to(vec, min_capacity);
+}
+
+int container_vec_resize(container_vec_t *vec, size_t new_size) {
+  int rc;
+  size_t old_size;
+
+  if (!container_vec_valid(vec)) return TURBO_EINVAL;
+  rc = container_vec_grow_to(vec, new_size);
+  if (rc != TURBO_OK) return rc;
+  old_size = vec->size;
+  if (new_size > old_size) {
+    memset((unsigned char *)vec->data + old_size * vec->elem_size, 0,
+           (new_size - old_size) * vec->elem_size);
+  }
+  vec->size = new_size;
+  return TURBO_OK;
+}
+
+int container_vec_push(container_vec_t *vec, const void *elem) {
+  int rc;
+
+  if (!container_vec_valid(vec) || !elem) return TURBO_EINVAL;
+  if (vec->size == SIZE_MAX) return TURBO_ENOMEM;
+  rc = container_vec_grow_to(vec, vec->size + 1U);
+  if (rc != TURBO_OK) return rc;
+  memcpy((unsigned char *)vec->data + vec->size * vec->elem_size, elem, vec->elem_size);
+  vec->size += 1U;
+  return TURBO_OK;
+}
+
+int container_vec_pop(container_vec_t *vec, void *out_elem) {
+  if (!container_vec_valid(vec)) return TURBO_EINVAL;
+  if (vec->size == 0) return TURBO_ENOENT;
+  vec->size -= 1U;
+  if (out_elem) {
+    memcpy(out_elem, (unsigned char *)vec->data + vec->size * vec->elem_size, vec->elem_size);
+  }
+  return TURBO_OK;
+}
+
+int container_vec_insert(container_vec_t *vec, size_t index, const void *elem) {
+  int rc;
+  unsigned char *base;
+
+  if (!container_vec_valid(vec) || !elem || index > vec->size) return TURBO_EINVAL;
+  if (vec->size == SIZE_MAX) return TURBO_ENOMEM;
+  rc = container_vec_grow_to(vec, vec->size + 1U);
+  if (rc != TURBO_OK) return rc;
+  base = (unsigned char *)vec->data;
+  memmove(base + (index + 1U) * vec->elem_size, base + index * vec->elem_size,
+          (vec->size - index) * vec->elem_size);
+  memcpy(base + index * vec->elem_size, elem, vec->elem_size);
+  vec->size += 1U;
+  return TURBO_OK;
+}
+
+int container_vec_erase(container_vec_t *vec, size_t index, void *out_elem) {
+  unsigned char *base;
+
+  if (!container_vec_valid(vec) || index >= vec->size) return TURBO_EINVAL;
+  base = (unsigned char *)vec->data;
+  if (out_elem) memcpy(out_elem, base + index * vec->elem_size, vec->elem_size);
+  memmove(base + index * vec->elem_size, base + (index + 1U) * vec->elem_size,
+          (vec->size - index - 1U) * vec->elem_size);
+  vec->size -= 1U;
+  return TURBO_OK;
+}
+
+int container_vec_swap_remove(container_vec_t *vec, size_t index, void *out_elem) {
+  unsigned char *base;
+
+  if (!container_vec_valid(vec) || index >= vec->size) return TURBO_EINVAL;
+  base = (unsigned char *)vec->data;
+  if (out_elem) memcpy(out_elem, base + index * vec->elem_size, vec->elem_size);
+  if (index != vec->size - 1U) {
+    memcpy(base + index * vec->elem_size, base + (vec->size - 1U) * vec->elem_size,
+           vec->elem_size);
+  }
+  vec->size -= 1U;
+  return TURBO_OK;
+}
+
+void *container_vec_at(container_vec_t *vec, size_t index) {
+  if (!container_vec_valid(vec) || index >= vec->size) return NULL;
+  return (unsigned char *)vec->data + index * vec->elem_size;
+}
+
+const void *container_vec_at_const(const container_vec_t *vec, size_t index) {
+  if (!container_vec_valid(vec) || index >= vec->size) return NULL;
+  return (const unsigned char *)vec->data + index * vec->elem_size;
+}
+
+void *container_vec_data(container_vec_t *vec) {
+  if (!vec) return NULL;
+  return vec->data;
+}
+
+const void *container_vec_data_const(const container_vec_t *vec) {
+  if (!vec) return NULL;
+  return vec->data;
+}
+
+size_t container_vec_size(const container_vec_t *vec) {
+  if (!vec) return 0;
+  return vec->size;
+}
+
+size_t container_vec_capacity(const container_vec_t *vec) {
+  if (!vec) return 0;
+  return vec->capacity;
+}
+
+bool container_vec_empty(const container_vec_t *vec) {
+  return vec == NULL || vec->size == 0;
+}
