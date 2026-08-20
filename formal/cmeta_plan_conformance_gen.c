@@ -162,76 +162,78 @@ static int emit_integral_values(const cmeta_type_desc *type,
     return 1;
 }
 
-static int compile_filter(cflow_plan *plan) {
+typedef int (*build_witness_fn)(cflow_graph *graph);
+
+static int build_filter(cflow_graph *graph) {
+    cflow_graph_init(graph, &cmeta_type_int);
+    return cflow_graph_filter(graph, conf_keep_i.fn);
+}
+
+static int build_map(cflow_graph *graph) {
+    cflow_graph_init(graph, &cmeta_type_int);
+    return cflow_graph_map(graph, conf_map_i_l.fn);
+}
+
+static int build_transform(cflow_graph *graph) {
+    cflow_graph_init(graph, &cmeta_type_int);
+    return cflow_graph_transform(graph, conf_transform_i_l.fn);
+}
+
+static int build_fused_map(cflow_graph *graph) {
+    cflow_graph_init(graph, &cmeta_type_int);
+    return cflow_graph_map(graph, conf_map_i_l.fn) &&
+           cflow_graph_map(graph, conf_map_l_d.fn);
+}
+
+static int build_fused_runtime_map(cflow_graph *graph) {
+    cflow_graph_init(graph, &cmeta_type_int);
+    return cflow_graph_map(graph, conf_map_i_i_plus_one.fn) &&
+           cflow_graph_map(graph, conf_map_i_l_twice.fn);
+}
+
+static int build_flat_map(cflow_graph *graph) {
+    cflow_graph_init(graph, &cmeta_type_int);
+    return cflow_graph_flatMap(graph, conf_flat_i_l.fn);
+}
+
+static int build_reduce(cflow_graph *graph) {
+    cflow_graph_init(graph, &cmeta_type_long);
+    return cflow_graph_reduce(graph, conf_reduce_l.fn);
+}
+
+static int compile_from_builder(cflow_plan *plan, build_witness_fn build) {
     cflow_graph graph = {0};
-    int ok;
-    cflow_graph_init(&graph, &cmeta_type_int);
-    ok = cflow_graph_filter(&graph, conf_keep_i.fn) &&
-         cflow_plan_compile_surface(plan, &graph, NULL);
+    int ok = build(&graph) && cflow_plan_compile_surface(plan, &graph, NULL);
     cflow_graph_destroy(&graph);
     return ok;
+}
+
+static int compile_filter(cflow_plan *plan) {
+    return compile_from_builder(plan, build_filter);
 }
 
 static int compile_map(cflow_plan *plan) {
-    cflow_graph graph = {0};
-    int ok;
-    cflow_graph_init(&graph, &cmeta_type_int);
-    ok = cflow_graph_map(&graph, conf_map_i_l.fn) &&
-         cflow_plan_compile_surface(plan, &graph, NULL);
-    cflow_graph_destroy(&graph);
-    return ok;
+    return compile_from_builder(plan, build_map);
 }
 
 static int compile_transform(cflow_plan *plan) {
-    cflow_graph graph = {0};
-    int ok;
-    cflow_graph_init(&graph, &cmeta_type_int);
-    ok = cflow_graph_transform(&graph, conf_transform_i_l.fn) &&
-         cflow_plan_compile_surface(plan, &graph, NULL);
-    cflow_graph_destroy(&graph);
-    return ok;
+    return compile_from_builder(plan, build_transform);
 }
 
 static int compile_fused_map(cflow_plan *plan) {
-    cflow_graph graph = {0};
-    int ok;
-    cflow_graph_init(&graph, &cmeta_type_int);
-    ok = cflow_graph_map(&graph, conf_map_i_l.fn) &&
-         cflow_graph_map(&graph, conf_map_l_d.fn) &&
-         cflow_plan_compile_surface(plan, &graph, NULL);
-    cflow_graph_destroy(&graph);
-    return ok;
+    return compile_from_builder(plan, build_fused_map);
 }
 
 static int compile_fused_runtime_map(cflow_plan *plan) {
-    cflow_graph graph = {0};
-    int ok;
-    cflow_graph_init(&graph, &cmeta_type_int);
-    ok = cflow_graph_map(&graph, conf_map_i_i_plus_one.fn) &&
-         cflow_graph_map(&graph, conf_map_i_l_twice.fn) &&
-         cflow_plan_compile_surface(plan, &graph, NULL);
-    cflow_graph_destroy(&graph);
-    return ok;
+    return compile_from_builder(plan, build_fused_runtime_map);
 }
 
 static int compile_flat_map(cflow_plan *plan) {
-    cflow_graph graph = {0};
-    int ok;
-    cflow_graph_init(&graph, &cmeta_type_int);
-    ok = cflow_graph_flatMap(&graph, conf_flat_i_l.fn) &&
-         cflow_plan_compile_surface(plan, &graph, NULL);
-    cflow_graph_destroy(&graph);
-    return ok;
+    return compile_from_builder(plan, build_flat_map);
 }
 
 static int compile_reduce(cflow_plan *plan) {
-    cflow_graph graph = {0};
-    int ok;
-    cflow_graph_init(&graph, &cmeta_type_long);
-    ok = cflow_graph_reduce(&graph, conf_reduce_l.fn) &&
-         cflow_plan_compile_surface(plan, &graph, NULL);
-    cflow_graph_destroy(&graph);
-    return ok;
+    return compile_from_builder(plan, build_reduce);
 }
 
 typedef int (*compile_witness_fn)(cflow_plan *plan);
@@ -306,6 +308,87 @@ static int execute_and_emit(const char *name,
     return 1;
 }
 
+static int differential_and_emit(const char *name,
+                                 build_witness_fn build,
+                                 const cmeta_type_desc *input_type,
+                                 const void *inputs,
+                                 size_t input_count) {
+    cflow_graph graph = {0};
+    cflow_plan plan = {0};
+    cflow_result reference = {0};
+    cflow_result direct = {0};
+    const char *input_token;
+    const char *reference_token;
+    const char *direct_token;
+    int ok = build(&graph);
+
+    if (!ok) {
+        fprintf(stderr, "failed to build differential witness %s\n", name);
+        cflow_graph_destroy(&graph);
+        return 0;
+    }
+    if (!cmeta_type_equal(cflow_graph_source_type(&graph), input_type)) {
+        fprintf(stderr, "differential witness %s has unexpected input type\n", name);
+        cflow_graph_destroy(&graph);
+        return 0;
+    }
+    if (!cflow_eval_array(&graph, inputs, input_count, &reference)) {
+        fprintf(stderr, "reference runtime failed for differential witness %s\n", name);
+        cflow_graph_destroy(&graph);
+        return 0;
+    }
+    if (!cflow_plan_compile_surface(&plan, &graph, NULL)) {
+        fprintf(stderr, "plan compile failed for differential witness %s: %s\n",
+                name, plan.error ? plan.error : "unknown error");
+        cflow_result_destroy(&reference);
+        cflow_graph_destroy(&graph);
+        cflow_plan_destroy(&plan);
+        return 0;
+    }
+    if (!cflow_plan_eval_array(&plan, inputs, input_count, &direct)) {
+        fprintf(stderr, "plan runtime failed for differential witness %s\n", name);
+        cflow_result_destroy(&reference);
+        cflow_graph_destroy(&graph);
+        cflow_plan_destroy(&plan);
+        return 0;
+    }
+
+    input_token = type_token(input_type);
+    reference_token = type_token(reference.type);
+    direct_token = type_token(direct.type);
+    if (!input_token || !reference_token || !direct_token) {
+        cflow_result_destroy(&direct);
+        cflow_result_destroy(&reference);
+        cflow_graph_destroy(&graph);
+        cflow_plan_destroy(&plan);
+        return 0;
+    }
+
+    printf("  { name := \"%s\", inputType := \"%s\", input := ",
+           name, input_token);
+    if (!emit_integral_values(input_type, inputs, input_count)) goto emit_fail;
+    printf(", referenceOutputType := \"%s\", referenceCount := %zu, referenceOutput := ",
+           reference_token, reference.count);
+    if (!emit_integral_values(reference.type, reference.data, reference.count)) goto emit_fail;
+    printf(", planOutputType := \"%s\", planCount := %zu, planOutput := ",
+           direct_token, direct.count);
+    if (!emit_integral_values(direct.type, direct.data, direct.count)) goto emit_fail;
+    printf(" } ::\n");
+
+    cflow_result_destroy(&direct);
+    cflow_result_destroy(&reference);
+    cflow_graph_destroy(&graph);
+    cflow_plan_destroy(&plan);
+    return 1;
+
+emit_fail:
+    cflow_result_destroy(&direct);
+    cflow_result_destroy(&reference);
+    cflow_graph_destroy(&graph);
+    cflow_plan_destroy(&plan);
+    return 0;
+}
+
 int main(void) {
     static const int int_inputs[] = { -2, 0, 3 };
     static const long reduce_inputs[] = { 2L, 3L, 5L };
@@ -339,6 +422,18 @@ int main(void) {
     puts("  output : List Int");
     puts("  deriving Repr, DecidableEq");
     puts("");
+    puts("structure DifferentialWitness where");
+    puts("  name : String");
+    puts("  inputType : String");
+    puts("  input : List Int");
+    puts("  referenceOutputType : String");
+    puts("  referenceCount : Nat");
+    puts("  referenceOutput : List Int");
+    puts("  planOutputType : String");
+    puts("  planCount : Nat");
+    puts("  planOutput : List Int");
+    puts("  deriving Repr, DecidableEq");
+    puts("");
     puts("def witnesses : List PlanWitness :=");
 
     if (!compile_and_emit("filter_i", compile_filter) ||
@@ -367,6 +462,26 @@ int main(void) {
                           &cmeta_type_long, reduce_inputs, 3u) ||
         !execute_and_emit("reduce_l_empty", compile_reduce,
                           &cmeta_type_long, NULL, 0u))
+        return EXIT_FAILURE;
+
+    puts("  []");
+    puts("");
+    puts("def differentialWitnesses : List DifferentialWitness :=");
+
+    if (!differential_and_emit("filter_i", build_filter,
+                               &cmeta_type_int, int_inputs, 3u) ||
+        !differential_and_emit("map_i_l", build_map,
+                               &cmeta_type_int, int_inputs, 3u) ||
+        !differential_and_emit("transform_i_l", build_transform,
+                               &cmeta_type_int, int_inputs, 3u) ||
+        !differential_and_emit("fused_map_i_i_l", build_fused_runtime_map,
+                               &cmeta_type_int, int_inputs, 3u) ||
+        !differential_and_emit("flat_map_i_l", build_flat_map,
+                               &cmeta_type_int, int_inputs, 3u) ||
+        !differential_and_emit("reduce_l", build_reduce,
+                               &cmeta_type_long, reduce_inputs, 3u) ||
+        !differential_and_emit("reduce_l_empty", build_reduce,
+                               &cmeta_type_long, NULL, 0u))
         return EXIT_FAILURE;
 
     puts("  []");
