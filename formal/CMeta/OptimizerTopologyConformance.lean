@@ -30,10 +30,10 @@ private def topologyEdges : TopologyNode → List TopologyNode
 /-- Fuel-bounded reachability for the finite witness graph.  Fuel bounds path
     length and makes the executable checker structurally terminating. -/
 private def reachableWithin : Nat → TopologyNode → TopologyNode → Bool
-  | 0, from, target => from == target
-  | fuel + 1, from, target =>
-      from == target ||
-        (topologyEdges from).any (fun next => reachableWithin fuel next target)
+  | 0, src, target => src == target
+  | fuel + 1, src, target =>
+      src == target ||
+        (topologyEdges src).any (fun next => reachableWithin fuel next target)
 
 private def reachableFromRoot (node : TopologyNode) : Bool :=
   reachableWithin allTopologyNodes.length .root node
