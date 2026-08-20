@@ -1,7 +1,7 @@
 #ifndef TURBO_MULTIMAP_H
 #define TURBO_MULTIMAP_H
 
-#include "turbo_hash.h"
+#include "turbo_hash_map.h"
 #include "turbo_vec.h"
 
 #include <stdbool.h>
@@ -166,11 +166,35 @@ static inline size_t turbo_multimap_erase(turbo_multimap_t *map, const void *key
 
 #define TURBO_MULTI_MAP_DEFINE(name, key_type, value_type)                                            \
   typedef struct {                                                                                   \
+    key_type key;                                                                                    \
+    value_type value;                                                                                \
+  } name##_entry;                                                                                    \
+  typedef struct {                                                                                   \
     turbo_multimap_t raw;                                                                           \
   } name;                                                                                            \
   static inline int name##_init(name *map) {                                                         \
     return turbo_multimap_init(&map->raw, sizeof(key_type), sizeof(value_type), NULL, NULL, NULL);    \
   }                                                                                                 \
+  static inline int name##_from(name *map, const name##_entry *entries, size_t count) {              \
+    size_t i;                                                                                        \
+    int rc;                                                                                          \
+    if (!map || (count > 0 && !entries)) return TURBO_EINVAL;                                        \
+    rc = name##_init(map);                                                                           \
+    if (rc != TURBO_OK) return rc;                                                                   \
+    rc = turbo_multimap_reserve(&map->raw, count);                                                   \
+    if (rc != TURBO_OK) {                                                                            \
+      turbo_multimap_destroy(&map->raw);                                                             \
+      return rc;                                                                                     \
+    }                                                                                                \
+    for (i = 0; i < count; ++i) {                                                                    \
+      rc = turbo_multimap_put(&map->raw, &entries[i].key, &entries[i].value);                        \
+      if (rc != TURBO_OK) {                                                                          \
+        turbo_multimap_destroy(&map->raw);                                                           \
+        return rc;                                                                                   \
+      }                                                                                              \
+    }                                                                                                \
+    return TURBO_OK;                                                                                 \
+  }                                                                                                  \
   static inline void name##_destroy(name *map) { turbo_multimap_destroy(&map->raw); }                 \
   static inline void name##_clear(name *map) { turbo_multimap_clear(&map->raw); }                     \
   static inline int name##_reserve(name *map, size_t capacity) {                                      \

@@ -3,7 +3,7 @@
 
 #include "turbo_deque.h"
 #include "turbo_list.h"
-#include "turbo_hash.h"
+#include "turbo_hash_map.h"
 #include "turbo_map.h"
 #include "turbo_heap.h"
 #include "turbo_set.h"

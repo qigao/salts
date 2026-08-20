@@ -24,6 +24,10 @@ typedef struct {
 
 CXX_C_API int turbo_heap_init(turbo_heap_t *heap, size_t elem_size,
                               turbo_heap_compare_fn compare, void *compare_ctx);
+/** Initialize a heap by copying and heapifying count contiguous elements. */
+CXX_C_API int turbo_heap_from_array(turbo_heap_t *heap, const void *elements, size_t count,
+                                    size_t elem_size, turbo_heap_compare_fn compare,
+                                    void *compare_ctx);
 CXX_C_API void turbo_heap_destroy(turbo_heap_t *heap);
 CXX_C_API void turbo_heap_clear(turbo_heap_t *heap);
 CXX_C_API int turbo_heap_reserve(turbo_heap_t *heap, size_t min_capacity);
@@ -40,6 +44,9 @@ CXX_C_API bool turbo_heap_empty(const turbo_heap_t *heap);
   } name;                                                                                          \
   static inline int name##_init(name *heap) {                                                       \
     return turbo_heap_init(&heap->raw, sizeof(type), compare_fn, NULL);                             \
+  }                                                                                                \
+  static inline int name##_from(name *heap, const type *elements, size_t count) {                   \
+    return turbo_heap_from_array(&heap->raw, elements, count, sizeof(type), compare_fn, NULL);      \
   }                                                                                                \
   static inline void name##_destroy(name *heap) { turbo_heap_destroy(&heap->raw); }                 \
   static inline void name##_clear(name *heap) { turbo_heap_clear(&heap->raw); }                     \

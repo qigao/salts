@@ -1,7 +1,7 @@
 #ifndef TURBO_MAP_H
 #define TURBO_MAP_H
 
-#include "turbo_hash.h"
+#include "turbo_hash_map.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,6 +12,14 @@ typedef turbo_hash_map_t turbo_map_t;
 static inline int turbo_map_init(turbo_map_t *map, size_t key_size, size_t value_size,
                                 turbo_hash_fn hash, turbo_hash_equal_fn equal, void *ctx) {
   return turbo_hash_map_init(map, key_size, value_size, hash, equal, ctx);
+}
+
+static inline int turbo_map_from_arrays(turbo_map_t *map, const void *keys,
+                                        const void *values, size_t count, size_t key_size,
+                                        size_t value_size, turbo_hash_fn hash,
+                                        turbo_hash_equal_fn equal, void *ctx) {
+  return turbo_hash_map_from_arrays(map, keys, values, count, key_size, value_size,
+                                    hash, equal, ctx);
 }
 
 static inline void turbo_map_destroy(turbo_map_t *map) {
@@ -62,6 +70,10 @@ static inline const void *turbo_map_key_at(const turbo_map_t *map, size_t slot) 
   return turbo_hash_map_key_at(map, slot);
 }
 
+static inline const void *turbo_map_key_at_const(const turbo_map_t *map, size_t slot) {
+  return turbo_map_key_at(map, slot);
+}
+
 static inline void *turbo_map_value_at(turbo_map_t *map, size_t slot) {
   return turbo_hash_map_value_at(map, slot);
 }
@@ -72,10 +84,34 @@ static inline const void *turbo_map_value_at_const(const turbo_map_t *map, size_
 
 #define TURBO_MAP_DEFINE(name, key_type, value_type)                                                 \
   typedef struct {                                                                                  \
+    key_type key;                                                                                   \
+    value_type value;                                                                               \
+  } name##_entry;                                                                                   \
+  typedef struct {                                                                                  \
     turbo_map_t raw;                                                                               \
   } name;                                                                                           \
   static inline int name##_init(name *map) {                                                         \
     return turbo_map_init(&map->raw, sizeof(key_type), sizeof(value_type), NULL, NULL, NULL);        \
+  }                                                                                                 \
+  static inline int name##_from(name *map, const name##_entry *entries, size_t count) {              \
+    size_t i;                                                                                       \
+    int rc;                                                                                         \
+    if (!map || (count > 0 && !entries)) return TURBO_EINVAL;                                       \
+    rc = name##_init(map);                                                                          \
+    if (rc != TURBO_OK) return rc;                                                                  \
+    rc = turbo_map_reserve(&map->raw, count);                                                       \
+    if (rc != TURBO_OK) {                                                                           \
+      turbo_map_destroy(&map->raw);                                                                 \
+      return rc;                                                                                    \
+    }                                                                                               \
+    for (i = 0; i < count; ++i) {                                                                   \
+      rc = turbo_map_put(&map->raw, &entries[i].key, &entries[i].value);                            \
+      if (rc != TURBO_OK) {                                                                         \
+        turbo_map_destroy(&map->raw);                                                               \
+        return rc;                                                                                  \
+      }                                                                                             \
+    }                                                                                               \
+    return TURBO_OK;                                                                                \
   }                                                                                                 \
   static inline void name##_destroy(name *map) { turbo_map_destroy(&map->raw); }                     \
   static inline void name##_clear(name *map) { turbo_map_clear(&map->raw); }                         \

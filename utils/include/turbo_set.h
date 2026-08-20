@@ -1,7 +1,7 @@
 #ifndef TURBO_SET_H
 #define TURBO_SET_H
 
-#include "turbo_hash.h"
+#include "turbo_hash_map.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -13,6 +13,10 @@ typedef struct {
 
 CXX_C_API int turbo_set_init(turbo_set_t *set, size_t key_size, turbo_hash_fn hash,
                              turbo_hash_equal_fn equal, void *ctx);
+/** Initialize a set by copying count keys from a contiguous array. */
+CXX_C_API int turbo_set_from_array(turbo_set_t *set, const void *keys, size_t count,
+                                   size_t key_size, turbo_hash_fn hash,
+                                   turbo_hash_equal_fn equal, void *ctx);
 CXX_C_API void turbo_set_destroy(turbo_set_t *set);
 CXX_C_API void turbo_set_clear(turbo_set_t *set);
 CXX_C_API int turbo_set_reserve(turbo_set_t *set, size_t min_capacity);
@@ -30,6 +34,9 @@ CXX_C_API const void *turbo_set_key_at(const turbo_set_t *set, size_t slot);
   } name;                                                                                          \
   static inline int name##_init(name *set) {                                                        \
     return turbo_set_init(&set->raw, sizeof(key_type), NULL, NULL, NULL);                           \
+  }                                                                                                \
+  static inline int name##_from(name *set, const key_type *keys, size_t count) {                    \
+    return turbo_set_from_array(&set->raw, keys, count, sizeof(key_type), NULL, NULL, NULL);         \
   }                                                                                                \
   static inline void name##_destroy(name *set) { turbo_set_destroy(&set->raw); }                    \
   static inline void name##_clear(name *set) { turbo_set_clear(&set->raw); }                        \

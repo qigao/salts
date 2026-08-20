@@ -37,6 +37,11 @@ CXX_C_API bool turbo_hash_key_equal(const void *left, const void *right, size_t 
 
 CXX_C_API int turbo_hash_map_init(turbo_hash_map_t *map, size_t key_size, size_t value_size,
                                   turbo_hash_fn hash, turbo_hash_equal_fn equal, void *ctx);
+/** Initialize a map by copying corresponding elements from parallel key/value arrays. */
+CXX_C_API int turbo_hash_map_from_arrays(turbo_hash_map_t *map, const void *keys,
+                                         const void *values, size_t count, size_t key_size,
+                                         size_t value_size, turbo_hash_fn hash,
+                                         turbo_hash_equal_fn equal, void *ctx);
 CXX_C_API void turbo_hash_map_destroy(turbo_hash_map_t *map);
 CXX_C_API void turbo_hash_map_clear(turbo_hash_map_t *map);
 CXX_C_API int turbo_hash_map_reserve(turbo_hash_map_t *map, size_t min_capacity);
@@ -54,10 +59,34 @@ CXX_C_API const void *turbo_hash_map_value_at_const(const turbo_hash_map_t *map,
 
 #define TURBO_HASH_MAP_DEFINE(name, key_type, value_type)                                           \
   typedef struct {                                                                                 \
+    key_type key;                                                                                  \
+    value_type value;                                                                              \
+  } name##_entry;                                                                                  \
+  typedef struct {                                                                                 \
     turbo_hash_map_t raw;                                                                          \
   } name;                                                                                          \
   static inline int name##_init(name *map) {                                                        \
     return turbo_hash_map_init(&map->raw, sizeof(key_type), sizeof(value_type), NULL, NULL, NULL);   \
+  }                                                                                                \
+  static inline int name##_from(name *map, const name##_entry *entries, size_t count) {             \
+    size_t i;                                                                                      \
+    int rc;                                                                                        \
+    if (!map || (count > 0 && !entries)) return TURBO_EINVAL;                                      \
+    rc = name##_init(map);                                                                         \
+    if (rc != TURBO_OK) return rc;                                                                 \
+    rc = turbo_hash_map_reserve(&map->raw, count);                                                 \
+    if (rc != TURBO_OK) {                                                                          \
+      turbo_hash_map_destroy(&map->raw);                                                           \
+      return rc;                                                                                   \
+    }                                                                                              \
+    for (i = 0; i < count; ++i) {                                                                  \
+      rc = turbo_hash_map_put(&map->raw, &entries[i].key, &entries[i].value);                       \
+      if (rc != TURBO_OK) {                                                                        \
+        turbo_hash_map_destroy(&map->raw);                                                         \
+        return rc;                                                                                 \
+      }                                                                                            \
+    }                                                                                              \
+    return TURBO_OK;                                                                               \
   }                                                                                                \
   static inline void name##_destroy(name *map) { turbo_hash_map_destroy(&map->raw); }               \
   static inline void name##_clear(name *map) { turbo_hash_map_clear(&map->raw); }                   \

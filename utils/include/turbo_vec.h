@@ -37,6 +37,9 @@ typedef struct {
 } turbo_vec_t;
 
 CXX_C_API int turbo_vec_init(turbo_vec_t *vec, size_t elem_size);
+/** Initialize vec by copying count elements from a contiguous array. */
+CXX_C_API int turbo_vec_from_array(turbo_vec_t *vec, const void *elements, size_t count,
+                                   size_t elem_size);
 CXX_C_API void turbo_vec_destroy(turbo_vec_t *vec);
 CXX_C_API void turbo_vec_clear(turbo_vec_t *vec);
 CXX_C_API int turbo_vec_reserve(turbo_vec_t *vec, size_t min_capacity);
@@ -59,6 +62,9 @@ CXX_C_API bool turbo_vec_empty(const turbo_vec_t *vec);
     turbo_vec_t raw;                                                                               \
   } name;                                                                                          \
   static inline int name##_init(name *vec) { return turbo_vec_init(&vec->raw, sizeof(type)); }      \
+  static inline int name##_from(name *vec, const type *elements, size_t count) {                    \
+    return turbo_vec_from_array(&vec->raw, elements, count, sizeof(type));                          \
+  }                                                                                                \
   static inline void name##_destroy(name *vec) { turbo_vec_destroy(&vec->raw); }                    \
   static inline void name##_clear(name *vec) { turbo_vec_clear(&vec->raw); }                        \
   static inline int name##_reserve(name *vec, size_t capacity) {                                    \

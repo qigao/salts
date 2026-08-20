@@ -20,6 +20,9 @@ typedef struct {
 } turbo_deque_t;
 
 CXX_C_API int turbo_deque_init(turbo_deque_t *deque, size_t elem_size);
+/** Initialize deque by copying count elements from a contiguous array in order. */
+CXX_C_API int turbo_deque_from_array(turbo_deque_t *deque, const void *elements, size_t count,
+                                     size_t elem_size);
 CXX_C_API void turbo_deque_destroy(turbo_deque_t *deque);
 CXX_C_API void turbo_deque_clear(turbo_deque_t *deque);
 CXX_C_API int turbo_deque_reserve(turbo_deque_t *deque, size_t min_capacity);
@@ -42,6 +45,9 @@ CXX_C_API bool turbo_deque_empty(const turbo_deque_t *deque);
     turbo_deque_t raw;                                                                             \
   } name;                                                                                          \
   static inline int name##_init(name *deque) { return turbo_deque_init(&deque->raw, sizeof(type)); } \
+  static inline int name##_from(name *deque, const type *elements, size_t count) {                  \
+    return turbo_deque_from_array(&deque->raw, elements, count, sizeof(type));                      \
+  }                                                                                                \
   static inline void name##_destroy(name *deque) { turbo_deque_destroy(&deque->raw); }              \
   static inline void name##_clear(name *deque) { turbo_deque_clear(&deque->raw); }                  \
   static inline int name##_reserve(name *deque, size_t capacity) {                                  \

@@ -1,4 +1,4 @@
-#include "turbo_hash.h"
+#include "turbo_hash_map.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -205,6 +205,36 @@ int turbo_hash_map_init(turbo_hash_map_t *map, size_t key_size, size_t value_siz
   map->hash = hash ? hash : turbo_hash_bytes;
   map->equal = equal ? equal : turbo_hash_key_equal;
   map->ctx = ctx;
+  return TURBO_OK;
+}
+
+int turbo_hash_map_from_arrays(turbo_hash_map_t *map, const void *keys, const void *values,
+                               size_t count, size_t key_size, size_t value_size,
+                               turbo_hash_fn hash, turbo_hash_equal_fn equal, void *ctx) {
+  const unsigned char *key_cursor = (const unsigned char *)keys;
+  const unsigned char *value_cursor = (const unsigned char *)values;
+  size_t i;
+  int rc;
+
+  if (!map || key_size == 0 || value_size == 0 ||
+      (count > 0 && (!keys || !values))) {
+    return TURBO_EINVAL;
+  }
+  rc = turbo_hash_map_init(map, key_size, value_size, hash, equal, ctx);
+  if (rc != TURBO_OK) return rc;
+  rc = turbo_hash_map_reserve(map, count);
+  if (rc != TURBO_OK) {
+    turbo_hash_map_destroy(map);
+    return rc;
+  }
+  for (i = 0; i < count; ++i) {
+    rc = turbo_hash_map_put(map, key_cursor + i * key_size,
+                            value_cursor + i * value_size);
+    if (rc != TURBO_OK) {
+      turbo_hash_map_destroy(map);
+      return rc;
+    }
+  }
   return TURBO_OK;
 }
 

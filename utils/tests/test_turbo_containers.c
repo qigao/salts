@@ -45,6 +45,17 @@ TURBO_BPLUS_TREE_DEFINE(int_bplus_tree_t, int, int, int_tree_map_compare)
 
 suite("Turbo Containers") {
   group("Vec") {
+    it("constructs typed vectors from arrays") {
+      const int values[] = {3, 1, 4, 1, 5};
+      int_vec_t vec;
+
+      check_int_eq(int_vec_t_from(&vec, values, sizeof(values) / sizeof(values[0])), TURBO_OK);
+      check_size_eq(int_vec_t_size(&vec), 5U);
+      check_int_eq(*int_vec_t_at_const(&vec, 0), 3);
+      check_int_eq(*int_vec_t_at_const(&vec, 4), 5);
+      int_vec_t_destroy(&vec);
+    }
+
     it("pushes, indexes, inserts, erases, and pops generic values") {
       turbo_vec_t vec;
       int value = 0;
@@ -99,6 +110,21 @@ suite("Turbo Containers") {
   }
 
   group("Heap") {
+    it("constructs typed heaps from arrays") {
+      const int values[] = {5, 1, 4, 2, 3};
+      const int expected[] = {1, 2, 3, 4, 5};
+      int_heap_t heap;
+      int out = 0;
+      size_t i;
+
+      check_int_eq(int_heap_t_from(&heap, values, sizeof(values) / sizeof(values[0])), TURBO_OK);
+      for (i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
+        check_true(int_heap_t_pop(&heap, &out));
+        check_int_eq(out, expected[i]);
+      }
+      int_heap_t_destroy(&heap);
+    }
+
     it("pops values according to comparator priority") {
       int_heap_t heap;
       int values[] = {5, 1, 3, 2, 4};
@@ -144,6 +170,32 @@ suite("Turbo Containers") {
   }
 
   group("Hash map") {
+    it("constructs typed hash maps from entries with replacement semantics") {
+      const u64_int_map_t_entry entries[] = {{1U, 10}, {2U, 20}, {1U, 11}};
+      u64_int_map_t map;
+
+      check_int_eq(u64_int_map_t_from(
+                       &map, entries, sizeof(entries) / sizeof(entries[0])),
+                   TURBO_OK);
+      check_size_eq(u64_int_map_t_size(&map), 2U);
+      check_int_eq(*u64_int_map_t_get(&map, 1U), 11);
+      check_int_eq(*u64_int_map_t_get(&map, 2U), 20);
+      u64_int_map_t_destroy(&map);
+    }
+
+    it("constructs generic hash maps from parallel arrays") {
+      const uint64_t keys[] = {7U, 9U};
+      const int values[] = {70, 90};
+      turbo_hash_map_t map;
+
+      check_int_eq(turbo_hash_map_from_arrays(
+                       &map, keys, values, 2U, sizeof(keys[0]), sizeof(values[0]),
+                       NULL, NULL, NULL),
+                   TURBO_OK);
+      check_int_eq(*(const int *)turbo_hash_map_get_const(&map, &keys[1]), 90);
+      turbo_hash_map_destroy(&map);
+    }
+
     it("puts, updates, gets, removes, and reuses tombstones") {
       u64_int_map_t map;
       uint64_t key = 0;
@@ -228,6 +280,17 @@ suite("Turbo Containers") {
   }
 
   group("Set") {
+    it("constructs typed sets from arrays and removes duplicates") {
+      const uint64_t keys[] = {7U, 11U, 7U, 13U};
+      u64_set_t set;
+
+      check_int_eq(u64_set_t_from(&set, keys, sizeof(keys) / sizeof(keys[0])), TURBO_OK);
+      check_size_eq(u64_set_t_size(&set), 3U);
+      check_true(u64_set_t_contains(&set, 7U));
+      check_true(u64_set_t_contains(&set, 13U));
+      u64_set_t_destroy(&set);
+    }
+
     it("adds, deduplicates, contains, and removes generic keys") {
       turbo_set_t set;
       uint64_t key = 0;
@@ -271,6 +334,19 @@ suite("Turbo Containers") {
   }
 
   group("Deque") {
+    it("constructs typed deques from arrays in logical order") {
+      const int values[] = {2, 4, 6, 8};
+      int_deque_t deque;
+
+      check_int_eq(int_deque_t_from(
+                       &deque, values, sizeof(values) / sizeof(values[0])),
+                   TURBO_OK);
+      check_size_eq(int_deque_t_size(&deque), 4U);
+      check_int_eq(*int_deque_t_front_const(&deque), 2);
+      check_int_eq(*int_deque_t_back_const(&deque), 8);
+      int_deque_t_destroy(&deque);
+    }
+
     it("pushes and pops from both ends in logical order") {
       turbo_deque_t deque;
       int value = 0;
@@ -344,6 +420,18 @@ suite("Turbo Containers") {
   }
 
   group("Map") {
+    it("constructs typed map aliases from entries") {
+      const u64_int_map_alias_t_entry entries[] = {{4U, 40}, {8U, 80}};
+      u64_int_map_alias_t map;
+
+      check_int_eq(u64_int_map_alias_t_from(
+                       &map, entries, sizeof(entries) / sizeof(entries[0])),
+                   TURBO_OK);
+      check_size_eq(u64_int_map_alias_t_size(&map), 2U);
+      check_int_eq(*u64_int_map_alias_t_get(&map, 8U), 80);
+      u64_int_map_alias_t_destroy(&map);
+    }
+
     it("reuses map wrappers with clear typed names") {
       u64_int_map_alias_t map;
       uint64_t key = 7;
@@ -365,6 +453,27 @@ suite("Turbo Containers") {
   }
 
   group("List") {
+    it("constructs typed lists from arrays") {
+      const int values[] = {2, 4, 6, 8};
+      int_list_t list;
+      size_t i;
+
+      check_int_eq(int_list_t_from(
+                       &list, values, sizeof(values) / sizeof(values[0])),
+                   TURBO_OK);
+      check_size_eq(int_list_t_size(&list), 4U);
+      for (i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+        check_int_eq(*int_list_t_at_const(&list, i), values[i]);
+      }
+      int_list_t_destroy(&list);
+    }
+
+    it("rejects a missing source for a non-empty list") {
+      turbo_list_t list;
+
+      check_int_eq(turbo_list_from_array(&list, NULL, 1U, sizeof(int)), TURBO_EINVAL);
+    }
+
     it("behaves like a deque-backed list") {
       int_list_t list;
       int value = 0;
@@ -394,6 +503,22 @@ suite("Turbo Containers") {
   }
 
   group("Multi-map") {
+    it("constructs typed multimaps from entries and preserves repeated keys") {
+      const u64_multi_map_t_entry entries[] = {{3U, 30}, {3U, 31}, {5U, 50}};
+      u64_multi_map_t map;
+      const turbo_vec_t *values;
+
+      check_int_eq(u64_multi_map_t_from(
+                       &map, entries, sizeof(entries) / sizeof(entries[0])),
+                   TURBO_OK);
+      check_size_eq(u64_multi_map_t_size(&map), 3U);
+      check_size_eq(u64_multi_map_t_count(&map, 3U), 2U);
+      values = u64_multi_map_t_values_const(&map, 3U);
+      check_int_eq(*(const int *)turbo_vec_at_const(values, 0), 30);
+      check_int_eq(*(const int *)turbo_vec_at_const(values, 1), 31);
+      u64_multi_map_t_destroy(&map);
+    }
+
     it("stores repeated keys and removes per-value safely") {
       u64_multi_map_t mm;
       const turbo_vec_t *values = NULL;
@@ -461,6 +586,20 @@ suite("Turbo Containers") {
   }
 
   group("Tree map") {
+    it("constructs typed tree maps from entries in key order") {
+      const int_tree_map_t_entry entries[] = {{5, 50}, {1, 10}, {3, 30}, {3, 33}};
+      int_tree_map_t map;
+
+      check_int_eq(int_tree_map_t_from(
+                       &map, entries, sizeof(entries) / sizeof(entries[0])),
+                   TURBO_OK);
+      check_size_eq(int_tree_map_t_size(&map), 3U);
+      check_int_eq(*int_tree_map_t_key_at_const(&map, 0), 1);
+      check_int_eq(*int_tree_map_t_key_at_const(&map, 2), 5);
+      check_int_eq(*int_tree_map_t_get(&map, 3), 33);
+      int_tree_map_t_destroy(&map);
+    }
+
     it("keeps keys ordered and supports replace/remove by ordered lookup") {
       int_tree_map_t map;
       int value = 0;
@@ -598,6 +737,20 @@ suite("Turbo Containers") {
   }
 
   group("B+ tree") {
+    it("constructs typed B+ trees from entries in key order") {
+      const int_bplus_tree_t_entry entries[] = {{8, 80}, {2, 20}, {6, 60}, {2, 22}};
+      int_bplus_tree_t map;
+
+      check_int_eq(int_bplus_tree_t_from(
+                       &map, entries, sizeof(entries) / sizeof(entries[0])),
+                   TURBO_OK);
+      check_size_eq(int_bplus_tree_t_size(&map), 3U);
+      check_int_eq(*int_bplus_tree_t_key_at_const(&map, 0), 2);
+      check_int_eq(*int_bplus_tree_t_key_at_const(&map, 2), 8);
+      check_int_eq(*int_bplus_tree_t_get(&map, 2), 22);
+      int_bplus_tree_t_destroy(&map);
+    }
+
     it("keeps sorted keys and supports replacement semantics") {
       int_bplus_tree_t map;
       bool found = false;

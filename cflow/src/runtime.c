@@ -1,0 +1,731 @@
+#include <cflow/operators.h>
+#include <cflow/runtime.h>
+#include <cflow/lower.h>
+#include <cflow/subrun.h>
+#include <cflow/coord.h>
+#include <cflow/relation_exec.h>
+
+#include <limits.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <threads.h>
+
+#ifndef CMETA_RUN_QUANTUM
+#define CMETA_RUN_QUANTUM 64u
+#endif
+
+#ifndef CMETA_RUN_MAX_CONTINUATIONS
+#define CMETA_RUN_MAX_CONTINUATIONS 64u
+#endif
+
+typedef struct generator_state {
+    cmeta_callable fn;
+    unsigned char *input;
+    size_t cursor;
+} generator_state;
+
+typedef struct continuation_frame {
+    cflow_node_id node_id;
+    cflow_resumable machine;
+    unsigned char *root;
+    unsigned char *output;
+    bool done;
+} continuation_frame;
+
+typedef struct run_impl {
+    cflow_run *owner;
+    const cflow_graph *graph;
+    cflow_subgraph_id subgraph_id;
+    const cflow_subgraph *subgraph;
+    cflow_source source;
+    cflow_scheduler *scheduler;
+    cflow_sink sink;
+    cflow_resume_ctx resume_ctx;
+
+    unsigned char *source_slot;
+    unsigned char **reduce_value;
+    bool *reduce_set;
+    bool *reduce_flushed;
+
+    continuation_frame continuations[CMETA_RUN_MAX_CONTINUATIONS];
+    size_t continuation_count;
+
+    mtx_t lock;
+    cnd_t task_cv;
+    size_t task_refs;
+    size_t demand;
+    bool task_scheduled;
+    bool pump_running;
+    bool waiting;
+    cflow_waitable active_wait;
+    bool source_done;
+    bool cancel_requested;
+    bool cancelled;
+    bool terminated;
+    bool closed;
+    const char *error;
+} run_impl;
+
+static run_impl *impl_of(const cflow_run *run) {
+    return run ? (run_impl *)run->impl : NULL;
+}
+
+static cflow_step generator_resume_machine(void *state, cflow_resume_ctx *ctx, void *out) {
+    (void)ctx;
+    generator_state *g = (generator_state *)state;
+    if (!g) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "generator state is null" };
+    cmeta_gen_status st = cmeta_callable_generate(&g->fn, g->input, out, &g->cursor);
+    switch (st) {
+        case CMETA_GEN_VALUE: return (cflow_step){ CFLOW_STEP_VALUE, {0}, NULL };
+        case CMETA_GEN_VALUE_AND_DONE: return (cflow_step){ CFLOW_STEP_VALUE_AND_DONE, {0}, NULL };
+        case CMETA_GEN_DONE: return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
+        case CMETA_GEN_ERROR: return (cflow_step){ CFLOW_STEP_ERROR, {0}, "generator returned error" };
+    }
+    return (cflow_step){ CFLOW_STEP_ERROR, {0}, "invalid generator status" };
+}
+static void generator_destroy_machine(void *state) {
+    generator_state *g = (generator_state *)state;
+    if (g) { free(g->input); free(g); }
+}
+static const cflow_resumable_ops generator_machine_ops = {
+    generator_resume_machine, NULL, generator_destroy_machine
+};
+
+
+static void continuation_clear(continuation_frame *f) {
+    if (!f) return;
+    if (f->machine.ops && f->machine.ops->destroy) f->machine.ops->destroy(f->machine.state);
+    free(f->root); free(f->output);
+    memset(f, 0, sizeof(*f));
+}
+
+static void continuations_clear(run_impl *r) {
+    while (r && r->continuation_count) continuation_clear(&r->continuations[--r->continuation_count]);
+}
+
+/* Takes ownership of machine on success. root_source is copied so nested
+ * child/stateful work can outlive the current process_path() stack frame. */
+static bool push_continuation(run_impl *r,
+                              cflow_node_id node_id,
+                              cflow_resumable machine,
+                              const void *root_source) {
+    if (!r || !machine.ops || !machine.ops->resume || !machine.output_type ||
+        r->continuation_count >= CMETA_RUN_MAX_CONTINUATIONS) return false;
+    continuation_frame *f = &r->continuations[r->continuation_count++];
+    memset(f, 0, sizeof(*f));
+    f->node_id = node_id;
+    f->machine = machine;
+    f->output = malloc(machine.output_type->size ? machine.output_type->size : 1);
+    if (root_source) {
+        const cmeta_type_desc *src_type = cflow_subgraph_source_type(r->graph, r->subgraph_id);
+        f->root = malloc(src_type->size ? src_type->size : 1);
+        if (f->root) memcpy(f->root, root_source, src_type->size);
+    }
+    if (!f->output || (root_source && !f->root)) {
+        continuation_clear(f);
+        --r->continuation_count;
+        return false;
+    }
+    return true;
+}
+
+static void reducers_clear(run_impl *r) {
+    if (!r) return;
+    if (r->reduce_value) {
+        for (size_t i = 0; i < r->subgraph->node_count; ++i) free(r->reduce_value[i]);
+    }
+    free(r->reduce_value);
+    free(r->reduce_set);
+    free(r->reduce_flushed);
+    r->reduce_value = NULL;
+    r->reduce_set = NULL;
+    r->reduce_flushed = NULL;
+}
+
+
+static size_t demand_get(run_impl *r) {
+    size_t n = 0;
+    if (mtx_lock(&r->lock) == thrd_success) {
+        n = r->demand;
+        (void)mtx_unlock(&r->lock);
+    }
+    return n;
+}
+
+static bool demand_consume_one(run_impl *r) {
+    bool ok = false;
+    if (mtx_lock(&r->lock) == thrd_success) {
+        if (r->demand) { --r->demand; ok = true; }
+        (void)mtx_unlock(&r->lock);
+    }
+    return ok;
+}
+
+static void run_fail(run_impl *r, const char *message) {
+    if (!r) return;
+    const char *msg = message ? message : "runtime error";
+    bool notify = false;
+    if (mtx_lock(&r->lock) == thrd_success) {
+        if (!r->terminated) {
+            r->error = msg;
+            r->terminated = true;
+            notify = true;
+        }
+        (void)mtx_unlock(&r->lock);
+    }
+    if (notify && cflow_sink_valid(&r->sink)) cflow_sink_error(&r->sink, msg);
+}
+
+static bool reducers_done(const run_impl *r) {
+    if (!r || !r->subgraph) return true;
+    for (size_t i = 0; i < r->subgraph->node_count; ++i) {
+        const cflow_node *node = cflow_subgraph_node(r->subgraph, (cflow_node_id)i);
+        const cflow_op_schema *schema = node ? cflow_op_schema_get(node->op) : NULL;
+        if (schema && schema->cardinality == CMETA_CARD_REDUCE &&
+            r->reduce_set[i] && !r->reduce_flushed[i]) return false;
+    }
+    return true;
+}
+
+
+typedef enum node_action {
+    NODE_CONTINUE,
+    NODE_STOP,
+    NODE_FAIL
+} node_action;
+
+typedef node_action (*node_handler)(run_impl *r,
+                                    cflow_node_id node_id,
+                                    const cflow_node *n,
+                                    unsigned char **owned,
+                                    const cmeta_type_desc **cur_type,
+                                    const void *root_source);
+
+static node_action semantic_filter(run_impl *r, cflow_node_id i, const cflow_node *n,
+                                   unsigned char **owned, const cmeta_type_desc **cur_type,
+                                   const void *root_source) {
+    (void)r; (void)i; (void)cur_type; (void)root_source;
+    _Bool keep = false; const void *args[1] = { *owned };
+    if (!cmeta_callable_invoke(&n->fn, &keep, args)) return NODE_FAIL;
+    if (!keep) { free(*owned); *owned = NULL; return NODE_STOP; }
+    return NODE_CONTINUE;
+}
+
+static node_action semantic_map(run_impl *r, cflow_node_id i, const cflow_node *n,
+                                unsigned char **owned, const cmeta_type_desc **cur_type,
+                                const void *root_source) {
+    (void)r; (void)i; (void)root_source;
+    const cmeta_callable *chain = n->fn_chain_count ? n->fn_chain : &n->fn;
+    size_t count = n->fn_chain_count ? n->fn_chain_count : 1u;
+    const cmeta_type_desc *type = *cur_type;
+    for (size_t k = 0; k < count; ++k) {
+        const cmeta_sig_desc *sig = cmeta_callable_signature(chain[k]);
+        if (!sig || sig->param_count != 1u || !cmeta_type_equal(sig->params[0], type))
+            return NODE_FAIL;
+        unsigned char *next = malloc(sig->return_type->size ? sig->return_type->size : 1u);
+        const void *args[1] = { *owned };
+        if (!next) return NODE_FAIL;
+        if (!cmeta_callable_invoke(&chain[k], next, args)) { free(next); return NODE_FAIL; }
+        free(*owned);
+        *owned = next;
+        type = sig->return_type;
+    }
+    *cur_type = type;
+    return cmeta_type_equal(type, n->output_type) ? NODE_CONTINUE : NODE_FAIL;
+}
+
+static node_action semantic_high_level(run_impl *r, cflow_node_id i, const cflow_node *n,
+                                       unsigned char **owned, const cmeta_type_desc **cur_type,
+                                       const void *root_source) {
+    (void)r; (void)i; (void)n; (void)owned; (void)cur_type; (void)root_source;
+    return NODE_FAIL;
+}
+
+static node_action semantic_relation(run_impl *r, cflow_node_id i, const cflow_node *n,
+                                     unsigned char **owned, const cmeta_type_desc **cur_type,
+                                     const void *root_source) {
+    (void)cur_type;
+    if (!r || !n || !owned || !*owned || r->continuation_count >= CMETA_RUN_MAX_CONTINUATIONS)
+        return NODE_FAIL;
+    cflow_resumable machine = {0};
+    if (!cflow_resumable_from_relation(&machine, r->graph, n, *owned)) return NODE_FAIL;
+    free(*owned);
+    *owned = NULL;
+    if (!push_continuation(r, i, machine, root_source)) {
+        if (machine.ops && machine.ops->destroy) machine.ops->destroy(machine.state);
+        return NODE_FAIL;
+    }
+    return NODE_STOP;
+}
+
+static node_action semantic_reduce(run_impl *r, cflow_node_id i, const cflow_node *n,
+                                   unsigned char **owned, const cmeta_type_desc **cur_type,
+                                   const void *root_source) {
+    (void)root_source;
+    if (!r->reduce_set[i]) {
+        r->reduce_value[i] = malloc((*cur_type)->size ? (*cur_type)->size : 1);
+        if (!r->reduce_value[i]) return NODE_FAIL;
+        memcpy(r->reduce_value[i], *owned, (*cur_type)->size);
+        r->reduce_set[i] = true;
+    } else {
+        unsigned char *next = malloc((*cur_type)->size ? (*cur_type)->size : 1);
+        const void *args[2] = { r->reduce_value[i], *owned };
+        if (!next) return NODE_FAIL;
+        if (!cmeta_callable_invoke(&n->fn, next, args)) { free(next); return NODE_FAIL; }
+        free(r->reduce_value[i]); r->reduce_value[i] = next;
+    }
+    free(*owned); *owned = NULL; return NODE_STOP;
+}
+
+static node_action semantic_flat_map(run_impl *r, cflow_node_id i, const cflow_node *n,
+                                     unsigned char **owned, const cmeta_type_desc **cur_type,
+                                     const void *root_source) {
+    (void)cur_type;
+    if (r->continuation_count >= CMETA_RUN_MAX_CONTINUATIONS) return NODE_FAIL;
+    generator_state *gs = calloc(1, sizeof(*gs));
+    if (!gs) return NODE_FAIL;
+    gs->fn = n->fn; gs->input = *owned; *owned = NULL;
+    cflow_resumable machine = { "flatMap-generator", n->output_type,
+                                &generator_machine_ops, gs };
+    if (!push_continuation(r, i, machine, root_source)) {
+        generator_destroy_machine(gs);
+        return NODE_FAIL;
+    }
+    return NODE_STOP;
+}
+
+static node_handler handlers[CFLOW_OP_COUNT] = {
+    [CFLOW_OP_RELATION] = semantic_relation,
+#define CFLOW_OP_ROW(E, method, margc, fnarg, childarg, farity, p0, p1, p2, ret, out, card, childrule, semantic, intrinsic_effects) \
+    [CFLOW_OP_##E] = semantic_##semantic,
+Replay(CFlowOperators, CFLOW_OP_ROW)
+#undef CFLOW_OP_ROW
+};
+
+static bool successor_of(run_impl *r,
+                         cflow_node_id node,
+                         cflow_node_id *next,
+                         bool *has_next) {
+    if (!r || !r->subgraph || !next || !has_next) return false;
+    size_t degree = cflow_subgraph_out_degree(r->subgraph, node);
+    if (degree == 0) {
+        *has_next = false;
+        *next = CMETA_INVALID_ID;
+        return true;
+    }
+    if (degree != 1 || !cflow_subgraph_single_successor(r->subgraph, node, next)) {
+        run_fail(r, "fan-out requires an explicit RELATION semantic");
+        return false;
+    }
+    *has_next = true;
+    return true;
+}
+
+static bool process_path(run_impl *r,
+                         cflow_node_id node_id,
+                         const void *value,
+                         const cmeta_type_desc *type,
+                         const void *root_source) {
+    unsigned char *owned = malloc(type->size ? type->size : 1);
+    if (!owned) { run_fail(r, "allocation failed"); return false; }
+    memcpy(owned, value, type->size);
+    const cmeta_type_desc *cur_type = type;
+
+    cflow_node_id current = node_id;
+    while (current != CMETA_INVALID_ID) {
+        const cflow_node *n = cflow_subgraph_node(r->subgraph, current);
+        if (!n || n->op <= CFLOW_OP_SOURCE || n->op >= CFLOW_OP_COUNT || !handlers[n->op]) {
+            free(owned); run_fail(r, "operator has no execution semantic"); return false;
+        }
+        node_action a = handlers[n->op](r, current, n, &owned, &cur_type, root_source);
+        if (a == NODE_FAIL) {
+            free(owned); run_fail(r, "operator semantic failed"); return false;
+        }
+        if (a == NODE_STOP) return true;
+
+        cflow_node_id next = CMETA_INVALID_ID;
+        bool has_next = false;
+        if (!successor_of(r, current, &next, &has_next)) { free(owned); return false; }
+        current = has_next ? next : CMETA_INVALID_ID;
+    }
+
+    if (!demand_consume_one(r)) {
+        free(owned); run_fail(r, "runtime produced value without demand"); return false;
+    }
+    if (cflow_sink_valid(&r->sink) && !cflow_sink_value(&r->sink, cur_type, owned)) {
+        free(owned); run_fail(r, "observer rejected value"); return false;
+    }
+    free(owned); return true;
+}
+
+
+static void wake_cb(void *user);
+
+static bool arm_waitable(run_impl *r, cflow_waitable waitable) {
+    if (!r || !cflow_waitable_valid(&waitable)) {
+        run_fail(r, "WAIT step has no armable waitable");
+        return false;
+    }
+    if (mtx_lock(&r->lock) != thrd_success) {
+        run_fail(r, "runtime lock failed");
+        return false;
+    }
+    r->waiting = true;
+    r->active_wait = waitable;
+    (void)mtx_unlock(&r->lock);
+    cflow_waker w = { wake_cb, r->owner };
+    if (!cflow_waitable_arm(&waitable, w)) {
+        if (mtx_lock(&r->lock) == thrd_success) {
+            r->waiting = false;
+            memset(&r->active_wait, 0, sizeof(r->active_wait));
+            (void)mtx_unlock(&r->lock);
+        }
+        run_fail(r, "waitable arm failed");
+        return false;
+    }
+    return true;
+}
+
+static bool resume_top_continuation(run_impl *r) {
+    if (!r->continuation_count) return true;
+    continuation_frame *f = &r->continuations[r->continuation_count - 1];
+    const cflow_node *n = cflow_subgraph_node(r->subgraph, f->node_id);
+    if (!n) { run_fail(r, "continuation references invalid node"); return false; }
+    if (f->done) {
+        continuation_clear(f); --r->continuation_count; return true;
+    }
+    cflow_step step = f->machine.ops->resume(f->machine.state, &r->resume_ctx, f->output);
+    if (step.kind == CFLOW_STEP_ERROR) { run_fail(r, step.error ? step.error : "operator resumable error"); return false; }
+    if (step.kind == CFLOW_STEP_WAIT) return arm_waitable(r, step.waitable);
+    if (step.kind == CFLOW_STEP_DONE) { f->done = true; return true; }
+    if (step.kind != CFLOW_STEP_VALUE && step.kind != CFLOW_STEP_VALUE_AND_DONE) {
+        run_fail(r, "invalid operator resumable step"); return false;
+    }
+    if (step.kind == CFLOW_STEP_VALUE_AND_DONE) f->done = true;
+    cflow_node_id next = CMETA_INVALID_ID;
+    bool has_next = false;
+    if (!successor_of(r, f->node_id, &next, &has_next)) return false;
+    if (!process_path(r, has_next ? next : CMETA_INVALID_ID,
+                      f->output, n->output_type, f->root)) return false;
+    return true;
+}
+
+
+static bool flush_one_reducer(run_impl *r) {
+    for (size_t i = 0; i < r->subgraph->node_count; ++i) {
+        const cflow_node *node = cflow_subgraph_node(r->subgraph, (cflow_node_id)i);
+        const cflow_op_schema *schema = node ? cflow_op_schema_get(node->op) : NULL;
+        if (!schema || schema->cardinality != CMETA_CARD_REDUCE ||
+            !r->reduce_set[i] || r->reduce_flushed[i]) continue;
+        r->reduce_flushed[i] = true;
+        cflow_node_id next = CMETA_INVALID_ID;
+        bool has_next = false;
+        if (!successor_of(r, (cflow_node_id)i, &next, &has_next)) return false;
+        if (!process_path(r, has_next ? next : CMETA_INVALID_ID,
+                          r->reduce_value[i], node->output_type, NULL)) return false;
+        return true;
+    }
+    return true;
+}
+
+
+static void finish_if_possible(run_impl *r) {
+    if (!r || !r->source_done || r->continuation_count || !reducers_done(r)) return;
+    bool notify = false;
+    if (mtx_lock(&r->lock) == thrd_success) {
+        if (!r->terminated) { r->terminated = true; notify = true; }
+        (void)mtx_unlock(&r->lock);
+    }
+    if (notify && cflow_sink_valid(&r->sink)) cflow_sink_done(&r->sink);
+}
+
+static bool schedule_pump(run_impl *r);
+
+static void wake_cb(void *user) {
+    cflow_run *run = (cflow_run *)user;
+    run_impl *r = impl_of(run);
+    if (!r) return;
+    if (mtx_lock(&r->lock) == thrd_success) {
+        r->waiting = false;
+        memset(&r->active_wait, 0, sizeof(r->active_wait));
+        (void)mtx_unlock(&r->lock);
+    }
+    (void)schedule_pump(r);
+}
+
+void cflow_run_wake(cflow_run *run) { wake_cb(run); }
+
+static bool process_source_step(run_impl *r) {
+    cflow_step step = cflow_source_resume(&r->source, &r->resume_ctx, r->source_slot);
+    cflow_node_id first = CMETA_INVALID_ID;
+    bool has_first = false;
+    if (!successor_of(r, r->subgraph->entry, &first, &has_first)) return false;
+    switch (step.kind) {
+        case CFLOW_STEP_VALUE:
+            return process_path(r, has_first ? first : CMETA_INVALID_ID,
+                                r->source_slot, cflow_source_output_type(&r->source), r->source_slot);
+        case CFLOW_STEP_VALUE_AND_DONE:
+            r->source_done = true;
+            return process_path(r, has_first ? first : CMETA_INVALID_ID,
+                                r->source_slot, cflow_source_output_type(&r->source), r->source_slot);
+        case CFLOW_STEP_WAIT:
+            return arm_waitable(r, step.waitable);
+        case CFLOW_STEP_DONE:
+            r->source_done = true;
+            return true;
+        case CFLOW_STEP_ERROR:
+            run_fail(r, step.error ? step.error : "source error");
+            return false;
+    }
+    run_fail(r, "invalid source step"); return false;
+}
+
+
+static bool poll_source_terminal(run_impl *r) {
+    if (!r || !cflow_source_valid(&r->source)) return false;
+    const char *err = NULL;
+    cflow_source_terminal st = cflow_source_poll_terminal(&r->source, &err);
+    if (st == CFLOW_SOURCE_ERROR) { run_fail(r, err ? err : "source terminal error"); return true; }
+    if (st == CFLOW_SOURCE_DONE) { r->source_done = true; return true; }
+    return false;
+}
+
+static bool take_cancel_request(run_impl *r) {
+    bool cancel = false;
+    if (mtx_lock(&r->lock) == thrd_success) {
+        if (r->cancel_requested && !r->terminated) {
+            r->cancel_requested = false;
+            r->cancelled = true;
+            r->terminated = true;
+            cancel = true;
+        }
+        (void)mtx_unlock(&r->lock);
+    }
+    return cancel;
+}
+
+static bool process_unit(run_impl *r) {
+    if (r->terminated) return false;
+    if (take_cancel_request(r)) {
+        cflow_source_cancel(&r->source);
+        continuations_clear(r);
+        return false;
+    }
+    if (r->continuation_count) {
+        continuation_frame *top = &r->continuations[r->continuation_count - 1];
+        if (top->done) return resume_top_continuation(r); /* pop is terminal bookkeeping, not a value */
+        if (demand_get(r) == 0) return false;
+        return resume_top_continuation(r);
+    }
+    if (r->source_done) {
+        if (!reducers_done(r)) {
+            if (demand_get(r) == 0) return false;
+            return flush_one_reducer(r);
+        }
+        finish_if_possible(r);
+        return false;
+    }
+    if (demand_get(r) == 0) {
+        if (poll_source_terminal(r)) return true;
+        return false;
+    }
+    return process_source_step(r);
+}
+
+static void pump_task(void *user) {
+    run_impl *r = (run_impl *)user;
+    if (!r) return;
+    if (mtx_lock(&r->lock) == thrd_success) {
+        r->task_scheduled = false;
+        r->pump_running = true;
+        (void)mtx_unlock(&r->lock);
+    }
+
+    for (unsigned i = 0; i < CMETA_RUN_QUANTUM; ++i) {
+        bool waiting = false;
+        if (mtx_lock(&r->lock) == thrd_success) {
+            waiting = r->waiting;
+            (void)mtx_unlock(&r->lock);
+        }
+        if (waiting || r->terminated) break;
+        if (demand_get(r) == 0 && r->continuation_count &&
+            !r->continuations[r->continuation_count - 1].done) break;
+        if (r->source_done && !reducers_done(r) && demand_get(r) == 0) break;
+        if (!process_unit(r)) break;
+    }
+
+    bool terminated = false, waiting = false;
+    if (mtx_lock(&r->lock) == thrd_success) {
+        r->pump_running = false;
+        terminated = r->terminated;
+        waiting = r->waiting;
+        (void)mtx_unlock(&r->lock);
+    }
+    size_t d = demand_get(r);
+    bool continuation_runnable = r->continuation_count &&
+                          (r->continuations[r->continuation_count - 1].done || d > 0);
+    bool runnable = continuation_runnable ||
+                    (!r->source_done && d > 0) ||
+                    (r->source_done && r->continuation_count == 0 && reducers_done(r)) ||
+                    (r->source_done && !reducers_done(r) && d > 0);
+    if (!terminated && !waiting && runnable) (void)schedule_pump(r);
+
+    if (mtx_lock(&r->lock) == thrd_success) {
+        if (r->task_refs) --r->task_refs;
+        if (r->task_refs == 0) cnd_broadcast(&r->task_cv);
+        (void)mtx_unlock(&r->lock);
+    }
+}
+
+static bool schedule_pump(run_impl *r) {
+    if (!r || !r->scheduler) return false;
+    if (mtx_lock(&r->lock) != thrd_success) return false;
+    if (r->closed || r->terminated || r->task_scheduled || r->pump_running || r->waiting) {
+        (void)mtx_unlock(&r->lock);
+        return true;
+    }
+    r->task_scheduled = true;
+    ++r->task_refs;
+    (void)mtx_unlock(&r->lock);
+    cflow_task_id id = cflow_scheduler_post(r->scheduler, pump_task, r);
+    if (!id) {
+        if (mtx_lock(&r->lock) == thrd_success) {
+            r->task_scheduled = false;
+            if (r->task_refs) --r->task_refs;
+            if (r->task_refs == 0) cnd_broadcast(&r->task_cv);
+            (void)mtx_unlock(&r->lock);
+        }
+        return false;
+    }
+    return true;
+}
+
+
+bool cflow_run_open_subgraph(cflow_run *run,
+                             const cflow_graph *graph,
+                             cflow_subgraph_id subgraph_id,
+                             cflow_source *source,
+                             cflow_scheduler *scheduler,
+                             const cflow_sink *sink) {
+    const cflow_subgraph *subgraph = cflow_graph_subgraph(graph, subgraph_id);
+    if (!cflow_graph_is_normalized(graph)) return false;
+    if (!run || !graph || !subgraph || !scheduler || !source || !cflow_source_valid(source) || !cflow_source_output_type(source)) return false;
+    if (!cmeta_type_equal(cflow_subgraph_source_type(graph, subgraph_id), cflow_source_output_type(source))) return false;
+    const char *validation_error = NULL;
+    if (!cflow_graph_validate(graph, &validation_error)) return false;
+
+    run_impl *r = calloc(1, sizeof(*r));
+    if (!r) return false;
+    if (mtx_init(&r->lock, mtx_plain) != thrd_success) { free(r); return false; }
+    if (cnd_init(&r->task_cv) != thrd_success) { mtx_destroy(&r->lock); free(r); return false; }
+    r->owner = run;
+    r->graph = graph;
+    r->subgraph_id = subgraph_id;
+    r->subgraph = subgraph;
+    r->source = *source;
+    r->scheduler = scheduler;
+    r->resume_ctx.scheduler = scheduler;
+    if (sink) r->sink = *sink;
+    r->source_slot = malloc(cflow_source_output_type(source)->size ? cflow_source_output_type(source)->size : 1);
+    r->reduce_value = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_value));
+    r->reduce_set = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_set));
+    r->reduce_flushed = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_flushed));
+    if (!r->source_slot || !r->reduce_value || !r->reduce_set || !r->reduce_flushed) {
+        free(r->source_slot); reducers_clear(r);
+        cnd_destroy(&r->task_cv); mtx_destroy(&r->lock); free(r); return false;
+    }
+    run->impl = r;
+    memset(source, 0, sizeof(*source));
+    {
+        cflow_waker w = { wake_cb, run };
+        cflow_source_bind_terminal_waker(&r->source, w);
+    }
+    return true;
+}
+
+bool cflow_run_open(cflow_run *run,
+                    const cflow_graph *graph,
+                    cflow_source *source,
+                    cflow_scheduler *scheduler,
+                    const cflow_sink *sink) {
+    if (!graph || graph->root >= graph->subgraph_count) return false;
+    return cflow_run_open_subgraph(run, graph, graph->root, source, scheduler, sink);
+}
+
+
+bool cflow_run_request(cflow_run *run, size_t n) {
+    run_impl *r = impl_of(run);
+    if (!r || n == 0) return false;
+    if (mtx_lock(&r->lock) != thrd_success) return false;
+    if (r->closed || r->terminated) { (void)mtx_unlock(&r->lock); return false; }
+    if (SIZE_MAX - r->demand < n) r->demand = SIZE_MAX;
+    else r->demand += n;
+    (void)mtx_unlock(&r->lock);
+    return schedule_pump(r);
+}
+
+void cflow_run_cancel(cflow_run *run) {
+    run_impl *r = impl_of(run);
+    if (!r) return;
+    cflow_waitable wait = {0};
+    if (mtx_lock(&r->lock) == thrd_success) {
+        r->cancel_requested = true;
+        if (r->waiting) { wait = r->active_wait; r->waiting = false; memset(&r->active_wait, 0, sizeof(r->active_wait)); }
+        (void)mtx_unlock(&r->lock);
+    }
+    if (cflow_waitable_valid(&wait)) cflow_waitable_cancel(&wait);
+    (void)schedule_pump(r);
+}
+
+void cflow_run_close(cflow_run *run) {
+    run_impl *r = impl_of(run);
+    if (!r) return;
+    cflow_run_cancel(run);
+    cflow_source_bind_terminal_waker(&r->source, (cflow_waker){0});
+
+    unsigned caps = cflow_scheduler_capabilities(r->scheduler);
+    for (;;) {
+        size_t refs = 0;
+        if (mtx_lock(&r->lock) == thrd_success) {
+            refs = r->task_refs;
+            if (!refs) { (void)mtx_unlock(&r->lock); break; }
+            if (caps & CMETA_SCHED_CAP_CONCURRENT) {
+                (void)cnd_wait(&r->task_cv, &r->lock);
+                (void)mtx_unlock(&r->lock);
+                continue;
+            }
+            (void)mtx_unlock(&r->lock);
+        }
+        (void)cflow_scheduler_run_until_idle(r->scheduler, 0);
+    }
+
+    if (cflow_source_valid(&r->source)) cflow_source_destroy(&r->source);
+    continuations_clear(r); reducers_clear(r); free(r->source_slot);
+    if (mtx_lock(&r->lock) == thrd_success) { r->closed = true; (void)mtx_unlock(&r->lock); }
+    cnd_destroy(&r->task_cv);
+    mtx_destroy(&r->lock);
+    free(r); run->impl = NULL;
+}
+
+bool cflow_run_is_done(const cflow_run *run) {
+    run_impl *r = impl_of(run); bool v = false;
+    if (r && mtx_lock(&r->lock) == thrd_success) {
+        v = r->terminated && !r->cancelled && !r->error;
+        (void)mtx_unlock(&r->lock);
+    }
+    return v;
+}
+bool cflow_run_is_cancelled(const cflow_run *run) {
+    run_impl *r = impl_of(run); bool v = false;
+    if (r && mtx_lock(&r->lock) == thrd_success) { v = r->cancelled; (void)mtx_unlock(&r->lock); }
+    return v;
+}
+const char *cflow_run_error(const cflow_run *run) {
+    run_impl *r = impl_of(run); const char *v = "run is null";
+    if (r && mtx_lock(&r->lock) == thrd_success) { v = r->error; (void)mtx_unlock(&r->lock); }
+    return v;
+}
+size_t cflow_run_outstanding_demand(const cflow_run *run) {
+    run_impl *r = impl_of(run); return r ? demand_get(r) : 0;
+}

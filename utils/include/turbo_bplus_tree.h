@@ -9,6 +9,12 @@
 #include <string.h>
 
 #ifdef __cplusplus
+#define TURBO_BPLUS_TREE_ALIGNOF(Type) alignof(Type)
+#else
+#define TURBO_BPLUS_TREE_ALIGNOF(Type) _Alignof(Type)
+#endif
+
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -158,16 +164,16 @@ static inline int turbo_bplus_tree_init_with_order(turbo_bplus_tree_t *tree, siz
   tree->min_degree = min_degree;
   tree->max_keys = tree->max_children - 1U;
   tree->min_keys = min_degree - 1U;
-  if (turbo_bplus_tree_align_up(key_size, _Alignof(turbo_bplus_tree_max_align_t), &tree->key_stride) !=
+  if (turbo_bplus_tree_align_up(key_size, TURBO_BPLUS_TREE_ALIGNOF(turbo_bplus_tree_max_align_t), &tree->key_stride) !=
       TURBO_OK) {
     return TURBO_ENOMEM;
   }
-  if (turbo_bplus_tree_align_up(value_size, _Alignof(turbo_bplus_tree_max_align_t), &tree->value_stride) !=
+  if (turbo_bplus_tree_align_up(value_size, TURBO_BPLUS_TREE_ALIGNOF(turbo_bplus_tree_max_align_t), &tree->value_stride) !=
       TURBO_OK) {
     return TURBO_ENOMEM;
   }
 
-  tree->align = _Alignof(turbo_bplus_tree_max_align_t);
+  tree->align = TURBO_BPLUS_TREE_ALIGNOF(turbo_bplus_tree_max_align_t);
   tree->key_size = key_size;
   tree->value_size = value_size;
   tree->compare = compare;
@@ -562,11 +568,35 @@ static inline int turbo_bplus_tree_remove(turbo_bplus_tree_t *tree, const void *
 
 #define TURBO_BPLUS_TREE_DEFINE(name, key_type, value_type, compare_fn)                                   \
   typedef struct {                                                                                         \
+    key_type key;                                                                                          \
+    value_type value;                                                                                      \
+  } name##_entry;                                                                                          \
+  typedef struct {                                                                                         \
     turbo_bplus_tree_t raw;                                                                              \
   } name;                                                                                                 \
   static inline int name##_init(name *map) {                                                              \
     return turbo_bplus_tree_init(&map->raw, sizeof(key_type), sizeof(value_type), compare_fn, NULL);       \
   }                                                                                                       \
+  static inline int name##_from(name *map, const name##_entry *entries, size_t count) {                   \
+    size_t i;                                                                                              \
+    int rc;                                                                                                \
+    if (!map || (count > 0 && !entries)) return TURBO_EINVAL;                                              \
+    rc = name##_init(map);                                                                                 \
+    if (rc != TURBO_OK) return rc;                                                                         \
+    rc = turbo_bplus_tree_reserve(&map->raw, count);                                                       \
+    if (rc != TURBO_OK) {                                                                                  \
+      turbo_bplus_tree_destroy(&map->raw);                                                                 \
+      return rc;                                                                                           \
+    }                                                                                                      \
+    for (i = 0; i < count; ++i) {                                                                          \
+      rc = turbo_bplus_tree_put(&map->raw, &entries[i].key, &entries[i].value);                            \
+      if (rc != TURBO_OK) {                                                                                \
+        turbo_bplus_tree_destroy(&map->raw);                                                               \
+        return rc;                                                                                         \
+      }                                                                                                    \
+    }                                                                                                      \
+    return TURBO_OK;                                                                                       \
+  }                                                                                                        \
   static inline int name##_init_with_order(name *map, size_t min_degree) {                                 \
     return turbo_bplus_tree_init_with_order(&map->raw, sizeof(key_type), sizeof(value_type), compare_fn,     \
                                           NULL, min_degree);                                               \
@@ -609,6 +639,8 @@ static inline int turbo_bplus_tree_remove(turbo_bplus_tree_t *tree, const void *
   static inline const value_type *name##_value_at_const(const name *map, size_t index) {                   \
     return (const value_type *)turbo_bplus_tree_value_at_const(&map->raw, index);                         \
   }
+
+#undef TURBO_BPLUS_TREE_ALIGNOF
 
 #ifdef __cplusplus
 }

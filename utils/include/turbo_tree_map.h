@@ -9,6 +9,12 @@
 #include <string.h>
 
 #ifdef __cplusplus
+#define TURBO_TREE_MAP_ALIGNOF(Type) alignof(Type)
+#else
+#define TURBO_TREE_MAP_ALIGNOF(Type) _Alignof(Type)
+#endif
+
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -20,7 +26,9 @@ typedef struct turbo_tree_map_node_t {
   struct turbo_tree_map_node_t *parent;
   bool red;
   size_t size;
-  unsigned char data[];
+  /* Use a one-byte array to avoid zero-sized array nonstandard extension.
+     Memory allocations account for additional space beyond this byte. */
+  unsigned char data[1];
 } turbo_tree_map_node_t;
 
 typedef union turbo_tree_map_max_align {
@@ -328,7 +336,7 @@ static inline int turbo_tree_map_init(turbo_tree_map_t *map, size_t key_size, si
 
   if (map == NULL || key_size == 0U || value_size == 0U || compare == NULL) return TURBO_EINVAL;
   value_offset = 0U;
-  if (turbo_tree_map_align_up(key_size, _Alignof(turbo_tree_map_max_align_t), &value_offset) !=
+  if (turbo_tree_map_align_up(key_size, TURBO_TREE_MAP_ALIGNOF(turbo_tree_map_max_align_t), &value_offset) !=
       TURBO_OK) {
     return TURBO_ENOMEM;
   }
@@ -337,7 +345,7 @@ static inline int turbo_tree_map_init(turbo_tree_map_t *map, size_t key_size, si
   map->key_size = key_size;
   map->value_size = value_size;
   map->value_offset = value_offset;
-  map->align = _Alignof(turbo_tree_map_max_align_t);
+  map->align = TURBO_TREE_MAP_ALIGNOF(turbo_tree_map_max_align_t);
   map->compare = compare;
   map->compare_ctx = compare_ctx;
   return TURBO_OK;
@@ -573,11 +581,35 @@ static inline int turbo_tree_map_remove(turbo_tree_map_t *map, const void *key, 
 
 #define TURBO_TREE_MAP_DEFINE(name, key_type, value_type, compare_fn)                                  \
   typedef struct {                                                                                     \
+    key_type key;                                                                                      \
+    value_type value;                                                                                  \
+  } name##_entry;                                                                                      \
+  typedef struct {                                                                                     \
     turbo_tree_map_t raw;                                                                             \
   } name;                                                                                             \
   static inline int name##_init(name *map) {                                                           \
     return turbo_tree_map_init(&map->raw, sizeof(key_type), sizeof(value_type), compare_fn, NULL);      \
   }                                                                                                   \
+  static inline int name##_from(name *map, const name##_entry *entries, size_t count) {                \
+    size_t i;                                                                                          \
+    int rc;                                                                                            \
+    if (!map || (count > 0 && !entries)) return TURBO_EINVAL;                                          \
+    rc = name##_init(map);                                                                             \
+    if (rc != TURBO_OK) return rc;                                                                     \
+    rc = turbo_tree_map_reserve(&map->raw, count);                                                     \
+    if (rc != TURBO_OK) {                                                                              \
+      turbo_tree_map_destroy(&map->raw);                                                               \
+      return rc;                                                                                       \
+    }                                                                                                  \
+    for (i = 0; i < count; ++i) {                                                                      \
+      rc = turbo_tree_map_put(&map->raw, &entries[i].key, &entries[i].value);                          \
+      if (rc != TURBO_OK) {                                                                            \
+        turbo_tree_map_destroy(&map->raw);                                                             \
+        return rc;                                                                                     \
+      }                                                                                                \
+    }                                                                                                  \
+    return TURBO_OK;                                                                                   \
+  }                                                                                                    \
   static inline void name##_destroy(name *map) { turbo_tree_map_destroy(&map->raw); }                   \
   static inline void name##_clear(name *map) { turbo_tree_map_clear(&map->raw); }                      \
   static inline int name##_reserve(name *map, size_t capacity) {                                       \
@@ -616,6 +648,8 @@ static inline int turbo_tree_map_remove(turbo_tree_map_t *map, const void *key, 
   static inline const value_type *name##_value_at_const(const name *map, size_t index) {                \
     return (const value_type *)turbo_tree_map_value_at_const(&map->raw, index);                        \
   }
+
+#undef TURBO_TREE_MAP_ALIGNOF
 
 #ifdef __cplusplus
 }
