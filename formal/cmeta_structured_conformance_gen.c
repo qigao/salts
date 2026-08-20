@@ -20,6 +20,20 @@ typed_raw(map, CMETA_EFFECT_PURE,
     return (long)x * 10L;
 }
 
+typed_raw(map, CMETA_EFFECT_PURE,
+          CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL | CMETA_PROP_NO_ALIAS,
+          double, conf_zip_right_i_d, (int x)) {
+    (void)x;
+    return 2.0;
+}
+
+typed_raw(zip, CMETA_EFFECT_PURE,
+          CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL | CMETA_PROP_NO_ALIAS,
+          double, conf_zip_pick_right, (long left, double right)) {
+    (void)left;
+    return right;
+}
+
 typed_raw(reduce, CMETA_EFFECT_PURE,
           CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL |
               CMETA_PROP_ASSOCIATIVE | CMETA_PROP_NO_ALIAS,
@@ -67,6 +81,19 @@ static int emit_integral_values(const cmeta_type_desc *type,
     return 1;
 }
 
+static int emit_double_values(const void *data, size_t count) {
+    size_t i;
+    const double *values = (const double *)data;
+    if (count && !data) return 0;
+    printf("[");
+    for (i = 0; i < count; ++i) {
+        if (i) printf(", ");
+        printf("%.1f", values[i]);
+    }
+    printf("]");
+    return 1;
+}
+
 static int build_fold_graph(cflow_graph *graph) {
     cflow_graph left = {0};
     cflow_graph right = {0};
@@ -91,6 +118,26 @@ static int build_fold_graph(cflow_graph *graph) {
 
 done:
     cflow_graph_destroy(&left);
+    cflow_graph_destroy(&right);
+    return ok;
+}
+
+static int build_zip_graph(cflow_graph *graph) {
+    cflow_graph right = {0};
+    int ok = 0;
+
+    cflow_graph_init(graph, &cmeta_type_int);
+    cflow_graph_init(&right, &cmeta_type_int);
+    if (graph->root == CMETA_INVALID_ID || right.root == CMETA_INVALID_ID)
+        goto done;
+
+    if (!cflow_graph_map(graph, conf_rel_left_i_l.fn) ||
+        !cflow_graph_map(&right, conf_zip_right_i_d.fn))
+        goto done;
+
+    ok = cflow_graph_zip(graph, &right, conf_zip_pick_right.fn);
+
+done:
     cflow_graph_destroy(&right);
     return ok;
 }
@@ -151,6 +198,64 @@ done:
     return ok;
 }
 
+static int emit_zip_witness(void) {
+    static const int inputs[] = { -2, 0, 3 };
+    cflow_graph graph = {0};
+    cflow_graph normalized = {0};
+    cflow_plan plan = {0};
+    cflow_result result = {0};
+    const cflow_subgraph *root;
+    const cflow_node *relation;
+    const char *input_type;
+    const char *output_type;
+    const char *combine_sig;
+    int plan_accepted;
+    int ok = 0;
+
+    normalized.root = CMETA_INVALID_ID;
+    if (!build_zip_graph(&graph)) goto done;
+    if (!cflow_graph_normalize(&normalized, &graph)) goto done;
+
+    root = cflow_graph_subgraph(&normalized, normalized.root);
+    relation = root ? cflow_subgraph_node(root, root->tail) : NULL;
+    if (!root || !relation || relation->op != CFLOW_OP_RELATION ||
+        !relation->has_relation || relation->relation.coordination != CFLOW_REL_COORD_ALL ||
+        relation->relation.result != CFLOW_REL_RESULT_INVOKE ||
+        relation->subgraph_count != 2u || !relation->has_fn)
+        goto done;
+
+    input_type = type_token(relation->input_type);
+    output_type = type_token(relation->output_type);
+    combine_sig = signature_id(relation->fn);
+    if (!input_type || !output_type || !combine_sig) goto done;
+
+    if (!cflow_eval_array(&graph, inputs, 3u, &result)) goto done;
+    if (!cmeta_type_equal(result.type, relation->output_type) ||
+        !cmeta_type_equal(result.type, &cmeta_type_double))
+        goto done;
+
+    plan_accepted = cflow_plan_compile_surface(&plan, &graph, NULL) ? 1 : 0;
+    if (plan_accepted) goto done;
+
+    puts("  { name := \"zip_all_invoke_i_l_d_d\",");
+    printf("    inputType := \"%s\", outputType := \"%s\",\n",
+           input_type, output_type);
+    puts("    coordination := \"ALL\", result := \"INVOKE\", branchCount := 2,");
+    printf("    combine := \"%s\", input := ", combine_sig);
+    if (!emit_integral_values(&cmeta_type_int, inputs, 3u)) goto done;
+    printf(", count := %zu,\n    output := ", result.count);
+    if (!emit_double_values(result.data, result.count)) goto done;
+    printf(", directPlanAccepted := false } ::\n");
+    ok = 1;
+
+done:
+    cflow_result_destroy(&result);
+    cflow_plan_destroy(&plan);
+    cflow_graph_destroy(&normalized);
+    cflow_graph_destroy(&graph);
+    return ok;
+}
+
 int main(void) {
     puts("import Std");
     puts("");
@@ -172,8 +277,26 @@ int main(void) {
     puts("  directPlanAccepted : Bool");
     puts("  deriving Repr, DecidableEq");
     puts("");
+    puts("structure ZipWitness where");
+    puts("  name : String");
+    puts("  inputType : String");
+    puts("  outputType : String");
+    puts("  coordination : String");
+    puts("  result : String");
+    puts("  branchCount : Nat");
+    puts("  combine : String");
+    puts("  input : List Int");
+    puts("  count : Nat");
+    puts("  output : List Float");
+    puts("  directPlanAccepted : Bool");
+    puts("  deriving Repr, BEq");
+    puts("");
     puts("def relationWitnesses : List RelationWitness :=");
     if (!emit_fold_witness()) return EXIT_FAILURE;
+    puts("  []");
+    puts("");
+    puts("def zipWitnesses : List ZipWitness :=");
+    if (!emit_zip_witness()) return EXIT_FAILURE;
     puts("  []");
     puts("");
     puts("end CMeta.CStructuredGenerated");
