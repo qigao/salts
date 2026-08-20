@@ -116,7 +116,7 @@ static int emit_plan(const char *name, const cflow_plan *plan) {
         printf("    { opcode := \"%s\", input := \"%s\", output := \"%s\", callbacks := ",
                opcode, inst_input, inst_output);
         if (!emit_callbacks(inst)) return 0;
-        printf(" },\n");
+        printf(" }%s\n", i + 1u < impl->count ? "," : "");
     }
     printf("  ] } ::\n");
     return 1;
