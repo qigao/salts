@@ -18,12 +18,34 @@ structure RelationWitness where
   directPlanAccepted : Bool
   deriving Repr, DecidableEq
 
+structure ZipWitness where
+  name : String
+  inputType : String
+  outputType : String
+  coordination : String
+  result : String
+  branchCount : Nat
+  combine : String
+  input : List Int
+  count : Nat
+  output : List Float
+  directPlanAccepted : Bool
+  deriving Repr, BEq
+
 def relationWitnesses : List RelationWitness :=
   { name := "relation_all_fold_i_l",
     inputType := "I", outputType := "L",
     coordination := "ALL", result := "FOLD", branchCount := 2,
     reducer := "B_L_L_L", input := [-2, 0, 3], count := 3,
     output := [-22, 0, 33], directPlanAccepted := false } ::
+  []
+
+def zipWitnesses : List ZipWitness :=
+  { name := "zip_all_invoke_i_l_d_d",
+    inputType := "I", outputType := "D",
+    coordination := "ALL", result := "INVOKE", branchCount := 2,
+    combine := "B_L_D_D", input := [-2, 0, 3], count := 3,
+    output := [2.0, 2.0, 2.0], directPlanAccepted := false } ::
   []
 
 end CMeta.CStructuredGenerated
