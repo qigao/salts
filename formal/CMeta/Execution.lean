@@ -175,9 +175,10 @@ theorem ExecProgram.result_type_safe {A R : CType}
     (program : ExecProgram A R) (values : ValueVec A) (out : PackedVec)
     (h : runRuntimePlan program.runtimeCode ⟨A, values⟩ = some out) :
     out.1 = R := by
-  have exactRun := program.runtime_execution_exact values
-  rw [exactRun] at h
-  exact Sigma.mk.inj_iff.mp (Option.some.inj h).1
+  have hexact := program.runtime_execution_exact values
+  have packedEq : out = (⟨R, program.run values⟩ : PackedVec) :=
+    Option.some.inj (h.symm.trans hexact)
+  exact congrArg (fun packed : PackedVec => packed.1) packedEq
 
 /-- The same executable program also passes the topology-free compiler type
     checker proved in `Plan.lean`. -/
