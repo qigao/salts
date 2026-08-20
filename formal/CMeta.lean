@@ -5,3 +5,5 @@ import CMeta.Lambda
 import CMeta.Dispatch
 import CMeta.Flow
 import CMeta.Graph
+import CMeta.Optimize
+import CMeta.Lowering
