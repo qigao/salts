@@ -85,16 +85,9 @@ def checkPlanInst (current : CType) (inst : ErasedPlanInst) : Option CType :=
 /-- Every statically compilable node survives instruction erasure. -/
 theorem PlanNode.check_erase {A R : CType} (node : PlanNode A R) :
     checkPlanInst A node.erase = some R := by
-  cases node with
-  | filter t => simp [PlanNode.erase, checkPlanInst]
-  | map input output =>
-      simp [PlanNode.erase, checkPlanInst, MapChain.check]
-  | transform input output =>
-      simp [PlanNode.erase, checkPlanInst, MapChain.check]
-  | fusedMap input output chain =>
-      simp [PlanNode.erase, checkPlanInst, MapChain.check_signatures]
-  | flatMap input output => simp [PlanNode.erase, checkPlanInst]
-  | reduce t => simp [PlanNode.erase, checkPlanInst]
+  cases node <;>
+    simp [PlanNode.erase, checkPlanInst, MapChain.check,
+      MapChain.check_signatures]
 
 /-- `TRANSFORM` is canonicalized to the same direct MAP opcode. -/
 theorem transform_compiles_as_map (A R : CType) :
