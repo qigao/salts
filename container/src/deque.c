@@ -1,0 +1,201 @@
+#include <container/deque.h>
+
+#include <stdlib.h>
+#include <string.h>
+
+#define CONTAINER_DEQUE_MIN_CAPACITY 8U
+
+static int container_deque_valid(const container_deque_t *deque) {
+  return deque != NULL && deque->elem_size > 0;
+}
+
+static size_t container_deque_physical_index(const container_deque_t *deque, size_t logical_index) {
+  return (deque->head + logical_index) % deque->capacity;
+}
+
+static unsigned char *container_deque_slot(container_deque_t *deque, size_t physical_index) {
+  return (unsigned char *)deque->data + physical_index * deque->elem_size;
+}
+
+static const unsigned char *container_deque_slot_const(const container_deque_t *deque,
+                                                   size_t physical_index) {
+  return (const unsigned char *)deque->data + physical_index * deque->elem_size;
+}
+
+static int container_deque_grow_to(container_deque_t *deque, size_t min_capacity) {
+  size_t new_capacity;
+  unsigned char *new_data;
+
+  if (!container_deque_valid(deque)) return TURBO_EINVAL;
+  if (min_capacity <= deque->capacity) return TURBO_OK;
+  if (min_capacity > SIZE_MAX / deque->elem_size) return TURBO_ENOMEM;
+
+  new_capacity = deque->capacity ? deque->capacity : CONTAINER_DEQUE_MIN_CAPACITY;
+  while (new_capacity < min_capacity) {
+    if (new_capacity > SIZE_MAX / 2U) {
+      new_capacity = min_capacity;
+      break;
+    }
+    new_capacity *= 2U;
+  }
+  if (new_capacity > SIZE_MAX / deque->elem_size) return TURBO_ENOMEM;
+
+  new_data = (unsigned char *)malloc(new_capacity * deque->elem_size);
+  if (!new_data) return TURBO_ENOMEM;
+
+  if (deque->size > 0) {
+    size_t first_count = deque->capacity - deque->head;
+    size_t second_count;
+    if (first_count > deque->size) first_count = deque->size;
+    second_count = deque->size - first_count;
+    memcpy(new_data, container_deque_slot_const(deque, deque->head),
+           first_count * deque->elem_size);
+    if (second_count > 0) {
+      memcpy(new_data + first_count * deque->elem_size, deque->data,
+             second_count * deque->elem_size);
+    }
+  }
+
+  free(deque->data);
+  deque->data = new_data;
+  deque->capacity = new_capacity;
+  deque->head = 0;
+  return TURBO_OK;
+}
+
+int container_deque_init(container_deque_t *deque, size_t elem_size) {
+  if (!deque || elem_size == 0) return TURBO_EINVAL;
+  memset(deque, 0, sizeof(*deque));
+  deque->elem_size = elem_size;
+  return TURBO_OK;
+}
+
+int container_deque_from_array(container_deque_t *deque, const void *elements, size_t count,
+                           size_t elem_size) {
+  int rc;
+
+  if (!deque || elem_size == 0 || (count > 0 && !elements)) return TURBO_EINVAL;
+  rc = container_deque_init(deque, elem_size);
+  if (rc != TURBO_OK) return rc;
+  rc = container_deque_reserve(deque, count);
+  if (rc != TURBO_OK) {
+    container_deque_destroy(deque);
+    return rc;
+  }
+  if (count > 0) memcpy(deque->data, elements, count * elem_size);
+  deque->size = count;
+  return TURBO_OK;
+}
+
+void container_deque_destroy(container_deque_t *deque) {
+  if (!deque) return;
+  free(deque->data);
+  memset(deque, 0, sizeof(*deque));
+}
+
+void container_deque_clear(container_deque_t *deque) {
+  if (!deque) return;
+  deque->size = 0;
+  deque->head = 0;
+}
+
+int container_deque_reserve(container_deque_t *deque, size_t min_capacity) {
+  return container_deque_grow_to(deque, min_capacity);
+}
+
+int container_deque_push_back(container_deque_t *deque, const void *elem) {
+  int rc;
+  size_t index;
+
+  if (!container_deque_valid(deque) || !elem) return TURBO_EINVAL;
+  if (deque->size == SIZE_MAX) return TURBO_ENOMEM;
+  rc = container_deque_grow_to(deque, deque->size + 1U);
+  if (rc != TURBO_OK) return rc;
+  index = container_deque_physical_index(deque, deque->size);
+  memcpy(container_deque_slot(deque, index), elem, deque->elem_size);
+  deque->size += 1U;
+  return TURBO_OK;
+}
+
+int container_deque_push_front(container_deque_t *deque, const void *elem) {
+  int rc;
+
+  if (!container_deque_valid(deque) || !elem) return TURBO_EINVAL;
+  if (deque->size == SIZE_MAX) return TURBO_ENOMEM;
+  rc = container_deque_grow_to(deque, deque->size + 1U);
+  if (rc != TURBO_OK) return rc;
+  deque->head = deque->head == 0 ? deque->capacity - 1U : deque->head - 1U;
+  memcpy(container_deque_slot(deque, deque->head), elem, deque->elem_size);
+  deque->size += 1U;
+  return TURBO_OK;
+}
+
+int container_deque_pop_back(container_deque_t *deque, void *out_elem) {
+  size_t index;
+
+  if (!container_deque_valid(deque)) return TURBO_EINVAL;
+  if (deque->size == 0) return TURBO_ENOENT;
+  index = container_deque_physical_index(deque, deque->size - 1U);
+  if (out_elem) memcpy(out_elem, container_deque_slot(deque, index), deque->elem_size);
+  deque->size -= 1U;
+  if (deque->size == 0) deque->head = 0;
+  return TURBO_OK;
+}
+
+int container_deque_pop_front(container_deque_t *deque, void *out_elem) {
+  if (!container_deque_valid(deque)) return TURBO_EINVAL;
+  if (deque->size == 0) return TURBO_ENOENT;
+  if (out_elem) memcpy(out_elem, container_deque_slot(deque, deque->head), deque->elem_size);
+  deque->head = (deque->head + 1U) % deque->capacity;
+  deque->size -= 1U;
+  if (deque->size == 0) deque->head = 0;
+  return TURBO_OK;
+}
+
+void *container_deque_front(container_deque_t *deque) {
+  if (!container_deque_valid(deque) || deque->size == 0) return NULL;
+  return container_deque_slot(deque, deque->head);
+}
+
+const void *container_deque_front_const(const container_deque_t *deque) {
+  if (!container_deque_valid(deque) || deque->size == 0) return NULL;
+  return container_deque_slot_const(deque, deque->head);
+}
+
+void *container_deque_back(container_deque_t *deque) {
+  size_t index;
+  if (!container_deque_valid(deque) || deque->size == 0) return NULL;
+  index = container_deque_physical_index(deque, deque->size - 1U);
+  return container_deque_slot(deque, index);
+}
+
+const void *container_deque_back_const(const container_deque_t *deque) {
+  size_t index;
+  if (!container_deque_valid(deque) || deque->size == 0) return NULL;
+  index = container_deque_physical_index(deque, deque->size - 1U);
+  return container_deque_slot_const(deque, index);
+}
+
+void *container_deque_at(container_deque_t *deque, size_t index) {
+  if (!container_deque_valid(deque) || index >= deque->size) return NULL;
+  return container_deque_slot(deque, container_deque_physical_index(deque, index));
+}
+
+const void *container_deque_at_const(const container_deque_t *deque, size_t index) {
+  if (!container_deque_valid(deque) || index >= deque->size) return NULL;
+  return container_deque_slot_const(deque, container_deque_physical_index(deque, index));
+}
+
+size_t container_deque_size(const container_deque_t *deque) {
+  if (!deque) return 0;
+  return deque->size;
+}
+
+size_t container_deque_capacity(const container_deque_t *deque) {
+  if (!deque) return 0;
+  return deque->capacity;
+}
+
+bool container_deque_empty(const container_deque_t *deque) {
+  return deque == NULL || deque->size == 0;
+}
