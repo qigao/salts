@@ -96,7 +96,8 @@ static inline size_t cmeta_range_size(const cmeta_range *range) {
 
 static inline uint64_t cmeta_range_capture_version(
     cmeta_range_version_fn current_version, const void *object) {
-    return current_version != NULL ? current_version(object) : UINT64_C(0);
+    return current_version != NULL && object != NULL ? current_version(object) :
+                                                      UINT64_C(0);
 }
 
 static inline cmeta_gen_status cmeta_range_next(const cmeta_range *range,
@@ -106,9 +107,11 @@ static inline cmeta_gen_status cmeta_range_next(const cmeta_range *range,
         cursor == NULL || out_value == NULL) {
         return CMETA_GEN_ERROR;
     }
-    if (range->current_version != NULL &&
-        range->current_version(range->object) != range->version) {
-        return CMETA_GEN_MUTATED;
+    if (range->current_version != NULL) {
+        if (range->object == NULL)
+            return CMETA_GEN_ERROR;
+        if (range->current_version(range->object) != range->version)
+            return CMETA_GEN_MUTATED;
     }
     return range->next(range->object, cursor, out_value);
 }

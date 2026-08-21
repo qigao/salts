@@ -143,8 +143,8 @@ CMETA_PP_FOR_EACH_A(CMETA_DEFINE_TYPE, ~, CMETA_TYPE_LIST)
 #undef CMETA_DEFINE_TYPE
 
 bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b) {
+    if (!a || !b || !a->name || !b->name) return false;
     if (a == b) return true;
-    if (!a || !b) return false;
     if (a->kind != b->kind || a->size != b->size || a->align != b->align)
         return false;
     if (strcmp(a->name, b->name) != 0) return false;

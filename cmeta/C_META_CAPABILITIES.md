@@ -18,6 +18,8 @@ CMeta is a finite, schema-driven compile-time metadata/code-generation layer for
 - allocation-free `cmeta_range` protocol and range traits;
 - one-pointer typed-container object headers plus static `cmeta_container_desc` metadata;
 - erased default/key/value/entry Range factories.
+- explicit type traits for equality, hash, comparison, copy, move, and
+  destruction, attached to semantic type descriptors;
 - transactional bounded `cmeta_collector` façade with semantic type admission,
   first-error preservation, and exactly-once adapter abort;
 - optional value-oriented collector factory in `cmeta_container_desc`.
@@ -153,8 +155,7 @@ and runtime capability APIs such as `stream(...)`.
 ## Next natural extensions
 
 - kind-level `_Generic` ergonomic APIs such as `list_push(&users, value)`;
-- type traits for copy/move/destroy and comparator/hash registration;
-- comparator/hash inference only for explicitly registered traits;
+- additional opt-in inference built on explicitly registered traits;
 - Array / SmallVec / RingBuffer finite generic kinds;
 - variant/sum types and richer pattern matching;
 - Pair/Tuple/Option/Result reflection descriptors;

@@ -174,12 +174,136 @@ static uint64_t cmeta_test_generated_range_version(const void *object) {
     return container->generation;
 }
 
+static size_t cmeta_test_required_range_version_reads;
+static size_t cmeta_test_null_owner_next_calls;
+
 static uint64_t cmeta_test_required_range_version(const void *object) {
     const cmeta_test_required_range_container *container =
         (const cmeta_test_required_range_container *)object;
 
+    ++cmeta_test_required_range_version_reads;
+    if (container == NULL)
+        return UINT64_C(0);
     return container->generation;
 }
+
+static cmeta_gen_status cmeta_test_null_owner_next(const void *object,
+                                                    size_t *cursor,
+                                                    void *out_value) {
+    (void)object;
+    (void)cursor;
+    (void)out_value;
+    ++cmeta_test_null_owner_next_calls;
+    return CMETA_GEN_VALUE;
+}
+
+typedef struct cmeta_test_slot_range_raw {
+    int values[2];
+    bool occupied[2];
+} cmeta_test_slot_range_raw;
+
+typedef struct cmeta_test_slot_range_container {
+    cmeta_container_header cmeta;
+    cmeta_test_slot_range_raw raw;
+    uint64_t generation;
+} cmeta_test_slot_range_container;
+
+static size_t cmeta_test_slot_range_raw_size(
+    const cmeta_test_slot_range_raw *raw) {
+    size_t count = 0u;
+    size_t index;
+
+    for (index = 0u; index < 2u; ++index)
+        count += raw->occupied[index] ? 1u : 0u;
+    return count;
+}
+
+static size_t cmeta_test_slot_range_raw_capacity(
+    const cmeta_test_slot_range_raw *raw) {
+    (void)raw;
+    return 2u;
+}
+
+static const void *cmeta_test_slot_range_raw_key_at(
+    const cmeta_test_slot_range_raw *raw, size_t index) {
+    return index < 2u && raw->occupied[index] ? &raw->values[index] : NULL;
+}
+
+static uint64_t cmeta_test_slot_range_version(const void *object) {
+    const cmeta_test_slot_range_container *container =
+        (const cmeta_test_slot_range_container *)object;
+
+    return container->generation;
+}
+
+CMETA_CONTAINER1_SLOT_RANGE_DEFINE(
+    cmeta_test_slot_range_container,
+    int,
+    cmeta_test_slot_range_raw,
+    CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE,
+    cmeta_test_slot_range_version)
+
+typedef struct cmeta_test_assoc_range_raw {
+    int keys[2];
+    long values[2];
+    bool occupied[2];
+} cmeta_test_assoc_range_raw;
+
+typedef struct cmeta_test_assoc_range_container_entry {
+    int key;
+    long value;
+} cmeta_test_assoc_range_container_entry;
+
+typedef struct cmeta_test_assoc_range_container {
+    cmeta_container_header cmeta;
+    cmeta_test_assoc_range_raw raw;
+    uint64_t generation;
+} cmeta_test_assoc_range_container;
+
+static size_t cmeta_test_assoc_range_raw_size(
+    const cmeta_test_assoc_range_raw *raw) {
+    size_t count = 0u;
+    size_t index;
+
+    for (index = 0u; index < 2u; ++index)
+        count += raw->occupied[index] ? 1u : 0u;
+    return count;
+}
+
+static size_t cmeta_test_assoc_range_raw_capacity(
+    const cmeta_test_assoc_range_raw *raw) {
+    (void)raw;
+    return 2u;
+}
+
+static const void *cmeta_test_assoc_range_raw_key_at(
+    const cmeta_test_assoc_range_raw *raw, size_t index) {
+    return index < 2u && raw->occupied[index] ? &raw->keys[index] : NULL;
+}
+
+static const void *cmeta_test_assoc_range_raw_value_at(
+    const cmeta_test_assoc_range_raw *raw, size_t index) {
+    return index < 2u && raw->occupied[index] ? &raw->values[index] : NULL;
+}
+
+static uint64_t cmeta_test_assoc_range_version(const void *object) {
+    const cmeta_test_assoc_range_container *container =
+        (const cmeta_test_assoc_range_container *)object;
+
+    return container->generation;
+}
+
+CMETA_CONTAINER2_RANGES_DEFINE(
+    cmeta_test_assoc_range_container,
+    int,
+    long,
+    cmeta_test_assoc_range_raw,
+    key_at,
+    value_at,
+    CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE,
+    CMETA_RANGE_SIZED,
+    CMETA_RANGE_SIZED,
+    cmeta_test_assoc_range_version)
 
 CMETA_CONTAINER1_INDEX_RANGE_DEFINE(
     cmeta_test_generated_range_container,
@@ -274,6 +398,16 @@ suite("CMeta core") {
         check_null(cmeta_type_find("not-a-cmeta-type"));
         check_null(cmeta_type_find(NULL));
         check_null(cmeta_type_registry_at(cmeta_type_registry_count()));
+    }
+
+    it("rejects malformed unnamed type descriptors") {
+        cmeta_type_desc unnamed = {
+            NULL, sizeof(int), _Alignof(int), CMETA_T_OBJECT, NULL, NULL
+        };
+
+        check_false(cmeta_type_equal(&unnamed, &unnamed));
+        check_false(cmeta_type_equal(&unnamed, &cmeta_type_int));
+        check_false(cmeta_type_equal(&cmeta_type_int, &unnamed));
     }
 
     it("attaches named traits to every builtin scalar descriptor") {
@@ -548,5 +682,104 @@ suite("CMeta core") {
         check_equal(out, 3);
         ++container.generation;
         check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_MUTATED);
+    }
+
+    it("rejects a null owner before version or next callbacks") {
+        cmeta_range range = {
+            NULL, &cmeta_type_int, CMETA_RANGE_NONE, NULL,
+            cmeta_test_null_owner_next, UINT64_C(0),
+            cmeta_test_required_range_version
+        };
+        size_t cursor = 0u;
+        int out = 0;
+
+        cmeta_test_required_range_version_reads = 0u;
+        cmeta_test_null_owner_next_calls = 0u;
+        check_equal(cmeta_range_capture_version(
+                        cmeta_test_required_range_version, NULL),
+                    UINT64_C(0));
+        check_equal(cmeta_test_required_range_version_reads, (size_t)0u);
+        check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_ERROR);
+        check_equal(cmeta_test_required_range_version_reads, (size_t)0u);
+        check_equal(cmeta_test_null_owner_next_calls, (size_t)0u);
+    }
+
+    it("preserves stateless ranges that accept a null object") {
+        cmeta_range range = {
+            NULL, &cmeta_type_int, CMETA_RANGE_NONE, NULL,
+            cmeta_test_null_owner_next, UINT64_C(0), NULL
+        };
+        size_t cursor = 0u;
+        int out = 0;
+
+        cmeta_test_null_owner_next_calls = 0u;
+        check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_VALUE);
+        check_equal(cmeta_test_null_owner_next_calls, (size_t)1u);
+    }
+
+    it("generated versioned ranges do not access a null owner") {
+        cmeta_range range;
+        size_t cursor = 0u;
+        int out = 0;
+
+        cmeta_test_required_range_version_reads = 0u;
+        range = cmeta_test_required_range_container_range(NULL);
+        check_equal(range.version, UINT64_C(0));
+        check_not_null(range.current_version);
+        check_equal(cmeta_test_required_range_version_reads, (size_t)0u);
+        check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_ERROR);
+        check_equal(cmeta_test_required_range_version_reads, (size_t)0u);
+    }
+
+    it("detects mutation through generated slot ranges") {
+        cmeta_test_slot_range_container container = {
+            .raw = { .values = {17, 0}, .occupied = {true, false} },
+            .generation = UINT64_C(21)
+        };
+        cmeta_range range = cmeta_test_slot_range_container_range(&container);
+        size_t cursor = 0u;
+        int out = 0;
+
+        check_equal(range.version, UINT64_C(21));
+        check_not_null(range.current_version);
+        check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_VALUE);
+        check_equal(out, 17);
+        ++container.generation;
+        check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_MUTATED);
+    }
+
+    it("detects mutation through generated associative ranges") {
+        cmeta_test_assoc_range_container container = {
+            .raw = { .keys = {7, 0}, .values = {70, 0},
+                     .occupied = {true, false} },
+            .generation = UINT64_C(31)
+        };
+        cmeta_range range;
+        cmeta_test_assoc_range_container_entry entry = {0};
+        size_t cursor;
+        int key = 0;
+        long value = 0;
+
+        range = cmeta_test_assoc_range_container_keys_range(&container);
+        cursor = 0u;
+        check_equal(cmeta_range_next(&range, &cursor, &key), CMETA_GEN_VALUE);
+        check_equal(key, 7);
+        ++container.generation;
+        check_equal(cmeta_range_next(&range, &cursor, &key), CMETA_GEN_MUTATED);
+
+        range = cmeta_test_assoc_range_container_values_range(&container);
+        cursor = 0u;
+        check_equal(cmeta_range_next(&range, &cursor, &value), CMETA_GEN_VALUE);
+        check_equal(value, 70L);
+        ++container.generation;
+        check_equal(cmeta_range_next(&range, &cursor, &value), CMETA_GEN_MUTATED);
+
+        range = cmeta_test_assoc_range_container_entries_range(&container);
+        cursor = 0u;
+        check_equal(cmeta_range_next(&range, &cursor, &entry), CMETA_GEN_VALUE);
+        check_equal(entry.key, 7);
+        check_equal(entry.value, 70L);
+        ++container.generation;
+        check_equal(cmeta_range_next(&range, &cursor, &entry), CMETA_GEN_MUTATED);
     }
 }

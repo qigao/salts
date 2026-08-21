@@ -23,7 +23,8 @@ static cmeta_status fake_collector_begin(void *context,
 
     ++state->begin_count;
     state->observed_limit = limit;
-    if (!cmeta_type_equal(input, state->expected_type))
+    if (state->expected_type != NULL &&
+        !cmeta_type_equal(input, state->expected_type))
         return CMETA_TYPE_MISMATCH;
     return state->begin_status;
 }
@@ -284,6 +285,63 @@ spec("CMeta transactional collectors") {
         check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &value),
                     CMETA_CALLBACK_ERROR);
         check_equal(collector.status, CMETA_CALLBACK_ERROR);
+        check_equal(state.abort_count, (size_t)1u);
+    }
+
+    it("normalizes an unknown begin status and aborts once") {
+        int output = 0;
+        fake_collector_state state = {
+            .output = &output,
+            .expected_type = &cmeta_type_int,
+            .begin_status = (cmeta_status)99
+        };
+        cmeta_collector collector =
+            fake_collector(&state, &output, &cmeta_type_int, 1u);
+
+        check_equal(cmeta_collector_begin(&collector), CMETA_CALLBACK_ERROR);
+        check_equal(collector.status, CMETA_CALLBACK_ERROR);
+        check_true(collector.state == CMETA_COLLECTOR_ABORTED);
+        check_equal(state.begin_count, (size_t)1u);
+        check_equal(state.abort_count, (size_t)1u);
+    }
+
+    it("normalizes an unknown finish status and aborts once") {
+        int output = 0;
+        fake_collector_state state = {
+            .output = &output,
+            .expected_type = &cmeta_type_int,
+            .finish_status = (cmeta_status)99
+        };
+        cmeta_collector collector =
+            fake_collector(&state, &output, &cmeta_type_int, 1u);
+
+        check_equal(cmeta_collector_begin(&collector), CMETA_OK);
+        check_equal(cmeta_collector_finish(&collector), CMETA_CALLBACK_ERROR);
+        check_equal(collector.status, CMETA_CALLBACK_ERROR);
+        check_true(collector.state == CMETA_COLLECTOR_ABORTED);
+        check_equal(state.finish_count, (size_t)1u);
+        check_equal(state.abort_count, (size_t)1u);
+    }
+
+    it("rejects malformed input descriptors before accept dispatch") {
+        int output = 0;
+        int value = 1;
+        cmeta_type_desc malformed = {
+            NULL, sizeof(int), _Alignof(int), CMETA_T_OBJECT, NULL, NULL
+        };
+        fake_collector_state state = {
+            .output = &output,
+            .expected_type = NULL
+        };
+        cmeta_collector collector =
+            fake_collector(&state, &output, &malformed, 1u);
+
+        check_equal(cmeta_collector_begin(&collector), CMETA_OK);
+        check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &value),
+                    CMETA_TYPE_MISMATCH);
+        check_equal(collector.status, CMETA_TYPE_MISMATCH);
+        check_true(collector.state == CMETA_COLLECTOR_ABORTED);
+        check_equal(state.accept_count, (size_t)0u);
         check_equal(state.abort_count, (size_t)1u);
     }
 
