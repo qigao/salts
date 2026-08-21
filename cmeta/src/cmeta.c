@@ -26,7 +26,7 @@ const cmeta_type_desc cmeta_type_gen_status = {
         CMETA_STR(CMETA_TYPE_CTYPE(row)) " *", sizeof(CMETA_TYPE_CTYPE(row) *), \
         _Alignof(CMETA_TYPE_CTYPE(row) *), CMETA_T_POINTER, &CMETA_TYPE_DESC(row) \
     };
-CMETA_PP_FOR_EACH_A(CMETA_DEFINE_TYPE, ~, CMETA_TYPE_LIST)
+CMETA_PP_FOR_EACH_A(CMETA_DEFINE_TYPE, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_DEFINE_TYPE
 
 bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b) {
@@ -42,7 +42,7 @@ bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b) {
 
 static const cmeta_type_desc *const cmeta_type_registry[] = {
 #define CMETA_TYPE_REG_ITEM(row, ignored) &CMETA_TYPE_DESC(row),
-    CMETA_PP_FOR_EACH_A(CMETA_TYPE_REG_ITEM, ~, CMETA_TYPE_LIST)
+    CMETA_PP_FOR_EACH_A(CMETA_TYPE_REG_ITEM, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_TYPE_REG_ITEM
 };
 
