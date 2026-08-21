@@ -37,7 +37,8 @@ private def clangCertified : CertifiedPreprocessorBackend :=
   ⟨clangBackend, by native_decide⟩
 
 private def certifiedRegistry : PreprocessorBackendRegistry :=
-  ⟨[gccCertified, clangCertified]⟩
+  { entries := [gccCertified, clangCertified]
+    uniqueKeys := by native_decide }
 
 private def reentrantIR : ReplayIR :=
   .replay 1 (.replay 2 (.replay 1 .emit))
@@ -90,7 +91,7 @@ theorem CPreprocessorBackendConformance.capabilities_agree :
   native_decide
 
 /-- Successful lowering normalizes to the one canonical plan determined only by
-    the replay IR once the selected backend admits that IR. -/
+    the replay IR once the selected backend supports that IR. -/
 theorem CPreprocessorBackendConformance.reentry_normalizes_to_canonical_plan :
     lowerReplayBackendPlan gccCertified.replayCapability reentrantIR =
       some (ReplayBackendPlan.fromIR reentrantIR) := by
@@ -105,6 +106,32 @@ theorem CPreprocessorBackendConformance.reentry_lowering_is_portable :
   exact certifiedReplayLowering_eq_of_both_supports
     gccCertified clangCertified reentrantIR
     (by native_decide) (by native_decide)
+
+/-- Registry lookup is keyed by compiler identity rather than list position. -/
+theorem CPreprocessorBackendConformance.gcc_lookup_round_trip :
+    (certifiedRegistry.lookup gccCertified.key).map
+        CertifiedPreprocessorBackend.key = some gccCertified.key := by
+  native_decide
+
+/-- Resolving a registered backend and a supported replay IR returns the same
+    canonical plan used by direct lowering. -/
+theorem CPreprocessorBackendConformance.gcc_registry_resolve :
+    certifiedRegistry.resolveReplay gccCertified.key reentrantIR =
+      some (ReplayBackendPlan.fromIR reentrantIR) := by
+  native_decide
+
+/-- The registry resolver has one semantic contract: successful resolution is
+    equivalent to finding the keyed certified backend, proving support for the
+    requested IR, and returning its canonical replay plan. -/
+theorem CPreprocessorBackendConformance.registry_resolve_contract :
+    certifiedRegistry.resolveReplay gccCertified.key reentrantIR =
+        some (ReplayBackendPlan.fromIR reentrantIR) ↔
+      ∃ backend,
+        certifiedRegistry.lookup gccCertified.key = some backend ∧
+        backend.supportsReplay reentrantIR ∧
+        ReplayBackendPlan.fromIR reentrantIR = ReplayBackendPlan.fromIR reentrantIR := by
+  exact PreprocessorBackendRegistry.resolveReplay_eq_some_iff
+    certifiedRegistry gccCertified.key reentrantIR (ReplayBackendPlan.fromIR reentrantIR)
 
 end Producer
 end CMeta
