@@ -1,8 +1,15 @@
 #include <cmeta/cmeta.h>
 
-#include <assert.h>
 #include <stdio.h>
 #include <string.h>
+
+#define CHECK(expr) \
+    do { \
+        if (!(expr)) { \
+            fprintf(stderr, "descriptor bridge check failed: %s\n", #expr); \
+            return 1; \
+        } \
+    } while (0)
 
 static const cmeta_type_identity user_id_a =
     CMETA_TYPE_ID_ATOM_INIT("app.User");
@@ -69,25 +76,25 @@ int main(void) {
     const bool pointer_different =
         cmeta_type_equal(&cmeta_type_int_ptr, &cmeta_type_long_ptr);
 
-    assert(legacy_equal);
-    assert(structural_equal);
-    assert(!different_identity);
-    assert(!mixed_equal);
-    assert(cmeta_type_identity_of(&structural_user_a) == &user_id_a);
-    assert(cmeta_type_identity_of(NULL) == NULL);
-    assert(cmeta_type_desc_valid(&legacy_a));
-    assert(cmeta_type_desc_valid(&structural_user_a));
+    CHECK(legacy_equal);
+    CHECK(structural_equal);
+    CHECK(!different_identity);
+    CHECK(!mixed_equal);
+    CHECK(cmeta_type_identity_of(&structural_user_a) == &user_id_a);
+    CHECK(cmeta_type_identity_of(NULL) == NULL);
+    CHECK(cmeta_type_desc_valid(&legacy_a));
+    CHECK(cmeta_type_desc_valid(&structural_user_a));
 
-    assert(int_id != NULL);
-    assert(int_id->form == CMETA_TYPE_ATOM);
-    assert(strcmp(int_id->stable_atom_id, "cmeta.int") == 0);
-    assert(int_ptr_id != NULL);
-    assert(int_ptr_id->form == CMETA_TYPE_POINTER);
-    assert(cmeta_type_identity_equal(int_ptr_id->base, int_id));
-    assert(cmeta_type_desc_valid(&cmeta_type_int));
-    assert(cmeta_type_desc_valid(&cmeta_type_int_ptr));
-    assert(long_ptr_id != NULL);
-    assert(!pointer_different);
+    CHECK(int_id != NULL);
+    CHECK(int_id->form == CMETA_TYPE_ATOM);
+    CHECK(strcmp(int_id->stable_atom_id, "cmeta.int") == 0);
+    CHECK(int_ptr_id != NULL);
+    CHECK(int_ptr_id->form == CMETA_TYPE_POINTER);
+    CHECK(cmeta_type_identity_equal(int_ptr_id->base, int_id));
+    CHECK(cmeta_type_desc_valid(&cmeta_type_int));
+    CHECK(cmeta_type_desc_valid(&cmeta_type_int_ptr));
+    CHECK(long_ptr_id != NULL);
+    CHECK(!pointer_different);
 
     puts("namespace CMeta.DescriptorBridgeGeneratedC");
     printf("def legacyEqual : Bool := %s\n", lean_bool(legacy_equal));
