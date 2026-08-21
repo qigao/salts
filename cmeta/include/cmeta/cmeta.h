@@ -2,6 +2,7 @@
 #define CMETA_H
 
 #include <cmeta/interface.h>
+#include <cmeta/type_identity.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -53,7 +54,7 @@ extern const cmeta_type_desc cmeta_type_gen_status;
 #define CMETA_DECLARE_TYPE(row, ignored) \
     extern const cmeta_type_desc CMETA_TYPE_DESC(row); \
     extern const cmeta_type_desc CMETA_DESC_PTR(row);
-CMETA_PP_FOR_EACH_A(CMETA_DECLARE_TYPE, ~, CMETA_TYPE_LIST)
+CMETA_PP_FOR_EACH_A(CMETA_DECLARE_TYPE, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_DECLARE_TYPE
 
 bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b);
