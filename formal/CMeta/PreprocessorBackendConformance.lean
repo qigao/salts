@@ -184,7 +184,8 @@ theorem CPreprocessorBackendConformance.selection_result_is_candidate
     certified replay depth. GCC and Clang currently expose equal depth four, so
     Clang 18 wins this deliberately cross-family policy fixture over GCC 13. -/
 theorem CPreprocessorBackendConformance.newer_version_breaks_equal_depth_tie :
-    replaySelectionPolicy.select [gccCertified, clangCertified] = some clangCertified := by
+    (replaySelectionPolicy.select [gccCertified, clangCertified]).map
+        CertifiedPreprocessorBackend.key = some clangCertified.key := by
   native_decide
 
 /-- Registry-level selection preserves the support guarantee of candidate
