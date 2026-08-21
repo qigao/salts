@@ -14,21 +14,21 @@ private def resultCtor : GenericConstructor :=
 
 example :
     TypeIdentityGeneratedC.atomAliasEqual =
-      decide (user = TypeId.atom "app.User") := by
+      (user == TypeId.atom "app.User") := by
   native_decide
 
 example :
-    TypeIdentityGeneratedC.atomDifferent = decide (user = err) := by
+    TypeIdentityGeneratedC.atomDifferent = (user == err) := by
   native_decide
 
 example :
     TypeIdentityGeneratedC.resultApplicationEqual =
-      decide (resultA = resultB) := by
+      (resultA == resultB) := by
   native_decide
 
 example :
     TypeIdentityGeneratedC.resultArgumentOrderEqual =
-      decide (resultA = resultReversed) := by
+      (resultA == resultReversed) := by
   native_decide
 
 example :
