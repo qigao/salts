@@ -1,0 +1,41 @@
+name: Temporary Plan A docs finalizer
+
+on:
+  push:
+    branches: [verify/formal-plan-a-docs]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: verify/formal-plan-a-docs
+          fetch-depth: 0
+
+      - name: Apply Plan A documentation finalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python formal/.plan_a_docs_finalize.py
+
+      - name: Commit documentation changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No documentation changes needed."
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -- \
+            docs/superpowers/specs/2026-08-21-cmeta-lean-module-system-migration-design.md \
+            docs/superpowers/specs/2026-08-21-cmeta-lean-module-system-migration-plan-a-amendment.md \
+            docs/superpowers/specs/2026-08-21-cmeta-lean-module-system-plan-a-errata.md \
+            formal/README.md
+          git commit -m "docs(formal): mark module migration Plan A verified"
+          git push origin HEAD:verify/formal-plan-a-docs
