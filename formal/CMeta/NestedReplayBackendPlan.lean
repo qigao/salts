@@ -82,6 +82,16 @@ structure ReplayBackendPlan where
   expansion : ReplayExpansionPlan
   deriving Repr, DecidableEq
 
+namespace ReplayBackendPlan
+
+/-- The unique backend plan determined by replay structure itself. Backend
+    capability decides only whether this plan is admitted; it does not alter the
+    plan once admission succeeds. -/
+def fromIR (ir : ReplayIR) : ReplayBackendPlan :=
+  ⟨ir, ir.sameProducerDepth, ReplayExpansionPlan.fromIR ir⟩
+
+end ReplayBackendPlan
+
 /-- Recover the exact IR-computed requirement from any successful structural
     lowering. -/
 theorem lowerReplayIR_requirement
@@ -102,6 +112,15 @@ def lowerReplayBackendPlan
   | none => none
   | some lowered =>
       some ⟨ir, lowered.requiredSameProducerDepth, ReplayExpansionPlan.fromIR ir⟩
+
+/-- Once a backend supports the IR's required replay depth, lowering normalizes
+    to the one canonical plan determined entirely by that IR. -/
+theorem lowerReplayBackendPlan_eq_canonical_of_supports
+    (backend : ReplayBackendCapability) (ir : ReplayIR)
+    (h : ir.sameProducerDepth ≤ backend.certifiedSameProducerDepth) :
+    lowerReplayBackendPlan backend ir = some (ReplayBackendPlan.fromIR ir) := by
+  simp [lowerReplayBackendPlan, lowerReplayIR, lowerSameProducerDepth,
+    ReplayBackendPlan.fromIR, h]
 
 /-- Successful backend plan generation preserves the IR-derived logical rescan
     requirement. -/
@@ -133,15 +152,26 @@ theorem lowerReplayBackendPlan_respects_active
       exact ReplayExpansionPlan.fromIR_respects ir
 
 /-- Any two certified preprocessors lower the same replay IR identically when
-    they expose the same replay capability. Compiler family, version, and other
-    identity fields remain outside this theorem because lowering consumes only
-    the capability projection. -/
+    they expose the same replay capability. Kept as a compatibility corollary;
+    the stronger theorem below needs only support for this particular IR. -/
 theorem certifiedReplayLowering_eq_of_capability_eq
     (a b : CertifiedPreprocessorBackend) (ir : ReplayIR)
     (hcap : a.replayCapability = b.replayCapability) :
     lowerReplayBackendPlan a.replayCapability ir =
       lowerReplayBackendPlan b.replayCapability ir := by
   rw [hcap]
+
+/-- Portability is local to the requested IR: two certified preprocessors need
+    not expose identical capability envelopes. If both admit this IR, both
+    normalize to the same canonical backend plan. -/
+theorem certifiedReplayLowering_eq_of_both_supports
+    (a b : CertifiedPreprocessorBackend) (ir : ReplayIR)
+    (ha : ir.sameProducerDepth ≤ a.replayCapability.certifiedSameProducerDepth)
+    (hb : ir.sameProducerDepth ≤ b.replayCapability.certifiedSameProducerDepth) :
+    lowerReplayBackendPlan a.replayCapability ir =
+      lowerReplayBackendPlan b.replayCapability ir := by
+  rw [lowerReplayBackendPlan_eq_canonical_of_supports a.replayCapability ir ha]
+  rw [lowerReplayBackendPlan_eq_canonical_of_supports b.replayCapability ir hb]
 
 end Producer
 end CMeta
