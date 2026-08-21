@@ -106,6 +106,55 @@ suite("CMeta core") {
         check_null(cmeta_type_registry_at(cmeta_type_registry_count()));
     }
 
+    it("exposes explicit built-in scalar traits") {
+        int a = 7;
+        int b = 7;
+        int copied = 0;
+        int moved = 0;
+        const cmeta_type_traits *traits = cmeta_type_int.traits;
+
+        check_not_null(traits);
+        check_true(traits->equal(&a, &b));
+        check_true(traits->hash(&a) == traits->hash(&b));
+        check_equal(traits->compare(&a, &b), 0);
+        b = 8;
+        check_true(traits->compare(&a, &b) < 0);
+        check_true(traits->copy_construct(&copied, &a));
+        check_equal(copied, 7);
+        traits->move_construct(&moved, &copied);
+        check_equal(moved, 7);
+        traits->destroy(&moved);
+        check_equal(cmeta_type_require_traits(
+                        &cmeta_type_int,
+                        CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH |
+                            CMETA_TRAIT_COMPARE | CMETA_TRAIT_COPY |
+                            CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY),
+                    CMETA_OK);
+    }
+
+    it("rejects missing or invalid required traits") {
+        cmeta_type_desc opaque = {
+            "opaque", sizeof(int), _Alignof(int), CMETA_T_OBJECT, NULL, NULL
+        };
+        cmeta_type_traits trivial_copy_without_operation = {
+            CMETA_TRAIT_COPY | CMETA_TRAIT_TRIVIAL_COPY,
+            NULL, NULL, NULL, NULL, NULL, NULL
+        };
+        cmeta_type_desc advertised_copy = {
+            "advertised_copy", sizeof(int), _Alignof(int), CMETA_T_OBJECT,
+            NULL, &trivial_copy_without_operation
+        };
+
+        check_equal(cmeta_type_require_traits(NULL, CMETA_TRAIT_HASH),
+                    CMETA_INVALID_ARGUMENT);
+        check_equal(cmeta_type_require_traits(&opaque, CMETA_TRAIT_HASH),
+                    CMETA_TRAIT_MISSING);
+        check_equal(cmeta_type_require_traits(&advertised_copy, CMETA_TRAIT_COPY),
+                    CMETA_TRAIT_MISSING);
+        check_equal(cmeta_type_require_traits(&cmeta_type_int, 1u << 31),
+                    CMETA_INVALID_ARGUMENT);
+    }
+
     it("reflects enum text, symbols, values, and invalid input") {
         cmeta_test_state parsed = CMETA_TEST_READY;
         const cmeta_enum_desc *meta = cmeta_test_state_meta();

@@ -5,29 +5,83 @@
 #define CMETA_STR_I(x) #x
 #define CMETA_STR(x) CMETA_STR_I(x)
 
-const cmeta_type_desc cmeta_type_void = { "void", 0, 1, CMETA_T_VOID, NULL };
+static bool cmeta_int_equal(const void *left, const void *right) {
+    return left != NULL && right != NULL &&
+           *(const int *)left == *(const int *)right;
+}
+
+static uint64_t cmeta_int_hash(const void *value) {
+    return value == NULL ? 0u : (uint64_t)*(const int *)value;
+}
+
+static int cmeta_int_compare(const void *left, const void *right) {
+    int lhs;
+    int rhs;
+
+    if (left == NULL || right == NULL) return 0;
+    lhs = *(const int *)left;
+    rhs = *(const int *)right;
+    return lhs < rhs ? -1 : lhs > rhs;
+}
+
+static bool cmeta_int_copy_construct(void *destination, const void *source) {
+    if (destination == NULL || source == NULL) return false;
+    *(int *)destination = *(const int *)source;
+    return true;
+}
+
+static void cmeta_int_move_construct(void *destination, void *source) {
+    if (destination != NULL && source != NULL)
+        *(int *)destination = *(int *)source;
+}
+
+static void cmeta_int_destroy(void *value) {
+    (void)value;
+}
+
+static const cmeta_type_traits cmeta_int_traits = {
+    CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH | CMETA_TRAIT_COMPARE |
+        CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY |
+        CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY,
+    cmeta_int_equal,
+    cmeta_int_hash,
+    cmeta_int_compare,
+    cmeta_int_copy_construct,
+    cmeta_int_move_construct,
+    cmeta_int_destroy
+};
+
+#define CMETA_BUILTIN_TRAITS(type) \
+    _Generic(((type *)0), int *: &cmeta_int_traits, default: NULL)
+
+const cmeta_type_desc cmeta_type_void = {
+    "void", 0, 1, CMETA_T_VOID, NULL, NULL
+};
 const cmeta_type_desc cmeta_type_size = {
-    "size_t", sizeof(size_t), _Alignof(size_t), CMETA_T_INTEGER, NULL
+    "size_t", sizeof(size_t), _Alignof(size_t), CMETA_T_INTEGER, NULL, NULL
 };
 const cmeta_type_desc cmeta_type_size_ptr = {
-    "size_t *", sizeof(size_t *), _Alignof(size_t *), CMETA_T_POINTER, &cmeta_type_size
+    "size_t *", sizeof(size_t *), _Alignof(size_t *), CMETA_T_POINTER,
+    &cmeta_type_size, NULL
 };
 const cmeta_type_desc cmeta_type_gen_status = {
     "cmeta_gen_status", sizeof(cmeta_gen_status), _Alignof(cmeta_gen_status),
-    CMETA_T_INTEGER, NULL
+    CMETA_T_INTEGER, NULL, NULL
 };
 
 #define CMETA_DEFINE_TYPE(row, ignored) \
     const cmeta_type_desc CMETA_TYPE_DESC(row) = { \
         CMETA_STR(CMETA_TYPE_CTYPE(row)), sizeof(CMETA_TYPE_CTYPE(row)), \
-        _Alignof(CMETA_TYPE_CTYPE(row)), CMETA_TYPE_KIND(row), NULL \
+        _Alignof(CMETA_TYPE_CTYPE(row)), CMETA_TYPE_KIND(row), NULL, \
+        CMETA_BUILTIN_TRAITS(CMETA_TYPE_CTYPE(row)) \
     }; \
     const cmeta_type_desc CMETA_DESC_PTR(row) = { \
         CMETA_STR(CMETA_TYPE_CTYPE(row)) " *", sizeof(CMETA_TYPE_CTYPE(row) *), \
-        _Alignof(CMETA_TYPE_CTYPE(row) *), CMETA_T_POINTER, &CMETA_TYPE_DESC(row) \
+        _Alignof(CMETA_TYPE_CTYPE(row) *), CMETA_T_POINTER, &CMETA_TYPE_DESC(row), NULL \
     };
 CMETA_PP_FOR_EACH_A(CMETA_DEFINE_TYPE, ~, CMETA_TYPE_LIST)
 #undef CMETA_DEFINE_TYPE
+#undef CMETA_BUILTIN_TRAITS
 
 bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b) {
     if (a == b) return true;

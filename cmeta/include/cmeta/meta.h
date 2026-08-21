@@ -1,5 +1,7 @@
 #ifndef CMETA_META_H
 #define CMETA_META_H
+#include <cmeta/status.h>
+#include <cmeta/type_traits.h>
 #include <cmeta/cmeta.h>
 #include <cmeta/pp.h>
 #include <cmeta/enum.h>

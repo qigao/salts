@@ -2,6 +2,8 @@
 #define CMETA_H
 
 #include <cmeta/interface.h>
+#include <cmeta/status.h>
+#include <cmeta/type_traits.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -31,7 +33,35 @@ typedef struct cmeta_type_desc {
     size_t align;
     cmeta_type_kind kind;
     const struct cmeta_type_desc *pointee;
+    const cmeta_type_traits *traits;
 } cmeta_type_desc;
+
+static inline cmeta_status cmeta_type_require_traits(
+    const cmeta_type_desc *type, cmeta_trait_flags required) {
+    const cmeta_type_traits *traits;
+
+    if (type == NULL || (required & ~CMETA_TRAIT_MASK) != 0u)
+        return CMETA_INVALID_ARGUMENT;
+    if (required == 0u)
+        return CMETA_OK;
+
+    traits = type->traits;
+    if (traits == NULL || (traits->flags & required) != required)
+        return CMETA_TRAIT_MISSING;
+    if ((required & CMETA_TRAIT_EQUAL) != 0u && traits->equal == NULL)
+        return CMETA_TRAIT_MISSING;
+    if ((required & CMETA_TRAIT_HASH) != 0u && traits->hash == NULL)
+        return CMETA_TRAIT_MISSING;
+    if ((required & CMETA_TRAIT_COMPARE) != 0u && traits->compare == NULL)
+        return CMETA_TRAIT_MISSING;
+    if ((required & CMETA_TRAIT_COPY) != 0u && traits->copy_construct == NULL)
+        return CMETA_TRAIT_MISSING;
+    if ((required & CMETA_TRAIT_MOVE) != 0u && traits->move_construct == NULL)
+        return CMETA_TRAIT_MISSING;
+    if ((required & CMETA_TRAIT_DESTROY) != 0u && traits->destroy == NULL)
+        return CMETA_TRAIT_MISSING;
+    return CMETA_OK;
+}
 
 Enum(cmeta_gen_status,
     (CMETA_GEN_VALUE,          1, "value"),
