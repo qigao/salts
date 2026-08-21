@@ -6,6 +6,36 @@
 #include <stdatomic.h>
 #include <string.h>
 #include "turbo_thread.h"
+
+typedef struct turbo_log_entry_legacy_layout {
+  turbo_log_level_t level;
+  uint64_t timestamp_ms;
+  uint32_t thread_id;
+  const char *component;
+  const char *file;
+  int line;
+  const char *message;
+  size_t message_len;
+} turbo_log_entry_legacy_layout;
+
+_Static_assert(sizeof(turbo_log_entry_t) == sizeof(turbo_log_entry_legacy_layout),
+               "turbo_log_entry_t size changed");
+_Static_assert(CMETA_ALIGNOF(turbo_log_entry_t) ==
+                   CMETA_ALIGNOF(turbo_log_entry_legacy_layout),
+               "turbo_log_entry_t alignment changed");
+#define TLOG_ASSERT_ENTRY_OFFSET(field) \
+  _Static_assert(offsetof(turbo_log_entry_t, field) == \
+                     offsetof(turbo_log_entry_legacy_layout, field), \
+                 "turbo_log_entry_t offset changed: " #field)
+TLOG_ASSERT_ENTRY_OFFSET(level);
+TLOG_ASSERT_ENTRY_OFFSET(timestamp_ms);
+TLOG_ASSERT_ENTRY_OFFSET(thread_id);
+TLOG_ASSERT_ENTRY_OFFSET(component);
+TLOG_ASSERT_ENTRY_OFFSET(file);
+TLOG_ASSERT_ENTRY_OFFSET(line);
+TLOG_ASSERT_ENTRY_OFFSET(message);
+TLOG_ASSERT_ENTRY_OFFSET(message_len);
+#undef TLOG_ASSERT_ENTRY_OFFSET
  
 static int callback_count = 0;
 static const char *callback_file = NULL;
@@ -162,13 +192,13 @@ spec("TLog Tests") {
     tlog_add_sink(logger, turbo_sink_console_create(NULL));
 
     tlog_set_level(logger, TURBO_LOG_LEVEL_WARN);
-    check_int_eq(tlog_get_level(logger), TURBO_LOG_LEVEL_WARN);
-    check_int_eq(tlog_set_level_ex(logger, TURBO_LOG_LEVEL_ERROR), 0);
-    check_int_eq(tlog_get_level(logger), TURBO_LOG_LEVEL_ERROR);
-    check_int_eq(tlog_set_level_ex(logger, (turbo_log_level_t)-1), -1);
-    check_int_eq(tlog_get_level(logger), TURBO_LOG_LEVEL_ERROR);
+    check_equal(tlog_get_level(logger), TURBO_LOG_LEVEL_WARN);
+    check_equal(tlog_set_level_ex(logger, TURBO_LOG_LEVEL_ERROR), 0);
+    check_equal(tlog_get_level(logger), TURBO_LOG_LEVEL_ERROR);
+    check_equal(tlog_set_level_ex(logger, (turbo_log_level_t)-1), -1);
+    check_equal(tlog_get_level(logger), TURBO_LOG_LEVEL_ERROR);
     tlog_set_level(logger, (turbo_log_level_t)(TURBO_LOG_LEVEL_FATAL + 1));
-    check_int_eq(tlog_get_level(logger), TURBO_LOG_LEVEL_ERROR);
+    check_equal(tlog_get_level(logger), TURBO_LOG_LEVEL_ERROR);
     tlog_set_level(logger, TURBO_LOG_LEVEL_WARN);
 
     TURBO_LOG_INFO(logger, "test", "Info (should not appear)");
@@ -183,17 +213,75 @@ spec("TLog Tests") {
   }
 
   it("should return correct level names") {
-    check_str_eq(turbo_log_level_name(TURBO_LOG_LEVEL_DEBUG), "DEBUG");
-    check_str_eq(turbo_log_level_name(TURBO_LOG_LEVEL_INFO), "INFO");
-    check_str_eq(turbo_log_level_name(TURBO_LOG_LEVEL_WARN), "WARN");
-    check_str_eq(turbo_log_level_name(TURBO_LOG_LEVEL_ERROR), "ERROR");
-    check_str_eq(turbo_log_level_name(TURBO_LOG_LEVEL_FATAL), "FATAL");
+    check_equal(turbo_log_level_name(TURBO_LOG_LEVEL_DEBUG), "DEBUG");
+    check_equal(turbo_log_level_name(TURBO_LOG_LEVEL_INFO), "INFO");
+    check_equal(turbo_log_level_name(TURBO_LOG_LEVEL_WARN), "WARN");
+    check_equal(turbo_log_level_name(TURBO_LOG_LEVEL_ERROR), "ERROR");
+    check_equal(turbo_log_level_name(TURBO_LOG_LEVEL_FATAL), "FATAL");
 
-    check_int_eq(turbo_log_level_from_name("DEBUG"), TURBO_LOG_LEVEL_DEBUG);
-    check_int_eq(turbo_log_level_from_name("INFO"), TURBO_LOG_LEVEL_INFO);
-    check_int_eq(turbo_log_level_from_name("WARN"), TURBO_LOG_LEVEL_WARN);
-    check_int_eq(turbo_log_level_from_name("ERROR"), TURBO_LOG_LEVEL_ERROR);
-    check_int_eq(turbo_log_level_from_name("FATAL"), TURBO_LOG_LEVEL_FATAL);
+    check_equal(turbo_log_level_from_name("DEBUG"), TURBO_LOG_LEVEL_DEBUG);
+    check_equal(turbo_log_level_from_name("INFO"), TURBO_LOG_LEVEL_INFO);
+    check_equal(turbo_log_level_from_name("WARN"), TURBO_LOG_LEVEL_WARN);
+    check_equal(turbo_log_level_from_name("ERROR"), TURBO_LOG_LEVEL_ERROR);
+    check_equal(turbo_log_level_from_name("FATAL"), TURBO_LOG_LEVEL_FATAL);
+  }
+
+  it("should expose log level metadata without changing legacy parsing") {
+    const cmeta_enum_desc *meta = turbo_log_level_t_meta();
+
+    check_equal((int)meta->count, 5);
+    check_equal(TURBO_LOG_LEVEL_DEBUG, 0);
+    check_equal(TURBO_LOG_LEVEL_FATAL, 4);
+    check_equal(turbo_log_level_t_to_string(TURBO_LOG_LEVEL_ERROR), "ERROR");
+    check_equal(turbo_log_level_name((turbo_log_level_t)99), "UNKNOWN");
+    check_equal(turbo_log_level_from_name("TURBO_LOG_LEVEL_ERROR"), TURBO_LOG_LEVEL_INFO);
+    check_equal(turbo_log_level_from_name(NULL), TURBO_LOG_LEVEL_INFO);
+  }
+
+  it("should expose the stable log entry layout as read-only metadata") {
+    const cmeta_struct_desc *meta = turbo_log_entry_t_meta();
+    const char *names[] = {
+        "level", "timestamp_ms", "thread_id", "component",
+        "file", "line", "message", "message_len"};
+    const char *types[] = {
+        "turbo_log_level_t", "uint64_t", "uint32_t", "const char *",
+        "const char *", "int", "const char *", "size_t"};
+    const size_t offsets[] = {
+        offsetof(turbo_log_entry_t, level),
+        offsetof(turbo_log_entry_t, timestamp_ms),
+        offsetof(turbo_log_entry_t, thread_id),
+        offsetof(turbo_log_entry_t, component),
+        offsetof(turbo_log_entry_t, file),
+        offsetof(turbo_log_entry_t, line),
+        offsetof(turbo_log_entry_t, message),
+        offsetof(turbo_log_entry_t, message_len)};
+    const size_t sizes[] = {
+        sizeof(turbo_log_level_t), sizeof(uint64_t), sizeof(uint32_t),
+        sizeof(const char *), sizeof(const char *), sizeof(int),
+        sizeof(const char *), sizeof(size_t)};
+    const size_t aligns[] = {
+        CMETA_ALIGNOF(turbo_log_level_t), CMETA_ALIGNOF(uint64_t),
+        CMETA_ALIGNOF(uint32_t), CMETA_ALIGNOF(const char *),
+        CMETA_ALIGNOF(const char *), CMETA_ALIGNOF(int),
+        CMETA_ALIGNOF(const char *), CMETA_ALIGNOF(size_t)};
+
+    check_not_null(meta);
+    check_equal(meta->name, "turbo_log_entry_t");
+    check_equal(meta->size, sizeof(turbo_log_entry_t));
+    check_equal(meta->align, CMETA_ALIGNOF(turbo_log_entry_t));
+    check_equal(meta->field_count, (size_t)8);
+    for (size_t i = 0; i < meta->field_count; ++i) {
+      check_equal(meta->fields[i].name, names[i]);
+      check_equal(meta->fields[i].type_name, types[i]);
+      check_equal(meta->fields[i].offset, offsets[i]);
+      check_equal(meta->fields[i].size, sizes[i]);
+      check_equal(meta->fields[i].align, aligns[i]);
+    }
+    check_equal(cmeta_struct_find_field(meta, "component")->type_name,
+                "const char *");
+    check_equal(cmeta_struct_find_field(meta, "message")->size,
+                sizeof(const char *));
+    check_null(cmeta_struct_find_field(meta, "missing"));
   }
 
   it("should handle logging from different components") {
@@ -274,7 +362,7 @@ spec("TLog Tests") {
     check(tlog_get_queue_size(logger) > 0);
     atomic_store(&blocking_callback_release, 1);
     tlog_flush(logger);
-    check_int_eq(tlog_get_queue_size(logger), 0);
+    check_equal(tlog_get_queue_size(logger), 0);
 
     tlog_destroy(logger);
   }
@@ -294,7 +382,7 @@ spec("TLog Tests") {
     TURBO_LOG_ERROR(logger, "test", "Third callback message");
 
     tlog_flush(logger); // Wait for async queue to drain before checking count
-    check_int_eq(callback_count, 3);
+    check_equal(callback_count, 3);
 
     tlog_destroy(logger);
   }
@@ -317,11 +405,11 @@ spec("TLog Tests") {
     tlog_flush(logger);
 
     turbo_sink_metrics_t stats = {0};
-    check_int_eq(turbo_sink_metrics_snapshot(metrics, &stats), 0);
-    check_int_eq(callback_count, 2);
-    check_size_eq((size_t)stats.entries_seen, 2);
-    check_size_eq((size_t)stats.entries_forwarded, 2);
-    check_size_eq((size_t)stats.entries_filtered, 0);
+    check_equal(turbo_sink_metrics_snapshot(metrics, &stats), 0);
+    check_equal(callback_count, 2);
+    check_equal((size_t)stats.entries_seen, 2);
+    check_equal((size_t)stats.entries_forwarded, 2);
+    check_equal((size_t)stats.entries_filtered, 0);
     check(stats.bytes_forwarded > 0);
 
     tlog_destroy(logger);
@@ -332,9 +420,9 @@ spec("TLog Tests") {
     check_not_null(sink);
 
     turbo_sink_metrics_t stats = {0};
-    check_int_eq(turbo_sink_metrics_snapshot(sink, &stats), -1);
-    check_int_eq(turbo_sink_metrics_snapshot(NULL, &stats), -1);
-    check_int_eq(turbo_sink_metrics_snapshot(sink, NULL), -1);
+    check_equal(turbo_sink_metrics_snapshot(sink, &stats), -1);
+    check_equal(turbo_sink_metrics_snapshot(NULL, &stats), -1);
+    check_equal(turbo_sink_metrics_snapshot(sink, NULL), -1);
 
     turbo_sink_destroy(sink);
   }
@@ -350,8 +438,8 @@ spec("TLog Tests") {
     check_not_null(inner);
     turbo_log_sink_t *metrics = turbo_sink_metrics_create(inner, TURBO_SINK_OWNED);
     check_not_null(metrics);
-    check_int_eq(turbo_sink_set_min_level(metrics, TURBO_LOG_LEVEL_WARN), 0);
-    check_int_eq(turbo_sink_get_min_level(metrics), TURBO_LOG_LEVEL_WARN);
+    check_equal(turbo_sink_set_min_level(metrics, TURBO_LOG_LEVEL_WARN), 0);
+    check_equal(turbo_sink_get_min_level(metrics), TURBO_LOG_LEVEL_WARN);
     tlog_add_sink(logger, metrics);
 
     TURBO_LOG_DEBUG(logger, "decorator", "filtered debug message");
@@ -359,11 +447,11 @@ spec("TLog Tests") {
     tlog_flush(logger);
 
     turbo_sink_metrics_t stats = {0};
-    check_int_eq(turbo_sink_metrics_snapshot(metrics, &stats), 0);
-    check_int_eq(callback_count, 1);
-    check_size_eq((size_t)stats.entries_seen, 2);
-    check_size_eq((size_t)stats.entries_forwarded, 1);
-    check_size_eq((size_t)stats.entries_filtered, 1);
+    check_equal(turbo_sink_metrics_snapshot(metrics, &stats), 0);
+    check_equal(callback_count, 1);
+    check_equal((size_t)stats.entries_seen, 2);
+    check_equal((size_t)stats.entries_forwarded, 1);
+    check_equal((size_t)stats.entries_filtered, 1);
 
     tlog_destroy(logger);
   }
@@ -373,11 +461,11 @@ spec("TLog Tests") {
     turbo_log_sink_t *sink = turbo_sink_callback_create(count_only_callback, NULL);
     check_not_null(sink);
 
-    check_int_eq(turbo_sink_set_min_level(sink, TURBO_LOG_LEVEL_ERROR), 0);
-    check_int_eq(turbo_sink_get_min_level(sink), TURBO_LOG_LEVEL_ERROR);
-    check_int_eq(turbo_sink_set_min_level(sink, (turbo_log_level_t)-1), -1);
-    check_int_eq(turbo_sink_set_min_level(sink, (turbo_log_level_t)(TURBO_LOG_LEVEL_FATAL + 1)), -1);
-    check_int_eq(turbo_sink_set_user_data(sink, &marker), 0);
+    check_equal(turbo_sink_set_min_level(sink, TURBO_LOG_LEVEL_ERROR), 0);
+    check_equal(turbo_sink_get_min_level(sink), TURBO_LOG_LEVEL_ERROR);
+    check_equal(turbo_sink_set_min_level(sink, (turbo_log_level_t)-1), -1);
+    check_equal(turbo_sink_set_min_level(sink, (turbo_log_level_t)(TURBO_LOG_LEVEL_FATAL + 1)), -1);
+    check_equal(turbo_sink_set_user_data(sink, &marker), 0);
     check(turbo_sink_get_user_data(sink) == &marker);
 
     turbo_sink_destroy(sink);
@@ -399,12 +487,12 @@ spec("TLog Tests") {
     filter_opts.min_level = TURBO_LOG_LEVEL_ERROR;
     filter_opts.max_level = TURBO_LOG_LEVEL_INFO;
     check_null(turbo_sink_filter_create(inner, TURBO_SINK_OWNED, &filter_opts));
-    check_int_eq(custom_destroy_count, 0);
+    check_equal(custom_destroy_count, 0);
 
-    check_int_eq(tlog_add_sink(NULL, inner), -1);
-    check_int_eq(custom_destroy_count, 0);
+    check_equal(tlog_add_sink(NULL, inner), -1);
+    check_equal(custom_destroy_count, 0);
     turbo_sink_destroy(inner);
-    check_int_eq(custom_destroy_count, 1);
+    check_equal(custom_destroy_count, 1);
   }
 
   it("should decorate a sink with a filter") {
@@ -431,7 +519,7 @@ spec("TLog Tests") {
     TURBO_LOG_FATAL(logger, "allowed", "filtered by max level");
     tlog_flush(logger);
 
-    check_int_eq(callback_count, 1);
+    check_equal(callback_count, 1);
 
     tlog_destroy(logger);
   }
@@ -455,9 +543,9 @@ spec("TLog Tests") {
     TURBO_LOG_INFO(logger, "fmt", "hello");
     tlog_flush(logger);
 
-    check_int_eq(callback_count, 1);
+    check_equal(callback_count, 1);
     check(callback_user_data == &marker);
-    check_str_eq(callback_message, "[INFO] fmt: hello");
+    check_equal(callback_message, "[INFO] fmt: hello");
 
     tlog_destroy(logger);
   }
@@ -503,13 +591,13 @@ spec("TLog Tests") {
 
     TURBO_LOG_INFO(logger, "custom", "custom sink message");
     tlog_flush(logger);
-    check_int_eq(custom_write_count, 1);
-    check_int_eq(custom_flush_count, 1);
+    check_equal(custom_write_count, 1);
+    check_equal(custom_flush_count, 1);
     check(callback_user_data == &marker);
-    check_str_eq(callback_message, "custom sink message");
+    check_equal(callback_message, "custom sink message");
 
     tlog_destroy(logger);
-    check_int_eq(custom_destroy_count, 1);
+    check_equal(custom_destroy_count, 1);
     check(callback_user_data == &marker);
   }
 
@@ -528,7 +616,7 @@ spec("TLog Tests") {
     TURBO_LOG_INFO(logger, "source", "source capture test");
     tlog_flush(logger);
 
-    check_int_eq(callback_count, 1);
+    check_equal(callback_count, 1);
 #if TURBO_LOG_CAPTURE_SOURCE
     check_not_null(callback_file);
     check(callback_line > 0);
@@ -536,7 +624,7 @@ spec("TLog Tests") {
     check(strstr(TURBO_LOG_FULL_PATTERN, "{line}") != NULL);
 #else
     check(callback_file == NULL);
-    check_int_eq(callback_line, 0);
+    check_equal(callback_line, 0);
     check(strstr(TURBO_LOG_FULL_PATTERN, "{file}") == NULL);
     check(strstr(TURBO_LOG_FULL_PATTERN, "{line}") == NULL);
 #endif
@@ -583,11 +671,11 @@ spec("TLog Tests") {
 
     turbo_fs_stat_t st_base = {0};
     turbo_fs_stat_t st_rot = {0};
-    check_int_eq(turbo_fs_stat(base_path, &st_base), 0);
-    check_int_eq(turbo_fs_stat(rotated_path, &st_rot), 0);
+    check_equal(turbo_fs_stat(base_path, &st_base), 0);
+    check_equal(turbo_fs_stat(rotated_path, &st_rot), 0);
     check(st_base.is_file);
     check(st_rot.is_file);
-    check_size_gt((size_t)st_rot.size, 0);
+    check_greater((size_t)st_rot.size, 0);
 
     turbo_fs_unlink(base_path);
     turbo_fs_unlink(rotated_path);
@@ -614,8 +702,8 @@ spec("TLog Tests") {
     }
 
     tlog_flush(logger);
-    check_int_eq(callback_count, total_logs);
-    check_int_eq((int)tlog_get_dropped(logger), 0);
+    check_equal(callback_count, total_logs);
+    check_equal((int)tlog_get_dropped(logger), 0);
 
     tlog_destroy(logger);
   }

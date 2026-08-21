@@ -43,7 +43,7 @@ spec("FMT Bench") {
     benchmark("scan_v simple", ITERS_FAST, 1) {
       const char *cur = simple;
       const char *end = simple + strlen(simple);
-      tstr_v tok = tstr_v_from_buf(NULL, 0);
+      vstr tok = vstr_from_buf(NULL, 0);
       while (fmt_scan_v_n(&cur, end, &tok) != FMT_TOKEN_END)
         sink_sz += tok.len;
     }
@@ -51,7 +51,7 @@ spec("FMT Bench") {
     benchmark("scan_v mixed", ITERS_FAST, 1) {
       const char *cur = mixed;
       const char *end = mixed + strlen(mixed);
-      tstr_v tok = tstr_v_from_buf(NULL, 0);
+      vstr tok = vstr_from_buf(NULL, 0);
       while (fmt_scan_v_n(&cur, end, &tok) != FMT_TOKEN_END)
         sink_sz += tok.len;
     }
@@ -59,7 +59,7 @@ spec("FMT Bench") {
     benchmark("scan_v many placeholders", ITERS_NORMAL, 1) {
       const char *cur = heavy;
       const char *end = heavy + strlen(heavy);
-      tstr_v tok = tstr_v_from_buf(NULL, 0);
+      vstr tok = vstr_from_buf(NULL, 0);
       while (fmt_scan_v_n(&cur, end, &tok) != FMT_TOKEN_END)
         sink_sz += tok.len;
     }
@@ -68,7 +68,7 @@ spec("FMT Bench") {
     benchmark_bytes("scan_n literal 64KiB", FMT_LITERAL_ITERS, FMT_LITERAL_BYTES) {
       const char *cur = long_literal;
       const char *end = long_literal + sizeof(long_literal);
-      tstr_v tok = tstr_v_from_buf(NULL, 0);
+      vstr tok = vstr_from_buf(NULL, 0);
       while (fmt_scan_v_n(&cur, end, &tok) != FMT_TOKEN_END)
         sink_sz += tok.len;
     }
@@ -143,14 +143,14 @@ spec("FMT Bench") {
 
       benchmark_titles("benchmark", "input", "iters", "avg(us)", NULL, "min(us)", "max(us)", "ops/s", NULL, NULL);
     benchmark("single append", ITERS_NORMAL, 1) {
-      tstr_t s = tstr_new();
+      tstr s = tstr_new();
       s = tstr_cat_typed(s, "id={}", 42);
       sink_sz += tstr_len(s);
       tstr_free(s);
     }
 
     benchmark("3x chain append", ITERS_HEAVY, 1) {
-      tstr_t s = tstr_new();
+      tstr s = tstr_new();
       s = tstr_cat_typed(s, "a={}", 1);
       s = tstr_cat_typed(s, " b={}", 2);
       s = tstr_cat_typed(s, " c={}", 3);
@@ -159,8 +159,8 @@ spec("FMT Bench") {
     }
 
     benchmark("strv append", ITERS_NORMAL, 1) {
-      tstr_t s = tstr_new();
-      tstr_v v = tstr_v_from_cstr("world");
+      tstr s = tstr_new();
+      vstr v = vstr_from_cstr("world");
       s = tstr_cat_typed(s, "hello {}", v);
       sink_sz += tstr_len(s);
       tstr_free(s);

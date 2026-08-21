@@ -105,16 +105,16 @@ spec("Bucket Priority Queue MPMC") {
     // Pop in priority order
     bucket_priority_mpmc_value_t value;
     check(bucket_priority_queue_mpmc_try_pop(queue, &value));
-    check_size_eq(value, 4);  // CRITICAL
+    check_equal(value, 4);  // CRITICAL
 
     check(bucket_priority_queue_mpmc_try_pop(queue, &value));
-    check_size_eq(value, 3);  // HIGH
+    check_equal(value, 3);  // HIGH
 
     check(bucket_priority_queue_mpmc_try_pop(queue, &value));
-    check_size_eq(value, 2);  // NORMAL
+    check_equal(value, 2);  // NORMAL
 
     check(bucket_priority_queue_mpmc_try_pop(queue, &value));
-    check_size_eq(value, 1);  // LOW
+    check_equal(value, 1);  // LOW
 
     test_bucket_priority_queue_destroy(queue);
   }
@@ -127,7 +127,7 @@ spec("Bucket Priority Queue MPMC") {
 
     bucket_priority_mpmc_value_t value;
     check(bucket_priority_queue_mpmc_try_pop(queue, &value));
-    check_size_eq(value, 100);
+    check_equal(value, 100);
 
     test_bucket_priority_queue_destroy(queue);
   }
@@ -139,7 +139,7 @@ spec("Bucket Priority Queue MPMC") {
     check_not_null(queue);
     bucket_priority_queue_mpmc_push_blocking(queue, BUCKET_PRIORITY_MPMC_HIGH, 101);
     check(bucket_priority_queue_mpmc_try_pop(queue, &value));
-    check_size_eq(value, 101);
+    check_equal(value, 101);
 
     test_bucket_priority_queue_destroy(queue);
   }
@@ -200,7 +200,7 @@ spec("Bucket Priority Queue MPMC") {
     for (size_t i = 0; i < NUM_CONSUMERS; ++i) {
       total_consumed += atomic_load(&consumers[i].consumed_count);
     }
-    check_size_eq(total_consumed, TEST_ITEMS);
+    check_equal(total_consumed, TEST_ITEMS);
 
     test_bucket_priority_queue_destroy(queue);
   }

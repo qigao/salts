@@ -40,18 +40,18 @@ spec("MMAP Group Tests") {
     turbo_mmap_group_init(&group);
 
     int err = turbo_mmap_group_open(&group, paths, 2, TURBO_MMAP_READ);
-    check_int_eq(err, TURBO_MMAP_OK);
+    check_equal(err, TURBO_MMAP_OK);
     check_not_null(group.data);
-    check_size_gt(group.total_size, strlen(data1) + strlen(data2));
-    check_size_eq(group.count, 2);
+    check_greater(group.total_size, strlen(data1) + strlen(data2));
+    check_equal(group.count, 2);
 
     // Verify first part
-    check_int_eq(memcmp(group.data, data1, strlen(data1)), 0);
+    check_equal(memcmp(group.data, data1, strlen(data1)), 0);
 
     // Verify second part is reachable at the correct offset
     // mappings[0].mapped_length is the offset where the 2nd file starts
     size_t offset = group.mappings[0].mapped_length;
-    check_int_eq(memcmp((char *)group.data + offset, data2, strlen(data2)), 0);
+    check_equal(memcmp((char *)group.data + offset, data2, strlen(data2)), 0);
 
     turbo_mmap_group_close(&group);
   }
@@ -62,7 +62,7 @@ spec("MMAP Group Tests") {
     turbo_mmap_group_init(&group);
 
     int err = turbo_mmap_group_open(&group, paths, 2, TURBO_MMAP_WRITE);
-    check_int_eq(err, TURBO_MMAP_OK);
+    check_equal(err, TURBO_MMAP_OK);
 
     char *ptr = (char *)group.data;
     ptr[0] = 'Z'; // Modify part 1
@@ -76,11 +76,11 @@ spec("MMAP Group Tests") {
     turbo_fs_buf_t b1, b2;
     int err1 = turbo_fs_read_file(test_file1, &b1);
     int err2 = turbo_fs_read_file(test_file2, &b2);
-    check_int_eq(err1, 0);
-    check_int_eq(err2, 0);
+    check_equal(err1, 0);
+    check_equal(err2, 0);
     
-    check_int_eq(b1.base[0], 'Z');
-    check_int_eq(b2.base[0], 'Q');
+    check_equal(b1.base[0], 'Z');
+    check_equal(b2.base[0], 'Q');
 
     turbo_fs_buf_free(&b1);
     turbo_fs_buf_free(&b2);

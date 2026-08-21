@@ -1,14 +1,18 @@
 #include "tinymock.h"
 
-TINYMOCk_MOCK2(int, tinymock_add, int, int)
-TINYMOCk_MOCK1(const char *, tinymock_greet, const char *)
-TINYMOCk_MOCK3(int, tinymock_dispatch, const char *, void *, unsigned long long)
-TINYMOCk_MOCK1_VOID(tinymock_log, int)
-TINYMOCk_MOCK1(int, tinymock_default, int)
-TINYMOCk_MOCK2(int, tinymock_sequence, int, int)
-TINYMOCk_MOCK2(uint64_t, tinymock_u64_pair, uint64_t, uint64_t)
-TINYMOCk_MOCK2(size_t, tinymock_size_pair, size_t, size_t)
-TINYMOCk_MOCK2(int, tinymock_bad_arg, int, int)
+TINYMOCk_MOCK(int, tinymock_add, int, int)
+TINYMOCk_MOCK(const char *, tinymock_greet, const char *)
+TINYMOCk_MOCK(int, tinymock_dispatch, const char *, void *, unsigned long long)
+TINYMOCk_MOCK_VOID(tinymock_log, int)
+TINYMOCk_MOCK(int, tinymock_default, int)
+TINYMOCk_MOCK(int, tinymock_sequence, int, int)
+TINYMOCk_MOCK(uint64_t, tinymock_u64_pair, uint64_t, uint64_t)
+TINYMOCk_MOCK(size_t, tinymock_size_pair, size_t, size_t)
+TINYMOCk_MOCK(int, tinymock_bad_arg, int, int)
+TINYMOCk_MOCK(int, tinymock_small_integers, signed char, unsigned short)
+TINYMOCk_MOCK(double, tinymock_floating, float, double)
+TINYMOCk_MOCK(int, tinymock_six, int, int, int, int, int, int)
+TINYMOCk_MOCK0(int, tinymock_zero)
 
 static int g_tinymock_mismatch_marker = 0;
 
@@ -17,7 +21,7 @@ suite("TinyMock") {
   it("should match int arguments and return mocked value") {
     mock_tinymock_add_reset();
     mock_tinymock_add_expect(TINYMOCk_ARG(2), TINYMOCk_ARG(3), TINYMOCk_RETURN(5));
-    check_int_eq(tinymock_add(2, 3), 5);
+    check_equal(tinymock_add(2, 3), 5);
     mock_tinymock_add_verify();
   }
 
@@ -30,7 +34,7 @@ suite("TinyMock") {
     mock_tinymock_dispatch_expect(TINYMOCk_ARG("cmd"), TINYMOCk_ANY, TINYMOCk_ARG((unsigned long long)42),
                                  TINYMOCk_RETURN(1234));
 
-    check_int_eq(tinymock_dispatch("cmd", &payload, 42), 1234);
+    check_equal(tinymock_dispatch("cmd", &payload, 42), 1234);
     mock_tinymock_dispatch_verify();
   }
 
@@ -39,7 +43,7 @@ suite("TinyMock") {
     mock_tinymock_greet_expect(TINYMOCk_ARG("name"), TINYMOCk_RETURN("hello"));
 
     const char *actual = tinymock_greet("name");
-    check_str_eq(actual, "hello");
+    check_equal(actual, "hello");
     mock_tinymock_greet_verify();
   }
 
@@ -55,7 +59,7 @@ suite("TinyMock") {
     mock_tinymock_size_pair_reset();
     mock_tinymock_size_pair_expect(TINYMOCk_ARG((size_t)10), TINYMOCk_ARG((size_t)20), TINYMOCk_RETURN((size_t)30));
 
-    check_size_eq(tinymock_size_pair((size_t)10, (size_t)20), (size_t)30);
+    check_equal(tinymock_size_pair((size_t)10, (size_t)20), (size_t)30);
     mock_tinymock_size_pair_verify();
   }
 
@@ -71,7 +75,7 @@ suite("TinyMock") {
     mock_tinymock_default_reset();
     mock_tinymock_default_set_default_return(TINYMOCk_RETURN(-9));
 
-    check_int_eq(tinymock_default(777), -9);
+    check_equal(tinymock_default(777), -9);
     mock_tinymock_default_verify();
   }
 
@@ -80,9 +84,48 @@ suite("TinyMock") {
     mock_tinymock_sequence_expect(TINYMOCk_ARG(1), TINYMOCk_ARG(2), TINYMOCk_RETURN(3));
     mock_tinymock_sequence_expect(TINYMOCk_ARG(3), TINYMOCk_ARG(4), TINYMOCk_RETURN(7));
 
-    check_int_eq(tinymock_sequence(1, 2), 3);
-    check_int_eq(tinymock_sequence(3, 4), 7);
+    check_equal(tinymock_sequence(1, 2), 3);
+    check_equal(tinymock_sequence(3, 4), 7);
     mock_tinymock_sequence_verify();
+  }
+
+  it("should normalize builtin argument families through traits") {
+    mock_tinymock_small_integers_reset();
+    mock_tinymock_small_integers_expect(TINYMOCk_ARG((signed char)-7),
+                                        TINYMOCk_ARG((unsigned short)65000),
+                                        TINYMOCk_RETURN(11));
+    check_equal(tinymock_small_integers((signed char)-7, (unsigned short)65000), 11);
+    mock_tinymock_small_integers_verify();
+
+    mock_tinymock_floating_reset();
+    mock_tinymock_floating_expect(TINYMOCk_ARG(1.25f), TINYMOCk_ARG(2.5),
+                                   TINYMOCk_RETURN(3.75));
+    check_equal(tinymock_floating(1.25f, 2.5), 3.75);
+    mock_tinymock_floating_verify();
+  }
+
+  it("should box and unbox values through generic entry points") {
+    tinymock_value_t signed_value = TINYMOCk_VALUE((signed char)-7);
+    tinymock_value_t unsigned_value = TINYMOCk_VALUE(UINT64_MAX);
+    tinymock_value_t string_value = TINYMOCk_VALUE("generic");
+
+    check_equal(TINYMOCk_VALUE_AS(long long, signed_value), -7LL);
+    check_equal(TINYMOCk_VALUE_AS(uint64_t, unsigned_value), UINT64_MAX);
+    check_equal(TINYMOCk_VALUE_AS(const char *, string_value), "generic");
+  }
+
+  it("should generate zero and six argument wrappers") {
+    mock_tinymock_zero_reset();
+    mock_tinymock_zero_expect(TINYMOCk_RETURN(9));
+    check_equal(tinymock_zero(), 9);
+    mock_tinymock_zero_verify();
+
+    mock_tinymock_six_reset();
+    mock_tinymock_six_expect(TINYMOCk_ARG(1), TINYMOCk_ARG(2), TINYMOCk_ARG(3),
+                             TINYMOCk_ARG(4), TINYMOCk_ARG(5), TINYMOCk_ARG(6),
+                             TINYMOCk_RETURN(21));
+    check_equal(tinymock_six(1, 2, 3, 4, 5, 6), 21);
+    mock_tinymock_six_verify();
   }
 
   it_should_fail("should stop on argument mismatch and not execute subsequent code") {
@@ -91,12 +134,12 @@ suite("TinyMock") {
     mock_tinymock_bad_arg_reset();
     mock_tinymock_bad_arg_expect(TINYMOCk_ARG(1), TINYMOCk_ARG(2), TINYMOCk_RETURN(4));
 
-    check_int_eq(tinymock_bad_arg(1, 3), 4);
+    check_equal(tinymock_bad_arg(1, 3), 4);
     g_tinymock_mismatch_marker = 2;
   }
 
   it("should keep execution marker unchanged after mismatch failure") {
-    check_int_eq(g_tinymock_mismatch_marker, 1);
+    check_equal(g_tinymock_mismatch_marker, 1);
     g_tinymock_mismatch_marker = 0;
   }
 }

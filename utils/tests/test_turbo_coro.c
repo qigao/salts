@@ -135,16 +135,16 @@ spec("Turbo Coro Primitive") {
         int times = 3;
         coro_t *co = coro_create(counter_coro, &times, NULL);
         check_not_null(co);
-        check_int_eq(coro_state(co), coro_SUSPENDED);
+        check_equal(coro_state(co), coro_SUSPENDED);
 
         for (int i = 0; i < times; i++) {
-            check_int_eq(coro_alive(co), 1);
-            check_int_eq(coro_resume(co), 0);
-            check_int_eq(g_counter, i + 1);
+            check_equal(coro_alive(co), 1);
+            check_equal(coro_resume(co), 0);
+            check_equal(g_counter, i + 1);
         }
 
-        check_int_eq(coro_resume(co), 0);
-        check_int_eq(coro_alive(co), 0);
+        check_equal(coro_resume(co), 0);
+        check_equal(coro_alive(co), 0);
         coro_destroy(co);
     }
 
@@ -154,10 +154,10 @@ spec("Turbo Coro Primitive") {
         int output = 0;
 
         check_not_null(co);
-        check_int_eq(coro_push(co, &input, sizeof(input)), 0);
-        check_int_eq(coro_resume(co), 0);
-        check_int_eq(coro_pop(co, &output, sizeof(output)), 0);
-        check_int_eq(output, 42);
+        check_equal(coro_push(co, &input, sizeof(input)), 0);
+        check_equal(coro_resume(co), 0);
+        check_equal(coro_pop(co, &output, sizeof(output)), 0);
+        check_equal(output, 42);
 
         coro_destroy(co);
     }
@@ -169,14 +169,14 @@ spec("Turbo Coro Primitive") {
 
         check_not_null(co);
         while (coro_alive(co)) {
-            check_int_eq(coro_resume(co), 0);
+            check_equal(coro_resume(co), 0);
         }
         for (int round = 0; round < CORO_STACK_WORK_ROUNDS; ++round) {
             expected += (uint32_t)(0x31 + round) * CORO_STACK_WORK_BYTES;
         }
-        check_int_eq(state.rounds, CORO_STACK_WORK_ROUNDS);
-        check_int_eq(state.mismatch, 0);
-        check_uint_eq(state.checksum, expected);
+        check_equal(state.rounds, CORO_STACK_WORK_ROUNDS);
+        check_equal(state.mismatch, 0);
+        check_equal(state.checksum, expected);
 
         coro_destroy(co);
     }
@@ -187,14 +187,14 @@ spec("Turbo Coro Primitive") {
 
         check_not_null(parent);
         while (coro_alive(parent)) {
-            check_int_eq(coro_resume(parent), 0);
+            check_equal(coro_resume(parent), 0);
         }
-        check_int_eq(state.allocation_failed, 0);
-        check_int_eq(state.resume_failed, 0);
-        check_int_eq(state.parent_stack_mismatch, 0);
-        check_int_eq(state.parent_resumes, CORO_STACK_WORK_ROUNDS + 1);
-        check_int_eq(state.child.rounds, CORO_STACK_WORK_ROUNDS);
-        check_int_eq(state.child.mismatch, 0);
+        check_equal(state.allocation_failed, 0);
+        check_equal(state.resume_failed, 0);
+        check_equal(state.parent_stack_mismatch, 0);
+        check_equal(state.parent_resumes, CORO_STACK_WORK_ROUNDS + 1);
+        check_equal(state.child.rounds, CORO_STACK_WORK_ROUNDS);
+        check_equal(state.child.mismatch, 0);
 
         coro_destroy(parent);
     }
@@ -231,12 +231,12 @@ spec("Turbo Coro Primitive") {
         check_not_null(sched);
         check_not_null(coro_spawn(sched, sched_worker, &c1, NULL));
         check_not_null(coro_spawn(sched, sched_worker, &c2, NULL));
-        check_int_eq(coro_scheduler_count(sched), 2);
+        check_equal(coro_scheduler_count(sched), 2);
 
         coro_scheduler_run(sched);
-        check_int_eq(c1, 3);
-        check_int_eq(c2, 3);
-        check_int_eq(coro_scheduler_count(sched), 0);
+        check_equal(c1, 3);
+        check_equal(c2, 3);
+        check_equal(coro_scheduler_count(sched), 0);
 
         coro_scheduler_destroy(sched);
     }
@@ -250,8 +250,8 @@ spec("Turbo Coro Primitive") {
         check_not_null(coro_spawn(sched, sched_fast, &counter, NULL));
 
         coro_scheduler_run(sched);
-        check_int_eq(counter, 20);
-        check_int_eq(coro_scheduler_count(sched), 0);
+        check_equal(counter, 20);
+        check_equal(coro_scheduler_count(sched), 0);
 
         coro_scheduler_destroy(sched);
     }
@@ -267,7 +267,7 @@ spec("Turbo Coro Primitive") {
         coro_set_discard(co, discard_callback, &g_discard_count);
 
         coro_scheduler_destroy(sched);
-        check_int_eq(g_discard_count, 1);
+        check_equal(g_discard_count, 1);
     }
 }
 
@@ -281,9 +281,9 @@ spec("Turbo Coro Pool") {
         turbo_coro_pool_t *pool = turbo_coro_pool_create(&config);
 
         check_not_null(pool);
-        check_int_eq(turbo_coro_pool_free_count(pool), 16);
-        check_int_eq(turbo_coro_pool_active_count(pool), 0);
-        check_int_eq(turbo_coro_pool_capacity(pool), 16);
+        check_equal(turbo_coro_pool_free_count(pool), 16);
+        check_equal(turbo_coro_pool_active_count(pool), 0);
+        check_equal(turbo_coro_pool_capacity(pool), 16);
 
         turbo_coro_pool_destroy(pool);
     }
@@ -300,16 +300,16 @@ spec("Turbo Coro Pool") {
         co2 = turbo_coro_pool_acquire(pool, sched_worker, &counter);
         check_not_null(co1);
         check_not_null(co2);
-        check_int_eq(turbo_coro_pool_active_count(pool), 2);
-        check_int_eq(turbo_coro_pool_free_count(pool), 0);
+        check_equal(turbo_coro_pool_active_count(pool), 2);
+        check_equal(turbo_coro_pool_free_count(pool), 0);
 
-        while (coro_alive(co1)) check_int_eq(coro_resume(co1), 0);
-        while (coro_alive(co2)) check_int_eq(coro_resume(co2), 0);
+        while (coro_alive(co1)) check_equal(coro_resume(co1), 0);
+        while (coro_alive(co2)) check_equal(coro_resume(co2), 0);
 
         turbo_coro_pool_release(pool, co1);
         turbo_coro_pool_release(pool, co2);
-        check_int_eq(turbo_coro_pool_active_count(pool), 0);
-        check_int_eq(turbo_coro_pool_free_count(pool), 2);
+        check_equal(turbo_coro_pool_active_count(pool), 0);
+        check_equal(turbo_coro_pool_free_count(pool), 2);
 
         turbo_coro_pool_destroy(pool);
     }
@@ -328,8 +328,8 @@ spec("Turbo Coro Pool") {
         check_not_null(co2);
         check(turbo_coro_pool_acquire(pool, sched_fast, &counter) == NULL);
 
-        while (coro_alive(co1)) check_int_eq(coro_resume(co1), 0);
-        while (coro_alive(co2)) check_int_eq(coro_resume(co2), 0);
+        while (coro_alive(co1)) check_equal(coro_resume(co1), 0);
+        while (coro_alive(co2)) check_equal(coro_resume(co2), 0);
         turbo_coro_pool_release(pool, co1);
         turbo_coro_pool_release(pool, co2);
 
@@ -349,18 +349,18 @@ spec("Turbo Coro Pool") {
         co1 = turbo_coro_pool_acquire(pool, sched_worker, &c1);
         check_not_null(co1);
         coro_set_data(co1, &user_data);
-        while (coro_alive(co1)) check_int_eq(coro_resume(co1), 0);
+        while (coro_alive(co1)) check_equal(coro_resume(co1), 0);
         turbo_coro_pool_release(pool, co1);
 
         co2 = turbo_coro_pool_acquire(pool, sched_worker, &c2);
         check_not_null(co2);
         check(co1 == co2);
         check(coro_get_data(co2) == &user_data);
-        while (coro_alive(co2)) check_int_eq(coro_resume(co2), 0);
+        while (coro_alive(co2)) check_equal(coro_resume(co2), 0);
         turbo_coro_pool_release(pool, co2);
 
-        check_int_eq(c1, 3);
-        check_int_eq(c2, 3);
+        check_equal(c1, 3);
+        check_equal(c2, 3);
         turbo_coro_pool_destroy(pool);
     }
 
@@ -375,13 +375,13 @@ spec("Turbo Coro Pool") {
         check_not_null(sched);
         check_not_null(turbo_coro_spawn_pooled(sched, pool, sched_worker, &c1));
         check_not_null(turbo_coro_spawn_pooled(sched, pool, sched_worker, &c2));
-        check_int_eq(turbo_coro_pool_active_count(pool), 2);
+        check_equal(turbo_coro_pool_active_count(pool), 2);
 
         coro_scheduler_run(sched);
-        check_int_eq(c1, 3);
-        check_int_eq(c2, 3);
-        check_int_eq(turbo_coro_pool_active_count(pool), 0);
-        check_int_eq(turbo_coro_pool_free_count(pool), 2);
+        check_equal(c1, 3);
+        check_equal(c2, 3);
+        check_equal(turbo_coro_pool_active_count(pool), 0);
+        check_equal(turbo_coro_pool_free_count(pool), 2);
 
         coro_scheduler_destroy(sched);
         turbo_coro_pool_destroy(pool);

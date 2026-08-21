@@ -38,12 +38,12 @@ typedef struct turbo_serial_event_set_impl turbo_serial_event_set_impl_t;
 
 typedef struct turbo_serial_port_info_storage {
   turbo_serial_port_info_t view;
-  tstr_t name;
-  tstr_t description;
-  tstr_t usb_manufacturer;
-  tstr_t usb_product;
-  tstr_t usb_serial;
-  tstr_t bluetooth_address;
+  tstr name;
+  tstr description;
+  tstr usb_manufacturer;
+  tstr usb_product;
+  tstr usb_serial;
+  tstr bluetooth_address;
 } turbo_serial_port_info_storage_t;
 
 TURBO_VEC_DEFINE(turbo_serial_port_info_vec_t, turbo_serial_port_info_storage_t)

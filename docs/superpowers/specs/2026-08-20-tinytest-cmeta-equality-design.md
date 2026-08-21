@@ -1,114 +1,65 @@
-# TinyTest CMeta Equality Design
+# TinyTest C11 泛型断言与静态运行时设计
 
 ## 目标
 
-新增可选头文件 `tinytest_cmeta.h`，让严格 C11 用户可以继续使用
-`check_equal(actual, expected)` 比较显式注册了 CMeta equality trait 的结构体，
-同时保持 `tinytest.h` 的现有独立使用方式与内建类型比较语义不变。
+TinyTest 只支持 C11 及以上 C 编译模式，不依赖 CMeta。断言 API 以少量泛型名称覆盖
+内建标量、字符串、指针、内存和显式注册的用户值类型；语言无关的运行时能力由
+`TurboUtils::TinyTest` 静态库提供，避免继续把实现堆在 `tinytest.h`。
 
-## 已选方案
+## 接口
 
-采用编译期 trait 策略表与薄适配器：
+- `check_equal(actual, expected)` / `check_not_equal(actual, expected)`：值比较。
+- `check_equal(actual, expected, len)` / `check_not_equal(actual, expected, len)`：字节比较。
+- `check_greater`、`check_greater_equal`、`check_less`、`check_less_equal`：有序数值比较。
+- `check_within(actual, expected, margin)`：显式容差比较。
+- `check_contains`、`check_starts_with`、`check_ends_with`：字符串或 C++ 容器操作。
+- 每个断言均有对应 `_warn` 非致命形式。
+
+删除旧的按类型断言、array 断言、`check_str_*`、`check_mem_*` 和 GTest 风格兼容别名；
+不提供 pre-C11 fallback。
+
+## C11 traits
+
+`tinytest/traits.h` 是 TinyTest 自己的编译期事实源。`TTEST_EQ`、`TTEST_NE`、
+`TTEST_GT`、`TTEST_GE`、`TTEST_LT`、`TTEST_LE` 表示关系，有限的类型族 handler
+处理 signed、unsigned、float、double、long double、C string 和 pointer。
+
+用户值类型通过以下 schema 注册：
 
 ```c
-typedef struct Point {
-    int x;
-    int y;
-} Point;
-
-static bool point_equal(const Point *actual, const Point *expected) {
-    return actual->x == expected->x && actual->y == expected->y;
-}
-
-#define CMETA_USER_EQUAL_TRAIT_LIST \
+#define TTEST_USER_EQUAL_TRAIT_LIST \
     , (POINT, Point, point_equal)
-#include "tinytest_cmeta.h"
+#include "tinytest.h"
 ```
 
-注册行字段为 `(TOKEN, C_TYPE, COMPARATOR)`。`TOKEN` 是生成内部符号所用的唯一
-C 标识符；`COMPARATOR` 必须具有 `bool(const C_TYPE *, const C_TYPE *)` 语义。
-比较器只借用两个参数，不能保存指针，也不取得对象所有权。
+每行是 `(TOKEN, C_TYPE, COMPARATOR)`；比较器语义为
+`bool(const C_TYPE *, const C_TYPE *)`，只借用参数。历史文件名
+`tinytest_cmeta.h` 由 `tinytest.h` 在 `traits.h` 之后单向包含；它不是独立入口，且不包含或链接 CMeta。
+未注册结构体必须编译失败，不能退回 `memcmp`；整数默认 handler 仅用于兼容 MSVC
+无法按底层整数类型匹配 enum 的 `_Generic` 行为，结构体无法转换为该 handler 的参数。
 
-选择该方案的原因：
+## 静态库边界
 
-- 相比向 `cmeta_type_desc` 增加函数指针，它不改变 CMeta ABI。
-- 相比 `memcmp`，它不会把 padding、指针地址或浮点位表示误当成值语义。
-- 相比显式 `check_equal_as(Type, ...)`，它保留 TinyTest 已有双参数调用形式。
-- trait 是有限的编译期事实源，不需要全局运行时注册表或初始化顺序。
+`tinytest.c` 实现共享 spec 注册表、计时、临时文件/目录、递归清理、内部动态数组、
+结果分类和字符串辅助函数。`tinytest_internal.h` 只保存该静态库与公开头共享的最小
+ABI 类型和声明，不保存函数实现，也不是用户入口。公开头文件保留 runner 宏必须
+直接访问的完整状态类型、断言宏和依赖语言语义的 runner 薄层。
 
-未选择的方案：
+C++ 断言失败必须通过异常展开以运行局部对象析构；C 使用 `longjmp`。因此这部分不能
+无差别编入单个 C 对象。MSVC 下 C/C++ 对 TLS 声明的处理也不同，活动 config 与当前
+spec 函数继续使用头文件中的 select-any TLS 定义；共享 spec 链表由静态库唯一拥有。
 
-- 修改 `cmeta_type_desc`：会改变公开结构布局与所有描述符初始化点，迁移范围过大。
-- 自动 `memcmp`：结构体 padding 可能未初始化，且无法表达深比较和领域相等语义。
-- 在调用点传入类型或比较器：实现简单，但破坏 `check_equal(actual, expected)` 的目标接口。
+## 构建与兼容性
 
-## 组件边界
+`tinytest` CMake target 是 `STATIC`，安装导出名仍为 `TurboUtils::TinyTest`。所有使用者
+必须链接该 target；直接只包含头文件再调用运行时 API 不再受支持。这是有意的构建
+兼容性破坏。安装内容包括静态库以及 `tinytest.h`、`tinytest.hpp`、`traits.h`、
+`tinytest_cmeta.h`、传递依赖 `tinytest_internal.h` 和 `tinymock.h`。
 
-### `cmeta/include/cmeta/traits.h`
+## 验收
 
-定义 equality trait 的编译期 schema、擦除后的只读描述符和类型安全分派助手。
-该头文件保持 header-only，不要求修改或链接新的运行时注册表。内建 CMeta 类型具有
-标准值相等 trait；用户 trait 由 `CMETA_USER_EQUAL_TRAIT_LIST` 追加。
-
-公开契约包括：
-
-- `cmeta_equal_trait`：类型名、大小、对齐与擦除比较函数；
-- `cmeta_equal(actual, expected)`：对已注册类型进行一次求值的类型安全比较；
-- `cmeta_equal_trait_of(value)`：取得对应的只读 trait；
-- `cmeta_equal_values(trait, actual, expected)`：擦除边界的空指针检查与调用。
-
-未注册类型不提供默认比较。调用 `cmeta_equal` 或经适配后的 `check_equal` 时，编译器
-必须报错，不能静默退回整数转换或字节比较。
-
-### `tinytest/tinytest.h`
-
-仅把现有 C11 `check_equal` 与 `check_equal_warn` 的 `_Generic` 内建关联提取为内部
-可复用选择宏。直接包含 `tinytest.h` 的源码继续得到完全相同的内建类型处理器、
-浮点容差、字符串内容比较和指针地址比较。
-
-### `tinytest/tinytest_cmeta.h`
-
-先包含 `tinytest.h` 与 `cmeta/traits.h`，再为用户 equality trait 生成 TinyTest
-处理器，并重定义 `check_equal`/`check_equal_warn` 的分派。自定义值按值传入生成的
-短处理器，处理器将局部副本地址借给 comparator，因此每个宏实参只在函数实参位置
-求值一次。
-
-比较失败时报告类型名，例如 `expected values of type Point to be equal`。适配器不负责
-格式化任意结构体字段，避免引入第二套 formatter trait。`check_not_equal` 不在本次范围。
-
-该适配器只支持 C11；C++ 用户继续使用 `tinytest.hpp`，不会经过 `_Generic` 分派。
-
-## 数据流与错误语义
-
-1. 预处理器从 `CMETA_USER_EQUAL_TRAIT_LIST` 生成每种类型的 typed/erased adapter。
-2. `_Generic` 只检查 `actual` 的类型，不求值。
-3. 选中的 typed adapter 接收 `actual` 与 `expected` 各一次。
-4. adapter 将两者地址传给 trait comparator。
-5. `true` 进入 TinyTest 成功路径；`false` 进入现有 fatal 或 warn 断言路径。
-
-`actual` 和 `expected` 类型不兼容时由生成函数的参数类型产生编译错误。擦除 API 收到
-NULL trait 或 NULL value 时返回 `false`，不解引用无效指针。
-
-## 构建、安装与兼容性
-
-- `tinytest_cmeta.h` 随 TinyTest 头文件安装。
-- `traits.h` 已由 CMeta 的 `include/cmeta/*.h` 安装规则覆盖。
-- 使用适配器的构建同时消费 `TurboUtils::TinyTest` 与 `TurboUtils::CMeta` 的 include
-  interface；不新增第三方依赖。
-- 不修改 `cmeta_type_desc`、`cmeta_callable`、TinyTest 公开函数或现有宏的直接行为。
-- `CMETA_USER_EQUAL_TRAIT_LIST` 必须在首次包含 `cmeta/traits.h` 之前定义；同一翻译单元
-  内它是唯一 trait 事实源。
-
-## 测试与验收
-
-新增 TinyTest/CMeta 集成测试，至少验证：
-
-- 两个相等的注册结构体通过 `check_equal` 与 `check_equal_warn`；
-- 不相等结构体在 `it_should_fail` 中触发预期失败；
-- 带副作用的 actual/expected producer 各调用一次；
-- `cmeta_equal` 与擦除 trait API 返回正确结果，并拒绝 NULL；
-- TinyTest 原有 C11 generic 测试继续通过；
-- 严格 C17 警告配置下 GCC/Clang/MSVC 可编译相关目标。
-
-未注册结构体的编译失败通过独立负向编译探针验证，期望失败原因是不存在可用的
-`_Generic` association，而不是链接错误。
+- C11 内建类型、字符串、指针、内存三参数分派均通过运行测试。
+- C++ 内容字符串比较、内存三参数分派和失败时析构均通过。
+- 用户 traits 的相等、警告、单次求值和未注册类型负向编译探针通过。
+- pre-C11 翻译单元因明确诊断而编译失败。
+- MSVC 与 clang-cl 完成相关构建和 CTest；未执行的平台不得声明为运行通过。

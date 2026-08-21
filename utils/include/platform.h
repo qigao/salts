@@ -10,14 +10,20 @@
 #define PLATFORM_H
 
 #ifndef _WIN32
-  #ifndef _DEFAULT_SOURCE
-    #define _DEFAULT_SOURCE 1
-  #endif
-  #ifndef _POSIX_C_SOURCE
-    #define _POSIX_C_SOURCE 200809L
-  #endif
-  #ifndef _XOPEN_SOURCE
-    #define _XOPEN_SOURCE 700
+  #if defined(__APPLE__)
+    #ifndef _DARWIN_C_SOURCE
+      #define _DARWIN_C_SOURCE 1
+    #endif
+  #else
+    #ifndef _DEFAULT_SOURCE
+      #define _DEFAULT_SOURCE 1
+    #endif
+    #ifndef _POSIX_C_SOURCE
+      #define _POSIX_C_SOURCE 200809L
+    #endif
+    #ifndef _XOPEN_SOURCE
+      #define _XOPEN_SOURCE 700
+    #endif
   #endif
 #endif
 

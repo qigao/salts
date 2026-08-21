@@ -56,7 +56,7 @@ spec("Bucket Priority Queue SPSC") {
     bucket_priority_queue_spsc_t queue;
     check(bucket_priority_queue_spsc_init(&queue, 0));
     check(bucket_priority_queue_spsc_empty(&queue));
-    check_size_eq(bucket_priority_queue_spsc_size(&queue), 0);
+    check_equal(bucket_priority_queue_spsc_size(&queue), 0);
     bucket_priority_queue_spsc_destroy(&queue);
   }
 
@@ -68,9 +68,9 @@ spec("Bucket Priority Queue SPSC") {
     check(bucket_priority_queue_spsc_init(&queue, 0));
     check(!bucket_priority_queue_spsc_pop(&queue, &value));
     check(!bucket_priority_queue_spsc_peek(&queue, &value));
-    check_size_eq(bucket_priority_queue_spsc_pop_batch(&queue, 4, out), 0);
+    check_equal(bucket_priority_queue_spsc_pop_batch(&queue, 4, out), 0);
     check(bucket_priority_queue_spsc_empty(&queue));
-    check_size_eq(bucket_priority_queue_spsc_size(&queue), 0);
+    check_equal(bucket_priority_queue_spsc_size(&queue), 0);
 
     bucket_priority_queue_spsc_destroy(&queue);
   }
@@ -85,11 +85,11 @@ spec("Bucket Priority Queue SPSC") {
     check(bucket_priority_queue_spsc_push(&queue, BUCKET_PRIORITY_SPSC_HIGH, 12));
 
     check(bucket_priority_queue_spsc_pop(&queue, &value));
-    check_size_eq(value, 10);
+    check_equal(value, 10);
     check(bucket_priority_queue_spsc_pop(&queue, &value));
-    check_size_eq(value, 11);
+    check_equal(value, 11);
     check(bucket_priority_queue_spsc_pop(&queue, &value));
-    check_size_eq(value, 12);
+    check_equal(value, 12);
     check(!bucket_priority_queue_spsc_pop(&queue, &value));
 
     bucket_priority_queue_spsc_destroy(&queue);
@@ -108,15 +108,15 @@ spec("Bucket Priority Queue SPSC") {
     check(bucket_priority_queue_spsc_push(&queue, BUCKET_PRIORITY_SPSC_LOW, 5));
 
     check(bucket_priority_queue_spsc_pop(&queue, &value));
-    check_size_eq(value, 4);  // CRITICAL
+    check_equal(value, 4);  // CRITICAL
     check(bucket_priority_queue_spsc_pop(&queue, &value));
-    check_size_eq(value, 3);  // HIGH
+    check_equal(value, 3);  // HIGH
     check(bucket_priority_queue_spsc_pop(&queue, &value));
-    check_size_eq(value, 2);  // NORMAL
+    check_equal(value, 2);  // NORMAL
     check(bucket_priority_queue_spsc_pop(&queue, &value));
-    check_size_eq(value, 1);  // LOW (first)
+    check_equal(value, 1);  // LOW (first)
     check(bucket_priority_queue_spsc_pop(&queue, &value));
-    check_size_eq(value, 5);  // LOW (second)
+    check_equal(value, 5);  // LOW (second)
 
     bucket_priority_queue_spsc_destroy(&queue);
   }
@@ -130,11 +130,11 @@ spec("Bucket Priority Queue SPSC") {
     check(bucket_priority_queue_spsc_push(&queue, BUCKET_PRIORITY_SPSC_HIGH, 100));
 
     check(bucket_priority_queue_spsc_peek(&queue, &value));
-    check_size_eq(value, 100);
-    check_size_eq(bucket_priority_queue_spsc_size(&queue), 2);  // Still 2 items
+    check_equal(value, 100);
+    check_equal(bucket_priority_queue_spsc_size(&queue), 2);  // Still 2 items
 
     check(bucket_priority_queue_spsc_pop(&queue, &value));
-    check_size_eq(value, 100);
+    check_equal(value, 100);
 
     bucket_priority_queue_spsc_destroy(&queue);
   }
@@ -152,12 +152,12 @@ spec("Bucket Priority Queue SPSC") {
     check(bucket_priority_queue_spsc_push(&queue, BUCKET_PRIORITY_SPSC_NORMAL, 5));
 
     size_t n = bucket_priority_queue_spsc_pop_batch(&queue, 10, out);
-    check_size_eq(n, 5);
-    check_size_eq(out[0], 20);  // CRITICAL
-    check_size_eq(out[1], 10);  // HIGH (first)
-    check_size_eq(out[2], 11);  // HIGH (second)
-    check_size_eq(out[3], 5);   // NORMAL
-    check_size_eq(out[4], 1);   // LOW
+    check_equal(n, 5);
+    check_equal(out[0], 20);  // CRITICAL
+    check_equal(out[1], 10);  // HIGH (first)
+    check_equal(out[2], 11);  // HIGH (second)
+    check_equal(out[3], 5);   // NORMAL
+    check_equal(out[4], 1);   // LOW
 
     bucket_priority_queue_spsc_destroy(&queue);
   }
@@ -179,7 +179,7 @@ spec("Bucket Priority Queue SPSC") {
 
     // Pop one item to make space
     check(bucket_priority_queue_spsc_pop(&queue, &value));
-    check_size_eq(value, 0);
+    check_equal(value, 0);
 
     // Now push should succeed
     check(bucket_priority_queue_spsc_push(&queue, BUCKET_PRIORITY_SPSC_NORMAL, 100));
@@ -193,11 +193,11 @@ spec("Bucket Priority Queue SPSC") {
     check(bucket_priority_queue_spsc_init(&queue, 16));
     check(bucket_priority_queue_spsc_push(&queue, BUCKET_PRIORITY_SPSC_HIGH, 1));
     check(bucket_priority_queue_spsc_push(&queue, BUCKET_PRIORITY_SPSC_LOW, 2));
-    check_size_eq(bucket_priority_queue_spsc_size(&queue), 2);
+    check_equal(bucket_priority_queue_spsc_size(&queue), 2);
 
     bucket_priority_queue_spsc_clear(&queue);
     check(bucket_priority_queue_spsc_empty(&queue));
-    check_size_eq(bucket_priority_queue_spsc_size(&queue), 0);
+    check_equal(bucket_priority_queue_spsc_size(&queue), 0);
 
     bucket_priority_queue_spsc_destroy(&queue);
   }

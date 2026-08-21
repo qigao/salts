@@ -3,10 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-CMETA_INTERFACE_IMPL(cflow_waitable, CMETA_WAITABLE_METHODS)
-CMETA_INTERFACE_IMPL(cflow_sink, CMETA_SINK_METHODS)
-CMETA_INTERFACE_IMPL(cflow_source, CFLOW_SOURCE_METHODS)
-
 static bool callback_sink_value(void *self,
                                 const cmeta_type_desc *type,
                                 const void *value) {

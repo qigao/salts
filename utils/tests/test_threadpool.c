@@ -79,7 +79,7 @@ spec("Thread Pool Tests") {
     it("should create and destroy pool") {
         turbo_threadpool_t *pool = turbo_threadpool_create(2);
         check(pool != NULL);
-        check_int_eq(turbo_threadpool_size(pool), 2);
+        check_equal(turbo_threadpool_size(pool), 2);
         turbo_threadpool_destroy(pool);
     }
 
@@ -98,7 +98,7 @@ spec("Thread Pool Tests") {
         turbo_threadpool_submit(pool, slow_task, &result);
         turbo_threadpool_wait(pool);
 
-        check_int_eq(result, 42);
+        check_equal(result, 42);
         turbo_threadpool_destroy(pool);
     }
 
@@ -110,7 +110,7 @@ spec("Thread Pool Tests") {
         }
 
         turbo_threadpool_wait(pool);
-        check_int_eq(counter, NUM_TASKS);
+        check_equal(counter, NUM_TASKS);
 
         turbo_threadpool_destroy(pool);
     }
@@ -129,7 +129,7 @@ spec("Thread Pool Tests") {
             contexts[i].pool = pool;
             contexts[i].tasks = TASKS_PER_PRODUCER;
             contexts[i].submit_failures = &submit_failures;
-            check_int_eq(turbo_thread_create(&producers[i], submitter_thread, &contexts[i]), 0);
+            check_equal(turbo_thread_create(&producers[i], submitter_thread, &contexts[i]), 0);
         }
 
         for (int i = 0; i < PRODUCERS; ++i) {
@@ -137,8 +137,8 @@ spec("Thread Pool Tests") {
         }
 
         turbo_threadpool_wait(pool);
-        check_int_eq(atomic_load(&submit_failures), 0);
-        check_int_eq(atomic_load(&mpmc_counter), PRODUCERS * TASKS_PER_PRODUCER);
+        check_equal(atomic_load(&submit_failures), 0);
+        check_equal(atomic_load(&mpmc_counter), PRODUCERS * TASKS_PER_PRODUCER);
 
         turbo_threadpool_destroy(pool);
     }
@@ -151,7 +151,7 @@ spec("Thread Pool Tests") {
         }
 
         turbo_threadpool_wait(pool);
-        check_int_eq(counter, 50);
+        check_equal(counter, 50);
 
         turbo_threadpool_destroy(pool);
     }
@@ -167,7 +167,7 @@ spec("Thread Pool Tests") {
 
         turbo_threadpool_wait(pool);
         // Sum of 1..10 = 55
-        check_int_eq(counter, 55);
+        check_equal(counter, 55);
 
         turbo_threadpool_destroy(pool);
     }
@@ -185,7 +185,7 @@ spec("Thread Pool Tests") {
         check(turbo_threadpool_pending(pool) > 0);
 
         turbo_threadpool_wait(pool);
-        check_int_eq(turbo_threadpool_pending(pool), 0);
+        check_equal(turbo_threadpool_pending(pool), 0);
 
         turbo_threadpool_destroy(pool);
     }
@@ -195,7 +195,7 @@ spec("Thread Pool Tests") {
 
         // Wait with no tasks should return immediately
         turbo_threadpool_wait(pool);
-        check_int_eq(turbo_threadpool_pending(pool), 0);
+        check_equal(turbo_threadpool_pending(pool), 0);
 
         turbo_threadpool_destroy(pool);
     }
@@ -203,8 +203,8 @@ spec("Thread Pool Tests") {
     it("should reject tasks after shutdown") {
         turbo_threadpool_t *pool = turbo_threadpool_create(2);
         turbo_threadpool_shutdown(pool);
-        check_int_eq(turbo_threadpool_is_accepting(pool), 0);
-        check_int_eq(turbo_threadpool_submit(pool, increment_task, NULL), -1);
+        check_equal(turbo_threadpool_is_accepting(pool), 0);
+        check_equal(turbo_threadpool_submit(pool, increment_task, NULL), -1);
         turbo_threadpool_destroy(pool);
 
         check(1);
@@ -222,7 +222,7 @@ spec("Thread Pool Tests") {
         int attempts = 0;
 
         check(pool != NULL);
-        check_int_eq((int)turbo_threadpool_capacity(pool), 2);
+        check_equal((int)turbo_threadpool_capacity(pool), 2);
 
         while (accepted < 1 && attempts < 200) {
             if (turbo_threadpool_try_submit(pool, gated_task, NULL) == 0) {
@@ -232,7 +232,7 @@ spec("Thread Pool Tests") {
             turbo_sleep_ms(1);
             attempts++;
         }
-        check_int_eq(accepted, 1);
+        check_equal(accepted, 1);
 
         attempts = 0;
         do {
@@ -243,7 +243,7 @@ spec("Thread Pool Tests") {
             turbo_sleep_ms(1);
             attempts++;
         } while (attempts < 200);
-        check_int_eq((int)stats.active_tasks, 1);
+        check_equal((int)stats.active_tasks, 1);
 
         attempts = 0;
         while ((accepted < 3 || rejected < 1) && attempts < 400) {
@@ -257,17 +257,17 @@ spec("Thread Pool Tests") {
         }
 
         turbo_threadpool_get_stats(pool, &stats);
-        check_int_eq(accepted, 3);
+        check_equal(accepted, 3);
         check(rejected >= 1);
-        check_int_eq((int)stats.rejected_tasks, 1);
-        check_int_eq((int)stats.active_tasks, 1);
-        check_int_eq((int)stats.queued_tasks, 2);
-        check_int_eq((int)stats.pending_tasks, 3);
+        check_equal((int)stats.rejected_tasks, 1);
+        check_equal((int)stats.active_tasks, 1);
+        check_equal((int)stats.queued_tasks, 2);
+        check_equal((int)stats.pending_tasks, 3);
 
         atomic_store(&gate_open, 1);
         turbo_threadpool_wait(pool);
         turbo_threadpool_get_stats(pool, &stats);
-        check_int_eq((int)stats.pending_tasks, 0);
+        check_equal((int)stats.pending_tasks, 0);
         turbo_threadpool_destroy(pool);
     }
 }

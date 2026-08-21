@@ -7,7 +7,7 @@
 #define FMT_LEXER_H
 
 #include <stddef.h>
-#include "../include/turbo_str_view.h"
+#include "../include/turbo_vstr.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,13 +38,13 @@ fmt_token_t fmt_scan(const char **cursor, const char **token_start, size_t *toke
  * @param token Set to token payload view (inner content for SPECIFIER)
  * @return Token type
  */
-fmt_token_t fmt_scan_v(const char **cursor, tstr_v *token);
+fmt_token_t fmt_scan_v(const char **cursor, vstr *token);
 
 /**
  * @brief Length-bounded scanner used by internal hot paths.
  * @param end One-past-the-last input byte; no NUL sentinel is consumed.
  */
-fmt_token_t fmt_scan_v_n(const char **cursor, const char *end, tstr_v *token);
+fmt_token_t fmt_scan_v_n(const char **cursor, const char *end, vstr *token);
 
 #ifdef __cplusplus
 }

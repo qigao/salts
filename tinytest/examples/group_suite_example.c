@@ -1,4 +1,4 @@
-#include "../tinytest.h"
+#include "tinytest.h"
 
 static int g_count = 0;
 
@@ -8,7 +8,7 @@ suite("tinytest sugar") {
       g_count = 0;
     }
     after_each() {
-      check_int_eq(g_count, 1);
+      check_equal(g_count, 1);
     }
 
     it("parses null") {

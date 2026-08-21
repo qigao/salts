@@ -23,7 +23,7 @@ suite("turbo_serial review fixes") {
     check_equal(config.io_chunk_size, 256);
 
     /* Should succeed by clamping io_chunk_size internally */
-    check_int_eq(turbo_serial_create(&serial, &config), TURBO_SERIAL_OK);
+    check_equal(turbo_serial_create(&serial, &config), TURBO_SERIAL_OK);
     check_not_null(serial);
 
     turbo_serial_destroy(serial);
@@ -36,7 +36,7 @@ suite("turbo_serial review fixes") {
     turbo_serial_config_default(&config);
     config.io_chunk_size = 0;
 
-    check_int_eq(turbo_serial_create(&serial, &config), TURBO_SERIAL_INVALID_VALUE);
+    check_equal(turbo_serial_create(&serial, &config), TURBO_SERIAL_INVALID_VALUE);
     check_null(serial);
   }
 
@@ -48,7 +48,7 @@ suite("turbo_serial review fixes") {
     config.rx_buffer_size = 64;
     config.tx_buffer_size = 128;
 
-    check_int_eq(turbo_serial_create(&serial, &config), TURBO_SERIAL_OK);
+    check_equal(turbo_serial_create(&serial, &config), TURBO_SERIAL_OK);
     check_not_null(serial);
 
     /* Usable capacity = buffer_size - 1 (sentinel slot) */
@@ -61,11 +61,11 @@ suite("turbo_serial review fixes") {
   it("sets async_running flag only after thread creation succeeds") {
     turbo_serial_t *serial = NULL;
 
-    check_int_eq(turbo_serial_create(&serial, NULL), TURBO_SERIAL_OK);
+    check_equal(turbo_serial_create(&serial, NULL), TURBO_SERIAL_OK);
     check_not_null(serial);
 
     /* Without an open port, start_async should fail */
-    check_int_eq(turbo_serial_start_async(serial), TURBO_SERIAL_INVALID_STATE);
+    check_equal(turbo_serial_start_async(serial), TURBO_SERIAL_INVALID_STATE);
     
     /* Flag should NOT be set after failed start */
     check_equal(turbo_serial_async_running(serial), 0);
