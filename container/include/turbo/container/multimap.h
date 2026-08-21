@@ -15,21 +15,30 @@ extern "C" {
 
 typedef struct {
   turbo_hash_map_t map;
+  size_t key_limit;
   size_t value_size;
   size_t value_align;
   size_t value_limit;
   size_t size;
 } turbo_multimap_t;
 
-static inline int turbo_multimap_init(turbo_multimap_t *map, size_t key_size, size_t value_size,
-                                     size_t value_align, size_t value_limit, turbo_hash_fn hash,
+static inline int turbo_multimap_init(turbo_multimap_t *map, size_t key_size, size_t key_align,
+                                     size_t key_limit, size_t value_size, size_t value_align,
+                                     size_t value_limit, turbo_hash_fn hash,
                                      turbo_hash_equal_fn equal, void *ctx) {
   if (!map || key_size == 0 || value_size == 0) return CONTAINER_INVALID_ARGUMENT;
   memset(map, 0, sizeof(*map));
+  map->key_limit = key_limit;
   map->value_size = value_size;
   map->value_align = value_align;
   map->value_limit = value_limit;
-  return turbo_hash_map_init(&map->map, key_size, sizeof(turbo_vec_t), hash, equal, ctx);
+  return turbo_hash_map_init_bytes(&map->map, key_size, key_align, sizeof(turbo_vec_t),
+#ifdef __cplusplus
+                                   alignof(turbo_vec_t),
+#else
+                                   _Alignof(turbo_vec_t),
+#endif
+                                   key_limit, hash, equal, ctx);
 }
 
 static inline void turbo_multimap_destroy(turbo_multimap_t *map) {

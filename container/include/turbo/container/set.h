@@ -8,24 +8,33 @@
 extern "C" {
 #endif
 
-typedef struct {
-  turbo_hash_map_t map;
-} turbo_set_t;
+typedef struct { turbo_hash_map_t map; } turbo_set_t;
 
-CONTAINER_API int turbo_set_init(turbo_set_t *set, size_t key_size, turbo_hash_fn hash,
-                             turbo_hash_equal_fn equal, void *ctx);
-/** Initialize a set by copying count keys from a contiguous array. */
-CONTAINER_API int turbo_set_from_array(turbo_set_t *set, const void *keys, size_t count,
-                                   size_t key_size, turbo_hash_fn hash,
-                                   turbo_hash_equal_fn equal, void *ctx);
+CONTAINER_API container_status turbo_set_init(turbo_set_t *set,
+                                              const cmeta_type_desc *key_type,
+                                              size_t entry_limit);
+CONTAINER_API container_status turbo_set_init_bytes(turbo_set_t *set, size_t key_size,
+                                                    size_t key_align, size_t entry_limit,
+                                                    turbo_hash_fn hash,
+                                                    turbo_hash_equal_fn equal, void *ctx);
+CONTAINER_API container_status turbo_set_from_array(turbo_set_t *set, const void *keys,
+                                                    size_t count,
+                                                    const cmeta_type_desc *key_type,
+                                                    size_t entry_limit);
+CONTAINER_API container_status turbo_set_from_array_bytes(turbo_set_t *set, const void *keys,
+                                                          size_t count, size_t key_size,
+                                                          size_t key_align, size_t entry_limit,
+                                                          turbo_hash_fn hash,
+                                                          turbo_hash_equal_fn equal, void *ctx);
 CONTAINER_API void turbo_set_destroy(turbo_set_t *set);
 CONTAINER_API void turbo_set_clear(turbo_set_t *set);
-CONTAINER_API int turbo_set_reserve(turbo_set_t *set, size_t min_capacity);
-CONTAINER_API int turbo_set_add(turbo_set_t *set, const void *key);
+CONTAINER_API container_status turbo_set_reserve(turbo_set_t *set, size_t min_entries);
+CONTAINER_API container_status turbo_set_add(turbo_set_t *set, const void *key);
 CONTAINER_API bool turbo_set_contains(const turbo_set_t *set, const void *key);
-CONTAINER_API int turbo_set_remove(turbo_set_t *set, const void *key);
+CONTAINER_API container_status turbo_set_remove(turbo_set_t *set, const void *key);
 CONTAINER_API size_t turbo_set_size(const turbo_set_t *set);
 CONTAINER_API size_t turbo_set_capacity(const turbo_set_t *set);
+CONTAINER_API uint64_t turbo_set_generation(const turbo_set_t *set);
 CONTAINER_API bool turbo_set_empty(const turbo_set_t *set);
 CONTAINER_API const void *turbo_set_key_at(const turbo_set_t *set, size_t slot);
 
