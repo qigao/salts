@@ -12,7 +12,7 @@ share the same Lean host representation, but they remain different logical
 runtime types.
 
 The generator model below represents a successfully completed finite generator
-trace.  This proves result-type safety of FLAT_MAP; it intentionally does not
+trace. This proves result-type safety of FLAT_MAP; it intentionally does not
 claim that an arbitrary C generator eventually returns `DONE`.
 -/
 
@@ -21,34 +21,34 @@ namespace CMeta
 /-- Values in one runtime vector, indexed by their logical CMeta type. -/
 abbrev ValueVec (T : CType) := List T.denote
 
-/-- A value vector after runtime type erasure.  The CType tag remains explicit,
+/-- A value vector after runtime type erasure. The CType tag remains explicit,
     matching `cflow_plan_value_vec.type`. -/
 abbrev PackedVec := Sigma (fun T : CType => ValueVec T)
 
-/-- Finite successful semantics of one generator callback.  Cursor/state
+/-- Finite successful semantics of one generator callback. Cursor/state
     termination is a separate operational obligation. -/
 structure CompletedGenerator (A R : CType) where
   generateAll : A.denote → List R.denote
 
 /-- Executable instruction in the exact direct-plan subset. -/
 inductive ExecInst : CType → CType → Type where
-  | filter (T : CType) (pred : Callable1 T .bool) : ExecInst T T
+  | filter (T : CType) (pred : Callable [T] .bool) : ExecInst T T
   | map (A R : CType) (chain : MapChain A R) : ExecInst A R
   | flatMap (A R : CType) (gen : CompletedGenerator A R) : ExecInst A R
-  | reduce (T : CType) (reducer : Callable2 T T T) : ExecInst T T
+  | reduce (T : CType) (reducer : Callable [T, T] T) : ExecInst T T
 
 /-- REDUCE in `plan_exec.c` returns zero values for empty input and exactly one
     accumulated value for non-empty input. -/
-def reduceValues {T : CType} (reducer : Callable2 T T T) :
+def reduceValues {T : CType} (reducer : Callable [T, T] T) :
     ValueVec T → ValueVec T
   | [] => []
-  | x :: xs => [xs.foldl reducer.run x]
+  | x :: xs => [xs.foldl reducer.invoke2 x]
 
 namespace ExecInst
 
 /-- Typed denotation of one successfully executed plan instruction. -/
 def run : {A R : CType} → ExecInst A R → ValueVec A → ValueVec R
-  | _, _, .filter _ pred => fun xs => xs.filter pred.run
+  | _, _, .filter _ pred => fun xs => xs.filter pred.invoke1
   | _, _, .map _ _ chain => fun xs => xs.map chain.run
   | _, _, .flatMap _ _ gen => fun xs => xs.flatMap gen.generateAll
   | _, _, .reduce _ reducer => reduceValues reducer
@@ -70,7 +70,7 @@ theorem map_length {A R : CType} (chain : MapChain A R)
 
 /-- REDUCE cardinality matches the C executor: zero stays zero; non-empty input
     becomes exactly one accumulated value. -/
-theorem reduce_length_le_one {T : CType} (reducer : Callable2 T T T)
+theorem reduce_length_le_one {T : CType} (reducer : Callable [T, T] T)
     (xs : ValueVec T) :
     (reduceValues reducer xs).length ≤ 1 := by
   cases xs <;> simp [reduceValues]
@@ -82,7 +82,7 @@ theorem planNode_checked {A R : CType} (inst : ExecInst A R) :
 
 end ExecInst
 
-/-- Runtime-erased executable instruction.  The implementation remains
+/-- Runtime-erased executable instruction. The implementation remains
     dependently tied to the declared input/output descriptors. -/
 structure RuntimeInst where
   input : CType
