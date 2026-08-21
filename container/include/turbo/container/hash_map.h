@@ -45,7 +45,8 @@ CONTAINER_API size_t turbo_hash_bytes(const void *key, size_t key_size, void *ct
 CONTAINER_API bool turbo_hash_key_equal(const void *left, const void *right, size_t key_size,
                                         void *ctx);
 
-/* Handles must first be initialized with `{0}`. Typed keys require equal,
+/* Stored type descriptors, raw hash/equality callbacks, and ctx are borrowed;
+ * the caller keeps them valid until destroy. Handles must first be initialized with `{0}`. Typed keys require equal,
  * hash, copy, move, and destroy traits; typed values require copy, move, and
  * destroy traits. A destroyed handle may be reused. */
 CONTAINER_API container_status turbo_hash_map_init(turbo_hash_map_t *map,
@@ -68,7 +69,8 @@ CONTAINER_API container_status turbo_hash_map_from_arrays_bytes(
     size_t entry_limit, turbo_hash_fn hash, turbo_hash_equal_fn equal, void *ctx);
 CONTAINER_API void turbo_hash_map_destroy(turbo_hash_map_t *map);
 CONTAINER_API void turbo_hash_map_clear(turbo_hash_map_t *map);
-/* min_entries is a live-entry request, never a bucket count. */
+/* min_entries is a live-entry request, never a bucket count. entry_limit is a
+ * hard live-entry limit; capacity() reports internal bucket slots. */
 CONTAINER_API container_status turbo_hash_map_reserve(turbo_hash_map_t *map,
                                                       size_t min_entries);
 CONTAINER_API container_status turbo_hash_map_put(turbo_hash_map_t *map, const void *key,
@@ -85,6 +87,7 @@ CONTAINER_API container_status turbo_hash_map_remove(turbo_hash_map_t *map, cons
                                                      void *out_value);
 CONTAINER_API size_t turbo_hash_map_size(const turbo_hash_map_t *map);
 CONTAINER_API size_t turbo_hash_map_capacity(const turbo_hash_map_t *map);
+CONTAINER_API size_t turbo_hash_map_entry_limit(const turbo_hash_map_t *map);
 CONTAINER_API uint64_t turbo_hash_map_generation(const turbo_hash_map_t *map);
 CONTAINER_API bool turbo_hash_map_empty(const turbo_hash_map_t *map);
 CONTAINER_API const void *turbo_hash_map_key_at(const turbo_hash_map_t *map, size_t slot);

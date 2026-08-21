@@ -10,6 +10,10 @@ extern "C" {
 
 typedef turbo_hash_map_t turbo_map_t;
 
+/* Descriptors, raw callbacks, and ctx are borrowed through destroy. get/key_at/
+ * value_at are borrowed and invalidate after successful reserve, put, remove,
+ * clear, or destroy. capacity() is bucket slots; entry_limit is live entries. */
+
 static inline container_status turbo_map_init(turbo_map_t *map,
                                               const cmeta_type_desc *key_type,
                                               const cmeta_type_desc *value_type,
@@ -82,6 +86,10 @@ static inline size_t turbo_map_size(const turbo_map_t *map) {
 
 static inline size_t turbo_map_capacity(const turbo_map_t *map) {
   return turbo_hash_map_capacity(map);
+}
+
+static inline size_t turbo_map_entry_limit(const turbo_map_t *map) {
+  return turbo_hash_map_entry_limit(map);
 }
 
 static inline uint64_t turbo_map_generation(const turbo_map_t *map) {

@@ -10,6 +10,10 @@ extern "C" {
 
 typedef turbo_set_t turbo_hash_set_t;
 
+/* HashSet is the Set hash-backed facade: descriptor or raw callbacks/context
+ * are borrowed through destroy; capacity is bucket slots and entry_limit is
+ * the live-key hard limit. Borrowed key pointers invalidate after mutation. */
+
 static inline container_status turbo_hash_set_init(turbo_hash_set_t *set,
                                                     const cmeta_type_desc *key_type,
                                                     size_t entry_limit) {
@@ -40,6 +44,7 @@ static inline bool turbo_hash_set_contains(const turbo_hash_set_t *set, const vo
 static inline container_status turbo_hash_set_remove(turbo_hash_set_t *set, const void *key) { return turbo_set_remove(set, key); }
 static inline size_t turbo_hash_set_size(const turbo_hash_set_t *set) { return turbo_set_size(set); }
 static inline size_t turbo_hash_set_capacity(const turbo_hash_set_t *set) { return turbo_set_capacity(set); }
+static inline size_t turbo_hash_set_entry_limit(const turbo_hash_set_t *set) { return turbo_set_entry_limit(set); }
 static inline uint64_t turbo_hash_set_generation(const turbo_hash_set_t *set) { return turbo_set_generation(set); }
 static inline bool turbo_hash_set_empty(const turbo_hash_set_t *set) { return turbo_set_empty(set); }
 static inline const void *turbo_hash_set_key_at(const turbo_hash_set_t *set, size_t slot) { return turbo_set_key_at(set, slot); }

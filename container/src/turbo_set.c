@@ -78,6 +78,7 @@ container_status turbo_set_remove(turbo_set_t *set, const void *key) {
 }
 size_t turbo_set_size(const turbo_set_t *set) { return set == NULL ? 0u : turbo_hash_map_size(&set->map); }
 size_t turbo_set_capacity(const turbo_set_t *set) { return set == NULL ? 0u : turbo_hash_map_capacity(&set->map); }
+size_t turbo_set_entry_limit(const turbo_set_t *set) { return set == NULL ? 0u : turbo_hash_map_entry_limit(&set->map); }
 uint64_t turbo_set_generation(const turbo_set_t *set) { return set == NULL ? UINT64_C(0) : turbo_hash_map_generation(&set->map); }
 bool turbo_set_empty(const turbo_set_t *set) { return turbo_set_size(set) == 0u; }
 const void *turbo_set_key_at(const turbo_set_t *set, size_t slot) { return set == NULL ? NULL : turbo_hash_map_key_at(&set->map, slot); }

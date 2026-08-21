@@ -364,12 +364,17 @@ container_status turbo_hash_map_from_arrays_bytes(turbo_hash_map_t *map, const v
 }
 
 void turbo_hash_map_destroy(turbo_hash_map_t *map) {
+    size_t slot;
     uint64_t generation;
     if (map == NULL) return;
     generation = map->generation;
     if (map->initialized) {
-        turbo_hash_map_clear(map);
-        generation = map->generation + UINT64_C(1);
+        for (slot = 0u; slot < map->capacity; ++slot) {
+            if (map->states[slot] != TURBO_HASH_OCCUPIED) continue;
+            turbo_hash_destroy_value(map->key_type, turbo_hash_key_slot(map, slot));
+            turbo_hash_destroy_value(map->value_type, turbo_hash_value_slot(map, slot));
+        }
+        generation += UINT64_C(1);
         turbo_sequence_deallocate(map->states);
     }
     memset(map, 0, sizeof(*map));
@@ -489,6 +494,7 @@ container_status turbo_hash_map_remove(turbo_hash_map_t *map, const void *key, v
 
 size_t turbo_hash_map_size(const turbo_hash_map_t *map) { return turbo_hash_map_valid(map) ? map->size : 0u; }
 size_t turbo_hash_map_capacity(const turbo_hash_map_t *map) { return turbo_hash_map_valid(map) ? map->capacity : 0u; }
+size_t turbo_hash_map_entry_limit(const turbo_hash_map_t *map) { return turbo_hash_map_valid(map) ? map->entry_limit : 0u; }
 uint64_t turbo_hash_map_generation(const turbo_hash_map_t *map) { return map ? map->generation : UINT64_C(0); }
 bool turbo_hash_map_empty(const turbo_hash_map_t *map) { return turbo_hash_map_size(map) == 0u; }
 

@@ -97,6 +97,13 @@ suite("Container hash ownership") {
                                               sizeof(int), 64u, 0u,
                                               turbo_hash_bytes, turbo_hash_key_equal, NULL),
                     CONTAINER_OK);
+        {
+            const int key = 1;
+            const int value = 1;
+            uint64_t generation = turbo_hash_map_generation(&map);
+            check_equal(turbo_hash_map_put(&map, &key, &value), CONTAINER_CAPACITY_EXCEEDED);
+            check_equal(turbo_hash_map_generation(&map), generation);
+        }
         turbo_hash_map_destroy(&map);
     }
 
@@ -290,5 +297,167 @@ suite("Container hash ownership") {
         check_equal(*(const int *)turbo_hash_map_get_const(&map, &source_key), 41);
         check_equal(*(const int *)turbo_hash_map_get_const(&map, &alias_key), 41);
         turbo_hash_map_destroy(&map);
+    }
+
+    it("advances destroy generation exactly once for empty and live handles") {
+        turbo_hash_map_t map = {0};
+        turbo_set_t set = {0};
+        const int key = 1;
+        const int value = 2;
+
+        check_equal(turbo_hash_map_init_bytes(&map, sizeof(int), _Alignof(int), sizeof(int),
+                                              _Alignof(int), 1u, turbo_hash_bytes,
+                                              turbo_hash_key_equal, NULL), CONTAINER_OK);
+        check_equal(turbo_hash_map_generation(&map), UINT64_C(1));
+        turbo_hash_map_destroy(&map);
+        check_equal(turbo_hash_map_generation(&map), UINT64_C(2));
+        turbo_hash_map_destroy(&map);
+        check_equal(turbo_hash_map_generation(&map), UINT64_C(2));
+        check_equal(turbo_hash_map_init_bytes(&map, sizeof(int), _Alignof(int), sizeof(int),
+                                              _Alignof(int), 1u, turbo_hash_bytes,
+                                              turbo_hash_key_equal, NULL), CONTAINER_OK);
+        check_equal(turbo_hash_map_put(&map, &key, &value), CONTAINER_OK);
+        check_equal(turbo_hash_map_generation(&map), UINT64_C(4));
+        turbo_hash_map_destroy(&map);
+        check_equal(turbo_hash_map_generation(&map), UINT64_C(5));
+
+        check_equal(turbo_set_init_bytes(&set, sizeof(int), _Alignof(int), 1u,
+                                         turbo_hash_bytes, turbo_hash_key_equal, NULL),
+                    CONTAINER_OK);
+        turbo_set_destroy(&set);
+        check_equal(turbo_set_generation(&set), UINT64_C(2));
+        check_equal(turbo_set_init_bytes(&set, sizeof(int), _Alignof(int), 1u,
+                                         turbo_hash_bytes, turbo_hash_key_equal, NULL),
+                    CONTAINER_OK);
+        check_equal(turbo_set_add(&set, &key), CONTAINER_OK);
+        turbo_set_destroy(&set);
+        check_equal(turbo_set_generation(&set), UINT64_C(5));
+    }
+
+    it("keeps multimap vector ownership behind a pointer carrier") {
+        turbo_multimap_t map = {0};
+        const int one = 1;
+        const int two = 2;
+        const int value = 7;
+        int out = 0;
+        turbo_vec_t *values;
+
+        check_equal(turbo_multimap_init(&map, sizeof(int), _Alignof(int), 1u,
+                                        sizeof(int), _Alignof(int), 1u,
+                                        turbo_hash_bytes, turbo_hash_key_equal, NULL), CONTAINER_OK);
+        check_equal(turbo_multimap_put(&map, &one, &value), CONTAINER_OK);
+        values = turbo_multimap_get_values(&map, &one);
+        check_not_null(values);
+        check_equal(turbo_vec_size(values), (size_t)1u);
+        check_equal(turbo_multimap_put(&map, &one, &value), CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(turbo_multimap_put(&map, &two, &value), CONTAINER_CAPACITY_EXCEEDED);
+        check_true(turbo_multimap_remove(&map, &one, &out));
+        check_equal(out, 7);
+        check_true(turbo_multimap_empty(&map));
+        turbo_multimap_destroy(&map);
+    }
+
+    it("counts typed set ownership and accepts duplicate arrays by live entry limit") {
+        turbo_set_t set = {0};
+        turbo_hash_map_t map = {0};
+        counted_value key;
+        const int keys[] = {1, 1};
+        const int values[] = {3, 4};
+        uint64_t generation;
+
+        reset_counts();
+        key = counted_make(1);
+        check_equal(turbo_set_init(&set, &counted_type, 1u), CONTAINER_OK);
+        check_equal(turbo_set_add(&set, &key), CONTAINER_OK);
+        generation = turbo_set_generation(&set);
+        check_equal(copies, (size_t)1u);
+        check_equal(turbo_set_add(&set, &key), CONTAINER_OK);
+        check_equal(copies, (size_t)1u);
+        check_equal(turbo_set_generation(&set), generation);
+        turbo_set_destroy(&set);
+        counted_destroy(&key);
+        check_equal(destroys, (size_t)3u);
+
+        check_equal(turbo_hash_map_from_arrays_bytes(&map, keys, values, 2u, sizeof(int),
+                                                     _Alignof(int), sizeof(int), _Alignof(int),
+                                                     1u, turbo_hash_bytes,
+                                                     turbo_hash_key_equal, NULL), CONTAINER_OK);
+        check_equal(turbo_hash_map_size(&map), (size_t)1u);
+        check_equal(*(const int *)turbo_hash_map_get_const(&map, &keys[0]), 4);
+        check_equal(turbo_hash_map_entry_limit(&map), (size_t)1u);
+        turbo_hash_map_destroy(&map);
+    }
+
+    it("rejects reserve metadata overflow without changing a SIZE_MAX-limited map") {
+        turbo_hash_map_t map = {0};
+        turbo_hash_map_t before;
+        const int key = 1;
+        const int value = 1;
+
+        check_equal(turbo_hash_map_init_bytes(&map, sizeof(int), _Alignof(int), sizeof(int),
+                                              _Alignof(int), SIZE_MAX, turbo_hash_bytes,
+                                              turbo_hash_key_equal, NULL), CONTAINER_OK);
+        check_equal(turbo_hash_map_put(&map, &key, &value), CONTAINER_OK);
+        before = map;
+        check_equal(turbo_hash_map_reserve(&map, SIZE_MAX), CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(memcmp(&map, &before, sizeof(map)), 0);
+        turbo_hash_map_destroy(&map);
+    }
+
+    it("balances typed clear and NULL removal ownership") {
+        turbo_hash_map_t map = {0};
+        counted_value keys[2];
+        counted_value values[2];
+
+        reset_counts();
+        keys[0] = counted_make(1); keys[1] = counted_make(2);
+        values[0] = counted_make(3); values[1] = counted_make(4);
+        check_equal(turbo_hash_map_init(&map, &counted_type, &counted_type, 2u), CONTAINER_OK);
+        check_equal(turbo_hash_map_put(&map, &keys[0], &values[0]), CONTAINER_OK);
+        check_equal(turbo_hash_map_put(&map, &keys[1], &values[1]), CONTAINER_OK);
+        check_equal(copies, (size_t)4u);
+        check_equal(moves, (size_t)4u);
+        turbo_hash_map_clear(&map);
+        check_equal(destroys, (size_t)8u);
+        turbo_hash_map_destroy(&map);
+        counted_destroy(&keys[0]); counted_destroy(&keys[1]);
+        counted_destroy(&values[0]); counted_destroy(&values[1]);
+        check_equal(destroys, (size_t)12u);
+
+        reset_counts();
+        keys[0] = counted_make(5); values[0] = counted_make(6);
+        check_equal(turbo_hash_map_init(&map, &counted_type, &counted_type, 1u), CONTAINER_OK);
+        check_equal(turbo_hash_map_put(&map, &keys[0], &values[0]), CONTAINER_OK);
+        check_equal(turbo_hash_map_remove(&map, &keys[0], NULL), CONTAINER_OK);
+        check_equal(destroys, (size_t)4u);
+        turbo_hash_map_destroy(&map);
+        counted_destroy(&keys[0]); counted_destroy(&values[0]);
+        check_equal(destroys, (size_t)6u);
+    }
+
+    it("moves and destroys typed entries during rehash") {
+        turbo_hash_map_t map = {0};
+        counted_value keys[12];
+        counted_value values[12];
+        size_t index;
+
+        reset_counts();
+        for (index = 0u; index < 12u; ++index) {
+            keys[index] = counted_make((int)index + 1);
+            values[index] = counted_make((int)index + 101);
+        }
+        check_equal(turbo_hash_map_init(&map, &counted_type, &counted_type, 12u), CONTAINER_OK);
+        for (index = 0u; index < 12u; ++index)
+            check_equal(turbo_hash_map_put(&map, &keys[index], &values[index]), CONTAINER_OK);
+        check_equal(copies, (size_t)24u);
+        check_equal(moves, (size_t)46u);
+        check_equal(destroys, (size_t)46u);
+        turbo_hash_map_destroy(&map);
+        check_equal(destroys, (size_t)70u);
+        for (index = 0u; index < 12u; ++index) {
+            counted_destroy(&keys[index]);
+            counted_destroy(&values[index]);
+        }
+        check_equal(destroys, (size_t)94u);
     }
 }

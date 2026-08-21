@@ -10,6 +10,10 @@ extern "C" {
 
 typedef struct { turbo_hash_map_t map; } turbo_set_t;
 
+/* The key descriptor, or raw hash/equality callbacks and ctx, are borrowed
+ * until destroy. capacity() reports bucket slots; entry_limit is a live-key
+ * hard limit. Returned key pointers are borrowed and invalidate after every
+ * successful reserve, add, remove, clear, or destroy. */
 CONTAINER_API container_status turbo_set_init(turbo_set_t *set,
                                               const cmeta_type_desc *key_type,
                                               size_t entry_limit);
@@ -34,6 +38,7 @@ CONTAINER_API bool turbo_set_contains(const turbo_set_t *set, const void *key);
 CONTAINER_API container_status turbo_set_remove(turbo_set_t *set, const void *key);
 CONTAINER_API size_t turbo_set_size(const turbo_set_t *set);
 CONTAINER_API size_t turbo_set_capacity(const turbo_set_t *set);
+CONTAINER_API size_t turbo_set_entry_limit(const turbo_set_t *set);
 CONTAINER_API uint64_t turbo_set_generation(const turbo_set_t *set);
 CONTAINER_API bool turbo_set_empty(const turbo_set_t *set);
 CONTAINER_API const void *turbo_set_key_at(const turbo_set_t *set, size_t slot);
