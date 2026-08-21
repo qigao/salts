@@ -12,17 +12,29 @@ This amendment does not change the target architecture. It specifies how Plan A 
 
 ## Temporary visibility bridges
 
-Plan A may keep a proof-only theorem or re-export temporarily public only when an identified, still-legacy consumer requires it. Every bridge MUST:
+Plan A may keep a proof-only theorem, re-export, or definition body temporarily visible only when an identified, still-legacy consumer requires it. Every bridge MUST:
 
-1. be an explicit declaration/import, never a blanket `public section` over unrelated proof machinery;
+1. be explicit, never a blanket `public section` over unrelated proof machinery;
 2. carry a source comment of the form `TEMP-MODULE-BRIDGE(M<n>): <consumer>`;
 3. name the phase in which it is removed;
 4. be included in the implementation plan's bridge-removal checklist;
-5. be absent at the final Plan A exact-head checkpoint unless the name is part of the approved public semantic API.
+5. be absent at the final Plan A exact-head checkpoint unless the declaration/body is part of the approved public semantic API.
 
 No bridge may be justified merely because making a declaration private causes an unspecified build failure. The failing consumer must be identified first.
 
-`backward.privateInPublic`, `backward.proofsInPublic`, and Lake `allowImportAll` remain forbidden. `@[expose]` is not a generic bridge mechanism; use it only when the definition is intentionally part of the supported public reasoning surface.
+`backward.privateInPublic`, `backward.proofsInPublic`, and Lake `allowImportAll` remain forbidden.
+
+### Temporary exposed-body bridges
+
+An unconverted legacy proof can also fail because a public definition becomes unexposed when its defining file becomes a module. In that case Plan A may use `@[expose] public def` as a temporary compatibility bridge only for an audited definition that the legacy consumer explicitly unfolds. The marker/comment and removal rules above apply exactly as for theorem bridges.
+
+The audited exposed-body bridges are:
+
+- through M6 for legacy `OptimizerConformance.identity_lists_equal`: `CMeta.HArgs.one`, `CMeta.Callable.ofUnary`, `CMeta.Callable.invoke1`;
+- through M4 for legacy `PlanNode.check_erase`: `CMeta.MapChain.check`;
+- through M5 for legacy `EndToEnd.runtime_result_matches_compiled_output` / `static_checker_matches_runtime`: `CMeta.PlanProgram.compile`, `CMeta.PlanWellTyped`.
+
+No other `@[expose]` is authorized by Plan A without first updating this amendment with the exact legacy consumer. All temporary exposures above are removed at their named phase, so the final Plan A expectation remains no migration-only `@[expose]` markers.
 
 ## Audited bridge lifecycle
 
@@ -58,8 +70,7 @@ After `Flow` and `Graph` become modules, later legacy files still consume select
 `Cardinality` is intended to export no semantic API, but legacy `EndToEnd` currently reaches execution/plan declarations through `import CMeta.Cardinality`. Until `EndToEnd` becomes a module in M5, `Cardinality` may temporarily use:
 
 ```lean
-public import CMeta.Execution
-import all CMeta.Execution
+public import all CMeta.Execution
 ```
 
 with a `TEMP-MODULE-BRIDGE(M5)` comment. In M5 this becomes private `import all CMeta.Execution` only.
@@ -89,7 +100,7 @@ However, M5 may not yet hide the three audited proof bridges still required by M
 - `CMeta.SurfaceZip.lowering_preserves_type`
 - `CMeta.duplicate_idempotent_elimination_sound`
 
-Therefore M5 establishes the module-form facade and a **partial isolation gate**. M6 converts the remaining CFlow conformance/generated closure, removes these final bridges, and then strengthens `PublicProofIsolationConformance` to the full approved negative set covering graph, lowering, optimizer, execution, and EndToEnd layers.
+Therefore M5 establishes the module-form facade and a **partial isolation gate**. M6 converts the remaining CFlow conformance/generated closure, removes these final bridges and all remaining temporary exposed-body bridges, and then strengthens `PublicProofIsolationConformance` to the full approved negative set covering graph, lowering, optimizer, execution, and EndToEnd layers.
 
 This supersedes the original wording that required the complete negative isolation set at the end of M5. The Plan A acceptance criterion is unchanged: complete hard CFlow/PublicProof isolation is required before the final M6 exact-head checkpoint.
 
@@ -125,6 +136,7 @@ At M6 exact head:
 
 - all M1–M6 CFlow semantic, facade, generated, and conformance files in the Plan A closure are modules;
 - no `TEMP-MODULE-BRIDGE(M1)` through `TEMP-MODULE-BRIDGE(M6)` marker remains;
+- no migration-only `@[expose]` remains;
 - `CMeta.PublicProof` exposes only the approved semantic vocabulary and six stable wrapper theorems;
 - representative internal proof names from Graph, Lowering, Optimize, Execution, and EndToEnd fail `assert_not_exists` for a client importing only `CMeta.PublicProof`;
 - the legacy `CMeta.lean` root still builds the complete formal tree; it is not converted in Plan A;
