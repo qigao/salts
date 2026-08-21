@@ -1,6 +1,25 @@
 set(CMETA_FORMAL_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${CMETA_FORMAL_GENERATED_DIR}")
 
+# Direct same-producer nesting is expected to fail in a strict C11 preprocessor
+# because the active producer macro is suppressed during replacement rescanning.
+# Keep this as negative applicability evidence: if it ever compiles, the backend
+# assumption has changed and this proof slice must be revisited.
+try_compile(CMETA_DIRECT_NESTED_REPLAY_COMPILED
+  "${CMAKE_CURRENT_BINARY_DIR}/direct-nested-replay-probe"
+  SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/cmeta_nested_replay_direct_fail.c"
+  CMAKE_FLAGS
+    "-DCMAKE_C_STANDARD=11"
+    "-DCMAKE_C_STANDARD_REQUIRED=ON"
+    "-DCMAKE_C_EXTENSIONS=OFF"
+  OUTPUT_VARIABLE CMETA_DIRECT_NESTED_REPLAY_OUTPUT)
+if(CMETA_DIRECT_NESTED_REPLAY_COMPILED)
+  message(FATAL_ERROR
+    "direct same-producer nested replay unexpectedly compiled; self-suppression proof invalid")
+else()
+  message(STATUS "direct same-producer nested replay rejected as expected")
+endif()
+
 function(cmeta_add_formal_witness target source)
   add_executable(${target} EXCLUDE_FROM_ALL ${source})
   target_compile_features(${target} PRIVATE c_std_11)
@@ -61,6 +80,17 @@ set_target_properties(cmeta_producer_replay_witness PROPERTIES
   C_EXTENSIONS NO)
 add_test(NAME cmeta_producer_replay
          COMMAND cmeta_producer_replay_witness)
+
+cmeta_add_formal_witness(cmeta_nested_replay_deferred_witness
+  cmeta_nested_replay_deferred_witness.c)
+target_include_directories(cmeta_nested_replay_deferred_witness PRIVATE
+  ${PROJECT_SOURCE_DIR}/cmeta/include)
+set_target_properties(cmeta_nested_replay_deferred_witness PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED YES
+  C_EXTENSIONS NO)
+add_test(NAME cmeta_nested_replay_deferred
+         COMMAND cmeta_nested_replay_deferred_witness)
 
 cmeta_add_formal_witness(cmeta_plan_conformance_witness
   cmeta_plan_conformance_witness.c)
