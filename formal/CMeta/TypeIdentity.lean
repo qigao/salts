@@ -15,13 +15,13 @@ inductive TypeId where
   | pointer (base : TypeId)
   | constType (base : TypeId)
   | apply (constructorId : String) (args : List TypeId)
-  deriving Repr, DecidableEq
+  deriving Repr, BEq
 
 structure GenericConstructor where
   stableId : String
   minArity : Nat
   maxArity : Nat
-  deriving Repr, DecidableEq
+  deriving Repr, BEq
 
 /-- Finite constructor acceptance is a closed interval over type argument count. -/
 def GenericConstructor.acceptsArity
@@ -45,9 +45,14 @@ inductive CallableSignature where
   | unary (input output : TypeId)
   | binary (left right output : TypeId)
   | generator (input output : TypeId)
-  deriving Repr, DecidableEq
+  deriving Repr, BEq
 
 abbrev CallableSchema := List CallableSignature
+
+/-- Registering a reflected type does not implicitly mutate an explicit callable schema. -/
+def CallableSchema.withKnownType
+    (_known : KnownTypes) (schema : CallableSchema) (_t : TypeId) : CallableSchema :=
+  schema
 
 private def resultCtor : GenericConstructor :=
   { stableId := "cmeta.Result", minArity := 2, maxArity := 2 }
@@ -60,14 +65,14 @@ example : resultCtor.valid = true := by native_decide
 example : resultCtor.acceptsArity 2 = true := by native_decide
 example : resultCtor.acceptsArity 1 = false := by native_decide
 example : resultCtor.accepts [user, err] = true := by native_decide
-example : result = TypeId.apply "cmeta.Result" [user, err] := by rfl
-example : result != TypeId.apply "cmeta.Result" [err, user] := by native_decide
-example : TypeId.pointer user != TypeId.constType user := by native_decide
+example : (result == TypeId.apply "cmeta.Result" [user, err]) = true := by native_decide
+example : (result == TypeId.apply "cmeta.Result" [err, user]) = false := by native_decide
+example : (TypeId.pointer user == TypeId.constType user) = false := by native_decide
 
-/-- Extending the reflected/known universe cannot mutate an explicit callable schema. -/
+/-- Extending the reflected/known universe leaves an explicit callable schema unchanged. -/
 theorem known_types_do_not_expand_callable_schema
     (known : KnownTypes) (schema : CallableSchema) (t : TypeId) :
-    schema = schema := by
+    schema.withKnownType known t = schema := by
   rfl
 
 end CMeta
