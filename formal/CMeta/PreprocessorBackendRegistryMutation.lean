@@ -30,7 +30,14 @@ theorem supportingCandidates_insert_irrelevant
   · simp at hinsert
   · simp only [Option.some.injEq] at hinsert
     subst inserted
-    simp [supportingCandidates, hirrelevant]
+    have hfamily : backend.backend.compilerFamily ≠ query.family := by
+      intro hsame
+      apply hirrelevant
+      refine ⟨hsame, ?_⟩
+      cases backend.backend.languageMode
+      cases query.languageMode
+      rfl
+    simp [supportingCandidates, hfamily]
 
 /-- Selection has no mutation-specific behavior: if insertion leaves candidate
     discovery unchanged, every selection policy receives the same input and must
