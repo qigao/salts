@@ -1,5 +1,6 @@
-import CMeta.NestedReplayLowering
-import CMeta.PreprocessorBackend
+module
+public import CMeta.PreprocessorBackend
+import all CMeta.NestedReplayLowering
 
 /-!
 # Strict-C11 nested replay backend plan
@@ -14,7 +15,7 @@ namespace CMeta
 namespace Producer
 
 /-- Concrete strict-C11 expansion choice for each replay node. -/
-inductive ReplayExpansionPlan where
+public inductive ReplayExpansionPlan where
   | emit
   | directReplay (producer : Nat) (body : ReplayExpansionPlan)
   | deferredObstructReplay (producer : Nat) (body : ReplayExpansionPlan)
@@ -24,7 +25,7 @@ namespace ReplayExpansionPlan
 
 /-- Direct replay is legal only for an inactive identity. An active
     same-identity re-entry must use the deferred-obstruct path. -/
-def respectsActiveProducers : ReplayExpansionPlan → List Nat → Prop
+public def respectsActiveProducers : ReplayExpansionPlan → List Nat → Prop
   | .emit, _ => True
   | .directReplay producer body, active =>
       producer ∉ active ∧ body.respectsActiveProducers (producer :: active)
@@ -41,14 +42,14 @@ private def fromIRAux (active : List Nat) : ReplayIR → ReplayExpansionPlan
         .directReplay producer (fromIRAux (producer :: active) body)
 
 /-- Top-level expansion starts with no active producer identities. -/
-def fromIR (ir : ReplayIR) : ReplayExpansionPlan :=
+public def fromIR (ir : ReplayIR) : ReplayExpansionPlan :=
   fromIRAux [] ir
 
 /-- Compact diagnostic encoding used by the real C conformance witness:
     `1` means direct producer replay and `2` means deferred+obstructed replay.
     Producer values are intentionally omitted so the trace describes expansion
     strategy rather than test data. -/
-def strategyTrace : ReplayExpansionPlan → List Nat
+public def strategyTrace : ReplayExpansionPlan → List Nat
   | .emit => []
   | .directReplay _ body => 1 :: body.strategyTrace
   | .deferredObstructReplay _ body => 2 :: body.strategyTrace
@@ -76,7 +77,7 @@ end ReplayExpansionPlan
 /-- Fully accepted strict-C11 backend plan. `requiredRescanDepth` is the logical
     nested re-entry depth that the backend certificate must cover; it is not the
     literal number of preprocessor `EVAL` scans. -/
-structure ReplayBackendPlan where
+public structure ReplayBackendPlan where
   source : ReplayIR
   requiredRescanDepth : Nat
   expansion : ReplayExpansionPlan
@@ -87,7 +88,7 @@ namespace ReplayBackendPlan
 /-- The unique backend plan determined by replay structure itself. Backend
     capability decides only whether this plan is accepted; it does not alter the
     plan once admission succeeds. -/
-def fromIR (ir : ReplayIR) : ReplayBackendPlan :=
+public def fromIR (ir : ReplayIR) : ReplayBackendPlan :=
   ⟨ir, ir.sameProducerDepth, ReplayExpansionPlan.fromIR ir⟩
 
 end ReplayBackendPlan
@@ -106,7 +107,7 @@ theorem lowerReplayIR_requirement
 
 /-- Produce a backend expansion plan only after structural IR applicability has
     passed the certified-depth gate. -/
-def lowerReplayBackendPlan
+public def lowerReplayBackendPlan
     (backend : ReplayBackendCapability) (ir : ReplayIR) : Option ReplayBackendPlan :=
   match lowerReplayIR backend ir with
   | none => none
@@ -199,7 +200,7 @@ namespace PreprocessorBackendRegistry
 /-- Registry selection and lowering are deliberately separate: lookup chooses
     the certified backend identity; the selected backend capability then gates
     the canonical replay plan. -/
-def resolveReplay
+public def resolveReplay
     (registry : PreprocessorBackendRegistry) (key : BackendKey) (ir : ReplayIR) :
     Option ReplayBackendPlan :=
   match registry.lookup key with
