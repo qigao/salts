@@ -1,141 +1,171 @@
 # CMeta State + Exec Concurrency Architecture
 
-Status: draft for user review  
+Status: architecture baseline  
 Date: 2026-08-21  
-Branch: `leanv4`
+Branch: `leanv4`  
+Parent architecture: `2026-08-21-cmeta-hexagonal-architecture-design.md`
 
 ## 1. Purpose
 
-This specification defines a concurrency and state-machine substrate for CMeta that combines four concerns without conflating them:
-
-1. finite typed application state machines;
-2. resumable task execution and structured concurrency;
-3. stackful coroutine execution, initially through a `minicoro.h` backend;
-4. cross-platform executor, timer, thread, wakeup and I/O polling integration.
-
-CMeta remains a finite typed generative layer over ordinary C11. This design does not add a borrow checker, GC, arbitrary compile-time execution, transparent syscall rewriting, or a new non-C ABI.
-
-The central invariant is that three state spaces remain distinct:
-
-- **application state** — protocol/UI/device/workflow state such as `Connected`, `Closing`, `Closed`;
-- **task execution state** — `NEW`, `RUNNABLE`, `RUNNING`, `WAITING`, `DONE`, `FAILED`, `CANCELLED`;
-- **executor placement** — the executor/thread that owns a task and receives its wakeups.
-
-A `Connected` machine may own a task in `WAITING`. A task wakeup may change execution state without changing application state. Executor placement must never be encoded as an application-machine state.
-
-## 2. Architectural decomposition
-
-The architecture is split into independently testable modules and CMake targets:
+This specification defines two first-party modules built on CMeta Core:
 
 ```text
-TurboUtils::CMeta                 existing CType/Traits/Callable/Schema core
-        │
-        ├── TurboUtils::CMetaState
-        │      finite machine/event/transition IR
-        │
-        └── TurboUtils::CMetaExec
-               Step/Waker/Waitable/Resumable
-               Task/Scope/Cancel/Coordination
-               deterministic executor
-                    │
-                    ├── TurboUtils::CMetaCoroMinicoro
-                    │      stackful coroutine backend
-                    │
-                    └── TurboUtils::CMetaExecNative
-                           native thread/timer/poller executor
-
-TurboUtils::CFlow
-        └── progressively consumes TurboUtils::CMetaExec
+CMeta State
+CMeta Exec
 ```
 
-`CMetaState` and `CMetaExec` share CType, callable signatures, effects/properties and finite graph algorithms, but they are different IR domains.
+They are not part of the minimal semantic kernel and they do not depend on CMeta Extend.
 
-- CFlow graph edges describe value-flow computations.
-- State-machine edges describe event-triggered state transitions.
-- Exec state describes whether a computation can currently run.
+CMeta Extend may later provide source syntax for `machine`, `Task<T>`, `async`, `await`, `spawn` and related constructs, but all runtime and validation semantics remain owned by State or Exec.
 
-They must not be collapsed into one universal graph structure.
+The design combines state machines, structured asynchronous execution, stackful coroutine backends and cross-platform event loops without conflating them.
 
-## 3. v1 goals
+## 2. Architectural position
 
-### 3.1 CMeta State
+```text
+                     CMeta Extend
+                    optional syntax
+                         │
+                         ▼
+                     lowering
+                         │
+       ┌─────────────────┴─────────────────┐
+       ▼                                   ▼
+  CMeta State                          CMeta Exec
+       ▲                                   ▲
+       └────────────── CMeta Core ─────────┘
+                                           │
+                              ┌────────────┴────────────┐
+                              ▼                         ▼
+                      CoroutineBackend             Platform ports
+                              │                         │
+                       minicoro adapter         epoll/IOCP/kqueue
 
-Provide:
+CFlow -> CMeta Core + selected CMeta Exec primitives
+```
 
-- a finite state universe;
-- a finite typed event universe;
-- exact event payload CType metadata;
-- deterministic transitions `(state,event) -> target`;
-- optional typed guard;
-- optional typed action;
-- reachability/dead-state analysis;
-- immutable reflection descriptors;
-- table-driven execution;
-- generated-switch backend later using the same descriptor semantics;
-- Lean model plus real-C conformance snapshot.
+State and Exec share Core types/callables/contracts but are separate semantic domains.
 
-### 3.2 CMeta Exec
+## 3. Three state spaces MUST remain distinct
 
-Provide:
+### Application state
 
-- `Step` with `VALUE`, `VALUE_AND_DONE`, `WAIT`, `DONE`, `ERROR`;
-- `Waker`;
-- `Waitable`;
-- `Resumable`;
-- `Executor`;
-- generated typed `Task<T>` wrappers;
-- cooperative `yield` and `await` core operations;
-- `CancelToken`;
-- structured `Scope`;
-- generic coordination `ALL`, `ALL_DONE`, `ANY`, `LATEST`, `SEQUENCE`;
-- timer waitables;
-- deterministic/manual-clock executor;
-- compatibility bridge for existing CFlow runtime users.
+Examples:
 
-### 3.3 Coroutine backend
+```text
+Disconnected
+Connecting
+Connected
+Closing
+Closed
+```
 
-Provide a backend-neutral coroutine ABI. The first backend uses minicoro only to preserve/switch the C call stack. CMeta public Task/Exec headers must not expose minicoro types.
+Owned by CMeta State.
 
-### 3.4 Native execution
+### Task execution state
 
-Provide Linux, Windows and Darwin executor backends with the same public Exec API.
+```text
+NEW
+RUNNABLE
+RUNNING
+WAITING
+DONE
+FAILED
+CANCELLED
+```
 
-## 4. Explicit v1 non-goals
+Owned by CMeta Exec.
 
-v1 excludes:
+### Executor placement
 
-- work stealing;
-- arbitrary task/coroutine migration between executor threads;
-- preemptive cancellation;
-- detached scoped children;
-- hierarchical/parallel statecharts;
-- state-history nodes;
-- multiple competing transitions for the same `(state,event)`;
-- suspending inside a state transition action;
-- parser/frontend `async`, `await`, `machine` syntax;
-- actor framework;
-- transparent blocking-I/O conversion;
-- WASM as an acceptance platform.
+Which executor/thread owns a task and receives its wakeups.
 
-These are deliberate boundaries, not placeholders.
+A `Connected` machine may have a task in `WAITING`. Waking the task does not change the application machine state. Moving/posting work between executors does not create application state transitions.
 
-## 5. Existing CFlow semantics to extract, not redesign
+## 4. CMeta State responsibilities
 
-CFlow already has the generic concepts needed by Exec:
+State owns:
 
-- `cflow_step_kind` including `VALUE_AND_DONE`;
-- `cflow_waker`;
-- `cflow_waitable`;
-- `cflow_resumable`;
-- scheduler interface and deterministic test scheduler;
-- coordination `ALL`, `ALL_DONE`, `ANY`, `LATEST`, `SEQUENCE`;
-- relation execution that lowers a structured relation into a resumable.
+```text
+StateId
+EventId
+MachineDesc
+EventDesc
+TransitionDesc
+serialized event processing
+guard/action admission
+determinism
+reachability/dead-state analysis
+runtime dispatch
+```
 
-The first Exec work is a semantic extraction. Existing CFlow behavior and current formal conformance remain mandatory during migration.
+State depends on Core:
 
-## 6. CMeta Exec primitive ABI
+```text
+CType
+Callable
+Traits
+Effect / Property / Contract
+finite graph algorithms
+reflection
+```
 
-### 6.1 Step
+State MUST NOT depend on:
+
+```text
+CMeta Extend parser
+minicoro
+native pollers
+CFlow graph model
+```
+
+## 5. CMeta Exec responsibilities
+
+Exec owns:
+
+```text
+Step
+Resumable
+Waitable
+Waker
+Task<T> semantic/runtime model
+Executor
+CancelToken
+Scope
+Coordination
+Timer waitables
+```
+
+Exec depends on Core type/callable/contracts but not on concrete coroutine or OS implementations.
+
+Exec MUST NOT expose minicoro, epoll, IOCP or kqueue types in its public API.
+
+## 6. Existing CFlow execution semantics to extract
+
+CFlow already contains general execution concepts:
+
+```text
+VALUE
+VALUE_AND_DONE
+WAIT
+DONE
+ERROR
+Waker
+Waitable
+Resumable
+Scheduler
+ALL / ALL_DONE / ANY / LATEST / SEQUENCE
+```
+
+These concepts are broader than value-flow and may migrate into Exec when their semantics are truly generic.
+
+Migration is semantic extraction, not redesign. Existing CFlow conformance remains mandatory during each step.
+
+CFlow-specific graph/result/error policies remain in CFlow.
+
+## 7. Exec Step
+
+Exec preserves the current resumable vocabulary:
 
 ```c
 typedef enum cmeta_step_kind {
@@ -153,9 +183,9 @@ typedef struct cmeta_step {
 } cmeta_step;
 ```
 
-`error` is borrowed runtime diagnostic text. It is not a typed application failure. Application errors remain ordinary typed data/events.
+`CMETA_STEP_ERROR` represents runtime/infrastructure failure, not an application-domain `Result<T,E>` error.
 
-### 6.2 Waker
+## 8. Waker and Waitable
 
 ```c
 typedef struct cmeta_waker {
@@ -164,15 +194,22 @@ typedef struct cmeta_waker {
 } cmeta_waker;
 ```
 
-Required semantics:
+A Waker may be called from another thread or an OS callback, but MUST NOT directly resume a coroutine on that foreign thread.
 
-- may be invoked from an OS callback or foreign thread;
-- never directly resumes a stackful coroutine on that foreign thread;
-- posts/marks work for the owning executor;
-- redundant wakeups are tolerated but cannot cause duplicate terminal completion;
-- cancellation/destruction detaches future wake delivery before task storage is freed.
+It requests/posts progress to the owning executor.
 
-### 6.3 Waitable
+A Waitable represents one blocking condition:
+
+```text
+timer expiry
+socket readiness
+IO completion
+child Task completion
+coordination readiness
+future channel availability
+```
+
+Conceptual interface:
 
 ```c
 #define CMETA_WAITABLE_METHODS(X,I) \
@@ -181,9 +218,9 @@ Required semantics:
 CMETA_INTERFACE(cmeta_waitable, CMETA_WAITABLE_METHODS);
 ```
 
-A waitable represents one blocking reason: timer expiry, socket readiness, IOCP completion, channel readiness, child completion, or coordination readiness.
+Cancellation/destruction MUST detach future wake delivery before referenced task storage is freed.
 
-### 6.4 Resumable
+## 9. Resumable
 
 ```c
 typedef struct cmeta_resume_ctx {
@@ -205,11 +242,64 @@ typedef struct cmeta_resumable {
 } cmeta_resumable;
 ```
 
-`Resumable` is the common execution object. CFlow sources/generators/relations, coroutine tasks and later generated stackless machines may all implement it. Executors do not depend on the concrete backend.
+`Resumable` is a Bridge abstraction over execution implementations.
 
-## 7. Task model
+Possible implementations:
 
-### 7.1 State machine
+```text
+CFlow source/generator/relation
+minicoro-backed Task body
+generated stackless machine
+manual test resumable
+```
+
+Executor logic MUST depend on Resumable semantics, not on the concrete implementation strategy.
+
+## 10. Task<T> semantic model
+
+`Task<T>` is owned by Exec as a generic constructor and runtime abstraction.
+
+CMeta Core supplies GenericConstructor/TypeId mechanics; Exec supplies Task meaning.
+
+Conceptually:
+
+```text
+Task<T>
+=
+execution identity
++ eventual typed completion T
++ lifecycle state
++ cancellation
++ executor affinity
++ awaitability
+```
+
+Task is not identical to coroutine.
+
+Coroutine is one Resumable strategy for executing a Task body.
+
+## 11. Task handle and runtime object
+
+A public typed task value SHOULD be a small handle to a stable-address runtime object rather than a copyable structure containing scheduler/coroutine state.
+
+Conceptually:
+
+```c
+typedef struct cmeta_task_User {
+    struct cmeta_task_User_impl *impl;
+} cmeta_task_User;
+
+typedef struct cmeta_task_User_impl {
+    cmeta_task_base base;
+    User result;
+} cmeta_task_User_impl;
+```
+
+The exact generated spelling is not normative.
+
+Successful result storage is typed and correctly aligned. Public successful-result APIs SHOULD NOT expose an untyped `void *` as the normal user-facing representation.
+
+## 12. Task state machine
 
 ```c
 typedef enum cmeta_task_state {
@@ -228,68 +318,102 @@ Allowed transitions:
 ```text
 NEW       -> RUNNABLE
 RUNNABLE  -> RUNNING
-RUNNING   -> RUNNABLE      cooperative yield
+RUNNING   -> RUNNABLE      yield
 RUNNING   -> WAITING       await
 RUNNING   -> DONE
 RUNNING   -> FAILED
-RUNNING   -> CANCELLED     cancellation observed
+RUNNING   -> CANCELLED
 WAITING   -> RUNNABLE      wake
-WAITING   -> CANCELLED     cancellation wake/cleanup path
+WAITING   -> CANCELLED     cancellation cleanup path
 ```
 
-`DONE`, `FAILED`, `CANCELLED` are terminal and cannot become runnable again.
+`DONE`, `FAILED` and `CANCELLED` are terminal.
 
-### 7.2 Typed Task<T>
+A terminal Task MUST NOT be resumed again.
 
-The runtime owns a generic base; CMeta generation creates concrete result storage.
+## 13. DONE vs application failure
 
-```c
-typedef struct cmeta_task_base {
-    cmeta_task_state state;
-    const cmeta_type_desc *result_type;
-    cmeta_executor *executor;
-    cmeta_resumable resumable;
-    cmeta_waitable active_wait;
-    cmeta_cancel_token *cancel;
-    const char *runtime_error;
-} cmeta_task_base;
+Application errors and runtime failures are separate.
+
+Example:
+
+```text
+Task<Result<User,HttpError>> = DONE(Err(HttpError))
 ```
 
-Conceptually `Task<User>` lowers to:
+is a normally completed Task carrying an application error value.
 
-```c
-typedef struct cmeta_task_User {
-    cmeta_task_base base;
-    User result;
-} cmeta_task_User;
-```
+`CMETA_TASK_FAILED` is reserved for runtime/infrastructure failure such as an invalid backend state or executor/internal allocation failure.
 
-Successful typed results do not travel through public `void *` APIs. Parser syntax `Task<User>` is outside v1; the generic-kind layer may later generate the same concrete wrapper.
+This separation MUST be preserved in Extend diagnostics and future async syntax.
 
-## 8. yield and await
+## 14. Task ownership and Scope
 
-`yield` means voluntary scheduling relinquishment:
+v1 structured tasks SHOULD belong to a Scope by default.
+
+Scope invariant:
+
+> Scope completion implies every scoped child is terminal.
+
+Rules:
+
+- child inherits cancellation lineage;
+- default child runs on the scope owner's executor;
+- an explicitly selected executor is fixed at task creation;
+- normal scope exit joins children;
+- cancelled/failed exit requests child cancellation and joins cleanup;
+- scoped spawn has no detached mode.
+
+This permits v1 to avoid making shared atomic reference counting the universal Task lifetime mechanism.
+
+A future detached/shared task facility must be separate and explicit.
+
+## 15. yield vs await
+
+They are different Exec primitives.
+
+### yield
 
 ```text
 RUNNING -> RUNNABLE
 ```
 
-The owning executor requeues the same task.
+No external dependency is registered. The task voluntarily returns scheduling control.
 
-`await` means dependency on a concrete waitable:
+### await
 
 ```text
 RUNNING
-   -> arm waitable
-   -> WAITING
-   -> backend suspends
-   -> waker posts owner executor
-   -> RUNNABLE
+ -> arm Waitable
+ -> WAITING
+ -> suspend execution implementation
+ -> Waker posts owner executor
+ -> RUNNABLE
 ```
 
-The coroutine backend supplies stack suspension only. Exec owns task-state transitions, wait ownership and executor affinity.
+The coroutine backend provides call-stack suspension. Exec owns wait ownership, lifecycle transition and affinity rules.
 
-## 9. Cooperative cancellation
+## 16. Task as Waitable
+
+Task completion SHOULD be exposable as a Waitable.
+
+This makes the following share one waiting abstraction:
+
+```text
+Timer
+I/O readiness/completion
+Task completion
+Channel readiness
+Coordination readiness
+```
+
+Awaiting `Task<T>` then adds typed result extraction after completion.
+
+## 17. Cancellation
+
+Cancellation is cooperative in v1.
+
+Conceptual API:
 
 ```c
 typedef struct cmeta_cancel_token cmeta_cancel_token;
@@ -298,50 +422,33 @@ bool cmeta_cancel_requested(const cmeta_cancel_token *token);
 void cmeta_cancel_request(cmeta_cancel_token *token);
 ```
 
-Mandatory checkpoints:
+Required cancellation checkpoints:
 
-- before an await suspends;
-- immediately after an await resumes;
-- explicit cancel point;
-- timer wait;
-- coordination/join wait;
-- future channel send/recv wait.
+```text
+before suspend
+immediately after resume
+explicit cancellation checkpoint
+timer wait
+coordination/join wait
+future channel wait
+```
 
-Cancelling a waiting task performs this order:
+Cancelling a waiting task performs:
 
 ```text
 request cancellation
-    -> cancel/detach active waitable
-    -> post task owner executor
-    -> task observes cancellation
-    -> backend/task cleanup on owner executor
-    -> CANCELLED
+ -> cancel/detach active Waitable
+ -> post owner Executor
+ -> Task observes cancellation
+ -> backend/task cleanup on owner Executor
+ -> CANCELLED
 ```
 
-No OS thread cancellation is used.
+OS thread cancellation is not used.
 
-## 10. Structured Scope
+## 18. Coordination
 
-A Scope owns live child relationships.
-
-Invariant:
-
-> Scope exit cannot complete while a scoped child is non-terminal.
-
-v1 rules:
-
-- child inherits the scope cancellation lineage;
-- default spawn creates the child on the scope owner's executor;
-- an explicit executor is permitted only at child creation; the child is then pinned to that executor for its entire lifetime;
-- normal scope exit joins all children;
-- cancelled/failed scope exit requests child cancellation and joins terminal cleanup;
-- scoped spawn has no detached mode.
-
-A detached-task API, if ever added, is a separate non-scope facility.
-
-## 11. Coordination
-
-Move the generic coordination algebra below CFlow:
+Generic child execution coordination belongs to Exec.
 
 ```c
 typedef enum cmeta_coord_mode {
@@ -353,20 +460,24 @@ typedef enum cmeta_coord_mode {
 } cmeta_coord_mode;
 ```
 
+This is a Composite + Policy design.
+
 Mappings:
 
 ```text
-ALL / ALL_DONE       join/all
+ALL / ALL_DONE       join/all semantics
 ANY                  race
 LATEST               combine-latest consumers
 SEQUENCE             ordered sequence/fallback
 ```
 
-CFlow keeps its relation-specific completion/result/error policy. Exec owns the child-resumable coordination mechanism. Existing CFlow coordination proofs should be generalized/reused rather than replaced.
+CFlow may compose these with its own relation result/error policies.
 
-## 12. Coroutine backend ABI
+## 19. Coroutine port
 
-The backend answers only: how is the C call stack suspended and restored?
+Exec defines a backend-neutral Bridge port whose only concern is preserving/restoring an execution context.
+
+Conceptually:
 
 ```c
 typedef enum cmeta_coro_state {
@@ -377,112 +488,115 @@ typedef enum cmeta_coro_state {
 } cmeta_coro_state;
 
 typedef struct cmeta_coro cmeta_coro;
-typedef void (*cmeta_coro_entry_fn)(cmeta_coro *coro, void *user);
-
-typedef struct cmeta_coro_desc {
-    cmeta_coro_entry_fn entry;
-    void *user;
-    size_t stack_size;
-    void *allocator_user;
-} cmeta_coro_desc;
 
 typedef struct cmeta_coro_ops {
-    bool (*create)(cmeta_coro *coro, const cmeta_coro_desc *desc);
-    cmeta_coro_state (*state)(const cmeta_coro *coro);
-    bool (*resume)(cmeta_coro *coro);
-    bool (*yield)(cmeta_coro *coro);
-    void (*destroy)(cmeta_coro *coro);
+    bool (*create)(cmeta_coro *, const cmeta_coro_desc *);
+    cmeta_coro_state (*state)(const cmeta_coro *);
+    bool (*resume)(cmeta_coro *);
+    bool (*yield)(cmeta_coro *);
+    void (*destroy)(cmeta_coro *);
 } cmeta_coro_ops;
 ```
 
-### minicoro backend rules
+Exact ABI may evolve, but Task/Exec semantics MUST NOT require minicoro-specific types.
 
-`TurboUtils::CMetaCoroMinicoro`:
+## 20. minicoro adapter
 
-- is optional and depends on `TurboUtils::CMetaExec`;
-- includes `minicoro.h` only in backend/private files;
-- maps create/resume/yield/status/destroy into the backend ABI;
-- stores the CMeta Task/frame pointer as backend user data;
+`CMetaCoroMinicoro` implements the coroutine port.
+
+Rules:
+
+- includes `minicoro.h` only in adapter/private files;
+- maps create/resume/yield/status/destroy;
+- uses CMeta task/frame state as user data;
 - does not use minicoro push/pop storage as typed Task transport;
-- keeps typed result storage in CMeta-owned memory;
-- translates minicoro failures to CMeta runtime errors at the backend boundary.
+- converts backend errors at the adapter boundary;
+- does not redefine Task state semantics.
 
-No public `cmeta/exec/*.h` header includes minicoro.
+minicoro is an implementation strategy, not a semantic dependency.
 
-## 13. Executor and thread model
+## 21. Executor
 
-### 13.1 Affinity
-
-A v1 task is pinned to one executor from creation to terminal cleanup.
-
-A foreign thread may enqueue/wake the owning executor. It never calls coroutine resume directly.
-
-### 13.2 Executor responsibilities
+Exec uses a Reactor/Proactor-compatible executor abstraction.
 
 A native event-loop executor owns:
 
-- owner thread identity;
-- ready queue;
-- cross-thread post queue;
-- timer queue;
-- platform poller;
-- shutdown state.
+```text
+ready queue
+cross-thread post queue
+timer queue
+poll/completion port
+owner-thread identity
+shutdown state
+```
 
 Conceptual loop:
 
 ```text
-drain cross-thread posts
-run bounded ready-task quantum
-fire expired timers
-compute poll timeout
-poll OS events/completions
-convert completions into executor wake/posts
+drain posts
+run bounded ready quantum
+fire timers
+compute wait timeout
+poll readiness/completions
+convert events to wake/posts
 repeat
 ```
 
-Ready-task execution is bounded per loop turn so I/O/timer progress cannot be starved by a permanently nonempty ready queue.
+Ready execution MUST be bounded sufficiently to avoid starving timer/I/O progress.
 
-### 13.3 Deterministic executor
+## 22. Executor affinity
 
-`TurboUtils::CMetaExec` includes a deterministic/manual-clock executor independent of native pollers. It is the reference executor for unit tests and C-to-Lean conformance witnesses.
+v1 tasks are pinned to one executor from creation through terminal cleanup.
 
-### 13.4 Threading
+A foreign thread may post/wake that executor. It MUST NOT directly resume the task's coroutine/backend implementation.
 
-v1 supports one event-loop executor per thread and explicit posting between executors. No work stealing or transparent migration is permitted.
+v1 excludes transparent coroutine migration and work stealing.
 
-## 14. Native platform layer
+## 23. Deterministic executor
 
-`TurboUtils::CMetaExecNative` depends on `TurboUtils::CMetaExec` and isolates OS code.
+Exec SHOULD provide a deterministic/manual-clock executor with no native poller dependency.
 
-Interfaces are split by responsibility:
+This executor is the reference implementation for:
+
+```text
+unit tests
+state transition tests
+coordination tests
+C-to-Lean conformance
+failure/cancellation scheduling tests
+```
+
+Native execution is an adapter, not the only way to exercise Exec semantics.
+
+## 24. Platform ports
+
+Native integration is separated into small interfaces:
 
 ```text
 ThreadOps
 ClockOps
-PollerOps
+PollerOps / CompletionOps
 WakeupOps
 ```
 
-Required monotonic clock:
+A single god `PlatformOps` interface SHOULD NOT be introduced.
 
-```c
-uint64_t cmeta_monotonic_ns(void);
-```
-
-Initial native mappings:
+Possible mappings:
 
 ```text
 Linux       epoll + eventfd
-Windows     IOCP + executor completion wake
-Darwin/BSD  kqueue + user-event/pipe wake
-POSIX       poll + pipe fallback
+Windows     IOCP
+Darwin/BSD  kqueue
+POSIX       poll fallback
 ```
 
-Public Task/State/CFlow code contains no `_WIN32`, `__linux__` or Darwin branching. WASM is deferred to a separate design because browser event-loop/Asyncify constraints differ materially from native pollers.
+Linux/Darwin are primarily readiness/Reactor oriented; IOCP is completion/Proactor oriented. Exec's port MUST be abstract enough not to force IOCP into a fake file-descriptor-readiness model.
 
-## 15. State Machine IR
+## 25. State Machine model
 
-### 15.1 Finite descriptor
+CMeta State uses a table-driven finite state machine, not a GoF state-object hierarchy.
+
+Conceptually:
 
 ```c
 typedef uint32_t cmeta_state_id;
@@ -497,96 +611,79 @@ typedef struct cmeta_transition_desc {
     cmeta_callable action;
     bool has_action;
 } cmeta_transition_desc;
-
-typedef struct cmeta_machine_desc {
-    const char *name;
-    const cmeta_type_desc *context_type;
-    const cmeta_state_desc *states;
-    size_t state_count;
-    const cmeta_event_desc *events;
-    size_t event_count;
-    const cmeta_transition_desc *transitions;
-    size_t transition_count;
-    cmeta_state_id initial_state;
-} cmeta_machine_desc;
 ```
 
-Each event has exactly one payload CType. A payload-less event uses a registered `cmeta_unit` CType.
+Machine descriptors contain finite state/event/transition tables and exact CType metadata for context and event payloads.
 
-### 15.2 Exact guard/action ABI
+## 26. Guard and action as Command
 
-State Core does **not** introduce a second callback type system.
+State reuses Core `cmeta_callable` as the Command abstraction.
 
-For a machine with context type `Context` and event payload `Payload`, generation registers finite concrete CMeta signature rows for:
+It MUST NOT introduce a second unrelated callback type system.
+
+For a machine context `Context` and event payload `Payload`, generated finite callable signatures conceptually represent:
 
 ```text
 guard  : (Context*, Payload) -> bool
 action : (Context*, Payload) -> bool
 ```
 
-`Context*`, `Payload` and `bool` are CTypes in the same finite signature universe used by `cmeta_callable`.
-
-This creates one prerequisite for State Core:
-
-> CMeta signature generation must admit registered user CTypes/pointer CTypes into a finite per-build signature schema.
-
-It remains finite: only concrete context/payload combinations referenced by declared machines are generated. State does not add dynamic arbitrary-signature invocation.
-
-Guard return meaning:
-
-- `true`: transition may proceed;
-- `false`: event is not accepted by this transition; state remains unchanged.
-
-Action return meaning:
-
-- `true`: action succeeded; commit target state;
-- `false`: runtime action failure; state remains source state.
-
-### 15.3 Guard contract
-
-Every guard requires:
+Guard requirements:
 
 ```text
-PURE + DETERMINISTIC + TOTAL
+PURE
+DETERMINISTIC
+TOTAL
 ```
 
-IO, STATEFUL, MAY_FAIL or UNKNOWN guards are rejected by machine validation.
+Stateful/IO/MAY_FAIL/UNKNOWN guards are invalid.
 
-### 15.4 Action contract
+Actions may be stateful, IO-bearing or MAY_FAIL according to declared contracts, but a v1 transition action does not suspend.
 
-Actions may carry STATEFUL, IO or MAY_FAIL effects. A v1 action never suspends. If asynchronous work is required, the action spawns a Task and returns; completion emits a later typed event.
+## 27. State determinism
 
-### 15.5 Determinism
+v1 permits at most one transition for each `(state,event)` pair.
 
-v1 permits **at most one transition per `(state,event)`**.
+This avoids pretending Core can prove arbitrary guard mutual exclusion.
 
-This deliberately excludes ordered competing guards because CMeta cannot generally prove arbitrary guard mutual exclusion. The schema-level determinism rule is decidable and directly formalizable.
+Future ordered competing guards require a separate explicit policy and formal semantics.
 
-## 16. State runtime semantics
+## 28. State dispatch semantics
 
-Machine event processing is serialized on the machine owner executor.
+One event dispatch is serialized per machine instance.
 
-Dispatch order is exact:
+Exact order:
 
 ```text
-validate machine/current state/event/payload CType
-    -> locate unique transition
-    -> no transition: UNHANDLED, state unchanged
-    -> evaluate guard if present
-    -> guard false: REJECTED, state unchanged
-    -> run action if present
-    -> action false: ACTION_ERROR, state unchanged
-    -> commit target state
-    -> SUCCESS
+validate current state/event/payload CType
+ -> locate unique transition
+ -> no transition: UNHANDLED
+ -> evaluate guard if present
+ -> guard false: REJECTED
+ -> run action if present
+ -> action false: ACTION_ERROR; source state retained
+ -> commit target state
+ -> SUCCESS
 ```
 
 There are no enter/exit hooks in v1.
 
-Application failures intentionally represented by the protocol should be events/typed data. `ACTION_ERROR` is an infrastructure/action failure signal.
+Application-level failures SHOULD be typed events/data rather than infrastructure action errors.
 
-## 17. State + Task integration
+## 29. State + Task integration
 
-A transition does not suspend.
+A state transition does not suspend.
+
+Asynchronous activity is modeled as:
+
+```text
+State transition
+ -> action starts Task
+ -> action returns
+ -> Task executes independently
+ -> completion enqueues typed Event
+ -> next machine transition consumes Event
+```
 
 Example:
 
@@ -596,349 +693,150 @@ Disconnected + Open(Address)
     action: spawn connect Task
 
 Task completes Ok(Socket)
-    -> enqueue Connected(Socket) event
+    -> enqueue Connected(Socket)
 
 Connecting + Connected(Socket)
     -> Connected
 ```
 
-Task completion never mutates machine state directly from a foreign thread. It posts a typed event to the machine owner executor, which serializes dispatch.
+This keeps logical state durable and activity temporary.
 
-This pattern can later support:
+Task completion MUST NOT mutate machine state directly from a foreign thread.
 
-```text
-Actor = Machine + typed Mailbox<Event> + Executor affinity
-```
+## 30. Extend ownership of syntax
 
-Actor is not part of v1.
-
-## 18. Channel<T> compatibility requirement
-
-Channel is not required before Task/Executor, but Exec must support it without ABI redesign.
-
-Future typed operations conceptually provide:
+The following are Extend concerns only:
 
 ```text
-send(Channel<T>, T)
-recv(Channel<T>) -> typed waiting Task/value
+machine
+state
+event
+on
+when
+->
+Task<T> angle-bracket spelling
+async
+await
+spawn
+scope
 ```
 
-Cross-thread send enqueues data and wakes/posts the receiver executor; it never resumes a coroutine on the sender thread.
+State/Exec public semantic APIs MUST remain usable from strict C11 without the parser.
 
-## 19. CFlow migration
-
-Migration is staged.
-
-### A. Extract compatibility primitives
-
-Add CMeta Exec equivalents of:
-
-- Step;
-- Waker;
-- Waitable;
-- Resumable;
-- deterministic executor/scheduler concepts;
-- coordination.
-
-Keep CFlow compatibility typedefs/wrappers where practical.
-
-### B. Adopt internally
-
-Move/adapt generic execution responsibilities currently in:
+Extend may lower:
 
 ```text
-cflow/runtime.c
-cflow/coord.c
-cflow/subrun.c
-cflow/scheduler.c
-cflow/scheduler_worker.c
+machine syntax -> MachineDesc/EventDesc/TransitionDesc
+Task<T>        -> Exec-owned generic application
+await          -> Exec await primitive
+async fn       -> Task/Resumable construction
 ```
 
-to consume CMeta Exec.
+Extend MUST NOT redefine State/Exec invariants.
 
-CFlow graph/lowering/optimization/plan semantics stay in CFlow.
+## 31. CFlow relationship
 
-### C. Remove duplication only after equivalence
+CFlow remains a separate value-flow consumer/domain.
 
-Current CFlow unit tests, runtime differential witnesses, structured coordination witnesses and Lean conformance remain green throughout extraction. Public CFlow symbol removal/deprecation is a separate later decision.
-
-## 20. Effects and properties
-
-Concurrency reuses the existing CMeta contract system:
+It may reuse Exec:
 
 ```text
-PURE
-STATEFUL
-ASYNC
-IO
-MAY_FAIL
-UNKNOWN
-
-DETERMINISTIC
-TOTAL
-IDEMPOTENT
-NO_ALIAS
-ASSOCIATIVE
+Resumable
+Waitable
+Waker
+Executor
+Coordination
 ```
 
-Rules:
-
-- async task producers normally carry ASYNC;
-- native I/O task producers carry ASYNC | IO;
-- State guards require PURE + DETERMINISTIC + TOTAL;
-- State actions declare their real effects;
-- later parallelization eligibility may require PURE + DETERMINISTIC + TOTAL;
-- optimizers continue to consume declared contracts only.
-
-v1 does not invent `SEND`, `SYNC` or `THREAD_SAFE` traits. Executor affinity is an explicit runtime ownership rule.
-
-## 21. Ownership and lifetime
-
-This is explicit C ownership, not language ownership inference.
-
-Normative ownership rules:
-
-- task owns its resumable/backend state and typed result storage;
-- executor owns scheduling references while a task is queued/running;
-- scope owns child-lifetime relationships;
-- coordination owns successfully moved child resumables;
-- armed waitable owns or safely references its registration until fire/cancel;
-- active waitable is detached/cancelled before task destruction;
-- terminal task cleanup occurs on its owner executor;
-- machine descriptor metadata is immutable;
-- machine instance owns mutable context/current state;
-- event payload ownership is defined by the generated event API/caller contract, not inferred by the state engine.
-
-## 22. Error classes
-
-Keep three classes distinct:
-
-1. **runtime infrastructure error** — allocation failure, invalid resumable, poll registration failure; represented by `CMETA_STEP_ERROR`/task runtime failure;
-2. **typed application error** — ordinary result/event data such as connection failure;
-3. **cancellation** — task terminal state, not automatically application error.
-
-This separation is required for structured concurrency and machine reasoning.
-
-## 23. Formal verification boundaries
-
-Formal verification is layered.
-
-### State Core
-
-Prove/check:
-
-- state/event identifiers are in finite universes;
-- transition source/target validity;
-- exact event payload CType preservation;
-- unique `(state,event)` transition determinism;
-- guard/action signature admission;
-- successful dispatch commits the statically known target;
-- failed guard/action leaves source state unchanged;
-- finite reachability/dead-state analysis.
-
-### Task Core
-
-Prove/check:
-
-- terminal tasks cannot resume;
-- only RUNNABLE becomes RUNNING;
-- WAITING becomes RUNNABLE through wake/cancellation path;
-- successful completion carries declared result CType;
-- cancellation cannot fabricate successful typed output;
-- scope terminality implies all scoped children terminal.
-
-### Coordination
-
-Generalize/reuse current executable proofs for ALL, ALL_DONE, ANY, LATEST and SEQUENCE.
-
-### minicoro boundary
-
-Do not prove minicoro internals. Prove/validate the refinement trace:
+but keeps:
 
 ```text
-CMeta resume
- -> backend resume
- -> backend yield/completion
- -> CMeta task transition
+CFlow Graph IR
+operators
+relations
+result policies
+optimizer
+plan compiler
+runtime value-flow semantics
 ```
 
-A deterministic C witness generates Lean snapshots for create/resume/yield/wait/wake/complete/cancel/destroy traces.
+State, Exec and CFlow are not one universal graph representation.
 
-### Platform boundary
+## 32. Formal verification split
 
-Formal claims stop at Waitable/Waker/Executor contracts. OS fairness and kernel implementation correctness are not claimed.
-
-## 24. Testing strategy
-
-Use CTest for C/CMeta behavior and retain `lake build --wfail` for formal proofs.
-
-State tests cover:
-
-- invalid source/target/event;
-- payload mismatch;
-- duplicate `(state,event)` rejection;
-- impure guard rejection;
-- guard false leaves source state;
-- action false leaves source state;
-- successful transition commits target;
-- reachability/dead-state calculation;
-- table/generated backend equivalence once both exist.
-
-Exec tests cover:
-
-- legal/illegal task transitions;
-- yield requeue;
-- wait/wake;
-- foreign-thread wake posts rather than resumes directly;
-- cancel runnable task;
-- cancel waiting task;
-- terminal immutability;
-- scope child join/cancellation.
-
-Coroutine backend tests cover:
-
-- stack locals survive yield/resume;
-- nested C call depth can suspend through backend abstraction;
-- typed result survives completion;
-- terminal task rejects later resume;
-- cancellation cleanup runs on owner executor.
-
-Native executor tests cover:
-
-- monotonic timer;
-- executor self-wake;
-- cross-thread post;
-- timer waitable;
-- platform poller smoke test.
-
-Real implementation conformance follows the established pattern:
+State proofs:
 
 ```text
-real C implementation
- -> deterministic generated Lean snapshot
- -> Lean checker/theorem
+transition target validity
+determinism
+step preservation
+reachability/dead states
+guard/action signature admission
 ```
 
-Separate State, Task and coroutine generators are preferred so failures isolate one layer.
-
-## 25. Platform CI
-
-Acceptance matrix for native Exec eventually includes:
+Exec proofs:
 
 ```text
-Linux
-Windows
-macOS
+legal Task lifecycle transitions
+terminal-state immutability
+WAIT -> wake -> RUNNABLE legality
+coordination semantics
+executor-affinity invariants
+cancellation progression
 ```
 
-Android/iOS follow native desktop stabilization. WASM remains a separate design.
+Extend proofs/conformance later establish that syntax lowering preserves these module semantics.
 
-## 26. Proposed source layout
+Native/minicoro conformance is executable refinement evidence at adapter boundaries.
+
+## 33. v1 exclusions
+
+v1 explicitly excludes:
 
 ```text
-cmeta/
-  include/cmeta/
-    state/
-      machine.h
-      event.h
-      transition.h
-      validate.h
-      exec.h
-    exec/
-      step.h
-      waker.h
-      waitable.h
-      resumable.h
-      executor.h
-      task.h
-      cancel.h
-      scope.h
-      coord.h
-    coro/
-      backend.h
-    platform/
-      thread.h
-      clock.h
-      poller.h
-
-  src/
-    state/
-      validate.c
-      exec.c
-    exec/
-      executor.c
-      task.c
-      cancel.c
-      scope.c
-      coord.c
-    coro/
-      minicoro_backend.c
-    platform/
-      linux/...
-      windows/...
-      darwin/...
-      posix/...
+work stealing
+transparent coroutine migration
+preemptive cancellation
+detached scoped children
+borrow checker / ownership language
+hierarchical statecharts
+parallel statechart regions
+state history
+suspending inside state transition actions
+actor framework
+transparent blocking syscall rewriting
+WASM native acceptance target
 ```
 
-CMake builds separate targets named in Section 2 rather than expanding `src/cmeta.c` into a catch-all runtime file.
+These are architectural scope limits, not placeholders.
 
-## 27. Implementation subprojects
+## 34. Migration sequence
 
-This umbrella spec is intentionally implemented as four separately planned/accepted projects.
+Recommended order:
 
-### 1. CMeta State Core
+1. extract generic CFlow execution primitives into Exec-compatible interfaces while preserving behavior;
+2. establish deterministic Exec tests before native backends;
+3. define Task lifecycle/typed completion and Scope;
+4. add coroutine port and minicoro adapter;
+5. add native executor adapters;
+6. implement State independently on Core;
+7. integrate State action -> Task -> typed Event flow;
+8. add Extend syntax only after semantic modules are stable.
 
-Deliver finite descriptors, user-CType signature generation required by machine callbacks, validation, deterministic dispatch, reachability, CTest and Lean conformance. No thread/coroutine dependency.
+Parser syntax is intentionally late because it must lower to already valid semantic APIs.
 
-### 2. CMeta Exec Core
+## 35. Acceptance criteria
 
-Deliver Step/Waker/Waitable/Resumable extraction, deterministic executor, Task state model, cancellation, Scope, coordination and CFlow compatibility adapters. No minicoro/native poller required.
+The design is correct when:
 
-### 3. minicoro Backend
+1. State and Exec build without CMeta Extend;
+2. Exec builds without minicoro/native pollers;
+3. deterministic Exec tests exercise Task/Wait/Cancel/Coordination semantics;
+4. minicoro can be replaced without changing Task API;
+5. native platform code is isolated behind ports;
+6. State guards/actions reuse Core Callable/contracts;
+7. transition actions never suspend in v1;
+8. Task completion can feed typed machine events without foreign-thread state mutation;
+9. CFlow can progressively reuse generic Exec primitives without moving CFlow graph semantics into Exec.
 
-Deliver backend ABI implementation, stackful Task runner, yield/await bridge, cancellation cleanup and C-to-Lean lifecycle trace. Deterministic executor/synthetic waitables are sufficient for acceptance.
-
-### 4. Native Platform Executor
-
-Deliver Linux epoll/eventfd, Windows IOCP and Darwin kqueue executors, timers, cross-thread posting and Linux/Windows/macOS CI.
-
-Each subproject must be green and usable before the next relies on it.
-
-## 28. Acceptance criteria
-
-The architecture is implemented when:
-
-1. CMeta State declares, validates, reflects and executes a flat typed machine without CFlow.
-2. Machine callbacks use the existing finite CMeta signature/callable model, including registered user CTypes, rather than a second callback type system.
-3. CMeta Exec runs `Task<T>` with the deterministic executor without minicoro.
-4. The same Task abstraction runs through minicoro without changing Task API or result ABI.
-5. A waiting task resumes only after its waker posts the owner executor.
-6. A cancelled waiting task detaches its waitable and terminates on the owner executor.
-7. Scope exit implies all scoped children terminal.
-8. Task completion integrates with State through typed queued events, not foreign-thread state mutation.
-9. CFlow consumes CMeta Exec primitives while all existing CFlow runtime/formal conformance remains green.
-10. Linux, Windows and macOS native backends expose the same Exec API.
-11. Lean proves the finite State and Task state-transition invariants, with generated real-C witnesses connecting implementation behavior to the models.
-
-## 29. Summary invariant
-
-The design assigns one question to each layer:
-
-```text
-CMeta State:
-  What logical state is the system in, and which typed event may change it?
-
-CMeta Exec:
-  What computation is runnable, waiting, complete, failed or cancelled?
-
-Executor/Thread:
-  Where and when may that computation resume?
-
-Coroutine backend:
-  How is the C call stack suspended/restored?
-
-Platform:
-  How does this OS report time, readiness and completion?
-```
-
-No layer is allowed to answer another layer's question implicitly. That separation is the primary architectural guarantee.
+This specification is subordinate to the CMeta Hexagonal Architecture and must preserve its dependency rules.
