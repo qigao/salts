@@ -31,14 +31,43 @@ CI writes generated Lean snapshots there and compares them with the checked base
 
 Generated C sources, if introduced by future CMeta lowering/code generation, must follow the same rule: they are emitted below the corresponding binary directory and are never written into the source tree.
 
+## Unified callable and lambda model
+
+The Core formal model now uses one finite argument schema:
+
+```text
+HArgs<Args>
+Callable<Args,R>
+Lambda<Env,Args,R>
+arity = Args.length
+```
+
+There are no Lean `Callable1/2/3/...` or `Lambda1/2/3/...` semantic types or compatibility aliases. CI rejects those names from the formal source tree.
+
+Unary and binary helpers such as `Callable.ofUnary`, `Callable.invoke1`, `Callable.ofBinary`, and `Callable.invoke2` are construction/invocation adapters over the one `Callable` type. They do not create separate semantic callable families.
+
+`bindLast` is defined over an arbitrary finite prefix:
+
+```text
+Callable<Args ++ [B],R> + B
+        ↓
+Callable<Args,R>
+```
+
+using heterogeneous argument `append/snoc`, so partial application is no longer modeled as a special binary-only semantic operation.
+
+Generator remains a separate protocol. Its output-buffer/cursor implementation parameters do not make it a higher-arity value lambda.
+
 ## What is proved
 
 - finite generation has an exact structural cardinality;
 - trait lookup/inference is deterministic once the trait environment is fixed;
-- typed unary/binary/generator callables preserve their declared signatures;
-- capturing lambdas are closures (`environment + body`) and erasure preserves ABI signature;
-- `cmeta_bind` is ordinary last-argument partial application;
-- higher-order unary composition is representable without a new callable ABI;
+- one finite-arity typed callable model covers zero, unary, binary, and higher finite argument schemas;
+- current unary/binary C backend signature erasure is a projection from that unified model;
+- capturing lambda is `environment + HArgs body`, and environment erasure preserves invocation;
+- lambda beta semantics is proved once for arbitrary finite `Args`;
+- `bindLast` is ordinary closure formation over `Args ++ [B]`;
+- higher-order unary composition is a specialization of the unified callable model;
 - finite operator dispatch is sound: a successful result comes from a matching rule;
 - a policy-respecting dispatch table cannot select a signature outside the operator policy;
 - structural TypeId and descriptor-bridge semantics are modeled separately from descriptor addresses;
@@ -51,8 +80,8 @@ Generated C sources, if introduced by future CMeta lowering/code generation, mus
 - `CMeta.TypeIdentity`: structural TypeId and finite generic constructor identity;
 - `CMeta.DescriptorBridge`: semantic descriptor equality and legacy/structural isolation;
 - `CMeta.Traits`: `_Generic`/descriptor-based type recovery assumption;
-- `CMeta.Callable`: `cmeta_fn`, `cmeta_callable`, resolved `cmeta_sig`;
-- `CMeta.Lambda`: `lambda1`, `lambda2`, `cmeta_bind` capture semantics;
+- `CMeta.Callable`: unified finite-argument semantics over the existing `cmeta_callable` erased ABI;
+- `CMeta.Lambda`: general closure/environment semantics; CFlow `lambda1/lambda2` macros are consumer-side C spellings rather than formal type families;
 - `CMeta.Dispatch`: CFlow signature lists and generated dispatch.
 
 The proof intentionally abstracts away some compiler/ABI mechanics such as raw object layout and preprocessor token implementation. Real C witnesses provide implementation-conformance evidence at those boundaries.
