@@ -1,34 +1,31 @@
 # CMeta Type Application Architecture
 
-Status: draft for user review  
+Status: architecture baseline  
 Date: 2026-08-21  
-Branch: `leanv4`
+Branch: `leanv4`  
+Parent architecture: `2026-08-21-cmeta-hexagonal-architecture-design.md`
 
 ## 1. Purpose
 
-This specification defines `M<A,B>` as a real finite generic type application in CMeta Syntax.
+This specification defines finite generic type application across the CMeta hexagonal architecture.
 
-It is not a prettier spelling for `typed(M, Name, A, B)`. The design separates:
+The semantic capability belongs to **CMeta Core**. The source spelling `M<A,B>` belongs to **CMeta Extend**.
 
-1. the generic constructor (`M`);
-2. the type arguments (`A`, `B`);
-3. the canonical semantic type identity of `M<A,B>`;
-4. the generated C symbol used to represent that type;
-5. optional user aliases.
-
-The goal is to make types compositional:
+The distinction is mandatory:
 
 ```text
-Task<Result<User, Error>>
-Map<String, List<User>>
-Option<const User *>
+CMeta Core
+    GenericConstructor + TypeId + finite Apply semantics
+
+CMeta Extend
+    TypeExpr parser + `M<A,B>` syntax + discovery + lowering
 ```
 
-while preserving CMeta's finite, terminating, schema-driven metaprogramming model and ordinary C ABI.
+Therefore `M<A,B>` is not a macro invocation and is not itself the semantic type identity. It is an Extend source expression that resolves to one Core type application.
 
-## 2. Existing model and migration constraint
+## 2. Existing strict-C11 model
 
-CMeta v50 currently uses explicit named instantiation:
+CMeta v50 already has explicit finite instantiation:
 
 ```c
 typed(Result, LoadResult, User, Error);
@@ -36,173 +33,85 @@ typed(List, UserList, User);
 typed(HashMap, UsersById, int, User);
 ```
 
-The current call simultaneously means:
+This remains a valid Core/module-facing C11 spelling.
+
+The current form combines:
 
 ```text
-constructor = Result
-arguments   = [User, Error]
-C type name = LoadResult
+constructor
+concrete type arguments
+chosen C output name
 ```
 
-The implementation routes a finite registered generic kind to `CMETA_TYPED_<Kind>` and expands a complete named C type/facade immediately.
+and emits a concrete named C type immediately.
 
-This remains valid strict-C11 infrastructure. However, it is not a compositional type-expression system: nested type applications require manual intermediate names.
+This is sufficient for strict C11 but does not make nested type expressions compositional.
 
-The new syntax layer therefore introduces a canonical type-expression model above this mechanism. Existing `typed(...)` remains available as a low-level explicit instantiation spelling during migration.
+## 3. Semantic rule
 
-## 3. Core design rule
-
-`M<A,B>` means:
+The Core semantic application is:
 
 ```text
-Apply(
-    constructor = M,
-    arguments   = [A, B]
-)
+Apply(Constructor, [TypeId...]) -> TypeId
 ```
-
-It does not mean "expand macro M here".
-
-The compiler/frontend first builds and canonicalizes a finite type-expression graph, then lowers each unique concrete application exactly once.
 
 Example:
 
-```c
-Task<Result<User, Error>>
+```text
+Task<Result<User,Error>>
 ```
 
-becomes:
+resolves to:
 
 ```text
-Apply(Task,
-  [
-    Apply(Result,
-      [
-        Atom(User),
-        Atom(Error)
-      ])
-  ])
+Apply(cmeta.Task,
+  [Apply(cmeta.Result,
+    [Atom(app.User), Atom(app.Error)])])
 ```
 
-That tree, not a generated typedef spelling, is the semantic type identity.
+The resulting Core TypeId, not a typedef spelling, is authoritative.
 
-## 4. TypeExpr
+## 4. Core vs Extend ownership
 
-The v1 type-expression language is deliberately small.
+### 4.1 Core owns
+
+Core or the owning generic module MUST own:
 
 ```text
-TypeExpr :=
-    Atom(name)
-  | Apply(constructor, TypeExpr...)
-  | Pointer(TypeExpr)
-  | Const(TypeExpr)
+GenericConstructor identity
+constructor arity
+semantic argument requirements
+canonical TypeId structure
+type equality
+reflection
+trait requirements
+layout/generation schema for concrete applications
+strict-C11 explicit instantiation entry points
 ```
 
-Surface examples:
+### 4.2 Extend owns
 
-```c
-User
-Result<User, Error>
-Task<Result<User, Error>>
-User *
-const User *
-Option<const User *>
-```
-
-v1 excludes:
-
-- value/non-type generic arguments;
-- arbitrary compile-time expressions;
-- dependent types;
-- generic function bodies/templates authored by users;
-- lifetime/ownership types;
-- arbitrary type-level recursion.
-
-The generic argument list inside `<...>` contains `TypeExpr` only.
-
-## 5. GenericConstructor
-
-A generic constructor is a finite registered kind known to CMeta.
-
-Conceptual semantic descriptor:
-
-```c
-typedef enum cmeta_generic_category {
-    CMETA_GENERIC_VALUE,
-    CMETA_GENERIC_CONTAINER,
-    CMETA_GENERIC_HANDLE
-} cmeta_generic_category;
-
-typedef struct cmeta_generic_desc {
-    const char *stable_id;
-    const char *display_name;
-    unsigned min_arity;
-    unsigned max_arity;
-    cmeta_generic_category category;
-} cmeta_generic_desc;
-```
-
-Examples:
+Extend MUST own:
 
 ```text
-cmeta.Pair     arity 2
-cmeta.Tuple    arity 2..16
-cmeta.Option   arity 1
-cmeta.Result   arity 2
-cmeta.Task     arity 1
-cmeta.Channel  arity 1
-cmeta.List     arity 1
-cmeta.Map      arity 2
+TypeExpr source AST
+`<...>` parsing
+source aliases (`type X = ...`)
+source occurrence discovery
+application dependency collection
+source-level deduplication plan
+generated symbol naming/mangling
+source rewriting/lowering
+diagnostics/source maps
 ```
 
-`stable_id` is semantic and namespace-qualified. `display_name` is the user-facing spelling.
+Core MUST NOT depend on TypeExpr AST nodes or mangled C symbol names.
 
-Two unrelated libraries must not obtain the same constructor identity merely because both use the spelling `Map`.
+## 5. Core TypeId model
 
-## 6. Constructor parameters
+Core requires structural semantic identity.
 
-v1 constructor parameters are TYPE-only.
-
-Valid:
-
-```c
-Map<int, User>
-Result<User, Error>
-Task<User>
-```
-
-Not v1:
-
-```c
-SmallVec<int, 16>
-BTree<int, User, int_compare>
-Array<float, 4>
-```
-
-Comparator/hash/policy callables are not generic type arguments in v1.
-
-For example:
-
-```c
-Map<String, User>
-```
-
-should obtain requirements such as:
-
-```text
-Hash<String>
-Eq<String>
-```
-
-through traits/configuration rather than by making the functions part of the type identity.
-
-This prevents CMeta from drifting toward unrestricted C++-style template arguments.
-
-## 7. Canonical type identity
-
-CMeta must distinguish type identity from C spelling.
-
-Conceptual identity form:
+Conceptually:
 
 ```c
 typedef enum cmeta_type_form {
@@ -219,223 +128,228 @@ typedef struct cmeta_type_identity {
     const struct cmeta_type_identity *base;
     const struct cmeta_type_identity *const *args;
     size_t arity;
-    uint64_t stable_hash;
 } cmeta_type_identity;
 ```
 
-Interpretation:
+Exact storage may differ. Semantics MUST preserve these relationships.
+
+Type identity MUST NOT depend on:
 
 ```text
-ATOM     stable_atom_id is used
-POINTER  base is used
-CONST    base is used
-APPLY    constructor + args[] are used
+descriptor address
+source alias
+source whitespace
+generated C symbol
+translation-unit-local metadata address
 ```
 
-The exact memory representation may change, but these semantic fields are required.
+## 6. GenericConstructor
 
-## 8. Alias is not identity
+A constructor is a finite registered semantic factory, not a programmable template language.
 
-Surface syntax may provide aliases:
+Conceptually:
 
 ```c
-type UserMap = Map<int, User>;
-type AnotherUserMap = Map<int, User>;
+typedef struct cmeta_generic_desc {
+    const char *stable_id;
+    const char *display_name;
+    unsigned min_arity;
+    unsigned max_arity;
+    cmeta_generic_category category;
+} cmeta_generic_desc;
 ```
-
-Both aliases refer to the same canonical type application:
-
-```text
-Apply(Map, [int, User])
-```
-
-Therefore:
-
-```text
-TypeId(UserMap) == TypeId(AnotherUserMap)
-```
-
-An alias is a source-level name, not a distinct nominal type.
-
-Generated C may contain:
-
-```c
-typedef cmeta_t_31a8ef... UserMap;
-typedef cmeta_t_31a8ef... AnotherUserMap;
-```
-
-rather than generating two unrelated structs.
-
-## 9. Existing `typed(...)` compatibility
-
-Current handwritten strict-C11 declarations such as:
-
-```c
-typed(Result, LoadResult, User, Error);
-```
-
-remain supported during migration as explicit named instantiations.
-
-However, existing macros currently generate a C type directly from the supplied `name`, so two different explicit names may produce two distinct C types even when their logical arguments match.
-
-The syntax frontend must not rely on that legacy nominal behavior for canonical applications.
-
-Frontend lowering therefore follows this model:
-
-```text
-Result<User,Error>
-   ↓ canonicalize
-internal canonical symbol = cmeta_t_<stable-id>
-   ↓ instantiate once
-existing/updated generic backend emits canonical concrete type
-   ↓
-source aliases become typedefs to that canonical type
-```
-
-This permits old code to continue using `typed(...)` while new compositional syntax has structural/canonical identity.
-
-A later migration may redefine or supplement the strict-C11 API with a canonical-instantiation form, but that is outside this v1 syntax specification.
-
-## 10. Canonicalization
-
-Canonicalization is deterministic and syntax-independent.
 
 Examples:
 
 ```text
-Task < Result < User , Error > >
-Task<Result<User,Error>>
+cmeta.Pair     Type × Type -> Type
+cmeta.Option   Type -> Type
+cmeta.Result   Type × Type -> Type
+cmeta.Task     Type -> Type       (owned by Exec)
+cmeta.Channel  Type -> Type       (owned by Exec/future channel module)
+cmeta.List     Type -> Type
+cmeta.Map      Type × Type -> Type
 ```
 
-produce the same canonical representation.
+Constructor descriptors belong to the module that owns the semantic type.
 
-Canonical identity ignores:
+Core provides the generic application mechanism.
 
-- whitespace;
-- aliases;
-- generated C symbol names;
-- descriptor addresses;
-- translation-unit-local metadata addresses.
+## 7. v1 argument policy
 
-Canonical identity includes:
+v1 generic parameters are TYPE-only.
 
-- atom stable ID;
-- pointer/const structure;
-- constructor stable ID;
-- argument order;
-- recursively canonicalized argument identities.
+Valid Extend forms:
 
-## 11. Stable hash and generated C symbol
+```c
+Option<User>
+Result<User, Error>
+Task<Result<User, Error>>
+Map<String, List<User>>
+```
 
-Every canonical TypeExpr obtains a stable hash from its canonical semantic serialization.
+Not v1:
 
-Canonical serialization examples:
+```c
+Array<int, 16>
+SmallVec<User, 8>
+BTree<Key, Value, key_compare>
+```
+
+Comparator/hash/policy callbacks SHOULD be traits/configuration rather than type arguments unless they actually define layout/type identity in a future explicit design.
+
+Examples:
 
 ```text
-atom:cmeta.int
-atom:app.User
-ptr(atom:app.User)
-apply:cmeta.Result(atom:app.User,atom:app.Error)
-apply:cmeta.Task(apply:cmeta.Result(atom:app.User,atom:app.Error))
+Map<K,V> requires Hash<K> + Eq<K>
+BTree<K,V> requires Compare<K>
 ```
 
-Generated C symbols use a bounded readable prefix plus the stable hash, for example:
+## 8. Extend TypeExpr
+
+Extend v1 parses only a small type-expression language:
 
 ```text
-cmeta_Result_7c912e4a...
-cmeta_Task_423da813...
+TypeExpr :=
+    Name
+  | Apply(Name, TypeExpr...)
+  | Pointer(TypeExpr)
+  | Const(TypeExpr)
 ```
 
-Requirements:
+Examples:
 
-- same semantic TypeExpr -> same generated symbol across translation units;
-- different aliases -> same generated symbol;
-- symbol length is bounded;
-- hash algorithm/version is fixed for one CMeta ABI generation;
-- a detected collision within one build is a hard generation error, never silently merged.
+```c
+User
+User *
+const User *
+Result<User, Error>
+Task<Result<User *, Error>>
+```
 
-The human-readable descriptor name remains the canonical source spelling such as `Task<Result<User,Error>>`, not only the hashed C symbol.
+TypeExpr is a frontend object and MUST NOT become a Core public ABI.
 
-## 12. Instantiation graph
+## 9. Alias semantics
 
-The frontend collects all referenced concrete applications before code generation.
+Extend may support:
+
+```c
+type UserResult = Result<User, Error>;
+type AnotherResult = Result<User, Error>;
+```
+
+Both aliases resolve to the same Core TypeId.
+
+```text
+TypeId(UserResult) == TypeId(AnotherResult)
+```
+
+Aliases do not create nominally distinct types in v1.
+
+If nominal newtypes are desired later, they require a separate explicit semantic construct.
+
+## 10. Canonical application and C representation
+
+Extend discovers each unique concrete application and requests/emits one canonical concrete C representation.
 
 Example source:
 
 ```c
-Map<int, User> users;
-Task<Map<int, User>> task;
-Option<Map<int, User>> cached;
+Task<Result<User, Error>> a;
+Task<Result<User, Error>> b;
 ```
 
-Unique application nodes:
+must not create two concrete structs.
+
+Conceptual lowering:
 
 ```text
-Map<int,User>
-Task<Map<int,User>>
-Option<Map<int,User>>
+Result<User,Error>
+    -> canonical application R
+Task<R>
+    -> canonical application T
 ```
 
-Dependency graph:
+Then generated C may contain:
+
+```c
+typed(Result, cmeta_Result_<id>, User, Error);
+typed(Task, cmeta_Task_<id>, cmeta_Result_<id>);
+
+cmeta_Task_<id> a;
+cmeta_Task_<id> b;
+```
+
+The actual naming scheme is an Extend/codegen implementation detail.
+
+## 11. Symbol mangling is not TypeId
+
+Extend needs deterministic generated C identifiers, but symbol identity is separate from semantic identity.
+
+Requirements:
+
+- one semantic application -> one symbol within an output unit;
+- symbol length bounded;
+- deterministic for reproducible builds;
+- collisions detected as hard generation errors;
+- symbol algorithm/version may evolve without redefining Core type equality.
+
+Core type equality MUST never compare mangled symbols.
+
+## 12. Application discovery and dependency ordering
+
+Use-site implicit instantiation is an Extend responsibility.
+
+Example:
+
+```c
+Map<String, User> users;
+Task<Map<String, User>> task;
+Option<Map<String, User>> cache;
+```
+
+Extend discovers:
 
 ```text
-int
-User
-  \ /
-Map<int,User>
-  ├── Task<Map<int,User>>
-  └── Option<Map<int,User>>
+Map<String,User>
+Task<Map<String,User>>
+Option<Map<String,User>>
 ```
 
-Generation rules:
-
-1. parse TypeExpr;
-2. resolve atoms and constructors;
-3. validate constructor arity;
-4. canonicalize recursively;
-5. intern/deduplicate TypeId;
-6. collect required constructor/trait constraints;
-7. build finite dependency graph;
-8. emit concrete applications in dependency order;
-9. emit user aliases after the canonical concrete type exists.
-
-Repeated source occurrences never imply repeated instantiation.
-
-## 13. Finiteness and termination
-
-The source program contains a finite set of type-expression occurrences.
-
-Every TypeExpr is a finite syntax tree.
-
-Constructor application does not execute arbitrary compile-time user code. It applies one finite registered generation schema to already finite arguments.
-
-Therefore the v1 generic type layer remains finite by construction.
-
-CMeta does not add:
+and orders generation by semantic dependency.
 
 ```text
-while-at-type-level
-recursive template execution
-arbitrary comptime programs
-self-generating new constructor programs
+String   User
+   \     /
+  Map<String,User>
+      /        \
+ Task<...>   Option<...>
 ```
 
-The implementation should make the following property explicit in the formal model:
+The graph is finite because source TypeExprs and registered constructor schemas are finite.
 
-```text
-finite source TypeExpr set
--> finite canonical TypeId set
--> finite instantiation graph
--> terminating generation
+## 13. Strict-C11 compatibility
+
+CMeta Core MUST remain usable without Extend.
+
+A strict-C11 user may explicitly instantiate:
+
+```c
+typed(Result, UserResult, User, Error);
+typed(Task, UserTask, UserResult);
 ```
+
+The architectural target is that both strict and Extend paths resolve to the same semantic constructor/type relationships, even if migration preserves legacy nominal generated structs for existing `typed(...)` code initially.
+
+The implementation MUST NOT silently claim old separately named C structs are ABI-identical aliases until the generic backend has been made canonical.
 
 ## 14. CType descriptor integration
 
-Current `cmeta_type_desc` is primarily flat metadata with optional pointer pointee information.
+Current CMeta descriptors are primarily flat metadata. Core generic applications require structured identity.
 
-Generic applications require structural semantic identity.
+The migration SHOULD append/associate an identity object without requiring descriptor pointer uniqueness.
 
-The migration should append an optional identity pointer to the existing descriptor shape:
+Conceptually:
 
 ```c
 typedef struct cmeta_type_desc {
@@ -448,432 +362,210 @@ typedef struct cmeta_type_desc {
 } cmeta_type_desc;
 ```
 
-Appending the field preserves existing five-field aggregate initializers because the trailing field is zero-initialized by C.
+Legacy descriptors may have `identity == NULL` during migration.
+
+Generic application descriptors MUST eventually carry structural identity.
+
+## 15. Type equality authority
+
+`cmeta_type_equal` remains Core semantic authority.
 
 Rules:
 
-- legacy descriptors may use `identity == NULL`;
-- generated generic descriptors use structured identity;
-- descriptor pointer equality is never type identity;
-- cross-TU equality structurally compares identity when present;
-- aliases do not create new identities;
-- `name` is display/debug metadata, not the authoritative equality key.
-
-## 15. Type equality
-
-`cmeta_type_equal(a,b)` evolves to:
-
 ```text
-if both have structural identity:
-    compare canonical identity recursively
-else:
-    use the existing legacy semantic fallback
+if both descriptors have structural identities:
+    compare identities structurally/semantically
+otherwise:
+    use conservative legacy fallback during migration
 ```
 
-It must never require:
+Equality MUST NOT rely on descriptor address or generated symbol address.
 
-```text
-a == b
-identity_a == identity_b
-constructor_descriptor_pointer_a == constructor_descriptor_pointer_b
-```
-
-because descriptors remain allowed to be TU-local.
-
-Constructor equality uses stable constructor ID, not address.
+Constructor equality uses stable constructor identity, not descriptor pointer equality.
 
 ## 16. Reflection
 
-Generic type reflection must support:
+Core generic reflection SHOULD provide:
 
 ```text
 is_application(type)
 constructor(type)
 arity(type)
-argument(type, index)
+argument(type,index)
 ```
 
 For:
 
-```c
-Map<String, User>
+```text
+Map<String,User>
 ```
 
-reflection reports:
+reflection yields:
 
 ```text
 constructor = cmeta.Map
-arity       = 2
-arg[0]      = String
-arg[1]      = User
+arity = 2
+arg0 = String
+arg1 = User
 ```
 
-This structured information is required for later:
+Display strings remain diagnostics, not semantic identity.
 
-- serde/schema generation;
-- Task/Channel reflection;
-- container capabilities;
-- RPC/FFI schemas;
-- diagnostics;
-- formal conformance.
+## 17. KnownTypes vs CallableSignatures
 
-The string `"Map<String,User>"` alone is not sufficient semantic metadata.
-
-## 17. Known type universe vs callable signature universe
-
-This distinction is mandatory.
-
-Current callable generation expands finite unary/binary/generator signature families from `CMETA_TYPE_LIST`, and the binary family can grow cubically with the number of registered types.
-
-Therefore:
-
-> Being a valid CMeta TypeExpr does not automatically make a type part of the callable signature universe.
-
-Two sets exist conceptually:
+This split is mandatory and belongs to Core.
 
 ```text
 KnownTypes
-    every concrete type known to CType/reflection/generic generation
+    all resolved/reflected types
 
-CallableTypes / CallableSignatures
-    only types/signatures explicitly required for typed callable invocation
+CallableSignatures
+    exact typed-callable signatures that are admitted/generated
 ```
 
-For example:
+A generic application becoming a KnownType MUST NOT automatically enlarge the full callable Cartesian product.
 
-```text
-Map<String,User>
-Task<Result<User,Error>>
-```
+The current full-product signature generation is acceptable for a small fixed type universe, but it does not scale to compositional generic applications.
 
-may be perfectly valid reflected CMeta types without automatically participating in every `N^2/N^3` callable product.
+The future direction is exact finite signature demand.
 
-The long-term callable system should become demand-driven by exact referenced signatures or an explicit finite callable schema, rather than automatically taking the full product of all known generic applications.
+Extend MAY discover exact signatures referenced by source, but Core owns their representation, validation and invocation semantics.
 
-This callable refactor is a dependent subproject, not part of the first TypeExpr parser implementation.
+## 18. Traits and generic requirements
 
-## 18. Traits and constructor requirements
+Requirements belong to semantic constructors/modules, not Extend syntax.
 
-Generic constructors may declare finite semantic requirements on type arguments.
-
-Examples:
+Example:
 
 ```text
 Map<K,V>
     requires Hash<K>
     requires Eq<K>
-
-BTree<K,V>
-    requires Compare<K>
 ```
 
-Requirements affect whether an application is valid, but do not normally become part of type identity.
+Extend may diagnose a missing trait before emission, but the owning constructor/Core validation remains authoritative.
 
-Therefore these are normally the same type:
+Trait implementation choice normally does not change type identity.
+
+## 19. Module ownership examples
 
 ```text
-Map<String,User> using hash_impl_A
-Map<String,User> using hash_impl_B
+Option<T> / Result<T,E>   Value module
+List<T> / Map<K,V>        Container module
+Task<T>                   Exec module
+Channel<T>                Exec/channel module
 ```
 
-The algorithm/strategy may differ per object/configuration, but the element/key/value type identity is unchanged unless a future constructor explicitly declares a policy argument to be layout/identity-bearing.
+Core does not know their layouts. It knows how to represent constructor identity, arguments, traits and CType semantics.
 
-v1 has no such value/policy generic parameters.
+Extend likewise MUST NOT hard-code module layouts.
 
-## 19. Containers
+## 20. Lowering contract
 
-Current container kinds already behave semantically like unary or binary constructors:
-
-```text
-List<T>
-Vec<T>
-HashMap<K,V>
-Map<K,V>
-BTree<K,V>
-```
-
-The new type model removes the need for application code to invent facade names for every nested usage.
+Extend lowers syntax to module/Core declarations, not directly to hand-written layouts.
 
 Example:
 
 ```c
-List<User>
-Map<String, List<User>>
+Task<Result<User, Error>> task;
 ```
 
-The raw algorithm implementation remains ordinary C. The constructor schema generates the typed facade and metadata once for each canonical application.
-
-Comparator/hash requirements move toward trait resolution rather than appearing as extra `<...>` arguments.
-
-## 20. Value types
-
-Existing value kinds map naturally:
+should conceptually lower through:
 
 ```text
-Pair<T,U>
-Tuple<T...>
-Option<T>
-Result<T,E>
+resolve Result constructor
+resolve User/Error
+request Result<User,Error> concrete application
+resolve Task constructor
+request Task<Result<User,Error>> concrete application
+emit explicit Core/module generation declarations
+emit ordinary C variable declaration
 ```
 
-Examples:
+This keeps generation semantics below the frontend.
 
-```c
-Option<User>
-Result<User, Error>
-Pair<String, User>
-Tuple<int, double, User>
-```
+## 21. Parser requirement
 
-Their layouts remain ordinary generated C structs/unions.
+The exact `<...>` spelling requires Extend parsing/source transformation.
 
-The new semantic difference is that `Result<User,Error>` is one canonical application, not "whatever named struct a particular call to `typed(Result, Name, User, Error)` happened to generate".
+Core generic semantics do not require a parser.
 
-## 21. Task and concurrency integration
-
-`Task<T>` becomes a normal unary type constructor:
+Recommended frontend path:
 
 ```text
-Task : Type -> Type
+.cm
+ -> re2c-generated lexer
+ -> small recursive-descent TypeExpr parser
+ -> semantic resolution
+ -> lowering
+ -> ordinary C11
 ```
 
-Examples:
+`re2c` is a frontend build dependency, not a Core dependency.
 
-```c
-Task<User>
-Task<Result<User, Error>>
-Task<Map<String, User>>
-```
+## 22. Finiteness
 
-The public Task handle may have a layout independent of `T`, while its runtime implementation/result storage remains typed by the application metadata.
+v1 remains finite by construction:
 
-The TypeExpr system therefore provides the canonical identity used by CMeta Exec to represent task result types.
+- source contains finitely many TypeExpr occurrences;
+- every TypeExpr is finite;
+- constructors are from a finite registered set;
+- constructor generation is finite schema application;
+- no arbitrary user compile-time loops/recursion are introduced.
 
-Similarly:
+Target formal property:
 
 ```text
-Channel<T>
-Option<Task<T>>
-Result<Task<T>, Error>
+finite source demand
+ -> finite resolved TypeId set
+ -> finite application dependency graph
+ -> finite generation
 ```
 
-become ordinary compositions rather than special concurrency syntax.
+## 23. Formal split
 
-## 22. Struct/Enum integration
-
-A reflected struct field may use any resolved TypeExpr:
-
-```c
-struct User {
-    int id;
-    Option<String> nickname;
-    List<Role> roles;
-}
-```
-
-The generated field descriptor should point to the exact canonical CType descriptor for each field TypeExpr.
-
-This enables recursive schema traversal for serde/RPC/debugging.
-
-C completeness/layout rules still apply. A by-value infinitely recursive C layout is invalid; pointer indirection may break layout recursion normally.
-
-## 23. Parser boundary
-
-`<` and `>` are parser-level type syntax, not lexer semantics.
-
-The lexer returns punctuation/tokens. The parser decides whether `<` begins type arguments based on `TypeExpr` context.
-
-Therefore:
-
-```c
-List<int>
-```
-
-in type context is application, while:
-
-```c
-if (a < b)
-```
-
-in expression context is comparison.
-
-Nested closing brackets:
-
-```c
-Task<Result<User,Error>>
-```
-
-must parse as two type-closing `>` tokens in TypeExpr context, not require a special generic `>>` token.
-
-This is compatible with the proposed re2c lexer + small parser frontend architecture.
-
-## 24. Constructor registration and frontend discovery
-
-The semantic constructor registry must have one finite source of truth for:
-
-- stable ID;
-- display name;
-- arity;
-- category;
-- trait requirements;
-- lowering/generator binding.
-
-The current `CMETA_GENERIC_KIND_<Kind>` macro markers only answer whether a C-preprocessor route exists; they are insufficient as a frontend semantic registry.
-
-Implementation should introduce a declarative finite constructor schema from which both can be derived:
+Core proof responsibilities:
 
 ```text
-constructor schema
-    ├── C preprocessor generic markers/routes
-    ├── frontend constructor table/manifest
-    └── formal snapshot
+TypeId equality properties
+constructor arity/identity
+finite application semantics
+trait requirement soundness
+KnownTypes/CallableSignatures separation
 ```
 
-The exact file/macro representation is an implementation-plan decision, but duplicated hand-maintained constructor tables are not permitted.
-
-## 25. Formal model
-
-Lean should model the semantic layer independently of C symbol mangling.
-
-Conceptual model:
-
-```lean
-inductive TypeExpr where
-  | atom  : AtomId -> TypeExpr
-  | ptr   : TypeExpr -> TypeExpr
-  | const : TypeExpr -> TypeExpr
-  | apply : ConstructorId -> List TypeExpr -> TypeExpr
-```
-
-Required properties:
+Extend proof/conformance responsibilities:
 
 ```text
-wellFormed
-    constructor exists
-    arity is valid
-    all children are well formed
-
-canonical
-    aliases erased
-    stable constructor/atom identity used
-
-finite
-    every TypeExpr has finite size
-    finite source list produces finite unique application set
-
-deterministic
-    canonicalization is deterministic
-    equality is decidable
+`M<A,B>` parsing/lowering resolves to expected Core application
+aliases preserve identity
+repeated applications deduplicate
+nested applications are emitted dependency-first
+source lowering preserves resolved CType
 ```
 
-Conformance should eventually connect:
+## 24. Rejected designs
 
-```text
-CMeta Syntax TypeExpr
-        ↓
-generated canonical C descriptor
-        ↓
-C runtime cmeta_type_equal
-        ↓
-Lean TypeExpr equality
-```
+The following are explicitly rejected:
 
-## 26. v1 acceptance examples
+- treating `M<A,B>` as macro text substitution;
+- making parser AST the Core type representation;
+- using generated typedef names as TypeId;
+- automatically adding every generic application to every callable signature family;
+- putting comparator/hash function names into `<...>` in v1;
+- allowing constructors to execute arbitrary user compile-time code;
+- making Extend know concrete Result/Task/container layouts.
 
-These must resolve and canonicalize:
+## 25. Acceptance criteria
 
-```c
-Option<User>
-Result<User, Error>
-Task<Result<User, Error>>
-Map<String, User>
-Map<String, List<User>>
-Option<const User *>
-```
+The design is correct when:
 
-Repeated use:
+1. Core generic semantics work without `cmc`;
+2. Extend `M<A,B>` resolves to the same constructor/argument semantics;
+3. aliases do not change structural identity;
+4. nested applications are finite and deduplicated;
+5. Core type equality does not depend on generated C symbol names;
+6. module owners, not Extend, define layout/generation semantics;
+7. known generic types do not cause uncontrolled callable-signature expansion.
 
-```c
-Map<String,User> a;
-Map<String,User> b;
-```
-
-must instantiate one canonical application.
-
-Aliases:
-
-```c
-type Users = Map<String,User>;
-type Users2 = Map<String,User>;
-```
-
-must share identity.
-
-Invalid arity:
-
-```c
-Option<User,Error>
-```
-
-must fail at CMeta semantic analysis.
-
-Unknown constructor:
-
-```c
-Unknown<User>
-```
-
-must fail before generated C compilation.
-
-Value parameter attempt:
-
-```c
-SmallVec<int,16>
-```
-
-must fail under v1 rules unless `SmallVec` is represented through a non-TypeExpr configuration mechanism.
-
-## 27. Non-goals
-
-This specification does not implement:
-
-- parser/lexer code;
-- arbitrary user-defined template bodies;
-- non-type generic parameters;
-- partial specialization;
-- SFINAE;
-- arbitrary compile-time evaluation;
-- ownership/lifetime types;
-- automatic inclusion of every generic application in the callable Cartesian product;
-- a new C ABI;
-- removal of existing `typed(...)` APIs.
-
-## 28. Implementation decomposition
-
-This architecture should be implemented as separate reviewable subprojects:
-
-1. **Type identity core** — structured `cmeta_type_identity`, equality, reflection, compatibility with legacy descriptors.
-2. **Generic constructor schema** — single finite constructor source of truth for existing Pair/Tuple/Option/Result and container kinds.
-3. **Canonical instantiation model** — TypeExpr interning, stable naming/hash rules and one-instantiation-per-application codegen substrate.
-4. **Syntax frontend TypeExpr parser** — `M<A,B>`, pointer/const, aliases; lower to canonical C generation.
-5. **Callable-universe separation** — stop equating every known CType with every generated callable combination; move toward exact finite signature generation.
-6. **Formal/conformance layer** — Lean TypeExpr model and C-generated snapshots.
-
-The first implementation plan should cover only subproject 1 or subprojects 1+2 if their interface cannot be meaningfully tested independently.
-
-## 29. Architectural conclusion
-
-The public semantic rule is:
-
-> `M<A,B>` is a finite generic type application whose identity is the constructor plus canonical argument TypeIds.
-
-It is not a macro invocation and not a generated typedef name.
-
-This turns CMeta from a system of manually named generic instantiations into a compositional finite type system while retaining:
-
-- finite generation;
-- explicit registered constructors;
-- ordinary C layout and ABI;
-- strict-C11 backend compatibility;
-- existing low-level `typed(...)` migration path;
-- formal decidability and termination.
+This specification is subordinate to the CMeta Hexagonal Architecture and must preserve its dependency rules.
