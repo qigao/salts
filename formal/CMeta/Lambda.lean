@@ -1,5 +1,6 @@
 module
-public import all CMeta.Callable
+public import CMeta.Callable
+import all CMeta.Callable
 
 /-!
 # Lambda, anonymous closure, bind and composition
