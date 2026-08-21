@@ -206,7 +206,7 @@ private theorem mem_map_removeEntries
     candidate ∈ entries.map CertifiedPreprocessorBackend.key := by
   induction entries with
   | nil =>
-      simpa [removeEntries] using hmem
+      simp [removeEntries] at hmem
   | cons backend rest ih =>
       by_cases hkey : backend.key = target
       · rw [removeEntries, if_pos hkey] at hmem
@@ -224,7 +224,7 @@ private theorem removeEntries_nodup_keys
     ((removeEntries entries target).map CertifiedPreprocessorBackend.key).Nodup := by
   induction entries with
   | nil =>
-      simpa [removeEntries]
+      simp [removeEntries]
   | cons backend rest ih =>
       have hhead := (List.nodup_cons.mp hunique).1
       have htail := (List.nodup_cons.mp hunique).2
@@ -300,12 +300,12 @@ private theorem lookupEntries_removeEntries_ne
           change (if backend.key = key then some backend
               else lookupEntries (removeEntries rest target) key) =
             (if backend.key = key then some backend else lookupEntries rest key)
-          rw [if_pos hlookup]
+          simp only [if_pos hlookup]
         · rw [removeEntries, if_neg hremove]
           change (if backend.key = key then some backend
               else lookupEntries (removeEntries rest target) key) =
             (if backend.key = key then some backend else lookupEntries rest key)
-          rw [if_neg hlookup]
+          simp only [if_neg hlookup]
           exact ih
 
 /-- Insert a fresh exact backend identity. Duplicate keys are rejected rather
