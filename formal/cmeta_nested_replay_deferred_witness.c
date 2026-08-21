@@ -15,6 +15,16 @@
 #error "direct-replay applicability result must be numeric 0 or 1"
 #endif
 
+#if defined(__clang__)
+#define CMETA_PROOF_COMPILER_FAMILY_TAG 2
+#define CMETA_PROOF_COMPILER_MAJOR_VERSION __clang_major__
+#elif defined(__GNUC__)
+#define CMETA_PROOF_COMPILER_FAMILY_TAG 1
+#define CMETA_PROOF_COMPILER_MAJOR_VERSION __GNUC__
+#else
+#error "nested replay formal witness supports GCC or Clang preprocessors"
+#endif
+
 /* This proof path must not obtain nesting behavior from the current arity
  * counter or public one-or-more FOR_EACH adapter. */
 #undef CMETA_PP_NARG
@@ -157,6 +167,9 @@ int main(void) {
     CHECK(cmeta_proof_depth4_count == 16);
     CHECK(cmeta_proof_certified_same_producer_depth == 4);
     CHECK(cmeta_proof_deferred_same_producer_accepted == 1);
+    CHECK(CMETA_PROOF_COMPILER_FAMILY_TAG == 1 ||
+          CMETA_PROOF_COMPILER_FAMILY_TAG == 2);
+    CHECK(CMETA_PROOF_COMPILER_MAJOR_VERSION > 0);
 
     CHECK(ARRAY_LEN(cmeta_proof_distinct_strategy_trace) == 2);
     CHECK(cmeta_proof_distinct_strategy_trace[0] == cmeta_proof_strategy_direct);
@@ -169,6 +182,11 @@ int main(void) {
           cmeta_proof_strategy_deferred_obstruct);
 
     puts("namespace CMeta.NestedReplayGeneratedC");
+    printf("def compilerFamilyTag : Nat := %d\n",
+           CMETA_PROOF_COMPILER_FAMILY_TAG);
+    printf("def compilerMajorVersion : Nat := %d\n",
+           CMETA_PROOF_COMPILER_MAJOR_VERSION);
+    printf("def languageStandard : Nat := %ld\n", (long)__STDC_VERSION__);
     printf("def distinctCount : Nat := %d\n", cmeta_proof_distinct_count);
     printf("def depth2Count : Nat := %d\n", cmeta_proof_depth2_count);
     printf("def depth3Count : Nat := %d\n", cmeta_proof_depth3_count);
