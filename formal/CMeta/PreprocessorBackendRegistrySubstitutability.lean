@@ -40,31 +40,18 @@ private theorem supportingCandidates_nodup
     entries_nodup_of_keys_nodup registry.entries registry.uniqueKeys
   exact hentries.filter _
 
-/-- Exact lookup returns an entry already present in the registry list. -/
-private theorem mem_entries_of_lookup_eq_some
-    (registry : PreprocessorBackendRegistry)
-    (backend : CertifiedPreprocessorBackend)
-    (hlookup : registry.lookup backend.key = some backend) :
-    backend ∈ registry.entries := by
-  rcases registry with ⟨entries, hkeys⟩
-  induction entries with
-  | nil =>
-      simp [PreprocessorBackendRegistry.lookup] at hlookup
-  | cons head tail ih =>
-      have hparts := List.nodup_cons.mp hkeys
-      by_cases hkey : head.key = backend.key
-      · have heq : head = backend := by
-          have hsome : some head = some backend := by
-            simpa [PreprocessorBackendRegistry.lookup, hkey] using hlookup
-          exact Option.some.inj hsome
-        subst backend
-        exact List.mem_cons_self
-      · have htailLookup :
-          (PreprocessorBackendRegistry.lookup
-            { entries := tail, uniqueKeys := hparts.2 } backend.key) =
-            some backend := by
-          simpa [PreprocessorBackendRegistry.lookup, hkey] using hlookup
-        exact List.mem_cons_of_mem head (ih hparts.2 htailLookup)
+/-- A nonempty registry is exactly a fresh insertion of its head into the tail
+    registry. This lets lookup correctness reuse the verified public mutation
+    laws instead of unfolding the private list lookup implementation. -/
+private theorem insert_head_tail
+    (head : CertifiedPreprocessorBackend)
+    (tail : List CertifiedPreprocessorBackend)
+    (hkeys : (List.map CertifiedPreprocessorBackend.key (head :: tail)).Nodup) :
+    ({ entries := tail
+       uniqueKeys := (List.nodup_cons.mp hkeys).2 } : PreprocessorBackendRegistry).insert head =
+      some { entries := head :: tail, uniqueKeys := hkeys } := by
+  have hfresh := (List.nodup_cons.mp hkeys).1
+  simp [insert, hfresh]
 
 /-- Every stored entry resolves at its own exact key. -/
 private theorem lookup_eq_some_of_mem_entries
@@ -78,9 +65,15 @@ private theorem lookup_eq_some_of_mem_entries
       simp at hmem
   | cons head tail ih =>
       have hparts := List.nodup_cons.mp hkeys
+      let tailRegistry : PreprocessorBackendRegistry :=
+        { entries := tail, uniqueKeys := hparts.2 }
+      let currentRegistry : PreprocessorBackendRegistry :=
+        { entries := head :: tail, uniqueKeys := hkeys }
+      have hinsert : tailRegistry.insert head = some currentRegistry := by
+        exact insert_head_tail head tail hkeys
       rcases List.mem_cons.mp hmem with hhere | htail
       · subst backend
-        simp [PreprocessorBackendRegistry.lookup]
+        exact lookup_insert_self_exact tailRegistry currentRegistry head hinsert
       · have hne : head.key ≠ backend.key := by
           intro heq
           apply hparts.1
@@ -88,12 +81,57 @@ private theorem lookup_eq_some_of_mem_entries
               backend.key ∈ tail.map CertifiedPreprocessorBackend.key :=
             List.mem_map.mpr ⟨backend, htail, rfl⟩
           simpa [heq] using hbackendKey
-        have htailLookup :
-            (PreprocessorBackendRegistry.lookup
-              { entries := tail, uniqueKeys := hparts.2 } backend.key) =
-              some backend :=
-          ih hparts.2 backend htail
-        simpa [PreprocessorBackendRegistry.lookup, hne] using htailLookup
+        have htailLookup : tailRegistry.lookup backend.key = some backend :=
+          ih backend hparts.2 htail
+        calc
+          currentRegistry.lookup backend.key = tailRegistry.lookup backend.key :=
+            lookup_insert_ne_exact
+              tailRegistry head currentRegistry backend.key hinsert hne
+          _ = some backend := htailLookup
+
+/-- Exact lookup can only return an entry already stored in the registry. -/
+private theorem mem_entries_of_lookup_eq_some
+    (registry : PreprocessorBackendRegistry)
+    (backend : CertifiedPreprocessorBackend)
+    (hlookup : registry.lookup backend.key = some backend) :
+    backend ∈ registry.entries := by
+  rcases registry with ⟨entries, hkeys⟩
+  induction entries generalizing backend with
+  | nil =>
+      have hnone :
+          ({ entries := [], uniqueKeys := hkeys } : PreprocessorBackendRegistry).lookup
+              backend.key = none :=
+        lookup_eq_none_of_key_not_mem
+          { entries := [], uniqueKeys := hkeys } backend.key (by simp)
+      rw [hlookup] at hnone
+      cases hnone
+  | cons head tail ih =>
+      have hparts := List.nodup_cons.mp hkeys
+      let tailRegistry : PreprocessorBackendRegistry :=
+        { entries := tail, uniqueKeys := hparts.2 }
+      let currentRegistry : PreprocessorBackendRegistry :=
+        { entries := head :: tail, uniqueKeys := hkeys }
+      have hinsert : tailRegistry.insert head = some currentRegistry := by
+        exact insert_head_tail head tail hkeys
+      by_cases hkey : head.key = backend.key
+      · have hheadLookup : currentRegistry.lookup head.key = some head :=
+          lookup_insert_self_exact tailRegistry currentRegistry head hinsert
+        have hsome : some head = some backend := by
+          calc
+            some head = currentRegistry.lookup head.key := hheadLookup.symm
+            _ = currentRegistry.lookup backend.key := congrArg currentRegistry.lookup hkey
+            _ = some backend := hlookup
+        have heq : head = backend := Option.some.inj hsome
+        subst backend
+        exact List.mem_cons_self
+      · have hframe :
+            currentRegistry.lookup backend.key = tailRegistry.lookup backend.key :=
+          lookup_insert_ne_exact
+            tailRegistry head currentRegistry backend.key hinsert hkey
+        have htailLookup : tailRegistry.lookup backend.key = some backend := by
+          rw [← hframe]
+          exact hlookup
+        exact List.mem_cons_of_mem head (ih backend hparts.2 htailLookup)
 
 /-- Certification proof identity is not semantic identity: equal observable
     backend payloads determine equal certified entries by proof irrelevance. -/
@@ -107,6 +145,41 @@ private theorem certified_eq_of_backend_eq
           cases hbackend
           congr
 
+/-- One direction of candidate substitutability. It is kept non-recursive so
+    symmetry of registry equivalence stays a theorem application rather than a
+    recursive definition. -/
+private theorem mem_supportingCandidates_of_equivalent
+    (left right : PreprocessorBackendRegistry)
+    (query : BackendQuery)
+    (ir : ReplayIR)
+    (heq : Equivalent left right)
+    (backend : CertifiedPreprocessorBackend)
+    (hleftCandidate : backend ∈ left.supportingCandidates query ir) :
+    backend ∈ right.supportingCandidates query ir := by
+  have hleftParts :=
+    (left.mem_supportingCandidates_iff query ir backend).1 hleftCandidate
+  have hleftLookup : left.lookup backend.key = some backend :=
+    lookup_eq_some_of_mem_entries left backend hleftParts.1
+  have hrightObserve : right.observe backend.key = some backend.backend := by
+    rw [← heq backend.key]
+    simp [observe, hleftLookup]
+  cases hrightLookup : right.lookup backend.key with
+  | none =>
+      simp [observe, hrightLookup] at hrightObserve
+  | some rightBackend =>
+      have hpayload : rightBackend.backend = backend.backend := by
+        unfold observe at hrightObserve
+        rw [hrightLookup] at hrightObserve
+        simp only [Option.map_some, Option.some.injEq] at hrightObserve
+        exact hrightObserve
+      have hcertified : rightBackend = backend :=
+        certified_eq_of_backend_eq rightBackend backend hpayload
+      subst rightBackend
+      have hrightMem : backend ∈ right.entries :=
+        mem_entries_of_lookup_eq_some right backend hrightLookup
+      exact (right.mem_supportingCandidates_iff query ir backend).2
+        ⟨hrightMem, hleftParts.2⟩
+
 /-- Equivalent registries have the same membership relation on supporting
     certified candidates. -/
 private theorem mem_supportingCandidates_iff_of_equivalent
@@ -118,31 +191,49 @@ private theorem mem_supportingCandidates_iff_of_equivalent
     backend ∈ left.supportingCandidates query ir ↔
       backend ∈ right.supportingCandidates query ir := by
   constructor
-  · intro hleftCandidate
-    have hleftParts :=
-      (left.mem_supportingCandidates_iff query ir backend).1 hleftCandidate
-    have hleftLookup : left.lookup backend.key = some backend :=
-      lookup_eq_some_of_mem_entries left backend hleftParts.1
-    have hrightObserve : right.observe backend.key = some backend.backend := by
-      rw [← heq backend.key]
-      simp [observe, hleftLookup]
-    cases hrightLookup : right.lookup backend.key with
-    | none =>
-        simp [observe, hrightLookup] at hrightObserve
-    | some rightBackend =>
-        have hpayload : rightBackend.backend = backend.backend := by
-          simp [observe, hrightLookup] at hrightObserve
-          exact hrightObserve
-        have hcertified : rightBackend = backend :=
-          certified_eq_of_backend_eq rightBackend backend hpayload
-        have hrightMem : rightBackend ∈ right.entries :=
-          mem_entries_of_lookup_eq_some right rightBackend hrightLookup
-        subst rightBackend
-        exact (right.mem_supportingCandidates_iff query ir backend).2
-          ⟨hrightMem, hleftParts.2⟩
-  · intro hrightCandidate
-    exact (mem_supportingCandidates_iff_of_equivalent
-      right left query ir (equivalent_symm heq) backend).1 hrightCandidate
+  · exact mem_supportingCandidates_of_equivalent
+      left right query ir heq backend
+  · exact mem_supportingCandidates_of_equivalent
+      right left query ir (equivalent_symm heq) backend
+
+/-- Two duplicate-free lists with the same membership relation are permutations.
+    This is the Lean 4.30-compatible extensional permutation principle used by
+    registry candidate discovery. -/
+private theorem perm_of_nodup_mem_iff
+    {α : Type}
+    {left right : List α}
+    (hleft : left.Nodup)
+    (hright : right.Nodup)
+    (hmem : ∀ value, value ∈ left ↔ value ∈ right) :
+    left.Perm right := by
+  induction left generalizing right with
+  | nil =>
+      cases right with
+      | nil => exact List.Perm.nil
+      | cons head tail =>
+          have himpossible : head ∈ ([] : List α) :=
+            (hmem head).2 (by simp)
+          simp at himpossible
+  | cons head tail ih =>
+      have hleftParts := List.nodup_cons.mp hleft
+      have hheadRight : head ∈ right := (hmem head).1 (by simp)
+      obtain ⟨before, after, rfl⟩ := List.append_of_mem hheadRight
+      have hmiddle :
+          (before ++ head :: after).Perm (head :: (before ++ after)) :=
+        List.perm_middle
+      have hrightReorderedNodup : (head :: (before ++ after)).Nodup :=
+        hmiddle.nodup hright
+      have hrightParts := List.nodup_cons.mp hrightReorderedNodup
+      have htailMem : ∀ value, value ∈ tail ↔ value ∈ before ++ after := by
+        intro value
+        by_cases hvalue : value = head
+        · subst value
+          simp [hleftParts.1, hrightParts.1]
+        · have hfull := hmem value
+          simpa [hvalue] using hfull
+      have htailPerm : tail.Perm (before ++ after) :=
+        ih hleftParts.2 hrightParts.2 htailMem
+      exact (htailPerm.cons head).trans hmiddle.symm
 
 /-- Observationally equivalent finite maps expose the same supporting certified
     candidate multiset. List order remains a representation detail. -/
@@ -153,12 +244,10 @@ theorem supportingCandidates_perm_of_equivalent
     (heq : Equivalent left right) :
     (left.supportingCandidates query ir).Perm
       (right.supportingCandidates query ir) := by
-  apply (List.perm_ext_iff_of_nodup
+  exact perm_of_nodup_mem_iff
     (supportingCandidates_nodup left query ir)
-    (supportingCandidates_nodup right query ir)).2
-  intro backend
-  exact mem_supportingCandidates_iff_of_equivalent
-    left right query ir heq backend
+    (supportingCandidates_nodup right query ir)
+    (mem_supportingCandidates_iff_of_equivalent left right query ir heq)
 
 /-- A well-formed policy cannot distinguish equivalent registries by selected
     backend identity. -/
@@ -176,10 +265,10 @@ theorem selectSupporting_key_eq_of_equivalent
     supportingCandidates_perm_of_equivalent left right query ir heq
   apply BackendSelectionPolicy.select_key_eq_of_perm_of_matches
     wellFormed query hcandidates
-  · intro backend hmem
-    exact (left.mem_supportingCandidates_iff query ir backend).1 hmem |>.2.1
-  · intro backend hmem
-    exact (right.mem_supportingCandidates_iff query ir backend).1 hmem |>.2.1
+  · intro backend hcandidate
+    exact (left.mem_supportingCandidates_iff query ir backend).1 hcandidate |>.2.1
+  · intro backend hcandidate
+    exact (right.mem_supportingCandidates_iff query ir backend).1 hcandidate |>.2.1
 
 /-- Equivalent registries are indistinguishable by selected replay lowering.
     Empty candidate sets agree, while every successful selection lowers to the
