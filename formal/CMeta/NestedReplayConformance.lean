@@ -123,5 +123,44 @@ theorem CNestedReplayConformance.ir_within_certificate_realizable
     ∃ loweredIR, lowerReplayIR c11ReplayBackend ir = some loweredIR := by
   exact lowerReplayIR_progress c11ReplayBackend ir h
 
+/-- Distinct identities stay on the direct backend path. -/
+theorem CNestedReplayConformance.distinct_backend_plan_is_direct :
+    lowerReplayBackendPlan c11ReplayBackend distinctIR =
+      some ⟨distinctIR, 1,
+        .directReplay 1 (.directReplay 2 .emit)⟩ := by
+  native_decide
+
+/-- Re-entering producer 1 through producer 2 must lower to a deferred,
+    obstructed replay rather than a direct replay. -/
+theorem CNestedReplayConformance.reentry_backend_plan_is_deferred :
+    lowerReplayBackendPlan c11ReplayBackend reentrantIR =
+      some ⟨reentrantIR, 2,
+        .directReplay 1
+          (.directReplay 2 (.deferredObstructReplay 1 .emit))⟩ := by
+  native_decide
+
+/-- Every generated backend expansion plan respects the active-producer rule:
+    direct replay only occurs for an inactive producer identity, while any
+    active same-identity re-entry is deferred and obstructed. -/
+theorem CNestedReplayConformance.generated_backend_plan_has_no_direct_reentry
+    (ir : ReplayIR) (plan : ReplayBackendPlan)
+    (h : lowerReplayBackendPlan c11ReplayBackend ir = some plan) :
+    plan.expansion.respectsActiveProducers [] := by
+  exact lowerReplayBackendPlan_respects_active c11ReplayBackend ir plan h
+
+/-- The backend plan carries the same rescan-depth requirement computed from the
+    structural IR; it does not invent an independent manual budget. -/
+theorem CNestedReplayConformance.backend_plan_requirement_matches_ir
+    (ir : ReplayIR) (plan : ReplayBackendPlan)
+    (h : lowerReplayBackendPlan c11ReplayBackend ir = some plan) :
+    plan.requiredRescanDepth = ir.sameProducerDepth := by
+  exact lowerReplayBackendPlan_requirement c11ReplayBackend ir plan h
+
+/-- The compiler still rejects an IR outside the certified envelope before a
+    backend expansion plan can be emitted. -/
+theorem CNestedReplayConformance.depth5_has_no_backend_plan :
+    lowerReplayBackendPlan c11ReplayBackend depth5IR = none := by
+  native_decide
+
 end Producer
 end CMeta
