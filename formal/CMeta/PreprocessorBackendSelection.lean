@@ -404,8 +404,7 @@ private theorem select_rank_eq_aggregate_of_ne_nil
 
 /-- A well-formed policy selects the same backend identity from any two
     permutations whose candidates all belong to the same backend query. -/
--- TEMP-MODULE-BRIDGE(M7e): legacy PreprocessorBackendRegistrySubstitutability.selectSupporting_key_eq_of_equivalent
-public theorem select_key_eq_of_perm_of_matches
+theorem select_key_eq_of_perm_of_matches
     (wellFormed : WellFormedSelectionPolicy)
     (query : BackendQuery)
     {left right : List CertifiedPreprocessorBackend}
