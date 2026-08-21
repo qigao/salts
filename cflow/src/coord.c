@@ -42,357 +42,446 @@ struct coord_state {
 
     mtx_t lock;
     cflow_waker waiter;
-    atomic_bool wake_posted;
 };
 
-static bool coord_init(cflow_resumable *out,
-                       cflow_coord_mode mode,
-                       const cflow_resumable *children,
-                       size_t count,
-                       size_t value_size);
+typedef struct value_state {
+    const cmeta_type_desc *type;
+    unsigned char *value;
+    bool emitted;
+} value_state;
 
-static void coord_child_wake(void *context);
-static cflow_step coord_resume(void *state, void *out);
-static void coord_cancel(void *state);
-static void coord_destroy(void *state);
-
-static const cflow_resumable_ops coord_ops = {
-    coord_resume,
-    coord_cancel,
-    coord_destroy
-};
-
-static void coord_child_wake(void *context) {
-    coord_child *child = (coord_child *)context;
-    coord_state *state;
-    cflow_waker waiter = {0};
-
-    if (!child || !(state = child->owner)) return;
-
-    mtx_lock(&state->lock);
-    atomic_store_explicit(&child->waiting, false, memory_order_release);
-    if (state->waiter.wake &&
-        !atomic_exchange_explicit(&state->wake_posted, true, memory_order_acq_rel))
-        waiter = state->waiter;
-    mtx_unlock(&state->lock);
-
-    cflow_waker_wake(waiter);
+static cflow_step value_resume(void *state, cflow_resume_ctx *ctx, void *out) {
+    (void)ctx;
+    value_state *s = (value_state *)state;
+    if (!s || !out) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "value machine is invalid" };
+    if (s->emitted) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
+    memcpy(out, s->value, s->type->size);
+    s->emitted = true;
+    return (cflow_step){ CFLOW_STEP_VALUE_AND_DONE, {0}, NULL };
 }
 
-static bool coord_child_wait(coord_child *child) {
-    cflow_waker waker;
-    if (!child || !child->waitable.ops) return false;
-    waker.wake = coord_child_wake;
-    waker.context = child;
-    atomic_store_explicit(&child->waiting, true, memory_order_release);
-    if (!cflow_waitable_arm(child->waitable, waker)) {
-        atomic_store_explicit(&child->waiting, false, memory_order_release);
-        return false;
-    }
-    atomic_store_explicit(&child->armed, true, memory_order_release);
+static void value_destroy(void *state) {
+    value_state *s = (value_state *)state;
+    if (!s) return;
+    free(s->value);
+    free(s);
+}
+
+static const cflow_resumable_ops value_ops = { value_resume, NULL, value_destroy };
+
+bool cflow_resumable_from_value(cflow_resumable *out,
+                                 const cmeta_type_desc *type,
+                                 const void *value) {
+    if (!out || !type || !value || !type->size) return false;
+    value_state *s = calloc(1, sizeof(*s));
+    if (!s) return false;
+    s->value = malloc(type->size);
+    if (!s->value) { free(s); return false; }
+    memcpy(s->value, value, type->size);
+    s->type = type;
+    *out = (cflow_resumable){ "value", type, &value_ops, s };
     return true;
 }
 
-static void coord_child_disarm(coord_child *child) {
-    if (!child) return;
-    if (atomic_exchange_explicit(&child->armed, false, memory_order_acq_rel))
-        cflow_waitable_cancel(child->waitable);
-    atomic_store_explicit(&child->waiting, false, memory_order_release);
-}
+static bool all_have_value(const coord_state *s);
 
-static void coord_cancel_others(coord_state *state, size_t keep) {
-    size_t i;
-    for (i = 0; i < state->count; ++i) {
-        if (i == keep || state->children[i].done) continue;
-        coord_child_disarm(&state->children[i]);
-        cflow_resumable_cancel(&state->children[i].machine);
-        state->children[i].done = true;
+static bool coord_child_runnable(const coord_state *s, size_t i) {
+    const coord_child *c = &s->children[i];
+    if (c->done || atomic_load(&c->waiting)) return false;
+    switch (s->mode) {
+        case CFLOW_COORD_ALL:
+            return !c->has_value;
+        case CFLOW_COORD_ALL_DONE:
+            return true;
+        case CFLOW_COORD_ANY:
+            return true;
+        case CFLOW_COORD_LATEST:
+            /* Before combineLatest has an initial value from every child,
+             * do not drain a fast already-initialized child while another
+             * child is WAITing. This preserves scheduler fairness. */
+            return all_have_value(s) ? true : !c->has_value;
+        case CFLOW_COORD_SEQUENCE:
+            return i == s->sequence_index && !c->has_value;
     }
+    return false;
 }
 
-static bool coord_all_done(const coord_state *state) {
-    size_t i;
-    for (i = 0; i < state->count; ++i)
-        if (!state->children[i].done) return false;
+static void coord_child_wake(void *user) {
+    coord_child *c = (coord_child *)user;
+    if (!c || !c->owner) return;
+    coord_state *s = c->owner;
+    cflow_waker parent = {0};
+    if (mtx_lock(&s->lock) == thrd_success) {
+        atomic_store(&c->waiting, false);
+        atomic_store(&c->armed, false);
+        parent = s->waiter;
+        s->waiter = (cflow_waker){0};
+        (void)mtx_unlock(&s->lock);
+    }
+    if (parent.wake) parent.wake(parent.user);
+}
+
+static bool coord_wait_arm(void *state, cflow_waker waker) {
+    coord_state *s = (coord_state *)state;
+    if (!s) return false;
+
+    size_t *to_arm = calloc(s->count ? s->count : 1, sizeof(*to_arm));
+    if (!to_arm) return false;
+    size_t arm_count = 0;
+    bool ready = false;
+
+    if (mtx_lock(&s->lock) != thrd_success) { free(to_arm); return false; }
+    if (s->cancelled || s->error) ready = true;
+    else {
+        s->waiter = waker;
+        for (size_t i = 0; i < s->count; ++i) {
+            coord_child *c = &s->children[i];
+            if (atomic_load(&c->waiting) && !atomic_load(&c->armed)) {
+                atomic_store(&c->armed, true);
+                to_arm[arm_count++] = i;
+            } else if (coord_child_runnable(s, i)) {
+                ready = true;
+            }
+        }
+    }
+    if (ready) s->waiter = (cflow_waker){0};
+    (void)mtx_unlock(&s->lock);
+
+    bool ok = true;
+    for (size_t n = 0; n < arm_count; ++n) {
+        coord_child *c = &s->children[to_arm[n]];
+        cflow_waker cw = { coord_child_wake, c };
+        if (!cflow_waitable_valid(&c->waitable) ||
+            !cflow_waitable_arm(&c->waitable, cw)) {
+            ok = false;
+            if (mtx_lock(&s->lock) == thrd_success) {
+                atomic_store(&c->armed, false);
+                atomic_store(&c->waiting, false);
+                s->error = "coordination child waitable could not be armed";
+                s->waiter = (cflow_waker){0};
+                (void)mtx_unlock(&s->lock);
+            }
+            break;
+        }
+    }
+    free(to_arm);
+    if (ready && waker.wake) waker.wake(waker.user);
+    return ok;
+}
+
+static void coord_wait_cancel(void *state) {
+    coord_state *s = (coord_state *)state;
+    if (!s) return;
+    if (mtx_lock(&s->lock) != thrd_success) return;
+    s->waiter = (cflow_waker){0};
+    for (size_t i = 0; i < s->count; ++i) {
+        coord_child *c = &s->children[i];
+        if (atomic_load(&c->armed) && cflow_waitable_valid(&c->waitable)) {
+            cflow_waitable w = c->waitable;
+            atomic_store(&c->armed, false);
+            (void)mtx_unlock(&s->lock);
+            cflow_waitable_cancel(&w);
+            (void)mtx_lock(&s->lock);
+        }
+    }
+    (void)mtx_unlock(&s->lock);
+}
+
+CMETA_IMPLEMENTS(cflow_waitable, coord_waitable, 0,
+    .arm = coord_wait_arm,
+    .cancel = coord_wait_cancel
+);
+
+static bool all_have_value(const coord_state *s) {
+    for (size_t i = 0; i < s->count; ++i) if (!s->children[i].has_value) return false;
     return true;
 }
 
-static cflow_step coord_step_child(coord_state *state, size_t index) {
-    coord_child *child = &state->children[index];
-    cflow_step step;
+static bool all_done(const coord_state *s) {
+    for (size_t i = 0; i < s->count; ++i) if (!s->children[i].done) return false;
+    return true;
+}
 
-    if (child->done) return cflow_step_done();
-    coord_child_disarm(child);
-    step = cflow_resumable_resume(&child->machine, child->value);
+static bool any_runnable(const coord_state *s) {
+    for (size_t i = 0; i < s->count; ++i)
+        if (coord_child_runnable(s, i)) return true;
+    return false;
+}
+
+static void cancel_other_children(coord_state *s, size_t winner) {
+    for (size_t i = 0; i < s->count; ++i) {
+        if (i == winner) continue;
+        coord_child *c = &s->children[i];
+        if (!c->done && c->machine.ops && c->machine.ops->cancel)
+            c->machine.ops->cancel(c->machine.state);
+        c->done = true;
+    }
+}
+
+static cflow_step emit_event(coord_state *s, size_t index, bool done, void *out) {
+    cflow_coord_event event = { index, ++s->generation };
+    memcpy(out, &event, sizeof(event));
+    return (cflow_step){ done ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE, {0}, NULL };
+}
+
+static cflow_step resume_child(coord_state *s,
+                               size_t idx,
+                               cflow_resume_ctx *ctx,
+                               bool *produced) {
+    coord_child *c = &s->children[idx];
+    *produced = false;
+    if (c->done || atomic_load(&c->waiting))
+        return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
+
+    cflow_step step = c->machine.ops->resume(c->machine.state, ctx, c->value);
     switch (step.kind) {
         case CFLOW_STEP_VALUE:
-            child->has_value = true;
+            c->has_value = true;
+            *produced = true;
             return step;
         case CFLOW_STEP_VALUE_AND_DONE:
-            child->has_value = true;
-            child->done = true;
+            c->has_value = true;
+            c->done = true;
+            *produced = true;
             return step;
         case CFLOW_STEP_WAIT:
-            child->waitable = step.waitable;
-            if (!coord_child_wait(child)) {
-                state->error = "coordination wait arm failed";
-                child->done = true;
-                return cflow_step_error(state->error);
-            }
+            atomic_store(&c->waiting, true);
+            c->waitable = step.waitable;
             return step;
         case CFLOW_STEP_DONE:
-            child->done = true;
+            c->done = true;
             return step;
         case CFLOW_STEP_ERROR:
-            child->done = true;
-            state->error = step.error;
+            s->error = step.error ? step.error : "coordination child failed";
             return step;
     }
-    state->error = "invalid coordination step";
-    child->done = true;
-    return cflow_step_error(state->error);
+    s->error = "coordination child returned invalid step";
+    return (cflow_step){ CFLOW_STEP_ERROR, {0}, s->error };
 }
 
-static cflow_step coord_resume_any(coord_state *state, void *out) {
-    size_t i;
-    bool waiting = false;
-
-    for (i = 0; i < state->count; ++i) {
-        cflow_step step;
-        if (state->children[i].done) continue;
-        step = coord_step_child(state, i);
-        if (step.kind == CFLOW_STEP_VALUE || step.kind == CFLOW_STEP_VALUE_AND_DONE) {
-            if (out) memcpy(out, state->children[i].value, step.value_size);
-            coord_cancel_others(state, i);
-            return cflow_step_value_and_done(step.value_size);
+static cflow_step coord_resume_all(coord_state *s, cflow_resume_ctx *ctx, void *out) {
+    if (s->emitted_all) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
+    for (;;) {
+        if (all_have_value(s)) {
+            /* ALL is a one-shot barrier: once every child produced one value,
+             * the coordinator is complete and any longer-lived child is cancelled. */
+            for (size_t i = 0; i < s->count; ++i) {
+                coord_child *c = &s->children[i];
+                if (!c->done && c->machine.ops && c->machine.ops->cancel)
+                    c->machine.ops->cancel(c->machine.state);
+                c->done = true;
+            }
+            s->emitted_all = true;
+            return emit_event(s, SIZE_MAX, true, out);
         }
-        if (step.kind == CFLOW_STEP_ERROR) return step;
-        if (step.kind == CFLOW_STEP_WAIT) waiting = true;
-    }
-
-    if (waiting) return cflow_step_wait((cflow_waitable){0});
-    return cflow_step_done();
-}
-
-static cflow_step coord_resume_all(coord_state *state, void *out, bool require_done) {
-    size_t i;
-    bool waiting = false;
-    bool progressed = false;
-
-    for (i = 0; i < state->count; ++i) {
-        cflow_step step;
-        if (state->children[i].done) continue;
-        step = coord_step_child(state, i);
-        if (step.kind == CFLOW_STEP_ERROR) return step;
-        if (step.kind == CFLOW_STEP_WAIT) waiting = true;
-        if (step.kind == CFLOW_STEP_VALUE || step.kind == CFLOW_STEP_VALUE_AND_DONE)
-            progressed = true;
-    }
-
-    if (coord_all_done(state)) {
-        if (out && state->count > 0 && state->children[state->count - 1].has_value)
-            memcpy(out, state->children[state->count - 1].value,
-                   state->children[state->count - 1].machine.value_size);
-        return require_done ? cflow_step_done() :
-            cflow_step_value_and_done(state->count > 0 ?
-                state->children[state->count - 1].machine.value_size : 0u);
-    }
-    if (progressed && !require_done) return cflow_step_value(0u);
-    if (waiting) return cflow_step_wait((cflow_waitable){0});
-    return cflow_step_done();
-}
-
-static cflow_step coord_resume_sequence(coord_state *state, void *out) {
-    while (state->sequence_index < state->count) {
-        coord_child *child = &state->children[state->sequence_index];
-        cflow_step step = coord_step_child(state, state->sequence_index);
-        if (step.kind == CFLOW_STEP_ERROR || step.kind == CFLOW_STEP_WAIT)
-            return step;
-        if (step.kind == CFLOW_STEP_VALUE) {
-            if (out) memcpy(out, child->value, step.value_size);
-            return step;
+        bool progressed = false;
+        size_t start = s->cursor;
+        for (size_t n = 0; n < s->count; ++n) {
+            size_t i = (start + n) % s->count;
+            coord_child *c = &s->children[i];
+            if (c->done || atomic_load(&c->waiting) || c->has_value) continue;
+            bool produced = false;
+            cflow_step step = resume_child(s, i, ctx, &produced);
+            s->cursor = (i + 1) % s->count;
+            if (step.kind == CFLOW_STEP_ERROR) return step;
+            if (c->done && !c->has_value)
+                return (cflow_step){ CFLOW_STEP_ERROR, {0}, "ALL child completed without a value" };
+            if (produced || step.kind == CFLOW_STEP_DONE) progressed = true;
+            if (all_have_value(s)) break;
         }
-        if (step.kind == CFLOW_STEP_VALUE_AND_DONE) {
-            if (out) memcpy(out, child->value, step.value_size);
-            ++state->sequence_index;
-            return state->sequence_index == state->count ?
-                cflow_step_value_and_done(step.value_size) : cflow_step_value(step.value_size);
+        if (all_have_value(s)) continue;
+        if (!progressed && !any_runnable(s))
+            return (cflow_step){ CFLOW_STEP_WAIT, coord_waitable_as_cflow_waitable(s), NULL };
+    }
+}
+
+
+static cflow_step coord_resume_all_done(coord_state *s, cflow_resume_ctx *ctx, void *out) {
+    if (s->emitted_all) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
+    for (;;) {
+        if (all_done(s)) {
+            if (!all_have_value(s))
+                return (cflow_step){ CFLOW_STEP_ERROR, {0}, "ALL_DONE child completed without a value" };
+            s->emitted_all = true;
+            return emit_event(s, SIZE_MAX, true, out);
         }
-        if (step.kind == CFLOW_STEP_DONE) ++state->sequence_index;
-    }
-    return cflow_step_done();
-}
-
-static cflow_step coord_resume_latest(coord_state *state, void *out) {
-    size_t i;
-    bool waiting = false;
-    bool have = true;
-    bool changed = false;
-
-    for (i = 0; i < state->count; ++i) {
-        cflow_step step;
-        if (state->children[i].done) continue;
-        step = coord_step_child(state, i);
-        if (step.kind == CFLOW_STEP_ERROR) return step;
-        if (step.kind == CFLOW_STEP_WAIT) waiting = true;
-        if (step.kind == CFLOW_STEP_VALUE || step.kind == CFLOW_STEP_VALUE_AND_DONE)
-            changed = true;
-    }
-    for (i = 0; i < state->count; ++i)
-        if (!state->children[i].has_value) have = false;
-
-    if (have && changed) {
-        if (out && state->count > 0)
-            memcpy(out, state->children[state->count - 1].value,
-                   state->children[state->count - 1].machine.value_size);
-        return coord_all_done(state) ?
-            cflow_step_value_and_done(state->count > 0 ?
-                state->children[state->count - 1].machine.value_size : 0u) :
-            cflow_step_value(state->count > 0 ?
-                state->children[state->count - 1].machine.value_size : 0u);
-    }
-    if (coord_all_done(state)) return cflow_step_done();
-    if (waiting) return cflow_step_wait((cflow_waitable){0});
-    return cflow_step_done();
-}
-
-static cflow_step coord_resume(void *opaque, void *out) {
-    coord_state *state = (coord_state *)opaque;
-    cflow_step result;
-    if (!state || state->cancelled) return cflow_step_done();
-
-    mtx_lock(&state->lock);
-    atomic_store_explicit(&state->wake_posted, false, memory_order_release);
-    mtx_unlock(&state->lock);
-
-    switch (state->mode) {
-        case CFLOW_COORD_ALL:
-            result = coord_resume_all(state, out, false);
-            break;
-        case CFLOW_COORD_ALL_DONE:
-            result = coord_resume_all(state, out, true);
-            break;
-        case CFLOW_COORD_ANY:
-            result = coord_resume_any(state, out);
-            break;
-        case CFLOW_COORD_LATEST:
-            result = coord_resume_latest(state, out);
-            break;
-        case CFLOW_COORD_SEQUENCE:
-            result = coord_resume_sequence(state, out);
-            break;
-        default:
-            result = cflow_step_error("unknown coordination mode");
-            break;
-    }
-
-    if (result.kind == CFLOW_STEP_WAIT) {
-        mtx_lock(&state->lock);
-        state->waiter = result.waitable.ops ? state->waiter : state->waiter;
-        mtx_unlock(&state->lock);
-    }
-    return result;
-}
-
-static void coord_cancel(void *opaque) {
-    coord_state *state = (coord_state *)opaque;
-    size_t i;
-    if (!state) return;
-    state->cancelled = true;
-    for (i = 0; i < state->count; ++i) {
-        coord_child_disarm(&state->children[i]);
-        cflow_resumable_cancel(&state->children[i].machine);
+        bool progressed = false;
+        size_t start = s->cursor;
+        for (size_t n = 0; n < s->count; ++n) {
+            size_t i = (start + n) % s->count;
+            coord_child *c = &s->children[i];
+            if (c->done || atomic_load(&c->waiting)) continue;
+            bool produced = false;
+            cflow_step step = resume_child(s, i, ctx, &produced);
+            s->cursor = (i + 1) % s->count;
+            if (step.kind == CFLOW_STEP_ERROR) return step;
+            if (produced || step.kind == CFLOW_STEP_DONE) progressed = true;
+        }
+        if (all_done(s)) continue;
+        if (!progressed && !any_runnable(s))
+            return (cflow_step){ CFLOW_STEP_WAIT, coord_waitable_as_cflow_waitable(s), NULL };
     }
 }
 
-static void coord_destroy(void *opaque) {
-    coord_state *state = (coord_state *)opaque;
-    size_t i;
-    if (!state) return;
-    for (i = 0; i < state->count; ++i) {
-        coord_child_disarm(&state->children[i]);
-        cflow_resumable_destroy(&state->children[i].machine);
-        free(state->children[i].value);
+static cflow_step coord_resume_any(coord_state *s, cflow_resume_ctx *ctx, void *out) {
+    for (;;) {
+        size_t start = s->cursor;
+        for (size_t n = 0; n < s->count; ++n) {
+            size_t i = (start + n) % s->count;
+            coord_child *c = &s->children[i];
+            if (c->done || atomic_load(&c->waiting)) continue;
+            bool produced = false;
+            cflow_step step = resume_child(s, i, ctx, &produced);
+            s->cursor = (i + 1) % s->count;
+            if (step.kind == CFLOW_STEP_ERROR) return step;
+            if (produced) {
+                cancel_other_children(s, i);
+                return emit_event(s, i, true, out);
+            }
+        }
+        if (all_done(s)) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
+        if (!any_runnable(s)) return (cflow_step){ CFLOW_STEP_WAIT, coord_waitable_as_cflow_waitable(s), NULL };
     }
-    free(state->children);
-    mtx_destroy(&state->lock);
-    free(state);
 }
 
-static bool coord_init(cflow_resumable *out,
-                       cflow_coord_mode mode,
-                       const cflow_resumable *children,
-                       size_t count,
-                       size_t value_size) {
-    coord_state *state;
-    size_t i;
-    if (!out || (count && !children)) return false;
-    state = (coord_state *)calloc(1, sizeof(*state));
-    if (!state) return false;
-    state->mode = mode;
-    state->count = count;
-    if (mtx_init(&state->lock, mtx_plain) != thrd_success) {
-        free(state);
-        return false;
+static cflow_step coord_resume_sequence(coord_state *s, cflow_resume_ctx *ctx, void *out) {
+    while (s->sequence_index < s->count) {
+        size_t i = s->sequence_index;
+        coord_child *c = &s->children[i];
+        if (atomic_load(&c->waiting)) return (cflow_step){ CFLOW_STEP_WAIT, coord_waitable_as_cflow_waitable(s), NULL };
+        if (c->done && !c->has_value) { ++s->sequence_index; continue; }
+        if (!c->has_value) {
+            bool produced = false;
+            cflow_step step = resume_child(s, i, ctx, &produced);
+            if (step.kind == CFLOW_STEP_ERROR) return step;
+            if (step.kind == CFLOW_STEP_WAIT) return (cflow_step){ CFLOW_STEP_WAIT, coord_waitable_as_cflow_waitable(s), NULL };
+            if (!produced) { if (c->done) ++s->sequence_index; continue; }
+        }
+        bool final = (i + 1 == s->count);
+        if (!c->done && c->machine.ops && c->machine.ops->cancel)
+            c->machine.ops->cancel(c->machine.state);
+        c->done = true;
+        ++s->sequence_index;
+        return emit_event(s, i, final, out);
     }
-    if (count) {
-        state->children = (coord_child *)calloc(count, sizeof(*state->children));
-        if (!state->children) {
-            mtx_destroy(&state->lock);
-            free(state);
+    return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
+}
+
+static cflow_step coord_resume_latest(coord_state *s, cflow_resume_ctx *ctx, void *out) {
+    for (;;) {
+        if (all_done(s)) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
+        bool progressed = false;
+        size_t start = s->cursor;
+        for (size_t n = 0; n < s->count; ++n) {
+            size_t i = (start + n) % s->count;
+            if (!coord_child_runnable(s, i)) continue;
+            bool produced = false;
+            cflow_step step = resume_child(s, i, ctx, &produced);
+            s->cursor = (i + 1) % s->count;
+            if (step.kind == CFLOW_STEP_ERROR) return step;
+            if (produced) {
+                progressed = true;
+                if (all_have_value(s)) return emit_event(s, i, all_done(s), out);
+            }
+        }
+        /* If a child terminates before ever producing, combineLatest can never
+         * become ready. */
+        for (size_t i = 0; i < s->count; ++i)
+            if (s->children[i].done && !s->children[i].has_value)
+                return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
+        if (!progressed && !any_runnable(s))
+            return (cflow_step){ CFLOW_STEP_WAIT, coord_waitable_as_cflow_waitable(s), NULL };
+    }
+}
+
+static cflow_step coord_resume(void *state, cflow_resume_ctx *ctx, void *out) {
+    coord_state *s = (coord_state *)state;
+    if (!s || !ctx || !out) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "coordination state is invalid" };
+    if (s->cancelled) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
+    if (s->error) return (cflow_step){ CFLOW_STEP_ERROR, {0}, s->error };
+    switch (s->mode) {
+        case CFLOW_COORD_ALL: return coord_resume_all(s, ctx, out);
+        case CFLOW_COORD_ALL_DONE: return coord_resume_all_done(s, ctx, out);
+        case CFLOW_COORD_ANY: return coord_resume_any(s, ctx, out);
+        case CFLOW_COORD_LATEST: return coord_resume_latest(s, ctx, out);
+        case CFLOW_COORD_SEQUENCE: return coord_resume_sequence(s, ctx, out);
+    }
+    return (cflow_step){ CFLOW_STEP_ERROR, {0}, "invalid coordination mode" };
+}
+
+static void coord_cancel(void *state) {
+    coord_state *s = (coord_state *)state;
+    if (!s) return;
+    s->cancelled = true;
+    coord_wait_cancel(s);
+    for (size_t i = 0; i < s->count; ++i) {
+        coord_child *c = &s->children[i];
+        if (!c->done && c->machine.ops && c->machine.ops->cancel)
+            c->machine.ops->cancel(c->machine.state);
+        c->done = true;
+    }
+}
+
+static void coord_destroy(void *state) {
+    coord_state *s = (coord_state *)state;
+    if (!s) return;
+    coord_cancel(s);
+    for (size_t i = 0; i < s->count; ++i) {
+        coord_child *c = &s->children[i];
+        if (c->machine.ops && c->machine.ops->destroy)
+            c->machine.ops->destroy(c->machine.state);
+        free(c->value);
+    }
+    mtx_destroy(&s->lock);
+    free(s->children);
+    free(s);
+}
+
+static const cflow_resumable_ops coord_ops = { coord_resume, coord_cancel, coord_destroy };
+
+bool cflow_resumable_from_coordination(cflow_resumable *out,
+                                        cflow_coord_mode mode,
+                                        cflow_resumable *children,
+                                        size_t count) {
+    if (!out || !children || count == 0) return false;
+    coord_state *s = calloc(1, sizeof(*s));
+    if (!s) return false;
+    if (mtx_init(&s->lock, mtx_plain) != thrd_success) { free(s); return false; }
+    s->children = calloc(count, sizeof(*s->children));
+    if (!s->children) { mtx_destroy(&s->lock); free(s); return false; }
+    s->mode = mode;
+    s->count = count;
+    for (size_t i = 0; i < count; ++i) {
+        if (!children[i].ops || !children[i].ops->resume || !children[i].output_type) {
+            coord_destroy(s);
             return false;
         }
-    }
-    for (i = 0; i < count; ++i) {
-        state->children[i].owner = state;
-        state->children[i].index = i;
-        state->children[i].machine = children[i];
-        state->children[i].value = value_size ? (unsigned char *)malloc(value_size) : NULL;
-        if (value_size && !state->children[i].value) {
-            coord_destroy(state);
+        s->children[i].owner = s;
+        s->children[i].index = i;
+        atomic_init(&s->children[i].waiting, false);
+        atomic_init(&s->children[i].armed, false);
+        s->children[i].machine = children[i];
+        s->children[i].value = malloc(children[i].output_type->size ? children[i].output_type->size : 1);
+        if (!s->children[i].value) {
+            /* Only machines already moved into s are destroyed here. */
+            for (size_t j = i + 1; j < count; ++j) memset(&s->children[j].machine, 0, sizeof(s->children[j].machine));
+            coord_destroy(s);
             return false;
         }
-        atomic_init(&state->children[i].waiting, false);
-        atomic_init(&state->children[i].armed, false);
+        memset(&children[i], 0, sizeof(children[i]));
     }
-    atomic_init(&state->wake_posted, false);
-    out->ops = &coord_ops;
-    out->state = state;
-    out->value_size = value_size;
+    *out = (cflow_resumable){ "coordination", &cflow_type_coord_event, &coord_ops, s };
     return true;
 }
 
-bool cflow_coord_all(cflow_resumable *out,
-                     const cflow_resumable *children,
-                     size_t count,
-                     size_t value_size) {
-    return coord_init(out, CFLOW_COORD_ALL, children, count, value_size);
-}
-
-bool cflow_coord_all_done(cflow_resumable *out,
-                          const cflow_resumable *children,
-                          size_t count,
-                          size_t value_size) {
-    return coord_init(out, CFLOW_COORD_ALL_DONE, children, count, value_size);
-}
-
-bool cflow_coord_any(cflow_resumable *out,
-                     const cflow_resumable *children,
-                     size_t count,
-                     size_t value_size) {
-    return coord_init(out, CFLOW_COORD_ANY, children, count, value_size);
-}
-
-bool cflow_coord_latest(cflow_resumable *out,
-                        const cflow_resumable *children,
-                        size_t count,
-                        size_t value_size) {
-    return coord_init(out, CFLOW_COORD_LATEST, children, count, value_size);
-}
-
-bool cflow_coord_sequence(cflow_resumable *out,
-                          const cflow_resumable *children,
-                          size_t count,
-                          size_t value_size) {
-    return coord_init(out, CFLOW_COORD_SEQUENCE, children, count, value_size);
+bool cflow_coord_value(const cflow_resumable *coord,
+                       size_t child_index,
+                       const cmeta_type_desc **type,
+                       const void **value) {
+    if (!coord || coord->ops != &coord_ops || !coord->state) return false;
+    coord_state *s = (coord_state *)coord->state;
+    if (child_index >= s->count || !s->children[child_index].has_value) return false;
+    if (type) *type = s->children[child_index].machine.output_type;
+    if (value) *value = s->children[child_index].value;
+    return true;
 }
