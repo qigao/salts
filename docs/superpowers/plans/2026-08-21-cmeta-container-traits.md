@@ -187,16 +187,18 @@ git commit -m "feat(cmeta): attach traits to type descriptors"
 
 ---
 
-### Task 3: Make ranges mutation-aware
+### Task 3: Make ranges mutation-aware with opaque cursors
 
 **Files:**
 - Modify: `cmeta/include/cmeta/range.h`
 - Modify: `cmeta/include/cmeta/container.h`
 - Modify: `cmeta/tests/cmeta_core_test.c`
+- Modify: `cflow/src/sources.c`
+- Modify: `cflow/tests/cflow_pipeline_test.c`
 
 **Interfaces:**
 - Consumes: semantic type descriptors and existing Range factories.
-- Produces: `cmeta_range.version`, `cmeta_range.current_version`, and `CMETA_RANGE_MUTATED`.
+- Produces: `cmeta_range_cursor`, `cmeta_range.version`, `cmeta_range.current_version`, and `CMETA_GEN_MUTATED`; CFlow stores the opaque cursor without interpreting it.
 
 - [ ] **Step 1: Write failing generation tests**
 
@@ -206,7 +208,7 @@ Use a fake owner with a mutable generation counter:
 it("fails when a borrowed range owner mutates") {
     fake_range_owner owner = { .generation = 4, .values = {1, 2}, .count = 2 };
     cmeta_range range = fake_range(&owner);
-    size_t cursor = 0;
+    cmeta_range_cursor cursor = {0};
     int out = 0;
     check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_VALUE);
     owner.generation++;
@@ -214,25 +216,36 @@ it("fails when a borrowed range owner mutates") {
 }
 ```
 
+Add a fake linked owner whose `next` callback stores its current node in `cursor.state[0]`, proving traversal does not require ordinal lookup. Add a CFlow pipeline case that consumes the fake Range and reports an execution error after the owner generation changes.
+
 - [ ] **Step 2: Run RED**
 
-Expected: compile failure for generation fields and `CMETA_GEN_MUTATED`.
+Expected: compile failure for `cmeta_range_cursor`, generation fields, and `CMETA_GEN_MUTATED`, or CFlow still stores `size_t cursor`.
 
-- [ ] **Step 3: Add version validation without owning the source**
+- [ ] **Step 3: Add opaque cursor and version validation without owning the source**
 
-Extend `cmeta_range` with a captured `uint64_t version` and optional callback:
+Define the cursor and extend `cmeta_range` with a captured version and optional callback:
 
 ```c
+typedef struct cmeta_range_cursor {
+    size_t index;
+    void *state[2];
+} cmeta_range_cursor;
+
 typedef uint64_t (*cmeta_range_version_fn)(const void *object);
 ```
 
-`cmeta_range_next()` compares the current version before calling `next`; unchanged legacy ranges use a NULL callback and retain current behavior. Generated Container range macros accept a version accessor rather than reading a concrete raw layout.
+Change `cmeta_range_next_fn` and `cmeta_range_next()` to accept `cmeta_range_cursor *`. `cmeta_range_next()` compares the current version before calling `next`; unchanged legacy ranges use a NULL version callback. Generated Container range macros accept a version accessor rather than reading a concrete raw layout. Array-style ranges use `cursor.index`; linked/tree ranges may use `cursor.state`.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [ ] **Step 4: Migrate the direct CFlow caller**
+
+Replace `range_state.size_t cursor` in `cflow/src/sources.c` with `cmeta_range_cursor cursor`. Map `CMETA_GEN_MUTATED` to `CFLOW_STEP_ERROR` with the stable message `"range owner mutated"`; do not retry or restart iteration.
+
+- [ ] **Step 5: Run GREEN and commit**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target cmeta_core_test && ctest --preset win-release-user -R ""^cmeta_core_test$"" --output-on-failure"
-git add cmeta/include/cmeta/range.h cmeta/include/cmeta/container.h cmeta/tests/cmeta_core_test.c
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target cmeta_core_test cflow_pipeline_test && ctest --preset win-release-user -R ""^(cmeta_core_test|cflow_pipeline_test)$"" --output-on-failure"
+git add cmeta/include/cmeta/range.h cmeta/include/cmeta/container.h cmeta/tests/cmeta_core_test.c cflow/src/sources.c cflow/tests/cflow_pipeline_test.c
 git commit -m "feat(cmeta): detect mutated range owners"
 ```
 

@@ -56,8 +56,7 @@ add_subdirectory(vendor)
 add_subdirectory(tinytest) 
 add_subdirectory(cmeta)
 add_subdirectory(utils)
-add_subdirectory(cflow)
-add_subdirectory(stream)
+add_subdirectory(cflow) 
 add_subdirectory(turbo_serial)
 
 # Package Configuration
