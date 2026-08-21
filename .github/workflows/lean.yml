@@ -51,6 +51,7 @@ jobs:
           cmake --build --preset build-formal-linux \
             --target cmeta_type_identity_conformance_gen \
                      cmeta_descriptor_bridge_conformance_gen \
+                     cmeta_type_identity_multi_tu \
                      cmeta_type_universe_probe \
                      cmeta_plan_conformance_gen \
                      cmeta_structured_conformance_gen \
@@ -65,6 +66,12 @@ jobs:
           set -euo pipefail
           build/formal-linux/bin/cmeta_descriptor_bridge_conformance_gen \
             > /tmp/DescriptorBridgeGeneratedC.lean
+
+      - name: Execute multi-TU TypeId applicability
+        shell: bash
+        run: |
+          set -euo pipefail
+          build/formal-linux/bin/cmeta_type_identity_multi_tu
 
       - name: Verify type identity conformance snapshot
         shell: bash
