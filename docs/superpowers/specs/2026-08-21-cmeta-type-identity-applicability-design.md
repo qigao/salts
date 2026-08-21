@@ -1,6 +1,6 @@
 # CMeta Type Identity Applicability and Descriptor Bridge
 
-Status: draft for user review  
+Status: architecture baseline — Gate A implemented and verified  
 Date: 2026-08-21  
 Branch: `leanv4`  
 Parent architecture: `2026-08-21-cmeta-hexagonal-architecture-design.md`  
@@ -8,94 +8,75 @@ Related type architecture: `2026-08-21-cmeta-type-application-design.md`
 
 ## 1. Purpose
 
-This specification defines what it means for CMeta Core `TypeId` to be **applicable** to the real CMeta type system, and defines the proof obligations that must be satisfied before `cmeta_type_desc` can use `TypeId` as semantic authority.
-
-The goal is not merely to prove that the abstract `TypeId` model is internally consistent. The goal is to establish that the model is adequate for existing strict-C11 CMeta descriptors, multi-translation-unit use, pointers, aliases, finite generic applications, containers, callable signatures, and CFlow consumers.
-
-The required evidence has three distinct layers:
+This specification defines what it means for CMeta Core `TypeId` to be applicable to the real CMeta type system. It separates three kinds of evidence:
 
 ```text
-1. Semantic proof
-   Is the TypeId/equality model internally well-defined?
+Semantic proof
+    Is the TypeId/equality model internally well-defined?
 
-2. Implementation conformance
-   Does the real C implementation agree with the formal model on generated witnesses?
+Implementation conformance
+    Does the real C implementation agree with the formal model on checked witnesses?
 
-3. Applicability proof
-   Can real CMeta type scenarios be represented without descriptor addresses,
-   display strings, generated symbols, or accidental layout equality becoming identity?
+Applicability proof
+    Do real CMeta scenarios, including multi-TU descriptors and existing consumers,
+    obey the intended semantic identity rules?
 ```
 
 No one layer substitutes for another.
 
-## 2. Current verified baseline
+Gate A connects the already implemented TypeId kernel to real `cmeta_type_desc` objects. Later gates extend structural identity to current value generics, containers, and CMeta Extend.
 
-The implemented baseline already contains:
+## 2. Verified baseline
 
-```text
-TypeId forms:
-    ATOM
-    POINTER
-    CONST
-    APPLY
-
-GenericConstructor:
-    stable semantic id
-    finite arity
-
-KnownTypes / CallableSignatures:
-    separate finite universes
-```
-
-The current CI also contains real C -> generated Lean -> kernel conformance witnesses for selected TypeId cases, plus a probe showing that adding a known-only type does not enlarge the full callable Cartesian-product universe.
-
-This baseline is evidence for the semantic kernel. It is not yet a proof that every existing `cmeta_type_desc` carries or correctly projects to a structural TypeId.
-
-## 3. Scope
-
-This specification covers:
-
-- semantic descriptor equality once TypeId is attached;
-- migration from legacy descriptors;
-- atom and pointer descriptor identity;
-- multi-TU address independence;
-- negative/adversarial identity cases;
-- existing generic/value/container applicability obligations;
-- KnownTypes/CallableSignatures applicability;
-- CFlow regression obligations;
-- Lean model and C conformance structure;
-- the acceptance gate for the descriptor bridge.
-
-This specification does **not** implement:
-
-- `M<A,B>` parsing;
-- CMeta Extend;
-- canonical generated C names;
-- Task/State/Exec;
-- arbitrary non-type generic arguments;
-- a general compile-time evaluator.
-
-## 4. Core principle: semantic identity dominates representation
-
-For any descriptor with structural identity, the identity object is authoritative.
-
-Semantic equality MUST NOT depend on:
+CMeta Core already implements structural TypeId forms:
 
 ```text
-descriptor address
-display name
-typedef alias
-generated symbol
-source whitespace
-same size/alignment
-translation-unit-local object address
+ATOM
+POINTER
+CONST
+APPLY
 ```
 
-A descriptor may still carry name/layout metadata for diagnostics, ABI checks, storage, and legacy migration, but those fields cease to define semantic identity once both compared descriptors have structural TypeIds.
+and finite `GenericConstructor` metadata. `KnownTypes` and `CallableSignatures` are separate finite universes.
 
-## 5. Descriptor bridge target
+Gate A now additionally implements:
 
-The architectural target is:
+```text
+cmeta_type_desc.identity
+cmeta_type_identity_of(...)
+cmeta_type_desc_valid(...)
+three-mode cmeta_type_equal(...)
+Core builtin atom TypeIds
+Core builtin pointer TypeIds
+multi-TU structural descriptor equality
+C -> generated Lean descriptor conformance
+Lean DescriptorView semantic equality laws
+```
+
+The current header-local value/container descriptors are not thereby declared structurally identified. That is Gate B/C work.
+
+## 3. Hexagonal ownership
+
+The descriptor bridge belongs to CMeta Core. It does not introduce a dependency on Extend, State, Exec, CFlow, minicoro, or OS APIs.
+
+```text
+CMeta Extend
+     │ lowers to
+     ▼
+CMeta Core
+  TypeId
+  cmeta_type_desc
+  semantic equality
+     ▲
+     │ consumed by
+State / Exec / CFlow / value & container modules
+```
+
+The bridge changes Core semantic metadata, not source syntax.
+
+## 4. Descriptor representation
+
+The implemented descriptor shape is:
 
 ```c
 typedef struct cmeta_type_desc {
@@ -108,15 +89,15 @@ typedef struct cmeta_type_desc {
 } cmeta_type_desc;
 ```
 
-Before this public layout is changed, existing positional `cmeta_type_desc` initializers MUST be migrated to designated initializers so the new field cannot silently bind to old positional assumptions or produce warning-driven build failures.
+Core and generated CMeta container descriptor initializers touched by this migration use designated fields. Gate A container descriptors explicitly keep `.identity = NULL` until container structural identity is implemented.
 
-Header-local generated descriptors remain supported.
+Descriptor addresses are never semantic identity.
 
-## 6. Equality modes
+## 5. Equality authority
 
-The migration has exactly three equality modes.
+The migration has exactly three modes.
 
-### 6.1 Structural / structural
+### 5.1 Structural / structural
 
 ```text
 A.identity != NULL
@@ -130,50 +111,107 @@ cmeta_type_equal(A,B)
     = cmeta_type_identity_equal(A.identity, B.identity)
 ```
 
-Legacy name/layout fields MUST NOT override a structural inequality.
+Display names, size, alignment, descriptor addresses, and generated symbol names cannot override a structural inequality.
 
-### 6.2 Legacy / legacy
+### 5.2 Legacy / legacy
 
 ```text
 A.identity == NULL
 B.identity == NULL
 ```
 
-The existing conservative legacy comparison remains temporarily valid:
+The compatibility comparison remains:
 
 ```text
 kind
 size
 align
 name
-recursive pointee comparison for pointers
+recursive pointee comparison for legacy pointers
 ```
 
-This preserves existing strict-C11 descriptors during staged migration.
+This is a migration path, not the target identity model.
 
-### 6.3 Structural / legacy — conservative isolation
+### 5.3 Structural / legacy
 
-```text
-exactly one identity is NULL
-```
-
-Then:
+If exactly one descriptor has structural identity:
 
 ```text
 cmeta_type_equal(A,B) == false
 ```
 
-This rule is mandatory.
+This isolation rule is mandatory. A structural descriptor never falls back to display-name/layout equality.
 
-Mixed-mode equality MUST NOT fall back to display-name/layout comparison. Otherwise a descriptor that already has semantic identity could still be equated to an unrelated legacy descriptor through string/layout coincidence, defeating TypeId authority.
+If two real descriptors should be semantically equal, migration must give both the correct TypeId rather than weaken equality.
 
-If a real consumer requires two descriptors to compare equal, the migration MUST give both descriptors the correct identity rather than weaken `cmeta_type_equal`.
+## 6. Descriptor validation
 
-A separate layout-compatibility API is not introduced in this slice. It may be designed later only if a concrete consumer requires representation compatibility that is intentionally weaker than semantic type equality.
+Gate A exposes:
 
-## 7. Formal descriptor model
+```c
+const cmeta_type_identity *cmeta_type_identity_of(
+    const cmeta_type_desc *desc);
 
-The Lean applicability model SHOULD distinguish semantic identity from legacy representation.
+bool cmeta_type_desc_valid(
+    const cmeta_type_desc *desc);
+```
+
+A structural descriptor must contain a valid TypeId.
+
+A structural pointer descriptor additionally requires:
+
+```text
+kind == CMETA_T_POINTER
+pointee != NULL
+pointee.identity != NULL
+identity.form == POINTER
+identity.base == pointee.identity
+```
+
+A pointer whose pointee is still legacy remains legacy in this gate.
+
+Equality does not repair malformed descriptors; validation and equality have separate responsibilities.
+
+## 7. Core builtin stable IDs
+
+Gate A publishes explicit Core-owned semantic IDs:
+
+```text
+cmeta.void
+cmeta.bool
+cmeta.int
+cmeta.long
+cmeta.float
+cmeta.double
+cmeta.size
+cmeta.gen_status
+```
+
+These IDs are selected from the finite built-in CMeta row/token schema. They are not derived by parsing `desc->name`.
+
+Project/user atom rows remain legacy unless an explicit stable-ID schema is provided by a later design.
+
+## 8. Pointer identity
+
+Builtin pointer identity is structural:
+
+```text
+identity(T*) = POINTER(identity(T))
+```
+
+It is not encoded as `ATOM("T *")`.
+
+Gate A witnesses include distinct pointer types such as:
+
+```text
+POINTER(cmeta.int) != POINTER(cmeta.long)
+```
+
+The descriptor validator also checks that a pointer TypeId base matches its structural pointee descriptor.
+
+## 9. Formal DescriptorView model
+
+`formal/CMeta/DescriptorBridge.lean` separates structural identity from legacy representation.
 
 Conceptually:
 
@@ -183,321 +221,121 @@ structure LegacyDesc where
   size : Nat
   align : Nat
   kind : LegacyKind
-  pointee : Option LegacyDesc
+  pointeeKey : Option String
 
 structure DescriptorView where
   identity : Option TypeId
   legacy : LegacyDesc
 ```
 
-The model equality is:
+The semantic authority is modeled as a tagged key:
 
 ```lean
-def DescriptorView.semanticEq (a b : DescriptorView) : Bool :=
-  match a.identity, b.identity with
-  | some x, some y => x == y
-  | none, none     => legacyEq a.legacy b.legacy
-  | _, _           => false
+inductive DescriptorSemanticKey where
+  | legacy (desc : LegacyDesc)
+  | structural (typeId : TypeId)
 ```
 
-The real C representation may use descriptor pointers for recursive metadata, but descriptor addresses are intentionally absent from the formal semantic equality model.
+Therefore structural and legacy equivalence classes are disjoint by construction.
 
-## 8. Required formal properties
-
-The descriptor model MUST establish at least the following properties.
-
-### 8.1 Reflexivity
-
-Every well-formed descriptor is equal to itself.
+The formal model proves proposition-level semantic equality properties:
 
 ```text
-semanticEq d d = true
+reflexivity
+symmetry
+transitivity
+structural identity dominance over legacy metadata
+same legacy metadata cannot erase different TypeIds
+mixed structural/legacy isolation
 ```
 
-### 8.2 Symmetry
+Descriptor/object addresses are absent from the formal semantic model.
+
+## 10. Real C conformance witness
+
+`formal/cmeta_descriptor_bridge_conformance_gen.c` uses explicit runtime checks that remain active under Release/`NDEBUG` builds.
+
+This is intentional: plain C `assert(...)` is not an acceptable formal witness because the formal preset defines `NDEBUG`.
+
+The C witness checks and emits computed results for:
 
 ```text
-semanticEq a b = semanticEq b a
+legacy/legacy equality
+same TypeId + different display/layout metadata
+same layout/display + different TypeId
+structural/legacy isolation
+builtin int structural identity
+int* versus long* inequality
 ```
 
-### 8.3 Transitivity for well-formed descriptors
-
-If:
+Its output is checked byte-for-byte against:
 
 ```text
-semanticEq a b = true
-semanticEq b c = true
+formal/CMeta/DescriptorBridgeGeneratedC.lean
 ```
 
-then:
+and re-evaluated by:
 
 ```text
-semanticEq a c = true
+formal/CMeta/DescriptorBridgeConformance.lean
 ```
 
-The mixed-mode isolation rule makes structural and legacy equivalence classes disjoint during migration.
+## 11. Multi-translation-unit applicability
 
-### 8.4 Identity dominance
-
-For two structural descriptors, changing legacy `name/size/align` metadata in the formal witness MUST NOT change semantic equality if their TypeIds remain equal.
-
-Conversely, equal legacy metadata MUST NOT make two different structural TypeIds equal.
-
-### 8.5 Mixed-mode isolation
+Gate A includes a real executable built from:
 
 ```text
-some(TypeId) vs none
-    => false
+formal/type_identity_tu_a.c
+formal/type_identity_tu_b.c
+formal/type_identity_multi_tu.c
 ```
 
-must be explicit in the formal model and C witness.
-
-### 8.6 Address independence
-
-Semantic equality cannot mention descriptor address. Multi-TU C witnesses provide the implementation evidence for this property.
-
-## 9. Descriptor well-formedness
-
-A structural descriptor SHOULD have a validation relation separate from equality.
-
-Minimum bridge requirements:
-
-- `identity` must itself be a valid TypeId;
-- if `kind == CMETA_T_POINTER` and identity is structural, the TypeId form MUST be `POINTER`;
-- a structural pointer descriptor MUST have a non-null `pointee`;
-- the pointer TypeId base MUST equal the pointee descriptor TypeId when the pointee is structural;
-- if the pointee remains legacy, the pointer descriptor MUST remain legacy in the first bridge slice rather than claim a partially structural pointer identity.
-
-The first bridge slice does not over-constrain non-pointer atoms/applications by layout kind. For example `CONST(T)` may have the same storage kind/layout as `T`, while remaining a distinct semantic TypeId.
-
-## 10. Applicability class A — built-in atoms
-
-The bridge MUST demonstrate stable structural identities for Core built-ins such as:
+It demonstrates:
 
 ```text
-bool
-int
-long
-float
-double
-void
-size_t
-cmeta_gen_status
+descriptorA address != descriptorB address
+identityA address   != identityB address
+TypeId(identityA)   == TypeId(identityB)
+cmeta_type_equal(descriptorA, descriptorB) == true
 ```
 
-Example semantic ids:
+The same executable proves this for structural pointer descriptors and also proves:
 
 ```text
-cmeta.bool
-cmeta.int
-cmeta.long
-cmeta.float
-cmeta.double
-cmeta.void
-cmeta.size
-cmeta.gen_status
+same layout + different TypeId -> false
+structural + legacy            -> false
 ```
 
-Exact stable IDs are part of Core semantic configuration once published and MUST NOT be derived by parsing the display string in `cmeta_type_desc.name`.
+This is the primary engineering evidence that TU-local metadata addresses are not program-wide type identity.
 
-The first bridge slice MAY leave project-defined atom descriptors legacy until an explicit stable-id registration/schema mechanism is designed.
+## 12. Adversarial applicability
 
-## 11. Applicability class B — pointers
+Gate A deliberately includes representation collisions. Two descriptors may have the same object kind, size, alignment, and even the same display name while carrying different structural TypeIds.
 
-Pointer identity MUST be structural:
+They must compare unequal.
 
-```text
-identity(T*) = POINTER(identity(T))
-```
+Conversely, two structural descriptors may have different display names and representation metadata but the same TypeId; semantic equality follows TypeId.
 
-It MUST NOT be represented as an atom such as:
+This demonstrates that TypeId is not merely renamed string/layout identity.
 
-```text
-ATOM("int *")
-```
+## 13. KnownTypes versus CallableSignatures
 
-Required positive/negative witnesses include:
-
-```text
-int* == int*        true
-int* == long*       false
-int* == const int*  false
-int* == int          false
-```
-
-Pointer descriptor equality across TUs must remain independent of the addresses of both the pointer descriptor and its pointee descriptor.
-
-## 12. Applicability class C — aliases and display names
-
-Alias transparency is a required semantic property.
-
-For a future canonical application:
-
-```text
-Users        = Map<int,User>
-AnotherUsers = Map<int,User>
-```
-
-both names MUST resolve to the same TypeId.
-
-Applicability witnesses MUST include:
-
-```text
-same TypeId + different display names => equal
-```
-
-and:
-
-```text
-different TypeId + same display name/layout => not equal
-```
-
-This proves that TypeId is not merely a renamed string-based identity scheme.
-
-## 13. Applicability class D — adversarial same-layout types
-
-The test suite MUST deliberately construct semantically different types with identical representation metadata.
-
-Example:
-
-```text
-User:
-  kind  = OBJECT
-  size  = 16
-  align = 8
-
-Order:
-  kind  = OBJECT
-  size  = 16
-  align = 8
-```
-
-With structural identities:
-
-```text
-ATOM("app.User") != ATOM("app.Order")
-```
-
-`cmeta_type_equal` MUST return false even if names are deliberately made equal in an adversarial witness.
-
-## 14. Applicability class E — multi-translation-unit identity
-
-A mandatory conformance executable MUST be built from at least three translation units:
-
-```text
-type_identity_tu_a.c
-type_identity_tu_b.c
-type_identity_multi_tu.c
-```
-
-TU A and TU B each define distinct descriptor objects representing the same semantic type.
-
-The executable must establish:
-
-```text
-&descriptorA != &descriptorB
-identityA object address may differ from identityB object address
-cmeta_type_identity_equal(identityA, identityB) == true
-cmeta_type_equal(&descriptorA, &descriptorB) == true
-```
-
-The same witness must include a different semantic TypeId with equal layout metadata and show inequality.
-
-This is the primary engineering proof that TU-local descriptors remain valid under structural identity.
-
-## 15. Applicability class F — finite generic applications
-
-The full TypeId architecture must be capable of representing current/future finite applications:
-
-```text
-Option<User>
-Result<User,Error>
-List<User>
-Map<int,User>
-Task<Result<User,Error>>
-```
-
-Required semantic properties:
-
-```text
-Apply(Result,[User,Error])
-    == Apply(Result,[User,Error])
-
-Apply(Result,[User,Error])
-    != Apply(Result,[Error,User])
-
-Apply(Option,[User])
-    != Apply(List,[User])
-```
-
-The descriptor bridge first slice does not need to retrofit all existing value/container macros with application identities. Instead it MUST preserve a path for those modules to attach a structural application TypeId without changing `cmeta_type_equal` again.
-
-## 16. Applicability class G — existing strict-C11 generic values
-
-Current forms such as:
-
-```c
-typed(Option, MaybeUser, User);
-typed(Result, LoadResult, User, Error);
-```
-
-must eventually map to semantic constructor applications.
-
-However the current generated C structs are nominally named by the user. Until canonical generic representation is implemented, the bridge MUST NOT claim that two independently generated legacy `typed(Result, A, User, Error)` and `typed(Result, B, User, Error)` C structs are interchangeable C types.
-
-The applicability proof concerns **semantic TypeId adequacy**, not automatic C ABI aliasing.
-
-## 17. Applicability class H — containers and Range
-
-Current typed containers are a required real-world applicability target.
-
-Examples:
-
-```c
-typed(List, UserList, User);
-typed(HashMap, UsersById, int, User);
-```
-
-The target semantic identities are:
-
-```text
-UserList  -> Apply(cmeta.List,[User])
-UsersById -> Apply(cmeta.HashMap,[int,User])
-```
-
-Range applicability must preserve element/key/value semantics:
-
-```text
-UserList.range.element     -> User
-UsersById.keys.element     -> int
-UsersById.values.element   -> User
-UsersById.entries.element  -> application/entry semantic type owned by container module
-```
-
-The first descriptor bridge MAY leave existing header-local container descriptors legacy. A later container-identity slice must prove cross-TU structural identity before those descriptors are declared fully migrated.
-
-No container TypeId may be inferred by parsing generated display names such as `"UserList"`.
-
-## 18. Applicability class I — KnownTypes vs CallableSignatures
-
-The already implemented split is part of the applicability argument.
-
-The invariant is:
+The previously implemented invariant remains part of the applicability argument:
 
 ```text
 KnownTypes may grow
 without automatically changing CallableSignatures
 ```
 
-The existing full-profile probe, where a known-only type is added while the callable universe remains five types / 176 signatures, remains a required regression witness.
+The full-profile C probe adds a known-only type while retaining five callable builtins and verifies the full signature count remains 176 including the invalid sentinel.
 
-Future generic applications MUST enter KnownTypes independently from exact callable admission.
+Generic applications therefore have a path into reflection without forcing N²/N³ callable expansion.
 
-## 19. Applicability class J — CFlow regression
+## 14. CFlow regression obligation
 
-Descriptor migration is not acceptable if it changes current CFlow semantics accidentally.
+Descriptor migration is not accepted if it silently changes existing CFlow semantics.
 
-Every descriptor-bridge implementation step MUST retain the existing CFlow conformance suite:
+Gate A keeps the existing suite unchanged:
 
 ```text
 header conformance
@@ -508,184 +346,155 @@ optimizer properties/effects/topology
 Lean kernel proofs
 ```
 
-Existing snapshots SHOULD remain byte-for-byte unchanged unless a descriptor-specific snapshot is deliberately extended.
+Existing snapshots remain byte-for-byte stable apart from the deliberately added descriptor-bridge snapshot.
 
-A regression in CFlow during bridge work is evidence of an incomplete migration boundary, not justification to weaken TypeId equality.
+## 15. Applicability matrix
 
-## 20. Applicability matrix
+Current verified status is:
 
-The project tracks applicability with this matrix.
+| Scenario | Lean semantic model | Real C witness | Multi-TU | Consumer evidence | Status |
+| --- | --- | --- | --- | --- | --- |
+| structural atom equality | yes | yes | yes | Core registry/builtins | Gate A verified |
+| pointer structural equality | yes | yes | yes | signature descriptors | Gate A verified |
+| same TypeId / different display metadata | yes | yes | yes | descriptor bridge | Gate A verified |
+| same layout / different TypeId | yes | yes | yes | descriptor bridge | Gate A verified |
+| mixed structural/legacy isolation | yes | yes | yes | migration boundary | Gate A verified |
+| descriptor address independence | semantic by construction | yes | yes | descriptor consumers | Gate A verified |
+| KnownTypes/CallableSignatures separation | yes | yes | not required | Callable/CFlow | verified |
+| CFlow behavior preservation | indirect | existing suite | not required | CFlow | Gate A verified |
+| finite generic application | TypeId level only | TypeId witness only | not yet generic descriptor witness | Value/Container | Gate B open |
+| current Option/Result descriptors | not yet bridged | not yet | not yet | Value | Gate B open |
+| current container applications | not yet bridged | not yet | not yet | Range/containers | Gate C open |
+| `M<A,B>` source lowering | not yet | not yet | not applicable | Extend | Gate D open |
 
-| Scenario | Lean semantic model | Real C witness | Multi-TU witness | Existing consumer evidence |
-| --- | --- | --- | --- | --- |
-| structural atom equality | required | required | required | type registry |
-| pointer structural equality | required | required | required | signature descriptors |
-| same TypeId / different display name | required | required | optional | aliases/generics |
-| same layout / different TypeId | required | required | required | Struct/object descriptors |
-| mixed structural/legacy isolation | required | required | required | migration boundary |
-| finite generic application | implemented at TypeId level | required before generic bridge | required before canonical generic migration | Value/Container |
-| container application | required before container migration | required | required | Range/containers |
-| KnownTypes/CallableSignatures separation | implemented | implemented | not required | Callable/CFlow |
-| descriptor address independence | semantic by construction | required | required | all descriptor consumers |
-| CFlow behavior preservation | indirect | existing suite | not required | CFlow |
+An abstract Lean case alone is never enough to mark an applicability row complete.
 
-A row is not considered complete merely because its abstract Lean case exists. Real C evidence is required for applicability claims.
+## 16. Gate A — Descriptor Bridge Applicability
 
-## 21. Staged acceptance gates
+**Status: CLOSED / IMPLEMENTED.**
 
-Applicability is staged so the bridge can progress without overclaiming later generic/container work.
+Evidence required by this specification has been supplied:
 
-### Gate A — Descriptor Bridge Applicability
+- field-safe designated descriptor initialization for the migration surface;
+- `cmeta_type_desc.identity` in the public Core descriptor;
+- explicit builtin atom identities;
+- structural builtin pointer identities;
+- structural/structural equality through TypeId only;
+- legacy/legacy compatibility;
+- structural/legacy isolation;
+- adversarial same-layout/different-TypeId C witness;
+- multi-TU address-independence executable;
+- Lean `DescriptorView` semantic equality laws;
+- C -> generated Lean -> Lean-model conformance;
+- unchanged existing CFlow/formal conformance suite;
+- `lake build --wfail` under Lean 4.30.0.
 
-Required before `cmeta_type_desc.identity` and structural `cmeta_type_equal` are called implemented:
+The implementation evidence is tracked by the formal workflow. Gate A closure does not close any later gate.
 
-- all `cmeta_type_desc` initializers touched by Core/container generation are safe for the new field, preferably designated initializers;
-- built-in atom identities exist;
-- built-in pointer identities are structural;
-- structural/structural equality uses TypeId only;
-- legacy/legacy compatibility is preserved;
-- structural/legacy equality is false;
-- same-layout/different-TypeId adversarial witness passes;
-- multi-TU same-TypeId witness passes;
-- Lean DescriptorView model establishes required equality properties;
-- C -> generated Lean descriptor-equality conformance passes;
-- all existing CFlow/formal CI remains green.
+## 17. Gate B — Generic Applicability
 
-### Gate B — Generic Applicability
+**Status: OPEN.**
 
-Required before claiming current value generics are structurally identified:
+Required before current strict-C11 value generics are called structurally identified:
 
-- Option/Result constructors have stable semantic IDs;
-- strict-C11 generated descriptors carry `Apply(...)` TypeIds;
-- alias/display names do not affect equality;
-- repeated equivalent applications compare equal across TUs;
-- no claim of C nominal-type interchangeability is made unless canonical representation is separately implemented.
+- stable semantic IDs for `Option`, `Result` and other participating constructors;
+- generated value descriptors carrying `Apply(...)` TypeIds;
+- equivalent applications comparing equal across TUs;
+- alias/display names not affecting semantic identity;
+- explicit distinction between semantic equality and nominal C type compatibility.
 
-### Gate C — Container Applicability
+Current separately named `typed(Result, A, User, Error)` and `typed(Result, B, User, Error)` structs must not be described as interchangeable C types merely because a future semantic TypeId is equal.
 
-Required before claiming typed containers are structurally identified:
+## 18. Gate C — Container Applicability
 
-- List/Vec/Map/HashMap/etc. constructor schemas are finite and stable;
-- container descriptors carry application TypeIds;
-- key/value/entry/element Range descriptors have correct semantic identities;
-- multi-TU container descriptor equality is proven by real C witnesses;
-- existing container and CFlow tests remain unchanged in behavior.
+**Status: OPEN.**
 
-### Gate D — Extend Applicability
+Required before typed containers are called structurally identified:
+
+- stable finite constructor schemas for List/Vec/Map/HashMap/etc.;
+- container descriptors carrying application TypeIds;
+- element/key/value/entry Range descriptors carrying correct semantic identities;
+- cross-TU container descriptor equality witnesses;
+- existing container/CFlow behavior preserved.
+
+Gate A intentionally leaves current header-local container descriptors with `.identity = NULL`.
+
+## 19. Gate D — Extend Applicability
+
+**Status: OPEN.**
 
 Required later for `M<A,B>`:
 
-- Extend lowering resolves to the same Core TypeIds proven above;
+- Extend lowering resolves to the same Core TypeIds;
 - aliases preserve TypeId;
-- generated names do not enter semantic equality;
-- nested applications preserve dependency order and finite generation.
+- generated C names remain non-semantic;
+- nested applications preserve finite dependency ordering and deduplication.
 
-## 22. Descriptor bridge implementation order
+## 20. Stable atom policy
 
-Once this written applicability specification is approved, the descriptor bridge implementation plan SHOULD use this order:
+Core builtin stable IDs are explicit semantic API.
 
-```text
-1. initializer safety migration
-   positional cmeta_type_desc initializers -> designated initializers
-   no semantic behavior change
-
-2. public descriptor bridge
-   append identity field
-   legacy descriptors explicitly use NULL
-
-3. builtin structural identities
-   atoms and pointers
-
-4. descriptor equality modes
-   structural/structural
-   legacy/legacy
-   structural/legacy false
-
-5. multi-TU + adversarial C witnesses
-
-6. Lean DescriptorView + C conformance
-
-7. full CFlow/formal regression gate
-```
-
-Generic values and containers are separate follow-up plans after Gate A.
-
-## 23. Stable atom ID policy
-
-The first bridge slice MUST NOT invent project atom identities from display names or arbitrary generated C symbols.
-
-Built-in stable IDs are explicitly owned by Core.
-
-Project/user atoms remain legacy until CMeta has an explicit stable-id registration/schema contract. That later contract must be namespace-qualified and consistent across TUs.
-
-This avoids accidentally freezing implementation symbol spellings as semantic API.
-
-## 24. Error handling and validation
-
-Malformed structural identities must fail closed.
-
-Examples:
+Gate A does not infer user/project stable IDs from:
 
 ```text
-pointer descriptor + ATOM identity           invalid
-pointer identity + NULL pointee              invalid
-POINTER(User) + pointee structural Order      invalid
-application with invalid constructor arity    invalid
+display names
+C descriptor symbol names
+typedef spellings
+layout metadata
 ```
 
-Equality is not responsible for repairing malformed descriptors.
+A future project/user stable-ID contract must be namespace-qualified and deterministic across TUs.
 
-A descriptor validation helper MAY be introduced as part of Gate A if tests demonstrate that runtime consumers need an explicit validity check. The implementation plan must not add a broad validation framework without a concrete use.
+## 21. Rejected designs
 
-## 25. Rejected designs
+The following remain rejected:
 
-The following are rejected:
-
-- using a global descriptor-address -> TypeId side table as the primary architecture;
+- a global descriptor-address -> TypeId side table as the primary architecture;
 - parsing `desc->name` to recover TypeId;
-- treating same size/alignment as semantic type equality;
-- structural/legacy mixed fallback to legacy equality;
-- using generated C symbol names as stable semantic TypeIds;
-- changing existing CFlow semantics to accommodate an incomplete bridge;
-- claiming generic/container applicability before their real descriptors have structural identities;
-- claiming formal proof from CI snapshots alone;
-- claiming applicability from abstract Lean equality alone.
+- using size/alignment as semantic identity;
+- structural/legacy fallback to legacy equality;
+- generated C symbol names as semantic TypeIds;
+- changing CFlow semantics to accommodate incomplete migration;
+- claiming generic/container applicability before their descriptors carry structural identities;
+- calling CI snapshots alone a formal proof;
+- calling abstract Lean equality alone an applicability proof.
 
-## 26. Proof language
+## 22. Proof language
 
-Project documentation must use precise language:
-
-```text
-"formally modeled/proved"
-    Lean theorem/kernel evidence for the semantic model.
-
-"C implementation conformance"
-    real C-generated witness agrees with checked Lean snapshot/model.
-
-"applicability demonstrated"
-    real CMeta scenario, including required multi-TU/consumer evidence, satisfies the matrix.
-```
-
-Avoid the unqualified phrase "formally proved" when only selected implementation witnesses exist.
-
-## 27. Success criterion
-
-The TypeId architecture is considered adequate for CMeta when:
+Project documentation uses these terms deliberately:
 
 ```text
-semantic identity is structural
-        +
-real descriptors can carry it
-        +
-TU-local addresses are irrelevant
-        +
-legacy migration cannot override structural identity
-        +
-generic/container domains can map to finite applications
-        +
-KnownTypes remain independent from callable demand
-        +
-existing CFlow behavior is preserved
+formally modeled/proved
+    Lean theorem/kernel evidence for the semantic model
+
+C implementation conformance
+    real C-generated witness agrees with checked Lean snapshot/model
+
+applicability demonstrated
+    real CMeta scenario, including required multi-TU/consumer evidence,
+    satisfies the relevant matrix row
 ```
 
-The descriptor bridge is only the first applicability gate. Its purpose is to connect the already implemented TypeId semantic kernel to real runtime descriptors without weakening the hexagonal Core boundary or overclaiming generic/container migration.
+The unqualified phrase “formally proved” should not be used for implementation behavior when only selected witnesses exist.
+
+## 23. Success criterion
+
+The overall TypeId architecture is adequate for CMeta when all relevant gates eventually establish:
+
+```text
+structural semantic identity
+        +
+real descriptors carrying it
+        +
+TU-local address independence
+        +
+legacy isolation
+        +
+finite generic/value/container application mapping
+        +
+KnownTypes independent from callable demand
+        +
+existing consumer behavior preserved
+```
+
+Gate A establishes the descriptor bridge portion of that criterion. Gate B/C/D remain explicit follow-up work.
