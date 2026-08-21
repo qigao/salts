@@ -120,6 +120,12 @@ target_include_directories(cmeta_traits_row_syntax_witness PRIVATE
   ${PROJECT_SOURCE_DIR}/cmeta/include)
 add_test(NAME cmeta_traits_row_syntax COMMAND cmeta_traits_row_syntax_witness)
 
+cmeta_add_formal_witness(cmeta_operator_row_syntax_witness
+  cmeta_operator_row_syntax_witness.c)
+target_include_directories(cmeta_operator_row_syntax_witness PRIVATE
+  ${PROJECT_SOURCE_DIR}/cmeta/include)
+add_test(NAME cmeta_operator_row_syntax COMMAND cmeta_operator_row_syntax_witness)
+
 cmeta_add_formal_witness(cmeta_fmt_args_simplification_witness
   fmt_args_simplification_witness.c)
 target_include_directories(cmeta_fmt_args_simplification_witness PRIVATE
