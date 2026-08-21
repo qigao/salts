@@ -1,6 +1,6 @@
 /**
  * @file test_str_bench.c
- * @brief Micro-benchmarks for tstr_t and tstr_v (tinytest)
+ * @brief Micro-benchmarks for tstr and vstr (tinytest)
  */
 
 #include <stdint.h>
@@ -9,7 +9,7 @@
 
 #include "tinytest.h"
 #include "turbo_str.h"
-#include "turbo_str_view.h"
+#include "turbo_vstr.h"
 #include "sds.h"
 
 #define BENCH_ITERS 200000
@@ -60,13 +60,13 @@ spec("String Bench") {
 
       benchmark_titles("benchmark", "input", "iters", "avg(us)", NULL, "min(us)", "max(us)", "ops/s", NULL, NULL);
     benchmark("dup", BENCH_ITERS, 1) {
-      tstr_t s = tstr_dup(sample);
+      tstr s = tstr_dup(sample);
       sink_size += tstr_len(s);
       tstr_free(s);
     }
 
     benchmark("cat", BENCH_ITERS, 1) {
-      tstr_t s = tstr_new();
+      tstr s = tstr_new();
       s = tstr_cat(s, "hello");
       s = tstr_cat(s, " world");
       sink_size += tstr_len(s);
@@ -74,15 +74,15 @@ spec("String Bench") {
     }
 
     benchmark("cat_fmt", BENCH_ITERS_LONG, 1) {
-      tstr_t s = tstr_new();
+      tstr s = tstr_new();
       s = tstr_cat_fmt(s, "num=%d str=%s", 12345, "test");
       sink_size += tstr_len(s);
       tstr_free(s);
     }
 
     benchmark("cmp", BENCH_ITERS, 1) {
-      tstr_t a = tstr_dup(sample);
-      tstr_t b = tstr_dup(sample);
+      tstr a = tstr_dup(sample);
+      tstr b = tstr_dup(sample);
       sink_int += tstr_cmp(a, b);
       tstr_free(a);
       tstr_free(b);
@@ -105,100 +105,100 @@ spec("String Bench") {
     }
 
     benchmark("trim", BENCH_ITERS, 1) {
-      tstr_t s = tstr_dup("   hello world   ");
+      tstr s = tstr_dup("   hello world   ");
       s = tstr_trim(s, " ");
       sink_size += tstr_len(s);
       tstr_free(s);
     }
 
     benchmark("split", BENCH_ITERS_LONG, 1) {
-      tstr_t s = tstr_dup("alpha,beta,gamma,delta,epsilon,zeta");
+      tstr s = tstr_dup("alpha,beta,gamma,delta,epsilon,zeta");
       int count = 0;
-      tstr_t *parts = tstr_split(s, ",", &count);
+      tstr *parts = tstr_split(s, ",", &count);
       sink_int += count;
       tstr_free_split(parts, count);
       tstr_free(s);
     }
   }
 
-  bench("tstr_v (view)") {
+  bench("vstr (view)") {
 
       benchmark_titles("benchmark", "input", "iters", "avg(us)", NULL, "min(us)", "max(us)", "ops/s", NULL, NULL);
-    tstr_v sv = tstr_v_from_cstr(sample);
-    tstr_v sv_long = tstr_v_from_cstr(sample_long);
-    tstr_v needle = tstr_v_from_cstr("brown fox");
-    tstr_v needle_long = tstr_v_from_cstr("exercitation");
+    vstr sv = vstr_from_cstr(sample);
+    vstr sv_long = vstr_from_cstr(sample_long);
+    vstr needle = vstr_from_cstr("brown fox");
+    vstr needle_long = vstr_from_cstr("exercitation");
 
     init_utf8_samples();
 
     benchmark("eq", BENCH_ITERS, 1) {
-      sink_int += tstr_v_eq(sv, sv);
+      sink_int += vstr_eq(sv, sv);
     }
 
     benchmark("ieq", BENCH_ITERS, 1) {
-      tstr_v upper = tstr_v_from_cstr(sample_upper);
-      sink_int += tstr_v_ieq(sv, upper);
+      vstr upper = vstr_from_cstr(sample_upper);
+      sink_int += vstr_ieq(sv, upper);
     }
 
     benchmark_bytes("ieq ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
-      sink_int += tstr_v_ieq(tstr_v_from_buf(ascii_case, sizeof(ascii_case)),
-                             tstr_v_from_buf(utf8_ascii, sizeof(utf8_ascii)));
+      sink_int += vstr_ieq(vstr_from_buf(ascii_case, sizeof(ascii_case)),
+                             vstr_from_buf(utf8_ascii, sizeof(utf8_ascii)));
     }
 
     benchmark("find(short)", BENCH_ITERS, 1) {
-      sink_size += tstr_v_find(sv, needle);
+      sink_size += vstr_find(sv, needle);
     }
 
     benchmark("find(long)", BENCH_ITERS, 1) {
-      sink_size += tstr_v_find(sv_long, needle_long);
+      sink_size += vstr_find(sv_long, needle_long);
     }
 
     benchmark("find_char", BENCH_ITERS, 1) {
-      sink_size += tstr_v_find_char(sv_long, 'x');
+      sink_size += vstr_find_char(sv_long, 'x');
     }
 
     benchmark("rfind", BENCH_ITERS, 1) {
-      sink_size += tstr_v_rfind(sv_long, needle_long);
+      sink_size += vstr_rfind(sv_long, needle_long);
     }
 
     benchmark("rfind_char", BENCH_ITERS, 1) {
-      sink_size += tstr_v_rfind_char(sv_long, 'e');
+      sink_size += vstr_rfind_char(sv_long, 'e');
     }
 
     benchmark("contains", BENCH_ITERS, 1) {
-      sink_int += tstr_v_contains(sv, needle);
+      sink_int += vstr_contains(sv, needle);
     }
 
     benchmark("starts_with", BENCH_ITERS, 1) {
-      sink_int += tstr_v_starts_with(sv, tstr_v_from_cstr("The quick"));
+      sink_int += vstr_starts_with(sv, vstr_from_cstr("The quick"));
     }
 
     benchmark("ends_with", BENCH_ITERS, 1) {
-      sink_int += tstr_v_ends_with(sv, tstr_v_from_cstr("lazy dog"));
+      sink_int += vstr_ends_with(sv, vstr_from_cstr("lazy dog"));
     }
 
     benchmark("trim", BENCH_ITERS, 1) {
-      tstr_v padded = tstr_v_from_cstr("   hello world   ");
-      tstr_v trimmed = tstr_v_trim(padded, " ");
+      vstr padded = vstr_from_cstr("   hello world   ");
+      vstr trimmed = vstr_trim(padded, " ");
       sink_size += trimmed.len;
     }
 
     benchmark_bytes("trim ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
-      tstr_v trimmed = tstr_v_trim(tstr_v_from_buf(trim_ascii, sizeof(trim_ascii)), " ");
+      vstr trimmed = vstr_trim(vstr_from_buf(trim_ascii, sizeof(trim_ascii)), " ");
       sink_size += trimmed.len;
     }
 
     benchmark_bytes("find_any ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
-      sink_size += tstr_v_find_any(tstr_v_from_buf(delimiters_ascii, sizeof(delimiters_ascii)),
-                                   tstr_v_from_cstr(",;"));
+      sink_size += vstr_find_any(vstr_from_buf(delimiters_ascii, sizeof(delimiters_ascii)),
+                                   vstr_from_cstr(",;"));
     }
 
     benchmark("split", BENCH_ITERS_LONG, 1) {
-      tstr_v csv = tstr_v_from_cstr("alpha,beta,gamma,delta,epsilon,zeta");
-      tstr_v delim = tstr_v_from_cstr(",");
-      tstr_v part;
+      vstr csv = vstr_from_cstr("alpha,beta,gamma,delta,epsilon,zeta");
+      vstr delim = vstr_from_cstr(",");
+      vstr part;
       int count = 0;
-      while ((part = tstr_v_split_next(&csv, delim)).data || csv.len > 0) {
+      while ((part = vstr_split_next(&csv, delim)).data || csv.len > 0) {
         count++;
         if (!part.data) break;
       }
@@ -206,12 +206,12 @@ spec("String Bench") {
     }
   }
 
-  bench("tstr vs tstr_v") {
+  bench("tstr vs vstr") {
 
       benchmark_titles("benchmark", "input", "iters", "avg(us)", NULL, "min(us)", "max(us)", "ops/s", NULL, NULL);
-    tstr_t ts = tstr_dup(sample_long);
-    tstr_v sv_long = tstr_v_from_cstr(sample_long);
-    tstr_v needle_v = tstr_v_from_cstr("exercitation");
+    tstr ts = tstr_dup(sample_long);
+    vstr sv_long = vstr_from_cstr(sample_long);
+    vstr needle_v = vstr_from_cstr("exercitation");
 
     benchmark("tstr:contains", BENCH_ITERS, 1) {
       sink_int += tstr_contains(sample_long, "exercitation");
@@ -222,7 +222,7 @@ spec("String Bench") {
     }
 
     benchmark("view:contains", BENCH_ITERS, 1) {
-      sink_int += tstr_v_contains(sv_long, needle_v);
+      sink_int += vstr_contains(sv_long, needle_v);
     }
 
     benchmark("tstr:find_v", BENCH_ITERS, 1) {
@@ -230,24 +230,24 @@ spec("String Bench") {
     }
 
     benchmark("view:find", BENCH_ITERS, 1) {
-      sink_size += tstr_v_find(sv_long, needle_v);
+      sink_size += vstr_find(sv_long, needle_v);
     }
 
     benchmark("tstr:split", BENCH_ITERS_LONG, 1) {
-      tstr_t s = tstr_dup("alpha,beta,gamma,delta,epsilon,zeta");
+      tstr s = tstr_dup("alpha,beta,gamma,delta,epsilon,zeta");
       int count = 0;
-      tstr_t *parts = tstr_split(s, ",", &count);
+      tstr *parts = tstr_split(s, ",", &count);
       sink_int += count;
       tstr_free_split(parts, count);
       tstr_free(s);
     }
 
     benchmark("view:split", BENCH_ITERS_LONG, 1) {
-      tstr_v csv = tstr_v_from_cstr("alpha,beta,gamma,delta,epsilon,zeta");
-      tstr_v delim = tstr_v_from_cstr(",");
-      tstr_v part;
+      vstr csv = vstr_from_cstr("alpha,beta,gamma,delta,epsilon,zeta");
+      vstr delim = vstr_from_cstr(",");
+      vstr part;
       int count = 0;
-      while ((part = tstr_v_split_next(&csv, delim)).data || csv.len > 0) {
+      while ((part = vstr_split_next(&csv, delim)).data || csv.len > 0) {
         count++;
         if (!part.data) break;
       }
@@ -261,24 +261,24 @@ spec("String Bench") {
     init_utf8_samples();
 
     benchmark_bytes("validate ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
-      sink_int += tstr_v_utf8_valid(tstr_v_from_buf(utf8_ascii, sizeof(utf8_ascii)));
+      sink_int += vstr_utf8_valid(vstr_from_buf(utf8_ascii, sizeof(utf8_ascii)));
     }
 
     benchmark_bytes("count ASCII 64KiB", UTF8_BENCH_ITERS, UTF8_BENCH_BYTES) {
-      sink_size += tstr_v_utf8_len(tstr_v_from_buf(utf8_ascii, sizeof(utf8_ascii)));
+      sink_size += vstr_utf8_len(vstr_from_buf(utf8_ascii, sizeof(utf8_ascii)));
     }
 
     benchmark_bytes("validate mixed UTF-8", UTF8_BENCH_ITERS, utf8_mixed_len) {
-      sink_int += tstr_v_utf8_valid(tstr_v_from_buf(utf8_mixed, utf8_mixed_len));
+      sink_int += vstr_utf8_valid(vstr_from_buf(utf8_mixed, utf8_mixed_len));
     }
 
     benchmark_bytes("count mixed UTF-8", UTF8_BENCH_ITERS, utf8_mixed_len) {
-      sink_size += tstr_v_utf8_len(tstr_v_from_buf(utf8_mixed, utf8_mixed_len));
+      sink_size += vstr_utf8_len(vstr_from_buf(utf8_mixed, utf8_mixed_len));
     }
   }
 
   bench("ASCII case mapping") {
-    tstr_t simd_case;
+    tstr simd_case;
     sds scalar_case;
 
     init_utf8_samples();

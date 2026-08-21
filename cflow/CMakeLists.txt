@@ -51,3 +51,7 @@ install(
     PATTERN "*.h"
     PATTERN "plan_internal.h" EXCLUDE
     PATTERN "relation_exec.h" EXCLUDE)
+
+if(BUILD_TESTS)
+  add_subdirectory(tests)
+endif()

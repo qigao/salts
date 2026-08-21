@@ -35,7 +35,9 @@ target_compile_definitions(
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
 target_compile_options(${TARGET_NAME}
   PUBLIC $<$<COMPILE_LANG_AND_ID:C,MSVC>:/experimental:c11atomics>)
-if(UNIX)
+if(APPLE)
+  target_compile_definitions(${TARGET_NAME} PUBLIC _DARWIN_C_SOURCE=1)
+elseif(UNIX)
   target_compile_definitions(
     ${TARGET_NAME} PUBLIC _DEFAULT_SOURCE=1 _POSIX_C_SOURCE=200809L
                           _XOPEN_SOURCE=700)
@@ -44,6 +46,7 @@ endif()
 # Link dependencies
 target_link_libraries(
   ${TARGET_NAME}
+  PUBLIC TurboUtils::CMeta
   PRIVATE ${FMT_LEXER_LIBRARY} TurboUtils::SDS # Simple Dynamic Strings
           aklomp::base64 zstd::libzstd
           ${LOG_PATTERN_LEXER_LIBRARY} # Log pattern lexer

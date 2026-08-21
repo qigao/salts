@@ -7,32 +7,34 @@ spec("C11 Atomic Operations") {
 
     it("should handle 32-bit int operations") {
         atomic_int val = 0;
-        check_int_eq(atomic_load(&val), 0);
+        check_equal(atomic_load(&val), 0);
 
         atomic_store(&val, 10);
-        check_int_eq(atomic_load(&val), 10);
+        check_equal(atomic_load(&val), 10);
 
         // inc: fetch_add + 1
-        check_int_eq(atomic_fetch_add(&val, 1) + 1, 11);
-        check_int_eq(atomic_load(&val), 11);
+        check_equal(atomic_fetch_add(&val, 1) + 1, 11);
+        check_equal(atomic_load(&val), 11);
 
         // dec: fetch_sub - 1
-        check_int_eq(atomic_fetch_sub(&val, 1) - 1, 10);
-        check_int_eq(atomic_load(&val), 10);
+        check_equal(atomic_fetch_sub(&val, 1) - 1, 10);
+        check_equal(atomic_load(&val), 10);
 
-        check_int_eq(atomic_fetch_add(&val, 5), 10);
-        check_int_eq(atomic_load(&val), 15);
+        check_equal(atomic_fetch_add(&val, 5), 10);
+        check_equal(atomic_load(&val), 15);
 
-        check_int_eq(atomic_fetch_sub(&val, 3), 15);
-        check_int_eq(atomic_load(&val), 12);
+        check_equal(atomic_fetch_sub(&val, 3), 15);
+        check_equal(atomic_load(&val), 12);
 
         int expected = 12;
-        check_int_eq(atomic_compare_exchange_strong(&val, &expected, 42), 1);
-        check_int_eq(atomic_load(&val), 42);
+        bool exchanged = atomic_compare_exchange_strong(&val, &expected, 42);
+        check_equal(exchanged, true);
+        check_equal(atomic_load(&val), 42);
 
         expected = 12;
-        check_int_eq(atomic_compare_exchange_strong(&val, &expected, 99), 0);
-        check_int_eq(atomic_load(&val), 42);
+        exchanged = atomic_compare_exchange_strong(&val, &expected, 99);
+        check_equal(exchanged, false);
+        check_equal(atomic_load(&val), 42);
     }
 
     it("should handle 64-bit int operations") {
@@ -53,13 +55,13 @@ spec("C11 Atomic Operations") {
 
     it("should handle 16-bit uint operations") {
         _Atomic uint16_t val = 0;
-        check_int_eq(atomic_load(&val), 0);
+        check_equal(atomic_load(&val), 0);
 
         atomic_store(&val, 65000);
-        check_int_eq(atomic_load(&val), 65000);
+        check_equal(atomic_load(&val), 65000);
 
-        check_int_eq(atomic_fetch_add(&val, 100), 65000);
-        check_int_eq(atomic_load(&val), 65100);
+        check_equal(atomic_fetch_add(&val, 100), 65000);
+        check_equal(atomic_load(&val), 65100);
     }
 
     it("should handle pointer operations") {
@@ -68,46 +70,50 @@ spec("C11 Atomic Operations") {
         int dummy2 = 2;
 
         void *expected = NULL;
-        check_int_eq(atomic_compare_exchange_strong((_Atomic(void *) *)&ptr, &expected, &dummy1), 1);
-        check_ptr_eq(ptr, &dummy1);
+        bool exchanged =
+            atomic_compare_exchange_strong((_Atomic(void *) *)&ptr, &expected, &dummy1);
+        check_equal(exchanged, true);
+        check_equal((const void *)(ptr), (const void *)(&dummy1));
 
         expected = NULL;
-        check_int_eq(atomic_compare_exchange_strong((_Atomic(void *) *)&ptr, &expected, &dummy2), 0);
-        check_ptr_eq(ptr, &dummy1);
+        exchanged = atomic_compare_exchange_strong((_Atomic(void *) *)&ptr, &expected, &dummy2);
+        check_equal(exchanged, false);
+        check_equal((const void *)(ptr), (const void *)(&dummy1));
 
-        check_ptr_eq(atomic_exchange((_Atomic(void *) *)&ptr, &dummy2), &dummy1);
-        check_ptr_eq(ptr, &dummy2);
+        check_equal((const void *)(atomic_exchange((_Atomic(void *) *)&ptr, &dummy2)), (const void *)(&dummy1));
+        check_equal((const void *)(ptr), (const void *)(&dummy2));
     }
 
     it("should handle size_t operations") {
         _Atomic size_t val = 0;
-        check_size_eq(atomic_load(&val), 0);
+        check_equal(atomic_load(&val), 0);
 
         atomic_store(&val, 123456);
-        check_size_eq(atomic_load(&val), 123456);
-        check_size_eq(atomic_load_explicit(&val, memory_order_relaxed), 123456);
+        check_equal(atomic_load(&val), 123456);
+        check_equal(atomic_load_explicit(&val, memory_order_relaxed), 123456);
 
         atomic_store_explicit(&val, 654321, memory_order_relaxed);
-        check_size_eq(atomic_load(&val), 654321);
-        check_size_eq(atomic_load_explicit(&val, memory_order_relaxed), 654321);
+        check_equal(atomic_load(&val), 654321);
+        check_equal(atomic_load_explicit(&val, memory_order_relaxed), 654321);
     }
 
     it("should handle uint32_t operations") {
         _Atomic uint32_t val = 0;
-        check_int_eq(atomic_load(&val), 0);
+        check_equal(atomic_load(&val), 0);
 
         atomic_store(&val, 42);
-        check_int_eq(atomic_load(&val), 42);
+        check_equal(atomic_load(&val), 42);
 
-        check_int_eq(atomic_fetch_add(&val, 10), 42);
-        check_int_eq(atomic_load(&val), 52);
+        check_equal(atomic_fetch_add(&val, 10), 42);
+        check_equal(atomic_load(&val), 52);
 
-        check_int_eq(atomic_fetch_sub(&val, 2), 52);
-        check_int_eq(atomic_load(&val), 50);
+        check_equal(atomic_fetch_sub(&val, 2), 52);
+        check_equal(atomic_load(&val), 50);
 
         uint32_t expected = 50;
-        check_int_eq(atomic_compare_exchange_strong(&val, &expected, 100), 1);
-        check_int_eq(atomic_load(&val), 100);
+        bool exchanged = atomic_compare_exchange_strong(&val, &expected, 100);
+        check_equal(exchanged, true);
+        check_equal(atomic_load(&val), 100);
     }
 
     it("should handle uint64_t operations") {
@@ -130,16 +136,17 @@ spec("C11 Atomic Operations") {
 
     it("should handle bool operations") {
         _Atomic int val = 0;
-        check_int_eq(atomic_load(&val) != 0, 0);
+        check_equal(atomic_load(&val) != 0, 0);
 
         atomic_store(&val, 1);
-        check_int_eq(atomic_load(&val) != 0, 1);
+        check_equal(atomic_load(&val) != 0, 1);
 
         atomic_store(&val, 0);
-        check_int_eq(atomic_load(&val) != 0, 0);
+        check_equal(atomic_load(&val) != 0, 0);
 
         int expected = 0;
-        check_int_eq(atomic_compare_exchange_strong(&val, &expected, 1), 1);
-        check_int_eq(atomic_load(&val) != 0, 1);
+        bool exchanged = atomic_compare_exchange_strong(&val, &expected, 1);
+        check_equal(exchanged, true);
+        check_equal(atomic_load(&val) != 0, 1);
     }
 }

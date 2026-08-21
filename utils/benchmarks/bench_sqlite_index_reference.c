@@ -418,13 +418,13 @@ spec("SQLite VDBE index reference benchmarks") {
   before_all() {
     int rc = sqlite_bench_setup();
     if (rc != SQLITE_OK) info("%s", g_sqlite_bench_error);
-    check_int_eq(rc, SQLITE_OK);
+    check_equal(rc, SQLITE_OK);
   }
 
   after_all() { sqlite_bench_shutdown(); }
 
   it("executes B-tree bytecode without SQL preparation") {
-    check_int_eq(sqlite_bench_direct_vdbe_btree(), SQLITE_OK);
+    check_equal(sqlite_bench_direct_vdbe_btree(), SQLITE_OK);
   }
 
   it("returns equivalent B-tree and R-tree overlap results") {
@@ -439,17 +439,17 @@ spec("SQLite VDBE index reference benchmarks") {
         if (btree_count != SQLITE_BENCH_EXPECTED_OVERLAPS || rtree_count != btree_count)
           ++mismatches;
       }
-      check_size_eq(mismatches, 0U);
-      check_long_eq(sqlite_bench_lookup(1), 1);
-      check_long_eq(sqlite_bench_lookup(SQLITE_BENCH_RECT_COUNT), SQLITE_BENCH_RECT_COUNT);
-      check_long_eq(sqlite_bench_direct_lookup(1), 1);
-      check_long_eq(sqlite_bench_direct_lookup(SQLITE_BENCH_RECT_COUNT),
+      check_equal(mismatches, 0U);
+      check_equal(sqlite_bench_lookup(1), 1);
+      check_equal(sqlite_bench_lookup(SQLITE_BENCH_RECT_COUNT), SQLITE_BENCH_RECT_COUNT);
+      check_equal(sqlite_bench_direct_lookup(1), 1);
+      check_equal(sqlite_bench_direct_lookup(SQLITE_BENCH_RECT_COUNT),
                     SQLITE_BENCH_RECT_COUNT);
-      check_long_eq(sqlite_bench_range_checksum(100, 163),
+      check_equal(sqlite_bench_range_checksum(100, 163),
                     (sqlite3_int64)(100 + 163) * SQLITE_BENCH_RANGE_SPAN / 2);
-      check_long_eq(sqlite_bench_direct_range_checksum(100, SQLITE_BENCH_RANGE_SPAN),
+      check_equal(sqlite_bench_direct_range_checksum(100, SQLITE_BENCH_RANGE_SPAN),
                     (sqlite3_int64)(100 + 163) * SQLITE_BENCH_RANGE_SPAN / 2);
-      check_size_eq(g_sqlite_bench_failures, 0U);
+      check_equal(g_sqlite_bench_failures, 0U);
     }
   }
 
@@ -470,7 +470,7 @@ spec("SQLite VDBE index reference benchmarks") {
           ++query_index;
         }
       }
-      check_size_eq(g_sqlite_bench_failures, failures_before);
+      check_equal(g_sqlite_bench_failures, failures_before);
 
       failures_before = g_sqlite_bench_failures;
       query_index = 0;
@@ -486,7 +486,7 @@ spec("SQLite VDBE index reference benchmarks") {
           ++query_index;
         }
       }
-      check_size_eq(g_sqlite_bench_failures, failures_before);
+      check_equal(g_sqlite_bench_failures, failures_before);
     }
   }
 
@@ -504,7 +504,7 @@ spec("SQLite VDBE index reference benchmarks") {
           ++query_index;
         }
       }
-      check_size_eq(g_sqlite_bench_failures, failures_before);
+      check_equal(g_sqlite_bench_failures, failures_before);
 
       failures_before = g_sqlite_bench_failures;
       query_index = 0;
@@ -517,7 +517,7 @@ spec("SQLite VDBE index reference benchmarks") {
           ++query_index;
         }
       }
-      check_size_eq(g_sqlite_bench_failures, failures_before);
+      check_equal(g_sqlite_bench_failures, failures_before);
     }
   }
 
@@ -536,7 +536,7 @@ spec("SQLite VDBE index reference benchmarks") {
           ++query_index;
         }
       }
-      check_size_eq(g_sqlite_bench_failures, failures_before);
+      check_equal(g_sqlite_bench_failures, failures_before);
     }
   }
 
@@ -554,7 +554,7 @@ spec("SQLite VDBE index reference benchmarks") {
           ++query_index;
         }
       }
-      check_size_eq(g_sqlite_bench_failures, failures_before);
+      check_equal(g_sqlite_bench_failures, failures_before);
     }
   }
 }

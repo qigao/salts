@@ -128,7 +128,7 @@ void ac_automaton_free(ac_automaton_t *ac) {
   free(ac);
 }
 
-int ac_automaton_add_pattern(ac_automaton_t *ac, tstr_v pattern, uint32_t *pattern_id) {
+int ac_automaton_add_pattern(ac_automaton_t *ac, vstr pattern, uint32_t *pattern_id) {
   int32_t state;
   uint32_t idx;
   ac_byte_node_t *node = NULL;
@@ -238,7 +238,7 @@ int ac_automaton_build(ac_automaton_t *ac) {
   return TURBO_OK;
 }
 
-int ac_automaton_match(const ac_automaton_t *ac, tstr_v text, ac_match_cb cb, void *user_data) {
+int ac_automaton_match(const ac_automaton_t *ac, vstr text, ac_match_cb cb, void *user_data) {
   int32_t state = 0;
 
   if (!ac || !ac->initialized || !cb || (text.len != 0U && !text.data)) return TURBO_EINVAL;
@@ -406,21 +406,21 @@ void ac_utf8_automaton_destroy(ac_utf8_automaton_t *ac) {
   memset(ac, 0, sizeof(*ac));
 }
 
-int ac_utf8_automaton_add_pattern(ac_utf8_automaton_t *ac, tstr_v pattern, uint32_t *pattern_id) {
+int ac_utf8_automaton_add_pattern(ac_utf8_automaton_t *ac, vstr pattern, uint32_t *pattern_id) {
   int32_t state = 0;
-  tstr_v rest = pattern;
+  vstr rest = pattern;
   uint32_t cp_count = 0U;
   uint32_t cp = 0U;
 
   if (!ac || !ac->initialized || pattern.len == SIZE_MAX) return TURBO_EINVAL;
   if (!pattern.data && pattern.len != 0U) return TURBO_EINVAL;
-  if (!tstr_v_utf8_valid(pattern) || pattern.len == 0U || ac->next_pattern_id == UINT32_MAX) {
+  if (!vstr_utf8_valid(pattern) || pattern.len == 0U || ac->next_pattern_id == UINT32_MAX) {
     return TURBO_EINVAL;
   }
 
   while (rest.len > 0U) {
     if (cp_count == UINT32_MAX) return TURBO_EINVAL;
-    if (!tstr_v_utf8_next(&rest, &cp)) return TURBO_EINVAL;
+    if (!vstr_utf8_next(&rest, &cp)) return TURBO_EINVAL;
     state = ac_utf8_add_child(ac, state, cp);
     if (state < 0) return TURBO_ENOMEM;
     ++cp_count;
@@ -527,19 +527,19 @@ int ac_utf8_automaton_build(ac_utf8_automaton_t *ac) {
   return TURBO_OK;
 }
 
-int ac_utf8_automaton_match(const ac_utf8_automaton_t *ac, tstr_v text, ac_match_cb cb,
+int ac_utf8_automaton_match(const ac_utf8_automaton_t *ac, vstr text, ac_match_cb cb,
                             void *user_data) {
   int32_t state = 0;
   size_t char_pos = 0;
-  tstr_v rest = text;
+  vstr rest = text;
   uint32_t cp = 0U;
 
   if (!ac || !ac->initialized || !cb || !ac->built || (text.len != 0U && !text.data))
     return TURBO_EINVAL;
-  if (!tstr_v_utf8_valid(text)) return TURBO_EINVAL;
+  if (!vstr_utf8_valid(text)) return TURBO_EINVAL;
 
   while (rest.len > 0U) {
-    if (!tstr_v_utf8_next(&rest, &cp)) return TURBO_EINVAL;
+    if (!vstr_utf8_next(&rest, &cp)) return TURBO_EINVAL;
     int32_t child = ac_utf8_find_child_const(ac, state, cp);
     while (child < 0 && state != 0) {
       state = ac_utf8_node_at_const(ac, state)->fail;

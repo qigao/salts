@@ -104,7 +104,7 @@ spec("C++ stream consumer") {
             STREAM_ITERATE(&stream, int, 2, 3, cpp_double_int),
             STREAM_OK);
         check_equal(STREAM_TO_ARRAY(&stream, output, &count), STREAM_END);
-        check_size_eq(count, 3);
+        check_equal(count, 3);
         check_equal(output[0], 2);
         check_equal(output[1], 4);
         check_equal(output[2], 8);
@@ -122,7 +122,7 @@ spec("C++ stream consumer") {
             sum += value;
         }
 
-        check_size_eq(value_count, 3);
+        check_equal(value_count, 3);
         check_equal(values[0], 5);
         check_equal(values[1], 6);
         check_equal(values[2], 7);
@@ -164,7 +164,7 @@ spec("C++ stream consumer") {
             ++count;
         }
 
-        check_size_eq(count, 3);
+        check_equal(count, 3);
         check_equal(sum, 9);
         check_equal(snapshot.error, STREAM_ERR_NONE);
     }
@@ -192,7 +192,7 @@ spec("C++ stream consumer") {
             ++count;
         }
 
-        check_size_eq(count, 2);
+        check_equal(count, 2);
         check_equal(sum, 6);
         check_equal(snapshot.error, STREAM_ERR_NONE);
 
@@ -222,7 +222,7 @@ spec("C++ stream consumer") {
             ++value_count;
         }
 
-        check_size_eq(value_count, 0);
+        check_equal(value_count, 0);
         check_equal(snapshot.error, STREAM_ERR_UNSUPPORTED_SOURCE);
     }
 
@@ -232,7 +232,7 @@ spec("C++ stream consumer") {
         int items = 0;
 
         check_equal(STREAM_OF(&stream, int, 3, 4, 5), STREAM_OK);
-        check_ptr_eq(stream.boxed(&stream), &stream);
+        check_equal(stream.boxed(&stream), &stream);
 
         for (const int *value : turbo::stream::from_boxed<int>(stream)) {
             if (value != nullptr) {
@@ -262,7 +262,7 @@ spec("C++ stream consumer") {
             ++count;
         }
 
-        check_size_eq(count, 2);
+        check_equal(count, 2);
         check_equal(sum, 10);
         check_equal(cpp_peek_count, 2);
         check_equal(cpp_peek_sum, 10);
@@ -281,7 +281,7 @@ spec("C++ stream consumer") {
             ++count;
         }
 
-        check_size_eq(count, 2);
+        check_equal(count, 2);
         check_equal(sum, 10);
     }
 
@@ -295,7 +295,7 @@ spec("C++ stream consumer") {
             sum += value;
             ++count;
         });
-        check_size_eq(count, 3);
+        check_equal(count, 3);
         check_equal(sum, 24);
 
         stream_t boxed_stream{};
@@ -309,7 +309,7 @@ spec("C++ stream consumer") {
                     ++boxed_count;
                 }
             });
-        check_size_eq(boxed_count, 3);
+        check_equal(boxed_count, 3);
         check_equal(boxed_sum, 12);
     }
 
@@ -325,7 +325,7 @@ spec("C++ stream consumer") {
 
         check_equal(STREAM_OF(&stream, int, 1, 2, 3, 4), STREAM_OK);
         check_equal(turbo::stream::from<int>(stream).count(count), STREAM_END);
-        check_size_eq(count, 4);
+        check_equal(count, 4);
 
         check_equal(STREAM_OF(&stream, int, 1, 2, 3, 4), STREAM_OK);
         sum = 0;
@@ -351,10 +351,10 @@ spec("C++ stream consumer") {
 
         check_equal(STREAM_OF(&stream, int, 1, 2, 3, 4), STREAM_OK);
         auto to_array_result = turbo::stream::from<int>(stream).to_array(out, 4, array_count);
-        check_size_eq(array_count, 4);
+        check_equal(array_count, 4);
         check_equal(to_array_result, STREAM_FULL);
         static const int expected[] = {1, 2, 3, 4};
-        check_mem_eq(out, expected, sizeof(expected));
+        check_equal(out, expected, sizeof(expected));
         check_equal(out[0], 1);
         check_equal(out[1], 2);
         check_equal(out[2], 3);

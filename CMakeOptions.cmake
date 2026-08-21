@@ -10,7 +10,6 @@ cmake_dependent_option(ENABLE_ASAN "Enable Address Sanitizer" ON
                        "CMAKE_BUILD_TYPE STREQUAL Debug" OFF)
 
 
-# if(MSVC) add_compile_options(/bigobj) endif()
 
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_TESTS "Build test suite" ON)

@@ -138,9 +138,9 @@ s->filter(s, is_even)
 
 For a borrowed-string pipeline over `turbo_list_t`, see
 [`examples/advanced_strings_example.c`](examples/advanced_strings_example.c).
-It uses the typed `tstr_v_list_t_from(&words, source, count)` constructor, then
+It uses the typed `vstr_list_t_from(&words, source, count)` constructor, then
 demonstrates string predicates, mapping, `for_each`, `clear`, and `reset`. The
-list owns copies of the `tstr_v` structures; the referenced string bytes remain
+list owns copies of the `vstr` structures; the referenced string bytes remain
 owned by their original source.
 
 Typed TurboUtils containers support the same bulk-construction style:
@@ -160,7 +160,7 @@ int_map_t_from(&values_by_id, entries, 2);
 `vec`, `deque`, `list`, `set`, and `heap` accept element arrays. `hash_map`,
 `map`, `multimap`, `tree_map`, and `bplus_tree` generate a typed
 `name_entry` structure and accept entry arrays. Elements, keys, and values are
-copied into container-owned slots. Pointer-bearing values such as `tstr_v`
+copied into container-owned slots. Pointer-bearing values such as `vstr`
 retain their normal shallow-copy/borrowed-payload semantics.
 
 Implemented operators:

@@ -16,8 +16,8 @@ spec("Memory Pool Tests") {
     MemoryPool *pool = pool_create(1024);
     void *p1 = pool_alloc(pool, 100);
     check_not_null(p1);
-    check_size_ge(pool_get_used(pool), 100);
-    check_size_eq((uintptr_t)p1 % MEMORY_POOL_DEFAULT_ALIGNMENT, 0);
+    check_greater_equal(pool_get_used(pool), 100);
+    check_equal((uintptr_t)p1 % MEMORY_POOL_DEFAULT_ALIGNMENT, 0);
     pool_destroy(pool);
   }
 
@@ -25,7 +25,7 @@ spec("Memory Pool Tests") {
     MemoryPool *pool = pool_create(1024);
     void *aligned = pool_alloc_aligned(pool, 16, 16);
     check_not_null(aligned);
-    check_size_eq((uintptr_t)aligned % 16, 0);
+    check_equal((uintptr_t)aligned % 16, 0);
     pool_destroy(pool);
   }
 
@@ -42,7 +42,7 @@ spec("Memory Pool Tests") {
     void *p2 = pool_alloc(pool, 50);
     check_not_null(p2);
     pool_rewind(pool, mark);
-    check_size_eq(pool_get_used(pool), mark);
+    check_equal(pool_get_used(pool), mark);
     pool_destroy(pool);
   }
 
@@ -50,7 +50,7 @@ spec("Memory Pool Tests") {
     MemoryPool *pool = pool_create(1024);
     pool_alloc(pool, 100);
     pool_reset(pool);
-    check_size_eq(pool_get_used(pool), 0);
+    check_equal(pool_get_used(pool), 0);
     pool_destroy(pool);
   }
 
@@ -58,7 +58,7 @@ spec("Memory Pool Tests") {
     MemoryPool *pool = pool_create(1024);
     void *p = pool_alloc(pool, SIZE_MAX);
     check_null(p);
-    check_size_eq(pool_get_used(pool), 0);
+    check_equal(pool_get_used(pool), 0);
     pool_destroy(pool);
   }
 
@@ -68,7 +68,7 @@ spec("Memory Pool Tests") {
     void *p2 = pool_alloc(pool, 1);
     check_not_null(p1);
     check_null(p2);
-    check_size_eq(pool_get_used(pool), 16);
+    check_equal(pool_get_used(pool), 16);
     pool_destroy(pool);
   }
 }

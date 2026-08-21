@@ -1,4 +1,4 @@
-#include "turbo_str_view.h"
+#include "turbo_vstr.h"
 #include <simde/x86/sse2.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -6,7 +6,7 @@
 
 enum { TSTR_SIMD_CSET_LIMIT = 8 };
 
-#define TSTR_V_COPY_TO(v, alloc_call)                                                              \
+#define VSTR_COPY_TO(v, alloc_call)                                                              \
   do {                                                                                             \
     if ((v).len == SIZE_MAX || (!(v).data && (v).len > 0)) return NULL;                            \
     char *out = (char *)(alloc_call);                                                              \
@@ -32,8 +32,6 @@ static const unsigned char lower_table[256] = {
     228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246,
     247, 248, 249, 250, 251, 252, 253, 254, 255,
 };
-
-static inline int tstr_v_valid(tstr_v v) { return v.data != NULL || v.len == 0; }
 
 static simde__m128i tstr_simd_cset_mask(simde__m128i bytes, const char *cset, size_t cset_len) {
   simde__m128i matches = simde_mm_setzero_si128();
@@ -139,17 +137,17 @@ static int tstr_utf8_decode_one(const char *data, size_t len, uint32_t *codepoin
   return 1;
 }
 
-int tstr_v_eq(tstr_v a, tstr_v b) {
+int vstr_eq(vstr a, vstr b) {
   if (a.len != b.len) return 0;
   if (a.len == 0) return 1;
-  if (!tstr_v_valid(a) || !tstr_v_valid(b)) return 0;
+  if (!vstr_is_valid(a) || !vstr_is_valid(b)) return 0;
   return memcmp(a.data, b.data, a.len) == 0;
 }
 
-int tstr_v_ieq(tstr_v a, tstr_v b) {
+int vstr_ieq(vstr a, vstr b) {
   if (a.len != b.len) return 0;
   if (a.len == 0) return 1;
-  if (!tstr_v_valid(a) || !tstr_v_valid(b)) return 0;
+  if (!vstr_is_valid(a) || !vstr_is_valid(b)) return 0;
   size_t i = 0;
   const simde__m128i uppercase_start = simde_mm_set1_epi8('A' - 1);
   const simde__m128i uppercase_end = simde_mm_set1_epi8('Z' + 1);
@@ -174,142 +172,144 @@ int tstr_v_ieq(tstr_v a, tstr_v b) {
   return 1;
 }
 
-int tstr_v_starts_with(tstr_v s, tstr_v prefix) {
+int vstr_starts_with(vstr s, vstr prefix) {
   if (prefix.len > s.len) return 0;
   if (prefix.len == 0) return 1;
-  if (!tstr_v_valid(s) || !tstr_v_valid(prefix)) return 0;
+  if (!vstr_is_valid(s) || !vstr_is_valid(prefix)) return 0;
   return memcmp(s.data, prefix.data, prefix.len) == 0;
 }
 
-int tstr_v_ends_with(tstr_v s, tstr_v suffix) {
+int vstr_ends_with(vstr s, vstr suffix) {
   if (suffix.len > s.len) return 0;
   if (suffix.len == 0) return 1;
-  if (!tstr_v_valid(s) || !tstr_v_valid(suffix)) return 0;
+  if (!vstr_is_valid(s) || !vstr_is_valid(suffix)) return 0;
   return memcmp(s.data + (s.len - suffix.len), suffix.data, suffix.len) == 0;
 }
 
-int tstr_v_contains(tstr_v s, tstr_v needle) { return tstr_v_find(s, needle) != TSTR_V_NPOS; }
+int vstr_contains(vstr s, vstr needle) { return vstr_find(s, needle) != VSTR_NPOS; }
 
-size_t tstr_v_find(tstr_v s, tstr_v needle) {
+size_t vstr_find(vstr s, vstr needle) {
   if (needle.len == 0) return 0;
-  if (needle.len > s.len) return TSTR_V_NPOS;
-  if (!tstr_v_valid(s) || !tstr_v_valid(needle)) return TSTR_V_NPOS;
+  if (needle.len > s.len) return VSTR_NPOS;
+  if (!vstr_is_valid(s) || !vstr_is_valid(needle)) return VSTR_NPOS;
   char first = needle.data[0];
   size_t limit = s.len - needle.len;
   for (size_t i = 0; i <= limit; i++) {
     const char *p = (const char *)memchr(s.data + i, first, limit - i + 1);
-    if (!p) return TSTR_V_NPOS;
+    if (!p) return VSTR_NPOS;
     i = (size_t)(p - s.data);
     if (memcmp(p, needle.data, needle.len) == 0) return i;
   }
-  return TSTR_V_NPOS;
+  return VSTR_NPOS;
 }
 
-size_t tstr_v_rfind(tstr_v s, tstr_v needle) {
+size_t vstr_rfind(vstr s, vstr needle) {
   if (needle.len == 0) return s.len;
-  if (needle.len > s.len) return TSTR_V_NPOS;
-  if (!tstr_v_valid(s) || !tstr_v_valid(needle)) return TSTR_V_NPOS;
+  if (needle.len > s.len) return VSTR_NPOS;
+  if (!vstr_is_valid(s) || !vstr_is_valid(needle)) return VSTR_NPOS;
   for (size_t i = s.len - needle.len + 1; i > 0; i--) {
     if (memcmp(s.data + i - 1, needle.data, needle.len) == 0) return i - 1;
   }
-  return TSTR_V_NPOS;
+  return VSTR_NPOS;
 }
 
-size_t tstr_v_find_char(tstr_v s, char c) {
-  if (s.len == 0) return TSTR_V_NPOS;
-  if (!tstr_v_valid(s)) return TSTR_V_NPOS;
+size_t vstr_find_char(vstr s, char c) {
+  if (s.len == 0) return VSTR_NPOS;
+  if (!vstr_is_valid(s)) return VSTR_NPOS;
   const char *p = (const char *)memchr(s.data, c, s.len);
-  return p ? (size_t)(p - s.data) : TSTR_V_NPOS;
+  return p ? (size_t)(p - s.data) : VSTR_NPOS;
 }
 
-size_t tstr_v_rfind_char(tstr_v s, char c) {
-  if (!tstr_v_valid(s)) return TSTR_V_NPOS;
+size_t vstr_rfind_char(vstr s, char c) {
+  if (!vstr_is_valid(s)) return VSTR_NPOS;
   for (size_t i = s.len; i > 0; i--) {
     if (s.data[i - 1] == c) return i - 1;
   }
-  return TSTR_V_NPOS;
+  return VSTR_NPOS;
 }
 
-size_t tstr_v_count(tstr_v s, tstr_v needle) {
+size_t vstr_count(vstr s, vstr needle) {
   size_t count = 0;
   size_t offset = 0;
 
   if (needle.len == 0 || needle.len > s.len) return 0;
-  if (!tstr_v_valid(s) || !tstr_v_valid(needle)) return 0;
+  if (!vstr_is_valid(s) || !vstr_is_valid(needle)) return 0;
 
   while (offset <= s.len - needle.len) {
-    tstr_v rest = tstr_v_from_buf(s.data + offset, s.len - offset);
-    size_t pos = tstr_v_find(rest, needle);
-    if (pos == TSTR_V_NPOS) break;
+    vstr rest = vstr_from_buf(s.data + offset, s.len - offset);
+    size_t pos = vstr_find(rest, needle);
+    if (pos == VSTR_NPOS) break;
     ++count;
     offset += pos + needle.len;
   }
   return count;
 }
 
-static void tstr_v_partition_empty(tstr_v *before, tstr_v *match, tstr_v *after) {
-  if (before) *before = tstr_v_from_buf(NULL, 0);
-  if (match) *match = tstr_v_from_buf(NULL, 0);
-  if (after) *after = tstr_v_from_buf(NULL, 0);
+static void vstr_partition_empty(vstr *before, vstr *match, vstr *after) {
+  if (before) *before = vstr_from_buf(NULL, 0);
+  if (match) *match = vstr_from_buf(NULL, 0);
+  if (after) *after = vstr_from_buf(NULL, 0);
 }
 
-int tstr_v_partition(tstr_v s, tstr_v delim, tstr_v *before, tstr_v *match, tstr_v *after) {
+int vstr_partition(vstr s, vstr delim, vstr *before, vstr *match, vstr *after) {
   size_t pos;
 
-  if (!before || !match || !after || !tstr_v_valid(s) || !tstr_v_valid(delim) || delim.len == 0) {
-    tstr_v_partition_empty(before, match, after);
+  if (!before || !match || !after || !vstr_is_valid(s) || !vstr_is_valid(delim) ||
+      delim.len == 0) {
+    vstr_partition_empty(before, match, after);
     return 0;
   }
-  pos = tstr_v_find(s, delim);
-  if (pos == TSTR_V_NPOS) {
+  pos = vstr_find(s, delim);
+  if (pos == VSTR_NPOS) {
     *before = s;
-    *match = tstr_v_from_buf(s.data ? s.data + s.len : NULL, 0);
-    *after = tstr_v_from_buf(s.data ? s.data + s.len : NULL, 0);
+    *match = vstr_from_buf(s.data ? s.data + s.len : NULL, 0);
+    *after = vstr_from_buf(s.data ? s.data + s.len : NULL, 0);
     return 0;
   }
-  *before = tstr_v_from_buf(s.data, pos);
-  *match = tstr_v_from_buf(s.data + pos, delim.len);
-  *after = tstr_v_from_buf(s.data + pos + delim.len, s.len - pos - delim.len);
+  *before = vstr_from_buf(s.data, pos);
+  *match = vstr_from_buf(s.data + pos, delim.len);
+  *after = vstr_from_buf(s.data + pos + delim.len, s.len - pos - delim.len);
   return 1;
 }
 
-int tstr_v_rpartition(tstr_v s, tstr_v delim, tstr_v *before, tstr_v *match, tstr_v *after) {
+int vstr_rpartition(vstr s, vstr delim, vstr *before, vstr *match, vstr *after) {
   size_t pos;
 
-  if (!before || !match || !after || !tstr_v_valid(s) || !tstr_v_valid(delim) || delim.len == 0) {
-    tstr_v_partition_empty(before, match, after);
+  if (!before || !match || !after || !vstr_is_valid(s) || !vstr_is_valid(delim) ||
+      delim.len == 0) {
+    vstr_partition_empty(before, match, after);
     return 0;
   }
-  pos = tstr_v_rfind(s, delim);
-  if (pos == TSTR_V_NPOS) {
-    *before = tstr_v_from_buf(s.data, 0);
-    *match = tstr_v_from_buf(s.data, 0);
+  pos = vstr_rfind(s, delim);
+  if (pos == VSTR_NPOS) {
+    *before = vstr_from_buf(s.data, 0);
+    *match = vstr_from_buf(s.data, 0);
     *after = s;
     return 0;
   }
-  *before = tstr_v_from_buf(s.data, pos);
-  *match = tstr_v_from_buf(s.data + pos, delim.len);
-  *after = tstr_v_from_buf(s.data + pos + delim.len, s.len - pos - delim.len);
+  *before = vstr_from_buf(s.data, pos);
+  *match = vstr_from_buf(s.data + pos, delim.len);
+  *after = vstr_from_buf(s.data + pos + delim.len, s.len - pos - delim.len);
   return 1;
 }
 
-tstr_v tstr_v_sub(tstr_v s, size_t pos, size_t n) {
-  if (!tstr_v_valid(s)) return tstr_v_from_buf(NULL, 0);
-  if (pos >= s.len) return tstr_v_from_buf(NULL, 0);
+vstr vstr_sub(vstr s, size_t pos, size_t n) {
+  if (!vstr_is_valid(s)) return vstr_from_buf(NULL, 0);
+  if (pos >= s.len) return vstr_from_buf(NULL, 0);
   size_t available = s.len - pos;
   if (n > available) n = available;
-  return tstr_v_from_buf(s.data + pos, n);
+  return vstr_from_buf(s.data + pos, n);
 }
 
-int tstr_v_utf8_valid(tstr_v s) {
-  return tstr_v_utf8_invalid_offset(s) == TSTR_V_NPOS;
+int vstr_utf8_valid(vstr s) {
+  return vstr_utf8_invalid_offset(s) == VSTR_NPOS;
 }
 
-size_t tstr_v_utf8_invalid_offset(tstr_v s) {
+size_t vstr_utf8_invalid_offset(vstr s) {
   size_t offset = 0;
   int use_simde = 1;
 
-  if (!tstr_v_valid(s)) return 0;
+  if (!vstr_is_valid(s)) return 0;
   while (offset < s.len) {
     size_t width = 0;
     if (!use_simde) {
@@ -317,7 +317,7 @@ size_t tstr_v_utf8_invalid_offset(tstr_v s) {
         if (!tstr_utf8_decode_one(s.data + offset, s.len - offset, NULL, &width)) return offset;
         offset += width;
       }
-      return TSTR_V_NPOS;
+      return VSTR_NPOS;
     }
     size_t remaining = s.len - offset;
     size_t ascii = use_simde ? tstr_utf8_ascii_prefix_simde(s.data + offset, remaining)
@@ -330,19 +330,20 @@ size_t tstr_v_utf8_invalid_offset(tstr_v s) {
     if (!tstr_utf8_decode_one(s.data + offset, s.len - offset, NULL, &width)) return offset;
     offset += width;
   }
-  return TSTR_V_NPOS;
+  return VSTR_NPOS;
 }
 
-size_t tstr_v_find_any(tstr_v s, tstr_v delimiters) {
+size_t vstr_find_any(vstr s, vstr delimiters) {
   size_t i = 0;
 
-  if (s.len == 0 || delimiters.len == 0 || !tstr_v_valid(s) || !tstr_v_valid(delimiters))
-    return TSTR_V_NPOS;
+  if (s.len == 0 || delimiters.len == 0 || !vstr_is_valid(s) ||
+      !vstr_is_valid(delimiters))
+    return VSTR_NPOS;
   if (delimiters.len > TSTR_SIMD_CSET_LIMIT) {
     for (; i < s.len; ++i) {
       if (memchr(delimiters.data, s.data[i], delimiters.len) != NULL) return i;
     }
-    return TSTR_V_NPOS;
+    return VSTR_NPOS;
   }
   while (s.len - i >= sizeof(simde__m128i)) {
     simde__m128i bytes = simde_mm_loadu_si128((const simde__m128i *)(s.data + i));
@@ -362,27 +363,27 @@ size_t tstr_v_find_any(tstr_v s, tstr_v delimiters) {
   for (; i < s.len; ++i) {
     if (memchr(delimiters.data, s.data[i], delimiters.len) != NULL) return i;
   }
-  return TSTR_V_NPOS;
+  return VSTR_NPOS;
 }
 
-size_t tstr_v_utf8_len(tstr_v s) {
-  return tstr_v_utf8_nlen(s, s.len);
+size_t vstr_utf8_len(vstr s) {
+  return vstr_utf8_nlen(s, s.len);
 }
 
-size_t tstr_v_utf8_nlen(tstr_v s, size_t n) {
+size_t vstr_utf8_nlen(vstr s, size_t n) {
   size_t offset = 0;
   size_t count = 0;
   size_t limit;
   int use_simde = 1;
 
-  if (!tstr_v_valid(s)) return TSTR_V_NPOS;
+  if (!vstr_is_valid(s)) return VSTR_NPOS;
   limit = n < s.len ? n : s.len;
   while (offset < limit) {
     size_t width = 0;
     if (!use_simde) {
       while (offset < limit) {
         if (!tstr_utf8_decode_one(s.data + offset, limit - offset, NULL, &width))
-          return TSTR_V_NPOS;
+          return VSTR_NPOS;
         offset += width;
         ++count;
       }
@@ -397,23 +398,23 @@ size_t tstr_v_utf8_nlen(tstr_v s, size_t n) {
     offset += ascii;
     count += ascii;
     if (offset == limit) break;
-    if (!tstr_utf8_decode_one(s.data + offset, limit - offset, NULL, &width)) return TSTR_V_NPOS;
+    if (!tstr_utf8_decode_one(s.data + offset, limit - offset, NULL, &width)) return VSTR_NPOS;
     offset += width;
     ++count;
   }
   return count;
 }
 
-size_t tstr_v_utf8_size_lazy(tstr_v s) {
-  if (!tstr_v_valid(s)) return TSTR_V_NPOS;
+size_t vstr_utf8_size_lazy(vstr s) {
+  if (!vstr_is_valid(s)) return VSTR_NPOS;
   return s.len;
 }
 
-size_t tstr_v_utf8_byte_offset(tstr_v s, size_t char_index) {
+size_t vstr_utf8_byte_offset(vstr s, size_t char_index) {
   size_t offset = 0;
   size_t count = 0;
 
-  if (!tstr_v_valid(s)) return TSTR_V_NPOS;
+  if (!vstr_is_valid(s)) return VSTR_NPOS;
   if (char_index == 0) return 0;
   while (offset < s.len) {
     size_t width = 0;
@@ -422,87 +423,87 @@ size_t tstr_v_utf8_byte_offset(tstr_v s, size_t char_index) {
     if (ascii >= remaining) return offset + remaining;
     offset += ascii;
     count += ascii;
-    if (!tstr_utf8_decode_one(s.data + offset, s.len - offset, NULL, &width)) return TSTR_V_NPOS;
+    if (!tstr_utf8_decode_one(s.data + offset, s.len - offset, NULL, &width)) return VSTR_NPOS;
     offset += width;
     ++count;
     if (count == char_index) return offset;
   }
-  return TSTR_V_NPOS;
+  return VSTR_NPOS;
 }
 
-tstr_v tstr_v_utf8_sub(tstr_v s, size_t char_pos, size_t char_count) {
+vstr vstr_utf8_sub(vstr s, size_t char_pos, size_t char_count) {
   size_t start;
   size_t end;
-  tstr_v tail;
+  vstr tail;
 
-  if (!tstr_v_utf8_valid(s)) return tstr_v_from_buf(NULL, 0);
+  if (!vstr_utf8_valid(s)) return vstr_from_buf(NULL, 0);
 
-  start = tstr_v_utf8_byte_offset(s, char_pos);
-  if (start == TSTR_V_NPOS || start >= s.len || char_count == 0) return tstr_v_from_buf(NULL, 0);
-  if (char_count == SIZE_MAX) return tstr_v_from_buf(s.data + start, s.len - start);
+  start = vstr_utf8_byte_offset(s, char_pos);
+  if (start == VSTR_NPOS || start >= s.len || char_count == 0) return vstr_from_buf(NULL, 0);
+  if (char_count == SIZE_MAX) return vstr_from_buf(s.data + start, s.len - start);
 
-  tail = tstr_v_from_buf(s.data + start, s.len - start);
-  end = tstr_v_utf8_byte_offset(tail, char_count);
-  if (end == TSTR_V_NPOS) end = tail.len;
-  return tstr_v_from_buf(tail.data, end);
+  tail = vstr_from_buf(s.data + start, s.len - start);
+  end = vstr_utf8_byte_offset(tail, char_count);
+  if (end == VSTR_NPOS) end = tail.len;
+  return vstr_from_buf(tail.data, end);
 }
 
-int tstr_v_utf8_next(tstr_v *rest, uint32_t *codepoint) {
+int vstr_utf8_next(vstr *rest, uint32_t *codepoint) {
   size_t width = 0;
   uint32_t cp = 0;
 
-  if (!rest || rest->len == 0 || !tstr_v_valid(*rest)) return 0;
+  if (!rest || rest->len == 0 || !vstr_is_valid(*rest)) return 0;
   if (!tstr_utf8_decode_one(rest->data, rest->len, &cp, &width)) return 0;
 
   if (codepoint) *codepoint = cp;
-  *rest = tstr_v_from_buf(rest->data + width, rest->len - width);
+  *rest = vstr_from_buf(rest->data + width, rest->len - width);
   return 1;
 }
 
-size_t tstr_v_utf8_find_cp(tstr_v s, uint32_t codepoint) {
+size_t vstr_utf8_find_cp(vstr s, uint32_t codepoint) {
   size_t offset = 0;
 
-  if (tstr_utf8_codepoint_size(codepoint) == 0 || !tstr_v_valid(s)) return TSTR_V_NPOS;
+  if (tstr_utf8_codepoint_size(codepoint) == 0 || !vstr_is_valid(s)) return VSTR_NPOS;
   while (offset < s.len) {
     size_t width = 0;
     uint32_t cp = 0;
-    if (!tstr_utf8_decode_one(s.data + offset, s.len - offset, &cp, &width)) return TSTR_V_NPOS;
+    if (!tstr_utf8_decode_one(s.data + offset, s.len - offset, &cp, &width)) return VSTR_NPOS;
     if (cp == codepoint) return offset;
     offset += width;
   }
-  return TSTR_V_NPOS;
+  return VSTR_NPOS;
 }
 
-size_t tstr_v_utf8_rfind_cp(tstr_v s, uint32_t codepoint) {
+size_t vstr_utf8_rfind_cp(vstr s, uint32_t codepoint) {
   size_t offset = 0;
-  size_t found = TSTR_V_NPOS;
+  size_t found = VSTR_NPOS;
 
-  if (tstr_utf8_codepoint_size(codepoint) == 0 || !tstr_v_valid(s)) return TSTR_V_NPOS;
+  if (tstr_utf8_codepoint_size(codepoint) == 0 || !vstr_is_valid(s)) return VSTR_NPOS;
   while (offset < s.len) {
     size_t width = 0;
     uint32_t cp = 0;
-    if (!tstr_utf8_decode_one(s.data + offset, s.len - offset, &cp, &width)) return TSTR_V_NPOS;
+    if (!tstr_utf8_decode_one(s.data + offset, s.len - offset, &cp, &width)) return VSTR_NPOS;
     if (cp == codepoint) found = offset;
     offset += width;
   }
   return found;
 }
 
-size_t tstr_v_utf8_find(tstr_v haystack, tstr_v needle) {
+size_t vstr_utf8_find(vstr haystack, vstr needle) {
   size_t offset = 0;
 
-  if (!tstr_v_utf8_valid(haystack) || !tstr_v_utf8_valid(needle)) return TSTR_V_NPOS;
+  if (!vstr_utf8_valid(haystack) || !vstr_utf8_valid(needle)) return VSTR_NPOS;
   if (needle.len == 0) return 0;
-  if (needle.len > haystack.len) return TSTR_V_NPOS;
+  if (needle.len > haystack.len) return VSTR_NPOS;
 
   while (offset <= haystack.len - needle.len) {
     size_t width = 0;
     if (memcmp(haystack.data + offset, needle.data, needle.len) == 0) return offset;
     if (!tstr_utf8_decode_one(haystack.data + offset, haystack.len - offset, NULL, &width))
-      return TSTR_V_NPOS;
+      return VSTR_NPOS;
     offset += width;
   }
-  return TSTR_V_NPOS;
+  return VSTR_NPOS;
 }
 
 size_t tstr_utf8_codepoint_size(uint32_t codepoint) {
@@ -513,11 +514,11 @@ size_t tstr_utf8_codepoint_size(uint32_t codepoint) {
   return 4;
 }
 
-tstr_v tstr_v_trim(tstr_v s, const char *cset) {
-  return tstr_v_trim_left(tstr_v_trim_right(s, cset), cset);
+vstr vstr_trim(vstr s, const char *cset) {
+  return vstr_trim_left(vstr_trim_right(s, cset), cset);
 }
 
-tstr_v tstr_v_trim_left(tstr_v s, const char *cset) {
+vstr vstr_trim_left(vstr s, const char *cset) {
   if (!s.data || s.len == 0 || !cset) return s;
   size_t cset_len = strlen(cset);
   size_t start = 0;
@@ -535,15 +536,15 @@ tstr_v tstr_v_trim_left(tstr_v s, const char *cset) {
         ++start;
         matches >>= 1;
       }
-      return tstr_v_from_buf(s.data + start, s.len - start);
+      return vstr_from_buf(s.data + start, s.len - start);
     }
   }
   while (start < s.len && strchr(cset, s.data[start]) != NULL)
     start++;
-  return tstr_v_from_buf(s.data + start, s.len - start);
+  return vstr_from_buf(s.data + start, s.len - start);
 }
 
-tstr_v tstr_v_trim_right(tstr_v s, const char *cset) {
+vstr vstr_trim_right(vstr s, const char *cset) {
   if (!s.data || s.len == 0 || !cset) return s;
   size_t cset_len = strlen(cset);
   size_t end = s.len;
@@ -561,69 +562,69 @@ tstr_v tstr_v_trim_right(tstr_v s, const char *cset) {
         --end;
         matches <<= 1;
       }
-      return tstr_v_from_buf(s.data, end);
+      return vstr_from_buf(s.data, end);
     }
   }
   while (end > 0 && strchr(cset, s.data[end - 1]) != NULL)
     end--;
-  return tstr_v_from_buf(s.data, end);
+  return vstr_from_buf(s.data, end);
 }
 
-tstr_v tstr_v_split_next(tstr_v *rest, tstr_v delim) {
-  if (!rest || rest->len == 0) return tstr_v_from_buf(NULL, 0);
-  if (!tstr_v_valid(*rest)) {
-    *rest = tstr_v_from_buf(NULL, 0);
-    return tstr_v_from_buf(NULL, 0);
+vstr vstr_split_next(vstr *rest, vstr delim) {
+  if (!rest || rest->len == 0) return vstr_from_buf(NULL, 0);
+  if (!vstr_is_valid(*rest)) {
+    *rest = vstr_from_buf(NULL, 0);
+    return vstr_from_buf(NULL, 0);
   }
-  if (!tstr_v_valid(delim) || delim.len == 0) {
-    tstr_v result = *rest;
-    *rest = tstr_v_from_buf(rest->data + rest->len, 0);
+  if (!vstr_is_valid(delim) || delim.len == 0) {
+    vstr result = *rest;
+    *rest = vstr_from_buf(rest->data + rest->len, 0);
     return result;
   }
-  size_t pos = tstr_v_find(*rest, delim);
-  if (pos == TSTR_V_NPOS) {
-    tstr_v result = *rest;
-    *rest = tstr_v_from_buf(rest->data + rest->len, 0);
+  size_t pos = vstr_find(*rest, delim);
+  if (pos == VSTR_NPOS) {
+    vstr result = *rest;
+    *rest = vstr_from_buf(rest->data + rest->len, 0);
     return result;
   }
-  tstr_v result = tstr_v_from_buf(rest->data, pos);
-  *rest = tstr_v_from_buf(rest->data + pos + delim.len, rest->len - pos - delim.len);
+  vstr result = vstr_from_buf(rest->data, pos);
+  *rest = vstr_from_buf(rest->data + pos + delim.len, rest->len - pos - delim.len);
   return result;
 }
 
-tstr_v tstr_v_rsplit_next(tstr_v *rest, tstr_v delim) {
+vstr vstr_rsplit_next(vstr *rest, vstr delim) {
   size_t pos;
 
-  if (!rest || rest->len == 0) return tstr_v_from_buf(NULL, 0);
-  if (!tstr_v_valid(*rest)) {
-    *rest = tstr_v_from_buf(NULL, 0);
-    return tstr_v_from_buf(NULL, 0);
+  if (!rest || rest->len == 0) return vstr_from_buf(NULL, 0);
+  if (!vstr_is_valid(*rest)) {
+    *rest = vstr_from_buf(NULL, 0);
+    return vstr_from_buf(NULL, 0);
   }
-  if (!tstr_v_valid(delim) || delim.len == 0) {
-    tstr_v result = *rest;
-    *rest = tstr_v_from_buf(rest->data, 0);
+  if (!vstr_is_valid(delim) || delim.len == 0) {
+    vstr result = *rest;
+    *rest = vstr_from_buf(rest->data, 0);
     return result;
   }
-  pos = tstr_v_rfind(*rest, delim);
-  if (pos == TSTR_V_NPOS) {
-    tstr_v result = *rest;
-    *rest = tstr_v_from_buf(rest->data, 0);
+  pos = vstr_rfind(*rest, delim);
+  if (pos == VSTR_NPOS) {
+    vstr result = *rest;
+    *rest = vstr_from_buf(rest->data, 0);
     return result;
   }
-  tstr_v result = tstr_v_from_buf(rest->data + pos + delim.len,
+  vstr result = vstr_from_buf(rest->data + pos + delim.len,
                                    rest->len - pos - delim.len);
-  *rest = tstr_v_from_buf(rest->data, pos);
+  *rest = vstr_from_buf(rest->data, pos);
   return result;
 }
 
-char *tstr_v_to_cstr(tstr_v v) { TSTR_V_COPY_TO(v, malloc(v.len + 1)); }
+char *vstr_to_cstr(vstr v) { VSTR_COPY_TO(v, malloc(v.len + 1)); }
 
-char *tstr_v_to_pool(tstr_v v, MemoryPool *pool) {
+char *vstr_to_pool(vstr v, MemoryPool *pool) {
   if (!pool) return NULL;
-  TSTR_V_COPY_TO(v, pool_alloc(pool, v.len + 1));
+  VSTR_COPY_TO(v, pool_alloc(pool, v.len + 1));
 }
 
-char *tstr_v_to_arena(tstr_v v, mem_pool_t *arena) {
+char *vstr_to_arena(vstr v, mem_pool_t *arena) {
   if (!arena) return NULL;
-  TSTR_V_COPY_TO(v, mem_alloc(arena, v.len + 1));
+  VSTR_COPY_TO(v, mem_alloc(arena, v.len + 1));
 }

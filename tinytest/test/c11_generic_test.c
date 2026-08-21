@@ -68,6 +68,17 @@ spec("C11 _Generic assertions") {
         check_not_equal_warn(mutable_str1, "different");
     }
 
+    it("should route three-argument equality to memory comparison") {
+        const unsigned char same_a[] = {0u, 1u, 2u, 3u};
+        const unsigned char same_b[] = {0u, 1u, 2u, 3u};
+        const unsigned char different[] = {0u, 1u, 9u, 3u};
+
+        check_equal(same_a, same_b, sizeof(same_a));
+        check_equal_warn(same_a, same_b, sizeof(same_a));
+        check_not_equal(same_a, different, sizeof(same_a));
+        check_not_equal_warn(same_a, different, sizeof(same_a));
+    }
+
     it("should route pointer helpers for check_equal and check_not_equal") {
         struct Foo foo1 = {10};
         struct Foo foo2 = {20};
@@ -133,7 +144,7 @@ spec("C11 _Generic assertions") {
         check_not_equal_warn(ld1, ld2);
     }
 
-    it("should route check_greater and check_less across numeric families") {
+    it("should route ordered comparisons across numeric families") {
         int i_small = 1;
         int i_big = 10;
         unsigned int ui_small = 1u;
@@ -189,6 +200,22 @@ spec("C11 _Generic assertions") {
         check_less_warn(f_small, f_big);
         check_less_warn(d_small, d_big);
         check_less_warn(ld_small, ld_big);
+        check_greater_equal(i_big, i_big);
+        check_greater_equal(ui_big, ui_big);
+        check_greater_equal(f_big, f_big);
+        check_greater_equal(ld_big, ld_big);
+        check_less_equal(i_small, i_small);
+        check_less_equal(ui_small, ui_small);
+        check_less_equal(d_small, d_small);
+        check_less_equal(ld_small, ld_small);
+        check_greater_equal_warn(i_big, i_big);
+        check_greater_equal_warn(ui_big, ui_big);
+        check_greater_equal_warn(f_big, f_big);
+        check_greater_equal_warn(ld_big, ld_big);
+        check_less_equal_warn(i_small, i_small);
+        check_less_equal_warn(ui_small, ui_small);
+        check_less_equal_warn(d_small, d_small);
+        check_less_equal_warn(ld_small, ld_small);
     }
 
     it("should support close and almost-equal assertions") {
@@ -199,12 +226,12 @@ spec("C11 _Generic assertions") {
         long double ld1 = 2.0L;
         long double ld2 = 2.0000000000001L;
 
-        check_close(f1, f2, 0.001f);
-        check_close_warn(f1, f2, 0.001f);
-        check_almost_equal(d1, d2, 0.001);
-        check_almost_equal_warn(d1, d2, 0.001);
-        check_almost_equal(ld1, ld2, 0.001L);
-        check_almost_equal_warn(ld1, ld2, 0.001L);
+        check_within(f1, f2, 0.001f);
+        check_within_warn(f1, f2, 0.001f);
+        check_within(d1, d2, 0.001);
+        check_within_warn(d1, d2, 0.001);
+        check_within(ld1, ld2, 0.001L);
+        check_within_warn(ld1, ld2, 0.001L);
     }
 
     it("should support in_range and between assertions") {

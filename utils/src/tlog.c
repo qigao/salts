@@ -63,27 +63,6 @@ uint64_t __pthread_threadid_np(void);
 #define COLOR_ERROR "\033[31m"
 #define COLOR_FATAL "\033[35m"
 
-#define TURBO_LOG_LEVEL_TABLE_ITEMS(X)                                                              \
-  X(TURBO_LOG_LEVEL_DEBUG, "DEBUG")                                                               \
-  X(TURBO_LOG_LEVEL_INFO, "INFO")                                                                 \
-  X(TURBO_LOG_LEVEL_WARN, "WARN")                                                                 \
-  X(TURBO_LOG_LEVEL_ERROR, "ERROR")                                                               \
-  X(TURBO_LOG_LEVEL_FATAL, "FATAL")
-
-typedef struct {
-  turbo_log_level_t level;
-  const char *name;
-} turbo_log_level_entry_t;
-
-#define TURBO_LOG_LEVEL_TABLE_ITEM(value, text) {value, text},
-static const turbo_log_level_entry_t turbo_log_level_entries[] = {
-  TURBO_LOG_LEVEL_TABLE_ITEMS(TURBO_LOG_LEVEL_TABLE_ITEM)
-};
-#undef TURBO_LOG_LEVEL_TABLE_ITEM
-
-#define TURBO_LOG_LEVEL_TABLE_SIZE                                                                    \
-  (sizeof(turbo_log_level_entries) / sizeof(turbo_log_level_entries[0]))
-
 #ifdef _MSC_VER
   #pragma warning(push)
   #pragma warning(disable : 4200) // nonstandard extension: zero-sized array
@@ -113,12 +92,12 @@ typedef struct {
 
 typedef struct {
   log_token_t type;
-  tstr_v text;
+  vstr text;
 } compiled_token_t;
 
 typedef struct {
   compiled_token_t tokens[MAX_PATTERN_TOKENS];
-  tstr_t pattern;
+  tstr pattern;
   int count;
 } compiled_pattern_t;
 
@@ -162,13 +141,7 @@ static int sink_accepts_level(const turbo_log_sink_t *sink, turbo_log_level_t le
 }
 
 static int log_level_is_valid(turbo_log_level_t level) {
-  size_t i;
-  for (i = 0; i < TURBO_LOG_LEVEL_TABLE_SIZE; ++i) {
-    if (turbo_log_level_entries[i].level == level) {
-      return 1;
-    }
-  }
-  return 0;
+  return cmeta_enum_item_by_value(turbo_log_level_t_meta(), (int64_t)level) != NULL;
 }
 
 static void *sink_user_data(const turbo_log_sink_t *sink) {
@@ -248,7 +221,7 @@ static int pattern_compile(const char *pattern, compiled_pattern_t *cp) {
   if (cp->pattern) {
     pattern_free(cp);
   }
-  tstr_t copy = tstr_dup(pattern);
+  tstr copy = tstr_dup(pattern);
   if (!copy) {
     return -1;
   }
@@ -265,9 +238,9 @@ static int pattern_compile(const char *pattern, compiled_pattern_t *cp) {
     compiled_token_t *ct = &cp->tokens[cp->count++];
     ct->type = token;
     if (token == LOG_TOKEN_TEXT || token == LOG_TOKEN_UNKNOWN) {
-      ct->text = tstr_v_from_buf(token_start, token_len);
+      ct->text = vstr_from_buf(token_start, token_len);
     } else {
-      ct->text = (tstr_v){NULL, 0};
+      ct->text = (vstr){NULL, 0};
     }
   }
   if (token != LOG_TOKEN_END) {
@@ -318,8 +291,8 @@ static uint64_t logger_disruptor_capacity(size_t buffer_size_bytes) {
 }
 
 static mem_buffer_t *async_entry_create(mem_pool_t *pool, const turbo_log_entry_t *entry) {
-  tstr_v comp = tstr_v_from_cstr(entry->component);
-  tstr_v file = tstr_v_from_cstr(entry->file);
+  vstr comp = vstr_from_cstr(entry->component);
+  vstr file = vstr_from_cstr(entry->file);
   size_t comp_len = comp.len;
   size_t file_len = file.len;
   size_t msg_len = entry->message_len;
@@ -421,7 +394,7 @@ static int format_with_pattern(char *buf, size_t buf_size, const compiled_patter
       break;
     }
     case LOG_TOKEN_LEVEL: {
-      tstr_v name = tstr_v_from_cstr(turbo_log_level_name(entry->level));
+      vstr name = vstr_from_cstr(turbo_log_level_name(entry->level));
       written = (int)name.len;
       if (written > 0 && dst + written < end) {
         memcpy(dst, name.data, written);
@@ -430,7 +403,7 @@ static int format_with_pattern(char *buf, size_t buf_size, const compiled_patter
     }
     case LOG_TOKEN_COMPONENT:
       if (entry->component) {
-        tstr_v component = tstr_v_from_cstr(entry->component);
+        vstr component = vstr_from_cstr(entry->component);
         written = (int)component.len;
         if (written > 0 && dst + written < end) {
           memcpy(dst, component.data, written);
@@ -439,7 +412,7 @@ static int format_with_pattern(char *buf, size_t buf_size, const compiled_patter
       break;
     case LOG_TOKEN_FILE:
       if (entry->file) {
-        tstr_v file = tstr_v_from_cstr(entry->file);
+        vstr file = vstr_from_cstr(entry->file);
         written = (int)file.len;
         if (written > 0 && dst + written < end) {
           memcpy(dst, file.data, written);
@@ -593,8 +566,8 @@ static void file_sink_rotate(file_sink_t *fs) {
 
   if (fs->max_files > 0) {
     // Rotate files: file.log.N -> file.log.N+1
-    tstr_t old_path = NULL;
-    tstr_t new_path = NULL;
+    tstr old_path = NULL;
+    tstr new_path = NULL;
     for (int i = fs->max_files - 1; i >= 0; i--) {
       tstr_free(old_path);
       tstr_free(new_path);
@@ -872,7 +845,7 @@ static int filter_sink_allows(filter_sink_t *fs, const turbo_log_entry_t *entry)
   }
   if (fs->component != NULL) {
     if (entry->component == NULL ||
-        tstr_cmp((tstr_t)entry->component, fs->component) != 0) {
+        tstr_cmp((tstr)entry->component, fs->component) != 0) {
       return 0;
     }
   }
@@ -1688,24 +1661,21 @@ tlog_t *tlog_peek_default(void) {
 // =============================================================================
 
 const char *turbo_log_level_name(turbo_log_level_t level) {
-  size_t i;
-  for (i = 0; i < TURBO_LOG_LEVEL_TABLE_SIZE; ++i) {
-    if (turbo_log_level_entries[i].level == level) {
-      return turbo_log_level_entries[i].name;
-    }
-  }
-  return "UNKNOWN";
+  const char *name = turbo_log_level_t_to_string(level);
+  return name ? name : "UNKNOWN";
 }
 
 turbo_log_level_t turbo_log_level_from_name(const char *name) {
+  const cmeta_enum_desc *meta;
   size_t i;
   if (!name) {
     return TURBO_LOG_LEVEL_INFO;
   }
 
-  for (i = 0; i < TURBO_LOG_LEVEL_TABLE_SIZE; ++i) {
-    if (strcmp(name, turbo_log_level_entries[i].name) == 0) {
-      return turbo_log_level_entries[i].level;
+  meta = turbo_log_level_t_meta();
+  for (i = 0; i < meta->count; ++i) {
+    if (strcmp(name, meta->items[i].text) == 0) {
+      return (turbo_log_level_t)meta->items[i].value;
     }
   }
 

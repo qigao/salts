@@ -55,10 +55,10 @@ suite("tinytest C++ Example") {
 
     it("should work with C-style checks in C++") {
       int x = 42;
-      check_int_eq(x, 42);
-      check_float_eq(3.14, 3.14, 0.001);
-      check_str_eq("hello", "hello");
-      check_hex_eq(0xFF, 0xFF);
+      check_equal(x, 42);
+      check_within(3.14, 3.14, 0.001);
+      check_equal("hello", "hello");
+      check_equal(0xFF, 0xFF);
     }
   }
 
@@ -68,27 +68,27 @@ suite("tinytest C++ Example") {
     before_each() { greeting = "hello world"; }
 
     it("should compare strings") {
-      check_string_eq(greeting, "hello world");
-      check_string_ne(greeting, "goodbye");
+      check_equal(greeting, "hello world");
+      check_not_equal(greeting, "goodbye");
     }
 
     it("should check substrings") {
-      check_string_contains(greeting, "world");
-      check_string_starts_with(greeting, "hello");
-      check_string_ends_with(greeting, "world");
+      check_contains(greeting, "world");
+      check_starts_with(greeting, "hello");
+      check_ends_with(greeting, "world");
     }
 
     it("should check empty/non-empty") {
-      check_string_not_empty(greeting);
+      check_not_empty(greeting);
 
       std::string empty;
-      check_string_empty(empty);
+      check_empty(empty);
     }
 
     it("should mix std::string and const char*") {
       const char *raw = "hello world";
-      check_string_eq(greeting, raw);
-      check_string_eq(raw, greeting);
+      check_equal(greeting, raw);
+      check_equal(raw, greeting);
     }
   }
 
@@ -151,11 +151,11 @@ suite("tinytest C++ Example") {
   describe("Calculator") {
     static Calculator calc;
 
-    it("should add") { check_int_eq(calc.add(2, 3), 5); }
+    it("should add") { check_equal(calc.add(2, 3), 5); }
 
-    it("should subtract") { check_int_eq(calc.subtract(10, 3), 7); }
+    it("should subtract") { check_equal(calc.subtract(10, 3), 7); }
 
-    it("should divide") { check_float_eq(calc.divide(10.0, 3.0), 3.333, 0.001); }
+    it("should divide") { check_within(calc.divide(10.0, 3.0), 3.333, 0.001); }
   }
 
   describe("TokenParser") {
@@ -170,7 +170,7 @@ suite("tinytest C++ Example") {
     it("should handle single token") {
       auto tokens = parser.split("hello", ',');
       check_size(tokens, 1);
-      check_string_eq(tokens[0], "hello");
+      check_equal(tokens[0], "hello");
     }
 
     it("should handle empty input") {
@@ -183,12 +183,12 @@ suite("tinytest C++ Example") {
 
     it("should work with unique_ptr") {
       auto calc = std::make_unique<Calculator>();
-      check_int_eq(calc->add(5, 7), 12);
+      check_equal(calc->add(5, 7), 12);
     }
 
     it("should work with shared_ptr") {
       auto calc = std::make_shared<Calculator>();
-      check_int_eq(calc->subtract(10, 4), 6);
+      check_equal(calc->subtract(10, 4), 6);
     }
   }
 
@@ -198,7 +198,7 @@ suite("tinytest C++ Example") {
       std::vector<std::string> names = {"alice", "bob", "charlie"};
       for (size_t i = 0; i < names.size(); i++) {
         info("checking name[%zu]=%s", i, names[i].c_str());
-        check_string_not_empty(names[i]);
+        check_not_empty(names[i]);
       }
     }
   }
@@ -211,14 +211,14 @@ suite("tinytest C++ Example") {
     when("adding items") {
       then("should update count") {
         inventory["apples"] += 5;
-        check_int_eq(inventory["apples"], 15);
+        check_equal(inventory["apples"], 15);
       }
     }
 
     when("removing items") {
       then("should decrease count") {
         inventory["bananas"] -= 2;
-        check_int_eq(inventory["bananas"], 3);
+        check_equal(inventory["bananas"], 3);
       }
     }
   }

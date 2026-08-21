@@ -1,6 +1,21 @@
 #ifndef CMETA_PP_H
 #define CMETA_PP_H
 
+#if defined(__GNUC__) || defined(__clang__)
+#define CMETA_UNUSED __attribute__((unused))
+#else
+#define CMETA_UNUSED
+#endif
+
+#define CMETA_INLINE static inline CMETA_UNUSED
+#define CMETA_LOCAL static CMETA_UNUSED
+
+#ifdef __cplusplus
+#define CMETA_ALIGNOF(type) alignof(type)
+#else
+#define CMETA_ALIGNOF(type) _Alignof(type)
+#endif
+
 /* Small, ISO-C-preprocessor iteration toolkit.
  *
  * A/B/C are deliberately separate expansion families. The preprocessor

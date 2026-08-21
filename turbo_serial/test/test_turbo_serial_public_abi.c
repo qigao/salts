@@ -8,11 +8,11 @@ suite("turbo_serial public ABI") {
 
     turbo_serial_config_default(&config);
 
-    check_int_eq(config.parity, TURBO_SERIAL_PARITY_NONE);
-    check_int_eq(config.flowcontrol, TURBO_SERIAL_FLOWCONTROL_NONE);
-    check_int_eq(turbo_serial_create(&serial, &config), TURBO_SERIAL_OK);
+    check_equal(config.parity, TURBO_SERIAL_PARITY_NONE);
+    check_equal(config.flowcontrol, TURBO_SERIAL_FLOWCONTROL_NONE);
+    check_equal(turbo_serial_create(&serial, &config), TURBO_SERIAL_OK);
     check_not_null(serial);
-    check_int_eq(turbo_serial_open(serial, "not-a-real-port", (turbo_serial_mode_t)0),
+    check_equal(turbo_serial_open(serial, "not-a-real-port", (turbo_serial_mode_t)0),
                  TURBO_SERIAL_INVALID_VALUE);
 
     turbo_serial_destroy(serial);
@@ -44,7 +44,7 @@ suite("turbo_serial public ABI") {
       check_null(ports);
     }
 
-    check_int_eq(turbo_serial_port_info_by_name(NULL, &ports, &info),
+    check_equal(turbo_serial_port_info_by_name(NULL, &ports, &info),
                  TURBO_SERIAL_INVALID_VALUE);
     check_null(ports);
     check_null(info);
@@ -55,19 +55,19 @@ suite("turbo_serial public ABI") {
     turbo_serial_t *serial = NULL;
     unsigned int ready_events = 99;
 
-    check_int_eq(turbo_serial_event_set_create(&event_set), TURBO_SERIAL_OK);
+    check_equal(turbo_serial_event_set_create(&event_set), TURBO_SERIAL_OK);
     check_not_null(event_set);
 
-    check_int_eq(turbo_serial_create(&serial, NULL), TURBO_SERIAL_OK);
+    check_equal(turbo_serial_create(&serial, NULL), TURBO_SERIAL_OK);
     check_not_null(serial);
-    check_int_eq(turbo_serial_event_set_add(event_set, serial, TURBO_SERIAL_EVENT_RX_READY),
+    check_equal(turbo_serial_event_set_add(event_set, serial, TURBO_SERIAL_EVENT_RX_READY),
                  TURBO_SERIAL_INVALID_STATE);
-    check_int_eq(turbo_serial_event_set_add(event_set, serial, 0x8000u),
+    check_equal(turbo_serial_event_set_add(event_set, serial, 0x8000u),
                  TURBO_SERIAL_INVALID_VALUE);
-    check_int_eq(turbo_serial_event_wait(event_set, 1), TURBO_SERIAL_INVALID_STATE);
-    check_int_eq(turbo_serial_event_wait_ex(event_set, 1, &ready_events),
+    check_equal(turbo_serial_event_wait(event_set, 1), TURBO_SERIAL_INVALID_STATE);
+    check_equal(turbo_serial_event_wait_ex(event_set, 1, &ready_events),
                  TURBO_SERIAL_INVALID_STATE);
-    check_uint_eq(ready_events, 0);
+    check_equal(ready_events, 0);
 
     turbo_serial_destroy(serial);
     turbo_serial_event_set_destroy(event_set);

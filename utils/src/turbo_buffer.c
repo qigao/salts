@@ -603,6 +603,7 @@ mem_pool_t* mem_global(void) {
 
 int mem_init(mem_pool_t* pool, size_t initial_size) {
     if (!pool) return -1;
+    (void)initial_size; /* Retained for source compatibility; allocation remains lazy. */
 
     for (int i = 0; i < POOL_SIZE_CLASSES; i++) {
         pool->slabs[i] = NULL;

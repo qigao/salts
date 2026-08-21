@@ -16,17 +16,17 @@ spec("platform_datetime") {
 
     ts = turbo_timegm(&tm_value);
     check(ts != (time_t)-1);
-    check_int_eq((int)ts, 1704110400);
+    check_equal((int)ts, 1704110400);
   }
 
   it("should decompose UTC time safely") {
     struct tm tm_value;
 
-    check_int_eq(turbo_gmtime((time_t)1704110400, &tm_value), 0);
-    check_int_eq(tm_value.tm_year + 1900, 2024);
-    check_int_eq(tm_value.tm_mon + 1, 1);
-    check_int_eq(tm_value.tm_mday, 1);
-    check_int_eq(tm_value.tm_hour, 12);
+    check_equal(turbo_gmtime((time_t)1704110400, &tm_value), 0);
+    check_equal(tm_value.tm_year + 1900, 2024);
+    check_equal(tm_value.tm_mon + 1, 1);
+    check_equal(tm_value.tm_mday, 1);
+    check_equal(tm_value.tm_hour, 12);
   }
 
   it("should format UTC time with strftime") {
@@ -35,6 +35,6 @@ spec("platform_datetime") {
                                 buf, sizeof(buf));
 
     check(rc > 0);
-    check_str_eq(buf, "2024-01-01T12:00:00Z");
+    check_equal(buf, "2024-01-01T12:00:00Z");
   }
 }

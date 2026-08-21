@@ -49,10 +49,10 @@ suite("Turbo Containers") {
       const int values[] = {3, 1, 4, 1, 5};
       int_vec_t vec;
 
-      check_int_eq(int_vec_t_from(&vec, values, sizeof(values) / sizeof(values[0])), TURBO_OK);
-      check_size_eq(int_vec_t_size(&vec), 5U);
-      check_int_eq(*int_vec_t_at_const(&vec, 0), 3);
-      check_int_eq(*int_vec_t_at_const(&vec, 4), 5);
+      check_equal(int_vec_t_from(&vec, values, sizeof(values) / sizeof(values[0])), TURBO_OK);
+      check_equal(int_vec_t_size(&vec), 5U);
+      check_equal(*int_vec_t_at_const(&vec, 0), 3);
+      check_equal(*int_vec_t_at_const(&vec, 4), 5);
       int_vec_t_destroy(&vec);
     }
 
@@ -61,25 +61,25 @@ suite("Turbo Containers") {
       int value = 0;
       int out = 0;
 
-      check_int_eq(turbo_vec_init(&vec, sizeof(int)), TURBO_OK);
+      check_equal(turbo_vec_init(&vec, sizeof(int)), TURBO_OK);
       for (value = 0; value < 8; ++value) {
-        check_int_eq(turbo_vec_push(&vec, &value), TURBO_OK);
+        check_equal(turbo_vec_push(&vec, &value), TURBO_OK);
       }
-      check_size_eq(turbo_vec_size(&vec), 8);
-      check_int_eq(*(int *)turbo_vec_at(&vec, 3), 3);
+      check_equal(turbo_vec_size(&vec), 8);
+      check_equal(*(int *)turbo_vec_at(&vec, 3), 3);
 
       value = 99;
-      check_int_eq(turbo_vec_insert(&vec, 4, &value), TURBO_OK);
-      check_int_eq(*(int *)turbo_vec_at(&vec, 4), 99);
-      check_size_eq(turbo_vec_size(&vec), 9);
+      check_equal(turbo_vec_insert(&vec, 4, &value), TURBO_OK);
+      check_equal(*(int *)turbo_vec_at(&vec, 4), 99);
+      check_equal(turbo_vec_size(&vec), 9);
 
-      check_int_eq(turbo_vec_erase(&vec, 4, &out), TURBO_OK);
-      check_int_eq(out, 99);
-      check_int_eq(*(int *)turbo_vec_at(&vec, 4), 4);
+      check_equal(turbo_vec_erase(&vec, 4, &out), TURBO_OK);
+      check_equal(out, 99);
+      check_equal(*(int *)turbo_vec_at(&vec, 4), 4);
 
-      check_int_eq(turbo_vec_pop(&vec, &out), TURBO_OK);
-      check_int_eq(out, 7);
-      check_size_eq(turbo_vec_size(&vec), 7);
+      check_equal(turbo_vec_pop(&vec, &out), TURBO_OK);
+      check_equal(out, 7);
+      check_equal(turbo_vec_size(&vec), 7);
 
       turbo_vec_destroy(&vec);
     }
@@ -88,23 +88,23 @@ suite("Turbo Containers") {
       int_vec_t vec;
       int out = 0;
 
-      check_int_eq(int_vec_t_init(&vec), TURBO_OK);
-      check_int_eq(int_vec_t_push(&vec, 10), TURBO_OK);
-      check_int_eq(int_vec_t_push(&vec, 20), TURBO_OK);
-      check_size_eq(int_vec_t_size(&vec), 2);
-      check_int_eq(*int_vec_t_at(&vec, 1), 20);
+      check_equal(int_vec_t_init(&vec), TURBO_OK);
+      check_equal(int_vec_t_push(&vec, 10), TURBO_OK);
+      check_equal(int_vec_t_push(&vec, 20), TURBO_OK);
+      check_equal(int_vec_t_size(&vec), 2);
+      check_equal(*int_vec_t_at(&vec, 1), 20);
       check_true(int_vec_t_pop(&vec, &out));
-      check_int_eq(out, 20);
+      check_equal(out, 20);
       int_vec_t_destroy(&vec);
     }
 
     it("zero-fills resize growth") {
       turbo_vec_t vec;
 
-      check_int_eq(turbo_vec_init(&vec, sizeof(int)), TURBO_OK);
-      check_int_eq(turbo_vec_resize(&vec, 3), TURBO_OK);
-      check_int_eq(*(int *)turbo_vec_at(&vec, 0), 0);
-      check_int_eq(*(int *)turbo_vec_at(&vec, 2), 0);
+      check_equal(turbo_vec_init(&vec, sizeof(int)), TURBO_OK);
+      check_equal(turbo_vec_resize(&vec, 3), TURBO_OK);
+      check_equal(*(int *)turbo_vec_at(&vec, 0), 0);
+      check_equal(*(int *)turbo_vec_at(&vec, 2), 0);
       turbo_vec_destroy(&vec);
     }
   }
@@ -117,10 +117,10 @@ suite("Turbo Containers") {
       int out = 0;
       size_t i;
 
-      check_int_eq(int_heap_t_from(&heap, values, sizeof(values) / sizeof(values[0])), TURBO_OK);
+      check_equal(int_heap_t_from(&heap, values, sizeof(values) / sizeof(values[0])), TURBO_OK);
       for (i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
         check_true(int_heap_t_pop(&heap, &out));
-        check_int_eq(out, expected[i]);
+        check_equal(out, expected[i]);
       }
       int_heap_t_destroy(&heap);
     }
@@ -132,16 +132,16 @@ suite("Turbo Containers") {
       int out = 0;
       size_t i = 0;
 
-      check_int_eq(int_heap_t_init(&heap), TURBO_OK);
+      check_equal(int_heap_t_init(&heap), TURBO_OK);
       for (i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
-        check_int_eq(int_heap_t_push(&heap, values[i]), TURBO_OK);
+        check_equal(int_heap_t_push(&heap, values[i]), TURBO_OK);
       }
-      check_size_eq(int_heap_t_size(&heap), 5);
-      check_int_eq(*int_heap_t_peek(&heap), 1);
+      check_equal(int_heap_t_size(&heap), 5);
+      check_equal(*int_heap_t_peek(&heap), 1);
 
       for (i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
         check_true(int_heap_t_pop(&heap, &out));
-        check_int_eq(out, expected[i]);
+        check_equal(out, expected[i]);
       }
       check_true(int_heap_t_empty(&heap));
       int_heap_t_destroy(&heap);
@@ -155,15 +155,15 @@ suite("Turbo Containers") {
       int expected[] = {1, 3, 5, 7, 9};
       size_t i;
 
-      check_int_eq(turbo_heap_init(&heap, sizeof(item), large_heap_item_compare, NULL), TURBO_OK);
+      check_equal(turbo_heap_init(&heap, sizeof(item), large_heap_item_compare, NULL), TURBO_OK);
       for (i = 0; i < sizeof(priorities) / sizeof(priorities[0]); ++i) {
         memset(&item, priorities[i], sizeof(item));
         item.priority = priorities[i];
-        check_int_eq(turbo_heap_push(&heap, &item), TURBO_OK);
+        check_equal(turbo_heap_push(&heap, &item), TURBO_OK);
       }
       for (i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
-        check_int_eq(turbo_heap_pop(&heap, &out), TURBO_OK);
-        check_int_eq(out.priority, expected[i]);
+        check_equal(turbo_heap_pop(&heap, &out), TURBO_OK);
+        check_equal(out.priority, expected[i]);
       }
       turbo_heap_destroy(&heap);
     }
@@ -174,12 +174,12 @@ suite("Turbo Containers") {
       const u64_int_map_t_entry entries[] = {{1U, 10}, {2U, 20}, {1U, 11}};
       u64_int_map_t map;
 
-      check_int_eq(u64_int_map_t_from(
+      check_equal(u64_int_map_t_from(
                        &map, entries, sizeof(entries) / sizeof(entries[0])),
                    TURBO_OK);
-      check_size_eq(u64_int_map_t_size(&map), 2U);
-      check_int_eq(*u64_int_map_t_get(&map, 1U), 11);
-      check_int_eq(*u64_int_map_t_get(&map, 2U), 20);
+      check_equal(u64_int_map_t_size(&map), 2U);
+      check_equal(*u64_int_map_t_get(&map, 1U), 11);
+      check_equal(*u64_int_map_t_get(&map, 2U), 20);
       u64_int_map_t_destroy(&map);
     }
 
@@ -188,11 +188,11 @@ suite("Turbo Containers") {
       const int values[] = {70, 90};
       turbo_hash_map_t map;
 
-      check_int_eq(turbo_hash_map_from_arrays(
+      check_equal(turbo_hash_map_from_arrays(
                        &map, keys, values, 2U, sizeof(keys[0]), sizeof(values[0]),
                        NULL, NULL, NULL),
                    TURBO_OK);
-      check_int_eq(*(const int *)turbo_hash_map_get_const(&map, &keys[1]), 90);
+      check_equal(*(const int *)turbo_hash_map_get_const(&map, &keys[1]), 90);
       turbo_hash_map_destroy(&map);
     }
 
@@ -203,30 +203,30 @@ suite("Turbo Containers") {
       int removed = 0;
       size_t i = 0;
 
-      check_int_eq(u64_int_map_t_init(&map), TURBO_OK);
+      check_equal(u64_int_map_t_init(&map), TURBO_OK);
       for (i = 0; i < 128; ++i) {
         key = (uint64_t)i;
         value = (int)(i * 10);
-        check_int_eq(u64_int_map_t_put(&map, key, value), TURBO_OK);
+        check_equal(u64_int_map_t_put(&map, key, value), TURBO_OK);
       }
-      check_size_eq(u64_int_map_t_size(&map), 128);
+      check_equal(u64_int_map_t_size(&map), 128);
 
       key = 42;
       check_not_null(u64_int_map_t_get(&map, key));
-      check_int_eq(*u64_int_map_t_get(&map, key), 420);
+      check_equal(*u64_int_map_t_get(&map, key), 420);
 
       value = 777;
-      check_int_eq(u64_int_map_t_put(&map, key, value), TURBO_OK);
-      check_size_eq(u64_int_map_t_size(&map), 128);
-      check_int_eq(*u64_int_map_t_get(&map, key), 777);
+      check_equal(u64_int_map_t_put(&map, key, value), TURBO_OK);
+      check_equal(u64_int_map_t_size(&map), 128);
+      check_equal(*u64_int_map_t_get(&map, key), 777);
 
       check_true(u64_int_map_t_remove(&map, key, &removed));
-      check_int_eq(removed, 777);
+      check_equal(removed, 777);
       check_false(u64_int_map_t_contains(&map, key));
-      check_size_eq(u64_int_map_t_size(&map), 127);
+      check_equal(u64_int_map_t_size(&map), 127);
 
-      check_int_eq(u64_int_map_t_put(&map, key, 4242), TURBO_OK);
-      check_int_eq(*u64_int_map_t_get(&map, key), 4242);
+      check_equal(u64_int_map_t_put(&map, key, 4242), TURBO_OK);
+      check_equal(*u64_int_map_t_get(&map, key), 4242);
       u64_int_map_t_destroy(&map);
     }
 
@@ -242,17 +242,17 @@ suite("Turbo Containers") {
       item_t item = {1, "one"};
       const item_t *found = NULL;
 
-      check_int_eq(turbo_hash_map_init(&map, sizeof(key1), sizeof(item), NULL, NULL, NULL),
+      check_equal(turbo_hash_map_init(&map, sizeof(key1), sizeof(item), NULL, NULL, NULL),
                    TURBO_OK);
-      check_int_eq(turbo_hash_map_put(&map, key1, &item), TURBO_OK);
+      check_equal(turbo_hash_map_put(&map, key1, &item), TURBO_OK);
       item.id = 2;
       strcpy(item.tag, "two");
-      check_int_eq(turbo_hash_map_put(&map, key2, &item), TURBO_OK);
+      check_equal(turbo_hash_map_put(&map, key2, &item), TURBO_OK);
 
       found = (const item_t *)turbo_hash_map_get_const(&map, key2);
       check_not_null(found);
-      check_int_eq(found->id, 2);
-      check_str_eq(found->tag, "two");
+      check_equal(found->id, 2);
+      check_equal(found->tag, "two");
       turbo_hash_map_destroy(&map);
     }
 
@@ -263,12 +263,12 @@ suite("Turbo Containers") {
       const long double *found;
       size_t i;
 
-      check_int_eq(turbo_hash_map_init(&map, sizeof(key), sizeof(value), NULL, NULL, NULL),
+      check_equal(turbo_hash_map_init(&map, sizeof(key), sizeof(value), NULL, NULL, NULL),
                    TURBO_OK);
       for (i = 0; i < 128; ++i) {
         key = (long double)i + 0.25L;
         value = (long double)i * 2.0L;
-        check_int_eq(turbo_hash_map_put(&map, &key, &value), TURBO_OK);
+        check_equal(turbo_hash_map_put(&map, &key, &value), TURBO_OK);
       }
       key = 63.25L;
       found = (const long double *)turbo_hash_map_get_const(&map, &key);
@@ -284,8 +284,8 @@ suite("Turbo Containers") {
       const uint64_t keys[] = {7U, 11U, 7U, 13U};
       u64_set_t set;
 
-      check_int_eq(u64_set_t_from(&set, keys, sizeof(keys) / sizeof(keys[0])), TURBO_OK);
-      check_size_eq(u64_set_t_size(&set), 3U);
+      check_equal(u64_set_t_from(&set, keys, sizeof(keys) / sizeof(keys[0])), TURBO_OK);
+      check_equal(u64_set_t_size(&set), 3U);
       check_true(u64_set_t_contains(&set, 7U));
       check_true(u64_set_t_contains(&set, 13U));
       u64_set_t_destroy(&set);
@@ -296,22 +296,22 @@ suite("Turbo Containers") {
       uint64_t key = 0;
       size_t i = 0;
 
-      check_int_eq(turbo_set_init(&set, sizeof(key), NULL, NULL, NULL), TURBO_OK);
+      check_equal(turbo_set_init(&set, sizeof(key), NULL, NULL, NULL), TURBO_OK);
       for (i = 0; i < 128; ++i) {
         key = (uint64_t)i;
-        check_int_eq(turbo_set_add(&set, &key), TURBO_OK);
+        check_equal(turbo_set_add(&set, &key), TURBO_OK);
       }
-      check_size_eq(turbo_set_size(&set), 128);
+      check_equal(turbo_set_size(&set), 128);
 
       key = 42;
       check_true(turbo_set_contains(&set, &key));
-      check_int_eq(turbo_set_add(&set, &key), TURBO_OK);
-      check_size_eq(turbo_set_size(&set), 128);
+      check_equal(turbo_set_add(&set, &key), TURBO_OK);
+      check_equal(turbo_set_size(&set), 128);
 
-      check_int_eq(turbo_set_remove(&set, &key), TURBO_OK);
+      check_equal(turbo_set_remove(&set, &key), TURBO_OK);
       check_false(turbo_set_contains(&set, &key));
-      check_size_eq(turbo_set_size(&set), 127);
-      check_int_eq(turbo_set_remove(&set, &key), TURBO_ENOENT);
+      check_equal(turbo_set_size(&set), 127);
+      check_equal(turbo_set_remove(&set, &key), TURBO_ENOENT);
 
       turbo_set_destroy(&set);
     }
@@ -319,15 +319,15 @@ suite("Turbo Containers") {
     it("supports typed wrappers") {
       u64_set_t set;
 
-      check_int_eq(u64_set_t_init(&set), TURBO_OK);
-      check_int_eq(u64_set_t_reserve(&set, 32), TURBO_OK);
-      check_int_eq(u64_set_t_add(&set, 7), TURBO_OK);
-      check_int_eq(u64_set_t_add(&set, 11), TURBO_OK);
+      check_equal(u64_set_t_init(&set), TURBO_OK);
+      check_equal(u64_set_t_reserve(&set, 32), TURBO_OK);
+      check_equal(u64_set_t_add(&set, 7), TURBO_OK);
+      check_equal(u64_set_t_add(&set, 11), TURBO_OK);
       check_true(u64_set_t_contains(&set, 7));
       check_false(u64_set_t_contains(&set, 5));
       check_true(u64_set_t_remove(&set, 7));
       check_false(u64_set_t_remove(&set, 7));
-      check_size_eq(u64_set_t_size(&set), 1);
+      check_equal(u64_set_t_size(&set), 1);
       check_true(u64_set_t_capacity(&set) >= 32);
       u64_set_t_destroy(&set);
     }
@@ -338,12 +338,12 @@ suite("Turbo Containers") {
       const int values[] = {2, 4, 6, 8};
       int_deque_t deque;
 
-      check_int_eq(int_deque_t_from(
+      check_equal(int_deque_t_from(
                        &deque, values, sizeof(values) / sizeof(values[0])),
                    TURBO_OK);
-      check_size_eq(int_deque_t_size(&deque), 4U);
-      check_int_eq(*int_deque_t_front_const(&deque), 2);
-      check_int_eq(*int_deque_t_back_const(&deque), 8);
+      check_equal(int_deque_t_size(&deque), 4U);
+      check_equal(*int_deque_t_front_const(&deque), 2);
+      check_equal(*int_deque_t_back_const(&deque), 8);
       int_deque_t_destroy(&deque);
     }
 
@@ -352,29 +352,29 @@ suite("Turbo Containers") {
       int value = 0;
       int out = 0;
 
-      check_int_eq(turbo_deque_init(&deque, sizeof(int)), TURBO_OK);
+      check_equal(turbo_deque_init(&deque, sizeof(int)), TURBO_OK);
       value = 1;
-      check_int_eq(turbo_deque_push_back(&deque, &value), TURBO_OK);
+      check_equal(turbo_deque_push_back(&deque, &value), TURBO_OK);
       value = 2;
-      check_int_eq(turbo_deque_push_back(&deque, &value), TURBO_OK);
+      check_equal(turbo_deque_push_back(&deque, &value), TURBO_OK);
       value = 0;
-      check_int_eq(turbo_deque_push_front(&deque, &value), TURBO_OK);
+      check_equal(turbo_deque_push_front(&deque, &value), TURBO_OK);
       value = -1;
-      check_int_eq(turbo_deque_push_front(&deque, &value), TURBO_OK);
+      check_equal(turbo_deque_push_front(&deque, &value), TURBO_OK);
 
-      check_size_eq(turbo_deque_size(&deque), 4);
-      check_int_eq(*(int *)turbo_deque_front(&deque), -1);
-      check_int_eq(*(int *)turbo_deque_back(&deque), 2);
-      check_int_eq(*(int *)turbo_deque_at(&deque, 0), -1);
-      check_int_eq(*(int *)turbo_deque_at(&deque, 1), 0);
-      check_int_eq(*(int *)turbo_deque_at(&deque, 2), 1);
-      check_int_eq(*(int *)turbo_deque_at(&deque, 3), 2);
+      check_equal(turbo_deque_size(&deque), 4);
+      check_equal(*(int *)turbo_deque_front(&deque), -1);
+      check_equal(*(int *)turbo_deque_back(&deque), 2);
+      check_equal(*(int *)turbo_deque_at(&deque, 0), -1);
+      check_equal(*(int *)turbo_deque_at(&deque, 1), 0);
+      check_equal(*(int *)turbo_deque_at(&deque, 2), 1);
+      check_equal(*(int *)turbo_deque_at(&deque, 3), 2);
 
-      check_int_eq(turbo_deque_pop_front(&deque, &out), TURBO_OK);
-      check_int_eq(out, -1);
-      check_int_eq(turbo_deque_pop_back(&deque, &out), TURBO_OK);
-      check_int_eq(out, 2);
-      check_size_eq(turbo_deque_size(&deque), 2);
+      check_equal(turbo_deque_pop_front(&deque, &out), TURBO_OK);
+      check_equal(out, -1);
+      check_equal(turbo_deque_pop_back(&deque, &out), TURBO_OK);
+      check_equal(out, 2);
+      check_equal(turbo_deque_size(&deque), 2);
 
       turbo_deque_destroy(&deque);
     }
@@ -385,34 +385,34 @@ suite("Turbo Containers") {
       int out = 0;
       int i = 0;
 
-      check_int_eq(int_deque_t_init(&deque), TURBO_OK);
-      check_int_eq(turbo_deque_pop_front(&deque.raw, &out), TURBO_ENOENT);
-      check_int_eq(turbo_deque_pop_back(&deque.raw, &out), TURBO_ENOENT);
-      check_int_eq(int_deque_t_reserve(&deque, 4), TURBO_OK);
+      check_equal(int_deque_t_init(&deque), TURBO_OK);
+      check_equal(turbo_deque_pop_front(&deque.raw, &out), TURBO_ENOENT);
+      check_equal(turbo_deque_pop_back(&deque.raw, &out), TURBO_ENOENT);
+      check_equal(int_deque_t_reserve(&deque, 4), TURBO_OK);
       for (i = 0; i < 4; ++i) {
-        check_int_eq(int_deque_t_push_back(&deque, i), TURBO_OK);
+        check_equal(int_deque_t_push_back(&deque, i), TURBO_OK);
       }
       check_true(int_deque_t_pop_front(&deque, &out));
-      check_int_eq(out, 0);
+      check_equal(out, 0);
       check_true(int_deque_t_pop_front(&deque, &out));
-      check_int_eq(out, 1);
+      check_equal(out, 1);
 
-      check_int_eq(int_deque_t_push_back(&deque, 4), TURBO_OK);
-      check_int_eq(int_deque_t_push_back(&deque, 5), TURBO_OK);
-      check_int_eq(int_deque_t_push_front(&deque, 1), TURBO_OK);
-      check_int_eq(int_deque_t_push_back(&deque, 6), TURBO_OK);
+      check_equal(int_deque_t_push_back(&deque, 4), TURBO_OK);
+      check_equal(int_deque_t_push_back(&deque, 5), TURBO_OK);
+      check_equal(int_deque_t_push_front(&deque, 1), TURBO_OK);
+      check_equal(int_deque_t_push_back(&deque, 6), TURBO_OK);
 
-      check_size_eq(int_deque_t_size(&deque), 6);
+      check_equal(int_deque_t_size(&deque), 6);
       const_deque = &deque;
-      check_int_eq(*int_deque_t_front_const(const_deque), 1);
-      check_int_eq(*int_deque_t_back_const(const_deque), 6);
+      check_equal(*int_deque_t_front_const(const_deque), 1);
+      check_equal(*int_deque_t_back_const(const_deque), 6);
       for (i = 0; i < 6; ++i) {
-        check_int_eq(*int_deque_t_at_const(const_deque, (size_t)i), i + 1);
+        check_equal(*int_deque_t_at_const(const_deque, (size_t)i), i + 1);
       }
 
       for (i = 1; i <= 6; ++i) {
         check_true(int_deque_t_pop_front(&deque, &out));
-        check_int_eq(out, i);
+        check_equal(out, i);
       }
       check_true(int_deque_t_empty(&deque));
       int_deque_t_destroy(&deque);
@@ -424,11 +424,11 @@ suite("Turbo Containers") {
       const u64_int_map_alias_t_entry entries[] = {{4U, 40}, {8U, 80}};
       u64_int_map_alias_t map;
 
-      check_int_eq(u64_int_map_alias_t_from(
+      check_equal(u64_int_map_alias_t_from(
                        &map, entries, sizeof(entries) / sizeof(entries[0])),
                    TURBO_OK);
-      check_size_eq(u64_int_map_alias_t_size(&map), 2U);
-      check_int_eq(*u64_int_map_alias_t_get(&map, 8U), 80);
+      check_equal(u64_int_map_alias_t_size(&map), 2U);
+      check_equal(*u64_int_map_alias_t_get(&map, 8U), 80);
       u64_int_map_alias_t_destroy(&map);
     }
 
@@ -438,16 +438,16 @@ suite("Turbo Containers") {
       int value = 70;
       int out = 0;
 
-      check_int_eq(u64_int_map_alias_t_init(&map), TURBO_OK);
-      check_int_eq(u64_int_map_alias_t_put(&map, key, value), TURBO_OK);
-      check_size_eq(u64_int_map_alias_t_size(&map), 1U);
+      check_equal(u64_int_map_alias_t_init(&map), TURBO_OK);
+      check_equal(u64_int_map_alias_t_put(&map, key, value), TURBO_OK);
+      check_equal(u64_int_map_alias_t_size(&map), 1U);
       check_true(u64_int_map_alias_t_contains(&map, key));
       value = 77;
-      check_int_eq(u64_int_map_alias_t_put(&map, key, value), TURBO_OK);
-      check_int_eq(*u64_int_map_alias_t_get(&map, key), 77);
-      check_int_eq(u64_int_map_alias_t_remove(&map, key, &out), TURBO_OK);
-      check_int_eq(out, 77);
-      check_size_eq(u64_int_map_alias_t_size(&map), 0U);
+      check_equal(u64_int_map_alias_t_put(&map, key, value), TURBO_OK);
+      check_equal(*u64_int_map_alias_t_get(&map, key), 77);
+      check_equal(u64_int_map_alias_t_remove(&map, key, &out), TURBO_OK);
+      check_equal(out, 77);
+      check_equal(u64_int_map_alias_t_size(&map), 0U);
       u64_int_map_alias_t_destroy(&map);
     }
   }
@@ -458,12 +458,12 @@ suite("Turbo Containers") {
       int_list_t list;
       size_t i;
 
-      check_int_eq(int_list_t_from(
+      check_equal(int_list_t_from(
                        &list, values, sizeof(values) / sizeof(values[0])),
                    TURBO_OK);
-      check_size_eq(int_list_t_size(&list), 4U);
+      check_equal(int_list_t_size(&list), 4U);
       for (i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
-        check_int_eq(*int_list_t_at_const(&list, i), values[i]);
+        check_equal(*int_list_t_at_const(&list, i), values[i]);
       }
       int_list_t_destroy(&list);
     }
@@ -471,7 +471,7 @@ suite("Turbo Containers") {
     it("rejects a missing source for a non-empty list") {
       turbo_list_t list;
 
-      check_int_eq(turbo_list_from_array(&list, NULL, 1U, sizeof(int)), TURBO_EINVAL);
+      check_equal(turbo_list_from_array(&list, NULL, 1U, sizeof(int)), TURBO_EINVAL);
     }
 
     it("behaves like a deque-backed list") {
@@ -479,25 +479,25 @@ suite("Turbo Containers") {
       int value = 0;
       int out = 0;
 
-      check_int_eq(int_list_t_init(&list), TURBO_OK);
-      check_int_eq(int_list_t_push_back(&list, 1), TURBO_OK);
-      check_int_eq(int_list_t_push_back(&list, 3), TURBO_OK);
-      check_int_eq(int_list_t_push_front(&list, 0), TURBO_OK);
-      check_int_eq(int_list_t_reserve(&list, 8), TURBO_OK);
+      check_equal(int_list_t_init(&list), TURBO_OK);
+      check_equal(int_list_t_push_back(&list, 1), TURBO_OK);
+      check_equal(int_list_t_push_back(&list, 3), TURBO_OK);
+      check_equal(int_list_t_push_front(&list, 0), TURBO_OK);
+      check_equal(int_list_t_reserve(&list, 8), TURBO_OK);
 
-      check_size_eq(int_list_t_size(&list), 3U);
-      check_size_eq(int_list_t_capacity(&list), 8U);
-      check_int_eq(*int_list_t_front(&list), 0);
-      check_int_eq(*int_list_t_back(&list), 3);
-      check_int_eq(*int_list_t_at(&list, 1), 1);
+      check_equal(int_list_t_size(&list), 3U);
+      check_equal(int_list_t_capacity(&list), 8U);
+      check_equal(*int_list_t_front(&list), 0);
+      check_equal(*int_list_t_back(&list), 3);
+      check_equal(*int_list_t_at(&list, 1), 1);
 
       value = 2;
       check_true(int_list_t_pop_front(&list, &out));
-      check_int_eq(out, 0);
+      check_equal(out, 0);
       check_true(int_list_t_pop_back(&list, &out));
-      check_int_eq(out, 3);
-      check_size_eq(int_list_t_size(&list), 1U);
-      check_int_eq(*int_list_t_at(&list, 0), 1);
+      check_equal(out, 3);
+      check_equal(int_list_t_size(&list), 1U);
+      check_equal(*int_list_t_at(&list, 0), 1);
       int_list_t_destroy(&list);
     }
   }
@@ -508,14 +508,14 @@ suite("Turbo Containers") {
       u64_multi_map_t map;
       const turbo_vec_t *values;
 
-      check_int_eq(u64_multi_map_t_from(
+      check_equal(u64_multi_map_t_from(
                        &map, entries, sizeof(entries) / sizeof(entries[0])),
                    TURBO_OK);
-      check_size_eq(u64_multi_map_t_size(&map), 3U);
-      check_size_eq(u64_multi_map_t_count(&map, 3U), 2U);
+      check_equal(u64_multi_map_t_size(&map), 3U);
+      check_equal(u64_multi_map_t_count(&map, 3U), 2U);
       values = u64_multi_map_t_values_const(&map, 3U);
-      check_int_eq(*(const int *)turbo_vec_at_const(values, 0), 30);
-      check_int_eq(*(const int *)turbo_vec_at_const(values, 1), 31);
+      check_equal(*(const int *)turbo_vec_at_const(values, 0), 30);
+      check_equal(*(const int *)turbo_vec_at_const(values, 1), 31);
       u64_multi_map_t_destroy(&map);
     }
 
@@ -524,25 +524,25 @@ suite("Turbo Containers") {
       const turbo_vec_t *values = NULL;
       int removed = 0;
 
-      check_int_eq(u64_multi_map_t_init(&mm), TURBO_OK);
-      check_int_eq(u64_multi_map_t_put(&mm, 42U, 100), TURBO_OK);
-      check_int_eq(u64_multi_map_t_put(&mm, 42U, 200), TURBO_OK);
-      check_int_eq(u64_multi_map_t_put(&mm, 7U, 10), TURBO_OK);
+      check_equal(u64_multi_map_t_init(&mm), TURBO_OK);
+      check_equal(u64_multi_map_t_put(&mm, 42U, 100), TURBO_OK);
+      check_equal(u64_multi_map_t_put(&mm, 42U, 200), TURBO_OK);
+      check_equal(u64_multi_map_t_put(&mm, 7U, 10), TURBO_OK);
 
-      check_size_eq(u64_multi_map_t_size(&mm), 3U);
-      check_size_eq(u64_multi_map_t_count(&mm, 42U), 2U);
+      check_equal(u64_multi_map_t_size(&mm), 3U);
+      check_equal(u64_multi_map_t_count(&mm, 42U), 2U);
       check_true(u64_multi_map_t_contains(&mm, 42U));
       values = u64_multi_map_t_values_const(&mm, 42U);
       check_not_null(values);
-      check_int_eq(*(const int *)turbo_vec_at_const(values, 0), 100);
-      check_int_eq(*(const int *)turbo_vec_at_const(values, 1), 200);
+      check_equal(*(const int *)turbo_vec_at_const(values, 0), 100);
+      check_equal(*(const int *)turbo_vec_at_const(values, 1), 200);
 
       check_true(u64_multi_map_t_remove(&mm, 42U, &removed));
-      check_int_eq(removed, 200);
-      check_size_eq(u64_multi_map_t_size(&mm), 2U);
-      check_size_eq(u64_multi_map_t_count(&mm, 42U), 1U);
-      check_size_eq(u64_multi_map_t_erase(&mm, 42U), 1U);
-      check_size_eq(u64_multi_map_t_size(&mm), 1U);
+      check_equal(removed, 200);
+      check_equal(u64_multi_map_t_size(&mm), 2U);
+      check_equal(u64_multi_map_t_count(&mm, 42U), 1U);
+      check_equal(u64_multi_map_t_erase(&mm, 42U), 1U);
+      check_equal(u64_multi_map_t_size(&mm), 1U);
       check_false(u64_multi_map_t_contains(&mm, 42U));
       u64_multi_map_t_destroy(&mm);
     }
@@ -551,22 +551,22 @@ suite("Turbo Containers") {
       u64_multi_map_t mm;
       const turbo_vec_t *values = NULL;
 
-      check_int_eq(u64_multi_map_t_init(&mm), TURBO_OK);
-      check_int_eq(u64_multi_map_t_put(&mm, 1U, 10), TURBO_OK);
-      check_int_eq(u64_multi_map_t_put(&mm, 1U, 20), TURBO_OK);
-      check_int_eq(u64_multi_map_t_size(&mm), 2U);
+      check_equal(u64_multi_map_t_init(&mm), TURBO_OK);
+      check_equal(u64_multi_map_t_put(&mm, 1U, 10), TURBO_OK);
+      check_equal(u64_multi_map_t_put(&mm, 1U, 20), TURBO_OK);
+      check_equal(u64_multi_map_t_size(&mm), 2U);
 
       u64_multi_map_t_clear(&mm);
-      check_size_eq(u64_multi_map_t_size(&mm), 0U);
+      check_equal(u64_multi_map_t_size(&mm), 0U);
       check_false(u64_multi_map_t_contains(&mm, 1U));
       values = u64_multi_map_t_values_const(&mm, 1U);
       check_true(values == NULL);
 
-      check_int_eq(u64_multi_map_t_put(&mm, 1U, 30), TURBO_OK);
-      check_size_eq(u64_multi_map_t_size(&mm), 1U);
+      check_equal(u64_multi_map_t_put(&mm, 1U, 30), TURBO_OK);
+      check_equal(u64_multi_map_t_size(&mm), 1U);
       values = u64_multi_map_t_values_const(&mm, 1U);
       check_not_null(values);
-      check_int_eq(*(const int *)turbo_vec_at_const(values, 0), 30);
+      check_equal(*(const int *)turbo_vec_at_const(values, 0), 30);
       u64_multi_map_t_destroy(&mm);
     }
 
@@ -574,13 +574,13 @@ suite("Turbo Containers") {
       u64_multi_map_t mm;
       int removed = 0;
 
-      check_int_eq(u64_multi_map_t_init(&mm), TURBO_OK);
-      check_int_eq(u64_multi_map_t_put(&mm, 1U, 11), TURBO_OK);
-      check_size_eq(u64_multi_map_t_size(&mm), 1U);
+      check_equal(u64_multi_map_t_init(&mm), TURBO_OK);
+      check_equal(u64_multi_map_t_put(&mm, 1U, 11), TURBO_OK);
+      check_equal(u64_multi_map_t_size(&mm), 1U);
       check_false(u64_multi_map_t_remove(&mm, 2U, &removed));
-      check_size_eq(u64_multi_map_t_size(&mm), 1U);
-      check_int_eq(u64_multi_map_t_erase(&mm, 2U), 0U);
-      check_size_eq(u64_multi_map_t_size(&mm), 1U);
+      check_equal(u64_multi_map_t_size(&mm), 1U);
+      check_equal(u64_multi_map_t_erase(&mm, 2U), 0U);
+      check_equal(u64_multi_map_t_size(&mm), 1U);
       u64_multi_map_t_destroy(&mm);
     }
   }
@@ -590,13 +590,13 @@ suite("Turbo Containers") {
       const int_tree_map_t_entry entries[] = {{5, 50}, {1, 10}, {3, 30}, {3, 33}};
       int_tree_map_t map;
 
-      check_int_eq(int_tree_map_t_from(
+      check_equal(int_tree_map_t_from(
                        &map, entries, sizeof(entries) / sizeof(entries[0])),
                    TURBO_OK);
-      check_size_eq(int_tree_map_t_size(&map), 3U);
-      check_int_eq(*int_tree_map_t_key_at_const(&map, 0), 1);
-      check_int_eq(*int_tree_map_t_key_at_const(&map, 2), 5);
-      check_int_eq(*int_tree_map_t_get(&map, 3), 33);
+      check_equal(int_tree_map_t_size(&map), 3U);
+      check_equal(*int_tree_map_t_key_at_const(&map, 0), 1);
+      check_equal(*int_tree_map_t_key_at_const(&map, 2), 5);
+      check_equal(*int_tree_map_t_get(&map, 3), 33);
       int_tree_map_t_destroy(&map);
     }
 
@@ -605,32 +605,32 @@ suite("Turbo Containers") {
       int value = 0;
       bool found = false;
 
-      check_int_eq(int_tree_map_t_init(&map), TURBO_OK);
-      check_int_eq(int_tree_map_t_put(&map, 5, 50), TURBO_OK);
-      check_int_eq(int_tree_map_t_put(&map, 1, 10), TURBO_OK);
-      check_int_eq(int_tree_map_t_put(&map, 3, 30), TURBO_OK);
-      check_size_eq(int_tree_map_t_size(&map), 3U);
+      check_equal(int_tree_map_t_init(&map), TURBO_OK);
+      check_equal(int_tree_map_t_put(&map, 5, 50), TURBO_OK);
+      check_equal(int_tree_map_t_put(&map, 1, 10), TURBO_OK);
+      check_equal(int_tree_map_t_put(&map, 3, 30), TURBO_OK);
+      check_equal(int_tree_map_t_size(&map), 3U);
 
-      check_int_eq(*int_tree_map_t_get(&map, 1), 10);
-      check_int_eq(*int_tree_map_t_get(&map, 3), 30);
+      check_equal(*int_tree_map_t_get(&map, 1), 10);
+      check_equal(*int_tree_map_t_get(&map, 3), 30);
       check_true(int_tree_map_t_contains(&map, 5));
       check_false(int_tree_map_t_contains(&map, 2));
-      check_int_eq(*int_tree_map_t_key_at(&map, 0), 1);
-      check_int_eq(*int_tree_map_t_value_at(&map, 1), 30);
-      check_int_eq(*int_tree_map_t_key_at(&map, 2), 5);
+      check_equal(*int_tree_map_t_key_at(&map, 0), 1);
+      check_equal(*int_tree_map_t_value_at(&map, 1), 30);
+      check_equal(*int_tree_map_t_key_at(&map, 2), 5);
 
-      check_int_eq(int_tree_map_t_put(&map, 3, 33), TURBO_OK);
-      check_int_eq(*int_tree_map_t_get(&map, 3), 33);
+      check_equal(int_tree_map_t_put(&map, 3, 33), TURBO_OK);
+      check_equal(*int_tree_map_t_get(&map, 3), 33);
       check_true(int_tree_map_t_remove(&map, 5, &value));
-      check_int_eq(value, 50);
+      check_equal(value, 50);
       check_false(int_tree_map_t_contains(&map, 5));
-      check_size_eq(int_tree_map_t_size(&map), 2U);
+      check_equal(int_tree_map_t_size(&map), 2U);
 
-      check_size_eq(int_tree_map_t_find_slot(&map, 1, &found), 0U);
+      check_equal(int_tree_map_t_find_slot(&map, 1, &found), 0U);
       check_true(found);
-      check_size_eq(int_tree_map_t_find_slot(&map, 2, &found), 1U);
+      check_equal(int_tree_map_t_find_slot(&map, 2, &found), 1U);
       check_false(found);
-      check_size_eq(int_tree_map_t_find_slot(&map, 4, &found), 2U);
+      check_equal(int_tree_map_t_find_slot(&map, 4, &found), 2U);
       check_false(found);
       int_tree_map_t_destroy(&map);
     }
@@ -640,25 +640,25 @@ suite("Turbo Containers") {
       int out = 0;
       bool found = false;
 
-      check_int_eq(int_tree_map_t_init(&map), TURBO_OK);
-      check_int_eq(int_tree_map_t_put(&map, 10, 1), TURBO_OK);
-      check_int_eq(int_tree_map_t_put(&map, 20, 2), TURBO_OK);
-      check_int_eq(int_tree_map_t_put(&map, 30, 3), TURBO_OK);
-      check_int_eq(int_tree_map_t_put(&map, 40, 4), TURBO_OK);
-      check_int_eq(int_tree_map_t_put(&map, 50, 5), TURBO_OK);
-      check_int_eq(int_tree_map_t_find_slot(&map, 30, &found), 2U);
+      check_equal(int_tree_map_t_init(&map), TURBO_OK);
+      check_equal(int_tree_map_t_put(&map, 10, 1), TURBO_OK);
+      check_equal(int_tree_map_t_put(&map, 20, 2), TURBO_OK);
+      check_equal(int_tree_map_t_put(&map, 30, 3), TURBO_OK);
+      check_equal(int_tree_map_t_put(&map, 40, 4), TURBO_OK);
+      check_equal(int_tree_map_t_put(&map, 50, 5), TURBO_OK);
+      check_equal(int_tree_map_t_find_slot(&map, 30, &found), 2U);
       check_true(found);
 
       check_true(int_tree_map_t_remove(&map, 10, &out));
-      check_int_eq(out, 1);
-      check_size_eq(int_tree_map_t_size(&map), 4U);
-      check_size_eq(int_tree_map_t_find_slot(&map, 20, &found), 0U);
+      check_equal(out, 1);
+      check_equal(int_tree_map_t_size(&map), 4U);
+      check_equal(int_tree_map_t_find_slot(&map, 20, &found), 0U);
       check_true(found);
 
       check_true(int_tree_map_t_remove(&map, 40, &out));
-      check_int_eq(out, 4);
-      check_size_eq(int_tree_map_t_size(&map), 3U);
-      check_size_eq(int_tree_map_t_find_slot(&map, 50, &found), 2U);
+      check_equal(out, 4);
+      check_equal(int_tree_map_t_size(&map), 3U);
+      check_equal(int_tree_map_t_find_slot(&map, 50, &found), 2U);
       check_true(found);
       int_tree_map_t_destroy(&map);
     }
@@ -673,11 +673,11 @@ suite("Turbo Containers") {
       size_t j = 0;
       bool found = false;
 
-      check_int_eq(int_tree_map_t_init(&map), TURBO_OK);
+      check_equal(int_tree_map_t_init(&map), TURBO_OK);
       for (i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
-        check_int_eq(int_tree_map_t_put(&map, keys[i], keys[i] * 10), TURBO_OK);
+        check_equal(int_tree_map_t_put(&map, keys[i], keys[i] * 10), TURBO_OK);
         present[keys[i]] = true;
-        check_size_eq(int_tree_map_t_size(&map), i + 1U);
+        check_equal(int_tree_map_t_size(&map), i + 1U);
       }
 
       for (i = 0; i < sizeof(remove_order) / sizeof(remove_order[0]); ++i) {
@@ -690,16 +690,16 @@ suite("Turbo Containers") {
           if (present[j]) {
             const int *k = int_tree_map_t_key_at_const(&map, remaining);
             check_not_null(k);
-            check_int_eq(*k, (int)j);
-            check_size_eq(int_tree_map_t_find_slot(&map, (int)j, &found), remaining);
+            check_equal(*k, (int)j);
+            check_equal(int_tree_map_t_find_slot(&map, (int)j, &found), remaining);
             check_true(found);
             ++remaining;
           } else {
-            check_size_eq(int_tree_map_t_find_slot(&map, (int)j, &found), remaining);
+            check_equal(int_tree_map_t_find_slot(&map, (int)j, &found), remaining);
             check_false(found);
           }
         }
-        check_size_eq(int_tree_map_t_size(&map), remaining);
+        check_equal(int_tree_map_t_size(&map), remaining);
       }
 
       check_true(int_tree_map_t_empty(&map));
@@ -711,25 +711,25 @@ suite("Turbo Containers") {
       int value = 0;
       bool found = false;
 
-      check_int_eq(int_tree_map_t_init(&map), TURBO_OK);
-      check_size_eq(int_tree_map_t_size(&map), 0U);
-      check_size_eq(int_tree_map_t_find_slot(&map, 1, &found), 0U);
+      check_equal(int_tree_map_t_init(&map), TURBO_OK);
+      check_equal(int_tree_map_t_size(&map), 0U);
+      check_equal(int_tree_map_t_find_slot(&map, 1, &found), 0U);
       check_false(found);
       check_null(int_tree_map_t_get(&map, 1));
       check_false(int_tree_map_t_contains(&map, 1));
       check_false(int_tree_map_t_remove(&map, 1, &value));
 
-      check_int_eq(int_tree_map_t_put(&map, 7, 70), TURBO_OK);
-      check_size_eq(int_tree_map_t_size(&map), 1U);
+      check_equal(int_tree_map_t_put(&map, 7, 70), TURBO_OK);
+      check_equal(int_tree_map_t_size(&map), 1U);
       check_true(int_tree_map_t_contains(&map, 7));
-      check_int_eq(*int_tree_map_t_get(&map, 7), 70);
+      check_equal(*int_tree_map_t_get(&map, 7), 70);
 
-      check_int_eq(int_tree_map_t_put(&map, 7, 77), TURBO_OK);
-      check_size_eq(int_tree_map_t_size(&map), 1U);
-      check_int_eq(*int_tree_map_t_get(&map, 7), 77);
+      check_equal(int_tree_map_t_put(&map, 7, 77), TURBO_OK);
+      check_equal(int_tree_map_t_size(&map), 1U);
+      check_equal(*int_tree_map_t_get(&map, 7), 77);
 
       check_true(int_tree_map_t_remove(&map, 7, &value));
-      check_int_eq(value, 77);
+      check_equal(value, 77);
       check_true(int_tree_map_t_empty(&map));
       check_false(int_tree_map_t_remove(&map, 7, &value));
       int_tree_map_t_destroy(&map);
@@ -741,13 +741,13 @@ suite("Turbo Containers") {
       const int_bplus_tree_t_entry entries[] = {{8, 80}, {2, 20}, {6, 60}, {2, 22}};
       int_bplus_tree_t map;
 
-      check_int_eq(int_bplus_tree_t_from(
+      check_equal(int_bplus_tree_t_from(
                        &map, entries, sizeof(entries) / sizeof(entries[0])),
                    TURBO_OK);
-      check_size_eq(int_bplus_tree_t_size(&map), 3U);
-      check_int_eq(*int_bplus_tree_t_key_at_const(&map, 0), 2);
-      check_int_eq(*int_bplus_tree_t_key_at_const(&map, 2), 8);
-      check_int_eq(*int_bplus_tree_t_get(&map, 2), 22);
+      check_equal(int_bplus_tree_t_size(&map), 3U);
+      check_equal(*int_bplus_tree_t_key_at_const(&map, 0), 2);
+      check_equal(*int_bplus_tree_t_key_at_const(&map, 2), 8);
+      check_equal(*int_bplus_tree_t_get(&map, 2), 22);
       int_bplus_tree_t_destroy(&map);
     }
 
@@ -755,34 +755,34 @@ suite("Turbo Containers") {
       int_bplus_tree_t map;
       bool found = false;
 
-      check_int_eq(int_bplus_tree_t_init(&map), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 50, 500), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 20, 200), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 70, 700), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 10, 100), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 40, 400), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 60, 600), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 80, 800), TURBO_OK);
-      check_size_eq(int_bplus_tree_t_size(&map), 7U);
+      check_equal(int_bplus_tree_t_init(&map), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 50, 500), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 20, 200), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 70, 700), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 10, 100), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 40, 400), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 60, 600), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 80, 800), TURBO_OK);
+      check_equal(int_bplus_tree_t_size(&map), 7U);
 
-      check_int_eq(*int_bplus_tree_t_key_at(&map, 0), 10);
-      check_int_eq(*int_bplus_tree_t_key_at(&map, 2), 40);
-      check_int_eq(*int_bplus_tree_t_key_at(&map, 6), 80);
-      check_int_eq(*int_bplus_tree_t_value_at(&map, 3), 500);
+      check_equal(*int_bplus_tree_t_key_at(&map, 0), 10);
+      check_equal(*int_bplus_tree_t_key_at(&map, 2), 40);
+      check_equal(*int_bplus_tree_t_key_at(&map, 6), 80);
+      check_equal(*int_bplus_tree_t_value_at(&map, 3), 500);
       check_true(int_bplus_tree_t_contains(&map, 20));
       check_false(int_bplus_tree_t_contains(&map, 99));
       check_true(int_bplus_tree_t_get(&map, 40) != NULL);
-      check_int_eq(*int_bplus_tree_t_get(&map, 40), 400);
+      check_equal(*int_bplus_tree_t_get(&map, 40), 400);
 
-      check_size_eq(int_bplus_tree_t_find_slot(&map, 40, &found), 2U);
+      check_equal(int_bplus_tree_t_find_slot(&map, 40, &found), 2U);
       check_true(found);
-      check_size_eq(int_bplus_tree_t_find_slot(&map, 41, &found), 3U);
+      check_equal(int_bplus_tree_t_find_slot(&map, 41, &found), 3U);
       check_false(found);
-      check_size_eq(int_bplus_tree_t_find_slot(&map, 1, &found), 0U);
+      check_equal(int_bplus_tree_t_find_slot(&map, 1, &found), 0U);
       check_false(found);
 
-      check_int_eq(int_bplus_tree_t_put(&map, 40, 441), TURBO_OK);
-      check_int_eq(*int_bplus_tree_t_get(&map, 40), 441);
+      check_equal(int_bplus_tree_t_put(&map, 40, 441), TURBO_OK);
+      check_equal(*int_bplus_tree_t_get(&map, 40), 441);
       int_bplus_tree_t_destroy(&map);
     }
 
@@ -790,23 +790,23 @@ suite("Turbo Containers") {
       int_bplus_tree_t map;
       int value = 0;
 
-      check_int_eq(int_bplus_tree_t_init(&map), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 1, 10), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 2, 20), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 3, 30), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 4, 40), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 5, 50), TURBO_OK);
-      check_int_eq(int_bplus_tree_t_put(&map, 6, 60), TURBO_OK);
+      check_equal(int_bplus_tree_t_init(&map), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 1, 10), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 2, 20), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 3, 30), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 4, 40), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 5, 50), TURBO_OK);
+      check_equal(int_bplus_tree_t_put(&map, 6, 60), TURBO_OK);
 
-      check_int_eq(int_bplus_tree_t_remove(&map, 4, &value), true);
-      check_int_eq(value, 40);
-      check_size_eq(int_bplus_tree_t_size(&map), 5U);
+      check_equal(int_bplus_tree_t_remove(&map, 4, &value), true);
+      check_equal(value, 40);
+      check_equal(int_bplus_tree_t_size(&map), 5U);
       check_false(int_bplus_tree_t_contains(&map, 4));
-      check_int_eq(*int_bplus_tree_t_key_at(&map, 2), 3);
-      check_int_eq(*int_bplus_tree_t_key_at(&map, 3), 5);
+      check_equal(*int_bplus_tree_t_key_at(&map, 2), 3);
+      check_equal(*int_bplus_tree_t_key_at(&map, 3), 5);
 
       check_false(int_bplus_tree_t_remove(&map, 100, &value));
-      check_size_eq(int_bplus_tree_t_size(&map), 5U);
+      check_equal(int_bplus_tree_t_size(&map), 5U);
       int_bplus_tree_t_destroy(&map);
     }
 
@@ -816,49 +816,49 @@ suite("Turbo Containers") {
       size_t i;
       bool found = false;
 
-      check_int_eq(int_bplus_tree_t_init(&map), TURBO_OK);
+      check_equal(int_bplus_tree_t_init(&map), TURBO_OK);
       for (i = 0; i < 200U; ++i) {
-        check_int_eq(int_bplus_tree_t_put(&map, (int)i, (int)(i * 10)), TURBO_OK);
+        check_equal(int_bplus_tree_t_put(&map, (int)i, (int)(i * 10)), TURBO_OK);
       }
-      check_size_eq(int_bplus_tree_t_size(&map), 200U);
+      check_equal(int_bplus_tree_t_size(&map), 200U);
       for (i = 0; i < 200U; ++i) {
         bool found = false;
-        check_size_eq(int_bplus_tree_t_find_slot(&map, (int)i, &found), i);
+        check_equal(int_bplus_tree_t_find_slot(&map, (int)i, &found), i);
         check_true(found);
-        check_int_eq(*int_bplus_tree_t_key_at(&map, i), (int)i);
+        check_equal(*int_bplus_tree_t_key_at(&map, i), (int)i);
       }
 
       for (i = 0; i < 200U; i += 2U) {
         check_true(int_bplus_tree_t_remove(&map, (int)i, &value));
-        check_int_eq(value, (int)i * 10);
+        check_equal(value, (int)i * 10);
       }
-      check_size_eq(int_bplus_tree_t_size(&map), 100U);
+      check_equal(int_bplus_tree_t_size(&map), 100U);
       check_false(int_bplus_tree_t_contains(&map, 0));
       check_true(int_bplus_tree_t_contains(&map, 199));
       found = false;
-      check_size_eq(int_bplus_tree_t_find_slot(&map, 0, &found), 0U);
+      check_equal(int_bplus_tree_t_find_slot(&map, 0, &found), 0U);
       check_false(found);
       found = false;
-      check_size_eq(int_bplus_tree_t_find_slot(&map, 200, &found), 100U);
+      check_equal(int_bplus_tree_t_find_slot(&map, 200, &found), 100U);
       check_false(found);
       found = false;
-      check_size_eq(int_bplus_tree_t_find_slot(&map, 102, &found), 51U);
+      check_equal(int_bplus_tree_t_find_slot(&map, 102, &found), 51U);
       check_false(found);
 
       for (i = 1; i < 200U; i += 2U) {
-        check_int_eq(*int_bplus_tree_t_key_at(&map, i / 2U), (int)i);
+        check_equal(*int_bplus_tree_t_key_at(&map, i / 2U), (int)i);
       }
 
       for (i = 0; i < 200U; i += 2U) {
-        check_int_eq(int_bplus_tree_t_put(&map, (int)i, (int)(i * 10)), TURBO_OK);
+        check_equal(int_bplus_tree_t_put(&map, (int)i, (int)(i * 10)), TURBO_OK);
       }
-      check_size_eq(int_bplus_tree_t_size(&map), 200U);
+      check_equal(int_bplus_tree_t_size(&map), 200U);
       for (i = 0; i < 200U; ++i) {
-        check_int_eq(*int_bplus_tree_t_key_at(&map, i), (int)i);
+        check_equal(*int_bplus_tree_t_key_at(&map, i), (int)i);
       }
 
       check_false(int_bplus_tree_t_remove(&map, 1000, &value));
-      check_size_eq(int_bplus_tree_t_size(&map), 200U);
+      check_equal(int_bplus_tree_t_size(&map), 200U);
       int_bplus_tree_t_destroy(&map);
     }
   }

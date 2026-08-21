@@ -11,34 +11,48 @@
 /* --- C++ container assertions (only available in C++ mode) --- */
 #ifdef __cplusplus
   #include <algorithm>
+  #include <cmath>
   #include <type_traits>
   #include <utility>
   #include <iterator>
   #include <sstream>
   #include <stdexcept>
+  #include <string>
 
 namespace ttest_cpp__ {
 
   template <typename T, typename U> inline bool ttest_equal__(const T &a, const U &b) {
-  #if defined(__GNUC__) || defined(__clang__)
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wfloat-equal"
-  #endif
-    return a == b;
-  #if defined(__GNUC__) || defined(__clang__)
-    #pragma GCC diagnostic pop
-  #endif
+    using left_type = std::remove_cv_t<std::remove_reference_t<T>>;
+    using right_type = std::remove_cv_t<std::remove_reference_t<U>>;
+    if constexpr (std::is_convertible_v<const T &, const char *> &&
+                  std::is_convertible_v<const U &, const char *>) {
+      const char *left = a;
+      const char *right = b;
+      return left && right ? strcmp(left, right) == 0 : left == right;
+    } else if constexpr (std::is_arithmetic_v<left_type> &&
+                         std::is_arithmetic_v<right_type> &&
+                         (std::is_floating_point_v<left_type> ||
+                          std::is_floating_point_v<right_type>)) {
+      using common_type = std::common_type_t<left_type, right_type>;
+      const common_type left = static_cast<common_type>(a);
+      const common_type right = static_cast<common_type>(b);
+      return !std::islessgreater(left, right) && !std::isunordered(left, right);
+    } else if constexpr (std::is_integral_v<left_type> && std::is_integral_v<right_type> &&
+                         !std::is_same_v<left_type, bool> &&
+                         !std::is_same_v<right_type, bool> &&
+                         (std::is_signed_v<left_type> != std::is_signed_v<right_type>)) {
+      if constexpr (std::is_signed_v<left_type>) {
+        return a >= 0 && static_cast<std::make_unsigned_t<left_type>>(a) == b;
+      } else {
+        return b >= 0 && a == static_cast<std::make_unsigned_t<right_type>>(b);
+      }
+    } else {
+      return a == b;
+    }
   }
 
   template <typename T, typename U> inline bool ttest_not_equal__(const T &a, const U &b) {
-  #if defined(__GNUC__) || defined(__clang__)
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wfloat-equal"
-  #endif
-    return a != b;
-  #if defined(__GNUC__) || defined(__clang__)
-    #pragma GCC diagnostic pop
-  #endif
+    return !ttest_equal__(a, b);
   }
 
   template <typename Container>
@@ -93,6 +107,20 @@ namespace ttest_cpp__ {
       }
     }
     return true;
+  }
+
+  template <typename Container, typename Value>
+  bool contains(const Container &container, const Value &value) {
+    if constexpr (std::is_same_v<std::decay_t<Container>, std::string>) {
+      return container.find(value) != std::string::npos;
+    } else if constexpr (std::is_convertible_v<const Container &, const char *> &&
+                         std::is_convertible_v<const Value &, const char *>) {
+      const char *haystack = container;
+      const char *needle = value;
+      return haystack && needle && strstr(haystack, needle) != nullptr;
+    } else {
+      return std::find(container.begin(), container.end(), value) != container.end();
+    }
   }
 
 } /* namespace ttest_cpp__ */
@@ -184,17 +212,17 @@ namespace ttest_cpp__ {
   #define check_between_warn(actual, lower, upper) check_in_range_warn((actual), (lower), (upper))
 
   #define check_contains(container, value)                                                         \
-    TTEST_CHECK__(std::find((container).begin(), (container).end(), (value)) != (container).end(), \
+    TTEST_CHECK__(ttest_cpp__::contains((container), (value)),                                     \
                   "container does not contain expected value")
   #define check_contains_warn(container, value)                                                    \
-    TTEST_WARN__(std::find((container).begin(), (container).end(), (value)) != (container).end(),  \
+    TTEST_WARN__(ttest_cpp__::contains((container), (value)),                                      \
                  "container does not contain expected value")
 
   #define check_not_contains(container, value)                                                     \
-    TTEST_CHECK__(std::find((container).begin(), (container).end(), (value)) == (container).end(), \
+    TTEST_CHECK__(!ttest_cpp__::contains((container), (value)),                                    \
                   "container contains unexpected value")
   #define check_not_contains_warn(container, value)                                                \
-    TTEST_WARN__(std::find((container).begin(), (container).end(), (value)) == (container).end(),  \
+    TTEST_WARN__(!ttest_cpp__::contains((container), (value)),                                     \
                  "container contains unexpected value")
 
   #define check_size(container, expected_size)                                                     \
@@ -244,104 +272,45 @@ namespace ttest_cpp__ {
 
 } /* namespace ttest_cpp__ */
 
-  #define check_string_eq(actual, expected)                                                        \
-    do {                                                                                           \
-      std::string __a = ttest_cpp__::stringify_safe(actual);                                       \
-      std::string __e = ttest_cpp__::stringify_safe(expected);                                     \
-      TTEST_CHECK__(__a == __e, "expected \"%s\" but got \"%s\"", __e.c_str(), __a.c_str());       \
+  #define check_starts_with(str, prefix)                                                            \
+    do {                                                                                            \
+      std::string ttest_s__ = ttest_cpp__::stringify_safe(str);                                     \
+      std::string ttest_p__ = ttest_cpp__::stringify_safe(prefix);                                  \
+      TTEST_CHECK__(ttest_s__.size() >= ttest_p__.size() &&                                        \
+                        ttest_s__.compare(0, ttest_p__.size(), ttest_p__) == 0,                     \
+                    "expected \"%s\" to start with \"%s\"", ttest_s__.c_str(), ttest_p__.c_str()); \
     } while (0)
-  #define check_string_eq_warn(actual, expected)                                                   \
-    do {                                                                                           \
-      std::string __a = ttest_cpp__::stringify_safe(actual);                                       \
-      std::string __e = ttest_cpp__::stringify_safe(expected);                                     \
-      TTEST_WARN__(__a == __e, "expected \"%s\" but got \"%s\"", __e.c_str(), __a.c_str());        \
-    } while (0)
-
-  #define check_string_ne(actual, expected)                                                        \
-    do {                                                                                           \
-      std::string __a = ttest_cpp__::stringify_safe(actual);                                       \
-      std::string __e = ttest_cpp__::stringify_safe(expected);                                     \
-      TTEST_CHECK__(__a != __e, "expected != \"%s\" but got \"%s\"", __e.c_str(), __a.c_str());    \
-    } while (0)
-  #define check_string_ne_warn(actual, expected)                                                   \
-    do {                                                                                           \
-      std::string __a = ttest_cpp__::stringify_safe(actual);                                       \
-      std::string __e = ttest_cpp__::stringify_safe(expected);                                     \
-      TTEST_WARN__(__a != __e, "expected != \"%s\" but got \"%s\"", __e.c_str(), __a.c_str());     \
+  #define check_starts_with_warn(str, prefix)                                                       \
+    do {                                                                                            \
+      std::string ttest_s__ = ttest_cpp__::stringify_safe(str);                                     \
+      std::string ttest_p__ = ttest_cpp__::stringify_safe(prefix);                                  \
+      TTEST_WARN__(ttest_s__.size() >= ttest_p__.size() &&                                         \
+                       ttest_s__.compare(0, ttest_p__.size(), ttest_p__) == 0,                      \
+                   "expected \"%s\" to start with \"%s\"", ttest_s__.c_str(), ttest_p__.c_str());  \
     } while (0)
 
-  #define check_string_contains(haystack, needle)                                                  \
-    do {                                                                                           \
-      std::string __h = ttest_cpp__::stringify_safe(haystack);                                     \
-      std::string __n = ttest_cpp__::stringify_safe(needle);                                       \
-      TTEST_CHECK__(__h.find(__n) != std::string::npos, "expected \"%s\" to contain \"%s\"",       \
-                    __h.c_str(), __n.c_str());                                                     \
+  #define check_ends_with(str, suffix)                                                              \
+    do {                                                                                            \
+      std::string ttest_s__ = ttest_cpp__::stringify_safe(str);                                     \
+      std::string ttest_x__ = ttest_cpp__::stringify_safe(suffix);                                  \
+      TTEST_CHECK__(ttest_s__.size() >= ttest_x__.size() &&                                        \
+                        ttest_s__.compare(ttest_s__.size() - ttest_x__.size(),                     \
+                                          ttest_x__.size(), ttest_x__) == 0,                        \
+                    "expected \"%s\" to end with \"%s\"", ttest_s__.c_str(), ttest_x__.c_str());   \
     } while (0)
-  #define check_string_contains_warn(haystack, needle)                                             \
-    do {                                                                                           \
-      std::string __h = ttest_cpp__::stringify_safe(haystack);                                     \
-      std::string __n = ttest_cpp__::stringify_safe(needle);                                       \
-      TTEST_WARN__(__h.find(__n) != std::string::npos, "expected \"%s\" to contain \"%s\"",        \
-                   __h.c_str(), __n.c_str());                                                      \
-    } while (0)
-
-  #define check_string_starts_with(str, prefix)                                                    \
-    do {                                                                                           \
-      std::string __s = ttest_cpp__::stringify_safe(str);                                          \
-      std::string __p = ttest_cpp__::stringify_safe(prefix);                                       \
-      TTEST_CHECK__(__s.size() >= __p.size() && __s.compare(0, __p.size(), __p) == 0,              \
-                    "expected \"%s\" to start with \"%s\"", __s.c_str(), __p.c_str());             \
-    } while (0)
-  #define check_string_starts_with_warn(str, prefix)                                               \
-    do {                                                                                           \
-      std::string __s = ttest_cpp__::stringify_safe(str);                                          \
-      std::string __p = ttest_cpp__::stringify_safe(prefix);                                       \
-      TTEST_WARN__(__s.size() >= __p.size() && __s.compare(0, __p.size(), __p) == 0,               \
-                   "expected \"%s\" to start with \"%s\"", __s.c_str(), __p.c_str());              \
-    } while (0)
-
-  #define check_string_ends_with(str, suffix)                                                      \
-    do {                                                                                           \
-      std::string __s = ttest_cpp__::stringify_safe(str);                                          \
-      std::string __x = ttest_cpp__::stringify_safe(suffix);                                       \
-      TTEST_CHECK__(__s.size() >= __x.size() &&                                                    \
-                        __s.compare(__s.size() - __x.size(), __x.size(), __x) == 0,                \
-                    "expected \"%s\" to end with \"%s\"", __s.c_str(), __x.c_str());               \
-    } while (0)
-  #define check_string_ends_with_warn(str, suffix)                                                 \
-    do {                                                                                           \
-      std::string __s = ttest_cpp__::stringify_safe(str);                                          \
-      std::string __x = ttest_cpp__::stringify_safe(suffix);                                       \
-      TTEST_WARN__(__s.size() >= __x.size() &&                                                     \
-                       __s.compare(__s.size() - __x.size(), __x.size(), __x) == 0,                 \
-                   "expected \"%s\" to end with \"%s\"", __s.c_str(), __x.c_str());                \
-    } while (0)
-
-  #define check_string_empty(str)                                                                  \
-    do {                                                                                           \
-      std::string __s = ttest_cpp__::stringify_safe(str);                                          \
-      TTEST_CHECK__(__s.empty(), "expected empty string but got \"%s\"", __s.c_str());             \
-    } while (0)
-  #define check_string_empty_warn(str)                                                             \
-    do {                                                                                           \
-      std::string __s = ttest_cpp__::stringify_safe(str);                                          \
-      TTEST_WARN__(__s.empty(), "expected empty string but got \"%s\"", __s.c_str());              \
-    } while (0)
-
-  #define check_string_not_empty(str)                                                              \
-    do {                                                                                           \
-      std::string __s = ttest_cpp__::stringify_safe(str);                                          \
-      TTEST_CHECK__(!__s.empty(), "expected non-empty string");                                    \
-    } while (0)
-  #define check_string_not_empty_warn(str)                                                         \
-    do {                                                                                           \
-      std::string __s = ttest_cpp__::stringify_safe(str);                                          \
-      TTEST_WARN__(!__s.empty(), "expected non-empty string");                                     \
+  #define check_ends_with_warn(str, suffix)                                                         \
+    do {                                                                                            \
+      std::string ttest_s__ = ttest_cpp__::stringify_safe(str);                                     \
+      std::string ttest_x__ = ttest_cpp__::stringify_safe(suffix);                                  \
+      TTEST_WARN__(ttest_s__.size() >= ttest_x__.size() &&                                         \
+                       ttest_s__.compare(ttest_s__.size() - ttest_x__.size(),                      \
+                                         ttest_x__.size(), ttest_x__) == 0,                         \
+                   "expected \"%s\" to end with \"%s\"", ttest_s__.c_str(), ttest_x__.c_str());    \
     } while (0)
 
   /* --- Template-based generic assertions --- */
 
-  #define check_equal(actual, expected)                                                            \
+  #define TTEST_CPP_CHECK_EQUAL_VALUE__(actual, expected)                                         \
     do {                                                                                           \
       const auto &ttest_a_ref__ = (actual);                                                        \
       const auto &ttest_e_ref__ = (expected);                                                      \
@@ -353,7 +322,7 @@ namespace ttest_cpp__ {
         ++ttest_active_config__->assertion_count;                                                  \
       }                                                                                            \
     } while (0)
-  #define check_equal_warn(actual, expected)                                                       \
+  #define TTEST_CPP_CHECK_EQUAL_VALUE_WARN__(actual, expected)                                    \
     do {                                                                                           \
       const auto &ttest_a_ref__ = (actual);                                                        \
       const auto &ttest_e_ref__ = (expected);                                                      \
@@ -366,7 +335,7 @@ namespace ttest_cpp__ {
       }                                                                                            \
     } while (0)
 
-  #define check_not_equal(actual, expected)                                                        \
+  #define TTEST_CPP_CHECK_NOT_EQUAL_VALUE__(actual, expected)                                     \
     do {                                                                                           \
       const auto &ttest_a_ref__ = (actual);                                                        \
       const auto &ttest_e_ref__ = (expected);                                                      \
@@ -378,7 +347,7 @@ namespace ttest_cpp__ {
         ++ttest_active_config__->assertion_count;                                                  \
       }                                                                                            \
     } while (0)
-  #define check_not_equal_warn(actual, expected)                                                   \
+  #define TTEST_CPP_CHECK_NOT_EQUAL_VALUE_WARN__(actual, expected)                                \
     do {                                                                                           \
       const auto &ttest_a_ref__ = (actual);                                                        \
       const auto &ttest_e_ref__ = (expected);                                                      \
@@ -416,6 +385,44 @@ namespace ttest_cpp__ {
       }                                                                                            \
     } while (0)
 
+  #define check_equal(...)                                                                        \
+    TTEST_EQUAL_OVERLOAD__(__VA_ARGS__, TTEST_CHECK_MEMORY_EQUAL__,                               \
+                           TTEST_CPP_CHECK_EQUAL_VALUE__, TTEST_EQUAL_SENTINEL__)(__VA_ARGS__)
+  #define check_equal_warn(...)                                                                   \
+    TTEST_EQUAL_OVERLOAD__(__VA_ARGS__, TTEST_CHECK_MEMORY_EQUAL_WARN__,                          \
+                           TTEST_CPP_CHECK_EQUAL_VALUE_WARN__, TTEST_EQUAL_SENTINEL__)(__VA_ARGS__)
+  #define check_not_equal(...)                                                                    \
+    TTEST_EQUAL_OVERLOAD__(__VA_ARGS__, TTEST_CHECK_MEMORY_NOT_EQUAL__,                           \
+                           TTEST_CPP_CHECK_NOT_EQUAL_VALUE__, TTEST_EQUAL_SENTINEL__)(__VA_ARGS__)
+  #define check_not_equal_warn(...)                                                               \
+    TTEST_EQUAL_OVERLOAD__(__VA_ARGS__, TTEST_CHECK_MEMORY_NOT_EQUAL_WARN__,                      \
+                           TTEST_CPP_CHECK_NOT_EQUAL_VALUE_WARN__, TTEST_EQUAL_SENTINEL__)(__VA_ARGS__)
+
+  #define check_greater_equal(actual, expected)                                                    \
+    do {                                                                                           \
+      const auto &ttest_a_ref__ = (actual);                                                        \
+      const auto &ttest_e_ref__ = (expected);                                                      \
+      if (!ttest_eval_bool__(!!(ttest_a_ref__ >= ttest_e_ref__))) {                                \
+        std::string __a = ttest_cpp__::to_string_safe(ttest_a_ref__);                              \
+        std::string __e = ttest_cpp__::to_string_safe(ttest_e_ref__);                              \
+        TTEST_CHECK__(0, "expected >= %s but got %s", __e.c_str(), __a.c_str());                  \
+      } else {                                                                                     \
+        ++ttest_active_config__->assertion_count;                                                  \
+      }                                                                                            \
+    } while (0)
+  #define check_greater_equal_warn(actual, expected)                                               \
+    do {                                                                                           \
+      const auto &ttest_a_ref__ = (actual);                                                        \
+      const auto &ttest_e_ref__ = (expected);                                                      \
+      if (!ttest_eval_bool__(!!(ttest_a_ref__ >= ttest_e_ref__))) {                                \
+        std::string __a = ttest_cpp__::to_string_safe(ttest_a_ref__);                              \
+        std::string __e = ttest_cpp__::to_string_safe(ttest_e_ref__);                              \
+        TTEST_WARN__(0, "expected >= %s but got %s", __e.c_str(), __a.c_str());                   \
+      } else {                                                                                     \
+        ++ttest_active_config__->assertion_count;                                                  \
+      }                                                                                            \
+    } while (0)
+
   #define check_less(actual, expected)                                                             \
     do {                                                                                           \
       const auto &ttest_a_ref__ = (actual);                                                        \
@@ -436,6 +443,62 @@ namespace ttest_cpp__ {
         std::string __a = ttest_cpp__::to_string_safe(ttest_a_ref__);                              \
         std::string __e = ttest_cpp__::to_string_safe(ttest_e_ref__);                              \
         TTEST_WARN__(0, "expected < %s but got %s", __e.c_str(), __a.c_str());                     \
+      } else {                                                                                     \
+        ++ttest_active_config__->assertion_count;                                                  \
+      }                                                                                            \
+    } while (0)
+
+  #define check_less_equal(actual, expected)                                                       \
+    do {                                                                                           \
+      const auto &ttest_a_ref__ = (actual);                                                        \
+      const auto &ttest_e_ref__ = (expected);                                                      \
+      if (!ttest_eval_bool__(!!(ttest_a_ref__ <= ttest_e_ref__))) {                                \
+        std::string __a = ttest_cpp__::to_string_safe(ttest_a_ref__);                              \
+        std::string __e = ttest_cpp__::to_string_safe(ttest_e_ref__);                              \
+        TTEST_CHECK__(0, "expected <= %s but got %s", __e.c_str(), __a.c_str());                  \
+      } else {                                                                                     \
+        ++ttest_active_config__->assertion_count;                                                  \
+      }                                                                                            \
+    } while (0)
+  #define check_less_equal_warn(actual, expected)                                                  \
+    do {                                                                                           \
+      const auto &ttest_a_ref__ = (actual);                                                        \
+      const auto &ttest_e_ref__ = (expected);                                                      \
+      if (!ttest_eval_bool__(!!(ttest_a_ref__ <= ttest_e_ref__))) {                                \
+        std::string __a = ttest_cpp__::to_string_safe(ttest_a_ref__);                              \
+        std::string __e = ttest_cpp__::to_string_safe(ttest_e_ref__);                              \
+        TTEST_WARN__(0, "expected <= %s but got %s", __e.c_str(), __a.c_str());                   \
+      } else {                                                                                     \
+        ++ttest_active_config__->assertion_count;                                                  \
+      }                                                                                            \
+    } while (0)
+
+  #define check_within(actual, expected, margin)                                                   \
+    do {                                                                                           \
+      const auto &ttest_a_ref__ = (actual);                                                        \
+      const auto &ttest_e_ref__ = (expected);                                                      \
+      const auto &ttest_m_ref__ = (margin);                                                        \
+      if (!ttest_eval_bool__(!!(std::fabs(ttest_a_ref__ - ttest_e_ref__) <= ttest_m_ref__))) {     \
+        std::string __a = ttest_cpp__::to_string_safe(ttest_a_ref__);                              \
+        std::string __e = ttest_cpp__::to_string_safe(ttest_e_ref__);                              \
+        std::string __m = ttest_cpp__::to_string_safe(ttest_m_ref__);                              \
+        TTEST_CHECK__(0, "expected %s (+/- %s) but got %s", __e.c_str(), __m.c_str(),             \
+                     __a.c_str());                                                                 \
+      } else {                                                                                     \
+        ++ttest_active_config__->assertion_count;                                                  \
+      }                                                                                            \
+    } while (0)
+  #define check_within_warn(actual, expected, margin)                                              \
+    do {                                                                                           \
+      const auto &ttest_a_ref__ = (actual);                                                        \
+      const auto &ttest_e_ref__ = (expected);                                                      \
+      const auto &ttest_m_ref__ = (margin);                                                        \
+      if (!ttest_eval_bool__(!!(std::fabs(ttest_a_ref__ - ttest_e_ref__) <= ttest_m_ref__))) {     \
+        std::string __a = ttest_cpp__::to_string_safe(ttest_a_ref__);                              \
+        std::string __e = ttest_cpp__::to_string_safe(ttest_e_ref__);                              \
+        std::string __m = ttest_cpp__::to_string_safe(ttest_m_ref__);                              \
+        TTEST_WARN__(0, "expected %s (+/- %s) but got %s", __e.c_str(), __m.c_str(),              \
+                    __a.c_str());                                                                  \
       } else {                                                                                     \
         ++ttest_active_config__->assertion_count;                                                  \
       }                                                                                            \

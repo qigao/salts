@@ -161,7 +161,13 @@ typedef struct cmeta_fn {
 #define CMETA_CAPTURE_INLINE 32u
 
 typedef union cmeta_capture_storage {
+#if defined(_MSC_VER) && !defined(__cplusplus)
+    long double _align_long_double;
+    long long _align_long_long;
+    void *_align_pointer;
+#else
     max_align_t _align;
+#endif
     unsigned char bytes[CMETA_CAPTURE_INLINE];
 } cmeta_capture_storage;
 

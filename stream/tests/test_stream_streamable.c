@@ -41,14 +41,14 @@ spec("streamable adapter") {
         stream_item_t first_item;
         stream_item_t second_item;
 
-        check_int_eq(test_container_stream(&first, &container), STREAM_OK);
-        check_int_eq(test_container_stream(&second, &container), STREAM_OK);
-        check_int_eq(stream_next_view(&first, &first_item), STREAM_OK);
-        check_int_eq(stream_next_view(&second, &second_item), STREAM_OK);
-        check_int_eq(*(const int *)first_item.data, 10);
-        check_int_eq(*(const int *)second_item.data, 10);
+        check_equal(test_container_stream(&first, &container), STREAM_OK);
+        check_equal(test_container_stream(&second, &container), STREAM_OK);
+        check_equal(stream_next_view(&first, &first_item), STREAM_OK);
+        check_equal(stream_next_view(&second, &second_item), STREAM_OK);
+        check_equal(*(const int *)first_item.data, 10);
+        check_equal(*(const int *)second_item.data, 10);
 
         ++container.version;
-        check_int_eq(stream_next_view(&first, &first_item), STREAM_MODIFIED);
+        check_equal(stream_next_view(&first, &first_item), STREAM_MODIFIED);
     }
 }

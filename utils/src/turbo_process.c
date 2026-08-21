@@ -50,8 +50,8 @@ struct turbo_process_s {
   size_t max_output_bytes;
   size_t captured_bytes;
 
-  tstr_t stdout_data;
-  tstr_t stderr_data;
+  tstr stdout_data;
+  tstr stderr_data;
   size_t stdout_offset;
   size_t stderr_offset;
   atomic_int stdout_open;
@@ -135,8 +135,8 @@ static void process_finish(turbo_process_t *process, turbo_process_state_t state
 
 static int process_append_output(turbo_process_t *process, int is_stdout, const char *data,
                                  size_t size) {
-  tstr_t *target;
-  tstr_t appended;
+  tstr *target;
+  tstr appended;
   size_t remaining;
   size_t accepted;
 
@@ -163,7 +163,7 @@ static int process_append_output(turbo_process_t *process, int is_stdout, const 
 
 static int process_read_buffer(turbo_process_t *process, int is_stdout, void *buffer,
                                size_t capacity, size_t *out_read) {
-  tstr_t data;
+  tstr data;
   size_t *offset;
   size_t available;
   size_t count;

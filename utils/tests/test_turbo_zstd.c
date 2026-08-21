@@ -23,25 +23,25 @@ spec("turbo zstd adapter") {
       uint8_t decompressed[sizeof(payload)];
       uint8_t *compressed;
 
-      check_int_eq(turbo_zstd_compress_bound(sizeof(payload), &bound), TURBO_OK);
-      check_size_ge(bound, sizeof(payload));
+      check_equal(turbo_zstd_compress_bound(sizeof(payload), &bound), TURBO_OK);
+      check_greater_equal(bound, sizeof(payload));
       compressed = (uint8_t *)malloc(bound);
       check_not_null(compressed);
 
-      check_int_eq(turbo_zstd_compress(compressed, bound, &compressed_size,
+      check_equal(turbo_zstd_compress(compressed, bound, &compressed_size,
                                        payload, sizeof(payload), 0),
                    TURBO_OK);
-      check_size_gt(compressed_size, 0U);
-      check_int_eq(turbo_zstd_frame_content_size(
+      check_greater(compressed_size, 0U);
+      check_equal(turbo_zstd_frame_content_size(
                        compressed, compressed_size, &content_size),
                    TURBO_OK);
-      check_size_eq(content_size, sizeof(payload));
-      check_int_eq(turbo_zstd_decompress(
+      check_equal(content_size, sizeof(payload));
+      check_equal(turbo_zstd_decompress(
                        decompressed, sizeof(decompressed), &decompressed_size,
                        compressed, compressed_size),
                    TURBO_OK);
-      check_size_eq(decompressed_size, sizeof(payload));
-      check_mem_eq(decompressed, payload, sizeof(payload));
+      check_equal(decompressed_size, sizeof(payload));
+      check_equal(decompressed, payload, sizeof(payload));
 
       free(compressed);
     }
@@ -53,20 +53,20 @@ spec("turbo zstd adapter") {
       size_t decompressed_size = 1U;
       uint8_t *compressed;
 
-      check_int_eq(turbo_zstd_compress_bound(0U, &bound), TURBO_OK);
+      check_equal(turbo_zstd_compress_bound(0U, &bound), TURBO_OK);
       compressed = (uint8_t *)malloc(bound);
       check_not_null(compressed);
-      check_int_eq(turbo_zstd_compress(compressed, bound, &compressed_size,
+      check_equal(turbo_zstd_compress(compressed, bound, &compressed_size,
                                        NULL, 0U, 0),
                    TURBO_OK);
-      check_int_eq(turbo_zstd_frame_content_size(
+      check_equal(turbo_zstd_frame_content_size(
                        compressed, compressed_size, &content_size),
                    TURBO_OK);
-      check_size_eq(content_size, 0U);
-      check_int_eq(turbo_zstd_decompress(NULL, 0U, &decompressed_size,
+      check_equal(content_size, 0U);
+      check_equal(turbo_zstd_decompress(NULL, 0U, &decompressed_size,
                                          compressed, compressed_size),
                    TURBO_OK);
-      check_size_eq(decompressed_size, 0U);
+      check_equal(decompressed_size, 0U);
 
       free(compressed);
     }
@@ -79,20 +79,20 @@ spec("turbo zstd adapter") {
       size_t compressed_size = 0U;
       size_t output_size = 17U;
 
-      check_int_eq(turbo_zstd_compress(compressed, 1U, &output_size,
+      check_equal(turbo_zstd_compress(compressed, 1U, &output_size,
                                        payload, sizeof(payload), 0),
                    TURBO_ENOSPC);
-      check_size_eq(output_size, 17U);
+      check_equal(output_size, 17U);
 
-      check_int_eq(turbo_zstd_compress(compressed, sizeof(compressed),
+      check_equal(turbo_zstd_compress(compressed, sizeof(compressed),
                                        &compressed_size, payload,
                                        sizeof(payload), 0),
                    TURBO_OK);
-      check_int_eq(turbo_zstd_decompress(
+      check_equal(turbo_zstd_decompress(
                        too_small, sizeof(too_small), &output_size, compressed,
                        compressed_size),
                    TURBO_ENOSPC);
-      check_size_eq(output_size, 17U);
+      check_equal(output_size, 17U);
     }
 
     it("maps malformed frames to protocol errors") {
@@ -100,46 +100,46 @@ spec("turbo zstd adapter") {
       uint8_t output[16];
       size_t output_size = 23U;
 
-      check_int_eq(turbo_zstd_decompress(output, sizeof(output), &output_size,
+      check_equal(turbo_zstd_decompress(output, sizeof(output), &output_size,
                                          malformed, sizeof(malformed)),
                    TURBO_EPROTO);
-      check_size_eq(output_size, 23U);
-      check_int_eq(turbo_zstd_frame_content_size(
+      check_equal(output_size, 23U);
+      check_equal(turbo_zstd_frame_content_size(
                        malformed, sizeof(malformed), &output_size),
                    TURBO_EPROTO);
-      check_size_eq(output_size, 23U);
+      check_equal(output_size, 23U);
     }
 
     it("rejects invalid arguments without changing outputs") {
       size_t value = 29U;
 
-      check_int_eq(turbo_zstd_compress_bound(1U, NULL), TURBO_EINVAL);
-      check_int_eq(turbo_zstd_compress_bound(SIZE_MAX, &value), TURBO_ERANGE);
-      check_size_eq(value, 29U);
-      check_int_eq(turbo_zstd_compress(NULL, 0U, &value, payload,
+      check_equal(turbo_zstd_compress_bound(1U, NULL), TURBO_EINVAL);
+      check_equal(turbo_zstd_compress_bound(SIZE_MAX, &value), TURBO_ERANGE);
+      check_equal(value, 29U);
+      check_equal(turbo_zstd_compress(NULL, 0U, &value, payload,
                                        sizeof(payload), 0),
                    TURBO_EINVAL);
-      check_size_eq(value, 29U);
-      check_int_eq(turbo_zstd_decompress(NULL, 1U, &value, payload,
+      check_equal(value, 29U);
+      check_equal(turbo_zstd_decompress(NULL, 1U, &value, payload,
                                          sizeof(payload)),
                    TURBO_EINVAL);
-      check_size_eq(value, 29U);
-      check_int_eq(turbo_zstd_frame_content_size(NULL, 0U, &value),
+      check_equal(value, 29U);
+      check_equal(turbo_zstd_frame_content_size(NULL, 0U, &value),
                    TURBO_EINVAL);
-      check_size_eq(value, 29U);
-      check_int_eq(turbo_zstd_compress((uint8_t[64]){0}, 64U, &value, payload,
+      check_equal(value, 29U);
+      check_equal(turbo_zstd_compress((uint8_t[64]){0}, 64U, &value, payload,
                                        sizeof(payload),
                                        turbo_zstd_max_level() + 1),
                    TURBO_EINVAL);
-      check_size_eq(value, 29U);
+      check_equal(value, 29U);
     }
   }
 
   group("levels") {
     it("exposes a valid default and supported range") {
-      check_int_le(turbo_zstd_min_level(), turbo_zstd_default_level());
-      check_int_ge(turbo_zstd_max_level(), turbo_zstd_default_level());
-      check_int_lt(turbo_zstd_min_level(), turbo_zstd_max_level());
+      check_less_equal(turbo_zstd_min_level(), turbo_zstd_default_level());
+      check_greater_equal(turbo_zstd_max_level(), turbo_zstd_default_level());
+      check_less(turbo_zstd_min_level(), turbo_zstd_max_level());
     }
   }
 }

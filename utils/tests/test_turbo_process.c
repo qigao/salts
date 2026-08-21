@@ -61,9 +61,9 @@ spec("turbo_process") {
       turbo_process_t *process = (turbo_process_t *)1;
 
       turbo_process_options_init(&options);
-      check_int_eq((int)options.flags, TURBO_PROCESS_CAPTURE_STDOUT | TURBO_PROCESS_CAPTURE_STDERR);
-      check_size_eq(options.max_output_bytes, TURBO_PROCESS_DEFAULT_MAX_OUTPUT_BYTES);
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_EINVAL);
+      check_equal((int)options.flags, TURBO_PROCESS_CAPTURE_STDOUT | TURBO_PROCESS_CAPTURE_STDERR);
+      check_equal(options.max_output_bytes, TURBO_PROCESS_DEFAULT_MAX_OUTPUT_BYTES);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_EINVAL);
       check_null(process);
     }
 
@@ -73,7 +73,7 @@ spec("turbo_process") {
 
       turbo_process_options_init(&options);
       options.program = "turbo_process_missing_executable_97531";
-      check_int_lt(turbo_process_spawn(&options, &process), 0);
+      check_less(turbo_process_spawn(&options, &process), 0);
       check_null(process);
     }
 
@@ -86,10 +86,10 @@ spec("turbo_process") {
       turbo_process_options_init(&options);
       options.program = TEST_SHELL;
       options.env = malformed;
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_EINVAL);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_EINVAL);
       check_null(process);
       options.env = duplicate;
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_EINVAL);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_EINVAL);
       check_null(process);
     }
   }
@@ -109,16 +109,16 @@ spec("turbo_process") {
       init_shell_options(&options, "printf stdout-line; printf stderr-line >&2; exit 7");
 #endif
 
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_OK);
       check_not_null(process);
-      check_int_gt(turbo_process_pid(process), 0);
-      check_int_eq(turbo_process_wait(process, &result), TURBO_OK);
-      check_int_eq(result.state, TURBO_PROCESS_EXITED);
-      check_int_eq(result.exit_code, 7);
-      check_int_eq(read_all(process, 1, stdout_data, sizeof(stdout_data), &stdout_size), TURBO_EOF);
-      check_int_eq(read_all(process, 0, stderr_data, sizeof(stderr_data), &stderr_size), TURBO_EOF);
-      check_str_contains(stdout_data, "stdout-line");
-      check_str_contains(stderr_data, "stderr-line");
+      check_greater(turbo_process_pid(process), 0);
+      check_equal(turbo_process_wait(process, &result), TURBO_OK);
+      check_equal(result.state, TURBO_PROCESS_EXITED);
+      check_equal(result.exit_code, 7);
+      check_equal(read_all(process, 1, stdout_data, sizeof(stdout_data), &stdout_size), TURBO_EOF);
+      check_equal(read_all(process, 0, stderr_data, sizeof(stderr_data), &stderr_size), TURBO_EOF);
+      check_contains(stdout_data, "stdout-line");
+      check_contains(stderr_data, "stderr-line");
       turbo_process_destroy(process);
     }
 
@@ -155,23 +155,23 @@ spec("turbo_process") {
 
       check_not_null(directory);
 #ifdef _WIN32
-      check_int_eq(turbo_fs_path_join(script, sizeof(script), directory, "probe.ps1"), TURBO_OK);
+      check_equal(turbo_fs_path_join(script, sizeof(script), directory, "probe.ps1"), TURBO_OK);
       {
         const char *script_data = "param([string]$value)\nWrite-Output "
                                   "\"$value|$env:TURBO_PROCESS_VALUE|$(Get-Location)\"\n";
         turbo_fs_buf_t script_buffer = turbo_fs_buf_init((char *)script_data, strlen(script_data));
-        check_int_eq(turbo_fs_write_file(script, &script_buffer), TURBO_OK);
+        check_equal(turbo_fs_write_file(script, &script_buffer), TURBO_OK);
       }
 #endif
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
-      check_int_eq(turbo_process_wait(process, &result), TURBO_OK);
-      check_int_eq(result.exit_code, 0);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_equal(turbo_process_wait(process, &result), TURBO_OK);
+      check_equal(result.exit_code, 0);
       read_all(process, 1, output, sizeof(output), &output_size);
-      check_str_contains(output, "alpha beta|env-value|");
-      check_str_contains(output, directory);
+      check_contains(output, "alpha beta|env-value|");
+      check_contains(output, directory);
 
       turbo_process_destroy(process);
-      check_int_eq(tt_remove_tree(directory), 0);
+      check_equal(tt_remove_tree(directory), 0);
       free(directory);
     }
 
@@ -193,29 +193,29 @@ spec("turbo_process") {
       options.env = env;
       options.flags |= TURBO_PROCESS_CLEAN_ENVIRONMENT;
 
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
-      check_int_eq(turbo_process_wait(process, &result), TURBO_OK);
-      check_int_eq(result.exit_code, 0);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_equal(turbo_process_wait(process, &result), TURBO_OK);
+      check_equal(result.exit_code, 0);
       read_all(process, 1, output, sizeof(output), &output_size);
 #ifdef _WIN32
       check_false(strstr(output, "PATH=") != NULL);
-      check_str_contains(output, "marker=clean-value");
+      check_contains(output, "marker=clean-value");
 #else
-      check_str_eq(output, "path=unset|marker=clean-value");
+      check_equal(output, "path=unset|marker=clean-value");
 #endif
 
       turbo_process_destroy(process);
       process = NULL;
       options.env = NULL;
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
-      check_int_eq(turbo_process_wait(process, &result), TURBO_OK);
-      check_int_eq(result.exit_code, 0);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_equal(turbo_process_wait(process, &result), TURBO_OK);
+      check_equal(result.exit_code, 0);
       read_all(process, 1, output, sizeof(output), &output_size);
 #ifdef _WIN32
       check_false(strstr(output, "PATH=") != NULL);
       check_false(strstr(output, "clean-value") != NULL);
 #else
-      check_str_eq(output, "path=unset|marker=");
+      check_equal(output, "path=unset|marker=");
 #endif
       turbo_process_destroy(process);
     }
@@ -247,15 +247,15 @@ spec("turbo_process") {
 
       check_not_null(payload);
       check_not_null(output);
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
-      check_int_eq(turbo_process_write_stdin(process, payload, payload_size, &written), TURBO_OK);
-      check_size_eq(written, payload_size);
-      check_int_eq(turbo_process_close_stdin(process), TURBO_OK);
-      check_int_eq(turbo_process_wait(process, &result), TURBO_OK);
-      check_int_eq(result.exit_code, 0);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_equal(turbo_process_write_stdin(process, payload, payload_size, &written), TURBO_OK);
+      check_equal(written, payload_size);
+      check_equal(turbo_process_close_stdin(process), TURBO_OK);
+      check_equal(turbo_process_wait(process, &result), TURBO_OK);
+      check_equal(result.exit_code, 0);
       read_all(process, 1, output, payload_size + 32U, &output_size);
-      check_size_eq(output_size, payload_size);
-      check_mem_eq(output, payload, payload_size);
+      check_equal(output_size, payload_size);
+      check_equal(output, payload, payload_size);
 
       turbo_process_destroy(process);
       free(output);
@@ -273,12 +273,12 @@ spec("turbo_process") {
 #else
       init_shell_options(&options, "sleep 2");
 #endif
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
-      check_int_eq(turbo_process_wait_for(process, 25, &result), TURBO_ETIMEDOUT);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_equal(turbo_process_wait_for(process, 25, &result), TURBO_ETIMEDOUT);
       check_true(turbo_process_is_running(process));
-      check_int_eq(turbo_process_terminate(process), TURBO_OK);
-      check_int_eq(turbo_process_wait(process, &result), TURBO_OK);
-      check_int_eq(result.state, TURBO_PROCESS_TERMINATED);
+      check_equal(turbo_process_terminate(process), TURBO_OK);
+      check_equal(turbo_process_wait(process, &result), TURBO_OK);
+      check_equal(result.state, TURBO_PROCESS_TERMINATED);
       turbo_process_destroy(process);
     }
 
@@ -292,10 +292,10 @@ spec("turbo_process") {
       init_shell_options(&options, "sleep 2");
 #endif
       options.timeout_ms = 100;
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
-      check_int_eq(turbo_process_wait(process, &result), TURBO_OK);
-      check_int_eq(result.state, TURBO_PROCESS_TIMED_OUT);
-      check_int_eq(result.exit_code, -1);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_equal(turbo_process_wait(process, &result), TURBO_OK);
+      check_equal(result.state, TURBO_PROCESS_TIMED_OUT);
+      check_equal(result.exit_code, -1);
       turbo_process_destroy(process);
     }
 
@@ -308,9 +308,9 @@ spec("turbo_process") {
       char *script;
       script = (char *)malloc(512);
       check_not_null(script);
-      check_int_eq(turbo_fs_path_join(script, 512, directory, "tree.cmd"), TURBO_OK);
+      check_equal(turbo_fs_path_join(script, 512, directory, "tree.cmd"), TURBO_OK);
       snprintf(marker, sizeof(marker), "%s\\marker.txt", directory);
-      check_int_eq(
+      check_equal(
           tt_write_file(
               script,
               "@echo off\r\nstart \"\" /b cmd.exe /d /s /c \"ping -n 3 127.0.0.1 >nul & echo "
@@ -323,7 +323,7 @@ spec("turbo_process") {
         turbo_process_options_init(&options);
         options.program = "cmd.exe";
         options.args = args;
-        check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
+        check_equal(turbo_process_spawn(&options, &process), TURBO_OK);
       }
 #else
       const char *script_data = "(sleep 1; echo bad > \"$1\") & sleep 5";
@@ -332,7 +332,7 @@ spec("turbo_process") {
       turbo_process_options_init(&options);
       options.program = "/bin/sh";
       options.args = args;
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_OK);
 #endif
       check_not_null(directory);
       turbo_sleep_ms(100);
@@ -343,7 +343,7 @@ spec("turbo_process") {
 #ifdef _WIN32
       free(script);
 #endif
-      check_int_eq(tt_remove_tree(directory), 0);
+      check_equal(tt_remove_tree(directory), 0);
       free(directory);
     }
 
@@ -360,11 +360,11 @@ spec("turbo_process") {
                          "i=0; while [ $i -lt 1000 ]; do echo 1234567890; i=$((i+1)); done");
 #endif
       options.max_output_bytes = 512;
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
-      check_int_eq(turbo_process_wait(process, &result), TURBO_OK);
-      check_int_eq(result.state, TURBO_PROCESS_OUTPUT_LIMIT_EXCEEDED);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_equal(turbo_process_wait(process, &result), TURBO_OK);
+      check_equal(result.state, TURBO_PROCESS_OUTPUT_LIMIT_EXCEEDED);
       read_all(process, 1, output, sizeof(output), &output_size);
-      check_size_le(output_size, 512);
+      check_less_equal(output_size, 512);
       turbo_process_destroy(process);
     }
   }
@@ -377,17 +377,17 @@ spec("turbo_process") {
       bool alive = false;
       int child_pid;
 
-      check_int_eq(turbo_process_is_pid_alive(turbo_getpid(), &alive), TURBO_OK);
+      check_equal(turbo_process_is_pid_alive(turbo_getpid(), &alive), TURBO_OK);
       check_true(alive);
 #ifdef _WIN32
       init_shell_options(&options, "exit /b 0");
 #else
       init_shell_options(&options, "exit 0");
 #endif
-      check_int_eq(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_equal(turbo_process_spawn(&options, &process), TURBO_OK);
       child_pid = turbo_process_pid(process);
-      check_int_eq(turbo_process_wait(process, &result), TURBO_OK);
-      check_int_eq(turbo_process_is_pid_alive(child_pid, &alive), TURBO_OK);
+      check_equal(turbo_process_wait(process, &result), TURBO_OK);
+      check_equal(turbo_process_is_pid_alive(child_pid, &alive), TURBO_OK);
       check_false(alive);
       turbo_process_destroy(process);
     }
