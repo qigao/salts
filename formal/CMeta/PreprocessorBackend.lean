@@ -36,6 +36,13 @@ def standardValue : LanguageMode → Nat
 
 end LanguageMode
 
+/-- Stable registry identity for one observed compiler/language configuration. -/
+structure BackendKey where
+  family : CompilerFamily
+  majorVersion : Nat
+  languageMode : LanguageMode
+  deriving Repr, DecidableEq
+
 structure PreprocessorBackend where
   compilerFamily : CompilerFamily
   compilerMajorVersion : Nat
@@ -46,6 +53,10 @@ structure PreprocessorBackend where
   deriving Repr, DecidableEq
 
 namespace PreprocessorBackend
+
+/-- Compiler identity used by the finite backend registry. -/
+def key (backend : PreprocessorBackend) : BackendKey :=
+  ⟨backend.compilerFamily, backend.compilerMajorVersion, backend.languageMode⟩
 
 /-- Capability consumed by replay lowering. Compiler identity remains attached
     to the surrounding backend, while the lowering API receives only the
@@ -78,10 +89,19 @@ structure CertifiedPreprocessorBackend where
 
 namespace CertifiedPreprocessorBackend
 
+/-- Identity projection retained by the registry. -/
+def key (backend : CertifiedPreprocessorBackend) : BackendKey :=
+  backend.backend.key
+
 /-- Capability projection used by replay lowering. -/
 def replayCapability
     (backend : CertifiedPreprocessorBackend) : ReplayBackendCapability :=
   backend.backend.replayCapability
+
+/-- Whether this certified backend covers the replay requirement of one IR. -/
+abbrev supportsReplay
+    (backend : CertifiedPreprocessorBackend) (ir : ReplayIR) : Prop :=
+  ir.sameProducerDepth ≤ backend.replayCapability.certifiedSameProducerDepth
 
 /-- Certification always carries a concrete compiler version. -/
 theorem compilerVersionPositive (backend : CertifiedPreprocessorBackend) :
@@ -100,10 +120,29 @@ theorem certifiedDepthPositive (backend : CertifiedPreprocessorBackend) :
 
 end CertifiedPreprocessorBackend
 
-/-- Registry entries are certified by construction, so adding another compiler
-    does not widen the trusted boundary of replay lowering. -/
+/-- Registry representation is a list, but its semantic contract is a finite map:
+    every compiler key occurs at most once and every stored entry is certified by
+    construction. -/
 structure PreprocessorBackendRegistry where
   entries : List CertifiedPreprocessorBackend
+  uniqueKeys : (entries.map CertifiedPreprocessorBackend.key).Nodup
+
+namespace PreprocessorBackendRegistry
+
+private def lookupEntries :
+    List CertifiedPreprocessorBackend → BackendKey →
+      Option CertifiedPreprocessorBackend
+  | [], _ => none
+  | backend :: rest, key =>
+      if backend.key = key then some backend else lookupEntries rest key
+
+/-- Resolve one certified backend by compiler identity. -/
+def lookup
+    (registry : PreprocessorBackendRegistry) (key : BackendKey) :
+    Option CertifiedPreprocessorBackend :=
+  lookupEntries registry.entries key
+
+end PreprocessorBackendRegistry
 
 end Producer
 end CMeta
