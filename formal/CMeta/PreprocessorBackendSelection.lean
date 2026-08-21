@@ -173,28 +173,38 @@ private theorem le_antisymm {left right : BackendSelectionRank}
 def max (left right : BackendSelectionRank) : BackendSelectionRank :=
   if le left right then right else left
 
-private theorem max_eq_right {left right : BackendSelectionRank}
+theorem max_eq_right {left right : BackendSelectionRank}
     (h : le left right) : max left right = right := by
+  simp [max, h]
+
+theorem max_eq_left {left right : BackendSelectionRank}
+    (h : ¬ le left right) : max left right = left := by
   simp [max, h]
 
 private theorem le_max_left (left right : BackendSelectionRank) :
     le left (max left right) := by
   by_cases h : le left right
-  · simpa [max, h] using h
-  · simpa [max, h] using le_refl left
+  · rw [max_eq_right h]
+    exact h
+  · rw [max_eq_left h]
+    exact le_refl left
 
 private theorem le_max_right (left right : BackendSelectionRank) :
     le right (max left right) := by
   by_cases h : le left right
-  · simpa [max, h] using le_refl right
+  · rw [max_eq_right h]
+    exact le_refl right
   · have hright : le right left := (le_total left right).resolve_left h
-    simpa [max, h] using hright
+    rw [max_eq_left h]
+    exact hright
 
 private theorem max_le {a b c : BackendSelectionRank}
     (ha : le a c) (hb : le b c) : le (max a b) c := by
   by_cases h : le a b
-  · simpa [max, h] using hb
-  · simpa [max, h] using ha
+  · rw [max_eq_right h]
+    exact hb
+  · rw [max_eq_left h]
+    exact ha
 
 /-- Folding rank maxima is insensitive to swapping any two inputs after an
     arbitrary accumulated rank. -/
@@ -271,49 +281,59 @@ private theorem replayChooseRank
   by_cases hrl :
       right.replayCapability.certifiedSameProducerDepth <
         left.replayCapability.certifiedSameProducerDepth
-  · have hnle : ¬ BackendSelectionRank.le (replayRank left) (replayRank right) := by
+  · have hchoose :
+        (preferGreaterCertifiedDepth.thenBy preferNewerVersion).choose left right = left := by
+      simp [choose, thenBy, preferGreaterCertifiedDepth, hrl]
+    have hnle : ¬ BackendSelectionRank.le (replayRank left) (replayRank right) := by
       simp [BackendSelectionRank.le, replayRank]
       omega
-    simp [choose, thenBy, preferGreaterCertifiedDepth,
-      BackendSelectionRank.max, replayRank, hrl, hnle]
+    rw [hchoose, BackendSelectionRank.max_eq_left hnle]
   · by_cases hlr :
       left.replayCapability.certifiedSameProducerDepth <
         right.replayCapability.certifiedSameProducerDepth
-    · have hle : BackendSelectionRank.le (replayRank left) (replayRank right) := by
-        simp [BackendSelectionRank.le, replayRank]
-        omega
-      simp [choose, thenBy, preferGreaterCertifiedDepth,
-        BackendSelectionRank.max, replayRank, hrl, hlr, hle]
+    · have hchoose :
+          (preferGreaterCertifiedDepth.thenBy preferNewerVersion).choose left right = right := by
+        simp [choose, thenBy, preferGreaterCertifiedDepth, hrl, hlr]
+      have hle : BackendSelectionRank.le (replayRank left) (replayRank right) := by
+        exact Or.inl hlr
+      rw [hchoose, BackendSelectionRank.max_eq_right hle]
     · have hdepth :
           left.replayCapability.certifiedSameProducerDepth =
             right.replayCapability.certifiedSameProducerDepth := by
         omega
       by_cases hrv :
           right.backend.compilerMajorVersion < left.backend.compilerMajorVersion
-      · have hnle : ¬ BackendSelectionRank.le (replayRank left) (replayRank right) := by
+      · have hchoose :
+            (preferGreaterCertifiedDepth.thenBy preferNewerVersion).choose left right = left := by
+          simp [choose, thenBy, preferGreaterCertifiedDepth, preferNewerVersion,
+            hrl, hlr, hrv]
+        have hnle : ¬ BackendSelectionRank.le (replayRank left) (replayRank right) := by
           simp [BackendSelectionRank.le, replayRank, hdepth]
           omega
-        simp [choose, thenBy, preferGreaterCertifiedDepth, preferNewerVersion,
-          BackendSelectionRank.max, replayRank, hrl, hlr, hrv, hnle]
+        rw [hchoose, BackendSelectionRank.max_eq_left hnle]
       · by_cases hlv :
           left.backend.compilerMajorVersion < right.backend.compilerMajorVersion
-        · have hle : BackendSelectionRank.le (replayRank left) (replayRank right) := by
-            simp [BackendSelectionRank.le, replayRank, hdepth]
-            omega
-          simp [choose, thenBy, preferGreaterCertifiedDepth, preferNewerVersion,
-            BackendSelectionRank.max, replayRank, hrl, hlr, hrv, hlv, hle]
+        · have hchoose :
+              (preferGreaterCertifiedDepth.thenBy preferNewerVersion).choose left right = right := by
+            simp [choose, thenBy, preferGreaterCertifiedDepth, preferNewerVersion,
+              hrl, hlr, hrv, hlv]
+          have hle : BackendSelectionRank.le (replayRank left) (replayRank right) := by
+            exact Or.inr ⟨hdepth, Nat.le_of_lt hlv⟩
+          rw [hchoose, BackendSelectionRank.max_eq_right hle]
         · have hver :
               left.backend.compilerMajorVersion =
                 right.backend.compilerMajorVersion := by
             omega
+          have hchoose :
+              (preferGreaterCertifiedDepth.thenBy preferNewerVersion).choose left right = left := by
+            simp [choose, thenBy, preferGreaterCertifiedDepth, preferNewerVersion,
+              hrl, hlr, hrv, hlv]
           have hle : BackendSelectionRank.le (replayRank left) (replayRank right) := by
-            simp [BackendSelectionRank.le, replayRank, hdepth, hver]
+            exact Or.inr ⟨hdepth, Nat.le_of_eq hver⟩
           have hrank : replayRank left = replayRank right := by
-            apply BackendSelectionRank.ext
-            · exact hdepth
-            · exact hver
-          simp [choose, thenBy, preferGreaterCertifiedDepth, preferNewerVersion,
-            BackendSelectionRank.max, replayRank, hrl, hlr, hrv, hlv, hle, hrank]
+            simp [replayRank, hdepth, hver]
+          rw [hchoose, BackendSelectionRank.max_eq_right hle]
+          exact hrank
 
 private theorem replayKeyEqOfQueryRankEq
     (left right : CertifiedPreprocessorBackend) (query : BackendQuery)
@@ -321,14 +341,20 @@ private theorem replayKeyEqOfQueryRankEq
     (hright : right.matchesQuery query)
     (hrank : replayRank left = replayRank right) :
     left.key = right.key := by
+  have hfamily :
+      left.backend.compilerFamily = right.backend.compilerFamily :=
+    hleft.1.trans hright.1.symm
   have hver :
       left.backend.compilerMajorVersion = right.backend.compilerMajorVersion :=
     congrArg BackendSelectionRank.compilerMajorVersion hrank
+  have hmode :
+      left.backend.languageMode = right.backend.languageMode :=
+    hleft.2.trans hright.2.symm
   simp only [CertifiedPreprocessorBackend.key, PreprocessorBackend.key]
-  apply BackendKey.ext
-  · exact hleft.1.trans hright.1.symm
-  · exact hver
-  · exact hleft.2.trans hright.2.symm
+  cases hfamily
+  cases hver
+  cases hmode
+  rfl
 
 /-- Certified replay selection: maximize formally witnessed replay depth, then
     compiler major version. -/
@@ -417,13 +443,15 @@ theorem select_key_eq_of_perm_of_matches
             have hrightMem := select_mem wellFormed.policy right rightBackend hrsel
             have hrankEq :
                 wellFormed.rank leftBackend = wellFormed.rank rightBackend := by
-              simpa [hlsel, hrsel] using hranks
+              rw [hlsel, hrsel] at hranks
+              simp only [Option.map_some] at hranks
+              exact Option.some.inj hranks
             have hkey := wellFormed.key_eq_of_query_rank_eq
               leftBackend rightBackend query
               (hleft leftBackend hleftMem)
               (hright rightBackend hrightMem)
               hrankEq
-            simp [hlsel, hrsel, hkey]
+            rw [hkey]
 
 end BackendSelectionPolicy
 
