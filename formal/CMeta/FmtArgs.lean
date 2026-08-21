@@ -71,7 +71,8 @@ theorem legacy_observation (xs : List α) :
   cases xs with
   | nil => rfl
   | cons x xs =>
-      simp [legacyStorage, observe_length]
+      have h := observe_length ((x :: xs).map (fun value => Slot.arg value))
+      simpa [legacyStorage] using h
 
 /-- The always-sentinel normal form has the same observable argument sequence. -/
 theorem normalized_observation (xs : List α) :
