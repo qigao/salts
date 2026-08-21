@@ -31,6 +31,10 @@
 #define FMT_PROOF_COUNT_EMPTY() \
     (ARRAY_COUNT(FMT_PROOF_NORMALIZED_EMPTY()) - 1u)
 
+/* The read guard is derived from the same storage representation. */
+#define FMT_PROOF_CAN_READ(storage, index) \
+    ((index) < (ARRAY_COUNT(storage) - 1u))
+
 static int same_observable_prefix(const fmt_arg_t *legacy,
                                   const fmt_arg_t *normalized,
                                   size_t logical_count) {
@@ -98,6 +102,47 @@ int main(void) {
     /* Current legacy storage size alone cannot distinguish zero from one arg. */
     CHECK(ARRAY_COUNT(FMT_ARGS()) == ARRAY_COUNT(FMT_ARGS(1)));
     CHECK(FMT_NARGS() != FMT_NARGS(1));
+
+    /* Derived guard: empty storage has no readable real-argument slot. */
+    {
+        fmt_arg_t storage[] = { { FMT_TYPE_NONE } };
+        CHECK(ARRAY_COUNT(storage) - 1u == 0u);
+        CHECK(!FMT_PROOF_CAN_READ(storage, 0u));
+        CHECK(storage[0].type == FMT_TYPE_NONE);
+    }
+
+    /* One real argument: index 0 is readable, index 1 is the sentinel and is
+     * physically present but rejected by the real-argument guard. */
+    {
+        fmt_arg_t storage[] = { FMT_ARG(7), { FMT_TYPE_NONE } };
+        size_t count = ARRAY_COUNT(storage) - 1u;
+        CHECK(count == 1u);
+        CHECK(FMT_PROOF_CAN_READ(storage, 0u));
+        CHECK(storage[0].type == FMT_TYPE_INT);
+        CHECK(storage[0].val.i == 7);
+        CHECK(!FMT_PROOF_CAN_READ(storage, count));
+        CHECK(count < ARRAY_COUNT(storage));
+        CHECK(storage[count].type == FMT_TYPE_NONE);
+        CHECK(!(count + 1u < ARRAY_COUNT(storage)));
+    }
+
+    /* Multiple real arguments obey the same single invariant; no arity-specific
+     * guard exists. */
+    {
+        fmt_arg_t storage[] = {
+            FMT_ARG(1), FMT_ARG(2), FMT_ARG(3), { FMT_TYPE_NONE }
+        };
+        size_t count = ARRAY_COUNT(storage) - 1u;
+        size_t i;
+        CHECK(count == 3u);
+        for (i = 0; i < count; ++i) {
+            CHECK(FMT_PROOF_CAN_READ(storage, i));
+            CHECK(storage[i].type == FMT_TYPE_INT);
+        }
+        CHECK(!FMT_PROOF_CAN_READ(storage, count));
+        CHECK(storage[count].type == FMT_TYPE_NONE);
+        CHECK(!(count + 1u < ARRAY_COUNT(storage)));
+    }
 
     puts("fmt args simplification applicability: ok");
     return 0;
