@@ -12,12 +12,18 @@ typedef struct {
   turbo_vec_t raw;
 } turbo_stack_t;
 
-static inline int turbo_stack_init(turbo_stack_t *stack, size_t elem_size) {
-  return stack == NULL ? CONTAINER_INVALID_ARGUMENT : turbo_vec_init(&stack->raw, elem_size);
+static inline int turbo_stack_init(turbo_stack_t *stack, size_t elem_size, size_t elem_align,
+                                   size_t element_limit) {
+  return stack == NULL ? CONTAINER_INVALID_ARGUMENT
+                       : turbo_vec_init_bytes(&stack->raw, elem_size, elem_align,
+                                              element_limit);
 }
 static inline int turbo_stack_from_array(turbo_stack_t *stack, const void *elements,
-                                         size_t count, size_t elem_size) {
-  return stack == NULL ? CONTAINER_INVALID_ARGUMENT : turbo_vec_from_array(&stack->raw, elements, count, elem_size);
+                                         size_t count, size_t elem_size, size_t elem_align,
+                                         size_t element_limit) {
+  return stack == NULL ? CONTAINER_INVALID_ARGUMENT
+                       : turbo_vec_from_array_bytes(&stack->raw, elements, count, elem_size, elem_align,
+                                                    element_limit);
 }
 static inline void turbo_stack_destroy(turbo_stack_t *stack) {
   if (stack != NULL) turbo_vec_destroy(&stack->raw);

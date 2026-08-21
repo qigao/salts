@@ -16,14 +16,19 @@ extern "C" {
 typedef struct {
   turbo_hash_map_t map;
   size_t value_size;
+  size_t value_align;
+  size_t value_limit;
   size_t size;
 } turbo_multimap_t;
 
 static inline int turbo_multimap_init(turbo_multimap_t *map, size_t key_size, size_t value_size,
-                                     turbo_hash_fn hash, turbo_hash_equal_fn equal, void *ctx) {
+                                     size_t value_align, size_t value_limit, turbo_hash_fn hash,
+                                     turbo_hash_equal_fn equal, void *ctx) {
   if (!map || key_size == 0 || value_size == 0) return CONTAINER_INVALID_ARGUMENT;
   memset(map, 0, sizeof(*map));
   map->value_size = value_size;
+  map->value_align = value_align;
+  map->value_limit = value_limit;
   return turbo_hash_map_init(&map->map, key_size, sizeof(turbo_vec_t), hash, equal, ctx);
 }
 
@@ -72,7 +77,7 @@ static inline int turbo_multimap_put(turbo_multimap_t *map, const void *key, con
     return CONTAINER_OK;
   }
 
-  rc = turbo_vec_init(&values, map->value_size);
+  rc = turbo_vec_init_bytes(&values, map->value_size, map->value_align, map->value_limit);
   if (rc != CONTAINER_OK) return rc;
   rc = turbo_vec_push(&values, value);
   if (rc != CONTAINER_OK) {

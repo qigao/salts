@@ -12,8 +12,11 @@ typedef struct {
   turbo_deque_t raw;
 } turbo_list_t;
 
-static inline int turbo_list_init(turbo_list_t *list, size_t elem_size) {
-  return turbo_deque_init(&list->raw, elem_size);
+static inline int turbo_list_init(turbo_list_t *list, size_t elem_size, size_t elem_align,
+                                  size_t element_limit) {
+  return list == NULL ? CONTAINER_INVALID_ARGUMENT
+                      : turbo_deque_init_bytes(&list->raw, elem_size, elem_align,
+                                               element_limit);
 }
 
 static inline void turbo_list_destroy(turbo_list_t *list) {
@@ -86,11 +89,12 @@ static inline bool turbo_list_empty(const turbo_list_t *list) {
  * elements may be NULL only when count is zero. On allocation failure, the
  * partially initialized list is destroyed and the error is returned.
  */
-static inline int turbo_list_from_array(turbo_list_t *list, const void *elements,
-                                        size_t count, size_t elem_size) {
+static inline int turbo_list_from_array(turbo_list_t *list, const void *elements, size_t count,
+                                        size_t elem_size, size_t elem_align, size_t element_limit) {
   return list == NULL
              ? CONTAINER_INVALID_ARGUMENT
-             : turbo_deque_from_array(&list->raw, elements, count, elem_size);
+             : turbo_deque_from_array_bytes(&list->raw, elements, count, elem_size, elem_align,
+                                            element_limit);
 }
 
 #define TURBO_LIST_DEFINE(name, type) \

@@ -12,12 +12,18 @@ typedef struct {
   turbo_deque_t raw;
 } turbo_queue_t;
 
-static inline int turbo_queue_init(turbo_queue_t *queue, size_t elem_size) {
-  return queue == NULL ? CONTAINER_INVALID_ARGUMENT : turbo_deque_init(&queue->raw, elem_size);
+static inline int turbo_queue_init(turbo_queue_t *queue, size_t elem_size, size_t elem_align,
+                                   size_t element_limit) {
+  return queue == NULL ? CONTAINER_INVALID_ARGUMENT
+                       : turbo_deque_init_bytes(&queue->raw, elem_size, elem_align,
+                                                element_limit);
 }
 static inline int turbo_queue_from_array(turbo_queue_t *queue, const void *elements,
-                                         size_t count, size_t elem_size) {
-  return queue == NULL ? CONTAINER_INVALID_ARGUMENT : turbo_deque_from_array(&queue->raw, elements, count, elem_size);
+                                         size_t count, size_t elem_size, size_t elem_align,
+                                         size_t element_limit) {
+  return queue == NULL ? CONTAINER_INVALID_ARGUMENT
+                       : turbo_deque_from_array_bytes(&queue->raw, elements, count, elem_size, elem_align,
+                                                      element_limit);
 }
 static inline void turbo_queue_destroy(turbo_queue_t *queue) {
   if (queue != NULL) turbo_deque_destroy(&queue->raw);

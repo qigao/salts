@@ -12,5 +12,7 @@ spec("Container C++ public header") {
 
     check_true(sizeof(vec) > 0);
     check_true(sizeof(map) > 0);
+    check_equal(turbo_vec_init_bytes(&vec, sizeof(int), alignof(int), 1u), CONTAINER_OK);
+    turbo_vec_destroy(&vec);
   }
 }

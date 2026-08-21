@@ -18,6 +18,16 @@ cmake_add_test(container_header_typed_cpp_test
   LIBS TurboUtils::Container TurboUtils::TinyTest
   FOLDER "container/tests")
 
+cmake_add_test(container_sequence_test
+  SOURCES container_sequence_test.c
+  LIBS TurboUtils::Container TurboUtils::TinyTest
+  FOLDER "container/tests")
+
+cmake_add_test(container_ownership_test
+  SOURCES container_ownership_test.c
+  LIBS TurboUtils::Container TurboUtils::TinyTest
+  FOLDER "container/tests")
+
 set_target_properties(
   container_header_test
   PROPERTIES
@@ -45,3 +55,11 @@ set_target_properties(
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS OFF)
+
+set_target_properties(
+  container_sequence_test
+  container_ownership_test
+  PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)

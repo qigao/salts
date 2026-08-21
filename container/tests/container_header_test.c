@@ -9,5 +9,7 @@ suite("Container public header") {
         check_true(sizeof(vec) > 0);
         check_true(sizeof(map) > 0);
         check_equal(CONTAINER_OK, 0);
+        check_equal(turbo_vec_init_bytes(&vec, sizeof(int), _Alignof(int), 1u), CONTAINER_OK);
+        turbo_vec_destroy(&vec);
     }
 }

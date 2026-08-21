@@ -24,6 +24,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <turbo/container/meta.h>
 
 #ifdef __cplusplus
@@ -35,27 +36,46 @@ typedef struct {
   size_t size;
   size_t capacity;
   size_t elem_size;
+  size_t elem_stride;
+  size_t elem_align;
+  size_t element_limit;
+  const cmeta_type_desc *element_type;
+  uint64_t generation;
+  bool initialized;
 } turbo_vec_t;
 
-CONTAINER_API int turbo_vec_init(turbo_vec_t *vec, size_t elem_size);
-/** Initialize vec by copying count elements from a contiguous array. */
-CONTAINER_API int turbo_vec_from_array(turbo_vec_t *vec, const void *elements, size_t count,
-                                   size_t elem_size);
+/* Borrowed pointers from at/data become invalid after any successful mutation,
+ * reserve that changes storage, clear, or destroy. */
+CONTAINER_API container_status turbo_vec_init(turbo_vec_t *vec,
+                                              const cmeta_type_desc *element_type,
+                                              size_t element_limit);
+CONTAINER_API container_status turbo_vec_init_bytes(turbo_vec_t *vec, size_t elem_size,
+                                                    size_t elem_align, size_t element_limit);
+CONTAINER_API container_status turbo_vec_from_array(turbo_vec_t *vec, const void *elements,
+                                                    size_t count,
+                                                    const cmeta_type_desc *element_type,
+                                                    size_t element_limit);
+CONTAINER_API container_status turbo_vec_from_array_bytes(turbo_vec_t *vec,
+                                                          const void *elements, size_t count,
+                                                          size_t elem_size, size_t elem_align,
+                                                          size_t element_limit);
 CONTAINER_API void turbo_vec_destroy(turbo_vec_t *vec);
-CONTAINER_API void turbo_vec_clear(turbo_vec_t *vec);
-CONTAINER_API int turbo_vec_reserve(turbo_vec_t *vec, size_t min_capacity);
-CONTAINER_API int turbo_vec_resize(turbo_vec_t *vec, size_t new_size);
-CONTAINER_API int turbo_vec_push(turbo_vec_t *vec, const void *elem);
-CONTAINER_API int turbo_vec_pop(turbo_vec_t *vec, void *out_elem);
-CONTAINER_API int turbo_vec_insert(turbo_vec_t *vec, size_t index, const void *elem);
-CONTAINER_API int turbo_vec_erase(turbo_vec_t *vec, size_t index, void *out_elem);
-CONTAINER_API int turbo_vec_swap_remove(turbo_vec_t *vec, size_t index, void *out_elem);
+CONTAINER_API container_status turbo_vec_clear(turbo_vec_t *vec);
+CONTAINER_API container_status turbo_vec_reserve(turbo_vec_t *vec, size_t min_capacity);
+CONTAINER_API container_status turbo_vec_resize(turbo_vec_t *vec, size_t new_size);
+CONTAINER_API container_status turbo_vec_push(turbo_vec_t *vec, const void *elem);
+CONTAINER_API container_status turbo_vec_pop(turbo_vec_t *vec, void *out_elem);
+CONTAINER_API container_status turbo_vec_insert(turbo_vec_t *vec, size_t index, const void *elem);
+CONTAINER_API container_status turbo_vec_set(turbo_vec_t *vec, size_t index, const void *elem);
+CONTAINER_API container_status turbo_vec_erase(turbo_vec_t *vec, size_t index, void *out_elem);
+CONTAINER_API container_status turbo_vec_swap_remove(turbo_vec_t *vec, size_t index, void *out_elem);
 CONTAINER_API void *turbo_vec_at(turbo_vec_t *vec, size_t index);
 CONTAINER_API const void *turbo_vec_at_const(const turbo_vec_t *vec, size_t index);
 CONTAINER_API void *turbo_vec_data(turbo_vec_t *vec);
 CONTAINER_API const void *turbo_vec_data_const(const turbo_vec_t *vec);
 CONTAINER_API size_t turbo_vec_size(const turbo_vec_t *vec);
 CONTAINER_API size_t turbo_vec_capacity(const turbo_vec_t *vec);
+CONTAINER_API uint64_t turbo_vec_generation(const turbo_vec_t *vec);
 CONTAINER_API bool turbo_vec_empty(const turbo_vec_t *vec);
 
 #define TURBO_VEC_DEFINE(name, type) \
