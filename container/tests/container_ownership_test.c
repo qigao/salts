@@ -63,6 +63,11 @@ static const cmeta_type_desc counted_type = {
     NULL, &counted_traits
 };
 
+static const cmeta_type_desc missing_traits_type = {
+    "missing_traits", sizeof(counted_value), _Alignof(counted_value), CMETA_T_OBJECT,
+    NULL, NULL
+};
+
 static counted_value counted_source(int value) {
     counted_value source;
     source.value = (int *)malloc(sizeof(*source.value));
@@ -260,5 +265,90 @@ suite("Container ownership") {
         counted_destroy(&values[2]);
         check_equal(counted_copies, (size_t)1u);
         check_equal(counted_destroys, (size_t)5u);
+    }
+
+    it("rejects live typed initialization before validating traits") {
+        turbo_vec_t vec = {0};
+        turbo_deque_t deque = {0};
+        turbo_heap_t heap = {0};
+        turbo_vec_t vec_before;
+        turbo_deque_t deque_before;
+        turbo_heap_t heap_before;
+
+        check_equal(turbo_vec_init(&vec, &counted_type, 1u), CONTAINER_OK);
+        vec_before = vec;
+        check_equal(turbo_vec_init(&vec, &missing_traits_type, 1u), CONTAINER_INVALID_ARGUMENT);
+        check_equal(memcmp(&vec, &vec_before, sizeof(vec)), 0);
+        turbo_vec_destroy(&vec);
+
+        check_equal(turbo_deque_init(&deque, &counted_type, 1u), CONTAINER_OK);
+        deque_before = deque;
+        check_equal(turbo_deque_init(&deque, &missing_traits_type, 1u), CONTAINER_INVALID_ARGUMENT);
+        check_equal(memcmp(&deque, &deque_before, sizeof(deque)), 0);
+        turbo_deque_destroy(&deque);
+
+        check_equal(turbo_heap_init(&heap, &counted_type, 1u), CONTAINER_OK);
+        heap_before = heap;
+        check_equal(turbo_heap_init(&heap, &missing_traits_type, 1u), CONTAINER_INVALID_ARGUMENT);
+        check_equal(memcmp(&heap, &heap_before, sizeof(heap)), 0);
+        turbo_heap_destroy(&heap);
+    }
+
+    it("transfers vector erase and swap-remove ownership exactly once") {
+        turbo_vec_t vec = {0};
+        counted_value values[3];
+        counted_value erased = {0};
+        counted_value swapped = {0};
+
+        counted_reset();
+        values[0] = counted_source(1);
+        values[1] = counted_source(2);
+        values[2] = counted_source(3);
+        check_equal(turbo_vec_init(&vec, &counted_type, 3u), CONTAINER_OK);
+        check_equal(turbo_vec_push(&vec, &values[0]), CONTAINER_OK);
+        check_equal(turbo_vec_push(&vec, &values[1]), CONTAINER_OK);
+        check_equal(turbo_vec_push(&vec, &values[2]), CONTAINER_OK);
+        check_equal(turbo_vec_erase(&vec, 1u, &erased), CONTAINER_OK);
+        check_equal(*erased.value, 2);
+        check_equal(turbo_vec_swap_remove(&vec, 0u, &swapped), CONTAINER_OK);
+        check_equal(*swapped.value, 1);
+        check_equal(turbo_vec_size(&vec), (size_t)1u);
+        counted_destroy(&erased);
+        counted_destroy(&swapped);
+        turbo_vec_destroy(&vec);
+        counted_destroy(&values[0]);
+        counted_destroy(&values[1]);
+        counted_destroy(&values[2]);
+        check_equal(counted_copies, (size_t)3u);
+        check_equal(counted_destroys, (size_t)13u);
+    }
+
+    it("transfers deque front and back ownership exactly once") {
+        turbo_deque_t deque = {0};
+        counted_value values[3];
+        counted_value front = {0};
+        counted_value back = {0};
+
+        counted_reset();
+        values[0] = counted_source(1);
+        values[1] = counted_source(2);
+        values[2] = counted_source(3);
+        check_equal(turbo_deque_init(&deque, &counted_type, 3u), CONTAINER_OK);
+        check_equal(turbo_deque_push_back(&deque, &values[0]), CONTAINER_OK);
+        check_equal(turbo_deque_push_back(&deque, &values[1]), CONTAINER_OK);
+        check_equal(turbo_deque_push_back(&deque, &values[2]), CONTAINER_OK);
+        check_equal(turbo_deque_pop_front(&deque, &front), CONTAINER_OK);
+        check_equal(*front.value, 1);
+        check_equal(turbo_deque_pop_back(&deque, &back), CONTAINER_OK);
+        check_equal(*back.value, 3);
+        check_equal(turbo_deque_size(&deque), (size_t)1u);
+        counted_destroy(&front);
+        counted_destroy(&back);
+        turbo_deque_destroy(&deque);
+        counted_destroy(&values[0]);
+        counted_destroy(&values[1]);
+        counted_destroy(&values[2]);
+        check_equal(counted_copies, (size_t)3u);
+        check_equal(counted_destroys, (size_t)11u);
     }
 }

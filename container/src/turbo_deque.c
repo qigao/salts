@@ -104,7 +104,9 @@ container_status turbo_deque_init_bytes(turbo_deque_t *deque, size_t elem_size, 
 }
 container_status turbo_deque_init(turbo_deque_t *deque, const cmeta_type_desc *element_type,
                                   size_t element_limit) {
-    container_status status = turbo_sequence_require_type(element_type, false);
+    container_status status;
+    if (!deque || deque->initialized) return CONTAINER_INVALID_ARGUMENT;
+    status = turbo_sequence_require_type(element_type, false);
     if (status != CONTAINER_OK) return status;
     return turbo_deque_initialize(deque, element_type, element_type->size, element_type->align,
                                   element_limit);

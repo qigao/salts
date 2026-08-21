@@ -138,7 +138,9 @@ container_status turbo_heap_init_bytes(turbo_heap_t *heap, size_t elem_size, siz
 }
 container_status turbo_heap_init(turbo_heap_t *heap, const cmeta_type_desc *element_type,
                                  size_t element_limit) {
-    container_status status = turbo_sequence_require_type(element_type, true);
+    container_status status;
+    if (!heap || heap->initialized) return CONTAINER_INVALID_ARGUMENT;
+    status = turbo_sequence_require_type(element_type, true);
     if (status != CONTAINER_OK) return status;
     return turbo_heap_initialize(heap, element_type, element_type->size, element_type->align,
                                  element_limit, NULL, NULL);

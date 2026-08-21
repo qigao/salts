@@ -100,7 +100,9 @@ container_status turbo_vec_init_bytes(turbo_vec_t *vec, size_t elem_size, size_t
 
 container_status turbo_vec_init(turbo_vec_t *vec, const cmeta_type_desc *element_type,
                                 size_t element_limit) {
-    container_status status = turbo_sequence_require_type(element_type, false);
+    container_status status;
+    if (!vec || vec->initialized) return CONTAINER_INVALID_ARGUMENT;
+    status = turbo_sequence_require_type(element_type, false);
     if (status != CONTAINER_OK) return status;
     return turbo_vec_initialize(vec, element_type, element_type->size, element_type->align,
                                 element_limit);
