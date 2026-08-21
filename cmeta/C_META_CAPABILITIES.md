@@ -27,6 +27,9 @@ The current shipped/implemented CMeta code is primarily the strict-C11 Core subs
 - strict-C11 preprocessor kernel: finite `FOR_EACH`, indexed replay, repeat;
 - unified tuple schema kernel through `Schema(...)` / `Replay(...)`;
 - finite type/signature registry;
+- independent structural TypeId core with `ATOM`, `POINTER`, `CONST`, and finite generic `APPLY` forms;
+- finite `GenericConstructor` metadata with arity validation;
+- explicit `KnownTypes` versus `CallableSignatures` universe separation;
 - typed callable substrate;
 - contract/effect/property metadata;
 - first-class typed callable values and inline captures;
@@ -35,6 +38,8 @@ The current shipped/implemented CMeta code is primarily the strict-C11 Core subs
 - `interface(...)` / `implements(...)` interface protocol;
 - finite generic kind dispatcher behind `typed(kind, ...)`;
 - allocation-free `cmeta_range` protocol and range traits.
+
+The TypeId implementation is intentionally independent of the current `cmeta_type_desc` layout. Descriptor-to-TypeId integration is a separate migration step.
 
 ## Implemented first-party value/container facilities
 
@@ -78,7 +83,30 @@ typed(Option, MaybeUser, User);
 typed(Result, LoadResult, User, Error);
 ```
 
-The approved architecture adds a future compositional semantic type-application model while preserving these C11 forms during migration.
+The semantic foundation for future compositional application is now implemented as:
+
+```text
+GenericConstructor + TypeId + Apply(Constructor,[TypeId...])
+```
+
+The source spelling `M<A,B>` remains a future CMeta Extend feature.
+
+## Structural type identity
+
+`cmeta_type_identity` represents semantic type structure independently from aliases, generated symbols and translation-unit-local descriptor addresses.
+
+The implemented forms are:
+
+```text
+ATOM(stable-id)
+POINTER(base)
+CONST(base)
+APPLY(constructor, args...)
+```
+
+Generic constructor equality is based on stable semantic constructor ID, not descriptor object address. Application equality recursively preserves argument order.
+
+Real C witnesses generate a Lean snapshot, and Lean recomputes the same structural equalities in `CMeta.TypeIdentityConformance`.
 
 ## Single-stage typed containers
 
@@ -121,6 +149,8 @@ Generated descriptor objects may also be TU-local. Their addresses are not a sta
 
 An object initialized in one translation unit may store a descriptor pointer emitted by that TU; erased consumers in another TU can safely use semantic descriptor data while the originating code remains linked.
 
+The new TypeId core supplies the structural identity model, but current descriptor APIs have not yet been bridged to it.
+
 ## Typed container kinds
 
 Current Turbo integration covers:
@@ -147,18 +177,22 @@ Ranges carry an element descriptor plus flags such as `SIZED`, `ORDERED`, `SORTE
 
 For element types outside CFlow's finite callable universe, generated facades can still provide local object descriptors so Range remains independently usable. Typed CFlow callback signatures currently require types to participate in the configured finite callable universe.
 
-## Callable universe constraint
+## Known types and callable signatures
 
-The current signature system derives finite callable families from the configured type list. This is practical for the current small universe but does not scale directly to arbitrary compositional generic applications.
-
-The approved architecture therefore distinguishes:
+The configuration layer now distinguishes:
 
 ```text
-KnownTypes
-CallableSignatures
+CMETA_KNOWN_TYPE_LIST
+CMETA_CALLABLE_TYPE_LIST
 ```
 
-A future implementation must not automatically add every known generic application to every callable Cartesian-product family.
+`CMETA_TYPE_LIST` remains a compatibility alias during migration.
+
+Descriptor declaration/definition and the type registry consume the known-type universe. Full/balanced callable Cartesian generation consumes the callable-type universe.
+
+A dedicated compile probe adds a known-only type while retaining the five builtin callable types and verifies that the full signature count remains unchanged. This prevents reflected/generic types from automatically inflating the N²/N³ callable products.
+
+The longer-term callable direction is still exact demand-driven signatures rather than broad Cartesian products.
 
 ## Public API boundary today
 
@@ -175,17 +209,31 @@ plus runtime capability APIs supplied by consumer modules such as CFlow.
 
 `Schema/Replay` is framework-generation infrastructure. `implements(...)` is an interface/protocol declaration and is unrelated to the removed container implementation phase.
 
-## Approved architecture direction — not yet implementation claims
+## Formal verification status
 
-### Core type identity and finite type application
-
-Planned semantic direction:
+The TypeId slice is connected to CI through:
 
 ```text
-GenericConstructor + TypeId + Apply(Constructor,[TypeId...])
+real C TypeId implementation
+  -> cmeta_type_identity_conformance_gen
+  -> TypeIdentityGeneratedC.lean
+  -> CMeta.TypeIdentityConformance
+  -> lake build --wfail
 ```
 
-with structural identity independent of aliases, display strings, descriptor addresses and generated C symbol names.
+CI also builds `cmeta_type_universe_probe` to lock the KnownTypes/CallableSignatures separation.
+
+The proof-placeholder guard continues to reject `axiom`, `constant`, `sorry`, and `admit` in formal modules.
+
+## Approved architecture direction — not yet implementation claims
+
+### Descriptor bridge and canonical strict-C11 application
+
+Still planned:
+
+- bridge `cmeta_type_desc` to structural TypeId without breaking existing descriptor initialization/source compatibility;
+- canonical strict-C11 generic instantiation so logically identical applications can share one concrete C representation;
+- structured reflection of generic constructor/arguments through descriptor APIs.
 
 ### CMeta Extend
 
@@ -203,7 +251,7 @@ Extend is an adapter and must lower to existing Core/module semantics.
 
 ### CMeta State
 
-First-party module for finite table-driven state machines using Core `CType`, `Callable`, effects/properties and finite graph analysis.
+First-party module for finite table-driven state machines using Core `CType`/TypeId, `Callable`, effects/properties and finite graph analysis.
 
 ### CMeta Exec
 
@@ -213,7 +261,7 @@ First-party module for `Task<T>`, `Resumable`, `Waitable`, `Waker`, `Executor`, 
 
 Architecture-approved but still requiring focused implementation specs/plans:
 
-- Core structured TypeId and semantic type equality;
+- descriptor ↔ TypeId bridge and semantic descriptor equality migration;
 - canonical strict-C11 generic application backend;
 - demand-driven exact callable signature generation;
 - comparator/hash/copy/move/destroy trait registration;
