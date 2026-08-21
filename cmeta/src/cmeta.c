@@ -5,13 +5,78 @@
 #define CMETA_STR_I(x) #x
 #define CMETA_STR(x) CMETA_STR_I(x)
 
+static const cmeta_type_identity cmeta_id_void =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.void");
+static const cmeta_type_identity cmeta_id_bool =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.bool");
+static const cmeta_type_identity cmeta_id_int =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.int");
+static const cmeta_type_identity cmeta_id_long =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.long");
+static const cmeta_type_identity cmeta_id_float =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.float");
+static const cmeta_type_identity cmeta_id_double =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.double");
+static const cmeta_type_identity cmeta_id_size =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.size");
+static const cmeta_type_identity cmeta_id_gen_status =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.gen_status");
+
+static const cmeta_type_identity cmeta_id_bool_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_bool);
+static const cmeta_type_identity cmeta_id_int_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_int);
+static const cmeta_type_identity cmeta_id_long_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_long);
+static const cmeta_type_identity cmeta_id_float_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_float);
+static const cmeta_type_identity cmeta_id_double_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_double);
+static const cmeta_type_identity cmeta_id_size_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_size);
+
+/* Builtin identity is selected from the finite CMeta row token schema, not
+ * from descriptor display names. Unknown/project row tokens remain legacy. */
+#define CMETA_BUILTIN_ID_MARK_B CMETA_GENERIC_PROBE()
+#define CMETA_BUILTIN_ID_MARK_I CMETA_GENERIC_PROBE()
+#define CMETA_BUILTIN_ID_MARK_L CMETA_GENERIC_PROBE()
+#define CMETA_BUILTIN_ID_MARK_F CMETA_GENERIC_PROBE()
+#define CMETA_BUILTIN_ID_MARK_D CMETA_GENERIC_PROBE()
+#define CMETA_BUILTIN_ID_MARK(tok) CMETA_PP_CAT(CMETA_BUILTIN_ID_MARK_, tok)
+
+#define CMETA_BUILTIN_ATOM_B (&cmeta_id_bool)
+#define CMETA_BUILTIN_ATOM_I (&cmeta_id_int)
+#define CMETA_BUILTIN_ATOM_L (&cmeta_id_long)
+#define CMETA_BUILTIN_ATOM_F (&cmeta_id_float)
+#define CMETA_BUILTIN_ATOM_D (&cmeta_id_double)
+#define CMETA_BUILTIN_ATOM_SELECT_1(tok) CMETA_PP_CAT(CMETA_BUILTIN_ATOM_, tok)
+#define CMETA_BUILTIN_ATOM_SELECT_0(tok) NULL
+#define CMETA_BUILTIN_ATOM_SELECT_I(flag, tok) \
+    CMETA_PP_CAT(CMETA_BUILTIN_ATOM_SELECT_, flag)(tok)
+#define CMETA_BUILTIN_ATOM_ID(tok) \
+    CMETA_BUILTIN_ATOM_SELECT_I( \
+        CMETA_GENERIC_IS_PROBE(CMETA_BUILTIN_ID_MARK(tok)), tok)
+
+#define CMETA_BUILTIN_PTR_B (&cmeta_id_bool_ptr)
+#define CMETA_BUILTIN_PTR_I (&cmeta_id_int_ptr)
+#define CMETA_BUILTIN_PTR_L (&cmeta_id_long_ptr)
+#define CMETA_BUILTIN_PTR_F (&cmeta_id_float_ptr)
+#define CMETA_BUILTIN_PTR_D (&cmeta_id_double_ptr)
+#define CMETA_BUILTIN_PTR_SELECT_1(tok) CMETA_PP_CAT(CMETA_BUILTIN_PTR_, tok)
+#define CMETA_BUILTIN_PTR_SELECT_0(tok) NULL
+#define CMETA_BUILTIN_PTR_SELECT_I(flag, tok) \
+    CMETA_PP_CAT(CMETA_BUILTIN_PTR_SELECT_, flag)(tok)
+#define CMETA_BUILTIN_PTR_ID(tok) \
+    CMETA_BUILTIN_PTR_SELECT_I( \
+        CMETA_GENERIC_IS_PROBE(CMETA_BUILTIN_ID_MARK(tok)), tok)
+
 const cmeta_type_desc cmeta_type_void = {
     .name = "void",
     .size = 0,
     .align = 1,
     .kind = CMETA_T_VOID,
     .pointee = NULL,
-    .identity = NULL
+    .identity = &cmeta_id_void
 };
 const cmeta_type_desc cmeta_type_size = {
     .name = "size_t",
@@ -19,7 +84,7 @@ const cmeta_type_desc cmeta_type_size = {
     .align = _Alignof(size_t),
     .kind = CMETA_T_INTEGER,
     .pointee = NULL,
-    .identity = NULL
+    .identity = &cmeta_id_size
 };
 const cmeta_type_desc cmeta_type_size_ptr = {
     .name = "size_t *",
@@ -27,7 +92,7 @@ const cmeta_type_desc cmeta_type_size_ptr = {
     .align = _Alignof(size_t *),
     .kind = CMETA_T_POINTER,
     .pointee = &cmeta_type_size,
-    .identity = NULL
+    .identity = &cmeta_id_size_ptr
 };
 const cmeta_type_desc cmeta_type_gen_status = {
     .name = "cmeta_gen_status",
@@ -35,7 +100,7 @@ const cmeta_type_desc cmeta_type_gen_status = {
     .align = _Alignof(cmeta_gen_status),
     .kind = CMETA_T_INTEGER,
     .pointee = NULL,
-    .identity = NULL
+    .identity = &cmeta_id_gen_status
 };
 
 #define CMETA_DEFINE_TYPE(row, ignored) \
@@ -45,7 +110,7 @@ const cmeta_type_desc cmeta_type_gen_status = {
         .align = _Alignof(CMETA_TYPE_CTYPE(row)), \
         .kind = CMETA_TYPE_KIND(row), \
         .pointee = NULL, \
-        .identity = NULL \
+        .identity = CMETA_BUILTIN_ATOM_ID(CMETA_TYPE_TOKEN(row)) \
     }; \
     const cmeta_type_desc CMETA_DESC_PTR(row) = { \
         .name = CMETA_STR(CMETA_TYPE_CTYPE(row)) " *", \
@@ -53,7 +118,7 @@ const cmeta_type_desc cmeta_type_gen_status = {
         .align = _Alignof(CMETA_TYPE_CTYPE(row) *), \
         .kind = CMETA_T_POINTER, \
         .pointee = &CMETA_TYPE_DESC(row), \
-        .identity = NULL \
+        .identity = CMETA_BUILTIN_PTR_ID(CMETA_TYPE_TOKEN(row)) \
     };
 CMETA_PP_FOR_EACH_A(CMETA_DEFINE_TYPE, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_DEFINE_TYPE
