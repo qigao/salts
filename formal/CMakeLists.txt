@@ -42,6 +42,15 @@ target_include_directories(cmeta_type_universe_probe PRIVATE
 set_target_properties(cmeta_type_universe_probe PROPERTIES FOLDER "formal")
 add_test(NAME cmeta_type_universe_probe COMMAND cmeta_type_universe_probe)
 
+cmeta_add_formal_witness(cmeta_fmt_args_simplification_witness
+  fmt_args_simplification_witness.c)
+target_include_directories(cmeta_fmt_args_simplification_witness PRIVATE
+  ${PROJECT_SOURCE_DIR}/utils/include
+  ${PROJECT_SOURCE_DIR}/utils/parser
+  ${PROJECT_SOURCE_DIR}/cmeta/include)
+add_test(NAME cmeta_fmt_args_simplification
+         COMMAND cmeta_fmt_args_simplification_witness)
+
 cmeta_add_formal_witness(cmeta_plan_conformance_witness
   cmeta_plan_conformance_witness.c)
 target_link_libraries(cmeta_plan_conformance_witness PRIVATE TurboUtils::CFlow)
