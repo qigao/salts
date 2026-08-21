@@ -110,14 +110,9 @@ theorem lowerReplayIR_isSome_iff
     (backend : ReplayBackendCapability) (ir : ReplayIR) :
     (lowerReplayIR backend ir).isSome = true ↔
       ir.sameProducerDepth ≤ backend.certifiedSameProducerDepth := by
-  unfold lowerReplayIR
-  rw [show
-    lowerSameProducerDepth backend ir.sameProducerDepth = some ir.sameProducerDepth ↔
-      ir.sameProducerDepth ≤ backend.certifiedSameProducerDepth from
-    lowerSameProducerDepth_iff backend ir.sameProducerDepth]
   by_cases h : ir.sameProducerDepth ≤ backend.certifiedSameProducerDepth
-  · simp [lowerSameProducerDepth, h]
-  · simp [lowerSameProducerDepth, h]
+  · simp [lowerReplayIR, lowerSameProducerDepth, h]
+  · simp [lowerReplayIR, lowerSameProducerDepth, h]
 
 /-- Compiler progress over well-formed-by-construction replay IR: if the IR's
     computed requirement is covered by the certificate, lowering cannot get
