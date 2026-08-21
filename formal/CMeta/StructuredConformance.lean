@@ -5,44 +5,28 @@ import CMeta.StructuredGeneratedC
 # Structured relation runtime conformance
 
 This module extends the executable formal model beyond the direct-plan subset
-with the concrete structured semantics exercised by the C runtime witnesses:
-
-* homogeneous 1:1 `ALL + FOLD` relations;
-* synchronous `ANY + SELECT`;
-* ordered `SEQUENCE + SELECT`;
-* `ALL_DONE + FOLD`, which folds the last value produced by each completed
-  branch;
-* heterogeneous surface ZIP lowered to `ALL + INVOKE`.
-
-The models preserve declaration order and mirror the value materialization used
-by `coord.c` and `relation_exec.c` while keeping direct-plan rejection as an
-explicit capability boundary.
+with the concrete structured semantics exercised by the C runtime witnesses.
 -/
 
 namespace CMeta
 
-/-- Executable value semantics for a non-empty homogeneous set of 1:1 relation
-    branches. -/
+/-- Executable value semantics for a non-empty homogeneous set of 1:1 relation branches. -/
 structure FoldRelationExec (A R : CType) where
-  first : Callable1 A R
-  rest : List (Callable1 A R)
-  reducer : Callable2 R R R
+  first : Callable [A] R
+  rest : List (Callable [A] R)
+  reducer : Callable [R, R] R
 
 namespace FoldRelationExec
 
-/-- Execute one relation input: first branch seeds the accumulator and the
-    remaining branch values are folded in declaration order. -/
 def runOne {A R : CType} (rel : FoldRelationExec A R)
     (x : A.denote) : R.denote :=
-  (rel.rest.map (fun branch => branch.run x)).foldl
-    rel.reducer.run (rel.first.run x)
+  (rel.rest.map (fun branch => branch.invoke1 x)).foldl
+    rel.reducer.invoke2 (rel.first.invoke1 x)
 
-/-- A 1:1 relation produces one result for every source value. -/
 def run {A R : CType} (rel : FoldRelationExec A R)
     (xs : ValueVec A) : ValueVec R :=
   xs.map rel.runOne
 
-/-- The concrete 1:1 ALL/FOLD execution preserves collection cardinality. -/
 theorem run_length {A R : CType} (rel : FoldRelationExec A R)
     (xs : ValueVec A) :
     (rel.run xs).length = xs.length := by
@@ -50,18 +34,15 @@ theorem run_length {A R : CType} (rel : FoldRelationExec A R)
 
 end FoldRelationExec
 
-/-- Synchronous ANY/SELECT witness semantics. The real coordinator starts at
-    branch zero; with immediately-producing branches the first declared branch
-    wins and the remaining branches are cancelled. -/
 structure AnySelectExec (A R : CType) where
-  first : Callable1 A R
-  rest : List (Callable1 A R)
+  first : Callable [A] R
+  rest : List (Callable [A] R)
 
 namespace AnySelectExec
 
 def run {A R : CType} (rel : AnySelectExec A R)
     (xs : ValueVec A) : ValueVec R :=
-  xs.map rel.first.run
+  xs.map rel.first.invoke1
 
 theorem run_length {A R : CType} (rel : AnySelectExec A R)
     (xs : ValueVec A) :
@@ -70,22 +51,19 @@ theorem run_length {A R : CType} (rel : AnySelectExec A R)
 
 end AnySelectExec
 
-/-- Ordered SEQUENCE/SELECT witness semantics. Each source value is evaluated
-    by every branch in declaration order and each selected branch value is
-    emitted before advancing to the next branch. -/
 structure SequenceSelectExec (A R : CType) where
-  first : Callable1 A R
-  rest : List (Callable1 A R)
+  first : Callable [A] R
+  rest : List (Callable [A] R)
 
 namespace SequenceSelectExec
 
 def branches {A R : CType} (rel : SequenceSelectExec A R) :
-    List (Callable1 A R) :=
+    List (Callable [A] R) :=
   rel.first :: rel.rest
 
 def runOne {A R : CType} (rel : SequenceSelectExec A R)
     (x : A.denote) : List R.denote :=
-  rel.branches.map (fun branch => branch.run x)
+  rel.branches.map (fun branch => branch.invoke1 x)
 
 def run {A R : CType} (rel : SequenceSelectExec A R)
     (xs : ValueVec A) : ValueVec R :=
@@ -93,15 +71,11 @@ def run {A R : CType} (rel : SequenceSelectExec A R)
 
 end SequenceSelectExec
 
-/-- One successfully completed branch trace with at least one value.  This is
-    the operational contract required by ALL_DONE, which errors if a branch
-    completes without ever producing a value. -/
 structure NonemptyBranchTrace (A R : CType) where
   run : A.denote → R.denote × List R.denote
 
 namespace NonemptyBranchTrace
 
-/-- The value retained by the coordinator after the branch has fully completed. -/
 def lastValue {A R : CType} (branch : NonemptyBranchTrace A R)
     (x : A.denote) : R.denote :=
   let trace := branch.run x
@@ -109,19 +83,17 @@ def lastValue {A R : CType} (branch : NonemptyBranchTrace A R)
 
 end NonemptyBranchTrace
 
-/-- ALL_DONE/FOLD semantics: fully drain each branch, retain each branch's last
-    produced value, then fold those retained values in branch order. -/
 structure AllDoneFoldExec (A R : CType) where
   first : NonemptyBranchTrace A R
   rest : List (NonemptyBranchTrace A R)
-  reducer : Callable2 R R R
+  reducer : Callable [R, R] R
 
 namespace AllDoneFoldExec
 
 def runOne {A R : CType} (rel : AllDoneFoldExec A R)
     (x : A.denote) : R.denote :=
   (rel.rest.map (fun branch => branch.lastValue x)).foldl
-    rel.reducer.run (rel.first.lastValue x)
+    rel.reducer.invoke2 (rel.first.lastValue x)
 
 def run {A R : CType} (rel : AllDoneFoldExec A R)
     (xs : ValueVec A) : ValueVec R :=
@@ -134,27 +106,21 @@ theorem run_length {A R : CType} (rel : AllDoneFoldExec A R)
 
 end AllDoneFoldExec
 
-/-- Executable value semantics of the two heterogeneous branches created by ZIP
-    lowering and combined by RELATION(INVOKE). -/
 structure ZipInvokeExec (A L R O : CType) where
-  left : Callable1 A L
-  right : Callable1 A R
-  combine : Callable2 L R O
+  left : Callable [A] L
+  right : Callable [A] R
+  combine : Callable [L, R] O
 
 namespace ZipInvokeExec
 
-/-- Execute one source value through both branches and invoke the binary
-    combiner with branch outputs in left/right order. -/
 def runOne {A L R O : CType} (zip : ZipInvokeExec A L R O)
     (x : A.denote) : O.denote :=
-  zip.combine.run (zip.left.run x) (zip.right.run x)
+  zip.combine.invoke2 (zip.left.invoke1 x) (zip.right.invoke1 x)
 
-/-- The 1:1 ZIP witness produces one combined result per source value. -/
 def run {A L R O : CType} (zip : ZipInvokeExec A L R O)
     (xs : ValueVec A) : ValueVec O :=
   xs.map zip.runOne
 
-/-- ZIP with 1:1 branches preserves source cardinality. -/
 theorem run_length {A L R O : CType} (zip : ZipInvokeExec A L R O)
     (xs : ValueVec A) :
     (zip.run xs).length = xs.length := by
@@ -162,14 +128,14 @@ theorem run_length {A L R O : CType} (zip : ZipInvokeExec A L R O)
 
 end ZipInvokeExec
 
-private def relationLeft : Callable1 CType.int CType.long :=
-  ⟨fun (x : Int) => x⟩
+private def relationLeft : Callable [CType.int] CType.long :=
+  Callable.ofUnary (fun (x : Int) => x)
 
-private def relationRight : Callable1 CType.int CType.long :=
-  ⟨fun (x : Int) => x * 10⟩
+private def relationRight : Callable [CType.int] CType.long :=
+  Callable.ofUnary (fun (x : Int) => x * 10)
 
-private def relationAdd : Callable2 CType.long CType.long CType.long :=
-  ⟨fun (a b : Int) => a + b⟩
+private def relationAdd : Callable [CType.long, CType.long] CType.long :=
+  Callable.ofBinary (fun (a b : Int) => a + b)
 
 private def relationExec : FoldRelationExec CType.int CType.long :=
   ⟨relationLeft, [relationRight], relationAdd⟩
@@ -200,23 +166,19 @@ private def relationTyped : TypedRelation CType.int CType.long :=
 private def selectTyped : TypedRelation CType.int CType.long :=
   .select { first := relationMapPipeline, rest := [relationMapPipeline] }
 
-/-- The FOLD branch/reducer shape is admitted by the structured graph typing
-    judgment already proved for `TypedRelation.fold`. -/
 theorem StructuredRelationConformance.typed_relation_valid :
     checkRelation CType.int relationTyped.erase = some CType.long := by
   exact relationTyped.check_erase
 
-/-- ANY and SEQUENCE change scheduling/result multiplicity, not the homogeneous
-    SELECT type equation. -/
 theorem StructuredRelationConformance.typed_select_valid :
     checkRelation CType.int selectTyped.erase = some CType.long := by
   exact selectTyped.check_erase
 
-private def zipRight : Callable1 CType.int CType.double :=
-  ⟨fun (_ : Int) => (2.0 : Float)⟩
+private def zipRight : Callable [CType.int] CType.double :=
+  Callable.ofUnary (fun (_ : Int) => (2.0 : Float))
 
-private def zipCombine : Callable2 CType.long CType.double CType.double :=
-  ⟨fun (_ : Int) (right : Float) => right⟩
+private def zipCombine : Callable [CType.long, CType.double] CType.double :=
+  Callable.ofBinary (fun (_ : Int) (right : Float) => right)
 
 private def zipExec : ZipInvokeExec CType.int CType.long CType.double CType.double :=
   ⟨relationLeft, zipRight, zipCombine⟩
@@ -234,8 +196,6 @@ private def zipSurface : SurfaceZip CType.int CType.double :=
     right := zipRightPipeline,
     combine := zipCombine }
 
-/-- The actual ZIP witness has exactly the heterogeneous branch equation already
-    proved sound for surface ZIP lowering to RELATION(INVOKE). -/
 theorem StructuredZipConformance.lowering_type_valid :
     checkInvokeRelation CType.int zipSurface.lower = some CType.double := by
   exact zipSurface.lowering_preserves_type
@@ -306,43 +266,30 @@ private def zipWitnessConforms
   w.count == (zipExec.run w.input).length &&
   w.output == zipExec.run w.input
 
-/-- The normalized C relation descriptor has the exact type/coordination/result
-    metadata modeled by the formal ALL/FOLD relation. -/
 theorem StructuredRelationConformance.generated_descriptor_matches :
     CStructuredGenerated.relationWitnesses.all relationWitnessConforms = true := by
   native_decide
 
-/-- The real structured FOLD runtime returns exactly the values computed by the
-    formal ordered branch/FOLD semantics. -/
 theorem StructuredRelationConformance.runtime_matches_model :
     CStructuredGenerated.relationWitnesses.all
       (fun w => w.count == w.output.length &&
         w.output == relationExec.run w.input) = true := by
   native_decide
 
-/-- The coordination witness suite covers the scheduler policies whose value
-    semantics are modeled in this module. -/
 theorem StructuredCoordinationConformance.coverage :
     CStructuredGenerated.coordinationWitnesses.map (fun w => w.name) =
       ["relation_any_select_i_l", "relation_sequence_select_i_l",
        "relation_all_done_fold_i_l"] := by
   native_decide
 
-/-- Real coord.c + relation_exec.c observations agree with the explicit ANY,
-    SEQUENCE and ALL_DONE value models, including completion/error metadata. -/
 theorem StructuredCoordinationConformance.runtime_matches_model :
     CStructuredGenerated.coordinationWitnesses.all coordinationWitnessConforms = true := by
   native_decide
 
-/-- The surface ZIP normalizes to the expected ALL/INVOKE descriptor and its
-    real structured runtime values match the formal left/right/combine model. -/
 theorem StructuredZipConformance.runtime_matches_lowered_model :
     CStructuredGenerated.zipWitnesses.all zipWitnessConforms = true := by
   native_decide
 
-/-- Direct-plan capability remains intentionally narrower than the structured
-    runtime: ordinary relations, coordination variants and ZIP-lowered INVOKE
-    relations are all rejected by the real direct-plan compiler. -/
 theorem StructuredRelationConformance.direct_plan_rejects_structured :
     CStructuredGenerated.relationWitnesses.all
       (fun w => !w.directPlanAccepted) = true ∧
@@ -354,8 +301,6 @@ theorem StructuredRelationConformance.direct_plan_rejects_structured :
   · native_decide
   constructor <;> native_decide
 
-/-- Public structured-backend gate combining typed relations/lowering,
-    coordination semantics, execution semantics and direct-plan rejection. -/
 theorem CImplementationConformance.structured_runtime :
     CStructuredGenerated.relationWitnesses.all relationWitnessConforms = true ∧
     CStructuredGenerated.coordinationWitnesses.all coordinationWitnessConforms = true ∧
