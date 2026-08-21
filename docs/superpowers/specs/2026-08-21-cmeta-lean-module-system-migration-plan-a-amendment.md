@@ -1,6 +1,6 @@
 # CMeta Lean Module-System Migration — Plan A Execution Amendment
 
-**Status:** Approved-design execution clarification  
+**Status:** Plan A implemented and exact-head verified; Plan B pending  
 **Date:** 2026-08-21  
 **Applies to:** `docs/superpowers/specs/2026-08-21-cmeta-lean-module-system-migration-design.md`, Plan A / M1–M6 only
 

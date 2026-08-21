@@ -94,3 +94,11 @@ cmake --build --preset build-formal-linux
 cd formal
 lake build --wfail
 ```
+
+## Lean module-system migration status
+
+Plan A (M1–M6) of the Lean 4.30 module-system migration is implemented and exact-head verified. The CFlow semantic spine now uses explicit module visibility, `CMeta.PublicProof` exposes the curated semantic vocabulary plus six stable end-to-end wrapper theorems, and representative Graph, Lowering, Optimize, Execution, and EndToEnd proof plumbing is not visible to a downstream client importing only `CMeta.PublicProof`.
+
+The real-C generated Lean snapshots for the direct, structured, and optimizer conformance paths are module-framed by their authoritative C witnesses and remain protected by byte-for-byte CI regeneration checks. `CType.denote` is intentionally `@[expose] public` because executable conformance models must reduce the logical CType universe to host value types across module boundaries.
+
+Plan B is still pending. It will migrate the independent Producer / Replay / Registry / LanguageSpec tree, create the final internal build aggregator, and convert the root `CMeta` module without reducing kernel-check coverage.

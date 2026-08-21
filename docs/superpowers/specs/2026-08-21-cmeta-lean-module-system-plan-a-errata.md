@@ -1,5 +1,6 @@
 # CMeta Lean Module-System Plan A Execution Errata
 
+**Status:** Plan A implemented and exact-head verified; Plan B pending  
 **Date:** 2026-08-21  
 **Applies to:** `2026-08-21-cmeta-lean-module-system-migration-design.md`, the Plan A amendment, and `2026-08-21-cmeta-lean-module-system-plan-a.md`
 
@@ -76,3 +77,21 @@ Removal rule:
 RED commits used solely for verification may live on the temporary verification branch/PR. They must not be fast-forwarded into the official `leanv4` branch.
 
 At each official phase checkpoint, create a GREEN commit from the verified final tree with the previous official checkpoint as its parent. This keeps the official PR history free of known-red intermediate commits while retaining real RED→GREEN CI evidence in the temporary verification PR.
+
+## 5. Permanent `CType.denote` exposure
+
+Actual Lean 4.30 module execution showed that executable conformance models must reduce `CType.denote` across module boundaries in order to elaborate host-language value types such as `Int`, `Bool`, and `Float`.
+
+Therefore the supported semantic declaration remains intentionally:
+
+```lean
+@[expose] public def CType.denote : CType → Type
+```
+
+This is part of the public semantic vocabulary, not a `TEMP-MODULE-BRIDGE`. The M6 cleanup rule “remove migration-only `@[expose]` declarations” does **not** apply to `CType.denote`.
+
+The final static audit for Plan A is therefore:
+
+- no `TEMP-MODULE-BRIDGE` marker remains in production formal sources;
+- no migration-only `@[expose]` remains;
+- `CType.denote` is the explicit permanent `@[expose]` exception required by the supported executable semantics.
