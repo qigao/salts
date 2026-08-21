@@ -165,6 +165,21 @@ jobs:
             exit 1
           fi
 
+      - name: Enforce public proof facade boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          public_imports="$(grep '^import ' formal/CMeta/PublicProof.lean)"
+          conformance_imports="$(grep '^import ' formal/CMeta/PublicProofConformance.lean)"
+          test "$public_imports" = "import CMeta.EndToEnd"
+          test "$conformance_imports" = "import CMeta.PublicProof"
+          if grep -nE '\b(PreprocessorBackend|Registry|NestedReplay|OptimizerTopology)\b' \
+              formal/CMeta/PublicProof.lean \
+              formal/CMeta/PublicProofConformance.lean; then
+            echo "PublicProof must not expose implementation-layer proof vocabulary."
+            exit 1
+          fi
+
       - name: Install elan
         shell: bash
         run: |
