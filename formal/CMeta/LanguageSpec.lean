@@ -1,4 +1,13 @@
-import CMeta.PreprocessorBackendRegistrySetoid
+module
+public import CMeta.PreprocessorBackend
+public import CMeta.NestedReplayBackendPlan
+public import CMeta.PreprocessorBackendSelection
+public import CMeta.PreprocessorBackendRegistrySetoid
+import all CMeta.PreprocessorBackend
+import all CMeta.NestedReplayBackendPlan
+import all CMeta.PreprocessorBackendSelection
+import all CMeta.PreprocessorBackendRegistryEquivalence
+import all CMeta.PreprocessorBackendRegistrySetoid
 
 /-!
 # CMeta formal language specification
@@ -15,28 +24,28 @@ namespace LanguageSpec
 
 /-! ## Syntax carriers -/
 
-abbrev IR := ReplayIR
-abbrev Backend := CertifiedPreprocessorBackend
-abbrev Query := BackendQuery
-abbrev Registry := PreprocessorBackendRegistry
-abbrev Plan := ReplayBackendPlan
+public abbrev IR := ReplayIR
+public abbrev Backend := CertifiedPreprocessorBackend
+public abbrev Query := BackendQuery
+public abbrev Registry := PreprocessorBackendRegistry
+public abbrev Plan := ReplayBackendPlan
 
 /-! ## Static and dynamic judgments -/
 
 /-- Raw backend evidence sufficient to construct a certified backend. -/
-abbrev Certifiable (backend : PreprocessorBackend) : Prop :=
+public abbrev Certifiable (backend : PreprocessorBackend) : Prop :=
   backend.IsReplayCertified
 
 /-- Compatibility-class judgment. -/
-abbrev Matches (backend : Backend) (query : Query) : Prop :=
+public abbrev Matches (backend : Backend) (query : Query) : Prop :=
   backend.matchesQuery query
 
 /-- Replay-capability judgment. -/
-abbrev Supports (backend : Backend) (ir : IR) : Prop :=
+public abbrev Supports (backend : Backend) (ir : IR) : Prop :=
   backend.supportsReplay ir
 
 /-- Supporting-candidate judgment. -/
-abbrev Candidate
+public abbrev Candidate
     (registry : Registry)
     (query : Query)
     (ir : IR)
@@ -44,11 +53,11 @@ abbrev Candidate
   backend ∈ registry.supportingCandidates query ir
 
 /-- Successful backend lowering judgment. -/
-abbrev LowersTo (backend : Backend) (ir : IR) (plan : Plan) : Prop :=
+public abbrev LowersTo (backend : Backend) (ir : IR) (plan : Plan) : Prop :=
   lowerReplayBackendPlan backend.replayCapability ir = some plan
 
 /-- Successful exact-key registry resolution judgment. -/
-abbrev ResolvesTo
+public abbrev ResolvesTo
     (registry : Registry) (key : BackendKey) (ir : IR) (plan : Plan) : Prop :=
   registry.resolveReplay key ir = some plan
 
@@ -57,13 +66,13 @@ namespace Rule
 /-! ## Static rules -/
 
 /-- `[T-CERT]`: package replay evidence into the certified-backend type. -/
-def cert_intro
+public def cert_intro
     (backend : PreprocessorBackend)
     (certificate : Certifiable backend) : Backend :=
   ⟨backend, certificate⟩
 
 /-- `[T-MATCH]`: compiler family and language mode establish query match. -/
-theorem match_intro
+public theorem match_intro
     (backend : Backend)
     (query : Query)
     (hfamily : backend.backend.compilerFamily = query.family)
@@ -72,7 +81,7 @@ theorem match_intro
   ⟨hfamily, hmode⟩
 
 /-- `[T-SUPPORT]`: an IR inside the certified depth envelope is supported. -/
-theorem support_intro
+public theorem support_intro
     (backend : Backend)
     (ir : IR)
     (hdepth : ir.sameProducerDepth ≤
@@ -81,7 +90,7 @@ theorem support_intro
   hdepth
 
 /-- `[T-CANDIDATE]`: membership, query match and replay support form a candidate. -/
-theorem candidate_intro
+public theorem candidate_intro
     (registry : Registry)
     (backend : Backend)
     (query : Query)
@@ -94,7 +103,7 @@ theorem candidate_intro
     ⟨hentry, hmatch, hsupport⟩
 
 /-- `[T-CANDIDATE-ELIM]`: candidate formation is an exact iff. -/
-theorem candidate_elim
+public theorem candidate_elim
     (registry : Registry)
     (backend : Backend)
     (query : Query)
@@ -108,7 +117,7 @@ theorem candidate_elim
 /-! ## Dynamic rules -/
 
 /-- `[T-LOWER]`: every supporting backend lowers to the one canonical plan. -/
-theorem lower_intro
+public theorem lower_intro
     (backend : Backend)
     (ir : IR)
     (hsupport : Supports backend ir) :
@@ -117,7 +126,7 @@ theorem lower_intro
     backend.replayCapability ir hsupport
 
 /-- `[T-LOWER-ELIM]`: successful lowering exposes support and canonical identity. -/
-theorem lower_elim
+public theorem lower_elim
     (backend : Backend)
     (ir : IR)
     (plan : Plan)
@@ -127,7 +136,7 @@ theorem lower_elim
     backend.replayCapability ir plan).1 hlower
 
 /-- `[T-SELECT]`: successful policy selection is a supporting candidate. -/
-theorem selection_elim
+public theorem selection_elim
     (registry : Registry)
     (policy : BackendSelectionPolicy)
     (query : Query)
@@ -139,7 +148,7 @@ theorem selection_elim
     policy query ir backend hselect
 
 /-- `[T-SELECT-LOWER]`: selection chooses a certificate, never another plan. -/
-theorem selection_lower
+public theorem selection_lower
     (registry : Registry)
     (policy : BackendSelectionPolicy)
     (query : Query)
@@ -151,7 +160,7 @@ theorem selection_lower
     policy query ir backend hselect
 
 /-- `[T-RESOLVE]`: exact lookup plus support resolves to the canonical plan. -/
-theorem resolve_intro
+public theorem resolve_intro
     (registry : Registry)
     (key : BackendKey)
     (ir : IR)
@@ -164,7 +173,7 @@ theorem resolve_intro
   exact lower_intro backend ir hsupport
 
 /-- `[T-RESOLVE-ELIM]`: resolution identifies a stored supporter and canonical plan. -/
-theorem resolve_elim
+public theorem resolve_elim
     (registry : Registry)
     (key : BackendKey)
     (ir : IR)
@@ -179,17 +188,17 @@ theorem resolve_elim
 /-! ## Observational equivalence rules -/
 
 /-- `[E-REFL]`. -/
-theorem eq_refl (registry : Registry) : registry ≈ registry :=
+public theorem eq_refl (registry : Registry) : registry ≈ registry :=
   PreprocessorBackendRegistry.equivalent_refl registry
 
 /-- `[E-SYM]`. -/
-theorem eq_symm
+public theorem eq_symm
     {left right : Registry}
     (h : left ≈ right) : right ≈ left :=
   PreprocessorBackendRegistry.equivalent_symm h
 
 /-- `[E-TRANS]`. -/
-theorem eq_trans
+public theorem eq_trans
     {first second third : Registry}
     (h12 : first ≈ second)
     (h23 : second ≈ third) : first ≈ third :=
@@ -198,7 +207,7 @@ theorem eq_trans
 /-! ## Congruence rules -/
 
 /-- `[E-CANDIDATES]`: discovery is congruent up to permutation. -/
-theorem candidates_congr
+public theorem candidates_congr
     {left right : Registry}
     (heq : left ≈ right)
     (query : Query)
@@ -208,7 +217,7 @@ theorem candidates_congr
   PreprocessorBackendRegistry.supportingCandidates_congr heq query ir
 
 /-- `[E-SELECT]`: well-formed selection preserves selected exact identity. -/
-theorem selection_congr
+public theorem selection_congr
     (wellFormed : WellFormedSelectionPolicy)
     {left right : Registry}
     (heq : left ≈ right)
@@ -222,7 +231,7 @@ theorem selection_congr
     wellFormed heq query ir
 
 /-- `[E-LOWER]`: selected replay lowering is a congruent observation. -/
-theorem lowering_congr
+public theorem lowering_congr
     (wellFormed : WellFormedSelectionPolicy)
     {left right : Registry}
     (heq : left ≈ right)
@@ -236,7 +245,7 @@ theorem lowering_congr
     wellFormed heq query ir
 
 /-- `[E-REMOVE]`: total removal is a proper registry-Setoid operation. -/
-theorem remove_congr
+public theorem remove_congr
     {left right : Registry}
     (heq : left ≈ right)
     (key : BackendKey) :
@@ -244,7 +253,7 @@ theorem remove_congr
   PreprocessorBackendRegistry.remove_congr heq key
 
 /-- `[E-INSERT]`: insertion preserves partial-result semantics. -/
-theorem insert_congr
+public theorem insert_congr
     {left right : Registry}
     (heq : left ≈ right)
     (backend : Backend) :
@@ -253,7 +262,7 @@ theorem insert_congr
   PreprocessorBackendRegistry.insert_congr heq backend
 
 /-- `[E-REPLACE]`: replacement preserves partial-result semantics. -/
-theorem replace_congr
+public theorem replace_congr
     {left right : Registry}
     (heq : left ≈ right)
     (backend : Backend) :
