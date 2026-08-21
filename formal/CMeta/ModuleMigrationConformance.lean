@@ -7,6 +7,7 @@ import CMeta.Flow
 import CMeta.Graph
 import CMeta.Optimize
 import CMeta.Lowering
+import CMeta.Plan
 
 #check CMeta.product
 #check CMeta.CoreExpr
@@ -127,3 +128,19 @@ assert_not_exists CMeta.duplicate_idempotent_elimination_type
 
 assert_not_exists CMeta.SurfaceZip.lowering_progress
 assert_not_exists CMeta.SurfaceZip.lowering_output_unique
+
+#check CMeta.PlanOpcode
+#check CMeta.ErasedPlanInst
+#check CMeta.PlanNode
+#check CMeta.PlanNode.erase
+#check CMeta.checkPlanInst
+#check CMeta.PlanProgram
+#check CMeta.PlanProgram.code
+#check CMeta.checkPlan
+#check CMeta.ErasedPlan
+#check CMeta.PlanProgram.compile
+#check CMeta.PlanWellTyped
+
+assert_not_exists CMeta.transform_compiles_as_map
+assert_not_exists CMeta.PlanProgram.compile_endpoints
+assert_not_exists CMeta.PlanProgram.output_unique
