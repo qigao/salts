@@ -111,7 +111,8 @@ private theorem selectAux_mem
             (fun h => Or.inr (Or.inr h))
 
 /-- A policy can only return an element of the candidate list supplied to it. -/
-theorem select_mem
+-- TEMP-MODULE-BRIDGE(M7g): legacy CPreprocessorBackendConformance.selection_result_is_candidate
+public theorem select_mem
     (policy : BackendSelectionPolicy)
     (candidates : List CertifiedPreprocessorBackend)
     (backend : CertifiedPreprocessorBackend)
@@ -402,7 +403,8 @@ private theorem select_rank_eq_aggregate_of_ne_nil
 
 /-- A well-formed policy selects the same backend identity from any two
     permutations whose candidates all belong to the same backend query. -/
-theorem select_key_eq_of_perm_of_matches
+-- TEMP-MODULE-BRIDGE(M7e): legacy PreprocessorBackendRegistrySubstitutability.selectSupporting_key_eq_of_equivalent
+public theorem select_key_eq_of_perm_of_matches
     (wellFormed : WellFormedSelectionPolicy)
     (query : BackendQuery)
     {left right : List CertifiedPreprocessorBackend}
@@ -472,7 +474,8 @@ public def selectSupporting
 
 /-- A successful registry-level selection remains a member of the policy-free
     supporting candidate set. -/
-theorem selectSupporting_mem_candidates
+-- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.selection_elim
+public theorem selectSupporting_mem_candidates
     (registry : PreprocessorBackendRegistry)
     (policy : BackendSelectionPolicy)
     (query : BackendQuery)
@@ -498,7 +501,8 @@ theorem selectSupporting_supports
 
 /-- Any selected supporting backend lowers to the same canonical replay plan;
     selection policy affects which certificate is chosen, never plan semantics. -/
-theorem selectSupporting_lowering_canonical
+-- TEMP-MODULE-BRIDGE(M7g): legacy LanguageSpec and backend conformance
+public theorem selectSupporting_lowering_canonical
     (registry : PreprocessorBackendRegistry)
     (policy : BackendSelectionPolicy)
     (query : BackendQuery)
@@ -514,7 +518,8 @@ theorem selectSupporting_lowering_canonical
 /-- Registry representation order is unobservable for a well-formed policy: if
     two registries contain the same certified entries up to permutation, one
     query and replay IR select the same backend identity. -/
-theorem selectSupporting_key_eq_of_entries_perm
+-- TEMP-MODULE-BRIDGE(M7g): legacy CPreprocessorBackendSelectionConformance.registry_order_independent
+public theorem selectSupporting_key_eq_of_entries_perm
     (wellFormed : WellFormedSelectionPolicy)
     (left right : PreprocessorBackendRegistry)
     (query : BackendQuery)
