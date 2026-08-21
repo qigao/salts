@@ -51,6 +51,17 @@ target_include_directories(cmeta_fmt_args_simplification_witness PRIVATE
 add_test(NAME cmeta_fmt_args_simplification
          COMMAND cmeta_fmt_args_simplification_witness)
 
+cmeta_add_formal_witness(cmeta_producer_replay_witness
+  cmeta_producer_replay_witness.c)
+target_include_directories(cmeta_producer_replay_witness PRIVATE
+  ${PROJECT_SOURCE_DIR}/cmeta/include)
+set_target_properties(cmeta_producer_replay_witness PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED YES
+  C_EXTENSIONS NO)
+add_test(NAME cmeta_producer_replay
+         COMMAND cmeta_producer_replay_witness)
+
 cmeta_add_formal_witness(cmeta_plan_conformance_witness
   cmeta_plan_conformance_witness.c)
 target_link_libraries(cmeta_plan_conformance_witness PRIVATE TurboUtils::CFlow)
