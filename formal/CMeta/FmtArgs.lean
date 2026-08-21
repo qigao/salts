@@ -111,11 +111,29 @@ theorem legacy_dispatch_normalizes (xs : List α) (h : xs.length ≤ 8) :
   simp [legacy_normalized_observational_equivalence]
 
 /-- The normalized representation has one storage slot more than the real
-    logical argument count.  This is the algebraic basis for deriving count
-    from storage size in a later C implementation, if desired. -/
+    logical argument count. -/
 theorem normalized_storage_length (xs : List α) :
     (normalizedStorage xs).length = xs.length + 1 := by
   simp [normalizedStorage]
+
+/-- Recover a logical argument count from a normalized storage representation. -/
+def argCountFromStorage (storage : List α) : Nat :=
+  storage.length - 1
+
+/-- Normalized storage makes the logical argument count exactly recoverable
+    from storage length alone. -/
+theorem normalized_storage_recovers_arg_count (xs : List α) :
+    argCountFromStorage (normalizedStorage xs) = xs.length := by
+  unfold argCountFromStorage
+  rw [normalized_storage_length]
+  simp
+
+/-- The legacy storage length is not sufficient to recover argument count:
+    zero arguments and one argument both occupy one storage slot. -/
+theorem legacy_storage_length_not_injective (x : α) :
+    (legacyStorage ([] : List α)).length = (legacyStorage [x]).length ∧
+      ([] : List α).length ≠ [x].length := by
+  simp [legacyStorage]
 
 end FmtArgs
 end CMeta
