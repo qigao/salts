@@ -40,4 +40,8 @@ assert_not_exists CMeta.Producer.nestedReplay_length
 assert_not_exists CMeta.Producer.nestedReplay_count
 assert_not_exists CMeta.Producer.lowerSameProducerDepth_iff
 assert_not_exists CMeta.Producer.lowerReplayIR_isSome_iff
-assert_not_exists CMeta.Producer.lowerReplayIR_progress
+
+-- TEMP-MODULE-BRIDGE(M7g): legacy NestedReplayConformance proof consumers
+#check CMeta.Producer.nestedReplay_same_length
+#check CMeta.Producer.lowerSameProducerDepth_progress
+#check CMeta.Producer.lowerReplayIR_progress

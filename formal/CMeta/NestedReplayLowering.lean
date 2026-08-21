@@ -81,7 +81,8 @@ theorem lowerSameProducerDepth_iff
 
 /-- Progress for nested replay lowering: a depth covered by the certificate
     cannot become stuck at the backend applicability boundary. -/
-theorem lowerSameProducerDepth_progress
+-- TEMP-MODULE-BRIDGE(M7g): legacy NestedReplayConformance.within_certificate_realizable
+public theorem lowerSameProducerDepth_progress
     (backend : ReplayBackendCapability) (depth : Nat)
     (h : depth ≤ backend.certifiedSameProducerDepth) :
     ∃ loweredDepth, lowerSameProducerDepth backend depth = some loweredDepth := by
@@ -118,7 +119,8 @@ theorem lowerReplayIR_isSome_iff
 /-- Compiler progress over well-formed-by-construction replay IR: if the IR's
     computed requirement is covered by the certificate, lowering cannot get
     stuck at the backend applicability boundary. -/
-theorem lowerReplayIR_progress
+-- TEMP-MODULE-BRIDGE(M7g): legacy NestedReplayConformance.ir_within_certificate_realizable
+public theorem lowerReplayIR_progress
     (backend : ReplayBackendCapability) (ir : ReplayIR)
     (h : ir.sameProducerDepth ≤ backend.certifiedSameProducerDepth) :
     ∃ loweredIR, lowerReplayIR backend ir = some loweredIR := by
