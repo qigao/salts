@@ -77,6 +77,11 @@ int main(void) {
     CHECK(cmeta_proof_depth3_count == 8);
     CHECK(cmeta_proof_depth4_count == 16);
 
-    puts("cmeta nested replay deferred applicability: ok");
+    puts("namespace CMeta.NestedReplayGeneratedC");
+    printf("def distinctCount : Nat := %d\n", cmeta_proof_distinct_count);
+    printf("def depth2Count : Nat := %d\n", cmeta_proof_depth2_count);
+    printf("def depth3Count : Nat := %d\n", cmeta_proof_depth3_count);
+    printf("def depth4Count : Nat := %d\n", cmeta_proof_depth4_count);
+    puts("end CMeta.NestedReplayGeneratedC");
     return 0;
 }
