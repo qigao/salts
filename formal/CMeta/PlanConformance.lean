@@ -1,5 +1,6 @@
-import CMeta.Conformance
-import CMeta.PlanGeneratedC
+module
+import all CMeta.Conformance
+import all CMeta.PlanGeneratedC
 
 /-!
 # Real C plan compiler ↔ Lean plan model conformance

@@ -1,5 +1,8 @@
-import CMeta.PlanConformance
-import CMeta.Execution
+module
+import all CMeta.PlanConformance
+-- TEMP-MODULE-BRIDGE(M6): legacy StructuredConformance needs CType/Callable/ValueVec semantics
+public import CMeta.Execution
+import all CMeta.Execution
 
 /-!
 # Real C runtime ↔ Lean execution semantics conformance

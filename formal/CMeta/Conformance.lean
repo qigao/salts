@@ -1,5 +1,6 @@
-import CMeta.EndToEnd
-import CMeta.GeneratedC
+module
+import all CMeta.EndToEnd
+import all CMeta.GeneratedC
 
 /-!
 # C header ↔ Lean model conformance
