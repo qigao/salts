@@ -53,8 +53,7 @@ theorem replay_append (map : α → β) (xs ys : List α) :
   simp [replay, append]
 
 /-- Replaying constant one and folding gives the producer's exact length. -/
--- TEMP-MODULE-BRIDGE(M7b): legacy NestedReplay.nestedReplay_count
-public theorem count_eq_length (xs : List α) :
+theorem count_eq_length (xs : List α) :
     count xs = xs.length := by
   induction xs with
   | nil => rfl
