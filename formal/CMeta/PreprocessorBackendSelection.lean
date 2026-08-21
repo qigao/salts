@@ -273,6 +273,15 @@ def replayRank (backend : CertifiedPreprocessorBackend) : BackendSelectionRank :
   ⟨backend.replayCapability.certifiedSameProducerDepth,
     backend.backend.compilerMajorVersion⟩
 
+private theorem backendKey_eq_of_fields
+    (left right : BackendKey)
+    (hfamily : left.family = right.family)
+    (hversion : left.majorVersion = right.majorVersion)
+    (hmode : left.languageMode = right.languageMode) : left = right := by
+  rcases left with ⟨lf, lv, lm⟩
+  rcases right with ⟨rf, rv, rm⟩
+  simp_all
+
 private theorem replayChooseRank
     (left right : CertifiedPreprocessorBackend) :
     replayRank
@@ -341,20 +350,13 @@ private theorem replayKeyEqOfQueryRankEq
     (hright : right.matchesQuery query)
     (hrank : replayRank left = replayRank right) :
     left.key = right.key := by
-  have hfamily :
-      left.backend.compilerFamily = right.backend.compilerFamily :=
-    hleft.1.trans hright.1.symm
   have hver :
       left.backend.compilerMajorVersion = right.backend.compilerMajorVersion :=
     congrArg BackendSelectionRank.compilerMajorVersion hrank
-  have hmode :
-      left.backend.languageMode = right.backend.languageMode :=
-    hleft.2.trans hright.2.symm
-  simp only [CertifiedPreprocessorBackend.key, PreprocessorBackend.key]
-  cases hfamily
-  cases hver
-  cases hmode
-  rfl
+  apply backendKey_eq_of_fields
+  · exact hleft.1.trans hright.1.symm
+  · exact hver
+  · exact hleft.2.trans hright.2.symm
 
 /-- Certified replay selection: maximize formally witnessed replay depth, then
     compiler major version. -/
@@ -451,7 +453,8 @@ theorem select_key_eq_of_perm_of_matches
               (hleft leftBackend hleftMem)
               (hright rightBackend hrightMem)
               hrankEq
-            rw [hkey]
+            change some leftBackend.key = some rightBackend.key
+            exact congrArg Option.some hkey
 
 end BackendSelectionPolicy
 
