@@ -58,6 +58,15 @@ jobs:
                      cmeta_optimizer_gating_conformance_gen \
                      cmeta_optimizer_topology_conformance_gen
 
+      - name: Verify type identity conformance snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          build/formal-linux/bin/cmeta_type_identity_conformance_gen \
+            > /tmp/TypeIdentityGeneratedC.lean
+          diff -u formal/CMeta/TypeIdentityGeneratedC.lean \
+            /tmp/TypeIdentityGeneratedC.lean
+
       - name: Verify plan compiler conformance snapshot
         shell: bash
         run: |
