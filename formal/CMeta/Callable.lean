@@ -11,8 +11,10 @@ argument schema rather than an arity-specific callable type family.
 
 namespace CMeta
 
-/-- Semantic interpretation of the logical CMeta type universe. -/
-public def CType.denote : CType → Type
+/-- Semantic interpretation of the logical CMeta type universe. This public
+    computation must remain unfoldable across module boundaries so executable
+    conformance models can compile logical CType values to their host types. -/
+@[expose] public def CType.denote : CType → Type
   | .bool => Bool
   | .int => Int
   | .long => Int
