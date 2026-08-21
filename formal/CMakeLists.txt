@@ -7,6 +7,14 @@ set_target_properties(cmeta_type_identity_conformance_gen PROPERTIES FOLDER "for
 add_test(NAME cmeta_type_identity_conformance
          COMMAND cmeta_type_identity_conformance_gen)
 
+add_executable(cmeta_descriptor_bridge_conformance_gen EXCLUDE_FROM_ALL
+  cmeta_descriptor_bridge_conformance_gen.c)
+target_compile_features(cmeta_descriptor_bridge_conformance_gen PRIVATE c_std_11)
+target_link_libraries(cmeta_descriptor_bridge_conformance_gen PRIVATE TurboUtils::CMeta)
+set_target_properties(cmeta_descriptor_bridge_conformance_gen PROPERTIES FOLDER "formal")
+add_test(NAME cmeta_descriptor_bridge_conformance
+         COMMAND cmeta_descriptor_bridge_conformance_gen)
+
 add_executable(cmeta_type_universe_probe EXCLUDE_FROM_ALL
   cmeta_type_universe_probe.c)
 target_compile_features(cmeta_type_universe_probe PRIVATE c_std_11)
