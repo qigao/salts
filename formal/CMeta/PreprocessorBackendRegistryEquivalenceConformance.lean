@@ -1,4 +1,4 @@
-import CMeta.PreprocessorBackendRegistryMutation
+import CMeta.PreprocessorBackendRegistryEquivalence
 
 /-!
 # Registry observational equivalence conformance
