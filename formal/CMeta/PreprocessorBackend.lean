@@ -43,6 +43,14 @@ structure BackendKey where
   languageMode : LanguageMode
   deriving Repr, DecidableEq
 
+/-- Compatibility query intentionally omits compiler version. Exact versioned
+    identity is handled by `BackendKey`; this query describes the family/mode
+    class from which capability-compatible candidates may be discovered. -/
+structure BackendQuery where
+  family : CompilerFamily
+  languageMode : LanguageMode
+  deriving Repr, DecidableEq
+
 structure PreprocessorBackend where
   compilerFamily : CompilerFamily
   compilerMajorVersion : Nat
@@ -98,6 +106,13 @@ def replayCapability
     (backend : CertifiedPreprocessorBackend) : ReplayBackendCapability :=
   backend.backend.replayCapability
 
+/-- Compatibility-class match used only for candidate discovery. Version is
+    deliberately absent here and remains available through `backend.key`. -/
+abbrev matchesQuery
+    (backend : CertifiedPreprocessorBackend) (query : BackendQuery) : Prop :=
+  backend.backend.compilerFamily = query.family ∧
+  backend.backend.languageMode = query.languageMode
+
 /-- Whether this certified backend covers the replay requirement of one IR. -/
 abbrev supportsReplay
     (backend : CertifiedPreprocessorBackend) (ir : ReplayIR) : Prop :=
@@ -136,11 +151,32 @@ private def lookupEntries :
   | backend :: rest, key =>
       if backend.key = key then some backend else lookupEntries rest key
 
-/-- Resolve one certified backend by compiler identity. -/
+/-- Resolve one certified backend by exact compiler identity. -/
 def lookup
     (registry : PreprocessorBackendRegistry) (key : BackendKey) :
     Option CertifiedPreprocessorBackend :=
   lookupEntries registry.entries key
+
+/-- Discover every certified backend in the requested family/language class that
+    covers the current replay IR. This function intentionally does not rank or
+    choose among candidates; selection policy is a separate layer. -/
+def supportingCandidates
+    (registry : PreprocessorBackendRegistry) (query : BackendQuery) (ir : ReplayIR) :
+    List CertifiedPreprocessorBackend :=
+  registry.entries.filter fun backend =>
+    decide (backend.matchesQuery query ∧ backend.supportsReplay ir)
+
+/-- Candidate discovery is exactly registry membership plus compatibility-class
+    match plus support for the requested IR. No ordering or preference policy is
+    encoded in this theorem. -/
+theorem mem_supportingCandidates_iff
+    (registry : PreprocessorBackendRegistry) (query : BackendQuery)
+    (ir : ReplayIR) (backend : CertifiedPreprocessorBackend) :
+    backend ∈ registry.supportingCandidates query ir ↔
+      backend ∈ registry.entries ∧
+      backend.matchesQuery query ∧
+      backend.supportsReplay ir := by
+  simp [supportingCandidates]
 
 end PreprocessorBackendRegistry
 
