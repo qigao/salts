@@ -1,3 +1,4 @@
+module
 import CMeta.Calculus
 import CMeta.Traits
 import CMeta.Callable
@@ -108,6 +109,7 @@ assert_not_exists CMeta.checkBranchTail
 assert_not_exists CMeta.TypedBranches.check_erase
 assert_not_exists CMeta.TypedRelation.progress
 assert_not_exists CMeta.TypedRelation.output_unique
+assert_not_exists CMeta.TypedGraph.check_stages
 assert_not_exists CMeta.TypedGraph.progress
 assert_not_exists CMeta.TypedGraph.output_unique
 
@@ -121,6 +123,7 @@ assert_not_exists CMeta.TypedGraph.output_unique
 
 assert_not_exists CMeta.MapChain.run_cons
 assert_not_exists CMeta.MapChain.check_signatures
+assert_not_exists CMeta.FusedMap.type_preserved
 assert_not_exists CMeta.canonicalizeMapLike_preserves_type
 assert_not_exists CMeta.duplicate_idempotent_elimination_type
 
@@ -172,6 +175,9 @@ assert_not_exists CMeta.ExecInst.reduce_length_le_one
 assert_not_exists CMeta.ExecInst.planNode_checked
 assert_not_exists CMeta.runRuntimeInst_output
 assert_not_exists CMeta.ExecInst.runtime_exact
+assert_not_exists CMeta.ExecProgram.runtime_execution_exact
+assert_not_exists CMeta.ExecProgram.result_type_safe
+assert_not_exists CMeta.ExecProgram.compiled_plan_well_typed
 
 assert_not_exists CMeta.ExecInst.filter_cardinality
 assert_not_exists CMeta.ExecInst.map_cardinality

@@ -181,8 +181,7 @@ public def checkGraph : CType → List ErasedStage → Option CType
 /-- Main graph preservation theorem for this structured model: after all
     dependent type indices are erased, ordinary dynamic validation recovers the
     exact statically known result type. -/
--- TEMP-MODULE-BRIDGE(M5): legacy EndToEnd.structured_graph_type_safe
-public theorem TypedGraph.check_stages {A R : CType} (graph : TypedGraph A R) :
+theorem TypedGraph.check_stages {A R : CType} (graph : TypedGraph A R) :
     checkGraph A graph.stages = some R := by
   induction graph with
   | done t => rfl

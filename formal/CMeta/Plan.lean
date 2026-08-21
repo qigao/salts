@@ -137,15 +137,13 @@ public structure ErasedPlan where
 namespace PlanProgram
 
 /-- Compile a statically supported program to the topology-free plan shape. -/
--- TEMP-MODULE-BRIDGE(M5): legacy EndToEnd unfolds compiled plan semantics
-@[expose] public def compile {A R : CType} (program : PlanProgram A R) : ErasedPlan :=
+public def compile {A R : CType} (program : PlanProgram A R) : ErasedPlan :=
   ⟨A, R, program.code⟩
 
 end PlanProgram
 
 /-- Runtime-checkable well-typedness of an erased direct plan. -/
--- TEMP-MODULE-BRIDGE(M5): legacy EndToEnd unfolds compiled plan semantics
-@[expose] public def PlanWellTyped (plan : ErasedPlan) : Prop :=
+public def PlanWellTyped (plan : ErasedPlan) : Prop :=
   checkPlan plan.input plan.code = some plan.output
 
 /-- Main plan-compilation theorem: public endpoints and every intermediate

@@ -172,9 +172,11 @@ jobs:
           grep -qx 'public import CMeta.Semantics' formal/CMeta/PublicProof.lean
           grep -qx 'import all CMeta.EndToEnd' formal/CMeta/PublicProof.lean
           grep -qx 'import CMeta.PublicProof' formal/CMeta/PublicProofConformance.lean
+          grep -qx 'import CMeta.PublicProof' formal/CMeta/PublicProofIsolationConformance.lean
           if grep -nE '\b(PreprocessorBackend|Registry|NestedReplay|OptimizerTopology)\b' \
               formal/CMeta/PublicProof.lean \
-              formal/CMeta/PublicProofConformance.lean; then
+              formal/CMeta/PublicProofConformance.lean \
+              formal/CMeta/PublicProofIsolationConformance.lean; then
             echo "PublicProof must not expose implementation-layer proof vocabulary."
             exit 1
           fi
@@ -210,6 +212,13 @@ jobs:
         run: |
           set -euo pipefail
           lake update
+
+      - name: Verify public proof isolation
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euo pipefail
+          lake env lean CMeta/PublicProofIsolationConformance.lean
 
       - name: Build and kernel-check Lean proofs
         working-directory: formal

@@ -162,8 +162,7 @@ public def runRuntimePlan : List RuntimeInst → PackedVec → Option PackedVec
 /-- Main execution theorem: erasing an executable typed plan to runtime
     instructions and running the same type guards as the C executor cannot
     produce a wrongly tagged result. -/
--- TEMP-MODULE-BRIDGE(M5): legacy EndToEnd
-public theorem ExecProgram.runtime_execution_exact {A R : CType}
+theorem ExecProgram.runtime_execution_exact {A R : CType}
     (program : ExecProgram A R) (values : ValueVec A) :
     runRuntimePlan program.runtimeCode ⟨A, values⟩ =
       some ⟨R, program.run values⟩ := by
@@ -175,8 +174,7 @@ public theorem ExecProgram.runtime_execution_exact {A R : CType}
 
 /-- Therefore every successful execution of a compiled typed program has the
     statically declared final CType. -/
--- TEMP-MODULE-BRIDGE(M5): legacy EndToEnd
-public theorem ExecProgram.result_type_safe {A R : CType}
+theorem ExecProgram.result_type_safe {A R : CType}
     (program : ExecProgram A R) (values : ValueVec A) (out : PackedVec)
     (h : runRuntimePlan program.runtimeCode ⟨A, values⟩ = some out) :
     out.1 = R := by
@@ -187,8 +185,7 @@ public theorem ExecProgram.result_type_safe {A R : CType}
 
 /-- The same executable program also passes the topology-free compiler type
     checker proved in `Plan.lean`. -/
--- TEMP-MODULE-BRIDGE(M5): legacy EndToEnd
-public theorem ExecProgram.compiled_plan_well_typed {A R : CType}
+theorem ExecProgram.compiled_plan_well_typed {A R : CType}
     (program : ExecProgram A R) :
     PlanWellTyped program.planProgram.compile := by
   exact program.planProgram.compile_well_typed

@@ -32,6 +32,7 @@ import CMeta.Execution
 import CMeta.Cardinality
 import CMeta.EndToEnd
 import CMeta.PublicProofConformance
+import CMeta.PublicProofIsolationConformance
 import CMeta.Conformance
 import CMeta.PlanGeneratedC
 import CMeta.PlanConformance

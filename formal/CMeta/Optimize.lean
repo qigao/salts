@@ -73,8 +73,7 @@ namespace FusedMap
 
 /-- Even after callback type indices are erased, the fused node validates from
     its original input type to its chain-tail output type. -/
--- TEMP-MODULE-BRIDGE(M5): legacy EndToEnd.fused_map_type_safe
-public theorem type_preserved {A R : CType} (fused : FusedMap A R) :
+theorem type_preserved {A R : CType} (fused : FusedMap A R) :
     MapChain.check A fused.chain.signatures = some R :=
   fused.chain.check_signatures
 

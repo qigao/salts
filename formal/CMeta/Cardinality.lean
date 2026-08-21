@@ -1,6 +1,4 @@
 module
--- TEMP-MODULE-BRIDGE(M5): legacy EndToEnd reaches Execution through Cardinality
-public import CMeta.Execution
 import all CMeta.Execution
 
 /-!
