@@ -91,6 +91,32 @@ static size_t constant_hash(const void *key, size_t key_size, void *context) {
 }
 
 suite("Container hash ownership") {
+    it("keeps HashSet independent with collision and duplicate semantics") {
+        turbo_hash_set_t set = {0};
+        int key;
+        uint64_t generation;
+
+        check_equal(turbo_hash_set_init_bytes(
+                        &set, sizeof(int), _Alignof(int), 4u,
+                        constant_hash, turbo_hash_key_equal, NULL),
+                    CONTAINER_OK);
+        for (key = 0; key < 4; ++key)
+            check_equal(turbo_hash_set_add(&set, &key), CONTAINER_OK);
+        generation = turbo_hash_set_generation(&set);
+        key = 2;
+        check_equal(turbo_hash_set_add(&set, &key), CONTAINER_OK);
+        check_equal(turbo_hash_set_generation(&set), generation);
+        key = 4;
+        check_equal(turbo_hash_set_add(&set, &key),
+                    CONTAINER_CAPACITY_EXCEEDED);
+        key = 1;
+        check_equal(turbo_hash_set_remove(&set, &key), CONTAINER_OK);
+        check_false(turbo_hash_set_contains(&set, &key));
+        key = 3;
+        check_true(turbo_hash_set_contains(&set, &key));
+        turbo_hash_set_destroy(&set);
+    }
+
     it("keeps collisions tombstones and rehash inside bucket arrays") {
         turbo_hash_map_t map = {0};
         int key;
