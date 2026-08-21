@@ -4,8 +4,7 @@ import CMeta.Callable
 # Lambda, anonymous closure, bind and composition
 
 Lambda is one closure model over an arbitrary finite logical argument schema.
-The current CFlow lambda1/lambda2 macros are backend/consumer spellings and do
-not define the Core formal type system.
+Consumer-specific C macros do not define the Core formal type system.
 -/
 
 namespace CMeta
@@ -54,32 +53,28 @@ theorem anonymous_beta {Env : Type} {Args : List CType} {R : CType}
     (xs : HArgs Args) :
     (anonymous capture body).invoke xs = body capture xs := rfl
 
-/-- Partial application of the last argument of a binary semantic function.
-    The result is the general Callable instantiated with one remaining argument. -/
-def bindLast {A B R : CType} (f : A.denote → B.denote → R.denote)
-    (bound : B.denote) : Callable [A] R :=
-  ⟨fun xs =>
-    match xs with
-    | .cons a .nil => f a bound⟩
+/-- Bind one logical final argument of a finite-arity callable. -/
+def bindLast {Args : List CType} {B R : CType}
+    (f : Callable (Args ++ [B]) R) (bound : B.denote) : Callable Args R :=
+  ⟨fun xs => f.run (xs.snoc bound)⟩
 
-/-- Binding preserves ordinary beta semantics. -/
-theorem bindLast_beta {A B R : CType} (f : A.denote → B.denote → R.denote)
+/-- General bind beta law over any finite prefix argument schema. -/
+theorem bindLast_beta {Args : List CType} {B R : CType}
+    (f : Callable (Args ++ [B]) R) (bound : B.denote)
+    (xs : HArgs Args) :
+    (bindLast f bound).run xs = f.run (xs.snoc bound) := rfl
+
+/-- Capturing the bound value and partial application are the same closure formation
+    for an arbitrary finite remaining argument schema. -/
+theorem lambda_bind_same_shape {Args : List CType} {B R : CType}
+    (f : Callable (Args ++ [B]) R) (bound : B.denote)
+    (xs : HArgs Args) :
+    (bindLast f bound).run xs =
+      (anonymous bound (fun cap args => f.run (args.snoc cap))).asCallable.run xs := rfl
+
+/-- The historical binary bind case is now only an instance of the general theorem. -/
+example {A B R : CType} (f : Callable [A, B] R)
     (bound : B.denote) (a : A.denote) :
-    (bindLast f bound).invoke1 a = f a bound := rfl
-
-/-- Binding still erases to the exact unary backend signature currently admitted by CFlow. -/
-theorem bindLast_signature {A B R : CType} (f : A.denote → B.denote → R.denote)
-    (bound : B.denote) :
-    eraseValue (bindLast f bound) = some ⟨.unary A R⟩ := rfl
-
-/-- Capturing a bound value and partial application are the same closure formation,
-    stated pointwise without introducing an arity-specific Lambda type. -/
-theorem lambda_bind_same_shape {A B R : CType}
-    (f : A.denote → B.denote → R.denote) (bound : B.denote)
-    (a : A.denote) :
-    (bindLast f bound).invoke1 a =
-      (anonymous bound (fun cap xs =>
-        match xs with
-        | .cons x .nil => f x cap)).asCallable.invoke1 a := rfl
+    (bindLast f bound).invoke1 a = f.invoke2 a bound := rfl
 
 end CMeta
