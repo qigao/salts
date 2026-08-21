@@ -32,109 +32,87 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify C header conformance snapshot
-        shell: bash
-        run: |
-          set -euo pipefail
-          cc -std=c11 -Wall -Wextra -Werror \
-            -I cmeta/include -I cflow/include \
-            formal/cmeta_conformance_gen.c \
-            -o /tmp/cmeta_conformance_gen
-          /tmp/cmeta_conformance_gen > /tmp/GeneratedC.lean
-          diff -u formal/CMeta/GeneratedC.lean /tmp/GeneratedC.lean
-
-      - name: Build real CFlow conformance witnesses
+      - name: Configure formal build
         shell: bash
         run: |
           set -euo pipefail
           cmake --preset formal-linux
-          cmake --build --preset build-formal-linux \
-            --target cmeta_type_identity_conformance_gen \
-                     cmeta_descriptor_bridge_conformance_gen \
-                     cmeta_type_identity_multi_tu \
-                     cmeta_type_universe_probe \
-                     cmeta_plan_conformance_gen \
-                     cmeta_structured_conformance_gen \
-                     cmeta_structured_policy_conformance_gen \
-                     cmeta_optimizer_conformance_gen \
-                     cmeta_optimizer_gating_conformance_gen \
-                     cmeta_optimizer_topology_conformance_gen
 
-      - name: Verify descriptor bridge conformance snapshot
+      - name: Build C conformance witnesses
         shell: bash
         run: |
           set -euo pipefail
-          build/formal-linux/bin/cmeta_descriptor_bridge_conformance_gen \
-            > /tmp/DescriptorBridgeGeneratedC.lean
-          diff -u formal/CMeta/DescriptorBridgeGeneratedC.lean \
-            /tmp/DescriptorBridgeGeneratedC.lean
+          cmake --build --preset build-formal-linux \
+            --target cmeta_header_conformance_witness \
+                     cmeta_type_identity_conformance_witness \
+                     cmeta_descriptor_bridge_conformance_witness \
+                     cmeta_type_identity_multi_tu \
+                     cmeta_type_universe_probe \
+                     cmeta_plan_conformance_witness \
+                     cmeta_structured_conformance_witness \
+                     cmeta_structured_policy_conformance_witness \
+                     cmeta_optimizer_conformance_witness \
+                     cmeta_optimizer_gating_conformance_witness \
+                     cmeta_optimizer_topology_conformance_witness
 
-      - name: Execute multi-TU TypeId applicability
+      - name: Verify C/Lean conformance snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          generated_dir="build/formal-linux/formal/generated"
+          mkdir -p "$generated_dir"
+
+          build/formal-linux/bin/cmeta_header_conformance_witness \
+            > "$generated_dir/GeneratedC.lean"
+          diff -u formal/CMeta/GeneratedC.lean \
+            "$generated_dir/GeneratedC.lean"
+
+          build/formal-linux/bin/cmeta_descriptor_bridge_conformance_witness \
+            > "$generated_dir/DescriptorBridgeGeneratedC.lean"
+          diff -u formal/CMeta/DescriptorBridgeGeneratedC.lean \
+            "$generated_dir/DescriptorBridgeGeneratedC.lean"
+
+          build/formal-linux/bin/cmeta_type_identity_conformance_witness \
+            > "$generated_dir/TypeIdentityGeneratedC.lean"
+          diff -u formal/CMeta/TypeIdentityGeneratedC.lean \
+            "$generated_dir/TypeIdentityGeneratedC.lean"
+
+          build/formal-linux/bin/cmeta_plan_conformance_witness \
+            > "$generated_dir/PlanGeneratedC.lean"
+          diff -u formal/CMeta/PlanGeneratedC.lean \
+            "$generated_dir/PlanGeneratedC.lean"
+
+          build/formal-linux/bin/cmeta_structured_conformance_witness \
+            > "$generated_dir/StructuredGeneratedC.lean"
+          diff -u formal/CMeta/StructuredGeneratedC.lean \
+            "$generated_dir/StructuredGeneratedC.lean"
+
+          build/formal-linux/bin/cmeta_structured_policy_conformance_witness \
+            > "$generated_dir/StructuredPolicyGeneratedC.lean"
+          diff -u formal/CMeta/StructuredPolicyGeneratedC.lean \
+            "$generated_dir/StructuredPolicyGeneratedC.lean"
+
+          build/formal-linux/bin/cmeta_optimizer_conformance_witness \
+            > "$generated_dir/OptimizerGeneratedC.lean"
+          diff -u formal/CMeta/OptimizerGeneratedC.lean \
+            "$generated_dir/OptimizerGeneratedC.lean"
+
+          build/formal-linux/bin/cmeta_optimizer_gating_conformance_witness \
+            > "$generated_dir/OptimizerGatingGeneratedC.lean"
+          diff -u formal/CMeta/OptimizerGatingGeneratedC.lean \
+            "$generated_dir/OptimizerGatingGeneratedC.lean"
+
+          build/formal-linux/bin/cmeta_optimizer_topology_conformance_witness \
+            > "$generated_dir/OptimizerTopologyGeneratedC.lean"
+          diff -u formal/CMeta/OptimizerTopologyGeneratedC.lean \
+            "$generated_dir/OptimizerTopologyGeneratedC.lean"
+
+      - name: Execute TypeId applicability probes
         shell: bash
         run: |
           set -euo pipefail
           build/formal-linux/bin/cmeta_type_identity_multi_tu
-
-      - name: Verify type identity conformance snapshot
-        shell: bash
-        run: |
-          set -euo pipefail
-          build/formal-linux/bin/cmeta_type_identity_conformance_gen \
-            > /tmp/TypeIdentityGeneratedC.lean
-          diff -u formal/CMeta/TypeIdentityGeneratedC.lean \
-            /tmp/TypeIdentityGeneratedC.lean
-
-      - name: Verify plan compiler conformance snapshot
-        shell: bash
-        run: |
-          set -euo pipefail
-          build/formal-linux/bin/cmeta_plan_conformance_gen \
-            > /tmp/PlanGeneratedC.lean
-          diff -u formal/CMeta/PlanGeneratedC.lean /tmp/PlanGeneratedC.lean
-
-      - name: Verify structured relation conformance snapshot
-        shell: bash
-        run: |
-          set -euo pipefail
-          build/formal-linux/bin/cmeta_structured_conformance_gen \
-            > /tmp/StructuredGeneratedC.lean
-          diff -u formal/CMeta/StructuredGeneratedC.lean /tmp/StructuredGeneratedC.lean
-
-      - name: Verify structured policy conformance snapshot
-        shell: bash
-        run: |
-          set -euo pipefail
-          build/formal-linux/bin/cmeta_structured_policy_conformance_gen \
-            > /tmp/StructuredPolicyGeneratedC.lean
-          diff -u formal/CMeta/StructuredPolicyGeneratedC.lean \
-            /tmp/StructuredPolicyGeneratedC.lean
-
-      - name: Verify optimizer property conformance snapshot
-        shell: bash
-        run: |
-          set -euo pipefail
-          build/formal-linux/bin/cmeta_optimizer_conformance_gen \
-            > /tmp/OptimizerGeneratedC.lean
-          diff -u formal/CMeta/OptimizerGeneratedC.lean \
-            /tmp/OptimizerGeneratedC.lean
-
-      - name: Verify optimizer gating conformance snapshot
-        shell: bash
-        run: |
-          set -euo pipefail
-          build/formal-linux/bin/cmeta_optimizer_gating_conformance_gen \
-            > /tmp/OptimizerGatingGeneratedC.lean
-          diff -u formal/CMeta/OptimizerGatingGeneratedC.lean \
-            /tmp/OptimizerGatingGeneratedC.lean
-
-      - name: Verify optimizer topology conformance snapshot
-        shell: bash
-        run: |
-          set -euo pipefail
-          build/formal-linux/bin/cmeta_optimizer_topology_conformance_gen \
-            > /tmp/OptimizerTopologyGeneratedC.lean
-          diff -u formal/CMeta/OptimizerTopologyGeneratedC.lean \
-            /tmp/OptimizerTopologyGeneratedC.lean
+          build/formal-linux/bin/cmeta_type_universe_probe
 
       - name: Reject proof placeholders
         shell: bash

@@ -1,19 +1,29 @@
-add_executable(cmeta_type_identity_conformance_gen EXCLUDE_FROM_ALL
-  cmeta_type_identity_conformance_gen.c)
+set(CMETA_FORMAL_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${CMETA_FORMAL_GENERATED_DIR}")
 
-target_compile_features(cmeta_type_identity_conformance_gen PRIVATE c_std_11)
-target_link_libraries(cmeta_type_identity_conformance_gen PRIVATE TurboUtils::CMeta)
-set_target_properties(cmeta_type_identity_conformance_gen PROPERTIES FOLDER "formal")
+function(cmeta_add_formal_witness target source)
+  add_executable(${target} EXCLUDE_FROM_ALL ${source})
+  target_compile_features(${target} PRIVATE c_std_11)
+  set_target_properties(${target} PROPERTIES FOLDER "formal")
+endfunction()
+
+cmeta_add_formal_witness(cmeta_header_conformance_witness
+  cmeta_conformance_witness.c)
+target_include_directories(cmeta_header_conformance_witness PRIVATE
+  ${PROJECT_SOURCE_DIR}/cmeta/include
+  ${PROJECT_SOURCE_DIR}/cflow/include)
+
+cmeta_add_formal_witness(cmeta_type_identity_conformance_witness
+  cmeta_type_identity_conformance_witness.c)
+target_link_libraries(cmeta_type_identity_conformance_witness PRIVATE TurboUtils::CMeta)
 add_test(NAME cmeta_type_identity_conformance
-         COMMAND cmeta_type_identity_conformance_gen)
+         COMMAND cmeta_type_identity_conformance_witness)
 
-add_executable(cmeta_descriptor_bridge_conformance_gen EXCLUDE_FROM_ALL
-  cmeta_descriptor_bridge_conformance_gen.c)
-target_compile_features(cmeta_descriptor_bridge_conformance_gen PRIVATE c_std_11)
-target_link_libraries(cmeta_descriptor_bridge_conformance_gen PRIVATE TurboUtils::CMeta)
-set_target_properties(cmeta_descriptor_bridge_conformance_gen PROPERTIES FOLDER "formal")
+cmeta_add_formal_witness(cmeta_descriptor_bridge_conformance_witness
+  cmeta_descriptor_bridge_conformance_witness.c)
+target_link_libraries(cmeta_descriptor_bridge_conformance_witness PRIVATE TurboUtils::CMeta)
 add_test(NAME cmeta_descriptor_bridge_conformance
-         COMMAND cmeta_descriptor_bridge_conformance_gen)
+         COMMAND cmeta_descriptor_bridge_conformance_witness)
 
 add_executable(cmeta_type_identity_multi_tu EXCLUDE_FROM_ALL
   type_identity_multi_tu.c
@@ -32,44 +42,26 @@ target_include_directories(cmeta_type_universe_probe PRIVATE
 set_target_properties(cmeta_type_universe_probe PROPERTIES FOLDER "formal")
 add_test(NAME cmeta_type_universe_probe COMMAND cmeta_type_universe_probe)
 
-add_executable(cmeta_plan_conformance_gen EXCLUDE_FROM_ALL
-  cmeta_plan_conformance_gen.c)
+cmeta_add_formal_witness(cmeta_plan_conformance_witness
+  cmeta_plan_conformance_witness.c)
+target_link_libraries(cmeta_plan_conformance_witness PRIVATE TurboUtils::CFlow)
 
-target_compile_features(cmeta_plan_conformance_gen PRIVATE c_std_11)
-target_link_libraries(cmeta_plan_conformance_gen PRIVATE TurboUtils::CFlow)
-set_target_properties(cmeta_plan_conformance_gen PROPERTIES FOLDER "formal")
+cmeta_add_formal_witness(cmeta_structured_conformance_witness
+  cmeta_structured_conformance_witness.c)
+target_link_libraries(cmeta_structured_conformance_witness PRIVATE TurboUtils::CFlow)
 
-add_executable(cmeta_structured_conformance_gen EXCLUDE_FROM_ALL
-  cmeta_structured_conformance_gen.c)
+cmeta_add_formal_witness(cmeta_structured_policy_conformance_witness
+  cmeta_structured_policy_conformance_witness.c)
+target_link_libraries(cmeta_structured_policy_conformance_witness PRIVATE TurboUtils::CFlow)
 
-target_compile_features(cmeta_structured_conformance_gen PRIVATE c_std_11)
-target_link_libraries(cmeta_structured_conformance_gen PRIVATE TurboUtils::CFlow)
-set_target_properties(cmeta_structured_conformance_gen PROPERTIES FOLDER "formal")
+cmeta_add_formal_witness(cmeta_optimizer_conformance_witness
+  cmeta_optimizer_conformance_witness.c)
+target_link_libraries(cmeta_optimizer_conformance_witness PRIVATE TurboUtils::CFlow)
 
-add_executable(cmeta_structured_policy_conformance_gen EXCLUDE_FROM_ALL
-  cmeta_structured_policy_conformance_gen.c)
+cmeta_add_formal_witness(cmeta_optimizer_gating_conformance_witness
+  cmeta_optimizer_gating_conformance_witness.c)
+target_link_libraries(cmeta_optimizer_gating_conformance_witness PRIVATE TurboUtils::CFlow)
 
-target_compile_features(cmeta_structured_policy_conformance_gen PRIVATE c_std_11)
-target_link_libraries(cmeta_structured_policy_conformance_gen PRIVATE TurboUtils::CFlow)
-set_target_properties(cmeta_structured_policy_conformance_gen PROPERTIES FOLDER "formal")
-
-add_executable(cmeta_optimizer_conformance_gen EXCLUDE_FROM_ALL
-  cmeta_optimizer_conformance_gen.c)
-
-target_compile_features(cmeta_optimizer_conformance_gen PRIVATE c_std_11)
-target_link_libraries(cmeta_optimizer_conformance_gen PRIVATE TurboUtils::CFlow)
-set_target_properties(cmeta_optimizer_conformance_gen PROPERTIES FOLDER "formal")
-
-add_executable(cmeta_optimizer_gating_conformance_gen EXCLUDE_FROM_ALL
-  cmeta_optimizer_gating_conformance_gen.c)
-
-target_compile_features(cmeta_optimizer_gating_conformance_gen PRIVATE c_std_11)
-target_link_libraries(cmeta_optimizer_gating_conformance_gen PRIVATE TurboUtils::CFlow)
-set_target_properties(cmeta_optimizer_gating_conformance_gen PROPERTIES FOLDER "formal")
-
-add_executable(cmeta_optimizer_topology_conformance_gen EXCLUDE_FROM_ALL
-  cmeta_optimizer_topology_conformance_gen.c)
-
-target_compile_features(cmeta_optimizer_topology_conformance_gen PRIVATE c_std_11)
-target_link_libraries(cmeta_optimizer_topology_conformance_gen PRIVATE TurboUtils::CFlow)
-set_target_properties(cmeta_optimizer_topology_conformance_gen PROPERTIES FOLDER "formal")
+cmeta_add_formal_witness(cmeta_optimizer_topology_conformance_witness
+  cmeta_optimizer_topology_conformance_witness.c)
+target_link_libraries(cmeta_optimizer_topology_conformance_witness PRIVATE TurboUtils::CFlow)
