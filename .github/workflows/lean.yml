@@ -7,6 +7,7 @@ on:
       - "formal/**"
       - "cmeta/**"
       - "cflow/**"
+      - "utils/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
       - "presets/**"
@@ -16,6 +17,7 @@ on:
       - "formal/**"
       - "cmeta/**"
       - "cflow/**"
+      - "utils/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
       - "presets/**"
@@ -48,6 +50,7 @@ jobs:
                      cmeta_descriptor_bridge_conformance_witness \
                      cmeta_type_identity_multi_tu \
                      cmeta_type_universe_probe \
+                     cmeta_fmt_args_simplification_witness \
                      cmeta_plan_conformance_witness \
                      cmeta_structured_conformance_witness \
                      cmeta_structured_policy_conformance_witness \
@@ -107,12 +110,13 @@ jobs:
           diff -u formal/CMeta/OptimizerTopologyGeneratedC.lean \
             "$generated_dir/OptimizerTopologyGeneratedC.lean"
 
-      - name: Execute TypeId applicability probes
+      - name: Execute applicability probes
         shell: bash
         run: |
           set -euo pipefail
           build/formal-linux/bin/cmeta_type_identity_multi_tu
           build/formal-linux/bin/cmeta_type_universe_probe
+          build/formal-linux/bin/cmeta_fmt_args_simplification_witness
 
       - name: Reject proof placeholders
         shell: bash
