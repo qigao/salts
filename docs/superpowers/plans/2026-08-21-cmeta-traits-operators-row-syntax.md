@@ -4,7 +4,7 @@
 
 **Goal:** Replace positional `Traits(...)` and human-written 15-field CFlow operator rows with structured tuple-row source syntax while preserving the existing normalized descriptors, `Replay(CFlowOperators, M)` consumer contract, callable ABI, graph semantics, lowering semantics, and Lean observations.
 
-**Architecture:** Keep one canonical internal representation. `Traits(...)` rows normalize directly into the existing `cmeta_type_traits` object; `Operators(M, ...)` accepts either the current flat 15-field row or the new 7-field composite row and normalizes the latter before invoking the existing consumer `M`. CFlow consumers remain unchanged: only source declarations and the single normalization boundary know about structured rows.
+**Architecture:** Keep one canonical internal representation. `Traits(...)` rows normalize directly into the existing `cmeta_type_traits` object. `Operators(M, ...)` accepts either the current flat 15-field row or the new 7-field composite row and normalizes the latter through an explicit expansion trampoline before invoking the existing 15-argument consumer `M`. No CFlow consumer learns the structured syntax.
 
 **Tech Stack:** Strict C11 preprocessor/macros, CMake presets, GCC, Clang, existing CMeta `Schema`/`Replay` kernel, existing C/Lean conformance snapshots, Lean 4.30.0 / Lake.
 
@@ -16,13 +16,13 @@
 - Do not change `cmeta_type_traits`, CFlow operator descriptor layout, callable ABI, graph/cardinality semantics, optimizer semantics, plan semantics, execution semantics, or canonical lowering.
 - Keep `Enum`/`Struct` homogeneous tuple rows unchanged.
 - Do not add wrapper vocabulary such as `Equal(...)`, `Hash(...)`, `Arity(...)`, `Effect(...)`, `Field(...)`, or `Item(...)`.
-- Phase 1 requires all five operator subrows in canonical order: `call`, `fn`, `flow`, `semantic`, `effect`.
-- Phase 1 keeps full effect tokens such as `CMETA_EFFECT_PURE`; no default inference or short aliases.
-- Trait capability flags are derived from rows. Do not infer `CMETA_TRAIT_TRIVIAL_COPY` or `CMETA_TRAIT_TRIVIAL_DESTROY` in this slice.
-- Invalid row tags, duplicate trait tags, missing operator subrows, duplicate/misordered operator subrows, and malformed row arities must fail at compile/preprocess time.
-- Run all formal C work through the existing `formal-linux-gcc` / `formal-linux-clang` CMake presets; do not add ad-hoc compiler configuration to workflow YAML.
-- Existing generated C/Lean semantic snapshots must remain byte-for-byte unchanged after the CFlow operator migration.
-- No new Lean axioms, `constant`, `sorry`, or `admit`; `lake build --wfail` must remain clean.
+- Phase 1 requires operator subrows in canonical order: `call`, `fn`, `flow`, `semantic`, `effect`.
+- Phase 1 keeps full effect tokens such as `CMETA_EFFECT_PURE`; no defaults or short aliases.
+- Trait flags are derived from rows. Do not infer `CMETA_TRAIT_TRIVIAL_COPY` or `CMETA_TRAIT_TRIVIAL_DESTROY`.
+- Invalid tags, duplicate trait tags, missing/duplicate/misordered operator subrows, and malformed arities must fail during compile/preprocess.
+- Use only `formal-linux-gcc` / `formal-linux-clang` presets for compiler configuration.
+- Existing committed `formal/CMeta/*GeneratedC.lean` semantic snapshots must remain byte-for-byte unchanged after the operator migration.
+- `lake build --wfail` must remain clean; no `axiom`, `constant`, `sorry`, or `admit`.
 
 ---
 
@@ -35,36 +35,30 @@
 - Modify after RED: `cmeta/include/cmeta/type_traits.h`
 
 **Interfaces:**
-- Consumes: existing `Schema(...)`, `CMETA_LOCAL`, `cmeta_trait_flags`, `cmeta_type_traits`.
-- Produces: public `Traits(name, (tag, fn), ...)` and internal compatibility macro `CMETA_TRAITS_POSITIONAL(name, flags, equal, hash, compare, copy, move, destroy)`.
+- Consumes: `Schema(...)`, `CMETA_LOCAL`, `cmeta_trait_flags`, `cmeta_type_traits`.
+- Produces: `Traits(name, (tag, fn), ...)` plus internal `CMETA_TRAITS_POSITIONAL(...)` compatibility constructor.
 
-- [ ] **Step 1: Add a failing strict-C11 witness for structured trait rows**
+- [ ] **Step 1: Write the failing positive witness**
 
-Create `formal/cmeta_traits_row_syntax_witness.c` with real function pointers and runtime assertions:
+Create `formal/cmeta_traits_row_syntax_witness.c`:
 
 ```c
 #include <cmeta/type_traits.h>
-
 #include <assert.h>
 #include <stdint.h>
 #include <string.h>
 
-typedef struct sample_point {
-    int x;
-    int y;
-} sample_point;
+typedef struct sample_point { int x; int y; } sample_point;
 
 static bool sample_point_equal(const void *a, const void *b) {
-    const sample_point *left = (const sample_point *)a;
-    const sample_point *right = (const sample_point *)b;
-    return left->x == right->x && left->y == right->y;
+    const sample_point *l = (const sample_point *)a;
+    const sample_point *r = (const sample_point *)b;
+    return l->x == r->x && l->y == r->y;
 }
-
 static uint64_t sample_point_hash(const void *value) {
-    const sample_point *point = (const sample_point *)value;
-    return (uint64_t)(unsigned)point->x * 131u + (uint64_t)(unsigned)point->y;
+    const sample_point *p = (const sample_point *)value;
+    return (uint64_t)(unsigned)p->x * 131u + (uint64_t)(unsigned)p->y;
 }
-
 static bool sample_point_copy(void *dst, const void *src) {
     memcpy(dst, src, sizeof(sample_point));
     return true;
@@ -96,35 +90,25 @@ cmeta_add_formal_witness(cmeta_traits_row_syntax_witness
   cmeta_traits_row_syntax_witness.c)
 target_include_directories(cmeta_traits_row_syntax_witness PRIVATE
   ${PROJECT_SOURCE_DIR}/cmeta/include)
-add_test(NAME cmeta_traits_row_syntax
-         COMMAND cmeta_traits_row_syntax_witness)
+add_test(NAME cmeta_traits_row_syntax COMMAND cmeta_traits_row_syntax_witness)
 ```
 
-Add `cmeta_traits_row_syntax_witness` to `.github/workflows/lean.yml` under both the existing `Build C conformance witnesses` target list and `Execute applicability probes` command list.
+Add `cmeta_traits_row_syntax_witness` to the workflow's existing C witness target list and execute `"$binary_dir/bin/cmeta_traits_row_syntax_witness"` in `Execute applicability probes`.
 
-- [ ] **Step 2: Verify RED before touching production macros**
-
-Run:
+- [ ] **Step 2: Run RED on both compiler presets**
 
 ```bash
 cmake --preset formal-linux-gcc
 cmake --build --preset build-formal-linux-gcc --target cmeta_traits_row_syntax_witness
-```
-
-Expected: FAIL because the current public `Traits` macro requires eight positional arguments and cannot consume tuple rows.
-
-Repeat with:
-
-```bash
 cmake --preset formal-linux-clang
 cmake --build --preset build-formal-linux-clang --target cmeta_traits_row_syntax_witness
 ```
 
-Expected: the same feature-missing failure under Clang.
+Expected: both builds fail because current `Traits` requires eight positional arguments.
 
-- [ ] **Step 3: Replace only the public Traits source normalizer**
+- [ ] **Step 3: Implement the minimal row-to-descriptor normalizer**
 
-In `cmeta/include/cmeta/type_traits.h`, preserve the old constructor under an explicitly internal name:
+In `cmeta/include/cmeta/type_traits.h`, preserve the old constructor only as:
 
 ```c
 #define CMETA_TRAITS_POSITIONAL(name, flags_, equal_, hash_, compare_, copy_, move_, destroy_) \
@@ -133,7 +117,7 @@ In `cmeta/include/cmeta/type_traits.h`, preserve the old constructor under an ex
     }
 ```
 
-Add one tag-to-flag mapping and one tag-to-designated-initializer mapping per supported callable trait:
+Add exact row mappings:
 
 ```c
 #define CMETA_TRAIT_FLAG_equal   CMETA_TRAIT_EQUAL
@@ -154,11 +138,7 @@ Add one tag-to-flag mapping and one tag-to-designated-initializer mapping per su
     | CMETA_PP_CAT(CMETA_TRAIT_FLAG_, tag)
 #define CMETA_TRAIT_INIT_ROW(tag, fn) \
     CMETA_PP_CAT(CMETA_TRAIT_INIT_, tag)(fn)
-```
 
-Define the new public surface so flags and slots are derived from the same rows:
-
-```c
 #define Traits(name, ...) \
     CMETA_LOCAL const cmeta_type_traits cmeta_traits_##name = { \
         .flags = (cmeta_trait_flags)(0u Schema(CMETA_TRAIT_FLAG_ROW, __VA_ARGS__)), \
@@ -166,38 +146,30 @@ Define the new public surface so flags and slots are derived from the same rows:
     }
 ```
 
-Do not add trivial-copy/destruction inference.
-
-- [ ] **Step 4: Verify GREEN on both formal presets**
-
-Run:
+- [ ] **Step 4: Run GREEN on both presets**
 
 ```bash
 cmake --preset formal-linux-gcc
 cmake --build --preset build-formal-linux-gcc --target cmeta_traits_row_syntax_witness
-./build/formal-linux-gcc/formal/cmeta_traits_row_syntax_witness
-
+./build/formal-linux-gcc/bin/cmeta_traits_row_syntax_witness
 cmake --preset formal-linux-clang
 cmake --build --preset build-formal-linux-clang --target cmeta_traits_row_syntax_witness
-./build/formal-linux-clang/formal/cmeta_traits_row_syntax_witness
+./build/formal-linux-clang/bin/cmeta_traits_row_syntax_witness
 ```
 
-If the executable path is emitted under `bin/` by the preset, use the generated `build/formal-linux-*/bin/cmeta_traits_row_syntax_witness` path consistently with the workflow.
+Expected: both executables pass.
 
-Expected: build and execution PASS under both compilers.
-
-- [ ] **Step 5: Commit the positive Traits slice**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add cmeta/include/cmeta/type_traits.h \
-        formal/cmeta_traits_row_syntax_witness.c \
+git add cmeta/include/cmeta/type_traits.h formal/cmeta_traits_row_syntax_witness.c \
         formal/CMakeLists.txt .github/workflows/lean.yml
 git commit -m "feat(cmeta): add structured trait rows"
 ```
 
 ---
 
-### Task 2: Trait Row Diagnostics and Duplicate Rejection
+### Task 2: Trait Diagnostics
 
 **Files:**
 - Create: `formal/cmeta_traits_duplicate_tag_fail.c`
@@ -207,47 +179,40 @@ git commit -m "feat(cmeta): add structured trait rows"
 - Modify after RED: `cmeta/include/cmeta/type_traits.h`
 
 **Interfaces:**
-- Consumes: Task 1 structured `Traits(...)`.
-- Produces: compile-time rejection of duplicate, unknown, and malformed trait rows without making row order semantically observable.
+- Consumes: Task 1 `Traits(...)` rows.
+- Produces: deterministic duplicate, unknown-tag, and arity rejection.
 
-- [ ] **Step 1: Add negative sources**
+- [ ] **Step 1: Add the three invalid translation units**
 
-Duplicate tag:
+`formal/cmeta_traits_duplicate_tag_fail.c`:
 
 ```c
 #include <cmeta/type_traits.h>
 static bool eq1(const void *a, const void *b) { return a == b; }
 static bool eq2(const void *a, const void *b) { return a == b; }
-Traits(duplicate_traits,
-    (equal, eq1),
-    (equal, eq2)
-);
+Traits(duplicate_traits, (equal, eq1), (equal, eq2));
 int main(void) { return 0; }
 ```
 
-Unknown tag:
+`formal/cmeta_traits_unknown_tag_fail.c`:
 
 ```c
 #include <cmeta/type_traits.h>
 static void serialize_value(void) {}
-Traits(unknown_traits,
-    (serialize, serialize_value)
-);
+Traits(unknown_traits, (serialize, serialize_value));
 int main(void) { return 0; }
 ```
 
-Malformed payload:
+`formal/cmeta_traits_malformed_row_fail.c`:
 
 ```c
 #include <cmeta/type_traits.h>
 static bool eq1(const void *a, const void *b) { return a == b; }
-Traits(malformed_traits,
-    (equal, eq1, unexpected)
-);
+Traits(malformed_traits, (equal, eq1, unexpected));
 int main(void) { return 0; }
 ```
 
-- [ ] **Step 2: Add a reusable strict-C11 negative compile helper and verify RED quality**
+- [ ] **Step 2: Add one reusable negative-compile helper and verify RED**
 
 Add to `formal/CMakeLists.txt`:
 
@@ -260,30 +225,23 @@ function(cmeta_expect_compile_failure name source)
       "-DCMAKE_C_STANDARD=11"
       "-DCMAKE_C_STANDARD_REQUIRED=ON"
       "-DCMAKE_C_EXTENSIONS=OFF"
-      "-DCMAKE_C_FLAGS=-I${PROJECT_SOURCE_DIR}/cmeta/include -I${PROJECT_SOURCE_DIR}/cflow/include"
+      "-DCMAKE_C_FLAGS:STRING=-I${PROJECT_SOURCE_DIR}/cmeta/include -I${PROJECT_SOURCE_DIR}/cflow/include"
     OUTPUT_VARIABLE ${name}_OUTPUT)
   if(${name}_COMPILED)
     message(FATAL_ERROR "${name} unexpectedly compiled")
   endif()
 endfunction()
+
+cmeta_expect_compile_failure(CMETA_TRAITS_DUPLICATE_TAG cmeta_traits_duplicate_tag_fail.c)
+cmeta_expect_compile_failure(CMETA_TRAITS_UNKNOWN_TAG cmeta_traits_unknown_tag_fail.c)
+cmeta_expect_compile_failure(CMETA_TRAITS_MALFORMED_ROW cmeta_traits_malformed_row_fail.c)
 ```
 
-Register:
+Run both configure presets. Expected RED: duplicate-tag probe unexpectedly compiles, causing configure failure; unknown/malformed probes are rejected.
 
-```cmake
-cmeta_expect_compile_failure(CMETA_TRAITS_DUPLICATE_TAG
-  cmeta_traits_duplicate_tag_fail.c)
-cmeta_expect_compile_failure(CMETA_TRAITS_UNKNOWN_TAG
-  cmeta_traits_unknown_tag_fail.c)
-cmeta_expect_compile_failure(CMETA_TRAITS_MALFORMED_ROW
-  cmeta_traits_malformed_row_fail.c)
-```
+- [ ] **Step 3: Add duplicate detection using owner-qualified enum markers**
 
-Run both configure presets. Expected before the duplicate guard is added: the duplicate case may compile or only warn; that is the intended RED. Unknown/malformed cases must already fail, proving tag dispatch is not silently accepted.
-
-- [ ] **Step 3: Add deterministic duplicate detection to `Traits(...)`**
-
-Use the existing context-preserving `CMETA_SCHEMA_ROWS` so each row can emit one owner-qualified enumerator:
+Add:
 
 ```c
 #define CMETA_TRAIT_SEEN_equal(name)   CMETA_PP_CAT(name, __cmeta_seen_equal),
@@ -292,16 +250,15 @@ Use the existing context-preserving `CMETA_SCHEMA_ROWS` so each row can emit one
 #define CMETA_TRAIT_SEEN_copy(name)    CMETA_PP_CAT(name, __cmeta_seen_copy),
 #define CMETA_TRAIT_SEEN_move(name)    CMETA_PP_CAT(name, __cmeta_seen_move),
 #define CMETA_TRAIT_SEEN_destroy(name) CMETA_PP_CAT(name, __cmeta_seen_destroy),
-
 #define CMETA_TRAIT_SEEN_ROW(row, name) \
-    CMETA_TRAIT_SEEN_ROW_I(name, CMETA_PP_UNPAREN row)
-#define CMETA_TRAIT_SEEN_ROW_I(name, ...) \
-    CMETA_TRAIT_SEEN_ROW_II(name, __VA_ARGS__)
-#define CMETA_TRAIT_SEEN_ROW_II(name, tag, fn) \
+    CMETA_TRAIT_SEEN_ROW_E(name, CMETA_PP_UNPAREN row)
+#define CMETA_TRAIT_SEEN_ROW_E(name, ...) \
+    CMETA_TRAIT_SEEN_ROW_I(name, __VA_ARGS__)
+#define CMETA_TRAIT_SEEN_ROW_I(name, tag, fn) \
     CMETA_PP_CAT(CMETA_TRAIT_SEEN_, tag)(name)
 ```
 
-Make `Traits(...)` emit an anonymous enum before the descriptor:
+Change `Traits` to emit markers before the descriptor:
 
 ```c
 #define Traits(name, ...) \
@@ -315,30 +272,15 @@ Make `Traits(...)` emit an anonymous enum before the descriptor:
     }
 ```
 
-A duplicate tag now creates a duplicate enumerator in the same enum; an unknown tag cannot resolve a `CMETA_TRAIT_SEEN_<tag>` handler; malformed arity cannot satisfy the two-field mapper.
+- [ ] **Step 4: Verify GREEN**
 
-- [ ] **Step 4: Verify all negative and positive cases**
+Run both configure presets and both positive witness executables. Expected: all three negative probes are rejected and the valid structured declaration still passes.
 
-Run:
-
-```bash
-cmake --preset formal-linux-gcc
-cmake --build --preset build-formal-linux-gcc --target cmeta_traits_row_syntax_witness
-./build/formal-linux-gcc/bin/cmeta_traits_row_syntax_witness
-
-cmake --preset formal-linux-clang
-cmake --build --preset build-formal-linux-clang --target cmeta_traits_row_syntax_witness
-./build/formal-linux-clang/bin/cmeta_traits_row_syntax_witness
-```
-
-Expected: configuration reports all three negative probes rejected, while the positive witness builds and runs.
-
-- [ ] **Step 5: Commit trait diagnostics**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add cmeta/include/cmeta/type_traits.h formal/CMakeLists.txt \
-        formal/cmeta_traits_duplicate_tag_fail.c \
-        formal/cmeta_traits_unknown_tag_fail.c \
+        formal/cmeta_traits_duplicate_tag_fail.c formal/cmeta_traits_unknown_tag_fail.c \
         formal/cmeta_traits_malformed_row_fail.c
 git commit -m "test(cmeta): reject invalid trait rows"
 ```
@@ -354,12 +296,12 @@ git commit -m "test(cmeta): reject invalid trait rows"
 - Modify after RED: `cmeta/include/cmeta/pp.h`
 
 **Interfaces:**
-- Consumes: existing `Schema`, `CMETA_SCHEMA_ROWS`, `CMETA_PP_NARG`, `CMETA_PP_CAT`.
-- Produces: `Operators(M, ...)` accepting either the existing flat 15-field row or the new composite 7-field row `(E, method, callRow, fnRow, flowRow, semanticRow, effectRow)` and always invoking `M` with the existing 15 normalized fields.
+- Consumes: `CMETA_SCHEMA_ROWS`, `CMETA_PP_NARG`, `CMETA_PP_CAT`, `CMETA_PP_UNPAREN`.
+- Produces: `Operators(M, ...)` that invokes `M` with exactly the existing 15 normalized arguments for both flat-15 and structured-7 source rows.
 
-- [ ] **Step 1: Add a positive structured-vs-flat normalization witness**
+- [ ] **Step 1: Add the structured-vs-flat positive witness**
 
-Create one test operator with integer tokens so the witness tests only preprocessor normalization, not CFlow semantics:
+Create `formal/cmeta_operator_row_syntax_witness.c`:
 
 ```c
 #include <cmeta/pp.h>
@@ -370,18 +312,11 @@ Create one test operator with integer tokens so the witness tests only preproces
 #define CAPTURE_FLAT(E, method, margc, fnarg, childarg, farity, p0, p1, p2, ret, out, card, childrule, semantic, effect) \
     static const int flat[] = { E, margc, fnarg, childarg, farity, p0, p1, p2, ret, out, card, childrule, semantic, effect };
 
-#define StructuredOps(M) \
-    Operators(M, \
-        (10, sample, \
-            (call, 1, 2, 3), \
-            (fn, 4, 5, 6, 7, 8), \
-            (flow, 9, 10, 11), \
-            (semantic, 12), \
-            (effect, 13)))
-
-#define FlatOps(M) \
-    Operators(M, \
-        (10, sample, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13))
+#define StructuredOps(M) Operators(M, \
+    (10, sample, (call, 1, 2, 3), (fn, 4, 5, 6, 7, 8), \
+     (flow, 9, 10, 11), (semantic, 12), (effect, 13)))
+#define FlatOps(M) Operators(M, \
+    (10, sample, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13))
 
 Replay(StructuredOps, CAPTURE_STRUCT)
 Replay(FlatOps, CAPTURE_FLAT)
@@ -394,74 +329,67 @@ int main(void) {
 }
 ```
 
-Wire `cmeta_operator_row_syntax_witness` into `formal/CMakeLists.txt`, the workflow build target list, and applicability probe list just like Task 1.
+Wire the witness into `formal/CMakeLists.txt`, the workflow witness target list, and `Execute applicability probes`.
 
-- [ ] **Step 2: Verify RED under GCC and Clang**
+- [ ] **Step 2: Run RED on both presets**
 
-Run both preset builds for only `cmeta_operator_row_syntax_witness`.
+Build only `cmeta_operator_row_syntax_witness` under GCC and Clang. Expected: both fail because current `Operators` forwards seven fields directly to a 15-argument consumer.
 
-Expected: FAIL because current `Operators(M, ...)` forwards the seven structured top-level fields directly to a consumer requiring fifteen normalized arguments.
+- [ ] **Step 3: Implement the two-stage operator expansion trampoline**
 
-- [ ] **Step 3: Implement one normalizer in `cmeta/include/cmeta/pp.h`**
-
-Replace only the current semantic alias implementation:
+In `cmeta/include/cmeta/pp.h`, replace only the current `Operators` semantic alias with:
 
 ```c
 #define CMETA_OPERATOR_ROW_APPLY(row, M) \
-    CMETA_OPERATOR_ROW_APPLY_I(M, CMETA_PP_UNPAREN row)
+    CMETA_OPERATOR_ROW_APPLY_E(M, CMETA_PP_UNPAREN row)
+#define CMETA_OPERATOR_ROW_APPLY_E(M, ...) \
+    CMETA_OPERATOR_ROW_APPLY_I(M, __VA_ARGS__)
 #define CMETA_OPERATOR_ROW_APPLY_I(M, ...) \
-    CMETA_OPERATOR_ROW_APPLY_II(M, CMETA_PP_NARG(__VA_ARGS__), __VA_ARGS__)
-#define CMETA_OPERATOR_ROW_APPLY_II(M, n, ...) \
+    CMETA_OPERATOR_ROW_APPLY_N(M, CMETA_PP_NARG(__VA_ARGS__), __VA_ARGS__)
+#define CMETA_OPERATOR_ROW_APPLY_N(M, n, ...) \
+    CMETA_OPERATOR_ROW_APPLY_N_E(M, n, __VA_ARGS__)
+#define CMETA_OPERATOR_ROW_APPLY_N_E(M, n, ...) \
     CMETA_PP_CAT(CMETA_OPERATOR_ROW_APPLY_, n)(M, __VA_ARGS__)
 
 #define CMETA_OPERATOR_ROW_APPLY_15(M, ...) M(__VA_ARGS__)
 ```
 
-Add tag-specific extractors. Only the valid tag for each canonical position exists:
+Add canonical tag extractors:
 
 ```c
 #define CMETA_OPERATOR_CALL_ARGS(tag, ...) \
     CMETA_PP_CAT(CMETA_OPERATOR_CALL_ARGS_, tag)(__VA_ARGS__)
-#define CMETA_OPERATOR_CALL_ARGS_call(margc, fnarg, childarg) \
-    margc, fnarg, childarg
-
+#define CMETA_OPERATOR_CALL_ARGS_call(margc, fnarg, childarg) margc, fnarg, childarg
 #define CMETA_OPERATOR_FN_ARGS(tag, ...) \
     CMETA_PP_CAT(CMETA_OPERATOR_FN_ARGS_, tag)(__VA_ARGS__)
-#define CMETA_OPERATOR_FN_ARGS_fn(arity, p0, p1, p2, ret) \
-    arity, p0, p1, p2, ret
-
+#define CMETA_OPERATOR_FN_ARGS_fn(arity, p0, p1, p2, ret) arity, p0, p1, p2, ret
 #define CMETA_OPERATOR_FLOW_ARGS(tag, ...) \
     CMETA_PP_CAT(CMETA_OPERATOR_FLOW_ARGS_, tag)(__VA_ARGS__)
-#define CMETA_OPERATOR_FLOW_ARGS_flow(out, card, childrule) \
-    out, card, childrule
-
+#define CMETA_OPERATOR_FLOW_ARGS_flow(out, card, childrule) out, card, childrule
 #define CMETA_OPERATOR_SEMANTIC_ARG(tag, value) \
     CMETA_PP_CAT(CMETA_OPERATOR_SEMANTIC_ARG_, tag)(value)
 #define CMETA_OPERATOR_SEMANTIC_ARG_semantic(value) value
-
 #define CMETA_OPERATOR_EFFECT_ARG(tag, value) \
     CMETA_PP_CAT(CMETA_OPERATOR_EFFECT_ARG_, tag)(value)
 #define CMETA_OPERATOR_EFFECT_ARG_effect(value) value
 ```
 
-Use an expansion trampoline so comma-producing subrow extractors are expanded before the final consumer call is parsed:
+Normalize structured rows through a second reparse boundary so comma-producing extractors become individual arguments before `M` is parsed:
 
 ```c
 #define CMETA_OPERATOR_ROW_APPLY_7(M, E, method, callrow, fnrow, flowrow, semanticrow, effectrow) \
-    CMETA_OPERATOR_ROW_APPLY_STRUCTURED(M, E, method, \
+    CMETA_OPERATOR_ROW_STRUCT_E(M, E, method, \
         CMETA_OPERATOR_CALL_ARGS callrow, \
         CMETA_OPERATOR_FN_ARGS fnrow, \
         CMETA_OPERATOR_FLOW_ARGS flowrow, \
         CMETA_OPERATOR_SEMANTIC_ARG semanticrow, \
         CMETA_OPERATOR_EFFECT_ARG effectrow)
-
-#define CMETA_OPERATOR_ROW_APPLY_STRUCTURED(...) \
-    CMETA_OPERATOR_ROW_APPLY_STRUCTURED_I(__VA_ARGS__)
-#define CMETA_OPERATOR_ROW_APPLY_STRUCTURED_I(M, E, method, margc, fnarg, childarg, farity, p0, p1, p2, ret, out, card, childrule, semantic, effect) \
+#define CMETA_OPERATOR_ROW_STRUCT_E(...) CMETA_OPERATOR_ROW_STRUCT_I(__VA_ARGS__)
+#define CMETA_OPERATOR_ROW_STRUCT_I(M, E, method, margc, fnarg, childarg, farity, p0, p1, p2, ret, out, card, childrule, semantic, effect) \
     M(E, method, margc, fnarg, childarg, farity, p0, p1, p2, ret, out, card, childrule, semantic, effect)
 ```
 
-Change `Operators` from direct `Schema` replay to the context-preserving normalizer:
+Finally:
 
 ```c
 #undef Operators
@@ -469,28 +397,28 @@ Change `Operators` from direct `Schema` replay to the context-preserving normali
     CMETA_SCHEMA_ROWS(CMETA_OPERATOR_ROW_APPLY, M, __VA_ARGS__)
 ```
 
-Do not touch `Replay(schema, M)`.
+Do not change `Replay(schema, M)`.
 
-- [ ] **Step 4: Verify flat compatibility and structured GREEN**
+- [ ] **Step 4: Run GREEN plus flat compatibility**
 
-Run both positive witness builds and executions. Then build at least the existing `cmeta_plan_conformance_witness` and `cmeta_optimizer_conformance_witness` under both presets to prove flat `CFlowOperators` still works before migration.
+Build/run `cmeta_operator_row_syntax_witness` under both presets, then build `cmeta_plan_conformance_witness` and `cmeta_optimizer_conformance_witness` under both presets before migrating `CFlowOperators`.
 
-Expected: structured witness PASS; existing flat consumers still compile unchanged.
+Expected: the new structured row and the old flat row normalize identically; old flat CFlow provider remains compatible.
 
-- [ ] **Step 5: Commit operator normalization**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add cmeta/include/cmeta/pp.h \
-        formal/cmeta_operator_row_syntax_witness.c \
+git add cmeta/include/cmeta/pp.h formal/cmeta_operator_row_syntax_witness.c \
         formal/CMakeLists.txt .github/workflows/lean.yml
 git commit -m "feat(cmeta): normalize structured operator rows"
 ```
 
 ---
 
-### Task 4: Operator Row Diagnostics
+### Task 4: Operator Diagnostics
 
 **Files:**
+- Create: `formal/cmeta_operator_invalid_row_fixture.h`
 - Create: `formal/cmeta_operator_unknown_tag_fail.c`
 - Create: `formal/cmeta_operator_duplicate_subrow_fail.c`
 - Create: `formal/cmeta_operator_missing_subrow_fail.c`
@@ -498,89 +426,97 @@ git commit -m "feat(cmeta): normalize structured operator rows"
 - Modify: `formal/CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: Task 3 `Operators` normalizer and Task 2 `cmeta_expect_compile_failure` helper.
-- Produces: explicit compile-time rejection of malformed composite operator rows while keeping flat 15-field internal compatibility.
+- Consumes: Task 3 `Operators` normalizer and Task 2 negative-compile helper.
+- Produces: compile-time rejection of invalid structured operator rows while flat-15 compatibility remains valid.
 
-- [ ] **Step 1: Write the four negative sources**
+- [ ] **Step 1: Add the shared invalid-row fixture**
 
-Use a 15-argument consumer macro in each source. Cover:
-
-```c
-/* unknown tag in call position */
-(10, sample,
-    (unknown, 1, 2, 3),
-    (fn, 4, 5, 6, 7, 8),
-    (flow, 9, 10, 11),
-    (semantic, 12),
-    (effect, 13))
-```
+`formal/cmeta_operator_invalid_row_fixture.h`:
 
 ```c
-/* duplicate/misordered call subrow in fn position */
-(10, sample,
-    (call, 1, 2, 3),
-    (call, 4, 5, 6, 7, 8),
-    (flow, 9, 10, 11),
-    (semantic, 12),
-    (effect, 13))
+#include <cmeta/pp.h>
+#define CMETA_INVALID_CONSUMER(E, method, margc, fnarg, childarg, farity, p0, p1, p2, ret, out, card, childrule, semantic, effect) \
+    enum { cmeta_invalid_operator_must_not_compile = (E) };
+#define InvalidOps(M) Operators(M, INVALID_OPERATOR_ROW)
+Replay(InvalidOps, CMETA_INVALID_CONSUMER)
+int main(void) { return 0; }
 ```
+
+- [ ] **Step 2: Add four exact invalid rows**
+
+`formal/cmeta_operator_unknown_tag_fail.c`:
 
 ```c
-/* missing effect subrow: top-level arity is six instead of seven */
-(10, sample,
-    (call, 1, 2, 3),
-    (fn, 4, 5, 6, 7, 8),
-    (flow, 9, 10, 11),
-    (semantic, 12))
+#define INVALID_OPERATOR_ROW \
+    (10, sample, (unknown, 1, 2, 3), (fn, 4, 5, 6, 7, 8), \
+     (flow, 9, 10, 11), (semantic, 12), (effect, 13))
+#include "cmeta_operator_invalid_row_fixture.h"
 ```
+
+`formal/cmeta_operator_duplicate_subrow_fail.c`:
 
 ```c
-/* malformed fn payload */
-(10, sample,
-    (call, 1, 2, 3),
-    (fn, 4, 5, 6, 7, 8, 99),
-    (flow, 9, 10, 11),
-    (semantic, 12),
-    (effect, 13))
+#define INVALID_OPERATOR_ROW \
+    (10, sample, (call, 1, 2, 3), (call, 4, 5, 6, 7, 8), \
+     (flow, 9, 10, 11), (semantic, 12), (effect, 13))
+#include "cmeta_operator_invalid_row_fixture.h"
 ```
 
-- [ ] **Step 2: Register all four with `cmeta_expect_compile_failure` and verify the failure boundary**
+`formal/cmeta_operator_missing_subrow_fail.c`:
 
-Add all four probes to `formal/CMakeLists.txt`. Run both configure presets.
+```c
+#define INVALID_OPERATOR_ROW \
+    (10, sample, (call, 1, 2, 3), (fn, 4, 5, 6, 7, 8), \
+     (flow, 9, 10, 11), (semantic, 12))
+#include "cmeta_operator_invalid_row_fixture.h"
+```
 
-Expected: each invalid source is rejected during `try_compile`; the valid structured witness from Task 3 still builds and runs.
+`formal/cmeta_operator_malformed_subrow_fail.c`:
 
-- [ ] **Step 3: Improve only diagnostics if a case fails for the wrong reason**
+```c
+#define INVALID_OPERATOR_ROW \
+    (10, sample, (call, 1, 2, 3), (fn, 4, 5, 6, 7, 8, 99), \
+     (flow, 9, 10, 11), (semantic, 12), (effect, 13))
+#include "cmeta_operator_invalid_row_fixture.h"
+```
 
-If a malformed case accidentally reaches the consumer rather than failing in the normalizer, add only the missing arity/tag dispatch guard in `pp.h`. Do not add arbitrary-order parsing or defaults. The expected failure mechanism is an undefined canonical tag handler or an unsupported top-level/subrow arity.
+- [ ] **Step 3: Register all four probes and verify rejection**
 
-- [ ] **Step 4: Commit operator diagnostics**
+Add:
+
+```cmake
+cmeta_expect_compile_failure(CMETA_OPERATOR_UNKNOWN_TAG cmeta_operator_unknown_tag_fail.c)
+cmeta_expect_compile_failure(CMETA_OPERATOR_DUPLICATE_SUBROW cmeta_operator_duplicate_subrow_fail.c)
+cmeta_expect_compile_failure(CMETA_OPERATOR_MISSING_SUBROW cmeta_operator_missing_subrow_fail.c)
+cmeta_expect_compile_failure(CMETA_OPERATOR_MALFORMED_SUBROW cmeta_operator_malformed_subrow_fail.c)
+```
+
+Run both configure presets. Expected: all four probes are rejected. Also build/run `cmeta_operator_row_syntax_witness` under both presets to prove valid structured syntax is still accepted.
+
+The required failure mechanisms are fixed by Task 3: unknown/misordered tags resolve to an undefined canonical tag handler; a missing top-level subrow dispatches to an undefined `CMETA_OPERATOR_ROW_APPLY_6`; malformed `fn` payload violates the exact `CMETA_OPERATOR_FN_ARGS_fn` arity. Do not add defaults or arbitrary-order parsing.
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add formal/CMakeLists.txt \
-        formal/cmeta_operator_unknown_tag_fail.c \
-        formal/cmeta_operator_duplicate_subrow_fail.c \
-        formal/cmeta_operator_missing_subrow_fail.c \
-        formal/cmeta_operator_malformed_subrow_fail.c \
-        cmeta/include/cmeta/pp.h
+git add formal/CMakeLists.txt formal/cmeta_operator_invalid_row_fixture.h \
+        formal/cmeta_operator_unknown_tag_fail.c formal/cmeta_operator_duplicate_subrow_fail.c \
+        formal/cmeta_operator_missing_subrow_fail.c formal/cmeta_operator_malformed_subrow_fail.c
 git commit -m "test(cmeta): reject invalid operator rows"
 ```
 
 ---
 
-### Task 5: Migrate `CFlowOperators` Without Semantic Drift
+### Task 5: Migrate `CFlowOperators` and Prove Semantic Stability
 
 **Files:**
 - Modify: `cflow/include/cflow/operators.h`
-- Test unchanged: existing formal witnesses and all committed `formal/CMeta/*GeneratedC.lean` snapshots.
+- Verify unchanged: all committed `formal/CMeta/*GeneratedC.lean` snapshots.
 
 **Interfaces:**
-- Consumes: Task 3 structured `Operators` normalizer.
-- Produces: structured source declaration for the same six CFlow operators; normalized output remains the existing 15-field consumer ABI.
+- Consumes: Task 3 normalizer.
+- Produces: structured source rows for the same six operators and the same normalized 15-field consumer ABI.
 
-- [ ] **Step 1: Rewrite all six operator source rows structurally**
-
-Replace the flat rows with exactly:
+- [ ] **Step 1: Rewrite all six rows exactly**
 
 ```c
 #define CFlowOperators(M) \
@@ -623,40 +559,32 @@ Replace the flat rows with exactly:
             (effect, CMETA_EFFECT_PURE)))
 ```
 
-Update the surrounding comment to state that source rows are structured but `Replay(CFlowOperators, M)` receives the same normalized flat consumer signature.
+Update the comment in the same file: source rows are structured; every `Replay(CFlowOperators, M)` consumer still receives the normalized 15-field signature.
 
-- [ ] **Step 2: Build the complete C witness set under GCC and verify snapshots are unchanged**
+- [ ] **Step 2: Run the full GCC C/snapshot gate**
 
-Run the same target list used by `.github/workflows/lean.yml`:
+Use the exact workflow target list plus the two new witnesses:
 
 ```bash
 cmake --preset formal-linux-gcc
 cmake --build --preset build-formal-linux-gcc --target \
-  cmeta_header_conformance_witness \
-  cmeta_type_identity_conformance_witness \
-  cmeta_descriptor_bridge_conformance_witness \
-  cmeta_type_identity_multi_tu \
-  cmeta_type_universe_probe \
-  cmeta_fmt_args_simplification_witness \
-  cmeta_producer_replay_witness \
-  cmeta_nested_replay_deferred_witness \
-  cmeta_traits_row_syntax_witness \
-  cmeta_operator_row_syntax_witness \
-  cmeta_plan_conformance_witness \
-  cmeta_structured_conformance_witness \
-  cmeta_structured_policy_conformance_witness \
-  cmeta_optimizer_conformance_witness \
-  cmeta_optimizer_gating_conformance_witness \
-  cmeta_optimizer_topology_conformance_witness
+  cmeta_header_conformance_witness cmeta_type_identity_conformance_witness \
+  cmeta_descriptor_bridge_conformance_witness cmeta_type_identity_multi_tu \
+  cmeta_type_universe_probe cmeta_fmt_args_simplification_witness \
+  cmeta_producer_replay_witness cmeta_nested_replay_deferred_witness \
+  cmeta_traits_row_syntax_witness cmeta_operator_row_syntax_witness \
+  cmeta_plan_conformance_witness cmeta_structured_conformance_witness \
+  cmeta_structured_policy_conformance_witness cmeta_optimizer_conformance_witness \
+  cmeta_optimizer_gating_conformance_witness cmeta_optimizer_topology_conformance_witness
 ```
 
-Then reproduce the workflow snapshot diff commands. Expected: **no committed `formal/CMeta/*GeneratedC.lean` file changes**.
+Run the existing workflow's snapshot-generation commands and `diff -u` against every committed generated Lean snapshot. Expected: zero diff.
 
-- [ ] **Step 3: Repeat the same C build/snapshot gate under Clang**
+- [ ] **Step 3: Repeat the full C/snapshot gate under Clang**
 
-Use `formal-linux-clang` / `build-formal-linux-clang`. Expected: the same semantic snapshots and successful witnesses.
+Use `formal-linux-clang` / `build-formal-linux-clang`. Expected: all witnesses pass and all semantic snapshots remain unchanged.
 
-- [ ] **Step 4: Run the Lean kernel after the C normalization migration**
+- [ ] **Step 4: Kernel-check the unchanged formal semantics**
 
 ```bash
 cd formal
@@ -664,9 +592,9 @@ lake update
 lake build --wfail
 ```
 
-Expected: PASS with no new warning and no changes to existing formal judgments or lowering proofs.
+Expected: PASS with no warning.
 
-- [ ] **Step 5: Commit the CFlow source migration**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add cflow/include/cflow/operators.h
@@ -675,53 +603,62 @@ git commit -m "refactor(cflow): structure operator schema rows"
 
 ---
 
-### Task 6: Legacy Surface Audit, Documentation, and Exact-Head Verification
+### Task 6: Surface Audit, Documentation, and Exact-Head Gate
 
 **Files:**
-- Modify: `cmeta/include/cmeta/type_traits.h` comments only if needed
-- Modify: `cmeta/include/cmeta/pp.h` comments only if needed
+- Modify: `cmeta/include/cmeta/type_traits.h` documentation comment
+- Modify: `cmeta/include/cmeta/pp.h` `Operators` documentation comment
 - Modify: `docs/superpowers/specs/2026-08-21-cmeta-traits-operators-row-syntax-design.md` status
 - Verify: `.github/workflows/lean.yml`, PR #3 exact head
 
 **Interfaces:**
-- Consumes: all previous tasks.
-- Produces: one documented public structured surface with only an internal positional Traits compatibility helper and one normalized operator consumer ABI.
+- Consumes: Tasks 1–5.
+- Produces: documented structured public surface, one internal positional Traits compatibility constructor, and one normalized operator consumer path.
 
-- [ ] **Step 1: Audit for accidental second semantic paths**
+- [ ] **Step 1: Verify the plan's repository-inventory precondition**
 
 Run:
 
 ```bash
 git grep -n "CMETA_TRAITS_POSITIONAL"
+git grep -nE '\bTraits[[:space:]]*\(' -- ':!docs/**'
 git grep -n "#define Operators"
 git grep -n "CFlowOperators(M)"
 git grep -n "Replay(CFlowOperators"
 ```
 
-Required result:
+Expected at this point: `CMETA_TRAITS_POSITIONAL` appears only at its internal definition; non-doc `Traits(...)` uses are the new structured witness and any deliberately migrated structured declarations; exactly one public `Operators` definition exists; exactly one authoritative `CFlowOperators(M)` provider exists. If the grep output contains a positional public `Traits(...)` call site, stop execution because this plan's inventory assumption is stale; amend the plan before changing that call site.
 
-- `CMETA_TRAITS_POSITIONAL` is an internal compatibility definition only; no new user-facing examples depend on it.
-- there is one public `Operators` normalizer path;
-- there is one authoritative `CFlowOperators(M)` provider;
-- existing consumers still use `Replay(CFlowOperators, M)` rather than bypassing normalization.
+- [ ] **Step 2: Write the final header documentation**
 
-If this audit exposes pre-existing in-repo positional `Traits(...)` call sites, migrate those call sites to tagged rows before proceeding; do not preserve two public `Traits` spellings.
-
-- [ ] **Step 2: Update comments/status without adding new syntax**
-
-Document in the headers that:
+In `type_traits.h`, document the accepted public rows:
 
 ```text
-Traits rows:      (equal, fn), (hash, fn), ...
-Operator source:  (E, method, (call,...), (fn,...), (flow,...), (semantic,...), (effect,...))
-Operator consumer remains the existing normalized 15-field M signature.
+Traits rows:
+  (equal, fn)
+  (hash, fn)
+  (compare, fn)
+  (copy, fn)
+  (move, fn)
+  (destroy, fn)
 ```
 
-Change the design spec status from “awaiting review” to “approved for implementation / implemented” only after the full test gate passes.
+In `pp.h`, document:
 
-- [ ] **Step 3: Run the full local verification gate one final time**
+```text
+Operators source row:
+  (E, method, (call,...), (fn,...), (flow,...), (semantic,...), (effect,...))
 
-Run both formal configure presets, both full witness target lists, all applicability executables including the two new row-syntax witnesses, all snapshot diffs, and:
+Consumer signature after normalization:
+  M(E, method, margc, fnarg, childarg, farity, p0, p1, p2,
+    ret, out, card, childrule, semantic, intrinsic_effects)
+```
+
+Change the design spec status to `Implemented and verified` only after Step 3 passes.
+
+- [ ] **Step 3: Run the complete local verification gate**
+
+Run both configure presets, both full witness target lists, both new applicability executables, all existing applicability executables, every workflow snapshot diff, then:
 
 ```bash
 cd formal
@@ -729,7 +666,7 @@ lake update
 lake build --wfail
 ```
 
-Also run:
+Run the existing proof-placeholder guard exactly:
 
 ```bash
 if grep -R -nE '^[[:space:]]*(axiom|constant)[[:space:]]|\b(sorry|admit)\b' \
@@ -738,9 +675,9 @@ if grep -R -nE '^[[:space:]]*(axiom|constant)[[:space:]]|\b(sorry|admit)\b' \
 fi
 ```
 
-Expected: zero failures, zero snapshot diffs, zero proof placeholders.
+Expected: zero build failures, zero snapshot diffs, zero placeholder matches.
 
-- [ ] **Step 4: Commit final documentation/audit changes**
+- [ ] **Step 4: Commit documentation**
 
 ```bash
 git add cmeta/include/cmeta/type_traits.h cmeta/include/cmeta/pp.h \
@@ -748,10 +685,6 @@ git add cmeta/include/cmeta/type_traits.h cmeta/include/cmeta/pp.h \
 git commit -m "docs(cmeta): document structured row surface"
 ```
 
-If Step 2 required no file changes, skip this commit rather than creating an empty one.
+- [ ] **Step 5: Push and verify exact head**
 
-- [ ] **Step 5: Push and verify the exact PR head**
-
-Push `leanv4`, then verify PR #3 reports the pushed commit as `head_sha`. Verify the `Lean proofs` workflow attached to that exact SHA is `completed / success`, and inspect both GCC and Clang jobs to confirm the final `Build and kernel-check Lean proofs` step succeeded.
-
-Do not claim completion from an earlier workflow attempt or from a merge ref whose head SHA differs from the branch head.
+Push `leanv4`. Verify PR #3 `head_sha` equals the pushed commit. Verify the `Lean proofs` run attached to that exact SHA is `completed / success`; inspect both GCC and Clang jobs and require `Build and kernel-check Lean proofs` to be `success`. Do not use an earlier workflow or a different merge/head SHA as completion evidence.
