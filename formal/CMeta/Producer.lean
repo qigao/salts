@@ -55,6 +55,7 @@ theorem count_eq_length (xs : List α) :
   induction xs with
   | nil => rfl
   | cons x xs ih =>
+      simp [count, replay] at ih
       simp [count, replay, ih, Nat.add_comm]
 
 /-- Normalized storage contains every logical item plus exactly one sentinel. -/
@@ -82,8 +83,7 @@ theorem canRead_implies_physical_bound
     (h : canRead (storage map sentinel xs) i) :
     i < (storage map sentinel xs).length := by
   rw [canRead_iff] at h
-  simp [storage, replay]
-  omega
+  simpa [storage, replay] using Nat.lt_trans h (Nat.lt_succ_self xs.length)
 
 /-- The sentinel occupies the first physical slot rejected by the logical guard. -/
 theorem sentinel_index_rejected (map : α → β) (sentinel : β) (xs : List α) :
