@@ -1,4 +1,7 @@
-import CMeta.Lambda
+module
+-- TEMP-MODULE-BRIDGE(M2): legacy Flow/Graph rely on Dispatch -> Lambda -> Callable semantics
+public import CMeta.Lambda
+import all CMeta.Traits
 
 /-!
 # Operator policy and deterministic dispatch
@@ -11,7 +14,7 @@ implementation target.
 
 namespace CMeta
 
-inductive Operator where
+public inductive Operator where
   | filter
   | map
   | transform
@@ -20,21 +23,22 @@ inductive Operator where
   | zip
   deriving Repr, DecidableEq
 
-structure DispatchRule where
+public structure DispatchRule where
   op : Operator
   sig : Signature
   target : Nat
   deriving Repr, DecidableEq
 
 /-- First-match finite dispatch. -/
-def dispatch : List DispatchRule → Operator → Signature → Option Nat
+public def dispatch : List DispatchRule → Operator → Signature → Option Nat
   | [], _, _ => none
   | r :: rs, op, sig =>
       if r.op = op ∧ r.sig = sig then some r.target
       else dispatch rs op sig
 
 /-- Every successful dispatch comes from an actual matching finite rule. -/
-theorem dispatch_sound (rules : List DispatchRule) (op : Operator)
+-- TEMP-MODULE-BRIDGE(M2): legacy Flow.ResolvedStep.dispatch_exact
+public theorem dispatch_sound (rules : List DispatchRule) (op : Operator)
     (sig : Signature) (target : Nat)
     (h : dispatch rules op sig = some target) :
     ∃ r, r ∈ rules ∧ r.op = op ∧ r.sig = sig ∧ r.target = target := by
@@ -50,13 +54,14 @@ theorem dispatch_sound (rules : List DispatchRule) (op : Operator)
         exact ⟨q, by simp [hqmem], hqop, hqsig, hqtarget⟩
 
 /-- A policy associates each operator with its finite set of admitted signatures. -/
-abbrev OperatorPolicy := Operator → SignaturePolicy
+public abbrev OperatorPolicy := Operator → SignaturePolicy
 
-def RulesRespectPolicy (policy : OperatorPolicy) (rules : List DispatchRule) : Prop :=
+public def RulesRespectPolicy (policy : OperatorPolicy) (rules : List DispatchRule) : Prop :=
   ∀ r, r ∈ rules → r.sig ∈ policy r.op
 
 /-- Dispatch cannot escape the operator's type policy when the table is well formed. -/
-theorem dispatch_policy_sound (policy : OperatorPolicy) (rules : List DispatchRule)
+-- TEMP-MODULE-BRIDGE(M2): legacy Flow.ResolvedStep.policy_safe
+public theorem dispatch_policy_sound (policy : OperatorPolicy) (rules : List DispatchRule)
     (hwf : RulesRespectPolicy policy rules)
     (op : Operator) (sig : Signature) (target : Nat)
     (h : dispatch rules op sig = some target) :
@@ -66,7 +71,7 @@ theorem dispatch_policy_sound (policy : OperatorPolicy) (rules : List DispatchRu
   simpa [hrop, hrsig] using hp
 
 /-- Unary composition can itself be dispatched/type-checked from signatures. -/
-def composeSignature : Signature → Signature → Option Signature
+public def composeSignature : Signature → Signature → Option Signature
   | .unary a b, .unary b' c =>
       if b = b' then some (.unary a c) else none
   | _, _ => none
@@ -80,7 +85,7 @@ theorem composeSignature_rejects_mismatch (a b b' c : CType) (h : b ≠ b') :
   simp [composeSignature, h]
 
 /-- Trait inference followed by policy admission is a deterministic pipeline. -/
-def inferAndAllow (tr : Traits Expr) (policy : OperatorPolicy)
+public def inferAndAllow (tr : Traits Expr) (policy : OperatorPolicy)
     (op : Operator) (input result : Expr) : Bool :=
   match tr.inferUnary input result with
   | some sig => policyAllows (policy op) sig

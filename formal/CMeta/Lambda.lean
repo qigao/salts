@@ -1,4 +1,6 @@
-import CMeta.Callable
+module
+public import CMeta.Callable
+import all CMeta.Callable
 
 /-!
 # Lambda, anonymous closure, bind and composition
@@ -10,18 +12,18 @@ Consumer-specific C macros do not define the Core formal type system.
 namespace CMeta
 
 /-- One finite capture environment plus one body over one finite argument schema. -/
-structure Lambda (Env : Type) (Args : List CType) (R : CType) where
+public structure Lambda (Env : Type) (Args : List CType) (R : CType) where
   capture : Env
   body : Env → HArgs Args → R.denote
 
 namespace Lambda
 
 /-- Invoke a closure by supplying the exact heterogeneous argument list. -/
-def invoke (f : Lambda Env Args R) (xs : HArgs Args) : R.denote :=
+public def invoke (f : Lambda Env Args R) (xs : HArgs Args) : R.denote :=
   f.body f.capture xs
 
 /-- Erasing the explicit environment yields an ordinary typed callable. -/
-def asCallable (f : Lambda Env Args R) : Callable Args R :=
+public def asCallable (f : Lambda Env Args R) : Callable Args R :=
   ⟨fun xs => f.body f.capture xs⟩
 
 /-- Closure beta-reduction is independent of callable arity. -/
@@ -43,7 +45,7 @@ theorem erasure_signature_binary (f : Lambda Env [A, B] R) :
 end Lambda
 
 /-- Surface-level anonymous construction; names are irrelevant to Core semantics. -/
-def anonymous {Env : Type} {Args : List CType} {R : CType}
+public def anonymous {Env : Type} {Args : List CType} {R : CType}
     (capture : Env) (body : Env → HArgs Args → R.denote) : Lambda Env Args R :=
   ⟨capture, body⟩
 
@@ -54,7 +56,7 @@ theorem anonymous_beta {Env : Type} {Args : List CType} {R : CType}
     (anonymous capture body).invoke xs = body capture xs := rfl
 
 /-- Bind one logical final argument of a finite-arity callable. -/
-def bindLast {Args : List CType} {B R : CType}
+public def bindLast {Args : List CType} {B R : CType}
     (f : Callable (Args ++ [B]) R) (bound : B.denote) : Callable Args R :=
   ⟨fun xs => f.run (xs.snoc bound)⟩
 
