@@ -1,4 +1,9 @@
-import CMeta.PreprocessorBackendRegistryEquivalence
+module
+public import CMeta.PreprocessorBackendRegistryEquivalence
+public import CMeta.PreprocessorBackendSelection
+import all CMeta.PreprocessorBackendRegistryEquivalence
+import all CMeta.PreprocessorBackendSelection
+import all CMeta.PreprocessorBackend
 
 /-!
 # Registry observational substitutability
@@ -237,7 +242,8 @@ private theorem perm_of_nodup_mem_iff
 
 /-- Observationally equivalent finite maps expose the same supporting certified
     candidate multiset. List order remains a representation detail. -/
-theorem supportingCandidates_perm_of_equivalent
+-- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistrySubstitutabilityConformance
+public theorem supportingCandidates_perm_of_equivalent
     (left right : PreprocessorBackendRegistry)
     (query : BackendQuery)
     (ir : ReplayIR)
@@ -251,7 +257,8 @@ theorem supportingCandidates_perm_of_equivalent
 
 /-- A well-formed policy cannot distinguish equivalent registries by selected
     backend identity. -/
-theorem selectSupporting_key_eq_of_equivalent
+-- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistrySubstitutabilityConformance
+public theorem selectSupporting_key_eq_of_equivalent
     (wellFormed : WellFormedSelectionPolicy)
     (left right : PreprocessorBackendRegistry)
     (query : BackendQuery)
@@ -273,7 +280,8 @@ theorem selectSupporting_key_eq_of_equivalent
 /-- Equivalent registries are indistinguishable by selected replay lowering.
     Empty candidate sets agree, while every successful selection lowers to the
     same canonical plan for the requested IR. -/
-theorem selectSupporting_lowering_eq_of_equivalent
+-- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistrySubstitutabilityConformance
+public theorem selectSupporting_lowering_eq_of_equivalent
     (wellFormed : WellFormedSelectionPolicy)
     (left right : PreprocessorBackendRegistry)
     (query : BackendQuery)
