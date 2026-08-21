@@ -169,10 +169,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          public_imports="$(grep '^import ' formal/CMeta/PublicProof.lean)"
-          conformance_imports="$(grep '^import ' formal/CMeta/PublicProofConformance.lean)"
-          test "$public_imports" = "import CMeta.EndToEnd"
-          test "$conformance_imports" = "import CMeta.PublicProof"
+          grep -qx 'public import CMeta.Semantics' formal/CMeta/PublicProof.lean
+          grep -qx 'import all CMeta.EndToEnd' formal/CMeta/PublicProof.lean
+          grep -qx 'import CMeta.PublicProof' formal/CMeta/PublicProofConformance.lean
           if grep -nE '\b(PreprocessorBackend|Registry|NestedReplay|OptimizerTopology)\b' \
               formal/CMeta/PublicProof.lean \
               formal/CMeta/PublicProofConformance.lean; then

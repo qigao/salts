@@ -1,10 +1,11 @@
+module
 import CMeta.PublicProof
 
 /-!
 # Public proof facade conformance
 
 This module checks that the stable public proof surface is sufficient for the
-already-proved end-to-end CMeta/CFlow safety envelope.  It intentionally uses
+already-proved end-to-end CMeta/CFlow safety envelope. It intentionally uses
 only `CMeta.PublicProof` as its import boundary.
 -/
 

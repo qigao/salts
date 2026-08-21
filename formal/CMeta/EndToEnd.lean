@@ -1,4 +1,10 @@
-import CMeta.Cardinality
+module
+import all CMeta.Cardinality
+import all CMeta.Graph
+import all CMeta.Lowering
+import all CMeta.Optimize
+import all CMeta.Plan
+import all CMeta.Execution
 
 /-!
 # End-to-end safety envelope
