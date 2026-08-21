@@ -31,7 +31,7 @@ theorem nestedReplay_empty_right (f : α → β → γ) (xs : List α) :
 theorem nestedReplay_length (f : α → β → γ) (xs : List α) (ys : List β) :
     (nestedReplay f xs ys).length = xs.length * ys.length := by
   induction xs with
-  | nil => rfl
+  | nil => simp [nestedReplay]
   | cons x xs ih =>
       simp [nestedReplay, ih, Nat.succ_mul, Nat.add_comm]
 
