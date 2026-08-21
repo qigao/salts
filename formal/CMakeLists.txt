@@ -14,9 +14,11 @@ try_compile(CMETA_DIRECT_NESTED_REPLAY_COMPILED
     "-DCMAKE_C_EXTENSIONS=OFF"
   OUTPUT_VARIABLE CMETA_DIRECT_NESTED_REPLAY_OUTPUT)
 if(CMETA_DIRECT_NESTED_REPLAY_COMPILED)
+  set(CMETA_DIRECT_NESTED_REPLAY_ACCEPTED_VALUE 1)
   message(FATAL_ERROR
     "direct same-producer nested replay unexpectedly compiled; self-suppression proof invalid")
 else()
+  set(CMETA_DIRECT_NESTED_REPLAY_ACCEPTED_VALUE 0)
   message(STATUS "direct same-producer nested replay rejected as expected")
 endif()
 
@@ -85,6 +87,8 @@ cmeta_add_formal_witness(cmeta_nested_replay_deferred_witness
   cmeta_nested_replay_deferred_witness.c)
 target_include_directories(cmeta_nested_replay_deferred_witness PRIVATE
   ${PROJECT_SOURCE_DIR}/cmeta/include)
+target_compile_definitions(cmeta_nested_replay_deferred_witness PRIVATE
+  CMETA_DIRECT_NESTED_REPLAY_ACCEPTED=${CMETA_DIRECT_NESTED_REPLAY_ACCEPTED_VALUE})
 set_target_properties(cmeta_nested_replay_deferred_witness PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED YES
