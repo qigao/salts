@@ -64,6 +64,7 @@ jobs:
                      cmeta_descriptor_bridge_conformance_witness \
                      cmeta_type_identity_multi_tu \
                      cmeta_type_universe_probe \
+                     cmeta_traits_row_syntax_witness \
                      cmeta_fmt_args_simplification_witness \
                      cmeta_producer_replay_witness \
                      cmeta_nested_replay_deferred_witness \
@@ -139,6 +140,7 @@ jobs:
           binary_dir="${{ matrix.binary_dir }}"
           "$binary_dir/bin/cmeta_type_identity_multi_tu"
           "$binary_dir/bin/cmeta_type_universe_probe"
+          "$binary_dir/bin/cmeta_traits_row_syntax_witness"
           "$binary_dir/bin/cmeta_fmt_args_simplification_witness"
           "$binary_dir/bin/cmeta_producer_replay_witness"
           "$binary_dir/bin/cmeta_nested_replay_deferred_witness"
