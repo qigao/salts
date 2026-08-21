@@ -65,6 +65,8 @@ assert_not_exists CMeta.lambda_bind_same_shape
 #check CMeta.inferAndAllow
 
 assert_not_exists CMeta.inferAndAllow_known
+assert_not_exists CMeta.dispatch_sound
+assert_not_exists CMeta.dispatch_policy_sound
 
 #check CMeta.TypedOp
 #check CMeta.stepType
