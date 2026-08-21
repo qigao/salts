@@ -39,7 +39,7 @@ function(cmeta_add_formal_witness target source)
   set_target_properties(${target} PROPERTIES FOLDER "formal")
 endfunction()
 
-function(cmeta_expect_compile_failure name source)
+function(cmeta_try_compile name source)
   try_compile(${name}_COMPILED
     "${CMAKE_CURRENT_BINARY_DIR}/${name}-probe"
     SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/${source}"
@@ -49,11 +49,27 @@ function(cmeta_expect_compile_failure name source)
       "-DCMAKE_C_EXTENSIONS=OFF"
       "-DCMAKE_C_FLAGS:STRING=-I${PROJECT_SOURCE_DIR}/cmeta/include -I${PROJECT_SOURCE_DIR}/cflow/include"
     OUTPUT_VARIABLE ${name}_OUTPUT)
+  set(${name}_COMPILED ${${name}_COMPILED} PARENT_SCOPE)
+  set(${name}_OUTPUT "${${name}_OUTPUT}" PARENT_SCOPE)
+endfunction()
+
+function(cmeta_expect_compile_success name source)
+  cmeta_try_compile(${name} ${source})
+  if(NOT ${name}_COMPILED)
+    message(FATAL_ERROR
+      "${name} unexpectedly failed to compile:\n${${name}_OUTPUT}")
+  endif()
+endfunction()
+
+function(cmeta_expect_compile_failure name source)
+  cmeta_try_compile(${name} ${source})
   if(${name}_COMPILED)
     message(FATAL_ERROR "${name} unexpectedly compiled")
   endif()
 endfunction()
 
+cmeta_expect_compile_success(CMETA_TRAITS_VALID
+  cmeta_traits_row_syntax_witness.c)
 cmeta_expect_compile_failure(CMETA_TRAITS_DUPLICATE_TAG
   cmeta_traits_duplicate_tag_fail.c)
 cmeta_expect_compile_failure(CMETA_TRAITS_UNKNOWN_TAG
