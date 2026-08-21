@@ -25,10 +25,14 @@
 
 #define CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name, type, prefix, flags) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
-        CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL \
+        .name = CMETA_CONTAINER_STR(type), .size = sizeof(type), \
+        .align = _Alignof(type), .kind = CMETA_T_OBJECT, .pointee = NULL, \
+        .identity = NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL \
+        .name = CMETA_CONTAINER_STR(name), .size = sizeof(name), \
+        .align = _Alignof(name), .kind = CMETA_T_OBJECT, .pointee = NULL, \
+        .identity = NULL \
     }; \
     CMETA_INLINE size_t name##_cmeta_range_size(const void *object) { \
         const name *self = (const name *)object; \
@@ -211,10 +215,14 @@
 
 #define CMETA_CONTAINER1_SLOT_RANGE_DEFINE(name, type, prefix, flags) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
-        CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL \
+        .name = CMETA_CONTAINER_STR(type), .size = sizeof(type), \
+        .align = _Alignof(type), .kind = CMETA_T_OBJECT, .pointee = NULL, \
+        .identity = NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL \
+        .name = CMETA_CONTAINER_STR(name), .size = sizeof(name), \
+        .align = _Alignof(name), .kind = CMETA_T_OBJECT, .pointee = NULL, \
+        .identity = NULL \
     }; \
     CMETA_INLINE size_t name##_cmeta_range_size(const void *object) { \
         const name *self = (const name *)object; \
@@ -257,16 +265,24 @@
 
 #define CMETA_CONTAINER2_RANGES_DEFINE(name, key_type, value_type, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags) \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL \
+        .name = CMETA_CONTAINER_STR(name), .size = sizeof(name), \
+        .align = _Alignof(name), .kind = CMETA_T_OBJECT, .pointee = NULL, \
+        .identity = NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_key_cmeta_type = { \
-        CMETA_CONTAINER_STR(key_type), sizeof(key_type), _Alignof(key_type), CMETA_T_OBJECT, NULL \
+        .name = CMETA_CONTAINER_STR(key_type), .size = sizeof(key_type), \
+        .align = _Alignof(key_type), .kind = CMETA_T_OBJECT, .pointee = NULL, \
+        .identity = NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_value_cmeta_type = { \
-        CMETA_CONTAINER_STR(value_type), sizeof(value_type), _Alignof(value_type), CMETA_T_OBJECT, NULL \
+        .name = CMETA_CONTAINER_STR(value_type), .size = sizeof(value_type), \
+        .align = _Alignof(value_type), .kind = CMETA_T_OBJECT, .pointee = NULL, \
+        .identity = NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_entry_cmeta_type = { \
-        CMETA_CONTAINER_STR(name) "_entry", sizeof(name##_entry), _Alignof(name##_entry), CMETA_T_OBJECT, NULL \
+        .name = CMETA_CONTAINER_STR(name) "_entry", .size = sizeof(name##_entry), \
+        .align = _Alignof(name##_entry), .kind = CMETA_T_OBJECT, .pointee = NULL, \
+        .identity = NULL \
     }; \
     CMETA_INLINE size_t name##_cmeta_assoc_range_size(const void *object) { \
         const name *self = (const name *)object; \
@@ -351,7 +367,9 @@
 /* Descriptor-only capability for typed containers that intentionally expose no Range view. */
 #define CMETA_CONTAINER2_OPAQUE_DESCRIPTOR_DEFINE(name, key_type, value_type) \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL \
+        .name = CMETA_CONTAINER_STR(name), .size = sizeof(name), \
+        .align = _Alignof(name), .kind = CMETA_T_OBJECT, .pointee = NULL, \
+        .identity = NULL \
     }; \
     CMETA_LOCAL const cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, NULL, NULL, NULL, \
