@@ -7,7 +7,7 @@ This directory contains the architecture specifications for CMeta work on branch
 When documents overlap, use this order:
 
 1. **CMeta Hexagonal Architecture** — global dependency and ownership rules;
-2. **domain specifications** — Type Application, Type Identity Applicability, State/Exec, and later modules;
+2. **domain specifications** — Type Application, Type Identity Applicability, C++-Like Lambda, State/Exec, and later modules;
 3. **implementation plans** — task sequencing only; they must not redefine architecture.
 
 A lower-level document must not violate a higher-level dependency rule.
@@ -61,6 +61,23 @@ legacy / legacy         -> legacy equality
 structural / legacy     -> false
 ```
 
+### [CMeta C++-Like Lambda Architecture](2026-08-21-cmeta-cpp-like-lambda-design.md)
+
+Defines C++-like lambda syntax as an optional CMeta Extend adapter over the existing Core callable/closure semantics.
+
+V1 is deliberately finite and explicit:
+
+```text
+[]
+[x]
+[a,b]
+[x = expr]
+explicit parameter types
+explicit result type
+```
+
+The formal direction generalizes the current single-`CType` capture into a typed environment `Env`, proves capture pack/unpack transparency plus invocation/signature preservation, and keeps CFlow as a consumer rather than the owner of lambda semantics. Reference/default capture, mutable captures, and generic template lambdas are outside v1.
+
 ### [CMeta State + Exec Concurrency Architecture](2026-08-21-cmeta-state-exec-concurrency-design.md)
 
 Defines two first-party modules:
@@ -84,6 +101,7 @@ Every future CMeta design should preserve these rules:
 - structural identity, once present, must not be weakened by legacy string/layout fallback.
 - generic generation stays finite; arbitrary compile-time user programs are not introduced.
 - parser/frontend additions must lower to existing Core/module APIs.
+- C++-like lambda syntax lowers to the same Core callable ABI and does not introduce C++ template semantics.
 - formal verification follows semantic ownership boundaries.
 - applicability claims require real C witnesses and multi-TU/consumer evidence where the focused spec requires them.
 
