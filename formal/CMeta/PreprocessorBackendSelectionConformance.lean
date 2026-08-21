@@ -69,7 +69,10 @@ private def replayPolicyWellFormed : WellFormedSelectionPolicy :=
 
 private theorem registryEntriesPerm : registryA.entries.Perm registryB.entries := by
   change [gcc14, gcc15, gcc16].Perm [gcc16, gcc14, gcc15]
-  simpa using (List.perm_append_comm [gcc14, gcc15] [gcc16])
+  simpa using
+    (List.perm_append_comm
+      (l₁ := [gcc14, gcc15])
+      (l₂ := [gcc16]))
 
 /-- The well-formed wrapper certifies the concrete replay policy, not a second
     implementation with different ranking behavior. -/
