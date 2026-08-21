@@ -2,6 +2,7 @@ module
 import Init.Tactics
 public import CMeta.NestedReplayBackendPlan
 import all CMeta.NestedReplayBackendPlan
+import all CMeta.PreprocessorBackend
 
 /-!
 # Certified preprocessor backend selection policy
