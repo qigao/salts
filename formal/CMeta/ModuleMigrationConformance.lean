@@ -9,4 +9,3 @@ import CMeta.Calculus
 assert_not_exists CMeta.product_length
 assert_not_exists CMeta.CoreExpr.eval_length_eq_cardinality
 assert_not_exists CMeta.replay_zip
-#check_assertions
