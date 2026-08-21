@@ -1,4 +1,4 @@
-import CMeta.PreprocessorBackendRegistrySubstitutability
+import CMeta.PreprocessorBackendRegistrySetoid
 
 /-!
 # Registry Setoid / congruence conformance
@@ -10,9 +10,6 @@ Setoid syntax. This conformance file intentionally does not construct a Quotient
 
 namespace CMeta
 namespace Producer
-
-local instance registrySetoid : Setoid PreprocessorBackendRegistry :=
-  PreprocessorBackendRegistry.registrySetoid
 
 /-- The standard `≈` syntax is exactly the existing registry observational
     equivalence; registering a Setoid must not introduce a second relation. -/
