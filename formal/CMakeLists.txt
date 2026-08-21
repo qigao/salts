@@ -78,6 +78,14 @@ cmeta_expect_compile_failure(CMETA_TRAITS_UNKNOWN_TAG
   cmeta_traits_unknown_tag_fail.c)
 cmeta_expect_compile_failure(CMETA_TRAITS_MALFORMED_ROW
   cmeta_traits_malformed_row_fail.c)
+cmeta_expect_compile_failure(CMETA_OPERATOR_UNKNOWN_TAG
+  cmeta_operator_unknown_tag_fail.c)
+cmeta_expect_compile_failure(CMETA_OPERATOR_DUPLICATE_SUBROW
+  cmeta_operator_duplicate_subrow_fail.c)
+cmeta_expect_compile_failure(CMETA_OPERATOR_MISSING_SUBROW
+  cmeta_operator_missing_subrow_fail.c)
+cmeta_expect_compile_failure(CMETA_OPERATOR_MALFORMED_SUBROW
+  cmeta_operator_malformed_subrow_fail.c)
 
 cmeta_add_formal_witness(cmeta_header_conformance_witness
   cmeta_conformance_witness.c)
