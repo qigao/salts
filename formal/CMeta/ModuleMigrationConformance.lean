@@ -80,9 +80,11 @@ assert_not_exists CMeta.dispatch_policy_sound
 #check CMeta.TargetSignatureUnique
 #check CMeta.WellFormedDispatch
 
+assert_not_exists CMeta.TypedOp.step_exact
 assert_not_exists CMeta.TypedOp.progress
 assert_not_exists CMeta.TypedOp.output_unique
 assert_not_exists CMeta.Pipeline.steps_length
+assert_not_exists CMeta.Pipeline.check_steps
 assert_not_exists CMeta.ResolvedStep.target_signature_safe
 assert_not_exists CMeta.ResolvedStep.cannot_target_incompatible
 

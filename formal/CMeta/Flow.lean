@@ -65,8 +65,7 @@ public def stepType : Operator → CType → Signature → Option CType
 namespace TypedOp
 
 /-- Every statically typed operator is admitted by the dynamic type transition. -/
--- TEMP-MODULE-BRIDGE(M3): legacy Optimize.canonicalizeMapLike_preserves_type
-public theorem step_exact {A R : CType} (node : TypedOp A R) :
+theorem step_exact {A R : CType} (node : TypedOp A R) :
     stepType node.operator A node.signature = some R := by
   cases node <;> simp [operator, signature, stepType]
 
@@ -117,8 +116,7 @@ public def checkPipeline : CType → List (Operator × Signature) → Option CTy
       | none => none
 
 /-- Type preservation for the whole pipeline after erasing the dependent indices. -/
--- TEMP-MODULE-BRIDGE(M3): legacy Lowering.SurfaceZip.lowering_preserves_type
-public theorem Pipeline.check_steps {A R : CType} (p : Pipeline A R) :
+theorem Pipeline.check_steps {A R : CType} (p : Pipeline A R) :
     checkPipeline A p.steps = some R := by
   induction p with
   | done t => rfl
