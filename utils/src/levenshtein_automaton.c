@@ -1,6 +1,7 @@
 #include "levenshtein_automaton.h"
 #include "turbo_error.h"
-#include "turbo_vec.h"
+#include "turbo_container_status_internal.h"
+#include <turbo/container/vec.h>
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -26,17 +27,22 @@ static size_t lev_safe_add(size_t lhs, size_t rhs) {
   return lhs + rhs;
 }
 
-static bool lev_init_common(lev_automaton_t *lev, vstr pattern, size_t max_distance,
-                           bool utf8_pattern) {
-  if (!lev || (!pattern.data && pattern.len != 0U) || max_distance > LEVENSHTEIN_INF) return false;
-  if (lev->initialized) return false;
+static int lev_init_common(lev_automaton_t *lev, vstr pattern,
+                           size_t max_distance, bool utf8_pattern) {
+  container_status status;
+  if (!lev || (!pattern.data && pattern.len != 0U) ||
+      max_distance > LEVENSHTEIN_INF)
+    return TURBO_EINVAL;
+  if (lev->initialized) return TURBO_EINVAL;
 
-  if (utf8_pattern && !vstr_utf8_valid(pattern)) return false;
-  if (pattern.len == 0U) return false;
+  if (utf8_pattern && !vstr_utf8_valid(pattern)) return TURBO_EINVAL;
+  if (pattern.len == 0U) return TURBO_EINVAL;
 
-  if (turbo_vec_init(&lev->pattern, utf8_pattern ? sizeof(uint32_t) : sizeof(uint8_t)) !=
-      TURBO_OK)
-    return false;
+  status = turbo_vec_init_bytes(
+      &lev->pattern, utf8_pattern ? sizeof(uint32_t) : sizeof(uint8_t),
+      utf8_pattern ? _Alignof(uint32_t) : _Alignof(uint8_t), pattern.len);
+  if (status != CONTAINER_OK)
+    return turbo_core_status_from_container(status);
 
   if (utf8_pattern) {
     vstr rest = pattern;
@@ -44,30 +50,32 @@ static bool lev_init_common(lev_automaton_t *lev, vstr pattern, size_t max_dista
     while (rest.len > 0U) {
       if (!vstr_utf8_next(&rest, &cp)) {
         turbo_vec_destroy(&lev->pattern);
-        return false;
+        return TURBO_EINVAL;
       }
-      if (turbo_vec_push(&lev->pattern, &cp) != TURBO_OK) {
+      status = turbo_vec_push(&lev->pattern, &cp);
+      if (status != CONTAINER_OK) {
         turbo_vec_destroy(&lev->pattern);
-        return false;
+        return turbo_core_status_from_container(status);
       }
     }
   } else {
     for (size_t i = 0; i < pattern.len; ++i) {
       uint8_t byte = (uint8_t)pattern.data[i];
-      if (turbo_vec_push(&lev->pattern, &byte) != TURBO_OK) {
+      status = turbo_vec_push(&lev->pattern, &byte);
+      if (status != CONTAINER_OK) {
         turbo_vec_destroy(&lev->pattern);
-        return false;
+        return turbo_core_status_from_container(status);
       }
     }
   }
 
   lev->max_distance = max_distance;
   lev->initialized = true;
-  return true;
+  return TURBO_OK;
 }
 
 int lev_automaton_init(lev_automaton_t *lev, vstr pattern, size_t max_distance) {
-  return lev_init_common(lev, pattern, max_distance, false) ? TURBO_OK : TURBO_EINVAL;
+  return lev_init_common(lev, pattern, max_distance, false);
 }
 
 lev_automaton_t *lev_automaton_create(void) {
@@ -87,7 +95,7 @@ void lev_automaton_destroy(lev_automaton_t *lev) {
 }
 
 int lev_utf8_automaton_init(lev_utf8_automaton_t *lev, vstr pattern, size_t max_distance) {
-  return lev_init_common((lev_automaton_t *)lev, pattern, max_distance, true) ? TURBO_OK : TURBO_EINVAL;
+  return lev_init_common((lev_automaton_t *)lev, pattern, max_distance, true);
 }
 
 lev_utf8_automaton_t *lev_utf8_automaton_create(void) {

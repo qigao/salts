@@ -11,6 +11,18 @@ static int int_compare(const void *left, const void *right, void *context) {
     return (lhs > rhs) - (lhs < rhs);
 }
 
+typedef struct large_heap_item {
+    int priority;
+    unsigned char payload[512];
+} large_heap_item;
+
+static int large_heap_compare(const void *left, const void *right, void *context) {
+    const large_heap_item *lhs = (const large_heap_item *)left;
+    const large_heap_item *rhs = (const large_heap_item *)right;
+    (void)context;
+    return (lhs->priority > rhs->priority) - (lhs->priority < rhs->priority);
+}
+
 suite("Container sequences") {
     it("keeps raw vector values bounded and zero fills growth") {
         turbo_vec_t vec = {0};
@@ -75,6 +87,29 @@ suite("Container sequences") {
         while (turbo_heap_pop(&heap, &out) == CONTAINER_OK) {
             check_true(previous <= out);
             previous = out;
+        }
+        turbo_heap_destroy(&heap);
+    }
+
+    it("orders records larger than the former inline swap buffer") {
+        turbo_heap_t heap = {0};
+        const int priorities[] = {9, 1, 7, 3, 5};
+        const int expected[] = {1, 3, 5, 7, 9};
+        large_heap_item item;
+        large_heap_item out;
+        size_t index;
+
+        check_equal(turbo_heap_init_bytes(&heap, sizeof(item), _Alignof(large_heap_item),
+                                          5u, large_heap_compare, NULL),
+                    CONTAINER_OK);
+        for (index = 0u; index < 5u; ++index) {
+            memset(&item, priorities[index], sizeof(item));
+            item.priority = priorities[index];
+            check_equal(turbo_heap_push(&heap, &item), CONTAINER_OK);
+        }
+        for (index = 0u; index < 5u; ++index) {
+            check_equal(turbo_heap_pop(&heap, &out), CONTAINER_OK);
+            check_equal(out.priority, expected[index]);
         }
         turbo_heap_destroy(&heap);
     }
