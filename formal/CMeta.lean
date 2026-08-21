@@ -6,6 +6,7 @@ import CMeta.NestedReplayConformance
 import CMeta.NestedReplayApplicabilityConformance
 import CMeta.PreprocessorBackendConformance
 import CMeta.PreprocessorBackendSelectionConformance
+import CMeta.PreprocessorBackendRegistryMutationConformance
 import CMeta.TypeIdentity
 import CMeta.TypeIdentityGeneratedC
 import CMeta.TypeIdentityConformance
