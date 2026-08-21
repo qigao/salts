@@ -29,8 +29,7 @@ public inductive HArgs : List CType → Type where
 namespace HArgs
 
 /-- Construct the exact one-argument value used by a unary backend adapter. -/
--- TEMP-MODULE-BRIDGE(M6): legacy OptimizerConformance.identity_lists_equal
-@[expose] public def one (x : A.denote) : HArgs [A] := .cons x .nil
+public def one (x : A.denote) : HArgs [A] := .cons x .nil
 
 /-- Construct the exact two-argument value used by a binary backend adapter. -/
 public def two (a : A.denote) (b : B.denote) : HArgs [A, B] :=
@@ -54,8 +53,7 @@ public structure Callable (Args : List CType) (R : CType) where
 namespace Callable
 
 /-- Wrap an ordinary unary function in the unified finite-argument callable. -/
--- TEMP-MODULE-BRIDGE(M6): legacy OptimizerConformance.identity_lists_equal
-@[expose] public def ofUnary (f : A.denote → R.denote) : Callable [A] R :=
+public def ofUnary (f : A.denote → R.denote) : Callable [A] R :=
   ⟨fun | .cons x .nil => f x⟩
 
 /-- Wrap an ordinary binary function in the unified finite-argument callable. -/
@@ -66,8 +64,7 @@ public def ofBinary (f : A.denote → B.denote → R.denote) : Callable [A, B] R
 public def invoke (f : Callable Args R) (xs : HArgs Args) : R.denote := f.run xs
 
 /-- Unary convenience is an operation on the general Callable, not a type. -/
--- TEMP-MODULE-BRIDGE(M6): legacy OptimizerConformance.identity_lists_equal
-@[expose] public def invoke1 (f : Callable [A] R) (x : A.denote) : R.denote :=
+public def invoke1 (f : Callable [A] R) (x : A.denote) : R.denote :=
   f.run (HArgs.one x)
 
 /-- Binary convenience is an operation on the general Callable, not a type. -/
