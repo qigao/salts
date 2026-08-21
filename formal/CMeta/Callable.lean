@@ -3,10 +3,9 @@ import CMeta.Traits
 /-!
 # Typed callables
 
-CMeta's runtime `cmeta_callable` is type-erased, but it carries a resolved
-signature.  Here we model the typed side before erasure.  If construction goes
-through these indexed values, argument/result type safety is obtained by Lean's
-type checker rather than by a post-hoc theorem.
+CMeta's runtime `cmeta_callable` is type-erased and already receives logical
+arguments through an array.  The formal typed side therefore uses one finite
+argument schema rather than an arity-specific family of Callable1/Callable2/etc.
 -/
 
 namespace CMeta
@@ -19,71 +18,94 @@ def CType.denote : CType → Type
   | .float => Float
   | .double => Float
 
-/-- A typed unary callable. -/
-structure Callable1 (A R : CType) where
-  run : A.denote → R.denote
+/-- Heterogeneous argument values indexed by one finite ordered CType schema. -/
+inductive HArgs : List CType → Type where
+  | nil : HArgs []
+  | cons {t : CType} {ts : List CType} : t.denote → HArgs ts → HArgs (t :: ts)
 
-/-- A typed binary callable. -/
-structure Callable2 (A B R : CType) where
-  run : A.denote → B.denote → R.denote
+namespace HArgs
 
-/-- A typed generator step; the state abstracts the cursor protocol. -/
-structure Generator1 (A R : CType) (State : Type) where
+/-- Construct the exact one-argument value used by a unary backend adapter. -/
+def one (x : A.denote) : HArgs [A] := .cons x .nil
+
+/-- Construct the exact two-argument value used by a binary backend adapter. -/
+def two (a : A.denote) (b : B.denote) : HArgs [A, B] :=
+  .cons a (.cons b .nil)
+
+end HArgs
+
+/-- One typed value callable over an arbitrary finite argument schema. -/
+structure Callable (Args : List CType) (R : CType) where
+  run : HArgs Args → R.denote
+
+namespace Callable
+
+/-- Typed invocation for the general finite-arity model. -/
+def invoke (f : Callable Args R) (xs : HArgs Args) : R.denote := f.run xs
+
+/-- Unary convenience is an operation on the general Callable, not a type. -/
+def invoke1 (f : Callable [A] R) (x : A.denote) : R.denote :=
+  f.run (HArgs.one x)
+
+/-- Binary convenience is an operation on the general Callable, not a type. -/
+def invoke2 (f : Callable [A, B] R)
+    (a : A.denote) (b : B.denote) : R.denote :=
+  f.run (HArgs.two a b)
+
+/-- Ordinary higher-order composition is representable without a new callable ABI. -/
+def compose (g : Callable [B] R) (f : Callable [A] B) : Callable [A] R :=
+  ⟨fun xs =>
+    match xs with
+    | .cons x .nil => g.invoke1 (f.invoke1 x)⟩
+
+theorem compose_beta (g : Callable [B] R) (f : Callable [A] B)
+    (x : A.denote) :
+    (compose g f).invoke1 x = g.invoke1 (f.invoke1 x) := rfl
+
+end Callable
+
+/-- Generator is a separate protocol, not a value lambda whose arity happens to
+    include output-buffer/cursor implementation parameters. -/
+structure Generator (A R : CType) (State : Type) where
   run : A.denote → State → Option (R.denote × State)
 
-namespace Callable1
+namespace Generator
 
-def signature (_ : Callable1 A R) : Signature := .unary A R
+/-- Logical generator signature remains independent from its runtime protocol mechanics. -/
+def signature (_ : Generator A R State) : Signature := .generator A R
 
-theorem signature_exact (f : Callable1 A R) :
-    f.signature = .unary A R := rfl
-
-/-- Typed invocation cannot return anything except the declared result type. -/
-def invoke (f : Callable1 A R) (x : A.denote) : R.denote := f.run x
-
-/-- Ordinary higher-order composition is representable without adding a new ABI. -/
-def compose (g : Callable1 B R) (f : Callable1 A B) : Callable1 A R :=
-  ⟨fun x => g.run (f.run x)⟩
-
-theorem compose_beta (g : Callable1 B R) (f : Callable1 A B) (x : A.denote) :
-    (compose g f).run x = g.run (f.run x) := rfl
-
-end Callable1
-
-namespace Callable2
-
-def signature (_ : Callable2 A B R) : Signature := .binary A B R
-
-theorem signature_exact (f : Callable2 A B R) :
-    f.signature = .binary A B R := rfl
-
-end Callable2
-
-namespace Generator1
-
-def signature (_ : Generator1 A R State) : Signature := .generator A R
-
-theorem signature_exact (g : Generator1 A R State) :
+theorem signature_exact (g : Generator A R State) :
     g.signature = .generator A R := rfl
 
-end Generator1
+end Generator
 
 /-- Runtime descriptor after type erasure. -/
 structure CallableDesc where
   sig : Signature
   deriving Repr, DecidableEq
 
-def erase1 (_ : Callable1 A R) : CallableDesc := ⟨.unary A R⟩
-def erase2 (_ : Callable2 A B R) : CallableDesc := ⟨.binary A B R⟩
-def eraseGenerator (_ : Generator1 A R State) : CallableDesc := ⟨.generator A R⟩
+/-- Existing C backends currently have concrete unary and binary value-function
+    pointer families.  Erasure is therefore partial for the general semantic
+    model until more finite backend signatures are admitted. -/
+def eraseValue {Args : List CType} {R : CType}
+    (_ : Callable Args R) : Option CallableDesc :=
+  match Args with
+  | [a] => some ⟨.unary a R⟩
+  | [a, b] => some ⟨.binary a b R⟩
+  | _ => none
 
-theorem erase1_preserves_signature (f : Callable1 A R) :
-    (erase1 f).sig = f.signature := rfl
+def eraseGenerator (_ : Generator A R State) : CallableDesc := ⟨.generator A R⟩
 
-theorem erase2_preserves_signature (f : Callable2 A B R) :
-    (erase2 f).sig = f.signature := rfl
+/-- Unary backend erasure is a corollary of the general Callable model. -/
+theorem eraseValue_unary (f : Callable [A] R) :
+    eraseValue f = some ⟨.unary A R⟩ := rfl
 
-theorem eraseGenerator_preserves_signature (g : Generator1 A R State) :
+/-- Binary backend erasure is a corollary of the general Callable model. -/
+theorem eraseValue_binary (f : Callable [A, B] R) :
+    eraseValue f = some ⟨.binary A B R⟩ := rfl
+
+/-- Generator erasure preserves the separate generator protocol signature. -/
+theorem eraseGenerator_preserves_signature (g : Generator A R State) :
     (eraseGenerator g).sig = g.signature := rfl
 
 end CMeta
