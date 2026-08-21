@@ -1,4 +1,5 @@
 import CMeta.Calculus
+import CMeta.TypeIdentity
 import CMeta.Traits
 import CMeta.Callable
 import CMeta.Lambda
