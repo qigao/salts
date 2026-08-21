@@ -1,4 +1,8 @@
-import CMeta.Flow
+module
+public import CMeta.Flow
+import all CMeta.Flow
+public import CMeta.Callable
+import all CMeta.Callable
 
 /-!
 # Typed graph and relation safety
@@ -13,21 +17,21 @@ namespace CMeta
 
 /-- Result semantics relevant to relation typing. Coordination/completion/error
     policies affect scheduling, not the type equation proved here. -/
-inductive RelationResult where
+public inductive RelationResult where
   | select
   | fold
   deriving Repr, DecidableEq
 
 /-- A non-empty homogeneous branch set. Every branch starts at `A` and ends at
     `R`, so branch input/output agreement is enforced by construction. -/
-structure TypedBranches (A R : CType) where
+public structure TypedBranches (A R : CType) where
   first : Pipeline A R
   rest : List (Pipeline A R)
 
 namespace TypedBranches
 
 /-- Erase branch indices to graph-level operator/signature streams. -/
-def erase {A R : CType} (b : TypedBranches A R) :
+public def erase {A R : CType} (b : TypedBranches A R) :
     List (List (Operator × Signature)) :=
   b.first.steps :: b.rest.map Pipeline.steps
 
@@ -46,7 +50,7 @@ def checkBranchTail (input expected : CType) :
 
 /-- A dynamic relation branch checker: the branch list must be non-empty and
     every erased branch must validate from the same input to the same output. -/
-def checkBranches (input : CType) :
+public def checkBranches (input : CType) :
     List (List (Operator × Signature)) → Option CType
   | [] => none
   | first :: rest =>
@@ -72,7 +76,7 @@ theorem TypedBranches.check_erase {A R : CType} (b : TypedBranches A R) :
 
 /-- Dynamic relation descriptor, corresponding to the type-relevant part of
     `cflow_relation_schema` plus its optional reducer signature. -/
-structure ErasedRelation where
+public structure ErasedRelation where
   branches : List (List (Operator × Signature))
   result : RelationResult
   reducer : Option Signature
@@ -80,7 +84,7 @@ structure ErasedRelation where
 
 /-- Statically typed relation. SELECT has homogeneous branches; FOLD has the
     same branch condition plus a homogeneous `R × R -> R` reducer. -/
-inductive TypedRelation (A R : CType) where
+public inductive TypedRelation (A R : CType) where
   | select (branches : TypedBranches A R) : TypedRelation A R
   | fold (branches : TypedBranches A R)
       (reducer : Callable [R, R] R) : TypedRelation A R
@@ -88,7 +92,7 @@ inductive TypedRelation (A R : CType) where
 namespace TypedRelation
 
 /-- Erase the dependent relation indices to the runtime descriptor shape. -/
-def erase : {A R : CType} → TypedRelation A R → ErasedRelation
+public def erase : {A R : CType} → TypedRelation A R → ErasedRelation
   | _, _, .select branches =>
       ⟨branches.erase, .select, none⟩
   | _, _, .fold branches reducer =>
@@ -98,7 +102,7 @@ end TypedRelation
 
 /-- Dynamic relation admission. SELECT returns the homogeneous branch output;
     FOLD additionally validates the exact homogeneous reducer signature. -/
-def checkRelation (input : CType) (rel : ErasedRelation) : Option CType :=
+public def checkRelation (input : CType) (rel : ErasedRelation) : Option CType :=
   match checkBranches input rel.branches with
   | none => none
   | some output =>
@@ -110,7 +114,8 @@ def checkRelation (input : CType) (rel : ErasedRelation) : Option CType :=
           else none
 
 /-- Relation preservation after erasure. -/
-theorem TypedRelation.check_erase {A R : CType} (rel : TypedRelation A R) :
+-- TEMP-MODULE-BRIDGE(M6): legacy StructuredConformance.typed_relation_valid
+public theorem TypedRelation.check_erase {A R : CType} (rel : TypedRelation A R) :
     checkRelation A rel.erase = some R := by
   cases rel with
   | select branches =>
@@ -134,7 +139,7 @@ theorem TypedRelation.output_unique {A R R' : CType}
   exact Option.some.inj hs
 
 /-- Type-relevant stages of the erased structured graph. -/
-inductive ErasedStage where
+public inductive ErasedStage where
   | op (operator : Operator) (signature : Signature)
   | relation (descriptor : ErasedRelation)
   deriving Repr, DecidableEq
@@ -142,7 +147,7 @@ inductive ErasedStage where
 /-- Structured graph typing judgment `A => R`. Operators and relations can be
     composed arbitrarily; each constructor forces the next stage to consume the
     previous stage's output. -/
-inductive TypedGraph : CType → CType → Type where
+public inductive TypedGraph : CType → CType → Type where
   | done (t : CType) : TypedGraph t t
   | op {A B R : CType} :
       TypedOp A B → TypedGraph B R → TypedGraph A R
@@ -152,7 +157,7 @@ inductive TypedGraph : CType → CType → Type where
 namespace TypedGraph
 
 /-- Erase graph type indices to runtime-checkable stages. -/
-def stages : {A R : CType} → TypedGraph A R → List ErasedStage
+public def stages : {A R : CType} → TypedGraph A R → List ErasedStage
   | _, _, .done _ => []
   | _, _, .op node rest =>
       .op node.operator node.signature :: rest.stages
@@ -162,7 +167,7 @@ def stages : {A R : CType} → TypedGraph A R → List ErasedStage
 end TypedGraph
 
 /-- Dynamic checker for the erased structured graph. -/
-def checkGraph : CType → List ErasedStage → Option CType
+public def checkGraph : CType → List ErasedStage → Option CType
   | current, [] => some current
   | current, .op operator signature :: rest =>
       match stepType operator current signature with
@@ -176,7 +181,8 @@ def checkGraph : CType → List ErasedStage → Option CType
 /-- Main graph preservation theorem for this structured model: after all
     dependent type indices are erased, ordinary dynamic validation recovers the
     exact statically known result type. -/
-theorem TypedGraph.check_stages {A R : CType} (graph : TypedGraph A R) :
+-- TEMP-MODULE-BRIDGE(M5): legacy EndToEnd.structured_graph_type_safe
+public theorem TypedGraph.check_stages {A R : CType} (graph : TypedGraph A R) :
     checkGraph A graph.stages = some R := by
   induction graph with
   | done t => rfl

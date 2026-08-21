@@ -1,4 +1,6 @@
-import CMeta.Dispatch
+module
+public import CMeta.Dispatch
+import all CMeta.Dispatch
 
 /-!
 # Typed CFlow lowering and dispatch safety
@@ -12,7 +14,7 @@ returns Bool while preserving the stream element type).
 namespace CMeta
 
 /-- A well-typed CFlow operator, indexed by stream input and stream output. -/
-inductive TypedOp : CType → CType → Type where
+public inductive TypedOp : CType → CType → Type where
   | filter (t : CType) : TypedOp t t
   | map (input output : CType) : TypedOp input output
   | transform (input output : CType) : TypedOp input output
@@ -24,7 +26,7 @@ namespace TypedOp
 
 /-- Surface CFlow operator represented by this typed node.  The indices are
     matched together with the node so constructors may refine them. -/
-def operator : {A R : CType} → TypedOp A R → Operator
+public def operator : {A R : CType} → TypedOp A R → Operator
   | _, _, .filter _ => .filter
   | _, _, .map _ _ => .map
   | _, _, .transform _ _ => .transform
@@ -34,7 +36,7 @@ def operator : {A R : CType} → TypedOp A R → Operator
 
 /-- Exact callable ABI required by a typed node.  As with `operator`, matching
     the indices explicitly enables dependent constructor refinement. -/
-def signature : {A R : CType} → TypedOp A R → Signature
+public def signature : {A R : CType} → TypedOp A R → Signature
   | _, _, .filter t => .unary t .bool
   | _, _, .map input output => .unary input output
   | _, _, .transform input output => .unary input output
@@ -45,7 +47,7 @@ def signature : {A R : CType} → TypedOp A R → Signature
 end TypedOp
 
 /-- Dynamic type transition corresponding to CFlow graph admission. -/
-def stepType : Operator → CType → Signature → Option CType
+public def stepType : Operator → CType → Signature → Option CType
   | .filter, input, .unary a .bool =>
       if a = input then some input else none
   | .map, input, .unary a output =>
@@ -63,7 +65,8 @@ def stepType : Operator → CType → Signature → Option CType
 namespace TypedOp
 
 /-- Every statically typed operator is admitted by the dynamic type transition. -/
-theorem step_exact {A R : CType} (node : TypedOp A R) :
+-- TEMP-MODULE-BRIDGE(M3): legacy Optimize.canonicalizeMapLike_preserves_type
+public theorem step_exact {A R : CType} (node : TypedOp A R) :
     stepType node.operator A node.signature = some R := by
   cases node <;> simp [operator, signature, stepType]
 
@@ -81,19 +84,19 @@ theorem output_unique {A R R' : CType} (node : TypedOp A R)
 end TypedOp
 
 /-- A pipeline is typed by construction: every node consumes the previous output. -/
-inductive Pipeline : CType → CType → Type where
+public inductive Pipeline : CType → CType → Type where
   | done (t : CType) : Pipeline t t
   | cons {A B R : CType} : TypedOp A B → Pipeline B R → Pipeline A R
 
 namespace Pipeline
 
 /-- Erase a typed pipeline to the operator/signature stream stored by graph IR. -/
-def steps {A R : CType} : Pipeline A R → List (Operator × Signature)
+public def steps {A R : CType} : Pipeline A R → List (Operator × Signature)
   | .done _ => []
   | .cons node rest => (node.operator, node.signature) :: rest.steps
 
 /-- Structural size of a typed pipeline. -/
-def length {A R : CType} : Pipeline A R → Nat
+public def length {A R : CType} : Pipeline A R → Nat
   | .done _ => 0
   | .cons _ rest => rest.length + 1
 
@@ -106,7 +109,7 @@ theorem steps_length {A R : CType} (p : Pipeline A R) :
 end Pipeline
 
 /-- Dynamic checker for the erased graph-level operator/signature stream. -/
-def checkPipeline : CType → List (Operator × Signature) → Option CType
+public def checkPipeline : CType → List (Operator × Signature) → Option CType
   | current, [] => some current
   | current, (op, sig) :: rest =>
       match stepType op current sig with
@@ -114,7 +117,8 @@ def checkPipeline : CType → List (Operator × Signature) → Option CType
       | none => none
 
 /-- Type preservation for the whole pipeline after erasing the dependent indices. -/
-theorem Pipeline.check_steps {A R : CType} (p : Pipeline A R) :
+-- TEMP-MODULE-BRIDGE(M3): legacy Lowering.SurfaceZip.lowering_preserves_type
+public theorem Pipeline.check_steps {A R : CType} (p : Pipeline A R) :
     checkPipeline A p.steps = some R := by
   induction p with
   | done t => rfl
@@ -122,7 +126,7 @@ theorem Pipeline.check_steps {A R : CType} (p : Pipeline A R) :
       simp [Pipeline.steps, checkPipeline, TypedOp.step_exact, ih]
 
 /-- Current built-in CFlow signature policy, mirrored from operator_policy.h. -/
-def cflowBuiltInPolicy : OperatorPolicy
+public def cflowBuiltInPolicy : OperatorPolicy
   | .filter => [.unary .int .bool]
   | .map =>
       [.unary .int .int,
@@ -138,7 +142,7 @@ def cflowBuiltInPolicy : OperatorPolicy
   | .zip => [.binary .long .double .double]
 
 /-- One successfully resolved typed node. -/
-structure ResolvedStep (rules : List DispatchRule) (A R : CType) where
+public structure ResolvedStep (rules : List DispatchRule) (A R : CType) where
   node : TypedOp A R
   target : Nat
   dispatches : dispatch rules node.operator node.signature = some target
@@ -156,12 +160,12 @@ theorem dispatch_exact {rules : List DispatchRule} {A R : CType}
 end ResolvedStep
 
 /-- A target implementation has one logical signature even if reused by operators. -/
-def TargetSignatureUnique (rules : List DispatchRule) : Prop :=
+public def TargetSignatureUnique (rules : List DispatchRule) : Prop :=
   ∀ r1, r1 ∈ rules → ∀ r2, r2 ∈ rules →
     r1.target = r2.target → r1.sig = r2.sig
 
 /-- Dispatch well-formedness needed for type-safe target reuse. -/
-structure WellFormedDispatch (policy : OperatorPolicy)
+public structure WellFormedDispatch (policy : OperatorPolicy)
     (rules : List DispatchRule) : Prop where
   respectsPolicy : RulesRespectPolicy policy rules
   targetSignatureUnique : TargetSignatureUnique rules

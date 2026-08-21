@@ -1,6 +1,5 @@
 module
--- TEMP-MODULE-BRIDGE(M2): legacy Flow/Graph rely on Dispatch -> Lambda -> Callable semantics
-public import CMeta.Lambda
+public import CMeta.Traits
 import all CMeta.Traits
 
 /-!
@@ -37,8 +36,7 @@ public def dispatch : List DispatchRule → Operator → Signature → Option Na
       else dispatch rs op sig
 
 /-- Every successful dispatch comes from an actual matching finite rule. -/
--- TEMP-MODULE-BRIDGE(M2): legacy Flow.ResolvedStep.dispatch_exact
-public theorem dispatch_sound (rules : List DispatchRule) (op : Operator)
+theorem dispatch_sound (rules : List DispatchRule) (op : Operator)
     (sig : Signature) (target : Nat)
     (h : dispatch rules op sig = some target) :
     ∃ r, r ∈ rules ∧ r.op = op ∧ r.sig = sig ∧ r.target = target := by
@@ -60,8 +58,7 @@ public def RulesRespectPolicy (policy : OperatorPolicy) (rules : List DispatchRu
   ∀ r, r ∈ rules → r.sig ∈ policy r.op
 
 /-- Dispatch cannot escape the operator's type policy when the table is well formed. -/
--- TEMP-MODULE-BRIDGE(M2): legacy Flow.ResolvedStep.policy_safe
-public theorem dispatch_policy_sound (policy : OperatorPolicy) (rules : List DispatchRule)
+theorem dispatch_policy_sound (policy : OperatorPolicy) (rules : List DispatchRule)
     (hwf : RulesRespectPolicy policy rules)
     (op : Operator) (sig : Signature) (target : Nat)
     (h : dispatch rules op sig = some target) :
