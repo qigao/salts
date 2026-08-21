@@ -162,5 +162,19 @@ theorem CNestedReplayConformance.depth5_has_no_backend_plan :
     lowerReplayBackendPlan c11ReplayBackend depth5IR = none := by
   native_decide
 
+/-- A real strict-C11 singleton producer probe records the same direct/direct
+    strategy trace as the symbolic backend plan for distinct producer IDs. -/
+theorem CNestedReplayConformance.c_distinct_strategy_matches_plan :
+    NestedReplayGeneratedC.distinctStrategyTrace =
+      (ReplayExpansionPlan.fromIR distinctIR).strategyTrace := by
+  native_decide
+
+/-- A real strict-C11 singleton producer probe records a deferred-obstruct
+    re-entry at exactly the point where the symbolic plan sees P active again. -/
+theorem CNestedReplayConformance.c_reentry_strategy_matches_plan :
+    NestedReplayGeneratedC.reentryStrategyTrace =
+      (ReplayExpansionPlan.fromIR reentrantIR).strategyTrace := by
+  native_decide
+
 end Producer
 end CMeta
