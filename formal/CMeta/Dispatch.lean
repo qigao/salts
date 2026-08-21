@@ -1,6 +1,5 @@
 module
--- TEMP-MODULE-BRIDGE(M2): legacy Flow/Graph rely on Dispatch -> Lambda -> Callable semantics
-public import CMeta.Lambda
+public import CMeta.Traits
 import all CMeta.Traits
 
 /-!
