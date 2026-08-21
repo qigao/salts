@@ -3,6 +3,8 @@ import CMeta.Traits
 import CMeta.Callable
 import CMeta.Lambda
 import CMeta.Dispatch
+import CMeta.Flow
+import CMeta.Graph
 
 #check CMeta.product
 #check CMeta.CoreExpr
@@ -64,3 +66,40 @@ assert_not_exists CMeta.lambda_bind_same_shape
 #check CMeta.inferAndAllow
 
 assert_not_exists CMeta.inferAndAllow_known
+assert_not_exists CMeta.dispatch_sound
+assert_not_exists CMeta.dispatch_policy_sound
+
+#check CMeta.TypedOp
+#check CMeta.stepType
+#check CMeta.Pipeline
+#check CMeta.checkPipeline
+#check CMeta.cflowBuiltInPolicy
+#check CMeta.ResolvedStep
+#check CMeta.TargetSignatureUnique
+#check CMeta.WellFormedDispatch
+
+assert_not_exists CMeta.TypedOp.progress
+assert_not_exists CMeta.TypedOp.output_unique
+assert_not_exists CMeta.Pipeline.steps_length
+assert_not_exists CMeta.ResolvedStep.target_signature_safe
+assert_not_exists CMeta.ResolvedStep.cannot_target_incompatible
+
+#check CMeta.RelationResult
+#check CMeta.TypedBranches
+#check CMeta.TypedBranches.erase
+#check CMeta.checkBranches
+#check CMeta.ErasedRelation
+#check CMeta.TypedRelation
+#check CMeta.TypedRelation.erase
+#check CMeta.checkRelation
+#check CMeta.ErasedStage
+#check CMeta.TypedGraph
+#check CMeta.TypedGraph.stages
+#check CMeta.checkGraph
+
+assert_not_exists CMeta.checkBranchTail
+assert_not_exists CMeta.TypedBranches.check_erase
+assert_not_exists CMeta.TypedRelation.progress
+assert_not_exists CMeta.TypedRelation.output_unique
+assert_not_exists CMeta.TypedGraph.progress
+assert_not_exists CMeta.TypedGraph.output_unique
