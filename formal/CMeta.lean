@@ -8,6 +8,7 @@ import CMeta.PreprocessorBackendConformance
 import CMeta.PreprocessorBackendSelectionConformance
 import CMeta.PreprocessorBackendRegistryMutationConformance
 import CMeta.PreprocessorBackendRegistryEquivalenceConformance
+import CMeta.PreprocessorBackendRegistrySubstitutabilityConformance
 import CMeta.TypeIdentity
 import CMeta.TypeIdentityGeneratedC
 import CMeta.TypeIdentityConformance
