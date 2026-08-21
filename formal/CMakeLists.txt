@@ -22,6 +22,17 @@ else()
   message(STATUS "direct same-producer nested replay rejected as expected")
 endif()
 
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  set(CMETA_NESTED_REPLAY_LEAN_NAMESPACE "CMeta.NestedReplayGeneratedC")
+elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+  set(CMETA_NESTED_REPLAY_LEAN_NAMESPACE "CMeta.NestedReplayClangGeneratedC")
+else()
+  message(FATAL_ERROR
+    "formal nested replay certificate supports GNU or Clang preprocessors, got ${CMAKE_C_COMPILER_ID}")
+endif()
+message(STATUS
+  "nested replay certificate namespace: ${CMETA_NESTED_REPLAY_LEAN_NAMESPACE}")
+
 function(cmeta_add_formal_witness target source)
   add_executable(${target} EXCLUDE_FROM_ALL ${source})
   target_compile_features(${target} PRIVATE c_std_11)
@@ -88,7 +99,8 @@ cmeta_add_formal_witness(cmeta_nested_replay_deferred_witness
 target_include_directories(cmeta_nested_replay_deferred_witness PRIVATE
   ${PROJECT_SOURCE_DIR}/cmeta/include)
 target_compile_definitions(cmeta_nested_replay_deferred_witness PRIVATE
-  CMETA_DIRECT_NESTED_REPLAY_ACCEPTED=${CMETA_DIRECT_NESTED_REPLAY_ACCEPTED_VALUE})
+  CMETA_DIRECT_NESTED_REPLAY_ACCEPTED=${CMETA_DIRECT_NESTED_REPLAY_ACCEPTED_VALUE}
+  CMETA_NESTED_REPLAY_LEAN_NAMESPACE="${CMETA_NESTED_REPLAY_LEAN_NAMESPACE}")
 set_target_properties(cmeta_nested_replay_deferred_witness PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED YES
