@@ -162,7 +162,7 @@ theorem certifiedReplayLowering_eq_of_capability_eq
   rw [hcap]
 
 /-- Portability is local to the requested IR: two certified preprocessors need
-    not expose identical capability envelopes. If both admit this IR, both
+    not expose identical capability envelopes. If both support this IR, both
     normalize to the same canonical backend plan. -/
 theorem certifiedReplayLowering_eq_of_both_supports
     (a b : CertifiedPreprocessorBackend) (ir : ReplayIR)
