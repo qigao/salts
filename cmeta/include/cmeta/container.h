@@ -40,12 +40,12 @@
         size_t count; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
         count = CMETA_CONTAINER_API(prefix, size)(&self->raw); \
-        if (*cursor >= count) return CMETA_GEN_DONE; \
-        value = (const type *)CMETA_CONTAINER_API(prefix, at_const)(&self->raw, *cursor); \
+        if (cursor->index >= count) return CMETA_GEN_DONE; \
+        value = (const type *)CMETA_CONTAINER_API(prefix, at_const)(&self->raw, cursor->index); \
         if (!value) return CMETA_GEN_ERROR; \
         memcpy(out_value, value, sizeof(type)); \
-        ++(*cursor); \
-        return *cursor == count ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE; \
+        ++cursor->index; \
+        return cursor->index == count ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE; \
     } \
     CMETA_INLINE cmeta_range name##_range(const name *self) { \
         cmeta_range range = { \
@@ -80,7 +80,7 @@
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
         if (!CMETA_CONTAINER_API(prefix, range_next)(&self->raw, cursor, &value)) return CMETA_GEN_DONE; \
         memcpy(out_value, value, sizeof(type)); \
-        return *cursor == SIZE_MAX ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE; \
+        return cursor->state[0] == NULL ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE; \
     } \
     CMETA_INLINE cmeta_range name##_range(const name *self) { \
         cmeta_range range = { self, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), (flags), \
@@ -159,6 +159,9 @@
 
 #define CMETA_C1_INLINE_PUSH_VALUE(pub, op, extra, name, type, raw_type, prefix, ok, aux) \
     CMETA_INLINE int name##_##pub(name *self, type value) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, &value); }
+
+#define CMETA_C1_INLINE_PUSH_VALUE_ITER(pub, op, extra, name, type, raw_type, prefix, ok, aux) \
+    CMETA_INLINE int name##_##pub(name *self, type value) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, &value, NULL); }
 
 #define CMETA_C1_INLINE_POP_BOOL(pub, op, extra, name, type, raw_type, prefix, ok, aux) \
     CMETA_INLINE int name##_##pub(name *self, type *out_value) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw, out_value) : CMETA_INVALID_ARGUMENT; }
@@ -287,9 +290,9 @@
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
         limit = CMETA_CONTAINER_API(prefix, capacity)(&self->raw); \
-        while (*cursor < limit) { \
-            const type *value = (const type *)CMETA_CONTAINER_API(prefix, key_at)(&self->raw, *cursor); \
-            ++(*cursor); \
+        while (cursor->index < limit) { \
+            const type *value = (const type *)CMETA_CONTAINER_API(prefix, key_at)(&self->raw, cursor->index); \
+            ++cursor->index; \
             if (value) { memcpy(out_value, value, sizeof(type)); return CMETA_GEN_VALUE; } \
         } \
         return CMETA_GEN_DONE; \
@@ -383,9 +386,9 @@
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
         limit = CMETA_CONTAINER_API(prefix, capacity)(&self->raw); \
-        while (*cursor < limit) { \
-            const key_type *key = (const key_type *)CMETA_CONTAINER_API(prefix, key_at_op)(&self->raw, *cursor); \
-            ++(*cursor); \
+        while (cursor->index < limit) { \
+            const key_type *key = (const key_type *)CMETA_CONTAINER_API(prefix, key_at_op)(&self->raw, cursor->index); \
+            ++cursor->index; \
             if (key) { memcpy(out_value, key, sizeof(key_type)); return CMETA_GEN_VALUE; } \
         } \
         return CMETA_GEN_DONE; \
@@ -395,9 +398,9 @@
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
         limit = CMETA_CONTAINER_API(prefix, capacity)(&self->raw); \
-        while (*cursor < limit) { \
-            const value_type *value = (const value_type *)CMETA_CONTAINER_API(prefix, value_at_op)(&self->raw, *cursor); \
-            ++(*cursor); \
+        while (cursor->index < limit) { \
+            const value_type *value = (const value_type *)CMETA_CONTAINER_API(prefix, value_at_op)(&self->raw, cursor->index); \
+            ++cursor->index; \
             if (value) { memcpy(out_value, value, sizeof(value_type)); return CMETA_GEN_VALUE; } \
         } \
         return CMETA_GEN_DONE; \
@@ -407,11 +410,11 @@
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
         limit = CMETA_CONTAINER_API(prefix, capacity)(&self->raw); \
-        while (*cursor < limit) { \
-            size_t slot = *cursor; \
+        while (cursor->index < limit) { \
+            size_t slot = cursor->index; \
             const key_type *key = (const key_type *)CMETA_CONTAINER_API(prefix, key_at_op)(&self->raw, slot); \
             const value_type *value = (const value_type *)CMETA_CONTAINER_API(prefix, value_at_op)(&self->raw, slot); \
-            ++(*cursor); \
+            ++cursor->index; \
             if (key && value) { \
                 name##_entry *entry = (name##_entry *)out_value; \
                 memcpy(&entry->key, key, sizeof(key_type)); \
@@ -485,7 +488,7 @@
         if (view == 0) memcpy(out_value, key, sizeof(key_type)); \
         else if (view == 1) memcpy(out_value, value, sizeof(value_type)); \
         else { name##_entry *entry = (name##_entry *)out_value; memcpy(&entry->key, key, sizeof(key_type)); memcpy(&entry->value, value, sizeof(value_type)); } \
-        return *cursor == SIZE_MAX ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE; \
+        return cursor->state[0] == NULL ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE; \
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_keys_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { return name##_cmeta_link_next(object, cursor, out_value, 0); } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_values_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { return name##_cmeta_link_next(object, cursor, out_value, 1); } \

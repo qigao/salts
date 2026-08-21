@@ -56,7 +56,7 @@ bool cflow_source_from_array(cflow_source *out,
 /* ---------------- CMeta Range ---------------- */
 typedef struct range_state {
     cmeta_range range;
-    size_t cursor;
+    cmeta_range_cursor cursor;
 } range_state;
 
 static cflow_step range_resume(void *state, cflow_resume_ctx *ctx, void *out) {
@@ -72,6 +72,8 @@ static cflow_step range_resume(void *state, cflow_resume_ctx *ctx, void *out) {
             return (cflow_step){ CFLOW_STEP_VALUE_AND_DONE, {0}, NULL };
         case CMETA_GEN_DONE:
             return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
+        case CMETA_GEN_MUTATED:
+            return (cflow_step){ CFLOW_STEP_ERROR, {0}, "range owner mutated" };
         case CMETA_GEN_ERROR:
             return (cflow_step){ CFLOW_STEP_ERROR, {0}, "range iteration failed" };
     }

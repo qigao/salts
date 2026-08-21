@@ -120,16 +120,41 @@ static size_t cmeta_test_range_size(const void *object) {
 }
 
 static cmeta_gen_status cmeta_test_range_next(const void *object,
-                                               size_t *cursor,
+                                               cmeta_range_cursor *cursor,
                                                void *out_value) {
     cmeta_test_range_owner *owner = (cmeta_test_range_owner *)object;
 
-    if (*cursor >= owner->count)
+    if (cursor->index >= owner->count)
         return CMETA_GEN_DONE;
-    *(int *)out_value = owner->values[*cursor];
+    *(int *)out_value = owner->values[cursor->index];
     ++owner->next_calls;
-    ++*cursor;
-    return *cursor == owner->count ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE;
+    ++cursor->index;
+    return cursor->index == owner->count ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE;
+}
+
+typedef struct cmeta_test_link_node {
+    int value;
+    struct cmeta_test_link_node *next;
+} cmeta_test_link_node;
+
+typedef struct cmeta_test_link_owner {
+    cmeta_test_link_node *head;
+} cmeta_test_link_owner;
+
+static cmeta_gen_status cmeta_test_link_next(const void *object,
+                                             cmeta_range_cursor *cursor,
+                                             void *out_value) {
+    const cmeta_test_link_owner *owner =
+        (const cmeta_test_link_owner *)object;
+    cmeta_test_link_node *node = cursor->state[0] == NULL
+                                     ? owner->head
+                                     : (cmeta_test_link_node *)cursor->state[0];
+
+    if (node == NULL)
+        return CMETA_GEN_DONE;
+    *(int *)out_value = node->value;
+    cursor->state[0] = node->next;
+    return node->next == NULL ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE;
 }
 
 static cmeta_range cmeta_test_range(const cmeta_test_range_owner *owner) {
@@ -188,7 +213,7 @@ static uint64_t cmeta_test_required_range_version(const void *object) {
 }
 
 static cmeta_gen_status cmeta_test_null_owner_next(const void *object,
-                                                    size_t *cursor,
+                                                    cmeta_range_cursor *cursor,
                                                     void *out_value) {
     (void)object;
     (void)cursor;
@@ -626,19 +651,39 @@ suite("CMeta core") {
             .generation = 4u, .values = {1, 2}, .count = 2u
         };
         cmeta_range range = cmeta_test_range(&owner);
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         int out = 0;
 
         check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_VALUE);
-        check_equal(cursor, (size_t)1u);
+        check_equal(cursor.index, (size_t)1u);
         check_equal(out, 1);
         check_equal(owner.next_calls, (size_t)1u);
         ++owner.generation;
         out = 99;
         check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_MUTATED);
-        check_equal(cursor, (size_t)1u);
+        check_equal(cursor.index, (size_t)1u);
         check_equal(out, 99);
         check_equal(owner.next_calls, (size_t)1u);
+    }
+
+    it("stores linked traversal state without integer pointer encoding") {
+        cmeta_test_link_node second = {2, NULL};
+        cmeta_test_link_node first = {1, &second};
+        cmeta_test_link_owner owner = {&first};
+        cmeta_range range = {
+            &owner, &cmeta_type_int, CMETA_RANGE_ORDERED, NULL,
+            cmeta_test_link_next, UINT64_C(0), NULL
+        };
+        cmeta_range_cursor cursor = {0};
+        int out = 0;
+
+        check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_VALUE);
+        check_equal(out, 1);
+        check_true(cursor.state[0] == &second);
+        check_equal(cmeta_range_next(&range, &cursor, &out),
+                    CMETA_GEN_VALUE_AND_DONE);
+        check_equal(out, 2);
+        check_null(cursor.state[0]);
     }
 
     it("checks range arguments before reading owner generation") {
@@ -658,7 +703,7 @@ suite("CMeta core") {
             .raw = {.values = {3, 5}, .count = 2u}, .generation = 9u
         };
         cmeta_range range = cmeta_test_generated_range_container_range(&container);
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         int out = 0;
 
         check_equal(range.version, UINT64_C(9));
@@ -668,7 +713,7 @@ suite("CMeta core") {
         ++container.generation;
         out = 77;
         check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_MUTATED);
-        check_equal(cursor, (size_t)1u);
+        check_equal(cursor.index, (size_t)1u);
         check_equal(out, 77);
     }
 
@@ -677,7 +722,7 @@ suite("CMeta core") {
             .raw = {.values = {3, 5}, .count = 2u}, .generation = 11u
         };
         cmeta_range range = cmeta_test_required_range_container_range(&container);
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         int out = 0;
 
         check_equal(range.version, UINT64_C(11));
@@ -694,7 +739,7 @@ suite("CMeta core") {
             cmeta_test_null_owner_next, UINT64_C(0),
             cmeta_test_required_range_version
         };
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         int out = 0;
 
         cmeta_test_required_range_version_reads = 0u;
@@ -713,7 +758,7 @@ suite("CMeta core") {
             NULL, &cmeta_type_int, CMETA_RANGE_NONE, NULL,
             cmeta_test_null_owner_next, UINT64_C(0), NULL
         };
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         int out = 0;
 
         cmeta_test_null_owner_next_calls = 0u;
@@ -723,7 +768,7 @@ suite("CMeta core") {
 
     it("generated versioned ranges do not access a null owner") {
         cmeta_range range;
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         int out = 0;
 
         cmeta_test_required_range_version_reads = 0u;
@@ -741,7 +786,7 @@ suite("CMeta core") {
             .generation = UINT64_C(21)
         };
         cmeta_range range = cmeta_test_slot_range_container_range(&container);
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         int out = 0;
 
         check_equal(range.version, UINT64_C(21));
@@ -760,26 +805,26 @@ suite("CMeta core") {
         };
         cmeta_range range;
         cmeta_test_assoc_range_container_entry entry = {0};
-        size_t cursor;
+        cmeta_range_cursor cursor;
         int key = 0;
         long value = 0;
 
         range = cmeta_test_assoc_range_container_keys_range(&container);
-        cursor = 0u;
+        cursor = (cmeta_range_cursor){0};
         check_equal(cmeta_range_next(&range, &cursor, &key), CMETA_GEN_VALUE);
         check_equal(key, 7);
         ++container.generation;
         check_equal(cmeta_range_next(&range, &cursor, &key), CMETA_GEN_MUTATED);
 
         range = cmeta_test_assoc_range_container_values_range(&container);
-        cursor = 0u;
+        cursor = (cmeta_range_cursor){0};
         check_equal(cmeta_range_next(&range, &cursor, &value), CMETA_GEN_VALUE);
         check_equal(value, 70L);
         ++container.generation;
         check_equal(cmeta_range_next(&range, &cursor, &value), CMETA_GEN_MUTATED);
 
         range = cmeta_test_assoc_range_container_entries_range(&container);
-        cursor = 0u;
+        cursor = (cmeta_range_cursor){0};
         check_equal(cmeta_range_next(&range, &cursor, &entry), CMETA_GEN_VALUE);
         check_equal(entry.key, 7);
         check_equal(entry.value, 70L);

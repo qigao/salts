@@ -24,17 +24,13 @@ enum {
 };
 
 typedef size_t (*cmeta_range_size_fn)(const void *object);
-/* Container ranges may use the cursor either as an index or as an encoded
- * uintptr_t to stable, container-owned traversal metadata. TurboUtils only
- * supports targets where size_t can represent uintptr_t without loss. */
-typedef size_t cmeta_range_cursor;
-#if defined(__cplusplus)
-static_assert(SIZE_MAX >= UINTPTR_MAX,
-              "CMETA_RANGE_CURSOR_CANNOT_REPRESENT_UINTPTR");
-#else
-_Static_assert(SIZE_MAX >= UINTPTR_MAX,
-               "CMETA_RANGE_CURSOR_CANNOT_REPRESENT_UINTPTR");
-#endif
+/* A cursor is caller-owned, zero-initialized opaque traversal state. Array and
+ * sparse ranges use index; linked and tree ranges use state. It may only be
+ * passed back to the Range that initialized it and never owns its pointers. */
+typedef struct cmeta_range_cursor {
+    size_t index;
+    void *state[2];
+} cmeta_range_cursor;
 typedef cmeta_gen_status (*cmeta_range_next_fn)(const void *object,
                                                  cmeta_range_cursor *cursor,
                                                  void *out_value);

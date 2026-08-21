@@ -3,6 +3,27 @@
 
 #include "cflow_test_ops.h"
 
+typedef struct cflow_test_range_owner {
+    uint64_t generation;
+    int value;
+} cflow_test_range_owner;
+
+static uint64_t cflow_test_range_version(const void *object) {
+    return ((const cflow_test_range_owner *)object)->generation;
+}
+
+static cmeta_gen_status cflow_test_range_next(const void *object,
+                                               cmeta_range_cursor *cursor,
+                                               void *out_value) {
+    const cflow_test_range_owner *owner =
+        (const cflow_test_range_owner *)object;
+    if (cursor->index != 0u)
+        return CMETA_GEN_DONE;
+    *(int *)out_value = owner->value;
+    ++cursor->index;
+    return CMETA_GEN_VALUE;
+}
+
 static bool cflow_test_build_pipeline(cflow_stream *stream) {
     return cflow_stream_init(stream, &cmeta_type_int) &&
            stream->filter(stream, cflow_test_even) &&
@@ -24,6 +45,27 @@ static void cflow_test_check_expected(const cflow_result *result) {
 }
 
 suite("CFlow pipeline") {
+    it("reports a mutated borrowed range owner") {
+        cflow_test_range_owner owner = {7u, 42};
+        cmeta_range range = {
+            &owner, &cmeta_type_int, CMETA_RANGE_NONE, NULL,
+            cflow_test_range_next, owner.generation, cflow_test_range_version
+        };
+        cflow_source source = {0};
+        cflow_step step;
+        int output = 0;
+
+        check_true(cflow_source_from_range(&source, range));
+        step = cflow_source_resume(&source, NULL, &output);
+        check_true(step.kind == CFLOW_STEP_VALUE);
+        check_equal(output, 42);
+        ++owner.generation;
+        step = cflow_source_resume(&source, NULL, &output);
+        check_true(step.kind == CFLOW_STEP_ERROR);
+        check_equal(step.error, "range owner mutated");
+        cflow_source_destroy(&source);
+    }
+
     it("evaluates a typed fluent pipeline") {
         cflow_stream stream = {0};
         cflow_result result = {0};
