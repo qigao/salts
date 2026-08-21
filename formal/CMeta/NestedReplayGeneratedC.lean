@@ -1,4 +1,7 @@
 namespace CMeta.NestedReplayGeneratedC
+def compilerFamilyTag : Nat := 1
+def compilerMajorVersion : Nat := 13
+def languageStandard : Nat := 201112
 def distinctCount : Nat := 6
 def depth2Count : Nat := 4
 def depth3Count : Nat := 8
