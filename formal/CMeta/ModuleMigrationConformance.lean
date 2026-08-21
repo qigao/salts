@@ -117,6 +117,7 @@ assert_not_exists CMeta.TypedGraph.output_unique
 #check CMeta.canonicalizeMapLike
 #check CMeta.IdempotentEndomap
 
+assert_not_exists CMeta.MapChain.check_signatures
 assert_not_exists CMeta.MapChain.run_cons
 assert_not_exists CMeta.canonicalizeMapLike_preserves_type
 assert_not_exists CMeta.duplicate_idempotent_elimination_type

@@ -1,4 +1,7 @@
-import CMeta.Lowering
+module
+public import CMeta.Lowering
+import all CMeta.Lowering
+import all CMeta.Optimize
 
 /-!
 # Direct execution-plan type preservation
@@ -14,7 +17,7 @@ keeps the ordered callback `fn_chain`, matching `cflow_plan_inst.fn_chain`.
 
 namespace CMeta
 
-inductive PlanOpcode where
+public inductive PlanOpcode where
   | filter
   | map
   | flatMap
@@ -22,7 +25,7 @@ inductive PlanOpcode where
   deriving Repr, DecidableEq
 
 /-- Type-relevant view of one `cflow_plan_inst`. -/
-structure ErasedPlanInst where
+public structure ErasedPlanInst where
   opcode : PlanOpcode
   input : CType
   output : CType
@@ -30,7 +33,7 @@ structure ErasedPlanInst where
   deriving Repr, DecidableEq
 
 /-- A node in the subset accepted by the direct plan compiler. -/
-inductive PlanNode : CType → CType → Type where
+public inductive PlanNode : CType → CType → Type where
   | filter (t : CType) : PlanNode t t
   | map (input output : CType) : PlanNode input output
   | transform (input output : CType) : PlanNode input output
@@ -42,7 +45,7 @@ inductive PlanNode : CType → CType → Type where
 namespace PlanNode
 
 /-- Compilation to the instruction fields copied by `plan_compile.c`. -/
-def erase : {A R : CType} → PlanNode A R → ErasedPlanInst
+public def erase : {A R : CType} → PlanNode A R → ErasedPlanInst
   | _, _, .filter t =>
       ⟨.filter, t, t, [.unary t .bool]⟩
   | _, _, .map input output =>
@@ -59,7 +62,7 @@ def erase : {A R : CType} → PlanNode A R → ErasedPlanInst
 end PlanNode
 
 /-- Validate one instruction using only fields retained in the direct plan. -/
-def checkPlanInst (current : CType) (inst : ErasedPlanInst) : Option CType :=
+public def checkPlanInst (current : CType) (inst : ErasedPlanInst) : Option CType :=
   if inst.input = current then
     match inst.opcode with
     | .filter =>
@@ -83,7 +86,8 @@ def checkPlanInst (current : CType) (inst : ErasedPlanInst) : Option CType :=
   else none
 
 /-- Every statically compilable node survives instruction erasure. -/
-theorem PlanNode.check_erase {A R : CType} (node : PlanNode A R) :
+-- TEMP-MODULE-BRIDGE(M4): legacy Execution; remove Task 10
+public theorem PlanNode.check_erase {A R : CType} (node : PlanNode A R) :
     checkPlanInst A node.erase = some R := by
   cases node <;>
     simp [PlanNode.erase, checkPlanInst, MapChain.check,
@@ -94,7 +98,7 @@ theorem transform_compiles_as_map (A R : CType) :
     (PlanNode.transform A R).erase.opcode = .map := rfl
 
 /-- Linear normalized program accepted by `cflow_plan_graph_supported`. -/
-inductive PlanProgram : CType → CType → Type where
+public inductive PlanProgram : CType → CType → Type where
   | done (t : CType) : PlanProgram t t
   | cons {A B R : CType} :
       PlanNode A B → PlanProgram B R → PlanProgram A R
@@ -102,14 +106,14 @@ inductive PlanProgram : CType → CType → Type where
 namespace PlanProgram
 
 /-- Drop graph topology and retain only the direct instruction array. -/
-def code : {A R : CType} → PlanProgram A R → List ErasedPlanInst
+public def code : {A R : CType} → PlanProgram A R → List ErasedPlanInst
   | _, _, .done _ => []
   | _, _, .cons node rest => node.erase :: rest.code
 
 end PlanProgram
 
 /-- Sequential type validation of a compiled instruction array. -/
-def checkPlan : CType → List ErasedPlanInst → Option CType
+public def checkPlan : CType → List ErasedPlanInst → Option CType
   | current, [] => some current
   | current, inst :: rest =>
       match checkPlanInst current inst with
@@ -125,7 +129,7 @@ theorem PlanProgram.check_code {A R : CType} (program : PlanProgram A R) :
       simp [PlanProgram.code, checkPlan, PlanNode.check_erase, ih]
 
 /-- Public type fields plus direct code, mirroring `cflow_plan`. -/
-structure ErasedPlan where
+public structure ErasedPlan where
   input : CType
   output : CType
   code : List ErasedPlanInst
@@ -134,18 +138,21 @@ structure ErasedPlan where
 namespace PlanProgram
 
 /-- Compile a statically supported program to the topology-free plan shape. -/
-def compile {A R : CType} (program : PlanProgram A R) : ErasedPlan :=
+-- TEMP-MODULE-BRIDGE(M5): legacy EndToEnd unfolds compiled plan semantics
+@[expose] public def compile {A R : CType} (program : PlanProgram A R) : ErasedPlan :=
   ⟨A, R, program.code⟩
 
 end PlanProgram
 
 /-- Runtime-checkable well-typedness of an erased direct plan. -/
-def PlanWellTyped (plan : ErasedPlan) : Prop :=
+-- TEMP-MODULE-BRIDGE(M5): legacy EndToEnd unfolds compiled plan semantics
+@[expose] public def PlanWellTyped (plan : ErasedPlan) : Prop :=
   checkPlan plan.input plan.code = some plan.output
 
 /-- Main plan-compilation theorem: public endpoints and every intermediate
     instruction remain type-consistent after topology erasure. -/
-theorem PlanProgram.compile_well_typed {A R : CType}
+-- TEMP-MODULE-BRIDGE(M4): legacy Execution; remove Task 10
+public theorem PlanProgram.compile_well_typed {A R : CType}
     (program : PlanProgram A R) :
     PlanWellTyped program.compile := by
   exact program.check_code
