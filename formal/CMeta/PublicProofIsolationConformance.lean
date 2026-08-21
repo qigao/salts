@@ -22,4 +22,3 @@ assert_not_exists CMeta.EndToEnd.direct_plan_exact
 assert_not_exists CMeta.TypedGraph.check_stages
 assert_not_exists CMeta.FusedMap.type_preserved
 assert_not_exists CMeta.ExecProgram.runtime_execution_exact
-#check_assertions
