@@ -73,19 +73,20 @@ theorem compose_beta (g : Callable [B] R) (f : Callable [A] B)
 
 end Callable
 
-/-- Zero logical arguments are already represented by the same Callable model. -/
-private def zeroArgumentExample : Callable [] .int :=
-  ⟨fun | .nil => 7⟩
+/-- Zero logical arguments are represented by the same Callable model. -/
+private def zeroArgumentExample {R : CType} (result : R.denote) : Callable [] R :=
+  ⟨fun | .nil => result⟩
 
 /-- Higher finite arity is represented without introducing another callable type. -/
-private def threeArgumentExample : Callable [.int, .int, .int] .int :=
-  ⟨fun | .cons a (.cons b (.cons c .nil)) => a + b + c⟩
+private def threeArgumentFirst {A B C : CType} : Callable [A, B, C] A :=
+  ⟨fun | .cons a (.cons _ (.cons _ .nil)) => a⟩
 
-example : zeroArgumentExample.run .nil = 7 := rfl
+example {R : CType} (result : R.denote) :
+    (zeroArgumentExample result).run .nil = result := rfl
 
-example :
-    threeArgumentExample.run (.cons 1 (.cons 2 (.cons 3 .nil))) = 6 := by
-  native_decide
+example {A B C : CType}
+    (a : A.denote) (b : B.denote) (c : C.denote) :
+    threeArgumentFirst.run (.cons a (.cons b (.cons c .nil))) = a := rfl
 
 /-- Generator is a separate protocol, not a value lambda whose arity happens to
     include output-buffer/cursor implementation parameters. -/
