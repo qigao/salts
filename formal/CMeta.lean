@@ -2,6 +2,7 @@ import CMeta.Calculus
 import CMeta.FmtArgs
 import CMeta.Producer
 import CMeta.NestedReplay
+import CMeta.NestedReplayConformance
 import CMeta.TypeIdentity
 import CMeta.TypeIdentityGeneratedC
 import CMeta.TypeIdentityConformance
