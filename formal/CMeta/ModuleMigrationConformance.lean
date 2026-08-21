@@ -3,6 +3,7 @@ import CMeta.Traits
 import CMeta.Callable
 import CMeta.Lambda
 import CMeta.Dispatch
+import CMeta.Flow
 
 #check CMeta.product
 #check CMeta.CoreExpr
@@ -64,3 +65,18 @@ assert_not_exists CMeta.lambda_bind_same_shape
 #check CMeta.inferAndAllow
 
 assert_not_exists CMeta.inferAndAllow_known
+
+#check CMeta.TypedOp
+#check CMeta.stepType
+#check CMeta.Pipeline
+#check CMeta.checkPipeline
+#check CMeta.cflowBuiltInPolicy
+#check CMeta.ResolvedStep
+#check CMeta.TargetSignatureUnique
+#check CMeta.WellFormedDispatch
+
+assert_not_exists CMeta.TypedOp.progress
+assert_not_exists CMeta.TypedOp.output_unique
+assert_not_exists CMeta.Pipeline.steps_length
+assert_not_exists CMeta.ResolvedStep.target_signature_safe
+assert_not_exists CMeta.ResolvedStep.cannot_target_incompatible
