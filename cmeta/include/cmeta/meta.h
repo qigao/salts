@@ -6,10 +6,12 @@
 #include <cmeta/pp.h>
 #include <cmeta/enum.h>
 #include <cmeta/struct.h>
+#ifndef __cplusplus
 #include <cmeta/range.h>
 #include <cmeta/container.h>
 #include <cmeta/generic.h>
 #include <cmeta/value.h>
 #include <cmeta/interface.h>
 #include <cmeta/contract.h>
+#endif
 #endif

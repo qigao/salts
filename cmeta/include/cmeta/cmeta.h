@@ -70,6 +70,7 @@ Enum(cmeta_gen_status,
     (CMETA_GEN_ERROR,          4, "error")
 );
 
+#ifndef __cplusplus
 #include <cmeta/signatures.h>
 
 extern const cmeta_type_desc cmeta_type_void;
@@ -321,6 +322,8 @@ bool cmeta_callable_same(cmeta_callable a, cmeta_callable b);
 bool cmeta_callable_invoke(const cmeta_callable *fn, void *out, const void *const *args);
 cmeta_gen_status cmeta_callable_generate(const cmeta_callable *fn, const void *input,
                                          void *out, size_t *cursor);
+
+#endif /* !__cplusplus */
 
 #ifdef __cplusplus
 }
