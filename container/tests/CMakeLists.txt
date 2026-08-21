@@ -84,6 +84,30 @@ if(NOT container_typed_unregistered_kind_output MATCHES
     "${container_typed_unregistered_kind_output}")
 endif()
 
+unset(container_list_forbidden_api_compiles CACHE)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+try_compile(container_list_forbidden_api_compiles
+  "${CMAKE_CURRENT_BINARY_DIR}/list_forbidden_api_probe"
+  SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/container_list_negative_capacity.c"
+  CMAKE_FLAGS
+    "-DCMAKE_C_STANDARD=11"
+    "-DCMAKE_C_STANDARD_REQUIRED=ON"
+    "-DINCLUDE_DIRECTORIES:STRING=${CMAKE_SOURCE_DIR}/container/include;${CMAKE_SOURCE_DIR}/cmeta/include"
+  OUTPUT_VARIABLE container_list_forbidden_api_output)
+unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
+
+if(container_list_forbidden_api_compiles)
+  message(FATAL_ERROR
+    "List still exposes forbidden reserve/capacity/at APIs")
+endif()
+
+if(NOT container_list_forbidden_api_output MATCHES
+   "turbo_list_(reserve|capacity|at)")
+  message(FATAL_ERROR
+    "List forbidden-API probe failed without an expected symbol diagnostic:\n"
+    "${container_list_forbidden_api_output}")
+endif()
+
 set_target_properties(
   container_header_test
   PROPERTIES

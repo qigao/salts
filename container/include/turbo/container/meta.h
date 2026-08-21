@@ -69,7 +69,15 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
  M(CONST_PTR_INDEX,at_const,at_const,_,C) M(SIZE,size,size,_,C) \
  M(SIZE,capacity,capacity,_,C) M(BOOL,empty,empty,_,C)
 
-#define TURBO_META_LIST_METHODS(M,C) TURBO_META_DEQUE_METHODS(M,C)
+#define TURBO_META_LIST_METHODS(M,C) \
+ M(INIT_SIZE,init,init,_,C) M(FROM_ARRAY_SIZE,from,from_array,_,C) \
+ M(DESTROY,destroy,destroy,_,C) M(CLEAR,clear,clear,_,C) \
+ M(PUSH_VALUE_ITER,push_back,push_back,_,C) \
+ M(PUSH_VALUE_ITER,push_front,push_front,_,C) \
+ M(POP_BOOL,pop_back,pop_back,_,C) M(POP_BOOL,pop_front,pop_front,_,C) \
+ M(PTR,front,front,_,C) M(CONST_PTR,front_const,front_const,_,C) \
+ M(PTR,back,back,_,C) M(CONST_PTR,back_const,back_const,_,C) \
+ M(SIZE,size,size,_,C) M(BOOL,empty,empty,_,C)
 
 #define TURBO_META_STACK_METHODS(M,C) \
  M(INIT_SIZE,init,init,_,C) M(FROM_ARRAY_SIZE,from,from_array,_,C) \
@@ -101,7 +109,12 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
  M(RESERVE,reserve,reserve,_,C) M(KEY_VALUE,add,add,_,C) \
  M(KEY_CONTAINS,contains,contains,_,C) M(KEY_REMOVE_BOOL,remove,remove,_,C) \
  M(SIZE,size,size,_,C) M(SIZE,capacity,capacity,_,C) M(BOOL,empty,empty,_,C)
-#define TURBO_META_HASH_SET_METHODS(M,C) TURBO_META_SET_METHODS(M,C)
+#define TURBO_META_HASH_SET_METHODS(M,C) \
+ M(INIT_KEY_HASH,init,init,_,C) M(FROM_KEYS_HASH,from,from_array,_,C) \
+ M(DESTROY,destroy,destroy,_,C) M(CLEAR,clear,clear,_,C) \
+ M(RESERVE,reserve,reserve,_,C) M(KEY_VALUE,add,add,_,C) \
+ M(KEY_CONTAINS,contains,contains,_,C) M(KEY_REMOVE_BOOL,remove,remove,_,C) \
+ M(SIZE,size,size,_,C) M(SIZE,capacity,capacity,_,C) M(BOOL,empty,empty,_,C)
 
 #define TURBO_META_C1_GENERATION(name,prefix) \
  CMETA_INLINE uint64_t name##_cmeta_generation(const void *object) { \

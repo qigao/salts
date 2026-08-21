@@ -64,73 +64,75 @@ static list_owned_value list_owned_make(int value) {
 }
 
 spec("Independent linked List") {
-    it("keeps bidirectional order and indexes from either end") {
+    it("keeps existing nodes stable across middle insertion") {
         turbo_list_t list = {0};
-        int values[] = {1, 2, 3, 4};
-        int out = -1;
+        turbo_list_iter_t first;
+        turbo_list_iter_t second;
+        turbo_list_iter_t inserted;
+        int one = 1;
+        int two = 2;
+        int middle = 7;
 
-        check_equal(turbo_list_init_bytes(&list, sizeof(int), 64u, 4u),
+        check_equal(turbo_list_init_bytes(&list, sizeof(int), 64u, 3u),
                     CONTAINER_OK);
-        check_equal(turbo_list_reserve(&list, 4u), CONTAINER_OK);
-        check_equal(turbo_list_capacity(&list), (size_t)4u);
-        check_equal(turbo_list_push_back(&list, &values[1]), CONTAINER_OK);
-        check_equal(turbo_list_push_front(&list, &values[0]), CONTAINER_OK);
-        check_equal(turbo_list_push_back(&list, &values[2]), CONTAINER_OK);
-        check_equal(turbo_list_push_back(&list, &values[3]), CONTAINER_OK);
-        check_true(list.head != NULL && list.tail != NULL);
+        check_equal(turbo_list_push_back(&list, &one, &first), CONTAINER_OK);
+        check_equal(turbo_list_push_back(&list, &two, &second), CONTAINER_OK);
+        check_equal(turbo_list_insert_after(&list, first, &middle, &inserted),
+                    CONTAINER_OK);
+        check_equal(*(const int *)turbo_list_iter_value_const(second), 2);
+        check_equal(*(const int *)turbo_list_iter_value_const(inserted), 7);
+        check_equal(*(const int *)turbo_list_iter_value_const(first), 1);
         check_equal((uintptr_t)turbo_list_front(&list) % 64u, (uintptr_t)0u);
-        {
-            uint64_t generation = turbo_list_generation(&list);
-            check_equal(turbo_list_push_back(&list, &values[0]),
-                        CONTAINER_CAPACITY_EXCEEDED);
-            check_equal(turbo_list_generation(&list), generation);
-        }
-        check_equal(*(const int *)turbo_list_front_const(&list), 1);
-        check_equal(*(const int *)turbo_list_back_const(&list), 4);
-        check_equal(*(const int *)turbo_list_at_const(&list, 1u), 2);
-        check_equal(*(const int *)turbo_list_at_const(&list, 3u), 4);
-        check_equal(turbo_list_pop_front(&list, &out), CONTAINER_OK);
-        check_equal(out, 1);
-        check_equal(turbo_list_pop_back(&list, &out), CONTAINER_OK);
-        check_equal(out, 4);
-        check_equal(turbo_list_capacity(&list), (size_t)4u);
         turbo_list_destroy(&list);
     }
 
-    it("reserves transactionally retains capacity on clear and enforces limit") {
+    it("supports bidirectional iteration exact erase and hard limits") {
         turbo_list_t list = {0};
+        turbo_list_t other = {0};
+        turbo_list_iter_t first;
+        turbo_list_iter_t second;
+        turbo_list_iter_t iterator;
         uint64_t generation;
-        int value = 7;
+        int values[] = {1, 2, 3};
+        int out = -1;
 
-        check_equal(turbo_list_init_bytes(&list, sizeof(value),
+        check_equal(turbo_list_init_bytes(&list, sizeof(int),
                                           _Alignof(int), 3u), CONTAINER_OK);
-        {
-            int unchanged = 91;
-            check_equal(turbo_list_pop_front(&list, &unchanged),
-                        CONTAINER_EMPTY);
-            check_equal(unchanged, 91);
-        }
-        generation = turbo_list_generation(&list);
-        check_equal(turbo_list_reserve(&list, 3u), CONTAINER_OK);
-        check_equal(turbo_list_generation(&list), generation);
-        check_equal(turbo_list_reserve(&list, 4u),
-                    CONTAINER_CAPACITY_EXCEEDED);
-        check_equal(turbo_list_capacity(&list), (size_t)3u);
-        check_equal(turbo_list_generation(&list), generation);
-        check_equal(turbo_list_push_back(&list, &value), CONTAINER_OK);
-        turbo_list_clear(&list);
-        check_equal(turbo_list_capacity(&list), (size_t)3u);
-        check_true(turbo_list_empty(&list));
-        check_equal(turbo_list_push_front(&list, &value), CONTAINER_OK);
-        generation = turbo_list_generation(&list);
-        turbo_list_destroy(&list);
-        check_equal(turbo_list_generation(&list), generation + 1u);
-        turbo_list_destroy(&list);
-        check_equal(turbo_list_generation(&list), generation + 1u);
-        check_equal(turbo_list_init_bytes(&list, sizeof(value),
+        check_equal(turbo_list_init_bytes(&other, sizeof(int),
                                           _Alignof(int), 1u), CONTAINER_OK);
-        check_equal(turbo_list_generation(&list), generation + 2u);
+        check_equal(turbo_list_push_back(&list, &values[0], &first),
+                    CONTAINER_OK);
+        check_equal(turbo_list_push_back(&list, &values[2], &second),
+                    CONTAINER_OK);
+        check_equal(turbo_list_insert_before(&list, second, &values[1],
+                                             &iterator), CONTAINER_OK);
+        iterator = turbo_list_begin(&list);
+        check_equal(*(const int *)turbo_list_iter_value_const(iterator), 1);
+        check_equal(turbo_list_iter_next(&iterator), CONTAINER_OK);
+        check_equal(*(const int *)turbo_list_iter_value_const(iterator), 2);
+        check_equal(turbo_list_iter_next(&iterator), CONTAINER_OK);
+        check_equal(*(const int *)turbo_list_iter_value_const(iterator), 3);
+        check_equal(turbo_list_iter_prev(&iterator), CONTAINER_OK);
+        check_equal(*(const int *)turbo_list_iter_value_const(iterator), 2);
+
+        generation = turbo_list_generation(&list);
+        check_equal(turbo_list_push_back(&list, &values[0], NULL),
+                    CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(turbo_list_generation(&list), generation);
+        check_equal(turbo_list_erase(&other, first, &out),
+                    CONTAINER_INVALID_ARGUMENT);
+        check_equal(turbo_list_generation(&list), generation);
+        check_equal(turbo_list_erase(&list, iterator, &out), CONTAINER_OK);
+        check_equal(out, 2);
+        check_equal(turbo_list_size(&list), (size_t)2u);
+        turbo_list_clear(&list);
+        check_true(turbo_list_empty(&list));
+        check_equal(turbo_list_push_front(&list, &values[0], NULL),
+                    CONTAINER_OK);
+        turbo_list_destroy(&other);
+        generation = turbo_list_generation(&list);
         turbo_list_destroy(&list);
+        check_equal(turbo_list_generation(&list), generation + 1u);
     }
 
     it("rolls back owning copy and from failures and balances pool reuse") {
@@ -146,18 +148,16 @@ spec("Independent linked List") {
         values[1] = list_owned_make(20);
         check_equal(turbo_list_init(&list, &list_owned_type, 2u),
                     CONTAINER_OK);
-        check_equal(turbo_list_reserve(&list, 2u), CONTAINER_OK);
         generation = turbo_list_generation(&list);
         list_fail_copy_at = list_copy_count + 1u;
-        check_equal(turbo_list_push_back(&list, &values[0]),
+        check_equal(turbo_list_push_back(&list, &values[0], NULL),
                     CONTAINER_OUT_OF_MEMORY);
         check_equal(turbo_list_size(&list), (size_t)0u);
-        check_equal(turbo_list_capacity(&list), (size_t)2u);
         check_equal(turbo_list_generation(&list), generation);
         list_fail_copy_at = 0u;
-        check_equal(turbo_list_push_back(&list, &values[0]), CONTAINER_OK);
+        check_equal(turbo_list_push_back(&list, &values[0], NULL), CONTAINER_OK);
         turbo_list_clear(&list);
-        check_equal(turbo_list_push_front(&list, &values[1]), CONTAINER_OK);
+        check_equal(turbo_list_push_front(&list, &values[1], NULL), CONTAINER_OK);
         turbo_list_destroy(&list);
 
         before = list;
@@ -175,8 +175,8 @@ spec("Independent linked List") {
     it("walks a stable link cursor in linear order") {
         RangeIntList list = {0};
         cmeta_range range;
-        cmeta_range_cursor cursor = 0u;
-        cmeta_range_cursor stale_cursor = 0u;
+        cmeta_range_cursor cursor = {0};
+        cmeta_range_cursor stale_cursor = {0};
         int out = -1;
         int stale_out = -7;
         int value;
@@ -194,11 +194,6 @@ spec("Independent linked List") {
         check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_DONE);
 
         range = RangeIntList_range(&list);
-        {
-            uint64_t generation = turbo_list_generation(&list.raw);
-            check_equal(turbo_list_reserve(&list.raw, 65u), CONTAINER_OK);
-            check_equal(turbo_list_generation(&list.raw), generation);
-        }
         check_equal(cmeta_range_next(&range, &stale_cursor, &stale_out),
                     CMETA_GEN_VALUE);
         check_equal(stale_out, 0);
@@ -208,7 +203,8 @@ spec("Independent linked List") {
             cmeta_range_cursor before_cursor = stale_cursor;
             check_equal(cmeta_range_next(&range, &stale_cursor, &stale_out),
                         CMETA_GEN_MUTATED);
-            check_equal(stale_cursor, before_cursor);
+            check_equal(memcmp(&stale_cursor, &before_cursor,
+                               sizeof(stale_cursor)), 0);
             check_equal(stale_out, -7);
         }
         RangeIntList_destroy(&list);
