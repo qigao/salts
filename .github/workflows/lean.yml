@@ -59,6 +59,13 @@ jobs:
                      cmeta_optimizer_gating_conformance_gen \
                      cmeta_optimizer_topology_conformance_gen
 
+      - name: Execute descriptor bridge witness
+        shell: bash
+        run: |
+          set -euo pipefail
+          build/formal-linux/bin/cmeta_descriptor_bridge_conformance_gen \
+            > /tmp/DescriptorBridgeGeneratedC.lean
+
       - name: Verify type identity conformance snapshot
         shell: bash
         run: |
