@@ -1,3 +1,4 @@
+module
 import CMeta.LanguageSpec
 
 #check CMeta.Producer.LanguageSpec.IR
