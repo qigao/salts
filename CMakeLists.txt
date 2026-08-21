@@ -49,7 +49,7 @@ include(CmakeUtils)
 
 find_package(Threads REQUIRED)
 
-# Minimal configuration used by the C→Lean conformance witness.  It deliberately
+# Minimal configuration used by the C→Lean conformance witness. It deliberately
 # avoids unrelated package-manager/vendor dependencies while building the exact
 # production CMeta and CFlow library targets.
 option(TURBO_FORMAL_ONLY "Configure only CMeta/CFlow formal conformance targets" OFF)
@@ -64,14 +64,14 @@ find_package(PkgConfig REQUIRED)
 
 # Additional components
 add_subdirectory(tools)
-include(FindTools) 
+include(FindTools)
 add_subdirectory(vendor)
-add_subdirectory(tinytest) 
+add_subdirectory(tinytest)
 add_subdirectory(cmeta)
-add_subdirectory(utils)
 add_subdirectory(cflow)
+add_subdirectory(container)
+add_subdirectory(utils)
 add_subdirectory(formal)
-add_subdirectory(stream)
 add_subdirectory(turbo_serial)
 
 # Package Configuration
