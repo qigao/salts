@@ -1,4 +1,8 @@
-import CMeta.Optimize
+module
+public import CMeta.Optimize
+import all CMeta.Optimize
+import all CMeta.Flow
+import all CMeta.Callable
 
 /-!
 # High-level lowering preservation
@@ -13,7 +17,7 @@ namespace CMeta
 
 /-- Surface ZIP typing: two computations share source `A`, produce possibly
     different outputs, and are combined by `L × R → O`. -/
-structure SurfaceZip (A O : CType) where
+public structure SurfaceZip (A O : CType) where
   leftOutput : CType
   rightOutput : CType
   left : Pipeline A leftOutput
@@ -21,14 +25,14 @@ structure SurfaceZip (A O : CType) where
   combine : Callable [leftOutput, rightOutput] O
 
 /-- Runtime/type-erased descriptor produced by ZIP lowering. -/
-structure ErasedInvokeRelation where
+public structure ErasedInvokeRelation where
   left : List (Operator × Signature)
   right : List (Operator × Signature)
   combine : Signature
   deriving Repr, DecidableEq
 
 /-- Dynamic validator for the type-relevant INVOKE relation rule. -/
-def checkInvokeRelation (input : CType)
+public def checkInvokeRelation (input : CType)
     (rel : ErasedInvokeRelation) : Option CType :=
   match checkPipeline input rel.left, checkPipeline input rel.right with
   | some leftOut, some rightOut =>
@@ -44,11 +48,12 @@ namespace SurfaceZip
 
 /-- Erasure performed by normalization: keep both branch programs and the
     exact binary callable signature. -/
-def lower {A O : CType} (zip : SurfaceZip A O) : ErasedInvokeRelation :=
+public def lower {A O : CType} (zip : SurfaceZip A O) : ErasedInvokeRelation :=
   ⟨zip.left.steps, zip.right.steps, zip.combine.binaryBackendSignature⟩
 
 /-- ZIP lowering preserves the statically known output type. -/
-theorem lowering_preserves_type {A O : CType} (zip : SurfaceZip A O) :
+-- TEMP-MODULE-BRIDGE(M6): legacy EndToEnd and StructuredConformance
+public theorem lowering_preserves_type {A O : CType} (zip : SurfaceZip A O) :
     checkInvokeRelation A zip.lower = some O := by
   simp [SurfaceZip.lower, checkInvokeRelation,
     Pipeline.check_steps, Callable.binaryBackendSignature]
