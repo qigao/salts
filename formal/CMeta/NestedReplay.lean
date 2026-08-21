@@ -1,4 +1,5 @@
-import CMeta.Producer
+module
+import all CMeta.Producer
 
 /-!
 # CMeta nested Producer replay
@@ -12,7 +13,7 @@ namespace CMeta
 namespace Producer
 
 /-- Ordered Cartesian replay: for each left item, replay every right item. -/
-def nestedReplay (f : α → β → γ) : List α → List β → List γ
+public def nestedReplay (f : α → β → γ) : List α → List β → List γ
   | [], _ => []
   | x :: xs, ys => ys.map (f x) ++ nestedReplay f xs ys
 
