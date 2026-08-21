@@ -51,6 +51,7 @@ jobs:
                      cmeta_type_identity_multi_tu \
                      cmeta_type_universe_probe \
                      cmeta_fmt_args_simplification_witness \
+                     cmeta_producer_replay_witness \
                      cmeta_plan_conformance_witness \
                      cmeta_structured_conformance_witness \
                      cmeta_structured_policy_conformance_witness \
@@ -117,6 +118,7 @@ jobs:
           build/formal-linux/bin/cmeta_type_identity_multi_tu
           build/formal-linux/bin/cmeta_type_universe_probe
           build/formal-linux/bin/cmeta_fmt_args_simplification_witness
+          build/formal-linux/bin/cmeta_producer_replay_witness
 
       - name: Reject proof placeholders
         shell: bash
