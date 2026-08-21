@@ -1,7 +1,74 @@
 #include <cmeta/cmeta.h>
 #include "tinytest.h"
 
+#include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
+
+typedef struct owned_int {
+    int *value;
+} owned_int;
+
+static size_t owned_copies;
+static size_t owned_moves;
+static size_t owned_destroys;
+
+static bool owned_equal(const void *left_, const void *right_) {
+    const owned_int *left = (const owned_int *)left_;
+    const owned_int *right = (const owned_int *)right_;
+
+    return left != NULL && right != NULL && left->value != NULL &&
+           right->value != NULL && *left->value == *right->value;
+}
+
+static bool owned_copy(void *destination_, const void *source_) {
+    owned_int *destination = (owned_int *)destination_;
+    const owned_int *source = (const owned_int *)source_;
+
+    if (destination == NULL || source == NULL || source->value == NULL)
+        return false;
+    destination->value = (int *)malloc(sizeof(*destination->value));
+    if (destination->value == NULL)
+        return false;
+    *destination->value = *source->value;
+    ++owned_copies;
+    return true;
+}
+
+static void owned_move(void *destination_, void *source_) {
+    owned_int *destination = (owned_int *)destination_;
+    owned_int *source = (owned_int *)source_;
+
+    if (destination == NULL || source == NULL)
+        return;
+    destination->value = source->value;
+    source->value = NULL;
+    ++owned_moves;
+}
+
+static void owned_destroy(void *value_) {
+    owned_int *value = (owned_int *)value_;
+
+    if (value == NULL)
+        return;
+    free(value->value);
+    value->value = NULL;
+    ++owned_destroys;
+}
+
+Traits(owned_int,
+    CMETA_TRAIT_EQUAL | CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
+    owned_equal, NULL, NULL, owned_copy, owned_move, owned_destroy);
+
+#define CMETA_TEST_OWNED_INT_ROW \
+    (O, owned_int, cmeta_type_owned_int, CMETA_T_OBJECT, cmeta_traits_owned_int)
+
+static const cmeta_type_desc cmeta_test_owned_int_type = {
+    "owned_int", sizeof(owned_int), _Alignof(owned_int), CMETA_T_OBJECT, NULL,
+    &CMETA_TYPE_TRAITS(CMETA_TEST_OWNED_INT_ROW)
+};
+
+const cmeta_type_desc *cmeta_traits_peer_owned_int_type(void);
 
 Enum(cmeta_test_state,
     (CMETA_TEST_READY, 10, "ready"),
@@ -104,6 +171,91 @@ suite("CMeta core") {
         check_null(cmeta_type_find("not-a-cmeta-type"));
         check_null(cmeta_type_find(NULL));
         check_null(cmeta_type_registry_at(cmeta_type_registry_count()));
+    }
+
+    it("attaches named traits to every builtin scalar descriptor") {
+        const cmeta_trait_flags required =
+            CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH | CMETA_TRAIT_COMPARE |
+            CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY |
+            CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY;
+
+        check_true(cmeta_type_bool.traits == &cmeta_traits_bool);
+        check_true(cmeta_type_int.traits == &cmeta_traits_int);
+        check_true(cmeta_type_long.traits == &cmeta_traits_long);
+        check_true(cmeta_type_float.traits == &cmeta_traits_float);
+        check_true(cmeta_type_double.traits == &cmeta_traits_double);
+        check_null(cmeta_type_int_ptr.traits);
+        check_true((cmeta_type_bool.traits->flags & required) == required);
+        check_true((cmeta_type_long.traits->flags & required) == required);
+    }
+
+    it("normalizes floating keys for zero and NaN equivalence") {
+        const cmeta_type_traits *float_traits = cmeta_type_float.traits;
+        const cmeta_type_traits *double_traits = cmeta_type_double.traits;
+        float float_zero = 0.0f;
+        float float_negative_zero = -0.0f;
+        float float_nan_one = NAN;
+        float float_nan_two = nanf("2");
+        float float_one = 1.0f;
+        double double_zero = 0.0;
+        double double_negative_zero = -0.0;
+        double double_nan_one = NAN;
+        double double_nan_two = nan("2");
+        double double_one = 1.0;
+
+        check_true(float_traits->equal(&float_zero, &float_negative_zero));
+        check_true(float_traits->hash(&float_zero) ==
+                   float_traits->hash(&float_negative_zero));
+        check_true(float_traits->equal(&float_nan_one, &float_nan_two));
+        check_true(float_traits->hash(&float_nan_one) ==
+                   float_traits->hash(&float_nan_two));
+        check_equal(float_traits->compare(&float_nan_one, &float_nan_two), 0);
+        check_true(float_traits->compare(&float_nan_one, &float_one) > 0);
+        check_true(float_traits->compare(&float_one, &float_nan_one) < 0);
+
+        check_true(double_traits->equal(&double_zero, &double_negative_zero));
+        check_true(double_traits->hash(&double_zero) ==
+                   double_traits->hash(&double_negative_zero));
+        check_true(double_traits->equal(&double_nan_one, &double_nan_two));
+        check_true(double_traits->hash(&double_nan_one) ==
+                   double_traits->hash(&double_nan_two));
+        check_equal(double_traits->compare(&double_nan_one, &double_nan_two), 0);
+        check_true(double_traits->compare(&double_nan_one, &double_one) > 0);
+        check_true(double_traits->compare(&double_one, &double_nan_one) < 0);
+    }
+
+    it("keeps custom trait descriptors semantically equal across translation units") {
+        const cmeta_type_desc *peer = cmeta_traits_peer_owned_int_type();
+        owned_int source = {(int *)malloc(sizeof(*source.value))};
+        owned_int copied = {NULL};
+        owned_int moved = {NULL};
+        const cmeta_trait_flags required =
+            CMETA_TRAIT_EQUAL | CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
+            CMETA_TRAIT_DESTROY;
+
+        check_not_null(source.value);
+        *source.value = 17;
+        owned_copies = 0u;
+        owned_moves = 0u;
+        owned_destroys = 0u;
+
+        check_true(cmeta_test_owned_int_type.traits->copy_construct(&copied, &source));
+        check_true(cmeta_test_owned_int_type.traits->equal(&source, &copied));
+        check_equal(owned_copies, (size_t)1u);
+        cmeta_test_owned_int_type.traits->move_construct(&moved, &copied);
+        check_null(copied.value);
+        check_not_null(moved.value);
+        check_equal(owned_moves, (size_t)1u);
+        cmeta_test_owned_int_type.traits->destroy(&moved);
+        cmeta_test_owned_int_type.traits->destroy(&source);
+        check_equal(owned_destroys, (size_t)2u);
+
+        check_not_null(peer);
+        check_true(&cmeta_test_owned_int_type != peer);
+        check_true(cmeta_test_owned_int_type.traits != peer->traits);
+        check_true(cmeta_type_equal(&cmeta_test_owned_int_type, peer));
+        check_true((cmeta_test_owned_int_type.traits->flags & required) == required);
+        check_true((peer->traits->flags & required) == required);
     }
 
     it("exposes explicit built-in scalar traits") {

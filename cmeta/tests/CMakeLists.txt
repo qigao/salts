@@ -1,7 +1,7 @@
 # CMeta public API regression tests.
 
 cmake_add_test(cmeta_core_test
-  SOURCES cmeta_core_test.c
+  SOURCES cmeta_core_test.c cmeta_traits_peer.c
   LIBS TurboUtils::CMeta TurboUtils::TinyTest
   FOLDER "cmeta/tests")
 

@@ -1,6 +1,8 @@
 #ifndef CMETA_TYPE_TRAITS_H
 #define CMETA_TYPE_TRAITS_H
 
+#include <cmeta/pp.h>
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -31,5 +33,25 @@ typedef struct cmeta_type_traits {
     void (*move_construct)(void *, void *);
     void (*destroy)(void *);
 } cmeta_type_traits;
+
+/* Floating-key semantics: +0 and -0 compare equal and hash equally; every
+ * NaN encoding compares equal to every other NaN, sorts after finite/infinite
+ * values, and hashes to one canonical value. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern const cmeta_type_traits cmeta_traits_bool;
+extern const cmeta_type_traits cmeta_traits_int;
+extern const cmeta_type_traits cmeta_traits_long;
+extern const cmeta_type_traits cmeta_traits_float;
+extern const cmeta_type_traits cmeta_traits_double;
+#ifdef __cplusplus
+}
+#endif
+
+#define Traits(name, flags_, equal_, hash_, compare_, copy_, move_, destroy_) \
+    CMETA_LOCAL const cmeta_type_traits cmeta_traits_##name = { \
+        (flags_), (equal_), (hash_), (compare_), (copy_), (move_), (destroy_) \
+    }
 
 #endif

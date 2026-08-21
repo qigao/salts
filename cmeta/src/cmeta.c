@@ -1,58 +1,102 @@
 #include <cmeta/cmeta.h>
 
+#include <math.h>
 #include <string.h>
 
 #define CMETA_STR_I(x) #x
 #define CMETA_STR(x) CMETA_STR_I(x)
 
-static bool cmeta_int_equal(const void *left, const void *right) {
-    return left != NULL && right != NULL &&
-           *(const int *)left == *(const int *)right;
-}
+#define CMETA_TRIVIAL_TRAIT_FLAGS \
+    (CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH | CMETA_TRAIT_COMPARE | \
+     CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY | \
+     CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY)
 
-static uint64_t cmeta_int_hash(const void *value) {
-    return value == NULL ? 0u : (uint64_t)*(const int *)value;
-}
+#define CMETA_DEFINE_TRIVIAL_TRAITS(prefix, type) \
+    static bool prefix##_equal(const void *left, const void *right) { \
+        return left != NULL && right != NULL && \
+               *(const type *)left == *(const type *)right; \
+    } \
+    static uint64_t prefix##_hash(const void *value) { \
+        return value == NULL ? 0u : (uint64_t)*(const type *)value; \
+    } \
+    static int prefix##_compare(const void *left, const void *right) { \
+        type lhs; type rhs; \
+        if (left == NULL || right == NULL) return 0; \
+        lhs = *(const type *)left; rhs = *(const type *)right; \
+        return lhs < rhs ? -1 : lhs > rhs; \
+    } \
+    static bool prefix##_copy_construct(void *destination, const void *source) { \
+        if (destination == NULL || source == NULL) return false; \
+        *(type *)destination = *(const type *)source; return true; \
+    } \
+    static void prefix##_move_construct(void *destination, void *source) { \
+        if (destination != NULL && source != NULL) \
+            *(type *)destination = *(type *)source; \
+    } \
+    static void prefix##_destroy(void *value) { (void)value; }
 
-static int cmeta_int_compare(const void *left, const void *right) {
-    int lhs;
-    int rhs;
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_bool, _Bool)
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_int, int)
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_long, long)
 
-    if (left == NULL || right == NULL) return 0;
-    lhs = *(const int *)left;
-    rhs = *(const int *)right;
-    return lhs < rhs ? -1 : lhs > rhs;
-}
+const cmeta_type_traits cmeta_traits_bool = { CMETA_TRIVIAL_TRAIT_FLAGS,
+    cmeta_bool_equal, cmeta_bool_hash, cmeta_bool_compare,
+    cmeta_bool_copy_construct, cmeta_bool_move_construct, cmeta_bool_destroy };
+const cmeta_type_traits cmeta_traits_int = { CMETA_TRIVIAL_TRAIT_FLAGS,
+    cmeta_int_equal, cmeta_int_hash, cmeta_int_compare,
+    cmeta_int_copy_construct, cmeta_int_move_construct, cmeta_int_destroy };
+const cmeta_type_traits cmeta_traits_long = { CMETA_TRIVIAL_TRAIT_FLAGS,
+    cmeta_long_equal, cmeta_long_hash, cmeta_long_compare,
+    cmeta_long_copy_construct, cmeta_long_move_construct, cmeta_long_destroy };
 
-static bool cmeta_int_copy_construct(void *destination, const void *source) {
-    if (destination == NULL || source == NULL) return false;
-    *(int *)destination = *(const int *)source;
-    return true;
-}
+#define CMETA_DEFINE_FLOAT_TRAITS(prefix, type, bits_type, zero, nan_hash) \
+    static bool prefix##_equal(const void *left, const void *right) { \
+        type lhs; type rhs; \
+        if (left == NULL || right == NULL) return false; \
+        lhs = *(const type *)left; rhs = *(const type *)right; \
+        return (isnan(lhs) && isnan(rhs)) || lhs == rhs; \
+    } \
+    static uint64_t prefix##_hash(const void *value) { \
+        type number; bits_type bits; \
+        if (value == NULL) return 0u; \
+        number = *(const type *)value; \
+        if (isnan(number)) return (nan_hash); \
+        if (number == (zero)) return 0u; \
+        memcpy(&bits, &number, sizeof(bits)); return (uint64_t)bits; \
+    } \
+    static int prefix##_compare(const void *left, const void *right) { \
+        type lhs; type rhs; \
+        if (left == NULL || right == NULL) return 0; \
+        lhs = *(const type *)left; rhs = *(const type *)right; \
+        if (isnan(lhs)) return isnan(rhs) ? 0 : 1; \
+        if (isnan(rhs)) return -1; \
+        return lhs < rhs ? -1 : lhs > rhs; \
+    } \
+    static bool prefix##_copy_construct(void *destination, const void *source) { \
+        if (destination == NULL || source == NULL) return false; \
+        *(type *)destination = *(const type *)source; return true; \
+    } \
+    static void prefix##_move_construct(void *destination, void *source) { \
+        if (destination != NULL && source != NULL) \
+            *(type *)destination = *(type *)source; \
+    } \
+    static void prefix##_destroy(void *value) { (void)value; }
 
-static void cmeta_int_move_construct(void *destination, void *source) {
-    if (destination != NULL && source != NULL)
-        *(int *)destination = *(int *)source;
-}
+CMETA_DEFINE_FLOAT_TRAITS(cmeta_float, float, uint32_t, 0.0f,
+                          UINT64_C(0x7fc00000))
+CMETA_DEFINE_FLOAT_TRAITS(cmeta_double, double, uint64_t, 0.0,
+                          UINT64_C(0x7ff8000000000000))
 
-static void cmeta_int_destroy(void *value) {
-    (void)value;
-}
+const cmeta_type_traits cmeta_traits_float = { CMETA_TRIVIAL_TRAIT_FLAGS,
+    cmeta_float_equal, cmeta_float_hash, cmeta_float_compare,
+    cmeta_float_copy_construct, cmeta_float_move_construct, cmeta_float_destroy };
+const cmeta_type_traits cmeta_traits_double = { CMETA_TRIVIAL_TRAIT_FLAGS,
+    cmeta_double_equal, cmeta_double_hash, cmeta_double_compare,
+    cmeta_double_copy_construct, cmeta_double_move_construct, cmeta_double_destroy };
 
-static const cmeta_type_traits cmeta_int_traits = {
-    CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH | CMETA_TRAIT_COMPARE |
-        CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY |
-        CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY,
-    cmeta_int_equal,
-    cmeta_int_hash,
-    cmeta_int_compare,
-    cmeta_int_copy_construct,
-    cmeta_int_move_construct,
-    cmeta_int_destroy
-};
-
-#define CMETA_BUILTIN_TRAITS(type) \
-    _Generic(((type *)0), int *: &cmeta_int_traits, default: NULL)
+#undef CMETA_DEFINE_FLOAT_TRAITS
+#undef CMETA_DEFINE_TRIVIAL_TRAITS
+#undef CMETA_TRIVIAL_TRAIT_FLAGS
 
 const cmeta_type_desc cmeta_type_void = {
     "void", 0, 1, CMETA_T_VOID, NULL, NULL
@@ -73,7 +117,7 @@ const cmeta_type_desc cmeta_type_gen_status = {
     const cmeta_type_desc CMETA_TYPE_DESC(row) = { \
         CMETA_STR(CMETA_TYPE_CTYPE(row)), sizeof(CMETA_TYPE_CTYPE(row)), \
         _Alignof(CMETA_TYPE_CTYPE(row)), CMETA_TYPE_KIND(row), NULL, \
-        CMETA_BUILTIN_TRAITS(CMETA_TYPE_CTYPE(row)) \
+        &CMETA_TYPE_TRAITS(row) \
     }; \
     const cmeta_type_desc CMETA_DESC_PTR(row) = { \
         CMETA_STR(CMETA_TYPE_CTYPE(row)) " *", sizeof(CMETA_TYPE_CTYPE(row) *), \
@@ -81,7 +125,6 @@ const cmeta_type_desc cmeta_type_gen_status = {
     };
 CMETA_PP_FOR_EACH_A(CMETA_DEFINE_TYPE, ~, CMETA_TYPE_LIST)
 #undef CMETA_DEFINE_TYPE
-#undef CMETA_BUILTIN_TRAITS
 
 bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b) {
     if (a == b) return true;
