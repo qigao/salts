@@ -135,5 +135,65 @@ theorem legacy_storage_length_not_injective (x : α) :
       ([] : List α).length ≠ [x].length := by
   simp [legacyStorage]
 
+/-- The formatter's read guard can be derived from normalized storage alone. -/
+def canReadRealArg (storage : List α) (index : Nat) : Prop :=
+  index < argCountFromStorage storage
+
+/-- The derived guard accepts exactly the indices of real arguments.  Arity is
+    not stored separately: it is recovered from normalized storage length. -/
+theorem normalized_guard_exactly_real_indices (xs : List α) (index : Nat) :
+    canReadRealArg (normalizedStorage xs) index ↔ index < xs.length := by
+  simp [canReadRealArg, normalized_storage_recovers_arg_count]
+
+/-- The prefix visible through the derived guard consists only of real argument
+    slots; the trailing NONE sentinel is not part of the observable prefix. -/
+theorem normalized_guarded_prefix (xs : List α) :
+    observe (argCountFromStorage (normalizedStorage xs)) (normalizedStorage xs) =
+      xs.map (fun value => Slot.arg value) := by
+  rw [normalized_storage_recovers_arg_count]
+  exact normalized_observation xs
+
+/-- Every index accepted by the derived guard is physically inside normalized
+    storage.  This is the bounds-safety implication required before dereference. -/
+theorem normalized_guard_implies_physical_bound
+    (xs : List α) (index : Nat)
+    (h : canReadRealArg (normalizedStorage xs) index) :
+    index < (normalizedStorage xs).length := by
+  have hreal : index < xs.length :=
+    (normalized_guard_exactly_real_indices xs index).mp h
+  rw [normalized_storage_length]
+  exact Nat.lt_trans hreal (by simp)
+
+/-- The derived count is the physical index of the trailing sentinel. -/
+theorem normalized_sentinel_is_inside_storage (xs : List α) :
+    argCountFromStorage (normalizedStorage xs) < (normalizedStorage xs).length := by
+  rw [normalized_storage_recovers_arg_count, normalized_storage_length]
+  simp
+
+/-- The real-argument guard rejects the sentinel itself. -/
+theorem normalized_guard_rejects_sentinel (xs : List α) :
+    ¬ canReadRealArg
+        (normalizedStorage xs)
+        (argCountFromStorage (normalizedStorage xs)) := by
+  simp [canReadRealArg]
+
+/-- One index after the sentinel is already outside physical storage.  Therefore
+    a single sentinel cannot make an unbounded sequence of reads safe. -/
+theorem normalized_one_past_sentinel_is_oob (xs : List α) :
+    ¬ (argCountFromStorage (normalizedStorage xs) + 1 <
+        (normalizedStorage xs).length) := by
+  rw [normalized_storage_recovers_arg_count, normalized_storage_length]
+  simp
+
+/-- Combined boundary fact: the sentinel occupies the first non-argument slot,
+    and the immediately following index is out of bounds.  Bounds protection
+    still requires the derived guard; the sentinel alone is not a guard. -/
+theorem trailing_sentinel_does_not_replace_guard (xs : List α) :
+    argCountFromStorage (normalizedStorage xs) < (normalizedStorage xs).length ∧
+      ¬ (argCountFromStorage (normalizedStorage xs) + 1 <
+          (normalizedStorage xs).length) := by
+  exact ⟨normalized_sentinel_is_inside_storage xs,
+         normalized_one_past_sentinel_is_oob xs⟩
+
 end FmtArgs
 end CMeta
