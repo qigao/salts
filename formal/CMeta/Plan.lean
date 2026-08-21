@@ -1,5 +1,6 @@
 module
-public import all CMeta.Lowering
+public import CMeta.Lowering
+import all CMeta.Lowering
 import all CMeta.Optimize
 
 /-!

@@ -1,5 +1,6 @@
 module
-public import all CMeta.Plan
+public import CMeta.Plan
+import all CMeta.Plan
 
 /-!
 # Direct plan execution type safety
