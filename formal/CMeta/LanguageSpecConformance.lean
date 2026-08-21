@@ -1,4 +1,4 @@
-import CMeta.PreprocessorBackendRegistrySetoid
+import CMeta.LanguageSpec
 
 /-!
 # CMeta language rule conformance
