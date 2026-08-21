@@ -2,13 +2,21 @@
 #define CMETA_TYPES_H
 
 /*
- * The finite element-type universe for the pure C11 meta system.
+ * Finite type universes for the pure C11 meta system.
  *
  * Tuple fields:
  *   (TOKEN, C_TYPE, DESCRIPTOR_SYMBOL, KIND, TRAITS_SYMBOL)
  *
- * Every row automatically participates in every generated signature family:
- *   U(T)->R, B(T,U)->R, expand T->U, and cursor-generator T->U.
+ * Known types participate in CType descriptors/reflection. Callable types are
+ * the smaller finite set admitted to generated callable signature families.
+ * Keeping these sets separate prevents every reflected generic application
+ * from automatically expanding unary/binary/generator Cartesian products.
+ *
+ * Legacy compatibility:
+ *   - projects defining only CMETA_TYPE_LIST retain the old behavior: that
+ *     list is both the known and callable universe;
+ *   - projects using CMETA_USER_TYPE_LIST retain builtins + user rows for both
+ *     universes unless they explicitly override one of the new list macros.
  *
  * A project may add types in a force-included/shared config header:
  *
@@ -16,8 +24,8 @@
  *   #define CMETA_USER_TYPE_LIST \
  *       , (P, Point, cmeta_type_point, CMETA_T_OBJECT, cmeta_traits_point)
  *
- * The leading comma is intentional.  The same configuration must be visible
- * to every translation unit because it changes cmeta_sig and cmeta_callable.
+ * A shared configuration that changes callable signatures must still be visible
+ * to every translation unit because it changes cmeta_sig/cmeta_callable ABI.
  */
 #define CMETA_ROW_B (B, _Bool,  cmeta_type_bool,   CMETA_T_BOOL,    cmeta_traits_bool)
 #define CMETA_ROW_I (I, int,    cmeta_type_int,    CMETA_T_INTEGER, cmeta_traits_int)
@@ -32,8 +40,27 @@
 #define CMETA_USER_TYPE_LIST
 #endif
 
+#ifndef CMETA_KNOWN_TYPE_LIST
+#  ifdef CMETA_TYPE_LIST
+#    define CMETA_KNOWN_TYPE_LIST CMETA_TYPE_LIST
+#  else
+#    define CMETA_KNOWN_TYPE_LIST \
+        CMETA_BUILTIN_TYPE_LIST CMETA_USER_TYPE_LIST
+#  endif
+#endif
+
+#ifndef CMETA_CALLABLE_TYPE_LIST
+#  ifdef CMETA_TYPE_LIST
+#    define CMETA_CALLABLE_TYPE_LIST CMETA_TYPE_LIST
+#  else
+#    define CMETA_CALLABLE_TYPE_LIST CMETA_KNOWN_TYPE_LIST
+#  endif
+#endif
+
+/* Deprecated compatibility spelling. Internal code should name the intended
+ * universe explicitly. Keeping this alias preserves existing external config. */
 #ifndef CMETA_TYPE_LIST
-#define CMETA_TYPE_LIST CMETA_BUILTIN_TYPE_LIST CMETA_USER_TYPE_LIST
+#define CMETA_TYPE_LIST CMETA_CALLABLE_TYPE_LIST
 #endif
 
 #define CMETA_TYPE_TOKEN(row) CMETA_TYPE_TOKEN_I row

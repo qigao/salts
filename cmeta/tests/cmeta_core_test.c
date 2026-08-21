@@ -63,8 +63,10 @@ static void owned_destroy(void *value_) {
 }
 
 Traits(owned_int,
-    CMETA_TRAIT_EQUAL | CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
-    owned_equal, NULL, NULL, owned_copy, owned_move, owned_destroy);
+    (equal, owned_equal),
+    (copy, owned_copy),
+    (move, owned_move),
+    (destroy, owned_destroy));
 
 #define CMETA_TEST_OWNED_INT_ROW \
     (O, owned_int, cmeta_type_owned_int, CMETA_T_OBJECT, cmeta_traits_owned_int)

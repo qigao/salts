@@ -7,8 +7,12 @@
 #include <threads.h>
 
 const cmeta_type_desc cflow_type_coord_event = {
-    "cflow_coord_event", sizeof(cflow_coord_event), _Alignof(cflow_coord_event),
-    CMETA_T_OBJECT, NULL
+    .name = "cflow_coord_event",
+    .size = sizeof(cflow_coord_event),
+    .align = _Alignof(cflow_coord_event),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .identity = NULL
 };
 
 typedef struct coord_state coord_state;

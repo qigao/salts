@@ -17,6 +17,12 @@ Enum(State,
     (DONE,  "done")
 );
 
+Traits(User,
+    (equal, user_equal),
+    (hash, user_hash),
+    (copy, user_copy)
+);
+
 typed(Option, MaybeUser, User);
 typed(List, UserList, User);
 
@@ -25,6 +31,8 @@ Containers(
     (HashMap, UserMap, int, User)
 );
 ```
+
+Trait rows declare capabilities once: CMeta derives both the trait flags and the corresponding function slots from the tagged rows. `TRIVIAL_COPY` and `TRIVIAL_DESTROY` remain explicit descriptor properties rather than inferred callable traits.
 
 For typed containers, declaration is complete instantiation. There is no public container `implement(...)` phase.
 

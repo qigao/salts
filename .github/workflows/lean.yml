@@ -1,0 +1,221 @@
+name: Lean proofs
+
+on:
+  push:
+    branches: [leanv4]
+    paths:
+      - "formal/**"
+      - "cmeta/**"
+      - "cflow/**"
+      - "utils/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "presets/**"
+      - ".github/workflows/lean.yml"
+  pull_request:
+    paths:
+      - "formal/**"
+      - "cmeta/**"
+      - "cflow/**"
+      - "utils/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "presets/**"
+      - ".github/workflows/lean.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: gcc
+            configure_preset: formal-linux-gcc
+            build_preset: build-formal-linux-gcc
+            binary_dir: build/formal-linux-gcc
+            replay_snapshot: NestedReplayGccGeneratedC.lean
+          - backend: clang
+            configure_preset: formal-linux-clang
+            build_preset: build-formal-linux-clang
+            binary_dir: build/formal-linux-clang
+            replay_snapshot: NestedReplayClangGeneratedC.lean
+    name: Lean 4 / kernel check (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure formal build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset "${{ matrix.configure_preset }}"
+
+      - name: Build C conformance witnesses
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build --preset "${{ matrix.build_preset }}" \
+            --target cmeta_header_conformance_witness \
+                     cmeta_type_identity_conformance_witness \
+                     cmeta_descriptor_bridge_conformance_witness \
+                     cmeta_type_identity_multi_tu \
+                     cmeta_type_universe_probe \
+                     cmeta_traits_row_syntax_witness \
+                     cmeta_operator_row_syntax_witness \
+                     cmeta_fmt_args_simplification_witness \
+                     cmeta_producer_replay_witness \
+                     cmeta_nested_replay_deferred_witness \
+                     cmeta_plan_conformance_witness \
+                     cmeta_structured_conformance_witness \
+                     cmeta_structured_policy_conformance_witness \
+                     cmeta_optimizer_conformance_witness \
+                     cmeta_optimizer_gating_conformance_witness \
+                     cmeta_optimizer_topology_conformance_witness
+
+      - name: Verify C/Lean conformance snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary_dir="${{ matrix.binary_dir }}"
+          generated_dir="$binary_dir/formal/generated"
+          mkdir -p "$generated_dir"
+
+          "$binary_dir/bin/cmeta_header_conformance_witness" \
+            > "$generated_dir/GeneratedC.lean"
+          diff -u formal/CMeta/GeneratedC.lean \
+            "$generated_dir/GeneratedC.lean"
+
+          "$binary_dir/bin/cmeta_descriptor_bridge_conformance_witness" \
+            > "$generated_dir/DescriptorBridgeGeneratedC.lean"
+          diff -u formal/CMeta/DescriptorBridgeGeneratedC.lean \
+            "$generated_dir/DescriptorBridgeGeneratedC.lean"
+
+          "$binary_dir/bin/cmeta_type_identity_conformance_witness" \
+            > "$generated_dir/TypeIdentityGeneratedC.lean"
+          diff -u formal/CMeta/TypeIdentityGeneratedC.lean \
+            "$generated_dir/TypeIdentityGeneratedC.lean"
+
+          "$binary_dir/bin/cmeta_nested_replay_deferred_witness" \
+            > "$generated_dir/${{ matrix.replay_snapshot }}"
+          diff -u "formal/CMeta/${{ matrix.replay_snapshot }}" \
+            "$generated_dir/${{ matrix.replay_snapshot }}"
+
+          "$binary_dir/bin/cmeta_plan_conformance_witness" \
+            > "$generated_dir/PlanGeneratedC.lean"
+          diff -u formal/CMeta/PlanGeneratedC.lean \
+            "$generated_dir/PlanGeneratedC.lean"
+
+          "$binary_dir/bin/cmeta_structured_conformance_witness" \
+            > "$generated_dir/StructuredGeneratedC.lean"
+          diff -u formal/CMeta/StructuredGeneratedC.lean \
+            "$generated_dir/StructuredGeneratedC.lean"
+
+          "$binary_dir/bin/cmeta_structured_policy_conformance_witness" \
+            > "$generated_dir/StructuredPolicyGeneratedC.lean"
+          diff -u formal/CMeta/StructuredPolicyGeneratedC.lean \
+            "$generated_dir/StructuredPolicyGeneratedC.lean"
+
+          "$binary_dir/bin/cmeta_optimizer_conformance_witness" \
+            > "$generated_dir/OptimizerGeneratedC.lean"
+          diff -u formal/CMeta/OptimizerGeneratedC.lean \
+            "$generated_dir/OptimizerGeneratedC.lean"
+
+          "$binary_dir/bin/cmeta_optimizer_gating_conformance_witness" \
+            > "$generated_dir/OptimizerGatingGeneratedC.lean"
+          diff -u formal/CMeta/OptimizerGatingGeneratedC.lean \
+            "$generated_dir/OptimizerGatingGeneratedC.lean"
+
+          "$binary_dir/bin/cmeta_optimizer_topology_conformance_witness" \
+            > "$generated_dir/OptimizerTopologyGeneratedC.lean"
+          diff -u formal/CMeta/OptimizerTopologyGeneratedC.lean \
+            "$generated_dir/OptimizerTopologyGeneratedC.lean"
+
+      - name: Execute applicability probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary_dir="${{ matrix.binary_dir }}"
+          "$binary_dir/bin/cmeta_type_identity_multi_tu"
+          "$binary_dir/bin/cmeta_type_universe_probe"
+          "$binary_dir/bin/cmeta_traits_row_syntax_witness"
+          "$binary_dir/bin/cmeta_operator_row_syntax_witness"
+          "$binary_dir/bin/cmeta_fmt_args_simplification_witness"
+          "$binary_dir/bin/cmeta_producer_replay_witness"
+          "$binary_dir/bin/cmeta_nested_replay_deferred_witness"
+
+      - name: Reject proof placeholders
+        shell: bash
+        run: |
+          if grep -R -nE '^[[:space:]]*(axiom|constant)[[:space:]]|\b(sorry|admit)\b' \
+              formal/CMeta.lean formal/CMeta/*.lean; then
+            echo "Formal proof files must not contain axioms, constants, sorry, or admit."
+            exit 1
+          fi
+
+      - name: Reject arity-specific callable formal APIs
+        shell: bash
+        run: |
+          if grep -R -nE '\b(Callable1|Callable2|Callable3|Callable4|Lambda1|Lambda2|Lambda3|Lambda4)\b' \
+              formal/CMeta.lean formal/CMeta/*.lean; then
+            echo "Formal callable/lambda semantics must use Callable<Args,R> and Lambda<Env,Args,R>."
+            exit 1
+          fi
+
+      - name: Enforce public proof facade boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qx 'public import CMeta.Semantics' formal/CMeta/PublicProof.lean
+          grep -qx 'import all CMeta.EndToEnd' formal/CMeta/PublicProof.lean
+          grep -qx 'import CMeta.PublicProof' formal/CMeta/PublicProofConformance.lean
+          grep -qx 'import CMeta.PublicProof' formal/CMeta/PublicProofIsolationConformance.lean
+          if grep -nE '\b(PreprocessorBackend|Registry|NestedReplay|OptimizerTopology)\b' \
+              formal/CMeta/PublicProof.lean \
+              formal/CMeta/PublicProofConformance.lean \
+              formal/CMeta/PublicProofIsolationConformance.lean; then
+            echo "PublicProof must not expose implementation-layer proof vocabulary."
+            exit 1
+          fi
+
+      - name: Install elan
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL \
+            https://github.com/leanprover/elan/releases/download/v4.2.2/elan-x86_64-unknown-linux-gnu.tar.gz \
+            | tar xz
+          ./elan-init -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Install pinned Lean toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          toolchain="$(cat formal/lean-toolchain)"
+          elan toolchain install "$toolchain"
+
+      - name: Verify Lean and Lake
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euo pipefail
+          lean --version
+          lake --version
+
+      - name: Generate Lake manifest
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euo pipefail
+          lake update
+
+      - name: Build and kernel-check Lean proofs
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euo pipefail
+          lake build --wfail
