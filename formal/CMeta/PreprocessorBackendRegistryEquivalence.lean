@@ -156,6 +156,7 @@ theorem insert_remove_equivalent
     have hnone : registry.insert backend = none :=
       (insert_eq_none_iff registry backend).2 hmem
     rw [hinsert] at hnone
+    cases hnone
   have hmissing : registry.lookup backend.key = none :=
     lookup_eq_none_of_key_not_mem registry backend.key hfresh
   intro key
