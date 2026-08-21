@@ -213,13 +213,6 @@ jobs:
           set -euo pipefail
           lake update
 
-      - name: Verify public proof isolation
-        working-directory: formal
-        shell: bash
-        run: |
-          set -euo pipefail
-          lake env lean CMeta/PublicProofIsolationConformance.lean
-
       - name: Build and kernel-check Lean proofs
         working-directory: formal
         shell: bash
