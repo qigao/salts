@@ -41,11 +41,11 @@ private theorem flatMap_length_sum {α β : Type} (emit : α → List β)
   | cons x xs ih => simp [ih]
 
 /-- FILTER may discard values but cannot create new ones. -/
-theorem ExecInst.filter_cardinality {T : CType} (pred : Callable1 T .bool)
+theorem ExecInst.filter_cardinality {T : CType} (pred : Callable [T] .bool)
     (xs : ValueVec T) :
     (ExecInst.run (.filter T pred) xs).length ≤ xs.length := by
-  change (xs.filter pred.run).length ≤ xs.length
-  exact filter_length_le pred.run xs
+  change (xs.filter pred.invoke1).length ≤ xs.length
+  exact filter_length_le pred.invoke1 xs
 
 /-- MAP preserves cardinality even when its implementation is a fused callback
     chain. -/
@@ -72,7 +72,7 @@ def reduceCount : Nat → Nat
 
 /-- REDUCE produces no value from empty input and exactly one value from every
     non-empty input. -/
-theorem ExecInst.reduce_cardinality {T : CType} (reducer : Callable2 T T T)
+theorem ExecInst.reduce_cardinality {T : CType} (reducer : Callable [T, T] T)
     (xs : ValueVec T) :
     (ExecInst.run (.reduce T reducer) xs).length = reduceCount xs.length := by
   cases xs <;> simp [ExecInst.run, reduceValues, reduceCount]
@@ -80,7 +80,7 @@ theorem ExecInst.reduce_cardinality {T : CType} (reducer : Callable2 T T T)
 /-- The weaker cardinality bound previously used by the executor follows from
     the exact REDUCE count equation. -/
 theorem ExecInst.reduce_cardinality_le_one {T : CType}
-    (reducer : Callable2 T T T) (xs : ValueVec T) :
+    (reducer : Callable [T, T] T) (xs : ValueVec T) :
     (ExecInst.run (.reduce T reducer) xs).length ≤ 1 := by
   rw [ExecInst.reduce_cardinality reducer xs]
   cases xs <;> simp [reduceCount]
