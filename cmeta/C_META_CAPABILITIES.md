@@ -11,6 +11,7 @@ CMeta is a finite, schema-driven compile-time metadata/code-generation layer for
 - first-class typed callable values and inline captures;
 - `Enum(...)` single-declaration enum + metadata;
 - `Struct(...)` single-declaration struct + field metadata;
+- tagged-row `Traits(...)` declarations deriving callable trait flags and slots;
 - `interface(...)` / `implements(...)` interface protocol;
 - finite generic kind dispatcher behind `typed(kind, ...)`;
 - header-only complete typed-container instantiation;
@@ -35,6 +36,8 @@ Replay(MySchema, mapper)
 
 `Enum`, `Struct`, and operator-generation infrastructure reuse the common row kernel. `Schema/Replay` is primarily framework-author infrastructure.
 
+CFlow operator declarations use structured source rows but normalize to the existing flat consumer ABI before `Replay(CFlowOperators, mapper)` invokes a consumer. The structured grouping is therefore a source-level representation change, not a second operator semantics.
+
 In v50, application `Containers(...)` is deliberately a different semantic surface: it directly instantiates all listed concrete types and does not require naming a schema for later implementation replay.
 
 ## Generic value types
@@ -56,6 +59,23 @@ typed(Tuple, Coordinate, double, double, double);
 typed(Option, MaybeUser, User);
 typed(Result, LoadResult, User, Error);
 ```
+
+## Structured type traits
+
+Callable type capabilities are declared once with tagged rows:
+
+```c
+Traits(User,
+    (equal, user_equal),
+    (hash, user_hash),
+    (compare, user_compare),
+    (copy, user_copy),
+    (move, user_move),
+    (destroy, user_destroy)
+);
+```
+
+CMeta derives `CMETA_TRAIT_EQUAL`, `HASH`, `COMPARE`, `COPY`, `MOVE`, and `DESTROY` flags from the rows and initializes the matching function slots. Duplicate, unknown, and malformed rows are compile-time errors. `CMETA_TRAIT_TRIVIAL_COPY` and `CMETA_TRAIT_TRIVIAL_DESTROY` remain explicit descriptor properties rather than inferred function capabilities.
 
 ## Single-stage typed containers — v50
 
@@ -144,6 +164,7 @@ Application-facing declarations should generally be limited to:
 ```text
 Struct(...)
 Enum(...)
+Traits(...)
 typed(...)
 Containers(...)
 ```
