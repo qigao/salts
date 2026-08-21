@@ -32,6 +32,7 @@ typedef struct cmeta_type_desc {
     size_t align;
     cmeta_type_kind kind;
     const struct cmeta_type_desc *pointee;
+    const cmeta_type_identity *identity;
 } cmeta_type_desc;
 
 Enum(cmeta_gen_status,
@@ -57,6 +58,8 @@ extern const cmeta_type_desc cmeta_type_gen_status;
 CMETA_PP_FOR_EACH_A(CMETA_DECLARE_TYPE, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_DECLARE_TYPE
 
+const cmeta_type_identity *cmeta_type_identity_of(const cmeta_type_desc *desc);
+bool cmeta_type_desc_valid(const cmeta_type_desc *desc);
 bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b);
 size_t cmeta_type_registry_count(void);
 const cmeta_type_desc *cmeta_type_registry_at(size_t index);
