@@ -5,6 +5,7 @@
 
 #include <stdbool.h>
 #include <float.h>
+#include <limits.h>
 #include <stdint.h>
 
 typedef uint32_t cmeta_trait_flags;
@@ -41,10 +42,16 @@ typedef struct cmeta_type_traits {
  *
  * Their raw-object hash implementation is deliberately fail-fast: CMeta only
  * supports IEC 60559 binary32/binary64 object representations without padding.
- * The expression below records the checked <float.h> and size requirements;
+ * The expressions below record the checked <float.h>, byte, and copy-width
+ * requirements; `CMETA_FLOAT_TRAITS_BINARY32_BINARY64` includes all of them.
  * cmeta.c rejects compilation when they are not met and supplies no fallback. */
+#define CMETA_FLOAT_TRAITS_OBJECT_HASH_WIDTHS \
+    (CHAR_BIT == 8 && sizeof(uint32_t) == sizeof(float) && \
+     sizeof(uint64_t) == sizeof(double))
+
 #define CMETA_FLOAT_TRAITS_BINARY32_BINARY64 \
-    (FLT_RADIX == 2 && sizeof(float) == 4u && sizeof(double) == 8u && \
+    (CMETA_FLOAT_TRAITS_OBJECT_HASH_WIDTHS && \
+     FLT_RADIX == 2 && sizeof(float) == 4u && sizeof(double) == 8u && \
      FLT_MANT_DIG == 24 && DBL_MANT_DIG == 53 && \
      FLT_MIN_EXP == -125 && FLT_MAX_EXP == 128 && \
      DBL_MIN_EXP == -1021 && DBL_MAX_EXP == 1024)

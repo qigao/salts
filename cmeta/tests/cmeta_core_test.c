@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+_Static_assert(CMETA_FLOAT_TRAITS_OBJECT_HASH_WIDTHS,
+               "floating trait hashes require complete object-width copies");
 _Static_assert(CMETA_FLOAT_TRAITS_BINARY32_BINARY64,
                "floating trait tests require the documented binary32/binary64 contract");
 
@@ -206,6 +208,7 @@ suite("CMeta core") {
         double double_nan_two = nan("2");
         double double_one = 1.0;
 
+        check_true(CMETA_FLOAT_TRAITS_OBJECT_HASH_WIDTHS);
         check_true(CMETA_FLOAT_TRAITS_BINARY32_BINARY64);
         check_true(float_traits->equal(&float_zero, &float_negative_zero));
         check_true(float_traits->hash(&float_zero) ==

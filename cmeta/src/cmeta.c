@@ -1,12 +1,16 @@
 #include <cmeta/cmeta.h>
 
 #include <float.h>
+#include <limits.h>
 #include <math.h>
+#include <stdint.h>
 #include <string.h>
 
 #define CMETA_STR_I(x) #x
 #define CMETA_STR(x) CMETA_STR_I(x)
 
+_Static_assert(CMETA_FLOAT_TRAITS_OBJECT_HASH_WIDTHS,
+               "floating trait hashes require eight-bit bytes and matching copy widths");
 _Static_assert(sizeof(float) == 4u,
                "floating trait hashes require a binary32-sized float");
 _Static_assert(sizeof(double) == 8u,
