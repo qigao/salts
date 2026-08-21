@@ -19,6 +19,18 @@ private def q : List Nat := [3, 4, 5]
 private def c11ReplayBackend : ReplayBackendCapability :=
   ⟨NestedReplayGeneratedC.certifiedSameProducerDepth⟩
 
+private def distinctIR : ReplayIR :=
+  .replay 1 (.replay 2 .emit)
+
+private def reentrantIR : ReplayIR :=
+  .replay 1 (.replay 2 (.replay 1 .emit))
+
+private def depth4IR : ReplayIR :=
+  .replay 1 (.replay 1 (.replay 1 (.replay 1 .emit)))
+
+private def depth5IR : ReplayIR :=
+  .replay 1 (.replay 1 (.replay 1 (.replay 1 (.replay 1 .emit))))
+
 /-- Distinct producer identities can nest directly and must realize the full
     Cartesian product cardinality. -/
 theorem CNestedReplayConformance.distinct_producers :
@@ -74,6 +86,42 @@ theorem CNestedReplayConformance.depth4_realizable :
 theorem CNestedReplayConformance.depth5_outside_current_certificate :
     lowerSameProducerDepth c11ReplayBackend 5 = none := by
   native_decide
+
+/-- Two distinct producer identities do not consume same-producer re-entry
+    budget. -/
+theorem CNestedReplayConformance.distinct_ir_depth :
+    distinctIR.sameProducerDepth = 1 := by
+  native_decide
+
+/-- Re-entering P through an intervening Q still sees the outer P active, so
+    the required same-producer depth is two rather than one. -/
+theorem CNestedReplayConformance.reentry_through_distinct_ir_depth :
+    reentrantIR.sameProducerDepth = 2 := by
+  native_decide
+
+/-- The surface replay IR computes its own required depth; callers do not pass a
+    hand-maintained Nat into lowering. -/
+theorem CNestedReplayConformance.depth4_ir_computes_requirement :
+    depth4IR.sameProducerDepth = 4 := by
+  native_decide
+
+/-- A surface replay IR inside the current certificate lowers successfully. -/
+theorem CNestedReplayConformance.depth4_ir_realizable :
+    (lowerReplayIR c11ReplayBackend depth4IR).isSome = true := by
+  native_decide
+
+/-- A surface replay IR outside the current certificate is conservatively
+    rejected by the compiler applicability gate. -/
+theorem CNestedReplayConformance.depth5_ir_outside_current_certificate :
+    lowerReplayIR c11ReplayBackend depth5IR = none := by
+  native_decide
+
+/-- Compiler progress is phrased directly over the structural replay IR. -/
+theorem CNestedReplayConformance.ir_within_certificate_realizable
+    (ir : ReplayIR)
+    (h : ir.sameProducerDepth ≤ c11ReplayBackend.certifiedSameProducerDepth) :
+    ∃ loweredIR, lowerReplayIR c11ReplayBackend ir = some loweredIR := by
+  exact lowerReplayIR_progress c11ReplayBackend ir h
 
 end Producer
 end CMeta
