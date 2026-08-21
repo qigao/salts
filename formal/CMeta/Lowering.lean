@@ -5,7 +5,7 @@ import CMeta.Optimize
 
 This module models the type-relevant part of `cflow/src/lower.c` for ZIP.
 The implementation lowers ZIP into a structured relation with two subgraphs
-that share one root source.  Their outputs may differ; a binary value callable
+that share one root source. Their outputs may differ; a binary value callable
 combines them into the final output.
 -/
 
@@ -18,7 +18,7 @@ structure SurfaceZip (A O : CType) where
   rightOutput : CType
   left : Pipeline A leftOutput
   right : Pipeline A rightOutput
-  combine : Callable2 leftOutput rightOutput O
+  combine : Callable [leftOutput, rightOutput] O
 
 /-- Runtime/type-erased descriptor produced by ZIP lowering. -/
 structure ErasedInvokeRelation where
@@ -45,13 +45,13 @@ namespace SurfaceZip
 /-- Erasure performed by normalization: keep both branch programs and the
     exact binary callable signature. -/
 def lower {A O : CType} (zip : SurfaceZip A O) : ErasedInvokeRelation :=
-  ⟨zip.left.steps, zip.right.steps, zip.combine.signature⟩
+  ⟨zip.left.steps, zip.right.steps, zip.combine.binaryBackendSignature⟩
 
 /-- ZIP lowering preserves the statically known output type. -/
 theorem lowering_preserves_type {A O : CType} (zip : SurfaceZip A O) :
     checkInvokeRelation A zip.lower = some O := by
   simp [SurfaceZip.lower, checkInvokeRelation,
-    Pipeline.check_steps, Callable2.signature]
+    Pipeline.check_steps, Callable.binaryBackendSignature]
 
 /-- Progress form: a well-typed surface ZIP cannot become type-stuck after
     lowering to RELATION(INVOKE). -/
