@@ -5,8 +5,8 @@ import CMeta.OptimizerTopologyGeneratedC
 # Dead-subgraph / topology optimizer conformance
 
 This module models the finite subgraph-reference topology exercised by the real
-C optimizer witness.  The C witness contains one root relation, one nested
-reachable branch and one detached subgraph.  `CMETA_OPT_DEAD_SUBGRAPHS` must
+C optimizer witness. The C witness contains one root relation, one nested
+reachable branch and one detached subgraph. `CMETA_OPT_DEAD_SUBGRAPHS` must
 retain exactly the root-reachable closure while leaving root execution
 unchanged.
 -/
@@ -27,8 +27,6 @@ private def topologyEdges : TopologyNode → List TopologyNode
   | .branch => []
   | .dead => []
 
-/-- Fuel-bounded reachability for the finite witness graph.  Fuel bounds path
-    length and makes the executable checker structurally terminating. -/
 private def reachableWithin : Nat → TopologyNode → TopologyNode → Bool
   | 0, src, target => src == target
   | fuel + 1, src, target =>
@@ -41,41 +39,38 @@ private def reachableFromRoot (node : TopologyNode) : Bool :=
 private def liveTopologyNodes : List TopologyNode :=
   allTopologyNodes.filter reachableFromRoot
 
-/-- The nested relation branch belongs to the root-reachable closure. -/
 theorem OptimizerTopologyConformance.branch_reachable :
     reachableFromRoot .branch = true := by
   native_decide
 
-/-- The detached subgraph is not root-reachable. -/
 theorem OptimizerTopologyConformance.dead_unreachable :
     reachableFromRoot .dead = false := by
   native_decide
 
-/-- The formal reachable closure contains exactly root and nested branch. -/
 theorem OptimizerTopologyConformance.live_set_exact :
     liveTopologyNodes = [.root, .branch] := by
   native_decide
 
-private def reachableBranch : Callable1 CType.int CType.long :=
-  ⟨fun (x : Int) => x * 2⟩
+private def reachableBranch : Callable [CType.int] CType.long :=
+  Callable.ofUnary (fun (x : Int) => x * 2)
 
-private def deadBranch : Callable1 CType.int CType.long :=
-  ⟨fun (x : Int) => x + 100⟩
+private def deadBranch : Callable [CType.int] CType.long :=
+  Callable.ofUnary (fun (x : Int) => x + 100)
 
 private structure TopologyExec where
-  live : Callable1 CType.int CType.long
-  dead : Callable1 CType.int CType.long
+  live : Callable [CType.int] CType.long
+  dead : Callable [CType.int] CType.long
 
 private def topologyExec : TopologyExec :=
   ⟨reachableBranch, deadBranch⟩
 
 private def runRoot (exec : TopologyExec) (xs : List Int) : List Int :=
-  xs.map exec.live.run
+  xs.map exec.live.invoke1
 
-/-- Root execution depends only on the reachable branch.  Replacing arbitrary
+/-- Root execution depends only on the reachable branch. Replacing arbitrary
     dead-subgraph code cannot affect the root denotation. -/
 theorem OptimizerTopologyConformance.dead_code_irrelevant
-    (replacement : Callable1 CType.int CType.long) (xs : List Int) :
+    (replacement : Callable [CType.int] CType.long) (xs : List Int) :
     runRoot { topologyExec with dead := replacement } xs =
       runRoot topologyExec xs := by
   rfl
