@@ -61,7 +61,7 @@
     CMETA_LOCAL const cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, \
         CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), NULL, NULL, \
-        name##_cmeta_erased_range, NULL, NULL, NULL \
+        name##_cmeta_erased_range, NULL, NULL, NULL, NULL \
     };
 
 /* -------------------------------------------------------------------------
@@ -247,7 +247,7 @@
     CMETA_LOCAL const cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, \
         CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), NULL, NULL, \
-        name##_cmeta_erased_range, NULL, NULL, NULL \
+        name##_cmeta_erased_range, NULL, NULL, NULL, NULL \
     };
 
 /* -------------------------------------------------------------------------
@@ -349,7 +349,7 @@
         CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), \
         CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), \
         NULL, name##_cmeta_erased_keys_range, name##_cmeta_erased_values_range, \
-        name##_cmeta_erased_entries_range \
+        name##_cmeta_erased_entries_range, NULL \
     };
 
 
@@ -360,7 +360,7 @@
     }; \
     CMETA_LOCAL const cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, NULL, NULL, NULL, \
-        NULL, NULL, NULL, NULL \
+        NULL, NULL, NULL, NULL, NULL \
     };
 
 #endif /* CMETA_CONTAINER_H */

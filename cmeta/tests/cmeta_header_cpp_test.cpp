@@ -1,6 +1,7 @@
 #include <cmeta/status.h>
 #include <cmeta/type_traits.h>
 #include <cmeta/cmeta.h>
+#include <cmeta/collector.h>
 #include <cmeta/meta.h>
 #include "tinytest.hpp"
 
@@ -17,6 +18,8 @@ static_assert(CMETA_FLOAT_TRAITS_BINARY32_BINARY64,
               "floating traits require the documented binary32/binary64 contract");
 static_assert(CMETA_GEN_MUTATED == 5,
               "the C++ public enum surface must expose mutated ranges");
+static_assert(CMETA_COLLECTOR_ABORTED == 4,
+              "the C++ public enum surface must expose collector states");
 
 static bool cmeta_cpp_copy_construct(void *destination, const void *source) {
   if (destination == nullptr || source == nullptr) return false;

@@ -2,6 +2,7 @@
 #define CMETA_RANGE_H
 
 #include <cmeta/cmeta.h>
+#include <cmeta/collector.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -57,6 +58,7 @@ typedef struct cmeta_container_desc {
     cmeta_range_factory_fn keys_range;
     cmeta_range_factory_fn values_range;
     cmeta_range_factory_fn entries_range;
+    cmeta_collector_factory_fn collector;
 } cmeta_container_desc;
 
 typedef struct cmeta_container_header {

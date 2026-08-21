@@ -36,6 +36,8 @@ typedef struct cmeta_type_desc {
     const cmeta_type_traits *traits;
 } cmeta_type_desc;
 
+bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b);
+
 static inline cmeta_status cmeta_type_require_traits(
     const cmeta_type_desc *type, cmeta_trait_flags required) {
     const cmeta_type_traits *traits;
@@ -88,7 +90,6 @@ extern const cmeta_type_desc cmeta_type_gen_status;
 CMETA_PP_FOR_EACH_A(CMETA_DECLARE_TYPE, ~, CMETA_TYPE_LIST)
 #undef CMETA_DECLARE_TYPE
 
-bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b);
 size_t cmeta_type_registry_count(void);
 const cmeta_type_desc *cmeta_type_registry_at(size_t index);
 const cmeta_type_desc *cmeta_type_find(const char *name);

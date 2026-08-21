@@ -3,6 +3,7 @@
 #include <cmeta/status.h>
 #include <cmeta/type_traits.h>
 #include <cmeta/cmeta.h>
+#include <cmeta/collector.h>
 #include <cmeta/pp.h>
 #include <cmeta/enum.h>
 #include <cmeta/struct.h>

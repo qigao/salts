@@ -18,6 +18,9 @@ CMeta is a finite, schema-driven compile-time metadata/code-generation layer for
 - allocation-free `cmeta_range` protocol and range traits;
 - one-pointer typed-container object headers plus static `cmeta_container_desc` metadata;
 - erased default/key/value/entry Range factories.
+- transactional bounded `cmeta_collector` façade with semantic type admission,
+  first-error preservation, and exactly-once adapter abort;
+- optional value-oriented collector factory in `cmeta_container_desc`.
 
 ## Schema / Replay
 
@@ -116,6 +119,19 @@ HashMap / Map / BTree / BPlusTree              -> keys/values/entries Range view
 ```
 
 Ranges carry an element descriptor plus flags such as `SIZED`, `ORDERED`, `SORTED`, `UNIQUE`, `CONTIGUOUS`, `RANDOM_ACCESS`, and `REUSABLE`.
+
+## Transactional collector capability
+
+`cmeta_collector` provides a single-threaded transaction over borrowed typed
+values. Its only successful terminal transition is `BEGUN`/`ACCEPTING` to
+`COMMITTED`; adapter failure, input/type validation failure, or a hard-capacity
+rejection transitions to `ABORTED` and invokes adapter cleanup exactly once.
+The façade validates `count >= limit` before dispatch, never grows or retries,
+and maps unknown non-OK callback statuses to `CMETA_CALLBACK_ERROR`.
+
+`cmeta_container_desc::collector` is optional. When present, it creates a
+value-oriented collector from caller-owned zero output and a maximum element
+count; `NULL` means that concrete container does not support collection.
 
 For element types outside CFlow's finite callable universe, generated facades can still provide local object descriptors so Range remains independently usable. Typed CFlow callback signatures require the type to be registered in the CMeta/CFlow type universe.
 
