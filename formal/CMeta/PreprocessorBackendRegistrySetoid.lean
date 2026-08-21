@@ -1,4 +1,9 @@
-import CMeta.PreprocessorBackendRegistrySubstitutability
+module
+public import CMeta.PreprocessorBackendRegistryEquivalence
+public import CMeta.PreprocessorBackendSelection
+import all CMeta.PreprocessorBackendRegistryEquivalence
+import all CMeta.PreprocessorBackendRegistrySubstitutability
+import all CMeta.PreprocessorBackend
 
 /-!
 # Registry Setoid / congruence interface
@@ -18,12 +23,13 @@ namespace PreprocessorBackendRegistry
 /-- The standard Setoid relation for concrete registries is exactly the existing
     exact-key observational equivalence. This instance adds syntax, not a second
     semantic equality. -/
-instance registrySetoid : Setoid PreprocessorBackendRegistry where
+public instance registrySetoid : Setoid PreprocessorBackendRegistry where
   r := Equivalent
   iseqv := ⟨equivalent_refl, equivalent_symm, equivalent_trans⟩
 
 /-- Exact-key backend-payload observation respects registry Setoid equality. -/
-theorem observe_congr
+-- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
+public theorem observe_congr
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
     (key : BackendKey) :
@@ -32,7 +38,8 @@ theorem observe_congr
 
 /-- Policy-free candidate discovery respects registry Setoid equality up to
     permutation, which is the correct observation for list representation. -/
-theorem supportingCandidates_congr
+-- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
+public theorem supportingCandidates_congr
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
     (query : BackendQuery)
@@ -43,7 +50,8 @@ theorem supportingCandidates_congr
 
 /-- Well-formed backend selection respects registry Setoid equality at the
     selected exact backend identity. -/
-theorem selectSupporting_key_congr
+-- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
+public theorem selectSupporting_key_congr
     (wellFormed : WellFormedSelectionPolicy)
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
@@ -59,7 +67,8 @@ theorem selectSupporting_key_congr
 /-- Selected replay lowering respects registry Setoid equality. The result is
     still computed from concrete registry values; Setoid equality only provides
     the reasoning interface. -/
-theorem selectSupporting_lowering_congr
+-- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
+public theorem selectSupporting_lowering_congr
     (wellFormed : WellFormedSelectionPolicy)
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
@@ -75,7 +84,7 @@ theorem selectSupporting_lowering_congr
 /-- Semantic relation for partial registry mutations. Failure is related only to
     failure; successful results are compared with registry observational
     equivalence rather than concrete list/proof-field equality. -/
-def MutationResultEquivalent :
+public def MutationResultEquivalent :
     Option PreprocessorBackendRegistry →
       Option PreprocessorBackendRegistry → Prop
   | none, none => True
@@ -152,7 +161,8 @@ private theorem lookup_none_congr
         simp at hobserve
 
 /-- Total removal is a proper operation on the registry Setoid. -/
-theorem remove_congr
+-- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
+public theorem remove_congr
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
     (key : BackendKey) :
@@ -168,7 +178,8 @@ theorem remove_congr
 /-- Fresh insertion is congruent as a partial mutation: equivalent registries
     reject the same duplicate exact keys, and successful inserts are equivalent
     finite-map updates at the inserted key. -/
-theorem insert_congr
+-- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
+public theorem insert_congr
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
     (backend : CertifiedPreprocessorBackend) :
@@ -224,7 +235,8 @@ theorem insert_congr
 /-- Replacement is the composition of a shape-preserving exact lookup check,
     total removal, and fresh insertion. Therefore it respects the same lifted
     partial-mutation relation as insertion. -/
-theorem replace_congr
+-- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
+public theorem replace_congr
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
     (backend : CertifiedPreprocessorBackend) :

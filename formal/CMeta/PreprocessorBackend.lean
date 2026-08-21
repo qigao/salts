@@ -343,8 +343,7 @@ public def replace
   | some _ => (registry.remove backend.key).insert backend
 
 /-- Insert fails exactly when the exact backend key is already present. -/
--- TEMP-MODULE-BRIDGE(M7e): legacy PreprocessorBackendRegistryEquivalence.insert_remove_equivalent
-public theorem insert_eq_none_iff
+theorem insert_eq_none_iff
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend) :
     registry.insert backend = none ↔
@@ -352,8 +351,7 @@ public theorem insert_eq_none_iff
   simp [insert]
 
 /-- A key absent from the registry key set cannot resolve to a backend. -/
--- TEMP-MODULE-BRIDGE(M7e): legacy PreprocessorBackendRegistryEquivalence.insert_remove_equivalent
-public theorem lookup_eq_none_of_key_not_mem
+theorem lookup_eq_none_of_key_not_mem
     (registry : PreprocessorBackendRegistry)
     (key : BackendKey)
     (hnotmem : key ∉ registry.entries.map CertifiedPreprocessorBackend.key) :
@@ -363,8 +361,7 @@ public theorem lookup_eq_none_of_key_not_mem
 /-- Successful insertion resolves the exact certified backend, including its
     payload. Proof fields remain internal to this equality and are not part of
     the registry's later observational equivalence. -/
--- TEMP-MODULE-BRIDGE(M7e): legacy PreprocessorBackendRegistryEquivalence.observe_insert_self
-public theorem lookup_insert_self_exact
+theorem lookup_insert_self_exact
     (registry inserted : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend)
     (hinsert : registry.insert backend = some inserted) :
@@ -389,8 +386,7 @@ theorem lookup_insert_self
 
 /-- Successful insertion is an exact finite-map frame update: every other key
     retains the same certified backend payload. -/
--- TEMP-MODULE-BRIDGE(M7e): legacy PreprocessorBackendRegistryEquivalence.observe_insert_ne
-public theorem lookup_insert_ne_exact
+theorem lookup_insert_ne_exact
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend)
     (inserted : PreprocessorBackendRegistry)
@@ -422,8 +418,7 @@ public theorem lookup_insert_ne
     (lookup_insert_ne_exact registry backend inserted key hinsert hne)
 
 /-- Removal makes the target exact key absent. -/
--- TEMP-MODULE-BRIDGE(M7e): legacy PreprocessorBackendRegistryEquivalence.observe_remove_self
-public theorem lookup_remove_self
+theorem lookup_remove_self
     (registry : PreprocessorBackendRegistry)
     (key : BackendKey) :
     (registry.remove key).lookup key = none := by
@@ -433,8 +428,7 @@ public theorem lookup_remove_self
     (target_not_mem_removeEntries registry.entries key registry.uniqueKeys)
 
 /-- Removal is an exact finite-map frame update for every non-target key. -/
--- TEMP-MODULE-BRIDGE(M7e): legacy PreprocessorBackendRegistryEquivalence.observe_remove_ne
-public theorem lookup_remove_ne_exact
+theorem lookup_remove_ne_exact
     (registry : PreprocessorBackendRegistry)
     (target key : BackendKey)
     (hne : target ≠ key) :
@@ -455,8 +449,7 @@ public theorem lookup_remove_ne
     (lookup_remove_ne_exact registry target key hne)
 
 /-- Successful replacement resolves the exact new certified backend payload. -/
--- TEMP-MODULE-BRIDGE(M7e): legacy PreprocessorBackendRegistryEquivalence.observe_replace_self
-public theorem lookup_replace_self_exact
+theorem lookup_replace_self_exact
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend)
     (replaced : PreprocessorBackendRegistry)
@@ -486,8 +479,7 @@ theorem lookup_replace_self
 
 /-- Replacement preserves the exact certified backend payload for every lookup
     outside the replaced key. -/
--- TEMP-MODULE-BRIDGE(M7e): legacy PreprocessorBackendRegistryEquivalence.observe_replace_ne
-public theorem lookup_replace_ne_exact
+theorem lookup_replace_ne_exact
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend)
     (replaced : PreprocessorBackendRegistry)
