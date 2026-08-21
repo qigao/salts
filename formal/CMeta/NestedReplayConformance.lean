@@ -1,4 +1,4 @@
-import CMeta.NestedReplay
+import CMeta.NestedReplayLowering
 import CMeta.NestedReplayGeneratedC
 
 /-!
