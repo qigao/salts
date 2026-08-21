@@ -39,6 +39,28 @@ function(cmeta_add_formal_witness target source)
   set_target_properties(${target} PROPERTIES FOLDER "formal")
 endfunction()
 
+function(cmeta_expect_compile_failure name source)
+  try_compile(${name}_COMPILED
+    "${CMAKE_CURRENT_BINARY_DIR}/${name}-probe"
+    SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/${source}"
+    CMAKE_FLAGS
+      "-DCMAKE_C_STANDARD=11"
+      "-DCMAKE_C_STANDARD_REQUIRED=ON"
+      "-DCMAKE_C_EXTENSIONS=OFF"
+      "-DCMAKE_C_FLAGS:STRING=-I${PROJECT_SOURCE_DIR}/cmeta/include -I${PROJECT_SOURCE_DIR}/cflow/include"
+    OUTPUT_VARIABLE ${name}_OUTPUT)
+  if(${name}_COMPILED)
+    message(FATAL_ERROR "${name} unexpectedly compiled")
+  endif()
+endfunction()
+
+cmeta_expect_compile_failure(CMETA_TRAITS_DUPLICATE_TAG
+  cmeta_traits_duplicate_tag_fail.c)
+cmeta_expect_compile_failure(CMETA_TRAITS_UNKNOWN_TAG
+  cmeta_traits_unknown_tag_fail.c)
+cmeta_expect_compile_failure(CMETA_TRAITS_MALFORMED_ROW
+  cmeta_traits_malformed_row_fail.c)
+
 cmeta_add_formal_witness(cmeta_header_conformance_witness
   cmeta_conformance_witness.c)
 target_include_directories(cmeta_header_conformance_witness PRIVATE
