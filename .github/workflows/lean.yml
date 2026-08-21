@@ -29,7 +29,21 @@ permissions:
 
 jobs:
   prove:
-    name: Lean 4 / kernel check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: gcc
+            configure_preset: formal-linux-gcc
+            build_preset: build-formal-linux-gcc
+            binary_dir: build/formal-linux-gcc
+            replay_snapshot: NestedReplayGccGeneratedC.lean
+          - backend: clang
+            configure_preset: formal-linux-clang
+            build_preset: build-formal-linux-clang
+            binary_dir: build/formal-linux-clang
+            replay_snapshot: NestedReplayClangGeneratedC.lean
+    name: Lean 4 / kernel check (${{ matrix.backend }})
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,13 +52,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset formal-linux
+          cmake --preset "${{ matrix.configure_preset }}"
 
       - name: Build C conformance witnesses
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build --preset build-formal-linux \
+          cmake --build --preset "${{ matrix.build_preset }}" \
             --target cmeta_header_conformance_witness \
                      cmeta_type_identity_conformance_witness \
                      cmeta_descriptor_bridge_conformance_witness \
@@ -64,55 +78,56 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          generated_dir="build/formal-linux/formal/generated"
+          binary_dir="${{ matrix.binary_dir }}"
+          generated_dir="$binary_dir/formal/generated"
           mkdir -p "$generated_dir"
 
-          build/formal-linux/bin/cmeta_header_conformance_witness \
+          "$binary_dir/bin/cmeta_header_conformance_witness" \
             > "$generated_dir/GeneratedC.lean"
           diff -u formal/CMeta/GeneratedC.lean \
             "$generated_dir/GeneratedC.lean"
 
-          build/formal-linux/bin/cmeta_descriptor_bridge_conformance_witness \
+          "$binary_dir/bin/cmeta_descriptor_bridge_conformance_witness" \
             > "$generated_dir/DescriptorBridgeGeneratedC.lean"
           diff -u formal/CMeta/DescriptorBridgeGeneratedC.lean \
             "$generated_dir/DescriptorBridgeGeneratedC.lean"
 
-          build/formal-linux/bin/cmeta_type_identity_conformance_witness \
+          "$binary_dir/bin/cmeta_type_identity_conformance_witness" \
             > "$generated_dir/TypeIdentityGeneratedC.lean"
           diff -u formal/CMeta/TypeIdentityGeneratedC.lean \
             "$generated_dir/TypeIdentityGeneratedC.lean"
 
-          build/formal-linux/bin/cmeta_nested_replay_deferred_witness \
-            > "$generated_dir/NestedReplayGeneratedC.lean"
-          diff -u formal/CMeta/NestedReplayGeneratedC.lean \
-            "$generated_dir/NestedReplayGeneratedC.lean"
+          "$binary_dir/bin/cmeta_nested_replay_deferred_witness" \
+            > "$generated_dir/${{ matrix.replay_snapshot }}"
+          diff -u "formal/CMeta/${{ matrix.replay_snapshot }}" \
+            "$generated_dir/${{ matrix.replay_snapshot }}"
 
-          build/formal-linux/bin/cmeta_plan_conformance_witness \
+          "$binary_dir/bin/cmeta_plan_conformance_witness" \
             > "$generated_dir/PlanGeneratedC.lean"
           diff -u formal/CMeta/PlanGeneratedC.lean \
             "$generated_dir/PlanGeneratedC.lean"
 
-          build/formal-linux/bin/cmeta_structured_conformance_witness \
+          "$binary_dir/bin/cmeta_structured_conformance_witness" \
             > "$generated_dir/StructuredGeneratedC.lean"
           diff -u formal/CMeta/StructuredGeneratedC.lean \
             "$generated_dir/StructuredGeneratedC.lean"
 
-          build/formal-linux/bin/cmeta_structured_policy_conformance_witness \
+          "$binary_dir/bin/cmeta_structured_policy_conformance_witness" \
             > "$generated_dir/StructuredPolicyGeneratedC.lean"
           diff -u formal/CMeta/StructuredPolicyGeneratedC.lean \
             "$generated_dir/StructuredPolicyGeneratedC.lean"
 
-          build/formal-linux/bin/cmeta_optimizer_conformance_witness \
+          "$binary_dir/bin/cmeta_optimizer_conformance_witness" \
             > "$generated_dir/OptimizerGeneratedC.lean"
           diff -u formal/CMeta/OptimizerGeneratedC.lean \
             "$generated_dir/OptimizerGeneratedC.lean"
 
-          build/formal-linux/bin/cmeta_optimizer_gating_conformance_witness \
+          "$binary_dir/bin/cmeta_optimizer_gating_conformance_witness" \
             > "$generated_dir/OptimizerGatingGeneratedC.lean"
           diff -u formal/CMeta/OptimizerGatingGeneratedC.lean \
             "$generated_dir/OptimizerGatingGeneratedC.lean"
 
-          build/formal-linux/bin/cmeta_optimizer_topology_conformance_witness \
+          "$binary_dir/bin/cmeta_optimizer_topology_conformance_witness" \
             > "$generated_dir/OptimizerTopologyGeneratedC.lean"
           diff -u formal/CMeta/OptimizerTopologyGeneratedC.lean \
             "$generated_dir/OptimizerTopologyGeneratedC.lean"
@@ -121,11 +136,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          build/formal-linux/bin/cmeta_type_identity_multi_tu
-          build/formal-linux/bin/cmeta_type_universe_probe
-          build/formal-linux/bin/cmeta_fmt_args_simplification_witness
-          build/formal-linux/bin/cmeta_producer_replay_witness
-          build/formal-linux/bin/cmeta_nested_replay_deferred_witness
+          binary_dir="${{ matrix.binary_dir }}"
+          "$binary_dir/bin/cmeta_type_identity_multi_tu"
+          "$binary_dir/bin/cmeta_type_universe_probe"
+          "$binary_dir/bin/cmeta_fmt_args_simplification_witness"
+          "$binary_dir/bin/cmeta_producer_replay_witness"
+          "$binary_dir/bin/cmeta_nested_replay_deferred_witness"
 
       - name: Reject proof placeholders
         shell: bash
