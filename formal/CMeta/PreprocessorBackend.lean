@@ -1,5 +1,5 @@
 module
-import CMeta.NestedReplayLowering
+public import CMeta.NestedReplayLowering
 
 /-!
 # Preprocessor backend identity
