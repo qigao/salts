@@ -63,7 +63,7 @@ def requiresDeferred (backend : PreprocessorBackend) : Bool :=
     direct and deferred forms. The lowering contract only requires that the
     deferred path is observed to work and that a non-zero replay depth has been
     certified for a concrete compiler version. -/
-def IsReplayCertified (backend : PreprocessorBackend) : Prop :=
+abbrev IsReplayCertified (backend : PreprocessorBackend) : Prop :=
   0 < backend.compilerMajorVersion ∧
   backend.deferredSameProducerAccepted = true ∧
   0 < backend.certifiedSameProducerDepth
