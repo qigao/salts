@@ -2,18 +2,53 @@
 
 ## Status
 
-Design approved for specification. This document defines the intended C11 surface syntax and normalization boundary only. It does not authorize implementation until this spec is reviewed.
+Design approved for specification and awaiting review. This document defines the intended C11 surface syntax and normalization boundary only. It does not authorize implementation until this spec is reviewed.
 
 ## Goal
 
 Unify CMeta declaration syntax around a small tuple-row grammar while preserving the existing executable and formal semantics.
 
-The design specifically addresses two readability problems in the current surface:
+The design addresses two readability problems in the current surface:
 
-- `Traits(name, flags, equal, hash, compare, copy, move, destroy)` is an 8-position declaration whose flags duplicate the function rows.
+- `Traits(name, flags, equal, hash, compare, copy, move, destroy)` is an 8-position declaration whose flags duplicate the function slots.
 - CFlow operator rows currently encode 15 positional fields in one flat tuple, even though those fields already belong to distinct semantic groups.
 
-The desired result is not a new macro language. The result should make existing schema structure explicit while keeping `Enum`, `Struct`, `typed`, `interface`, and `implements` conceptually unchanged.
+The desired result is not a new macro language. Existing `Enum`, `Struct`, `typed`, `interface`, `implements`, `Schema`, and `Replay` roles remain intact.
+
+## Existing compatibility constraint
+
+Today the public preprocessor kernel defines:
+
+```c
+#define Replay(schema, M) schema(M)
+#define Operators(M, ...) Schema(M, __VA_ARGS__)
+```
+
+and the CFlow operator provider is shaped as:
+
+```c
+#define CFlowOperators(M) \
+    Operators(M, ...rows...)
+```
+
+This design **preserves that provider/consumer contract**. It does not repurpose `Operators` into `Operators(Name, ...)` in Phase 1.
+
+Therefore the approved structured source form is expressed inside the existing provider:
+
+```c
+#define CFlowOperators(M) \
+    Operators(M, \
+        (MAP, map, \
+            (call,     1, 0, -1), \
+            (fn,       1, INPUT, NONE, NONE, VALUE), \
+            (flow,     RETURN, ONE, NONE), \
+            (semantic, map), \
+            (effect,   CMETA_EFFECT_PURE)))
+```
+
+This keeps `Replay(CFlowOperators, Consumer)` unchanged and prevents a surface cleanup from becoming an unrelated schema-provider redesign.
+
+A future named-declaration syntax such as `OperatorSchema(CFlowOperators, ...)` may be considered separately if it proves useful, but it is not part of this migration.
 
 ## Non-goals
 
@@ -22,8 +57,9 @@ This slice does not:
 - change `cmeta_type_traits` runtime representation;
 - change CFlow operator descriptor semantics;
 - change operator identifiers, callable ABI, graph semantics, cardinality semantics, effects, or lowering;
+- change the `CFlowOperators(M)` / `Replay(CFlowOperators, M)` provider-consumer model;
 - add default inference for omitted operator properties;
-- merge function bodies into `Operators(...)`;
+- merge function bodies into operator declarations;
 - expose Lean judgments such as `Supports` or `Candidate` as user-facing C macros;
 - introduce `Item(...)`, `Field(...)`, `Equal(...)`, `Hash(...)`, `Arity(...)`, `Effect(...)`, or similar wrapper vocabulary;
 - change `typed(...)`, lambda, bind, or callable execution semantics;
@@ -31,22 +67,21 @@ This slice does not:
 
 ## Design principle
 
-CMeta declaration syntax follows one grammar:
+CMeta declaration syntax follows one tuple-row grammar:
 
 ```text
-schema      ::= Declaration(Name, row, row, ...)
-row         ::= homogeneous-row
-              | tagged-row
-              | composite-row
+schema        ::= declaration(row, row, ...)
+row           ::= homogeneous-row
+                | tagged-row
+                | composite-row
 
-tagged-row ::= (tag, payload...)
-
+tagged-row   ::= (tag, payload...)
 composite-row ::= (identity..., tagged-row, tagged-row, ...)
 ```
 
-The important rule is that the schema name already supplies context. A row should not be wrapped in a second noun when its role is already clear.
+The schema already supplies context, so a row should not be wrapped in a second noun when its role is clear.
 
-Therefore:
+For homogeneous schemas:
 
 ```c
 Struct(Point,
@@ -74,18 +109,15 @@ Traits(Point,
 );
 ```
 
-For objects with multiple semantic groups, use tagged subrows:
+For composite objects, identity fields are followed by tagged subrows:
 
 ```c
-Operators(CFlowOperators,
-    (MAP, map,
-        (call,     1, 0, -1),
-        (fn,       1, INPUT, NONE, NONE, VALUE),
-        (flow,     RETURN, ONE, NONE),
-        (semantic, map),
-        (effect,   PURE)
-    )
-);
+(FILTER, filter,
+    (call,     1, 0, -1),
+    (fn,       1, INPUT, NONE, NONE, BOOL),
+    (flow,     SAME, FILTER, NONE),
+    (semantic, filter),
+    (effect,   CMETA_EFFECT_PURE))
 ```
 
 ## Traits surface
@@ -104,12 +136,7 @@ Traits(Point,
 );
 ```
 
-The declaration encodes the same information twice:
-
-- the flags say which capabilities exist;
-- the positional function slots say which capabilities exist.
-
-The position of a function is also meaningful but invisible at the call site.
+The same information is encoded twice: flags declare capability presence while positional function slots repeat the presence and hide the semantic role behind position.
 
 ### Proposed form
 
@@ -134,28 +161,28 @@ Traits(User,
 );
 ```
 
-The public row tags are intentionally lowercase because they describe semantic properties rather than C identifiers generated into the global namespace.
+The public row tags are lowercase because they describe semantic properties rather than generated global C identifiers.
 
 ### Trait normalization
 
-The public declaration normalizes to the existing runtime representation:
+The public rows normalize mechanically to the existing `cmeta_type_traits` payload:
 
 ```text
-(equal, f)   -> flag CMETA_TRAIT_EQUAL   + .equal = f
-(hash, f)    -> flag CMETA_TRAIT_HASH    + .hash = f
-(compare, f) -> flag CMETA_TRAIT_COMPARE + .compare = f
-(copy, f)    -> flag CMETA_TRAIT_COPY    + .copy_construct = f
-(move, f)    -> flag CMETA_TRAIT_MOVE    + .move_construct = f
-(destroy, f) -> flag CMETA_TRAIT_DESTROY + .destroy = f
+(equal, f)   -> CMETA_TRAIT_EQUAL   + .equal = f
+(hash, f)    -> CMETA_TRAIT_HASH    + .hash = f
+(compare, f) -> CMETA_TRAIT_COMPARE + .compare = f
+(copy, f)    -> CMETA_TRAIT_COPY    + .copy_construct = f
+(move, f)    -> CMETA_TRAIT_MOVE    + .move_construct = f
+(destroy, f) -> CMETA_TRAIT_DESTROY + .destroy = f
 ```
 
-Existing trivial flags remain descriptor-level facts unless and until a separate design proves a better declaration syntax for them. This design does not infer `TRIVIAL_COPY` or `TRIVIAL_DESTROY` from the presence or absence of functions.
+The flags are derived from declared rows. Users do not repeat the capability set manually.
 
-The normalized result remains a `cmeta_type_traits` object with the existing fields and flags. No consumer should need to understand the new source syntax.
+Existing `TRIVIAL_COPY` and `TRIVIAL_DESTROY` facts remain outside this row inference in Phase 1. Their declaration/inference requires a separate design because they are properties, not function witnesses.
 
 ### Duplicate and unknown tags
 
-The syntax must reject:
+The implementation must reject duplicate semantic rows:
 
 ```c
 Traits(Point,
@@ -164,7 +191,7 @@ Traits(Point,
 );
 ```
 
-and must reject unknown tags such as:
+and unknown tags:
 
 ```c
 Traits(Point,
@@ -172,13 +199,13 @@ Traits(Point,
 );
 ```
 
-Silently taking the first or last row would make the declaration order semantically observable and would undermine the existing capability model.
+Silently taking the first or last row would make declaration order observable and would weaken the capability model.
 
 ## Operators surface
 
-### Current normalized row
+### Current flat row
 
-The current CFlow operator schema contains rows equivalent to:
+The current CFlow schema contains rows equivalent to:
 
 ```c
 (FILTER, filter,
@@ -189,42 +216,36 @@ The current CFlow operator schema contains rows equivalent to:
  CMETA_EFFECT_PURE)
 ```
 
-This representation is compact for replay machinery but poor as a source-level declaration because unrelated categories are flattened together.
+This is a useful normalized replay representation but an increasingly poor source representation.
 
 ### Proposed structured row
 
-The first version of the new surface keeps every existing field but groups them explicitly:
+Phase 1 keeps every existing field but groups fields by meaning:
 
 ```c
-Operators(CFlowOperators,
-
-    (FILTER, filter,
-        (call,     1, 0, -1),
-        (fn,       1, INPUT, NONE, NONE, BOOL),
-        (flow,     SAME, FILTER, NONE),
-        (semantic, filter),
-        (effect,   PURE)
-    ),
-
-    (MAP, map,
-        (call,     1, 0, -1),
-        (fn,       1, INPUT, NONE, NONE, VALUE),
-        (flow,     RETURN, ONE, NONE),
-        (semantic, map),
-        (effect,   PURE)
-    ),
-
-    (FLAT_MAP, flatMap,
-        (call,     1, 0, -1),
-        (fn,       3, INPUT, OUT_PTR, CURSOR, GENERATOR),
-        (flow,     POINTEE1, EXPAND, NONE),
-        (semantic, flat_map),
-        (effect,   PURE)
-    )
-);
+#define CFlowOperators(M) \
+    Operators(M, \
+        (FILTER, filter, \
+            (call,     1, 0, -1), \
+            (fn,       1, INPUT, NONE, NONE, BOOL), \
+            (flow,     SAME, FILTER, NONE), \
+            (semantic, filter), \
+            (effect,   CMETA_EFFECT_PURE)), \
+        (MAP, map, \
+            (call,     1, 0, -1), \
+            (fn,       1, INPUT, NONE, NONE, VALUE), \
+            (flow,     RETURN, ONE, NONE), \
+            (semantic, map), \
+            (effect,   CMETA_EFFECT_PURE)), \
+        (FLAT_MAP, flatMap, \
+            (call,     1, 0, -1), \
+            (fn,       3, INPUT, OUT_PTR, CURSOR, GENERATOR), \
+            (flow,     POINTEE1, EXPAND, NONE), \
+            (semantic, flat_map), \
+            (effect,   CMETA_EFFECT_PURE)))
 ```
 
-The groups map directly to the existing fields.
+`Replay(CFlowOperators, Consumer)` remains the canonical consumption syntax.
 
 ### `call` subrow
 
@@ -232,9 +253,7 @@ The groups map directly to the existing fields.
 (call, methodArgc, fnArg, childArg)
 ```
 
-This preserves the existing method-invocation shape.
-
-No default is introduced in the first implementation.
+This preserves the existing method-invocation shape exactly. Phase 1 introduces no defaults.
 
 ### `fn` subrow
 
@@ -242,9 +261,7 @@ No default is introduced in the first implementation.
 (fn, arity, p0, p1, p2, ret)
 ```
 
-This preserves the existing callable ABI schema.
-
-The first implementation keeps the existing maximum positional representation even when a lower arity leaves `NONE` slots. A later simplification may define shorter arity-specific row forms, but that must be a separate semantic-preservation step.
+This preserves the existing callable ABI schema exactly, including `NONE` placeholders for unused positions. Shorter arity-specific forms are deferred until normalization equivalence is proven.
 
 ### `flow` subrow
 
@@ -252,7 +269,7 @@ The first implementation keeps the existing maximum positional representation ev
 (flow, outputRule, cardinalityRule, childRule)
 ```
 
-This groups output typing, cardinality, and child coordination without changing their values.
+This groups output typing, cardinality, and child coordination without changing any values.
 
 ### `semantic` subrow
 
@@ -260,7 +277,7 @@ This groups output typing, cardinality, and child coordination without changing 
 (semantic, class)
 ```
 
-The semantic classification remains exactly the existing value used by graph/optimizer/lowering consumers.
+This preserves the existing semantic class consumed by graph/optimizer/lowering code.
 
 ### `effect` subrow
 
@@ -268,59 +285,58 @@ The semantic classification remains exactly the existing value used by graph/opt
 (effect, value)
 ```
 
-The source surface may use short values such as `PURE` only if the normalization layer maps them mechanically to the existing internal constant such as `CMETA_EFFECT_PURE`.
-
-The first implementation may instead retain the full internal token in this subrow if short-token mapping adds unnecessary scope. The important design invariant is grouping, not spelling.
+Phase 1 uses the existing internal constant, for example `CMETA_EFFECT_PURE`. Short aliases such as `PURE` are intentionally deferred; grouping is the semantic cleanup, while token abbreviation is cosmetic and can be decided later.
 
 ## Normalization boundary
 
 The key implementation rule is:
 
-> The new syntax must normalize to the current flat operator row before existing CFlow consumers replay it.
+> Structured source rows normalize to the current flat operator row before existing CFlow consumers interpret the schema.
 
 Conceptually:
 
 ```text
-structured source row
-        |
-        v
-CMeta row normalizer
-        |
-        v
-existing flat operator row
-        |
-        +--> enum generation
-        +--> descriptors
-        +--> callable wrappers
-        +--> Stream methods
-        +--> graph wrappers
-        +--> runtime dispatch
-        +--> generated C/Lean witnesses
+CFlowOperators(M)
+      |
+      v
+structured operator row
+      |
+      v
+single CMeta normalizer
+      |
+      v
+current flat operator row
+      |
+      +--> enum generation
+      +--> descriptors
+      +--> callable wrappers
+      +--> Stream methods
+      +--> graph wrappers
+      +--> runtime dispatch
+      +--> generated C/Lean witnesses
 ```
 
-This prevents every consumer from learning the new surface independently.
+Existing consumers should not each learn how to parse the structured source form.
 
-The normalized representation remains the compatibility boundary for framework-internal replay.
-
-The first implementation should therefore prefer one normalization macro family plus unchanged existing consumers over rewriting every consumer for structured rows.
+The current flat row becomes an internal normalized representation rather than the preferred human-written source representation.
 
 ## Row ordering
 
-Within one operator declaration, tagged subrows should have a canonical source order in the first implementation:
+Phase 1 requires operator subrows in canonical order:
 
 ```text
 call -> fn -> flow -> semantic -> effect
 ```
 
-Although the rows are tagged, arbitrary-order parsing in the C preprocessor would add complexity without current user value.
+Tagged rows make their meaning explicit, but arbitrary-order parsing adds preprocessor complexity without current value.
 
-This is intentionally different from semantic dependence on order. The source parser may require canonical order while the normalized semantic object remains the same fixed record.
+This syntactic ordering requirement is not a semantic ordering rule: all valid source rows normalize to one fixed record.
 
-Traits rows may be allowed in any order only if duplicate detection and flag aggregation remain simple and deterministic. If arbitrary ordering complicates the implementation materially, the first version may document a canonical trait order as well. Semantic identity must never depend on which valid source order was used.
+For Traits, arbitrary row ordering is desirable only if duplicate detection and flag aggregation remain simple under strict C11 preprocessing. If not, Phase 1 may specify canonical trait order. In either case, two accepted orderings must never produce different semantic descriptors.
 
 ## Relationship to `typed(...)`
 
-`Operators(...)` declares the legal operator universe. It does not define concrete callbacks.
+The operator schema declares the legal operator universe; it does not contain concrete callback bodies.
 
 Concrete callbacks remain separate:
 
@@ -330,94 +346,99 @@ typed(map, value, long, square, (int x)) {
 }
 ```
 
-The relationship is:
+The relationship remains:
 
 ```text
-Operators(...)
+CFlowOperators
     -> operator kind
-    -> legal callable ABI
+    -> callable ABI constraints
     -> flow/cardinality semantics
     -> intrinsic effect class
 
-             +
+              +
 
 typed(map, ...)
     -> concrete callable witness
 ```
 
-This preserves the existing design in which graph and lowering reason about operator semantics while named callables remain first-class concrete values.
+This preserves the current architecture in which graph/lowering semantics belong to the operator schema while named callables are first-class concrete values.
 
 ## Relationship to formal semantics
 
-The new source syntax must not create new Lean judgments.
+The source syntax creates no new Lean judgment.
 
-The existing formal layer already separates:
+The formal layer remains downstream:
 
 ```text
-syntax / descriptors
-        |
-        v
-static judgments
-        |
-        v
+C source declaration
+       |
+       v
+normalized descriptor / operator schema
+       |
+       v
+IR and static judgments
+       |
+       v
 canonical lowering
 ```
 
-This design only changes the C declaration surface used to construct the same descriptors/operator schema.
+The migration obligation is normalization equivalence, not textual equivalence.
 
-The formal obligation for the migration is normalization equivalence:
-
-```text
-normalize(structuredRow) = existingFlatRow
-```
-
-For Traits, the obligation is descriptor equivalence:
+For Operators:
 
 ```text
-normalize(Traits rows) = existing cmeta_type_traits payload
+normalize(structuredOperatorRow) = existingFlatOperatorRow
 ```
 
-No proof should state that textual source forms are equal. The proof/conformance target is the normalized observable descriptor/schema.
+For Traits:
+
+```text
+normalize(structuredTraitRows) = existing cmeta_type_traits observable payload
+```
+
+Formal/conformance tests should compare normalized observable semantics, not source spelling.
 
 ## Compatibility strategy
 
-The migration should not keep two independent semantic implementations.
+The migration must not create two semantic implementations.
 
 Recommended transition:
 
-1. Keep existing normalized flat consumer macros as the internal representation.
-2. Add structured source normalization.
-3. Migrate `CFlowOperators` to structured rows.
-4. Migrate representative trait declarations.
-5. Verify generated C/Lean observations remain unchanged.
-6. Remove or clearly mark the old public positional declaration form as internal/legacy once all in-repo users have migrated.
+1. Keep the current flat operator row as the internal normalized consumer representation.
+2. Add one structured-row normalizer.
+3. Migrate `CFlowOperators(M)` rows to the structured form while retaining `Replay(CFlowOperators, M)` unchanged.
+4. Add structured `Traits(...)` normalization to the existing `cmeta_type_traits` representation.
+5. Migrate representative trait declarations/examples.
+6. Verify existing C and Lean semantic observations remain unchanged.
+7. Mark legacy positional declaration helpers internal/legacy after all in-repo users migrate.
 
-If a short compatibility window is needed, legacy syntax should normalize into the same internal representation rather than taking a separate consumer path.
+If a compatibility window is needed, legacy input must normalize into the same canonical representation rather than using a second consumer path.
 
 ## Error model
 
-Source mistakes should fail at compile/preprocess time where practical.
+Source errors should fail at compile/preprocess time where practical.
 
 Required failures include:
 
 - unknown Trait tag;
 - duplicate Trait tag;
 - malformed Trait payload arity;
+- malformed Operator composite row;
 - unknown Operator subrow tag;
 - missing required Operator subrow;
 - duplicate Operator subrow;
 - malformed Operator subrow arity;
-- structured operator row that cannot normalize to the existing flat schema.
+- structured Operator row that cannot normalize to the existing flat schema.
 
-The implementation should avoid silent defaults in the first phase because they weaken diagnostics and make equivalence harder to audit.
+Phase 1 intentionally avoids silent defaults because they weaken diagnostics and make equivalence harder to audit.
 
 ## Implementation phases
 
-### Phase 1: syntax normalization with zero semantic change
+### Phase 1: structured syntax, zero semantic change
 
-Implement only enough machinery to express the full current schema structurally.
+Implement exactly the full current information in structured source form.
 
-Target source:
+Representative source:
 
 ```c
 Traits(Point,
@@ -426,83 +447,81 @@ Traits(Point,
     (copy, point_copy)
 );
 
-Operators(CFlowOperators,
-    (MAP, map,
-        (call, 1, 0, -1),
-        (fn, 1, INPUT, NONE, NONE, VALUE),
-        (flow, RETURN, ONE, NONE),
-        (semantic, map),
-        (effect, CMETA_EFFECT_PURE)
-    )
-);
+#define CFlowOperators(M) \
+    Operators(M, \
+        (MAP, map, \
+            (call, 1, 0, -1), \
+            (fn, 1, INPUT, NONE, NONE, VALUE), \
+            (flow, RETURN, ONE, NONE), \
+            (semantic, map), \
+            (effect, CMETA_EFFECT_PURE)))
 ```
 
-The normalized output must equal the current flat schema/descriptor observations.
+Normalized output must match the existing descriptor/operator observations.
 
-### Phase 2: migrate repository declarations
+### Phase 2: repository migration
 
-Migrate `CFlowOperators`, trait examples, and relevant documentation/examples.
+Migrate all `CFlowOperators` rows and relevant trait examples/documentation. Do not modify callback bodies, graph logic, optimizer logic, plan logic, or runtime logic merely to accommodate source syntax.
 
-Do not alter callable bodies or graph/runtime code as part of this phase.
+### Phase 3: optional compression
 
-### Phase 3: optional syntax compression
-
-Only after equivalence is established, evaluate removing values that are provable defaults, for example:
+Only after equivalence is established, evaluate omissions that can be normalized safely, such as:
 
 - default pure intrinsic effect;
-- default no child rule;
-- common method-argument shapes;
+- default no-child rule;
+- common method invocation shapes;
 - unused callable parameter placeholders.
 
-Any such simplification requires its own tests proving the shorter surface normalizes to the same canonical schema.
+Each compression needs its own RED/GREEN proof that the shorter source normalizes to the same canonical representation.
 
 ## Verification strategy
 
-This design relies on the repository's existing real-C plus Lean verification stack.
+Implementation uses TDD. The first change must be a RED conformance target that consumes the new syntax before production normalization exists.
 
-Implementation must use TDD and should introduce a RED conformance target that expects the new syntax before production macros exist.
+GREEN requires at least:
 
-GREEN must include at least:
+- strict C11 compilation with the formal GCC and Clang presets;
+- structured `Traits(...)` producing expected flags and function pointers;
+- negative compile probes for duplicate/unknown Trait tags;
+- structured `CFlowOperators(M)` normalizing to the same flat rows or equivalent generated observations as today;
+- `Replay(CFlowOperators, Consumer)` remaining source-compatible for consumers;
+- existing callable signature validation continuing to pass;
+- generated C/Lean snapshots unchanged unless a snapshot intentionally records source-only metadata;
+- existing graph, optimizer, plan, execution, runtime, registry, and language-spec conformance continuing to pass;
+- `lake build --wfail` with no new warning, axiom, `sorry`, or `admit`.
 
-- strict C11 compilation under both GCC and Clang formal presets;
-- `Traits(...)` structured rows generating the expected flags and function pointers;
-- negative compile tests for duplicate/unknown trait tags;
-- structured `CFlowOperators` producing the same normalized operator descriptors as the current schema;
-- existing callable signature checks continuing to pass;
-- existing generated C/Lean snapshots unchanged unless the snapshot intentionally records surface-only metadata;
-- existing graph, optimizer, plan, execution, and runtime conformance continuing to pass;
-- `lake build --wfail` with no new warnings, axioms, `sorry`, or `admit`.
-
-The strongest migration signal is that the existing generated semantic observations do not change while source declarations become structured.
+The strongest migration signal is unchanged semantic observations with a more structured declaration surface.
 
 ## Design invariants
 
-The implementation is acceptable only if all of the following remain true:
+Implementation is acceptable only if all remain true:
 
-1. `Enum` and `Struct` continue to use plain homogeneous tuple rows.
-2. Heterogeneous properties use tagged tuple rows, not wrapper vocabulary.
-3. Composite declarations use identity fields plus tagged subrows.
-4. `Traits` capability flags are derived from declared capability rows rather than duplicated manually.
-5. `Operators` source rows normalize to one canonical internal row representation.
-6. Existing Replay consumers do not each implement their own structured parser.
-7. `typed(...)` remains the concrete callable-definition mechanism.
-8. CFlow operator lowering semantics do not change.
-9. Formal judgments remain downstream of descriptors/IR and are not exposed as source DSL commands.
-10. No source-order choice becomes an observable semantic difference.
+1. `Enum` and `Struct` keep plain homogeneous tuple rows.
+2. Heterogeneous properties use tagged tuple rows rather than wrapper vocabulary.
+3. Composite rows use identity fields plus tagged semantic subrows.
+4. Trait capability flags are derived from declared capability rows rather than repeated manually.
+5. `CFlowOperators(M)` remains the authoritative operator provider and `Replay(CFlowOperators, M)` remains the consumer interface.
+6. Structured operator source normalizes to one canonical internal flat representation.
+7. Existing Replay consumers do not each implement structured parsing.
+8. `typed(...)` remains the concrete callable-definition mechanism.
+9. CFlow operator and lowering semantics do not change.
+10. Formal judgments remain downstream of descriptors/IR and are not exposed as C surface commands.
+11. Source-order choices cannot become observable semantic differences.
 
 ## Open implementation choices
 
-These choices are intentionally left to the implementation plan because they do not change the approved surface semantics:
+These are deliberately left to the implementation plan because they do not change the approved semantics:
 
-- whether the normalizer is implemented with `Schema`, `Replay`, direct preprocessor dispatch, or a small combination;
-- whether Phase 1 requires canonical Trait row ordering for simpler duplicate detection;
-- whether `effect` uses `PURE` or `CMETA_EFFECT_PURE` in the first migration;
-- the exact internal macro names used for normalized operator rows;
-- whether legacy positional forms are retained temporarily behind an explicitly internal compatibility macro.
+- whether normalization uses `Schema`, `Replay`, direct tag dispatch, or a small combination;
+- whether Phase 1 requires canonical Trait row order for simpler duplicate detection;
+- exact internal macro names for normalized operator rows;
+- whether legacy positional Trait input is retained temporarily behind an explicitly internal compatibility name.
+
+The public `Operators(M, ...)` provider contract and full effect token spelling are **not** open choices in Phase 1; they remain as today.
 
 ## Acceptance example
 
-The following should be representative of the intended final first-phase CMeta/CFlow declaration style:
+The intended first-phase style is:
 
 ```c
 Struct(Point,
@@ -516,22 +535,20 @@ Traits(Point,
     (copy, point_copy)
 );
 
-Operators(CFlowOperators,
-    (FILTER, filter,
-        (call,     1, 0, -1),
-        (fn,       1, INPUT, NONE, NONE, BOOL),
-        (flow,     SAME, FILTER, NONE),
-        (semantic, filter),
-        (effect,   CMETA_EFFECT_PURE)
-    ),
-    (MAP, map,
-        (call,     1, 0, -1),
-        (fn,       1, INPUT, NONE, NONE, VALUE),
-        (flow,     RETURN, ONE, NONE),
-        (semantic, map),
-        (effect,   CMETA_EFFECT_PURE)
-    )
-);
+#define CFlowOperators(M) \
+    Operators(M, \
+        (FILTER, filter, \
+            (call,     1, 0, -1), \
+            (fn,       1, INPUT, NONE, NONE, BOOL), \
+            (flow,     SAME, FILTER, NONE), \
+            (semantic, filter), \
+            (effect,   CMETA_EFFECT_PURE)), \
+        (MAP, map, \
+            (call,     1, 0, -1), \
+            (fn,       1, INPUT, NONE, NONE, VALUE), \
+            (flow,     RETURN, ONE, NONE), \
+            (semantic, map), \
+            (effect,   CMETA_EFFECT_PURE)))
 
 typed(map, value, long, square, (int x)) {
     return (long)x * (long)x;
@@ -540,4 +557,4 @@ typed(map, value, long, square, (int x)) {
 
 The central design statement is:
 
-> CMeta source syntax should expose semantic structure, while normalization preserves one canonical internal representation for execution and proof.
+> CMeta source syntax exposes semantic structure; one normalization boundary preserves the canonical representation used for execution and proof.
