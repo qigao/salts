@@ -23,16 +23,16 @@ structure GenericConstructor where
   maxArity : Nat
   deriving Repr, DecidableEq
 
-/-- Finite constructor admission is a closed interval over type argument count. -/
+/-- Finite constructor acceptance is a closed interval over type argument count. -/
 def GenericConstructor.acceptsArity
     (ctor : GenericConstructor) (arity : Nat) : Bool :=
   decide (ctor.minArity ≤ arity ∧ arity ≤ ctor.maxArity)
 
-/-- Constructor metadata is structurally well-formed before it can admit an application. -/
+/-- Constructor metadata is structurally well-formed before it can accept an application. -/
 def GenericConstructor.valid (ctor : GenericConstructor) : Bool :=
   decide (ctor.stableId ≠ "" ∧ ctor.minArity ≤ ctor.maxArity)
 
-/-- Application admission depends only on constructor semantics and finite arguments. -/
+/-- Application acceptance depends only on constructor semantics and finite arguments. -/
 def GenericConstructor.accepts
     (ctor : GenericConstructor) (args : List TypeId) : Bool :=
   ctor.valid && ctor.acceptsArity args.length
