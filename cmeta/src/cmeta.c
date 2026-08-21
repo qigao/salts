@@ -177,15 +177,6 @@ static const cmeta_type_identity cmeta_id_size_ptr =
     CMETA_BUILTIN_PTR_SELECT_I( \
         CMETA_GENERIC_IS_PROBE(CMETA_BUILTIN_ID_MARK(tok)), tok)
 
-static const cmeta_type_traits cmeta_builtin_size_traits = {
-    CMETA_TRIVIAL_TRAIT_FLAGS,
-    NULL, NULL, NULL, NULL, NULL, NULL
-};
-static const cmeta_type_traits cmeta_builtin_gen_status_traits = {
-    CMETA_TRIVIAL_TRAIT_FLAGS,
-    NULL, NULL, NULL, NULL, NULL, NULL
-};
-
 const cmeta_type_desc cmeta_type_void = {
     .name = "void", .size = 0, .align = 1, .kind = CMETA_T_VOID,
     .pointee = NULL, .traits = NULL, .identity = &cmeta_id_void
@@ -193,7 +184,7 @@ const cmeta_type_desc cmeta_type_void = {
 const cmeta_type_desc cmeta_type_size = {
     .name = "size_t", .size = sizeof(size_t), .align = _Alignof(size_t),
     .kind = CMETA_T_INTEGER, .pointee = NULL,
-    .traits = &cmeta_builtin_size_traits, .identity = &cmeta_id_size
+    .traits = NULL, .identity = &cmeta_id_size
 };
 const cmeta_type_desc cmeta_type_size_ptr = {
     .name = "size_t *", .size = sizeof(size_t *), .align = _Alignof(size_t *),
@@ -203,8 +194,7 @@ const cmeta_type_desc cmeta_type_size_ptr = {
 const cmeta_type_desc cmeta_type_gen_status = {
     .name = "cmeta_gen_status", .size = sizeof(cmeta_gen_status),
     .align = _Alignof(cmeta_gen_status), .kind = CMETA_T_INTEGER,
-    .pointee = NULL, .traits = &cmeta_builtin_gen_status_traits,
-    .identity = &cmeta_id_gen_status
+    .pointee = NULL, .traits = NULL, .identity = &cmeta_id_gen_status
 };
 
 #define CMETA_DEFINE_TYPE(row, ignored) \
