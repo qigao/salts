@@ -1,3 +1,4 @@
+module
 import CMeta.NestedReplay
 
 /-!
@@ -17,14 +18,14 @@ namespace CMeta
 namespace Producer
 
 /-- Conservative capability exposed by a nested-replay lowering backend. -/
-structure ReplayBackendCapability where
+public structure ReplayBackendCapability where
   certifiedSameProducerDepth : Nat
   deriving Repr, DecidableEq
 
 namespace ReplayBackendCapability
 
 /-- A semantic nesting depth is inside the backend's current proof envelope. -/
-abbrev supportsSameProducerDepth
+public abbrev supportsSameProducerDepth
     (backend : ReplayBackendCapability) (depth : Nat) : Prop :=
   depth ≤ backend.certifiedSameProducerDepth
 
@@ -34,7 +35,7 @@ end ReplayBackendCapability
     explicit because strict-C11 macro self-suppression depends on whether a
     producer is re-entered while an earlier expansion of the same identity is
     still active. The inductive shape is well-formed by construction. -/
-inductive ReplayIR where
+public inductive ReplayIR where
   | emit
   | replay (producer : Nat) (body : ReplayIR)
   deriving Repr, DecidableEq
@@ -59,7 +60,7 @@ private def sameProducerDepthAux (active : List Nat) : ReplayIR → Nat
       Nat.max here (sameProducerDepthAux (producer :: active) body)
 
 /-- Backend applicability requirement computed directly from structural IR. -/
-def sameProducerDepth (ir : ReplayIR) : Nat :=
+public def sameProducerDepth (ir : ReplayIR) : Nat :=
   sameProducerDepthAux [] ir
 
 end ReplayIR
@@ -67,7 +68,7 @@ end ReplayIR
 /-- Lower a same-producer nesting depth only when it is covered by the current
     backend certificate. The returned depth is unchanged; this function models
     applicability/gating rather than macro expansion itself. -/
-def lowerSameProducerDepth
+public def lowerSameProducerDepth
     (backend : ReplayBackendCapability) (depth : Nat) : Option Nat :=
   if backend.supportsSameProducerDepth depth then some depth else none
 
@@ -90,7 +91,7 @@ theorem lowerSameProducerDepth_progress
 
 /-- Backend-facing replay plan. The compiler records the structural source and
     the automatically computed same-producer depth that justified admission. -/
-structure LoweredReplayIR where
+public structure LoweredReplayIR where
   source : ReplayIR
   requiredSameProducerDepth : Nat
   deriving Repr, DecidableEq
@@ -98,7 +99,7 @@ structure LoweredReplayIR where
 /-- Compiler lowering over structural replay IR. The caller supplies no manual
     depth: the requirement is computed from producer identities in the IR and
     then checked through the same certified depth gate used above. -/
-def lowerReplayIR
+public def lowerReplayIR
     (backend : ReplayBackendCapability) (ir : ReplayIR) : Option LoweredReplayIR :=
   match lowerSameProducerDepth backend ir.sameProducerDepth with
   | some requiredDepth => some ⟨ir, requiredDepth⟩
