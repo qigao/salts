@@ -47,8 +47,10 @@ static void owned_destroy(void *value_) {
 }
 
 Traits(owned_int,
-    CMETA_TRAIT_EQUAL | CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
-    owned_equal, NULL, NULL, owned_copy, owned_move, owned_destroy);
+    (equal, owned_equal),
+    (copy, owned_copy),
+    (move, owned_move),
+    (destroy, owned_destroy));
 
 static const cmeta_type_desc cmeta_peer_owned_int_type = {
     "owned_int", sizeof(owned_int), _Alignof(owned_int), CMETA_T_OBJECT, NULL,
