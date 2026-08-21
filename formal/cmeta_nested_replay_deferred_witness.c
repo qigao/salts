@@ -6,6 +6,15 @@
 #error "nested replay deferred witness must compile as exact C11"
 #endif
 
+#ifndef CMETA_DIRECT_NESTED_REPLAY_ACCEPTED
+#error "CMake direct-replay applicability result must be injected"
+#endif
+
+#if CMETA_DIRECT_NESTED_REPLAY_ACCEPTED != 0 && \
+    CMETA_DIRECT_NESTED_REPLAY_ACCEPTED != 1
+#error "direct-replay applicability result must be numeric 0 or 1"
+#endif
+
 /* This proof path must not obtain nesting behavior from the current arity
  * counter or public one-or-more FOR_EACH adapter. */
 #undef CMETA_PP_NARG
@@ -74,7 +83,13 @@ enum {
 
     /* This is the depth actually covered by the witness cases above. It is a
      * certified lower bound, not the preprocessor's claimed absolute maximum. */
-    cmeta_proof_certified_same_producer_depth = 4
+    cmeta_proof_certified_same_producer_depth = 4,
+
+    /* Positive applicability evidence is derived from the real deferred depth-2
+     * expansion compiled in this translation unit, rather than an independent
+     * hand-maintained flag. */
+    cmeta_proof_deferred_same_producer_accepted =
+        (cmeta_proof_depth2_count == 4)
 };
 
 /* Strategy tracing uses singleton producer identities so one structural replay
@@ -130,12 +145,18 @@ static void print_nat_list(const char *name, const int *values, size_t count) {
     puts("]");
 }
 
+static const char *lean_bool(int value) {
+    return value ? "true" : "false";
+}
+
 int main(void) {
+    CHECK(CMETA_DIRECT_NESTED_REPLAY_ACCEPTED == 0);
     CHECK(cmeta_proof_distinct_count == 6);
     CHECK(cmeta_proof_depth2_count == 4);
     CHECK(cmeta_proof_depth3_count == 8);
     CHECK(cmeta_proof_depth4_count == 16);
     CHECK(cmeta_proof_certified_same_producer_depth == 4);
+    CHECK(cmeta_proof_deferred_same_producer_accepted == 1);
 
     CHECK(ARRAY_LEN(cmeta_proof_distinct_strategy_trace) == 2);
     CHECK(cmeta_proof_distinct_strategy_trace[0] == cmeta_proof_strategy_direct);
@@ -154,6 +175,10 @@ int main(void) {
     printf("def depth4Count : Nat := %d\n", cmeta_proof_depth4_count);
     printf("def certifiedSameProducerDepth : Nat := %d\n",
            cmeta_proof_certified_same_producer_depth);
+    printf("def directSameProducerAccepted : Bool := %s\n",
+           lean_bool(CMETA_DIRECT_NESTED_REPLAY_ACCEPTED));
+    printf("def deferredSameProducerAccepted : Bool := %s\n",
+           lean_bool(cmeta_proof_deferred_same_producer_accepted));
     print_nat_list("distinctStrategyTrace",
                    cmeta_proof_distinct_strategy_trace,
                    ARRAY_LEN(cmeta_proof_distinct_strategy_trace));
