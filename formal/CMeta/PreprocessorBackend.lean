@@ -1,3 +1,4 @@
+module
 import CMeta.NestedReplayLowering
 
 /-!
@@ -12,32 +13,32 @@ that backend.
 namespace CMeta
 namespace Producer
 
-inductive CompilerFamily where
+public inductive CompilerFamily where
   | gcc
   | clang
   deriving Repr, DecidableEq
 
 namespace CompilerFamily
 
-def tag : CompilerFamily → Nat
+public def tag : CompilerFamily → Nat
   | .gcc => 1
   | .clang => 2
 
 end CompilerFamily
 
-inductive LanguageMode where
+public inductive LanguageMode where
   | c11
   deriving Repr, DecidableEq
 
 namespace LanguageMode
 
-def standardValue : LanguageMode → Nat
+public def standardValue : LanguageMode → Nat
   | .c11 => 201112
 
 end LanguageMode
 
 /-- Stable registry identity for one observed compiler/language configuration. -/
-structure BackendKey where
+public structure BackendKey where
   family : CompilerFamily
   majorVersion : Nat
   languageMode : LanguageMode
@@ -46,12 +47,12 @@ structure BackendKey where
 /-- Compatibility query intentionally omits compiler version. Exact versioned
     identity is handled by `BackendKey`; this query describes the family/mode
     class from which capability-compatible candidates may be discovered. -/
-structure BackendQuery where
+public structure BackendQuery where
   family : CompilerFamily
   languageMode : LanguageMode
   deriving Repr, DecidableEq
 
-structure PreprocessorBackend where
+public structure PreprocessorBackend where
   compilerFamily : CompilerFamily
   compilerMajorVersion : Nat
   languageMode : LanguageMode
@@ -63,18 +64,18 @@ structure PreprocessorBackend where
 namespace PreprocessorBackend
 
 /-- Compiler identity used by the finite backend registry. -/
-def key (backend : PreprocessorBackend) : BackendKey :=
+public def key (backend : PreprocessorBackend) : BackendKey :=
   ⟨backend.compilerFamily, backend.compilerMajorVersion, backend.languageMode⟩
 
 /-- Capability consumed by replay lowering. Compiler identity remains attached
     to the surrounding backend, while the lowering API receives only the
     capability projection it needs. -/
-def replayCapability (backend : PreprocessorBackend) : ReplayBackendCapability :=
+public def replayCapability (backend : PreprocessorBackend) : ReplayBackendCapability :=
   ⟨backend.certifiedSameProducerDepth⟩
 
 /-- Whether the observed backend evidence requires the deferred same-producer
     path: direct re-entry is rejected while the deferred path is accepted. -/
-def requiresDeferred (backend : PreprocessorBackend) : Bool :=
+public def requiresDeferred (backend : PreprocessorBackend) : Bool :=
   (!backend.directSameProducerAccepted) && backend.deferredSameProducerAccepted
 
 /-- Evidence required before a backend can enter the replay registry. Direct
@@ -82,7 +83,7 @@ def requiresDeferred (backend : PreprocessorBackend) : Bool :=
     direct and deferred forms. The lowering contract only requires that the
     deferred path is observed to work and that a non-zero replay depth has been
     certified for a concrete compiler version. -/
-abbrev IsReplayCertified (backend : PreprocessorBackend) : Prop :=
+public abbrev IsReplayCertified (backend : PreprocessorBackend) : Prop :=
   0 < backend.compilerMajorVersion ∧
   backend.deferredSameProducerAccepted = true ∧
   0 < backend.certifiedSameProducerDepth
@@ -91,30 +92,30 @@ end PreprocessorBackend
 
 /-- A backend whose replay evidence is strong enough to be consumed by the
     lowering registry. -/
-structure CertifiedPreprocessorBackend where
+public structure CertifiedPreprocessorBackend where
   backend : PreprocessorBackend
   certificate : backend.IsReplayCertified
 
 namespace CertifiedPreprocessorBackend
 
 /-- Identity projection retained by the registry. -/
-def key (backend : CertifiedPreprocessorBackend) : BackendKey :=
+public def key (backend : CertifiedPreprocessorBackend) : BackendKey :=
   backend.backend.key
 
 /-- Capability projection used by replay lowering. -/
-def replayCapability
+public def replayCapability
     (backend : CertifiedPreprocessorBackend) : ReplayBackendCapability :=
   backend.backend.replayCapability
 
 /-- Compatibility-class match used only for candidate discovery. Version is
     deliberately absent here and remains available through `backend.key`. -/
-abbrev matchesQuery
+public abbrev matchesQuery
     (backend : CertifiedPreprocessorBackend) (query : BackendQuery) : Prop :=
   backend.backend.compilerFamily = query.family ∧
   backend.backend.languageMode = query.languageMode
 
 /-- Whether this certified backend covers the replay requirement of one IR. -/
-abbrev supportsReplay
+public abbrev supportsReplay
     (backend : CertifiedPreprocessorBackend) (ir : ReplayIR) : Prop :=
   ir.sameProducerDepth ≤ backend.replayCapability.certifiedSameProducerDepth
 
@@ -138,7 +139,7 @@ end CertifiedPreprocessorBackend
 /-- Registry representation is a list, but its semantic contract is a finite map:
     every compiler key occurs at most once and every stored entry is certified by
     construction. -/
-structure PreprocessorBackendRegistry where
+public structure PreprocessorBackendRegistry where
   entries : List CertifiedPreprocessorBackend
   uniqueKeys : (entries.map CertifiedPreprocessorBackend.key).Nodup
 
@@ -152,7 +153,7 @@ private def lookupEntries :
       if backend.key = key then some backend else lookupEntries rest key
 
 /-- Resolve one certified backend by exact compiler identity. -/
-def lookup
+public def lookup
     (registry : PreprocessorBackendRegistry) (key : BackendKey) :
     Option CertifiedPreprocessorBackend :=
   lookupEntries registry.entries key
@@ -160,7 +161,7 @@ def lookup
 /-- Discover every certified backend in the requested family/language class that
     covers the current replay IR. This function intentionally does not rank or
     choose among candidates; selection policy is a separate layer. -/
-def supportingCandidates
+public def supportingCandidates
     (registry : PreprocessorBackendRegistry) (query : BackendQuery) (ir : ReplayIR) :
     List CertifiedPreprocessorBackend :=
   registry.entries.filter fun backend =>
@@ -310,7 +311,7 @@ private theorem lookupEntries_removeEntries_ne
 
 /-- Insert a fresh exact backend identity. Duplicate keys are rejected rather
     than relying on list position to decide which certificate wins. -/
-def insert
+public def insert
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend) :
     Option PreprocessorBackendRegistry :=
@@ -324,7 +325,7 @@ def insert
           simp [hduplicate, registry.uniqueKeys] }
 
 /-- Remove one exact backend identity. Missing keys are a no-op. -/
-def remove
+public def remove
     (registry : PreprocessorBackendRegistry)
     (key : BackendKey) : PreprocessorBackendRegistry :=
   { entries := removeEntries registry.entries key
@@ -332,7 +333,7 @@ def remove
 
 /-- Replace one existing exact backend identity with a new certified payload.
     Missing keys are rejected; replacement never acts as an implicit insert. -/
-def replace
+public def replace
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend) :
     Option PreprocessorBackendRegistry :=
