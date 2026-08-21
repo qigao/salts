@@ -1,3 +1,6 @@
+module
+import Std
+
 /-!
 # CMeta Producer / Replay algebra
 
@@ -13,27 +16,27 @@ namespace CMeta
 namespace Producer
 
 /-- Replay a finite producer through one mapper. -/
-def replay (map : α → β) (xs : List α) : List β :=
+public def replay (map : α → β) (xs : List α) : List β :=
   xs.map map
 
 /-- Producer composition is ordinary ordered append. -/
-def append (xs ys : List α) : List α :=
+public def append (xs ys : List α) : List α :=
   xs ++ ys
 
 /-- Count by replaying the constant-one mapper and folding the result. -/
-def count (xs : List α) : Nat :=
+public def count (xs : List α) : Nat :=
   (replay (fun _ : α => 1) xs).foldr Nat.add 0
 
 /-- Materialize mapped producer items and append one storage-only sentinel. -/
-def storage (map : α → β) (sentinel : β) (xs : List α) : List β :=
+public def storage (map : α → β) (sentinel : β) (xs : List α) : List β :=
   replay map xs ++ [sentinel]
 
 /-- Recover logical count from the normalized storage representation. -/
-def storageCount (values : List β) : Nat :=
+public def storageCount (values : List β) : Nat :=
   values.length - 1
 
 /-- The only logical read guard needed by normalized producer storage. -/
-def canRead (values : List β) (i : Nat) : Prop :=
+public def canRead (values : List β) (i : Nat) : Prop :=
   i < storageCount values
 
 /-- Zero elements replay to zero mapper applications. -/
@@ -50,7 +53,8 @@ theorem replay_append (map : α → β) (xs ys : List α) :
   simp [replay, append]
 
 /-- Replaying constant one and folding gives the producer's exact length. -/
-theorem count_eq_length (xs : List α) :
+-- TEMP-MODULE-BRIDGE(M7b): legacy NestedReplay.nestedReplay_count
+public theorem count_eq_length (xs : List α) :
     count xs = xs.length := by
   induction xs with
   | nil => rfl
