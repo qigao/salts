@@ -3,6 +3,8 @@ import CMeta.FmtArgs
 import CMeta.NestedReplay
 import CMeta.NestedReplayLowering
 import CMeta.PreprocessorBackend
+import CMeta.NestedReplayBackendPlan
+import CMeta.PreprocessorBackendSelection
 
 #check CMeta.Producer.replay
 #check CMeta.Producer.append
@@ -91,3 +93,38 @@ assert_not_exists CMeta.Producer.CertifiedPreprocessorBackend.certifiedDepthPosi
 #check CMeta.Producer.PreprocessorBackendRegistry.lookup_insert_ne
 #check CMeta.Producer.PreprocessorBackendRegistry.lookup_remove_ne
 #check CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_ne
+
+#check CMeta.Producer.ReplayExpansionPlan
+#check CMeta.Producer.ReplayExpansionPlan.respectsActiveProducers
+#check CMeta.Producer.ReplayExpansionPlan.fromIR
+#check CMeta.Producer.ReplayExpansionPlan.strategyTrace
+#check CMeta.Producer.ReplayBackendPlan
+#check CMeta.Producer.ReplayBackendPlan.fromIR
+#check CMeta.Producer.lowerReplayBackendPlan
+#check CMeta.Producer.PreprocessorBackendRegistry.resolveReplay
+
+assert_not_exists CMeta.Producer.ReplayExpansionPlan.fromIR_respects
+assert_not_exists CMeta.Producer.lowerReplayIR_requirement
+assert_not_exists CMeta.Producer.lowerReplayBackendPlan_eq_some_iff
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.resolveReplay_eq_some_iff
+
+#check CMeta.Producer.BackendPreference
+#check CMeta.Producer.BackendSelectionPolicy
+#check CMeta.Producer.BackendSelectionPolicy.thenBy
+#check CMeta.Producer.BackendSelectionPolicy.preferGreaterCertifiedDepth
+#check CMeta.Producer.BackendSelectionPolicy.preferNewerVersion
+#check CMeta.Producer.BackendSelectionPolicy.choose
+#check CMeta.Producer.BackendSelectionPolicy.select
+#check CMeta.Producer.BackendSelectionRank
+#check CMeta.Producer.BackendSelectionRank.max
+#check CMeta.Producer.WellFormedSelectionPolicy
+#check CMeta.Producer.BackendSelectionPolicy.replayRank
+#check CMeta.Producer.BackendSelectionPolicy.replayWellFormed
+#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting
+
+assert_not_exists CMeta.Producer.BackendSelectionPolicy.select_mem
+assert_not_exists CMeta.Producer.BackendSelectionRank.aggregate_eq_of_perm
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_mem_candidates
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_supports
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_canonical
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_eq_of_entries_perm
