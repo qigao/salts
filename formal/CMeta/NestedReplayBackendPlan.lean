@@ -1,5 +1,6 @@
-import CMeta.NestedReplayLowering
-import CMeta.PreprocessorBackend
+module
+public import CMeta.PreprocessorBackend
+import all CMeta.NestedReplayLowering
 
 /-!
 # Strict-C11 nested replay backend plan
@@ -14,7 +15,7 @@ namespace CMeta
 namespace Producer
 
 /-- Concrete strict-C11 expansion choice for each replay node. -/
-inductive ReplayExpansionPlan where
+public inductive ReplayExpansionPlan where
   | emit
   | directReplay (producer : Nat) (body : ReplayExpansionPlan)
   | deferredObstructReplay (producer : Nat) (body : ReplayExpansionPlan)
@@ -24,7 +25,7 @@ namespace ReplayExpansionPlan
 
 /-- Direct replay is legal only for an inactive identity. An active
     same-identity re-entry must use the deferred-obstruct path. -/
-def respectsActiveProducers : ReplayExpansionPlan → List Nat → Prop
+public def respectsActiveProducers : ReplayExpansionPlan → List Nat → Prop
   | .emit, _ => True
   | .directReplay producer body, active =>
       producer ∉ active ∧ body.respectsActiveProducers (producer :: active)
@@ -41,14 +42,14 @@ private def fromIRAux (active : List Nat) : ReplayIR → ReplayExpansionPlan
         .directReplay producer (fromIRAux (producer :: active) body)
 
 /-- Top-level expansion starts with no active producer identities. -/
-def fromIR (ir : ReplayIR) : ReplayExpansionPlan :=
+public def fromIR (ir : ReplayIR) : ReplayExpansionPlan :=
   fromIRAux [] ir
 
 /-- Compact diagnostic encoding used by the real C conformance witness:
     `1` means direct producer replay and `2` means deferred+obstructed replay.
     Producer values are intentionally omitted so the trace describes expansion
     strategy rather than test data. -/
-def strategyTrace : ReplayExpansionPlan → List Nat
+public def strategyTrace : ReplayExpansionPlan → List Nat
   | .emit => []
   | .directReplay _ body => 1 :: body.strategyTrace
   | .deferredObstructReplay _ body => 2 :: body.strategyTrace
@@ -76,7 +77,7 @@ end ReplayExpansionPlan
 /-- Fully accepted strict-C11 backend plan. `requiredRescanDepth` is the logical
     nested re-entry depth that the backend certificate must cover; it is not the
     literal number of preprocessor `EVAL` scans. -/
-structure ReplayBackendPlan where
+public structure ReplayBackendPlan where
   source : ReplayIR
   requiredRescanDepth : Nat
   expansion : ReplayExpansionPlan
@@ -87,7 +88,7 @@ namespace ReplayBackendPlan
 /-- The unique backend plan determined by replay structure itself. Backend
     capability decides only whether this plan is accepted; it does not alter the
     plan once admission succeeds. -/
-def fromIR (ir : ReplayIR) : ReplayBackendPlan :=
+public def fromIR (ir : ReplayIR) : ReplayBackendPlan :=
   ⟨ir, ir.sameProducerDepth, ReplayExpansionPlan.fromIR ir⟩
 
 end ReplayBackendPlan
@@ -106,7 +107,7 @@ theorem lowerReplayIR_requirement
 
 /-- Produce a backend expansion plan only after structural IR applicability has
     passed the certified-depth gate. -/
-def lowerReplayBackendPlan
+public def lowerReplayBackendPlan
     (backend : ReplayBackendCapability) (ir : ReplayIR) : Option ReplayBackendPlan :=
   match lowerReplayIR backend ir with
   | none => none
@@ -115,7 +116,8 @@ def lowerReplayBackendPlan
 
 /-- Once a backend supports the IR's required replay depth, lowering normalizes
     to the one canonical plan determined entirely by that IR. -/
-theorem lowerReplayBackendPlan_eq_canonical_of_supports
+-- TEMP-MODULE-BRIDGE(M7g): legacy LanguageSpec and backend conformance
+public theorem lowerReplayBackendPlan_eq_canonical_of_supports
     (backend : ReplayBackendCapability) (ir : ReplayIR)
     (h : ir.sameProducerDepth ≤ backend.certifiedSameProducerDepth) :
     lowerReplayBackendPlan backend ir = some (ReplayBackendPlan.fromIR ir) := by
@@ -124,7 +126,8 @@ theorem lowerReplayBackendPlan_eq_canonical_of_supports
 
 /-- Successful plan generation is exactly support for the requested IR plus the
     canonical plan identity. -/
-theorem lowerReplayBackendPlan_eq_some_iff
+-- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.lower_elim
+public theorem lowerReplayBackendPlan_eq_some_iff
     (backend : ReplayBackendCapability) (ir : ReplayIR) (plan : ReplayBackendPlan) :
     lowerReplayBackendPlan backend ir = some plan ↔
       ir.sameProducerDepth ≤ backend.certifiedSameProducerDepth ∧
@@ -145,7 +148,8 @@ theorem lowerReplayBackendPlan_eq_some_iff
 
 /-- Successful backend plan generation preserves the IR-derived logical rescan
     requirement. -/
-theorem lowerReplayBackendPlan_requirement
+-- TEMP-MODULE-BRIDGE(M7g): legacy NestedReplayConformance.backend_plan_requirement_matches_ir
+public theorem lowerReplayBackendPlan_requirement
     (backend : ReplayBackendCapability) (ir : ReplayIR) (plan : ReplayBackendPlan)
     (h : lowerReplayBackendPlan backend ir = some plan) :
     plan.requiredRescanDepth = ir.sameProducerDepth := by
@@ -160,7 +164,8 @@ theorem lowerReplayBackendPlan_requirement
 
 /-- Successful backend plan generation cannot contain a direct replay of an
     already-active producer identity. -/
-theorem lowerReplayBackendPlan_respects_active
+-- TEMP-MODULE-BRIDGE(M7g): legacy NestedReplayConformance.generated_backend_plan_has_no_direct_reentry
+public theorem lowerReplayBackendPlan_respects_active
     (backend : ReplayBackendCapability) (ir : ReplayIR) (plan : ReplayBackendPlan)
     (h : lowerReplayBackendPlan backend ir = some plan) :
     plan.expansion.respectsActiveProducers [] := by
@@ -185,7 +190,8 @@ theorem certifiedReplayLowering_eq_of_capability_eq
 /-- Portability is local to the requested IR: two certified preprocessors need
     not expose identical capability envelopes. If both support this IR, both
     normalize to the same canonical backend plan. -/
-theorem certifiedReplayLowering_eq_of_both_supports
+-- TEMP-MODULE-BRIDGE(M7g): legacy CPreprocessorBackendConformance.reentry_lowering_is_portable
+public theorem certifiedReplayLowering_eq_of_both_supports
     (a b : CertifiedPreprocessorBackend) (ir : ReplayIR)
     (ha : ir.sameProducerDepth ≤ a.replayCapability.certifiedSameProducerDepth)
     (hb : ir.sameProducerDepth ≤ b.replayCapability.certifiedSameProducerDepth) :
@@ -199,7 +205,7 @@ namespace PreprocessorBackendRegistry
 /-- Registry selection and lowering are deliberately separate: lookup chooses
     the certified backend identity; the selected backend capability then gates
     the canonical replay plan. -/
-def resolveReplay
+public def resolveReplay
     (registry : PreprocessorBackendRegistry) (key : BackendKey) (ir : ReplayIR) :
     Option ReplayBackendPlan :=
   match registry.lookup key with
@@ -209,7 +215,8 @@ def resolveReplay
 /-- A registry resolution succeeds exactly when the key selects a certified
     backend that supports the requested IR, and the result is the IR's canonical
     replay plan. -/
-theorem resolveReplay_eq_some_iff
+-- TEMP-MODULE-BRIDGE(M7g): legacy LanguageSpec and backend conformance
+public theorem resolveReplay_eq_some_iff
     (registry : PreprocessorBackendRegistry) (key : BackendKey)
     (ir : ReplayIR) (plan : ReplayBackendPlan) :
     registry.resolveReplay key ir = some plan ↔

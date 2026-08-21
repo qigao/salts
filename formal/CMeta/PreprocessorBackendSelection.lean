@@ -1,5 +1,8 @@
+module
 import Init.Tactics
-import CMeta.NestedReplayBackendPlan
+public import CMeta.NestedReplayBackendPlan
+import all CMeta.NestedReplayBackendPlan
+import all CMeta.PreprocessorBackend
 
 /-!
 # Certified preprocessor backend selection policy
@@ -15,14 +18,14 @@ namespace CMeta
 namespace Producer
 
 /-- Three-way preference result used for composable backend ranking. -/
-inductive BackendPreference where
+public inductive BackendPreference where
   | preferLeft
   | equivalent
   | preferRight
   deriving Repr, DecidableEq
 
 /-- A selection policy compares two already-certified backend candidates. -/
-structure BackendSelectionPolicy where
+public structure BackendSelectionPolicy where
   compare : CertifiedPreprocessorBackend → CertifiedPreprocessorBackend →
     BackendPreference
 
@@ -30,7 +33,7 @@ namespace BackendSelectionPolicy
 
 /-- Lexicographic policy composition: consult the second policy only when the
     first regards both candidates as equivalent. -/
-def thenBy
+public def thenBy
     (primary secondary : BackendSelectionPolicy) : BackendSelectionPolicy :=
   { compare := fun left right =>
       match primary.compare left right with
@@ -38,7 +41,7 @@ def thenBy
       | result => result }
 
 /-- Prefer the candidate with the larger formally certified replay envelope. -/
-def preferGreaterCertifiedDepth : BackendSelectionPolicy :=
+public def preferGreaterCertifiedDepth : BackendSelectionPolicy :=
   { compare := fun left right =>
       let l := left.replayCapability.certifiedSameProducerDepth
       let r := right.replayCapability.certifiedSameProducerDepth
@@ -47,7 +50,7 @@ def preferGreaterCertifiedDepth : BackendSelectionPolicy :=
       else .equivalent }
 
 /-- Prefer the newer compiler major version when an earlier criterion ties. -/
-def preferNewerVersion : BackendSelectionPolicy :=
+public def preferNewerVersion : BackendSelectionPolicy :=
   { compare := fun left right =>
       let l := left.backend.compilerMajorVersion
       let r := right.backend.compilerMajorVersion
@@ -58,7 +61,7 @@ def preferNewerVersion : BackendSelectionPolicy :=
 /-- Reduce one comparison to a surviving candidate. Equivalence deliberately
     keeps the current left candidate; deterministic tie-breaking beyond the
     declared policy belongs in an explicit later criterion. -/
-def choose
+public def choose
     (policy : BackendSelectionPolicy)
     (left right : CertifiedPreprocessorBackend) : CertifiedPreprocessorBackend :=
   match policy.compare left right with
@@ -75,7 +78,7 @@ private def selectAux
 
 /-- Select one candidate according to the declared policy, or `none` for an empty
     candidate set. -/
-def select
+public def select
     (policy : BackendSelectionPolicy)
     (candidates : List CertifiedPreprocessorBackend) :
     Option CertifiedPreprocessorBackend :=
@@ -109,7 +112,8 @@ private theorem selectAux_mem
             (fun h => Or.inr (Or.inr h))
 
 /-- A policy can only return an element of the candidate list supplied to it. -/
-theorem select_mem
+-- TEMP-MODULE-BRIDGE(M7g): legacy CPreprocessorBackendConformance.selection_result_is_candidate
+public theorem select_mem
     (policy : BackendSelectionPolicy)
     (candidates : List CertifiedPreprocessorBackend)
     (backend : CertifiedPreprocessorBackend)
@@ -127,7 +131,7 @@ end BackendSelectionPolicy
 
 /-- Semantic rank used to certify deterministic replay selection. Larger depth
     wins first; compiler major version is the secondary coordinate. -/
-structure BackendSelectionRank where
+public structure BackendSelectionRank where
   certifiedDepth : Nat
   compilerMajorVersion : Nat
   deriving Repr, DecidableEq
@@ -170,7 +174,7 @@ private theorem le_antisymm {left right : BackendSelectionRank}
   rfl
 
 /-- Deterministic maximum under the lexicographic replay rank. -/
-def max (left right : BackendSelectionRank) : BackendSelectionRank :=
+public def max (left right : BackendSelectionRank) : BackendSelectionRank :=
   if le left right then right else left
 
 theorem max_eq_right {left right : BackendSelectionRank}
@@ -253,7 +257,7 @@ end BackendSelectionRank
     exactly maximum under a lawful replay rank and equal rank within one query
     determines one backend identity. These are the properties needed to erase
     registry list order from observable selection. -/
-structure WellFormedSelectionPolicy where
+public structure WellFormedSelectionPolicy where
   policy : BackendSelectionPolicy
   rank : CertifiedPreprocessorBackend → BackendSelectionRank
   choose_rank : ∀ left right,
@@ -269,7 +273,7 @@ namespace BackendSelectionPolicy
 
 /-- Rank corresponding exactly to the replay policy's depth-then-version
     preference. -/
-def replayRank (backend : CertifiedPreprocessorBackend) : BackendSelectionRank :=
+public def replayRank (backend : CertifiedPreprocessorBackend) : BackendSelectionRank :=
   ⟨backend.replayCapability.certifiedSameProducerDepth,
     backend.backend.compilerMajorVersion⟩
 
@@ -360,7 +364,7 @@ private theorem replayKeyEqOfQueryRankEq
 
 /-- Certified replay selection: maximize formally witnessed replay depth, then
     compiler major version. -/
-def replayWellFormed : WellFormedSelectionPolicy :=
+public def replayWellFormed : WellFormedSelectionPolicy :=
   { policy := preferGreaterCertifiedDepth.thenBy preferNewerVersion
     rank := replayRank
     choose_rank := replayChooseRank
@@ -400,7 +404,8 @@ private theorem select_rank_eq_aggregate_of_ne_nil
 
 /-- A well-formed policy selects the same backend identity from any two
     permutations whose candidates all belong to the same backend query. -/
-theorem select_key_eq_of_perm_of_matches
+-- TEMP-MODULE-BRIDGE(M7e): legacy PreprocessorBackendRegistrySubstitutability.selectSupporting_key_eq_of_equivalent
+public theorem select_key_eq_of_perm_of_matches
     (wellFormed : WellFormedSelectionPolicy)
     (query : BackendQuery)
     {left right : List CertifiedPreprocessorBackend}
@@ -461,7 +466,7 @@ end BackendSelectionPolicy
 namespace PreprocessorBackendRegistry
 
 /-- Apply an explicit policy only after policy-free registry candidate discovery. -/
-def selectSupporting
+public def selectSupporting
     (registry : PreprocessorBackendRegistry)
     (policy : BackendSelectionPolicy)
     (query : BackendQuery)
@@ -470,7 +475,8 @@ def selectSupporting
 
 /-- A successful registry-level selection remains a member of the policy-free
     supporting candidate set. -/
-theorem selectSupporting_mem_candidates
+-- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.selection_elim
+public theorem selectSupporting_mem_candidates
     (registry : PreprocessorBackendRegistry)
     (policy : BackendSelectionPolicy)
     (query : BackendQuery)
@@ -496,7 +502,8 @@ theorem selectSupporting_supports
 
 /-- Any selected supporting backend lowers to the same canonical replay plan;
     selection policy affects which certificate is chosen, never plan semantics. -/
-theorem selectSupporting_lowering_canonical
+-- TEMP-MODULE-BRIDGE(M7g): legacy LanguageSpec and backend conformance
+public theorem selectSupporting_lowering_canonical
     (registry : PreprocessorBackendRegistry)
     (policy : BackendSelectionPolicy)
     (query : BackendQuery)
@@ -512,7 +519,8 @@ theorem selectSupporting_lowering_canonical
 /-- Registry representation order is unobservable for a well-formed policy: if
     two registries contain the same certified entries up to permutation, one
     query and replay IR select the same backend identity. -/
-theorem selectSupporting_key_eq_of_entries_perm
+-- TEMP-MODULE-BRIDGE(M7g): legacy CPreprocessorBackendSelectionConformance.registry_order_independent
+public theorem selectSupporting_key_eq_of_entries_perm
     (wellFormed : WellFormedSelectionPolicy)
     (left right : PreprocessorBackendRegistry)
     (query : BackendQuery)
