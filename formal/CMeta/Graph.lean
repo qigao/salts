@@ -114,8 +114,7 @@ public def checkRelation (input : CType) (rel : ErasedRelation) : Option CType :
           else none
 
 /-- Relation preservation after erasure. -/
--- TEMP-MODULE-BRIDGE(M6): legacy StructuredConformance.typed_relation_valid
-public theorem TypedRelation.check_erase {A R : CType} (rel : TypedRelation A R) :
+theorem TypedRelation.check_erase {A R : CType} (rel : TypedRelation A R) :
     checkRelation A rel.erase = some R := by
   cases rel with
   | select branches =>

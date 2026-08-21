@@ -107,6 +107,7 @@ assert_not_exists CMeta.ResolvedStep.cannot_target_incompatible
 
 assert_not_exists CMeta.checkBranchTail
 assert_not_exists CMeta.TypedBranches.check_erase
+assert_not_exists CMeta.TypedRelation.check_erase
 assert_not_exists CMeta.TypedRelation.progress
 assert_not_exists CMeta.TypedRelation.output_unique
 assert_not_exists CMeta.TypedGraph.check_stages
@@ -125,6 +126,7 @@ assert_not_exists CMeta.MapChain.run_cons
 assert_not_exists CMeta.MapChain.check_signatures
 assert_not_exists CMeta.FusedMap.type_preserved
 assert_not_exists CMeta.canonicalizeMapLike_preserves_type
+assert_not_exists CMeta.duplicate_idempotent_elimination_sound
 assert_not_exists CMeta.duplicate_idempotent_elimination_type
 
 #check CMeta.SurfaceZip
@@ -132,6 +134,7 @@ assert_not_exists CMeta.duplicate_idempotent_elimination_type
 #check CMeta.checkInvokeRelation
 #check CMeta.SurfaceZip.lower
 
+assert_not_exists CMeta.SurfaceZip.lowering_preserves_type
 assert_not_exists CMeta.SurfaceZip.lowering_progress
 assert_not_exists CMeta.SurfaceZip.lowering_output_unique
 

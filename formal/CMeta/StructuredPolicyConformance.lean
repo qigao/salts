@@ -1,5 +1,6 @@
-import CMeta.StructuredConformance
-import CMeta.StructuredPolicyGeneratedC
+module
+import all CMeta.StructuredConformance
+import all CMeta.StructuredPolicyGeneratedC
 
 /-!
 # Remaining structured relation policy conformance

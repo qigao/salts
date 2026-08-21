@@ -1,5 +1,6 @@
-import CMeta.OptimizerConformance
-import CMeta.OptimizerGatingGeneratedC
+module
+import all CMeta.OptimizerConformance
+import all CMeta.OptimizerGatingGeneratedC
 
 /-!
 # Optimizer effect/property gating conformance

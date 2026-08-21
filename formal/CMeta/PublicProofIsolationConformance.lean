@@ -6,9 +6,8 @@ import CMeta.PublicProof
 
 This module is a downstream-client view: it imports only `CMeta.PublicProof`.
 The positive checks define the supported proof facade; negative assertions make
-representative internal proof plumbing unavailable through that facade.
-M6 will extend this list after the remaining legacy conformance consumers have
-been moduleized.
+representative Graph, Lowering, Optimize, Execution, and EndToEnd proof plumbing
+unavailable through that facade.
 -/
 
 #check CMeta.PublicProof.structured_graph_type_safe
@@ -20,5 +19,8 @@ been moduleized.
 
 assert_not_exists CMeta.EndToEnd.direct_plan_exact
 assert_not_exists CMeta.TypedGraph.check_stages
+assert_not_exists CMeta.TypedRelation.check_erase
+assert_not_exists CMeta.SurfaceZip.lowering_preserves_type
 assert_not_exists CMeta.FusedMap.type_preserved
+assert_not_exists CMeta.duplicate_idempotent_elimination_sound
 assert_not_exists CMeta.ExecProgram.runtime_execution_exact

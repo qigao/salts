@@ -1,5 +1,8 @@
-import CMeta.StructuredPolicyConformance
-import CMeta.OptimizerGeneratedC
+module
+import all CMeta.StructuredPolicyConformance
+import all CMeta.OptimizerGeneratedC
+import all CMeta.Optimize
+import all CMeta.Callable
 
 /-!
 # Real C optimizer ↔ property rewrite conformance
