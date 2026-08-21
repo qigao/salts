@@ -206,12 +206,14 @@ private theorem mem_map_removeEntries
     candidate ∈ entries.map CertifiedPreprocessorBackend.key := by
   induction entries with
   | nil =>
-      simp [removeEntries] at hmem
+      simpa [removeEntries] using hmem
   | cons backend rest ih =>
       by_cases hkey : backend.key = target
-      · simp only [removeEntries, hkey, if_pos]
+      · rw [removeEntries, if_pos hkey] at hmem
+        simp only [List.map_cons, List.mem_cons]
         exact Or.inr hmem
-      · simp only [removeEntries, hkey, if_neg, List.map_cons, List.mem_cons] at hmem ⊢
+      · rw [removeEntries, if_neg hkey] at hmem
+        simp only [List.map_cons, List.mem_cons] at hmem ⊢
         exact hmem.elim Or.inl (fun hrest => Or.inr (ih hrest))
 
 /-- The list-level removal implementation preserves key uniqueness. -/
@@ -222,14 +224,15 @@ private theorem removeEntries_nodup_keys
     ((removeEntries entries target).map CertifiedPreprocessorBackend.key).Nodup := by
   induction entries with
   | nil =>
-      simp [removeEntries]
+      simpa [removeEntries]
   | cons backend rest ih =>
       have hhead := (List.nodup_cons.mp hunique).1
       have htail := (List.nodup_cons.mp hunique).2
       by_cases hkey : backend.key = target
-      · simp only [removeEntries, hkey, if_pos]
+      · rw [removeEntries, if_pos hkey]
         exact htail
-      · simp only [removeEntries, hkey, if_neg, List.map_cons]
+      · rw [removeEntries, if_neg hkey]
+        simp only [List.map_cons]
         exact List.nodup_cons.mpr
           ⟨(fun hmem => hhead (mem_map_removeEntries rest target backend.key hmem)),
             ih htail⟩
@@ -248,10 +251,14 @@ private theorem target_not_mem_removeEntries
       have hhead := (List.nodup_cons.mp hunique).1
       have htail := (List.nodup_cons.mp hunique).2
       by_cases hkey : backend.key = target
-      · simp only [removeEntries, hkey, if_pos]
+      · rw [removeEntries, if_pos hkey]
         simpa [hkey] using hhead
-      · simp only [removeEntries, hkey, if_neg, List.map_cons, List.mem_cons, not_or]
-        exact ⟨Ne.symm hkey, ih htail⟩
+      · rw [removeEntries, if_neg hkey]
+        simp only [List.map_cons]
+        intro hmem
+        rcases List.mem_cons.mp hmem with hhere | hrest
+        · exact hkey hhere.symm
+        · exact ih htail hrest
 
 private theorem lookupEntries_none_of_not_mem
     (entries : List CertifiedPreprocessorBackend)
@@ -284,10 +291,22 @@ private theorem lookupEntries_removeEntries_ne
       · have hlookup : backend.key ≠ key := by
           intro hsame
           exact hne (hremove.symm.trans hsame)
-        simp [removeEntries, lookupEntries, hremove, hlookup]
+        rw [removeEntries, if_pos hremove]
+        change lookupEntries rest key =
+          (if backend.key = key then some backend else lookupEntries rest key)
+        rw [if_neg hlookup]
       · by_cases hlookup : backend.key = key
-        · simp [removeEntries, lookupEntries, hremove, hlookup]
-        · simp [removeEntries, lookupEntries, hremove, hlookup, ih]
+        · rw [removeEntries, if_neg hremove]
+          change (if backend.key = key then some backend
+              else lookupEntries (removeEntries rest target) key) =
+            (if backend.key = key then some backend else lookupEntries rest key)
+          rw [if_pos hlookup]
+        · rw [removeEntries, if_neg hremove]
+          change (if backend.key = key then some backend
+              else lookupEntries (removeEntries rest target) key) =
+            (if backend.key = key then some backend else lookupEntries rest key)
+          rw [if_neg hlookup]
+          exact ih
 
 /-- Insert a fresh exact backend identity. Duplicate keys are rejected rather
     than relying on list position to decide which certificate wins. -/
@@ -338,10 +357,13 @@ theorem lookup_insert_self
       some backend.key := by
   unfold insert at hinsert
   split at hinsert
-  · contradiction
+  · simp at hinsert
   · simp only [Option.some.injEq] at hinsert
     subst inserted
-    simp [lookup, lookupEntries]
+    change (lookupEntries (backend :: registry.entries) backend.key).map
+        CertifiedPreprocessorBackend.key = some backend.key
+    rw [lookupEntries, if_pos rfl]
+    rfl
 
 /-- Successful insertion is a finite-map frame update: every other exact key
     keeps the same lookup result. -/
@@ -356,16 +378,19 @@ theorem lookup_insert_ne
       (registry.lookup key).map CertifiedPreprocessorBackend.key := by
   unfold insert at hinsert
   split at hinsert
-  · contradiction
+  · simp at hinsert
   · simp only [Option.some.injEq] at hinsert
     subst inserted
-    simp [lookup, lookupEntries, hne]
+    change (lookupEntries (backend :: registry.entries) key).map
+        CertifiedPreprocessorBackend.key =
+      (lookupEntries registry.entries key).map CertifiedPreprocessorBackend.key
+    rw [lookupEntries, if_neg hne]
 
 /-- Removal makes the target exact key absent. -/
 theorem lookup_remove_self
     (registry : PreprocessorBackendRegistry)
     (key : BackendKey) :
-    registry.remove key |>.lookup key = none := by
+    (registry.remove key).lookup key = none := by
   change lookupEntries (removeEntries registry.entries key) key = none
   exact lookupEntries_none_of_not_mem
     (removeEntries registry.entries key) key
