@@ -1,4 +1,6 @@
-import CMeta.Execution
+module
+-- TEMP-MODULE-BRIDGE(M5): legacy EndToEnd reaches Execution through Cardinality
+public import all CMeta.Execution
 
 /-!
 # Execution cardinality safety

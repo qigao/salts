@@ -42,16 +42,14 @@ public def signatures : {A R : CType} → MapChain A R → List Signature
   | _, _, .cons fn rest => fn.unaryBackendSignature :: rest.signatures
 
 /-- Dynamic checker for an erased unary callback chain. -/
--- TEMP-MODULE-BRIDGE(M4): legacy Plan.PlanNode.check_erase unfolds MapChain.check
-@[expose] public def check : CType → List Signature → Option CType
+public def check : CType → List Signature → Option CType
   | current, [] => some current
   | current, .unary input output :: rest =>
       if input = current then check output rest else none
   | _, _ :: _ => none
 
 /-- Type preservation for the exact ordered callback chain. -/
--- TEMP-MODULE-BRIDGE(M4): legacy Plan.PlanNode.check_erase
-public theorem check_signatures {A R : CType} (chain : MapChain A R) :
+theorem check_signatures {A R : CType} (chain : MapChain A R) :
     check A chain.signatures = some R := by
   induction chain with
   | done t => rfl

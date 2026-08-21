@@ -7,6 +7,9 @@ import CMeta.Flow
 import CMeta.Graph
 import CMeta.Optimize
 import CMeta.Lowering
+import CMeta.Plan
+import CMeta.Execution
+import CMeta.Cardinality
 
 #check CMeta.product
 #check CMeta.CoreExpr
@@ -117,6 +120,7 @@ assert_not_exists CMeta.TypedGraph.output_unique
 #check CMeta.IdempotentEndomap
 
 assert_not_exists CMeta.MapChain.run_cons
+assert_not_exists CMeta.MapChain.check_signatures
 assert_not_exists CMeta.canonicalizeMapLike_preserves_type
 assert_not_exists CMeta.duplicate_idempotent_elimination_type
 
@@ -127,3 +131,51 @@ assert_not_exists CMeta.duplicate_idempotent_elimination_type
 
 assert_not_exists CMeta.SurfaceZip.lowering_progress
 assert_not_exists CMeta.SurfaceZip.lowering_output_unique
+
+#check CMeta.PlanOpcode
+#check CMeta.ErasedPlanInst
+#check CMeta.PlanNode
+#check CMeta.PlanNode.erase
+#check CMeta.checkPlanInst
+#check CMeta.PlanProgram
+#check CMeta.PlanProgram.code
+#check CMeta.checkPlan
+#check CMeta.ErasedPlan
+#check CMeta.PlanProgram.compile
+#check CMeta.PlanWellTyped
+
+assert_not_exists CMeta.PlanNode.check_erase
+assert_not_exists CMeta.transform_compiles_as_map
+assert_not_exists CMeta.PlanProgram.check_code
+assert_not_exists CMeta.PlanProgram.compile_well_typed
+assert_not_exists CMeta.PlanProgram.compile_endpoints
+assert_not_exists CMeta.PlanProgram.output_unique
+
+#check CMeta.ValueVec
+#check CMeta.PackedVec
+#check CMeta.CompletedGenerator
+#check CMeta.ExecInst
+#check CMeta.reduceValues
+#check CMeta.ExecInst.run
+#check CMeta.ExecInst.planNode
+#check CMeta.RuntimeInst
+#check CMeta.ExecInst.runtime
+#check CMeta.runRuntimeInst
+#check CMeta.ExecProgram
+#check CMeta.ExecProgram.run
+#check CMeta.ExecProgram.planProgram
+#check CMeta.ExecProgram.runtimeCode
+#check CMeta.runRuntimePlan
+
+assert_not_exists CMeta.ExecInst.map_length
+assert_not_exists CMeta.ExecInst.reduce_length_le_one
+assert_not_exists CMeta.ExecInst.planNode_checked
+assert_not_exists CMeta.runRuntimeInst_output
+assert_not_exists CMeta.ExecInst.runtime_exact
+
+assert_not_exists CMeta.ExecInst.filter_cardinality
+assert_not_exists CMeta.ExecInst.map_cardinality
+assert_not_exists CMeta.ExecInst.flatMap_cardinality
+assert_not_exists CMeta.ExecInst.reduce_cardinality
+assert_not_exists CMeta.ExecInst.reduce_cardinality_le_one
+assert_not_exists CMeta.reduceCount
