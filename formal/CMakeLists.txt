@@ -47,7 +47,9 @@ function(cmeta_try_compile name source)
       "-DCMAKE_C_STANDARD=11"
       "-DCMAKE_C_STANDARD_REQUIRED=ON"
       "-DCMAKE_C_EXTENSIONS=OFF"
-      "-DCMAKE_C_FLAGS:STRING=-I${PROJECT_SOURCE_DIR}/cmeta/include -I${PROJECT_SOURCE_DIR}/cflow/include"
+    COMPILE_DEFINITIONS
+      "-I${PROJECT_SOURCE_DIR}/cmeta/include"
+      "-I${PROJECT_SOURCE_DIR}/cflow/include"
     OUTPUT_VARIABLE ${name}_OUTPUT)
   set(${name}_COMPILED ${${name}_COMPILED} PARENT_SCOPE)
   set(${name}_OUTPUT "${${name}_OUTPUT}" PARENT_SCOPE)
