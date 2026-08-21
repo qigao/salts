@@ -9,7 +9,8 @@ import CMeta.FmtArgs
 #check CMeta.Producer.canRead
 
 assert_not_exists CMeta.Producer.replay_append
-assert_not_exists CMeta.Producer.count_eq_length
+-- TEMP-MODULE-BRIDGE(M7b): legacy NestedReplay.nestedReplay_count
+#check CMeta.Producer.count_eq_length
 assert_not_exists CMeta.Producer.storage_count_eq_count
 assert_not_exists CMeta.Producer.canRead_iff
 
