@@ -1,5 +1,6 @@
 import CMeta.Calculus
 import CMeta.FmtArgs
+import CMeta.Producer
 import CMeta.TypeIdentity
 import CMeta.TypeIdentityGeneratedC
 import CMeta.TypeIdentityConformance
