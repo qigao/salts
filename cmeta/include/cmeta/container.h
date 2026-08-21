@@ -34,7 +34,7 @@
         const name *self = (const name *)object; \
         return self ? CMETA_CONTAINER_API(prefix, size)(&self->raw) : 0U; \
     } \
-    CMETA_INLINE cmeta_gen_status name##_cmeta_range_next(const void *object, size_t *cursor, void *out_value) { \
+    CMETA_INLINE cmeta_gen_status name##_cmeta_range_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
         const name *self = (const name *)object; \
         const type *value; \
         size_t count; \
@@ -182,7 +182,7 @@
         generation = CMETA_CONTAINER_API(prefix, generation)(&self->raw) + UINT64_C(1); \
         rc = name##_init(&temporary, limit); \
         if (rc != (ok)) return rc; \
-        rc = CMETA_CONTAINER_API(prefix, reserve)(&temporary.raw, count); \
+        rc = CMETA_CONTAINER_API(prefix, reserve)(&temporary.raw, count < limit ? count : limit); \
         if (rc != (ok)) { CMETA_CONTAINER_API(prefix, destroy)(&temporary.raw); return rc; } \
         for (i = 0; i < count; ++i) { \
             rc = CMETA_CONTAINER_API(prefix, put)(&temporary.raw, &entries[i].key, &entries[i].value); \
@@ -249,7 +249,7 @@
         const name *self = (const name *)object; \
         return self ? CMETA_CONTAINER_API(prefix, size)(&self->raw) : 0U; \
     } \
-    CMETA_INLINE cmeta_gen_status name##_cmeta_range_next(const void *object, size_t *cursor, void *out_value) { \
+    CMETA_INLINE cmeta_gen_status name##_cmeta_range_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
         const name *self = (const name *)object; \
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
@@ -285,6 +285,48 @@
 #define CMETA_CONTAINER_STR(x) CMETA_CONTAINER_STR_I(x)
 
 
+/* Generated entry descriptors have translation-unit static lifetime. Their
+ * callbacks carry no mutable context and borrow the registered key/value
+ * descriptors (or the generated static fallback descriptors) on each call;
+ * admitting an entry therefore fails when either field lacks the requested
+ * semantic lifetime traits. */
+#define CMETA_CONTAINER2_ENTRY_TRAITS_DEFINE(name, key_type, value_type, semantic_flags, equal_member, hash_member, compare_member) \
+    CMETA_INLINE bool name##_entry_cmeta_copy(void *destination_, const void *source_) { \
+        name##_entry *destination = (name##_entry *)destination_; const name##_entry *source = (const name##_entry *)source_; \
+        const cmeta_type_desc *key_desc = CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type); const cmeta_type_desc *value_desc = CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type); \
+        if (destination == NULL || source == NULL || cmeta_type_require_traits(key_desc, CMETA_TRAIT_COPY | CMETA_TRAIT_DESTROY) != CMETA_OK || cmeta_type_require_traits(value_desc, CMETA_TRAIT_COPY | CMETA_TRAIT_DESTROY) != CMETA_OK) return false; \
+        if (!key_desc->traits->copy_construct(&destination->key, &source->key)) return false; \
+        if (!value_desc->traits->copy_construct(&destination->value, &source->value)) { key_desc->traits->destroy(&destination->key); return false; } \
+        return true; \
+    } \
+    CMETA_INLINE void name##_entry_cmeta_move(void *destination_, void *source_) { \
+        name##_entry *destination = (name##_entry *)destination_; name##_entry *source = (name##_entry *)source_; \
+        const cmeta_type_desc *key_desc = CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type); const cmeta_type_desc *value_desc = CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type); \
+        if (destination == NULL || source == NULL || cmeta_type_require_traits(key_desc, CMETA_TRAIT_MOVE) != CMETA_OK || cmeta_type_require_traits(value_desc, CMETA_TRAIT_MOVE) != CMETA_OK) return; \
+        key_desc->traits->move_construct(&destination->key, &source->key); value_desc->traits->move_construct(&destination->value, &source->value); \
+    } \
+    CMETA_INLINE void name##_entry_cmeta_destroy(void *value_) { \
+        name##_entry *value = (name##_entry *)value_; const cmeta_type_desc *key_desc = CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type); const cmeta_type_desc *value_desc = CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type); \
+        if (value == NULL) return; \
+        if (cmeta_type_require_traits(value_desc, CMETA_TRAIT_DESTROY) == CMETA_OK) value_desc->traits->destroy(&value->value); \
+        if (cmeta_type_require_traits(key_desc, CMETA_TRAIT_DESTROY) == CMETA_OK) key_desc->traits->destroy(&value->key); \
+    } \
+    CMETA_INLINE bool name##_entry_cmeta_equal(const void *left_, const void *right_) { \
+        const name##_entry *left = (const name##_entry *)left_; const name##_entry *right = (const name##_entry *)right_; const cmeta_type_desc *key_desc = CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type); \
+        return left != NULL && right != NULL && cmeta_type_require_traits(key_desc, CMETA_TRAIT_EQUAL) == CMETA_OK && key_desc->traits->equal(&left->key, &right->key); \
+    } \
+    CMETA_INLINE uint64_t name##_entry_cmeta_hash(const void *value_) { \
+        const name##_entry *value = (const name##_entry *)value_; const cmeta_type_desc *key_desc = CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type); \
+        return value != NULL && cmeta_type_require_traits(key_desc, CMETA_TRAIT_HASH) == CMETA_OK ? key_desc->traits->hash(&value->key) : UINT64_C(0); \
+    } \
+    CMETA_INLINE int name##_entry_cmeta_compare(const void *left_, const void *right_) { \
+        const name##_entry *left = (const name##_entry *)left_; const name##_entry *right = (const name##_entry *)right_; const cmeta_type_desc *key_desc = CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type); \
+        return left != NULL && right != NULL && cmeta_type_require_traits(key_desc, CMETA_TRAIT_COMPARE) == CMETA_OK ? key_desc->traits->compare(&left->key, &right->key) : 0; \
+    } \
+    CMETA_LOCAL const cmeta_type_traits name##_entry_cmeta_traits = { \
+        CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY | (semantic_flags), (equal_member), (hash_member), (compare_member), name##_entry_cmeta_copy, name##_entry_cmeta_move, name##_entry_cmeta_destroy \
+    };
+
 #define CMETA_CONTAINER2_RANGES_DEFINE(name, key_type, value_type, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor, collector_factory) \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
         CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, NULL \
@@ -295,14 +337,15 @@
     CMETA_LOCAL const cmeta_type_desc name##_value_cmeta_type = { \
         CMETA_CONTAINER_STR(value_type), sizeof(value_type), _Alignof(value_type), CMETA_T_OBJECT, NULL, NULL \
     }; \
+    CMETA_CONTAINER2_ENTRY_TRAITS_DEFINE(name, key_type, value_type, CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH, name##_entry_cmeta_equal, name##_entry_cmeta_hash, NULL) \
     CMETA_LOCAL cmeta_type_desc name##_entry_cmeta_type = { \
-        CMETA_CONTAINER_STR(name) "_entry", sizeof(name##_entry), _Alignof(name##_entry), CMETA_T_OBJECT, NULL, NULL \
+        CMETA_CONTAINER_STR(name) "_entry", sizeof(name##_entry), _Alignof(name##_entry), CMETA_T_OBJECT, NULL, &name##_entry_cmeta_traits \
     }; \
     CMETA_INLINE size_t name##_cmeta_assoc_range_size(const void *object) { \
         const name *self = (const name *)object; \
         return self ? CMETA_CONTAINER_API(prefix, size)(&self->raw) : 0U; \
     } \
-    CMETA_INLINE cmeta_gen_status name##_cmeta_keys_next(const void *object, size_t *cursor, void *out_value) { \
+    CMETA_INLINE cmeta_gen_status name##_cmeta_keys_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
         const name *self = (const name *)object; \
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
@@ -314,7 +357,7 @@
         } \
         return CMETA_GEN_DONE; \
     } \
-    CMETA_INLINE cmeta_gen_status name##_cmeta_values_next(const void *object, size_t *cursor, void *out_value) { \
+    CMETA_INLINE cmeta_gen_status name##_cmeta_values_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
         const name *self = (const name *)object; \
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
@@ -326,7 +369,7 @@
         } \
         return CMETA_GEN_DONE; \
     } \
-    CMETA_INLINE cmeta_gen_status name##_cmeta_entries_next(const void *object, size_t *cursor, void *out_value) { \
+    CMETA_INLINE cmeta_gen_status name##_cmeta_entries_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
         const name *self = (const name *)object; \
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
@@ -378,6 +421,56 @@
         CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), \
         name##_cmeta_erased_entries_range, name##_cmeta_erased_keys_range, name##_cmeta_erased_values_range, \
         name##_cmeta_erased_entries_range, (collector_factory) \
+    };
+
+/* Ordered trees expose stable derived entry links. Their cursor follows one
+ * link per next() call, avoiding repeated rank scans while retaining the
+ * public allocation-free cmeta_range contract. */
+#define CMETA_CONTAINER2_LINK_RANGES_DEFINE(name, key_type, value_type, prefix, key_flags, value_flags, entry_flags, version_accessor, collector_factory) \
+    CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
+        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, NULL \
+    }; \
+    CMETA_LOCAL const cmeta_type_desc name##_key_cmeta_type = { \
+        CMETA_CONTAINER_STR(key_type), sizeof(key_type), _Alignof(key_type), CMETA_T_OBJECT, NULL, NULL \
+    }; \
+    CMETA_LOCAL const cmeta_type_desc name##_value_cmeta_type = { \
+        CMETA_CONTAINER_STR(value_type), sizeof(value_type), _Alignof(value_type), CMETA_T_OBJECT, NULL, NULL \
+    }; \
+    CMETA_CONTAINER2_ENTRY_TRAITS_DEFINE(name, key_type, value_type, CMETA_TRAIT_COMPARE, NULL, NULL, name##_entry_cmeta_compare) \
+    CMETA_LOCAL cmeta_type_desc name##_entry_cmeta_type = { \
+        CMETA_CONTAINER_STR(name) "_entry", sizeof(name##_entry), _Alignof(name##_entry), CMETA_T_OBJECT, NULL, &name##_entry_cmeta_traits \
+    }; \
+    CMETA_INLINE size_t name##_cmeta_assoc_range_size(const void *object) { \
+        const name *self = (const name *)object; \
+        return self ? CMETA_CONTAINER_API(prefix, size)(&self->raw) : 0U; \
+    } \
+    CMETA_INLINE cmeta_gen_status name##_cmeta_link_next(const void *object, cmeta_range_cursor *cursor, void *out_value, int view) { \
+        const name *self = (const name *)object; \
+        const void *key = NULL; const void *value = NULL; \
+        if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
+        if (!CMETA_CONTAINER_API(prefix, range_next)(&self->raw, cursor, &key, &value)) return CMETA_GEN_DONE; \
+        if (view == 0) memcpy(out_value, key, sizeof(key_type)); \
+        else if (view == 1) memcpy(out_value, value, sizeof(value_type)); \
+        else { name##_entry *entry = (name##_entry *)out_value; memcpy(&entry->key, key, sizeof(key_type)); memcpy(&entry->value, value, sizeof(value_type)); } \
+        return *cursor == SIZE_MAX ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE; \
+    } \
+    CMETA_INLINE cmeta_gen_status name##_cmeta_keys_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { return name##_cmeta_link_next(object, cursor, out_value, 0); } \
+    CMETA_INLINE cmeta_gen_status name##_cmeta_values_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { return name##_cmeta_link_next(object, cursor, out_value, 1); } \
+    CMETA_INLINE cmeta_gen_status name##_cmeta_entries_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { return name##_cmeta_link_next(object, cursor, out_value, 2); } \
+    CMETA_INLINE cmeta_range name##_keys_range(const name *self) { \
+        cmeta_range range = { self, CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), (key_flags), name##_cmeta_assoc_range_size, name##_cmeta_keys_next, cmeta_range_capture_version((version_accessor), self), (version_accessor) }; return range; \
+    } \
+    CMETA_INLINE cmeta_range name##_values_range(const name *self) { \
+        cmeta_range range = { self, CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), (value_flags), name##_cmeta_assoc_range_size, name##_cmeta_values_next, cmeta_range_capture_version((version_accessor), self), (version_accessor) }; return range; \
+    } \
+    CMETA_INLINE cmeta_range name##_entries_range(const name *self) { \
+        cmeta_range range = { self, &name##_entry_cmeta_type, (entry_flags), name##_cmeta_assoc_range_size, name##_cmeta_entries_next, cmeta_range_capture_version((version_accessor), self), (version_accessor) }; return range; \
+    } \
+    CMETA_INLINE cmeta_range name##_cmeta_erased_keys_range(const void *object) { return name##_keys_range((const name *)object); } \
+    CMETA_INLINE cmeta_range name##_cmeta_erased_values_range(const void *object) { return name##_values_range((const name *)object); } \
+    CMETA_INLINE cmeta_range name##_cmeta_erased_entries_range(const void *object) { return name##_entries_range((const name *)object); } \
+    CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
+        CMETA_CONTAINER_STR(name), &name##_cmeta_type, NULL, CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), name##_cmeta_erased_entries_range, name##_cmeta_erased_keys_range, name##_cmeta_erased_values_range, name##_cmeta_erased_entries_range, (collector_factory) \
     };
 
 

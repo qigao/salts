@@ -3,6 +3,20 @@
 
 #include <string.h>
 
+#define COUNT_CONTAINER_KIND(kind,arity,family,raw,prefix,methods,accept,key_at,value_at,range_flags,key_flags,value_flags,entry_flags) + 1
+enum { TURBO_TEST_CONTAINER_KIND_COUNT = 0 Replay(TURBO_CONTAINER_KIND_SCHEMA, COUNT_CONTAINER_KIND) };
+#undef COUNT_CONTAINER_KIND
+
+#define DECLARE_CONTAINER_KIND_ARITY(kind,arity,family,raw,prefix,methods,accept,key_at,value_at,range_flags,key_flags,value_flags,entry_flags) TURBO_TEST_ARITY_##kind = arity,
+enum { Replay(TURBO_CONTAINER_KIND_SCHEMA, DECLARE_CONTAINER_KIND_ARITY) };
+#undef DECLARE_CONTAINER_KIND_ARITY
+
+_Static_assert(TURBO_TEST_CONTAINER_KIND_COUNT == 13,
+               "TURBO_CONTAINER_KIND_SCHEMA_COUNT_MISMATCH");
+_Static_assert(TURBO_TEST_ARITY_Vec == 1 && TURBO_TEST_ARITY_HashMap == 2 &&
+                   TURBO_TEST_ARITY_BPlusTree == 2,
+               "TURBO_CONTAINER_KIND_SCHEMA_ARITY_MISMATCH");
+
 Containers(
     (Vec, IntVec, int),
     (Deque, IntDeque, int),
@@ -29,6 +43,52 @@ Containers(
     check_true(cmeta_container_descriptor(&output) ==                        \
                &Name##_cmeta_container_desc);                               \
     Name##_destroy(&output);                                                \
+} while (0)
+
+#define VERIFY_C1_COLLECTOR(Name, Value) do {                               \
+    Name committed = {0};                                                   \
+    Name aborted = {0};                                                     \
+    int first = (Value);                                                    \
+    int second = (Value) + 1;                                               \
+    cmeta_collector collector = Name##_collector(&committed, 1u);           \
+    check_equal(cmeta_collector_begin(&collector), CMETA_OK);                \
+    check_equal(cmeta_collector_accept(&collector, collector.input_type,     \
+                                       &first), CMETA_OK);                   \
+    check_equal(cmeta_collector_finish(&collector), CMETA_OK);               \
+    check_equal(Name##_size(&committed), (size_t)1u);                        \
+    Name##_destroy(&committed);                                             \
+    collector = Name##_collector(&aborted, 1u);                              \
+    check_equal(cmeta_collector_begin(&collector), CMETA_OK);                \
+    check_equal(cmeta_collector_accept(&collector, collector.input_type,     \
+                                       &first), CMETA_OK);                   \
+    check_equal(cmeta_collector_accept(&collector, collector.input_type,     \
+                                       &second), CMETA_CAPACITY_EXCEEDED);   \
+    check_equal(memcmp(&aborted, &(Name){0}, sizeof(aborted)), 0);           \
+    cmeta_collector_abort(&collector);                                       \
+    check_equal(memcmp(&aborted, &(Name){0}, sizeof(aborted)), 0);           \
+} while (0)
+
+#define VERIFY_C2_COLLECTOR(Name, Key, Value) do {                           \
+    Name committed = {0};                                                   \
+    Name aborted = {0};                                                     \
+    Name##_entry first = {(Key), (Value)};                                  \
+    Name##_entry second = {(Key) + 1, (Value) + 1};                         \
+    cmeta_collector collector = Name##_collector(&committed, 1u);           \
+    check_equal(cmeta_collector_begin(&collector), CMETA_OK);                \
+    check_equal(cmeta_collector_accept(&collector, collector.input_type,     \
+                                       &first), CMETA_OK);                   \
+    check_equal(cmeta_collector_finish(&collector), CMETA_OK);               \
+    check_equal(Name##_size(&committed), (size_t)1u);                        \
+    Name##_destroy(&committed);                                             \
+    collector = Name##_collector(&aborted, 1u);                              \
+    check_equal(cmeta_collector_begin(&collector), CMETA_OK);                \
+    check_equal(cmeta_collector_accept(&collector, collector.input_type,     \
+                                       &first), CMETA_OK);                   \
+    check_equal(cmeta_collector_accept(&collector, collector.input_type,     \
+                                       &second), CMETA_CAPACITY_EXCEEDED);   \
+    check_equal(memcmp(&aborted, &(Name){0}, sizeof(aborted)), 0);           \
+    cmeta_collector_abort(&collector);                                       \
+    check_equal(memcmp(&aborted, &(Name){0}, sizeof(aborted)), 0);           \
 } while (0)
 
 spec("Container typed schema") {
@@ -180,6 +240,66 @@ spec("Container typed schema") {
         IntVec_destroy(&vector);
     }
 
+    it("counts live keys rather than input rows when building associative containers") {
+        IntLongHashMap hash_map = {0};
+        IntLongMap map = {0};
+        IntLongBTree btree = {0};
+        IntLongBPlusTree bplus = {0};
+        IntLongHashMap_entry hash_entries[] = {{1, 10L}, {1, 11L}};
+        IntLongMap_entry map_entries[] = {{1, 20L}, {1, 21L}};
+        IntLongBTree_entry btree_entries[] = {{1, 30L}, {1, 31L}};
+        IntLongBPlusTree_entry bplus_entries[] = {{1, 40L}, {1, 41L}};
+        IntLongHashMap_entry hash_distinct[] = {{2, 12L}, {3, 13L}};
+        IntLongMap_entry map_distinct[] = {{2, 22L}, {3, 23L}};
+        IntLongBTree_entry btree_distinct[] = {{2, 32L}, {3, 33L}};
+        IntLongBPlusTree_entry bplus_distinct[] = {{2, 42L}, {3, 43L}};
+
+        check_equal(IntLongHashMap_from(&hash_map, hash_entries, 2u, 1u),
+                    CONTAINER_OK);
+        check_equal(IntLongHashMap_size(&hash_map), (size_t)1u);
+        check_equal(*IntLongHashMap_get_const(&hash_map, 1), 11L);
+        check_equal(turbo_hash_map_generation(&hash_map.raw), UINT64_C(1));
+
+        check_equal(IntLongMap_from(&map, map_entries, 2u, 1u), CONTAINER_OK);
+        check_equal(IntLongMap_size(&map), (size_t)1u);
+        check_equal(*IntLongMap_get_const(&map, 1), 21L);
+        check_equal(turbo_map_generation(&map.raw), UINT64_C(1));
+
+        check_equal(IntLongBTree_from(&btree, btree_entries, 2u, 1u),
+                    CONTAINER_OK);
+        check_equal(IntLongBTree_size(&btree), (size_t)1u);
+        check_equal(*IntLongBTree_get_const(&btree, 1), 31L);
+        check_equal(turbo_btree_generation(&btree.raw), UINT64_C(1));
+
+        check_equal(IntLongBPlusTree_from(&bplus, bplus_entries, 2u, 1u),
+                    CONTAINER_OK);
+        check_equal(IntLongBPlusTree_size(&bplus), (size_t)1u);
+        check_equal(*IntLongBPlusTree_get_const(&bplus, 1), 41L);
+        check_equal(turbo_bplus_tree_generation(&bplus.raw), UINT64_C(1));
+
+        check_equal(IntLongHashMap_from(&hash_map, hash_distinct, 2u, 1u),
+                    CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(turbo_hash_map_generation(&hash_map.raw), UINT64_C(1));
+        check_equal(*IntLongHashMap_get_const(&hash_map, 1), 11L);
+        check_equal(IntLongMap_from(&map, map_distinct, 2u, 1u),
+                    CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(turbo_map_generation(&map.raw), UINT64_C(1));
+        check_equal(*IntLongMap_get_const(&map, 1), 21L);
+        check_equal(IntLongBTree_from(&btree, btree_distinct, 2u, 1u),
+                    CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(turbo_btree_generation(&btree.raw), UINT64_C(1));
+        check_equal(*IntLongBTree_get_const(&btree, 1), 31L);
+        check_equal(IntLongBPlusTree_from(&bplus, bplus_distinct, 2u, 1u),
+                    CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(turbo_bplus_tree_generation(&bplus.raw), UINT64_C(1));
+        check_equal(*IntLongBPlusTree_get_const(&bplus, 1), 41L);
+
+        IntLongBPlusTree_destroy(&bplus);
+        IntLongBTree_destroy(&btree);
+        IntLongMap_destroy(&map);
+        IntLongHashMap_destroy(&hash_map);
+    }
+
     it("aborts a collector exactly once and restores zero output") {
         IntVec output = {0};
         cmeta_collector collector = IntVec_collector(&output, 1u);
@@ -211,6 +331,22 @@ spec("Container typed schema") {
         VERIFY_EMPTY_COLLECTOR(IntLongMultiMap);
         VERIFY_EMPTY_COLLECTOR(IntLongBTree);
         VERIFY_EMPTY_COLLECTOR(IntLongBPlusTree);
+    }
+
+    it("executes nonempty commit and overflow abort for all standard kinds") {
+        VERIFY_C1_COLLECTOR(IntVec, 1);
+        VERIFY_C1_COLLECTOR(IntDeque, 2);
+        VERIFY_C1_COLLECTOR(IntList, 3);
+        VERIFY_C1_COLLECTOR(IntStack, 4);
+        VERIFY_C1_COLLECTOR(IntQueue, 5);
+        VERIFY_C1_COLLECTOR(IntHeap, 6);
+        VERIFY_C1_COLLECTOR(IntSet, 7);
+        VERIFY_C1_COLLECTOR(IntHashSet, 8);
+        VERIFY_C2_COLLECTOR(IntLongHashMap, 1, 10L);
+        VERIFY_C2_COLLECTOR(IntLongMap, 2, 20L);
+        VERIFY_C2_COLLECTOR(IntLongMultiMap, 3, 30L);
+        VERIFY_C2_COLLECTOR(IntLongBTree, 4, 40L);
+        VERIFY_C2_COLLECTOR(IntLongBPlusTree, 5, 50L);
     }
 
     it("collects associative tree and multimap entries transactionally") {
@@ -287,3 +423,5 @@ spec("Container typed schema") {
 }
 
 #undef VERIFY_EMPTY_COLLECTOR
+#undef VERIFY_C1_COLLECTOR
+#undef VERIFY_C2_COLLECTOR

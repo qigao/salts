@@ -55,10 +55,14 @@ static turbo_bplus_tree_node_t *turbo_bplus_node_new(
   if (node == NULL) return NULL;
   node->keys = (void **)calloc(tree->max_keys, sizeof(void *));
   node->values = (void **)calloc(tree->max_keys, sizeof(void *));
+  node->links = (turbo_bplus_tree_entry_link_t **)calloc(
+      tree->max_keys, sizeof(*node->links));
   node->children = (turbo_bplus_tree_node_t **)calloc(
       tree->max_children, sizeof(*node->children));
-  if (node->keys == NULL || node->values == NULL || node->children == NULL) {
+  if (node->keys == NULL || node->values == NULL || node->links == NULL ||
+      node->children == NULL) {
     free(node->children);
+    free(node->links);
     free(node->values);
     free(node->keys);
     free(node);
@@ -76,15 +80,64 @@ static void turbo_bplus_node_destroy(const turbo_bplus_tree_t *tree,
     for (index = 0u; index < node->num_keys; ++index) {
       turbo_bplus_destroy_object(tree->key_type, node->keys[index]);
       turbo_bplus_destroy_object(tree->value_type, node->values[index]);
+      free(node->links[index]);
     }
   } else {
     for (index = 0u; index <= node->num_keys; ++index)
       turbo_bplus_node_destroy(tree, node->children[index]);
   }
   free(node->children);
+  free(node->links);
   free(node->values);
   free(node->keys);
   free(node);
+}
+
+static void turbo_bplus_node_free_shell(turbo_bplus_tree_node_t *node) {
+  if (node == NULL) return;
+  free(node->children);
+  free(node->links);
+  free(node->values);
+  free(node->keys);
+  free(node);
+}
+
+static turbo_bplus_tree_entry_link_t *turbo_bplus_link_new(void *key,
+                                                            void *value) {
+  turbo_bplus_tree_entry_link_t *link =
+      (turbo_bplus_tree_entry_link_t *)calloc(1u, sizeof(*link));
+  if (link != NULL) {
+    link->key = key;
+    link->value = value;
+  }
+  return link;
+}
+
+static void turbo_bplus_link_insert_before(
+    turbo_bplus_tree_t *tree, turbo_bplus_tree_entry_link_t *next,
+    turbo_bplus_tree_entry_link_t *link) {
+  link->next = next;
+  link->previous = next != NULL ? next->previous : tree->last;
+  if (link->previous != NULL)
+    link->previous->next = link;
+  else
+    tree->first = link;
+  if (next != NULL)
+    next->previous = link;
+  else
+    tree->last = link;
+}
+
+static void turbo_bplus_link_unlink(turbo_bplus_tree_t *tree,
+                                    turbo_bplus_tree_entry_link_t *link) {
+  if (link->previous != NULL)
+    link->previous->next = link->next;
+  else
+    tree->first = link->next;
+  if (link->next != NULL)
+    link->next->previous = link->previous;
+  else
+    tree->last = link->previous;
 }
 
 static size_t turbo_bplus_leaf_lower_bound(const turbo_bplus_tree_t *tree,
@@ -112,15 +165,23 @@ static size_t turbo_bplus_child_index(const turbo_bplus_tree_t *tree,
   return index;
 }
 
-static void *turbo_bplus_refresh_separators(turbo_bplus_tree_node_t *node) {
+static void *turbo_bplus_subtree_first(turbo_bplus_tree_node_t *node) {
+  while (node != NULL && !node->is_leaf) node = node->children[0];
+  return node == NULL || node->num_keys == 0u ? NULL : node->keys[0];
+}
+
+static void turbo_bplus_refresh_node(turbo_bplus_tree_node_t *node) {
   size_t index;
-  void *first;
-  if (node->is_leaf) return node->num_keys == 0u ? NULL : node->keys[0];
-  first = turbo_bplus_refresh_separators(node->children[0]);
+  if (node == NULL || node->is_leaf) return;
   for (index = 0u; index < node->num_keys; ++index)
-    node->keys[index] = turbo_bplus_refresh_separators(
-        node->children[index + 1u]);
-  return first;
+    node->keys[index] = turbo_bplus_subtree_first(node->children[index + 1u]);
+}
+
+static void turbo_bplus_refresh_ancestors(turbo_bplus_tree_node_t *node) {
+  while (node != NULL) {
+    turbo_bplus_refresh_node(node);
+    node = node->parent;
+  }
 }
 
 static void turbo_bplus_parent_insert(turbo_bplus_tree_node_t *parent,
@@ -137,13 +198,12 @@ static void turbo_bplus_parent_insert(turbo_bplus_tree_node_t *parent,
   ++parent->num_keys;
 }
 
-static container_status turbo_bplus_split_child(
+static void turbo_bplus_split_child(
     turbo_bplus_tree_t *tree, turbo_bplus_tree_node_t *parent,
-    size_t child_index) {
+    size_t child_index, turbo_bplus_tree_node_t *right) {
   turbo_bplus_tree_node_t *left = parent->children[child_index];
-  turbo_bplus_tree_node_t *right = turbo_bplus_node_new(tree, left->is_leaf);
   size_t index;
-  if (right == NULL) return CONTAINER_OUT_OF_MEMORY;
+  right->is_leaf = left->is_leaf;
   right->parent = parent;
   if (left->is_leaf) {
     size_t split = tree->min_degree;
@@ -151,8 +211,10 @@ static container_status turbo_bplus_split_child(
     for (index = 0u; index < right->num_keys; ++index) {
       right->keys[index] = left->keys[split + index];
       right->values[index] = left->values[split + index];
+      right->links[index] = left->links[split + index];
       left->keys[split + index] = NULL;
       left->values[split + index] = NULL;
+      left->links[split + index] = NULL;
     }
     left->num_keys = split;
     right->next = left->next;
@@ -175,81 +237,116 @@ static container_status turbo_bplus_split_child(
     left->num_keys = median;
     turbo_bplus_parent_insert(parent, child_index, promoted, right);
   }
+}
+
+typedef struct turbo_bplus_node_pool {
+  turbo_bplus_tree_node_t **nodes;
+  size_t count;
+  size_t used;
+} turbo_bplus_node_pool;
+
+static void turbo_bplus_pool_destroy(turbo_bplus_node_pool *pool) {
+  size_t index;
+  if (pool == NULL) return;
+  for (index = pool->used; index < pool->count; ++index)
+    turbo_bplus_node_free_shell(pool->nodes[index]);
+  free(pool->nodes);
+  memset(pool, 0, sizeof(*pool));
+}
+
+static container_status turbo_bplus_pool_prepare(
+    const turbo_bplus_tree_t *tree, turbo_bplus_node_pool *pool) {
+  const turbo_bplus_tree_node_t *node = tree->root;
+  size_t levels = 0u;
+  size_t index;
+  while (node != NULL) {
+    ++levels;
+    node = node->is_leaf ? NULL : node->children[0];
+  }
+  if (levels > SIZE_MAX - 2u) return CONTAINER_CAPACITY_EXCEEDED;
+  pool->count = levels + 2u;
+  if (pool->count > SIZE_MAX / sizeof(*pool->nodes))
+    return CONTAINER_CAPACITY_EXCEEDED;
+  pool->nodes = (turbo_bplus_tree_node_t **)calloc(pool->count,
+                                                   sizeof(*pool->nodes));
+  if (pool->nodes == NULL) return CONTAINER_OUT_OF_MEMORY;
+  for (index = 0u; index < pool->count; ++index) {
+    pool->nodes[index] = turbo_bplus_node_new(tree, true);
+    if (pool->nodes[index] == NULL) {
+      turbo_bplus_pool_destroy(pool);
+      return CONTAINER_OUT_OF_MEMORY;
+    }
+  }
   return CONTAINER_OK;
 }
 
-/* On success consumes key/value. On failure they remain caller-owned. */
-static container_status turbo_bplus_insert_owned(turbo_bplus_tree_t *tree,
-                                                  void *key, void *value) {
+static turbo_bplus_tree_node_t *turbo_bplus_pool_take(
+    turbo_bplus_node_pool *pool, bool leaf) {
+  turbo_bplus_tree_node_t *node = pool->nodes[pool->used++];
+  node->is_leaf = leaf;
+  return node;
+}
+
+static void turbo_bplus_insert_prepared(
+    turbo_bplus_tree_t *tree, void *key, void *value,
+    turbo_bplus_tree_entry_link_t *link, turbo_bplus_node_pool *pool) {
   turbo_bplus_tree_node_t *node;
+  turbo_bplus_tree_entry_link_t *next_link;
   size_t index;
-  container_status status;
   if (tree->root == NULL) {
-    node = turbo_bplus_node_new(tree, true);
-    if (node == NULL) return CONTAINER_OUT_OF_MEMORY;
+    node = turbo_bplus_pool_take(pool, true);
     node->keys[0] = key;
     node->values[0] = value;
+    node->links[0] = link;
     node->num_keys = 1u;
     tree->root = node;
-    ++tree->size;
-    return CONTAINER_OK;
-  }
-  if (tree->root->num_keys == tree->max_keys) {
-    node = turbo_bplus_node_new(tree, false);
-    if (node == NULL) return CONTAINER_OUT_OF_MEMORY;
-    node->children[0] = tree->root;
-    tree->root->parent = node;
-    tree->root = node;
-    status = turbo_bplus_split_child(tree, node, 0u);
-    if (status != CONTAINER_OK) return status;
-  }
-  node = tree->root;
-  while (!node->is_leaf) {
-    index = turbo_bplus_child_index(tree, node, key);
-    if (node->children[index]->num_keys == tree->max_keys) {
-      status = turbo_bplus_split_child(tree, node, index);
-      if (status != CONTAINER_OK) return status;
-      if (turbo_bplus_compare_key(tree, key, node->keys[index]) >= 0) ++index;
+  } else {
+    if (tree->root->num_keys == tree->max_keys) {
+      node = turbo_bplus_pool_take(pool, false);
+      node->children[0] = tree->root;
+      tree->root->parent = node;
+      tree->root = node;
+      turbo_bplus_split_child(
+          tree, node, 0u,
+          turbo_bplus_pool_take(pool, node->children[0]->is_leaf));
     }
-    node = node->children[index];
+    node = tree->root;
+    while (!node->is_leaf) {
+      index = turbo_bplus_child_index(tree, node, key);
+      if (node->children[index]->num_keys == tree->max_keys) {
+        turbo_bplus_split_child(
+            tree, node, index,
+            turbo_bplus_pool_take(pool, node->children[index]->is_leaf));
+        if (turbo_bplus_compare_key(tree, key, node->keys[index]) >= 0)
+          ++index;
+      }
+      node = node->children[index];
+    }
+    index = turbo_bplus_leaf_lower_bound(tree, node, key);
+    next_link = index < node->num_keys ? node->links[index]
+                                      : (node->next != NULL &&
+                                                 node->next->num_keys != 0u
+                                             ? node->next->links[0]
+                                             : NULL);
+    if (index < node->num_keys) {
+      memmove(node->keys + index + 1u, node->keys + index,
+              (node->num_keys - index) * sizeof(void *));
+      memmove(node->values + index + 1u, node->values + index,
+              (node->num_keys - index) * sizeof(void *));
+      memmove(node->links + index + 1u, node->links + index,
+              (node->num_keys - index) * sizeof(*node->links));
+    }
+    node->keys[index] = key;
+    node->values[index] = value;
+    node->links[index] = link;
+    ++node->num_keys;
+    turbo_bplus_link_insert_before(tree, next_link, link);
+    turbo_bplus_refresh_ancestors(node->parent);
+    ++tree->size;
+    return;
   }
-  index = turbo_bplus_leaf_lower_bound(tree, node, key);
-  if (index < node->num_keys) {
-    memmove(node->keys + index + 1u, node->keys + index,
-            (node->num_keys - index) * sizeof(void *));
-    memmove(node->values + index + 1u, node->values + index,
-            (node->num_keys - index) * sizeof(void *));
-  }
-  node->keys[index] = key;
-  node->values[index] = value;
-  ++node->num_keys;
+  turbo_bplus_link_insert_before(tree, NULL, link);
   ++tree->size;
-  (void)turbo_bplus_refresh_separators(tree->root);
-  return CONTAINER_OK;
-}
-
-static container_status turbo_bplus_insert_copy(turbo_bplus_tree_t *tree,
-                                                 const void *key,
-                                                 const void *value) {
-  void *key_copy = NULL;
-  void *value_copy = NULL;
-  container_status status = turbo_bplus_copy_object(
-      tree->key_type, tree->key_size, tree->key_stride, tree->key_align, key,
-      &key_copy);
-  if (status != CONTAINER_OK) return status;
-  status = turbo_bplus_copy_object(tree->value_type, tree->value_size,
-                                   tree->value_stride, tree->value_align,
-                                   value, &value_copy);
-  if (status != CONTAINER_OK) {
-    turbo_bplus_destroy_object(tree->key_type, key_copy);
-    return status;
-  }
-  status = turbo_bplus_insert_owned(tree, key_copy, value_copy);
-  if (status != CONTAINER_OK) {
-    turbo_bplus_destroy_object(tree->key_type, key_copy);
-    turbo_bplus_destroy_object(tree->value_type, value_copy);
-  }
-  return status;
 }
 
 static container_status turbo_bplus_init_common(
@@ -339,15 +436,6 @@ container_status turbo_bplus_tree_init_bytes(
       TURBO_BPLUS_TREE_DEFAULT_MIN_DEGREE, entry_limit, compare, compare_ctx);
 }
 
-static container_status turbo_bplus_clone_config(
-    const turbo_bplus_tree_t *tree, turbo_bplus_tree_t *out) {
-  memset(out, 0, sizeof(*out));
-  return turbo_bplus_init_common(
-      out, tree->key_size, tree->key_align, tree->value_size,
-      tree->value_align, tree->min_degree, tree->entry_limit, tree->key_type,
-      tree->value_type, tree->compare, tree->compare_ctx);
-}
-
 static turbo_bplus_tree_node_t *turbo_bplus_leftmost(
     const turbo_bplus_tree_t *tree) {
   turbo_bplus_tree_node_t *node = tree->root;
@@ -397,55 +485,61 @@ static const void *turbo_bplus_find_value(const turbo_bplus_tree_t *tree,
   return leaf->values[index];
 }
 
-static void turbo_bplus_commit(turbo_bplus_tree_t *tree,
-                               turbo_bplus_tree_t *next) {
-  uint64_t generation = tree->generation + UINT64_C(1);
-  turbo_bplus_node_destroy(tree, tree->root);
-  *tree = *next;
-  tree->generation = generation;
-  memset(next, 0, sizeof(*next));
-}
-
 container_status turbo_bplus_tree_put(turbo_bplus_tree_t *tree,
                                       const void *key, const void *value) {
-  turbo_bplus_tree_t next;
+  turbo_bplus_node_pool pool = {0};
   turbo_bplus_tree_node_t *leaf;
-  bool replaced = false;
+  turbo_bplus_tree_entry_link_t *link;
+  void *key_copy = NULL;
+  void *value_copy = NULL;
+  size_t index;
   container_status status;
   if (!turbo_bplus_valid(tree) || key == NULL || value == NULL)
     return CONTAINER_INVALID_ARGUMENT;
-  if (turbo_bplus_find_value(tree, key) == NULL &&
-      tree->size >= tree->entry_limit)
-    return CONTAINER_CAPACITY_EXCEEDED;
-  status = turbo_bplus_clone_config(tree, &next);
+  leaf = turbo_bplus_find_leaf(tree, key);
+  if (leaf != NULL) {
+    index = turbo_bplus_leaf_lower_bound(tree, leaf, key);
+    if (index < leaf->num_keys &&
+        turbo_bplus_compare_key(tree, leaf->keys[index], key) == 0) {
+      status = turbo_bplus_copy_object(
+          tree->value_type, tree->value_size, tree->value_stride,
+          tree->value_align, value, &value_copy);
+      if (status != CONTAINER_OK) return status;
+      turbo_bplus_destroy_object(tree->value_type, leaf->values[index]);
+      leaf->values[index] = value_copy;
+      leaf->links[index]->value = value_copy;
+      ++tree->generation;
+      return CONTAINER_OK;
+    }
+  }
+  if (tree->size >= tree->entry_limit) return CONTAINER_CAPACITY_EXCEEDED;
+  status = turbo_bplus_copy_object(
+      tree->key_type, tree->key_size, tree->key_stride, tree->key_align, key,
+      &key_copy);
   if (status != CONTAINER_OK) return status;
-  leaf = turbo_bplus_leftmost(tree);
-  while (leaf != NULL) {
-    size_t index;
-    for (index = 0u; index < leaf->num_keys; ++index) {
-      if (!replaced &&
-          turbo_bplus_compare_key(tree, leaf->keys[index], key) == 0) {
-        status = turbo_bplus_insert_copy(&next, leaf->keys[index], value);
-        replaced = status == CONTAINER_OK;
-      } else {
-        status = turbo_bplus_insert_copy(&next, leaf->keys[index],
-                                         leaf->values[index]);
-      }
-      if (status != CONTAINER_OK) {
-        turbo_bplus_tree_destroy(&next);
-        return status;
-      }
-    }
-    leaf = leaf->next;
+  status = turbo_bplus_copy_object(tree->value_type, tree->value_size,
+                                   tree->value_stride, tree->value_align,
+                                   value, &value_copy);
+  if (status != CONTAINER_OK) {
+    turbo_bplus_destroy_object(tree->key_type, key_copy);
+    return status;
   }
-  if (!replaced) {
-    status = turbo_bplus_insert_copy(&next, key, value);
-    if (status != CONTAINER_OK) {
-      turbo_bplus_tree_destroy(&next);
-      return status;
-    }
+  link = turbo_bplus_link_new(key_copy, value_copy);
+  if (link == NULL) {
+    turbo_bplus_destroy_object(tree->value_type, value_copy);
+    turbo_bplus_destroy_object(tree->key_type, key_copy);
+    return CONTAINER_OUT_OF_MEMORY;
   }
-  turbo_bplus_commit(tree, &next);
+  status = turbo_bplus_pool_prepare(tree, &pool);
+  if (status != CONTAINER_OK) {
+    free(link);
+    turbo_bplus_destroy_object(tree->value_type, value_copy);
+    turbo_bplus_destroy_object(tree->key_type, key_copy);
+    return status;
+  }
+  turbo_bplus_insert_prepared(tree, key_copy, value_copy, link, &pool);
+  turbo_bplus_pool_destroy(&pool);
+  ++tree->generation;
   return CONTAINER_OK;
 }
 
@@ -463,43 +557,203 @@ bool turbo_bplus_tree_contains(const turbo_bplus_tree_t *tree,
   return turbo_bplus_find_value(tree, key) != NULL;
 }
 
-container_status turbo_bplus_tree_remove(turbo_bplus_tree_t *tree,
-                                         const void *key, void *out_value) {
-  turbo_bplus_tree_t next;
-  turbo_bplus_tree_node_t *leaf;
-  const void *removed_value = NULL;
-  container_status status;
-  if (!turbo_bplus_valid(tree) || key == NULL)
-    return CONTAINER_INVALID_ARGUMENT;
-  if (!turbo_bplus_tree_contains(tree, key)) return CONTAINER_NOT_FOUND;
-  status = turbo_bplus_clone_config(tree, &next);
-  if (status != CONTAINER_OK) return status;
-  leaf = turbo_bplus_leftmost(tree);
-  while (leaf != NULL) {
+static size_t turbo_bplus_parent_child_index(
+    const turbo_bplus_tree_node_t *parent,
+    const turbo_bplus_tree_node_t *child) {
+  size_t index;
+  for (index = 0u; index <= parent->num_keys; ++index)
+    if (parent->children[index] == child) return index;
+  return parent->num_keys + 1u;
+}
+
+static void turbo_bplus_leaf_remove_slot(turbo_bplus_tree_node_t *leaf,
+                                         size_t index) {
+  if (index + 1u < leaf->num_keys) {
+    memmove(leaf->keys + index, leaf->keys + index + 1u,
+            (leaf->num_keys - index - 1u) * sizeof(void *));
+    memmove(leaf->values + index, leaf->values + index + 1u,
+            (leaf->num_keys - index - 1u) * sizeof(void *));
+    memmove(leaf->links + index, leaf->links + index + 1u,
+            (leaf->num_keys - index - 1u) * sizeof(*leaf->links));
+  }
+  --leaf->num_keys;
+  leaf->keys[leaf->num_keys] = NULL;
+  leaf->values[leaf->num_keys] = NULL;
+  leaf->links[leaf->num_keys] = NULL;
+}
+
+static void turbo_bplus_parent_remove_child(turbo_bplus_tree_node_t *parent,
+                                            size_t child_index) {
+  if (child_index < parent->num_keys)
+    memmove(parent->children + child_index,
+            parent->children + child_index + 1u,
+            (parent->num_keys - child_index) * sizeof(*parent->children));
+  --parent->num_keys;
+  parent->children[parent->num_keys + 1u] = NULL;
+  turbo_bplus_refresh_node(parent);
+}
+
+static void turbo_bplus_rebalance_after_remove(turbo_bplus_tree_t *tree,
+                                                turbo_bplus_tree_node_t *node) {
+  size_t minimum = tree->min_degree - 1u;
+  while (node != tree->root && node->num_keys < minimum) {
+    turbo_bplus_tree_node_t *parent = node->parent;
+    size_t child_index = turbo_bplus_parent_child_index(parent, node);
+    turbo_bplus_tree_node_t *left =
+        child_index > 0u ? parent->children[child_index - 1u] : NULL;
+    turbo_bplus_tree_node_t *right =
+        child_index < parent->num_keys ? parent->children[child_index + 1u]
+                                       : NULL;
     size_t index;
-    for (index = 0u; index < leaf->num_keys; ++index) {
-      if (removed_value == NULL &&
-          turbo_bplus_compare_key(tree, leaf->keys[index], key) == 0) {
-        removed_value = leaf->values[index];
-        continue;
+    if (node->is_leaf) {
+      if (left != NULL && left->num_keys > minimum) {
+        memmove(node->keys + 1u, node->keys,
+                node->num_keys * sizeof(void *));
+        memmove(node->values + 1u, node->values,
+                node->num_keys * sizeof(void *));
+        memmove(node->links + 1u, node->links,
+                node->num_keys * sizeof(*node->links));
+        node->keys[0] = left->keys[left->num_keys - 1u];
+        node->values[0] = left->values[left->num_keys - 1u];
+        node->links[0] = left->links[left->num_keys - 1u];
+        left->keys[left->num_keys - 1u] = NULL;
+        left->values[left->num_keys - 1u] = NULL;
+        left->links[left->num_keys - 1u] = NULL;
+        --left->num_keys;
+        ++node->num_keys;
+        turbo_bplus_refresh_ancestors(parent);
+        return;
       }
-      status = turbo_bplus_insert_copy(&next, leaf->keys[index],
-                                       leaf->values[index]);
-      if (status != CONTAINER_OK) {
-        turbo_bplus_tree_destroy(&next);
-        return status;
+      if (right != NULL && right->num_keys > minimum) {
+        node->keys[node->num_keys] = right->keys[0];
+        node->values[node->num_keys] = right->values[0];
+        node->links[node->num_keys] = right->links[0];
+        ++node->num_keys;
+        turbo_bplus_leaf_remove_slot(right, 0u);
+        turbo_bplus_refresh_ancestors(parent);
+        return;
+      }
+      if (left != NULL) {
+        for (index = 0u; index < node->num_keys; ++index) {
+          left->keys[left->num_keys + index] = node->keys[index];
+          left->values[left->num_keys + index] = node->values[index];
+          left->links[left->num_keys + index] = node->links[index];
+        }
+        left->num_keys += node->num_keys;
+        left->next = node->next;
+        turbo_bplus_parent_remove_child(parent, child_index);
+        turbo_bplus_node_free_shell(node);
+      } else {
+        for (index = 0u; index < right->num_keys; ++index) {
+          node->keys[node->num_keys + index] = right->keys[index];
+          node->values[node->num_keys + index] = right->values[index];
+          node->links[node->num_keys + index] = right->links[index];
+        }
+        node->num_keys += right->num_keys;
+        node->next = right->next;
+        turbo_bplus_parent_remove_child(parent, child_index + 1u);
+        turbo_bplus_node_free_shell(right);
+      }
+    } else {
+      if (left != NULL && left->num_keys > minimum) {
+        memmove(node->children + 1u, node->children,
+                (node->num_keys + 1u) * sizeof(*node->children));
+        node->children[0] = left->children[left->num_keys];
+        node->children[0]->parent = node;
+        left->children[left->num_keys] = NULL;
+        --left->num_keys;
+        ++node->num_keys;
+        turbo_bplus_refresh_node(left);
+        turbo_bplus_refresh_node(node);
+        turbo_bplus_refresh_ancestors(parent);
+        return;
+      }
+      if (right != NULL && right->num_keys > minimum) {
+        node->children[node->num_keys + 1u] = right->children[0];
+        node->children[node->num_keys + 1u]->parent = node;
+        memmove(right->children, right->children + 1u,
+                right->num_keys * sizeof(*right->children));
+        right->children[right->num_keys] = NULL;
+        --right->num_keys;
+        ++node->num_keys;
+        turbo_bplus_refresh_node(right);
+        turbo_bplus_refresh_node(node);
+        turbo_bplus_refresh_ancestors(parent);
+        return;
+      }
+      if (left != NULL) {
+        size_t left_children = left->num_keys + 1u;
+        for (index = 0u; index <= node->num_keys; ++index) {
+          left->children[left_children + index] = node->children[index];
+          node->children[index]->parent = left;
+        }
+        left->num_keys += node->num_keys + 1u;
+        turbo_bplus_refresh_node(left);
+        turbo_bplus_parent_remove_child(parent, child_index);
+        turbo_bplus_node_free_shell(node);
+      } else {
+        size_t node_children = node->num_keys + 1u;
+        for (index = 0u; index <= right->num_keys; ++index) {
+          node->children[node_children + index] = right->children[index];
+          right->children[index]->parent = node;
+        }
+        node->num_keys += right->num_keys + 1u;
+        turbo_bplus_refresh_node(node);
+        turbo_bplus_parent_remove_child(parent, child_index + 1u);
+        turbo_bplus_node_free_shell(right);
       }
     }
-    leaf = leaf->next;
+    node = parent;
   }
+  if (tree->root != NULL && !tree->root->is_leaf &&
+      tree->root->num_keys == 0u) {
+    turbo_bplus_tree_node_t *old_root = tree->root;
+    tree->root = old_root->children[0];
+    tree->root->parent = NULL;
+    old_root->children[0] = NULL;
+    turbo_bplus_node_free_shell(old_root);
+  }
+  turbo_bplus_refresh_ancestors(node == tree->root ? node : node->parent);
+}
+
+container_status turbo_bplus_tree_remove(turbo_bplus_tree_t *tree,
+                                         const void *key, void *out_value) {
+  turbo_bplus_tree_node_t *leaf;
+  turbo_bplus_tree_entry_link_t *removed_link;
+  void *removed_key;
+  void *removed_value;
+  size_t index;
+  if (!turbo_bplus_valid(tree) || key == NULL)
+    return CONTAINER_INVALID_ARGUMENT;
+  leaf = turbo_bplus_find_leaf(tree, key);
+  if (leaf == NULL) return CONTAINER_NOT_FOUND;
+  index = turbo_bplus_leaf_lower_bound(tree, leaf, key);
+  if (index >= leaf->num_keys ||
+      turbo_bplus_compare_key(tree, leaf->keys[index], key) != 0)
+    return CONTAINER_NOT_FOUND;
+  removed_key = leaf->keys[index];
+  removed_value = leaf->values[index];
+  removed_link = leaf->links[index];
+  turbo_bplus_leaf_remove_slot(leaf, index);
+  if (leaf == tree->root && leaf->num_keys == 0u) {
+    turbo_bplus_node_free_shell(leaf);
+    tree->root = NULL;
+  } else {
+    turbo_bplus_refresh_ancestors(leaf->parent);
+    turbo_bplus_rebalance_after_remove(tree, leaf);
+  }
+  turbo_bplus_link_unlink(tree, removed_link);
   if (out_value != NULL) {
     if (tree->value_type != NULL)
-      tree->value_type->traits->move_construct(out_value,
-                                               (void *)removed_value);
+      tree->value_type->traits->move_construct(out_value, removed_value);
     else
       memcpy(out_value, removed_value, tree->value_size);
   }
-  turbo_bplus_commit(tree, &next);
+  turbo_bplus_destroy_object(tree->key_type, removed_key);
+  turbo_bplus_destroy_object(tree->value_type, removed_value);
+  free(removed_link);
+  --tree->size;
+  ++tree->generation;
   return CONTAINER_OK;
 }
 
@@ -508,6 +762,8 @@ void turbo_bplus_tree_clear(turbo_bplus_tree_t *tree) {
   turbo_bplus_node_destroy(tree, tree->root);
   tree->root = NULL;
   tree->size = 0u;
+  tree->first = NULL;
+  tree->last = NULL;
   ++tree->generation;
 }
 
@@ -576,6 +832,26 @@ const void *turbo_bplus_tree_value_at_const(const turbo_bplus_tree_t *tree,
   return turbo_bplus_pair_at(tree, index, &key, &value) ? value : NULL;
 }
 
+bool turbo_bplus_tree_range_next(const turbo_bplus_tree_t *tree,
+                                 size_t *cursor, const void **out_key,
+                                 const void **out_value) {
+  turbo_bplus_tree_entry_link_t *link;
+  if (!turbo_bplus_valid(tree) || cursor == NULL || out_key == NULL ||
+      out_value == NULL || *cursor == SIZE_MAX)
+    return false;
+  link = *cursor == 0u
+             ? tree->first
+             : (turbo_bplus_tree_entry_link_t *)(uintptr_t)(*cursor);
+  if (link == NULL) {
+    *cursor = SIZE_MAX;
+    return false;
+  }
+  *out_key = link->key;
+  *out_value = link->value;
+  *cursor = link->next == NULL ? SIZE_MAX : (size_t)(uintptr_t)link->next;
+  return true;
+}
+
 static container_status turbo_bplus_from_arrays_common(
     turbo_bplus_tree_t *tree, const void *keys, const void *values,
     size_t count, const cmeta_type_desc *key_type,
@@ -586,10 +862,8 @@ static container_status turbo_bplus_from_arrays_common(
   size_t index;
   uint64_t generation;
   container_status status;
-  if (tree == NULL || (count != 0u && (keys == NULL || values == NULL)) ||
-      count > entry_limit)
-    return count > entry_limit ? CONTAINER_CAPACITY_EXCEEDED
-                               : CONTAINER_INVALID_ARGUMENT;
+  if (tree == NULL || (count != 0u && (keys == NULL || values == NULL)))
+    return CONTAINER_INVALID_ARGUMENT;
   if (count != 0u &&
       (key_size > SIZE_MAX / count || value_size > SIZE_MAX / count))
     return CONTAINER_CAPACITY_EXCEEDED;

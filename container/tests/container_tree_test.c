@@ -14,6 +14,25 @@ static int raw_int_compare(const void *left, const void *right, void *context) {
     return (lhs > rhs) - (lhs < rhs);
 }
 
+static size_t counted_compare_calls;
+
+static int counted_int_compare(const void *left, const void *right,
+                               void *context) {
+    ++counted_compare_calls;
+    return raw_int_compare(left, right, context);
+}
+
+static uint32_t tree_test_random_state = UINT32_C(0x5eed1234);
+
+static uint32_t tree_test_random(void) {
+    uint32_t value = tree_test_random_state;
+    value ^= value << 13;
+    value ^= value >> 17;
+    value ^= value << 5;
+    tree_test_random_state = value;
+    return value;
+}
+
 typedef struct owned_tree_value {
     int *value;
 } owned_tree_value;
@@ -88,7 +107,7 @@ spec("Container trees") {
     it("splits BTree nodes and iterates entries in key order") {
         IntTree tree = {0};
         cmeta_range range;
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = 0u;
         IntTree_entry entry = {0};
         int key;
 
@@ -100,8 +119,9 @@ spec("Container trees") {
                                               CMETA_CONTAINER_VIEW_DEFAULT,
                                               &range));
         for (key = 0; key < 32; ++key) {
-            check_true(cmeta_range_next(&range, &cursor, &entry) == CMETA_GEN_VALUE ||
-                       cursor == 32u);
+            cmeta_gen_status status = cmeta_range_next(&range, &cursor, &entry);
+            check_true(status == CMETA_GEN_VALUE ||
+                       status == CMETA_GEN_VALUE_AND_DONE);
             check_equal(entry.key, key);
             check_equal(entry.value, (long)key * 10L);
         }
@@ -148,7 +168,7 @@ spec("Container trees") {
         IntPlusTree tree = {0};
         cmeta_range range;
         IntPlusTree_entry entry = {0};
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = 0u;
         uint64_t generation;
         int key;
 
@@ -177,6 +197,190 @@ spec("Container trees") {
         check_equal(cursor, (size_t)0u);
         check_equal(entry.key, -1);
         IntPlusTree_destroy(&tree);
+    }
+
+    it("keeps single tree mutations on one logarithmic search path") {
+        turbo_btree_t btree = {0};
+        turbo_bplus_tree_t bplus = {0};
+        enum { ENTRY_COUNT = 256, MAX_PATH_COMPARISONS = 128 };
+        int key;
+        long value;
+
+        check_equal(turbo_btree_init_bytes_with_order(
+                        &btree, sizeof(int), _Alignof(int), sizeof(long),
+                        _Alignof(long), 2u, ENTRY_COUNT + 1u,
+                        counted_int_compare, NULL), CONTAINER_OK);
+        check_equal(turbo_bplus_tree_init_bytes_with_order(
+                        &bplus, sizeof(int), _Alignof(int), sizeof(long),
+                        _Alignof(long), 2u, ENTRY_COUNT + 1u,
+                        counted_int_compare, NULL), CONTAINER_OK);
+        for (key = 0; key < ENTRY_COUNT; ++key) {
+            value = (long)key;
+            check_equal(turbo_btree_put(&btree, &key, &value), CONTAINER_OK);
+            check_equal(turbo_bplus_tree_put(&bplus, &key, &value),
+                        CONTAINER_OK);
+        }
+
+        key = ENTRY_COUNT / 2;
+        value = 999L;
+        counted_compare_calls = 0u;
+        check_equal(turbo_btree_put(&btree, &key, &value), CONTAINER_OK);
+        check_true(counted_compare_calls < MAX_PATH_COMPARISONS);
+        counted_compare_calls = 0u;
+        check_equal(turbo_bplus_tree_put(&bplus, &key, &value), CONTAINER_OK);
+        check_true(counted_compare_calls < MAX_PATH_COMPARISONS);
+
+        counted_compare_calls = 0u;
+        check_equal(turbo_btree_remove(&btree, &key, NULL), CONTAINER_OK);
+        check_true(counted_compare_calls < MAX_PATH_COMPARISONS);
+        counted_compare_calls = 0u;
+        check_equal(turbo_bplus_tree_remove(&bplus, &key, NULL), CONTAINER_OK);
+        check_true(counted_compare_calls < MAX_PATH_COMPARISONS);
+
+        turbo_bplus_tree_destroy(&bplus);
+        turbo_btree_destroy(&btree);
+    }
+
+    it("builds raw trees by final live keys and commits once") {
+        turbo_btree_t btree = {0};
+        turbo_bplus_tree_t bplus = {0};
+        int duplicate_keys[] = {1, 1};
+        int distinct_keys[] = {2, 3};
+        long duplicate_values[] = {10L, 11L};
+        long distinct_values[] = {20L, 30L};
+
+        check_equal(turbo_btree_from_arrays_bytes(
+                        &btree, duplicate_keys, duplicate_values, 2u,
+                        sizeof(int), _Alignof(int), sizeof(long),
+                        _Alignof(long), 1u, raw_int_compare, NULL),
+                    CONTAINER_OK);
+        check_equal(turbo_btree_size(&btree), (size_t)1u);
+        check_equal(*(const long *)turbo_btree_get_const(&btree,
+                                                         &duplicate_keys[0]),
+                    11L);
+        check_equal(turbo_btree_generation(&btree), UINT64_C(1));
+        check_equal(turbo_btree_from_arrays_bytes(
+                        &btree, distinct_keys, distinct_values, 2u,
+                        sizeof(int), _Alignof(int), sizeof(long),
+                        _Alignof(long), 1u, raw_int_compare, NULL),
+                    CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(turbo_btree_generation(&btree), UINT64_C(1));
+        check_equal(*(const long *)turbo_btree_get_const(&btree,
+                                                         &duplicate_keys[0]),
+                    11L);
+
+        check_equal(turbo_bplus_tree_from_arrays_bytes(
+                        &bplus, duplicate_keys, duplicate_values, 2u,
+                        sizeof(int), _Alignof(int), sizeof(long),
+                        _Alignof(long), 1u, raw_int_compare, NULL),
+                    CONTAINER_OK);
+        check_equal(turbo_bplus_tree_size(&bplus), (size_t)1u);
+        check_equal(*(const long *)turbo_bplus_tree_get_const(
+                        &bplus, &duplicate_keys[0]), 11L);
+        check_equal(turbo_bplus_tree_generation(&bplus), UINT64_C(1));
+        check_equal(turbo_bplus_tree_from_arrays_bytes(
+                        &bplus, distinct_keys, distinct_values, 2u,
+                        sizeof(int), _Alignof(int), sizeof(long),
+                        _Alignof(long), 1u, raw_int_compare, NULL),
+                    CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(turbo_bplus_tree_generation(&bplus), UINT64_C(1));
+        check_equal(*(const long *)turbo_bplus_tree_get_const(
+                        &bplus, &duplicate_keys[0]), 11L);
+
+        turbo_bplus_tree_destroy(&bplus);
+        turbo_btree_destroy(&btree);
+    }
+
+    it("matches a bounded model across randomized split borrow and merge paths") {
+        IntTree btree = {0};
+        IntPlusTree bplus = {0};
+        enum { KEY_COUNT = 128, OPERATION_COUNT = 2000 };
+        bool present[KEY_COUNT] = {false};
+        long model[KEY_COUNT] = {0};
+        size_t live = 0u;
+        int operation;
+
+        tree_test_random_state = UINT32_C(0x5eed1234);
+        check_equal(IntTree_init_with_order(&btree, 2u, KEY_COUNT),
+                    CONTAINER_OK);
+        check_equal(IntPlusTree_init_with_order(&bplus, 2u, KEY_COUNT),
+                    CONTAINER_OK);
+        for (operation = 0; operation < OPERATION_COUNT; ++operation) {
+            int key = (int)(tree_test_random() % KEY_COUNT);
+            if ((tree_test_random() & 3u) != 0u) {
+                long value = (long)operation + 1000L;
+                check_equal(IntTree_put(&btree, key, value), CONTAINER_OK);
+                check_equal(IntPlusTree_put(&bplus, key, value), CONTAINER_OK);
+                if (!present[key]) {
+                    present[key] = true;
+                    ++live;
+                }
+                model[key] = value;
+            } else if (present[key]) {
+                long btree_out = -1L;
+                long bplus_out = -1L;
+                check_equal(IntTree_remove(&btree, key, &btree_out),
+                            CONTAINER_OK);
+                check_equal(IntPlusTree_remove(&bplus, key, &bplus_out),
+                            CONTAINER_OK);
+                check_equal(btree_out, model[key]);
+                check_equal(bplus_out, model[key]);
+                present[key] = false;
+                --live;
+            } else {
+                check_equal(IntTree_remove(&btree, key, NULL),
+                            CONTAINER_NOT_FOUND);
+                check_equal(IntPlusTree_remove(&bplus, key, NULL),
+                            CONTAINER_NOT_FOUND);
+            }
+
+            if ((operation % 97) == 0) {
+                int probe;
+                check_equal(IntTree_size(&btree), live);
+                check_equal(IntPlusTree_size(&bplus), live);
+                for (probe = 0; probe < KEY_COUNT; ++probe) {
+                    const long *left = IntTree_get_const(&btree, probe);
+                    const long *right = IntPlusTree_get_const(&bplus, probe);
+                    check_equal(left != NULL, present[probe]);
+                    check_equal(right != NULL, present[probe]);
+                    if (present[probe]) {
+                        check_equal(*left, model[probe]);
+                        check_equal(*right, model[probe]);
+                    }
+                }
+            }
+        }
+        {
+            cmeta_range btree_range = IntTree_entries_range(&btree);
+            cmeta_range bplus_range = IntPlusTree_entries_range(&bplus);
+            cmeta_range_cursor btree_cursor = 0u;
+            cmeta_range_cursor bplus_cursor = 0u;
+            IntTree_entry btree_entry = {0};
+            IntPlusTree_entry bplus_entry = {0};
+            size_t observed = 0u;
+            int ordered_key;
+            for (ordered_key = 0; ordered_key < KEY_COUNT; ++ordered_key) {
+                if (!present[ordered_key]) continue;
+                check_true(cmeta_range_next(&btree_range, &btree_cursor,
+                                            &btree_entry) == CMETA_GEN_VALUE ||
+                           btree_cursor == SIZE_MAX);
+                check_true(cmeta_range_next(&bplus_range, &bplus_cursor,
+                                            &bplus_entry) == CMETA_GEN_VALUE ||
+                           bplus_cursor == SIZE_MAX);
+                check_equal(btree_entry.key, ordered_key);
+                check_equal(bplus_entry.key, ordered_key);
+                check_equal(btree_entry.value, model[ordered_key]);
+                check_equal(bplus_entry.value, model[ordered_key]);
+                ++observed;
+            }
+            check_equal(observed, live);
+            check_equal(cmeta_range_next(&btree_range, &btree_cursor,
+                                         &btree_entry), CMETA_GEN_DONE);
+            check_equal(cmeta_range_next(&bplus_range, &bplus_cursor,
+                                         &bplus_entry), CMETA_GEN_DONE);
+        }
+        IntPlusTree_destroy(&bplus);
+        IntTree_destroy(&btree);
     }
 
     it("keeps owning BTree mutations transactional and transfers removal") {
@@ -296,5 +500,32 @@ spec("Container trees") {
         check_true(turbo_btree_generation(&tree) > destroyed_generation);
         turbo_btree_destroy(&tree);
         turbo_btree_destroy(&tree);
+    }
+
+    bench("path-local tree replacement") {
+        IntTree btree = {0};
+        IntPlusTree bplus = {0};
+        enum { BENCH_ENTRY_COUNT = 256 };
+        int key;
+        long value = 1L;
+
+        check_equal(IntTree_init_with_order(&btree, 4u, BENCH_ENTRY_COUNT),
+                    CONTAINER_OK);
+        check_equal(IntPlusTree_init_with_order(&bplus, 4u,
+                                                BENCH_ENTRY_COUNT),
+                    CONTAINER_OK);
+        for (key = 0; key < BENCH_ENTRY_COUNT; ++key) {
+            check_equal(IntTree_put(&btree, key, (long)key), CONTAINER_OK);
+            check_equal(IntPlusTree_put(&bplus, key, (long)key),
+                        CONTAINER_OK);
+        }
+        key = BENCH_ENTRY_COUNT / 2;
+        benchmark_ops("replace one BTree and one BPlusTree entry", 64, 2) {
+            (void)IntTree_put(&btree, key, value);
+            (void)IntPlusTree_put(&bplus, key, value);
+            ++value;
+        }
+        IntPlusTree_destroy(&bplus);
+        IntTree_destroy(&btree);
     }
 }

@@ -20,11 +20,19 @@ extern "C" {
 typedef int (*turbo_bplus_tree_compare_fn)(const void *left,
                                            const void *right, void *ctx);
 
+typedef struct turbo_bplus_tree_entry_link {
+  void *key;
+  void *value;
+  struct turbo_bplus_tree_entry_link *previous;
+  struct turbo_bplus_tree_entry_link *next;
+} turbo_bplus_tree_entry_link_t;
+
 typedef struct turbo_bplus_tree_node {
   bool is_leaf;
   size_t num_keys;
   void **keys;
   void **values;
+  turbo_bplus_tree_entry_link_t **links;
   struct turbo_bplus_tree_node **children;
   struct turbo_bplus_tree_node *parent;
   struct turbo_bplus_tree_node *next;
@@ -43,6 +51,8 @@ typedef struct {
   size_t max_children;
   size_t entry_limit;
   size_t size;
+  turbo_bplus_tree_entry_link_t *first;
+  turbo_bplus_tree_entry_link_t *last;
   const cmeta_type_desc *key_type;
   const cmeta_type_desc *value_type;
   turbo_bplus_tree_compare_fn compare;
@@ -52,7 +62,10 @@ typedef struct {
 } turbo_bplus_tree_t;
 
 /* Leaf entries own aligned key/value objects. Internal separator pointers are
- * borrowed from leaves and are refreshed after each successful insertion. */
+ * borrowed from leaves and are refreshed only along the modified ancestor
+ * path. Search, put, and remove are O(log n) for fixed min_degree;
+ * from-arrays is O(rows log live_entries). Indexed lookup is O(n), while the
+ * ordered Range cursor follows derived entry links in O(n) total. */
 CONTAINER_API container_status turbo_bplus_tree_init(
     turbo_bplus_tree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit);
@@ -109,6 +122,9 @@ CONTAINER_API void *turbo_bplus_tree_value_at(turbo_bplus_tree_t *tree,
                                               size_t index);
 CONTAINER_API const void *turbo_bplus_tree_value_at_const(
     const turbo_bplus_tree_t *tree, size_t index);
+CONTAINER_API bool turbo_bplus_tree_range_next(
+    const turbo_bplus_tree_t *tree, size_t *cursor, const void **out_key,
+    const void **out_value);
 
 #ifdef __cplusplus
 }

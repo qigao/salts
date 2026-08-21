@@ -24,8 +24,19 @@ enum {
 };
 
 typedef size_t (*cmeta_range_size_fn)(const void *object);
+/* Container ranges may use the cursor either as an index or as an encoded
+ * uintptr_t to stable, container-owned traversal metadata. TurboUtils only
+ * supports targets where size_t can represent uintptr_t without loss. */
+typedef size_t cmeta_range_cursor;
+#if defined(__cplusplus)
+static_assert(SIZE_MAX >= UINTPTR_MAX,
+              "CMETA_RANGE_CURSOR_CANNOT_REPRESENT_UINTPTR");
+#else
+_Static_assert(SIZE_MAX >= UINTPTR_MAX,
+               "CMETA_RANGE_CURSOR_CANNOT_REPRESENT_UINTPTR");
+#endif
 typedef cmeta_gen_status (*cmeta_range_next_fn)(const void *object,
-                                                 size_t *cursor,
+                                                 cmeta_range_cursor *cursor,
                                                  void *out_value);
 typedef uint64_t (*cmeta_range_version_fn)(const void *object);
 
@@ -106,7 +117,7 @@ static inline uint64_t cmeta_range_capture_version(
 }
 
 static inline cmeta_gen_status cmeta_range_next(const cmeta_range *range,
-                                                 size_t *cursor,
+                                                 cmeta_range_cursor *cursor,
                                                  void *out_value) {
     if (range == NULL || range->element_type == NULL || range->next == NULL ||
         cursor == NULL || out_value == NULL) {

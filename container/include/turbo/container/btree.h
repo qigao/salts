@@ -20,11 +20,19 @@ extern "C" {
 typedef int (*turbo_btree_compare_fn)(const void *left, const void *right,
                                       void *ctx);
 
+typedef struct turbo_btree_entry_link {
+  void *key;
+  void *value;
+  struct turbo_btree_entry_link *previous;
+  struct turbo_btree_entry_link *next;
+} turbo_btree_entry_link_t;
+
 typedef struct turbo_btree_node {
   bool leaf;
   size_t num_keys;
   void **keys;
   void **values;
+  turbo_btree_entry_link_t **links;
   struct turbo_btree_node **children;
 } turbo_btree_node_t;
 
@@ -41,6 +49,8 @@ typedef struct {
   size_t max_children;
   size_t entry_limit;
   size_t size;
+  turbo_btree_entry_link_t *first;
+  turbo_btree_entry_link_t *last;
   const cmeta_type_desc *key_type;
   const cmeta_type_desc *value_type;
   turbo_btree_compare_fn compare;
@@ -51,7 +61,10 @@ typedef struct {
 
 /* Descriptors and raw comparator/context are borrowed through destroy.
  * Typed keys require COMPARE|COPY|MOVE|DESTROY and typed values require
- * COPY|MOVE|DESTROY. Handles must be zero-initialized before first use. */
+ * COPY|MOVE|DESTROY. Handles must be zero-initialized before first use.
+ * Search, put, and remove are O(log n) for fixed min_degree; from-arrays is
+ * O(rows log live_entries). Indexed key/value lookup is O(n), while the
+ * ordered Range cursor follows the derived entry links in O(n) total. */
 CONTAINER_API container_status turbo_btree_init(
     turbo_btree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit);
@@ -107,6 +120,12 @@ CONTAINER_API const void *turbo_btree_key_at_const(const turbo_btree_t *tree,
 CONTAINER_API void *turbo_btree_value_at(turbo_btree_t *tree, size_t index);
 CONTAINER_API const void *turbo_btree_value_at_const(const turbo_btree_t *tree,
                                                      size_t index);
+/* cursor is zero before first use and SIZE_MAX after exhaustion. The returned
+ * key/value pointers are borrowed until the next successful mutation. */
+CONTAINER_API bool turbo_btree_range_next(const turbo_btree_t *tree,
+                                          size_t *cursor,
+                                          const void **out_key,
+                                          const void **out_value);
 
 #ifdef __cplusplus
 }

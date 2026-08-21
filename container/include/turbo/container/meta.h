@@ -31,7 +31,7 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
 
 #define TURBO_META_C2_COLLECTOR(name) \
  CMETA_LOCAL cmeta_type_desc name##_entry_cmeta_type; \
- CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;return turbo_container_cmeta_status((container_status)name##_init((name*)context,limit));} \
+ CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;return turbo_container_cmeta_status((container_status)name##_init((name*)context,limit));} \
  CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return turbo_container_cmeta_status((container_status)name##_put((name*)context,entry->key,entry->value));} \
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
  CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
@@ -42,7 +42,7 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
  * values retained for any one key. */
 #define TURBO_META_MULTIMAP_COLLECTOR(name) \
  CMETA_LOCAL cmeta_type_desc name##_entry_cmeta_type; \
- CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;return turbo_container_cmeta_status((container_status)name##_init((name*)context,limit,limit));} \
+ CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;return turbo_container_cmeta_status((container_status)name##_init((name*)context,limit,limit));} \
  CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return turbo_container_cmeta_status((container_status)name##_put((name*)context,entry->key,entry->value));} \
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
  CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
@@ -146,70 +146,53 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
 #define TURBO_META_BTREE_METHODS(M,C) TURBO_META_TREE_METHODS(M,C)
 #define TURBO_META_BPLUS_TREE_METHODS(M,C) TURBO_META_TREE_METHODS(M,C)
 
-#define TURBO_VEC_DEFINE(name,type) \
- CMETA_CONTAINER1_DEFINE(name,type,turbo_vec_t,turbo_vec,CONTAINER_OK,_,TURBO_META_VEC_METHODS) \
- TURBO_META_C1_GENERATION(name,turbo_vec) \
- TURBO_META_C1_COLLECTOR(name,type,push) \
- CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name,type,turbo_vec,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_CONTIGUOUS|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
-#define TURBO_DEQUE_DEFINE(name,type) \
- CMETA_CONTAINER1_DEFINE(name,type,turbo_deque_t,turbo_deque,CONTAINER_OK,_,TURBO_META_DEQUE_METHODS) \
- TURBO_META_C1_GENERATION(name,turbo_deque) \
- TURBO_META_C1_COLLECTOR(name,type,push_back) \
- CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name,type,turbo_deque,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
-#define TURBO_LIST_DEFINE(name,type) \
- CMETA_CONTAINER1_DEFINE(name,type,turbo_list_t,turbo_list,CONTAINER_OK,_,TURBO_META_LIST_METHODS) \
- TURBO_META_C1_GENERATION(name,turbo_list) \
- TURBO_META_C1_COLLECTOR(name,type,push_back) \
- CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name,type,turbo_list,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
-#define TURBO_STACK_DEFINE(name,type) \
- CMETA_CONTAINER1_DEFINE(name,type,turbo_stack_t,turbo_stack,CONTAINER_OK,_,TURBO_META_STACK_METHODS) \
- TURBO_META_C1_GENERATION(name,turbo_stack) \
- TURBO_META_C1_COLLECTOR(name,type,push) \
- CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name,type,turbo_stack,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
-#define TURBO_QUEUE_DEFINE(name,type) \
- CMETA_CONTAINER1_DEFINE(name,type,turbo_queue_t,turbo_queue,CONTAINER_OK,_,TURBO_META_QUEUE_METHODS) \
- TURBO_META_C1_GENERATION(name,turbo_queue) \
- TURBO_META_C1_COLLECTOR(name,type,push) \
- CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name,type,turbo_queue,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
-#define TURBO_HEAP_DEFINE(name,type) \
- CMETA_CONTAINER1_DEFINE(name,type,turbo_heap_t,turbo_heap,CONTAINER_OK,_,TURBO_META_HEAP_METHODS) \
- TURBO_META_C1_GENERATION(name,turbo_heap) \
- TURBO_META_C1_COLLECTOR(name,type,push) \
- CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name,type,turbo_heap,CMETA_RANGE_SIZED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
-#define TURBO_SET_DEFINE(name,type) \
- CMETA_CONTAINER1_DEFINE(name,type,turbo_set_t,turbo_set,CONTAINER_OK,_,TURBO_META_SET_METHODS) \
- TURBO_META_C1_GENERATION(name,turbo_set) \
- TURBO_META_C1_COLLECTOR(name,type,add) \
- CMETA_CONTAINER1_SLOT_RANGE_DEFINE(name,type,turbo_set,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
-#define TURBO_HASH_SET_DEFINE(name,type) \
- CMETA_CONTAINER1_DEFINE(name,type,turbo_hash_set_t,turbo_hash_set,CONTAINER_OK,_,TURBO_META_HASH_SET_METHODS) \
- TURBO_META_C1_GENERATION(name,turbo_hash_set) \
- TURBO_META_C1_COLLECTOR(name,type,add) \
- CMETA_CONTAINER1_SLOT_RANGE_DEFINE(name,type,turbo_hash_set,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
-#define TURBO_HASH_MAP_DEFINE(name,k,v) \
- CMETA_CONTAINER2_DEFINE(name,k,v,turbo_hash_map_t,turbo_hash_map,CONTAINER_OK,_,TURBO_META_HASH_MAP_METHODS) \
- TURBO_META_C2_GENERATION(name,turbo_hash_map) \
- TURBO_META_C2_COLLECTOR(name) \
- CMETA_CONTAINER2_RANGES_DEFINE(name,k,v,turbo_hash_map,key_at,value_at_const,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
-#define TURBO_MAP_DEFINE(name,k,v) \
- CMETA_CONTAINER2_DEFINE(name,k,v,turbo_map_t,turbo_map,CONTAINER_OK,_,TURBO_META_MAP_METHODS) \
- TURBO_META_C2_GENERATION(name,turbo_map) \
- TURBO_META_C2_COLLECTOR(name) \
- CMETA_CONTAINER2_RANGES_DEFINE(name,k,v,turbo_map,key_at_const,value_at_const,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
-#define TURBO_MULTI_MAP_DEFINE(name,k,v) \
- CMETA_CONTAINER2_DEFINE(name,k,v,turbo_multimap_t,turbo_multimap,CONTAINER_OK,_,TURBO_META_MULTIMAP_METHODS) \
- TURBO_META_C2_GENERATION(name,turbo_multimap) \
- TURBO_META_MULTIMAP_COLLECTOR(name) \
- CMETA_CONTAINER2_RANGES_DEFINE(name,k,v,turbo_multimap_range,key_at_const,value_at_const,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
-#define TURBO_BTREE_DEFINE(name,k,v) \
- CMETA_CONTAINER2_DEFINE(name,k,v,turbo_btree_t,turbo_btree,CONTAINER_OK,_,TURBO_META_BTREE_METHODS) \
- TURBO_META_C2_GENERATION(name,turbo_btree) \
- TURBO_META_C2_COLLECTOR(name) \
- CMETA_CONTAINER2_RANGES_DEFINE(name,k,v,turbo_btree,key_at_const,value_at_const,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
-#define TURBO_BPLUS_TREE_DEFINE(name,k,v) \
- CMETA_CONTAINER2_DEFINE(name,k,v,turbo_bplus_tree_t,turbo_bplus_tree,CONTAINER_OK,_,TURBO_META_BPLUS_TREE_METHODS) \
- TURBO_META_C2_GENERATION(name,turbo_bplus_tree) \
- TURBO_META_C2_COLLECTOR(name) \
- CMETA_CONTAINER2_RANGES_DEFINE(name,k,v,turbo_bplus_tree,key_at_const,value_at_const,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,name##_cmeta_generation,name##_collector)
+/* The row macros are the sole semantic mapping for every standard kind.
+ * C cannot emit #define directives from Replay, so the public kind markers and
+ * adapters remain thin language-policy shims that reference these rows. */
+#define TURBO_CONTAINER_KIND_ROW_Vec (Vec,1,C1_INDEX,turbo_vec_t,turbo_vec,TURBO_META_VEC_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_CONTIGUOUS|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
+#define TURBO_CONTAINER_KIND_ROW_Deque (Deque,1,C1_INDEX,turbo_deque_t,turbo_deque,TURBO_META_DEQUE_METHODS,push_back,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
+#define TURBO_CONTAINER_KIND_ROW_List (List,1,C1_INDEX,turbo_list_t,turbo_list,TURBO_META_LIST_METHODS,push_back,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,0,0,0)
+#define TURBO_CONTAINER_KIND_ROW_Stack (Stack,1,C1_INDEX,turbo_stack_t,turbo_stack,TURBO_META_STACK_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
+#define TURBO_CONTAINER_KIND_ROW_Queue (Queue,1,C1_INDEX,turbo_queue_t,turbo_queue,TURBO_META_QUEUE_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
+#define TURBO_CONTAINER_KIND_ROW_Heap (Heap,1,C1_INDEX,turbo_heap_t,turbo_heap,TURBO_META_HEAP_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
+#define TURBO_CONTAINER_KIND_ROW_Set (Set,1,C1_SLOT,turbo_set_t,turbo_set,TURBO_META_SET_METHODS,add,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,0,0,0)
+#define TURBO_CONTAINER_KIND_ROW_HashSet (HashSet,1,C1_SLOT,turbo_hash_set_t,turbo_hash_set,TURBO_META_HASH_SET_METHODS,add,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,0,0,0)
+#define TURBO_CONTAINER_KIND_ROW_HashMap (HashMap,2,C2_HASH,turbo_hash_map_t,turbo_hash_map,TURBO_META_HASH_MAP_METHODS,_,key_at,value_at_const,0,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
+#define TURBO_CONTAINER_KIND_ROW_Map (Map,2,C2_HASH,turbo_map_t,turbo_map,TURBO_META_MAP_METHODS,_,key_at_const,value_at_const,0,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
+#define TURBO_CONTAINER_KIND_ROW_MultiMap (MultiMap,2,C2_MULTIMAP,turbo_multimap_t,turbo_multimap,TURBO_META_MULTIMAP_METHODS,_,key_at_const,value_at_const,0,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE)
+#define TURBO_CONTAINER_KIND_ROW_BTree (BTree,2,C2_LINK,turbo_btree_t,turbo_btree,TURBO_META_BTREE_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
+#define TURBO_CONTAINER_KIND_ROW_BPlusTree (BPlusTree,2,C2_LINK,turbo_bplus_tree_t,turbo_bplus_tree,TURBO_META_BPLUS_TREE_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
+
+#define TURBO_CONTAINER_KIND_SCHEMA(M) Schema(M,TURBO_CONTAINER_KIND_ROW_Vec,TURBO_CONTAINER_KIND_ROW_Deque,TURBO_CONTAINER_KIND_ROW_List,TURBO_CONTAINER_KIND_ROW_Stack,TURBO_CONTAINER_KIND_ROW_Queue,TURBO_CONTAINER_KIND_ROW_Heap,TURBO_CONTAINER_KIND_ROW_Set,TURBO_CONTAINER_KIND_ROW_HashSet,TURBO_CONTAINER_KIND_ROW_HashMap,TURBO_CONTAINER_KIND_ROW_Map,TURBO_CONTAINER_KIND_ROW_MultiMap,TURBO_CONTAINER_KIND_ROW_BTree,TURBO_CONTAINER_KIND_ROW_BPlusTree)
+
+#define TURBO_CONTAINER_KIND_APPLY(row,name,...) TURBO_CONTAINER_KIND_APPLY_E(row,name,__VA_ARGS__)
+#define TURBO_CONTAINER_KIND_APPLY_E(row,name,...) TURBO_CONTAINER_KIND_APPLY_EXPAND(CMETA_PP_UNPAREN row,name,__VA_ARGS__)
+#define TURBO_CONTAINER_KIND_APPLY_EXPAND(...) TURBO_CONTAINER_KIND_APPLY_I(__VA_ARGS__)
+#define TURBO_CONTAINER_KIND_APPLY_I(kind,arity,family,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags,name,...) CMETA_PP_CAT(TURBO_CONTAINER_KIND_DEFINE_,family)(name,__VA_ARGS__,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags)
+
+#define TURBO_CONTAINER_KIND_DEFINE_C1_INDEX(name,type,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
+ CMETA_CONTAINER1_DEFINE(name,type,raw,prefix,CONTAINER_OK,_,methods) TURBO_META_C1_GENERATION(name,prefix) TURBO_META_C1_COLLECTOR(name,type,accept) CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name,type,prefix,range_flags,name##_cmeta_generation,name##_collector)
+#define TURBO_CONTAINER_KIND_DEFINE_C1_SLOT(name,type,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
+ CMETA_CONTAINER1_DEFINE(name,type,raw,prefix,CONTAINER_OK,_,methods) TURBO_META_C1_GENERATION(name,prefix) TURBO_META_C1_COLLECTOR(name,type,accept) CMETA_CONTAINER1_SLOT_RANGE_DEFINE(name,type,prefix,range_flags,name##_cmeta_generation,name##_collector)
+#define TURBO_CONTAINER_KIND_DEFINE_C2_HASH(name,k,v,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
+ CMETA_CONTAINER2_DEFINE(name,k,v,raw,prefix,CONTAINER_OK,_,methods) TURBO_META_C2_GENERATION(name,prefix) TURBO_META_C2_COLLECTOR(name) CMETA_CONTAINER2_RANGES_DEFINE(name,k,v,prefix,key_at_op,value_at_op,key_flags,value_flags,entry_flags,name##_cmeta_generation,name##_collector)
+#define TURBO_CONTAINER_KIND_DEFINE_C2_MULTIMAP(name,k,v,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
+ CMETA_CONTAINER2_DEFINE(name,k,v,raw,prefix,CONTAINER_OK,_,methods) TURBO_META_C2_GENERATION(name,prefix) TURBO_META_MULTIMAP_COLLECTOR(name) CMETA_CONTAINER2_RANGES_DEFINE(name,k,v,turbo_multimap_range,key_at_op,value_at_op,key_flags,value_flags,entry_flags,name##_cmeta_generation,name##_collector)
+#define TURBO_CONTAINER_KIND_DEFINE_C2_LINK(name,k,v,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
+ CMETA_CONTAINER2_DEFINE(name,k,v,raw,prefix,CONTAINER_OK,_,methods) TURBO_META_C2_GENERATION(name,prefix) TURBO_META_C2_COLLECTOR(name) CMETA_CONTAINER2_LINK_RANGES_DEFINE(name,k,v,prefix,key_flags,value_flags,entry_flags,name##_cmeta_generation,name##_collector)
+
+#define TURBO_VEC_DEFINE(name,type) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_Vec,name,type)
+#define TURBO_DEQUE_DEFINE(name,type) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_Deque,name,type)
+#define TURBO_LIST_DEFINE(name,type) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_List,name,type)
+#define TURBO_STACK_DEFINE(name,type) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_Stack,name,type)
+#define TURBO_QUEUE_DEFINE(name,type) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_Queue,name,type)
+#define TURBO_HEAP_DEFINE(name,type) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_Heap,name,type)
+#define TURBO_SET_DEFINE(name,type) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_Set,name,type)
+#define TURBO_HASH_SET_DEFINE(name,type) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_HashSet,name,type)
+#define TURBO_HASH_MAP_DEFINE(name,k,v) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_HashMap,name,k,v)
+#define TURBO_MAP_DEFINE(name,k,v) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_Map,name,k,v)
+#define TURBO_MULTI_MAP_DEFINE(name,k,v) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_MultiMap,name,k,v)
+#define TURBO_BTREE_DEFINE(name,k,v) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_BTree,name,k,v)
+#define TURBO_BPLUS_TREE_DEFINE(name,k,v) TURBO_CONTAINER_KIND_APPLY(TURBO_CONTAINER_KIND_ROW_BPlusTree,name,k,v)
 
 #endif
