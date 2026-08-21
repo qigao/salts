@@ -348,6 +348,30 @@ theorem insert_eq_none_iff
       backend.key ∈ registry.entries.map CertifiedPreprocessorBackend.key := by
   simp [insert]
 
+/-- A key absent from the registry key set cannot resolve to a backend. -/
+theorem lookup_eq_none_of_key_not_mem
+    (registry : PreprocessorBackendRegistry)
+    (key : BackendKey)
+    (hnotmem : key ∉ registry.entries.map CertifiedPreprocessorBackend.key) :
+    registry.lookup key = none := by
+  exact lookupEntries_none_of_not_mem registry.entries key hnotmem
+
+/-- Successful insertion resolves the exact certified backend, including its
+    payload. Proof fields remain internal to this equality and are not part of
+    the registry's later observational equivalence. -/
+theorem lookup_insert_self_exact
+    (registry inserted : PreprocessorBackendRegistry)
+    (backend : CertifiedPreprocessorBackend)
+    (hinsert : registry.insert backend = some inserted) :
+    inserted.lookup backend.key = some backend := by
+  unfold insert at hinsert
+  split at hinsert
+  · simp at hinsert
+  · simp only [Option.some.injEq] at hinsert
+    subst inserted
+    change lookupEntries (backend :: registry.entries) backend.key = some backend
+    rw [lookupEntries, if_pos rfl]
+
 /-- Successful insertion resolves the inserted exact identity. -/
 theorem lookup_insert_self
     (registry inserted : PreprocessorBackendRegistry)
@@ -355,18 +379,29 @@ theorem lookup_insert_self
     (hinsert : registry.insert backend = some inserted) :
     (inserted.lookup backend.key).map CertifiedPreprocessorBackend.key =
       some backend.key := by
+  exact congrArg (Option.map CertifiedPreprocessorBackend.key)
+    (lookup_insert_self_exact registry inserted backend hinsert)
+
+/-- Successful insertion is an exact finite-map frame update: every other key
+    retains the same certified backend payload. -/
+theorem lookup_insert_ne_exact
+    (registry : PreprocessorBackendRegistry)
+    (backend : CertifiedPreprocessorBackend)
+    (inserted : PreprocessorBackendRegistry)
+    (key : BackendKey)
+    (hinsert : registry.insert backend = some inserted)
+    (hne : backend.key ≠ key) :
+    inserted.lookup key = registry.lookup key := by
   unfold insert at hinsert
   split at hinsert
   · simp at hinsert
   · simp only [Option.some.injEq] at hinsert
     subst inserted
-    change (lookupEntries (backend :: registry.entries) backend.key).map
-        CertifiedPreprocessorBackend.key = some backend.key
-    rw [lookupEntries, if_pos rfl]
-    rfl
+    change lookupEntries (backend :: registry.entries) key =
+      lookupEntries registry.entries key
+    rw [lookupEntries, if_neg hne]
 
-/-- Successful insertion is a finite-map frame update: every other exact key
-    keeps the same lookup result. -/
+/-- Successful insertion is a finite-map frame update at the identity projection. -/
 theorem lookup_insert_ne
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend)
@@ -376,15 +411,8 @@ theorem lookup_insert_ne
     (hne : backend.key ≠ key) :
     (inserted.lookup key).map CertifiedPreprocessorBackend.key =
       (registry.lookup key).map CertifiedPreprocessorBackend.key := by
-  unfold insert at hinsert
-  split at hinsert
-  · simp at hinsert
-  · simp only [Option.some.injEq] at hinsert
-    subst inserted
-    change (lookupEntries (backend :: registry.entries) key).map
-        CertifiedPreprocessorBackend.key =
-      (lookupEntries registry.entries key).map CertifiedPreprocessorBackend.key
-    rw [lookupEntries, if_neg hne]
+  exact congrArg (Option.map CertifiedPreprocessorBackend.key)
+    (lookup_insert_ne_exact registry backend inserted key hinsert hne)
 
 /-- Removal makes the target exact key absent. -/
 theorem lookup_remove_self
@@ -396,18 +424,42 @@ theorem lookup_remove_self
     (removeEntries registry.entries key) key
     (target_not_mem_removeEntries registry.entries key registry.uniqueKeys)
 
-/-- Removal is a finite-map frame update for every non-target key. -/
+/-- Removal is an exact finite-map frame update for every non-target key. -/
+theorem lookup_remove_ne_exact
+    (registry : PreprocessorBackendRegistry)
+    (target key : BackendKey)
+    (hne : target ≠ key) :
+    (registry.remove target).lookup key = registry.lookup key := by
+  change lookupEntries (removeEntries registry.entries target) key =
+    lookupEntries registry.entries key
+  exact lookupEntries_removeEntries_ne registry.entries target key hne
+
+/-- Removal preserves every non-target identity projection. -/
 theorem lookup_remove_ne
     (registry : PreprocessorBackendRegistry)
     (target key : BackendKey)
     (hne : target ≠ key) :
     ((registry.remove target).lookup key).map CertifiedPreprocessorBackend.key =
       (registry.lookup key).map CertifiedPreprocessorBackend.key := by
-  change (lookupEntries (removeEntries registry.entries target) key).map
-      CertifiedPreprocessorBackend.key =
-    (lookupEntries registry.entries key).map CertifiedPreprocessorBackend.key
   exact congrArg (Option.map CertifiedPreprocessorBackend.key)
-    (lookupEntries_removeEntries_ne registry.entries target key hne)
+    (lookup_remove_ne_exact registry target key hne)
+
+/-- Successful replacement resolves the exact new certified backend payload. -/
+theorem lookup_replace_self_exact
+    (registry : PreprocessorBackendRegistry)
+    (backend : CertifiedPreprocessorBackend)
+    (replaced : PreprocessorBackendRegistry)
+    (hreplace : registry.replace backend = some replaced) :
+    replaced.lookup backend.key = some backend := by
+  cases hlookup : registry.lookup backend.key with
+  | none =>
+      simp [replace, hlookup] at hreplace
+  | some existing =>
+      have hinsert :
+          (registry.remove backend.key).insert backend = some replaced := by
+        simpa [replace, hlookup] using hreplace
+      exact lookup_insert_self_exact
+        (registry.remove backend.key) replaced backend hinsert
 
 /-- Successful replacement resolves the new certified payload under the same
     exact backend identity. -/
@@ -418,6 +470,19 @@ theorem lookup_replace_self
     (hreplace : registry.replace backend = some replaced) :
     (replaced.lookup backend.key).map CertifiedPreprocessorBackend.key =
       some backend.key := by
+  exact congrArg (Option.map CertifiedPreprocessorBackend.key)
+    (lookup_replace_self_exact registry backend replaced hreplace)
+
+/-- Replacement preserves the exact certified backend payload for every lookup
+    outside the replaced key. -/
+theorem lookup_replace_ne_exact
+    (registry : PreprocessorBackendRegistry)
+    (backend : CertifiedPreprocessorBackend)
+    (replaced : PreprocessorBackendRegistry)
+    (key : BackendKey)
+    (hreplace : registry.replace backend = some replaced)
+    (hne : backend.key ≠ key) :
+    replaced.lookup key = registry.lookup key := by
   cases hlookup : registry.lookup backend.key with
   | none =>
       simp [replace, hlookup] at hreplace
@@ -425,9 +490,14 @@ theorem lookup_replace_self
       have hinsert :
           (registry.remove backend.key).insert backend = some replaced := by
         simpa [replace, hlookup] using hreplace
-      exact lookup_insert_self (registry.remove backend.key) replaced backend hinsert
+      calc
+        replaced.lookup key = (registry.remove backend.key).lookup key :=
+          lookup_insert_ne_exact
+            (registry.remove backend.key) backend replaced key hinsert hne
+        _ = registry.lookup key :=
+          lookup_remove_ne_exact registry backend.key key hne
 
-/-- Replacement preserves every lookup outside the replaced exact key. -/
+/-- Replacement preserves every identity projection outside the replaced key. -/
 theorem lookup_replace_ne
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend)
@@ -437,20 +507,8 @@ theorem lookup_replace_ne
     (hne : backend.key ≠ key) :
     (replaced.lookup key).map CertifiedPreprocessorBackend.key =
       (registry.lookup key).map CertifiedPreprocessorBackend.key := by
-  cases hlookup : registry.lookup backend.key with
-  | none =>
-      simp [replace, hlookup] at hreplace
-  | some existing =>
-      have hinsert :
-          (registry.remove backend.key).insert backend = some replaced := by
-        simpa [replace, hlookup] using hreplace
-      calc
-        (replaced.lookup key).map CertifiedPreprocessorBackend.key =
-            ((registry.remove backend.key).lookup key).map
-              CertifiedPreprocessorBackend.key :=
-          lookup_insert_ne (registry.remove backend.key) backend replaced key hinsert hne
-        _ = (registry.lookup key).map CertifiedPreprocessorBackend.key :=
-          lookup_remove_ne registry backend.key key hne
+  exact congrArg (Option.map CertifiedPreprocessorBackend.key)
+    (lookup_replace_ne_exact registry backend replaced key hreplace hne)
 
 end PreprocessorBackendRegistry
 
