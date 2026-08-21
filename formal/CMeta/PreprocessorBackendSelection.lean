@@ -91,8 +91,21 @@ private theorem selectAux_mem
   | nil =>
       simp [selectAux]
   | cons next rest ih =>
-      cases hcmp : policy.compare current next <;>
-        simp [selectAux, choose, hcmp, ih]
+      cases hcmp : policy.compare current next with
+      | preferLeft =>
+          have htail := ih current
+          simp [selectAux, choose, hcmp] at htail ⊢
+          exact htail.elim Or.inl (fun h => Or.inr (Or.inr h))
+      | equivalent =>
+          have htail := ih current
+          simp [selectAux, choose, hcmp] at htail ⊢
+          exact htail.elim Or.inl (fun h => Or.inr (Or.inr h))
+      | preferRight =>
+          have htail := ih next
+          simp [selectAux, choose, hcmp] at htail ⊢
+          exact htail.elim
+            (fun h => Or.inr (Or.inl h))
+            (fun h => Or.inr (Or.inr h))
 
 /-- A policy can only return an element of the candidate list supplied to it. -/
 theorem select_mem
