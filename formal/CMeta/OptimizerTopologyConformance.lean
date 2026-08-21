@@ -1,5 +1,6 @@
-import CMeta.OptimizerGatingConformance
-import CMeta.OptimizerTopologyGeneratedC
+module
+import all CMeta.OptimizerGatingConformance
+import all CMeta.OptimizerTopologyGeneratedC
 
 /-!
 # Dead-subgraph / topology optimizer conformance

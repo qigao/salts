@@ -1,5 +1,8 @@
-import CMeta.RuntimeConformance
-import CMeta.StructuredGeneratedC
+module
+import all CMeta.RuntimeConformance
+import all CMeta.StructuredGeneratedC
+import all CMeta.Graph
+import all CMeta.Lowering
 
 /-!
 # Structured relation runtime conformance
