@@ -44,8 +44,10 @@ typedef struct {
   bool initialized;
 } turbo_vec_t;
 
-/* Borrowed pointers from at/data become invalid after any successful mutation,
- * reserve that changes storage, clear, or destroy. */
+/* Handles must be first initialized with `{0}`. A destroyed handle may be
+ * reused. init/from_array on a live handle return CONTAINER_INVALID_ARGUMENT
+ * without mutation. Borrowed pointers from at/data become invalid after any
+ * successful mutation, storage-changing reserve, clear, or destroy. */
 CONTAINER_API container_status turbo_vec_init(turbo_vec_t *vec,
                                               const cmeta_type_desc *element_type,
                                               size_t element_limit);
@@ -64,10 +66,19 @@ CONTAINER_API container_status turbo_vec_clear(turbo_vec_t *vec);
 CONTAINER_API container_status turbo_vec_reserve(turbo_vec_t *vec, size_t min_capacity);
 CONTAINER_API container_status turbo_vec_resize(turbo_vec_t *vec, size_t new_size);
 CONTAINER_API container_status turbo_vec_push(turbo_vec_t *vec, const void *elem);
+/* A non-NULL out_elem must be sufficiently aligned, uninitialized element
+ * storage; success transfers ownership there. NULL destroys the value. On
+ * failure out_elem is not written. */
 CONTAINER_API container_status turbo_vec_pop(turbo_vec_t *vec, void *out_elem);
 CONTAINER_API container_status turbo_vec_insert(turbo_vec_t *vec, size_t index, const void *elem);
 CONTAINER_API container_status turbo_vec_set(turbo_vec_t *vec, size_t index, const void *elem);
+/* A non-NULL out_elem must be sufficiently aligned, uninitialized element
+ * storage; success transfers ownership there. NULL destroys the value. On
+ * failure out_elem is not written. */
 CONTAINER_API container_status turbo_vec_erase(turbo_vec_t *vec, size_t index, void *out_elem);
+/* A non-NULL out_elem must be sufficiently aligned, uninitialized element
+ * storage; success transfers ownership there. NULL destroys the value. On
+ * failure out_elem is not written. */
 CONTAINER_API container_status turbo_vec_swap_remove(turbo_vec_t *vec, size_t index, void *out_elem);
 CONTAINER_API void *turbo_vec_at(turbo_vec_t *vec, size_t index);
 CONTAINER_API const void *turbo_vec_at_const(const turbo_vec_t *vec, size_t index);

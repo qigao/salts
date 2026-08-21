@@ -108,31 +108,45 @@ container_status turbo_vec_init(turbo_vec_t *vec, const cmeta_type_desc *element
 
 container_status turbo_vec_from_array_bytes(turbo_vec_t *vec, const void *elements, size_t count,
                                             size_t elem_size, size_t elem_align, size_t limit) {
+    turbo_vec_t temporary = {0};
     container_status status;
     size_t index;
+    uint64_t generation;
+    if (!vec) return CONTAINER_INVALID_ARGUMENT;
+    if (vec->initialized) return CONTAINER_INVALID_ARGUMENT;
     if ((count && !elements) || count > limit)
         return count > limit ? CONTAINER_CAPACITY_EXCEEDED : CONTAINER_INVALID_ARGUMENT;
-    status = turbo_vec_init_bytes(vec, elem_size, elem_align, limit);
+    status = turbo_vec_init_bytes(&temporary, elem_size, elem_align, limit);
     if (status != CONTAINER_OK) return status;
     for (index = 0u; index < count; ++index) {
-        status = turbo_vec_push(vec, (const unsigned char *)elements + index * elem_size);
-        if (status != CONTAINER_OK) { turbo_vec_destroy(vec); return status; }
+        status = turbo_vec_push(&temporary, (const unsigned char *)elements + index * elem_size);
+        if (status != CONTAINER_OK) { turbo_vec_destroy(&temporary); return status; }
     }
+    generation = vec->generation + UINT64_C(1);
+    temporary.generation = generation;
+    *vec = temporary;
     return CONTAINER_OK;
 }
 
 container_status turbo_vec_from_array(turbo_vec_t *vec, const void *elements, size_t count,
                                       const cmeta_type_desc *type, size_t limit) {
+    turbo_vec_t temporary = {0};
     container_status status;
     size_t index;
+    uint64_t generation;
+    if (!vec) return CONTAINER_INVALID_ARGUMENT;
+    if (vec->initialized) return CONTAINER_INVALID_ARGUMENT;
     if ((count && !elements) || count > limit)
         return count > limit ? CONTAINER_CAPACITY_EXCEEDED : CONTAINER_INVALID_ARGUMENT;
-    status = turbo_vec_init(vec, type, limit);
+    status = turbo_vec_init(&temporary, type, limit);
     if (status != CONTAINER_OK) return status;
     for (index = 0u; index < count; ++index) {
-        status = turbo_vec_push(vec, (const unsigned char *)elements + index * type->size);
-        if (status != CONTAINER_OK) { turbo_vec_destroy(vec); return status; }
+        status = turbo_vec_push(&temporary, (const unsigned char *)elements + index * type->size);
+        if (status != CONTAINER_OK) { turbo_vec_destroy(&temporary); return status; }
     }
+    generation = vec->generation + UINT64_C(1);
+    temporary.generation = generation;
+    *vec = temporary;
     return CONTAINER_OK;
 }
 

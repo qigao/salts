@@ -30,8 +30,10 @@ typedef struct {
   void *compare_ctx;
 } turbo_heap_t;
 
-/* Borrowed pointers from peek/at become invalid after any successful mutation,
- * storage-changing reserve, clear, or destroy. */
+/* Handles must be first initialized with `{0}`. A destroyed handle may be
+ * reused. init/from_array on a live handle return CONTAINER_INVALID_ARGUMENT
+ * without mutation. Borrowed pointers from peek/at become invalid after any
+ * successful mutation, storage-changing reserve, clear, or destroy. */
 CONTAINER_API container_status turbo_heap_init(turbo_heap_t *heap,
                                                const cmeta_type_desc *element_type,
                                                size_t element_limit);
@@ -53,6 +55,9 @@ CONTAINER_API void turbo_heap_destroy(turbo_heap_t *heap);
 CONTAINER_API container_status turbo_heap_clear(turbo_heap_t *heap);
 CONTAINER_API container_status turbo_heap_reserve(turbo_heap_t *heap, size_t min_capacity);
 CONTAINER_API container_status turbo_heap_push(turbo_heap_t *heap, const void *elem);
+/* A non-NULL out_elem must be sufficiently aligned, uninitialized element
+ * storage; success transfers ownership there. NULL destroys the value. On
+ * failure out_elem is not written. */
 CONTAINER_API container_status turbo_heap_pop(turbo_heap_t *heap, void *out_elem);
 CONTAINER_API const void *turbo_heap_peek(const turbo_heap_t *heap);
 static inline const void *turbo_heap_at_const(const turbo_heap_t *heap, size_t index) {

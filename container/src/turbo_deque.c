@@ -113,30 +113,44 @@ container_status turbo_deque_init(turbo_deque_t *deque, const cmeta_type_desc *e
 container_status turbo_deque_from_array_bytes(turbo_deque_t *deque, const void *elements,
                                               size_t count, size_t elem_size, size_t elem_align,
                                               size_t limit) {
+    turbo_deque_t temporary = {0};
     container_status status;
     size_t index;
+    uint64_t generation;
+    if (!deque) return CONTAINER_INVALID_ARGUMENT;
+    if (deque->initialized) return CONTAINER_INVALID_ARGUMENT;
     if ((count && !elements) || count > limit)
         return count > limit ? CONTAINER_CAPACITY_EXCEEDED : CONTAINER_INVALID_ARGUMENT;
-    status = turbo_deque_init_bytes(deque, elem_size, elem_align, limit);
+    status = turbo_deque_init_bytes(&temporary, elem_size, elem_align, limit);
     if (status != CONTAINER_OK) return status;
     for (index = 0u; index < count; ++index) {
-        status = turbo_deque_push_back(deque, (const unsigned char *)elements + index * elem_size);
-        if (status != CONTAINER_OK) { turbo_deque_destroy(deque); return status; }
+        status = turbo_deque_push_back(&temporary, (const unsigned char *)elements + index * elem_size);
+        if (status != CONTAINER_OK) { turbo_deque_destroy(&temporary); return status; }
     }
+    generation = deque->generation + UINT64_C(1);
+    temporary.generation = generation;
+    *deque = temporary;
     return CONTAINER_OK;
 }
 container_status turbo_deque_from_array(turbo_deque_t *deque, const void *elements, size_t count,
                                         const cmeta_type_desc *type, size_t limit) {
+    turbo_deque_t temporary = {0};
     container_status status;
     size_t index;
+    uint64_t generation;
+    if (!deque) return CONTAINER_INVALID_ARGUMENT;
+    if (deque->initialized) return CONTAINER_INVALID_ARGUMENT;
     if ((count && !elements) || count > limit)
         return count > limit ? CONTAINER_CAPACITY_EXCEEDED : CONTAINER_INVALID_ARGUMENT;
-    status = turbo_deque_init(deque, type, limit);
+    status = turbo_deque_init(&temporary, type, limit);
     if (status != CONTAINER_OK) return status;
     for (index = 0u; index < count; ++index) {
-        status = turbo_deque_push_back(deque, (const unsigned char *)elements + index * type->size);
-        if (status != CONTAINER_OK) { turbo_deque_destroy(deque); return status; }
+        status = turbo_deque_push_back(&temporary, (const unsigned char *)elements + index * type->size);
+        if (status != CONTAINER_OK) { turbo_deque_destroy(&temporary); return status; }
     }
+    generation = deque->generation + UINT64_C(1);
+    temporary.generation = generation;
+    *deque = temporary;
     return CONTAINER_OK;
 }
 

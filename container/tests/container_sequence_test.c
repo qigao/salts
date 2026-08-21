@@ -2,6 +2,7 @@
 #include "tinytest.h"
 
 #include <stdint.h>
+#include <string.h>
 
 static int int_compare(const void *left, const void *right, void *context) {
     const int lhs = *(const int *)left;
@@ -102,5 +103,119 @@ suite("Container sequences") {
         check_equal(turbo_vec_push(&vec, &byte), CONTAINER_OK);
         check_equal((uintptr_t)turbo_vec_data(&vec) % 64u, 0u);
         turbo_vec_destroy(&vec);
+    }
+
+    it("leaves destroyed byte handles unchanged when from-array exceeds the limit") {
+        const int values[] = {1, 2};
+        turbo_vec_t vec = {0};
+        turbo_deque_t deque = {0};
+        turbo_heap_t heap = {0};
+        turbo_vec_t vec_before;
+        turbo_deque_t deque_before;
+        turbo_heap_t heap_before;
+
+        check_equal(turbo_vec_init_bytes(&vec, sizeof(int), _Alignof(int), 1u), CONTAINER_OK);
+        turbo_vec_destroy(&vec);
+        vec_before = vec;
+        check_equal(turbo_vec_from_array_bytes(&vec, values, 2u, sizeof(int), _Alignof(int), 1u),
+                    CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(memcmp(&vec, &vec_before, sizeof(vec)), 0);
+        check_equal(turbo_vec_from_array_bytes(&vec, values, 1u, sizeof(int), _Alignof(int), 1u),
+                    CONTAINER_OK);
+        check_equal(vec.generation, vec_before.generation + UINT64_C(1));
+        turbo_vec_destroy(&vec);
+
+        check_equal(turbo_deque_init_bytes(&deque, sizeof(int), _Alignof(int), 1u), CONTAINER_OK);
+        turbo_deque_destroy(&deque);
+        deque_before = deque;
+        check_equal(turbo_deque_from_array_bytes(&deque, values, 2u, sizeof(int), _Alignof(int), 1u),
+                    CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(memcmp(&deque, &deque_before, sizeof(deque)), 0);
+        check_equal(turbo_deque_from_array_bytes(&deque, values, 1u, sizeof(int), _Alignof(int), 1u),
+                    CONTAINER_OK);
+        check_equal(deque.generation, deque_before.generation + UINT64_C(1));
+        turbo_deque_destroy(&deque);
+
+        check_equal(turbo_heap_init_bytes(&heap, sizeof(int), _Alignof(int), 1u, int_compare, NULL),
+                    CONTAINER_OK);
+        turbo_heap_destroy(&heap);
+        heap_before = heap;
+        check_equal(turbo_heap_from_array_bytes(&heap, values, 2u, sizeof(int), _Alignof(int), 1u,
+                                                 int_compare, NULL), CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(memcmp(&heap, &heap_before, sizeof(heap)), 0);
+        check_equal(turbo_heap_from_array_bytes(&heap, values, 1u, sizeof(int), _Alignof(int), 1u,
+                                                 int_compare, NULL), CONTAINER_OK);
+        check_equal(heap.generation, heap_before.generation + UINT64_C(1));
+        turbo_heap_destroy(&heap);
+    }
+
+    it("rejects repeated initialization without changing live handles") {
+        turbo_vec_t vec = {0};
+        turbo_deque_t deque = {0};
+        turbo_heap_t heap = {0};
+        turbo_vec_t vec_before;
+        turbo_deque_t deque_before;
+        turbo_heap_t heap_before;
+        const int value = 1;
+
+        check_equal(turbo_vec_init_bytes(&vec, sizeof(int), _Alignof(int), 1u), CONTAINER_OK);
+        vec_before = vec;
+        check_equal(turbo_vec_init_bytes(&vec, sizeof(int), _Alignof(int), 1u),
+                    CONTAINER_INVALID_ARGUMENT);
+        check_equal(memcmp(&vec, &vec_before, sizeof(vec)), 0);
+        check_equal(turbo_vec_from_array_bytes(&vec, &value, 1u, sizeof(int), _Alignof(int), 1u),
+                    CONTAINER_INVALID_ARGUMENT);
+        check_equal(memcmp(&vec, &vec_before, sizeof(vec)), 0);
+        turbo_vec_destroy(&vec);
+
+        check_equal(turbo_deque_init_bytes(&deque, sizeof(int), _Alignof(int), 1u), CONTAINER_OK);
+        deque_before = deque;
+        check_equal(turbo_deque_init_bytes(&deque, sizeof(int), _Alignof(int), 1u),
+                    CONTAINER_INVALID_ARGUMENT);
+        check_equal(memcmp(&deque, &deque_before, sizeof(deque)), 0);
+        check_equal(turbo_deque_from_array_bytes(&deque, &value, 1u, sizeof(int), _Alignof(int), 1u),
+                    CONTAINER_INVALID_ARGUMENT);
+        check_equal(memcmp(&deque, &deque_before, sizeof(deque)), 0);
+        turbo_deque_destroy(&deque);
+
+        check_equal(turbo_heap_init_bytes(&heap, sizeof(int), _Alignof(int), 1u, int_compare, NULL),
+                    CONTAINER_OK);
+        heap_before = heap;
+        check_equal(turbo_heap_init_bytes(&heap, sizeof(int), _Alignof(int), 1u, int_compare, NULL),
+                    CONTAINER_INVALID_ARGUMENT);
+        check_equal(memcmp(&heap, &heap_before, sizeof(heap)), 0);
+        check_equal(turbo_heap_from_array_bytes(&heap, &value, 1u, sizeof(int), _Alignof(int), 1u,
+                                                 int_compare, NULL), CONTAINER_INVALID_ARGUMENT);
+        check_equal(memcmp(&heap, &heap_before, sizeof(heap)), 0);
+        turbo_heap_destroy(&heap);
+    }
+
+    it("does not write removal output on failure") {
+        turbo_vec_t vec = {0};
+        turbo_deque_t deque = {0};
+        turbo_heap_t heap = {0};
+        int output = 91;
+
+        check_equal(turbo_vec_init_bytes(&vec, sizeof(int), _Alignof(int), 1u), CONTAINER_OK);
+        check_equal(turbo_vec_pop(&vec, &output), CONTAINER_EMPTY);
+        check_equal(output, 91);
+        check_equal(turbo_vec_erase(&vec, 0u, &output), CONTAINER_INVALID_ARGUMENT);
+        check_equal(output, 91);
+        check_equal(turbo_vec_swap_remove(&vec, 0u, &output), CONTAINER_INVALID_ARGUMENT);
+        check_equal(output, 91);
+        turbo_vec_destroy(&vec);
+
+        check_equal(turbo_deque_init_bytes(&deque, sizeof(int), _Alignof(int), 1u), CONTAINER_OK);
+        check_equal(turbo_deque_pop_back(&deque, &output), CONTAINER_EMPTY);
+        check_equal(output, 91);
+        check_equal(turbo_deque_pop_front(&deque, &output), CONTAINER_EMPTY);
+        check_equal(output, 91);
+        turbo_deque_destroy(&deque);
+
+        check_equal(turbo_heap_init_bytes(&heap, sizeof(int), _Alignof(int), 1u, int_compare, NULL),
+                    CONTAINER_OK);
+        check_equal(turbo_heap_pop(&heap, &output), CONTAINER_EMPTY);
+        check_equal(output, 91);
+        turbo_heap_destroy(&heap);
     }
 }

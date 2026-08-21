@@ -27,8 +27,10 @@ typedef struct {
   size_t head;
 } turbo_deque_t;
 
-/* Borrowed pointers from front/back/at become invalid after any successful
- * mutation, storage-changing reserve, clear, or destroy. */
+/* Handles must be first initialized with `{0}`. A destroyed handle may be
+ * reused. init/from_array on a live handle return CONTAINER_INVALID_ARGUMENT
+ * without mutation. Borrowed pointers from front/back/at become invalid after
+ * any successful mutation, storage-changing reserve, clear, or destroy. */
 CONTAINER_API container_status turbo_deque_init(turbo_deque_t *deque,
                                                 const cmeta_type_desc *element_type,
                                                 size_t element_limit);
@@ -47,7 +49,13 @@ CONTAINER_API container_status turbo_deque_clear(turbo_deque_t *deque);
 CONTAINER_API container_status turbo_deque_reserve(turbo_deque_t *deque, size_t min_capacity);
 CONTAINER_API container_status turbo_deque_push_back(turbo_deque_t *deque, const void *elem);
 CONTAINER_API container_status turbo_deque_push_front(turbo_deque_t *deque, const void *elem);
+/* A non-NULL out_elem must be sufficiently aligned, uninitialized element
+ * storage; success transfers ownership there. NULL destroys the value. On
+ * failure out_elem is not written. */
 CONTAINER_API container_status turbo_deque_pop_back(turbo_deque_t *deque, void *out_elem);
+/* A non-NULL out_elem must be sufficiently aligned, uninitialized element
+ * storage; success transfers ownership there. NULL destroys the value. On
+ * failure out_elem is not written. */
 CONTAINER_API container_status turbo_deque_pop_front(turbo_deque_t *deque, void *out_elem);
 CONTAINER_API container_status turbo_deque_set(turbo_deque_t *deque, size_t index,
                                                const void *elem);
