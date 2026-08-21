@@ -115,15 +115,38 @@ routes a registered kind to `CMETA_TYPED_<Kind>`. Unregistered kinds may fall th
 
 Generic constructors are finite factories, not user-programmable compile-time templates.
 
-## Type application direction
+## Structural TypeId core
 
-The semantic model is moving toward compositional finite type application:
+CMeta Core now has an independent structural type-identity model for future compositional type application.
+
+The C API models:
 
 ```text
-Apply(Constructor, [TypeId...]) -> TypeId
+ATOM
+POINTER
+CONST
+APPLY(GenericConstructor, TypeId...)
 ```
 
-CMeta Extend may spell this as:
+with equality based on stable semantic IDs and recursively structured arguments rather than generated C symbol names or descriptor addresses.
+
+For example, the semantic target for:
+
+```text
+Task<Result<User,Error>>
+```
+
+is structurally equivalent to:
+
+```text
+Apply(cmeta.Task,
+  [Apply(cmeta.Result,
+    [Atom(app.User), Atom(app.Error)])])
+```
+
+This TypeId layer is intentionally independent from the current `cmeta_type_desc` ABI. Descriptor integration is a later bridge so existing header-local descriptors and positional initializers remain source-compatible during migration.
+
+CMeta Extend may later spell the same semantics as:
 
 ```c
 Task<Result<User, Error>>
@@ -132,22 +155,20 @@ Map<String, List<User>>
 
 while strict C11 continues to use explicit named instantiation.
 
-Semantic type identity must be independent from aliases, display names, generated C symbols and translation-unit-local descriptor addresses.
-
 ## Known types and callable signatures
 
-A reflected/known CMeta type is not automatically part of every callable signature family.
-
-CMeta distinguishes conceptually:
+The configured reflected type universe and callable-instantiation universe are now explicitly separated:
 
 ```text
-KnownTypes
-CallableSignatures
+CMETA_KNOWN_TYPE_LIST
+CMETA_CALLABLE_TYPE_LIST
 ```
 
-This prevents compositional generic types from causing uncontrolled Cartesian-product growth in the typed callable universe.
+`CMETA_TYPE_LIST` remains a compatibility alias during migration.
 
-Callable signatures should evolve toward explicit finite demand while preserving Core `Callable`, effect/property and contract semantics.
+Descriptor declaration/definition and the runtime type registry use the known-type universe. Full/balanced callable Cartesian generation uses only the callable-type universe.
+
+This means adding a reflected/known type does not automatically inflate every unary/binary/generator signature family. A formal compile probe locks this invariant, and the Lean model represents `KnownTypes` and explicit `CallableSchema` separately.
 
 ## Single-stage typed containers
 
@@ -183,7 +204,7 @@ Generated wrapper functions are TU-local `static inline`. Generated descriptors 
 
 Descriptor addresses are not stable program-wide type IDs. Consumers must compare semantic type identity/content rather than require pointer equality.
 
-This rule becomes more important as generic type applications gain structured TypeId metadata.
+The independent TypeId core now provides the structural model that later descriptor bridging can reference without making translation-unit-local addresses authoritative.
 
 ## Range metadata
 
@@ -213,6 +234,22 @@ implements(...);
 `implements(...)` means a concrete type implements an interface/protocol. It is unrelated to the removed container implementation phase.
 
 `cmeta_callable` is the shared Command abstraction for typed behavior. It carries signature, effects, properties and captures and is reused by domains such as CFlow and future CMeta State/Exec modules.
+
+## Formal conformance
+
+The TypeId slice follows the same executable-refinement pattern as the existing CMeta/CFlow formal work:
+
+```text
+real C TypeId implementation
+        ↓ witness generator
+TypeIdentityGeneratedC.lean
+        ↓
+Lean TypeId model + conformance checks
+        ↓
+lake build --wfail
+```
+
+The formal build also includes a compile probe proving that extending `KnownTypes` does not expand the configured full callable universe.
 
 ## Hexagonal architecture
 
