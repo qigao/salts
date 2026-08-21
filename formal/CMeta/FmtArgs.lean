@@ -1,3 +1,4 @@
+module
 import CMeta.Calculus
 
 /-!
@@ -18,23 +19,23 @@ namespace CMeta
 namespace FmtArgs
 
 /-- Semantic slot corresponding to one `fmt_arg_t` entry. -/
-inductive Slot (α : Type) where
+public inductive Slot (α : Type) where
   | none
   | arg (value : α)
   deriving Repr, DecidableEq
 
 /-- The current storage behavior after the 0..8 arity dispatch has resolved. -/
-def legacyStorage : List α → List (Slot α)
+public def legacyStorage : List α → List (Slot α)
   | [] => [.none]
   | x :: xs => (x :: xs).map (fun value => .arg value)
 
 /-- Proposed semantic normal form: replay every real argument, then append NONE. -/
-def normalizedStorage (xs : List α) : List (Slot α) :=
+public def normalizedStorage (xs : List α) : List (Slot α) :=
   xs.map (fun value => .arg value) ++ [.none]
 
 /-- Model of what `fmt_print(args, arg_count)` may observe from the argument
     array: at most the first `arg_count` slots. -/
-def observe : Nat → List α → List α
+public def observe : Nat → List α → List α
   | 0, _ => []
   | _ + 1, [] => []
   | n + 1, x :: xs => x :: observe n xs
@@ -93,7 +94,7 @@ theorem legacy_normalized_observational_equivalence (xs : List α) :
 
 /-- Model the current FMT dispatcher limit.  Its 0..8 routing is a capacity
     restriction, not a semantic distinction among non-empty arities. -/
-def legacyDispatch (xs : List α) : Option (List (Slot α)) :=
+public def legacyDispatch (xs : List α) : Option (List (Slot α)) :=
   if xs.length ≤ 8 then some (legacyStorage xs) else none
 
 /-- Within the exact current macro domain, dispatch contributes no semantics
@@ -117,7 +118,7 @@ theorem normalized_storage_length (xs : List α) :
   simp [normalizedStorage]
 
 /-- Recover a logical argument count from a normalized storage representation. -/
-def argCountFromStorage (storage : List α) : Nat :=
+public def argCountFromStorage (storage : List α) : Nat :=
   storage.length - 1
 
 /-- Normalized storage makes the logical argument count exactly recoverable
@@ -136,7 +137,7 @@ theorem legacy_storage_length_not_injective (x : α) :
   simp [legacyStorage]
 
 /-- The formatter's read guard can be derived from normalized storage alone. -/
-def canReadRealArg (storage : List α) (index : Nat) : Prop :=
+public def canReadRealArg (storage : List α) (index : Nat) : Prop :=
   index < argCountFromStorage storage
 
 /-- The derived guard accepts exactly the indices of real arguments.  Arity is
