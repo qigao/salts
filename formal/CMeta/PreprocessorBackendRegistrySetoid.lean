@@ -25,7 +25,11 @@ namespace PreprocessorBackendRegistry
     semantic equality. -/
 public instance registrySetoid : Setoid PreprocessorBackendRegistry where
   r := Equivalent
-  iseqv := ⟨equivalent_refl, equivalent_symm, equivalent_trans⟩
+  iseqv :=
+    { refl := fun _ _ => rfl
+      symm := fun _ _ h key => (h key).symm
+      trans := fun _ _ _ hleft hright key =>
+        (hleft key).trans (hright key) }
 
 /-- Exact-key backend-payload observation respects registry Setoid equality. -/
 -- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
@@ -133,7 +137,9 @@ private theorem key_mem_congr
       key ∈ right.entries.map CertifiedPreprocessorBackend.key := by
   constructor
   · exact key_mem_of_equivalent heq key
-  · exact key_mem_of_equivalent (equivalent_symm heq) key
+  · exact key_mem_of_equivalent
+      (left := right) (right := left)
+      (fun observedKey => (heq observedKey).symm) key
 
 /-- Equivalent registries agree on whether exact lookup is absent. Replacement
     only needs this shape property; the existing payload is not consumed by the
