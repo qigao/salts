@@ -1,6 +1,6 @@
 import CMeta.PreprocessorBackend
 import CMeta.NestedReplayBackendPlan
-import CMeta.NestedReplayGeneratedC
+import CMeta.NestedReplayGccGeneratedC
 import CMeta.NestedReplayClangGeneratedC
 
 /-!
@@ -16,11 +16,11 @@ namespace Producer
 
 private def gccBackend : PreprocessorBackend :=
   { compilerFamily := .gcc
-    compilerMajorVersion := NestedReplayGeneratedC.compilerMajorVersion
+    compilerMajorVersion := NestedReplayGccGeneratedC.compilerMajorVersion
     languageMode := .c11
-    directSameProducerAccepted := NestedReplayGeneratedC.directSameProducerAccepted
-    deferredSameProducerAccepted := NestedReplayGeneratedC.deferredSameProducerAccepted
-    certifiedSameProducerDepth := NestedReplayGeneratedC.certifiedSameProducerDepth }
+    directSameProducerAccepted := NestedReplayGccGeneratedC.directSameProducerAccepted
+    deferredSameProducerAccepted := NestedReplayGccGeneratedC.deferredSameProducerAccepted
+    certifiedSameProducerDepth := NestedReplayGccGeneratedC.certifiedSameProducerDepth }
 
 private def clangBackend : PreprocessorBackend :=
   { compilerFamily := .clang
@@ -35,7 +35,7 @@ private def reentrantIR : ReplayIR :=
 
 /-- The generated GCC witness identifies its compiler family explicitly. -/
 theorem CPreprocessorBackendConformance.gcc_family :
-    NestedReplayGeneratedC.compilerFamilyTag = CompilerFamily.gcc.tag := by
+    NestedReplayGccGeneratedC.compilerFamilyTag = CompilerFamily.gcc.tag := by
   native_decide
 
 /-- The generated Clang witness identifies its compiler family explicitly. -/
@@ -45,13 +45,13 @@ theorem CPreprocessorBackendConformance.clang_family :
 
 /-- Both compiler certificates record concrete major versions. -/
 theorem CPreprocessorBackendConformance.compiler_versions_are_concrete :
-    0 < NestedReplayGeneratedC.compilerMajorVersion ∧
+    0 < NestedReplayGccGeneratedC.compilerMajorVersion ∧
     0 < NestedReplayClangGeneratedC.compilerMajorVersion := by
   native_decide
 
 /-- Exact strict-C11 mode is part of both backend certificates. -/
 theorem CPreprocessorBackendConformance.language_modes_are_c11 :
-    NestedReplayGeneratedC.languageStandard = LanguageMode.c11.standardValue ∧
+    NestedReplayGccGeneratedC.languageStandard = LanguageMode.c11.standardValue ∧
     NestedReplayClangGeneratedC.languageStandard = LanguageMode.c11.standardValue := by
   native_decide
 
