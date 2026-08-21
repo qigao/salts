@@ -1,6 +1,7 @@
 import CMeta.Calculus
 import CMeta.Traits
 import CMeta.Callable
+import CMeta.Lambda
 
 #check CMeta.product
 #check CMeta.CoreExpr
@@ -38,3 +39,17 @@ assert_not_exists CMeta.Generator.signature_exact
 assert_not_exists CMeta.eraseValue_unary
 assert_not_exists CMeta.eraseValue_binary
 assert_not_exists CMeta.eraseGenerator_preserves_signature
+
+#check CMeta.Lambda
+#check CMeta.Lambda.invoke
+#check CMeta.Lambda.asCallable
+#check CMeta.anonymous
+#check CMeta.bindLast
+
+assert_not_exists CMeta.Lambda.beta
+assert_not_exists CMeta.Lambda.erasure_semantics
+assert_not_exists CMeta.Lambda.erasure_signature_unary
+assert_not_exists CMeta.Lambda.erasure_signature_binary
+assert_not_exists CMeta.anonymous_beta
+assert_not_exists CMeta.bindLast_beta
+assert_not_exists CMeta.lambda_bind_same_shape
