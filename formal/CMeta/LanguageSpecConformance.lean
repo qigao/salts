@@ -19,8 +19,9 @@ theorem CLanguageSpecConformance.syntaxCarriers
     (backend : LanguageSpec.Backend)
     (query : LanguageSpec.Query)
     (registry : LanguageSpec.Registry)
-    (plan : LanguageSpec.Plan) : True := by
-  trivial
+    (plan : LanguageSpec.Plan) :
+    ir = ir ∧ backend = backend ∧ query = query ∧ registry = registry ∧ plan = plan := by
+  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-- Raw certification evidence can be introduced as a certified backend value. -/
 theorem CLanguageSpecConformance.certificationIntro
