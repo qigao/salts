@@ -3,6 +3,19 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#if !defined(__STDC_VERSION__) || __STDC_VERSION__ != 201112L
+#error "producer replay applicability witness must compile as exact C11"
+#endif
+
+/* The producer/replay path being tested must not obtain empty/non-empty or
+ * arity information from the current variadic-list backend.  Poison those
+ * entry points after pp.h is parsed; any dependency during Replay expansion
+ * now becomes a compile error. */
+#undef CMETA_PP_NARG
+#define CMETA_PP_NARG(...) CMETA_PRODUCER_WITNESS_FORBIDS_NARG
+#undef CMETA_PP_FOR_EACH
+#define CMETA_PP_FOR_EACH(...) CMETA_PRODUCER_WITNESS_FORBIDS_FOR_EACH
+
 #define CHECK(expr) do { \
     if (!(expr)) { \
         fprintf(stderr, "producer replay check failed: %s\n", #expr); \
