@@ -5,7 +5,7 @@ import CMeta.Execution
 # Real C runtime ↔ Lean execution semantics conformance
 
 `CPlanGenerated.runtimeWitnesses` is produced by executing real plans through
-`cflow_plan_eval_array`.  Each witness records the input logical type and
+`cflow_plan_eval_array`. Each witness records the input logical type and
 values, the runtime result CType/count, and the returned values.
 
 `CPlanGenerated.differentialWitnesses` goes one step further: one surface Graph
@@ -15,29 +15,29 @@ the surface program, through `cflow_plan_compile_surface` followed by
 
 The expected result below is not a second table of outputs: it is computed by
 `ExecProgram.run` using the same logical callbacks represented in the C
-witnesses.  The closed conformance theorems therefore check both C backends
+witnesses. The closed conformance theorems therefore check both C backends
 against each other and against the already-proved Lean execution semantics.
 -/
 
 namespace CMeta
 
-private def keepI : Callable1 CType.int CType.bool :=
-  ⟨fun (x : Int) => x != 0⟩
+private def keepI : Callable [CType.int] CType.bool :=
+  Callable.ofUnary (fun (x : Int) => x != 0)
 
-private def mapIL : Callable1 CType.int CType.long :=
-  ⟨fun (x : Int) => x⟩
+private def mapIL : Callable [CType.int] CType.long :=
+  Callable.ofUnary (fun (x : Int) => x)
 
-private def mapIIPlusOne : Callable1 CType.int CType.int :=
-  ⟨fun (x : Int) => x + 1⟩
+private def mapIIPlusOne : Callable [CType.int] CType.int :=
+  Callable.ofUnary (fun (x : Int) => x + 1)
 
-private def mapILTwice : Callable1 CType.int CType.long :=
-  ⟨fun (x : Int) => x * 2⟩
+private def mapILTwice : Callable [CType.int] CType.long :=
+  Callable.ofUnary (fun (x : Int) => x * 2)
 
 private def flatIL : CompletedGenerator CType.int CType.long :=
   ⟨fun (x : Int) => [x, x + 10]⟩
 
-private def addL : Callable2 CType.long CType.long CType.long :=
-  ⟨fun (a b : Int) => a + b⟩
+private def addL : Callable [CType.long, CType.long] CType.long :=
+  Callable.ofBinary (fun (a b : Int) => a + b)
 
 private def mapILChain : MapChain CType.int CType.long :=
   .cons mapIL (.done CType.long)
@@ -123,7 +123,7 @@ theorem CRuntimeConformance.coverage :
        "flat_map_i_l", "reduce_l", "reduce_l_empty"] := by
   native_decide
 
-/-- Main executable runtime-conformance theorem.  For every generated witness,
+/-- Main executable runtime-conformance theorem. For every generated witness,
     the real `cflow_plan_eval_array` result CType, cardinality and values match
     the result computed by the typed `ExecProgram.run` semantics. -/
 theorem CRuntimeConformance.matches_execution_model :
