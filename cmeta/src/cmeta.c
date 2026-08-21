@@ -1,9 +1,118 @@
 #include <cmeta/cmeta.h>
 
+#include <float.h>
+#include <limits.h>
+#include <math.h>
+#include <stdint.h>
 #include <string.h>
 
 #define CMETA_STR_I(x) #x
 #define CMETA_STR(x) CMETA_STR_I(x)
+
+_Static_assert(CMETA_FLOAT_TRAITS_OBJECT_HASH_WIDTHS,
+               "floating trait hashes require eight-bit bytes and matching copy widths");
+_Static_assert(sizeof(float) == 4u,
+               "floating trait hashes require a binary32-sized float");
+_Static_assert(sizeof(double) == 8u,
+               "floating trait hashes require a binary64-sized double");
+_Static_assert(FLT_RADIX == 2,
+               "floating trait hashes require a binary radix");
+_Static_assert(FLT_MANT_DIG == 24 && FLT_MIN_EXP == -125 && FLT_MAX_EXP == 128,
+               "floating trait hashes require binary32 precision and exponent range");
+_Static_assert(DBL_MANT_DIG == 53 && DBL_MIN_EXP == -1021 && DBL_MAX_EXP == 1024,
+               "floating trait hashes require binary64 precision and exponent range");
+
+#define CMETA_TRIVIAL_TRAIT_FLAGS \
+    (CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH | CMETA_TRAIT_COMPARE | \
+     CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY | \
+     CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY)
+
+#define CMETA_DEFINE_TRIVIAL_TRAITS(prefix, type) \
+    static bool prefix##_equal(const void *left, const void *right) { \
+        return left != NULL && right != NULL && \
+               *(const type *)left == *(const type *)right; \
+    } \
+    static uint64_t prefix##_hash(const void *value) { \
+        return value == NULL ? 0u : (uint64_t)*(const type *)value; \
+    } \
+    static int prefix##_compare(const void *left, const void *right) { \
+        type lhs; type rhs; \
+        if (left == NULL || right == NULL) return 0; \
+        lhs = *(const type *)left; rhs = *(const type *)right; \
+        return lhs < rhs ? -1 : lhs > rhs; \
+    } \
+    static bool prefix##_copy_construct(void *destination, const void *source) { \
+        if (destination == NULL || source == NULL) return false; \
+        *(type *)destination = *(const type *)source; return true; \
+    } \
+    static void prefix##_move_construct(void *destination, void *source) { \
+        if (destination != NULL && source != NULL) \
+            *(type *)destination = *(type *)source; \
+    } \
+    static void prefix##_destroy(void *value) { (void)value; }
+
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_bool, _Bool)
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_int, int)
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_long, long)
+
+const cmeta_type_traits cmeta_traits_bool = { CMETA_TRIVIAL_TRAIT_FLAGS,
+    cmeta_bool_equal, cmeta_bool_hash, cmeta_bool_compare,
+    cmeta_bool_copy_construct, cmeta_bool_move_construct, cmeta_bool_destroy };
+const cmeta_type_traits cmeta_traits_int = { CMETA_TRIVIAL_TRAIT_FLAGS,
+    cmeta_int_equal, cmeta_int_hash, cmeta_int_compare,
+    cmeta_int_copy_construct, cmeta_int_move_construct, cmeta_int_destroy };
+const cmeta_type_traits cmeta_traits_long = { CMETA_TRIVIAL_TRAIT_FLAGS,
+    cmeta_long_equal, cmeta_long_hash, cmeta_long_compare,
+    cmeta_long_copy_construct, cmeta_long_move_construct, cmeta_long_destroy };
+
+#define CMETA_DEFINE_FLOAT_TRAITS(prefix, type, bits_type, zero, nan_hash) \
+    static bool prefix##_equal(const void *left, const void *right) { \
+        type lhs; type rhs; \
+        if (left == NULL || right == NULL) return false; \
+        lhs = *(const type *)left; rhs = *(const type *)right; \
+        return (isnan(lhs) && isnan(rhs)) || lhs == rhs; \
+    } \
+    static uint64_t prefix##_hash(const void *value) { \
+        type number; bits_type bits; \
+        if (value == NULL) return 0u; \
+        number = *(const type *)value; \
+        if (isnan(number)) return (nan_hash); \
+        if (number == (zero)) return 0u; \
+        memcpy(&bits, &number, sizeof(bits)); return (uint64_t)bits; \
+    } \
+    static int prefix##_compare(const void *left, const void *right) { \
+        type lhs; type rhs; \
+        if (left == NULL || right == NULL) return 0; \
+        lhs = *(const type *)left; rhs = *(const type *)right; \
+        if (isnan(lhs)) return isnan(rhs) ? 0 : 1; \
+        if (isnan(rhs)) return -1; \
+        return lhs < rhs ? -1 : lhs > rhs; \
+    } \
+    static bool prefix##_copy_construct(void *destination, const void *source) { \
+        if (destination == NULL || source == NULL) return false; \
+        *(type *)destination = *(const type *)source; return true; \
+    } \
+    static void prefix##_move_construct(void *destination, void *source) { \
+        if (destination != NULL && source != NULL) \
+            *(type *)destination = *(type *)source; \
+    } \
+    static void prefix##_destroy(void *value) { (void)value; }
+
+CMETA_DEFINE_FLOAT_TRAITS(cmeta_float, float, uint32_t, 0.0f,
+                          UINT64_C(0x7fc00000))
+CMETA_DEFINE_FLOAT_TRAITS(cmeta_double, double, uint64_t, 0.0,
+                          UINT64_C(0x7ff8000000000000))
+
+const cmeta_type_traits cmeta_traits_float = { CMETA_TRIVIAL_TRAIT_FLAGS,
+    cmeta_float_equal, cmeta_float_hash, cmeta_float_compare,
+    cmeta_float_copy_construct, cmeta_float_move_construct, cmeta_float_destroy };
+const cmeta_type_traits cmeta_traits_double = { CMETA_TRIVIAL_TRAIT_FLAGS,
+    cmeta_double_equal, cmeta_double_hash, cmeta_double_compare,
+    cmeta_double_copy_construct, cmeta_double_move_construct, cmeta_double_destroy };
+
+#undef CMETA_DEFINE_FLOAT_TRAITS
+#undef CMETA_DEFINE_TRIVIAL_TRAITS
+#undef CMETA_TRIVIAL_TRAIT_FLAGS
 
 static const cmeta_type_identity cmeta_id_void =
     CMETA_TYPE_ID_ATOM_INIT("cmeta.void");
@@ -35,8 +144,6 @@ static const cmeta_type_identity cmeta_id_double_ptr =
 static const cmeta_type_identity cmeta_id_size_ptr =
     CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_size);
 
-/* Builtin identity is selected from the finite CMeta row token schema, not
- * from descriptor display names. Unknown/project row tokens remain legacy. */
 #define CMETA_BUILTIN_ID_MARK_B CMETA_GENERIC_PROBE()
 #define CMETA_BUILTIN_ID_MARK_I CMETA_GENERIC_PROBE()
 #define CMETA_BUILTIN_ID_MARK_L CMETA_GENERIC_PROBE()
@@ -70,36 +177,33 @@ static const cmeta_type_identity cmeta_id_size_ptr =
     CMETA_BUILTIN_PTR_SELECT_I( \
         CMETA_GENERIC_IS_PROBE(CMETA_BUILTIN_ID_MARK(tok)), tok)
 
+static const cmeta_type_traits cmeta_builtin_size_traits = {
+    CMETA_TRIVIAL_TRAIT_FLAGS,
+    NULL, NULL, NULL, NULL, NULL, NULL
+};
+static const cmeta_type_traits cmeta_builtin_gen_status_traits = {
+    CMETA_TRIVIAL_TRAIT_FLAGS,
+    NULL, NULL, NULL, NULL, NULL, NULL
+};
+
 const cmeta_type_desc cmeta_type_void = {
-    .name = "void",
-    .size = 0,
-    .align = 1,
-    .kind = CMETA_T_VOID,
-    .pointee = NULL,
-    .identity = &cmeta_id_void
+    .name = "void", .size = 0, .align = 1, .kind = CMETA_T_VOID,
+    .pointee = NULL, .traits = NULL, .identity = &cmeta_id_void
 };
 const cmeta_type_desc cmeta_type_size = {
-    .name = "size_t",
-    .size = sizeof(size_t),
-    .align = _Alignof(size_t),
-    .kind = CMETA_T_INTEGER,
-    .pointee = NULL,
-    .identity = &cmeta_id_size
+    .name = "size_t", .size = sizeof(size_t), .align = _Alignof(size_t),
+    .kind = CMETA_T_INTEGER, .pointee = NULL,
+    .traits = &cmeta_builtin_size_traits, .identity = &cmeta_id_size
 };
 const cmeta_type_desc cmeta_type_size_ptr = {
-    .name = "size_t *",
-    .size = sizeof(size_t *),
-    .align = _Alignof(size_t *),
-    .kind = CMETA_T_POINTER,
-    .pointee = &cmeta_type_size,
-    .identity = &cmeta_id_size_ptr
+    .name = "size_t *", .size = sizeof(size_t *), .align = _Alignof(size_t *),
+    .kind = CMETA_T_POINTER, .pointee = &cmeta_type_size,
+    .traits = NULL, .identity = &cmeta_id_size_ptr
 };
 const cmeta_type_desc cmeta_type_gen_status = {
-    .name = "cmeta_gen_status",
-    .size = sizeof(cmeta_gen_status),
-    .align = _Alignof(cmeta_gen_status),
-    .kind = CMETA_T_INTEGER,
-    .pointee = NULL,
+    .name = "cmeta_gen_status", .size = sizeof(cmeta_gen_status),
+    .align = _Alignof(cmeta_gen_status), .kind = CMETA_T_INTEGER,
+    .pointee = NULL, .traits = &cmeta_builtin_gen_status_traits,
     .identity = &cmeta_id_gen_status
 };
 
@@ -110,6 +214,7 @@ const cmeta_type_desc cmeta_type_gen_status = {
         .align = _Alignof(CMETA_TYPE_CTYPE(row)), \
         .kind = CMETA_TYPE_KIND(row), \
         .pointee = NULL, \
+        .traits = &CMETA_TYPE_TRAITS(row), \
         .identity = CMETA_BUILTIN_ATOM_ID(CMETA_TYPE_TOKEN(row)) \
     }; \
     const cmeta_type_desc CMETA_DESC_PTR(row) = { \
@@ -118,6 +223,7 @@ const cmeta_type_desc cmeta_type_gen_status = {
         .align = _Alignof(CMETA_TYPE_CTYPE(row) *), \
         .kind = CMETA_T_POINTER, \
         .pointee = &CMETA_TYPE_DESC(row), \
+        .traits = NULL, \
         .identity = CMETA_BUILTIN_PTR_ID(CMETA_TYPE_TOKEN(row)) \
     };
 CMETA_PP_FOR_EACH_A(CMETA_DEFINE_TYPE, ~, CMETA_KNOWN_TYPE_LIST)
@@ -130,14 +236,10 @@ const cmeta_type_identity *cmeta_type_identity_of(const cmeta_type_desc *desc) {
 bool cmeta_type_desc_valid(const cmeta_type_desc *desc) {
     if (!desc || !desc->name || desc->name[0] == '\0' || desc->align == 0u)
         return false;
-
-    if (!desc->identity) {
+    if (!desc->identity)
         return desc->kind != CMETA_T_POINTER || desc->pointee != NULL;
-    }
-
     if (!cmeta_type_identity_valid(desc->identity))
         return false;
-
     if (desc->kind == CMETA_T_POINTER) {
         if (!desc->pointee || !desc->pointee->identity)
             return false;
@@ -146,20 +248,17 @@ bool cmeta_type_desc_valid(const cmeta_type_desc *desc) {
         return cmeta_type_identity_equal(desc->identity->base,
                                          desc->pointee->identity);
     }
-
     return desc->identity->form != CMETA_TYPE_POINTER;
 }
 
 bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b) {
     if (a == b) return a != NULL;
     if (!a || !b) return false;
-
     if (a->identity || b->identity) {
         if (!a->identity || !b->identity)
             return false;
         return cmeta_type_identity_equal(a->identity, b->identity);
     }
-
     if (a->kind != b->kind || a->size != b->size || a->align != b->align)
         return false;
     if (strcmp(a->name, b->name) != 0) return false;
@@ -322,7 +421,6 @@ cmeta_gen_status cmeta_fn_generate(cmeta_fn fn, const void *input,
     return CMETA_GEN_ERROR;
 }
 
-
 bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out) {
     cmeta_fn meta;
     const cmeta_sig_desc *sig;
@@ -331,7 +429,6 @@ bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out) {
     if (meta.sig == CMETA_SIG_INVALID) {
         if (!in.resolve) return false;
         meta = in.resolve();
-        /* The callable value is the ownership point for semantic contracts. */
         meta.effects = in.meta.effects;
         meta.properties = in.meta.properties;
     }
