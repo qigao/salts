@@ -55,8 +55,9 @@ include(FindTools)
 add_subdirectory(vendor)
 add_subdirectory(tinytest) 
 add_subdirectory(cmeta)
-add_subdirectory(utils)
 add_subdirectory(cflow)
+add_subdirectory(container)
+add_subdirectory(utils)
 add_subdirectory(turbo_serial)
 
 # Package Configuration

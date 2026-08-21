@@ -1,0 +1,70 @@
+/**
+ * @file turbo_vec.h
+ * @brief Dynamic array implementation
+ *
+ * THREAD SAFETY: NOT thread-safe. Each turbo_vec_t instance must be accessed
+ *                by only one thread at a time. Use external synchronization
+ *                (e.g., mutex) for shared vectors.
+ *
+ * CONCURRENCY MODEL: Single-owner model. For multi-threaded scenarios:
+ *                    - Use one vec per thread (thread-local), or
+ *                    - Protect shared vec with external mutex, or
+ *                    - Use read-write lock for concurrent reads + exclusive writes
+ *
+ * CONCURRENT READS: Multiple threads may safely read a const turbo_vec_t
+ *                   (using turbo_vec_at_const, turbo_vec_size, etc.) if no
+ *                   thread is modifying it. Reallocation invalidates pointers.
+ */
+
+#ifndef TURBO_VEC_H
+#define TURBO_VEC_H
+
+#include <turbo/container/export.h>
+#include <turbo/container/status.h>
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <turbo/container/meta.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct {
+  void *data;
+  size_t size;
+  size_t capacity;
+  size_t elem_size;
+} turbo_vec_t;
+
+CONTAINER_API int turbo_vec_init(turbo_vec_t *vec, size_t elem_size);
+/** Initialize vec by copying count elements from a contiguous array. */
+CONTAINER_API int turbo_vec_from_array(turbo_vec_t *vec, const void *elements, size_t count,
+                                   size_t elem_size);
+CONTAINER_API void turbo_vec_destroy(turbo_vec_t *vec);
+CONTAINER_API void turbo_vec_clear(turbo_vec_t *vec);
+CONTAINER_API int turbo_vec_reserve(turbo_vec_t *vec, size_t min_capacity);
+CONTAINER_API int turbo_vec_resize(turbo_vec_t *vec, size_t new_size);
+CONTAINER_API int turbo_vec_push(turbo_vec_t *vec, const void *elem);
+CONTAINER_API int turbo_vec_pop(turbo_vec_t *vec, void *out_elem);
+CONTAINER_API int turbo_vec_insert(turbo_vec_t *vec, size_t index, const void *elem);
+CONTAINER_API int turbo_vec_erase(turbo_vec_t *vec, size_t index, void *out_elem);
+CONTAINER_API int turbo_vec_swap_remove(turbo_vec_t *vec, size_t index, void *out_elem);
+CONTAINER_API void *turbo_vec_at(turbo_vec_t *vec, size_t index);
+CONTAINER_API const void *turbo_vec_at_const(const turbo_vec_t *vec, size_t index);
+CONTAINER_API void *turbo_vec_data(turbo_vec_t *vec);
+CONTAINER_API const void *turbo_vec_data_const(const turbo_vec_t *vec);
+CONTAINER_API size_t turbo_vec_size(const turbo_vec_t *vec);
+CONTAINER_API size_t turbo_vec_capacity(const turbo_vec_t *vec);
+CONTAINER_API bool turbo_vec_empty(const turbo_vec_t *vec);
+
+#define TURBO_VEC_DEFINE(name, type) \
+  CMETA_CONTAINER1_DEFINE(name, type, turbo_vec_t, turbo_vec, CONTAINER_OK, _, TURBO_META_VEC_METHODS) \
+  CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name, type, turbo_vec, \
+      CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_CONTIGUOUS | CMETA_RANGE_RANDOM_ACCESS | CMETA_RANGE_REUSABLE)
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* TURBO_VEC_H */
