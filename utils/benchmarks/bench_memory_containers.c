@@ -1,6 +1,5 @@
 #include "tinytest.h"
 #include "turbo_buffer.h"
-#include "turbo_containers.h"
 #include "turbo_thread.h"
 
 #include <stdint.h>
@@ -11,8 +10,6 @@
 #define MEMORY_BENCH_ITERS 5000U
 #define MEMORY_BENCH_BATCH 256U
 #define MEMORY_BENCH_BLOCK_SIZE 64U
-#define CONTAINER_BENCH_ITERS 2000U
-#define CONTAINER_BENCH_ITEMS 1024U
 #define EXTERNAL_WRAPPER_BENCH_ITERS 100000U
 #define EXTERNAL_WRAPPER_BENCH_REPEATS 5U
 #define EXTERNAL_WRAPPER_BENCH_MAX_THREADS 8U
@@ -24,11 +21,6 @@
 #define SLAB_ALLOC_BENCH_REPEATS 5U
 #define SLAB_ALLOC_BENCH_FIXED_SIZE 64U
 #define SLAB_ALLOC_BENCH_SIZE_CLASSES 9U
-
-typedef struct memory_bench_heap_item {
-  uint32_t priority;
-  unsigned char payload[508];
-} memory_bench_heap_item_t;
 
 static volatile uintptr_t g_memory_bench_sink;
 static mem_pool_t g_memory_bench_pool;
@@ -253,13 +245,6 @@ static void slab_alloc_bench_parallel(size_t thread_count, int owner_local, int 
   }
 }
 
-static int memory_bench_heap_compare(const void *left, const void *right, void *ctx) {
-  const memory_bench_heap_item_t *a = (const memory_bench_heap_item_t *)left;
-  const memory_bench_heap_item_t *b = (const memory_bench_heap_item_t *)right;
-  (void)ctx;
-  return (a->priority > b->priority) - (a->priority < b->priority);
-}
-
 spec("Memory and container allocation benchmarks") {
   before_all() { turbo_mutex_init(&g_memory_bench_baseline_mutex); }
 
@@ -461,63 +446,4 @@ spec("Memory and container allocation benchmarks") {
     check_equal(atomic_load_explicit(&g_memory_bench_failures, memory_order_relaxed), 0U);
   }
 
-  bench("Container allocation paths") {
-    benchmark("heap push/pop: 1024 x 512B", CONTAINER_BENCH_ITERS,
-              CONTAINER_BENCH_ITEMS * 2U) {
-      turbo_heap_t heap;
-      memory_bench_heap_item_t item;
-      memory_bench_heap_item_t out;
-      size_t i;
-      (void)turbo_heap_init(&heap, sizeof(item), memory_bench_heap_compare, NULL);
-      memset(&item, 0x5a, sizeof(item));
-      for (i = 0; i < CONTAINER_BENCH_ITEMS; ++i) {
-        item.priority = (uint32_t)(CONTAINER_BENCH_ITEMS - i);
-        (void)turbo_heap_push(&heap, &item);
-      }
-      while (turbo_heap_pop(&heap, &out) == TURBO_OK) {
-        g_memory_bench_sink ^= out.priority;
-      }
-      turbo_heap_destroy(&heap);
-    }
-
-    benchmark("deque wrapped growth: 1024 ints", CONTAINER_BENCH_ITERS,
-              CONTAINER_BENCH_ITEMS) {
-      turbo_deque_t deque;
-      int value;
-      size_t i;
-      (void)turbo_deque_init(&deque, sizeof(value));
-      (void)turbo_deque_reserve(&deque, CONTAINER_BENCH_ITEMS);
-      for (i = 0; i < CONTAINER_BENCH_ITEMS; ++i) {
-        value = (int)i;
-        (void)turbo_deque_push_back(&deque, &value);
-      }
-      for (i = 0; i < CONTAINER_BENCH_ITEMS / 2U; ++i) {
-        (void)turbo_deque_pop_front(&deque, &value);
-      }
-      for (i = 0; i < CONTAINER_BENCH_ITEMS / 2U; ++i) {
-        value = (int)(CONTAINER_BENCH_ITEMS + i);
-        (void)turbo_deque_push_back(&deque, &value);
-      }
-      (void)turbo_deque_reserve(&deque, CONTAINER_BENCH_ITEMS * 2U);
-      g_memory_bench_sink ^= (uintptr_t)turbo_deque_back(&deque);
-      turbo_deque_destroy(&deque);
-    }
-
-    benchmark("hash insert with growth: 1024 pairs", CONTAINER_BENCH_ITERS,
-              CONTAINER_BENCH_ITEMS) {
-      turbo_hash_map_t map;
-      uint64_t key;
-      uint64_t value;
-      size_t i;
-      (void)turbo_hash_map_init(&map, sizeof(key), sizeof(value), NULL, NULL, NULL);
-      for (i = 0; i < CONTAINER_BENCH_ITEMS; ++i) {
-        key = (uint64_t)i;
-        value = key * 2U;
-        (void)turbo_hash_map_put(&map, &key, &value);
-      }
-      key = CONTAINER_BENCH_ITEMS - 1U;
-      g_memory_bench_sink ^= (uintptr_t)turbo_hash_map_get(&map, &key);
-      turbo_hash_map_destroy(&map);
-    }
-  }
 }

@@ -109,6 +109,44 @@ REUSABLE
 
 Typed sequence containers can derive a default Range. Associative containers can publish key/value/entry Range factories.
 
+## Transactional collectors
+
+`cmeta_collector` is the bounded, single-threaded collection protocol for an
+adapter that constructs a caller-owned, zero-initialized output. A container
+descriptor may expose an optional value-oriented factory:
+
+```c
+cmeta_collector (*collector)(void *zero_output, size_t limit);
+```
+
+`begin` receives the input descriptor and hard item limit. `accept` borrows one
+value only until the callback returns; the adapter must copy, retain, or move it
+within that call. `finish` commits the output, while `abort` releases temporary
+values and restores the output's documented zero state.
+
+```c
+cmeta_collector collector = descriptor->collector(&output, limit);
+if (cmeta_collector_begin(&collector) != CMETA_OK) return false;
+for (size_t i = 0; i < count; ++i) {
+    if (cmeta_collector_accept(&collector, &cmeta_type_int, &values[i]) != CMETA_OK)
+        return false; /* the facade has already aborted exactly once */
+}
+return cmeta_collector_finish(&collector) == CMETA_OK;
+```
+
+The stable state vocabulary is `ZERO`, `BEGUN`, `ACCEPTING`, `COMMITTED`, and
+`ABORTED`. `finish` is valid only from `BEGUN` or `ACCEPTING`; an empty collection
+commits directly from `BEGUN`. `accept` checks `count >= limit` before dispatch,
+so zero capacity is valid for an empty result and `SIZE_MAX` cannot wrap. Values
+must have a semantically equal `cmeta_type_desc`; pointer identity is not used.
+
+Any validation or callback failure after `begin`, including an unknown callback
+status (mapped to `CMETA_CALLBACK_ERROR`), records the first error and invokes
+adapter `abort` exactly once. Repeated abort is harmless; begin, accept, or finish
+after a terminal state returns `CMETA_INVALID_ARGUMENT` without calling adapters.
+The façade performs no allocation, I/O, logging, retry, or synchronization;
+callers must externally serialize lifecycle mutation.
+
 ## Interfaces are separate
 
 CMeta still supports:

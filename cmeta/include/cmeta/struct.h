@@ -2,6 +2,7 @@
 #define CMETA_STRUCT_H
 
 #include <cmeta/pp.h>
+#include <cmeta/type_traits.h>
 
 #include <stddef.h>
 #include <string.h>

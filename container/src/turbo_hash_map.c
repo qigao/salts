@@ -1,375 +1,513 @@
-#include "turbo_hash_map.h"
+#include <turbo/container/hash_map.h>
 
-#include <stddef.h>
-#include <stdlib.h>
+#include "turbo_sequence_internal.h"
+
 #include <string.h>
 
-#define TURBO_HASH_EMPTY 0U
-#define TURBO_HASH_OCCUPIED 1U
-#define TURBO_HASH_TOMBSTONE 2U
-#define TURBO_HASH_MIN_CAPACITY 16U
+#define TURBO_HASH_EMPTY 0u
+#define TURBO_HASH_OCCUPIED 1u
+#define TURBO_HASH_TOMBSTONE 2u
+#define TURBO_HASH_MIN_BUCKETS 16u
 
-typedef union turbo_hash_max_align {
-  long double long_double_value;
-  long long long_long_value;
-  void *pointer_value;
-} turbo_hash_max_align_t;
+static bool turbo_hash_map_valid(const turbo_hash_map_t *map) {
+    return map != NULL && map->initialized && map->key_size != 0u && map->value_size != 0u;
+}
+
+static unsigned char *turbo_hash_key_slot(turbo_hash_map_t *map, size_t slot) {
+    return map->keys + slot * map->key_stride;
+}
+
+static const unsigned char *turbo_hash_key_slot_const(const turbo_hash_map_t *map, size_t slot) {
+    return map->keys + slot * map->key_stride;
+}
+
+static unsigned char *turbo_hash_value_slot(turbo_hash_map_t *map, size_t slot) {
+    return map->values + slot * map->value_stride;
+}
+
+static container_status turbo_hash_add(size_t left, size_t right, size_t *out) {
+    if (out == NULL || right > SIZE_MAX - left)
+        return CONTAINER_CAPACITY_EXCEEDED;
+    *out = left + right;
+    return CONTAINER_OK;
+}
+
+static container_status turbo_hash_mul(size_t left, size_t right, size_t *out) {
+    if (out == NULL || (left != 0u && right > SIZE_MAX / left))
+        return CONTAINER_CAPACITY_EXCEEDED;
+    *out = left * right;
+    return CONTAINER_OK;
+}
+
+static container_status turbo_hash_align(size_t value, size_t alignment, size_t *out) {
+    size_t padding;
+    if (!turbo_sequence_alignment_valid(alignment) || out == NULL)
+        return CONTAINER_INVALID_ARGUMENT;
+    padding = alignment - 1u;
+    if (value > SIZE_MAX - padding)
+        return CONTAINER_CAPACITY_EXCEEDED;
+    *out = (value + padding) & ~padding;
+    return CONTAINER_OK;
+}
+
+static size_t turbo_hash_max_alignment(const turbo_hash_map_t *map) {
+    size_t alignment = _Alignof(size_t);
+    if (map->key_align > alignment) alignment = map->key_align;
+    if (map->value_align > alignment) alignment = map->value_align;
+    return alignment;
+}
+
+static container_status turbo_hash_buckets_for_entries(size_t entries, size_t *out_buckets) {
+    size_t quotient;
+    size_t remainder;
+    size_t extra;
+    size_t requested;
+
+    if (out_buckets == NULL) return CONTAINER_INVALID_ARGUMENT;
+    if (entries == 0u) { *out_buckets = 0u; return CONTAINER_OK; }
+    quotient = entries / 7u;
+    remainder = entries % 7u;
+    if (quotient > SIZE_MAX / 3u) return CONTAINER_CAPACITY_EXCEEDED;
+    extra = quotient * 3u + (remainder * 3u + 6u) / 7u;
+    if (turbo_hash_add(entries, extra, &requested) != CONTAINER_OK)
+        return CONTAINER_CAPACITY_EXCEEDED;
+    if (requested < TURBO_HASH_MIN_BUCKETS) requested = TURBO_HASH_MIN_BUCKETS;
+    *out_buckets = TURBO_HASH_MIN_BUCKETS;
+    while (*out_buckets < requested) {
+        if (*out_buckets > SIZE_MAX / 2u) return CONTAINER_CAPACITY_EXCEEDED;
+        *out_buckets *= 2u;
+    }
+    return CONTAINER_OK;
+}
+
+static container_status turbo_hash_map_allocate(turbo_hash_map_t *map, size_t capacity) {
+    size_t states_bytes;
+    size_t hashes_bytes;
+    size_t keys_bytes;
+    size_t values_bytes;
+    size_t hashes_offset;
+    size_t keys_offset;
+    size_t values_offset;
+    size_t total;
+    void *storage;
+    container_status status;
+
+    status = turbo_hash_mul(capacity, sizeof(uint8_t), &states_bytes);
+    if (status != CONTAINER_OK) return status;
+    status = turbo_hash_align(states_bytes, _Alignof(size_t), &hashes_offset);
+    if (status != CONTAINER_OK) return status;
+    status = turbo_hash_mul(capacity, sizeof(size_t), &hashes_bytes);
+    if (status != CONTAINER_OK || turbo_hash_add(hashes_offset, hashes_bytes, &total) != CONTAINER_OK)
+        return CONTAINER_CAPACITY_EXCEEDED;
+    status = turbo_hash_align(total, map->key_align, &keys_offset);
+    if (status != CONTAINER_OK) return status;
+    status = turbo_hash_mul(capacity, map->key_stride, &keys_bytes);
+    if (status != CONTAINER_OK || turbo_hash_add(keys_offset, keys_bytes, &total) != CONTAINER_OK)
+        return CONTAINER_CAPACITY_EXCEEDED;
+    status = turbo_hash_align(total, map->value_align, &values_offset);
+    if (status != CONTAINER_OK) return status;
+    status = turbo_hash_mul(capacity, map->value_stride, &values_bytes);
+    if (status != CONTAINER_OK || turbo_hash_add(values_offset, values_bytes, &total) != CONTAINER_OK)
+        return CONTAINER_CAPACITY_EXCEEDED;
+    status = turbo_sequence_allocate(1u, total, turbo_hash_max_alignment(map), &storage);
+    if (status != CONTAINER_OK) return status;
+    memset(storage, TURBO_HASH_EMPTY, states_bytes);
+    map->states = (uint8_t *)storage;
+    map->hashes = (size_t *)(void *)((unsigned char *)storage + hashes_offset);
+    map->keys = (unsigned char *)storage + keys_offset;
+    map->values = (unsigned char *)storage + values_offset;
+    map->capacity = capacity;
+    return CONTAINER_OK;
+}
+
+static void turbo_hash_destroy_value(const cmeta_type_desc *type, void *value) {
+    if (type != NULL) type->traits->destroy(value);
+}
+
+static container_status turbo_hash_prepare(const cmeta_type_desc *type, size_t size,
+                                           size_t stride, size_t alignment, const void *source,
+                                           void **out_value) {
+    container_status status;
+    if (source == NULL || out_value == NULL) return CONTAINER_INVALID_ARGUMENT;
+    *out_value = NULL;
+    status = turbo_sequence_allocate(1u, stride, alignment, out_value);
+    if (status != CONTAINER_OK) return status;
+    if (type != NULL && !type->traits->copy_construct(*out_value, source)) {
+        turbo_sequence_deallocate(*out_value);
+        *out_value = NULL;
+        return CONTAINER_OUT_OF_MEMORY;
+    }
+    if (type == NULL) memcpy(*out_value, source, size);
+    return CONTAINER_OK;
+}
+
+static void turbo_hash_discard(const cmeta_type_desc *type, void *value) {
+    if (value == NULL) return;
+    turbo_hash_destroy_value(type, value);
+    turbo_sequence_deallocate(value);
+}
+
+static void turbo_hash_move_construct(const cmeta_type_desc *type, size_t size, void *destination,
+                                      void *source) {
+    if (type != NULL) type->traits->move_construct(destination, source);
+    else memcpy(destination, source, size);
+}
+
+static void turbo_hash_move_destroy(const cmeta_type_desc *type, size_t size, void *destination,
+                                    void *source) {
+    turbo_hash_move_construct(type, size, destination, source);
+    turbo_hash_destroy_value(type, source);
+}
+
+static size_t turbo_hash_map_hash(const turbo_hash_map_t *map, const void *key) {
+    size_t hash = map->key_type != NULL ? (size_t)map->key_type->traits->hash(key)
+                                         : map->hash(key, map->key_size, map->ctx);
+    return hash == 0u ? 1u : hash;
+}
+
+static bool turbo_hash_map_equal(const turbo_hash_map_t *map, const void *left, const void *right) {
+    return map->key_type != NULL ? map->key_type->traits->equal(left, right)
+                                 : map->equal(left, right, map->key_size, map->ctx);
+}
+
+static bool turbo_hash_map_find_slot(const turbo_hash_map_t *map, const void *key, size_t hash,
+                                     size_t *out_slot) {
+    size_t mask;
+    size_t probe;
+    if (map->capacity == 0u) return false;
+    mask = map->capacity - 1u;
+    for (probe = 0u; probe < map->capacity; ++probe) {
+        size_t slot = (hash + probe) & mask;
+        if (map->states[slot] == TURBO_HASH_EMPTY) return false;
+        if (map->states[slot] == TURBO_HASH_OCCUPIED && map->hashes[slot] == hash &&
+            turbo_hash_map_equal(map, turbo_hash_key_slot_const(map, slot), key)) {
+            *out_slot = slot;
+            return true;
+        }
+    }
+    return false;
+}
+
+static size_t turbo_hash_map_insert_slot(const turbo_hash_map_t *map, size_t hash) {
+    size_t first_tombstone = SIZE_MAX;
+    size_t mask = map->capacity - 1u;
+    size_t probe;
+    for (probe = 0u; probe < map->capacity; ++probe) {
+        size_t slot = (hash + probe) & mask;
+        if (map->states[slot] == TURBO_HASH_TOMBSTONE) {
+            if (first_tombstone == SIZE_MAX) first_tombstone = slot;
+        } else if (map->states[slot] == TURBO_HASH_EMPTY) {
+            return first_tombstone == SIZE_MAX ? slot : first_tombstone;
+        }
+    }
+    return first_tombstone;
+}
+
+static void turbo_hash_map_rehash_insert(turbo_hash_map_t *map, size_t hash, void *key,
+                                         void *value) {
+    size_t slot = turbo_hash_map_insert_slot(map, hash);
+    turbo_hash_move_construct(map->key_type, map->key_size, turbo_hash_key_slot(map, slot), key);
+    turbo_hash_move_construct(map->value_type, map->value_size, turbo_hash_value_slot(map, slot), value);
+    map->hashes[slot] = hash;
+    map->states[slot] = TURBO_HASH_OCCUPIED;
+    ++map->size;
+}
+
+static container_status turbo_hash_map_rehash(turbo_hash_map_t *map, size_t capacity) {
+    turbo_hash_map_t next = *map;
+    size_t slot;
+    container_status status;
+
+    next.states = NULL; next.hashes = NULL; next.keys = NULL; next.values = NULL;
+    next.size = 0u; next.capacity = 0u; next.tombstones = 0u;
+    status = turbo_hash_map_allocate(&next, capacity);
+    if (status != CONTAINER_OK) return status;
+    for (slot = 0u; slot < map->capacity; ++slot) {
+        if (map->states[slot] != TURBO_HASH_OCCUPIED) continue;
+        turbo_hash_map_rehash_insert(&next, map->hashes[slot], turbo_hash_key_slot(map, slot),
+                                     turbo_hash_value_slot(map, slot));
+        turbo_hash_destroy_value(map->key_type, turbo_hash_key_slot(map, slot));
+        turbo_hash_destroy_value(map->value_type, turbo_hash_value_slot(map, slot));
+    }
+    turbo_sequence_deallocate(map->states);
+    next.generation = map->generation;
+    *map = next;
+    return CONTAINER_OK;
+}
+
+static container_status turbo_hash_map_ensure_insert(turbo_hash_map_t *map) {
+    size_t desired;
+    size_t buckets;
+    container_status status;
+    if (map->size == SIZE_MAX) return CONTAINER_CAPACITY_EXCEEDED;
+    desired = map->size + 1u;
+    status = turbo_hash_buckets_for_entries(desired, &buckets);
+    if (status != CONTAINER_OK) return status;
+    if (buckets > map->capacity || (map->tombstones > map->size && map->capacity != 0u)) {
+        if (buckets < map->capacity) buckets = map->capacity;
+        return turbo_hash_map_rehash(map, buckets);
+    }
+    return CONTAINER_OK;
+}
+
+static container_status turbo_hash_map_initialize(turbo_hash_map_t *map,
+                                                  const cmeta_type_desc *key_type,
+                                                  const cmeta_type_desc *value_type,
+                                                  size_t key_size, size_t key_align,
+                                                  size_t value_size, size_t value_align,
+                                                  size_t entry_limit, turbo_hash_fn hash,
+                                                  turbo_hash_equal_fn equal, void *ctx) {
+    size_t key_stride;
+    size_t value_stride;
+    uint64_t generation;
+    container_status status;
+    if (map == NULL || map->initialized) return CONTAINER_INVALID_ARGUMENT;
+    status = turbo_sequence_stride(key_size, key_align, &key_stride);
+    if (status != CONTAINER_OK) return status;
+    status = turbo_sequence_stride(value_size, value_align, &value_stride);
+    if (status != CONTAINER_OK) return status;
+    generation = map->generation + UINT64_C(1);
+    memset(map, 0, sizeof(*map));
+    map->key_size = key_size; map->key_stride = key_stride; map->key_align = key_align;
+    map->value_size = value_size; map->value_stride = value_stride; map->value_align = value_align;
+    map->entry_limit = entry_limit; map->key_type = key_type; map->value_type = value_type;
+    map->hash = hash; map->equal = equal; map->ctx = ctx; map->generation = generation;
+    map->initialized = true;
+    return CONTAINER_OK;
+}
 
 size_t turbo_hash_bytes(const void *key, size_t key_size, void *ctx) {
-  const unsigned char *p = (const unsigned char *)key;
-  uint64_t h = UINT64_C(1469598103934665603);
-  size_t i;
-  (void)ctx;
-  for (i = 0; i < key_size; ++i) {
-    h ^= (uint64_t)p[i];
-    h *= UINT64_C(1099511628211);
-  }
-  if (h == 0) h = 1;
-  return (size_t)h;
+    const unsigned char *bytes = (const unsigned char *)key;
+    uint64_t hash = UINT64_C(1469598103934665603);
+    size_t index;
+    (void)ctx;
+    for (index = 0u; index < key_size; ++index) { hash ^= bytes[index]; hash *= UINT64_C(1099511628211); }
+    return (size_t)(hash == 0u ? 1u : hash);
 }
 
 bool turbo_hash_key_equal(const void *left, const void *right, size_t key_size, void *ctx) {
-  (void)ctx;
-  return memcmp(left, right, key_size) == 0;
+    (void)ctx;
+    return memcmp(left, right, key_size) == 0;
 }
 
-static int turbo_hash_map_valid(const turbo_hash_map_t *map) {
-  return map != NULL && map->key_size > 0 && map->value_size > 0 && map->hash != NULL &&
-         map->equal != NULL;
+container_status turbo_hash_map_init(turbo_hash_map_t *map, const cmeta_type_desc *key_type,
+                                     const cmeta_type_desc *value_type, size_t entry_limit) {
+    cmeta_trait_flags key_required = CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH | CMETA_TRAIT_COPY |
+                                     CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY;
+    cmeta_trait_flags value_required = CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY;
+    if (map == NULL || map->initialized) return CONTAINER_INVALID_ARGUMENT;
+    if (key_type == NULL || value_type == NULL || key_type->size == 0u || value_type->size == 0u ||
+        !turbo_sequence_alignment_valid(key_type->align) || !turbo_sequence_alignment_valid(value_type->align))
+        return CONTAINER_INVALID_ARGUMENT;
+    if (cmeta_type_require_traits(key_type, key_required) != CMETA_OK ||
+        cmeta_type_require_traits(value_type, value_required) != CMETA_OK)
+        return CONTAINER_TRAIT_MISSING;
+    return turbo_hash_map_initialize(map, key_type, value_type, key_type->size, key_type->align,
+                                     value_type->size, value_type->align, entry_limit, NULL, NULL, NULL);
 }
 
-static size_t turbo_hash_round_pow2(size_t value) {
-  size_t n = TURBO_HASH_MIN_CAPACITY;
-  while (n < value) {
-    if (n > SIZE_MAX / 2U) return 0;
-    n *= 2U;
-  }
-  return n;
+container_status turbo_hash_map_init_bytes(turbo_hash_map_t *map, size_t key_size, size_t key_align,
+                                           size_t value_size, size_t value_align, size_t entry_limit,
+                                           turbo_hash_fn hash, turbo_hash_equal_fn equal, void *ctx) {
+    if (map == NULL || map->initialized || hash == NULL || equal == NULL) return CONTAINER_INVALID_ARGUMENT;
+    return turbo_hash_map_initialize(map, NULL, NULL, key_size, key_align, value_size, value_align,
+                                     entry_limit, hash, equal, ctx);
 }
 
-static int turbo_hash_add_size(size_t left, size_t right, size_t *out) {
-  if (right > SIZE_MAX - left) return TURBO_ENOMEM;
-  *out = left + right;
-  return TURBO_OK;
-}
-
-static int turbo_hash_align_size(size_t value, size_t alignment, size_t *out) {
-  size_t remainder = value % alignment;
-  return remainder == 0 ? (*out = value, TURBO_OK)
-                        : turbo_hash_add_size(value, alignment - remainder, out);
-}
-
-static int turbo_hash_alloc_arrays(turbo_hash_map_t *map, size_t capacity) {
-  const size_t alignment = _Alignof(turbo_hash_max_align_t);
-  size_t hashes_offset;
-  size_t keys_offset;
-  size_t values_offset;
-  size_t total_size;
-  size_t region_size;
-  unsigned char *storage;
-
-  if (capacity > SIZE_MAX / map->key_size) return TURBO_ENOMEM;
-  if (capacity > SIZE_MAX / map->value_size) return TURBO_ENOMEM;
-  if (capacity > SIZE_MAX / sizeof(size_t)) return TURBO_ENOMEM;
-
-  total_size = capacity * sizeof(uint8_t);
-  if (turbo_hash_align_size(total_size, alignment, &hashes_offset) != TURBO_OK)
-    return TURBO_ENOMEM;
-  region_size = capacity * sizeof(size_t);
-  if (turbo_hash_add_size(hashes_offset, region_size, &total_size) != TURBO_OK)
-    return TURBO_ENOMEM;
-  if (turbo_hash_align_size(total_size, alignment, &keys_offset) != TURBO_OK)
-    return TURBO_ENOMEM;
-  region_size = capacity * map->key_size;
-  if (turbo_hash_add_size(keys_offset, region_size, &total_size) != TURBO_OK)
-    return TURBO_ENOMEM;
-  if (turbo_hash_align_size(total_size, alignment, &values_offset) != TURBO_OK)
-    return TURBO_ENOMEM;
-  region_size = capacity * map->value_size;
-  if (turbo_hash_add_size(values_offset, region_size, &total_size) != TURBO_OK)
-    return TURBO_ENOMEM;
-
-  storage = (unsigned char *)malloc(total_size);
-  if (!storage) return TURBO_ENOMEM;
-  memset(storage, TURBO_HASH_EMPTY, capacity * sizeof(uint8_t));
-  map->states = storage;
-  map->hashes = (size_t *)(storage + hashes_offset);
-  map->keys = storage + keys_offset;
-  map->values = storage + values_offset;
-  map->capacity = capacity;
-  return TURBO_OK;
-}
-
-static void turbo_hash_insert_occupied(turbo_hash_map_t *map, size_t hash, const void *key,
-                                       const void *value) {
-  size_t mask = map->capacity - 1U;
-  size_t i;
-  for (i = 0; i < map->capacity; ++i) {
-    size_t slot = (hash + i) & mask;
-    if (map->states[slot] == TURBO_HASH_EMPTY) {
-      map->states[slot] = TURBO_HASH_OCCUPIED;
-      map->hashes[slot] = hash;
-      memcpy(map->keys + slot * map->key_size, key, map->key_size);
-      memcpy(map->values + slot * map->value_size, value, map->value_size);
-      map->size += 1U;
-      return;
+container_status turbo_hash_map_from_arrays(turbo_hash_map_t *map, const void *keys,
+                                            const void *values, size_t count,
+                                            const cmeta_type_desc *key_type,
+                                            const cmeta_type_desc *value_type, size_t entry_limit) {
+    turbo_hash_map_t temporary = {0};
+    container_status status;
+    size_t index;
+    uint64_t generation;
+    if (map == NULL || map->initialized) return CONTAINER_INVALID_ARGUMENT;
+    if (count != 0u && (keys == NULL || values == NULL)) return CONTAINER_INVALID_ARGUMENT;
+    status = turbo_hash_map_init(&temporary, key_type, value_type, entry_limit);
+    if (status != CONTAINER_OK) return status;
+    for (index = 0u; index < count; ++index) {
+        status = turbo_hash_map_put(&temporary, (const unsigned char *)keys + index * key_type->size,
+                                    (const unsigned char *)values + index * value_type->size);
+        if (status != CONTAINER_OK) { turbo_hash_map_destroy(&temporary); return status; }
     }
-  }
+    generation = map->generation + UINT64_C(1);
+    temporary.generation = generation;
+    *map = temporary;
+    return CONTAINER_OK;
 }
 
-static int turbo_hash_map_rehash(turbo_hash_map_t *map, size_t new_capacity) {
-  turbo_hash_map_t next;
-  size_t i;
-  int rc;
-
-  memset(&next, 0, sizeof(next));
-  next.key_size = map->key_size;
-  next.value_size = map->value_size;
-  next.hash = map->hash;
-  next.equal = map->equal;
-  next.ctx = map->ctx;
-
-  rc = turbo_hash_alloc_arrays(&next, new_capacity);
-  if (rc != TURBO_OK) return rc;
-
-  for (i = 0; i < map->capacity; ++i) {
-    if (map->states[i] == TURBO_HASH_OCCUPIED) {
-      turbo_hash_insert_occupied(&next, map->hashes[i], map->keys + i * map->key_size,
-                                 map->values + i * map->value_size);
+container_status turbo_hash_map_from_arrays_bytes(turbo_hash_map_t *map, const void *keys,
+                                                  const void *values, size_t count, size_t key_size,
+                                                  size_t key_align, size_t value_size,
+                                                  size_t value_align, size_t entry_limit,
+                                                  turbo_hash_fn hash, turbo_hash_equal_fn equal,
+                                                  void *ctx) {
+    turbo_hash_map_t temporary = {0};
+    container_status status;
+    size_t index;
+    uint64_t generation;
+    if (map == NULL || map->initialized) return CONTAINER_INVALID_ARGUMENT;
+    if (count != 0u && (keys == NULL || values == NULL)) return CONTAINER_INVALID_ARGUMENT;
+    status = turbo_hash_map_init_bytes(&temporary, key_size, key_align, value_size, value_align,
+                                       entry_limit, hash, equal, ctx);
+    if (status != CONTAINER_OK) return status;
+    for (index = 0u; index < count; ++index) {
+        status = turbo_hash_map_put(&temporary, (const unsigned char *)keys + index * key_size,
+                                    (const unsigned char *)values + index * value_size);
+        if (status != CONTAINER_OK) { turbo_hash_map_destroy(&temporary); return status; }
     }
-  }
-
-  free(map->states);
-  map->states = next.states;
-  map->hashes = next.hashes;
-  map->keys = next.keys;
-  map->values = next.values;
-  map->size = next.size;
-  map->capacity = next.capacity;
-  map->tombstones = 0;
-  return TURBO_OK;
-}
-
-static int turbo_hash_map_ensure_load(turbo_hash_map_t *map, size_t extra) {
-  size_t wanted;
-  size_t min_slots;
-  size_t capacity;
-  size_t used;
-
-  if (extra > SIZE_MAX - map->size) return TURBO_ENOMEM;
-  wanted = map->size + extra;
-  if (map->size > SIZE_MAX - map->tombstones) return TURBO_ENOMEM;
-  if (extra > SIZE_MAX - map->size - map->tombstones) return TURBO_ENOMEM;
-  used = map->size + map->tombstones + extra;
-  if (map->capacity != 0 && used <= map->capacity - (map->capacity / 10U) * 3U) {
-    return TURBO_OK;
-  }
-
-  if (wanted > (SIZE_MAX - 1U) / 10U) return TURBO_ENOMEM;
-  min_slots = (wanted * 10U) / 7U + 1U;
-  capacity = turbo_hash_round_pow2(min_slots);
-  if (capacity == 0) return TURBO_ENOMEM;
-  if (map->capacity <= SIZE_MAX / 2U && capacity < map->capacity * 2U && map->tombstones == 0) {
-    capacity = map->capacity ? map->capacity * 2U : capacity;
-  }
-  if (capacity < TURBO_HASH_MIN_CAPACITY) capacity = TURBO_HASH_MIN_CAPACITY;
-  return turbo_hash_map_rehash(map, capacity);
-}
-
-static int turbo_hash_map_find_slot(const turbo_hash_map_t *map, const void *key, size_t hash,
-                                    size_t *out_slot) {
-  size_t mask;
-  size_t i;
-
-  if (map->capacity == 0) return 0;
-  mask = map->capacity - 1U;
-  for (i = 0; i < map->capacity; ++i) {
-    size_t slot = (hash + i) & mask;
-    uint8_t state = map->states[slot];
-    if (state == TURBO_HASH_EMPTY) return 0;
-    if (state == TURBO_HASH_OCCUPIED && map->hashes[slot] == hash &&
-        map->equal(map->keys + slot * map->key_size, key, map->key_size, map->ctx)) {
-      *out_slot = slot;
-      return 1;
-    }
-  }
-  return 0;
-}
-
-int turbo_hash_map_init(turbo_hash_map_t *map, size_t key_size, size_t value_size,
-                        turbo_hash_fn hash, turbo_hash_equal_fn equal, void *ctx) {
-  if (!map || key_size == 0 || value_size == 0) return TURBO_EINVAL;
-  memset(map, 0, sizeof(*map));
-  map->key_size = key_size;
-  map->value_size = value_size;
-  map->hash = hash ? hash : turbo_hash_bytes;
-  map->equal = equal ? equal : turbo_hash_key_equal;
-  map->ctx = ctx;
-  return TURBO_OK;
-}
-
-int turbo_hash_map_from_arrays(turbo_hash_map_t *map, const void *keys, const void *values,
-                               size_t count, size_t key_size, size_t value_size,
-                               turbo_hash_fn hash, turbo_hash_equal_fn equal, void *ctx) {
-  const unsigned char *key_cursor = (const unsigned char *)keys;
-  const unsigned char *value_cursor = (const unsigned char *)values;
-  size_t i;
-  int rc;
-
-  if (!map || key_size == 0 || value_size == 0 ||
-      (count > 0 && (!keys || !values))) {
-    return TURBO_EINVAL;
-  }
-  rc = turbo_hash_map_init(map, key_size, value_size, hash, equal, ctx);
-  if (rc != TURBO_OK) return rc;
-  rc = turbo_hash_map_reserve(map, count);
-  if (rc != TURBO_OK) {
-    turbo_hash_map_destroy(map);
-    return rc;
-  }
-  for (i = 0; i < count; ++i) {
-    rc = turbo_hash_map_put(map, key_cursor + i * key_size,
-                            value_cursor + i * value_size);
-    if (rc != TURBO_OK) {
-      turbo_hash_map_destroy(map);
-      return rc;
-    }
-  }
-  return TURBO_OK;
+    generation = map->generation + UINT64_C(1);
+    temporary.generation = generation;
+    *map = temporary;
+    return CONTAINER_OK;
 }
 
 void turbo_hash_map_destroy(turbo_hash_map_t *map) {
-  if (!map) return;
-  free(map->states);
-  memset(map, 0, sizeof(*map));
+    size_t slot;
+    uint64_t generation;
+    if (map == NULL) return;
+    generation = map->generation;
+    if (map->initialized) {
+        for (slot = 0u; slot < map->capacity; ++slot) {
+            if (map->states[slot] != TURBO_HASH_OCCUPIED) continue;
+            turbo_hash_destroy_value(map->key_type, turbo_hash_key_slot(map, slot));
+            turbo_hash_destroy_value(map->value_type, turbo_hash_value_slot(map, slot));
+        }
+        generation += UINT64_C(1);
+        turbo_sequence_deallocate(map->states);
+    }
+    memset(map, 0, sizeof(*map));
+    map->generation = generation;
 }
 
 void turbo_hash_map_clear(turbo_hash_map_t *map) {
-  if (!map || !map->states) return;
-  memset(map->states, 0, map->capacity * sizeof(uint8_t));
-  map->size = 0;
-  map->tombstones = 0;
-}
-
-int turbo_hash_map_reserve(turbo_hash_map_t *map, size_t min_capacity) {
-  size_t min_slots;
-  size_t capacity;
-
-  if (!turbo_hash_map_valid(map)) return TURBO_EINVAL;
-  if (min_capacity == 0) return TURBO_OK;
-  if (min_capacity > (SIZE_MAX - 1U) / 10U) return TURBO_ENOMEM;
-  min_slots = (min_capacity * 10U) / 7U + 1U;
-  capacity = turbo_hash_round_pow2(min_slots);
-  if (capacity == 0) return TURBO_ENOMEM;
-  if (capacity <= map->capacity) return TURBO_OK;
-  return turbo_hash_map_rehash(map, capacity);
-}
-
-int turbo_hash_map_put(turbo_hash_map_t *map, const void *key, const void *value) {
-  size_t hash;
-  size_t mask;
-  size_t first_tombstone = SIZE_MAX;
-  size_t i;
-  int rc;
-
-  if (!turbo_hash_map_valid(map) || !key || !value) return TURBO_EINVAL;
-  rc = turbo_hash_map_ensure_load(map, 1U);
-  if (rc != TURBO_OK) return rc;
-
-  hash = map->hash(key, map->key_size, map->ctx);
-  if (hash == 0) hash = 1;
-  mask = map->capacity - 1U;
-
-  for (i = 0; i < map->capacity; ++i) {
-    size_t slot = (hash + i) & mask;
-    uint8_t state = map->states[slot];
-    if (state == TURBO_HASH_OCCUPIED) {
-      if (map->hashes[slot] == hash &&
-          map->equal(map->keys + slot * map->key_size, key, map->key_size, map->ctx)) {
-        memcpy(map->values + slot * map->value_size, value, map->value_size);
-        return TURBO_OK;
-      }
-    } else if (state == TURBO_HASH_TOMBSTONE) {
-      if (first_tombstone == SIZE_MAX) first_tombstone = slot;
-    } else {
-      size_t target = first_tombstone != SIZE_MAX ? first_tombstone : slot;
-      if (map->states[target] == TURBO_HASH_TOMBSTONE) map->tombstones -= 1U;
-      map->states[target] = TURBO_HASH_OCCUPIED;
-      map->hashes[target] = hash;
-      memcpy(map->keys + target * map->key_size, key, map->key_size);
-      memcpy(map->values + target * map->value_size, value, map->value_size);
-      map->size += 1U;
-      return TURBO_OK;
+    size_t slot;
+    if (!turbo_hash_map_valid(map)) return;
+    for (slot = 0u; slot < map->capacity; ++slot) {
+        if (map->states[slot] != TURBO_HASH_OCCUPIED) continue;
+        turbo_hash_destroy_value(map->key_type, turbo_hash_key_slot(map, slot));
+        turbo_hash_destroy_value(map->value_type, turbo_hash_value_slot(map, slot));
     }
-  }
+    if (map->size != 0u) {
+        memset(map->states, TURBO_HASH_EMPTY, map->capacity * sizeof(*map->states));
+        map->size = 0u;
+        map->tombstones = 0u;
+        ++map->generation;
+    }
+}
 
-  if (map->capacity > SIZE_MAX / 2U) return TURBO_ENOMEM;
-  rc = turbo_hash_map_rehash(map, map->capacity * 2U);
-  if (rc != TURBO_OK) return rc;
-  return turbo_hash_map_put(map, key, value);
+container_status turbo_hash_map_reserve(turbo_hash_map_t *map, size_t min_entries) {
+    size_t buckets;
+    container_status status;
+    if (!turbo_hash_map_valid(map)) return CONTAINER_INVALID_ARGUMENT;
+    if (min_entries > map->entry_limit) return CONTAINER_CAPACITY_EXCEEDED;
+    status = turbo_hash_buckets_for_entries(min_entries, &buckets);
+    if (status != CONTAINER_OK) return status;
+    if (buckets > map->capacity || (map->tombstones > map->size && map->capacity != 0u)) {
+        if (buckets < map->capacity) buckets = map->capacity;
+        status = turbo_hash_map_rehash(map, buckets);
+        if (status == CONTAINER_OK) ++map->generation;
+    }
+    return status;
+}
+
+container_status turbo_hash_map_put(turbo_hash_map_t *map, const void *key, const void *value) {
+    size_t hash;
+    size_t slot;
+    void *prepared_key = NULL;
+    void *prepared_value = NULL;
+    container_status status;
+    if (!turbo_hash_map_valid(map) || key == NULL || value == NULL) return CONTAINER_INVALID_ARGUMENT;
+    hash = turbo_hash_map_hash(map, key);
+    if (turbo_hash_map_find_slot(map, key, hash, &slot)) {
+        status = turbo_hash_prepare(map->value_type, map->value_size, map->value_stride,
+                                    map->value_align, value, &prepared_value);
+        if (status != CONTAINER_OK) return status;
+        turbo_hash_destroy_value(map->value_type, turbo_hash_value_slot(map, slot));
+        turbo_hash_move_destroy(map->value_type, map->value_size, turbo_hash_value_slot(map, slot),
+                                prepared_value);
+        turbo_sequence_deallocate(prepared_value);
+        ++map->generation;
+        return CONTAINER_OK;
+    }
+    if (map->size >= map->entry_limit) return CONTAINER_CAPACITY_EXCEEDED;
+    status = turbo_hash_prepare(map->key_type, map->key_size, map->key_stride, map->key_align,
+                                key, &prepared_key);
+    if (status != CONTAINER_OK) return status;
+    status = turbo_hash_prepare(map->value_type, map->value_size, map->value_stride,
+                                map->value_align, value, &prepared_value);
+    if (status != CONTAINER_OK) { turbo_hash_discard(map->key_type, prepared_key); return status; }
+    status = turbo_hash_map_ensure_insert(map);
+    if (status != CONTAINER_OK) {
+        turbo_hash_discard(map->key_type, prepared_key);
+        turbo_hash_discard(map->value_type, prepared_value);
+        return status;
+    }
+    slot = turbo_hash_map_insert_slot(map, hash);
+    turbo_hash_move_destroy(map->key_type, map->key_size, turbo_hash_key_slot(map, slot), prepared_key);
+    turbo_hash_move_destroy(map->value_type, map->value_size, turbo_hash_value_slot(map, slot), prepared_value);
+    turbo_sequence_deallocate(prepared_key);
+    turbo_sequence_deallocate(prepared_value);
+    map->hashes[slot] = hash;
+    if (map->states[slot] == TURBO_HASH_TOMBSTONE) --map->tombstones;
+    map->states[slot] = TURBO_HASH_OCCUPIED;
+    ++map->size;
+    ++map->generation;
+    return CONTAINER_OK;
 }
 
 void *turbo_hash_map_get(turbo_hash_map_t *map, const void *key) {
-  size_t hash;
-  size_t slot = 0;
-
-  if (!turbo_hash_map_valid(map) || !key) return NULL;
-  hash = map->hash(key, map->key_size, map->ctx);
-  if (hash == 0) hash = 1;
-  if (!turbo_hash_map_find_slot(map, key, hash, &slot)) return NULL;
-  return map->values + slot * map->value_size;
+    size_t slot;
+    size_t hash;
+    if (!turbo_hash_map_valid(map) || key == NULL) return NULL;
+    hash = turbo_hash_map_hash(map, key);
+    return turbo_hash_map_find_slot(map, key, hash, &slot) ? turbo_hash_value_slot(map, slot) : NULL;
 }
 
 const void *turbo_hash_map_get_const(const turbo_hash_map_t *map, const void *key) {
-  return turbo_hash_map_get((turbo_hash_map_t *)map, key);
+    return turbo_hash_map_get((turbo_hash_map_t *)map, key);
 }
 
 bool turbo_hash_map_contains(const turbo_hash_map_t *map, const void *key) {
-  return turbo_hash_map_get_const(map, key) != NULL;
+    return turbo_hash_map_get_const(map, key) != NULL;
 }
 
-int turbo_hash_map_remove(turbo_hash_map_t *map, const void *key, void *out_value) {
-  size_t hash;
-  size_t slot = 0;
-
-  if (!turbo_hash_map_valid(map) || !key) return TURBO_EINVAL;
-  hash = map->hash(key, map->key_size, map->ctx);
-  if (hash == 0) hash = 1;
-  if (!turbo_hash_map_find_slot(map, key, hash, &slot)) return TURBO_ENOENT;
-  if (out_value) memcpy(out_value, map->values + slot * map->value_size, map->value_size);
-  map->states[slot] = TURBO_HASH_TOMBSTONE;
-  map->size -= 1U;
-  map->tombstones += 1U;
-  if (map->tombstones > map->size && map->capacity > TURBO_HASH_MIN_CAPACITY) {
-    (void)turbo_hash_map_rehash(map, map->capacity);
-  }
-  return TURBO_OK;
+container_status turbo_hash_map_remove(turbo_hash_map_t *map, const void *key, void *out_value) {
+    size_t hash;
+    size_t slot;
+    if (!turbo_hash_map_valid(map) || key == NULL) return CONTAINER_INVALID_ARGUMENT;
+    hash = turbo_hash_map_hash(map, key);
+    if (!turbo_hash_map_find_slot(map, key, hash, &slot)) return CONTAINER_NOT_FOUND;
+    if (out_value != NULL)
+        turbo_hash_move_destroy(map->value_type, map->value_size, out_value,
+                                turbo_hash_value_slot(map, slot));
+    else
+        turbo_hash_destroy_value(map->value_type, turbo_hash_value_slot(map, slot));
+    turbo_hash_destroy_value(map->key_type, turbo_hash_key_slot(map, slot));
+    map->states[slot] = TURBO_HASH_TOMBSTONE;
+    --map->size;
+    ++map->tombstones;
+    ++map->generation;
+    return CONTAINER_OK;
 }
 
-size_t turbo_hash_map_size(const turbo_hash_map_t *map) {
-  if (!map) return 0;
-  return map->size;
-}
-
-size_t turbo_hash_map_capacity(const turbo_hash_map_t *map) {
-  if (!map) return 0;
-  return map->capacity;
-}
-
-bool turbo_hash_map_empty(const turbo_hash_map_t *map) {
-  return map == NULL || map->size == 0;
-}
+size_t turbo_hash_map_size(const turbo_hash_map_t *map) { return turbo_hash_map_valid(map) ? map->size : 0u; }
+size_t turbo_hash_map_capacity(const turbo_hash_map_t *map) { return turbo_hash_map_valid(map) ? map->capacity : 0u; }
+size_t turbo_hash_map_entry_limit(const turbo_hash_map_t *map) { return turbo_hash_map_valid(map) ? map->entry_limit : 0u; }
+uint64_t turbo_hash_map_generation(const turbo_hash_map_t *map) { return map ? map->generation : UINT64_C(0); }
+bool turbo_hash_map_empty(const turbo_hash_map_t *map) { return turbo_hash_map_size(map) == 0u; }
 
 const void *turbo_hash_map_key_at(const turbo_hash_map_t *map, size_t slot) {
-  if (!map || slot >= map->capacity || map->states[slot] != TURBO_HASH_OCCUPIED) return NULL;
-  return map->keys + slot * map->key_size;
+    return turbo_hash_map_valid(map) && slot < map->capacity && map->states[slot] == TURBO_HASH_OCCUPIED
+        ? turbo_hash_key_slot_const(map, slot) : NULL;
 }
 
 void *turbo_hash_map_value_at(turbo_hash_map_t *map, size_t slot) {
-  if (!map || slot >= map->capacity || map->states[slot] != TURBO_HASH_OCCUPIED) return NULL;
-  return map->values + slot * map->value_size;
+    return turbo_hash_map_valid(map) && slot < map->capacity && map->states[slot] == TURBO_HASH_OCCUPIED
+        ? turbo_hash_value_slot(map, slot) : NULL;
 }
 
 const void *turbo_hash_map_value_at_const(const turbo_hash_map_t *map, size_t slot) {
-  return turbo_hash_map_value_at((turbo_hash_map_t *)map, slot);
+    return turbo_hash_map_value_at((turbo_hash_map_t *)map, slot);
 }

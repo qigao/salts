@@ -105,6 +105,29 @@ spec("AC 自动机") {
     ac_automaton_free(ac);
   }
 
+  it("在节点数组扩容后保留所有字节根边") {
+    ac_automaton_t *ac = ac_automaton_create();
+    unsigned char byte;
+
+    check_not_null(ac);
+    for (byte = 1U; byte <= 64U; ++byte) {
+      const char pattern[1] = {(char)byte};
+      check_equal(ac_automaton_add_pattern(
+                      ac, vstr_from_buf(pattern, sizeof(pattern)), NULL),
+                  TURBO_OK);
+    }
+    check_equal(ac_automaton_build(ac), TURBO_OK);
+    for (byte = 1U; byte <= 64U; ++byte) {
+      const char pattern[1] = {(char)byte};
+      match_record_list_t matches = {0};
+      check_equal(ac_automaton_match(ac, vstr_from_buf(pattern, sizeof(pattern)),
+                                     capture_ac_match, &matches),
+                  TURBO_OK);
+      check_equal(matches.count, 1U);
+    }
+    ac_automaton_free(ac);
+  }
+
   it("在 UTF-8 文本中进行多模式匹配") {
     ac_utf8_automaton_t *ac = ac_utf8_automaton_create();
     uint32_t pid_ni = 0, pid_hao = 0, pid_world = 0, pid_haosh = 0;
@@ -127,6 +150,32 @@ spec("AC 自动机") {
     check(have_record(&matches, pid_haosh, 1, 3, (size_t)-1));
     check(have_record(&matches, pid_world, 2, 4, (size_t)-1));
     ac_utf8_automaton_destroy(ac);
+    ac_utf8_automaton_free(ac);
+  }
+
+  it("在节点数组扩容后保留所有 UTF-8 根边") {
+    ac_utf8_automaton_t *ac = ac_utf8_automaton_create();
+    uint32_t cp;
+
+    check_not_null(ac);
+    for (cp = 0x400U; cp < 0x440U; ++cp) {
+      tstr pattern = tstr_utf8_from_cp(cp);
+      check_not_null(pattern);
+      check_equal(ac_utf8_automaton_add_pattern(ac, tstr_to_v(pattern), NULL),
+                  TURBO_OK);
+      tstr_freep(&pattern);
+    }
+    check_equal(ac_utf8_automaton_build(ac), TURBO_OK);
+    for (cp = 0x400U; cp < 0x440U; ++cp) {
+      tstr pattern = tstr_utf8_from_cp(cp);
+      match_record_list_t matches = {0};
+      check_not_null(pattern);
+      check_equal(ac_utf8_automaton_match(ac, tstr_to_v(pattern), capture_ac_match,
+                                          &matches),
+                  TURBO_OK);
+      check_equal(matches.count, 1U);
+      tstr_freep(&pattern);
+    }
     ac_utf8_automaton_free(ac);
   }
 

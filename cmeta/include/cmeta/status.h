@@ -1,0 +1,14 @@
+#ifndef CMETA_STATUS_H
+#define CMETA_STATUS_H
+
+typedef enum cmeta_status {
+    CMETA_OK = 0,
+    CMETA_INVALID_ARGUMENT,
+    CMETA_TYPE_MISMATCH,
+    CMETA_TRAIT_MISSING,
+    CMETA_CAPACITY_EXCEEDED,
+    CMETA_OUT_OF_MEMORY,
+    CMETA_CALLBACK_ERROR
+} cmeta_status;
+
+#endif

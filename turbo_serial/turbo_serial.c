@@ -27,7 +27,7 @@
 #include "platform.h"
 #include "turbo_str.h"
 #include "turbo_thread.h"
-#include "turbo_vec.h"
+#include <turbo/container/vec.h>
 
 #include <stdbool.h>
 #include <stdatomic.h>
@@ -188,18 +188,6 @@ static void set_last_error(turbo_serial_t *serial, turbo_serial_result_t result)
   }
 }
 
-static void clear_port_info_storage(turbo_serial_port_info_storage_t *storage) {
-  if (!storage) return;
-
-  tstr_freep(&storage->name);
-  tstr_freep(&storage->description);
-  tstr_freep(&storage->usb_manufacturer);
-  tstr_freep(&storage->usb_product);
-  tstr_freep(&storage->usb_serial);
-  tstr_freep(&storage->bluetooth_address);
-  memset(storage, 0, sizeof(*storage));
-}
-
 static void wake_worker(turbo_serial_t *serial) {
   if (!serial) return;
 
@@ -342,9 +330,11 @@ turbo_serial_result_t turbo_serial_list_ports(turbo_serial_port_list_t **ports) 
   list = (turbo_serial_port_list_t *)calloc(1, sizeof(*list));
   if (!list) return TURBO_SERIAL_NO_MEMORY;
 
-  if (turbo_serial_port_info_vec_t_init(&list->items) != TURBO_OK) {
+  result = turbo_serial_result_from_container(
+      turbo_serial_port_info_vec_t_init(&list->items));
+  if (result != TURBO_SERIAL_OK) {
     free(list);
-    return TURBO_SERIAL_NO_MEMORY;
+    return result;
   }
 
   result = ops->list_ports(&list->items);
@@ -373,9 +363,11 @@ turbo_serial_result_t turbo_serial_port_info_by_name(const char *port_name,
   list = (turbo_serial_port_list_t *)calloc(1, sizeof(*list));
   if (!list) return TURBO_SERIAL_NO_MEMORY;
 
-  if (turbo_serial_port_info_vec_t_init(&list->items) != TURBO_OK) {
+  result = turbo_serial_result_from_container(
+      turbo_serial_port_info_vec_t_init(&list->items));
+  if (result != TURBO_SERIAL_OK) {
     free(list);
-    return TURBO_SERIAL_NO_MEMORY;
+    return result;
   }
 
   memset(&storage, 0, sizeof(storage));
@@ -385,10 +377,12 @@ turbo_serial_result_t turbo_serial_port_info_by_name(const char *port_name,
     return result;
   }
 
-  if (turbo_serial_port_info_vec_t_push(&list->items, storage) != TURBO_OK) {
-    clear_port_info_storage(&storage);
+  result = turbo_serial_result_from_container(
+      turbo_serial_port_info_vec_t_push(&list->items, storage));
+  turbo_serial_port_info_storage_destroy(&storage);
+  if (result != TURBO_SERIAL_OK) {
     turbo_serial_port_list_destroy(list);
-    return TURBO_SERIAL_NO_MEMORY;
+    return result;
   }
 
   *ports = list;
@@ -401,13 +395,7 @@ turbo_serial_result_t turbo_serial_port_info_by_name(const char *port_name,
 }
 
 void turbo_serial_port_list_destroy(turbo_serial_port_list_t *ports) {
-  size_t i;
-
   if (!ports) return;
-
-  for (i = 0; i < turbo_serial_port_info_vec_t_size(&ports->items); ++i) {
-    clear_port_info_storage(turbo_serial_port_info_vec_t_at(&ports->items, i));
-  }
   turbo_serial_port_info_vec_t_destroy(&ports->items);
   free(ports);
 }
