@@ -52,8 +52,7 @@ public def lower {A O : CType} (zip : SurfaceZip A O) : ErasedInvokeRelation :=
   ⟨zip.left.steps, zip.right.steps, zip.combine.binaryBackendSignature⟩
 
 /-- ZIP lowering preserves the statically known output type. -/
--- TEMP-MODULE-BRIDGE(M6): legacy EndToEnd and StructuredConformance
-public theorem lowering_preserves_type {A O : CType} (zip : SurfaceZip A O) :
+theorem lowering_preserves_type {A O : CType} (zip : SurfaceZip A O) :
     checkInvokeRelation A zip.lower = some O := by
   simp [SurfaceZip.lower, checkInvokeRelation,
     Pipeline.check_steps, Callable.binaryBackendSignature]
