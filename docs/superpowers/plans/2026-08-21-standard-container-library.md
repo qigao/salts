@@ -1,10 +1,10 @@
-# Standard Container Semantic Redesign Implementation Plan
+# Standard TurboSTL Semantic Redesign Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `container/` the only standard container library, with a true linked `List`, red-black-tree ordered containers, open-addressing hash containers, explicit ownership traits, bounded growth, and no semantic aliases.
+**Goal:** Make `turbostl/` the only standard container library, with a true linked `List`, red-black-tree ordered containers, open-addressing hash containers, explicit ownership traits, bounded growth, and no semantic aliases.
 
-**Architecture:** `TurboUtils::Container` depends only on CMeta. Compiled C owns list linking, red-black balancing, hash probing, and value lifecycles; CMeta generates typed facades, mutation-aware Range adapters, and collectors. `List`, `Deque`, ordered containers, and hash containers remain distinct algorithm families.
+**Architecture:** `TurboUtils::STL` depends only on CMeta. Compiled C owns list linking, red-black balancing, hash probing, and value lifecycles; CMeta generates typed facades, mutation-aware Range adapters, and collectors. `List`, `Deque`, ordered containers, and hash containers remain distinct algorithm families.
 
 **Tech Stack:** ISO C11, CMeta type traits and Range/collector protocols, TinyTest, CMake Presets, MSVC/Clang, C++17 public-header checks.
 
@@ -12,61 +12,61 @@
 
 ## Global Constraints
 
-- Execute the updated `docs/superpowers/plans/2026-08-21-cmeta-container-traits.md` first; Container requires CMeta ownership traits, opaque Range cursors, mutation detection, and collectors.
-- Treat the current untracked `container/` tree and tracked deletions under `turbo/` as user-owned migration baseline; inspect before every edit and never restore or overwrite unrelated work.
-- Container must not include or link Core or CFlow. It links only `TurboUtils::CMeta`.
+- Execute the updated `docs/superpowers/plans/2026-08-21-cmeta-container-traits.md` first; TurboSTL requires CMeta ownership traits, opaque Range cursors, mutation detection, and collectors.
+- Treat the current untracked `turbostl/` tree and tracked deletions under `turbo/` as user-owned migration baseline; inspect before every edit and never restore or overwrite unrelated work.
+- TurboSTL must not include or link Core or CFlow. It links only `TurboUtils::CMeta`.
 - `List` is a doubly linked list and has no `reserve`, `capacity`, or `at(index)` API.
 - `Map`, `Set`, and `MultiMap` use the internal red-black tree engine; `HashMap` and `HashSet` use the internal open-addressing hash-table engine.
 - `Map` never accepts hash/equal; `HashMap` never promises order; BTree/BPlusTree remain separate algorithms.
 - Every `init/from` receives `max_elements`; zero means a valid empty container that cannot grow, never unbounded growth.
 - Every successful mutation increments generation exactly once; rejected operations leave contents, size, and generation unchanged.
 - Every byte count and aligned offset uses checked arithmetic. Distinguish capacity exceeded from OOM.
-- Public headers live under `<turbo/container/...>`; do not install flat compatibility headers or old `TURBO_*_DEFINE` macros.
+- Public headers live under `<turbo/stl/...>`; do not install flat compatibility headers or old `TURBO_*_DEFINE` macros.
 - Use TDD for every task: add a behavioral failure, run RED for the expected reason, implement minimal behavior, run GREEN, then refactor.
 
 ## File Map
 
-- `container/CMakeLists.txt`: defines/export-installs `TurboUtils::Container`, tests, examples, and benchmarks.
-- `container/include/turbo/container/status.h`: independent stable `container_status` values.
-- `container/include/turbo/container/vec.h`, `deque.h`, `list.h`, and `heap.h`: sequence handles and operations.
-- `container/include/turbo/container/map.h`, `set.h`, and `multimap.h`: ordered handles and iterators.
-- `container/include/turbo/container/hash_map.h` and `hash_set.h`: unordered handles and iterators.
-- `container/include/turbo/container/typed.h` and `meta.h`: typed declaration surface and schema replay.
-- `container/src/value_internal.h` and `value_internal.c`: checked layout, CMeta lifecycle helpers, and production allocation wrappers.
-- `container/src/list.c`: doubly linked list implementation.
-- `container/src/rb_tree_internal.h` and `rb_tree_internal.c`: private rotations, fixups, bounds, and invariant validation.
-- `container/src/map.c`, `set.c`, and `multimap.c`: adapters over the red-black engine.
-- `container/src/hash_table_internal.h` and `hash_table_internal.c`: private probing, tombstones, and rehash.
-- `container/src/hash_map.c` and `hash_set.c`: adapters over the hash engine.
+- `turbostl/CMakeLists.txt`: defines/export-installs `TurboUtils::STL`, tests, examples, and benchmarks.
+- `turbostl/include/turbo/stl/status.h`: independent stable `turbo_stl_status` values.
+- `turbostl/include/turbo/stl/vec.h`, `deque.h`, `list.h`, and `heap.h`: sequence handles and operations.
+- `turbostl/include/turbo/stl/map.h`, `set.h`, and `multimap.h`: ordered handles and iterators.
+- `turbostl/include/turbo/stl/hash_map.h` and `hash_set.h`: unordered handles and iterators.
+- `turbostl/include/turbo/stl/typed.h` and `meta.h`: typed declaration surface and schema replay.
+- `turbostl/src/value_internal.h` and `value_internal.c`: checked layout, CMeta lifecycle helpers, and production allocation wrappers.
+- `turbostl/src/list.c`: doubly linked list implementation.
+- `turbostl/src/rb_tree_internal.h` and `rb_tree_internal.c`: private rotations, fixups, bounds, and invariant validation.
+- `turbostl/src/map.c`, `set.c`, and `multimap.c`: adapters over the red-black engine.
+- `turbostl/src/hash_table_internal.h` and `hash_table_internal.c`: private probing, tombstones, and rehash.
+- `turbostl/src/hash_map.c` and `hash_set.c`: adapters over the hash engine.
 
 ---
 
 ### Task 1: Establish the target, status, value helpers, and public include surface
 
 **Files:**
-- Create: `container/CMakeLists.txt`
-- Create: `container/include/turbo/container/export.h`
-- Create: `container/include/turbo/container/status.h`
-- Create: `container/include/turbo/container.h`
-- Create: `container/src/value_internal.h`
-- Create: `container/src/value_internal.c`
-- Create: `container/tests/CMakeLists.txt`
-- Create: `container/tests/expect_compile_failure.cmake`
-- Create: `container/tests/container_header_test.c`
-- Create: `container/tests/container_header_cpp_test.cpp`
+- Create: `turbostl/CMakeLists.txt`
+- Create: `turbostl/include/turbo/stl/export.h`
+- Create: `turbostl/include/turbo/stl/status.h`
+- Create: `turbostl/include/turbo/stl.h`
+- Create: `turbostl/src/value_internal.h`
+- Create: `turbostl/src/value_internal.c`
+- Create: `turbostl/tests/CMakeLists.txt`
+- Create: `turbostl/tests/expect_compile_failure.cmake`
+- Create: `turbostl/tests/turbostl_header_test.c`
+- Create: `turbostl/tests/turbostl_header_cpp_test.cpp`
 - Modify: `CMakeLists.txt`
 - Modify: `cmake/TurboUtilsConfig.cmake.in`
 
 **Interfaces:**
 - Consumes: `TurboUtils::CMeta`, `cmeta_type_desc`, `cmeta_type_traits`.
-- Produces: `TurboUtils::Container`, `container_status`, checked size/value helpers, namespaced installed headers.
+- Produces: `TurboUtils::STL`, `turbo_stl_status`, checked size/value helpers, namespaced installed headers.
 
 - [ ] **Step 1: Write C/C++ header RED tests**
 
 ```c
-#include <turbo/container.h>
+#include <turbo/stl.h>
 #include "tinytest.h"
-suite("Container public header") {
+suite("TurboSTL public header") {
     it("exposes distinct raw handles") {
         turbo_list_t list = {0}; turbo_deque_t deque = {0};
         turbo_map_t map = {0}; turbo_hash_map_t hash_map = {0};
@@ -81,7 +81,7 @@ The C++17 test includes the same aggregate header and zero-initializes all four 
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --fresh --preset win-release-user && cmake --build --preset win-release-user --target container_header_test"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --fresh --preset win-release-user && cmake --build --preset win-release-user --target turbostl_header_test"
 ```
 
 Expected: target/header is absent.
@@ -89,41 +89,41 @@ Expected: target/header is absent.
 - [ ] **Step 3: Define exact status/value interfaces**
 
 ```c
-typedef enum container_status {
-    CONTAINER_OK = 0, CONTAINER_INVALID_ARGUMENT, CONTAINER_OUT_OF_MEMORY,
-    CONTAINER_CAPACITY_EXCEEDED, CONTAINER_EMPTY, CONTAINER_NOT_FOUND,
-    CONTAINER_TYPE_MISMATCH, CONTAINER_TRAIT_MISSING
-} container_status;
-container_status container_checked_add(size_t, size_t, size_t *);
-container_status container_checked_mul(size_t, size_t, size_t *);
-container_status container_checked_align(size_t, size_t, size_t *);
-container_status container_value_copy(const cmeta_type_desc *, void *, const void *);
-container_status container_value_move(const cmeta_type_desc *, void *, void *);
-void container_value_destroy(const cmeta_type_desc *, void *);
+typedef enum turbo_stl_status {
+    TURBO_STL_OK = 0, TURBO_STL_INVALID_ARGUMENT, TURBO_STL_OUT_OF_MEMORY,
+    TURBO_STL_CAPACITY_EXCEEDED, TURBO_STL_EMPTY, TURBO_STL_NOT_FOUND,
+    TURBO_STL_TYPE_MISMATCH, TURBO_STL_TRAIT_MISSING
+} turbo_stl_status;
+turbo_stl_status turbostl_checked_add(size_t, size_t, size_t *);
+turbo_stl_status turbostl_checked_mul(size_t, size_t, size_t *);
+turbo_stl_status turbostl_checked_align(size_t, size_t, size_t *);
+turbo_stl_status turbostl_value_copy(const cmeta_type_desc *, void *, const void *);
+turbo_stl_status turbostl_value_move(const cmeta_type_desc *, void *, void *);
+void turbostl_value_destroy(const cmeta_type_desc *, void *);
 ```
 
-Keep production allocation fixed to `malloc/free`; do not add an allocator strategy. Under the test-only `TURBO_CONTAINER_TESTING` definition, expose deterministic failure controls from `value_internal.h`:
+Keep production allocation fixed to `malloc/free`; do not add an allocator strategy. Under the test-only `TURBO_STL_TESTING` definition, expose deterministic failure controls from `value_internal.h`:
 
 ```c
-void container_test_fail_allocation_after(size_t successful_allocations);
-void container_test_reset_allocation_failures(void);
+void turbostl_test_fail_allocation_after(size_t successful_allocations);
+void turbostl_test_reset_allocation_failures(void);
 ```
 
-All implementation allocation sites use private `container_allocate/container_deallocate` wrappers. Production wrappers have no configurable state. Tests compile a private `container_test_objects` object library from the same sources with `TURBO_CONTAINER_TESTING`; only that target counts allocations and fails the selected call, and the hooks are never installed/exported. `expect_compile_failure.cmake` invokes the configured compiler for one fixture and fails unless compilation fails with the requested symbol in diagnostics. Missing traits fail before touching storage; COPY failure maps to OOM.
+All implementation allocation sites use private `turbostl_allocate/turbostl_deallocate` wrappers. Production wrappers have no configurable state. Tests compile a private `turbostl_test_objects` object library from the same sources with `TURBO_STL_TESTING`; only that target counts allocations and fails the selected call, and the hooks are never installed/exported. `expect_compile_failure.cmake` invokes the configured compiler for one fixture and fails unless compilation fails with the requested symbol in diagnostics. Missing traits fail before touching storage; COPY failure maps to OOM.
 
 - [ ] **Step 4: Wire target/export and run GREEN**
 
-Use `cmake_config_target(... ALIAS TurboUtils::Container EXPORT_NAME Container)`, public C11/CMeta, namespaced install headers, and root order `cmeta,cflow,container,utils,turbo_serial`.
+Use `cmake_config_target(... ALIAS TurboUtils::STL EXPORT_NAME STL)`, public C11/CMeta, namespaced install headers, and root order `cmeta,cflow,turbostl,utils,turbo_serial`.
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --fresh --preset win-release-user && cmake --build --preset win-release-user --target container_header_test container_header_cpp_test && ctest --preset win-release-user -R ""^container_header"" --output-on-failure"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --fresh --preset win-release-user && cmake --build --preset win-release-user --target turbostl_header_test turbostl_header_cpp_test && ctest --preset win-release-user -R ""^turbostl_header"" --output-on-failure"
 ```
 
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add CMakeLists.txt cmake/TurboUtilsConfig.cmake.in container/CMakeLists.txt container/include/turbo/container.h container/include/turbo/container container/src/value_internal.* container/tests
-git commit -m "build(container): establish independent container target"
+git add CMakeLists.txt cmake/TurboUtilsConfig.cmake.in turbostl/CMakeLists.txt turbostl/include/turbo/stl.h turbostl/include/turbo/stl turbostl/src/value_internal.* turbostl/tests
+git commit -m "build(turbostl): establish independent container target"
 ```
 
 ---
@@ -131,16 +131,16 @@ git commit -m "build(container): establish independent container target"
 ### Task 2: Migrate Vec, Deque, Stack, Queue, and Heap without changing meanings
 
 **Files:**
-- Create: `container/include/turbo/container/vec.h`
-- Create: `container/include/turbo/container/deque.h`
-- Create: `container/include/turbo/container/stack.h`
-- Create: `container/include/turbo/container/queue.h`
-- Create: `container/include/turbo/container/heap.h`
-- Modify: `container/src/turbo_vec.c`
-- Modify: `container/src/turbo_deque.c`
-- Modify: `container/src/turbo_heap.c`
-- Create: `container/tests/container_sequence_test.c`
-- Create: `container/tests/container_ownership_test.c`
+- Create: `turbostl/include/turbo/stl/vec.h`
+- Create: `turbostl/include/turbo/stl/deque.h`
+- Create: `turbostl/include/turbo/stl/stack.h`
+- Create: `turbostl/include/turbo/stl/queue.h`
+- Create: `turbostl/include/turbo/stl/heap.h`
+- Modify: `turbostl/src/turbo_vec.c`
+- Modify: `turbostl/src/turbo_deque.c`
+- Modify: `turbostl/src/turbo_heap.c`
+- Create: `turbostl/tests/turbostl_sequence_test.c`
+- Create: `turbostl/tests/turbostl_ownership_test.c`
 
 **Interfaces:**
 - Consumes: Task 1 helpers and element traits.
@@ -151,10 +151,10 @@ git commit -m "build(container): establish independent container target"
 ```c
 it("rejects deque max plus one without mutation") {
     turbo_deque_t deque = {0}; int value = 3;
-    check_equal(turbo_deque_init(&deque, &cmeta_type_int, 1U), CONTAINER_OK);
-    check_equal(turbo_deque_push_back(&deque, &value), CONTAINER_OK);
+    check_equal(turbo_deque_init(&deque, &cmeta_type_int, 1U), TURBO_STL_OK);
+    check_equal(turbo_deque_push_back(&deque, &value), TURBO_STL_OK);
     uint64_t before = turbo_deque_generation(&deque);
-    check_equal(turbo_deque_push_front(&deque, &value), CONTAINER_CAPACITY_EXCEEDED);
+    check_equal(turbo_deque_push_front(&deque, &value), TURBO_STL_CAPACITY_EXCEEDED);
     check_equal(turbo_deque_size(&deque), 1U);
     check_equal(turbo_deque_generation(&deque), before);
     turbo_deque_destroy(&deque);
@@ -166,7 +166,7 @@ Add counted owning-value cases for copy failure, pop with/without output, reserv
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_sequence_test container_ownership_test"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_sequence_test turbostl_ownership_test"
 ```
 
 Expected: descriptor/max/generation APIs are missing or lifecycle assertions fail.
@@ -174,10 +174,10 @@ Expected: descriptor/max/generation APIs are missing or lifecycle assertions fai
 - [ ] **Step 3: Implement exact initialization contracts**
 
 ```c
-container_status turbo_vec_init(turbo_vec_t *, const cmeta_type_desc *, size_t max_elements);
-container_status turbo_vec_init_bytes(turbo_vec_t *, size_t size, size_t align, size_t max_elements);
-container_status turbo_deque_init(turbo_deque_t *, const cmeta_type_desc *, size_t max_elements);
-container_status turbo_deque_init_bytes(turbo_deque_t *, size_t size, size_t align, size_t max_elements);
+turbo_stl_status turbo_vec_init(turbo_vec_t *, const cmeta_type_desc *, size_t max_elements);
+turbo_stl_status turbo_vec_init_bytes(turbo_vec_t *, size_t size, size_t align, size_t max_elements);
+turbo_stl_status turbo_deque_init(turbo_deque_t *, const cmeta_type_desc *, size_t max_elements);
+turbo_stl_status turbo_deque_init_bytes(turbo_deque_t *, size_t size, size_t align, size_t max_elements);
 ```
 
 Reserve before copy; mutate state/generation only after success. Stack exposes push/pop/top over Vec. Queue exposes push/pop/front/back over Deque.
@@ -185,9 +185,9 @@ Reserve before copy; mutate state/generation only after success. Stack exposes p
 - [ ] **Step 4: Run GREEN and commit**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_sequence_test container_ownership_test container_header_cpp_test && ctest --preset win-release-user -R ""^container_(sequence|ownership|header)"" --output-on-failure"
-git add container/include/turbo/container/vec.h container/include/turbo/container/deque.h container/include/turbo/container/stack.h container/include/turbo/container/queue.h container/include/turbo/container/heap.h container/src/turbo_vec.c container/src/turbo_deque.c container/src/turbo_heap.c container/tests
-git commit -m "feat(container): add bounded trait-aware sequences"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_sequence_test turbostl_ownership_test turbostl_header_cpp_test && ctest --preset win-release-user -R ""^turbostl_(sequence|ownership|header)"" --output-on-failure"
+git add turbostl/include/turbo/stl/vec.h turbostl/include/turbo/stl/deque.h turbostl/include/turbo/stl/stack.h turbostl/include/turbo/stl/queue.h turbostl/include/turbo/stl/heap.h turbostl/src/turbo_vec.c turbostl/src/turbo_deque.c turbostl/src/turbo_heap.c turbostl/tests
+git commit -m "feat(turbostl): add bounded trait-aware sequences"
 ```
 
 ---
@@ -195,11 +195,11 @@ git commit -m "feat(container): add bounded trait-aware sequences"
 ### Task 3: Replace the deque alias with a true doubly linked List
 
 **Files:**
-- Create: `container/include/turbo/container/list.h`
-- Create: `container/src/list.c`
-- Create: `container/tests/container_list_test.c`
-- Create: `container/tests/compile_fail/list_has_no_capacity.c`
-- Modify: `container/tests/CMakeLists.txt`
+- Create: `turbostl/include/turbo/stl/list.h`
+- Create: `turbostl/src/list.c`
+- Create: `turbostl/tests/turbostl_list_test.c`
+- Create: `turbostl/tests/compile_fail/list_has_no_capacity.c`
+- Modify: `turbostl/tests/CMakeLists.txt`
 
 **Interfaces:**
 - Consumes: Task 1 value helpers and element traits.
@@ -211,10 +211,10 @@ git commit -m "feat(container): add bounded trait-aware sequences"
 it("keeps existing nodes stable across insertion") {
     turbo_list_t list = {0}; turbo_list_iter_t first, second, inserted;
     int one = 1, two = 2, middle = 7;
-    check_equal(turbo_list_init(&list, &cmeta_type_int, 3U), CONTAINER_OK);
-    check_equal(turbo_list_push_back(&list, &one, &first), CONTAINER_OK);
-    check_equal(turbo_list_push_back(&list, &two, &second), CONTAINER_OK);
-    check_equal(turbo_list_insert_after(&list, first, &middle, &inserted), CONTAINER_OK);
+    check_equal(turbo_list_init(&list, &cmeta_type_int, 3U), TURBO_STL_OK);
+    check_equal(turbo_list_push_back(&list, &one, &first), TURBO_STL_OK);
+    check_equal(turbo_list_push_back(&list, &two, &second), TURBO_STL_OK);
+    check_equal(turbo_list_insert_after(&list, first, &middle, &inserted), TURBO_STL_OK);
     check_equal(*(const int *)turbo_list_iter_value_const(second), 2);
     check_equal(*(const int *)turbo_list_iter_value_const(inserted), 7);
     turbo_list_destroy(&list);
@@ -226,7 +226,7 @@ it("keeps existing nodes stable across insertion") {
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_list_test container_compile_fail_list"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_list_test turbostl_compile_fail_list"
 ```
 
 Expected: List is absent/still exposes deque semantics, or the forbidden capacity call compiles.
@@ -236,12 +236,12 @@ Expected: List is absent/still exposes deque semantics, or the forbidden capacit
 ```c
 typedef struct turbo_list { void *impl; } turbo_list_t;
 typedef struct turbo_list_iter { const turbo_list_t *owner; void *node; } turbo_list_iter_t;
-container_status turbo_list_init(turbo_list_t *, const cmeta_type_desc *, size_t max_elements);
-container_status turbo_list_push_front(turbo_list_t *, const void *, turbo_list_iter_t *);
-container_status turbo_list_push_back(turbo_list_t *, const void *, turbo_list_iter_t *);
-container_status turbo_list_insert_before(turbo_list_t *, turbo_list_iter_t, const void *, turbo_list_iter_t *);
-container_status turbo_list_insert_after(turbo_list_t *, turbo_list_iter_t, const void *, turbo_list_iter_t *);
-container_status turbo_list_erase(turbo_list_t *, turbo_list_iter_t, void *out_value);
+turbo_stl_status turbo_list_init(turbo_list_t *, const cmeta_type_desc *, size_t max_elements);
+turbo_stl_status turbo_list_push_front(turbo_list_t *, const void *, turbo_list_iter_t *);
+turbo_stl_status turbo_list_push_back(turbo_list_t *, const void *, turbo_list_iter_t *);
+turbo_stl_status turbo_list_insert_before(turbo_list_t *, turbo_list_iter_t, const void *, turbo_list_iter_t *);
+turbo_stl_status turbo_list_insert_after(turbo_list_t *, turbo_list_iter_t, const void *, turbo_list_iter_t *);
+turbo_stl_status turbo_list_erase(turbo_list_t *, turbo_list_iter_t, void *out_value);
 ```
 
 Also declare begin/end/next/prev/value, front/back, pop_front/pop_back, from, clear/destroy, size/empty/generation. Do not declare reserve/capacity/at.
@@ -257,9 +257,9 @@ Cover empty, singleton, head/tail/middle operations, reverse iteration, wrong ow
 - [ ] **Step 6: Run GREEN and commit**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_list_test container_ownership_test && ctest --preset win-release-user -R ""^container_(list|ownership)_test$"" --output-on-failure"
-git add container/include/turbo/container/list.h container/src/list.c container/tests
-git commit -m "feat(container): implement linked list semantics"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_list_test turbostl_ownership_test && ctest --preset win-release-user -R ""^turbostl_(list|ownership)_test$"" --output-on-failure"
+git add turbostl/include/turbo/stl/list.h turbostl/src/list.c turbostl/tests
+git commit -m "feat(turbostl): implement linked list semantics"
 ```
 
 ---
@@ -267,13 +267,13 @@ git commit -m "feat(container): implement linked list semantics"
 ### Task 4: Isolate open addressing behind HashMap and HashSet
 
 **Files:**
-- Create: `container/src/hash_table_internal.h`
-- Create: `container/src/hash_table_internal.c`
-- Create: `container/include/turbo/container/hash_map.h`
-- Create: `container/include/turbo/container/hash_set.h`
-- Move: `container/src/turbo_hash_map.c` to `container/src/hash_map.c`
-- Move: `container/src/turbo_set.c` to `container/src/hash_set.c`
-- Create: `container/tests/container_hash_test.c`
+- Create: `turbostl/src/hash_table_internal.h`
+- Create: `turbostl/src/hash_table_internal.c`
+- Create: `turbostl/include/turbo/stl/hash_map.h`
+- Create: `turbostl/include/turbo/stl/hash_set.h`
+- Move: `turbostl/src/turbo_hash_map.c` to `turbostl/src/hash_map.c`
+- Move: `turbostl/src/turbo_set.c` to `turbostl/src/hash_set.c`
+- Create: `turbostl/tests/turbostl_hash_test.c`
 
 **Interfaces:**
 - Consumes: Task 1 helpers; key HASH+EQUAL and lifecycle traits.
@@ -286,10 +286,10 @@ it("survives all keys colliding and reuses tombstones") {
     turbo_hash_map_t map = {0};
     int keys[] = {1,2,3,4}, values[] = {10,20,30,40};
     check_equal(turbo_hash_map_init_with(&map, &cmeta_type_int, &cmeta_type_int,
-                                         constant_hash, int_equal, 4U), CONTAINER_OK);
+                                         constant_hash, int_equal, 4U), TURBO_STL_OK);
     for (size_t i = 0; i < 4U; ++i)
-        check_equal(turbo_hash_map_put(&map, &keys[i], &values[i]), CONTAINER_OK);
-    check_equal(turbo_hash_map_remove(&map, &keys[1], NULL), CONTAINER_OK);
+        check_equal(turbo_hash_map_put(&map, &keys[i], &values[i]), TURBO_STL_OK);
+    check_equal(turbo_hash_map_remove(&map, &keys[1], NULL), TURBO_STL_OK);
     check_equal(*(const int *)turbo_hash_map_get_const(&map, &keys[3]), 40);
     turbo_hash_map_destroy(&map);
 }
@@ -300,7 +300,7 @@ Add RED cases for replacement-copy failure preserving old value/generation, non-
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_hash_test"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_hash_test"
 ```
 
 Expected: trait APIs or separate HashSet are missing.
@@ -314,9 +314,9 @@ Define the public customization boundary without exposing slots:
 ```c
 typedef uint64_t (*turbo_hash_fn)(const void *key, void *context);
 typedef bool (*turbo_equal_fn)(const void *left, const void *right, void *context);
-container_status turbo_hash_map_init(turbo_hash_map_t *, const cmeta_type_desc *,
+turbo_stl_status turbo_hash_map_init(turbo_hash_map_t *, const cmeta_type_desc *,
                                      const cmeta_type_desc *, size_t max_elements);
-container_status turbo_hash_map_init_with(turbo_hash_map_t *, const cmeta_type_desc *,
+turbo_stl_status turbo_hash_map_init_with(turbo_hash_map_t *, const cmeta_type_desc *,
                                           const cmeta_type_desc *, turbo_hash_fn,
                                           turbo_equal_fn, void *context,
                                           size_t max_elements);
@@ -335,9 +335,9 @@ Use no value region/dummy value. Duplicate add succeeds without growth. Expose a
 - [ ] **Step 6: Run GREEN and commit**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_hash_test container_ownership_test && ctest --preset win-release-user -R ""^container_(hash|ownership)_test$"" --output-on-failure"
-git add container/src/hash_table_internal.h container/src/hash_table_internal.c container/src/hash_map.c container/src/hash_set.c container/include/turbo/container/hash_map.h container/include/turbo/container/hash_set.h container/tests
-git commit -m "feat(container): isolate hash table containers"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_hash_test turbostl_ownership_test && ctest --preset win-release-user -R ""^turbostl_(hash|ownership)_test$"" --output-on-failure"
+git add turbostl/src/hash_table_internal.h turbostl/src/hash_table_internal.c turbostl/src/hash_map.c turbostl/src/hash_set.c turbostl/include/turbo/stl/hash_map.h turbostl/include/turbo/stl/hash_set.h turbostl/tests
+git commit -m "feat(turbostl): isolate hash table containers"
 ```
 
 ---
@@ -345,13 +345,13 @@ git commit -m "feat(container): isolate hash table containers"
 ### Task 5: Implement the private red-black engine and ordered Map/Set
 
 **Files:**
-- Create: `container/src/rb_tree_internal.h`
-- Create: `container/src/rb_tree_internal.c`
-- Create: `container/include/turbo/container/map.h`
-- Create: `container/include/turbo/container/set.h`
-- Create: `container/src/map.c`
-- Create: `container/src/set.c`
-- Create: `container/tests/container_ordered_test.c`
+- Create: `turbostl/src/rb_tree_internal.h`
+- Create: `turbostl/src/rb_tree_internal.c`
+- Create: `turbostl/include/turbo/stl/map.h`
+- Create: `turbostl/include/turbo/stl/set.h`
+- Create: `turbostl/src/map.c`
+- Create: `turbostl/src/set.c`
+- Create: `turbostl/tests/turbostl_ordered_test.c`
 
 **Interfaces:**
 - Consumes: Task 1 helpers and COMPARE/lifecycle traits.
@@ -362,9 +362,9 @@ git commit -m "feat(container): isolate hash table containers"
 ```c
 it("iterates map keys in comparator order") {
     turbo_map_t map = {0}; int keys[] = {5,1,3,2,4};
-    check_equal(turbo_map_init(&map, &cmeta_type_int, &cmeta_type_int, 5U), CONTAINER_OK);
+    check_equal(turbo_map_init(&map, &cmeta_type_int, &cmeta_type_int, 5U), TURBO_STL_OK);
     for (size_t i = 0; i < 5U; ++i)
-        check_equal(turbo_map_put(&map, &keys[i], &keys[i]), CONTAINER_OK);
+        check_equal(turbo_map_put(&map, &keys[i], &keys[i]), TURBO_STL_OK);
     turbo_map_iter_t it = turbo_map_begin(&map);
     for (int expected = 1; expected <= 5; ++expected) {
         check_equal(*(const int *)turbo_map_iter_key_const(it), expected);
@@ -375,12 +375,12 @@ it("iterates map keys in comparator order") {
 }
 ```
 
-After every deterministic mutation assert private `turbo_rb_tree_validate(map.impl) == CONTAINER_OK`.
+After every deterministic mutation assert private `turbo_rb_tree_validate(map.impl) == TURBO_STL_OK`.
 
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_ordered_test"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_ordered_test"
 ```
 
 Expected: Map aliases HashMap or ordered APIs are absent.
@@ -393,9 +393,9 @@ Define comparator-based initialization explicitly:
 
 ```c
 typedef int (*turbo_compare_fn)(const void *left, const void *right, void *context);
-container_status turbo_map_init(turbo_map_t *, const cmeta_type_desc *,
+turbo_stl_status turbo_map_init(turbo_map_t *, const cmeta_type_desc *,
                                 const cmeta_type_desc *, size_t max_elements);
-container_status turbo_map_init_with(turbo_map_t *, const cmeta_type_desc *,
+turbo_stl_status turbo_map_init_with(turbo_map_t *, const cmeta_type_desc *,
                                      const cmeta_type_desc *, turbo_compare_fn,
                                      void *context, size_t max_elements);
 ```
@@ -417,9 +417,9 @@ Cover all rotation shapes, red/black leaf, one/two-child/root deletion, replacem
 - [ ] **Step 7: Run GREEN and commit**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_ordered_test container_ownership_test && ctest --preset win-release-user -R ""^container_(ordered|ownership)_test$"" --output-on-failure"
-git add container/src/rb_tree_internal.h container/src/rb_tree_internal.c container/src/map.c container/src/set.c container/include/turbo/container/map.h container/include/turbo/container/set.h container/tests
-git commit -m "feat(container): add red black tree map and set"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_ordered_test turbostl_ownership_test && ctest --preset win-release-user -R ""^turbostl_(ordered|ownership)_test$"" --output-on-failure"
+git add turbostl/src/rb_tree_internal.h turbostl/src/rb_tree_internal.c turbostl/src/map.c turbostl/src/set.c turbostl/include/turbo/stl/map.h turbostl/include/turbo/stl/set.h turbostl/tests
+git commit -m "feat(turbostl): add red black tree map and set"
 ```
 
 ---
@@ -427,11 +427,11 @@ git commit -m "feat(container): add red black tree map and set"
 ### Task 6: Add ordered MultiMap without hidden vectors
 
 **Files:**
-- Create: `container/include/turbo/container/multimap.h`
-- Create: `container/src/multimap.c`
-- Modify: `container/src/rb_tree_internal.h`
-- Modify: `container/src/rb_tree_internal.c`
-- Modify: `container/tests/container_ordered_test.c`
+- Create: `turbostl/include/turbo/stl/multimap.h`
+- Create: `turbostl/src/multimap.c`
+- Modify: `turbostl/src/rb_tree_internal.h`
+- Modify: `turbostl/src/rb_tree_internal.c`
+- Modify: `turbostl/tests/turbostl_ordered_test.c`
 
 **Interfaces:**
 - Consumes: Task 5 RB engine.
@@ -442,9 +442,9 @@ git commit -m "feat(container): add red black tree map and set"
 ```c
 it("keeps equal multimap keys in insertion order") {
     turbo_multimap_t map = {0}; int key = 3, values[] = {30,31,32};
-    check_equal(turbo_multimap_init(&map, &cmeta_type_int, &cmeta_type_int, 3U), CONTAINER_OK);
+    check_equal(turbo_multimap_init(&map, &cmeta_type_int, &cmeta_type_int, 3U), TURBO_STL_OK);
     for (size_t i = 0; i < 3U; ++i)
-        check_equal(turbo_multimap_put(&map, &key, &values[i], NULL), CONTAINER_OK);
+        check_equal(turbo_multimap_put(&map, &key, &values[i], NULL), TURBO_STL_OK);
     turbo_multimap_range_t r = turbo_multimap_equal_range(&map, &key);
     for (size_t i = 0; i < 3U; ++i) {
         check_equal(*(const int *)turbo_multimap_iter_value_const(r.first), values[i]);
@@ -457,7 +457,7 @@ it("keeps equal multimap keys in insertion order") {
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_ordered_test"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_ordered_test"
 ```
 
 Expected: MultiMap is absent or still hash-map-to-vector based.
@@ -471,9 +471,9 @@ Store monotonic `uint64_t insertion_sequence`; compare key then sequence; reject
 Run ordered/ownership tests for equal-range order, head/middle/tail erase, erase-all, missing key, max+1, and lifecycle balance.
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_ordered_test container_ownership_test && ctest --preset win-release-user -R ""^container_(ordered|ownership)_test$"" --output-on-failure"
-git add container/include/turbo/container/multimap.h container/src/multimap.c container/src/rb_tree_internal.h container/src/rb_tree_internal.c container/tests/container_ordered_test.c
-git commit -m "feat(container): add ordered multimap semantics"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_ordered_test turbostl_ownership_test && ctest --preset win-release-user -R ""^turbostl_(ordered|ownership)_test$"" --output-on-failure"
+git add turbostl/include/turbo/stl/multimap.h turbostl/src/multimap.c turbostl/src/rb_tree_internal.h turbostl/src/rb_tree_internal.c turbostl/tests/turbostl_ordered_test.c
+git commit -m "feat(turbostl): add ordered multimap semantics"
 ```
 
 ---
@@ -481,13 +481,13 @@ git commit -m "feat(container): add ordered multimap semantics"
 ### Task 7: Preserve BTree and BPlusTree as separate bounded algorithms
 
 **Files:**
-- Create: `container/include/turbo/container/btree.h`
-- Create: `container/include/turbo/container/bplus_tree.h`
-- Move: `container/src/turbo_btree.c` to `container/src/btree.c`
-- Create: `container/src/bplus_tree.c`
-- Create: `container/tests/container_multiway_tree_test.c`
-- Modify: `container/include/turbo/container.h`
-- Modify: `container/CMakeLists.txt`
+- Create: `turbostl/include/turbo/stl/btree.h`
+- Create: `turbostl/include/turbo/stl/bplus_tree.h`
+- Move: `turbostl/src/turbo_btree.c` to `turbostl/src/btree.c`
+- Create: `turbostl/src/bplus_tree.c`
+- Create: `turbostl/tests/turbostl_multiway_tree_test.c`
+- Modify: `turbostl/include/turbo/stl.h`
+- Modify: `turbostl/CMakeLists.txt`
 
 **Interfaces:**
 - Consumes: Task 1 helpers and COMPARE/lifecycle traits.
@@ -500,7 +500,7 @@ Initialize `turbo_btree_t`, `turbo_bplus_tree_t`, and `turbo_map_t` in one trans
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_multiway_tree_test"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_multiway_tree_test"
 ```
 
 Expected: old Core status/includes, missing namespaced headers, or missing descriptor/max/generation contracts.
@@ -516,9 +516,9 @@ Cover `max_elements` 0/1/exact/max+1, `SIZE_MAX` arithmetic, split allocation fa
 - [ ] **Step 5: Run GREEN and commit**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_multiway_tree_test container_ownership_test container_header_cpp_test && ctest --preset win-release-user -R ""^container_(multiway_tree|ownership|header)_test$"" --output-on-failure"
-git add container/include/turbo/container/btree.h container/include/turbo/container/bplus_tree.h container/include/turbo/container.h container/src/btree.c container/src/bplus_tree.c container/tests/container_multiway_tree_test.c container/CMakeLists.txt
-git commit -m "refactor(container): preserve bounded multiway trees"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_multiway_tree_test turbostl_ownership_test turbostl_header_cpp_test && ctest --preset win-release-user -R ""^turbostl_(multiway_tree|ownership|header)_test$"" --output-on-failure"
+git add turbostl/include/turbo/stl/btree.h turbostl/include/turbo/stl/bplus_tree.h turbostl/include/turbo/stl.h turbostl/src/btree.c turbostl/src/bplus_tree.c turbostl/tests/turbostl_multiway_tree_test.c turbostl/CMakeLists.txt
+git commit -m "refactor(turbostl): preserve bounded multiway trees"
 ```
 
 ---
@@ -526,14 +526,14 @@ git commit -m "refactor(container): preserve bounded multiway trees"
 ### Task 8: Generate typed facades, semantic ranges, and collectors from one schema
 
 **Files:**
-- Create: `container/include/turbo/container/meta.h`
-- Create: `container/include/turbo/container/typed.h`
-- Modify: `container/include/turbo/container/*.h`
+- Create: `turbostl/include/turbo/stl/meta.h`
+- Create: `turbostl/include/turbo/stl/typed.h`
+- Modify: `turbostl/include/turbo/stl/*.h`
 - Modify: `cmeta/include/cmeta/container.h`
-- Create: `container/tests/container_typed_test.c`
-- Modify: `container/tests/container_list_test.c`
-- Modify: `container/tests/container_ordered_test.c`
-- Modify: `container/tests/container_hash_test.c`
+- Create: `turbostl/tests/turbostl_typed_test.c`
+- Modify: `turbostl/tests/turbostl_list_test.c`
+- Modify: `turbostl/tests/turbostl_ordered_test.c`
+- Modify: `turbostl/tests/turbostl_hash_test.c`
 
 **Interfaces:**
 - Consumes: Tasks 2-7 raw APIs and prerequisite CMeta cursor/collector protocols.
@@ -550,8 +550,8 @@ Containers(
 );
 it("publishes sorted flags only for ordered containers") {
     IntMap ordered = {0}; IntHashMap hashed = {0};
-    check_equal(IntMap_init(&ordered, 4U), CONTAINER_OK);
-    check_equal(IntHashMap_init(&hashed, 4U), CONTAINER_OK);
+    check_equal(IntMap_init(&ordered, 4U), TURBO_STL_OK);
+    check_equal(IntHashMap_init(&hashed, 4U), TURBO_STL_OK);
     check_true((IntMap_keys_range(&ordered).flags & CMETA_RANGE_SORTED) != 0U);
     check_false((IntHashMap_keys_range(&hashed).flags & CMETA_RANGE_SORTED) != 0U);
     IntHashMap_destroy(&hashed); IntMap_destroy(&ordered);
@@ -561,7 +561,7 @@ it("publishes sorted flags only for ordered containers") {
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_typed_test container_compile_fail_typed"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_typed_test turbostl_compile_fail_typed"
 ```
 
 Expected: schema, `init(max_elements)`, Range adapters, or compile-negative enforcement are absent.
@@ -589,9 +589,9 @@ Require diagnostics for Map missing COMPARE, HashMap missing HASH/EQUAL, owning 
 - [ ] **Step 8: Run GREEN and commit**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target container_typed_test container_list_test container_ordered_test container_hash_test container_header_cpp_test && ctest --preset win-release-user -R ""^container_"" --output-on-failure"
-git add cmeta/include/cmeta/container.h container/include/turbo/container container/tests
-git commit -m "feat(container): generate semantic typed containers"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_typed_test turbostl_list_test turbostl_ordered_test turbostl_hash_test turbostl_header_cpp_test && ctest --preset win-release-user -R ""^turbostl_"" --output-on-failure"
+git add cmeta/include/cmeta/container.h turbostl/include/turbo/stl turbostl/tests
+git commit -m "feat(turbostl): generate semantic typed containers"
 ```
 
 ---
@@ -605,9 +605,9 @@ git commit -m "feat(container): generate semantic typed containers"
 - Modify: `turbo_serial/CMakeLists.txt`
 - Modify: `turbo_serial/turbo_serial.c`
 - Modify: `turbo_serial/turbo_serial_internal.h`
-- Modify: `container/README.md`
+- Modify: `turbostl/README.md`
 - Modify: `AGENTS.md`
-- Move coverage from: `utils/tests/test_turbo_containers.c`
+- Move coverage from: `utils/tests/test_turbo_stls.c`
 - Move standard benchmarks from: `utils/benchmarks/bench_memory_containers.c`
 - Delete migrated standard-container files from: `utils/include`, `utils/src`
 - Preserve current tracked deletions under: `turbo/`, `stream/`
@@ -618,27 +618,27 @@ git commit -m "feat(container): generate semantic typed containers"
 
 - [ ] **Step 1: Create dependency RED**
 
-Change one automaton include to `<turbo/container/vec.h>` without linkage, fresh-configure, build `turbo_utils`; expect include/link failure proving dependency is explicit.
+Change one automaton include to `<turbo/stl/vec.h>` without linkage, fresh-configure, build `turbo_utils`; expect include/link failure proving dependency is explicit.
 
 - [ ] **Step 2: Link privately and map status**
 
 ```c
-static int core_status_from_container(container_status s) {
+static int core_status_from_stl(turbo_stl_status s) {
     switch (s) {
-        case CONTAINER_OK: return TURBO_OK;
-        case CONTAINER_INVALID_ARGUMENT: return TURBO_EINVAL;
-        case CONTAINER_OUT_OF_MEMORY: return TURBO_ENOMEM;
-        case CONTAINER_CAPACITY_EXCEEDED: return TURBO_ERANGE;
-        case CONTAINER_EMPTY: return TURBO_ENOENT;
-        case CONTAINER_NOT_FOUND: return TURBO_ENOENT;
-        case CONTAINER_TYPE_MISMATCH: return TURBO_EINVAL;
-        case CONTAINER_TRAIT_MISSING: return TURBO_EINVAL;
+        case TURBO_STL_OK: return TURBO_OK;
+        case TURBO_STL_INVALID_ARGUMENT: return TURBO_EINVAL;
+        case TURBO_STL_OUT_OF_MEMORY: return TURBO_ENOMEM;
+        case TURBO_STL_CAPACITY_EXCEEDED: return TURBO_ERANGE;
+        case TURBO_STL_EMPTY: return TURBO_ENOENT;
+        case TURBO_STL_NOT_FOUND: return TURBO_ENOENT;
+        case TURBO_STL_TYPE_MISMATCH: return TURBO_EINVAL;
+        case TURBO_STL_TRAIT_MISSING: return TURBO_EINVAL;
         default: return TURBO_EIO;
     }
 }
 ```
 
-Link Core/TurboSerial privately to Container; do not re-export includes.
+Link Core/TurboSerial privately to TurboSTL; do not re-export includes.
 
 - [ ] **Step 3: Migrate tests/benchmarks by family**
 
@@ -651,7 +651,7 @@ Use `IntList_init(&list,max_elements)` and iterator traversal; never List_at/Lis
 - [ ] **Step 5: Scan stale references**
 
 ```powershell
-rg.exe -n 'turbo_containers\.h|"turbo_(vec|deque|list|heap|hash_map|hash_set|map|set|multimap)\.h"|TURBO_.*_DEFINE|deque-backed|map alias' utils turbo_serial container AGENTS.md -g '!build/**'
+rg.exe -n 'turbo_stls\.h|"turbo_(vec|deque|list|heap|hash_map|hash_set|map|set|multimap)\.h"|TURBO_.*_DEFINE|deque-backed|map alias' utils turbo_serial container AGENTS.md -g '!build/**'
 ```
 
 Expected: zero old include, macro, or incorrect semantic phrase.
@@ -659,11 +659,11 @@ Expected: zero old include, macro, or incorrect semantic phrase.
 - [ ] **Step 6: Run GREEN and commit**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --fresh --preset win-release-user && cmake --build --preset win-release-user --target turbo_utils turbo_serial test_string_automata container_sequence_test container_list_test container_ordered_test container_hash_test container_multiway_tree_test container_typed_test container_ownership_test && ctest --preset win-release-user -R ""^(test_string_automata|container_.*|turbo_serial.*)$"" --output-on-failure"
-git add CMakeLists.txt cmake container utils turbo_serial
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --fresh --preset win-release-user && cmake --build --preset win-release-user --target turbo_utils turbo_serial test_string_automata turbostl_sequence_test turbostl_list_test turbostl_ordered_test turbostl_hash_test turbostl_multiway_tree_test turbostl_typed_test turbostl_ownership_test && ctest --preset win-release-user -R ""^(test_string_automata|turbostl_.*|turbo_serial.*)$"" --output-on-failure"
+git add CMakeLists.txt cmake turbostl utils turbo_serial
 git add -A -- turbo stream
 git diff --cached --check
-git commit -m "refactor(container): enforce standard container semantics"
+git commit -m "refactor(turbostl): enforce standard container semantics"
 ```
 
 ---
@@ -671,10 +671,10 @@ git commit -m "refactor(container): enforce standard container semantics"
 ### Task 10: Verify sanitizers, install consumption, and measured behavior
 
 **Files:**
-- Create: `container/tests/install_consumer/CMakeLists.txt`
-- Create: `container/tests/install_consumer/main.c`
-- Create: `container/benchmarks/container_benchmark.c`
-- Modify: `container/CMakeLists.txt`
+- Create: `turbostl/tests/install_consumer/CMakeLists.txt`
+- Create: `turbostl/tests/install_consumer/main.c`
+- Create: `turbostl/benchmarks/turbostl_benchmark.c`
+- Modify: `turbostl/CMakeLists.txt`
 
 **Interfaces:**
 - Consumes: completed package.
@@ -682,7 +682,7 @@ git commit -m "refactor(container): enforce standard container semantics"
 
 - [ ] **Step 1: Write install consumer**
 
-Declare typed List/Map/HashMap; initialize finite limits; verify List order, Map sorted iteration, HashMap lookup; destroy all; include only `<turbo/container.h>` and link only `TurboUtils::Container`.
+Declare typed List/Map/HashMap; initialize finite limits; verify List order, Map sorted iteration, HashMap lookup; destroy all; include only `<turbo/stl.h>` and link only `TurboUtils::STL`.
 
 - [ ] **Step 2: Run Release verification**
 
@@ -695,7 +695,7 @@ Record exact pass/fail count and exit code.
 - [ ] **Step 3: Run ASan/development verification**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --fresh --preset win-dev-user && cmake --build --preset win-dev-user --target container_sequence_test container_list_test container_ordered_test container_hash_test container_multiway_tree_test container_typed_test container_ownership_test && ctest --preset win-dev-user -R ""^container_(sequence|list|ordered|hash|multiway_tree|typed|ownership)_test$"" --output-on-failure"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --fresh --preset win-dev-user && cmake --build --preset win-dev-user --target turbostl_sequence_test turbostl_list_test turbostl_ordered_test turbostl_hash_test turbostl_multiway_tree_test turbostl_typed_test turbostl_ownership_test && ctest --preset win-dev-user -R ""^turbostl_(sequence|list|ordered|hash|multiway_tree|typed|ownership)_test$"" --output-on-failure"
 ```
 
 - [ ] **Step 4: Verify installed package**
@@ -709,7 +709,7 @@ Measure typical, exact-limit, saturated List push/iterate, Deque push/pop, Map p
 - [ ] **Step 6: Final residue/scope audit**
 
 ```powershell
-rg.exe -n 'turbo_containers\.h|"turbo_(vec|deque|list|heap|hash_map|hash_set|map|set|multimap)\.h"|TURBO_.*_DEFINE|deque-backed|map alias' . -g '!build/**' -g '!.git/**' -g '!.worktrees/**' -g '!docs/superpowers/**'
+rg.exe -n 'turbo_stls\.h|"turbo_(vec|deque|list|heap|hash_map|hash_set|map|set|multimap)\.h"|TURBO_.*_DEFINE|deque-backed|map alias' . -g '!build/**' -g '!.git/**' -g '!.worktrees/**' -g '!docs/superpowers/**'
 git diff --check
 git status --short
 ```
@@ -719,6 +719,6 @@ Expected: zero stale production references/whitespace errors; report unrelated d
 - [ ] **Step 7: Commit verification artifacts**
 
 ```powershell
-git add container/tests/install_consumer container/benchmarks container/CMakeLists.txt
-git commit -m "test(container): verify semantic container package"
+git add turbostl/tests/install_consumer turbostl/benchmarks turbostl/CMakeLists.txt
+git commit -m "test(turbostl): verify semantic container package"
 ```

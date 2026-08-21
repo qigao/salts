@@ -83,7 +83,7 @@ static void counted_reset(void) {
     counted_copy_fail_on = 0u;
 }
 
-suite("Container ownership") {
+suite("TurboSTL ownership") {
     it("transfers typed vector removals and balances constructed values") {
         turbo_vec_t vec = {0};
         counted_value first;

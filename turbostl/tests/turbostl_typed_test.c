@@ -91,7 +91,7 @@ Containers(
     check_equal(memcmp(&aborted, &(Name){0}, sizeof(aborted)), 0);           \
 } while (0)
 
-spec("Container typed schema") {
+spec("TurboSTL typed schema") {
     it("generates a bounded sequence Range and transactional collector") {
         IntVec source = {0};
         IntVec output = {0};

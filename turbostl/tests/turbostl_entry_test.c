@@ -104,7 +104,7 @@ const cmeta_type_desc cmeta_type_owned_entry_value_ptr = {
 typed(HashMap, OwnedEntryMap, owned_entry_value, owned_entry_value);
 typed(BTree, OwnedEntryTree, owned_entry_value, owned_entry_value);
 
-spec("Container composed entry descriptors") {
+spec("TurboSTL composed entry descriptors") {
     it("copies a borrowed Range entry into an owned collector transient") {
         OwnedEntryMap source = {0};
         OwnedEntryMap output = {0};

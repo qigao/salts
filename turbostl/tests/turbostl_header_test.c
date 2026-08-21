@@ -1,7 +1,7 @@
 #include <turbo/stl.h>
 #include "tinytest.h"
 
-suite("Container public header") {
+suite("TurboSTL public header") {
     it("exposes raw standard container handles and status") {
         turbo_vec_t vec = {0};
         turbo_hash_map_t map = {0};

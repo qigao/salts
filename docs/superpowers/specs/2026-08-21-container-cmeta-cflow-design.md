@@ -1,4 +1,4 @@
-# Container、CMeta 与 CFlow 一体化设计
+# TurboSTL、CMeta 与 CFlow 一体化设计
 
 日期：2026-08-21
 
@@ -10,14 +10,14 @@
 - 旧 `turbo/` 目录包含更完整的容器集合及 typed 宏；
 - 旧 `stream/` 提供一套独立的 Java 风格有限流和 live/SPSC 运行时，而 `cflow/` 已经拥有 typed graph、runtime、source、scheduler 与 fluent stream facade。
 
-当前工作区已经开始删除旧 `turbo/`、`stream/` 并建立 `container/`，但尚未完成 target、安装、测试、调用方和错误/所有权协议的迁移。本设计以这些未提交改动为迁移基线，不恢复第二套容器或 Stream runtime。
+当前工作区已经开始删除旧 `turbo/`、`stream/` 并建立 `turbostl/`，但尚未完成 target、安装、测试、调用方和错误/所有权协议的迁移。本设计以这些未提交改动为迁移基线，不恢复第二套容器或 Stream runtime。
 
 ## 目标
 
-1. 将 Core 中的标准容器和旧 `turbo/` 容器统一迁入 `container/`，使其成为唯一标准容器库。
+1. 将 Core 中的标准容器和旧 `turbo/` 容器统一迁入 `turbostl/`，使其成为唯一标准容器库。
 2. 以 CMeta `typed(...)`、`Containers(...)` 和显式 traits 生成 typed facade、Range 与 collector 能力。
-3. 由 Container 提供 CFlow 的容器实现适配，使有限容器获得 Java 风格 lazy pipeline 与 terminal API。
-4. 保持 CFlow 不依赖具体 Container；ContainerCFlow 在构造 stream 时显式注入状态后端和 collector。
+3. 由 TurboSTL 提供 CFlow 的容器实现适配，使有限容器获得 Java 风格 lazy pipeline 与 terminal API。
+4. 保持 CFlow 不依赖具体 TurboSTL；STLCFlow 在构造 stream 时显式注入状态后端和 collector。
 5. 对所有增长状态设置硬上限，明确所有权、失效点、错误、清理与重复执行语义。
 6. 删除旧公开 include、typed 宏和 `TurboUtils::Stream` target，不保留兼容层。
 
@@ -34,13 +34,13 @@
 
 ### 方案 A：分层单事实源（采用）
 
-标准容器、CFlow 抽象和二者适配各有独立 target。CMeta 承载有限的类型与能力描述，ContainerCFlow 通过显式 Adapter/Strategy 将 Container 接入 CFlow。
+标准容器、CFlow 抽象和二者适配各有独立 target。CMeta 承载有限的类型与能力描述，STLCFlow 通过显式 Adapter/Strategy 将 TurboSTL 接入 CFlow。
 
-优点是无依赖环、无全局注册、无算法复制，Core 也能只消费标准容器本体。代价是新增一个明确的 `TurboUtils::ContainerCFlow` target，并需要一次完整的 breaking migration。
+优点是无依赖环、无全局注册、无算法复制，Core 也能只消费标准容器本体。代价是新增一个明确的 `TurboUtils::STLCFlow` target，并需要一次完整的 breaking migration。
 
-### 方案 B：CFlow 直接依赖 Container（拒绝）
+### 方案 B：CFlow 直接依赖 TurboSTL（拒绝）
 
-实现状态算子较直接，但违反“Container 是 CFlow 实现、CFlow 不感知 Container”的边界，并会把具体容器依赖扩散到通用 graph/runtime。
+实现状态算子较直接，但违反“TurboSTL 是 CFlow 实现、CFlow 不感知 TurboSTL”的边界，并会把具体容器依赖扩散到通用 graph/runtime。
 
 ### 方案 C：由 typed 容器宏直接生成 Stream 算法（拒绝）
 
@@ -52,20 +52,20 @@
 
 ```text
 TurboUtils::CFlow          -> TurboUtils::CMeta
-TurboUtils::Container      -> TurboUtils::CMeta
-TurboUtils::ContainerCFlow -> TurboUtils::Container + TurboUtils::CFlow
-TurboUtils::Core           -> TurboUtils::Container（PRIVATE）
+TurboUtils::STL      -> TurboUtils::CMeta
+TurboUtils::STLCFlow -> TurboUtils::STL + TurboUtils::CFlow
+TurboUtils::Core           -> TurboUtils::STL（PRIVATE）
 ```
 
 职责如下：
 
 - `TurboUtils::CMeta`：类型描述、type traits、Range、container descriptor 与 collector 协议。
 - `TurboUtils::CFlow`：graph、operator、terminal、runtime、status 和抽象的有界状态后端协议。
-- `TurboUtils::Container`：标准容器算法、raw API、typed facade、Range/collector adapter。
-- `TurboUtils::ContainerCFlow`：Container 对 CFlow stream、state backend 和 typed collector 的实现。
+- `TurboUtils::STL`：标准容器算法、raw API、typed facade、Range/collector adapter。
+- `TurboUtils::STLCFlow`：TurboSTL 对 CFlow stream、state backend 和 typed collector 的实现。
 - `TurboUtils::Core`：错误、字符串、文件、平台、日志、automata 等共享能力；不再拥有或安装标准容器。
 
-Container 不依赖 Core。它提供自己的 export header 与 `container_status`，避免 Core 私有消费 Container 时产生依赖环。Core 在自身公开边界把 Container 错误转换为现有 `TURBO_E*`。
+TurboSTL 不依赖 Core。它提供自己的 export header 与 `turbo_stl_status`，避免 Core 私有消费 TurboSTL 时产生依赖环。Core 在自身公开边界把 TurboSTL 错误转换为现有 `TURBO_E*`。
 
 ## 文件布局
 
@@ -84,11 +84,11 @@ cflow/include/cflow/
   terminals.h
   collectors.h
 
-container/
+turbostl/
   CMakeLists.txt
   include/turbo/
-    container.h
-    container/
+    stl.h
+    stl/
       export.h
       status.h
       vec.h
@@ -122,11 +122,11 @@ container/
   benchmarks/
 ```
 
-`<turbo/container.h>` 是标准容器聚合头；`<turbo/container/cflow.h>` 是可选 CFlow 集成入口。旧 flat include 路径不安装。
+`<turbo/stl.h>` 是标准容器聚合头；`<turbo/stl/cflow.h>` 是可选 CFlow 集成入口。旧 flat include 路径不安装。
 
 ## 标准容器范围
 
-迁入 Container 的标准容器为：
+迁入 TurboSTL 的标准容器为：
 
 ```text
 Vec / Deque / List / Stack / Queue / Heap
@@ -182,11 +182,11 @@ rotation 只重连节点，不移动节点内 key/value payload。插入必须�
 ## Breaking public API
 
 - raw 类型名如 `turbo_vec_t`、`turbo_hash_map_t` 保留。
-- raw API 改用 Container 自身 status 和显式类型/字节语义，不再从 Core 取得错误码。
+- raw API 改用 TurboSTL 自身 status 和显式类型/字节语义，不再从 Core 取得错误码。
 - typed 声明的唯一公开入口是 `typed(Kind, ...)` 和 `Containers(...)`。
-- `TURBO_VEC_DEFINE`、`TURBO_HASH_MAP_DEFINE` 等宏降为 Container 内部生成机制，不再安装或文档化。
-- include 统一迁移至 `<turbo/container/...>`。
-- 删除 `TurboUtils::Stream`；普通用户链接 `TurboUtils::Container`，容器流用户链接 `TurboUtils::ContainerCFlow`。
+- `TURBO_VEC_DEFINE`、`TURBO_HASH_MAP_DEFINE` 等宏降为 TurboSTL 内部生成机制，不再安装或文档化。
+- include 统一迁移至 `<turbo/stl/...>`。
+- 删除 `TurboUtils::Stream`；普通用户链接 `TurboUtils::STL`，容器流用户链接 `TurboUtils::STLCFlow`。
 - 删除 List 的 `reserve/capacity/at` 和所有“deque-backed list”契约。
 - Map 初始化由 hash/equal 改为 compare trait；删除 hash slot/capacity API 并改为有序 iterator/bounds API。
 - Set 与 MultiMap 迁移到有序红黑树族；HashSet 与 HashMap 保留哈希语义。
@@ -219,7 +219,7 @@ HashMap
   size / capacity / empty / generation
 ```
 
-`init` 使用 type descriptor/traits；`init_bytes` 只接受显式 size/alignment 和 comparator 或 hash/equal，且只能保存 trivial byte 值。List/Map iterator 保存 owner 和当前节点；插入与 rotation 不使它失效，erase 只使指向目标节点的 iterator 失效。失效节点 iterator 不可安全自检，继续使用属于调用方契约违例。HashMap iterator 保存 owner、当前 slot 和捕获 generation，任何 rehash 后访问都返回 `CONTAINER_INVALID_ARGUMENT`。iterator 都是 borrowed handle，不拥有容器或 payload。
+`init` 使用 type descriptor/traits；`init_bytes` 只接受显式 size/alignment 和 comparator 或 hash/equal，且只能保存 trivial byte 值。List/Map iterator 保存 owner 和当前节点；插入与 rotation 不使它失效，erase 只使指向目标节点的 iterator 失效。失效节点 iterator 不可安全自检，继续使用属于调用方契约违例。HashMap iterator 保存 owner、当前 slot 和捕获 generation，任何 rehash 后访问都返回 `TURBO_STL_INVALID_ARGUMENT`。iterator 都是 borrowed handle，不拥有容器或 payload。
 
 `MultiMap` 不提供含糊的 `remove(key)`：`erase(iterator)` 删除一个精确 entry，`erase_key(key)` 删除该 key 的全部 entries，`equal_range(key)` 返回同 key 的有序区间。任何批量删除在开始前完成参数与 trait 校验，执行阶段不包含可失败分配。
 
@@ -264,11 +264,11 @@ collect capability
 - element/key/value ownership metadata；
 - Range factories 与 range flags；
 - collector factory；
-- Container 内部 raw adapter。
+- TurboSTL 内部 raw adapter。
 
-这些产物由稳定的 Container schemas 经 CMeta `Schema/Replay` 生成。方法表、descriptor、Range 与 collector 不各自维护重复的容器种类列表。CMeta 只生成 metadata 和薄 facade，实际算法仍由 Container 编译库拥有。
+这些产物由稳定的 TurboSTL schemas 经 CMeta `Schema/Replay` 生成。方法表、descriptor、Range 与 collector 不各自维护重复的容器种类列表。CMeta 只生成 metadata 和薄 facade，实际算法仍由 TurboSTL 编译库拥有。
 
-## Container 值所有权
+## TurboSTL 值所有权
 
 - 插入拥有型值时执行 copy/move construct；失败不得留下半初始化 slot。
 - 移除到调用方输出时执行 move construct；无输出时直接 destroy。
@@ -288,9 +288,9 @@ typedef struct cmeta_range_cursor {
 } cmeta_range_cursor;
 ```
 
-数组和 hash range 使用 `index`，List/RB tree range 使用 `state` 保存当前节点。cursor 由调用方零初始化，只能交回创建它的 Range；不得复制到另一个 owner 或在 mutation 后继续使用。`cmeta_range_next_fn`、CFlow range source 和生成的 Container adapters 同步迁移到该类型，不保留把节点指针塞进 `size_t` 的平台假设。
+数组和 hash range 使用 `index`，List/RB tree range 使用 `state` 保存当前节点。cursor 由调用方零初始化，只能交回创建它的 Range；不得复制到另一个 owner 或在 mutation 后继续使用。`cmeta_range_next_fn`、CFlow range source 和生成的 TurboSTL adapters 同步迁移到该类型，不保留把节点指针塞进 `size_t` 的平台假设。
 
-所有容器是 single-threaded。跨线程共享必须由调用方在容器 API 外同步；`const` 查询与 iterator 不隐含线程安全。初始化记录 `max_elements` 硬上限，所有节点大小、payload offset、alignment、capacity 和总字节计算都使用 checked arithmetic。到达上限返回 `CONTAINER_CAPACITY_EXCEEDED`，OOM 返回 `CONTAINER_OUT_OF_MEMORY`，二者不得混淆。
+所有容器是 single-threaded。跨线程共享必须由调用方在容器 API 外同步；`const` 查询与 iterator 不隐含线程安全。初始化记录 `max_elements` 硬上限，所有节点大小、payload offset、alignment、capacity 和总字节计算都使用 checked arithmetic。到达上限返回 `TURBO_STL_CAPACITY_EXCEEDED`，OOM 返回 `TURBO_STL_OUT_OF_MEMORY`，二者不得混淆。
 
 `init(..., max_elements)` 创建空容器；`from(..., count, max_elements)` 要求 `count <= max_elements`，失败时输出保持零状态。API 不提供“0 等于无限”或自动扩展上限的 fallback。HashMap 的 `capacity` 是 `max_elements` 约束下的内部 slot 预算，List/RB tree 不公开 capacity 概念。
 
@@ -308,9 +308,9 @@ cflow_set_state_ops
   begin / insert_if_absent / destroy
 ```
 
-ContainerCFlow 以 Adapter + Strategy 实现这些接口：sequence state 使用 `turbo_vec_t`，distinct state 使用 `turbo_hash_set_t`，typed terminal 使用 CMeta collector。
+STLCFlow 以 Adapter + Strategy 实现这些接口：sequence state 使用 `turbo_vec_t`，distinct state 使用 `turbo_hash_set_t`，typed terminal 使用 CMeta collector。
 
-不使用全局 registry、服务定位器或隐式弱 fallback。backend 由 `<turbo/container/cflow.h>` 在构造 stream 时显式注入。CFlow graph 只保存语义参数，不保存 Container 对象：
+不使用全局 registry、服务定位器或隐式弱 fallback。backend 由 `<turbo/stl/cflow.h>` 在构造 stream 时显式注入。CFlow graph 只保存语义参数，不保存 TurboSTL 对象：
 
 ```c
 cflow_stream stream = {0};
@@ -319,7 +319,7 @@ stream(&values, &stream)
     ->map(&stream, square);
 ```
 
-`stream_keys`、`stream_values`、`stream_entries` 对关联容器选择显式 view；Map 不定义模糊的默认元素流。普通 CFlow Range 继续使用 CFlow 自身的 range/source 构造 API，不需要 Container。
+`stream_keys`、`stream_values`、`stream_entries` 对关联容器选择显式 view；Map 不定义模糊的默认元素流。普通 CFlow Range 继续使用 CFlow 自身的 range/source 构造 API，不需要 TurboSTL。
 
 没有 backend 时，无状态 CFlow pipeline 正常工作；请求 distinct、sorted 或 typed collection 时返回 `CFLOW_UNSUPPORTED`。该结果是显式能力检查，不触发 interpreter/container fallback。
 
@@ -434,21 +434,21 @@ ZERO -> BEGUN -> ACCEPTING -> COMMITTED
 - groupingBy/partitioningBy：平均时间 `O(n)`，空间由 bucket、entry 和 retained payload 三个上限共同约束。
 - min/max/count/match/find：时间 `O(n)`；find/match 允许短路。
 
-Container 提供稳定排序和 hash set 实现；CFlow 与 ContainerCFlow 不另写动态数组、hash table 或排序基础设施。以上复杂度是算法契约，不代表吞吐或缓存收益；性能结论必须来自实现后的 benchmark/profile。
+TurboSTL 提供稳定排序和 hash set 实现；CFlow 与 STLCFlow 不另写动态数组、hash table 或排序基础设施。以上复杂度是算法契约，不代表吞吐或缓存收益；性能结论必须来自实现后的 benchmark/profile。
 
 ## 错误契约
 
-Container 定义：
+TurboSTL 定义：
 
 ```text
-CONTAINER_OK
-CONTAINER_INVALID_ARGUMENT
-CONTAINER_OUT_OF_MEMORY
-CONTAINER_CAPACITY_EXCEEDED
-CONTAINER_EMPTY
-CONTAINER_NOT_FOUND
-CONTAINER_TYPE_MISMATCH
-CONTAINER_TRAIT_MISSING
+TURBO_STL_OK
+TURBO_STL_INVALID_ARGUMENT
+TURBO_STL_OUT_OF_MEMORY
+TURBO_STL_CAPACITY_EXCEEDED
+TURBO_STL_EMPTY
+TURBO_STL_NOT_FOUND
+TURBO_STL_TYPE_MISMATCH
+TURBO_STL_TRAIT_MISSING
 ```
 
 CFlow 定义结构化 `cflow_status`，至少区分：
@@ -469,7 +469,7 @@ typedef struct cflow_error {
 } cflow_error;
 ```
 
-fluent intermediate method 继续返回 self，失败后 stream 进入 sticky failed 状态。terminal 返回 `cflow_status`；详细信息从 stream/run error accessor 读取。ContainerCFlow 在唯一适配边界把 `container_status` 转换为 `cflow_status`。中间层不重复记录日志，应用在消费或转换错误的边界决定是否记录。
+fluent intermediate method 继续返回 self，失败后 stream 进入 sticky failed 状态。terminal 返回 `cflow_status`；详细信息从 stream/run error accessor 读取。STLCFlow 在唯一适配边界把 `turbo_stl_status` 转换为 `cflow_status`。中间层不重复记录日志，应用在消费或转换错误的边界决定是否记录。
 
 空流语义：
 
@@ -484,11 +484,11 @@ fluent intermediate method 继续返回 self，失败后 stream 进入 sticky fa
 ## 迁移顺序
 
 1. 扩展 CMeta type/container traits，并建立 traits、multi-TU 与 ownership tests。
-2. 建立 `TurboUtils::Container`，合并 Core 与旧 `turbo/` 的标准容器实现。
+2. 建立 `TurboUtils::STL`，合并 Core 与旧 `turbo/` 的标准容器实现。
 3. 迁移 Core automata、TurboSerial 等调用方和构建依赖。
-4. 扩展 CFlow operator/terminal/status/backend 协议，保持无 Container 的核心测试可运行。
-5. 建立 `TurboUtils::ContainerCFlow`，实现 backend、stream adapter 和 typed collectors。
-6. 把旧 Stream 中有限容器流的有效行为测试迁移到 CFlow/ContainerCFlow。
+4. 扩展 CFlow operator/terminal/status/backend 协议，保持无 TurboSTL 的核心测试可运行。
+5. 建立 `TurboUtils::STLCFlow`，实现 backend、stream adapter 和 typed collectors。
+6. 把旧 Stream 中有限容器流的有效行为测试迁移到 CFlow/STLCFlow。
 7. 删除旧 `stream/`、旧 `turbo/` 与 Utils 中全部标准容器文件和失效引用。
 8. 更新安装导出、文档、examples、benchmark 与 install consumer smoke test。
 
@@ -500,14 +500,14 @@ TinyTest 测试按模块拆分：
 
 ```text
 cmeta_traits_test
-container_algorithms_test
-container_list_test
-container_ordered_test
-container_hash_test
-container_ownership_test
-container_multi_tu_test
+turbostl_algorithms_test
+turbostl_list_test
+turbostl_ordered_test
+turbostl_hash_test
+turbostl_ownership_test
+turbostl_multi_tu_test
 cflow_terminals_test
-container_cflow_test
+turbostl_cflow_test
 core_container_consumers_test
 install_consumer_smoke
 ```
@@ -534,7 +534,7 @@ install_consumer_smoke
 Windows 首选仓库实际可用的 user preset：
 
 1. `cmake --fresh --preset win-release-user`；
-2. 先构建并运行 CMeta、Container、CFlow、ContainerCFlow 最小相关 targets；
+2. 先构建并运行 CMeta、TurboSTL、CFlow、STLCFlow 最小相关 targets；
 3. 再运行 Core automata、regex、TurboSerial 相邻回归；
 4. 扩大到 `ctest --preset win-release-user`；
 5. 使用 `win-dev-user` 做 ASan/开发配置验证；
@@ -576,12 +576,12 @@ Windows 首选仓库实际可用的 user preset：
 
 ## 回滚方案
 
-本改动不迁移持久化数据。合入或发布前若验证失败，按阶段回退 Container/CMeta/CFlow 相关提交并恢复上一版本构建图，不在失败实现上增加 fallback 分支。发布后需要旧接口的用户继续使用上一 major/minor package；新版本不动态切换回旧 Stream runtime，也不同时维护两套容器实现。
+本改动不迁移持久化数据。合入或发布前若验证失败，按阶段回退 TurboSTL/CMeta/CFlow 相关提交并恢复上一版本构建图，不在失败实现上增加 fallback 分支。发布后需要旧接口的用户继续使用上一 major/minor package；新版本不动态切换回旧 Stream runtime，也不同时维护两套容器实现。
 
 ## 完成条件
 
-- 标准容器文件只存在于 `container/`，Core 和旧 `turbo/` 无重复实现；
-- CFlow target 不依赖 Container，ContainerCFlow 是唯一适配实现；
+- 标准容器文件只存在于 `turbostl/`，Core 和旧 `turbo/` 无重复实现；
+- CFlow target 不依赖 TurboSTL，STLCFlow 是唯一适配实现；
 - 公开 typed API 只有 CMeta `typed/Containers`；
 - 有限容器 Java 风格操作面按本设计完整公开，没有占位 terminal；
 - ownership、capacity、mutation、status 和 collector 状态机测试通过；

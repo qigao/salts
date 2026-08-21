@@ -98,7 +98,7 @@ static int raw_int_compare_multimap(const void *left, const void *right,
     return (lhs > rhs) - (lhs < rhs);
 }
 
-suite("Container hash ownership") {
+suite("TurboSTL hash ownership") {
     it("keeps HashSet independent with collision and duplicate semantics") {
         turbo_hash_set_t set = {0};
         int key;

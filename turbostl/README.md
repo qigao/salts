@@ -1,6 +1,20 @@
-# Turbo typed containers v50
+# TurboSTL
 
-Turbo owns the concrete data-structure algorithms. CMeta supplies finite typed facades and metadata around those raw algorithms.
+TurboSTL is TurboUtils' C11 standard-library-style collection module. It owns
+the concrete data-structure algorithms, while CMeta supplies finite typed
+facades and metadata around those raw algorithms.
+
+Link the installed CMake target and include either the aggregate header or a
+focused component header:
+
+```cmake
+target_link_libraries(my_target PRIVATE TurboUtils::STL)
+```
+
+```c
+#include <turbo/stl.h>
+#include <turbo/stl/typed.h>
+```
 
 ## One declaration is enough
 
@@ -35,7 +49,7 @@ container descriptor
 Range factories / traits
 ```
 
-The forwarding functions are `static inline`, and descriptors are header-local metadata. The actual algorithms remain compiled C in Turbo sources:
+The forwarding functions are `static inline`, and descriptors are header-local metadata. The actual algorithms remain compiled C in TurboSTL sources:
 
 ```text
 vector growth
@@ -95,4 +109,4 @@ stream_values(&map, &s);
 stream_entries(&map, &s);
 ```
 
-Turbo does not depend on CFlow.
+TurboSTL does not depend on CFlow.

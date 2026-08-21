@@ -109,7 +109,7 @@ static owned_sort_item owned_sort_make(int key, int order) {
     return result;
 }
 
-spec("Container stable sort") {
+spec("TurboSTL stable sort") {
     it("sorts stably while preserving duplicate encounter order") {
         stable_item values[] = {{2, 0}, {1, 1}, {2, 2}, {1, 3}};
 

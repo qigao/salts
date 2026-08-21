@@ -3,9 +3,9 @@
 
 #include <cstddef>
 
-static_assert(TURBO_STL_OK == 0, "Container status must remain zero-success");
+static_assert(TURBO_STL_OK == 0, "TurboSTL status must remain zero-success");
 
-spec("Container C++ public header") {
+spec("TurboSTL C++ public header") {
   it("exposes zero-initializable raw standard container handles") {
     turbo_vec_t vec{};
     turbo_hash_map_t map{};

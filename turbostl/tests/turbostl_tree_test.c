@@ -133,7 +133,7 @@ static const cmeta_type_desc missing_compare_type = {
     CMETA_T_OBJECT, NULL, &missing_compare_traits
 };
 
-spec("Container trees") {
+spec("TurboSTL trees") {
     it("splits BTree nodes and iterates entries in key order") {
         IntTree tree = {0};
         cmeta_range range;

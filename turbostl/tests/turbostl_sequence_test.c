@@ -23,7 +23,7 @@ static int large_heap_compare(const void *left, const void *right, void *context
     return (lhs->priority > rhs->priority) - (lhs->priority < rhs->priority);
 }
 
-suite("Container sequences") {
+suite("TurboSTL sequences") {
     it("keeps raw vector values bounded and zero fills growth") {
         turbo_vec_t vec = {0};
         const int value = 7;
