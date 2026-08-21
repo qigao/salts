@@ -89,13 +89,22 @@ theorem CPreprocessorBackendConformance.capabilities_agree :
     gccCertified.replayCapability = clangCertified.replayCapability := by
   native_decide
 
-/-- Portability is now a generic theorem over any two certified backends with
-    equal replay capabilities, rather than a GCC/Clang-specific pair theorem. -/
+/-- Successful lowering normalizes to the one canonical plan determined only by
+    the replay IR once the selected backend admits that IR. -/
+theorem CPreprocessorBackendConformance.reentry_normalizes_to_canonical_plan :
+    lowerReplayBackendPlan gccCertified.replayCapability reentrantIR =
+      some (ReplayBackendPlan.fromIR reentrantIR) := by
+  exact lowerReplayBackendPlan_eq_canonical_of_supports
+    gccCertified.replayCapability reentrantIR (by native_decide)
+
+/-- Portability depends only on both certified backends supporting this IR, not
+    on equality of their complete capability records. -/
 theorem CPreprocessorBackendConformance.reentry_lowering_is_portable :
     lowerReplayBackendPlan gccCertified.replayCapability reentrantIR =
       lowerReplayBackendPlan clangCertified.replayCapability reentrantIR := by
-  exact certifiedReplayLowering_eq_of_capability_eq
-    gccCertified clangCertified reentrantIR (by native_decide)
+  exact certifiedReplayLowering_eq_of_both_supports
+    gccCertified clangCertified reentrantIR
+    (by native_decide) (by native_decide)
 
 end Producer
 end CMeta
