@@ -73,7 +73,7 @@ theorem fromIR_respects (ir : ReplayIR) :
 
 end ReplayExpansionPlan
 
-/-- Fully admitted strict-C11 backend plan. `requiredRescanDepth` is the logical
+/-- Fully accepted strict-C11 backend plan. `requiredRescanDepth` is the logical
     nested re-entry depth that the backend certificate must cover; it is not the
     literal number of preprocessor `EVAL` scans. -/
 structure ReplayBackendPlan where
@@ -85,7 +85,7 @@ structure ReplayBackendPlan where
 namespace ReplayBackendPlan
 
 /-- The unique backend plan determined by replay structure itself. Backend
-    capability decides only whether this plan is admitted; it does not alter the
+    capability decides only whether this plan is accepted; it does not alter the
     plan once admission succeeds. -/
 def fromIR (ir : ReplayIR) : ReplayBackendPlan :=
   ⟨ir, ir.sameProducerDepth, ReplayExpansionPlan.fromIR ir⟩
@@ -121,6 +121,27 @@ theorem lowerReplayBackendPlan_eq_canonical_of_supports
     lowerReplayBackendPlan backend ir = some (ReplayBackendPlan.fromIR ir) := by
   simp [lowerReplayBackendPlan, lowerReplayIR, lowerSameProducerDepth,
     ReplayBackendPlan.fromIR, h]
+
+/-- Successful plan generation is exactly support for the requested IR plus the
+    canonical plan identity. -/
+theorem lowerReplayBackendPlan_eq_some_iff
+    (backend : ReplayBackendCapability) (ir : ReplayIR) (plan : ReplayBackendPlan) :
+    lowerReplayBackendPlan backend ir = some plan ↔
+      ir.sameProducerDepth ≤ backend.certifiedSameProducerDepth ∧
+      plan = ReplayBackendPlan.fromIR ir := by
+  by_cases hs : ir.sameProducerDepth ≤ backend.certifiedSameProducerDepth
+  · have hc := lowerReplayBackendPlan_eq_canonical_of_supports backend ir hs
+    constructor
+    · intro hplan
+      rw [hc] at hplan
+      exact ⟨hs, (Option.some.inj hplan).symm⟩
+    · rintro ⟨_, rfl⟩
+      exact hc
+  · constructor
+    · intro hplan
+      simp [lowerReplayBackendPlan, lowerReplayIR, lowerSameProducerDepth, hs] at hplan
+    · rintro ⟨h, _⟩
+      exact (hs h).elim
 
 /-- Successful backend plan generation preserves the IR-derived logical rescan
     requirement. -/
@@ -172,6 +193,38 @@ theorem certifiedReplayLowering_eq_of_both_supports
       lowerReplayBackendPlan b.replayCapability ir := by
   rw [lowerReplayBackendPlan_eq_canonical_of_supports a.replayCapability ir ha]
   rw [lowerReplayBackendPlan_eq_canonical_of_supports b.replayCapability ir hb]
+
+namespace PreprocessorBackendRegistry
+
+/-- Registry selection and lowering are deliberately separate: lookup chooses
+    the certified backend identity; the selected backend capability then gates
+    the canonical replay plan. -/
+def resolveReplay
+    (registry : PreprocessorBackendRegistry) (key : BackendKey) (ir : ReplayIR) :
+    Option ReplayBackendPlan :=
+  match registry.lookup key with
+  | none => none
+  | some backend => lowerReplayBackendPlan backend.replayCapability ir
+
+/-- A registry resolution succeeds exactly when the key selects a certified
+    backend that supports the requested IR, and the result is the IR's canonical
+    replay plan. -/
+theorem resolveReplay_eq_some_iff
+    (registry : PreprocessorBackendRegistry) (key : BackendKey)
+    (ir : ReplayIR) (plan : ReplayBackendPlan) :
+    registry.resolveReplay key ir = some plan ↔
+      ∃ backend,
+        registry.lookup key = some backend ∧
+        backend.supportsReplay ir ∧
+        plan = ReplayBackendPlan.fromIR ir := by
+  cases hlookup : registry.lookup key with
+  | none =>
+      simp [resolveReplay, hlookup]
+  | some backend =>
+      simp [resolveReplay, hlookup, lowerReplayBackendPlan_eq_some_iff,
+        CertifiedPreprocessorBackend.supportsReplay]
+
+end PreprocessorBackendRegistry
 
 end Producer
 end CMeta
