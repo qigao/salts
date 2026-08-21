@@ -123,6 +123,15 @@ jobs:
             exit 1
           fi
 
+      - name: Reject arity-specific callable formal APIs
+        shell: bash
+        run: |
+          if grep -R -nE '\b(Callable1|Callable2|Callable3|Callable4|Lambda1|Lambda2|Lambda3|Lambda4)\b' \
+              formal/CMeta.lean formal/CMeta/*.lean; then
+            echo "Formal callable/lambda semantics must use Callable<Args,R> and Lambda<Env,Args,R>."
+            exit 1
+          fi
+
       - name: Install elan
         shell: bash
         run: |
