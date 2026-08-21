@@ -74,6 +74,12 @@ target_include_directories(cmeta_type_universe_probe PRIVATE
 set_target_properties(cmeta_type_universe_probe PROPERTIES FOLDER "formal")
 add_test(NAME cmeta_type_universe_probe COMMAND cmeta_type_universe_probe)
 
+cmeta_add_formal_witness(cmeta_traits_row_syntax_witness
+  cmeta_traits_row_syntax_witness.c)
+target_include_directories(cmeta_traits_row_syntax_witness PRIVATE
+  ${PROJECT_SOURCE_DIR}/cmeta/include)
+add_test(NAME cmeta_traits_row_syntax COMMAND cmeta_traits_row_syntax_witness)
+
 cmeta_add_formal_witness(cmeta_fmt_args_simplification_witness
   fmt_args_simplification_witness.c)
 target_include_directories(cmeta_fmt_args_simplification_witness PRIVATE
