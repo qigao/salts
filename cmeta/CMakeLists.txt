@@ -11,6 +11,8 @@ cmake_config_target(
   EXPORT_NAME CMeta)
 
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
+target_compile_options(${TARGET_NAME}
+  PUBLIC $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:preprocessor>)
 target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
