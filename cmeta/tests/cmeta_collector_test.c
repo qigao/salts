@@ -94,6 +94,55 @@ spec("CMeta transactional collectors") {
         check_equal(state.abort_count, (size_t)0u);
     }
 
+    it("terminates null pre-begin validation without adapter callbacks") {
+        int output = 0;
+        fake_collector_state zero_output_state = {
+            .output = &output,
+            .expected_type = &cmeta_type_int
+        };
+        cmeta_collector zero_output_collector =
+            fake_collector(&zero_output_state, NULL, &cmeta_type_int, 1u);
+        fake_collector_state input_type_state = {
+            .output = &output,
+            .expected_type = &cmeta_type_int
+        };
+        cmeta_collector input_type_collector =
+            fake_collector(&input_type_state, &output, NULL, 1u);
+
+        check_equal(cmeta_collector_begin(&zero_output_collector),
+                    CMETA_INVALID_ARGUMENT);
+        check_true(zero_output_collector.state == CMETA_COLLECTOR_ABORTED);
+        check_equal(zero_output_collector.status, CMETA_INVALID_ARGUMENT);
+        check_equal(zero_output_state.begin_count, (size_t)0u);
+        check_equal(zero_output_state.abort_count, (size_t)0u);
+
+        check_equal(cmeta_collector_begin(&input_type_collector),
+                    CMETA_INVALID_ARGUMENT);
+        check_true(input_type_collector.state == CMETA_COLLECTOR_ABORTED);
+        check_equal(input_type_collector.status, CMETA_INVALID_ARGUMENT);
+        check_equal(input_type_state.begin_count, (size_t)0u);
+        check_equal(input_type_state.abort_count, (size_t)0u);
+    }
+
+    it("terminates incomplete pre-begin ops without adapter callbacks") {
+        int output = 0;
+        cmeta_collector_ops incomplete_ops = fake_collector_ops;
+        fake_collector_state state = {
+            .output = &output,
+            .expected_type = &cmeta_type_int
+        };
+        cmeta_collector collector =
+            fake_collector(&state, &output, &cmeta_type_int, 1u);
+
+        incomplete_ops.accept = NULL;
+        collector.ops = &incomplete_ops;
+        check_equal(cmeta_collector_begin(&collector), CMETA_INVALID_ARGUMENT);
+        check_true(collector.state == CMETA_COLLECTOR_ABORTED);
+        check_equal(collector.status, CMETA_INVALID_ARGUMENT);
+        check_equal(state.begin_count, (size_t)0u);
+        check_equal(state.abort_count, (size_t)0u);
+    }
+
     it("aborts a full collector exactly once") {
         int output = 0;
         int one = 1;

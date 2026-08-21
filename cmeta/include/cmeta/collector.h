@@ -80,6 +80,15 @@ static inline void cmeta_collector_fail(cmeta_collector *collector,
     cmeta_collector_abort_failed_begin(collector);
 }
 
+static inline void cmeta_collector_terminate_pre_begin(
+    cmeta_collector *collector, cmeta_status status) {
+    if (collector == NULL)
+        return;
+    if (collector->status == CMETA_OK)
+        collector->status = status;
+    collector->state = CMETA_COLLECTOR_ABORTED;
+}
+
 static inline cmeta_status cmeta_collector_begin(cmeta_collector *collector) {
     cmeta_status status;
 
@@ -89,7 +98,7 @@ static inline cmeta_status cmeta_collector_begin(cmeta_collector *collector) {
         return CMETA_INVALID_ARGUMENT;
     if (collector->zero_output == NULL || collector->input_type == NULL ||
         !cmeta_collector_ops_valid(collector->ops)) {
-        cmeta_collector_fail(collector, CMETA_INVALID_ARGUMENT);
+        cmeta_collector_terminate_pre_begin(collector, CMETA_INVALID_ARGUMENT);
         return collector->status;
     }
     status = collector->ops->begin(collector->context, collector->input_type,
