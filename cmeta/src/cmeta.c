@@ -5,33 +5,96 @@
 #define CMETA_STR_I(x) #x
 #define CMETA_STR(x) CMETA_STR_I(x)
 
-const cmeta_type_desc cmeta_type_void = { "void", 0, 1, CMETA_T_VOID, NULL };
+const cmeta_type_desc cmeta_type_void = {
+    .name = "void",
+    .size = 0,
+    .align = 1,
+    .kind = CMETA_T_VOID,
+    .pointee = NULL,
+    .identity = NULL
+};
 const cmeta_type_desc cmeta_type_size = {
-    "size_t", sizeof(size_t), _Alignof(size_t), CMETA_T_INTEGER, NULL
+    .name = "size_t",
+    .size = sizeof(size_t),
+    .align = _Alignof(size_t),
+    .kind = CMETA_T_INTEGER,
+    .pointee = NULL,
+    .identity = NULL
 };
 const cmeta_type_desc cmeta_type_size_ptr = {
-    "size_t *", sizeof(size_t *), _Alignof(size_t *), CMETA_T_POINTER, &cmeta_type_size
+    .name = "size_t *",
+    .size = sizeof(size_t *),
+    .align = _Alignof(size_t *),
+    .kind = CMETA_T_POINTER,
+    .pointee = &cmeta_type_size,
+    .identity = NULL
 };
 const cmeta_type_desc cmeta_type_gen_status = {
-    "cmeta_gen_status", sizeof(cmeta_gen_status), _Alignof(cmeta_gen_status),
-    CMETA_T_INTEGER, NULL
+    .name = "cmeta_gen_status",
+    .size = sizeof(cmeta_gen_status),
+    .align = _Alignof(cmeta_gen_status),
+    .kind = CMETA_T_INTEGER,
+    .pointee = NULL,
+    .identity = NULL
 };
 
 #define CMETA_DEFINE_TYPE(row, ignored) \
     const cmeta_type_desc CMETA_TYPE_DESC(row) = { \
-        CMETA_STR(CMETA_TYPE_CTYPE(row)), sizeof(CMETA_TYPE_CTYPE(row)), \
-        _Alignof(CMETA_TYPE_CTYPE(row)), CMETA_TYPE_KIND(row), NULL \
+        .name = CMETA_STR(CMETA_TYPE_CTYPE(row)), \
+        .size = sizeof(CMETA_TYPE_CTYPE(row)), \
+        .align = _Alignof(CMETA_TYPE_CTYPE(row)), \
+        .kind = CMETA_TYPE_KIND(row), \
+        .pointee = NULL, \
+        .identity = NULL \
     }; \
     const cmeta_type_desc CMETA_DESC_PTR(row) = { \
-        CMETA_STR(CMETA_TYPE_CTYPE(row)) " *", sizeof(CMETA_TYPE_CTYPE(row) *), \
-        _Alignof(CMETA_TYPE_CTYPE(row) *), CMETA_T_POINTER, &CMETA_TYPE_DESC(row) \
+        .name = CMETA_STR(CMETA_TYPE_CTYPE(row)) " *", \
+        .size = sizeof(CMETA_TYPE_CTYPE(row) *), \
+        .align = _Alignof(CMETA_TYPE_CTYPE(row) *), \
+        .kind = CMETA_T_POINTER, \
+        .pointee = &CMETA_TYPE_DESC(row), \
+        .identity = NULL \
     };
 CMETA_PP_FOR_EACH_A(CMETA_DEFINE_TYPE, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_DEFINE_TYPE
 
+const cmeta_type_identity *cmeta_type_identity_of(const cmeta_type_desc *desc) {
+    return desc ? desc->identity : NULL;
+}
+
+bool cmeta_type_desc_valid(const cmeta_type_desc *desc) {
+    if (!desc || !desc->name || desc->name[0] == '\0' || desc->align == 0u)
+        return false;
+
+    if (!desc->identity) {
+        return desc->kind != CMETA_T_POINTER || desc->pointee != NULL;
+    }
+
+    if (!cmeta_type_identity_valid(desc->identity))
+        return false;
+
+    if (desc->kind == CMETA_T_POINTER) {
+        if (!desc->pointee || !desc->pointee->identity)
+            return false;
+        if (desc->identity->form != CMETA_TYPE_POINTER)
+            return false;
+        return cmeta_type_identity_equal(desc->identity->base,
+                                         desc->pointee->identity);
+    }
+
+    return desc->identity->form != CMETA_TYPE_POINTER;
+}
+
 bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b) {
-    if (a == b) return true;
+    if (a == b) return a != NULL;
     if (!a || !b) return false;
+
+    if (a->identity || b->identity) {
+        if (!a->identity || !b->identity)
+            return false;
+        return cmeta_type_identity_equal(a->identity, b->identity);
+    }
+
     if (a->kind != b->kind || a->size != b->size || a->align != b->align)
         return false;
     if (strcmp(a->name, b->name) != 0) return false;
