@@ -1,54 +1,28 @@
-# CMeta capability catalog — v50+
+# CMeta capability catalog — v50
 
-CMeta is a finite, schema-driven typed metaprogramming substrate for strict C11.
+CMeta is a finite, schema-driven compile-time metadata/code-generation layer for strict C11.
 
-This document distinguishes **implemented capabilities** from the **approved architecture direction**. Architectural designs are not listed as implemented until production code and tests exist.
-
-Architecture references:
-
-- `../docs/superpowers/specs/2026-08-21-cmeta-hexagonal-architecture-design.md`
-- `../docs/superpowers/specs/2026-08-21-cmeta-type-application-design.md`
-- `../docs/superpowers/specs/2026-08-21-cmeta-state-exec-concurrency-design.md`
-
-## Architecture boundary
-
-```text
-CMeta Core       semantic hexagonal kernel
-CMeta Extend     optional source syntax / lowering frontend
-State / Exec     first-party modules built on Core
-CFlow            typed value-flow consumer
-minicoro / OS    infrastructure adapters
-```
-
-The current shipped/implemented CMeta code is primarily the strict-C11 Core substrate and first-party value/container facilities. `M<A,B>` source syntax, `cmc`, CMeta State and CMeta Exec are architecture work, not yet claimed as implemented by this catalog.
-
-## Implemented Core substrate
+## Implemented core
 
 - strict-C11 preprocessor kernel: finite `FOR_EACH`, indexed replay, repeat;
 - unified tuple schema kernel through `Schema(...)` / `Replay(...)`;
-- finite type/signature registry;
-- independent structural TypeId core with `ATOM`, `POINTER`, `CONST`, and finite generic `APPLY` forms;
-- finite `GenericConstructor` metadata with arity validation;
-- explicit `KnownTypes` versus `CallableSignatures` universe separation;
-- typed callable substrate;
+- type/signature registry and typed callable substrate;
 - contract/effect/property metadata;
 - first-class typed callable values and inline captures;
 - `Enum(...)` single-declaration enum + metadata;
 - `Struct(...)` single-declaration struct + field metadata;
 - `interface(...)` / `implements(...)` interface protocol;
 - finite generic kind dispatcher behind `typed(kind, ...)`;
-- allocation-free `cmeta_range` protocol and range traits.
-
-The TypeId implementation is intentionally independent of the current `cmeta_type_desc` layout. Descriptor-to-TypeId integration is a separate migration step.
-
-## Implemented first-party value/container facilities
-
-- `Pair`, `Tuple`, `Option`, `Result` strict-C11 generic kinds;
-- header-complete typed-container instantiation;
+- header-only complete typed-container instantiation;
 - direct batch container instantiation through `Containers(...)`;
+- allocation-free `cmeta_range` protocol and range traits;
 - one-pointer typed-container object headers plus static `cmeta_container_desc` metadata;
-- erased default/key/value/entry Range factories;
-- typed container integration for the Turbo container algorithms listed below.
+- erased default/key/value/entry Range factories.
+- explicit type traits for equality, hash, comparison, copy, move, and
+  destruction, attached to semantic type descriptors;
+- transactional bounded `cmeta_collector` façade with semantic type admission,
+  first-error preservation, and exactly-once adapter abort;
+- optional value-oriented collector factory in `cmeta_container_desc`.
 
 ## Schema / Replay
 
@@ -61,11 +35,11 @@ Replay(MySchema, mapper)
 
 `Enum`, `Struct`, and operator-generation infrastructure reuse the common row kernel. `Schema/Replay` is primarily framework-author infrastructure.
 
-Application `Containers(...)` is deliberately a different semantic surface: it directly instantiates all listed concrete types and does not require naming a schema for later implementation replay.
+In v50, application `Containers(...)` is deliberately a different semantic surface: it directly instantiates all listed concrete types and does not require naming a schema for later implementation replay.
 
 ## Generic value types
 
-Header-complete strict-C11 value kinds include:
+Header-complete value types include:
 
 ```text
 Pair<T,U>       first / second
@@ -74,7 +48,7 @@ Option<T>       has_value + value
 Result<T,E>     ok + value/error union
 ```
 
-Current canonical strict-C11 forms are explicit named instantiations:
+Canonical forms:
 
 ```c
 typed(Pair, Entry, Key, Value);
@@ -83,32 +57,7 @@ typed(Option, MaybeUser, User);
 typed(Result, LoadResult, User, Error);
 ```
 
-The semantic foundation for future compositional application is now implemented as:
-
-```text
-GenericConstructor + TypeId + Apply(Constructor,[TypeId...])
-```
-
-The source spelling `M<A,B>` remains a future CMeta Extend feature.
-
-## Structural type identity
-
-`cmeta_type_identity` represents semantic type structure independently from aliases, generated symbols and translation-unit-local descriptor addresses.
-
-The implemented forms are:
-
-```text
-ATOM(stable-id)
-POINTER(base)
-CONST(base)
-APPLY(constructor, args...)
-```
-
-Generic constructor equality is based on stable semantic constructor ID, not descriptor object address. Application equality recursively preserves argument order.
-
-Real C witnesses generate a Lean snapshot, and Lean recomputes the same structural equalities in `CMeta.TypeIdentityConformance`.
-
-## Single-stage typed containers
+## Single-stage typed containers — v50
 
 A concrete algorithmic container is fully instantiated by one declaration:
 
@@ -128,7 +77,7 @@ Containers(
 
 There is no public container `implement(...)`, `DeclareContainers(...)`, or `ImplementContainers(...)` phase.
 
-The declaration derives:
+The declaration immediately derives:
 
 ```text
 concrete wrapper type
@@ -145,11 +94,9 @@ Raw allocation, growth, hashing, queue/deque logic, heapification, B-tree insert
 
 Generated typed forwarding code is header-local `static inline`, so the same declaration header may be included by many translation units without requiring one implementation TU.
 
-Generated descriptor objects may also be TU-local. Their addresses are not a stable program-wide type ID. CMeta type equality and generic consumers must use semantic descriptor/type identity instead of assuming pointer equality across translation units.
+Generated descriptor objects are also header-local. Their addresses are not a stable program-wide type ID. CMeta type equality and generic consumers must use semantic descriptor/type identity instead of assuming descriptor pointer equality across translation units.
 
-An object initialized in one translation unit may store a descriptor pointer emitted by that TU; erased consumers in another TU can safely use semantic descriptor data while the originating code remains linked.
-
-The new TypeId core supplies the structural identity model, but current descriptor APIs have not yet been bridged to it.
+An object initialized in one translation unit may store a descriptor pointer emitted by that TU; erased consumers in another TU can safely call through that descriptor while the originating code remains linked into the program.
 
 ## Typed container kinds
 
@@ -175,28 +122,24 @@ HashMap / Map / BTree / BPlusTree              -> keys/values/entries Range view
 
 Ranges carry an element descriptor plus flags such as `SIZED`, `ORDERED`, `SORTED`, `UNIQUE`, `CONTIGUOUS`, `RANDOM_ACCESS`, and `REUSABLE`.
 
-For element types outside CFlow's finite callable universe, generated facades can still provide local object descriptors so Range remains independently usable. Typed CFlow callback signatures currently require types to participate in the configured finite callable universe.
+## Transactional collector capability
 
-## Known types and callable signatures
+`cmeta_collector` provides a single-threaded transaction over borrowed typed
+values. Its only successful terminal transition is `BEGUN`/`ACCEPTING` to
+`COMMITTED`; adapter failure, input/type validation failure, or a hard-capacity
+rejection transitions to `ABORTED` and invokes adapter cleanup exactly once.
+The façade validates `count >= limit` before dispatch, never grows or retries,
+and maps unknown non-OK callback statuses to `CMETA_CALLBACK_ERROR`.
 
-The configuration layer now distinguishes:
+`cmeta_container_desc::collector` is optional. When present, it creates a
+value-oriented collector from caller-owned zero output and a maximum element
+count; `NULL` means that concrete container does not support collection.
 
-```text
-CMETA_KNOWN_TYPE_LIST
-CMETA_CALLABLE_TYPE_LIST
-```
+For element types outside CFlow's finite callable universe, generated facades can still provide local object descriptors so Range remains independently usable. Typed CFlow callback signatures require the type to be registered in the CMeta/CFlow type universe.
 
-`CMETA_TYPE_LIST` remains a compatibility alias during migration.
+## Public API boundary
 
-Descriptor declaration/definition and the type registry consume the known-type universe. Full/balanced callable Cartesian generation consumes the callable-type universe.
-
-A dedicated compile probe adds a known-only type while retaining the five builtin callable types and verifies that the full signature count remains unchanged. This prevents reflected/generic types from automatically inflating the N²/N³ callable products.
-
-The longer-term callable direction is still exact demand-driven signatures rather than broad Cartesian products.
-
-## Public API boundary today
-
-Current application-facing strict-C11 declarations are primarily:
+Application-facing declarations should generally be limited to:
 
 ```text
 Struct(...)
@@ -205,73 +148,16 @@ typed(...)
 Containers(...)
 ```
 
-plus runtime capability APIs supplied by consumer modules such as CFlow.
+and runtime capability APIs such as `stream(...)`.
 
-`Schema/Replay` is framework-generation infrastructure. `implements(...)` is an interface/protocol declaration and is unrelated to the removed container implementation phase.
+`Schema/Replay` is for library/framework generation. `implements(...)` is an interface/protocol declaration and remains valid; it is unrelated to the removed container implementation phase.
 
-## Formal verification status
+## Next natural extensions
 
-The TypeId slice is connected to CI through:
-
-```text
-real C TypeId implementation
-  -> cmeta_type_identity_conformance_gen
-  -> TypeIdentityGeneratedC.lean
-  -> CMeta.TypeIdentityConformance
-  -> lake build --wfail
-```
-
-CI also builds `cmeta_type_universe_probe` to lock the KnownTypes/CallableSignatures separation.
-
-The proof-placeholder guard continues to reject `axiom`, `constant`, `sorry`, and `admit` in formal modules.
-
-## Approved architecture direction — not yet implementation claims
-
-### Descriptor bridge and canonical strict-C11 application
-
-Still planned:
-
-- bridge `cmeta_type_desc` to structural TypeId without breaking existing descriptor initialization/source compatibility;
-- canonical strict-C11 generic instantiation so logically identical applications can share one concrete C representation;
-- structured reflection of generic constructor/arguments through descriptor APIs.
-
-### CMeta Extend
-
-Optional frontend/lowering layer for source forms such as:
-
-```text
-M<A,B>
-type aliases
-machine syntax
-match syntax
-future async/await syntax
-```
-
-Extend is an adapter and must lower to existing Core/module semantics.
-
-### CMeta State
-
-First-party module for finite table-driven state machines using Core `CType`/TypeId, `Callable`, effects/properties and finite graph analysis.
-
-### CMeta Exec
-
-First-party module for `Task<T>`, `Resumable`, `Waitable`, `Waker`, `Executor`, cancellation, scopes and coordination. Coroutine and OS support remain replaceable adapters.
-
-## Natural next implementation work
-
-Architecture-approved but still requiring focused implementation specs/plans:
-
-- descriptor ↔ TypeId bridge and semantic descriptor equality migration;
-- canonical strict-C11 generic application backend;
-- demand-driven exact callable signature generation;
-- comparator/hash/copy/move/destroy trait registration;
-- CMeta Extend frontend (`cmc`) and `M<A,B>` lowering;
-- CMeta State Core;
-- CMeta Exec Core;
-- minicoro coroutine adapter;
-- native executor adapters;
-- Pair/Tuple/Option/Result structural reflection descriptors;
-- variant/sum types and matching after the type model is stable;
-- serde/RPC generation as consumers rather than Core expansion.
-
-Implementation status must be updated here only after code, tests and relevant conformance evidence exist.
+- kind-level `_Generic` ergonomic APIs such as `list_push(&users, value)`;
+- additional opt-in inference built on explicitly registered traits;
+- Array / SmallVec / RingBuffer finite generic kinds;
+- variant/sum types and richer pattern matching;
+- Pair/Tuple/Option/Result reflection descriptors;
+- ownership-aware destruction and serde generation;
+- standard in-place B-tree deletion and bounded/range-query iterators.

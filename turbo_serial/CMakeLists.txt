@@ -40,7 +40,7 @@ target_include_directories(${TARGET_NAME}
 
 target_link_libraries(${TARGET_NAME}
   PUBLIC TurboUtils::Core
-  PRIVATE ${TURBOSERIAL_PLATFORM_LIBS})
+  PRIVATE TurboUtils::Container ${TURBOSERIAL_PLATFORM_LIBS})
 
 set_target_properties(${TARGET_NAME} PROPERTIES
   C_STANDARD 11

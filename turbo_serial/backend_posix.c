@@ -125,9 +125,13 @@ static turbo_serial_result_t posix_list_ports(turbo_serial_port_info_vec_t *vec)
         storage.view.transport = TURBO_SERIAL_TRANSPORT_NATIVE;
       }
 
-      if (turbo_serial_port_info_vec_t_push(vec, storage) != TURBO_OK) {
-        tstr_freep(&storage.name);
-        tstr_freep(&storage.description);
+      {
+        container_status status = turbo_serial_port_info_vec_t_push(vec, storage);
+        turbo_serial_port_info_storage_destroy(&storage);
+        if (status != CONTAINER_OK) {
+          closedir(dir);
+          return turbo_serial_result_from_container(status);
+        }
       }
     }
   }

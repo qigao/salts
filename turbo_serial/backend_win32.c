@@ -191,10 +191,13 @@ static turbo_serial_result_t win32_list_ports(turbo_serial_port_info_vec_t *vec)
         }
       }
 
-      if (turbo_serial_port_info_vec_t_push(vec, storage) != TURBO_OK) {
-        tstr_freep(&storage.name);
-        tstr_freep(&storage.description);
-        tstr_freep(&storage.usb_manufacturer);
+      {
+        container_status status = turbo_serial_port_info_vec_t_push(vec, storage);
+        turbo_serial_port_info_storage_destroy(&storage);
+        if (status != CONTAINER_OK) {
+          SetupDiDestroyDeviceInfoList(dev_info);
+          return turbo_serial_result_from_container(status);
+        }
       }
     }
   }
@@ -212,7 +215,8 @@ static turbo_serial_result_t win32_get_port_info(const char *port_name,
   if (!port_name || !storage) return TURBO_SERIAL_INVALID_VALUE;
   memset(storage, 0, sizeof(*storage));
 
-  if (turbo_serial_port_info_vec_t_init(&vec) != TURBO_OK) return TURBO_SERIAL_NO_MEMORY;
+  res = turbo_serial_result_from_container(turbo_serial_port_info_vec_t_init(&vec));
+  if (res != TURBO_SERIAL_OK) return res;
 
   res = win32_list_ports(&vec);
   if (res == TURBO_SERIAL_OK) {
@@ -226,15 +230,6 @@ static turbo_serial_result_t win32_get_port_info(const char *port_name,
     }
   }
 
-  for (i = 0; i < turbo_serial_port_info_vec_t_size(&vec); ++i) {
-    turbo_serial_port_info_storage_t *item = turbo_serial_port_info_vec_t_at(&vec, i);
-    tstr_freep(&item->name);
-    tstr_freep(&item->description);
-    tstr_freep(&item->usb_manufacturer);
-    tstr_freep(&item->usb_product);
-    tstr_freep(&item->usb_serial);
-    tstr_freep(&item->bluetooth_address);
-  }
   turbo_serial_port_info_vec_t_destroy(&vec);
 
   if (!storage->name) {
