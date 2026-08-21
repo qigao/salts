@@ -104,8 +104,7 @@ public structure IdempotentEndomap (T : CType) where
 
 /-- The optimizer may remove an adjacent duplicate only when the idempotence
     contract is valid. -/
--- TEMP-MODULE-BRIDGE(M6): legacy OptimizerConformance.identity_duplicate_elimination_sound
-public theorem duplicate_idempotent_elimination_sound {T : CType}
+theorem duplicate_idempotent_elimination_sound {T : CType}
     (f : IdempotentEndomap T) (x : T.denote) :
     f.fn.invoke1 (f.fn.invoke1 x) = f.fn.invoke1 x :=
   f.law x
