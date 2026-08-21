@@ -7,7 +7,7 @@ This directory contains the architecture specifications for CMeta work on branch
 When documents overlap, use this order:
 
 1. **CMeta Hexagonal Architecture** — global dependency and ownership rules;
-2. **domain specifications** — Type Application, Type Identity Applicability, C++-Like Lambda, State/Exec, and later modules;
+2. **domain specifications** — Type Application, Type Identity Applicability, Producer/Replay, C++-Like Lambda, State/Exec, and later modules;
 3. **implementation plans** — task sequencing only; they must not redefine architecture.
 
 A lower-level document must not violate a higher-level dependency rule.
@@ -61,6 +61,22 @@ legacy / legacy         -> legacy equality
 structural / legacy     -> false
 ```
 
+### [CMeta Producer/Replay Algebra](2026-08-21-cmeta-producer-replay-algebra-design.md)
+
+Defines the semantic representation of finite zero-or-more CMeta sequences:
+
+```text
+Producer
+  ↓ Replay
+ordered mapper applications
+```
+
+The kernel-checked model proves empty replay, singleton replay, append homomorphism, exact producer count, normalized storage count, read-guard equivalence, and map composition. A strict-C11 witness also demonstrates that producer replay works for empty and non-empty sequences while the current `CMETA_PP_NARG` and public `CMETA_PP_FOR_EACH` are deliberately poisoned.
+
+Therefore raw variadic arity machinery is not part of the semantic finite-sequence model. `NARG`, arity-specific `FOR_EACH_1..N`, empty-token detection, and consumer-specific `WRAP_0..N` are adapter/backend mechanics when a source spelling insists on inline raw `__VA_ARGS__`.
+
+Nested replay lanes remain a separate backend problem and are not removed by this proof.
+
 ### [CMeta C++-Like Lambda Architecture](2026-08-21-cmeta-cpp-like-lambda-design.md)
 
 Defines C++-like lambda syntax as an optional CMeta Extend adapter over one Core finite-arity closure model:
@@ -110,6 +126,9 @@ Every future CMeta design should preserve these rules:
 - semantic type identity is structural and never based on display strings or descriptor addresses.
 - structural identity, once present, must not be weakened by legacy string/layout fallback.
 - generic generation stays finite; arbitrary compile-time user programs are not introduced.
+- finite zero-or-more schemas are semantically Producers; Replay does not require arity inspection.
+- raw `__VA_ARGS__`, empty-token detection and arity-specific preprocessor dispatch are adapter/backend concerns rather than semantic list primitives.
+- nested preprocessor expansion lanes are orthogonal to the Producer/Replay zero-or-more model.
 - parser/frontend additions must lower to existing Core/module APIs.
 - C++-like lambda syntax lowers to the same Core callable ABI and does not introduce C++ template semantics.
 - callable arity is data (`Args.length`), not a semantic type-family suffix.
@@ -122,6 +141,8 @@ Every future CMeta design should preserve these rules:
 Future work should be split rather than growing one monolithic document. Natural next specifications include:
 
 ```text
+CMeta Raw Variadic Adapter
+CMeta Nested Replay Backend
 CMeta Core Demand-Driven Callable Signatures
 CMeta Generic Value Identity
 CMeta Container Type Identity
