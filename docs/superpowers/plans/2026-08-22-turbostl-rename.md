@@ -31,7 +31,7 @@
 - Consumes: the current build-tree `TurboUtilsConfig.cmake` package.
 - Produces: a consumer requiring `TurboUtils::STL`, `<turbo/stl/typed.h>`, and `TURBO_STL_OK`.
 
-- [ ] **Step 1: Change the C and C++ consumers to the new target, header, and status names**
+- [x] **Step 1: Change the C and C++ consumers to the new target, header, and status names**
 
 ```cmake
 target_link_libraries(turbostl_consumer_c PRIVATE TurboUtils::STL)
@@ -43,7 +43,7 @@ target_link_libraries(turbostl_consumer_cpp PRIVATE TurboUtils::STL)
 if (InstalledInts_init(&values, 2u) != TURBO_STL_OK) return 1;
 ```
 
-- [ ] **Step 2: Configure the consumer against the old build-tree package and verify RED**
+- [x] **Step 2: Configure the consumer against the old build-tree package and verify RED**
 
 Run:
 
@@ -53,7 +53,7 @@ cmake -S container/tests/install_consumer -B build/turbostl-consumer-red -DCMAKE
 
 Expected: configure fails because `TurboUtils::STL` does not exist yet.
 
-- [ ] **Step 3: Commit the failing public-contract test**
+- [x] **Step 3: Commit the failing public-contract test**
 
 ```powershell
 git add container/tests/install_consumer
@@ -75,7 +75,7 @@ git commit -m "test(turbostl): require renamed public package contract"
 - Consumes: unchanged `TurboUtils::CMeta` and concrete `turbo_*` source APIs.
 - Produces: build target `turbo_stl`, alias/export `TurboUtils::STL`, library artifact `turbo_stl`, and installed `<turbo/stl/...>` headers.
 
-- [ ] **Step 1: Move the module and public header tree with Git-aware renames**
+- [x] **Step 1: Move the module and public header tree with Git-aware renames**
 
 ```powershell
 git mv container turbostl
@@ -83,15 +83,15 @@ git mv turbostl/include/turbo/container turbostl/include/turbo/stl
 git mv turbostl/include/turbo/container.h turbostl/include/turbo/stl.h
 ```
 
-- [ ] **Step 2: Update the root build graph and module target identity**
+- [x] **Step 2: Update the root build graph and module target identity**
 
 Use `add_subdirectory(turbostl)`, `set(TARGET_NAME turbo_stl)`, alias `TurboUtils::STL`, export name `STL`, and IDE folder `turbostl`.
 
-- [ ] **Step 3: Update repository target consumers and test/benchmark targets**
+- [x] **Step 3: Update repository target consumers and test/benchmark targets**
 
 Replace links to `TurboUtils::Container` with `TurboUtils::STL`; rename module-local test and benchmark targets from `container_*` to `turbostl_*` while preserving their test behavior.
 
-- [ ] **Step 4: Fresh-configure and build the new library target**
+- [x] **Step 4: Fresh-configure and build the new library target**
 
 Run:
 
@@ -102,7 +102,7 @@ cmake --build --preset win-release-user --target turbo_stl
 
 Expected: configure and target build succeed with a `turbo_stl` artifact.
 
-- [ ] **Step 5: Commit the module/build rename**
+- [x] **Step 5: Commit the module/build rename**
 
 ```powershell
 git add CMakeLists.txt turbostl utils turbo_serial
@@ -126,15 +126,15 @@ git commit -m "refactor(turbostl): rename container module and targets"
 - Consumes: the existing status meanings and concrete algorithm behavior.
 - Produces: `turbo_stl_status`, `TURBO_STL_OK`, `TURBO_STL_INVALID_ARGUMENT`, `TURBO_STL_OUT_OF_MEMORY`, `TURBO_STL_CAPACITY_EXCEEDED`, `TURBO_STL_EMPTY`, `TURBO_STL_NOT_FOUND`, `TURBO_STL_TYPE_MISMATCH`, `TURBO_STL_TRAIT_MISSING`, and `TURBO_STL_API`.
 
-- [ ] **Step 1: Rename module guards, export macros, status type/constants, and internal typed-schema macros**
+- [x] **Step 1: Rename module guards, export macros, status type/constants, and internal typed-schema macros**
 
 Apply exact mechanical substitutions only inside the TurboSTL module and its direct consumers; do not rename generic CMeta container protocols.
 
-- [ ] **Step 2: Rename Core and TurboSerial status adapters**
+- [x] **Step 2: Rename Core and TurboSerial status adapters**
 
 Rename module-specific adapter identifiers and includes from `container` to `stl`, preserving their existing status mappings.
 
-- [ ] **Step 3: Build and run the focused module and adjacent tests**
+- [x] **Step 3: Build and run the focused module and adjacent tests**
 
 Run:
 
@@ -145,7 +145,7 @@ ctest --preset win-release-user -R "^(turbostl_|test_string_automata)"
 
 Expected: all selected targets build and selected tests pass.
 
-- [ ] **Step 4: Commit the public API/caller rename**
+- [x] **Step 4: Commit the public API/caller rename**
 
 ```powershell
 git add turbostl utils turbo_serial
@@ -166,11 +166,11 @@ git commit -m "refactor(turbostl): rename public status and header surface"
 - Consumes: the implemented target/header/status mapping.
 - Produces: repository documentation and install examples that name only TurboSTL.
 
-- [ ] **Step 1: Replace obsolete module names in active documentation and examples**
+- [x] **Step 1: Replace obsolete module names in active documentation and examples**
 
 Document `TurboSTL`, `TurboUtils::STL`, `turbostl/`, `<turbo/stl/...>`, and `TURBO_STL_*`; retain the lowercase word “container” where it describes the data-structure concept.
 
-- [ ] **Step 2: Scan for forbidden old public names**
+- [x] **Step 2: Scan for forbidden old public names**
 
 Run:
 
@@ -180,7 +180,7 @@ rg.exe -n "TurboUtils::Container|turbo_container|<turbo/container|container_stat
 
 Expected: no matches outside historical prose that explicitly explains the migration; preferred final state is zero matches.
 
-- [ ] **Step 3: Run fresh configure, full build, and full CTest**
+- [x] **Step 3: Run fresh configure, full build, and full CTest**
 
 Run:
 
@@ -192,7 +192,7 @@ ctest --preset win-release-user --output-on-failure
 
 Expected: configure/build succeed and all registered tests pass.
 
-- [ ] **Step 4: Install to an isolated prefix and build both standalone consumers**
+- [x] **Step 4: Install to an isolated prefix and build both standalone consumers**
 
 Run:
 
@@ -204,7 +204,7 @@ cmake --build build/turbostl-consumer
 
 Expected: both C11 and C++17 consumers configure and link only through `TurboUtils::STL` and installed `<turbo/stl/...>` headers.
 
-- [ ] **Step 5: Check formatting, index state, and commit documentation**
+- [x] **Step 5: Check formatting, index state, and commit documentation**
 
 ```powershell
 git diff --check
