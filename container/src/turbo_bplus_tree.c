@@ -854,22 +854,24 @@ const void *turbo_bplus_tree_value_at_const(const turbo_bplus_tree_t *tree,
 }
 
 bool turbo_bplus_tree_range_next(const turbo_bplus_tree_t *tree,
-                                 size_t *cursor, const void **out_key,
+                                 cmeta_range_cursor *cursor,
+                                 const void **out_key,
                                  const void **out_value) {
   turbo_bplus_tree_entry_link_t *link;
   if (!turbo_bplus_valid(tree) || cursor == NULL || out_key == NULL ||
-      out_value == NULL || *cursor == SIZE_MAX)
+      out_value == NULL)
     return false;
-  link = *cursor == 0u
-             ? tree->first
-             : (turbo_bplus_tree_entry_link_t *)(uintptr_t)(*cursor);
-  if (link == NULL) {
-    *cursor = SIZE_MAX;
-    return false;
+  if (cursor->state[1] == NULL) {
+    cursor->state[1] = (void *)tree;
+    link = tree->first;
+  } else {
+    if (cursor->state[1] != (void *)tree) return false;
+    link = (turbo_bplus_tree_entry_link_t *)cursor->state[0];
   }
+  if (link == NULL) return false;
   *out_key = link->key;
   *out_value = link->value;
-  *cursor = link->next == NULL ? SIZE_MAX : (size_t)(uintptr_t)link->next;
+  cursor->state[0] = link->next;
   return true;
 }
 

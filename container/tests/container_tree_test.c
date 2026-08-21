@@ -137,7 +137,7 @@ spec("Container trees") {
     it("splits BTree nodes and iterates entries in key order") {
         IntTree tree = {0};
         cmeta_range range;
-        cmeta_range_cursor cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         IntTree_entry entry = {0};
         int key;
 
@@ -198,7 +198,8 @@ spec("Container trees") {
         IntPlusTree tree = {0};
         cmeta_range range;
         IntPlusTree_entry entry = {0};
-        cmeta_range_cursor cursor = 0u;
+        cmeta_range_cursor cursor = {0};
+        cmeta_range_cursor before_cursor;
         uint64_t generation;
         int key;
 
@@ -220,11 +221,12 @@ spec("Container trees") {
         generation = turbo_bplus_tree_generation(&tree.raw);
         check_equal(IntPlusTree_put(&tree, 12, 999L), CONTAINER_OK);
         check_equal(turbo_bplus_tree_generation(&tree.raw), generation + 1u);
-        cursor = 0u;
+        memset(&cursor, 0, sizeof(cursor));
+        before_cursor = cursor;
         entry.key = -1;
         check_equal(cmeta_range_next(&range, &cursor, &entry),
                     CMETA_GEN_MUTATED);
-        check_equal(cursor, (size_t)0u);
+        check_equal(memcmp(&cursor, &before_cursor, sizeof(cursor)), 0);
         check_equal(entry.key, -1);
         IntPlusTree_destroy(&tree);
     }
@@ -233,7 +235,7 @@ spec("Container trees") {
         IntPlusTree tree = {0};
         turbo_bplus_tree_node_t *retired_root;
         cmeta_range range;
-        cmeta_range_cursor cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         IntPlusTree_entry entry = {0};
         uint64_t generation;
         long out = -1L;
@@ -462,20 +464,22 @@ spec("Container trees") {
         {
             cmeta_range btree_range = IntTree_entries_range(&btree);
             cmeta_range bplus_range = IntPlusTree_entries_range(&bplus);
-            cmeta_range_cursor btree_cursor = 0u;
-            cmeta_range_cursor bplus_cursor = 0u;
+            cmeta_range_cursor btree_cursor = {0};
+            cmeta_range_cursor bplus_cursor = {0};
             IntTree_entry btree_entry = {0};
             IntPlusTree_entry bplus_entry = {0};
             size_t observed = 0u;
             int ordered_key;
             for (ordered_key = 0; ordered_key < KEY_COUNT; ++ordered_key) {
                 if (!present[ordered_key]) continue;
-                check_true(cmeta_range_next(&btree_range, &btree_cursor,
-                                            &btree_entry) == CMETA_GEN_VALUE ||
-                           btree_cursor == SIZE_MAX);
-                check_true(cmeta_range_next(&bplus_range, &bplus_cursor,
-                                            &bplus_entry) == CMETA_GEN_VALUE ||
-                           bplus_cursor == SIZE_MAX);
+                cmeta_gen_status btree_status = cmeta_range_next(
+                    &btree_range, &btree_cursor, &btree_entry);
+                cmeta_gen_status bplus_status = cmeta_range_next(
+                    &bplus_range, &bplus_cursor, &bplus_entry);
+                check_true(btree_status == CMETA_GEN_VALUE ||
+                           btree_status == CMETA_GEN_VALUE_AND_DONE);
+                check_true(bplus_status == CMETA_GEN_VALUE ||
+                           bplus_status == CMETA_GEN_VALUE_AND_DONE);
                 check_equal(btree_entry.key, ordered_key);
                 check_equal(bplus_entry.key, ordered_key);
                 check_equal(btree_entry.value, model[ordered_key]);
@@ -585,7 +589,7 @@ spec("Container trees") {
         owned_tree_value keys[4];
         owned_tree_value values[4];
         uint64_t generation;
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         size_t index;
         const void *range_key = NULL;
         const void *range_value = NULL;

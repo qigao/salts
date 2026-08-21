@@ -97,7 +97,7 @@ spec("Container typed schema") {
         IntVec output = {0};
         cmeta_range range;
         cmeta_collector collector;
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         int value = 4;
         int ranged = 0;
 
@@ -128,7 +128,8 @@ spec("Container typed schema") {
     it("invalidates an existing Range without changing cursor or output") {
         IntDeque values = {0};
         cmeta_range range;
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = {0};
+        cmeta_range_cursor before_cursor;
         int one = 1;
         int two = 2;
         int output = 91;
@@ -139,9 +140,10 @@ spec("Container typed schema") {
                                               CMETA_CONTAINER_VIEW_DEFAULT,
                                               &range));
         check_equal(IntDeque_push_back(&values, two), CONTAINER_OK);
+        before_cursor = cursor;
         check_equal(cmeta_range_next(&range, &cursor, &output),
                     CMETA_GEN_MUTATED);
-        check_equal(cursor, (size_t)0u);
+        check_equal(memcmp(&cursor, &before_cursor, sizeof(cursor)), 0);
         check_equal(output, 91);
         IntDeque_destroy(&values);
     }
@@ -153,7 +155,7 @@ spec("Container typed schema") {
         cmeta_range values;
         cmeta_range entries;
         IntLongHashMap_entry entry = {0};
-        size_t cursor = 0u;
+        cmeta_range_cursor cursor = {0};
 
         check_equal(IntLongHashMap_init(&map, 1u), CONTAINER_OK);
         check_equal(IntLongHashMap_put(&map, 7, 70L), CONTAINER_OK);
@@ -188,7 +190,7 @@ spec("Container typed schema") {
         check_equal(IntSet_add(&set, one), CONTAINER_CAPACITY_EXCEEDED);
         check_equal(IntLongMap_init(&map, 0u), CONTAINER_OK);
         check_equal(IntLongMap_put(&map, one, 1L), CONTAINER_CAPACITY_EXCEEDED);
-        check_equal(IntLongMultiMap_init(&multimap, 0u, 0u), CONTAINER_OK);
+        check_equal(IntLongMultiMap_init(&multimap, 0u), CONTAINER_OK);
         check_equal(IntLongMultiMap_put(&multimap, one, 1L),
                     CONTAINER_CAPACITY_EXCEEDED);
         IntLongMultiMap_destroy(&multimap);
@@ -223,10 +225,10 @@ spec("Container typed schema") {
         check_equal(turbo_hash_map_generation(&map.raw), generation);
         check_equal(*IntLongHashMap_get_const(&map, 2), 20L);
 
-        check_equal(IntLongMultiMap_from(&multimap, multi_entries, 2u, 1u, 1u),
+        check_equal(IntLongMultiMap_from(&multimap, multi_entries, 2u, 1u),
                     CONTAINER_CAPACITY_EXCEEDED);
         check_true(IntLongMultiMap_empty(&multimap));
-        check_equal(IntLongMultiMap_from(&multimap, multi_entries, 2u, 1u, 2u),
+        check_equal(IntLongMultiMap_from(&multimap, multi_entries, 2u, 2u),
                     CONTAINER_OK);
         check_equal(IntLongMultiMap_count(&multimap, 1), (size_t)2u);
 

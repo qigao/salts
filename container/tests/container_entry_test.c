@@ -113,7 +113,7 @@ spec("Container composed entry descriptors") {
         OwnedEntryMap_entry transient = {0};
         OwnedEntryMap_entry moved = {0};
         cmeta_range range;
-        cmeta_range_cursor cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         cmeta_collector collector;
 
         owned_entry_fail_copy_at = 0u;
@@ -129,9 +129,12 @@ spec("Container composed entry descriptors") {
                         CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
                             CMETA_TRAIT_DESTROY | CMETA_TRAIT_EQUAL |
                             CMETA_TRAIT_HASH), CMETA_OK);
-        check_true(cmeta_range_next(&range, &cursor, &borrowed) ==
-                       CMETA_GEN_VALUE ||
-                   cursor == SIZE_MAX);
+        {
+            cmeta_gen_status status = cmeta_range_next(&range, &cursor,
+                                                       &borrowed);
+            check_true(status == CMETA_GEN_VALUE ||
+                       status == CMETA_GEN_VALUE_AND_DONE);
+        }
         check_true(range.element_type->traits->copy_construct(&transient,
                                                                &borrowed));
         range.element_type->traits->move_construct(&moved, &transient);

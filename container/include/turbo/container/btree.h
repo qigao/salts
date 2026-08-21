@@ -1,7 +1,7 @@
 #ifndef TURBO_BTREE_H
 #define TURBO_BTREE_H
 
-#include <cmeta/cmeta.h>
+#include <cmeta/range.h>
 #include <turbo/container/export.h>
 #include <turbo/container/status.h>
 
@@ -120,10 +120,10 @@ CONTAINER_API const void *turbo_btree_key_at_const(const turbo_btree_t *tree,
 CONTAINER_API void *turbo_btree_value_at(turbo_btree_t *tree, size_t index);
 CONTAINER_API const void *turbo_btree_value_at_const(const turbo_btree_t *tree,
                                                      size_t index);
-/* cursor is zero before first use and SIZE_MAX after exhaustion. The returned
- * key/value pointers are borrowed until the next successful mutation. */
+/* cursor is zero-initialized before first use. The returned key/value pointers
+ * are borrowed until the next successful mutation. */
 CONTAINER_API bool turbo_btree_range_next(const turbo_btree_t *tree,
-                                          size_t *cursor,
+                                          cmeta_range_cursor *cursor,
                                           const void **out_key,
                                           const void **out_value);
 

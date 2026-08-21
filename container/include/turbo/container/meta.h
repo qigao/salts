@@ -38,11 +38,10 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \
  CMETA_INLINE cmeta_collector name##_collector(void *zero_output,size_t limit){cmeta_collector result={&name##_collector_ops,zero_output,zero_output,&name##_entry_cmeta_type,limit,0u,CMETA_COLLECTOR_ZERO,CMETA_OK};return result;}
 
-/* A multimap collector's single factory limit bounds both distinct keys and
- * values retained for any one key. */
+/* A multimap collector's limit bounds total retained key/value pairs. */
 #define TURBO_META_MULTIMAP_COLLECTOR(name) \
  CMETA_LOCAL cmeta_type_desc name##_entry_cmeta_type; \
- CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;return turbo_container_cmeta_status((container_status)name##_init((name*)context,limit,limit));} \
+ CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;return turbo_container_cmeta_status((container_status)name##_init((name*)context,limit));} \
  CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return turbo_container_cmeta_status((container_status)name##_put((name*)context,entry->key,entry->value));} \
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
  CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
@@ -104,11 +103,11 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
  M(SIZE,size,size,_,C) M(SIZE,capacity,capacity,_,C) M(BOOL,empty,empty,_,C)
 
 #define TURBO_META_SET_METHODS(M,C) \
- M(INIT_KEY_HASH,init,init,_,C) M(FROM_KEYS_HASH,from,from_array,_,C) \
+ M(INIT_KEY_COMPARE,init,init,_,C) M(FROM_KEYS_COMPARE,from,from_array,_,C) \
  M(DESTROY,destroy,destroy,_,C) M(CLEAR,clear,clear,_,C) \
- M(RESERVE,reserve,reserve,_,C) M(KEY_VALUE,add,add,_,C) \
+ M(KEY_VALUE,add,add,_,C) \
  M(KEY_CONTAINS,contains,contains,_,C) M(KEY_REMOVE_BOOL,remove,remove,_,C) \
- M(SIZE,size,size,_,C) M(SIZE,capacity,capacity,_,C) M(BOOL,empty,empty,_,C)
+ M(SIZE,size,size,_,C) M(BOOL,empty,empty,_,C)
 #define TURBO_META_HASH_SET_METHODS(M,C) \
  M(INIT_KEY_HASH,init,init,_,C) M(FROM_KEYS_HASH,from,from_array,_,C) \
  M(DESTROY,destroy,destroy,_,C) M(CLEAR,clear,clear,_,C) \
@@ -134,26 +133,21 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
  M(VALUE_AT,value_at,value_at,_,C) M(VALUE_AT_CONST,value_at_const,value_at_const,_,C)
 
 #define TURBO_META_MAP_METHODS(M,C) \
- M(INIT_KV_COMPARE,init,init,_,C) M(FROM_ENTRIES,from,from,CONTAINER_INVALID_ARGUMENT,C) \
+ M(INIT_KV_COMPARE,init,init,_,C) M(FROM_ENTRIES_LINK,from,from,CONTAINER_INVALID_ARGUMENT,C) \
  M(DESTROY,destroy,destroy,_,C) M(CLEAR,clear,clear,_,C) \
- M(RESERVE,reserve,reserve,_,C) M(PUT,put,put,_,C) M(GET,get,get,_,C) \
+ M(PUT,put,put,_,C) M(GET,get,get,_,C) \
  M(GET_CONST,get_const,get_const,_,C) M(CONTAINS,contains,contains,_,C) \
  M(REMOVE_STATUS_BOOL,remove,remove,_,C) M(SIZE,size,size,_,C) \
- M(CAPACITY,capacity,capacity,_,C) M(EMPTY,empty,empty,_,C) \
- M(KEY_AT,key_at,key_at,_,C) M(KEY_AT_CONST,key_at_const,key_at_const,_,C) \
- M(VALUE_AT,value_at,value_at,_,C) M(VALUE_AT_CONST,value_at_const,value_at_const,_,C)
+ M(EMPTY,empty,empty,_,C)
 
 #define TURBO_META_MULTIMAP_METHODS(M,C) \
- M(INIT_KV_MULTIMAP,init,init,_,C) \
- M(FROM_ENTRIES_MULTIMAP,from,from,CONTAINER_INVALID_ARGUMENT,C) \
+ M(INIT_KV_COMPARE,init,init,_,C) \
+ M(FROM_ENTRIES_LINK,from,from,CONTAINER_INVALID_ARGUMENT,C) \
  M(DESTROY,destroy,destroy,_,C) M(CLEAR,clear,clear,_,C) \
- M(RESERVE,reserve,reserve,_,C) M(PUT,put,put,_,C) \
- M(RAW_PTR_KEY,get_values,get_values,turbo_vec_t,C) \
- M(RAW_CONST_PTR_KEY,get_values_const,get_values_const,turbo_vec_t,C) \
- M(CONTAINS,contains,contains,_,C) M(COUNT_KEY,count,key_count,_,C) \
+ M(PUT,put,put,_,C) \
+ M(CONTAINS,contains,contains,_,C) M(COUNT_KEY,count,count,_,C) \
  M(REMOVE_BOOL,remove,remove,_,C) M(ERASE_KEY,erase,erase,_,C) \
- M(SIZE,size,size,_,C) M(CAPACITY,capacity,capacity,_,C) \
- M(EMPTY,empty,empty,_,C)
+ M(SIZE,size,size,_,C) M(EMPTY,empty,empty,_,C)
 
 #define TURBO_META_TREE_METHODS(M,C) \
  M(INIT_KV_COMPARE,init,init,_,C) M(FROM_ENTRIES,from,from,CONTAINER_INVALID_ARGUMENT,C) \
@@ -177,11 +171,11 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
 #define TURBO_CONTAINER_KIND_ROW_Stack (Stack,1,C1_INDEX,turbo_stack_t,turbo_stack,TURBO_META_STACK_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
 #define TURBO_CONTAINER_KIND_ROW_Queue (Queue,1,C1_INDEX,turbo_queue_t,turbo_queue,TURBO_META_QUEUE_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
 #define TURBO_CONTAINER_KIND_ROW_Heap (Heap,1,C1_INDEX,turbo_heap_t,turbo_heap,TURBO_META_HEAP_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
-#define TURBO_CONTAINER_KIND_ROW_Set (Set,1,C1_SLOT,turbo_set_t,turbo_set,TURBO_META_SET_METHODS,add,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,0,0,0)
+#define TURBO_CONTAINER_KIND_ROW_Set (Set,1,C1_LINK,turbo_set_t,turbo_set,TURBO_META_SET_METHODS,add,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,0,0,0)
 #define TURBO_CONTAINER_KIND_ROW_HashSet (HashSet,1,C1_SLOT,turbo_hash_set_t,turbo_hash_set,TURBO_META_HASH_SET_METHODS,add,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,0,0,0)
 #define TURBO_CONTAINER_KIND_ROW_HashMap (HashMap,2,C2_HASH,turbo_hash_map_t,turbo_hash_map,TURBO_META_HASH_MAP_METHODS,_,key_at,value_at_const,0,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
 #define TURBO_CONTAINER_KIND_ROW_Map (Map,2,C2_LINK,turbo_map_t,turbo_map,TURBO_META_MAP_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
-#define TURBO_CONTAINER_KIND_ROW_MultiMap (MultiMap,2,C2_MULTIMAP,turbo_multimap_t,turbo_multimap,TURBO_META_MULTIMAP_METHODS,_,key_at_const,value_at_const,0,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE)
+#define TURBO_CONTAINER_KIND_ROW_MultiMap (MultiMap,2,C2_LINK,turbo_multimap_t,turbo_multimap,TURBO_META_MULTIMAP_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_REUSABLE)
 #define TURBO_CONTAINER_KIND_ROW_BTree (BTree,2,C2_LINK,turbo_btree_t,turbo_btree,TURBO_META_BTREE_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
 #define TURBO_CONTAINER_KIND_ROW_BPlusTree (BPlusTree,2,C2_LINK,turbo_bplus_tree_t,turbo_bplus_tree,TURBO_META_BPLUS_TREE_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
 

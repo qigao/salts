@@ -90,6 +90,14 @@ static size_t constant_hash(const void *key, size_t key_size, void *context) {
     return 1u;
 }
 
+static int raw_int_compare_multimap(const void *left, const void *right,
+                                    void *context) {
+    int lhs = *(const int *)left;
+    int rhs = *(const int *)right;
+    (void)context;
+    return (lhs > rhs) - (lhs < rhs);
+}
+
 suite("Container hash ownership") {
     it("keeps HashSet independent with collision and duplicate semantics") {
         turbo_hash_set_t set = {0};
@@ -262,7 +270,7 @@ suite("Container hash ownership") {
     it("keeps failed from arrays unchanged and makes duplicate set add a no-op") {
         turbo_hash_map_t map = {0};
         turbo_hash_map_t before;
-        turbo_set_t set = {0};
+        turbo_hash_set_t set = {0};
         const int keys[] = {1, 2};
         const int values[] = {3, 4};
         uint64_t generation;
@@ -278,15 +286,15 @@ suite("Container hash ownership") {
                                                      turbo_hash_key_equal, NULL),
                     CONTAINER_CAPACITY_EXCEEDED);
         check_equal(memcmp(&map, &before, sizeof(map)), 0);
-        check_equal(turbo_set_init_bytes(&set, sizeof(int), _Alignof(int), 2u,
-                                         turbo_hash_bytes, turbo_hash_key_equal, NULL),
+        check_equal(turbo_hash_set_init_bytes(&set, sizeof(int), _Alignof(int), 2u,
+                                              turbo_hash_bytes, turbo_hash_key_equal, NULL),
                     CONTAINER_OK);
-        check_equal(turbo_set_add(&set, &keys[0]), CONTAINER_OK);
-        generation = set.map.generation;
-        check_equal(turbo_set_add(&set, &keys[0]), CONTAINER_OK);
-        check_equal(turbo_set_size(&set), (size_t)1u);
-        check_equal(set.map.generation, generation);
-        turbo_set_destroy(&set);
+        check_equal(turbo_hash_set_add(&set, &keys[0]), CONTAINER_OK);
+        generation = set.table.generation;
+        check_equal(turbo_hash_set_add(&set, &keys[0]), CONTAINER_OK);
+        check_equal(turbo_hash_set_size(&set), (size_t)1u);
+        check_equal(set.table.generation, generation);
+        turbo_hash_set_destroy(&set);
     }
 
     it("commits typed from arrays only after every copy succeeds") {
@@ -367,7 +375,7 @@ suite("Container hash ownership") {
 
     it("advances destroy generation exactly once for empty and live handles") {
         turbo_hash_map_t map = {0};
-        turbo_set_t set = {0};
+        turbo_hash_set_t set = {0};
         const int key = 1;
         const int value = 2;
 
@@ -387,44 +395,45 @@ suite("Container hash ownership") {
         turbo_hash_map_destroy(&map);
         check_equal(turbo_hash_map_generation(&map), UINT64_C(5));
 
-        check_equal(turbo_set_init_bytes(&set, sizeof(int), _Alignof(int), 1u,
-                                         turbo_hash_bytes, turbo_hash_key_equal, NULL),
+        check_equal(turbo_hash_set_init_bytes(&set, sizeof(int), _Alignof(int), 1u,
+                                              turbo_hash_bytes, turbo_hash_key_equal, NULL),
                     CONTAINER_OK);
-        turbo_set_destroy(&set);
-        check_equal(turbo_set_generation(&set), UINT64_C(2));
-        check_equal(turbo_set_init_bytes(&set, sizeof(int), _Alignof(int), 1u,
-                                         turbo_hash_bytes, turbo_hash_key_equal, NULL),
+        turbo_hash_set_destroy(&set);
+        check_equal(turbo_hash_set_generation(&set), UINT64_C(2));
+        check_equal(turbo_hash_set_init_bytes(&set, sizeof(int), _Alignof(int), 1u,
+                                              turbo_hash_bytes, turbo_hash_key_equal, NULL),
                     CONTAINER_OK);
-        check_equal(turbo_set_add(&set, &key), CONTAINER_OK);
-        turbo_set_destroy(&set);
-        check_equal(turbo_set_generation(&set), UINT64_C(5));
+        check_equal(turbo_hash_set_add(&set, &key), CONTAINER_OK);
+        turbo_hash_set_destroy(&set);
+        check_equal(turbo_hash_set_generation(&set), UINT64_C(5));
     }
 
-    it("keeps multimap vector ownership behind a pointer carrier") {
+    it("keeps ordered multimap duplicates under one element limit") {
         turbo_multimap_t map = {0};
         const int one = 1;
         const int two = 2;
-        const int value = 7;
+        const int first = 7;
+        const int second = 8;
         int out = 0;
-        turbo_vec_t *values;
 
-        check_equal(turbo_multimap_init_bytes(&map, sizeof(int), _Alignof(int), 1u,
-                                        sizeof(int), _Alignof(int), 1u,
-                                        turbo_hash_bytes, turbo_hash_key_equal, NULL), CONTAINER_OK);
-        check_equal(turbo_multimap_put(&map, &one, &value), CONTAINER_OK);
-        values = turbo_multimap_get_values(&map, &one);
-        check_not_null(values);
-        check_equal(turbo_vec_size(values), (size_t)1u);
-        check_equal(turbo_multimap_put(&map, &one, &value), CONTAINER_CAPACITY_EXCEEDED);
-        check_equal(turbo_multimap_put(&map, &two, &value), CONTAINER_CAPACITY_EXCEEDED);
+        check_equal(turbo_multimap_init_bytes(
+                        &map, sizeof(int), _Alignof(int), sizeof(int),
+                        _Alignof(int), 2u, raw_int_compare_multimap, NULL),
+                    CONTAINER_OK);
+        check_equal(turbo_multimap_put(&map, &one, &first), CONTAINER_OK);
+        check_equal(turbo_multimap_put(&map, &one, &second), CONTAINER_OK);
+        check_equal(turbo_multimap_count(&map, &one), (size_t)2u);
+        check_equal(turbo_multimap_put(&map, &two, &first),
+                    CONTAINER_CAPACITY_EXCEEDED);
         check_true(turbo_multimap_remove(&map, &one, &out));
-        check_equal(out, 7);
+        check_equal(out, 8);
+        check_equal(turbo_multimap_erase(&map, &one), (size_t)1u);
         check_true(turbo_multimap_empty(&map));
         turbo_multimap_destroy(&map);
     }
 
     it("counts typed set ownership and accepts duplicate arrays by live entry limit") {
-        turbo_set_t set = {0};
+        turbo_hash_set_t set = {0};
         turbo_hash_map_t map = {0};
         counted_value key;
         const int keys[] = {1, 1};
@@ -433,14 +442,14 @@ suite("Container hash ownership") {
 
         reset_counts();
         key = counted_make(1);
-        check_equal(turbo_set_init(&set, &counted_type, 1u), CONTAINER_OK);
-        check_equal(turbo_set_add(&set, &key), CONTAINER_OK);
-        generation = turbo_set_generation(&set);
+        check_equal(turbo_hash_set_init(&set, &counted_type, 1u), CONTAINER_OK);
+        check_equal(turbo_hash_set_add(&set, &key), CONTAINER_OK);
+        generation = turbo_hash_set_generation(&set);
         check_equal(copies, (size_t)1u);
-        check_equal(turbo_set_add(&set, &key), CONTAINER_OK);
+        check_equal(turbo_hash_set_add(&set, &key), CONTAINER_OK);
         check_equal(copies, (size_t)1u);
-        check_equal(turbo_set_generation(&set), generation);
-        turbo_set_destroy(&set);
+        check_equal(turbo_hash_set_generation(&set), generation);
+        turbo_hash_set_destroy(&set);
         counted_destroy(&key);
         check_equal(destroys, (size_t)3u);
 

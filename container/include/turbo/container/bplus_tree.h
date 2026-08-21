@@ -1,7 +1,7 @@
 #ifndef TURBO_BPLUS_TREE_H
 #define TURBO_BPLUS_TREE_H
 
-#include <cmeta/cmeta.h>
+#include <cmeta/range.h>
 #include <turbo/container/export.h>
 #include <turbo/container/status.h>
 
@@ -130,7 +130,8 @@ CONTAINER_API void *turbo_bplus_tree_value_at(turbo_bplus_tree_t *tree,
 CONTAINER_API const void *turbo_bplus_tree_value_at_const(
     const turbo_bplus_tree_t *tree, size_t index);
 CONTAINER_API bool turbo_bplus_tree_range_next(
-    const turbo_bplus_tree_t *tree, size_t *cursor, const void **out_key,
+    const turbo_bplus_tree_t *tree, cmeta_range_cursor *cursor,
+    const void **out_key,
     const void **out_value);
 
 #ifdef __cplusplus

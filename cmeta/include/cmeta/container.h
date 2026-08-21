@@ -149,6 +149,9 @@
         if (rc == (ok)) self->cmeta.descriptor = &name##_cmeta_container_desc; return rc; \
     }
 
+#define CMETA_C1_INLINE_INIT_KEY_COMPARE CMETA_C1_INLINE_INIT_KEY_HASH
+#define CMETA_C1_INLINE_FROM_KEYS_COMPARE CMETA_C1_INLINE_FROM_KEYS_HASH
+
 #define CMETA_C1_INLINE_DESTROY(pub, op, extra, name, type, raw_type, prefix, ok, aux) \
     CMETA_INLINE void name##_##pub(name *self) { if (self) { CMETA_CONTAINER_API(prefix, op)(&self->raw); self->cmeta.descriptor = NULL; } }
 #define CMETA_C1_INLINE_CLEAR(pub, op, extra, name, type, raw_type, prefix, ok, aux) \
@@ -220,6 +223,23 @@
         if (rc != (ok)) return rc; \
         rc = CMETA_CONTAINER_API(prefix, reserve)(&temporary.raw, count < limit ? count : limit); \
         if (rc != (ok)) { CMETA_CONTAINER_API(prefix, destroy)(&temporary.raw); return rc; } \
+        for (i = 0; i < count; ++i) { \
+            rc = CMETA_CONTAINER_API(prefix, put)(&temporary.raw, &entries[i].key, &entries[i].value); \
+            if (rc != (ok)) { CMETA_CONTAINER_API(prefix, destroy)(&temporary.raw); return rc; } \
+        } \
+        CMETA_CONTAINER_API(prefix, destroy)(&self->raw); \
+        temporary.raw.generation = generation; \
+        *self = temporary; \
+        return (ok); \
+    }
+
+#define CMETA_C2_INLINE_FROM_ENTRIES_LINK(pub, op, extra, name, kt, vt, raw_type, prefix, ok, aux) \
+    CMETA_INLINE int name##_##pub(name *self, const name##_entry *entries, size_t count, size_t limit) { \
+        name temporary = {0}; size_t i; int rc; uint64_t generation; \
+        if (!self || (count > 0U && !entries)) return extra; \
+        generation = CMETA_CONTAINER_API(prefix, generation)(&self->raw) + UINT64_C(1); \
+        rc = name##_init(&temporary, limit); \
+        if (rc != (ok)) return rc; \
         for (i = 0; i < count; ++i) { \
             rc = CMETA_CONTAINER_API(prefix, put)(&temporary.raw, &entries[i].key, &entries[i].value); \
             if (rc != (ok)) { CMETA_CONTAINER_API(prefix, destroy)(&temporary.raw); return rc; } \

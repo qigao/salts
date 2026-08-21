@@ -8,6 +8,9 @@ add_library(${TARGET_NAME}
   src/turbo_hash_set.c
   src/turbo_heap.c
   src/turbo_list.c
+  src/turbo_map.c
+  src/turbo_multimap.c
+  src/turbo_rbtree.c
   src/turbo_sort.c
   src/turbo_set.c
   src/turbo_vec.c)

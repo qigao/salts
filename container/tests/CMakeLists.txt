@@ -53,6 +53,11 @@ cmake_add_test(container_map_test
   LIBS TurboUtils::Container TurboUtils::TinyTest
   FOLDER "container/tests")
 
+cmake_add_test(container_rbtree_test
+  SOURCES container_rbtree_test.c
+  LIBS TurboUtils::Container TurboUtils::TinyTest
+  FOLDER "container/tests")
+
 cmake_add_test(container_entry_test
   SOURCES container_entry_test.c
   LIBS TurboUtils::Container TurboUtils::TinyTest
@@ -108,6 +113,30 @@ if(NOT container_list_forbidden_api_output MATCHES
     "${container_list_forbidden_api_output}")
 endif()
 
+unset(container_map_forbidden_api_compiles CACHE)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+try_compile(container_map_forbidden_api_compiles
+  "${CMAKE_CURRENT_BINARY_DIR}/map_forbidden_api_probe"
+  SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/container_map_negative_index.c"
+  CMAKE_FLAGS
+    "-DCMAKE_C_STANDARD=11"
+    "-DCMAKE_C_STANDARD_REQUIRED=ON"
+    "-DINCLUDE_DIRECTORIES:STRING=${CMAKE_SOURCE_DIR}/container/include;${CMAKE_SOURCE_DIR}/cmeta/include"
+  OUTPUT_VARIABLE container_map_forbidden_api_output)
+unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
+
+if(container_map_forbidden_api_compiles)
+  message(FATAL_ERROR
+    "Map still exposes forbidden reserve/capacity/key_at APIs")
+endif()
+
+if(NOT container_map_forbidden_api_output MATCHES
+   "turbo_map_(reserve|capacity|key_at)")
+  message(FATAL_ERROR
+    "Map forbidden-API probe failed without an expected symbol diagnostic:\n"
+    "${container_map_forbidden_api_output}")
+endif()
+
 set_target_properties(
   container_header_test
   PROPERTIES
@@ -144,6 +173,7 @@ set_target_properties(
   container_tree_test
   container_list_test
   container_map_test
+  container_rbtree_test
   container_entry_test
   container_sort_test
   PROPERTIES

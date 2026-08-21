@@ -5,6 +5,7 @@
 #include <string.h>
 
 typed(Map, OrderedIntMap, int, long);
+typed(Set, OrderedIntSet, int);
 
 typedef struct compare_value {
     int value;
@@ -119,7 +120,7 @@ static int raw_int_compare_map(const void *left, const void *right,
     return (lhs > rhs) - (lhs < rhs);
 }
 
-spec("BTree-backed ordered Map") {
+spec("Red-black-tree ordered Map") {
     it("admits compare-only keys and rejects a missing comparator") {
         turbo_map_t map = {0};
 
@@ -140,7 +141,7 @@ spec("BTree-backed ordered Map") {
         OrderedIntMap map = {0};
         int keys[] = {7, 1, 9, 3, 5};
         cmeta_range range;
-        cmeta_range_cursor cursor = 0u;
+        cmeta_range_cursor cursor = {0};
         OrderedIntMap_entry entry = {0};
         int expected[] = {1, 3, 5, 7, 9};
         size_t index;
@@ -164,6 +165,61 @@ spec("BTree-backed ordered Map") {
             check_equal(entry.value, (long)expected[index] * 10L);
         }
         OrderedIntMap_destroy(&map);
+    }
+
+    it("supports bidirectional bounds without rank indexing") {
+        turbo_map_t map = {0};
+        turbo_map_iter_t iterator;
+        int keys[] = {8, 2, 6, 4};
+        long value = 1L;
+        int probe = 5;
+        size_t index;
+
+        check_equal(turbo_map_init_bytes(
+                        &map, sizeof(int), _Alignof(int), sizeof(long),
+                        _Alignof(long), 4u, raw_int_compare_map, NULL),
+                    CONTAINER_OK);
+        for (index = 0u; index < 4u; ++index)
+            check_equal(turbo_map_put(&map, &keys[index], &value),
+                        CONTAINER_OK);
+        iterator = turbo_map_lower_bound(&map, &probe);
+        check_equal(*(const int *)turbo_map_iter_key_const(iterator), 6);
+        iterator = turbo_map_upper_bound(&map, &keys[2]);
+        check_equal(*(const int *)turbo_map_iter_key_const(iterator), 8);
+        check_equal(turbo_map_iter_prev(&iterator), CONTAINER_OK);
+        check_equal(*(const int *)turbo_map_iter_key_const(iterator), 6);
+        iterator = turbo_map_begin(&map);
+        check_equal(*(const int *)turbo_map_iter_key_const(iterator), 2);
+        check_equal(turbo_map_iter_next(&iterator), CONTAINER_OK);
+        check_equal(*(const int *)turbo_map_iter_key_const(iterator), 4);
+        turbo_map_destroy(&map);
+    }
+
+    it("keeps Set ordered and distinct from HashSet") {
+        OrderedIntSet set = {0};
+        cmeta_range range;
+        cmeta_range_cursor cursor = {0};
+        int keys[] = {9, 1, 5, 1};
+        int out = 0;
+        int expected[] = {1, 5, 9};
+        size_t index;
+
+        check_equal(OrderedIntSet_init(&set, 3u), CONTAINER_OK);
+        for (index = 0u; index < 4u; ++index)
+            check_equal(OrderedIntSet_add(&set, keys[index]), CONTAINER_OK);
+        check_equal(OrderedIntSet_size(&set), (size_t)3u);
+        range = OrderedIntSet_range(&set);
+        check_true((range.flags & (CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+                                  CMETA_RANGE_UNIQUE)) ==
+                   (CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+                    CMETA_RANGE_UNIQUE));
+        for (index = 0u; index < 3u; ++index) {
+            cmeta_gen_status status = cmeta_range_next(&range, &cursor, &out);
+            check_true(status == CMETA_GEN_VALUE ||
+                       status == CMETA_GEN_VALUE_AND_DONE);
+            check_equal(out, expected[index]);
+        }
+        OrderedIntSet_destroy(&set);
     }
 
     it("replaces duplicate from rows and preserves output on overflow") {

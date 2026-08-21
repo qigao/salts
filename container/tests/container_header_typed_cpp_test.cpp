@@ -9,6 +9,8 @@
 
 static_assert(!std::is_same_v<turbo_set_t, turbo_hash_set_t>,
               "Set and HashSet must be independent container types");
+static_assert(!std::is_same_v<turbo_map_t, turbo_btree_t>,
+              "Map and BTree must be independent container types");
 
 spec("Container typed C++ public header") {
   it("directly exposes raw typed facade prerequisites") {
