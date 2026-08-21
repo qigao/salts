@@ -4,7 +4,7 @@
 
 **Goal:** Migrate the CFlow semantic/PublicProof tree (M1–M6) to Lean 4.30 modules with explicit public semantic API, private proof machinery, hard PublicProof isolation, and unchanged C witness semantics.
 
-**Architecture:** Convert the CFlow semantic spine bottom-up. Semantic carriers/functions required to state and use the public proofs are explicitly public; proof plumbing is private. While an identified legacy consumer cannot yet use `import all`, use only the audited `TEMP-MODULE-BRIDGE(M<n>)` theorem/re-export/exposure bridges from the execution amendment, then remove each at its last-consumer phase. `EndToEnd` becomes a private theorem implementation layer; `Semantics` re-exports only semantic public scopes; `PublicProof` is the stable six-theorem facade. The legacy `CMeta.lean` remains the full-build root throughout Plan A. M6 moduleizes the CFlow generated/conformance closure, removes every remaining bridge, and proves hard client isolation.
+**Architecture:** Convert the CFlow semantic spine bottom-up. Semantic carriers/functions required to state/use public proofs are public; proof plumbing is private. Until an identified legacy consumer can use `import all`, only the audited `TEMP-MODULE-BRIDGE(M<n>)` declarations/re-exports/exposures may remain visible. `EndToEnd` becomes private proof implementation, `Semantics` re-exports curated semantic scopes, and `PublicProof` remains the stable six-theorem facade. The legacy `CMeta.lean` remains the full-build root throughout Plan A. M6 converts the generated/conformance closure, removes every bridge, and proves client isolation.
 
 **Tech Stack:** Lean 4.30.0, Lake, C11/CMake, GCC/Clang, GitHub Actions.
 
@@ -14,257 +14,145 @@
 
 ## Global Constraints
 
-- Do not change CMeta/CFlow runtime semantics, operator semantics, or proof statements except visibility/import qualification required by the module system.
-- Do not introduce duplicate/opaque semantic carriers. Existing `CType`, `Callable`, `TypedGraph`, `SurfaceZip`, `FusedMap`, `ExecProgram`, `PackedVec`, plan/runtime structures remain authoritative.
-- Do not convert `formal/CMeta.lean` to `module` in Plan A. Do not create final `CMeta.InternalChecks`; both belong to Plan B.
-- Do not enable Lake `allowImportAll`.
-- Do not set `backward.privateInPublic` or `backward.proofsInPublic`.
-- Use `public import all X` when the current module intentionally re-exports `X`'s public semantic API and also needs `X`'s private proof/body scope. Use `import all X` for private package implementation access only. Use `public import X` for public re-export without private access.
-- Every temporary compatibility declaration/import/body exposure must carry `TEMP-MODULE-BRIDGE(M<n>): <consumer>` and be removed at the named phase.
-- The only authorized temporary `@[expose]` bridges are those listed in the execution amendment: `HArgs.one`, `Callable.ofUnary`, `Callable.invoke1` through M6; `MapChain.check` through M4; `PlanProgram.compile` and `PlanWellTyped` through M5.
-- No migration-only `@[expose]` may remain at final Plan A exact head.
-- Generated Lean snapshots may change only by module-system source framing. Their semantic payload after the framing prefix must remain byte-for-byte identical to the previous committed source.
-- Keep the existing proof-placeholder and arity-specific callable guards green.
-- Every RED must be inspected and must fail for the intended visibility/module reason, not a typo or missing unrelated import.
-- Commit only GREEN states. Tasks inside a phase may be committed locally; push at phase checkpoints so CI is not intentionally fed a known-red intermediate commit.
+- Do not change CMeta/CFlow runtime semantics, operator semantics, or theorem statements except visibility/import qualification forced by modules.
+- Do not create duplicate/opaque carriers. Existing `CType`, `Callable`, `TypedGraph`, `SurfaceZip`, `FusedMap`, `ExecProgram`, `PackedVec`, plan/runtime structures remain authoritative.
+- Do not convert `formal/CMeta.lean` to `module` and do not create `CMeta.InternalChecks`; both are Plan B.
+- Never enable `allowImportAll`, `backward.privateInPublic`, or `backward.proofsInPublic`.
+- Use `public import all X` when both re-exported public semantics and package-private proof/body access are required; `import all X` for private package implementation only; `public import X` for semantic re-export only.
+- Every temporary bridge must carry `TEMP-MODULE-BRIDGE(M<n>): <consumer>` and be removed at the named phase.
+- Authorized temporary body exposures only: `HArgs.one`, `Callable.ofUnary`, `Callable.invoke1` through M6; `MapChain.check` through M4; `PlanProgram.compile`, `PlanWellTyped` through M5.
+- Generated Lean snapshots may change only by module framing. Data after the framing prefix must remain byte-for-byte identical.
+- Commit only GREEN states. Local commits inside a phase are allowed; push only phase checkpoints.
 
 ## Bridge Removal Ledger
 
-The executor must update this ledger mentally/source comments during work and prove it empty in Task 13.
-
-| Bridge | Created | Remove |
-|---|---|---|
-| `dispatch_sound`, `dispatch_policy_sound` public | M1 | M2 / Task 6 |
-| `TypedOp.step_exact`, `Pipeline.check_steps` public | M2 | M3 / Task 8 |
-| `TypedGraph.check_stages` public | M2 | M5 / Task 11 |
-| `TypedRelation.check_erase` public | M2 | M6 / Task 13 |
-| `MapChain.check_signatures` public | M3 | M4 / Task 9 |
-| `FusedMap.type_preserved` public | M3 | M5 / Task 11 |
-| `SurfaceZip.lowering_preserves_type` public | M3 | M6 / Task 13 |
-| `duplicate_idempotent_elimination_sound` public | M3 | M6 / Task 13 |
-| `PlanNode.check_erase`, `PlanProgram.compile_well_typed` public within M4 | Task 9 | Task 10 |
-| `ExecProgram.runtime_execution_exact`, `result_type_safe`, `compiled_plan_well_typed` public | M4 | M5 / Task 11 |
-| `Cardinality` public re-export of `Execution` | M4 | M5 / Task 11 |
-| `@[expose] HArgs.one`, `Callable.ofUnary`, `Callable.invoke1` | M1 | M6 / Task 13 |
-| `@[expose] MapChain.check` | M3 | M4 / Task 9 |
-| `@[expose] PlanProgram.compile`, `PlanWellTyped` | M4 | M5 / Task 11 |
+| Bridge | Remove |
+|---|---|
+| `dispatch_sound`, `dispatch_policy_sound` public | Task 6 / M2 |
+| `TypedOp.step_exact`, `Pipeline.check_steps` public | Task 8 / M3 |
+| `TypedGraph.check_stages` public | Task 11 / M5 |
+| `TypedRelation.check_erase` public | Task 13 / M6 |
+| `MapChain.check_signatures` public | Task 9 / M4 |
+| `FusedMap.type_preserved` public | Task 11 / M5 |
+| `SurfaceZip.lowering_preserves_type` public | Task 13 / M6 |
+| `duplicate_idempotent_elimination_sound` public | Task 13 / M6 |
+| `PlanNode.check_erase`, `PlanProgram.compile_well_typed` public | Task 10 / M4 |
+| `ExecProgram.runtime_execution_exact`, `result_type_safe`, `compiled_plan_well_typed` public | Task 11 / M5 |
+| `Cardinality` public re-export of `Execution` | Task 11 / M5 |
+| `RuntimeConformance` public re-export of `Execution` | Task 13 / M6 |
+| exposed bodies `HArgs.one`, `Callable.ofUnary`, `Callable.invoke1` | Task 13 / M6 |
+| exposed body `MapChain.check` | Task 9 / M4 |
+| exposed bodies `PlanProgram.compile`, `PlanWellTyped` | Task 11 / M5 |
 
 ---
 
-## Task 1 — M1a: Convert `Calculus` and create the migration conformance harness
+## Task 1 — M1a: Calculus + migration conformance harness
 
-**Files**
+**Files:** create `formal/CMeta/ModuleMigrationConformance.lean`; modify `formal/CMeta/Calculus.lean`, `formal/CMeta.lean`.
 
-- Create: `formal/CMeta/ModuleMigrationConformance.lean`
-- Modify: `formal/CMeta/Calculus.lean`
-- Modify: `formal/CMeta.lean`
+**Public:** `product`, `CoreExpr`, `CoreExpr.eval`, `CoreExpr.cardinality`, `ppRepeat`, `replay`.
 
-**Consumes:** `Std`.
+**Private:** `product_length`, `CoreExpr.eval_length_eq_cardinality`, `map_cardinality`, `append_cardinality`, `product_cardinality`, `ppRepeat_length`, `ppRepeat_index_domain`, `ppRepeat_indices_unique`, `replay_length`, `replay_zip`.
 
-**Produces public semantic API:** `product`, `CoreExpr`, `CoreExpr.eval`, `CoreExpr.cardinality`, `ppRepeat`, `replay`.
-
-**Must become private:** `product_length`, `CoreExpr.eval_length_eq_cardinality`, `map_cardinality`, `append_cardinality`, `product_cardinality`, `ppRepeat_length`, `ppRepeat_index_domain`, `ppRepeat_indices_unique`, `replay_length`, `replay_zip`.
-
-- [ ] **RED:** create `formal/CMeta/ModuleMigrationConformance.lean` as a legacy source so it can test the pre-conversion file:
+- [ ] RED: create:
 
 ```lean
 import CMeta.Calculus
-
 #check CMeta.product
 #check CMeta.CoreExpr
 #check CMeta.CoreExpr.eval
 #check CMeta.ppRepeat
 #check CMeta.replay
-
 assert_not_exists CMeta.product_length
 assert_not_exists CMeta.CoreExpr.eval_length_eq_cardinality
 assert_not_exists CMeta.replay_zip
 #check_assertions
 ```
 
-- [ ] Import `CMeta.ModuleMigrationConformance` from the legacy `formal/CMeta.lean` root.
-- [ ] Run:
+Import `CMeta.ModuleMigrationConformance` from legacy `formal/CMeta.lean`.
 
-```bash
-cd formal
-lake env lean CMeta/ModuleMigrationConformance.lean
-```
-
-Expected RED: at least one `assert_not_exists` fails because legacy `CMeta.Calculus` exports those theorem names.
-
-- [ ] **GREEN:** add the module header to `Calculus.lean`:
+- [ ] Run `cd formal && lake env lean CMeta/ModuleMigrationConformance.lean`; confirm RED is the visibility assertion against legacy Calculus.
+- [ ] GREEN: `Calculus.lean` begins:
 
 ```lean
 module
 import Std
 ```
 
-Mark exactly these declarations public:
+Add `public` only to the six public declarations above; theorem bodies remain unchanged/private; no `@[expose]`.
 
-```text
-product
-CoreExpr
-CoreExpr.eval
-CoreExpr.cardinality
-ppRepeat
-replay
-```
-
-Leave all listed proof theorems unmarked/private. Do not add `@[expose]`.
-
-- [ ] Run focused GREEN:
+- [ ] Run:
 
 ```bash
 cd formal
-lake env lean CMeta/ModuleMigrationConformance.lean
 lake env lean CMeta/Calculus.lean
+lake env lean CMeta/ModuleMigrationConformance.lean
 ```
 
-- [ ] Inspect diff to confirm no theorem body/semantic body changed except visibility/header tokens.
-- [ ] Commit locally:
-
-```bash
-git add -- formal/CMeta/Calculus.lean formal/CMeta/ModuleMigrationConformance.lean formal/CMeta.lean
-git commit -m "refactor(formal): moduleize calculus surface"
-```
-
-Do not push until Task 5 M1 checkpoint.
+- [ ] Commit locally: `refactor(formal): moduleize calculus surface`. Do not push before Task 5.
 
 ---
 
-## Task 2 — M1b: Convert `Traits`
+## Task 2 — M1b: Traits
 
-**Files**
+**Files:** `formal/CMeta/Traits.lean`, `formal/CMeta/ModuleMigrationConformance.lean`.
 
-- Modify: `formal/CMeta/Traits.lean`
-- Modify: `formal/CMeta/ModuleMigrationConformance.lean`
-
-**Consumes:** public `Calculus` module only; Traits itself does not re-export Calculus.
-
-**Produces public semantic API:** `CType`, `Signature`, `Traits`, `Traits.inferUnary`, `SignaturePolicy`, `policyAllows`.
-
-**Must become private:** `Traits.type_unique`, `Traits.inferUnary_of_known`, `Traits.inferUnary_unique`, `policyAllows_iff`.
-
-- [ ] **RED:** extend migration conformance imports and checks:
+**Header:**
 
 ```lean
+module
 import CMeta.Calculus
-import CMeta.Traits
+```
 
-#check CMeta.CType
-#check CMeta.Signature
-#check CMeta.Traits
-#check CMeta.Traits.inferUnary
-#check CMeta.SignaturePolicy
-#check CMeta.policyAllows
+Do not public-re-export Calculus.
 
+**Public:** `CType`, `Signature`, `Traits`, `Traits.inferUnary`, `SignaturePolicy`, `policyAllows`.
+
+**Private:** `Traits.type_unique`, `Traits.inferUnary_of_known`, `Traits.inferUnary_unique`, `policyAllows_iff`.
+
+- [ ] RED: add `import CMeta.Traits`, `#check` every public name above, then:
+
+```lean
 assert_not_exists CMeta.Traits.type_unique
 assert_not_exists CMeta.Traits.inferUnary_of_known
 assert_not_exists CMeta.Traits.inferUnary_unique
 assert_not_exists CMeta.policyAllows_iff
 ```
 
-Keep Task 1 assertions in the same file and keep one final `#check_assertions`.
+Keep one final `#check_assertions`; run the conformance file and inspect the intended legacy-export failure.
 
-- [ ] Run:
-
-```bash
-cd formal
-lake env lean CMeta/ModuleMigrationConformance.lean
-```
-
-Expected RED: the new Traits `assert_not_exists` checks fail against legacy Traits.
-
-- [ ] **GREEN:** make `Traits.lean` begin:
-
-```lean
-module
-import CMeta.Calculus
-```
-
-Use explicit `public` declarations/public sections only around the six semantic names listed above. Proof theorems remain private. Do not public-import Calculus.
-
-- [ ] Run focused GREEN:
-
-```bash
-cd formal
-lake env lean CMeta/Traits.lean
-lake env lean CMeta/ModuleMigrationConformance.lean
-```
-
-- [ ] Commit locally:
-
-```bash
-git add -- formal/CMeta/Traits.lean formal/CMeta/ModuleMigrationConformance.lean
-git commit -m "refactor(formal): moduleize trait semantics"
-```
-
-Do not push until Task 5.
+- [ ] GREEN: add the header and public modifiers exactly as listed; do not change bodies.
+- [ ] Run focused `lake env lean CMeta/Traits.lean` and migration conformance.
+- [ ] Commit locally: `refactor(formal): moduleize trait semantics`. Do not push before Task 5.
 
 ---
 
-## Task 3 — M1c: Convert `Callable` with the audited legacy-conformance exposure bridge
+## Task 3 — M1c: Callable + audited M6 body bridge
 
-**Files**
+**Files:** `formal/CMeta/Callable.lean`, `formal/CMeta/ModuleMigrationConformance.lean`.
 
-- Modify: `formal/CMeta/Callable.lean`
-- Modify: `formal/CMeta/ModuleMigrationConformance.lean`
-
-**Consumes/re-exports:** `CMeta.Traits` public semantics.
-
-**Produces public semantic API:** `CType.denote`, `HArgs`, `HArgs.one`, `HArgs.two`, `HArgs.append`, `HArgs.snoc`, `Callable`, `Callable.ofUnary`, `Callable.ofBinary`, `Callable.invoke`, `Callable.invoke1`, `Callable.invoke2`, `Callable.unaryBackendSignature`, `Callable.binaryBackendSignature`, `Callable.compose`, `Generator`, `Generator.signature`, `CallableDesc`, `eraseValue`, `eraseGenerator`.
-
-**Must become private:** `Callable.compose_beta`, `Generator.signature_exact`, `eraseValue_unary`, `eraseValue_binary`, `eraseGenerator_preserves_signature`.
-
-- [ ] **RED:** add:
-
-```lean
-import CMeta.Callable
-
-#check CMeta.HArgs
-#check CMeta.Callable
-#check CMeta.Callable.ofUnary
-#check CMeta.Callable.invoke1
-#check CMeta.Generator
-#check CMeta.CallableDesc
-#check CMeta.eraseValue
-#check CMeta.eraseGenerator
-
-assert_not_exists CMeta.Callable.compose_beta
-assert_not_exists CMeta.Generator.signature_exact
-assert_not_exists CMeta.eraseValue_unary
-assert_not_exists CMeta.eraseValue_binary
-assert_not_exists CMeta.eraseGenerator_preserves_signature
-```
-
-Run the conformance file and verify the new assertions fail against legacy Callable.
-
-- [ ] **GREEN:** start Callable with:
+**Header:**
 
 ```lean
 module
 public import CMeta.Traits
 ```
 
-Make the listed semantic names public. Keep proof theorems private.
+**Public:** `CType.denote`, `HArgs`, `HArgs.one`, `HArgs.two`, `HArgs.append`, `HArgs.snoc`, `Callable`, `Callable.ofUnary`, `Callable.ofBinary`, `Callable.invoke`, `Callable.invoke1`, `Callable.invoke2`, `Callable.unaryBackendSignature`, `Callable.binaryBackendSignature`, `Callable.compose`, `Generator`, `Generator.signature`, `CallableDesc`, `eraseValue`, `eraseGenerator`.
 
-- [ ] Add exactly these temporary body bridges, each with the exact source marker comment:
+**Private:** `Callable.compose_beta`, `Generator.signature_exact`, `eraseValue_unary`, `eraseValue_binary`, `eraseGenerator_preserves_signature`.
+
+- [ ] RED: import Callable, `#check` representative public carriers/functions, then assert all five private theorem names absent. Verify the assertions fail against legacy Callable.
+- [ ] GREEN: add module/public modifiers without body changes.
+- [ ] On the existing declarations `HArgs.one`, `Callable.ofUnary`, and `Callable.invoke1`, add `@[expose] public` and immediately preceding comment:
 
 ```text
 TEMP-MODULE-BRIDGE(M6): legacy OptimizerConformance.identity_lists_equal
 ```
 
-on:
+Do not expose any other Callable/HArgs definition.
 
-```lean
-@[expose] public def HArgs.one ...
-@[expose] public def Callable.ofUnary ...
-@[expose] public def Callable.invoke1 ...
-```
-
-Do not expose `ofBinary`, `invoke2`, or other definitions unless the execution amendment is first updated with an audited consumer.
-
-- [ ] Run:
+- [ ] Focused GREEN:
 
 ```bash
 cd formal
@@ -272,130 +160,57 @@ lake env lean CMeta/Callable.lean
 lake env lean CMeta/ModuleMigrationConformance.lean
 ```
 
-- [ ] Commit locally:
-
-```bash
-git add -- formal/CMeta/Callable.lean formal/CMeta/ModuleMigrationConformance.lean
-git commit -m "refactor(formal): moduleize callable semantics"
-```
-
-Do not push until Task 5.
+- [ ] Commit locally: `refactor(formal): moduleize callable semantics`. Do not push before Task 5.
 
 ---
 
-## Task 4 — M1d: Convert `Lambda`
+## Task 4 — M1d: Lambda
 
-**Files**
+**Files:** `formal/CMeta/Lambda.lean`, `formal/CMeta/ModuleMigrationConformance.lean`.
 
-- Modify: `formal/CMeta/Lambda.lean`
-- Modify: `formal/CMeta/ModuleMigrationConformance.lean`
-
-**Consumes/re-exports:** Callable public semantics and private bodies for Lambda proof implementation.
-
-**Produces public semantic API:** `Lambda`, `Lambda.invoke`, `Lambda.asCallable`, `anonymous`, `bindLast`.
-
-**Must become private:** `Lambda.beta`, `Lambda.erasure_semantics`, `Lambda.erasure_signature_unary`, `Lambda.erasure_signature_binary`, `anonymous_beta`, `bindLast_beta`, `lambda_bind_same_shape`.
-
-- [ ] **RED:** add:
-
-```lean
-import CMeta.Lambda
-
-#check CMeta.Lambda
-#check CMeta.Lambda.invoke
-#check CMeta.Lambda.asCallable
-#check CMeta.anonymous
-#check CMeta.bindLast
-
-assert_not_exists CMeta.Lambda.beta
-assert_not_exists CMeta.Lambda.erasure_semantics
-assert_not_exists CMeta.Lambda.erasure_signature_unary
-assert_not_exists CMeta.Lambda.erasure_signature_binary
-assert_not_exists CMeta.anonymous_beta
-assert_not_exists CMeta.bindLast_beta
-assert_not_exists CMeta.lambda_bind_same_shape
-```
-
-Verify RED against legacy Lambda.
-
-- [ ] **GREEN:** use:
+**Header:**
 
 ```lean
 module
 public import all CMeta.Callable
 ```
 
-Make only the listed semantic declarations public. The combined `public import all` is intentional: downstream Lambda users receive Callable semantic API, while Lambda's private proofs can unfold Callable bodies without widening Callable's public proof names.
+**Public:** `Lambda`, `Lambda.invoke`, `Lambda.asCallable`, `anonymous`, `bindLast`.
 
-- [ ] Run focused GREEN and commit locally:
+**Private:** `Lambda.beta`, `Lambda.erasure_semantics`, `Lambda.erasure_signature_unary`, `Lambda.erasure_signature_binary`, `anonymous_beta`, `bindLast_beta`, `lambda_bind_same_shape`.
 
-```bash
-cd formal
-lake env lean CMeta/Lambda.lean
-lake env lean CMeta/ModuleMigrationConformance.lean
-git add -- CMeta/Lambda.lean CMeta/ModuleMigrationConformance.lean
-git commit -m "refactor(formal): moduleize lambda semantics"
-```
-
-Do not push until Task 5.
+- [ ] RED: import Lambda, positive-check every public name, assert all seven proof names absent, verify intended failure.
+- [ ] GREEN: moduleize, keep only semantic declarations public. `public import all` is intentional so Lambda proof bodies can unfold Callable privately.
+- [ ] Run focused Lambda + migration conformance.
+- [ ] Commit locally: `refactor(formal): moduleize lambda semantics`. Do not push before Task 5.
 
 ---
 
-## Task 5 — M1e: Convert `Dispatch`, keep the two M2 theorem bridges, and take the M1 checkpoint
+## Task 5 — M1e: Dispatch + M1 checkpoint
 
-**Files**
+**Files:** `formal/CMeta/Dispatch.lean`, `formal/CMeta/ModuleMigrationConformance.lean`.
 
-- Modify: `formal/CMeta/Dispatch.lean`
-- Modify: `formal/CMeta/ModuleMigrationConformance.lean`
-
-**Consumes/re-exports:** Traits public semantics; private Traits bodies for dispatch proofs.
-
-**Produces public semantic API:** `Operator`, `DispatchRule`, `dispatch`, `OperatorPolicy`, `RulesRespectPolicy`, `composeSignature`, `inferAndAllow`.
-
-**Private now:** `inferAndAllow_known`.
-
-**Temporary M2 public bridges:** `dispatch_sound`, `dispatch_policy_sound`, required by still-legacy `Flow.lean`.
-
-- [ ] **RED:** add public semantic checks and only the proof assertion that can already be hidden:
-
-```lean
-import CMeta.Dispatch
-
-#check CMeta.Operator
-#check CMeta.DispatchRule
-#check CMeta.dispatch
-#check CMeta.OperatorPolicy
-#check CMeta.RulesRespectPolicy
-#check CMeta.composeSignature
-#check CMeta.inferAndAllow
-
-assert_not_exists CMeta.inferAndAllow_known
-```
-
-Do not assert absence of `dispatch_sound` or `dispatch_policy_sound` yet; they are audited M2 bridges.
-
-- [ ] Verify RED against legacy Dispatch.
-
-- [ ] **GREEN:** replace the accidental Lambda dependency with the exact module import needed by Dispatch:
+Replace current Lambda import with:
 
 ```lean
 module
 public import all CMeta.Traits
 ```
 
-Mark semantic declarations public. Keep `inferAndAllow_known` private.
+**Public semantic:** `Operator`, `DispatchRule`, `dispatch`, `OperatorPolicy`, `RulesRespectPolicy`, `composeSignature`, `inferAndAllow`.
 
-Mark exactly these theorem bridges public, with comments:
+**Private now:** `inferAndAllow_known`.
 
-```lean
--- TEMP-MODULE-BRIDGE(M2): legacy Flow.ResolvedStep.dispatch_exact
-public theorem dispatch_sound ...
+**M2 theorem bridges:** existing `dispatch_sound` and `dispatch_policy_sound` declarations receive `public` without signature/body edits. Add respectively:
 
--- TEMP-MODULE-BRIDGE(M2): legacy Flow.ResolvedStep.policy_safe
-public theorem dispatch_policy_sound ...
+```text
+TEMP-MODULE-BRIDGE(M2): legacy Flow.ResolvedStep.dispatch_exact
+TEMP-MODULE-BRIDGE(M2): legacy Flow.ResolvedStep.policy_safe
 ```
 
-- [ ] Run focused checks, then full M1 Lean root gate:
+- [ ] RED: positive-check semantic names; `assert_not_exists CMeta.inferAndAllow_known`; verify legacy failure.
+- [ ] GREEN: apply exact header/public/private/bridge rules.
+- [ ] Run:
 
 ```bash
 cd formal
@@ -404,115 +219,57 @@ lake env lean CMeta/ModuleMigrationConformance.lean
 lake build --wfail
 ```
 
-Expected: full legacy root is green because Flow can still consume the two explicit public bridge theorems.
-
-- [ ] Audit M1 for blanket/backward escapes:
+- [ ] Audit:
 
 ```bash
-git grep -nE 'backward\.(privateInPublic|proofsInPublic)|allowImportAll' -- formal
+! git grep -nE 'backward\.(privateInPublic|proofsInPublic)|allowImportAll' -- formal
 ```
 
-Expected: no matches.
-
-- [ ] Commit if not already committed and push the M1 GREEN stack to `leanv4`. Verify the triggered `Lean proofs` run reaches and passes `lake build --wfail` on both GCC and Clang before proceeding to M2.
-
-Commit message for Dispatch task:
-
-```text
-refactor(formal): moduleize dispatch semantics
-```
+- [ ] Commit `refactor(formal): moduleize dispatch semantics`, push the M1 stack, and require exact-head GCC/Clang `Lean proofs` success before M2.
 
 ---
 
-## Task 6 — M2a: Convert `Flow`, consume/remove Dispatch bridges, and create downstream bridges
+## Task 6 — M2a: Flow; consume Dispatch bridges
 
-**Files**
+**Files:** `formal/CMeta/Flow.lean`, `formal/CMeta/Dispatch.lean`, `formal/CMeta/ModuleMigrationConformance.lean`.
 
-- Modify: `formal/CMeta/Flow.lean`
-- Modify: `formal/CMeta/Dispatch.lean`
-- Modify: `formal/CMeta/ModuleMigrationConformance.lean`
-
-**Produces public semantic API:** `TypedOp`, `TypedOp.operator`, `TypedOp.signature`, `stepType`, `Pipeline`, `Pipeline.steps`, `Pipeline.length`, `checkPipeline`, `cflowBuiltInPolicy`, `ResolvedStep`, `TargetSignatureUnique`, `WellFormedDispatch`.
-
-**Private now:** `TypedOp.progress`, `TypedOp.output_unique`, `Pipeline.steps_length`, `ResolvedStep.dispatch_exact`, `ResolvedStep.policy_safe`, `ResolvedStep.target_signature_safe`, `ResolvedStep.cannot_target_incompatible`.
-
-**Temporary public bridges:** `TypedOp.step_exact` (remove M3), `Pipeline.check_steps` (remove M3).
-
-- [ ] **RED:** before conversion, add Flow checks plus private assertions that do not conflict with known bridges:
-
-```lean
-import CMeta.Flow
-
-#check CMeta.TypedOp
-#check CMeta.stepType
-#check CMeta.Pipeline
-#check CMeta.checkPipeline
-#check CMeta.cflowBuiltInPolicy
-#check CMeta.ResolvedStep
-#check CMeta.TargetSignatureUnique
-#check CMeta.WellFormedDispatch
-
-assert_not_exists CMeta.TypedOp.progress
-assert_not_exists CMeta.TypedOp.output_unique
-assert_not_exists CMeta.Pipeline.steps_length
-assert_not_exists CMeta.ResolvedStep.target_signature_safe
-assert_not_exists CMeta.ResolvedStep.cannot_target_incompatible
-```
-
-Verify RED.
-
-- [ ] **GREEN:** use:
+**Header:**
 
 ```lean
 module
 public import all CMeta.Dispatch
 ```
 
-Make the semantic list public. Make the two known downstream bridge theorems public with exact markers:
+**Public semantic:** `TypedOp`, `TypedOp.operator`, `TypedOp.signature`, `stepType`, `Pipeline`, `Pipeline.steps`, `Pipeline.length`, `checkPipeline`, `cflowBuiltInPolicy`, `ResolvedStep`, `TargetSignatureUnique`, `WellFormedDispatch`.
+
+**Private now:** `TypedOp.progress`, `TypedOp.output_unique`, `Pipeline.steps_length`, `ResolvedStep.dispatch_exact`, `ResolvedStep.policy_safe`, `ResolvedStep.target_signature_safe`, `ResolvedStep.cannot_target_incompatible`.
+
+**M3 bridges:** existing `TypedOp.step_exact` and `Pipeline.check_steps` declarations get public visibility plus:
 
 ```text
 TEMP-MODULE-BRIDGE(M3): legacy Optimize.canonicalizeMapLike_preserves_type
 TEMP-MODULE-BRIDGE(M3): legacy Lowering.SurfaceZip.lowering_preserves_type
 ```
 
-for `TypedOp.step_exact` and `Pipeline.check_steps` respectively.
-
-- [ ] Remove `public` and both `TEMP-MODULE-BRIDGE(M2)` comments from `dispatch_sound` and `dispatch_policy_sound`; Flow now sees them privately through `public import all CMeta.Dispatch`.
-
-- [ ] Add these assertions to migration conformance:
+- [ ] RED: positive-check the semantic list; assert the immediately-private proof names above absent; verify legacy failure.
+- [ ] GREEN: moduleize Flow; remove `public` and M2 comments from Dispatch `dispatch_sound` / `dispatch_policy_sound`.
+- [ ] Add:
 
 ```lean
 assert_not_exists CMeta.dispatch_sound
 assert_not_exists CMeta.dispatch_policy_sound
 ```
 
-- [ ] Run:
-
-```bash
-cd formal
-lake env lean CMeta/Flow.lean
-lake env lean CMeta/ModuleMigrationConformance.lean
-lake build --wfail
-```
-
-- [ ] Commit and push GREEN:
-
-```text
-refactor(formal): moduleize flow semantics
-```
-
-Verify exact-head GCC/Clang CI before Task 7.
+- [ ] Run Flow, migration conformance, then `lake build --wfail`.
+- [ ] Commit/push `refactor(formal): moduleize flow semantics`; verify exact-head GCC/Clang success.
 
 ---
 
-## Task 7 — M2b: Convert `Graph` and take the M2 checkpoint
+## Task 7 — M2b: Graph + M2 checkpoint
 
-**Files**
+**Files:** `formal/CMeta/Graph.lean`, `formal/CMeta/ModuleMigrationConformance.lean`.
 
-- Modify: `formal/CMeta/Graph.lean`
-- Modify: `formal/CMeta/ModuleMigrationConformance.lean`
-
-**Imports:**
+**Header:**
 
 ```lean
 module
@@ -520,95 +277,26 @@ public import all CMeta.Flow
 public import all CMeta.Callable
 ```
 
-**Produces public semantic API:** `RelationResult`, `TypedBranches`, `TypedBranches.erase`, `checkBranches`, `ErasedRelation`, `TypedRelation`, `TypedRelation.erase`, `checkRelation`, `ErasedStage`, `TypedGraph`, `TypedGraph.stages`, `checkGraph`.
+**Public semantic:** `RelationResult`, `TypedBranches`, `TypedBranches.erase`, `checkBranches`, `ErasedRelation`, `TypedRelation`, `TypedRelation.erase`, `checkRelation`, `ErasedStage`, `TypedGraph`, `TypedGraph.stages`, `checkGraph`.
 
-`checkBranchTail` and `checkBranchTail_typed` stay private.
+`checkBranchTail`, `checkBranchTail_typed`, `TypedBranches.check_erase`, `TypedRelation.progress`, `TypedRelation.output_unique`, `TypedGraph.progress`, `TypedGraph.output_unique` are private.
 
-**Private now:** `TypedBranches.check_erase`, `TypedRelation.progress`, `TypedRelation.output_unique`, `TypedGraph.progress`, `TypedGraph.output_unique`.
+**Bridges:** existing `TypedRelation.check_erase` gets public + `TEMP-MODULE-BRIDGE(M6): legacy StructuredConformance.typed_relation_valid`; existing `TypedGraph.check_stages` gets public + `TEMP-MODULE-BRIDGE(M5): legacy EndToEnd.structured_graph_type_safe`.
 
-**Temporary bridges:** `TypedRelation.check_erase` through M6; `TypedGraph.check_stages` through M5.
-
-- [ ] **RED:** add Graph public checks and assertions for immediately private proof plumbing:
-
-```lean
-import CMeta.Graph
-
-#check CMeta.RelationResult
-#check CMeta.TypedBranches
-#check CMeta.TypedRelation
-#check CMeta.checkRelation
-#check CMeta.TypedGraph
-#check CMeta.checkGraph
-
-assert_not_exists CMeta.TypedBranches.check_erase
-assert_not_exists CMeta.TypedRelation.progress
-assert_not_exists CMeta.TypedRelation.output_unique
-assert_not_exists CMeta.TypedGraph.progress
-assert_not_exists CMeta.TypedGraph.output_unique
-```
-
-Verify RED.
-
-- [ ] **GREEN:** apply the two imports above, mark the semantic list public, and mark only these two proof bridges public:
-
-```text
-TEMP-MODULE-BRIDGE(M6): legacy StructuredConformance.typed_relation_valid
-TEMP-MODULE-BRIDGE(M5): legacy EndToEnd.structured_graph_type_safe
-```
-
-on `TypedRelation.check_erase` and `TypedGraph.check_stages`.
-
-- [ ] Run focused + full M2 gate:
-
-```bash
-cd formal
-lake env lean CMeta/Graph.lean
-lake env lean CMeta/ModuleMigrationConformance.lean
-lake build --wfail
-```
-
-- [ ] Commit/push:
-
-```text
-refactor(formal): moduleize graph semantics
-```
-
-Verify exact-head GCC/Clang CI.
+- [ ] RED: positive-check public semantic names; assert the private graph proof names above absent; verify legacy failure.
+- [ ] GREEN: apply exact header/public/private/bridge rules.
+- [ ] Run Graph + migration conformance + `lake build --wfail`.
+- [ ] Commit/push `refactor(formal): moduleize graph semantics`; require exact-head GCC/Clang success.
 
 ---
 
-## Task 8 — M3: Convert `Optimize` and `Lowering`, then remove the M3 Flow bridges
+## Task 8 — M3: Optimize + Lowering; remove M3 Flow bridges
 
-**Files**
+**Files:** `formal/CMeta/Optimize.lean`, `formal/CMeta/Lowering.lean`, `formal/CMeta/Flow.lean`, `formal/CMeta/ModuleMigrationConformance.lean`.
 
-- Modify: `formal/CMeta/Optimize.lean`
-- Modify: `formal/CMeta/Lowering.lean`
-- Modify: `formal/CMeta/Flow.lean`
-- Modify: `formal/CMeta/ModuleMigrationConformance.lean`
+### Optimize RED/GREEN
 
-### Cycle A — Optimize
-
-**Public semantic API:** `MapChain`, `MapChain.run`, `MapChain.signatures`, `MapChain.check`, `FusedMap`, `canonicalizeMapLike`, `IdempotentEndomap`.
-
-**Private now:** `MapChain.run_cons`, `canonicalizeMapLike_preserves_type`, `duplicate_idempotent_elimination_type`.
-
-**Temporary:** `MapChain.check_signatures` through M4, `FusedMap.type_preserved` through M5, `duplicate_idempotent_elimination_sound` through M6, and `@[expose] MapChain.check` through M4.
-
-- [ ] RED checks:
-
-```lean
-import CMeta.Optimize
-#check CMeta.MapChain
-#check CMeta.MapChain.check
-#check CMeta.FusedMap
-#check CMeta.canonicalizeMapLike
-#check CMeta.IdempotentEndomap
-assert_not_exists CMeta.MapChain.run_cons
-assert_not_exists CMeta.canonicalizeMapLike_preserves_type
-assert_not_exists CMeta.duplicate_idempotent_elimination_type
-```
-
-- [ ] Convert Optimize with:
+Header:
 
 ```lean
 module
@@ -616,36 +304,23 @@ public import all CMeta.Graph
 import all CMeta.Flow
 ```
 
-- [ ] Add exact markers to the three theorem bridges and to the temporary exposed body:
+**Public semantic:** `MapChain`, `MapChain.run`, `MapChain.signatures`, `MapChain.check`, `FusedMap`, `canonicalizeMapLike`, `IdempotentEndomap`.
 
-```text
-TEMP-MODULE-BRIDGE(M4): legacy Plan.PlanNode.check_erase
-TEMP-MODULE-BRIDGE(M5): legacy EndToEnd.fused_map_type_safe
-TEMP-MODULE-BRIDGE(M6): legacy OptimizerConformance.identity_duplicate_elimination_sound
-TEMP-MODULE-BRIDGE(M4): legacy Plan.PlanNode.check_erase unfolds MapChain.check
-```
+**Private now:** `MapChain.run_cons`, `canonicalizeMapLike_preserves_type`, `duplicate_idempotent_elimination_type`.
 
-### Cycle B — Lowering
+**Bridges:**
 
-**Public semantic API:** `SurfaceZip`, `ErasedInvokeRelation`, `checkInvokeRelation`, `SurfaceZip.lower`.
+- existing `MapChain.check_signatures`: public + `TEMP-MODULE-BRIDGE(M4): legacy Plan.PlanNode.check_erase`;
+- existing `FusedMap.type_preserved`: public + `TEMP-MODULE-BRIDGE(M5): legacy EndToEnd.fused_map_type_safe`;
+- existing `duplicate_idempotent_elimination_sound`: public + `TEMP-MODULE-BRIDGE(M6): legacy OptimizerConformance.identity_duplicate_elimination_sound`;
+- existing public `MapChain.check`: temporarily add `@[expose]` + `TEMP-MODULE-BRIDGE(M4): legacy Plan.PlanNode.check_erase unfolds MapChain.check`.
 
-**Private now:** `SurfaceZip.lowering_progress`, `SurfaceZip.lowering_output_unique`.
+- [ ] RED: positive-check public semantic names; assert the three immediately-private proof names absent; verify failure.
+- [ ] GREEN: apply exact module/bridge rules.
 
-**Temporary theorem bridge:** `SurfaceZip.lowering_preserves_type` through M6.
+### Lowering RED/GREEN
 
-- [ ] RED checks:
-
-```lean
-import CMeta.Lowering
-#check CMeta.SurfaceZip
-#check CMeta.ErasedInvokeRelation
-#check CMeta.checkInvokeRelation
-#check CMeta.SurfaceZip.lower
-assert_not_exists CMeta.SurfaceZip.lowering_progress
-assert_not_exists CMeta.SurfaceZip.lowering_output_unique
-```
-
-- [ ] Convert Lowering with:
+Header:
 
 ```lean
 module
@@ -654,68 +329,28 @@ import all CMeta.Flow
 import all CMeta.Callable
 ```
 
-- [ ] Keep only `SurfaceZip.lowering_preserves_type` public with:
+**Public semantic:** `SurfaceZip`, `ErasedInvokeRelation`, `checkInvokeRelation`, `SurfaceZip.lower`.
 
-```text
-TEMP-MODULE-BRIDGE(M6): legacy EndToEnd and StructuredConformance
-```
+**Private now:** `SurfaceZip.lowering_progress`, `SurfaceZip.lowering_output_unique`.
 
-### Remove M3 Flow bridges
+Existing `SurfaceZip.lowering_preserves_type` is public bridge with `TEMP-MODULE-BRIDGE(M6): legacy EndToEnd and StructuredConformance`.
 
-- [ ] Remove public visibility/markers from `TypedOp.step_exact` and `Pipeline.check_steps`; Optimize/Lowering now import Flow private scope.
-- [ ] Add:
+- [ ] RED: positive-check semantic names; assert the two private theorem names absent; verify failure.
+- [ ] GREEN: moduleize and add the one bridge.
 
-```lean
-assert_not_exists CMeta.TypedOp.step_exact
-assert_not_exists CMeta.Pipeline.check_steps
-```
+### Remove Flow bridges
 
-- [ ] Run full M3 gate:
-
-```bash
-cd formal
-lake env lean CMeta/Optimize.lean
-lake env lean CMeta/Lowering.lean
-lake env lean CMeta/ModuleMigrationConformance.lean
-lake build --wfail
-```
-
-- [ ] Commit/push:
-
-```text
-refactor(formal): moduleize optimizer and lowering semantics
-```
-
-Verify exact-head GCC/Clang CI.
+- [ ] Remove public/markers from `TypedOp.step_exact` and `Pipeline.check_steps`; add both `assert_not_exists` checks.
+- [ ] Run Optimize, Lowering, migration conformance, and `lake build --wfail`.
+- [ ] Commit/push `refactor(formal): moduleize optimizer and lowering semantics`; require exact-head GCC/Clang success.
 
 ---
 
-## Task 9 — M4a: Convert `Plan` with within-phase bridges
+## Task 9 — M4a: Plan
 
-**Files**
+**Files:** `formal/CMeta/Plan.lean`, `formal/CMeta/Optimize.lean`, `formal/CMeta/ModuleMigrationConformance.lean`.
 
-- Modify: `formal/CMeta/Plan.lean`
-- Modify: `formal/CMeta/Optimize.lean`
-- Modify: `formal/CMeta/ModuleMigrationConformance.lean`
-
-**Public semantic API:** `PlanOpcode`, `ErasedPlanInst`, `PlanNode`, `PlanNode.erase`, `checkPlanInst`, `PlanProgram`, `PlanProgram.code`, `checkPlan`, `ErasedPlan`, `PlanProgram.compile`, `PlanWellTyped`.
-
-**Private final:** `PlanNode.check_erase`, `transform_compiles_as_map`, `PlanProgram.check_code`, `PlanProgram.compile_well_typed`, `PlanProgram.compile_endpoints`, `PlanProgram.output_unique`.
-
-- [ ] RED assertions for theorem names not needed by still-legacy Execution:
-
-```lean
-import CMeta.Plan
-#check CMeta.PlanOpcode
-#check CMeta.PlanNode
-#check CMeta.PlanProgram
-#check CMeta.PlanWellTyped
-assert_not_exists CMeta.transform_compiles_as_map
-assert_not_exists CMeta.PlanProgram.compile_endpoints
-assert_not_exists CMeta.PlanProgram.output_unique
-```
-
-- [ ] Convert with:
+Header:
 
 ```lean
 module
@@ -723,70 +358,45 @@ public import all CMeta.Lowering
 import all CMeta.Optimize
 ```
 
-- [ ] Keep `PlanNode.check_erase` and `PlanProgram.compile_well_typed` public only until Task 10, both marked:
+**Public semantic:** `PlanOpcode`, `ErasedPlanInst`, `PlanNode`, `PlanNode.erase`, `checkPlanInst`, `PlanProgram`, `PlanProgram.code`, `checkPlan`, `ErasedPlan`, `PlanProgram.compile`, `PlanWellTyped`.
 
-```text
-TEMP-MODULE-BRIDGE(M4): legacy Execution; remove Task 10
-```
+**Private final:** `PlanNode.check_erase`, `transform_compiles_as_map`, `PlanProgram.check_code`, `PlanProgram.compile_well_typed`, `PlanProgram.compile_endpoints`, `PlanProgram.output_unique`.
 
-- [ ] Mark `PlanProgram.compile` and `PlanWellTyped` with the exact M5 exposed-body marker and `@[expose] public` because legacy EndToEnd unfolds them:
-
-```text
-TEMP-MODULE-BRIDGE(M5): legacy EndToEnd unfolds compiled plan semantics
-```
-
-- [ ] Remove the M4 bridge/public theorem visibility from `MapChain.check_signatures` and remove `@[expose]` from `MapChain.check`; Plan now has `import all CMeta.Optimize`.
-- [ ] Add `assert_not_exists CMeta.MapChain.check_signatures` to migration conformance.
-- [ ] Run focused GREEN:
-
-```bash
-cd formal
-lake env lean CMeta/Plan.lean
-lake env lean CMeta/ModuleMigrationConformance.lean
-```
-
-- [ ] Commit locally, do not push until Task 10:
-
-```text
-refactor(formal): moduleize plan semantics
-```
+- [ ] RED: positive-check plan semantic names; assert `transform_compiles_as_map`, `compile_endpoints`, `output_unique` absent; verify failure.
+- [ ] GREEN: moduleize.
+- [ ] Existing `PlanNode.check_erase` and `PlanProgram.compile_well_typed` get public + `TEMP-MODULE-BRIDGE(M4): legacy Execution; remove Task 10`.
+- [ ] Existing public `PlanProgram.compile` and `PlanWellTyped` get temporary `@[expose]` + `TEMP-MODULE-BRIDGE(M5): legacy EndToEnd unfolds compiled plan semantics`.
+- [ ] Remove public/bridge from `MapChain.check_signatures`; remove temporary `@[expose]` from `MapChain.check`; assert `MapChain.check_signatures` absent.
+- [ ] Run Plan + migration conformance focused GREEN.
+- [ ] Commit locally `refactor(formal): moduleize plan semantics`; do not push until Task 10.
 
 ---
 
-## Task 10 — M4b: Convert `Execution` and `Cardinality`, remove within-M4 Plan bridges, take M4 checkpoint
+## Task 10 — M4b: Execution + Cardinality; M4 checkpoint
 
-**Files**
-
-- Modify: `formal/CMeta/Execution.lean`
-- Modify: `formal/CMeta/Cardinality.lean`
-- Modify: `formal/CMeta/Plan.lean`
-- Modify: `formal/CMeta/ModuleMigrationConformance.lean`
+**Files:** `formal/CMeta/Execution.lean`, `formal/CMeta/Cardinality.lean`, `formal/CMeta/Plan.lean`, `formal/CMeta/ModuleMigrationConformance.lean`.
 
 ### Execution
 
-**Public semantic API:** `ValueVec`, `PackedVec`, `CompletedGenerator`, `ExecInst`, `reduceValues`, `ExecInst.run`, `ExecInst.planNode`, `RuntimeInst`, `ExecInst.runtime`, `runRuntimeInst`, `ExecProgram`, `ExecProgram.run`, `ExecProgram.planProgram`, `ExecProgram.runtimeCode`, `runRuntimePlan`.
-
-**Private now:** `ExecInst.map_length`, `ExecInst.reduce_length_le_one`, `ExecInst.planNode_checked`, `runRuntimeInst_output`, `ExecInst.runtime_exact`.
-
-**Temporary M5 theorem bridges:** `ExecProgram.runtime_execution_exact`, `ExecProgram.result_type_safe`, `ExecProgram.compiled_plan_well_typed`.
-
-- [ ] RED checks/assertions for the immediately private group.
-- [ ] Convert with:
+Header:
 
 ```lean
 module
 public import all CMeta.Plan
 ```
 
-- [ ] Add exact M5 comments/public visibility to the three EndToEnd-consumed theorem bridges.
-- [ ] Remove public visibility/markers from `PlanNode.check_erase` and `PlanProgram.compile_well_typed`; Execution now imports Plan private scope.
-- [ ] Add assertions proving both Plan theorem bridges are hidden.
+**Public semantic:** `ValueVec`, `PackedVec`, `CompletedGenerator`, `ExecInst`, `reduceValues`, `ExecInst.run`, `ExecInst.planNode`, `RuntimeInst`, `ExecInst.runtime`, `runRuntimeInst`, `ExecProgram`, `ExecProgram.run`, `ExecProgram.planProgram`, `ExecProgram.runtimeCode`, `runRuntimePlan`.
+
+**Private now:** `ExecInst.map_length`, `ExecInst.reduce_length_le_one`, `ExecInst.planNode_checked`, `runRuntimeInst_output`, `ExecInst.runtime_exact`.
+
+**M5 bridges:** existing `ExecProgram.runtime_execution_exact`, `ExecProgram.result_type_safe`, `ExecProgram.compiled_plan_well_typed` get public plus exact `TEMP-MODULE-BRIDGE(M5): legacy EndToEnd` comments.
+
+- [ ] RED: positive-check semantic names; assert immediately-private theorem names absent; verify legacy failure.
+- [ ] GREEN: moduleize; remove public/markers from Plan `PlanNode.check_erase` and `PlanProgram.compile_well_typed`; assert both absent.
 
 ### Cardinality
 
-Cardinality contributes no approved public semantic API in Plan A. Its own definitions/theorems remain private.
-
-- [ ] Convert it with the temporary EndToEnd reachability bridge:
+Header during M4:
 
 ```lean
 module
@@ -794,9 +404,9 @@ module
 public import all CMeta.Execution
 ```
 
-Do not mark `reduceCount` or any `ExecInst.*_cardinality` theorem public.
+No `Cardinality` declaration is public; `reduceCount` and all cardinality theorems remain private.
 
-- [ ] Extend migration conformance with a direct `import CMeta.Cardinality` and verify:
+- [ ] Directly import Cardinality in migration conformance and assert absent:
 
 ```lean
 assert_not_exists CMeta.ExecInst.filter_cardinality
@@ -805,9 +415,9 @@ assert_not_exists CMeta.ExecInst.flatMap_cardinality
 assert_not_exists CMeta.ExecInst.reduce_cardinality
 ```
 
-Do not assert `ExecProgram` absence yet because the audited M5 re-export bridge intentionally exposes Execution semantics through Cardinality.
+Do not assert `ExecProgram` absent before M5 because the re-export is deliberate.
 
-- [ ] Run M4 full gate:
+- [ ] Run:
 
 ```bash
 cd formal
@@ -817,46 +427,26 @@ lake env lean CMeta/ModuleMigrationConformance.lean
 lake build --wfail
 ```
 
-- [ ] Commit/push the M4 GREEN stack and verify exact-head GCC/Clang CI:
-
-```text
-refactor(formal): moduleize execution and cardinality semantics
-```
+- [ ] Commit/push `refactor(formal): moduleize execution and cardinality semantics`; require exact-head GCC/Clang success.
 
 ---
 
-## Task 11 — M5: Convert `EndToEnd`, create `Semantics`, convert `PublicProof`, establish partial hard isolation, update CI guard
+## Task 11 — M5: EndToEnd + Semantics + PublicProof + partial isolation
 
-**Files**
+**Files:** `formal/CMeta/EndToEnd.lean`, create `formal/CMeta/Semantics.lean`, modify `formal/CMeta/PublicProof.lean`, `formal/CMeta/PublicProofConformance.lean`, create `formal/CMeta/PublicProofIsolationConformance.lean`, modify `formal/CMeta/ModuleMigrationConformance.lean`, `formal/CMeta/Cardinality.lean`, `formal/CMeta/Graph.lean`, `formal/CMeta/Optimize.lean`, `formal/CMeta/Execution.lean`, `formal/CMeta/Plan.lean`, `formal/CMeta.lean`, `.github/workflows/lean.yml`.
 
-- Modify: `formal/CMeta/EndToEnd.lean`
-- Create: `formal/CMeta/Semantics.lean`
-- Modify: `formal/CMeta/PublicProof.lean`
-- Modify: `formal/CMeta/PublicProofConformance.lean`
-- Create: `formal/CMeta/PublicProofIsolationConformance.lean`
-- Modify: `formal/CMeta/ModuleMigrationConformance.lean`
-- Modify: `formal/CMeta/Cardinality.lean`
-- Modify: `formal/CMeta/Graph.lean`
-- Modify: `formal/CMeta/Optimize.lean`
-- Modify: `formal/CMeta/Execution.lean`
-- Modify: `formal/CMeta/Plan.lean`
-- Modify: `formal/CMeta.lean`
-- Modify: `.github/workflows/lean.yml`
+### RED
 
-### RED — current facade still leaks internal names
-
-- [ ] Create the initial client-style isolation test as legacy source first:
+Create client isolation source:
 
 ```lean
 import CMeta.PublicProof
-
 #check CMeta.PublicProof.structured_graph_type_safe
 #check CMeta.PublicProof.zip_lowering_type_safe
 #check CMeta.PublicProof.fused_map_type_safe
 #check CMeta.PublicProof.direct_plan_exact
 #check CMeta.PublicProof.runtime_output_type_safe
 #check CMeta.PublicProof.static_checker_matches_runtime
-
 assert_not_exists CMeta.EndToEnd.direct_plan_exact
 assert_not_exists CMeta.TypedGraph.check_stages
 assert_not_exists CMeta.FusedMap.type_preserved
@@ -864,18 +454,11 @@ assert_not_exists CMeta.ExecProgram.runtime_execution_exact
 #check_assertions
 ```
 
-- [ ] Import it from legacy `formal/CMeta.lean` and run:
+Import it in legacy `formal/CMeta.lean`. Run it; verify RED is current transitive visibility.
 
-```bash
-cd formal
-lake env lean CMeta/PublicProofIsolationConformance.lean
-```
+### EndToEnd GREEN
 
-Expected RED: internal names are visible through the legacy PublicProof import chain.
-
-### GREEN — EndToEnd private implementation
-
-- [ ] Convert `EndToEnd.lean` to:
+Header:
 
 ```lean
 module
@@ -887,27 +470,21 @@ import all CMeta.Plan
 import all CMeta.Execution
 ```
 
-Leave every `EndToEnd.*` theorem private, including `direct_plan_endpoints`.
+All seven `EndToEnd.*` theorems remain private/default.
 
-### GREEN — remove M5 bridges
+### Remove M5 bridges
 
-- [ ] `Cardinality.lean`: replace the public re-export bridge with only:
+- [ ] Cardinality: replace public bridge with `import all CMeta.Execution`.
+- [ ] Graph: make `TypedGraph.check_stages` private.
+- [ ] Optimize: make `FusedMap.type_preserved` private.
+- [ ] Execution: make the three `ExecProgram` M5 bridge theorems private.
+- [ ] Plan: remove temporary `@[expose]` from `PlanProgram.compile` and `PlanWellTyped`; declarations stay public.
+- [ ] Add corresponding negative assertions to migration conformance.
+- [ ] Keep only M6 theorem bridges `TypedRelation.check_erase`, `SurfaceZip.lowering_preserves_type`, `duplicate_idempotent_elimination_sound`.
 
-```lean
-import all CMeta.Execution
-```
+### Semantics/PublicProof GREEN
 
-- [ ] `Graph.lean`: remove public visibility/marker from `TypedGraph.check_stages`.
-- [ ] `Optimize.lean`: remove public visibility/marker from `FusedMap.type_preserved`.
-- [ ] `Execution.lean`: remove public visibility/markers from `runtime_execution_exact`, `result_type_safe`, `compiled_plan_well_typed`.
-- [ ] `Plan.lean`: remove temporary `@[expose]` and M5 marker from `PlanProgram.compile` and `PlanWellTyped`; keep those declarations public but their bodies unexposed.
-- [ ] Add the corresponding negative assertions to `ModuleMigrationConformance.lean`.
-
-Do **not** remove the M6 bridges `TypedRelation.check_erase`, `SurfaceZip.lowering_preserves_type`, or `duplicate_idempotent_elimination_sound` yet.
-
-### GREEN — Semantics and PublicProof
-
-- [ ] Create `Semantics.lean` exactly as a no-declaration aggregator:
+`Semantics.lean` exactly:
 
 ```lean
 module
@@ -924,7 +501,7 @@ public import CMeta.Plan
 public import CMeta.Execution
 ```
 
-- [ ] Convert `PublicProof.lean` header to:
+`PublicProof.lean` header:
 
 ```lean
 module
@@ -932,23 +509,20 @@ public import CMeta.Semantics
 import all CMeta.EndToEnd
 ```
 
-Place the existing five aliases and six wrapper theorems inside `public section`; do not alter their statements/bodies except namespace qualification forced by the module elaborator.
+Move the existing five aliases and six wrapper theorems into `public section` without statement/body changes.
 
-- [ ] Convert `PublicProofConformance.lean` to:
+`PublicProofConformance.lean`:
 
 ```lean
 module
 import CMeta.PublicProof
 ```
 
-Its conformance theorems remain private/default.
+Convert `ModuleMigrationConformance.lean` and `PublicProofIsolationConformance.lean` themselves to modules; keep partial negative isolation until M6.
 
-- [ ] Convert `ModuleMigrationConformance.lean` itself to `module`; all of its imports are now modules. Keep its accumulated positive/negative assertions.
-- [ ] Convert `PublicProofIsolationConformance.lean` to `module` and keep the partial negative set above. Do not yet assert the three M6 bridges absent.
+### CI guard update
 
-### Update workflow guard
-
-- [ ] Replace the old single-import equality check with explicit checks:
+Replace old exact single-import check with:
 
 ```bash
 grep -qx 'public import CMeta.Semantics' formal/CMeta/PublicProof.lean
@@ -957,104 +531,53 @@ grep -qx 'import CMeta.PublicProof' formal/CMeta/PublicProofConformance.lean
 grep -qx 'import CMeta.PublicProof' formal/CMeta/PublicProofIsolationConformance.lean
 ```
 
-Retain the forbidden-vocabulary scan for `PreprocessorBackend|Registry|NestedReplay|OptimizerTopology` over both facade/conformance files.
+Retain forbidden-vocabulary scan for `PreprocessorBackend|Registry|NestedReplay|OptimizerTopology`. Add explicit CI execution of `lake env lean CMeta/PublicProofIsolationConformance.lean` before full Lake build.
 
-- [ ] Add a CI invocation before full Lake build:
-
-```bash
-cd formal
-lake env lean CMeta/PublicProofIsolationConformance.lean
-```
-
-or equivalent workflow working-directory form.
-
-### M5 verification
-
-- [ ] Run:
-
-```bash
-cd formal
-lake env lean CMeta/PublicProofConformance.lean
-lake env lean CMeta/PublicProofIsolationConformance.lean
-lake env lean CMeta/ModuleMigrationConformance.lean
-lake build --wfail
-```
-
-- [ ] Commit/push:
-
-```text
-refactor(formal): enforce module public proof facade
-```
-
-Verify exact-head GCC/Clang CI. The three documented M6 proof bridges may still be public; every other M1–M5 bridge scheduled for removal must be gone.
+- [ ] Run all three conformance files and `lake build --wfail`.
+- [ ] Commit/push `refactor(formal): enforce module public proof facade`; require exact-head GCC/Clang success.
 
 ---
 
-## Task 12 — M6a: Moduleize base/plan generated snapshots and direct-plan conformance closure
+## Task 12 — M6a: Generated base/plan snapshots + direct-plan conformance closure
 
-**Files**
+**Files:** `formal/cmeta_conformance_witness.c`, `formal/CMeta/GeneratedC.lean`, `formal/cmeta_plan_conformance_witness.c`, `formal/CMeta/PlanGeneratedC.lean`, `formal/CMeta/Conformance.lean`, `formal/CMeta/PlanConformance.lean`, `formal/CMeta/RuntimeConformance.lean`.
 
-- Modify: `formal/cmeta_conformance_witness.c`
-- Modify: `formal/CMeta/GeneratedC.lean`
-- Modify: `formal/cmeta_plan_conformance_witness.c`
-- Modify: `formal/CMeta/PlanGeneratedC.lean`
-- Modify: `formal/CMeta/Conformance.lean`
-- Modify: `formal/CMeta/PlanConformance.lean`
-- Modify: `formal/CMeta/RuntimeConformance.lean`
+### RED
 
-### RED — generated source is still legacy
+- [ ] Create a local RED by moduleizing one generated/conformance edge before its dependency; run the importing module and verify Lean rejects the legacy dependency. Revert the RED edit before GREEN. Do not commit RED.
 
-- [ ] Before changing C output, prepend `module` manually to a temporary working copy or change committed `GeneratedC.lean` first and run its importing conformance as a module. Verify the intended failure is that the module import chain reaches a legacy generated/conformance file. Do not commit this RED state.
+### Generated framing GREEN
 
-### GREEN — generator framing
-
-For each of these two C witnesses:
-
-```text
-formal/cmeta_conformance_witness.c
-formal/cmeta_plan_conformance_witness.c
-```
-
-- [ ] At the exact point before the existing first emitted `import Std`, emit:
+For both C witnesses, immediately before the existing first emitted `import Std`, add exactly:
 
 ```c
 fputs("module\n\n", stdout);
 ```
 
-Do not change any later emitted witness data.
+Committed `GeneratedC.lean` and `PlanGeneratedC.lean` become exactly `module\n\n` plus their pre-Task-12 bytes.
 
-- [ ] Regenerate/update committed snapshots so they are exactly:
-
-```text
-module\n\n + previous committed source
-```
-
-for:
-
-```text
-formal/CMeta/GeneratedC.lean
-formal/CMeta/PlanGeneratedC.lean
-```
-
-- [ ] Verify payload identity against the parent commit:
+- [ ] Record pre-Task-12 SHA:
 
 ```bash
-python - <<'PY'
+PRE_M6A=$(git rev-parse HEAD)
+```
+
+- [ ] Verify framing-only identity:
+
+```bash
+python - "$PRE_M6A" <<'PY'
 from pathlib import Path
-import subprocess
+import subprocess, sys
+base = sys.argv[1]
 for path in ["formal/CMeta/GeneratedC.lean", "formal/CMeta/PlanGeneratedC.lean"]:
-    old = subprocess.check_output(["git", "show", f"HEAD:{path}"], text=True)
+    old = subprocess.check_output(["git", "show", f"{base}:{path}"], text=True)
     new = Path(path).read_text()
     assert new == "module\n\n" + old, path
 print("module framing only: ok")
 PY
 ```
 
-Run this before committing; if Task 12 has prior local commits, use the exact pre-Task-12 SHA instead of `HEAD` and record it in the task notes.
-
-### GREEN — conformance modules
-
-- [ ] Convert:
+### Conformance modules
 
 `Conformance.lean`:
 
@@ -1072,100 +595,43 @@ import all CMeta.Conformance
 import all CMeta.PlanGeneratedC
 ```
 
-`RuntimeConformance.lean`:
+`RuntimeConformance.lean` must temporarily re-export Execution semantics for still-legacy `StructuredConformance`:
 
 ```lean
 module
 import all CMeta.PlanConformance
-import all CMeta.Execution
+-- TEMP-MODULE-BRIDGE(M6): legacy StructuredConformance needs CType/Callable/ValueVec semantics
+public import all CMeta.Execution
 ```
 
-All declarations in these conformance files remain private/default; there is no public implementation-gate API in Plan A.
+All RuntimeConformance declarations remain private/default.
 
-- [ ] Configure/build both formal presets and regenerate these two snapshots:
-
-```bash
-cmake --preset formal-linux-gcc
-cmake --build --preset build-formal-linux-gcc --target cmeta_header_conformance_witness cmeta_plan_conformance_witness
-build/formal-linux-gcc/bin/cmeta_header_conformance_witness > /tmp/GeneratedC.lean
-build/formal-linux-gcc/bin/cmeta_plan_conformance_witness > /tmp/PlanGeneratedC.lean
-diff -u formal/CMeta/GeneratedC.lean /tmp/GeneratedC.lean
-diff -u formal/CMeta/PlanGeneratedC.lean /tmp/PlanGeneratedC.lean
-
-cmake --preset formal-linux-clang
-cmake --build --preset build-formal-linux-clang --target cmeta_header_conformance_witness cmeta_plan_conformance_witness
-build/formal-linux-clang/bin/cmeta_header_conformance_witness > /tmp/GeneratedC.clang.lean
-build/formal-linux-clang/bin/cmeta_plan_conformance_witness > /tmp/PlanGeneratedC.clang.lean
-diff -u formal/CMeta/GeneratedC.lean /tmp/GeneratedC.clang.lean
-diff -u formal/CMeta/PlanGeneratedC.lean /tmp/PlanGeneratedC.clang.lean
-```
-
-- [ ] Run `cd formal && lake build --wfail`.
-- [ ] Commit locally:
-
-```text
-refactor(formal): moduleize direct conformance snapshots
-```
-
-Do not take final Plan A checkpoint until Task 13.
+- [ ] Build both GCC/Clang witness targets `cmeta_header_conformance_witness` and `cmeta_plan_conformance_witness`, regenerate snapshots, and require zero `diff -u` against committed files.
+- [ ] Run `cd formal && lake build --wfail`; legacy StructuredConformance must remain green through the explicit RuntimeConformance semantic re-export.
+- [ ] Commit locally `refactor(formal): moduleize direct conformance snapshots`; do not final-push before Task 13.
 
 ---
 
-## Task 13 — M6b: Moduleize structured/optimizer generated closure, remove final bridges, strengthen isolation, full exact-head checkpoint
+## Task 13 — M6b: Structured/optimizer closure + final bridge removal + exact-head checkpoint
 
-**Files**
+**Generated C witnesses:** `formal/cmeta_structured_conformance_witness.c`, `formal/cmeta_structured_policy_conformance_witness.c`, `formal/cmeta_optimizer_conformance_witness.c`, `formal/cmeta_optimizer_gating_conformance_witness.c`, `formal/cmeta_optimizer_topology_conformance_witness.c`.
 
-Generated C witnesses:
+**Generated Lean:** `formal/CMeta/StructuredGeneratedC.lean`, `StructuredPolicyGeneratedC.lean`, `OptimizerGeneratedC.lean`, `OptimizerGatingGeneratedC.lean`, `OptimizerTopologyGeneratedC.lean`.
 
-- `formal/cmeta_structured_conformance_witness.c`
-- `formal/cmeta_structured_policy_conformance_witness.c`
-- `formal/cmeta_optimizer_conformance_witness.c`
-- `formal/cmeta_optimizer_gating_conformance_witness.c`
-- `formal/cmeta_optimizer_topology_conformance_witness.c`
+**Conformance:** `formal/CMeta/StructuredConformance.lean`, `StructuredPolicyConformance.lean`, `OptimizerConformance.lean`, `OptimizerGatingConformance.lean`, `OptimizerTopologyConformance.lean`.
 
-Generated Lean snapshots:
+**Cleanup:** `formal/CMeta/RuntimeConformance.lean`, `Callable.lean`, `Graph.lean`, `Optimize.lean`, `Lowering.lean`, `PublicProofIsolationConformance.lean`, `ModuleMigrationConformance.lean`, `.github/workflows/lean.yml`, design spec and execution amendment status.
 
-- `formal/CMeta/StructuredGeneratedC.lean`
-- `formal/CMeta/StructuredPolicyGeneratedC.lean`
-- `formal/CMeta/OptimizerGeneratedC.lean`
-- `formal/CMeta/OptimizerGatingGeneratedC.lean`
-- `formal/CMeta/OptimizerTopologyGeneratedC.lean`
+### Generated framing
 
-Conformance modules:
+- [ ] Record `PRE_M6B=$(git rev-parse HEAD)`.
+- [ ] In all five C witnesses, emit `fputs("module\n\n", stdout);` before their existing first generated `import Std`.
+- [ ] Prepend exactly `module\n\n` to each committed generated Lean source.
+- [ ] Run the Task-12 Python framing-only assertion against `PRE_M6B` for all five files.
 
-- `formal/CMeta/StructuredConformance.lean`
-- `formal/CMeta/StructuredPolicyConformance.lean`
-- `formal/CMeta/OptimizerConformance.lean`
-- `formal/CMeta/OptimizerGatingConformance.lean`
-- `formal/CMeta/OptimizerTopologyConformance.lean`
+### Conformance conversion
 
-Bridge/source cleanup:
-
-- `formal/CMeta/Callable.lean`
-- `formal/CMeta/Graph.lean`
-- `formal/CMeta/Optimize.lean`
-- `formal/CMeta/Lowering.lean`
-- `formal/CMeta/PublicProofIsolationConformance.lean`
-- `formal/CMeta/ModuleMigrationConformance.lean`
-- `.github/workflows/lean.yml`
-- `docs/superpowers/specs/2026-08-21-cmeta-lean-module-system-migration-design.md`
-- `docs/superpowers/specs/2026-08-21-cmeta-lean-module-system-migration-plan-a-amendment.md`
-
-### Cycle A — generated framing
-
-- [ ] For all five C witnesses, emit exactly:
-
-```c
-fputs("module\n\n", stdout);
-```
-
-before the existing first generated `import Std` and change no semantic payload emission.
-
-- [ ] Update all five committed generated files to exactly `module\n\n + previous source` and run the same Python payload-identity assertion from Task 12 across all five paths.
-
-### Cycle B — conformance modules
-
-Convert with these exact private implementation imports:
+Use exact imports:
 
 `StructuredConformance.lean`:
 
@@ -1211,18 +677,19 @@ import all CMeta.OptimizerGatingConformance
 import all CMeta.OptimizerTopologyGeneratedC
 ```
 
-All their declarations remain private/default.
+All declarations remain private/default.
 
-### Remove final M6 bridges
+### Remove every final bridge
 
-- [ ] `Graph.lean`: remove public visibility/marker from `TypedRelation.check_erase`.
-- [ ] `Lowering.lean`: remove public visibility/marker from `SurfaceZip.lowering_preserves_type`.
-- [ ] `Optimize.lean`: remove public visibility/marker from `duplicate_idempotent_elimination_sound`.
-- [ ] `Callable.lean`: remove temporary `@[expose]` and M6 markers from `HArgs.one`, `Callable.ofUnary`, `Callable.invoke1`; keep the names public, bodies unexposed.
+- [ ] RuntimeConformance: replace `public import all CMeta.Execution` with `import all CMeta.Execution`; remove marker.
+- [ ] Graph: make `TypedRelation.check_erase` private/remove marker.
+- [ ] Lowering: make `SurfaceZip.lowering_preserves_type` private/remove marker.
+- [ ] Optimize: make `duplicate_idempotent_elimination_sound` private/remove marker.
+- [ ] Callable: remove temporary `@[expose]` and M6 marker from `HArgs.one`, `Callable.ofUnary`, `Callable.invoke1`; names remain public with unexposed bodies.
 
-### Strengthen hard PublicProof isolation
+### Full client isolation
 
-- [ ] Extend `PublicProofIsolationConformance.lean` so a module importing only `CMeta.PublicProof` positively checks all six public wrappers and negatively checks at least:
+`PublicProofIsolationConformance.lean`, importing only `CMeta.PublicProof`, must positively check all six wrapper theorems and include:
 
 ```lean
 assert_not_exists CMeta.EndToEnd.direct_plan_exact
@@ -1235,13 +702,11 @@ assert_not_exists CMeta.ExecProgram.runtime_execution_exact
 #check_assertions
 ```
 
-This satisfies the required Graph, Lowering, Optimize, Execution, and EndToEnd coverage.
+Add matching direct-module absence assertions to `ModuleMigrationConformance.lean` where useful.
 
-- [ ] Add the same final bridge names to `ModuleMigrationConformance.lean` where appropriate so direct module clients also prove proof-surface contraction.
+### Full verification
 
-### Snapshot and full local verification
-
-Build the full witness list for GCC and Clang:
+- [ ] GCC and Clang build this exact target list:
 
 ```text
 cmeta_header_conformance_witness
@@ -1262,8 +727,8 @@ cmeta_optimizer_gating_conformance_witness
 cmeta_optimizer_topology_conformance_witness
 ```
 
-- [ ] Run the workflow-equivalent generated snapshot comparisons for `GeneratedC`, descriptor/type identity, compiler-specific nested replay, Plan, Structured, StructuredPolicy, Optimizer, OptimizerGating, and OptimizerTopology. Every `diff -u` must be zero.
-- [ ] Run all applicability binaries currently listed in `.github/workflows/lean.yml`.
+- [ ] Run workflow-equivalent snapshot diffs for GeneratedC, DescriptorBridge, TypeIdentity, compiler-specific NestedReplay, Plan, Structured, StructuredPolicy, Optimizer, OptimizerGating, OptimizerTopology; every diff must be zero.
+- [ ] Execute all applicability binaries in current `.github/workflows/lean.yml`.
 - [ ] Run:
 
 ```bash
@@ -1274,122 +739,54 @@ lake env lean CMeta/ModuleMigrationConformance.lean
 lake build --wfail
 ```
 
-### Final static audit
+### Static audit
 
-- [ ] Run:
-
-```bash
-git grep -n "allowImportAll" -- formal/lakefile.toml formal/CMeta.lean formal/CMeta || true
-git grep -nE 'backward\.(privateInPublic|proofsInPublic)' -- formal || true
-git grep -n '@\[expose\]' -- formal/CMeta || true
-git grep -n 'TEMP-MODULE-BRIDGE' -- formal docs/superpowers/specs/2026-08-21-cmeta-lean-module-system-migration-plan-a-amendment.md || true
-```
-
-Expected in production Lean sources:
-
-- no `allowImportAll`;
-- no backward compatibility options;
-- no migration-only `@[expose]`;
-- no `TEMP-MODULE-BRIDGE` marker.
-
-The amendment document itself intentionally contains the phrase `TEMP-MODULE-BRIDGE`; when auditing, distinguish documentation from production by also requiring:
+Run:
 
 ```bash
+! git grep -n "allowImportAll" -- formal/lakefile.toml formal/CMeta.lean formal/CMeta
+! git grep -nE 'backward\.(privateInPublic|proofsInPublic)' -- formal
+! git grep -n '@\[expose\]' -- formal/CMeta
 ! git grep -n 'TEMP-MODULE-BRIDGE' -- formal/CMeta
 ```
 
-- [ ] Verify every Plan A module has a `module` header:
+Expected: all four commands succeed because there are no matches.
+
+Verify module headers:
 
 ```bash
 git grep -n '^module$' -- \
-  formal/CMeta/Calculus.lean \
-  formal/CMeta/Traits.lean \
-  formal/CMeta/Callable.lean \
-  formal/CMeta/Lambda.lean \
-  formal/CMeta/Dispatch.lean \
-  formal/CMeta/Flow.lean \
-  formal/CMeta/Graph.lean \
-  formal/CMeta/Optimize.lean \
-  formal/CMeta/Lowering.lean \
-  formal/CMeta/Plan.lean \
-  formal/CMeta/Execution.lean \
-  formal/CMeta/Cardinality.lean \
-  formal/CMeta/EndToEnd.lean \
-  formal/CMeta/Semantics.lean \
-  formal/CMeta/PublicProof.lean \
-  formal/CMeta/PublicProofConformance.lean \
-  formal/CMeta/PublicProofIsolationConformance.lean \
-  formal/CMeta/ModuleMigrationConformance.lean \
-  formal/CMeta/GeneratedC.lean \
-  formal/CMeta/PlanGeneratedC.lean \
-  formal/CMeta/StructuredGeneratedC.lean \
-  formal/CMeta/StructuredPolicyGeneratedC.lean \
-  formal/CMeta/OptimizerGeneratedC.lean \
-  formal/CMeta/OptimizerGatingGeneratedC.lean \
-  formal/CMeta/OptimizerTopologyGeneratedC.lean \
-  formal/CMeta/Conformance.lean \
-  formal/CMeta/PlanConformance.lean \
-  formal/CMeta/RuntimeConformance.lean \
-  formal/CMeta/StructuredConformance.lean \
-  formal/CMeta/StructuredPolicyConformance.lean \
-  formal/CMeta/OptimizerConformance.lean \
-  formal/CMeta/OptimizerGatingConformance.lean \
-  formal/CMeta/OptimizerTopologyConformance.lean
+  formal/CMeta/Calculus.lean formal/CMeta/Traits.lean formal/CMeta/Callable.lean \
+  formal/CMeta/Lambda.lean formal/CMeta/Dispatch.lean formal/CMeta/Flow.lean \
+  formal/CMeta/Graph.lean formal/CMeta/Optimize.lean formal/CMeta/Lowering.lean \
+  formal/CMeta/Plan.lean formal/CMeta/Execution.lean formal/CMeta/Cardinality.lean \
+  formal/CMeta/EndToEnd.lean formal/CMeta/Semantics.lean formal/CMeta/PublicProof.lean \
+  formal/CMeta/PublicProofConformance.lean formal/CMeta/PublicProofIsolationConformance.lean \
+  formal/CMeta/ModuleMigrationConformance.lean formal/CMeta/GeneratedC.lean \
+  formal/CMeta/PlanGeneratedC.lean formal/CMeta/StructuredGeneratedC.lean \
+  formal/CMeta/StructuredPolicyGeneratedC.lean formal/CMeta/OptimizerGeneratedC.lean \
+  formal/CMeta/OptimizerGatingGeneratedC.lean formal/CMeta/OptimizerTopologyGeneratedC.lean \
+  formal/CMeta/Conformance.lean formal/CMeta/PlanConformance.lean \
+  formal/CMeta/RuntimeConformance.lean formal/CMeta/StructuredConformance.lean \
+  formal/CMeta/StructuredPolicyConformance.lean formal/CMeta/OptimizerConformance.lean \
+  formal/CMeta/OptimizerGatingConformance.lean formal/CMeta/OptimizerTopologyConformance.lean
 ```
 
-Expected: one matching header per listed file.
+Expected one top-level `module` match per listed file.
 
-- [ ] Confirm `formal/CMeta.lean` is still legacy (no top-level `module`) and still imports the full verification closure. Do not create `InternalChecks`.
+Confirm `formal/CMeta.lean` itself has no top-level `module`, still imports the full verification closure, and no `InternalChecks` exists.
 
-### Documentation status and commit
+### Documentation + exact head
 
-- [ ] Only after all local verification passes, update the main design spec status to:
-
-```text
-Plan A implemented and exact-head verified; Plan B pending
-```
-
-and update the execution amendment status to the same Plan A completion state.
-
-- [ ] Commit all final M6 work with scoped staging only:
-
-```text
-refactor(formal): close CFlow module proof boundary
-```
-
-### Exact-head GitHub verification
-
-- [ ] Push `leanv4`.
-- [ ] Fetch PR #3 and record exact `head_sha`.
-- [ ] Fetch the `Lean proofs` run associated with exactly that SHA. Do not accept a successful run from an older head.
-- [ ] Require `status=completed` and `conclusion=success`.
-- [ ] Require both jobs:
-
-```text
-Lean 4 / kernel check (gcc)
-Lean 4 / kernel check (clang)
-```
-
-completed/success.
-- [ ] In both jobs require successful steps for:
-  - Configure formal build
-  - Build C conformance witnesses
-  - Verify C/Lean conformance snapshots
-  - Execute applicability probes
-  - Reject proof placeholders
-  - Reject arity-specific callable formal APIs
-  - Enforce public proof facade boundary / isolation
-  - Build and kernel-check Lean proofs
-- [ ] Only after exact-head success declare Plan A complete. If CI fails before `lake build --wfail` due to transient Lean toolchain download/install infrastructure, rerun the failed job without changing code; judge code only from runs that reach the kernel build.
+- [ ] After local verification, set both design spec and execution amendment status to `Plan A implemented and exact-head verified; Plan B pending`.
+- [ ] Commit final M6 work: `refactor(formal): close CFlow module proof boundary`.
+- [ ] Push `leanv4`; fetch PR #3 exact `head_sha`.
+- [ ] Fetch the `Lean proofs` run for exactly that SHA; require `completed/success`.
+- [ ] Require both `Lean 4 / kernel check (gcc)` and `(clang)` completed/success, including Configure, C witnesses, snapshot verification, applicability, placeholder guard, callable/lambda guard, public proof boundary/isolation, and `Build and kernel-check Lean proofs`.
+- [ ] If a job fails before kernel build solely on pinned Lean toolchain download/install infrastructure, rerun the failed job without code changes; only a run that reaches the kernel step is code evidence.
 
 ---
 
 ## Plan A Done Means
 
-A downstream client can intentionally use:
-
-```lean
-import CMeta.PublicProof
-```
-
-and receives the curated semantic vocabulary plus the six stable `CMeta.PublicProof` theorems, while representative graph/lowering/optimizer/execution/EndToEnd proof plumbing is genuinely absent from that client's scope. The legacy root still kernel-checks every pre-existing formal proof and C-derived conformance path. Plan B may then migrate the independent Producer/Replay/Registry/LanguageSpec tree and perform the final `CMeta.InternalChecks` + root-module conversion.
+`import CMeta.PublicProof` provides the curated semantic vocabulary and six stable wrappers, while representative Graph/Lowering/Optimize/Execution/EndToEnd proof machinery is genuinely absent from client scope. The legacy root still kernel-checks the full existing formal stack and all real-C conformance snapshots. Plan B can then migrate Producer/Replay/Registry/LanguageSpec and perform final `InternalChecks` + root-module conversion.
