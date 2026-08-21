@@ -63,9 +63,19 @@ structural / legacy     -> false
 
 ### [CMeta C++-Like Lambda Architecture](2026-08-21-cmeta-cpp-like-lambda-design.md)
 
-Defines C++-like lambda syntax as an optional CMeta Extend adapter over the existing Core callable/closure semantics.
+Defines C++-like lambda syntax as an optional CMeta Extend adapter over one Core finite-arity closure model:
 
-V1 is deliberately finite and explicit:
+```text
+Callable<Args,R>
+Lambda<Env,Args,R>
+arity = Args.length
+```
+
+The formal model uses one heterogeneous finite argument schema rather than arity-specific callable/lambda type families. The migration is a direct cut-over: Lean `Callable1/2` and `Lambda1/2` are removed rather than retained as aliases, and `Callable3/4/...` or `Lambda3/4/...` are forbidden as semantic API growth.
+
+Generator is a separate callable protocol, not a three-argument lambda. Runtime protocol parameters such as output buffers and cursors do not define logical lambda arity.
+
+V1 surface syntax remains deliberately finite and explicit:
 
 ```text
 []
@@ -76,7 +86,7 @@ explicit parameter types
 explicit result type
 ```
 
-The formal direction generalizes the current single-`CType` capture into a typed environment `Env`, proves capture pack/unpack transparency plus invocation/signature preservation, and keeps CFlow as a consumer rather than the owner of lambda semantics. Reference/default capture, mutable captures, and generic template lambdas are outside v1.
+Reference/default capture, mutable captures, and C++ generic-template lambdas are outside v1. CFlow may retain consumer-specific C macros until a separate source-API migration, but they do not own Core lambda semantics.
 
 ### [CMeta State + Exec Concurrency Architecture](2026-08-21-cmeta-state-exec-concurrency-design.md)
 
@@ -102,6 +112,8 @@ Every future CMeta design should preserve these rules:
 - generic generation stays finite; arbitrary compile-time user programs are not introduced.
 - parser/frontend additions must lower to existing Core/module APIs.
 - C++-like lambda syntax lowers to the same Core callable ABI and does not introduce C++ template semantics.
+- callable arity is data (`Args.length`), not a semantic type-family suffix.
+- callable protocol is orthogonal to arity.
 - formal verification follows semantic ownership boundaries.
 - applicability claims require real C witnesses and multi-TU/consumer evidence where the focused spec requires them.
 
