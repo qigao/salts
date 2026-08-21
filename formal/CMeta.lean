@@ -1,6 +1,7 @@
 import CMeta.Calculus
 import CMeta.ModuleMigrationConformance
 import CMeta.LanguageModuleMigrationConformance
+import CMeta.RegistryModuleMigrationConformance
 import CMeta.FmtArgs
 import CMeta.Producer
 import CMeta.NestedReplay
