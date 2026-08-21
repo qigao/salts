@@ -23,11 +23,7 @@
  * Header-local Range capability generators
  * ------------------------------------------------------------------------- */
 
-#define CMETA_CONTAINER1_INDEX_RANGE_DEFINE(...) \
-    CMETA_PP_CAT(CMETA_CONTAINER1_INDEX_RANGE_DEFINE_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
-#define CMETA_CONTAINER1_INDEX_RANGE_DEFINE_4(name, type, prefix, flags) \
-    CMETA_CONTAINER1_INDEX_RANGE_DEFINE_5(name, type, prefix, flags, NULL)
-#define CMETA_CONTAINER1_INDEX_RANGE_DEFINE_5(name, type, prefix, flags, version_accessor) \
+#define CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name, type, prefix, flags, version_accessor) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
         CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL \
     }; \
@@ -214,11 +210,7 @@
  * Sparse one-type Range (set/hash-set style)
  * ------------------------------------------------------------------------- */
 
-#define CMETA_CONTAINER1_SLOT_RANGE_DEFINE(...) \
-    CMETA_PP_CAT(CMETA_CONTAINER1_SLOT_RANGE_DEFINE_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
-#define CMETA_CONTAINER1_SLOT_RANGE_DEFINE_4(name, type, prefix, flags) \
-    CMETA_CONTAINER1_SLOT_RANGE_DEFINE_5(name, type, prefix, flags, NULL)
-#define CMETA_CONTAINER1_SLOT_RANGE_DEFINE_5(name, type, prefix, flags, version_accessor) \
+#define CMETA_CONTAINER1_SLOT_RANGE_DEFINE(name, type, prefix, flags, version_accessor) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
         CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL \
     }; \
@@ -265,11 +257,7 @@
 #define CMETA_CONTAINER_STR(x) CMETA_CONTAINER_STR_I(x)
 
 
-#define CMETA_CONTAINER2_RANGES_DEFINE(...) \
-    CMETA_PP_CAT(CMETA_CONTAINER2_RANGES_DEFINE_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
-#define CMETA_CONTAINER2_RANGES_DEFINE_9(name, key_type, value_type, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags) \
-    CMETA_CONTAINER2_RANGES_DEFINE_10(name, key_type, value_type, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, NULL)
-#define CMETA_CONTAINER2_RANGES_DEFINE_10(name, key_type, value_type, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor) \
+#define CMETA_CONTAINER2_RANGES_DEFINE(name, key_type, value_type, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor) \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
         CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL \
     }; \

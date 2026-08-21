@@ -151,10 +151,11 @@ typedef struct cmeta_test_generated_range_container {
     uint64_t generation;
 } cmeta_test_generated_range_container;
 
-typedef struct cmeta_test_legacy_range_container {
+typedef struct cmeta_test_required_range_container {
     cmeta_container_header cmeta;
     cmeta_test_generated_range_raw raw;
-} cmeta_test_legacy_range_container;
+    uint64_t generation;
+} cmeta_test_required_range_container;
 
 static size_t cmeta_test_generated_range_raw_size(
     const cmeta_test_generated_range_raw *raw) {
@@ -173,6 +174,13 @@ static uint64_t cmeta_test_generated_range_version(const void *object) {
     return container->generation;
 }
 
+static uint64_t cmeta_test_required_range_version(const void *object) {
+    const cmeta_test_required_range_container *container =
+        (const cmeta_test_required_range_container *)object;
+
+    return container->generation;
+}
+
 CMETA_CONTAINER1_INDEX_RANGE_DEFINE(
     cmeta_test_generated_range_container,
     int,
@@ -181,10 +189,11 @@ CMETA_CONTAINER1_INDEX_RANGE_DEFINE(
     cmeta_test_generated_range_version)
 
 CMETA_CONTAINER1_INDEX_RANGE_DEFINE(
-    cmeta_test_legacy_range_container,
+    cmeta_test_required_range_container,
     int,
     cmeta_test_generated_range_raw,
-    CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED)
+    CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED,
+    cmeta_test_required_range_version)
 
 enum {
     CMETA_TEST_COUNTER_RESET = 1u << 0
@@ -525,17 +534,19 @@ suite("CMeta core") {
         check_equal(out, 77);
     }
 
-    it("legacy generated ranges retain null version accessors") {
-        cmeta_test_legacy_range_container container = {
-            .raw = {.values = {3, 5}, .count = 2u}
+    it("generated ranges require explicit version accessors") {
+        cmeta_test_required_range_container container = {
+            .raw = {.values = {3, 5}, .count = 2u}, .generation = 11u
         };
-        cmeta_range range = cmeta_test_legacy_range_container_range(&container);
+        cmeta_range range = cmeta_test_required_range_container_range(&container);
         size_t cursor = 0u;
         int out = 0;
 
-        check_equal(range.version, UINT64_C(0));
-        check_null(range.current_version);
+        check_equal(range.version, UINT64_C(11));
+        check_not_null(range.current_version);
         check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_VALUE);
         check_equal(out, 3);
+        ++container.generation;
+        check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_MUTATED);
     }
 }
