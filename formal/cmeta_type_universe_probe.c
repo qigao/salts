@@ -5,7 +5,7 @@ typedef struct known_only_type {
 #define CMETA_SIGNATURE_PROFILE_FULL
 #define CMETA_KNOWN_TYPE_LIST \
     CMETA_BUILTIN_TYPE_LIST, \
-    (K, known_only_type, cmeta_type_known_only, CMETA_T_OBJECT)
+    (K, known_only_type, cmeta_type_known_only, CMETA_T_OBJECT, cmeta_traits_known_only)
 #define CMETA_CALLABLE_TYPE_LIST CMETA_BUILTIN_TYPE_LIST
 
 #include <cmeta/cmeta.h>
@@ -17,6 +17,7 @@ _Static_assert(CMETA_PP_NARG(CMETA_CALLABLE_TYPE_LIST) == 5,
 _Static_assert(CMETA_SIG_COUNT == 176,
                "five callable types in full profile must remain 25+125+25 signatures plus invalid");
 
+static const cmeta_type_traits cmeta_traits_known_only = {0};
 static const cmeta_type_desc *const known_probe = &cmeta_type_known_only;
 
 const cmeta_type_desc cmeta_type_known_only = {
@@ -25,6 +26,7 @@ const cmeta_type_desc cmeta_type_known_only = {
     .align = _Alignof(known_only_type),
     .kind = CMETA_T_OBJECT,
     .pointee = NULL,
+    .traits = &cmeta_traits_known_only,
     .identity = NULL
 };
 
