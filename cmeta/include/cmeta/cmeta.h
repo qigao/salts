@@ -34,8 +34,8 @@ typedef struct cmeta_type_desc {
     size_t align;
     cmeta_type_kind kind;
     const struct cmeta_type_desc *pointee;
-    const cmeta_type_identity *identity;
     const cmeta_type_traits *traits;
+    const cmeta_type_identity *identity;
 } cmeta_type_desc;
 
 const cmeta_type_identity *cmeta_type_identity_of(const cmeta_type_desc *desc);
@@ -126,13 +126,11 @@ typedef enum cmeta_sig {
 typedef uint32_t cmeta_effects;
 
 enum {
-    /* PURE is the empty effect set. Other flags may be ORed together. */
     CMETA_EFFECT_PURE     = 0u,
     CMETA_EFFECT_STATEFUL = 1u << 0,
     CMETA_EFFECT_ASYNC    = 1u << 1,
     CMETA_EFFECT_IO       = 1u << 2,
     CMETA_EFFECT_MAY_FAIL = 1u << 3,
-    /* UNKNOWN is conservative: optimizers must not assume purity. */
     CMETA_EFFECT_UNKNOWN  = 1u << 4,
     CMETA_EFFECT_MASK     = CMETA_EFFECT_STATEFUL | CMETA_EFFECT_ASYNC |
                             CMETA_EFFECT_IO | CMETA_EFFECT_MAY_FAIL |
@@ -142,10 +140,6 @@ enum {
 static inline bool cmeta_effects_are_pure(cmeta_effects e) { return e == CMETA_EFFECT_PURE; }
 static inline bool cmeta_effects_valid(cmeta_effects e) { return (e & ~CMETA_EFFECT_MASK) == 0u; }
 
-/* Positive semantic guarantees. Zero means no guarantee is known. Unlike
- * effects, these are not all closed under arbitrary composition: in
- * particular IDEMPOTENT is a unary endomorphism contract and must not be
- * blindly propagated to a whole Graph. */
 typedef uint32_t cmeta_properties;
 enum {
     CMETA_PROP_NONE          = 0u,
@@ -153,9 +147,7 @@ enum {
     CMETA_PROP_TOTAL         = 1u << 1,
     CMETA_PROP_IDEMPOTENT    = 1u << 2,
     CMETA_PROP_NO_ALIAS      = 1u << 3,
-    /* Algebraic law for binary endomorphisms T(T,T)->T.  It is an
-     * admission contract used by static analysis and future C-side rewrites. */
-    CMETA_PROP_ASSOCIATIVE    = 1u << 4,
+    CMETA_PROP_ASSOCIATIVE   = 1u << 4,
     CMETA_PROP_MASK          = CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL |
                                CMETA_PROP_IDEMPOTENT | CMETA_PROP_NO_ALIAS |
                                CMETA_PROP_ASSOCIATIVE
@@ -184,9 +176,6 @@ typedef union cmeta_raw_call {
 #undef CMETA_UNION_G
 } cmeta_raw_call;
 
-/* Low-level signature descriptor used by the C11 type registry.  User-facing
- * Graph APIs use cmeta_callable below; this raw descriptor remains the typed
- * adapter substrate. */
 typedef struct cmeta_fn {
     cmeta_sig sig;
     cmeta_raw_call call;
@@ -217,11 +206,8 @@ typedef cmeta_gen_status (*cmeta_callable_generate_fn)(const cmeta_callable *sel
                                                        void *out,
                                                        size_t *cursor);
 
-/* First-class immutable callable value.  Plain typed functions and capturing
- * C-meta lambdas share this exact representation.  capture is copied by value
- * with the Graph, Subgraph snapshots and compiled plans. */
 struct cmeta_callable {
-    cmeta_fn meta; /* sig may be resolved lazily before Graph insertion */
+    cmeta_fn meta;
     cmeta_callable_resolve_fn resolve;
     cmeta_callable_invoke_fn invoke;
     cmeta_callable_generate_fn generate;
@@ -274,7 +260,6 @@ static inline void cmeta_unsupported_signature(void) { }
       .resolve = (resolver_fn), .invoke = (invoke_fn), .generate = (generate_fn), \
       .capture_size = (cap_size), .capture = { .bytes = { 0 } } }
 
-/* Raw first-class named callable for custom IR code. */
 #define typed_any_raw(effect_set, property_set, ret, name, params) \
     static ret cmeta_typed_##name params; \
     static cmeta_fn cmeta_meta_##name(void) { \
@@ -319,8 +304,6 @@ bool cmeta_fn_invoke(cmeta_fn fn, void *out, const void *const *args);
 cmeta_gen_status cmeta_fn_generate(cmeta_fn fn, const void *input,
                                    void *out, size_t *cursor);
 
-/* First-class callable operations. Graph insertion resolves the logical
- * signature once; runtime invocation thereafter uses the bound erased adapter. */
 bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out);
 const cmeta_sig_desc *cmeta_callable_signature(cmeta_callable fn);
 bool cmeta_callable_contract_valid(cmeta_callable fn);
