@@ -86,8 +86,7 @@ public def checkPlanInst (current : CType) (inst : ErasedPlanInst) : Option CTyp
   else none
 
 /-- Every statically compilable node survives instruction erasure. -/
--- TEMP-MODULE-BRIDGE(M4): legacy Execution; remove Task 10
-public theorem PlanNode.check_erase {A R : CType} (node : PlanNode A R) :
+theorem PlanNode.check_erase {A R : CType} (node : PlanNode A R) :
     checkPlanInst A node.erase = some R := by
   cases node <;>
     simp [PlanNode.erase, checkPlanInst, MapChain.check,
@@ -151,8 +150,7 @@ end PlanProgram
 
 /-- Main plan-compilation theorem: public endpoints and every intermediate
     instruction remain type-consistent after topology erasure. -/
--- TEMP-MODULE-BRIDGE(M4): legacy Execution; remove Task 10
-public theorem PlanProgram.compile_well_typed {A R : CType}
+theorem PlanProgram.compile_well_typed {A R : CType}
     (program : PlanProgram A R) :
     PlanWellTyped program.compile := by
   exact program.check_code
