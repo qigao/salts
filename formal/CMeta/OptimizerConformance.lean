@@ -6,18 +6,12 @@ import CMeta.OptimizerGeneratedC
 
 This module ties the actual duplicate-MAP rewrite in `cflow/src/opt.c` to the
 `IdempotentEndomap` law already proved in `Optimize.lean`.
-
-The two generated witnesses intentionally use the same identity value semantics
-but different contracts.  The idempotent callable authorizes duplicate
-elimination; the ordinary value callable does not.  Thus the conformance gate
-checks that optimization follows declared semantic properties rather than
-attempting to infer extensional function laws from C code.
 -/
 
 namespace CMeta
 
-private def identityI : Callable1 CType.int CType.int :=
-  ⟨fun (x : Int) => x⟩
+private def identityI : Callable [CType.int] CType.int :=
+  Callable.ofUnary (fun (x : Int) => x)
 
 private def identityEndomap : IdempotentEndomap CType.int :=
   { fn := identityI,
@@ -26,20 +20,21 @@ private def identityEndomap : IdempotentEndomap CType.int :=
 /-- The semantic law that licenses the real duplicate-elimination witness. -/
 theorem OptimizerConformance.identity_duplicate_elimination_sound
     (x : CType.int.denote) :
-    identityEndomap.fn.run (identityEndomap.fn.run x) =
-      identityEndomap.fn.run x := by
+    identityEndomap.fn.invoke1 (identityEndomap.fn.invoke1 x) =
+      identityEndomap.fn.invoke1 x := by
   exact duplicate_idempotent_elimination_sound identityEndomap x
 
 private def runIdentityOnce (xs : List Int) : List Int :=
-  xs.map identityI.run
+  xs.map identityI.invoke1
 
 private def runIdentityTwice (xs : List Int) : List Int :=
-  xs.map (fun x => identityI.run (identityI.run x))
+  xs.map (fun x => identityI.invoke1 (identityI.invoke1 x))
 
 /-- The list-level witness semantics follows immediately from the endomap law. -/
 theorem OptimizerConformance.identity_lists_equal (xs : List Int) :
     runIdentityTwice xs = runIdentityOnce xs := by
-  simp [runIdentityTwice, runIdentityOnce, identityI]
+  simp [runIdentityTwice, runIdentityOnce, identityI, Callable.ofUnary, Callable.invoke1,
+    HArgs.one]
 
 private structure OptimizerModelResult where
   inputType : String
