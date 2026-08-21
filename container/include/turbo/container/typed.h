@@ -5,17 +5,17 @@
 
 #include <turbo/container/vec.h>
 #include <turbo/container/deque.h>
-#include "turbo_list.h"
-#include "turbo_stack.h"
-#include "turbo_queue.h"
+#include <turbo/container/list.h>
+#include <turbo/container/stack.h>
+#include <turbo/container/queue.h>
 #include <turbo/container/heap.h>
 #include <turbo/container/set.h>
-#include "turbo_hash_set.h"
+#include <turbo/container/hash_set.h>
 #include <turbo/container/hash_map.h>
-#include "turbo_map.h"
-#include "turbo_multimap.h"
+#include <turbo/container/map.h>
+#include <turbo/container/multimap.h>
 #include <turbo/container/btree.h>
-#include "turbo_bplus_tree.h"
+#include <turbo/container/bplus_tree.h>
 
 /* Turbo generic-kind registrations. */
 #define CMETA_GENERIC_KIND_Vec CMETA_GENERIC_PROBE()
