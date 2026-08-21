@@ -61,6 +61,14 @@ def invoke2 (f : Callable [A, B] R)
     (a : A.denote) (b : B.denote) : R.denote :=
   f.run (HArgs.two a b)
 
+/-- Current unary C backend signature projection. This is backend metadata,
+    not an arity-specific callable semantic type. -/
+def unaryBackendSignature (_ : Callable [A] R) : Signature := .unary A R
+
+/-- Current binary C backend signature projection. This is backend metadata,
+    not an arity-specific callable semantic type. -/
+def binaryBackendSignature (_ : Callable [A, B] R) : Signature := .binary A B R
+
 /-- Ordinary higher-order composition is representable without a new callable ABI. -/
 def compose (g : Callable [B] R) (f : Callable [A] B) : Callable [A] R :=
   ⟨fun xs =>
