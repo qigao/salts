@@ -1,5 +1,6 @@
 module
-public import CMeta.Traits
+-- TEMP-MODULE-BRIDGE(M2): legacy Flow/Graph rely on Dispatch -> Lambda -> Callable semantics
+public import CMeta.Lambda
 import all CMeta.Traits
 
 /-!
