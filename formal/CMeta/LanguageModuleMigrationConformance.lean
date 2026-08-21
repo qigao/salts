@@ -9,6 +9,7 @@ import CMeta.PreprocessorBackendRegistryMutation
 import CMeta.PreprocessorBackendRegistryEquivalence
 import CMeta.PreprocessorBackendRegistrySubstitutability
 import CMeta.PreprocessorBackendRegistrySetoid
+import CMeta.LanguageModuleLegacyBridge
 
 #check CMeta.Producer.replay
 #check CMeta.Producer.append
@@ -79,9 +80,10 @@ assert_not_exists CMeta.Producer.lowerReplayIR_isSome_iff
 assert_not_exists CMeta.Producer.CertifiedPreprocessorBackend.compilerVersionPositive
 assert_not_exists CMeta.Producer.CertifiedPreprocessorBackend.deferredSameProducerAccepted
 assert_not_exists CMeta.Producer.CertifiedPreprocessorBackend.certifiedDepthPositive
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.mem_supportingCandidates_iff
 
--- TEMP-MODULE-BRIDGE(M7g): legacy Selection and backend conformance candidate proofs
-#check CMeta.Producer.PreprocessorBackendRegistry.mem_supportingCandidates_iff
+-- TEMP-MODULE-BRIDGE(M7g): legacy backend conformance candidate proof
+#check CMeta.Producer.LanguageModuleLegacyBridge.mem_supportingCandidates_iff
 
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.insert_eq_none_iff
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_eq_none_of_key_not_mem
@@ -108,6 +110,7 @@ assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_ne_e
 
 assert_not_exists CMeta.Producer.ReplayExpansionPlan.fromIR_respects
 assert_not_exists CMeta.Producer.lowerReplayIR_requirement
+assert_not_exists CMeta.Producer.lowerReplayBackendPlan_eq_some_iff
 
 -- TEMP-MODULE-BRIDGE(M7g): legacy backend/replay conformance
 #check CMeta.Producer.lowerReplayBackendPlan_eq_canonical_of_supports
@@ -115,9 +118,6 @@ assert_not_exists CMeta.Producer.lowerReplayIR_requirement
 #check CMeta.Producer.lowerReplayBackendPlan_respects_active
 #check CMeta.Producer.certifiedReplayLowering_eq_of_both_supports
 #check CMeta.Producer.PreprocessorBackendRegistry.resolveReplay_eq_some_iff
-
--- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.lower_elim
-#check CMeta.Producer.lowerReplayBackendPlan_eq_some_iff
 
 #check CMeta.Producer.BackendPreference
 #check CMeta.Producer.BackendSelectionPolicy
@@ -136,12 +136,13 @@ assert_not_exists CMeta.Producer.lowerReplayIR_requirement
 assert_not_exists CMeta.Producer.BackendSelectionRank.aggregate_eq_of_perm
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_supports
 assert_not_exists CMeta.Producer.BackendSelectionPolicy.select_key_eq_of_perm_of_matches
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_mem_candidates
+assert_not_exists CMeta.Producer.BackendSelectionPolicy.select_mem
 
--- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.selection_elim
-#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_mem_candidates
+-- TEMP-MODULE-BRIDGE(M7g): legacy backend conformance selection proof
+#check CMeta.Producer.LanguageModuleLegacyBridge.select_mem
 
 -- TEMP-MODULE-BRIDGE(M7g): legacy backend/selection conformance
-#check CMeta.Producer.BackendSelectionPolicy.select_mem
 #check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_canonical
 #check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_eq_of_entries_perm
 
@@ -155,11 +156,9 @@ assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.observe_insert_ne
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.observe_remove
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.observe_replace_self
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.observe_replace_ne
-
--- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec registry equality rules
-#check CMeta.Producer.PreprocessorBackendRegistry.equivalent_refl
-#check CMeta.Producer.PreprocessorBackendRegistry.equivalent_symm
-#check CMeta.Producer.PreprocessorBackendRegistry.equivalent_trans
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.equivalent_refl
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.equivalent_symm
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.equivalent_trans
 
 -- TEMP-MODULE-BRIDGE(M7g): legacy registry mutation/equivalence conformance
 #check CMeta.Producer.PreprocessorBackendRegistry.supportingCandidates_insert_irrelevant
