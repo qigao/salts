@@ -49,6 +49,14 @@ structure Callable (Args : List CType) (R : CType) where
 
 namespace Callable
 
+/-- Wrap an ordinary unary function in the unified finite-argument callable. -/
+def ofUnary (f : A.denote → R.denote) : Callable [A] R :=
+  ⟨fun | .cons x .nil => f x⟩
+
+/-- Wrap an ordinary binary function in the unified finite-argument callable. -/
+def ofBinary (f : A.denote → B.denote → R.denote) : Callable [A, B] R :=
+  ⟨fun | .cons a (.cons b .nil) => f a b⟩
+
 /-- Typed invocation for the general finite-arity model. -/
 def invoke (f : Callable Args R) (xs : HArgs Args) : R.denote := f.run xs
 
@@ -71,9 +79,7 @@ def binaryBackendSignature (_ : Callable [A, B] R) : Signature := .binary A B R
 
 /-- Ordinary higher-order composition is representable without a new callable ABI. -/
 def compose (g : Callable [B] R) (f : Callable [A] B) : Callable [A] R :=
-  ⟨fun xs =>
-    match xs with
-    | .cons x .nil => g.invoke1 (f.invoke1 x)⟩
+  ofUnary (fun x => g.invoke1 (f.invoke1 x))
 
 theorem compose_beta (g : Callable [B] R) (f : Callable [A] B)
     (x : A.denote) :
