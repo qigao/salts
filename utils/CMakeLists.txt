@@ -47,7 +47,7 @@ endif()
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC TurboUtils::CMeta
-  PRIVATE TurboUtils::Container
+  PRIVATE TurboUtils::STL
           ${FMT_LEXER_LIBRARY} TurboUtils::SDS # Simple Dynamic Strings
           aklomp::base64 zstd::libzstd
           ${LOG_PATTERN_LEXER_LIBRARY} # Log pattern lexer

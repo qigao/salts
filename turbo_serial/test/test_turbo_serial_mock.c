@@ -189,8 +189,8 @@ suite("turbo_serial mocked backend") {
     turbo_serial_port_info_storage_t *stored;
 
     fill_port_storage(&source);
-    check_equal(turbo_serial_port_info_vec_t_init(&items), CONTAINER_OK);
-    check_equal(turbo_serial_port_info_vec_t_push(&items, source), CONTAINER_OK);
+    check_equal(turbo_serial_port_info_vec_t_init(&items), TURBO_STL_OK);
+    check_equal(turbo_serial_port_info_vec_t_push(&items, source), TURBO_STL_OK);
     stored = turbo_serial_port_info_vec_t_at(&items, 0);
     check_not_null(stored);
     check_equal(tstr_cmp(stored->name, source.name), 0);
