@@ -107,6 +107,15 @@ container/
       typed.h
       cflow.h
   src/
+    list.c
+    deque.c
+    rb_tree.c
+    hash_table.c
+    map.c
+    set.c
+    multimap.c
+    hash_map.c
+    hash_set.c
   cflow/
   tests/
   examples/
@@ -136,6 +145,40 @@ threadpool / coro_pool
 
 Core 内的 `ac_automaton`、`levenshtein_automaton` 以及 `turbo_serial` 等调用方改用新 include 和 target，不复制或私藏 Vec 实现。
 
+### 容器名称与数据结构契约
+
+容器名称直接表达数据结构和可观察语义，不允许用另一个容器的薄别名实现：
+
+| 公开容器 | 唯一事实源 | 顺序 | 核心复杂度 |
+|---|---|---|---|
+| `List` | 独立双向链表节点 | 插入顺序 | 已知节点处插入/删除 `O(1)`，查找 `O(n)` |
+| `Deque` | 循环数组 | 逻辑索引顺序 | 两端操作摊销 `O(1)`，随机访问 `O(1)` |
+| `Map` | 红黑树 | key 升序、key 唯一 | 查找/插入/删除 `O(log n)` |
+| `Set` | 红黑树 | value 升序、value 唯一 | 查找/插入/删除 `O(log n)` |
+| `MultiMap` | 红黑树 | key 升序；同 key 按插入顺序 | 插入 `O(log n)`；key range `O(log n + k)` |
+| `HashMap` | 开放寻址 hash table | 未指定 | 平均查找/插入/删除 `O(1)`，最坏 `O(n)` |
+| `HashSet` | 开放寻址 hash table | 未指定 | 平均查找/插入/删除 `O(1)`，最坏 `O(n)` |
+
+`List` 不包含 `turbo_deque_t`，不公开 `reserve`、`capacity` 或随机访问 `at(index)`。它公开双向 iterator、`insert_before/after` 和 `erase`；插入不使既有节点地址失效，删除只使被删除节点失效，`clear/destroy` 使全部节点失效。
+
+`Map` 不 typedef、不组合 `turbo_hash_map_t`，也不接收 hash/equal。它从 key type traits 取得 comparator，并公开 `lower_bound`、`upper_bound`、有序 iterator 和唯一 key 的替换语义。`Set` 复用同一内部红黑树引擎但没有 value。`MultiMap` 的内部比较键为 `(user_key, insertion_sequence)`，从而让相同 key 连续且保持插入顺序；sequence 溢出必须在修改前失败。
+
+`HashMap` 与 `HashSet` 复用内部开放寻址引擎，要求 hash/equal traits，最大占用率为 70%，显式处理 collision、tombstone 和 rehash。rehash 使全部 borrowed pointer 失效。哈希槽编号只是实现细节，不作为 public iterator、Range 或持久化顺序。
+
+`BTree`、`BPlusTree` 保持独立算法和公开类型；不得以 B-tree 实现或名称替代红黑树 Map。
+
+### 红黑树不变量
+
+内部 `rb_tree.c` 只服务 `Map`、`Set` 和 `MultiMap`，不作为运行时可切换 backend。每次成功修改后必须同时满足：
+
+- root 为黑色；
+- 红节点没有红色子节点；
+- 任一节点到叶哨兵的黑高相同；
+- `Map/Set` 中序 key 严格递增；`MultiMap` 中序复合键严格递增；
+- parent/left/right 互相一致，记录的 size 等于实际节点数。
+
+rotation 只重连节点，不移动节点内 key/value payload。插入必须先完成节点和 payload 构造再挂入树；删除带输出时先校验 move trait 与未初始化输出契约，再修改树结构并 move payload。失败操作不得改变 root、size、generation 或任一已有 payload。
+
 ## Breaking public API
 
 - raw 类型名如 `turbo_vec_t`、`turbo_hash_map_t` 保留。
@@ -144,8 +187,41 @@ Core 内的 `ac_automaton`、`levenshtein_automaton` 以及 `turbo_serial` 等�
 - `TURBO_VEC_DEFINE`、`TURBO_HASH_MAP_DEFINE` 等宏降为 Container 内部生成机制，不再安装或文档化。
 - include 统一迁移至 `<turbo/container/...>`。
 - 删除 `TurboUtils::Stream`；普通用户链接 `TurboUtils::Container`，容器流用户链接 `TurboUtils::ContainerCFlow`。
+- 删除 List 的 `reserve/capacity/at` 和所有“deque-backed list”契约。
+- Map 初始化由 hash/equal 改为 compare trait；删除 hash slot/capacity API 并改为有序 iterator/bounds API。
+- Set 与 MultiMap 迁移到有序红黑树族；HashSet 与 HashMap 保留哈希语义。
+- raw 与 typed `init/from` 都显式接收 `max_elements`；`0` 表示合法但不可增长的空容器，不表示无界。
 
 对 raw byte 容器，初始化 API 必须显式声明 trivial byte 语义；typed 容器则使用 CMeta type descriptor。禁止把带资源所有权的值隐式当作可 `memcpy` 字节。
+
+### List、Map 与 HashMap 公开能力
+
+公开头只暴露语义能力，不暴露 node、rotation、probe 或 tombstone 操作：
+
+```text
+List
+  init / init_bytes / from / destroy / clear
+  push_front / push_back / pop_front / pop_back
+  begin / end / next / prev / value
+  insert_before / insert_after / erase
+  front / back / size / empty / generation
+
+Map
+  init / init_bytes / from / destroy / clear
+  put / get / contains / remove
+  begin / end / next / prev / key / value
+  lower_bound / upper_bound / size / empty / generation
+
+HashMap
+  init / init_bytes / from / destroy / clear
+  reserve / put / get / contains / remove
+  begin / end / next / key / value
+  size / capacity / empty / generation
+```
+
+`init` 使用 type descriptor/traits；`init_bytes` 只接受显式 size/alignment 和 comparator 或 hash/equal，且只能保存 trivial byte 值。List/Map iterator 保存 owner 和当前节点；插入与 rotation 不使它失效，erase 只使指向目标节点的 iterator 失效。失效节点 iterator 不可安全自检，继续使用属于调用方契约违例。HashMap iterator 保存 owner、当前 slot 和捕获 generation，任何 rehash 后访问都返回 `CONTAINER_INVALID_ARGUMENT`。iterator 都是 borrowed handle，不拥有容器或 payload。
+
+`MultiMap` 不提供含糊的 `remove(key)`：`erase(iterator)` 删除一个精确 entry，`erase_key(key)` 删除该 key 的全部 entries，`equal_range(key)` 返回同 key 的有序区间。任何批量删除在开始前完成参数与 trait 校验，执行阶段不包含可失败分配。
 
 ## CMeta type traits
 
@@ -163,7 +239,7 @@ typedef struct cmeta_type_traits {
 } cmeta_type_traits;
 ```
 
-内建标量由 CMeta 提供完整 traits。显式标为 trivially copyable/destroyable 的类型使用 byte copy/no-op destroy。自定义拥有型类型必须注册 copy/move/destroy；需要 distinct、Set 或排序时还必须注册对应 equal/hash/compare。
+内建标量由 CMeta 提供完整 traits。显式标为 trivially copyable/destroyable 的类型使用 byte copy/no-op destroy。自定义拥有型类型必须注册 copy/move/destroy；Map/Set/MultiMap 要求 compare，HashMap/HashSet 与 distinct 要求 hash+equal，排序要求 compare。
 
 traits 和 descriptor 遵循现有 multi-TU 规则：header-local descriptor 地址不是全局 type identity，消费者使用语义字段和 `cmeta_type_equal`，不比较地址。
 
@@ -198,10 +274,27 @@ collect capability
 - 移除到调用方输出时执行 move construct；无输出时直接 destroy。
 - clear/destroy 必须对每个活元素恰好调用一次 destroy。
 - key/value 分别使用各自 traits；替换 Map value 时先构造新值，再原子地替换并销毁旧值。
-- `get/at/front/back` 返回 borrowed pointer；任何可能改变布局的 reserve、insert、erase、push、pop、clear、destroy 都使其失效。
+- `get/at/front/back` 与 iterator value 返回 borrowed pointer。Vec/Deque/HashMap 的 reserve/rehash 使相关地址失效；List 和红黑树的插入不移动既有节点 payload，erase 只使目标节点失效；clear/destroy 始终使全部借用失效。
 - raw byte 初始化只允许 trivial 类型，不接管指针指向资源。
 
 每个 raw 容器维护 mutation generation。Range 创建时捕获 generation，每次读取前校验；通过公开容器 API 发生的中途 mutation 必须返回执行错误。直接写入已借出的 mutable pointer 仍是调用方契约违例，无法由 generation 完整检测。
+
+List 和红黑树不能通过 ordinal `size_t` 在总计 `O(n)` 内完成遍历。CMeta Range 因此使用 opaque cursor：
+
+```c
+typedef struct cmeta_range_cursor {
+    size_t index;
+    void *state[2];
+} cmeta_range_cursor;
+```
+
+数组和 hash range 使用 `index`，List/RB tree range 使用 `state` 保存当前节点。cursor 由调用方零初始化，只能交回创建它的 Range；不得复制到另一个 owner 或在 mutation 后继续使用。`cmeta_range_next_fn`、CFlow range source 和生成的 Container adapters 同步迁移到该类型，不保留把节点指针塞进 `size_t` 的平台假设。
+
+所有容器是 single-threaded。跨线程共享必须由调用方在容器 API 外同步；`const` 查询与 iterator 不隐含线程安全。初始化记录 `max_elements` 硬上限，所有节点大小、payload offset、alignment、capacity 和总字节计算都使用 checked arithmetic。到达上限返回 `CONTAINER_CAPACITY_EXCEEDED`，OOM 返回 `CONTAINER_OUT_OF_MEMORY`，二者不得混淆。
+
+`init(..., max_elements)` 创建空容器；`from(..., count, max_elements)` 要求 `count <= max_elements`，失败时输出保持零状态。API 不提供“0 等于无限”或自动扩展上限的 fallback。HashMap 的 `capacity` 是 `max_elements` 约束下的内部 slot 预算，List/RB tree 不公开 capacity 概念。
+
+List/RB tree 初版使用单节点分配，不依赖 Core 的 pool，也不预先加入 allocator/pool 策略层。只有 benchmark/profile 证明节点分配是相关 workload 的瓶颈后，才单独设计可注入 allocator；池化不得改变节点稳定性、上限或失败原子性。
 
 ## CFlow 容器适配边界
 
@@ -331,6 +424,10 @@ ZERO -> BEGUN -> ACCEPTING -> COMMITTED
 
 ## 算法语义与复杂度
 
+- List：已知 iterator 处插入/删除 `O(1)`，按值或位置查找 `O(n)`，完整迭代 `O(n)`；不提供随机访问伪装。
+- Map/Set：查找、插入、删除和 bounds `O(log n)`，完整中序迭代 `O(n)`，空间 `O(n)`。
+- MultiMap：按 key 定位 `O(log n)`，枚举同 key 的 `k` 个值为 `O(k)`；同 key 保持插入顺序。
+- HashMap/HashSet：平均查找、插入和删除 `O(1)`、最坏 `O(n)`；rehash `O(n)`，空间 `O(capacity)`。
 - filter/map/take/skip/takeWhile/dropWhile：时间 `O(n)`，除 callable transient value 外额外空间 `O(1)`。
 - stable sorted：时间 `O(n log n)`，额外空间 `O(n)`，受 `max_items` 限制。
 - distinct：保持首次出现顺序，平均时间 `O(n)`，空间 `O(n)`，受 `max_unique` 限制。
@@ -404,6 +501,9 @@ TinyTest 测试按模块拆分：
 ```text
 cmeta_traits_test
 container_algorithms_test
+container_list_test
+container_ordered_test
+container_hash_test
 container_ownership_test
 container_multi_tu_test
 cflow_terminals_test
@@ -418,6 +518,9 @@ install_consumer_smoke
 - built-in traits、自定义 owning traits、缺 trait、type mismatch；
 - copy/move/destroy 次数、每个失败注入点、collector commit/abort；
 - raw 与 typed 容器的全部算法行为以及 stable sort；
+- List 节点稳定性、双向 iterator、头尾/中间删除，以及旧 reserve/capacity/at 不再公开；
+- Map/Set/MultiMap 的全部 insertion/deletion rotation 情形、随机操作后的红黑不变量、中序顺序、bounds 和重复 key 顺序；
+- HashMap/HashSet 的极端 collision、tombstone 复用、70% load boundary、rehash 和未指定遍历顺序；
 - default/key/value/entry Range、generation mismatch 和 source lifetime；
 - Java 空流语义、短路、顺序、稳定 distinct/sort、重复执行；
 - grouping/partition conflict policy、bucket/entry/payload 三重容量；
@@ -444,7 +547,7 @@ Windows 首选仓库实际可用的 user preset：
 
 ### HIGH：公开 API、header 与 target 破坏
 
-事实：旧 include、typed 宏和 `TurboUtils::Stream` 被删除。影响所有直接消费者。验证安装 manifest、CMake export 和独立 consumer；在 release notes 给出一对一迁移表。本设计明确不提供兼容层。
+事实：旧 include、typed 宏和 `TurboUtils::Stream` 被删除；List 不再提供 deque 容量/随机访问接口，Map 不再接受 hash/equal 或暴露 slot/capacity。影响所有直接消费者。验证安装 manifest、CMake export、compile-negative fixtures 和独立 consumer；在 release notes 给出一对一迁移表。本设计明确不提供兼容层。
 
 ### HIGH：拥有型值生命周期错误
 
@@ -452,7 +555,7 @@ Windows 首选仓库实际可用的 user preset：
 
 ### HIGH：Range 执行期 mutation
 
-事实：append、reserve、erase、clear 或 destroy 会使 borrowed view 失效。使用 mutation generation 对公开 API mutation fail fast，并测试 callback 中 mutation。直接裸指针写入仍作为明确契约限制记录。
+事实：Range cursor 从 ordinal `size_t` 迁移为 opaque cursor，CFlow source 是当前直接调用方；任何 container mutation 都使 Range 执行失效。同步迁移 CMeta generated adapters 与 `cflow/src/sources.c`，使用 mutation generation fail fast，并测试 callback 中 mutation。直接裸指针写入仍作为明确契约限制记录。
 
 ### MED：优化与状态算子语义偏移
 
