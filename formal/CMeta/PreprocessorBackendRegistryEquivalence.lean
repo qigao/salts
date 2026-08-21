@@ -1,4 +1,7 @@
+module
+public import CMeta.PreprocessorBackend
 import CMeta.PreprocessorBackendRegistryMutation
+import all CMeta.PreprocessorBackend
 
 /-!
 # Registry observational equivalence
@@ -16,32 +19,35 @@ namespace Producer
 namespace PreprocessorBackendRegistry
 
 /-- Observable registry payload at one exact backend key. -/
-def observe
+public def observe
     (registry : PreprocessorBackendRegistry) (key : BackendKey) :
     Option PreprocessorBackend :=
   (registry.lookup key).map CertifiedPreprocessorBackend.backend
 
 /-- Extensional finite-map equality for registries. List order and certificate
     proof terms are representation details; concrete backend payloads are not. -/
-abbrev Equivalent
+public abbrev Equivalent
     (left right : PreprocessorBackendRegistry) : Prop :=
   ∀ key, left.observe key = right.observe key
 
 /-- Observational equivalence is reflexive. -/
-theorem equivalent_refl (registry : PreprocessorBackendRegistry) :
+-- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.eq_refl
+public theorem equivalent_refl (registry : PreprocessorBackendRegistry) :
     Equivalent registry registry := by
   intro key
   rfl
 
 /-- Observational equivalence is symmetric. -/
-theorem equivalent_symm
+-- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.eq_symm
+public theorem equivalent_symm
     {left right : PreprocessorBackendRegistry}
     (h : Equivalent left right) : Equivalent right left := by
   intro key
   exact (h key).symm
 
 /-- Observational equivalence is transitive. -/
-theorem equivalent_trans
+-- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.eq_trans
+public theorem equivalent_trans
     {left middle right : PreprocessorBackendRegistry}
     (hleft : Equivalent left middle)
     (hright : Equivalent middle right) : Equivalent left right := by
@@ -128,7 +134,8 @@ theorem observe_replace_ne
   rw [lookup_replace_ne_exact registry backend replaced key hreplace hne]
 
 /-- Removing an absent exact key is extensionally the identity. -/
-theorem remove_missing_equivalent
+-- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryEquivalenceConformance
+public theorem remove_missing_equivalent
     (registry : PreprocessorBackendRegistry)
     (target : BackendKey)
     (hmissing : registry.lookup target = none) :
@@ -144,7 +151,8 @@ theorem remove_missing_equivalent
 
 /-- Fresh insertion followed by removal of the inserted exact key restores the
     original registry extensionally. -/
-theorem insert_remove_equivalent
+-- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryEquivalenceConformance
+public theorem insert_remove_equivalent
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend)
     (inserted : PreprocessorBackendRegistry)
@@ -175,7 +183,8 @@ theorem insert_remove_equivalent
 /-- Two removals commute extensionally. No distinctness premise is needed: the
     equal-key case is idempotent and the distinct-key case changes disjoint map
     points. -/
-theorem remove_remove_equivalent
+-- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryEquivalenceConformance
+public theorem remove_remove_equivalent
     (registry : PreprocessorBackendRegistry)
     (first second : BackendKey) :
     Equivalent
@@ -202,7 +211,8 @@ theorem remove_remove_equivalent
     replacement may change the payload arbitrarily, but after the second
     successful replacement no observation can distinguish it from replacing the
     original registry directly with the final payload. -/
-theorem replace_last_write_wins
+-- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryEquivalenceConformance
+public theorem replace_last_write_wins
     (registry : PreprocessorBackendRegistry)
     (firstBackend secondBackend : CertifiedPreprocessorBackend)
     (first second direct : PreprocessorBackendRegistry)
