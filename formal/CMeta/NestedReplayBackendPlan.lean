@@ -43,6 +43,15 @@ private def fromIRAux (active : List Nat) : ReplayIR → ReplayExpansionPlan
 def fromIR (ir : ReplayIR) : ReplayExpansionPlan :=
   fromIRAux [] ir
 
+/-- Compact diagnostic encoding used by the real C conformance witness:
+    `1` means direct producer replay and `2` means deferred+obstructed replay.
+    Producer values are intentionally omitted so the trace describes expansion
+    strategy rather than test data. -/
+def strategyTrace : ReplayExpansionPlan → List Nat
+  | .emit => []
+  | .directReplay _ body => 1 :: body.strategyTrace
+  | .deferredObstructReplay _ body => 2 :: body.strategyTrace
+
 /-- Compilation never emits a direct replay for an identity already active on
     the expansion stack. -/
 private theorem fromIRAux_respects (active : List Nat) (ir : ReplayIR) :
