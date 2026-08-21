@@ -18,7 +18,7 @@ Containers(
     (List, IntList, int),
     (HashSet, IntSet, int),
     (HashMap, IntLongMap, int, long),
-    (BTree, IntTree, int, long, int_compare)
+    (BTree, IntTree, int, long)
 );
 ```
 
@@ -57,13 +57,17 @@ HashMap    Map        MultiMap
 BTree      BPlusTree
 ```
 
-`Heap`, `BTree`, and `BPlusTree` take an explicit comparator.
+Ordered kinds obtain comparison from the registered CMeta type descriptor;
+their typed declarations do not take a parallel comparator token. `Map` is an
+ordered B-tree map and requires key `COMPARE`. `HashMap` is an independent
+open-addressed hash table and requires key `HASH` and `EQUAL`. `List` is an
+independent doubly-linked list whose reserved nodes form a reusable free pool.
 
 ## Generated low-level typed ABI
 
 ```c
-IntList values;
-IntList_init(&values);
+IntList values = {0};
+IntList_init(&values, 100);
 IntList_push_back(&values, 10);
 IntList_push_back(&values, 20);
 int *p = IntList_at(&values, 0);

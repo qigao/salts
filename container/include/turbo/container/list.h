@@ -1,122 +1,84 @@
 #ifndef TURBO_LIST_H
 #define TURBO_LIST_H
 
-#include <turbo/container/deque.h>
+#include <cmeta/cmeta.h>
+#include <turbo/container/export.h>
+#include <turbo/container/status.h>
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct {
-  turbo_deque_t raw;
+typedef struct turbo_list_node turbo_list_node_t;
+
+typedef struct turbo_list {
+  turbo_list_node_t *head;
+  turbo_list_node_t *tail;
+  turbo_list_node_t *free_nodes;
+  size_t size;
+  size_t capacity;
+  size_t elem_size;
+  size_t elem_stride;
+  size_t elem_align;
+  size_t element_limit;
+  const cmeta_type_desc *element_type;
+  uint64_t generation;
+  bool initialized;
 } turbo_list_t;
 
-static inline container_status turbo_list_init(turbo_list_t *list,
-                                                const cmeta_type_desc *type,
-                                                size_t element_limit) {
-  return list == NULL ? CONTAINER_INVALID_ARGUMENT
-                      : turbo_deque_init(&list->raw, type, element_limit);
-}
-
-static inline container_status turbo_list_init_bytes(turbo_list_t *list, size_t elem_size,
-                                                      size_t elem_align,
-                                                      size_t element_limit) {
-  return list == NULL ? CONTAINER_INVALID_ARGUMENT
-                      : turbo_deque_init_bytes(&list->raw, elem_size, elem_align,
-                                               element_limit);
-}
-
-static inline void turbo_list_destroy(turbo_list_t *list) {
-  turbo_deque_destroy(&list->raw);
-}
-
-static inline void turbo_list_clear(turbo_list_t *list) {
-  turbo_deque_clear(&list->raw);
-}
-
-static inline int turbo_list_reserve(turbo_list_t *list, size_t min_capacity) {
-  return turbo_deque_reserve(&list->raw, min_capacity);
-}
-
-static inline int turbo_list_push_front(turbo_list_t *list, const void *elem) {
-  return turbo_deque_push_front(&list->raw, elem);
-}
-
-static inline int turbo_list_push_back(turbo_list_t *list, const void *elem) {
-  return turbo_deque_push_back(&list->raw, elem);
-}
-
-static inline int turbo_list_pop_front(turbo_list_t *list, void *out_elem) {
-  return turbo_deque_pop_front(&list->raw, out_elem);
-}
-
-static inline int turbo_list_pop_back(turbo_list_t *list, void *out_elem) {
-  return turbo_deque_pop_back(&list->raw, out_elem);
-}
-
-static inline void *turbo_list_front(turbo_list_t *list) {
-  return turbo_deque_front(&list->raw);
-}
-
-static inline const void *turbo_list_front_const(const turbo_list_t *list) {
-  return turbo_deque_front_const(&list->raw);
-}
-
-static inline void *turbo_list_back(turbo_list_t *list) {
-  return turbo_deque_back(&list->raw);
-}
-
-static inline const void *turbo_list_back_const(const turbo_list_t *list) {
-  return turbo_deque_back_const(&list->raw);
-}
-
-static inline void *turbo_list_at(turbo_list_t *list, size_t index) {
-  return turbo_deque_at(&list->raw, index);
-}
-
-static inline const void *turbo_list_at_const(const turbo_list_t *list, size_t index) {
-  return turbo_deque_at_const(&list->raw, index);
-}
-
-static inline size_t turbo_list_size(const turbo_list_t *list) {
-  return turbo_deque_size(&list->raw);
-}
-
-static inline size_t turbo_list_capacity(const turbo_list_t *list) {
-  return turbo_deque_capacity(&list->raw);
-}
-
-static inline uint64_t turbo_list_generation(const turbo_list_t *list) {
-  return list == NULL ? UINT64_C(0) : turbo_deque_generation(&list->raw);
-}
-
-static inline bool turbo_list_empty(const turbo_list_t *list) {
-  return turbo_deque_empty(&list->raw);
-}
-
-/**
- * Initialize a list by copying count fixed-size elements from a contiguous array.
- *
- * elements may be NULL only when count is zero. On allocation failure, the
- * partially initialized list is destroyed and the error is returned.
- */
-static inline container_status turbo_list_from_array(
+/* List owns independently allocated, aligned node payloads. capacity() is the
+ * total number of live plus reusable free nodes; clear() destroys live values
+ * and retains all nodes in the free pool. Handles start as `{0}` and borrow
+ * the type descriptor through destroy. */
+CONTAINER_API container_status turbo_list_init(
+    turbo_list_t *list, const cmeta_type_desc *element_type,
+    size_t element_limit);
+CONTAINER_API container_status turbo_list_init_bytes(
+    turbo_list_t *list, size_t elem_size, size_t elem_align,
+    size_t element_limit);
+CONTAINER_API container_status turbo_list_from_array(
     turbo_list_t *list, const void *elements, size_t count,
-    const cmeta_type_desc *type, size_t element_limit) {
-  return list == NULL
-             ? CONTAINER_INVALID_ARGUMENT
-             : turbo_deque_from_array(&list->raw, elements, count, type,
-                                      element_limit);
-}
-
-static inline container_status turbo_list_from_array_bytes(
+    const cmeta_type_desc *element_type, size_t element_limit);
+CONTAINER_API container_status turbo_list_from_array_bytes(
     turbo_list_t *list, const void *elements, size_t count,
-    size_t elem_size, size_t elem_align, size_t element_limit) {
-  return list == NULL
-             ? CONTAINER_INVALID_ARGUMENT
-             : turbo_deque_from_array_bytes(&list->raw, elements, count, elem_size, elem_align,
-                                            element_limit);
-}
+    size_t elem_size, size_t elem_align, size_t element_limit);
+CONTAINER_API void turbo_list_destroy(turbo_list_t *list);
+CONTAINER_API void turbo_list_clear(turbo_list_t *list);
+/* reserve() transactionally preallocates unconstructed nodes. It never moves
+ * live nodes, so success preserves borrowed pointers and Range generation.
+ * Failure leaves contents, capacity, pool, and generation unchanged. */
+CONTAINER_API container_status turbo_list_reserve(turbo_list_t *list,
+                                                   size_t min_capacity);
+CONTAINER_API container_status turbo_list_push_front(turbo_list_t *list,
+                                                      const void *elem);
+CONTAINER_API container_status turbo_list_push_back(turbo_list_t *list,
+                                                     const void *elem);
+/* Non-NULL output is aligned uninitialized storage and receives ownership by
+ * move. NULL output destroys the removed value. */
+CONTAINER_API container_status turbo_list_pop_front(turbo_list_t *list,
+                                                     void *out_elem);
+CONTAINER_API container_status turbo_list_pop_back(turbo_list_t *list,
+                                                    void *out_elem);
+CONTAINER_API void *turbo_list_front(turbo_list_t *list);
+CONTAINER_API const void *turbo_list_front_const(const turbo_list_t *list);
+CONTAINER_API void *turbo_list_back(turbo_list_t *list);
+CONTAINER_API const void *turbo_list_back_const(const turbo_list_t *list);
+CONTAINER_API void *turbo_list_at(turbo_list_t *list, size_t index);
+CONTAINER_API const void *turbo_list_at_const(const turbo_list_t *list,
+                                              size_t index);
+CONTAINER_API size_t turbo_list_size(const turbo_list_t *list);
+CONTAINER_API size_t turbo_list_capacity(const turbo_list_t *list);
+CONTAINER_API uint64_t turbo_list_generation(const turbo_list_t *list);
+CONTAINER_API bool turbo_list_empty(const turbo_list_t *list);
+/* cursor is zero before first use and SIZE_MAX after exhaustion. The returned
+ * pointer is borrowed until the next successful mutation or destroy. */
+CONTAINER_API bool turbo_list_range_next(const turbo_list_t *list,
+                                         size_t *cursor,
+                                         const void **out_value);
 
 #ifdef __cplusplus
 }

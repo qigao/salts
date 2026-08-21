@@ -43,6 +43,16 @@ cmake_add_test(container_tree_test
   LIBS TurboUtils::Container TurboUtils::TinyTest
   FOLDER "container/tests")
 
+cmake_add_test(container_list_test
+  SOURCES container_list_test.c
+  LIBS TurboUtils::Container TurboUtils::TinyTest
+  FOLDER "container/tests")
+
+cmake_add_test(container_map_test
+  SOURCES container_map_test.c
+  LIBS TurboUtils::Container TurboUtils::TinyTest
+  FOLDER "container/tests")
+
 cmake_add_test(container_entry_test
   SOURCES container_entry_test.c
   LIBS TurboUtils::Container TurboUtils::TinyTest
@@ -108,6 +118,8 @@ set_target_properties(
   container_hash_test
   container_typed_test
   container_tree_test
+  container_list_test
+  container_map_test
   container_entry_test
   container_sort_test
   PROPERTIES

@@ -64,6 +64,39 @@
         name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory) \
     };
 
+#define CMETA_CONTAINER1_LINK_RANGE_DEFINE(name, type, prefix, flags, version_accessor, collector_factory) \
+    CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
+        CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL, NULL \
+    }; \
+    CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
+        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, NULL \
+    }; \
+    CMETA_INLINE size_t name##_cmeta_range_size(const void *object) { \
+        const name *self = (const name *)object; \
+        return self ? CMETA_CONTAINER_API(prefix, size)(&self->raw) : 0U; \
+    } \
+    CMETA_INLINE cmeta_gen_status name##_cmeta_range_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
+        const name *self = (const name *)object; const void *value = NULL; \
+        if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
+        if (!CMETA_CONTAINER_API(prefix, range_next)(&self->raw, cursor, &value)) return CMETA_GEN_DONE; \
+        memcpy(out_value, value, sizeof(type)); \
+        return *cursor == SIZE_MAX ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE; \
+    } \
+    CMETA_INLINE cmeta_range name##_range(const name *self) { \
+        cmeta_range range = { self, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), (flags), \
+            name##_cmeta_range_size, name##_cmeta_range_next, \
+            cmeta_range_capture_version((version_accessor), self), (version_accessor) }; \
+        return range; \
+    } \
+    CMETA_INLINE cmeta_range name##_cmeta_erased_range(const void *object) { \
+        return name##_range((const name *)object); \
+    } \
+    CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
+        CMETA_CONTAINER_STR(name), &name##_cmeta_type, \
+        CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), NULL, NULL, \
+        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory) \
+    };
+
 /* -------------------------------------------------------------------------
  * One-type facade
  * ------------------------------------------------------------------------- */

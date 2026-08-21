@@ -83,7 +83,47 @@ static void reset_counts(void) {
     fail_copy_on = 0u;
 }
 
+static size_t constant_hash(const void *key, size_t key_size, void *context) {
+    (void)key;
+    (void)key_size;
+    (void)context;
+    return 1u;
+}
+
 suite("Container hash ownership") {
+    it("keeps collisions tombstones and rehash inside bucket arrays") {
+        turbo_hash_map_t map = {0};
+        int key;
+        const int value = 90;
+        size_t capacity;
+        uint64_t generation;
+
+        check_equal(turbo_hash_map_init_bytes(
+                        &map, sizeof(int), _Alignof(int), sizeof(int),
+                        _Alignof(int), 8u, constant_hash,
+                        turbo_hash_key_equal, NULL), CONTAINER_OK);
+        for (key = 0; key < 6; ++key)
+            check_equal(turbo_hash_map_put(&map, &key, &value), CONTAINER_OK);
+        check_true((uintptr_t)map.states < (uintptr_t)map.hashes);
+        check_true((uintptr_t)map.hashes < (uintptr_t)map.keys);
+        check_true((uintptr_t)map.keys < (uintptr_t)map.values);
+        for (key = 0; key < 4; ++key)
+            check_equal(turbo_hash_map_remove(&map, &key, NULL), CONTAINER_OK);
+        check_equal(map.tombstones, (size_t)4u);
+        capacity = turbo_hash_map_capacity(&map);
+        generation = turbo_hash_map_generation(&map);
+        check_equal(turbo_hash_map_reserve(&map, 2u), CONTAINER_OK);
+        check_equal(turbo_hash_map_capacity(&map), capacity);
+        check_equal(map.tombstones, (size_t)0u);
+        check_equal(turbo_hash_map_generation(&map), generation + 1u);
+        for (key = 4; key < 6; ++key)
+            check_equal(*(const int *)turbo_hash_map_get_const(&map, &key),
+                        value);
+        for (key = 0; key < 4; ++key)
+            check_equal(turbo_hash_map_get_const(&map, &key), NULL);
+        turbo_hash_map_destroy(&map);
+    }
+
     it("requires explicit raw callbacks and typed key traits") {
         turbo_hash_map_t map = {0};
 

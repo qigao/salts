@@ -18,6 +18,8 @@ typedef bool (*turbo_hash_equal_fn)(const void *left, const void *right, size_t 
                                     void *ctx);
 
 typedef struct {
+  /* One checked allocation is partitioned into four bucket-indexed arrays:
+   * states/hashes metadata plus contiguous aligned key/value payload arrays. */
   uint8_t *states;
   size_t *hashes;
   unsigned char *keys;
@@ -45,7 +47,8 @@ CONTAINER_API size_t turbo_hash_bytes(const void *key, size_t key_size, void *ct
 CONTAINER_API bool turbo_hash_key_equal(const void *left, const void *right, size_t key_size,
                                         void *ctx);
 
-/* Stored type descriptors, raw hash/equality callbacks, and ctx are borrowed;
+/* HashMap is an independent open-addressed hash table, not an ordered tree.
+ * Stored type descriptors, raw hash/equality callbacks, and ctx are borrowed;
  * the caller keeps them valid until destroy. Handles must first be initialized with `{0}`. Typed keys require equal,
  * hash, copy, move, and destroy traits; typed values require copy, move, and
  * destroy traits. A destroyed handle may be reused. */

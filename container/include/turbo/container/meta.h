@@ -110,7 +110,7 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
  }
 #define TURBO_META_C2_GENERATION(name,prefix) TURBO_META_C1_GENERATION(name,prefix)
 
-#define TURBO_META_MAP_METHODS(M,C) \
+#define TURBO_META_HASH_MAP_METHODS(M,C) \
  M(INIT_KV_HASH,init,init,_,C) M(FROM_ENTRIES,from,from,CONTAINER_INVALID_ARGUMENT,C) \
  M(DESTROY,destroy,destroy,_,C) M(CLEAR,clear,clear,_,C) \
  M(RESERVE,reserve,reserve,_,C) M(PUT,put,put,_,C) M(GET,get,get,_,C) \
@@ -119,7 +119,16 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
  M(CAPACITY,capacity,capacity,_,C) M(EMPTY,empty,empty,_,C) \
  M(KEY_AT,key_at,key_at,_,C) M(KEY_AT_CONST,key_at_const,key_at_const,_,C) \
  M(VALUE_AT,value_at,value_at,_,C) M(VALUE_AT_CONST,value_at_const,value_at_const,_,C)
-#define TURBO_META_HASH_MAP_METHODS(M,C) TURBO_META_MAP_METHODS(M,C)
+
+#define TURBO_META_MAP_METHODS(M,C) \
+ M(INIT_KV_COMPARE,init,init,_,C) M(FROM_ENTRIES,from,from,CONTAINER_INVALID_ARGUMENT,C) \
+ M(DESTROY,destroy,destroy,_,C) M(CLEAR,clear,clear,_,C) \
+ M(RESERVE,reserve,reserve,_,C) M(PUT,put,put,_,C) M(GET,get,get,_,C) \
+ M(GET_CONST,get_const,get_const,_,C) M(CONTAINS,contains,contains,_,C) \
+ M(REMOVE_STATUS_BOOL,remove,remove,_,C) M(SIZE,size,size,_,C) \
+ M(CAPACITY,capacity,capacity,_,C) M(EMPTY,empty,empty,_,C) \
+ M(KEY_AT,key_at,key_at,_,C) M(KEY_AT_CONST,key_at_const,key_at_const,_,C) \
+ M(VALUE_AT,value_at,value_at,_,C) M(VALUE_AT_CONST,value_at_const,value_at_const,_,C)
 
 #define TURBO_META_MULTIMAP_METHODS(M,C) \
  M(INIT_KV_MULTIMAP,init,init,_,C) \
@@ -151,14 +160,14 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
  * adapters remain thin language-policy shims that reference these rows. */
 #define TURBO_CONTAINER_KIND_ROW_Vec (Vec,1,C1_INDEX,turbo_vec_t,turbo_vec,TURBO_META_VEC_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_CONTIGUOUS|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
 #define TURBO_CONTAINER_KIND_ROW_Deque (Deque,1,C1_INDEX,turbo_deque_t,turbo_deque,TURBO_META_DEQUE_METHODS,push_back,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
-#define TURBO_CONTAINER_KIND_ROW_List (List,1,C1_INDEX,turbo_list_t,turbo_list,TURBO_META_LIST_METHODS,push_back,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,0,0,0)
+#define TURBO_CONTAINER_KIND_ROW_List (List,1,C1_LINK,turbo_list_t,turbo_list,TURBO_META_LIST_METHODS,push_back,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,0,0,0)
 #define TURBO_CONTAINER_KIND_ROW_Stack (Stack,1,C1_INDEX,turbo_stack_t,turbo_stack,TURBO_META_STACK_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
 #define TURBO_CONTAINER_KIND_ROW_Queue (Queue,1,C1_INDEX,turbo_queue_t,turbo_queue,TURBO_META_QUEUE_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
 #define TURBO_CONTAINER_KIND_ROW_Heap (Heap,1,C1_INDEX,turbo_heap_t,turbo_heap,TURBO_META_HEAP_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
 #define TURBO_CONTAINER_KIND_ROW_Set (Set,1,C1_SLOT,turbo_set_t,turbo_set,TURBO_META_SET_METHODS,add,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,0,0,0)
 #define TURBO_CONTAINER_KIND_ROW_HashSet (HashSet,1,C1_SLOT,turbo_hash_set_t,turbo_hash_set,TURBO_META_HASH_SET_METHODS,add,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,0,0,0)
 #define TURBO_CONTAINER_KIND_ROW_HashMap (HashMap,2,C2_HASH,turbo_hash_map_t,turbo_hash_map,TURBO_META_HASH_MAP_METHODS,_,key_at,value_at_const,0,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
-#define TURBO_CONTAINER_KIND_ROW_Map (Map,2,C2_HASH,turbo_map_t,turbo_map,TURBO_META_MAP_METHODS,_,key_at_const,value_at_const,0,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
+#define TURBO_CONTAINER_KIND_ROW_Map (Map,2,C2_LINK,turbo_map_t,turbo_map,TURBO_META_MAP_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
 #define TURBO_CONTAINER_KIND_ROW_MultiMap (MultiMap,2,C2_MULTIMAP,turbo_multimap_t,turbo_multimap,TURBO_META_MULTIMAP_METHODS,_,key_at_const,value_at_const,0,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE)
 #define TURBO_CONTAINER_KIND_ROW_BTree (BTree,2,C2_LINK,turbo_btree_t,turbo_btree,TURBO_META_BTREE_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
 #define TURBO_CONTAINER_KIND_ROW_BPlusTree (BPlusTree,2,C2_LINK,turbo_bplus_tree_t,turbo_bplus_tree,TURBO_META_BPLUS_TREE_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
@@ -172,6 +181,8 @@ CMETA_INLINE cmeta_status turbo_container_cmeta_status(container_status status) 
 
 #define TURBO_CONTAINER_KIND_DEFINE_C1_INDEX(name,type,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
  CMETA_CONTAINER1_DEFINE(name,type,raw,prefix,CONTAINER_OK,_,methods) TURBO_META_C1_GENERATION(name,prefix) TURBO_META_C1_COLLECTOR(name,type,accept) CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name,type,prefix,range_flags,name##_cmeta_generation,name##_collector)
+#define TURBO_CONTAINER_KIND_DEFINE_C1_LINK(name,type,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
+ CMETA_CONTAINER1_DEFINE(name,type,raw,prefix,CONTAINER_OK,_,methods) TURBO_META_C1_GENERATION(name,prefix) TURBO_META_C1_COLLECTOR(name,type,accept) CMETA_CONTAINER1_LINK_RANGE_DEFINE(name,type,prefix,range_flags,name##_cmeta_generation,name##_collector)
 #define TURBO_CONTAINER_KIND_DEFINE_C1_SLOT(name,type,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
  CMETA_CONTAINER1_DEFINE(name,type,raw,prefix,CONTAINER_OK,_,methods) TURBO_META_C1_GENERATION(name,prefix) TURBO_META_C1_COLLECTOR(name,type,accept) CMETA_CONTAINER1_SLOT_RANGE_DEFINE(name,type,prefix,range_flags,name##_cmeta_generation,name##_collector)
 #define TURBO_CONTAINER_KIND_DEFINE_C2_HASH(name,k,v,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \

@@ -36,6 +36,8 @@ typedef struct turbo_bplus_tree_node {
   struct turbo_bplus_tree_node **children;
   struct turbo_bplus_tree_node *parent;
   struct turbo_bplus_tree_node *next;
+  /* Borrowed derived metadata: the first leaf key in this subtree. */
+  void *first_key;
 } turbo_bplus_tree_node_t;
 
 typedef struct {
@@ -57,13 +59,18 @@ typedef struct {
   const cmeta_type_desc *value_type;
   turbo_bplus_tree_compare_fn compare;
   void *compare_ctx;
+  /* Cumulative mutation-maintenance node reads. This diagnostic counter does
+   * not participate in logical generation and lets complexity tests measure
+   * structural work without timing thresholds. */
+  uint64_t maintenance_node_visits;
   uint64_t generation;
   bool initialized;
 } turbo_bplus_tree_t;
 
-/* Leaf entries own aligned key/value objects. Internal separator pointers are
- * borrowed from leaves and are refreshed only along the modified ancestor
- * path. Search, put, and remove are O(log n) for fixed min_degree;
+/* Leaf entries own aligned key/value objects. Internal separators and
+ * first_key metadata borrow leaf keys and are refreshed only along the
+ * modified ancestor path; they never destroy or retain keys independently.
+ * Search, put, and remove are O(log n) for fixed min_degree;
  * from-arrays is O(rows log live_entries). Indexed lookup is O(n), while the
  * ordered Range cursor follows derived entry links in O(n) total. */
 CONTAINER_API container_status turbo_bplus_tree_init(

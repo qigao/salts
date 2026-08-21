@@ -33,6 +33,36 @@ static uint32_t tree_test_random(void) {
     return value;
 }
 
+static size_t bplus_tree_height(const turbo_bplus_tree_t *tree) {
+    const turbo_bplus_tree_node_t *node = tree->root;
+    size_t height = 0u;
+    while (node != NULL) {
+        ++height;
+        node = node->is_leaf ? NULL : node->children[0];
+    }
+    return height;
+}
+
+static bool bplus_metadata_is_valid(const turbo_bplus_tree_node_t *node) {
+    size_t index;
+    if (node == NULL) return true;
+    if (node->is_leaf)
+        return node->first_key ==
+               (node->num_keys == 0u ? NULL : node->keys[0]);
+    if (node->children[0] == NULL ||
+        node->first_key != node->children[0]->first_key)
+        return false;
+    for (index = 0u; index <= node->num_keys; ++index) {
+        if (node->children[index] == NULL ||
+            !bplus_metadata_is_valid(node->children[index]))
+            return false;
+        if (index != 0u &&
+            node->keys[index - 1u] != node->children[index]->first_key)
+            return false;
+    }
+    return true;
+}
+
 typedef struct owned_tree_value {
     int *value;
 } owned_tree_value;
@@ -199,6 +229,84 @@ spec("Container trees") {
         IntPlusTree_destroy(&tree);
     }
 
+    it("shrinks a BPlusTree root without revisiting the retired root") {
+        IntPlusTree tree = {0};
+        turbo_bplus_tree_node_t *retired_root;
+        cmeta_range range;
+        cmeta_range_cursor cursor = 0u;
+        IntPlusTree_entry entry = {0};
+        uint64_t generation;
+        long out = -1L;
+        int key;
+
+        check_equal(IntPlusTree_init_with_order(&tree, 2u, 4u), CONTAINER_OK);
+        for (key = 0; key < 4; ++key)
+            check_equal(IntPlusTree_put(&tree, key, (long)key + 100L),
+                        CONTAINER_OK);
+        check_equal(bplus_tree_height(&tree.raw), (size_t)2u);
+        retired_root = tree.raw.root;
+        generation = turbo_bplus_tree_generation(&tree.raw);
+
+        check_equal(IntPlusTree_remove(&tree, 0, &out), CONTAINER_OK);
+        check_equal(out, 100L);
+        check_equal(turbo_bplus_tree_generation(&tree.raw), ++generation);
+        check_equal(IntPlusTree_remove(&tree, 1, &out), CONTAINER_OK);
+        check_equal(out, 101L);
+        check_equal(turbo_bplus_tree_generation(&tree.raw), ++generation);
+        check_equal(bplus_tree_height(&tree.raw), (size_t)2u);
+        check_equal(IntPlusTree_remove(&tree, 2, &out), CONTAINER_OK);
+        check_equal(out, 102L);
+        check_equal(turbo_bplus_tree_generation(&tree.raw), ++generation);
+        check_not_equal((const void *)tree.raw.root,
+                        (const void *)retired_root);
+        check_true(tree.raw.root != NULL && tree.raw.root->is_leaf);
+        check_true(tree.raw.root->parent == NULL);
+        check_equal(bplus_tree_height(&tree.raw), (size_t)1u);
+        check_true(bplus_metadata_is_valid(tree.raw.root));
+
+        range = IntPlusTree_entries_range(&tree);
+        for (key = 3; key < 4; ++key) {
+            cmeta_gen_status status = cmeta_range_next(&range, &cursor,
+                                                       &entry);
+            check_true(status == CMETA_GEN_VALUE ||
+                       status == CMETA_GEN_VALUE_AND_DONE);
+            check_equal(entry.key, key);
+            check_equal(entry.value, (long)key + 100L);
+        }
+        check_equal(cmeta_range_next(&range, &cursor, &entry),
+                    CMETA_GEN_DONE);
+
+        check_equal(IntPlusTree_size(&tree), (size_t)1u);
+        check_equal(*IntPlusTree_get_const(&tree, 3), 103L);
+        IntPlusTree_destroy(&tree);
+    }
+
+    it("bounds BPlusTree separator maintenance to the modified path") {
+        turbo_bplus_tree_t tree = {0};
+        enum { ENTRY_COUNT = 4096, MAX_VISITS_PER_LEVEL = 5 };
+        uint64_t visits_before;
+        size_t height;
+        int key;
+        long value;
+
+        check_equal(turbo_bplus_tree_init_bytes_with_order(
+                        &tree, sizeof(int), _Alignof(int), sizeof(long),
+                        _Alignof(long), 2u, ENTRY_COUNT,
+                        raw_int_compare, NULL), CONTAINER_OK);
+        for (key = 0; key < ENTRY_COUNT; ++key) {
+            value = (long)key;
+            check_equal(turbo_bplus_tree_put(&tree, &key, &value),
+                        CONTAINER_OK);
+        }
+        height = bplus_tree_height(&tree);
+        visits_before = tree.maintenance_node_visits;
+        key = ENTRY_COUNT - 1;
+        check_equal(turbo_bplus_tree_remove(&tree, &key, NULL), CONTAINER_OK);
+        check_less_equal(tree.maintenance_node_visits - visits_before,
+                         height * MAX_VISITS_PER_LEVEL);
+        turbo_bplus_tree_destroy(&tree);
+    }
+
     it("keeps single tree mutations on one logarithmic search path") {
         turbo_btree_t btree = {0};
         turbo_bplus_tree_t bplus = {0};
@@ -338,6 +446,7 @@ spec("Container trees") {
                 int probe;
                 check_equal(IntTree_size(&btree), live);
                 check_equal(IntPlusTree_size(&bplus), live);
+                check_true(bplus_metadata_is_valid(bplus.raw.root));
                 for (probe = 0; probe < KEY_COUNT; ++probe) {
                     const long *left = IntTree_get_const(&btree, probe);
                     const long *right = IntPlusTree_get_const(&bplus, probe);
@@ -465,6 +574,58 @@ spec("Container trees") {
         turbo_bplus_tree_destroy(&tree);
         owned_tree_destroy(&out);
         for (index = 0u; index < 8u; ++index) {
+            owned_tree_destroy(&values[index]);
+            owned_tree_destroy(&keys[index]);
+        }
+        check_equal(owned_tree_live, (size_t)0u);
+    }
+
+    it("preserves owning entries while shrinking a BPlusTree root") {
+        turbo_bplus_tree_t tree = {0};
+        owned_tree_value keys[4];
+        owned_tree_value values[4];
+        uint64_t generation;
+        size_t cursor = 0u;
+        size_t index;
+        const void *range_key = NULL;
+        const void *range_value = NULL;
+
+        check_equal(owned_tree_live, (size_t)0u);
+        owned_tree_fail_copy = false;
+        for (index = 0u; index < 4u; ++index) {
+            keys[index] = owned_tree_make((int)index);
+            values[index] = owned_tree_make((int)index + 100);
+        }
+        check_equal(turbo_bplus_tree_init_with_order(
+                        &tree, &owned_tree_type, &owned_tree_type, 2u, 4u),
+                    CONTAINER_OK);
+        for (index = 0u; index < 4u; ++index)
+            check_equal(turbo_bplus_tree_put(&tree, &keys[index],
+                                             &values[index]), CONTAINER_OK);
+        check_equal(bplus_tree_height(&tree), (size_t)2u);
+        generation = turbo_bplus_tree_generation(&tree);
+        for (index = 0u; index < 3u; ++index) {
+            owned_tree_value out = {0};
+            check_equal(turbo_bplus_tree_remove(&tree, &keys[index], &out),
+                        CONTAINER_OK);
+            check_true(out.value != NULL &&
+                       *out.value == (int)index + 100);
+            check_equal(turbo_bplus_tree_generation(&tree), ++generation);
+            owned_tree_destroy(&out);
+        }
+        check_true(tree.root != NULL && tree.root->is_leaf);
+        check_true(tree.root->parent == NULL);
+        check_true(bplus_metadata_is_valid(tree.root));
+        check_true(turbo_bplus_tree_range_next(
+            &tree, &cursor, &range_key, &range_value));
+        check_true(range_key != NULL &&
+                   *((const owned_tree_value *)range_key)->value == 3);
+        check_true(range_value != NULL &&
+                   *((const owned_tree_value *)range_value)->value == 103);
+        check_false(turbo_bplus_tree_range_next(
+            &tree, &cursor, &range_key, &range_value));
+        turbo_bplus_tree_destroy(&tree);
+        for (index = 0u; index < 4u; ++index) {
             owned_tree_destroy(&values[index]);
             owned_tree_destroy(&keys[index]);
         }
