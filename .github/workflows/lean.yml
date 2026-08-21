@@ -49,7 +49,8 @@ jobs:
           set -euo pipefail
           cmake --preset formal-linux
           cmake --build --preset build-formal-linux \
-            --target cmeta_plan_conformance_gen \
+            --target cmeta_type_identity_conformance_gen \
+                     cmeta_plan_conformance_gen \
                      cmeta_structured_conformance_gen \
                      cmeta_structured_policy_conformance_gen \
                      cmeta_optimizer_conformance_gen \
