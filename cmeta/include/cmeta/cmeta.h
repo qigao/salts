@@ -2,7 +2,9 @@
 #define CMETA_H
 
 #include <cmeta/interface.h>
+#include <cmeta/status.h>
 #include <cmeta/type_identity.h>
+#include <cmeta/type_traits.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -33,15 +35,49 @@ typedef struct cmeta_type_desc {
     cmeta_type_kind kind;
     const struct cmeta_type_desc *pointee;
     const cmeta_type_identity *identity;
+    const cmeta_type_traits *traits;
 } cmeta_type_desc;
+
+const cmeta_type_identity *cmeta_type_identity_of(const cmeta_type_desc *desc);
+bool cmeta_type_desc_valid(const cmeta_type_desc *desc);
+bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b);
+
+static inline cmeta_status cmeta_type_require_traits(
+    const cmeta_type_desc *type, cmeta_trait_flags required) {
+    const cmeta_type_traits *traits;
+
+    if (type == NULL || (required & ~CMETA_TRAIT_MASK) != 0u)
+        return CMETA_INVALID_ARGUMENT;
+    if (required == 0u)
+        return CMETA_OK;
+
+    traits = type->traits;
+    if (traits == NULL || (traits->flags & required) != required)
+        return CMETA_TRAIT_MISSING;
+    if ((required & CMETA_TRAIT_EQUAL) != 0u && traits->equal == NULL)
+        return CMETA_TRAIT_MISSING;
+    if ((required & CMETA_TRAIT_HASH) != 0u && traits->hash == NULL)
+        return CMETA_TRAIT_MISSING;
+    if ((required & CMETA_TRAIT_COMPARE) != 0u && traits->compare == NULL)
+        return CMETA_TRAIT_MISSING;
+    if ((required & CMETA_TRAIT_COPY) != 0u && traits->copy_construct == NULL)
+        return CMETA_TRAIT_MISSING;
+    if ((required & CMETA_TRAIT_MOVE) != 0u && traits->move_construct == NULL)
+        return CMETA_TRAIT_MISSING;
+    if ((required & CMETA_TRAIT_DESTROY) != 0u && traits->destroy == NULL)
+        return CMETA_TRAIT_MISSING;
+    return CMETA_OK;
+}
 
 Enum(cmeta_gen_status,
     (CMETA_GEN_VALUE,          1, "value"),
     (CMETA_GEN_VALUE_AND_DONE, 2, "value_and_done"),
     (CMETA_GEN_DONE,           3, "done"),
-    (CMETA_GEN_ERROR,          4, "error")
+    (CMETA_GEN_ERROR,          4, "error"),
+    (CMETA_GEN_MUTATED,        5, "mutated")
 );
 
+#ifndef __cplusplus
 #include <cmeta/signatures.h>
 
 extern const cmeta_type_desc cmeta_type_void;
@@ -58,9 +94,6 @@ extern const cmeta_type_desc cmeta_type_gen_status;
 CMETA_PP_FOR_EACH_A(CMETA_DECLARE_TYPE, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_DECLARE_TYPE
 
-const cmeta_type_identity *cmeta_type_identity_of(const cmeta_type_desc *desc);
-bool cmeta_type_desc_valid(const cmeta_type_desc *desc);
-bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b);
 size_t cmeta_type_registry_count(void);
 const cmeta_type_desc *cmeta_type_registry_at(size_t index);
 const cmeta_type_desc *cmeta_type_find(const char *name);
@@ -295,6 +328,8 @@ bool cmeta_callable_same(cmeta_callable a, cmeta_callable b);
 bool cmeta_callable_invoke(const cmeta_callable *fn, void *out, const void *const *args);
 cmeta_gen_status cmeta_callable_generate(const cmeta_callable *fn, const void *input,
                                          void *out, size_t *cursor);
+
+#endif /* !__cplusplus */
 
 #ifdef __cplusplus
 }
