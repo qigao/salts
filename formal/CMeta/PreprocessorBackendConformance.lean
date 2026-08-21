@@ -7,8 +7,8 @@ import CMeta.NestedReplayClangGeneratedC
 # Preprocessor backend identity conformance
 
 The nested-replay certificate must be attached to explicit compiler backends
-rather than treated as a universal C11 fact.  GCC and Clang are independently
-witnessed and compared through the shared replay lowering abstraction.
+rather than treated as a universal C11 fact. GCC and Clang are independently
+witnessed and registered through the shared replay lowering abstraction.
 -/
 
 namespace CMeta
@@ -30,6 +30,15 @@ private def clangBackend : PreprocessorBackend :=
     deferredSameProducerAccepted := NestedReplayClangGeneratedC.deferredSameProducerAccepted
     certifiedSameProducerDepth := NestedReplayClangGeneratedC.certifiedSameProducerDepth }
 
+private def gccCertified : CertifiedPreprocessorBackend :=
+  ⟨gccBackend, by native_decide⟩
+
+private def clangCertified : CertifiedPreprocessorBackend :=
+  ⟨clangBackend, by native_decide⟩
+
+private def certifiedRegistry : PreprocessorBackendRegistry :=
+  ⟨[gccCertified, clangCertified]⟩
+
 private def reentrantIR : ReplayIR :=
   .replay 1 (.replay 2 (.replay 1 .emit))
 
@@ -49,39 +58,44 @@ theorem CPreprocessorBackendConformance.compiler_versions_are_concrete :
     0 < NestedReplayClangGeneratedC.compilerMajorVersion := by
   native_decide
 
-/-- Exact strict-C11 mode is part of both backend certificates. -/
+/-- Exact strict-C11 mode is part of both backend identities. -/
 theorem CPreprocessorBackendConformance.language_modes_are_c11 :
     NestedReplayGccGeneratedC.languageStandard = LanguageMode.c11.standardValue ∧
     NestedReplayClangGeneratedC.languageStandard = LanguageMode.c11.standardValue := by
   native_decide
 
-/-- Replay lowering consumes the capability projected from the identified
-    backend rather than a free-standing depth value. -/
-theorem CPreprocessorBackendConformance.capability_projection :
-    gccBackend.replayCapability.certifiedSameProducerDepth =
-      gccBackend.certifiedSameProducerDepth ∧
-    clangBackend.replayCapability.certifiedSameProducerDepth =
-      clangBackend.certifiedSameProducerDepth := by
+/-- The registry contains only replay-certified backends by construction. -/
+theorem CPreprocessorBackendConformance.registry_contains_two_certified_backends :
+    certifiedRegistry.entries.length = 2 := by
+  native_decide
+
+/-- Certification exposes the replay capability without losing the surrounding
+    compiler identity. -/
+theorem CPreprocessorBackendConformance.certified_capability_projection :
+    gccCertified.replayCapability = gccBackend.replayCapability ∧
+    clangCertified.replayCapability = clangBackend.replayCapability := by
   constructor <;> rfl
 
-/-- Both real compiler backends require deferred replay for active same-ID
-    re-entry under the witnessed strict-C11 configuration. -/
+/-- Both currently registered real compiler backends require deferred replay
+    for active same-ID re-entry under strict C11. -/
 theorem CPreprocessorBackendConformance.both_require_deferred :
-    gccBackend.requiresDeferred = true ∧ clangBackend.requiresDeferred = true := by
+    gccCertified.backend.requiresDeferred = true ∧
+    clangCertified.backend.requiresDeferred = true := by
   native_decide
 
-/-- The currently witnessed GCC and Clang backends expose the same certified
+/-- The currently witnessed GCC and Clang entries expose the same certified
     replay capability envelope. -/
 theorem CPreprocessorBackendConformance.capabilities_agree :
-    gccBackend.replayCapability = clangBackend.replayCapability := by
+    gccCertified.replayCapability = clangCertified.replayCapability := by
   native_decide
 
-/-- Therefore the same re-entry IR lowers identically through either compiler
-    capability, while compiler identity remains explicit outside the lowering. -/
+/-- Portability is now a generic theorem over any two certified backends with
+    equal replay capabilities, rather than a GCC/Clang-specific pair theorem. -/
 theorem CPreprocessorBackendConformance.reentry_lowering_is_portable :
-    lowerReplayBackendPlan gccBackend.replayCapability reentrantIR =
-      lowerReplayBackendPlan clangBackend.replayCapability reentrantIR := by
-  native_decide
+    lowerReplayBackendPlan gccCertified.replayCapability reentrantIR =
+      lowerReplayBackendPlan clangCertified.replayCapability reentrantIR := by
+  exact certifiedReplayLowering_eq_of_capability_eq
+    gccCertified clangCertified reentrantIR (by native_decide)
 
 end Producer
 end CMeta
