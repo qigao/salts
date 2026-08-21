@@ -138,14 +138,14 @@ private theorem lookup_none_congr
   constructor
   · intro hleft
     cases hright : right.lookup key with
-    | none => exact hright
+    | none => rfl
     | some backend =>
         unfold observe at hobserve
         rw [hleft, hright] at hobserve
         simp at hobserve
   · intro hright
     cases hleft : left.lookup key with
-    | none => exact hleft
+    | none => rfl
     | some backend =>
         unfold observe at hobserve
         rw [hleft, hright] at hobserve
@@ -184,7 +184,8 @@ theorem insert_congr
         hkeys.1 hleftPresent
       have hright : right.insert backend = none :=
         (insert_eq_none_iff right backend).2 hrightPresent
-      rw [hleft, hright]
+      rw [hright]
+      change True
       trivial
   | some leftInserted =>
       have hleftFresh :
@@ -205,7 +206,6 @@ theorem insert_congr
             (insert_eq_none_iff right backend).1 hright
           exact (hrightFresh hrightPresent).elim
       | some rightInserted =>
-          rw [hleft, hright]
           change leftInserted ≈ rightInserted
           intro observedKey
           by_cases htarget : backend.key = observedKey
@@ -234,7 +234,8 @@ theorem replace_congr
   cases hleft : left.lookup backend.key with
   | none =>
       have hright : right.lookup backend.key = none := hnone.1 hleft
-      rw [hleft, hright]
+      rw [hright]
+      change True
       trivial
   | some existing =>
       have hrightNotNone : right.lookup backend.key ≠ none := by
@@ -245,7 +246,9 @@ theorem replace_congr
       cases hright : right.lookup backend.key with
       | none => exact (hrightNotNone hright).elim
       | some rightExisting =>
-          rw [hleft, hright]
+          change MutationResultEquivalent
+            ((left.remove backend.key).insert backend)
+            ((right.remove backend.key).insert backend)
           exact insert_congr (remove_congr heq backend.key) backend
 
 end PreprocessorBackendRegistry
