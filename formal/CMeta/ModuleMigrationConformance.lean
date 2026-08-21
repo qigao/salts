@@ -5,6 +5,8 @@ import CMeta.Lambda
 import CMeta.Dispatch
 import CMeta.Flow
 import CMeta.Graph
+import CMeta.Optimize
+import CMeta.Lowering
 
 #check CMeta.product
 #check CMeta.CoreExpr
@@ -103,3 +105,23 @@ assert_not_exists CMeta.TypedRelation.progress
 assert_not_exists CMeta.TypedRelation.output_unique
 assert_not_exists CMeta.TypedGraph.progress
 assert_not_exists CMeta.TypedGraph.output_unique
+
+#check CMeta.MapChain
+#check CMeta.MapChain.run
+#check CMeta.MapChain.signatures
+#check CMeta.MapChain.check
+#check CMeta.FusedMap
+#check CMeta.canonicalizeMapLike
+#check CMeta.IdempotentEndomap
+
+assert_not_exists CMeta.MapChain.run_cons
+assert_not_exists CMeta.canonicalizeMapLike_preserves_type
+assert_not_exists CMeta.duplicate_idempotent_elimination_type
+
+#check CMeta.SurfaceZip
+#check CMeta.ErasedInvokeRelation
+#check CMeta.checkInvokeRelation
+#check CMeta.SurfaceZip.lower
+
+assert_not_exists CMeta.SurfaceZip.lowering_progress
+assert_not_exists CMeta.SurfaceZip.lowering_output_unique
