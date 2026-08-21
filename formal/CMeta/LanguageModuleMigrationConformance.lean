@@ -2,6 +2,7 @@ import CMeta.Producer
 import CMeta.FmtArgs
 import CMeta.NestedReplay
 import CMeta.NestedReplayLowering
+import CMeta.PreprocessorBackend
 
 #check CMeta.Producer.replay
 #check CMeta.Producer.append
@@ -45,3 +46,36 @@ assert_not_exists CMeta.Producer.lowerReplayIR_isSome_iff
 #check CMeta.Producer.nestedReplay_same_length
 #check CMeta.Producer.lowerSameProducerDepth_progress
 #check CMeta.Producer.lowerReplayIR_progress
+
+#check CMeta.Producer.CompilerFamily
+#check CMeta.Producer.CompilerFamily.tag
+#check CMeta.Producer.LanguageMode
+#check CMeta.Producer.LanguageMode.standardValue
+#check CMeta.Producer.BackendKey
+#check CMeta.Producer.BackendQuery
+#check CMeta.Producer.PreprocessorBackend
+#check CMeta.Producer.PreprocessorBackend.key
+#check CMeta.Producer.PreprocessorBackend.replayCapability
+#check CMeta.Producer.PreprocessorBackend.requiresDeferred
+#check CMeta.Producer.PreprocessorBackend.IsReplayCertified
+#check CMeta.Producer.CertifiedPreprocessorBackend
+#check CMeta.Producer.CertifiedPreprocessorBackend.key
+#check CMeta.Producer.CertifiedPreprocessorBackend.replayCapability
+#check CMeta.Producer.CertifiedPreprocessorBackend.matchesQuery
+#check CMeta.Producer.CertifiedPreprocessorBackend.supportsReplay
+#check CMeta.Producer.PreprocessorBackendRegistry
+#check CMeta.Producer.PreprocessorBackendRegistry.lookup
+#check CMeta.Producer.PreprocessorBackendRegistry.supportingCandidates
+#check CMeta.Producer.PreprocessorBackendRegistry.insert
+#check CMeta.Producer.PreprocessorBackendRegistry.remove
+#check CMeta.Producer.PreprocessorBackendRegistry.replace
+
+assert_not_exists CMeta.Producer.CertifiedPreprocessorBackend.compilerVersionPositive
+assert_not_exists CMeta.Producer.CertifiedPreprocessorBackend.deferredSameProducerAccepted
+assert_not_exists CMeta.Producer.CertifiedPreprocessorBackend.certifiedDepthPositive
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.mem_supportingCandidates_iff
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.insert_eq_none_iff
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_eq_none_of_key_not_mem
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_insert_self_exact
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_remove_self
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_self_exact
