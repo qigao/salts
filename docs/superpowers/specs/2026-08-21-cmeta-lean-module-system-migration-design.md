@@ -1,6 +1,6 @@
 # CMeta Lean 4 Module-System Migration Design
 
-**Status:** Design approved in chat; awaiting spec review before implementation planning  
+**Status:** Plan A implemented and exact-head verified; Plan B pending  
 **Date:** 2026-08-21  
 **Scope:** `formal/` Lean proof/API organization only
 
