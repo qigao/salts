@@ -68,9 +68,37 @@ extern const cmeta_type_traits cmeta_traits_double;
 }
 #endif
 
-#define Traits(name, flags_, equal_, hash_, compare_, copy_, move_, destroy_) \
+/* Internal compatibility constructor for the normalized positional payload. */
+#define CMETA_TRAITS_POSITIONAL(name, flags_, equal_, hash_, compare_, copy_, move_, destroy_) \
     CMETA_LOCAL const cmeta_type_traits cmeta_traits_##name = { \
         (flags_), (equal_), (hash_), (compare_), (copy_), (move_), (destroy_) \
+    }
+
+#define CMETA_TRAIT_FLAG_equal   CMETA_TRAIT_EQUAL
+#define CMETA_TRAIT_FLAG_hash    CMETA_TRAIT_HASH
+#define CMETA_TRAIT_FLAG_compare CMETA_TRAIT_COMPARE
+#define CMETA_TRAIT_FLAG_copy    CMETA_TRAIT_COPY
+#define CMETA_TRAIT_FLAG_move    CMETA_TRAIT_MOVE
+#define CMETA_TRAIT_FLAG_destroy CMETA_TRAIT_DESTROY
+
+#define CMETA_TRAIT_INIT_equal(fn)   .equal = (fn),
+#define CMETA_TRAIT_INIT_hash(fn)    .hash = (fn),
+#define CMETA_TRAIT_INIT_compare(fn) .compare = (fn),
+#define CMETA_TRAIT_INIT_copy(fn)    .copy_construct = (fn),
+#define CMETA_TRAIT_INIT_move(fn)    .move_construct = (fn),
+#define CMETA_TRAIT_INIT_destroy(fn) .destroy = (fn),
+
+#define CMETA_TRAIT_FLAG_ROW(tag, fn) \
+    | CMETA_PP_CAT(CMETA_TRAIT_FLAG_, tag)
+#define CMETA_TRAIT_INIT_ROW(tag, fn) \
+    CMETA_PP_CAT(CMETA_TRAIT_INIT_, tag)(fn)
+
+/* Public heterogeneous trait schema. Flags and function slots are derived from
+ * the same tagged rows, so capability presence is declared exactly once. */
+#define Traits(name, ...) \
+    CMETA_LOCAL const cmeta_type_traits cmeta_traits_##name = { \
+        .flags = (cmeta_trait_flags)(0u Schema(CMETA_TRAIT_FLAG_ROW, __VA_ARGS__)), \
+        Schema(CMETA_TRAIT_INIT_ROW, __VA_ARGS__) \
     }
 
 #endif
