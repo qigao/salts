@@ -20,11 +20,12 @@ _Static_assert(CMETA_SIG_COUNT == 176,
 static const cmeta_type_desc *const known_probe = &cmeta_type_known_only;
 
 const cmeta_type_desc cmeta_type_known_only = {
-    "known_only_type",
-    sizeof(known_only_type),
-    _Alignof(known_only_type),
-    CMETA_T_OBJECT,
-    NULL
+    .name = "known_only_type",
+    .size = sizeof(known_only_type),
+    .align = _Alignof(known_only_type),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .identity = NULL
 };
 
 int main(void) {
