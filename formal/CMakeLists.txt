@@ -23,7 +23,7 @@ else()
 endif()
 
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-  set(CMETA_NESTED_REPLAY_LEAN_NAMESPACE "CMeta.NestedReplayGeneratedC")
+  set(CMETA_NESTED_REPLAY_LEAN_NAMESPACE "CMeta.NestedReplayGccGeneratedC")
 elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
   set(CMETA_NESTED_REPLAY_LEAN_NAMESPACE "CMeta.NestedReplayClangGeneratedC")
 else()
