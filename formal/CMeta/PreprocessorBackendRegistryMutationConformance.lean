@@ -1,4 +1,4 @@
-import CMeta.PreprocessorBackendSelection
+import CMeta.PreprocessorBackendRegistryMutation
 
 /-!
 # Preprocessor backend registry mutation conformance
