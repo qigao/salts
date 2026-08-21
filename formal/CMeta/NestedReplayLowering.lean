@@ -24,7 +24,7 @@ structure ReplayBackendCapability where
 namespace ReplayBackendCapability
 
 /-- A semantic nesting depth is inside the backend's current proof envelope. -/
-def supportsSameProducerDepth
+abbrev supportsSameProducerDepth
     (backend : ReplayBackendCapability) (depth : Nat) : Prop :=
   depth ≤ backend.certifiedSameProducerDepth
 
