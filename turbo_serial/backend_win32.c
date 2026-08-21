@@ -192,11 +192,11 @@ static turbo_serial_result_t win32_list_ports(turbo_serial_port_info_vec_t *vec)
       }
 
       {
-        container_status status = turbo_serial_port_info_vec_t_push(vec, storage);
+        turbo_stl_status status = turbo_serial_port_info_vec_t_push(vec, storage);
         turbo_serial_port_info_storage_destroy(&storage);
-        if (status != CONTAINER_OK) {
+        if (status != TURBO_STL_OK) {
           SetupDiDestroyDeviceInfoList(dev_info);
-          return turbo_serial_result_from_container(status);
+          return turbo_serial_result_from_stl(status);
         }
       }
     }
@@ -215,7 +215,7 @@ static turbo_serial_result_t win32_get_port_info(const char *port_name,
   if (!port_name || !storage) return TURBO_SERIAL_INVALID_VALUE;
   memset(storage, 0, sizeof(*storage));
 
-  res = turbo_serial_result_from_container(turbo_serial_port_info_vec_t_init(&vec));
+  res = turbo_serial_result_from_stl(turbo_serial_port_info_vec_t_init(&vec));
   if (res != TURBO_SERIAL_OK) return res;
 
   res = win32_list_ports(&vec);

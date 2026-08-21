@@ -27,7 +27,7 @@
 
 #include "turbo_serial.h"
 #include "turbo_str.h"
-#include <turbo/container/vec.h>
+#include <turbo/stl/vec.h>
 
 #include <stdint.h>
 #include <string.h>
@@ -153,29 +153,29 @@ static const cmeta_type_desc turbo_serial_port_info_storage_type = {
 
 typedef turbo_vec_t turbo_serial_port_info_vec_t;
 
-static inline turbo_serial_result_t turbo_serial_result_from_container(
-    container_status status) {
+static inline turbo_serial_result_t turbo_serial_result_from_stl(
+    turbo_stl_status status) {
   switch (status) {
-    case CONTAINER_OK: return TURBO_SERIAL_OK;
-    case CONTAINER_INVALID_ARGUMENT: return TURBO_SERIAL_INVALID_VALUE;
-    case CONTAINER_OUT_OF_MEMORY:
-    case CONTAINER_CAPACITY_EXCEEDED: return TURBO_SERIAL_NO_MEMORY;
-    case CONTAINER_EMPTY:
-    case CONTAINER_NOT_FOUND:
-    case CONTAINER_TYPE_MISMATCH:
-    case CONTAINER_TRAIT_MISSING: return TURBO_SERIAL_INVALID_STATE;
+    case TURBO_STL_OK: return TURBO_SERIAL_OK;
+    case TURBO_STL_INVALID_ARGUMENT: return TURBO_SERIAL_INVALID_VALUE;
+    case TURBO_STL_OUT_OF_MEMORY:
+    case TURBO_STL_CAPACITY_EXCEEDED: return TURBO_SERIAL_NO_MEMORY;
+    case TURBO_STL_EMPTY:
+    case TURBO_STL_NOT_FOUND:
+    case TURBO_STL_TYPE_MISMATCH:
+    case TURBO_STL_TRAIT_MISSING: return TURBO_SERIAL_INVALID_STATE;
   }
   return TURBO_SERIAL_INVALID_STATE;
 }
 
-static inline container_status turbo_serial_port_info_vec_t_init(
+static inline turbo_stl_status turbo_serial_port_info_vec_t_init(
     turbo_serial_port_info_vec_t *vec) {
   return turbo_vec_init(vec, &turbo_serial_port_info_storage_type,
                         turbo_serial_port_list_entry_limit(
                             &turbo_serial_port_info_storage_type));
 }
 
-static inline container_status turbo_serial_port_info_vec_t_push(
+static inline turbo_stl_status turbo_serial_port_info_vec_t_push(
     turbo_serial_port_info_vec_t *vec,
     turbo_serial_port_info_storage_t value) {
   return turbo_vec_push(vec, &value);
