@@ -1,14 +1,19 @@
+import CMeta.NestedReplayGccGeneratedC
+
+/-! Compatibility alias for older GCC-specific nested-replay conformance. -/
 namespace CMeta.NestedReplayGeneratedC
-def compilerFamilyTag : Nat := 1
-def compilerMajorVersion : Nat := 13
-def languageStandard : Nat := 201112
-def distinctCount : Nat := 6
-def depth2Count : Nat := 4
-def depth3Count : Nat := 8
-def depth4Count : Nat := 16
-def certifiedSameProducerDepth : Nat := 4
-def directSameProducerAccepted : Bool := false
-def deferredSameProducerAccepted : Bool := true
-def distinctStrategyTrace : List Nat := [1, 1]
-def reentryStrategyTrace : List Nat := [1, 1, 2]
+
+def compilerFamilyTag : Nat := CMeta.NestedReplayGccGeneratedC.compilerFamilyTag
+def compilerMajorVersion : Nat := CMeta.NestedReplayGccGeneratedC.compilerMajorVersion
+def languageStandard : Nat := CMeta.NestedReplayGccGeneratedC.languageStandard
+def distinctCount : Nat := CMeta.NestedReplayGccGeneratedC.distinctCount
+def depth2Count : Nat := CMeta.NestedReplayGccGeneratedC.depth2Count
+def depth3Count : Nat := CMeta.NestedReplayGccGeneratedC.depth3Count
+def depth4Count : Nat := CMeta.NestedReplayGccGeneratedC.depth4Count
+def certifiedSameProducerDepth : Nat := CMeta.NestedReplayGccGeneratedC.certifiedSameProducerDepth
+def directSameProducerAccepted : Bool := CMeta.NestedReplayGccGeneratedC.directSameProducerAccepted
+def deferredSameProducerAccepted : Bool := CMeta.NestedReplayGccGeneratedC.deferredSameProducerAccepted
+def distinctStrategyTrace : List Nat := CMeta.NestedReplayGccGeneratedC.distinctStrategyTrace
+def reentryStrategyTrace : List Nat := CMeta.NestedReplayGccGeneratedC.reentryStrategyTrace
+
 end CMeta.NestedReplayGeneratedC
