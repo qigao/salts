@@ -20,6 +20,8 @@
     } \
 } while (0)
 
+#define ARRAY_LEN(values) (sizeof(values) / sizeof((values)[0]))
+
 /* Fixed deferred-rescan machinery.  Its budget is a backend nesting-depth
  * budget; it is independent of the producer's element count. */
 #define CMETA_PROOF_EMPTY()
@@ -75,12 +77,75 @@ enum {
     cmeta_proof_certified_same_producer_depth = 4
 };
 
+/* Strategy tracing uses singleton producer identities so one structural replay
+ * node produces exactly one trace token.  The trace therefore records backend
+ * expansion strategy rather than producer cardinality.
+ *
+ * Tag 1: direct producer invocation.
+ * Tag 2: deferred + obstructed same-producer re-entry.
+ */
+enum {
+    cmeta_proof_strategy_direct = 1,
+    cmeta_proof_strategy_deferred_obstruct = 2
+};
+
+#define CMETA_PROOF_P_ONE(M) M(1)
+#define CMETA_PROOF_Q_ONE(M) M(2)
+#define CMETA_PROOF_P_ONE_INDIRECT() CMETA_PROOF_P_ONE
+#define CMETA_PROOF_DEFER_P_ONE(M) \
+    CMETA_PROOF_OBSTRUCT(CMETA_PROOF_P_ONE_INDIRECT) () (M)
+
+#define CMETA_PROOF_TRACE_DIRECT_Q(x) cmeta_proof_strategy_direct,
+#define CMETA_PROOF_TRACE_DISTINCT_P(x) \
+    cmeta_proof_strategy_direct, \
+    CMETA_PROOF_Q_ONE(CMETA_PROOF_TRACE_DIRECT_Q)
+
+static const int cmeta_proof_distinct_strategy_trace[] = {
+    Replay(CMETA_PROOF_P_ONE, CMETA_PROOF_TRACE_DISTINCT_P)
+};
+
+#define CMETA_PROOF_TRACE_DEFERRED_P(x) \
+    cmeta_proof_strategy_deferred_obstruct,
+#define CMETA_PROOF_TRACE_REENTRY_Q(x) \
+    cmeta_proof_strategy_direct, \
+    CMETA_PROOF_DEFER_P_ONE(CMETA_PROOF_TRACE_DEFERRED_P)
+#define CMETA_PROOF_TRACE_REENTRY_P(x) \
+    cmeta_proof_strategy_direct, \
+    CMETA_PROOF_Q_ONE(CMETA_PROOF_TRACE_REENTRY_Q)
+
+static const int cmeta_proof_reentry_strategy_trace[] = {
+    CMETA_PROOF_EVAL(Replay(CMETA_PROOF_P_ONE, CMETA_PROOF_TRACE_REENTRY_P))
+};
+
+static void print_nat_list(const char *name, const int *values, size_t count) {
+    size_t i;
+
+    printf("def %s : List Nat := [", name);
+    for (i = 0; i < count; ++i) {
+        if (i != 0) {
+            fputs(", ", stdout);
+        }
+        printf("%d", values[i]);
+    }
+    puts("]");
+}
+
 int main(void) {
     CHECK(cmeta_proof_distinct_count == 6);
     CHECK(cmeta_proof_depth2_count == 4);
     CHECK(cmeta_proof_depth3_count == 8);
     CHECK(cmeta_proof_depth4_count == 16);
     CHECK(cmeta_proof_certified_same_producer_depth == 4);
+
+    CHECK(ARRAY_LEN(cmeta_proof_distinct_strategy_trace) == 2);
+    CHECK(cmeta_proof_distinct_strategy_trace[0] == cmeta_proof_strategy_direct);
+    CHECK(cmeta_proof_distinct_strategy_trace[1] == cmeta_proof_strategy_direct);
+
+    CHECK(ARRAY_LEN(cmeta_proof_reentry_strategy_trace) == 3);
+    CHECK(cmeta_proof_reentry_strategy_trace[0] == cmeta_proof_strategy_direct);
+    CHECK(cmeta_proof_reentry_strategy_trace[1] == cmeta_proof_strategy_direct);
+    CHECK(cmeta_proof_reentry_strategy_trace[2] ==
+          cmeta_proof_strategy_deferred_obstruct);
 
     puts("namespace CMeta.NestedReplayGeneratedC");
     printf("def distinctCount : Nat := %d\n", cmeta_proof_distinct_count);
@@ -89,6 +154,12 @@ int main(void) {
     printf("def depth4Count : Nat := %d\n", cmeta_proof_depth4_count);
     printf("def certifiedSameProducerDepth : Nat := %d\n",
            cmeta_proof_certified_same_producer_depth);
+    print_nat_list("distinctStrategyTrace",
+                   cmeta_proof_distinct_strategy_trace,
+                   ARRAY_LEN(cmeta_proof_distinct_strategy_trace));
+    print_nat_list("reentryStrategyTrace",
+                   cmeta_proof_reentry_strategy_trace,
+                   ARRAY_LEN(cmeta_proof_reentry_strategy_trace));
     puts("end CMeta.NestedReplayGeneratedC");
     return 0;
 }
