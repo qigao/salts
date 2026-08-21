@@ -52,11 +52,14 @@
             ]
         },
         {
-            "name": "formal-linux",
-            "displayName": "Formal Conformance (Linux)",
-            "inherits": "base-release-linux",
+            "name": "formal-linux-base",
+            "hidden": true,
+            "inherits": [
+                "ISLinux",
+                "release-mode",
+                "flags-gcc-clang"
+            ],
             "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/formal-linux",
             "cacheVariables": {
                 "TURBO_FORMAL_ONLY": true,
                 "ENABLE_TESTS": false,
@@ -64,12 +67,46 @@
                 "BUILD_EXAMPLES": false,
                 "BUILD_BENCHMARKS": false
             }
+        },
+        {
+            "name": "formal-linux-gcc",
+            "displayName": "Formal Conformance (Linux, GCC)",
+            "inherits": [
+                "formal-linux-base",
+                "Gcc"
+            ],
+            "binaryDir": "${sourceDir}/build/formal-linux-gcc"
+        },
+        {
+            "name": "formal-linux-clang",
+            "displayName": "Formal Conformance (Linux, Clang)",
+            "inherits": [
+                "formal-linux-base",
+                "Clang"
+            ],
+            "binaryDir": "${sourceDir}/build/formal-linux-clang"
+        },
+        {
+            "name": "formal-linux",
+            "displayName": "Formal Conformance (Linux, GCC Compatibility Alias)",
+            "inherits": "formal-linux-gcc",
+            "binaryDir": "${sourceDir}/build/formal-linux"
         }
     ],
     "buildPresets": [
         {
+            "name": "build-formal-linux-gcc",
+            "displayName": "Build Formal Conformance (Linux, GCC)",
+            "configurePreset": "formal-linux-gcc"
+        },
+        {
+            "name": "build-formal-linux-clang",
+            "displayName": "Build Formal Conformance (Linux, Clang)",
+            "configurePreset": "formal-linux-clang"
+        },
+        {
             "name": "build-formal-linux",
-            "displayName": "Build Formal Conformance (Linux)",
+            "displayName": "Build Formal Conformance (Linux, GCC Compatibility Alias)",
             "configurePreset": "formal-linux"
         }
     ]
