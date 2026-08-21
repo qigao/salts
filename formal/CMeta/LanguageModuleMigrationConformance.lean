@@ -5,6 +5,10 @@ import CMeta.NestedReplayLowering
 import CMeta.PreprocessorBackend
 import CMeta.NestedReplayBackendPlan
 import CMeta.PreprocessorBackendSelection
+import CMeta.PreprocessorBackendRegistryMutation
+import CMeta.PreprocessorBackendRegistryEquivalence
+import CMeta.PreprocessorBackendRegistrySubstitutability
+import CMeta.PreprocessorBackendRegistrySetoid
 
 #check CMeta.Producer.replay
 #check CMeta.Producer.append
@@ -79,15 +83,14 @@ assert_not_exists CMeta.Producer.CertifiedPreprocessorBackend.certifiedDepthPosi
 -- TEMP-MODULE-BRIDGE(M7g): legacy Selection and backend conformance candidate proofs
 #check CMeta.Producer.PreprocessorBackendRegistry.mem_supportingCandidates_iff
 
--- TEMP-MODULE-BRIDGE(M7e): legacy registry equivalence proof consumers
-#check CMeta.Producer.PreprocessorBackendRegistry.insert_eq_none_iff
-#check CMeta.Producer.PreprocessorBackendRegistry.lookup_eq_none_of_key_not_mem
-#check CMeta.Producer.PreprocessorBackendRegistry.lookup_insert_self_exact
-#check CMeta.Producer.PreprocessorBackendRegistry.lookup_insert_ne_exact
-#check CMeta.Producer.PreprocessorBackendRegistry.lookup_remove_self
-#check CMeta.Producer.PreprocessorBackendRegistry.lookup_remove_ne_exact
-#check CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_self_exact
-#check CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_ne_exact
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.insert_eq_none_iff
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_eq_none_of_key_not_mem
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_insert_self_exact
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_insert_ne_exact
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_remove_self
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_remove_ne_exact
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_self_exact
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_ne_exact
 
 -- TEMP-MODULE-BRIDGE(M7g): legacy registry mutation conformance frame laws
 #check CMeta.Producer.PreprocessorBackendRegistry.lookup_insert_ne
@@ -132,9 +135,7 @@ assert_not_exists CMeta.Producer.lowerReplayIR_requirement
 
 assert_not_exists CMeta.Producer.BackendSelectionRank.aggregate_eq_of_perm
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_supports
-
--- TEMP-MODULE-BRIDGE(M7e): legacy registry substitutability proof consumer
-#check CMeta.Producer.BackendSelectionPolicy.select_key_eq_of_perm_of_matches
+assert_not_exists CMeta.Producer.BackendSelectionPolicy.select_key_eq_of_perm_of_matches
 
 -- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.selection_elim
 #check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_mem_candidates
@@ -143,3 +144,37 @@ assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_su
 #check CMeta.Producer.BackendSelectionPolicy.select_mem
 #check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_canonical
 #check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_eq_of_entries_perm
+
+#check CMeta.Producer.PreprocessorBackendRegistry.observe
+#check CMeta.Producer.PreprocessorBackendRegistry.Equivalent
+#check CMeta.Producer.PreprocessorBackendRegistry.registrySetoid
+#check CMeta.Producer.PreprocessorBackendRegistry.MutationResultEquivalent
+
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.observe_insert_self
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.observe_insert_ne
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.observe_remove
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.observe_replace_self
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.observe_replace_ne
+
+-- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec registry equality rules
+#check CMeta.Producer.PreprocessorBackendRegistry.equivalent_refl
+#check CMeta.Producer.PreprocessorBackendRegistry.equivalent_symm
+#check CMeta.Producer.PreprocessorBackendRegistry.equivalent_trans
+
+-- TEMP-MODULE-BRIDGE(M7g): legacy registry mutation/equivalence conformance
+#check CMeta.Producer.PreprocessorBackendRegistry.supportingCandidates_insert_irrelevant
+#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_insert_irrelevant
+#check CMeta.Producer.PreprocessorBackendRegistry.remove_missing_equivalent
+#check CMeta.Producer.PreprocessorBackendRegistry.insert_remove_equivalent
+#check CMeta.Producer.PreprocessorBackendRegistry.remove_remove_equivalent
+#check CMeta.Producer.PreprocessorBackendRegistry.replace_last_write_wins
+#check CMeta.Producer.PreprocessorBackendRegistry.supportingCandidates_perm_of_equivalent
+#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_eq_of_equivalent
+#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_eq_of_equivalent
+#check CMeta.Producer.PreprocessorBackendRegistry.observe_congr
+#check CMeta.Producer.PreprocessorBackendRegistry.supportingCandidates_congr
+#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_congr
+#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_congr
+#check CMeta.Producer.PreprocessorBackendRegistry.remove_congr
+#check CMeta.Producer.PreprocessorBackendRegistry.insert_congr
+#check CMeta.Producer.PreprocessorBackendRegistry.replace_congr
