@@ -43,6 +43,14 @@ private def certifiedRegistry : PreprocessorBackendRegistry :=
 private def reentrantIR : ReplayIR :=
   .replay 1 (.replay 2 (.replay 1 .emit))
 
+private def gccQuery : BackendQuery :=
+  { family := .gcc
+    languageMode := .c11 }
+
+private def clangQuery : BackendQuery :=
+  { family := .clang
+    languageMode := .c11 }
+
 /-- The generated GCC witness identifies its compiler family explicitly. -/
 theorem CPreprocessorBackendConformance.gcc_family :
     NestedReplayGccGeneratedC.compilerFamilyTag = CompilerFamily.gcc.tag := by
@@ -132,6 +140,31 @@ theorem CPreprocessorBackendConformance.registry_resolve_contract :
         ReplayBackendPlan.fromIR reentrantIR = ReplayBackendPlan.fromIR reentrantIR := by
   exact PreprocessorBackendRegistry.resolveReplay_eq_some_iff
     certifiedRegistry gccCertified.key reentrantIR (ReplayBackendPlan.fromIR reentrantIR)
+
+/-- Capability discovery is deliberately broader than exact lookup: the query
+    fixes compiler family and language mode, while version remains part of the
+    returned backend identity. -/
+theorem CPreprocessorBackendConformance.gcc_supporting_candidates :
+    (certifiedRegistry.supportingCandidates gccQuery reentrantIR).map
+        CertifiedPreprocessorBackend.key = [gccCertified.key] := by
+  native_decide
+
+/-- The same candidate mechanism is backend-family neutral. -/
+theorem CPreprocessorBackendConformance.clang_supporting_candidates :
+    (certifiedRegistry.supportingCandidates clangQuery reentrantIR).map
+        CertifiedPreprocessorBackend.key = [clangCertified.key] := by
+  native_decide
+
+/-- Candidate discovery has no hidden selection policy: membership means exactly
+    registry membership plus query match plus support for this replay IR. -/
+theorem CPreprocessorBackendConformance.supporting_candidates_contract
+    (backend : CertifiedPreprocessorBackend) :
+    backend ∈ certifiedRegistry.supportingCandidates gccQuery reentrantIR ↔
+      backend ∈ certifiedRegistry.entries ∧
+      backend.matchesQuery gccQuery ∧
+      backend.supportsReplay reentrantIR := by
+  exact PreprocessorBackendRegistry.mem_supportingCandidates_iff
+    certifiedRegistry gccQuery reentrantIR backend
 
 end Producer
 end CMeta
