@@ -131,14 +131,25 @@ theorem CPreprocessorBackendRegistryMutationConformance.replace_updates_candidat
       some [gcc14Deep.key] := by
   native_decide
 
-/-- Adding a backend outside the queried family cannot perturb GCC selection. -/
-theorem CPreprocessorBackendRegistryMutationConformance.unrelated_insert_preserves_selection :
-    (baseRegistry.insert clang19).map (fun registry =>
-      (registry.selectSupporting replayPolicy gccQuery depth3IR).map
-        CertifiedPreprocessorBackend.key) =
-      some ((baseRegistry.selectSupporting replayPolicy gccQuery depth3IR).map
-        CertifiedPreprocessorBackend.key) := by
-  native_decide
+/-- A successful insert outside the queried compatibility class leaves candidate
+    discovery unchanged by the production non-interference theorem. -/
+theorem CPreprocessorBackendRegistryMutationConformance.unrelated_insert_preserves_candidates
+    (inserted : PreprocessorBackendRegistry)
+    (hinsert : baseRegistry.insert clang19 = some inserted) :
+    inserted.supportingCandidates gccQuery depth3IR =
+      baseRegistry.supportingCandidates gccQuery depth3IR := by
+  exact PreprocessorBackendRegistry.supportingCandidates_insert_irrelevant
+    baseRegistry clang19 inserted gccQuery depth3IR hinsert (by native_decide)
+
+/-- Because candidate discovery is unchanged, an unrelated insert cannot perturb
+    the result of any selection policy. -/
+theorem CPreprocessorBackendRegistryMutationConformance.unrelated_insert_preserves_selection
+    (inserted : PreprocessorBackendRegistry)
+    (hinsert : baseRegistry.insert clang19 = some inserted) :
+    inserted.selectSupporting replayPolicy gccQuery depth3IR =
+      baseRegistry.selectSupporting replayPolicy gccQuery depth3IR := by
+  exact PreprocessorBackendRegistry.selectSupporting_insert_irrelevant
+    baseRegistry clang19 inserted replayPolicy gccQuery depth3IR hinsert (by native_decide)
 
 /-- The production lookup frame law: successful insertion preserves every other key. -/
 theorem CPreprocessorBackendRegistryMutationConformance.insert_frame
