@@ -68,7 +68,11 @@ enum {
     cmeta_proof_depth3_count =
         0 CMETA_PROOF_EVAL(Replay(CMETA_PROOF_P, CMETA_PROOF_LEVEL2)),
     cmeta_proof_depth4_count =
-        0 CMETA_PROOF_EVAL(Replay(CMETA_PROOF_P, CMETA_PROOF_LEVEL3))
+        0 CMETA_PROOF_EVAL(Replay(CMETA_PROOF_P, CMETA_PROOF_LEVEL3)),
+
+    /* This is the depth actually covered by the witness cases above. It is a
+     * certified lower bound, not the preprocessor's claimed absolute maximum. */
+    cmeta_proof_certified_same_producer_depth = 4
 };
 
 int main(void) {
@@ -76,12 +80,15 @@ int main(void) {
     CHECK(cmeta_proof_depth2_count == 4);
     CHECK(cmeta_proof_depth3_count == 8);
     CHECK(cmeta_proof_depth4_count == 16);
+    CHECK(cmeta_proof_certified_same_producer_depth == 4);
 
     puts("namespace CMeta.NestedReplayGeneratedC");
     printf("def distinctCount : Nat := %d\n", cmeta_proof_distinct_count);
     printf("def depth2Count : Nat := %d\n", cmeta_proof_depth2_count);
     printf("def depth3Count : Nat := %d\n", cmeta_proof_depth3_count);
     printf("def depth4Count : Nat := %d\n", cmeta_proof_depth4_count);
+    printf("def certifiedSameProducerDepth : Nat := %d\n",
+           cmeta_proof_certified_same_producer_depth);
     puts("end CMeta.NestedReplayGeneratedC");
     return 0;
 }
