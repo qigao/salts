@@ -23,7 +23,11 @@
  * Header-local Range capability generators
  * ------------------------------------------------------------------------- */
 
-#define CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name, type, prefix, flags) \
+#define CMETA_CONTAINER1_INDEX_RANGE_DEFINE(...) \
+    CMETA_PP_CAT(CMETA_CONTAINER1_INDEX_RANGE_DEFINE_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define CMETA_CONTAINER1_INDEX_RANGE_DEFINE_4(name, type, prefix, flags) \
+    CMETA_CONTAINER1_INDEX_RANGE_DEFINE_5(name, type, prefix, flags, NULL)
+#define CMETA_CONTAINER1_INDEX_RANGE_DEFINE_5(name, type, prefix, flags, version_accessor) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
         CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL \
     }; \
@@ -50,7 +54,8 @@
     CMETA_INLINE cmeta_range name##_range(const name *self) { \
         cmeta_range range = { \
             self, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), (flags), \
-            name##_cmeta_range_size, name##_cmeta_range_next \
+            name##_cmeta_range_size, name##_cmeta_range_next, \
+            cmeta_range_capture_version((version_accessor), self), (version_accessor) \
         }; \
         return range; \
     } \
@@ -209,7 +214,11 @@
  * Sparse one-type Range (set/hash-set style)
  * ------------------------------------------------------------------------- */
 
-#define CMETA_CONTAINER1_SLOT_RANGE_DEFINE(name, type, prefix, flags) \
+#define CMETA_CONTAINER1_SLOT_RANGE_DEFINE(...) \
+    CMETA_PP_CAT(CMETA_CONTAINER1_SLOT_RANGE_DEFINE_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define CMETA_CONTAINER1_SLOT_RANGE_DEFINE_4(name, type, prefix, flags) \
+    CMETA_CONTAINER1_SLOT_RANGE_DEFINE_5(name, type, prefix, flags, NULL)
+#define CMETA_CONTAINER1_SLOT_RANGE_DEFINE_5(name, type, prefix, flags, version_accessor) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
         CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL \
     }; \
@@ -235,7 +244,8 @@
     CMETA_INLINE cmeta_range name##_range(const name *self) { \
         cmeta_range range = { \
             self, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), (flags), \
-            name##_cmeta_range_size, name##_cmeta_range_next \
+            name##_cmeta_range_size, name##_cmeta_range_next, \
+            cmeta_range_capture_version((version_accessor), self), (version_accessor) \
         }; \
         return range; \
     } \
@@ -255,7 +265,11 @@
 #define CMETA_CONTAINER_STR(x) CMETA_CONTAINER_STR_I(x)
 
 
-#define CMETA_CONTAINER2_RANGES_DEFINE(name, key_type, value_type, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags) \
+#define CMETA_CONTAINER2_RANGES_DEFINE(...) \
+    CMETA_PP_CAT(CMETA_CONTAINER2_RANGES_DEFINE_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define CMETA_CONTAINER2_RANGES_DEFINE_9(name, key_type, value_type, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags) \
+    CMETA_CONTAINER2_RANGES_DEFINE_10(name, key_type, value_type, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, NULL)
+#define CMETA_CONTAINER2_RANGES_DEFINE_10(name, key_type, value_type, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor) \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
         CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL \
     }; \
@@ -317,17 +331,20 @@
     } \
     CMETA_INLINE cmeta_range name##_keys_range(const name *self) { \
         cmeta_range range = { self, CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), (key_flags), \
-            name##_cmeta_assoc_range_size, name##_cmeta_keys_next }; \
+            name##_cmeta_assoc_range_size, name##_cmeta_keys_next, \
+            cmeta_range_capture_version((version_accessor), self), (version_accessor) }; \
         return range; \
     } \
     CMETA_INLINE cmeta_range name##_values_range(const name *self) { \
         cmeta_range range = { self, CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), (value_flags), \
-            name##_cmeta_assoc_range_size, name##_cmeta_values_next }; \
+            name##_cmeta_assoc_range_size, name##_cmeta_values_next, \
+            cmeta_range_capture_version((version_accessor), self), (version_accessor) }; \
         return range; \
     } \
     CMETA_INLINE cmeta_range name##_entries_range(const name *self) { \
         cmeta_range range = { self, &name##_entry_cmeta_type, (entry_flags), \
-            name##_cmeta_assoc_range_size, name##_cmeta_entries_next }; \
+            name##_cmeta_assoc_range_size, name##_cmeta_entries_next, \
+            cmeta_range_capture_version((version_accessor), self), (version_accessor) }; \
         return range; \
     } \
     CMETA_INLINE cmeta_range name##_cmeta_erased_keys_range(const void *object) { \

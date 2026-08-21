@@ -1,4 +1,5 @@
 #include <cmeta/cmeta.h>
+#include <cmeta/container.h>
 #include "tinytest.h"
 
 #include <math.h>
@@ -96,6 +97,94 @@ static cmeta_gen_status cmeta_test_expand(int input, long *out, size_t *cursor) 
     ++*cursor;
     return *cursor == 2u ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE;
 }
+
+typedef struct cmeta_test_range_owner {
+    uint64_t generation;
+    int values[2];
+    size_t count;
+    size_t next_calls;
+    size_t version_reads;
+} cmeta_test_range_owner;
+
+static uint64_t cmeta_test_range_version(const void *object) {
+    cmeta_test_range_owner *owner = (cmeta_test_range_owner *)object;
+
+    ++owner->version_reads;
+    return owner->generation;
+}
+
+static size_t cmeta_test_range_size(const void *object) {
+    const cmeta_test_range_owner *owner = (const cmeta_test_range_owner *)object;
+
+    return owner->count;
+}
+
+static cmeta_gen_status cmeta_test_range_next(const void *object,
+                                               size_t *cursor,
+                                               void *out_value) {
+    cmeta_test_range_owner *owner = (cmeta_test_range_owner *)object;
+
+    if (*cursor >= owner->count)
+        return CMETA_GEN_DONE;
+    *(int *)out_value = owner->values[*cursor];
+    ++owner->next_calls;
+    ++*cursor;
+    return *cursor == owner->count ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE;
+}
+
+static cmeta_range cmeta_test_range(const cmeta_test_range_owner *owner) {
+    return (cmeta_range){
+        owner, &cmeta_type_int, CMETA_RANGE_SIZED,
+        cmeta_test_range_size, cmeta_test_range_next,
+        owner->generation, cmeta_test_range_version
+    };
+}
+
+typedef struct cmeta_test_generated_range_raw {
+    int values[2];
+    size_t count;
+} cmeta_test_generated_range_raw;
+
+typedef struct cmeta_test_generated_range_container {
+    cmeta_container_header cmeta;
+    cmeta_test_generated_range_raw raw;
+    uint64_t generation;
+} cmeta_test_generated_range_container;
+
+typedef struct cmeta_test_legacy_range_container {
+    cmeta_container_header cmeta;
+    cmeta_test_generated_range_raw raw;
+} cmeta_test_legacy_range_container;
+
+static size_t cmeta_test_generated_range_raw_size(
+    const cmeta_test_generated_range_raw *raw) {
+    return raw->count;
+}
+
+static const void *cmeta_test_generated_range_raw_at_const(
+    const cmeta_test_generated_range_raw *raw, size_t index) {
+    return index < raw->count ? &raw->values[index] : NULL;
+}
+
+static uint64_t cmeta_test_generated_range_version(const void *object) {
+    const cmeta_test_generated_range_container *container =
+        (const cmeta_test_generated_range_container *)object;
+
+    return container->generation;
+}
+
+CMETA_CONTAINER1_INDEX_RANGE_DEFINE(
+    cmeta_test_generated_range_container,
+    int,
+    cmeta_test_generated_range_raw,
+    CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED,
+    cmeta_test_generated_range_version)
+
+CMETA_CONTAINER1_INDEX_RANGE_DEFINE(
+    cmeta_test_legacy_range_container,
+    int,
+    cmeta_test_generated_range_raw,
+    CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED)
 
 enum {
     CMETA_TEST_COUNTER_RESET = 1u << 0
@@ -383,5 +472,70 @@ suite("CMeta core") {
         check_false(cmeta_fn_invoke(generator, &output, NULL));
         check_true(cmeta_fn_generate(generator, NULL, &output, &cursor) ==
                    CMETA_GEN_ERROR);
+    }
+
+    it("fails when a borrowed range owner mutates") {
+        cmeta_test_range_owner owner = {
+            .generation = 4u, .values = {1, 2}, .count = 2u
+        };
+        cmeta_range range = cmeta_test_range(&owner);
+        size_t cursor = 0u;
+        int out = 0;
+
+        check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_VALUE);
+        check_equal(cursor, (size_t)1u);
+        check_equal(out, 1);
+        check_equal(owner.next_calls, (size_t)1u);
+        ++owner.generation;
+        out = 99;
+        check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_MUTATED);
+        check_equal(cursor, (size_t)1u);
+        check_equal(out, 99);
+        check_equal(owner.next_calls, (size_t)1u);
+    }
+
+    it("checks range arguments before reading owner generation") {
+        cmeta_test_range_owner owner = {
+            .generation = 4u, .values = {1, 2}, .count = 2u
+        };
+        cmeta_range range = cmeta_test_range(&owner);
+        int out = 0;
+
+        check_equal(cmeta_range_next(&range, NULL, &out), CMETA_GEN_ERROR);
+        check_equal(owner.version_reads, (size_t)0u);
+        check_equal(owner.next_calls, (size_t)0u);
+    }
+
+    it("generated ranges capture their version accessor") {
+        cmeta_test_generated_range_container container = {
+            .raw = {.values = {3, 5}, .count = 2u}, .generation = 9u
+        };
+        cmeta_range range = cmeta_test_generated_range_container_range(&container);
+        size_t cursor = 0u;
+        int out = 0;
+
+        check_equal(range.version, UINT64_C(9));
+        check_not_null(range.current_version);
+        check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_VALUE);
+        check_equal(out, 3);
+        ++container.generation;
+        out = 77;
+        check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_MUTATED);
+        check_equal(cursor, (size_t)1u);
+        check_equal(out, 77);
+    }
+
+    it("legacy generated ranges retain null version accessors") {
+        cmeta_test_legacy_range_container container = {
+            .raw = {.values = {3, 5}, .count = 2u}
+        };
+        cmeta_range range = cmeta_test_legacy_range_container_range(&container);
+        size_t cursor = 0u;
+        int out = 0;
+
+        check_equal(range.version, UINT64_C(0));
+        check_null(range.current_version);
+        check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_VALUE);
+        check_equal(out, 3);
     }
 }

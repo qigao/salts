@@ -67,7 +67,8 @@ Enum(cmeta_gen_status,
     (CMETA_GEN_VALUE,          1, "value"),
     (CMETA_GEN_VALUE_AND_DONE, 2, "value_and_done"),
     (CMETA_GEN_DONE,           3, "done"),
-    (CMETA_GEN_ERROR,          4, "error")
+    (CMETA_GEN_ERROR,          4, "error"),
+    (CMETA_GEN_MUTATED,        5, "mutated")
 );
 
 #ifndef __cplusplus

@@ -15,6 +15,8 @@ static_assert(CMETA_ALIGNOF(cmeta_cpp_record) == alignof(cmeta_cpp_record),
               "CMETA_ALIGNOF must use the active language spelling");
 static_assert(CMETA_FLOAT_TRAITS_BINARY32_BINARY64,
               "floating traits require the documented binary32/binary64 contract");
+static_assert(CMETA_GEN_MUTATED == 5,
+              "the C++ public enum surface must expose mutated ranges");
 
 static bool cmeta_cpp_copy_construct(void *destination, const void *source) {
   if (destination == nullptr || source == nullptr) return false;

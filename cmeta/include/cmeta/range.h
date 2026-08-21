@@ -26,6 +26,7 @@ typedef size_t (*cmeta_range_size_fn)(const void *object);
 typedef cmeta_gen_status (*cmeta_range_next_fn)(const void *object,
                                                  size_t *cursor,
                                                  void *out_value);
+typedef uint64_t (*cmeta_range_version_fn)(const void *object);
 
 typedef struct cmeta_range {
     const void *object;
@@ -33,6 +34,8 @@ typedef struct cmeta_range {
     cmeta_range_flags flags;
     cmeta_range_size_fn size;
     cmeta_range_next_fn next;
+    uint64_t version;
+    cmeta_range_version_fn current_version;
 } cmeta_range;
 
 typedef cmeta_range (*cmeta_range_factory_fn)(const void *object);
@@ -89,12 +92,21 @@ static inline size_t cmeta_range_size(const cmeta_range *range) {
     return (range != NULL && range->size != NULL) ? range->size(range->object) : 0U;
 }
 
+static inline uint64_t cmeta_range_capture_version(
+    cmeta_range_version_fn current_version, const void *object) {
+    return current_version != NULL ? current_version(object) : UINT64_C(0);
+}
+
 static inline cmeta_gen_status cmeta_range_next(const cmeta_range *range,
                                                  size_t *cursor,
                                                  void *out_value) {
     if (range == NULL || range->element_type == NULL || range->next == NULL ||
         cursor == NULL || out_value == NULL) {
         return CMETA_GEN_ERROR;
+    }
+    if (range->current_version != NULL &&
+        range->current_version(range->object) != range->version) {
+        return CMETA_GEN_MUTATED;
     }
     return range->next(range->object, cursor, out_value);
 }
