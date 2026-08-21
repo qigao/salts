@@ -51,6 +51,10 @@ private def clangQuery : BackendQuery :=
   { family := .clang
     languageMode := .c11 }
 
+private def replaySelectionPolicy : BackendSelectionPolicy :=
+  BackendSelectionPolicy.preferGreaterCertifiedDepth.thenBy
+    BackendSelectionPolicy.preferNewerVersion
+
 /-- The generated GCC witness identifies its compiler family explicitly. -/
 theorem CPreprocessorBackendConformance.gcc_family :
     NestedReplayGccGeneratedC.compilerFamilyTag = CompilerFamily.gcc.tag := by
@@ -165,6 +169,33 @@ theorem CPreprocessorBackendConformance.supporting_candidates_contract
       backend.supportsReplay reentrantIR := by
   exact PreprocessorBackendRegistry.mem_supportingCandidates_iff
     certifiedRegistry gccQuery reentrantIR backend
+
+/-- Selection policy cannot manufacture a backend: any successful result must
+    come from the candidate list supplied by the registry. -/
+theorem CPreprocessorBackendConformance.selection_result_is_candidate
+    (backend : CertifiedPreprocessorBackend)
+    (h : replaySelectionPolicy.select
+      (certifiedRegistry.supportingCandidates gccQuery reentrantIR) = some backend) :
+    backend ∈ certifiedRegistry.supportingCandidates gccQuery reentrantIR := by
+  exact BackendSelectionPolicy.select_mem replaySelectionPolicy _ h
+
+/-- The concrete replay policy uses compiler version only as a tie-break after
+    certified replay depth. GCC and Clang currently expose equal depth four, so
+    Clang 18 wins this deliberately cross-family policy fixture over GCC 13. -/
+theorem CPreprocessorBackendConformance.newer_version_breaks_equal_depth_tie :
+    replaySelectionPolicy.select [gccCertified, clangCertified] = some clangCertified := by
+  native_decide
+
+/-- Registry-level selection preserves the support guarantee of candidate
+    discovery, so selected lowering still normalizes to the IR's canonical plan. -/
+theorem CPreprocessorBackendConformance.selected_backend_lowers_canonically
+    (backend : CertifiedPreprocessorBackend)
+    (h : certifiedRegistry.selectSupporting replaySelectionPolicy gccQuery reentrantIR =
+      some backend) :
+    lowerReplayBackendPlan backend.replayCapability reentrantIR =
+      some (ReplayBackendPlan.fromIR reentrantIR) := by
+  exact PreprocessorBackendRegistry.selectSupporting_lowering_canonical
+    certifiedRegistry replaySelectionPolicy gccQuery reentrantIR backend h
 
 end Producer
 end CMeta
