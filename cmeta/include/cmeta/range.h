@@ -2,6 +2,7 @@
 #define CMETA_RANGE_H
 
 #include <cmeta/cmeta.h>
+#include <cmeta/collector.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -23,9 +24,17 @@ enum {
 };
 
 typedef size_t (*cmeta_range_size_fn)(const void *object);
+/* A cursor is caller-owned, zero-initialized opaque traversal state. Array and
+ * sparse ranges use index; linked and tree ranges use state. It may only be
+ * passed back to the Range that initialized it and never owns its pointers. */
+typedef struct cmeta_range_cursor {
+    size_t index;
+    void *state[2];
+} cmeta_range_cursor;
 typedef cmeta_gen_status (*cmeta_range_next_fn)(const void *object,
-                                                 size_t *cursor,
+                                                 cmeta_range_cursor *cursor,
                                                  void *out_value);
+typedef uint64_t (*cmeta_range_version_fn)(const void *object);
 
 typedef struct cmeta_range {
     const void *object;
@@ -33,7 +42,14 @@ typedef struct cmeta_range {
     cmeta_range_flags flags;
     cmeta_range_size_fn size;
     cmeta_range_next_fn next;
+    uint64_t version;
+    cmeta_range_version_fn current_version;
 } cmeta_range;
+
+/* A Range borrows its source object and element descriptor. The source handle
+ * storage must outlive the Range. Mutation or destroy is reported as
+ * CMETA_GEN_MUTATED while that handle storage remains alive; next() performs
+ * this version check before changing either cursor or output. */
 
 typedef cmeta_range (*cmeta_range_factory_fn)(const void *object);
 
@@ -54,6 +70,7 @@ typedef struct cmeta_container_desc {
     cmeta_range_factory_fn keys_range;
     cmeta_range_factory_fn values_range;
     cmeta_range_factory_fn entries_range;
+    cmeta_collector_factory_fn collector;
 } cmeta_container_desc;
 
 typedef struct cmeta_container_header {
@@ -89,12 +106,24 @@ static inline size_t cmeta_range_size(const cmeta_range *range) {
     return (range != NULL && range->size != NULL) ? range->size(range->object) : 0U;
 }
 
+static inline uint64_t cmeta_range_capture_version(
+    cmeta_range_version_fn current_version, const void *object) {
+    return current_version != NULL && object != NULL ? current_version(object) :
+                                                      UINT64_C(0);
+}
+
 static inline cmeta_gen_status cmeta_range_next(const cmeta_range *range,
-                                                 size_t *cursor,
+                                                 cmeta_range_cursor *cursor,
                                                  void *out_value) {
     if (range == NULL || range->element_type == NULL || range->next == NULL ||
         cursor == NULL || out_value == NULL) {
         return CMETA_GEN_ERROR;
+    }
+    if (range->current_version != NULL) {
+        if (range->object == NULL)
+            return CMETA_GEN_ERROR;
+        if (range->current_version(range->object) != range->version)
+            return CMETA_GEN_MUTATED;
     }
     return range->next(range->object, cursor, out_value);
 }
