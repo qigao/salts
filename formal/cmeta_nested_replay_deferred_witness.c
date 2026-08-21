@@ -10,6 +10,10 @@
 #error "CMake direct-replay applicability result must be injected"
 #endif
 
+#ifndef CMETA_NESTED_REPLAY_LEAN_NAMESPACE
+#error "CMake replay certificate namespace must be injected"
+#endif
+
 #if CMETA_DIRECT_NESTED_REPLAY_ACCEPTED != 0 && \
     CMETA_DIRECT_NESTED_REPLAY_ACCEPTED != 1
 #error "direct-replay applicability result must be numeric 0 or 1"
@@ -181,7 +185,7 @@ int main(void) {
     CHECK(cmeta_proof_reentry_strategy_trace[2] ==
           cmeta_proof_strategy_deferred_obstruct);
 
-    puts("namespace CMeta.NestedReplayGeneratedC");
+    puts("namespace " CMETA_NESTED_REPLAY_LEAN_NAMESPACE);
     printf("def compilerFamilyTag : Nat := %d\n",
            CMETA_PROOF_COMPILER_FAMILY_TAG);
     printf("def compilerMajorVersion : Nat := %d\n",
@@ -203,6 +207,6 @@ int main(void) {
     print_nat_list("reentryStrategyTrace",
                    cmeta_proof_reentry_strategy_trace,
                    ARRAY_LEN(cmeta_proof_reentry_strategy_trace));
-    puts("end CMeta.NestedReplayGeneratedC");
+    puts("end " CMETA_NESTED_REPLAY_LEAN_NAMESPACE);
     return 0;
 }
