@@ -1,3 +1,4 @@
+module
 import Std
 
 /-!
@@ -20,7 +21,7 @@ namespace CMeta
 universe u v
 
 /-- Ordered Cartesian product, matching nested preprocessor foreach order. -/
-def product (xs : List α) (ys : List β) : List (α × β) :=
+public def product (xs : List α) (ys : List β) : List (α × β) :=
   match xs with
   | [] => []
   | x :: xs => ys.map (fun y => (x, y)) ++ product xs ys
@@ -33,7 +34,7 @@ theorem product_length (xs : List α) (ys : List β) :
       simp [product, ih, Nat.succ_mul, Nat.add_comm]
 
 /-- A small typed algebra sufficient for the finite CMeta generators studied here. -/
-inductive CoreExpr : Type u → Type (u + 1) where
+public inductive CoreExpr : Type u → Type (u + 1) where
   | source {α : Type u} : List α → CoreExpr α
   | map {α β : Type u} : (α → β) → CoreExpr α → CoreExpr β
   | append {α : Type u} : CoreExpr α → CoreExpr α → CoreExpr α
@@ -42,7 +43,7 @@ inductive CoreExpr : Type u → Type (u + 1) where
 
 namespace CoreExpr
 
-def eval {α : Type u} : CoreExpr α → List α
+public def eval {α : Type u} : CoreExpr α → List α
   | .source xs => xs
   | .map f e => (eval e).map f
   | .append a b => eval a ++ eval b
@@ -50,7 +51,7 @@ def eval {α : Type u} : CoreExpr α → List α
   | .choose p a b => if p then eval a else eval b
 
 /-- Exact static output cardinality of a core expression. -/
-def cardinality {α : Type u} : CoreExpr α → Nat
+public def cardinality {α : Type u} : CoreExpr α → Nat
   | .source xs => xs.length
   | .map _ e => cardinality e
   | .append a b => cardinality a + cardinality b
@@ -84,7 +85,7 @@ theorem product_cardinality (a : CoreExpr α) (b : CoreExpr β) :
 end CoreExpr
 
 /-- `CMETA_PP_REPEAT(n, ...)` is semantically a map over `[0,n)`. -/
-def ppRepeat (n : Nat) (emit : Nat → α) : List α :=
+public def ppRepeat (n : Nat) (emit : Nat → α) : List α :=
   (List.range n).map emit
 
 theorem ppRepeat_length (n : Nat) (emit : Nat → α) :
@@ -100,7 +101,7 @@ theorem ppRepeat_indices_unique (n : Nat) :
   exact List.nodup_range
 
 /-- Schema replay is ordinary ordered map. -/
-def replay (emit : α → β) (rows : List α) : List β := rows.map emit
+public def replay (emit : α → β) (rows : List α) : List β := rows.map emit
 
 theorem replay_length (emit : α → β) (rows : List α) :
     (replay emit rows).length = rows.length := by

@@ -1,4 +1,5 @@
 import CMeta.Calculus
+import CMeta.ModuleMigrationConformance
 import CMeta.FmtArgs
 import CMeta.Producer
 import CMeta.NestedReplay

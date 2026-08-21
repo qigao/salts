@@ -1,3 +1,4 @@
+module
 import CMeta.Calculus
 
 /-!
@@ -13,7 +14,7 @@ namespace CMeta
 universe u
 
 /-- Finite logical type universe used by the proof model. -/
-inductive CType where
+public inductive CType where
   | bool
   | int
   | long
@@ -22,14 +23,14 @@ inductive CType where
   deriving Repr, DecidableEq
 
 /-- Logical callable signatures corresponding to CMeta unary/binary/generator ABIs. -/
-inductive Signature where
+public inductive Signature where
   | unary (input output : CType)
   | binary (left right output : CType)
   | generator (input output : CType)
   deriving Repr, DecidableEq
 
 /-- A trait environment is precisely the premise "type can be recovered". -/
-structure Traits (Expr : Type u) where
+public structure Traits (Expr : Type u) where
   typeOf : Expr → Option CType
 
 /-- Functional trait lookup cannot assign two different types to one expression. -/
@@ -41,7 +42,7 @@ theorem Traits.type_unique (tr : Traits Expr) (e : Expr)
   exact Option.some.inj h
 
 /-- Infer a unary callable signature from two trait-resolved expressions. -/
-def Traits.inferUnary (tr : Traits Expr) (input result : Expr) : Option Signature :=
+public def Traits.inferUnary (tr : Traits Expr) (input result : Expr) : Option Signature :=
   match tr.typeOf input, tr.typeOf result with
   | some a, some r => some (.unary a r)
   | _, _ => none
@@ -62,10 +63,10 @@ theorem Traits.inferUnary_unique (tr : Traits Expr) (input result : Expr)
   exact Option.some.inj h
 
 /-- A finite signature policy is the formal counterpart of CFlow's generated lists. -/
-abbrev SignaturePolicy := List Signature
+public abbrev SignaturePolicy := List Signature
 
 /-- Admission is decidable because the signature universe has decidable equality. -/
-def policyAllows (policy : SignaturePolicy) (sig : Signature) : Bool :=
+public def policyAllows (policy : SignaturePolicy) (sig : Signature) : Bool :=
   policy.contains sig
 
 theorem policyAllows_iff (policy : SignaturePolicy) (sig : Signature) :
