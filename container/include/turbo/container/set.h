@@ -2,7 +2,6 @@
 #define TURBO_SET_H
 
 #include <turbo/container/hash_map.h>
-#include <turbo/container/meta.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,11 +41,6 @@ CONTAINER_API size_t turbo_set_entry_limit(const turbo_set_t *set);
 CONTAINER_API uint64_t turbo_set_generation(const turbo_set_t *set);
 CONTAINER_API bool turbo_set_empty(const turbo_set_t *set);
 CONTAINER_API const void *turbo_set_key_at(const turbo_set_t *set, size_t slot);
-
-#define TURBO_SET_DEFINE(name, key_type) \
-  CMETA_CONTAINER1_DEFINE(name, key_type, turbo_set_t, turbo_set, CONTAINER_OK, _, TURBO_META_SET_METHODS) \
-  CMETA_CONTAINER1_SLOT_RANGE_DEFINE(name, key_type, turbo_set, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE)
 
 #ifdef __cplusplus
 }

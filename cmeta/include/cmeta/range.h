@@ -39,6 +39,11 @@ typedef struct cmeta_range {
     cmeta_range_version_fn current_version;
 } cmeta_range;
 
+/* A Range borrows its source object and element descriptor. The source handle
+ * storage must outlive the Range. Mutation or destroy is reported as
+ * CMETA_GEN_MUTATED while that handle storage remains alive; next() performs
+ * this version check before changing either cursor or output. */
+
 typedef cmeta_range (*cmeta_range_factory_fn)(const void *object);
 
 typedef enum cmeta_container_view {

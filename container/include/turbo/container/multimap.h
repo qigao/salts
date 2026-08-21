@@ -8,7 +8,6 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-#include <turbo/container/meta.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +25,9 @@ typedef struct {
   size_t value_align;
   size_t value_limit;
   size_t size;
+  const cmeta_type_desc *key_type;
+  const cmeta_type_desc *value_type;
+  uint64_t generation;
 } turbo_multimap_t;
 
 static inline turbo_vec_t **turbo_multimap_values_carrier(turbo_multimap_t *map,
@@ -50,42 +52,123 @@ static inline void turbo_multimap_destroy_vectors(turbo_multimap_t *map) {
   }
 }
 
-static inline int turbo_multimap_init(turbo_multimap_t *map, size_t key_size, size_t key_align,
-                                      size_t key_limit, size_t value_size, size_t value_align,
-                                      size_t value_limit, turbo_hash_fn hash,
-                                      turbo_hash_equal_fn equal, void *ctx) {
-  if (map == NULL || map->map.initialized || key_size == 0u || value_size == 0u)
-    return CONTAINER_INVALID_ARGUMENT;
-  memset(map, 0, sizeof(*map));
+static inline bool turbo_multimap_pointer_copy(void *destination, const void *source) {
+  if (destination == NULL || source == NULL) return false;
+  *(turbo_vec_t **)destination = *(turbo_vec_t *const *)source;
+  return true;
+}
+static inline void turbo_multimap_pointer_move(void *destination, void *source) {
+  if (destination != NULL && source != NULL) {
+    *(turbo_vec_t **)destination = *(turbo_vec_t **)source;
+    *(turbo_vec_t **)source = NULL;
+  }
+}
+static inline void turbo_multimap_pointer_destroy(void *value) { (void)value; }
+static const cmeta_type_traits turbo_multimap_pointer_traits = {
+  CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY |
+      CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY,
+  NULL, NULL, NULL, turbo_multimap_pointer_copy, turbo_multimap_pointer_move,
+  turbo_multimap_pointer_destroy
+};
+static const cmeta_type_desc turbo_multimap_pointer_type = {
+  "turbo_vec_t *", sizeof(turbo_vec_t *),
+#ifdef __cplusplus
+  alignof(turbo_vec_t *),
+#else
+  _Alignof(turbo_vec_t *),
+#endif
+  CMETA_T_POINTER, NULL, &turbo_multimap_pointer_traits
+};
+
+static inline container_status turbo_multimap_init(
+    turbo_multimap_t *map, const cmeta_type_desc *key_type, size_t key_limit,
+    const cmeta_type_desc *value_type, size_t value_limit) {
+  container_status status;
+  uint64_t generation;
+  if (map == NULL || map->map.initialized) return CONTAINER_INVALID_ARGUMENT;
+  if (value_type == NULL || value_type->size == 0u || value_type->align == 0u ||
+      (value_type->align & (value_type->align - 1u)) != 0u ||
+      cmeta_type_require_traits(value_type, CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
+                                               CMETA_TRAIT_DESTROY) != CMETA_OK)
+    return value_type == NULL || value_type->size == 0u
+               ? CONTAINER_INVALID_ARGUMENT
+               : CONTAINER_TRAIT_MISSING;
+  generation = map->generation + UINT64_C(1);
+  status = turbo_hash_map_init(&map->map, key_type, &turbo_multimap_pointer_type,
+                               key_limit);
+  if (status != CONTAINER_OK) return status;
   map->key_limit = key_limit;
-  map->value_size = value_size;
-  map->value_align = value_align;
+  map->value_size = value_type->size;
+  map->value_align = value_type->align;
   map->value_limit = value_limit;
-  return turbo_hash_map_init_bytes(&map->map, key_size, key_align, sizeof(turbo_vec_t *),
+  map->size = 0u;
+  map->key_type = key_type;
+  map->value_type = value_type;
+  map->generation = generation;
+  return CONTAINER_OK;
+}
+
+static inline container_status turbo_multimap_init_bytes(
+    turbo_multimap_t *map, size_t key_size, size_t key_align,
+    size_t key_limit, size_t value_size, size_t value_align,
+    size_t value_limit, turbo_hash_fn hash,
+    turbo_hash_equal_fn equal, void *ctx) {
+  turbo_multimap_t temporary = {0};
+  container_status status;
+  uint64_t generation;
+  if (map == NULL || map->map.initialized || key_size == 0u || value_size == 0u ||
+      key_align == 0u || (key_align & (key_align - 1u)) != 0u ||
+      value_align == 0u || (value_align & (value_align - 1u)) != 0u)
+    return CONTAINER_INVALID_ARGUMENT;
+  generation = map->generation + UINT64_C(1);
+  temporary.key_limit = key_limit;
+  temporary.value_size = value_size;
+  temporary.value_align = value_align;
+  temporary.value_limit = value_limit;
+  temporary.generation = generation;
+  status = turbo_hash_map_init_bytes(&temporary.map, key_size, key_align,
+                                     sizeof(turbo_vec_t *),
 #ifdef __cplusplus
                                    alignof(turbo_vec_t *),
 #else
                                    _Alignof(turbo_vec_t *),
 #endif
                                    key_limit, hash, equal, ctx);
+  if (status != CONTAINER_OK) return status;
+  *map = temporary;
+  return CONTAINER_OK;
 }
 
 static inline void turbo_multimap_destroy(turbo_multimap_t *map) {
+  uint64_t generation;
   if (map == NULL) return;
+  generation = map->generation;
+  if (map->map.initialized) ++generation;
   turbo_multimap_destroy_vectors(map);
   turbo_hash_map_destroy(&map->map);
   memset(map, 0, sizeof(*map));
+  map->generation = generation;
 }
 
 static inline void turbo_multimap_clear(turbo_multimap_t *map) {
+  bool changed;
   if (map == NULL) return;
+  changed = map->size != 0u;
   turbo_multimap_destroy_vectors(map);
   turbo_hash_map_clear(&map->map);
   map->size = 0u;
+  if (changed) ++map->generation;
 }
 
 static inline int turbo_multimap_reserve(turbo_multimap_t *map, size_t min_keys) {
-  return map == NULL ? CONTAINER_INVALID_ARGUMENT : turbo_hash_map_reserve(&map->map, min_keys);
+  uint64_t before;
+  int status;
+  if (map == NULL) return CONTAINER_INVALID_ARGUMENT;
+  before = turbo_hash_map_generation(&map->map);
+  status = turbo_hash_map_reserve(&map->map, min_keys);
+  if (status == CONTAINER_OK && turbo_hash_map_generation(&map->map) != before)
+    ++map->generation;
+  return status;
 }
 
 static inline int turbo_multimap_put(turbo_multimap_t *map, const void *key, const void *value) {
@@ -97,19 +180,23 @@ static inline int turbo_multimap_put(turbo_multimap_t *map, const void *key, con
   carrier = turbo_multimap_values_carrier(map, key);
   if (carrier != NULL) {
     rc = turbo_vec_push(*carrier, value);
-    if (rc == CONTAINER_OK) ++map->size;
+    if (rc == CONTAINER_OK) { ++map->size; ++map->generation; }
     return rc;
   }
   values = (turbo_vec_t *)malloc(sizeof(*values));
   if (values == NULL) return CONTAINER_OUT_OF_MEMORY;
   memset(values, 0, sizeof(*values));
-  rc = turbo_vec_init_bytes(values, map->value_size, map->value_align, map->value_limit);
+  rc = map->value_type != NULL
+           ? turbo_vec_init(values, map->value_type, map->value_limit)
+           : turbo_vec_init_bytes(values, map->value_size, map->value_align,
+                                  map->value_limit);
   if (rc != CONTAINER_OK) { free(values); return rc; }
   rc = turbo_vec_push(values, value);
   if (rc != CONTAINER_OK) { turbo_vec_destroy(values); free(values); return rc; }
   rc = turbo_hash_map_put(&map->map, key, &values);
   if (rc != CONTAINER_OK) { turbo_vec_destroy(values); free(values); return rc; }
   ++map->size;
+  ++map->generation;
   return CONTAINER_OK;
 }
 
@@ -164,6 +251,7 @@ static inline bool turbo_multimap_remove(turbo_multimap_t *map, const void *key,
   rc = turbo_vec_pop(values, out_value);
   if (rc != CONTAINER_OK) return false;
   --map->size;
+  ++map->generation;
   if (before_count == 1u) {
     rc = turbo_hash_map_remove(&map->map, key, NULL);
     if (rc != CONTAINER_OK) return false;
@@ -186,12 +274,62 @@ static inline size_t turbo_multimap_erase(turbo_multimap_t *map, const void *key
   turbo_vec_destroy(values);
   free(values);
   map->size -= removed;
+  ++map->generation;
   return removed;
 }
 
-#define TURBO_MULTI_MAP_DEFINE(name, key_type, value_type) \
-  CMETA_CONTAINER2_DEFINE(name, key_type, value_type, turbo_multimap_t, turbo_multimap, CONTAINER_OK, _, TURBO_META_MULTIMAP_METHODS) \
-  CMETA_CONTAINER2_OPAQUE_DESCRIPTOR_DEFINE(name, key_type, value_type)
+static inline uint64_t turbo_multimap_generation(const turbo_multimap_t *map) {
+  return map == NULL ? UINT64_C(0) : map->generation;
+}
+
+static inline const void *turbo_multimap_key_at_const(
+    const turbo_multimap_t *map, size_t pair_index) {
+  size_t slot;
+  if (map == NULL) return NULL;
+  for (slot = 0u; slot < map->map.capacity; ++slot) {
+    const void *key = turbo_hash_map_key_at(&map->map, slot);
+    turbo_vec_t *const *carrier;
+    size_t count;
+    if (key == NULL) continue;
+    carrier = (turbo_vec_t *const *)turbo_hash_map_value_at_const(&map->map, slot);
+    count = carrier == NULL || *carrier == NULL ? 0u : turbo_vec_size(*carrier);
+    if (pair_index < count) return key;
+    pair_index -= count;
+  }
+  return NULL;
+}
+
+static inline const void *turbo_multimap_value_at_const(
+    const turbo_multimap_t *map, size_t pair_index) {
+  size_t slot;
+  if (map == NULL) return NULL;
+  for (slot = 0u; slot < map->map.capacity; ++slot) {
+    turbo_vec_t *const *carrier = (turbo_vec_t *const *)
+        turbo_hash_map_value_at_const(&map->map, slot);
+    size_t count = carrier == NULL || *carrier == NULL ? 0u : turbo_vec_size(*carrier);
+    if (pair_index < count) return turbo_vec_at_const(*carrier, pair_index);
+    pair_index -= count;
+  }
+  return NULL;
+}
+
+static inline size_t turbo_multimap_range_capacity(const turbo_multimap_t *map) {
+  return turbo_multimap_size(map);
+}
+static inline size_t turbo_multimap_range_size(const turbo_multimap_t *map) {
+  return turbo_multimap_size(map);
+}
+static inline uint64_t turbo_multimap_range_generation(const turbo_multimap_t *map) {
+  return turbo_multimap_generation(map);
+}
+static inline const void *turbo_multimap_range_key_at_const(
+    const turbo_multimap_t *map, size_t index) {
+  return turbo_multimap_key_at_const(map, index);
+}
+static inline const void *turbo_multimap_range_value_at_const(
+    const turbo_multimap_t *map, size_t index) {
+  return turbo_multimap_value_at_const(map, index);
+}
 
 #ifdef __cplusplus
 }

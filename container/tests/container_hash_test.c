@@ -342,7 +342,7 @@ suite("Container hash ownership") {
         int out = 0;
         turbo_vec_t *values;
 
-        check_equal(turbo_multimap_init(&map, sizeof(int), _Alignof(int), 1u,
+        check_equal(turbo_multimap_init_bytes(&map, sizeof(int), _Alignof(int), 1u,
                                         sizeof(int), _Alignof(int), 1u,
                                         turbo_hash_bytes, turbo_hash_key_equal, NULL), CONTAINER_OK);
         check_equal(turbo_multimap_put(&map, &one, &value), CONTAINER_OK);

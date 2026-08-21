@@ -2,7 +2,6 @@
 #define TURBO_MAP_H
 
 #include <turbo/container/hash_map.h>
-#include <turbo/container/meta.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -115,13 +114,6 @@ static inline void *turbo_map_value_at(turbo_map_t *map, size_t slot) {
 static inline const void *turbo_map_value_at_const(const turbo_map_t *map, size_t slot) {
   return turbo_hash_map_value_at_const(map, slot);
 }
-
-#define TURBO_MAP_DEFINE(name, key_type, value_type) \
-  CMETA_CONTAINER2_DEFINE(name, key_type, value_type, turbo_map_t, turbo_map, CONTAINER_OK, _, TURBO_META_MAP_METHODS) \
-  CMETA_CONTAINER2_RANGES_DEFINE(name, key_type, value_type, turbo_map, key_at_const, value_at_const, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_REUSABLE, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE)
 
 #ifdef __cplusplus
 }

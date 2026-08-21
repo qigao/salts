@@ -12,6 +12,7 @@
 #include <turbo/container/multimap.h>
 #include <turbo/container/queue.h>
 #include <turbo/container/set.h>
+#include <turbo/container/sort.h>
 #include <turbo/container/stack.h>
 #include <turbo/container/vec.h>
 

@@ -7,7 +7,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <turbo/container/meta.h>
+#include <cmeta/cmeta.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,11 +69,6 @@ CONTAINER_API size_t turbo_deque_size(const turbo_deque_t *deque);
 CONTAINER_API size_t turbo_deque_capacity(const turbo_deque_t *deque);
 CONTAINER_API uint64_t turbo_deque_generation(const turbo_deque_t *deque);
 CONTAINER_API bool turbo_deque_empty(const turbo_deque_t *deque);
-
-#define TURBO_DEQUE_DEFINE(name, type) \
-  CMETA_CONTAINER1_DEFINE(name, type, turbo_deque_t, turbo_deque, CONTAINER_OK, _, TURBO_META_DEQUE_METHODS) \
-  CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name, type, turbo_deque, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_RANDOM_ACCESS | CMETA_RANGE_REUSABLE)
 
 #ifdef __cplusplus
 }

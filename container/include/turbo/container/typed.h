@@ -16,6 +16,7 @@
 #include <turbo/container/multimap.h>
 #include <turbo/container/btree.h>
 #include <turbo/container/bplus_tree.h>
+#include <turbo/container/meta.h>
 
 /* Turbo generic-kind registrations. */
 #define CMETA_GENERIC_KIND_Vec CMETA_GENERIC_PROBE()
@@ -43,7 +44,7 @@
 
 #define CMETA_TYPED_Queue(name, type) TURBO_QUEUE_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
 
-#define CMETA_TYPED_Heap(name, type, compare_fn) TURBO_HEAP_DEFINE(name, type, compare_fn) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_Heap(name, type) TURBO_HEAP_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
 
 /* Associative kinds ------------------------------------------------------ */
 #define CMETA_TYPED_Set(name, type) TURBO_SET_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
@@ -59,10 +60,10 @@
 #define CMETA_TYPED_MultiMap(name, key_type, value_type) \
   TURBO_MULTI_MAP_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
 
-#define CMETA_TYPED_BTree(name, key_type, value_type, compare_fn) \
-  TURBO_BTREE_DEFINE(name, key_type, value_type, compare_fn) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_BTree(name, key_type, value_type) \
+  TURBO_BTREE_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
 
-#define CMETA_TYPED_BPlusTree(name, key_type, value_type, compare_fn) \
-  TURBO_BPLUS_TREE_DEFINE(name, key_type, value_type, compare_fn) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_BPlusTree(name, key_type, value_type) \
+  TURBO_BPLUS_TREE_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
 
 #endif /* TURBO_TYPED_H */

@@ -171,8 +171,8 @@ static inline cmeta_status cmeta_collector_finish(cmeta_collector *collector) {
 }
 
 static inline void cmeta_collector_abort(cmeta_collector *collector) {
-    if (collector == NULL || collector->state != CMETA_COLLECTOR_BEGUN &&
-        collector->state != CMETA_COLLECTOR_ACCEPTING)
+    if (collector == NULL || (collector->state != CMETA_COLLECTOR_BEGUN &&
+        collector->state != CMETA_COLLECTOR_ACCEPTING))
         return;
     if (collector->ops != NULL && collector->ops->abort != NULL)
         collector->ops->abort(collector->context);

@@ -25,7 +25,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <turbo/container/meta.h>
+#include <cmeta/cmeta.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -88,11 +88,6 @@ CONTAINER_API size_t turbo_vec_size(const turbo_vec_t *vec);
 CONTAINER_API size_t turbo_vec_capacity(const turbo_vec_t *vec);
 CONTAINER_API uint64_t turbo_vec_generation(const turbo_vec_t *vec);
 CONTAINER_API bool turbo_vec_empty(const turbo_vec_t *vec);
-
-#define TURBO_VEC_DEFINE(name, type) \
-  CMETA_CONTAINER1_DEFINE(name, type, turbo_vec_t, turbo_vec, CONTAINER_OK, _, TURBO_META_VEC_METHODS) \
-  CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name, type, turbo_vec, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_CONTIGUOUS | CMETA_RANGE_RANDOM_ACCESS | CMETA_RANGE_REUSABLE)
 
 #ifdef __cplusplus
 }

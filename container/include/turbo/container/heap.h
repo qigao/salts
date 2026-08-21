@@ -7,7 +7,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <turbo/container/meta.h>
+#include <cmeta/cmeta.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,11 +68,6 @@ CONTAINER_API size_t turbo_heap_size(const turbo_heap_t *heap);
 CONTAINER_API size_t turbo_heap_capacity(const turbo_heap_t *heap);
 CONTAINER_API uint64_t turbo_heap_generation(const turbo_heap_t *heap);
 CONTAINER_API bool turbo_heap_empty(const turbo_heap_t *heap);
-
-#define TURBO_HEAP_DEFINE(name, type, compare_fn) \
-  CMETA_CONTAINER1_DEFINE(name, type, turbo_heap_t, turbo_heap, CONTAINER_OK, compare_fn, TURBO_META_HEAP_METHODS) \
-  CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name, type, turbo_heap, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_RANDOM_ACCESS | CMETA_RANGE_REUSABLE)
 
 #ifdef __cplusplus
 }

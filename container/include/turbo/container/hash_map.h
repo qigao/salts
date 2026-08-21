@@ -7,7 +7,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <turbo/container/meta.h>
+#include <cmeta/cmeta.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -91,16 +91,13 @@ CONTAINER_API size_t turbo_hash_map_entry_limit(const turbo_hash_map_t *map);
 CONTAINER_API uint64_t turbo_hash_map_generation(const turbo_hash_map_t *map);
 CONTAINER_API bool turbo_hash_map_empty(const turbo_hash_map_t *map);
 CONTAINER_API const void *turbo_hash_map_key_at(const turbo_hash_map_t *map, size_t slot);
+static inline const void *turbo_hash_map_key_at_const(const turbo_hash_map_t *map,
+                                                       size_t slot) {
+  return turbo_hash_map_key_at(map, slot);
+}
 CONTAINER_API void *turbo_hash_map_value_at(turbo_hash_map_t *map, size_t slot);
 CONTAINER_API const void *turbo_hash_map_value_at_const(const turbo_hash_map_t *map,
                                                         size_t slot);
-
-#define TURBO_HASH_MAP_DEFINE(name, key_type, value_type) \
-  CMETA_CONTAINER2_DEFINE(name, key_type, value_type, turbo_hash_map_t, turbo_hash_map, CONTAINER_OK, _, TURBO_META_HASH_MAP_METHODS) \
-  CMETA_CONTAINER2_RANGES_DEFINE(name, key_type, value_type, turbo_hash_map, key_at, value_at_const, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_REUSABLE, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE)
 
 #ifdef __cplusplus
 }

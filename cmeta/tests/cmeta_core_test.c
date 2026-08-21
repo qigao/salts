@@ -241,7 +241,8 @@ CMETA_CONTAINER1_SLOT_RANGE_DEFINE(
     int,
     cmeta_test_slot_range_raw,
     CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE,
-    cmeta_test_slot_range_version)
+    cmeta_test_slot_range_version,
+    NULL)
 
 typedef struct cmeta_test_assoc_range_raw {
     int keys[2];
@@ -303,21 +304,24 @@ CMETA_CONTAINER2_RANGES_DEFINE(
     CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE,
     CMETA_RANGE_SIZED,
     CMETA_RANGE_SIZED,
-    cmeta_test_assoc_range_version)
+    cmeta_test_assoc_range_version,
+    NULL)
 
 CMETA_CONTAINER1_INDEX_RANGE_DEFINE(
     cmeta_test_generated_range_container,
     int,
     cmeta_test_generated_range_raw,
     CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED,
-    cmeta_test_generated_range_version)
+    cmeta_test_generated_range_version,
+    NULL)
 
 CMETA_CONTAINER1_INDEX_RANGE_DEFINE(
     cmeta_test_required_range_container,
     int,
     cmeta_test_generated_range_raw,
     CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED,
-    cmeta_test_required_range_version)
+    cmeta_test_required_range_version,
+    NULL)
 
 enum {
     CMETA_TEST_COUNTER_RESET = 1u << 0

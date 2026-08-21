@@ -2,7 +2,6 @@
 #define TURBO_HASH_SET_H
 
 #include <turbo/container/set.h>
-#include <turbo/container/meta.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,11 +47,6 @@ static inline size_t turbo_hash_set_entry_limit(const turbo_hash_set_t *set) { r
 static inline uint64_t turbo_hash_set_generation(const turbo_hash_set_t *set) { return turbo_set_generation(set); }
 static inline bool turbo_hash_set_empty(const turbo_hash_set_t *set) { return turbo_set_empty(set); }
 static inline const void *turbo_hash_set_key_at(const turbo_hash_set_t *set, size_t slot) { return turbo_set_key_at(set, slot); }
-
-#define TURBO_HASH_SET_DEFINE(name, key_type) \
-  CMETA_CONTAINER1_DEFINE(name, key_type, turbo_hash_set_t, turbo_hash_set, CONTAINER_OK, _, TURBO_META_HASH_SET_METHODS) \
-  CMETA_CONTAINER1_SLOT_RANGE_DEFINE(name, key_type, turbo_hash_set, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE)
 
 #ifdef __cplusplus
 }

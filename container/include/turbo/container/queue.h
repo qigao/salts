@@ -2,7 +2,6 @@
 #define TURBO_QUEUE_H
 
 #include <turbo/container/deque.h>
-#include <turbo/container/meta.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,15 +11,29 @@ typedef struct {
   turbo_deque_t raw;
 } turbo_queue_t;
 
-static inline int turbo_queue_init(turbo_queue_t *queue, size_t elem_size, size_t elem_align,
-                                   size_t element_limit) {
+static inline container_status turbo_queue_init(turbo_queue_t *queue,
+                                                 const cmeta_type_desc *type,
+                                                 size_t element_limit) {
+  return queue == NULL ? CONTAINER_INVALID_ARGUMENT
+                       : turbo_deque_init(&queue->raw, type, element_limit);
+}
+static inline container_status turbo_queue_init_bytes(turbo_queue_t *queue, size_t elem_size,
+                                                       size_t elem_align,
+                                                       size_t element_limit) {
   return queue == NULL ? CONTAINER_INVALID_ARGUMENT
                        : turbo_deque_init_bytes(&queue->raw, elem_size, elem_align,
                                                 element_limit);
 }
-static inline int turbo_queue_from_array(turbo_queue_t *queue, const void *elements,
-                                         size_t count, size_t elem_size, size_t elem_align,
-                                         size_t element_limit) {
+static inline container_status turbo_queue_from_array(
+    turbo_queue_t *queue, const void *elements, size_t count,
+    const cmeta_type_desc *type, size_t element_limit) {
+  return queue == NULL ? CONTAINER_INVALID_ARGUMENT
+                       : turbo_deque_from_array(&queue->raw, elements, count,
+                                                type, element_limit);
+}
+static inline container_status turbo_queue_from_array_bytes(
+    turbo_queue_t *queue, const void *elements, size_t count, size_t elem_size,
+    size_t elem_align, size_t element_limit) {
   return queue == NULL ? CONTAINER_INVALID_ARGUMENT
                        : turbo_deque_from_array_bytes(&queue->raw, elements, count, elem_size, elem_align,
                                                       element_limit);
@@ -61,14 +74,12 @@ static inline size_t turbo_queue_size(const turbo_queue_t *queue) {
 static inline size_t turbo_queue_capacity(const turbo_queue_t *queue) {
   return queue == NULL ? 0U : turbo_deque_capacity(&queue->raw);
 }
+static inline uint64_t turbo_queue_generation(const turbo_queue_t *queue) {
+  return queue == NULL ? UINT64_C(0) : turbo_deque_generation(&queue->raw);
+}
 static inline bool turbo_queue_empty(const turbo_queue_t *queue) {
   return queue == NULL || turbo_deque_empty(&queue->raw);
 }
-
-#define TURBO_QUEUE_DEFINE(name, type) \
-  CMETA_CONTAINER1_DEFINE(name, type, turbo_queue_t, turbo_queue, CONTAINER_OK, _, TURBO_META_QUEUE_METHODS) \
-  CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name, type, turbo_queue, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_RANDOM_ACCESS | CMETA_RANGE_REUSABLE)
 
 #ifdef __cplusplus
 }

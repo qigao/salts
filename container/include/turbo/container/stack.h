@@ -2,7 +2,6 @@
 #define TURBO_STACK_H
 
 #include <turbo/container/vec.h>
-#include <turbo/container/meta.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,15 +11,29 @@ typedef struct {
   turbo_vec_t raw;
 } turbo_stack_t;
 
-static inline int turbo_stack_init(turbo_stack_t *stack, size_t elem_size, size_t elem_align,
-                                   size_t element_limit) {
+static inline container_status turbo_stack_init(turbo_stack_t *stack,
+                                                 const cmeta_type_desc *type,
+                                                 size_t element_limit) {
+  return stack == NULL ? CONTAINER_INVALID_ARGUMENT
+                       : turbo_vec_init(&stack->raw, type, element_limit);
+}
+static inline container_status turbo_stack_init_bytes(turbo_stack_t *stack, size_t elem_size,
+                                                       size_t elem_align,
+                                                       size_t element_limit) {
   return stack == NULL ? CONTAINER_INVALID_ARGUMENT
                        : turbo_vec_init_bytes(&stack->raw, elem_size, elem_align,
                                               element_limit);
 }
-static inline int turbo_stack_from_array(turbo_stack_t *stack, const void *elements,
-                                         size_t count, size_t elem_size, size_t elem_align,
-                                         size_t element_limit) {
+static inline container_status turbo_stack_from_array(
+    turbo_stack_t *stack, const void *elements, size_t count,
+    const cmeta_type_desc *type, size_t element_limit) {
+  return stack == NULL ? CONTAINER_INVALID_ARGUMENT
+                       : turbo_vec_from_array(&stack->raw, elements, count, type,
+                                              element_limit);
+}
+static inline container_status turbo_stack_from_array_bytes(
+    turbo_stack_t *stack, const void *elements, size_t count, size_t elem_size,
+    size_t elem_align, size_t element_limit) {
   return stack == NULL ? CONTAINER_INVALID_ARGUMENT
                        : turbo_vec_from_array_bytes(&stack->raw, elements, count, elem_size, elem_align,
                                                     element_limit);
@@ -55,14 +68,12 @@ static inline size_t turbo_stack_size(const turbo_stack_t *stack) {
 static inline size_t turbo_stack_capacity(const turbo_stack_t *stack) {
   return stack == NULL ? 0U : turbo_vec_capacity(&stack->raw);
 }
+static inline uint64_t turbo_stack_generation(const turbo_stack_t *stack) {
+  return stack == NULL ? UINT64_C(0) : turbo_vec_generation(&stack->raw);
+}
 static inline bool turbo_stack_empty(const turbo_stack_t *stack) {
   return stack == NULL || turbo_vec_empty(&stack->raw);
 }
-
-#define TURBO_STACK_DEFINE(name, type) \
-  CMETA_CONTAINER1_DEFINE(name, type, turbo_stack_t, turbo_stack, CONTAINER_OK, _, TURBO_META_STACK_METHODS) \
-  CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name, type, turbo_stack, \
-      CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_RANDOM_ACCESS | CMETA_RANGE_REUSABLE)
 
 #ifdef __cplusplus
 }
