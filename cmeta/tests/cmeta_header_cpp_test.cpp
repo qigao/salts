@@ -13,6 +13,8 @@ Struct(cmeta_cpp_record,
 
 static_assert(CMETA_ALIGNOF(cmeta_cpp_record) == alignof(cmeta_cpp_record),
               "CMETA_ALIGNOF must use the active language spelling");
+static_assert(CMETA_FLOAT_TRAITS_BINARY32_BINARY64,
+              "floating traits require the documented binary32/binary64 contract");
 
 static bool cmeta_cpp_copy_construct(void *destination, const void *source) {
   if (destination == nullptr || source == nullptr) return false;

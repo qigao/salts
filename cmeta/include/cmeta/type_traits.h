@@ -4,6 +4,7 @@
 #include <cmeta/pp.h>
 
 #include <stdbool.h>
+#include <float.h>
 #include <stdint.h>
 
 typedef uint32_t cmeta_trait_flags;
@@ -36,7 +37,18 @@ typedef struct cmeta_type_traits {
 
 /* Floating-key semantics: +0 and -0 compare equal and hash equally; every
  * NaN encoding compares equal to every other NaN, sorts after finite/infinite
- * values, and hashes to one canonical value. */
+ * values, and hashes to one canonical value.
+ *
+ * Their raw-object hash implementation is deliberately fail-fast: CMeta only
+ * supports IEC 60559 binary32/binary64 object representations without padding.
+ * The expression below records the checked <float.h> and size requirements;
+ * cmeta.c rejects compilation when they are not met and supplies no fallback. */
+#define CMETA_FLOAT_TRAITS_BINARY32_BINARY64 \
+    (FLT_RADIX == 2 && sizeof(float) == 4u && sizeof(double) == 8u && \
+     FLT_MANT_DIG == 24 && DBL_MANT_DIG == 53 && \
+     FLT_MIN_EXP == -125 && FLT_MAX_EXP == 128 && \
+     DBL_MIN_EXP == -1021 && DBL_MAX_EXP == 1024)
+
 #ifdef __cplusplus
 extern "C" {
 #endif

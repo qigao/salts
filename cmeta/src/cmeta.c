@@ -1,10 +1,22 @@
 #include <cmeta/cmeta.h>
 
+#include <float.h>
 #include <math.h>
 #include <string.h>
 
 #define CMETA_STR_I(x) #x
 #define CMETA_STR(x) CMETA_STR_I(x)
+
+_Static_assert(sizeof(float) == 4u,
+               "floating trait hashes require a binary32-sized float");
+_Static_assert(sizeof(double) == 8u,
+               "floating trait hashes require a binary64-sized double");
+_Static_assert(FLT_RADIX == 2,
+               "floating trait hashes require a binary radix");
+_Static_assert(FLT_MANT_DIG == 24 && FLT_MIN_EXP == -125 && FLT_MAX_EXP == 128,
+               "floating trait hashes require binary32 precision and exponent range");
+_Static_assert(DBL_MANT_DIG == 53 && DBL_MIN_EXP == -1021 && DBL_MAX_EXP == 1024,
+               "floating trait hashes require binary64 precision and exponent range");
 
 #define CMETA_TRIVIAL_TRAIT_FLAGS \
     (CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH | CMETA_TRAIT_COMPARE | \
