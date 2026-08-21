@@ -176,10 +176,62 @@
 #define Replay(schema, M) schema(M)
 #endif
 
-/* Semantic compatibility aliases. Operators and Containers keep their public
- * vocabulary, but no longer own separate tuple-unpack/replay machinery. */
+/* Operator source rows may be either the legacy normalized 15-field row or a
+ * structured 7-field row. Both forms invoke the consumer with the same flat
+ * 15-field ABI. Replay(schema, M) remains unchanged. */
+#define CMETA_OPERATOR_ROW_APPLY(row, M) \
+    CMETA_OPERATOR_ROW_APPLY_E(M, CMETA_PP_UNPAREN row)
+#define CMETA_OPERATOR_ROW_APPLY_E(M, ...) \
+    CMETA_OPERATOR_ROW_APPLY_I(M, CMETA_PP_NARG(__VA_ARGS__), __VA_ARGS__)
+#define CMETA_OPERATOR_ROW_APPLY_I(M, n, ...) \
+    CMETA_OPERATOR_ROW_APPLY_II(M, n, __VA_ARGS__)
+#define CMETA_OPERATOR_ROW_APPLY_II(M, n, ...) \
+    CMETA_PP_CAT(CMETA_OPERATOR_ROW_APPLY_, n)(M, __VA_ARGS__)
+
+#define CMETA_OPERATOR_ROW_APPLY_15(M, ...) M(__VA_ARGS__)
+
+#define CMETA_OPERATOR_CALL_ARGS(tag, ...) \
+    CMETA_PP_CAT(CMETA_OPERATOR_CALL_ARGS_, tag)(__VA_ARGS__)
+#define CMETA_OPERATOR_CALL_ARGS_call(margc, fnarg, childarg) \
+    margc, fnarg, childarg
+
+#define CMETA_OPERATOR_FN_ARGS(tag, ...) \
+    CMETA_PP_CAT(CMETA_OPERATOR_FN_ARGS_, tag)(__VA_ARGS__)
+#define CMETA_OPERATOR_FN_ARGS_fn(arity, p0, p1, p2, ret) \
+    arity, p0, p1, p2, ret
+
+#define CMETA_OPERATOR_FLOW_ARGS(tag, ...) \
+    CMETA_PP_CAT(CMETA_OPERATOR_FLOW_ARGS_, tag)(__VA_ARGS__)
+#define CMETA_OPERATOR_FLOW_ARGS_flow(out, card, childrule) \
+    out, card, childrule
+
+#define CMETA_OPERATOR_SEMANTIC_ARG(tag, value) \
+    CMETA_PP_CAT(CMETA_OPERATOR_SEMANTIC_ARG_, tag)(value)
+#define CMETA_OPERATOR_SEMANTIC_ARG_semantic(value) value
+
+#define CMETA_OPERATOR_EFFECT_ARG(tag, value) \
+    CMETA_PP_CAT(CMETA_OPERATOR_EFFECT_ARG_, tag)(value)
+#define CMETA_OPERATOR_EFFECT_ARG_effect(value) value
+
+/* Expansion trampoline: subrow extractors intentionally emit commas, so they
+ * must expand before the fixed 15-argument consumer signature is reparsed. */
+#define CMETA_OPERATOR_ROW_APPLY_7(M, E, method, callrow, fnrow, flowrow, semanticrow, effectrow) \
+    CMETA_OPERATOR_ROW_APPLY_STRUCTURED(M, E, method, \
+        CMETA_OPERATOR_CALL_ARGS callrow, \
+        CMETA_OPERATOR_FN_ARGS fnrow, \
+        CMETA_OPERATOR_FLOW_ARGS flowrow, \
+        CMETA_OPERATOR_SEMANTIC_ARG semanticrow, \
+        CMETA_OPERATOR_EFFECT_ARG effectrow)
+#define CMETA_OPERATOR_ROW_APPLY_STRUCTURED(...) \
+    CMETA_OPERATOR_ROW_APPLY_STRUCTURED_I(__VA_ARGS__)
+#define CMETA_OPERATOR_ROW_APPLY_STRUCTURED_I(M, E, method, margc, fnarg, childarg, farity, p0, p1, p2, ret, out, card, childrule, semantic, effect) \
+    M(E, method, margc, fnarg, childarg, farity, p0, p1, p2, ret, out, card, childrule, semantic, effect)
+
+/* Semantic compatibility alias. Operators owns source normalization; Schema
+ * remains the generic tuple-row replay primitive. */
 #ifndef Operators
-#define Operators(M, ...) Schema(M, __VA_ARGS__)
+#define Operators(M, ...) \
+    CMETA_SCHEMA_ROWS(CMETA_OPERATOR_ROW_APPLY, M, __VA_ARGS__)
 #endif
 
 #endif
