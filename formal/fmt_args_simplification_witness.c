@@ -24,6 +24,13 @@
 #define FMT_PROOF_NORMALIZED_EMPTY() \
     (fmt_arg_t[]) { { FMT_TYPE_NONE } }
 
+/* In normalized storage, one slot is always the trailing NONE sentinel,
+ * so the logical argument count is storage_count - 1. */
+#define FMT_PROOF_COUNT_NONEMPTY(...) \
+    (ARRAY_COUNT(FMT_PROOF_NORMALIZED_NONEMPTY(__VA_ARGS__)) - 1u)
+#define FMT_PROOF_COUNT_EMPTY() \
+    (ARRAY_COUNT(FMT_PROOF_NORMALIZED_EMPTY()) - 1u)
+
 static int same_observable_prefix(const fmt_arg_t *legacy,
                                   const fmt_arg_t *normalized,
                                   size_t logical_count) {
@@ -57,14 +64,22 @@ static int check_case(const fmt_arg_t *legacy,
     fmt_arg_t *legacy = FMT_ARGS(__VA_ARGS__); \
     fmt_arg_t *normalized = FMT_PROOF_NORMALIZED_NONEMPTY(__VA_ARGS__); \
     CHECK(FMT_NARGS(__VA_ARGS__) == (count)); \
+    CHECK(FMT_PROOF_COUNT_NONEMPTY(__VA_ARGS__) == (count)); \
     CHECK(check_case(legacy, (count), normalized, (count) + 1u, (count))); \
 } while (0)
+
+static int next_value(int *calls) {
+    ++*calls;
+    return *calls;
+}
 
 int main(void) {
     fmt_arg_t *legacy_empty = FMT_ARGS();
     fmt_arg_t *normalized_empty = FMT_PROOF_NORMALIZED_EMPTY();
+    int calls = 0;
 
     CHECK(FMT_NARGS() == 0);
+    CHECK(FMT_PROOF_COUNT_EMPTY() == 0u);
     CHECK(check_case(legacy_empty, 1u, normalized_empty, 1u, 0u));
 
     CHECK_NONEMPTY_CASE(1u, 1);
@@ -75,6 +90,14 @@ int main(void) {
     CHECK_NONEMPTY_CASE(6u, 1, 2, 3, 4, 5, 6);
     CHECK_NONEMPTY_CASE(7u, 1, 2, 3, 4, 5, 6, 7);
     CHECK_NONEMPTY_CASE(8u, 1, 2, 3, 4, 5, 6, 7, 8);
+
+    /* Deriving the count through sizeof must not evaluate argument expressions. */
+    CHECK(FMT_PROOF_COUNT_NONEMPTY(next_value(&calls)) == 1u);
+    CHECK(calls == 0);
+
+    /* Current legacy storage size alone cannot distinguish zero from one arg. */
+    CHECK(ARRAY_COUNT(FMT_ARGS()) == ARRAY_COUNT(FMT_ARGS(1)));
+    CHECK(FMT_NARGS() != FMT_NARGS(1));
 
     puts("fmt args simplification applicability: ok");
     return 0;
