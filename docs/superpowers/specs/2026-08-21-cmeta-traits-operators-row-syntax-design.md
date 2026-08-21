@@ -2,7 +2,7 @@
 
 ## Status
 
-Design approved for specification and awaiting review. This document defines the intended C11 surface syntax and normalization boundary only. It does not authorize implementation until this spec is reviewed.
+Implemented and verified. The C11 surface syntax and normalization boundary described here are active on `leanv4`; strict-C11 GCC/Clang witnesses, negative compile probes, unchanged generated C/Lean semantic snapshots, and `lake build --wfail` verify the Phase 1 migration.
 
 ## Goal
 
