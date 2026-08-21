@@ -2,6 +2,7 @@ import CMeta.Calculus
 import CMeta.Traits
 import CMeta.Callable
 import CMeta.Lambda
+import CMeta.Dispatch
 
 #check CMeta.product
 #check CMeta.CoreExpr
@@ -53,3 +54,13 @@ assert_not_exists CMeta.Lambda.erasure_signature_binary
 assert_not_exists CMeta.anonymous_beta
 assert_not_exists CMeta.bindLast_beta
 assert_not_exists CMeta.lambda_bind_same_shape
+
+#check CMeta.Operator
+#check CMeta.DispatchRule
+#check CMeta.dispatch
+#check CMeta.OperatorPolicy
+#check CMeta.RulesRespectPolicy
+#check CMeta.composeSignature
+#check CMeta.inferAndAllow
+
+assert_not_exists CMeta.inferAndAllow_known
