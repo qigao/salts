@@ -1,5 +1,6 @@
 import CMeta.Calculus
 import CMeta.Traits
+import CMeta.Callable
 
 #check CMeta.product
 #check CMeta.CoreExpr
@@ -22,3 +23,18 @@ assert_not_exists CMeta.Traits.type_unique
 assert_not_exists CMeta.Traits.inferUnary_of_known
 assert_not_exists CMeta.Traits.inferUnary_unique
 assert_not_exists CMeta.policyAllows_iff
+
+#check CMeta.HArgs
+#check CMeta.Callable
+#check CMeta.Callable.ofUnary
+#check CMeta.Callable.invoke1
+#check CMeta.Generator
+#check CMeta.CallableDesc
+#check CMeta.eraseValue
+#check CMeta.eraseGenerator
+
+assert_not_exists CMeta.Callable.compose_beta
+assert_not_exists CMeta.Generator.signature_exact
+assert_not_exists CMeta.eraseValue_unary
+assert_not_exists CMeta.eraseValue_binary
+assert_not_exists CMeta.eraseGenerator_preserves_signature
