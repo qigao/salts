@@ -4,8 +4,8 @@ import CMeta.Traits
 # Typed callables
 
 CMeta's runtime `cmeta_callable` is type-erased and already receives logical
-arguments through an array.  The formal typed side therefore uses one finite
-argument schema rather than an arity-specific family of Callable1/Callable2/etc.
+arguments through an array. The formal typed side therefore uses one finite
+argument schema rather than an arity-specific callable type family.
 -/
 
 namespace CMeta
@@ -31,6 +31,15 @@ def one (x : A.denote) : HArgs [A] := .cons x .nil
 /-- Construct the exact two-argument value used by a binary backend adapter. -/
 def two (a : A.denote) (b : B.denote) : HArgs [A, B] :=
   .cons a (.cons b .nil)
+
+/-- Concatenate two heterogeneous argument lists while preserving the type schema. -/
+def append : HArgs xs → HArgs ys → HArgs (xs ++ ys)
+  | .nil, right => right
+  | .cons x rest, right => .cons x (append rest right)
+
+/-- Append one logical last argument; this is the semantic primitive for bind-last. -/
+def snoc (xs : HArgs Args) (x : B.denote) : HArgs (Args ++ [B]) :=
+  xs.append (one x)
 
 end HArgs
 
@@ -64,6 +73,20 @@ theorem compose_beta (g : Callable [B] R) (f : Callable [A] B)
 
 end Callable
 
+/-- Zero logical arguments are already represented by the same Callable model. -/
+private def zeroArgumentExample : Callable [] .int :=
+  ⟨fun | .nil => 7⟩
+
+/-- Higher finite arity is represented without introducing another callable type. -/
+private def threeArgumentExample : Callable [.int, .int, .int] .int :=
+  ⟨fun | .cons a (.cons b (.cons c .nil)) => a + b + c⟩
+
+example : zeroArgumentExample.run .nil = 7 := rfl
+
+example :
+    threeArgumentExample.run (.cons 1 (.cons 2 (.cons 3 .nil))) = 6 := by
+  native_decide
+
 /-- Generator is a separate protocol, not a value lambda whose arity happens to
     include output-buffer/cursor implementation parameters. -/
 structure Generator (A R : CType) (State : Type) where
@@ -85,7 +108,7 @@ structure CallableDesc where
   deriving Repr, DecidableEq
 
 /-- Existing C backends currently have concrete unary and binary value-function
-    pointer families.  Erasure is therefore partial for the general semantic
+    pointer families. Erasure is therefore partial for the general semantic
     model until more finite backend signatures are admitted. -/
 def eraseValue {Args : List CType} {R : CType}
     (_ : Callable Args R) : Option CallableDesc :=
