@@ -1,7 +1,5 @@
 module
 import all CMeta.PlanConformance
--- TEMP-MODULE-BRIDGE(M6): legacy StructuredConformance needs CType/Callable/ValueVec semantics
-public import CMeta.Execution
 import all CMeta.Execution
 
 /-!
