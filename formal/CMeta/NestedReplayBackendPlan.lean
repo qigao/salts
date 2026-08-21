@@ -1,4 +1,5 @@
 import CMeta.NestedReplayLowering
+import CMeta.PreprocessorBackend
 
 /-!
 # Strict-C11 nested replay backend plan
@@ -130,6 +131,17 @@ theorem lowerReplayBackendPlan_respects_active
       simp [lowerReplayBackendPlan, hl] at h
       subst plan
       exact ReplayExpansionPlan.fromIR_respects ir
+
+/-- Any two certified preprocessors lower the same replay IR identically when
+    they expose the same replay capability. Compiler family, version, and other
+    identity fields remain outside this theorem because lowering consumes only
+    the capability projection. -/
+theorem certifiedReplayLowering_eq_of_capability_eq
+    (a b : CertifiedPreprocessorBackend) (ir : ReplayIR)
+    (hcap : a.replayCapability = b.replayCapability) :
+    lowerReplayBackendPlan a.replayCapability ir =
+      lowerReplayBackendPlan b.replayCapability ir := by
+  rw [hcap]
 
 end Producer
 end CMeta
