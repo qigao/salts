@@ -82,6 +82,11 @@ jobs:
           diff -u formal/CMeta/TypeIdentityGeneratedC.lean \
             "$generated_dir/TypeIdentityGeneratedC.lean"
 
+          build/formal-linux/bin/cmeta_nested_replay_deferred_witness \
+            > "$generated_dir/NestedReplayGeneratedC.lean"
+          diff -u formal/CMeta/NestedReplayGeneratedC.lean \
+            "$generated_dir/NestedReplayGeneratedC.lean"
+
           build/formal-linux/bin/cmeta_plan_conformance_witness \
             > "$generated_dir/PlanGeneratedC.lean"
           diff -u formal/CMeta/PlanGeneratedC.lean \
