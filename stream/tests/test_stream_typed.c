@@ -26,18 +26,18 @@ spec("typed stream adapters") {
         stream_item_t item;
         int output = 0;
 
-        check_int_eq(STREAM_ARRAY_INIT(&stream, &source_state, values), STREAM_OK);
+        check_equal(STREAM_ARRAY_INIT(&stream, &source_state, values), STREAM_OK);
         STREAM_FILTER_TYPED(&stream, positive_adapter);
         STREAM_MAP_TYPED(&stream, int, double_adapter);
 
         item.data = &output;
         item.size = sizeof(output);
-        check_int_eq(stream_next(&stream, &item), STREAM_OK);
-        check_int_eq(output, 4);
+        check_equal(stream_next(&stream, &item), STREAM_OK);
+        check_equal(output, 4);
         item.size = sizeof(output);
-        check_int_eq(stream_next(&stream, &item), STREAM_OK);
-        check_int_eq(output, 6);
+        check_equal(stream_next(&stream, &item), STREAM_OK);
+        check_equal(output, 6);
         item.size = sizeof(output);
-        check_int_eq(stream_next(&stream, &item), STREAM_END);
+        check_equal(stream_next(&stream, &item), STREAM_END);
     }
 }

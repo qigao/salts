@@ -265,7 +265,7 @@ spec("Memory and container allocation benchmarks") {
 
   after_all() { turbo_mutex_destroy(&g_memory_bench_baseline_mutex); }
 
-  before_each() { check_int_eq(mem_init(&g_memory_bench_pool, 0), 0); }
+  before_each() { check_equal(mem_init(&g_memory_bench_pool, 0), 0); }
 
   after_each() { mem_destroy(&g_memory_bench_pool); }
 
@@ -337,7 +337,7 @@ spec("Memory and container allocation benchmarks") {
               8U * EXTERNAL_WRAPPER_BENCH_ITERS) {
       external_wrapper_bench_parallel(8U, 0);
     }
-    check_size_eq(atomic_load_explicit(&g_memory_bench_failures, memory_order_relaxed), 0U);
+    check_equal(atomic_load_explicit(&g_memory_bench_failures, memory_order_relaxed), 0U);
   }
 
   bench("Internal buffer recycling") {
@@ -389,7 +389,7 @@ spec("Memory and container allocation benchmarks") {
               8U * BUFFER_RECYCLE_BENCH_ITERS) {
       buffer_recycle_bench_parallel(8U, 1, 0);
     }
-    check_size_eq(atomic_load_explicit(&g_memory_bench_failures, memory_order_relaxed), 0U);
+    check_equal(atomic_load_explicit(&g_memory_bench_failures, memory_order_relaxed), 0U);
   }
 
   bench("Concurrent slab allocation") {
@@ -457,8 +457,8 @@ spec("Memory and container allocation benchmarks") {
               8U * SLAB_ALLOC_BENCH_ITERS) {
       slab_alloc_bench_parallel(8U, 1, 1);
     }
-    check_size_eq(mem_pool_total_used(&g_memory_bench_pool), 0U);
-    check_size_eq(atomic_load_explicit(&g_memory_bench_failures, memory_order_relaxed), 0U);
+    check_equal(mem_pool_total_used(&g_memory_bench_pool), 0U);
+    check_equal(atomic_load_explicit(&g_memory_bench_failures, memory_order_relaxed), 0U);
   }
 
   bench("Container allocation paths") {

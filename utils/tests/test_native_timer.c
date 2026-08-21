@@ -43,7 +43,7 @@ spec("Native Timer Tests") {
 
     turbo_sleep_ms(1000); // Wait for ticks
 
-    check_int_ge(count, 5);
+    check_greater_equal(count, 5);
     turbo_timer_destroy(repeating);
   }
 
@@ -57,7 +57,7 @@ spec("Native Timer Tests") {
 
     turbo_sleep_ms(300); // Wait for firing
 
-    check_int_eq(count, 1);
+    check_equal(count, 1);
     turbo_timer_destroy(oneshot);
   }
 
@@ -69,11 +69,11 @@ spec("Native Timer Tests") {
 
       check_not_null(timer);
       turbo_timer_set_data(timer, &destroy_race_count);
-      check_int_eq(turbo_timer_start(timer, on_destroy_race_timer, 1, 0), 0);
+      check_equal(turbo_timer_start(timer, on_destroy_race_timer, 1, 0), 0);
       turbo_sleep_ms(1);
       turbo_timer_destroy(timer);
     }
 
-    check_int_ge(atomic_load(&destroy_race_count), 0);
+    check_greater_equal(atomic_load(&destroy_race_count), 0);
   }
 }

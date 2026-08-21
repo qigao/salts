@@ -43,7 +43,7 @@ spec("Mutex Tests") {
     shared_counter = 42;
     turbo_mutex_unlock(&mutex);
 
-    check_int_eq(shared_counter, 42);
+    check_equal(shared_counter, 42);
   }
 
   it("should handle concurrent access") {
@@ -52,17 +52,17 @@ spec("Mutex Tests") {
     // Start threads
     for (int i = 0; i < TEST_THREAD_COUNT; i++) {
       int rc = turbo_thread_create(&threads[i], mutex_test_thread, NULL);
-      check_int_eq(rc, 0);
+      check_equal(rc, 0);
     }
 
     // Join threads
     for (int i = 0; i < TEST_THREAD_COUNT; i++) {
       int rc = turbo_thread_join(&threads[i]);
-      check_int_eq(rc, 0);
+      check_equal(rc, 0);
     }
 
     // Verify count is exactly threads * iterations
     // If mutex was broken, race conditions would make this value smaller
-    check_int_eq(shared_counter, TEST_THREAD_COUNT * TEST_ITERATIONS);
+    check_equal(shared_counter, TEST_THREAD_COUNT * TEST_ITERATIONS);
   }
 }

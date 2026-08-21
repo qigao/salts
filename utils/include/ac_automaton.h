@@ -2,7 +2,7 @@
 #define TURBO_UTILS_AC_AUTOMATON_H
 
 #include "platform.h"
-#include "turbo_str_view.h"
+#include "turbo_vstr.h"
 #include "turbo_error.h"
 
 #include <stdbool.h>
@@ -51,7 +51,7 @@ CXX_C_API void ac_automaton_destroy(ac_automaton_t *ac);
  *  - On success, pattern_id is written when non-NULL.
  *  - The automaton is marked dirty; call ac_automaton_build() before matching again.
  */
-CXX_C_API int ac_automaton_add_pattern(ac_automaton_t *ac, tstr_v pattern,
+CXX_C_API int ac_automaton_add_pattern(ac_automaton_t *ac, vstr pattern,
                                        uint32_t *pattern_id);
 
 /**
@@ -67,7 +67,7 @@ CXX_C_API int ac_automaton_build(ac_automaton_t *ac);
  * Callback is invoked for every matched pattern instance with pattern_id/start/end.
  * Return false in callback to stop scanning early.
  */
-CXX_C_API int ac_automaton_match(const ac_automaton_t *ac, tstr_v text, ac_match_cb cb,
+CXX_C_API int ac_automaton_match(const ac_automaton_t *ac, vstr text, ac_match_cb cb,
                                  void *user_data);
 
 /**
@@ -94,7 +94,7 @@ CXX_C_API void ac_utf8_automaton_destroy(ac_utf8_automaton_t *ac);
  *
  * Input must be valid UTF-8.
  */
-CXX_C_API int ac_utf8_automaton_add_pattern(ac_utf8_automaton_t *ac, tstr_v pattern,
+CXX_C_API int ac_utf8_automaton_add_pattern(ac_utf8_automaton_t *ac, vstr pattern,
                                            uint32_t *pattern_id);
 
 /** Builds fail links. Must be called after adding all patterns. */
@@ -106,7 +106,7 @@ CXX_C_API int ac_utf8_automaton_build(ac_utf8_automaton_t *ac);
  * Callback is invoked for every matched pattern instance with pattern_id/start/end.
  * start/end are code-point offsets.
  */
-CXX_C_API int ac_utf8_automaton_match(const ac_utf8_automaton_t *ac, tstr_v text, ac_match_cb cb,
+CXX_C_API int ac_utf8_automaton_match(const ac_utf8_automaton_t *ac, vstr text, ac_match_cb cb,
                                      void *user_data);
 
 /** Number of added UTF-8 patterns. */

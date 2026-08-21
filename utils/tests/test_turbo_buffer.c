@@ -74,16 +74,16 @@ static void* StressWorker(void* arg) {
 spec("Turbo Buffer (mem_pool_t) Tests") {
   
   it("should maintain ABI stability (112 bytes)") {
-    check_size_eq(sizeof(mem_pool_t), 112);
+    check_equal(sizeof(mem_pool_t), 112);
   }
 
   it("should initialize and destroy a pool") {
     mem_pool_t pool;
     int rc = mem_init(&pool, 0);
-    check_size_eq((size_t)rc, 0);
+    check_equal((size_t)rc, 0);
     
-    check_size_eq(mem_pool_total_allocated(&pool), 0);
-    check_size_eq(mem_pool_total_used(&pool), 0);
+    check_equal(mem_pool_total_allocated(&pool), 0);
+    check_equal(mem_pool_total_used(&pool), 0);
     
     mem_destroy(&pool);
   }
@@ -97,10 +97,10 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     
     void* p2 = mem_alloc(&pool, 32);
     check_not_null(p2);
-    check_ptr_ne(p1, p2);
+    check_not_equal((const void *)(p1), (const void *)(p2));
     
-    check_size_gt(mem_pool_total_allocated(&pool), 0);
-    check_size_gt(mem_pool_total_used(&pool), 64);
+    check_greater(mem_pool_total_allocated(&pool), 0);
+    check_greater(mem_pool_total_used(&pool), 64);
     
     mem_free(&pool, p1);
     mem_free(&pool, p2);
@@ -120,25 +120,25 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
       check_not_null(first[i]);
     }
     for (i = 0; i < TEST_SLAB_SIZE_CLASSES; ++i) mem_free(&pool, first[i]);
-    check_size_eq(mem_pool_total_used(&pool), 0U);
+    check_equal(mem_pool_total_used(&pool), 0U);
 
     for (i = 0; i < TEST_SLAB_SIZE_CLASSES; ++i) {
       void* recycled = mem_alloc(&pool, g_test_slab_sizes[i]);
-      check_ptr_eq(recycled, first[i]);
+      check_equal((const void *)(recycled), (const void *)(first[i]));
       mem_free(&pool, recycled);
     }
-    check_size_gt(mem_pool_total_allocated(&pool), 0U);
+    check_greater(mem_pool_total_allocated(&pool), 0U);
     mem_trim(&pool);
-    check_size_eq(mem_pool_total_allocated(&pool), 0U);
+    check_equal(mem_pool_total_allocated(&pool), 0U);
 
     for (i = 0; i < TEST_SLAB_LOCAL_MAGAZINE_SLOTS + 1U; ++i) {
       burst[i] = mem_alloc(&pool, 64U);
       check_not_null(burst[i]);
     }
     for (i = 0; i < TEST_SLAB_LOCAL_MAGAZINE_SLOTS + 1U; ++i) mem_free(&pool, burst[i]);
-    check_size_eq(mem_pool_total_used(&pool), 0U);
+    check_equal(mem_pool_total_used(&pool), 0U);
     mem_trim(&pool);
-    check_size_eq(mem_pool_total_allocated(&pool), 0U);
+    check_equal(mem_pool_total_allocated(&pool), 0U);
     mem_destroy(&pool);
   }
 
@@ -159,12 +159,12 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     mem_free(&second_pool, second);
 
     recycled = mem_alloc(&first_pool, 64U);
-    check_ptr_eq(recycled, first);
+    check_equal((const void *)(recycled), (const void *)(first));
     mem_free(&first_pool, recycled);
     mem_trim(&first_pool);
     mem_trim(&second_pool);
-    check_size_eq(mem_pool_total_allocated(&first_pool), 0U);
-    check_size_eq(mem_pool_total_allocated(&second_pool), 0U);
+    check_equal(mem_pool_total_allocated(&first_pool), 0U);
+    check_equal(mem_pool_total_allocated(&second_pool), 0U);
     mem_destroy(&first_pool);
     mem_destroy(&second_pool);
   }
@@ -177,7 +177,7 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     void* p = mem_alloc(&pool, large_size);
     check_not_null(p);
     
-    check_size_ge(mem_pool_total_used(&pool), large_size);
+    check_greater_equal(mem_pool_total_used(&pool), large_size);
     
     mem_free(&pool, p);
     mem_destroy(&pool);
@@ -193,18 +193,18 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     first = mem_alloc(&pool, 32);
     check_not_null(first);
     allocated_before_reset = mem_pool_total_allocated(&pool);
-    check_size_gt(allocated_before_reset, 0);
+    check_greater(allocated_before_reset, 0);
 
     mem_reset(&pool);
-    check_size_eq(mem_pool_total_used(&pool), 0);
-    check_size_eq(mem_pool_total_allocated(&pool), allocated_before_reset);
+    check_equal(mem_pool_total_used(&pool), 0);
+    check_equal(mem_pool_total_allocated(&pool), allocated_before_reset);
 
     reused = mem_alloc(&pool, 32);
     check_not_null(reused);
-    check_size_eq(mem_pool_total_allocated(&pool), allocated_before_reset);
+    check_equal(mem_pool_total_allocated(&pool), allocated_before_reset);
     mem_free(&pool, reused);
     mem_trim(&pool);
-    check_size_eq(mem_pool_total_allocated(&pool), 0);
+    check_equal(mem_pool_total_allocated(&pool), 0);
     mem_destroy(&pool);
   }
 
@@ -225,20 +225,20 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     
     mem_buffer_t* buffer = mem_get_buffer(&pool, 100);
     check_not_null(buffer);
-    check_size_eq((size_t)mem_buffer_ref_count(buffer), 1);
-    check_ptr_eq(mem_buffer_pool(buffer), &pool);
+    check_equal((size_t)mem_buffer_ref_count(buffer), 1);
+    check_equal((const void *)(mem_buffer_pool(buffer)), (const void *)(&pool));
     
     mem_ref(buffer);
-    check_size_eq((size_t)mem_buffer_ref_count(buffer), 2);
+    check_equal((size_t)mem_buffer_ref_count(buffer), 2);
     
     mem_unref(buffer);
-    check_size_eq((size_t)mem_buffer_ref_count(buffer), 1);
+    check_equal((size_t)mem_buffer_ref_count(buffer), 1);
 
-    check_ptr_eq(mem_buffer_retain(buffer), buffer);
-    check_size_eq((size_t)mem_buffer_ref_count(buffer), 2);
+    check_equal((const void *)(mem_buffer_retain(buffer)), (const void *)(buffer));
+    check_equal((size_t)mem_buffer_ref_count(buffer), 2);
 
     mem_buffer_release(buffer);
-    check_size_eq((size_t)mem_buffer_ref_count(buffer), 1);
+    check_equal((size_t)mem_buffer_ref_count(buffer), 1);
     
     mem_release(buffer);
     
@@ -255,8 +255,8 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     mem_release(b1);
     
     mem_buffer_t* b2 = mem_get_buffer(&pool, 100);
-    check_ptr_eq(mem_buffer_data(b2), data1);
-    check_size_eq(mem_buffer_used(b2), 0);
+    check_equal((const void *)(mem_buffer_data(b2)), (const void *)(data1));
+    check_equal(mem_buffer_used(b2), 0);
     
     mem_release(b2);
     mem_destroy(&pool);
@@ -275,12 +275,12 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     }
     for (i = 0; i < sizeof(buffers) / sizeof(buffers[0]); ++i) mem_buffer_release(buffers[i]);
 
-    check_size_eq(mem_pool_recycle_count(&pool), MEM_BUFFER_RECYCLE_LIMIT);
+    check_equal(mem_pool_recycle_count(&pool), MEM_BUFFER_RECYCLE_LIMIT);
     cache_metadata = pool.recycle_head;
     check_not_null(cache_metadata);
     mem_reset(&pool);
-    check_size_eq(mem_pool_recycle_count(&pool), 0U);
-    check_ptr_eq(pool.recycle_head, cache_metadata);
+    check_equal(mem_pool_recycle_count(&pool), 0U);
+    check_equal((const void *)(pool.recycle_head), (const void *)(cache_metadata));
     mem_destroy(&pool);
   }
 
@@ -294,13 +294,13 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
         buffer->used = strlen(buffer->data) + 1;
         
         mem_slice_t slice = mem_slice(buffer, 6, 5);
-        check_ptr_eq(slice.data, mem_buffer_data(buffer) + 6);
-        check_size_eq(slice.length, 5);
-        check_ptr_eq(slice.buffer, buffer);
-        check_size_eq((size_t)mem_buffer_ref_count(buffer), 2);
+        check_equal((const void *)(slice.data), (const void *)(mem_buffer_data(buffer) + 6));
+        check_equal(slice.length, 5);
+        check_equal((const void *)(slice.buffer), (const void *)(buffer));
+        check_equal((size_t)mem_buffer_ref_count(buffer), 2);
         
         mem_slice_release(&slice);
-        check_size_eq((size_t)mem_buffer_ref_count(buffer), 1);
+        check_equal((size_t)mem_buffer_ref_count(buffer), 1);
         
         mem_release(buffer);
     }
@@ -318,13 +318,13 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     buffer = mem_wrap_external(data, sizeof(data), external_free_probe, &user_data);
     
     check_not_null(buffer);
-    check_size_eq((size_t)mem_is_external(buffer), 1);
-    check_ptr_eq(mem_buffer_data(buffer), data);
+    check_equal((size_t)mem_is_external(buffer), 1);
+    check_equal((const void *)(mem_buffer_data(buffer)), (const void *)(data));
     
     mem_release(buffer);
-    check_int_eq(atomic_load_explicit(&g_external_free_calls, memory_order_relaxed), 1);
-    check_ptr_eq(g_external_free_data, data);
-    check_ptr_eq(g_external_free_user, &user_data);
+    check_equal(atomic_load_explicit(&g_external_free_calls, memory_order_relaxed), 1);
+    check_equal((const void *)(g_external_free_data), (const void *)(data));
+    check_equal((const void *)(g_external_free_user), (const void *)(&user_data));
   }
 
   it("should fall back safely when the external wrapper cache is full") {
@@ -338,7 +338,7 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
       check_not_null(buffers[i]);
     }
     for (i = 0; i < sizeof(buffers) / sizeof(buffers[0]); ++i) mem_buffer_release(buffers[i]);
-    check_int_eq(atomic_load_explicit(&g_external_free_calls, memory_order_relaxed), 80);
+    check_equal(atomic_load_explicit(&g_external_free_calls, memory_order_relaxed), 80);
   }
 
   it("should survive concurrency stress") {
@@ -364,10 +364,10 @@ spec("Turbo Buffer (mem_pool_t) Tests") {
     }
 #endif
     
-    check_size_gt(mem_pool_recycle_count(&pool), 0U);
-    check_size_le(mem_pool_recycle_count(&pool), MEM_BUFFER_RECYCLE_LIMIT);
+    check_greater(mem_pool_recycle_count(&pool), 0U);
+    check_less_equal(mem_pool_recycle_count(&pool), MEM_BUFFER_RECYCLE_LIMIT);
     mem_destroy(&pool);
-    check_size_eq(atomic_load_explicit(&g_external_stress_free_calls, memory_order_relaxed),
+    check_equal(atomic_load_explicit(&g_external_stress_free_calls, memory_order_relaxed),
                   (size_t)num_threads * 1000U);
   }
 }

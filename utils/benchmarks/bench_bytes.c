@@ -29,10 +29,10 @@ spec("bounded byte buffer benchmarks") {
     turbo_bytes_view_t view;
     int failures = 0;
 
-    check_int_eq(turbo_bytes_init(&buffer, BYTE_BUFFER_PACKET_SIZE), TURBO_OK);
-    check_int_eq(turbo_bytes_append(&buffer, byte_buffer_chunk, sizeof(byte_buffer_chunk)),
+    check_equal(turbo_bytes_init(&buffer, BYTE_BUFFER_PACKET_SIZE), TURBO_OK);
+    check_equal(turbo_bytes_append(&buffer, byte_buffer_chunk, sizeof(byte_buffer_chunk)),
                  TURBO_OK);
-    check_int_eq(turbo_bytes_consume(&buffer, sizeof(byte_buffer_chunk)), TURBO_OK);
+    check_equal(turbo_bytes_consume(&buffer, sizeof(byte_buffer_chunk)), TURBO_OK);
 
     benchmark_io("append+view+consume 1 KiB", BYTE_BUFFER_BENCH_SAMPLES, 3u,
                  BYTE_BUFFER_CHUNK_SIZE) {
@@ -46,8 +46,8 @@ spec("bounded byte buffer benchmarks") {
       }
     }
 
-    check_int_eq(failures, 0);
-    check_size_eq(turbo_bytes_size(&buffer), 0u);
+    check_equal(failures, 0);
+    check_equal(turbo_bytes_size(&buffer), 0u);
     turbo_bytes_destroy(&buffer);
   }
 
@@ -57,10 +57,10 @@ spec("bounded byte buffer benchmarks") {
     int failures = 0;
     size_t i;
 
-    check_int_eq(turbo_bytes_init(&buffer, BYTE_BUFFER_PACKET_SIZE), TURBO_OK);
-    check_int_eq(turbo_bytes_append(&buffer, byte_buffer_packet, sizeof(byte_buffer_packet)),
+    check_equal(turbo_bytes_init(&buffer, BYTE_BUFFER_PACKET_SIZE), TURBO_OK);
+    check_equal(turbo_bytes_append(&buffer, byte_buffer_packet, sizeof(byte_buffer_packet)),
                  TURBO_OK);
-    check_int_eq(turbo_bytes_consume(&buffer, sizeof(byte_buffer_packet)), TURBO_OK);
+    check_equal(turbo_bytes_consume(&buffer, sizeof(byte_buffer_packet)), TURBO_OK);
 
     benchmark_io("64 x 1 KiB append + view + consume", BYTE_BUFFER_FRAGMENT_SAMPLES,
                  BYTE_BUFFER_FRAGMENT_COUNT + 2u, BYTE_BUFFER_PACKET_SIZE) {
@@ -77,8 +77,8 @@ spec("bounded byte buffer benchmarks") {
       }
     }
 
-    check_int_eq(failures, 0);
-    check_size_eq(turbo_bytes_size(&buffer), 0u);
+    check_equal(failures, 0);
+    check_equal(turbo_bytes_size(&buffer), 0u);
     turbo_bytes_destroy(&buffer);
   }
 
@@ -86,10 +86,10 @@ spec("bounded byte buffer benchmarks") {
     turbo_bytes_t buffer = turbo_bytes_INIT;
     int failures = 0;
 
-    check_int_eq(turbo_bytes_init(&buffer, BYTE_BUFFER_PACKET_SIZE), TURBO_OK);
-    check_int_eq(turbo_bytes_append(&buffer, byte_buffer_packet, sizeof(byte_buffer_packet)),
+    check_equal(turbo_bytes_init(&buffer, BYTE_BUFFER_PACKET_SIZE), TURBO_OK);
+    check_equal(turbo_bytes_append(&buffer, byte_buffer_packet, sizeof(byte_buffer_packet)),
                  TURBO_OK);
-    check_int_eq(turbo_bytes_consume(&buffer, sizeof(byte_buffer_packet)), TURBO_OK);
+    check_equal(turbo_bytes_consume(&buffer, sizeof(byte_buffer_packet)), TURBO_OK);
 
     benchmark_io("48 KiB append, 32 KiB consume, compact+append", BYTE_BUFFER_FRAGMENT_SAMPLES, 4u,
                  80u * 1024u) {
@@ -101,8 +101,8 @@ spec("bounded byte buffer benchmarks") {
       }
     }
 
-    check_int_eq(failures, 0);
-    check_size_eq(turbo_bytes_size(&buffer), 0u);
+    check_equal(failures, 0);
+    check_equal(turbo_bytes_size(&buffer), 0u);
     turbo_bytes_destroy(&buffer);
   }
 }

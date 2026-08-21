@@ -25,41 +25,41 @@ suite("tinytest C Example") {
     group("Typed assertions") {
 
         it("should compare integers") {
-            check_int_eq(a + b, 6);
-            check_int_ne(a, b + 1);
-            check_int_gt(a + b, 5);
-            check_int_ge(a, 3);
-            check_int_lt(a, 4);
-            check_int_le(b, 3);
+            check_equal(a + b, 6);
+            check_not_equal(a, b + 1);
+            check_greater(a + b, 5);
+            check_greater_equal(a, 3);
+            check_less(a, 4);
+            check_less_equal(b, 3);
         }
 
         it("should compare unsigned and size_t") {
             unsigned count = 42;
-            check_uint_eq(count, 42);
-            check_uint_ne(count, 0);
+            check_equal(count, 42);
+            check_not_equal(count, 0);
 
             size_t len = strlen("hello");
-            check_size_eq(len, 5);
-            check_size_ne(len, 0);
+            check_equal(len, 5);
+            check_not_equal(len, 0);
         }
 
         it("should compare 64-bit integers") {
             long long big = 1LL << 40;
-            check_long_eq(big, 1LL << 40);
+            check_equal(big, 1LL << 40);
         }
 
         it("should compare floats with epsilon") {
             double pi = 3.14159;
-            check_float_eq(pi, 3.14159, 0.00001);
-            check_float_ne(pi, 3.0, 0.01);
-            check_float_gt(pi, 3.0);
-            check_float_lt(pi, 4.0);
+            check_within(pi, 3.14159, 0.00001);
+            check_not_equal(pi, 3.0);
+            check_greater(pi, 3.0);
+            check_less(pi, 4.0);
         }
 
         it("should compare hex values") {
             unsigned flags = 0xFF01;
-            check_hex_eq(flags, 0xFF01);
-            check_hex64_eq(0xDEADBEEFULL, 0xDEADBEEFULL);
+            check_equal(flags, 0xFF01);
+            check_equal(0xDEADBEEFULL, 0xDEADBEEFULL);
         }
     }
 
@@ -67,22 +67,22 @@ suite("tinytest C Example") {
 
         it("should compare strings") {
             const char *greeting = "hello world";
-            check_str_eq(greeting, "hello world");
-            check_str_ne(greeting, "goodbye");
+            check_equal(greeting, "hello world");
+            check_not_equal(greeting, "goodbye");
         }
 
         context("when working with URLs") {
             it("should check substrings and prefixes") {
                 const char *url = "https://example.com/api/v2";
-                check_str_contains(url, "example.com");
-                check_str_starts_with(url, "https://");
+                check_contains(url, "example.com");
+                check_starts_with(url, "https://");
             }
         }
 
         it("should handle NULL safely") {
             const char *empty = NULL;
             check_null(empty);
-            check_str_ne(empty, "something");
+            check_not_equal(empty, "something");
         }
     }
 
@@ -100,28 +100,7 @@ suite("tinytest C Example") {
         it("should compare memory blocks") {
             unsigned char buf_a[] = {0x01, 0x02, 0x03, 0x04};
             unsigned char buf_b[] = {0x01, 0x02, 0x03, 0x04};
-            check_mem_eq(buf_a, buf_b, 4);
-        }
-    }
-
-    group("Array assertions") {
-
-        it("should compare int arrays") {
-            int actual[]   = {10, 20, 30};
-            int expected[] = {10, 20, 30};
-            check_int_array_eq(actual, expected, 3);
-        }
-
-        it("should compare byte arrays in hex") {
-            unsigned char actual[]   = {0xDE, 0xAD, 0xBE, 0xEF};
-            unsigned char expected[] = {0xDE, 0xAD, 0xBE, 0xEF};
-            check_uint8_array_eq(actual, expected, 4);
-        }
-
-        it("should compare string arrays") {
-            const char *actual[]   = {"one", "two", "three"};
-            const char *expected[] = {"one", "two", "three"};
-            check_str_array_eq(actual, expected, 3);
+            check_equal(buf_a, buf_b, 4);
         }
     }
 
@@ -140,16 +119,16 @@ suite("tinytest C Example") {
             const char *msg = "hello file";
             char *path = tt_make_temp_file("tt", ".txt");
             check_not_null(path);
-            check_int_eq(tt_write_file(path, msg, strlen(msg)), 0);
+            check_equal(tt_write_file(path, msg, strlen(msg)), 0);
 
             size_t n = 0;
             char *data = tt_read_file(path, &n);
             check_not_null(data);
-            check_size_eq(n, strlen(msg));
-            check_str_eq(data, msg);
+            check_equal(n, strlen(msg));
+            check_equal(data, msg);
             free(data);
 
-            check_int_eq(tt_remove_file(path), 0);
+            check_equal(tt_remove_file(path), 0);
             free(path);
         }
 
@@ -159,9 +138,9 @@ suite("tinytest C Example") {
 
             char file_path[512];
             snprintf(file_path, sizeof(file_path), "%s/%s", dir, "a.txt");
-            check_int_eq(tt_write_file(file_path, "x", 1), 0);
+            check_equal(tt_write_file(file_path, "x", 1), 0);
 
-            check_int_eq(tt_remove_tree(dir), 0);
+            check_equal(tt_remove_tree(dir), 0);
             free(dir);
         }
     }
@@ -190,7 +169,7 @@ suite("tinytest C Example") {
         it("should capture variables") {
             int x = 42;
             capture(x, "%d");
-            check_int_eq(x, 42);
+            check_equal(x, 42);
         }
     }
 
@@ -205,14 +184,14 @@ suite("tinytest C Example") {
         when("depositing money") {
             then("should increase balance") {
                 balance += 50;
-                check_int_eq(balance, 150);
+                check_equal(balance, 150);
             }
         }
 
         when("withdrawing money") {
             then("should decrease balance") {
                 balance -= 30;
-                check_int_eq(balance, 70);
+                check_equal(balance, 70);
             }
         }
         }
@@ -225,7 +204,7 @@ suite("tinytest C Example") {
         }
 
         it_should_fail("known issue: off-by-one") {
-            check_int_eq(a + b, 7);
+            check_equal(a + b, 7);
         }
     }
 
@@ -235,9 +214,9 @@ suite("tinytest C Example") {
             check_not_null(ptr);  // Line 235 - should report THIS line
         }
 
-        it_should_fail("should report line 240 for check_int_eq failure") {
+        it_should_fail("should report line 240 for check_equal failure") {
             int x = 42;
-            check_int_eq(x, 99);  // Line 240 - should report THIS line
+            check_equal(x, 99);  // Line 240 - should report THIS line
         }
 
         it_should_fail("should report line 245 for check with message failure") {

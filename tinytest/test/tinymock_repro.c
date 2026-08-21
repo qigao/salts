@@ -2,7 +2,7 @@
 #include "tinymock.h"
 #include <stdio.h>
 
-TINYMOCk_MOCK2(int, repro, int, int)
+TINYMOCk_MOCK(int, repro, int, int)
 
 int main() {
   mock_repro_reset();
@@ -10,10 +10,7 @@ int main() {
 
   printf("before call ret=%d\n", repro(2,3));
   printf("cursor=%zu expected=%zu\n", tinymock_repro.cursor, tinymock_repro.expected_count);
-  printf("arg0 after call storage bytes: %u %u %u %u\n",
-         (unsigned)tinymock_repro.expectations[0].args[0].value.storage[0],
-         (unsigned)tinymock_repro.expectations[0].args[0].value.storage[1],
-         (unsigned)tinymock_repro.expectations[0].args[0].value.storage[2],
-         (unsigned)tinymock_repro.expectations[0].args[0].value.storage[3]);
+  printf("arg0 after call: %lld\n",
+         tinymock_repro.expectations[0].args[0].value.as.signed_value);
   return 0;
 }

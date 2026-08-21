@@ -16,8 +16,8 @@
 static int fake_handle_marker = 0;
 #define FAKE_HANDLE ((turbo_port_handle_t *)&fake_handle_marker)
 
-TINYMOCk_MOCK3(turbo_serial_result_t, fake_nonblocking_read, turbo_port_handle_t *, void *, size_t)
-TINYMOCk_MOCK3(turbo_serial_result_t, fake_nonblocking_write, turbo_port_handle_t *, const void *, size_t)
+TINYMOCk_MOCK(turbo_serial_result_t, fake_nonblocking_read, turbo_port_handle_t *, void *, size_t)
+TINYMOCk_MOCK(turbo_serial_result_t, fake_nonblocking_write, turbo_port_handle_t *, const void *, size_t)
 
 static unsigned char fake_rx_data[16];
 static size_t fake_rx_len;
@@ -78,9 +78,9 @@ suite("turbo_serial mocked backend") {
     fake_tx_len = 0;
 
     mock_fake_nonblocking_read_reset();
-    mock_fake_nonblocking_read_set_default_return(tinymock_value_int(TURBO_SERIAL_OK));
+    mock_fake_nonblocking_read_set_default_return(TINYMOCk_RETURN(TURBO_SERIAL_OK));
     mock_fake_nonblocking_write_reset();
-    mock_fake_nonblocking_write_set_default_return(tinymock_value_int(TURBO_SERIAL_OK));
+    mock_fake_nonblocking_write_set_default_return(TINYMOCk_RETURN(TURBO_SERIAL_OK));
 
     turbo_serial_set_backend_ops_for_testing(&fake_backend_ops);
   }
@@ -104,7 +104,7 @@ suite("turbo_serial mocked backend") {
     mock_fake_nonblocking_read_expect(tinymock_expected_arg_any(),
                                       tinymock_expected_arg_any(),
                                       tinymock_expected_arg_any(),
-                                      tinymock_value_int(TURBO_SERIAL_OK));
+                                      TINYMOCk_RETURN(TURBO_SERIAL_OK));
 
     check_equal(turbo_serial_create(&serial, &config), TURBO_SERIAL_OK);
     check_not_null(serial);
@@ -118,7 +118,7 @@ suite("turbo_serial mocked backend") {
     check_equal(turbo_serial_read_buffered(serial, out, sizeof(out), &bytes_read),
                 TURBO_SERIAL_OK);
     check_equal(bytes_read, 3);
-    check_mem_eq(out, "ABC", 3);
+    check_equal(out, "ABC", 3);
 
     mock_fake_nonblocking_read_verify();
     turbo_serial_destroy(serial);
@@ -139,7 +139,7 @@ suite("turbo_serial mocked backend") {
     mock_fake_nonblocking_write_expect(tinymock_expected_arg_any(),
                                        tinymock_expected_arg_any(),
                                        tinymock_expected_arg_any(),
-                                       tinymock_value_int(TURBO_SERIAL_OK));
+                                       TINYMOCk_RETURN(TURBO_SERIAL_OK));
 
     check_equal(turbo_serial_create(&serial, &config), TURBO_SERIAL_OK);
     check_not_null(serial);
@@ -154,7 +154,7 @@ suite("turbo_serial mocked backend") {
     check_equal(turbo_serial_stop_async(serial), TURBO_SERIAL_OK);
 
     check_equal(fake_tx_len, 2);
-    check_mem_eq(fake_tx_data, "XY", 2);
+    check_equal(fake_tx_data, "XY", 2);
 
     mock_fake_nonblocking_write_verify();
     turbo_serial_destroy(serial);

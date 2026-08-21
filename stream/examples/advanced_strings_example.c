@@ -1,24 +1,24 @@
 #include "stream_turbo_containers.h"
-#include "turbo_str_view.h"
+#include "turbo_vstr.h"
 
 #include <stdio.h>
 
 typedef struct {
-    tstr_v text;
+    vstr text;
     size_t byte_length;
 } word_info_t;
 
-TURBO_LIST_DEFINE(tstr_v_list_t, tstr_v)
+TURBO_LIST_DEFINE(vstr_list_t, vstr)
 
 static bool contains_stream(const void *value)
 {
-    static const tstr_v needle = {"stream", 6};
-    return tstr_v_contains(*(const tstr_v *)value, needle) != 0;
+    static const vstr needle = {"stream", 6};
+    return vstr_contains(*(const vstr *)value, needle) != 0;
 }
 
 static stream_result_t describe_word(const void *input, void *output)
 {
-    const tstr_v *word = (const tstr_v *)input;
+    const vstr *word = (const vstr *)input;
     word_info_t *info = (word_info_t *)output;
 
     if (!word->data && word->len != 0) {
@@ -26,7 +26,7 @@ static stream_result_t describe_word(const void *input, void *output)
     }
 
     info->text = *word;
-    info->byte_length = tstr_v_len(*word);
+    info->byte_length = vstr_len(*word);
     return STREAM_OK;
 }
 
@@ -40,7 +40,7 @@ static void print_word_info(const void *value)
 
 static void print_word(const void *value)
 {
-    const tstr_v *word = (const tstr_v *)value;
+    const vstr *word = (const vstr *)value;
 
     fwrite(word->data, 1, word->len, stdout);
     fputc('\n', stdout);
@@ -48,21 +48,21 @@ static void print_word(const void *value)
 
 int main(void)
 {
-    const tstr_v source[] = {
-        tstr_v_from_cstr("turbo-utils"),
-        tstr_v_from_cstr("stream pipeline"),
-        tstr_v_from_cstr("tstr_v borrowed view"),
-        tstr_v_from_cstr("event stream"),
-        tstr_v_from_cstr("container adapter"),
-        tstr_v_from_cstr("stream reset")
+    const vstr source[] = {
+        vstr_from_cstr("turbo-utils"),
+        vstr_from_cstr("stream pipeline"),
+        vstr_from_cstr("vstr borrowed view"),
+        vstr_from_cstr("event stream"),
+        vstr_from_cstr("container adapter"),
+        vstr_from_cstr("stream reset")
     };
-    tstr_v_list_t words;
+    vstr_list_t words;
     stream_t stream;
     stream_t *s = &stream;
     stream_result_t result;
     int exit_code = 1;
 
-    if (tstr_v_list_t_from(
+    if (vstr_list_t_from(
             &words, source, sizeof(source) / sizeof(source[0])) != TURBO_OK) {
         return 1;
     }
@@ -94,6 +94,6 @@ int main(void)
     exit_code = 0;
 
 cleanup:
-    tstr_v_list_t_destroy(&words);
+    vstr_list_t_destroy(&words);
     return exit_code;
 }

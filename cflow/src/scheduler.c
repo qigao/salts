@@ -201,8 +201,6 @@ bool cflow_scheduler_test_init(cflow_scheduler *scheduler) {
     return true;
 }
 
-CMETA_INTERFACE_IMPL(cflow_scheduler, CMETA_SCHEDULER_METHODS)
-
 cflow_task_id cflow_scheduler_post(cflow_scheduler *scheduler,
                                    cflow_task_fn fn,
                                    void *user) {

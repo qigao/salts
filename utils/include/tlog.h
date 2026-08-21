@@ -17,6 +17,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <cmeta/enum.h>
+#include <cmeta/struct.h>
 #include "fmt.h"
 
 #ifdef __cplusplus
@@ -29,36 +31,33 @@ extern "C" {
 // Log Levels
 // =============================================================================
 
-#define TURBO_LOG_LEVEL_ITEMS(X)                                                                   \
-  X(TURBO_LOG_LEVEL_DEBUG, 0, "DEBUG")                                                           \
-  X(TURBO_LOG_LEVEL_INFO, 1, "INFO")                                                             \
-  X(TURBO_LOG_LEVEL_WARN, 2, "WARN")                                                             \
-  X(TURBO_LOG_LEVEL_ERROR, 3, "ERROR")                                                           \
-  X(TURBO_LOG_LEVEL_FATAL, 4, "FATAL")
-
-#define TURBO_LOG_LEVEL_ENUM_ITEM(name, value, str) name = value,
-
-typedef enum {
-  TURBO_LOG_LEVEL_ITEMS(TURBO_LOG_LEVEL_ENUM_ITEM)
-} turbo_log_level_t;
-
-#undef TURBO_LOG_LEVEL_ENUM_ITEM
-#undef TURBO_LOG_LEVEL_ITEMS
+Enum(turbo_log_level_t,
+     (TURBO_LOG_LEVEL_DEBUG, 0, "DEBUG"),
+     (TURBO_LOG_LEVEL_INFO, 1, "INFO"),
+     (TURBO_LOG_LEVEL_WARN, 2, "WARN"),
+     (TURBO_LOG_LEVEL_ERROR, 3, "ERROR"),
+     (TURBO_LOG_LEVEL_FATAL, 4, "FATAL"));
 
 // =============================================================================
 // Log Entry (passed to sinks)
 // =============================================================================
 
-typedef struct {
-  turbo_log_level_t level;
-  uint64_t timestamp_ms; // Real-time timestamp (ms since epoch)
-  uint32_t thread_id;
-  const char *component;
-  const char *file;
-  int line;
-  const char *message; // Formatted message
-  size_t message_len;
-} turbo_log_entry_t;
+/**
+ * Log entry passed to sinks.
+ *
+ * component, file, and message are borrowed for the callback duration. The
+ * reflected descriptor does not own or extend the lifetime of these strings.
+ */
+CMETA_STRUCT(turbo_log_entry_t,
+    (turbo_log_level_t, level),
+    (uint64_t, timestamp_ms),
+    (uint32_t, thread_id),
+    (const char *, component),
+    (const char *, file),
+    (int, line),
+    (const char *, message),
+    (size_t, message_len)
+);
 
 // =============================================================================
 // Sink Interface (vtable pattern)

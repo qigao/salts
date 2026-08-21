@@ -2,7 +2,7 @@
 #include "levenshtein_automaton.h"
 #include "tinytest.h"
 #include "turbo_str.h"
-#include "turbo_str_view.h"
+#include "turbo_vstr.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -83,19 +83,19 @@ spec("AC 自动机") {
   it("在字节文本中进行多模式匹配") {
     ac_automaton_t *ac = ac_automaton_create();
     uint32_t pid_aba = 0, pid_ba = 0, pid_bab = 0;
-    tstr_v text = tstr_v_from_cstr("ababa");
+    vstr text = vstr_from_cstr("ababa");
     match_record_list_t matches = {0};
     int rc;
     check_not_null(ac);
-    check_int_eq(ac_automaton_add_pattern(ac, tstr_v_from_cstr("aba"), &pid_aba), TURBO_OK);
-    check_int_eq(ac_automaton_add_pattern(ac, tstr_v_from_cstr("ba"), &pid_ba), TURBO_OK);
-    check_int_eq(ac_automaton_add_pattern(ac, tstr_v_from_cstr("bab"), &pid_bab), TURBO_OK);
-    check_int_eq(ac_automaton_pattern_count(ac), 3U);
+    check_equal(ac_automaton_add_pattern(ac, vstr_from_cstr("aba"), &pid_aba), TURBO_OK);
+    check_equal(ac_automaton_add_pattern(ac, vstr_from_cstr("ba"), &pid_ba), TURBO_OK);
+    check_equal(ac_automaton_add_pattern(ac, vstr_from_cstr("bab"), &pid_bab), TURBO_OK);
+    check_equal(ac_automaton_pattern_count(ac), 3U);
 
-    check_int_eq(ac_automaton_build(ac), TURBO_OK);
+    check_equal(ac_automaton_build(ac), TURBO_OK);
     rc = ac_automaton_match(ac, text, capture_ac_match, &matches);
-    check_int_eq(rc, TURBO_OK);
-    check_size_eq(matches.count, 5U);
+    check_equal(rc, TURBO_OK);
+    check_equal(matches.count, 5U);
     check(have_record(&matches, pid_aba, 0, 3, (size_t)-1));
     check(have_record(&matches, pid_aba, 2, 5, (size_t)-1));
     check(have_record(&matches, pid_ba, 1, 3, (size_t)-1));
@@ -108,20 +108,20 @@ spec("AC 自动机") {
   it("在 UTF-8 文本中进行多模式匹配") {
     ac_utf8_automaton_t *ac = ac_utf8_automaton_create();
     uint32_t pid_ni = 0, pid_hao = 0, pid_world = 0, pid_haosh = 0;
-    tstr_v text = tstr_v_from_cstr("你好世界");
+    vstr text = vstr_from_cstr("你好世界");
     match_record_list_t matches = {0};
     int rc;
     check_not_null(ac);
-    check_int_eq(ac_utf8_automaton_add_pattern(ac, tstr_v_from_cstr("你"), &pid_ni), TURBO_OK);
-    check_int_eq(ac_utf8_automaton_add_pattern(ac, tstr_v_from_cstr("好"), &pid_hao), TURBO_OK);
-    check_int_eq(ac_utf8_automaton_add_pattern(ac, tstr_v_from_cstr("世界"), &pid_world), TURBO_OK);
-    check_int_eq(ac_utf8_automaton_add_pattern(ac, tstr_v_from_cstr("好世"), &pid_haosh), TURBO_OK);
-    check_int_eq(ac_utf8_automaton_pattern_count(ac), 4U);
+    check_equal(ac_utf8_automaton_add_pattern(ac, vstr_from_cstr("你"), &pid_ni), TURBO_OK);
+    check_equal(ac_utf8_automaton_add_pattern(ac, vstr_from_cstr("好"), &pid_hao), TURBO_OK);
+    check_equal(ac_utf8_automaton_add_pattern(ac, vstr_from_cstr("世界"), &pid_world), TURBO_OK);
+    check_equal(ac_utf8_automaton_add_pattern(ac, vstr_from_cstr("好世"), &pid_haosh), TURBO_OK);
+    check_equal(ac_utf8_automaton_pattern_count(ac), 4U);
 
-    check_int_eq(ac_utf8_automaton_build(ac), TURBO_OK);
+    check_equal(ac_utf8_automaton_build(ac), TURBO_OK);
     rc = ac_utf8_automaton_match(ac, text, capture_ac_match, &matches);
-    check_int_eq(rc, TURBO_OK);
-    check_size_eq(matches.count, 4U);
+    check_equal(rc, TURBO_OK);
+    check_equal(matches.count, 4U);
     check(have_record(&matches, pid_ni, 0, 1, (size_t)-1));
     check(have_record(&matches, pid_hao, 1, 2, (size_t)-1));
     check(have_record(&matches, pid_haosh, 1, 3, (size_t)-1));
@@ -135,14 +135,14 @@ spec("AC 自动机") {
     int rc;
 
     check_not_null(ac);
-    rc = ac_automaton_add_pattern(ac, tstr_v_from_cstr("ab"), NULL);
-    check_int_eq(rc, TURBO_OK);
-    rc = ac_automaton_add_pattern(ac, tstr_v_from_cstr("b"), NULL);
-    check_int_eq(rc, TURBO_OK);
-    check_int_eq(ac_automaton_build(ac), TURBO_OK);
+    rc = ac_automaton_add_pattern(ac, vstr_from_cstr("ab"), NULL);
+    check_equal(rc, TURBO_OK);
+    rc = ac_automaton_add_pattern(ac, vstr_from_cstr("b"), NULL);
+    check_equal(rc, TURBO_OK);
+    check_equal(ac_automaton_build(ac), TURBO_OK);
 
-    rc = ac_automaton_match(ac, tstr_v_from_cstr("ab"), stop_after_one_ac, NULL);
-    check_int_eq(rc, TURBO_OK);
+    rc = ac_automaton_match(ac, vstr_from_cstr("ab"), stop_after_one_ac, NULL);
+    check_equal(rc, TURBO_OK);
     ac_automaton_destroy(ac);
     ac_automaton_free(ac);
   }
@@ -155,15 +155,15 @@ spec("Levenshtein 自动机") {
     int rc;
     check_not_null(lev);
 
-    rc = lev_automaton_init(lev, tstr_v_from_cstr("abc"), 1U);
-    check_int_eq(rc, TURBO_OK);
+    rc = lev_automaton_init(lev, vstr_from_cstr("abc"), 1U);
+    check_equal(rc, TURBO_OK);
 
-    rc = lev_automaton_match(lev, tstr_v_from_cstr("abxd"), capture_lev_match, &matches);
-    check_int_eq(rc, TURBO_OK);
-    check_size_eq(matches.count, 1U);
-    check_size_eq(matches.entries[0].start, 0U);
-    check_size_eq(matches.entries[0].end, 3U);
-    check_size_eq(matches.entries[0].distance, 1U);
+    rc = lev_automaton_match(lev, vstr_from_cstr("abxd"), capture_lev_match, &matches);
+    check_equal(rc, TURBO_OK);
+    check_equal(matches.count, 1U);
+    check_equal(matches.entries[0].start, 0U);
+    check_equal(matches.entries[0].end, 3U);
+    check_equal(matches.entries[0].distance, 1U);
     lev_automaton_destroy(lev);
     lev_automaton_free(lev);
   }
@@ -174,15 +174,15 @@ spec("Levenshtein 自动机") {
     int rc;
     check_not_null(lev);
 
-    rc = lev_utf8_automaton_init(lev, tstr_v_from_cstr("你好"), 1U);
-    check_int_eq(rc, TURBO_OK);
+    rc = lev_utf8_automaton_init(lev, vstr_from_cstr("你好"), 1U);
+    check_equal(rc, TURBO_OK);
 
-    rc = lev_utf8_automaton_match(lev, tstr_v_from_cstr("你他"), capture_lev_match, &matches);
-    check_int_eq(rc, TURBO_OK);
-    check_size_eq(matches.count, 1U);
-    check_size_eq(matches.entries[0].start, 0U);
-    check_size_eq(matches.entries[0].end, 2U);
-    check_size_eq(matches.entries[0].distance, 1U);
+    rc = lev_utf8_automaton_match(lev, vstr_from_cstr("你他"), capture_lev_match, &matches);
+    check_equal(rc, TURBO_OK);
+    check_equal(matches.count, 1U);
+    check_equal(matches.entries[0].start, 0U);
+    check_equal(matches.entries[0].end, 2U);
+    check_equal(matches.entries[0].distance, 1U);
     lev_utf8_automaton_destroy(lev);
     lev_utf8_automaton_free(lev);
   }
@@ -193,11 +193,11 @@ spec("Levenshtein 自动机") {
     int rc;
     check_not_null(lev);
 
-    rc = lev_automaton_init(lev, tstr_v_from_cstr("abcd"), 2U);
-    check_int_eq(rc, TURBO_OK);
-    rc = lev_automaton_match(lev, tstr_v_from_cstr("abxd"), stop_after_one_lev, &matches);
-    check_int_eq(rc, TURBO_OK);
-    check_size_eq(matches.count, 1U);
+    rc = lev_automaton_init(lev, vstr_from_cstr("abcd"), 2U);
+    check_equal(rc, TURBO_OK);
+    rc = lev_automaton_match(lev, vstr_from_cstr("abxd"), stop_after_one_lev, &matches);
+    check_equal(rc, TURBO_OK);
+    check_equal(matches.count, 1U);
     lev_automaton_destroy(lev);
     lev_automaton_free(lev);
   }
@@ -209,19 +209,19 @@ spec("Levenshtein 自动机") {
     match_record_list_t matches = {0};
     int rc;
 
-    check_int_eq(ac_automaton_match(ac, tstr_v_from_cstr("abc"), capture_ac_match, &matches),
+    check_equal(ac_automaton_match(ac, vstr_from_cstr("abc"), capture_ac_match, &matches),
                 TURBO_EINVAL);
-    rc = lev_automaton_init(lev, (tstr_v){.data = NULL, .len = 0U}, 1U);
-    check_int_eq(rc, TURBO_EINVAL);
-    rc = lev_utf8_automaton_init(NULL, tstr_v_from_cstr("\x80"), 1U);
-    check_int_eq(rc, TURBO_EINVAL);
+    rc = lev_automaton_init(lev, (vstr){.data = NULL, .len = 0U}, 1U);
+    check_equal(rc, TURBO_EINVAL);
+    rc = lev_utf8_automaton_init(NULL, vstr_from_cstr("\x80"), 1U);
+    check_equal(rc, TURBO_EINVAL);
     lev = lev_automaton_create();
     check_not_null(lev);
     lev_automaton_free(lev);
     lev_utf8 = lev_utf8_automaton_create();
     check_not_null(lev_utf8);
-    rc = lev_utf8_automaton_init(lev_utf8, tstr_v_from_cstr("\x80"), 1U);
-    check_int_eq(rc, TURBO_EINVAL);
+    rc = lev_utf8_automaton_init(lev_utf8, vstr_from_cstr("\x80"), 1U);
+    check_equal(rc, TURBO_EINVAL);
     lev_utf8_automaton_destroy(lev_utf8);
     lev_utf8_automaton_free(lev_utf8);
   }

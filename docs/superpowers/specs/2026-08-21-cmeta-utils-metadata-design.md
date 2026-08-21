@@ -26,7 +26,7 @@ TurboUtils 正在把 CMeta 作为整个应用可复用的基础元数据层。�
 - 不修改 `fmt.c` 的格式解析、specifier 校验或渲染算法。
 - 不修改 `tlog.c` 的异步队列、内存池、sink、过滤、轮转或关闭协议。
 - 不把 tlog sink vtable 迁移为 `interface/implements`。
-- 不为 `tstr_t` 或 `tstr_v` 增加反射、range 或新的字符串算法。
+- 不为 `tstr` 或 `vstr` 增加反射、range 或新的字符串算法。
 - 不提供通过元数据写入日志条目的接口。
 - 不把 Utils 类型注册到 `cmeta/src/cmeta.c` 的进程级类型注册表。
 - 不承诺不同翻译单元中的描述符地址相等。

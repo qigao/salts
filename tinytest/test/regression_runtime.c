@@ -8,6 +8,7 @@
 #include <unistd.h>
 #endif
 
+#ifndef _WIN32
 static char *tt_join_path__(const char *dir, const char *name) {
   size_t len = strlen(dir) + strlen(name) + 2;
   char *path = (char *)malloc(len);
@@ -19,23 +20,24 @@ static char *tt_join_path__(const char *dir, const char *name) {
 #endif
   return path;
 }
+#endif
 
 static int fixture_body_runs;
 static int fixture_cleanup_runs;
 
 spec("tinytest runtime regression") {
-  it("check_int_eq_warn should evaluate operands once") {
+  it("check_equal_warn should evaluate operands once") {
     int value = 1;
-    check_int_eq_warn(value++, 1);
-    check_int_eq(value, 2);
+    check_equal_warn(value++, 1);
+    check_equal(value, 2);
   }
 
-  it("check_mem_eq_warn should evaluate length once") {
+  it("check_equal_warn should evaluate length once") {
     unsigned char actual[2] = {0, 0};
     unsigned char expected[2] = {0, 0};
     size_t len = 1;
-    check_mem_eq_warn(actual, expected, len++);
-    check_size_eq(len, 2);
+    check_equal_warn(actual, expected, len++);
+    check_equal(len, 2);
   }
 
   it("check_warn should behave as a single statement") {
@@ -46,45 +48,35 @@ spec("tinytest runtime regression") {
     check_true(1);
   }
 
-  it("float and double array checks should use their declared element types") {
-    float actual_float[1] = {1.25f};
-    float expected_float[1] = {1.25f};
-    double actual_double[1] = {2.5};
-    double expected_double[1] = {2.5};
-
-    check_float_array_eq(actual_float, expected_float, 1, 0.0);
-    check_double_array_eq(actual_double, expected_double, 1, 0.0);
-  }
-
   it("benchmark metrics should keep samples, operations, and bytes distinct") {
     ttest_bench_entry__ entry =
         ttest_bench_make_entry__("batched io", 4, 8.0, 1.5, 2.5, 10, 1024 * 1024, true);
 
-    check_size_eq(entry.samples, 4);
-    check_size_eq(entry.operations_per_sample, 10);
-    check_size_eq(entry.bytes_per_sample, 1024 * 1024);
+    check_equal(entry.samples, 4);
+    check_equal(entry.operations_per_sample, 10);
+    check_equal(entry.bytes_per_sample, 1024 * 1024);
     check_true(entry.tracks_bytes);
-    check_float_eq(entry.avg_op_us, 200.0, 0.001);
-    check_float_eq(entry.min_sample_us, 1500.0, 0.001);
-    check_float_eq(entry.max_sample_us, 2500.0, 0.001);
-    check_float_eq(entry.ops_s, 5000.0, 0.001);
-    check_float_eq(entry.mib_s, 500.0, 0.001);
+    check_within(entry.avg_op_us, 200.0, 0.001);
+    check_within(entry.min_sample_us, 1500.0, 0.001);
+    check_within(entry.max_sample_us, 2500.0, 0.001);
+    check_within(entry.ops_s, 5000.0, 0.001);
+    check_within(entry.mib_s, 500.0, 0.001);
   }
 
   group("fixture assertion handling") {
-    before_each() { check_int_eq(1, 2); }
+    before_each() { check_equal(1, 2); }
     after_each() { ++fixture_cleanup_runs; }
 
     it_should_fail("should attribute setup failures to the test") { ++fixture_body_runs; }
   }
 
   it("should skip a body after setup failure and still run cleanup") {
-    check_int_eq(fixture_body_runs, 0);
-    check_int_eq(fixture_cleanup_runs, 1);
+    check_equal(fixture_body_runs, 0);
+    check_equal(fixture_cleanup_runs, 1);
   }
 
   group("cleanup assertion handling") {
-    after_each() { check_int_eq(1, 2); }
+    after_each() { check_equal(1, 2); }
 
     it_should_fail("should attribute cleanup failures to the test") { check_true(1); }
   }
@@ -106,16 +98,16 @@ spec("tinytest runtime regression") {
 
     check_not_null(link);
     check_not_null(sentinel);
-    check_int_eq(tt_write_file(sentinel, "x", 1), 0);
-    check_int_eq(symlink(outside, link), 0);
-    check_int_eq(tt_remove_tree(root), 0);
+    check_equal(tt_write_file(sentinel, "x", 1), 0);
+    check_equal(symlink(outside, link), 0);
+    check_equal(tt_remove_tree(root), 0);
 
     content = tt_read_file(sentinel, &size);
     check_not_null(content);
-    check_size_eq(size, 1);
+    check_equal(size, 1);
 
     free(content);
-    check_int_eq(tt_remove_tree(outside), 0);
+    check_equal(tt_remove_tree(outside), 0);
     free(root);
     free(outside);
     free(link);

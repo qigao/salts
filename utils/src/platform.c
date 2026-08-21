@@ -28,7 +28,10 @@
   #include <sys/utsname.h>
   #include <time.h>
   #include <unistd.h>
-  #if defined(__ANDROID__)
+  #if defined(__APPLE__)
+    #include <mach/mach.h>
+    #include <sys/sysctl.h>
+  #elif defined(__ANDROID__)
     /* arc4random_buf is available on Android API 21+ (Bionic); no additional header needed */
   #elif defined(__linux__)
     #include <sys/random.h>
@@ -357,13 +360,32 @@ time_t turbo_mktime(struct tm *tm_value) {
   return mktime(tm_value);
 }
 
+#if defined(__clang__)
+  #pragma clang diagnostic push
+  #pragma clang diagnostic ignored "-Wformat-nonliteral"
+#elif defined(__GNUC__)
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
+
+static size_t turbo_strftime_format(char *buffer, size_t buffer_size, const char *format,
+                                    const struct tm *tm_value) {
+  return strftime(buffer, buffer_size, format, tm_value);
+}
+
+#if defined(__clang__)
+  #pragma clang diagnostic pop
+#elif defined(__GNUC__)
+  #pragma GCC diagnostic pop
+#endif
+
 int turbo_strftime_utc(time_t t, const char *format, char *buffer, size_t buffer_size) {
   struct tm tm_value;
   size_t written;
 
   if (!format || !buffer || buffer_size == 0) return -EINVAL;
   if (turbo_gmtime(t, &tm_value) != 0) return -EINVAL;
-  written = strftime(buffer, buffer_size, format, &tm_value);
+  written = turbo_strftime_format(buffer, buffer_size, format, &tm_value);
   if (written == 0) return -ENOSPC;
   return (int)written;
 }
@@ -374,7 +396,7 @@ int turbo_strftime_local(time_t t, const char *format, char *buffer, size_t buff
 
   if (!format || !buffer || buffer_size == 0) return -EINVAL;
   if (turbo_localtime(t, &tm_value) != 0) return -EINVAL;
-  written = strftime(buffer, buffer_size, format, &tm_value);
+  written = turbo_strftime_format(buffer, buffer_size, format, &tm_value);
   if (written == 0) return -ENOSPC;
   return (int)written;
 }
@@ -505,6 +527,22 @@ int turbo_platform_cpu_info(turbo_platform_cpu_info_t *info) {
     info->speed_mhz = 0.0;
     return 0;
   }
+#elif defined(__APPLE__)
+  {
+    int core_count = 0;
+    size_t core_count_size = sizeof(core_count);
+    struct utsname uts;
+
+    if (sysctlbyname("hw.logicalcpu", &core_count, &core_count_size, NULL, 0) == 0 &&
+        core_count > 0) {
+      info->core_count = core_count;
+    }
+    if (uname(&uts) == 0) {
+      turbo_platform_copy_string(info->model, sizeof(info->model), uts.machine);
+    }
+    info->speed_mhz = 0.0;
+    return 0;
+  }
 #else
   {
     long core_count = sysconf(_SC_NPROCESSORS_ONLN);
@@ -539,6 +577,47 @@ int turbo_platform_memory_info(turbo_platform_memory_info_t *info) {
     info->total_memory = mem.ullTotalPhys;
     info->free_memory = mem.ullAvailPhys;
     info->available_memory = mem.ullAvailPhys;
+    return 0;
+  }
+#elif defined(__APPLE__)
+  {
+    uint64_t total_memory = 0;
+    uint64_t free_pages;
+    uint64_t available_pages;
+    size_t total_memory_size = sizeof(total_memory);
+    mach_port_t host = mach_host_self();
+    vm_size_t page_size = 0;
+    vm_statistics64_data_t vm_stats;
+    mach_msg_type_number_t vm_stats_count = HOST_VM_INFO64_COUNT;
+    kern_return_t kr;
+
+    if (sysctlbyname("hw.memsize", &total_memory, &total_memory_size, NULL, 0) != 0) {
+      mach_port_deallocate(mach_task_self(), host);
+      return -errno;
+    }
+    kr = host_page_size(host, &page_size);
+    if (kr == KERN_SUCCESS) {
+      kr = host_statistics64(host, HOST_VM_INFO64, (host_info64_t)(void *)&vm_stats,
+                             &vm_stats_count);
+    }
+    mach_port_deallocate(mach_task_self(), host);
+    if (kr != KERN_SUCCESS || page_size == 0) {
+      return -EIO;
+    }
+
+    free_pages = (uint64_t)vm_stats.free_count;
+    if ((uint64_t)vm_stats.inactive_count > UINT64_MAX - free_pages) {
+      return -EOVERFLOW;
+    }
+    available_pages = free_pages + (uint64_t)vm_stats.inactive_count;
+    if (free_pages > UINT64_MAX / (uint64_t)page_size ||
+        available_pages > UINT64_MAX / (uint64_t)page_size) {
+      return -EOVERFLOW;
+    }
+
+    info->total_memory = total_memory;
+    info->free_memory = free_pages * (uint64_t)page_size;
+    info->available_memory = available_pages * (uint64_t)page_size;
     return 0;
   }
 #else
@@ -617,14 +696,21 @@ static void turbo_extract_windows_unicast(IP_ADAPTER_ADDRESSES *adapter,
       turbo_platform_is_loopback_address(iface->address);
 }
 #else
-static void *turbo_get_sockaddr_ptr(struct sockaddr *sa) {
-  if (!sa) return NULL;
-  if (sa->sa_family == AF_INET) {
-    return (void *)&((struct sockaddr_in *)sa)->sin_addr;
-  } else if (sa->sa_family == AF_INET6) {
-    return (void *)&((struct sockaddr_in6 *)sa)->sin6_addr;
+static int turbo_format_sockaddr(const struct sockaddr *address, char *buffer,
+                                 size_t buffer_size) {
+  if (!address || !buffer || buffer_size == 0) return -EINVAL;
+
+  if (address->sa_family == AF_INET) {
+    struct sockaddr_in ipv4;
+    memcpy(&ipv4, address, sizeof(ipv4));
+    return inet_ntop(AF_INET, &ipv4.sin_addr, buffer, buffer_size) ? 0 : -errno;
   }
-  return NULL;
+  if (address->sa_family == AF_INET6) {
+    struct sockaddr_in6 ipv6;
+    memcpy(&ipv6, address, sizeof(ipv6));
+    return inet_ntop(AF_INET6, &ipv6.sin6_addr, buffer, buffer_size) ? 0 : -errno;
+  }
+  return -EAFNOSUPPORT;
 }
 #endif
 
@@ -689,8 +775,6 @@ int turbo_platform_network_interfaces(turbo_platform_network_interface_t *interf
 
     for (ifa = ifaddr; ifa && *count < max_interfaces; ifa = ifa->ifa_next) {
       turbo_platform_network_interface_t *iface;
-      void *addr_ptr;
-      void *mask_ptr;
       int family;
 
       if (!ifa->ifa_addr || !ifa->ifa_name) {
@@ -707,13 +791,11 @@ int turbo_platform_network_interfaces(turbo_platform_network_interface_t *interf
       turbo_platform_copy_string(iface->name, sizeof(iface->name), ifa->ifa_name);
       iface->is_internal = (ifa->ifa_flags & IFF_LOOPBACK) ? 1 : 0;
 
-      addr_ptr = turbo_get_sockaddr_ptr(ifa->ifa_addr);
-      mask_ptr = turbo_get_sockaddr_ptr(ifa->ifa_netmask);
-
-      if (!inet_ntop(family, addr_ptr, iface->address, sizeof(iface->address))) {
+      if (turbo_format_sockaddr(ifa->ifa_addr, iface->address, sizeof(iface->address)) != 0) {
         turbo_platform_copy_string(iface->address, sizeof(iface->address), "unknown");
       }
-      if (mask_ptr && !inet_ntop(family, mask_ptr, iface->netmask, sizeof(iface->netmask))) {
+      if (ifa->ifa_netmask &&
+          turbo_format_sockaddr(ifa->ifa_netmask, iface->netmask, sizeof(iface->netmask)) != 0) {
         turbo_platform_copy_string(iface->netmask, sizeof(iface->netmask), "unknown");
       }
       if (turbo_platform_is_loopback_address(iface->address)) {

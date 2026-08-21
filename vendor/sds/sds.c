@@ -90,7 +90,7 @@ static inline char sdsReqType(size_t string_size) {
  * end of the string. However the string is binary safe and can contain
  * \0 characters in the middle, as the length is stored in the sds header. */
 sds sdsnewlen(const void *init, size_t initlen) {
-  void *sh;
+  void *header;
   sds s;
   char type = sdsReqType(initlen);
   /* Empty strings are usually created in order to append. Use type 8
@@ -100,14 +100,14 @@ sds sdsnewlen(const void *init, size_t initlen) {
   int hdrlen = sdsHdrSize(type);
   unsigned char *fp; /* flags pointer. */
 
-  sh = s_malloc(hdrlen + initlen + 1);
-  if (sh == NULL)
+  header = s_malloc(hdrlen + initlen + 1);
+  if (header == NULL)
     return NULL;
   if (init == SDS_NOINIT)
     init = NULL;
   else if (!init)
-    memset(sh, 0, hdrlen + initlen + 1);
-  s = (char *)sh + hdrlen;
+    memset(header, 0, hdrlen + initlen + 1);
+  s = (char *)header + hdrlen;
   fp = ((unsigned char *)s) - 1;
   switch (type) {
   case SDS_TYPE_5: {
@@ -232,6 +232,7 @@ sds sdsMakeRoomFor(sds s, size_t addlen) {
 
   hdrlen = sdsHdrSize(type);
   assert(hdrlen + newlen + 1 > reqlen); /* Catch size_t overflow */
+  (void)reqlen; /* The overflow invariant is compiled out with NDEBUG. */
   if (oldtype == type) {
     newsh = s_realloc(sh, hdrlen + newlen + 1);
     if (newsh == NULL)
@@ -542,6 +543,14 @@ sds sdsfromlonglong(long long value) {
 }
 
 /* Like sdscatprintf() but gets va_list instead of being variadic. */
+#if defined(__clang__)
+  #pragma clang diagnostic push
+  #pragma clang diagnostic ignored "-Wformat-nonliteral"
+#elif defined(__GNUC__)
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
+
 sds sdscatvprintf(sds s, const char *fmt, va_list ap) {
   va_list cpy;
   char staticbuf[1024], *buf = staticbuf, *t;
@@ -587,6 +596,12 @@ sds sdscatvprintf(sds s, const char *fmt, va_list ap) {
     s_free(buf);
   return t;
 }
+
+#if defined(__clang__)
+  #pragma clang diagnostic pop
+#elif defined(__GNUC__)
+  #pragma GCC diagnostic pop
+#endif
 
 /* Append to the sds string 's' a string obtained using printf-alike format
  * specifier.

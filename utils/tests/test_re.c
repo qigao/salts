@@ -9,15 +9,15 @@ static void check_match_at(const char *pattern, const char *text, int expected_i
                            int expected_len) {
   int len = -1;
   int idx = re_match(pattern, text, &len);
-  check_int_eq(idx, expected_idx);
-  check_int_eq(len, expected_len);
+  check_equal(idx, expected_idx);
+  check_equal(len, expected_len);
 }
 
 static void check_no_match(const char *pattern, const char *text) {
   int len = -1;
   int idx = re_match(pattern, text, &len);
-  check_int_eq(idx, -1);
-  check_int_eq(len, 0);
+  check_equal(idx, -1);
+  check_equal(len, 0);
 }
 
 suite("bounded regex") {
@@ -53,9 +53,9 @@ suite("bounded regex") {
     it("matches byte slices containing NUL") {
       static const char text[] = {'a', '\0', 'b'};
       re_match_result_t match = {0};
-      check_int_eq(re_match_n("a.b", 3, text, sizeof(text), NULL, &match), RE_STATUS_OK);
-      check_size_eq(match.index, 0);
-      check_size_eq(match.length, 3);
+      check_equal(re_match_n("a.b", 3, text, sizeof(text), NULL, &match), RE_STATUS_OK);
+      check_equal(match.index, 0);
+      check_equal(match.length, 3);
     }
   }
 
@@ -65,15 +65,15 @@ suite("bounded regex") {
       re_t second = NULL;
       re_match_result_t match = {0};
 
-      check_int_eq(re_compile_n("foo", 3, NULL, &first), RE_STATUS_OK);
-      check_int_eq(re_compile_n("bar", 3, NULL, &second), RE_STATUS_OK);
+      check_equal(re_compile_n("foo", 3, NULL, &first), RE_STATUS_OK);
+      check_equal(re_compile_n("bar", 3, NULL, &second), RE_STATUS_OK);
       check_not_null(first);
       check_not_null(second);
-      check_int_eq(re_matchn(first, "xxfoo", 5, NULL, &match), RE_STATUS_OK);
-      check_size_eq(match.index, 2);
-      check_int_eq(re_matchn(second, "xxbar", 5, NULL, &match), RE_STATUS_OK);
-      check_size_eq(match.index, 2);
-      check_int_eq(re_matchn(first, "bar", 3, NULL, &match), RE_STATUS_NO_MATCH);
+      check_equal(re_matchn(first, "xxfoo", 5, NULL, &match), RE_STATUS_OK);
+      check_equal(match.index, 2);
+      check_equal(re_matchn(second, "xxbar", 5, NULL, &match), RE_STATUS_OK);
+      check_equal(match.index, 2);
+      check_equal(re_matchn(first, "bar", 3, NULL, &match), RE_STATUS_NO_MATCH);
 
       re_destroy(second);
       re_destroy(first);
@@ -81,7 +81,7 @@ suite("bounded regex") {
 
     it("rejects malformed patterns without returning a handle") {
       re_t pattern = (re_t)(uintptr_t)1;
-      check_int_eq(re_compile_n("(a|b", 4, NULL, &pattern), RE_STATUS_INVALID_PATTERN);
+      check_equal(re_compile_n("(a|b", 4, NULL, &pattern), RE_STATUS_INVALID_PATTERN);
       check_null(pattern);
       check_null(re_compile("*a"));
       check_null(re_compile("a**"));
@@ -93,50 +93,50 @@ suite("bounded regex") {
       re_limits_t limits = re_limits_default();
       re_match_result_t match = {0};
       limits.max_pattern_bytes = 2;
-      check_int_eq(re_validate_n("abc", 3, &limits), RE_STATUS_PATTERN_LIMIT);
+      check_equal(re_validate_n("abc", 3, &limits), RE_STATUS_PATTERN_LIMIT);
 
       limits = re_limits_default();
       limits.max_text_bytes = 2;
-      check_int_eq(re_match_n("a", 1, "abc", 3, &limits, &match), RE_STATUS_TEXT_LIMIT);
-      check_size_eq(match.index, RE_NPOS);
+      check_equal(re_match_n("a", 1, "abc", 3, &limits, &match), RE_STATUS_TEXT_LIMIT);
+      check_equal(match.index, RE_NPOS);
     }
 
     it("stops when the recursion depth budget is exhausted") {
       re_limits_t limits = re_limits_default();
       limits.max_depth = 2;
-      check_int_eq(re_validate_n("((a))", 5, &limits), RE_STATUS_DEPTH_LIMIT);
+      check_equal(re_validate_n("((a))", 5, &limits), RE_STATUS_DEPTH_LIMIT);
     }
 
     it("stops when the execution step budget is exhausted") {
       re_limits_t limits = re_limits_default();
       re_match_result_t match = {0};
       limits.max_steps = 1;
-      check_int_eq(re_match_n("a", 1, "a", 1, &limits, &match), RE_STATUS_STEP_LIMIT);
-      check_size_eq(match.index, RE_NPOS);
+      check_equal(re_match_n("a", 1, "a", 1, &limits, &match), RE_STATUS_STEP_LIMIT);
+      check_equal(match.index, RE_NPOS);
     }
 
     it("stops before allocating beyond the workspace budget") {
       re_limits_t limits = re_limits_default();
       re_match_result_t match = {0};
       limits.max_workspace_bytes = (uint32_t)(sizeof(size_t) * 2);
-      check_int_eq(re_match_n("(a*)*", 5, "a", 1, &limits, &match), RE_STATUS_WORKSPACE_LIMIT);
-      check_size_eq(match.index, RE_NPOS);
+      check_equal(re_match_n("(a*)*", 5, "a", 1, &limits, &match), RE_STATUS_WORKSPACE_LIMIT);
+      check_equal(match.index, RE_NPOS);
     }
 
     it("rejects malformed limit structures") {
       re_limits_t limits = re_limits_default();
       limits.max_steps = 0;
-      check_int_eq(re_validate_n("a", 1, &limits), RE_STATUS_INVALID_ARGUMENT);
+      check_equal(re_validate_n("a", 1, &limits), RE_STATUS_INVALID_ARGUMENT);
       limits = re_limits_default();
       limits.struct_size = sizeof(limits) - 1;
-      check_int_eq(re_validate_n("a", 1, &limits), RE_STATUS_INVALID_ARGUMENT);
+      check_equal(re_validate_n("a", 1, &limits), RE_STATUS_INVALID_ARGUMENT);
     }
   }
 
   group("status strings") {
     it("returns stable diagnostics") {
-      check_str_eq(re_status_string(RE_STATUS_STEP_LIMIT), "step limit exceeded");
-      check_str_eq(re_status_string((re_status_t)99), "unknown regex status");
+      check_equal(re_status_string(RE_STATUS_STEP_LIMIT), "step limit exceeded");
+      check_equal(re_status_string((re_status_t)99), "unknown regex status");
     }
   }
 
@@ -175,13 +175,13 @@ suite("bounded regex") {
       for (i = 1; i < BUF_LEN; i = i * 3 + 7) {
         const char *scalar = re_scan_first_byte_scalar(buf, buf + i, (unsigned char)'q');
         const char *simde = re_scan_first_byte_simde(buf, buf + i, (unsigned char)'q');
-        check_ptr_eq(scalar, simde);
+        check_equal((const void *)(scalar), (const void *)(simde));
       }
       check_null(re_scan_first_byte_scalar(buf, buf + BUF_LEN, (unsigned char)'~'));
       check_null(re_scan_first_byte_simde(buf, buf + BUF_LEN, (unsigned char)'~'));
       check_null(re_scan_first_byte_simde(buf, buf, (unsigned char)'a'));
 
-      check_ptr_eq(re_scan_first_byte_simde(buf, buf + 1, (unsigned char)'a'), buf);
+      check_equal((const void *)(re_scan_first_byte_simde(buf, buf + 1, (unsigned char)'a')), (const void *)(buf));
     }
   }
 
@@ -220,9 +220,9 @@ suite("bounded regex") {
 
     it("rejects malformed interval quantifiers") {
       re_limits_t limits = re_limits_default();
-      check_int_eq(re_validate_n("a{2,1}", 6, &limits), RE_STATUS_INVALID_PATTERN);
-      check_int_eq(re_validate_n("a{2", 3, &limits), RE_STATUS_INVALID_PATTERN);
-      check_int_eq(re_validate_n("a{1,2,3}", 8, &limits), RE_STATUS_INVALID_PATTERN);
+      check_equal(re_validate_n("a{2,1}", 6, &limits), RE_STATUS_INVALID_PATTERN);
+      check_equal(re_validate_n("a{2", 3, &limits), RE_STATUS_INVALID_PATTERN);
+      check_equal(re_validate_n("a{1,2,3}", 8, &limits), RE_STATUS_INVALID_PATTERN);
       check_null(re_compile("a{2,1}"));
     }
 

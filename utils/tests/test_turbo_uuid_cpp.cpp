@@ -1,4 +1,4 @@
-#include "tinytest.h"
+#include "tinytest.hpp"
 #include "turbo_error.h"
 #include "turbo_uuid.h"
 
@@ -10,8 +10,8 @@ suite("Turbo UUID C++") {
     TurboUtils::UUID uuid{};
     char text[TURBO_UUID_STRING_SIZE]{};
 
-    check_int_eq(turbo_uuid_v7_generate(&uuid), TURBO_OK);
-    check_int_eq(turbo_uuid_format(&uuid, text, sizeof(text)), TURBO_OK);
-    check_hex_eq(uuid.bytes[6] & 0xf0U, 0x70U);
+    check_equal(turbo_uuid_v7_generate(&uuid), TURBO_OK);
+    check_equal(turbo_uuid_format(&uuid, text, sizeof(text)), TURBO_OK);
+    check_equal(uuid.bytes[6] & 0xf0U, 0x70U);
   }
 }

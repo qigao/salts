@@ -25,8 +25,6 @@ implements(counter, simple_counter, 1u,
     .reset = simple_counter_reset
 );
 
-interface_impl(counter, COUNTER_METHODS)
-
 int main(void) {
     color c;
     int value = 2;

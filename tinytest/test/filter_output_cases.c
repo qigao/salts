@@ -10,7 +10,7 @@ spec("filter output") {
   }
 
   it("keep test") {
-    check_int_eq(fixture_count, 1);
+    check_equal(fixture_count, 1);
   }
 
   it("drop test") {

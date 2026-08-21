@@ -9,6 +9,7 @@
 #include "platform.h"
 #include "fmt_lexer.h"
 #include "turbo_str.h"
+#include <cmeta/enum.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -27,26 +28,27 @@ extern "C" {
  * Type Tags
  * ============================================================================ */
 
-#define FMT_TYPE_ITEMS(X)                                                                        \
-  X(FMT_TYPE_CHAR, char, c, char)                                                              \
-  X(FMT_TYPE_INT, int, i, int)                                                                  \
-  X(FMT_TYPE_UINT, unsigned int, u, uint)                                                        \
-  X(FMT_TYPE_LONG, long, l, long)                                                                \
-  X(FMT_TYPE_ULONG, unsigned long, ul, ulong)                                                    \
-  X(FMT_TYPE_LLONG, long long, ll, llong)                                                        \
-  X(FMT_TYPE_ULLONG, unsigned long long, ull, ullong)                                            \
-  X(FMT_TYPE_DOUBLE, double, f, double)                                                           \
-  X(FMT_TYPE_STR, const char *, s, str)                                                           \
-  X(FMT_TYPE_PTR, const void *, p, ptr)                                                           \
-  X(FMT_TYPE_SIZE, size_t, sz, size)                                                              \
-  X(FMT_TYPE_BOOL, int, b, bool)                                                                  \
-  X(FMT_TYPE_STRV, tstr_v, sv, strv)                                                              \
-  X(FMT_TYPE_TIME, turbo_timeval_t, tv, timeval)
+#define FMT_DETAIL_TYPE_SCHEMA(M)                                                                 \
+  Schema(M,                                                                                       \
+         (FMT_TYPE_CHAR, 1, "char", char, c, fmt_arg_char),                                      \
+         (FMT_TYPE_INT, 2, "int", int, i, fmt_arg_int),                                          \
+         (FMT_TYPE_UINT, 3, "uint", unsigned int, u, fmt_arg_uint),                              \
+         (FMT_TYPE_LONG, 4, "long", long, l, fmt_arg_long),                                      \
+         (FMT_TYPE_ULONG, 5, "ulong", unsigned long, ul, fmt_arg_ulong),                         \
+         (FMT_TYPE_LLONG, 6, "llong", long long, ll, fmt_arg_llong),                             \
+         (FMT_TYPE_ULLONG, 7, "ullong", unsigned long long, ull, fmt_arg_ullong),                 \
+         (FMT_TYPE_DOUBLE, 8, "double", double, f, fmt_arg_double),                              \
+         (FMT_TYPE_STR, 9, "str", const char *, s, fmt_arg_str),                                 \
+         (FMT_TYPE_PTR, 10, "ptr", const void *, p, fmt_arg_ptr),                                \
+         (FMT_TYPE_SIZE, 11, "size", size_t, sz, fmt_arg_size),                                  \
+         (FMT_TYPE_BOOL, 12, "bool", int, b, fmt_arg_bool),                                      \
+         (FMT_TYPE_STRV, 13, "strv", vstr, sv, fmt_arg_strv),                                  \
+         (FMT_TYPE_TIME, 14, "time", turbo_timeval_t, tv, fmt_arg_timeval))
 
-#define FMT_TYPE_ITEM(name, type, member, suffix) name,
+#define FMT_TYPE_ITEM(name, value, text, type, member, constructor) name = value,
 typedef enum {
   FMT_TYPE_NONE = 0,
-  FMT_TYPE_ITEMS(FMT_TYPE_ITEM)
+  Replay(FMT_DETAIL_TYPE_SCHEMA, FMT_TYPE_ITEM)
 } fmt_type_t;
 #undef FMT_TYPE_ITEM
 
@@ -62,26 +64,15 @@ typedef enum {
  * fmt_arg_t arrays to fmt_print(). Construct values through fmt_arg_* helpers so
  * new enum values or union members can be added without changing call sites.
  *
- * Strings and tstr_v values are non-owning views. The referenced storage must
+ * Strings and vstr values are non-owning views. The referenced storage must
  * remain valid until fmt_print() returns.
  */
 typedef struct {
   fmt_type_t type;
   union {
-    char c;
-    int i;
-    unsigned int u;
-    long l;
-    unsigned long ul;
-    long long ll;
-    unsigned long long ull;
-    double f;
-    const char *s;
-    const void *p;
-    size_t sz;
-    int b; /* bool stored as int */
-    tstr_v sv;
-    turbo_timeval_t tv;
+#define FMT_TYPE_FIELD(name, value, text, type, member, constructor) type member;
+    Replay(FMT_DETAIL_TYPE_SCHEMA, FMT_TYPE_FIELD)
+#undef FMT_TYPE_FIELD
   } val;
 } fmt_arg_t;
 
@@ -99,12 +90,47 @@ typedef struct {
   #define FMT_MAKE_ARG(t, m, v) return (fmt_arg_t){t, {.m = v}};
 #endif
 
-#define FMT_MAKE_FN(name, type, member, suffix)                                                    \
-  static inline fmt_arg_t fmt_arg_ ## suffix(type x) { FMT_MAKE_ARG(name, member, x) }
+#define FMT_MAKE_FN(name, value, text, type, member, constructor)                                  \
+  static inline fmt_arg_t constructor(type x) { FMT_MAKE_ARG(name, member, x) }
 
-FMT_TYPE_ITEMS(FMT_MAKE_FN)
+Replay(FMT_DETAIL_TYPE_SCHEMA, FMT_MAKE_FN)
 #undef FMT_MAKE_FN
-#undef FMT_TYPE_ITEMS
+
+#define FMT_TYPE_META_ITEM(name, value, text, type, member, constructor) \
+  {(int64_t)(name), #name, (text)},
+
+CMETA_LOCAL const cmeta_enum_item_desc fmt_type_t__enum_items[] = {
+  {(int64_t)FMT_TYPE_NONE, "FMT_TYPE_NONE", "none"},
+  Replay(FMT_DETAIL_TYPE_SCHEMA, FMT_TYPE_META_ITEM)
+};
+
+CMETA_LOCAL const cmeta_enum_desc fmt_type_t__enum_meta = {
+  "fmt_type_t",
+  fmt_type_t__enum_items,
+  sizeof(fmt_type_t__enum_items) / sizeof(fmt_type_t__enum_items[0])
+};
+
+CMETA_INLINE const cmeta_enum_desc *fmt_type_t_meta(void) {
+  return &fmt_type_t__enum_meta;
+}
+
+CMETA_INLINE const char *fmt_type_t_to_string(fmt_type_t value) {
+  return cmeta_enum_to_string(&fmt_type_t__enum_meta, (int64_t)value);
+}
+
+CMETA_INLINE const char *fmt_type_t_to_symbol(fmt_type_t value) {
+  return cmeta_enum_to_symbol(&fmt_type_t__enum_meta, (int64_t)value);
+}
+
+CMETA_INLINE bool fmt_type_t_from_string(const char *text, fmt_type_t *out) {
+  int64_t raw;
+  if (!out || !cmeta_enum_from_string(&fmt_type_t__enum_meta, text, &raw)) return false;
+  *out = (fmt_type_t)raw;
+  return true;
+}
+
+#undef FMT_TYPE_META_ITEM
+#undef FMT_DETAIL_TYPE_SCHEMA
 
 static inline fmt_arg_t fmt_arg_time(time_t x) {
 #ifdef __cplusplus
@@ -127,22 +153,54 @@ static inline fmt_arg_t fmt_arg_time(time_t x) {
  * ============================================================================ */
 
 #ifdef __cplusplus
+  #define FMT_DETAIL_BOOL_SOURCE bool
+#else
+  #define FMT_DETAIL_BOOL_SOURCE _Bool
+#endif
+
+/* Detection rows are separate from storage rows because several promoted
+ * source types intentionally share one fmt_arg_t representation. */
+#define FMT_DETAIL_NUMERIC_DETECT_SCHEMA(M)                                                       \
+  Schema(M,                                                                                       \
+         (char, fmt_arg_char),                                                                    \
+         (signed char, fmt_arg_char),                                                             \
+         (unsigned char, fmt_arg_char),                                                           \
+         (short, fmt_arg_int),                                                                    \
+         (unsigned short, fmt_arg_uint),                                                          \
+         (int, fmt_arg_int),                                                                      \
+         (unsigned int, fmt_arg_uint),                                                            \
+         (long, fmt_arg_long),                                                                    \
+         (unsigned long, fmt_arg_ulong),                                                          \
+         (long long, fmt_arg_llong),                                                              \
+         (unsigned long long, fmt_arg_ullong),                                                    \
+         (float, fmt_arg_double),                                                                 \
+         (double, fmt_arg_double),                                                                \
+         (FMT_DETAIL_BOOL_SOURCE, fmt_arg_bool))
+
+#define FMT_DETAIL_OBJECT_DETECT_SCHEMA(M)                                                        \
+  Schema(M,                                                                                       \
+         (char *, fmt_arg_str),                                                                   \
+         (const char *, fmt_arg_str),                                                             \
+         (void *, fmt_arg_ptr),                                                                   \
+         (const void *, fmt_arg_ptr),                                                             \
+         (vstr, fmt_arg_strv),                                                                  \
+         (turbo_timeval_t, fmt_arg_timeval))
+
+#ifdef __cplusplus
 } /* End extern "C" to allow C++ overloading */
 
 /* C++ Overloads for automatic type detection */
-static inline fmt_arg_t fmt_arg_detect(char x) { return fmt_arg_char(x); }
-static inline fmt_arg_t fmt_arg_detect(signed char x) { return fmt_arg_char((char)x); }
-static inline fmt_arg_t fmt_arg_detect(unsigned char x) { return fmt_arg_char((char)x); }
-static inline fmt_arg_t fmt_arg_detect(short x) { return fmt_arg_int(x); }
-static inline fmt_arg_t fmt_arg_detect(unsigned short x) { return fmt_arg_uint(x); }
-static inline fmt_arg_t fmt_arg_detect(int x) { return fmt_arg_int(x); }
-static inline fmt_arg_t fmt_arg_detect(unsigned int x) { return fmt_arg_uint(x); }
-static inline fmt_arg_t fmt_arg_detect(long x) { return fmt_arg_long(x); }
-static inline fmt_arg_t fmt_arg_detect(unsigned long x) { return fmt_arg_ulong(x); }
-static inline fmt_arg_t fmt_arg_detect(long long x) { return fmt_arg_llong(x); }
-static inline fmt_arg_t fmt_arg_detect(unsigned long long x) { return fmt_arg_ullong(x); }
-/* size_t overload: only enabled when size_t is a distinct type from unsigned long/unsigned long
- * long */
+#define FMT_DETAIL_CPP_DETECT(source_type, constructor)                                            \
+  static inline fmt_arg_t fmt_arg_detect(source_type x) { return constructor(x); }
+Replay(FMT_DETAIL_NUMERIC_DETECT_SCHEMA, FMT_DETAIL_CPP_DETECT)
+Replay(FMT_DETAIL_OBJECT_DETECT_SCHEMA, FMT_DETAIL_CPP_DETECT)
+#undef FMT_DETAIL_CPP_DETECT
+#undef FMT_DETAIL_NUMERIC_DETECT_SCHEMA
+#undef FMT_DETAIL_OBJECT_DETECT_SCHEMA
+#undef FMT_DETAIL_BOOL_SOURCE
+
+/* Fallback for integral types without an exact overload. size_t is a typedef,
+ * so it resolves through its exact underlying unsigned-type overload. */
 template <typename T = size_t>
 static inline
     typename std::enable_if<std::is_integral<T>::value && !std::is_same<T, unsigned long>::value &&
@@ -151,15 +209,6 @@ static inline
     fmt_arg_detect(T x) {
   return fmt_arg_size(x);
 }
-static inline fmt_arg_t fmt_arg_detect(float x) { return fmt_arg_double((double)x); }
-static inline fmt_arg_t fmt_arg_detect(double x) { return fmt_arg_double(x); }
-static inline fmt_arg_t fmt_arg_detect(bool x) { return fmt_arg_bool(x); }
-static inline fmt_arg_t fmt_arg_detect(char *x) { return fmt_arg_str(x); }
-static inline fmt_arg_t fmt_arg_detect(const char *x) { return fmt_arg_str(x); }
-static inline fmt_arg_t fmt_arg_detect(void *x) { return fmt_arg_ptr(x); }
-static inline fmt_arg_t fmt_arg_detect(const void *x) { return fmt_arg_ptr(x); }
-static inline fmt_arg_t fmt_arg_detect(tstr_v x) { return fmt_arg_strv(x); }
-static inline fmt_arg_t fmt_arg_detect(turbo_timeval_t x) { return fmt_arg_timeval(x); }
 static inline fmt_arg_t fmt_arg_detect(std::chrono::system_clock::time_point tp) {
   auto dur = tp.time_since_epoch();
   auto sec = std::chrono::duration_cast<std::chrono::seconds>(dur);
@@ -186,7 +235,7 @@ template <typename T>
 static inline auto fmt_arg_detect(const T &x) ->
     typename std::enable_if<!__fmt_detail::has_c_str<T>::value,
                             decltype(x.data(), x.size(), fmt_arg_t{})>::type {
-  tstr_v sv;
+  vstr sv;
   sv.data = x.data();
   sv.len = x.size();
   return fmt_arg_strv(sv);
@@ -215,55 +264,23 @@ extern "C" { /* Re-open extern "C" */
 
 #ifdef _MSC_VER
 
-    /* MSVC-specific cascading _Generic */
+    /* MSVC accepts a bounded association set, so compose two schema-generated
+     * selectors while retaining the same pointer fallback. */
+    #define FMT_DETAIL_C_ASSOC(source_type, constructor) source_type: constructor,
+    #define FMT_DETAIL_C_OBJECT_SELECTOR(x)                                                    \
+      _Generic((x), Replay(FMT_DETAIL_OBJECT_DETECT_SCHEMA, FMT_DETAIL_C_ASSOC)                 \
+               default: fmt_arg_ptr)
     #define FMT_ARG(x)                                                                             \
-      (_Generic((x),                                                                               \
-                char *: fmt_arg_str,                                                                \
-                const char *: fmt_arg_str,                                                          \
-                double: fmt_arg_double,                                                             \
-                float: fmt_arg_double,                                                              \
-                void *: fmt_arg_ptr,                                                                \
-                const void *: fmt_arg_ptr,                                                          \
-                tstr_v: fmt_arg_strv,                                                               \
-                turbo_timeval_t: fmt_arg_timeval,                                                    \
-                char: fmt_arg_char,                                                                 \
-                int: fmt_arg_int,                                                                   \
-                unsigned int: fmt_arg_uint,                                                          \
-                long long: fmt_arg_llong,                                                            \
-                unsigned long long: fmt_arg_ullong,                                                  \
-                default: _Generic((x),                                                              \
-                                   signed char: fmt_arg_char,                                          \
-                                   unsigned char: fmt_arg_char,                                        \
-                                   short: fmt_arg_int,                                                 \
-                                   unsigned short: fmt_arg_uint,                                        \
-                                   long: fmt_arg_long,                                                  \
-                                   unsigned long: fmt_arg_ulong,                                        \
-                                   default: fmt_arg_ptr))(x))
+      (_Generic((x), Replay(FMT_DETAIL_NUMERIC_DETECT_SCHEMA, FMT_DETAIL_C_ASSOC)                    \
+                default: FMT_DETAIL_C_OBJECT_SELECTOR(x)))(x)
 
 #else
     /* Standard C11 _Generic */
+    #define FMT_DETAIL_C_ASSOC(source_type, constructor) source_type: constructor,
     #define FMT_ARG(x)                                                                             \
       _Generic((x),                                                                                \
-               char: fmt_arg_char,                                                                 \
-               signed char: fmt_arg_char,                                                          \
-               unsigned char: fmt_arg_char,                                                        \
-               short: fmt_arg_int,                                                                 \
-               unsigned short: fmt_arg_uint,                                                        \
-               int: fmt_arg_int,                                                                   \
-               unsigned int: fmt_arg_uint,                                                         \
-               long: fmt_arg_long,                                                                 \
-               unsigned long: fmt_arg_ulong,                                                       \
-               long long: fmt_arg_llong,                                                           \
-               unsigned long long: fmt_arg_ullong,                                                  \
-               float: fmt_arg_double,                                                              \
-               double: fmt_arg_double,                                                             \
-               char *: fmt_arg_str,                                                                \
-               const char *: fmt_arg_str,                                                          \
-               void *: fmt_arg_ptr,                                                                \
-               const void *: fmt_arg_ptr,                                                          \
-               tstr_v: fmt_arg_strv,                                                               \
-               turbo_timeval_t: fmt_arg_timeval,                                                    \
-               _Bool: fmt_arg_bool,                                                                \
+               Replay(FMT_DETAIL_NUMERIC_DETECT_SCHEMA, FMT_DETAIL_C_ASSOC)                        \
+               Replay(FMT_DETAIL_OBJECT_DETECT_SCHEMA, FMT_DETAIL_C_ASSOC)                         \
                default: fmt_arg_ptr)(x)
   #endif
 #else
@@ -283,19 +300,20 @@ extern "C" { /* Re-open extern "C" */
 #define FMT_NARGS_IMPL(_0, _1, _2, _3, _4, _5, _6, _7, _8, N, ...) N
 #define FMT_NARGS(...) FMT_EXPAND(FMT_NARGS_IMPL(0, ##__VA_ARGS__, 8, 7, 6, 5, 4, 3, 2, 1, 0))
 
-/* Expand each argument with FMT_ARG */
+/* Expand each non-empty argument list through the shared CMeta preprocessor
+ * kernel. The arity-specific names remain available for source compatibility. */
+#define FMT_DETAIL_WRAP_ONE(arg, ignored) FMT_ARG(arg),
+#define FMT_DETAIL_WRAP_NONEMPTY(...)                                                            \
+  CMETA_PP_FOR_EACH(FMT_DETAIL_WRAP_ONE, ~, __VA_ARGS__)
 #define FMT_WRAP_0() {FMT_TYPE_NONE}
-#define FMT_WRAP_1(a) FMT_ARG(a)
-#define FMT_WRAP_2(a, b) FMT_ARG(a), FMT_ARG(b)
-#define FMT_WRAP_3(a, b, c) FMT_ARG(a), FMT_ARG(b), FMT_ARG(c)
-#define FMT_WRAP_4(a, b, c, d) FMT_ARG(a), FMT_ARG(b), FMT_ARG(c), FMT_ARG(d)
-#define FMT_WRAP_5(a, b, c, d, e) FMT_ARG(a), FMT_ARG(b), FMT_ARG(c), FMT_ARG(d), FMT_ARG(e)
-#define FMT_WRAP_6(a, b, c, d, e, f)                                                               \
-  FMT_ARG(a), FMT_ARG(b), FMT_ARG(c), FMT_ARG(d), FMT_ARG(e), FMT_ARG(f)
-#define FMT_WRAP_7(a, b, c, d, e, f, g)                                                            \
-  FMT_ARG(a), FMT_ARG(b), FMT_ARG(c), FMT_ARG(d), FMT_ARG(e), FMT_ARG(f), FMT_ARG(g)
-#define FMT_WRAP_8(a, b, c, d, e, f, g, h)                                                         \
-  FMT_ARG(a), FMT_ARG(b), FMT_ARG(c), FMT_ARG(d), FMT_ARG(e), FMT_ARG(f), FMT_ARG(g), FMT_ARG(h)
+#define FMT_WRAP_1(a) FMT_DETAIL_WRAP_NONEMPTY(a)
+#define FMT_WRAP_2(a, b) FMT_DETAIL_WRAP_NONEMPTY(a, b)
+#define FMT_WRAP_3(a, b, c) FMT_DETAIL_WRAP_NONEMPTY(a, b, c)
+#define FMT_WRAP_4(a, b, c, d) FMT_DETAIL_WRAP_NONEMPTY(a, b, c, d)
+#define FMT_WRAP_5(a, b, c, d, e) FMT_DETAIL_WRAP_NONEMPTY(a, b, c, d, e)
+#define FMT_WRAP_6(a, b, c, d, e, f) FMT_DETAIL_WRAP_NONEMPTY(a, b, c, d, e, f)
+#define FMT_WRAP_7(a, b, c, d, e, f, g) FMT_DETAIL_WRAP_NONEMPTY(a, b, c, d, e, f, g)
+#define FMT_WRAP_8(a, b, c, d, e, f, g, h) FMT_DETAIL_WRAP_NONEMPTY(a, b, c, d, e, f, g, h)
 
 /* Dispatch to correct wrapper based on count */
 #define FMT_WRAP_N_INNER(N, ...) FMT_WRAP_##N(__VA_ARGS__)
@@ -325,32 +343,39 @@ extern "C" { /* Re-open extern "C" */
  * @param arg_count Number of arguments
  * @return Number of characters written, or 0 for invalid input or backend failure.
  *
- * Error conditions: NULL buf, zero size, NULL fmt, or args == NULL with
- * arg_count > 0. On valid buf/size, failures leave buf as an empty string.
+ * A specifier may contain printf flags, a decimal width, a decimal precision,
+ * an optional type-compatible length, and an optional conversion. Dynamic
+ * width/precision (`*`), unknown conversions, and lengths incompatible with
+ * the tagged argument are rejected before calling the printf backend.
+ *
+ * Error conditions: NULL buf, zero size, NULL fmt, args == NULL with
+ * arg_count > 0, or an invalid/incompatible specifier. On valid buf/size,
+ * failures leave buf as an empty string.
  */
 CXX_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
                         size_t arg_count);
 
 /**
- * @brief Append formatted content directly to tstr_t.
+ * @brief Append formatted content directly to tstr.
  *
  * This is the dynamic-string backend for fmt formatting. It avoids fixed-size
  * temporary buffers by growing the render buffer until fmt_print() can produce
  * the full output, then appends that output to s.
  *
- * @param s         Existing tstr_t, or NULL to create one.
+ * @param s         Existing tstr, or NULL to create one.
  * @param fmt       Format string with {} placeholders.
  * @param args      Array of typed arguments.
  * @param arg_count Number of arguments.
- * @return Updated tstr_t. Callers must assign the return value.
+ * @return Updated tstr. Callers must assign the return value. Invalid input
+ *         or an incompatible specifier leaves the existing string unchanged.
  */
-CXX_C_API tstr_t fmt_print_tstr(tstr_t s, const char *fmt, const fmt_arg_t *args, size_t arg_count);
+CXX_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args, size_t arg_count);
 
 /* ============================================================================
- * tstr_t Integration
+ * tstr Integration
  * ============================================================================ */
 
-static inline tstr_t tstr_cat_typed_impl(tstr_t s, const char *format, const fmt_arg_t *args,
+static inline tstr tstr_cat_typed_impl(tstr s, const char *format, const fmt_arg_t *args,
                                          size_t count) {
   return fmt_print_tstr(s, format, args, count);
 }
@@ -358,7 +383,7 @@ static inline tstr_t tstr_cat_typed_impl(tstr_t s, const char *format, const fmt
 #define tstr_cat_typed(s, format, ...)                                                             \
   tstr_cat_typed_impl((s), (format), FMT_ARGS(__VA_ARGS__), FMT_NARGS(__VA_ARGS__))
 
-static inline tstr_t tstr_format_typed_impl(const char *format, const fmt_arg_t *args,
+static inline tstr tstr_format_typed_impl(const char *format, const fmt_arg_t *args,
                                             size_t count) {
   return fmt_print_tstr(tstr_new(), format, args, count);
 }
@@ -430,7 +455,7 @@ static inline auto fmt_arg_detect(const T &x) -> typename std::enable_if<
   thread_local char buf[512];
   fmt_buffer_t fb(buf, sizeof(buf));
   fmt_format(fb, x);
-  tstr_v sv;
+  vstr sv;
   sv.data = buf;
   sv.len = fb.pos;
   return fmt_arg_strv(sv);
@@ -450,7 +475,7 @@ inline int fmt_cpp_wrapper(char *buf, size_t size, const char *fmt, const Args &
   #define fmt(buf, size, fmt, ...) fmt_cpp_wrapper((buf), (size), (fmt), ##__VA_ARGS__)
 
 template <typename... Args>
-inline tstr_t tstr_cat_typed_cpp(tstr_t s, const char *format, const Args &...args) {
+inline tstr tstr_cat_typed_cpp(tstr s, const char *format, const Args &...args) {
   const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE}};
   return fmt_print_tstr(s, format, arg_array, sizeof...(Args));
 }
@@ -459,7 +484,7 @@ inline tstr_t tstr_cat_typed_cpp(tstr_t s, const char *format, const Args &...ar
   #define tstr_cat_typed(s, format, ...) tstr_cat_typed_cpp((s), (format), ##__VA_ARGS__)
 
 template <typename... Args>
-inline tstr_t tstr_format_typed_cpp(const char *format, const Args &...args) {
+inline tstr tstr_format_typed_cpp(const char *format, const Args &...args) {
   const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE}};
   return fmt_print_tstr(tstr_new(), format, arg_array, sizeof...(Args));
 }

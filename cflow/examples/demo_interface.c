@@ -39,8 +39,6 @@ implements(counter, basic_counter, COUNTER_CAP_RESET,
     .reset = basic_reset
 );
 
-interface_impl(counter, COUNTER_METHODS)
-
 int main(void) {
     counter_state state = { 4 };
     counter c = basic_counter_as_counter(&state);
@@ -66,7 +64,8 @@ int main(void) {
     assert(cflow_waitable_interface()->method_count == 2);
     assert(cflow_sink_interface()->method_count == 3);
 
-    puts("interface/implements: generated handle, vtable, wrappers, capabilities, metadata");
+    puts("interface: generated handle, vtable, wrappers, capabilities, metadata");
+    puts("implements: binds a concrete vtable to the interface");
     puts("CFlow boundaries: Scheduler / Source / Waitable / Sink use the same protocol");
     return 0;
 }

@@ -1,9 +1,10 @@
 # tinytest
 
-Header-only BDD/TDD testing framework for C and C++. Zero dependencies beyond libc.
-C tests include `tinytest.h`; C++ tests include `tinytest.hpp`.
+BDD/TDD testing framework for C and C++. The runtime is a static library with no
+dependency beyond libc. C tests include `tinytest.h`; C++ tests include
+`tinytest.hpp`; both link `TurboUtils::TinyTest`.
 
-Features: spec/describe/it, given/when/then, TDD TEST_CASE/SECTION, check/check_warn, typed assertions, benchmarking, TAP, JUnit XML, color output, test filtering.
+Features: spec/describe/it, given/when/then, TDD TEST_CASE/SECTION, check/check_warn, strict-C11 generic assertions, benchmarking, TAP, JUnit XML, color output, test filtering.
 
 ## Quick Start
 
@@ -21,9 +22,9 @@ spec("strncmp") {
 }
 ```
 
-```bash
-cc strncmp_spec.c -o strncmp_spec
-./strncmp_spec
+```cmake
+add_executable(strncmp_spec strncmp_spec.c)
+target_link_libraries(strncmp_spec PRIVATE TurboUtils::TinyTest)
 ```
 
 ```
@@ -49,82 +50,84 @@ check_warn(a == 1);
 check_warn(b == 2);
 ```
 
-### Typed Assertions
+### Generic Assertions
 
-All print actual vs expected on failure. Parameter order: `actual, expected`.
-
-#### Integer
+C tests require C11. The generic comparisons support integer, floating-point,
+boolean, string, and pointer values as appropriate. Parameter order is
+`actual, expected`.
 
 ```c
-check_int_eq(actual, expected);    check_int_ne(actual, expected);
-check_int_gt(actual, expected);    check_int_ge(actual, expected);
-check_int_lt(actual, expected);    check_int_le(actual, expected);
-check_int_range(actual, lo, hi);
+check_equal(actual, expected);         check_not_equal(actual, expected);
+check_greater(actual, expected);       check_greater_equal(actual, expected);
+check_less(actual, expected);          check_less_equal(actual, expected);
+check_in_range(actual, lo, hi);
+check_within(actual, expected, margin); /* float, double, long double */
 ```
 
-#### Unsigned / size_t / long
+Every generic assertion has a non-fatal `_warn` form:
 
 ```c
-check_uint_eq(actual, expected);   check_uint_ne(actual, expected);
-check_size_eq(actual, expected);   check_size_ne(actual, expected);
-check_size_gt(actual, expected);   check_size_ge(actual, expected);
-check_size_lt(actual, expected);   check_size_le(actual, expected);
-check_long_eq(actual, expected);
-check_ll_eq(actual, expected);     check_ll_ne(actual, expected);
-check_ll_gt(actual, expected);     check_ll_ge(actual, expected);
-check_ll_lt(actual, expected);     check_ll_le(actual, expected);
-check_ull_eq(actual, expected);    check_ull_ne(actual, expected);
+check_equal_warn(actual, expected);
+check_greater_equal_warn(actual, expected);
+check_within_warn(actual, expected, margin);
 ```
 
-#### Float / Double
+### String
 
 ```c
-check_float_eq(actual, expected, epsilon);
-check_float_ne(actual, expected, epsilon);
-check_float_gt(actual, expected);  check_float_ge(actual, expected);
-check_float_lt(actual, expected);  check_float_le(actual, expected);
-check_float_within_rel(actual, expected, rel);   /* |a-e| <= rel*|e| */
-check_float_within_abs(actual, expected, margin); /* same as float_eq */
-check_float_nan(actual);
-check_float_inf(actual);
+check_equal(actual, expected);
+check_not_equal(actual, expected);
+check_contains(haystack, needle);
+check_starts_with(str, prefix);
+check_ends_with(str, suffix);
 ```
 
-#### String
+### Memory / Pointer
 
 ```c
-check_str_eq(actual, expected);
-check_str_ne(actual, expected);
-check_str_contains(haystack, needle);
-check_str_starts_with(str, prefix);
-check_str_ends_with(str, suffix);
-```
-
-#### Memory / Pointer
-
-```c
-check_mem_eq(actual, expected, len);
-check_mem_ne(actual, expected, len);
+check_equal(actual, expected, len);
+check_not_equal(actual, expected, len);
 check_null(ptr);           check_not_null(ptr);
-check_ptr_eq(actual, expected);  check_ptr_ne(actual, expected);
+check_equal(actual, expected);  check_not_equal(actual, expected);
 ```
 
-#### Hex / Boolean / Bits
+The two-argument form compares values. The three-argument form compares exactly
+`len` bytes; there is no separate `check_mem_*` family.
+
+### Custom C value types
+
+Strict C11 tests can register value equality without depending on CMeta.
+`tinytest.h` automatically includes the historically named internal traits
+adapter `tinytest_cmeta.h`:
 
 ```c
-check_hex_eq(actual, expected);     check_hex64_eq(actual, expected);
-check_true(val);                    check_false(val);
-check_bits(actual, mask);           /* (actual & mask) == mask */
+#include <stdbool.h>
+
+typedef struct Point { int x, y; } Point;
+
+static bool point_equal(const Point *actual, const Point *expected) {
+    return actual->x == expected->x && actual->y == expected->y;
+}
+
+#define TTEST_USER_EQUAL_TRAIT_LIST , (POINT, Point, point_equal)
+#include "tinytest.h"
+
+check_equal((Point){1, 2}, (Point){1, 2});
 ```
 
-#### Arrays
+Each row is `(TOKEN, C_TYPE, COMPARATOR)`. The comparator borrows two
+`const C_TYPE *` values. Unregistered structures are rejected at compile time.
+`tinytest_cmeta.h` and `tinytest_internal.h` are transitive implementation
+headers; applications include only `tinytest.h` (or `tinytest.hpp` for C++).
+Language-neutral runner, reporting, benchmark, temporary-file, and tree-management
+implementations live in `tinytest.c`. The public header retains only the macros
+that must expand in the test translation unit and the C++ assertion-unwind adapter.
+
+### Boolean / Bits
 
 ```c
-check_int_array_eq(actual, expected, n);
-check_uint8_array_eq(actual, expected, n);
-check_size_array_eq(actual, expected, n);
-check_float_array_eq(actual, expected, n, epsilon);
-check_ptr_array_eq(actual, expected, n);
-check_str_array_eq(actual, expected, n);
+check_true(val);           check_false(val);
+check_bits(actual, mask);  /* (actual & mask) == mask */
 ```
 
 ## Diagnostic Context
@@ -154,15 +157,15 @@ spec("my module") {
 ```c
 spec("tests") {
     TEST_CASE("arithmetic") {
-        check_int_eq(1 + 1, 2);
+        check_equal(1 + 1, 2);
 
         SECTION("subtraction") {
-            check_int_eq(3 - 1, 2);
+            check_equal(3 - 1, 2);
         }
     }
 
     TEST_CASE("strings", "[string]") {
-        check_str_eq("a", "a");
+        check_equal("a", "a");
     }
 }
 ```
@@ -178,7 +181,7 @@ spec("account") {
         when("withdrawing 50") {
             then("should have 50 remaining") {
                 balance -= 50;
-                check_int_eq(balance, 50);
+                check_equal(balance, 50);
             }
         }
     }
@@ -206,12 +209,43 @@ spec("with fixtures") {
     static int counter;
     before_all() { counter = 0; }
     before_each() { counter++; }
-    it("first") { check_int_eq(counter, 1); }
-    it("second") { check_int_eq(counter, 2); }
+    it("first") { check_equal(counter, 1); }
+    it("second") { check_equal(counter, 2); }
 }
 ```
 
 Variables shared between setup and tests must be `static`.
+
+## Mocking
+
+C mocks use the same strict-C11 builtin trait map as generic assertions. Use the
+single variadic entry for one to six parameters; zero-parameter mocks have a
+separate form because portable C11 has no empty-variadic facility.
+
+```c
+#include "tinymock.h"
+
+TINYMOCk_MOCK(int, add, int, int)
+TINYMOCk_MOCK_VOID(log_value, int)
+TINYMOCk_MOCK0(int, read_status)
+
+spec("mocked add") {
+    it("returns the scripted value") {
+        mock_add_reset();
+        mock_add_expect(TINYMOCk_ARG(2), TINYMOCk_ARG(3), TINYMOCk_RETURN(5));
+        check_equal(add(2, 3), 5);
+        mock_add_verify();
+    }
+}
+```
+
+The numbered `TINYMOCk_MOCK1/2/3` and `TINYMOCk_MOCK_DEFINE1/2` forms are not
+provided. C++ tests include `tinymock.hpp` and use `tinymock::function_mock` or
+the `TINYMOCK_CPP_MOCK_METHOD*` method generators.
+
+`TINYMOCk_VALUE(value)` boxes a supported builtin value and
+`TINYMOCk_VALUE_AS(type, value)` unboxes it. Both are strict-C11 `_Generic`
+interfaces; the ABI-specific conversion handlers are implementation details.
 
 ## Benchmarking
 
@@ -303,13 +337,13 @@ check_empty(vec);
 check_not_empty(vec);
 check_map_has_key(map, key);
 check_map_not_has_key(map, key);
-check_string_eq(s, "hello");
-check_string_ne(s, "other");
-check_string_contains(s, "ell");
-check_string_starts_with(s, "hel");
-check_string_ends_with(s, "llo");
-check_string_empty(s);
-check_string_not_empty(s);
+check_equal(s, "hello");
+check_not_equal(s, "other");
+check_contains(s, "ell");
+check_starts_with(s, "hel");
+check_ends_with(s, "llo");
+check_empty(s);
+check_not_empty(s);
 ```
 
 ## C++ Template Assertions

@@ -1,6 +1,6 @@
 /**
  * @file turbo_str.c
- * @brief tstr_t implementation wrapping SDS
+ * @brief tstr implementation wrapping SDS
  *
  * API uses snake_case: tstr_len, tstr_cat, tstr_cpy, etc.
  */
@@ -13,10 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-static inline int tstr_view_valid(tstr_v v) { return v.data != NULL || v.len == 0; }
-
-static int tstr_append_checked(tstr_t *s, const void *data, size_t len) {
-  tstr_t next;
+static int tstr_append_checked(tstr *s, const void *data, size_t len) {
+  tstr next;
 
   if (!s || !*s) return 0;
   if (len == 0) return 1;
@@ -28,8 +26,8 @@ static int tstr_append_checked(tstr_t *s, const void *data, size_t len) {
   return 1;
 }
 
-static int tstr_reserve_checked(tstr_t *s, size_t addlen) {
-  tstr_t next;
+static int tstr_reserve_checked(tstr *s, size_t addlen) {
+  tstr next;
 
   if (!s || !*s) return 0;
   if (addlen == 0) return 1;
@@ -66,17 +64,17 @@ static size_t tstr_utf8_encode_one(uint32_t codepoint, char out[4]) {
 }
 
 /* ============================================================================
- * tstr_t <-> tstr_v conversion
+ * tstr <-> vstr conversion
  * ========================================================================= */
 
-tstr_t tstr_from_v(tstr_v v) {
-  if (v.len == SIZE_MAX) return NULL;
-  if (!v.data || v.len == 0) return sdsempty();
+tstr tstr_from_v(vstr v) {
+  if (!vstr_is_valid(v) || v.len == SIZE_MAX) return NULL;
+  if (v.len == 0) return sdsempty();
   return sdsnewlen(v.data, v.len);
 }
 
-tstr_v tstr_to_v(tstr_t s) {
-  tstr_v v;
+vstr tstr_to_v(tstr s) {
+  vstr v;
   v.data = s;
   v.len = s ? sdslen(s) : 0;
   return v;
@@ -86,43 +84,43 @@ tstr_v tstr_to_v(tstr_t s) {
  * Creation / Destruction
  * ========================================================================= */
 
-tstr_t tstr_new(void) {
+tstr tstr_new(void) {
   return sdsempty();
 }
 
-tstr_t tstr_dup(const char *s) {
+tstr tstr_dup(const char *s) {
   if (!s) return sdsempty();
   return sdsnew(s);
 }
 
-tstr_t tstr_clone(tstr_t s) {
+tstr tstr_clone(tstr s) {
   if (!s) return NULL;
   return sdsdup(s);
 }
 
-tstr_t tstr_dup_len(const char *s, size_t n) {
+tstr tstr_dup_len(const char *s, size_t n) {
   if (n == SIZE_MAX) return NULL;
   if (!s || n == 0) return sdsempty();
   return sdsnewlen(s, n);
 }
 
-tstr_t tstr_new_len(const void *init, size_t n) {
+tstr tstr_new_len(const void *init, size_t n) {
   if (n == SIZE_MAX) return NULL;
   return sdsnewlen(init, n);
 }
 
-void tstr_free(tstr_t s) {
+void tstr_free(tstr s) {
   sdsfree(s);
 }
 
-void tstr_freep(tstr_t *s) {
+void tstr_freep(tstr *s) {
   if (!s) return;
   tstr_free(*s);
   *s = NULL;
 }
 
-tstr_t tstr_move(tstr_t *s) {
-  tstr_t moved;
+tstr tstr_move(tstr *s) {
+  tstr moved;
   if (!s) return NULL;
   moved = *s;
   *s = NULL;
@@ -133,25 +131,25 @@ tstr_t tstr_move(tstr_t *s) {
  * Properties
  * ========================================================================= */
 
-size_t tstr_len(tstr_t s) {
+size_t tstr_len(tstr s) {
   if (!s) return 0;
   return sdslen(s);
 }
 
-size_t tstr_avail(tstr_t s) {
+size_t tstr_avail(tstr s) {
   if (!s) return 0;
   return sdsavail(s);
 }
 
-int tstr_empty(tstr_t s) {
+int tstr_empty(tstr s) {
   return !s || sdslen(s) == 0;
 }
 
-void tstr_set_len(tstr_t s, size_t n) {
+void tstr_set_len(tstr s, size_t n) {
   (void)tstr_set_len_checked(s, n);
 }
 
-int tstr_set_len_checked(tstr_t s, size_t n) {
+int tstr_set_len_checked(tstr s, size_t n) {
   if (!s || n > sdsalloc(s)) return 0;
   sdssetlen(s, n);
   s[n] = '\0';
@@ -162,31 +160,32 @@ int tstr_set_len_checked(tstr_t s, size_t n) {
  * Concatenation
  * ========================================================================= */
 
-tstr_t tstr_cat(tstr_t s, const char *t) {
+tstr tstr_cat(tstr s, const char *t) {
   if (!s) s = sdsempty();
   if (!t) return s;
   return sdscat(s, t);
 }
 
-tstr_t tstr_cat_len(tstr_t s, const char *t, size_t n) {
+tstr tstr_cat_len(tstr s, const char *t, size_t n) {
   if (!s) s = sdsempty();
   if (!t || n == 0) return s;
   return sdscatlen(s, t, n);
 }
 
-tstr_t tstr_cat_str(tstr_t s, tstr_t t) {
+tstr tstr_cat_str(tstr s, tstr t) {
   if (!s) s = sdsempty();
   if (!t) return s;
   return sdscatsds(s, t);
 }
 
-tstr_t tstr_cat_v(tstr_t s, tstr_v v) {
+tstr tstr_cat_v(tstr s, vstr v) {
+  if (!vstr_is_valid(v)) return s;
   if (!s) s = sdsempty();
-  if (!v.data || v.len == 0) return s;
+  if (v.len == 0) return s;
   return sdscatlen(s, v.data, v.len);
 }
 
-tstr_t tstr_cat_fmt(tstr_t s, const char *fmt, ...) {
+tstr tstr_cat_fmt(tstr s, const char *fmt, ...) {
   if (!s) s = sdsempty();
   if (!fmt) return s;
 
@@ -197,7 +196,7 @@ tstr_t tstr_cat_fmt(tstr_t s, const char *fmt, ...) {
   return s;
 }
 
-tstr_t tstr_cat_vfmt(tstr_t s, const char *fmt, va_list ap) {
+tstr tstr_cat_vfmt(tstr s, const char *fmt, va_list ap) {
   if (!s) s = sdsempty();
   if (!fmt) return s;
   return sdscatvprintf(s, fmt, ap);
@@ -207,7 +206,7 @@ tstr_t tstr_cat_vfmt(tstr_t s, const char *fmt, va_list ap) {
  * Copy
  * ========================================================================= */
 
-tstr_t tstr_cpy(tstr_t s, const char *t) {
+tstr tstr_cpy(tstr s, const char *t) {
   if (!s) return sdsnew(t);
   if (!t) {
     sdsclear(s);
@@ -216,7 +215,7 @@ tstr_t tstr_cpy(tstr_t s, const char *t) {
   return sdscpy(s, t);
 }
 
-tstr_t tstr_cpy_len(tstr_t s, const char *t, size_t n) {
+tstr tstr_cpy_len(tstr s, const char *t, size_t n) {
   if (!s) return sdsnewlen(t, n);
   if (!t || n == 0) {
     sdsclear(s);
@@ -225,11 +224,12 @@ tstr_t tstr_cpy_len(tstr_t s, const char *t, size_t n) {
   return sdscpylen(s, t, n);
 }
 
-tstr_t tstr_cpy_v(tstr_t s, tstr_v v) {
+tstr tstr_cpy_v(tstr s, vstr v) {
+  if (!vstr_is_valid(v)) return s;
   return tstr_cpy_len(s, v.data, v.len);
 }
 
-void tstr_clear(tstr_t s) {
+void tstr_clear(tstr s) {
   if (s) sdsclear(s);
 }
 
@@ -237,15 +237,16 @@ void tstr_clear(tstr_t s) {
  * Comparison
  * ========================================================================= */
 
-int tstr_cmp(tstr_t s1, tstr_t s2) {
+int tstr_cmp(tstr s1, tstr s2) {
   if (!s1 && !s2) return 0;
   if (!s1) return -1;
   if (!s2) return 1;
   return sdscmp(s1, s2);
 }
 
-int tstr_cmp_v(tstr_t s, tstr_v v) {
-  tstr_v sv = tstr_to_v(s);
+int tstr_cmp_v(tstr s, vstr v) {
+  vstr sv = tstr_to_v(s);
+  if (!vstr_is_valid(v)) return 1;
   if (sv.len < v.len) return -1;
   if (sv.len > v.len) return 1;
   if (sv.len == 0) return 0;
@@ -264,20 +265,20 @@ int tstr_ncasecmp(const char *s1, const char *s2, size_t n) {
 #endif
 }
 
-int tstr_eq_v(tstr_t s, tstr_v v) {
-  return tstr_v_eq(tstr_to_v(s), v);
+int tstr_eq_v(tstr s, vstr v) {
+  return vstr_eq(tstr_to_v(s), v);
 }
 
-int tstr_ieq_v(tstr_t s, tstr_v v) {
-  return tstr_v_ieq(tstr_to_v(s), v);
+int tstr_ieq_v(tstr s, vstr v) {
+  return vstr_ieq(tstr_to_v(s), v);
 }
 
 int tstr_starts_with(const char *s, const char *prefix) {
   return sdsstartswith(s, prefix);
 }
 
-int tstr_starts_with_v(tstr_t s, tstr_v prefix) {
-  return tstr_v_starts_with(tstr_to_v(s), prefix);
+int tstr_starts_with_v(tstr s, vstr prefix) {
+  return vstr_starts_with(tstr_to_v(s), prefix);
 }
 
 int tstr_istarts_with(const char *s, const char *prefix) {
@@ -288,59 +289,59 @@ int tstr_ends_with(const char *s, const char *suffix) {
   return sdsendswith(s, suffix);
 }
 
-int tstr_ends_with_v(tstr_t s, tstr_v suffix) {
-  return tstr_v_ends_with(tstr_to_v(s), suffix);
+int tstr_ends_with_v(tstr s, vstr suffix) {
+  return vstr_ends_with(tstr_to_v(s), suffix);
 }
 
 int tstr_contains(const char *s, const char *substr) {
   return sdscontains(s, substr);
 }
 
-int tstr_contains_v(tstr_t s, tstr_v needle) {
-  return tstr_v_contains(tstr_to_v(s), needle);
+int tstr_contains_v(tstr s, vstr needle) {
+  return vstr_contains(tstr_to_v(s), needle);
 }
 
-size_t tstr_count_v(tstr_t s, tstr_v needle) {
-  return tstr_v_count(tstr_to_v(s), needle);
+size_t tstr_count_v(tstr s, vstr needle) {
+  return vstr_count(tstr_to_v(s), needle);
 }
 
 /* ============================================================================
  * Search
  * ========================================================================= */
 
-size_t tstr_find_v(tstr_t s, tstr_v needle) {
-  return tstr_v_find(tstr_to_v(s), needle);
+size_t tstr_find_v(tstr s, vstr needle) {
+  return vstr_find(tstr_to_v(s), needle);
 }
 
-size_t tstr_find_char(tstr_t s, char c) {
-  return tstr_v_find_char(tstr_to_v(s), c);
+size_t tstr_find_char(tstr s, char c) {
+  return vstr_find_char(tstr_to_v(s), c);
 }
 
-size_t tstr_rfind_v(tstr_t s, tstr_v needle) {
-  return tstr_v_rfind(tstr_to_v(s), needle);
+size_t tstr_rfind_v(tstr s, vstr needle) {
+  return vstr_rfind(tstr_to_v(s), needle);
 }
 
-size_t tstr_rfind_char(tstr_t s, char c) {
-  return tstr_v_rfind_char(tstr_to_v(s), c);
+size_t tstr_rfind_char(tstr s, char c) {
+  return vstr_rfind_char(tstr_to_v(s), c);
 }
 
 /* ============================================================================
  * Transformation
  * ========================================================================= */
 
-tstr_t tstr_trim(tstr_t s, const char *cset) {
+tstr tstr_trim(tstr s, const char *cset) {
   if (!s || !cset) return s;
   return tstr_rtrim(tstr_ltrim(s, cset), cset);
 }
 
-tstr_t tstr_ltrim(tstr_t s, const char *cset) {
+tstr tstr_ltrim(tstr s, const char *cset) {
   size_t len;
   size_t start = 0;
 
   if (!s || !cset) return s;
 
   len = sdslen(s);
-  start = (size_t)(tstr_v_trim_left(tstr_to_v(s), cset).data - s);
+  start = (size_t)(vstr_trim_left(tstr_to_v(s), cset).data - s);
 
   if (start > 0) {
     len -= start;
@@ -351,53 +352,53 @@ tstr_t tstr_ltrim(tstr_t s, const char *cset) {
   return s;
 }
 
-tstr_t tstr_rtrim(tstr_t s, const char *cset) {
+tstr tstr_rtrim(tstr s, const char *cset) {
   size_t end;
 
   if (!s || !cset) return s;
 
-  end = tstr_v_trim_right(tstr_to_v(s), cset).len;
+  end = vstr_trim_right(tstr_to_v(s), cset).len;
 
   s[end] = '\0';
   sdssetlen(s, end);
   return s;
 }
 
-tstr_t tstr_slice(tstr_t s, size_t pos, size_t n) {
-  return tstr_from_v(tstr_v_sub(tstr_to_v(s), pos, n));
+tstr tstr_slice(tstr s, size_t pos, size_t n) {
+  return tstr_from_v(vstr_sub(tstr_to_v(s), pos, n));
 }
 
-int tstr_utf8_valid(tstr_t s) {
-  return tstr_v_utf8_valid(tstr_to_v(s));
+int tstr_utf8_valid(tstr s) {
+  return vstr_utf8_valid(tstr_to_v(s));
 }
 
-size_t tstr_utf8_invalid_offset(tstr_t s) {
-  return tstr_v_utf8_invalid_offset(tstr_to_v(s));
+size_t tstr_utf8_invalid_offset(tstr s) {
+  return vstr_utf8_invalid_offset(tstr_to_v(s));
 }
 
-size_t tstr_utf8_len(tstr_t s) {
-  return tstr_v_utf8_len(tstr_to_v(s));
+size_t tstr_utf8_len(tstr s) {
+  return vstr_utf8_len(tstr_to_v(s));
 }
 
-size_t tstr_utf8_nlen(tstr_t s, size_t n) {
-  return tstr_v_utf8_nlen(tstr_to_v(s), n);
+size_t tstr_utf8_nlen(tstr s, size_t n) {
+  return vstr_utf8_nlen(tstr_to_v(s), n);
 }
 
-size_t tstr_utf8_size(tstr_t s) {
+size_t tstr_utf8_size(tstr s) {
   size_t len = tstr_len(s);
   if (!s || len == SIZE_MAX) return 0;
   return len + 1;
 }
 
-size_t tstr_utf8_size_lazy(tstr_t s) {
+size_t tstr_utf8_size_lazy(tstr s) {
   return s ? tstr_len(s) : 0;
 }
 
-tstr_t tstr_utf8_slice(tstr_t s, size_t char_pos, size_t char_count) {
-  return tstr_from_v(tstr_v_utf8_sub(tstr_to_v(s), char_pos, char_count));
+tstr tstr_utf8_slice(tstr s, size_t char_pos, size_t char_count) {
+  return tstr_from_v(vstr_utf8_sub(tstr_to_v(s), char_pos, char_count));
 }
 
-tstr_t tstr_utf8_append_cp(tstr_t s, uint32_t codepoint) {
+tstr tstr_utf8_append_cp(tstr s, uint32_t codepoint) {
   char buf[4];
   size_t len = tstr_utf8_encode_one(codepoint, buf);
 
@@ -408,7 +409,7 @@ tstr_t tstr_utf8_append_cp(tstr_t s, uint32_t codepoint) {
   return s;
 }
 
-tstr_t tstr_utf8_from_cp(uint32_t codepoint) {
+tstr tstr_utf8_from_cp(uint32_t codepoint) {
   char buf[4];
   size_t len = tstr_utf8_encode_one(codepoint, buf);
 
@@ -416,27 +417,27 @@ tstr_t tstr_utf8_from_cp(uint32_t codepoint) {
   return tstr_dup_len(buf, len);
 }
 
-size_t tstr_utf8_find_cp(tstr_t s, uint32_t codepoint) {
-  return tstr_v_utf8_find_cp(tstr_to_v(s), codepoint);
+size_t tstr_utf8_find_cp(tstr s, uint32_t codepoint) {
+  return vstr_utf8_find_cp(tstr_to_v(s), codepoint);
 }
 
-size_t tstr_utf8_rfind_cp(tstr_t s, uint32_t codepoint) {
-  return tstr_v_utf8_rfind_cp(tstr_to_v(s), codepoint);
+size_t tstr_utf8_rfind_cp(tstr s, uint32_t codepoint) {
+  return vstr_utf8_rfind_cp(tstr_to_v(s), codepoint);
 }
 
-size_t tstr_utf8_find(tstr_t haystack, tstr_v needle) {
-  return tstr_v_utf8_find(tstr_to_v(haystack), needle);
+size_t tstr_utf8_find(tstr haystack, vstr needle) {
+  return vstr_utf8_find(tstr_to_v(haystack), needle);
 }
 
-tstr_t tstr_repeat(const char *s, size_t count) {
-  return tstr_repeat_v(tstr_v_from_cstr(s), count);
+tstr tstr_repeat(const char *s, size_t count) {
+  return tstr_repeat_v(vstr_from_cstr(s), count);
 }
 
-tstr_t tstr_repeat_v(tstr_v v, size_t count) {
-  tstr_t out;
+tstr tstr_repeat_v(vstr v, size_t count) {
+  tstr out;
   size_t total;
 
-  if (!tstr_view_valid(v)) return NULL;
+  if (!vstr_is_valid(v)) return NULL;
   if (v.len == 0 || count == 0) return sdsempty();
   if (count > SIZE_MAX / v.len) return NULL;
 
@@ -463,29 +464,29 @@ tstr_t tstr_repeat_v(tstr_v v, size_t count) {
   return out;
 }
 
-tstr_t tstr_replace(tstr_t s, const char *needle, const char *replacement, size_t max_count) {
-  return tstr_replace_v(s, tstr_v_from_cstr(needle), tstr_v_from_cstr(replacement), max_count);
+tstr tstr_replace(tstr s, const char *needle, const char *replacement, size_t max_count) {
+  return tstr_replace_v(s, vstr_from_cstr(needle), vstr_from_cstr(replacement), max_count);
 }
 
-tstr_t tstr_replace_v(tstr_t s, tstr_v needle, tstr_v replacement, size_t max_count) {
-  tstr_v src;
-  tstr_t out;
+tstr tstr_replace_v(tstr s, vstr needle, vstr replacement, size_t max_count) {
+  vstr src;
+  tstr out;
   size_t offset = 0;
   size_t replaced = 0;
 
   if (!s) s = sdsempty();
   if (!s || max_count == 0 || needle.len == 0) return s;
-  if (!tstr_view_valid(needle) || !tstr_view_valid(replacement)) return s;
+  if (!vstr_is_valid(needle) || !vstr_is_valid(replacement)) return s;
 
   src = tstr_to_v(s);
   out = sdsempty();
   if (!out) return s;
 
   while (offset < src.len) {
-    tstr_v rest = tstr_v_from_buf(src.data + offset, src.len - offset);
-    size_t pos = (replaced < max_count) ? tstr_v_find(rest, needle) : TSTR_V_NPOS;
+    vstr rest = vstr_from_buf(src.data + offset, src.len - offset);
+    size_t pos = (replaced < max_count) ? vstr_find(rest, needle) : VSTR_NPOS;
 
-    if (pos == TSTR_V_NPOS) {
+    if (pos == VSTR_NPOS) {
       if (!tstr_append_checked(&out, rest.data, rest.len)) {
         tstr_free(out);
         return s;
@@ -513,11 +514,11 @@ tstr_t tstr_replace_v(tstr_t s, tstr_v needle, tstr_v replacement, size_t max_co
   return out;
 }
 
-tstr_t tstr_replace_all(tstr_t s, const char *needle, const char *replacement) {
+tstr tstr_replace_all(tstr s, const char *needle, const char *replacement) {
   return tstr_replace(s, needle, replacement, SIZE_MAX);
 }
 
-void tstr_lower(tstr_t s) {
+void tstr_lower(tstr s) {
   size_t offset = 0;
   size_t len;
   const simde__m128i lower_start = simde_mm_set1_epi8('A' - 1);
@@ -539,7 +540,7 @@ void tstr_lower(tstr_t s) {
   }
 }
 
-void tstr_upper(tstr_t s) {
+void tstr_upper(tstr s) {
   size_t offset = 0;
   size_t len;
   const simde__m128i upper_start = simde_mm_set1_epi8('a' - 1);
@@ -561,10 +562,10 @@ void tstr_upper(tstr_t s) {
   }
 }
 
-tstr_t tstr_pad_left(tstr_t s, size_t width, char fill) {
+tstr tstr_pad_left(tstr s, size_t width, char fill) {
   size_t len;
   size_t padding;
-  tstr_t next;
+  tstr next;
 
   if (!s) s = sdsempty();
   if (!s) return NULL;
@@ -580,10 +581,10 @@ tstr_t tstr_pad_left(tstr_t s, size_t width, char fill) {
   return next;
 }
 
-tstr_t tstr_pad_right(tstr_t s, size_t width, char fill) {
+tstr tstr_pad_right(tstr s, size_t width, char fill) {
   size_t len;
   size_t padding;
-  tstr_t next;
+  tstr next;
 
   if (!s) s = sdsempty();
   if (!s) return NULL;
@@ -602,12 +603,12 @@ tstr_t tstr_pad_right(tstr_t s, size_t width, char fill) {
  * Memory Management
  * ========================================================================= */
 
-tstr_t tstr_reserve(tstr_t s, size_t addlen) {
+tstr tstr_reserve(tstr s, size_t addlen) {
   if (!s) s = sdsempty();
   return sdsMakeRoomFor(s, addlen);
 }
 
-tstr_t tstr_shrink(tstr_t s) {
+tstr tstr_shrink(tstr s) {
   if (!s) return NULL;
   return sdsRemoveFreeSpace(s);
 }
@@ -616,7 +617,7 @@ tstr_t tstr_shrink(tstr_t s) {
  * Conversion
  * ========================================================================= */
 
-char *tstr_to_cstr(tstr_t s) {
+char *tstr_to_cstr(tstr s) {
   if (!s) return NULL;
 
   size_t len = sdslen(s);
@@ -629,7 +630,7 @@ char *tstr_to_cstr(tstr_t s) {
   return result;
 }
 
-tstr_t tstr_from_ll(long long value) {
+tstr tstr_from_ll(long long value) {
   return sdsfromlonglong(value);
 }
 
@@ -637,9 +638,9 @@ tstr_t tstr_from_ll(long long value) {
  * Split / Join
  * ========================================================================= */
 
-tstr_t *tstr_split(tstr_t s, const char *sep, int *count) {
+tstr *tstr_split(tstr s, const char *sep, int *count) {
   size_t sep_len;
-  tstr_t *tokens;
+  tstr *tokens;
 
   if (!s || !sep || !count) {
     if (count) *count = 0;
@@ -648,7 +649,7 @@ tstr_t *tstr_split(tstr_t s, const char *sep, int *count) {
 
   sep_len = strlen(sep);
   if (sep_len == 0) {
-    tokens = (tstr_t *)malloc(sizeof(*tokens));
+    tokens = (tstr *)malloc(sizeof(*tokens));
     if (!tokens) {
       *count = 0;
       return NULL;
@@ -670,12 +671,12 @@ tstr_t *tstr_split(tstr_t s, const char *sep, int *count) {
   return sdssplitlen(s, (ssize_t)sdslen(s), sep, (int)sep_len, count);
 }
 
-void tstr_free_split(tstr_t *tokens, int count) {
+void tstr_free_split(tstr *tokens, int count) {
   sdsfreesplitres(tokens, count);
 }
 
-tstr_t tstr_join(char **argv, int argc, const char *sep) {
-  tstr_t out;
+tstr tstr_join(char **argv, int argc, const char *sep) {
+  tstr out;
   size_t sep_len;
   size_t total = 0;
 

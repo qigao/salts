@@ -6,9 +6,9 @@
 
 #include "fmt_lexer.h"
 #include "../include/turbo_simd_scan.h"
-#include "../include/turbo_str_view.h"
+#include "../include/turbo_vstr.h"
 
-fmt_token_t fmt_scan_v_n(const char **cursor, const char *end, tstr_v *token) {
+fmt_token_t fmt_scan_v_n(const char **cursor, const char *end, vstr *token) {
     const char *start;
 
     if (!cursor || !*cursor || !token || !end || *cursor >= end) {
@@ -92,13 +92,13 @@ fmt_token_t fmt_scan_v_n(const char **cursor, const char *end, tstr_v *token) {
     return FMT_TOKEN_INVALID;
 }
 
-fmt_token_t fmt_scan_v(const char **cursor, tstr_v *token) {
+fmt_token_t fmt_scan_v(const char **cursor, vstr *token) {
     if (!cursor || !*cursor || !token) return FMT_TOKEN_END;
     return fmt_scan_v_n(cursor, *cursor + strlen(*cursor), token);
 }
 
 fmt_token_t fmt_scan(const char **cursor, const char **token_start, size_t *token_len) {
-    tstr_v token = tstr_v_from_buf(NULL, 0);
+    vstr token = vstr_from_buf(NULL, 0);
     fmt_token_t type = fmt_scan_v(cursor, &token);
     if (token_start)
         *token_start = token.data;
