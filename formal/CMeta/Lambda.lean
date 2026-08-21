@@ -3,83 +3,83 @@ import CMeta.Callable
 /-!
 # Lambda, anonymous closure, bind and composition
 
-The current CFlow macros implement closures by copying a capture object into
-`cmeta_callable.capture` and using generated invoke/generate adapters.  These
-proofs capture the semantic content independently of the byte-level C layout.
+Lambda is one closure model over an arbitrary finite logical argument schema.
+The current CFlow lambda1/lambda2 macros are backend/consumer spellings and do
+not define the Core formal type system.
 -/
 
 namespace CMeta
 
-/-- One-argument capturing lambda. -/
-structure Lambda1 (C A R : CType) where
-  capture : C.denote
-  body : C.denote → A.denote → R.denote
+/-- One finite capture environment plus one body over one finite argument schema. -/
+structure Lambda (Env : Type) (Args : List CType) (R : CType) where
+  capture : Env
+  body : Env → HArgs Args → R.denote
 
-namespace Lambda1
+namespace Lambda
 
-def invoke (f : Lambda1 C A R) (x : A.denote) : R.denote :=
-  f.body f.capture x
+/-- Invoke a closure by supplying the exact heterogeneous argument list. -/
+def invoke (f : Lambda Env Args R) (xs : HArgs Args) : R.denote :=
+  f.body f.capture xs
 
-/-- Erasing the explicit environment yields an ordinary typed callable closure. -/
-def asCallable (f : Lambda1 C A R) : Callable1 A R :=
-  ⟨fun x => f.body f.capture x⟩
+/-- Erasing the explicit environment yields an ordinary typed callable. -/
+def asCallable (f : Lambda Env Args R) : Callable Args R :=
+  ⟨fun xs => f.body f.capture xs⟩
 
-theorem beta (f : Lambda1 C A R) (x : A.denote) :
-    f.invoke x = f.body f.capture x := rfl
+/-- Closure beta-reduction is independent of callable arity. -/
+theorem beta (f : Lambda Env Args R) (xs : HArgs Args) :
+    f.invoke xs = f.body f.capture xs := rfl
 
-theorem erasure_semantics (f : Lambda1 C A R) (x : A.denote) :
-    f.asCallable.run x = f.invoke x := rfl
+/-- Environment erasure preserves invocation for every finite argument schema. -/
+theorem erasure_semantics (f : Lambda Env Args R) (xs : HArgs Args) :
+    f.asCallable.run xs = f.invoke xs := rfl
 
-theorem erasure_signature (f : Lambda1 C A R) :
-    (erase1 f.asCallable).sig = .unary A R := rfl
+/-- Current unary C backend erasure is a corollary of the general Lambda model. -/
+theorem erasure_signature_unary (f : Lambda Env [A] R) :
+    eraseValue f.asCallable = some ⟨.unary A R⟩ := rfl
 
-end Lambda1
+/-- Current binary C backend erasure is a corollary of the general Lambda model. -/
+theorem erasure_signature_binary (f : Lambda Env [A, B] R) :
+    eraseValue f.asCallable = some ⟨.binary A B R⟩ := rfl
 
-/-- Two-argument capturing lambda, corresponding to reduce/zip callbacks. -/
-structure Lambda2 (C A B R : CType) where
-  capture : C.denote
-  body : C.denote → A.denote → B.denote → R.denote
+end Lambda
 
-namespace Lambda2
-
-def asCallable (f : Lambda2 C A B R) : Callable2 A B R :=
-  ⟨fun a b => f.body f.capture a b⟩
-
-theorem beta (f : Lambda2 C A B R) (a : A.denote) (b : B.denote) :
-    f.asCallable.run a b = f.body f.capture a b := rfl
-
-theorem erasure_signature (f : Lambda2 C A B R) :
-    (erase2 f.asCallable).sig = .binary A B R := rfl
-
-end Lambda2
-
-/-- Surface-level "anonymous" construction; names are irrelevant to semantics. -/
-def anonymous1 {C A R : CType} (capture : C.denote)
-    (body : C.denote → A.denote → R.denote) : Lambda1 C A R :=
+/-- Surface-level anonymous construction; names are irrelevant to Core semantics. -/
+def anonymous {Env : Type} {Args : List CType} {R : CType}
+    (capture : Env) (body : Env → HArgs Args → R.denote) : Lambda Env Args R :=
   ⟨capture, body⟩
 
-theorem anonymous1_beta {C A R : CType} (capture : C.denote)
-    (body : C.denote → A.denote → R.denote) (x : A.denote) :
-    (anonymous1 capture body).invoke x = body capture x := rfl
+/-- Anonymous construction has the same beta law as direct Lambda construction. -/
+theorem anonymous_beta {Env : Type} {Args : List CType} {R : CType}
+    (capture : Env) (body : Env → HArgs Args → R.denote)
+    (xs : HArgs Args) :
+    (anonymous capture body).invoke xs = body capture xs := rfl
 
-/-- Partial application of the last argument, matching `cmeta_bind`. -/
+/-- Partial application of the last argument of a binary semantic function.
+    The result is the general Callable instantiated with one remaining argument. -/
 def bindLast {A B R : CType} (f : A.denote → B.denote → R.denote)
-    (bound : B.denote) : Callable1 A R :=
-  ⟨fun a => f a bound⟩
+    (bound : B.denote) : Callable [A] R :=
+  ⟨fun xs =>
+    match xs with
+    | .cons a .nil => f a bound⟩
 
+/-- Binding preserves ordinary beta semantics. -/
 theorem bindLast_beta {A B R : CType} (f : A.denote → B.denote → R.denote)
     (bound : B.denote) (a : A.denote) :
-    (bindLast f bound).run a = f a bound := rfl
+    (bindLast f bound).invoke1 a = f a bound := rfl
 
-/-- Binding changes a binary semantic function into the exact unary ABI expected by CFlow. -/
+/-- Binding still erases to the exact unary backend signature currently admitted by CFlow. -/
 theorem bindLast_signature {A B R : CType} (f : A.denote → B.denote → R.denote)
     (bound : B.denote) :
-    (erase1 (bindLast f bound)).sig = .unary A R := rfl
+    eraseValue (bindLast f bound) = some ⟨.unary A R⟩ := rfl
 
-/-- Capturing lambda and partial application are both ordinary closure formation. -/
+/-- Capturing a bound value and partial application are the same closure formation,
+    stated pointwise without introducing an arity-specific Lambda type. -/
 theorem lambda_bind_same_shape {A B R : CType}
-    (f : A.denote → B.denote → R.denote) (bound : B.denote) :
-    (bindLast f bound).run =
-      (anonymous1 bound (fun cap a => f a cap)).asCallable.run := rfl
+    (f : A.denote → B.denote → R.denote) (bound : B.denote)
+    (a : A.denote) :
+    (bindLast f bound).invoke1 a =
+      (anonymous bound (fun cap xs =>
+        match xs with
+        | .cons x .nil => f x cap)).asCallable.invoke1 a := rfl
 
 end CMeta
