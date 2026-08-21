@@ -1,6 +1,6 @@
 # CMeta Lean 4 Module-System Migration Design
 
-**Status:** Design approved; awaiting implementation-plan review  
+**Status:** Design approved in chat; awaiting spec review before implementation planning  
 **Date:** 2026-08-21  
 **Scope:** `formal/` Lean proof/API organization only
 
@@ -40,7 +40,7 @@ end CMeta.PublicProof
 
 `PublicProofConformance.lean` imports only `CMeta.PublicProof`, and CI enforces that the facade directly imports only `CMeta.EndToEnd` and does not directly reference implementation-layer names.
 
-However, ordinary Lean imports are transitive. The semantic spine is currently approximately:
+The relevant public-proof dependency spine is:
 
 ```text
 PublicProof
@@ -138,6 +138,8 @@ This rule is deterministic: if removing a name from the public scope makes a sup
 
 Reducing the public surface must not stop internal proof modules from building. The final `CMeta` root module will public-import the two supported entry points and privately import an internal build aggregator.
 
+Until the complete module closure exists, the current legacy `CMeta.lean` aggregator remains the default build root and continues to import the full proof stack. Root conversion is deliberately last.
+
 ## 5. Target architecture
 
 ### 5.1 Two supported public entry points
@@ -179,7 +181,7 @@ public import CMeta.Plan
 public import CMeta.Execution
 ```
 
-The exact import list may omit a module only when all public names required from it are already deliberately re-exported by another listed semantic module. The implementation plan must prefer explicit imports over relying accidentally on transitive public imports.
+The implementation plan must prefer explicit imports over relying accidentally on transitive public imports. A listed import may be omitted only when the omitted module contributes no public declaration required by the supported semantic/public-proof surface.
 
 `Cardinality` is not automatically part of the public semantic surface merely because `EndToEnd` currently imports it. It becomes public only if a supported public theorem or semantic API needs its declarations.
 
@@ -240,13 +242,15 @@ The internal `EndToEnd.*` theorem names must not be visible to a client that imp
 
 ### 5.5 InternalChecks aggregator and root module
 
-Add:
+The final architecture adds:
 
 ```text
 formal/CMeta/InternalChecks.lean
 ```
 
 Its job is build reachability, not API exposure. It imports the conformance, generated-snapshot, registry/replay, optimizer, runtime, and other internal proof modules that must continue to be kernel-checked by the default target.
+
+It is created only after both the CFlow semantic tree and the Producer/replay tree have been converted to modules, because a module cannot import remaining legacy source files.
 
 The final root becomes conceptually:
 
@@ -337,9 +341,13 @@ PublicProofIsolationConformance
 
 At the end of M5, importing `CMeta.PublicProof` must no longer expose the selected internal proof names listed in the isolation conformance file.
 
+The legacy `CMeta.lean` aggregator remains the default full-build root during M1-M7.
+
 ### Phase M6 — CFlow internal conformance closure
 
-Convert the remaining CFlow-side conformance/generated modules needed to build `InternalChecks` as modules. Create/extend `InternalChecks` so the full current kernel-check coverage remains reachable.
+Convert the remaining CFlow-side conformance/generated modules to modules so they are ready for the final internal build aggregator.
+
+M6 does **not** create the final `CMeta.InternalChecks` and does not replace the legacy root, because Producer/replay/registry modules are still legacy files at this point. The existing `CMeta.lean` continues to build both converted and unconverted proof trees.
 
 This phase does not widen `PublicProof`.
 
@@ -359,9 +367,11 @@ related generated/conformance modules
 
 `CMeta.LanguageSpec` remains the stable public entry point. Registry/replay implementation lemmas become private where they are not part of the existing rule facade.
 
-### Phase M8 — root conversion
+The end of M7 establishes a complete module closure for every file that the final internal aggregator must import.
 
-Convert `CMeta.lean` to the final root module:
+### Phase M8 — InternalChecks and root conversion
+
+Create `CMeta.InternalChecks` from the now-moduleized internal/conformance closure and convert `CMeta.lean` to:
 
 ```lean
 module
@@ -378,7 +388,7 @@ The default Lake target remains `CMeta` and therefore continues to build the com
 
 Use `public import` only when downstream users intentionally need the imported module's public API through the current module.
 
-Use plain `import` when the dependency is needed only to implement the current module's private/public declarations but must not be re-exported.
+Use plain `import` when the dependency is needed only to implement the current module's declarations but must not be re-exported.
 
 Use `import all` only for same-package proof implementation that genuinely needs the imported module's private scope.
 
@@ -430,7 +440,7 @@ assert_not_exists CMeta.FusedMap.type_preserved
 assert_not_exists CMeta.ExecProgram.runtime_execution_exact
 ```
 
-The exact negative list must cover at least one internal theorem from graph, lowering, optimizer, execution, and EndToEnd layers.
+The final negative list must cover at least one internal theorem from graph, lowering, optimizer, execution, and EndToEnd layers.
 
 Do **not** assert that `CMeta.EndToEnd` is not transitively imported. It is expected to be an internal implementation dependency. The contract is that its private declarations are not in the client's scope.
 
