@@ -4,8 +4,8 @@ import CMeta.Flow
 # Typed graph and relation safety
 
 This layer lifts the linear `Pipeline` proof to the structured graph shape used
-by CFlow.  Relation branches are snapshot subgraphs that all receive the same
-input type.  SELECT requires homogeneous branch output; FOLD additionally
+by CFlow. Relation branches are snapshot subgraphs that all receive the same
+input type. SELECT requires homogeneous branch output; FOLD additionally
 requires a homogeneous reducer `T(T,T) -> T`.
 -/
 
@@ -83,7 +83,7 @@ structure ErasedRelation where
 inductive TypedRelation (A R : CType) where
   | select (branches : TypedBranches A R) : TypedRelation A R
   | fold (branches : TypedBranches A R)
-      (reducer : Callable2 R R R) : TypedRelation A R
+      (reducer : Callable [R, R] R) : TypedRelation A R
 
 namespace TypedRelation
 
@@ -92,7 +92,7 @@ def erase : {A R : CType} → TypedRelation A R → ErasedRelation
   | _, _, .select branches =>
       ⟨branches.erase, .select, none⟩
   | _, _, .fold branches reducer =>
-      ⟨branches.erase, .fold, some reducer.signature⟩
+      ⟨branches.erase, .fold, some reducer.binaryBackendSignature⟩
 
 end TypedRelation
 
@@ -117,7 +117,7 @@ theorem TypedRelation.check_erase {A R : CType} (rel : TypedRelation A R) :
       simp [TypedRelation.erase, checkRelation, TypedBranches.check_erase]
   | fold branches reducer =>
       simp [TypedRelation.erase, checkRelation, TypedBranches.check_erase,
-        Callable2.signature]
+        Callable.binaryBackendSignature]
 
 /-- Relation progress: a well-typed relation cannot get stuck in type
     admission after erasure. -/
