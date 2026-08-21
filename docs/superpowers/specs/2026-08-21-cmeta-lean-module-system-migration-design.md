@@ -14,7 +14,7 @@ This design migrates the formal stack to Lean 4.30's module system so that:
 2. the stable proof surface remains small;
 3. proof plumbing, optimizer helper lemmas, backend/registry proof engineering, and conformance details become genuinely private to the package;
 4. the default formal build continues to kernel-check all internal proofs;
-5. the existing C witnesses, generated snapshots, and proof semantics remain unchanged.
+5. C witness semantics and generated snapshot payload data remain unchanged; only module-system source framing may change where required.
 
 The migration is visibility/refactoring work. It must not change the modeled C behavior.
 
@@ -139,6 +139,20 @@ This rule is deterministic: if removing a name from the public scope makes a sup
 Reducing the public surface must not stop internal proof modules from building. The final `CMeta` root module will public-import the two supported entry points and privately import an internal build aggregator.
 
 Until the complete module closure exists, the current legacy `CMeta.lean` aggregator remains the default build root and continues to import the full proof stack. Root conversion is deliberately last.
+
+### 4.5 Generated C/Lean snapshots preserve payload semantics
+
+Committed files such as `PlanGeneratedC.lean`, `StructuredGeneratedC.lean`, and optimizer/generated replay snapshots are complete Lean source files emitted by real C witnesses. A module cannot import them while they remain legacy source files, so the final all-module closure requires these generated sources to opt into the module system too.
+
+For generated snapshots, the migration permits only module-system **source framing** changes, such as:
+
+- the required `module` header;
+- import visibility modifiers required by module compilation;
+- no changes to witness rows, counts, type names, operator data, runtime observations, or other generated semantic payload.
+
+The corresponding C generator and committed snapshot must be updated in the same TDD phase. After that migration commit, CI must again compare generated output to the committed snapshot byte-for-byte with zero diff.
+
+A review of such a snapshot change must be able to separate the framing diff from the semantic payload and demonstrate that the payload is identical.
 
 ## 5. Target architecture
 
@@ -277,6 +291,15 @@ Each phase has two steps:
 
 The compatibility step is temporary within the phase. A phase is not complete until its surface contraction and isolation checks are green.
 
+### Implementation-plan decomposition
+
+This architecture is intentionally broader than one safe execution batch. After spec approval, implementation planning is split into two plans:
+
+- **Plan A:** M1-M6, establishing hard isolation for the CFlow semantic/PublicProof tree while the legacy root continues full builds;
+- **Plan B:** M7-M8, migrating the Producer/replay/registry tree, generated/conformance closure, final `InternalChecks`, and root conversion.
+
+Plan B starts only after Plan A has an exact-head full CI checkpoint. If Plan A reveals a module-system constraint that changes this architecture, update this spec before writing/executing Plan B.
+
 ### Phase M1 — semantic foundation
 
 Convert, in dependency order:
@@ -343,9 +366,11 @@ At the end of M5, importing `CMeta.PublicProof` must no longer expose the select
 
 The legacy `CMeta.lean` aggregator remains the default full-build root during M1-M7.
 
-### Phase M6 — CFlow internal conformance closure
+### Phase M6 — CFlow internal conformance and generated closure
 
-Convert the remaining CFlow-side conformance/generated modules to modules so they are ready for the final internal build aggregator.
+Convert the remaining CFlow-side conformance modules and any generated Lean snapshot modules they import so they are ready for the final internal build aggregator.
+
+Generated snapshot conversion follows §4.5: only module framing may change; the C-derived semantic payload must remain identical, and the generator/committed source must return to exact zero-diff immediately.
 
 M6 does **not** create the final `CMeta.InternalChecks` and does not replace the legacy root, because Producer/replay/registry modules are still legacy files at this point. The existing `CMeta.lean` continues to build both converted and unconverted proof trees.
 
@@ -364,6 +389,8 @@ LanguageSpec
 LanguageSpecConformance
 related generated/conformance modules
 ```
+
+Generated replay/backend snapshot files follow the same framing-only rule in §4.5.
 
 `CMeta.LanguageSpec` remains the stable public entry point. Registry/replay implementation lemmas become private where they are not part of the existing rule facade.
 
@@ -478,6 +505,8 @@ public-proof boundary/isolation guards
 lake build --wfail
 ```
 
+When a generated snapshot is first converted to a module, the phase must additionally verify that its semantic payload is unchanged apart from the explicitly approved module framing. All subsequent runs return to ordinary byte-for-byte zero-diff against the new committed module snapshot.
+
 No phase is complete if only the new visibility conformance passes while the existing formal stack fails.
 
 ## 10. Compatibility and API policy
@@ -514,7 +543,7 @@ Internal source modules may continue to access them through same-package `import
 This migration does not:
 
 - change CMeta/CFlow runtime behavior;
-- alter C witness output or generated Lean snapshots;
+- change C witness semantic observations or generated snapshot payload data;
 - introduce new operator semantics;
 - introduce `Interaction / Feedback / Recovery / Aggregation / ClosedLoop` objects that do not currently exist in the repository;
 - duplicate existing semantic carriers behind opaque wrappers;
@@ -522,6 +551,8 @@ This migration does not:
 - remove internal proofs;
 - reduce the set of proofs kernel-checked by the default CI target;
 - merge `LanguageSpec` and `PublicProof` into one conceptual API.
+
+Adding the module-system framing required to compile generated Lean snapshots is explicitly in scope and is not considered a semantic snapshot change.
 
 ## 12. Failure handling and rollback
 
@@ -550,7 +581,8 @@ The migration is complete only when all of the following hold:
 7. The default `CMeta` Lake target still reaches and kernel-checks the complete current internal verification closure.
 8. Lake `allowImportAll` remains disabled/default.
 9. No final phase relies on `backward.privateInPublic` or `backward.proofsInPublic`.
-10. GCC and Clang formal CI pass at the exact PR head with snapshot zero-diff and `lake build --wfail`.
+10. Generated module snapshots differ from their pre-migration form only by approved module-system framing; their semantic payload remains unchanged.
+11. GCC and Clang formal CI pass at the exact PR head with committed-vs-generated snapshot zero-diff and `lake build --wfail`.
 
 ## 14. Resulting proof-surface model
 
