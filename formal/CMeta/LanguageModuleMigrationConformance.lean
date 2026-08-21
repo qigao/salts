@@ -105,8 +105,16 @@ assert_not_exists CMeta.Producer.CertifiedPreprocessorBackend.certifiedDepthPosi
 
 assert_not_exists CMeta.Producer.ReplayExpansionPlan.fromIR_respects
 assert_not_exists CMeta.Producer.lowerReplayIR_requirement
-assert_not_exists CMeta.Producer.lowerReplayBackendPlan_eq_some_iff
-assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.resolveReplay_eq_some_iff
+
+-- TEMP-MODULE-BRIDGE(M7g): legacy backend/replay conformance
+#check CMeta.Producer.lowerReplayBackendPlan_eq_canonical_of_supports
+#check CMeta.Producer.lowerReplayBackendPlan_requirement
+#check CMeta.Producer.lowerReplayBackendPlan_respects_active
+#check CMeta.Producer.certifiedReplayLowering_eq_of_both_supports
+#check CMeta.Producer.PreprocessorBackendRegistry.resolveReplay_eq_some_iff
+
+-- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.lower_elim
+#check CMeta.Producer.lowerReplayBackendPlan_eq_some_iff
 
 #check CMeta.Producer.BackendPreference
 #check CMeta.Producer.BackendSelectionPolicy
@@ -122,9 +130,16 @@ assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.resolveReplay_eq_so
 #check CMeta.Producer.BackendSelectionPolicy.replayWellFormed
 #check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting
 
-assert_not_exists CMeta.Producer.BackendSelectionPolicy.select_mem
 assert_not_exists CMeta.Producer.BackendSelectionRank.aggregate_eq_of_perm
-assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_mem_candidates
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_supports
-assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_canonical
-assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_eq_of_entries_perm
+
+-- TEMP-MODULE-BRIDGE(M7e): legacy registry substitutability proof consumer
+#check CMeta.Producer.BackendSelectionPolicy.select_key_eq_of_perm_of_matches
+
+-- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.selection_elim
+#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_mem_candidates
+
+-- TEMP-MODULE-BRIDGE(M7g): legacy backend/selection conformance
+#check CMeta.Producer.BackendSelectionPolicy.select_mem
+#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_canonical
+#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_eq_of_entries_perm
