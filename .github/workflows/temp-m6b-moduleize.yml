@@ -1,0 +1,47 @@
+name: Temporary M6b moduleizer
+
+on:
+  push:
+    branches: [verify/formal-m6b]
+
+permissions:
+  contents: write
+
+jobs:
+  moduleize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: verify/formal-m6b
+          fetch-depth: 0
+
+      - name: Apply mechanical M6b transformations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python formal/.m6b_moduleize.py
+
+      - name: Commit transformed files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No transformation changes needed."
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -- \
+            formal/cmeta_structured_conformance_witness.c \
+            formal/cmeta_structured_policy_conformance_witness.c \
+            formal/cmeta_optimizer_conformance_witness.c \
+            formal/cmeta_optimizer_gating_conformance_witness.c \
+            formal/cmeta_optimizer_topology_conformance_witness.c \
+            formal/CMeta/StructuredConformance.lean \
+            formal/CMeta/StructuredPolicyConformance.lean \
+            formal/CMeta/OptimizerConformance.lean \
+            formal/CMeta/OptimizerGatingConformance.lean \
+            formal/CMeta/OptimizerTopologyConformance.lean
+          git commit -m "refactor(formal): moduleize m6b conformance closure"
+          git push origin HEAD:verify/formal-m6b
