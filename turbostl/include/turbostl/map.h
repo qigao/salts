@@ -29,15 +29,15 @@ typedef struct map_iter {
   void *node;
 } map_iter_t;
 
-/* Internal typed bridge used while implementation symbols are migrated. */
-stl_status map_init_with_types(map_t *map, const cmeta_type_desc *key_type,
-                               const cmeta_type_desc *value_type,
-                               size_t entry_limit);
-stl_status map_from_arrays_with_types(
+/* Internal typed-storage bridge. Natural typed API is instance-driven below. */
+stl_status map_raw_init(map_t *map, const cmeta_type_desc *key_type,
+                        const cmeta_type_desc *value_type,
+                        size_t entry_limit);
+stl_status map_raw_from_arrays(
     map_t *map, const void *keys, const void *values, size_t count,
     const cmeta_type_desc *key_type, const cmeta_type_desc *value_type,
     size_t entry_limit);
-void map_destroy_storage(map_t *map);
+void map_raw_destroy_storage(map_t *map);
 
 /* Raw byte entry points remain explicit. */
 stl_status map_init_bytes(map_t *map, size_t key_size, size_t key_align,
@@ -60,7 +60,7 @@ static inline stl_status map_init(map_t *map, size_t entry_limit) {
   kind = map->cmeta.descriptor;
   key_type = map->key_type;
   value_type = map->value_type;
-  status = map_init_with_types(map, key_type, value_type, entry_limit);
+  status = map_raw_init(map, key_type, value_type, entry_limit);
   map->cmeta.descriptor = kind;
   map->key_type = key_type;
   map->value_type = value_type;
@@ -79,8 +79,8 @@ static inline stl_status map_from_arrays(map_t *map, const void *keys,
   kind = map->cmeta.descriptor;
   key_type = map->key_type;
   value_type = map->value_type;
-  status = map_from_arrays_with_types(map, keys, values, count, key_type,
-                                      value_type, entry_limit);
+  status = map_raw_from_arrays(map, keys, values, count, key_type, value_type,
+                               entry_limit);
   map->cmeta.descriptor = kind;
   map->key_type = key_type;
   map->value_type = value_type;
@@ -96,7 +96,7 @@ static inline void map_destroy(map_t *map) {
   kind = map->cmeta.descriptor;
   key_type = map->key_type;
   value_type = map->value_type;
-  map_destroy_storage(map);
+  map_raw_destroy_storage(map);
   map->cmeta.descriptor = kind;
   map->key_type = key_type;
   map->value_type = value_type;
@@ -181,11 +181,11 @@ static const cmeta_container_desc stl_map_container_desc = {
 typedef map_compare_fn turbo_map_compare_fn;
 typedef map_t turbo_map_t;
 typedef map_iter_t turbo_map_iter_t;
-#define turbo_map_init map_init_with_types
+#define turbo_map_init map_raw_init
 #define turbo_map_init_bytes map_init_bytes
-#define turbo_map_from_arrays map_from_arrays_with_types
+#define turbo_map_from_arrays map_raw_from_arrays
 #define turbo_map_from_arrays_bytes map_from_arrays_bytes
-#define turbo_map_destroy map_destroy_storage
+#define turbo_map_destroy map_raw_destroy_storage
 #define turbo_map_clear map_clear
 #define turbo_map_put map_put
 #define turbo_map_get map_get
