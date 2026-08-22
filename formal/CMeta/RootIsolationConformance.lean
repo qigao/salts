@@ -1,0 +1,15 @@
+module
+import CMeta
+
+#check CMeta.Producer.LanguageSpec.IR
+#check CMeta.Producer.LanguageSpec.Rule.lower_intro
+#check CMeta.PublicProof.StructuredGraph
+#check CMeta.PublicProof.structured_graph_type_safe
+#check CMeta.PublicProof.static_checker_matches_runtime
+
+assert_not_exists CMeta.EndToEnd.direct_plan_exact
+assert_not_exists CMeta.TypedGraph.check_stages
+assert_not_exists CMeta.Producer.count_eq_length
+assert_not_exists CMeta.Producer.lowerReplayBackendPlan_eq_some_iff
+assert_not_exists CMeta.Producer.CLanguageSpecConformance.syntaxCarriers
+assert_not_exists CMeta.ExecProgram.runtime_execution_exact
