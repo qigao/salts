@@ -222,15 +222,15 @@ spec("FMT Tests") {
       check_equal(FMT_ARG(time_value).type, FMT_TYPE_TIME);
     }
 
-    it("should preserve zero and eight argument boundaries") {
+    it("should preserve non-empty argument boundaries") {
       char buf[BUFFER_SIZE];
       int evaluation_count = 0;
-      fmt_arg_t *empty = FMT_ARGS();
       fmt_arg_t *single = FMT_ARGS(++evaluation_count);
       fmt_arg_t *eight = FMT_ARGS(1, 2, 3, 4, 5, 6, 7, 8);
       int formatted;
 
-      check_equal(empty[0].type, FMT_TYPE_NONE);
+      check_equal(FMT_ARG_COUNT(1), 1);
+      check_equal(FMT_ARG_COUNT(1, 2, 3, 4, 5, 6, 7, 8), 8);
       check_equal(evaluation_count, 1);
       check_equal(single[0].val.i, 1);
       for (int i = 0; i < 8; ++i) {
@@ -238,7 +238,7 @@ spec("FMT Tests") {
         check_equal(eight[i].val.i, i + 1);
       }
 
-      formatted = fmt(buf, sizeof(buf), "literal");
+      formatted = fmt_text(buf, sizeof(buf), "literal");
       check_equal(formatted, 7);
       check_equal(buf, "literal");
       formatted = fmt(buf, sizeof(buf), "{}{}{}{}{}{}{}{}", 1, 2, 3, 4, 5, 6, 7, 8);
@@ -526,7 +526,7 @@ spec("FMT Tests") {
     }
 
     it("should append through the named format backend") {
-      tstr s = tstr_format("start");
+      tstr s = tstr_newlen("start", 5);
       s = tstr_append_format(s, " id={}", 42);
       check_equal(s, "start id=42");
       tstr_free(s);

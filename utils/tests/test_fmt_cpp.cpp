@@ -61,11 +61,13 @@ spec("FMT C++ Tests") {
     check_equal(FMT_ARG(time_point).type, FMT_TYPE_TIME);
   }
 
-  it("should preserve zero and eight argument formatting") {
+  it("should separate raw text from formatted arguments") {
     char buf[128];
 
-    check_equal(fmt(buf, sizeof(buf), "literal"), 7);
+    check_equal(fmt_text(buf, sizeof(buf), "literal"), 7);
     check_equal(buf, "literal");
+    check_equal(fmt(buf, sizeof(buf), "{}:{}", 7, "ok"), 4);
+    check_equal(buf, "7:ok");
     check_equal(fmt(buf, sizeof(buf), "{}{}{}{}{}{}{}{}", 1, 2, 3, 4, 5, 6, 7, 8), 8);
     check_equal(buf, "12345678");
   }
