@@ -43,9 +43,9 @@ Add these public behaviors to `test_fmt.c` and equivalent C++ assertions to `tes
 ```c
 char buf[64];
 check_equal(fmt_text(buf, sizeof(buf), "ready"), 5);
-check_str_equal(buf, "ready");
+check_equal(buf, "ready");
 check(fmt(buf, sizeof(buf), "{}:{}", 7, "ok") > 0);
-check_str_equal(buf, "7:ok");
+check_equal(buf, "7:ok");
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -244,7 +244,28 @@ it("literal percent name") { check(true); }
 it("row %d", 7) { check(true); }
 ```
 
-Add two tiny internal callback wrappers in that test file so one public test path exercises a context-only call and another exercises context plus one value. The implementation step will map them to `TT_invoke0(fn)` and `TT_invoke(fn, value)`.
+Add these internal callbacks and test body to the same translation unit:
+
+```c
+static int tt_invoke_probe__ = 0;
+static void tt_invoke_zero__(ttest_config_type__ *config) {
+  (void)config;
+  tt_invoke_probe__ += 1;
+}
+static void tt_invoke_one__(ttest_config_type__ *config, int value) {
+  (void)config;
+  tt_invoke_probe__ += value;
+}
+
+it("invokes context helpers without empty variadics") {
+  tt_invoke_probe__ = 0;
+  TT_invoke0(tt_invoke_zero__);
+  TT_invoke(tt_invoke_one__, 7);
+  check_equal(tt_invoke_probe__, 8);
+}
+```
+
+Expected before implementation: compile failure because `TT_invoke0` is not defined.
 
 - [ ] **Step 2: Add canonical selectors to TinyMeta**
 
@@ -355,7 +376,7 @@ git commit -m "refactor(tinytest): centralize preprocessor dispatch"
 
 Add a direct `<cmeta/container.h>` protocol test that builds a minimal `cmeta_container_desc`/`cmeta_container_header` pair and verifies descriptor lookup plus a false result for an unavailable view.
 
-Add to `cmeta_language_surface_test.c` a compile-time rejection of representative facade-generator names after the move:
+Add to `cmeta_language_surface_test.c`:
 
 ```c
 #ifdef CMETA_CONTAINER1_DEFINE
@@ -400,7 +421,7 @@ Every other moved facade-only `CMETA_CONTAINER*` helper receives the same `TURBO
 
 - [ ] **Step 4: Rewire TurboSTL**
 
-` t urbostl/include/turbostl/meta.h` must include:
+`turbostl/include/turbostl/meta.h` must include:
 
 ```c
 #include <cmeta/container.h>
@@ -432,7 +453,7 @@ git commit -m "refactor(turbostl): own typed facade generation"
 
 **Files:**
 - Inspect: `cflow/include/cflow/meta.h`, `cflow/include/cflow/operators.h`
-- Modify only pure forwarding aliases that add no CFlow semantics.
+- Modify only literal forwarding aliases that add no CFlow semantics.
 - Modify: `.github/workflows/cmeta.yml`
 - Modify docs: `cmeta/LANGUAGE_REFERENCE.md`, `cmeta/README.md`, `turbostl/README.md`, comments in `fmt.h`/`tlog.h`
 - Create: `docs/superpowers/plans/2026-08-22-pp-variadic-surface-cleanup-audit.md`
@@ -448,7 +469,7 @@ git grep -nE '#define[[:space:]]+[A-Za-z0-9_]*(NARGS|COUNT_ARGS|WRAP_[0-9]+|APPL
 
 Expected: no independent generic arity family. `Replay`, `CMETA_PP_FOR_EACH_A`, `typed_raw`, `lambda*_raw`, `cmeta_bindable*`, and operator-row macros remain because they carry CFlow semantics.
 
-If a macro is a literal argument-for-argument rename of a CMeta PP primitive, replace its callers with that primitive and delete only that alias.
+A CFlow alias is removed only when its body is a direct call to one CMeta PP primitive with the same argument order and no additional token generation or semantic validation.
 
 - [ ] **Step 2: Run the final macro audit**
 
