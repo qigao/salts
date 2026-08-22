@@ -1,5 +1,5 @@
-#ifndef TURBO_LIST_H
-#define TURBO_LIST_H
+#ifndef TURBOSTL_LIST_H
+#define TURBOSTL_LIST_H
 
 #include <cmeta/range.h>
 #include <turbostl/status.h>
@@ -12,85 +12,92 @@
 extern "C" {
 #endif
 
-typedef struct turbo_list {
+typedef struct list {
   void *impl;
   uint64_t generation;
-} turbo_list_t;
+} list_t;
 
-/* Iterators are borrowed node identities. Insertion preserves every existing
- * iterator; erase invalidates only the erased iterator. clear/destroy
- * invalidate all iterators. */
-typedef struct turbo_list_iter {
-  const turbo_list_t *owner;
+typedef struct list_iter {
+  const list_t *owner;
   void *node;
-} turbo_list_iter_t;
+} list_iter_t;
 
 /* List is a node-based bidirectional sequence. Each successful insertion
- * allocates one independent node and is bounded by element_limit. Handles
- * must start as `{0}`; a destroyed handle may be initialized again. */
-turbo_stl_status turbo_list_init(
-    turbo_list_t *list, const cmeta_type_desc *element_type,
-    size_t element_limit);
-turbo_stl_status turbo_list_init_bytes(
-    turbo_list_t *list, size_t elem_size, size_t elem_align,
-    size_t element_limit);
-turbo_stl_status turbo_list_from_array(
-    turbo_list_t *list, const void *elements, size_t count,
-    const cmeta_type_desc *element_type, size_t element_limit);
-turbo_stl_status turbo_list_from_array_bytes(
-    turbo_list_t *list, const void *elements, size_t count,
-    size_t elem_size, size_t elem_align, size_t element_limit);
-void turbo_list_destroy(turbo_list_t *list);
-void turbo_list_clear(turbo_list_t *list);
+ * allocates one independent node and is bounded by element_limit. */
+stl_status list_init(list_t *list, const cmeta_type_desc *element_type,
+                     size_t element_limit);
+stl_status list_init_bytes(list_t *list, size_t elem_size, size_t elem_align,
+                           size_t element_limit);
+stl_status list_from_array(list_t *list, const void *elements, size_t count,
+                           const cmeta_type_desc *element_type,
+                           size_t element_limit);
+stl_status list_from_array_bytes(list_t *list, const void *elements,
+                                 size_t count, size_t elem_size,
+                                 size_t elem_align, size_t element_limit);
+void list_destroy(list_t *list);
+void list_clear(list_t *list);
+stl_status list_push_front(list_t *list, const void *elem,
+                           list_iter_t *out_iterator);
+stl_status list_push_back(list_t *list, const void *elem,
+                          list_iter_t *out_iterator);
+stl_status list_insert_before(list_t *list, list_iter_t position,
+                              const void *elem, list_iter_t *out_iterator);
+stl_status list_insert_after(list_t *list, list_iter_t position,
+                             const void *elem, list_iter_t *out_iterator);
+stl_status list_erase(list_t *list, list_iter_t position, void *out_elem);
+stl_status list_pop_front(list_t *list, void *out_elem);
+stl_status list_pop_back(list_t *list, void *out_elem);
+list_iter_t list_begin(const list_t *list);
+list_iter_t list_end(const list_t *list);
+stl_status list_iter_next(list_iter_t *iterator);
+stl_status list_iter_prev(list_iter_t *iterator);
+bool list_iter_equal(list_iter_t left, list_iter_t right);
+void *list_iter_value(list_iter_t iterator);
+const void *list_iter_value_const(list_iter_t iterator);
+void *list_front(list_t *list);
+const void *list_front_const(const list_t *list);
+void *list_back(list_t *list);
+const void *list_back_const(const list_t *list);
+size_t list_size(const list_t *list);
+uint64_t list_generation(const list_t *list);
+bool list_empty(const list_t *list);
+bool list_range_next(const list_t *list, cmeta_range_cursor *cursor,
+                     const void **out_value);
 
-turbo_stl_status turbo_list_push_front(
-    turbo_list_t *list, const void *elem, turbo_list_iter_t *out_iterator);
-turbo_stl_status turbo_list_push_back(
-    turbo_list_t *list, const void *elem, turbo_list_iter_t *out_iterator);
-turbo_stl_status turbo_list_insert_before(
-    turbo_list_t *list, turbo_list_iter_t position, const void *elem,
-    turbo_list_iter_t *out_iterator);
-turbo_stl_status turbo_list_insert_after(
-    turbo_list_t *list, turbo_list_iter_t position, const void *elem,
-    turbo_list_iter_t *out_iterator);
-/* Non-NULL output is aligned uninitialized storage and receives ownership by
- * move. NULL output destroys the removed value. */
-turbo_stl_status turbo_list_erase(
-    turbo_list_t *list, turbo_list_iter_t position, void *out_elem);
-turbo_stl_status turbo_list_pop_front(turbo_list_t *list,
-                                                     void *out_elem);
-turbo_stl_status turbo_list_pop_back(turbo_list_t *list,
-                                                    void *out_elem);
-
-turbo_list_iter_t turbo_list_begin(const turbo_list_t *list);
-turbo_list_iter_t turbo_list_end(const turbo_list_t *list);
-turbo_stl_status turbo_list_iter_next(turbo_list_iter_t *iterator);
-/* prev(end) selects the tail. prev(begin) returns TURBO_STL_NOT_FOUND and
- * leaves the iterator unchanged. */
-turbo_stl_status turbo_list_iter_prev(turbo_list_iter_t *iterator);
-bool turbo_list_iter_equal(turbo_list_iter_t left,
-                                          turbo_list_iter_t right);
-void *turbo_list_iter_value(turbo_list_iter_t iterator);
-const void *turbo_list_iter_value_const(
-    turbo_list_iter_t iterator);
-
-void *turbo_list_front(turbo_list_t *list);
-const void *turbo_list_front_const(const turbo_list_t *list);
-void *turbo_list_back(turbo_list_t *list);
-const void *turbo_list_back_const(const turbo_list_t *list);
-size_t turbo_list_size(const turbo_list_t *list);
-uint64_t turbo_list_generation(const turbo_list_t *list);
-bool turbo_list_empty(const turbo_list_t *list);
-
-/* The cursor is zero-initialized before first use. It stores opaque traversal
- * state and becomes invalid after mutation; CMeta Range detects that mutation
- * through generation before calling this function. */
-bool turbo_list_range_next(const turbo_list_t *list,
-                                         cmeta_range_cursor *cursor,
-                                         const void **out_value);
+/* Temporary repository-migration aliases. */
+typedef list_t turbo_list_t;
+typedef list_iter_t turbo_list_iter_t;
+#define turbo_list_init list_init
+#define turbo_list_init_bytes list_init_bytes
+#define turbo_list_from_array list_from_array
+#define turbo_list_from_array_bytes list_from_array_bytes
+#define turbo_list_destroy list_destroy
+#define turbo_list_clear list_clear
+#define turbo_list_push_front list_push_front
+#define turbo_list_push_back list_push_back
+#define turbo_list_insert_before list_insert_before
+#define turbo_list_insert_after list_insert_after
+#define turbo_list_erase list_erase
+#define turbo_list_pop_front list_pop_front
+#define turbo_list_pop_back list_pop_back
+#define turbo_list_begin list_begin
+#define turbo_list_end list_end
+#define turbo_list_iter_next list_iter_next
+#define turbo_list_iter_prev list_iter_prev
+#define turbo_list_iter_equal list_iter_equal
+#define turbo_list_iter_value list_iter_value
+#define turbo_list_iter_value_const list_iter_value_const
+#define turbo_list_front list_front
+#define turbo_list_front_const list_front_const
+#define turbo_list_back list_back
+#define turbo_list_back_const list_back_const
+#define turbo_list_size list_size
+#define turbo_list_generation list_generation
+#define turbo_list_empty list_empty
+#define turbo_list_range_next list_range_next
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* TURBO_LIST_H */
+#endif /* TURBOSTL_LIST_H */
