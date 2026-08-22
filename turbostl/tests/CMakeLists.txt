@@ -54,10 +54,9 @@ cmake_add_test(turbostl_map_test
   FOLDER "turbostl/tests")
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(
-    turbostl_list_test
-    turbostl_map_test
-    PRIVATE -Werror=misleading-indentation)
+  foreach(tgt turbostl_list_test turbostl_map_test)
+    target_compile_options(${tgt} PRIVATE -Werror=misleading-indentation)
+  endforeach()
 endif()
 
 cmake_add_test(turbostl_rbtree_test
