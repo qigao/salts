@@ -1,0 +1,38 @@
+name: TurboSTL natural API migration
+
+on:
+  push:
+    branches:
+      - refactor/turbostl-natural-api
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/turbostl-natural-api
+          fetch-depth: 0
+
+      - name: Install fd and ripgrep
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fd-find ripgrep
+
+      - name: Apply mechanical migration
+        run: bash scripts/turbostl_natural_migrate.sh
+
+      - name: Commit migration
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "refactor(turbostl): migrate raw surface to natural names"
+          git push origin HEAD:refactor/turbostl-natural-api
