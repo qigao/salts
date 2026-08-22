@@ -12,7 +12,7 @@ turbostl_status hash_set_init(hash_set_t *set,
 
 turbostl_status hash_set_init_bytes(
     hash_set_t *set, size_t key_size, size_t key_align,
-    size_t entry_limit, turbo_hash_fn hash, turbo_hash_equal_fn equal,
+    size_t entry_limit, hash_fn hash, hash_equal_fn equal,
     void *ctx) {
   if (set == NULL) return TURBO_STL_INVALID_ARGUMENT;
   return hash_map_init_bytes(&set->table, key_size, key_align,
@@ -23,7 +23,7 @@ turbostl_status hash_set_init_bytes(
 static turbostl_status hash_set_from_common(
     hash_set_t *set, const void *keys, size_t count,
     const cmeta_type_desc *key_type, size_t key_size, size_t key_align,
-    size_t entry_limit, turbo_hash_fn hash, turbo_hash_equal_fn equal,
+    size_t entry_limit, hash_fn hash, hash_equal_fn equal,
     void *ctx) {
   hash_set_t temporary = {0};
   turbostl_status status;
@@ -61,8 +61,8 @@ turbostl_status hash_set_from_array(
 
 turbostl_status hash_set_from_array_bytes(
     hash_set_t *set, const void *keys, size_t count, size_t key_size,
-    size_t key_align, size_t entry_limit, turbo_hash_fn hash,
-    turbo_hash_equal_fn equal, void *ctx) {
+    size_t key_align, size_t entry_limit, hash_fn hash,
+    hash_equal_fn equal, void *ctx) {
   return hash_set_from_common(set, keys, count, NULL, key_size,
                                     key_align, entry_limit, hash, equal, ctx);
 }

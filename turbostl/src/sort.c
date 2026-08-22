@@ -46,7 +46,7 @@ static void sort_merge(const cmeta_type_desc *type, void *source,
     }
 }
 
-turbostl_status turbo_stable_sort(void *base, size_t count,
+turbostl_status stable_sort(void *base, size_t count,
                                    const cmeta_type_desc *type,
                                    size_t scratch_byte_limit) {
     const cmeta_trait_flags required =
