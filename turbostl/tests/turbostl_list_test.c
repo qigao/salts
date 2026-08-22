@@ -4,8 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typed(List, RangeIntList, int);
-
 typedef struct list_owned_value {
     int *value;
 } list_owned_value;
@@ -173,7 +171,7 @@ spec("Independent linked List") {
     }
 
     it("walks a stable link cursor in linear order") {
-        RangeIntList list = {0};
+        List(int, list);
         cmeta_range range;
         cmeta_range_cursor cursor = {0};
         cmeta_range_cursor stale_cursor = {0};
@@ -181,10 +179,12 @@ spec("Independent linked List") {
         int stale_out = -7;
         int value;
 
-        check_equal(RangeIntList_init(&list, 65u), TURBO_STL_OK);
+        check_equal(list_init(&list, 65u), STL_OK);
         for (value = 0; value < 64; ++value)
-            check_equal(RangeIntList_push_back(&list, value), TURBO_STL_OK);
-        range = RangeIntList_range(&list);
+            check_equal(list_push_back(&list, &value, NULL), STL_OK);
+        check_true(cmeta_container_range_view(&list,
+                                              CMETA_CONTAINER_VIEW_DEFAULT,
+                                              &range));
         for (value = 0; value < 64; ++value) {
             cmeta_gen_status status = cmeta_range_next(&range, &cursor, &out);
             check_true(status == CMETA_GEN_VALUE ||
@@ -193,11 +193,13 @@ spec("Independent linked List") {
         }
         check_equal(cmeta_range_next(&range, &cursor, &out), CMETA_GEN_DONE);
 
-        range = RangeIntList_range(&list);
+        check_true(cmeta_container_range_view(&list,
+                                              CMETA_CONTAINER_VIEW_DEFAULT,
+                                              &range));
         check_equal(cmeta_range_next(&range, &stale_cursor, &stale_out),
                     CMETA_GEN_VALUE);
         check_equal(stale_out, 0);
-        check_equal(RangeIntList_pop_front(&list, NULL), TURBO_STL_OK);
+        check_equal(list_pop_front(&list, NULL), STL_OK);
         stale_out = -7;
         {
             cmeta_range_cursor before_cursor = stale_cursor;
@@ -207,6 +209,6 @@ spec("Independent linked List") {
                                sizeof(stale_cursor)), 0);
             check_equal(stale_out, -7);
         }
-        RangeIntList_destroy(&list);
+        list_destroy(&list);
     }
 }
