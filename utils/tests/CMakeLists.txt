@@ -9,8 +9,11 @@ set(FMT_SURFACE_CONTRACT_C
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fmt_surface_contract.c)
 set(FMT_SURFACE_CONTRACT_CPP
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fmt_surface_contract.cpp)
+set(EXECUTION_COMPAT_C
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_execution_compat.c)
 cmake_add_source(TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
-                 "test_*.c" EXCLUDES ${TLOG_HEADER_COLLISION_C} ${FMT_SURFACE_CONTRACT_C})
+                 "test_*.c" EXCLUDES ${TLOG_HEADER_COLLISION_C} ${FMT_SURFACE_CONTRACT_C}
+                 ${EXECUTION_COMPAT_C})
 cmake_add_source(CXX_TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
                  "test_*.cpp" EXCLUDES ${TLOG_HEADER_COLLISION_CPP} ${FMT_SURFACE_CONTRACT_CPP})
 
@@ -28,6 +31,17 @@ foreach(test_source ${TEST_SOURCES} ${CXX_TEST_SOURCES})
     FOLDER "utils/tests"
     LIBS ${COMMON_LIBS})
 endforeach()
+
+# This link contract intentionally depends only on Core. Its legacy headers
+# must pull Platform/Concurrency transitively through the exported target graph.
+cmake_add_test(test_execution_compat
+  SOURCES ${EXECUTION_COMPAT_C}
+  FOLDER "utils/tests"
+  LIBS TurboUtils::Core)
+set_target_properties(test_execution_compat PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND TARGET test_tlog)
   target_compile_options(test_tlog PRIVATE -Werror=null-dereference)
