@@ -18,7 +18,17 @@
 #include <turbostl/bplus_tree.h>
 #include <turbostl/meta.h>
 
-/* Turbo generic-kind registrations. */
+/* Self-describing declaration DSL. These declarations bind CMeta metadata but
+ * perform no allocation. More container kinds migrate to this model task by
+ * task; Vec is the first public contract. */
+#ifndef Vec
+#define Vec(T, name) \
+  vec_t name = { .element_type = CMETA_TYPEOF(T) }
+#endif
+
+/* Legacy generated-kind registrations remain temporarily for repository
+ * migration only. They are removed once every TurboSTL consumer uses the
+ * self-describing handle model. */
 #define CMETA_GENERIC_KIND_Vec CMETA_GENERIC_PROBE()
 #define CMETA_GENERIC_KIND_Deque CMETA_GENERIC_PROBE()
 #define CMETA_GENERIC_KIND_List CMETA_GENERIC_PROBE()
@@ -33,45 +43,23 @@
 #define CMETA_GENERIC_KIND_BTree CMETA_GENERIC_PROBE()
 #define CMETA_GENERIC_KIND_BPlusTree CMETA_GENERIC_PROBE()
 
-/* Sequence kinds --------------------------------------------------------- */
 #define CMETA_TYPED_Vec(name, type) TURBO_VEC_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
 #define CMETA_TYPED_Deque(name, type) TURBO_DEQUE_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
 #define CMETA_TYPED_List(name, type) TURBO_LIST_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
 #define CMETA_TYPED_Stack(name, type) TURBO_STACK_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
 #define CMETA_TYPED_Queue(name, type) TURBO_QUEUE_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
 #define CMETA_TYPED_Heap(name, type) TURBO_HEAP_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
-/* Associative kinds ------------------------------------------------------ */
 #define CMETA_TYPED_Set(name, type) TURBO_SET_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
 #define CMETA_TYPED_HashSet(name, type) TURBO_HASH_SET_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
 #define CMETA_TYPED_HashMap(name, key_type, value_type) \
   TURBO_HASH_MAP_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
-
 #define CMETA_TYPED_Map(name, key_type, value_type) \
   TURBO_MAP_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
-
 #define CMETA_TYPED_MultiMap(name, key_type, value_type) \
   TURBO_MULTI_MAP_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
-
 #define CMETA_TYPED_BTree(name, key_type, value_type) \
   TURBO_BTREE_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
-
 #define CMETA_TYPED_BPlusTree(name, key_type, value_type) \
   TURBO_BPLUS_TREE_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
-
-/*
- * Typed containers expose their generated Type_method API directly, for
- * example IntList_init(), IntList_push_back(), IntMap_put(), and
- * IntMap_destroy(). The raw list_* / map_* namespaces belong exclusively to
- * the natural TurboSTL API and must not be shadowed by generic front-end
- * macros here.
- */
 
 #endif /* TURBO_TYPED_H */
