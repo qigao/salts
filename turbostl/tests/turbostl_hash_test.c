@@ -106,7 +106,7 @@ suite("TurboSTL hash ownership") {
 
         check_equal(hash_set_init_bytes(
                         &set, sizeof(int), _Alignof(int), 4u,
-                        constant_hash, turbo_hash_key_equal, NULL),
+                        constant_hash, hash_key_equal, NULL),
                     TURBO_STL_OK);
         for (key = 0; key < 4; ++key)
             check_equal(hash_set_add(&set, &key), TURBO_STL_OK);
@@ -135,7 +135,7 @@ suite("TurboSTL hash ownership") {
         check_equal(hash_map_init_bytes(
                         &map, sizeof(int), _Alignof(int), sizeof(int),
                         _Alignof(int), 8u, constant_hash,
-                        turbo_hash_key_equal, NULL), TURBO_STL_OK);
+                        hash_key_equal, NULL), TURBO_STL_OK);
         for (key = 0; key < 6; ++key)
             check_equal(hash_map_put(&map, &key, &value), TURBO_STL_OK);
         check_true((uintptr_t)map.states < (uintptr_t)map.hashes);
@@ -163,13 +163,13 @@ suite("TurboSTL hash ownership") {
 
         check_equal(hash_map_init_bytes(&map, sizeof(int), _Alignof(int),
                                               sizeof(int), _Alignof(int), 1u,
-                                              NULL, turbo_hash_key_equal, NULL),
+                                              NULL, hash_key_equal, NULL),
                     TURBO_STL_INVALID_ARGUMENT);
         check_equal(hash_map_init(&map, &no_hash_type, &counted_type, 1u),
                     TURBO_STL_TRAIT_MISSING);
         check_equal(hash_map_init_bytes(&map, sizeof(int), 64u,
                                               sizeof(int), 64u, 0u,
-                                              turbo_hash_bytes, turbo_hash_key_equal, NULL),
+                                              hash_bytes, hash_key_equal, NULL),
                     TURBO_STL_OK);
         {
             const int key = 1;
@@ -191,7 +191,7 @@ suite("TurboSTL hash ownership") {
         uint64_t generation;
 
         check_equal(hash_map_init_bytes(&map, sizeof(one), 64u, sizeof(value), 64u, 1u,
-                                              turbo_hash_bytes, turbo_hash_key_equal, NULL),
+                                              hash_bytes, hash_key_equal, NULL),
                     TURBO_STL_OK);
         check_equal(hash_map_reserve(&map, 2u), TURBO_STL_CAPACITY_EXCEEDED);
         check_equal(hash_map_put(&map, &one, &value), TURBO_STL_OK);
@@ -276,18 +276,18 @@ suite("TurboSTL hash ownership") {
         uint64_t generation;
 
         check_equal(hash_map_init_bytes(&map, sizeof(int), _Alignof(int), sizeof(int),
-                                              _Alignof(int), 1u, turbo_hash_bytes,
-                                              turbo_hash_key_equal, NULL), TURBO_STL_OK);
+                                              _Alignof(int), 1u, hash_bytes,
+                                              hash_key_equal, NULL), TURBO_STL_OK);
         hash_map_destroy(&map);
         before = map;
         check_equal(hash_map_from_arrays_bytes(&map, keys, values, 2u, sizeof(int),
                                                      _Alignof(int), sizeof(int), _Alignof(int),
-                                                     1u, turbo_hash_bytes,
-                                                     turbo_hash_key_equal, NULL),
+                                                     1u, hash_bytes,
+                                                     hash_key_equal, NULL),
                     TURBO_STL_CAPACITY_EXCEEDED);
         check_equal(memcmp(&map, &before, sizeof(map)), 0);
         check_equal(hash_set_init_bytes(&set, sizeof(int), _Alignof(int), 2u,
-                                              turbo_hash_bytes, turbo_hash_key_equal, NULL),
+                                              hash_bytes, hash_key_equal, NULL),
                     TURBO_STL_OK);
         check_equal(hash_set_add(&set, &keys[0]), TURBO_STL_OK);
         generation = set.table.generation;
@@ -330,12 +330,12 @@ suite("TurboSTL hash ownership") {
         uint64_t generation;
 
         check_equal(hash_map_init_bytes(&map, sizeof(int), _Alignof(int), sizeof(int),
-                                              _Alignof(int), 2u, turbo_hash_bytes,
-                                              turbo_hash_key_equal, NULL), TURBO_STL_OK);
+                                              _Alignof(int), 2u, hash_bytes,
+                                              hash_key_equal, NULL), TURBO_STL_OK);
         before = map;
         check_equal(hash_map_init_bytes(&map, sizeof(int), _Alignof(int), sizeof(int),
-                                              _Alignof(int), 2u, turbo_hash_bytes,
-                                              turbo_hash_key_equal, NULL), TURBO_STL_INVALID_ARGUMENT);
+                                              _Alignof(int), 2u, hash_bytes,
+                                              hash_key_equal, NULL), TURBO_STL_INVALID_ARGUMENT);
         check_equal(memcmp(&map, &before, sizeof(map)), 0);
         check_equal(hash_map_put(&map, &one, &value), TURBO_STL_OK);
         check_equal(hash_map_remove(&map, &one, NULL), TURBO_STL_OK);
@@ -345,8 +345,8 @@ suite("TurboSTL hash ownership") {
         hash_map_destroy(&map);
         generation = map.generation;
         check_equal(hash_map_init_bytes(&map, sizeof(int), _Alignof(int), sizeof(int),
-                                              _Alignof(int), 2u, turbo_hash_bytes,
-                                              turbo_hash_key_equal, NULL), TURBO_STL_OK);
+                                              _Alignof(int), 2u, hash_bytes,
+                                              hash_key_equal, NULL), TURBO_STL_OK);
         check_equal(map.generation, generation + UINT64_C(1));
         check_equal(hash_map_put(&map, &two, &value), TURBO_STL_OK);
         hash_map_destroy(&map);
@@ -361,8 +361,8 @@ suite("TurboSTL hash ownership") {
         const int *aliased_value;
 
         check_equal(hash_map_init_bytes(&map, sizeof(int), _Alignof(int), sizeof(int),
-                                              _Alignof(int), 12u, turbo_hash_bytes,
-                                              turbo_hash_key_equal, NULL), TURBO_STL_OK);
+                                              _Alignof(int), 12u, hash_bytes,
+                                              hash_key_equal, NULL), TURBO_STL_OK);
         for (key = 1; key <= 11; ++key)
             check_equal(hash_map_put(&map, &key, &value), TURBO_STL_OK);
         aliased_value = (const int *)hash_map_get_const(&map, &source_key);
@@ -380,28 +380,28 @@ suite("TurboSTL hash ownership") {
         const int value = 2;
 
         check_equal(hash_map_init_bytes(&map, sizeof(int), _Alignof(int), sizeof(int),
-                                              _Alignof(int), 1u, turbo_hash_bytes,
-                                              turbo_hash_key_equal, NULL), TURBO_STL_OK);
+                                              _Alignof(int), 1u, hash_bytes,
+                                              hash_key_equal, NULL), TURBO_STL_OK);
         check_equal(hash_map_generation(&map), UINT64_C(1));
         hash_map_destroy(&map);
         check_equal(hash_map_generation(&map), UINT64_C(2));
         hash_map_destroy(&map);
         check_equal(hash_map_generation(&map), UINT64_C(2));
         check_equal(hash_map_init_bytes(&map, sizeof(int), _Alignof(int), sizeof(int),
-                                              _Alignof(int), 1u, turbo_hash_bytes,
-                                              turbo_hash_key_equal, NULL), TURBO_STL_OK);
+                                              _Alignof(int), 1u, hash_bytes,
+                                              hash_key_equal, NULL), TURBO_STL_OK);
         check_equal(hash_map_put(&map, &key, &value), TURBO_STL_OK);
         check_equal(hash_map_generation(&map), UINT64_C(4));
         hash_map_destroy(&map);
         check_equal(hash_map_generation(&map), UINT64_C(5));
 
         check_equal(hash_set_init_bytes(&set, sizeof(int), _Alignof(int), 1u,
-                                              turbo_hash_bytes, turbo_hash_key_equal, NULL),
+                                              hash_bytes, hash_key_equal, NULL),
                     TURBO_STL_OK);
         hash_set_destroy(&set);
         check_equal(hash_set_generation(&set), UINT64_C(2));
         check_equal(hash_set_init_bytes(&set, sizeof(int), _Alignof(int), 1u,
-                                              turbo_hash_bytes, turbo_hash_key_equal, NULL),
+                                              hash_bytes, hash_key_equal, NULL),
                     TURBO_STL_OK);
         check_equal(hash_set_add(&set, &key), TURBO_STL_OK);
         hash_set_destroy(&set);
@@ -455,8 +455,8 @@ suite("TurboSTL hash ownership") {
 
         check_equal(hash_map_from_arrays_bytes(&map, keys, values, 2u, sizeof(int),
                                                      _Alignof(int), sizeof(int), _Alignof(int),
-                                                     1u, turbo_hash_bytes,
-                                                     turbo_hash_key_equal, NULL), TURBO_STL_OK);
+                                                     1u, hash_bytes,
+                                                     hash_key_equal, NULL), TURBO_STL_OK);
         check_equal(hash_map_size(&map), (size_t)1u);
         check_equal(*(const int *)hash_map_get_const(&map, &keys[0]), 4);
         check_equal(hash_map_entry_limit(&map), (size_t)1u);
@@ -470,8 +470,8 @@ suite("TurboSTL hash ownership") {
         const int value = 1;
 
         check_equal(hash_map_init_bytes(&map, sizeof(int), _Alignof(int), sizeof(int),
-                                              _Alignof(int), SIZE_MAX, turbo_hash_bytes,
-                                              turbo_hash_key_equal, NULL), TURBO_STL_OK);
+                                              _Alignof(int), SIZE_MAX, hash_bytes,
+                                              hash_key_equal, NULL), TURBO_STL_OK);
         check_equal(hash_map_put(&map, &key, &value), TURBO_STL_OK);
         before = map;
         check_equal(hash_map_reserve(&map, SIZE_MAX), TURBO_STL_CAPACITY_EXCEEDED);

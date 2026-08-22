@@ -113,7 +113,7 @@ spec("TurboSTL stable sort") {
     it("sorts stably while preserving duplicate encounter order") {
         stable_item values[] = {{2, 0}, {1, 1}, {2, 2}, {1, 3}};
 
-        check_equal(turbo_stable_sort(values, 4u, &stable_item_type,
+        check_equal(stable_sort(values, 4u, &stable_item_type,
                                       sizeof(values)), TURBO_STL_OK);
         check_equal(values[0].key, 1);
         check_equal(values[0].order, 1);
@@ -129,13 +129,13 @@ spec("TurboSTL stable sort") {
         cmeta_type_desc overflow_type = stable_item_type;
 
         memcpy(before, values, sizeof(values));
-        check_equal(turbo_stable_sort(values, 2u, &stable_item_type,
+        check_equal(stable_sort(values, 2u, &stable_item_type,
                                       sizeof(stable_item)),
                     TURBO_STL_CAPACITY_EXCEEDED);
         check_equal(memcmp(values, before, sizeof(values)), 0);
         overflow_type.size = SIZE_MAX;
         overflow_type.align = 1u;
-        check_equal(turbo_stable_sort(values, 2u, &overflow_type, SIZE_MAX),
+        check_equal(stable_sort(values, 2u, &overflow_type, SIZE_MAX),
                     TURBO_STL_CAPACITY_EXCEEDED);
         check_equal(memcmp(values, before, sizeof(values)), 0);
     }
@@ -145,11 +145,11 @@ spec("TurboSTL stable sort") {
         cmeta_type_desc missing = stable_item_type;
 
         missing.traits = NULL;
-        check_equal(turbo_stable_sort(NULL, 0u, &stable_item_type, 0u),
+        check_equal(stable_sort(NULL, 0u, &stable_item_type, 0u),
                     TURBO_STL_OK);
-        check_equal(turbo_stable_sort(&value, 1u, &stable_item_type, 0u),
+        check_equal(stable_sort(&value, 1u, &stable_item_type, 0u),
                     TURBO_STL_OK);
-        check_equal(turbo_stable_sort(&value, 1u, &missing, 0u),
+        check_equal(stable_sort(&value, 1u, &missing, 0u),
                     TURBO_STL_TRAIT_MISSING);
     }
 
@@ -165,7 +165,7 @@ spec("TurboSTL stable sort") {
             before_resources[index] = values[index].resource;
         owned_sort_copy_count = 0u;
         owned_sort_fail_copy_at = 3u;
-        check_equal(turbo_stable_sort(values, 4u, &owned_sort_type,
+        check_equal(stable_sort(values, 4u, &owned_sort_type,
                                       sizeof(values)),
                     TURBO_STL_OUT_OF_MEMORY);
         for (index = 0u; index < 4u; ++index)
@@ -174,7 +174,7 @@ spec("TurboSTL stable sort") {
 
         owned_sort_copy_count = 0u;
         owned_sort_fail_copy_at = 0u;
-        check_equal(turbo_stable_sort(values, 4u, &owned_sort_type,
+        check_equal(stable_sort(values, 4u, &owned_sort_type,
                                       sizeof(values)), TURBO_STL_OK);
         check_equal(values[0].key, 1);
         check_equal(values[1].key, 2);
@@ -191,14 +191,14 @@ spec("TurboSTL stable sort") {
         stable_item sorted[] = {{1, 0}, {2, 1}, {3, 2}};
         stable_item reverse[] = {{3, 0}, {2, 1}, {1, 2}};
 
-        check_equal(turbo_stable_sort(storage + 1u, 2u, &stable_item_type,
+        check_equal(stable_sort(storage + 1u, 2u, &stable_item_type,
                                       sizeof(stable_item) * 2u),
                     TURBO_STL_INVALID_ARGUMENT);
-        check_equal(turbo_stable_sort(sorted, 3u, &stable_item_type,
+        check_equal(stable_sort(sorted, 3u, &stable_item_type,
                                       sizeof(sorted)), TURBO_STL_OK);
         check_equal(sorted[0].key, 1);
         check_equal(sorted[2].key, 3);
-        check_equal(turbo_stable_sort(reverse, 3u, &stable_item_type,
+        check_equal(stable_sort(reverse, 3u, &stable_item_type,
                                       sizeof(reverse)), TURBO_STL_OK);
         check_equal(reverse[0].key, 1);
         check_equal(reverse[2].key, 3);

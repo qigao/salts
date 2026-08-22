@@ -12,8 +12,8 @@
 extern "C" {
 #endif
 
-typedef size_t (*turbo_hash_fn)(const void *key, size_t key_size, void *ctx);
-typedef bool (*turbo_hash_equal_fn)(const void *left, const void *right, size_t key_size,
+typedef size_t (*hash_fn)(const void *key, size_t key_size, void *ctx);
+typedef bool (*hash_equal_fn)(const void *left, const void *right, size_t key_size,
                                     void *ctx);
 
 typedef struct {
@@ -35,15 +35,15 @@ typedef struct {
   size_t entry_limit;
   const cmeta_type_desc *key_type;
   const cmeta_type_desc *value_type;
-  turbo_hash_fn hash;
-  turbo_hash_equal_fn equal;
+  hash_fn hash;
+  hash_equal_fn equal;
   void *ctx;
   uint64_t generation;
   bool initialized;
 } hash_map_t;
 
-size_t turbo_hash_bytes(const void *key, size_t key_size, void *ctx);
-bool turbo_hash_key_equal(const void *left, const void *right, size_t key_size,
+size_t hash_bytes(const void *key, size_t key_size, void *ctx);
+bool hash_key_equal(const void *left, const void *right, size_t key_size,
                                         void *ctx);
 
 /* HashMap is an independent open-addressed hash table, not an ordered tree.
@@ -60,15 +60,15 @@ turbostl_status hash_map_init(hash_map_t *map,
 turbostl_status hash_map_init_bytes(hash_map_t *map,
                                                          size_t key_size, size_t key_align,
                                                          size_t value_size, size_t value_align,
-                                                         size_t entry_limit, turbo_hash_fn hash,
-                                                         turbo_hash_equal_fn equal, void *ctx);
+                                                         size_t entry_limit, hash_fn hash,
+                                                         hash_equal_fn equal, void *ctx);
 turbostl_status hash_map_from_arrays(
     hash_map_t *map, const void *keys, const void *values, size_t count,
     const cmeta_type_desc *key_type, const cmeta_type_desc *value_type, size_t entry_limit);
 turbostl_status hash_map_from_arrays_bytes(
     hash_map_t *map, const void *keys, const void *values, size_t count,
     size_t key_size, size_t key_align, size_t value_size, size_t value_align,
-    size_t entry_limit, turbo_hash_fn hash, turbo_hash_equal_fn equal, void *ctx);
+    size_t entry_limit, hash_fn hash, hash_equal_fn equal, void *ctx);
 void hash_map_destroy(hash_map_t *map);
 void hash_map_clear(hash_map_t *map);
 /* min_entries is a live-entry request, never a bucket count. entry_limit is a

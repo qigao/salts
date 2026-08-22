@@ -7,7 +7,7 @@
 
 #include <string.h>
 
-CMETA_INLINE cmeta_status turbo_stl_cmeta_status(turbostl_status status) {
+CMETA_INLINE cmeta_status turbostl_cmeta_status(turbostl_status status) {
  switch (status) {
   case TURBO_STL_OK: return CMETA_OK;
   case TURBO_STL_INVALID_ARGUMENT: return CMETA_INVALID_ARGUMENT;
@@ -22,8 +22,8 @@ CMETA_INLINE cmeta_status turbo_stl_cmeta_status(turbostl_status status) {
 }
 
 #define TURBO_META_C1_COLLECTOR(name,type,accept_method) \
- CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,CMETA_TYPEOF(type)))return CMETA_TYPE_MISMATCH;return turbo_stl_cmeta_status((turbostl_status)name##_init((name*)context,limit));} \
- CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){return turbo_stl_cmeta_status((turbostl_status)name##_##accept_method((name*)context,*(const type*)value));} \
+ CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,CMETA_TYPEOF(type)))return CMETA_TYPE_MISMATCH;return turbostl_cmeta_status((turbostl_status)name##_init((name*)context,limit));} \
+ CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){return turbostl_cmeta_status((turbostl_status)name##_##accept_method((name*)context,*(const type*)value));} \
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
  CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \
@@ -31,8 +31,8 @@ CMETA_INLINE cmeta_status turbo_stl_cmeta_status(turbostl_status status) {
 
 #define TURBO_META_C2_COLLECTOR(name) \
  CMETA_LOCAL cmeta_type_desc name##_entry_cmeta_type; \
- CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;return turbo_stl_cmeta_status((turbostl_status)name##_init((name*)context,limit));} \
- CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return turbo_stl_cmeta_status((turbostl_status)name##_put((name*)context,entry->key,entry->value));} \
+ CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;return turbostl_cmeta_status((turbostl_status)name##_init((name*)context,limit));} \
+ CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return turbostl_cmeta_status((turbostl_status)name##_put((name*)context,entry->key,entry->value));} \
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
  CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \
@@ -41,8 +41,8 @@ CMETA_INLINE cmeta_status turbo_stl_cmeta_status(turbostl_status status) {
 /* A multimap collector's limit bounds total retained key/value pairs. */
 #define TURBO_META_MULTIMAP_COLLECTOR(name) \
  CMETA_LOCAL cmeta_type_desc name##_entry_cmeta_type; \
- CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;return turbo_stl_cmeta_status((turbostl_status)name##_init((name*)context,limit));} \
- CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return turbo_stl_cmeta_status((turbostl_status)name##_put((name*)context,entry->key,entry->value));} \
+ CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;return turbostl_cmeta_status((turbostl_status)name##_init((name*)context,limit));} \
+ CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return turbostl_cmeta_status((turbostl_status)name##_put((name*)context,entry->key,entry->value));} \
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
  CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \

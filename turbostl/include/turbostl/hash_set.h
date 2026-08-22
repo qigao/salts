@@ -18,15 +18,15 @@ turbostl_status hash_set_init(
     size_t entry_limit);
 turbostl_status hash_set_init_bytes(
     hash_set_t *set, size_t key_size, size_t key_align,
-    size_t entry_limit, turbo_hash_fn hash, turbo_hash_equal_fn equal,
+    size_t entry_limit, hash_fn hash, hash_equal_fn equal,
     void *ctx);
 turbostl_status hash_set_from_array(
     hash_set_t *set, const void *keys, size_t count,
     const cmeta_type_desc *key_type, size_t entry_limit);
 turbostl_status hash_set_from_array_bytes(
     hash_set_t *set, const void *keys, size_t count, size_t key_size,
-    size_t key_align, size_t entry_limit, turbo_hash_fn hash,
-    turbo_hash_equal_fn equal, void *ctx);
+    size_t key_align, size_t entry_limit, hash_fn hash,
+    hash_equal_fn equal, void *ctx);
 void hash_set_destroy(hash_set_t *set);
 void hash_set_clear(hash_set_t *set);
 turbostl_status hash_set_reserve(
