@@ -127,12 +127,13 @@ const void *map_iter_value_const(map_iter_t iterator);
 bool map_range_next(const map_t *map, cmeta_range_cursor *cursor,
                     const void **out_key, const void **out_value);
 
-/* Instance-driven values Range used by CFlow stream_values(). */
-static inline size_t stl_map_range_size(const void *object) {
+/* Legacy values-only adapter retained only while generated-wrapper tests are
+ * being migrated. Canonical instance metadata lives in associative_meta.c. */
+static inline size_t stl_map_legacy_range_size(const void *object) {
   return map_size((const map_t *)object);
 }
 
-static inline uint64_t stl_map_range_version(const void *object) {
+static inline uint64_t stl_map_legacy_range_version(const void *object) {
   return map_generation((const map_t *)object);
 }
 
@@ -152,16 +153,17 @@ static inline cmeta_gen_status stl_map_values_range_next(
                                     CMETA_GEN_VALUE;
 }
 
-static inline cmeta_range stl_map_values_range_factory(const void *object) {
+static inline cmeta_range stl_map_legacy_values_range_factory(
+    const void *object) {
   const map_t *map = (const map_t *)object;
   cmeta_range range = {
       object,
       map != NULL ? map->value_type : NULL,
       CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
-      stl_map_range_size,
+      stl_map_legacy_range_size,
       stl_map_values_range_next,
-      stl_map_range_version(object),
-      stl_map_range_version};
+      stl_map_legacy_range_version(object),
+      stl_map_legacy_range_version};
   return range;
 }
 
@@ -173,7 +175,7 @@ static const cmeta_container_desc stl_map_container_desc = {
     NULL,
     NULL,
     NULL,
-    stl_map_values_range_factory,
+    stl_map_legacy_values_range_factory,
     NULL,
     NULL};
 
