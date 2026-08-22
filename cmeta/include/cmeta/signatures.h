@@ -30,46 +30,46 @@
 #define CMETA_MAKER_E(id) CMETA_MAKER_I(id)
 #define CMETA_MAKER(id) CMETA_MAKER_E(id)
 
-/* Unary full product R(T), N^2. */
+/* Unary full product R(T), N^2 over the callable universe only. */
 #define CMETA_U_OUTER(in, M) \
-    CMETA_PP_FOR_EACH_B(CMETA_U_INNER, (M, in), CMETA_TYPE_LIST)
+    CMETA_PP_FOR_EACH_B(CMETA_U_INNER, (M, in), CMETA_CALLABLE_TYPE_LIST)
 #define CMETA_U_INNER(ret, ctx) CMETA_U_INNER_E(ret, CMETA_PP_UNPAREN ctx)
 #define CMETA_U_INNER_E(...) CMETA_U_INNER_I(__VA_ARGS__)
 #define CMETA_U_INNER_I(ret, M, in) M(in, ret)
 #define CMETA_GEN_UNARY_ALL(M) \
-    CMETA_PP_FOR_EACH_A(CMETA_U_OUTER, M, CMETA_TYPE_LIST)
+    CMETA_PP_FOR_EACH_A(CMETA_U_OUTER, M, CMETA_CALLABLE_TYPE_LIST)
 
-/* Binary full product R(A,B), N^3. */
+/* Binary full product R(A,B), N^3 over the callable universe only. */
 #define CMETA_B_OUTER_A(a, M) \
-    CMETA_PP_FOR_EACH_B(CMETA_B_OUTER_B, (M, a), CMETA_TYPE_LIST)
+    CMETA_PP_FOR_EACH_B(CMETA_B_OUTER_B, (M, a), CMETA_CALLABLE_TYPE_LIST)
 #define CMETA_B_OUTER_B(b, ctx) CMETA_B_OUTER_B_E(b, CMETA_PP_UNPAREN ctx)
 #define CMETA_B_OUTER_B_E(...) CMETA_B_OUTER_B_I(__VA_ARGS__)
 #define CMETA_B_OUTER_B_I(b, M, a) \
-    CMETA_PP_FOR_EACH_C(CMETA_B_INNER, (M, a, b), CMETA_TYPE_LIST)
+    CMETA_PP_FOR_EACH_C(CMETA_B_INNER, (M, a, b), CMETA_CALLABLE_TYPE_LIST)
 #define CMETA_B_INNER(ret, ctx) CMETA_B_INNER_E(ret, CMETA_PP_UNPAREN ctx)
 #define CMETA_B_INNER_E(...) CMETA_B_INNER_I(__VA_ARGS__)
 #define CMETA_B_INNER_I(ret, M, a, b) M(a, b, ret)
 #define CMETA_GEN_BINARY_ALL(M) \
-    CMETA_PP_FOR_EACH_A(CMETA_B_OUTER_A, M, CMETA_TYPE_LIST)
+    CMETA_PP_FOR_EACH_A(CMETA_B_OUTER_A, M, CMETA_CALLABLE_TYPE_LIST)
 
-/* Balanced binary family: B(A,B), N^2. */
+/* Balanced binary family: B(A,B), N^2 over the callable universe only. */
 #define CMETA_BR_OUTER(a, M) \
-    CMETA_PP_FOR_EACH_B(CMETA_BR_INNER, (M, a), CMETA_TYPE_LIST)
+    CMETA_PP_FOR_EACH_B(CMETA_BR_INNER, (M, a), CMETA_CALLABLE_TYPE_LIST)
 #define CMETA_BR_INNER(b, ctx) CMETA_BR_INNER_E(b, CMETA_PP_UNPAREN ctx)
 #define CMETA_BR_INNER_E(...) CMETA_BR_INNER_I(__VA_ARGS__)
 #define CMETA_BR_INNER_I(b, M, a) M(a, b, b)
 #define CMETA_GEN_BINARY_RETURN_RIGHT(M) \
-    CMETA_PP_FOR_EACH_A(CMETA_BR_OUTER, M, CMETA_TYPE_LIST)
+    CMETA_PP_FOR_EACH_A(CMETA_BR_OUTER, M, CMETA_CALLABLE_TYPE_LIST)
 
 /* Canonical resumable flatMap family:
- * cmeta_gen_status(IN, OUT *, size_t *cursor), N^2. */
+ * cmeta_gen_status(IN, OUT *, size_t *cursor), N^2 over callable types. */
 #define CMETA_G_OUTER(in, M) \
-    CMETA_PP_FOR_EACH_B(CMETA_G_INNER, (M, in), CMETA_TYPE_LIST)
+    CMETA_PP_FOR_EACH_B(CMETA_G_INNER, (M, in), CMETA_CALLABLE_TYPE_LIST)
 #define CMETA_G_INNER(out, ctx) CMETA_G_INNER_E(out, CMETA_PP_UNPAREN ctx)
 #define CMETA_G_INNER_E(...) CMETA_G_INNER_I(__VA_ARGS__)
 #define CMETA_G_INNER_I(out, M, in) M(in, out)
 #define CMETA_GEN_GENERATOR_ALL(M) \
-    CMETA_PP_FOR_EACH_A(CMETA_G_OUTER, M, CMETA_TYPE_LIST)
+    CMETA_PP_FOR_EACH_A(CMETA_G_OUTER, M, CMETA_CALLABLE_TYPE_LIST)
 
 #include <cmeta/relations.h>
 #define CMETA_UR_APPLY(rel, M) CMETA_UR_APPLY_E(M, CMETA_PP_UNPAREN rel)
