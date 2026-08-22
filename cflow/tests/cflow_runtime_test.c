@@ -1,8 +1,8 @@
 #include <cflow/cflow.h>
+#include <turbo/thread.h>
 #include "tinytest.h"
 
 #include <stdint.h>
-#include <threads.h>
 
 typedef struct close_from_sink_state {
     cflow_run *run;
@@ -33,8 +33,8 @@ static void close_from_sink_done(void *user) {
 
 typedef struct concurrent_close_state {
     cflow_run *run;
-    mtx_t lock;
-    cnd_t changed;
+    turbo_mutex_t lock;
+    turbo_cond_t changed;
     bool callback_entered;
     bool external_started;
     bool callback_returned;
@@ -47,39 +47,38 @@ static bool concurrent_close_value(void *user,
     concurrent_close_state *state = (concurrent_close_state *)user;
     if (!state || !cmeta_type_equal(type, &cmeta_type_int) || !value)
         return false;
-    if (mtx_lock(&state->lock) != thrd_success)
-        return false;
+
+    turbo_mutex_lock(&state->lock);
     state->callback_entered = true;
-    cnd_broadcast(&state->changed);
+    turbo_cond_broadcast(&state->changed);
     while (!state->external_started)
-        (void)cnd_wait(&state->changed, &state->lock);
-    (void)mtx_unlock(&state->lock);
+        turbo_cond_wait(&state->changed, &state->lock);
+    turbo_mutex_unlock(&state->lock);
 
     cflow_run_close(state->run);
 
-    if (mtx_lock(&state->lock) == thrd_success) {
-        state->callback_returned = true;
-        cnd_broadcast(&state->changed);
-        (void)mtx_unlock(&state->lock);
-    }
+    turbo_mutex_lock(&state->lock);
+    state->callback_returned = true;
+    turbo_cond_broadcast(&state->changed);
+    turbo_mutex_unlock(&state->lock);
     return true;
 }
 
-static int concurrent_external_close(void *user) {
+static void concurrent_external_close(void *user) {
     concurrent_close_state *state = (concurrent_close_state *)user;
-    if (!state) return -1;
-    if (mtx_lock(&state->lock) != thrd_success) return -1;
+    if (!state) return;
+
+    turbo_mutex_lock(&state->lock);
     state->external_started = true;
-    cnd_broadcast(&state->changed);
-    (void)mtx_unlock(&state->lock);
+    turbo_cond_broadcast(&state->changed);
+    turbo_mutex_unlock(&state->lock);
 
     cflow_run_close(state->run);
 
-    if (mtx_lock(&state->lock) != thrd_success) return -1;
+    turbo_mutex_lock(&state->lock);
     state->external_returned = true;
-    cnd_broadcast(&state->changed);
-    (void)mtx_unlock(&state->lock);
-    return 0;
+    turbo_cond_broadcast(&state->changed);
+    turbo_mutex_unlock(&state->lock);
 }
 
 typedef struct destroy_reentrant_close_state {
@@ -113,7 +112,13 @@ static void destroy_reentrant_close(void *user) {
 suite("CFlow runtime") {
     it("rejects channel storage size overflow") {
         const cmeta_type_desc three_byte_type = {
-            "three_byte", 3u, 1u, CMETA_T_OBJECT, NULL, NULL
+            .name = "three_byte",
+            .size = 3u,
+            .align = 1u,
+            .kind = CMETA_T_OBJECT,
+            .pointee = NULL,
+            .traits = NULL,
+            .identity = NULL
         };
         cflow_channel channel = {0};
         const size_t overflowing_capacity = SIZE_MAX / three_byte_type.size + 1u;
@@ -177,14 +182,15 @@ suite("CFlow runtime") {
             &state
         };
         cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
-        thrd_t external_thread;
-        int external_result = -1;
+        turbo_thread_t external_thread;
         const int input = 11;
 
         state.run = &run;
         normalized.root = CMETA_INVALID_ID;
-        check_true(mtx_init(&state.lock, mtx_plain) == thrd_success);
-        check_true(cnd_init(&state.changed) == thrd_success);
+        turbo_mutex_init(&state.lock);
+        turbo_cond_init(&state.changed);
+        check_not_null(state.lock);
+        check_not_null(state.changed);
         cflow_graph_init(&surface, &cmeta_type_int);
         check_true(cflow_graph_normalize(&normalized, &surface));
         check_true(cflow_scheduler_worker_init(&scheduler, 1u));
@@ -194,15 +200,13 @@ suite("CFlow runtime") {
             &run, &normalized, &source, &scheduler, &sink));
         check_true(cflow_run_request(&run, 1u));
 
-        check_true(mtx_lock(&state.lock) == thrd_success);
+        turbo_mutex_lock(&state.lock);
         while (!state.callback_entered)
-            (void)cnd_wait(&state.changed, &state.lock);
-        (void)mtx_unlock(&state.lock);
-        check_true(thrd_create(
-            &external_thread, concurrent_external_close, &state) ==
-            thrd_success);
-        check_true(thrd_join(external_thread, &external_result) == thrd_success);
-        check_equal(external_result, 0);
+            turbo_cond_wait(&state.changed, &state.lock);
+        turbo_mutex_unlock(&state.lock);
+        check_equal(turbo_thread_create(
+            &external_thread, concurrent_external_close, &state), 0);
+        check_equal(turbo_thread_join(&external_thread), 0);
         check_true(cflow_scheduler_wait_idle(&scheduler));
 
         check_true(state.callback_returned);
@@ -213,8 +217,8 @@ suite("CFlow runtime") {
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
-        cnd_destroy(&state.changed);
-        mtx_destroy(&state.lock);
+        turbo_cond_destroy(&state.changed);
+        turbo_mutex_destroy(&state.lock);
     }
 
     it("allows a source destroy callback to close the same run") {
