@@ -49,7 +49,9 @@ target_include_directories(
   fmt_lexer PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
                    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
 target_include_directories(fmt_lexer PRIVATE ${PROJECT_SOURCE_DIR}/parser ${SIMDE_INCLUDE_DIRS})
-target_link_libraries(fmt_lexer PUBLIC TurboUtils::CMeta PRIVATE TurboUtils::Platform)
+target_link_libraries(fmt_lexer
+  PUBLIC TurboUtils::CMeta
+  PRIVATE TurboUtils::Platform TurboUtils::Concurrency)
 
 # Export for parent
 set(FMT_LEXER_LIBRARY
