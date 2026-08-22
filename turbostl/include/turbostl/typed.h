@@ -44,6 +44,19 @@
 #define Heap(T, name) \
   heap_t name = { .element_type = CMETA_TYPEOF(T) }
 #endif
+#ifndef Set
+#define Set(T, name) \
+  set_t name = { .element_type = CMETA_TYPEOF(T) }
+#endif
+#ifndef HashSet
+#define HashSet(T, name) \
+  hash_set_t name = { .element_type = CMETA_TYPEOF(T) }
+#endif
+#ifndef HashMap
+#define HashMap(K, V, name) \
+  hash_map_t name = { .key_type = CMETA_TYPEOF(K), \
+                      .value_type = CMETA_TYPEOF(V) }
+#endif
 #ifndef Map
 #define Map(K, V, name) \
   map_t name = { { &stl_map_container_desc }, CMETA_TYPEOF(K), \
