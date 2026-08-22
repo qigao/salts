@@ -5,5 +5,8 @@ import CMetaCFlowCalculus.CMeta.Environment
 import CMetaCFlowCalculus.CMeta.Ownership
 import CMetaCFlowCalculus.CFlow.Syntax
 import CMetaCFlowCalculus.CFlow.Execution
+import CMetaCFlowCalculus.CFlow.Observation
+import CMetaCFlowCalculus.CFlow.Architecture
 import CMetaCFlowCalculus.Proofs.Ownership
 import CMetaCFlowCalculus.Proofs.Execution
+import CMetaCFlowCalculus.Proofs.Architecture
