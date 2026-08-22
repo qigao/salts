@@ -64,18 +64,18 @@ typedef struct bplus_tree {
 } bplus_tree_t;
 
 /* Internal typed bridges for compiled implementation and legacy wrappers. */
-stl_status bplus_tree_init_with_types(
+stl_status bplus_tree_raw_init(
     bplus_tree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit);
-stl_status bplus_tree_init_with_order_and_types(
+stl_status bplus_tree_raw_init_with_order(
     bplus_tree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t min_degree,
     size_t entry_limit);
-stl_status bplus_tree_from_arrays_with_types(
+stl_status bplus_tree_raw_from_arrays(
     bplus_tree_t *tree, const void *keys, const void *values,
     size_t count, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit);
-void bplus_tree_destroy_storage(bplus_tree_t *tree);
+void bplus_tree_raw_destroy_storage(bplus_tree_t *tree);
 
 stl_status bplus_tree_init_bytes(
     bplus_tree_t *tree, size_t key_size, size_t key_align,
@@ -103,7 +103,7 @@ static inline stl_status bplus_tree_init(bplus_tree_t *tree,
   kind = tree->cmeta.descriptor;
   key_type = tree->key_type;
   value_type = tree->value_type;
-  status = bplus_tree_init_with_types(tree, key_type, value_type, entry_limit);
+  status = bplus_tree_raw_init(tree, key_type, value_type, entry_limit);
   tree->cmeta.descriptor = kind;
   tree->key_type = key_type;
   tree->value_type = value_type;
@@ -122,8 +122,8 @@ static inline stl_status bplus_tree_init_with_order(bplus_tree_t *tree,
   kind = tree->cmeta.descriptor;
   key_type = tree->key_type;
   value_type = tree->value_type;
-  status = bplus_tree_init_with_order_and_types(tree, key_type, value_type,
-                                                min_degree, entry_limit);
+  status = bplus_tree_raw_init_with_order(tree, key_type, value_type,
+                                          min_degree, entry_limit);
   tree->cmeta.descriptor = kind;
   tree->key_type = key_type;
   tree->value_type = value_type;
@@ -142,9 +142,8 @@ static inline stl_status bplus_tree_from_arrays(
   kind = tree->cmeta.descriptor;
   key_type = tree->key_type;
   value_type = tree->value_type;
-  status = bplus_tree_from_arrays_with_types(tree, keys, values, count,
-                                             key_type, value_type,
-                                             entry_limit);
+  status = bplus_tree_raw_from_arrays(tree, keys, values, count,
+                                      key_type, value_type, entry_limit);
   tree->cmeta.descriptor = kind;
   tree->key_type = key_type;
   tree->value_type = value_type;
@@ -160,7 +159,7 @@ static inline void bplus_tree_destroy(bplus_tree_t *tree) {
   kind = tree->cmeta.descriptor;
   key_type = tree->key_type;
   value_type = tree->value_type;
-  bplus_tree_destroy_storage(tree);
+  bplus_tree_raw_destroy_storage(tree);
   tree->cmeta.descriptor = kind;
   tree->key_type = key_type;
   tree->value_type = value_type;
@@ -192,13 +191,13 @@ bool bplus_tree_range_next(const bplus_tree_t *tree,
 /* Temporary repository-migration aliases. */
 typedef bplus_tree_compare_fn turbo_bplus_tree_compare_fn;
 typedef bplus_tree_t turbo_bplus_tree_t;
-#define turbo_bplus_tree_init bplus_tree_init_with_types
-#define turbo_bplus_tree_init_with_order bplus_tree_init_with_order_and_types
+#define turbo_bplus_tree_init bplus_tree_raw_init
+#define turbo_bplus_tree_init_with_order bplus_tree_raw_init_with_order
 #define turbo_bplus_tree_init_bytes bplus_tree_init_bytes
 #define turbo_bplus_tree_init_bytes_with_order bplus_tree_init_bytes_with_order
-#define turbo_bplus_tree_from_arrays bplus_tree_from_arrays_with_types
+#define turbo_bplus_tree_from_arrays bplus_tree_raw_from_arrays
 #define turbo_bplus_tree_from_arrays_bytes bplus_tree_from_arrays_bytes
-#define turbo_bplus_tree_destroy bplus_tree_destroy_storage
+#define turbo_bplus_tree_destroy bplus_tree_raw_destroy_storage
 #define turbo_bplus_tree_clear bplus_tree_clear
 #define turbo_bplus_tree_reserve bplus_tree_reserve
 #define turbo_bplus_tree_put bplus_tree_put
