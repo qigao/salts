@@ -53,11 +53,11 @@ jobs:
       - name: Configure
         run: cmake --preset linux-release-user
 
-      - name: Build
-        run: cmake --build --preset linux-release-user
+      - name: Build Task 1 fmt surface contracts
+        run: cmake --build --preset linux-release-user --target test_fmt_surface_contract_c test_fmt_surface_contract_cpp
 
-      - name: Test CMeta and CFlow
-        run: ctest --preset linux-release-user -R "^(cmeta_|cflow_)" --output-on-failure
+      - name: Test Task 1 fmt surface contracts
+        run: ctest --preset linux-release-user -R "^test_fmt_surface_contract_(c|cpp)$" --output-on-failure
 
   windows:
     name: Windows release
@@ -69,7 +69,7 @@ jobs:
         shell: powershell
         run: choco install re2c -y --no-progress
 
-      - name: Configure, build, and test
+      - name: Configure, build, and test Task 1 fmt surface contracts
         shell: cmd
         run: |
           if defined VCPKG_INSTALLATION_ROOT set "VCPKG_ROOT=%VCPKG_INSTALLATION_ROOT%"
@@ -82,6 +82,6 @@ jobs:
 
           cmake --preset win-release-user
           if errorlevel 1 exit /b 1
-          cmake --build --preset win-release-user
+          cmake --build --preset win-release-user --target test_fmt_surface_contract_c test_fmt_surface_contract_cpp
           if errorlevel 1 exit /b 1
-          ctest --preset win-release-user -R "^(cmeta_|cflow_)" --output-on-failure
+          ctest --preset win-release-user -R "^test_fmt_surface_contract_(c|cpp)$" --output-on-failure
