@@ -4,9 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typed(BTree, IntTree, int, long);
-typed(BPlusTree, IntPlusTree, int, long);
-
 static int raw_int_compare(const void *left, const void *right, void *context) {
     int lhs = *(const int *)left;
     int rhs = *(const int *)right;
@@ -133,18 +130,44 @@ static const cmeta_type_desc missing_compare_type = {
     CMETA_T_OBJECT, NULL, &missing_compare_traits
 };
 
+static stl_status int_btree_put(btree_t *tree, int key, long value) {
+    return btree_put(tree, &key, &value);
+}
+
+static const long *int_btree_get_const(const btree_t *tree, int key) {
+    return (const long *)btree_get_const(tree, &key);
+}
+
+static stl_status int_btree_remove(btree_t *tree, int key, long *out_value) {
+    return btree_remove(tree, &key, out_value);
+}
+
+static stl_status int_bplus_put(bplus_tree_t *tree, int key, long value) {
+    return bplus_tree_put(tree, &key, &value);
+}
+
+static const long *int_bplus_get_const(const bplus_tree_t *tree, int key) {
+    return (const long *)bplus_tree_get_const(tree, &key);
+}
+
+static stl_status int_bplus_remove(bplus_tree_t *tree, int key,
+                                   long *out_value) {
+    return bplus_tree_remove(tree, &key, out_value);
+}
+
 spec("TurboSTL trees") {
     it("splits BTree nodes and iterates entries in key order") {
-        IntTree tree = {0};
-        cmeta_range range;
+        BTree(int, long, tree);
+        cmeta_range range = {0};
         cmeta_range_cursor cursor = {0};
-        IntTree_entry entry = {0};
+        cmeta_entry entry = {0};
         int key;
 
-        check_equal(IntTree_init(&tree, 32u), TURBO_STL_OK);
+        check_equal(btree_init(&tree, 32u), TURBO_STL_OK);
         for (key = 31; key >= 0; --key)
-            check_equal(IntTree_put(&tree, key, (long)key * 10L), TURBO_STL_OK);
-        check_equal(IntTree_size(&tree), (size_t)32u);
+            check_equal(int_btree_put(&tree, key, (long)key * 10L),
+                        TURBO_STL_OK);
+        check_equal(btree_size(&tree), (size_t)32u);
         check_true(cmeta_container_range_view(&tree,
                                               CMETA_CONTAINER_VIEW_DEFAULT,
                                               &range));
@@ -152,26 +175,26 @@ spec("TurboSTL trees") {
             cmeta_gen_status status = cmeta_range_next(&range, &cursor, &entry);
             check_true(status == CMETA_GEN_VALUE ||
                        status == CMETA_GEN_VALUE_AND_DONE);
-            check_equal(entry.key, key);
-            check_equal(entry.value, (long)key * 10L);
+            check_equal(*(const int *)entry.key, key);
+            check_equal(*(const long *)entry.value, (long)key * 10L);
         }
-        IntTree_destroy(&tree);
+        btree_destroy(&tree);
     }
 
     it("replaces before destroy removes by transfer and enforces tree limits") {
-        IntPlusTree tree = {0};
+        BPlusTree(int, long, tree);
         long out = 91L;
 
-        check_equal(IntPlusTree_init(&tree, 1u), TURBO_STL_OK);
-        check_equal(IntPlusTree_put(&tree, 1, 10L), TURBO_STL_OK);
-        check_equal(IntPlusTree_put(&tree, 1, 20L), TURBO_STL_OK);
-        check_equal(*IntPlusTree_get_const(&tree, 1), 20L);
-        check_equal(IntPlusTree_put(&tree, 2, 30L),
+        check_equal(bplus_tree_init(&tree, 1u), TURBO_STL_OK);
+        check_equal(int_bplus_put(&tree, 1, 10L), TURBO_STL_OK);
+        check_equal(int_bplus_put(&tree, 1, 20L), TURBO_STL_OK);
+        check_equal(*int_bplus_get_const(&tree, 1), 20L);
+        check_equal(int_bplus_put(&tree, 2, 30L),
                     TURBO_STL_CAPACITY_EXCEEDED);
-        check_equal(IntPlusTree_remove(&tree, 1, &out), TURBO_STL_OK);
+        check_equal(int_bplus_remove(&tree, 1, &out), TURBO_STL_OK);
         check_equal(out, 20L);
-        check_true(IntPlusTree_empty(&tree));
-        IntPlusTree_destroy(&tree);
+        check_true(bplus_tree_empty(&tree));
+        bplus_tree_destroy(&tree);
     }
 
     it("rejects raw trees without explicit comparator and preserves live handles") {
@@ -195,19 +218,21 @@ spec("TurboSTL trees") {
     }
 
     it("builds a real split BPlusTree and invalidates its ordered Range") {
-        IntPlusTree tree = {0};
-        cmeta_range range;
-        IntPlusTree_entry entry = {0};
+        BPlusTree(int, long, tree);
+        cmeta_range range = {0};
+        cmeta_entry entry = {0};
+        cmeta_entry before_entry;
         cmeta_range_cursor cursor = {0};
         cmeta_range_cursor before_cursor;
         uint64_t generation;
+        int sentinel_key = -1;
         int key;
 
-        check_equal(IntPlusTree_init_with_order(&tree, 2u, 48u), TURBO_STL_OK);
+        check_equal(bplus_tree_init_with_order(&tree, 2u, 48u), TURBO_STL_OK);
         for (key = 47; key >= 0; --key)
-            check_equal(IntPlusTree_put(&tree, key, (long)key + 100L),
+            check_equal(int_bplus_put(&tree, key, (long)key + 100L),
                         TURBO_STL_OK);
-        check_true(tree.raw.root != NULL && !tree.raw.root->is_leaf);
+        check_true(tree.root != NULL && !tree.root->is_leaf);
         check_true(cmeta_container_range_view(&tree,
                                               CMETA_CONTAINER_VIEW_ENTRIES,
                                               &range));
@@ -215,72 +240,75 @@ spec("TurboSTL trees") {
             cmeta_gen_status status = cmeta_range_next(&range, &cursor, &entry);
             check_true(status == CMETA_GEN_VALUE ||
                        status == CMETA_GEN_VALUE_AND_DONE);
-            check_equal(entry.key, key);
-            check_equal(entry.value, (long)key + 100L);
+            check_equal(*(const int *)entry.key, key);
+            check_equal(*(const long *)entry.value, (long)key + 100L);
         }
-        generation = turbo_bplus_tree_generation(&tree.raw);
-        check_equal(IntPlusTree_put(&tree, 12, 999L), TURBO_STL_OK);
-        check_equal(turbo_bplus_tree_generation(&tree.raw), generation + 1u);
+        generation = bplus_tree_generation(&tree);
+        check_equal(int_bplus_put(&tree, 12, 999L), TURBO_STL_OK);
+        check_equal(bplus_tree_generation(&tree), generation + 1u);
         memset(&cursor, 0, sizeof(cursor));
         before_cursor = cursor;
-        entry.key = -1;
+        entry = (cmeta_entry){.key = &sentinel_key};
+        before_entry = entry;
         check_equal(cmeta_range_next(&range, &cursor, &entry),
                     CMETA_GEN_MUTATED);
         check_equal(memcmp(&cursor, &before_cursor, sizeof(cursor)), 0);
-        check_equal(entry.key, -1);
-        IntPlusTree_destroy(&tree);
+        check_equal(memcmp(&entry, &before_entry, sizeof(entry)), 0);
+        bplus_tree_destroy(&tree);
     }
 
     it("shrinks a BPlusTree root without revisiting the retired root") {
-        IntPlusTree tree = {0};
+        BPlusTree(int, long, tree);
         turbo_bplus_tree_node_t *retired_root;
-        cmeta_range range;
+        cmeta_range range = {0};
         cmeta_range_cursor cursor = {0};
-        IntPlusTree_entry entry = {0};
+        cmeta_entry entry = {0};
         uint64_t generation;
         long out = -1L;
         int key;
 
-        check_equal(IntPlusTree_init_with_order(&tree, 2u, 4u), TURBO_STL_OK);
+        check_equal(bplus_tree_init_with_order(&tree, 2u, 4u), TURBO_STL_OK);
         for (key = 0; key < 4; ++key)
-            check_equal(IntPlusTree_put(&tree, key, (long)key + 100L),
+            check_equal(int_bplus_put(&tree, key, (long)key + 100L),
                         TURBO_STL_OK);
-        check_equal(bplus_tree_height(&tree.raw), (size_t)2u);
-        retired_root = tree.raw.root;
-        generation = turbo_bplus_tree_generation(&tree.raw);
+        check_equal(bplus_tree_height(&tree), (size_t)2u);
+        retired_root = tree.root;
+        generation = bplus_tree_generation(&tree);
 
-        check_equal(IntPlusTree_remove(&tree, 0, &out), TURBO_STL_OK);
+        check_equal(int_bplus_remove(&tree, 0, &out), TURBO_STL_OK);
         check_equal(out, 100L);
-        check_equal(turbo_bplus_tree_generation(&tree.raw), ++generation);
-        check_equal(IntPlusTree_remove(&tree, 1, &out), TURBO_STL_OK);
+        check_equal(bplus_tree_generation(&tree), ++generation);
+        check_equal(int_bplus_remove(&tree, 1, &out), TURBO_STL_OK);
         check_equal(out, 101L);
-        check_equal(turbo_bplus_tree_generation(&tree.raw), ++generation);
-        check_equal(bplus_tree_height(&tree.raw), (size_t)2u);
-        check_equal(IntPlusTree_remove(&tree, 2, &out), TURBO_STL_OK);
+        check_equal(bplus_tree_generation(&tree), ++generation);
+        check_equal(bplus_tree_height(&tree), (size_t)2u);
+        check_equal(int_bplus_remove(&tree, 2, &out), TURBO_STL_OK);
         check_equal(out, 102L);
-        check_equal(turbo_bplus_tree_generation(&tree.raw), ++generation);
-        check_not_equal((const void *)tree.raw.root,
+        check_equal(bplus_tree_generation(&tree), ++generation);
+        check_not_equal((const void *)tree.root,
                         (const void *)retired_root);
-        check_true(tree.raw.root != NULL && tree.raw.root->is_leaf);
-        check_true(tree.raw.root->parent == NULL);
-        check_equal(bplus_tree_height(&tree.raw), (size_t)1u);
-        check_true(bplus_metadata_is_valid(tree.raw.root));
+        check_true(tree.root != NULL && tree.root->is_leaf);
+        check_true(tree.root->parent == NULL);
+        check_equal(bplus_tree_height(&tree), (size_t)1u);
+        check_true(bplus_metadata_is_valid(tree.root));
 
-        range = IntPlusTree_entries_range(&tree);
+        check_true(cmeta_container_range_view(&tree,
+                                              CMETA_CONTAINER_VIEW_ENTRIES,
+                                              &range));
         for (key = 3; key < 4; ++key) {
             cmeta_gen_status status = cmeta_range_next(&range, &cursor,
                                                        &entry);
             check_true(status == CMETA_GEN_VALUE ||
                        status == CMETA_GEN_VALUE_AND_DONE);
-            check_equal(entry.key, key);
-            check_equal(entry.value, (long)key + 100L);
+            check_equal(*(const int *)entry.key, key);
+            check_equal(*(const long *)entry.value, (long)key + 100L);
         }
         check_equal(cmeta_range_next(&range, &cursor, &entry),
                     CMETA_GEN_DONE);
 
-        check_equal(IntPlusTree_size(&tree), (size_t)1u);
-        check_equal(*IntPlusTree_get_const(&tree, 3), 103L);
-        IntPlusTree_destroy(&tree);
+        check_equal(bplus_tree_size(&tree), (size_t)1u);
+        check_equal(*int_bplus_get_const(&tree, 3), 103L);
+        bplus_tree_destroy(&tree);
     }
 
     it("bounds BPlusTree separator maintenance to the modified path") {
@@ -402,8 +430,8 @@ spec("TurboSTL trees") {
     }
 
     it("matches a bounded model across randomized split borrow and merge paths") {
-        IntTree btree = {0};
-        IntPlusTree bplus = {0};
+        BTree(int, long, btree);
+        BPlusTree(int, long, bplus);
         enum { KEY_COUNT = 128, OPERATION_COUNT = 2000 };
         bool present[KEY_COUNT] = {false};
         long model[KEY_COUNT] = {0};
@@ -411,16 +439,16 @@ spec("TurboSTL trees") {
         int operation;
 
         tree_test_random_state = UINT32_C(0x5eed1234);
-        check_equal(IntTree_init_with_order(&btree, 2u, KEY_COUNT),
+        check_equal(btree_init_with_order(&btree, 2u, KEY_COUNT),
                     TURBO_STL_OK);
-        check_equal(IntPlusTree_init_with_order(&bplus, 2u, KEY_COUNT),
+        check_equal(bplus_tree_init_with_order(&bplus, 2u, KEY_COUNT),
                     TURBO_STL_OK);
         for (operation = 0; operation < OPERATION_COUNT; ++operation) {
             int key = (int)(tree_test_random() % KEY_COUNT);
             if ((tree_test_random() & 3u) != 0u) {
                 long value = (long)operation + 1000L;
-                check_equal(IntTree_put(&btree, key, value), TURBO_STL_OK);
-                check_equal(IntPlusTree_put(&bplus, key, value), TURBO_STL_OK);
+                check_equal(int_btree_put(&btree, key, value), TURBO_STL_OK);
+                check_equal(int_bplus_put(&bplus, key, value), TURBO_STL_OK);
                 if (!present[key]) {
                     present[key] = true;
                     ++live;
@@ -429,29 +457,29 @@ spec("TurboSTL trees") {
             } else if (present[key]) {
                 long btree_out = -1L;
                 long bplus_out = -1L;
-                check_equal(IntTree_remove(&btree, key, &btree_out),
+                check_equal(int_btree_remove(&btree, key, &btree_out),
                             TURBO_STL_OK);
-                check_equal(IntPlusTree_remove(&bplus, key, &bplus_out),
+                check_equal(int_bplus_remove(&bplus, key, &bplus_out),
                             TURBO_STL_OK);
                 check_equal(btree_out, model[key]);
                 check_equal(bplus_out, model[key]);
                 present[key] = false;
                 --live;
             } else {
-                check_equal(IntTree_remove(&btree, key, NULL),
+                check_equal(int_btree_remove(&btree, key, NULL),
                             TURBO_STL_NOT_FOUND);
-                check_equal(IntPlusTree_remove(&bplus, key, NULL),
+                check_equal(int_bplus_remove(&bplus, key, NULL),
                             TURBO_STL_NOT_FOUND);
             }
 
             if ((operation % 97) == 0) {
                 int probe;
-                check_equal(IntTree_size(&btree), live);
-                check_equal(IntPlusTree_size(&bplus), live);
-                check_true(bplus_metadata_is_valid(bplus.raw.root));
+                check_equal(btree_size(&btree), live);
+                check_equal(bplus_tree_size(&bplus), live);
+                check_true(bplus_metadata_is_valid(bplus.root));
                 for (probe = 0; probe < KEY_COUNT; ++probe) {
-                    const long *left = IntTree_get_const(&btree, probe);
-                    const long *right = IntPlusTree_get_const(&bplus, probe);
+                    const long *left = int_btree_get_const(&btree, probe);
+                    const long *right = int_bplus_get_const(&bplus, probe);
                     check_equal(left != NULL, present[probe]);
                     check_equal(right != NULL, present[probe]);
                     if (present[probe]) {
@@ -462,14 +490,20 @@ spec("TurboSTL trees") {
             }
         }
         {
-            cmeta_range btree_range = IntTree_entries_range(&btree);
-            cmeta_range bplus_range = IntPlusTree_entries_range(&bplus);
+            cmeta_range btree_range = {0};
+            cmeta_range bplus_range = {0};
             cmeta_range_cursor btree_cursor = {0};
             cmeta_range_cursor bplus_cursor = {0};
-            IntTree_entry btree_entry = {0};
-            IntPlusTree_entry bplus_entry = {0};
+            cmeta_entry btree_entry = {0};
+            cmeta_entry bplus_entry = {0};
             size_t observed = 0u;
             int ordered_key;
+            check_true(cmeta_container_range_view(&btree,
+                                                  CMETA_CONTAINER_VIEW_ENTRIES,
+                                                  &btree_range));
+            check_true(cmeta_container_range_view(&bplus,
+                                                  CMETA_CONTAINER_VIEW_ENTRIES,
+                                                  &bplus_range));
             for (ordered_key = 0; ordered_key < KEY_COUNT; ++ordered_key) {
                 if (!present[ordered_key]) continue;
                 cmeta_gen_status btree_status = cmeta_range_next(
@@ -480,10 +514,12 @@ spec("TurboSTL trees") {
                            btree_status == CMETA_GEN_VALUE_AND_DONE);
                 check_true(bplus_status == CMETA_GEN_VALUE ||
                            bplus_status == CMETA_GEN_VALUE_AND_DONE);
-                check_equal(btree_entry.key, ordered_key);
-                check_equal(bplus_entry.key, ordered_key);
-                check_equal(btree_entry.value, model[ordered_key]);
-                check_equal(bplus_entry.value, model[ordered_key]);
+                check_equal(*(const int *)btree_entry.key, ordered_key);
+                check_equal(*(const int *)bplus_entry.key, ordered_key);
+                check_equal(*(const long *)btree_entry.value,
+                            model[ordered_key]);
+                check_equal(*(const long *)bplus_entry.value,
+                            model[ordered_key]);
                 ++observed;
             }
             check_equal(observed, live);
@@ -492,8 +528,8 @@ spec("TurboSTL trees") {
             check_equal(cmeta_range_next(&bplus_range, &bplus_cursor,
                                          &bplus_entry), CMETA_GEN_DONE);
         }
-        IntPlusTree_destroy(&bplus);
-        IntTree_destroy(&btree);
+        bplus_tree_destroy(&bplus);
+        btree_destroy(&btree);
     }
 
     it("keeps owning BTree mutations transactional and transfers removal") {
@@ -668,29 +704,29 @@ spec("TurboSTL trees") {
     }
 
     bench("path-local tree replacement") {
-        IntTree btree = {0};
-        IntPlusTree bplus = {0};
+        BTree(int, long, btree);
+        BPlusTree(int, long, bplus);
         enum { BENCH_ENTRY_COUNT = 256 };
         int key;
         long value = 1L;
 
-        check_equal(IntTree_init_with_order(&btree, 4u, BENCH_ENTRY_COUNT),
+        check_equal(btree_init_with_order(&btree, 4u, BENCH_ENTRY_COUNT),
                     TURBO_STL_OK);
-        check_equal(IntPlusTree_init_with_order(&bplus, 4u,
-                                                BENCH_ENTRY_COUNT),
+        check_equal(bplus_tree_init_with_order(&bplus, 4u,
+                                               BENCH_ENTRY_COUNT),
                     TURBO_STL_OK);
         for (key = 0; key < BENCH_ENTRY_COUNT; ++key) {
-            check_equal(IntTree_put(&btree, key, (long)key), TURBO_STL_OK);
-            check_equal(IntPlusTree_put(&bplus, key, (long)key),
+            check_equal(int_btree_put(&btree, key, (long)key), TURBO_STL_OK);
+            check_equal(int_bplus_put(&bplus, key, (long)key),
                         TURBO_STL_OK);
         }
         key = BENCH_ENTRY_COUNT / 2;
         benchmark_ops("replace one BTree and one BPlusTree entry", 64, 2) {
-            (void)IntTree_put(&btree, key, value);
-            (void)IntPlusTree_put(&bplus, key, value);
+            (void)int_btree_put(&btree, key, value);
+            (void)int_bplus_put(&bplus, key, value);
             ++value;
         }
-        IntPlusTree_destroy(&bplus);
-        IntTree_destroy(&btree);
+        bplus_tree_destroy(&bplus);
+        btree_destroy(&btree);
     }
 }
