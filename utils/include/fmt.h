@@ -148,6 +148,21 @@ static inline fmt_arg_t fmt_arg_time(time_t x) {
 
 #undef FMT_MAKE_ARG
 
+/* Keep signed/unsigned byte sources on the public character representation
+ * without an implicit signedness conversion. Bit-copying preserves the source
+ * byte exactly; printf's %c path later consumes that byte representation. */
+static inline fmt_arg_t fmt_arg_schar(signed char x) {
+  char value;
+  memcpy(&value, &x, sizeof(value));
+  return fmt_arg_char(value);
+}
+
+static inline fmt_arg_t fmt_arg_uchar(unsigned char x) {
+  char value;
+  memcpy(&value, &x, sizeof(value));
+  return fmt_arg_char(value);
+}
+
 /* ============================================================================
  * Type Wrappers (C++ Overloads or C11 _Generic)
  * ============================================================================ */
@@ -163,8 +178,8 @@ static inline fmt_arg_t fmt_arg_time(time_t x) {
 #define FMT_DETAIL_NUMERIC_DETECT_SCHEMA(M)                                                       \
   Schema(M,                                                                                       \
          (char, fmt_arg_char),                                                                    \
-         (signed char, fmt_arg_char),                                                             \
-         (unsigned char, fmt_arg_char),                                                           \
+         (signed char, fmt_arg_schar),                                                            \
+         (unsigned char, fmt_arg_uchar),                                                          \
          (short, fmt_arg_int),                                                                    \
          (unsigned short, fmt_arg_uint),                                                          \
          (int, fmt_arg_int),                                                                      \
@@ -214,8 +229,8 @@ static inline fmt_arg_t fmt_arg_detect(std::chrono::system_clock::time_point tp)
   auto sec = std::chrono::duration_cast<std::chrono::seconds>(dur);
   auto usec = std::chrono::duration_cast<std::chrono::microseconds>(dur - sec);
   turbo_timeval_t tv;
-  tv.tv_sec = (int64_t)sec.count();
-  tv.tv_usec = (int32_t)usec.count();
+  tv.tv_sec = static_cast<int64_t>(sec.count());
+  tv.tv_usec = static_cast<int32_t>(usec.count());
   return fmt_arg_timeval(tv);
 }
 
@@ -241,9 +256,9 @@ static inline auto fmt_arg_detect(const T &x) ->
   return fmt_arg_strv(sv);
 }
 
-/* Template catches all other pointer types */
+/* Template catches all other object pointer types. */
 template <typename T> static inline fmt_arg_t fmt_arg_detect(T *x) {
-  return fmt_arg_ptr((const void *)x);
+  return fmt_arg_ptr(static_cast<const void *>(x));
 }
 
 /* Template for enum types: cast to underlying integer type */
@@ -411,7 +426,7 @@ struct fmt_buffer_t {
   template <typename... Args> void print(const char *format, const Args &...args) {
     if (pos < size) {
       int n = fmt_cpp_wrapper(data + pos, size - pos, format, args...);
-      if (n > 0) pos += (size_t)n;
+      if (n > 0) pos += static_cast<size_t>(n);
     }
   }
 };
