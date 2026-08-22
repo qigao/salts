@@ -10,13 +10,6 @@ Struct(StreamStudent,
 
 #include "tinytest.h"
 
-#include <string.h>
-
-typed(List, StreamInts, int);
-typed(List, StreamLongs, long);
-typed(List, StreamLongList, long);
-typed(Map, StreamClassAges, int, int);
-
 typed(filter, value, bool, stream_keep_even, (int value)) {
     return value % 2 == 0;
 }
@@ -33,14 +26,15 @@ typed(reduce, associative, long, stream_sum_age, (long left, long right)) {
     return left + right;
 }
 
-static bool stream_test_input(StreamInts *input) {
+static bool stream_test_input(list_t *input) {
     size_t index;
 
-    if (list_init(StreamInts, input, 6u) != TURBO_STL_OK)
+    if (list_init(input, 6u) != STL_OK)
         return false;
     for (index = 1u; index <= 6u; ++index) {
-        if (list_add(StreamInts, input, (int)index) != TURBO_STL_OK) {
-            list_destroy(StreamInts, input);
+        int value = (int)index;
+        if (list_push_back(input, &value, NULL) != STL_OK) {
+            list_destroy(input);
             return false;
         }
     }
@@ -48,9 +42,9 @@ static bool stream_test_input(StreamInts *input) {
 }
 
 suite("TurboSTL CFlow Stream") {
-    it("collects a Java-style fluent pipeline without naming generated collectors") {
-        StreamInts input = {0};
-        StreamLongList output = {0};
+    it("collects a fluent pipeline without generated container types") {
+        List(int, input);
+        List(long, output);
         turbostl_stream_t pipeline = {0};
         turbostl_collect_result result;
         long value = 0;
@@ -59,25 +53,25 @@ suite("TurboSTL CFlow Stream") {
         check_not_null(stream(&input, &pipeline));
         check_not_null(pipeline.filter(&pipeline, stream_keep_even)
                                    ->map(&pipeline, stream_square));
-        result = to_list(&pipeline, StreamLongList, &output, 3u);
+        result = to_list(&pipeline, &output, 3u);
         check_equal(result.status, CMETA_OK);
         check_null(result.error);
         check_true(result.ok);
         check_equal(result.count, (size_t)3u);
-        check_equal(list_pop_front(StreamLongList, &output, &value), TURBO_STL_OK);
+        check_equal(list_pop_front(&output, &value), STL_OK);
         check_equal(value, 4L);
-        check_equal(list_pop_front(StreamLongList, &output, &value), TURBO_STL_OK);
+        check_equal(list_pop_front(&output, &value), STL_OK);
         check_equal(value, 16L);
-        check_equal(list_pop_front(StreamLongList, &output, &value), TURBO_STL_OK);
+        check_equal(list_pop_front(&output, &value), STL_OK);
         check_equal(value, 36L);
 
-        list_destroy(StreamLongList, &output);
+        list_destroy(&output);
         turbostl_stream_destroy(&pipeline);
-        list_destroy(StreamInts, &input);
+        list_destroy(&input);
     }
 
     it("collects an owned generic array through the CFlow terminal") {
-        StreamInts input = {0};
+        List(int, input);
         turbostl_stream_t pipeline = {0};
         cflow_result output = {0};
 
@@ -93,11 +87,11 @@ suite("TurboSTL CFlow Stream") {
 
         cflow_result_destroy(&output);
         turbostl_stream_destroy(&pipeline);
-        list_destroy(StreamInts, &input);
+        list_destroy(&input);
     }
 
     it("rejects an array result that exceeds its explicit limit") {
-        StreamInts input = {0};
+        List(int, input);
         turbostl_stream_t pipeline = {0};
         cflow_result output = {0};
 
@@ -111,35 +105,38 @@ suite("TurboSTL CFlow Stream") {
         check_null(output.type);
 
         turbostl_stream_destroy(&pipeline);
-        list_destroy(StreamInts, &input);
+        list_destroy(&input);
     }
 
-    it("aborts collection when the borrowed source mutates") {
-        StreamInts input = {0};
-        StreamLongs output = {0};
-        const StreamLongs zero = {0};
+    it("aborts collection when the borrowed source mutates and preserves binding") {
+        List(int, input);
+        List(long, output);
         turbostl_stream_t pipeline = {0};
         turbostl_collect_result result;
+        int seven = 7;
 
         check_true(stream_test_input(&input));
         check_not_null(stream(&input, &pipeline));
         check_not_null(pipeline.map(&pipeline, stream_square));
-        check_equal(list_add(StreamInts, &input, 7), TURBO_STL_CAPACITY_EXCEEDED);
-        list_clear(StreamInts, &input);
-        result = collect(&pipeline, StreamLongs, &output, 6u);
+        check_equal(list_push_back(&input, &seven, NULL),
+                    STL_CAPACITY_EXCEEDED);
+        list_clear(&input);
+        result = collect(&pipeline, &output, 6u);
         check_false(result.ok);
         check_equal(result.error, "range owner mutated");
         check_equal(result.status, CMETA_CALLBACK_ERROR);
-        check_equal(memcmp(&output, &zero, sizeof(output)), 0);
+        check_null(output.impl);
+        check_true(output.element_type == CMETA_TYPEOF(long));
+        check_equal(list_init(&output, 6u), STL_OK);
+        list_destroy(&output);
 
         turbostl_stream_destroy(&pipeline);
-        list_destroy(StreamInts, &input);
+        list_destroy(&input);
     }
 
-    it("keeps the output zero when its collection limit is exceeded") {
-        StreamInts input = {0};
-        StreamLongs output = {0};
-        const StreamLongs zero = {0};
+    it("aborts output when its collection limit is exceeded and preserves binding") {
+        List(int, input);
+        List(long, output);
         turbostl_stream_t pipeline = {0};
         turbostl_collect_result result;
 
@@ -147,14 +144,17 @@ suite("TurboSTL CFlow Stream") {
         check_not_null(stream(&input, &pipeline));
         check_not_null(pipeline.filter(&pipeline, stream_keep_even)
                                    ->map(&pipeline, stream_square));
-        result = collect(&pipeline, StreamLongs, &output, 2u);
+        result = collect(&pipeline, &output, 2u);
         check_false(result.ok);
         check_equal(result.error, "observer rejected value");
         check_equal(result.status, CMETA_CAPACITY_EXCEEDED);
-        check_equal(memcmp(&output, &zero, sizeof(output)), 0);
+        check_null(output.impl);
+        check_true(output.element_type == CMETA_TYPEOF(long));
+        check_equal(list_init(&output, 2u), STL_OK);
+        list_destroy(&output);
 
         turbostl_stream_destroy(&pipeline);
-        list_destroy(StreamInts, &input);
+        list_destroy(&input);
     }
 
     it("streams reflected students and computes their class average age") {
@@ -163,34 +163,32 @@ suite("TurboSTL CFlow Stream") {
             {102, 7, 20},
             {103, 7, 22}
         };
-        StreamClassAges ages = {0};
+        Map(int, int, ages);
         turbostl_stream_t pipeline = {0};
         cflow_result total = {0};
         size_t student_count;
+        size_t index;
 
         check_equal(FieldCount(StreamStudent), (size_t)3u);
         check_not_null(FieldFind(StreamStudent, "age"));
-        check_equal(map_init(StreamClassAges, &ages, 3u), TURBO_STL_OK);
-        check_equal(map_put(StreamClassAges, &ages, students[0].student_id,
-                            students[0].age),
-                    TURBO_STL_OK);
-        check_equal(map_put(StreamClassAges, &ages, students[1].student_id,
-                            students[1].age),
-                    TURBO_STL_OK);
-        check_equal(map_put(StreamClassAges, &ages, students[2].student_id,
-                            students[2].age),
-                    TURBO_STL_OK);
-        student_count = map_size(StreamClassAges, &ages);
+        check_equal(map_init(&ages, 3u), STL_OK);
+        for (index = 0u; index < 3u; ++index) {
+            int key = students[index].student_id;
+            int value = students[index].age;
+            check_equal(map_put(&ages, &key, &value), STL_OK);
+        }
+        student_count = map_size(&ages);
         check_not_null(stream_values(&ages, &pipeline));
         check_not_null(pipeline.map(&pipeline, stream_age_as_long)
                                    ->reduce(&pipeline, stream_sum_age));
         check_true(to_array(&pipeline, 1u, &total));
         check_equal(total.count, (size_t)1u);
         check_equal(*(const long *)total.data, 60L);
-        check_equal((double)*(const long *)total.data / (double)student_count, 20.0);
+        check_equal((double)*(const long *)total.data / (double)student_count,
+                    20.0);
 
         cflow_result_destroy(&total);
         turbostl_stream_destroy(&pipeline);
-        map_destroy(StreamClassAges, &ages);
+        map_destroy(&ages);
     }
 }
