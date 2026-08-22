@@ -1,5 +1,5 @@
-#ifndef TURBO_STL_H
-#define TURBO_STL_H
+#ifndef TURBOSTL_H
+#define TURBOSTL_H
 
 #include <turbostl/bplus_tree.h>
 #include <turbostl/btree.h>
@@ -16,4 +16,7 @@
 #include <turbostl/stack.h>
 #include <turbostl/vec.h>
 
-#endif /* TURBO_STL_H */
+/* Temporary while compiled symbols and repository consumers migrate. */
+#include <turbostl/natural_bridge.h>
+
+#endif /* TURBOSTL_H */
