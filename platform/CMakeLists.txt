@@ -1,7 +1,8 @@
 set(TARGET_NAME turbo_platform)
 
 add_library(${TARGET_NAME} STATIC
-  src/clock.c)
+  src/clock.c
+  src/thread.c)
 
 cmake_config_target(
   ${TARGET_NAME}
