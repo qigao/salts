@@ -16,7 +16,4 @@
 #include <turbostl/stack.h>
 #include <turbostl/vec.h>
 
-/* Temporary while compiled symbols and repository consumers migrate. */
-#include <turbostl/natural_bridge.h>
-
 #endif /* TURBOSTL_H */
