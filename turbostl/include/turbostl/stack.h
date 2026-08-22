@@ -15,7 +15,7 @@ static inline stl_status stack_init(stack_t *stack,
                                     const cmeta_type_desc *type,
                                     size_t element_limit) {
   return stack == NULL ? STL_INVALID_ARGUMENT
-                       : vec_init(&stack->raw, type, element_limit);
+                       : vec_init_with_type(&stack->raw, type, element_limit);
 }
 static inline stl_status stack_init_bytes(stack_t *stack, size_t elem_size,
                                           size_t elem_align,
@@ -28,8 +28,8 @@ static inline stl_status stack_from_array(
     stack_t *stack, const void *elements, size_t count,
     const cmeta_type_desc *type, size_t element_limit) {
   return stack == NULL ? STL_INVALID_ARGUMENT
-                       : vec_from_array(&stack->raw, elements, count, type,
-                                        element_limit);
+                       : vec_from_array_with_type(&stack->raw, elements, count,
+                                                  type, element_limit);
 }
 static inline stl_status stack_from_array_bytes(
     stack_t *stack, const void *elements, size_t count, size_t elem_size,
