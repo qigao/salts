@@ -5,31 +5,32 @@ add_library(${TARGET_NAME}
   src/entry.c
   src/type_identity.c)
 
-cmake_config_target(${TARGET_NAME}
+cmake_config_target(
+  ${TARGET_NAME}
   ALIAS TurboUtils::CMeta
   FOLDER "cmeta"
   EXPORT_NAME CMeta)
 
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
+target_compile_options(${TARGET_NAME}
+  PUBLIC $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:preprocessor>)
+target_include_directories(
+  ${TARGET_NAME}
+  PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+         $<INSTALL_INTERFACE:include>)
 
-target_include_directories(${TARGET_NAME}
-  PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+install(
+  TARGETS ${TARGET_NAME}
+  EXPORT TurboUtilsTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-if(BUILD_SHARED_LIBS)
-  if(WIN32)
-    target_compile_definitions(${TARGET_NAME}
-      PRIVATE CMETA_BUILD_SHARED CMETA_EXPORTS
-      INTERFACE CMETA_BUILD_SHARED)
-  else()
-    set_target_properties(${TARGET_NAME} PROPERTIES
-      C_VISIBILITY_PRESET hidden
-      VISIBILITY_INLINES_HIDDEN YES)
-    target_compile_definitions(${TARGET_NAME} PRIVATE CMETA_BUILD_SHARED)
-  endif()
-endif()
+install(
+  DIRECTORY include/cmeta
+  DESTINATION include
+  FILES_MATCHING PATTERN "*.h")
 
-if(TURBO_UTILS_BUILD_TESTS)
+if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()
