@@ -1,5 +1,5 @@
-#ifndef TURBO_STL_META_H
-#define TURBO_STL_META_H
+#ifndef TURBOSTL_DETAIL_TYPED_FACADE_H
+#define TURBOSTL_DETAIL_TYPED_FACADE_H
 
 /* Internal typed-facade generation. Raw public headers never include this. */
 #include <cmeta/container.h>

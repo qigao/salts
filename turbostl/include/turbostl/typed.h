@@ -16,7 +16,7 @@
 #include <turbostl/multimap.h>
 #include <turbostl/btree.h>
 #include <turbostl/bplus_tree.h>
-#include <turbostl/meta.h>
+#include <turbostl/detail/typed_facade.h>
 
 /* Turbo generic-kind registrations. */
 #define CMETA_GENERIC_KIND_Vec CMETA_GENERIC_PROBE()
