@@ -3,20 +3,20 @@
 
 #include <cmeta/meta.h>
 
-#include <turbo/stl/vec.h>
-#include <turbo/stl/deque.h>
-#include <turbo/stl/list.h>
-#include <turbo/stl/stack.h>
-#include <turbo/stl/queue.h>
-#include <turbo/stl/heap.h>
-#include <turbo/stl/set.h>
-#include <turbo/stl/hash_set.h>
-#include <turbo/stl/hash_map.h>
-#include <turbo/stl/map.h>
-#include <turbo/stl/multimap.h>
-#include <turbo/stl/btree.h>
-#include <turbo/stl/bplus_tree.h>
-#include <turbo/stl/meta.h>
+#include <turbostl/vec.h>
+#include <turbostl/deque.h>
+#include <turbostl/list.h>
+#include <turbostl/stack.h>
+#include <turbostl/queue.h>
+#include <turbostl/heap.h>
+#include <turbostl/set.h>
+#include <turbostl/hash_set.h>
+#include <turbostl/hash_map.h>
+#include <turbostl/map.h>
+#include <turbostl/multimap.h>
+#include <turbostl/btree.h>
+#include <turbostl/bplus_tree.h>
+#include <turbostl/meta.h>
 
 /* Turbo generic-kind registrations. */
 #define CMETA_GENERIC_KIND_Vec CMETA_GENERIC_PROBE()

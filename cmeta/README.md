@@ -19,11 +19,8 @@ Enum(State,
 
 typed(Option, MaybeUser, User);
 typed(List, UserList, User);
-
-Containers(
-    (Vec, UserVec, User),
-    (HashMap, UserMap, int, User)
-);
+typed(Vec, UserVec, User);
+typed(HashMap, UserMap, int, User);
 ```
 
 For typed containers, declaration is complete instantiation. There is no public container `implement(...)` phase.
@@ -42,8 +39,6 @@ Replay(MyRows, SOME_MAPPER)
 ```
 
 `Schema` owns parenthesized-row unpacking. `Replay` applies a named schema to a mapper. `Enum`, `Struct`, and CFlow's operator metadata reuse this kernel internally.
-
-Application `Containers(...)` is intentionally *not* a named-schema alias in v50; it directly instantiates every row. This keeps framework replay machinery out of normal application code.
 
 ## Finite generic routing
 
@@ -78,11 +73,9 @@ The raw library remains responsible for the concrete algorithm. CMeta generates 
 Multiple instantiations can be written without an application macro definition:
 
 ```c
-Containers(
-    (List, UserList, User),
-    (Vec, UserVec, User),
-    (HashMap, UsersById, int, User)
-);
+typed(List, UserList, User);
+typed(Vec, UserVec, User);
+typed(HashMap, UsersById, int, User);
 ```
 
 ## Multi-TU model

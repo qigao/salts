@@ -21,17 +21,17 @@
 - Every `init/from` receives `max_elements`; zero means a valid empty container that cannot grow, never unbounded growth.
 - Every successful mutation increments generation exactly once; rejected operations leave contents, size, and generation unchanged.
 - Every byte count and aligned offset uses checked arithmetic. Distinguish capacity exceeded from OOM.
-- Public headers live under `<turbo/stl/...>`; do not install flat compatibility headers or old `TURBO_*_DEFINE` macros.
+- Public headers live under `<turbostl/...>`; do not install flat compatibility headers or old `TURBO_*_DEFINE` macros.
 - Use TDD for every task: add a behavioral failure, run RED for the expected reason, implement minimal behavior, run GREEN, then refactor.
 
 ## File Map
 
 - `turbostl/CMakeLists.txt`: defines/export-installs `TurboUtils::STL`, tests, examples, and benchmarks.
-- `turbostl/include/turbo/stl/status.h`: independent stable `turbo_stl_status` values.
-- `turbostl/include/turbo/stl/vec.h`, `deque.h`, `list.h`, and `heap.h`: sequence handles and operations.
-- `turbostl/include/turbo/stl/map.h`, `set.h`, and `multimap.h`: ordered handles and iterators.
-- `turbostl/include/turbo/stl/hash_map.h` and `hash_set.h`: unordered handles and iterators.
-- `turbostl/include/turbo/stl/typed.h` and `meta.h`: typed declaration surface and schema replay.
+- `turbostl/include/turbostl/status.h`: independent stable `turbo_stl_status` values.
+- `turbostl/include/turbostl/vec.h`, `deque.h`, `list.h`, and `heap.h`: sequence handles and operations.
+- `turbostl/include/turbostl/map.h`, `set.h`, and `multimap.h`: ordered handles and iterators.
+- `turbostl/include/turbostl/hash_map.h` and `hash_set.h`: unordered handles and iterators.
+- `turbostl/include/turbostl/typed.h` and `meta.h`: typed declaration surface and schema replay.
 - `turbostl/src/value_internal.h` and `value_internal.c`: checked layout, CMeta lifecycle helpers, and production allocation wrappers.
 - `turbostl/src/list.c`: doubly linked list implementation.
 - `turbostl/src/rb_tree_internal.h` and `rb_tree_internal.c`: private rotations, fixups, bounds, and invariant validation.
@@ -45,9 +45,8 @@
 
 **Files:**
 - Create: `turbostl/CMakeLists.txt`
-- Create: `turbostl/include/turbo/stl/export.h`
-- Create: `turbostl/include/turbo/stl/status.h`
-- Create: `turbostl/include/turbo/stl.h`
+- Create: `turbostl/include/turbostl/status.h`
+- Create: `turbostl/turbostl.h`
 - Create: `turbostl/src/value_internal.h`
 - Create: `turbostl/src/value_internal.c`
 - Create: `turbostl/tests/CMakeLists.txt`
@@ -64,7 +63,7 @@
 - [ ] **Step 1: Write C/C++ header RED tests**
 
 ```c
-#include <turbo/stl.h>
+#include <turbostl.h>
 #include "tinytest.h"
 suite("TurboSTL public header") {
     it("exposes distinct raw handles") {
@@ -122,7 +121,7 @@ cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add CMakeLists.txt cmake/TurboUtilsConfig.cmake.in turbostl/CMakeLists.txt turbostl/include/turbo/stl.h turbostl/include/turbo/stl turbostl/src/value_internal.* turbostl/tests
+git add CMakeLists.txt cmake/TurboUtilsConfig.cmake.in turbostl/CMakeLists.txt turbostl/turbostl.h turbostl/include/turbostl turbostl/src/value_internal.* turbostl/tests
 git commit -m "build(turbostl): establish independent container target"
 ```
 
@@ -131,11 +130,11 @@ git commit -m "build(turbostl): establish independent container target"
 ### Task 2: Migrate Vec, Deque, Stack, Queue, and Heap without changing meanings
 
 **Files:**
-- Create: `turbostl/include/turbo/stl/vec.h`
-- Create: `turbostl/include/turbo/stl/deque.h`
-- Create: `turbostl/include/turbo/stl/stack.h`
-- Create: `turbostl/include/turbo/stl/queue.h`
-- Create: `turbostl/include/turbo/stl/heap.h`
+- Create: `turbostl/include/turbostl/vec.h`
+- Create: `turbostl/include/turbostl/deque.h`
+- Create: `turbostl/include/turbostl/stack.h`
+- Create: `turbostl/include/turbostl/queue.h`
+- Create: `turbostl/include/turbostl/heap.h`
 - Modify: `turbostl/src/turbo_vec.c`
 - Modify: `turbostl/src/turbo_deque.c`
 - Modify: `turbostl/src/turbo_heap.c`
@@ -186,7 +185,7 @@ Reserve before copy; mutate state/generation only after success. Stack exposes p
 
 ```powershell
 cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_sequence_test turbostl_ownership_test turbostl_header_cpp_test && ctest --preset win-release-user -R ""^turbostl_(sequence|ownership|header)"" --output-on-failure"
-git add turbostl/include/turbo/stl/vec.h turbostl/include/turbo/stl/deque.h turbostl/include/turbo/stl/stack.h turbostl/include/turbo/stl/queue.h turbostl/include/turbo/stl/heap.h turbostl/src/turbo_vec.c turbostl/src/turbo_deque.c turbostl/src/turbo_heap.c turbostl/tests
+git add turbostl/include/turbostl/vec.h turbostl/include/turbostl/deque.h turbostl/include/turbostl/stack.h turbostl/include/turbostl/queue.h turbostl/include/turbostl/heap.h turbostl/src/turbo_vec.c turbostl/src/turbo_deque.c turbostl/src/turbo_heap.c turbostl/tests
 git commit -m "feat(turbostl): add bounded trait-aware sequences"
 ```
 
@@ -195,7 +194,7 @@ git commit -m "feat(turbostl): add bounded trait-aware sequences"
 ### Task 3: Replace the deque alias with a true doubly linked List
 
 **Files:**
-- Create: `turbostl/include/turbo/stl/list.h`
+- Create: `turbostl/include/turbostl/list.h`
 - Create: `turbostl/src/list.c`
 - Create: `turbostl/tests/turbostl_list_test.c`
 - Create: `turbostl/tests/compile_fail/list_has_no_capacity.c`
@@ -258,7 +257,7 @@ Cover empty, singleton, head/tail/middle operations, reverse iteration, wrong ow
 
 ```powershell
 cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_list_test turbostl_ownership_test && ctest --preset win-release-user -R ""^turbostl_(list|ownership)_test$"" --output-on-failure"
-git add turbostl/include/turbo/stl/list.h turbostl/src/list.c turbostl/tests
+git add turbostl/include/turbostl/list.h turbostl/src/list.c turbostl/tests
 git commit -m "feat(turbostl): implement linked list semantics"
 ```
 
@@ -269,8 +268,8 @@ git commit -m "feat(turbostl): implement linked list semantics"
 **Files:**
 - Create: `turbostl/src/hash_table_internal.h`
 - Create: `turbostl/src/hash_table_internal.c`
-- Create: `turbostl/include/turbo/stl/hash_map.h`
-- Create: `turbostl/include/turbo/stl/hash_set.h`
+- Create: `turbostl/include/turbostl/hash_map.h`
+- Create: `turbostl/include/turbostl/hash_set.h`
 - Move: `turbostl/src/turbo_hash_map.c` to `turbostl/src/hash_map.c`
 - Move: `turbostl/src/turbo_set.c` to `turbostl/src/hash_set.c`
 - Create: `turbostl/tests/turbostl_hash_test.c`
@@ -336,7 +335,7 @@ Use no value region/dummy value. Duplicate add succeeds without growth. Expose a
 
 ```powershell
 cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_hash_test turbostl_ownership_test && ctest --preset win-release-user -R ""^turbostl_(hash|ownership)_test$"" --output-on-failure"
-git add turbostl/src/hash_table_internal.h turbostl/src/hash_table_internal.c turbostl/src/hash_map.c turbostl/src/hash_set.c turbostl/include/turbo/stl/hash_map.h turbostl/include/turbo/stl/hash_set.h turbostl/tests
+git add turbostl/src/hash_table_internal.h turbostl/src/hash_table_internal.c turbostl/src/hash_map.c turbostl/src/hash_set.c turbostl/include/turbostl/hash_map.h turbostl/include/turbostl/hash_set.h turbostl/tests
 git commit -m "feat(turbostl): isolate hash table containers"
 ```
 
@@ -347,8 +346,8 @@ git commit -m "feat(turbostl): isolate hash table containers"
 **Files:**
 - Create: `turbostl/src/rb_tree_internal.h`
 - Create: `turbostl/src/rb_tree_internal.c`
-- Create: `turbostl/include/turbo/stl/map.h`
-- Create: `turbostl/include/turbo/stl/set.h`
+- Create: `turbostl/include/turbostl/map.h`
+- Create: `turbostl/include/turbostl/set.h`
 - Create: `turbostl/src/map.c`
 - Create: `turbostl/src/set.c`
 - Create: `turbostl/tests/turbostl_ordered_test.c`
@@ -418,7 +417,7 @@ Cover all rotation shapes, red/black leaf, one/two-child/root deletion, replacem
 
 ```powershell
 cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_ordered_test turbostl_ownership_test && ctest --preset win-release-user -R ""^turbostl_(ordered|ownership)_test$"" --output-on-failure"
-git add turbostl/src/rb_tree_internal.h turbostl/src/rb_tree_internal.c turbostl/src/map.c turbostl/src/set.c turbostl/include/turbo/stl/map.h turbostl/include/turbo/stl/set.h turbostl/tests
+git add turbostl/src/rb_tree_internal.h turbostl/src/rb_tree_internal.c turbostl/src/map.c turbostl/src/set.c turbostl/include/turbostl/map.h turbostl/include/turbostl/set.h turbostl/tests
 git commit -m "feat(turbostl): add red black tree map and set"
 ```
 
@@ -427,7 +426,7 @@ git commit -m "feat(turbostl): add red black tree map and set"
 ### Task 6: Add ordered MultiMap without hidden vectors
 
 **Files:**
-- Create: `turbostl/include/turbo/stl/multimap.h`
+- Create: `turbostl/include/turbostl/multimap.h`
 - Create: `turbostl/src/multimap.c`
 - Modify: `turbostl/src/rb_tree_internal.h`
 - Modify: `turbostl/src/rb_tree_internal.c`
@@ -472,7 +471,7 @@ Run ordered/ownership tests for equal-range order, head/middle/tail erase, erase
 
 ```powershell
 cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_ordered_test turbostl_ownership_test && ctest --preset win-release-user -R ""^turbostl_(ordered|ownership)_test$"" --output-on-failure"
-git add turbostl/include/turbo/stl/multimap.h turbostl/src/multimap.c turbostl/src/rb_tree_internal.h turbostl/src/rb_tree_internal.c turbostl/tests/turbostl_ordered_test.c
+git add turbostl/include/turbostl/multimap.h turbostl/src/multimap.c turbostl/src/rb_tree_internal.h turbostl/src/rb_tree_internal.c turbostl/tests/turbostl_ordered_test.c
 git commit -m "feat(turbostl): add ordered multimap semantics"
 ```
 
@@ -481,12 +480,12 @@ git commit -m "feat(turbostl): add ordered multimap semantics"
 ### Task 7: Preserve BTree and BPlusTree as separate bounded algorithms
 
 **Files:**
-- Create: `turbostl/include/turbo/stl/btree.h`
-- Create: `turbostl/include/turbo/stl/bplus_tree.h`
+- Create: `turbostl/include/turbostl/btree.h`
+- Create: `turbostl/include/turbostl/bplus_tree.h`
 - Move: `turbostl/src/turbo_btree.c` to `turbostl/src/btree.c`
 - Create: `turbostl/src/bplus_tree.c`
 - Create: `turbostl/tests/turbostl_multiway_tree_test.c`
-- Modify: `turbostl/include/turbo/stl.h`
+- Modify: `turbostl/turbostl.h`
 - Modify: `turbostl/CMakeLists.txt`
 
 **Interfaces:**
@@ -517,7 +516,7 @@ Cover `max_elements` 0/1/exact/max+1, `SIZE_MAX` arithmetic, split allocation fa
 
 ```powershell
 cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_multiway_tree_test turbostl_ownership_test turbostl_header_cpp_test && ctest --preset win-release-user -R ""^turbostl_(multiway_tree|ownership|header)_test$"" --output-on-failure"
-git add turbostl/include/turbo/stl/btree.h turbostl/include/turbo/stl/bplus_tree.h turbostl/include/turbo/stl.h turbostl/src/btree.c turbostl/src/bplus_tree.c turbostl/tests/turbostl_multiway_tree_test.c turbostl/CMakeLists.txt
+git add turbostl/include/turbostl/btree.h turbostl/include/turbostl/bplus_tree.h turbostl/turbostl.h turbostl/src/btree.c turbostl/src/bplus_tree.c turbostl/tests/turbostl_multiway_tree_test.c turbostl/CMakeLists.txt
 git commit -m "refactor(turbostl): preserve bounded multiway trees"
 ```
 
@@ -526,9 +525,9 @@ git commit -m "refactor(turbostl): preserve bounded multiway trees"
 ### Task 8: Generate typed facades, semantic ranges, and collectors from one schema
 
 **Files:**
-- Create: `turbostl/include/turbo/stl/meta.h`
-- Create: `turbostl/include/turbo/stl/typed.h`
-- Modify: `turbostl/include/turbo/stl/*.h`
+- Create: `turbostl/include/turbostl/meta.h`
+- Create: `turbostl/include/turbostl/typed.h`
+- Modify: `turbostl/include/turbostl/*.h`
 - Modify: `cmeta/include/cmeta/container.h`
 - Create: `turbostl/tests/turbostl_typed_test.c`
 - Modify: `turbostl/tests/turbostl_list_test.c`
@@ -537,17 +536,19 @@ git commit -m "refactor(turbostl): preserve bounded multiway trees"
 
 **Interfaces:**
 - Consumes: Tasks 2-7 raw APIs and prerequisite CMeta cursor/collector protocols.
-- Produces: `typed(...)`, `Containers(...)`, per-kind methods, correct Range flags/cursors, transactional collectors.
+- Produces: `typed(...)`, per-kind methods, correct Range flags/cursors, transactional collectors.
 
 - [ ] **Step 1: Write typed RED tests**
 
 ```c
-Containers(
-    (List, IntList, int), (Map, IntMap, int, int),
-    (Set, IntSet, int), (MultiMap, IntMultiMap, int, int),
-    (HashMap, IntHashMap, int, int), (HashSet, IntHashSet, int),
-    (BTree, IntBTree, int, int), (BPlusTree, IntBPlusTree, int, int)
-);
+typed(List, IntList, int);
+typed(Map, IntMap, int, int);
+typed(Set, IntSet, int);
+typed(MultiMap, IntMultiMap, int, int);
+typed(HashMap, IntHashMap, int, int);
+typed(HashSet, IntHashSet, int);
+typed(BTree, IntBTree, int, int);
+typed(BPlusTree, IntBPlusTree, int, int);
 it("publishes sorted flags only for ordered containers") {
     IntMap ordered = {0}; IntHashMap hashed = {0};
     check_equal(IntMap_init(&ordered, 4U), TURBO_STL_OK);
@@ -590,7 +591,7 @@ Require diagnostics for Map missing COMPARE, HashMap missing HASH/EQUAL, owning 
 
 ```powershell
 cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target turbostl_typed_test turbostl_list_test turbostl_ordered_test turbostl_hash_test turbostl_header_cpp_test && ctest --preset win-release-user -R ""^turbostl_"" --output-on-failure"
-git add cmeta/include/cmeta/container.h turbostl/include/turbo/stl turbostl/tests
+git add cmeta/include/cmeta/container.h turbostl/include/turbostl turbostl/tests
 git commit -m "feat(turbostl): generate semantic typed containers"
 ```
 
@@ -618,7 +619,7 @@ git commit -m "feat(turbostl): generate semantic typed containers"
 
 - [ ] **Step 1: Create dependency RED**
 
-Change one automaton include to `<turbo/stl/vec.h>` without linkage, fresh-configure, build `turbo_utils`; expect include/link failure proving dependency is explicit.
+Change one automaton include to `<turbostl/vec.h>` without linkage, fresh-configure, build `turbo_utils`; expect include/link failure proving dependency is explicit.
 
 - [ ] **Step 2: Link privately and map status**
 
@@ -682,7 +683,7 @@ git commit -m "refactor(turbostl): enforce standard container semantics"
 
 - [ ] **Step 1: Write install consumer**
 
-Declare typed List/Map/HashMap; initialize finite limits; verify List order, Map sorted iteration, HashMap lookup; destroy all; include only `<turbo/stl.h>` and link only `TurboUtils::STL`.
+Declare typed List/Map/HashMap; initialize finite limits; verify List order, Map sorted iteration, HashMap lookup; destroy all; include only `<turbostl.h>` and link only `TurboUtils::STL`.
 
 - [ ] **Step 2: Run Release verification**
 

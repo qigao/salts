@@ -2,8 +2,7 @@
 #define TURBO_BTREE_H
 
 #include <cmeta/range.h>
-#include <turbo/stl/export.h>
-#include <turbo/stl/status.h>
+#include <turbostl/status.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -65,64 +64,64 @@ typedef struct {
  * Search, put, and remove are O(log n) for fixed min_degree; from-arrays is
  * O(rows log live_entries). Indexed key/value lookup is O(n), while the
  * ordered Range cursor follows the derived entry links in O(n) total. */
-TURBO_STL_API turbo_stl_status turbo_btree_init(
+turbo_stl_status turbo_btree_init(
     turbo_btree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit);
-TURBO_STL_API turbo_stl_status turbo_btree_init_with_order(
+turbo_stl_status turbo_btree_init_with_order(
     turbo_btree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t min_degree,
     size_t entry_limit);
-TURBO_STL_API turbo_stl_status turbo_btree_init_bytes(
+turbo_stl_status turbo_btree_init_bytes(
     turbo_btree_t *tree, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t entry_limit,
     turbo_btree_compare_fn compare, void *compare_ctx);
-TURBO_STL_API turbo_stl_status turbo_btree_init_bytes_with_order(
+turbo_stl_status turbo_btree_init_bytes_with_order(
     turbo_btree_t *tree, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t min_degree,
     size_t entry_limit, turbo_btree_compare_fn compare, void *compare_ctx);
 
-TURBO_STL_API turbo_stl_status turbo_btree_from_arrays(
+turbo_stl_status turbo_btree_from_arrays(
     turbo_btree_t *tree, const void *keys, const void *values, size_t count,
     const cmeta_type_desc *key_type, const cmeta_type_desc *value_type,
     size_t entry_limit);
-TURBO_STL_API turbo_stl_status turbo_btree_from_arrays_bytes(
+turbo_stl_status turbo_btree_from_arrays_bytes(
     turbo_btree_t *tree, const void *keys, const void *values, size_t count,
     size_t key_size, size_t key_align, size_t value_size, size_t value_align,
     size_t entry_limit, turbo_btree_compare_fn compare, void *compare_ctx);
 
-TURBO_STL_API void turbo_btree_destroy(turbo_btree_t *tree);
-TURBO_STL_API void turbo_btree_clear(turbo_btree_t *tree);
-TURBO_STL_API turbo_stl_status turbo_btree_reserve(turbo_btree_t *tree,
+void turbo_btree_destroy(turbo_btree_t *tree);
+void turbo_btree_clear(turbo_btree_t *tree);
+turbo_stl_status turbo_btree_reserve(turbo_btree_t *tree,
                                                     size_t min_capacity);
-TURBO_STL_API turbo_stl_status turbo_btree_put(turbo_btree_t *tree,
+turbo_stl_status turbo_btree_put(turbo_btree_t *tree,
                                                 const void *key,
                                                 const void *value);
 /* Returned pointers are borrowed and invalidate after any successful mutation,
  * clear, or destroy. */
-TURBO_STL_API void *turbo_btree_get(turbo_btree_t *tree, const void *key);
-TURBO_STL_API const void *turbo_btree_get_const(const turbo_btree_t *tree,
+void *turbo_btree_get(turbo_btree_t *tree, const void *key);
+const void *turbo_btree_get_const(const turbo_btree_t *tree,
                                                 const void *key);
-TURBO_STL_API bool turbo_btree_contains(const turbo_btree_t *tree,
+bool turbo_btree_contains(const turbo_btree_t *tree,
                                         const void *key);
 /* out_value is aligned uninitialized storage. Success transfers the removed
  * value there; NULL destroys it. Failure leaves tree and output unchanged. */
-TURBO_STL_API turbo_stl_status turbo_btree_remove(turbo_btree_t *tree,
+turbo_stl_status turbo_btree_remove(turbo_btree_t *tree,
                                                    const void *key,
                                                    void *out_value);
-TURBO_STL_API size_t turbo_btree_size(const turbo_btree_t *tree);
-TURBO_STL_API size_t turbo_btree_capacity(const turbo_btree_t *tree);
-TURBO_STL_API size_t turbo_btree_entry_limit(const turbo_btree_t *tree);
-TURBO_STL_API uint64_t turbo_btree_generation(const turbo_btree_t *tree);
-TURBO_STL_API bool turbo_btree_empty(const turbo_btree_t *tree);
-TURBO_STL_API void *turbo_btree_key_at(turbo_btree_t *tree, size_t index);
-TURBO_STL_API const void *turbo_btree_key_at_const(const turbo_btree_t *tree,
+size_t turbo_btree_size(const turbo_btree_t *tree);
+size_t turbo_btree_capacity(const turbo_btree_t *tree);
+size_t turbo_btree_entry_limit(const turbo_btree_t *tree);
+uint64_t turbo_btree_generation(const turbo_btree_t *tree);
+bool turbo_btree_empty(const turbo_btree_t *tree);
+void *turbo_btree_key_at(turbo_btree_t *tree, size_t index);
+const void *turbo_btree_key_at_const(const turbo_btree_t *tree,
                                                    size_t index);
-TURBO_STL_API void *turbo_btree_value_at(turbo_btree_t *tree, size_t index);
-TURBO_STL_API const void *turbo_btree_value_at_const(const turbo_btree_t *tree,
+void *turbo_btree_value_at(turbo_btree_t *tree, size_t index);
+const void *turbo_btree_value_at_const(const turbo_btree_t *tree,
                                                      size_t index);
 /* cursor is zero-initialized before first use. The returned key/value pointers
  * are borrowed until the next successful mutation. */
-TURBO_STL_API bool turbo_btree_range_next(const turbo_btree_t *tree,
+bool turbo_btree_range_next(const turbo_btree_t *tree,
                                           cmeta_range_cursor *cursor,
                                           const void **out_key,
                                           const void **out_value);

@@ -63,9 +63,33 @@ typedef struct run_impl {
     bool cancel_requested;
     bool cancelled;
     bool terminated;
+    bool close_requested;
+    bool external_closer;
+    bool destroying;
     bool closed;
     const char *error;
 } run_impl;
+
+static _Thread_local run_impl *active_pump_run;
+static _Thread_local const cflow_run *active_destroy_owner;
+static once_flag run_lifecycle_once = ONCE_FLAG_INIT;
+static mtx_t run_lifecycle_lock;
+static cnd_t run_lifecycle_cv;
+static bool run_lifecycle_ready;
+
+static void run_lifecycle_init(void) {
+    if (mtx_init(&run_lifecycle_lock, mtx_plain) != thrd_success) return;
+    if (cnd_init(&run_lifecycle_cv) != thrd_success) {
+        mtx_destroy(&run_lifecycle_lock);
+        return;
+    }
+    run_lifecycle_ready = true;
+}
+
+static bool run_lifecycle_ensure(void) {
+    call_once(&run_lifecycle_once, run_lifecycle_init);
+    return run_lifecycle_ready;
+}
 
 static run_impl *impl_of(const cflow_run *run) {
     return run ? (run_impl *)run->impl : NULL;
@@ -533,9 +557,51 @@ static bool process_unit(run_impl *r) {
     return process_source_step(r);
 }
 
+static void run_destroy_claimed(run_impl *r) {
+    cflow_run *owner;
+    const cflow_run *previous_destroy_owner;
+    if (!r) return;
+    owner = r->owner;
+    previous_destroy_owner = active_destroy_owner;
+    active_destroy_owner = owner;
+    if (cflow_source_valid(&r->source)) cflow_source_destroy(&r->source);
+    continuations_clear(r);
+    reducers_clear(r);
+    free(r->source_slot);
+    if (mtx_lock(&r->lock) == thrd_success) {
+        r->closed = true;
+        (void)mtx_unlock(&r->lock);
+    }
+    cnd_destroy(&r->task_cv);
+    mtx_destroy(&r->lock);
+    active_destroy_owner = previous_destroy_owner;
+
+    (void)mtx_lock(&run_lifecycle_lock);
+    if (owner && owner->impl == r) owner->impl = NULL;
+    free(r);
+    cnd_broadcast(&run_lifecycle_cv);
+    (void)mtx_unlock(&run_lifecycle_lock);
+}
+
+static bool run_claim_pump_destroy(run_impl *r) {
+    bool claimed = false;
+    if (!r || mtx_lock(&run_lifecycle_lock) != thrd_success) return false;
+    if (r->owner && r->owner->impl == r && !r->external_closer && !r->destroying) {
+        r->destroying = true;
+        claimed = true;
+    }
+    (void)mtx_unlock(&run_lifecycle_lock);
+    return claimed;
+}
+
 static void pump_task(void *user) {
     run_impl *r = (run_impl *)user;
+    run_impl *previous_active_run;
+    bool destroy = false;
+
     if (!r) return;
+    previous_active_run = active_pump_run;
+    active_pump_run = r;
     if (mtx_lock(&r->lock) == thrd_success) {
         r->task_scheduled = false;
         r->pump_running = true;
@@ -573,9 +639,14 @@ static void pump_task(void *user) {
 
     if (mtx_lock(&r->lock) == thrd_success) {
         if (r->task_refs) --r->task_refs;
-        if (r->task_refs == 0) cnd_broadcast(&r->task_cv);
+        if (r->task_refs == 0) {
+            destroy = r->close_requested;
+            cnd_broadcast(&r->task_cv);
+        }
         (void)mtx_unlock(&r->lock);
     }
+    active_pump_run = previous_active_run;
+    if (destroy && run_claim_pump_destroy(r)) run_destroy_claimed(r);
 }
 
 static bool schedule_pump(run_impl *r) {
@@ -611,6 +682,7 @@ bool cflow_run_open_subgraph(cflow_run *run,
     const cflow_subgraph *subgraph = cflow_graph_subgraph(graph, subgraph_id);
     if (!cflow_graph_is_normalized(graph)) return false;
     if (!run || !graph || !subgraph || !scheduler || !source || !cflow_source_valid(source) || !cflow_source_output_type(source)) return false;
+    if (!run_lifecycle_ensure()) return false;
     if (!cmeta_type_equal(cflow_subgraph_source_type(graph, subgraph_id), cflow_source_output_type(source))) return false;
     const char *validation_error = NULL;
     if (!cflow_graph_validate(graph, &validation_error)) return false;
@@ -679,10 +751,37 @@ void cflow_run_cancel(cflow_run *run) {
 }
 
 void cflow_run_close(cflow_run *run) {
-    run_impl *r = impl_of(run);
-    if (!r) return;
-    cflow_run_cancel(run);
-    cflow_source_bind_terminal_waker(&r->source, (cflow_waker){0});
+    run_impl *r;
+    bool initiate_close = false;
+
+    if (!run || active_destroy_owner == run || !run_lifecycle_ensure()) return;
+    if (mtx_lock(&run_lifecycle_lock) != thrd_success) return;
+    for (;;) {
+        r = (run_impl *)run->impl;
+        if (!r) {
+            (void)mtx_unlock(&run_lifecycle_lock);
+            return;
+        }
+        if (active_pump_run == r) break;
+        if (!r->external_closer && !r->destroying) {
+            r->external_closer = true;
+            break;
+        }
+        (void)cnd_wait(&run_lifecycle_cv, &run_lifecycle_lock);
+    }
+    (void)mtx_unlock(&run_lifecycle_lock);
+
+    if (mtx_lock(&r->lock) == thrd_success) {
+        initiate_close = !r->close_requested;
+        r->close_requested = true;
+        (void)mtx_unlock(&r->lock);
+    }
+    if (initiate_close) {
+        cflow_run_cancel(run);
+        cflow_source_bind_terminal_waker(&r->source, (cflow_waker){0});
+    }
+
+    if (active_pump_run == r) return;
 
     unsigned caps = cflow_scheduler_capabilities(r->scheduler);
     for (;;) {
@@ -700,12 +799,10 @@ void cflow_run_close(cflow_run *run) {
         (void)cflow_scheduler_run_until_idle(r->scheduler, 0);
     }
 
-    if (cflow_source_valid(&r->source)) cflow_source_destroy(&r->source);
-    continuations_clear(r); reducers_clear(r); free(r->source_slot);
-    if (mtx_lock(&r->lock) == thrd_success) { r->closed = true; (void)mtx_unlock(&r->lock); }
-    cnd_destroy(&r->task_cv);
-    mtx_destroy(&r->lock);
-    free(r); run->impl = NULL;
+    if (mtx_lock(&run_lifecycle_lock) != thrd_success) return;
+    if (run->impl == r && !r->destroying) r->destroying = true;
+    (void)mtx_unlock(&run_lifecycle_lock);
+    run_destroy_claimed(r);
 }
 
 bool cflow_run_is_done(const cflow_run *run) {

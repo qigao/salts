@@ -2,6 +2,7 @@
 #include <cflow/lower.h>
 #include <cflow/plan.h>
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -84,10 +85,28 @@ bool cflow_graph_structural_equal(const cflow_graph *a, const cflow_graph *b) {
 }
 
 bool cflow_result_equal(const cflow_result *a, const cflow_result *b) {
+    const cmeta_type_traits *traits;
+    const unsigned char *left;
+    const unsigned char *right;
+
     if (!a || !b || a->count != b->count || !cmeta_type_equal(a->type, b->type))
         return false;
     if (a->count == 0u) return true;
-    if (!a->type || !a->data || !b->data) return false;
+    if (!a->type || a->type->size == 0u || !a->data || !b->data ||
+        a->count > SIZE_MAX / a->type->size)
+        return false;
+
+    traits = a->type->traits;
+    left = (const unsigned char *)a->data;
+    right = (const unsigned char *)b->data;
+    if (traits && (traits->flags & CMETA_TRAIT_EQUAL) != 0u && traits->equal) {
+        for (size_t i = 0; i < a->count; ++i) {
+            if (!traits->equal(left + i * a->type->size,
+                               right + i * a->type->size))
+                return false;
+        }
+        return true;
+    }
     return memcmp(a->data, b->data, a->count * a->type->size) == 0;
 }
 

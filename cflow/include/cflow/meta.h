@@ -14,6 +14,12 @@ extern "C" {
 Replay(CFlowOperators, CFLOW_OP_ROW)
 #undef CFLOW_OP_ROW
 
+#define CFLOW_OP_CALLABLE_I(op) cflow_##op##_callable
+#define CFLOW_OP_CALLABLE(op) CFLOW_OP_CALLABLE_I(op)
+#define typed_decl(op, name) extern const CFLOW_OP_CALLABLE(op) name
+
+#ifndef __cplusplus
+
 #define CFLOW_ASSOC_ID(id, ignored) , CMETA_FN_TYPE(id): CMETA_MAKER(id)
 #define CFLOW_WRAP_OP_TYPED(op, fn) \
     _Generic(&(fn), default: cmeta_unsupported_signature \
@@ -23,9 +29,6 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
 #define CFLOW_SIG_OF_OP(op, expr) \
     _Generic((expr), default: CMETA_SIG_INVALID \
         CMETA_PP_FOR_EACH_A(CFLOW_SIG_ASSOC_ID, ~, CFLOW_OP_SIGNATURE_LIST(op)))
-
-#define CFLOW_OP_CALLABLE_I(op) cflow_##op##_callable
-#define CFLOW_OP_CALLABLE(op) CFLOW_OP_CALLABLE_I(op)
 
 /* Canonical named callable.  The public identifier is a value, not a provider
  * function, so s->map(s, square) passes a true first-class callable. */
@@ -57,7 +60,6 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
 #undef CMETA_TYPED_FALLBACK
 #define CMETA_TYPED_FALLBACK(op, ...) CFLOW_TYPED(op, __VA_ARGS__)
 
-#define typed_decl(op, name) extern const CFLOW_OP_CALLABLE(op) name
 #define typed_call(name) cmeta_typed_##name
 
 /* Capturing C-meta lambda with one logical callback argument and one by-value
@@ -230,6 +232,8 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
 #define bindable(...) cmeta_bindable(__VA_ARGS__)
 #define bind(name, value) cmeta_bind(name, value)
 #endif
+
+#endif /* !__cplusplus */
 
 
 #ifdef __cplusplus

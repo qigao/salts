@@ -7,6 +7,10 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct cflow_verify_report {
     size_t input_count;
     size_t output_count;
@@ -38,5 +42,9 @@ bool cflow_verify_pipeline(const cflow_graph *surface,
                            const void *inputs,
                            size_t input_count,
                            cflow_verify_report *report);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

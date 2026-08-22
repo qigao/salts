@@ -412,6 +412,21 @@ suite("CMeta core") {
         check_equal(meta->methods[2].arity, 0u);
     }
 
+    it("rejects an interface whose required vtable method is missing") {
+        const cmeta_test_counter_vtable incomplete_vtable = {
+            .implementation = "incomplete_counter",
+            .capabilities = 0u,
+            .add = cmeta_test_basic_add,
+            .value = cmeta_test_basic_value,
+            .reset = NULL
+        };
+        cmeta_test_counter_state state = {4};
+        cmeta_test_counter counter =
+            cmeta_test_counter_bind(&state, &incomplete_vtable);
+
+        check_false(cmeta_test_counter_valid(&counter));
+    }
+
     it("exposes builtin type metadata through a bounded registry") {
         const cmeta_type_desc *int_type = cmeta_type_find("int");
         cmeta_type_desc equivalent;
@@ -620,6 +635,31 @@ suite("CMeta core") {
         check_true(cmeta_callable_contract_valid(cmeta_test_add));
         check_true(cmeta_properties_include(
             cmeta_test_add.meta.properties, CMETA_PROP_ASSOCIATIVE));
+    }
+
+    it("rejects a raw callable whose active target is missing") {
+        cmeta_callable bound;
+        cmeta_fn missing_target;
+
+        check_true(cmeta_callable_bind(cmeta_test_increment, &bound));
+        missing_target = bound.meta;
+        memset(&missing_target.call, 0, sizeof(missing_target.call));
+
+        check_false(cmeta_fn_contract_valid(missing_target));
+    }
+
+    it("rejects null argument slots without invoking the target") {
+        cmeta_callable unary;
+        cmeta_callable binary;
+        int left = 7;
+        int output = 0;
+        const void *unary_args[] = {NULL};
+        const void *binary_args[] = {&left, NULL};
+
+        check_true(cmeta_callable_bind(cmeta_test_increment, &unary));
+        check_true(cmeta_callable_bind(cmeta_test_add, &binary));
+        check_false(cmeta_fn_invoke(unary.meta, &output, unary_args));
+        check_false(cmeta_fn_invoke(binary.meta, &output, binary_args));
     }
 
     it("dispatches generators and rejects invalid invocation shapes") {

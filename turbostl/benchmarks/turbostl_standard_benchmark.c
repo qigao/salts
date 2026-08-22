@@ -1,9 +1,9 @@
 #include "tinytest.h"
 
-#include <turbo/stl/deque.h>
-#include <turbo/stl/hash_map.h>
-#include <turbo/stl/heap.h>
-#include <turbo/stl/vec.h>
+#include <turbostl/deque.h>
+#include <turbostl/hash_map.h>
+#include <turbostl/heap.h>
+#include <turbostl/vec.h>
 
 #include <stdint.h>
 #include <string.h>

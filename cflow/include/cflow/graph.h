@@ -8,6 +8,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define CMETA_INVALID_ID UINT32_MAX
 
 typedef uint32_t cflow_node_id;
@@ -204,39 +208,46 @@ bool cflow_graph_relation(cflow_graph *g,
                           cmeta_callable reducer);
 
 static inline cflow_relation_schema cflow_relation_all_fold(void) {
-    return (cflow_relation_schema){ CFLOW_REL_COORD_ALL,
+    const cflow_relation_schema schema = { CFLOW_REL_COORD_ALL,
         CFLOW_REL_COMPLETE_COORDINATOR, CFLOW_REL_RESULT_FOLD,
         CFLOW_REL_ERROR_FAIL_FAST };
+    return schema;
 }
 static inline cflow_relation_schema cflow_relation_fork_join_fold(void) {
-    return (cflow_relation_schema){ CFLOW_REL_COORD_ALL,
+    const cflow_relation_schema schema = { CFLOW_REL_COORD_ALL,
         CFLOW_REL_COMPLETE_ALL_DONE, CFLOW_REL_RESULT_FOLD,
         CFLOW_REL_ERROR_FAIL_FAST };
+    return schema;
 }
 static inline cflow_relation_schema cflow_relation_any_select(void) {
-    return (cflow_relation_schema){ CFLOW_REL_COORD_ANY,
+    const cflow_relation_schema schema = { CFLOW_REL_COORD_ANY,
         CFLOW_REL_COMPLETE_COORDINATOR, CFLOW_REL_RESULT_SELECT,
         CFLOW_REL_ERROR_FAIL_FAST };
+    return schema;
 }
 static inline cflow_relation_schema cflow_relation_latest_fold(void) {
-    return (cflow_relation_schema){ CFLOW_REL_COORD_LATEST,
+    const cflow_relation_schema schema = { CFLOW_REL_COORD_LATEST,
         CFLOW_REL_COMPLETE_COORDINATOR, CFLOW_REL_RESULT_FOLD,
         CFLOW_REL_ERROR_FAIL_FAST };
+    return schema;
 }
 static inline cflow_relation_schema cflow_relation_sequence_select(void) {
-    return (cflow_relation_schema){ CFLOW_REL_COORD_SEQUENCE,
+    const cflow_relation_schema schema = { CFLOW_REL_COORD_SEQUENCE,
         CFLOW_REL_COMPLETE_COORDINATOR, CFLOW_REL_RESULT_SELECT,
         CFLOW_REL_ERROR_FAIL_FAST };
+    return schema;
 }
 static inline cflow_relation_schema cflow_relation_fallback(void) {
-    return (cflow_relation_schema){ CFLOW_REL_COORD_SEQUENCE,
+    const cflow_relation_schema schema = { CFLOW_REL_COORD_SEQUENCE,
         CFLOW_REL_COMPLETE_FIRST_RESULT, CFLOW_REL_RESULT_SELECT,
         CFLOW_REL_ERROR_TRY_NEXT };
+    return schema;
 }
 static inline cflow_relation_schema cflow_relation_all_invoke(void) {
-    return (cflow_relation_schema){ CFLOW_REL_COORD_ALL,
+    const cflow_relation_schema schema = { CFLOW_REL_COORD_ALL,
         CFLOW_REL_COMPLETE_COORDINATOR, CFLOW_REL_RESULT_INVOKE,
         CFLOW_REL_ERROR_FAIL_FAST };
+    return schema;
 }
 
 
@@ -271,5 +282,9 @@ bool cflow_subgraph_is_one_to_one(const cflow_graph *g, cflow_subgraph_id id);
 const cmeta_type_desc *cflow_graph_source_type(const cflow_graph *g);
 const cmeta_type_desc *cflow_graph_output_type(const cflow_graph *g);
 bool cflow_graph_is_one_to_one(const cflow_graph *g);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

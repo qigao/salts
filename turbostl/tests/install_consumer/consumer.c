@@ -1,6 +1,7 @@
-#include <turbo/stl/typed.h>
+#include <turbostl.h>
+#include <turbostl/typed.h>
 
-Containers((Vec, InstalledInts, int));
+typed(Vec, InstalledInts, int);
 
 int main(void) {
   InstalledInts values = {0};

@@ -12,8 +12,8 @@ target_link_libraries(my_target PRIVATE TurboUtils::STL)
 ```
 
 ```c
-#include <turbo/stl.h>
-#include <turbo/stl/typed.h>
+#include <turbostl.h>
+#include <turbostl/typed.h>
 ```
 
 ## One declaration is enough
@@ -27,13 +27,11 @@ typed(List, IntList, int);
 For several:
 
 ```c
-Containers(
-    (Vec, IntVec, int),
-    (List, IntList, int),
-    (HashSet, IntSet, int),
-    (HashMap, IntLongMap, int, long),
-    (BTree, IntTree, int, long)
-);
+typed(Vec, IntVec, int);
+typed(List, IntList, int);
+typed(HashSet, IntSet, int);
+typed(HashMap, IntLongMap, int, long);
+typed(BTree, IntTree, int, long);
 ```
 
 No `implement(...)`, `DeclareContainers(...)`, or `ImplementContainers(...)` call is required or exposed for typed containers.

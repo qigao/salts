@@ -25,7 +25,7 @@
 
 **Files:**
 - Create: `turbostl/cflow/CMakeLists.txt`
-- Create: `turbostl/include/turbo/stl/cflow.h`
+- Create: `turbostl/include/turbostl/cflow.h`
 - Create: `turbostl/cflow/turbostl_cflow_stream.c`
 - Create: `turbostl/tests/turbostl_cflow_stream_test.c`
 - Modify: `turbostl/CMakeLists.txt`
@@ -133,8 +133,8 @@ git commit -m "feat(turbostl): implement cflow bounded state backends"
 ### Task 3: Generate typed sequence/set collectors
 
 **Files:**
-- Modify: `turbostl/include/turbo/stl/meta.h`
-- Modify: `turbostl/include/turbo/stl/typed.h`
+- Modify: `turbostl/include/turbostl/meta.h`
+- Modify: `turbostl/include/turbostl/typed.h`
 - Create: `turbostl/cflow/turbostl_cflow_collectors.c`
 - Create: `turbostl/tests/turbostl_cflow_collect_test.c`
 
@@ -167,7 +167,7 @@ git commit -m "feat(turbostl): generate transactional cflow collectors"
 ### Task 4: Add groupingBy and partitioningBy collectors
 
 **Files:**
-- Create: `turbostl/include/turbo/stl/grouping.h`
+- Create: `turbostl/include/turbostl/grouping.h`
 - Create: `turbostl/cflow/turbostl_cflow_grouping.c`
 - Modify: `cflow/include/cflow/terminals.h`
 - Modify: `cflow/src/terminals.c`

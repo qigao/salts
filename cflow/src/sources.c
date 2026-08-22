@@ -192,7 +192,9 @@ static channel_impl *channel_of(cflow_channel *ch) { return ch ? (channel_impl *
 bool cflow_channel_init(cflow_channel *ch,
                         const cmeta_type_desc *type,
                         size_t capacity) {
-    if (!ch || !type || capacity == 0) return false;
+    if (!ch || !type || type->size == 0u || capacity == 0u ||
+        capacity > SIZE_MAX / type->size)
+        return false;
     channel_impl *c = calloc(1, sizeof(*c));
     if (!c) return false;
     c->data = malloc(type->size * capacity);

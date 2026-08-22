@@ -3,6 +3,10 @@
 
 #include <cflow/runtime.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Reactive is intentionally a façade, not an execution engine. */
 typedef struct cflow_subscription {
     cflow_run run;
@@ -18,5 +22,9 @@ void cflow_subscription_cancel(cflow_subscription *sub);
 void cflow_subscription_close(cflow_subscription *sub);
 bool cflow_subscription_is_done(const cflow_subscription *sub);
 const char *cflow_subscription_error(const cflow_subscription *sub);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

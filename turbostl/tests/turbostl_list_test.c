@@ -1,4 +1,4 @@
-#include <turbo/stl/typed.h>
+#include <turbostl/typed.h>
 #include "tinytest.h"
 
 #include <stdlib.h>

@@ -2,8 +2,7 @@
 #define TURBO_BPLUS_TREE_H
 
 #include <cmeta/range.h>
-#include <turbo/stl/export.h>
-#include <turbo/stl/status.h>
+#include <turbostl/status.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -73,63 +72,63 @@ typedef struct {
  * Search, put, and remove are O(log n) for fixed min_degree;
  * from-arrays is O(rows log live_entries). Indexed lookup is O(n), while the
  * ordered Range cursor follows derived entry links in O(n) total. */
-TURBO_STL_API turbo_stl_status turbo_bplus_tree_init(
+turbo_stl_status turbo_bplus_tree_init(
     turbo_bplus_tree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit);
-TURBO_STL_API turbo_stl_status turbo_bplus_tree_init_with_order(
+turbo_stl_status turbo_bplus_tree_init_with_order(
     turbo_bplus_tree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t min_degree,
     size_t entry_limit);
-TURBO_STL_API turbo_stl_status turbo_bplus_tree_init_bytes(
+turbo_stl_status turbo_bplus_tree_init_bytes(
     turbo_bplus_tree_t *tree, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t entry_limit,
     turbo_bplus_tree_compare_fn compare, void *compare_ctx);
-TURBO_STL_API turbo_stl_status turbo_bplus_tree_init_bytes_with_order(
+turbo_stl_status turbo_bplus_tree_init_bytes_with_order(
     turbo_bplus_tree_t *tree, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t min_degree,
     size_t entry_limit, turbo_bplus_tree_compare_fn compare,
     void *compare_ctx);
-TURBO_STL_API turbo_stl_status turbo_bplus_tree_from_arrays(
+turbo_stl_status turbo_bplus_tree_from_arrays(
     turbo_bplus_tree_t *tree, const void *keys, const void *values,
     size_t count, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit);
-TURBO_STL_API turbo_stl_status turbo_bplus_tree_from_arrays_bytes(
+turbo_stl_status turbo_bplus_tree_from_arrays_bytes(
     turbo_bplus_tree_t *tree, const void *keys, const void *values,
     size_t count, size_t key_size, size_t key_align, size_t value_size,
     size_t value_align, size_t entry_limit,
     turbo_bplus_tree_compare_fn compare, void *compare_ctx);
 
-TURBO_STL_API void turbo_bplus_tree_destroy(turbo_bplus_tree_t *tree);
-TURBO_STL_API void turbo_bplus_tree_clear(turbo_bplus_tree_t *tree);
-TURBO_STL_API turbo_stl_status turbo_bplus_tree_reserve(
+void turbo_bplus_tree_destroy(turbo_bplus_tree_t *tree);
+void turbo_bplus_tree_clear(turbo_bplus_tree_t *tree);
+turbo_stl_status turbo_bplus_tree_reserve(
     turbo_bplus_tree_t *tree, size_t min_capacity);
-TURBO_STL_API turbo_stl_status turbo_bplus_tree_put(turbo_bplus_tree_t *tree,
+turbo_stl_status turbo_bplus_tree_put(turbo_bplus_tree_t *tree,
                                                      const void *key,
                                                      const void *value);
-TURBO_STL_API void *turbo_bplus_tree_get(turbo_bplus_tree_t *tree,
+void *turbo_bplus_tree_get(turbo_bplus_tree_t *tree,
                                          const void *key);
-TURBO_STL_API const void *turbo_bplus_tree_get_const(
+const void *turbo_bplus_tree_get_const(
     const turbo_bplus_tree_t *tree, const void *key);
-TURBO_STL_API bool turbo_bplus_tree_contains(const turbo_bplus_tree_t *tree,
+bool turbo_bplus_tree_contains(const turbo_bplus_tree_t *tree,
                                              const void *key);
-TURBO_STL_API turbo_stl_status turbo_bplus_tree_remove(
+turbo_stl_status turbo_bplus_tree_remove(
     turbo_bplus_tree_t *tree, const void *key, void *out_value);
-TURBO_STL_API size_t turbo_bplus_tree_size(const turbo_bplus_tree_t *tree);
-TURBO_STL_API size_t turbo_bplus_tree_capacity(const turbo_bplus_tree_t *tree);
-TURBO_STL_API size_t turbo_bplus_tree_entry_limit(
+size_t turbo_bplus_tree_size(const turbo_bplus_tree_t *tree);
+size_t turbo_bplus_tree_capacity(const turbo_bplus_tree_t *tree);
+size_t turbo_bplus_tree_entry_limit(
     const turbo_bplus_tree_t *tree);
-TURBO_STL_API uint64_t turbo_bplus_tree_generation(
+uint64_t turbo_bplus_tree_generation(
     const turbo_bplus_tree_t *tree);
-TURBO_STL_API bool turbo_bplus_tree_empty(const turbo_bplus_tree_t *tree);
-TURBO_STL_API void *turbo_bplus_tree_key_at(turbo_bplus_tree_t *tree,
+bool turbo_bplus_tree_empty(const turbo_bplus_tree_t *tree);
+void *turbo_bplus_tree_key_at(turbo_bplus_tree_t *tree,
                                             size_t index);
-TURBO_STL_API const void *turbo_bplus_tree_key_at_const(
+const void *turbo_bplus_tree_key_at_const(
     const turbo_bplus_tree_t *tree, size_t index);
-TURBO_STL_API void *turbo_bplus_tree_value_at(turbo_bplus_tree_t *tree,
+void *turbo_bplus_tree_value_at(turbo_bplus_tree_t *tree,
                                               size_t index);
-TURBO_STL_API const void *turbo_bplus_tree_value_at_const(
+const void *turbo_bplus_tree_value_at_const(
     const turbo_bplus_tree_t *tree, size_t index);
-TURBO_STL_API bool turbo_bplus_tree_range_next(
+bool turbo_bplus_tree_range_next(
     const turbo_bplus_tree_t *tree, cmeta_range_cursor *cursor,
     const void **out_key,
     const void **out_value);

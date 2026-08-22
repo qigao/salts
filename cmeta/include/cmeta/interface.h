@@ -85,6 +85,19 @@ typedef struct cmeta_interface_desc {
 #define CMETA_IFACE_IMPL_V4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) CMETA_INLINE void I##_##N(I *self, T1 A1, T2 A2, T3 A3, T4 A4) { self->vtable->N(self->self, A1, A2, A3, A4); }
 #define CMETA_IFACE_IMPL_ROW(I,K,R,N,...) CMETA_PP_CAT(CMETA_IFACE_IMPL_,K)(I,R,N,__VA_ARGS__)
 
+/* required-method validation */
+#define CMETA_IFACE_VALID_R0(I,R,N,_) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_R1(I,R,N,T1,A1) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_R2(I,R,N,T1,A1,T2,A2) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_R3(I,R,N,T1,A1,T2,A2,T3,A3) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_R4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_V0(I,R,N,_) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_V1(I,R,N,T1,A1) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_V2(I,R,N,T1,A1,T2,A2) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_V3(I,R,N,T1,A1,T2,A2,T3,A3) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_V4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_ROW(I,K,R,N,...) CMETA_PP_CAT(CMETA_IFACE_VALID_,K)(I,R,N,__VA_ARGS__)
+
 #define CMETA_IFACE_META_ROW(I,K,R,N,...) { #N, #R, CMETA_PP_CAT(CMETA_IFACE_ARITY_,K) },
 
 #define CMETA_INTERFACE(I, METHODS) \
@@ -100,7 +113,9 @@ typedef struct cmeta_interface_desc {
     CMETA_LOCAL const cmeta_interface_desc I##_interface_meta = { #I, I##_method_meta, sizeof(I##_method_meta)/sizeof(I##_method_meta[0]) }; \
     METHODS(CMETA_IFACE_IMPL_ROW, I) \
     CMETA_INLINE I I##_bind(void *self, const I##_vtable *vtable) { I out = { self, vtable }; return out; } \
-    CMETA_INLINE bool I##_valid(const I *self) { return self && self->self && self->vtable; } \
+    CMETA_INLINE bool I##_valid(const I *self) { \
+        return self && self->self && self->vtable METHODS(CMETA_IFACE_VALID_ROW, I); \
+    } \
     CMETA_INLINE const char *I##_implementation(const I *self) { return I##_valid(self) && self->vtable->implementation ? self->vtable->implementation : "none"; } \
     CMETA_INLINE uint64_t I##_capabilities(const I *self) { return I##_valid(self) ? self->vtable->capabilities : 0u; } \
     CMETA_INLINE bool I##_has(const I *self, uint64_t capability) { return (I##_capabilities(self) & capability) == capability; } \

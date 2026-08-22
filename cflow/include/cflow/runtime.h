@@ -116,6 +116,8 @@ bool cflow_run_open_subgraph(cflow_run *run,
 /* Demand is always downstream-value demand, never source-item demand. */
 bool cflow_run_request(cflow_run *run, size_t n);
 void cflow_run_cancel(cflow_run *run);
+/* External calls close synchronously. A call from this run's sink callback
+ * requests close and defers destruction until the active pump returns. */
 void cflow_run_close(cflow_run *run);
 
 bool cflow_run_is_done(const cflow_run *run);

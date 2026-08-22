@@ -104,6 +104,19 @@ suite("CFlow pipeline") {
         cflow_stream_destroy(&stream);
     }
 
+    it("compares result values with their CMeta equality traits") {
+        float positive_zero = 0.0f;
+        float negative_zero = -0.0f;
+        const cflow_result left = {
+            .data = &positive_zero, .count = 1u, .type = &cmeta_type_float
+        };
+        const cflow_result right = {
+            .data = &negative_zero, .count = 1u, .type = &cmeta_type_float
+        };
+
+        check_true(cflow_result_equal(&left, &right));
+    }
+
     it("verifies normalization optimization and execution parity") {
         cflow_stream stream = {0};
         cflow_verify_report report = {0};

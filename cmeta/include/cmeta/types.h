@@ -19,7 +19,13 @@
  * The leading comma is intentional.  The same configuration must be visible
  * to every translation unit because it changes cmeta_sig and cmeta_callable.
  */
-#define CMETA_ROW_B (B, _Bool,  cmeta_type_bool,   CMETA_T_BOOL,    cmeta_traits_bool)
+#ifdef __cplusplus
+#define CMETA_BOOL_TYPE bool
+#else
+#define CMETA_BOOL_TYPE _Bool
+#endif
+
+#define CMETA_ROW_B (B, CMETA_BOOL_TYPE, cmeta_type_bool, CMETA_T_BOOL, cmeta_traits_bool)
 #define CMETA_ROW_I (I, int,    cmeta_type_int,    CMETA_T_INTEGER, cmeta_traits_int)
 #define CMETA_ROW_L (L, long,   cmeta_type_long,   CMETA_T_INTEGER, cmeta_traits_long)
 #define CMETA_ROW_F (F, float,  cmeta_type_float,  CMETA_T_FLOAT,   cmeta_traits_float)

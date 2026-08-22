@@ -1,4 +1,4 @@
-#include <turbo/stl/typed.h>
+#include <turbostl/typed.h>
 #include "tinytest.h"
 
 #include <string.h>
@@ -17,21 +17,19 @@ _Static_assert(TURBO_TEST_ARITY_Vec == 1 && TURBO_TEST_ARITY_HashMap == 2 &&
                    TURBO_TEST_ARITY_BPlusTree == 2,
                "TURBO_STL_KIND_SCHEMA_ARITY_MISMATCH");
 
-Containers(
-    (Vec, IntVec, int),
-    (Deque, IntDeque, int),
-    (List, IntList, int),
-    (Stack, IntStack, int),
-    (Queue, IntQueue, int),
-    (Heap, IntHeap, int),
-    (Set, IntSet, int),
-    (HashSet, IntHashSet, int),
-    (HashMap, IntLongHashMap, int, long),
-    (Map, IntLongMap, int, long),
-    (MultiMap, IntLongMultiMap, int, long),
-    (BTree, IntLongBTree, int, long),
-    (BPlusTree, IntLongBPlusTree, int, long)
-);
+typed(Vec, IntVec, int);
+typed(Deque, IntDeque, int);
+typed(List, IntList, int);
+typed(Stack, IntStack, int);
+typed(Queue, IntQueue, int);
+typed(Heap, IntHeap, int);
+typed(Set, IntSet, int);
+typed(HashSet, IntHashSet, int);
+typed(HashMap, IntLongHashMap, int, long);
+typed(Map, IntLongMap, int, long);
+typed(MultiMap, IntLongMultiMap, int, long);
+typed(BTree, IntLongBTree, int, long);
+typed(BPlusTree, IntLongBPlusTree, int, long);
 
 #define VERIFY_EMPTY_COLLECTOR(Name) do {                                  \
     Name output = {0};                                                      \

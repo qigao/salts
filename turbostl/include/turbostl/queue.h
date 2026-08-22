@@ -1,7 +1,7 @@
 #ifndef TURBO_QUEUE_H
 #define TURBO_QUEUE_H
 
-#include <turbo/stl/deque.h>
+#include <turbostl/deque.h>
 
 #ifdef __cplusplus
 extern "C" {

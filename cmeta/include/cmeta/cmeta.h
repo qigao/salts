@@ -73,7 +73,6 @@ Enum(cmeta_gen_status,
     (CMETA_GEN_MUTATED,        5, "mutated")
 );
 
-#ifndef __cplusplus
 #include <cmeta/signatures.h>
 
 extern const cmeta_type_desc cmeta_type_void;
@@ -193,7 +192,7 @@ typedef struct cmeta_fn {
 #define CMETA_CAPTURE_INLINE 32u
 
 typedef union cmeta_capture_storage {
-#if defined(_MSC_VER) && !defined(__cplusplus)
+#if defined(_MSC_VER)
     long double _align_long_double;
     long long _align_long_long;
     void *_align_pointer;
@@ -224,6 +223,8 @@ struct cmeta_callable {
     size_t capture_size;
     cmeta_capture_storage capture;
 };
+
+#ifndef __cplusplus
 
 #define CMETA_MAKE_U(in, ret) \
     static inline cmeta_fn CMETA_MAKER(CMETA_U_ID(in, ret))( \
@@ -291,6 +292,9 @@ static inline void cmeta_unsupported_signature(void) { }
     static ret cmeta_typed_##name params
 #define typed_any(contract, ret, name, params) \
     typed_any_raw(CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract), ret, name, params)
+
+#endif /* !__cplusplus */
+
 #define typed_any_decl(name) extern const cmeta_callable name
 
 Enum(cmeta_fn_protocol,
@@ -324,8 +328,6 @@ bool cmeta_callable_same(cmeta_callable a, cmeta_callable b);
 bool cmeta_callable_invoke(const cmeta_callable *fn, void *out, const void *const *args);
 cmeta_gen_status cmeta_callable_generate(const cmeta_callable *fn, const void *input,
                                          void *out, size_t *cursor);
-
-#endif /* !__cplusplus */
 
 #ifdef __cplusplus
 }

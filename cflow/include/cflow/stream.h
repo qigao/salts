@@ -8,6 +8,10 @@
 
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct cflow_stream cflow_stream;
 
 #define CFLOW_STREAM_METHOD_1(method) \
@@ -78,5 +82,9 @@ bool cflow_stream_ok(const cflow_stream *s);
 const char *cflow_stream_error(const cflow_stream *s);
 const cmeta_type_desc *cflow_stream_output_type(const cflow_stream *s);
 const cflow_graph *cflow_stream_graph(const cflow_stream *s);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

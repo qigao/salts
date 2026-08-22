@@ -7,6 +7,10 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct cflow_result {
     void *data;
     size_t count;
@@ -23,5 +27,9 @@ bool cflow_eval_array(const cflow_graph *graph,
 /* Evaluate a stream whose source was bound by cflow_stream_from_range/stream(). */
 bool cflow_eval_stream(const cflow_stream *stream, cflow_result *out);
 void cflow_result_destroy(cflow_result *result);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

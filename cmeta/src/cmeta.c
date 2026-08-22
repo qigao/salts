@@ -229,10 +229,31 @@ const char *cmeta_sig_to_symbol(cmeta_sig sig) {
     return (sig > CMETA_SIG_INVALID && sig < CMETA_SIG_COUNT) ? cmeta_sig_symbols[sig] : NULL;
 }
 
+static bool cmeta_fn_target_valid(cmeta_fn fn) {
+    switch (fn.sig) {
+#define CMETA_TARGET_U(in, ret) \
+        case CMETA_SIG_NAME(CMETA_U_ID(in, ret)): \
+            return fn.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret)) != NULL;
+#define CMETA_TARGET_B(a, b, ret) \
+        case CMETA_SIG_NAME(CMETA_B_ID(a, b, ret)): \
+            return fn.call.CMETA_CALL_MEMBER(CMETA_B_ID(a, b, ret)) != NULL;
+#define CMETA_TARGET_G(in, out) \
+        case CMETA_SIG_NAME(CMETA_G_ID(in, out)): \
+            return fn.call.CMETA_CALL_MEMBER(CMETA_G_ID(in, out)) != NULL;
+        CMETA_ALL_SIGNATURES(CMETA_TARGET_U, CMETA_TARGET_B, CMETA_TARGET_G)
+#undef CMETA_TARGET_U
+#undef CMETA_TARGET_B
+#undef CMETA_TARGET_G
+        default:
+            return false;
+    }
+}
+
 bool cmeta_fn_contract_valid(cmeta_fn fn) {
     const cmeta_sig_desc *sig = cmeta_fn_signature(fn);
     if (!sig || !cmeta_effects_valid(fn.effects) || !cmeta_properties_valid(fn.properties))
         return false;
+    if (!cmeta_fn_target_valid(fn)) return false;
     if ((fn.properties & CMETA_PROP_TOTAL) && (fn.effects & CMETA_EFFECT_MAY_FAIL))
         return false;
     if (fn.properties & CMETA_PROP_IDEMPOTENT) {
@@ -250,7 +271,12 @@ bool cmeta_fn_contract_valid(cmeta_fn fn) {
 }
 
 bool cmeta_fn_invoke(cmeta_fn fn, void *out, const void *const *args) {
-    if (!args) return false;
+    const cmeta_sig_desc *sig = cmeta_fn_signature(fn);
+    if (!sig || sig->protocol != CMETA_FN_PROTOCOL_VALUE ||
+        !cmeta_fn_target_valid(fn) || !args)
+        return false;
+    for (size_t i = 0; i < sig->param_count; ++i)
+        if (!args[i]) return false;
     switch (fn.sig) {
 #define CMETA_INVOKE_U(in, ret) \
         case CMETA_SIG_NAME(CMETA_U_ID(in, ret)): { \
@@ -283,7 +309,10 @@ bool cmeta_fn_invoke(cmeta_fn fn, void *out, const void *const *args) {
 
 cmeta_gen_status cmeta_fn_generate(cmeta_fn fn, const void *input,
                                    void *out, size_t *cursor) {
-    if (!input || !out || !cursor) return CMETA_GEN_ERROR;
+    const cmeta_sig_desc *sig = cmeta_fn_signature(fn);
+    if (!sig || sig->protocol != CMETA_FN_PROTOCOL_GENERATOR ||
+        !cmeta_fn_target_valid(fn) || !input || !out || !cursor)
+        return CMETA_GEN_ERROR;
     switch (fn.sig) {
 #define CMETA_GENERATE_U(in, ret) \
         case CMETA_SIG_NAME(CMETA_U_ID(in, ret)): return CMETA_GEN_ERROR;

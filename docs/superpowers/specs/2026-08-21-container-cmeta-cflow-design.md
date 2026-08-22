@@ -15,7 +15,7 @@
 ## 目标
 
 1. 将 Core 中的标准容器和旧 `turbo/` 容器统一迁入 `turbostl/`，使其成为唯一标准容器库。
-2. 以 CMeta `typed(...)`、`Containers(...)` 和显式 traits 生成 typed facade、Range 与 collector 能力。
+2. 以 CMeta `typed(...)` 和显式 traits 生成 typed facade、Range 与 collector 能力。
 3. 由 TurboSTL 提供 CFlow 的容器实现适配，使有限容器获得 Java 风格 lazy pipeline 与 terminal API。
 4. 保持 CFlow 不依赖具体 TurboSTL；STLCFlow 在构造 stream 时显式注入状态后端和 collector。
 5. 对所有增长状态设置硬上限，明确所有权、失效点、错误、清理与重复执行语义。
@@ -86,26 +86,25 @@ cflow/include/cflow/
 
 turbostl/
   CMakeLists.txt
-  include/turbo/
-    stl.h
-    stl/
-      export.h
-      status.h
-      vec.h
-      deque.h
-      list.h
-      stack.h
-      queue.h
-      heap.h
-      set.h
-      hash_set.h
-      hash_map.h
-      map.h
-      multimap.h
-      btree.h
-      bplus_tree.h
-      typed.h
-      cflow.h
+  turbostl.h
+  include/turbostl/
+    export.h
+    status.h
+    vec.h
+    deque.h
+    list.h
+    stack.h
+    queue.h
+    heap.h
+    set.h
+    hash_set.h
+    hash_map.h
+    map.h
+    multimap.h
+    btree.h
+    bplus_tree.h
+    typed.h
+    cflow.h
   src/
     list.c
     deque.c
@@ -122,7 +121,7 @@ turbostl/
   benchmarks/
 ```
 
-`<turbo/stl.h>` 是标准容器聚合头；`<turbo/stl/cflow.h>` 是可选 CFlow 集成入口。旧 flat include 路径不安装。
+`<turbostl.h>` 是标准容器聚合头；`<turbostl/cflow.h>` 是可选 CFlow 集成入口。旧 flat include 路径不安装。
 
 ## 标准容器范围
 
@@ -183,9 +182,9 @@ rotation 只重连节点，不移动节点内 key/value payload。插入必须�
 
 - raw 类型名如 `turbo_vec_t`、`turbo_hash_map_t` 保留。
 - raw API 改用 TurboSTL 自身 status 和显式类型/字节语义，不再从 Core 取得错误码。
-- typed 声明的唯一公开入口是 `typed(Kind, ...)` 和 `Containers(...)`。
+- typed 声明的唯一公开入口是 `typed(Kind, ...)`。
 - `TURBO_VEC_DEFINE`、`TURBO_HASH_MAP_DEFINE` 等宏降为 TurboSTL 内部生成机制，不再安装或文档化。
-- include 统一迁移至 `<turbo/stl/...>`。
+- include 统一迁移至 `<turbostl/...>`。
 - 删除 `TurboUtils::Stream`；普通用户链接 `TurboUtils::STL`，容器流用户链接 `TurboUtils::STLCFlow`。
 - 删除 List 的 `reserve/capacity/at` 和所有“deque-backed list”契约。
 - Map 初始化由 hash/equal 改为 compare trait；删除 hash slot/capacity API 并改为有序 iterator/bounds API。
@@ -257,7 +256,7 @@ collect capability
   collector begin / accept / finish / abort
 ```
 
-`typed(Vec, IntVec, int)` 或一行 `Containers(...)` 一次生成：
+`typed(Vec, IntVec, int)` 一次生成：
 
 - typed wrapper 和 forwarding functions；
 - container/type descriptor；
@@ -310,7 +309,7 @@ cflow_set_state_ops
 
 STLCFlow 以 Adapter + Strategy 实现这些接口：sequence state 使用 `turbo_vec_t`，distinct state 使用 `turbo_hash_set_t`，typed terminal 使用 CMeta collector。
 
-不使用全局 registry、服务定位器或隐式弱 fallback。backend 由 `<turbo/stl/cflow.h>` 在构造 stream 时显式注入。CFlow graph 只保存语义参数，不保存 TurboSTL 对象：
+不使用全局 registry、服务定位器或隐式弱 fallback。backend 由 `<turbostl/cflow.h>` 在构造 stream 时显式注入。CFlow graph 只保存语义参数，不保存 TurboSTL 对象：
 
 ```c
 cflow_stream stream = {0};

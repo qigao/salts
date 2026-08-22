@@ -4,7 +4,7 @@
 
 **Goal:** Rename the standard-container module from Container to TurboSTL across its source layout, public headers, CMake package targets, status API, repository consumers, and documentation without retaining compatibility aliases.
 
-**Architecture:** The container algorithms and concrete `turbo_*` APIs remain the single implementation fact source. Only the module identity changes: source directory `turbostl/`, internal target `turbo_stl`, exported target `TurboUtils::STL`, headers under `<turbo/stl/...>`, and module-level status/export identifiers under `turbo_stl`/`TURBO_STL`. CMeta container concepts remain named `cmeta_container_*` because they describe a generic protocol rather than this module.
+**Architecture:** The container algorithms and concrete `turbo_*` APIs remain the single implementation fact source. Only the module identity changes: source directory `turbostl/`, internal target `turbo_stl`, exported target `TurboUtils::STL`, headers under `<turbostl/...>`, and module-level status/export identifiers under `turbo_stl`/`TURBO_STL`. CMeta container concepts remain named `cmeta_container_*` because they describe a generic protocol rather than this module.
 
 **Tech Stack:** C11, C++17 header probes, CMake 3.20+, CMake Presets, MSVC/Ninja, TinyTest, standalone `find_package(TurboUtils)` consumers.
 
@@ -29,7 +29,7 @@
 
 **Interfaces:**
 - Consumes: the current build-tree `TurboUtilsConfig.cmake` package.
-- Produces: a consumer requiring `TurboUtils::STL`, `<turbo/stl/typed.h>`, and `TURBO_STL_OK`.
+- Produces: a consumer requiring `TurboUtils::STL`, `<turbostl/typed.h>`, and `TURBO_STL_OK`.
 
 - [x] **Step 1: Change the C and C++ consumers to the new target, header, and status names**
 
@@ -39,7 +39,7 @@ target_link_libraries(turbostl_consumer_cpp PRIVATE TurboUtils::STL)
 ```
 
 ```c
-#include <turbo/stl/typed.h>
+#include <turbostl/typed.h>
 if (InstalledInts_init(&values, 2u) != TURBO_STL_OK) return 1;
 ```
 
@@ -64,8 +64,8 @@ git commit -m "test(turbostl): require renamed public package contract"
 
 **Files:**
 - Rename: `container/` to `turbostl/`
-- Rename: `turbostl/include/turbo/container.h` to `turbostl/include/turbo/stl.h`
-- Rename: `turbostl/include/turbo/container/` to `turbostl/include/turbo/stl/`
+- Rename: `turbostl/include/turbo/container.h` to `turbostl/turbostl.h`
+- Rename: `turbostl/include/turbo/container/` to `turbostl/include/turbostl/`
 - Modify: `CMakeLists.txt`
 - Modify: `turbostl/CMakeLists.txt`
 - Modify: `utils/CMakeLists.txt`
@@ -73,14 +73,14 @@ git commit -m "test(turbostl): require renamed public package contract"
 
 **Interfaces:**
 - Consumes: unchanged `TurboUtils::CMeta` and concrete `turbo_*` source APIs.
-- Produces: build target `turbo_stl`, alias/export `TurboUtils::STL`, library artifact `turbo_stl`, and installed `<turbo/stl/...>` headers.
+- Produces: build target `turbo_stl`, alias/export `TurboUtils::STL`, library artifact `turbo_stl`, and installed `<turbostl/...>` headers.
 
 - [x] **Step 1: Move the module and public header tree with Git-aware renames**
 
 ```powershell
 git mv container turbostl
-git mv turbostl/include/turbo/container turbostl/include/turbo/stl
-git mv turbostl/include/turbo/container.h turbostl/include/turbo/stl.h
+git mv turbostl/include/turbo/container turbostl/include/turbostl
+git mv turbostl/include/turbo/container.h turbostl/turbostl.h
 ```
 
 - [x] **Step 2: Update the root build graph and module target identity**
@@ -112,7 +112,7 @@ git commit -m "refactor(turbostl): rename container module and targets"
 ### Task 3: Rename the public status/export surface and callers
 
 **Files:**
-- Modify: `turbostl/include/turbo/stl/*.h`
+- Modify: `turbostl/include/turbostl/*.h`
 - Modify: `turbostl/src/*.c`
 - Rename: `utils/src/turbo_container_status_internal.h` to `utils/src/turbo_stl_status_internal.h`
 - Modify: `utils/src/ac_automaton.c`
@@ -124,9 +124,9 @@ git commit -m "refactor(turbostl): rename container module and targets"
 
 **Interfaces:**
 - Consumes: the existing status meanings and concrete algorithm behavior.
-- Produces: `turbo_stl_status`, `TURBO_STL_OK`, `TURBO_STL_INVALID_ARGUMENT`, `TURBO_STL_OUT_OF_MEMORY`, `TURBO_STL_CAPACITY_EXCEEDED`, `TURBO_STL_EMPTY`, `TURBO_STL_NOT_FOUND`, `TURBO_STL_TYPE_MISMATCH`, `TURBO_STL_TRAIT_MISSING`, and `TURBO_STL_API`.
+- Produces: `turbo_stl_status`, `TURBO_STL_OK`, `TURBO_STL_INVALID_ARGUMENT`, `TURBO_STL_OUT_OF_MEMORY`, `TURBO_STL_CAPACITY_EXCEEDED`, `TURBO_STL_EMPTY`, `TURBO_STL_NOT_FOUND`, `TURBO_STL_TYPE_MISMATCH`, and `TURBO_STL_TRAIT_MISSING`.
 
-- [x] **Step 1: Rename module guards, export macros, status type/constants, and internal typed-schema macros**
+- [x] **Step 1: Rename module guards, status type/constants, and internal typed-schema macros**
 
 Apply exact mechanical substitutions only inside the TurboSTL module and its direct consumers; do not rename generic CMeta container protocols.
 
@@ -168,7 +168,7 @@ git commit -m "refactor(turbostl): rename public status and header surface"
 
 - [x] **Step 1: Replace obsolete module names in active documentation and examples**
 
-Document `TurboSTL`, `TurboUtils::STL`, `turbostl/`, `<turbo/stl/...>`, and `TURBO_STL_*`; retain the lowercase word “container” where it describes the data-structure concept.
+Document `TurboSTL`, `TurboUtils::STL`, `turbostl/`, `<turbostl/...>`, and `TURBO_STL_*`; retain the lowercase word “container” where it describes the data-structure concept.
 
 - [x] **Step 2: Scan for forbidden old public names**
 
@@ -202,7 +202,7 @@ cmake -S turbostl/tests/install_consumer -B build/turbostl-consumer -DCMAKE_PREF
 cmake --build build/turbostl-consumer
 ```
 
-Expected: both C11 and C++17 consumers configure and link only through `TurboUtils::STL` and installed `<turbo/stl/...>` headers.
+Expected: both C11 and C++17 consumers configure and link only through `TurboUtils::STL` and installed `<turbostl/...>` headers.
 
 - [x] **Step 5: Check formatting, index state, and commit documentation**
 
