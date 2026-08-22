@@ -7,7 +7,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -112,115 +111,6 @@ uint64_t list_generation(const list_t *list);
 bool list_empty(const list_t *list);
 bool list_range_next(const list_t *list, cmeta_range_cursor *cursor,
                      const void **out_value);
-
-/* Instance-driven CMeta adapter. */
-static inline cmeta_status stl_list_cmeta_status(stl_status status) {
-  switch (status) {
-    case STL_OK: return CMETA_OK;
-    case STL_INVALID_ARGUMENT: return CMETA_INVALID_ARGUMENT;
-    case STL_OUT_OF_MEMORY: return CMETA_OUT_OF_MEMORY;
-    case STL_CAPACITY_EXCEEDED: return CMETA_CAPACITY_EXCEEDED;
-    case STL_TYPE_MISMATCH: return CMETA_TYPE_MISMATCH;
-    case STL_TRAIT_MISSING: return CMETA_TRAIT_MISSING;
-    case STL_EMPTY:
-    case STL_NOT_FOUND:
-    default: return CMETA_CALLBACK_ERROR;
-  }
-}
-
-static inline size_t stl_list_range_size(const void *object) {
-  return list_size((const list_t *)object);
-}
-
-static inline uint64_t stl_list_range_version(const void *object) {
-  return list_generation((const list_t *)object);
-}
-
-static inline cmeta_gen_status stl_list_range_next(
-    const void *object, cmeta_range_cursor *cursor, void *out_value) {
-  const list_t *list = (const list_t *)object;
-  const void *value = NULL;
-  if (list == NULL || cursor == NULL || out_value == NULL ||
-      list->element_type == NULL)
-    return CMETA_GEN_ERROR;
-  if (!list_range_next(list, cursor, &value))
-    return CMETA_GEN_DONE;
-  memcpy(out_value, value, list->element_type->size);
-  return cursor->state[0] == NULL ? CMETA_GEN_VALUE_AND_DONE :
-                                    CMETA_GEN_VALUE;
-}
-
-static inline cmeta_range stl_list_range_factory(const void *object) {
-  const list_t *list = (const list_t *)object;
-  cmeta_range range = {
-      object,
-      list != NULL ? list->element_type : NULL,
-      CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
-      stl_list_range_size,
-      stl_list_range_next,
-      stl_list_range_version(object),
-      stl_list_range_version};
-  return range;
-}
-
-static inline cmeta_status stl_list_collector_begin(
-    void *context, const cmeta_type_desc *input, size_t limit) {
-  list_t *output = (list_t *)context;
-  if (output == NULL || output->element_type == NULL || input == NULL)
-    return CMETA_INVALID_ARGUMENT;
-  if (!cmeta_type_equal(output->element_type, input))
-    return CMETA_TYPE_MISMATCH;
-  return stl_list_cmeta_status(list_init(output, limit));
-}
-
-static inline cmeta_status stl_list_collector_accept(void *context,
-                                                      const void *value) {
-  return stl_list_cmeta_status(
-      list_push_back((list_t *)context, value, NULL));
-}
-
-static inline cmeta_status stl_list_collector_finish(void *context) {
-  (void)context;
-  return CMETA_OK;
-}
-
-static inline void stl_list_collector_abort(void *context) {
-  list_destroy((list_t *)context);
-}
-
-static const cmeta_collector_ops stl_list_collector_ops = {
-    stl_list_collector_begin,
-    stl_list_collector_accept,
-    stl_list_collector_finish,
-    stl_list_collector_abort};
-
-static inline cmeta_collector stl_list_collector_factory(void *zero_output,
-                                                          size_t limit) {
-  list_t *output = (list_t *)zero_output;
-  cmeta_collector result = {
-      &stl_list_collector_ops,
-      output,
-      output,
-      output != NULL ? output->element_type : NULL,
-      limit,
-      0u,
-      CMETA_COLLECTOR_ZERO,
-      CMETA_OK};
-  return result;
-}
-
-static const cmeta_container_desc stl_list_container_desc = {
-    "List",
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    stl_list_range_factory,
-    NULL,
-    NULL,
-    NULL,
-    stl_list_collector_factory};
-
 
 #ifdef __cplusplus
 }
