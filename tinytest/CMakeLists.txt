@@ -55,10 +55,5 @@ install(FILES ${tinytest_meta_headers}
 # Examples live in examples/ and are plain executables rather than CTest cases.
 add_subdirectory(examples)
 
-# TinyTest's internal probes are independent from downstream suites that merely
-# link TurboUtils::TinyTest. Keep the historical default while allowing focused
-# component CI to skip TinyTest's own self-test matrix.
-option(TINYTEST_BUILD_SELF_TESTS "Build TinyTest self-tests and compile probes" ON)
-if(TINYTEST_BUILD_SELF_TESTS)
-  add_subdirectory(test)
-endif()
+# Tests live in test/ and register executable targets and CTest entries.
+add_subdirectory(test)
