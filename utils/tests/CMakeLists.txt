@@ -57,6 +57,10 @@ set_target_properties(test_fmt_surface_contract_c PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+if(NOT WIN32)
+  target_compile_definitions(test_fmt_surface_contract_c PRIVATE
+    _POSIX_C_SOURCE=200809L)
+endif()
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(test_fmt_surface_contract_c PRIVATE
     -Werror=unused-parameter
