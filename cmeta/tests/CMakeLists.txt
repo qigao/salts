@@ -15,6 +15,15 @@ cmake_add_test(cmeta_collector_test
   LIBS TurboUtils::CMeta TurboUtils::TinyTest
   FOLDER "cmeta/tests")
 
+add_executable(cmeta_language_surface_test cmeta_language_surface_test.c)
+target_link_libraries(cmeta_language_surface_test PRIVATE TurboUtils::CMeta)
+set_target_properties(cmeta_language_surface_test PROPERTIES
+  FOLDER "cmeta/tests"
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+add_test(NAME cmeta_language_surface COMMAND cmeta_language_surface_test)
+
 set_target_properties(cmeta_header_cpp_test PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON

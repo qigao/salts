@@ -2,8 +2,8 @@ set(CMETA_FORMAL_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${CMETA_FORMAL_GENERATED_DIR}")
 
 # Backend-specific nested replay certification currently exists only for GNU and
-# Clang preprocessors. MSVC participates in portable CMeta/CFlow conformance and
-# Lean kernel builds, but does not claim a generated nested-replay certificate.
+# Clang preprocessors. MSVC participates in portable CMeta/CFlow conformance but
+# does not claim a generated nested-replay certificate.
 set(CMETA_FORMAL_BACKEND_CERTIFICATE OFF)
 
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
@@ -164,6 +164,16 @@ set_target_properties(cmeta_producer_replay_witness PROPERTIES
   C_EXTENSIONS NO)
 add_test(NAME cmeta_producer_replay
          COMMAND cmeta_producer_replay_witness)
+
+cmeta_add_formal_witness(cmeta_language_surface_witness
+  ${PROJECT_SOURCE_DIR}/cmeta/tests/cmeta_language_surface_test.c)
+target_link_libraries(cmeta_language_surface_witness PRIVATE TurboUtils::CMeta)
+set_target_properties(cmeta_language_surface_witness PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED YES
+  C_EXTENSIONS NO)
+add_test(NAME cmeta_language_surface_contract
+         COMMAND cmeta_language_surface_witness)
 
 if(CMETA_FORMAL_BACKEND_CERTIFICATE)
   cmeta_add_formal_witness(cmeta_nested_replay_deferred_witness
