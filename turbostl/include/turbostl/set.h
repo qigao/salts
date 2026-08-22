@@ -21,13 +21,12 @@ typedef struct set_iter {
 } set_iter_t;
 
 /* Internal typed bridge for compiled implementation and legacy wrappers. */
-stl_status set_init_with_type(set_t *set, const cmeta_type_desc *key_type,
+stl_status set_raw_init(set_t *set, const cmeta_type_desc *key_type,
+                        size_t element_limit);
+stl_status set_raw_from_array(set_t *set, const void *keys, size_t count,
+                              const cmeta_type_desc *key_type,
                               size_t element_limit);
-stl_status set_from_array_with_type(set_t *set, const void *keys,
-                                    size_t count,
-                                    const cmeta_type_desc *key_type,
-                                    size_t element_limit);
-void set_destroy_storage(set_t *set);
+void set_raw_destroy_storage(set_t *set);
 
 stl_status set_init_bytes(set_t *set, size_t key_size, size_t key_align,
                           size_t element_limit, set_compare_fn compare,
@@ -40,7 +39,7 @@ stl_status set_from_array_bytes(set_t *set, const void *keys, size_t count,
 static inline stl_status set_init(set_t *set, size_t element_limit) {
   if (set == NULL || set->element_type == NULL)
     return STL_INVALID_ARGUMENT;
-  return set_init_with_type(set, set->element_type, element_limit);
+  return set_raw_init(set, set->element_type, element_limit);
 }
 
 static inline stl_status set_from_array(set_t *set, const void *keys,
@@ -52,7 +51,7 @@ static inline stl_status set_from_array(set_t *set, const void *keys,
     return STL_INVALID_ARGUMENT;
   kind = set->cmeta.descriptor;
   type = set->element_type;
-  status = set_from_array_with_type(set, keys, count, type, element_limit);
+  status = set_raw_from_array(set, keys, count, type, element_limit);
   set->cmeta.descriptor = kind;
   set->element_type = type;
   return status;
@@ -60,7 +59,7 @@ static inline stl_status set_from_array(set_t *set, const void *keys,
 
 static inline void set_destroy(set_t *set) {
   if (set != NULL)
-    set_destroy_storage(set);
+    set_raw_destroy_storage(set);
 }
 
 void set_clear(set_t *set);
@@ -87,11 +86,11 @@ bool set_range_next(const set_t *set, cmeta_range_cursor *cursor,
 typedef set_compare_fn turbo_set_compare_fn;
 typedef set_t turbo_set_t;
 typedef set_iter_t turbo_set_iter_t;
-#define turbo_set_init set_init_with_type
+#define turbo_set_init set_raw_init
 #define turbo_set_init_bytes set_init_bytes
-#define turbo_set_from_array set_from_array_with_type
+#define turbo_set_from_array set_raw_from_array
 #define turbo_set_from_array_bytes set_from_array_bytes
-#define turbo_set_destroy set_destroy_storage
+#define turbo_set_destroy set_raw_destroy_storage
 #define turbo_set_clear set_clear
 #define turbo_set_add set_add
 #define turbo_set_contains set_contains
