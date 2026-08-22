@@ -1,230 +1,191 @@
+#include <cflow/clock.h>
+#include <cflow/executor.h>
 #include <cflow/scheduler.h>
+#include "timer_queue.h"
+#include <turbo/thread.h>
 
 #include <stdlib.h>
 #include <string.h>
-#include <threads.h>
-#include <time.h>
-
-typedef struct worker_task {
-    cflow_task_id id;
-    uint64_t due_ms;
-    uint64_t order;
-    cflow_task_fn fn;
-    void *user;
-    bool cancelled;
-} worker_task;
 
 typedef struct worker_state {
-    mtx_t mutex;
-    cnd_t cv;
-    cnd_t idle_cv;
-    thrd_t *threads;
-    size_t worker_count;
-    worker_task *tasks;
-    size_t count;
-    size_t capacity;
-    size_t active;
-    cflow_task_id next_id;
-    uint64_t next_order;
+    turbo_mutex_t mutex;
+    turbo_cond_t changed;
+    turbo_thread_t timer_thread;
+    cflow_clock clock;
+    cflow_executor executor;
+    cflow_timer_queue timers;
+    size_t dispatching;
     bool stopping;
 } worker_state;
 
-static uint64_t now_ms(void) {
-    struct timespec ts;
-    if (timespec_get(&ts, TIME_UTC) != TIME_UTC) return 0;
-    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
-}
+static void worker_timer_main(void *user) {
+    worker_state *state = (worker_state *)user;
 
-static struct timespec ms_to_timespec(uint64_t ms) {
-    struct timespec ts;
-    ts.tv_sec = (time_t)(ms / 1000u);
-    ts.tv_nsec = (long)((ms % 1000u) * 1000000u);
-    return ts;
-}
-
-static bool ensure_capacity(worker_state *s, size_t need) {
-    if (need <= s->capacity) return true;
-    size_t cap = s->capacity ? s->capacity * 2u : 16u;
-    while (cap < need) {
-        if (cap > SIZE_MAX / 2u) { cap = need; break; }
-        cap *= 2u;
-    }
-    worker_task *p = realloc(s->tasks, cap * sizeof(*p));
-    if (!p) return false;
-    s->tasks = p;
-    s->capacity = cap;
-    return true;
-}
-
-static void compact_cancelled(worker_state *s) {
-    size_t w = 0;
-    for (size_t i = 0; i < s->count; ++i) {
-        if (!s->tasks[i].cancelled) {
-            if (w != i) s->tasks[w] = s->tasks[i];
-            ++w;
-        }
-    }
-    s->count = w;
-}
-
-static size_t earliest_task(const worker_state *s) {
-    size_t best = SIZE_MAX;
-    for (size_t i = 0; i < s->count; ++i) {
-        const worker_task *t = &s->tasks[i];
-        if (t->cancelled) continue;
-        if (best == SIZE_MAX || t->due_ms < s->tasks[best].due_ms ||
-            (t->due_ms == s->tasks[best].due_ms &&
-             t->order < s->tasks[best].order))
-            best = i;
-    }
-    return best;
-}
-
-static bool is_idle(const worker_state *s) {
-    if (s->active != 0) return false;
-    for (size_t i = 0; i < s->count; ++i)
-        if (!s->tasks[i].cancelled) return false;
-    return true;
-}
-
-static int worker_main(void *arg) {
-    worker_state *s = (worker_state *)arg;
-    if (!s) return -1;
-
-    if (mtx_lock(&s->mutex) != thrd_success) return -1;
+    if (!state) return;
+    turbo_mutex_lock(&state->mutex);
     for (;;) {
-        compact_cancelled(s);
-        if (s->stopping) break;
+        cflow_deadline deadline;
+        cflow_instant now;
+        cflow_timer_task task;
 
-        size_t idx = earliest_task(s);
-        if (idx == SIZE_MAX) {
-            (void)cnd_wait(&s->cv, &s->mutex);
+        if (state->stopping) break;
+        if (!cflow_timer_queue_next_deadline(&state->timers, &deadline)) {
+            turbo_cond_wait(&state->changed, &state->mutex);
             continue;
         }
 
-        uint64_t now = now_ms();
-        if (s->tasks[idx].due_ms > now) {
-            struct timespec deadline = ms_to_timespec(s->tasks[idx].due_ms);
-            (void)cnd_timedwait(&s->cv, &s->mutex, &deadline);
+        now = cflow_clock_now(&state->clock);
+        if (deadline.ns > now.ns) {
+            cflow_duration remaining = cflow_deadline_remaining(deadline, now);
+            (void)turbo_cond_timedwait(&state->changed, &state->mutex,
+                                       remaining.ns);
             continue;
         }
 
-        worker_task task = s->tasks[idx];
-        memmove(&s->tasks[idx], &s->tasks[idx + 1],
-                (s->count - idx - 1u) * sizeof(s->tasks[0]));
-        --s->count;
-        ++s->active;
-        (void)mtx_unlock(&s->mutex);
+        if (!cflow_timer_queue_take_ready(&state->timers, now, &task))
+            continue;
 
-        task.fn(task.user);
+        ++state->dispatching;
+        turbo_cond_broadcast(&state->changed);
+        turbo_mutex_unlock(&state->mutex);
 
-        (void)mtx_lock(&s->mutex);
-        --s->active;
-        if (is_idle(s)) cnd_broadcast(&s->idle_cv);
+        (void)cflow_executor_post(&state->executor, task.fn, task.user);
+
+        turbo_mutex_lock(&state->mutex);
+        --state->dispatching;
+        turbo_cond_broadcast(&state->changed);
     }
-    (void)mtx_unlock(&s->mutex);
-    return 0;
+    turbo_cond_broadcast(&state->changed);
+    turbo_mutex_unlock(&state->mutex);
 }
 
-static cflow_task_id worker_post_after(void *state,
+static cflow_task_id worker_post_after(void *self,
                                        uint64_t delay_ms,
                                        cflow_task_fn fn,
                                        void *user) {
-    worker_state *s = (worker_state *)state;
-    if (!s || !fn) return 0;
-    if (mtx_lock(&s->mutex) != thrd_success) return 0;
-    if (s->stopping || !ensure_capacity(s, s->count + 1u)) {
-        (void)mtx_unlock(&s->mutex);
-        return 0;
+    worker_state *state = (worker_state *)self;
+    cflow_instant now;
+    cflow_deadline deadline;
+    cflow_task_id id;
+
+    if (!state || !fn) return 0u;
+    turbo_mutex_lock(&state->mutex);
+    if (state->stopping) {
+        turbo_mutex_unlock(&state->mutex);
+        return 0u;
     }
-    uint64_t now = now_ms();
-    uint64_t due = UINT64_MAX - now < delay_ms ? UINT64_MAX : now + delay_ms;
-    cflow_task_id id = s->next_id++;
-    if (id == 0) id = s->next_id++;
-    s->tasks[s->count++] = (worker_task){
-        .id = id,
-        .due_ms = due,
-        .order = s->next_order++,
-        .fn = fn,
-        .user = user,
-        .cancelled = false
-    };
-    cnd_broadcast(&s->cv);
-    (void)mtx_unlock(&s->mutex);
+
+    now = cflow_clock_now(&state->clock);
+    deadline = cflow_deadline_after(now, cflow_duration_from_ms(delay_ms));
+    id = cflow_timer_queue_schedule(&state->timers, deadline, fn, user);
+    if (id != 0u) turbo_cond_broadcast(&state->changed);
+    turbo_mutex_unlock(&state->mutex);
     return id;
 }
 
-static bool worker_cancel(void *state, cflow_task_id id) {
-    worker_state *s = (worker_state *)state;
-    if (!s || !id || mtx_lock(&s->mutex) != thrd_success) return false;
-    bool found = false;
-    for (size_t i = 0; i < s->count; ++i) {
-        if (s->tasks[i].id == id && !s->tasks[i].cancelled) {
-            s->tasks[i].cancelled = true;
-            found = true;
-            break;
+static bool worker_cancel(void *self, cflow_task_id id) {
+    worker_state *state = (worker_state *)self;
+    bool cancelled;
+
+    if (!state || id == 0u) return false;
+    turbo_mutex_lock(&state->mutex);
+    cancelled = !state->stopping &&
+                cflow_timer_queue_cancel(&state->timers, id);
+    if (cancelled) turbo_cond_broadcast(&state->changed);
+    turbo_mutex_unlock(&state->mutex);
+    return cancelled;
+}
+
+static bool worker_run_one(void *self) {
+    (void)self;
+    return false;
+}
+
+static size_t worker_run_ready(void *self) {
+    (void)self;
+    return 0u;
+}
+
+static size_t worker_advance(void *self, uint64_t ticks) {
+    (void)self;
+    (void)ticks;
+    return 0u;
+}
+
+static size_t worker_run_until_idle(void *self, size_t max_steps) {
+    (void)self;
+    (void)max_steps;
+    return 0u;
+}
+
+static bool worker_wait_idle(void *self) {
+    worker_state *state = (worker_state *)self;
+
+    if (!state) return false;
+    for (;;) {
+        bool stopping;
+        bool delayed_idle;
+
+        turbo_mutex_lock(&state->mutex);
+        while (!state->stopping &&
+               (cflow_timer_queue_pending(&state->timers) != 0u ||
+                state->dispatching != 0u)) {
+            turbo_cond_wait(&state->changed, &state->mutex);
         }
+        stopping = state->stopping;
+        delayed_idle = cflow_timer_queue_pending(&state->timers) == 0u &&
+                       state->dispatching == 0u;
+        turbo_mutex_unlock(&state->mutex);
+
+        if (stopping) return false;
+        if (!delayed_idle || !cflow_executor_wait_idle(&state->executor))
+            return false;
+
+        turbo_mutex_lock(&state->mutex);
+        delayed_idle = !state->stopping &&
+                       cflow_timer_queue_pending(&state->timers) == 0u &&
+                       state->dispatching == 0u;
+        turbo_mutex_unlock(&state->mutex);
+        if (delayed_idle && cflow_executor_pending(&state->executor) == 0u)
+            return true;
     }
-    compact_cancelled(s);
-    if (is_idle(s)) cnd_broadcast(&s->idle_cv);
-    cnd_broadcast(&s->cv);
-    (void)mtx_unlock(&s->mutex);
-    return found;
 }
 
-static bool worker_wait_idle(void *state) {
-    worker_state *s = (worker_state *)state;
-    if (!s || mtx_lock(&s->mutex) != thrd_success) return false;
-    while (!s->stopping && !is_idle(s))
-        (void)cnd_wait(&s->idle_cv, &s->mutex);
-    bool ok = !s->stopping || is_idle(s);
-    (void)mtx_unlock(&s->mutex);
-    return ok;
+static uint64_t worker_now(void *self) {
+    worker_state *state = (worker_state *)self;
+    return state ? cflow_instant_to_ms(cflow_clock_now(&state->clock)) : 0u;
 }
 
-static uint64_t worker_now(void *state) {
-    (void)state;
-    return now_ms();
+static size_t worker_pending(void *self) {
+    worker_state *state = (worker_state *)self;
+    size_t delayed;
+
+    if (!state) return 0u;
+    turbo_mutex_lock(&state->mutex);
+    delayed = cflow_timer_queue_pending(&state->timers) + state->dispatching;
+    turbo_mutex_unlock(&state->mutex);
+    return delayed + cflow_executor_pending(&state->executor);
 }
 
-static size_t worker_pending(void *state) {
-    worker_state *s = (worker_state *)state;
-    if (!s || mtx_lock(&s->mutex) != thrd_success) return 0;
-    size_t count = 0;
-    for (size_t i = 0; i < s->count; ++i)
-        if (!s->tasks[i].cancelled) ++count;
-    (void)mtx_unlock(&s->mutex);
-    return count;
+static void worker_destroy(void *self) {
+    worker_state *state = (worker_state *)self;
+
+    if (!state) return;
+    turbo_mutex_lock(&state->mutex);
+    state->stopping = true;
+    turbo_cond_broadcast(&state->changed);
+    turbo_mutex_unlock(&state->mutex);
+
+    if (state->timer_thread) (void)turbo_thread_join(&state->timer_thread);
+    cflow_timer_queue_destroy(&state->timers);
+    cflow_executor_destroy(&state->executor);
+    cflow_clock_destroy(&state->clock);
+    turbo_cond_destroy(&state->changed);
+    turbo_mutex_destroy(&state->mutex);
+    free(state);
 }
 
-static void worker_destroy(void *state) {
-    worker_state *s = (worker_state *)state;
-    if (!s) return;
-    if (mtx_lock(&s->mutex) == thrd_success) {
-        s->stopping = true;
-        s->count = 0;
-        cnd_broadcast(&s->cv);
-        cnd_broadcast(&s->idle_cv);
-        (void)mtx_unlock(&s->mutex);
-    }
-    for (size_t i = 0; i < s->worker_count; ++i) {
-        int result = 0;
-        (void)thrd_join(s->threads[i], &result);
-    }
-    free(s->tasks);
-    free(s->threads);
-    cnd_destroy(&s->idle_cv);
-    cnd_destroy(&s->cv);
-    mtx_destroy(&s->mutex);
-    free(s);
-}
-
-static bool worker_run_one(void *state) { (void)state; return false; }
-static size_t worker_run_ready(void *state) { (void)state; return 0; }
-static size_t worker_advance(void *state, uint64_t ticks) { (void)state; (void)ticks; return 0; }
-static size_t worker_run_until_idle(void *state, size_t max_steps) { (void)state; (void)max_steps; return 0; }
-
-CMETA_IMPLEMENTS(cflow_scheduler, c11_worker,
+CMETA_IMPLEMENTS(cflow_scheduler, worker_scheduler,
     CMETA_SCHED_CAP_DELAYED | CMETA_SCHED_CAP_CONCURRENT,
     .post_after = worker_post_after,
     .cancel = worker_cancel,
@@ -239,45 +200,31 @@ CMETA_IMPLEMENTS(cflow_scheduler, c11_worker,
 );
 
 bool cflow_scheduler_worker_init(cflow_scheduler *scheduler, size_t workers) {
-    if (!scheduler || workers == 0) return false;
+    worker_state *state;
+
+    if (!scheduler || workers == 0u) return false;
     memset(scheduler, 0, sizeof(*scheduler));
-    worker_state *s = calloc(1, sizeof(*s));
-    if (!s) return false;
-    if (mtx_init(&s->mutex, mtx_plain) != thrd_success) {
-        free(s); return false;
+    state = (worker_state *)calloc(1, sizeof(*state));
+    if (!state) return false;
+
+    turbo_mutex_init(&state->mutex);
+    turbo_cond_init(&state->changed);
+    if (!state->mutex || !state->changed ||
+        !cflow_clock_system_init(&state->clock) ||
+        !cflow_executor_worker_init(&state->executor, workers) ||
+        !cflow_timer_queue_init(&state->timers) ||
+        turbo_thread_create(&state->timer_thread, worker_timer_main, state) != 0) {
+        if (state->timer_thread) (void)turbo_thread_join(&state->timer_thread);
+        cflow_timer_queue_destroy(&state->timers);
+        if (cflow_executor_valid(&state->executor))
+            cflow_executor_destroy(&state->executor);
+        if (cflow_clock_valid(&state->clock)) cflow_clock_destroy(&state->clock);
+        turbo_cond_destroy(&state->changed);
+        turbo_mutex_destroy(&state->mutex);
+        free(state);
+        return false;
     }
-    if (cnd_init(&s->cv) != thrd_success) {
-        mtx_destroy(&s->mutex); free(s); return false;
-    }
-    if (cnd_init(&s->idle_cv) != thrd_success) {
-        cnd_destroy(&s->cv); mtx_destroy(&s->mutex); free(s); return false;
-    }
-    s->threads = calloc(workers, sizeof(*s->threads));
-    if (!s->threads) {
-        cnd_destroy(&s->idle_cv); cnd_destroy(&s->cv); mtx_destroy(&s->mutex);
-        free(s); return false;
-    }
-    s->worker_count = workers;
-    s->next_id = 1;
-    size_t created = 0;
-    for (; created < workers; ++created) {
-        if (thrd_create(&s->threads[created], worker_main, s) != thrd_success)
-            break;
-    }
-    if (created != workers) {
-        if (mtx_lock(&s->mutex) == thrd_success) {
-            s->stopping = true;
-            cnd_broadcast(&s->cv);
-            (void)mtx_unlock(&s->mutex);
-        }
-        for (size_t i = 0; i < created; ++i) {
-            int result = 0;
-            (void)thrd_join(s->threads[i], &result);
-        }
-        free(s->threads);
-        cnd_destroy(&s->idle_cv); cnd_destroy(&s->cv); mtx_destroy(&s->mutex);
-        free(s); return false;
-    }
-    *scheduler = c11_worker_as_cflow_scheduler(s);
+
+    *scheduler = worker_scheduler_as_cflow_scheduler(state);
     return true;
 }
