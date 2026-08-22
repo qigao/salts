@@ -11,12 +11,11 @@ typedef struct queue {
   deque_t raw;
 } queue_t;
 
-static inline stl_status queue_init_with_type(queue_t *queue,
-                                              const cmeta_type_desc *type,
-                                              size_t element_limit) {
+static inline stl_status queue_raw_init(queue_t *queue,
+                                        const cmeta_type_desc *type,
+                                        size_t element_limit) {
   return queue == NULL ? STL_INVALID_ARGUMENT
-                       : deque_init_with_type(&queue->raw, type,
-                                              element_limit);
+                       : deque_raw_init(&queue->raw, type, element_limit);
 }
 
 static inline stl_status queue_init(queue_t *queue, size_t element_limit) {
@@ -32,13 +31,12 @@ static inline stl_status queue_init_bytes(queue_t *queue, size_t elem_size,
                                           element_limit);
 }
 
-static inline stl_status queue_from_array_with_type(
+static inline stl_status queue_raw_from_array(
     queue_t *queue, const void *elements, size_t count,
     const cmeta_type_desc *type, size_t element_limit) {
   return queue == NULL ? STL_INVALID_ARGUMENT
-                       : deque_from_array_with_type(&queue->raw, elements,
-                                                    count, type,
-                                                    element_limit);
+                       : deque_raw_from_array(&queue->raw, elements, count,
+                                              type, element_limit);
 }
 
 static inline stl_status queue_from_array(queue_t *queue,
@@ -105,9 +103,9 @@ static inline bool queue_empty(const queue_t *queue) {
 
 /* Temporary repository-migration aliases. */
 typedef queue_t turbo_queue_t;
-#define turbo_queue_init queue_init_with_type
+#define turbo_queue_init queue_raw_init
 #define turbo_queue_init_bytes queue_init_bytes
-#define turbo_queue_from_array queue_from_array_with_type
+#define turbo_queue_from_array queue_raw_from_array
 #define turbo_queue_from_array_bytes queue_from_array_bytes
 #define turbo_queue_destroy queue_destroy
 #define turbo_queue_clear queue_clear
