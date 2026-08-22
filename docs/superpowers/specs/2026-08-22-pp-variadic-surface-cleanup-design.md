@@ -61,16 +61,18 @@ and one shared helper builds the stack array. Argument count comes from the shar
 
 Strict C11 has no clean standard empty-`__VA_ARGS__` primitive. The implementation will not introduce complex empty-argument detection into CMeta.
 
-Raw text and formatted text therefore become explicit API shapes:
+Raw text and formatted text use explicit API shapes:
 
 ```c
 fmt_text(buf, size, "ready");
 fmt(buf, size, "value={}", value);
 ```
 
-`fmt(...)` requires at least one formatting argument. `fmt_text(...)` (or the final equivalent name chosen during implementation) routes to `fmt_print(..., NULL, 0)` or an optimized copy path while preserving the existing output/error contract.
+`fmt(...)` requires at least one formatting argument. `fmt_text(...)` is the canonical zero-format-argument API and routes to the existing formatter contract with `args == NULL` and `arg_count == 0`, unless a direct-copy implementation is proven behaviorally identical by the existing tests.
 
 Low-level `fmt_print()` remains unchanged and continues to accept an explicit `fmt_arg_t *` plus count.
+
+Existing in-repository zero-argument `fmt(...)` calls must be migrated to `fmt_text(...)`. No compatibility alias preserves the old zero-argument `fmt(...)` shape.
 
 ## Logging API Cleanup
 
@@ -86,29 +88,33 @@ TURBO_LOG_INFO(logger, component, "ready");
 TURBO_LOG_INFOF(logger, component, "value={}", value);
 ```
 
+The same naming rule applies to DEBUG/WARN/ERROR/FATAL and the generic level-taking form where one exists: the existing name is the raw-message form and the `F` suffix is the formatted-message form.
+
 The existing runtime entry points remain:
 
 - `turbo_log_str(...)`
 - `turbo_log_typed(...)`
 
-Raw convenience macros call `turbo_log_str`. Formatted convenience macros call `turbo_log_typed` and require at least one formatting argument. Source capture (`__FILE__`, `__LINE__`) and level filtering remain at the call site.
+Raw convenience macros call `turbo_log_str`. Formatted convenience macros call `turbo_log_typed` and require at least one formatting argument. Source capture (`__FILE__`, `__LINE__`) and level filtering remain at the call site. Existing default-logger acquisition behavior is preserved unless a separate bug is identified and approved outside this cleanup.
 
-C++ may continue to use a variadic template helper internally for formatted logging because this is native C++ language functionality, not preprocessor arity emulation. The public C and C++ macro names should still follow the same raw-vs-formatted distinction.
+C++ may continue to use a variadic template helper internally for formatted logging because this is native C++ language functionality, not preprocessor arity emulation. The public C and C++ macro names follow the same raw-vs-formatted distinction.
 
-Compatibility aliases that require `##__VA_ARGS__` are removed rather than retained indefinitely.
+All in-repository formatted calls using the old raw macro names are migrated to the corresponding `*F` macro. Compatibility aliases that require `##__VA_ARGS__` are not retained.
 
 ## TinyTest and TinyMock Cleanup
 
 TinyTest's independent PP kernel remains. The cleanup target is duplication outside that kernel.
 
-`tinytest.h` currently defines additional helpers such as `TTEST_COUNT_ARGS__`, `TTEST_OVERLOAD__`, and `TT_invoke` comma-elision logic. Implementation should:
+`tinytest.h` currently defines additional helpers such as `TTEST_COUNT_ARGS__`, `TTEST_OVERLOAD__`, and `TT_invoke` comma-elision logic. The target state is explicit:
 
-- route non-empty arity selection through `TTEST_PP_NARG__`;
-- move any genuinely reusable selection helper into `tinymeta/pp.h` rather than duplicating it in `tinytest.h`;
-- replace zero-or-N invocation tricks with explicit zero/non-empty forms where practical;
-- avoid new `##__VA_ARGS__` dependencies.
+- non-empty arity selection uses `TTEST_PP_NARG__` from `tinymeta/pp.h`;
+- any reusable token concatenation/selection helper needed by TinyTest/TinyMock lives in `tinymeta/pp.h` rather than being reimplemented in `tinytest.h`;
+- `TTEST_COUNT_ARGS__` is removed;
+- generic zero-or-N invocation via `func(config, ##__VA_ARGS__)` is removed;
+- zero-argument invocation uses an explicit zero-argument helper/form, while non-empty invocation requires at least one forwarded argument;
+- no new `##__VA_ARGS__` dependency is introduced.
 
-TinyMock already uses `TTEST_PP_REPEAT__`, `TTEST_PP_NARG__`, `TTEST_PP_ARG_AT__`, and `TTEST_PP_COMMA_IF__`. Those patterns remain canonical. Existing explicit zero-argument mock forms (`TINYMOCk_MOCK0`, `TINYMOCk_MOCK0_VOID`) are preferred over empty-variadic detection.
+TinyMock already uses `TTEST_PP_REPEAT__`, `TTEST_PP_NARG__`, `TTEST_PP_ARG_AT__`, and `TTEST_PP_COMMA_IF__`. Those patterns remain canonical. Existing explicit zero-argument mock forms (`TINYMOCk_MOCK0`, `TINYMOCk_MOCK0_VOID`) remain and are preferred over empty-variadic detection.
 
 TinyTest stays strict C11 and remains independently usable without CMeta.
 
@@ -142,6 +148,8 @@ turbostl/include/turbostl/detail/typed_facade.h
 
 `cmeta/container.h` becomes a small protocol header. The current large facade generator is moved under TurboSTL and renamed with TurboSTL-owned internal prefixes where appropriate. `turbostl/meta.h` consumes that internal generator.
 
+`cmeta/range.h` then depends on the small container protocol only where the public Range/container-view API requires it; the two headers must not form an include cycle. The implementation may place shared forward declarations in the smaller dependency direction, but no new umbrella header is introduced for this purpose.
+
 No TurboSTL raw container implementation moves into CMeta, and CMeta must not know concrete prefixes such as `turbo_vec`, `turbo_map`, or operation names such as `push`, `at`, or `put`.
 
 ## CFlow Cleanup
@@ -167,21 +175,22 @@ Removed legacy implementation helpers are not preserved as deprecated aliases wh
 - logging raw and formatted forms use distinct public macro names rather than empty-variadic tricks;
 - `cmeta/container.h` no longer exports TurboSTL facade-generation internals.
 
-Runtime ABI functions remain stable unless implementation uncovers an unavoidable conflict; any such conflict requires a separate explicit decision rather than being folded into this cleanup.
+Source compatibility may break for old zero-argument `fmt(...)` and old formatted `TLOG_*`/`TURBO_LOG_*` call shapes; all repository call sites are migrated in the same change. Runtime ABI functions remain stable. Any proposed runtime ABI change requires a separate explicit decision and is not part of this cleanup.
 
 ## Testing and Verification
 
 The implementation is complete only when all of the following hold:
 
 1. Repository search shows no surviving business-layer `NARGS`, `WRAP_1..N`, `APPLY_1..N`, or equivalent arity families except the canonical kernels in `cmeta/pp.h` and `tinytest/include/tinymeta/pp.h`.
-2. Repository search shows no newly introduced `##__VA_ARGS__`; existing occurrences in the touched surfaces are removed or explicitly justified.
-3. `fmt` tests cover raw-text and formatted-text APIs separately, including type detection and zero-format-argument behavior through the raw path.
-4. TLog tests cover raw and formatted macros, source capture, level filtering, default logger use, and C++ helper behavior.
-5. TinyTest/TinyMock C and C++ tests pass without CMeta dependency.
+2. Repository search shows no `##__VA_ARGS__` in the touched `fmt.h`, `tlog.h`, `tinytest.h`, TinyMock/TinyMeta surface, CFlow surface, or TurboSTL typed-facade surface. Any untouched occurrence elsewhere is inventoried rather than silently ignored.
+3. `fmt` tests cover `fmt_text(...)` and non-empty `fmt(...)` separately, including C11 type detection and C++ overload behavior.
+4. TLog tests cover raw and formatted macros, source capture, level filtering, default logger use, and C++ formatted helper behavior.
+5. TinyTest/TinyMock C and C++ tests pass without CMeta dependency and exercise explicit zero-argument and non-empty invocation paths.
 6. TurboSTL typed facade tests pass after moving generator ownership out of CMeta.
-7. CMeta language-surface tests still pass and no longer require TurboSTL-specific facade generation from `cmeta/container.h`.
-8. CFlow tests pass without semantic changes.
+7. CMeta language-surface tests still pass, `cmeta/container.h` exposes only protocol concepts, and CMeta no longer exports TurboSTL-specific facade-generation macros.
+8. CFlow tests pass without callable/lambda/bind semantic changes.
 9. Standard project CI uses the existing `linux-release-user` and `win-release-user` configure/build/test presets.
+10. A final repository-wide macro audit is included in the PR description, listing any remaining arity or comma-elision machinery and why it is intentionally retained.
 
 ## Non-Goals
 
