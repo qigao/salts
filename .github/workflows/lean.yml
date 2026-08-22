@@ -219,3 +219,10 @@ jobs:
         run: |
           set -euo pipefail
           lake build --wfail
+
+      - name: Verify root module isolation
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euo pipefail
+          lake env lean CMeta/RootIsolationConformance.lean
