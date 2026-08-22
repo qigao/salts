@@ -48,7 +48,7 @@ Enum(turbo_log_level_t,
  * component, file, and message are borrowed for the callback duration. The
  * reflected descriptor does not own or extend the lifetime of these strings.
  */
-CMETA_STRUCT(turbo_log_entry_t,
+Struct(turbo_log_entry_t,
     (turbo_log_level_t, level),
     (uint64_t, timestamp_ms),
     (uint32_t, thread_id),
