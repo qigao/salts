@@ -379,16 +379,6 @@ const cmeta_container_desc descriptor_symbol = {                                
     stl_##prefix##_collector_factory};
 
 STL_DEFINE_ORDERED_ASSOC_META(
-    map, map_t, "Map", map_init, map_put, map_destroy, map_size,
-    map_generation, map_range_next,
-    CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
-        CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
-    CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
-    CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
-        CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
-    stl_map_container_desc)
-
-STL_DEFINE_ORDERED_ASSOC_META(
     multimap, multimap_t, "MultiMap", multimap_init, multimap_put,
     multimap_destroy, multimap_size, multimap_generation, multimap_range_next,
     CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
