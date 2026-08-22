@@ -77,7 +77,7 @@ static void turbo_platform_zero_cpu_info(turbo_platform_cpu_info_t *info) {
 }
 
 static void turbo_platform_zero_interface(turbo_platform_network_interface_t *iface) {
-  if (!info) {
+  if (!iface) {
     return;
   }
   memset(iface, 0, sizeof(*iface));
