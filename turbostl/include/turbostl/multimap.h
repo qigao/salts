@@ -44,9 +44,20 @@ stl_status multimap_from_arrays_bytes(
 
 static inline stl_status multimap_init(multimap_t *map,
                                        size_t element_limit) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *key_type;
+  const cmeta_type_desc *value_type;
+  stl_status status;
   if (map == NULL || map->key_type == NULL || map->value_type == NULL)
     return STL_INVALID_ARGUMENT;
-  return multimap_raw_init(map, map->key_type, map->value_type, element_limit);
+  kind = map->cmeta.descriptor;
+  key_type = map->key_type;
+  value_type = map->value_type;
+  status = multimap_raw_init(map, key_type, value_type, element_limit);
+  map->cmeta.descriptor = kind;
+  map->key_type = key_type;
+  map->value_type = value_type;
+  return status;
 }
 
 static inline stl_status multimap_from_arrays(
@@ -70,8 +81,18 @@ static inline stl_status multimap_from_arrays(
 }
 
 static inline void multimap_destroy(multimap_t *map) {
-  if (map != NULL)
-    multimap_raw_destroy_storage(map);
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *key_type;
+  const cmeta_type_desc *value_type;
+  if (map == NULL)
+    return;
+  kind = map->cmeta.descriptor;
+  key_type = map->key_type;
+  value_type = map->value_type;
+  multimap_raw_destroy_storage(map);
+  map->cmeta.descriptor = kind;
+  map->key_type = key_type;
+  map->value_type = value_type;
 }
 
 void multimap_clear(multimap_t *map);

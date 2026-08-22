@@ -61,27 +61,31 @@
 #endif
 #ifndef HashMap
 #define HashMap(K, V, name) \
-  hash_map_t name = { .key_type = CMETA_TYPEOF(K), \
+  hash_map_t name = { .cmeta = { &stl_hash_map_container_desc }, \
+                      .key_type = CMETA_TYPEOF(K), \
                       .value_type = CMETA_TYPEOF(V) }
 #endif
 #ifndef Map
 #define Map(K, V, name) \
-  map_t name = { { &stl_map_container_desc }, CMETA_TYPEOF(K), \
+  map_t name = { { &stl_map_instance_container_desc }, CMETA_TYPEOF(K), \
                  CMETA_TYPEOF(V), NULL, UINT64_C(0) }
 #endif
 #ifndef MultiMap
 #define MultiMap(K, V, name) \
-  multimap_t name = { .key_type = CMETA_TYPEOF(K), \
+  multimap_t name = { .cmeta = { &stl_multimap_container_desc }, \
+                      .key_type = CMETA_TYPEOF(K), \
                       .value_type = CMETA_TYPEOF(V) }
 #endif
 #ifndef BTree
 #define BTree(K, V, name) \
-  btree_t name = { .key_type = CMETA_TYPEOF(K), \
+  btree_t name = { .cmeta = { &stl_btree_container_desc }, \
+                   .key_type = CMETA_TYPEOF(K), \
                    .value_type = CMETA_TYPEOF(V) }
 #endif
 #ifndef BPlusTree
 #define BPlusTree(K, V, name) \
-  bplus_tree_t name = { .key_type = CMETA_TYPEOF(K), \
+  bplus_tree_t name = { .cmeta = { &stl_bplus_tree_container_desc }, \
+                        .key_type = CMETA_TYPEOF(K), \
                         .value_type = CMETA_TYPEOF(V) }
 #endif
 
