@@ -25,15 +25,14 @@ typedef struct list_iter {
   void *node;
 } list_iter_t;
 
-/* Internal typed bridge used while implementation symbols are migrated. */
-stl_status list_init_with_type(list_t *list,
+/* Internal typed-storage bridge. Natural typed API is instance-driven below. */
+stl_status list_raw_init(list_t *list, const cmeta_type_desc *element_type,
+                         size_t element_limit);
+stl_status list_raw_from_array(list_t *list, const void *elements,
+                               size_t count,
                                const cmeta_type_desc *element_type,
                                size_t element_limit);
-stl_status list_from_array_with_type(list_t *list, const void *elements,
-                                     size_t count,
-                                     const cmeta_type_desc *element_type,
-                                     size_t element_limit);
-void list_destroy_storage(list_t *list);
+void list_raw_destroy_storage(list_t *list);
 
 /* Raw byte entry points remain explicit. */
 stl_status list_init_bytes(list_t *list, size_t elem_size, size_t elem_align,
@@ -51,7 +50,7 @@ static inline stl_status list_init(list_t *list, size_t element_limit) {
     return STL_INVALID_ARGUMENT;
   kind = list->cmeta.descriptor;
   type = list->element_type;
-  status = list_init_with_type(list, type, element_limit);
+  status = list_raw_init(list, type, element_limit);
   list->cmeta.descriptor = kind;
   list->element_type = type;
   return status;
@@ -67,8 +66,7 @@ static inline stl_status list_from_array(list_t *list, const void *elements,
     return STL_INVALID_ARGUMENT;
   kind = list->cmeta.descriptor;
   type = list->element_type;
-  status = list_from_array_with_type(list, elements, count, type,
-                                     element_limit);
+  status = list_raw_from_array(list, elements, count, type, element_limit);
   list->cmeta.descriptor = kind;
   list->element_type = type;
   return status;
@@ -81,7 +79,7 @@ static inline void list_destroy(list_t *list) {
     return;
   kind = list->cmeta.descriptor;
   type = list->element_type;
-  list_destroy_storage(list);
+  list_raw_destroy_storage(list);
   list->cmeta.descriptor = kind;
   list->element_type = type;
 }
@@ -226,11 +224,11 @@ static const cmeta_container_desc stl_list_container_desc = {
 /* Temporary repository-migration aliases. */
 typedef list_t turbo_list_t;
 typedef list_iter_t turbo_list_iter_t;
-#define turbo_list_init list_init_with_type
+#define turbo_list_init list_raw_init
 #define turbo_list_init_bytes list_init_bytes
-#define turbo_list_from_array list_from_array_with_type
+#define turbo_list_from_array list_raw_from_array
 #define turbo_list_from_array_bytes list_from_array_bytes
-#define turbo_list_destroy list_destroy_storage
+#define turbo_list_destroy list_raw_destroy_storage
 #define turbo_list_clear list_clear
 #define turbo_list_push_front list_push_front
 #define turbo_list_push_back list_push_back
