@@ -474,7 +474,7 @@ static inline auto fmt_arg_detect(const T &x) -> typename std::enable_if<
  */
 template <typename... Args>
 inline int fmt_cpp_wrapper(char *buf, size_t size, const char *fmt, const Args &...args) {
-  const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE}};
+  const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE, {}}};
   return fmt_print(buf, size, fmt, arg_array, sizeof...(Args));
 }
 
@@ -482,7 +482,7 @@ inline int fmt_cpp_wrapper(char *buf, size_t size, const char *fmt, const Args &
 
 template <typename... Args>
 inline tstr tstr_cat_typed_cpp(tstr s, const char *format, const Args &...args) {
-  const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE}};
+  const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE, {}}};
   return fmt_print_tstr(s, format, arg_array, sizeof...(Args));
 }
 
@@ -490,7 +490,7 @@ inline tstr tstr_cat_typed_cpp(tstr s, const char *format, const Args &...args) 
 
 template <typename... Args>
 inline tstr tstr_format_typed_cpp(const char *format, const Args &...args) {
-  const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE}};
+  const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE, {}}};
   return fmt_print_tstr(tstr_new(), format, arg_array, sizeof...(Args));
 }
 
