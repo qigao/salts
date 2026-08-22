@@ -23,6 +23,13 @@ cmake_add_test(cflow_runtime_test
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_calculus_conformance_test
+  SOURCES
+    cflow_calculus_conformance_test.c
+    ${CFLOW_TEST_SUPPORT}
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_execution_test
   SOURCES cflow_execution_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
@@ -43,6 +50,7 @@ set_target_properties(
   cflow_graph_test
   cflow_pipeline_test
   cflow_runtime_test
+  cflow_calculus_conformance_test
   cflow_execution_test
   cflow_scheduler_compat_test
   PROPERTIES
