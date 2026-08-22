@@ -8,17 +8,17 @@ The canonical user model is:
 
 ```c
 Vec(int, numbers);
-List(User, users);
-Map(int, User, user_map);
+List(int, items);
+Map(int, int, scores);
 
 vec_init(&numbers, 128u);
 vec_push(&numbers, &value);
 
-list_init(&users, 128u);
-list_push_back(&users, &user);
+list_init(&items, 128u);
+list_push_back(&items, &value);
 
-map_init(&user_map, 128u);
-map_put(&user_map, &id, &user);
+map_init(&scores, 128u);
+map_put(&scores, &id, &score);
 ```
 
 The concrete element/key/value types are bound by the declaration DSL and carried by the container object itself. Users do not pass a generated type token to operations.
@@ -57,7 +57,7 @@ set_t
     vec_t name = { .element_type = CMETA_TYPEOF(T) }
 ```
 
-The exact implementation macro may use an internal initializer helper, but the observable contract is that `numbers` has type `vec_t` and carries `CMETA_TYPEOF(int)` before `vec_init()`.
+The exact implementation macro may use an internal initializer helper, but the observable contract is that `numbers` has type `vec_t` and carries the descriptor resolved for `T` before `vec_init()`.
 
 Two-type containers bind both descriptors:
 
@@ -86,6 +86,21 @@ BPlusTree(K, V, name)
 ```
 
 These macros bind type metadata only. They do not allocate storage and do not initialize the runtime container.
+
+## CMeta type-resolution boundary
+
+Current strict-C11 `CMETA_TYPEOF(T)` is intentionally finite: it resolves the types registered in CMeta's `_Generic` type list and returns `NULL` for an unknown application type.
+
+TurboSTL must not silently invent memcpy/no-op lifecycle semantics for an unknown type merely to make `Vec(User, users)` compile.
+
+Therefore the first self-describing API contract is:
+
+- if CMeta resolves `T`, `Vec(T, value)` / `Map(K,V,value)` pre-bind those descriptors;
+- if any required descriptor is unresolved, typed `*_init()` returns `STL_INVALID_ARGUMENT` without mutation;
+- application-defined types require a proper CMeta type-registration path before they can use the inferred typed initialization path;
+- raw-byte entry points remain available when the caller intentionally supplies size/alignment/comparator information.
+
+Extending CMeta's application-type registration mechanism is a separate concern and must not be faked inside TurboSTL.
 
 ## Natural operation API
 
@@ -169,7 +184,7 @@ A destroyed self-describing handle can be initialized again without repeating a 
 CMeta remains the source of type descriptors and traits:
 
 ```text
-Struct / Enum / built-in type
+registered CMeta type
         ↓
 CMETA_TYPEOF(T)
         ↓
@@ -188,7 +203,7 @@ CMeta's generic container-generation infrastructure may remain for other users; 
 
 Removing generated user types simplifies CFlow integration because container *kinds* are finite even though element types are open-ended.
 
-A future/public generic stream entry point may dispatch on ordinary handle types:
+A public generic stream entry point can dispatch on ordinary handle types:
 
 ```c
 _Generic((container_ptr),
@@ -213,12 +228,12 @@ to_list(&pipeline, OutputList, &output, limit);
 
 ## Type-safety boundary
 
-Strict C11 cannot recover an arbitrary application-defined element type from a `void *` argument and perform C++-style template deduction without compiler extensions or a finite `_Generic` registry.
+Strict C11 cannot recover an arbitrary application-defined element type from a `void *` payload argument and perform C++-style template deduction without compiler extensions or a finite `_Generic` registry.
 
 Therefore the supported guarantee is:
 
-- declaration-time type metadata is inferred from `Vec(T, ...)` / `Map(K,V,...)`;
-- lifecycle/compare/hash behavior is driven by the correct CMeta descriptors;
+- declaration-time type metadata is inferred for CMeta-resolved types from `Vec(T, ...)` / `Map(K,V,...)`;
+- lifecycle/compare/hash behavior is driven by the bound CMeta descriptors;
 - operations require no repeated type token;
 - element/key/value payloads remain pointer-based (`&value`, `&key`) as in the underlying C API.
 
@@ -250,7 +265,7 @@ There is no permanent `turbo_*` compatibility API in final installed TurboSTL he
 
 TurboSTL must not publish generated names such as `IntList_init()` as the normal end-user path.
 
-`typed.h` must not define semantic macros that shadow natural raw functions. In particular, it must not own macros named `list_init`, `map_init`, `map_put`, etc.
+`typed.h` must not define semantic macros that shadow natural functions. In particular, it must not own macros named `list_init`, `map_init`, `map_put`, etc.
 
 As this self-describing model is implemented, TurboSTL's old `typed(Vec, IntVec, int)` registration/generation surface should be removed from the public entry point rather than maintained as a second API.
 
@@ -291,7 +306,8 @@ Temporary aliases may exist in intermediate commits only. They must not remain i
 Verification is compile/link/runtime based:
 
 - a C11 test declares `Vec(int, v)`, calls `vec_init(&v, limit)`, pushes/pops values, destroys, and reinitializes without a type token;
-- equivalent declaration/init/operation tests cover List, Stack, Queue, Set/HashSet, Map/HashMap, MultiMap, BTree/BPlusTree;
+- equivalent declaration/init/operation tests cover List, Stack, Queue, Set/HashSet, Map/HashMap, MultiMap, BTree/BPlusTree using CMeta-resolved types;
+- an unresolved type-binding test proves `*_init()` fails without mutation rather than guessing lifecycle semantics;
 - user tests contain no `IntVec`, `IntList`, `IntMap`, `Type_method`, or generated container type token;
 - C++17 can include all public headers;
 - existing ownership, iterator invalidation, capacity, compare/hash, and sort behavior remains unchanged;
@@ -305,6 +321,7 @@ No grep/source-spelling test is added; API absence is established by final publi
 ## Out of scope
 
 - changing container algorithms/storage models except fields required to retain type bindings;
+- inventing an application-type CMeta registration mechanism inside TurboSTL;
 - introducing C++ templates or compiler-specific `typeof` extensions;
 - renaming the `turbostl` directory or `TurboUtils::STL` target;
 - changing CMeta naming policy outside the integration required by TurboSTL;
