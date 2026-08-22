@@ -51,7 +51,11 @@ stl_status heap_reserve(heap_t *heap, size_t min_capacity);
 stl_status heap_push(heap_t *heap, const void *elem);
 stl_status heap_pop(heap_t *heap, void *out_elem);
 const void *heap_peek(const heap_t *heap);
-const void *heap_at_const(const heap_t *heap, size_t index);
+static inline const void *heap_at_const(const heap_t *heap, size_t index) {
+  if (heap == NULL || index >= heap->size)
+    return NULL;
+  return (const unsigned char *)heap->data + index * heap->elem_stride;
+}
 size_t heap_size(const heap_t *heap);
 size_t heap_capacity(const heap_t *heap);
 uint64_t heap_generation(const heap_t *heap);
