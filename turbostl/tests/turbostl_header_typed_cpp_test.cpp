@@ -3,19 +3,19 @@
 
 #include <type_traits>
 
-#ifndef CMETA_GENERIC_KIND_Vec
-#error "typed.h must expose the Vec generic-kind registration"
-#endif
-
-static_assert(!std::is_same_v<turbo_set_t, turbo_hash_set_t>,
-              "Set and HashSet must be independent container types");
-static_assert(!std::is_same_v<turbo_map_t, turbo_btree_t>,
-              "Map and BTree must be independent container types");
+static_assert(!std::is_same_v<set_t, hash_set_t>,
+              "Set and HashSet must remain independent container types");
+static_assert(!std::is_same_v<map_t, btree_t>,
+              "Map and BTree must remain independent container types");
 
 spec("TurboSTL typed C++ public header") {
-  it("directly exposes raw typed facade prerequisites") {
-    turbo_vec_t vec{};
+  it("exposes ordinary self-describing handle types") {
+    vec_t vec{};
+    list_t list{};
+    map_t map{};
 
     check_true(sizeof(vec) > 0);
+    check_true(sizeof(list) > 0);
+    check_true(sizeof(map) > 0);
   }
 }
