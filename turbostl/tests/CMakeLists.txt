@@ -39,7 +39,7 @@ cmake_add_test(turbostl_typed_test
   FOLDER "turbostl/tests")
 
 cmake_add_test(turbostl_tree_test
-  SOURCES legacy_tree_test.c
+  SOURCES turbostl_tree_test.c
   LIBS TurboUtils::STL TurboUtils::TinyTest
   FOLDER "turbostl/tests")
 
