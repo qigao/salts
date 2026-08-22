@@ -1,0 +1,95 @@
+name: CMeta conformance
+
+on:
+  pull_request:
+    paths:
+      - "cmeta/**"
+      - "cflow/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "presets/**"
+      - ".github/workflows/cmeta.yml"
+  push:
+    branches: [master]
+    paths:
+      - "cmeta/**"
+      - "cflow/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "presets/**"
+      - ".github/workflows/cmeta.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: CMeta / ${{ matrix.backend }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        shell: bash
+        run: cmake --preset "cmeta-ci-linux-${{ matrix.backend }}"
+
+      - name: Build CMeta and CFlow tests
+        shell: bash
+        run: |
+          cmake --build --preset "build-cmeta-ci-linux-${{ matrix.backend }}" --target \
+            cmeta_core_test \
+            cmeta_header_cpp_test \
+            cmeta_meta_header_test \
+            cmeta_language_surface_test \
+            cmeta_collector_test \
+            cflow_graph_test \
+            cflow_pipeline_test \
+            cflow_runtime_test \
+            cflow_header_cpp_test
+
+      - name: Run CMeta and CFlow tests
+        shell: bash
+        run: ctest --test-dir "build/cmeta-ci-linux-${{ matrix.backend }}" -R "^(cmeta_|cflow_)" --output-on-failure
+
+  windows:
+    name: CMeta / MSVC
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure, build, and test
+        shell: cmd
+        run: |
+          set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+          if not exist "%VSWHERE%" exit /b 1
+          for /f "usebackq tokens=*" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%I"
+          if not defined VSINSTALL exit /b 1
+
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+
+          set "MSVC_ROOT=%VCToolsInstallDir%"
+          set "WINDOWS_SDK_ROOT=%WindowsSdkDir%"
+          set "WINDOWS_SDK_VERSION=%WindowsSDKVersion:\=%"
+
+          cmake --preset cmeta-ci-windows-msvc
+          if errorlevel 1 exit /b 1
+
+          cmake --build --preset build-cmeta-ci-windows-msvc --target ^
+            cmeta_core_test ^
+            cmeta_header_cpp_test ^
+            cmeta_meta_header_test ^
+            cmeta_language_surface_test ^
+            cmeta_collector_test ^
+            cflow_graph_test ^
+            cflow_pipeline_test ^
+            cflow_runtime_test ^
+            cflow_header_cpp_test
+          if errorlevel 1 exit /b 1
+
+          ctest --test-dir build/cmeta-ci-windows-msvc -R "^(cmeta_|cflow_)" --output-on-failure
