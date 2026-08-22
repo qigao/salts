@@ -52,12 +52,20 @@ cmake_add_test(tinytest_cmeta_equal_test
   LIBS TurboUtils::TinyTest
   FOLDER "tinytest/tests")
 
+# Negative language probes must be compile-only. Otherwise an unrelated link
+# failure can be mistaken for the expected compile-time diagnostic.
+set(_tinytest_saved_try_compile_target_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+# TinyTest's C surface is C11. Keep this probe on the same baseline rather than
+# silently testing a newer C17 dialect.
 try_compile(tinytest_cmeta_unregistered_compiles
   "${CMAKE_CURRENT_BINARY_DIR}/cmeta_equal_unregistered_probe"
   SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/cmeta_equal_unregistered.c"
   CMAKE_FLAGS
-    "-DCMAKE_C_STANDARD=17"
+    "-DCMAKE_C_STANDARD=11"
     "-DCMAKE_C_STANDARD_REQUIRED=ON"
+    "-DCMAKE_C_EXTENSIONS=OFF"
     "-DINCLUDE_DIRECTORIES:STRING=${CMAKE_SOURCE_DIR}/tinytest/include"
   OUTPUT_VARIABLE tinytest_cmeta_unregistered_output)
 
@@ -67,14 +75,28 @@ if(tinytest_cmeta_unregistered_compiles)
 endif()
 
 if(NOT WIN32)
+  # CMP0067 makes source-signature try_compile inherit the caller's language
+  # standard. Override the caller locally so this is a real C99/pre-C11 probe.
+  set(_tinytest_saved_c_standard "${CMAKE_C_STANDARD}")
+  set(_tinytest_saved_c_standard_required "${CMAKE_C_STANDARD_REQUIRED}")
+  set(_tinytest_saved_c_extensions "${CMAKE_C_EXTENSIONS}")
+  set(CMAKE_C_STANDARD 99)
+  set(CMAKE_C_STANDARD_REQUIRED ON)
+  set(CMAKE_C_EXTENSIONS OFF)
+
   try_compile(tinytest_pre_c11_compiles
     "${CMAKE_CURRENT_BINARY_DIR}/pre_c11_compile_probe"
     SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/pre_c11_compile_fail.c"
     CMAKE_FLAGS
-      "-DCMAKE_C_STANDARD=99"
-      "-DCMAKE_C_STANDARD_REQUIRED=ON"
       "-DINCLUDE_DIRECTORIES:STRING=${CMAKE_SOURCE_DIR}/tinytest/include"
     OUTPUT_VARIABLE tinytest_pre_c11_output)
+
+  set(CMAKE_C_STANDARD "${_tinytest_saved_c_standard}")
+  set(CMAKE_C_STANDARD_REQUIRED "${_tinytest_saved_c_standard_required}")
+  set(CMAKE_C_EXTENSIONS "${_tinytest_saved_c_extensions}")
+  unset(_tinytest_saved_c_standard)
+  unset(_tinytest_saved_c_standard_required)
+  unset(_tinytest_saved_c_extensions)
 
   if(tinytest_pre_c11_compiles)
     message(FATAL_ERROR "tinytest.h accepted a pre-C11 C translation unit")
@@ -86,6 +108,9 @@ if(NOT WIN32)
       "${tinytest_pre_c11_output}")
   endif()
 endif()
+
+set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_tinytest_saved_try_compile_target_type}")
+unset(_tinytest_saved_try_compile_target_type)
 
 cmake_add_test(tinytest_result_x_macro
   SOURCES result_x_macro_test.c
