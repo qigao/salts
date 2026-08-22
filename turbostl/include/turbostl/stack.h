@@ -11,12 +11,19 @@ typedef struct stack {
   vec_t raw;
 } stack_t;
 
-static inline stl_status stack_init(stack_t *stack,
-                                    const cmeta_type_desc *type,
-                                    size_t element_limit) {
+/* Internal compatibility bridge for generated wrappers. */
+static inline stl_status stack_init_with_type(stack_t *stack,
+                                              const cmeta_type_desc *type,
+                                              size_t element_limit) {
   return stack == NULL ? STL_INVALID_ARGUMENT
                        : vec_init_with_type(&stack->raw, type, element_limit);
 }
+
+static inline stl_status stack_init(stack_t *stack, size_t element_limit) {
+  return stack == NULL ? STL_INVALID_ARGUMENT
+                       : vec_init(&stack->raw, element_limit);
+}
+
 static inline stl_status stack_init_bytes(stack_t *stack, size_t elem_size,
                                           size_t elem_align,
                                           size_t element_limit) {
@@ -24,13 +31,23 @@ static inline stl_status stack_init_bytes(stack_t *stack, size_t elem_size,
                        : vec_init_bytes(&stack->raw, elem_size, elem_align,
                                         element_limit);
 }
-static inline stl_status stack_from_array(
+
+static inline stl_status stack_from_array_with_type(
     stack_t *stack, const void *elements, size_t count,
     const cmeta_type_desc *type, size_t element_limit) {
   return stack == NULL ? STL_INVALID_ARGUMENT
                        : vec_from_array_with_type(&stack->raw, elements, count,
                                                   type, element_limit);
 }
+
+static inline stl_status stack_from_array(stack_t *stack,
+                                          const void *elements, size_t count,
+                                          size_t element_limit) {
+  return stack == NULL ? STL_INVALID_ARGUMENT
+                       : vec_from_array(&stack->raw, elements, count,
+                                        element_limit);
+}
+
 static inline stl_status stack_from_array_bytes(
     stack_t *stack, const void *elements, size_t count, size_t elem_size,
     size_t elem_align, size_t element_limit) {
@@ -83,9 +100,9 @@ static inline bool stack_empty(const stack_t *stack) {
 
 /* Temporary repository-migration aliases. */
 typedef stack_t turbo_stack_t;
-#define turbo_stack_init stack_init
+#define turbo_stack_init stack_init_with_type
 #define turbo_stack_init_bytes stack_init_bytes
-#define turbo_stack_from_array stack_from_array
+#define turbo_stack_from_array stack_from_array_with_type
 #define turbo_stack_from_array_bytes stack_from_array_bytes
 #define turbo_stack_destroy stack_destroy
 #define turbo_stack_clear stack_clear
