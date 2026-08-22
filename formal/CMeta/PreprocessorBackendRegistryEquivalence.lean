@@ -131,8 +131,7 @@ theorem observe_replace_ne
   rw [lookup_replace_ne_exact registry backend replaced key hreplace hne]
 
 /-- Removing an absent exact key is extensionally the identity. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryEquivalenceConformance
-public theorem remove_missing_equivalent
+theorem remove_missing_equivalent
     (registry : PreprocessorBackendRegistry)
     (target : BackendKey)
     (hmissing : registry.lookup target = none) :
@@ -148,8 +147,7 @@ public theorem remove_missing_equivalent
 
 /-- Fresh insertion followed by removal of the inserted exact key restores the
     original registry extensionally. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryEquivalenceConformance
-public theorem insert_remove_equivalent
+theorem insert_remove_equivalent
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend)
     (inserted : PreprocessorBackendRegistry)
@@ -180,8 +178,7 @@ public theorem insert_remove_equivalent
 /-- Two removals commute extensionally. No distinctness premise is needed: the
     equal-key case is idempotent and the distinct-key case changes disjoint map
     points. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryEquivalenceConformance
-public theorem remove_remove_equivalent
+theorem remove_remove_equivalent
     (registry : PreprocessorBackendRegistry)
     (first second : BackendKey) :
     Equivalent
@@ -208,8 +205,7 @@ public theorem remove_remove_equivalent
     replacement may change the payload arbitrarily, but after the second
     successful replacement no observation can distinguish it from replacing the
     original registry directly with the final payload. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryEquivalenceConformance
-public theorem replace_last_write_wins
+theorem replace_last_write_wins
     (registry : PreprocessorBackendRegistry)
     (firstBackend secondBackend : CertifiedPreprocessorBackend)
     (first second direct : PreprocessorBackendRegistry)
