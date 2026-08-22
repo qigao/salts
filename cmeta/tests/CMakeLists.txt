@@ -35,6 +35,10 @@ set_target_properties(cmeta_core_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_core_test PRIVATE -Werror=missing-field-initializers)
+endif()
+
 set_target_properties(cmeta_meta_header_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON

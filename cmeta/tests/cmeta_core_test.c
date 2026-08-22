@@ -72,8 +72,13 @@ Traits(owned_int,
     (O, owned_int, cmeta_type_owned_int, CMETA_T_OBJECT, cmeta_traits_owned_int)
 
 static const cmeta_type_desc cmeta_test_owned_int_type = {
-    "owned_int", sizeof(owned_int), _Alignof(owned_int), CMETA_T_OBJECT, NULL,
-    &CMETA_TYPE_TRAITS(CMETA_TEST_OWNED_INT_ROW)
+    .name = "owned_int",
+    .size = sizeof(owned_int),
+    .align = _Alignof(owned_int),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &CMETA_TYPE_TRAITS(CMETA_TEST_OWNED_INT_ROW),
+    .identity = NULL
 };
 
 const cmeta_type_desc *cmeta_traits_peer_owned_int_type(void);
@@ -448,7 +453,13 @@ suite("CMeta core") {
 
     it("rejects malformed unnamed type descriptors") {
         cmeta_type_desc unnamed = {
-            NULL, sizeof(int), _Alignof(int), CMETA_T_OBJECT, NULL, NULL
+            .name = NULL,
+            .size = sizeof(int),
+            .align = _Alignof(int),
+            .kind = CMETA_T_OBJECT,
+            .pointee = NULL,
+            .traits = NULL,
+            .identity = NULL
         };
 
         check_false(cmeta_type_equal(&unnamed, &unnamed));
@@ -571,15 +582,26 @@ suite("CMeta core") {
 
     it("rejects missing or invalid required traits") {
         cmeta_type_desc opaque = {
-            "opaque", sizeof(int), _Alignof(int), CMETA_T_OBJECT, NULL, NULL
+            .name = "opaque",
+            .size = sizeof(int),
+            .align = _Alignof(int),
+            .kind = CMETA_T_OBJECT,
+            .pointee = NULL,
+            .traits = NULL,
+            .identity = NULL
         };
         cmeta_type_traits trivial_copy_without_operation = {
             CMETA_TRAIT_COPY | CMETA_TRAIT_TRIVIAL_COPY,
             NULL, NULL, NULL, NULL, NULL, NULL
         };
         cmeta_type_desc advertised_copy = {
-            "advertised_copy", sizeof(int), _Alignof(int), CMETA_T_OBJECT,
-            NULL, &trivial_copy_without_operation
+            .name = "advertised_copy",
+            .size = sizeof(int),
+            .align = _Alignof(int),
+            .kind = CMETA_T_OBJECT,
+            .pointee = NULL,
+            .traits = &trivial_copy_without_operation,
+            .identity = NULL
         };
 
         check_equal(cmeta_type_require_traits(NULL, CMETA_TRAIT_HASH),

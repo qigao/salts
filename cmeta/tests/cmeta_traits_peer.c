@@ -53,8 +53,13 @@ Traits(owned_int,
     (destroy, owned_destroy));
 
 static const cmeta_type_desc cmeta_peer_owned_int_type = {
-    "owned_int", sizeof(owned_int), _Alignof(owned_int), CMETA_T_OBJECT, NULL,
-    &cmeta_traits_owned_int
+    .name = "owned_int",
+    .size = sizeof(owned_int),
+    .align = _Alignof(owned_int),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cmeta_traits_owned_int,
+    .identity = NULL
 };
 
 const cmeta_type_desc *cmeta_traits_peer_owned_int_type(void) {

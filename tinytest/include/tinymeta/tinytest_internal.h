@@ -6,6 +6,14 @@
 #include <setjmp.h>
 #include <stdio.h>
 
+#ifndef _WIN32
+#include <unistd.h>
+#ifdef TTEST_IS_ATTY__
+#undef TTEST_IS_ATTY__
+#endif
+#define TTEST_IS_ATTY__() isatty(STDOUT_FILENO)
+#endif
+
 #ifndef __cplusplus
 #include <stdbool.h>
 #endif

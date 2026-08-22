@@ -53,6 +53,13 @@ cmake_add_test(turbostl_map_test
   LIBS TurboUtils::STL TurboUtils::TinyTest
   FOLDER "turbostl/tests")
 
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(
+    turbostl_list_test
+    turbostl_map_test
+    PRIVATE -Werror=misleading-indentation)
+endif()
+
 cmake_add_test(turbostl_rbtree_test
   SOURCES turbostl_rbtree_test.c
   LIBS TurboUtils::STL TurboUtils::TinyTest
