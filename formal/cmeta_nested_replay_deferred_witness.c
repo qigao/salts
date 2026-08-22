@@ -149,7 +149,7 @@ static const int cmeta_proof_reentry_strategy_trace[] = {
 static void print_nat_list(const char *name, const int *values, size_t count) {
     size_t i;
 
-    printf("def %s : List Nat := [", name);
+    printf("public def %s : List Nat := [", name);
     for (i = 0; i < count; ++i) {
         if (i != 0) {
             fputs(", ", stdout);
@@ -185,21 +185,22 @@ int main(void) {
     CHECK(cmeta_proof_reentry_strategy_trace[2] ==
           cmeta_proof_strategy_deferred_obstruct);
 
+    puts("module");
     puts("namespace " CMETA_NESTED_REPLAY_LEAN_NAMESPACE);
-    printf("def compilerFamilyTag : Nat := %d\n",
+    printf("public def compilerFamilyTag : Nat := %d\n",
            CMETA_PROOF_COMPILER_FAMILY_TAG);
-    printf("def compilerMajorVersion : Nat := %d\n",
+    printf("public def compilerMajorVersion : Nat := %d\n",
            CMETA_PROOF_COMPILER_MAJOR_VERSION);
-    printf("def languageStandard : Nat := %ld\n", (long)__STDC_VERSION__);
-    printf("def distinctCount : Nat := %d\n", cmeta_proof_distinct_count);
-    printf("def depth2Count : Nat := %d\n", cmeta_proof_depth2_count);
-    printf("def depth3Count : Nat := %d\n", cmeta_proof_depth3_count);
-    printf("def depth4Count : Nat := %d\n", cmeta_proof_depth4_count);
-    printf("def certifiedSameProducerDepth : Nat := %d\n",
+    printf("public def languageStandard : Nat := %ld\n", (long)__STDC_VERSION__);
+    printf("public def distinctCount : Nat := %d\n", cmeta_proof_distinct_count);
+    printf("public def depth2Count : Nat := %d\n", cmeta_proof_depth2_count);
+    printf("public def depth3Count : Nat := %d\n", cmeta_proof_depth3_count);
+    printf("public def depth4Count : Nat := %d\n", cmeta_proof_depth4_count);
+    printf("public def certifiedSameProducerDepth : Nat := %d\n",
            cmeta_proof_certified_same_producer_depth);
-    printf("def directSameProducerAccepted : Bool := %s\n",
+    printf("public def directSameProducerAccepted : Bool := %s\n",
            lean_bool(CMETA_DIRECT_NESTED_REPLAY_ACCEPTED));
-    printf("def deferredSameProducerAccepted : Bool := %s\n",
+    printf("public def deferredSameProducerAccepted : Bool := %s\n",
            lean_bool(cmeta_proof_deferred_same_producer_accepted));
     print_nat_list("distinctStrategyTrace",
                    cmeta_proof_distinct_strategy_trace,
