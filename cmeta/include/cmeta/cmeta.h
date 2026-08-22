@@ -46,7 +46,7 @@ static inline cmeta_status cmeta_type_require_traits(
     const cmeta_type_desc *type, cmeta_trait_flags required) {
     const cmeta_type_traits *traits;
 
-    if (type == NULL || (required & ~CMETA_TRAIT_MASK) != 0u)
+    if (type == NULL || (required & CMETA_TRAIT_MASK) != required)
         return CMETA_INVALID_ARGUMENT;
     if (required == 0u)
         return CMETA_OK;
@@ -139,7 +139,9 @@ enum {
 };
 
 static inline bool cmeta_effects_are_pure(cmeta_effects e) { return e == CMETA_EFFECT_PURE; }
-static inline bool cmeta_effects_valid(cmeta_effects e) { return (e & ~CMETA_EFFECT_MASK) == 0u; }
+static inline bool cmeta_effects_valid(cmeta_effects e) {
+    return (e & CMETA_EFFECT_MASK) == e;
+}
 
 /* Positive semantic guarantees. Zero means no guarantee is known. Unlike
  * effects, these are not all closed under arbitrary composition: in
@@ -162,7 +164,7 @@ enum {
 #define CMETA_PROP_STABLE (CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL)
 
 static inline bool cmeta_properties_valid(cmeta_properties p) {
-    return (p & ~CMETA_PROP_MASK) == 0u;
+    return (p & CMETA_PROP_MASK) == p;
 }
 static inline bool cmeta_properties_include(cmeta_properties p, cmeta_properties required) {
     return (p & required) == required;
