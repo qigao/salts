@@ -23,6 +23,11 @@ cmake_add_test(cflow_runtime_test
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_execution_test
+  SOURCES cflow_execution_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_header_cpp_test
   SOURCES cflow_header_cpp_test.cpp
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
@@ -32,6 +37,7 @@ set_target_properties(
   cflow_graph_test
   cflow_pipeline_test
   cflow_runtime_test
+  cflow_execution_test
   PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
