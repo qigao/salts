@@ -1,5 +1,5 @@
-#ifndef TURBO_MULTIMAP_H
-#define TURBO_MULTIMAP_H
+#ifndef TURBOSTL_MULTIMAP_H
+#define TURBOSTL_MULTIMAP_H
 
 #include <turbostl/map.h>
 
@@ -7,80 +7,132 @@
 extern "C" {
 #endif
 
-typedef turbo_map_compare_fn turbo_multimap_compare_fn;
+typedef map_compare_fn multimap_compare_fn;
 
-typedef struct turbo_multimap {
+typedef struct multimap {
+  cmeta_container_header cmeta;
+  const cmeta_type_desc *key_type;
+  const cmeta_type_desc *value_type;
   void *impl;
   uint64_t generation;
-} turbo_multimap_t;
+} multimap_t;
 
-typedef struct turbo_multimap_iter {
-  const turbo_multimap_t *owner;
+typedef struct multimap_iter {
+  const multimap_t *owner;
   void *node;
-} turbo_multimap_iter_t;
+} multimap_iter_t;
 
-/* MultiMap is a red-black tree that stores each key/value pair in its own
- * node. Equivalent keys retain insertion order in traversal and all pairs
- * share one explicit element_limit. */
-turbo_stl_status turbo_multimap_init(
-    turbo_multimap_t *map, const cmeta_type_desc *key_type,
-    const cmeta_type_desc *value_type, size_t element_limit);
-turbo_stl_status turbo_multimap_init_bytes(
-    turbo_multimap_t *map, size_t key_size, size_t key_align,
-    size_t value_size, size_t value_align, size_t element_limit,
-    turbo_multimap_compare_fn compare, void *context);
-turbo_stl_status turbo_multimap_from_arrays(
-    turbo_multimap_t *map, const void *keys, const void *values, size_t count,
+/* Internal typed bridges for legacy/generated callers. */
+stl_status multimap_init_with_types(multimap_t *map,
+                                    const cmeta_type_desc *key_type,
+                                    const cmeta_type_desc *value_type,
+                                    size_t element_limit);
+stl_status multimap_from_arrays_with_types(
+    multimap_t *map, const void *keys, const void *values, size_t count,
     const cmeta_type_desc *key_type, const cmeta_type_desc *value_type,
     size_t element_limit);
-turbo_stl_status turbo_multimap_from_arrays_bytes(
-    turbo_multimap_t *map, const void *keys, const void *values, size_t count,
-    size_t key_size, size_t key_align, size_t value_size, size_t value_align,
-    size_t element_limit, turbo_multimap_compare_fn compare, void *context);
-void turbo_multimap_destroy(turbo_multimap_t *map);
-void turbo_multimap_clear(turbo_multimap_t *map);
-turbo_stl_status turbo_multimap_put(turbo_multimap_t *map,
-                                                   const void *key,
-                                                   const void *value);
-bool turbo_multimap_contains(const turbo_multimap_t *map,
-                                           const void *key);
-size_t turbo_multimap_count(const turbo_multimap_t *map,
-                                          const void *key);
-/* remove erases the most recently inserted equivalent pair. */
-bool turbo_multimap_remove(turbo_multimap_t *map,
-                                         const void *key, void *out_value);
-size_t turbo_multimap_erase(turbo_multimap_t *map,
-                                          const void *key);
-size_t turbo_multimap_size(const turbo_multimap_t *map);
-size_t turbo_multimap_element_limit(const turbo_multimap_t *map);
-uint64_t turbo_multimap_generation(const turbo_multimap_t *map);
-bool turbo_multimap_empty(const turbo_multimap_t *map);
+void multimap_destroy_storage(multimap_t *map);
 
-turbo_multimap_iter_t turbo_multimap_begin(
-    const turbo_multimap_t *map);
-turbo_multimap_iter_t turbo_multimap_end(
-    const turbo_multimap_t *map);
-turbo_multimap_iter_t turbo_multimap_lower_bound(
-    const turbo_multimap_t *map, const void *key);
-turbo_multimap_iter_t turbo_multimap_upper_bound(
-    const turbo_multimap_t *map, const void *key);
-turbo_stl_status turbo_multimap_iter_next(
-    turbo_multimap_iter_t *iterator);
-turbo_stl_status turbo_multimap_iter_prev(
-    turbo_multimap_iter_t *iterator);
-bool turbo_multimap_iter_equal(turbo_multimap_iter_t left,
-                                              turbo_multimap_iter_t right);
-const void *turbo_multimap_iter_key_const(
-    turbo_multimap_iter_t iterator);
-void *turbo_multimap_iter_value(turbo_multimap_iter_t iterator);
-const void *turbo_multimap_iter_value_const(
-    turbo_multimap_iter_t iterator);
-bool turbo_multimap_range_next(
-    const turbo_multimap_t *map, cmeta_range_cursor *cursor,
-    const void **out_key, const void **out_value);
+stl_status multimap_init_bytes(multimap_t *map, size_t key_size,
+                               size_t key_align, size_t value_size,
+                               size_t value_align, size_t element_limit,
+                               multimap_compare_fn compare, void *context);
+stl_status multimap_from_arrays_bytes(
+    multimap_t *map, const void *keys, const void *values, size_t count,
+    size_t key_size, size_t key_align, size_t value_size, size_t value_align,
+    size_t element_limit, multimap_compare_fn compare, void *context);
+
+static inline stl_status multimap_init(multimap_t *map,
+                                       size_t element_limit) {
+  if (map == NULL || map->key_type == NULL || map->value_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  return multimap_init_with_types(map, map->key_type, map->value_type,
+                                  element_limit);
+}
+
+static inline stl_status multimap_from_arrays(
+    multimap_t *map, const void *keys, const void *values, size_t count,
+    size_t element_limit) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *key_type;
+  const cmeta_type_desc *value_type;
+  stl_status status;
+  if (map == NULL || map->key_type == NULL || map->value_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  kind = map->cmeta.descriptor;
+  key_type = map->key_type;
+  value_type = map->value_type;
+  status = multimap_from_arrays_with_types(map, keys, values, count,
+                                           key_type, value_type,
+                                           element_limit);
+  map->cmeta.descriptor = kind;
+  map->key_type = key_type;
+  map->value_type = value_type;
+  return status;
+}
+
+static inline void multimap_destroy(multimap_t *map) {
+  if (map != NULL)
+    multimap_destroy_storage(map);
+}
+
+void multimap_clear(multimap_t *map);
+stl_status multimap_put(multimap_t *map, const void *key, const void *value);
+bool multimap_contains(const multimap_t *map, const void *key);
+size_t multimap_count(const multimap_t *map, const void *key);
+bool multimap_remove(multimap_t *map, const void *key, void *out_value);
+size_t multimap_erase(multimap_t *map, const void *key);
+size_t multimap_size(const multimap_t *map);
+size_t multimap_element_limit(const multimap_t *map);
+uint64_t multimap_generation(const multimap_t *map);
+bool multimap_empty(const multimap_t *map);
+
+multimap_iter_t multimap_begin(const multimap_t *map);
+multimap_iter_t multimap_end(const multimap_t *map);
+multimap_iter_t multimap_lower_bound(const multimap_t *map, const void *key);
+multimap_iter_t multimap_upper_bound(const multimap_t *map, const void *key);
+stl_status multimap_iter_next(multimap_iter_t *iterator);
+stl_status multimap_iter_prev(multimap_iter_t *iterator);
+bool multimap_iter_equal(multimap_iter_t left, multimap_iter_t right);
+const void *multimap_iter_key_const(multimap_iter_t iterator);
+void *multimap_iter_value(multimap_iter_t iterator);
+const void *multimap_iter_value_const(multimap_iter_t iterator);
+bool multimap_range_next(const multimap_t *map, cmeta_range_cursor *cursor,
+                         const void **out_key, const void **out_value);
+
+/* Temporary repository-migration aliases. */
+typedef multimap_compare_fn turbo_multimap_compare_fn;
+typedef multimap_t turbo_multimap_t;
+typedef multimap_iter_t turbo_multimap_iter_t;
+#define turbo_multimap_init multimap_init_with_types
+#define turbo_multimap_init_bytes multimap_init_bytes
+#define turbo_multimap_from_arrays multimap_from_arrays_with_types
+#define turbo_multimap_from_arrays_bytes multimap_from_arrays_bytes
+#define turbo_multimap_destroy multimap_destroy_storage
+#define turbo_multimap_clear multimap_clear
+#define turbo_multimap_put multimap_put
+#define turbo_multimap_contains multimap_contains
+#define turbo_multimap_count multimap_count
+#define turbo_multimap_remove multimap_remove
+#define turbo_multimap_erase multimap_erase
+#define turbo_multimap_size multimap_size
+#define turbo_multimap_element_limit multimap_element_limit
+#define turbo_multimap_generation multimap_generation
+#define turbo_multimap_empty multimap_empty
+#define turbo_multimap_begin multimap_begin
+#define turbo_multimap_end multimap_end
+#define turbo_multimap_lower_bound multimap_lower_bound
+#define turbo_multimap_upper_bound multimap_upper_bound
+#define turbo_multimap_iter_next multimap_iter_next
+#define turbo_multimap_iter_prev multimap_iter_prev
+#define turbo_multimap_iter_equal multimap_iter_equal
+#define turbo_multimap_iter_key_const multimap_iter_key_const
+#define turbo_multimap_iter_value multimap_iter_value
+#define turbo_multimap_iter_value_const multimap_iter_value_const
+#define turbo_multimap_range_next multimap_range_next
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* TURBO_MULTIMAP_H */
+#endif /* TURBOSTL_MULTIMAP_H */
