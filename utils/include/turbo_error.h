@@ -2,10 +2,11 @@
 #define TURBO_ERROR_H
 
 #include "platform.h"
-#include "enum_utils.h"
+#include <cmeta/enum.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -13,17 +14,44 @@ extern "C" {
 
 #define TURBO_OK 0
 
-#define TURBO_ERROR_DOMAIN_ITEMS(X) \
-  X(TURBO_ERROR_DOMAIN_NONE, 0, "none") \
-  X(TURBO_ERROR_DOMAIN_TURBO, 1, "turbo") \
-  X(TURBO_ERROR_DOMAIN_CUSTOM, 2, "custom") \
-  X(TURBO_ERROR_DOMAIN_POSIX, 3, "posix") \
-  X(TURBO_ERROR_DOMAIN_WIN32, 4, "win32") \
-  X(TURBO_ERROR_DOMAIN_UNKNOWN, 5, "unknown")
+Enum(turbo_error_domain_t,
+     (TURBO_ERROR_DOMAIN_NONE, 0, "none"),
+     (TURBO_ERROR_DOMAIN_TURBO, 1, "turbo"),
+     (TURBO_ERROR_DOMAIN_CUSTOM, 2, "custom"),
+     (TURBO_ERROR_DOMAIN_POSIX, 3, "posix"),
+     (TURBO_ERROR_DOMAIN_WIN32, 4, "win32"),
+     (TURBO_ERROR_DOMAIN_UNKNOWN, 5, "unknown"));
 
-TURBO_ENUM_DECLARE(turbo_error_domain_t, turbo_error_domain, TURBO_ERROR_DOMAIN_ITEMS, "unknown")
+/* Compatibility surface for the pre-CMeta domain enum API. */
+static inline size_t turbo_error_domain_count(void) {
+  return turbo_error_domain_t_meta()->count;
+}
 
-#undef TURBO_ERROR_DOMAIN_ITEMS
+static inline const char *turbo_error_domain_to_string(turbo_error_domain_t value) {
+  const char *text = turbo_error_domain_t_to_string(value);
+  return text ? text : "unknown";
+}
+
+static inline int turbo_error_domain_from_string(const char *text,
+                                                 turbo_error_domain_t *out) {
+  turbo_error_domain_t parsed;
+  const char *parsed_text;
+
+  if (!text || !out || !turbo_error_domain_t_from_string(text, &parsed)) return -1;
+  parsed_text = turbo_error_domain_t_to_string(parsed);
+  if (!parsed_text || strcmp(parsed_text, text) != 0) return -1;
+  *out = parsed;
+  return 0;
+}
+
+static inline bool turbo_error_domain_is_valid(turbo_error_domain_t value) {
+  return turbo_error_domain_t_to_string(value) != NULL;
+}
+
+static inline bool turbo_error_domain_equals(turbo_error_domain_t lhs,
+                                             turbo_error_domain_t rhs) {
+  return lhs == rhs;
+}
 
 #define TURBO_ERROR_CUSTOM_DOMAIN_MIN 1
 #define TURBO_ERROR_CUSTOM_DOMAIN_MAX 32767

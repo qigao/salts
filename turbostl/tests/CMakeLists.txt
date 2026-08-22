@@ -76,6 +76,11 @@ cmake_add_test(turbostl_sort_test
   LIBS TurboUtils::STL TurboUtils::TinyTest
   FOLDER "turbostl/tests")
 
+cmake_add_test(turbostl_stream_test
+  SOURCES turbostl_stream_test.c
+  LIBS TurboUtils::STLStream TurboUtils::TinyTest
+  FOLDER "turbostl/tests")
+
 set_target_properties(
   turbostl_header_test
   PROPERTIES
@@ -115,6 +120,7 @@ set_target_properties(
   turbostl_rbtree_test
   turbostl_entry_test
   turbostl_sort_test
+  turbostl_stream_test
   PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON

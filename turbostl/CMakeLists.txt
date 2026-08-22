@@ -29,12 +29,26 @@ target_include_directories(
     $<INSTALL_INTERFACE:include>)
 target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::CMeta)
 
+add_library(turbo_stl_stream INTERFACE)
+cmake_config_target(
+  turbo_stl_stream
+  ALIAS TurboUtils::STLStream
+  FOLDER "turbostl"
+  EXPORT_NAME STLStream)
+target_link_libraries(
+  turbo_stl_stream
+  INTERFACE TurboUtils::STL TurboUtils::CFlow)
+
 install(
   TARGETS ${TARGET_NAME}
   EXPORT TurboUtilsTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+install(
+  TARGETS turbo_stl_stream
+  EXPORT TurboUtilsTargets)
 
 install(
   DIRECTORY include/turbostl

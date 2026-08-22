@@ -38,5 +38,10 @@
 #define typed(kind, ...) CMETA_TYPED_ROUTE(kind, __VA_ARGS__)
 #endif
 
+/* Compose a generated Type_method symbol behind a semantic public facade. */
+#define CMETA_TYPED_METHOD_I(type, method) type##_##method
+#define CMETA_TYPED_METHOD(type, method) CMETA_TYPED_METHOD_I(type, method)
+#define CMETA_TYPED_CALL(type, method, ...) \
+    CMETA_TYPED_METHOD(type, method)(__VA_ARGS__)
 
 #endif /* CMETA_GENERIC_H */

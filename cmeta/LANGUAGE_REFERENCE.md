@@ -120,11 +120,17 @@ callable traits.
 The single generic-instantiation entry point.
 
 ```c
+#include <cmeta/meta.h>
+
+typedef int Key;
+typedef int Value;
+typedef struct User {
+    int id;
+} User;
+
 typed(Option, MaybeUser, User);
 typed(Pair, Entry, Key, Value);
 typed(Tuple, Point3, double, double, double);
-typed(List, UserList, User);
-typed(HashMap, UsersById, int, User);
 ```
 
 General form:
@@ -133,24 +139,32 @@ General form:
 typed(kind, generated_name, type_arguments...)
 ```
 
-CMeta implements **finite generic routing**, not unrestricted templates. A
-library registers a finite kind such as `List`, `Vec`, `Option`, or `HashMap`;
-`typed(...)` routes to that kind's concrete C11 generator.
+CMeta implements **finite generic routing**, not unrestricted templates. The
+CMeta aggregate header registers the value kinds `Pair`, `Tuple`, `Option`, and
+`Result`. A library may register additional kinds, and `typed(...)` routes each
+registered kind to that kind's concrete C11 generator.
+
+Algorithmic container kinds such as `List`, `Vec`, and `HashMap` belong to
+TurboSTL. Container users include `<turbostl/typed.h>` and link
+`TurboUtils::STL`:
+
+```c
+#include <turbostl/typed.h>
+
+typed(List, IntList, int);
+typed(Vec, IntVec, int);
+typed(HashMap, IntValuesById, int, int);
+```
 
 For containers, one `typed(...)` declaration is a complete instantiation. It may
 generate the wrapper type, static-inline typed forwarding functions, metadata,
 container descriptors, Range factories, and relevant traits. Allocation and
-container algorithms remain ordinary compiled C in the underlying library.
+container algorithms remain ordinary compiled C in the underlying library. A
+complete facade does not implicitly register its element, key, or value types;
+those types must satisfy the finite type-universe rules described below.
 
-Multiple types are declared explicitly:
-
-```c
-typed(List, UserList, User);
-typed(Vec, UserVec, User);
-typed(HashMap, UsersById, int, User);
-```
-
-There is no batch container declaration syntax.
+Declare each concrete container with its own `typed(...)` statement, as shown
+above. There is no batch container declaration syntax.
 
 ### `typed_any(...)`
 
@@ -195,6 +209,8 @@ new execution model.
 Declares a small protocol/vtable interface.
 
 ```c
+#include <cmeta/meta.h>
+
 #define SOURCE_METHODS(X, I) \
     X(I, R1, bool, next, int *, out) \
     X(I, V0, void, close, _)
@@ -227,6 +243,24 @@ implements(Source,
 `implements(...)` only means "implements this interface/protocol". It is not a
 container generation phase.
 
+The natural names are conditional aliases. If
+`CMETA_NO_NATURAL_INTERFACE_NAMES` is defined, or a host header has already
+claimed `interface` or `implements`, use the collision-safe spellings:
+
+```c
+CMETA_INTERFACE(Source, SOURCE_METHODS);
+
+CMETA_IMPLEMENTS(Source,
+                 file_source,
+                 SOURCE_CAN_SEEK,
+                 .next = file_source_next,
+                 .close = file_source_close);
+```
+
+Framework and public headers should prefer `CMETA_INTERFACE(...)` and
+`CMETA_IMPLEMENTS(...)`; application-local code may use the natural aliases when
+the host environment leaves them available.
+
 ---
 
 ## 2. Framework DSL
@@ -245,7 +279,11 @@ Defines or expands parenthesized row data through a mapper.
 ```
 
 `Schema(...)` owns row unpacking. It is a finite C-preprocessor code-generation
-kernel, not a runtime data structure.
+kernel, not a runtime data structure. The tuple-list kernel accepts at most 16
+rows per invocation. `Struct(...)`, `Enum(...)`, `Traits(...)`, `Schema(...)`,
+and `Operators(...)` share that row-count limit; `Tuple` accepts 2 through 16
+type arguments. Split larger declarations into separate stable concepts instead
+of depending on an implementation-specific macro expansion failure.
 
 ### `Replay(...)`
 
@@ -299,6 +337,30 @@ kind, pointee, traits, and identity. Header-generated descriptor addresses are
 not required to be process-global type IDs; consumers compare semantic type
 identity/content.
 
+`CMETA_TYPEOF(T)` is a finite `_Generic` lookup, not reflection over arbitrary C
+types. `T` must be compatible with exactly one C type named by the active
+`CMETA_TYPE_LIST`; by default that aliases `CMETA_CALLABLE_TYPE_LIST`, which in
+turn defaults to `CMETA_KNOWN_TYPE_LIST`. A `typedef` alias reuses its underlying
+compatible type's descriptor. Do not register a second row for such an alias,
+because two compatible `_Generic` associations are a compile-time error.
+
+Applications normally extend the defaults through `CMETA_USER_TYPE_LIST` in a
+shared configuration header included before the first CMeta header in every
+affected translation unit. Overrides of `CMETA_KNOWN_TYPE_LIST` and
+`CMETA_CALLABLE_TYPE_LIST` follow the same rule. Changing the callable list
+changes the ABI of `cmeta_sig` and `cmeta_callable`, so the list must match in
+every translation unit and in the linked CMeta library build. Every custom row
+must name descriptors and traits that the program defines with the ownership
+operations required by its consumers.
+
+`Struct(T, ...)` and `Traits(T, ...)` generate structural and callable metadata,
+but do not add `T` to either finite type universe. `CMETA_TYPEOF(T)` returns
+`NULL` when no compatible registered type exists. APIs that require a descriptor
+then fail according to their own contract: a container range lookup can return
+`false`, range traversal can return `CMETA_GEN_ERROR`, and initialization or
+collector boundaries can return invalid-argument or type-mismatch errors. Check
+the exact API result; there is no implicit fallback.
+
 ### Callable protocol
 
 Core runtime values include:
@@ -329,6 +391,18 @@ REUSABLE
 
 Typed containers may expose default, key, value, or entry ranges through their
 descriptors.
+
+A Range borrows both its source object and its element descriptor.
+The source handle storage must outlive the Range and every cursor used with it.
+Creating a Range does not allocate, retain, or extend either lifetime. Unless a
+concrete container promises otherwise, append, erase, resize, reset, destroy,
+slot reuse, and undocumented cross-thread access invalidate the traversal.
+
+When a Range supplies version tracking, `cmeta_range_next(...)` reports
+`CMETA_GEN_MUTATED` before changing the cursor or output, but only while the
+source handle storage remains alive. Version tracking cannot make expired or
+freed storage safe, and a Range without a version callback cannot detect
+mutation generically.
 
 ### Collector protocol
 
@@ -405,16 +479,18 @@ Old style:
 ```c
 /* removed */
 Containers(
-    (List, UserList, User),
-    (Vec, UserVec, User)
+    (List, IntList, int),
+    (Vec, IntVec, int)
 );
 ```
 
 Current style:
 
 ```c
-typed(List, UserList, User);
-typed(Vec, UserVec, User);
+#include <turbostl/typed.h>
+
+typed(List, IntList, int);
+typed(Vec, IntVec, int);
 ```
 
 The explicit form keeps one generic entry point and avoids a second batch DSL

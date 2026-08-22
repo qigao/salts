@@ -44,14 +44,30 @@ suite("Turbo Error") {
 
     it("maps turbo_error_domain enum to and from string") {
       turbo_error_domain_t domain = TURBO_ERROR_DOMAIN_UNKNOWN;
+      const cmeta_enum_desc *meta = turbo_error_domain_t_meta();
 
+      check_not_null(meta);
+      check_equal(meta->name, "turbo_error_domain_t");
+      check_equal(meta->count, (size_t)6u);
+      check_equal(turbo_error_domain_t_to_symbol(TURBO_ERROR_DOMAIN_WIN32),
+                  "TURBO_ERROR_DOMAIN_WIN32");
+      check_equal(turbo_error_domain_t_to_string(TURBO_ERROR_DOMAIN_WIN32), "win32");
+      check_true(turbo_error_domain_t_from_string("TURBO_ERROR_DOMAIN_WIN32", &domain));
+      check_equal(domain, TURBO_ERROR_DOMAIN_WIN32);
       check_equal(turbo_error_domain_to_string(TURBO_ERROR_DOMAIN_NONE), "none");
       check_equal(turbo_error_domain_to_string(TURBO_ERROR_DOMAIN_CUSTOM), "custom");
       check_equal(turbo_error_domain_from_string("win32", &domain), 0);
       check_equal(domain, TURBO_ERROR_DOMAIN_WIN32);
+      domain = TURBO_ERROR_DOMAIN_POSIX;
+      check_equal(turbo_error_domain_from_string("TURBO_ERROR_DOMAIN_WIN32", &domain), -1);
+      check_equal(domain, TURBO_ERROR_DOMAIN_POSIX);
       check_equal(turbo_error_domain_from_string("not_found", &domain), -1);
+      check_equal(turbo_error_domain_to_string((turbo_error_domain_t)999), "unknown");
+      check_equal(turbo_error_domain_count(), (size_t)6u);
       check_true(turbo_error_domain_is_valid(TURBO_ERROR_DOMAIN_TURBO));
       check_false(turbo_error_domain_is_valid((turbo_error_domain_t)999));
+      check_true(turbo_error_domain_equals(TURBO_ERROR_DOMAIN_TURBO,
+                                           TURBO_ERROR_DOMAIN_TURBO));
     }
   }
 
