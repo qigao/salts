@@ -1,7 +1,8 @@
 set(TARGET_NAME turbo_concurrency)
 
 add_library(${TARGET_NAME} STATIC
-  src/disruptor.c)
+  src/disruptor.c
+  src/thread_pool.c)
 
 cmake_config_target(
   ${TARGET_NAME}
