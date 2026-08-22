@@ -1,5 +1,6 @@
 #include "timer_queue.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -8,7 +9,7 @@ static bool ensure_capacity(cflow_timer_queue *queue, size_t need) {
     cflow_timer_task *items;
 
     if (need <= queue->capacity) return true;
-    capacity = queue->capacity ? queue->capacity * 2u : 16u;
+    capacity = queue->capacity ? queue->capacity : 16u;
     while (capacity < need) {
         if (capacity > SIZE_MAX / 2u) {
             capacity = need;
@@ -65,12 +66,12 @@ cflow_timer_id cflow_timer_queue_schedule(cflow_timer_queue *queue,
                                           cflow_task_fn fn,
                                           void *user) {
     cflow_timer_id id;
-    if (!queue || !fn || !ensure_capacity(queue, queue->count + 1u)) return 0u;
+    if (!queue || !fn || queue->count == SIZE_MAX ||
+        queue->next_id == 0u || queue->next_order == UINT64_MAX ||
+        !ensure_capacity(queue, queue->count + 1u))
+        return 0u;
 
     id = queue->next_id++;
-    if (id == 0u) id = queue->next_id++;
-    if (queue->next_id == 0u) queue->next_id = 1u;
-
     queue->items[queue->count++] = (cflow_timer_task){
         .id = id,
         .deadline = deadline,
