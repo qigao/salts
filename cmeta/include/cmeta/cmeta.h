@@ -3,6 +3,7 @@
 
 #include <cmeta/interface.h>
 #include <cmeta/status.h>
+#include <cmeta/type_identity.h>
 #include <cmeta/type_traits.h>
 
 #include <stdbool.h>
@@ -34,8 +35,11 @@ typedef struct cmeta_type_desc {
     cmeta_type_kind kind;
     const struct cmeta_type_desc *pointee;
     const cmeta_type_traits *traits;
+    const cmeta_type_identity *identity;
 } cmeta_type_desc;
 
+const cmeta_type_identity *cmeta_type_identity_of(const cmeta_type_desc *desc);
+bool cmeta_type_desc_valid(const cmeta_type_desc *desc);
 bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b);
 
 static inline cmeta_status cmeta_type_require_traits(
@@ -86,7 +90,7 @@ extern const cmeta_type_desc cmeta_type_gen_status;
 #define CMETA_DECLARE_TYPE(row, ignored) \
     extern const cmeta_type_desc CMETA_TYPE_DESC(row); \
     extern const cmeta_type_desc CMETA_DESC_PTR(row);
-CMETA_PP_FOR_EACH_A(CMETA_DECLARE_TYPE, ~, CMETA_TYPE_LIST)
+CMETA_PP_FOR_EACH_A(CMETA_DECLARE_TYPE, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_DECLARE_TYPE
 
 size_t cmeta_type_registry_count(void);

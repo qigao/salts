@@ -68,9 +68,50 @@ extern const cmeta_type_traits cmeta_traits_double;
 }
 #endif
 
-#define Traits(name, flags_, equal_, hash_, compare_, copy_, move_, destroy_) \
+#define CMETA_TRAIT_FLAG_equal   CMETA_TRAIT_EQUAL
+#define CMETA_TRAIT_FLAG_hash    CMETA_TRAIT_HASH
+#define CMETA_TRAIT_FLAG_compare CMETA_TRAIT_COMPARE
+#define CMETA_TRAIT_FLAG_copy    CMETA_TRAIT_COPY
+#define CMETA_TRAIT_FLAG_move    CMETA_TRAIT_MOVE
+#define CMETA_TRAIT_FLAG_destroy CMETA_TRAIT_DESTROY
+
+#define CMETA_TRAIT_INIT_equal(fn)   .equal = (fn),
+#define CMETA_TRAIT_INIT_hash(fn)    .hash = (fn),
+#define CMETA_TRAIT_INIT_compare(fn) .compare = (fn),
+#define CMETA_TRAIT_INIT_copy(fn)    .copy_construct = (fn),
+#define CMETA_TRAIT_INIT_move(fn)    .move_construct = (fn),
+#define CMETA_TRAIT_INIT_destroy(fn) .destroy = (fn),
+
+#define CMETA_TRAIT_FLAG_ROW(tag, fn) \
+    | CMETA_PP_CAT(CMETA_TRAIT_FLAG_, tag)
+#define CMETA_TRAIT_INIT_ROW(tag, fn) \
+    CMETA_PP_CAT(CMETA_TRAIT_INIT_, tag)(fn)
+
+#define CMETA_TRAIT_SEEN_equal(name)   CMETA_PP_CAT(name, __cmeta_seen_equal),
+#define CMETA_TRAIT_SEEN_hash(name)    CMETA_PP_CAT(name, __cmeta_seen_hash),
+#define CMETA_TRAIT_SEEN_compare(name) CMETA_PP_CAT(name, __cmeta_seen_compare),
+#define CMETA_TRAIT_SEEN_copy(name)    CMETA_PP_CAT(name, __cmeta_seen_copy),
+#define CMETA_TRAIT_SEEN_move(name)    CMETA_PP_CAT(name, __cmeta_seen_move),
+#define CMETA_TRAIT_SEEN_destroy(name) CMETA_PP_CAT(name, __cmeta_seen_destroy),
+
+#define CMETA_TRAIT_SEEN_ROW(row, name) \
+    CMETA_TRAIT_SEEN_ROW_E(name, CMETA_PP_UNPAREN row)
+#define CMETA_TRAIT_SEEN_ROW_E(name, ...) \
+    CMETA_TRAIT_SEEN_ROW_I(name, __VA_ARGS__)
+#define CMETA_TRAIT_SEEN_ROW_I(name, tag, fn) \
+    CMETA_PP_CAT(CMETA_TRAIT_SEEN_, tag)(name)
+
+/* Public heterogeneous trait schema. Flags and function slots are derived from
+ * the same tagged rows, so capability presence is declared exactly once.
+ * Owner-qualified enum markers make duplicate tags an immediate compile error. */
+#define Traits(name, ...) \
+    enum { \
+        CMETA_SCHEMA_ROWS(CMETA_TRAIT_SEEN_ROW, name, __VA_ARGS__) \
+        CMETA_PP_CAT(name, __cmeta_traits_end) \
+    }; \
     CMETA_LOCAL const cmeta_type_traits cmeta_traits_##name = { \
-        (flags_), (equal_), (hash_), (compare_), (copy_), (move_), (destroy_) \
+        .flags = (cmeta_trait_flags)(0u Schema(CMETA_TRAIT_FLAG_ROW, __VA_ARGS__)), \
+        Schema(CMETA_TRAIT_INIT_ROW, __VA_ARGS__) \
     }
 
 #endif

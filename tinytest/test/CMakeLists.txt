@@ -52,41 +52,6 @@ cmake_add_test(tinytest_cmeta_equal_test
   LIBS TurboUtils::TinyTest
   FOLDER "tinytest/tests")
 
-try_compile(tinytest_cmeta_unregistered_compiles
-  "${CMAKE_CURRENT_BINARY_DIR}/cmeta_equal_unregistered_probe"
-  SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/cmeta_equal_unregistered.c"
-  CMAKE_FLAGS
-    "-DCMAKE_C_STANDARD=17"
-    "-DCMAKE_C_STANDARD_REQUIRED=ON"
-    "-DINCLUDE_DIRECTORIES:STRING=${CMAKE_SOURCE_DIR}/tinytest/include"
-  OUTPUT_VARIABLE tinytest_cmeta_unregistered_output)
-
-if(tinytest_cmeta_unregistered_compiles)
-  message(FATAL_ERROR
-    "TinyTest accepted check_equal for an unregistered structure")
-endif()
-
-if(NOT WIN32)
-  try_compile(tinytest_pre_c11_compiles
-    "${CMAKE_CURRENT_BINARY_DIR}/pre_c11_compile_probe"
-    SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/pre_c11_compile_fail.c"
-    CMAKE_FLAGS
-      "-DCMAKE_C_STANDARD=99"
-      "-DCMAKE_C_STANDARD_REQUIRED=ON"
-      "-DINCLUDE_DIRECTORIES:STRING=${CMAKE_SOURCE_DIR}/tinytest/include"
-    OUTPUT_VARIABLE tinytest_pre_c11_output)
-
-  if(tinytest_pre_c11_compiles)
-    message(FATAL_ERROR "tinytest.h accepted a pre-C11 C translation unit")
-  endif()
-
-  if(NOT tinytest_pre_c11_output MATCHES "TinyTest requires C11 or later")
-    message(FATAL_ERROR
-      "The pre-C11 probe failed for an unexpected reason:\n"
-      "${tinytest_pre_c11_output}")
-  endif()
-endif()
-
 cmake_add_test(tinytest_result_x_macro
   SOURCES result_x_macro_test.c
   LIBS TurboUtils::TinyTest

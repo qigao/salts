@@ -1,0 +1,87 @@
+name: CMeta conformance
+
+on:
+  pull_request:
+    paths:
+      - "cmeta/**"
+      - "cflow/**"
+      - "tinytest/**"
+      - "turbostl/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - "presets/**"
+      - "vcpkg.json"
+      - ".github/workflows/cmeta.yml"
+  push:
+    branches: [master]
+    paths:
+      - "cmeta/**"
+      - "cflow/**"
+      - "tinytest/**"
+      - "turbostl/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - "presets/**"
+      - "vcpkg.json"
+      - ".github/workflows/cmeta.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup re2c and vcpkg
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y re2c
+          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
+            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Configure
+        run: cmake --preset linux-release-user
+
+      - name: Build
+        run: cmake --build --preset linux-release-user
+
+      - name: Test CMeta and CFlow
+        run: ctest --preset linux-release-user -R "^(cmeta_|cflow_)" --output-on-failure
+
+  windows:
+    name: Windows release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup re2c
+        shell: powershell
+        run: choco install re2c -y --no-progress
+
+      - name: Configure, build, and test
+        shell: cmd
+        run: |
+          if defined VCPKG_INSTALLATION_ROOT set "VCPKG_ROOT=%VCPKG_INSTALLATION_ROOT%"
+          if not defined VCPKG_ROOT exit /b 1
+
+          for /f "usebackq tokens=*" %%I in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%I"
+          if not defined VSINSTALL exit /b 1
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+
+          cmake --preset win-release-user
+          if errorlevel 1 exit /b 1
+          cmake --build --preset win-release-user
+          if errorlevel 1 exit /b 1
+          ctest --preset win-release-user -R "^(cmeta_|cflow_)" --output-on-failure
