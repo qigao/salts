@@ -27,12 +27,17 @@ target_include_directories(
           $<BUILD_INTERFACE:${FMT_LEXER_INCLUDE_DIRS}>
           $<BUILD_INTERFACE:${LOG_PATTERN_LEXER_INCLUDE_DIRS}>)
 
+# Keep shared-library producer/consumer state on TurboUtils::Core itself.
+# The INTERFACE definition is exported into TurboUtilsTargets.cmake, so only
+# targets that link TurboUtils::Core receive the consumer-side import marker.
 target_compile_definitions(
   ${TARGET_NAME}
   PUBLIC
     $<$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>,$<CONFIG:RelWithDebInfo>>:TURBO_LOG_CAPTURE_SOURCE=0>
-  PRIVATE TURBO_BUILD_SHARED
-  INTERFACE TURBO_USE_SHARED)
+  PRIVATE
+    "$<$<PLATFORM_ID:Windows>:TURBO_API=__declspec(dllexport)>"
+  INTERFACE
+    "$<$<PLATFORM_ID:Windows>:TURBO_API=__declspec(dllimport)>")
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
 target_compile_options(${TARGET_NAME}
   PUBLIC $<$<COMPILE_LANG_AND_ID:C,MSVC>:/experimental:c11atomics>)

@@ -28,31 +28,34 @@
 #endif
 
 // =============================================================================
-// DLL Export/Import macros for cross-platform shared library builds
+// Public API linkage markers
 // =============================================================================
+//
+// CMake owns shared-library producer/consumer state for TurboUtils::Core:
+// - the Core target receives TURBO_API=dllexport while it is built on Windows;
+// - targets linking TurboUtils::Core receive TURBO_API=dllimport through the
+//   exported target's INTERFACE compile definitions;
+// - no CMake-internal producer marker is inspected by this public header.
+//
+// TURBO_C_API is intentionally only a language-linkage composition over the
+// target-provided TURBO_API. It carries no build-system state of its own.
+//
 // clang-format off
 #ifndef TURBO_API
-    #if defined(_MSC_VER) || defined(__MINGW32__) || defined(__MINGW64__)
-        #if defined(TURBO_BUILD_SHARED)
-            #define TURBO_API __declspec(dllexport)
-        #elif defined(TURBO_USE_SHARED)
-            #define TURBO_API __declspec(dllimport)
-        #else
-            #define TURBO_API
-        #endif
-    #elif defined(__GNUC__) && __GNUC__ >= 4
+    #if !defined(_WIN32) && defined(__GNUC__) && __GNUC__ >= 4
         #define TURBO_API __attribute__((visibility("default")))
     #else
         #define TURBO_API
     #endif
 #endif
 
-#ifdef __cplusplus
-    #define TURBO_C_API extern "C" TURBO_API
-#else
-    #define TURBO_C_API TURBO_API
+#ifndef TURBO_C_API
+    #ifdef __cplusplus
+        #define TURBO_C_API extern "C" TURBO_API
+    #else
+        #define TURBO_C_API TURBO_API
+    #endif
 #endif
-
 // clang-format on
 
 #ifdef _WIN32
@@ -86,10 +89,6 @@ typedef intptr_t ssize_t;
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 // =============================================================================
 // Time utilities - platform-independent high-resolution timing
@@ -397,10 +396,6 @@ TURBO_C_API uint64_t turbo_timer_get_repeat(turbo_timer_t *timer);
 #else
   #define likely(x) (x)
   #define unlikely(x) (x)
-#endif
-
-#ifdef __cplusplus
-}
 #endif
 
 #endif // PLATFORM_H
