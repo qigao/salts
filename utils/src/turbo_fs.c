@@ -603,7 +603,7 @@ int turbo_fs_read_file(const char *path, turbo_fs_buf_t *buf) {
   if (stat(path, &st) != 0) {
 #endif
     int e = err_from_errno();
-    TLOG_ERROR("Failed to stat file {}: {}", path, strerror(-e));
+    TLOG_ERRORF("Failed to stat file {}: {}", path, strerror(-e));
     return e;
   }
 
@@ -620,7 +620,7 @@ int turbo_fs_read_file(const char *path, turbo_fs_buf_t *buf) {
                    , 0);
   if (fd < 0) {
     int e = err_from_errno();
-    TLOG_ERROR("Failed to open file {}: {}", path, strerror(-e));
+    TLOG_ERRORF("Failed to open file {}: {}", path, strerror(-e));
     return e;
   }
 
@@ -636,7 +636,7 @@ int turbo_fs_read_file(const char *path, turbo_fs_buf_t *buf) {
   int rc = turbo_fs_read_exact(fd, base, file_size, &bytes_read);
   int close_rc = fs_close(fd);
   if (rc != 0) {
-    TLOG_ERROR("Failed to read file {}: {}", path, strerror(-rc));
+    TLOG_ERRORF("Failed to read file {}: {}", path, strerror(-rc));
     free(base);
     return rc;
   }
@@ -649,7 +649,7 @@ int turbo_fs_read_file(const char *path, turbo_fs_buf_t *buf) {
   buf->base = base;
   buf->len = bytes_read;
   buf->base[bytes_read] = '\0';
-  TLOG_DEBUG("Read file {}: {} bytes", path, buf->len);
+  TLOG_DEBUGF("Read file {}: {} bytes", path, buf->len);
   return 0;
 }
 
@@ -665,21 +665,21 @@ int turbo_fs_write_file(const char *path, const turbo_fs_buf_t *buf) {
                    , TURBO_FS_DEFAULT_MODE);
   if (fd < 0) {
     int e = err_from_errno();
-    TLOG_ERROR("Failed to open file {}: {}", path, strerror(-e));
+    TLOG_ERRORF("Failed to open file {}: {}", path, strerror(-e));
     return e;
   }
 
   int rc = turbo_fs_write_all(fd, buf->base, buf->len);
   int close_rc = fs_close(fd);
   if (rc != 0) {
-    TLOG_ERROR("Failed to write file {}: {}", path, strerror(-rc));
+    TLOG_ERRORF("Failed to write file {}: {}", path, strerror(-rc));
     return rc;
   }
   if (close_rc != 0) {
     return err_from_errno();
   }
 
-  TLOG_DEBUG("Wrote file {}: {} bytes", path, buf->len);
+  TLOG_DEBUGF("Wrote file {}: {} bytes", path, buf->len);
   return 0;
 }
 
@@ -695,13 +695,13 @@ int turbo_fs_stat(const char *path, turbo_fs_stat_t *stat_out) {
   if (stat(path, &st) != 0) {
 #endif
     int e = err_from_errno();
-    TLOG_ERROR("Stat failed for {}: {}", path, strerror(-e));
+    TLOG_ERRORF("Stat failed for {}: {}", path, strerror(-e));
     return e;
   }
 
   turbo_fs_stat_from_native(&st, stat_out);
 
-  TLOG_DEBUG("Stat completed for: {}", path);
+  TLOG_DEBUGF("Stat completed for: {}", path);
   return 0;
 }
 
@@ -713,20 +713,20 @@ int turbo_fs_lstat(const char *path, turbo_fs_stat_t *stat_out) {
 #ifdef _WIN32
   int rc = turbo_fs_lstat_win32(path, stat_out);
   if (rc != 0) {
-    TLOG_ERROR("Lstat failed for {}: {}", path, strerror(-rc));
+    TLOG_ERRORF("Lstat failed for {}: {}", path, strerror(-rc));
     return rc;
   }
 #else
   fs_stat_t st;
   if (lstat(path, &st) != 0) {
     int e = err_from_errno();
-    TLOG_ERROR("Lstat failed for {}: {}", path, strerror(-e));
+    TLOG_ERRORF("Lstat failed for {}: {}", path, strerror(-e));
     return e;
   }
   turbo_fs_stat_from_native(&st, stat_out);
 #endif
 
-  TLOG_DEBUG("Lstat completed for: {}", path);
+  TLOG_DEBUGF("Lstat completed for: {}", path);
   return 0;
 }
 
@@ -844,11 +844,11 @@ int turbo_fs_mkdir(const char *path, int mode) {
 
   if (err != 0) {
     int e = err_from_errno();
-    TLOG_ERROR("Failed to create directory {}: {}", path, strerror(-e));
+    TLOG_ERRORF("Failed to create directory {}: {}", path, strerror(-e));
     return e;
   }
 
-  TLOG_DEBUG("Directory created: {}", path);
+  TLOG_DEBUGF("Directory created: {}", path);
   return 0;
 }
 
@@ -865,11 +865,11 @@ int turbo_fs_rmdir(const char *path) {
 
   if (err != 0) {
     int e = err_from_errno();
-    TLOG_ERROR("Failed to remove directory {}: {}", path, strerror(-e));
+    TLOG_ERRORF("Failed to remove directory {}: {}", path, strerror(-e));
     return e;
   }
 
-  TLOG_DEBUG("Directory removed: {}", path);
+  TLOG_DEBUGF("Directory removed: {}", path);
   return 0;
 }
 
@@ -1040,11 +1040,11 @@ int turbo_fs_unlink(const char *path) {
 
   if (fs_unlink(path) != 0) {
     int e = err_from_errno();
-    TLOG_ERROR("Failed to remove file {}: {}", path, strerror(-e));
+    TLOG_ERRORF("Failed to remove file {}: {}", path, strerror(-e));
     return e;
   }
 
-  TLOG_DEBUG("File removed: {}", path);
+  TLOG_DEBUGF("File removed: {}", path);
   return 0;
 }
 
@@ -1094,7 +1094,7 @@ int turbo_fs_get_tmpdir(char *buffer, size_t buffer_size) {
   memcpy(buffer, tmp, len + 1);
 #endif
 
-  TLOG_DEBUG("Temporary directory: {}", buffer);
+  TLOG_DEBUGF("Temporary directory: {}", buffer);
   return 0;
 }
 
@@ -1229,7 +1229,7 @@ turbo_file_t turbo_fs_open(const char *path, int flags, int mode) {
   int fd           = fs_open(path, native_flags, mode);
 
   if (fd < 0) {
-    TLOG_ERROR("Failed to open file {}: {}", path, strerror(errno));
+    TLOG_ERRORF("Failed to open file {}: {}", path, strerror(errno));
     return TURBO_INVALID_FILE;
   }
 

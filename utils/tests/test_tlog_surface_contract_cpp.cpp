@@ -1,5 +1,5 @@
 #include "tlog.h"
-#include "tinytest.h"
+#include "tinytest.hpp"
 
 #include <cstdio>
 #include <string>

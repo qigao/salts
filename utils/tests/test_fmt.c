@@ -526,7 +526,7 @@ spec("FMT Tests") {
     }
 
     it("should append through the named format backend") {
-      tstr s = tstr_newlen("start", 5);
+      tstr s = tstr_dup("start");
       s = tstr_append_format(s, " id={}", 42);
       check_equal(s, "start id=42");
       tstr_free(s);
