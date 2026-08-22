@@ -68,7 +68,7 @@ extern const cmeta_type_traits cmeta_traits_double;
 }
 #endif
 
-/* Compatibility constructor for the legacy positional payload. */
+/* Internal compatibility constructor for the normalized positional payload. */
 #define CMETA_TRAITS_POSITIONAL(name, flags_, equal_, hash_, compare_, copy_, move_, destroy_) \
     CMETA_LOCAL const cmeta_type_traits cmeta_traits_##name = { \
         (flags_), (equal_), (hash_), (compare_), (copy_), (move_), (destroy_) \
@@ -107,9 +107,10 @@ extern const cmeta_type_traits cmeta_traits_double;
 #define CMETA_TRAIT_SEEN_ROW_I(name, tag, fn) \
     CMETA_PP_CAT(CMETA_TRAIT_SEEN_, tag)(name)
 
-/* Canonical tagged-row form. Flags and function slots are derived from the
- * same rows; duplicate tags become compile-time enum collisions. */
-#define CMETA_TRAITS_TAGGED(name, ...) \
+/* Public heterogeneous trait schema. Flags and function slots are derived from
+ * the same tagged rows, so capability presence is declared exactly once.
+ * Owner-qualified enum markers make duplicate tags an immediate compile error. */
+#define Traits(name, ...) \
     enum { \
         CMETA_SCHEMA_ROWS(CMETA_TRAIT_SEEN_ROW, name, __VA_ARGS__) \
         CMETA_PP_CAT(name, __cmeta_traits_end) \
@@ -118,19 +119,5 @@ extern const cmeta_type_traits cmeta_traits_double;
         .flags = (cmeta_trait_flags)(0u Schema(CMETA_TRAIT_FLAG_ROW, __VA_ARGS__)), \
         Schema(CMETA_TRAIT_INIT_ROW, __VA_ARGS__) \
     }
-
-/* Transitional source compatibility: a valid tagged declaration has at most
- * six rows (equal/hash/compare/copy/move/destroy), while the historical form
- * has exactly seven arguments after the type name. New code should use rows. */
-#define CMETA_TRAITS_DISPATCH_1(name, ...) CMETA_TRAITS_TAGGED(name, __VA_ARGS__)
-#define CMETA_TRAITS_DISPATCH_2(name, ...) CMETA_TRAITS_TAGGED(name, __VA_ARGS__)
-#define CMETA_TRAITS_DISPATCH_3(name, ...) CMETA_TRAITS_TAGGED(name, __VA_ARGS__)
-#define CMETA_TRAITS_DISPATCH_4(name, ...) CMETA_TRAITS_TAGGED(name, __VA_ARGS__)
-#define CMETA_TRAITS_DISPATCH_5(name, ...) CMETA_TRAITS_TAGGED(name, __VA_ARGS__)
-#define CMETA_TRAITS_DISPATCH_6(name, ...) CMETA_TRAITS_TAGGED(name, __VA_ARGS__)
-#define CMETA_TRAITS_DISPATCH_7(name, flags_, equal_, hash_, compare_, copy_, move_, destroy_) \
-    CMETA_TRAITS_POSITIONAL(name, flags_, equal_, hash_, compare_, copy_, move_, destroy_)
-#define Traits(name, ...) \
-    CMETA_PP_CAT(CMETA_TRAITS_DISPATCH_, CMETA_PP_NARG(__VA_ARGS__))(name, __VA_ARGS__)
 
 #endif
