@@ -23,15 +23,15 @@ typedef struct multimap_iter {
 } multimap_iter_t;
 
 /* Internal typed bridges for legacy/generated callers. */
-stl_status multimap_init_with_types(multimap_t *map,
-                                    const cmeta_type_desc *key_type,
-                                    const cmeta_type_desc *value_type,
-                                    size_t element_limit);
-stl_status multimap_from_arrays_with_types(
+stl_status multimap_raw_init(multimap_t *map,
+                             const cmeta_type_desc *key_type,
+                             const cmeta_type_desc *value_type,
+                             size_t element_limit);
+stl_status multimap_raw_from_arrays(
     multimap_t *map, const void *keys, const void *values, size_t count,
     const cmeta_type_desc *key_type, const cmeta_type_desc *value_type,
     size_t element_limit);
-void multimap_destroy_storage(multimap_t *map);
+void multimap_raw_destroy_storage(multimap_t *map);
 
 stl_status multimap_init_bytes(multimap_t *map, size_t key_size,
                                size_t key_align, size_t value_size,
@@ -46,8 +46,7 @@ static inline stl_status multimap_init(multimap_t *map,
                                        size_t element_limit) {
   if (map == NULL || map->key_type == NULL || map->value_type == NULL)
     return STL_INVALID_ARGUMENT;
-  return multimap_init_with_types(map, map->key_type, map->value_type,
-                                  element_limit);
+  return multimap_raw_init(map, map->key_type, map->value_type, element_limit);
 }
 
 static inline stl_status multimap_from_arrays(
@@ -62,9 +61,8 @@ static inline stl_status multimap_from_arrays(
   kind = map->cmeta.descriptor;
   key_type = map->key_type;
   value_type = map->value_type;
-  status = multimap_from_arrays_with_types(map, keys, values, count,
-                                           key_type, value_type,
-                                           element_limit);
+  status = multimap_raw_from_arrays(map, keys, values, count, key_type,
+                                    value_type, element_limit);
   map->cmeta.descriptor = kind;
   map->key_type = key_type;
   map->value_type = value_type;
@@ -73,7 +71,7 @@ static inline stl_status multimap_from_arrays(
 
 static inline void multimap_destroy(multimap_t *map) {
   if (map != NULL)
-    multimap_destroy_storage(map);
+    multimap_raw_destroy_storage(map);
 }
 
 void multimap_clear(multimap_t *map);
@@ -104,11 +102,11 @@ bool multimap_range_next(const multimap_t *map, cmeta_range_cursor *cursor,
 typedef multimap_compare_fn turbo_multimap_compare_fn;
 typedef multimap_t turbo_multimap_t;
 typedef multimap_iter_t turbo_multimap_iter_t;
-#define turbo_multimap_init multimap_init_with_types
+#define turbo_multimap_init multimap_raw_init
 #define turbo_multimap_init_bytes multimap_init_bytes
-#define turbo_multimap_from_arrays multimap_from_arrays_with_types
+#define turbo_multimap_from_arrays multimap_raw_from_arrays
 #define turbo_multimap_from_arrays_bytes multimap_from_arrays_bytes
-#define turbo_multimap_destroy multimap_destroy_storage
+#define turbo_multimap_destroy multimap_raw_destroy_storage
 #define turbo_multimap_clear multimap_clear
 #define turbo_multimap_put multimap_put
 #define turbo_multimap_contains multimap_contains
