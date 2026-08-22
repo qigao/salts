@@ -1,8 +1,10 @@
 #include <turbostl/list.h>
+#include <turbostl/detail/instance_meta.h>
 
 #include "sequence_internal.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 typedef struct list_node {
   struct list_node *previous;
@@ -36,8 +38,8 @@ static bool list_valid(const list_t *list) {
 }
 
 static void list_set_iterator(list_iter_t *out_iterator,
-                                    const list_t *owner,
-                                    list_node_t *node) {
+                              const list_t *owner,
+                              list_node_t *node) {
   if (out_iterator != NULL) {
     out_iterator->owner = owner;
     out_iterator->node = node;
@@ -56,10 +58,10 @@ static list_node_t *list_node_new(
     return NULL;
   }
   status = sequence_allocate(1u, impl->elem_stride, impl->elem_align,
-                                   &node->value);
+                             &node->value);
   if (status == STL_OK)
     status = sequence_copy(impl->element_type, impl->elem_size,
-                                 node->value, elem);
+                           node->value, elem);
   if (status != STL_OK) {
     sequence_deallocate(node->value);
     free(node);
@@ -99,22 +101,22 @@ static stl_status list_initialize(
 }
 
 stl_status list_init_bytes(list_t *list, size_t elem_size,
-                                       size_t elem_align,
-                                       size_t element_limit) {
+                           size_t elem_align,
+                           size_t element_limit) {
   return list_initialize(list, NULL, elem_size, elem_align,
-                               element_limit);
+                         element_limit);
 }
 
 stl_status list_raw_init(list_t *list,
-                                 const cmeta_type_desc *element_type,
-                                 size_t element_limit) {
+                         const cmeta_type_desc *element_type,
+                         size_t element_limit) {
   stl_status status;
 
   if (list == NULL || list->impl != NULL) return STL_INVALID_ARGUMENT;
   status = sequence_require_type(element_type, false);
   if (status != STL_OK) return status;
   return list_initialize(list, element_type, element_type->size,
-                               element_type->align, element_limit);
+                         element_type->align, element_limit);
 }
 
 static stl_status list_insert_between(
@@ -146,63 +148,63 @@ static stl_status list_insert_between(
 }
 
 stl_status list_push_front(list_t *list, const void *elem,
-                                       list_iter_t *out_iterator) {
+                           list_iter_t *out_iterator) {
   list_impl_t *impl = list_impl(list);
   if (impl == NULL) return STL_INVALID_ARGUMENT;
   return list_insert_between(list, NULL, impl->head, elem,
-                                   out_iterator);
+                             out_iterator);
 }
 
 stl_status list_push_back(list_t *list, const void *elem,
-                                      list_iter_t *out_iterator) {
+                          list_iter_t *out_iterator) {
   list_impl_t *impl = list_impl(list);
   if (impl == NULL) return STL_INVALID_ARGUMENT;
   return list_insert_between(list, impl->tail, NULL, elem,
-                                   out_iterator);
+                             out_iterator);
 }
 
 static bool list_iterator_matches(const list_t *list,
-                                        list_iter_t position) {
+                                  list_iter_t position) {
   return list_valid(list) && position.owner == list &&
          position.node != NULL;
 }
 
 stl_status list_insert_before(list_t *list,
-                                          list_iter_t position,
-                                          const void *elem,
-                                          list_iter_t *out_iterator) {
+                              list_iter_t position,
+                              const void *elem,
+                              list_iter_t *out_iterator) {
   list_node_t *next;
   if (!list_iterator_matches(list, position))
     return STL_INVALID_ARGUMENT;
   next = (list_node_t *)position.node;
   return list_insert_between(list, next->previous, next, elem,
-                                   out_iterator);
+                             out_iterator);
 }
 
 stl_status list_insert_after(list_t *list,
-                                         list_iter_t position,
-                                         const void *elem,
-                                         list_iter_t *out_iterator) {
+                             list_iter_t position,
+                             const void *elem,
+                             list_iter_t *out_iterator) {
   list_node_t *previous;
   if (!list_iterator_matches(list, position))
     return STL_INVALID_ARGUMENT;
   previous = (list_node_t *)position.node;
   return list_insert_between(list, previous, previous->next, elem,
-                                   out_iterator);
+                             out_iterator);
 }
 
 static stl_status list_remove_node(list_t *list,
-                                               list_node_t *node,
-                                               void *out_elem) {
+                                   list_node_t *node,
+                                   void *out_elem) {
   list_impl_t *impl = list_impl(list);
   stl_status status;
 
   status = out_elem != NULL
                ? sequence_move_destroy(impl->element_type,
-                                             impl->elem_size, out_elem,
-                                             node->value)
+                                       impl->elem_size, out_elem,
+                                       node->value)
                : sequence_destroy_value(impl->element_type,
-                                              node->value);
+                                        node->value);
   if (status != STL_OK) return status;
   if (node->previous != NULL)
     node->previous->next = node->next;
@@ -219,12 +221,12 @@ static stl_status list_remove_node(list_t *list,
 }
 
 stl_status list_erase(list_t *list,
-                                  list_iter_t position,
-                                  void *out_elem) {
+                      list_iter_t position,
+                      void *out_elem) {
   if (!list_iterator_matches(list, position))
     return STL_INVALID_ARGUMENT;
   return list_remove_node(list, (list_node_t *)position.node,
-                                out_elem);
+                          out_elem);
 }
 
 stl_status list_pop_front(list_t *list, void *out_elem) {
@@ -290,7 +292,7 @@ static stl_status list_from_common(
   status = element_type != NULL
                ? list_raw_init(&temporary, element_type, element_limit)
                : list_init_bytes(&temporary, elem_size, elem_align,
-                                       element_limit);
+                                 element_limit);
   if (status != STL_OK) return status;
   for (index = 0u; index < count; ++index) {
     status = list_push_back(
@@ -311,15 +313,15 @@ stl_status list_raw_from_array(
     const cmeta_type_desc *element_type, size_t element_limit) {
   if (element_type == NULL) return STL_INVALID_ARGUMENT;
   return list_from_common(list, elements, count, element_type,
-                                element_type->size, element_type->align,
-                                element_limit);
+                          element_type->size, element_type->align,
+                          element_limit);
 }
 
 stl_status list_from_array_bytes(
     list_t *list, const void *elements, size_t count, size_t elem_size,
     size_t elem_align, size_t element_limit) {
   return list_from_common(list, elements, count, NULL, elem_size,
-                                elem_align, element_limit);
+                          elem_align, element_limit);
 }
 
 list_iter_t list_begin(const list_t *list) {
@@ -410,8 +412,8 @@ bool list_empty(const list_t *list) {
 }
 
 bool list_range_next(const list_t *list,
-                           cmeta_range_cursor *cursor,
-                           const void **out_value) {
+                     cmeta_range_cursor *cursor,
+                     const void **out_value) {
   const list_impl_t *impl = list_impl_const(list);
   list_node_t *node;
 
@@ -428,3 +430,113 @@ bool list_range_next(const list_t *list,
   cursor->state[0] = node->next;
   return true;
 }
+
+static cmeta_status stl_list_cmeta_status(stl_status status) {
+  switch (status) {
+    case STL_OK: return CMETA_OK;
+    case STL_INVALID_ARGUMENT: return CMETA_INVALID_ARGUMENT;
+    case STL_OUT_OF_MEMORY: return CMETA_OUT_OF_MEMORY;
+    case STL_CAPACITY_EXCEEDED: return CMETA_CAPACITY_EXCEEDED;
+    case STL_TYPE_MISMATCH: return CMETA_TYPE_MISMATCH;
+    case STL_TRAIT_MISSING: return CMETA_TRAIT_MISSING;
+    case STL_EMPTY:
+    case STL_NOT_FOUND:
+    default: return CMETA_CALLBACK_ERROR;
+  }
+}
+
+static size_t stl_list_range_size(const void *object) {
+  return list_size((const list_t *)object);
+}
+
+static uint64_t stl_list_range_version(const void *object) {
+  return list_generation((const list_t *)object);
+}
+
+static cmeta_gen_status stl_list_meta_range_next(
+    const void *object, cmeta_range_cursor *cursor, void *out_value) {
+  const list_t *list = (const list_t *)object;
+  const void *value = NULL;
+  if (list == NULL || cursor == NULL || out_value == NULL ||
+      list->element_type == NULL)
+    return CMETA_GEN_ERROR;
+  if (!list_range_next(list, cursor, &value))
+    return CMETA_GEN_DONE;
+  memcpy(out_value, value, list->element_type->size);
+  return cursor->state[0] == NULL ? CMETA_GEN_VALUE_AND_DONE :
+                                    CMETA_GEN_VALUE;
+}
+
+static cmeta_range stl_list_range_factory(const void *object) {
+  const list_t *list = (const list_t *)object;
+  cmeta_range range = {
+      object,
+      list != NULL ? list->element_type : NULL,
+      CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
+      stl_list_range_size,
+      stl_list_meta_range_next,
+      stl_list_range_version(object),
+      stl_list_range_version};
+  return range;
+}
+
+static cmeta_status stl_list_collector_begin(
+    void *context, const cmeta_type_desc *input, size_t limit) {
+  list_t *output = (list_t *)context;
+  if (output == NULL || output->element_type == NULL || input == NULL)
+    return CMETA_INVALID_ARGUMENT;
+  if (!cmeta_type_equal(output->element_type, input))
+    return CMETA_TYPE_MISMATCH;
+  return stl_list_cmeta_status(list_init(output, limit));
+}
+
+static cmeta_status stl_list_collector_accept(void *context,
+                                              const void *value) {
+  if (context == NULL || value == NULL)
+    return CMETA_INVALID_ARGUMENT;
+  return stl_list_cmeta_status(
+      list_push_back((list_t *)context, value, NULL));
+}
+
+static cmeta_status stl_list_collector_finish(void *context) {
+  (void)context;
+  return CMETA_OK;
+}
+
+static void stl_list_collector_abort(void *context) {
+  if (context != NULL)
+    list_destroy((list_t *)context);
+}
+
+static const cmeta_collector_ops stl_list_collector_ops = {
+    stl_list_collector_begin,
+    stl_list_collector_accept,
+    stl_list_collector_finish,
+    stl_list_collector_abort};
+
+static cmeta_collector stl_list_collector_factory(void *zero_output,
+                                                  size_t limit) {
+  list_t *output = (list_t *)zero_output;
+  cmeta_collector result = {
+      &stl_list_collector_ops,
+      output,
+      output,
+      output != NULL ? output->element_type : NULL,
+      limit,
+      0u,
+      CMETA_COLLECTOR_ZERO,
+      CMETA_OK};
+  return result;
+}
+
+const cmeta_container_desc stl_list_container_desc = {
+    "List",
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    stl_list_range_factory,
+    NULL,
+    NULL,
+    NULL,
+    stl_list_collector_factory};
