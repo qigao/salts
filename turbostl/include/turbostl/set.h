@@ -1,5 +1,5 @@
-#ifndef TURBO_SET_H
-#define TURBO_SET_H
+#ifndef TURBOSTL_SET_H
+#define TURBOSTL_SET_H
 
 #include <turbostl/map.h>
 
@@ -7,61 +7,111 @@
 extern "C" {
 #endif
 
-typedef turbo_map_compare_fn turbo_set_compare_fn;
+typedef map_compare_fn set_compare_fn;
 
-typedef struct turbo_set {
-  turbo_map_t map;
-} turbo_set_t;
+typedef struct set {
+  cmeta_container_header cmeta;
+  const cmeta_type_desc *element_type;
+  map_t map;
+} set_t;
 
-typedef struct turbo_set_iter {
-  const turbo_set_t *owner;
+typedef struct set_iter {
+  const set_t *owner;
   void *node;
-} turbo_set_iter_t;
+} set_iter_t;
 
-/* Set is a unique-key red-black tree. It is ordered by COMPARE and is not a
- * HashSet alias. */
-turbo_stl_status turbo_set_init(
-    turbo_set_t *set, const cmeta_type_desc *key_type, size_t element_limit);
-turbo_stl_status turbo_set_init_bytes(
-    turbo_set_t *set, size_t key_size, size_t key_align,
-    size_t element_limit, turbo_set_compare_fn compare, void *context);
-turbo_stl_status turbo_set_from_array(
-    turbo_set_t *set, const void *keys, size_t count,
-    const cmeta_type_desc *key_type, size_t element_limit);
-turbo_stl_status turbo_set_from_array_bytes(
-    turbo_set_t *set, const void *keys, size_t count, size_t key_size,
-    size_t key_align, size_t element_limit, turbo_set_compare_fn compare,
-    void *context);
-void turbo_set_destroy(turbo_set_t *set);
-void turbo_set_clear(turbo_set_t *set);
-turbo_stl_status turbo_set_add(turbo_set_t *set,
-                                              const void *key);
-bool turbo_set_contains(const turbo_set_t *set,
-                                      const void *key);
-turbo_stl_status turbo_set_remove(turbo_set_t *set,
-                                                 const void *key);
-size_t turbo_set_size(const turbo_set_t *set);
-size_t turbo_set_element_limit(const turbo_set_t *set);
-uint64_t turbo_set_generation(const turbo_set_t *set);
-bool turbo_set_empty(const turbo_set_t *set);
+/* Internal typed bridge for compiled implementation and legacy wrappers. */
+stl_status set_init_with_type(set_t *set, const cmeta_type_desc *key_type,
+                              size_t element_limit);
+stl_status set_from_array_with_type(set_t *set, const void *keys,
+                                    size_t count,
+                                    const cmeta_type_desc *key_type,
+                                    size_t element_limit);
+void set_destroy_storage(set_t *set);
 
-turbo_set_iter_t turbo_set_begin(const turbo_set_t *set);
-turbo_set_iter_t turbo_set_end(const turbo_set_t *set);
-turbo_set_iter_t turbo_set_lower_bound(const turbo_set_t *set,
-                                                      const void *key);
-turbo_set_iter_t turbo_set_upper_bound(const turbo_set_t *set,
-                                                      const void *key);
-turbo_stl_status turbo_set_iter_next(turbo_set_iter_t *iterator);
-turbo_stl_status turbo_set_iter_prev(turbo_set_iter_t *iterator);
-bool turbo_set_iter_equal(turbo_set_iter_t left,
-                                         turbo_set_iter_t right);
-const void *turbo_set_iter_value_const(turbo_set_iter_t iterator);
-bool turbo_set_range_next(const turbo_set_t *set,
-                                        cmeta_range_cursor *cursor,
-                                        const void **out_value);
+stl_status set_init_bytes(set_t *set, size_t key_size, size_t key_align,
+                          size_t element_limit, set_compare_fn compare,
+                          void *context);
+stl_status set_from_array_bytes(set_t *set, const void *keys, size_t count,
+                                size_t key_size, size_t key_align,
+                                size_t element_limit, set_compare_fn compare,
+                                void *context);
+
+static inline stl_status set_init(set_t *set, size_t element_limit) {
+  if (set == NULL || set->element_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  return set_init_with_type(set, set->element_type, element_limit);
+}
+
+static inline stl_status set_from_array(set_t *set, const void *keys,
+                                        size_t count, size_t element_limit) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *type;
+  stl_status status;
+  if (set == NULL || set->element_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  kind = set->cmeta.descriptor;
+  type = set->element_type;
+  status = set_from_array_with_type(set, keys, count, type, element_limit);
+  set->cmeta.descriptor = kind;
+  set->element_type = type;
+  return status;
+}
+
+static inline void set_destroy(set_t *set) {
+  if (set != NULL)
+    set_destroy_storage(set);
+}
+
+void set_clear(set_t *set);
+stl_status set_add(set_t *set, const void *key);
+bool set_contains(const set_t *set, const void *key);
+stl_status set_remove(set_t *set, const void *key);
+size_t set_size(const set_t *set);
+size_t set_element_limit(const set_t *set);
+uint64_t set_generation(const set_t *set);
+bool set_empty(const set_t *set);
+
+set_iter_t set_begin(const set_t *set);
+set_iter_t set_end(const set_t *set);
+set_iter_t set_lower_bound(const set_t *set, const void *key);
+set_iter_t set_upper_bound(const set_t *set, const void *key);
+stl_status set_iter_next(set_iter_t *iterator);
+stl_status set_iter_prev(set_iter_t *iterator);
+bool set_iter_equal(set_iter_t left, set_iter_t right);
+const void *set_iter_value_const(set_iter_t iterator);
+bool set_range_next(const set_t *set, cmeta_range_cursor *cursor,
+                    const void **out_value);
+
+/* Temporary repository-migration aliases. */
+typedef set_compare_fn turbo_set_compare_fn;
+typedef set_t turbo_set_t;
+typedef set_iter_t turbo_set_iter_t;
+#define turbo_set_init set_init_with_type
+#define turbo_set_init_bytes set_init_bytes
+#define turbo_set_from_array set_from_array_with_type
+#define turbo_set_from_array_bytes set_from_array_bytes
+#define turbo_set_destroy set_destroy_storage
+#define turbo_set_clear set_clear
+#define turbo_set_add set_add
+#define turbo_set_contains set_contains
+#define turbo_set_remove set_remove
+#define turbo_set_size set_size
+#define turbo_set_element_limit set_element_limit
+#define turbo_set_generation set_generation
+#define turbo_set_empty set_empty
+#define turbo_set_begin set_begin
+#define turbo_set_end set_end
+#define turbo_set_lower_bound set_lower_bound
+#define turbo_set_upper_bound set_upper_bound
+#define turbo_set_iter_next set_iter_next
+#define turbo_set_iter_prev set_iter_prev
+#define turbo_set_iter_equal set_iter_equal
+#define turbo_set_iter_value_const set_iter_value_const
+#define turbo_set_range_next set_range_next
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* TURBO_SET_H */
+#endif /* TURBOSTL_SET_H */
