@@ -21,7 +21,7 @@ CMeta must not gain a TurboSTL dependency.
 3. Users never need generated types such as `IntVec`, `OrderedIntMap`, `OwnedEntryMap_entry`, or generated `Type_method` functions.
 4. Sequence, set, and associative Range/Collector behavior previously covered by generated wrappers is preserved through instance metadata.
 5. Associative entries have one non-generated runtime value representation with safe borrowed/owned lifetime semantics.
-6. Hash and ordered associative entry descriptors advertise only capabilities that are actually guaranteed by their container kind.
+6. Hash and ordered associative entry descriptors advertise only capabilities that are actually guaranteed by values admitted to their views.
 7. Existing raw byte APIs and container algorithms remain unchanged.
 
 ## Non-goals
@@ -31,6 +31,7 @@ CMeta must not gain a TurboSTL dependency.
 - No generated hidden `MapEntry<K,V>` C type under a different name.
 - No change to the meaning of `cmeta_range`, `cmeta_collector`, container capacity, ordering, or mutation detection.
 - No CFlow trait-aware transport rewrite in this task.
+- No structural `Entry<K,V>` CMeta type-identity extension in this task.
 
 ## Kind-level descriptor model
 
@@ -158,6 +159,8 @@ Keys and values use the handle's bound `key_type` and `value_type` directly as `
 
 Entries use the non-generated `cmeta_entry` representation described below.
 
+Raw-byte associative handles with no valid CMeta key/value binding do not expose CMeta entry views or collectors. A view factory returns failure rather than inventing type/lifecycle semantics.
+
 ## `cmeta_entry`: one runtime associative entry value
 
 CMeta owns the generic entry value because `CMETA_CONTAINER_VIEW_ENTRIES` is a CMeta abstraction and must not depend on TurboSTL.
@@ -171,8 +174,9 @@ typedef struct cmeta_entry {
     const void *key;
     const void *value;
 
-    /* NULL for borrowed entries. Non-NULL only when this entry owns a
-     * separately allocated key/value object. */
+    /* NULL for borrowed entries. When non-NULL these are the allocation
+     * owners/base pointers; key/value may point at aligned addresses within
+     * those allocations. */
     void *key_storage;
     void *value_storage;
 } cmeta_entry;
@@ -183,11 +187,11 @@ The implementation may add flags or allocation bookkeeping, but users must not n
 A Range writes a **borrowed** entry:
 
 ```text
-entry.key_type     = map->key_type
-entry.value_type   = map->value_type
-entry.key          = address of key owned by container
-entry.value        = address of value owned by container
-entry.key_storage  = NULL
+entry.key_type      = map->key_type
+entry.value_type    = map->value_type
+entry.key           = address of key owned by container
+entry.value         = address of value owned by container
+entry.key_storage   = NULL
 entry.value_storage = NULL
 ```
 
@@ -201,7 +205,7 @@ The borrowed pointers obey the same lifetime as the Range owner. Mutation/destro
 
 The operation:
 
-1. validates matching non-null `key_type` and `value_type`;
+1. validates non-null key/value pointers and valid non-null `key_type`/`value_type` descriptors;
 2. requires key and value `COPY | DESTROY` traits;
 3. allocates correctly aligned storage for the key;
 4. copy-constructs the key;
@@ -228,8 +232,8 @@ Destroy is a no-op for borrowed key/value pointers.
 
 For owned storage it:
 
-1. invokes the value `DESTROY` trait when present and owned;
-2. invokes the key `DESTROY` trait when present and owned;
+1. invokes the value `DESTROY` trait when owned;
+2. invokes the key `DESTROY` trait when owned;
 3. releases backing allocations;
 4. zeroes the entry.
 
@@ -253,6 +257,8 @@ COPY | MOVE | DESTROY | EQUAL | HASH
 
 `equal` and `hash` operate on the key through `entry.key_type->traits`. HashMap uses this descriptor for its entry Range/Collector.
 
+HashMap may expose this entry descriptor only when its bound key/value descriptors satisfy the lifecycle requirements needed by entry copy/destroy and the key satisfies HashMap's `EQUAL | HASH` requirements. Otherwise the typed init/view fails rather than exposing a descriptor whose advertised traits are not usable for values from that instance.
+
 ### Ordered entry
 
 ```text
@@ -267,7 +273,9 @@ COPY | MOVE | DESTROY | COMPARE
 
 `compare` operates on the key through `entry.key_type->traits`. Map, MultiMap, BTree, and BPlusTree use this descriptor.
 
-The callbacks reject/null-safe invalid entries rather than dereferencing missing descriptors.
+These containers may expose this entry descriptor only when their bound key/value descriptors satisfy the lifecycle requirements needed by entry copy/destroy and the key satisfies the ordered container's `COMPARE` requirement.
+
+The callbacks are null-safe and reject invalid entries rather than dereferencing missing descriptors.
 
 The descriptors describe semantic capability, while every entry value itself carries the concrete `key_type` and `value_type`.
 
@@ -286,7 +294,14 @@ Otherwise it returns `CMETA_TYPE_MISMATCH` without modifying the output.
 
 This dynamic validation is mandatory for every accepted entry, not merely at collector begin.
 
-The collector's `input_type` remains the appropriate semantic entry descriptor (`cmeta_type_hash_entry` or `cmeta_type_ordered_entry`).
+The collector's `input_type` remains the appropriate semantic entry descriptor (`cmeta_type_hash_entry` or `cmeta_type_ordered_entry`). Collector begin must perform both checks:
+
+1. `cmeta_type_equal(input, expected_entry_descriptor)`; and
+2. `cmeta_type_require_traits(input, required_entry_traits)`.
+
+Therefore an equivalent copied descriptor whose `.traits` is missing is rejected with `CMETA_TRAIT_MISSING` rather than silently admitted by name/size/alignment equality.
+
+This design intentionally chooses runtime K/V validation over generating a per-`K,V` `cmeta_type_desc`. Entry streams are therefore typed as hash-entry or ordered-entry at the CMeta Range level, with concrete K/V carried by each entry value. A future structural `Entry<K,V>` type-identity facility may refine static graph typing without changing the C representation, but it is outside this task.
 
 ## Collector contract
 
@@ -300,7 +315,7 @@ Abort destroys runtime storage while preserving the declaration-time binding/kin
 
 ### Associative containers
 
-Collector begin validates the semantic entry descriptor required by the kind and initializes the output.
+Collector begin validates the semantic entry descriptor required by the kind, requires its advertised semantic/lifecycle traits, and initializes the output.
 
 Each accept:
 
@@ -341,10 +356,19 @@ if (cmeta_container_range_view(&scores,
                                &entries)) {
     cmeta_entry entry = {0};
     cmeta_range_cursor cursor = {0};
-    while (cmeta_range_next(&entries, &cursor, &entry) == CMETA_GEN_VALUE) {
+    for (;;) {
+        cmeta_gen_status status = cmeta_range_next(&entries, &cursor, &entry);
+        if (status == CMETA_GEN_DONE)
+            break;
+        if (status != CMETA_GEN_VALUE && status != CMETA_GEN_VALUE_AND_DONE)
+            break;
+
         const int *key = (const int *)entry.key;
         const long *value = (const long *)entry.value;
         /* borrowed until owner mutation/destroy */
+
+        if (status == CMETA_GEN_VALUE_AND_DONE)
+            break;
     }
 }
 ```
@@ -379,7 +403,9 @@ Generated CMeta container infrastructure may remain in CMeta for non-TurboSTL us
 ## Error handling and rollback
 
 - Missing type bindings: `STL_INVALID_ARGUMENT`, no runtime mutation.
+- Missing lifecycle/semantic traits required by an instance view: typed init/view is rejected rather than exposing an unusable entry descriptor.
 - Entry key/value type mismatch at collector accept: `CMETA_TYPE_MISMATCH`, collector abort semantics apply.
+- Missing semantic traits on the supplied collector input descriptor: `CMETA_TRAIT_MISSING`.
 - Missing key/value lifecycle traits during entry copy: copy returns false and destination remains empty.
 - Allocation failure during entry copy: copy returns false, all partial ownership is rolled back.
 - Mutated Range owner: existing `CMETA_GEN_MUTATED` behavior remains unchanged and cursor/output are not advanced by the failed call.
@@ -397,13 +423,16 @@ The implementation must preserve or add compile/runtime coverage for:
 6. default associative view equals entries;
 7. a borrowed entry can be copy-constructed into an owned transient;
 8. owned entry move transfers ownership without invoking container-value move operations;
-9. value-copy failure after key copy rolls back key ownership exactly once;
-10. entry destroy balances key/value owned lifetimes;
-11. associative collector rejects mismatched runtime K/V bindings without mutation;
-12. collector abort preserves handle declaration binding;
-13. existing capacity/order/mutation/ownership regressions remain unchanged;
-14. public C11 and C++17 header tests compile without generated container names;
-15. final Linux and Windows CI pass on the final head.
+9. moving a borrowed entry does not mutate the container value;
+10. value-copy failure after key copy rolls back key ownership exactly once;
+11. entry destroy balances key/value owned lifetimes;
+12. associative collector rejects mismatched runtime K/V bindings without mutation;
+13. an equivalent entry descriptor with missing traits is rejected at collector begin;
+14. collector abort preserves handle declaration binding;
+15. raw-byte handles without CMeta bindings do not expose invented entry views;
+16. existing capacity/order/mutation/ownership regressions remain unchanged;
+17. public C11 and C++17 header tests compile without generated container names;
+18. final Linux and Windows CI pass on the final head.
 
 No source-spelling/grep test is introduced.
 
@@ -413,6 +442,7 @@ CFlow already consumes `cmeta_range.element_type`. In this task:
 
 - explicit `VALUES` views continue to carry the concrete value descriptor;
 - entry views carry `cmeta_type_hash_entry` or `cmeta_type_ordered_entry` and produce `cmeta_entry` values;
+- concrete entry K/V identity is validated at runtime by consumers/collectors rather than encoded in a generated C type;
 - no CFlow execution behavior is changed.
 
 CFlow's existing byte-copy transport for non-trivial values remains a separate follow-up. This task must not silently widen into a CFlow ownership rewrite.
