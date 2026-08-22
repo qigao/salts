@@ -1,6 +1,8 @@
 #include <cflow/executor.h>
 #include <turbo/thread_pool.h>
 
+#include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,7 +26,7 @@ static bool manual_ensure_capacity(cflow_manual_executor_state *state, size_t ne
     cflow_manual_task *tasks;
 
     if (need <= state->capacity) return true;
-    capacity = state->capacity ? state->capacity * 2u : 16u;
+    capacity = state->capacity ? state->capacity : 16u;
     while (capacity < need) {
         if (capacity > SIZE_MAX / 2u) {
             capacity = need;
@@ -43,7 +45,8 @@ static bool manual_ensure_capacity(cflow_manual_executor_state *state, size_t ne
 
 static bool manual_post(void *self, cflow_task_fn fn, void *user) {
     cflow_manual_executor_state *state = (cflow_manual_executor_state *)self;
-    if (!state || !fn || !manual_ensure_capacity(state, state->count + 1u))
+    if (!state || !fn || state->count == SIZE_MAX ||
+        !manual_ensure_capacity(state, state->count + 1u))
         return false;
     state->tasks[state->count++] = (cflow_manual_task){fn, user};
     return true;
@@ -71,8 +74,9 @@ static size_t manual_run_ready(void *self) {
 }
 
 static bool manual_wait_idle(void *self) {
-    (void)manual_run_ready(self);
-    return true;
+    const cflow_manual_executor_state *state =
+        (const cflow_manual_executor_state *)self;
+    return state && state->count == 0u;
 }
 
 static size_t manual_pending(void *self) {
@@ -169,7 +173,7 @@ bool cflow_executor_manual_init(cflow_executor *executor) {
 static bool pool_executor_init(cflow_executor *executor, size_t workers,
                                bool serial) {
     cflow_pool_executor_state *state;
-    if (!executor || workers == 0u) return false;
+    if (!executor || workers == 0u || workers > (size_t)INT_MAX) return false;
     memset(executor, 0, sizeof(*executor));
     state = (cflow_pool_executor_state *)calloc(1, sizeof(*state));
     if (!state) return false;
@@ -188,6 +192,5 @@ bool cflow_executor_serial_init(cflow_executor *executor) {
 }
 
 bool cflow_executor_worker_init(cflow_executor *executor, size_t workers) {
-    if (workers > (size_t)INT_MAX) return false;
     return pool_executor_init(executor, workers, false);
 }
