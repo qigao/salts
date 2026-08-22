@@ -29,11 +29,10 @@
         {
             "name": "win-paths",
             "hidden": true,
-            "toolchainFile": "$penv{VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "toolchainFile": "$penv{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
             "cacheVariables": {
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
                 "PKG_CONFIG_EXECUTABLE": "${sourceDir}/vcpkg_installed/x64-windows/tools/pkgconf/pkgconf.exe",
-                "RE2C_EXECUTABLE": "${sourceDir}/vcpkg_installed/x64-windows/tools/re2c/re2c.exe",
                 "VCPKG_TARGET_TRIPLET": "x64-windows",
                 "VCPKG_MANIFEST_MODE": "ON"
             },
@@ -49,11 +48,10 @@
         {
             "name": "linux-paths",
             "hidden": true,
-            "toolchainFile": "$penv{VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "toolchainFile": "$penv{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
             "cacheVariables": {
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
                 "PKG_CONFIG_EXECUTABLE": "${sourceDir}/vcpkg_installed/x64-linux/tools/pkgconf/pkgconf",
-                "RE2C_EXECUTABLE": "${sourceDir}/vcpkg_installed/x64-linux/tools/re2c/re2c",
                 "VCPKG_TARGET_TRIPLET": "x64-linux",
                 "VCPKG_MANIFEST_MODE": "ON"
             }
