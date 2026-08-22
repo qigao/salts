@@ -1,15 +1,12 @@
 #include "turbo_thread.h"
 #include "disruptor.h"
-
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-  #include <windows.h>
-#else
-  #include <unistd.h>
-#endif
+// =============================================================================
+// Thread Pool
+// =============================================================================
 
 typedef struct task_entry_s {
   turbo_task_fn fn;
@@ -48,11 +45,17 @@ struct turbo_threadpool_s {
 static uint64_t turbo_threadpool_round_up_pow2(size_t value) {
   uint64_t rounded = 1U;
 
-  if (value == 0U) return 0U;
+  if (value == 0U) {
+    return 0U;
+  }
+
   while (rounded < (uint64_t)value) {
-    if (rounded > (UINT64_MAX >> 1U)) return 0U;
+    if (rounded > (UINT64_MAX >> 1U)) {
+      return 0U;
+    }
     rounded <<= 1U;
   }
+
   return rounded;
 }
 
@@ -60,17 +63,24 @@ static int64_t turbo_threadpool_pending_tasks(const turbo_threadpool_t *pool) {
   int64_t submitted;
   int64_t completed;
 
-  if (pool == NULL) return 0;
+  if (pool == NULL) {
+    return 0;
+  }
+
   submitted = atomic_load(&pool->tasks_submitted);
   completed = atomic_load(&pool->tasks_completed);
   return submitted - completed;
 }
 
 static void turbo_threadpool_notify_progress(turbo_threadpool_t *pool) {
-  if (pool == NULL) return;
+  if (pool == NULL) {
+    return;
+  }
+
   turbo_mutex_lock(&pool->wait_mutex);
-  if (turbo_threadpool_pending_tasks(pool) <= 0)
+  if (turbo_threadpool_pending_tasks(pool) <= 0) {
     turbo_cond_broadcast(&pool->all_done);
+  }
   turbo_mutex_unlock(&pool->wait_mutex);
 }
 
@@ -91,18 +101,20 @@ static void turbo_threadpool_signal_queue_space(turbo_threadpool_t *pool) {
   turbo_mutex_unlock(&pool->park_mutex);
 }
 
-static int turbo_threadpool_try_reserve_queue_slot(turbo_threadpool_t *pool,
-                                                    int blocking) {
+static int turbo_threadpool_try_reserve_queue_slot(turbo_threadpool_t *pool, int blocking) {
   int64_t depth;
 
   while (atomic_load(&pool->accepting) && !atomic_load(&pool->shutdown)) {
     depth = atomic_load(&pool->queued_depth);
     while (depth < (int64_t)pool->queue_capacity) {
-      if (atomic_compare_exchange_weak(&pool->queued_depth, &depth, depth + 1))
+      if (atomic_compare_exchange_weak(&pool->queued_depth, &depth, depth + 1)) {
         return 1;
+      }
     }
 
-    if (!blocking) return 0;
+    if (!blocking) {
+      return 0;
+    }
 
     turbo_mutex_lock(&pool->park_mutex);
     while (atomic_load(&pool->queued_depth) >= (int64_t)pool->queue_capacity &&
@@ -129,8 +141,7 @@ static void worker_entry(void *arg) {
     const task_entry_t *entry;
 
     if (!disruptor_worker_try_claim(pool->queue, &cursor)) {
-      if (atomic_load(&pool->shutdown) &&
-          turbo_threadpool_pending_tasks(pool) <= 0 &&
+      if (atomic_load(&pool->shutdown) && turbo_threadpool_pending_tasks(pool) <= 0 &&
           atomic_load(&pool->queued_depth) <= 0) {
         break;
       }
@@ -141,8 +152,7 @@ static void worker_entry(void *arg) {
       }
 
       turbo_mutex_lock(&pool->park_mutex);
-      while (atomic_load(&pool->queued_depth) <= 0 &&
-             !atomic_load(&pool->shutdown)) {
+      while (atomic_load(&pool->queued_depth) <= 0 && !atomic_load(&pool->shutdown)) {
         turbo_cond_wait(&pool->task_available, &pool->park_mutex);
       }
       turbo_mutex_unlock(&pool->park_mutex);
@@ -166,30 +176,34 @@ static void worker_entry(void *arg) {
   turbo_threadpool_notify_progress(pool);
 }
 
-turbo_threadpool_t *
-turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
+turbo_threadpool_t *turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
   turbo_threadpool_t *pool;
   disruptor_config_t queue_config;
   int num_threads;
   size_t queue_capacity;
   uint64_t ring_capacity;
 
-  if (config == NULL) return NULL;
+  if (config == NULL) {
+    return NULL;
+  }
 
   num_threads = config->num_threads;
-  if (num_threads <= 0) num_threads = turbo_cpu_count();
-  queue_capacity = config->queue_capacity > 0U
-                       ? config->queue_capacity
-                       : TURBO_THREADPOOL_DEFAULT_QUEUE_CAPACITY;
-  if (queue_capacity == SIZE_MAX) return NULL;
-
+  if (num_threads <= 0) {
+    num_threads = turbo_cpu_count();
+  }
+  queue_capacity =
+      config->queue_capacity > 0U ? config->queue_capacity : TURBO_THREADPOOL_DEFAULT_QUEUE_CAPACITY;
+  if (queue_capacity == SIZE_MAX) {
+    return NULL;
+  }
   ring_capacity = turbo_threadpool_round_up_pow2(queue_capacity + 1U);
   if (ring_capacity == 0U || ring_capacity > (uint64_t)SIZE_MAX ||
-      ring_capacity > (uint64_t)INT64_MAX)
+      ring_capacity > (uint64_t)INT64_MAX) {
     return NULL;
+  }
 
-  pool = (turbo_threadpool_t *)calloc(1, sizeof(*pool));
-  if (pool == NULL) return NULL;
+  pool = calloc(1, sizeof(turbo_threadpool_t));
+  if (!pool) return NULL;
 
   pool->num_threads = num_threads;
   pool->queue_capacity = queue_capacity;
@@ -206,7 +220,7 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
   queue_config.consumer_capacity = 1U;
   queue_config.mode = DISRUPTOR_MODE_WORKER_POOL;
   pool->queue = disruptor_create(&queue_config);
-  if (pool->queue == NULL) {
+  if (!pool->queue) {
     free(pool);
     return NULL;
   }
@@ -217,13 +231,11 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
   turbo_mutex_init(&pool->wait_mutex);
   turbo_cond_init(&pool->all_done);
 
-  pool->threads = (turbo_thread_t *)calloc((size_t)num_threads,
-                                           sizeof(*pool->threads));
-  pool->workers = (worker_context_t *)calloc((size_t)num_threads,
-                                             sizeof(*pool->workers));
-  if (pool->threads == NULL || pool->workers == NULL) {
-    free(pool->threads);
-    free(pool->workers);
+  pool->threads = calloc(num_threads, sizeof(turbo_thread_t));
+  pool->workers = calloc(num_threads, sizeof(worker_context_t));
+  if (!pool->threads || !pool->workers) {
+    if (pool->threads) free(pool->threads);
+    if (pool->workers) free(pool->workers);
     turbo_mutex_destroy(&pool->park_mutex);
     turbo_cond_destroy(&pool->task_available);
     turbo_cond_destroy(&pool->queue_space);
@@ -234,15 +246,16 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
     return NULL;
   }
 
-  for (int i = 0; i < num_threads; ++i) {
+  for (int i = 0; i < num_threads; i++) {
     pool->workers[i].pool = pool;
     pool->workers[i].worker_id = i;
-    if (turbo_thread_create(&pool->threads[i], worker_entry,
-                            &pool->workers[i]) != 0) {
+
+    if (turbo_thread_create(&pool->threads[i], worker_entry, &pool->workers[i]) != 0) {
       atomic_store(&pool->accepting, 0);
       atomic_store(&pool->shutdown, 1);
-      for (int j = 0; j < i; ++j)
-        (void)turbo_thread_join(&pool->threads[j]);
+      for (int j = 0; j < i; j++) {
+        turbo_thread_join(&pool->threads[j]);
+      }
       free(pool->threads);
       free(pool->workers);
       turbo_mutex_destroy(&pool->park_mutex);
@@ -261,13 +274,15 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
 
 turbo_threadpool_t *turbo_threadpool_create(int num_threads) {
   turbo_threadpool_config_t config;
+
   config.num_threads = num_threads;
   config.queue_capacity = TURBO_THREADPOOL_DEFAULT_QUEUE_CAPACITY;
   return turbo_threadpool_create_with_config(&config);
 }
 
 void turbo_threadpool_shutdown(turbo_threadpool_t *pool) {
-  if (pool == NULL) return;
+  if (!pool) return;
+
   atomic_store(&pool->accepting, 0);
   atomic_store(&pool->shutdown, 1);
   turbo_mutex_lock(&pool->park_mutex);
@@ -278,10 +293,12 @@ void turbo_threadpool_shutdown(turbo_threadpool_t *pool) {
 }
 
 void turbo_threadpool_destroy(turbo_threadpool_t *pool) {
-  if (pool == NULL) return;
+  if (!pool) return;
+
   turbo_threadpool_shutdown(pool);
-  for (int i = 0; i < pool->num_threads; ++i)
-    (void)turbo_thread_join(&pool->threads[i]);
+  for (int i = 0; i < pool->num_threads; i++) {
+    turbo_thread_join(&pool->threads[i]);
+  }
 
   turbo_mutex_destroy(&pool->park_mutex);
   turbo_cond_destroy(&pool->task_available);
@@ -294,15 +311,13 @@ void turbo_threadpool_destroy(turbo_threadpool_t *pool) {
   free(pool);
 }
 
-static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool,
-                                            turbo_task_fn task,
-                                            void *arg,
+static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool, turbo_task_fn task, void *arg,
                                             int blocking) {
   disruptor_cursor_t cursor = {0};
   task_entry_t *entry;
   unsigned int wait_rounds = 0U;
 
-  if (pool == NULL || task == NULL) return -1;
+  if (!pool || !task) return -1;
   if (!atomic_load(&pool->accepting) || atomic_load(&pool->shutdown)) {
     atomic_fetch_add(&pool->tasks_rejected, 1);
     return -1;
@@ -314,45 +329,45 @@ static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool,
   }
 
   while (!disruptor_publisher_try_claim(pool->queue, &cursor)) {
-    if (!blocking || !atomic_load(&pool->accepting) ||
-        atomic_load(&pool->shutdown)) {
+    if (!blocking || !atomic_load(&pool->accepting) || atomic_load(&pool->shutdown)) {
       turbo_threadpool_release_queue_slot(pool);
       atomic_fetch_add(&pool->tasks_rejected, 1);
       return -1;
     }
 
-    if ((++wait_rounds & 0xFFU) == 0U)
+    if ((++wait_rounds & 0xFFU) == 0U) {
       turbo_sleep_ms(1);
-    else
+    } else {
       turbo_thread_yield();
+    }
   }
 
   entry = (task_entry_t *)disruptor_acquire_entry(pool->queue, &cursor);
   entry->fn = task;
   entry->arg = arg;
+
   atomic_fetch_add(&pool->tasks_submitted, 1);
   (void)disruptor_publisher_publish(pool->queue, &cursor);
   turbo_threadpool_signal_task_available(pool);
+
   return 0;
 }
 
-int turbo_threadpool_submit(turbo_threadpool_t *pool,
-                            turbo_task_fn task,
-                            void *arg) {
+int turbo_threadpool_submit(turbo_threadpool_t *pool, turbo_task_fn task, void *arg) {
   return turbo_threadpool_submit_internal(pool, task, arg, 1);
 }
 
-int turbo_threadpool_try_submit(turbo_threadpool_t *pool,
-                                turbo_task_fn task,
-                                void *arg) {
+int turbo_threadpool_try_submit(turbo_threadpool_t *pool, turbo_task_fn task, void *arg) {
   return turbo_threadpool_submit_internal(pool, task, arg, 0);
 }
 
 void turbo_threadpool_wait(turbo_threadpool_t *pool) {
-  if (pool == NULL) return;
+  if (!pool) return;
+
   turbo_mutex_lock(&pool->wait_mutex);
-  while (turbo_threadpool_pending_tasks(pool) > 0)
+  while (turbo_threadpool_pending_tasks(pool) > 0) {
     turbo_cond_wait(&pool->all_done, &pool->wait_mutex);
+  }
   turbo_mutex_unlock(&pool->wait_mutex);
 }
 
@@ -360,25 +375,25 @@ int turbo_threadpool_pending(turbo_threadpool_t *pool) {
   return (int)turbo_threadpool_pending_tasks(pool);
 }
 
-int turbo_threadpool_size(turbo_threadpool_t *pool) {
-  return pool != NULL ? pool->num_threads : 0;
-}
+int turbo_threadpool_size(turbo_threadpool_t *pool) { return pool ? pool->num_threads : 0; }
 
 size_t turbo_threadpool_capacity(turbo_threadpool_t *pool) {
-  return pool != NULL ? pool->queue_capacity : 0U;
+  return pool ? pool->queue_capacity : 0U;
 }
 
 int turbo_threadpool_is_accepting(turbo_threadpool_t *pool) {
-  return pool != NULL ? atomic_load(&pool->accepting) : 0;
+  return pool ? atomic_load(&pool->accepting) : 0;
 }
 
-void turbo_threadpool_get_stats(turbo_threadpool_t *pool,
-                                turbo_threadpool_stats_t *stats) {
+void turbo_threadpool_get_stats(turbo_threadpool_t *pool, turbo_threadpool_stats_t *stats) {
   int64_t submitted;
   int64_t started;
   int64_t completed;
 
-  if (pool == NULL || stats == NULL) return;
+  if (pool == NULL || stats == NULL) {
+    return;
+  }
+
   memset(stats, 0, sizeof(*stats));
 
   submitted = atomic_load(&pool->tasks_submitted);
@@ -396,6 +411,10 @@ void turbo_threadpool_get_stats(turbo_threadpool_t *pool,
   stats->active_tasks = started - completed;
   stats->pending_tasks = submitted - completed;
 }
+
+// =============================================================================
+// Global Synchronization Policy
+// =============================================================================
 
 static int g_single_threaded = 0;
 
