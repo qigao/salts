@@ -60,19 +60,19 @@ typedef struct btree {
 } btree_t;
 
 /* Internal typed bridges for compiled implementation and legacy wrappers. */
-stl_status btree_init_with_types(btree_t *tree,
-                                 const cmeta_type_desc *key_type,
-                                 const cmeta_type_desc *value_type,
-                                 size_t entry_limit);
-stl_status btree_init_with_order_and_types(
+stl_status btree_raw_init(btree_t *tree,
+                          const cmeta_type_desc *key_type,
+                          const cmeta_type_desc *value_type,
+                          size_t entry_limit);
+stl_status btree_raw_init_with_order(
     btree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t min_degree,
     size_t entry_limit);
-stl_status btree_from_arrays_with_types(
+stl_status btree_raw_from_arrays(
     btree_t *tree, const void *keys, const void *values, size_t count,
     const cmeta_type_desc *key_type, const cmeta_type_desc *value_type,
     size_t entry_limit);
-void btree_destroy_storage(btree_t *tree);
+void btree_raw_destroy_storage(btree_t *tree);
 
 stl_status btree_init_bytes(
     btree_t *tree, size_t key_size, size_t key_align,
@@ -97,7 +97,7 @@ static inline stl_status btree_init(btree_t *tree, size_t entry_limit) {
   kind = tree->cmeta.descriptor;
   key_type = tree->key_type;
   value_type = tree->value_type;
-  status = btree_init_with_types(tree, key_type, value_type, entry_limit);
+  status = btree_raw_init(tree, key_type, value_type, entry_limit);
   tree->cmeta.descriptor = kind;
   tree->key_type = key_type;
   tree->value_type = value_type;
@@ -116,8 +116,8 @@ static inline stl_status btree_init_with_order(btree_t *tree,
   kind = tree->cmeta.descriptor;
   key_type = tree->key_type;
   value_type = tree->value_type;
-  status = btree_init_with_order_and_types(tree, key_type, value_type,
-                                           min_degree, entry_limit);
+  status = btree_raw_init_with_order(tree, key_type, value_type,
+                                     min_degree, entry_limit);
   tree->cmeta.descriptor = kind;
   tree->key_type = key_type;
   tree->value_type = value_type;
@@ -136,8 +136,8 @@ static inline stl_status btree_from_arrays(
   kind = tree->cmeta.descriptor;
   key_type = tree->key_type;
   value_type = tree->value_type;
-  status = btree_from_arrays_with_types(tree, keys, values, count, key_type,
-                                        value_type, entry_limit);
+  status = btree_raw_from_arrays(tree, keys, values, count, key_type,
+                                 value_type, entry_limit);
   tree->cmeta.descriptor = kind;
   tree->key_type = key_type;
   tree->value_type = value_type;
@@ -153,7 +153,7 @@ static inline void btree_destroy(btree_t *tree) {
   kind = tree->cmeta.descriptor;
   key_type = tree->key_type;
   value_type = tree->value_type;
-  btree_destroy_storage(tree);
+  btree_raw_destroy_storage(tree);
   tree->cmeta.descriptor = kind;
   tree->key_type = key_type;
   tree->value_type = value_type;
@@ -181,13 +181,13 @@ bool btree_range_next(const btree_t *tree, cmeta_range_cursor *cursor,
 /* Temporary repository-migration aliases. */
 typedef btree_compare_fn turbo_btree_compare_fn;
 typedef btree_t turbo_btree_t;
-#define turbo_btree_init btree_init_with_types
-#define turbo_btree_init_with_order btree_init_with_order_and_types
+#define turbo_btree_init btree_raw_init
+#define turbo_btree_init_with_order btree_raw_init_with_order
 #define turbo_btree_init_bytes btree_init_bytes
 #define turbo_btree_init_bytes_with_order btree_init_bytes_with_order
-#define turbo_btree_from_arrays btree_from_arrays_with_types
+#define turbo_btree_from_arrays btree_raw_from_arrays
 #define turbo_btree_from_arrays_bytes btree_from_arrays_bytes
-#define turbo_btree_destroy btree_destroy_storage
+#define turbo_btree_destroy btree_raw_destroy_storage
 #define turbo_btree_clear btree_clear
 #define turbo_btree_reserve btree_reserve
 #define turbo_btree_put btree_put
