@@ -29,9 +29,55 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  turbostl_migrate:
+    name: TurboSTL mechanical migration
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 31
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Setup re2c, ripgrep and vcpkg
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y re2c ripgrep
+          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
+            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run mechanical migration
+        run: bash scripts/turbostl_rg_migrate.sh
+
+      - name: Configure
+        run: cmake --preset linux-release-user
+
+      - name: Build
+        run: cmake --build --preset linux-release-user
+
+      - name: Test CMeta and CFlow
+        run: ctest --preset linux-release-user -R "^(cmeta_|cflow_)" --output-on-failure
+
+      - name: Commit migration
+        shell: bash
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A turbostl utils turbo_serial cmeta cflow stream
+          git commit -m "refactor(turbostl): remove legacy public aliases"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+
   linux:
     name: Linux release
     runs-on: ubuntu-latest
