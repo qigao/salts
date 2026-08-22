@@ -86,4 +86,33 @@ suite("TurboSTL public header") {
         check_equal(hash_map_init(&table, 8u), STL_OK);
         hash_map_destroy(&table);
     }
+
+    it("infers multimap btree and bplus-tree types from declarations") {
+        MultiMap(int, int, multi);
+        BTree(int, int, tree);
+        BPlusTree(int, int, plus);
+        int key = 2;
+        int value = 8;
+
+        check_equal(multimap_init(&multi, 4u), STL_OK);
+        check_equal(multimap_put(&multi, &key, &value), STL_OK);
+        check_equal(multimap_count(&multi, &key), (size_t)1u);
+        multimap_destroy(&multi);
+        check_equal(multimap_init(&multi, 8u), STL_OK);
+        multimap_destroy(&multi);
+
+        check_equal(btree_init(&tree, 4u), STL_OK);
+        check_equal(btree_put(&tree, &key, &value), STL_OK);
+        check_equal(*(const int *)btree_get_const(&tree, &key), 8);
+        btree_destroy(&tree);
+        check_equal(btree_init(&tree, 8u), STL_OK);
+        btree_destroy(&tree);
+
+        check_equal(bplus_tree_init(&plus, 4u), STL_OK);
+        check_equal(bplus_tree_put(&plus, &key, &value), STL_OK);
+        check_equal(*(const int *)bplus_tree_get_const(&plus, &key), 8);
+        bplus_tree_destroy(&plus);
+        check_equal(bplus_tree_init(&plus, 8u), STL_OK);
+        bplus_tree_destroy(&plus);
+    }
 }
