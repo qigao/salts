@@ -16,8 +16,8 @@ extern "C" {
 #define TURBO_BPLUS_TREE_DEFAULT_MIN_DEGREE 4U
 #endif
 
-typedef int (*turbo_bplus_tree_compare_fn)(const void *left,
-                                           const void *right, void *ctx);
+typedef int (*bplus_tree_compare_fn)(const void *left,
+                                     const void *right, void *ctx);
 
 typedef struct turbo_bplus_tree_entry_link {
   void *key;
@@ -35,11 +35,11 @@ typedef struct turbo_bplus_tree_node {
   struct turbo_bplus_tree_node **children;
   struct turbo_bplus_tree_node *parent;
   struct turbo_bplus_tree_node *next;
-  /* Borrowed derived metadata: the first leaf key in this subtree. */
   void *first_key;
 } turbo_bplus_tree_node_t;
 
-typedef struct {
+typedef struct bplus_tree {
+  cmeta_container_header cmeta;
   turbo_bplus_tree_node_t *root;
   size_t key_size;
   size_t key_align;
@@ -56,82 +56,166 @@ typedef struct {
   turbo_bplus_tree_entry_link_t *last;
   const cmeta_type_desc *key_type;
   const cmeta_type_desc *value_type;
-  turbo_bplus_tree_compare_fn compare;
+  bplus_tree_compare_fn compare;
   void *compare_ctx;
-  /* Cumulative mutation-maintenance node reads. This diagnostic counter does
-   * not participate in logical generation and lets complexity tests measure
-   * structural work without timing thresholds. */
   uint64_t maintenance_node_visits;
   uint64_t generation;
   bool initialized;
-} turbo_bplus_tree_t;
+} bplus_tree_t;
 
-/* Leaf entries own aligned key/value objects. Internal separators and
- * first_key metadata borrow leaf keys and are refreshed only along the
- * modified ancestor path; they never destroy or retain keys independently.
- * Search, put, and remove are O(log n) for fixed min_degree;
- * from-arrays is O(rows log live_entries). Indexed lookup is O(n), while the
- * ordered Range cursor follows derived entry links in O(n) total. */
-turbo_stl_status turbo_bplus_tree_init(
-    turbo_bplus_tree_t *tree, const cmeta_type_desc *key_type,
+/* Internal typed bridges for compiled implementation and legacy wrappers. */
+stl_status bplus_tree_init_with_types(
+    bplus_tree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit);
-turbo_stl_status turbo_bplus_tree_init_with_order(
-    turbo_bplus_tree_t *tree, const cmeta_type_desc *key_type,
+stl_status bplus_tree_init_with_order_and_types(
+    bplus_tree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t min_degree,
     size_t entry_limit);
-turbo_stl_status turbo_bplus_tree_init_bytes(
-    turbo_bplus_tree_t *tree, size_t key_size, size_t key_align,
-    size_t value_size, size_t value_align, size_t entry_limit,
-    turbo_bplus_tree_compare_fn compare, void *compare_ctx);
-turbo_stl_status turbo_bplus_tree_init_bytes_with_order(
-    turbo_bplus_tree_t *tree, size_t key_size, size_t key_align,
-    size_t value_size, size_t value_align, size_t min_degree,
-    size_t entry_limit, turbo_bplus_tree_compare_fn compare,
-    void *compare_ctx);
-turbo_stl_status turbo_bplus_tree_from_arrays(
-    turbo_bplus_tree_t *tree, const void *keys, const void *values,
+stl_status bplus_tree_from_arrays_with_types(
+    bplus_tree_t *tree, const void *keys, const void *values,
     size_t count, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit);
-turbo_stl_status turbo_bplus_tree_from_arrays_bytes(
-    turbo_bplus_tree_t *tree, const void *keys, const void *values,
+void bplus_tree_destroy_storage(bplus_tree_t *tree);
+
+stl_status bplus_tree_init_bytes(
+    bplus_tree_t *tree, size_t key_size, size_t key_align,
+    size_t value_size, size_t value_align, size_t entry_limit,
+    bplus_tree_compare_fn compare, void *compare_ctx);
+stl_status bplus_tree_init_bytes_with_order(
+    bplus_tree_t *tree, size_t key_size, size_t key_align,
+    size_t value_size, size_t value_align, size_t min_degree,
+    size_t entry_limit, bplus_tree_compare_fn compare,
+    void *compare_ctx);
+stl_status bplus_tree_from_arrays_bytes(
+    bplus_tree_t *tree, const void *keys, const void *values,
     size_t count, size_t key_size, size_t key_align, size_t value_size,
     size_t value_align, size_t entry_limit,
-    turbo_bplus_tree_compare_fn compare, void *compare_ctx);
+    bplus_tree_compare_fn compare, void *compare_ctx);
 
-void turbo_bplus_tree_destroy(turbo_bplus_tree_t *tree);
-void turbo_bplus_tree_clear(turbo_bplus_tree_t *tree);
-turbo_stl_status turbo_bplus_tree_reserve(
-    turbo_bplus_tree_t *tree, size_t min_capacity);
-turbo_stl_status turbo_bplus_tree_put(turbo_bplus_tree_t *tree,
-                                                     const void *key,
-                                                     const void *value);
-void *turbo_bplus_tree_get(turbo_bplus_tree_t *tree,
-                                         const void *key);
-const void *turbo_bplus_tree_get_const(
-    const turbo_bplus_tree_t *tree, const void *key);
-bool turbo_bplus_tree_contains(const turbo_bplus_tree_t *tree,
-                                             const void *key);
-turbo_stl_status turbo_bplus_tree_remove(
-    turbo_bplus_tree_t *tree, const void *key, void *out_value);
-size_t turbo_bplus_tree_size(const turbo_bplus_tree_t *tree);
-size_t turbo_bplus_tree_capacity(const turbo_bplus_tree_t *tree);
-size_t turbo_bplus_tree_entry_limit(
-    const turbo_bplus_tree_t *tree);
-uint64_t turbo_bplus_tree_generation(
-    const turbo_bplus_tree_t *tree);
-bool turbo_bplus_tree_empty(const turbo_bplus_tree_t *tree);
-void *turbo_bplus_tree_key_at(turbo_bplus_tree_t *tree,
-                                            size_t index);
-const void *turbo_bplus_tree_key_at_const(
-    const turbo_bplus_tree_t *tree, size_t index);
-void *turbo_bplus_tree_value_at(turbo_bplus_tree_t *tree,
-                                              size_t index);
-const void *turbo_bplus_tree_value_at_const(
-    const turbo_bplus_tree_t *tree, size_t index);
-bool turbo_bplus_tree_range_next(
-    const turbo_bplus_tree_t *tree, cmeta_range_cursor *cursor,
-    const void **out_key,
-    const void **out_value);
+static inline stl_status bplus_tree_init(bplus_tree_t *tree,
+                                         size_t entry_limit) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *key_type;
+  const cmeta_type_desc *value_type;
+  stl_status status;
+  if (tree == NULL || tree->key_type == NULL || tree->value_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  kind = tree->cmeta.descriptor;
+  key_type = tree->key_type;
+  value_type = tree->value_type;
+  status = bplus_tree_init_with_types(tree, key_type, value_type, entry_limit);
+  tree->cmeta.descriptor = kind;
+  tree->key_type = key_type;
+  tree->value_type = value_type;
+  return status;
+}
+
+static inline stl_status bplus_tree_init_with_order(bplus_tree_t *tree,
+                                                    size_t min_degree,
+                                                    size_t entry_limit) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *key_type;
+  const cmeta_type_desc *value_type;
+  stl_status status;
+  if (tree == NULL || tree->key_type == NULL || tree->value_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  kind = tree->cmeta.descriptor;
+  key_type = tree->key_type;
+  value_type = tree->value_type;
+  status = bplus_tree_init_with_order_and_types(tree, key_type, value_type,
+                                                min_degree, entry_limit);
+  tree->cmeta.descriptor = kind;
+  tree->key_type = key_type;
+  tree->value_type = value_type;
+  return status;
+}
+
+static inline stl_status bplus_tree_from_arrays(
+    bplus_tree_t *tree, const void *keys, const void *values, size_t count,
+    size_t entry_limit) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *key_type;
+  const cmeta_type_desc *value_type;
+  stl_status status;
+  if (tree == NULL || tree->key_type == NULL || tree->value_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  kind = tree->cmeta.descriptor;
+  key_type = tree->key_type;
+  value_type = tree->value_type;
+  status = bplus_tree_from_arrays_with_types(tree, keys, values, count,
+                                             key_type, value_type,
+                                             entry_limit);
+  tree->cmeta.descriptor = kind;
+  tree->key_type = key_type;
+  tree->value_type = value_type;
+  return status;
+}
+
+static inline void bplus_tree_destroy(bplus_tree_t *tree) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *key_type;
+  const cmeta_type_desc *value_type;
+  if (tree == NULL)
+    return;
+  kind = tree->cmeta.descriptor;
+  key_type = tree->key_type;
+  value_type = tree->value_type;
+  bplus_tree_destroy_storage(tree);
+  tree->cmeta.descriptor = kind;
+  tree->key_type = key_type;
+  tree->value_type = value_type;
+}
+
+void bplus_tree_clear(bplus_tree_t *tree);
+stl_status bplus_tree_reserve(bplus_tree_t *tree, size_t min_capacity);
+stl_status bplus_tree_put(bplus_tree_t *tree, const void *key,
+                          const void *value);
+void *bplus_tree_get(bplus_tree_t *tree, const void *key);
+const void *bplus_tree_get_const(const bplus_tree_t *tree, const void *key);
+bool bplus_tree_contains(const bplus_tree_t *tree, const void *key);
+stl_status bplus_tree_remove(bplus_tree_t *tree, const void *key,
+                             void *out_value);
+size_t bplus_tree_size(const bplus_tree_t *tree);
+size_t bplus_tree_capacity(const bplus_tree_t *tree);
+size_t bplus_tree_entry_limit(const bplus_tree_t *tree);
+uint64_t bplus_tree_generation(const bplus_tree_t *tree);
+bool bplus_tree_empty(const bplus_tree_t *tree);
+void *bplus_tree_key_at(bplus_tree_t *tree, size_t index);
+const void *bplus_tree_key_at_const(const bplus_tree_t *tree, size_t index);
+void *bplus_tree_value_at(bplus_tree_t *tree, size_t index);
+const void *bplus_tree_value_at_const(const bplus_tree_t *tree, size_t index);
+bool bplus_tree_range_next(const bplus_tree_t *tree,
+                           cmeta_range_cursor *cursor,
+                           const void **out_key,
+                           const void **out_value);
+
+/* Temporary repository-migration aliases. */
+typedef bplus_tree_compare_fn turbo_bplus_tree_compare_fn;
+typedef bplus_tree_t turbo_bplus_tree_t;
+#define turbo_bplus_tree_init bplus_tree_init_with_types
+#define turbo_bplus_tree_init_with_order bplus_tree_init_with_order_and_types
+#define turbo_bplus_tree_init_bytes bplus_tree_init_bytes
+#define turbo_bplus_tree_init_bytes_with_order bplus_tree_init_bytes_with_order
+#define turbo_bplus_tree_from_arrays bplus_tree_from_arrays_with_types
+#define turbo_bplus_tree_from_arrays_bytes bplus_tree_from_arrays_bytes
+#define turbo_bplus_tree_destroy bplus_tree_destroy_storage
+#define turbo_bplus_tree_clear bplus_tree_clear
+#define turbo_bplus_tree_reserve bplus_tree_reserve
+#define turbo_bplus_tree_put bplus_tree_put
+#define turbo_bplus_tree_get bplus_tree_get
+#define turbo_bplus_tree_get_const bplus_tree_get_const
+#define turbo_bplus_tree_contains bplus_tree_contains
+#define turbo_bplus_tree_remove bplus_tree_remove
+#define turbo_bplus_tree_size bplus_tree_size
+#define turbo_bplus_tree_capacity bplus_tree_capacity
+#define turbo_bplus_tree_entry_limit bplus_tree_entry_limit
+#define turbo_bplus_tree_generation bplus_tree_generation
+#define turbo_bplus_tree_empty bplus_tree_empty
+#define turbo_bplus_tree_key_at bplus_tree_key_at
+#define turbo_bplus_tree_key_at_const bplus_tree_key_at_const
+#define turbo_bplus_tree_value_at bplus_tree_value_at
+#define turbo_bplus_tree_value_at_const bplus_tree_value_at_const
+#define turbo_bplus_tree_range_next bplus_tree_range_next
 
 #ifdef __cplusplus
 }
