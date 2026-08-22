@@ -4,9 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typed(Map, OrderedIntMap, int, long);
-typed(Set, OrderedIntSet, int);
-
 typedef struct compare_value {
     int value;
 } compare_value;
@@ -153,33 +150,38 @@ spec("Red-black-tree ordered Map") {
     }
 
     it("iterates shuffled keys in sorted Map order") {
-        OrderedIntMap map = {0};
+        Map(int, long, map);
         int keys[] = {7, 1, 9, 3, 5};
         cmeta_range range;
         cmeta_range_cursor cursor = {0};
-        OrderedIntMap_entry entry = {0};
+        cmeta_entry entry = {0};
         int expected[] = {1, 3, 5, 7, 9};
         size_t index;
 
-        check_equal(OrderedIntMap_init(&map, 5u), TURBO_STL_OK);
-        for (index = 0u; index < 5u; ++index)
-            check_equal(OrderedIntMap_put(&map, keys[index],
-                                          (long)keys[index] * 10L),
-                        TURBO_STL_OK);
-        range = OrderedIntMap_entries_range(&map);
+        check_equal(map_init(&map, 5u), STL_OK);
+        for (index = 0u; index < 5u; ++index) {
+            long mapped = (long)keys[index] * 10L;
+            check_equal(map_put(&map, &keys[index], &mapped), STL_OK);
+        }
+        check_true(cmeta_container_range_view(&map,
+                                              CMETA_CONTAINER_VIEW_ENTRIES,
+                                              &range));
         check_true((range.flags & (CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
                                   CMETA_RANGE_UNIQUE)) ==
                    (CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
                     CMETA_RANGE_UNIQUE));
+        check_true(cmeta_type_equal(range.element_type,
+                                    &cmeta_type_ordered_entry));
         for (index = 0u; index < 5u; ++index) {
             cmeta_gen_status status = cmeta_range_next(&range, &cursor,
                                                        &entry);
             check_true(status == CMETA_GEN_VALUE ||
                        status == CMETA_GEN_VALUE_AND_DONE);
-            check_equal(entry.key, expected[index]);
-            check_equal(entry.value, (long)expected[index] * 10L);
+            check_equal(*(const int *)entry.key, expected[index]);
+            check_equal(*(const long *)entry.value,
+                        (long)expected[index] * 10L);
         }
-        OrderedIntMap_destroy(&map);
+        map_destroy(&map);
     }
 
     it("supports bidirectional bounds without rank indexing") {
@@ -211,7 +213,7 @@ spec("Red-black-tree ordered Map") {
     }
 
     it("keeps Set ordered and distinct from HashSet") {
-        OrderedIntSet set = {0};
+        Set(int, set);
         cmeta_range range;
         cmeta_range_cursor cursor = {0};
         int keys[] = {9, 1, 5, 1};
@@ -219,11 +221,13 @@ spec("Red-black-tree ordered Map") {
         int expected[] = {1, 5, 9};
         size_t index;
 
-        check_equal(OrderedIntSet_init(&set, 3u), TURBO_STL_OK);
+        check_equal(set_init(&set, 3u), STL_OK);
         for (index = 0u; index < 4u; ++index)
-            check_equal(OrderedIntSet_add(&set, keys[index]), TURBO_STL_OK);
-        check_equal(OrderedIntSet_size(&set), (size_t)3u);
-        range = OrderedIntSet_range(&set);
+            check_equal(set_add(&set, &keys[index]), STL_OK);
+        check_equal(set_size(&set), (size_t)3u);
+        check_true(cmeta_container_range_view(&set,
+                                              CMETA_CONTAINER_VIEW_DEFAULT,
+                                              &range));
         check_true((range.flags & (CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
                                   CMETA_RANGE_UNIQUE)) ==
                    (CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
@@ -234,7 +238,7 @@ spec("Red-black-tree ordered Map") {
                        status == CMETA_GEN_VALUE_AND_DONE);
             check_equal(out, expected[index]);
         }
-        OrderedIntSet_destroy(&set);
+        set_destroy(&set);
     }
 
     it("replaces duplicate from rows and preserves output on overflow") {
