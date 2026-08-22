@@ -1,6 +1,8 @@
 set(TARGET_NAME turbo_stl)
 
 add_library(${TARGET_NAME}
+  src/associative_meta.c
+  src/instance_meta.c
   src/bplus_tree.c
   src/btree.c
   src/deque.c

@@ -1,5 +1,5 @@
-#ifndef TURBO_HASH_SET_H
-#define TURBO_HASH_SET_H
+#ifndef TURBOSTL_HASH_SET_H
+#define TURBOSTL_HASH_SET_H
 
 #include <turbostl/hash_map.h>
 
@@ -7,48 +7,88 @@
 extern "C" {
 #endif
 
-/* HashSet is an independent hash-backed type. Its table owns keys while an
- * internal byte value only marks presence; it never aliases ordered Set. */
+/* HashSet is an independent hash-backed type. The element binding lives on
+ * the outer handle; the internal hash map owns keys and a byte presence value. */
 typedef struct hash_set {
+  cmeta_container_header cmeta;
+  const cmeta_type_desc *element_type;
   hash_map_t table;
 } hash_set_t;
 
-turbostl_status hash_set_init(
-    hash_set_t *set, const cmeta_type_desc *key_type,
-    size_t entry_limit);
-turbostl_status hash_set_init_bytes(
-    hash_set_t *set, size_t key_size, size_t key_align,
-    size_t entry_limit, hash_fn hash, hash_equal_fn equal,
-    void *ctx);
-turbostl_status hash_set_from_array(
+/* Internal typed bridge for compiled implementation and legacy wrappers. */
+stl_status hash_set_raw_init(hash_set_t *set,
+                             const cmeta_type_desc *key_type,
+                             size_t entry_limit);
+stl_status hash_set_raw_from_array(
     hash_set_t *set, const void *keys, size_t count,
     const cmeta_type_desc *key_type, size_t entry_limit);
-turbostl_status hash_set_from_array_bytes(
+void hash_set_raw_destroy_storage(hash_set_t *set);
+
+stl_status hash_set_init_bytes(hash_set_t *set, size_t key_size,
+                               size_t key_align, size_t entry_limit,
+                               hash_fn hash, hash_equal_fn equal, void *ctx);
+stl_status hash_set_from_array_bytes(
     hash_set_t *set, const void *keys, size_t count, size_t key_size,
     size_t key_align, size_t entry_limit, hash_fn hash,
     hash_equal_fn equal, void *ctx);
-void hash_set_destroy(hash_set_t *set);
+
+static inline stl_status hash_set_init(hash_set_t *set, size_t entry_limit) {
+  if (set == NULL || set->element_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  return hash_set_raw_init(set, set->element_type, entry_limit);
+}
+
+static inline stl_status hash_set_from_array(hash_set_t *set,
+                                             const void *keys, size_t count,
+                                             size_t entry_limit) {
+  const cmeta_type_desc *type;
+  stl_status status;
+  if (set == NULL || set->element_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  type = set->element_type;
+  status = hash_set_raw_from_array(set, keys, count, type, entry_limit);
+  set->element_type = type;
+  return status;
+}
+
+static inline void hash_set_destroy(hash_set_t *set) {
+  if (set != NULL)
+    hash_set_raw_destroy_storage(set);
+}
+
 void hash_set_clear(hash_set_t *set);
-turbostl_status hash_set_reserve(
-    hash_set_t *set, size_t min_entries);
-turbostl_status hash_set_add(hash_set_t *set,
-                                                   const void *key);
-bool hash_set_contains(const hash_set_t *set,
-                                            const void *key);
-turbostl_status hash_set_remove(hash_set_t *set,
-                                                      const void *key);
+stl_status hash_set_reserve(hash_set_t *set, size_t min_entries);
+stl_status hash_set_add(hash_set_t *set, const void *key);
+bool hash_set_contains(const hash_set_t *set, const void *key);
+stl_status hash_set_remove(hash_set_t *set, const void *key);
 size_t hash_set_size(const hash_set_t *set);
-/* capacity is the internal bucket count; entry_limit is the hard live-key
- * bound supplied at initialization. */
 size_t hash_set_capacity(const hash_set_t *set);
 size_t hash_set_entry_limit(const hash_set_t *set);
 uint64_t hash_set_generation(const hash_set_t *set);
 bool hash_set_empty(const hash_set_t *set);
-const void *hash_set_key_at(const hash_set_t *set,
-                                                size_t slot);
+const void *hash_set_key_at(const hash_set_t *set, size_t slot);
+
+/* Temporary repository-migration aliases. */
+typedef hash_set_t turbo_hash_set_t;
+#define turbo_hash_set_init hash_set_raw_init
+#define turbo_hash_set_init_bytes hash_set_init_bytes
+#define turbo_hash_set_from_array hash_set_raw_from_array
+#define turbo_hash_set_from_array_bytes hash_set_from_array_bytes
+#define turbo_hash_set_destroy hash_set_raw_destroy_storage
+#define turbo_hash_set_clear hash_set_clear
+#define turbo_hash_set_reserve hash_set_reserve
+#define turbo_hash_set_add hash_set_add
+#define turbo_hash_set_contains hash_set_contains
+#define turbo_hash_set_remove hash_set_remove
+#define turbo_hash_set_size hash_set_size
+#define turbo_hash_set_capacity hash_set_capacity
+#define turbo_hash_set_entry_limit hash_set_entry_limit
+#define turbo_hash_set_generation hash_set_generation
+#define turbo_hash_set_empty hash_set_empty
+#define turbo_hash_set_key_at hash_set_key_at
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* TURBO_HASH_SET_H */
+#endif /* TURBOSTL_HASH_SET_H */
