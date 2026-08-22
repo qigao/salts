@@ -36,11 +36,11 @@ typed(reduce, associative, long, stream_sum_age, (long left, long right)) {
 static bool stream_test_input(StreamInts *input) {
     size_t index;
 
-    if (list_init(StreamInts, input, 6u) != TURBO_STL_OK)
+    if (StreamInts_init(input, 6u) != TURBO_STL_OK)
         return false;
     for (index = 1u; index <= 6u; ++index) {
-        if (list_add(StreamInts, input, (int)index) != TURBO_STL_OK) {
-            list_destroy(StreamInts, input);
+        if (StreamInts_push_back(input, (int)index) != TURBO_STL_OK) {
+            StreamInts_destroy(input);
             return false;
         }
     }
@@ -64,16 +64,16 @@ suite("TurboSTL CFlow Stream") {
         check_null(result.error);
         check_true(result.ok);
         check_equal(result.count, (size_t)3u);
-        check_equal(list_pop_front(StreamLongList, &output, &value), TURBO_STL_OK);
+        check_equal(StreamLongList_pop_front(&output, &value), TURBO_STL_OK);
         check_equal(value, 4L);
-        check_equal(list_pop_front(StreamLongList, &output, &value), TURBO_STL_OK);
+        check_equal(StreamLongList_pop_front(&output, &value), TURBO_STL_OK);
         check_equal(value, 16L);
-        check_equal(list_pop_front(StreamLongList, &output, &value), TURBO_STL_OK);
+        check_equal(StreamLongList_pop_front(&output, &value), TURBO_STL_OK);
         check_equal(value, 36L);
 
-        list_destroy(StreamLongList, &output);
+        StreamLongList_destroy(&output);
         turbostl_stream_destroy(&pipeline);
-        list_destroy(StreamInts, &input);
+        StreamInts_destroy(&input);
     }
 
     it("collects an owned generic array through the CFlow terminal") {
@@ -93,7 +93,7 @@ suite("TurboSTL CFlow Stream") {
 
         cflow_result_destroy(&output);
         turbostl_stream_destroy(&pipeline);
-        list_destroy(StreamInts, &input);
+        StreamInts_destroy(&input);
     }
 
     it("rejects an array result that exceeds its explicit limit") {
@@ -111,7 +111,7 @@ suite("TurboSTL CFlow Stream") {
         check_null(output.type);
 
         turbostl_stream_destroy(&pipeline);
-        list_destroy(StreamInts, &input);
+        StreamInts_destroy(&input);
     }
 
     it("aborts collection when the borrowed source mutates") {
@@ -124,8 +124,8 @@ suite("TurboSTL CFlow Stream") {
         check_true(stream_test_input(&input));
         check_not_null(stream(&input, &pipeline));
         check_not_null(pipeline.map(&pipeline, stream_square));
-        check_equal(list_add(StreamInts, &input, 7), TURBO_STL_CAPACITY_EXCEEDED);
-        list_clear(StreamInts, &input);
+        check_equal(StreamInts_push_back(&input, 7), TURBO_STL_CAPACITY_EXCEEDED);
+        StreamInts_clear(&input);
         result = collect(&pipeline, StreamLongs, &output, 6u);
         check_false(result.ok);
         check_equal(result.error, "range owner mutated");
@@ -133,7 +133,7 @@ suite("TurboSTL CFlow Stream") {
         check_equal(memcmp(&output, &zero, sizeof(output)), 0);
 
         turbostl_stream_destroy(&pipeline);
-        list_destroy(StreamInts, &input);
+        StreamInts_destroy(&input);
     }
 
     it("keeps the output zero when its collection limit is exceeded") {
@@ -154,7 +154,7 @@ suite("TurboSTL CFlow Stream") {
         check_equal(memcmp(&output, &zero, sizeof(output)), 0);
 
         turbostl_stream_destroy(&pipeline);
-        list_destroy(StreamInts, &input);
+        StreamInts_destroy(&input);
     }
 
     it("streams reflected students and computes their class average age") {
@@ -170,17 +170,17 @@ suite("TurboSTL CFlow Stream") {
 
         check_equal(FieldCount(StreamStudent), (size_t)3u);
         check_not_null(FieldFind(StreamStudent, "age"));
-        check_equal(map_init(StreamClassAges, &ages, 3u), TURBO_STL_OK);
-        check_equal(map_put(StreamClassAges, &ages, students[0].student_id,
-                            students[0].age),
+        check_equal(StreamClassAges_init(&ages, 3u), TURBO_STL_OK);
+        check_equal(StreamClassAges_put(&ages, students[0].student_id,
+                                        students[0].age),
                     TURBO_STL_OK);
-        check_equal(map_put(StreamClassAges, &ages, students[1].student_id,
-                            students[1].age),
+        check_equal(StreamClassAges_put(&ages, students[1].student_id,
+                                        students[1].age),
                     TURBO_STL_OK);
-        check_equal(map_put(StreamClassAges, &ages, students[2].student_id,
-                            students[2].age),
+        check_equal(StreamClassAges_put(&ages, students[2].student_id,
+                                        students[2].age),
                     TURBO_STL_OK);
-        student_count = map_size(StreamClassAges, &ages);
+        student_count = StreamClassAges_size(&ages);
         check_not_null(stream_values(&ages, &pipeline));
         check_not_null(pipeline.map(&pipeline, stream_age_as_long)
                                    ->reduce(&pipeline, stream_sum_age));
@@ -191,6 +191,6 @@ suite("TurboSTL CFlow Stream") {
 
         cflow_result_destroy(&total);
         turbostl_stream_destroy(&pipeline);
-        map_destroy(StreamClassAges, &ages);
+        StreamClassAges_destroy(&ages);
     }
 }
