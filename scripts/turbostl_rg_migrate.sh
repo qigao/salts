@@ -79,20 +79,27 @@ for p in Path('turbostl/src').glob('*'):
     p.write_text(text, encoding='utf-8')
 
 # The tree implementations already use natural internal type names. Make the
-# public handle layout use those exact types instead of legacy turbo_ tags.
+# public handle layout use those exact types instead of legacy turbo_ tags and
+# typedef names. Replace the typedef spellings first because `_t` is part of
+# the identifier and therefore cannot be reached by a word-boundary tag-only
+# replacement.
 for name, replacements in {
     'btree.h': {
+        'turbo_btree_entry_link_t': 'btree_entry_link_t',
+        'turbo_btree_node_t': 'btree_node_t',
         'turbo_btree_entry_link': 'btree_entry_link',
         'turbo_btree_node': 'btree_node',
     },
     'bplus_tree.h': {
+        'turbo_bplus_tree_entry_link_t': 'bplus_tree_entry_link_t',
+        'turbo_bplus_tree_node_t': 'bplus_tree_node_t',
         'turbo_bplus_tree_entry_link': 'bplus_tree_entry_link',
         'turbo_bplus_tree_node': 'bplus_tree_node',
     },
 }.items():
     p = public_dir / name
     text = p.read_text(encoding='utf-8')
-    for old, new in replacements.items():
+    for old, new in sorted(replacements.items(), key=lambda item: -len(item[0])):
         text = re.sub(r'\b' + re.escape(old) + r'\b', new, text)
     p.write_text(text, encoding='utf-8')
 
@@ -120,10 +127,12 @@ for p in files:
         p.write_text(text, encoding='utf-8')
 
 # Remove the alias blocks themselves. They are migration input, never final API.
+# Accept both "alias" and "aliases" so one-off surfaces such as sort.h are not
+# accidentally retained.
 for p in headers:
     text = p.read_text(encoding='utf-8')
     text = re.sub(
-        r'\n/\* Temporary repository-migration aliases\.[\s\S]*?(?=\n#ifdef __cplusplus)',
+        r'\n/\* Temporary repository-migration alias(?:es)?\.[\s\S]*?(?=\n#ifdef __cplusplus)',
         '\n', text)
     # Naturalize the two remaining tree configuration names.
     text = re.sub(r'\bTURBO_BTREE_DEFAULT_MIN_DEGREE\b',
