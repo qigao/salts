@@ -19,11 +19,19 @@
 #include <turbostl/meta.h>
 
 /* Self-describing declaration DSL. These declarations bind CMeta metadata but
- * perform no allocation. More container kinds migrate to this model task by
- * task; Vec is the first public contract. */
+ * perform no allocation and do not create generated user-visible C types. */
 #ifndef Vec
 #define Vec(T, name) \
   vec_t name = { .element_type = CMETA_TYPEOF(T) }
+#endif
+#ifndef List
+#define List(T, name) \
+  list_t name = { { &stl_list_container_desc }, CMETA_TYPEOF(T), NULL, UINT64_C(0) }
+#endif
+#ifndef Map
+#define Map(K, V, name) \
+  map_t name = { { &stl_map_container_desc }, CMETA_TYPEOF(K), \
+                 CMETA_TYPEOF(V), NULL, UINT64_C(0) }
 #endif
 
 /* Legacy generated-kind registrations remain temporarily for repository
