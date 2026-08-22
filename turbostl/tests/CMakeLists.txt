@@ -44,12 +44,12 @@ cmake_add_test(turbostl_tree_test
   FOLDER "turbostl/tests")
 
 cmake_add_test(turbostl_list_test
-  SOURCES legacy_list_test.c
+  SOURCES turbostl_list_test.c
   LIBS TurboUtils::STL TurboUtils::TinyTest
   FOLDER "turbostl/tests")
 
 cmake_add_test(turbostl_map_test
-  SOURCES legacy_map_test.c
+  SOURCES turbostl_map_test.c
   LIBS TurboUtils::STL TurboUtils::TinyTest
   FOLDER "turbostl/tests")
 
