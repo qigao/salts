@@ -2,6 +2,7 @@ import CMetaCFlowCalculus.CMeta.Environment
 import CMetaCFlowCalculus.Proofs.Ownership
 import CMetaCFlowCalculus.CFlow.Syntax
 import PhaseATests.PhaseB
+import PhaseATests.PhaseC
 
 open CMetaCFlowCalculus.CMeta
 open CMetaCFlowCalculus.CFlow
