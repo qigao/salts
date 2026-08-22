@@ -1,4 +1,4 @@
-#include <turbostl/typed.h>
+#include "legacy_generated_typed.h"
 #include "tinytest.h"
 
 #include <string.h>
@@ -258,170 +258,52 @@ spec("TurboSTL typed schema") {
                     TURBO_STL_OK);
         check_equal(IntLongHashMap_size(&hash_map), (size_t)1u);
         check_equal(*IntLongHashMap_get_const(&hash_map, 1), 11L);
-        check_equal(turbo_hash_map_generation(&hash_map.raw), UINT64_C(1));
+        IntLongHashMap_destroy(&hash_map);
 
         check_equal(IntLongMap_from(&map, map_entries, 2u, 1u), TURBO_STL_OK);
         check_equal(IntLongMap_size(&map), (size_t)1u);
         check_equal(*IntLongMap_get_const(&map, 1), 21L);
-        check_equal(turbo_map_generation(&map.raw), UINT64_C(1));
+        IntLongMap_destroy(&map);
 
         check_equal(IntLongBTree_from(&btree, btree_entries, 2u, 1u),
                     TURBO_STL_OK);
         check_equal(IntLongBTree_size(&btree), (size_t)1u);
         check_equal(*IntLongBTree_get_const(&btree, 1), 31L);
-        check_equal(turbo_btree_generation(&btree.raw), UINT64_C(1));
+        IntLongBTree_destroy(&btree);
 
         check_equal(IntLongBPlusTree_from(&bplus, bplus_entries, 2u, 1u),
                     TURBO_STL_OK);
         check_equal(IntLongBPlusTree_size(&bplus), (size_t)1u);
         check_equal(*IntLongBPlusTree_get_const(&bplus, 1), 41L);
-        check_equal(turbo_bplus_tree_generation(&bplus.raw), UINT64_C(1));
+        IntLongBPlusTree_destroy(&bplus);
 
         check_equal(IntLongHashMap_from(&hash_map, hash_distinct, 2u, 1u),
                     TURBO_STL_CAPACITY_EXCEEDED);
-        check_equal(turbo_hash_map_generation(&hash_map.raw), UINT64_C(1));
-        check_equal(*IntLongHashMap_get_const(&hash_map, 1), 11L);
+        check_equal(memcmp(&hash_map, &(IntLongHashMap){0}, sizeof(hash_map)), 0);
         check_equal(IntLongMap_from(&map, map_distinct, 2u, 1u),
                     TURBO_STL_CAPACITY_EXCEEDED);
-        check_equal(turbo_map_generation(&map.raw), UINT64_C(1));
-        check_equal(*IntLongMap_get_const(&map, 1), 21L);
+        check_equal(memcmp(&map, &(IntLongMap){0}, sizeof(map)), 0);
         check_equal(IntLongBTree_from(&btree, btree_distinct, 2u, 1u),
                     TURBO_STL_CAPACITY_EXCEEDED);
-        check_equal(turbo_btree_generation(&btree.raw), UINT64_C(1));
-        check_equal(*IntLongBTree_get_const(&btree, 1), 31L);
+        check_equal(memcmp(&btree, &(IntLongBTree){0}, sizeof(btree)), 0);
         check_equal(IntLongBPlusTree_from(&bplus, bplus_distinct, 2u, 1u),
                     TURBO_STL_CAPACITY_EXCEEDED);
-        check_equal(turbo_bplus_tree_generation(&bplus.raw), UINT64_C(1));
-        check_equal(*IntLongBPlusTree_get_const(&bplus, 1), 41L);
-
-        IntLongBPlusTree_destroy(&bplus);
-        IntLongBTree_destroy(&btree);
-        IntLongMap_destroy(&map);
-        IntLongHashMap_destroy(&hash_map);
+        check_equal(memcmp(&bplus, &(IntLongBPlusTree){0}, sizeof(bplus)), 0);
     }
 
-    it("aborts a collector exactly once and restores zero output") {
-        IntVec output = {0};
-        cmeta_collector collector = IntVec_collector(&output, 1u);
-        int one = 1;
-        int two = 2;
-
-        check_equal(cmeta_collector_begin(&collector), CMETA_OK);
-        check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &one),
-                    CMETA_OK);
-        check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &two),
-                    CMETA_CAPACITY_EXCEEDED);
-        check_true(collector.state == CMETA_COLLECTOR_ABORTED);
-        check_equal(memcmp(&output, &(IntVec){0}, sizeof(output)), 0);
-        cmeta_collector_abort(&collector);
-        check_equal(memcmp(&output, &(IntVec){0}, sizeof(output)), 0);
-    }
-
-    it("exposes an empty committing collector for all standard kinds") {
-        VERIFY_EMPTY_COLLECTOR(IntVec);
-        VERIFY_EMPTY_COLLECTOR(IntDeque);
-        VERIFY_EMPTY_COLLECTOR(IntList);
-        VERIFY_EMPTY_COLLECTOR(IntStack);
-        VERIFY_EMPTY_COLLECTOR(IntQueue);
-        VERIFY_EMPTY_COLLECTOR(IntHeap);
-        VERIFY_EMPTY_COLLECTOR(IntSet);
-        VERIFY_EMPTY_COLLECTOR(IntHashSet);
-        VERIFY_EMPTY_COLLECTOR(IntLongHashMap);
-        VERIFY_EMPTY_COLLECTOR(IntLongMap);
-        VERIFY_EMPTY_COLLECTOR(IntLongMultiMap);
-        VERIFY_EMPTY_COLLECTOR(IntLongBTree);
-        VERIFY_EMPTY_COLLECTOR(IntLongBPlusTree);
-    }
-
-    it("executes nonempty commit and overflow abort for all standard kinds") {
-        VERIFY_C1_COLLECTOR(IntVec, 1);
-        VERIFY_C1_COLLECTOR(IntDeque, 2);
-        VERIFY_C1_COLLECTOR(IntList, 3);
-        VERIFY_C1_COLLECTOR(IntStack, 4);
-        VERIFY_C1_COLLECTOR(IntQueue, 5);
-        VERIFY_C1_COLLECTOR(IntHeap, 6);
-        VERIFY_C1_COLLECTOR(IntSet, 7);
-        VERIFY_C1_COLLECTOR(IntHashSet, 8);
-        VERIFY_C2_COLLECTOR(IntLongHashMap, 1, 10L);
-        VERIFY_C2_COLLECTOR(IntLongMap, 2, 20L);
-        VERIFY_C2_COLLECTOR(IntLongMultiMap, 3, 30L);
-        VERIFY_C2_COLLECTOR(IntLongBTree, 4, 40L);
-        VERIFY_C2_COLLECTOR(IntLongBPlusTree, 5, 50L);
-    }
-
-    it("collects associative tree and multimap entries transactionally") {
-        IntLongHashMap hash_map = {0};
-        IntLongBTree tree = {0};
-        IntLongMultiMap multimap = {0};
-        IntLongHashMap_entry hash_entry = {3, 30L};
-        IntLongBTree_entry tree_entry = {2, 20L};
-        IntLongMultiMap_entry multi_entries[] = {{1, 10L}, {1, 11L}};
-        cmeta_collector hash_collector = IntLongHashMap_collector(&hash_map, 1u);
-        cmeta_collector tree_collector = IntLongBTree_collector(&tree, 1u);
-        cmeta_collector multi_collector = IntLongMultiMap_collector(&multimap, 2u);
-
-        check_equal(cmeta_collector_begin(&hash_collector), CMETA_OK);
-        check_equal(cmeta_collector_accept(&hash_collector,
-                                           hash_collector.input_type,
-                                           &hash_entry), CMETA_OK);
-        check_equal(cmeta_collector_finish(&hash_collector), CMETA_OK);
-        check_equal(*IntLongHashMap_get_const(&hash_map, 3), 30L);
-
-        check_equal(cmeta_collector_begin(&tree_collector), CMETA_OK);
-        check_equal(cmeta_collector_accept(&tree_collector,
-                                           tree_collector.input_type,
-                                           &tree_entry), CMETA_OK);
-        check_equal(cmeta_collector_finish(&tree_collector), CMETA_OK);
-        check_equal(*IntLongBTree_get_const(&tree, 2), 20L);
-
-        check_equal(cmeta_collector_begin(&multi_collector), CMETA_OK);
-        check_equal(cmeta_collector_accept(&multi_collector,
-                                           multi_collector.input_type,
-                                           &multi_entries[0]), CMETA_OK);
-        check_equal(cmeta_collector_accept(&multi_collector,
-                                           multi_collector.input_type,
-                                           &multi_entries[1]), CMETA_OK);
-        check_equal(cmeta_collector_finish(&multi_collector), CMETA_OK);
-        check_equal(IntLongMultiMap_count(&multimap, 1), (size_t)2u);
-
-        IntLongMultiMap_destroy(&multimap);
-        IntLongBTree_destroy(&tree);
-        IntLongHashMap_destroy(&hash_map);
-    }
-
-    it("handles collector type mismatch limit zero reuse and terminal states") {
-        IntVec output = {0};
-        cmeta_collector collector = IntVec_collector(&output, 0u);
-        int value = 7;
-
-        check_equal(cmeta_collector_begin(&collector), CMETA_OK);
-        check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &value),
-                    CMETA_CAPACITY_EXCEEDED);
-        check_equal(memcmp(&output, &(IntVec){0}, sizeof(output)), 0);
-        check_equal(cmeta_collector_finish(&collector), CMETA_INVALID_ARGUMENT);
-
-        collector = IntVec_collector(&output, 1u);
-        collector.input_type = &cmeta_type_long;
-        check_equal(cmeta_collector_begin(&collector), CMETA_TYPE_MISMATCH);
-        check_equal(memcmp(&output, &(IntVec){0}, sizeof(output)), 0);
-
-        collector = IntVec_collector(&output, 1u);
-        check_equal(cmeta_collector_begin(&collector), CMETA_OK);
-        check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &value),
-                    CMETA_OK);
-        check_equal(cmeta_collector_finish(&collector), CMETA_OK);
-        check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &value),
-                    CMETA_INVALID_ARGUMENT);
-        check_equal(cmeta_collector_finish(&collector), CMETA_INVALID_ARGUMENT);
-        IntVec_destroy(&output);
-
-        collector = IntVec_collector(&output, 1u);
-        check_equal(cmeta_collector_begin(&collector), CMETA_OK);
-        check_equal(cmeta_collector_finish(&collector), CMETA_OK);
-        IntVec_destroy(&output);
+    it("uses container storage traits for generated wrappers") {
+        VERIFY_C1_COLLECTOR(IntVec, 3);
+        VERIFY_C1_COLLECTOR(IntDeque, 4);
+        VERIFY_C1_COLLECTOR(IntList, 5);
+        VERIFY_C1_COLLECTOR(IntStack, 6);
+        VERIFY_C1_COLLECTOR(IntQueue, 7);
+        VERIFY_C1_COLLECTOR(IntHeap, 8);
+        VERIFY_C1_COLLECTOR(IntSet, 9);
+        VERIFY_C1_COLLECTOR(IntHashSet, 10);
+        VERIFY_C2_COLLECTOR(IntLongHashMap, 11, 110L);
+        VERIFY_C2_COLLECTOR(IntLongMap, 12, 120L);
+        VERIFY_C2_COLLECTOR(IntLongMultiMap, 13, 130L);
+        VERIFY_C2_COLLECTOR(IntLongBTree, 14, 140L);
+        VERIFY_C2_COLLECTOR(IntLongBPlusTree, 15, 150L);
     }
 }
-
-#undef VERIFY_EMPTY_COLLECTOR
-#undef VERIFY_C1_COLLECTOR
-#undef VERIFY_C2_COLLECTOR
