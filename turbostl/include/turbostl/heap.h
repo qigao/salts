@@ -33,14 +33,14 @@ typedef struct heap {
 
 /* Internal typed bridge used while compiled implementation symbols and legacy
  * generated wrappers migrate to the self-describing API. */
-stl_status heap_init_with_type(heap_t *heap,
+stl_status heap_raw_init(heap_t *heap,
+                         const cmeta_type_desc *element_type,
+                         size_t element_limit);
+stl_status heap_raw_from_array(heap_t *heap, const void *elements,
+                               size_t count,
                                const cmeta_type_desc *element_type,
                                size_t element_limit);
-stl_status heap_from_array_with_type(heap_t *heap, const void *elements,
-                                     size_t count,
-                                     const cmeta_type_desc *element_type,
-                                     size_t element_limit);
-void heap_destroy_storage(heap_t *heap);
+void heap_raw_destroy_storage(heap_t *heap);
 
 /* Raw byte heaps require an explicit comparator/context. */
 stl_status heap_init_bytes(heap_t *heap, size_t elem_size, size_t elem_align,
@@ -60,7 +60,7 @@ static inline stl_status heap_init(heap_t *heap, size_t element_limit) {
     return STL_INVALID_ARGUMENT;
   kind = heap->cmeta.descriptor;
   type = heap->element_type;
-  status = heap_init_with_type(heap, type, element_limit);
+  status = heap_raw_init(heap, type, element_limit);
   heap->cmeta.descriptor = kind;
   heap->element_type = type;
   return status;
@@ -76,8 +76,7 @@ static inline stl_status heap_from_array(heap_t *heap, const void *elements,
     return STL_INVALID_ARGUMENT;
   kind = heap->cmeta.descriptor;
   type = heap->element_type;
-  status = heap_from_array_with_type(heap, elements, count, type,
-                                     element_limit);
+  status = heap_raw_from_array(heap, elements, count, type, element_limit);
   heap->cmeta.descriptor = kind;
   heap->element_type = type;
   return status;
@@ -90,7 +89,7 @@ static inline void heap_destroy(heap_t *heap) {
     return;
   kind = heap->cmeta.descriptor;
   type = heap->element_type;
-  heap_destroy_storage(heap);
+  heap_raw_destroy_storage(heap);
   heap->cmeta.descriptor = kind;
   heap->element_type = type;
 }
@@ -113,11 +112,11 @@ bool heap_empty(const heap_t *heap);
 /* Temporary repository-migration aliases. */
 typedef heap_compare_fn turbo_heap_compare_fn;
 typedef heap_t turbo_heap_t;
-#define turbo_heap_init heap_init_with_type
+#define turbo_heap_init heap_raw_init
 #define turbo_heap_init_bytes heap_init_bytes
-#define turbo_heap_from_array heap_from_array_with_type
+#define turbo_heap_from_array heap_raw_from_array
 #define turbo_heap_from_array_bytes heap_from_array_bytes
-#define turbo_heap_destroy heap_destroy_storage
+#define turbo_heap_destroy heap_raw_destroy_storage
 #define turbo_heap_clear heap_clear
 #define turbo_heap_reserve heap_reserve
 #define turbo_heap_push heap_push
