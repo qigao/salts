@@ -79,7 +79,7 @@ int main() {
   Status s_code = Status::OK;
 
   TLOG_INFOF("Enum (Old-style): {}", c);
-  TLOG_INFOF("Enum Class (Typed): {}", ENUM_NAME(s_code));
+  TLOG_INFOF("Enum Class (Typed): {}", s_code);
 
   // 5. Test Custom Class (via helper)
   User u = {100, "Alice"};
