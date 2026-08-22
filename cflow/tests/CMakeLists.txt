@@ -29,6 +29,11 @@ cmake_add_test(cflow_execution_test
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_scheduler_compat_test
+  SOURCES cflow_scheduler_compat_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_header_cpp_test
   SOURCES cflow_header_cpp_test.cpp
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
@@ -39,6 +44,7 @@ set_target_properties(
   cflow_pipeline_test
   cflow_runtime_test
   cflow_execution_test
+  cflow_scheduler_compat_test
   PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
