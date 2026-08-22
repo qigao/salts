@@ -79,13 +79,25 @@ jobs:
 
           ctest --test-dir build/formal-windows-msvc --output-on-failure
 
-      - name: Build Lean model on Windows
-        uses: leanprover/lean-action@v1
-        with:
-          lake-package-directory: formal
-          auto-config: false
-          build: true
-          test: false
-          lint: false
-          build-args: "--wfail"
-          use-mathlib-cache: false
+      # Keep the Windows Lean path semantically identical to the existing Linux
+      # lane: pinned elan, pinned lean-toolchain, dynamic Lake manifest, then
+      # kernel build. The manifest is intentionally not committed as a CI artifact.
+      - name: Install pinned Lean toolchain and build model
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL \
+            https://github.com/leanprover/elan/releases/download/v4.2.2/elan-x86_64-pc-windows-msvc.zip \
+            -o elan-init.zip
+          unzip -q elan-init.zip
+          ./elan-init.exe -y --default-toolchain none
+
+          elan_bin="$(cygpath -u "$USERPROFILE")/.elan/bin"
+          toolchain="$(cat formal/lean-toolchain)"
+          "$elan_bin/elan.exe" toolchain install "$toolchain"
+          "$elan_bin/lean.exe" --version
+          "$elan_bin/lake.exe" --version
+
+          cd formal
+          "$elan_bin/lake.exe" update
+          "$elan_bin/lake.exe" build --wfail
