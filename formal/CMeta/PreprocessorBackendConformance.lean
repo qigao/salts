@@ -1,6 +1,7 @@
 import CMeta.PreprocessorBackend
 import CMeta.NestedReplayBackendPlan
 import CMeta.PreprocessorBackendSelection
+import CMeta.LanguageModuleLegacyBridge
 import CMeta.NestedReplayGccGeneratedC
 import CMeta.NestedReplayClangGeneratedC
 
@@ -168,7 +169,7 @@ theorem CPreprocessorBackendConformance.supporting_candidates_contract
       backend ∈ certifiedRegistry.entries ∧
       backend.matchesQuery gccQuery ∧
       backend.supportsReplay reentrantIR := by
-  exact PreprocessorBackendRegistry.mem_supportingCandidates_iff
+  exact LanguageModuleLegacyBridge.mem_supportingCandidates_iff
     certifiedRegistry gccQuery reentrantIR backend
 
 /-- Selection policy cannot manufacture a backend: any successful result must
@@ -178,7 +179,7 @@ theorem CPreprocessorBackendConformance.selection_result_is_candidate
     (h : replaySelectionPolicy.select
       (certifiedRegistry.supportingCandidates gccQuery reentrantIR) = some backend) :
     backend ∈ certifiedRegistry.supportingCandidates gccQuery reentrantIR := by
-  exact BackendSelectionPolicy.select_mem replaySelectionPolicy _ backend h
+  exact LanguageModuleLegacyBridge.select_mem replaySelectionPolicy _ backend h
 
 /-- The concrete replay policy uses compiler version only as a tie-break after
     certified replay depth. GCC and Clang currently expose equal depth four, so

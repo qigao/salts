@@ -112,8 +112,7 @@ private theorem selectAux_mem
             (fun h => Or.inr (Or.inr h))
 
 /-- A policy can only return an element of the candidate list supplied to it. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy CPreprocessorBackendConformance.selection_result_is_candidate
-public theorem select_mem
+theorem select_mem
     (policy : BackendSelectionPolicy)
     (candidates : List CertifiedPreprocessorBackend)
     (backend : CertifiedPreprocessorBackend)
@@ -474,8 +473,7 @@ public def selectSupporting
 
 /-- A successful registry-level selection remains a member of the policy-free
     supporting candidate set. -/
--- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.selection_elim
-public theorem selectSupporting_mem_candidates
+theorem selectSupporting_mem_candidates
     (registry : PreprocessorBackendRegistry)
     (policy : BackendSelectionPolicy)
     (query : BackendQuery)

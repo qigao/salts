@@ -1,0 +1,42 @@
+module
+import CMeta.LanguageSpec
+
+#check CMeta.Producer.LanguageSpec.IR
+#check CMeta.Producer.LanguageSpec.Backend
+#check CMeta.Producer.LanguageSpec.Query
+#check CMeta.Producer.LanguageSpec.Registry
+#check CMeta.Producer.LanguageSpec.Plan
+#check CMeta.Producer.LanguageSpec.Certifiable
+#check CMeta.Producer.LanguageSpec.Matches
+#check CMeta.Producer.LanguageSpec.Supports
+#check CMeta.Producer.LanguageSpec.Candidate
+#check CMeta.Producer.LanguageSpec.LowersTo
+#check CMeta.Producer.LanguageSpec.ResolvesTo
+#check CMeta.Producer.LanguageSpec.Rule.cert_intro
+#check CMeta.Producer.LanguageSpec.Rule.match_intro
+#check CMeta.Producer.LanguageSpec.Rule.support_intro
+#check CMeta.Producer.LanguageSpec.Rule.candidate_intro
+#check CMeta.Producer.LanguageSpec.Rule.candidate_elim
+#check CMeta.Producer.LanguageSpec.Rule.lower_intro
+#check CMeta.Producer.LanguageSpec.Rule.lower_elim
+#check CMeta.Producer.LanguageSpec.Rule.selection_elim
+#check CMeta.Producer.LanguageSpec.Rule.selection_lower
+#check CMeta.Producer.LanguageSpec.Rule.resolve_intro
+#check CMeta.Producer.LanguageSpec.Rule.resolve_elim
+#check CMeta.Producer.LanguageSpec.Rule.eq_refl
+#check CMeta.Producer.LanguageSpec.Rule.eq_symm
+#check CMeta.Producer.LanguageSpec.Rule.eq_trans
+#check CMeta.Producer.LanguageSpec.Rule.candidates_congr
+#check CMeta.Producer.LanguageSpec.Rule.selection_congr
+#check CMeta.Producer.LanguageSpec.Rule.lowering_congr
+#check CMeta.Producer.LanguageSpec.Rule.remove_congr
+#check CMeta.Producer.LanguageSpec.Rule.insert_congr
+#check CMeta.Producer.LanguageSpec.Rule.replace_congr
+
+assert_not_exists CMeta.Producer.count_eq_length
+assert_not_exists CMeta.Producer.nestedReplay_length
+assert_not_exists CMeta.Producer.lowerReplayBackendPlan_eq_some_iff
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.mem_supportingCandidates_iff
+assert_not_exists CMeta.Producer.BackendSelectionPolicy.select_mem
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_mem_candidates
+assert_not_exists CMeta.Producer.CLanguageSpecConformance.syntaxCarriers

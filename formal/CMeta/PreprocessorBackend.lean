@@ -170,8 +170,7 @@ public def supportingCandidates
 /-- Candidate discovery is exactly registry membership plus compatibility-class
     match plus support for the requested IR. No ordering or preference policy is
     encoded in this theorem. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy Selection and backend conformance candidate proofs
-public theorem mem_supportingCandidates_iff
+theorem mem_supportingCandidates_iff
     (registry : PreprocessorBackendRegistry) (query : BackendQuery)
     (ir : ReplayIR) (backend : CertifiedPreprocessorBackend) :
     backend ∈ registry.supportingCandidates query ir ↔

@@ -1,4 +1,5 @@
-import CMeta.LanguageSpec
+module
+import all CMeta.LanguageSpec
 
 /-!
 # CMeta language rule conformance

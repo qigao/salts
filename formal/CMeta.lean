@@ -14,6 +14,7 @@ import CMeta.PreprocessorBackendRegistrySubstitutabilityConformance
 import CMeta.PreprocessorBackendRegistrySetoidConformance
 import CMeta.PreprocessorBackendRegistryCongruenceAuditConformance
 import CMeta.LanguageSpecConformance
+import CMeta.LanguageSpecIsolationConformance
 import CMeta.TypeIdentity
 import CMeta.TypeIdentityGeneratedC
 import CMeta.TypeIdentityConformance
