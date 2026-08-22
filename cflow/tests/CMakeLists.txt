@@ -20,12 +20,12 @@ cmake_add_test(cflow_runtime_test
   SOURCES
     cflow_runtime_test.c
     ${CFLOW_TEST_SUPPORT}
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_execution_test
   SOURCES cflow_execution_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
