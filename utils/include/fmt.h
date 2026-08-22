@@ -20,7 +20,12 @@
 #ifdef __cplusplus
   #include <chrono>
   #include <type_traits>
+  #define FMT_DETAIL_CAST(type, value) static_cast<type>(value)
+#else
+  #define FMT_DETAIL_CAST(type, value) ((type)(value))
+#endif
 
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -96,11 +101,11 @@ typedef struct {
 Replay(FMT_DETAIL_TYPE_SCHEMA, FMT_MAKE_FN)
 #undef FMT_MAKE_FN
 
-#define FMT_TYPE_META_ITEM(name, value, text, type, member, constructor) \
-  {(int64_t)(name), #name, (text)},
+#define FMT_TYPE_META_ITEM(name, value, text, type, member, constructor)                           \
+  {FMT_DETAIL_CAST(int64_t, name), #name, (text)},
 
 CMETA_LOCAL const cmeta_enum_item_desc fmt_type_t__enum_items[] = {
-  {(int64_t)FMT_TYPE_NONE, "FMT_TYPE_NONE", "none"},
+  {FMT_DETAIL_CAST(int64_t, FMT_TYPE_NONE), "FMT_TYPE_NONE", "none"},
   Replay(FMT_DETAIL_TYPE_SCHEMA, FMT_TYPE_META_ITEM)
 };
 
@@ -115,17 +120,17 @@ CMETA_INLINE const cmeta_enum_desc *fmt_type_t_meta(void) {
 }
 
 CMETA_INLINE const char *fmt_type_t_to_string(fmt_type_t value) {
-  return cmeta_enum_to_string(&fmt_type_t__enum_meta, (int64_t)value);
+  return cmeta_enum_to_string(&fmt_type_t__enum_meta, FMT_DETAIL_CAST(int64_t, value));
 }
 
 CMETA_INLINE const char *fmt_type_t_to_symbol(fmt_type_t value) {
-  return cmeta_enum_to_symbol(&fmt_type_t__enum_meta, (int64_t)value);
+  return cmeta_enum_to_symbol(&fmt_type_t__enum_meta, FMT_DETAIL_CAST(int64_t, value));
 }
 
 CMETA_INLINE bool fmt_type_t_from_string(const char *text, fmt_type_t *out) {
   int64_t raw;
   if (!out || !cmeta_enum_from_string(&fmt_type_t__enum_meta, text, &raw)) return false;
-  *out = (fmt_type_t)raw;
+  *out = FMT_DETAIL_CAST(fmt_type_t, raw);
   return true;
 }
 
@@ -136,17 +141,18 @@ static inline fmt_arg_t fmt_arg_time(time_t x) {
 #ifdef __cplusplus
   fmt_arg_t arg;
   arg.type = FMT_TYPE_TIME;
-  arg.val.tv.tv_sec = (int64_t)x;
+  arg.val.tv.tv_sec = FMT_DETAIL_CAST(int64_t, x);
   arg.val.tv.tv_usec = 0;
   return arg;
 #else
-  return (fmt_arg_t){FMT_TYPE_TIME, {.tv = {(int64_t)x, 0}}};
+  return (fmt_arg_t){FMT_TYPE_TIME, {.tv = {FMT_DETAIL_CAST(int64_t, x), 0}}};
 #endif
 }
 
 #define FMT_TIME(t) fmt_arg_time(t)
 
 #undef FMT_MAKE_ARG
+#undef FMT_DETAIL_CAST
 
 /* Keep signed/unsigned byte sources on the public character representation
  * without an implicit signedness conversion. Bit-copying preserves the source
