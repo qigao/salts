@@ -264,6 +264,8 @@ spec("TLog Tests") {
         CMETA_ALIGNOF(uint32_t), CMETA_ALIGNOF(const char *),
         CMETA_ALIGNOF(const char *), CMETA_ALIGNOF(int),
         CMETA_ALIGNOF(const char *), CMETA_ALIGNOF(size_t)};
+    const cmeta_field_desc *component_field;
+    const cmeta_field_desc *message_field;
 
     check_not_null(meta);
     check_equal(meta->name, "turbo_log_entry_t");
@@ -277,10 +279,15 @@ spec("TLog Tests") {
       check_equal(meta->fields[i].size, sizes[i]);
       check_equal(meta->fields[i].align, aligns[i]);
     }
-    check_equal(cmeta_struct_find_field(meta, "component")->type_name,
-                "const char *");
-    check_equal(cmeta_struct_find_field(meta, "message")->size,
-                sizeof(const char *));
+
+    component_field = cmeta_struct_find_field(meta, "component");
+    message_field = cmeta_struct_find_field(meta, "message");
+    check_not_null(component_field);
+    check_not_null(message_field);
+    if (component_field != NULL)
+      check_equal(component_field->type_name, "const char *");
+    if (message_field != NULL)
+      check_equal(message_field->size, sizeof(const char *));
     check_null(cmeta_struct_find_field(meta, "missing"));
   }
 
