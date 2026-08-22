@@ -24,9 +24,25 @@
 #define Vec(T, name) \
   vec_t name = { .element_type = CMETA_TYPEOF(T) }
 #endif
+#ifndef Deque
+#define Deque(T, name) \
+  deque_t name = { .element_type = CMETA_TYPEOF(T) }
+#endif
 #ifndef List
 #define List(T, name) \
   list_t name = { { &stl_list_container_desc }, CMETA_TYPEOF(T), NULL, UINT64_C(0) }
+#endif
+#ifndef Stack
+#define Stack(T, name) \
+  stack_t name = { .raw = { .element_type = CMETA_TYPEOF(T) } }
+#endif
+#ifndef Queue
+#define Queue(T, name) \
+  queue_t name = { .raw = { .element_type = CMETA_TYPEOF(T) } }
+#endif
+#ifndef Heap
+#define Heap(T, name) \
+  heap_t name = { .element_type = CMETA_TYPEOF(T) }
 #endif
 #ifndef Map
 #define Map(K, V, name) \
