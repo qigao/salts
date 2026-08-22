@@ -30,7 +30,6 @@ install(
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
 
-option(CMETA_BUILD_TESTS "Build CMeta tests independently of the global suite" OFF)
-if(BUILD_TESTS OR CMETA_BUILD_TESTS)
+if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()
