@@ -68,12 +68,6 @@ extern const cmeta_type_traits cmeta_traits_double;
 }
 #endif
 
-/* Internal compatibility constructor for the normalized positional payload. */
-#define CMETA_TRAITS_POSITIONAL(name, flags_, equal_, hash_, compare_, copy_, move_, destroy_) \
-    CMETA_LOCAL const cmeta_type_traits cmeta_traits_##name = { \
-        (flags_), (equal_), (hash_), (compare_), (copy_), (move_), (destroy_) \
-    }
-
 #define CMETA_TRAIT_FLAG_equal   CMETA_TRAIT_EQUAL
 #define CMETA_TRAIT_FLAG_hash    CMETA_TRAIT_HASH
 #define CMETA_TRAIT_FLAG_compare CMETA_TRAIT_COMPARE
