@@ -38,7 +38,7 @@ target_include_directories(
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC TurboUtils::CMeta
-  PRIVATE TurboUtils::Platform TurboUtils::Concurrency Threads::Threads)
+  PRIVATE TurboUtils::Platform TurboUtils::Concurrency)
 
 install(
   TARGETS ${TARGET_NAME}
