@@ -68,6 +68,7 @@ jobs:
                      cmeta_operator_row_syntax_witness \
                      cmeta_fmt_args_simplification_witness \
                      cmeta_producer_replay_witness \
+                     cmeta_language_surface_witness \
                      cmeta_nested_replay_deferred_witness \
                      cmeta_plan_conformance_witness \
                      cmeta_structured_conformance_witness \
@@ -145,6 +146,7 @@ jobs:
           "$binary_dir/bin/cmeta_operator_row_syntax_witness"
           "$binary_dir/bin/cmeta_fmt_args_simplification_witness"
           "$binary_dir/bin/cmeta_producer_replay_witness"
+          "$binary_dir/bin/cmeta_language_surface_witness"
           "$binary_dir/bin/cmeta_nested_replay_deferred_witness"
 
       - name: Reject proof placeholders
