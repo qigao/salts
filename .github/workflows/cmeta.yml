@@ -5,18 +5,26 @@ on:
     paths:
       - "cmeta/**"
       - "cflow/**"
+      - "tinytest/**"
+      - "turbostl/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
+      - "CMakeUserPresets.json"
       - "presets/**"
+      - "vcpkg.json"
       - ".github/workflows/cmeta.yml"
   push:
     branches: [master]
     paths:
       - "cmeta/**"
       - "cflow/**"
+      - "tinytest/**"
+      - "turbostl/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
+      - "CMakeUserPresets.json"
       - "presets/**"
+      - "vcpkg.json"
       - ".github/workflows/cmeta.yml"
   workflow_dispatch:
 
@@ -25,84 +33,31 @@ permissions:
 
 jobs:
   linux:
-    name: CMeta / ${{ matrix.backend }}
+    name: Linux release
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        backend: [gcc, clang]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build tools
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y re2c
-
       - name: Configure
-        shell: bash
-        run: cmake --preset "cmeta-ci-linux-${{ matrix.backend }}"
+        run: cmake --preset linux-release-user
 
-      - name: Build CMeta and CFlow tests
-        shell: bash
-        run: |
-          cmake --build --preset "build-cmeta-ci-linux-${{ matrix.backend }}" --target \
-            cmeta_core_test \
-            cmeta_header_cpp_test \
-            cmeta_meta_header_test \
-            cmeta_language_surface_test \
-            cmeta_collector_test \
-            cflow_graph_test \
-            cflow_pipeline_test \
-            cflow_runtime_test \
-            cflow_header_cpp_test
+      - name: Build
+        run: cmake --build --preset linux-release-user
 
-      - name: Run CMeta and CFlow tests
-        shell: bash
-        run: ctest --test-dir "build/cmeta-ci-linux-${{ matrix.backend }}" -R "^(cmeta_|cflow_)" --output-on-failure
+      - name: Test CMeta and CFlow
+        run: ctest --preset linux-release-user -R "^(cmeta_|cflow_)" --output-on-failure
 
   windows:
-    name: CMeta / MSVC
+    name: Windows release
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build tools
-        shell: powershell
-        run: choco install re2c -y --no-progress
+      - name: Configure
+        run: cmake --preset win-release-user
 
-      - name: Configure, build, and test
-        shell: cmd
-        run: |
-          set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
-          if not exist "%VSWHERE%" exit /b 1
-          for /f "usebackq tokens=*" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%I"
-          if not defined VSINSTALL exit /b 1
+      - name: Build
+        run: cmake --build --preset win-release-user
 
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
-          if errorlevel 1 exit /b 1
-
-          set "MSVC_ROOT=%VCToolsInstallDir:\=/%"
-          set "WINDOWS_SDK_ROOT=%WindowsSdkDir:\=/%"
-          set "WINDOWS_SDK_VERSION=%WindowsSDKVersion:\=%"
-
-          where re2c
-          if errorlevel 1 exit /b 1
-
-          cmake --preset cmeta-ci-windows-msvc
-          if errorlevel 1 exit /b 1
-
-          cmake --build --preset build-cmeta-ci-windows-msvc --target ^
-            cmeta_core_test ^
-            cmeta_header_cpp_test ^
-            cmeta_meta_header_test ^
-            cmeta_language_surface_test ^
-            cmeta_collector_test ^
-            cflow_graph_test ^
-            cflow_pipeline_test ^
-            cflow_runtime_test ^
-            cflow_header_cpp_test
-          if errorlevel 1 exit /b 1
-
-          ctest --test-dir build/cmeta-ci-windows-msvc -R "^(cmeta_|cflow_)" --output-on-failure
+      - name: Test CMeta and CFlow
+        run: ctest --preset win-release-user -R "^(cmeta_|cflow_)" --output-on-failure
