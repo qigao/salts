@@ -1,0 +1,79 @@
+name: MSVC conformance
+
+on:
+  push:
+    branches: [leanv4]
+    paths:
+      - "formal/**"
+      - "cmeta/**"
+      - "cflow/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "presets/**"
+      - ".github/workflows/msvc.yml"
+  pull_request:
+    paths:
+      - "formal/**"
+      - "cmeta/**"
+      - "cflow/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "presets/**"
+      - ".github/workflows/msvc.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  msvc-portability:
+    name: MSVC / portable conformance
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # This lane validates CMeta/CFlow portability on MSVC. It intentionally
+      # does not run Lean or generate a NestedReplay* backend certificate.
+      - name: Configure, build, and run portable MSVC conformance
+        shell: cmd
+        run: |
+          set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+          if not exist "%VSWHERE%" (
+            echo vswhere.exe not found
+            exit /b 1
+          )
+
+          for /f "usebackq tokens=*" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%I"
+          if not defined VSINSTALL (
+            echo Visual Studio C++ toolchain not found
+            exit /b 1
+          )
+
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+
+          where cl
+          where ninja
+          cmake --preset formal-windows-msvc
+          if errorlevel 1 exit /b 1
+
+          cmake --build --preset build-formal-windows-msvc --target ^
+            cmeta_header_conformance_witness ^
+            cmeta_type_identity_conformance_witness ^
+            cmeta_descriptor_bridge_conformance_witness ^
+            cmeta_type_identity_multi_tu ^
+            cmeta_type_universe_probe ^
+            cmeta_traits_row_syntax_witness ^
+            cmeta_operator_row_syntax_witness ^
+            cmeta_fmt_args_simplification_witness ^
+            cmeta_producer_replay_witness ^
+            cmeta_plan_conformance_witness ^
+            cmeta_structured_conformance_witness ^
+            cmeta_structured_policy_conformance_witness ^
+            cmeta_optimizer_conformance_witness ^
+            cmeta_optimizer_gating_conformance_witness ^
+            cmeta_optimizer_topology_conformance_witness
+          if errorlevel 1 exit /b 1
+
+          ctest --test-dir build/formal-windows-msvc --output-on-failure

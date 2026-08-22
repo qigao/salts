@@ -91,6 +91,24 @@
             "displayName": "Formal Conformance (Linux, GCC Compatibility Alias)",
             "inherits": "formal-linux-gcc",
             "binaryDir": "${sourceDir}/build/formal-linux"
+        },
+        {
+            "name": "formal-windows-msvc",
+            "displayName": "Formal Portability Conformance (Windows, MSVC)",
+            "inherits": [
+                "ISWindows",
+                "release-mode",
+                "flags-msvc"
+            ],
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/formal-windows-msvc",
+            "cacheVariables": {
+                "TURBO_FORMAL_ONLY": true,
+                "ENABLE_TESTS": false,
+                "BUILD_TESTS": false,
+                "BUILD_EXAMPLES": false,
+                "BUILD_BENCHMARKS": false
+            }
         }
     ],
     "buildPresets": [
@@ -108,6 +126,11 @@
             "name": "build-formal-linux",
             "displayName": "Build Formal Conformance (Linux, GCC Compatibility Alias)",
             "configurePreset": "formal-linux"
+        },
+        {
+            "name": "build-formal-windows-msvc",
+            "displayName": "Build Formal Portability Conformance (Windows, MSVC)",
+            "configurePreset": "formal-windows-msvc"
         }
     ]
 }

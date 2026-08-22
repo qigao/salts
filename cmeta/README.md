@@ -1,6 +1,12 @@
 # CMeta v50
 
-CMeta is a finite, schema-driven compile-time metadata/code-generation layer for strict C11. It does not attempt to reproduce unrestricted C++ templates.
+CMeta is a pragmatic modern-C dialect/toolkit built on strict C11: a finite,
+schema-driven compile-time metadata/code-generation layer plus ordinary C
+runtime protocols. It does not attempt to reproduce unrestricted C++ templates
+or design a universal language before concrete use cases require it.
+
+The authoritative syntax and layering contract is
+[`LANGUAGE_REFERENCE.md`](LANGUAGE_REFERENCE.md).
 
 ## Public programming model
 
@@ -175,4 +181,4 @@ types / metadata / thin typed facades
 ordinary C runtime libraries
 ```
 
-Macros are the compile-time mechanism; semantic DSL declarations are the user contract.
+Macros are the compile-time mechanism; semantic DSL declarations are the user contract. Prefer composing these existing mechanisms and ordinary C over adding new vocabulary prematurely.
