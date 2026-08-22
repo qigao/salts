@@ -7,7 +7,7 @@
 
 suite("TurboSTL typed public header") {
     it("directly exposes raw typed facade prerequisites") {
-        turbo_vec_t vec = {0};
+        vec_t vec = {0};
 
         check_true(sizeof(vec) > 0);
     }

@@ -126,7 +126,7 @@ static turbo_serial_result_t posix_list_ports(turbo_serial_port_info_vec_t *vec)
       }
 
       {
-        turbo_stl_status status = turbo_serial_port_info_vec_t_push(vec, storage);
+        turbostl_status status = turbo_serial_port_info_vec_t_push(vec, storage);
         turbo_serial_port_info_storage_destroy(&storage);
         if (status != TURBO_STL_OK) {
           closedir(dir);

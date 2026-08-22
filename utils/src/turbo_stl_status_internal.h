@@ -4,7 +4,7 @@
 #include "turbo_error.h"
 #include <turbostl/status.h>
 
-static inline int turbo_core_status_from_stl(turbo_stl_status status) {
+static inline int turbo_core_status_from_stl(turbostl_status status) {
   switch (status) {
     case TURBO_STL_OK: return TURBO_OK;
     case TURBO_STL_INVALID_ARGUMENT: return TURBO_EINVAL;

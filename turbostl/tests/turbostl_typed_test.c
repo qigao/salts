@@ -217,10 +217,10 @@ spec("TurboSTL typed schema") {
         check_equal(IntLongHashMap_from(&map, map_entries, 2u, 2u),
                     TURBO_STL_OK);
         check_equal(*IntLongHashMap_get_const(&map, 2), 20L);
-        generation = turbo_hash_map_generation(&map.raw);
+        generation = hash_map_generation(&map.raw);
         check_equal(IntLongHashMap_from(&map, map_entries, 2u, 1u),
                     TURBO_STL_CAPACITY_EXCEEDED);
-        check_equal(turbo_hash_map_generation(&map.raw), generation);
+        check_equal(hash_map_generation(&map.raw), generation);
         check_equal(*IntLongHashMap_get_const(&map, 2), 20L);
 
         check_equal(IntLongMultiMap_from(&multimap, multi_entries, 2u, 1u),
@@ -258,40 +258,40 @@ spec("TurboSTL typed schema") {
                     TURBO_STL_OK);
         check_equal(IntLongHashMap_size(&hash_map), (size_t)1u);
         check_equal(*IntLongHashMap_get_const(&hash_map, 1), 11L);
-        check_equal(turbo_hash_map_generation(&hash_map.raw), UINT64_C(1));
+        check_equal(hash_map_generation(&hash_map.raw), UINT64_C(1));
 
         check_equal(IntLongMap_from(&map, map_entries, 2u, 1u), TURBO_STL_OK);
         check_equal(IntLongMap_size(&map), (size_t)1u);
         check_equal(*IntLongMap_get_const(&map, 1), 21L);
-        check_equal(turbo_map_generation(&map.raw), UINT64_C(1));
+        check_equal(map_generation(&map.raw), UINT64_C(1));
 
         check_equal(IntLongBTree_from(&btree, btree_entries, 2u, 1u),
                     TURBO_STL_OK);
         check_equal(IntLongBTree_size(&btree), (size_t)1u);
         check_equal(*IntLongBTree_get_const(&btree, 1), 31L);
-        check_equal(turbo_btree_generation(&btree.raw), UINT64_C(1));
+        check_equal(btree_generation(&btree.raw), UINT64_C(1));
 
         check_equal(IntLongBPlusTree_from(&bplus, bplus_entries, 2u, 1u),
                     TURBO_STL_OK);
         check_equal(IntLongBPlusTree_size(&bplus), (size_t)1u);
         check_equal(*IntLongBPlusTree_get_const(&bplus, 1), 41L);
-        check_equal(turbo_bplus_tree_generation(&bplus.raw), UINT64_C(1));
+        check_equal(bplus_tree_generation(&bplus.raw), UINT64_C(1));
 
         check_equal(IntLongHashMap_from(&hash_map, hash_distinct, 2u, 1u),
                     TURBO_STL_CAPACITY_EXCEEDED);
-        check_equal(turbo_hash_map_generation(&hash_map.raw), UINT64_C(1));
+        check_equal(hash_map_generation(&hash_map.raw), UINT64_C(1));
         check_equal(*IntLongHashMap_get_const(&hash_map, 1), 11L);
         check_equal(IntLongMap_from(&map, map_distinct, 2u, 1u),
                     TURBO_STL_CAPACITY_EXCEEDED);
-        check_equal(turbo_map_generation(&map.raw), UINT64_C(1));
+        check_equal(map_generation(&map.raw), UINT64_C(1));
         check_equal(*IntLongMap_get_const(&map, 1), 21L);
         check_equal(IntLongBTree_from(&btree, btree_distinct, 2u, 1u),
                     TURBO_STL_CAPACITY_EXCEEDED);
-        check_equal(turbo_btree_generation(&btree.raw), UINT64_C(1));
+        check_equal(btree_generation(&btree.raw), UINT64_C(1));
         check_equal(*IntLongBTree_get_const(&btree, 1), 31L);
         check_equal(IntLongBPlusTree_from(&bplus, bplus_distinct, 2u, 1u),
                     TURBO_STL_CAPACITY_EXCEEDED);
-        check_equal(turbo_bplus_tree_generation(&bplus.raw), UINT64_C(1));
+        check_equal(bplus_tree_generation(&bplus.raw), UINT64_C(1));
         check_equal(*IntLongBPlusTree_get_const(&bplus, 1), 41L);
 
         IntLongBPlusTree_destroy(&bplus);

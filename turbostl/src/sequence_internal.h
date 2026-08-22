@@ -8,15 +8,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-static inline bool turbo_sequence_alignment_valid(size_t alignment) {
+static inline bool sequence_alignment_valid(size_t alignment) {
     return alignment != 0u && (alignment & (alignment - 1u)) == 0u;
 }
 
-static inline turbo_stl_status turbo_sequence_stride(size_t elem_size, size_t elem_align,
+static inline turbostl_status sequence_stride(size_t elem_size, size_t elem_align,
                                                      size_t *out_stride) {
     size_t padding;
 
-    if (elem_size == 0u || !turbo_sequence_alignment_valid(elem_align) || !out_stride)
+    if (elem_size == 0u || !sequence_alignment_valid(elem_align) || !out_stride)
         return TURBO_STL_INVALID_ARGUMENT;
     padding = elem_align - 1u;
     if (elem_size > SIZE_MAX - padding)
@@ -25,7 +25,7 @@ static inline turbo_stl_status turbo_sequence_stride(size_t elem_size, size_t el
     return TURBO_STL_OK;
 }
 
-static inline turbo_stl_status turbo_sequence_bytes(size_t count, size_t stride,
+static inline turbostl_status sequence_bytes(size_t count, size_t stride,
                                                     size_t *out_bytes) {
     if (!out_bytes || (count != 0u && stride > SIZE_MAX / count))
         return TURBO_STL_CAPACITY_EXCEEDED;
@@ -33,7 +33,7 @@ static inline turbo_stl_status turbo_sequence_bytes(size_t count, size_t stride,
     return TURBO_STL_OK;
 }
 
-static inline turbo_stl_status turbo_sequence_allocate(size_t count, size_t stride,
+static inline turbostl_status sequence_allocate(size_t count, size_t stride,
                                                         size_t alignment, void **out_data) {
     size_t bytes;
     size_t overhead;
@@ -41,10 +41,10 @@ static inline turbo_stl_status turbo_sequence_allocate(size_t count, size_t stri
     uintptr_t address;
     uintptr_t aligned;
 
-    if (!out_data || !turbo_sequence_alignment_valid(alignment))
+    if (!out_data || !sequence_alignment_valid(alignment))
         return TURBO_STL_INVALID_ARGUMENT;
     *out_data = NULL;
-    if (turbo_sequence_bytes(count, stride, &bytes) != TURBO_STL_OK)
+    if (sequence_bytes(count, stride, &bytes) != TURBO_STL_OK)
         return TURBO_STL_CAPACITY_EXCEEDED;
     if (bytes == 0u)
         return TURBO_STL_OK;
@@ -67,16 +67,16 @@ static inline turbo_stl_status turbo_sequence_allocate(size_t count, size_t stri
     return TURBO_STL_OK;
 }
 
-static inline void turbo_sequence_deallocate(void *data) {
+static inline void sequence_deallocate(void *data) {
     if (data)
         free(((void **)data)[-1]);
 }
 
-static inline turbo_stl_status turbo_sequence_require_type(const cmeta_type_desc *type,
+static inline turbostl_status sequence_require_type(const cmeta_type_desc *type,
                                                             bool require_compare) {
     cmeta_trait_flags required = CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY;
 
-    if (!type || type->size == 0u || !turbo_sequence_alignment_valid(type->align))
+    if (!type || type->size == 0u || !sequence_alignment_valid(type->align))
         return TURBO_STL_INVALID_ARGUMENT;
     if (require_compare)
         required |= CMETA_TRAIT_COMPARE;
@@ -84,7 +84,7 @@ static inline turbo_stl_status turbo_sequence_require_type(const cmeta_type_desc
                                                                    : TURBO_STL_TRAIT_MISSING;
 }
 
-static inline turbo_stl_status turbo_sequence_copy(const cmeta_type_desc *type,
+static inline turbostl_status sequence_copy(const cmeta_type_desc *type,
                                                     size_t elem_size, void *destination,
                                                     const void *source) {
     if (!destination || !source)
@@ -99,7 +99,7 @@ static inline turbo_stl_status turbo_sequence_copy(const cmeta_type_desc *type,
                                                                : TURBO_STL_OUT_OF_MEMORY;
 }
 
-static inline turbo_stl_status turbo_sequence_move_destroy(const cmeta_type_desc *type,
+static inline turbostl_status sequence_move_destroy(const cmeta_type_desc *type,
                                                             size_t elem_size, void *destination,
                                                             void *source) {
     if (!destination || !source)
@@ -115,7 +115,7 @@ static inline turbo_stl_status turbo_sequence_move_destroy(const cmeta_type_desc
     return TURBO_STL_OK;
 }
 
-static inline turbo_stl_status turbo_sequence_destroy_value(const cmeta_type_desc *type,
+static inline turbostl_status sequence_destroy_value(const cmeta_type_desc *type,
                                                              void *value) {
     if (!value || !type)
         return TURBO_STL_OK;

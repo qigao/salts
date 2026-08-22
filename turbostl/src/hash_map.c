@@ -1,6 +1,6 @@
 #include <turbostl/hash_map.h>
 
-#include "turbo_sequence_internal.h"
+#include "sequence_internal.h"
 
 #include <string.h>
 
@@ -9,39 +9,39 @@
 #define TURBO_HASH_TOMBSTONE 2u
 #define TURBO_HASH_MIN_BUCKETS 16u
 
-static bool turbo_hash_map_valid(const turbo_hash_map_t *map) {
+static bool hash_map_valid(const hash_map_t *map) {
     return map != NULL && map->initialized && map->key_size != 0u && map->value_size != 0u;
 }
 
-static unsigned char *turbo_hash_key_slot(turbo_hash_map_t *map, size_t slot) {
+static unsigned char *turbo_hash_key_slot(hash_map_t *map, size_t slot) {
     return map->keys + slot * map->key_stride;
 }
 
-static const unsigned char *turbo_hash_key_slot_const(const turbo_hash_map_t *map, size_t slot) {
+static const unsigned char *turbo_hash_key_slot_const(const hash_map_t *map, size_t slot) {
     return map->keys + slot * map->key_stride;
 }
 
-static unsigned char *turbo_hash_value_slot(turbo_hash_map_t *map, size_t slot) {
+static unsigned char *turbo_hash_value_slot(hash_map_t *map, size_t slot) {
     return map->values + slot * map->value_stride;
 }
 
-static turbo_stl_status turbo_hash_add(size_t left, size_t right, size_t *out) {
+static turbostl_status turbo_hash_add(size_t left, size_t right, size_t *out) {
     if (out == NULL || right > SIZE_MAX - left)
         return TURBO_STL_CAPACITY_EXCEEDED;
     *out = left + right;
     return TURBO_STL_OK;
 }
 
-static turbo_stl_status turbo_hash_mul(size_t left, size_t right, size_t *out) {
+static turbostl_status turbo_hash_mul(size_t left, size_t right, size_t *out) {
     if (out == NULL || (left != 0u && right > SIZE_MAX / left))
         return TURBO_STL_CAPACITY_EXCEEDED;
     *out = left * right;
     return TURBO_STL_OK;
 }
 
-static turbo_stl_status turbo_hash_align(size_t value, size_t alignment, size_t *out) {
+static turbostl_status turbo_hash_align(size_t value, size_t alignment, size_t *out) {
     size_t padding;
-    if (!turbo_sequence_alignment_valid(alignment) || out == NULL)
+    if (!sequence_alignment_valid(alignment) || out == NULL)
         return TURBO_STL_INVALID_ARGUMENT;
     padding = alignment - 1u;
     if (value > SIZE_MAX - padding)
@@ -50,14 +50,14 @@ static turbo_stl_status turbo_hash_align(size_t value, size_t alignment, size_t 
     return TURBO_STL_OK;
 }
 
-static size_t turbo_hash_max_alignment(const turbo_hash_map_t *map) {
+static size_t turbo_hash_max_alignment(const hash_map_t *map) {
     size_t alignment = _Alignof(size_t);
     if (map->key_align > alignment) alignment = map->key_align;
     if (map->value_align > alignment) alignment = map->value_align;
     return alignment;
 }
 
-static turbo_stl_status turbo_hash_buckets_for_entries(size_t entries, size_t *out_buckets) {
+static turbostl_status turbo_hash_buckets_for_entries(size_t entries, size_t *out_buckets) {
     size_t quotient;
     size_t remainder;
     size_t extra;
@@ -80,7 +80,7 @@ static turbo_stl_status turbo_hash_buckets_for_entries(size_t entries, size_t *o
     return TURBO_STL_OK;
 }
 
-static turbo_stl_status turbo_hash_map_allocate(turbo_hash_map_t *map, size_t capacity) {
+static turbostl_status hash_map_allocate(hash_map_t *map, size_t capacity) {
     size_t states_bytes;
     size_t hashes_bytes;
     size_t keys_bytes;
@@ -90,7 +90,7 @@ static turbo_stl_status turbo_hash_map_allocate(turbo_hash_map_t *map, size_t ca
     size_t values_offset;
     size_t total;
     void *storage;
-    turbo_stl_status status;
+    turbostl_status status;
 
     status = turbo_hash_mul(capacity, sizeof(uint8_t), &states_bytes);
     if (status != TURBO_STL_OK) return status;
@@ -109,7 +109,7 @@ static turbo_stl_status turbo_hash_map_allocate(turbo_hash_map_t *map, size_t ca
     status = turbo_hash_mul(capacity, map->value_stride, &values_bytes);
     if (status != TURBO_STL_OK || turbo_hash_add(values_offset, values_bytes, &total) != TURBO_STL_OK)
         return TURBO_STL_CAPACITY_EXCEEDED;
-    status = turbo_sequence_allocate(1u, total, turbo_hash_max_alignment(map), &storage);
+    status = sequence_allocate(1u, total, turbo_hash_max_alignment(map), &storage);
     if (status != TURBO_STL_OK) return status;
     memset(storage, TURBO_HASH_EMPTY, states_bytes);
     map->states = (uint8_t *)storage;
@@ -124,16 +124,16 @@ static void turbo_hash_destroy_value(const cmeta_type_desc *type, void *value) {
     if (type != NULL) type->traits->destroy(value);
 }
 
-static turbo_stl_status turbo_hash_prepare(const cmeta_type_desc *type, size_t size,
+static turbostl_status turbo_hash_prepare(const cmeta_type_desc *type, size_t size,
                                            size_t stride, size_t alignment, const void *source,
                                            void **out_value) {
-    turbo_stl_status status;
+    turbostl_status status;
     if (source == NULL || out_value == NULL) return TURBO_STL_INVALID_ARGUMENT;
     *out_value = NULL;
-    status = turbo_sequence_allocate(1u, stride, alignment, out_value);
+    status = sequence_allocate(1u, stride, alignment, out_value);
     if (status != TURBO_STL_OK) return status;
     if (type != NULL && !type->traits->copy_construct(*out_value, source)) {
-        turbo_sequence_deallocate(*out_value);
+        sequence_deallocate(*out_value);
         *out_value = NULL;
         return TURBO_STL_OUT_OF_MEMORY;
     }
@@ -144,7 +144,7 @@ static turbo_stl_status turbo_hash_prepare(const cmeta_type_desc *type, size_t s
 static void turbo_hash_discard(const cmeta_type_desc *type, void *value) {
     if (value == NULL) return;
     turbo_hash_destroy_value(type, value);
-    turbo_sequence_deallocate(value);
+    sequence_deallocate(value);
 }
 
 static void turbo_hash_move_construct(const cmeta_type_desc *type, size_t size, void *destination,
@@ -159,18 +159,18 @@ static void turbo_hash_move_destroy(const cmeta_type_desc *type, size_t size, vo
     turbo_hash_destroy_value(type, source);
 }
 
-static size_t turbo_hash_map_hash(const turbo_hash_map_t *map, const void *key) {
+static size_t hash_map_hash(const hash_map_t *map, const void *key) {
     size_t hash = map->key_type != NULL ? (size_t)map->key_type->traits->hash(key)
                                          : map->hash(key, map->key_size, map->ctx);
     return hash == 0u ? 1u : hash;
 }
 
-static bool turbo_hash_map_equal(const turbo_hash_map_t *map, const void *left, const void *right) {
+static bool hash_map_equal(const hash_map_t *map, const void *left, const void *right) {
     return map->key_type != NULL ? map->key_type->traits->equal(left, right)
                                  : map->equal(left, right, map->key_size, map->ctx);
 }
 
-static bool turbo_hash_map_find_slot(const turbo_hash_map_t *map, const void *key, size_t hash,
+static bool hash_map_find_slot(const hash_map_t *map, const void *key, size_t hash,
                                      size_t *out_slot) {
     size_t mask;
     size_t probe;
@@ -180,7 +180,7 @@ static bool turbo_hash_map_find_slot(const turbo_hash_map_t *map, const void *ke
         size_t slot = (hash + probe) & mask;
         if (map->states[slot] == TURBO_HASH_EMPTY) return false;
         if (map->states[slot] == TURBO_HASH_OCCUPIED && map->hashes[slot] == hash &&
-            turbo_hash_map_equal(map, turbo_hash_key_slot_const(map, slot), key)) {
+            hash_map_equal(map, turbo_hash_key_slot_const(map, slot), key)) {
             *out_slot = slot;
             return true;
         }
@@ -188,7 +188,7 @@ static bool turbo_hash_map_find_slot(const turbo_hash_map_t *map, const void *ke
     return false;
 }
 
-static size_t turbo_hash_map_insert_slot(const turbo_hash_map_t *map, size_t hash) {
+static size_t hash_map_insert_slot(const hash_map_t *map, size_t hash) {
     size_t first_tombstone = SIZE_MAX;
     size_t mask = map->capacity - 1u;
     size_t probe;
@@ -203,9 +203,9 @@ static size_t turbo_hash_map_insert_slot(const turbo_hash_map_t *map, size_t has
     return first_tombstone;
 }
 
-static void turbo_hash_map_rehash_insert(turbo_hash_map_t *map, size_t hash, void *key,
+static void hash_map_rehash_insert(hash_map_t *map, size_t hash, void *key,
                                          void *value) {
-    size_t slot = turbo_hash_map_insert_slot(map, hash);
+    size_t slot = hash_map_insert_slot(map, hash);
     turbo_hash_move_construct(map->key_type, map->key_size, turbo_hash_key_slot(map, slot), key);
     turbo_hash_move_construct(map->value_type, map->value_size, turbo_hash_value_slot(map, slot), value);
     map->hashes[slot] = hash;
@@ -213,44 +213,44 @@ static void turbo_hash_map_rehash_insert(turbo_hash_map_t *map, size_t hash, voi
     ++map->size;
 }
 
-static turbo_stl_status turbo_hash_map_rehash(turbo_hash_map_t *map, size_t capacity) {
-    turbo_hash_map_t next = *map;
+static turbostl_status hash_map_rehash(hash_map_t *map, size_t capacity) {
+    hash_map_t next = *map;
     size_t slot;
-    turbo_stl_status status;
+    turbostl_status status;
 
     next.states = NULL; next.hashes = NULL; next.keys = NULL; next.values = NULL;
     next.size = 0u; next.capacity = 0u; next.tombstones = 0u;
-    status = turbo_hash_map_allocate(&next, capacity);
+    status = hash_map_allocate(&next, capacity);
     if (status != TURBO_STL_OK) return status;
     for (slot = 0u; slot < map->capacity; ++slot) {
         if (map->states[slot] != TURBO_HASH_OCCUPIED) continue;
-        turbo_hash_map_rehash_insert(&next, map->hashes[slot], turbo_hash_key_slot(map, slot),
+        hash_map_rehash_insert(&next, map->hashes[slot], turbo_hash_key_slot(map, slot),
                                      turbo_hash_value_slot(map, slot));
         turbo_hash_destroy_value(map->key_type, turbo_hash_key_slot(map, slot));
         turbo_hash_destroy_value(map->value_type, turbo_hash_value_slot(map, slot));
     }
-    turbo_sequence_deallocate(map->states);
+    sequence_deallocate(map->states);
     next.generation = map->generation;
     *map = next;
     return TURBO_STL_OK;
 }
 
-static turbo_stl_status turbo_hash_map_ensure_insert(turbo_hash_map_t *map) {
+static turbostl_status hash_map_ensure_insert(hash_map_t *map) {
     size_t desired;
     size_t buckets;
-    turbo_stl_status status;
+    turbostl_status status;
     if (map->size == SIZE_MAX) return TURBO_STL_CAPACITY_EXCEEDED;
     desired = map->size + 1u;
     status = turbo_hash_buckets_for_entries(desired, &buckets);
     if (status != TURBO_STL_OK) return status;
     if (buckets > map->capacity || (map->tombstones > map->size && map->capacity != 0u)) {
         if (buckets < map->capacity) buckets = map->capacity;
-        return turbo_hash_map_rehash(map, buckets);
+        return hash_map_rehash(map, buckets);
     }
     return TURBO_STL_OK;
 }
 
-static turbo_stl_status turbo_hash_map_initialize(turbo_hash_map_t *map,
+static turbostl_status hash_map_initialize(hash_map_t *map,
                                                   const cmeta_type_desc *key_type,
                                                   const cmeta_type_desc *value_type,
                                                   size_t key_size, size_t key_align,
@@ -260,11 +260,11 @@ static turbo_stl_status turbo_hash_map_initialize(turbo_hash_map_t *map,
     size_t key_stride;
     size_t value_stride;
     uint64_t generation;
-    turbo_stl_status status;
+    turbostl_status status;
     if (map == NULL || map->initialized) return TURBO_STL_INVALID_ARGUMENT;
-    status = turbo_sequence_stride(key_size, key_align, &key_stride);
+    status = sequence_stride(key_size, key_align, &key_stride);
     if (status != TURBO_STL_OK) return status;
-    status = turbo_sequence_stride(value_size, value_align, &value_stride);
+    status = sequence_stride(value_size, value_align, &value_stride);
     if (status != TURBO_STL_OK) return status;
     generation = map->generation + UINT64_C(1);
     memset(map, 0, sizeof(*map));
@@ -290,46 +290,46 @@ bool turbo_hash_key_equal(const void *left, const void *right, size_t key_size, 
     return memcmp(left, right, key_size) == 0;
 }
 
-turbo_stl_status turbo_hash_map_init(turbo_hash_map_t *map, const cmeta_type_desc *key_type,
+turbostl_status hash_map_init(hash_map_t *map, const cmeta_type_desc *key_type,
                                      const cmeta_type_desc *value_type, size_t entry_limit) {
     cmeta_trait_flags key_required = CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH | CMETA_TRAIT_COPY |
                                      CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY;
     cmeta_trait_flags value_required = CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY;
     if (map == NULL || map->initialized) return TURBO_STL_INVALID_ARGUMENT;
     if (key_type == NULL || value_type == NULL || key_type->size == 0u || value_type->size == 0u ||
-        !turbo_sequence_alignment_valid(key_type->align) || !turbo_sequence_alignment_valid(value_type->align))
+        !sequence_alignment_valid(key_type->align) || !sequence_alignment_valid(value_type->align))
         return TURBO_STL_INVALID_ARGUMENT;
     if (cmeta_type_require_traits(key_type, key_required) != CMETA_OK ||
         cmeta_type_require_traits(value_type, value_required) != CMETA_OK)
         return TURBO_STL_TRAIT_MISSING;
-    return turbo_hash_map_initialize(map, key_type, value_type, key_type->size, key_type->align,
+    return hash_map_initialize(map, key_type, value_type, key_type->size, key_type->align,
                                      value_type->size, value_type->align, entry_limit, NULL, NULL, NULL);
 }
 
-turbo_stl_status turbo_hash_map_init_bytes(turbo_hash_map_t *map, size_t key_size, size_t key_align,
+turbostl_status hash_map_init_bytes(hash_map_t *map, size_t key_size, size_t key_align,
                                            size_t value_size, size_t value_align, size_t entry_limit,
                                            turbo_hash_fn hash, turbo_hash_equal_fn equal, void *ctx) {
     if (map == NULL || map->initialized || hash == NULL || equal == NULL) return TURBO_STL_INVALID_ARGUMENT;
-    return turbo_hash_map_initialize(map, NULL, NULL, key_size, key_align, value_size, value_align,
+    return hash_map_initialize(map, NULL, NULL, key_size, key_align, value_size, value_align,
                                      entry_limit, hash, equal, ctx);
 }
 
-turbo_stl_status turbo_hash_map_from_arrays(turbo_hash_map_t *map, const void *keys,
+turbostl_status hash_map_from_arrays(hash_map_t *map, const void *keys,
                                             const void *values, size_t count,
                                             const cmeta_type_desc *key_type,
                                             const cmeta_type_desc *value_type, size_t entry_limit) {
-    turbo_hash_map_t temporary = {0};
-    turbo_stl_status status;
+    hash_map_t temporary = {0};
+    turbostl_status status;
     size_t index;
     uint64_t generation;
     if (map == NULL || map->initialized) return TURBO_STL_INVALID_ARGUMENT;
     if (count != 0u && (keys == NULL || values == NULL)) return TURBO_STL_INVALID_ARGUMENT;
-    status = turbo_hash_map_init(&temporary, key_type, value_type, entry_limit);
+    status = hash_map_init(&temporary, key_type, value_type, entry_limit);
     if (status != TURBO_STL_OK) return status;
     for (index = 0u; index < count; ++index) {
-        status = turbo_hash_map_put(&temporary, (const unsigned char *)keys + index * key_type->size,
+        status = hash_map_put(&temporary, (const unsigned char *)keys + index * key_type->size,
                                     (const unsigned char *)values + index * value_type->size);
-        if (status != TURBO_STL_OK) { turbo_hash_map_destroy(&temporary); return status; }
+        if (status != TURBO_STL_OK) { hash_map_destroy(&temporary); return status; }
     }
     generation = map->generation + UINT64_C(1);
     temporary.generation = generation;
@@ -337,25 +337,25 @@ turbo_stl_status turbo_hash_map_from_arrays(turbo_hash_map_t *map, const void *k
     return TURBO_STL_OK;
 }
 
-turbo_stl_status turbo_hash_map_from_arrays_bytes(turbo_hash_map_t *map, const void *keys,
+turbostl_status hash_map_from_arrays_bytes(hash_map_t *map, const void *keys,
                                                   const void *values, size_t count, size_t key_size,
                                                   size_t key_align, size_t value_size,
                                                   size_t value_align, size_t entry_limit,
                                                   turbo_hash_fn hash, turbo_hash_equal_fn equal,
                                                   void *ctx) {
-    turbo_hash_map_t temporary = {0};
-    turbo_stl_status status;
+    hash_map_t temporary = {0};
+    turbostl_status status;
     size_t index;
     uint64_t generation;
     if (map == NULL || map->initialized) return TURBO_STL_INVALID_ARGUMENT;
     if (count != 0u && (keys == NULL || values == NULL)) return TURBO_STL_INVALID_ARGUMENT;
-    status = turbo_hash_map_init_bytes(&temporary, key_size, key_align, value_size, value_align,
+    status = hash_map_init_bytes(&temporary, key_size, key_align, value_size, value_align,
                                        entry_limit, hash, equal, ctx);
     if (status != TURBO_STL_OK) return status;
     for (index = 0u; index < count; ++index) {
-        status = turbo_hash_map_put(&temporary, (const unsigned char *)keys + index * key_size,
+        status = hash_map_put(&temporary, (const unsigned char *)keys + index * key_size,
                                     (const unsigned char *)values + index * value_size);
-        if (status != TURBO_STL_OK) { turbo_hash_map_destroy(&temporary); return status; }
+        if (status != TURBO_STL_OK) { hash_map_destroy(&temporary); return status; }
     }
     generation = map->generation + UINT64_C(1);
     temporary.generation = generation;
@@ -363,7 +363,7 @@ turbo_stl_status turbo_hash_map_from_arrays_bytes(turbo_hash_map_t *map, const v
     return TURBO_STL_OK;
 }
 
-void turbo_hash_map_destroy(turbo_hash_map_t *map) {
+void hash_map_destroy(hash_map_t *map) {
     size_t slot;
     uint64_t generation;
     if (map == NULL) return;
@@ -375,15 +375,15 @@ void turbo_hash_map_destroy(turbo_hash_map_t *map) {
             turbo_hash_destroy_value(map->value_type, turbo_hash_value_slot(map, slot));
         }
         generation += UINT64_C(1);
-        turbo_sequence_deallocate(map->states);
+        sequence_deallocate(map->states);
     }
     memset(map, 0, sizeof(*map));
     map->generation = generation;
 }
 
-void turbo_hash_map_clear(turbo_hash_map_t *map) {
+void hash_map_clear(hash_map_t *map) {
     size_t slot;
-    if (!turbo_hash_map_valid(map)) return;
+    if (!hash_map_valid(map)) return;
     for (slot = 0u; slot < map->capacity; ++slot) {
         if (map->states[slot] != TURBO_HASH_OCCUPIED) continue;
         turbo_hash_destroy_value(map->key_type, turbo_hash_key_slot(map, slot));
@@ -397,37 +397,37 @@ void turbo_hash_map_clear(turbo_hash_map_t *map) {
     }
 }
 
-turbo_stl_status turbo_hash_map_reserve(turbo_hash_map_t *map, size_t min_entries) {
+turbostl_status hash_map_reserve(hash_map_t *map, size_t min_entries) {
     size_t buckets;
-    turbo_stl_status status;
-    if (!turbo_hash_map_valid(map)) return TURBO_STL_INVALID_ARGUMENT;
+    turbostl_status status;
+    if (!hash_map_valid(map)) return TURBO_STL_INVALID_ARGUMENT;
     if (min_entries > map->entry_limit) return TURBO_STL_CAPACITY_EXCEEDED;
     status = turbo_hash_buckets_for_entries(min_entries, &buckets);
     if (status != TURBO_STL_OK) return status;
     if (buckets > map->capacity || (map->tombstones > map->size && map->capacity != 0u)) {
         if (buckets < map->capacity) buckets = map->capacity;
-        status = turbo_hash_map_rehash(map, buckets);
+        status = hash_map_rehash(map, buckets);
         if (status == TURBO_STL_OK) ++map->generation;
     }
     return status;
 }
 
-turbo_stl_status turbo_hash_map_put(turbo_hash_map_t *map, const void *key, const void *value) {
+turbostl_status hash_map_put(hash_map_t *map, const void *key, const void *value) {
     size_t hash;
     size_t slot;
     void *prepared_key = NULL;
     void *prepared_value = NULL;
-    turbo_stl_status status;
-    if (!turbo_hash_map_valid(map) || key == NULL || value == NULL) return TURBO_STL_INVALID_ARGUMENT;
-    hash = turbo_hash_map_hash(map, key);
-    if (turbo_hash_map_find_slot(map, key, hash, &slot)) {
+    turbostl_status status;
+    if (!hash_map_valid(map) || key == NULL || value == NULL) return TURBO_STL_INVALID_ARGUMENT;
+    hash = hash_map_hash(map, key);
+    if (hash_map_find_slot(map, key, hash, &slot)) {
         status = turbo_hash_prepare(map->value_type, map->value_size, map->value_stride,
                                     map->value_align, value, &prepared_value);
         if (status != TURBO_STL_OK) return status;
         turbo_hash_destroy_value(map->value_type, turbo_hash_value_slot(map, slot));
         turbo_hash_move_destroy(map->value_type, map->value_size, turbo_hash_value_slot(map, slot),
                                 prepared_value);
-        turbo_sequence_deallocate(prepared_value);
+        sequence_deallocate(prepared_value);
         ++map->generation;
         return TURBO_STL_OK;
     }
@@ -438,17 +438,17 @@ turbo_stl_status turbo_hash_map_put(turbo_hash_map_t *map, const void *key, cons
     status = turbo_hash_prepare(map->value_type, map->value_size, map->value_stride,
                                 map->value_align, value, &prepared_value);
     if (status != TURBO_STL_OK) { turbo_hash_discard(map->key_type, prepared_key); return status; }
-    status = turbo_hash_map_ensure_insert(map);
+    status = hash_map_ensure_insert(map);
     if (status != TURBO_STL_OK) {
         turbo_hash_discard(map->key_type, prepared_key);
         turbo_hash_discard(map->value_type, prepared_value);
         return status;
     }
-    slot = turbo_hash_map_insert_slot(map, hash);
+    slot = hash_map_insert_slot(map, hash);
     turbo_hash_move_destroy(map->key_type, map->key_size, turbo_hash_key_slot(map, slot), prepared_key);
     turbo_hash_move_destroy(map->value_type, map->value_size, turbo_hash_value_slot(map, slot), prepared_value);
-    turbo_sequence_deallocate(prepared_key);
-    turbo_sequence_deallocate(prepared_value);
+    sequence_deallocate(prepared_key);
+    sequence_deallocate(prepared_value);
     map->hashes[slot] = hash;
     if (map->states[slot] == TURBO_HASH_TOMBSTONE) --map->tombstones;
     map->states[slot] = TURBO_HASH_OCCUPIED;
@@ -457,28 +457,28 @@ turbo_stl_status turbo_hash_map_put(turbo_hash_map_t *map, const void *key, cons
     return TURBO_STL_OK;
 }
 
-void *turbo_hash_map_get(turbo_hash_map_t *map, const void *key) {
+void *hash_map_get(hash_map_t *map, const void *key) {
     size_t slot;
     size_t hash;
-    if (!turbo_hash_map_valid(map) || key == NULL) return NULL;
-    hash = turbo_hash_map_hash(map, key);
-    return turbo_hash_map_find_slot(map, key, hash, &slot) ? turbo_hash_value_slot(map, slot) : NULL;
+    if (!hash_map_valid(map) || key == NULL) return NULL;
+    hash = hash_map_hash(map, key);
+    return hash_map_find_slot(map, key, hash, &slot) ? turbo_hash_value_slot(map, slot) : NULL;
 }
 
-const void *turbo_hash_map_get_const(const turbo_hash_map_t *map, const void *key) {
-    return turbo_hash_map_get((turbo_hash_map_t *)map, key);
+const void *hash_map_get_const(const hash_map_t *map, const void *key) {
+    return hash_map_get((hash_map_t *)map, key);
 }
 
-bool turbo_hash_map_contains(const turbo_hash_map_t *map, const void *key) {
-    return turbo_hash_map_get_const(map, key) != NULL;
+bool hash_map_contains(const hash_map_t *map, const void *key) {
+    return hash_map_get_const(map, key) != NULL;
 }
 
-turbo_stl_status turbo_hash_map_remove(turbo_hash_map_t *map, const void *key, void *out_value) {
+turbostl_status hash_map_remove(hash_map_t *map, const void *key, void *out_value) {
     size_t hash;
     size_t slot;
-    if (!turbo_hash_map_valid(map) || key == NULL) return TURBO_STL_INVALID_ARGUMENT;
-    hash = turbo_hash_map_hash(map, key);
-    if (!turbo_hash_map_find_slot(map, key, hash, &slot)) return TURBO_STL_NOT_FOUND;
+    if (!hash_map_valid(map) || key == NULL) return TURBO_STL_INVALID_ARGUMENT;
+    hash = hash_map_hash(map, key);
+    if (!hash_map_find_slot(map, key, hash, &slot)) return TURBO_STL_NOT_FOUND;
     if (out_value != NULL)
         turbo_hash_move_destroy(map->value_type, map->value_size, out_value,
                                 turbo_hash_value_slot(map, slot));
@@ -492,22 +492,22 @@ turbo_stl_status turbo_hash_map_remove(turbo_hash_map_t *map, const void *key, v
     return TURBO_STL_OK;
 }
 
-size_t turbo_hash_map_size(const turbo_hash_map_t *map) { return turbo_hash_map_valid(map) ? map->size : 0u; }
-size_t turbo_hash_map_capacity(const turbo_hash_map_t *map) { return turbo_hash_map_valid(map) ? map->capacity : 0u; }
-size_t turbo_hash_map_entry_limit(const turbo_hash_map_t *map) { return turbo_hash_map_valid(map) ? map->entry_limit : 0u; }
-uint64_t turbo_hash_map_generation(const turbo_hash_map_t *map) { return map ? map->generation : UINT64_C(0); }
-bool turbo_hash_map_empty(const turbo_hash_map_t *map) { return turbo_hash_map_size(map) == 0u; }
+size_t hash_map_size(const hash_map_t *map) { return hash_map_valid(map) ? map->size : 0u; }
+size_t hash_map_capacity(const hash_map_t *map) { return hash_map_valid(map) ? map->capacity : 0u; }
+size_t hash_map_entry_limit(const hash_map_t *map) { return hash_map_valid(map) ? map->entry_limit : 0u; }
+uint64_t hash_map_generation(const hash_map_t *map) { return map ? map->generation : UINT64_C(0); }
+bool hash_map_empty(const hash_map_t *map) { return hash_map_size(map) == 0u; }
 
-const void *turbo_hash_map_key_at(const turbo_hash_map_t *map, size_t slot) {
-    return turbo_hash_map_valid(map) && slot < map->capacity && map->states[slot] == TURBO_HASH_OCCUPIED
+const void *hash_map_key_at(const hash_map_t *map, size_t slot) {
+    return hash_map_valid(map) && slot < map->capacity && map->states[slot] == TURBO_HASH_OCCUPIED
         ? turbo_hash_key_slot_const(map, slot) : NULL;
 }
 
-void *turbo_hash_map_value_at(turbo_hash_map_t *map, size_t slot) {
-    return turbo_hash_map_valid(map) && slot < map->capacity && map->states[slot] == TURBO_HASH_OCCUPIED
+void *hash_map_value_at(hash_map_t *map, size_t slot) {
+    return hash_map_valid(map) && slot < map->capacity && map->states[slot] == TURBO_HASH_OCCUPIED
         ? turbo_hash_value_slot(map, slot) : NULL;
 }
 
-const void *turbo_hash_map_value_at_const(const turbo_hash_map_t *map, size_t slot) {
-    return turbo_hash_map_value_at((turbo_hash_map_t *)map, slot);
+const void *hash_map_value_at_const(const hash_map_t *map, size_t slot) {
+    return hash_map_value_at((hash_map_t *)map, slot);
 }

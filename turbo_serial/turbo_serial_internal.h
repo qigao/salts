@@ -151,10 +151,10 @@ static const cmeta_type_desc turbo_serial_port_info_storage_type = {
     _Alignof(turbo_serial_port_info_storage_t), CMETA_T_OBJECT, NULL,
     &turbo_serial_port_info_storage_traits};
 
-typedef turbo_vec_t turbo_serial_port_info_vec_t;
+typedef vec_t turbo_serial_port_info_vec_t;
 
 static inline turbo_serial_result_t turbo_serial_result_from_stl(
-    turbo_stl_status status) {
+    turbostl_status status) {
   switch (status) {
     case TURBO_STL_OK: return TURBO_SERIAL_OK;
     case TURBO_STL_INVALID_ARGUMENT: return TURBO_SERIAL_INVALID_VALUE;
@@ -168,39 +168,39 @@ static inline turbo_serial_result_t turbo_serial_result_from_stl(
   return TURBO_SERIAL_INVALID_STATE;
 }
 
-static inline turbo_stl_status turbo_serial_port_info_vec_t_init(
+static inline turbostl_status turbo_serial_port_info_vec_t_init(
     turbo_serial_port_info_vec_t *vec) {
-  return turbo_vec_init(vec, &turbo_serial_port_info_storage_type,
+  return vec_init(vec, &turbo_serial_port_info_storage_type,
                         turbo_serial_port_list_entry_limit(
                             &turbo_serial_port_info_storage_type));
 }
 
-static inline turbo_stl_status turbo_serial_port_info_vec_t_push(
+static inline turbostl_status turbo_serial_port_info_vec_t_push(
     turbo_serial_port_info_vec_t *vec,
     turbo_serial_port_info_storage_t value) {
-  return turbo_vec_push(vec, &value);
+  return vec_push(vec, &value);
 }
 
 static inline turbo_serial_port_info_storage_t *turbo_serial_port_info_vec_t_at(
     turbo_serial_port_info_vec_t *vec, size_t index) {
-  return (turbo_serial_port_info_storage_t *)turbo_vec_at(vec, index);
+  return (turbo_serial_port_info_storage_t *)vec_at(vec, index);
 }
 
 static inline const turbo_serial_port_info_storage_t *
 turbo_serial_port_info_vec_t_at_const(const turbo_serial_port_info_vec_t *vec,
                                       size_t index) {
-  return (const turbo_serial_port_info_storage_t *)turbo_vec_at_const(vec,
+  return (const turbo_serial_port_info_storage_t *)vec_at_const(vec,
                                                                       index);
 }
 
 static inline size_t turbo_serial_port_info_vec_t_size(
     const turbo_serial_port_info_vec_t *vec) {
-  return turbo_vec_size(vec);
+  return vec_size(vec);
 }
 
 static inline void turbo_serial_port_info_vec_t_destroy(
     turbo_serial_port_info_vec_t *vec) {
-  turbo_vec_destroy(vec);
+  vec_destroy(vec);
 }
 
 typedef struct turbo_serial_backend_ops turbo_serial_backend_ops_t;

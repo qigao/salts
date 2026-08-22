@@ -66,29 +66,4 @@
 #define CMETA_TYPED_BPlusTree(name, key_type, value_type) \
   TURBO_BPLUS_TREE_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
 
-/* Semantic front-end calls. The concrete type remains explicit because C11
- * cannot extend one _Generic association list from later typed(...) calls;
- * generated Type_method symbols remain an implementation detail. */
-#define list_init(list_type, list_ptr, limit) \
-  CMETA_TYPED_CALL(list_type, init, (list_ptr), (limit))
-#define list_add(list_type, list_ptr, value) \
-  CMETA_TYPED_CALL(list_type, push_back, (list_ptr), (value))
-#define list_pop_front(list_type, list_ptr, output_ptr) \
-  CMETA_TYPED_CALL(list_type, pop_front, (list_ptr), (output_ptr))
-#define list_clear(list_type, list_ptr) \
-  CMETA_TYPED_CALL(list_type, clear, (list_ptr))
-#define list_destroy(list_type, list_ptr) \
-  CMETA_TYPED_CALL(list_type, destroy, (list_ptr))
-
-#define map_init(map_type, map_ptr, limit) \
-  CMETA_TYPED_CALL(map_type, init, (map_ptr), (limit))
-#define map_put(map_type, map_ptr, key, value) \
-  CMETA_TYPED_CALL(map_type, put, (map_ptr), (key), (value))
-#define map_clear(map_type, map_ptr) \
-  CMETA_TYPED_CALL(map_type, clear, (map_ptr))
-#define map_size(map_type, map_ptr) \
-  CMETA_TYPED_CALL(map_type, size, (map_ptr))
-#define map_destroy(map_type, map_ptr) \
-  CMETA_TYPED_CALL(map_type, destroy, (map_ptr))
-
 #endif /* TURBO_TYPED_H */

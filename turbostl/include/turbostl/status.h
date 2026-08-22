@@ -1,7 +1,7 @@
 #ifndef TURBO_STL_STATUS_H
 #define TURBO_STL_STATUS_H
 
-typedef enum turbo_stl_status {
+typedef enum turbostl_status {
   TURBO_STL_OK = 0,
   TURBO_STL_INVALID_ARGUMENT,
   TURBO_STL_OUT_OF_MEMORY,
@@ -10,6 +10,6 @@ typedef enum turbo_stl_status {
   TURBO_STL_NOT_FOUND,
   TURBO_STL_TYPE_MISMATCH,
   TURBO_STL_TRAIT_MISSING
-} turbo_stl_status;
+} turbostl_status;
 
 #endif /* TURBO_STL_STATUS_H */

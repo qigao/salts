@@ -1,16 +1,16 @@
 #include <turbostl/bplus_tree.h>
 
-#include "turbo_sequence_internal.h"
+#include "sequence_internal.h"
 
 #include <string.h>
 
-static bool turbo_bplus_valid(const turbo_bplus_tree_t *tree) {
+static bool turbo_bplus_valid(const bplus_tree_t *tree) {
   return tree != NULL && tree->initialized && tree->key_size != 0u &&
          tree->value_size != 0u && tree->min_degree >= 2u &&
          (tree->key_type != NULL || tree->compare != NULL);
 }
 
-static int turbo_bplus_compare_key(const turbo_bplus_tree_t *tree,
+static int turbo_bplus_compare_key(const bplus_tree_t *tree,
                                    const void *left, const void *right) {
   return tree->key_type != NULL
              ? tree->key_type->traits->compare(left, right)
@@ -21,20 +21,20 @@ static void turbo_bplus_destroy_object(const cmeta_type_desc *type,
                                        void *object) {
   if (object == NULL) return;
   if (type != NULL) type->traits->destroy(object);
-  turbo_sequence_deallocate(object);
+  sequence_deallocate(object);
 }
 
-static turbo_stl_status turbo_bplus_copy_object(
+static turbostl_status turbo_bplus_copy_object(
     const cmeta_type_desc *type, size_t size, size_t stride, size_t alignment,
     const void *source, void **out_object) {
-  turbo_stl_status status;
+  turbostl_status status;
   if (source == NULL || out_object == NULL) return TURBO_STL_INVALID_ARGUMENT;
   *out_object = NULL;
-  status = turbo_sequence_allocate(1u, stride, alignment, out_object);
+  status = sequence_allocate(1u, stride, alignment, out_object);
   if (status != TURBO_STL_OK) return status;
   if (type != NULL) {
     if (!type->traits->copy_construct(*out_object, source)) {
-      turbo_sequence_deallocate(*out_object);
+      sequence_deallocate(*out_object);
       *out_object = NULL;
       return TURBO_STL_OUT_OF_MEMORY;
     }
@@ -44,20 +44,20 @@ static turbo_stl_status turbo_bplus_copy_object(
   return TURBO_STL_OK;
 }
 
-static turbo_bplus_tree_node_t *turbo_bplus_node_new(
-    const turbo_bplus_tree_t *tree, bool leaf) {
-  turbo_bplus_tree_node_t *node;
+static bplus_tree_node_t *turbo_bplus_node_new(
+    const bplus_tree_t *tree, bool leaf) {
+  bplus_tree_node_t *node;
   if (!turbo_bplus_valid(tree) ||
       tree->max_keys > SIZE_MAX / sizeof(void *) ||
-      tree->max_children > SIZE_MAX / sizeof(turbo_bplus_tree_node_t *))
+      tree->max_children > SIZE_MAX / sizeof(bplus_tree_node_t *))
     return NULL;
-  node = (turbo_bplus_tree_node_t *)calloc(1u, sizeof(*node));
+  node = (bplus_tree_node_t *)calloc(1u, sizeof(*node));
   if (node == NULL) return NULL;
   node->keys = (void **)calloc(tree->max_keys, sizeof(void *));
   node->values = (void **)calloc(tree->max_keys, sizeof(void *));
-  node->links = (turbo_bplus_tree_entry_link_t **)calloc(
+  node->links = (bplus_tree_entry_link_t **)calloc(
       tree->max_keys, sizeof(*node->links));
-  node->children = (turbo_bplus_tree_node_t **)calloc(
+  node->children = (bplus_tree_node_t **)calloc(
       tree->max_children, sizeof(*node->children));
   if (node->keys == NULL || node->values == NULL || node->links == NULL ||
       node->children == NULL) {
@@ -72,8 +72,8 @@ static turbo_bplus_tree_node_t *turbo_bplus_node_new(
   return node;
 }
 
-static void turbo_bplus_node_destroy(const turbo_bplus_tree_t *tree,
-                                     turbo_bplus_tree_node_t *node) {
+static void turbo_bplus_node_destroy(const bplus_tree_t *tree,
+                                     bplus_tree_node_t *node) {
   size_t index;
   if (node == NULL) return;
   if (node->is_leaf) {
@@ -93,7 +93,7 @@ static void turbo_bplus_node_destroy(const turbo_bplus_tree_t *tree,
   free(node);
 }
 
-static void turbo_bplus_node_free_shell(turbo_bplus_tree_node_t *node) {
+static void turbo_bplus_node_free_shell(bplus_tree_node_t *node) {
   if (node == NULL) return;
   free(node->children);
   free(node->links);
@@ -102,10 +102,10 @@ static void turbo_bplus_node_free_shell(turbo_bplus_tree_node_t *node) {
   free(node);
 }
 
-static turbo_bplus_tree_entry_link_t *turbo_bplus_link_new(void *key,
+static bplus_tree_entry_link_t *turbo_bplus_link_new(void *key,
                                                             void *value) {
-  turbo_bplus_tree_entry_link_t *link =
-      (turbo_bplus_tree_entry_link_t *)calloc(1u, sizeof(*link));
+  bplus_tree_entry_link_t *link =
+      (bplus_tree_entry_link_t *)calloc(1u, sizeof(*link));
   if (link != NULL) {
     link->key = key;
     link->value = value;
@@ -114,8 +114,8 @@ static turbo_bplus_tree_entry_link_t *turbo_bplus_link_new(void *key,
 }
 
 static void turbo_bplus_link_insert_before(
-    turbo_bplus_tree_t *tree, turbo_bplus_tree_entry_link_t *next,
-    turbo_bplus_tree_entry_link_t *link) {
+    bplus_tree_t *tree, bplus_tree_entry_link_t *next,
+    bplus_tree_entry_link_t *link) {
   link->next = next;
   link->previous = next != NULL ? next->previous : tree->last;
   if (link->previous != NULL)
@@ -128,8 +128,8 @@ static void turbo_bplus_link_insert_before(
     tree->last = link;
 }
 
-static void turbo_bplus_link_unlink(turbo_bplus_tree_t *tree,
-                                    turbo_bplus_tree_entry_link_t *link) {
+static void turbo_bplus_link_unlink(bplus_tree_t *tree,
+                                    bplus_tree_entry_link_t *link) {
   if (link->previous != NULL)
     link->previous->next = link->next;
   else
@@ -140,8 +140,8 @@ static void turbo_bplus_link_unlink(turbo_bplus_tree_t *tree,
     tree->last = link->previous;
 }
 
-static size_t turbo_bplus_leaf_lower_bound(const turbo_bplus_tree_t *tree,
-                                           const turbo_bplus_tree_node_t *leaf,
+static size_t turbo_bplus_leaf_lower_bound(const bplus_tree_t *tree,
+                                           const bplus_tree_node_t *leaf,
                                            const void *key) {
   size_t left = 0u;
   size_t right = leaf->num_keys;
@@ -155,8 +155,8 @@ static size_t turbo_bplus_leaf_lower_bound(const turbo_bplus_tree_t *tree,
   return left;
 }
 
-static size_t turbo_bplus_child_index(const turbo_bplus_tree_t *tree,
-                                      const turbo_bplus_tree_node_t *node,
+static size_t turbo_bplus_child_index(const bplus_tree_t *tree,
+                                      const bplus_tree_node_t *node,
                                       const void *key) {
   size_t index = 0u;
   while (index < node->num_keys &&
@@ -165,8 +165,8 @@ static size_t turbo_bplus_child_index(const turbo_bplus_tree_t *tree,
   return index;
 }
 
-static void turbo_bplus_refresh_node(turbo_bplus_tree_t *tree,
-                                     turbo_bplus_tree_node_t *node) {
+static void turbo_bplus_refresh_node(bplus_tree_t *tree,
+                                     bplus_tree_node_t *node) {
   size_t index;
   if (node == NULL) return;
   ++tree->maintenance_node_visits;
@@ -179,23 +179,23 @@ static void turbo_bplus_refresh_node(turbo_bplus_tree_t *tree,
                         : node->children[0]->first_key;
   if (node->children[0] != NULL) ++tree->maintenance_node_visits;
   for (index = 0u; index < node->num_keys; ++index) {
-    turbo_bplus_tree_node_t *child = node->children[index + 1u];
+    bplus_tree_node_t *child = node->children[index + 1u];
     if (child != NULL) ++tree->maintenance_node_visits;
     node->keys[index] = child == NULL ? NULL : child->first_key;
   }
 }
 
-static void turbo_bplus_refresh_ancestors(turbo_bplus_tree_t *tree,
-                                          turbo_bplus_tree_node_t *node) {
+static void turbo_bplus_refresh_ancestors(bplus_tree_t *tree,
+                                          bplus_tree_node_t *node) {
   while (node != NULL) {
     turbo_bplus_refresh_node(tree, node);
     node = node->parent;
   }
 }
 
-static void turbo_bplus_parent_insert(turbo_bplus_tree_node_t *parent,
+static void turbo_bplus_parent_insert(bplus_tree_node_t *parent,
                                       size_t child_index, void *separator,
-                                      turbo_bplus_tree_node_t *right) {
+                                      bplus_tree_node_t *right) {
   size_t index;
   for (index = parent->num_keys; index > child_index; --index)
     parent->keys[index] = parent->keys[index - 1u];
@@ -208,9 +208,9 @@ static void turbo_bplus_parent_insert(turbo_bplus_tree_node_t *parent,
 }
 
 static void turbo_bplus_split_child(
-    turbo_bplus_tree_t *tree, turbo_bplus_tree_node_t *parent,
-    size_t child_index, turbo_bplus_tree_node_t *right) {
-  turbo_bplus_tree_node_t *left = parent->children[child_index];
+    bplus_tree_t *tree, bplus_tree_node_t *parent,
+    size_t child_index, bplus_tree_node_t *right) {
+  bplus_tree_node_t *left = parent->children[child_index];
   size_t index;
   right->is_leaf = left->is_leaf;
   right->parent = parent;
@@ -253,7 +253,7 @@ static void turbo_bplus_split_child(
 }
 
 typedef struct turbo_bplus_node_pool {
-  turbo_bplus_tree_node_t **nodes;
+  bplus_tree_node_t **nodes;
   size_t count;
   size_t used;
 } turbo_bplus_node_pool;
@@ -267,9 +267,9 @@ static void turbo_bplus_pool_destroy(turbo_bplus_node_pool *pool) {
   memset(pool, 0, sizeof(*pool));
 }
 
-static turbo_stl_status turbo_bplus_pool_prepare(
-    const turbo_bplus_tree_t *tree, turbo_bplus_node_pool *pool) {
-  const turbo_bplus_tree_node_t *node = tree->root;
+static turbostl_status turbo_bplus_pool_prepare(
+    const bplus_tree_t *tree, turbo_bplus_node_pool *pool) {
+  const bplus_tree_node_t *node = tree->root;
   size_t levels = 0u;
   size_t index;
   while (node != NULL) {
@@ -280,7 +280,7 @@ static turbo_stl_status turbo_bplus_pool_prepare(
   pool->count = levels + 2u;
   if (pool->count > SIZE_MAX / sizeof(*pool->nodes))
     return TURBO_STL_CAPACITY_EXCEEDED;
-  pool->nodes = (turbo_bplus_tree_node_t **)calloc(pool->count,
+  pool->nodes = (bplus_tree_node_t **)calloc(pool->count,
                                                    sizeof(*pool->nodes));
   if (pool->nodes == NULL) return TURBO_STL_OUT_OF_MEMORY;
   for (index = 0u; index < pool->count; ++index) {
@@ -293,18 +293,18 @@ static turbo_stl_status turbo_bplus_pool_prepare(
   return TURBO_STL_OK;
 }
 
-static turbo_bplus_tree_node_t *turbo_bplus_pool_take(
+static bplus_tree_node_t *turbo_bplus_pool_take(
     turbo_bplus_node_pool *pool, bool leaf) {
-  turbo_bplus_tree_node_t *node = pool->nodes[pool->used++];
+  bplus_tree_node_t *node = pool->nodes[pool->used++];
   node->is_leaf = leaf;
   return node;
 }
 
 static void turbo_bplus_insert_prepared(
-    turbo_bplus_tree_t *tree, void *key, void *value,
-    turbo_bplus_tree_entry_link_t *link, turbo_bplus_node_pool *pool) {
-  turbo_bplus_tree_node_t *node;
-  turbo_bplus_tree_entry_link_t *next_link;
+    bplus_tree_t *tree, void *key, void *value,
+    bplus_tree_entry_link_t *link, turbo_bplus_node_pool *pool) {
+  bplus_tree_node_t *node;
+  bplus_tree_entry_link_t *next_link;
   size_t index;
   if (tree->root == NULL) {
     node = turbo_bplus_pool_take(pool, true);
@@ -364,26 +364,26 @@ static void turbo_bplus_insert_prepared(
   ++tree->size;
 }
 
-static turbo_stl_status turbo_bplus_init_common(
-    turbo_bplus_tree_t *tree, size_t key_size, size_t key_align,
+static turbostl_status turbo_bplus_init_common(
+    bplus_tree_t *tree, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t min_degree,
     size_t entry_limit, const cmeta_type_desc *key_type,
-    const cmeta_type_desc *value_type, turbo_bplus_tree_compare_fn compare,
+    const cmeta_type_desc *value_type, bplus_tree_compare_fn compare,
     void *compare_ctx) {
   size_t key_stride;
   size_t value_stride;
   uint64_t generation;
-  turbo_stl_status status;
+  turbostl_status status;
   if (tree == NULL || tree->initialized || min_degree < 2u ||
       (key_type == NULL && compare == NULL))
     return TURBO_STL_INVALID_ARGUMENT;
   if (min_degree > SIZE_MAX / 2u) return TURBO_STL_CAPACITY_EXCEEDED;
-  status = turbo_sequence_stride(key_size, key_align, &key_stride);
+  status = sequence_stride(key_size, key_align, &key_stride);
   if (status != TURBO_STL_OK) return status;
-  status = turbo_sequence_stride(value_size, value_align, &value_stride);
+  status = sequence_stride(value_size, value_align, &value_stride);
   if (status != TURBO_STL_OK) return status;
   if ((2u * min_degree - 1u) > SIZE_MAX / sizeof(void *) ||
-      (2u * min_degree) > SIZE_MAX / sizeof(turbo_bplus_tree_node_t *))
+      (2u * min_degree) > SIZE_MAX / sizeof(bplus_tree_node_t *))
     return TURBO_STL_CAPACITY_EXCEEDED;
   generation = tree->generation + UINT64_C(1);
   memset(tree, 0, sizeof(*tree));
@@ -406,16 +406,16 @@ static turbo_stl_status turbo_bplus_init_common(
   return TURBO_STL_OK;
 }
 
-turbo_stl_status turbo_bplus_tree_init_with_order(
-    turbo_bplus_tree_t *tree, const cmeta_type_desc *key_type,
+turbostl_status bplus_tree_init_with_order(
+    bplus_tree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t min_degree,
     size_t entry_limit) {
-  turbo_stl_status status;
+  turbostl_status status;
   if (key_type == NULL || value_type == NULL)
     return TURBO_STL_INVALID_ARGUMENT;
-  status = turbo_sequence_require_type(key_type, true);
+  status = sequence_require_type(key_type, true);
   if (status != TURBO_STL_OK) return status;
-  status = turbo_sequence_require_type(value_type, false);
+  status = sequence_require_type(value_type, false);
   if (status != TURBO_STL_OK) return status;
   return turbo_bplus_init_common(
       tree, key_type->size, key_type->align, value_type->size,
@@ -423,45 +423,45 @@ turbo_stl_status turbo_bplus_tree_init_with_order(
       NULL);
 }
 
-turbo_stl_status turbo_bplus_tree_init(turbo_bplus_tree_t *tree,
+turbostl_status bplus_tree_init(bplus_tree_t *tree,
                                        const cmeta_type_desc *key_type,
                                        const cmeta_type_desc *value_type,
                                        size_t entry_limit) {
-  return turbo_bplus_tree_init_with_order(
+  return bplus_tree_init_with_order(
       tree, key_type, value_type, TURBO_BPLUS_TREE_DEFAULT_MIN_DEGREE,
       entry_limit);
 }
 
-turbo_stl_status turbo_bplus_tree_init_bytes_with_order(
-    turbo_bplus_tree_t *tree, size_t key_size, size_t key_align,
+turbostl_status bplus_tree_init_bytes_with_order(
+    bplus_tree_t *tree, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t min_degree,
-    size_t entry_limit, turbo_bplus_tree_compare_fn compare,
+    size_t entry_limit, bplus_tree_compare_fn compare,
     void *compare_ctx) {
   return turbo_bplus_init_common(tree, key_size, key_align, value_size,
                                  value_align, min_degree, entry_limit, NULL,
                                  NULL, compare, compare_ctx);
 }
 
-turbo_stl_status turbo_bplus_tree_init_bytes(
-    turbo_bplus_tree_t *tree, size_t key_size, size_t key_align,
+turbostl_status bplus_tree_init_bytes(
+    bplus_tree_t *tree, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t entry_limit,
-    turbo_bplus_tree_compare_fn compare, void *compare_ctx) {
-  return turbo_bplus_tree_init_bytes_with_order(
+    bplus_tree_compare_fn compare, void *compare_ctx) {
+  return bplus_tree_init_bytes_with_order(
       tree, key_size, key_align, value_size, value_align,
       TURBO_BPLUS_TREE_DEFAULT_MIN_DEGREE, entry_limit, compare, compare_ctx);
 }
 
-static turbo_bplus_tree_node_t *turbo_bplus_leftmost(
-    const turbo_bplus_tree_t *tree) {
-  turbo_bplus_tree_node_t *node = tree->root;
+static bplus_tree_node_t *turbo_bplus_leftmost(
+    const bplus_tree_t *tree) {
+  bplus_tree_node_t *node = tree->root;
   while (node != NULL && !node->is_leaf) node = node->children[0];
   return node;
 }
 
-static bool turbo_bplus_pair_at(const turbo_bplus_tree_t *tree, size_t index,
+static bool turbo_bplus_pair_at(const bplus_tree_t *tree, size_t index,
                                 const void **out_key,
                                 const void **out_value) {
-  turbo_bplus_tree_node_t *leaf;
+  bplus_tree_node_t *leaf;
   if (!turbo_bplus_valid(tree) || index >= tree->size || out_key == NULL ||
       out_value == NULL)
     return false;
@@ -478,9 +478,9 @@ static bool turbo_bplus_pair_at(const turbo_bplus_tree_t *tree, size_t index,
   return false;
 }
 
-static turbo_bplus_tree_node_t *turbo_bplus_find_leaf(
-    const turbo_bplus_tree_t *tree, const void *key) {
-  turbo_bplus_tree_node_t *node;
+static bplus_tree_node_t *turbo_bplus_find_leaf(
+    const bplus_tree_t *tree, const void *key) {
+  bplus_tree_node_t *node;
   if (!turbo_bplus_valid(tree) || key == NULL) return NULL;
   node = tree->root;
   while (node != NULL && !node->is_leaf)
@@ -488,9 +488,9 @@ static turbo_bplus_tree_node_t *turbo_bplus_find_leaf(
   return node;
 }
 
-static const void *turbo_bplus_find_value(const turbo_bplus_tree_t *tree,
+static const void *turbo_bplus_find_value(const bplus_tree_t *tree,
                                           const void *key) {
-  turbo_bplus_tree_node_t *leaf = turbo_bplus_find_leaf(tree, key);
+  bplus_tree_node_t *leaf = turbo_bplus_find_leaf(tree, key);
   size_t index;
   if (leaf == NULL) return NULL;
   index = turbo_bplus_leaf_lower_bound(tree, leaf, key);
@@ -500,15 +500,15 @@ static const void *turbo_bplus_find_value(const turbo_bplus_tree_t *tree,
   return leaf->values[index];
 }
 
-turbo_stl_status turbo_bplus_tree_put(turbo_bplus_tree_t *tree,
+turbostl_status bplus_tree_put(bplus_tree_t *tree,
                                       const void *key, const void *value) {
   turbo_bplus_node_pool pool = {0};
-  turbo_bplus_tree_node_t *leaf;
-  turbo_bplus_tree_entry_link_t *link;
+  bplus_tree_node_t *leaf;
+  bplus_tree_entry_link_t *link;
   void *key_copy = NULL;
   void *value_copy = NULL;
   size_t index;
-  turbo_stl_status status;
+  turbostl_status status;
   if (!turbo_bplus_valid(tree) || key == NULL || value == NULL)
     return TURBO_STL_INVALID_ARGUMENT;
   leaf = turbo_bplus_find_leaf(tree, key);
@@ -558,30 +558,30 @@ turbo_stl_status turbo_bplus_tree_put(turbo_bplus_tree_t *tree,
   return TURBO_STL_OK;
 }
 
-void *turbo_bplus_tree_get(turbo_bplus_tree_t *tree, const void *key) {
+void *bplus_tree_get(bplus_tree_t *tree, const void *key) {
   return (void *)turbo_bplus_find_value(tree, key);
 }
 
-const void *turbo_bplus_tree_get_const(const turbo_bplus_tree_t *tree,
+const void *bplus_tree_get_const(const bplus_tree_t *tree,
                                        const void *key) {
   return turbo_bplus_find_value(tree, key);
 }
 
-bool turbo_bplus_tree_contains(const turbo_bplus_tree_t *tree,
+bool bplus_tree_contains(const bplus_tree_t *tree,
                                const void *key) {
   return turbo_bplus_find_value(tree, key) != NULL;
 }
 
 static size_t turbo_bplus_parent_child_index(
-    const turbo_bplus_tree_node_t *parent,
-    const turbo_bplus_tree_node_t *child) {
+    const bplus_tree_node_t *parent,
+    const bplus_tree_node_t *child) {
   size_t index;
   for (index = 0u; index <= parent->num_keys; ++index)
     if (parent->children[index] == child) return index;
   return parent->num_keys + 1u;
 }
 
-static void turbo_bplus_leaf_remove_slot(turbo_bplus_tree_node_t *leaf,
+static void turbo_bplus_leaf_remove_slot(bplus_tree_node_t *leaf,
                                          size_t index) {
   if (index + 1u < leaf->num_keys) {
     memmove(leaf->keys + index, leaf->keys + index + 1u,
@@ -598,8 +598,8 @@ static void turbo_bplus_leaf_remove_slot(turbo_bplus_tree_node_t *leaf,
   leaf->first_key = leaf->num_keys == 0u ? NULL : leaf->keys[0];
 }
 
-static void turbo_bplus_parent_remove_child(turbo_bplus_tree_t *tree,
-                                            turbo_bplus_tree_node_t *parent,
+static void turbo_bplus_parent_remove_child(bplus_tree_t *tree,
+                                            bplus_tree_node_t *parent,
                                             size_t child_index) {
   if (child_index < parent->num_keys)
     memmove(parent->children + child_index,
@@ -610,15 +610,15 @@ static void turbo_bplus_parent_remove_child(turbo_bplus_tree_t *tree,
   turbo_bplus_refresh_node(tree, parent);
 }
 
-static void turbo_bplus_rebalance_after_remove(turbo_bplus_tree_t *tree,
-                                                turbo_bplus_tree_node_t *node) {
+static void turbo_bplus_rebalance_after_remove(bplus_tree_t *tree,
+                                                bplus_tree_node_t *node) {
   size_t minimum = tree->min_degree - 1u;
   while (node != tree->root && node->num_keys < minimum) {
-    turbo_bplus_tree_node_t *parent = node->parent;
+    bplus_tree_node_t *parent = node->parent;
     size_t child_index = turbo_bplus_parent_child_index(parent, node);
-    turbo_bplus_tree_node_t *left =
+    bplus_tree_node_t *left =
         child_index > 0u ? parent->children[child_index - 1u] : NULL;
-    turbo_bplus_tree_node_t *right =
+    bplus_tree_node_t *right =
         child_index < parent->num_keys ? parent->children[child_index + 1u]
                                        : NULL;
     size_t index;
@@ -727,7 +727,7 @@ static void turbo_bplus_rebalance_after_remove(turbo_bplus_tree_t *tree,
   }
   if (tree->root != NULL && !tree->root->is_leaf &&
       tree->root->num_keys == 0u) {
-    turbo_bplus_tree_node_t *old_root = tree->root;
+    bplus_tree_node_t *old_root = tree->root;
     tree->root = old_root->children[0];
     tree->root->parent = NULL;
     old_root->children[0] = NULL;
@@ -738,10 +738,10 @@ static void turbo_bplus_rebalance_after_remove(turbo_bplus_tree_t *tree,
   turbo_bplus_refresh_ancestors(tree, node);
 }
 
-turbo_stl_status turbo_bplus_tree_remove(turbo_bplus_tree_t *tree,
+turbostl_status bplus_tree_remove(bplus_tree_t *tree,
                                          const void *key, void *out_value) {
-  turbo_bplus_tree_node_t *leaf;
-  turbo_bplus_tree_entry_link_t *removed_link;
+  bplus_tree_node_t *leaf;
+  bplus_tree_entry_link_t *removed_link;
   void *removed_key;
   void *removed_value;
   size_t index;
@@ -778,7 +778,7 @@ turbo_stl_status turbo_bplus_tree_remove(turbo_bplus_tree_t *tree,
   return TURBO_STL_OK;
 }
 
-void turbo_bplus_tree_clear(turbo_bplus_tree_t *tree) {
+void bplus_tree_clear(bplus_tree_t *tree) {
   if (!turbo_bplus_valid(tree) || tree->root == NULL) return;
   turbo_bplus_node_destroy(tree, tree->root);
   tree->root = NULL;
@@ -788,7 +788,7 @@ void turbo_bplus_tree_clear(turbo_bplus_tree_t *tree) {
   ++tree->generation;
 }
 
-void turbo_bplus_tree_destroy(turbo_bplus_tree_t *tree) {
+void bplus_tree_destroy(bplus_tree_t *tree) {
   uint64_t generation;
   if (tree == NULL) return;
   generation = tree->generation;
@@ -800,64 +800,64 @@ void turbo_bplus_tree_destroy(turbo_bplus_tree_t *tree) {
   tree->generation = generation;
 }
 
-turbo_stl_status turbo_bplus_tree_reserve(turbo_bplus_tree_t *tree,
+turbostl_status bplus_tree_reserve(bplus_tree_t *tree,
                                           size_t min_capacity) {
   if (!turbo_bplus_valid(tree)) return TURBO_STL_INVALID_ARGUMENT;
   return min_capacity <= tree->entry_limit ? TURBO_STL_OK
                                             : TURBO_STL_CAPACITY_EXCEEDED;
 }
 
-size_t turbo_bplus_tree_size(const turbo_bplus_tree_t *tree) {
+size_t bplus_tree_size(const bplus_tree_t *tree) {
   return tree == NULL ? 0u : tree->size;
 }
 
-size_t turbo_bplus_tree_capacity(const turbo_bplus_tree_t *tree) {
+size_t bplus_tree_capacity(const bplus_tree_t *tree) {
   return tree == NULL ? 0u : tree->size;
 }
 
-size_t turbo_bplus_tree_entry_limit(const turbo_bplus_tree_t *tree) {
+size_t bplus_tree_entry_limit(const bplus_tree_t *tree) {
   return tree == NULL ? 0u : tree->entry_limit;
 }
 
-uint64_t turbo_bplus_tree_generation(const turbo_bplus_tree_t *tree) {
+uint64_t bplus_tree_generation(const bplus_tree_t *tree) {
   return tree == NULL ? UINT64_C(0) : tree->generation;
 }
 
-bool turbo_bplus_tree_empty(const turbo_bplus_tree_t *tree) {
+bool bplus_tree_empty(const bplus_tree_t *tree) {
   return tree == NULL || tree->size == 0u;
 }
 
-void *turbo_bplus_tree_key_at(turbo_bplus_tree_t *tree, size_t index) {
+void *bplus_tree_key_at(bplus_tree_t *tree, size_t index) {
   const void *key;
   const void *value;
   return turbo_bplus_pair_at(tree, index, &key, &value) ? (void *)key : NULL;
 }
 
-const void *turbo_bplus_tree_key_at_const(const turbo_bplus_tree_t *tree,
+const void *bplus_tree_key_at_const(const bplus_tree_t *tree,
                                           size_t index) {
   const void *key;
   const void *value;
   return turbo_bplus_pair_at(tree, index, &key, &value) ? key : NULL;
 }
 
-void *turbo_bplus_tree_value_at(turbo_bplus_tree_t *tree, size_t index) {
+void *bplus_tree_value_at(bplus_tree_t *tree, size_t index) {
   const void *key;
   const void *value;
   return turbo_bplus_pair_at(tree, index, &key, &value) ? (void *)value : NULL;
 }
 
-const void *turbo_bplus_tree_value_at_const(const turbo_bplus_tree_t *tree,
+const void *bplus_tree_value_at_const(const bplus_tree_t *tree,
                                             size_t index) {
   const void *key;
   const void *value;
   return turbo_bplus_pair_at(tree, index, &key, &value) ? value : NULL;
 }
 
-bool turbo_bplus_tree_range_next(const turbo_bplus_tree_t *tree,
+bool bplus_tree_range_next(const bplus_tree_t *tree,
                                  cmeta_range_cursor *cursor,
                                  const void **out_key,
                                  const void **out_value) {
-  turbo_bplus_tree_entry_link_t *link;
+  bplus_tree_entry_link_t *link;
   if (!turbo_bplus_valid(tree) || cursor == NULL || out_key == NULL ||
       out_value == NULL)
     return false;
@@ -866,7 +866,7 @@ bool turbo_bplus_tree_range_next(const turbo_bplus_tree_t *tree,
     link = tree->first;
   } else {
     if (cursor->state[1] != (void *)tree) return false;
-    link = (turbo_bplus_tree_entry_link_t *)cursor->state[0];
+    link = (bplus_tree_entry_link_t *)cursor->state[0];
   }
   if (link == NULL) return false;
   *out_key = link->key;
@@ -875,34 +875,34 @@ bool turbo_bplus_tree_range_next(const turbo_bplus_tree_t *tree,
   return true;
 }
 
-static turbo_stl_status turbo_bplus_from_arrays_common(
-    turbo_bplus_tree_t *tree, const void *keys, const void *values,
+static turbostl_status turbo_bplus_from_arrays_common(
+    bplus_tree_t *tree, const void *keys, const void *values,
     size_t count, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t entry_limit,
-    turbo_bplus_tree_compare_fn compare, void *compare_ctx) {
-  turbo_bplus_tree_t next = {0};
+    bplus_tree_compare_fn compare, void *compare_ctx) {
+  bplus_tree_t next = {0};
   size_t index;
   uint64_t generation;
-  turbo_stl_status status;
+  turbostl_status status;
   if (tree == NULL || (count != 0u && (keys == NULL || values == NULL)))
     return TURBO_STL_INVALID_ARGUMENT;
   if (count != 0u &&
       (key_size > SIZE_MAX / count || value_size > SIZE_MAX / count))
     return TURBO_STL_CAPACITY_EXCEEDED;
   if (key_type != NULL)
-    status = turbo_bplus_tree_init(&next, key_type, value_type, entry_limit);
+    status = bplus_tree_init(&next, key_type, value_type, entry_limit);
   else
-    status = turbo_bplus_tree_init_bytes(
+    status = bplus_tree_init_bytes(
         &next, key_size, key_align, value_size, value_align, entry_limit,
         compare, compare_ctx);
   if (status != TURBO_STL_OK) return status;
   for (index = 0u; index < count; ++index) {
-    status = turbo_bplus_tree_put(
+    status = bplus_tree_put(
         &next, (const unsigned char *)keys + index * key_size,
         (const unsigned char *)values + index * value_size);
     if (status != TURBO_STL_OK) {
-      turbo_bplus_tree_destroy(&next);
+      bplus_tree_destroy(&next);
       return status;
     }
   }
@@ -913,8 +913,8 @@ static turbo_stl_status turbo_bplus_from_arrays_common(
   return TURBO_STL_OK;
 }
 
-turbo_stl_status turbo_bplus_tree_from_arrays(
-    turbo_bplus_tree_t *tree, const void *keys, const void *values,
+turbostl_status bplus_tree_from_arrays(
+    bplus_tree_t *tree, const void *keys, const void *values,
     size_t count, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit) {
   if (key_type == NULL || value_type == NULL) return TURBO_STL_INVALID_ARGUMENT;
@@ -924,11 +924,11 @@ turbo_stl_status turbo_bplus_tree_from_arrays(
       NULL);
 }
 
-turbo_stl_status turbo_bplus_tree_from_arrays_bytes(
-    turbo_bplus_tree_t *tree, const void *keys, const void *values,
+turbostl_status bplus_tree_from_arrays_bytes(
+    bplus_tree_t *tree, const void *keys, const void *values,
     size_t count, size_t key_size, size_t key_align, size_t value_size,
     size_t value_align, size_t entry_limit,
-    turbo_bplus_tree_compare_fn compare, void *compare_ctx) {
+    bplus_tree_compare_fn compare, void *compare_ctx) {
   return turbo_bplus_from_arrays_common(
       tree, keys, values, count, NULL, NULL, key_size, key_align, value_size,
       value_align, entry_limit, compare, compare_ctx);
