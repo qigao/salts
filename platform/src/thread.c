@@ -21,8 +21,10 @@ struct turbo_thread_wrapper_ctx {
 #ifdef _WIN32
 
 void turbo_mutex_init(turbo_mutex_t *mutex) {
+  PSRWLOCK native;
   if (mutex == NULL) return;
-  PSRWLOCK native = (PSRWLOCK)malloc(sizeof(SRWLOCK));
+  *mutex = NULL;
+  native = (PSRWLOCK)malloc(sizeof(SRWLOCK));
   if (native == NULL) return;
   InitializeSRWLock(native);
   *mutex = native;
@@ -45,8 +47,10 @@ void turbo_mutex_unlock(turbo_mutex_t *mutex) {
 }
 
 int turbo_rwlock_init(turbo_rwlock_t *lock) {
+  PSRWLOCK native;
   if (lock == NULL) return -EINVAL;
-  PSRWLOCK native = (PSRWLOCK)malloc(sizeof(SRWLOCK));
+  *lock = NULL;
+  native = (PSRWLOCK)malloc(sizeof(SRWLOCK));
   if (native == NULL) return -ENOMEM;
   InitializeSRWLock(native);
   *lock = native;
@@ -80,9 +84,10 @@ void turbo_rwlock_wrunlock(turbo_rwlock_t *lock) {
 }
 
 void turbo_cond_init(turbo_cond_t *cond) {
+  PCONDITION_VARIABLE native;
   if (cond == NULL) return;
-  PCONDITION_VARIABLE native =
-      (PCONDITION_VARIABLE)malloc(sizeof(CONDITION_VARIABLE));
+  *cond = NULL;
+  native = (PCONDITION_VARIABLE)malloc(sizeof(CONDITION_VARIABLE));
   if (native == NULL) return;
   InitializeConditionVariable(native);
   *cond = native;
@@ -118,11 +123,10 @@ int turbo_cond_timedwait(turbo_cond_t *cond, turbo_mutex_t *mutex,
   if (cond == NULL || *cond == NULL || mutex == NULL || *mutex == NULL)
     return -EINVAL;
 
-  if (timeout_ns >= (uint64_t)INFINITE * 1000000ULL) {
+  if (timeout_ns >= (uint64_t)INFINITE * 1000000ULL)
     timeout_ms = INFINITE - 1U;
-  } else {
+  else
     timeout_ms = (DWORD)((timeout_ns + 999999ULL) / 1000000ULL);
-  }
 
   result = SleepConditionVariableSRW((PCONDITION_VARIABLE)*cond,
                                      (PSRWLOCK)*mutex, timeout_ms, 0);
@@ -145,6 +149,7 @@ int turbo_thread_create(turbo_thread_t *thread, turbo_thread_cb entry, void *arg
   HANDLE native;
 
   if (thread == NULL || entry == NULL) return -EINVAL;
+  *thread = NULL;
   ctx = (struct turbo_thread_wrapper_ctx *)malloc(sizeof(*ctx));
   if (ctx == NULL) return -ENOMEM;
   ctx->entry = entry;
@@ -208,6 +213,7 @@ typedef struct turbo_posix_cond_s {
 void turbo_mutex_init(turbo_mutex_t *mutex) {
   pthread_mutex_t *native;
   if (mutex == NULL) return;
+  *mutex = NULL;
   native = (pthread_mutex_t *)malloc(sizeof(*native));
   if (native == NULL) return;
   if (pthread_mutex_init(native, NULL) != 0) {
@@ -238,6 +244,7 @@ int turbo_rwlock_init(turbo_rwlock_t *lock) {
   pthread_rwlock_t *native;
   int rc;
   if (lock == NULL) return -EINVAL;
+  *lock = NULL;
   native = (pthread_rwlock_t *)malloc(sizeof(*native));
   if (native == NULL) return -ENOMEM;
   rc = pthread_rwlock_init(native, NULL);
@@ -281,6 +288,7 @@ void turbo_cond_init(turbo_cond_t *cond) {
   int rc;
 
   if (cond == NULL) return;
+  *cond = NULL;
   wrapper = (turbo_posix_cond_t *)malloc(sizeof(*wrapper));
   if (wrapper == NULL) return;
 
@@ -289,10 +297,14 @@ void turbo_cond_init(turbo_cond_t *cond) {
 #else
   {
     pthread_condattr_t attr;
+    int attr_initialized = 0;
     rc = pthread_condattr_init(&attr);
-    if (rc == 0) rc = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    if (rc == 0) {
+      attr_initialized = 1;
+      rc = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    }
     if (rc == 0) rc = pthread_cond_init(&wrapper->native, &attr);
-    (void)pthread_condattr_destroy(&attr);
+    if (attr_initialized) (void)pthread_condattr_destroy(&attr);
   }
 #endif
 
@@ -388,6 +400,7 @@ int turbo_thread_create(turbo_thread_t *thread, turbo_thread_cb entry, void *arg
   int rc;
 
   if (thread == NULL || entry == NULL) return -EINVAL;
+  *thread = NULL;
   ctx = (struct turbo_thread_wrapper_ctx *)malloc(sizeof(*ctx));
   if (ctx == NULL) return -ENOMEM;
   native = (pthread_t *)malloc(sizeof(*native));
