@@ -197,7 +197,6 @@ typedef struct {
   turbo_sink_filter_fn predicate;   // Optional extra predicate, non-zero means allow
   void *predicate_user_data;
 } turbo_sink_filter_opts_t;
-
 #define TURBO_SINK_FILTER_OPTS_DEFAULT \
   { TURBO_LOG_LEVEL_DEBUG, TURBO_LOG_LEVEL_FATAL, NULL, NULL, NULL }
 
@@ -411,96 +410,106 @@ CXX_C_API turbo_log_level_t turbo_log_level_from_name(const char *name);
 #endif
 
 // =============================================================================
-// Convenience Macros (capture caller's file/line correctly)
+// Convenience Macros
 // =============================================================================
 //
-// Three-level macro hierarchy:
-//
-// 1. TURBO_LOG_TYPED - Internal implementation (captures __FILE__/__LINE__)
-//    - Used by all other macros
-//    - Supports typed format arguments via fmt.h
-//    - DO NOT call directly - use TURBO_LOG_* or TLOG_* instead
-//
-// 2. TURBO_LOG_* - Explicit logger + component
-//    - TURBO_LOG_DEBUG(logger, component, fmt, ...)
-//    - TURBO_LOG_INFO(logger, component, fmt, ...)
-//    - Use when you need multiple loggers or per-call component names
-//
-// 3. TLOG_* - Uses default logger (convenient)
-//    - TLOG_DEBUG(fmt, ...)
-//    - TLOG_INFO(fmt, ...)
-//    - Use for simple cases with global logger
-//
-// =============================================================================
+// Raw-message forms have fixed arity and route directly to turbo_log_str.
+// Formatted forms use the F suffix, require at least one formatting argument,
+// and route to turbo_log_typed. This keeps strict-C11 call sites free of
+// empty-__VA_ARGS__ detection and comma-elision extensions.
 
-#define TURBO_LOG(logger, level, component, ...)                                                   \
-  TURBO_LOG_TYPED((logger), (level), (component), __VA_ARGS__)
+#define TURBO_LOG_RAW_IMPL(logger_expr, lvl, comp, message_expr)                                  \
+  do {                                                                                             \
+    tlog_t *_tlog_ptr = (logger_expr);                                                             \
+    if (_tlog_ptr && (lvl) >= tlog_get_level(_tlog_ptr)) {                                        \
+      const char *_tlog_message = (message_expr);                                                  \
+      turbo_log_str(_tlog_ptr, (lvl), (comp), TURBO_LOG_SOURCE_FILE,                              \
+                    TURBO_LOG_SOURCE_LINE, _tlog_message,                                          \
+                    _tlog_message ? strlen(_tlog_message) : 0U);                                   \
+    }                                                                                              \
+  } while (0)
 
-#define TURBO_LOG_DEBUG(logger, component, ...)                                                    \
-  TURBO_LOG_TYPED((logger), TURBO_LOG_LEVEL_DEBUG, (component), __VA_ARGS__)
-
-#define TURBO_LOG_INFO(logger, component, ...)                                                     \
-  TURBO_LOG_TYPED((logger), TURBO_LOG_LEVEL_INFO, (component), __VA_ARGS__)
-
-#define TURBO_LOG_WARN(logger, component, ...)                                                     \
-  TURBO_LOG_TYPED((logger), TURBO_LOG_LEVEL_WARN, (component), __VA_ARGS__)
-
-#define TURBO_LOG_ERROR(logger, component, ...)                                                    \
-  TURBO_LOG_TYPED((logger), TURBO_LOG_LEVEL_ERROR, (component), __VA_ARGS__)
-
-#define TURBO_LOG_FATAL(logger, component, ...)                                                    \
-  TURBO_LOG_TYPED((logger), TURBO_LOG_LEVEL_FATAL, (component), __VA_ARGS__)
-
-// Typed logging macros (use auto-detected {} or typed placeholders)
 #ifdef __cplusplus
 
-// C++ Helper: wrapper for type-safe logging using variadic templates
-// This avoids non-standard compound literals in macros
 template <typename... Args>
-inline void turbo_log_cpp_wrapper(tlog_t* logger, turbo_log_level_t level, 
-                                  const char* component, const char* file, int line, 
-                                  const char* fmt, const Args&... args) {
-     if constexpr (sizeof...(Args) > 0) {
-         // Create array on stack - safe and efficient
-         const fmt_arg_t arg_array[] = { FMT_ARG(args)... };
-         turbo_log_typed(logger, level, component, file, line, fmt, arg_array, sizeof...(Args));
-     } else {
-         turbo_log_typed(logger, level, component, file, line, fmt, NULL, 0);
-     }
+inline void turbo_log_cpp_wrapper(tlog_t *logger, turbo_log_level_t level,
+                                  const char *component, const char *file, int line,
+                                  const char *pattern, const Args &...args) {
+  static_assert(sizeof...(Args) > 0, "formatted logging requires at least one argument");
+  const fmt_arg_t arg_array[] = {FMT_ARG(args)...};
+  turbo_log_typed(logger, level, component, file, line, pattern, arg_array, sizeof...(Args));
 }
 
-#define TURBO_LOG_TYPED(logger, lvl, comp, fmt, ...)                                               \
+#define TURBO_LOG_FORMAT_IMPL(logger_expr, lvl, comp, pattern, ...)                               \
   do {                                                                                             \
-    tlog_t* _tlog_ptr = (logger);                                                                  \
-    if (_tlog_ptr && (lvl) >= tlog_get_level(_tlog_ptr)) {                                         \
-      turbo_log_cpp_wrapper(_tlog_ptr, (lvl), (comp), TURBO_LOG_SOURCE_FILE,                       \
-                            TURBO_LOG_SOURCE_LINE, (fmt), ##__VA_ARGS__);                          \
+    tlog_t *_tlog_ptr = (logger_expr);                                                             \
+    if (_tlog_ptr && (lvl) >= tlog_get_level(_tlog_ptr)) {                                        \
+      turbo_log_cpp_wrapper(_tlog_ptr, (lvl), (comp), TURBO_LOG_SOURCE_FILE,                      \
+                            TURBO_LOG_SOURCE_LINE, (pattern), __VA_ARGS__);                         \
     }                                                                                              \
   } while (0)
 
 #else
 
-// Standard C Implementation - Add level check to macro for performance
-#define TURBO_LOG_TYPED(logger, lvl, comp, fmt, ...)                                               \
+#define TURBO_LOG_FORMAT_IMPL(logger_expr, lvl, comp, pattern, ...)                               \
   do {                                                                                             \
-    tlog_t* _log_ptr = (logger);                                                                   \
-    if (_log_ptr && (lvl) >= tlog_get_level(_log_ptr)) {                                           \
-      turbo_log_typed(_log_ptr, (lvl), (comp), TURBO_LOG_SOURCE_FILE, TURBO_LOG_SOURCE_LINE, (fmt), \
-                      FMT_ARGS(__VA_ARGS__), FMT_NARGS(__VA_ARGS__));                              \
+    tlog_t *_tlog_ptr = (logger_expr);                                                             \
+    if (_tlog_ptr && (lvl) >= tlog_get_level(_tlog_ptr)) {                                        \
+      turbo_log_typed(_tlog_ptr, (lvl), (comp), TURBO_LOG_SOURCE_FILE,                            \
+                      TURBO_LOG_SOURCE_LINE, (pattern), FMT_ARGS(__VA_ARGS__),                     \
+                      (size_t)FMT_ARG_COUNT(__VA_ARGS__));                                         \
     }                                                                                              \
   } while (0)
 
 #endif
 
-#define TLOG_DEBUG(fmt, ...)                                                                       \
-  TURBO_LOG_TYPED(tlog_peek_default(), TURBO_LOG_LEVEL_DEBUG, NULL, fmt, ##__VA_ARGS__)
-#define TLOG_INFO(fmt, ...)                                                                        \
-  TURBO_LOG_TYPED(tlog_get_default(), TURBO_LOG_LEVEL_INFO, NULL, fmt, ##__VA_ARGS__)
-#define TLOG_WARN(fmt, ...)                                                                        \
-  TURBO_LOG_TYPED(tlog_get_default(), TURBO_LOG_LEVEL_WARN, NULL, fmt, ##__VA_ARGS__)
-#define TLOG_ERROR(fmt, ...)                                                                       \
-  TURBO_LOG_TYPED(tlog_get_default(), TURBO_LOG_LEVEL_ERROR, NULL, fmt, ##__VA_ARGS__)
-#define TLOG_FATAL(fmt, ...)                                                                       \
-  TURBO_LOG_TYPED(tlog_get_default(), TURBO_LOG_LEVEL_FATAL, NULL, fmt, ##__VA_ARGS__)
+#define TURBO_LOG(logger, level, component, message)                                               \
+  TURBO_LOG_RAW_IMPL((logger), (level), (component), (message))
+#define TURBO_LOGF(logger, level, component, pattern, ...)                                         \
+  TURBO_LOG_FORMAT_IMPL((logger), (level), (component), (pattern), __VA_ARGS__)
+
+#define TURBO_LOG_DEBUG(logger, component, message)                                                \
+  TURBO_LOG_RAW_IMPL((logger), TURBO_LOG_LEVEL_DEBUG, (component), (message))
+#define TURBO_LOG_INFO(logger, component, message)                                                 \
+  TURBO_LOG_RAW_IMPL((logger), TURBO_LOG_LEVEL_INFO, (component), (message))
+#define TURBO_LOG_WARN(logger, component, message)                                                 \
+  TURBO_LOG_RAW_IMPL((logger), TURBO_LOG_LEVEL_WARN, (component), (message))
+#define TURBO_LOG_ERROR(logger, component, message)                                                \
+  TURBO_LOG_RAW_IMPL((logger), TURBO_LOG_LEVEL_ERROR, (component), (message))
+#define TURBO_LOG_FATAL(logger, component, message)                                                \
+  TURBO_LOG_RAW_IMPL((logger), TURBO_LOG_LEVEL_FATAL, (component), (message))
+
+#define TURBO_LOG_DEBUGF(logger, component, pattern, ...)                                          \
+  TURBO_LOG_FORMAT_IMPL((logger), TURBO_LOG_LEVEL_DEBUG, (component), (pattern), __VA_ARGS__)
+#define TURBO_LOG_INFOF(logger, component, pattern, ...)                                           \
+  TURBO_LOG_FORMAT_IMPL((logger), TURBO_LOG_LEVEL_INFO, (component), (pattern), __VA_ARGS__)
+#define TURBO_LOG_WARNF(logger, component, pattern, ...)                                           \
+  TURBO_LOG_FORMAT_IMPL((logger), TURBO_LOG_LEVEL_WARN, (component), (pattern), __VA_ARGS__)
+#define TURBO_LOG_ERRORF(logger, component, pattern, ...)                                          \
+  TURBO_LOG_FORMAT_IMPL((logger), TURBO_LOG_LEVEL_ERROR, (component), (pattern), __VA_ARGS__)
+#define TURBO_LOG_FATALF(logger, component, pattern, ...)                                          \
+  TURBO_LOG_FORMAT_IMPL((logger), TURBO_LOG_LEVEL_FATAL, (component), (pattern), __VA_ARGS__)
+
+#define TLOG_DEBUG(message)                                                                        \
+  TURBO_LOG_RAW_IMPL(tlog_peek_default(), TURBO_LOG_LEVEL_DEBUG, NULL, (message))
+#define TLOG_INFO(message)                                                                         \
+  TURBO_LOG_RAW_IMPL(tlog_get_default(), TURBO_LOG_LEVEL_INFO, NULL, (message))
+#define TLOG_WARN(message)                                                                         \
+  TURBO_LOG_RAW_IMPL(tlog_get_default(), TURBO_LOG_LEVEL_WARN, NULL, (message))
+#define TLOG_ERROR(message)                                                                        \
+  TURBO_LOG_RAW_IMPL(tlog_get_default(), TURBO_LOG_LEVEL_ERROR, NULL, (message))
+#define TLOG_FATAL(message)                                                                        \
+  TURBO_LOG_RAW_IMPL(tlog_get_default(), TURBO_LOG_LEVEL_FATAL, NULL, (message))
+
+#define TLOG_DEBUGF(pattern, ...)                                                                  \
+  TURBO_LOG_FORMAT_IMPL(tlog_peek_default(), TURBO_LOG_LEVEL_DEBUG, NULL, (pattern), __VA_ARGS__)
+#define TLOG_INFOF(pattern, ...)                                                                   \
+  TURBO_LOG_FORMAT_IMPL(tlog_get_default(), TURBO_LOG_LEVEL_INFO, NULL, (pattern), __VA_ARGS__)
+#define TLOG_WARNF(pattern, ...)                                                                   \
+  TURBO_LOG_FORMAT_IMPL(tlog_get_default(), TURBO_LOG_LEVEL_WARN, NULL, (pattern), __VA_ARGS__)
+#define TLOG_ERRORF(pattern, ...)                                                                  \
+  TURBO_LOG_FORMAT_IMPL(tlog_get_default(), TURBO_LOG_LEVEL_ERROR, NULL, (pattern), __VA_ARGS__)
+#define TLOG_FATALF(pattern, ...)                                                                  \
+  TURBO_LOG_FORMAT_IMPL(tlog_get_default(), TURBO_LOG_LEVEL_FATAL, NULL, (pattern), __VA_ARGS__)
 
 #endif // tlog_h
