@@ -1,13 +1,14 @@
 # CMeta capability catalog — v50
 
-CMeta is a finite, schema-driven compile-time metadata/code-generation layer for strict C11.
+CMeta is a finite, schema-driven compile-time metadata/code-generation layer for strict C11 and a pragmatic toolkit for building a modern C dialect. The authoritative syntax boundary is [`LANGUAGE_REFERENCE.md`](LANGUAGE_REFERENCE.md).
 
 ## Implemented core
 
 - strict-C11 preprocessor kernel: finite `FOR_EACH`, indexed replay, repeat;
 - unified tuple schema kernel through `Schema(...)` / `Replay(...)`;
+- specialized operator schema normalization through `Operators(...)`;
 - type/signature registry and typed callable substrate;
-- contract/effect/property metadata;
+- contract/effect/property metadata and `typed_any(...)` declarations;
 - first-class typed callable values and inline captures;
 - `Enum(...)` single-declaration enum + metadata;
 - `Struct(...)` single-declaration struct + field metadata;
@@ -17,14 +18,30 @@ CMeta is a finite, schema-driven compile-time metadata/code-generation layer for
 - header-only complete typed-container instantiation through `typed(...)`;
 - allocation-free `cmeta_range` protocol and range traits;
 - one-pointer typed-container object headers plus static `cmeta_container_desc` metadata;
-- erased default/key/value/entry Range factories.
+- erased default/key/value/entry Range factories;
 - explicit type traits for equality, hash, comparison, copy, move, and
   destruction, attached to semantic type descriptors;
 - transactional bounded `cmeta_collector` façade with semantic type admission,
   first-error preservation, and exactly-once adapter abort;
 - optional value-oriented collector factory in `cmeta_container_desc`.
 
-## Schema / Replay
+## Application DSL
+
+The stable application-facing declaration vocabulary is:
+
+```text
+Struct(...)
+Enum(...)
+Traits(...)
+typed(...)
+typed_any(...)
+interface(...)
+implements(...)
+```
+
+Application generic declarations intentionally have one entry point: `typed(kind, ...)`. Multiple concrete container types are declared with multiple `typed(...)` statements rather than a separate batch-container DSL.
+
+## Framework DSL
 
 Framework-level tuple schemas use:
 
@@ -35,9 +52,7 @@ Replay(MySchema, mapper)
 
 `Enum`, `Struct`, and operator-generation infrastructure reuse the common row kernel. `Schema/Replay` is primarily framework-author infrastructure.
 
-CFlow operator declarations use structured source rows but normalize to the existing flat consumer ABI before `Replay(CFlowOperators, mapper)` invokes a consumer. The structured grouping is therefore a source-level representation change, not a second operator semantics.
-
-Application generic declarations intentionally have one entry point: `typed(kind, ...)`. Multiple concrete container types are declared with multiple `typed(...)` statements rather than a separate batch-container DSL.
+CFlow operator declarations use structured source rows through `Operators(...)` but normalize to the existing flat consumer ABI before `Replay(CFlowOperators, mapper)` invokes a consumer. The structured grouping is therefore a source-level representation change, not a second operator semantics.
 
 ## Generic value types
 
@@ -154,27 +169,26 @@ count; `NULL` means that concrete container does not support collection.
 
 For element types outside CFlow's finite callable universe, generated facades can still provide local object descriptors so Range remains independently usable. Typed CFlow callback signatures require the type to be registered in the CMeta/CFlow type universe.
 
-## Public API boundary
+## Runtime protocol boundary
 
-Application-facing declarations should generally be limited to:
+Type descriptors/identity, callables, ranges, collectors, container descriptors, and generated interface values are ordinary C runtime/meta APIs. They are capabilities, not additional DSL keywords.
+
+## Removed syntax
+
+`Containers(...)` is removed and must not be kept as a compatibility alias. Write one `typed(...)` declaration per generated type.
+
+The earlier container `implement(...)` / declaration-then-implementation generation model is also removed.
+
+## Reserved future directions
+
+The following are ideas, not current language promises:
 
 ```text
-Struct(...)
-Enum(...)
-Traits(...)
-typed(...)
+Lambda / Bind
+Variant / Match
+Array / SmallVec / RingBuffer
 ```
 
-and runtime capability APIs such as `stream(...)`.
+Other natural extensions include kind-level `_Generic` ergonomic APIs, additional opt-in inference over registered traits, richer reflection descriptors, ownership-aware destruction/serde generation, and additional container/range operations.
 
-`Schema/Replay` is for library/framework generation. `implements(...)` is an interface/protocol declaration and remains valid; it is unrelated to the removed container implementation phase.
-
-## Next natural extensions
-
-- kind-level `_Generic` ergonomic APIs such as `list_push(&users, value)`;
-- additional opt-in inference built on explicitly registered traits;
-- Array / SmallVec / RingBuffer finite generic kinds;
-- variant/sum types and richer pattern matching;
-- Pair/Tuple/Option/Result reflection descriptors;
-- ownership-aware destruction and serde generation;
-- standard in-place B-tree deletion and bounded/range-query iterators.
+New syntax should appear only after an implementable C11 pattern proves useful. CMeta does not need a complete universal language design before features can be composed and shipped.
