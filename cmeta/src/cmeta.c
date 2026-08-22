@@ -114,37 +114,142 @@ const cmeta_type_traits cmeta_traits_double = { CMETA_TRIVIAL_TRAIT_FLAGS,
 #undef CMETA_DEFINE_TRIVIAL_TRAITS
 #undef CMETA_TRIVIAL_TRAIT_FLAGS
 
+static const cmeta_type_identity cmeta_id_void =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.void");
+static const cmeta_type_identity cmeta_id_bool =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.bool");
+static const cmeta_type_identity cmeta_id_int =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.int");
+static const cmeta_type_identity cmeta_id_long =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.long");
+static const cmeta_type_identity cmeta_id_float =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.float");
+static const cmeta_type_identity cmeta_id_double =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.double");
+static const cmeta_type_identity cmeta_id_size =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.size");
+static const cmeta_type_identity cmeta_id_gen_status =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.gen_status");
+
+static const cmeta_type_identity cmeta_id_bool_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_bool);
+static const cmeta_type_identity cmeta_id_int_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_int);
+static const cmeta_type_identity cmeta_id_long_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_long);
+static const cmeta_type_identity cmeta_id_float_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_float);
+static const cmeta_type_identity cmeta_id_double_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_double);
+static const cmeta_type_identity cmeta_id_size_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_size);
+
+#define CMETA_BUILTIN_ID_MARK_B CMETA_GENERIC_PROBE()
+#define CMETA_BUILTIN_ID_MARK_I CMETA_GENERIC_PROBE()
+#define CMETA_BUILTIN_ID_MARK_L CMETA_GENERIC_PROBE()
+#define CMETA_BUILTIN_ID_MARK_F CMETA_GENERIC_PROBE()
+#define CMETA_BUILTIN_ID_MARK_D CMETA_GENERIC_PROBE()
+#define CMETA_BUILTIN_ID_MARK(tok) CMETA_PP_CAT(CMETA_BUILTIN_ID_MARK_, tok)
+
+#define CMETA_BUILTIN_ATOM_B (&cmeta_id_bool)
+#define CMETA_BUILTIN_ATOM_I (&cmeta_id_int)
+#define CMETA_BUILTIN_ATOM_L (&cmeta_id_long)
+#define CMETA_BUILTIN_ATOM_F (&cmeta_id_float)
+#define CMETA_BUILTIN_ATOM_D (&cmeta_id_double)
+#define CMETA_BUILTIN_ATOM_SELECT_1(tok) CMETA_PP_CAT(CMETA_BUILTIN_ATOM_, tok)
+#define CMETA_BUILTIN_ATOM_SELECT_0(tok) NULL
+#define CMETA_BUILTIN_ATOM_SELECT_I(flag, tok) \
+    CMETA_PP_CAT(CMETA_BUILTIN_ATOM_SELECT_, flag)(tok)
+#define CMETA_BUILTIN_ATOM_ID(tok) \
+    CMETA_BUILTIN_ATOM_SELECT_I( \
+        CMETA_GENERIC_IS_PROBE(CMETA_BUILTIN_ID_MARK(tok)), tok)
+
+#define CMETA_BUILTIN_PTR_B (&cmeta_id_bool_ptr)
+#define CMETA_BUILTIN_PTR_I (&cmeta_id_int_ptr)
+#define CMETA_BUILTIN_PTR_L (&cmeta_id_long_ptr)
+#define CMETA_BUILTIN_PTR_F (&cmeta_id_float_ptr)
+#define CMETA_BUILTIN_PTR_D (&cmeta_id_double_ptr)
+#define CMETA_BUILTIN_PTR_SELECT_1(tok) CMETA_PP_CAT(CMETA_BUILTIN_PTR_, tok)
+#define CMETA_BUILTIN_PTR_SELECT_0(tok) NULL
+#define CMETA_BUILTIN_PTR_SELECT_I(flag, tok) \
+    CMETA_PP_CAT(CMETA_BUILTIN_PTR_SELECT_, flag)(tok)
+#define CMETA_BUILTIN_PTR_ID(tok) \
+    CMETA_BUILTIN_PTR_SELECT_I( \
+        CMETA_GENERIC_IS_PROBE(CMETA_BUILTIN_ID_MARK(tok)), tok)
+
 const cmeta_type_desc cmeta_type_void = {
-    "void", 0, 1, CMETA_T_VOID, NULL, NULL
+    .name = "void", .size = 0, .align = 1, .kind = CMETA_T_VOID,
+    .pointee = NULL, .traits = NULL, .identity = &cmeta_id_void
 };
 const cmeta_type_desc cmeta_type_size = {
-    "size_t", sizeof(size_t), _Alignof(size_t), CMETA_T_INTEGER, NULL, NULL
+    .name = "size_t", .size = sizeof(size_t), .align = _Alignof(size_t),
+    .kind = CMETA_T_INTEGER, .pointee = NULL,
+    .traits = NULL, .identity = &cmeta_id_size
 };
 const cmeta_type_desc cmeta_type_size_ptr = {
-    "size_t *", sizeof(size_t *), _Alignof(size_t *), CMETA_T_POINTER,
-    &cmeta_type_size, NULL
+    .name = "size_t *", .size = sizeof(size_t *), .align = _Alignof(size_t *),
+    .kind = CMETA_T_POINTER, .pointee = &cmeta_type_size,
+    .traits = NULL, .identity = &cmeta_id_size_ptr
 };
 const cmeta_type_desc cmeta_type_gen_status = {
-    "cmeta_gen_status", sizeof(cmeta_gen_status), _Alignof(cmeta_gen_status),
-    CMETA_T_INTEGER, NULL, NULL
+    .name = "cmeta_gen_status", .size = sizeof(cmeta_gen_status),
+    .align = _Alignof(cmeta_gen_status), .kind = CMETA_T_INTEGER,
+    .pointee = NULL, .traits = NULL, .identity = &cmeta_id_gen_status
 };
 
 #define CMETA_DEFINE_TYPE(row, ignored) \
     const cmeta_type_desc CMETA_TYPE_DESC(row) = { \
-        CMETA_STR(CMETA_TYPE_CTYPE(row)), sizeof(CMETA_TYPE_CTYPE(row)), \
-        _Alignof(CMETA_TYPE_CTYPE(row)), CMETA_TYPE_KIND(row), NULL, \
-        &CMETA_TYPE_TRAITS(row) \
+        .name = CMETA_STR(CMETA_TYPE_CTYPE(row)), \
+        .size = sizeof(CMETA_TYPE_CTYPE(row)), \
+        .align = _Alignof(CMETA_TYPE_CTYPE(row)), \
+        .kind = CMETA_TYPE_KIND(row), \
+        .pointee = NULL, \
+        .traits = &CMETA_TYPE_TRAITS(row), \
+        .identity = CMETA_BUILTIN_ATOM_ID(CMETA_TYPE_TOKEN(row)) \
     }; \
     const cmeta_type_desc CMETA_DESC_PTR(row) = { \
-        CMETA_STR(CMETA_TYPE_CTYPE(row)) " *", sizeof(CMETA_TYPE_CTYPE(row) *), \
-        _Alignof(CMETA_TYPE_CTYPE(row) *), CMETA_T_POINTER, &CMETA_TYPE_DESC(row), NULL \
+        .name = CMETA_STR(CMETA_TYPE_CTYPE(row)) " *", \
+        .size = sizeof(CMETA_TYPE_CTYPE(row) *), \
+        .align = _Alignof(CMETA_TYPE_CTYPE(row) *), \
+        .kind = CMETA_T_POINTER, \
+        .pointee = &CMETA_TYPE_DESC(row), \
+        .traits = NULL, \
+        .identity = CMETA_BUILTIN_PTR_ID(CMETA_TYPE_TOKEN(row)) \
     };
-CMETA_PP_FOR_EACH_A(CMETA_DEFINE_TYPE, ~, CMETA_TYPE_LIST)
+CMETA_PP_FOR_EACH_A(CMETA_DEFINE_TYPE, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_DEFINE_TYPE
 
+const cmeta_type_identity *cmeta_type_identity_of(const cmeta_type_desc *desc) {
+    return desc ? desc->identity : NULL;
+}
+
+bool cmeta_type_desc_valid(const cmeta_type_desc *desc) {
+    if (!desc || !desc->name || desc->name[0] == '\0' || desc->align == 0u)
+        return false;
+    if (!desc->identity)
+        return desc->kind != CMETA_T_POINTER || desc->pointee != NULL;
+    if (!cmeta_type_identity_valid(desc->identity))
+        return false;
+    if (desc->kind == CMETA_T_POINTER) {
+        if (!desc->pointee || !desc->pointee->identity)
+            return false;
+        if (desc->identity->form != CMETA_TYPE_POINTER)
+            return false;
+        return cmeta_type_identity_equal(desc->identity->base,
+                                         desc->pointee->identity);
+    }
+    return desc->identity->form != CMETA_TYPE_POINTER;
+}
+
 bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b) {
-    if (!a || !b || !a->name || !b->name) return false;
-    if (a == b) return true;
+    if (a == b) return a != NULL && cmeta_type_desc_valid(a);
+    if (!a || !b || !cmeta_type_desc_valid(a) || !cmeta_type_desc_valid(b))
+        return false;
+    if (a->identity || b->identity) {
+        if (!a->identity || !b->identity)
+            return false;
+        return cmeta_type_identity_equal(a->identity, b->identity);
+    }
     if (a->kind != b->kind || a->size != b->size || a->align != b->align)
         return false;
     if (strcmp(a->name, b->name) != 0) return false;
@@ -155,7 +260,7 @@ bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b) {
 
 static const cmeta_type_desc *const cmeta_type_registry[] = {
 #define CMETA_TYPE_REG_ITEM(row, ignored) &CMETA_TYPE_DESC(row),
-    CMETA_PP_FOR_EACH_A(CMETA_TYPE_REG_ITEM, ~, CMETA_TYPE_LIST)
+    CMETA_PP_FOR_EACH_A(CMETA_TYPE_REG_ITEM, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_TYPE_REG_ITEM
 };
 
@@ -335,7 +440,6 @@ cmeta_gen_status cmeta_fn_generate(cmeta_fn fn, const void *input,
     }
     return CMETA_GEN_ERROR;
 }
-
 
 bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out) {
     cmeta_fn meta;
