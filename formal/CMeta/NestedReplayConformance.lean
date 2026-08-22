@@ -4,6 +4,7 @@ public meta import CMeta.NestedReplayLowering
 import all CMeta.NestedReplayLowering
 public meta import CMeta.NestedReplayBackendPlan
 import all CMeta.NestedReplayBackendPlan
+import CMeta.NestedReplayGeneratedC
 public meta import CMeta.NestedReplayGeneratedC
 
 /-!
