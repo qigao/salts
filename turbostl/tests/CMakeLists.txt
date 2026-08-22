@@ -34,7 +34,7 @@ cmake_add_test(turbostl_hash_test
   FOLDER "turbostl/tests")
 
 cmake_add_test(turbostl_typed_test
-  SOURCES turbostl_typed_test.c
+  SOURCES legacy_typed_test.c
   LIBS TurboUtils::STL TurboUtils::TinyTest
   FOLDER "turbostl/tests")
 
