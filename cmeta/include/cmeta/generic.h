@@ -33,22 +33,11 @@
 #define CMETA_TYPED_ROUTE(kind, ...) \
     CMETA_TYPED_ROUTE_I(CMETA_GENERIC_IS_KIND(kind), kind, __VA_ARGS__)
 
-
+/* `typed(kind, ...)` is the single public finite-generic declaration entry.
+ * Multiple concrete instantiations are written as multiple typed(...) declarations;
+ * CMeta intentionally has no separate batch-container DSL. */
 #ifndef typed
 #define typed(kind, ...) CMETA_TYPED_ROUTE(kind, __VA_ARGS__)
-#endif
-
-
-/* Container batch instantiation -----------------------------------------------
- *
- * Application-facing Containers(...) is just a concise batch form of typed(...).
- * Generic Schema/Replay remains available separately for framework authors.
- */
-#define CMETA_INSTANTIATE_CONTAINER(kind, ...) typed(kind, __VA_ARGS__);
-#ifndef Containers
-#define Containers(...) \
-    Schema(CMETA_INSTANTIATE_CONTAINER, __VA_ARGS__) \
-    _Static_assert(1, "container batch instantiation")
 #endif
 
 #endif /* CMETA_GENERIC_H */
