@@ -75,6 +75,29 @@ TURBO_STL_TRAIT_MISSING      -> STL_TRAIT_MISSING
 
 This preserves a clear module namespace without repeating `turbo_` on every API symbol.
 
+## Typed/raw namespace ownership
+
+The raw STL API owns the natural container namespaces such as `list_*`, `map_*`, `queue_*`, and `stack_*`.
+
+`typed.h` currently defines generic front-end macros such as:
+
+```c
+list_init(list_type, list_ptr, limit)
+map_init(map_type, map_ptr, limit)
+map_put(map_type, map_ptr, key, value)
+```
+
+Those names conflict directly with the new canonical raw API and therefore must be removed. Typed containers continue to use the generated concrete methods produced by CMeta/TurboSTL declarations, for example:
+
+```c
+IntList_init(&list, limit);
+IntList_push_back(&list, value);
+UserMap_put(&map, key, value);
+UserMap_destroy(&map);
+```
+
+There is no overloaded macro layer on top of `list_init`, `map_init`, or other raw names. One spelling has one owner.
+
 ## CMeta / generated facade vocabulary
 
 TurboSTL metadata-generation identifiers also lose the `TURBO_` prefix.
@@ -164,6 +187,7 @@ Verification is behavior/compile/link based:
 - C11 and C++17 public-header tests compile against the natural API;
 - `TurboUtils::STL` builds with its declared `CMeta` dependency only;
 - `TurboUtils::STLStream` continues to compile through its explicit CFlow adapter dependency;
+- typed-header tests prove generated `Type_method` calls work without generic `list_init/map_init` macros;
 - Core and turbo_serial consumers compile after migration;
 - full Linux and Windows builds pass;
 - no completion claim is made until a fresh CI run on the final head succeeds.
