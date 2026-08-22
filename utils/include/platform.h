@@ -10,6 +10,7 @@
 #define PLATFORM_H
 
 #include "turbo_api.h"
+#include <turbo/clock.h>
 
 #ifdef _WIN32
   #define TURBO_WIN32 1
@@ -44,20 +45,8 @@ typedef intptr_t ssize_t;
 #include <time.h>
 
 // =============================================================================
-// Time utilities - platform-independent high-resolution timing
+// Time utilities
 // =============================================================================
-
-/**
- * @brief Get monotonic time in milliseconds (never goes backward)
- * @return Monotonic time in milliseconds, suitable for measuring intervals
- */
-TURBO_C_API uint64_t turbo_monotonic_ms(void);
-
-/**
- * @brief Get real time in milliseconds since Unix epoch
- * @return Wall clock time in milliseconds (can jump if system time changes)
- */
-TURBO_C_API uint64_t turbo_realtime_ms(void);
 
 /**
  * @brief Cross-platform time structure (Y2038 safe)
@@ -82,18 +71,6 @@ typedef struct {
  * @return 0 on success
  */
 TURBO_C_API int turbo_gettimeofday(turbo_timeval_t *tv, turbo_timezone_t *tz);
-
-/**
- * @brief Get current high-resolution time in nanoseconds
- * @return Current time in nanoseconds (monotonic)
- */
-TURBO_C_API uint64_t turbo_hrtime(void);
-
-/**
- * @brief Get uptime in milliseconds since process start
- * @return Process uptime in milliseconds
- */
-TURBO_C_API uint64_t turbo_uptime_ms(void);
 
 /**
  * @brief Thread-safe UTC time decomposition.
@@ -259,16 +236,6 @@ TURBO_C_API int turbo_platform_load_average(turbo_platform_load_average_t *info)
  */
 TURBO_C_API int turbo_platform_network_interfaces(turbo_platform_network_interface_t *interfaces,
                                                 size_t max_interfaces, size_t *count);
-
-/**
- * @brief Convert nanoseconds to milliseconds
- */
-static inline uint64_t turbo_ns_to_ms(uint64_t ns) { return ns / 1000000ULL; }
-
-/**
- * @brief Convert milliseconds to nanoseconds
- */
-static inline uint64_t turbo_ms_to_ns(uint64_t ms) { return ms * 1000000ULL; }
 
 // =============================================================================
 // Timer utilities - cross-platform async timers (Native OS backend)
