@@ -1,4 +1,7 @@
+module
 import CMeta.PreprocessorBackendSelection
+public meta import CMeta.PreprocessorBackendSelection
+import all CMeta.PreprocessorBackendSelection
 
 /-!
 # Preprocessor backend selection conformance

@@ -37,8 +37,7 @@ theorem nestedReplay_length (f : α → β → γ) (xs : List α) (ys : List β)
       simp [nestedReplay, ih, Nat.succ_mul, Nat.add_comm]
 
 /-- Replaying a producer against itself has square cardinality. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy NestedReplayConformance.depth2_matches_model
-public theorem nestedReplay_same_length (f : α → α → γ) (xs : List α) :
+theorem nestedReplay_same_length (f : α → α → γ) (xs : List α) :
     (nestedReplay f xs xs).length = xs.length * xs.length := by
   exact nestedReplay_length f xs xs
 

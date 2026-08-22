@@ -14,8 +14,7 @@ CMeta is a finite, schema-driven compile-time metadata/code-generation layer for
 - tagged-row `Traits(...)` declarations deriving callable trait flags and slots;
 - `interface(...)` / `implements(...)` interface protocol;
 - finite generic kind dispatcher behind `typed(kind, ...)`;
-- header-only complete typed-container instantiation;
-- direct batch container instantiation through `Containers(...)`;
+- header-only complete typed-container instantiation through `typed(...)`;
 - allocation-free `cmeta_range` protocol and range traits;
 - one-pointer typed-container object headers plus static `cmeta_container_desc` metadata;
 - erased default/key/value/entry Range factories.
@@ -38,7 +37,7 @@ Replay(MySchema, mapper)
 
 CFlow operator declarations use structured source rows but normalize to the existing flat consumer ABI before `Replay(CFlowOperators, mapper)` invokes a consumer. The structured grouping is therefore a source-level representation change, not a second operator semantics.
 
-In v50, application `Containers(...)` is deliberately a different semantic surface: it directly instantiates all listed concrete types and does not require naming a schema for later implementation replay.
+Application generic declarations intentionally have one entry point: `typed(kind, ...)`. Multiple concrete container types are declared with multiple `typed(...)` statements rather than a separate batch-container DSL.
 
 ## Generic value types
 
@@ -85,17 +84,15 @@ A concrete algorithmic container is fully instantiated by one declaration:
 typed(List, IntList, int);
 ```
 
-or in a direct batch:
+Multiple instantiations remain explicit and uniform:
 
 ```c
-Containers(
-    (List, IntList, int),
-    (HashMap, Table, int, long),
-    (BTree, Tree, int, long, int_compare)
-);
+typed(List, IntList, int);
+typed(HashMap, Table, int, long);
+typed(BTree, Tree, int, long, int_compare);
 ```
 
-There is no public container `implement(...)`, `DeclareContainers(...)`, or `ImplementContainers(...)` phase.
+There is no public container batch declaration, `implement(...)`, `DeclareContainers(...)`, or `ImplementContainers(...)` phase.
 
 The declaration immediately derives:
 
@@ -166,7 +163,6 @@ Struct(...)
 Enum(...)
 Traits(...)
 typed(...)
-Containers(...)
 ```
 
 and runtime capability APIs such as `stream(...)`.

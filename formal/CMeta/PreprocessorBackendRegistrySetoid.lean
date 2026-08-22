@@ -32,8 +32,7 @@ public instance registrySetoid : Setoid PreprocessorBackendRegistry where
         (hleft key).trans (hright key) }
 
 /-- Exact-key backend-payload observation respects registry Setoid equality. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
-public theorem observe_congr
+theorem observe_congr
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
     (key : BackendKey) :
@@ -42,8 +41,7 @@ public theorem observe_congr
 
 /-- Policy-free candidate discovery respects registry Setoid equality up to
     permutation, which is the correct observation for list representation. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
-public theorem supportingCandidates_congr
+theorem supportingCandidates_congr
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
     (query : BackendQuery)
@@ -54,8 +52,7 @@ public theorem supportingCandidates_congr
 
 /-- Well-formed backend selection respects registry Setoid equality at the
     selected exact backend identity. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
-public theorem selectSupporting_key_congr
+theorem selectSupporting_key_congr
     (wellFormed : WellFormedSelectionPolicy)
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
@@ -71,8 +68,7 @@ public theorem selectSupporting_key_congr
 /-- Selected replay lowering respects registry Setoid equality. The result is
     still computed from concrete registry values; Setoid equality only provides
     the reasoning interface. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
-public theorem selectSupporting_lowering_congr
+theorem selectSupporting_lowering_congr
     (wellFormed : WellFormedSelectionPolicy)
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
@@ -167,8 +163,7 @@ private theorem lookup_none_congr
         simp at hobserve
 
 /-- Total removal is a proper operation on the registry Setoid. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
-public theorem remove_congr
+theorem remove_congr
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
     (key : BackendKey) :
@@ -184,8 +179,7 @@ public theorem remove_congr
 /-- Fresh insertion is congruent as a partial mutation: equivalent registries
     reject the same duplicate exact keys, and successful inserts are equivalent
     finite-map updates at the inserted key. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
-public theorem insert_congr
+theorem insert_congr
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
     (backend : CertifiedPreprocessorBackend) :
@@ -241,8 +235,7 @@ public theorem insert_congr
 /-- Replacement is the composition of a shape-preserving exact lookup check,
     total removal, and fresh insertion. Therefore it respects the same lifted
     partial-mutation relation as insertion. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy registry Setoid/congruence conformance
-public theorem replace_congr
+theorem replace_congr
     {left right : PreprocessorBackendRegistry}
     (heq : left ≈ right)
     (backend : CertifiedPreprocessorBackend) :

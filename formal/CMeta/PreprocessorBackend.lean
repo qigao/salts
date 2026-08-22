@@ -403,8 +403,7 @@ theorem lookup_insert_ne_exact
     rw [lookupEntries, if_neg hne]
 
 /-- Successful insertion is a finite-map frame update at the identity projection. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryMutationConformance
-public theorem lookup_insert_ne
+theorem lookup_insert_ne
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend)
     (inserted : PreprocessorBackendRegistry)
@@ -437,8 +436,7 @@ theorem lookup_remove_ne_exact
   exact lookupEntries_removeEntries_ne registry.entries target key hne
 
 /-- Removal preserves every non-target identity projection. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryMutationConformance
-public theorem lookup_remove_ne
+theorem lookup_remove_ne
     (registry : PreprocessorBackendRegistry)
     (target key : BackendKey)
     (hne : target ≠ key) :
@@ -501,8 +499,7 @@ theorem lookup_replace_ne_exact
           lookup_remove_ne_exact registry backend.key key hne
 
 /-- Replacement preserves every identity projection outside the replaced key. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryMutationConformance
-public theorem lookup_replace_ne
+theorem lookup_replace_ne
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend)
     (replaced : PreprocessorBackendRegistry)

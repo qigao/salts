@@ -1,5 +1,8 @@
+module
 import CMeta.NestedReplayBackendPlan
+public meta import CMeta.NestedReplayBackendPlan
 import CMeta.NestedReplayGccGeneratedC
+public meta import CMeta.NestedReplayGccGeneratedC
 
 /-!
 # Strict-C11 nested replay applicability conformance

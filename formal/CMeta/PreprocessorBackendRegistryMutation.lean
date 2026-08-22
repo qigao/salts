@@ -18,8 +18,7 @@ namespace PreprocessorBackendRegistry
 /-- Inserting a certified backend outside one compatibility class leaves that
     class's supporting candidate list exactly unchanged. This is stronger than a
     permutation statement: the observable candidate representation is identical. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryMutationConformance
-public theorem supportingCandidates_insert_irrelevant
+theorem supportingCandidates_insert_irrelevant
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend)
     (inserted : PreprocessorBackendRegistry)
@@ -46,8 +45,7 @@ public theorem supportingCandidates_insert_irrelevant
 /-- Selection has no mutation-specific behavior: if insertion leaves candidate
     discovery unchanged, every selection policy receives the same input and must
     therefore return the same result. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistryMutationConformance
-public theorem selectSupporting_insert_irrelevant
+theorem selectSupporting_insert_irrelevant
     (registry : PreprocessorBackendRegistry)
     (backend : CertifiedPreprocessorBackend)
     (inserted : PreprocessorBackendRegistry)

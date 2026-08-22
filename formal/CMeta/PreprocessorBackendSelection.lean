@@ -499,8 +499,7 @@ theorem selectSupporting_supports
 
 /-- Any selected supporting backend lowers to the same canonical replay plan;
     selection policy affects which certificate is chosen, never plan semantics. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy LanguageSpec and backend conformance
-public theorem selectSupporting_lowering_canonical
+theorem selectSupporting_lowering_canonical
     (registry : PreprocessorBackendRegistry)
     (policy : BackendSelectionPolicy)
     (query : BackendQuery)
@@ -516,8 +515,7 @@ public theorem selectSupporting_lowering_canonical
 /-- Registry representation order is unobservable for a well-formed policy: if
     two registries contain the same certified entries up to permutation, one
     query and replay IR select the same backend identity. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy CPreprocessorBackendSelectionConformance.registry_order_independent
-public theorem selectSupporting_key_eq_of_entries_perm
+theorem selectSupporting_key_eq_of_entries_perm
     (wellFormed : WellFormedSelectionPolicy)
     (left right : PreprocessorBackendRegistry)
     (query : BackendQuery)
