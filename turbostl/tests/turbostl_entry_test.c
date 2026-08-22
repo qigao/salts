@@ -12,7 +12,7 @@ typedef struct owned_entry_value {
     , (O, owned_entry_value, cmeta_type_owned_entry_value, CMETA_T_OBJECT, \
        cmeta_traits_owned_entry_value)
 
-#include "legacy_generated_typed.h"
+#include <turbostl/typed.h>
 #include "tinytest.h"
 
 static size_t owned_entry_live;
@@ -90,40 +90,51 @@ const cmeta_type_traits cmeta_traits_owned_entry_value = {
 };
 
 const cmeta_type_desc cmeta_type_owned_entry_value = {
-    "owned_entry_value", sizeof(owned_entry_value),
-    _Alignof(owned_entry_value), CMETA_T_OBJECT, NULL,
-    &cmeta_traits_owned_entry_value
+    .name = "owned_entry_value",
+    .size = sizeof(owned_entry_value),
+    .align = _Alignof(owned_entry_value),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cmeta_traits_owned_entry_value,
+    .identity = NULL
 };
 
 const cmeta_type_desc cmeta_type_owned_entry_value_ptr = {
-    "owned_entry_value *", sizeof(owned_entry_value *),
-    _Alignof(owned_entry_value *), CMETA_T_POINTER,
-    &cmeta_type_owned_entry_value, NULL
+    .name = "owned_entry_value *",
+    .size = sizeof(owned_entry_value *),
+    .align = _Alignof(owned_entry_value *),
+    .kind = CMETA_T_POINTER,
+    .pointee = &cmeta_type_owned_entry_value,
+    .traits = NULL,
+    .identity = NULL
 };
-
-typed(HashMap, OwnedEntryMap, owned_entry_value, owned_entry_value);
-typed(BTree, OwnedEntryTree, owned_entry_value, owned_entry_value);
 
 spec("TurboSTL composed entry descriptors") {
     it("copies a borrowed Range entry into an owned collector transient") {
-        OwnedEntryMap source = {0};
-        OwnedEntryMap output = {0};
-        OwnedEntryMap_entry input = {owned_entry_make(1), owned_entry_make(10)};
-        OwnedEntryMap_entry borrowed = {0};
-        OwnedEntryMap_entry transient = {0};
-        OwnedEntryMap_entry moved = {0};
+        HashMap(owned_entry_value, owned_entry_value, source);
+        HashMap(owned_entry_value, owned_entry_value, output);
+        owned_entry_value input_key = owned_entry_make(1);
+        owned_entry_value input_value = owned_entry_make(10);
+        cmeta_entry borrowed = {0};
+        cmeta_entry transient = {0};
+        cmeta_entry moved = {0};
         cmeta_range range;
         cmeta_range_cursor cursor = {0};
         cmeta_collector collector;
+        const cmeta_container_desc *output_desc;
+        const owned_entry_value *stored;
+        size_t moves_before;
 
         owned_entry_fail_copy_at = 0u;
         owned_entry_copy_calls = 0u;
-        check_equal(OwnedEntryMap_init(&source, 1u), TURBO_STL_OK);
-        check_equal(OwnedEntryMap_put(&source, input.key, input.value),
-                    TURBO_STL_OK);
+        owned_entry_move_calls = 0u;
+        check_equal(hash_map_init(&source, 1u), STL_OK);
+        check_equal(hash_map_put(&source, &input_key, &input_value), STL_OK);
         check_true(cmeta_container_range_view(&source,
                                               CMETA_CONTAINER_VIEW_DEFAULT,
                                               &range));
+        check_true(cmeta_type_equal(range.element_type,
+                                    &cmeta_type_hash_entry));
         check_equal(cmeta_type_require_traits(
                         range.element_type,
                         CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
@@ -137,52 +148,82 @@ spec("TurboSTL composed entry descriptors") {
         }
         check_true(range.element_type->traits->copy_construct(&transient,
                                                                &borrowed));
+        check_not_null(transient.key_storage);
+        check_not_null(transient.value_storage);
+        moves_before = owned_entry_move_calls;
         range.element_type->traits->move_construct(&moved, &transient);
-        check_null(transient.key.value);
-        check_null(transient.value.value);
+        check_equal(owned_entry_move_calls, moves_before);
+        check_null(transient.key);
+        check_null(transient.value);
+        check_null(transient.key_storage);
+        check_null(transient.value_storage);
 
-        collector = OwnedEntryMap_collector(&output, 1u);
+        output_desc = cmeta_container_descriptor(&output);
+        check_not_null(output_desc);
+        check_not_null(output_desc->collector);
+        collector = output_desc->collector(&output, 1u);
         check_equal(cmeta_collector_begin(&collector), CMETA_OK);
         check_equal(cmeta_collector_accept(&collector, range.element_type,
                                            &moved), CMETA_OK);
         check_equal(cmeta_collector_finish(&collector), CMETA_OK);
-        check_equal(*OwnedEntryMap_get_const(&output, moved.key)->value, 10);
+        stored = (const owned_entry_value *)hash_map_get_const(&output,
+                                                               moved.key);
+        check_true(stored != NULL && stored->value != NULL);
+        check_equal(*stored->value, 10);
 
         range.element_type->traits->destroy(&transient);
         range.element_type->traits->destroy(&moved);
-        OwnedEntryMap_destroy(&output);
-        OwnedEntryMap_destroy(&source);
-        owned_entry_destroy(&input.value);
-        owned_entry_destroy(&input.key);
+        hash_map_destroy(&output);
+        hash_map_destroy(&source);
+        owned_entry_destroy(&input_value);
+        owned_entry_destroy(&input_key);
         check_equal(owned_entry_live, (size_t)0u);
-        check_true(owned_entry_move_calls >= (size_t)2u);
     }
 
     it("rolls back the key when value copy construction fails") {
-        OwnedEntryTree_entry source = {owned_entry_make(2),
-                                       owned_entry_make(20)};
-        OwnedEntryTree_entry destination = {0};
+        owned_entry_value key = owned_entry_make(2);
+        owned_entry_value value = owned_entry_make(20);
+        cmeta_entry source = {
+            .key_type = &cmeta_type_owned_entry_value,
+            .value_type = &cmeta_type_owned_entry_value,
+            .key = &key,
+            .value = &value,
+            .key_storage = NULL,
+            .value_storage = NULL
+        };
+        cmeta_entry destination = {0};
         size_t live_before = owned_entry_live;
 
         owned_entry_copy_calls = 0u;
         owned_entry_fail_copy_at = 2u;
-        check_false(OwnedEntryTree_entry_cmeta_type.traits->copy_construct(
+        check_false(cmeta_type_ordered_entry.traits->copy_construct(
             &destination, &source));
         check_equal(owned_entry_live, live_before);
+        check_null(destination.key);
+        check_null(destination.value);
+        check_null(destination.key_storage);
+        check_null(destination.value_storage);
         owned_entry_fail_copy_at = 0u;
-        owned_entry_destroy(&source.value);
-        owned_entry_destroy(&source.key);
+        owned_entry_destroy(&value);
+        owned_entry_destroy(&key);
         check_equal(owned_entry_live, (size_t)0u);
     }
 
     it("rejects an equivalent entry descriptor without semantic traits") {
-        OwnedEntryMap output = {0};
-        cmeta_type_desc missing = OwnedEntryMap_entry_cmeta_type;
-        cmeta_collector collector = OwnedEntryMap_collector(&output, 1u);
+        Map(owned_entry_value, owned_entry_value, output);
+        const cmeta_container_desc *desc = cmeta_container_descriptor(&output);
+        cmeta_type_desc missing = cmeta_type_ordered_entry;
+        cmeta_collector collector;
 
+        check_not_null(desc);
+        check_not_null(desc->collector);
         missing.traits = NULL;
+        collector = desc->collector(&output, 1u);
         collector.input_type = &missing;
         check_equal(cmeta_collector_begin(&collector), CMETA_TRAIT_MISSING);
-        check_equal(memcmp(&output, &(OwnedEntryMap){0}, sizeof(output)), 0);
+        check_true(cmeta_container_descriptor(&output) == desc);
+        check_equal(map_init(&output, 1u), STL_OK);
+        check_true(map_empty(&output));
+        map_destroy(&output);
     }
 }
