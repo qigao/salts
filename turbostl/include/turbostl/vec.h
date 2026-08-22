@@ -12,6 +12,7 @@
 #include <turbostl/status.h>
 
 #include <cmeta/cmeta.h>
+#include <cmeta/range.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -21,6 +22,7 @@ extern "C" {
 #endif
 
 typedef struct vec {
+  cmeta_container_header cmeta;
   void *data;
   size_t size;
   size_t capacity;
@@ -33,21 +35,68 @@ typedef struct vec {
   bool initialized;
 } vec_t;
 
-/* Handles must be first initialized with `{0}`. A destroyed handle may be
- * reused. init/from_array on a live handle return STL_INVALID_ARGUMENT without
- * mutation. Borrowed pointers from at/data become invalid after any successful
- * mutation, storage-changing reserve, clear, or destroy. */
-stl_status vec_init(vec_t *vec, const cmeta_type_desc *element_type,
-                    size_t element_limit);
+/* Internal typed bridge used while implementation symbols are migrated. */
+stl_status vec_init_with_type(vec_t *vec, const cmeta_type_desc *element_type,
+                              size_t element_limit);
+stl_status vec_from_array_with_type(vec_t *vec, const void *elements,
+                                    size_t count,
+                                    const cmeta_type_desc *element_type,
+                                    size_t element_limit);
+void vec_destroy_storage(vec_t *vec);
+
+/* Raw byte entry points remain explicit. */
 stl_status vec_init_bytes(vec_t *vec, size_t elem_size, size_t elem_align,
-                          size_t element_limit);
-stl_status vec_from_array(vec_t *vec, const void *elements, size_t count,
-                          const cmeta_type_desc *element_type,
                           size_t element_limit);
 stl_status vec_from_array_bytes(vec_t *vec, const void *elements, size_t count,
                                 size_t elem_size, size_t elem_align,
                                 size_t element_limit);
-void vec_destroy(vec_t *vec);
+
+/* Self-describing typed entry points consume the binding already in the
+ * handle. The wrapper preserves declaration metadata across implementation
+ * reset paths while the compiled implementation is being migrated. */
+static inline stl_status vec_init(vec_t *vec, size_t element_limit) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *type;
+  stl_status status;
+  if (vec == NULL || vec->element_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  kind = vec->cmeta.descriptor;
+  type = vec->element_type;
+  status = vec_init_with_type(vec, type, element_limit);
+  vec->cmeta.descriptor = kind;
+  if (status != STL_OK)
+    vec->element_type = type;
+  return status;
+}
+
+static inline stl_status vec_from_array(vec_t *vec, const void *elements,
+                                        size_t count, size_t element_limit) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *type;
+  stl_status status;
+  if (vec == NULL || vec->element_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  kind = vec->cmeta.descriptor;
+  type = vec->element_type;
+  status = vec_from_array_with_type(vec, elements, count, type, element_limit);
+  vec->cmeta.descriptor = kind;
+  if (status != STL_OK)
+    vec->element_type = type;
+  return status;
+}
+
+static inline void vec_destroy(vec_t *vec) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *type;
+  if (vec == NULL)
+    return;
+  kind = vec->cmeta.descriptor;
+  type = vec->element_type;
+  vec_destroy_storage(vec);
+  vec->cmeta.descriptor = kind;
+  vec->element_type = type;
+}
+
 stl_status vec_clear(vec_t *vec);
 stl_status vec_reserve(vec_t *vec, size_t min_capacity);
 stl_status vec_resize(vec_t *vec, size_t new_size);
@@ -68,11 +117,11 @@ bool vec_empty(const vec_t *vec);
 
 /* Temporary repository-migration aliases. Remove after all callers migrate. */
 typedef vec_t turbo_vec_t;
-#define turbo_vec_init vec_init
+#define turbo_vec_init vec_init_with_type
 #define turbo_vec_init_bytes vec_init_bytes
-#define turbo_vec_from_array vec_from_array
+#define turbo_vec_from_array vec_from_array_with_type
 #define turbo_vec_from_array_bytes vec_from_array_bytes
-#define turbo_vec_destroy vec_destroy
+#define turbo_vec_destroy vec_destroy_storage
 #define turbo_vec_clear vec_clear
 #define turbo_vec_reserve vec_reserve
 #define turbo_vec_resize vec_resize
