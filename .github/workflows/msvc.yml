@@ -68,6 +68,7 @@ jobs:
             cmeta_operator_row_syntax_witness ^
             cmeta_fmt_args_simplification_witness ^
             cmeta_producer_replay_witness ^
+            cmeta_language_surface_witness ^
             cmeta_plan_conformance_witness ^
             cmeta_structured_conformance_witness ^
             cmeta_structured_policy_conformance_witness ^
