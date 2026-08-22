@@ -64,8 +64,7 @@
                 "BUILD_TESTS": true,
                 "BUILD_EXAMPLES": false,
                 "BUILD_BENCHMARKS": false,
-                "ENABLE_ASAN": false,
-                "TINYTEST_BUILD_SELF_TESTS": false
+                "ENABLE_ASAN": false
             }
         },
         {
@@ -101,8 +100,7 @@
                 "BUILD_TESTS": true,
                 "BUILD_EXAMPLES": false,
                 "BUILD_BENCHMARKS": false,
-                "ENABLE_ASAN": false,
-                "TINYTEST_BUILD_SELF_TESTS": false
+                "ENABLE_ASAN": false
             }
         }
     ],
