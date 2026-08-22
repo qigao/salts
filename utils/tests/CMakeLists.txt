@@ -55,14 +55,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   endforeach()
 endif()
 
-# Task-1 fmt surface contracts deliberately do not link TurboUtils::Core.
-# They stub fmt_print and validate only the public macro expansion contract,
-# so fmt can be verified before the following TLog migration removes its old
-# dependency on FMT_NARGS/FMT_ARGS().
+# fmt surface contracts deliberately do not link TurboUtils::Core. They stub
+# fmt_print and validate the public macro expansion contract, but fmt.h also
+# includes the Core platform compatibility header, so the surface targets own
+# an explicit Platform dependency for its canonical clock include path.
 cmake_add_test(test_fmt_surface_contract_c
   SOURCES ${FMT_SURFACE_CONTRACT_C}
   FOLDER "utils/tests"
-  LIBS TurboUtils::CMeta)
+  LIBS TurboUtils::CMeta TurboUtils::Platform)
 target_include_directories(test_fmt_surface_contract_c PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../parser
@@ -80,7 +80,7 @@ endif()
 cmake_add_test(test_fmt_surface_contract_cpp
   SOURCES ${FMT_SURFACE_CONTRACT_CPP}
   FOLDER "utils/tests"
-  LIBS TurboUtils::CMeta)
+  LIBS TurboUtils::CMeta TurboUtils::Platform)
 target_include_directories(test_fmt_surface_contract_cpp PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../parser
