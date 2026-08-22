@@ -52,7 +52,7 @@ endif()
 # Link dependencies
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC TurboUtils::CMeta
+  PUBLIC TurboUtils::CMeta TurboUtils::Platform
   PRIVATE TurboUtils::STL
           ${FMT_LEXER_LIBRARY} TurboUtils::SDS # Simple Dynamic Strings
           aklomp::base64 zstd::libzstd
