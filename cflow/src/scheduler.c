@@ -1,180 +1,116 @@
+#include <cflow/clock.h>
+#include <cflow/executor.h>
 #include <cflow/scheduler.h>
+#include "timer_queue.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct cflow_scheduled_task {
-    cflow_task_id id;
-    uint64_t due;
-    uint64_t order;
-    cflow_task_fn fn;
-    void *user;
-    bool cancelled;
-} cflow_scheduled_task;
-
 typedef struct cflow_test_loop_state {
-    cflow_scheduled_task *tasks;
-    size_t count;
-    size_t capacity;
-    uint64_t now;
-    uint64_t next_order;
-    cflow_task_id next_id;
-    bool running;
+    cflow_clock clock;
+    cflow_executor executor;
+    cflow_timer_queue timers;
 } cflow_test_loop_state;
 
-static bool ensure_capacity(cflow_test_loop_state *s, size_t need) {
-    if (need <= s->capacity) return true;
-    size_t cap = s->capacity ? s->capacity * 2u : 16u;
-    while (cap < need) {
-        if (cap > SIZE_MAX / 2u) { cap = need; break; }
-        cap *= 2u;
-    }
-    cflow_scheduled_task *p = realloc(s->tasks, cap * sizeof(*p));
-    if (!p) return false;
-    s->tasks = p;
-    s->capacity = cap;
-    return true;
+static bool test_take_and_run_one(cflow_test_loop_state *state) {
+    cflow_timer_task task;
+    cflow_instant now;
+
+    if (!state) return false;
+    now = cflow_clock_now(&state->clock);
+    if (!cflow_timer_queue_take_ready(&state->timers, now, &task)) return false;
+    if (!cflow_executor_post(&state->executor, task.fn, task.user)) return false;
+    return cflow_executor_run_one(&state->executor);
 }
 
-static cflow_task_id test_post_after(void *state,
-                                     uint64_t delay,
+static cflow_task_id test_post_after(void *self,
+                                     uint64_t delay_ms,
                                      cflow_task_fn fn,
                                      void *user) {
-    cflow_test_loop_state *s = (cflow_test_loop_state *)state;
-    if (!s || !fn || !ensure_capacity(s, s->count + 1u)) return 0;
-    uint64_t due = UINT64_MAX - s->now < delay ? UINT64_MAX : s->now + delay;
-    cflow_task_id id = s->next_id++;
-    if (id == 0) id = s->next_id++;
-    s->tasks[s->count++] = (cflow_scheduled_task){
-        .id = id,
-        .due = due,
-        .order = s->next_order++,
-        .fn = fn,
-        .user = user,
-        .cancelled = false
-    };
-    return id;
+    cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    cflow_instant now;
+    cflow_deadline deadline;
+
+    if (!state || !fn) return 0u;
+    now = cflow_clock_now(&state->clock);
+    deadline = cflow_deadline_after(now, cflow_duration_from_ms(delay_ms));
+    return cflow_timer_queue_schedule(&state->timers, deadline, fn, user);
 }
 
-static bool test_cancel(void *state, cflow_task_id id) {
-    cflow_test_loop_state *s = (cflow_test_loop_state *)state;
-    if (!s || !id) return false;
-    for (size_t i = 0; i < s->count; ++i) {
-        if (s->tasks[i].id == id && !s->tasks[i].cancelled) {
-            s->tasks[i].cancelled = true;
-            return true;
+static bool test_cancel(void *self, cflow_task_id id) {
+    cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    return state && cflow_timer_queue_cancel(&state->timers, id);
+}
+
+static bool test_run_one(void *self) {
+    return test_take_and_run_one((cflow_test_loop_state *)self);
+}
+
+static size_t test_run_ready(void *self) {
+    cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    size_t count = 0u;
+    while (test_take_and_run_one(state)) ++count;
+    return count;
+}
+
+static size_t test_advance(void *self, uint64_t ticks_ms) {
+    cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    if (!state || !cflow_clock_advance(&state->clock,
+                                       cflow_duration_from_ms(ticks_ms)))
+        return 0u;
+    return test_run_ready(state);
+}
+
+static size_t test_run_until_idle(void *self, size_t max_steps) {
+    cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    size_t ran = 0u;
+
+    if (!state) return 0u;
+    while (cflow_timer_queue_pending(&state->timers) != 0u &&
+           (max_steps == 0u || ran < max_steps)) {
+        cflow_deadline deadline;
+        cflow_instant now = cflow_clock_now(&state->clock);
+
+        if (!cflow_timer_queue_next_deadline(&state->timers, &deadline)) break;
+        if (deadline.ns > now.ns) {
+            if (!cflow_clock_advance(
+                    &state->clock,
+                    cflow_deadline_remaining(deadline, now)))
+                break;
         }
-    }
-    return false;
-}
-
-static void compact_cancelled(cflow_test_loop_state *s) {
-    size_t w = 0;
-    for (size_t i = 0; i < s->count; ++i) {
-        if (!s->tasks[i].cancelled) {
-            if (w != i) s->tasks[w] = s->tasks[i];
-            ++w;
-        }
-    }
-    s->count = w;
-}
-
-static size_t best_ready(const cflow_test_loop_state *s) {
-    size_t best = SIZE_MAX;
-    for (size_t i = 0; i < s->count; ++i) {
-        const cflow_scheduled_task *t = &s->tasks[i];
-        if (t->cancelled || t->due > s->now) continue;
-        if (best == SIZE_MAX || t->due < s->tasks[best].due ||
-            (t->due == s->tasks[best].due && t->order < s->tasks[best].order))
-            best = i;
-    }
-    return best;
-}
-
-static bool test_run_one(void *state) {
-    cflow_test_loop_state *s = (cflow_test_loop_state *)state;
-    if (!s) return false;
-    compact_cancelled(s);
-    size_t i = best_ready(s);
-    if (i == SIZE_MAX) return false;
-    cflow_scheduled_task task = s->tasks[i];
-    memmove(&s->tasks[i], &s->tasks[i + 1],
-            (s->count - i - 1u) * sizeof(s->tasks[0]));
-    --s->count;
-    bool outer = s->running;
-    s->running = true;
-    task.fn(task.user);
-    s->running = outer;
-    return true;
-}
-
-static size_t test_run_ready(void *state) {
-    size_t n = 0;
-    while (test_run_one(state)) ++n;
-    return n;
-}
-
-static size_t test_advance(void *state, uint64_t ticks) {
-    cflow_test_loop_state *s = (cflow_test_loop_state *)state;
-    if (!s) return 0;
-    s->now = UINT64_MAX - s->now < ticks ? UINT64_MAX : s->now + ticks;
-    return test_run_ready(s);
-}
-
-static bool next_due(const cflow_test_loop_state *s, uint64_t *due) {
-    bool found = false;
-    uint64_t best = 0;
-    for (size_t i = 0; i < s->count; ++i) {
-        if (s->tasks[i].cancelled) continue;
-        if (!found || s->tasks[i].due < best) {
-            best = s->tasks[i].due;
-            found = true;
-        }
-    }
-    if (found && due) *due = best;
-    return found;
-}
-
-static size_t test_run_until_idle(void *state, size_t max_steps) {
-    cflow_test_loop_state *s = (cflow_test_loop_state *)state;
-    if (!s) return 0;
-    size_t ran = 0;
-    for (;;) {
-        compact_cancelled(s);
-        if (s->count == 0 || (max_steps && ran >= max_steps)) break;
-        uint64_t due = 0;
-        if (!next_due(s, &due)) break;
-        if (due > s->now) s->now = due;
-        if (!test_run_one(s)) break;
+        if (!test_take_and_run_one(state)) break;
         ++ran;
     }
     return ran;
 }
 
-static bool test_wait_idle(void *state) {
-    (void)test_run_until_idle(state, 0);
-    return true;
+static bool test_wait_idle(void *self) {
+    cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    if (!state) return false;
+    (void)test_run_until_idle(state, 0u);
+    return cflow_timer_queue_pending(&state->timers) == 0u &&
+           cflow_executor_wait_idle(&state->executor);
 }
 
-static uint64_t test_now(void *state) {
-    const cflow_test_loop_state *s = (const cflow_test_loop_state *)state;
-    return s ? s->now : 0;
+static uint64_t test_now(void *self) {
+    cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    return state ? cflow_instant_to_ms(cflow_clock_now(&state->clock)) : 0u;
 }
 
-static size_t test_pending(void *state) {
-    const cflow_test_loop_state *s = (const cflow_test_loop_state *)state;
-    if (!s) return 0;
-    size_t n = 0;
-    for (size_t i = 0; i < s->count; ++i)
-        if (!s->tasks[i].cancelled) ++n;
-    return n;
+static size_t test_pending(void *self) {
+    cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    if (!state) return 0u;
+    return cflow_timer_queue_pending(&state->timers) +
+           cflow_executor_pending(&state->executor);
 }
 
-static void test_destroy(void *state) {
-    cflow_test_loop_state *s = (cflow_test_loop_state *)state;
-    if (!s) return;
-    free(s->tasks);
-    free(s);
+static void test_destroy(void *self) {
+    cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    if (!state) return;
+    cflow_timer_queue_destroy(&state->timers);
+    cflow_executor_destroy(&state->executor);
+    cflow_clock_destroy(&state->clock);
+    free(state);
 }
 
 CMETA_IMPLEMENTS(cflow_scheduler, test_loop,
@@ -192,11 +128,24 @@ CMETA_IMPLEMENTS(cflow_scheduler, test_loop,
 );
 
 bool cflow_scheduler_test_init(cflow_scheduler *scheduler) {
+    cflow_test_loop_state *state;
+
     if (!scheduler) return false;
     memset(scheduler, 0, sizeof(*scheduler));
-    cflow_test_loop_state *state = calloc(1, sizeof(*state));
+    state = (cflow_test_loop_state *)calloc(1, sizeof(*state));
     if (!state) return false;
-    state->next_id = 1;
+
+    if (!cflow_clock_virtual_init(&state->clock, (cflow_instant){0u}) ||
+        !cflow_executor_manual_init(&state->executor) ||
+        !cflow_timer_queue_init(&state->timers)) {
+        if (cflow_clock_valid(&state->clock)) cflow_clock_destroy(&state->clock);
+        if (cflow_executor_valid(&state->executor))
+            cflow_executor_destroy(&state->executor);
+        cflow_timer_queue_destroy(&state->timers);
+        free(state);
+        return false;
+    }
+
     *scheduler = test_loop_as_cflow_scheduler(state);
     return true;
 }
@@ -204,7 +153,7 @@ bool cflow_scheduler_test_init(cflow_scheduler *scheduler) {
 cflow_task_id cflow_scheduler_post(cflow_scheduler *scheduler,
                                    cflow_task_fn fn,
                                    void *user) {
-    return cflow_scheduler_post_after(scheduler, 0, fn, user);
+    return cflow_scheduler_post_after(scheduler, 0u, fn, user);
 }
 
 const char *cflow_scheduler_name(const cflow_scheduler *scheduler) {
