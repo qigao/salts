@@ -36,7 +36,9 @@ set_target_properties(cmeta_core_test PROPERTIES
   C_EXTENSIONS OFF)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(cmeta_core_test PRIVATE -Werror=missing-field-initializers)
+  foreach(tgt cmeta_core_test cmeta_collector_test)
+    target_compile_options(${tgt} PRIVATE -Werror=missing-field-initializers)
+  endforeach()
 endif()
 
 set_target_properties(cmeta_meta_header_test PROPERTIES
