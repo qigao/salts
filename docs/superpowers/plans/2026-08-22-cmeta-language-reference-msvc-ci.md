@@ -2,23 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the implemented CMeta language surface explicit, stop formal proof expansion at the verified M7g checkpoint, and add an MSVC portability/Lean-build CI lane without pretending MSVC is a formally certified replay backend.
+**Goal:** Make the implemented CMeta language surface explicit, stop formal proof expansion at the verified M7g checkpoint, and add an MSVC portability/conformance CI lane without creating an MSVC Lean/proof backend.
 
-**Architecture:** Keep GCC/Clang as the only backend-certificate lanes. Add a portable MSVC formal configuration that skips the nested-replay backend certificate but compiles/runs the shared CMeta/CFlow conformance witnesses and builds the existing Lean package on Windows. Publish one authoritative language reference with application/framework/runtime/future boundaries.
+**Architecture:** Keep GCC/Clang as the existing backend-certificate Lean lanes. Add a portable MSVC formal configuration that skips the nested-replay backend certificate and only compiles/runs the shared CMeta/CFlow C conformance witnesses. Publish one authoritative language reference with application/framework/runtime/future boundaries.
 
-**Tech Stack:** strict C11, CMake presets, MSVC, Ninja, GitHub Actions, Lean 4.30.0, Lake.
+**Tech Stack:** strict C11, CMake presets, MSVC, Ninja, GitHub Actions, existing Lean 4.30 GCC/Clang proof lanes.
 
 **Spec:** `docs/superpowers/specs/2026-08-22-cmeta-language-reference-msvc-ci-design.md`
 
 ## Global Constraints
 
 - M7g is the current formalization stopping point; M8 is TODO, not a release gate.
-- Do not add `CompilerFamily.msvc` or an MSVC nested-replay generated certificate.
+- Do not add `CompilerFamily.msvc`, an MSVC nested-replay generated certificate, or an MSVC Lean/proof job.
 - `typed(...)` is the only public generic/container instantiation entry; `Containers(...)` remains removed with no alias.
 - MSVC CI must use CMake presets for configuration/build policy; YAML may only enter the developer environment and invoke presets/standard tools.
+- The MSVC workflow must not invoke `elan`, `lean`, or `lake`.
 - Keep GCC/Clang snapshot semantics unchanged.
 - Prefer ordinary C composition and existing CMeta patterns over new syntax.
-- Do not commit `formal/lake-manifest.json`; CI generates it with `lake update` before the build.
 
 ---
 
@@ -47,7 +47,7 @@ Ensure the public API list contains `Struct`, `Enum`, `Traits`, `typed`, `typed_
 
 - [x] **Step 4: Record proof stopping policy**
 
-The design spec supersedes M8 as a mandatory gate: the verified M7g checkpoint is sufficient for current syntax/semantics, while root isolation, MSVC backend certification, and stronger completeness claims are future work.
+The design spec supersedes M8 as a mandatory gate: the verified M7g checkpoint is sufficient for current syntax/semantics, while root isolation and stronger completeness claims remain optional future work. MSVC proof is explicitly out of scope.
 
 ---
 
@@ -80,14 +80,14 @@ Add `formal-windows-msvc` and `build-formal-windows-msvc` using the existing Win
 
 ---
 
-### Task 3: Add the Windows/MSVC + Lean CI workflow
+### Task 3: Add the Windows/MSVC conformance workflow
 
 **Files:**
 - Create: `.github/workflows/msvc.yml`
 
 **Interfaces:**
 - Consumes: `formal-windows-msvc`, `build-formal-windows-msvc`.
-- Produces one non-proof-backend CI signal: `MSVC / portable conformance + Lean`.
+- Produces one CI signal: `MSVC / portable conformance`.
 
 - [x] **Step 1: Enter the Visual Studio developer environment**
 
@@ -101,22 +101,9 @@ Invoke only the CMake presets. Build all existing portable formal targets except
 
 Run `ctest --test-dir build/formal-windows-msvc --output-on-failure` after explicitly building the EXCLUDE_FROM_ALL witness targets.
 
-- [x] **Step 4: Build Lean on Windows with the repository's existing manifest policy**
+- [x] **Step 4: Keep Lean out of the MSVC lane**
 
-Use pinned elan `v4.2.2`, read the Lean version from `formal/lean-toolchain`, and run exactly the same Lake lifecycle used by the Linux proof lane:
-
-```bash
-elan toolchain install "$(cat formal/lean-toolchain)"
-cd formal
-lake update
-lake build --wfail
-```
-
-Do not use a CI action that requires a pre-existing `lake-manifest.json`; this repository deliberately generates the manifest during CI and does not commit it.
-
-- [x] **Step 5: Scope workflow triggers**
-
-Trigger on changes under `formal/**`, `cmeta/**`, `cflow/**`, CMake preset/config files, and the workflow itself.
+The workflow ends after portable C/MSVC conformance. It does not install elan and does not run Lean or Lake. Lean's own Windows toolchain support is a separate concern.
 
 ---
 
@@ -136,10 +123,10 @@ Require no changes to generated Lean snapshot payloads, replay theorem statement
 
 Use the existing `Lean proofs` workflow as the regression gate for GCC and Clang. Both lanes must retain snapshot zero-diff, applicability checks, API guards, and `lake build --wfail`.
 
-- [ ] **Step 3: Verify the new MSVC workflow**
+- [ ] **Step 3: Verify the MSVC workflow**
 
-Require configuration to report portable-conformance mode, portable witness targets and CTest to pass, and the pinned Windows Lean build to pass.
+Require configuration to report portable-conformance mode and all portable witness targets/CTest to pass. No Lean result is required or expected from this lane.
 
 - [x] **Step 4: Publish a draft PR**
 
-Base the PR on `leanv4-plan-b`, summarize the proof stopping policy, language surface, removed `Containers(...)`, and the distinction between backend proof lanes and the MSVC portability lane.
+Base the PR on `leanv4-plan-b`, summarize the proof stopping policy, language surface, removed `Containers(...)`, and the distinction between existing Lean proof lanes and the MSVC portability lane.
