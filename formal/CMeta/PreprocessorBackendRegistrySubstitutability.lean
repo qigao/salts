@@ -36,7 +36,7 @@ private theorem entries_nodup_of_keys_nodup
       · exact ih hparts.2
 
 /-- Candidate filtering preserves the registry's entry uniqueness. -/
-theorem supportingCandidates_nodup
+private theorem supportingCandidates_nodup
     (registry : PreprocessorBackendRegistry)
     (query : BackendQuery)
     (ir : ReplayIR) :
