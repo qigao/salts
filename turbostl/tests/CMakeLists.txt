@@ -57,6 +57,8 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   foreach(tgt turbostl_list_test turbostl_map_test)
     target_compile_options(${tgt} PRIVATE -Werror=misleading-indentation)
   endforeach()
+  target_compile_options(turbostl_map_test PRIVATE
+    -Werror=missing-field-initializers)
 endif()
 
 cmake_add_test(turbostl_rbtree_test
