@@ -1,203 +1,311 @@
-# TurboSTL Natural API Naming Design
+# TurboSTL Self-Describing Natural API Design
 
 ## Goal
 
-Make TurboSTL expose one canonical, natural C API with no `turbo_` prefix on container types, functions, status values, or TurboSTL-internal public macros.
+TurboSTL exposes one natural user API with no `turbo_` prefix and no user-visible generated names such as `IntVec`, `IntList`, `IntMap`, `IntVec_init`, or `UserMap_put`.
 
-This is an intentional breaking API/ABI cleanup. The final installed TurboSTL headers must not preserve `turbo_*` aliases.
-
-## Scope
-
-The rename covers every TurboSTL container and supporting API currently owned by `TurboUtils::STL`, including:
-
-- vec
-- deque
-- list
-- stack
-- queue
-- heap / priority queue
-- set / hash set
-- map / hash map
-- multimap
-- btree / bplus tree
-- sort
-- shared status and metadata-generation vocabulary
-
-The module/directory identity remains `turbostl`, and the CMake target remains `TurboUtils::STL`. This change removes the redundant symbol prefix, not the module identity.
-
-## Canonical naming
-
-Container types use the container name directly:
+The canonical user model is:
 
 ```c
-turbo_list_t       -> list_t
-turbo_list_iter_t  -> list_iter_t
-turbo_map_t        -> map_t
-turbo_hash_map_t   -> hash_map_t
-turbo_btree_t      -> btree_t
+Vec(int, numbers);
+List(User, users);
+Map(int, User, user_map);
+
+vec_init(&numbers, 128u);
+vec_push(&numbers, &value);
+
+list_init(&users, 128u);
+list_push_back(&users, &user);
+
+map_init(&user_map, 128u);
+map_put(&user_map, &id, &user);
 ```
 
-Functions follow the same namespace:
+The concrete element/key/value types are bound by the declaration DSL and carried by the container object itself. Users do not pass a generated type token to operations.
 
-```c
-turbo_list_init(...)       -> list_init(...)
-turbo_list_push_back(...)  -> list_push_back(...)
-turbo_map_put(...)         -> map_put(...)
-turbo_hash_map_get(...)    -> hash_map_get(...)
-turbo_btree_remove(...)    -> btree_remove(...)
-```
+This is an intentional breaking API/ABI cleanup.
 
-Source files follow the public container name:
+## Module identity
 
-```text
-src/turbo_list.c       -> src/list.c
-src/turbo_map.c        -> src/map.c
-src/turbo_btree.c      -> src/btree.c
-```
+The directory/module remains `turbostl` and the CMake target remains `TurboUtils::STL`.
 
-Public header filenames are already natural (`list.h`, `map.h`, `btree.h`, ...), so they remain unchanged.
-
-## Status naming
-
-A completely generic `status` type would be too collision-prone, so the shared module status keeps an STL-level namespace:
-
-```c
-turbo_stl_status             -> stl_status
-TURBO_STL_OK                 -> STL_OK
-TURBO_STL_INVALID_ARGUMENT   -> STL_INVALID_ARGUMENT
-TURBO_STL_OUT_OF_MEMORY      -> STL_OUT_OF_MEMORY
-TURBO_STL_CAPACITY_EXCEEDED  -> STL_CAPACITY_EXCEEDED
-TURBO_STL_EMPTY              -> STL_EMPTY
-TURBO_STL_NOT_FOUND          -> STL_NOT_FOUND
-TURBO_STL_TYPE_MISMATCH      -> STL_TYPE_MISMATCH
-TURBO_STL_TRAIT_MISSING      -> STL_TRAIT_MISSING
-```
-
-This preserves a clear module namespace without repeating `turbo_` on every API symbol.
-
-## Typed/raw namespace ownership
-
-The raw STL API owns the natural container namespaces such as `list_*`, `map_*`, `queue_*`, and `stack_*`.
-
-`typed.h` currently defines generic front-end macros such as:
-
-```c
-list_init(list_type, list_ptr, limit)
-map_init(map_type, map_ptr, limit)
-map_put(map_type, map_ptr, key, value)
-```
-
-Those names conflict directly with the new canonical raw API and therefore must be removed. Typed containers continue to use the generated concrete methods produced by CMeta/TurboSTL declarations, for example:
-
-```c
-IntList_init(&list, limit);
-IntList_push_back(&list, value);
-UserMap_put(&map, key, value);
-UserMap_destroy(&map);
-```
-
-There is no overloaded macro layer on top of `list_init`, `map_init`, or other raw names. One spelling has one owner.
-
-## CMeta / generated facade vocabulary
-
-TurboSTL metadata-generation identifiers also lose the `TURBO_` prefix.
-
-Examples:
-
-```text
-TURBO_META_VEC_METHODS       -> STL_META_VEC_METHODS
-TURBO_META_MAP_METHODS       -> STL_META_MAP_METHODS
-TURBO_STL_KIND_ROW_Vec       -> STL_KIND_ROW_Vec
-TURBO_STL_INVALID_ARGUMENT   -> STL_INVALID_ARGUMENT
-```
-
-CMeta itself retains its own `CMETA_*` namespace. The rename must not move TurboSTL policy into CMeta or create new CMeta aliases.
-
-## Compatibility policy
-
-There is no permanent `turbo_*` compatibility API.
-
-The implementation migration is atomic at repository level:
-
-1. introduce the new canonical names;
-2. migrate all TurboSTL implementation files, tests, examples, CFlow adapters, Core consumers, and turbo_serial consumers;
-3. remove the old `turbo_*` declarations and definitions before the refactor is considered complete;
-4. install only the natural API.
-
-Temporary aliases may exist only inside an intermediate development commit when necessary to keep a mechanical rename buildable. They must not remain in the final PR tree and must not be installed.
-
-## Dependency boundary
-
-This naming refactor must not change the approved module dependency contract.
-
-In particular:
+The base dependency contract remains:
 
 ```text
 TurboSTL -> CMeta
 ```
 
-remains valid for the base STL target. TurboSTL must not gain a dependency on Core, Platform, or Concurrency merely to make old compatibility headers compile.
+The base STL target must not gain Core, Platform, Concurrency, or CFlow dependencies. `TurboUtils::STLStream` remains the explicit optional `TurboUtils::STL + TurboUtils::CFlow` adapter target.
 
-`TurboUtils::STLStream` may continue to depend on `TurboUtils::CFlow` as its separate adapter target.
+## Self-describing handles
 
-Any existing accidental include of Core compatibility headers from TurboSTL must be removed rather than satisfied by adding a lower-level dependency.
-
-## API shape examples
-
-Before:
+There is exactly one runtime handle type per container kind:
 
 ```c
-turbo_list_t list = {0};
-turbo_stl_status rc = turbo_list_init(&list, &cmeta_type_int, 128u);
-if (rc == TURBO_STL_OK) {
-    int value = 7;
-    turbo_list_push_back(&list, &value, NULL);
-}
-turbo_list_destroy(&list);
+vec_t
+list_t
+map_t
+hash_map_t
+set_t
+...
 ```
 
-After:
+`Vec(int, numbers)` does **not** create `IntVec`. It declares an ordinary `vec_t` whose CMeta element descriptor is pre-bound:
 
 ```c
-list_t list = {0};
-stl_status rc = list_init(&list, &cmeta_type_int, 128u);
-if (rc == STL_OK) {
-    int value = 7;
-    list_push_back(&list, &value, NULL);
-}
+#define Vec(T, name) \
+    vec_t name = { .element_type = CMETA_TYPEOF(T) }
+```
+
+The exact implementation macro may use an internal initializer helper, but the observable contract is that `numbers` has type `vec_t` and carries `CMETA_TYPEOF(int)` before `vec_init()`.
+
+Two-type containers bind both descriptors:
+
+```c
+#define Map(K, V, name) \
+    map_t name = { .key_type = CMETA_TYPEOF(K), \
+                   .value_type = CMETA_TYPEOF(V) }
+```
+
+Equivalent declaration macros exist for all supported kinds:
+
+```text
+Vec(T, name)
+Deque(T, name)
+List(T, name)
+Stack(T, name)
+Queue(T, name)
+Heap(T, name)
+Set(T, name)
+HashSet(T, name)
+Map(K, V, name)
+HashMap(K, V, name)
+MultiMap(K, V, name)
+BTree(K, V, name)
+BPlusTree(K, V, name)
+```
+
+These macros bind type metadata only. They do not allocate storage and do not initialize the runtime container.
+
+## Natural operation API
+
+Users call one stable operation vocabulary per container kind:
+
+```c
+vec_init(&v, limit);
+vec_push(&v, &value);
+vec_pop(&v, &out);
+vec_destroy(&v);
+
+list_init(&list, limit);
+list_push_back(&list, &value);
 list_destroy(&list);
+
+map_init(&map, limit);
+map_put(&map, &key, &value);
+map_get(&map, &key);
+map_destroy(&map);
 ```
 
-The same rule applies consistently to every container.
+There is no public overload taking a generated type token:
 
-## Implementation constraints
+```c
+/* Not public API */
+vec_init(IntVec, &v, limit);
+map_put(UserMap, &m, key, value);
+```
 
-- Do not create a second long-lived API surface.
-- Do not retain `turbo_*` aliases in installed headers.
-- Do not solve compile failures by adding Platform/Core dependencies to TurboSTL.
-- Do not add source-spelling/grep tests that merely assert the absence of a token.
-- Preserve runtime behavior; this work is naming and ownership cleanup, not a container algorithm rewrite.
-- Keep C11 compatibility and C++17 header compatibility.
+There is also no public generated method vocabulary:
+
+```c
+/* Not public API */
+IntVec_init(...);
+IntVec_push(...);
+IntMap_put(...);
+```
+
+## Initialization contract
+
+Typed initialization reads the type binding already stored in the handle.
+
+For example:
+
+```c
+stl_status vec_init(vec_t *vec, size_t element_limit);
+stl_status list_init(list_t *list, size_t element_limit);
+stl_status map_init(map_t *map, size_t entry_limit);
+```
+
+A typed initializer returns `STL_INVALID_ARGUMENT` when the required binding is absent or invalid.
+
+Raw-byte entry points remain explicit and separate, for example:
+
+```c
+vec_init_bytes(...);
+map_init_bytes(...);
+```
+
+They are not part of type inference and continue to accept explicit size/alignment/comparator information where required.
+
+`from_array`/`from_arrays` typed entry points follow the same rule: they use the handle's pre-bound descriptors rather than receiving descriptors as normal user arguments.
+
+## Binding lifetime
+
+Type bindings are configuration, not runtime storage.
+
+`clear()` and `destroy()` release/reset runtime contents while preserving declaration-time type bindings. Therefore this remains valid:
+
+```c
+Vec(int, values);
+vec_init(&values, 32u);
+vec_destroy(&values);
+vec_init(&values, 64u);  /* still bound to int */
+```
+
+A destroyed self-describing handle can be initialized again without repeating a type token.
+
+## CMeta integration
+
+CMeta remains the source of type descriptors and traits:
+
+```text
+Struct / Enum / built-in type
+        ↓
+CMETA_TYPEOF(T)
+        ↓
+container handle binding
+        ↓
+copy / move / destroy / compare / hash
+```
+
+TurboSTL no longer needs a named generated wrapper type merely to carry CMeta metadata.
+
+Container Range/collector integration should read type metadata from the runtime handle. The previous `CMETA_CONTAINER1_DEFINE(IntVec, ...)` / `CMETA_CONTAINER2_DEFINE(UserMap, ...)` layer is not the user-facing TurboSTL model and should be removed from TurboSTL's public path where no longer required.
+
+CMeta's generic container-generation infrastructure may remain for other users; this refactor does not require deleting generic facilities from CMeta itself.
+
+## Stream integration
+
+Removing generated user types simplifies CFlow integration because container *kinds* are finite even though element types are open-ended.
+
+A future/public generic stream entry point may dispatch on ordinary handle types:
+
+```c
+_Generic((container_ptr),
+    vec_t *: ...,
+    list_t *: ...,
+    map_t *: ...)
+```
+
+It does not need an association for `IntVec`, `UserVec`, or every application-defined container type.
+
+Collectors likewise bind to a concrete output handle rather than a generated type token. The intended terminal shape is:
+
+```c
+to_list(&pipeline, &output, limit);
+```
+
+not:
+
+```c
+to_list(&pipeline, OutputList, &output, limit);
+```
+
+## Type-safety boundary
+
+Strict C11 cannot recover an arbitrary application-defined element type from a `void *` argument and perform C++-style template deduction without compiler extensions or a finite `_Generic` registry.
+
+Therefore the supported guarantee is:
+
+- declaration-time type metadata is inferred from `Vec(T, ...)` / `Map(K,V,...)`;
+- lifecycle/compare/hash behavior is driven by the correct CMeta descriptors;
+- operations require no repeated type token;
+- element/key/value payloads remain pointer-based (`&value`, `&key`) as in the underlying C API.
+
+The design does not introduce GNU `typeof`, compiler-specific template emulation, or a user-maintained `_Generic` association table merely to make `vec_push(&v, 42)` possible.
+
+## Natural naming
+
+All TurboSTL public container/status names lose the `turbo_` prefix:
+
+```text
+turbo_vec_t        -> vec_t
+turbo_list_t       -> list_t
+turbo_map_t        -> map_t
+turbo_hash_map_t   -> hash_map_t
+
+turbo_vec_push     -> vec_push
+turbo_list_init    -> list_init
+turbo_map_put      -> map_put
+
+turbo_stl_status   -> stl_status
+TURBO_STL_OK       -> STL_OK
+```
+
+Source filenames also become natural (`vec.c`, `list.c`, `map.c`, ...).
+
+There is no permanent `turbo_*` compatibility API in final installed TurboSTL headers.
+
+## Typed/generated vocabulary policy
+
+TurboSTL must not publish generated names such as `IntList_init()` as the normal end-user path.
+
+`typed.h` must not define semantic macros that shadow natural raw functions. In particular, it must not own macros named `list_init`, `map_init`, `map_put`, etc.
+
+As this self-describing model is implemented, TurboSTL's old `typed(Vec, IntVec, int)` registration/generation surface should be removed from the public entry point rather than maintained as a second API.
+
+## Status naming
+
+Shared status remains namespaced at the module level:
+
+```c
+typedef enum stl_status {
+    STL_OK = 0,
+    STL_INVALID_ARGUMENT,
+    STL_OUT_OF_MEMORY,
+    STL_CAPACITY_EXCEEDED,
+    STL_EMPTY,
+    STL_NOT_FOUND,
+    STL_TYPE_MISMATCH,
+    STL_TRAIT_MISSING
+} stl_status;
+```
+
+A completely generic `status` name is intentionally avoided.
+
+## Compatibility policy
+
+The repository migration is atomic:
+
+1. introduce self-describing handle bindings and declaration macros;
+2. switch typed initializers to consume stored bindings;
+3. migrate tests/examples/Core/turbo_serial/CFlow adapters to the natural API;
+4. remove generated TurboSTL typed-wrapper usage from the public path;
+5. remove temporary `turbo_*` aliases;
+6. install only the self-describing natural API.
+
+Temporary aliases may exist in intermediate commits only. They must not remain in the final PR tree.
 
 ## Verification
 
-Verification is behavior/compile/link based:
+Verification is compile/link/runtime based:
 
-- each container's existing tests are migrated to the natural API and must still pass;
-- C11 and C++17 public-header tests compile against the natural API;
-- `TurboUtils::STL` builds with its declared `CMeta` dependency only;
-- `TurboUtils::STLStream` continues to compile through its explicit CFlow adapter dependency;
-- typed-header tests prove generated `Type_method` calls work without generic `list_init/map_init` macros;
-- Core and turbo_serial consumers compile after migration;
+- a C11 test declares `Vec(int, v)`, calls `vec_init(&v, limit)`, pushes/pops values, destroys, and reinitializes without a type token;
+- equivalent declaration/init/operation tests cover List, Stack, Queue, Set/HashSet, Map/HashMap, MultiMap, BTree/BPlusTree;
+- user tests contain no `IntVec`, `IntList`, `IntMap`, `Type_method`, or generated container type token;
+- C++17 can include all public headers;
+- existing ownership, iterator invalidation, capacity, compare/hash, and sort behavior remains unchanged;
+- `TurboUtils::STL` builds with CMeta only;
+- `TurboUtils::STLStream` compiles with explicit CFlow dependency;
 - full Linux and Windows builds pass;
-- no completion claim is made until a fresh CI run on the final head succeeds.
+- final completion requires a fresh CI run on the final head.
 
-Absence of legacy `turbo_*` TurboSTL API is verified by final diff/API review, not by source-text tests.
+No grep/source-spelling test is added; API absence is established by final public-header/diff review.
 
 ## Out of scope
 
-- renaming the repository/module directory `turbostl`;
-- renaming the CMake target `TurboUtils::STL`;
-- changing container algorithms or storage models;
-- changing CMeta naming policy;
+- changing container algorithms/storage models except fields required to retain type bindings;
+- introducing C++ templates or compiler-specific `typeof` extensions;
+- renaming the `turbostl` directory or `TurboUtils::STL` target;
+- changing CMeta naming policy outside the integration required by TurboSTL;
 - changing CFlow execution semantics.
