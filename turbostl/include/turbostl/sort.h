@@ -1,5 +1,5 @@
-#ifndef TURBO_STL_SORT_H
-#define TURBO_STL_SORT_H
+#ifndef TURBOSTL_SORT_H
+#define TURBOSTL_SORT_H
 
 #include <turbostl/status.h>
 
@@ -10,15 +10,18 @@
 extern "C" {
 #endif
 
-/* Stable O(n log n) sort. The type descriptor is borrowed for the call and
- * must provide COMPARE, COPY, MOVE, and DESTROY. scratch_byte_limit bounds
- * the single temporary value array; insufficient space leaves base intact. */
-turbo_stl_status turbo_stable_sort(
-    void *base, size_t count, const cmeta_type_desc *type,
-    size_t scratch_byte_limit);
+/* Stable in-place sort of typed or raw contiguous elements. */
+stl_status stable_sort(void *base, size_t count,
+                       const cmeta_type_desc *element_type,
+                       int (*compare)(const void *left, const void *right,
+                                      void *context),
+                       void *context);
+
+/* Temporary repository-migration alias. */
+#define turbo_stable_sort stable_sort
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* TURBO_STL_SORT_H */
+#endif /* TURBOSTL_SORT_H */
