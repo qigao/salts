@@ -211,4 +211,200 @@ suite("TurboSTL typed public header") {
         set_destroy(&set);
         hash_set_destroy(&hash_set);
     }
+
+    it("exposes associative entry views and collectors without generated entries") {
+        HashMap(int, int, hash_map);
+        Map(int, int, map);
+        MultiMap(int, int, multimap);
+        BTree(int, int, btree);
+        BPlusTree(int, int, bplus_tree);
+        HashMap(int, int, hash_output);
+        Map(int, int, map_output);
+        MultiMap(int, int, multimap_output);
+        BTree(int, int, btree_output);
+        BPlusTree(int, int, bplus_output);
+        Map(int, int, rejected);
+        const cmeta_container_desc *hash_desc = cmeta_container_descriptor(&hash_map);
+        const cmeta_container_desc *map_desc = cmeta_container_descriptor(&map);
+        const cmeta_container_desc *multimap_desc = cmeta_container_descriptor(&multimap);
+        const cmeta_container_desc *btree_desc = cmeta_container_descriptor(&btree);
+        const cmeta_container_desc *bplus_desc = cmeta_container_descriptor(&bplus_tree);
+        cmeta_entry input;
+        cmeta_collector collector;
+        int key = 3;
+        int value = 30;
+
+        check_not_null(hash_desc);
+        check_not_null(map_desc);
+        check_not_null(multimap_desc);
+        check_not_null(btree_desc);
+        check_not_null(bplus_desc);
+
+        check_equal(hash_map_init(&hash_map, 2u), STL_OK);
+        check_equal(map_init(&map, 2u), STL_OK);
+        check_equal(multimap_init(&multimap, 2u), STL_OK);
+        check_equal(btree_init(&btree, 2u), STL_OK);
+        check_equal(bplus_tree_init(&bplus_tree, 2u), STL_OK);
+
+        check_equal(hash_map_put(&hash_map, &key, &value), STL_OK);
+        check_equal(map_put(&map, &key, &value), STL_OK);
+        check_equal(multimap_put(&multimap, &key, &value), STL_OK);
+        check_equal(btree_put(&btree, &key, &value), STL_OK);
+        check_equal(bplus_tree_put(&bplus_tree, &key, &value), STL_OK);
+
+#define CHECK_ASSOC_VIEWS(handle, expected_entry_type, key_flags, value_flags, entry_flags) do { \
+    cmeta_range default_range = {0};                                            \
+    cmeta_range keys_range = {0};                                               \
+    cmeta_range values_range = {0};                                             \
+    cmeta_range entries_range = {0};                                            \
+    cmeta_range_cursor key_cursor = {0};                                        \
+    cmeta_range_cursor value_cursor = {0};                                      \
+    cmeta_range_cursor entry_cursor = {0};                                      \
+    cmeta_entry entry = {0};                                                    \
+    int key_out = 0;                                                            \
+    int value_out = 0;                                                          \
+    cmeta_gen_status entry_status;                                              \
+    check_true(cmeta_container_range_view(&(handle),                            \
+                    CMETA_CONTAINER_VIEW_DEFAULT, &default_range));             \
+    check_true(cmeta_container_range_view(&(handle),                            \
+                    CMETA_CONTAINER_VIEW_KEYS, &keys_range));                   \
+    check_true(cmeta_container_range_view(&(handle),                            \
+                    CMETA_CONTAINER_VIEW_VALUES, &values_range));               \
+    check_true(cmeta_container_range_view(&(handle),                            \
+                    CMETA_CONTAINER_VIEW_ENTRIES, &entries_range));             \
+    check_true(cmeta_type_equal(default_range.element_type,                     \
+                                (expected_entry_type)));                         \
+    check_true(cmeta_type_equal(entries_range.element_type,                     \
+                                (expected_entry_type)));                         \
+    check_true(cmeta_type_equal(keys_range.element_type, &cmeta_type_int));     \
+    check_true(cmeta_type_equal(values_range.element_type, &cmeta_type_int));   \
+    check_true((keys_range.flags & (key_flags)) == (key_flags));                \
+    check_true((values_range.flags & (value_flags)) == (value_flags));          \
+    check_true((entries_range.flags & (entry_flags)) == (entry_flags));         \
+    check_equal(cmeta_range_next(&keys_range, &key_cursor, &key_out) ==         \
+                    CMETA_GEN_ERROR, false);                                    \
+    check_equal(key_out, key);                                                  \
+    check_equal(cmeta_range_next(&values_range, &value_cursor, &value_out) ==   \
+                    CMETA_GEN_ERROR, false);                                    \
+    check_equal(value_out, value);                                              \
+    entry_status = cmeta_range_next(&entries_range, &entry_cursor, &entry);     \
+    check_true(entry_status == CMETA_GEN_VALUE ||                              \
+               entry_status == CMETA_GEN_VALUE_AND_DONE);                      \
+    check_true(cmeta_type_equal(entry.key_type, &cmeta_type_int));              \
+    check_true(cmeta_type_equal(entry.value_type, &cmeta_type_int));            \
+    check_equal(*(const int *)entry.key, key);                                  \
+    check_equal(*(const int *)entry.value, value);                              \
+    check_null(entry.key_storage);                                              \
+    check_null(entry.value_storage);                                            \
+} while (0)
+
+        CHECK_ASSOC_VIEWS(hash_map, &cmeta_type_hash_entry,
+            CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
+            CMETA_RANGE_SIZED | CMETA_RANGE_REUSABLE,
+            CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE);
+        CHECK_ASSOC_VIEWS(map, &cmeta_type_ordered_entry,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+                CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+                CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE);
+        CHECK_ASSOC_VIEWS(multimap, &cmeta_type_ordered_entry,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+                CMETA_RANGE_REUSABLE,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+                CMETA_RANGE_REUSABLE);
+        CHECK_ASSOC_VIEWS(btree, &cmeta_type_ordered_entry,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+                CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+                CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE);
+        CHECK_ASSOC_VIEWS(bplus_tree, &cmeta_type_ordered_entry,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+                CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+                CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE);
+#undef CHECK_ASSOC_VIEWS
+
+        input = (cmeta_entry){
+            .key_type = &cmeta_type_int,
+            .value_type = &cmeta_type_int,
+            .key = &key,
+            .value = &value
+        };
+
+#define BEGIN_ACCEPT_FINISH(output, expected_type) do {                         \
+    const cmeta_container_desc *desc = cmeta_container_descriptor(&(output));   \
+    check_not_null(desc);                                                       \
+    check_not_null(desc->collector);                                            \
+    if (desc != NULL && desc->collector != NULL) {                              \
+        collector = desc->collector(&(output), 2u);                             \
+        check_true(cmeta_type_equal(collector.input_type, (expected_type)));    \
+        check_equal(cmeta_collector_begin(&collector), CMETA_OK);               \
+        check_equal(cmeta_collector_accept(&collector, (expected_type),         \
+                                           &input), CMETA_OK);                   \
+        check_equal(cmeta_collector_finish(&collector), CMETA_OK);              \
+    }                                                                           \
+} while (0)
+
+        BEGIN_ACCEPT_FINISH(hash_output, &cmeta_type_hash_entry);
+        BEGIN_ACCEPT_FINISH(map_output, &cmeta_type_ordered_entry);
+        BEGIN_ACCEPT_FINISH(multimap_output, &cmeta_type_ordered_entry);
+        BEGIN_ACCEPT_FINISH(btree_output, &cmeta_type_ordered_entry);
+        BEGIN_ACCEPT_FINISH(bplus_output, &cmeta_type_ordered_entry);
+#undef BEGIN_ACCEPT_FINISH
+
+        check_equal(*(const int *)hash_map_get_const(&hash_output, &key), value);
+        check_equal(*(const int *)map_get_const(&map_output, &key), value);
+        check_equal(multimap_count(&multimap_output, &key), (size_t)1u);
+        check_equal(*(const int *)btree_get_const(&btree_output, &key), value);
+        check_equal(*(const int *)bplus_tree_get_const(&bplus_output, &key), value);
+
+        {
+            const cmeta_container_desc *desc = cmeta_container_descriptor(&rejected);
+            cmeta_type_desc missing_traits = cmeta_type_ordered_entry;
+            check_not_null(desc);
+            check_not_null(desc->collector);
+            if (desc != NULL && desc->collector != NULL) {
+                missing_traits.traits = NULL;
+                collector = desc->collector(&rejected, 1u);
+                collector.input_type = &missing_traits;
+                check_equal(cmeta_collector_begin(&collector), CMETA_TRAIT_MISSING);
+                check_equal(map_init(&rejected, 1u), STL_OK);
+                map_destroy(&rejected);
+            }
+        }
+
+        {
+            long wrong_value = 30L;
+            cmeta_entry mismatch = {
+                .key_type = &cmeta_type_int,
+                .value_type = &cmeta_type_long,
+                .key = &key,
+                .value = &wrong_value
+            };
+            const cmeta_container_desc *desc = cmeta_container_descriptor(&rejected);
+            collector = desc->collector(&rejected, 1u);
+            check_equal(cmeta_collector_begin(&collector), CMETA_OK);
+            check_equal(cmeta_collector_accept(&collector,
+                                               &cmeta_type_ordered_entry,
+                                               &mismatch),
+                        CMETA_TYPE_MISMATCH);
+            check_equal(map_init(&rejected, 1u), STL_OK);
+            map_destroy(&rejected);
+        }
+
+        hash_map_destroy(&hash_output);
+        map_destroy(&map_output);
+        multimap_destroy(&multimap_output);
+        btree_destroy(&btree_output);
+        bplus_tree_destroy(&bplus_output);
+        hash_map_destroy(&hash_map);
+        map_destroy(&map);
+        multimap_destroy(&multimap);
+        btree_destroy(&btree);
+        bplus_tree_destroy(&bplus_tree);
+    }
 }
