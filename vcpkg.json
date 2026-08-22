@@ -7,6 +7,10 @@
       "host": true
     },
     {
+      "name": "re2c",
+      "host": true
+    },
+    {
       "name": "simde"
     },
     {
