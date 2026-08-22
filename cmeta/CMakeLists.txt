@@ -22,7 +22,7 @@ install(
   TARGETS ${TARGET_NAME}
   EXPORT TurboUtilsTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_BINDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(
@@ -30,6 +30,7 @@ install(
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
 
-if(BUILD_TESTS)
+option(CMETA_BUILD_TESTS "Build CMeta tests independently of the global suite" OFF)
+if(BUILD_TESTS OR CMETA_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
