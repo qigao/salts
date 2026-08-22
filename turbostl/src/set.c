@@ -6,7 +6,7 @@ turbostl_status set_init(set_t *set,
                                 const cmeta_type_desc *key_type,
                                 size_t element_limit) {
   if (set == NULL) return TURBO_STL_INVALID_ARGUMENT;
-  return map_init(&set->map, key_type, &cmeta_type_bool,
+  return map_raw_init(&set->map, key_type, &cmeta_type_bool,
                         element_limit);
 }
 
@@ -71,7 +71,7 @@ turbostl_status set_from_array_bytes(
 }
 
 void set_destroy(set_t *set) {
-  if (set != NULL) map_destroy(&set->map);
+  if (set != NULL) map_raw_destroy_storage(&set->map);
 }
 
 void set_clear(set_t *set) {
