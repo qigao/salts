@@ -16,16 +16,19 @@
 #include <turbostl/multimap.h>
 #include <turbostl/btree.h>
 #include <turbostl/bplus_tree.h>
+#include <turbostl/detail/instance_meta.h>
 
 /* Self-describing declaration DSL. These declarations bind CMeta metadata but
  * perform no allocation and do not create generated user-visible C types. */
 #ifndef Vec
 #define Vec(T, name) \
-  vec_t name = { .element_type = CMETA_TYPEOF(T) }
+  vec_t name = { .cmeta = { &stl_vec_container_desc }, \
+                 .element_type = CMETA_TYPEOF(T) }
 #endif
 #ifndef Deque
 #define Deque(T, name) \
-  deque_t name = { .element_type = CMETA_TYPEOF(T) }
+  deque_t name = { .cmeta = { &stl_deque_container_desc }, \
+                   .element_type = CMETA_TYPEOF(T) }
 #endif
 #ifndef List
 #define List(T, name) \
@@ -33,23 +36,28 @@
 #endif
 #ifndef Stack
 #define Stack(T, name) \
-  stack_t name = { .raw = { .element_type = CMETA_TYPEOF(T) } }
+  stack_t name = { .raw = { .cmeta = { &stl_stack_container_desc }, \
+                            .element_type = CMETA_TYPEOF(T) } }
 #endif
 #ifndef Queue
 #define Queue(T, name) \
-  queue_t name = { .raw = { .element_type = CMETA_TYPEOF(T) } }
+  queue_t name = { .raw = { .cmeta = { &stl_queue_container_desc }, \
+                            .element_type = CMETA_TYPEOF(T) } }
 #endif
 #ifndef Heap
 #define Heap(T, name) \
-  heap_t name = { .element_type = CMETA_TYPEOF(T) }
+  heap_t name = { .cmeta = { &stl_heap_container_desc }, \
+                  .element_type = CMETA_TYPEOF(T) }
 #endif
 #ifndef Set
 #define Set(T, name) \
-  set_t name = { .element_type = CMETA_TYPEOF(T) }
+  set_t name = { .cmeta = { &stl_set_container_desc }, \
+                 .element_type = CMETA_TYPEOF(T) }
 #endif
 #ifndef HashSet
 #define HashSet(T, name) \
-  hash_set_t name = { .element_type = CMETA_TYPEOF(T) }
+  hash_set_t name = { .cmeta = { &stl_hash_set_container_desc }, \
+                      .element_type = CMETA_TYPEOF(T) }
 #endif
 #ifndef HashMap
 #define HashMap(K, V, name) \
