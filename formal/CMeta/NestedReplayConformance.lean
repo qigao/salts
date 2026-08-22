@@ -1,6 +1,10 @@
 module
-import CMeta.NestedReplayBackendPlan
-import CMeta.NestedReplayGeneratedC
+import all CMeta.NestedReplay
+public meta import CMeta.NestedReplayLowering
+import all CMeta.NestedReplayLowering
+public meta import CMeta.NestedReplayBackendPlan
+import all CMeta.NestedReplayBackendPlan
+public meta import CMeta.NestedReplayGeneratedC
 
 /-!
 # Real C nested Producer replay conformance
