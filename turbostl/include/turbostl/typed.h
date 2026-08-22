@@ -62,6 +62,21 @@
   map_t name = { { &stl_map_container_desc }, CMETA_TYPEOF(K), \
                  CMETA_TYPEOF(V), NULL, UINT64_C(0) }
 #endif
+#ifndef MultiMap
+#define MultiMap(K, V, name) \
+  multimap_t name = { .key_type = CMETA_TYPEOF(K), \
+                      .value_type = CMETA_TYPEOF(V) }
+#endif
+#ifndef BTree
+#define BTree(K, V, name) \
+  btree_t name = { .key_type = CMETA_TYPEOF(K), \
+                   .value_type = CMETA_TYPEOF(V) }
+#endif
+#ifndef BPlusTree
+#define BPlusTree(K, V, name) \
+  bplus_tree_t name = { .key_type = CMETA_TYPEOF(K), \
+                        .value_type = CMETA_TYPEOF(V) }
+#endif
 
 /* Legacy generated-kind registrations remain temporarily for repository
  * migration only. They are removed once every TurboSTL consumer uses the
