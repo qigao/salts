@@ -18,7 +18,7 @@ extern const cmeta_container_desc stl_heap_container_desc;
 extern const cmeta_container_desc stl_set_container_desc;
 extern const cmeta_container_desc stl_hash_set_container_desc;
 extern const cmeta_container_desc stl_hash_map_container_desc;
-extern const cmeta_container_desc stl_map_instance_container_desc;
+extern const cmeta_container_desc stl_map_container_desc;
 extern const cmeta_container_desc stl_multimap_container_desc;
 extern const cmeta_container_desc stl_btree_container_desc;
 extern const cmeta_container_desc stl_bplus_tree_container_desc;

@@ -45,7 +45,7 @@ size_t hash_bytes(const void *key, size_t key_size, void *context);
 bool hash_key_equal(const void *left, const void *right, size_t key_size,
                     void *context);
 
-/* Internal typed bridge for compiled implementation and legacy wrappers. */
+/* Internal typed-storage bridge used by the natural instance wrappers. */
 stl_status hash_map_raw_init(hash_map_t *map,
                              const cmeta_type_desc *key_type,
                              const cmeta_type_desc *value_type,
@@ -138,33 +138,6 @@ static inline const void *hash_map_key_at_const(const hash_map_t *map,
 void *hash_map_value_at(hash_map_t *map, size_t slot);
 const void *hash_map_value_at_const(const hash_map_t *map, size_t slot);
 
-/* Temporary repository-migration aliases. */
-typedef hash_fn turbo_hash_fn;
-typedef hash_equal_fn turbo_hash_equal_fn;
-typedef hash_map_t turbo_hash_map_t;
-#define turbo_hash_bytes hash_bytes
-#define turbo_hash_key_equal hash_key_equal
-#define turbo_hash_map_init hash_map_raw_init
-#define turbo_hash_map_init_bytes hash_map_init_bytes
-#define turbo_hash_map_from_arrays hash_map_raw_from_arrays
-#define turbo_hash_map_from_arrays_bytes hash_map_from_arrays_bytes
-#define turbo_hash_map_destroy hash_map_raw_destroy_storage
-#define turbo_hash_map_clear hash_map_clear
-#define turbo_hash_map_reserve hash_map_reserve
-#define turbo_hash_map_put hash_map_put
-#define turbo_hash_map_get hash_map_get
-#define turbo_hash_map_get_const hash_map_get_const
-#define turbo_hash_map_contains hash_map_contains
-#define turbo_hash_map_remove hash_map_remove
-#define turbo_hash_map_size hash_map_size
-#define turbo_hash_map_capacity hash_map_capacity
-#define turbo_hash_map_entry_limit hash_map_entry_limit
-#define turbo_hash_map_generation hash_map_generation
-#define turbo_hash_map_empty hash_map_empty
-#define turbo_hash_map_key_at hash_map_key_at
-#define turbo_hash_map_key_at_const hash_map_key_at_const
-#define turbo_hash_map_value_at hash_map_value_at
-#define turbo_hash_map_value_at_const hash_map_value_at_const
 
 #ifdef __cplusplus
 }

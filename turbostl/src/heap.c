@@ -26,10 +26,10 @@ static bool heap_less(const heap_t *heap, size_t left, size_t right) {
     return heap_compare_values(heap, left, right) < 0;
 }
 
-static turbostl_status heap_next_capacity(const heap_t *heap, size_t minimum,
+static stl_status heap_next_capacity(const heap_t *heap, size_t minimum,
                                                  size_t *out_capacity) {
     size_t capacity;
-    if (minimum > heap->element_limit) return TURBO_STL_CAPACITY_EXCEEDED;
+    if (minimum > heap->element_limit) return STL_CAPACITY_EXCEEDED;
     capacity = heap->capacity ? heap->capacity : TURBO_HEAP_MIN_CAPACITY;
     if (capacity > heap->element_limit) capacity = heap->element_limit;
     while (capacity < minimum) {
@@ -37,41 +37,41 @@ static turbostl_status heap_next_capacity(const heap_t *heap, size_t minimum,
         capacity *= 2u;
     }
     *out_capacity = capacity;
-    return TURBO_STL_OK;
+    return STL_OK;
 }
-static turbostl_status heap_grow_to(heap_t *heap, size_t minimum, bool *changed) {
+static stl_status heap_grow_to(heap_t *heap, size_t minimum, bool *changed) {
     void *data;
     size_t capacity, index;
-    turbostl_status status;
+    stl_status status;
     if (changed) *changed = false;
-    if (!heap_valid(heap)) return TURBO_STL_INVALID_ARGUMENT;
-    if (minimum <= heap->capacity) return TURBO_STL_OK;
+    if (!heap_valid(heap)) return STL_INVALID_ARGUMENT;
+    if (minimum <= heap->capacity) return STL_OK;
     status = heap_next_capacity(heap, minimum, &capacity);
-    if (status != TURBO_STL_OK) return status;
+    if (status != STL_OK) return status;
     status = sequence_allocate(capacity, heap->elem_stride, heap->elem_align, &data);
-    if (status != TURBO_STL_OK) return status;
+    if (status != STL_OK) return status;
     if (!heap->element_type) {
         if (heap->size) memcpy(data, heap->data, heap->size * heap->elem_stride);
     } else {
         for (index = 0u; index < heap->size; ++index) {
             status = sequence_move_destroy(heap->element_type, heap->elem_size,
                 (unsigned char *)data + index * heap->elem_stride, heap_slot(heap, index));
-            if (status != TURBO_STL_OK) { sequence_deallocate(data); return status; }
+            if (status != STL_OK) { sequence_deallocate(data); return status; }
         }
     }
     sequence_deallocate(heap->data);
     heap->data = data; heap->capacity = capacity;
     if (changed) *changed = true;
-    return TURBO_STL_OK;
+    return STL_OK;
 }
-static turbostl_status heap_prepare_copy(const heap_t *heap, const void *elem,
+static stl_status heap_prepare_copy(const heap_t *heap, const void *elem,
                                                 void **out_value) {
-    turbostl_status status;
-    if (!elem || !out_value) return TURBO_STL_INVALID_ARGUMENT;
+    stl_status status;
+    if (!elem || !out_value) return STL_INVALID_ARGUMENT;
     status = sequence_allocate(1u, heap->elem_stride, heap->elem_align, out_value);
-    if (status != TURBO_STL_OK) return status;
+    if (status != STL_OK) return status;
     status = sequence_copy(heap->element_type, heap->elem_size, *out_value, elem);
-    if (status != TURBO_STL_OK) { sequence_deallocate(*out_value); *out_value = NULL; }
+    if (status != STL_OK) { sequence_deallocate(*out_value); *out_value = NULL; }
     return status;
 }
 static void heap_discard_prepared(const heap_t *heap, void *value) {
@@ -114,82 +114,82 @@ static void heap_sift_down(heap_t *heap, size_t index, void *scratch) {
     }
 }
 
-static turbostl_status heap_initialize(heap_t *heap, const cmeta_type_desc *type,
+static stl_status heap_initialize(heap_t *heap, const cmeta_type_desc *type,
                                               size_t size, size_t align, size_t limit,
                                               heap_compare_fn compare, void *context) {
-    turbostl_status status;
+    stl_status status;
     size_t stride;
     uint64_t generation;
-    if (!heap || (!type && !compare)) return TURBO_STL_INVALID_ARGUMENT;
-    if (heap->initialized) return TURBO_STL_INVALID_ARGUMENT;
+    if (!heap || (!type && !compare)) return STL_INVALID_ARGUMENT;
+    if (heap->initialized) return STL_INVALID_ARGUMENT;
     status = sequence_stride(size, align, &stride);
-    if (status != TURBO_STL_OK) return status;
+    if (status != STL_OK) return status;
     generation = heap->generation + UINT64_C(1);
     memset(heap, 0, sizeof(*heap));
     heap->elem_size = size; heap->elem_stride = stride; heap->elem_align = align;
     heap->element_limit = limit; heap->element_type = type; heap->compare = compare;
     heap->compare_ctx = context; heap->generation = generation; heap->initialized = true;
-    return TURBO_STL_OK;
+    return STL_OK;
 }
-turbostl_status heap_init_bytes(heap_t *heap, size_t elem_size, size_t elem_align,
+stl_status heap_init_bytes(heap_t *heap, size_t elem_size, size_t elem_align,
                                        size_t element_limit, heap_compare_fn compare,
                                        void *compare_ctx) {
     return heap_initialize(heap, NULL, elem_size, elem_align, element_limit, compare, compare_ctx);
 }
-turbostl_status heap_init(heap_t *heap, const cmeta_type_desc *element_type,
+stl_status heap_raw_init(heap_t *heap, const cmeta_type_desc *element_type,
                                  size_t element_limit) {
-    turbostl_status status;
-    if (!heap || heap->initialized) return TURBO_STL_INVALID_ARGUMENT;
+    stl_status status;
+    if (!heap || heap->initialized) return STL_INVALID_ARGUMENT;
     status = sequence_require_type(element_type, true);
-    if (status != TURBO_STL_OK) return status;
+    if (status != STL_OK) return status;
     return heap_initialize(heap, element_type, element_type->size, element_type->align,
                                  element_limit, NULL, NULL);
 }
-turbostl_status heap_from_array_bytes(heap_t *heap, const void *elements, size_t count,
+stl_status heap_from_array_bytes(heap_t *heap, const void *elements, size_t count,
                                              size_t elem_size, size_t elem_align, size_t limit,
                                              heap_compare_fn compare, void *context) {
     heap_t temporary = {0};
-    turbostl_status status;
+    stl_status status;
     size_t index;
     uint64_t generation;
-    if (!heap) return TURBO_STL_INVALID_ARGUMENT;
-    if (heap->initialized) return TURBO_STL_INVALID_ARGUMENT;
+    if (!heap) return STL_INVALID_ARGUMENT;
+    if (heap->initialized) return STL_INVALID_ARGUMENT;
     if ((count && !elements) || count > limit)
-        return count > limit ? TURBO_STL_CAPACITY_EXCEEDED : TURBO_STL_INVALID_ARGUMENT;
+        return count > limit ? STL_CAPACITY_EXCEEDED : STL_INVALID_ARGUMENT;
     status = heap_init_bytes(&temporary, elem_size, elem_align, limit, compare, context);
-    if (status != TURBO_STL_OK) return status;
+    if (status != STL_OK) return status;
     for (index = 0u; index < count; ++index) {
         status = heap_push(&temporary, (const unsigned char *)elements + index * elem_size);
-        if (status != TURBO_STL_OK) { heap_destroy(&temporary); return status; }
+        if (status != STL_OK) { heap_raw_destroy_storage(&temporary); return status; }
     }
     generation = heap->generation + UINT64_C(1);
     temporary.generation = generation;
     *heap = temporary;
-    return TURBO_STL_OK;
+    return STL_OK;
 }
-turbostl_status heap_from_array(heap_t *heap, const void *elements, size_t count,
+stl_status heap_raw_from_array(heap_t *heap, const void *elements, size_t count,
                                        const cmeta_type_desc *type, size_t limit) {
     heap_t temporary = {0};
-    turbostl_status status;
+    stl_status status;
     size_t index;
     uint64_t generation;
-    if (!heap) return TURBO_STL_INVALID_ARGUMENT;
-    if (heap->initialized) return TURBO_STL_INVALID_ARGUMENT;
+    if (!heap) return STL_INVALID_ARGUMENT;
+    if (heap->initialized) return STL_INVALID_ARGUMENT;
     if ((count && !elements) || count > limit)
-        return count > limit ? TURBO_STL_CAPACITY_EXCEEDED : TURBO_STL_INVALID_ARGUMENT;
-    status = heap_init(&temporary, type, limit);
-    if (status != TURBO_STL_OK) return status;
+        return count > limit ? STL_CAPACITY_EXCEEDED : STL_INVALID_ARGUMENT;
+    status = heap_raw_init(&temporary, type, limit);
+    if (status != STL_OK) return status;
     for (index = 0u; index < count; ++index) {
         status = heap_push(&temporary, (const unsigned char *)elements + index * type->size);
-        if (status != TURBO_STL_OK) { heap_destroy(&temporary); return status; }
+        if (status != STL_OK) { heap_raw_destroy_storage(&temporary); return status; }
     }
     generation = heap->generation + UINT64_C(1);
     temporary.generation = generation;
     *heap = temporary;
-    return TURBO_STL_OK;
+    return STL_OK;
 }
 
-void heap_destroy(heap_t *heap) {
+void heap_raw_destroy_storage(heap_t *heap) {
     uint64_t generation;
     if (!heap) return;
     generation = heap->generation;
@@ -201,59 +201,59 @@ void heap_destroy(heap_t *heap) {
     memset(heap, 0, sizeof(*heap));
     heap->generation = generation;
 }
-turbostl_status heap_clear(heap_t *heap) {
+stl_status heap_clear(heap_t *heap) {
     size_t index;
-    turbostl_status status;
-    if (!heap_valid(heap)) return TURBO_STL_INVALID_ARGUMENT;
+    stl_status status;
+    if (!heap_valid(heap)) return STL_INVALID_ARGUMENT;
     for (index = 0u; index < heap->size; ++index) {
         status = sequence_destroy_value(heap->element_type, heap_slot(heap, index));
-        if (status != TURBO_STL_OK) return status;
+        if (status != STL_OK) return status;
     }
     if (heap->size) { heap->size = 0u; ++heap->generation; }
-    return TURBO_STL_OK;
+    return STL_OK;
 }
-turbostl_status heap_reserve(heap_t *heap, size_t min_capacity) {
+stl_status heap_reserve(heap_t *heap, size_t min_capacity) {
     bool changed;
-    turbostl_status status = heap_grow_to(heap, min_capacity, &changed);
-    if (status == TURBO_STL_OK && changed) ++heap->generation;
+    stl_status status = heap_grow_to(heap, min_capacity, &changed);
+    if (status == STL_OK && changed) ++heap->generation;
     return status;
 }
-turbostl_status heap_push(heap_t *heap, const void *elem) {
+stl_status heap_push(heap_t *heap, const void *elem) {
     void *prepared = NULL;
     void *scratch = NULL;
-    turbostl_status status;
-    if (!heap_valid(heap) || !elem) return TURBO_STL_INVALID_ARGUMENT;
-    if (heap->size >= heap->element_limit) return TURBO_STL_CAPACITY_EXCEEDED;
+    stl_status status;
+    if (!heap_valid(heap) || !elem) return STL_INVALID_ARGUMENT;
+    if (heap->size >= heap->element_limit) return STL_CAPACITY_EXCEEDED;
     status = heap_prepare_copy(heap, elem, &prepared);
-    if (status != TURBO_STL_OK) return status;
+    if (status != STL_OK) return status;
     status = sequence_allocate(1u, heap->elem_stride, heap->elem_align, &scratch);
-    if (status != TURBO_STL_OK) { heap_discard_prepared(heap, prepared); return status; }
+    if (status != STL_OK) { heap_discard_prepared(heap, prepared); return status; }
     status = heap_grow_to(heap, heap->size + 1u, NULL);
-    if (status != TURBO_STL_OK) { sequence_deallocate(scratch); heap_discard_prepared(heap, prepared); return status; }
+    if (status != STL_OK) { sequence_deallocate(scratch); heap_discard_prepared(heap, prepared); return status; }
     status = sequence_move_destroy(heap->element_type, heap->elem_size,
         heap_slot(heap, heap->size), prepared);
     sequence_deallocate(prepared);
-    if (status != TURBO_STL_OK) { sequence_deallocate(scratch); return status; }
+    if (status != STL_OK) { sequence_deallocate(scratch); return status; }
     ++heap->size;
     heap_sift_up(heap, heap->size - 1u, scratch);
     sequence_deallocate(scratch);
     ++heap->generation;
-    return TURBO_STL_OK;
+    return STL_OK;
 }
-turbostl_status heap_pop(heap_t *heap, void *out_elem) {
+stl_status heap_pop(heap_t *heap, void *out_elem) {
     void *scratch = NULL;
-    turbostl_status status;
+    stl_status status;
     size_t last;
-    if (!heap_valid(heap)) return TURBO_STL_INVALID_ARGUMENT;
-    if (!heap->size) return TURBO_STL_EMPTY;
+    if (!heap_valid(heap)) return STL_INVALID_ARGUMENT;
+    if (!heap->size) return STL_EMPTY;
     if (heap->size > 1u) {
         status = sequence_allocate(1u, heap->elem_stride, heap->elem_align, &scratch);
-        if (status != TURBO_STL_OK) return status;
+        if (status != STL_OK) return status;
     }
     status = out_elem ? sequence_move_destroy(heap->element_type, heap->elem_size, out_elem,
                                                      heap_slot(heap, 0u))
                      : sequence_destroy_value(heap->element_type, heap_slot(heap, 0u));
-    if (status != TURBO_STL_OK) { sequence_deallocate(scratch); return status; }
+    if (status != STL_OK) { sequence_deallocate(scratch); return status; }
     last = heap->size - 1u;
     if (last) {
         (void)sequence_move_destroy(heap->element_type, heap->elem_size,
@@ -263,7 +263,7 @@ turbostl_status heap_pop(heap_t *heap, void *out_elem) {
     if (heap->size) heap_sift_down(heap, 0u, scratch);
     sequence_deallocate(scratch);
     ++heap->generation;
-    return TURBO_STL_OK;
+    return STL_OK;
 }
 
 const void *heap_peek(const heap_t *heap) {

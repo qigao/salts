@@ -20,7 +20,7 @@ typedef struct set_iter {
   void *node;
 } set_iter_t;
 
-/* Internal typed bridge for compiled implementation and legacy wrappers. */
+/* Internal typed-storage bridge used by the natural instance wrappers. */
 stl_status set_raw_init(set_t *set, const cmeta_type_desc *key_type,
                         size_t element_limit);
 stl_status set_raw_from_array(set_t *set, const void *keys, size_t count,
@@ -82,32 +82,6 @@ const void *set_iter_value_const(set_iter_t iterator);
 bool set_range_next(const set_t *set, cmeta_range_cursor *cursor,
                     const void **out_value);
 
-/* Temporary repository-migration aliases. */
-typedef set_compare_fn turbo_set_compare_fn;
-typedef set_t turbo_set_t;
-typedef set_iter_t turbo_set_iter_t;
-#define turbo_set_init set_raw_init
-#define turbo_set_init_bytes set_init_bytes
-#define turbo_set_from_array set_raw_from_array
-#define turbo_set_from_array_bytes set_from_array_bytes
-#define turbo_set_destroy set_raw_destroy_storage
-#define turbo_set_clear set_clear
-#define turbo_set_add set_add
-#define turbo_set_contains set_contains
-#define turbo_set_remove set_remove
-#define turbo_set_size set_size
-#define turbo_set_element_limit set_element_limit
-#define turbo_set_generation set_generation
-#define turbo_set_empty set_empty
-#define turbo_set_begin set_begin
-#define turbo_set_end set_end
-#define turbo_set_lower_bound set_lower_bound
-#define turbo_set_upper_bound set_upper_bound
-#define turbo_set_iter_next set_iter_next
-#define turbo_set_iter_prev set_iter_prev
-#define turbo_set_iter_equal set_iter_equal
-#define turbo_set_iter_value_const set_iter_value_const
-#define turbo_set_range_next set_range_next
 
 #ifdef __cplusplus
 }

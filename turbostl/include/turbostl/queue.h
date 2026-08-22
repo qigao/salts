@@ -101,26 +101,6 @@ static inline bool queue_empty(const queue_t *queue) {
   return queue == NULL || deque_empty(&queue->raw);
 }
 
-/* Temporary repository-migration aliases. */
-typedef queue_t turbo_queue_t;
-#define turbo_queue_init queue_raw_init
-#define turbo_queue_init_bytes queue_init_bytes
-#define turbo_queue_from_array queue_raw_from_array
-#define turbo_queue_from_array_bytes queue_from_array_bytes
-#define turbo_queue_destroy queue_destroy
-#define turbo_queue_clear queue_clear
-#define turbo_queue_reserve queue_reserve
-#define turbo_queue_push queue_push
-#define turbo_queue_pop queue_pop
-#define turbo_queue_front queue_front
-#define turbo_queue_front_const queue_front_const
-#define turbo_queue_back queue_back
-#define turbo_queue_back_const queue_back_const
-#define turbo_queue_at_const queue_at_const
-#define turbo_queue_size queue_size
-#define turbo_queue_capacity queue_capacity
-#define turbo_queue_generation queue_generation
-#define turbo_queue_empty queue_empty
 
 #ifdef __cplusplus
 }

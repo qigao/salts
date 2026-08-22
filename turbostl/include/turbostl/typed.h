@@ -67,7 +67,7 @@
 #endif
 #ifndef Map
 #define Map(K, V, name) \
-  map_t name = { { &stl_map_instance_container_desc }, CMETA_TYPEOF(K), \
+  map_t name = { { &stl_map_container_desc }, CMETA_TYPEOF(K), \
                  CMETA_TYPEOF(V), NULL, UINT64_C(0) }
 #endif
 #ifndef MultiMap

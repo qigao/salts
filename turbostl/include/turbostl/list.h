@@ -221,37 +221,6 @@ static const cmeta_container_desc stl_list_container_desc = {
     NULL,
     stl_list_collector_factory};
 
-/* Temporary repository-migration aliases. */
-typedef list_t turbo_list_t;
-typedef list_iter_t turbo_list_iter_t;
-#define turbo_list_init list_raw_init
-#define turbo_list_init_bytes list_init_bytes
-#define turbo_list_from_array list_raw_from_array
-#define turbo_list_from_array_bytes list_from_array_bytes
-#define turbo_list_destroy list_raw_destroy_storage
-#define turbo_list_clear list_clear
-#define turbo_list_push_front list_push_front
-#define turbo_list_push_back list_push_back
-#define turbo_list_insert_before list_insert_before
-#define turbo_list_insert_after list_insert_after
-#define turbo_list_erase list_erase
-#define turbo_list_pop_front list_pop_front
-#define turbo_list_pop_back list_pop_back
-#define turbo_list_begin list_begin
-#define turbo_list_end list_end
-#define turbo_list_iter_next list_iter_next
-#define turbo_list_iter_prev list_iter_prev
-#define turbo_list_iter_equal list_iter_equal
-#define turbo_list_iter_value list_iter_value
-#define turbo_list_iter_value_const list_iter_value_const
-#define turbo_list_front list_front
-#define turbo_list_front_const list_front_const
-#define turbo_list_back list_back
-#define turbo_list_back_const list_back_const
-#define turbo_list_size list_size
-#define turbo_list_generation list_generation
-#define turbo_list_empty list_empty
-#define turbo_list_range_next list_range_next
 
 #ifdef __cplusplus
 }

@@ -46,27 +46,27 @@ static void list_set_iterator(list_iter_t *out_iterator,
 
 static list_node_t *list_node_new(
     const list_impl_t *impl, const void *elem,
-    turbostl_status *out_status) {
+    stl_status *out_status) {
   list_node_t *node;
-  turbostl_status status;
+  stl_status status;
 
   node = (list_node_t *)calloc(1u, sizeof(*node));
   if (node == NULL) {
-    *out_status = TURBO_STL_OUT_OF_MEMORY;
+    *out_status = STL_OUT_OF_MEMORY;
     return NULL;
   }
   status = sequence_allocate(1u, impl->elem_stride, impl->elem_align,
                                    &node->value);
-  if (status == TURBO_STL_OK)
+  if (status == STL_OK)
     status = sequence_copy(impl->element_type, impl->elem_size,
                                  node->value, elem);
-  if (status != TURBO_STL_OK) {
+  if (status != STL_OK) {
     sequence_deallocate(node->value);
     free(node);
     *out_status = status;
     return NULL;
   }
-  *out_status = TURBO_STL_OK;
+  *out_status = STL_OK;
   return node;
 }
 
@@ -76,18 +76,18 @@ static void list_node_free(list_node_t *node) {
   free(node);
 }
 
-static turbostl_status list_initialize(
+static stl_status list_initialize(
     list_t *list, const cmeta_type_desc *element_type,
     size_t elem_size, size_t elem_align, size_t element_limit) {
   list_impl_t *impl;
   size_t stride;
-  turbostl_status status;
+  stl_status status;
 
-  if (list == NULL || list->impl != NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (list == NULL || list->impl != NULL) return STL_INVALID_ARGUMENT;
   status = sequence_stride(elem_size, elem_align, &stride);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   impl = (list_impl_t *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_STL_OUT_OF_MEMORY;
+  if (impl == NULL) return STL_OUT_OF_MEMORY;
   impl->elem_size = elem_size;
   impl->elem_stride = stride;
   impl->elem_align = elem_align;
@@ -95,38 +95,38 @@ static turbostl_status list_initialize(
   impl->element_type = element_type;
   list->impl = impl;
   ++list->generation;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
-turbostl_status list_init_bytes(list_t *list, size_t elem_size,
+stl_status list_init_bytes(list_t *list, size_t elem_size,
                                        size_t elem_align,
                                        size_t element_limit) {
   return list_initialize(list, NULL, elem_size, elem_align,
                                element_limit);
 }
 
-turbostl_status list_init(list_t *list,
+stl_status list_raw_init(list_t *list,
                                  const cmeta_type_desc *element_type,
                                  size_t element_limit) {
-  turbostl_status status;
+  stl_status status;
 
-  if (list == NULL || list->impl != NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (list == NULL || list->impl != NULL) return STL_INVALID_ARGUMENT;
   status = sequence_require_type(element_type, false);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   return list_initialize(list, element_type, element_type->size,
                                element_type->align, element_limit);
 }
 
-static turbostl_status list_insert_between(
+static stl_status list_insert_between(
     list_t *list, list_node_t *previous,
     list_node_t *next, const void *elem,
     list_iter_t *out_iterator) {
   list_impl_t *impl = list_impl(list);
   list_node_t *node;
-  turbostl_status status;
+  stl_status status;
 
-  if (impl == NULL || elem == NULL) return TURBO_STL_INVALID_ARGUMENT;
-  if (impl->size >= impl->element_limit) return TURBO_STL_CAPACITY_EXCEEDED;
+  if (impl == NULL || elem == NULL) return STL_INVALID_ARGUMENT;
+  if (impl->size >= impl->element_limit) return STL_CAPACITY_EXCEEDED;
   node = list_node_new(impl, elem, &status);
   if (node == NULL) return status;
   node->previous = previous;
@@ -142,21 +142,21 @@ static turbostl_status list_insert_between(
   ++impl->size;
   ++list->generation;
   list_set_iterator(out_iterator, list, node);
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
-turbostl_status list_push_front(list_t *list, const void *elem,
+stl_status list_push_front(list_t *list, const void *elem,
                                        list_iter_t *out_iterator) {
   list_impl_t *impl = list_impl(list);
-  if (impl == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (impl == NULL) return STL_INVALID_ARGUMENT;
   return list_insert_between(list, NULL, impl->head, elem,
                                    out_iterator);
 }
 
-turbostl_status list_push_back(list_t *list, const void *elem,
+stl_status list_push_back(list_t *list, const void *elem,
                                       list_iter_t *out_iterator) {
   list_impl_t *impl = list_impl(list);
-  if (impl == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (impl == NULL) return STL_INVALID_ARGUMENT;
   return list_insert_between(list, impl->tail, NULL, elem,
                                    out_iterator);
 }
@@ -167,35 +167,35 @@ static bool list_iterator_matches(const list_t *list,
          position.node != NULL;
 }
 
-turbostl_status list_insert_before(list_t *list,
+stl_status list_insert_before(list_t *list,
                                           list_iter_t position,
                                           const void *elem,
                                           list_iter_t *out_iterator) {
   list_node_t *next;
   if (!list_iterator_matches(list, position))
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   next = (list_node_t *)position.node;
   return list_insert_between(list, next->previous, next, elem,
                                    out_iterator);
 }
 
-turbostl_status list_insert_after(list_t *list,
+stl_status list_insert_after(list_t *list,
                                          list_iter_t position,
                                          const void *elem,
                                          list_iter_t *out_iterator) {
   list_node_t *previous;
   if (!list_iterator_matches(list, position))
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   previous = (list_node_t *)position.node;
   return list_insert_between(list, previous, previous->next, elem,
                                    out_iterator);
 }
 
-static turbostl_status list_remove_node(list_t *list,
+static stl_status list_remove_node(list_t *list,
                                                list_node_t *node,
                                                void *out_elem) {
   list_impl_t *impl = list_impl(list);
-  turbostl_status status;
+  stl_status status;
 
   status = out_elem != NULL
                ? sequence_move_destroy(impl->element_type,
@@ -203,7 +203,7 @@ static turbostl_status list_remove_node(list_t *list,
                                              node->value)
                : sequence_destroy_value(impl->element_type,
                                               node->value);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   if (node->previous != NULL)
     node->previous->next = node->next;
   else
@@ -215,29 +215,29 @@ static turbostl_status list_remove_node(list_t *list,
   list_node_free(node);
   --impl->size;
   ++list->generation;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
-turbostl_status list_erase(list_t *list,
+stl_status list_erase(list_t *list,
                                   list_iter_t position,
                                   void *out_elem) {
   if (!list_iterator_matches(list, position))
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   return list_remove_node(list, (list_node_t *)position.node,
                                 out_elem);
 }
 
-turbostl_status list_pop_front(list_t *list, void *out_elem) {
+stl_status list_pop_front(list_t *list, void *out_elem) {
   list_impl_t *impl = list_impl(list);
-  if (impl == NULL) return TURBO_STL_INVALID_ARGUMENT;
-  if (impl->head == NULL) return TURBO_STL_EMPTY;
+  if (impl == NULL) return STL_INVALID_ARGUMENT;
+  if (impl->head == NULL) return STL_EMPTY;
   return list_remove_node(list, impl->head, out_elem);
 }
 
-turbostl_status list_pop_back(list_t *list, void *out_elem) {
+stl_status list_pop_back(list_t *list, void *out_elem) {
   list_impl_t *impl = list_impl(list);
-  if (impl == NULL) return TURBO_STL_INVALID_ARGUMENT;
-  if (impl->tail == NULL) return TURBO_STL_EMPTY;
+  if (impl == NULL) return STL_INVALID_ARGUMENT;
+  if (impl->tail == NULL) return STL_EMPTY;
   return list_remove_node(list, impl->tail, out_elem);
 }
 
@@ -264,7 +264,7 @@ void list_clear(list_t *list) {
   ++list->generation;
 }
 
-void list_destroy(list_t *list) {
+void list_raw_destroy_storage(list_t *list) {
   list_impl_t *impl;
 
   if (list == NULL) return;
@@ -276,46 +276,46 @@ void list_destroy(list_t *list) {
   ++list->generation;
 }
 
-static turbostl_status list_from_common(
+static stl_status list_from_common(
     list_t *list, const void *elements, size_t count,
     const cmeta_type_desc *element_type, size_t elem_size, size_t elem_align,
     size_t element_limit) {
   list_t temporary = {0};
-  turbostl_status status;
+  stl_status status;
   size_t index;
 
-  if (list == NULL || list->impl != NULL) return TURBO_STL_INVALID_ARGUMENT;
-  if (count > element_limit) return TURBO_STL_CAPACITY_EXCEEDED;
-  if (count != 0u && elements == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (list == NULL || list->impl != NULL) return STL_INVALID_ARGUMENT;
+  if (count > element_limit) return STL_CAPACITY_EXCEEDED;
+  if (count != 0u && elements == NULL) return STL_INVALID_ARGUMENT;
   status = element_type != NULL
-               ? list_init(&temporary, element_type, element_limit)
+               ? list_raw_init(&temporary, element_type, element_limit)
                : list_init_bytes(&temporary, elem_size, elem_align,
                                        element_limit);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   for (index = 0u; index < count; ++index) {
     status = list_push_back(
         &temporary, (const unsigned char *)elements + index * elem_size,
         NULL);
-    if (status != TURBO_STL_OK) {
-      list_destroy(&temporary);
+    if (status != STL_OK) {
+      list_raw_destroy_storage(&temporary);
       return status;
     }
   }
   temporary.generation = list->generation + UINT64_C(1);
   *list = temporary;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
-turbostl_status list_from_array(
+stl_status list_raw_from_array(
     list_t *list, const void *elements, size_t count,
     const cmeta_type_desc *element_type, size_t element_limit) {
-  if (element_type == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (element_type == NULL) return STL_INVALID_ARGUMENT;
   return list_from_common(list, elements, count, element_type,
                                 element_type->size, element_type->align,
                                 element_limit);
 }
 
-turbostl_status list_from_array_bytes(
+stl_status list_from_array_bytes(
     list_t *list, const void *elements, size_t count, size_t elem_size,
     size_t elem_align, size_t element_limit) {
   return list_from_common(list, elements, count, NULL, elem_size,
@@ -333,32 +333,32 @@ list_iter_t list_end(const list_t *list) {
   return result;
 }
 
-turbostl_status list_iter_next(list_iter_t *iterator) {
+stl_status list_iter_next(list_iter_t *iterator) {
   list_node_t *node;
   if (iterator == NULL || !list_valid(iterator->owner) ||
       iterator->node == NULL)
-    return TURBO_STL_NOT_FOUND;
+    return STL_NOT_FOUND;
   node = (list_node_t *)iterator->node;
   iterator->node = node->next;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
-turbostl_status list_iter_prev(list_iter_t *iterator) {
+stl_status list_iter_prev(list_iter_t *iterator) {
   const list_impl_t *impl;
   list_node_t *node;
 
   if (iterator == NULL || !list_valid(iterator->owner))
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   impl = list_impl_const(iterator->owner);
   if (iterator->node == NULL) {
-    if (impl->tail == NULL) return TURBO_STL_NOT_FOUND;
+    if (impl->tail == NULL) return STL_NOT_FOUND;
     iterator->node = impl->tail;
-    return TURBO_STL_OK;
+    return STL_OK;
   }
   node = (list_node_t *)iterator->node;
-  if (node->previous == NULL) return TURBO_STL_NOT_FOUND;
+  if (node->previous == NULL) return STL_NOT_FOUND;
   iterator->node = node->previous;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
 bool list_iter_equal(list_iter_t left, list_iter_t right) {

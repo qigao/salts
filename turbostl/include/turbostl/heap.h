@@ -109,24 +109,6 @@ size_t heap_capacity(const heap_t *heap);
 uint64_t heap_generation(const heap_t *heap);
 bool heap_empty(const heap_t *heap);
 
-/* Temporary repository-migration aliases. */
-typedef heap_compare_fn turbo_heap_compare_fn;
-typedef heap_t turbo_heap_t;
-#define turbo_heap_init heap_raw_init
-#define turbo_heap_init_bytes heap_init_bytes
-#define turbo_heap_from_array heap_raw_from_array
-#define turbo_heap_from_array_bytes heap_from_array_bytes
-#define turbo_heap_destroy heap_raw_destroy_storage
-#define turbo_heap_clear heap_clear
-#define turbo_heap_reserve heap_reserve
-#define turbo_heap_push heap_push
-#define turbo_heap_pop heap_pop
-#define turbo_heap_peek heap_peek
-#define turbo_heap_at_const heap_at_const
-#define turbo_heap_size heap_size
-#define turbo_heap_capacity heap_capacity
-#define turbo_heap_generation heap_generation
-#define turbo_heap_empty heap_empty
 
 #ifdef __cplusplus
 }

@@ -12,32 +12,32 @@
 extern "C" {
 #endif
 
-#ifndef TURBO_BTREE_DEFAULT_MIN_DEGREE
-#define TURBO_BTREE_DEFAULT_MIN_DEGREE 4U
+#ifndef BTREE_DEFAULT_MIN_DEGREE
+#define BTREE_DEFAULT_MIN_DEGREE 4U
 #endif
 
 typedef int (*btree_compare_fn)(const void *left, const void *right,
                                 void *ctx);
 
-typedef struct turbo_btree_entry_link {
+typedef struct btree_entry_link {
   void *key;
   void *value;
-  struct turbo_btree_entry_link *previous;
-  struct turbo_btree_entry_link *next;
-} turbo_btree_entry_link_t;
+  struct btree_entry_link *previous;
+  struct btree_entry_link *next;
+} btree_entry_link_t;
 
-typedef struct turbo_btree_node {
+typedef struct btree_node {
   bool leaf;
   size_t num_keys;
   void **keys;
   void **values;
-  turbo_btree_entry_link_t **links;
-  struct turbo_btree_node **children;
-} turbo_btree_node_t;
+  btree_entry_link_t **links;
+  struct btree_node **children;
+} btree_node_t;
 
 typedef struct btree {
   cmeta_container_header cmeta;
-  turbo_btree_node_t *root;
+  btree_node_t *root;
   size_t key_size;
   size_t key_align;
   size_t key_stride;
@@ -49,8 +49,8 @@ typedef struct btree {
   size_t max_children;
   size_t entry_limit;
   size_t size;
-  turbo_btree_entry_link_t *first;
-  turbo_btree_entry_link_t *last;
+  btree_entry_link_t *first;
+  btree_entry_link_t *last;
   const cmeta_type_desc *key_type;
   const cmeta_type_desc *value_type;
   btree_compare_fn compare;
@@ -59,7 +59,7 @@ typedef struct btree {
   bool initialized;
 } btree_t;
 
-/* Internal typed bridges for compiled implementation and legacy wrappers. */
+/* Internal typed-storage bridges used by the natural instance wrappers. */
 stl_status btree_raw_init(btree_t *tree,
                           const cmeta_type_desc *key_type,
                           const cmeta_type_desc *value_type,
@@ -178,33 +178,6 @@ const void *btree_value_at_const(const btree_t *tree, size_t index);
 bool btree_range_next(const btree_t *tree, cmeta_range_cursor *cursor,
                       const void **out_key, const void **out_value);
 
-/* Temporary repository-migration aliases. */
-typedef btree_compare_fn turbo_btree_compare_fn;
-typedef btree_t turbo_btree_t;
-#define turbo_btree_init btree_raw_init
-#define turbo_btree_init_with_order btree_raw_init_with_order
-#define turbo_btree_init_bytes btree_init_bytes
-#define turbo_btree_init_bytes_with_order btree_init_bytes_with_order
-#define turbo_btree_from_arrays btree_raw_from_arrays
-#define turbo_btree_from_arrays_bytes btree_from_arrays_bytes
-#define turbo_btree_destroy btree_raw_destroy_storage
-#define turbo_btree_clear btree_clear
-#define turbo_btree_reserve btree_reserve
-#define turbo_btree_put btree_put
-#define turbo_btree_get btree_get
-#define turbo_btree_get_const btree_get_const
-#define turbo_btree_contains btree_contains
-#define turbo_btree_remove btree_remove
-#define turbo_btree_size btree_size
-#define turbo_btree_capacity btree_capacity
-#define turbo_btree_entry_limit btree_entry_limit
-#define turbo_btree_generation btree_generation
-#define turbo_btree_empty btree_empty
-#define turbo_btree_key_at btree_key_at
-#define turbo_btree_key_at_const btree_key_at_const
-#define turbo_btree_value_at btree_value_at
-#define turbo_btree_value_at_const btree_value_at_const
-#define turbo_btree_range_next btree_range_next
 
 #ifdef __cplusplus
 }

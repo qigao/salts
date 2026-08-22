@@ -46,13 +46,13 @@ static void sort_merge(const cmeta_type_desc *type, void *source,
     }
 }
 
-turbostl_status stable_sort(void *base, size_t count,
+stl_status stable_sort(void *base, size_t count,
                                    const cmeta_type_desc *type,
                                    size_t scratch_byte_limit) {
     const cmeta_trait_flags required =
         CMETA_TRAIT_COMPARE | CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
         CMETA_TRAIT_DESTROY;
-    turbostl_status status;
+    stl_status status;
     size_t stride;
     size_t bytes;
     size_t copied = 0u;
@@ -64,34 +64,34 @@ turbostl_status stable_sort(void *base, size_t count,
 
     if (type == NULL || type->size == 0u ||
         !sequence_alignment_valid(type->align))
-        return TURBO_STL_INVALID_ARGUMENT;
+        return STL_INVALID_ARGUMENT;
     if (cmeta_type_require_traits(type, required) != CMETA_OK)
-        return TURBO_STL_TRAIT_MISSING;
+        return STL_TRAIT_MISSING;
     if (count == 0u)
-        return TURBO_STL_OK;
+        return STL_OK;
     if (base == NULL)
-        return TURBO_STL_INVALID_ARGUMENT;
+        return STL_INVALID_ARGUMENT;
     if ((uintptr_t)base % type->align != 0u)
-        return TURBO_STL_INVALID_ARGUMENT;
+        return STL_INVALID_ARGUMENT;
     if (count == 1u)
-        return TURBO_STL_OK;
+        return STL_OK;
     status = sequence_stride(type->size, type->align, &stride);
-    if (status != TURBO_STL_OK)
+    if (status != STL_OK)
         return status;
     status = sequence_bytes(count, stride, &bytes);
-    if (status != TURBO_STL_OK)
+    if (status != STL_OK)
         return status;
     if (bytes > scratch_byte_limit)
-        return TURBO_STL_CAPACITY_EXCEEDED;
+        return STL_CAPACITY_EXCEEDED;
     status = sequence_allocate(count, stride, type->align, &scratch);
-    if (status != TURBO_STL_OK)
+    if (status != STL_OK)
         return status;
     for (copied = 0u; copied < count; ++copied) {
         if (!type->traits->copy_construct(sort_slot(scratch, stride, copied),
                                           sort_slot(base, stride, copied))) {
             sort_destroy_range(type, scratch, stride, copied);
             sequence_deallocate(scratch);
-            return TURBO_STL_OUT_OF_MEMORY;
+            return STL_OUT_OF_MEMORY;
         }
     }
 
@@ -123,5 +123,5 @@ turbostl_status stable_sort(void *base, size_t count,
         }
     }
     sequence_deallocate(scratch);
-    return TURBO_STL_OK;
+    return STL_OK;
 }

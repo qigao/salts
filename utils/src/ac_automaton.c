@@ -60,8 +60,8 @@ static int32_t ac_byte_new_node(ac_automaton_t *ac, int *out_error) {
   node.fail = -1;
   node.outputs = -1;
 
-  turbostl_status status = vec_push(&ac->nodes, &node);
-  if (status != TURBO_STL_OK) {
+  stl_status status = vec_push(&ac->nodes, &node);
+  if (status != STL_OK) {
     if (out_error) *out_error = turbo_core_status_from_stl(status);
     return -1;
   }
@@ -84,8 +84,8 @@ static int32_t ac_new_output(ac_automaton_t *ac, uint32_t pattern_id, uint32_t p
   output.pattern_len = pattern_len;
   output.next_output = head;
 
-  turbostl_status status = vec_push(&ac->outputs, &output);
-  if (status != TURBO_STL_OK) {
+  stl_status status = vec_push(&ac->outputs, &output);
+  if (status != STL_OK) {
     if (out_error) *out_error = turbo_core_status_from_stl(status);
     return -1;
   }
@@ -93,17 +93,17 @@ static int32_t ac_new_output(ac_automaton_t *ac, uint32_t pattern_id, uint32_t p
 }
 
 static int ac_automaton_init_common(ac_automaton_t *ac) {
-  turbostl_status status;
+  stl_status status;
   int error = TURBO_OK;
   if (!ac) return TURBO_EINVAL;
   if (ac->initialized) return TURBO_EINVAL;
 
   status = vec_init_bytes(&ac->nodes, sizeof(ac_byte_node_t),
                                 _Alignof(ac_byte_node_t), AC_AUTOMATON_ENTRY_LIMIT);
-  if (status != TURBO_STL_OK) return turbo_core_status_from_stl(status);
+  if (status != STL_OK) return turbo_core_status_from_stl(status);
   status = vec_init_bytes(&ac->outputs, sizeof(ac_output_t),
                                 _Alignof(ac_output_t), AC_AUTOMATON_ENTRY_LIMIT);
-  if (status != TURBO_STL_OK) {
+  if (status != STL_OK) {
     vec_destroy(&ac->nodes);
     return turbo_core_status_from_stl(status);
   }
@@ -194,9 +194,9 @@ int ac_automaton_build(ac_automaton_t *ac) {
 
   if (!ac || !ac->initialized) return TURBO_EINVAL;
   {
-    turbostl_status status = vec_init_bytes(
+    stl_status status = vec_init_bytes(
         &queue, sizeof(uint32_t), _Alignof(uint32_t), vec_size(&ac->nodes));
-    if (status != TURBO_STL_OK) return turbo_core_status_from_stl(status);
+    if (status != STL_OK) return turbo_core_status_from_stl(status);
   }
 
   for (size_t ch = 0; ch < 256; ++ch) {
@@ -209,8 +209,8 @@ int ac_automaton_build(ac_automaton_t *ac) {
       }
       child_node->fail = 0;
       {
-        turbostl_status status = vec_push(&queue, &child);
-        if (status != TURBO_STL_OK) {
+        stl_status status = vec_push(&queue, &child);
+        if (status != STL_OK) {
           vec_destroy(&queue);
           return turbo_core_status_from_stl(status);
         }
@@ -256,8 +256,8 @@ int ac_automaton_build(ac_automaton_t *ac) {
       }
       child_node->fail = state;
       {
-        turbostl_status status = vec_push(&queue, &child);
-        if (status != TURBO_STL_OK) {
+        stl_status status = vec_push(&queue, &child);
+        if (status != STL_OK) {
           vec_destroy(&queue);
           return turbo_core_status_from_stl(status);
         }
@@ -328,8 +328,8 @@ static int32_t ac_utf8_new_node(ac_utf8_automaton_t *ac, int *out_error) {
   node.outputs = -1;
   node.first_edge = -1;
 
-  turbostl_status status = vec_push(&ac->nodes, &node);
-  if (status != TURBO_STL_OK) {
+  stl_status status = vec_push(&ac->nodes, &node);
+  if (status != STL_OK) {
     if (out_error) *out_error = turbo_core_status_from_stl(status);
     return -1;
   }
@@ -343,8 +343,8 @@ static int32_t ac_utf8_new_edge(ac_utf8_automaton_t *ac, uint32_t cp, int32_t ch
   edge.child = child;
   edge.next_edge = head;
 
-  turbostl_status status = vec_push(&ac->edges, &edge);
-  if (status != TURBO_STL_OK) {
+  stl_status status = vec_push(&ac->edges, &edge);
+  if (status != STL_OK) {
     if (out_error) *out_error = turbo_core_status_from_stl(status);
     return -1;
   }
@@ -401,23 +401,23 @@ static int32_t ac_utf8_add_child(ac_utf8_automaton_t *ac, int32_t node_index,
 }
 
 int ac_utf8_automaton_init(ac_utf8_automaton_t *ac) {
-  turbostl_status status;
+  stl_status status;
   int error = TURBO_OK;
   if (!ac) return TURBO_EINVAL;
   if (ac->initialized) return TURBO_EINVAL;
 
   status = vec_init_bytes(&ac->nodes, sizeof(ac_utf8_node_t),
                                 _Alignof(ac_utf8_node_t), AC_AUTOMATON_ENTRY_LIMIT);
-  if (status != TURBO_STL_OK) return turbo_core_status_from_stl(status);
+  if (status != STL_OK) return turbo_core_status_from_stl(status);
   status = vec_init_bytes(&ac->outputs, sizeof(ac_output_t),
                                 _Alignof(ac_output_t), AC_AUTOMATON_ENTRY_LIMIT);
-  if (status != TURBO_STL_OK) {
+  if (status != STL_OK) {
     vec_destroy(&ac->nodes);
     return turbo_core_status_from_stl(status);
   }
   status = vec_init_bytes(&ac->edges, sizeof(ac_utf8_edge_t),
                                 _Alignof(ac_utf8_edge_t), AC_AUTOMATON_ENTRY_LIMIT);
-  if (status != TURBO_STL_OK) {
+  if (status != STL_OK) {
     vec_destroy(&ac->outputs);
     vec_destroy(&ac->nodes);
     return turbo_core_status_from_stl(status);
@@ -486,11 +486,11 @@ int ac_utf8_automaton_add_pattern(ac_utf8_automaton_t *ac, vstr pattern, uint32_
   if (!terminal) return TURBO_EINVAL;
 
   {
-    turbostl_status status = vec_push(
+    stl_status status = vec_push(
         &ac->outputs, &(ac_output_t){.pattern_id = ac->next_pattern_id,
                                     .pattern_len = cp_count,
                                     .next_output = terminal->outputs});
-    if (status != TURBO_STL_OK) {
+    if (status != STL_OK) {
       return turbo_core_status_from_stl(status);
     }
   }
@@ -508,9 +508,9 @@ int ac_utf8_automaton_build(ac_utf8_automaton_t *ac) {
 
   if (!ac || !ac->initialized) return TURBO_EINVAL;
   {
-    turbostl_status status = vec_init_bytes(
+    stl_status status = vec_init_bytes(
         &queue, sizeof(uint32_t), _Alignof(uint32_t), vec_size(&ac->nodes));
-    if (status != TURBO_STL_OK) return turbo_core_status_from_stl(status);
+    if (status != STL_OK) return turbo_core_status_from_stl(status);
   }
 
   for (int32_t edge_idx = ac_utf8_node_at_const(ac, 0U)->first_edge; edge_idx >= 0;
@@ -527,8 +527,8 @@ int ac_utf8_automaton_build(ac_utf8_automaton_t *ac) {
     }
     child->fail = 0;
     {
-      turbostl_status status = vec_push(&queue, &edge->child);
-      if (status != TURBO_STL_OK) {
+      stl_status status = vec_push(&queue, &edge->child);
+      if (status != STL_OK) {
         vec_destroy(&queue);
         return turbo_core_status_from_stl(status);
       }
@@ -582,8 +582,8 @@ int ac_utf8_automaton_build(ac_utf8_automaton_t *ac) {
       }
       child_node->fail = (int32_t)state_fail;
       {
-        turbostl_status status = vec_push(&queue, &edge->child);
-        if (status != TURBO_STL_OK) {
+        stl_status status = vec_push(&queue, &edge->child);
+        if (status != STL_OK) {
           vec_destroy(&queue);
           return turbo_core_status_from_stl(status);
         }

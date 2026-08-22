@@ -29,7 +29,7 @@ static size_t lev_safe_add(size_t lhs, size_t rhs) {
 
 static int lev_init_common(lev_automaton_t *lev, vstr pattern,
                            size_t max_distance, bool utf8_pattern) {
-  turbostl_status status;
+  stl_status status;
   if (!lev || (!pattern.data && pattern.len != 0U) ||
       max_distance > LEVENSHTEIN_INF)
     return TURBO_EINVAL;
@@ -41,7 +41,7 @@ static int lev_init_common(lev_automaton_t *lev, vstr pattern,
   status = vec_init_bytes(
       &lev->pattern, utf8_pattern ? sizeof(uint32_t) : sizeof(uint8_t),
       utf8_pattern ? _Alignof(uint32_t) : _Alignof(uint8_t), pattern.len);
-  if (status != TURBO_STL_OK)
+  if (status != STL_OK)
     return turbo_core_status_from_stl(status);
 
   if (utf8_pattern) {
@@ -53,7 +53,7 @@ static int lev_init_common(lev_automaton_t *lev, vstr pattern,
         return TURBO_EINVAL;
       }
       status = vec_push(&lev->pattern, &cp);
-      if (status != TURBO_STL_OK) {
+      if (status != STL_OK) {
         vec_destroy(&lev->pattern);
         return turbo_core_status_from_stl(status);
       }
@@ -62,7 +62,7 @@ static int lev_init_common(lev_automaton_t *lev, vstr pattern,
     for (size_t i = 0; i < pattern.len; ++i) {
       uint8_t byte = (uint8_t)pattern.data[i];
       status = vec_push(&lev->pattern, &byte);
-      if (status != TURBO_STL_OK) {
+      if (status != STL_OK) {
         vec_destroy(&lev->pattern);
         return turbo_core_status_from_stl(status);
       }

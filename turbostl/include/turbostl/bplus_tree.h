@@ -12,35 +12,35 @@
 extern "C" {
 #endif
 
-#ifndef TURBO_BPLUS_TREE_DEFAULT_MIN_DEGREE
-#define TURBO_BPLUS_TREE_DEFAULT_MIN_DEGREE 4U
+#ifndef BPLUS_TREE_DEFAULT_MIN_DEGREE
+#define BPLUS_TREE_DEFAULT_MIN_DEGREE 4U
 #endif
 
 typedef int (*bplus_tree_compare_fn)(const void *left,
                                      const void *right, void *ctx);
 
-typedef struct turbo_bplus_tree_entry_link {
+typedef struct bplus_tree_entry_link {
   void *key;
   void *value;
-  struct turbo_bplus_tree_entry_link *previous;
-  struct turbo_bplus_tree_entry_link *next;
-} turbo_bplus_tree_entry_link_t;
+  struct bplus_tree_entry_link *previous;
+  struct bplus_tree_entry_link *next;
+} bplus_tree_entry_link_t;
 
-typedef struct turbo_bplus_tree_node {
+typedef struct bplus_tree_node {
   bool is_leaf;
   size_t num_keys;
   void **keys;
   void **values;
-  turbo_bplus_tree_entry_link_t **links;
-  struct turbo_bplus_tree_node **children;
-  struct turbo_bplus_tree_node *parent;
-  struct turbo_bplus_tree_node *next;
+  bplus_tree_entry_link_t **links;
+  struct bplus_tree_node **children;
+  struct bplus_tree_node *parent;
+  struct bplus_tree_node *next;
   void *first_key;
-} turbo_bplus_tree_node_t;
+} bplus_tree_node_t;
 
 typedef struct bplus_tree {
   cmeta_container_header cmeta;
-  turbo_bplus_tree_node_t *root;
+  bplus_tree_node_t *root;
   size_t key_size;
   size_t key_align;
   size_t key_stride;
@@ -52,8 +52,8 @@ typedef struct bplus_tree {
   size_t max_children;
   size_t entry_limit;
   size_t size;
-  turbo_bplus_tree_entry_link_t *first;
-  turbo_bplus_tree_entry_link_t *last;
+  bplus_tree_entry_link_t *first;
+  bplus_tree_entry_link_t *last;
   const cmeta_type_desc *key_type;
   const cmeta_type_desc *value_type;
   bplus_tree_compare_fn compare;
@@ -63,7 +63,7 @@ typedef struct bplus_tree {
   bool initialized;
 } bplus_tree_t;
 
-/* Internal typed bridges for compiled implementation and legacy wrappers. */
+/* Internal typed-storage bridges used by the natural instance wrappers. */
 stl_status bplus_tree_raw_init(
     bplus_tree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit);
@@ -188,33 +188,6 @@ bool bplus_tree_range_next(const bplus_tree_t *tree,
                            const void **out_key,
                            const void **out_value);
 
-/* Temporary repository-migration aliases. */
-typedef bplus_tree_compare_fn turbo_bplus_tree_compare_fn;
-typedef bplus_tree_t turbo_bplus_tree_t;
-#define turbo_bplus_tree_init bplus_tree_raw_init
-#define turbo_bplus_tree_init_with_order bplus_tree_raw_init_with_order
-#define turbo_bplus_tree_init_bytes bplus_tree_init_bytes
-#define turbo_bplus_tree_init_bytes_with_order bplus_tree_init_bytes_with_order
-#define turbo_bplus_tree_from_arrays bplus_tree_raw_from_arrays
-#define turbo_bplus_tree_from_arrays_bytes bplus_tree_from_arrays_bytes
-#define turbo_bplus_tree_destroy bplus_tree_raw_destroy_storage
-#define turbo_bplus_tree_clear bplus_tree_clear
-#define turbo_bplus_tree_reserve bplus_tree_reserve
-#define turbo_bplus_tree_put bplus_tree_put
-#define turbo_bplus_tree_get bplus_tree_get
-#define turbo_bplus_tree_get_const bplus_tree_get_const
-#define turbo_bplus_tree_contains bplus_tree_contains
-#define turbo_bplus_tree_remove bplus_tree_remove
-#define turbo_bplus_tree_size bplus_tree_size
-#define turbo_bplus_tree_capacity bplus_tree_capacity
-#define turbo_bplus_tree_entry_limit bplus_tree_entry_limit
-#define turbo_bplus_tree_generation bplus_tree_generation
-#define turbo_bplus_tree_empty bplus_tree_empty
-#define turbo_bplus_tree_key_at bplus_tree_key_at
-#define turbo_bplus_tree_key_at_const bplus_tree_key_at_const
-#define turbo_bplus_tree_value_at bplus_tree_value_at
-#define turbo_bplus_tree_value_at_const bplus_tree_value_at_const
-#define turbo_bplus_tree_range_next bplus_tree_range_next
 
 #ifdef __cplusplus
 }

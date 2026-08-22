@@ -2,64 +2,64 @@
 
 #include <stdint.h>
 
-turbostl_status hash_set_init(hash_set_t *set,
+stl_status hash_set_raw_init(hash_set_t *set,
                                      const cmeta_type_desc *key_type,
                                      size_t entry_limit) {
-  if (set == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (set == NULL) return STL_INVALID_ARGUMENT;
   return hash_map_raw_init(&set->table, key_type, &cmeta_type_bool,
                              entry_limit);
 }
 
-turbostl_status hash_set_init_bytes(
+stl_status hash_set_init_bytes(
     hash_set_t *set, size_t key_size, size_t key_align,
     size_t entry_limit, hash_fn hash, hash_equal_fn equal,
     void *ctx) {
-  if (set == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (set == NULL) return STL_INVALID_ARGUMENT;
   return hash_map_init_bytes(&set->table, key_size, key_align,
                                    sizeof(uint8_t), _Alignof(uint8_t),
                                    entry_limit, hash, equal, ctx);
 }
 
-static turbostl_status hash_set_from_common(
+static stl_status hash_set_from_common(
     hash_set_t *set, const void *keys, size_t count,
     const cmeta_type_desc *key_type, size_t key_size, size_t key_align,
     size_t entry_limit, hash_fn hash, hash_equal_fn equal,
     void *ctx) {
   hash_set_t temporary = {0};
-  turbostl_status status;
+  stl_status status;
   size_t index;
 
   if (set == NULL || set->table.initialized)
-    return TURBO_STL_INVALID_ARGUMENT;
-  if (count != 0u && keys == NULL) return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
+  if (count != 0u && keys == NULL) return STL_INVALID_ARGUMENT;
   status = key_type != NULL
-               ? hash_set_init(&temporary, key_type, entry_limit)
+               ? hash_set_raw_init(&temporary, key_type, entry_limit)
                : hash_set_init_bytes(&temporary, key_size, key_align,
                                            entry_limit, hash, equal, ctx);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   for (index = 0u; index < count; ++index) {
     status = hash_set_add(
         &temporary, (const unsigned char *)keys + index * key_size);
-    if (status != TURBO_STL_OK) {
-      hash_set_destroy(&temporary);
+    if (status != STL_OK) {
+      hash_set_raw_destroy_storage(&temporary);
       return status;
     }
   }
   temporary.table.generation = set->table.generation + UINT64_C(1);
   *set = temporary;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
-turbostl_status hash_set_from_array(
+stl_status hash_set_raw_from_array(
     hash_set_t *set, const void *keys, size_t count,
     const cmeta_type_desc *key_type, size_t entry_limit) {
-  if (key_type == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (key_type == NULL) return STL_INVALID_ARGUMENT;
   return hash_set_from_common(set, keys, count, key_type,
                                     key_type->size, key_type->align,
                                     entry_limit, NULL, NULL, NULL);
 }
 
-turbostl_status hash_set_from_array_bytes(
+stl_status hash_set_from_array_bytes(
     hash_set_t *set, const void *keys, size_t count, size_t key_size,
     size_t key_align, size_t entry_limit, hash_fn hash,
     hash_equal_fn equal, void *ctx) {
@@ -67,7 +67,7 @@ turbostl_status hash_set_from_array_bytes(
                                     key_align, entry_limit, hash, equal, ctx);
 }
 
-void hash_set_destroy(hash_set_t *set) {
+void hash_set_raw_destroy_storage(hash_set_t *set) {
   if (set != NULL) hash_map_raw_destroy_storage(&set->table);
 }
 
@@ -75,17 +75,17 @@ void hash_set_clear(hash_set_t *set) {
   if (set != NULL) hash_map_clear(&set->table);
 }
 
-turbostl_status hash_set_reserve(hash_set_t *set,
+stl_status hash_set_reserve(hash_set_t *set,
                                         size_t min_entries) {
-  return set == NULL ? TURBO_STL_INVALID_ARGUMENT
+  return set == NULL ? STL_INVALID_ARGUMENT
                      : hash_map_reserve(&set->table, min_entries);
 }
 
-turbostl_status hash_set_add(hash_set_t *set,
+stl_status hash_set_add(hash_set_t *set,
                                     const void *key) {
   uint8_t present = 1u;
-  if (set == NULL) return TURBO_STL_INVALID_ARGUMENT;
-  if (hash_map_contains(&set->table, key)) return TURBO_STL_OK;
+  if (set == NULL) return STL_INVALID_ARGUMENT;
+  if (hash_map_contains(&set->table, key)) return STL_OK;
   return hash_map_put(&set->table, key, &present);
 }
 
@@ -93,9 +93,9 @@ bool hash_set_contains(const hash_set_t *set, const void *key) {
   return set != NULL && hash_map_contains(&set->table, key);
 }
 
-turbostl_status hash_set_remove(hash_set_t *set,
+stl_status hash_set_remove(hash_set_t *set,
                                        const void *key) {
-  return set == NULL ? TURBO_STL_INVALID_ARGUMENT
+  return set == NULL ? STL_INVALID_ARGUMENT
                      : hash_map_remove(&set->table, key, NULL);
 }
 

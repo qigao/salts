@@ -2,67 +2,67 @@
 
 #include <stdint.h>
 
-turbostl_status set_init(set_t *set,
+stl_status set_raw_init(set_t *set,
                                 const cmeta_type_desc *key_type,
                                 size_t element_limit) {
-  if (set == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (set == NULL) return STL_INVALID_ARGUMENT;
   return map_raw_init(&set->map, key_type, &cmeta_type_bool,
                         element_limit);
 }
 
-turbostl_status set_init_bytes(set_t *set, size_t key_size,
+stl_status set_init_bytes(set_t *set, size_t key_size,
                                       size_t key_align, size_t element_limit,
                                       set_compare_fn compare,
                                       void *context) {
-  if (set == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (set == NULL) return STL_INVALID_ARGUMENT;
   return map_init_bytes(&set->map, key_size, key_align,
                               sizeof(uint8_t), _Alignof(uint8_t),
                               element_limit, compare, context);
 }
 
-static turbostl_status set_from_common(
+static stl_status set_from_common(
     set_t *set, const void *keys, size_t count,
     const cmeta_type_desc *key_type, size_t key_size, size_t key_align,
     size_t element_limit, set_compare_fn compare, void *context) {
   set_t temporary = {0};
-  turbostl_status status;
+  stl_status status;
   uint64_t generation;
   size_t index;
 
   if (set == NULL || (count != 0u && keys == NULL))
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   if (count != 0u && key_size > SIZE_MAX / count)
-    return TURBO_STL_CAPACITY_EXCEEDED;
+    return STL_CAPACITY_EXCEEDED;
   status = key_type != NULL
-               ? set_init(&temporary, key_type, element_limit)
+               ? set_raw_init(&temporary, key_type, element_limit)
                : set_init_bytes(&temporary, key_size, key_align,
                                       element_limit, compare, context);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   for (index = 0u; index < count; ++index) {
     status = set_add(
         &temporary, (const unsigned char *)keys + index * key_size);
-    if (status != TURBO_STL_OK) {
-      set_destroy(&temporary);
+    if (status != STL_OK) {
+      set_raw_destroy_storage(&temporary);
       return status;
     }
   }
   generation = set_generation(set) + UINT64_C(1);
-  set_destroy(set);
+  set_raw_destroy_storage(set);
   temporary.map.generation = generation;
   *set = temporary;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
-turbostl_status set_from_array(set_t *set, const void *keys,
+stl_status set_raw_from_array(set_t *set, const void *keys,
                                       size_t count,
                                       const cmeta_type_desc *key_type,
                                       size_t element_limit) {
-  if (key_type == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (key_type == NULL) return STL_INVALID_ARGUMENT;
   return set_from_common(set, keys, count, key_type, key_type->size,
                                key_type->align, element_limit, NULL, NULL);
 }
 
-turbostl_status set_from_array_bytes(
+stl_status set_from_array_bytes(
     set_t *set, const void *keys, size_t count, size_t key_size,
     size_t key_align, size_t element_limit, set_compare_fn compare,
     void *context) {
@@ -70,7 +70,7 @@ turbostl_status set_from_array_bytes(
                                element_limit, compare, context);
 }
 
-void set_destroy(set_t *set) {
+void set_raw_destroy_storage(set_t *set) {
   if (set != NULL) map_raw_destroy_storage(&set->map);
 }
 
@@ -78,10 +78,10 @@ void set_clear(set_t *set) {
   if (set != NULL) map_clear(&set->map);
 }
 
-turbostl_status set_add(set_t *set, const void *key) {
+stl_status set_add(set_t *set, const void *key) {
   uint8_t present = 1u;
-  if (set == NULL || key == NULL) return TURBO_STL_INVALID_ARGUMENT;
-  if (map_contains(&set->map, key)) return TURBO_STL_OK;
+  if (set == NULL || key == NULL) return STL_INVALID_ARGUMENT;
+  if (map_contains(&set->map, key)) return STL_OK;
   return map_put(&set->map, key, &present);
 }
 
@@ -89,8 +89,8 @@ bool set_contains(const set_t *set, const void *key) {
   return set != NULL && map_contains(&set->map, key);
 }
 
-turbostl_status set_remove(set_t *set, const void *key) {
-  return set == NULL ? TURBO_STL_INVALID_ARGUMENT
+stl_status set_remove(set_t *set, const void *key) {
+  return set == NULL ? STL_INVALID_ARGUMENT
                      : map_remove(&set->map, key, NULL);
 }
 
@@ -136,27 +136,27 @@ set_iter_t set_upper_bound(const set_t *set,
       set, map_upper_bound(set == NULL ? NULL : &set->map, key));
 }
 
-turbostl_status set_iter_next(set_iter_t *iterator) {
+stl_status set_iter_next(set_iter_t *iterator) {
   map_iter_t map_iterator;
-  turbostl_status status;
+  stl_status status;
   if (iterator == NULL || iterator->owner == NULL)
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   map_iterator.owner = &iterator->owner->map;
   map_iterator.node = iterator->node;
   status = map_iter_next(&map_iterator);
-  if (status == TURBO_STL_OK) iterator->node = map_iterator.node;
+  if (status == STL_OK) iterator->node = map_iterator.node;
   return status;
 }
 
-turbostl_status set_iter_prev(set_iter_t *iterator) {
+stl_status set_iter_prev(set_iter_t *iterator) {
   map_iter_t map_iterator;
-  turbostl_status status;
+  stl_status status;
   if (iterator == NULL || iterator->owner == NULL)
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   map_iterator.owner = &iterator->owner->map;
   map_iterator.node = iterator->node;
   status = map_iter_prev(&map_iterator);
-  if (status == TURBO_STL_OK) iterator->node = map_iterator.node;
+  if (status == STL_OK) iterator->node = map_iterator.node;
   return status;
 }
 

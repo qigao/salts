@@ -12,96 +12,96 @@ static const rbtree_t *multimap_tree_const(
   return map == NULL ? NULL : (const rbtree_t *)map->impl;
 }
 
-static turbostl_status multimap_initialize(
+static stl_status multimap_initialize(
     multimap_t *map, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t element_limit,
     multimap_compare_fn compare, void *context) {
   rbtree_t *tree;
-  turbostl_status status;
-  if (map == NULL || map->impl != NULL) return TURBO_STL_INVALID_ARGUMENT;
+  stl_status status;
+  if (map == NULL || map->impl != NULL) return STL_INVALID_ARGUMENT;
   status = rbtree_create(
       &tree, key_type, value_type, key_size, key_align, value_size,
       value_align, element_limit, compare, context, true);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   map->impl = tree;
   ++map->generation;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
-turbostl_status multimap_init(
+stl_status multimap_raw_init(
     multimap_t *map, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t element_limit) {
-  turbostl_status status;
-  if (map == NULL || map->impl != NULL) return TURBO_STL_INVALID_ARGUMENT;
+  stl_status status;
+  if (map == NULL || map->impl != NULL) return STL_INVALID_ARGUMENT;
   status = sequence_require_type(key_type, true);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   status = sequence_require_type(value_type, false);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   return multimap_initialize(
       map, key_type, value_type, key_type->size, key_type->align,
       value_type->size, value_type->align, element_limit, NULL, NULL);
 }
 
-turbostl_status multimap_init_bytes(
+stl_status multimap_init_bytes(
     multimap_t *map, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t element_limit,
     multimap_compare_fn compare, void *context) {
-  if (compare == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (compare == NULL) return STL_INVALID_ARGUMENT;
   return multimap_initialize(map, NULL, NULL, key_size, key_align,
                                    value_size, value_align, element_limit,
                                    compare, context);
 }
 
-static turbostl_status multimap_from_common(
+static stl_status multimap_from_common(
     multimap_t *map, const void *keys, const void *values, size_t count,
     const cmeta_type_desc *key_type, const cmeta_type_desc *value_type,
     size_t key_size, size_t key_align, size_t value_size, size_t value_align,
     size_t element_limit, multimap_compare_fn compare, void *context) {
   multimap_t temporary = {0};
-  turbostl_status status;
+  stl_status status;
   size_t index;
 
   if (map == NULL || (count != 0u && (keys == NULL || values == NULL)))
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   if (count != 0u &&
       (key_size > SIZE_MAX / count || value_size > SIZE_MAX / count))
-    return TURBO_STL_CAPACITY_EXCEEDED;
+    return STL_CAPACITY_EXCEEDED;
   status = key_type != NULL
-               ? multimap_init(&temporary, key_type, value_type,
+               ? multimap_raw_init(&temporary, key_type, value_type,
                                      element_limit)
                : multimap_init_bytes(
                      &temporary, key_size, key_align, value_size, value_align,
                      element_limit, compare, context);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   for (index = 0u; index < count; ++index) {
     status = multimap_put(
         &temporary, (const unsigned char *)keys + index * key_size,
         (const unsigned char *)values + index * value_size);
-    if (status != TURBO_STL_OK) {
-      multimap_destroy(&temporary);
+    if (status != STL_OK) {
+      multimap_raw_destroy_storage(&temporary);
       return status;
     }
   }
   temporary.generation = map->generation + UINT64_C(1);
   if (map->impl != NULL) rbtree_destroy(multimap_tree(map));
   *map = temporary;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
-turbostl_status multimap_from_arrays(
+stl_status multimap_raw_from_arrays(
     multimap_t *map, const void *keys, const void *values, size_t count,
     const cmeta_type_desc *key_type, const cmeta_type_desc *value_type,
     size_t element_limit) {
   if (key_type == NULL || value_type == NULL)
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   return multimap_from_common(
       map, keys, values, count, key_type, value_type, key_type->size,
       key_type->align, value_type->size, value_type->align, element_limit,
       NULL, NULL);
 }
 
-turbostl_status multimap_from_arrays_bytes(
+stl_status multimap_from_arrays_bytes(
     multimap_t *map, const void *keys, const void *values, size_t count,
     size_t key_size, size_t key_align, size_t value_size, size_t value_align,
     size_t element_limit, multimap_compare_fn compare, void *context) {
@@ -110,7 +110,7 @@ turbostl_status multimap_from_arrays_bytes(
       value_align, element_limit, compare, context);
 }
 
-void multimap_destroy(multimap_t *map) {
+void multimap_raw_destroy_storage(multimap_t *map) {
   rbtree_t *tree = multimap_tree(map);
   if (tree == NULL) return;
   rbtree_destroy(tree);
@@ -125,15 +125,15 @@ void multimap_clear(multimap_t *map) {
   ++map->generation;
 }
 
-turbostl_status multimap_put(multimap_t *map, const void *key,
+stl_status multimap_put(multimap_t *map, const void *key,
                                     const void *value) {
   rbtree_t *tree = multimap_tree(map);
   rbtree_put_result result;
-  turbostl_status status;
-  if (tree == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  stl_status status;
+  if (tree == NULL) return STL_INVALID_ARGUMENT;
   status = rbtree_put(tree, key, value, &result);
   (void)result;
-  if (status == TURBO_STL_OK) ++map->generation;
+  if (status == STL_OK) ++map->generation;
   return status;
 }
 
@@ -167,7 +167,7 @@ bool multimap_remove(multimap_t *map, const void *key,
   end = rbtree_upper_bound(tree, key);
   if (first == end) return false;
   node = end == NULL ? tree->tail : end->previous;
-  if (rbtree_remove_node(tree, node, out_value) != TURBO_STL_OK)
+  if (rbtree_remove_node(tree, node, out_value) != STL_OK)
     return false;
   ++map->generation;
   return true;
@@ -183,7 +183,7 @@ size_t multimap_erase(multimap_t *map, const void *key) {
   end = rbtree_upper_bound(tree, key);
   while (node != end) {
     rbtree_node_t *next = node->next;
-    if (rbtree_remove_node(tree, node, NULL) != TURBO_STL_OK) break;
+    if (rbtree_remove_node(tree, node, NULL) != STL_OK) break;
     ++removed;
     node = next;
   }
@@ -236,31 +236,31 @@ multimap_iter_t multimap_upper_bound(
       map, rbtree_upper_bound(multimap_tree_const(map), key));
 }
 
-turbostl_status multimap_iter_next(multimap_iter_t *iterator) {
+stl_status multimap_iter_next(multimap_iter_t *iterator) {
   rbtree_node_t *node;
   if (iterator == NULL || multimap_tree_const(iterator->owner) == NULL ||
       iterator->node == NULL)
-    return TURBO_STL_NOT_FOUND;
+    return STL_NOT_FOUND;
   node = (rbtree_node_t *)iterator->node;
   iterator->node = node->next;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
-turbostl_status multimap_iter_prev(multimap_iter_t *iterator) {
+stl_status multimap_iter_prev(multimap_iter_t *iterator) {
   const rbtree_t *tree;
   rbtree_node_t *node;
   if (iterator == NULL ||
       (tree = multimap_tree_const(iterator->owner)) == NULL)
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   if (iterator->node == NULL) {
-    if (tree->tail == NULL) return TURBO_STL_NOT_FOUND;
+    if (tree->tail == NULL) return STL_NOT_FOUND;
     iterator->node = tree->tail;
-    return TURBO_STL_OK;
+    return STL_OK;
   }
   node = (rbtree_node_t *)iterator->node;
-  if (node->previous == NULL) return TURBO_STL_NOT_FOUND;
+  if (node->previous == NULL) return STL_NOT_FOUND;
   iterator->node = node->previous;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
 bool multimap_iter_equal(multimap_iter_t left,

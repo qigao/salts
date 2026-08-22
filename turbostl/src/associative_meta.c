@@ -386,7 +386,7 @@ STL_DEFINE_ORDERED_ASSOC_META(
     CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
     CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
         CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
-    stl_map_instance_container_desc)
+    stl_map_container_desc)
 
 STL_DEFINE_ORDERED_ASSOC_META(
     multimap, multimap_t, "MultiMap", multimap_init, multimap_put,

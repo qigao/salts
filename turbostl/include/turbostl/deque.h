@@ -104,30 +104,6 @@ size_t deque_capacity(const deque_t *deque);
 uint64_t deque_generation(const deque_t *deque);
 bool deque_empty(const deque_t *deque);
 
-/* Temporary repository-migration aliases. */
-typedef deque_t turbo_deque_t;
-#define turbo_deque_init deque_raw_init
-#define turbo_deque_init_bytes deque_init_bytes
-#define turbo_deque_from_array deque_raw_from_array
-#define turbo_deque_from_array_bytes deque_from_array_bytes
-#define turbo_deque_destroy deque_raw_destroy_storage
-#define turbo_deque_clear deque_clear
-#define turbo_deque_reserve deque_reserve
-#define turbo_deque_push_back deque_push_back
-#define turbo_deque_push_front deque_push_front
-#define turbo_deque_pop_back deque_pop_back
-#define turbo_deque_pop_front deque_pop_front
-#define turbo_deque_set deque_set
-#define turbo_deque_front deque_front
-#define turbo_deque_front_const deque_front_const
-#define turbo_deque_back deque_back
-#define turbo_deque_back_const deque_back_const
-#define turbo_deque_at deque_at
-#define turbo_deque_at_const deque_at_const
-#define turbo_deque_size deque_size
-#define turbo_deque_capacity deque_capacity
-#define turbo_deque_generation deque_generation
-#define turbo_deque_empty deque_empty
 
 #ifdef __cplusplus
 }

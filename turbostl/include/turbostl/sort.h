@@ -17,8 +17,6 @@ stl_status stable_sort(void *base, size_t count,
                        const cmeta_type_desc *type,
                        size_t scratch_byte_limit);
 
-/* Temporary repository-migration alias. */
-#define turbo_stable_sort stable_sort
 
 #ifdef __cplusplus
 }

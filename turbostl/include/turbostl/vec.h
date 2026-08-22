@@ -114,30 +114,6 @@ size_t vec_capacity(const vec_t *vec);
 uint64_t vec_generation(const vec_t *vec);
 bool vec_empty(const vec_t *vec);
 
-/* Temporary repository-migration aliases. Remove after all callers migrate. */
-typedef vec_t turbo_vec_t;
-#define turbo_vec_init vec_raw_init
-#define turbo_vec_init_bytes vec_init_bytes
-#define turbo_vec_from_array vec_raw_from_array
-#define turbo_vec_from_array_bytes vec_from_array_bytes
-#define turbo_vec_destroy vec_raw_destroy_storage
-#define turbo_vec_clear vec_clear
-#define turbo_vec_reserve vec_reserve
-#define turbo_vec_resize vec_resize
-#define turbo_vec_push vec_push
-#define turbo_vec_pop vec_pop
-#define turbo_vec_insert vec_insert
-#define turbo_vec_set vec_set
-#define turbo_vec_erase vec_erase
-#define turbo_vec_swap_remove vec_swap_remove
-#define turbo_vec_at vec_at
-#define turbo_vec_at_const vec_at_const
-#define turbo_vec_data vec_data
-#define turbo_vec_data_const vec_data_const
-#define turbo_vec_size vec_size
-#define turbo_vec_capacity vec_capacity
-#define turbo_vec_generation vec_generation
-#define turbo_vec_empty vec_empty
 
 #ifdef __cplusplus
 }

@@ -50,14 +50,14 @@ suite("standard TurboSTL operation benchmarks") {
     int value = 0;
     check_equal(vec_init_bytes(&vec, sizeof(value), _Alignof(int),
                                      TURBO_STL_BENCH_ITEMS),
-                TURBO_STL_OK);
-    check_equal(vec_reserve(&vec, TURBO_STL_BENCH_ITEMS), TURBO_STL_OK);
+                STL_OK);
+    check_equal(vec_reserve(&vec, TURBO_STL_BENCH_ITEMS), STL_OK);
     benchmark_ops("Vec push/pop 1024 ints", 1, TURBO_STL_BENCH_ITEMS * 2U) {
       for (i = 0; i < TURBO_STL_BENCH_ITEMS; ++i) {
         value = (int)i;
         (void)vec_push(&vec, &value);
       }
-      while (vec_pop(&vec, &value) == TURBO_STL_OK) {
+      while (vec_pop(&vec, &value) == STL_OK) {
         turbostl_bench_sink ^= (uintptr_t)value;
       }
     }
@@ -68,11 +68,11 @@ suite("standard TurboSTL operation benchmarks") {
       deque_t deque = {0};
       check_equal(deque_init_bytes(&deque, sizeof(value), _Alignof(int),
                                          TURBO_STL_BENCH_ITEMS),
-                  TURBO_STL_OK);
-      check_equal(deque_reserve(&deque, TURBO_STL_BENCH_ITEMS), TURBO_STL_OK);
+                  STL_OK);
+      check_equal(deque_reserve(&deque, TURBO_STL_BENCH_ITEMS), STL_OK);
       for (i = 0; i < TURBO_STL_BENCH_ITEMS; ++i) {
         value = (int)i;
-        check_equal(deque_push_back(&deque, &value), TURBO_STL_OK);
+        check_equal(deque_push_back(&deque, &value), STL_OK);
       }
       benchmark_ops("Deque wrapped pop/push 1024 ints", 1,
                     TURBO_STL_BENCH_ITEMS * 2U) {
@@ -94,15 +94,15 @@ suite("standard TurboSTL operation benchmarks") {
       check_equal(heap_init_bytes(
                       &heap, sizeof(item), _Alignof(turbostl_bench_heap_item_t),
                       TURBO_STL_BENCH_ITEMS, turbostl_bench_heap_compare, NULL),
-                  TURBO_STL_OK);
-      check_equal(heap_reserve(&heap, TURBO_STL_BENCH_ITEMS), TURBO_STL_OK);
+                  STL_OK);
+      check_equal(heap_reserve(&heap, TURBO_STL_BENCH_ITEMS), STL_OK);
       benchmark_ops("Heap push/pop 1024 512-byte records", 1,
                     TURBO_STL_BENCH_ITEMS * 2U) {
         for (i = 0; i < TURBO_STL_BENCH_ITEMS; ++i) {
           item.priority = (uint32_t)(TURBO_STL_BENCH_ITEMS - i);
           (void)heap_push(&heap, &item);
         }
-        while (heap_pop(&heap, &out) == TURBO_STL_OK) {
+        while (heap_pop(&heap, &out) == STL_OK) {
           turbostl_bench_sink ^= out.priority;
         }
       }
@@ -118,8 +118,8 @@ suite("standard TurboSTL operation benchmarks") {
                       &map, sizeof(key), _Alignof(uint64_t), sizeof(mapped),
                       _Alignof(uint64_t), TURBO_STL_BENCH_ITEMS,
                       turbostl_bench_hash_u64, turbostl_bench_equal_u64, NULL),
-                  TURBO_STL_OK);
-      check_equal(hash_map_reserve(&map, TURBO_STL_BENCH_ITEMS), TURBO_STL_OK);
+                  STL_OK);
+      check_equal(hash_map_reserve(&map, TURBO_STL_BENCH_ITEMS), STL_OK);
       benchmark_ops("HashMap put/remove 1024 pairs", 1,
                     TURBO_STL_BENCH_ITEMS * 2U) {
         for (i = 0; i < TURBO_STL_BENCH_ITEMS; ++i) {

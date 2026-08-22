@@ -12,16 +12,16 @@ static int rbtree_compare_key(const rbtree_t *tree,
              : tree->compare(left, right, tree->compare_context);
 }
 
-static turbostl_status rbtree_copy_object(
+static stl_status rbtree_copy_object(
     const cmeta_type_desc *type, size_t size, size_t stride, size_t alignment,
     const void *source, void **out_object) {
-  turbostl_status status;
-  if (source == NULL || out_object == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  stl_status status;
+  if (source == NULL || out_object == NULL) return STL_INVALID_ARGUMENT;
   *out_object = NULL;
   status = sequence_allocate(1u, stride, alignment, out_object);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   status = sequence_copy(type, size, *out_object, source);
-  if (status != TURBO_STL_OK) {
+  if (status != STL_OK) {
     sequence_deallocate(*out_object);
     *out_object = NULL;
   }
@@ -37,30 +37,30 @@ static void rbtree_destroy_object(const cmeta_type_desc *type,
 
 static rbtree_node_t *rbtree_node_create(
     const rbtree_t *tree, const void *key, const void *value,
-    turbostl_status *out_status) {
+    stl_status *out_status) {
   rbtree_node_t *node;
-  turbostl_status status;
+  stl_status status;
 
   node = (rbtree_node_t *)calloc(1u, sizeof(*node));
   if (node == NULL) {
-    *out_status = TURBO_STL_OUT_OF_MEMORY;
+    *out_status = STL_OUT_OF_MEMORY;
     return NULL;
   }
   status = rbtree_copy_object(tree->key_type, tree->key_size,
                                     tree->key_stride, tree->key_align, key,
                                     &node->key);
-  if (status == TURBO_STL_OK)
+  if (status == STL_OK)
     status = rbtree_copy_object(
         tree->value_type, tree->value_size, tree->value_stride,
         tree->value_align, value, &node->value);
-  if (status != TURBO_STL_OK) {
+  if (status != STL_OK) {
     rbtree_destroy_object(tree->key_type, node->key);
     free(node);
     *out_status = status;
     return NULL;
   }
   node->red = true;
-  *out_status = TURBO_STL_OK;
+  *out_status = STL_OK;
   return node;
 }
 
@@ -150,7 +150,7 @@ static void rbtree_insert_fix(rbtree_t *tree,
   tree->root->red = false;
 }
 
-turbostl_status rbtree_create(
+stl_status rbtree_create(
     rbtree_t **out_tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t element_limit,
@@ -159,18 +159,18 @@ turbostl_status rbtree_create(
   rbtree_t *tree;
   size_t key_stride;
   size_t value_stride;
-  turbostl_status status;
+  stl_status status;
 
   if (out_tree == NULL || (value_type == NULL && value_size == 0u) ||
       (key_type == NULL && compare == NULL))
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   *out_tree = NULL;
   status = sequence_stride(key_size, key_align, &key_stride);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   status = sequence_stride(value_size, value_align, &value_stride);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   tree = (rbtree_t *)calloc(1u, sizeof(*tree));
-  if (tree == NULL) return TURBO_STL_OUT_OF_MEMORY;
+  if (tree == NULL) return STL_OUT_OF_MEMORY;
   tree->key_size = key_size;
   tree->key_stride = key_stride;
   tree->key_align = key_align;
@@ -184,7 +184,7 @@ turbostl_status rbtree_create(
   tree->compare_context = compare_context;
   tree->allow_duplicates = allow_duplicates;
   *out_tree = tree;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
 void rbtree_clear(rbtree_t *tree) {
@@ -259,16 +259,16 @@ rbtree_node_t *rbtree_upper_bound(const rbtree_t *tree,
   return result;
 }
 
-turbostl_status rbtree_put(rbtree_t *tree, const void *key,
+stl_status rbtree_put(rbtree_t *tree, const void *key,
                                   const void *value,
                                   rbtree_put_result *out_result) {
   rbtree_node_t *node;
   rbtree_node_t *parent = NULL;
   int comparison = 0;
-  turbostl_status status;
+  stl_status status;
 
   if (tree == NULL || key == NULL || value == NULL || out_result == NULL)
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   node = tree->root;
   while (node != NULL) {
     parent = node;
@@ -278,16 +278,16 @@ turbostl_status rbtree_put(rbtree_t *tree, const void *key,
       status = rbtree_copy_object(
           tree->value_type, tree->value_size, tree->value_stride,
           tree->value_align, value, &replacement);
-      if (status != TURBO_STL_OK) return status;
+      if (status != STL_OK) return status;
       rbtree_destroy_object(tree->value_type, node->value);
       node->value = replacement;
-      *out_result = TURBO_RBTREE_REPLACED;
-      return TURBO_STL_OK;
+      *out_result = RBTREE_REPLACED;
+      return STL_OK;
     }
     node = comparison < 0 ? node->left : node->right;
   }
   if (tree->size >= tree->element_limit)
-    return TURBO_STL_CAPACITY_EXCEEDED;
+    return STL_CAPACITY_EXCEEDED;
   node = rbtree_node_create(tree, key, value, &status);
   if (node == NULL) return status;
   node->parent = parent;
@@ -316,8 +316,8 @@ turbostl_status rbtree_put(rbtree_t *tree, const void *key,
   }
   rbtree_insert_fix(tree, node);
   ++tree->size;
-  *out_result = TURBO_RBTREE_INSERTED;
-  return TURBO_STL_OK;
+  *out_result = RBTREE_INSERTED;
+  return STL_OK;
 }
 
 static rbtree_node_t *rbtree_minimum(rbtree_node_t *node) {
@@ -408,23 +408,23 @@ static void rbtree_delete_fix(rbtree_t *tree,
   if (node != NULL) node->red = false;
 }
 
-turbostl_status rbtree_remove_node(rbtree_t *tree,
+stl_status rbtree_remove_node(rbtree_t *tree,
                                           rbtree_node_t *node,
                                           void *out_value) {
   rbtree_node_t *moved;
   rbtree_node_t *fix_node;
   rbtree_node_t *fix_parent;
   bool moved_was_red;
-  turbostl_status status;
+  stl_status status;
 
-  if (tree == NULL || node == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (tree == NULL || node == NULL) return STL_INVALID_ARGUMENT;
   status = out_value != NULL
                ? sequence_move_destroy(tree->value_type,
                                              tree->value_size, out_value,
                                              node->value)
                : sequence_destroy_value(tree->value_type,
                                               node->value);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   moved = node;
   moved_was_red = moved->red;
   if (node->left == NULL) {
@@ -466,5 +466,5 @@ turbostl_status rbtree_remove_node(rbtree_t *tree,
   sequence_deallocate(node->value);
   free(node);
   --tree->size;
-  return TURBO_STL_OK;
+  return STL_OK;
 }

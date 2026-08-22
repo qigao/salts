@@ -11,7 +11,7 @@ typedef struct stack {
   vec_t raw;
 } stack_t;
 
-/* Internal typed-storage bridge for legacy/generated migration only. */
+/* Internal typed-storage bridge used by the natural Stack instance API. */
 static inline stl_status stack_raw_init(stack_t *stack,
                                         const cmeta_type_desc *type,
                                         size_t element_limit) {
@@ -98,24 +98,6 @@ static inline bool stack_empty(const stack_t *stack) {
   return stack == NULL || vec_empty(&stack->raw);
 }
 
-/* Temporary repository-migration aliases. */
-typedef stack_t turbo_stack_t;
-#define turbo_stack_init stack_raw_init
-#define turbo_stack_init_bytes stack_init_bytes
-#define turbo_stack_from_array stack_raw_from_array
-#define turbo_stack_from_array_bytes stack_from_array_bytes
-#define turbo_stack_destroy stack_destroy
-#define turbo_stack_clear stack_clear
-#define turbo_stack_reserve stack_reserve
-#define turbo_stack_push stack_push
-#define turbo_stack_pop stack_pop
-#define turbo_stack_top stack_top
-#define turbo_stack_top_const stack_top_const
-#define turbo_stack_at_const stack_at_const
-#define turbo_stack_size stack_size
-#define turbo_stack_capacity stack_capacity
-#define turbo_stack_generation stack_generation
-#define turbo_stack_empty stack_empty
 
 #ifdef __cplusplus
 }

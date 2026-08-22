@@ -4,16 +4,16 @@
 #include "turbo_error.h"
 #include <turbostl/status.h>
 
-static inline int turbo_core_status_from_stl(turbostl_status status) {
+static inline int turbo_core_status_from_stl(stl_status status) {
   switch (status) {
-    case TURBO_STL_OK: return TURBO_OK;
-    case TURBO_STL_INVALID_ARGUMENT: return TURBO_EINVAL;
-    case TURBO_STL_OUT_OF_MEMORY: return TURBO_ENOMEM;
-    case TURBO_STL_CAPACITY_EXCEEDED: return TURBO_ERANGE;
-    case TURBO_STL_EMPTY:
-    case TURBO_STL_NOT_FOUND:
-    case TURBO_STL_TYPE_MISMATCH:
-    case TURBO_STL_TRAIT_MISSING: return TURBO_EIO;
+    case STL_OK: return TURBO_OK;
+    case STL_INVALID_ARGUMENT: return TURBO_EINVAL;
+    case STL_OUT_OF_MEMORY: return TURBO_ENOMEM;
+    case STL_CAPACITY_EXCEEDED: return TURBO_ERANGE;
+    case STL_EMPTY:
+    case STL_NOT_FOUND:
+    case STL_TYPE_MISMATCH:
+    case STL_TRAIT_MISSING: return TURBO_EIO;
   }
   return TURBO_EIO;
 }

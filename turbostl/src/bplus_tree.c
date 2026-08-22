@@ -24,24 +24,24 @@ static void bplus_destroy_object(const cmeta_type_desc *type,
   sequence_deallocate(object);
 }
 
-static turbostl_status bplus_copy_object(
+static stl_status bplus_copy_object(
     const cmeta_type_desc *type, size_t size, size_t stride, size_t alignment,
     const void *source, void **out_object) {
-  turbostl_status status;
-  if (source == NULL || out_object == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  stl_status status;
+  if (source == NULL || out_object == NULL) return STL_INVALID_ARGUMENT;
   *out_object = NULL;
   status = sequence_allocate(1u, stride, alignment, out_object);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   if (type != NULL) {
     if (!type->traits->copy_construct(*out_object, source)) {
       sequence_deallocate(*out_object);
       *out_object = NULL;
-      return TURBO_STL_OUT_OF_MEMORY;
+      return STL_OUT_OF_MEMORY;
     }
   } else {
     memcpy(*out_object, source, size);
   }
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
 static bplus_tree_node_t *bplus_node_new(
@@ -267,7 +267,7 @@ static void bplus_pool_destroy(bplus_node_pool *pool) {
   memset(pool, 0, sizeof(*pool));
 }
 
-static turbostl_status bplus_pool_prepare(
+static stl_status bplus_pool_prepare(
     const bplus_tree_t *tree, bplus_node_pool *pool) {
   const bplus_tree_node_t *node = tree->root;
   size_t levels = 0u;
@@ -276,21 +276,21 @@ static turbostl_status bplus_pool_prepare(
     ++levels;
     node = node->is_leaf ? NULL : node->children[0];
   }
-  if (levels > SIZE_MAX - 2u) return TURBO_STL_CAPACITY_EXCEEDED;
+  if (levels > SIZE_MAX - 2u) return STL_CAPACITY_EXCEEDED;
   pool->count = levels + 2u;
   if (pool->count > SIZE_MAX / sizeof(*pool->nodes))
-    return TURBO_STL_CAPACITY_EXCEEDED;
+    return STL_CAPACITY_EXCEEDED;
   pool->nodes = (bplus_tree_node_t **)calloc(pool->count,
                                                    sizeof(*pool->nodes));
-  if (pool->nodes == NULL) return TURBO_STL_OUT_OF_MEMORY;
+  if (pool->nodes == NULL) return STL_OUT_OF_MEMORY;
   for (index = 0u; index < pool->count; ++index) {
     pool->nodes[index] = bplus_node_new(tree, true);
     if (pool->nodes[index] == NULL) {
       bplus_pool_destroy(pool);
-      return TURBO_STL_OUT_OF_MEMORY;
+      return STL_OUT_OF_MEMORY;
     }
   }
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
 static bplus_tree_node_t *bplus_pool_take(
@@ -364,7 +364,7 @@ static void bplus_insert_prepared(
   ++tree->size;
 }
 
-static turbostl_status bplus_init_common(
+static stl_status bplus_init_common(
     bplus_tree_t *tree, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t min_degree,
     size_t entry_limit, const cmeta_type_desc *key_type,
@@ -373,18 +373,18 @@ static turbostl_status bplus_init_common(
   size_t key_stride;
   size_t value_stride;
   uint64_t generation;
-  turbostl_status status;
+  stl_status status;
   if (tree == NULL || tree->initialized || min_degree < 2u ||
       (key_type == NULL && compare == NULL))
-    return TURBO_STL_INVALID_ARGUMENT;
-  if (min_degree > SIZE_MAX / 2u) return TURBO_STL_CAPACITY_EXCEEDED;
+    return STL_INVALID_ARGUMENT;
+  if (min_degree > SIZE_MAX / 2u) return STL_CAPACITY_EXCEEDED;
   status = sequence_stride(key_size, key_align, &key_stride);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   status = sequence_stride(value_size, value_align, &value_stride);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   if ((2u * min_degree - 1u) > SIZE_MAX / sizeof(void *) ||
       (2u * min_degree) > SIZE_MAX / sizeof(bplus_tree_node_t *))
-    return TURBO_STL_CAPACITY_EXCEEDED;
+    return STL_CAPACITY_EXCEEDED;
   generation = tree->generation + UINT64_C(1);
   memset(tree, 0, sizeof(*tree));
   tree->key_size = key_size;
@@ -403,36 +403,36 @@ static turbostl_status bplus_init_common(
   tree->compare_ctx = compare_ctx;
   tree->generation = generation;
   tree->initialized = true;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
-turbostl_status bplus_tree_init_with_order(
+stl_status bplus_tree_raw_init_with_order(
     bplus_tree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t min_degree,
     size_t entry_limit) {
-  turbostl_status status;
+  stl_status status;
   if (key_type == NULL || value_type == NULL)
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   status = sequence_require_type(key_type, true);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   status = sequence_require_type(value_type, false);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   return bplus_init_common(
       tree, key_type->size, key_type->align, value_type->size,
       value_type->align, min_degree, entry_limit, key_type, value_type, NULL,
       NULL);
 }
 
-turbostl_status bplus_tree_init(bplus_tree_t *tree,
+stl_status bplus_tree_raw_init(bplus_tree_t *tree,
                                        const cmeta_type_desc *key_type,
                                        const cmeta_type_desc *value_type,
                                        size_t entry_limit) {
-  return bplus_tree_init_with_order(
-      tree, key_type, value_type, TURBO_BPLUS_TREE_DEFAULT_MIN_DEGREE,
+  return bplus_tree_raw_init_with_order(
+      tree, key_type, value_type, BPLUS_TREE_DEFAULT_MIN_DEGREE,
       entry_limit);
 }
 
-turbostl_status bplus_tree_init_bytes_with_order(
+stl_status bplus_tree_init_bytes_with_order(
     bplus_tree_t *tree, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t min_degree,
     size_t entry_limit, bplus_tree_compare_fn compare,
@@ -442,13 +442,13 @@ turbostl_status bplus_tree_init_bytes_with_order(
                                  NULL, compare, compare_ctx);
 }
 
-turbostl_status bplus_tree_init_bytes(
+stl_status bplus_tree_init_bytes(
     bplus_tree_t *tree, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t entry_limit,
     bplus_tree_compare_fn compare, void *compare_ctx) {
   return bplus_tree_init_bytes_with_order(
       tree, key_size, key_align, value_size, value_align,
-      TURBO_BPLUS_TREE_DEFAULT_MIN_DEGREE, entry_limit, compare, compare_ctx);
+      BPLUS_TREE_DEFAULT_MIN_DEGREE, entry_limit, compare, compare_ctx);
 }
 
 static bplus_tree_node_t *bplus_leftmost(
@@ -500,7 +500,7 @@ static const void *bplus_find_value(const bplus_tree_t *tree,
   return leaf->values[index];
 }
 
-turbostl_status bplus_tree_put(bplus_tree_t *tree,
+stl_status bplus_tree_put(bplus_tree_t *tree,
                                       const void *key, const void *value) {
   bplus_node_pool pool = {0};
   bplus_tree_node_t *leaf;
@@ -508,9 +508,9 @@ turbostl_status bplus_tree_put(bplus_tree_t *tree,
   void *key_copy = NULL;
   void *value_copy = NULL;
   size_t index;
-  turbostl_status status;
+  stl_status status;
   if (!bplus_valid(tree) || key == NULL || value == NULL)
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   leaf = bplus_find_leaf(tree, key);
   if (leaf != NULL) {
     index = bplus_leaf_lower_bound(tree, leaf, key);
@@ -519,23 +519,23 @@ turbostl_status bplus_tree_put(bplus_tree_t *tree,
       status = bplus_copy_object(
           tree->value_type, tree->value_size, tree->value_stride,
           tree->value_align, value, &value_copy);
-      if (status != TURBO_STL_OK) return status;
+      if (status != STL_OK) return status;
       bplus_destroy_object(tree->value_type, leaf->values[index]);
       leaf->values[index] = value_copy;
       leaf->links[index]->value = value_copy;
       ++tree->generation;
-      return TURBO_STL_OK;
+      return STL_OK;
     }
   }
-  if (tree->size >= tree->entry_limit) return TURBO_STL_CAPACITY_EXCEEDED;
+  if (tree->size >= tree->entry_limit) return STL_CAPACITY_EXCEEDED;
   status = bplus_copy_object(
       tree->key_type, tree->key_size, tree->key_stride, tree->key_align, key,
       &key_copy);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   status = bplus_copy_object(tree->value_type, tree->value_size,
                                    tree->value_stride, tree->value_align,
                                    value, &value_copy);
-  if (status != TURBO_STL_OK) {
+  if (status != STL_OK) {
     bplus_destroy_object(tree->key_type, key_copy);
     return status;
   }
@@ -543,10 +543,10 @@ turbostl_status bplus_tree_put(bplus_tree_t *tree,
   if (link == NULL) {
     bplus_destroy_object(tree->value_type, value_copy);
     bplus_destroy_object(tree->key_type, key_copy);
-    return TURBO_STL_OUT_OF_MEMORY;
+    return STL_OUT_OF_MEMORY;
   }
   status = bplus_pool_prepare(tree, &pool);
-  if (status != TURBO_STL_OK) {
+  if (status != STL_OK) {
     free(link);
     bplus_destroy_object(tree->value_type, value_copy);
     bplus_destroy_object(tree->key_type, key_copy);
@@ -555,7 +555,7 @@ turbostl_status bplus_tree_put(bplus_tree_t *tree,
   bplus_insert_prepared(tree, key_copy, value_copy, link, &pool);
   bplus_pool_destroy(&pool);
   ++tree->generation;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
 void *bplus_tree_get(bplus_tree_t *tree, const void *key) {
@@ -738,7 +738,7 @@ static void bplus_rebalance_after_remove(bplus_tree_t *tree,
   bplus_refresh_ancestors(tree, node);
 }
 
-turbostl_status bplus_tree_remove(bplus_tree_t *tree,
+stl_status bplus_tree_remove(bplus_tree_t *tree,
                                          const void *key, void *out_value) {
   bplus_tree_node_t *leaf;
   bplus_tree_entry_link_t *removed_link;
@@ -746,13 +746,13 @@ turbostl_status bplus_tree_remove(bplus_tree_t *tree,
   void *removed_value;
   size_t index;
   if (!bplus_valid(tree) || key == NULL)
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   leaf = bplus_find_leaf(tree, key);
-  if (leaf == NULL) return TURBO_STL_NOT_FOUND;
+  if (leaf == NULL) return STL_NOT_FOUND;
   index = bplus_leaf_lower_bound(tree, leaf, key);
   if (index >= leaf->num_keys ||
       bplus_compare_key(tree, leaf->keys[index], key) != 0)
-    return TURBO_STL_NOT_FOUND;
+    return STL_NOT_FOUND;
   removed_key = leaf->keys[index];
   removed_value = leaf->values[index];
   removed_link = leaf->links[index];
@@ -775,7 +775,7 @@ turbostl_status bplus_tree_remove(bplus_tree_t *tree,
   free(removed_link);
   --tree->size;
   ++tree->generation;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
 void bplus_tree_clear(bplus_tree_t *tree) {
@@ -788,7 +788,7 @@ void bplus_tree_clear(bplus_tree_t *tree) {
   ++tree->generation;
 }
 
-void bplus_tree_destroy(bplus_tree_t *tree) {
+void bplus_tree_raw_destroy_storage(bplus_tree_t *tree) {
   uint64_t generation;
   if (tree == NULL) return;
   generation = tree->generation;
@@ -800,11 +800,11 @@ void bplus_tree_destroy(bplus_tree_t *tree) {
   tree->generation = generation;
 }
 
-turbostl_status bplus_tree_reserve(bplus_tree_t *tree,
+stl_status bplus_tree_reserve(bplus_tree_t *tree,
                                           size_t min_capacity) {
-  if (!bplus_valid(tree)) return TURBO_STL_INVALID_ARGUMENT;
-  return min_capacity <= tree->entry_limit ? TURBO_STL_OK
-                                            : TURBO_STL_CAPACITY_EXCEEDED;
+  if (!bplus_valid(tree)) return STL_INVALID_ARGUMENT;
+  return min_capacity <= tree->entry_limit ? STL_OK
+                                            : STL_CAPACITY_EXCEEDED;
 }
 
 size_t bplus_tree_size(const bplus_tree_t *tree) {
@@ -875,7 +875,7 @@ bool bplus_tree_range_next(const bplus_tree_t *tree,
   return true;
 }
 
-static turbostl_status bplus_from_arrays_common(
+static stl_status bplus_from_arrays_common(
     bplus_tree_t *tree, const void *keys, const void *values,
     size_t count, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t key_size, size_t key_align,
@@ -884,25 +884,25 @@ static turbostl_status bplus_from_arrays_common(
   bplus_tree_t next = {0};
   size_t index;
   uint64_t generation;
-  turbostl_status status;
+  stl_status status;
   if (tree == NULL || (count != 0u && (keys == NULL || values == NULL)))
-    return TURBO_STL_INVALID_ARGUMENT;
+    return STL_INVALID_ARGUMENT;
   if (count != 0u &&
       (key_size > SIZE_MAX / count || value_size > SIZE_MAX / count))
-    return TURBO_STL_CAPACITY_EXCEEDED;
+    return STL_CAPACITY_EXCEEDED;
   if (key_type != NULL)
-    status = bplus_tree_init(&next, key_type, value_type, entry_limit);
+    status = bplus_tree_raw_init(&next, key_type, value_type, entry_limit);
   else
     status = bplus_tree_init_bytes(
         &next, key_size, key_align, value_size, value_align, entry_limit,
         compare, compare_ctx);
-  if (status != TURBO_STL_OK) return status;
+  if (status != STL_OK) return status;
   for (index = 0u; index < count; ++index) {
     status = bplus_tree_put(
         &next, (const unsigned char *)keys + index * key_size,
         (const unsigned char *)values + index * value_size);
-    if (status != TURBO_STL_OK) {
-      bplus_tree_destroy(&next);
+    if (status != STL_OK) {
+      bplus_tree_raw_destroy_storage(&next);
       return status;
     }
   }
@@ -910,21 +910,21 @@ static turbostl_status bplus_from_arrays_common(
   if (tree->initialized) bplus_node_destroy(tree, tree->root);
   *tree = next;
   tree->generation = generation;
-  return TURBO_STL_OK;
+  return STL_OK;
 }
 
-turbostl_status bplus_tree_from_arrays(
+stl_status bplus_tree_raw_from_arrays(
     bplus_tree_t *tree, const void *keys, const void *values,
     size_t count, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit) {
-  if (key_type == NULL || value_type == NULL) return TURBO_STL_INVALID_ARGUMENT;
+  if (key_type == NULL || value_type == NULL) return STL_INVALID_ARGUMENT;
   return bplus_from_arrays_common(
       tree, keys, values, count, key_type, value_type, key_type->size,
       key_type->align, value_type->size, value_type->align, entry_limit, NULL,
       NULL);
 }
 
-turbostl_status bplus_tree_from_arrays_bytes(
+stl_status bplus_tree_from_arrays_bytes(
     bplus_tree_t *tree, const void *keys, const void *values,
     size_t count, size_t key_size, size_t key_align, size_t value_size,
     size_t value_align, size_t entry_limit,

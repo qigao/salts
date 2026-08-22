@@ -154,28 +154,28 @@ static const cmeta_type_desc turbo_serial_port_info_storage_type = {
 typedef vec_t turbo_serial_port_info_vec_t;
 
 static inline turbo_serial_result_t turbo_serial_result_from_stl(
-    turbostl_status status) {
+    stl_status status) {
   switch (status) {
-    case TURBO_STL_OK: return TURBO_SERIAL_OK;
-    case TURBO_STL_INVALID_ARGUMENT: return TURBO_SERIAL_INVALID_VALUE;
-    case TURBO_STL_OUT_OF_MEMORY:
-    case TURBO_STL_CAPACITY_EXCEEDED: return TURBO_SERIAL_NO_MEMORY;
-    case TURBO_STL_EMPTY:
-    case TURBO_STL_NOT_FOUND:
-    case TURBO_STL_TYPE_MISMATCH:
-    case TURBO_STL_TRAIT_MISSING: return TURBO_SERIAL_INVALID_STATE;
+    case STL_OK: return TURBO_SERIAL_OK;
+    case STL_INVALID_ARGUMENT: return TURBO_SERIAL_INVALID_VALUE;
+    case STL_OUT_OF_MEMORY:
+    case STL_CAPACITY_EXCEEDED: return TURBO_SERIAL_NO_MEMORY;
+    case STL_EMPTY:
+    case STL_NOT_FOUND:
+    case STL_TYPE_MISMATCH:
+    case STL_TRAIT_MISSING: return TURBO_SERIAL_INVALID_STATE;
   }
   return TURBO_SERIAL_INVALID_STATE;
 }
 
-static inline turbostl_status turbo_serial_port_info_vec_t_init(
+static inline stl_status turbo_serial_port_info_vec_t_init(
     turbo_serial_port_info_vec_t *vec) {
   return vec_raw_init(vec, &turbo_serial_port_info_storage_type,
                       turbo_serial_port_list_entry_limit(
                           &turbo_serial_port_info_storage_type));
 }
 
-static inline turbostl_status turbo_serial_port_info_vec_t_push(
+static inline stl_status turbo_serial_port_info_vec_t_push(
     turbo_serial_port_info_vec_t *vec,
     turbo_serial_port_info_storage_t value) {
   return vec_push(vec, &value);

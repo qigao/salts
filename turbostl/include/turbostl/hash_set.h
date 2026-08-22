@@ -15,7 +15,7 @@ typedef struct hash_set {
   hash_map_t table;
 } hash_set_t;
 
-/* Internal typed bridge for compiled implementation and legacy wrappers. */
+/* Internal typed-storage bridge used by the natural instance wrappers. */
 stl_status hash_set_raw_init(hash_set_t *set,
                              const cmeta_type_desc *key_type,
                              size_t entry_limit);
@@ -68,24 +68,6 @@ uint64_t hash_set_generation(const hash_set_t *set);
 bool hash_set_empty(const hash_set_t *set);
 const void *hash_set_key_at(const hash_set_t *set, size_t slot);
 
-/* Temporary repository-migration aliases. */
-typedef hash_set_t turbo_hash_set_t;
-#define turbo_hash_set_init hash_set_raw_init
-#define turbo_hash_set_init_bytes hash_set_init_bytes
-#define turbo_hash_set_from_array hash_set_raw_from_array
-#define turbo_hash_set_from_array_bytes hash_set_from_array_bytes
-#define turbo_hash_set_destroy hash_set_raw_destroy_storage
-#define turbo_hash_set_clear hash_set_clear
-#define turbo_hash_set_reserve hash_set_reserve
-#define turbo_hash_set_add hash_set_add
-#define turbo_hash_set_contains hash_set_contains
-#define turbo_hash_set_remove hash_set_remove
-#define turbo_hash_set_size hash_set_size
-#define turbo_hash_set_capacity hash_set_capacity
-#define turbo_hash_set_entry_limit hash_set_entry_limit
-#define turbo_hash_set_generation hash_set_generation
-#define turbo_hash_set_empty hash_set_empty
-#define turbo_hash_set_key_at hash_set_key_at
 
 #ifdef __cplusplus
 }

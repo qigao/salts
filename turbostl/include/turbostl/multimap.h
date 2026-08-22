@@ -119,36 +119,6 @@ const void *multimap_iter_value_const(multimap_iter_t iterator);
 bool multimap_range_next(const multimap_t *map, cmeta_range_cursor *cursor,
                          const void **out_key, const void **out_value);
 
-/* Temporary repository-migration aliases. */
-typedef multimap_compare_fn turbo_multimap_compare_fn;
-typedef multimap_t turbo_multimap_t;
-typedef multimap_iter_t turbo_multimap_iter_t;
-#define turbo_multimap_init multimap_raw_init
-#define turbo_multimap_init_bytes multimap_init_bytes
-#define turbo_multimap_from_arrays multimap_raw_from_arrays
-#define turbo_multimap_from_arrays_bytes multimap_from_arrays_bytes
-#define turbo_multimap_destroy multimap_raw_destroy_storage
-#define turbo_multimap_clear multimap_clear
-#define turbo_multimap_put multimap_put
-#define turbo_multimap_contains multimap_contains
-#define turbo_multimap_count multimap_count
-#define turbo_multimap_remove multimap_remove
-#define turbo_multimap_erase multimap_erase
-#define turbo_multimap_size multimap_size
-#define turbo_multimap_element_limit multimap_element_limit
-#define turbo_multimap_generation multimap_generation
-#define turbo_multimap_empty multimap_empty
-#define turbo_multimap_begin multimap_begin
-#define turbo_multimap_end multimap_end
-#define turbo_multimap_lower_bound multimap_lower_bound
-#define turbo_multimap_upper_bound multimap_upper_bound
-#define turbo_multimap_iter_next multimap_iter_next
-#define turbo_multimap_iter_prev multimap_iter_prev
-#define turbo_multimap_iter_equal multimap_iter_equal
-#define turbo_multimap_iter_key_const multimap_iter_key_const
-#define turbo_multimap_iter_value multimap_iter_value
-#define turbo_multimap_iter_value_const multimap_iter_value_const
-#define turbo_multimap_range_next multimap_range_next
 
 #ifdef __cplusplus
 }

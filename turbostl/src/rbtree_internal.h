@@ -41,11 +41,11 @@ typedef struct rbtree {
 } rbtree_t;
 
 typedef enum rbtree_put_result {
-  TURBO_RBTREE_INSERTED,
-  TURBO_RBTREE_REPLACED
+  RBTREE_INSERTED,
+  RBTREE_REPLACED
 } rbtree_put_result;
 
-turbostl_status rbtree_create(
+stl_status rbtree_create(
     rbtree_t **out_tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t key_size, size_t key_align,
     size_t value_size, size_t value_align, size_t element_limit,
@@ -53,7 +53,7 @@ turbostl_status rbtree_create(
     bool allow_duplicates);
 void rbtree_destroy(rbtree_t *tree);
 void rbtree_clear(rbtree_t *tree);
-turbostl_status rbtree_put(rbtree_t *tree, const void *key,
+stl_status rbtree_put(rbtree_t *tree, const void *key,
                                   const void *value,
                                   rbtree_put_result *out_result);
 rbtree_node_t *rbtree_find(const rbtree_t *tree,
@@ -62,7 +62,7 @@ rbtree_node_t *rbtree_lower_bound(const rbtree_t *tree,
                                               const void *key);
 rbtree_node_t *rbtree_upper_bound(const rbtree_t *tree,
                                               const void *key);
-turbostl_status rbtree_remove_node(rbtree_t *tree,
+stl_status rbtree_remove_node(rbtree_t *tree,
                                           rbtree_node_t *node,
                                           void *out_value);
 
