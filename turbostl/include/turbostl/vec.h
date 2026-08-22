@@ -35,14 +35,13 @@ typedef struct vec {
   bool initialized;
 } vec_t;
 
-/* Internal typed bridge used while implementation symbols are migrated. */
-stl_status vec_init_with_type(vec_t *vec, const cmeta_type_desc *element_type,
+/* Internal typed-storage bridge. Natural typed API is instance-driven below. */
+stl_status vec_raw_init(vec_t *vec, const cmeta_type_desc *element_type,
+                        size_t element_limit);
+stl_status vec_raw_from_array(vec_t *vec, const void *elements, size_t count,
+                              const cmeta_type_desc *element_type,
                               size_t element_limit);
-stl_status vec_from_array_with_type(vec_t *vec, const void *elements,
-                                    size_t count,
-                                    const cmeta_type_desc *element_type,
-                                    size_t element_limit);
-void vec_destroy_storage(vec_t *vec);
+void vec_raw_destroy_storage(vec_t *vec);
 
 /* Raw byte entry points remain explicit. */
 stl_status vec_init_bytes(vec_t *vec, size_t elem_size, size_t elem_align,
@@ -62,7 +61,7 @@ static inline stl_status vec_init(vec_t *vec, size_t element_limit) {
     return STL_INVALID_ARGUMENT;
   kind = vec->cmeta.descriptor;
   type = vec->element_type;
-  status = vec_init_with_type(vec, type, element_limit);
+  status = vec_raw_init(vec, type, element_limit);
   vec->cmeta.descriptor = kind;
   if (status != STL_OK)
     vec->element_type = type;
@@ -78,7 +77,7 @@ static inline stl_status vec_from_array(vec_t *vec, const void *elements,
     return STL_INVALID_ARGUMENT;
   kind = vec->cmeta.descriptor;
   type = vec->element_type;
-  status = vec_from_array_with_type(vec, elements, count, type, element_limit);
+  status = vec_raw_from_array(vec, elements, count, type, element_limit);
   vec->cmeta.descriptor = kind;
   if (status != STL_OK)
     vec->element_type = type;
@@ -92,7 +91,7 @@ static inline void vec_destroy(vec_t *vec) {
     return;
   kind = vec->cmeta.descriptor;
   type = vec->element_type;
-  vec_destroy_storage(vec);
+  vec_raw_destroy_storage(vec);
   vec->cmeta.descriptor = kind;
   vec->element_type = type;
 }
@@ -117,11 +116,11 @@ bool vec_empty(const vec_t *vec);
 
 /* Temporary repository-migration aliases. Remove after all callers migrate. */
 typedef vec_t turbo_vec_t;
-#define turbo_vec_init vec_init_with_type
+#define turbo_vec_init vec_raw_init
 #define turbo_vec_init_bytes vec_init_bytes
-#define turbo_vec_from_array vec_from_array_with_type
+#define turbo_vec_from_array vec_raw_from_array
 #define turbo_vec_from_array_bytes vec_from_array_bytes
-#define turbo_vec_destroy vec_destroy_storage
+#define turbo_vec_destroy vec_raw_destroy_storage
 #define turbo_vec_clear vec_clear
 #define turbo_vec_reserve vec_reserve
 #define turbo_vec_resize vec_resize
