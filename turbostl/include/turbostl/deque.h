@@ -29,14 +29,14 @@ typedef struct deque {
 
 /* Internal typed bridge used while compiled implementation symbols and legacy
  * generated wrappers migrate to the self-describing API. */
-stl_status deque_init_with_type(deque_t *deque,
+stl_status deque_raw_init(deque_t *deque,
+                          const cmeta_type_desc *element_type,
+                          size_t element_limit);
+stl_status deque_raw_from_array(deque_t *deque, const void *elements,
+                                size_t count,
                                 const cmeta_type_desc *element_type,
                                 size_t element_limit);
-stl_status deque_from_array_with_type(deque_t *deque, const void *elements,
-                                      size_t count,
-                                      const cmeta_type_desc *element_type,
-                                      size_t element_limit);
-void deque_destroy_storage(deque_t *deque);
+void deque_raw_destroy_storage(deque_t *deque);
 
 stl_status deque_init_bytes(deque_t *deque, size_t elem_size, size_t elem_align,
                             size_t element_limit);
@@ -52,7 +52,7 @@ static inline stl_status deque_init(deque_t *deque, size_t element_limit) {
     return STL_INVALID_ARGUMENT;
   kind = deque->cmeta.descriptor;
   type = deque->element_type;
-  status = deque_init_with_type(deque, type, element_limit);
+  status = deque_raw_init(deque, type, element_limit);
   deque->cmeta.descriptor = kind;
   deque->element_type = type;
   return status;
@@ -68,8 +68,7 @@ static inline stl_status deque_from_array(deque_t *deque,
     return STL_INVALID_ARGUMENT;
   kind = deque->cmeta.descriptor;
   type = deque->element_type;
-  status = deque_from_array_with_type(deque, elements, count, type,
-                                      element_limit);
+  status = deque_raw_from_array(deque, elements, count, type, element_limit);
   deque->cmeta.descriptor = kind;
   deque->element_type = type;
   return status;
@@ -82,7 +81,7 @@ static inline void deque_destroy(deque_t *deque) {
     return;
   kind = deque->cmeta.descriptor;
   type = deque->element_type;
-  deque_destroy_storage(deque);
+  deque_raw_destroy_storage(deque);
   deque->cmeta.descriptor = kind;
   deque->element_type = type;
 }
@@ -107,11 +106,11 @@ bool deque_empty(const deque_t *deque);
 
 /* Temporary repository-migration aliases. */
 typedef deque_t turbo_deque_t;
-#define turbo_deque_init deque_init_with_type
+#define turbo_deque_init deque_raw_init
 #define turbo_deque_init_bytes deque_init_bytes
-#define turbo_deque_from_array deque_from_array_with_type
+#define turbo_deque_from_array deque_raw_from_array
 #define turbo_deque_from_array_bytes deque_from_array_bytes
-#define turbo_deque_destroy deque_destroy_storage
+#define turbo_deque_destroy deque_raw_destroy_storage
 #define turbo_deque_clear deque_clear
 #define turbo_deque_reserve deque_reserve
 #define turbo_deque_push_back deque_push_back
