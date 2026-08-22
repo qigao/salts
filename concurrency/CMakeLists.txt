@@ -17,6 +17,14 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::Platform)
 
+if(APPLE)
+  target_compile_definitions(${TARGET_NAME} PRIVATE _DARWIN_C_SOURCE=1)
+elseif(UNIX)
+  target_compile_definitions(
+    ${TARGET_NAME}
+    PRIVATE _DEFAULT_SOURCE=1 _POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700)
+endif()
+
 install(
   TARGETS ${TARGET_NAME}
   EXPORT TurboUtilsTargets
