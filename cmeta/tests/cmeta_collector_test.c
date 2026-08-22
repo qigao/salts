@@ -327,7 +327,13 @@ spec("CMeta transactional collectors") {
         int output = 0;
         int value = 1;
         cmeta_type_desc malformed = {
-            NULL, sizeof(int), _Alignof(int), CMETA_T_OBJECT, NULL, NULL
+            .name = NULL,
+            .size = sizeof(int),
+            .align = _Alignof(int),
+            .kind = CMETA_T_OBJECT,
+            .pointee = NULL,
+            .traits = NULL,
+            .identity = NULL
         };
         fake_collector_state state = {
             .output = &output,

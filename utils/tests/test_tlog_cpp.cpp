@@ -66,7 +66,7 @@ spec("TLog C++ Tests") {
 
   it("should log pointer with {}") {
     int x = 42;
-    TLOG_INFOF("pointer: {}", (void*)&x);
+    TLOG_INFOF("pointer: {}", static_cast<void *>(&x));
   }
 
   it("should log enum with {}") {

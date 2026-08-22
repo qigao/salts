@@ -38,10 +38,17 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
 
 #define CMETA_STRUCT_FIELD_DECL(type, name) type name;
 
+#ifdef __cplusplus
+#define CMETA_STRUCT_FIELD_SIZE(owner, name) \
+    sizeof(static_cast<owner *>(nullptr)->name)
+#else
+#define CMETA_STRUCT_FIELD_SIZE(owner, name) sizeof(((owner *)0)->name)
+#endif
+
 #define CMETA_STRUCT_FIELD_DESC(field, owner) CMETA_STRUCT_FIELD_DESC_I(owner, CMETA_PP_UNPAREN field)
 #define CMETA_STRUCT_FIELD_DESC_I(owner, ...) CMETA_STRUCT_FIELD_DESC_II(owner, __VA_ARGS__)
 #define CMETA_STRUCT_FIELD_DESC_II(owner, type, name) \
-    { #name, #type, offsetof(owner, name), sizeof(((owner *)0)->name), CMETA_ALIGNOF(type) },
+    { #name, #type, offsetof(owner, name), CMETA_STRUCT_FIELD_SIZE(owner, name), CMETA_ALIGNOF(type) },
 
 /* Single-declaration reflected struct.
  *

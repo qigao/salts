@@ -20,7 +20,12 @@
 #ifdef __cplusplus
   #include <chrono>
   #include <type_traits>
+  #define FMT_DETAIL_CAST(type, value) static_cast<type>(value)
+#else
+  #define FMT_DETAIL_CAST(type, value) ((type)(value))
+#endif
 
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -96,11 +101,11 @@ typedef struct {
 Replay(FMT_DETAIL_TYPE_SCHEMA, FMT_MAKE_FN)
 #undef FMT_MAKE_FN
 
-#define FMT_TYPE_META_ITEM(name, value, text, type, member, constructor) \
-  {(int64_t)(name), #name, (text)},
+#define FMT_TYPE_META_ITEM(name, value, text, type, member, constructor)                           \
+  {FMT_DETAIL_CAST(int64_t, name), #name, (text)},
 
 CMETA_LOCAL const cmeta_enum_item_desc fmt_type_t__enum_items[] = {
-  {(int64_t)FMT_TYPE_NONE, "FMT_TYPE_NONE", "none"},
+  {FMT_DETAIL_CAST(int64_t, FMT_TYPE_NONE), "FMT_TYPE_NONE", "none"},
   Replay(FMT_DETAIL_TYPE_SCHEMA, FMT_TYPE_META_ITEM)
 };
 
@@ -115,17 +120,17 @@ CMETA_INLINE const cmeta_enum_desc *fmt_type_t_meta(void) {
 }
 
 CMETA_INLINE const char *fmt_type_t_to_string(fmt_type_t value) {
-  return cmeta_enum_to_string(&fmt_type_t__enum_meta, (int64_t)value);
+  return cmeta_enum_to_string(&fmt_type_t__enum_meta, FMT_DETAIL_CAST(int64_t, value));
 }
 
 CMETA_INLINE const char *fmt_type_t_to_symbol(fmt_type_t value) {
-  return cmeta_enum_to_symbol(&fmt_type_t__enum_meta, (int64_t)value);
+  return cmeta_enum_to_symbol(&fmt_type_t__enum_meta, FMT_DETAIL_CAST(int64_t, value));
 }
 
 CMETA_INLINE bool fmt_type_t_from_string(const char *text, fmt_type_t *out) {
   int64_t raw;
   if (!out || !cmeta_enum_from_string(&fmt_type_t__enum_meta, text, &raw)) return false;
-  *out = (fmt_type_t)raw;
+  *out = FMT_DETAIL_CAST(fmt_type_t, raw);
   return true;
 }
 
@@ -136,17 +141,33 @@ static inline fmt_arg_t fmt_arg_time(time_t x) {
 #ifdef __cplusplus
   fmt_arg_t arg;
   arg.type = FMT_TYPE_TIME;
-  arg.val.tv.tv_sec = (int64_t)x;
+  arg.val.tv.tv_sec = FMT_DETAIL_CAST(int64_t, x);
   arg.val.tv.tv_usec = 0;
   return arg;
 #else
-  return (fmt_arg_t){FMT_TYPE_TIME, {.tv = {(int64_t)x, 0}}};
+  return (fmt_arg_t){FMT_TYPE_TIME, {.tv = {FMT_DETAIL_CAST(int64_t, x), 0}}};
 #endif
 }
 
 #define FMT_TIME(t) fmt_arg_time(t)
 
 #undef FMT_MAKE_ARG
+#undef FMT_DETAIL_CAST
+
+/* Keep signed/unsigned byte sources on the public character representation
+ * without an implicit signedness conversion. Bit-copying preserves the source
+ * byte exactly; printf's %c path later consumes that byte representation. */
+static inline fmt_arg_t fmt_arg_schar(signed char x) {
+  char value;
+  memcpy(&value, &x, sizeof(value));
+  return fmt_arg_char(value);
+}
+
+static inline fmt_arg_t fmt_arg_uchar(unsigned char x) {
+  char value;
+  memcpy(&value, &x, sizeof(value));
+  return fmt_arg_char(value);
+}
 
 /* ============================================================================
  * Type Wrappers (C++ Overloads or C11 _Generic)
@@ -163,8 +184,8 @@ static inline fmt_arg_t fmt_arg_time(time_t x) {
 #define FMT_DETAIL_NUMERIC_DETECT_SCHEMA(M)                                                       \
   Schema(M,                                                                                       \
          (char, fmt_arg_char),                                                                    \
-         (signed char, fmt_arg_char),                                                             \
-         (unsigned char, fmt_arg_char),                                                           \
+         (signed char, fmt_arg_schar),                                                            \
+         (unsigned char, fmt_arg_uchar),                                                          \
          (short, fmt_arg_int),                                                                    \
          (unsigned short, fmt_arg_uint),                                                          \
          (int, fmt_arg_int),                                                                      \
@@ -214,8 +235,8 @@ static inline fmt_arg_t fmt_arg_detect(std::chrono::system_clock::time_point tp)
   auto sec = std::chrono::duration_cast<std::chrono::seconds>(dur);
   auto usec = std::chrono::duration_cast<std::chrono::microseconds>(dur - sec);
   turbo_timeval_t tv;
-  tv.tv_sec = (int64_t)sec.count();
-  tv.tv_usec = (int32_t)usec.count();
+  tv.tv_sec = static_cast<int64_t>(sec.count());
+  tv.tv_usec = static_cast<int32_t>(usec.count());
   return fmt_arg_timeval(tv);
 }
 
@@ -241,9 +262,9 @@ static inline auto fmt_arg_detect(const T &x) ->
   return fmt_arg_strv(sv);
 }
 
-/* Template catches all other pointer types */
+/* Template catches all other object pointer types. */
 template <typename T> static inline fmt_arg_t fmt_arg_detect(T *x) {
-  return fmt_arg_ptr((const void *)x);
+  return fmt_arg_ptr(static_cast<const void *>(x));
 }
 
 /* Template for enum types: cast to underlying integer type */
@@ -411,7 +432,7 @@ struct fmt_buffer_t {
   template <typename... Args> void print(const char *format, const Args &...args) {
     if (pos < size) {
       int n = fmt_cpp_wrapper(data + pos, size - pos, format, args...);
-      if (n > 0) pos += (size_t)n;
+      if (n > 0) pos += static_cast<size_t>(n);
     }
   }
 };
@@ -453,7 +474,7 @@ static inline auto fmt_arg_detect(const T &x) -> typename std::enable_if<
  */
 template <typename... Args>
 inline int fmt_cpp_wrapper(char *buf, size_t size, const char *fmt, const Args &...args) {
-  const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE}};
+  const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE, {}}};
   return fmt_print(buf, size, fmt, arg_array, sizeof...(Args));
 }
 
@@ -461,7 +482,7 @@ inline int fmt_cpp_wrapper(char *buf, size_t size, const char *fmt, const Args &
 
 template <typename... Args>
 inline tstr tstr_cat_typed_cpp(tstr s, const char *format, const Args &...args) {
-  const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE}};
+  const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE, {}}};
   return fmt_print_tstr(s, format, arg_array, sizeof...(Args));
 }
 
@@ -469,7 +490,7 @@ inline tstr tstr_cat_typed_cpp(tstr s, const char *format, const Args &...args) 
 
 template <typename... Args>
 inline tstr tstr_format_typed_cpp(const char *format, const Args &...args) {
-  const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE}};
+  const fmt_arg_t arg_array[] = {FMT_ARG(args)..., {FMT_TYPE_NONE, {}}};
   return fmt_print_tstr(tstr_new(), format, arg_array, sizeof...(Args));
 }
 

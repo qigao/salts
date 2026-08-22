@@ -44,13 +44,23 @@ static const cmeta_type_traits missing_compare_traits = {
 };
 
 static const cmeta_type_desc compare_value_type = {
-    "compare_value", sizeof(compare_value), _Alignof(compare_value),
-    CMETA_T_OBJECT, NULL, &compare_value_traits
+    .name = "compare_value",
+    .size = sizeof(compare_value),
+    .align = _Alignof(compare_value),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &compare_value_traits,
+    .identity = NULL
 };
 
 static const cmeta_type_desc missing_compare_type = {
-    "missing_compare", sizeof(compare_value), _Alignof(compare_value),
-    CMETA_T_OBJECT, NULL, &missing_compare_traits
+    .name = "missing_compare",
+    .size = sizeof(compare_value),
+    .align = _Alignof(compare_value),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &missing_compare_traits,
+    .identity = NULL
 };
 
 typedef struct map_owned_value {
@@ -108,8 +118,13 @@ static const cmeta_type_traits map_owned_traits = {
 };
 
 static const cmeta_type_desc map_owned_type = {
-    "map_owned", sizeof(map_owned_value), _Alignof(map_owned_value),
-    CMETA_T_OBJECT, NULL, &map_owned_traits
+    .name = "map_owned",
+    .size = sizeof(map_owned_value),
+    .align = _Alignof(map_owned_value),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &map_owned_traits,
+    .identity = NULL
 };
 
 static int raw_int_compare_map(const void *left, const void *right,

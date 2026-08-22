@@ -50,15 +50,11 @@ extern "C" {
   #include <sys/stat.h>
   #define TTEST_IS_ATTY__() _isatty(_fileno(stdout))
 #else
-  #ifndef _POSIX_C_SOURCE
-    /* This definition is required for `fileno` to be defined */
-    #define _POSIX_C_SOURCE 200809L
-  #endif
   #include <dirent.h>
   #include <stdio.h>
   #include <sys/stat.h>
   #include <unistd.h>
-  #define TTEST_IS_ATTY__() isatty(fileno(stdout))
+  #define TTEST_IS_ATTY__() isatty(STDOUT_FILENO)
 #endif
 
 #include <float.h>
@@ -327,14 +323,14 @@ int main(int argc, char **argv) {
   do {                                                                                             \
     if (!ttest_eval_bool__(!!(condition))) {                                                       \
       if (ttest_active_config__) {                                                                 \
-        bool ttest_expected_fail__ = (ttest_active_config__->current_test &&                               \
-                                     (ttest_active_config__->current_test->flags &                         \
-                                      ttest_node_flags_expected_fail__));                              \
+        bool ttest_expected_fail__ = (ttest_active_config__->current_test &&                       \
+                                      (ttest_active_config__->current_test->flags &                 \
+                                       ttest_node_flags_expected_fail__));                          \
         ++ttest_active_config__->assertion_count;                                                  \
         if (!ttest_expected_fail__) {                                                              \
           ++ttest_active_config__->assertion_failed_count;                                         \
         }                                                                                          \
-        if (ttest_active_config__->run == TTEST_TEST_RUN__ && !ttest_active_config__->error) {        \
+        if (ttest_active_config__->run == TTEST_TEST_RUN__ && !ttest_active_config__->error) {    \
           char *ttest_message__ = ttest_format__(__VA_ARGS__);                                     \
           const char *ttest_format_string__ =                                                      \
               ttest_active_config__->use_color ? TTEST_FMT_COLOR__ : TTEST_FMT_PLAIN__;            \
@@ -459,28 +455,16 @@ int main(int argc, char **argv) {
                  "expected memory to differ at %zu bytes", ttest_n__);                             \
   } while (0)
 
-/* Pointer checks */
+/* Pointer checks compare the original expression directly so object and
+ * function pointers do not need to round-trip through void *. */
 #define check_not_null(ptr)                                                                        \
-  do {                                                                                             \
-    const void *ttest_ptr__ = (const void *)(ptr);                                                 \
-    TTEST_CHECK__(ttest_ptr__ != NULL, "expected non-null but got NULL");                          \
-  } while (0)
+  TTEST_CHECK__((ptr) != NULL, "expected non-null but got NULL")
 #define check_not_null_warn(ptr)                                                                   \
-  do {                                                                                             \
-    const void *ttest_ptr__ = (const void *)(ptr);                                                 \
-    TTEST_WARN__(ttest_ptr__ != NULL, "expected non-null but got NULL");                           \
-  } while (0)
-
+  TTEST_WARN__((ptr) != NULL, "expected non-null but got NULL")
 #define check_null(ptr)                                                                            \
-  do {                                                                                             \
-    const void *ttest_ptr__ = (const void *)(ptr);                                                 \
-    TTEST_CHECK__(ttest_ptr__ == NULL, "expected NULL but got %p", ttest_ptr__);                   \
-  } while (0)
+  TTEST_CHECK__((ptr) == NULL, "expected NULL but got non-null")
 #define check_null_warn(ptr)                                                                       \
-  do {                                                                                             \
-    const void *ttest_ptr__ = (const void *)(ptr);                                                 \
-    TTEST_WARN__(ttest_ptr__ == NULL, "expected NULL but got %p", ttest_ptr__);                    \
-  } while (0)
+  TTEST_WARN__((ptr) == NULL, "expected NULL but got non-null")
 #define check_is_null(ptr) check_null((ptr))
 #define check_is_null_warn(ptr) check_null_warn((ptr))
 
@@ -505,8 +489,8 @@ int main(int argc, char **argv) {
   do {                                                                                             \
     if (ttest_active_config__) {                                                                   \
       if (!ttest_eval_bool__(!!(condition))) {                                                     \
-        /* Warnings are diagnostics, not assertions; they must not count as   \
-         * passed assertions in the summary. */                                \
+        /* Warnings are diagnostics, not assertions; they must not count as
+         * passed assertions in the summary. */                                                    \
         char *ttest_message__ = ttest_format__(__VA_ARGS__);                                       \
         ++ttest_active_config__->warn_count;                                                       \
         ttest_indent__(stdout, ttest_active_config__->current_test                                 \

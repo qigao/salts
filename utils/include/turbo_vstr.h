@@ -78,7 +78,7 @@ TURBO_C_API int vstr_contains(vstr s, vstr needle);
  * Search
  * ========================================================================= */
 
-#define VSTR_NPOS ((size_t)-1)
+#define VSTR_NPOS SIZE_MAX
 
 TURBO_C_API size_t vstr_find(vstr s, vstr needle);
 TURBO_C_API size_t vstr_rfind(vstr s, vstr needle);
