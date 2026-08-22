@@ -16,13 +16,13 @@ typedef struct hash_set {
 } hash_set_t;
 
 /* Internal typed bridge for compiled implementation and legacy wrappers. */
-stl_status hash_set_init_with_type(hash_set_t *set,
-                                   const cmeta_type_desc *key_type,
-                                   size_t entry_limit);
-stl_status hash_set_from_array_with_type(
+stl_status hash_set_raw_init(hash_set_t *set,
+                             const cmeta_type_desc *key_type,
+                             size_t entry_limit);
+stl_status hash_set_raw_from_array(
     hash_set_t *set, const void *keys, size_t count,
     const cmeta_type_desc *key_type, size_t entry_limit);
-void hash_set_destroy_storage(hash_set_t *set);
+void hash_set_raw_destroy_storage(hash_set_t *set);
 
 stl_status hash_set_init_bytes(hash_set_t *set, size_t key_size,
                                size_t key_align, size_t entry_limit,
@@ -35,7 +35,7 @@ stl_status hash_set_from_array_bytes(
 static inline stl_status hash_set_init(hash_set_t *set, size_t entry_limit) {
   if (set == NULL || set->element_type == NULL)
     return STL_INVALID_ARGUMENT;
-  return hash_set_init_with_type(set, set->element_type, entry_limit);
+  return hash_set_raw_init(set, set->element_type, entry_limit);
 }
 
 static inline stl_status hash_set_from_array(hash_set_t *set,
@@ -46,14 +46,14 @@ static inline stl_status hash_set_from_array(hash_set_t *set,
   if (set == NULL || set->element_type == NULL)
     return STL_INVALID_ARGUMENT;
   type = set->element_type;
-  status = hash_set_from_array_with_type(set, keys, count, type, entry_limit);
+  status = hash_set_raw_from_array(set, keys, count, type, entry_limit);
   set->element_type = type;
   return status;
 }
 
 static inline void hash_set_destroy(hash_set_t *set) {
   if (set != NULL)
-    hash_set_destroy_storage(set);
+    hash_set_raw_destroy_storage(set);
 }
 
 void hash_set_clear(hash_set_t *set);
@@ -70,11 +70,11 @@ const void *hash_set_key_at(const hash_set_t *set, size_t slot);
 
 /* Temporary repository-migration aliases. */
 typedef hash_set_t turbo_hash_set_t;
-#define turbo_hash_set_init hash_set_init_with_type
+#define turbo_hash_set_init hash_set_raw_init
 #define turbo_hash_set_init_bytes hash_set_init_bytes
-#define turbo_hash_set_from_array hash_set_from_array_with_type
+#define turbo_hash_set_from_array hash_set_raw_from_array
 #define turbo_hash_set_from_array_bytes hash_set_from_array_bytes
-#define turbo_hash_set_destroy hash_set_destroy_storage
+#define turbo_hash_set_destroy hash_set_raw_destroy_storage
 #define turbo_hash_set_clear hash_set_clear
 #define turbo_hash_set_reserve hash_set_reserve
 #define turbo_hash_set_add hash_set_add
