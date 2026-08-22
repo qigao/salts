@@ -9,36 +9,7 @@
 #ifndef PLATFORM_H
 #define PLATFORM_H
 
-// =============================================================================
-// Public API linkage markers
-// =============================================================================
-//
-// CMake owns shared-library producer/consumer state for TurboUtils::Core:
-// - the Core target receives TURBO_API=dllexport while it is built on Windows;
-// - targets linking TurboUtils::Core receive TURBO_API=dllimport through the
-//   exported target's INTERFACE compile definitions;
-// - no CMake-internal producer marker is inspected by this public header.
-//
-// TURBO_C_API is intentionally only a language-linkage composition over the
-// target-provided TURBO_API. It carries no build-system state of its own.
-//
-// clang-format off
-#ifndef TURBO_API
-    #if !defined(_WIN32) && defined(__GNUC__) && __GNUC__ >= 4
-        #define TURBO_API __attribute__((visibility("default")))
-    #else
-        #define TURBO_API
-    #endif
-#endif
-
-#ifndef TURBO_C_API
-    #ifdef __cplusplus
-        #define TURBO_C_API extern "C" TURBO_API
-    #else
-        #define TURBO_C_API TURBO_API
-    #endif
-#endif
-// clang-format on
+#include "turbo_api.h"
 
 #ifdef _WIN32
   #define TURBO_WIN32 1
