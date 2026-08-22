@@ -1,4 +1,5 @@
-import CMeta.PreprocessorBackendRegistrySetoid
+module
+import all CMeta.PreprocessorBackendRegistrySetoid
 
 /-!
 # Registry Setoid / congruence conformance
