@@ -6,7 +6,7 @@ turbostl_status hash_set_init(hash_set_t *set,
                                      const cmeta_type_desc *key_type,
                                      size_t entry_limit) {
   if (set == NULL) return TURBO_STL_INVALID_ARGUMENT;
-  return hash_map_init(&set->table, key_type, &cmeta_type_bool,
+  return hash_map_raw_init(&set->table, key_type, &cmeta_type_bool,
                              entry_limit);
 }
 
@@ -68,7 +68,7 @@ turbostl_status hash_set_from_array_bytes(
 }
 
 void hash_set_destroy(hash_set_t *set) {
-  if (set != NULL) hash_map_destroy(&set->table);
+  if (set != NULL) hash_map_raw_destroy_storage(&set->table);
 }
 
 void hash_set_clear(hash_set_t *set) {
