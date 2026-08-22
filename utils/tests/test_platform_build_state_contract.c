@@ -1,3 +1,4 @@
+#include "turbo_api.h"
 #include "platform.h"
 #include "tinytest.h"
 
@@ -15,6 +16,10 @@
 
 #ifndef TURBO_API
 #error "TurboUtils::Core consumers must receive TURBO_API through the target contract"
+#endif
+
+#ifndef TURBO_C_API
+#error "TurboUtils::Core consumers must receive TURBO_C_API through the target contract"
 #endif
 
 spec("platform build-state contract") {
