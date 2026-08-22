@@ -29,12 +29,6 @@ foreach(test_source ${TEST_SOURCES} ${CXX_TEST_SOURCES})
     LIBS ${COMMON_LIBS})
 endforeach()
 
-if(TARGET test_fmt_cpp AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(test_fmt_cpp PRIVATE
-    -Werror=sign-conversion
-    -Werror=old-style-cast)
-endif()
-
 # Task-1 fmt surface contracts deliberately do not link TurboUtils::Core.
 # They stub fmt_print and validate only the public macro expansion contract,
 # so fmt can be verified before the following TLog migration removes its old
@@ -64,6 +58,12 @@ set_target_properties(test_fmt_surface_contract_cpp PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON
   CXX_EXTENSIONS OFF)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(test_fmt_surface_contract_cpp PRIVATE
+    -Werror=sign-conversion
+    -Werror=old-style-cast
+    -Werror=missing-field-initializers)
+endif()
 
 if(TARGET test_turbo_str_meta)
   target_sources(test_turbo_str_meta PRIVATE turbo_str_meta_peer.c)
