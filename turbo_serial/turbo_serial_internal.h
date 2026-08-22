@@ -16,10 +16,10 @@
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR A PARTICULAR PURPOSE AND CLAIM,
- * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 
 #ifndef TURBO_SERIAL_INTERNAL_H
@@ -170,9 +170,9 @@ static inline turbo_serial_result_t turbo_serial_result_from_stl(
 
 static inline turbostl_status turbo_serial_port_info_vec_t_init(
     turbo_serial_port_info_vec_t *vec) {
-  return vec_init(vec, &turbo_serial_port_info_storage_type,
-                        turbo_serial_port_list_entry_limit(
-                            &turbo_serial_port_info_storage_type));
+  return vec_raw_init(vec, &turbo_serial_port_info_storage_type,
+                      turbo_serial_port_list_entry_limit(
+                          &turbo_serial_port_info_storage_type));
 }
 
 static inline turbostl_status turbo_serial_port_info_vec_t_push(
