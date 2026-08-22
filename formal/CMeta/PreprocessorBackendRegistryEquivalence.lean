@@ -31,23 +31,20 @@ public abbrev Equivalent
   ∀ key, left.observe key = right.observe key
 
 /-- Observational equivalence is reflexive. -/
--- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.eq_refl
-public theorem equivalent_refl (registry : PreprocessorBackendRegistry) :
+theorem equivalent_refl (registry : PreprocessorBackendRegistry) :
     Equivalent registry registry := by
   intro key
   rfl
 
 /-- Observational equivalence is symmetric. -/
--- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.eq_symm
-public theorem equivalent_symm
+theorem equivalent_symm
     {left right : PreprocessorBackendRegistry}
     (h : Equivalent left right) : Equivalent right left := by
   intro key
   exact (h key).symm
 
 /-- Observational equivalence is transitive. -/
--- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.eq_trans
-public theorem equivalent_trans
+theorem equivalent_trans
     {left middle right : PreprocessorBackendRegistry}
     (hleft : Equivalent left middle)
     (hright : Equivalent middle right) : Equivalent left right := by

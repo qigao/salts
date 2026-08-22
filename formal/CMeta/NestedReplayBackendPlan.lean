@@ -126,8 +126,7 @@ public theorem lowerReplayBackendPlan_eq_canonical_of_supports
 
 /-- Successful plan generation is exactly support for the requested IR plus the
     canonical plan identity. -/
--- TEMP-MODULE-BRIDGE(M7f): legacy LanguageSpec.Rule.lower_elim
-public theorem lowerReplayBackendPlan_eq_some_iff
+theorem lowerReplayBackendPlan_eq_some_iff
     (backend : ReplayBackendCapability) (ir : ReplayIR) (plan : ReplayBackendPlan) :
     lowerReplayBackendPlan backend ir = some plan ↔
       ir.sameProducerDepth ≤ backend.certifiedSameProducerDepth ∧
