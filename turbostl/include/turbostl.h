@@ -15,5 +15,6 @@
 #include <turbostl/sort.h>
 #include <turbostl/stack.h>
 #include <turbostl/vec.h>
+#include <turbostl/typed.h>
 
 #endif /* TURBOSTL_H */
