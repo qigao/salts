@@ -45,7 +45,7 @@ typedef struct {
  * @param config Pool configuration
  * @return Pool handle, or NULL on failure
  */
-CXX_C_API object_pool_t *object_pool_create(const object_pool_config_t *config);
+TURBO_C_API object_pool_t *object_pool_create(const object_pool_config_t *config);
 
 /**
  * @brief Destroy an object pool
@@ -53,7 +53,7 @@ CXX_C_API object_pool_t *object_pool_create(const object_pool_config_t *config);
  *
  * WARNING: Does not call destructors. User must ensure all objects are properly cleaned up.
  */
-CXX_C_API void object_pool_destroy(object_pool_t *pool);
+TURBO_C_API void object_pool_destroy(object_pool_t *pool);
 
 /**
  * @brief Allocate an object from the pool
@@ -62,7 +62,7 @@ CXX_C_API void object_pool_destroy(object_pool_t *pool);
  *
  * PERFORMANCE: O(1) from the active bump chunk; O(chunks) when reusing a free slot
  */
-CXX_C_API void *object_pool_alloc(object_pool_t *pool);
+TURBO_C_API void *object_pool_alloc(object_pool_t *pool);
 
 /**
  * @brief Deallocate an object back to the pool
@@ -72,20 +72,20 @@ CXX_C_API void *object_pool_alloc(object_pool_t *pool);
  * PERFORMANCE: O(chunks) ownership lookup, then O(1) bitmap validation/free-list push
  * WARNING: Does not call destructor. User must clean up object before returning.
  */
-CXX_C_API void object_pool_free(object_pool_t *pool, void *obj);
+TURBO_C_API void object_pool_free(object_pool_t *pool, void *obj);
 
 /**
  * @brief Get pool statistics
  */
-CXX_C_API size_t object_pool_allocated_count(const object_pool_t *pool);
-CXX_C_API size_t object_pool_free_count(const object_pool_t *pool);
-CXX_C_API size_t object_pool_capacity(const object_pool_t *pool);
-CXX_C_API size_t object_pool_peak_usage(const object_pool_t *pool);
+TURBO_C_API size_t object_pool_allocated_count(const object_pool_t *pool);
+TURBO_C_API size_t object_pool_free_count(const object_pool_t *pool);
+TURBO_C_API size_t object_pool_capacity(const object_pool_t *pool);
+TURBO_C_API size_t object_pool_peak_usage(const object_pool_t *pool);
 
 /**
  * @brief Reset pool statistics
  */
-CXX_C_API void object_pool_reset_stats(object_pool_t *pool);
+TURBO_C_API void object_pool_reset_stats(object_pool_t *pool);
 
 #ifdef __cplusplus
 }

@@ -75,10 +75,10 @@ typedef struct {
 } turbo_process_result_t;
 
 /** Fill options with defaults: stdout/stderr capture and no execution deadline. */
-CXX_C_API void turbo_process_options_init(turbo_process_options_t *options);
+TURBO_C_API void turbo_process_options_init(turbo_process_options_t *options);
 
 /** Return the stable string name of a process state. */
-CXX_C_API const char *turbo_process_state_name(turbo_process_state_t state);
+TURBO_C_API const char *turbo_process_state_name(turbo_process_state_t state);
 
 /**
  * Start a child process and its monitor thread.
@@ -87,17 +87,17 @@ CXX_C_API const char *turbo_process_state_name(turbo_process_state_t state);
  * failure, *out_process is NULL and the return value is a TurboUtils or
  * negative native platform error code.
  */
-CXX_C_API int turbo_process_spawn(const turbo_process_options_t *options,
+TURBO_C_API int turbo_process_spawn(const turbo_process_options_t *options,
                                   turbo_process_t **out_process);
 
 /** Return the owned child PID, or -1 for an invalid handle. */
-CXX_C_API int turbo_process_pid(const turbo_process_t *process);
+TURBO_C_API int turbo_process_pid(const turbo_process_t *process);
 
 /** Return the current lifecycle state. */
-CXX_C_API turbo_process_state_t turbo_process_state(const turbo_process_t *process);
+TURBO_C_API turbo_process_state_t turbo_process_state(const turbo_process_t *process);
 
 /** Return true while the owned child has not reached a terminal state. */
-CXX_C_API bool turbo_process_is_running(const turbo_process_t *process);
+TURBO_C_API bool turbo_process_is_running(const turbo_process_t *process);
 
 /**
  * Copy the terminal result without blocking.
@@ -105,11 +105,11 @@ CXX_C_API bool turbo_process_is_running(const turbo_process_t *process);
  * Returns TURBO_OK when terminal, TURBO_EBUSY while running, or TURBO_EINVAL
  * for invalid arguments.
  */
-CXX_C_API int turbo_process_poll(const turbo_process_t *process,
+TURBO_C_API int turbo_process_poll(const turbo_process_t *process,
                                  turbo_process_result_t *out_result);
 
 /** Wait indefinitely for the terminal result. */
-CXX_C_API int turbo_process_wait(turbo_process_t *process, turbo_process_result_t *out_result);
+TURBO_C_API int turbo_process_wait(turbo_process_t *process, turbo_process_result_t *out_result);
 
 /**
  * Wait at most timeout_ms for the terminal result.
@@ -117,11 +117,11 @@ CXX_C_API int turbo_process_wait(turbo_process_t *process, turbo_process_result_
  * TURBO_ETIMEDOUT only describes this wait operation and does not terminate
  * the process. Use options.timeout_ms for an execution deadline.
  */
-CXX_C_API int turbo_process_wait_for(turbo_process_t *process, uint64_t timeout_ms,
+TURBO_C_API int turbo_process_wait_for(turbo_process_t *process, uint64_t timeout_ms,
                                      turbo_process_result_t *out_result);
 
 /** Terminate the owned process tree. This operation is idempotent. */
-CXX_C_API int turbo_process_terminate(turbo_process_t *process);
+TURBO_C_API int turbo_process_terminate(turbo_process_t *process);
 
 /**
  * Queue bytes for the child's stdin pipe.
@@ -129,11 +129,11 @@ CXX_C_API int turbo_process_terminate(turbo_process_t *process);
  * This call may block until the OS pipe accepts the bytes. It returns
  * TURBO_EPIPE after stdin has been closed or when no stdin pipe was requested.
  */
-CXX_C_API int turbo_process_write_stdin(turbo_process_t *process, const void *data, size_t size,
+TURBO_C_API int turbo_process_write_stdin(turbo_process_t *process, const void *data, size_t size,
                                         size_t *out_written);
 
 /** Close the parent's stdin pipe so the child observes EOF. */
-CXX_C_API int turbo_process_close_stdin(turbo_process_t *process);
+TURBO_C_API int turbo_process_close_stdin(turbo_process_t *process);
 
 /**
  * Consume currently captured stdout bytes.
@@ -141,11 +141,11 @@ CXX_C_API int turbo_process_close_stdin(turbo_process_t *process);
  * Returns TURBO_OK with *out_read possibly zero, or TURBO_EOF after the stream
  * is closed and all captured bytes have been consumed.
  */
-CXX_C_API int turbo_process_read_stdout(turbo_process_t *process, void *buffer, size_t capacity,
+TURBO_C_API int turbo_process_read_stdout(turbo_process_t *process, void *buffer, size_t capacity,
                                         size_t *out_read);
 
 /** Consume currently captured stderr bytes; semantics match stdout. */
-CXX_C_API int turbo_process_read_stderr(turbo_process_t *process, void *buffer, size_t capacity,
+TURBO_C_API int turbo_process_read_stderr(turbo_process_t *process, void *buffer, size_t capacity,
                                         size_t *out_read);
 
 /**
@@ -154,10 +154,10 @@ CXX_C_API int turbo_process_read_stderr(turbo_process_t *process, void *buffer, 
  * This is observation only. Managed termination uses the retained native
  * handle to avoid PID-reuse races.
  */
-CXX_C_API int turbo_process_is_pid_alive(int pid, bool *out_alive);
+TURBO_C_API int turbo_process_is_pid_alive(int pid, bool *out_alive);
 
 /** Terminate, reap, close, and free a process handle; no concurrent calls are allowed. */
-CXX_C_API void turbo_process_destroy(turbo_process_t *process);
+TURBO_C_API void turbo_process_destroy(turbo_process_t *process);
 
 #ifdef __cplusplus
 }

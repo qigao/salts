@@ -44,18 +44,18 @@ typedef struct {
  * - Multiple producer threads can call push operations
  * - Multiple consumer threads can call pop operations
  */
-CXX_C_API bool bucket_priority_queue_mpmc_init(bucket_priority_queue_mpmc_t *queue,
+TURBO_C_API bool bucket_priority_queue_mpmc_init(bucket_priority_queue_mpmc_t *queue,
                                                size_t capacity_per_bucket,
                                                uint32_t max_consumers);
 
 /* Releases all memory owned by queue. Safe to call on zero-initialized queue. */
-CXX_C_API void bucket_priority_queue_mpmc_destroy(bucket_priority_queue_mpmc_t *queue);
+TURBO_C_API void bucket_priority_queue_mpmc_destroy(bucket_priority_queue_mpmc_t *queue);
 
 /*
  * Try to push (non-blocking). Returns false if all queues are full.
  * Thread-safe for multiple producers.
  */
-CXX_C_API bool bucket_priority_queue_mpmc_try_push(bucket_priority_queue_mpmc_t *queue,
+TURBO_C_API bool bucket_priority_queue_mpmc_try_push(bucket_priority_queue_mpmc_t *queue,
                                                    bucket_priority_mpmc_t priority,
                                                    bucket_priority_mpmc_value_t value);
 
@@ -63,7 +63,7 @@ CXX_C_API bool bucket_priority_queue_mpmc_try_push(bucket_priority_queue_mpmc_t 
  * Push (blocking). Waits if queue is full.
  * Thread-safe for multiple producers.
  */
-CXX_C_API void bucket_priority_queue_mpmc_push_blocking(bucket_priority_queue_mpmc_t *queue,
+TURBO_C_API void bucket_priority_queue_mpmc_push_blocking(bucket_priority_queue_mpmc_t *queue,
                                                         bucket_priority_mpmc_t priority,
                                                         bucket_priority_mpmc_value_t value);
 
@@ -72,7 +72,7 @@ CXX_C_API void bucket_priority_queue_mpmc_push_blocking(bucket_priority_queue_mp
  * Returns false if all queues are empty.
  * Thread-safe for multiple consumers.
  */
-CXX_C_API bool bucket_priority_queue_mpmc_try_pop(
+TURBO_C_API bool bucket_priority_queue_mpmc_try_pop(
     bucket_priority_queue_mpmc_t *queue,
     bucket_priority_mpmc_value_t *out_value);
 
@@ -80,13 +80,13 @@ CXX_C_API bool bucket_priority_queue_mpmc_try_pop(
  * Pop highest-priority item (blocking). Waits if all queues are empty.
  * Thread-safe for multiple consumers.
  */
-CXX_C_API bool bucket_priority_queue_mpmc_pop_blocking(
+TURBO_C_API bool bucket_priority_queue_mpmc_pop_blocking(
     bucket_priority_queue_mpmc_t *queue,
     bucket_priority_mpmc_value_t *out_value,
     uint32_t timeout_ms);
 
 /* Query helpers - approximate values in MPMC scenario */
-CXX_C_API bool bucket_priority_queue_mpmc_empty(const bucket_priority_queue_mpmc_t *queue);
+TURBO_C_API bool bucket_priority_queue_mpmc_empty(const bucket_priority_queue_mpmc_t *queue);
 
 #ifdef __cplusplus
 }

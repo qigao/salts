@@ -42,7 +42,7 @@ extern "C" {
          (FMT_TYPE_PTR, 10, "ptr", const void *, p, fmt_arg_ptr),                                \
          (FMT_TYPE_SIZE, 11, "size", size_t, sz, fmt_arg_size),                                  \
          (FMT_TYPE_BOOL, 12, "bool", int, b, fmt_arg_bool),                                      \
-         (FMT_TYPE_STRV, 13, "strv", vstr, sv, fmt_arg_strv),                                  \
+         (FMT_TYPE_STRV, 13, "strv", vstr, sv, fmt_arg_strv),                                   \
          (FMT_TYPE_TIME, 14, "time", turbo_timeval_t, tv, fmt_arg_timeval))
 
 #define FMT_TYPE_ITEM(name, value, text, type, member, constructor) name = value,
@@ -183,7 +183,7 @@ static inline fmt_arg_t fmt_arg_time(time_t x) {
          (const char *, fmt_arg_str),                                                             \
          (void *, fmt_arg_ptr),                                                                   \
          (const void *, fmt_arg_ptr),                                                             \
-         (vstr, fmt_arg_strv),                                                                  \
+         (vstr, fmt_arg_strv),                                                                    \
          (turbo_timeval_t, fmt_arg_timeval))
 
 #ifdef __cplusplus
@@ -290,48 +290,20 @@ extern "C" { /* Re-open extern "C" */
 #endif
 
 /* ============================================================================
- * Argument Count Macros (for variadic)
+ * Non-empty formatted argument lists
  * ============================================================================ */
 
-/* Use a helper to force macro expansion on MSVC */
-#define FMT_EXPAND(x) x
+#define FMT_DETAIL_ARG_ITEM(arg, ignored) FMT_ARG(arg),
+#define FMT_ARG_COUNT(...) CMETA_PP_NARG(__VA_ARGS__)
 
-/* Count arguments (up to 8). MSVC compatible 0-arg detection. */
-#define FMT_NARGS_IMPL(_0, _1, _2, _3, _4, _5, _6, _7, _8, N, ...) N
-#define FMT_NARGS(...) FMT_EXPAND(FMT_NARGS_IMPL(0, ##__VA_ARGS__, 8, 7, 6, 5, 4, 3, 2, 1, 0))
-
-/* Expand each non-empty argument list through the shared CMeta preprocessor
- * kernel. The arity-specific names remain available for source compatibility. */
-#define FMT_DETAIL_WRAP_ONE(arg, ignored) FMT_ARG(arg),
-#define FMT_DETAIL_WRAP_NONEMPTY(...)                                                            \
-  CMETA_PP_FOR_EACH(FMT_DETAIL_WRAP_ONE, ~, __VA_ARGS__)
-#define FMT_WRAP_0() {FMT_TYPE_NONE}
-#define FMT_WRAP_1(a) FMT_DETAIL_WRAP_NONEMPTY(a)
-#define FMT_WRAP_2(a, b) FMT_DETAIL_WRAP_NONEMPTY(a, b)
-#define FMT_WRAP_3(a, b, c) FMT_DETAIL_WRAP_NONEMPTY(a, b, c)
-#define FMT_WRAP_4(a, b, c, d) FMT_DETAIL_WRAP_NONEMPTY(a, b, c, d)
-#define FMT_WRAP_5(a, b, c, d, e) FMT_DETAIL_WRAP_NONEMPTY(a, b, c, d, e)
-#define FMT_WRAP_6(a, b, c, d, e, f) FMT_DETAIL_WRAP_NONEMPTY(a, b, c, d, e, f)
-#define FMT_WRAP_7(a, b, c, d, e, f, g) FMT_DETAIL_WRAP_NONEMPTY(a, b, c, d, e, f, g)
-#define FMT_WRAP_8(a, b, c, d, e, f, g, h) FMT_DETAIL_WRAP_NONEMPTY(a, b, c, d, e, f, g, h)
-
-/* Dispatch to correct wrapper based on count */
-#define FMT_WRAP_N_INNER(N, ...) FMT_WRAP_##N(__VA_ARGS__)
-#define FMT_WRAP_N(N, ...) FMT_WRAP_N_INNER(N, __VA_ARGS__)
-
-/* Main wrapper: creates array of typed args. */
-#define FMT_ARGS(...)                                                                              \
-  (fmt_arg_t[]) { FMT_WRAP_N(FMT_NARGS(__VA_ARGS__), __VA_ARGS__) }
+#ifndef __cplusplus
+  #define FMT_ARGS(...)                                                                            \
+    ((fmt_arg_t[]){ CMETA_PP_FOR_EACH(FMT_DETAIL_ARG_ITEM, ~, __VA_ARGS__) })
+#endif
 
 /* ============================================================================
  * Type-Safe Formatting Function
  * ============================================================================ */
-
-/**
- * @brief Simple macro for buffer formatting using type-safe logic
- */
-#define fmt(buf, size, fmt, ...)                                                                   \
-  fmt_print((buf), (size), (fmt), FMT_ARGS(__VA_ARGS__), FMT_NARGS(__VA_ARGS__))
 
 /**
  * @brief Format a string using typed arguments
@@ -352,8 +324,16 @@ extern "C" { /* Re-open extern "C" */
  * arg_count > 0, or an invalid/incompatible specifier. On valid buf/size,
  * failures leave buf as an empty string.
  */
-CXX_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
+TURBO_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
                         size_t arg_count);
+
+#define fmt_text(buf, size, text) fmt_print((buf), (size), (text), NULL, 0U)
+
+#ifndef __cplusplus
+  #define fmt(buf, size, pattern, ...)                                                             \
+    fmt_print((buf), (size), (pattern), FMT_ARGS(__VA_ARGS__),                                    \
+              (size_t)FMT_ARG_COUNT(__VA_ARGS__))
+#endif
 
 /**
  * @brief Append formatted content directly to tstr.
@@ -369,30 +349,37 @@ CXX_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t
  * @return Updated tstr. Callers must assign the return value. Invalid input
  *         or an incompatible specifier leaves the existing string unchanged.
  */
-CXX_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args, size_t arg_count);
+TURBO_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args, size_t arg_count);
 
 /* ============================================================================
  * tstr Integration
  * ============================================================================ */
 
 static inline tstr tstr_cat_typed_impl(tstr s, const char *format, const fmt_arg_t *args,
-                                         size_t count) {
+                                       size_t count) {
   return fmt_print_tstr(s, format, args, count);
 }
 
-#define tstr_cat_typed(s, format, ...)                                                             \
-  tstr_cat_typed_impl((s), (format), FMT_ARGS(__VA_ARGS__), FMT_NARGS(__VA_ARGS__))
+#ifndef __cplusplus
+  #define tstr_cat_typed(s, format, ...)                                                           \
+    tstr_cat_typed_impl((s), (format), FMT_ARGS(__VA_ARGS__),                                     \
+                        (size_t)FMT_ARG_COUNT(__VA_ARGS__))
+#endif
 
 static inline tstr tstr_format_typed_impl(const char *format, const fmt_arg_t *args,
-                                            size_t count) {
+                                          size_t count) {
   return fmt_print_tstr(tstr_new(), format, args, count);
 }
 
-#define tstr_format(format, ...)                                                                   \
-  tstr_format_typed_impl((format), FMT_ARGS(__VA_ARGS__), FMT_NARGS(__VA_ARGS__))
+#ifndef __cplusplus
+  #define tstr_format(format, ...)                                                                 \
+    tstr_format_typed_impl((format), FMT_ARGS(__VA_ARGS__),                                       \
+                           (size_t)FMT_ARG_COUNT(__VA_ARGS__))
 
-#define tstr_append_format(s, format, ...)                                                         \
-  tstr_cat_typed_impl((s), (format), FMT_ARGS(__VA_ARGS__), FMT_NARGS(__VA_ARGS__))
+  #define tstr_append_format(s, format, ...)                                                       \
+    tstr_cat_typed_impl((s), (format), FMT_ARGS(__VA_ARGS__),                                     \
+                        (size_t)FMT_ARG_COUNT(__VA_ARGS__))
+#endif
 
 #ifdef __cplusplus
 } /* End extern "C" */
@@ -470,9 +457,7 @@ inline int fmt_cpp_wrapper(char *buf, size_t size, const char *fmt, const Args &
   return fmt_print(buf, size, fmt, arg_array, sizeof...(Args));
 }
 
-  /* Override macro for C++ */
-  #undef fmt
-  #define fmt(buf, size, fmt, ...) fmt_cpp_wrapper((buf), (size), (fmt), ##__VA_ARGS__)
+  #define fmt(buf, size, pattern, ...) fmt_cpp_wrapper((buf), (size), (pattern), __VA_ARGS__)
 
 template <typename... Args>
 inline tstr tstr_cat_typed_cpp(tstr s, const char *format, const Args &...args) {
@@ -480,8 +465,7 @@ inline tstr tstr_cat_typed_cpp(tstr s, const char *format, const Args &...args) 
   return fmt_print_tstr(s, format, arg_array, sizeof...(Args));
 }
 
-  #undef tstr_cat_typed
-  #define tstr_cat_typed(s, format, ...) tstr_cat_typed_cpp((s), (format), ##__VA_ARGS__)
+  #define tstr_cat_typed(s, format, ...) tstr_cat_typed_cpp((s), (format), __VA_ARGS__)
 
 template <typename... Args>
 inline tstr tstr_format_typed_cpp(const char *format, const Args &...args) {
@@ -489,11 +473,8 @@ inline tstr tstr_format_typed_cpp(const char *format, const Args &...args) {
   return fmt_print_tstr(tstr_new(), format, arg_array, sizeof...(Args));
 }
 
-  #undef tstr_format
-  #define tstr_format(format, ...) tstr_format_typed_cpp((format), ##__VA_ARGS__)
-
-  #undef tstr_append_format
-  #define tstr_append_format(s, format, ...) tstr_cat_typed_cpp((s), (format), ##__VA_ARGS__)
+  #define tstr_format(format, ...) tstr_format_typed_cpp((format), __VA_ARGS__)
+  #define tstr_append_format(s, format, ...) tstr_cat_typed_cpp((s), (format), __VA_ARGS__)
 #endif
 
 #endif /* FMT_H */

@@ -31,34 +31,26 @@
 // DLL Export/Import macros for cross-platform shared library builds
 // =============================================================================
 // clang-format off
-#define CXX_EXTERN_C extern "C"
-#if defined(_MSC_VER) || defined(__MINGW32__) || defined(__MINGW64__)
-    #define CXX_DLL_IMPORT __declspec(dllimport)
-    #define CXX_DLL_EXPORT __declspec(dllexport)
-    #define CXX_DLL_LOCAL
-#else
-    #if defined(__GNUC__) && __GNUC__ >= 4
-        #define CXX_DLL_IMPORT __attribute__((visibility("default")))
-        #define CXX_DLL_EXPORT __attribute__((visibility("default")))
-        #define CXX_DLL_LOCAL __attribute__((visibility("hidden")))
+#ifndef TURBO_API
+    #if defined(_MSC_VER) || defined(__MINGW32__) || defined(__MINGW64__)
+        #if defined(TURBO_BUILD_SHARED)
+            #define TURBO_API __declspec(dllexport)
+        #elif defined(TURBO_USE_SHARED)
+            #define TURBO_API __declspec(dllimport)
+        #else
+            #define TURBO_API
+        #endif
+    #elif defined(__GNUC__) && __GNUC__ >= 4
+        #define TURBO_API __attribute__((visibility("default")))
     #else
-        #define CXX_DLL_IMPORT
-        #define CXX_DLL_EXPORT
-        #define CXX_DLL_LOCAL
+        #define TURBO_API
     #endif
 #endif
 
-#ifndef CXX_API
-    #if defined(SHARED_CXX)
-        #define CXX_API CXX_DLL_EXPORT  // Building DLL: export symbols
-    #else
-        #define CXX_API                 // Static library or POSIX: no decoration
-    #endif
-#endif
 #ifdef __cplusplus
-    #define CXX_C_API CXX_EXTERN_C CXX_API
+    #define TURBO_C_API extern "C" TURBO_API
 #else
-    #define CXX_C_API CXX_API
+    #define TURBO_C_API TURBO_API
 #endif
 
 // clang-format on
@@ -107,13 +99,13 @@ extern "C" {
  * @brief Get monotonic time in milliseconds (never goes backward)
  * @return Monotonic time in milliseconds, suitable for measuring intervals
  */
-CXX_C_API uint64_t turbo_monotonic_ms(void);
+TURBO_C_API uint64_t turbo_monotonic_ms(void);
 
 /**
  * @brief Get real time in milliseconds since Unix epoch
  * @return Wall clock time in milliseconds (can jump if system time changes)
  */
-CXX_C_API uint64_t turbo_realtime_ms(void);
+TURBO_C_API uint64_t turbo_realtime_ms(void);
 
 /**
  * @brief Cross-platform time structure (Y2038 safe)
@@ -137,19 +129,19 @@ typedef struct {
  * @param tz Timezone structure (can be NULL)
  * @return 0 on success
  */
-CXX_C_API int turbo_gettimeofday(turbo_timeval_t *tv, turbo_timezone_t *tz);
+TURBO_C_API int turbo_gettimeofday(turbo_timeval_t *tv, turbo_timezone_t *tz);
 
 /**
  * @brief Get current high-resolution time in nanoseconds
  * @return Current time in nanoseconds (monotonic)
  */
-CXX_C_API uint64_t turbo_hrtime(void);
+TURBO_C_API uint64_t turbo_hrtime(void);
 
 /**
  * @brief Get uptime in milliseconds since process start
  * @return Process uptime in milliseconds
  */
-CXX_C_API uint64_t turbo_uptime_ms(void);
+TURBO_C_API uint64_t turbo_uptime_ms(void);
 
 /**
  * @brief Thread-safe UTC time decomposition.
@@ -157,7 +149,7 @@ CXX_C_API uint64_t turbo_uptime_ms(void);
  * @param out Broken-down UTC time
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_gmtime(time_t t, struct tm *out);
+TURBO_C_API int turbo_gmtime(time_t t, struct tm *out);
 
 /**
  * @brief Thread-safe local time decomposition.
@@ -165,21 +157,21 @@ CXX_C_API int turbo_gmtime(time_t t, struct tm *out);
  * @param out Broken-down local time
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_localtime(time_t t, struct tm *out);
+TURBO_C_API int turbo_localtime(time_t t, struct tm *out);
 
 /**
  * @brief Convert broken-down UTC time to seconds since Unix epoch.
  * @param tm_value Broken-down UTC time
  * @return Seconds since Unix epoch, or (time_t)-1 on invalid input
  */
-CXX_C_API time_t turbo_timegm(const struct tm *tm_value);
+TURBO_C_API time_t turbo_timegm(const struct tm *tm_value);
 
 /**
  * @brief Convert broken-down local time to seconds since Unix epoch.
  * @param tm_value Broken-down local time, normalized by the platform mktime
  * @return Seconds since Unix epoch, or (time_t)-1 on failure
  */
-CXX_C_API time_t turbo_mktime(struct tm *tm_value);
+TURBO_C_API time_t turbo_mktime(struct tm *tm_value);
 
 /**
  * @brief Format UTC time with strftime semantics.
@@ -189,7 +181,7 @@ CXX_C_API time_t turbo_mktime(struct tm *tm_value);
  * @param buffer_size Size of destination buffer
  * @return Number of bytes written, or negative error code on failure
  */
-CXX_C_API int turbo_strftime_utc(time_t t, const char *format, char *buffer,
+TURBO_C_API int turbo_strftime_utc(time_t t, const char *format, char *buffer,
                                  size_t buffer_size);
 
 /**
@@ -200,7 +192,7 @@ CXX_C_API int turbo_strftime_utc(time_t t, const char *format, char *buffer,
  * @param buffer_size Size of destination buffer
  * @return Number of bytes written, or negative error code on failure
  */
-CXX_C_API int turbo_strftime_local(time_t t, const char *format, char *buffer,
+TURBO_C_API int turbo_strftime_local(time_t t, const char *format, char *buffer,
                                    size_t buffer_size);
 
 /**
@@ -213,7 +205,7 @@ CXX_C_API int turbo_strftime_local(time_t t, const char *format, char *buffer,
  * @param length Number of random bytes requested
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_secure_random(void *buffer, size_t length);
+TURBO_C_API int turbo_secure_random(void *buffer, size_t length);
 
 /**
  * @brief Maximum platform info string length including trailing NUL
@@ -226,7 +218,7 @@ CXX_C_API int turbo_secure_random(void *buffer, size_t length);
  * @param buffer_size Size of destination buffer
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_platform_os_name(char *buffer, size_t buffer_size);
+TURBO_C_API int turbo_platform_os_name(char *buffer, size_t buffer_size);
 
 /**
  * @brief Get operating system version string
@@ -234,7 +226,7 @@ CXX_C_API int turbo_platform_os_name(char *buffer, size_t buffer_size);
  * @param buffer_size Size of destination buffer
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_platform_os_version(char *buffer, size_t buffer_size);
+TURBO_C_API int turbo_platform_os_version(char *buffer, size_t buffer_size);
 
 /**
  * @brief Get normalized machine architecture
@@ -242,7 +234,7 @@ CXX_C_API int turbo_platform_os_version(char *buffer, size_t buffer_size);
  * @param buffer_size Size of destination buffer
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_platform_arch(char *buffer, size_t buffer_size);
+TURBO_C_API int turbo_platform_arch(char *buffer, size_t buffer_size);
 
 typedef struct {
   char model[TURBO_PLATFORM_INFO_MAX];
@@ -275,7 +267,7 @@ typedef struct {
  * @param buffer_size Size of destination buffer
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_platform_username(char *buffer, size_t buffer_size);
+TURBO_C_API int turbo_platform_username(char *buffer, size_t buffer_size);
 
 /**
  * @brief Get current hostname
@@ -283,28 +275,28 @@ CXX_C_API int turbo_platform_username(char *buffer, size_t buffer_size);
  * @param buffer_size Size of destination buffer
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_platform_hostname(char *buffer, size_t buffer_size);
+TURBO_C_API int turbo_platform_hostname(char *buffer, size_t buffer_size);
 
 /**
  * @brief Get CPU information
  * @param info Output structure
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_platform_cpu_info(turbo_platform_cpu_info_t *info);
+TURBO_C_API int turbo_platform_cpu_info(turbo_platform_cpu_info_t *info);
 
 /**
  * @brief Get memory information
  * @param info Output structure
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_platform_memory_info(turbo_platform_memory_info_t *info);
+TURBO_C_API int turbo_platform_memory_info(turbo_platform_memory_info_t *info);
 
 /**
  * @brief Get system load average
  * @param info Output structure
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_platform_load_average(turbo_platform_load_average_t *info);
+TURBO_C_API int turbo_platform_load_average(turbo_platform_load_average_t *info);
 
 /**
  * @brief Get network interface information
@@ -313,7 +305,7 @@ CXX_C_API int turbo_platform_load_average(turbo_platform_load_average_t *info);
  * @param count Receives number of interfaces written
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_platform_network_interfaces(turbo_platform_network_interface_t *interfaces,
+TURBO_C_API int turbo_platform_network_interfaces(turbo_platform_network_interface_t *interfaces,
                                                 size_t max_interfaces, size_t *count);
 
 /**
@@ -344,13 +336,13 @@ typedef void (*turbo_timer_cb)(turbo_timer_t *timer);
  * @param loop Event loop (IGNORED - kept for API compatibility)
  * @return Timer pointer on success, NULL on failure
  */
-CXX_C_API turbo_timer_t *turbo_timer_create(void *loop);
+TURBO_C_API turbo_timer_t *turbo_timer_create(void *loop);
 
 /**
  * @brief Destroy a timer and free resources
  * @param timer Timer to destroy (stops if running)
  */
-CXX_C_API void turbo_timer_destroy(turbo_timer_t *timer);
+TURBO_C_API void turbo_timer_destroy(turbo_timer_t *timer);
 
 /**
  * @brief Start a timer
@@ -360,7 +352,7 @@ CXX_C_API void turbo_timer_destroy(turbo_timer_t *timer);
  * @param repeat Repeat interval in milliseconds (0 for one-shot)
  * @return 0 on success, error code on failure
  */
-CXX_C_API int turbo_timer_start(turbo_timer_t *timer, turbo_timer_cb cb, uint64_t timeout,
+TURBO_C_API int turbo_timer_start(turbo_timer_t *timer, turbo_timer_cb cb, uint64_t timeout,
                                 uint64_t repeat);
 
 /**
@@ -368,28 +360,28 @@ CXX_C_API int turbo_timer_start(turbo_timer_t *timer, turbo_timer_cb cb, uint64_
  * @param timer Timer to stop
  * @return 0 on success, error code on failure
  */
-CXX_C_API int turbo_timer_stop(turbo_timer_t *timer);
+TURBO_C_API int turbo_timer_stop(turbo_timer_t *timer);
 
 /**
  * @brief Set timer user data
  * @param timer Timer to set data on
  * @param data User data pointer
  */
-CXX_C_API void turbo_timer_set_data(turbo_timer_t *timer, void *data);
+TURBO_C_API void turbo_timer_set_data(turbo_timer_t *timer, void *data);
 
 /**
  * @brief Get timer user data
  * @param timer Timer to get data from
  * @return User data pointer
  */
-CXX_C_API void *turbo_timer_get_data(turbo_timer_t *timer);
+TURBO_C_API void *turbo_timer_get_data(turbo_timer_t *timer);
 
 /**
  * @brief Get timer repeat interval
  * @param timer Timer to query
  * @return Repeat interval in milliseconds
  */
-CXX_C_API uint64_t turbo_timer_get_repeat(turbo_timer_t *timer);
+TURBO_C_API uint64_t turbo_timer_get_repeat(turbo_timer_t *timer);
 
 /**
  * @brief Mark a variable as unused to suppress compiler warnings

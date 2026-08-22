@@ -5,10 +5,14 @@ set(TLOG_HEADER_COLLISION_C
     ${CMAKE_CURRENT_SOURCE_DIR}/test_tlog_header_collision.c)
 set(TLOG_HEADER_COLLISION_CPP
     ${CMAKE_CURRENT_SOURCE_DIR}/test_tlog_header_collision.cpp)
+set(FMT_SURFACE_CONTRACT_C
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_fmt_surface_contract.c)
+set(FMT_SURFACE_CONTRACT_CPP
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_fmt_surface_contract.cpp)
 cmake_add_source(TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
-                 "test_*.c" EXCLUDES ${TLOG_HEADER_COLLISION_C})
+                 "test_*.c" EXCLUDES ${TLOG_HEADER_COLLISION_C} ${FMT_SURFACE_CONTRACT_C})
 cmake_add_source(CXX_TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
-                 "test_*.cpp" EXCLUDES ${TLOG_HEADER_COLLISION_CPP})
+                 "test_*.cpp" EXCLUDES ${TLOG_HEADER_COLLISION_CPP} ${FMT_SURFACE_CONTRACT_CPP})
 
 # Common libraries for all tests
 set(COMMON_LIBS TurboUtils::TinyTest TurboUtils::Core)
@@ -24,6 +28,36 @@ foreach(test_source ${TEST_SOURCES} ${CXX_TEST_SOURCES})
     FOLDER "utils/tests"
     LIBS ${COMMON_LIBS})
 endforeach()
+
+# Task-1 fmt surface contracts deliberately do not link TurboUtils::Core.
+# They stub fmt_print and validate only the public macro expansion contract,
+# so fmt can be verified before the following TLog migration removes its old
+# dependency on FMT_NARGS/FMT_ARGS().
+cmake_add_test(test_fmt_surface_contract_c
+  SOURCES ${FMT_SURFACE_CONTRACT_C}
+  FOLDER "utils/tests"
+  LIBS TurboUtils::CMeta)
+target_include_directories(test_fmt_surface_contract_c PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  ${CMAKE_CURRENT_SOURCE_DIR}/../parser
+  ${CMAKE_SOURCE_DIR}/vendor/sds)
+set_target_properties(test_fmt_surface_contract_c PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(test_fmt_surface_contract_cpp
+  SOURCES ${FMT_SURFACE_CONTRACT_CPP}
+  FOLDER "utils/tests"
+  LIBS TurboUtils::CMeta)
+target_include_directories(test_fmt_surface_contract_cpp PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  ${CMAKE_CURRENT_SOURCE_DIR}/../parser
+  ${CMAKE_SOURCE_DIR}/vendor/sds)
+set_target_properties(test_fmt_surface_contract_cpp PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF)
 
 if(TARGET test_turbo_str_meta)
   target_sources(test_turbo_str_meta PRIVATE turbo_str_meta_peer.c)

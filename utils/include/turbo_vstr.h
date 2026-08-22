@@ -63,16 +63,16 @@ static inline int vstr_is_valid(vstr v) { return v.data != NULL || v.len == 0; }
  * Comparison
  * ========================================================================= */
 
-CXX_C_API int vstr_eq(vstr a, vstr b);
-CXX_C_API int vstr_ieq(vstr a, vstr b);
+TURBO_C_API int vstr_eq(vstr a, vstr b);
+TURBO_C_API int vstr_ieq(vstr a, vstr b);
 
 /* ============================================================================
  * Predicates
  * ========================================================================= */
 
-CXX_C_API int vstr_starts_with(vstr s, vstr prefix);
-CXX_C_API int vstr_ends_with(vstr s, vstr suffix);
-CXX_C_API int vstr_contains(vstr s, vstr needle);
+TURBO_C_API int vstr_starts_with(vstr s, vstr prefix);
+TURBO_C_API int vstr_ends_with(vstr s, vstr suffix);
+TURBO_C_API int vstr_contains(vstr s, vstr needle);
 
 /* ============================================================================
  * Search
@@ -80,85 +80,85 @@ CXX_C_API int vstr_contains(vstr s, vstr needle);
 
 #define VSTR_NPOS ((size_t)-1)
 
-CXX_C_API size_t vstr_find(vstr s, vstr needle);
-CXX_C_API size_t vstr_rfind(vstr s, vstr needle);
-CXX_C_API size_t vstr_find_char(vstr s, char c);
-CXX_C_API size_t vstr_rfind_char(vstr s, char c);
+TURBO_C_API size_t vstr_find(vstr s, vstr needle);
+TURBO_C_API size_t vstr_rfind(vstr s, vstr needle);
+TURBO_C_API size_t vstr_find_char(vstr s, char c);
+TURBO_C_API size_t vstr_rfind_char(vstr s, char c);
 /** Find the first byte that equals any byte in delimiters. */
-CXX_C_API size_t vstr_find_any(vstr s, vstr delimiters);
-CXX_C_API size_t vstr_count(vstr s, vstr needle);
+TURBO_C_API size_t vstr_find_any(vstr s, vstr delimiters);
+TURBO_C_API size_t vstr_count(vstr s, vstr needle);
 
 /** Split once from the left. Returns 1 when delim is present. */
-CXX_C_API int vstr_partition(vstr s, vstr delim, vstr *before, vstr *match,
+TURBO_C_API int vstr_partition(vstr s, vstr delim, vstr *before, vstr *match,
                                vstr *after);
 
 /** Split once from the right. Returns 1 when delim is present. */
-CXX_C_API int vstr_rpartition(vstr s, vstr delim, vstr *before, vstr *match,
+TURBO_C_API int vstr_rpartition(vstr s, vstr delim, vstr *before, vstr *match,
                                 vstr *after);
 
 /* ============================================================================
  * Slicing
  * ========================================================================= */
 
-CXX_C_API vstr vstr_sub(vstr s, size_t pos, size_t n);
-CXX_C_API vstr vstr_trim(vstr s, const char *cset);
-CXX_C_API vstr vstr_trim_left(vstr s, const char *cset);
-CXX_C_API vstr vstr_trim_right(vstr s, const char *cset);
+TURBO_C_API vstr vstr_sub(vstr s, size_t pos, size_t n);
+TURBO_C_API vstr vstr_trim(vstr s, const char *cset);
+TURBO_C_API vstr vstr_trim_left(vstr s, const char *cset);
+TURBO_C_API vstr vstr_trim_right(vstr s, const char *cset);
 
 /* ============================================================================
  * UTF-8 helpers
  * ========================================================================= */
 
 /** Strict UTF-8 validation */
-CXX_C_API int vstr_utf8_valid(vstr s);
+TURBO_C_API int vstr_utf8_valid(vstr s);
 
 /** Invalid byte offset, or VSTR_NPOS when the view is valid UTF-8 */
-CXX_C_API size_t vstr_utf8_invalid_offset(vstr s);
+TURBO_C_API size_t vstr_utf8_invalid_offset(vstr s);
 
 /** Count Unicode code points; returns VSTR_NPOS when input is invalid UTF-8 */
-CXX_C_API size_t vstr_utf8_len(vstr s);
+TURBO_C_API size_t vstr_utf8_len(vstr s);
 
 /** Count Unicode code points in at most n bytes; invalid/truncated input returns VSTR_NPOS */
-CXX_C_API size_t vstr_utf8_nlen(vstr s, size_t n);
+TURBO_C_API size_t vstr_utf8_nlen(vstr s, size_t n);
 
 /** Number of bytes, equivalent to utf8size_lazy() for a bounded view */
-CXX_C_API size_t vstr_utf8_size_lazy(vstr s);
+TURBO_C_API size_t vstr_utf8_size_lazy(vstr s);
 
 /** Convert code-point index to byte offset; index at end returns s.len */
-CXX_C_API size_t vstr_utf8_byte_offset(vstr s, size_t char_index);
+TURBO_C_API size_t vstr_utf8_byte_offset(vstr s, size_t char_index);
 
 /** Return a view sliced by Unicode code-point indexes */
-CXX_C_API vstr vstr_utf8_sub(vstr s, size_t char_pos, size_t char_count);
+TURBO_C_API vstr vstr_utf8_sub(vstr s, size_t char_pos, size_t char_count);
 
 /** Decode and consume one Unicode code point from rest */
-CXX_C_API int vstr_utf8_next(vstr *rest, uint32_t *codepoint);
+TURBO_C_API int vstr_utf8_next(vstr *rest, uint32_t *codepoint);
 
 /** Find first/last byte offset of a Unicode code point */
-CXX_C_API size_t vstr_utf8_find_cp(vstr s, uint32_t codepoint);
-CXX_C_API size_t vstr_utf8_rfind_cp(vstr s, uint32_t codepoint);
+TURBO_C_API size_t vstr_utf8_find_cp(vstr s, uint32_t codepoint);
+TURBO_C_API size_t vstr_utf8_rfind_cp(vstr s, uint32_t codepoint);
 
 /** Find a UTF-8 needle only at code-point boundaries */
-CXX_C_API size_t vstr_utf8_find(vstr haystack, vstr needle);
+TURBO_C_API size_t vstr_utf8_find(vstr haystack, vstr needle);
 
 /** Encoded byte size of one Unicode code point, or 0 when invalid */
-CXX_C_API size_t tstr_utf8_codepoint_size(uint32_t codepoint);
+TURBO_C_API size_t tstr_utf8_codepoint_size(uint32_t codepoint);
 
 /* ============================================================================
  * Split (zero-allocation iterator)
  * ========================================================================= */
 
-CXX_C_API vstr vstr_split_next(vstr *rest, vstr delim);
+TURBO_C_API vstr vstr_split_next(vstr *rest, vstr delim);
 
 /** Return the next field from the right and shorten rest from the right. */
-CXX_C_API vstr vstr_rsplit_next(vstr *rest, vstr delim);
+TURBO_C_API vstr vstr_rsplit_next(vstr *rest, vstr delim);
 
 /* ============================================================================
  * Conversion (copies)
  * ========================================================================= */
 
-CXX_C_API char *vstr_to_cstr(vstr v);
-CXX_C_API char *vstr_to_pool(vstr v, MemoryPool *pool);
-CXX_C_API char *vstr_to_arena(vstr v, mem_pool_t *arena);
+TURBO_C_API char *vstr_to_cstr(vstr v);
+TURBO_C_API char *vstr_to_pool(vstr v, MemoryPool *pool);
+TURBO_C_API char *vstr_to_arena(vstr v, mem_pool_t *arena);
 
 /* ============================================================================
  * Arena/Network interop (zero-copy)

@@ -119,7 +119,8 @@ typedef struct cmeta_interface_desc {
     CMETA_INLINE const char *I##_implementation(const I *self) { return I##_valid(self) && self->vtable->implementation ? self->vtable->implementation : "none"; } \
     CMETA_INLINE uint64_t I##_capabilities(const I *self) { return I##_valid(self) ? self->vtable->capabilities : 0u; } \
     CMETA_INLINE bool I##_has(const I *self, uint64_t capability) { return (I##_capabilities(self) & capability) == capability; } \
-    CMETA_INLINE const cmeta_interface_desc *I##_interface(void) { return &I##_interface_meta; }
+    CMETA_INLINE const cmeta_interface_desc *I##_interface(void) { return &I##_interface_meta; } \
+    typedef int I##_interface_anchor_t
 
 /* Bind a conventional C implementation to an interface.  Method functions use
  * the interface ABI directly: first parameter is void *self.  Implementations

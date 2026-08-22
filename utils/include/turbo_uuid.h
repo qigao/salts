@@ -40,7 +40,7 @@ typedef struct turbo_uuid_s {
  * @param out Destination UUID
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_uuid_v4_generate(turbo_uuid_t *out);
+TURBO_C_API int turbo_uuid_v4_generate(turbo_uuid_t *out);
 
 /**
  * Generate an RFC 9562 UUID version 7 using the current Unix millisecond
@@ -51,7 +51,7 @@ CXX_C_API int turbo_uuid_v4_generate(turbo_uuid_t *out);
  * @param out Destination UUID
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_uuid_v7_generate(turbo_uuid_t *out);
+TURBO_C_API int turbo_uuid_v7_generate(turbo_uuid_t *out);
 
 /**
  * Parse a canonical lowercase or uppercase 8-4-4-4-12 UUID string.
@@ -61,7 +61,7 @@ CXX_C_API int turbo_uuid_v7_generate(turbo_uuid_t *out);
  * @param out Destination UUID
  * @return 0 on success, TURBO_EINVAL on invalid input
  */
-CXX_C_API int turbo_uuid_parse(const char *text, turbo_uuid_t *out);
+TURBO_C_API int turbo_uuid_parse(const char *text, turbo_uuid_t *out);
 
 /**
  * Format a UUID as a lowercase canonical 8-4-4-4-12 string.
@@ -71,10 +71,10 @@ CXX_C_API int turbo_uuid_parse(const char *text, turbo_uuid_t *out);
  * @param out_size Destination capacity, at least TURBO_UUID_STRING_SIZE
  * @return 0 on success, TURBO_EINVAL or TURBO_ENOSPC on failure
  */
-CXX_C_API int turbo_uuid_format(const turbo_uuid_t *uuid, char *out, size_t out_size);
+TURBO_C_API int turbo_uuid_format(const turbo_uuid_t *uuid, char *out, size_t out_size);
 
 /** Return true when both UUID values contain the same 16 bytes. */
-CXX_C_API bool turbo_uuid_equal(const turbo_uuid_t *left, const turbo_uuid_t *right);
+TURBO_C_API bool turbo_uuid_equal(const turbo_uuid_t *left, const turbo_uuid_t *right);
 
 #ifdef __cplusplus
 }

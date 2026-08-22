@@ -31,7 +31,8 @@ target_compile_definitions(
   ${TARGET_NAME}
   PUBLIC
     $<$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>,$<CONFIG:RelWithDebInfo>>:TURBO_LOG_CAPTURE_SOURCE=0>
-  PRIVATE SHARED_CXX)
+  PRIVATE TURBO_BUILD_SHARED
+  INTERFACE TURBO_USE_SHARED)
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
 target_compile_options(${TARGET_NAME}
   PUBLIC $<$<COMPILE_LANG_AND_ID:C,MSVC>:/experimental:c11atomics>)

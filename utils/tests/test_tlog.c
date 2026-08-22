@@ -307,9 +307,9 @@ spec("TLog Tests") {
     int error_code = 404;
 
     TLOG_INFO("Starting simplified API test");
-    TLOG_DEBUG("Debug message: value={:d}", 42);
-    TLOG_WARN("Warning: {:s} returned code {:d}", url, error_code);
-    TLOG_ERROR("Invalid URL format: {:s}", url);
+    TLOG_DEBUGF("Debug message: value={:d}", 42);
+    TLOG_WARNF("Warning: {:s} returned code {:d}", url, error_code);
+    TLOG_ERRORF("Invalid URL format: {:s}", url);
 
     // Test with custom logger set as default
     tlog_config_t config = {.min_level = TURBO_LOG_LEVEL_DEBUG};
@@ -322,7 +322,7 @@ spec("TLog Tests") {
     tlog_set_default(custom_logger);
 
     TLOG_INFO("Custom logger with file:line info");
-    TLOG_ERROR("Error with custom config: {:s}", "test error");
+    TLOG_ERRORF("Error with custom config: {:s}", "test error");
 
     // Reset to auto-created logger
     tlog_set_default(default_logger);
@@ -663,7 +663,7 @@ spec("TLog Tests") {
     tlog_add_sink(logger, file_sink);
 
     for (int i = 0; i < 64; i++) {
-      TURBO_LOG_INFO(logger, "rotate", "rotate-msg-{:04d}-abcdefghijklmnopqrstuvwxyz", i);
+      TURBO_LOG_INFOF(logger, "rotate", "rotate-msg-{:04d}-abcdefghijklmnopqrstuvwxyz", i);
     }
 
     tlog_flush(logger);
@@ -698,7 +698,7 @@ spec("TLog Tests") {
 
     const int total_logs = 5000;
     for (int i = 0; i < total_logs; i++) {
-      TURBO_LOG_INFO(logger, "stress", "high-volume message {}", i);
+      TURBO_LOG_INFOF(logger, "stress", "high-volume message {}", i);
     }
 
     tlog_flush(logger);
@@ -710,18 +710,18 @@ spec("TLog Tests") {
 
   it("should perform type-safe logging") {
     // These should work with auto-detection {} or typed placeholders
-    TLOG_INFO("Auto-detected string: {}", "Hello World");
-    TLOG_INFO("Auto-detected int: {}", 42);
-    TLOG_INFO("Auto-detected double: {}", 3.14159);
-    TLOG_INFO("Auto-detected bool: {}", true);
+    TLOG_INFOF("Auto-detected string: {}", "Hello World");
+    TLOG_INFOF("Auto-detected int: {}", 42);
+    TLOG_INFOF("Auto-detected double: {}", 3.14159);
+    TLOG_INFOF("Auto-detected bool: {}", true);
 
     // Mixed usage
-    TLOG_INFO("Mixed: string={}, int={}, ptr={}", "test", 123,
-              (void *)(uintptr_t)0xdeadbeef);
+    TLOG_INFOF("Mixed: string={}, int={}, ptr={}", "test", 123,
+               (void *)(uintptr_t)0xdeadbeef);
 
     // Explicit specifiers with auto-detected types
-    TLOG_INFO("Hex int: {:04x}", 255);
-    TLOG_INFO("Padded double: {:08.2f}", 12.3456);
+    TLOG_INFOF("Hex int: {:04x}", 255);
+    TLOG_INFOF("Padded double: {:08.2f}", 12.3456);
   }
 
  
@@ -732,8 +732,8 @@ spec("TLog Tests") {
       tlog_set_level(tlog_get_default(), TURBO_LOG_LEVEL_DEBUG);
 
       turbomq_error_t err = TURBOMQ_ERR_CONN_FAILED;
-      TLOG_DEBUG("Error set: {:s} ({:d})", turbomq_strerror_internal(err),
-                 (int)err);
+      TLOG_DEBUGF("Error set: {:s} ({:d})", turbomq_strerror_internal(err),
+                  (int)err);
 
       // Restoration
       tlog_set_level(tlog_get_default(), TURBO_LOG_LEVEL_INFO);

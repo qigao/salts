@@ -896,7 +896,7 @@ int turbo_timer_start(turbo_timer_t *timer, turbo_timer_cb cb, uint64_t timeout,
                                       (DWORD)repeat, WT_EXECUTEDEFAULT);
 
   if (!result) {
-    TLOG_ERROR("CreateTimerQueueTimer failed: {}", GetLastError());
+    TLOG_ERRORF("CreateTimerQueueTimer failed: {}", GetLastError());
     return -1;
   }
 
@@ -924,7 +924,7 @@ int turbo_timer_stop(turbo_timer_t *timer) {
     if (!DeleteTimerQueueTimer(NULL, h, completion)) {
       DWORD err = GetLastError();
       if (err != ERROR_IO_PENDING) {
-        TLOG_ERROR("DeleteTimerQueueTimer failed: {}", err);
+        TLOG_ERRORF("DeleteTimerQueueTimer failed: {}", err);
       }
     }
   }

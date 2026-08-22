@@ -12,10 +12,10 @@
  *   #include "tlog_helper.h"
  *
  *   std::vector<int> vec = {1, 2, 3, 4, 5};
- *   TLOG_INFO("Vector: {}", tlog::format(vec));
+ *   TLOG_INFOF("Vector: {}", tlog::format(vec));
  *
  *   std::map<std::string, int> map = {{"a", 1}, {"b", 2}};
- *   TLOG_INFO("Map: {}", tlog::format(map));
+ *   TLOG_INFOF("Map: {}", tlog::format(map));
  */
 
 #ifndef TLOG_HELPER_HPP

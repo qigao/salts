@@ -66,7 +66,7 @@ typedef struct {
  * @param size Size of data array (MUST be power of 2)
  * @return true on success, false if size is not power of 2
  */
-CXX_C_API bool ring_spsc_init(ring_spsc_t *inst, uint8_t *data_array, size_t size);
+TURBO_C_API bool ring_spsc_init(ring_spsc_t *inst, uint8_t *data_array, size_t size);
 
 /**
  * @brief Acquire space for writing
@@ -77,7 +77,7 @@ CXX_C_API bool ring_spsc_init(ring_spsc_t *inst, uint8_t *data_array, size_t siz
  * NOTE: Returns contiguous space only. If wrapping is needed, returns NULL.
  * Call again after consumer reads to get space from beginning.
  */
-CXX_C_API uint8_t *ring_spsc_write_acquire(ring_spsc_t *inst, size_t size_required);
+TURBO_C_API uint8_t *ring_spsc_write_acquire(ring_spsc_t *inst, size_t size_required);
 
 /**
  * @brief Release write operation
@@ -86,7 +86,7 @@ CXX_C_API uint8_t *ring_spsc_write_acquire(ring_spsc_t *inst, size_t size_requir
  *
  * NOTE: Data becomes visible to consumer only after release
  */
-CXX_C_API void ring_spsc_write_release(ring_spsc_t *inst, size_t bytes_written);
+TURBO_C_API void ring_spsc_write_release(ring_spsc_t *inst, size_t bytes_written);
 
 /**
  * @brief Acquire data for reading
@@ -96,28 +96,28 @@ CXX_C_API void ring_spsc_write_release(ring_spsc_t *inst, size_t bytes_written);
  *
  * NOTE: Returns contiguous data only. May need multiple calls to read all data.
  */
-CXX_C_API uint8_t *ring_spsc_read_acquire(ring_spsc_t *inst, size_t *available);
+TURBO_C_API uint8_t *ring_spsc_read_acquire(ring_spsc_t *inst, size_t *available);
 
 /**
  * @brief Release read operation
  * @param inst Instance pointer
  * @param bytes_read Actual bytes consumed
  */
-CXX_C_API void ring_spsc_read_release(ring_spsc_t *inst, size_t bytes_read);
+TURBO_C_API void ring_spsc_read_release(ring_spsc_t *inst, size_t bytes_read);
 
 /**
  * @brief Get available space for writing
  * @param inst Instance pointer
  * @return Available bytes
  */
-CXX_C_API size_t ring_spsc_write_available(const ring_spsc_t *inst);
+TURBO_C_API size_t ring_spsc_write_available(const ring_spsc_t *inst);
 
 /**
  * @brief Get available data for reading
  * @param inst Instance pointer
  * @return Available bytes
  */
-CXX_C_API size_t ring_spsc_read_available(const ring_spsc_t *inst);
+TURBO_C_API size_t ring_spsc_read_available(const ring_spsc_t *inst);
 
 #ifdef __cplusplus
 }

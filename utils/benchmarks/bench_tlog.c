@@ -37,12 +37,12 @@ spec("TLog Bench") {
     benchmark("sync_simple_message", ITERS_NORMAL, 1) { TLOG_INFO("Benchmark simple message"); }
 
     benchmark("sync_formatted_message", ITERS_NORMAL, 1) {
-      TLOG_INFO("Benchmark message with values: {} and {}", 42, "test");
+      TLOG_INFOF("Benchmark message with values: {} and {}", 42, "test");
     }
 
     benchmark("sync_complex_pattern", ITERS_NORMAL, 1) {
       // This tests the pre-compiled pattern performance
-      TLOG_DEBUG("Logging with multiple fields: count={}, status={}", 100, true);
+      TLOG_DEBUGF("Logging with multiple fields: count={}, status={}", 100, true);
     }
 
     tlog_destroy(tlog_get_default());

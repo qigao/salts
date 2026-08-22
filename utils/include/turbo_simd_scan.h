@@ -8,26 +8,26 @@
 extern "C" {
 #endif
 
-CXX_C_API const char *turbo_scan_char(const char *p, const char *end, char needle);
+TURBO_C_API const char *turbo_scan_char(const char *p, const char *end, char needle);
 
-CXX_C_API const char *turbo_scan_to_char(const char *p, const char *end, char needle);
+TURBO_C_API const char *turbo_scan_to_char(const char *p, const char *end, char needle);
 
-CXX_C_API const char *turbo_scan_to_any2(const char *p,
+TURBO_C_API const char *turbo_scan_to_any2(const char *p,
                                          const char *end,
                                          char a,
                                          char b);
 
-CXX_C_API const char *turbo_scan_to_any3(const char *p,
+TURBO_C_API const char *turbo_scan_to_any3(const char *p,
                                          const char *end,
                                          char a,
                                          char b,
                                          char c);
 
-CXX_C_API const char *turbo_scan_skip_sp_tab(const char *p, const char *end);
+TURBO_C_API const char *turbo_scan_skip_sp_tab(const char *p, const char *end);
 
-CXX_C_API const char *turbo_scan_skip_sp_tab_cr_lf(const char *p, const char *end);
+TURBO_C_API const char *turbo_scan_skip_sp_tab_cr_lf(const char *p, const char *end);
 
-CXX_C_API const char *turbo_scan_mem(const char *haystack,
+TURBO_C_API const char *turbo_scan_mem(const char *haystack,
                                      size_t haystack_len,
                                      const char *needle,
                                      size_t needle_len);

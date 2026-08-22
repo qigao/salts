@@ -5,6 +5,14 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifndef TURBO_API
+  #error "re.h must use the TurboUtils export contract"
+#endif
+
+#ifdef RE_API
+  #error "re.h must not expose the legacy RE_API macro"
+#endif
+
 static void check_match_at(const char *pattern, const char *text, int expected_idx,
                            int expected_len) {
   int len = -1;

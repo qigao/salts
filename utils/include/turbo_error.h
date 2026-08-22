@@ -136,10 +136,10 @@ typedef struct {
 } turbo_result_t;
 
 /** Return human-readable text for TURBO_*, negative errno, or negative Win32 error codes. */
-CXX_C_API const char *turbo_strerror(int err);
+TURBO_C_API const char *turbo_strerror(int err);
 
 /** Return structured metadata for an error code. */
-CXX_C_API turbo_error_info_t turbo_error_info(int err);
+TURBO_C_API turbo_error_info_t turbo_error_info(int err);
 
 /**
  * Register a custom error domain.
@@ -148,10 +148,10 @@ CXX_C_API turbo_error_info_t turbo_error_info(int err);
  * turbo_error_unregister_domain() is called. Domain ids must be in
  * [TURBO_ERROR_CUSTOM_DOMAIN_MIN, TURBO_ERROR_CUSTOM_DOMAIN_MAX].
  */
-CXX_C_API int turbo_error_register_domain(const turbo_error_domain_desc_t *domain);
+TURBO_C_API int turbo_error_register_domain(const turbo_error_domain_desc_t *domain);
 
 /** Remove a previously registered custom domain. */
-CXX_C_API int turbo_error_unregister_domain(int domain);
+TURBO_C_API int turbo_error_unregister_domain(int domain);
 
 static inline turbo_result_t turbo_result_ok(void) {
   turbo_result_t r;

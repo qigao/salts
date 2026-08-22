@@ -143,7 +143,7 @@ suite("turbo_serial mocked backend") {
     mock_fake_nonblocking_read_verify();
     turbo_serial_destroy(serial);
 
-    TLOG_DEBUG("mocked rx pump delivered {} bytes", bytes_read);
+    TLOG_DEBUGF("mocked rx pump delivered {} bytes", bytes_read);
   }
 
   it("drains tx bytes through the mocked backend") {
@@ -179,7 +179,7 @@ suite("turbo_serial mocked backend") {
     mock_fake_nonblocking_write_verify();
     turbo_serial_destroy(serial);
 
-    TLOG_DEBUG("mocked tx pump drained {} bytes", fake_tx_len);
+    TLOG_DEBUGF("mocked tx pump drained {} bytes", fake_tx_len);
   }
 
   it("owns all port-info strings through copy move and repeated destroy") {
