@@ -27,8 +27,8 @@ public instance registrySetoid : Setoid PreprocessorBackendRegistry where
   r := Equivalent
   iseqv :=
     { refl := fun _ _ => rfl
-      symm := fun _ _ h key => (h key).symm
-      trans := fun _ _ _ hleft hright key =>
+      symm := fun h key => (h key).symm
+      trans := fun hleft hright key =>
         (hleft key).trans (hright key) }
 
 /-- Exact-key backend-payload observation respects registry Setoid equality. -/
