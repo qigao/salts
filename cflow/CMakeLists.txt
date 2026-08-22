@@ -2,6 +2,7 @@ set(TARGET_NAME turbo_cflow)
 
 add_library(${TARGET_NAME}
   src/adapters.c
+  src/clock.c
   src/coord.c
   src/effect.c
   src/graph.c
@@ -35,7 +36,7 @@ target_include_directories(
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC TurboUtils::CMeta
-  PRIVATE Threads::Threads)
+  PRIVATE TurboUtils::Platform Threads::Threads)
 
 install(
   TARGETS ${TARGET_NAME}
