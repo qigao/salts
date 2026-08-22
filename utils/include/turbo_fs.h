@@ -71,7 +71,7 @@ typedef struct {
  * @note Blocks until the entire file is read or an error occurs
  * @note Use turbo_fs_buf_free() to release the buffer when done
  */
-CXX_C_API int turbo_fs_read_file(const char *path, turbo_fs_buf_t *buf);
+TURBO_C_API int turbo_fs_read_file(const char *path, turbo_fs_buf_t *buf);
 
 /**
  * @brief Write data to a file
@@ -85,7 +85,7 @@ CXX_C_API int turbo_fs_read_file(const char *path, turbo_fs_buf_t *buf);
  * @note Blocks until the entire buffer is written or an error occurs
  * @note Creates the file if it doesn't exist, overwrites if it does
  */
-CXX_C_API int turbo_fs_write_file(const char *path, const turbo_fs_buf_t *buf);
+TURBO_C_API int turbo_fs_write_file(const char *path, const turbo_fs_buf_t *buf);
 
 // =============================================================================
 // Asynchronous File Operations - thread-pool backed cooperative I/O
@@ -106,7 +106,7 @@ typedef struct turbo_fs_async_s turbo_fs_async_t;
  * @param req_out Receives the owned request handle
  * @return 0 on successful submission, negative error code on failure
  */
-CXX_C_API int turbo_fs_read_file_async(turbo_threadpool_t *pool, const char *path,
+TURBO_C_API int turbo_fs_read_file_async(turbo_threadpool_t *pool, const char *path,
                                        turbo_fs_async_t **req_out);
 
 /**
@@ -121,7 +121,7 @@ CXX_C_API int turbo_fs_read_file_async(turbo_threadpool_t *pool, const char *pat
  * @param req_out Receives the owned request handle
  * @return 0 on successful submission, negative error code on failure
  */
-CXX_C_API int turbo_fs_write_file_async(turbo_threadpool_t *pool, const char *path,
+TURBO_C_API int turbo_fs_write_file_async(turbo_threadpool_t *pool, const char *path,
                                         const turbo_fs_buf_t *buf,
                                         turbo_fs_async_t **req_out);
 
@@ -131,7 +131,7 @@ CXX_C_API int turbo_fs_write_file_async(turbo_threadpool_t *pool, const char *pa
  * @param req Request handle
  * @return 1 if complete, 0 if pending
  */
-CXX_C_API int turbo_fs_async_ready(turbo_fs_async_t *req);
+TURBO_C_API int turbo_fs_async_ready(turbo_fs_async_t *req);
 
 /**
  * @brief Wait for an async request to complete.
@@ -142,7 +142,7 @@ CXX_C_API int turbo_fs_async_ready(turbo_fs_async_t *req);
  * @param req Request handle
  * @return Underlying file operation result, or negative error code
  */
-CXX_C_API int turbo_fs_async_wait(turbo_fs_async_t *req);
+TURBO_C_API int turbo_fs_async_wait(turbo_fs_async_t *req);
 
 /**
  * @brief Return the completed async operation result without waiting.
@@ -150,7 +150,7 @@ CXX_C_API int turbo_fs_async_wait(turbo_fs_async_t *req);
  * @param req Request handle
  * @return Operation result, -EAGAIN if still pending, or negative error code
  */
-CXX_C_API int turbo_fs_async_result(turbo_fs_async_t *req);
+TURBO_C_API int turbo_fs_async_result(turbo_fs_async_t *req);
 
 /**
  * @brief Take ownership of the buffer produced by an async read request.
@@ -159,7 +159,7 @@ CXX_C_API int turbo_fs_async_result(turbo_fs_async_t *req);
  * @param buf_out Receives the owned buffer; release with turbo_fs_buf_free()
  * @return 0 on success, -EAGAIN if pending, or negative error code
  */
-CXX_C_API int turbo_fs_async_take_buf(turbo_fs_async_t *req, turbo_fs_buf_t *buf_out);
+TURBO_C_API int turbo_fs_async_take_buf(turbo_fs_async_t *req, turbo_fs_buf_t *buf_out);
 
 /**
  * @brief Destroy an async request.
@@ -169,7 +169,7 @@ CXX_C_API int turbo_fs_async_take_buf(turbo_fs_async_t *req, turbo_fs_buf_t *buf
  *
  * @param req Request handle
  */
-CXX_C_API void turbo_fs_async_destroy(turbo_fs_async_t *req);
+TURBO_C_API void turbo_fs_async_destroy(turbo_fs_async_t *req);
 
 /**
  * @brief Get file information
@@ -183,7 +183,7 @@ CXX_C_API void turbo_fs_async_destroy(turbo_fs_async_t *req);
  * @note Works on both files and directories
  * @note Provides size, permissions, timestamps, and file type information
  */
-CXX_C_API int turbo_fs_stat(const char *path, turbo_fs_stat_t *stat);
+TURBO_C_API int turbo_fs_stat(const char *path, turbo_fs_stat_t *stat);
 
 /**
  * @brief Get file information without following symbolic links when supported
@@ -195,7 +195,7 @@ CXX_C_API int turbo_fs_stat(const char *path, turbo_fs_stat_t *stat);
  * @note On POSIX this uses lstat(). On Windows this reports reparse-point
  *       symlinks using Win32 file attributes.
  */
-CXX_C_API int turbo_fs_lstat(const char *path, turbo_fs_stat_t *stat);
+TURBO_C_API int turbo_fs_lstat(const char *path, turbo_fs_stat_t *stat);
 
 /**
  * @brief Change file permissions
@@ -206,7 +206,7 @@ CXX_C_API int turbo_fs_lstat(const char *path, turbo_fs_stat_t *stat);
  *
  * @note Windows maps this to read-only/read-write CRT permissions.
  */
-CXX_C_API int turbo_fs_chmod(const char *path, int mode);
+TURBO_C_API int turbo_fs_chmod(const char *path, int mode);
 
 // Access check flags for turbo_fs_access()
 #define TURBO_FS_ACCESS_EXISTS 0x00
@@ -224,7 +224,7 @@ CXX_C_API int turbo_fs_chmod(const char *path, int mode);
  * @note Windows CRT access checks read/write/existence. Execute is treated as
  *       existence on Windows because executable permission is not a mode bit.
  */
-CXX_C_API int turbo_fs_access(const char *path, int mode);
+TURBO_C_API int turbo_fs_access(const char *path, int mode);
 
 /**
  * @brief Create a symbolic link
@@ -234,7 +234,7 @@ CXX_C_API int turbo_fs_access(const char *path, int mode);
  * @param is_directory Non-zero when target is a directory
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_fs_symlink(const char *target, const char *link_path, int is_directory);
+TURBO_C_API int turbo_fs_symlink(const char *target, const char *link_path, int is_directory);
 
 /**
  * @brief Read a symbolic link target into buffer
@@ -248,7 +248,7 @@ CXX_C_API int turbo_fs_symlink(const char *target, const char *link_path, int is
  *       path for the reparse point because Win32 does not expose POSIX readlink
  *       semantics through the CRT.
  */
-CXX_C_API int turbo_fs_readlink(const char *path, char *buffer, size_t buffer_size);
+TURBO_C_API int turbo_fs_readlink(const char *path, char *buffer, size_t buffer_size);
 
 /**
  * @brief Create a directory
@@ -260,7 +260,7 @@ CXX_C_API int turbo_fs_readlink(const char *path, char *buffer, size_t buffer_si
  * @note Parent directories must exist
  * @note Permissions are ignored on Windows platforms
  */
-CXX_C_API int turbo_fs_mkdir(const char *path, int mode);
+TURBO_C_API int turbo_fs_mkdir(const char *path, int mode);
 
 /**
  * @brief Remove a directory
@@ -270,7 +270,7 @@ CXX_C_API int turbo_fs_mkdir(const char *path, int mode);
  *
  * @note Directory must be empty
  */
-CXX_C_API int turbo_fs_rmdir(const char *path);
+TURBO_C_API int turbo_fs_rmdir(const char *path);
 
 /**
  * @brief Open a directory for enumeration
@@ -282,7 +282,7 @@ CXX_C_API int turbo_fs_rmdir(const char *path);
  * @note The returned handle must be released with turbo_fs_closedir().
  * @note A directory handle is not safe for concurrent reads.
  */
-CXX_C_API int turbo_fs_opendir(const char *path, turbo_fs_dir_t **dir);
+TURBO_C_API int turbo_fs_opendir(const char *path, turbo_fs_dir_t **dir);
 
 /**
  * @brief Read the next directory entry
@@ -298,7 +298,7 @@ CXX_C_API int turbo_fs_opendir(const char *path, turbo_fs_dir_t **dir);
  * @note type may be TURBO_FS_DIRENT_UNKNOWN when the platform does not expose
  *       a file type during enumeration. Use turbo_fs_lstat() when required.
  */
-CXX_C_API int turbo_fs_readdir(turbo_fs_dir_t *dir, turbo_fs_dirent_t *entry);
+TURBO_C_API int turbo_fs_readdir(turbo_fs_dir_t *dir, turbo_fs_dirent_t *entry);
 
 /**
  * @brief Close a directory enumeration handle
@@ -306,7 +306,7 @@ CXX_C_API int turbo_fs_readdir(turbo_fs_dir_t *dir, turbo_fs_dirent_t *entry);
  * @param dir Directory handle from turbo_fs_opendir()
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_fs_closedir(turbo_fs_dir_t *dir);
+TURBO_C_API int turbo_fs_closedir(turbo_fs_dir_t *dir);
 
 /**
  * @brief Delete a file
@@ -316,7 +316,7 @@ CXX_C_API int turbo_fs_closedir(turbo_fs_dir_t *dir);
  *
  * @note Only works on files, not directories
  */
-CXX_C_API int turbo_fs_unlink(const char *path);
+TURBO_C_API int turbo_fs_unlink(const char *path);
 
 // =============================================================================
 // File System Utilities - cross-platform helpers
@@ -329,7 +329,7 @@ CXX_C_API int turbo_fs_unlink(const char *path);
  * @param len Length of the buffer in bytes
  * @return Initialized turbo_fs_buf_t structure
  */
-CXX_C_API turbo_fs_buf_t turbo_fs_buf_init(char *base, size_t len);
+TURBO_C_API turbo_fs_buf_t turbo_fs_buf_init(char *base, size_t len);
 
 /**
  * @brief Free a file system buffer allocated by TurboUtils
@@ -338,7 +338,7 @@ CXX_C_API turbo_fs_buf_t turbo_fs_buf_init(char *base, size_t len);
  *
  * @note Only call this on buffers allocated by TurboUtils functions
  */
-CXX_C_API void turbo_fs_buf_free(turbo_fs_buf_t *buf);
+TURBO_C_API void turbo_fs_buf_free(turbo_fs_buf_t *buf);
 
 /**
  * @brief Get temporary directory path (cross-platform)
@@ -347,7 +347,7 @@ CXX_C_API void turbo_fs_buf_free(turbo_fs_buf_t *buf);
  * @param buffer_size Size of the buffer in bytes
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_fs_get_tmpdir(char *buffer, size_t buffer_size);
+TURBO_C_API int turbo_fs_get_tmpdir(char *buffer, size_t buffer_size);
 
 /**
  * @brief Check if a path is absolute
@@ -355,7 +355,7 @@ CXX_C_API int turbo_fs_get_tmpdir(char *buffer, size_t buffer_size);
  * @param path Path to check
  * @return true if path is absolute, false if relative
  */
-CXX_C_API bool turbo_fs_path_is_absolute(const char *path);
+TURBO_C_API bool turbo_fs_path_is_absolute(const char *path);
 
 /**
  * @brief Join two path components into a single path
@@ -366,7 +366,7 @@ CXX_C_API bool turbo_fs_path_is_absolute(const char *path);
  * @param path Relative path component to append
  * @return 0 on success, -1 if result buffer is too small
  */
-CXX_C_API int turbo_fs_path_join(char *result, size_t result_size, const char *base,
+TURBO_C_API int turbo_fs_path_join(char *result, size_t result_size, const char *base,
                                  const char *path);
 
 /**
@@ -377,7 +377,7 @@ CXX_C_API int turbo_fs_path_join(char *result, size_t result_size, const char *b
  * @param dirname_size Size of the dirname buffer in bytes
  * @return 0 on success, -1 if dirname buffer is too small
  */
-CXX_C_API int turbo_fs_path_dirname(const char *path, char *dirname, size_t dirname_size);
+TURBO_C_API int turbo_fs_path_dirname(const char *path, char *dirname, size_t dirname_size);
 
 /**
  * @brief Extract filename component from a path
@@ -387,7 +387,7 @@ CXX_C_API int turbo_fs_path_dirname(const char *path, char *dirname, size_t dirn
  * @param basename_size Size of the basename buffer in bytes
  * @return 0 on success, -1 if basename buffer is too small
  */
-CXX_C_API int turbo_fs_path_basename(const char *path, char *basename, size_t basename_size);
+TURBO_C_API int turbo_fs_path_basename(const char *path, char *basename, size_t basename_size);
 
 // File system constants
 #define TURBO_FS_MAX_PATH 260
@@ -422,7 +422,7 @@ typedef int turbo_file_t;
  * @param mode File permissions for new files (e.g., 0644)
  * @return File handle on success, TURBO_INVALID_FILE on failure
  */
-CXX_C_API turbo_file_t turbo_fs_open(const char *path, int flags, int mode);
+TURBO_C_API turbo_file_t turbo_fs_open(const char *path, int flags, int mode);
 
 /**
  * @brief Read from an open file
@@ -434,7 +434,7 @@ CXX_C_API turbo_file_t turbo_fs_open(const char *path, int flags, int mode);
  *
  * @note len must be <= INT_MAX because the return type is int
  */
-CXX_C_API int turbo_fs_read(turbo_file_t fd, char *buf, size_t len);
+TURBO_C_API int turbo_fs_read(turbo_file_t fd, char *buf, size_t len);
 
 /**
  * @brief Read from an open file at a specific offset (thread-safe)
@@ -450,7 +450,7 @@ CXX_C_API int turbo_fs_read(turbo_file_t fd, char *buf, size_t len);
  *
  * @note len must be <= INT_MAX because the return type is int
  */
-CXX_C_API int turbo_fs_pread(turbo_file_t fd, char *buf, size_t len, int64_t offset);
+TURBO_C_API int turbo_fs_pread(turbo_file_t fd, char *buf, size_t len, int64_t offset);
 
 /**
  * @brief Write to an open file at a specific offset
@@ -463,7 +463,7 @@ CXX_C_API int turbo_fs_pread(turbo_file_t fd, char *buf, size_t len, int64_t off
  *
  * @note len must be <= INT_MAX because the return type is int
  */
-CXX_C_API int turbo_fs_pwrite(turbo_file_t fd, const char *data, size_t len, int64_t offset);
+TURBO_C_API int turbo_fs_pwrite(turbo_file_t fd, const char *data, size_t len, int64_t offset);
 
 /**
  * @brief Write to an open file
@@ -475,7 +475,7 @@ CXX_C_API int turbo_fs_pwrite(turbo_file_t fd, const char *data, size_t len, int
  *
  * @note len must be <= INT_MAX because the return type is int
  */
-CXX_C_API int turbo_fs_write(turbo_file_t fd, const char *data, size_t len);
+TURBO_C_API int turbo_fs_write(turbo_file_t fd, const char *data, size_t len);
 
 /**
  * @brief Close an open file
@@ -483,7 +483,7 @@ CXX_C_API int turbo_fs_write(turbo_file_t fd, const char *data, size_t len);
  * @param fd File handle to close
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_fs_close(turbo_file_t fd);
+TURBO_C_API int turbo_fs_close(turbo_file_t fd);
 
 /**
  * @brief Truncate or extend a file to a specified length
@@ -492,7 +492,7 @@ CXX_C_API int turbo_fs_close(turbo_file_t fd);
  * @param length New length in bytes
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_fs_ftruncate(turbo_file_t fd, int64_t length);
+TURBO_C_API int turbo_fs_ftruncate(turbo_file_t fd, int64_t length);
 
 /**
  * @brief Flush file buffers to disk
@@ -500,7 +500,7 @@ CXX_C_API int turbo_fs_ftruncate(turbo_file_t fd, int64_t length);
  * @param fd File handle to flush
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_fs_fsync(turbo_file_t fd);
+TURBO_C_API int turbo_fs_fsync(turbo_file_t fd);
 
 /**
  * @brief Acquire an advisory byte-range lock
@@ -515,7 +515,7 @@ CXX_C_API int turbo_fs_fsync(turbo_file_t fd);
  * @note POSIX uses fcntl record locks. Windows uses LockFileEx. Locks are
  *       advisory and process/OS semantics differ across platforms.
  */
-CXX_C_API int turbo_fs_lock(turbo_file_t fd, int flags, int64_t offset, uint64_t len);
+TURBO_C_API int turbo_fs_lock(turbo_file_t fd, int flags, int64_t offset, uint64_t len);
 
 /**
  * @brief Release an advisory byte-range lock
@@ -525,7 +525,7 @@ CXX_C_API int turbo_fs_lock(turbo_file_t fd, int flags, int64_t offset, uint64_t
  * @param len Length to unlock; 0 means to EOF
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_fs_unlock(turbo_file_t fd, int64_t offset, uint64_t len);
+TURBO_C_API int turbo_fs_unlock(turbo_file_t fd, int64_t offset, uint64_t len);
 
 /**
  * @brief Rename/move a file, replacing an existing destination file
@@ -536,7 +536,7 @@ CXX_C_API int turbo_fs_unlock(turbo_file_t fd, int64_t offset, uint64_t len);
  *
  * @note The source and destination must be on the same filesystem.
  */
-CXX_C_API int turbo_fs_rename(const char *old_path, const char *new_path);
+TURBO_C_API int turbo_fs_rename(const char *old_path, const char *new_path);
 
 /**
  * @brief Get current file position
@@ -544,7 +544,7 @@ CXX_C_API int turbo_fs_rename(const char *old_path, const char *new_path);
  * @param fd File handle
  * @return Current position, or negative error code
  */
-CXX_C_API int64_t turbo_fs_tell(turbo_file_t fd);
+TURBO_C_API int64_t turbo_fs_tell(turbo_file_t fd);
 
 /**
  * @brief Seek to position in file
@@ -554,7 +554,7 @@ CXX_C_API int64_t turbo_fs_tell(turbo_file_t fd);
  * @param whence SEEK_SET, SEEK_CUR, or SEEK_END
  * @return New position, or negative error code
  */
-CXX_C_API int64_t turbo_fs_seek(turbo_file_t fd, int64_t offset, int whence);
+TURBO_C_API int64_t turbo_fs_seek(turbo_file_t fd, int64_t offset, int whence);
 
 #ifdef __cplusplus
 }

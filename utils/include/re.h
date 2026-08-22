@@ -16,16 +16,10 @@
 #ifndef TURBO_RE_H
 #define TURBO_RE_H
 
+#include "platform.h"
+
 #include <stddef.h>
 #include <stdint.h>
-
-#if defined(_WIN32) && defined(SHARED_CXX)
-  #define RE_API __declspec(dllexport)
-#elif defined(_WIN32) && defined(RE_USE_SHARED)
-  #define RE_API __declspec(dllimport)
-#else
-  #define RE_API
-#endif
 
 #ifndef RE_DOT_MATCHES_NEWLINE
   #define RE_DOT_MATCHES_NEWLINE 1
@@ -77,40 +71,40 @@ typedef struct re_match_result {
 #define RE_NPOS ((size_t)-1)
 
 /* Returns the default bounded configuration by value. */
-RE_API re_limits_t re_limits_default(void);
+TURBO_API re_limits_t re_limits_default(void);
 
 /* Validates exactly pattern_len bytes. NULL limits selects the defaults. */
-RE_API re_status_t re_validate_n(const char *pattern, size_t pattern_len,
+TURBO_API re_status_t re_validate_n(const char *pattern, size_t pattern_len,
                                  const re_limits_t *limits);
 
 /*
  * Compiles an owned, immutable pattern. The returned handle is independent of
  * every other handle and may be matched concurrently. The caller owns it.
  */
-RE_API re_status_t re_compile_n(const char *pattern, size_t pattern_len,
+TURBO_API re_status_t re_compile_n(const char *pattern, size_t pattern_len,
                                 const re_limits_t *limits, re_t *out_pattern);
-RE_API void re_destroy(re_t pattern);
+TURBO_API void re_destroy(re_t pattern);
 
 /* Searches exactly text_len bytes using a compiled pattern. */
-RE_API re_status_t re_matchn(re_t pattern, const char *text, size_t text_len,
+TURBO_API re_status_t re_matchn(re_t pattern, const char *text, size_t text_len,
                              const re_limits_t *limits,
                              re_match_result_t *out_match);
 
 /* Validates and searches an uncompiled pattern without retaining allocations. */
-RE_API re_status_t re_match_n(const char *pattern, size_t pattern_len,
+TURBO_API re_status_t re_match_n(const char *pattern, size_t pattern_len,
                               const char *text, size_t text_len,
                               const re_limits_t *limits,
                               re_match_result_t *out_match);
 
-RE_API const char *re_status_string(re_status_t status);
+TURBO_API const char *re_status_string(re_status_t status);
 
 /*
  * NUL-terminated compatibility API. re_compile() returns an owned handle that
  * must be released with re_destroy(). Failure and no-match both map to -1.
  */
-RE_API re_t re_compile(const char *pattern);
-RE_API int re_matchp(re_t pattern, const char *text, int *matchlength);
-RE_API int re_match(const char *pattern, const char *text, int *matchlength);
+TURBO_API re_t re_compile(const char *pattern);
+TURBO_API int re_matchp(re_t pattern, const char *text, int *matchlength);
+TURBO_API int re_match(const char *pattern, const char *text, int *matchlength);
 
 #ifdef __cplusplus
 }

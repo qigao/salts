@@ -18,7 +18,7 @@ extern "C" {
  * @note The function is thread-safe and does not allocate memory. On failure,
  *       @p out_bound is unchanged.
  */
-CXX_C_API int turbo_zstd_compress_bound(size_t source_size, size_t *out_bound);
+TURBO_C_API int turbo_zstd_compress_bound(size_t source_size, size_t *out_bound);
 
 /**
  * @brief Compress one complete zstd frame into caller-owned storage.
@@ -38,7 +38,7 @@ CXX_C_API int turbo_zstd_compress_bound(size_t source_size, size_t *out_bound);
  *
  * @note The function is thread-safe. On failure, @p out_size is unchanged.
  */
-CXX_C_API int turbo_zstd_compress(void *destination, size_t destination_capacity,
+TURBO_C_API int turbo_zstd_compress(void *destination, size_t destination_capacity,
                                   size_t *out_size, const void *source,
                                   size_t source_size, int level);
 
@@ -60,7 +60,7 @@ CXX_C_API int turbo_zstd_compress(void *destination, size_t destination_capacity
  *
  * @note The function is thread-safe. On failure, @p out_size is unchanged.
  */
-CXX_C_API int turbo_zstd_decompress(void *destination, size_t destination_capacity,
+TURBO_C_API int turbo_zstd_decompress(void *destination, size_t destination_capacity,
                                     size_t *out_size, const void *source,
                                     size_t source_size);
 
@@ -76,17 +76,17 @@ CXX_C_API int turbo_zstd_decompress(void *destination, size_t destination_capaci
  *
  * @note On failure, @p out_size is unchanged.
  */
-CXX_C_API int turbo_zstd_frame_content_size(const void *source, size_t source_size,
+TURBO_C_API int turbo_zstd_frame_content_size(const void *source, size_t source_size,
                                             size_t *out_size);
 
 /** @return The vendored zstd default compression level. */
-CXX_C_API int turbo_zstd_default_level(void);
+TURBO_C_API int turbo_zstd_default_level(void);
 
 /** @return The minimum compression level accepted by turbo_zstd_compress(). */
-CXX_C_API int turbo_zstd_min_level(void);
+TURBO_C_API int turbo_zstd_min_level(void);
 
 /** @return The maximum compression level accepted by turbo_zstd_compress(). */
-CXX_C_API int turbo_zstd_max_level(void);
+TURBO_C_API int turbo_zstd_max_level(void);
 
 #ifdef __cplusplus
 }

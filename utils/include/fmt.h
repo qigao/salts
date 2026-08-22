@@ -324,7 +324,7 @@ extern "C" { /* Re-open extern "C" */
  * arg_count > 0, or an invalid/incompatible specifier. On valid buf/size,
  * failures leave buf as an empty string.
  */
-CXX_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
+TURBO_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
                         size_t arg_count);
 
 #define fmt_text(buf, size, text) fmt_print((buf), (size), (text), NULL, 0U)
@@ -349,7 +349,7 @@ CXX_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t
  * @return Updated tstr. Callers must assign the return value. Invalid input
  *         or an incompatible specifier leaves the existing string unchanged.
  */
-CXX_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args, size_t arg_count);
+TURBO_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args, size_t arg_count);
 
 /* ============================================================================
  * tstr Integration

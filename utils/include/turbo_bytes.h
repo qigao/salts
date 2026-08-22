@@ -65,13 +65,13 @@ typedef struct turbo_bytes_s {
  *
  * Destroy an initialized buffer before initializing it again.
  */
-CXX_C_API int turbo_bytes_init(turbo_bytes_t *buffer, size_t max_bytes);
+TURBO_C_API int turbo_bytes_init(turbo_bytes_t *buffer, size_t max_bytes);
 
 /**
  * @brief Release storage and clear the object.
  * @param buffer Initialized buffer, or NULL.
  */
-CXX_C_API void turbo_bytes_destroy(turbo_bytes_t *buffer);
+TURBO_C_API void turbo_bytes_destroy(turbo_bytes_t *buffer);
 
 /**
  * @brief Append an entire byte range.
@@ -85,7 +85,7 @@ CXX_C_API void turbo_bytes_destroy(turbo_bytes_t *buffer);
  * is rejected. Time is amortized O(size), with occasional O(unread_size)
  * compaction or growth.
  */
-CXX_C_API int turbo_bytes_append(turbo_bytes_t *buffer, const void *data, size_t size);
+TURBO_C_API int turbo_bytes_append(turbo_bytes_t *buffer, const void *data, size_t size);
 
 /**
  * @brief Return a borrowed view of all unread bytes.
@@ -94,7 +94,7 @@ CXX_C_API int turbo_bytes_append(turbo_bytes_t *buffer, const void *data, size_t
  * @return TURBO_OK or TURBO_EINVAL. On failure, out is unchanged.
  * @complexity Time O(1), space O(1).
  */
-CXX_C_API int turbo_bytes_view(const turbo_bytes_t *buffer,
+TURBO_C_API int turbo_bytes_view(const turbo_bytes_t *buffer,
                                      turbo_bytes_view_t *out);
 
 /**
@@ -107,23 +107,23 @@ CXX_C_API int turbo_bytes_view(const turbo_bytes_t *buffer,
  * allocates memory; compaction is deferred until a later append needs space.
  * @complexity Time O(1), space O(1).
  */
-CXX_C_API int turbo_bytes_consume(turbo_bytes_t *buffer, size_t size);
+TURBO_C_API int turbo_bytes_consume(turbo_bytes_t *buffer, size_t size);
 
 /**
  * @brief Discard unread bytes while retaining allocation capacity.
  * @param buffer Initialized buffer. Invalid or NULL objects are ignored.
  * @complexity Time O(1), space O(1).
  */
-CXX_C_API void turbo_bytes_reset(turbo_bytes_t *buffer);
+TURBO_C_API void turbo_bytes_reset(turbo_bytes_t *buffer);
 
 /** @brief Return unread byte count, or zero for an invalid object. */
-CXX_C_API size_t turbo_bytes_size(const turbo_bytes_t *buffer);
+TURBO_C_API size_t turbo_bytes_size(const turbo_bytes_t *buffer);
 
 /** @brief Return remaining logical quota, or zero for an invalid object. */
-CXX_C_API size_t turbo_bytes_available(const turbo_bytes_t *buffer);
+TURBO_C_API size_t turbo_bytes_available(const turbo_bytes_t *buffer);
 
 /** @brief Return allocated byte capacity, or zero for an invalid object. */
-CXX_C_API size_t turbo_bytes_capacity(const turbo_bytes_t *buffer);
+TURBO_C_API size_t turbo_bytes_capacity(const turbo_bytes_t *buffer);
 
 #ifdef __cplusplus
 }

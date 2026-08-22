@@ -65,7 +65,7 @@ typedef struct {
  * @brief Initialize a mmap handle to empty state
  * @param mmap Handle to initialize
  */
-CXX_C_API void turbo_mmap_init(turbo_mmap_t *mmap);
+TURBO_C_API void turbo_mmap_init(turbo_mmap_t *mmap);
 
 /**
  * @brief Map an entire file into memory
@@ -77,7 +77,7 @@ CXX_C_API void turbo_mmap_init(turbo_mmap_t *mmap);
  *
  * @note File must exist. For write access, file must not be empty.
  */
-CXX_C_API int turbo_mmap_open(turbo_mmap_t *mmap, const char *path, int access);
+TURBO_C_API int turbo_mmap_open(turbo_mmap_t *mmap, const char *path, int access);
 
 /**
  * @brief Map a portion of a file into memory
@@ -92,7 +92,7 @@ CXX_C_API int turbo_mmap_open(turbo_mmap_t *mmap, const char *path, int access);
  * @note Offset is automatically aligned to system page boundary.
  *       The returned data pointer accounts for this alignment.
  */
-CXX_C_API int turbo_mmap_open_range(turbo_mmap_t *mmap, const char *path,
+TURBO_C_API int turbo_mmap_open_range(turbo_mmap_t *mmap, const char *path,
                                     int64_t offset, size_t length, int access);
 
 /**
@@ -107,7 +107,7 @@ CXX_C_API int turbo_mmap_open_range(turbo_mmap_t *mmap, const char *path,
  *
  * @note Does NOT take ownership of fd/handle - caller must close it.
  */
-CXX_C_API int turbo_mmap_from_fd(turbo_mmap_t *mmap, intptr_t fd,
+TURBO_C_API int turbo_mmap_from_fd(turbo_mmap_t *mmap, intptr_t fd,
                                   int64_t offset, size_t length, int access);
 
 /**
@@ -117,7 +117,7 @@ CXX_C_API int turbo_mmap_from_fd(turbo_mmap_t *mmap, intptr_t fd,
  * @param async If true, return immediately (async flush)
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_mmap_sync(turbo_mmap_t *mmap, bool async);
+TURBO_C_API int turbo_mmap_sync(turbo_mmap_t *mmap, bool async);
 
 /**
  * @brief Sync a specific range to disk
@@ -128,7 +128,7 @@ CXX_C_API int turbo_mmap_sync(turbo_mmap_t *mmap, bool async);
  * @param async If true, return immediately
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_mmap_sync_range(turbo_mmap_t *mmap, size_t offset,
+TURBO_C_API int turbo_mmap_sync_range(turbo_mmap_t *mmap, size_t offset,
                                      size_t length, bool async);
 
 /**
@@ -139,7 +139,7 @@ CXX_C_API int turbo_mmap_sync_range(turbo_mmap_t *mmap, size_t offset,
  * @note Safe to call on already-unmapped or uninitialized handle.
  *       Does NOT sync - call turbo_mmap_sync() first if needed.
  */
-CXX_C_API void turbo_mmap_unmap(turbo_mmap_t *mmap);
+TURBO_C_API void turbo_mmap_unmap(turbo_mmap_t *mmap);
 
 /**
  * @brief Close the mapping and release all resources
@@ -148,7 +148,7 @@ CXX_C_API void turbo_mmap_unmap(turbo_mmap_t *mmap);
  *
  * @note Calls unmap internally. Safe to call multiple times.
  */
-CXX_C_API void turbo_mmap_close(turbo_mmap_t *mmap);
+TURBO_C_API void turbo_mmap_close(turbo_mmap_t *mmap);
 
 // =============================================================================
 // Accessors
@@ -187,21 +187,21 @@ static inline void turbo_mmap_set(turbo_mmap_t *mmap, size_t offset, uint8_t val
  * @brief Get system page size
  * @return Page size in bytes
  */
-CXX_C_API size_t turbo_mmap_page_size(void);
+TURBO_C_API size_t turbo_mmap_page_size(void);
 
 /**
  * @brief Calculate number of pages needed for a given size
  * @param size Size in bytes
  * @return Number of pages (rounded up)
  */
-CXX_C_API size_t turbo_mmap_page_count(size_t size);
+TURBO_C_API size_t turbo_mmap_page_count(size_t size);
 
 /**
  * @brief Get number of pages for a mapped region
  * @param mmap Mapping handle
  * @return Number of pages, or 0 if not mapped
  */
-CXX_C_API size_t turbo_mmap_pages(const turbo_mmap_t *mmap);
+TURBO_C_API size_t turbo_mmap_pages(const turbo_mmap_t *mmap);
 
 /**
  * @brief Advise kernel about access pattern
@@ -212,7 +212,7 @@ CXX_C_API size_t turbo_mmap_pages(const turbo_mmap_t *mmap);
  *
  * @note This is a hint only - kernel may ignore it.
  */
-CXX_C_API int turbo_mmap_advise(turbo_mmap_t *mmap, turbo_mmap_advice_t advice);
+TURBO_C_API int turbo_mmap_advise(turbo_mmap_t *mmap, turbo_mmap_advice_t advice);
 
 /**
  * @brief Lock mapped pages in physical memory (prevent swapping)
@@ -222,7 +222,7 @@ CXX_C_API int turbo_mmap_advise(turbo_mmap_t *mmap, turbo_mmap_advice_t advice);
  *
  * @note Requires appropriate privileges on most systems.
  */
-CXX_C_API int turbo_mmap_lock(turbo_mmap_t *mmap);
+TURBO_C_API int turbo_mmap_lock(turbo_mmap_t *mmap);
 
 /**
  * @brief Unlock mapped pages (allow swapping)
@@ -230,7 +230,7 @@ CXX_C_API int turbo_mmap_lock(turbo_mmap_t *mmap);
  * @param mmap Mapping to unlock
  * @return 0 on success, negative error code on failure
  */
-CXX_C_API int turbo_mmap_unlock(turbo_mmap_t *mmap);
+TURBO_C_API int turbo_mmap_unlock(turbo_mmap_t *mmap);
 
 // =============================================================================
 // Group Mapping (Map multiple files into one contiguous address space)
@@ -249,7 +249,7 @@ typedef struct {
 /**
  * @brief Initialize a group handle
  */
-CXX_C_API void turbo_mmap_group_init(turbo_mmap_group_t *group);
+TURBO_C_API void turbo_mmap_group_init(turbo_mmap_group_t *group);
 
 /**
  * @brief Map several files into one contiguous block of virtual memory
@@ -263,13 +263,13 @@ CXX_C_API void turbo_mmap_group_init(turbo_mmap_group_t *group);
  * @note This is highly efficient for segmented logs or datasets.
  *       The resulting 'group->data' can be treated as one huge array.
  */
-CXX_C_API int turbo_mmap_group_open(turbo_mmap_group_t *group, const char **paths,
+TURBO_C_API int turbo_mmap_group_open(turbo_mmap_group_t *group, const char **paths,
                                      size_t count, int access);
 
 /**
  * @brief Close all mappings in the group and release the address space
  */
-CXX_C_API void turbo_mmap_group_close(turbo_mmap_group_t *group);
+TURBO_C_API void turbo_mmap_group_close(turbo_mmap_group_t *group);
 
 // =============================================================================
 // Error codes (negative values)
@@ -290,7 +290,7 @@ CXX_C_API void turbo_mmap_group_close(turbo_mmap_group_t *group);
  * @param err Error code
  * @return Human-readable error message
  */
-CXX_C_API const char *turbo_mmap_strerror(int err);
+TURBO_C_API const char *turbo_mmap_strerror(int err);
 
 #ifdef __cplusplus
 }

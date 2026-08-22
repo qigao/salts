@@ -31,11 +31,11 @@ typedef struct {
 
 #define TURBO_CORO_POOL_CONFIG_DEFAULT { 16, 1024, 0, 0, NULL, NULL, NULL }
 
-CXX_C_API turbo_coro_pool_t *turbo_coro_pool_create(const turbo_coro_pool_config_t *config);
-CXX_C_API void turbo_coro_pool_destroy(turbo_coro_pool_t *pool);
+TURBO_C_API turbo_coro_pool_t *turbo_coro_pool_create(const turbo_coro_pool_config_t *config);
+TURBO_C_API void turbo_coro_pool_destroy(turbo_coro_pool_t *pool);
 
-CXX_C_API coro_t *turbo_coro_pool_acquire(turbo_coro_pool_t *pool, coro_fn fn, void *arg);
-CXX_C_API void turbo_coro_pool_release(turbo_coro_pool_t *pool, coro_t *co);
+TURBO_C_API coro_t *turbo_coro_pool_acquire(turbo_coro_pool_t *pool, coro_fn fn, void *arg);
+TURBO_C_API void turbo_coro_pool_release(turbo_coro_pool_t *pool, coro_t *co);
 
 /**
  * @brief Reclaim pool bookkeeping for a coroutine being force-destroyed.
@@ -43,18 +43,18 @@ CXX_C_API void turbo_coro_pool_release(turbo_coro_pool_t *pool, coro_t *co);
  * This is normally called through the coroutine discard hook registered by
  * turbo_coro_pool_acquire().
  */
-CXX_C_API void turbo_coro_pool_discard_coro(coro_t *co);
+TURBO_C_API void turbo_coro_pool_discard_coro(coro_t *co);
 
-CXX_C_API void turbo_coro_pool_forget_active(turbo_coro_pool_t *pool);
+TURBO_C_API void turbo_coro_pool_forget_active(turbo_coro_pool_t *pool);
 
-CXX_C_API coro_t *turbo_coro_spawn_pooled(coro_scheduler_t *sched,
+TURBO_C_API coro_t *turbo_coro_spawn_pooled(coro_scheduler_t *sched,
                                           turbo_coro_pool_t *pool,
                                           coro_fn fn,
                                           void *arg);
 
-CXX_C_API size_t turbo_coro_pool_free_count(const turbo_coro_pool_t *pool);
-CXX_C_API size_t turbo_coro_pool_active_count(const turbo_coro_pool_t *pool);
-CXX_C_API size_t turbo_coro_pool_capacity(const turbo_coro_pool_t *pool);
+TURBO_C_API size_t turbo_coro_pool_free_count(const turbo_coro_pool_t *pool);
+TURBO_C_API size_t turbo_coro_pool_active_count(const turbo_coro_pool_t *pool);
+TURBO_C_API size_t turbo_coro_pool_capacity(const turbo_coro_pool_t *pool);
 
 #ifdef __cplusplus
 }

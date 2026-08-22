@@ -81,10 +81,10 @@ typedef enum {
   TURBO_SINK_OWNED = 1
 } turbo_sink_ownership_t;
 
-CXX_C_API int turbo_sink_set_min_level(turbo_log_sink_t *sink, turbo_log_level_t level);
-CXX_C_API turbo_log_level_t turbo_sink_get_min_level(const turbo_log_sink_t *sink);
-CXX_C_API int turbo_sink_set_user_data(turbo_log_sink_t *sink, void *user_data);
-CXX_C_API void *turbo_sink_get_user_data(const turbo_log_sink_t *sink);
+TURBO_C_API int turbo_sink_set_min_level(turbo_log_sink_t *sink, turbo_log_level_t level);
+TURBO_C_API turbo_log_level_t turbo_sink_get_min_level(const turbo_log_sink_t *sink);
+TURBO_C_API int turbo_sink_set_user_data(turbo_log_sink_t *sink, void *user_data);
+TURBO_C_API void *turbo_sink_get_user_data(const turbo_log_sink_t *sink);
 
 // =============================================================================
 // Built-in Sinks
@@ -162,7 +162,7 @@ typedef struct {
 /**
  * @brief Create console sink (stdout/stderr with optional colors)
  */
-CXX_C_API turbo_log_sink_t *turbo_sink_console_create(const turbo_console_sink_opts_t *opts);
+TURBO_C_API turbo_log_sink_t *turbo_sink_console_create(const turbo_console_sink_opts_t *opts);
 
 /**
  * @brief Create file sink with optional rotation
@@ -174,12 +174,12 @@ CXX_C_API turbo_log_sink_t *turbo_sink_console_create(const turbo_console_sink_o
  *
  * Best for: All file logging scenarios, especially high-concurrency
  */
-CXX_C_API turbo_log_sink_t *turbo_sink_file_create(const turbo_file_sink_opts_t *opts);
+TURBO_C_API turbo_log_sink_t *turbo_sink_file_create(const turbo_file_sink_opts_t *opts);
 
 /**
  * @brief Create callback sink for custom handling
  */
-CXX_C_API turbo_log_sink_t *turbo_sink_callback_create(turbo_log_callback_fn callback,
+TURBO_C_API turbo_log_sink_t *turbo_sink_callback_create(turbo_log_callback_fn callback,
                                                        void *user_data);
 
 /**
@@ -188,7 +188,7 @@ CXX_C_API turbo_log_sink_t *turbo_sink_callback_create(turbo_log_callback_fn cal
  * Ownership of opts->user_data remains with the returned sink only after this
  * function succeeds. On failure, the caller still owns opts->user_data.
  */
-CXX_C_API turbo_log_sink_t *turbo_sink_custom_create(const turbo_sink_custom_opts_t *opts);
+TURBO_C_API turbo_log_sink_t *turbo_sink_custom_create(const turbo_sink_custom_opts_t *opts);
 
 typedef struct {
   turbo_log_level_t min_level;
@@ -207,7 +207,7 @@ typedef struct {
  * TURBO_SINK_FILTER_OPTS_DEFAULT before overriding selected fields.
  * Ownership of inner is transferred only after this function succeeds.
  */
-CXX_C_API turbo_log_sink_t *turbo_sink_filter_create(turbo_log_sink_t *inner,
+TURBO_C_API turbo_log_sink_t *turbo_sink_filter_create(turbo_log_sink_t *inner,
                                                      turbo_sink_ownership_t ownership,
                                                      const turbo_sink_filter_opts_t *opts);
 
@@ -218,7 +218,7 @@ CXX_C_API turbo_log_sink_t *turbo_sink_filter_create(turbo_log_sink_t *inner,
  * stack buffer valid only for the duration of the inner write call.
  * Ownership of inner is transferred only after this function succeeds.
  */
-CXX_C_API turbo_log_sink_t *turbo_sink_format_create(turbo_log_sink_t *inner,
+TURBO_C_API turbo_log_sink_t *turbo_sink_format_create(turbo_log_sink_t *inner,
                                                      turbo_sink_ownership_t ownership,
                                                      const char *pattern);
 
@@ -236,19 +236,19 @@ typedef struct {
  * is TURBO_SINK_OWNED, destroying the decorator also destroys inner.
  * Ownership of inner is transferred only after this function succeeds.
  */
-CXX_C_API turbo_log_sink_t *turbo_sink_metrics_create(turbo_log_sink_t *inner,
+TURBO_C_API turbo_log_sink_t *turbo_sink_metrics_create(turbo_log_sink_t *inner,
                                                       turbo_sink_ownership_t ownership);
 
 /**
  * @brief Read metrics from a sink created by turbo_sink_metrics_create.
  * @return 0 on success, -1 if sink is not a metrics decorator or args are invalid.
  */
-CXX_C_API int turbo_sink_metrics_snapshot(turbo_log_sink_t *sink, turbo_sink_metrics_t *out);
+TURBO_C_API int turbo_sink_metrics_snapshot(turbo_log_sink_t *sink, turbo_sink_metrics_t *out);
 
 /**
  * @brief Destroy a sink
  */
-CXX_C_API void turbo_sink_destroy(turbo_log_sink_t *sink);
+TURBO_C_API void turbo_sink_destroy(turbo_log_sink_t *sink);
 
 // =============================================================================
 // Logger
@@ -268,12 +268,12 @@ typedef struct {
 /**
  * @brief Create logger with configuration
  */
-CXX_C_API tlog_t *tlog_create(const tlog_config_t *config);
+TURBO_C_API tlog_t *tlog_create(const tlog_config_t *config);
 
 /**
  * @brief Destroy logger and all attached sinks
  */
-CXX_C_API void tlog_destroy(tlog_t *logger);
+TURBO_C_API void tlog_destroy(tlog_t *logger);
 
 /**
  * @brief Add sink to logger and transfer ownership
@@ -323,7 +323,7 @@ CXX_C_API void tlog_destroy(tlog_t *logger);
  *   }
  *   // Both sinks now owned by logger
  */
-CXX_C_API int tlog_add_sink(tlog_t *logger, turbo_log_sink_t *sink);
+TURBO_C_API int tlog_add_sink(tlog_t *logger, turbo_log_sink_t *sink);
 
 /**
  * @brief Remove sink from logger without destroying it
@@ -331,12 +331,12 @@ CXX_C_API int tlog_add_sink(tlog_t *logger, turbo_log_sink_t *sink);
  * Call tlog_flush(logger) before removing when logs already published before
  * removal must still be delivered to this sink.
  */
-CXX_C_API void tlog_remove_sink(tlog_t *logger, turbo_log_sink_t *sink);
+TURBO_C_API void tlog_remove_sink(tlog_t *logger, turbo_log_sink_t *sink);
 
 /**
  * @brief Flush all sinks (blocks until async queue is drained)
  */
-CXX_C_API void tlog_flush(tlog_t *logger);
+TURBO_C_API void tlog_flush(tlog_t *logger);
 
 // =============================================================================
 // Logging Functions
@@ -345,13 +345,13 @@ CXX_C_API void tlog_flush(tlog_t *logger);
 /**
  * @brief Log a pre-formatted string directly
  */
-CXX_C_API void turbo_log_str(tlog_t *logger, turbo_log_level_t level, const char *component,
+TURBO_C_API void turbo_log_str(tlog_t *logger, turbo_log_level_t level, const char *component,
                              const char *file, int line, const char *message, size_t message_len);
 
 /**
  * @brief Log a message using typed arguments (auto-detects types for {})
  */
-CXX_C_API void turbo_log_typed(tlog_t *logger, turbo_log_level_t level,
+TURBO_C_API void turbo_log_typed(tlog_t *logger, turbo_log_level_t level,
                                const char *component, const char *file, int line, const char *fmt,
                                const fmt_arg_t *args, size_t arg_count);
 
@@ -363,21 +363,21 @@ CXX_C_API void turbo_log_typed(tlog_t *logger, turbo_log_level_t level,
  * @brief Set logger minimum level.
  * @return 0 on success, -1 if logger is NULL or level is invalid.
  */
-CXX_C_API int tlog_set_level_ex(tlog_t *logger, turbo_log_level_t level);
+TURBO_C_API int tlog_set_level_ex(tlog_t *logger, turbo_log_level_t level);
 
 /**
  * @brief Backward-compatible level setter. Invalid inputs are ignored.
  */
-CXX_C_API void tlog_set_level(tlog_t *logger, turbo_log_level_t level);
-CXX_C_API turbo_log_level_t tlog_get_level(const tlog_t *logger);
+TURBO_C_API void tlog_set_level(tlog_t *logger, turbo_log_level_t level);
+TURBO_C_API turbo_log_level_t tlog_get_level(const tlog_t *logger);
 
 // =============================================================================
 // Default Logger
 // =============================================================================
 
-CXX_C_API void tlog_set_default(tlog_t *logger);
-CXX_C_API tlog_t *tlog_get_default(void);
-CXX_C_API tlog_t *tlog_peek_default(void);
+TURBO_C_API void tlog_set_default(tlog_t *logger);
+TURBO_C_API tlog_t *tlog_get_default(void);
+TURBO_C_API tlog_t *tlog_peek_default(void);
 
 // =============================================================================
 // Statistics (for monitoring)
@@ -386,24 +386,24 @@ CXX_C_API tlog_t *tlog_peek_default(void);
 /**
  * @brief Get total logs written
  */
-CXX_C_API uint64_t tlog_get_written(const tlog_t *logger);
+TURBO_C_API uint64_t tlog_get_written(const tlog_t *logger);
 
 /**
  * @brief Get total logs dropped (due to backpressure in async mode)
  */
-CXX_C_API uint64_t tlog_get_dropped(const tlog_t *logger);
+TURBO_C_API uint64_t tlog_get_dropped(const tlog_t *logger);
 
 /**
  * @brief Get current async queue size
  */
-CXX_C_API int tlog_get_queue_size(const tlog_t *logger);
+TURBO_C_API int tlog_get_queue_size(const tlog_t *logger);
 
 // =============================================================================
 // Utility Functions
 // =============================================================================
 
-CXX_C_API const char *turbo_log_level_name(turbo_log_level_t level);
-CXX_C_API turbo_log_level_t turbo_log_level_from_name(const char *name);
+TURBO_C_API const char *turbo_log_level_name(turbo_log_level_t level);
+TURBO_C_API turbo_log_level_t turbo_log_level_from_name(const char *name);
 
 #ifdef __cplusplus
 }

@@ -59,7 +59,7 @@ static int64_t get_file_size_fd(intptr_t fd) {
 // Core Implementation
 // =============================================================================
 
-CXX_C_API void turbo_mmap_init(turbo_mmap_t *mmap_ptr) {
+TURBO_C_API void turbo_mmap_init(turbo_mmap_t *mmap_ptr) {
     if (!mmap_ptr) return;
     memset(mmap_ptr, 0, sizeof(*mmap_ptr));
 #ifdef _WIN32
@@ -71,26 +71,26 @@ CXX_C_API void turbo_mmap_init(turbo_mmap_t *mmap_ptr) {
 #endif
 }
 
-CXX_C_API size_t turbo_mmap_page_size(void) {
+TURBO_C_API size_t turbo_mmap_page_size(void) {
     return get_page_size();
 }
 
-CXX_C_API size_t turbo_mmap_page_count(size_t size) {
+TURBO_C_API size_t turbo_mmap_page_count(size_t size) {
     size_t page_size = get_page_size();
     return (size + page_size - 1) / page_size;
 }
 
-CXX_C_API size_t turbo_mmap_pages(const turbo_mmap_t *mmap_ptr) {
+TURBO_C_API size_t turbo_mmap_pages(const turbo_mmap_t *mmap_ptr) {
     if (!mmap_ptr || !mmap_ptr->is_mapped) return 0;
     size_t page_size = get_page_size();
     return (mmap_ptr->length + page_size - 1) / page_size;
 }
 
-CXX_C_API int turbo_mmap_open(turbo_mmap_t *mmap_ptr, const char *path, int access) {
+TURBO_C_API int turbo_mmap_open(turbo_mmap_t *mmap_ptr, const char *path, int access) {
     return turbo_mmap_open_range(mmap_ptr, path, 0, 0, access);
 }
 
-CXX_C_API int turbo_mmap_open_range(turbo_mmap_t *mmap_ptr, const char *path,
+TURBO_C_API int turbo_mmap_open_range(turbo_mmap_t *mmap_ptr, const char *path,
                                     int64_t offset, size_t length, int access) {
     if (!mmap_ptr || !path) {
         return TURBO_MMAP_EINVAL;
@@ -153,7 +153,7 @@ CXX_C_API int turbo_mmap_open_range(turbo_mmap_t *mmap_ptr, const char *path,
 #endif
 }
 
-CXX_C_API int turbo_mmap_from_fd(turbo_mmap_t *mmap_ptr, intptr_t fd,
+TURBO_C_API int turbo_mmap_from_fd(turbo_mmap_t *mmap_ptr, intptr_t fd,
                                  int64_t offset, size_t length, int access) {
     if (!mmap_ptr) {
         return TURBO_MMAP_EINVAL;
@@ -235,14 +235,14 @@ CXX_C_API int turbo_mmap_from_fd(turbo_mmap_t *mmap_ptr, intptr_t fd,
     return TURBO_MMAP_OK;
 }
 
-CXX_C_API int turbo_mmap_sync(turbo_mmap_t *mmap_ptr, bool async) {
+TURBO_C_API int turbo_mmap_sync(turbo_mmap_t *mmap_ptr, bool async) {
     if (!mmap_ptr || !mmap_ptr->is_mapped) {
         return TURBO_MMAP_EINVAL;
     }
     return turbo_mmap_sync_range(mmap_ptr, 0, mmap_ptr->length, async);
 }
 
-CXX_C_API int turbo_mmap_sync_range(turbo_mmap_t *mmap_ptr, size_t offset,
+TURBO_C_API int turbo_mmap_sync_range(turbo_mmap_t *mmap_ptr, size_t offset,
                                     size_t length, bool async) {
     if (!mmap_ptr || !mmap_ptr->is_mapped) {
         return TURBO_MMAP_EINVAL;
@@ -270,7 +270,7 @@ CXX_C_API int turbo_mmap_sync_range(turbo_mmap_t *mmap_ptr, size_t offset,
 #endif
 }
 
-CXX_C_API void turbo_mmap_unmap(turbo_mmap_t *mmap_ptr) {
+TURBO_C_API void turbo_mmap_unmap(turbo_mmap_t *mmap_ptr) {
     if (!mmap_ptr || !mmap_ptr->is_mapped) {
         return;
     }
@@ -293,7 +293,7 @@ CXX_C_API void turbo_mmap_unmap(turbo_mmap_t *mmap_ptr) {
     mmap_ptr->is_mapped = false;
 }
 
-CXX_C_API void turbo_mmap_close(turbo_mmap_t *mmap_ptr) {
+TURBO_C_API void turbo_mmap_close(turbo_mmap_t *mmap_ptr) {
     if (!mmap_ptr) return;
 
     turbo_mmap_unmap(mmap_ptr);
@@ -316,7 +316,7 @@ CXX_C_API void turbo_mmap_close(turbo_mmap_t *mmap_ptr) {
 // Utilities
 // =============================================================================
 
-CXX_C_API int turbo_mmap_advise(turbo_mmap_t *mmap_ptr, turbo_mmap_advice_t advice) {
+TURBO_C_API int turbo_mmap_advise(turbo_mmap_t *mmap_ptr, turbo_mmap_advice_t advice) {
     if (!mmap_ptr || !mmap_ptr->is_mapped) {
         return TURBO_MMAP_EINVAL;
     }
@@ -345,7 +345,7 @@ CXX_C_API int turbo_mmap_advise(turbo_mmap_t *mmap_ptr, turbo_mmap_advice_t advi
 #endif
 }
 
-CXX_C_API int turbo_mmap_lock(turbo_mmap_t *mmap_ptr) {
+TURBO_C_API int turbo_mmap_lock(turbo_mmap_t *mmap_ptr) {
     if (!mmap_ptr || !mmap_ptr->is_mapped) {
         return TURBO_MMAP_EINVAL;
     }
@@ -366,7 +366,7 @@ CXX_C_API int turbo_mmap_lock(turbo_mmap_t *mmap_ptr) {
 #endif
 }
 
-CXX_C_API int turbo_mmap_unlock(turbo_mmap_t *mmap_ptr) {
+TURBO_C_API int turbo_mmap_unlock(turbo_mmap_t *mmap_ptr) {
     if (!mmap_ptr || !mmap_ptr->is_mapped) {
         return TURBO_MMAP_EINVAL;
     }
@@ -391,12 +391,12 @@ CXX_C_API int turbo_mmap_unlock(turbo_mmap_t *mmap_ptr) {
 // Group Mapping Implementation
 // =============================================================================
 
-CXX_C_API void turbo_mmap_group_init(turbo_mmap_group_t *group) {
+TURBO_C_API void turbo_mmap_group_init(turbo_mmap_group_t *group) {
     if (!group) return;
     memset(group, 0, sizeof(*group));
 }
 
-CXX_C_API int turbo_mmap_group_open(turbo_mmap_group_t *group, const char **paths,
+TURBO_C_API int turbo_mmap_group_open(turbo_mmap_group_t *group, const char **paths,
                                      size_t count, int access) {
     if (!group || !paths || count == 0) return TURBO_MMAP_EINVAL;
     if (group->data) return TURBO_MMAP_EEXIST;
@@ -522,7 +522,7 @@ cleanup:
     return result;
 }
 
-CXX_C_API void turbo_mmap_group_close(turbo_mmap_group_t *group) {
+TURBO_C_API void turbo_mmap_group_close(turbo_mmap_group_t *group) {
     if (!group || !group->data) return;
 
     for (size_t i = 0; i < group->count; i++) {
@@ -542,7 +542,7 @@ CXX_C_API void turbo_mmap_group_close(turbo_mmap_group_t *group) {
     memset(group, 0, sizeof(*group));
 }
 
-CXX_C_API const char *turbo_mmap_strerror(int err) {
+TURBO_C_API const char *turbo_mmap_strerror(int err) {
     switch (err) {
         case TURBO_MMAP_OK:     return "Success";
         case TURBO_MMAP_EINVAL: return "Invalid argument";

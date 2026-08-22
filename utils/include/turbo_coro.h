@@ -58,7 +58,7 @@ typedef struct {
  * @param opts Options (NULL for defaults)
  * @return Coroutine handle or NULL on failure
  */
-CXX_C_API coro_t *coro_create(coro_fn fn, void *arg, const coro_opts_t *opts);
+TURBO_C_API coro_t *coro_create(coro_fn fn, void *arg, const coro_opts_t *opts);
 
 /**
  * @brief Destroy a coroutine (Advanced API)
@@ -68,7 +68,7 @@ CXX_C_API coro_t *coro_create(coro_fn fn, void *arg, const coro_opts_t *opts);
  *
  * @param co Coroutine to destroy
  */
-CXX_C_API void coro_destroy(coro_t *co);
+TURBO_C_API void coro_destroy(coro_t *co);
 
 // =============================================================================
 // Execution Control
@@ -84,7 +84,7 @@ CXX_C_API void coro_destroy(coro_t *co);
  * @param co Coroutine to resume
  * @return 0 on success, -1 on error
  */
-CXX_C_API int coro_resume(coro_t *co);
+TURBO_C_API int coro_resume(coro_t *co);
 
 /**
  * @brief Yield from current coroutine (suspend execution)
@@ -92,7 +92,7 @@ CXX_C_API int coro_resume(coro_t *co);
  *
  * @note Must be called from within a coroutine
  */
-CXX_C_API int coro_yield(void);
+TURBO_C_API int coro_yield(void);
 
 /**
  * @brief Reset a coroutine for reuse (Advanced API)
@@ -105,21 +105,21 @@ CXX_C_API int coro_yield(void);
  * @param arg New argument
  * @return 0 on success, -1 on error
  */
-CXX_C_API int coro_reset(coro_t *co, coro_fn fn, void *arg);
+TURBO_C_API int coro_reset(coro_t *co, coro_fn fn, void *arg);
 
 /**
  * @brief Get current coroutine state
  * @param co Coroutine to query
  * @return Current state
  */
-CXX_C_API coro_state_t coro_state(coro_t *co);
+TURBO_C_API coro_state_t coro_state(coro_t *co);
 
 /**
  * @brief Check if coroutine is alive (not dead)
  * @param co Coroutine to check
  * @return 1 if alive, 0 if dead
  */
-CXX_C_API int coro_alive(coro_t *co);
+TURBO_C_API int coro_alive(coro_t *co);
 
 // =============================================================================
 // Context
@@ -129,21 +129,21 @@ CXX_C_API int coro_alive(coro_t *co);
  * @brief Get currently running coroutine
  * @return Current coroutine or NULL if not in a coroutine
  */
-CXX_C_API coro_t *coro_running(void);
+TURBO_C_API coro_t *coro_running(void);
 
 /**
  * @brief Get user data from coroutine
  * @param co Coroutine
  * @return User data pointer
  */
-CXX_C_API void *coro_get_data(coro_t *co);
+TURBO_C_API void *coro_get_data(coro_t *co);
 
 /**
  * @brief Set user data on coroutine
  * @param co Coroutine
  * @param data User data pointer
  */
-CXX_C_API void coro_set_data(coro_t *co, void *data);
+TURBO_C_API void coro_set_data(coro_t *co, void *data);
 
 /**
  * @brief Get lifecycle owner metadata from coroutine.
@@ -155,14 +155,14 @@ CXX_C_API void coro_set_data(coro_t *co, void *data);
  * @param co Coroutine
  * @return Owner metadata pointer
  */
-CXX_C_API void *coro_get_owner_data(coro_t *co);
+TURBO_C_API void *coro_get_owner_data(coro_t *co);
 
 /**
  * @brief Set lifecycle owner metadata on coroutine.
  * @param co Coroutine
  * @param data Owner metadata pointer
  */
-CXX_C_API void coro_set_owner_data(coro_t *co, void *data);
+TURBO_C_API void coro_set_owner_data(coro_t *co, void *data);
 
 // =============================================================================
 // Data Passing (LIFO storage buffer)
@@ -175,7 +175,7 @@ CXX_C_API void coro_set_owner_data(coro_t *co, void *data);
  * @param size Size in bytes
  * @return 0 on success, -1 on error
  */
-CXX_C_API int coro_push(coro_t *co, const void *data, size_t size);
+TURBO_C_API int coro_push(coro_t *co, const void *data, size_t size);
 
 /**
  * @brief Pop data from coroutine storage
@@ -184,14 +184,14 @@ CXX_C_API int coro_push(coro_t *co, const void *data, size_t size);
  * @param size Size in bytes
  * @return 0 on success, -1 on error
  */
-CXX_C_API int coro_pop(coro_t *co, void *data, size_t size);
+TURBO_C_API int coro_pop(coro_t *co, void *data, size_t size);
 
 /**
  * @brief Get bytes available in storage
  * @param co Coroutine
  * @return Bytes stored
  */
-CXX_C_API size_t coro_bytes_stored(coro_t *co);
+TURBO_C_API size_t coro_bytes_stored(coro_t *co);
 
 // =============================================================================
 // Coroutine Scheduler
@@ -204,7 +204,7 @@ typedef struct coro_scheduler_s coro_scheduler_t;
  * @brief Create a coroutine scheduler
  * @return Scheduler or NULL on failure
  */
-CXX_C_API coro_scheduler_t *coro_scheduler_create(void);
+TURBO_C_API coro_scheduler_t *coro_scheduler_create(void);
 
 /**
  * @brief Destroy scheduler
@@ -216,7 +216,7 @@ CXX_C_API coro_scheduler_t *coro_scheduler_create(void);
  *
  * @param sched Scheduler to destroy
  */
-CXX_C_API void coro_scheduler_destroy(coro_scheduler_t *sched);
+TURBO_C_API void coro_scheduler_destroy(coro_scheduler_t *sched);
 
 /**
  * @brief Spawn a new coroutine in the scheduler (lazy start).
@@ -230,54 +230,54 @@ CXX_C_API void coro_scheduler_destroy(coro_scheduler_t *sched);
  * @param opts  Options (NULL for defaults)
  * @return Coroutine handle or NULL on failure
  */
-CXX_C_API coro_t *coro_spawn(coro_scheduler_t *sched, coro_fn fn, void *arg, const coro_opts_t *opts);
+TURBO_C_API coro_t *coro_spawn(coro_scheduler_t *sched, coro_fn fn, void *arg, const coro_opts_t *opts);
 
 /**
  * @brief Adopt an existing coroutine into the scheduler.
  * @param sched Scheduler
  * @param co    Coroutine to adopt
  */
-CXX_C_API void coro_scheduler_adopt(coro_scheduler_t *sched, coro_t *co);
+TURBO_C_API void coro_scheduler_adopt(coro_scheduler_t *sched, coro_t *co);
 
 /**
  * @brief Run one scheduling round (resume all ready coroutines once)
  * @param sched Scheduler
  * @return Number of coroutines still alive
  */
-CXX_C_API int coro_scheduler_tick(coro_scheduler_t *sched);
+TURBO_C_API int coro_scheduler_tick(coro_scheduler_t *sched);
 
 /**
  * @brief Run until all coroutines complete
  * @param sched Scheduler
  */
-CXX_C_API void coro_scheduler_run(coro_scheduler_t *sched);
+TURBO_C_API void coro_scheduler_run(coro_scheduler_t *sched);
 
 /**
  * @brief Get number of active coroutines
  * @param sched Scheduler
  * @return Number of alive coroutines
  */
-CXX_C_API int coro_scheduler_count(coro_scheduler_t *sched);
+TURBO_C_API int coro_scheduler_count(coro_scheduler_t *sched);
 
 /**
  * @brief Check if any managed coroutine is ready to run (not blocked on I/O).
  * @param sched Scheduler
  * @return 1 if any coroutine is ready, 0 otherwise
  */
-CXX_C_API int coro_scheduler_has_ready(coro_scheduler_t *sched);
+TURBO_C_API int coro_scheduler_has_ready(coro_scheduler_t *sched);
 
 /**
  * @brief Get scheduler from current coroutine
  * @return Scheduler or NULL if not in a scheduled coroutine
  */
-CXX_C_API coro_scheduler_t *coro_current_scheduler(void);
+TURBO_C_API coro_scheduler_t *coro_current_scheduler(void);
 
 /**
  * @brief Check if a coroutine is managed by a scheduler
  * @param co Coroutine to check
  * @return 1 if managed by scheduler, 0 if manually managed
  */
-CXX_C_API int coro_is_scheduled(coro_t *co);
+TURBO_C_API int coro_is_scheduled(coro_t *co);
 
 /**
  * @brief Mark coroutine as waiting for I/O (internal/advanced use only)
@@ -289,7 +289,7 @@ CXX_C_API int coro_is_scheduled(coro_t *co);
  * @param co Coroutine
  * @param waiting 1 = waiting for I/O, 0 = ready to run
  */
-CXX_C_API void coro_set_waiting_for_io(coro_t *co, int waiting);
+TURBO_C_API void coro_set_waiting_for_io(coro_t *co, int waiting);
 
 /**
  * @brief Set cleanup callback for coroutine
@@ -297,7 +297,7 @@ CXX_C_API void coro_set_waiting_for_io(coro_t *co, int waiting);
  * @param fn Cleanup function
  * @param arg Cleanup argument
  */
-CXX_C_API void coro_set_cleanup(coro_t *co, void (*fn)(coro_t *co, void *arg), void *arg);
+TURBO_C_API void coro_set_cleanup(coro_t *co, void (*fn)(coro_t *co, void *arg), void *arg);
 
 /**
  * @brief Set forced-discard callback for scheduler teardown.
@@ -310,13 +310,13 @@ CXX_C_API void coro_set_cleanup(coro_t *co, void (*fn)(coro_t *co, void *arg), v
  * @param fn Discard function
  * @param arg Discard argument
  */
-CXX_C_API void coro_set_discard(coro_t *co, void (*fn)(coro_t *co, void *arg), void *arg);
+TURBO_C_API void coro_set_discard(coro_t *co, void (*fn)(coro_t *co, void *arg), void *arg);
 
 /**
  * @brief Remove coroutine from scheduler without destroying it.
  * @param co Coroutine to detach
  */
-CXX_C_API void coro_detach_scheduler(coro_t *co);
+TURBO_C_API void coro_detach_scheduler(coro_t *co);
 
 #ifdef __cplusplus
 }
