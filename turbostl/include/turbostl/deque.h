@@ -13,6 +13,7 @@ extern "C" {
 #endif
 
 typedef struct deque {
+  cmeta_container_header cmeta;
   void *data;
   size_t size;
   size_t capacity;
@@ -26,20 +27,66 @@ typedef struct deque {
   size_t head;
 } deque_t;
 
-/* Handles must be first initialized with `{0}`. A destroyed handle may be
- * reused. Borrowed pointers become invalid after successful mutation,
- * storage-changing reserve, clear, or destroy. */
-stl_status deque_init(deque_t *deque, const cmeta_type_desc *element_type,
-                      size_t element_limit);
+/* Internal typed bridge used while compiled implementation symbols and legacy
+ * generated wrappers migrate to the self-describing API. */
+stl_status deque_init_with_type(deque_t *deque,
+                                const cmeta_type_desc *element_type,
+                                size_t element_limit);
+stl_status deque_from_array_with_type(deque_t *deque, const void *elements,
+                                      size_t count,
+                                      const cmeta_type_desc *element_type,
+                                      size_t element_limit);
+void deque_destroy_storage(deque_t *deque);
+
 stl_status deque_init_bytes(deque_t *deque, size_t elem_size, size_t elem_align,
-                            size_t element_limit);
-stl_status deque_from_array(deque_t *deque, const void *elements, size_t count,
-                            const cmeta_type_desc *element_type,
                             size_t element_limit);
 stl_status deque_from_array_bytes(deque_t *deque, const void *elements,
                                   size_t count, size_t elem_size,
                                   size_t elem_align, size_t element_limit);
-void deque_destroy(deque_t *deque);
+
+static inline stl_status deque_init(deque_t *deque, size_t element_limit) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *type;
+  stl_status status;
+  if (deque == NULL || deque->element_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  kind = deque->cmeta.descriptor;
+  type = deque->element_type;
+  status = deque_init_with_type(deque, type, element_limit);
+  deque->cmeta.descriptor = kind;
+  deque->element_type = type;
+  return status;
+}
+
+static inline stl_status deque_from_array(deque_t *deque,
+                                          const void *elements, size_t count,
+                                          size_t element_limit) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *type;
+  stl_status status;
+  if (deque == NULL || deque->element_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  kind = deque->cmeta.descriptor;
+  type = deque->element_type;
+  status = deque_from_array_with_type(deque, elements, count, type,
+                                      element_limit);
+  deque->cmeta.descriptor = kind;
+  deque->element_type = type;
+  return status;
+}
+
+static inline void deque_destroy(deque_t *deque) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *type;
+  if (deque == NULL)
+    return;
+  kind = deque->cmeta.descriptor;
+  type = deque->element_type;
+  deque_destroy_storage(deque);
+  deque->cmeta.descriptor = kind;
+  deque->element_type = type;
+}
+
 stl_status deque_clear(deque_t *deque);
 stl_status deque_reserve(deque_t *deque, size_t min_capacity);
 stl_status deque_push_back(deque_t *deque, const void *elem);
@@ -60,11 +107,11 @@ bool deque_empty(const deque_t *deque);
 
 /* Temporary repository-migration aliases. */
 typedef deque_t turbo_deque_t;
-#define turbo_deque_init deque_init
+#define turbo_deque_init deque_init_with_type
 #define turbo_deque_init_bytes deque_init_bytes
-#define turbo_deque_from_array deque_from_array
+#define turbo_deque_from_array deque_from_array_with_type
 #define turbo_deque_from_array_bytes deque_from_array_bytes
-#define turbo_deque_destroy deque_destroy
+#define turbo_deque_destroy deque_destroy_storage
 #define turbo_deque_clear deque_clear
 #define turbo_deque_reserve deque_reserve
 #define turbo_deque_push_back deque_push_back
