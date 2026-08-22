@@ -1,6 +1,6 @@
 #include "levenshtein_automaton.h"
 #include "turbo_error.h"
-#include "turbo_stl_status_internal.h"
+#include "turbostl_status_internal.h"
 #include <turbostl/vec.h>
 
 #include <stddef.h>
@@ -11,13 +11,13 @@
 #define LEVENSHTEIN_INF (SIZE_MAX / 4U)
 
 struct lev_automaton_s {
-  turbo_vec_t pattern;
+  vec_t pattern;
   size_t max_distance;
   bool initialized;
 };
 
 struct lev_utf8_automaton_s {
-  turbo_vec_t pattern;
+  vec_t pattern;
   size_t max_distance;
   bool initialized;
 };
@@ -29,7 +29,7 @@ static size_t lev_safe_add(size_t lhs, size_t rhs) {
 
 static int lev_init_common(lev_automaton_t *lev, vstr pattern,
                            size_t max_distance, bool utf8_pattern) {
-  turbo_stl_status status;
+  stl_status status;
   if (!lev || (!pattern.data && pattern.len != 0U) ||
       max_distance > LEVENSHTEIN_INF)
     return TURBO_EINVAL;
@@ -38,10 +38,10 @@ static int lev_init_common(lev_automaton_t *lev, vstr pattern,
   if (utf8_pattern && !vstr_utf8_valid(pattern)) return TURBO_EINVAL;
   if (pattern.len == 0U) return TURBO_EINVAL;
 
-  status = turbo_vec_init_bytes(
+  status = vec_init_bytes(
       &lev->pattern, utf8_pattern ? sizeof(uint32_t) : sizeof(uint8_t),
       utf8_pattern ? _Alignof(uint32_t) : _Alignof(uint8_t), pattern.len);
-  if (status != TURBO_STL_OK)
+  if (status != STL_OK)
     return turbo_core_status_from_stl(status);
 
   if (utf8_pattern) {
@@ -49,21 +49,21 @@ static int lev_init_common(lev_automaton_t *lev, vstr pattern,
     uint32_t cp = 0;
     while (rest.len > 0U) {
       if (!vstr_utf8_next(&rest, &cp)) {
-        turbo_vec_destroy(&lev->pattern);
+        vec_destroy(&lev->pattern);
         return TURBO_EINVAL;
       }
-      status = turbo_vec_push(&lev->pattern, &cp);
-      if (status != TURBO_STL_OK) {
-        turbo_vec_destroy(&lev->pattern);
+      status = vec_push(&lev->pattern, &cp);
+      if (status != STL_OK) {
+        vec_destroy(&lev->pattern);
         return turbo_core_status_from_stl(status);
       }
     }
   } else {
     for (size_t i = 0; i < pattern.len; ++i) {
       uint8_t byte = (uint8_t)pattern.data[i];
-      status = turbo_vec_push(&lev->pattern, &byte);
-      if (status != TURBO_STL_OK) {
-        turbo_vec_destroy(&lev->pattern);
+      status = vec_push(&lev->pattern, &byte);
+      if (status != STL_OK) {
+        vec_destroy(&lev->pattern);
         return turbo_core_status_from_stl(status);
       }
     }
@@ -90,7 +90,7 @@ void lev_automaton_free(lev_automaton_t *lev) {
 
 void lev_automaton_destroy(lev_automaton_t *lev) {
   if (!lev || !lev->initialized) return;
-  turbo_vec_destroy(&lev->pattern);
+  vec_destroy(&lev->pattern);
   memset(lev, 0, sizeof(*lev));
 }
 
@@ -110,7 +110,7 @@ void lev_utf8_automaton_free(lev_utf8_automaton_t *lev) {
 
 void lev_utf8_automaton_destroy(lev_utf8_automaton_t *lev) {
   if (!lev || !lev->initialized) return;
-  turbo_vec_destroy(&lev->pattern);
+  vec_destroy(&lev->pattern);
   memset(lev, 0, sizeof(*lev));
 }
 
@@ -195,8 +195,8 @@ int lev_automaton_match(const lev_automaton_t *lev, vstr text, levenshtein_match
   const uint8_t *pattern = NULL;
 
   if (!lev || !lev->initialized || (!text.data && text.len != 0U) || !cb) return TURBO_EINVAL;
-  pattern_len = turbo_vec_size(&lev->pattern);
-  pattern = (const uint8_t *)turbo_vec_data_const(&lev->pattern);
+  pattern_len = vec_size(&lev->pattern);
+  pattern = (const uint8_t *)vec_data_const(&lev->pattern);
   if (!pattern || pattern_len == 0U) return TURBO_EINVAL;
 
   return lev_match_bytes(pattern, pattern_len, lev->max_distance, text, cb, user_data);
@@ -312,8 +312,8 @@ int lev_utf8_automaton_match(const lev_utf8_automaton_t *lev, vstr text,
   const uint32_t *pattern = NULL;
 
   if (!lev || !lev->initialized || (!text.data && text.len != 0U) || !cb) return TURBO_EINVAL;
-  pattern_len = turbo_vec_size(&lev->pattern);
-  pattern = (const uint32_t *)turbo_vec_data_const(&lev->pattern);
+  pattern_len = vec_size(&lev->pattern);
+  pattern = (const uint32_t *)vec_data_const(&lev->pattern);
   if (!pattern || pattern_len == 0U) return TURBO_EINVAL;
 
   return lev_match_utf8(pattern, pattern_len, lev->max_distance, text, cb, user_data);

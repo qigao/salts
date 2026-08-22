@@ -17,7 +17,7 @@ extern "C" {
  *
  * Example:
  *   stream(&input, &pipeline)->filter(&pipeline, keep)->map(&pipeline, map_fn);
- *   result = to_list(&pipeline, OutputList, &output, output_limit);
+ *   result = to_list(&pipeline, &output, output_limit);
  */
 typedef cflow_stream turbostl_stream_t;
 
@@ -42,19 +42,26 @@ static inline void turbostl_stream_destroy(turbostl_stream_t *stream) {
     cflow_stream_destroy(stream);
 }
 
-/*
- * Front-end terminals hide generated Name_collector symbols. collect() and
- * to_list() return turbostl_collect_result; to_array() writes an owned,
- * explicitly bounded cflow_result. The output passed to collect()/to_list()
- * must be zero-initialized and is owned by the caller only after success.
- */
-#define collector(container_type, output_ptr, limit) \
-    CMETA_PP_CAT(container_type, _collector)((output_ptr), (limit))
-#define collect(stream_ptr, container_type, output_ptr, limit) \
+static inline cmeta_collector
+turbostl_container_collector(void *output, size_t limit) {
+    const cmeta_container_desc *desc = cmeta_container_descriptor(output);
+    cmeta_collector invalid = {0};
+    if (desc != NULL && desc->collector != NULL)
+        return desc->collector(output, limit);
+    invalid.context = output;
+    invalid.zero_output = output;
+    invalid.limit = limit;
+    invalid.status = CMETA_INVALID_ARGUMENT;
+    return invalid;
+}
+
+/* Instance-driven terminals: the output handle carries its own CMeta type and
+ * collector factory, so callers never name a generated output container type. */
+#define collect(stream_ptr, output_ptr, limit) \
     turbostl_stream_collect((stream_ptr), \
-                            collector(container_type, output_ptr, limit))
-#define to_list(stream_ptr, list_type, output_ptr, limit) \
-    collect((stream_ptr), list_type, (output_ptr), (limit))
+                            turbostl_container_collector((output_ptr), (limit)))
+#define to_list(stream_ptr, output_ptr, limit) \
+    collect((stream_ptr), (output_ptr), (limit))
 #define to_array(stream_ptr, max_items, output_ptr) \
     cflow_eval_stream_limit((stream_ptr), (max_items), (output_ptr))
 

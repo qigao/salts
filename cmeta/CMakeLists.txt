@@ -2,6 +2,7 @@ set(TARGET_NAME turbo_cmeta)
 
 add_library(${TARGET_NAME}
   src/cmeta.c
+  src/entry.c
   src/type_identity.c)
 
 cmake_config_target(

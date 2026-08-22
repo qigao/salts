@@ -16,79 +16,77 @@
 #include <turbostl/multimap.h>
 #include <turbostl/btree.h>
 #include <turbostl/bplus_tree.h>
-#include <turbostl/meta.h>
+#include <turbostl/detail/instance_meta.h>
 
-/* Turbo generic-kind registrations. */
-#define CMETA_GENERIC_KIND_Vec CMETA_GENERIC_PROBE()
-#define CMETA_GENERIC_KIND_Deque CMETA_GENERIC_PROBE()
-#define CMETA_GENERIC_KIND_List CMETA_GENERIC_PROBE()
-#define CMETA_GENERIC_KIND_Stack CMETA_GENERIC_PROBE()
-#define CMETA_GENERIC_KIND_Queue CMETA_GENERIC_PROBE()
-#define CMETA_GENERIC_KIND_Heap CMETA_GENERIC_PROBE()
-#define CMETA_GENERIC_KIND_Set CMETA_GENERIC_PROBE()
-#define CMETA_GENERIC_KIND_HashSet CMETA_GENERIC_PROBE()
-#define CMETA_GENERIC_KIND_HashMap CMETA_GENERIC_PROBE()
-#define CMETA_GENERIC_KIND_Map CMETA_GENERIC_PROBE()
-#define CMETA_GENERIC_KIND_MultiMap CMETA_GENERIC_PROBE()
-#define CMETA_GENERIC_KIND_BTree CMETA_GENERIC_PROBE()
-#define CMETA_GENERIC_KIND_BPlusTree CMETA_GENERIC_PROBE()
-
-/* Sequence kinds --------------------------------------------------------- */
-#define CMETA_TYPED_Vec(name, type) TURBO_VEC_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
-#define CMETA_TYPED_Deque(name, type) TURBO_DEQUE_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
-#define CMETA_TYPED_List(name, type) TURBO_LIST_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
-#define CMETA_TYPED_Stack(name, type) TURBO_STACK_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
-#define CMETA_TYPED_Queue(name, type) TURBO_QUEUE_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
-#define CMETA_TYPED_Heap(name, type) TURBO_HEAP_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
-/* Associative kinds ------------------------------------------------------ */
-#define CMETA_TYPED_Set(name, type) TURBO_SET_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
-#define CMETA_TYPED_HashSet(name, type) TURBO_HASH_SET_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-
-#define CMETA_TYPED_HashMap(name, key_type, value_type) \
-  TURBO_HASH_MAP_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
-
-#define CMETA_TYPED_Map(name, key_type, value_type) \
-  TURBO_MAP_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
-
-#define CMETA_TYPED_MultiMap(name, key_type, value_type) \
-  TURBO_MULTI_MAP_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
-
-#define CMETA_TYPED_BTree(name, key_type, value_type) \
-  TURBO_BTREE_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
-
-#define CMETA_TYPED_BPlusTree(name, key_type, value_type) \
-  TURBO_BPLUS_TREE_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
-
-/* Semantic front-end calls. The concrete type remains explicit because C11
- * cannot extend one _Generic association list from later typed(...) calls;
- * generated Type_method symbols remain an implementation detail. */
-#define list_init(list_type, list_ptr, limit) \
-  CMETA_TYPED_CALL(list_type, init, (list_ptr), (limit))
-#define list_add(list_type, list_ptr, value) \
-  CMETA_TYPED_CALL(list_type, push_back, (list_ptr), (value))
-#define list_pop_front(list_type, list_ptr, output_ptr) \
-  CMETA_TYPED_CALL(list_type, pop_front, (list_ptr), (output_ptr))
-#define list_clear(list_type, list_ptr) \
-  CMETA_TYPED_CALL(list_type, clear, (list_ptr))
-#define list_destroy(list_type, list_ptr) \
-  CMETA_TYPED_CALL(list_type, destroy, (list_ptr))
-
-#define map_init(map_type, map_ptr, limit) \
-  CMETA_TYPED_CALL(map_type, init, (map_ptr), (limit))
-#define map_put(map_type, map_ptr, key, value) \
-  CMETA_TYPED_CALL(map_type, put, (map_ptr), (key), (value))
-#define map_clear(map_type, map_ptr) \
-  CMETA_TYPED_CALL(map_type, clear, (map_ptr))
-#define map_size(map_type, map_ptr) \
-  CMETA_TYPED_CALL(map_type, size, (map_ptr))
-#define map_destroy(map_type, map_ptr) \
-  CMETA_TYPED_CALL(map_type, destroy, (map_ptr))
+/* Self-describing declaration DSL. These declarations bind CMeta metadata but
+ * perform no allocation and do not create generated user-visible C types. */
+#ifndef Vec
+#define Vec(T, name) \
+  vec_t name = { .cmeta = { &stl_vec_container_desc }, \
+                 .element_type = CMETA_TYPEOF(T) }
+#endif
+#ifndef Deque
+#define Deque(T, name) \
+  deque_t name = { .cmeta = { &stl_deque_container_desc }, \
+                   .element_type = CMETA_TYPEOF(T) }
+#endif
+#ifndef List
+#define List(T, name) \
+  list_t name = { { &stl_list_container_desc }, CMETA_TYPEOF(T), NULL, UINT64_C(0) }
+#endif
+#ifndef Stack
+#define Stack(T, name) \
+  stack_t name = { .raw = { .cmeta = { &stl_stack_container_desc }, \
+                            .element_type = CMETA_TYPEOF(T) } }
+#endif
+#ifndef Queue
+#define Queue(T, name) \
+  queue_t name = { .raw = { .cmeta = { &stl_queue_container_desc }, \
+                            .element_type = CMETA_TYPEOF(T) } }
+#endif
+#ifndef Heap
+#define Heap(T, name) \
+  heap_t name = { .cmeta = { &stl_heap_container_desc }, \
+                  .element_type = CMETA_TYPEOF(T) }
+#endif
+#ifndef Set
+#define Set(T, name) \
+  set_t name = { .cmeta = { &stl_set_container_desc }, \
+                 .element_type = CMETA_TYPEOF(T) }
+#endif
+#ifndef HashSet
+#define HashSet(T, name) \
+  hash_set_t name = { .cmeta = { &stl_hash_set_container_desc }, \
+                      .element_type = CMETA_TYPEOF(T) }
+#endif
+#ifndef HashMap
+#define HashMap(K, V, name) \
+  hash_map_t name = { .cmeta = { &stl_hash_map_container_desc }, \
+                      .key_type = CMETA_TYPEOF(K), \
+                      .value_type = CMETA_TYPEOF(V) }
+#endif
+#ifndef Map
+#define Map(K, V, name) \
+  map_t name = { { &stl_map_container_desc }, CMETA_TYPEOF(K), \
+                 CMETA_TYPEOF(V), NULL, UINT64_C(0) }
+#endif
+#ifndef MultiMap
+#define MultiMap(K, V, name) \
+  multimap_t name = { .cmeta = { &stl_multimap_container_desc }, \
+                      .key_type = CMETA_TYPEOF(K), \
+                      .value_type = CMETA_TYPEOF(V) }
+#endif
+#ifndef BTree
+#define BTree(K, V, name) \
+  btree_t name = { .cmeta = { &stl_btree_container_desc }, \
+                   .key_type = CMETA_TYPEOF(K), \
+                   .value_type = CMETA_TYPEOF(V) }
+#endif
+#ifndef BPlusTree
+#define BPlusTree(K, V, name) \
+  bplus_tree_t name = { .cmeta = { &stl_bplus_tree_container_desc }, \
+                        .key_type = CMETA_TYPEOF(K), \
+                        .value_type = CMETA_TYPEOF(V) }
+#endif
 
 #endif /* TURBO_TYPED_H */

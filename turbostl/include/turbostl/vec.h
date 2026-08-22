@@ -1,36 +1,28 @@
 /**
- * @file turbo_vec.h
- * @brief Dynamic array implementation
+ * @file vec.h
+ * @brief Dynamic array implementation.
  *
- * THREAD SAFETY: NOT thread-safe. Each turbo_vec_t instance must be accessed
- *                by only one thread at a time. Use external synchronization
- *                (e.g., mutex) for shared vectors.
- *
- * CONCURRENCY MODEL: Single-owner model. For multi-threaded scenarios:
- *                    - Use one vec per thread (thread-local), or
- *                    - Protect shared vec with external mutex, or
- *                    - Use read-write lock for concurrent reads + exclusive writes
- *
- * CONCURRENT READS: Multiple threads may safely read a const turbo_vec_t
- *                   (using turbo_vec_at_const, turbo_vec_size, etc.) if no
- *                   thread is modifying it. Reallocation invalidates pointers.
+ * THREAD SAFETY: NOT thread-safe. Each vec_t instance must be accessed by only
+ * one thread at a time. Use external synchronization for shared vectors.
  */
 
-#ifndef TURBO_VEC_H
-#define TURBO_VEC_H
+#ifndef TURBOSTL_VEC_H
+#define TURBOSTL_VEC_H
 
 #include <turbostl/status.h>
 
+#include <cmeta/cmeta.h>
+#include <cmeta/range.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <cmeta/cmeta.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct {
+typedef struct vec {
+  cmeta_container_header cmeta;
   void *data;
   size_t size;
   size_t capacity;
@@ -41,55 +33,90 @@ typedef struct {
   const cmeta_type_desc *element_type;
   uint64_t generation;
   bool initialized;
-} turbo_vec_t;
+} vec_t;
 
-/* Handles must be first initialized with `{0}`. A destroyed handle may be
- * reused. init/from_array on a live handle return TURBO_STL_INVALID_ARGUMENT
- * without mutation. Borrowed pointers from at/data become invalid after any
- * successful mutation, storage-changing reserve, clear, or destroy. */
-turbo_stl_status turbo_vec_init(turbo_vec_t *vec,
-                                              const cmeta_type_desc *element_type,
-                                              size_t element_limit);
-turbo_stl_status turbo_vec_init_bytes(turbo_vec_t *vec, size_t elem_size,
-                                                    size_t elem_align, size_t element_limit);
-turbo_stl_status turbo_vec_from_array(turbo_vec_t *vec, const void *elements,
-                                                    size_t count,
-                                                    const cmeta_type_desc *element_type,
-                                                    size_t element_limit);
-turbo_stl_status turbo_vec_from_array_bytes(turbo_vec_t *vec,
-                                                          const void *elements, size_t count,
-                                                          size_t elem_size, size_t elem_align,
-                                                          size_t element_limit);
-void turbo_vec_destroy(turbo_vec_t *vec);
-turbo_stl_status turbo_vec_clear(turbo_vec_t *vec);
-turbo_stl_status turbo_vec_reserve(turbo_vec_t *vec, size_t min_capacity);
-turbo_stl_status turbo_vec_resize(turbo_vec_t *vec, size_t new_size);
-turbo_stl_status turbo_vec_push(turbo_vec_t *vec, const void *elem);
-/* A non-NULL out_elem must be sufficiently aligned, uninitialized element
- * storage; success transfers ownership there. NULL destroys the value. On
- * failure out_elem is not written. */
-turbo_stl_status turbo_vec_pop(turbo_vec_t *vec, void *out_elem);
-turbo_stl_status turbo_vec_insert(turbo_vec_t *vec, size_t index, const void *elem);
-turbo_stl_status turbo_vec_set(turbo_vec_t *vec, size_t index, const void *elem);
-/* A non-NULL out_elem must be sufficiently aligned, uninitialized element
- * storage; success transfers ownership there. NULL destroys the value. On
- * failure out_elem is not written. */
-turbo_stl_status turbo_vec_erase(turbo_vec_t *vec, size_t index, void *out_elem);
-/* A non-NULL out_elem must be sufficiently aligned, uninitialized element
- * storage; success transfers ownership there. NULL destroys the value. On
- * failure out_elem is not written. */
-turbo_stl_status turbo_vec_swap_remove(turbo_vec_t *vec, size_t index, void *out_elem);
-void *turbo_vec_at(turbo_vec_t *vec, size_t index);
-const void *turbo_vec_at_const(const turbo_vec_t *vec, size_t index);
-void *turbo_vec_data(turbo_vec_t *vec);
-const void *turbo_vec_data_const(const turbo_vec_t *vec);
-size_t turbo_vec_size(const turbo_vec_t *vec);
-size_t turbo_vec_capacity(const turbo_vec_t *vec);
-uint64_t turbo_vec_generation(const turbo_vec_t *vec);
-bool turbo_vec_empty(const turbo_vec_t *vec);
+/* Internal typed-storage bridge. Natural typed API is instance-driven below. */
+stl_status vec_raw_init(vec_t *vec, const cmeta_type_desc *element_type,
+                        size_t element_limit);
+stl_status vec_raw_from_array(vec_t *vec, const void *elements, size_t count,
+                              const cmeta_type_desc *element_type,
+                              size_t element_limit);
+void vec_raw_destroy_storage(vec_t *vec);
+
+/* Raw byte entry points remain explicit. */
+stl_status vec_init_bytes(vec_t *vec, size_t elem_size, size_t elem_align,
+                          size_t element_limit);
+stl_status vec_from_array_bytes(vec_t *vec, const void *elements, size_t count,
+                                size_t elem_size, size_t elem_align,
+                                size_t element_limit);
+
+/* Self-describing typed entry points consume the binding already in the
+ * handle. The wrapper preserves declaration metadata across implementation
+ * reset paths while the compiled implementation is being migrated. */
+static inline stl_status vec_init(vec_t *vec, size_t element_limit) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *type;
+  stl_status status;
+  if (vec == NULL || vec->element_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  kind = vec->cmeta.descriptor;
+  type = vec->element_type;
+  status = vec_raw_init(vec, type, element_limit);
+  vec->cmeta.descriptor = kind;
+  if (status != STL_OK)
+    vec->element_type = type;
+  return status;
+}
+
+static inline stl_status vec_from_array(vec_t *vec, const void *elements,
+                                        size_t count, size_t element_limit) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *type;
+  stl_status status;
+  if (vec == NULL || vec->element_type == NULL)
+    return STL_INVALID_ARGUMENT;
+  kind = vec->cmeta.descriptor;
+  type = vec->element_type;
+  status = vec_raw_from_array(vec, elements, count, type, element_limit);
+  vec->cmeta.descriptor = kind;
+  if (status != STL_OK)
+    vec->element_type = type;
+  return status;
+}
+
+static inline void vec_destroy(vec_t *vec) {
+  const cmeta_container_desc *kind;
+  const cmeta_type_desc *type;
+  if (vec == NULL)
+    return;
+  kind = vec->cmeta.descriptor;
+  type = vec->element_type;
+  vec_raw_destroy_storage(vec);
+  vec->cmeta.descriptor = kind;
+  vec->element_type = type;
+}
+
+stl_status vec_clear(vec_t *vec);
+stl_status vec_reserve(vec_t *vec, size_t min_capacity);
+stl_status vec_resize(vec_t *vec, size_t new_size);
+stl_status vec_push(vec_t *vec, const void *elem);
+stl_status vec_pop(vec_t *vec, void *out_elem);
+stl_status vec_insert(vec_t *vec, size_t index, const void *elem);
+stl_status vec_set(vec_t *vec, size_t index, const void *elem);
+stl_status vec_erase(vec_t *vec, size_t index, void *out_elem);
+stl_status vec_swap_remove(vec_t *vec, size_t index, void *out_elem);
+void *vec_at(vec_t *vec, size_t index);
+const void *vec_at_const(const vec_t *vec, size_t index);
+void *vec_data(vec_t *vec);
+const void *vec_data_const(const vec_t *vec);
+size_t vec_size(const vec_t *vec);
+size_t vec_capacity(const vec_t *vec);
+uint64_t vec_generation(const vec_t *vec);
+bool vec_empty(const vec_t *vec);
+
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* TURBO_VEC_H */
+#endif /* TURBOSTL_VEC_H */

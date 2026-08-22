@@ -1,4 +1,4 @@
-#include "../src/turbo_rbtree_internal.h"
+#include "../src/rbtree_internal.h"
 #include "tinytest.h"
 
 static int compare_int(const void *left, const void *right, void *context) {
@@ -8,8 +8,8 @@ static int compare_int(const void *left, const void *right, void *context) {
     return (lhs > rhs) - (lhs < rhs);
 }
 
-static bool validate_subtree(const turbo_rbtree_node_t *node,
-                             const turbo_rbtree_node_t *parent,
+static bool validate_subtree(const rbtree_node_t *node,
+                             const rbtree_node_t *parent,
                              size_t *out_black_height,
                              size_t *out_count) {
     size_t left_height;
@@ -36,9 +36,9 @@ static bool validate_subtree(const turbo_rbtree_node_t *node,
     return true;
 }
 
-static bool validate_tree(const turbo_rbtree_t *tree) {
-    const turbo_rbtree_node_t *node;
-    const turbo_rbtree_node_t *previous = NULL;
+static bool validate_tree(const rbtree_t *tree) {
+    const rbtree_node_t *node;
+    const rbtree_node_t *previous = NULL;
     size_t black_height;
     size_t node_count;
     size_t linked_count = 0u;
@@ -64,35 +64,35 @@ static bool validate_tree(const turbo_rbtree_t *tree) {
 
 spec("Internal red-black tree invariants") {
     it("preserves coloring black height and sorted links across churn") {
-        turbo_rbtree_t *tree = NULL;
+        rbtree_t *tree = NULL;
         enum { item_count = 257 };
         int keys[item_count];
         int value;
         int index;
 
-        check_equal(turbo_rbtree_create(
+        check_equal(rbtree_create(
                         &tree, NULL, NULL, sizeof(int), _Alignof(int),
                         sizeof(int), _Alignof(int), item_count, compare_int,
-                        NULL, false), TURBO_STL_OK);
+                        NULL, false), STL_OK);
         for (index = 0; index < item_count; ++index)
             keys[index] = (index * 73) % item_count;
         for (index = 0; index < item_count; ++index) {
-            turbo_rbtree_put_result result;
+            rbtree_put_result result;
             value = keys[index] * 10;
-            check_equal(turbo_rbtree_put(tree, &keys[index], &value, &result),
-                        TURBO_STL_OK);
-            check_equal(result, TURBO_RBTREE_INSERTED);
+            check_equal(rbtree_put(tree, &keys[index], &value, &result),
+                        STL_OK);
+            check_equal(result, RBTREE_INSERTED);
             check_true(validate_tree(tree));
         }
         for (index = 0; index < item_count; ++index) {
-            turbo_rbtree_node_t *node = turbo_rbtree_find(tree, &keys[index]);
+            rbtree_node_t *node = rbtree_find(tree, &keys[index]);
             check_not_null(node);
-            check_equal(turbo_rbtree_remove_node(tree, node, NULL),
-                        TURBO_STL_OK);
+            check_equal(rbtree_remove_node(tree, node, NULL),
+                        STL_OK);
             check_true(validate_tree(tree));
         }
         check_true(tree->root == NULL && tree->head == NULL &&
                    tree->tail == NULL);
-        turbo_rbtree_destroy(tree);
+        rbtree_destroy(tree);
     }
 }

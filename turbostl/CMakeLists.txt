@@ -1,19 +1,21 @@
 set(TARGET_NAME turbo_stl)
 
 add_library(${TARGET_NAME}
-  src/turbo_bplus_tree.c
-  src/turbo_btree.c
-  src/turbo_deque.c
-  src/turbo_hash_map.c
-  src/turbo_hash_set.c
-  src/turbo_heap.c
-  src/turbo_list.c
-  src/turbo_map.c
-  src/turbo_multimap.c
-  src/turbo_rbtree.c
-  src/turbo_sort.c
-  src/turbo_set.c
-  src/turbo_vec.c)
+  src/associative_meta.c
+  src/instance_meta.c
+  src/bplus_tree.c
+  src/btree.c
+  src/deque.c
+  src/hash_map.c
+  src/hash_set.c
+  src/heap.c
+  src/list.c
+  src/map.c
+  src/multimap.c
+  src/rbtree.c
+  src/sort.c
+  src/set.c
+  src/vec.c)
 
 cmake_config_target(
   ${TARGET_NAME}

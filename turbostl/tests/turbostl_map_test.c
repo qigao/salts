@@ -4,9 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typed(Map, OrderedIntMap, int, long);
-typed(Set, OrderedIntSet, int);
-
 typedef struct compare_value {
     int value;
 } compare_value;
@@ -137,81 +134,86 @@ static int raw_int_compare_map(const void *left, const void *right,
 
 spec("Red-black-tree ordered Map") {
     it("admits compare-only keys and rejects a missing comparator") {
-        turbo_map_t map = {0};
+        map_t map = {0};
 
-        check_equal(turbo_map_init(&map, &compare_value_type,
-                                   &compare_value_type, 2u), TURBO_STL_OK);
-        turbo_map_destroy(&map);
-        check_equal(turbo_map_init(&map, &missing_compare_type,
+        check_equal(map_raw_init(&map, &compare_value_type,
+                                   &compare_value_type, 2u), STL_OK);
+        map_raw_destroy_storage(&map);
+        check_equal(map_raw_init(&map, &missing_compare_type,
                                    &compare_value_type, 2u),
-                    TURBO_STL_TRAIT_MISSING);
-        check_equal(turbo_map_init_bytes(
+                    STL_TRAIT_MISSING);
+        check_equal(map_init_bytes(
                         &map, sizeof(int), _Alignof(int), sizeof(long),
                         _Alignof(long), 2u, raw_int_compare_map, NULL),
-                    TURBO_STL_OK);
-        turbo_map_destroy(&map);
+                    STL_OK);
+        map_raw_destroy_storage(&map);
     }
 
     it("iterates shuffled keys in sorted Map order") {
-        OrderedIntMap map = {0};
+        Map(int, long, map);
         int keys[] = {7, 1, 9, 3, 5};
         cmeta_range range;
         cmeta_range_cursor cursor = {0};
-        OrderedIntMap_entry entry = {0};
+        cmeta_entry entry = {0};
         int expected[] = {1, 3, 5, 7, 9};
         size_t index;
 
-        check_equal(OrderedIntMap_init(&map, 5u), TURBO_STL_OK);
-        for (index = 0u; index < 5u; ++index)
-            check_equal(OrderedIntMap_put(&map, keys[index],
-                                          (long)keys[index] * 10L),
-                        TURBO_STL_OK);
-        range = OrderedIntMap_entries_range(&map);
+        check_equal(map_init(&map, 5u), STL_OK);
+        for (index = 0u; index < 5u; ++index) {
+            long mapped = (long)keys[index] * 10L;
+            check_equal(map_put(&map, &keys[index], &mapped), STL_OK);
+        }
+        check_true(cmeta_container_range_view(&map,
+                                              CMETA_CONTAINER_VIEW_ENTRIES,
+                                              &range));
         check_true((range.flags & (CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
                                   CMETA_RANGE_UNIQUE)) ==
                    (CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
                     CMETA_RANGE_UNIQUE));
+        check_true(cmeta_type_equal(range.element_type,
+                                    &cmeta_type_ordered_entry));
         for (index = 0u; index < 5u; ++index) {
             cmeta_gen_status status = cmeta_range_next(&range, &cursor,
                                                        &entry);
             check_true(status == CMETA_GEN_VALUE ||
                        status == CMETA_GEN_VALUE_AND_DONE);
-            check_equal(entry.key, expected[index]);
-            check_equal(entry.value, (long)expected[index] * 10L);
+            check_equal(*(const int *)entry.key, expected[index]);
+            check_equal(*(const long *)entry.value,
+                        (long)expected[index] * 10L);
         }
-        OrderedIntMap_destroy(&map);
+        map_destroy(&map);
     }
 
     it("supports bidirectional bounds without rank indexing") {
-        turbo_map_t map = {0};
-        turbo_map_iter_t iterator;
+        map_t map = {0};
+        map_iter_t iterator;
         int keys[] = {8, 2, 6, 4};
         long value = 1L;
         int probe = 5;
         size_t index;
 
-        check_equal(turbo_map_init_bytes(
+        check_equal(map_init_bytes(
                         &map, sizeof(int), _Alignof(int), sizeof(long),
                         _Alignof(long), 4u, raw_int_compare_map, NULL),
-                    TURBO_STL_OK);
+                    STL_OK);
         for (index = 0u; index < 4u; ++index)
-            check_equal(turbo_map_put(&map, &keys[index], &value),
-                        TURBO_STL_OK);
-        iterator = turbo_map_lower_bound(&map, &probe);
-        check_equal(*(const int *)turbo_map_iter_key_const(iterator), 6);
-        iterator = turbo_map_upper_bound(&map, &keys[2]);
-        check_equal(*(const int *)turbo_map_iter_key_const(iterator), 8);
-        check_equal(turbo_map_iter_prev(&iterator), TURBO_STL_OK);
-        check_equal(*(const int *)turbo_map_iter_key_const(iterator), 6);
-        iterator = turbo_map_begin(&map);
-        check_equal(*(const int *)turbo_map_iter_key_const(iterator), 2);
-        check_equal(turbo_map_iter_next(&iterator), TURBO_STL_OK);
-        check_equal(*(const int *)turbo_map_iter_key_const(iterator), 4);
-        turbo_map_destroy(&map);
+            check_equal(map_put(&map, &keys[index], &value),
+                        STL_OK);
+        iterator = map_lower_bound(&map, &probe);
+        check_equal(*(const int *)map_iter_key_const(iterator), 6);
+        iterator = map_upper_bound(&map, &keys[2]);
+        check_equal(*(const int *)map_iter_key_const(iterator), 8);
+        check_equal(map_iter_prev(&iterator), STL_OK);
+        check_equal(*(const int *)map_iter_key_const(iterator), 6);
+        iterator = map_begin(&map);
+        check_equal(*(const int *)map_iter_key_const(iterator), 2);
+        check_equal(map_iter_next(&iterator), STL_OK);
+        check_equal(*(const int *)map_iter_key_const(iterator), 4);
+        map_raw_destroy_storage(&map);
     }
 
     it("keeps Set ordered and distinct from HashSet") {
-        OrderedIntSet set = {0};
+        Set(int, set);
         cmeta_range range;
         cmeta_range_cursor cursor = {0};
         int keys[] = {9, 1, 5, 1};
@@ -219,11 +221,13 @@ spec("Red-black-tree ordered Map") {
         int expected[] = {1, 5, 9};
         size_t index;
 
-        check_equal(OrderedIntSet_init(&set, 3u), TURBO_STL_OK);
+        check_equal(set_init(&set, 3u), STL_OK);
         for (index = 0u; index < 4u; ++index)
-            check_equal(OrderedIntSet_add(&set, keys[index]), TURBO_STL_OK);
-        check_equal(OrderedIntSet_size(&set), (size_t)3u);
-        range = OrderedIntSet_range(&set);
+            check_equal(set_add(&set, &keys[index]), STL_OK);
+        check_equal(set_size(&set), (size_t)3u);
+        check_true(cmeta_container_range_view(&set,
+                                              CMETA_CONTAINER_VIEW_DEFAULT,
+                                              &range));
         check_true((range.flags & (CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
                                   CMETA_RANGE_UNIQUE)) ==
                    (CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
@@ -234,41 +238,41 @@ spec("Red-black-tree ordered Map") {
                        status == CMETA_GEN_VALUE_AND_DONE);
             check_equal(out, expected[index]);
         }
-        OrderedIntSet_destroy(&set);
+        set_destroy(&set);
     }
 
     it("replaces duplicate from rows and preserves output on overflow") {
-        turbo_map_t map = {0};
+        map_t map = {0};
         int duplicate_keys[] = {2, 2};
         long duplicate_values[] = {20L, 21L};
         int distinct_keys[] = {3, 4};
         long distinct_values[] = {30L, 40L};
         uint64_t generation;
 
-        check_equal(turbo_map_from_arrays_bytes(
+        check_equal(map_from_arrays_bytes(
                         &map, duplicate_keys, duplicate_values, 2u,
                         sizeof(int), _Alignof(int), sizeof(long),
                         _Alignof(long), 1u, raw_int_compare_map, NULL),
-                    TURBO_STL_OK);
-        check_equal(turbo_map_size(&map), (size_t)1u);
-        check_equal(*(const long *)turbo_map_get_const(&map,
+                    STL_OK);
+        check_equal(map_size(&map), (size_t)1u);
+        check_equal(*(const long *)map_get_const(&map,
                                                        &duplicate_keys[0]),
                     21L);
-        generation = turbo_map_generation(&map);
-        check_equal(turbo_map_from_arrays_bytes(
+        generation = map_generation(&map);
+        check_equal(map_from_arrays_bytes(
                         &map, distinct_keys, distinct_values, 2u,
                         sizeof(int), _Alignof(int), sizeof(long),
                         _Alignof(long), 1u, raw_int_compare_map, NULL),
-                    TURBO_STL_CAPACITY_EXCEEDED);
-        check_equal(turbo_map_generation(&map), generation);
-        check_equal(*(const long *)turbo_map_get_const(&map,
+                    STL_CAPACITY_EXCEEDED);
+        check_equal(map_generation(&map), generation);
+        check_equal(*(const long *)map_get_const(&map,
                                                        &duplicate_keys[0]),
                     21L);
-        turbo_map_destroy(&map);
+        map_raw_destroy_storage(&map);
     }
 
     it("keeps owning replacement limit and removal transactional") {
-        turbo_map_t map = {0};
+        map_t map = {0};
         map_owned_value key = map_owned_make(1);
         map_owned_value other_key = map_owned_make(2);
         map_owned_value first = map_owned_make(10);
@@ -277,27 +281,27 @@ spec("Red-black-tree ordered Map") {
         uint64_t generation;
 
         map_owned_fail_copy = false;
-        check_equal(turbo_map_init(&map, &map_owned_type, &map_owned_type,
-                                   1u), TURBO_STL_OK);
-        check_equal(turbo_map_put(&map, &key, &first), TURBO_STL_OK);
-        check_equal(turbo_map_put(&map, &key, &replacement), TURBO_STL_OK);
-        check_equal(*((const map_owned_value *)turbo_map_get_const(
+        check_equal(map_raw_init(&map, &map_owned_type, &map_owned_type,
+                                   1u), STL_OK);
+        check_equal(map_put(&map, &key, &first), STL_OK);
+        check_equal(map_put(&map, &key, &replacement), STL_OK);
+        check_equal(*((const map_owned_value *)map_get_const(
                           &map, &key))->value, 11);
-        generation = turbo_map_generation(&map);
+        generation = map_generation(&map);
         map_owned_fail_copy = true;
-        check_equal(turbo_map_put(&map, &key, &first),
-                    TURBO_STL_OUT_OF_MEMORY);
-        check_equal(turbo_map_generation(&map), generation);
-        check_equal(*((const map_owned_value *)turbo_map_get_const(
+        check_equal(map_put(&map, &key, &first),
+                    STL_OUT_OF_MEMORY);
+        check_equal(map_generation(&map), generation);
+        check_equal(*((const map_owned_value *)map_get_const(
                           &map, &key))->value, 11);
         map_owned_fail_copy = false;
-        check_equal(turbo_map_put(&map, &other_key, &first),
-                    TURBO_STL_CAPACITY_EXCEEDED);
-        check_equal(turbo_map_generation(&map), generation);
-        check_equal(turbo_map_remove(&map, &key, &out), TURBO_STL_OK);
+        check_equal(map_put(&map, &other_key, &first),
+                    STL_CAPACITY_EXCEEDED);
+        check_equal(map_generation(&map), generation);
+        check_equal(map_remove(&map, &key, &out), STL_OK);
         check_true(out.value != NULL && *out.value == 11);
         map_owned_destroy(&out);
-        turbo_map_destroy(&map);
+        map_raw_destroy_storage(&map);
         map_owned_destroy(&replacement);
         map_owned_destroy(&first);
         map_owned_destroy(&other_key);
