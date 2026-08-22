@@ -1,4 +1,9 @@
+module
 import CMeta.PreprocessorBackendRegistryMutation
+public meta import CMeta.PreprocessorBackendRegistryMutation
+public meta import CMeta.PreprocessorBackend
+import all CMeta.PreprocessorBackendRegistryMutation
+import all CMeta.PreprocessorBackend
 
 /-!
 # Preprocessor backend registry mutation conformance

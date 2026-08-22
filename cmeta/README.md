@@ -25,16 +25,13 @@ Traits(User,
 
 typed(Option, MaybeUser, User);
 typed(List, UserList, User);
-
-Containers(
-    (Vec, UserVec, User),
-    (HashMap, UserMap, int, User)
-);
+typed(Vec, UserVec, User);
+typed(HashMap, UserMap, int, User);
 ```
 
 Trait rows declare capabilities once: CMeta derives both the trait flags and the corresponding function slots from the tagged rows. `TRIVIAL_COPY` and `TRIVIAL_DESTROY` remain explicit descriptor properties rather than inferred callable traits.
 
-For typed containers, declaration is complete instantiation. There is no public container `implement(...)` phase.
+For typed containers, declaration is complete instantiation. There is no public container `implement(...)` phase and no separate batch-container declaration DSL.
 
 ## Unified Schema / Replay kernel
 
@@ -51,7 +48,7 @@ Replay(MyRows, SOME_MAPPER)
 
 `Schema` owns parenthesized-row unpacking. `Replay` applies a named schema to a mapper. `Enum`, `Struct`, and CFlow's operator metadata reuse this kernel internally.
 
-Application `Containers(...)` is intentionally *not* a named-schema alias in v50; it directly instantiates every row. This keeps framework replay machinery out of normal application code.
+Application code does not need a separate schema or batch declaration to instantiate several generic types; write one `typed(...)` declaration per concrete type. This keeps the public generic surface to one entry point while leaving `Schema/Replay` as framework-generation machinery.
 
 ## Finite generic routing
 
@@ -83,14 +80,12 @@ into a complete typed facade containing:
 
 The raw library remains responsible for the concrete algorithm. CMeta generates structural forwarding code, not list allocation logic, hash probing, or B-tree balancing.
 
-Multiple instantiations can be written without an application macro definition:
+Multiple instantiations are simply multiple declarations:
 
 ```c
-Containers(
-    (List, UserList, User),
-    (Vec, UserVec, User),
-    (HashMap, UsersById, int, User)
-);
+typed(List, UserList, User);
+typed(Vec, UserVec, User);
+typed(HashMap, UsersById, int, User);
 ```
 
 ## Multi-TU model

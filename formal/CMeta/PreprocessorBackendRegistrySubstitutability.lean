@@ -242,8 +242,7 @@ private theorem perm_of_nodup_mem_iff
 
 /-- Observationally equivalent finite maps expose the same supporting certified
     candidate multiset. List order remains a representation detail. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistrySubstitutabilityConformance
-public theorem supportingCandidates_perm_of_equivalent
+theorem supportingCandidates_perm_of_equivalent
     (left right : PreprocessorBackendRegistry)
     (query : BackendQuery)
     (ir : ReplayIR)
@@ -257,8 +256,7 @@ public theorem supportingCandidates_perm_of_equivalent
 
 /-- A well-formed policy cannot distinguish equivalent registries by selected
     backend identity. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistrySubstitutabilityConformance
-public theorem selectSupporting_key_eq_of_equivalent
+theorem selectSupporting_key_eq_of_equivalent
     (wellFormed : WellFormedSelectionPolicy)
     (left right : PreprocessorBackendRegistry)
     (query : BackendQuery)
@@ -280,8 +278,7 @@ public theorem selectSupporting_key_eq_of_equivalent
 /-- Equivalent registries are indistinguishable by selected replay lowering.
     Empty candidate sets agree, while every successful selection lowers to the
     same canonical plan for the requested IR. -/
--- TEMP-MODULE-BRIDGE(M7g): legacy PreprocessorBackendRegistrySubstitutabilityConformance
-public theorem selectSupporting_lowering_eq_of_equivalent
+theorem selectSupporting_lowering_eq_of_equivalent
     (wellFormed : WellFormedSelectionPolicy)
     (left right : PreprocessorBackendRegistry)
     (query : BackendQuery)

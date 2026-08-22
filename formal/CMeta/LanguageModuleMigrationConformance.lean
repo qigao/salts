@@ -1,3 +1,4 @@
+module
 import CMeta.Producer
 import CMeta.FmtArgs
 import CMeta.NestedReplay
@@ -9,7 +10,6 @@ import CMeta.PreprocessorBackendRegistryMutation
 import CMeta.PreprocessorBackendRegistryEquivalence
 import CMeta.PreprocessorBackendRegistrySubstitutability
 import CMeta.PreprocessorBackendRegistrySetoid
-import CMeta.LanguageModuleLegacyBridge
 
 #check CMeta.Producer.replay
 #check CMeta.Producer.append
@@ -46,13 +46,11 @@ assert_not_exists CMeta.FmtArgs.normalized_guard_implies_physical_bound
 
 assert_not_exists CMeta.Producer.nestedReplay_length
 assert_not_exists CMeta.Producer.nestedReplay_count
+assert_not_exists CMeta.Producer.nestedReplay_same_length
 assert_not_exists CMeta.Producer.lowerSameProducerDepth_iff
+assert_not_exists CMeta.Producer.lowerSameProducerDepth_progress
 assert_not_exists CMeta.Producer.lowerReplayIR_isSome_iff
-
--- TEMP-MODULE-BRIDGE(M7g): legacy NestedReplayConformance proof consumers
-#check CMeta.Producer.nestedReplay_same_length
-#check CMeta.Producer.lowerSameProducerDepth_progress
-#check CMeta.Producer.lowerReplayIR_progress
+assert_not_exists CMeta.Producer.lowerReplayIR_progress
 
 #check CMeta.Producer.CompilerFamily
 #check CMeta.Producer.CompilerFamily.tag
@@ -81,23 +79,22 @@ assert_not_exists CMeta.Producer.CertifiedPreprocessorBackend.compilerVersionPos
 assert_not_exists CMeta.Producer.CertifiedPreprocessorBackend.deferredSameProducerAccepted
 assert_not_exists CMeta.Producer.CertifiedPreprocessorBackend.certifiedDepthPositive
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.mem_supportingCandidates_iff
-
--- TEMP-MODULE-BRIDGE(M7g): legacy backend conformance candidate proof
-#check CMeta.Producer.LanguageModuleLegacyBridge.mem_supportingCandidates_iff
+assert_not_exists CMeta.Producer.LanguageModuleLegacyBridge.mem_supportingCandidates_iff
+assert_not_exists CMeta.Producer.LanguageModuleLegacyBridge.select_mem
 
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.insert_eq_none_iff
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_eq_none_of_key_not_mem
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_insert_self_exact
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_insert_self
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_insert_ne_exact
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_insert_ne
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_remove_self
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_remove_ne_exact
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_remove_ne
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_self_exact
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_self
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_ne_exact
-
--- TEMP-MODULE-BRIDGE(M7g): legacy registry mutation conformance frame laws
-#check CMeta.Producer.PreprocessorBackendRegistry.lookup_insert_ne
-#check CMeta.Producer.PreprocessorBackendRegistry.lookup_remove_ne
-#check CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_ne
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_ne
 
 #check CMeta.Producer.ReplayExpansionPlan
 #check CMeta.Producer.ReplayExpansionPlan.respectsActiveProducers
@@ -110,14 +107,12 @@ assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.lookup_replace_ne_e
 
 assert_not_exists CMeta.Producer.ReplayExpansionPlan.fromIR_respects
 assert_not_exists CMeta.Producer.lowerReplayIR_requirement
+assert_not_exists CMeta.Producer.lowerReplayBackendPlan_eq_canonical_of_supports
 assert_not_exists CMeta.Producer.lowerReplayBackendPlan_eq_some_iff
-
--- TEMP-MODULE-BRIDGE(M7g): legacy backend/replay conformance
-#check CMeta.Producer.lowerReplayBackendPlan_eq_canonical_of_supports
-#check CMeta.Producer.lowerReplayBackendPlan_requirement
-#check CMeta.Producer.lowerReplayBackendPlan_respects_active
-#check CMeta.Producer.certifiedReplayLowering_eq_of_both_supports
-#check CMeta.Producer.PreprocessorBackendRegistry.resolveReplay_eq_some_iff
+assert_not_exists CMeta.Producer.lowerReplayBackendPlan_requirement
+assert_not_exists CMeta.Producer.lowerReplayBackendPlan_respects_active
+assert_not_exists CMeta.Producer.certifiedReplayLowering_eq_of_both_supports
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.resolveReplay_eq_some_iff
 
 #check CMeta.Producer.BackendPreference
 #check CMeta.Producer.BackendSelectionPolicy
@@ -138,13 +133,8 @@ assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_su
 assert_not_exists CMeta.Producer.BackendSelectionPolicy.select_key_eq_of_perm_of_matches
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_mem_candidates
 assert_not_exists CMeta.Producer.BackendSelectionPolicy.select_mem
-
--- TEMP-MODULE-BRIDGE(M7g): legacy backend conformance selection proof
-#check CMeta.Producer.LanguageModuleLegacyBridge.select_mem
-
--- TEMP-MODULE-BRIDGE(M7g): legacy backend/selection conformance
-#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_canonical
-#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_eq_of_entries_perm
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_canonical
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_eq_of_entries_perm
 
 #check CMeta.Producer.PreprocessorBackendRegistry.observe
 #check CMeta.Producer.PreprocessorBackendRegistry.Equivalent
@@ -160,20 +150,19 @@ assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.equivalent_refl
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.equivalent_symm
 assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.equivalent_trans
 
--- TEMP-MODULE-BRIDGE(M7g): legacy registry mutation/equivalence conformance
-#check CMeta.Producer.PreprocessorBackendRegistry.supportingCandidates_insert_irrelevant
-#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_insert_irrelevant
-#check CMeta.Producer.PreprocessorBackendRegistry.remove_missing_equivalent
-#check CMeta.Producer.PreprocessorBackendRegistry.insert_remove_equivalent
-#check CMeta.Producer.PreprocessorBackendRegistry.remove_remove_equivalent
-#check CMeta.Producer.PreprocessorBackendRegistry.replace_last_write_wins
-#check CMeta.Producer.PreprocessorBackendRegistry.supportingCandidates_perm_of_equivalent
-#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_eq_of_equivalent
-#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_eq_of_equivalent
-#check CMeta.Producer.PreprocessorBackendRegistry.observe_congr
-#check CMeta.Producer.PreprocessorBackendRegistry.supportingCandidates_congr
-#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_congr
-#check CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_congr
-#check CMeta.Producer.PreprocessorBackendRegistry.remove_congr
-#check CMeta.Producer.PreprocessorBackendRegistry.insert_congr
-#check CMeta.Producer.PreprocessorBackendRegistry.replace_congr
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.supportingCandidates_insert_irrelevant
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_insert_irrelevant
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.remove_missing_equivalent
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.insert_remove_equivalent
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.remove_remove_equivalent
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.replace_last_write_wins
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.supportingCandidates_perm_of_equivalent
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_eq_of_equivalent
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_eq_of_equivalent
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.observe_congr
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.supportingCandidates_congr
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_key_congr
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.selectSupporting_lowering_congr
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.remove_congr
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.insert_congr
+assert_not_exists CMeta.Producer.PreprocessorBackendRegistry.replace_congr

@@ -1,4 +1,5 @@
-import CMeta.PreprocessorBackendRegistrySubstitutability
+module
+import all CMeta.PreprocessorBackendRegistrySubstitutability
 
 /-!
 # Registry observational substitutability conformance

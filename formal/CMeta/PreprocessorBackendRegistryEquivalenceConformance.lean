@@ -1,4 +1,7 @@
+module
 import CMeta.PreprocessorBackendRegistryEquivalence
+public meta import CMeta.PreprocessorBackendRegistryEquivalence
+import all CMeta.PreprocessorBackendRegistryEquivalence
 
 /-!
 # Registry observational equivalence conformance

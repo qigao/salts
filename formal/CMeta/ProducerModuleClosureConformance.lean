@@ -1,0 +1,20 @@
+module
+import CMeta.NestedReplayGeneratedC
+import CMeta.NestedReplayGccGeneratedC
+import CMeta.NestedReplayClangGeneratedC
+import CMeta.NestedReplayConformance
+import CMeta.NestedReplayApplicabilityConformance
+import CMeta.PreprocessorBackendConformance
+import CMeta.PreprocessorBackendSelectionConformance
+import CMeta.PreprocessorBackendRegistryMutationConformance
+import CMeta.PreprocessorBackendRegistryEquivalenceConformance
+import CMeta.PreprocessorBackendRegistrySubstitutabilityConformance
+import CMeta.PreprocessorBackendRegistrySetoidConformance
+import CMeta.PreprocessorBackendRegistryCongruenceAuditConformance
+import CMeta.LanguageModuleMigrationConformance
+
+/-!
+M7g closure harness: every Producer-side generated/conformance dependency reachable
+from the root must be a real Lean module so this ordinary module client can import
+it without legacy-import escape hatches.
+-/
