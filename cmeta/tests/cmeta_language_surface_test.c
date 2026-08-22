@@ -4,6 +4,10 @@
 #error "Containers(...) is removed; use one typed(...) declaration per type"
 #endif
 
+#ifdef CMETA_TRAITS_POSITIONAL
+#error "positional Traits compatibility is removed; use tagged rows"
+#endif
+
 #define REQUIRE(expr) do { if (!(expr)) return __LINE__; } while (0)
 
 Struct(SurfacePoint,
