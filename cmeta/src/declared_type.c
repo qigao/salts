@@ -1,6 +1,11 @@
 #include <cmeta/declared_type.h>
+#include <cmeta/range.h>
 
+#include <stddef.h>
 #include <stdint.h>
+
+#define CMETA_FIELD_END(type, member) \
+    (offsetof(type, member) + sizeof(((type *)0)->member))
 
 bool cmeta_declared_type_valid(const cmeta_declared_type *declared) {
     const cmeta_type_identity *identities[UINT8_MAX + 1u];
@@ -29,8 +34,16 @@ bool cmeta_declared_type_valid(const cmeta_declared_type *declared) {
 }
 
 bool cmeta_declared_type_constructible(const cmeta_declared_type *declared) {
-    return cmeta_declared_type_valid(declared) &&
-           declared->construction != NULL;
+    const cmeta_container_construct_ops *ops;
+
+    if (!cmeta_declared_type_valid(declared))
+        return false;
+    ops = declared->construction;
+    return ops != NULL &&
+           ops->struct_size >=
+               CMETA_FIELD_END(cmeta_container_construct_ops, bind_types) &&
+           ops->abi_version == CMETA_CONTAINER_CONSTRUCT_OPS_ABI_VERSION &&
+           ops->descriptor != NULL && ops->bind_types != NULL;
 }
 
 const cmeta_type_desc *cmeta_declared_type_argument(
@@ -40,3 +53,5 @@ const cmeta_type_desc *cmeta_declared_type_argument(
         return NULL;
     return declared->arguments[index];
 }
+
+#undef CMETA_FIELD_END
