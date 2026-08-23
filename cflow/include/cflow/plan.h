@@ -41,6 +41,11 @@ void cflow_plan_destroy(cflow_plan *plan);
 /* Static capability query used by differential verification. */
 bool cflow_plan_graph_supported(const cflow_graph *graph);
 
+/* True only when immutable Plan metadata proves that the plan has a supported
+ * linear prefix and one terminal reducer with the complete ordered-parallel
+ * admission contract. No property is inferred from a function pointer. */
+bool cflow_plan_parallel_reduce_supported(const cflow_plan *plan);
+
 /* Execute the pre-decoded plan without Graph topology queries. */
 bool cflow_plan_eval_array(const cflow_plan *plan,
                            const void *inputs,

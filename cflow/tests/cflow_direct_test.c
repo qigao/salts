@@ -41,6 +41,14 @@ typed(map, idempotent, int, cflow_direct_clamp_nonnegative, (int value)) {
   return value < 0 ? 0 : value;
 }
 
+typed(reduce, associative, long, cflow_direct_add_long, (long left, long right)) {
+  return left + right;
+}
+
+typed(zip, value, double, cflow_direct_merge_long_double, (long left, double right)) {
+  return (double)left + right;
+}
+
 static bool cflow_direct_alternate_canonical_invoke(
     const cmeta_callable *self, void *out, const void *const *args) {
   return self != NULL && cmeta_fn_invoke(self->meta, out, args);
@@ -121,6 +129,64 @@ suite("CFlow Direct executor") {
     cflow_result_destroy(&cflow_direct_state.plan_result);
     cflow_plan_destroy(&cflow_direct_state.plan);
     cflow_stream_destroy(&cflow_direct_state.stream);
+  }
+
+  group("parallel reduce eligibility") {
+    it("requires complete reducer premises on a terminal linear plan") {
+      cflow_stream stream = {0};
+      cflow_plan plan = {0};
+      cflow_reduce_callable missing_associative = cflow_direct_add_long;
+      cflow_reduce_callable missing_no_alias = cflow_direct_add_long;
+
+      check_not_null(cflow_stream_init(&stream, &cmeta_type_long));
+      check_not_null(stream.reduce(&stream, cflow_direct_add_long));
+      check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+      check_true(cflow_plan_parallel_reduce_supported(&plan));
+      cflow_plan_destroy(&plan);
+      cflow_stream_destroy(&stream);
+
+      missing_associative.fn.meta.properties &= ~CMETA_PROP_ASSOCIATIVE;
+      check_not_null(cflow_stream_init(&stream, &cmeta_type_long));
+      check_not_null(stream.reduce(&stream, missing_associative));
+      check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+      check_false(cflow_plan_parallel_reduce_supported(&plan));
+      cflow_plan_destroy(&plan);
+      cflow_stream_destroy(&stream);
+
+      missing_no_alias.fn.meta.properties &= ~CMETA_PROP_NO_ALIAS;
+      check_not_null(cflow_stream_init(&stream, &cmeta_type_long));
+      check_not_null(stream.reduce(&stream, missing_no_alias));
+      check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+      check_false(cflow_plan_parallel_reduce_supported(&plan));
+      cflow_plan_destroy(&plan);
+      cflow_stream_destroy(&stream);
+    }
+
+    it("rejects a nonterminal reduce and relation topology") {
+      cflow_stream stream = {0};
+      cflow_stream branch = {0};
+      cflow_plan plan = {0};
+
+      check_not_null(cflow_stream_init(&stream, &cmeta_type_long));
+      check_not_null(stream.reduce(&stream, cflow_direct_add_long));
+      check_not_null(stream.map(&stream, cflow_direct_half));
+      check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+      check_false(cflow_plan_parallel_reduce_supported(&plan));
+      cflow_plan_destroy(&plan);
+      cflow_stream_destroy(&stream);
+
+      check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+      check_not_null(cflow_stream_init(&branch, &cmeta_type_int));
+      check_not_null(stream.map(&stream, cflow_direct_square));
+      check_not_null(branch.map(&branch, cflow_direct_square));
+      check_not_null(branch.map(&branch, cflow_direct_half));
+      check_not_null(stream.zip(&stream, &branch, cflow_direct_merge_long_double));
+      check_false(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+      check_false(cflow_plan_parallel_reduce_supported(&plan));
+      cflow_plan_destroy(&plan);
+      cflow_stream_destroy(&branch);
+      cflow_stream_destroy(&stream);
+    }
   }
 
   it("matches Plan and Kernel for one generated linear value pipeline") {

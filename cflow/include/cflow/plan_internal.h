@@ -54,6 +54,8 @@ struct cflow_plan_inst {
 typedef struct cflow_plan_impl {
     cflow_plan_inst *code;
     size_t count;
+    size_t terminal_reduce_index;
+    bool parallel_reduce_supported;
     bool fused_value;
     size_t fused_filter_count;
     size_t fused_map_call_count;

@@ -1,6 +1,7 @@
 #include <cflow/plan_internal.h>
 #include <cflow/lower.h>
 #include <cflow/opt.h>
+#include <cflow/property.h>
 #include "dense_successor_index.h"
 
 #include <stdlib.h>
@@ -99,6 +100,45 @@ static void prepare_fused_value(cflow_plan_impl *impl) {
     impl->fused_value = true;
 }
 
+static bool call_is_parallel_prefix(const cflow_plan_call *call) {
+    const cmeta_properties required = CMETA_PROP_DETERMINISTIC |
+        CMETA_PROP_TOTAL | CMETA_PROP_NO_ALIAS;
+    return call && cmeta_callable_contract_valid(call->fn) &&
+        cmeta_effects_are_pure(call->fn.meta.effects) &&
+        cmeta_properties_include(call->fn.meta.properties, required);
+}
+
+static void prepare_parallel_reduce(cflow_plan_impl *impl) {
+    const cflow_plan_inst *reduce;
+
+    if (!impl) return;
+    impl->terminal_reduce_index = SIZE_MAX;
+    if (!impl->count) return;
+    reduce = &impl->code[impl->count - 1u];
+    if (reduce->opcode != CMETA_PLAN_REDUCE ||
+        !cmeta_type_equal(reduce->input_type, reduce->output_type) ||
+        !cflow_callable_declares_associative_endomap(reduce->call.fn))
+        return;
+
+    for (size_t pc = 0u; pc + 1u < impl->count; ++pc) {
+        const cflow_plan_inst *inst = &impl->code[pc];
+        if (inst->opcode == CMETA_PLAN_FILTER) {
+            if (!call_is_parallel_prefix(&inst->call)) return;
+        } else if (inst->opcode == CMETA_PLAN_MAP) {
+            if (!inst->fn_chain_count) return;
+            for (size_t k = 0u; k < inst->fn_chain_count; ++k)
+                if (!call_is_parallel_prefix(&inst->fn_chain[k])) return;
+        } else if (inst->opcode == CMETA_PLAN_FLAT_MAP) {
+            if (!call_is_parallel_prefix(&inst->call)) return;
+        } else {
+            return;
+        }
+    }
+
+    impl->terminal_reduce_index = impl->count - 1u;
+    impl->parallel_reduce_supported = true;
+}
+
 static cflow_plan_opcode opcode_for(const cflow_node *n, bool *ok) {
     *ok = true;
     switch (n->op) {
@@ -192,6 +232,7 @@ bool cflow_plan_compile(cflow_plan *plan,
         cflow_dense_successor_index_destroy(&index);
         return plan_fail(plan, "allocation failed");
     }
+    impl->terminal_reduce_index = SIZE_MAX;
     if (instruction_count) {
         if (instruction_count > SIZE_MAX / sizeof(*impl->code)) {
             free(impl);
@@ -270,9 +311,16 @@ bool cflow_plan_compile(cflow_plan *plan,
         id = successor;
     }
     cflow_dense_successor_index_destroy(&index);
+    prepare_parallel_reduce(impl);
     prepare_fused_value(impl);
     plan->error = NULL;
     return true;
+}
+
+bool cflow_plan_parallel_reduce_supported(const cflow_plan *plan) {
+    const cflow_plan_impl *impl = plan ? (const cflow_plan_impl *)plan->impl : NULL;
+    return impl && impl->parallel_reduce_supported &&
+        impl->terminal_reduce_index < impl->count;
 }
 
 bool cflow_plan_compile_surface(cflow_plan *plan,
