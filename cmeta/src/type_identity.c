@@ -29,8 +29,23 @@ bool cmeta_generic_accepts_arity(const cmeta_generic_desc *desc, size_t arity) {
            arity <= (size_t)desc->max_arity;
 }
 
-bool cmeta_type_identity_valid(const cmeta_type_identity *identity) {
+bool cmeta_type_application_valid(
+    const cmeta_generic_desc *constructor,
+    const cmeta_type_identity *const *args,
+    size_t arity) {
     size_t i;
+    if (!cmeta_generic_accepts_arity(constructor, arity))
+        return false;
+    if (arity != 0u && args == NULL)
+        return false;
+    for (i = 0u; i < arity; ++i) {
+        if (args[i] == NULL || !cmeta_type_identity_valid(args[i]))
+            return false;
+    }
+    return true;
+}
+
+bool cmeta_type_identity_valid(const cmeta_type_identity *identity) {
     if (!identity) return false;
     switch (identity->form) {
         case CMETA_TYPE_ATOM:
@@ -43,15 +58,10 @@ bool cmeta_type_identity_valid(const cmeta_type_identity *identity) {
                    identity->base && !identity->args && identity->arity == 0u &&
                    cmeta_type_identity_valid(identity->base);
         case CMETA_TYPE_APPLY:
-            if (identity->stable_atom_id || identity->base ||
-                !identity->constructor || !identity->args ||
-                !cmeta_generic_accepts_arity(identity->constructor, identity->arity))
-                return false;
-            for (i = 0; i < identity->arity; ++i)
-                if (!identity->args[i] ||
-                    !cmeta_type_identity_valid(identity->args[i]))
-                    return false;
-            return true;
+            return !identity->stable_atom_id && !identity->base &&
+                   cmeta_type_application_valid(identity->constructor,
+                                                identity->args,
+                                                identity->arity);
     }
     return false;
 }
