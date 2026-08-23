@@ -25,6 +25,11 @@ cmake_add_test(cserde_recording_test
   LIBS cserde_recording_support TurboUtils::TinyTest
   FOLDER "cserde/tests")
 
+cmake_add_test(cserde_header_cpp_test
+  SOURCES cserde_header_cpp_test.cpp
+  LIBS TurboUtils::CSerde TurboUtils::TinyTest
+  FOLDER "cserde/tests")
+
 set_target_properties(
   cserde_token_test
   cserde_reader_test
@@ -39,3 +44,8 @@ set_target_properties(cserde_recording_support PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+set_target_properties(cserde_header_cpp_test PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF)
