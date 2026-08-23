@@ -13,6 +13,8 @@ import CMetaCFlowCalculus.CFlow.BuiltinOperatorPolicy
 import CMetaCFlowCalculus.CFlow.OperatorPolicyHeader
 import CMetaCFlowCalculus.CFlow.Execution
 import CMetaCFlowCalculus.CFlow.Mailbox
+import CMetaCFlowCalculus.CFlow.MachineSchema
+import CMetaCFlowCalculus.CFlow.MachineSchemaHeader
 import CMetaCFlowCalculus.CFlow.Observation
 import CMetaCFlowCalculus.CFlow.Architecture
 import CMetaCFlowCalculus.CFlow.Rewrite
