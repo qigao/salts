@@ -2,6 +2,18 @@ import Std
 
 namespace CMetaCFlowCalculus.CFlow
 
+inductive MachineStateKind where
+  | active
+  | done
+  | error
+  deriving Repr, DecidableEq, BEq
+
+inductive MachineActionObservationKind where
+  | none
+  | value
+  | event
+  deriving Repr, DecidableEq, BEq
+
 /-- One stable C enum row owned by the proof-facing Machine schema. -/
 structure MachineEnumRow where
   leanName : String

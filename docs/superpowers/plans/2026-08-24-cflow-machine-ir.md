@@ -137,32 +137,32 @@ git commit -m "feat(cflow): add transactional typed machine ir"
 - Consumes: `Ty`, dependent `Value`, `Mailbox.TypedEvent`, and Machine schema kinds.
 - Produces: typed declarations, `Machine.Valid`, `Config`, `MachineObservation`, `Trace`, deterministic priority selection, `step`, `SmallStep`, typing preservation, determinism, consumption, failure, and terminal-absorption theorems.
 
-- [ ] **Step 1: Write failing executable semantic examples**
+- [x] **Step 1: Write failing executable semantic examples**
 
 Construct literal Machines showing lowest enabled priority selection, no-transition error, action-success state commit, action-failure source-state preservation, Event consumption, DONE trace, and terminal absorption. Expected traces are literal lists, not computed by a duplicate evaluator.
 
-- [ ] **Step 2: Run and observe missing semantics**
+- [x] **Step 2: Run and observe missing semantics**
 
 Run: `lake env lean Test/PhaseATests/Machine.lean`  
 Expected: FAIL because `CFlow.Machine` does not exist.
 
-- [ ] **Step 3: Implement minimal typed semantic definitions**
+- [x] **Step 3: Implement minimal typed semantic definitions**
 
 Define finite lookups, candidate filtering, lowest-priority selection, action outcome, observations, terminal mode, configuration, pure `step`, and `SmallStep` as one evaluator equality. A non-terminal call consumes the input exactly once; no-match and action failure enter error with the source state unchanged.
 
-- [ ] **Step 4: Run semantic examples to green**
+- [x] **Step 4: Run semantic examples to green**
 
 Run the focused Lean test and confirm every literal trace matches.
 
-- [ ] **Step 5: Write theorem witnesses before proofs**
+- [x] **Step 5: Write theorem witnesses before proofs**
 
 Add examples requiring `smallStep_deterministic`, `step_preserves_state_typing`, `step_preserves_event_typing`, `step_consumes_once`, `action_failure_preserves_state`, and `terminal_no_step`.
 
-- [ ] **Step 6: Prove the admitted-fragment obligations**
+- [x] **Step 6: Prove the admitted-fragment obligations**
 
 Prove determinism from functional evaluation, typing preservation from validated transition references/type alignment, exact consumption by case analysis, and terminal absorption from the evaluator's terminal guard. Do not use `sorry` or axioms.
 
-- [ ] **Step 7: Run focused and complete Lean suites, then commit**
+- [x] **Step 7: Run focused and complete Lean suites, then commit**
 
 Run:
 

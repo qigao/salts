@@ -12,6 +12,7 @@ import PhaseATests.OperatorPolicyManifest
 import PhaseATests.FiniteCompute
 import PhaseATests.Mailbox
 import PhaseATests.MachineSchema
+import PhaseATests.Machine
 
 open CMetaCFlowCalculus.CMeta
 open CMetaCFlowCalculus.CFlow
