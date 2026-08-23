@@ -86,6 +86,9 @@ static cbind_status cbind_validate_struct_shape(
                                           child, field, current_depth + 1u);
             status = cbind_validate_struct_shape(context, child,
                                                  current_depth, &frame, error);
+        } else if (cbind_data_kind_is_container(child->kind)) {
+            status = cbind_validate_container_field(
+                context, child, reflected, field, current_depth, error);
         } else {
             size_t ignored_scratch = 0u;
             status = cbind_validate_graph(context, child, current_depth,
@@ -94,11 +97,12 @@ static cbind_status cbind_validate_struct_shape(
         if (status != CBIND_OK)
             return status;
 
-        if (child->storage_type == NULL ||
-            reflected->size != child->storage_type->size ||
-            reflected->align != child->storage_type->align ||
+        if ((!cbind_data_kind_is_container(child->kind) &&
+             (child->storage_type == NULL ||
+              reflected->size != child->storage_type->size ||
+              reflected->align != child->storage_type->align)) ||
             field->offset > shape->storage_type->size ||
-            child->storage_type->size >
+            reflected->size >
                 shape->storage_type->size - field->offset)
             return cbind_struct_error(error, CBIND_INVALID_SHAPE, shape, field,
                                       current_depth);
@@ -174,9 +178,15 @@ bool cbind_struct_is_empty(const cmeta_data_desc *shape, const void *value) {
     for (i = 0u; i < struct_shape->field_count; ++i) {
         const cmeta_data_field_desc *field = &struct_shape->fields[i];
         const void *member = base + field->offset;
-        bool empty = field->value->kind == CMETA_DATA_STRUCT
-                         ? cbind_struct_is_empty(field->value, member)
-                         : cbind_value_is_empty(field->value, member);
+        const cmeta_field_desc *reflected = cmeta_struct_find_field(
+            struct_shape->layout, field->name);
+        bool empty;
+        if (field->value->kind == CMETA_DATA_STRUCT)
+            empty = cbind_struct_is_empty(field->value, member);
+        else if (cbind_data_kind_is_container(field->value->kind))
+            empty = cbind_container_is_zero(reflected, member);
+        else
+            empty = cbind_value_is_empty(field->value, member);
         if (!empty)
             return false;
     }
@@ -193,12 +203,54 @@ void cbind_struct_reset(const cmeta_data_desc *shape, void *value) {
     struct_shape = (const cmeta_data_struct_shape *)shape->shape;
     for (i = 0u; i < struct_shape->field_count; ++i) {
         const cmeta_data_field_desc *field = &struct_shape->fields[i];
+        const cmeta_field_desc *reflected = cmeta_struct_find_field(
+            struct_shape->layout, field->name);
         void *member = base + field->offset;
         if (field->value->kind == CMETA_DATA_STRUCT)
             cbind_struct_reset(field->value, member);
+        else if (cbind_data_kind_is_container(field->value->kind))
+            cbind_container_reset(reflected, member);
         else
             cbind_value_reset(field->value, member);
     }
+}
+
+cbind_status cbind_prepare_struct_containers(
+    const cmeta_data_desc *shape, void *value, cbind_error *error,
+    size_t depth) {
+    const cmeta_data_struct_shape *struct_shape =
+        (const cmeta_data_struct_shape *)shape->shape;
+    unsigned char *base = (unsigned char *)value;
+    size_t current_depth = depth + 1u;
+    size_t i;
+
+    for (i = 0u; i < struct_shape->field_count; ++i) {
+        const cmeta_data_field_desc *field = &struct_shape->fields[i];
+        const cmeta_field_desc *reflected = cmeta_struct_find_field(
+            struct_shape->layout, field->name);
+        void *member = base + field->offset;
+        cmeta_status target;
+        cbind_status status;
+
+        if (field->value->kind == CMETA_DATA_STRUCT) {
+            status = cbind_prepare_struct_containers(
+                field->value, member, error, current_depth);
+            if (status != CBIND_OK)
+                return status;
+            continue;
+        }
+        if (!cbind_data_kind_is_container(field->value->kind))
+            continue;
+
+        target = cmeta_container_bind_types(member, reflected->declared_type);
+        if (target != CMETA_OK) {
+            cbind_error_set(error, CBIND_TARGET_ERROR, CSERDE_OK,
+                            field->value, field, current_depth);
+            cbind_error_set_target(error, target);
+            return CBIND_TARGET_ERROR;
+        }
+    }
+    return CBIND_OK;
 }
 
 const cmeta_data_field_desc *cbind_find_field_slice(
@@ -311,8 +363,10 @@ cbind_status cbind_decode_struct(cbind_decode_state *state,
             break;
         }
 
-        status = cbind_decode_value(state, field->value, field, current_depth,
-                                    (unsigned char *)out + field->offset);
+        status = cbind_decode_value(
+            state, field->value, field,
+            cmeta_struct_find_field(struct_shape->layout, field->name),
+            current_depth, (unsigned char *)out + field->offset);
         if (status != CBIND_OK)
             break;
         cbind_mark_field_seen(bitmap, field_index);

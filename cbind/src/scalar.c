@@ -30,6 +30,23 @@ static bool cbind_type_matches(const cmeta_type_desc *actual,
     return cbind_storage_classify(actual, canonical) == CBIND_STORAGE_EXACT;
 }
 
+const cmeta_data_desc *cbind_scalar_shape_for_type(
+    const cmeta_type_desc *type) {
+    if (cbind_type_matches(type, &cmeta_type_bool))
+        return &cmeta_data_bool;
+    if (cbind_type_matches(type, &cmeta_type_int))
+        return &cmeta_data_int;
+    if (cbind_type_matches(type, &cmeta_type_long))
+        return &cmeta_data_long;
+    if (cbind_type_matches(type, &cmeta_type_size))
+        return &cmeta_data_size;
+    if (cbind_type_matches(type, &cmeta_type_float))
+        return &cmeta_data_float;
+    if (cbind_type_matches(type, &cmeta_type_double))
+        return &cmeta_data_double;
+    return NULL;
+}
+
 static cbind_status cbind_validation_error(cbind_error *error,
                                            cbind_status status,
                                            const cmeta_data_desc *shape,
@@ -444,6 +461,34 @@ static cbind_status cbind_decode_floating(cbind_decode_state *state,
     }
 }
 
+cbind_status cbind_decode_scalar_token(cbind_decode_state *state,
+                                       const cmeta_data_desc *shape,
+                                       const cmeta_data_field_desc *field,
+                                       size_t depth,
+                                       const cserde_token *token,
+                                       void *out) {
+    if (token == NULL)
+        return cbind_scalar_error(state, CBIND_INVALID_ARGUMENT,
+                                  shape, field, depth);
+    switch (shape->kind) {
+        case CMETA_DATA_BOOL:
+            if (token->kind != CSERDE_BOOL)
+                return cbind_scalar_error(state, CBIND_TOKEN_MISMATCH,
+                                          shape, field, depth);
+            memcpy(out, &token->value.boolean, sizeof(token->value.boolean));
+            return CBIND_OK;
+        case CMETA_DATA_SINT:
+            return cbind_decode_signed(state, shape, field, depth, token, out);
+        case CMETA_DATA_UINT:
+            return cbind_decode_unsigned(state, shape, field, depth, token, out);
+        case CMETA_DATA_FLOAT:
+            return cbind_decode_floating(state, shape, field, depth, token, out);
+        default:
+            return cbind_scalar_error(state, CBIND_UNSUPPORTED,
+                                      shape, field, depth);
+    }
+}
+
 cbind_status cbind_decode_scalar(cbind_decode_state *state,
                                  const cmeta_data_desc *shape,
                                  const cmeta_data_field_desc *field,
@@ -454,22 +499,5 @@ cbind_status cbind_decode_scalar(cbind_decode_state *state,
 
     if (status != CBIND_OK)
         return status;
-
-    switch (shape->kind) {
-        case CMETA_DATA_BOOL:
-            if (token.kind != CSERDE_BOOL)
-                return cbind_scalar_error(state, CBIND_TOKEN_MISMATCH,
-                                          shape, field, depth);
-            memcpy(out, &token.value.boolean, sizeof(token.value.boolean));
-            return CBIND_OK;
-        case CMETA_DATA_SINT:
-            return cbind_decode_signed(state, shape, field, depth, &token, out);
-        case CMETA_DATA_UINT:
-            return cbind_decode_unsigned(state, shape, field, depth, &token, out);
-        case CMETA_DATA_FLOAT:
-            return cbind_decode_floating(state, shape, field, depth, &token, out);
-        default:
-            return cbind_scalar_error(state, CBIND_UNSUPPORTED,
-                                      shape, field, depth);
-    }
+    return cbind_decode_scalar_token(state, shape, field, depth, &token, out);
 }

@@ -70,6 +70,14 @@ static bool cmeta_container_construct_ops_valid(
            ops->descriptor != NULL && ops->bind_types != NULL;
 }
 
+static bool cmeta_container_restore_ops_valid(
+    const cmeta_container_construct_ops *ops) {
+    return cmeta_container_construct_ops_valid(ops) &&
+           ops->struct_size >=
+               CMETA_FIELD_END(cmeta_container_construct_ops, restore_zero) &&
+           ops->restore_zero != NULL;
+}
+
 static const cmeta_container_construct_ops *
 cmeta_container_construction_of_descriptor(const cmeta_container_desc *desc) {
     const cmeta_container_ext *ext =
@@ -163,6 +171,28 @@ cmeta_status cmeta_container_bind_types(
 
     return construction->bind_types(
         object, declared->arguments, declared->arity);
+}
+
+cmeta_status cmeta_container_restore_zero(
+    void *object, const cmeta_declared_type *declared) {
+    const cmeta_container_construct_ops *construction;
+    const cmeta_container_desc *current;
+
+    if (object == NULL || !cmeta_declared_type_constructible(declared))
+        return CMETA_INVALID_ARGUMENT;
+
+    construction = declared->construction;
+    if (!cmeta_container_restore_ops_valid(construction) ||
+        cmeta_container_construction_of_descriptor(construction->descriptor) !=
+            construction)
+        return CMETA_INVALID_ARGUMENT;
+
+    current = cmeta_container_descriptor(object);
+    if (current != NULL && current != construction->descriptor)
+        return CMETA_TYPE_MISMATCH;
+
+    construction->restore_zero(object);
+    return CMETA_OK;
 }
 
 #undef CMETA_FIELD_END

@@ -15,7 +15,8 @@ typedef enum cbind_status {
     CBIND_UNEXPECTED_END,
     CBIND_LIMIT_EXCEEDED,
     CBIND_UNSUPPORTED,
-    CBIND_SOURCE_ERROR
+    CBIND_SOURCE_ERROR,
+    CBIND_TARGET_ERROR
 } cbind_status;
 
 #endif /* CBIND_STATUS_H */
