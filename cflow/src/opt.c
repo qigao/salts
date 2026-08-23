@@ -2,9 +2,20 @@
 #include <cflow/lower.h>
 #include <cflow/effect.h>
 #include <cflow/property.h>
+#include "graph_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
+
+typedef struct cflow_opt_trace_impl {
+    const cflow_graph *source;
+    const cflow_graph *optimized;
+    uint64_t source_version;
+    uint64_t optimized_version;
+    size_t count;
+    size_t capacity;
+    cflow_opt_rewrite_event events[];
+} cflow_opt_trace_impl;
 
 typedef struct opt_ctx {
     const cflow_graph *src;
@@ -13,6 +24,7 @@ typedef struct opt_ctx {
     unsigned char *state;
     unsigned passes;
     cflow_opt_stats *stats;
+    cflow_opt_trace_impl *trace;
     const char *error;
 } opt_ctx;
 
@@ -36,13 +48,52 @@ static bool node_is_stable(const opt_ctx *ctx, const cflow_node *n) {
         cflow_node_properties(ctx->src, n), CMETA_PROP_STABLE);
 }
 
-static bool fn_safe_idempotent_endomap(cmeta_callable fn) {
-    const cmeta_sig_desc *sig = cmeta_callable_signature(fn);
-    return cmeta_callable_contract_valid(fn) && cmeta_effects_are_pure(fn.meta.effects) &&
-        cmeta_properties_include(fn.meta.properties,
-            CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL | CMETA_PROP_IDEMPOTENT) &&
-        sig && sig->protocol == CMETA_FN_PROTOCOL_VALUE && sig->param_count == 1u &&
-        cmeta_type_equal(sig->params[0], sig->return_type);
+static bool graph_callable_count(const cflow_graph *g, size_t *count) {
+    size_t total = 0u;
+    if (!g || !count) return false;
+    for (size_t si = 0u; si < g->subgraph_count; ++si) {
+        const cflow_subgraph *sg = &g->subgraphs[si];
+        for (size_t ni = 0u; ni < sg->node_count; ++ni) {
+            const cflow_node *node = &sg->nodes[ni];
+            size_t calls = node->fn_chain_count ? node->fn_chain_count :
+                (node->has_fn ? 1u : 0u);
+            if (calls > SIZE_MAX - total) return false;
+            total += calls;
+        }
+    }
+    *count = total;
+    return true;
+}
+
+static cflow_opt_trace_impl *trace_create(const cflow_graph *source,
+                                          const char **error) {
+    size_t capacity = 0u;
+    if (!graph_callable_count(source, &capacity) ||
+        capacity > (SIZE_MAX - sizeof(cflow_opt_trace_impl)) /
+            sizeof(cflow_opt_rewrite_event)) {
+        if (error) *error = "optimizer proof trace size overflow";
+        return NULL;
+    }
+    size_t bytes = sizeof(cflow_opt_trace_impl) +
+        capacity * sizeof(cflow_opt_rewrite_event);
+    cflow_opt_trace_impl *trace = malloc(bytes);
+    if (!trace) {
+        if (error) *error = "optimizer proof trace allocation failed";
+        return NULL;
+    }
+    memset(trace, 0, sizeof(*trace));
+    trace->capacity = capacity;
+    return trace;
+}
+
+static bool trace_record(opt_ctx *ctx, cflow_opt_rewrite_event event) {
+    if (!ctx || !ctx->trace) return true;
+    if (ctx->trace->count >= ctx->trace->capacity) {
+        ctx->error = "optimizer proof trace capacity exceeded";
+        return false;
+    }
+    ctx->trace->events[ctx->trace->count++] = event;
+    return true;
 }
 
 static bool append_edge(opt_ctx *ctx, cflow_subgraph_id sgid,
@@ -150,7 +201,8 @@ static size_t node_chain_count(const cflow_node *n) {
     return n && n->fn_chain_count ? n->fn_chain_count : 1u;
 }
 
-static bool append_map_chain(opt_ctx *ctx, cflow_subgraph_id sgid,
+static bool append_map_chain(opt_ctx *ctx, cflow_subgraph_id src_sgid,
+                             cflow_subgraph_id sgid,
                              const cflow_subgraph *srcsg,
                              cflow_node_id first,
                              cflow_node_id *last_out) {
@@ -159,7 +211,12 @@ static bool append_map_chain(opt_ctx *ctx, cflow_subgraph_id sgid,
     for (;;) {
         const cflow_node *n = cflow_subgraph_node(srcsg, at);
         if (!maplike(n) || !node_is_pure(ctx, n)) break;
-        total += node_chain_count(n);
+        size_t calls = node_chain_count(n);
+        if (calls > SIZE_MAX - total) {
+            ctx->error = "optimizer map-chain size overflow";
+            return false;
+        }
+        total += calls;
         ++nodes;
         if (at == srcsg->tail) break;
         cflow_node_id next = CMETA_INVALID_ID;
@@ -173,9 +230,15 @@ static bool append_map_chain(opt_ctx *ctx, cflow_subgraph_id sgid,
         at = next;
     }
 
+    if (total == 0u || total > SIZE_MAX / sizeof(cmeta_callable)) {
+        ctx->error = "optimizer map-chain size is invalid";
+        return false;
+    }
     cmeta_callable *chain = malloc(total * sizeof(*chain));
     if (!chain) { ctx->error = "optimizer fused-map allocation failed"; return false; }
     size_t pos = 0;
+    cflow_node_id retained_node = CMETA_INVALID_ID;
+    size_t retained_callable_index = 0u;
     cflow_node_id walk = first;
     for (;;) {
         const cflow_node *n = cflow_subgraph_node(srcsg, walk);
@@ -185,14 +248,25 @@ static bool append_map_chain(opt_ctx *ctx, cflow_subgraph_id sgid,
             cmeta_callable fn = fns[fi];
             bool duplicate = pos > 0u && cmeta_callable_same(chain[pos - 1u], fn);
             if (duplicate && (ctx->passes & CMETA_OPT_PROPERTY_REWRITES)) {
-                if (fn_safe_idempotent_endomap(chain[pos - 1u]) &&
-                    fn_safe_idempotent_endomap(fn)) {
+                if (cflow_callable_declares_idempotent_endomap(chain[pos - 1u]) &&
+                    cflow_callable_declares_idempotent_endomap(fn)) {
+                    cflow_opt_rewrite_event event = {
+                        CFLOW_OPT_RULE_IDEMPOTENT_MAP_ELIMINATION,
+                        src_sgid,
+                        retained_node,
+                        retained_callable_index,
+                        walk,
+                        fi
+                    };
+                    if (!trace_record(ctx, event)) { free(chain); return false; }
                     if (ctx->stats) ++ctx->stats->idempotent_maps_eliminated;
                     continue;
                 }
                 if (ctx->stats) ++ctx->stats->property_blocked_idempotent_eliminations;
             }
             chain[pos++] = fn;
+            retained_node = walk;
+            retained_callable_index = fi;
         }
         if (walk == at) break;
         cflow_node_id next = CMETA_INVALID_ID;
@@ -250,7 +324,7 @@ static bool optimize_subgraph(opt_ctx *ctx, cflow_subgraph_id src_id,
 
         if ((ctx->passes & CMETA_OPT_MAP_FUSION) && maplike(node) && node_is_pure(ctx, node)) {
             cflow_node_id last = next;
-            if (!append_map_chain(ctx, dstid, srcsg, next, &last)) return false;
+            if (!append_map_chain(ctx, src_id, dstid, srcsg, next, &last)) return false;
             at = last;
             continue;
         }
@@ -282,12 +356,17 @@ static bool optimize_subgraph(opt_ctx *ctx, cflow_subgraph_id src_id,
     return true;
 }
 
-bool cflow_graph_optimize(cflow_graph *dst,
-                          const cflow_graph *src,
-                          cflow_opt_options options,
-                          cflow_opt_stats *stats) {
+static bool graph_optimize_impl(cflow_graph *dst,
+                                const cflow_graph *src,
+                                cflow_opt_options options,
+                                cflow_opt_stats *stats,
+                                cflow_opt_trace *trace) {
     if (!dst || !src || dst == src || dst->subgraphs || dst->subgraph_count != 0u)
         return false;
+    if (trace && trace->impl) {
+        dst->error = "optimizer proof trace must be in zero state";
+        return false;
+    }
     if (!cflow_graph_is_normalized(src)) { dst->error = "optimizer requires normalized IR"; return false; }
     const char *validation = NULL;
     if (!cflow_graph_validate(src, &validation)) {
@@ -301,12 +380,24 @@ bool cflow_graph_optimize(cflow_graph *dst,
         stats->nodes_before = graph_node_count(src);
     }
 
+    cflow_opt_trace_impl *trace_impl = NULL;
+    if (trace) {
+        const char *trace_error = NULL;
+        trace_impl = trace_create(src, &trace_error);
+        if (!trace_impl) {
+            dst->error = trace_error ? trace_error : "optimizer proof trace creation failed";
+            return false;
+        }
+    }
+
     opt_ctx ctx = {0};
     ctx.src = src; ctx.dst = dst; ctx.passes = options.passes; ctx.stats = stats;
+    ctx.trace = trace_impl;
     ctx.map = malloc(src->subgraph_count * sizeof(*ctx.map));
     ctx.state = calloc(src->subgraph_count ? src->subgraph_count : 1u, 1u);
     if (!ctx.map || !ctx.state) {
-        free(ctx.map); free(ctx.state); dst->error = "optimizer state allocation failed"; return false;
+        free(ctx.map); free(ctx.state); free(trace_impl);
+        dst->error = "optimizer state allocation failed"; return false;
     }
     for (size_t i = 0; i < src->subgraph_count; ++i) ctx.map[i] = CMETA_INVALID_ID;
 
@@ -321,15 +412,19 @@ bool cflow_graph_optimize(cflow_graph *dst,
     free(ctx.map); free(ctx.state);
     if (!ok) {
         const char *err = ctx.error ? ctx.error : (dst->error ? dst->error : "Graph optimization failed");
-        cflow_graph_destroy(dst); dst->error = err; return false;
+        free(trace_impl); cflow_graph_destroy(dst); dst->error = err; return false;
     }
     dst->root = root;
     dst->error = NULL;
-    ++dst->version;
+    if (!cflow_graph_version_acquire(&dst->version)) {
+        free(trace_impl); cflow_graph_destroy(dst);
+        dst->error = "graph version space exhausted";
+        return false;
+    }
 
     if (!cflow_graph_validate(dst, &validation) || !cflow_graph_is_normalized(dst)) {
         const char *err = validation ? validation : "optimized Graph validation failed";
-        cflow_graph_destroy(dst); dst->error = err; return false;
+        free(trace_impl); cflow_graph_destroy(dst); dst->error = err; return false;
     }
     if (stats) {
         stats->subgraphs_after = dst->subgraph_count;
@@ -338,5 +433,60 @@ bool cflow_graph_optimize(cflow_graph *dst,
             stats->subgraphs_before > stats->subgraphs_after)
             stats->dead_subgraphs_removed = stats->subgraphs_before - stats->subgraphs_after;
     }
+    if (trace_impl) {
+        trace_impl->source = src;
+        trace_impl->optimized = dst;
+        trace_impl->source_version = src->version;
+        trace_impl->optimized_version = dst->version;
+        trace->impl = trace_impl;
+    }
     return true;
+}
+
+bool cflow_graph_optimize(cflow_graph *dst,
+                          const cflow_graph *src,
+                          cflow_opt_options options,
+                          cflow_opt_stats *stats) {
+    return graph_optimize_impl(dst, src, options, stats, NULL);
+}
+
+bool cflow_graph_optimize_with_trace(cflow_graph *dst,
+                                     const cflow_graph *src,
+                                     cflow_opt_options options,
+                                     cflow_opt_stats *stats,
+                                     cflow_opt_trace *trace) {
+    if (!trace) {
+        if (dst) dst->error = "optimizer proof trace output is required";
+        return false;
+    }
+    return graph_optimize_impl(dst, src, options, stats, trace);
+}
+
+void cflow_opt_trace_destroy(cflow_opt_trace *trace) {
+    if (!trace) return;
+    free(trace->impl);
+    trace->impl = NULL;
+}
+
+size_t cflow_opt_trace_count(const cflow_opt_trace *trace) {
+    const cflow_opt_trace_impl *impl = trace ? trace->impl : NULL;
+    return impl ? impl->count : 0u;
+}
+
+bool cflow_opt_trace_event_at(const cflow_opt_trace *trace,
+                              size_t index,
+                              cflow_opt_rewrite_event *event) {
+    const cflow_opt_trace_impl *impl = trace ? trace->impl : NULL;
+    if (!impl || !event || index >= impl->count) return false;
+    *event = impl->events[index];
+    return true;
+}
+
+bool cflow_opt_trace_bound_to(const cflow_opt_trace *trace,
+                              const cflow_graph *source,
+                              const cflow_graph *optimized) {
+    const cflow_opt_trace_impl *impl = trace ? trace->impl : NULL;
+    return impl && source && optimized && impl->source == source &&
+        impl->optimized == optimized && impl->source_version == source->version &&
+        impl->optimized_version == optimized->version;
 }

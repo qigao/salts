@@ -1,4 +1,5 @@
 #include <cflow/lower.h>
+#include "graph_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -240,7 +241,11 @@ bool cflow_graph_normalize(cflow_graph *dst, const cflow_graph *src) {
     }
     dst->root = root;
     dst->error = NULL;
-    ++dst->version;
+    if (!cflow_graph_version_acquire(&dst->version)) {
+        cflow_graph_destroy(dst);
+        dst->error = "graph version space exhausted";
+        return false;
+    }
 
     if (!cflow_graph_is_normalized(dst) || !cflow_graph_validate(dst, &validation)) {
         const char *err = validation ? validation : "normalized Graph validation failed";

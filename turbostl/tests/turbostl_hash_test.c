@@ -297,6 +297,69 @@ suite("TurboSTL hash ownership") {
         turbo_hash_set_destroy(&set);
     }
 
+    it("replaces an initialized raw map after building its successor") {
+        turbo_hash_map_t map = {0};
+        const int old_key = 1;
+        const int old_value = 10;
+        const int new_key = 2;
+        const int new_value = 20;
+        uint64_t generation;
+
+        check_equal(turbo_hash_map_init_bytes(
+                        &map, sizeof(int), _Alignof(int), sizeof(int),
+                        _Alignof(int), 1u, turbo_hash_bytes,
+                        turbo_hash_key_equal, NULL),
+                    TURBO_STL_OK);
+        check_equal(turbo_hash_map_put(&map, &old_key, &old_value),
+                    TURBO_STL_OK);
+        generation = turbo_hash_map_generation(&map);
+
+        check_equal(turbo_hash_map_from_arrays_bytes(
+                        &map, &new_key, &new_value, 1u, sizeof(int),
+                        _Alignof(int), sizeof(int), _Alignof(int), 1u,
+                        turbo_hash_bytes, turbo_hash_key_equal, NULL),
+                    TURBO_STL_OK);
+        check_equal(turbo_hash_map_generation(&map), generation + UINT64_C(1));
+        check_equal(turbo_hash_map_get_const(&map, &old_key), NULL);
+        check_equal(*(const int *)turbo_hash_map_get_const(&map, &new_key),
+                    new_value);
+        turbo_hash_map_destroy(&map);
+    }
+
+    it("releases replaced typed entries on commit") {
+        turbo_hash_map_t map = {0};
+        counted_value old_key;
+        counted_value old_value;
+        counted_value new_key;
+        counted_value new_value;
+        const counted_value *stored;
+
+        reset_counts();
+        old_key = counted_make(1);
+        old_value = counted_make(10);
+        new_key = counted_make(2);
+        new_value = counted_make(20);
+        check_equal(turbo_hash_map_init(&map, &counted_type, &counted_type, 1u),
+                    TURBO_STL_OK);
+        check_equal(turbo_hash_map_put(&map, &old_key, &old_value),
+                    TURBO_STL_OK);
+
+        check_equal(turbo_hash_map_from_arrays(
+                        &map, &new_key, &new_value, 1u, &counted_type,
+                        &counted_type, 1u),
+                    TURBO_STL_OK);
+        stored = (const counted_value *)turbo_hash_map_get_const(&map, &new_key);
+        check_not_null(stored);
+        check_equal(*stored->value, 20);
+
+        turbo_hash_map_destroy(&map);
+        counted_destroy(&old_key);
+        counted_destroy(&old_value);
+        counted_destroy(&new_key);
+        counted_destroy(&new_value);
+        check_equal(destroys, (size_t)12u);
+    }
+
     it("commits typed from arrays only after every copy succeeds") {
         turbo_hash_map_t map = {0};
         turbo_hash_map_t before;

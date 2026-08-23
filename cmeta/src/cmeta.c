@@ -354,11 +354,35 @@ static bool cmeta_fn_target_valid(cmeta_fn fn) {
     }
 }
 
-bool cmeta_fn_contract_valid(cmeta_fn fn) {
+static bool cmeta_fn_target_same(cmeta_fn a, cmeta_fn b) {
+    if (a.sig != b.sig) return false;
+    switch (a.sig) {
+#define CMETA_TARGET_SAME_U(in, ret) \
+        case CMETA_SIG_NAME(CMETA_U_ID(in, ret)): \
+            return a.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret)) == \
+                   b.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret));
+#define CMETA_TARGET_SAME_B(left, right, ret) \
+        case CMETA_SIG_NAME(CMETA_B_ID(left, right, ret)): \
+            return a.call.CMETA_CALL_MEMBER(CMETA_B_ID(left, right, ret)) == \
+                   b.call.CMETA_CALL_MEMBER(CMETA_B_ID(left, right, ret));
+#define CMETA_TARGET_SAME_G(in, out) \
+        case CMETA_SIG_NAME(CMETA_G_ID(in, out)): \
+            return a.call.CMETA_CALL_MEMBER(CMETA_G_ID(in, out)) == \
+                   b.call.CMETA_CALL_MEMBER(CMETA_G_ID(in, out));
+        CMETA_ALL_SIGNATURES(CMETA_TARGET_SAME_U, CMETA_TARGET_SAME_B,
+                             CMETA_TARGET_SAME_G)
+#undef CMETA_TARGET_SAME_U
+#undef CMETA_TARGET_SAME_B
+#undef CMETA_TARGET_SAME_G
+        default:
+            return false;
+    }
+}
+
+static bool cmeta_fn_semantic_contract_valid(cmeta_fn fn) {
     const cmeta_sig_desc *sig = cmeta_fn_signature(fn);
     if (!sig || !cmeta_effects_valid(fn.effects) || !cmeta_properties_valid(fn.properties))
         return false;
-    if (!cmeta_fn_target_valid(fn)) return false;
     if ((fn.properties & CMETA_PROP_TOTAL) && (fn.effects & CMETA_EFFECT_MAY_FAIL))
         return false;
     if (fn.properties & CMETA_PROP_IDEMPOTENT) {
@@ -373,6 +397,10 @@ bool cmeta_fn_contract_valid(cmeta_fn fn) {
             return false;
     }
     return true;
+}
+
+bool cmeta_fn_contract_valid(cmeta_fn fn) {
+    return cmeta_fn_semantic_contract_valid(fn) && cmeta_fn_target_valid(fn);
 }
 
 bool cmeta_fn_invoke(cmeta_fn fn, void *out, const void *const *args) {
@@ -444,7 +472,9 @@ cmeta_gen_status cmeta_fn_generate(cmeta_fn fn, const void *input,
 bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out) {
     cmeta_fn meta;
     const cmeta_sig_desc *sig;
-    if (!out) return false;
+    if (!out || (in.dispatch != CMETA_CALLABLE_DISPATCH_ADAPTER &&
+                 in.dispatch != CMETA_CALLABLE_DISPATCH_CANONICAL_RAW))
+        return false;
     meta = in.meta;
     if (meta.sig == CMETA_SIG_INVALID) {
         if (!in.resolve) return false;
@@ -453,7 +483,10 @@ bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out) {
         meta.effects = in.meta.effects;
         meta.properties = in.meta.properties;
     }
-    if (!cmeta_fn_contract_valid(meta)) return false;
+    if (!cmeta_fn_semantic_contract_valid(meta) ||
+        (in.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW &&
+         !cmeta_fn_target_valid(meta)))
+        return false;
     sig = cmeta_fn_signature(meta);
     if (!sig) return false;
     if (sig->protocol == CMETA_FN_PROTOCOL_GENERATOR) {
@@ -461,7 +494,9 @@ bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out) {
     } else if (!in.invoke) {
         return false;
     }
-    if (in.capture_size > CMETA_CAPTURE_INLINE) return false;
+    if (in.capture_size > CMETA_CAPTURE_INLINE ||
+        (in.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW && in.capture_size != 0u))
+        return false;
     *out = in;
     out->meta = meta;
     out->resolve = NULL;
@@ -479,13 +514,22 @@ bool cmeta_callable_contract_valid(cmeta_callable fn) {
     return cmeta_callable_bind(fn, &bound);
 }
 
+bool cmeta_callable_can_dispatch_canonical_raw(cmeta_callable fn) {
+    cmeta_callable bound;
+    return cmeta_callable_bind(fn, &bound) &&
+           bound.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW;
+}
+
 bool cmeta_callable_same(cmeta_callable a, cmeta_callable b) {
     cmeta_callable ba, bb;
     if (!cmeta_callable_bind(a, &ba) || !cmeta_callable_bind(b, &bb)) return false;
     if (ba.meta.sig != bb.meta.sig || ba.meta.effects != bb.meta.effects ||
-        ba.meta.properties != bb.meta.properties || ba.invoke != bb.invoke ||
-        ba.generate != bb.generate || ba.capture_size != bb.capture_size)
+        ba.meta.properties != bb.meta.properties || ba.dispatch != bb.dispatch ||
+        ba.capture_size != bb.capture_size)
         return false;
+    if (ba.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW)
+        return cmeta_fn_target_same(ba.meta, bb.meta);
+    if (ba.invoke != bb.invoke || ba.generate != bb.generate) return false;
     if (ba.capture_size && memcmp(ba.capture.bytes, bb.capture.bytes, ba.capture_size) != 0)
         return false;
     return true;
