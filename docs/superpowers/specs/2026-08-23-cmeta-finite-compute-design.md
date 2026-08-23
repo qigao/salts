@@ -25,25 +25,25 @@
 类型函数把有限输入 token 映射到 C 类型：
 
 ```c
-TypeFunction2(CommonArithmetic,
+TypeFunction(CommonArithmetic,
     (int, int, int),
     (int, double, double),
     (double, int, double),
     (double, double, double)
 );
 
-typedef TypeEval2(CommonArithmetic, int, double) result_type;
+typedef TypeEval(CommonArithmetic, int, double) result_type;
 ```
 
 值函数把有限输入 token 映射到整数常量表达式：
 
 ```c
-ValueFunction1(TypeRank,
+ValueFunction(TypeRank,
     (int, 1),
     (double, 2)
 );
 
-enum { rank = ValueEval1(TypeRank, double) };
+enum { rank = ValueEval(TypeRank, double) };
 ```
 
 Predicate 是布尔值函数的语义别名：
@@ -91,8 +91,8 @@ Predicate 投影由调用者在 schema 事实源中显式表达，例如 `(Satis
 
 ```text
 cmeta/compute.h
-  ├─ TypeFunction1/2/3 + TypeEval1/2/3
-  ├─ ValueFunction1/2/3 + ValueEval1/2/3
+  ├─ TypeFunction + TypeEval
+  ├─ ValueFunction + ValueEval
   ├─ Predicate / Satisfies / Require
   └─ SchemaCount / SchemaAll / SchemaAny
 

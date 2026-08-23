@@ -324,29 +324,30 @@ Finite functions declare explicit mappings and evaluate them through generated
 C declarations. They do not add C++ template syntax or a runtime evaluator.
 
 ```c
-TypeFunction1(StorageType,
+TypeFunction(StorageType,
     (small, SmallStorage),
     (wide, WideStorage));
 
-TypeFunction2(CommonType,
+TypeFunction(CommonType,
     (small, small, SmallStorage),
     (small, wide, WideStorage),
     (wide, small, WideStorage),
     (wide, wide, WideStorage));
 
-typedef TypeEval1(StorageType, small) storage_type;
-typedef TypeEval2(CommonType, small, wide) common_type;
+typedef TypeEval(StorageType, small) storage_type;
+typedef TypeEval(CommonType, small, wide) common_type;
 ```
 
-The type forms are `TypeFunction1/2/3` and `TypeEval1/2/3`. The corresponding
-integer-constant forms are `ValueFunction1/2/3` and `ValueEval1/2/3`:
+`TypeFunction` infers the input arity from its first row, while `TypeEval`
+infers it from the number of input keys. The corresponding integer-constant
+forms are `ValueFunction` and `ValueEval`:
 
 ```c
-ValueFunction1(TypeRank,
+ValueFunction(TypeRank,
     (small, 1),
     (wide, 2));
 
-enum { wide_rank = ValueEval1(TypeRank, wide) };
+enum { wide_rank = ValueEval(TypeRank, wide) };
 ```
 
 `Predicate` is a unary boolean value function. `Satisfies` evaluates it and
@@ -363,6 +364,8 @@ The declaration contract is deliberately finite and fail-fast:
   identifier.
 - A declaration contains 1 through 16 rows. More rows can be added by repeating
   the same function name in separate bounded declarations.
+- The first row determines input arity; every later row in that declaration
+  must have the same shape or compilation fails.
 - A value result is an integer constant expression. Complex type results should
   first receive a stable typedef name.
 - Evaluating an absent mapping produces an unknown generated identifier, while
@@ -372,12 +375,14 @@ The declaration contract is deliberately finite and fail-fast:
 Arity is part of each generated identifier, so unary, binary, and ternary
 functions with the same public name remain distinct. Declaration work is linear
 in the number of rows; an evaluation is fixed token lookup rather than a scan
-or a generated binary/ternary Cartesian product.
+or a generated binary/ternary Cartesian product. Only the unified entry points
+are public; numbered implementation families remain internal.
 
 ### Finite DFA inference
 
-`InferenceRules1/2/3` projects explicit integer-symbol rows into an ordinary C
-relation. A row contains one through three input symbols followed by one result.
+`InferenceRules` projects explicit integer-symbol rows into an ordinary C
+relation and infers arity from the first row. A row contains one through three
+input symbols followed by one result.
 Each declaration accepts the same bounded 1–16 row list as the underlying
 `CMETA_PP_FOR_EACH_A` projection.
 The row source may be shared with a matching `ValueFunction` so compile-time and
@@ -397,8 +402,8 @@ enum {
     (TYPE_SMALL, TYPE_WIDE, TYPE_WIDE), \
     (TYPE_WIDE, TYPE_SMALL, TYPE_WIDE)
 
-ValueFunction2(CommonType, CommonRows);
-InferenceRules2(common_type_relation, CommonRows);
+ValueFunction(CommonType, CommonRows);
+InferenceRules(common_type_relation, CommonRows);
 
 int main(void) {
     cmeta_infer_state states[

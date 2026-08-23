@@ -105,87 +105,109 @@
     enum { CMETA_COMPUTE_VALUE_KEY_3( \
         function_name, first, second, third) = (result) };
 
-#ifndef TypeFunction1
-#define TypeFunction1(function_name, ...) \
+#define CMETA_COMPUTE_TYPE_FUNCTION_1(function_name, ...) \
     CMETA_PP_FOR_EACH_A( \
         CMETA_COMPUTE_TYPE_FUNCTION_1_ROW, function_name, __VA_ARGS__) \
     CMETA_COMPUTE_DECLARATION_END
-#endif
 
-#ifndef TypeFunction2
-#define TypeFunction2(function_name, ...) \
+#define CMETA_COMPUTE_TYPE_FUNCTION_2(function_name, ...) \
     CMETA_PP_FOR_EACH_A( \
         CMETA_COMPUTE_TYPE_FUNCTION_2_ROW, function_name, __VA_ARGS__) \
     CMETA_COMPUTE_DECLARATION_END
-#endif
 
-#ifndef TypeFunction3
-#define TypeFunction3(function_name, ...) \
+#define CMETA_COMPUTE_TYPE_FUNCTION_3(function_name, ...) \
     CMETA_PP_FOR_EACH_A( \
         CMETA_COMPUTE_TYPE_FUNCTION_3_ROW, function_name, __VA_ARGS__) \
     CMETA_COMPUTE_DECLARATION_END
+
+#define CMETA_COMPUTE_FUNCTION_DISPATCH_I( \
+    function_family, input_arity, function_name, ...) \
+    CMETA_PP_CAT(function_family, input_arity)(function_name, __VA_ARGS__)
+#define CMETA_COMPUTE_FUNCTION_DISPATCH( \
+    function_family, input_arity, function_name, ...) \
+    CMETA_COMPUTE_FUNCTION_DISPATCH_I( \
+        function_family, input_arity, function_name, __VA_ARGS__)
+
+#ifndef TypeFunction
+#define TypeFunction(function_name, ...) \
+    CMETA_COMPUTE_FUNCTION_DISPATCH( \
+        CMETA_COMPUTE_TYPE_FUNCTION_, \
+        CMETA_PP_FIRST_RELATION_ARITY(__VA_ARGS__), \
+        function_name, __VA_ARGS__)
 #endif
 
-#ifndef TypeEval1
-#define TypeEval1(function_name, input) \
+#define CMETA_COMPUTE_TYPE_EVAL_1(function_name, input) \
     CMETA_COMPUTE_TYPE_KEY_1(function_name, input)
-#endif
 
-#ifndef TypeEval2
-#define TypeEval2(function_name, left, right) \
+#define CMETA_COMPUTE_TYPE_EVAL_2(function_name, left, right) \
     CMETA_COMPUTE_TYPE_KEY_2(function_name, left, right)
-#endif
 
-#ifndef TypeEval3
-#define TypeEval3(function_name, first, second, third) \
+#define CMETA_COMPUTE_TYPE_EVAL_3(function_name, first, second, third) \
     CMETA_COMPUTE_TYPE_KEY_3(function_name, first, second, third)
+
+#define CMETA_COMPUTE_EVAL_DISPATCH_I( \
+    eval_family, input_arity, function_name, ...) \
+    CMETA_PP_CAT(eval_family, input_arity)(function_name, __VA_ARGS__)
+#define CMETA_COMPUTE_EVAL_DISPATCH( \
+    eval_family, input_arity, function_name, ...) \
+    CMETA_COMPUTE_EVAL_DISPATCH_I( \
+        eval_family, input_arity, function_name, __VA_ARGS__)
+
+#ifndef TypeEval
+#define TypeEval(function_name, ...) \
+    CMETA_COMPUTE_EVAL_DISPATCH( \
+        CMETA_COMPUTE_TYPE_EVAL_, CMETA_PP_NARG(__VA_ARGS__), \
+        function_name, __VA_ARGS__)
 #endif
 
-#ifndef ValueFunction1
-#define ValueFunction1(function_name, ...) \
+#define CMETA_COMPUTE_VALUE_FUNCTION_1(function_name, ...) \
     CMETA_PP_FOR_EACH_A( \
         CMETA_COMPUTE_VALUE_FUNCTION_1_ROW, function_name, __VA_ARGS__) \
     CMETA_COMPUTE_DECLARATION_END
-#endif
 
-#ifndef ValueFunction2
-#define ValueFunction2(function_name, ...) \
+#define CMETA_COMPUTE_VALUE_FUNCTION_2(function_name, ...) \
     CMETA_PP_FOR_EACH_A( \
         CMETA_COMPUTE_VALUE_FUNCTION_2_ROW, function_name, __VA_ARGS__) \
     CMETA_COMPUTE_DECLARATION_END
-#endif
 
-#ifndef ValueFunction3
-#define ValueFunction3(function_name, ...) \
+#define CMETA_COMPUTE_VALUE_FUNCTION_3(function_name, ...) \
     CMETA_PP_FOR_EACH_A( \
         CMETA_COMPUTE_VALUE_FUNCTION_3_ROW, function_name, __VA_ARGS__) \
     CMETA_COMPUTE_DECLARATION_END
+
+#ifndef ValueFunction
+#define ValueFunction(function_name, ...) \
+    CMETA_COMPUTE_FUNCTION_DISPATCH( \
+        CMETA_COMPUTE_VALUE_FUNCTION_, \
+        CMETA_PP_FIRST_RELATION_ARITY(__VA_ARGS__), \
+        function_name, __VA_ARGS__)
 #endif
 
-#ifndef ValueEval1
-#define ValueEval1(function_name, input) \
+#define CMETA_COMPUTE_VALUE_EVAL_1(function_name, input) \
     CMETA_COMPUTE_VALUE_KEY_1(function_name, input)
-#endif
 
-#ifndef ValueEval2
-#define ValueEval2(function_name, left, right) \
+#define CMETA_COMPUTE_VALUE_EVAL_2(function_name, left, right) \
     CMETA_COMPUTE_VALUE_KEY_2(function_name, left, right)
-#endif
 
-#ifndef ValueEval3
-#define ValueEval3(function_name, first, second, third) \
+#define CMETA_COMPUTE_VALUE_EVAL_3(function_name, first, second, third) \
     CMETA_COMPUTE_VALUE_KEY_3(function_name, first, second, third)
+
+#ifndef ValueEval
+#define ValueEval(function_name, ...) \
+    CMETA_COMPUTE_EVAL_DISPATCH( \
+        CMETA_COMPUTE_VALUE_EVAL_, CMETA_PP_NARG(__VA_ARGS__), \
+        function_name, __VA_ARGS__)
 #endif
 
 /* Predicates and constraints ---------------------------------------------- */
 #ifndef Predicate
 #define Predicate(predicate_name, ...) \
-    ValueFunction1(predicate_name, __VA_ARGS__)
+    ValueFunction(predicate_name, __VA_ARGS__)
 #endif
 
 #ifndef Satisfies
 #define Satisfies(predicate_name, input) \
-    ValueEval1(predicate_name, input)
+    ValueEval(predicate_name, input)
 #endif
 
 #define CMETA_COMPUTE_STRINGIZE_I(value) #value

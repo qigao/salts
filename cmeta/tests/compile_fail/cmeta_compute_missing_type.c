@@ -1,7 +1,7 @@
 #include <cmeta/compute.h>
 
 enum {
-    cmeta_missing_type_size = sizeof(TypeEval1(CMetaMissingType, absent))
+    cmeta_missing_type_size = sizeof(TypeEval(CMetaMissingType, absent))
 };
 
 int main(void) {
