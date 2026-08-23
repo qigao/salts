@@ -140,6 +140,24 @@ spec("CBind nested struct error attribution") {
     check_equal(error.depth, (size_t)2u);
     check_equal(source_index, (size_t)4u);
   }
+
+  it("keeps the resolved parent field when the nested reader ends") {
+    const cserde_token tokens[] = {
+        TOKEN_MAP_BEGIN,
+        TOKEN_KEY("inner"), TOKEN_MAP_BEGIN
+    };
+    cbind_error error = CBIND_ERROR_INIT;
+    size_t source_index = 0u;
+
+    check_equal(decode(tokens, sizeof(tokens) / sizeof(tokens[0]),
+                       &error, &source_index),
+                CBIND_UNEXPECTED_END);
+    check_equal(error.source_status, CSERDE_DONE);
+    check_true(error.shape == &inner_data);
+    check_true(error.field == &outer_fields[0]);
+    check_equal(error.depth, (size_t)2u);
+    check_equal(source_index, (size_t)3u);
+  }
 }
 
 #undef DEFINE_OBJECT_TYPE
