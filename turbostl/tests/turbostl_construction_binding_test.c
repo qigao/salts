@@ -12,6 +12,60 @@ Struct(construction_conflict_payload,
     (TYPE(Vec, long), values)
 );
 
+Struct(construction_matrix,
+    (TYPE(Vec, int), vec),
+    (TYPE(Deque, int), deque),
+    (TYPE(List, int), list),
+    (TYPE(Stack, int), stack),
+    (TYPE(Queue, int), queue),
+    (TYPE(Heap, int), heap),
+    (TYPE(Set, int), set),
+    (TYPE(HashSet, int), hash_set),
+    (TYPE(HashMap, int, long), hash_map),
+    (TYPE(Map, int, long), map),
+    (TYPE(MultiMap, int, long), multimap),
+    (TYPE(BTree, int, long), btree),
+    (TYPE(BPlusTree, int, long), bplus_tree)
+);
+
+#define CHECK_UNARY_BIND(matrix_, member_, generic_)                           \
+    do {                                                                        \
+        const cmeta_field_desc *field_ = cmeta_struct_find_field(               \
+            construction_matrix_meta(), #member_);                              \
+        check_true(field_ != NULL);                                              \
+        check_true(field_->declared_type != NULL);                              \
+        check_equal(cmeta_container_bind_types(                                 \
+                        &(matrix_).member_, field_->declared_type),              \
+                    CMETA_OK);                                                   \
+        check_true(cmeta_container_type_constructor(&(matrix_).member_) ==       \
+                   &(generic_));                                                 \
+        check_equal(cmeta_container_type_arity(&(matrix_).member_),              \
+                    (size_t)1u);                                                 \
+        check_true(cmeta_container_type_argument(&(matrix_).member_, 0u) ==      \
+                   &cmeta_type_int);                                             \
+        check_true(cmeta_container_construction(&(matrix_).member_) != NULL);    \
+    } while (0)
+
+#define CHECK_BINARY_BIND(matrix_, member_, generic_)                          \
+    do {                                                                        \
+        const cmeta_field_desc *field_ = cmeta_struct_find_field(               \
+            construction_matrix_meta(), #member_);                              \
+        check_true(field_ != NULL);                                              \
+        check_true(field_->declared_type != NULL);                              \
+        check_equal(cmeta_container_bind_types(                                 \
+                        &(matrix_).member_, field_->declared_type),              \
+                    CMETA_OK);                                                   \
+        check_true(cmeta_container_type_constructor(&(matrix_).member_) ==       \
+                   &(generic_));                                                 \
+        check_equal(cmeta_container_type_arity(&(matrix_).member_),              \
+                    (size_t)2u);                                                 \
+        check_true(cmeta_container_type_argument(&(matrix_).member_, 0u) ==      \
+                   &cmeta_type_int);                                             \
+        check_true(cmeta_container_type_argument(&(matrix_).member_, 1u) ==      \
+                   &cmeta_type_long);                                            \
+        check_true(cmeta_container_construction(&(matrix_).member_) != NULL);    \
+    } while (0)
+
 spec("TurboSTL construction binding") {
   it("binds a zero Vec field from static TYPE metadata before Collector") {
     const cmeta_field_desc *values =
@@ -96,6 +150,32 @@ spec("TurboSTL construction binding") {
     map_destroy(&payload.index);
   }
 
+  it("binds every canonical TurboSTL generic kind without semantic duplication") {
+    construction_matrix matrix = {0};
+
+    CHECK_UNARY_BIND(matrix, vec, stl_vec_generic_desc);
+    CHECK_UNARY_BIND(matrix, deque, stl_deque_generic_desc);
+    CHECK_UNARY_BIND(matrix, list, stl_list_generic_desc);
+    CHECK_UNARY_BIND(matrix, stack, stl_stack_generic_desc);
+    CHECK_UNARY_BIND(matrix, queue, stl_queue_generic_desc);
+    CHECK_UNARY_BIND(matrix, heap, stl_heap_generic_desc);
+    CHECK_UNARY_BIND(matrix, set, stl_set_generic_desc);
+    CHECK_UNARY_BIND(matrix, hash_set, stl_hash_set_generic_desc);
+
+    CHECK_BINARY_BIND(matrix, hash_map, stl_hash_map_generic_desc);
+    CHECK_BINARY_BIND(matrix, map, stl_map_generic_desc);
+    CHECK_BINARY_BIND(matrix, multimap, stl_multimap_generic_desc);
+    CHECK_BINARY_BIND(matrix, btree, stl_btree_generic_desc);
+    CHECK_BINARY_BIND(matrix, bplus_tree, stl_bplus_tree_generic_desc);
+
+    check_null(cmeta_container_data(&matrix.heap));
+    check_true(cmeta_container_construction(&matrix.heap) ==
+               &stl_heap_construct_ops);
+    check_null(cmeta_container_data(&matrix.multimap));
+    check_true(cmeta_container_construction(&matrix.multimap) ==
+               &stl_multimap_construct_ops);
+  }
+
   it("is idempotent before init and rejects conflicting or partial binding") {
     const cmeta_field_desc *ints =
         cmeta_struct_find_field(construction_payload_meta(), "values");
@@ -142,3 +222,6 @@ spec("TurboSTL construction binding") {
     vec_destroy(&vec);
   }
 }
+
+#undef CHECK_UNARY_BIND
+#undef CHECK_BINARY_BIND

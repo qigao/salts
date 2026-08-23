@@ -56,6 +56,14 @@ static const cmeta_container_ext cmeta_test_sequence_ext = {
     .type = &cmeta_test_sequence_type_ops
 };
 
+static const cmeta_container_ext cmeta_test_semantic_sequence_ext = {
+    .struct_size = offsetof(cmeta_container_ext, data) +
+                   sizeof(((cmeta_container_ext *)0)->data),
+    .abi_version = CMETA_CONTAINER_EXT_ABI_VERSION,
+    .type = &cmeta_test_sequence_type_ops,
+    .data = &cmeta_data_sequence
+};
+
 static const cmeta_container_desc cmeta_test_sequence_desc = {
     .name = "test_sequence",
     .container_type = NULL,
@@ -68,6 +76,20 @@ static const cmeta_container_desc cmeta_test_sequence_desc = {
     .entries_range = NULL,
     .collector = NULL,
     .ext = &cmeta_test_sequence_ext
+};
+
+static const cmeta_container_desc cmeta_test_semantic_sequence_desc = {
+    .name = "test_semantic_sequence",
+    .container_type = NULL,
+    .element_type = NULL,
+    .key_type = NULL,
+    .value_type = NULL,
+    .range = NULL,
+    .keys_range = NULL,
+    .values_range = NULL,
+    .entries_range = NULL,
+    .collector = NULL,
+    .ext = &cmeta_test_semantic_sequence_ext
 };
 
 static const cmeta_container_desc cmeta_test_constructible_sequence_desc;
@@ -132,17 +154,24 @@ spec("CMeta container generic type applications") {
     check_null(cmeta_container_type_argument(&sequence, 1u));
   }
 
-  it("keeps the old extension prefix valid and construction absent") {
-    cmeta_test_sequence sequence = {
+  it("keeps older extension prefixes valid and construction absent") {
+    cmeta_test_sequence type_only = {
         .cmeta = {&cmeta_test_sequence_desc},
         .element_type = &cmeta_type_int
     };
+    cmeta_test_sequence semantic = {
+        .cmeta = {&cmeta_test_semantic_sequence_desc},
+        .element_type = &cmeta_type_int
+    };
 
-    check_true(cmeta_container_extension(&sequence) ==
+    check_true(cmeta_container_extension(&type_only) ==
                &cmeta_test_sequence_ext);
     check_null(cmeta_container_extension(NULL));
-    check_null(cmeta_container_data(&sequence));
-    check_null(cmeta_container_construction(&sequence));
+    check_null(cmeta_container_data(&type_only));
+    check_null(cmeta_container_construction(&type_only));
+
+    check_true(cmeta_container_data(&semantic) == &cmeta_data_sequence);
+    check_null(cmeta_container_construction(&semantic));
   }
 
   it("binds an all-zero object from declaration-side construction metadata") {

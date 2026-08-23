@@ -52,8 +52,10 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
 #ifdef __cplusplus
 #define CMETA_STRUCT_FIELD_SIZE(owner, name) \
     sizeof(static_cast<owner *>(nullptr)->name)
+#define CMETA_STRUCT_TYPE_NULL nullptr
 #else
 #define CMETA_STRUCT_FIELD_SIZE(owner, name) sizeof(((owner *)0)->name)
+#define CMETA_STRUCT_TYPE_NULL ((const cmeta_type_desc *)0)
 #endif
 
 #define CMETA_STRUCT_FIELD_ARGS_NAME_I(owner, name) owner##__##name##__type_args
@@ -101,7 +103,7 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
         owner, type, name)
 #define CMETA_STRUCT_FIELD_DESC_0(owner, type, name) \
     { #name, #type, offsetof(owner, name), CMETA_STRUCT_FIELD_SIZE(owner, name), \
-      CMETA_ALIGNOF(type), CMETA_TYPEOF_OR(type, (const cmeta_type_desc *)0), \
+      CMETA_ALIGNOF(type), CMETA_TYPEOF_OR(type, CMETA_STRUCT_TYPE_NULL), \
       NULL },
 #define CMETA_STRUCT_FIELD_DESC_1(owner, spec, name) \
     { #name, #spec, offsetof(owner, name), CMETA_STRUCT_FIELD_SIZE(owner, name), \
