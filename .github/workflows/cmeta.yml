@@ -70,6 +70,9 @@ jobs:
       - name: Build
         run: cmake --build --preset build-default-linux
 
+      - name: Test full Linux suite
+        run: ctest --preset test-release-linux --output-on-failure
+
       - name: Test execution foundation and typed layers
         run: ctest --preset test-release-linux -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cbind_|cflow_|turbostl_|test_execution_compat$)" --output-on-failure
 
