@@ -11,6 +11,7 @@
 #include <cflow/property.h>
 #include <cflow/opt.h>
 #include <cflow/plan.h>
+#include <cflow/certificate.h>
 #include <cflow/scheduler.h>
 #include <cflow/runtime.h>
 #include <cflow/sources.h>
