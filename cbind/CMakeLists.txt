@@ -2,7 +2,8 @@ set(TARGET_NAME turbo_cbind)
 
 add_library(${TARGET_NAME}
   src/decode.c
-  src/scalar.c)
+  src/scalar.c
+  src/struct.c)
 
 cmake_config_target(
   ${TARGET_NAME}

@@ -65,6 +65,7 @@ cbind_status cbind_decode(const cbind_context *context,
     cbind_decode_state state;
     size_t max_scratch = 0u;
     cbind_status status;
+    bool destination_empty;
 
     if (shape == NULL || reader == NULL || out == NULL)
         return CBIND_INVALID_ARGUMENT;
@@ -76,8 +77,12 @@ cbind_status cbind_decode(const cbind_context *context,
         return CBIND_INVALID_CONTEXT;
     }
 
-    status = cbind_validate_graph(context, shape, 0u, NULL, 0u,
-                                  &max_scratch, error);
+    if (shape->kind == CMETA_DATA_STRUCT)
+        status = cbind_validate_struct_graph(context, shape, 0u, NULL, 0u,
+                                             &max_scratch, error);
+    else
+        status = cbind_validate_graph(context, shape, 0u, NULL, 0u,
+                                      &max_scratch, error);
     if (status != CBIND_OK)
         return status;
     if (max_scratch > context->scratch_size) {
@@ -85,7 +90,11 @@ cbind_status cbind_decode(const cbind_context *context,
                         shape, NULL, 0u);
         return CBIND_LIMIT_EXCEEDED;
     }
-    if (!cbind_value_is_empty(shape, out)) {
+
+    destination_empty = shape->kind == CMETA_DATA_STRUCT
+                            ? cbind_struct_is_empty(shape, out)
+                            : cbind_value_is_empty(shape, out);
+    if (!destination_empty) {
         cbind_error_set(error, CBIND_DESTINATION_NOT_EMPTY, CSERDE_OK,
                         shape, NULL, 0u);
         return CBIND_DESTINATION_NOT_EMPTY;
@@ -99,7 +108,10 @@ cbind_status cbind_decode(const cbind_context *context,
 
     status = cbind_decode_scalar(&state, shape, NULL, 0u, out);
     if (status != CBIND_OK) {
-        cbind_value_reset(shape, out);
+        if (shape->kind == CMETA_DATA_STRUCT)
+            cbind_struct_reset(shape, out);
+        else
+            cbind_value_reset(shape, out);
         return status;
     }
 
