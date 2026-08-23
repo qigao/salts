@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Historical execution record:** The implementation described here landed through the Platform, Concurrency, Clock, Executor, TimerQueue, scheduler, and Core-compatibility commit series. The unchecked boxes preserve the original step-by-step script; current completion evidence is maintained in `2026-08-23-cflow-execution-foundation-completion.md` and the design status table.
+
 **Goal:** Refactor TurboUtils into a real `Platform -> Concurrency -> CFlow -> Core` execution stack, remove CFlow's duplicate worker-pool/wall-clock scheduling implementation, and preserve existing Core/CFlow public behavior during migration.
 
 **Architecture:** `TurboUtils::Platform` owns OS clock/thread/synchronization primitives. `TurboUtils::Concurrency` owns disruptor and the existing disruptor-backed thread pool. CFlow builds typed Clock/Executor/TimerQueue semantics on those modules while retaining `cflow_scheduler` as a compatibility facade. Core moves above these modules and may depend on CFlow/CMeta without creating a cycle.

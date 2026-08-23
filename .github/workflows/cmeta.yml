@@ -6,9 +6,14 @@ on:
       - "cmeta/**"
       - "cserde/**"
       - "cflow/**"
+      - "platform/**"
+      - "concurrency/**"
       - "tinytest/**"
       - "turbostl/**"
       - "turbo_serial/**"
+      - "utils/**"
+      - "cmake/**"
+      - "tests/install_consumer/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
       - "presets/**"
@@ -20,9 +25,14 @@ on:
       - "cmeta/**"
       - "cserde/**"
       - "cflow/**"
+      - "platform/**"
+      - "concurrency/**"
       - "tinytest/**"
       - "turbostl/**"
       - "turbo_serial/**"
+      - "utils/**"
+      - "cmake/**"
+      - "tests/install_consumer/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
       - "presets/**"
@@ -58,8 +68,11 @@ jobs:
       - name: Build
         run: cmake --build --preset build-default-linux
 
-      - name: Test CMeta, CSerde, CFlow, and TurboSTL
-        run: ctest --preset test-release-linux -R "^(cmeta_|cserde_|cflow_|turbostl_)" --output-on-failure
+      - name: Test execution foundation and typed layers
+        run: ctest --preset test-release-linux -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cflow_|turbostl_|test_execution_compat$)" --output-on-failure
+
+      - name: Verify installed package targets
+        run: cmake --build --preset build-default-linux --target verify_installed_package
 
   windows:
     name: Windows release
@@ -86,4 +99,6 @@ jobs:
           if errorlevel 1 exit /b 1
           cmake --build --preset build-release-windows
           if errorlevel 1 exit /b 1
-          ctest --preset test-release-windows -R "^(cmeta_|cserde_|cflow_|turbostl_)" --output-on-failure
+          ctest --preset test-release-windows -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cflow_|turbostl_|test_execution_compat$)" --output-on-failure
+          if errorlevel 1 exit /b 1
+          cmake --build --preset build-release-windows --target verify_installed_package
