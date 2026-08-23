@@ -1,6 +1,7 @@
 #include <turbostl/typed.h>
 #include "tinytest.hpp"
 
+#include <cstring>
 #include <type_traits>
 
 static_assert(!std::is_same_v<set_t, hash_set_t>,
@@ -17,5 +18,19 @@ spec("TurboSTL typed C++ public header") {
     check_true(sizeof(vec) > 0);
     check_true(sizeof(list) > 0);
     check_true(sizeof(map) > 0);
+  }
+
+  it("exposes canonical generic metadata without C-only declaration macros") {
+    check_true(stl_vec_container_ext.type != nullptr);
+    check_true(stl_vec_container_ext.type->constructor ==
+               &stl_vec_generic_desc);
+    check_equal(stl_vec_container_ext.type->arity, static_cast<size_t>(1));
+    check_equal(std::strcmp(stl_vec_generic_desc.stable_id, "turbostl.Vec"), 0);
+
+    check_true(stl_map_container_ext.type != nullptr);
+    check_true(stl_map_container_ext.type->constructor ==
+               &stl_map_generic_desc);
+    check_equal(stl_map_container_ext.type->arity, static_cast<size_t>(2));
+    check_equal(std::strcmp(stl_map_generic_desc.stable_id, "turbostl.Map"), 0);
   }
 }

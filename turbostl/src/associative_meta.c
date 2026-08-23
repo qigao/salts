@@ -232,7 +232,8 @@ const cmeta_container_desc stl_hash_map_container_desc = {
     stl_hash_map_keys_range_factory,
     stl_hash_map_values_range_factory,
     stl_hash_map_entries_range_factory,
-    stl_hash_map_collector_factory};
+    stl_hash_map_collector_factory,
+    &stl_hash_map_container_ext};
 
 /* -------------------------------------------------------------------------
  * Ordered linked associative kinds
@@ -376,7 +377,8 @@ const cmeta_container_desc descriptor_symbol = {                                
     stl_##prefix##_keys_range_factory,                                           \
     stl_##prefix##_values_range_factory,                                         \
     stl_##prefix##_entries_range_factory,                                        \
-    stl_##prefix##_collector_factory};
+    stl_##prefix##_collector_factory,                                            \
+    &stl_##prefix##_container_ext};
 
 STL_DEFINE_ORDERED_ASSOC_META(
     multimap, multimap_t, "MultiMap", multimap_init, multimap_put,

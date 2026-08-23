@@ -512,4 +512,5 @@ const cmeta_container_desc stl_map_container_desc = {
     stl_map_keys_range_factory,
     stl_map_values_range_factory,
     stl_map_entries_range_factory,
-    stl_map_collector_factory};
+    stl_map_collector_factory,
+    &stl_map_container_ext};

@@ -539,4 +539,5 @@ const cmeta_container_desc stl_list_container_desc = {
     NULL,
     NULL,
     NULL,
-    stl_list_collector_factory};
+    stl_list_collector_factory,
+    &stl_list_container_ext};

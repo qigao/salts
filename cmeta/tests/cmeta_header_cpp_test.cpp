@@ -2,10 +2,12 @@
 #include <cmeta/type_traits.h>
 #include <cmeta/cmeta.h>
 #include <cmeta/collector.h>
+#include <cmeta/range.h>
 #include <cmeta/meta.h>
 #include "tinytest.hpp"
 
 #include <cstddef>
+#include <type_traits>
 
 Struct(cmeta_cpp_record,
     (int, value),
@@ -20,6 +22,14 @@ static_assert(CMETA_GEN_MUTATED == 5,
               "the C++ public enum surface must expose mutated ranges");
 static_assert(CMETA_COLLECTOR_ABORTED == 4,
               "the C++ public enum surface must expose collector states");
+static_assert(CMETA_CONTAINER_TYPE_OPS_ABI_VERSION == 1u,
+              "container type ops ABI starts at version 1");
+static_assert(CMETA_CONTAINER_EXT_ABI_VERSION == 1u,
+              "container extension ABI starts at version 1");
+static_assert(std::is_standard_layout_v<cmeta_container_type_ops>,
+              "container type ops must remain a C-compatible standard-layout type");
+static_assert(std::is_standard_layout_v<cmeta_container_ext>,
+              "container extensions must remain C-compatible standard-layout types");
 
 static const cmeta_generic_desc cmeta_cpp_pair_generic =
     CMETA_GENERIC_DESC_INIT("cpp.Pair", "Pair", 2u, 2u, CMETA_GENERIC_VALUE);
@@ -72,5 +82,22 @@ spec("CMeta C++ public headers") {
                 static_cast<size_t>(2));
     check_true(cmeta_type_identity_argument(&cmeta_cpp_pair_identity, 0u) ==
                &cmeta_cpp_atom_a);
+  }
+
+  it("exposes versioned container extension structs through C++") {
+    const cmeta_container_type_ops type_ops = {
+        sizeof(cmeta_container_type_ops),
+        CMETA_CONTAINER_TYPE_OPS_ABI_VERSION,
+        nullptr,
+        0u,
+        nullptr};
+    const cmeta_container_ext ext = {
+        sizeof(cmeta_container_ext),
+        CMETA_CONTAINER_EXT_ABI_VERSION,
+        &type_ops};
+
+    check_equal(type_ops.struct_size, sizeof(cmeta_container_type_ops));
+    check_equal(ext.struct_size, sizeof(cmeta_container_ext));
+    check_true(ext.type == &type_ops);
   }
 }
