@@ -5,6 +5,10 @@ static const cmeta_generic_desc cmeta_test_box_generic =
     CMETA_GENERIC_DESC_INIT("test.Box", "Box", 1u, 1u, CMETA_GENERIC_VALUE);
 static const cmeta_generic_desc cmeta_test_pair_generic =
     CMETA_GENERIC_DESC_INIT("test.Pair", "Pair", 2u, 2u, CMETA_GENERIC_VALUE);
+static const cmeta_generic_desc cmeta_test_unit_generic_a =
+    CMETA_GENERIC_DESC_INIT("test.Unit", "Unit", 0u, 0u, CMETA_GENERIC_VALUE);
+static const cmeta_generic_desc cmeta_test_unit_generic_b =
+    CMETA_GENERIC_DESC_INIT("test.Unit", "Unit", 0u, 0u, CMETA_GENERIC_VALUE);
 
 static const cmeta_type_identity cmeta_test_atom_a =
     CMETA_TYPE_ID_ATOM_INIT("test.A");
@@ -12,6 +16,12 @@ static const cmeta_type_identity cmeta_test_atom_b =
     CMETA_TYPE_ID_ATOM_INIT("test.B");
 static const cmeta_type_identity cmeta_test_invalid_atom = {
     CMETA_TYPE_ATOM, NULL, NULL, NULL, NULL, 0u
+};
+static const cmeta_type_identity cmeta_test_unit_a = {
+    CMETA_TYPE_APPLY, NULL, &cmeta_test_unit_generic_a, NULL, NULL, 0u
+};
+static const cmeta_type_identity cmeta_test_unit_b = {
+    CMETA_TYPE_APPLY, NULL, &cmeta_test_unit_generic_b, NULL, NULL, 0u
 };
 
 static const cmeta_type_identity *const cmeta_test_box_args[] = {
@@ -44,6 +54,8 @@ spec("CMeta generic type applications") {
         &cmeta_test_box_generic, box_args, 1u));
     check_true(cmeta_type_application_valid(
         &cmeta_test_pair_generic, pair_args, 2u));
+    check_true(cmeta_type_application_valid(
+        &cmeta_test_unit_generic_a, NULL, 0u));
     check_false(cmeta_type_application_valid(
         &cmeta_test_pair_generic, pair_args, 1u));
     check_false(cmeta_type_application_valid(
@@ -63,6 +75,13 @@ spec("CMeta generic type applications") {
     check_true(cmeta_type_identity_argument(&cmeta_test_nested_pair, 1u) ==
                &cmeta_test_atom_b);
     check_null(cmeta_type_identity_argument(&cmeta_test_nested_pair, 2u));
+  }
+
+  it("keeps zero-arity application validity and equality consistent") {
+    check_true(cmeta_type_identity_valid(&cmeta_test_unit_a));
+    check_true(cmeta_type_identity_valid(&cmeta_test_unit_b));
+    check_true(cmeta_type_identity_equal(&cmeta_test_unit_a,
+                                         &cmeta_test_unit_b));
   }
 
   it("compares generic identities structurally across translation units") {
