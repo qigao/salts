@@ -195,6 +195,16 @@ The façade validates input and type compatibility, preserves the first error,
 and performs exactly-once abort behavior. It does not own allocation, retry,
 I/O, scheduling, or synchronization policy.
 
+### Container construction lifecycle
+
+`cmeta_container_bind_types()` binds declaration-side T/K/V metadata into a
+canonical zero handle without allocation. Providers may append
+`restore_zero` to `cmeta_container_construct_ops`; the checked
+`cmeta_container_restore_zero()` façade then releases bound, active, or
+committed storage and restores the complete handle to all-bits-zero. This
+lifecycle operation is intentionally separate from Collector abort, which does
+not act on committed collectors.
+
 ### Callable
 
 `cmeta_fn`, `cmeta_callable`, and `cmeta_sig_desc` form the runtime callable

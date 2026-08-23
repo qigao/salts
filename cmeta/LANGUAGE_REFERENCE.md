@@ -590,6 +590,31 @@ general allocator, scheduler, retry system, or synchronization policy.
 including type metadata, Range factories, and an optional collector factory.
 The raw algorithms remain ordinary C implementation code.
 
+Declaration-side construction uses two distinct lifecycle operations:
+
+```c
+cmeta_status cmeta_container_bind_types(
+    void *object, const cmeta_declared_type *declared);
+cmeta_status cmeta_container_restore_zero(
+    void *object, const cmeta_declared_type *declared);
+```
+
+`bind_types` accepts a canonical zero handle and installs its concrete
+descriptor plus T/K/V metadata without allocating. `restore_zero` accepts a
+zero, bound, active, or committed handle for the same declared provider,
+releases provider-owned storage, and restores the complete handle to canonical
+all-bits-zero. It returns `CMETA_TYPE_MISMATCH` when a nonzero handle belongs to
+a different provider and `CMETA_INVALID_ARGUMENT` for an invalid declaration,
+missing lifecycle callback, or invalid pointer.
+
+Complete C usage is compiled in
+`turbostl/tests/turbostl_construction_binding_test.c`.
+
+The restore operation is not a synonym for `cmeta_collector_abort()`.
+Collector abort owns only a begun/accepting collection transaction and remains
+a no-op after commit; restore-to-zero is the declaration/provider lifecycle
+boundary used by larger object transactions.
+
 ### Interface runtime values
 
 `interface(...)` generates an ordinary C `{ self, vtable }` protocol value,

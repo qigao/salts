@@ -18,10 +18,11 @@ typedef struct cbind_error {
     const cmeta_data_desc *shape;
     const cmeta_data_field_desc *field;
     size_t depth;
+    cmeta_status target_status;
 } cbind_error;
 
 #define CBIND_ERROR_INIT \
     { sizeof(cbind_error), CBIND_ERROR_ABI_VERSION, CBIND_OK, \
-      CSERDE_OK, NULL, NULL, 0u }
+      CSERDE_OK, NULL, NULL, 0u, CMETA_OK }
 
 #endif /* CBIND_ERROR_H */
