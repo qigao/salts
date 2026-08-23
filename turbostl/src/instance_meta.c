@@ -116,7 +116,8 @@ const cmeta_container_desc stl_##prefix##_container_desc = {                    
     NULL,                                                                        \
     NULL,                                                                        \
     NULL,                                                                        \
-    stl_##prefix##_collector_factory};
+    stl_##prefix##_collector_factory,                                            \
+    &stl_##prefix##_container_ext};
 
 STL_DEFINE_INDEXED_INSTANCE_META(
     vec, vec_t, self->element_type, vec_size(self),
@@ -246,7 +247,8 @@ static cmeta_collector stl_set_collector_factory(
 
 const cmeta_container_desc stl_set_container_desc = {
     "Set", NULL, NULL, NULL, NULL,
-    stl_set_range_factory, NULL, NULL, NULL, stl_set_collector_factory};
+    stl_set_range_factory, NULL, NULL, NULL, stl_set_collector_factory,
+    &stl_set_container_ext};
 
 static const cmeta_type_desc *stl_hash_set_element_type(
     const hash_set_t *set) {
@@ -345,4 +347,4 @@ static cmeta_collector stl_hash_set_collector_factory(
 const cmeta_container_desc stl_hash_set_container_desc = {
     "HashSet", NULL, NULL, NULL, NULL,
     stl_hash_set_range_factory, NULL, NULL, NULL,
-    stl_hash_set_collector_factory};
+    stl_hash_set_collector_factory, &stl_hash_set_container_ext};
