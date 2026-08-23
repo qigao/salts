@@ -32,7 +32,7 @@ CMETA_PP_FOR_EACH_A(CMETA_CPP_TYPEOF_SPECIALIZE, ~, CMETA_KNOWN_TYPE_LIST)
     CMETA_TYPE_CTYPE(row) *: &CMETA_TYPE_DESC(row),
 #define CMETA_TYPE_SELECT(type, fallback_desc) \
     _Generic((type *)0, \
-        CMETA_PP_FOR_EACH_A(CMETA_TYPE_SELECT_ASSOC, ~, CMETA_KNOWN_TYPE_LIST) \
+        CMETA_PP_FOR_EACH_B(CMETA_TYPE_SELECT_ASSOC, ~, CMETA_KNOWN_TYPE_LIST) \
         default: (fallback_desc))
 #define CMETA_TYPEOF(type) \
     CMETA_TYPE_SELECT(type, (const cmeta_type_desc *)0)
