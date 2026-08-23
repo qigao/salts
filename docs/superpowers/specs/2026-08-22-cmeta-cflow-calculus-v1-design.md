@@ -1,8 +1,11 @@
 # CMeta–CFlow Calculus v1 Design
 
-**状态：** Proposed  
-**分支：** `formal/cmeta-cflow-calculus-v1`  
-**基线：** `refactor/execution-foundation`  
+**状态：** Proposed
+
+**分支：** `formal/cmeta-cflow-calculus-v1-v2`
+
+**基线：** `master`（已包含 #48 execution foundation）
+
 **日期：** 2026-08-22
 
 ## 1. 目的
@@ -1503,13 +1506,13 @@ Calculus terms/judgements
 本工作采用独立分支：
 
 ```text
-formal/cmeta-cflow-calculus-v1
+formal/cmeta-cflow-calculus-v1-v2
 ```
 
 base：
 
 ```text
-refactor/execution-foundation
+master
 ```
 
 允许修改：

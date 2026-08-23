@@ -124,4 +124,4 @@ unrelated working-tree changes remain untouched.
 
 Stage the two Lean implementation files, Phase F test/import and these two docs;
 commit as `formal: prove certified idempotent rewrite`, then push
-`formal/cmeta-cflow-calculus-v1`.
+`formal/cmeta-cflow-calculus-v1-v2`.
