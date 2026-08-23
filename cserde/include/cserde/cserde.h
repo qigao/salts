@@ -3,5 +3,6 @@
 
 #include <cserde/status.h>
 #include <cserde/token.h>
+#include <cserde/reader.h>
 
 #endif /* CSERDE_CSERDE_H */
