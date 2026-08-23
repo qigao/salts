@@ -84,11 +84,11 @@ git commit -m "formal(cflow): define machine schema manifest"
 - Consumes: `cflow_event_type`, `cmeta_type_desc_valid`, `cmeta_type_equal`, CMeta effects/properties, and generated Machine schema rows.
 - Produces: declaration structs, `cflow_machine_status`, `cflow_machine_build`, `cflow_machine_destroy`, count/initial-state queries, and canonical `*_at` row queries.
 
-- [ ] **Step 1: Write the first failing public-contract tests**
+- [x] **Step 1: Write the first failing public-contract tests**
 
 Create a valid two-state Machine fixture and assert successful build, exact initial state, canonical sorted state/transition rows, copied arrays, and error-capable action admission. Add an empty-Machine test and a transactional-failure test asserting `machine.impl == NULL`. The breaks caught are partial publication, input aliasing, and missing finite-domain rejection.
 
-- [ ] **Step 2: Configure/build the target and observe the missing API failure**
+- [x] **Step 2: Configure/build the target and observe the missing API failure**
 
 Run:
 
@@ -98,24 +98,24 @@ cmd.exe /d /s /c 'call "C:\Program Files\Microsoft Visual Studio\2022\Profession
 
 Expected: FAIL because `cflow/machine.h` and the implementation do not exist.
 
-- [ ] **Step 3: Implement minimal owned construction and queries**
+- [x] **Step 3: Implement minimal owned construction and queries**
 
 Use one private implementation with exact-sized arrays. Preflight every count/byte multiplication before reading arrays. Copy to temporary storage, sort by stable IDs and `(source,event,priority)`, validate, then publish once. `destroy` frees every owned array and zeros the public handle.
 
-- [ ] **Step 4: Run focused tests to green**
+- [x] **Step 4: Run focused tests to green**
 
 Run: `ctest --preset win-release-user -R "^cflow_machine_test$" --output-on-failure`  
 Expected: PASS.
 
-- [ ] **Step 5: Add failing validation matrix tests**
+- [x] **Step 5: Add failing validation matrix tests**
 
 Use literal fixtures for zero/duplicate IDs, unknown initial/source/target/Event/guard/action IDs, state/Event/action type mismatches, invalid guard contracts, invalid observation declarations, terminal outgoing edges, duplicate priority, unreachable states, and unused guard/action rows. Each `it` names one rejected invariant.
 
-- [ ] **Step 6: Implement the validation matrix and rerun**
+- [x] **Step 6: Implement the validation matrix and rerun**
 
 Return the specific `cflow_machine_status` for each failure. Reachability uses a bounded traversal over the copied finite state array; no dynamic growth occurs after exact allocation. Run the focused target and CTest until all cases pass.
 
-- [ ] **Step 7: Add C++ inclusion coverage and commit**
+- [x] **Step 7: Add C++ inclusion coverage and commit**
 
 Include `cflow/machine.h` in the existing C++ header test, add the new target to C11 properties, run both tests, then commit:
 

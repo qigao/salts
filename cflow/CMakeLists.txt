@@ -13,6 +13,7 @@ add_library(${TARGET_NAME}
   src/graph.c
   src/interfaces.c
   src/lower.c
+  src/machine.c
   src/opt.c
   src/plan_compile.c
   src/plan_exec.c

@@ -11,6 +11,10 @@ static_assert(std::is_standard_layout<cflow_event_type>::value,
               "cflow_event_type must remain a C-compatible schema row");
 static_assert(std::is_standard_layout<cflow_mailbox>::value,
               "cflow_mailbox must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_machine>::value,
+              "cflow_machine must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_machine_transition>::value,
+              "cflow_machine_transition must remain a C-compatible row");
 
 suite("CFlow C++ public header") {
     it("exposes the aggregate API to C++ consumers") {
@@ -24,6 +28,7 @@ suite("CFlow C++ public header") {
         const int sent = 23;
         const cflow_event_view event = {1u, &cmeta_type_int, &sent};
         cflow_mailbox mailbox = {};
+        cflow_machine machine = {};
         cflow_event_id event_id = 0u;
         const cmeta_type_desc *event_type = nullptr;
         int received = 0;
@@ -52,5 +57,7 @@ suite("CFlow C++ public header") {
         check_true(event_type == &cmeta_type_int);
         check_true(received == sent);
         cflow_mailbox_destroy(&mailbox);
+        check_null(machine.impl);
+        cflow_machine_destroy(&machine);
     }
 }
