@@ -64,6 +64,22 @@ add_subdirectory(turbostl)
 add_subdirectory(utils)
 add_subdirectory(turbo_serial)
 
+add_custom_target(
+  verify_installed_package
+  COMMAND
+    ${CMAKE_COMMAND}
+    -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+    -DBUILD_DIR=${CMAKE_BINARY_DIR}
+    -DCMAKE_COMMAND_PATH=${CMAKE_COMMAND}
+    -DBUILD_CONFIG=$<CONFIG>
+    -DBUILD_GENERATOR=${CMAKE_GENERATOR}
+    -P
+    ${CMAKE_SOURCE_DIR}/cmake/VerifyInstalledPackage.cmake
+  DEPENDS turbo_platform turbo_concurrency turbo_cmeta turbo_cflow turbo_stl
+          turbo_utils
+  VERBATIM)
+set_target_properties(verify_installed_package PROPERTIES FOLDER "cmake")
+
 # Package Configuration
 include(CMakePackageConfigHelpers)
 
