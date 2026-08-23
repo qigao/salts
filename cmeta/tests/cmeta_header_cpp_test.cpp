@@ -103,7 +103,8 @@ spec("CMeta C++ public headers") {
     const cmeta_container_ext ext = {
         offsetof(cmeta_container_ext, type) + sizeof(ext.type),
         CMETA_CONTAINER_EXT_ABI_VERSION,
-        &type_ops};
+        &type_ops,
+        nullptr};
     const cmeta_container_desc desc = {
         "cpp container", nullptr, nullptr, nullptr, nullptr,
         nullptr, nullptr, nullptr, nullptr, nullptr, &ext};
