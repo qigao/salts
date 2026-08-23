@@ -43,11 +43,11 @@
 同一行列表产生两种投影：
 
 ```c
-ValueFunction3(CFlowPlanOpcode, CFLOW_PLAN_INFERENCE_ROWS);
-InferenceRules3(cflow_plan_rules, CFLOW_PLAN_INFERENCE_ROWS);
+ValueFunction(CFlowPlanOpcode, CFLOW_PLAN_INFERENCE_ROWS);
+InferenceRules(cflow_plan_rules, CFLOW_PLAN_INFERENCE_ROWS);
 ```
 
-`ValueFunction3` 是编译期 token/value 投影；`InferenceRules3` 是 C DFA 的运行期 relation。不得维护第二份手写 switch。
+`ValueFunction` 是编译期 token/value 投影；`InferenceRules` 是 C DFA 的运行期 relation。两者从首行自动推导元数，不得维护第二份手写 switch。
 
 ## 4. CMeta API
 

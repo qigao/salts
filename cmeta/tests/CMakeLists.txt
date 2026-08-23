@@ -45,6 +45,11 @@ cmake_add_test(cmeta_collector_test
   LIBS TurboUtils::CMeta TurboUtils::TinyTest
   FOLDER "cmeta/tests")
 
+cmake_add_test(cmeta_signature_manifest_test
+  SOURCES cmeta_signature_manifest_test.c
+  LIBS TurboUtils::CMeta TurboUtils::TinyTest
+  FOLDER "cmeta/tests")
+
 cmake_add_test(cmeta_compute_test
   SOURCES cmeta_compute_test.c
   LIBS TurboUtils::CMeta TurboUtils::TinyTest
@@ -138,7 +143,7 @@ set_target_properties(cmeta_language_surface_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
-set_target_properties(cmeta_collector_test PROPERTIES
+set_target_properties(cmeta_collector_test cmeta_signature_manifest_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)

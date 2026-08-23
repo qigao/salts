@@ -20,8 +20,8 @@
     (CFLOW_OP_REDUCE, CFLOW_OUTPUT_SAME, CMETA_CARD_REDUCE, \
      CMETA_PLAN_REDUCE)
 
-ValueFunction3(CFlowPlanOpcode, CFLOW_PLAN_INFERENCE_ROWS);
-InferenceRules3(cflow_plan_inference_relation, CFLOW_PLAN_INFERENCE_ROWS);
+ValueFunction(CFlowPlanOpcode, CFLOW_PLAN_INFERENCE_ROWS);
+InferenceRules(cflow_plan_inference_relation, CFLOW_PLAN_INFERENCE_ROWS);
 
 typedef struct cflow_plan_inference {
     cmeta_infer_dfa dfa;

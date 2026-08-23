@@ -15,26 +15,26 @@ enum {
     (TEST_TYPE_SMALL, TEST_TYPE_WIDE, TEST_TYPE_WIDE), \
     (TEST_TYPE_WIDE, TEST_TYPE_SMALL, TEST_TYPE_WIDE)
 
-ValueFunction2(TestCommonType, TEST_COMMON_TYPE_ROWS);
-InferenceRules2(test_common_type_relation, TEST_COMMON_TYPE_ROWS);
+ValueFunction(TestCommonType, TEST_COMMON_TYPE_ROWS);
+InferenceRules(test_common_type_relation, TEST_COMMON_TYPE_ROWS);
 
 #define TEST_OPERATION_ROWS \
     (TEST_OP_ADD, TEST_TYPE_SMALL, TEST_TYPE_WIDE, TEST_TYPE_WIDE), \
     (TEST_OP_COMPARE, TEST_TYPE_WIDE, TEST_TYPE_WIDE, TEST_TYPE_BOOL)
 
-InferenceRules3(test_operation_relation, TEST_OPERATION_ROWS);
+InferenceRules(test_operation_relation, TEST_OPERATION_ROWS);
 
 #define TEST_DUPLICATE_ROWS \
     (TEST_TYPE_SMALL, TEST_TYPE_WIDE), \
     (TEST_TYPE_SMALL, TEST_TYPE_WIDE)
 
-InferenceRules1(test_duplicate_relation, TEST_DUPLICATE_ROWS);
+InferenceRules(test_duplicate_relation, TEST_DUPLICATE_ROWS);
 
 #define TEST_AMBIGUOUS_ROWS \
     (TEST_TYPE_SMALL, TEST_TYPE_SMALL), \
     (TEST_TYPE_SMALL, TEST_TYPE_WIDE)
 
-InferenceRules1(test_ambiguous_relation, TEST_AMBIGUOUS_ROWS);
+InferenceRules(test_ambiguous_relation, TEST_AMBIGUOUS_ROWS);
 
 static cmeta_infer_status build_common_dfa(
     cmeta_infer_dfa *dfa,
@@ -67,7 +67,7 @@ suite("CMeta finite DFA inference") {
             TEST_TYPE_WIDE, TEST_TYPE_SMALL
         };
 
-        check_equal(ValueEval2(TestCommonType,
+        check_equal(ValueEval(TestCommonType,
                                TEST_TYPE_SMALL,
                                TEST_TYPE_WIDE), TEST_TYPE_WIDE);
         check_equal(build_common_dfa(

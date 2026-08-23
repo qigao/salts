@@ -324,29 +324,30 @@ Finite functions declare explicit mappings and evaluate them through generated
 C declarations. They do not add C++ template syntax or a runtime evaluator.
 
 ```c
-TypeFunction1(StorageType,
+TypeFunction(StorageType,
     (small, SmallStorage),
     (wide, WideStorage));
 
-TypeFunction2(CommonType,
+TypeFunction(CommonType,
     (small, small, SmallStorage),
     (small, wide, WideStorage),
     (wide, small, WideStorage),
     (wide, wide, WideStorage));
 
-typedef TypeEval1(StorageType, small) storage_type;
-typedef TypeEval2(CommonType, small, wide) common_type;
+typedef TypeEval(StorageType, small) storage_type;
+typedef TypeEval(CommonType, small, wide) common_type;
 ```
 
-The type forms are `TypeFunction1/2/3` and `TypeEval1/2/3`. The corresponding
-integer-constant forms are `ValueFunction1/2/3` and `ValueEval1/2/3`:
+`TypeFunction` infers the input arity from its first row, while `TypeEval`
+infers it from the number of input keys. The corresponding integer-constant
+forms are `ValueFunction` and `ValueEval`:
 
 ```c
-ValueFunction1(TypeRank,
+ValueFunction(TypeRank,
     (small, 1),
     (wide, 2));
 
-enum { wide_rank = ValueEval1(TypeRank, wide) };
+enum { wide_rank = ValueEval(TypeRank, wide) };
 ```
 
 `Predicate` is a unary boolean value function. `Satisfies` evaluates it and
@@ -363,6 +364,8 @@ The declaration contract is deliberately finite and fail-fast:
   identifier.
 - A declaration contains 1 through 16 rows. More rows can be added by repeating
   the same function name in separate bounded declarations.
+- The first row determines input arity; every later row in that declaration
+  must have the same shape or compilation fails.
 - A value result is an integer constant expression. Complex type results should
   first receive a stable typedef name.
 - Evaluating an absent mapping produces an unknown generated identifier, while
@@ -372,12 +375,14 @@ The declaration contract is deliberately finite and fail-fast:
 Arity is part of each generated identifier, so unary, binary, and ternary
 functions with the same public name remain distinct. Declaration work is linear
 in the number of rows; an evaluation is fixed token lookup rather than a scan
-or a generated binary/ternary Cartesian product.
+or a generated binary/ternary Cartesian product. Only the unified entry points
+are public; numbered implementation families remain internal.
 
 ### Finite DFA inference
 
-`InferenceRules1/2/3` projects explicit integer-symbol rows into an ordinary C
-relation. A row contains one through three input symbols followed by one result.
+`InferenceRules` projects explicit integer-symbol rows into an ordinary C
+relation and infers arity from the first row. A row contains one through three
+input symbols followed by one result.
 Each declaration accepts the same bounded 1–16 row list as the underlying
 `CMETA_PP_FOR_EACH_A` projection.
 The row source may be shared with a matching `ValueFunction` so compile-time and
@@ -397,8 +402,8 @@ enum {
     (TYPE_SMALL, TYPE_WIDE, TYPE_WIDE), \
     (TYPE_WIDE, TYPE_SMALL, TYPE_WIDE)
 
-ValueFunction2(CommonType, CommonRows);
-InferenceRules2(common_type_relation, CommonRows);
+ValueFunction(CommonType, CommonRows);
+InferenceRules(common_type_relation, CommonRows);
 
 int main(void) {
     cmeta_infer_state states[
@@ -510,6 +515,32 @@ every translation unit and in the linked CMeta library build. Every custom row
 must name descriptors and traits that the program defines with the ownership
 operations required by its consumers.
 
+The built-in type rows and finite callable relation graph are declared in
+`formal/cmeta_cflow_calculus/CMetaCFlowCalculus/CMeta/BuiltinSignatures.lean`.
+Validation rejects empty categories, duplicates, and relations that reference
+unknown built-in type tokens before rendering. The checked-in
+`cmeta/generated/builtin_signature_manifest.h` preserves the public macro and
+signature order, is consumed by normal C/C++ compilation without a Lean
+dependency, and must not be edited manually. From the formal package, use:
+
+```text
+lake exe cmeta-signature-gen --write ../../cmeta/include/cmeta/generated/builtin_signature_manifest.h
+lake exe cmeta-signature-gen --check ../../cmeta/include/cmeta/generated/builtin_signature_manifest.h
+```
+
+This generation boundary owns only built-ins. Application rows and
+`CMETA_USER_UNARY_RELATION_LIST`, `CMETA_USER_BINARY_RELATION_LIST`, and
+`CMETA_USER_GENERATOR_RELATION_LIST` remain shared compile-time configuration;
+all translation units must still see the same callable ABI.
+
+Mechanical consumers can select `CMETA_VALUE_SIGNATURES(U, B)` or
+`CMETA_GENERATOR_SIGNATURES(G)` when their protocol is already known.
+`CMETA_ALL_SIGNATURES(U, B, G)` remains the complete ABI universe and preserves
+unary, binary, then generator ordering. Protocol grouping changes only which
+adapters or switch cases are emitted at an already-validated boundary;
+`cmeta_fn_invoke` and `cmeta_fn_generate` retain their documented rejection
+results for the other protocol.
+
 `Struct(T, ...)` and `Traits(T, ...)` generate structural and callable metadata,
 but do not add `T` to either finite type universe. `CMETA_TYPEOF(T)` returns
 `NULL` when no compatible registered type exists. APIs that require a descriptor
@@ -584,6 +615,31 @@ general allocator, scheduler, retry system, or synchronization policy.
 `cmeta_container_desc` describes the runtime capabilities of a typed container,
 including type metadata, Range factories, and an optional collector factory.
 The raw algorithms remain ordinary C implementation code.
+
+Declaration-side construction uses two distinct lifecycle operations:
+
+```c
+cmeta_status cmeta_container_bind_types(
+    void *object, const cmeta_declared_type *declared);
+cmeta_status cmeta_container_restore_zero(
+    void *object, const cmeta_declared_type *declared);
+```
+
+`bind_types` accepts a canonical zero handle and installs its concrete
+descriptor plus T/K/V metadata without allocating. `restore_zero` accepts a
+zero, bound, active, or committed handle for the same declared provider,
+releases provider-owned storage, and restores the complete handle to canonical
+all-bits-zero. It returns `CMETA_TYPE_MISMATCH` when a nonzero handle belongs to
+a different provider and `CMETA_INVALID_ARGUMENT` for an invalid declaration,
+missing lifecycle callback, or invalid pointer.
+
+Complete C usage is compiled in
+`turbostl/tests/turbostl_construction_binding_test.c`.
+
+The restore operation is not a synonym for `cmeta_collector_abort()`.
+Collector abort owns only a begun/accepting collection transaction and remains
+a no-op after commit; restore-to-zero is the declaration/provider lifecycle
+boundary used by larger object transactions.
 
 ### Interface runtime values
 

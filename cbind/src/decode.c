@@ -21,6 +21,8 @@ void cbind_error_clear(cbind_error *error) {
     error->shape = NULL;
     error->field = NULL;
     error->depth = 0u;
+    if (error->struct_size >= CBIND_FIELD_END(cbind_error, target_status))
+        error->target_status = CMETA_OK;
 }
 
 void cbind_error_set(cbind_error *error,
@@ -36,6 +38,14 @@ void cbind_error_set(cbind_error *error,
     error->shape = shape;
     error->field = field;
     error->depth = depth;
+    if (error->struct_size >= CBIND_FIELD_END(cbind_error, target_status))
+        error->target_status = CMETA_OK;
+}
+
+void cbind_error_set_target(cbind_error *error, cmeta_status target_status) {
+    if (error != NULL &&
+        error->struct_size >= CBIND_FIELD_END(cbind_error, target_status))
+        error->target_status = target_status;
 }
 
 cbind_status cbind_read_required(cbind_decode_state *state,
@@ -60,10 +70,14 @@ cbind_status cbind_read_required(cbind_decode_state *state,
 cbind_status cbind_decode_value(cbind_decode_state *state,
                                 const cmeta_data_desc *shape,
                                 const cmeta_data_field_desc *field,
+                                const cmeta_field_desc *reflected,
                                 size_t depth,
                                 void *out) {
     if (shape->kind == CMETA_DATA_STRUCT)
         return cbind_decode_struct(state, shape, field, depth, out);
+    if (cbind_data_kind_is_container(shape->kind))
+        return cbind_decode_container(state, shape, field, reflected,
+                                      depth, out);
     return cbind_decode_scalar(state, shape, field, depth, out);
 }
 
@@ -116,7 +130,15 @@ cbind_status cbind_decode(const cbind_context *context,
     state.scratch = (unsigned char *)context->scratch;
     state.scratch_used = 0u;
 
-    status = cbind_decode_value(&state, shape, NULL, 0u, out);
+    if (shape->kind == CMETA_DATA_STRUCT) {
+        status = cbind_prepare_struct_containers(shape, out, error, 0u);
+        if (status != CBIND_OK) {
+            cbind_struct_reset(shape, out);
+            return status;
+        }
+    }
+
+    status = cbind_decode_value(&state, shape, NULL, NULL, 0u, out);
     if (status != CBIND_OK) {
         if (shape->kind == CMETA_DATA_STRUCT)
             cbind_struct_reset(shape, out);

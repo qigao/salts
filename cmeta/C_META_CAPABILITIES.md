@@ -11,7 +11,7 @@ schema-driven, and intentionally compositional rather than a universal language.
 - `Enum(...)` single-declaration enum + immutable metadata;
 - tagged-row `Traits(...)` with duplicate/unknown tag rejection;
 - finite generic routing through the single `typed(kind, ...)` entry point;
-- caller-bounded finite DFA inference through `InferenceRules1/2/3` and
+- caller-bounded finite DFA inference through `InferenceRules` and
   `cmeta_infer_dfa_build/eval`;
 - CMeta value kinds: `Pair`, `Tuple`, `Option`, `Result`;
 - `typed_any(...)` first-class callable declarations with semantic contracts;
@@ -71,24 +71,25 @@ CMeta provides explicit finite relations for type and integer-constant
 computation:
 
 ```c
-TypeFunction2(CommonType,
+TypeFunction(CommonType,
     (small, small, Small),
     (small, wide, Wide),
     (wide, small, Wide),
     (wide, wide, Wide));
 
-ValueFunction1(TypeRank, (small, 1), (wide, 2));
+ValueFunction(TypeRank, (small, 1), (wide, 2));
 Predicate(Hashable, (small, 1), (opaque, 0));
 
-typedef TypeEval2(CommonType, small, wide) result_type;
-enum { rank = ValueEval1(TypeRank, wide) };
+typedef TypeEval(CommonType, small, wide) result_type;
+enum { rank = ValueEval(TypeRank, wide) };
 Require(Hashable, small);
 ```
 
-Unary, binary, and ternary forms are available. Function names and input keys
-are single stable preprocessing identifiers; each declaration has 1 through 16
-rows and may be extended by another declaration with the same name. Missing and
-conflicting mappings fail during compilation instead of selecting a default.
+Unary, binary, and ternary forms are inferred automatically from the first rule
+row or evaluation input count. Function names and input keys are single stable
+preprocessing identifiers; each declaration has 1 through 16 rows and may be
+extended by another declaration with the same name. Missing and conflicting
+mappings fail during compilation instead of selecting a default.
 
 `SchemaCount(schema)`, `SchemaAll(schema)`, and `SchemaAny(schema)` provide
 integer constant folds. Count accepts arbitrary non-empty rows; all/any accept
@@ -96,8 +97,8 @@ one integer constant expression per row. This layer generates typedefs, enum
 constants, and static assertions only: it adds no runtime object, ABI symbol, or
 C++ template dependency.
 
-`InferenceRules1/2/3` can project the same integer row list used by a
-`ValueFunction1/2/3` into a runtime finite relation. A caller-owned workspace
+`InferenceRules` can project the same integer row list used by a
+`ValueFunction` into a runtime finite relation. A caller-owned workspace
 is built into a deterministic prefix trie; missing, duplicate, ambiguous, and
 capacity failures remain distinct. This evaluator belongs in validation or
 plan admission. Hot executors consume the inferred action and do not query the
@@ -193,6 +194,16 @@ ABORTED
 The façade validates input and type compatibility, preserves the first error,
 and performs exactly-once abort behavior. It does not own allocation, retry,
 I/O, scheduling, or synchronization policy.
+
+### Container construction lifecycle
+
+`cmeta_container_bind_types()` binds declaration-side T/K/V metadata into a
+canonical zero handle without allocation. Providers may append
+`restore_zero` to `cmeta_container_construct_ops`; the checked
+`cmeta_container_restore_zero()` façade then releases bound, active, or
+committed storage and restores the complete handle to all-bits-zero. This
+lifecycle operation is intentionally separate from Collector abort, which does
+not act on committed collectors.
 
 ### Callable
 

@@ -427,17 +427,12 @@ bool cmeta_fn_invoke(cmeta_fn fn, void *out, const void *const *args) {
             if (out) memcpy(out, &r, sizeof r); \
             return true; \
         }
-#define CMETA_INVOKE_G(in, out_type) \
-        case CMETA_SIG_NAME(CMETA_G_ID(in, out_type)): return false;
-        CMETA_ALL_SIGNATURES(CMETA_INVOKE_U, CMETA_INVOKE_B, CMETA_INVOKE_G)
+        CMETA_VALUE_SIGNATURES(CMETA_INVOKE_U, CMETA_INVOKE_B)
 #undef CMETA_INVOKE_U
 #undef CMETA_INVOKE_B
-#undef CMETA_INVOKE_G
-        case CMETA_SIG_INVALID:
-        case CMETA_SIG_COUNT:
+        default:
             return false;
     }
-    return false;
 }
 
 cmeta_gen_status cmeta_fn_generate(cmeta_fn fn, const void *input,
@@ -447,10 +442,6 @@ cmeta_gen_status cmeta_fn_generate(cmeta_fn fn, const void *input,
         !cmeta_fn_target_valid(fn) || !input || !out || !cursor)
         return CMETA_GEN_ERROR;
     switch (fn.sig) {
-#define CMETA_GENERATE_U(in, ret) \
-        case CMETA_SIG_NAME(CMETA_U_ID(in, ret)): return CMETA_GEN_ERROR;
-#define CMETA_GENERATE_B(a, b, ret) \
-        case CMETA_SIG_NAME(CMETA_B_ID(a, b, ret)): return CMETA_GEN_ERROR;
 #define CMETA_GENERATE_G(in, out_type) \
         case CMETA_SIG_NAME(CMETA_G_ID(in, out_type)): { \
             CMETA_TYPE_CTYPE(in) a0; \
@@ -458,15 +449,11 @@ cmeta_gen_status cmeta_fn_generate(cmeta_fn fn, const void *input,
             return fn.call.CMETA_CALL_MEMBER(CMETA_G_ID(in, out_type))( \
                 a0, (CMETA_TYPE_CTYPE(out_type) *)out, cursor); \
         }
-        CMETA_ALL_SIGNATURES(CMETA_GENERATE_U, CMETA_GENERATE_B, CMETA_GENERATE_G)
-#undef CMETA_GENERATE_U
-#undef CMETA_GENERATE_B
+        CMETA_GENERATOR_SIGNATURES(CMETA_GENERATE_G)
 #undef CMETA_GENERATE_G
-        case CMETA_SIG_INVALID:
-        case CMETA_SIG_COUNT:
+        default:
             return CMETA_GEN_ERROR;
     }
-    return CMETA_GEN_ERROR;
 }
 
 bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out) {

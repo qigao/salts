@@ -1,5 +1,7 @@
 #include <turbostl/typed.h>
 
+#include <string.h>
+
 #define STL_DEFINE_UNARY_CONSTRUCTION(                                         \
     prefix, handle_type, descriptor_expr, type_expr, live_expr)                \
 const cmeta_type_desc stl_##prefix##_storage_type = {                           \
@@ -29,11 +31,19 @@ static cmeta_status stl_##prefix##_bind_types(                                  
         return CMETA_TYPE_MISMATCH;                                             \
     return CMETA_OK;                                                            \
 }                                                                               \
+static void stl_##prefix##_restore_zero(void *object) {                         \
+    handle_type *self = (handle_type *)object;                                  \
+    if (self == NULL)                                                           \
+        return;                                                                 \
+    prefix##_destroy(self);                                                     \
+    memset(self, 0, sizeof(*self));                                             \
+}                                                                               \
 const cmeta_container_construct_ops stl_##prefix##_construct_ops = {            \
     sizeof(cmeta_container_construct_ops),                                      \
     CMETA_CONTAINER_CONSTRUCT_OPS_ABI_VERSION,                                  \
     &stl_##prefix##_container_desc,                                             \
-    stl_##prefix##_bind_types};
+    stl_##prefix##_bind_types,                                                  \
+    stl_##prefix##_restore_zero};
 
 #define STL_DEFINE_BINARY_CONSTRUCTION(                                        \
     prefix, handle_type, descriptor_expr, key_expr, value_expr, live_expr)     \
@@ -70,11 +80,19 @@ static cmeta_status stl_##prefix##_bind_types(                                  
         return CMETA_TYPE_MISMATCH;                                             \
     return CMETA_OK;                                                            \
 }                                                                               \
+static void stl_##prefix##_restore_zero(void *object) {                         \
+    handle_type *self = (handle_type *)object;                                  \
+    if (self == NULL)                                                           \
+        return;                                                                 \
+    prefix##_destroy(self);                                                     \
+    memset(self, 0, sizeof(*self));                                             \
+}                                                                               \
 const cmeta_container_construct_ops stl_##prefix##_construct_ops = {            \
     sizeof(cmeta_container_construct_ops),                                      \
     CMETA_CONTAINER_CONSTRUCT_OPS_ABI_VERSION,                                  \
     &stl_##prefix##_container_desc,                                             \
-    stl_##prefix##_bind_types};
+    stl_##prefix##_bind_types,                                                  \
+    stl_##prefix##_restore_zero};
 
 STL_DEFINE_UNARY_CONSTRUCTION(
     vec, vec_t, self->cmeta.descriptor, self->element_type,

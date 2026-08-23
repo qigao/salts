@@ -284,26 +284,16 @@ static inline bool cmeta_detail_unsupported_invoke(
         if (out) memcpy(out, &result, sizeof(result)); \
         return true; \
     }
-#define CMETA_DEFINE_INVOKER_G(in, out_type) \
-    static inline bool CMETA_DETAIL_INVOKER(CMETA_G_ID(in, out_type))( \
-        const cmeta_callable *self, void *out, const void *const *args) { \
-        (void)self; \
-        (void)out; \
-        (void)args; \
-        return false; \
-    }
-CMETA_ALL_SIGNATURES(CMETA_DEFINE_INVOKER_U, CMETA_DEFINE_INVOKER_B,
-                     CMETA_DEFINE_INVOKER_G)
+CMETA_VALUE_SIGNATURES(CMETA_DEFINE_INVOKER_U, CMETA_DEFINE_INVOKER_B)
 #undef CMETA_DEFINE_INVOKER_U
 #undef CMETA_DEFINE_INVOKER_B
-#undef CMETA_DEFINE_INVOKER_G
 
 #define CMETA_INVOKER_ASSOC_U(in, ret) \
     , CMETA_FN_TYPE(CMETA_U_ID(in, ret)): CMETA_DETAIL_INVOKER(CMETA_U_ID(in, ret))
 #define CMETA_INVOKER_ASSOC_B(a, b, ret) \
     , CMETA_FN_TYPE(CMETA_B_ID(a, b, ret)): CMETA_DETAIL_INVOKER(CMETA_B_ID(a, b, ret))
 #define CMETA_INVOKER_ASSOC_G(in, out_type) \
-    , CMETA_FN_TYPE(CMETA_G_ID(in, out_type)): CMETA_DETAIL_INVOKER(CMETA_G_ID(in, out_type))
+    , CMETA_FN_TYPE(CMETA_G_ID(in, out_type)): cmeta_detail_unsupported_invoke
 #define CMETA_TYPED_INVOKER_ANY(fn) \
     _Generic(&(fn), default: cmeta_detail_unsupported_invoke \
         CMETA_ALL_SIGNATURES(CMETA_INVOKER_ASSOC_U, CMETA_INVOKER_ASSOC_B, \

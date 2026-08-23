@@ -107,7 +107,22 @@ static cmeta_status cmeta_test_sequence_bind_types(
     return CMETA_OK;
 }
 
+static void cmeta_test_sequence_restore_zero(void *object) {
+    cmeta_test_sequence *sequence = (cmeta_test_sequence *)object;
+    if (sequence != NULL)
+        memset(sequence, 0, sizeof(*sequence));
+}
+
 static const cmeta_container_construct_ops cmeta_test_sequence_construct_ops = {
+    .struct_size = sizeof(cmeta_container_construct_ops),
+    .abi_version = CMETA_CONTAINER_CONSTRUCT_OPS_ABI_VERSION,
+    .descriptor = &cmeta_test_constructible_sequence_desc,
+    .bind_types = cmeta_test_sequence_bind_types,
+    .restore_zero = cmeta_test_sequence_restore_zero
+};
+
+static const cmeta_container_construct_ops
+cmeta_test_legacy_sequence_construct_ops = {
     .struct_size = offsetof(cmeta_container_construct_ops, bind_types) +
                    sizeof(((cmeta_container_construct_ops *)0)->bind_types),
     .abi_version = CMETA_CONTAINER_CONSTRUCT_OPS_ABI_VERSION,
@@ -193,6 +208,43 @@ spec("CMeta container generic type applications") {
     check_true(cmeta_container_construction(&sequence) ==
                &cmeta_test_sequence_construct_ops);
     check_true(cmeta_container_type_application_valid(&sequence));
+  }
+
+  it("restores bound storage through the declaration-side lifecycle") {
+    static const cmeta_type_desc *const arguments[] = { &cmeta_type_int };
+    cmeta_declared_type declared = {
+        &cmeta_test_sequence_storage_type,
+        &cmeta_test_sequence_generic_alias,
+        arguments,
+        1u,
+        &cmeta_test_sequence_construct_ops
+    };
+    cmeta_declared_type legacy = declared;
+    cmeta_test_sequence sequence = {0};
+    cmeta_test_sequence zero = {0};
+    cmeta_test_sequence foreign;
+
+    check_equal(cmeta_container_bind_types(&sequence, &declared), CMETA_OK);
+    check_equal(cmeta_container_restore_zero(&sequence, &declared), CMETA_OK);
+    check_equal(memcmp(&sequence, &zero, sizeof(sequence)), 0);
+    check_equal(cmeta_container_restore_zero(&sequence, &declared), CMETA_OK);
+
+    legacy.construction = &cmeta_test_legacy_sequence_construct_ops;
+    check_equal(cmeta_container_restore_zero(&sequence, &legacy),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(cmeta_container_restore_zero(NULL, &declared),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(cmeta_container_restore_zero(&sequence, NULL),
+                CMETA_INVALID_ARGUMENT);
+
+    foreign = (cmeta_test_sequence){
+        .cmeta = {&cmeta_test_sequence_desc},
+        .element_type = &cmeta_type_int
+    };
+    sequence = foreign;
+    check_equal(cmeta_container_restore_zero(&sequence, &declared),
+                CMETA_TYPE_MISMATCH);
+    check_equal(memcmp(&sequence, &foreign, sizeof(sequence)), 0);
   }
 
   it("rejects a concrete argument without a CMeta type identity") {

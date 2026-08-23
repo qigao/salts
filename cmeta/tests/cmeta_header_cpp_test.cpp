@@ -20,30 +20,30 @@ Enum(cmeta_cpp_state,
     (CMETA_CPP_DONE, 7, "done")
 );
 
-TypeFunction1(CMetaCppStorage,
+TypeFunction(CMetaCppStorage,
     (small, int),
     (wide, long)
 );
 
-TypeFunction2(CMetaCppCommon,
+TypeFunction(CMetaCppCommon,
     (small, small, int),
     (small, wide, long)
 );
 
-TypeFunction3(CMetaCppResult,
+TypeFunction(CMetaCppResult,
     (add, small, wide, long)
 );
 
-ValueFunction1(CMetaCppRank,
+ValueFunction(CMetaCppRank,
     (small, 1),
     (wide, 2)
 );
 
-ValueFunction2(CMetaCppCost,
+ValueFunction(CMetaCppCost,
     (small, wide, 3)
 );
 
-ValueFunction3(CMetaCppDispatch,
+ValueFunction(CMetaCppDispatch,
     (add, small, wide, 7)
 );
 
@@ -63,13 +63,13 @@ enum {
     (CMETA_CPP_INFER_SMALL, CMETA_CPP_INFER_SMALL), \
     (CMETA_CPP_INFER_WIDE, CMETA_CPP_INFER_WIDE)
 
-InferenceRules1(cmeta_cpp_infer_relation, CMETA_CPP_INFER_ROWS);
+InferenceRules(cmeta_cpp_infer_relation, CMETA_CPP_INFER_ROWS);
 
-InferenceRules2(cmeta_cpp_infer_relation_2,
+InferenceRules(cmeta_cpp_infer_relation_2,
     (CMETA_CPP_INFER_SMALL, CMETA_CPP_INFER_WIDE,
      CMETA_CPP_INFER_WIDE));
 
-InferenceRules3(cmeta_cpp_infer_relation_3,
+InferenceRules(cmeta_cpp_infer_relation_3,
     (CMETA_CPP_INFER_SMALL, CMETA_CPP_INFER_WIDE,
      CMETA_CPP_INFER_SMALL, CMETA_CPP_INFER_WIDE));
 
@@ -97,18 +97,18 @@ static_assert(CMETA_CONTAINER_EXT_ABI_VERSION == 1u,
               "container extension ABI starts at version 1");
 static_assert(CMETA_DATA_DESC_ABI_VERSION == 1u,
               "semantic data descriptor ABI starts at version 1");
-static_assert(std::is_same_v<TypeEval1(CMetaCppStorage, small), int>,
+static_assert(std::is_same_v<TypeEval(CMetaCppStorage, small), int>,
               "C++17 can evaluate unary CMeta type functions");
-static_assert(std::is_same_v<TypeEval2(CMetaCppCommon, small, wide), long>,
+static_assert(std::is_same_v<TypeEval(CMetaCppCommon, small, wide), long>,
               "C++17 can evaluate binary CMeta type functions");
 static_assert(std::is_same_v<
-                  TypeEval3(CMetaCppResult, add, small, wide), long>,
+                  TypeEval(CMetaCppResult, add, small, wide), long>,
               "C++17 can evaluate ternary CMeta type functions");
-static_assert(ValueEval1(CMetaCppRank, wide) == 2,
+static_assert(ValueEval(CMetaCppRank, wide) == 2,
               "C++17 can evaluate unary CMeta value functions");
-static_assert(ValueEval2(CMetaCppCost, small, wide) == 3,
+static_assert(ValueEval(CMetaCppCost, small, wide) == 3,
               "C++17 can evaluate binary CMeta value functions");
-static_assert(ValueEval3(CMetaCppDispatch, add, small, wide) == 7,
+static_assert(ValueEval(CMetaCppDispatch, add, small, wide) == 7,
               "C++17 can evaluate ternary CMeta value functions");
 static_assert(SchemaCount(CMETA_CPP_COMPUTE_ROWS) == 2u,
               "C++17 can count CMeta schema rows");

@@ -84,12 +84,16 @@ struct cmeta_container_desc;
 
 typedef cmeta_status (*cmeta_container_bind_types_fn)(
     void *object, const cmeta_type_desc *const *arguments, size_t arity);
+/* Releases provider-owned storage from zero, bound, active, or committed state
+ * and restores the complete handle to its canonical all-bits-zero value. */
+typedef void (*cmeta_container_restore_zero_fn)(void *object);
 
 typedef struct cmeta_container_construct_ops {
     size_t struct_size;
     uint32_t abi_version;
     const struct cmeta_container_desc *descriptor;
     cmeta_container_bind_types_fn bind_types;
+    cmeta_container_restore_zero_fn restore_zero;
 } cmeta_container_construct_ops;
 
 typedef struct cmeta_container_ext {
@@ -138,6 +142,8 @@ const cmeta_type_desc *cmeta_container_type_argument(const void *object,
                                                      size_t index);
 bool cmeta_container_type_application_valid(const void *object);
 cmeta_status cmeta_container_bind_types(
+    void *object, const cmeta_declared_type *declared);
+cmeta_status cmeta_container_restore_zero(
     void *object, const cmeta_declared_type *declared);
 
 static inline bool cmeta_container_range_view(const void *object,

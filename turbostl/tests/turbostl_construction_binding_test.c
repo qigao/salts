@@ -66,6 +66,16 @@ Struct(construction_matrix,
         check_true(cmeta_container_construction(&(matrix_).member_) != NULL);    \
     } while (0)
 
+#define CHECK_RESTORE_ZERO(matrix_, member_)                                   \
+    do {                                                                        \
+        const cmeta_field_desc *field_ = cmeta_struct_find_field(               \
+            construction_matrix_meta(), #member_);                              \
+        check_true(field_ != NULL);                                              \
+        check_equal(cmeta_container_restore_zero(                               \
+                        &(matrix_).member_, field_->declared_type),              \
+                    CMETA_OK);                                                   \
+    } while (0)
+
 spec("TurboSTL construction binding") {
   it("binds a zero Vec field from static TYPE metadata before Collector") {
     const cmeta_field_desc *values =
@@ -221,7 +231,106 @@ spec("TurboSTL construction binding") {
     check_equal(vec.capacity, capacity);
     vec_destroy(&vec);
   }
+
+  it("restores committed sequence and map handles to canonical zero") {
+    const cmeta_field_desc *values =
+        cmeta_struct_find_field(construction_payload_meta(), "values");
+    const cmeta_field_desc *index =
+        cmeta_struct_find_field(construction_payload_meta(), "index");
+    construction_payload payload = {0};
+    construction_payload zero = {0};
+    cmeta_collector values_collector;
+    cmeta_collector index_collector;
+    int element = 11;
+    int key = 4;
+    long mapped = 44L;
+    cmeta_entry entry = {
+        .key_type = &cmeta_type_int,
+        .value_type = &cmeta_type_long,
+        .key = &key,
+        .value = &mapped,
+        .key_storage = NULL,
+        .value_storage = NULL
+    };
+
+    check_equal(cmeta_container_bind_types(
+                    &payload.values, values->declared_type), CMETA_OK);
+    values_collector =
+        stl_vec_container_desc.collector(&payload.values, 2u);
+    check_equal(cmeta_collector_begin(&values_collector), CMETA_OK);
+    check_equal(cmeta_collector_accept(
+                    &values_collector, &cmeta_type_int, &element), CMETA_OK);
+    check_equal(cmeta_collector_finish(&values_collector), CMETA_OK);
+
+    check_equal(cmeta_container_bind_types(
+                    &payload.index, index->declared_type), CMETA_OK);
+    index_collector = stl_map_container_desc.collector(&payload.index, 2u);
+    check_equal(cmeta_collector_begin(&index_collector), CMETA_OK);
+    check_equal(cmeta_collector_accept(
+                    &index_collector, &cmeta_type_ordered_entry, &entry),
+                CMETA_OK);
+    check_equal(cmeta_collector_finish(&index_collector), CMETA_OK);
+
+    check_equal(cmeta_container_restore_zero(
+                    &payload.values, values->declared_type), CMETA_OK);
+    check_equal(cmeta_container_restore_zero(
+                    &payload.index, index->declared_type), CMETA_OK);
+    check_equal(memcmp(&payload, &zero, sizeof(payload)), 0);
+    check_equal(cmeta_container_restore_zero(
+                    &payload.values, values->declared_type), CMETA_OK);
+    check_equal(cmeta_container_restore_zero(
+                    &payload.index, index->declared_type), CMETA_OK);
+  }
+
+  it("restores every construction provider from zero and bound states") {
+    construction_matrix matrix = {0};
+    construction_matrix zero = {0};
+
+    CHECK_RESTORE_ZERO(matrix, vec);
+    CHECK_RESTORE_ZERO(matrix, deque);
+    CHECK_RESTORE_ZERO(matrix, list);
+    CHECK_RESTORE_ZERO(matrix, stack);
+    CHECK_RESTORE_ZERO(matrix, queue);
+    CHECK_RESTORE_ZERO(matrix, heap);
+    CHECK_RESTORE_ZERO(matrix, set);
+    CHECK_RESTORE_ZERO(matrix, hash_set);
+    CHECK_RESTORE_ZERO(matrix, hash_map);
+    CHECK_RESTORE_ZERO(matrix, map);
+    CHECK_RESTORE_ZERO(matrix, multimap);
+    CHECK_RESTORE_ZERO(matrix, btree);
+    CHECK_RESTORE_ZERO(matrix, bplus_tree);
+
+    CHECK_UNARY_BIND(matrix, vec, stl_vec_generic_desc);
+    CHECK_UNARY_BIND(matrix, deque, stl_deque_generic_desc);
+    CHECK_UNARY_BIND(matrix, list, stl_list_generic_desc);
+    CHECK_UNARY_BIND(matrix, stack, stl_stack_generic_desc);
+    CHECK_UNARY_BIND(matrix, queue, stl_queue_generic_desc);
+    CHECK_UNARY_BIND(matrix, heap, stl_heap_generic_desc);
+    CHECK_UNARY_BIND(matrix, set, stl_set_generic_desc);
+    CHECK_UNARY_BIND(matrix, hash_set, stl_hash_set_generic_desc);
+    CHECK_BINARY_BIND(matrix, hash_map, stl_hash_map_generic_desc);
+    CHECK_BINARY_BIND(matrix, map, stl_map_generic_desc);
+    CHECK_BINARY_BIND(matrix, multimap, stl_multimap_generic_desc);
+    CHECK_BINARY_BIND(matrix, btree, stl_btree_generic_desc);
+    CHECK_BINARY_BIND(matrix, bplus_tree, stl_bplus_tree_generic_desc);
+
+    CHECK_RESTORE_ZERO(matrix, vec);
+    CHECK_RESTORE_ZERO(matrix, deque);
+    CHECK_RESTORE_ZERO(matrix, list);
+    CHECK_RESTORE_ZERO(matrix, stack);
+    CHECK_RESTORE_ZERO(matrix, queue);
+    CHECK_RESTORE_ZERO(matrix, heap);
+    CHECK_RESTORE_ZERO(matrix, set);
+    CHECK_RESTORE_ZERO(matrix, hash_set);
+    CHECK_RESTORE_ZERO(matrix, hash_map);
+    CHECK_RESTORE_ZERO(matrix, map);
+    CHECK_RESTORE_ZERO(matrix, multimap);
+    CHECK_RESTORE_ZERO(matrix, btree);
+    CHECK_RESTORE_ZERO(matrix, bplus_tree);
+    check_equal(memcmp(&matrix, &zero, sizeof(matrix)), 0);
+  }
 }
 
+#undef CHECK_RESTORE_ZERO
 #undef CHECK_UNARY_BIND
 #undef CHECK_BINARY_BIND

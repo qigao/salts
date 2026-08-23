@@ -844,6 +844,21 @@ suite("CMeta core") {
                    CMETA_GEN_ERROR);
     }
 
+    it("keeps value and generator protocol rejection paths disjoint") {
+        cmeta_fn value = CMETA_WRAP_TYPED_ANY(cmeta_test_increment_alternate);
+        cmeta_fn generator = CMETA_WRAP_TYPED_ANY(cmeta_test_expand);
+        int input = 7;
+        long output = 91L;
+        size_t cursor = 13u;
+        const void *args[] = {&input};
+
+        check_true(cmeta_fn_generate(value, &input, &output, &cursor) ==
+                   CMETA_GEN_ERROR);
+        check_equal(output, 91L);
+        check_equal(cursor, (size_t)13u);
+        check_false(cmeta_fn_invoke(generator, &output, args));
+    }
+
     it("fails when a borrowed range owner mutates") {
         cmeta_test_range_owner owner = {
             .generation = 4u, .values = {1, 2}, .count = 2u
