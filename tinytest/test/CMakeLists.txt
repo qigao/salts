@@ -71,7 +71,7 @@ add_test(
   NAME tinymock_public_header_structure
   COMMAND ${CMAKE_COMMAND}
     "-DTINYMOCK_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/tinymock.h"
-    "-DTRAITS_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/traits.h"
+    "-DTRAITS_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/tinymeta/tinytest_traits.h"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tinymock_header_structure.cmake")
 
 cmake_add_test(tinymock_test
