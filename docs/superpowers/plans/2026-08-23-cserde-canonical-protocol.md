@@ -4,17 +4,18 @@
 
 **Goal:** Add the standalone `TurboUtils::CSerde` C11 module that defines canonical tokens, versioned pull-reader/push-writer facades, bounded nested-value skipping, and deterministic recording test providers for the later CBind layer.
 
-**Architecture:** CSerde is a format-neutral transport protocol with no dependency on CMeta, CFlow, TurboSTL, TurboParser, or Core. Providers implement versioned ops tables; the public facades validate ABI prefixes and callback results, maintain sticky terminal/error state, and never own token payload memory. Reader structural walking lives only in `cserde_reader_skip_value`; writer v1 deliberately does not duplicate a complete output nesting validator.
+**Architecture:** CSerde is a format-neutral transport protocol with no dependency on CMeta, CFlow, TurboSTL, TurboParser, or Core. Providers implement append-safe versioned ops tables; public facades validate ABI prefixes and callback results, maintain sticky terminal/error state, and never own token payload memory. Reader structural walking exists only in `cserde_reader_skip_value`; writer v1 deliberately does not duplicate a complete nesting validator.
 
-**Tech Stack:** ISO C11, C++17 public-header compatibility, CMake presets, CTest, TinyTest, GitHub Actions Linux/MSVC release gates.
+**Tech Stack:** ISO C11, C++17 public-header/linkage compatibility, CMake presets, CTest, TinyTest, GitHub Actions Linux/MSVC release gates.
 
 **Spec:** `docs/superpowers/specs/2026-08-23-cserde-canonical-protocol-design.md`
 
 ## Global Constraints
 
-- Implementation baseline is `master` commit `4e2d47971071bb75266a56844919a79e724c5c82` plus the approved D1 spec/plan commits.
+- Implementation starts from the final `design/cserde-canonical-protocol` head containing the approved spec and this plan, on execution branch `feat/cserde-canonical-protocol`.
 - Public target name is `TurboUtils::CSerde`; concrete target is `turbo_cserde` with export name `CSerde`.
 - CSerde must not include or link CMeta, CFlow, TurboSTL, TurboParser, or `utils` Core.
+- Public callable declarations in `token.h`, `reader.h`, and `writer.h` must use the standard `#ifdef __cplusplus extern "C" { ... }` guard so the C implementation links correctly from C++17.
 - Canonical token kinds are exactly `NULL/BOOL/SINT/UINT/FLOAT/STRING/BYTES/ARRAY_BEGIN/ARRAY_END/MAP_BEGIN/MAP_END` in D1.
 - `SINT` stores `int64_t`; `UINT` stores `uint64_t`; `FLOAT` stores `double`. Integer producers must never round-trip through `double`.
 - STRING/BYTES payloads are borrowed `cserde_slice` views. CSerde never allocates, copies, frees, or assumes NUL termination for public token payloads.
@@ -26,7 +27,7 @@
 - Reader failed/done states are sticky. Writer failed/finished states are terminal. Caller precondition errors must not invoke providers or poison an otherwise usable READY facade.
 - `cserde_reader_skip_value` consumes exactly one canonical value, permits arbitrary canonical MAP keys, detects malformed nesting, and performs no heap allocation.
 - D1 does not add parser code, binding policy, CBind, container construction, schema policy, allocator registry, DOM, or CFlow integration.
-- Test-only recording support is not installed/exported and performs no heap allocation.
+- Recording support exists only below `BUILD_TESTS`, is not installed/exported, is reusable by later in-tree `cbind/tests`, and performs no heap allocation.
 - Exact final head must pass fresh Linux and Windows release configure/build/test with `cserde_*` included in the existing conformance workflow.
 
 ---
@@ -37,17 +38,17 @@ Production files after D1:
 
 ```text
 cserde/
-  CMakeLists.txt                    target/export/install/test wiring
+  CMakeLists.txt
   include/cserde/
-    cserde.h                        umbrella public include only
-    status.h                        cserde_status
-    token.h                         canonical token/slice model + validation API
-    reader.h                        pull reader provider ABI + facade API
-    writer.h                        push writer provider ABI + facade API + byte sink typedef
+    cserde.h
+    status.h
+    token.h
+    reader.h
+    writer.h
   src/
-    token.c                         shallow token/view validation
-    reader.c                        reader ABI/state facade + skip_value walker
-    writer.c                        writer ABI/state facade
+    token.c
+    reader.c
+    writer.c
 ```
 
 Test files after D1:
@@ -55,26 +56,26 @@ Test files after D1:
 ```text
 cserde/tests/
   CMakeLists.txt
-  cserde_token_test.c               token/status/lifetime contract
-  cserde_reader_test.c              reader ABI/state/callback/skip contract
-  cserde_writer_test.c              writer ABI/state/callback contract
-  cserde_recording_test.c           recording provider conformance
-  cserde_header_cpp_test.cpp        C++17 standard-layout/public include contract
+  cserde_token_test.c
+  cserde_reader_test.c
+  cserde_writer_test.c
+  cserde_recording_test.c
+  cserde_header_cpp_test.cpp
   support/
-    recording.h                     test-only fixed-array provider API
-    recording.c                     test-only reader/writer callbacks
+    recording.h
+    recording.c
 ```
 
 Repository files modified:
 
 ```text
-CMakeLists.txt                       add_subdirectory(cserde)
-.github/workflows/cmeta.yml          trigger on cserde/** and execute cserde_* tests
+CMakeLists.txt
+.github/workflows/cmeta.yml
 ```
 
 ---
 
-### Task 1: Module skeleton, status model, and canonical token validation
+### Task 1: Module skeleton, status model, canonical token validation, and CI trigger
 
 **Files:**
 - Create: `cserde/CMakeLists.txt`
@@ -148,9 +149,9 @@ bool cserde_view_lifetime_valid(cserde_view_lifetime lifetime);
 bool cserde_token_valid(const cserde_token *token);
 ```
 
-- [ ] **Step 1: Add the test/build scaffold and public declarations, but no validation implementation**
+- [ ] **Step 1: Add public declarations and build/test scaffold, leaving validation symbols undefined**
 
-Create `cserde/CMakeLists.txt` with the final library ownership but leave `src/token.c` declaration-only/empty enough that validation symbols remain undefined for the first RED:
+`cserde/CMakeLists.txt`:
 
 ```cmake
 set(TARGET_NAME turbo_cserde)
@@ -186,7 +187,7 @@ if(BUILD_TESTS)
 endif()
 ```
 
-Modify the root `CMakeLists.txt` immediately after `add_subdirectory(cmeta)`:
+Root `CMakeLists.txt`:
 
 ```cmake
 add_subdirectory(cmeta)
@@ -194,7 +195,7 @@ add_subdirectory(cserde)
 add_subdirectory(cflow)
 ```
 
-Create `cserde/tests/CMakeLists.txt` initially with:
+Initial `cserde/tests/CMakeLists.txt`:
 
 ```cmake
 cmake_add_test(cserde_token_test
@@ -208,23 +209,41 @@ set_target_properties(cserde_token_test PROPERTIES
   C_EXTENSIONS OFF)
 ```
 
-Modify `.github/workflows/cmeta.yml` in both pull-request and push path filters to add:
+`token.h` must wrap the three function declarations in C linkage guards:
+
+```c
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+bool cserde_token_kind_valid(cserde_token_kind kind);
+bool cserde_view_lifetime_valid(cserde_view_lifetime lifetime);
+bool cserde_token_valid(const cserde_token *token);
+
+#ifdef __cplusplus
+}
+#endif
+```
+
+`src/token.c` exists so configure succeeds but contains no function definitions for the initial RED.
+
+Modify `.github/workflows/cmeta.yml` in both pull-request and push path filters:
 
 ```yaml
       - "cserde/**"
 ```
 
-and change both test regexes to:
+Change both selected-test regexes to:
 
 ```text
 ^(cmeta_|cserde_|cflow_|turbostl_)
 ```
 
-so every later D1 commit is exercised by the existing Linux/Windows release gate.
+and rename the Linux test step to `Test CMeta, CSerde, CFlow, and TurboSTL`.
 
-- [ ] **Step 2: Write the token validation tests before function bodies**
+- [ ] **Step 2: Write token RED tests**
 
-`cserde/tests/cserde_token_test.c` must cover all token kinds and both slice lifetimes, including these concrete cases:
+`cserde/tests/cserde_token_test.c` must include the following behaviors:
 
 ```c
 #include <cserde/token.h>
@@ -236,10 +255,11 @@ spec("CSerde canonical tokens") {
         for (kind = CSERDE_NULL; kind <= CSERDE_MAP_END; ++kind)
             check_true(cserde_token_kind_valid((cserde_token_kind)kind));
         check_false(cserde_token_kind_valid((cserde_token_kind)-1));
-        check_false(cserde_token_kind_valid((cserde_token_kind)(CSERDE_MAP_END + 1)));
+        check_false(cserde_token_kind_valid(
+            (cserde_token_kind)(CSERDE_MAP_END + 1)));
     }
 
-    it("accepts zero-length borrowed slices with null data") {
+    it("accepts zero length borrowed slices with null data") {
         cserde_token string_token = {
             .kind = CSERDE_STRING,
             .value.slice = { NULL, 0u, CSERDE_VIEW_TRANSIENT }
@@ -252,7 +272,7 @@ spec("CSerde canonical tokens") {
         check_true(cserde_token_valid(&bytes_token));
     }
 
-    it("rejects non-empty slices without backing data") {
+    it("rejects nonempty slices without backing data") {
         cserde_token token = {
             .kind = CSERDE_STRING,
             .value.slice = { NULL, 1u, CSERDE_VIEW_STABLE }
@@ -268,34 +288,32 @@ spec("CSerde canonical tokens") {
         };
         check_false(cserde_token_valid(&token));
     }
-
-    it("does not interpret scalar payload contents") {
-        cserde_token floating = { .kind = CSERDE_FLOAT };
-        floating.value.floating = 0.0 / 0.0;
-        check_true(cserde_token_valid(&floating));
-    }
 }
 ```
 
-Also assert `cserde_token_valid(NULL) == false`, both legal lifetime values, and invalid lifetime values.
+Also assert `cserde_token_valid(NULL) == false`, both legal lifetime values are accepted, invalid lifetime values are rejected, and every non-slice token kind is shallow-valid regardless of inactive union bytes.
 
-- [ ] **Step 3: Run the first RED**
-
-Run on Linux/local compatible toolchain:
+- [ ] **Step 3: Run first RED and commit it**
 
 ```bash
 cmake --preset release-linux-ninja
 cmake --build --preset build-default-linux --target cserde_token_test
 ```
 
-Expected: configure succeeds; link fails on one or more of `cserde_token_kind_valid`, `cserde_view_lifetime_valid`, `cserde_token_valid`. The failure must not be a missing CMake target, include path, or unrelated repository error.
-
-Commit this RED contract:
+Expected: configure succeeds; link fails only on the three validation functions.
 
 ```bash
 git add CMakeLists.txt .github/workflows/cmeta.yml cserde
- git commit -m "test(cserde): define canonical token contract"
+git commit -m "test(cserde): define canonical token contract"
 ```
+
+Immediately open a **draft PR** from `feat/cserde-canonical-protocol` to `master` titled:
+
+```text
+feat(cserde): add canonical token protocol
+```
+
+The first PR workflow is expected RED at this exact test-only/API-contract head; record that run in the PR body as TDD evidence. Keep the PR draft through Tasks 1–6.
 
 - [ ] **Step 4: Implement only shallow token validation**
 
@@ -324,30 +342,22 @@ bool cserde_token_valid(const cserde_token *token) {
 }
 ```
 
-`cserde/include/cserde/cserde.h` at this stage includes `status.h` and `token.h`; reader/writer includes are appended in their tasks.
+`cserde.h` includes `status.h` and `token.h` at this task.
 
 - [ ] **Step 5: Run GREEN and dependency audit**
 
 ```bash
-cmake --build --preset build-default-linux --target cserde_token_test
+cmake --build --preset build-default-linux --target cserde_token_test turbo_cserde
 ctest --preset test-release-linux -R '^cserde_token_test$' --output-on-failure
 ```
 
-Expected: PASS.
-
-Check CSerde has no target dependency:
-
-```bash
-cmake --build --preset build-default-linux --target turbo_cserde
-```
-
-Then inspect `cserde/CMakeLists.txt`: it must contain no `target_link_libraries(turbo_cserde ... CMeta/CFlow/TurboSTL/Core ...)` entry.
+Expected: PASS. `cserde/CMakeLists.txt` contains no production `target_link_libraries` dependency on CMeta/CFlow/TurboSTL/Core.
 
 - [ ] **Step 6: Commit Task 1 GREEN**
 
 ```bash
 git add cserde
- git commit -m "feat(cserde): add canonical token model"
+git commit -m "feat(cserde): add canonical token model"
 ```
 
 ---
@@ -363,7 +373,7 @@ git add cserde
 - Modify: `cserde/tests/CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: `cserde_status`, `cserde_token`, `cserde_token_valid` from Task 1.
+- Consumes: Task 1 status/token API.
 - Produces:
 
 ```c
@@ -407,13 +417,11 @@ cserde_status cserde_reader_skip_value(
     size_t max_depth);
 ```
 
-`cserde_reader_skip_value` is declared now but implemented only in Task 3.
+`reader.h` wraps all callable declarations in `extern "C"` guards. `skip_value` is declared now and implemented in Task 3.
 
-- [ ] **Step 1: Add reader declarations and RED tests, without reader function bodies**
+- [ ] **Step 1: Add reader declarations and RED tests without reader function bodies**
 
-Add `reader.h`, include it from `cserde.h`, register `cserde_reader_test`, but do not yet add `src/reader.c` to `turbo_cserde`.
-
-Use a fake provider whose context records call count and returns a programmed status/token:
+Fake provider:
 
 ```c
 typedef struct fake_reader_context {
@@ -431,49 +439,50 @@ static cserde_status fake_reader_next(void *context, cserde_token *out) {
 }
 ```
 
-Required test cases in `cserde_reader_test.c`:
+Required test cases:
 
-1. exact v1 ops prefix through `.next` initializes successfully;
-2. prefix one byte short is rejected without mutating zero reader;
+1. exact v1 prefix through `.next` initializes successfully;
+2. prefix one byte short is rejected and zero reader remains byte-for-byte zero;
 3. wrong ABI is rejected without mutation;
 4. NULL `.next` is rejected without mutation;
-5. NULL context is accepted when callback supports it;
-6. `next` OK commits only a valid temporary token into caller `out`;
-7. invalid callback token -> `INVALID_TOKEN`, FAILED/sticky, caller `out` unchanged;
-8. callback DONE -> DONE and no second provider invocation on repeated `next`;
+5. NULL context is accepted when provider supports it;
+6. OK callback commits a valid temporary token to caller output;
+7. OK callback with invalid token -> `INVALID_TOKEN`, FAILED/sticky, caller output unchanged;
+8. DONE -> DONE/sticky and repeated next does not call provider;
 9. each allowed reader callback error -> FAILED/sticky;
-10. a disallowed known status such as `CSERDE_SINK_ERROR` -> `CALLBACK_ERROR`;
-11. arbitrary unknown enum status -> `CALLBACK_ERROR`;
-12. `reader == NULL` / `out == NULL` returns `INVALID_ARGUMENT` without advancing a READY reader;
-13. calling `next` on ZERO returns `INVALID_STATE` without provider invocation.
+10. `CSERDE_SINK_ERROR` from reader callback -> `CALLBACK_ERROR`;
+11. unknown enum status -> `CALLBACK_ERROR`;
+12. NULL reader/output caller preconditions do not advance or poison READY reader;
+13. next on ZERO -> `INVALID_STATE` without callback.
 
-Use a sentinel output to prove non-OK does not overwrite it:
+Sentinel-output proof:
 
 ```c
-cserde_token out = { .kind = CSERDE_UINT, .value.uint = UINT64_C(0x1234) };
+cserde_token out = {
+    .kind = CSERDE_UINT,
+    .value.uint = UINT64_C(0x1234)
+};
 check_equal(cserde_reader_next(&reader, &out), CSERDE_SOURCE_ERROR);
 check_true(out.kind == CSERDE_UINT);
 check_equal(out.value.uint, UINT64_C(0x1234));
 ```
 
-- [ ] **Step 2: Run RED**
+- [ ] **Step 2: Run and commit reader RED**
 
 ```bash
 cmake --build --preset build-default-linux --target cserde_reader_test
 ```
 
-Expected: link failure for `cserde_reader_init`/`cserde_reader_next`, not compile/configure failure.
-
-Commit RED:
+Expected: link failure only for reader facade symbols.
 
 ```bash
 git add cserde/include/cserde cserde/tests
- git commit -m "test(cserde): define pull reader contract"
+git commit -m "test(cserde): define pull reader contract"
 ```
 
-- [ ] **Step 3: Implement prefix validation and reader facade**
+- [ ] **Step 3: Implement append-safe reader ABI and state facade**
 
-Add `src/reader.c` to the library in `cserde/CMakeLists.txt` and implement with a field-end prefix helper:
+Add `src/reader.c` to `turbo_cserde` and use a field-end prefix check:
 
 ```c
 #define CSERDE_FIELD_END(type, field) \
@@ -487,13 +496,9 @@ static bool cserde_reader_ops_valid(const cserde_reader_ops *ops) {
 }
 ```
 
-Do not require `ops->struct_size >= sizeof(cserde_reader_ops)`.
-
-Reader initialization must construct a temporary facade and assign it only after all checks:
+Initialization must validate zero state first and commit a temporary facade only after all validation succeeds:
 
 ```c
-cserde_reader next_reader;
-
 if (reader == NULL || ops == NULL)
     return CSERDE_INVALID_ARGUMENT;
 if (reader->ops != NULL || reader->context != NULL ||
@@ -501,31 +506,24 @@ if (reader->ops != NULL || reader->context != NULL ||
     return CSERDE_INVALID_STATE;
 if (!cserde_reader_ops_valid(ops))
     return CSERDE_INVALID_ARGUMENT;
-
-next_reader.ops = ops;
-next_reader.context = context;
-next_reader.state = CSERDE_READER_READY;
-next_reader.status = CSERDE_OK;
-*reader = next_reader;
-return CSERDE_OK;
 ```
 
-`cserde_reader_next` must call the provider with a local temporary token, validate it, and copy to caller output only on success. Allowed callback errors are forwarded into sticky FAILED state; DONE becomes sticky DONE; every other callback result becomes `CALLBACK_ERROR`.
+`cserde_reader_next` invokes provider with a local `cserde_token temporary`; only callback `OK` plus `cserde_token_valid(&temporary)` copies to caller `out`. Allowed callback errors become FAILED/sticky. DONE becomes DONE/sticky. Every disallowed/unknown callback status becomes `CALLBACK_ERROR`/FAILED.
 
-- [ ] **Step 4: Run reader GREEN plus Task 1 regression**
+- [ ] **Step 4: Run reader GREEN plus token regression**
 
 ```bash
 cmake --build --preset build-default-linux --target cserde_token_test cserde_reader_test
 ctest --preset test-release-linux -R '^(cserde_token_test|cserde_reader_test)$' --output-on-failure
 ```
 
-Expected: both PASS.
+Expected: PASS.
 
 - [ ] **Step 5: Commit Task 2 GREEN**
 
 ```bash
 git add cserde
- git commit -m "feat(cserde): add versioned pull reader"
+git commit -m "feat(cserde): add versioned pull reader"
 ```
 
 ---
@@ -537,12 +535,10 @@ git add cserde
 - Modify: `cserde/tests/cserde_reader_test.c`
 
 **Interfaces:**
-- Consumes: `cserde_reader_next` and token grammar from Tasks 1–2.
-- Produces: working `cserde_reader_skip_value(cserde_reader *, size_t max_depth)` with no allocation and exact one-value consumption.
+- Consumes: `cserde_reader_next` and Task 1 token grammar.
+- Produces: `cserde_reader_skip_value(cserde_reader *, size_t max_depth)` with exact one-value consumption and no allocation.
 
-- [ ] **Step 1: Add RED tests for scalar, nested ARRAY, arbitrary-key MAP, malformed structure, and depth**
-
-Use a fixed token-array provider in the test file for this RED cycle:
+- [ ] **Step 1: Add RED cases using a fixed sequence provider**
 
 ```c
 typedef struct sequence_reader_context {
@@ -560,67 +556,58 @@ static cserde_status sequence_reader_next(void *context, cserde_token *out) {
 }
 ```
 
-Required concrete sequences:
+Test these exact token sequences:
 
 ```text
-scalar:
-  SINT(7), UINT(9)
-  skip once -> next returns UINT(9)
+SINT(7), UINT(9)
+  skip once -> next is UINT(9)
 
-nested array:
-  ARRAY_BEGIN, SINT(1), ARRAY_BEGIN, BOOL(true), ARRAY_END, ARRAY_END, UINT(9)
-  skip(max_depth=2) -> next UINT(9)
+ARRAY_BEGIN, SINT(1), ARRAY_BEGIN, BOOL(true), ARRAY_END, ARRAY_END, UINT(9)
+  skip(max_depth=2) -> next is UINT(9)
 
-arbitrary MAP key:
-  MAP_BEGIN, ARRAY_BEGIN, SINT(1), ARRAY_END, STRING("value"), MAP_END, NULL
-  skip(max_depth=2) -> next NULL
+MAP_BEGIN, ARRAY_BEGIN, SINT(1), ARRAY_END, STRING("value"), MAP_END, NULL
+  skip(max_depth=2) -> next is NULL
 
-mismatched end:
-  ARRAY_BEGIN, SINT(1), MAP_END
+ARRAY_BEGIN, SINT(1), MAP_END
   -> INVALID_TOKEN + FAILED
 
-orphan map key:
-  MAP_BEGIN, STRING("key"), MAP_END
+MAP_BEGIN, STRING("key"), MAP_END
   -> INVALID_TOKEN + FAILED
 
-initial DONE:
-  empty stream
+empty stream
   -> UNEXPECTED_END + FAILED
 
-unterminated container:
-  ARRAY_BEGIN, SINT(1), then DONE
+ARRAY_BEGIN, SINT(1), then DONE
   -> UNEXPECTED_END + FAILED
 
-depth:
-  ARRAY_BEGIN, ARRAY_BEGIN, NULL, ARRAY_END, ARRAY_END
+ARRAY_BEGIN, ARRAY_BEGIN, NULL, ARRAY_END, ARRAY_END
   max_depth=1 -> LIMIT_EXCEEDED + FAILED
   max_depth=2 -> OK
 
-zero depth:
-  scalar with max_depth=0 -> OK
-  ARRAY_BEGIN with max_depth=0 -> LIMIT_EXCEEDED
+scalar with max_depth=0
+  -> OK
+ARRAY_BEGIN with max_depth=0
+  -> LIMIT_EXCEEDED + FAILED
 ```
 
-For every failed skip, call `cserde_reader_next` afterward and assert the same sticky failure without another provider call.
+After every failed skip, verify another `cserde_reader_next` returns the same sticky error with no provider call.
 
-- [ ] **Step 2: Run RED**
+- [ ] **Step 2: Run and commit skip RED**
 
 ```bash
 cmake --build --preset build-default-linux --target cserde_reader_test
 ```
 
-Expected: link failure on `cserde_reader_skip_value` if still undefined, or failing assertions if a temporary stub exists. Do not implement the walker before observing this RED.
-
-Commit RED:
+Expected: undefined `cserde_reader_skip_value` or failing skip assertions.
 
 ```bash
 git add cserde/tests/cserde_reader_test.c
- git commit -m "test(cserde): define nested skip semantics"
+git commit -m "test(cserde): define nested skip semantics"
 ```
 
-- [ ] **Step 3: Implement one-value grammar walking in `reader.c`**
+- [ ] **Step 3: Implement one-value grammar walking**
 
-Use internal helpers that accept an already-read token so ARRAY/MAP END tokens are interpreted by their owning container loop rather than requiring pushback:
+Use an already-read-token helper so container END markers are consumed by their owning loop:
 
 ```c
 static cserde_status cserde_reader_skip_token(
@@ -634,7 +621,7 @@ static cserde_status cserde_reader_take_token(
     cserde_token *token);
 ```
 
-`take_token` wraps `cserde_reader_next`; when it observes `CSERDE_DONE` while a complete value is required, overwrite terminal state with:
+`take_token` maps DONE encountered while a complete value is required to:
 
 ```c
 reader->state = CSERDE_READER_FAILED;
@@ -642,11 +629,11 @@ reader->status = CSERDE_UNEXPECTED_END;
 return CSERDE_UNEXPECTED_END;
 ```
 
-For ARRAY_BEGIN:
+When handling an ARRAY/MAP begin token, reject if `depth >= max_depth`. Root begins are called with `depth=0`, so `max_depth=1` allows one container level and a nested begin fails. Scalars do not consume depth budget.
+
+ARRAY loop:
 
 ```c
-if (depth >= max_depth)
-    return cserde_reader_fail(reader, CSERDE_LIMIT_EXCEEDED);
 for (;;) {
     cserde_token child;
     cserde_status status = cserde_reader_take_token(reader, &child);
@@ -662,24 +649,20 @@ for (;;) {
 }
 ```
 
-For MAP_BEGIN, read a possible key/`MAP_END`, recursively consume the key value, then require and recursively consume exactly one value. Encountering ARRAY_END/MAP_END in the value position is `INVALID_TOKEN`. Canonical map keys remain any valid canonical value.
+MAP loop must read a possible key/`MAP_END`, recursively consume the key value, then require and recursively consume exactly one value. An END token in value position is `INVALID_TOKEN`. Canonical map keys may themselves be arrays/maps.
 
-Top-level call reads one token and calls `skip_token(..., depth=0, max_depth)`. END as the first token is `INVALID_TOKEN`.
+Top-level END is `INVALID_TOKEN`. Any failure from skip poisons reader because source position may already have advanced.
 
-- [ ] **Step 4: Run all reader tests GREEN**
+- [ ] **Step 4: Run reader GREEN and commit**
 
 ```bash
 cmake --build --preset build-default-linux --target cserde_reader_test
 ctest --preset test-release-linux -R '^cserde_reader_test$' --output-on-failure
 ```
 
-Expected: PASS with exact one-value consumption and sticky failures.
-
-- [ ] **Step 5: Commit Task 3 GREEN**
-
 ```bash
 git add cserde/src/reader.c cserde/tests/cserde_reader_test.c
- git commit -m "feat(cserde): add bounded value skipping"
+git commit -m "feat(cserde): add bounded value skipping"
 ```
 
 ---
@@ -695,7 +678,7 @@ git add cserde/src/reader.c cserde/tests/cserde_reader_test.c
 - Modify: `cserde/tests/CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: Task 1 token validation/status model.
+- Consumes: Task 1 status/token API.
 - Produces:
 
 ```c
@@ -745,9 +728,9 @@ cserde_status cserde_writer_write(
 cserde_status cserde_writer_finish(cserde_writer *writer);
 ```
 
-D1 writer intentionally has no `abort` and no canonical nesting stack.
+`writer.h` wraps callable declarations and callback typedefs in C linkage guards. D1 writer has no abort and no canonical nesting stack.
 
-- [ ] **Step 1: Add writer declarations and RED tests before implementation**
+- [ ] **Step 1: Add writer declarations and RED tests before `writer.c`**
 
 Fake provider:
 
@@ -759,92 +742,69 @@ typedef struct fake_writer_context {
     size_t finish_calls;
     cserde_token observed;
 } fake_writer_context;
-
-static cserde_status fake_writer_write(void *context,
-                                       const cserde_token *token) {
-    fake_writer_context *state = (fake_writer_context *)context;
-    ++state->write_calls;
-    state->observed = *token;
-    return state->write_status;
-}
-
-static cserde_status fake_writer_finish(void *context) {
-    fake_writer_context *state = (fake_writer_context *)context;
-    ++state->finish_calls;
-    return state->finish_status;
-}
 ```
 
 Required tests:
 
-1. exact ops prefix through `.finish` initializes;
+1. exact prefix through `.finish` initializes;
 2. one-byte-short prefix, bad ABI, NULL write, NULL finish reject without mutating zero writer;
-3. valid token is forwarded exactly once;
-4. invalid STRING/BYTES token returns `INVALID_TOKEN`, does not call provider, and leaves READY writer usable;
-5. NULL writer/token preconditions do not call provider and do not poison READY writer;
+3. valid token forwards exactly once;
+4. invalid STRING/BYTES token returns `INVALID_TOKEN`, does not call provider, leaves writer READY;
+5. NULL writer/token preconditions do not call provider or poison READY writer;
 6. allowed write callback errors (`VALUE_OUT_OF_RANGE`, `LIMIT_EXCEEDED`, `UNSUPPORTED`, `SINK_ERROR`) become FAILED/sticky;
-7. disallowed known status (`SOURCE_ERROR` or `DONE`) becomes `CALLBACK_ERROR`;
-8. unknown status becomes `CALLBACK_ERROR`;
-9. successful `finish` -> FINISHED and exactly one finish callback;
-10. repeated finish and write-after-finish return `INVALID_STATE` without callbacks;
-11. failed finish is FAILED/sticky;
-12. byte sink typedef compiles with a function matching `(void *, const void *, size_t)`.
+7. `SOURCE_ERROR`, `DONE`, and unknown callback status become `CALLBACK_ERROR`;
+8. successful finish -> FINISHED and one callback;
+9. repeated finish and write-after-finish -> `INVALID_STATE` without callback;
+10. failed finish -> FAILED/sticky;
+11. a function matching `(void *, const void *, size_t)` assigns to `cserde_byte_sink_fn` in C without cast.
 
-- [ ] **Step 2: Run writer RED**
+- [ ] **Step 2: Run and commit writer RED**
 
 ```bash
 cmake --build --preset build-default-linux --target cserde_writer_test
 ```
 
-Expected: link failure for writer facade symbols.
-
-Commit RED:
+Expected: link failure only for writer facade symbols.
 
 ```bash
 git add cserde/include/cserde cserde/tests
- git commit -m "test(cserde): define push writer contract"
+git commit -m "test(cserde): define push writer contract"
 ```
 
 - [ ] **Step 3: Implement writer ABI/state facade**
 
-Add `src/writer.c` to `turbo_cserde`. Validate prefix through `.finish` using the same field-end rule as reader. Init uses temporary-then-commit semantics.
+Add `src/writer.c` to `turbo_cserde`. Validate ops prefix through `.finish` using the same field-end rule. Init uses temporary-then-commit semantics.
 
-`cserde_writer_write` flow must be exactly:
+Write flow:
 
 ```text
 validate caller pointers/state
-  -> shallow cserde_token_valid
+  -> validate token shallowly
   -> call provider write
   -> OK: remain READY
   -> allowed provider error: FAILED/sticky
-  -> all other callback status: CALLBACK_ERROR/FAILED
+  -> other callback result: CALLBACK_ERROR/FAILED
 ```
 
-An invalid caller token is not a stream/provider failure and therefore leaves writer READY.
+Invalid caller token is not a provider-stream failure and leaves writer READY. `finish` is legal only from READY; callback OK -> FINISHED, allowed writer callback error -> FAILED, other status -> CALLBACK_ERROR/FAILED.
 
-`cserde_writer_finish` calls provider only from READY; callback OK transitions to FINISHED, accepted errors to FAILED, all other results to CALLBACK_ERROR/FAILED.
+Do not add container depth, map parity, abort, allocation, or serialization logic.
 
-Do not add container depth, map parity, abort, allocation, or serialization logic in `writer.c`.
-
-- [ ] **Step 4: Run writer GREEN plus CSerde regression suite**
+- [ ] **Step 4: Run writer GREEN and commit**
 
 ```bash
 cmake --build --preset build-default-linux --target cserde_token_test cserde_reader_test cserde_writer_test
 ctest --preset test-release-linux -R '^cserde_' --output-on-failure
 ```
 
-Expected: all current CSerde tests PASS.
-
-- [ ] **Step 5: Commit Task 4 GREEN**
-
 ```bash
 git add cserde
- git commit -m "feat(cserde): add versioned push writer"
+git commit -m "feat(cserde): add versioned push writer"
 ```
 
 ---
 
-### Task 5: Test-only recording providers and C++17 public-header contract
+### Task 5: Reusable test-only recording providers and C++17 public linkage
 
 **Files:**
 - Create: `cserde/tests/support/recording.h`
@@ -854,8 +814,8 @@ git add cserde
 - Modify: `cserde/tests/CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: public reader/writer/token API.
-- Produces test-only support, not installed/exported:
+- Consumes: public CSerde API.
+- Produces test-only, in-tree reusable support:
 
 ```c
 typedef struct cserde_recording_reader_context {
@@ -875,21 +835,31 @@ extern const cserde_reader_ops cserde_recording_reader_ops;
 extern const cserde_writer_ops cserde_recording_writer_ops;
 ```
 
-Provider semantics:
+Recording reader returns array tokens then DONE. Recording writer shallow-copies a token while capacity remains, otherwise returns `LIMIT_EXCEEDED`. STRING/BYTES payload bytes remain caller-owned.
 
-```text
-recording reader: token[index++] -> OK; index==count -> DONE
-recording writer: count<capacity -> shallow-copy token + OK; else LIMIT_EXCEEDED
-recording finish: finished=false -> set true + OK; repeated direct provider finish is INVALID_STATE only inside support, though public facade prevents the second call
+- [ ] **Step 1: Define a BUILD_TESTS-only reusable support target and write RED recording tests**
+
+In `cserde/tests/CMakeLists.txt` add:
+
+```cmake
+add_library(cserde_recording_support STATIC support/recording.c)
+target_link_libraries(cserde_recording_support PUBLIC TurboUtils::CSerde)
+target_include_directories(
+  cserde_recording_support
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/support)
+cmake_config_target(cserde_recording_support FOLDER "cserde/tests")
+
+cmake_add_test(cserde_recording_test
+  SOURCES cserde_recording_test.c
+  LIBS cserde_recording_support TurboUtils::TinyTest
+  FOLDER "cserde/tests")
 ```
 
-STRING/BYTES remain shallow borrowed slices; support never allocates or copies payload bytes.
+Because `cserde/tests` itself is entered only under `if(BUILD_TESTS)`, this target cannot enter install/export production surface. Later `cbind/tests` in the same build may link `cserde_recording_support` directly.
 
-- [ ] **Step 1: Add recording tests before support implementation**
+For the RED commit, `recording.h` declares the contexts/ops but `recording.c` does not yet define them.
 
-Register `cserde_recording_test` with `support/recording.c` as a source only after the RED proof. First write the test and compile it against a declaration-only `recording.h`.
-
-Concrete tests:
+Concrete input:
 
 ```c
 static const unsigned char name[] = "alice";
@@ -902,36 +872,26 @@ static const cserde_token input[] = {
 };
 ```
 
-Verify:
+Verify reader emits four tokens then DONE; capacity-4 writer records four shallow tokens and finishes; recorded STRING pointer equals `name`; capacity-3 writer fails fourth write with `LIMIT_EXCEEDED`, count remains 3, facade becomes FAILED.
 
-1. reader emits exactly all four tokens then DONE;
-2. writer with capacity 4 records all four shallow tokens and finish succeeds;
-3. recorded STRING slice points at `name` rather than an allocated copy;
-4. writer with capacity 3 fails fourth write with `LIMIT_EXCEEDED`, facade becomes FAILED, count remains 3;
-5. no support API exposes allocation/free or ownership transfer.
-
-- [ ] **Step 2: Run recording RED**
-
-Compile the target before `recording.c` definitions exist.
+- [ ] **Step 2: Run and commit recording RED**
 
 ```bash
 cmake --build --preset build-default-linux --target cserde_recording_test
 ```
 
-Expected: link failure on `cserde_recording_reader_ops` / `cserde_recording_writer_ops`.
-
-Commit RED:
+Expected: link failure on recording ops symbols.
 
 ```bash
 git add cserde/tests
- git commit -m "test(cserde): define recording provider harness"
+git commit -m "test(cserde): define recording provider harness"
 ```
 
-- [ ] **Step 3: Implement recording providers with fixed caller-owned arrays**
+- [ ] **Step 3: Implement fixed-array recording providers**
 
-`recording.c` must use only index/capacity checks and shallow token assignment. No `malloc`, `calloc`, `realloc`, `free`, `strdup`, TurboSTL, or Core utility calls.
+No `malloc`, `calloc`, `realloc`, `free`, `strdup`, TurboSTL, or Core calls.
 
-Set ops prefixes to exact v1 field ends, not blindly to a future larger struct contract:
+Use exact v1 prefix sizes:
 
 ```c
 const cserde_reader_ops cserde_recording_reader_ops = {
@@ -942,11 +902,11 @@ const cserde_reader_ops cserde_recording_reader_ops = {
 };
 ```
 
-Use analogous `.finish` field-end sizing for writer ops.
+Writer ops uses the field end through `.finish`. Direct support callbacks use only context validation, index/capacity checks, shallow assignment, and the callback statuses allowed by the public facade.
 
-- [ ] **Step 4: Add C++17 public-header conformance test**
+- [ ] **Step 4: Add C++17 compile-and-link conformance**
 
-`cserde_header_cpp_test.cpp` includes only:
+`cserde_header_cpp_test.cpp`:
 
 ```cpp
 #include <cserde/cserde.h>
@@ -954,11 +914,7 @@ Use analogous `.finish` field-end sizing for writer ops.
 
 #include <cstddef>
 #include <type_traits>
-```
 
-Compile-time assertions:
-
-```cpp
 static_assert(std::is_standard_layout<cserde_slice>::value, "slice ABI");
 static_assert(std::is_standard_layout<cserde_token>::value, "token ABI");
 static_assert(std::is_standard_layout<cserde_reader_ops>::value, "reader ops ABI");
@@ -969,18 +925,23 @@ static_assert(CSERDE_READER_OPS_ABI_VERSION == 1u, "reader ABI version");
 static_assert(CSERDE_WRITER_OPS_ABI_VERSION == 1u, "writer ABI version");
 ```
 
-Runtime TinyTest case constructs prefix-sized reader/writer ops and verifies both init calls succeed from C++17.
+Runtime TinyTest must call `cserde_token_valid`, `cserde_reader_init`, `cserde_reader_next`, `cserde_writer_init`, `cserde_writer_write`, and `cserde_writer_finish` from C++17. This is a link test for the `extern "C"` contract, not just an include test.
 
-Register target with:
+Register:
 
 ```cmake
+cmake_add_test(cserde_header_cpp_test
+  SOURCES cserde_header_cpp_test.cpp
+  LIBS TurboUtils::CSerde TurboUtils::TinyTest
+  FOLDER "cserde/tests")
+
 set_target_properties(cserde_header_cpp_test PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON
   CXX_EXTENSIONS OFF)
 ```
 
-- [ ] **Step 5: Run recording and C++ GREEN**
+- [ ] **Step 5: Run all CSerde tests GREEN**
 
 ```bash
 cmake --build --preset build-default-linux --target cserde_recording_test cserde_header_cpp_test
@@ -993,141 +954,151 @@ Expected: all CSerde tests PASS.
 
 ```bash
 git add cserde/tests
- git commit -m "test(cserde): add recording and C++ conformance"
+git commit -m "test(cserde): add recording and C++ conformance"
 ```
 
 ---
 
-### Task 6: Contract hardening, full exact-head verification, and PR readiness
+### Task 6: Review hardening, fresh exact-head CI, and PR readiness
 
 **Files:**
-- Modify only files identified by review failures; no new feature scope.
-- Verify: all D1 files, `CMakeLists.txt`, `.github/workflows/cmeta.yml`.
+- Modify only files for concrete review defects; no new feature scope.
+- Verify: `cserde/**`, `CMakeLists.txt`, `.github/workflows/cmeta.yml`.
 
 **Interfaces:**
-- Consumes: complete D1 surface from Tasks 1–5.
-- Produces: review-clean exact head suitable for merge; no CBind or format adapter code.
+- Consumes: complete D1 surface.
+- Produces: review-clean exact head suitable for merge; still no CBind or format-adapter production code.
 
-- [ ] **Step 1: Run static repository-scope checks**
-
-Search production `cserde` for forbidden dependencies/implementation creep:
+- [ ] **Step 1: Audit dependency and scope boundaries**
 
 ```bash
-rg -n "cmeta|cflow|turbostl|turbo_parser|TurboParser|json|yaml|xml|csv|malloc|calloc|realloc|free" cserde/include cserde/src cserde/CMakeLists.txt
+rg -n "cmeta|cflow|turbostl|turbo_parser|TurboParser|malloc|calloc|realloc|free" \
+  cserde/include cserde/src cserde/CMakeLists.txt
 ```
 
-Expected: no dependency includes/links, parser implementation, or allocation calls. Mentions in comments should be removed unless they state a necessary contract; production code must have none of those dependencies.
+Expected: no production dependency/allocation hits.
 
-Check workflow wiring:
+Search format names separately:
 
 ```bash
-rg -n "cserde" CMakeLists.txt .github/workflows/cmeta.yml cserde/CMakeLists.txt cserde/tests/CMakeLists.txt
+rg -n "json|yaml|xml|csv" cserde/include cserde/src
 ```
 
-Expected: root subdirectory, workflow path filters/test regex, module target, and test targets are present.
+Expected: no parser/serializer implementation. A documentation comment may name a format only if it explains a format-neutral boundary; remove incidental references.
 
-- [ ] **Step 2: Run format/diff checks**
+Workflow/module wiring:
 
 ```bash
+rg -n "cserde" CMakeLists.txt .github/workflows/cmeta.yml \
+  cserde/CMakeLists.txt cserde/tests/CMakeLists.txt
+```
+
+Expected: root subdirectory, workflow path filters/test regex, module target, tests, and recording support target all present.
+
+- [ ] **Step 2: Run formatting and diff checks**
+
+```bash
+clang-format --dry-run --Werror \
+  cserde/include/cserde/*.h \
+  cserde/src/*.c \
+  cserde/tests/*.c \
+  cserde/tests/*.cpp \
+  cserde/tests/support/*.c \
+  cserde/tests/support/*.h
+
 git diff --check master...HEAD
 ```
 
-If repository clang-format gate is available, run it only over changed C/C++ files using the repository `.clang-format`; fix formatting without semantic changes.
+Expected: both commands succeed.
 
 - [ ] **Step 3: Fresh Linux release verification**
 
-Delete/recreate the preset build tree as the repository preset workflow does, then:
+The preset binary directory is `build/linux-gcc-release`.
 
 ```bash
+rm -rf build/linux-gcc-release
 cmake --preset release-linux-ninja
 cmake --build --preset build-default-linux
 ctest --preset test-release-linux -R '^(cmeta_|cserde_|cflow_|turbostl_)' --output-on-failure
 ```
 
-Expected: configure PASS, full build PASS, all selected tests PASS.
+Expected: fresh configure PASS, full build PASS, every selected test PASS.
 
 - [ ] **Step 4: Fresh Windows/MSVC release verification**
 
-Use the same commands as `.github/workflows/cmeta.yml` after `VsDevCmd.bat`:
+The preset binary directory is `build/Msvc-Release`. In a `VsDevCmd.bat` x64 environment:
 
 ```bat
+if exist build\Msvc-Release rmdir /s /q build\Msvc-Release
 cmake --preset release-win-msvc-ninja
 cmake --build --preset build-release-windows
 ctest --preset test-release-windows -R "^(cmeta_|cserde_|cflow_|turbostl_)" --output-on-failure
 ```
 
-Expected: configure/build/test PASS.
+Expected: fresh configure/build/test PASS.
 
-- [ ] **Step 5: Review exact-head behavior against every spec acceptance item**
+- [ ] **Step 5: Review every D1 acceptance item**
 
-The final review must explicitly verify all 18 spec acceptance items:
+Explicitly verify:
 
-1. token/status model exists with no format-specific token;
-2. SINT/UINT/FLOAT storage widths are exact;
-3. STRING/BYTES slice validation and both lifetimes behave as specified;
+1. token/status model has no format-specific token;
+2. SINT/UINT/FLOAT widths are exact;
+3. STRING/BYTES slice/lifetime validation matches spec;
 4. reader ops prefix/ABI validation is append-safe;
-5. reader init failure leaves zero facade unchanged;
+5. reader init failure is non-mutating;
 6. reader non-OK never overwrites caller output;
-7. DONE/FAILED reader state is sticky;
-8. allowed reader errors propagate and disallowed statuses normalize to CALLBACK_ERROR;
-9. `skip_value` crosses nested arrays/maps and consumes exactly one value;
-10. malformed END/map parity/early DONE/depth failures poison reader with correct status;
+7. DONE/FAILED reader states are sticky;
+8. reader callback status normalization is exact;
+9. skip_value consumes exactly one nested value;
+10. malformed END/map parity/early DONE/depth failures poison correctly;
 11. writer ops prefix/ABI validation is append-safe;
 12. invalid caller token does not invoke provider or poison READY writer;
-13. writer callback status normalization and terminal finish state are correct;
+13. writer callback normalization and FINISHED state are exact;
 14. writer has no abort and no duplicate nesting stack;
-15. recording support is fixed-capacity/no-allocation/test-only;
-16. C++17 umbrella public include passes;
-17. production target has no CMeta/CFlow/TurboSTL/Core/parser dependencies;
+15. recording support is fixed-capacity, no-allocation, reusable, and test-only;
+16. C++17 public API compiles **and links** to the C implementation;
+17. production target has no forbidden module/parser dependency;
 18. exact-head Linux + Windows release CI is green.
 
-Any discovered defect gets one focused RED regression before the fix, then rerun affected CSerde tests.
+For every defect found, add one focused failing regression first, observe RED, apply the smallest fix, then rerun the affected `cserde_*` tests.
 
-- [ ] **Step 6: Commit review fixes, if any, then push exact head**
+- [ ] **Step 6: Commit concrete review fixes only when needed**
 
-Use a focused commit message matching the defect, for example:
+Example for the known class of non-mutating-output regression:
 
 ```bash
-git commit -am "fix(cserde): preserve reader output on callback failure"
+git add cserde
+git commit -m "fix(cserde): preserve reader output on callback failure"
 ```
 
-Do not create a catch-all refactor commit unless actual review changes require it.
+If review finds no defect, create no review-fix commit.
 
-- [ ] **Step 7: Open/update a draft PR and require exact-head CI**
+- [ ] **Step 7: Verify the draft PR on the exact final head and mark ready**
 
-PR title:
-
-```text
-feat(cserde): add canonical token protocol
-```
-
-PR body must record:
+Update the existing draft PR body with:
 
 ```text
-D1 scope: canonical token + versioned reader/writer + skip_value + recording harness only.
+D1 scope: canonical token + versioned reader/writer + skip_value + reusable recording harness only.
 No CBind, parser, TurboSTL, CMeta semantic, or container-construction production changes.
 ```
 
-Include the exact final head SHA and the Linux/Windows workflow run that executed that SHA. Mark Ready for Review only after both jobs are successful.
+Record the exact final head SHA and the GitHub Actions run ID that executed that SHA. Require both Linux release and Windows release jobs to be `completed/success`. Only then mark the PR Ready for Review.
 
 ---
 
 ## Expected Commit Shape
 
-The intended development history is reviewable and TDD-visible:
-
 ```text
 test(cserde): define canonical token contract        RED
 feat(cserde): add canonical token model             GREEN
-test(cserde): define pull reader contract            RED
-feat(cserde): add versioned pull reader              GREEN
-test(cserde): define nested skip semantics           RED
-feat(cserde): add bounded value skipping             GREEN
-test(cserde): define push writer contract            RED
-feat(cserde): add versioned push writer              GREEN
-test(cserde): define recording provider harness      RED
-test(cserde): add recording and C++ conformance      GREEN
-fix(cserde): <review defect>                         only if review finds one
+test(cserde): define pull reader contract           RED
+feat(cserde): add versioned pull reader             GREEN
+test(cserde): define nested skip semantics          RED
+feat(cserde): add bounded value skipping            GREEN
+test(cserde): define push writer contract           RED
+feat(cserde): add versioned push writer             GREEN
+test(cserde): define recording provider harness     RED
+test(cserde): add recording and C++ conformance     GREEN
 ```
 
-The exact commit count may differ only when a platform/build failure requires an independently reviewable focused fix. Do not squash RED/GREEN evidence before review.
+A focused `fix(cserde): ...` commit is added only if review or a platform gate first demonstrates a concrete failing regression. RED/GREEN evidence remains visible until review; do not squash it away during implementation.
