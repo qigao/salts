@@ -58,6 +58,7 @@ add_subdirectory(platform)
 add_subdirectory(concurrency)
 add_subdirectory(cmeta)
 add_subdirectory(cserde)
+add_subdirectory(cbind)
 add_subdirectory(cflow)
 add_subdirectory(turbostl)
 add_subdirectory(utils)
@@ -74,8 +75,8 @@ add_custom_target(
     -DBUILD_GENERATOR=${CMAKE_GENERATOR}
     -P
     ${CMAKE_SOURCE_DIR}/cmake/VerifyInstalledPackage.cmake
-  DEPENDS turbo_platform turbo_concurrency turbo_cmeta turbo_cflow turbo_stl
-          turbo_utils
+  DEPENDS turbo_platform turbo_concurrency turbo_cmeta turbo_cserde turbo_cbind
+          turbo_cflow turbo_stl turbo_utils
   VERBATIM)
 set_target_properties(verify_installed_package PROPERTIES FOLDER "cmake")
 

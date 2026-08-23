@@ -97,7 +97,7 @@ Collector properties
     ! PURE
     [ASSOCIATIVE]
 
-Γ ⊢ users : Range<User>
+Γ ⊢ users : Range(User)
     [SIZED, ORDERED, REUSABLE]
 ```
 
@@ -343,7 +343,7 @@ Stream API 不是理论核心；它只是 term construction notation。
 若：
 
 ```text
-Γ ⊢ S : Source<A>
+Γ ⊢ S : Source(A)
 ```
 
 则：
@@ -388,7 +388,7 @@ Stream API 不是理论核心；它只是 term construction notation。
 
 ```text
 Γ ; K ⊢ F : A ⇒ B
-Γ ⊢ f : B → Range<C> ! εf [Pf]
+Γ ⊢ f : B → Range(C) ! εf [Pf]
 ```
 
 则：
@@ -424,7 +424,7 @@ Stream API 不是理论核心；它只是 term construction notation。
 
 ```text
 Γ ; K ⊢ F : A ⇒ B
-Γ ⊢ c : Collector<B,R>
+Γ ⊢ c : Collector(B,R)
 ```
 
 则：

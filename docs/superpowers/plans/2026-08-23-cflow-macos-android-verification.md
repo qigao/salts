@@ -87,8 +87,8 @@
 
 ## Execution Evidence
 
-- PR #58 branch head `7396925e2b0a6bb592c2122ff9c321a2b5489f3a` passed the manually dispatched [CMeta conformance run 32653089799](https://github.com/qigao/turbo-utils/actions/runs/32653089799) on 2026-08-24 (Asia/Shanghai).
+- PR #58 pre-merge execution-model head `7396925e2b0a6bb592c2122ff9c321a2b5489f3a` passed the manually dispatched [CMeta conformance run 32653089799](https://github.com/qigao/turbo-utils/actions/runs/32653089799) on 2026-08-24 (Asia/Shanghai).
 - [macOS 15 release](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227597826) passed native Release configure/build, owner tests, and installed-package consumer verification.
 - [Android arm64 Release cross-build](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595331) passed portable preset configure, cross-build, install, exported package checks, and evidence upload for `android-24`/`arm64-v8a`. No device or emulator runtime claim is made.
 - [Linux release](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595385) passed the owner-test boundary, Lean refinement certificate check, C certificate binding, and installed-package consumers; [Windows release](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595405) passed its combined Release configure/build/test step.
-- The final Core-only repair required `workflow_dispatch` because `.github/workflows/cmeta.yml` does not currently include `utils/**` in its path filter. The run above verifies the exact final code head despite that trigger-coverage limitation.
+- The Core-only repair at that head required `workflow_dispatch` because the workflow revision then in the branch did not include `utils/**` in its path filter. The current workflow includes `utils/**` after integrating `master`; the run above remains the exact pre-merge host evidence for the execution-model code.

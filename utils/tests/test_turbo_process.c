@@ -127,6 +127,7 @@ spec("turbo_process") {
       turbo_process_t *process = NULL;
       turbo_process_result_t result;
       char *directory = tt_make_temp_dir("turbo-process-cwd");
+      char marker[512];
       char output[1024];
       size_t output_size = 0;
 #ifdef _WIN32
@@ -144,7 +145,8 @@ spec("turbo_process") {
       turbo_process_options_init(&options);
       options.program = "powershell.exe";
 #else
-      const char *args[] = {"-c", "printf '%s|%s|%s' \"$1\" \"$TURBO_PROCESS_VALUE\" \"$PWD\"",
+      const char *args[] = {"-c",
+                            "printf '%s|%s|' \"$1\" \"$TURBO_PROCESS_VALUE\"; cat cwd-marker.txt",
                             "probe", "alpha beta", NULL};
       turbo_process_options_init(&options);
       options.program = "/bin/sh";
@@ -154,11 +156,15 @@ spec("turbo_process") {
       options.cwd = directory;
 
       check_not_null(directory);
+      check_equal(turbo_fs_path_join(marker, sizeof(marker), directory, "cwd-marker.txt"), TURBO_OK);
+      check_equal(tt_write_file(marker, "cwd-ok", strlen("cwd-ok")), 0);
 #ifdef _WIN32
       check_equal(turbo_fs_path_join(script, sizeof(script), directory, "probe.ps1"), TURBO_OK);
       {
-        const char *script_data = "param([string]$value)\nWrite-Output "
-                                  "\"$value|$env:TURBO_PROCESS_VALUE|$(Get-Location)\"\n";
+        const char *script_data =
+            "param([string]$value)\n"
+            "$marker = Get-Content -Raw -LiteralPath '.\\cwd-marker.txt'\n"
+            "Write-Output \"$value|$env:TURBO_PROCESS_VALUE|$marker\"\n";
         turbo_fs_buf_t script_buffer = turbo_fs_buf_init((char *)script_data, strlen(script_data));
         check_equal(turbo_fs_write_file(script, &script_buffer), TURBO_OK);
       }
@@ -167,8 +173,7 @@ spec("turbo_process") {
       check_equal(turbo_process_wait(process, &result), TURBO_OK);
       check_equal(result.exit_code, 0);
       read_all(process, 1, output, sizeof(output), &output_size);
-      check_contains(output, "alpha beta|env-value|");
-      check_contains(output, directory);
+      check_contains(output, "alpha beta|env-value|cwd-ok");
 
       turbo_process_destroy(process);
       check_equal(tt_remove_tree(directory), 0);
@@ -183,12 +188,14 @@ spec("turbo_process") {
       size_t output_size = 0;
       const char *env[] = {"TURBO_PROCESS_VALUE=clean-value", NULL};
 #ifdef _WIN32
-      init_shell_options(&options,
-                         "set PATH 2>nul & echo marker=%TURBO_PROCESS_VALUE%");
+      init_shell_options(
+          &options,
+          "set TURBO_PROCESS_PARENT_SENTINEL 2>nul & echo marker=%TURBO_PROCESS_VALUE%");
 #else
       init_shell_options(
           &options,
-          "printf 'path=%s|marker=%s' \"${PATH-unset}\" \"$TURBO_PROCESS_VALUE\"");
+          "printf 'parent=%s|marker=%s' \"${TURBO_PROCESS_PARENT_SENTINEL-unset}\" "
+          "\"$TURBO_PROCESS_VALUE\"");
 #endif
       options.env = env;
       options.flags |= TURBO_PROCESS_CLEAN_ENVIRONMENT;
@@ -198,10 +205,10 @@ spec("turbo_process") {
       check_equal(result.exit_code, 0);
       read_all(process, 1, output, sizeof(output), &output_size);
 #ifdef _WIN32
-      check_false(strstr(output, "PATH=") != NULL);
+      check_false(strstr(output, "TURBO_PROCESS_PARENT_SENTINEL=") != NULL);
       check_contains(output, "marker=clean-value");
 #else
-      check_equal(output, "path=unset|marker=clean-value");
+      check_equal(output, "parent=unset|marker=clean-value");
 #endif
 
       turbo_process_destroy(process);
@@ -212,10 +219,10 @@ spec("turbo_process") {
       check_equal(result.exit_code, 0);
       read_all(process, 1, output, sizeof(output), &output_size);
 #ifdef _WIN32
-      check_false(strstr(output, "PATH=") != NULL);
+      check_false(strstr(output, "TURBO_PROCESS_PARENT_SENTINEL=") != NULL);
       check_false(strstr(output, "clean-value") != NULL);
 #else
-      check_equal(output, "path=unset|marker=");
+      check_equal(output, "parent=unset|marker=");
 #endif
       turbo_process_destroy(process);
     }

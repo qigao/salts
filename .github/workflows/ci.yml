@@ -1,0 +1,56 @@
+name: C API notation
+
+on:
+  pull_request:
+    paths:
+      - "cmeta/**"
+      - "turbostl/**"
+      - "cflow/**"
+      - "docs/**"
+      - "tests/**"
+      - ".github/workflows/ci.yml"
+  push:
+    branches: [master]
+    paths:
+      - "cmeta/**"
+      - "turbostl/**"
+      - "cflow/**"
+      - "docs/**"
+      - "tests/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  c-api-notation:
+    name: Reject C++-style generic notation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install --yes ripgrep
+
+      - name: Audit CMeta, TurboSTL, and CFlow notation
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='\b(TYPE|M|Pair|Tuple|Option|Result|Range|Source|Collector|Vec|Deque|List|Stack|Queue|Heap|Set|HashSet|HashMap|Map|MultiMap|BTree|BPlusTree)\s*<|CMETA_[A-Z0-9_]+_<[A-Za-z][A-Za-z0-9_]*>'
+
+          set +e
+          matches="$(rg -n --glob '!vendor/**' --glob '!build/**' "$pattern" cmeta turbostl cflow docs tests 2>&1)"
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            printf '%s\n' "$matches"
+            echo "::error::C APIs must use TYPE(...), typed(...), or plain C notation; C++-style generic notation is forbidden."
+            exit 1
+          fi
+
+          if [ "$status" -ne 1 ]; then
+            printf '%s\n' "$matches"
+            exit "$status"
+          fi

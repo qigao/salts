@@ -45,6 +45,48 @@ cmake_add_test(cmeta_collector_test
   LIBS TurboUtils::CMeta TurboUtils::TinyTest
   FOLDER "cmeta/tests")
 
+cmake_add_test(cmeta_compute_test
+  SOURCES cmeta_compute_test.c
+  LIBS TurboUtils::CMeta TurboUtils::TinyTest
+  FOLDER "cmeta/tests")
+
+cmake_add_test(cmeta_infer_test
+  SOURCES cmeta_infer_test.c
+  LIBS TurboUtils::CMeta TurboUtils::TinyTest
+  FOLDER "cmeta/tests")
+
+function(cmeta_add_compile_failure_test target_name source expected_diagnostic)
+  add_executable(${target_name} EXCLUDE_FROM_ALL ${source})
+  target_link_libraries(${target_name} PRIVATE TurboUtils::CMeta)
+  set_target_properties(${target_name} PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    FOLDER "cmeta/tests/compile_fail")
+  add_test(
+    NAME ${target_name}
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+            --config $<CONFIG> --target ${target_name})
+  set_tests_properties(${target_name} PROPERTIES
+    PASS_REGULAR_EXPRESSION "${expected_diagnostic}"
+    RUN_SERIAL TRUE)
+endfunction()
+
+cmeta_add_compile_failure_test(
+  cmeta_compute_missing_type_compile_fail
+  compile_fail/cmeta_compute_missing_type.c
+  "cmeta_type_fn_CMetaMissingType_1_absent")
+
+cmeta_add_compile_failure_test(
+  cmeta_compute_conflicting_value_compile_fail
+  compile_fail/cmeta_compute_conflicting_value.c
+  "cmeta_value_fn_CMetaConflictingValue_1_same")
+
+cmeta_add_compile_failure_test(
+  cmeta_compute_require_compile_fail
+  compile_fail/cmeta_compute_require.c
+  "CMeta predicate CMetaRejected rejects blocked")
+
 set_target_properties(cmeta_header_cpp_test PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON
@@ -97,6 +139,16 @@ set_target_properties(cmeta_language_surface_test PROPERTIES
   C_EXTENSIONS OFF)
 
 set_target_properties(cmeta_collector_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+set_target_properties(cmeta_compute_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+set_target_properties(cmeta_infer_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)

@@ -58,32 +58,32 @@ jobs:
           - host: ubuntu-22.04-gcc
             runner: ubuntu-22.04
             family: linux
-            configure_preset: release-linux-ninja
-            build_preset: build-default-linux
+            configure_preset: linux-release-user
+            build_preset: linux-release-user
             build_dir: build/linux-gcc-release
             executable: build/linux-gcc-release/bin/cflow_direct_benchmark
             parallel_executable: build/linux-gcc-release/bin/cflow_parallel_reduce_benchmark
           - host: ubuntu-24.04-gcc
             runner: ubuntu-24.04
             family: linux
-            configure_preset: release-linux-ninja
-            build_preset: build-default-linux
+            configure_preset: linux-release-user
+            build_preset: linux-release-user
             build_dir: build/linux-gcc-release
             executable: build/linux-gcc-release/bin/cflow_direct_benchmark
             parallel_executable: build/linux-gcc-release/bin/cflow_parallel_reduce_benchmark
           - host: windows-2022-msvc
             runner: windows-2022
             family: windows
-            configure_preset: release-win-msvc-ninja
-            build_preset: build-release-windows
+            configure_preset: win-release-user
+            build_preset: win-release-user
             build_dir: build/Msvc-Release
             executable: build/Msvc-Release/bin/cflow_direct_benchmark.exe
             parallel_executable: build/Msvc-Release/bin/cflow_parallel_reduce_benchmark.exe
           - host: windows-2025-msvc
             runner: windows-2025
             family: windows
-            configure_preset: release-win-msvc-ninja
-            build_preset: build-release-windows
+            configure_preset: win-release-user
+            build_preset: win-release-user
             build_dir: build/Msvc-Release
             executable: build/Msvc-Release/bin/cflow_direct_benchmark.exe
             parallel_executable: build/Msvc-Release/bin/cflow_parallel_reduce_benchmark.exe
@@ -98,6 +98,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y ninja-build re2c
+          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
           if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
             echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
           else
@@ -125,6 +126,7 @@ jobs:
         if: matrix.family == 'windows'
         shell: cmd
         run: |
+          set "PROJECT_ROOT=%GITHUB_WORKSPACE%"
           if defined VCPKG_INSTALLATION_ROOT set "VCPKG_ROOT=%VCPKG_INSTALLATION_ROOT%"
           if not defined VCPKG_ROOT exit /b 1
 

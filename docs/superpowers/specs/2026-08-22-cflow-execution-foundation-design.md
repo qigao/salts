@@ -486,7 +486,7 @@ Retain existing disruptor worker-wait, broadcast, worker-pool and ring behavior 
 Core-only compatibility consumers include legacy `platform.h`, `turbo_thread.h`, and `disruptor.h` and link only `TurboUtils::Core`, relying on declared transitive dependencies rather than manual link additions.
 
 Linux/Windows/macOS native builds exercise the module boundaries and installed
-package exports. PR #58 branch head
+package exports. PR #58 pre-merge execution-model head
 `7396925e2b0a6bb592c2122ff9c321a2b5489f3a` passed conformance run
 [32653089799](https://github.com/qigao/turbo-utils/actions/runs/32653089799).
 The same run verified Android arm64 cross-build/install/package exports; it did
@@ -517,8 +517,8 @@ not execute Android binaries.
 
 | Host | Status | Evidence boundary |
 |---|---|---|
-| Windows Release | Implemented + CI verified | [PR #58 Windows job](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595405) passed Release configure/build/test at the final code head. |
-| Linux Release | Implemented + CI verified | [PR #58 Linux job](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595385) passed owner tests, Lean/C certificate checks, and installed-package consumers at the final code head. |
+| Windows Release | Implemented + CI verified | [PR #58 Windows job](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595405) passed Release configure/build/test at verified head `7396925`. |
+| Linux Release | Implemented + CI verified | [PR #58 Linux job](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595385) passed owner tests, Lean/C certificate checks, and installed-package consumers at verified head `7396925`. |
 | macOS 15 Release | Implemented + native CI verified | [PR #58 macOS job](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227597826) passed native Release build, owner tests, and installed-package consumers. |
 | Android arm64-v8a Release | Cross-build/package CI verified | [PR #58 Android job](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595331) built and installed `android-24`/`arm64-v8a`, verified exported headers/CMake targets, and uploaded evidence. Android runtime was not tested. |
 

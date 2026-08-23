@@ -4,7 +4,8 @@
 
 Implemented and branch-verified. Phase G-1 bounded admission, Phase G-2 ordered
 parallel reduction, Phase G-3 Lean/C refinement evidence, and Phase G-4 host
-verification are complete on the execution-model-v2 branch. PR #58 branch head
+verification are complete on the execution-model-v2 branch. PR #58 pre-merge
+execution-model head
 `7396925e2b0a6bb592c2122ff9c321a2b5489f3a` passed CMeta conformance run
 [32653089799](https://github.com/qigao/turbo-utils/actions/runs/32653089799)
 across Linux, Windows, and native macOS, plus Android arm64 cross-build/install
@@ -256,7 +257,7 @@ Primary references:
 
 The macOS job runs the same owner-test regex and installed-package consumer target as Linux/Windows. The Android job builds the exported libraries and installs the package for arm64; it cannot run host executables produced for Android.
 
-The first current-head branch verification completed in PR #58 run
+The pre-merge execution-model branch verification completed in PR #58 run
 [32653089799](https://github.com/qigao/turbo-utils/actions/runs/32653089799):
 
 | Host job | Result | Evidence boundary |

@@ -44,7 +44,7 @@ static const cmeta_type_identity cmeta_test_nested_pair =
 const cmeta_type_identity *cmeta_type_identity_peer_pair(void);
 
 spec("CMeta generic type applications") {
-  it("validates TYPE<A...> from constructor arity and recursive arguments") {
+  it("validates generic applications from constructor arity and recursive arguments") {
     const cmeta_type_identity *box_args[] = {&cmeta_test_atom_a};
     const cmeta_type_identity *pair_args[] = {
         &cmeta_test_atom_a, &cmeta_test_atom_b};
