@@ -31,8 +31,7 @@ typedef struct heap {
   bool initialized;
 } heap_t;
 
-/* Internal typed bridge used while compiled implementation symbols and legacy
- * generated wrappers migrate to the self-describing API. */
+/* Storage bridge shared by generated facades and explicitly bound raw handles. */
 stl_status heap_raw_init(heap_t *heap,
                          const cmeta_type_desc *element_type,
                          size_t element_limit);

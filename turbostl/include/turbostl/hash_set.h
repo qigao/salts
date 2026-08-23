@@ -15,7 +15,7 @@ typedef struct hash_set {
   hash_map_t table;
 } hash_set_t;
 
-/* Internal typed-storage bridge used by the natural instance wrappers. */
+/* Storage bridge shared by generated facades and explicitly bound raw handles. */
 stl_status hash_set_raw_init(hash_set_t *set,
                              const cmeta_type_desc *key_type,
                              size_t entry_limit);

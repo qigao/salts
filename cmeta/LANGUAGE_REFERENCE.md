@@ -156,6 +156,16 @@ typed(Vec, IntVec, int);
 typed(HashMap, IntValuesById, int, int);
 ```
 
+The declared container type prefixes its generated operations:
+
+```c
+IntList values = {0};
+
+IntList_init(&values, 100u);
+IntList_push_back(&values, 7);
+IntList_destroy(&values);
+```
+
 For containers, one `typed(...)` declaration is a complete instantiation. It may
 generate the wrapper type, static-inline typed forwarding functions, metadata,
 container descriptors, Range factories, and relevant traits. Allocation and
@@ -164,7 +174,11 @@ complete facade does not implicitly register its element, key, or value types;
 those types must satisfy the finite type-universe rules described below.
 
 Declare each concrete container with its own `typed(...)` statement, as shown
-above. There is no batch container declaration syntax.
+above. There is no batch syntax inside the CMeta Generic grammar. TurboSTL also
+retains self-describing raw-handle initializers such as `Vec(int, variable)`
+and `VecOf(int)` (plus their associative forms). Those initializers produce
+erased TurboSTL handles; they do not declare a generated Generic type and do
+not change the meaning of `typed(...)`.
 
 ### `typed_any(...)`
 

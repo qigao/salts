@@ -27,8 +27,7 @@ typedef struct deque {
   size_t head;
 } deque_t;
 
-/* Internal typed bridge used while compiled implementation symbols and legacy
- * generated wrappers migrate to the self-describing API. */
+/* Storage bridge shared by generated facades and explicitly bound raw handles. */
 stl_status deque_raw_init(deque_t *deque,
                           const cmeta_type_desc *element_type,
                           size_t element_limit);
