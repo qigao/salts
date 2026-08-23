@@ -5,6 +5,11 @@ cmake_add_test(cmeta_core_test
   LIBS TurboUtils::CMeta TurboUtils::TinyTest
   FOLDER "cmeta/tests")
 
+cmake_add_test(cmeta_type_identity_test
+  SOURCES cmeta_type_identity_test.c cmeta_type_identity_peer.c
+  LIBS TurboUtils::CMeta TurboUtils::TinyTest
+  FOLDER "cmeta/tests")
+
 cmake_add_test(cmeta_header_cpp_test
   SOURCES cmeta_header_cpp_test.cpp
   LIBS TurboUtils::CMeta TurboUtils::TinyTest
@@ -35,8 +40,13 @@ set_target_properties(cmeta_core_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+set_target_properties(cmeta_type_identity_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  foreach(tgt cmeta_core_test cmeta_collector_test)
+  foreach(tgt cmeta_core_test cmeta_type_identity_test cmeta_collector_test)
     target_compile_options(${tgt} PRIVATE -Werror=missing-field-initializers)
   endforeach()
 endif()

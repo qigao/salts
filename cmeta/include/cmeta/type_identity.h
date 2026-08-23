@@ -54,6 +54,10 @@ struct cmeta_type_identity {
 
 bool cmeta_generic_desc_valid(const cmeta_generic_desc *desc);
 bool cmeta_generic_accepts_arity(const cmeta_generic_desc *desc, size_t arity);
+bool cmeta_type_application_valid(
+    const cmeta_generic_desc *constructor,
+    const cmeta_type_identity *const *args,
+    size_t arity);
 bool cmeta_type_identity_valid(const cmeta_type_identity *identity);
 bool cmeta_type_identity_equal(const cmeta_type_identity *a,
                                const cmeta_type_identity *b);
