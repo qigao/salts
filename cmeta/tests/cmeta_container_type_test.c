@@ -1,3 +1,4 @@
+#include <cmeta/data.h>
 #include <cmeta/range.h>
 #include "tinytest.h"
 
@@ -43,6 +44,14 @@ static const cmeta_container_ext cmeta_test_sequence_ext = {
     .type = &cmeta_test_sequence_type_ops
 };
 
+static const cmeta_container_ext cmeta_test_semantic_sequence_ext = {
+    .struct_size = offsetof(cmeta_container_ext, data) +
+                   sizeof(((cmeta_container_ext *)0)->data),
+    .abi_version = CMETA_CONTAINER_EXT_ABI_VERSION,
+    .type = &cmeta_test_sequence_type_ops,
+    .data = &cmeta_data_sequence
+};
+
 static const cmeta_container_desc cmeta_test_sequence_desc = {
     .name = "test_sequence",
     .container_type = NULL,
@@ -55,6 +64,20 @@ static const cmeta_container_desc cmeta_test_sequence_desc = {
     .entries_range = NULL,
     .collector = NULL,
     .ext = &cmeta_test_sequence_ext
+};
+
+static const cmeta_container_desc cmeta_test_semantic_sequence_desc = {
+    .name = "test_semantic_sequence",
+    .container_type = NULL,
+    .element_type = NULL,
+    .key_type = NULL,
+    .value_type = NULL,
+    .range = NULL,
+    .keys_range = NULL,
+    .values_range = NULL,
+    .entries_range = NULL,
+    .collector = NULL,
+    .ext = &cmeta_test_semantic_sequence_ext
 };
 
 spec("CMeta container generic type applications") {
@@ -82,6 +105,36 @@ spec("CMeta container generic type applications") {
     check_true(cmeta_container_extension(&sequence) ==
                &cmeta_test_sequence_ext);
     check_null(cmeta_container_extension(NULL));
+  }
+
+  it("keeps a legacy extension valid after semantic tails are appended") {
+    cmeta_test_sequence sequence = {
+        .cmeta = {&cmeta_test_sequence_desc},
+        .element_type = &cmeta_type_int
+    };
+
+    check_equal(cmeta_test_sequence_ext.struct_size,
+                offsetof(cmeta_container_ext, type) +
+                    sizeof(cmeta_test_sequence_ext.type));
+    check_true(cmeta_container_extension(&sequence) ==
+               &cmeta_test_sequence_ext);
+    check_true(cmeta_container_type_application_valid(&sequence));
+    check_null(cmeta_container_data_descriptor(&sequence));
+  }
+
+  it("projects semantic data only for a valid generic application") {
+    cmeta_test_sequence sequence = {
+        .cmeta = {&cmeta_test_semantic_sequence_desc},
+        .element_type = &cmeta_type_int
+    };
+
+    check_true(cmeta_container_type_application_valid(&sequence));
+    check_true(cmeta_container_data_descriptor(&sequence) ==
+               &cmeta_data_sequence);
+
+    sequence.element_type = &cmeta_test_opaque_type;
+    check_false(cmeta_container_type_application_valid(&sequence));
+    check_null(cmeta_container_data_descriptor(&sequence));
   }
 
   it("rejects a concrete argument without a CMeta type identity") {
