@@ -124,5 +124,5 @@
   regression candidates.
 - [x] Review the diff for unsupported fallback, hot-loop indirect calls,
   execution-time allocation, public-header portability and user-owned changes.
-- [ ] Commit, push the stacked branch and open a Draft PR targeting
+- [x] Commit, push the stacked branch and open a Draft PR targeting
   `test/cflow-calculus-conformance-phase-f1`.
