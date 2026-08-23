@@ -132,17 +132,22 @@ const char *cmeta_infer_status_string(cmeta_infer_status status);
         CMETA_INFER_ARITY_NAME(name) \
     }
 
-#ifndef InferenceRules1
-#define InferenceRules1(name, ...) \
+#define CMETA_INFERENCE_RULES_1(name, ...) \
     CMETA_INFERENCE_RULES(name, 1u, CMETA_INFER_RULE_1, __VA_ARGS__)
-#endif
-#ifndef InferenceRules2
-#define InferenceRules2(name, ...) \
+#define CMETA_INFERENCE_RULES_2(name, ...) \
     CMETA_INFERENCE_RULES(name, 2u, CMETA_INFER_RULE_2, __VA_ARGS__)
-#endif
-#ifndef InferenceRules3
-#define InferenceRules3(name, ...) \
+#define CMETA_INFERENCE_RULES_3(name, ...) \
     CMETA_INFERENCE_RULES(name, 3u, CMETA_INFER_RULE_3, __VA_ARGS__)
+
+#define CMETA_INFERENCE_RULES_DISPATCH_I(input_arity, name, ...) \
+    CMETA_PP_CAT(CMETA_INFERENCE_RULES_, input_arity)(name, __VA_ARGS__)
+#define CMETA_INFERENCE_RULES_DISPATCH(input_arity, name, ...) \
+    CMETA_INFERENCE_RULES_DISPATCH_I(input_arity, name, __VA_ARGS__)
+
+#ifndef InferenceRules
+#define InferenceRules(name, ...) \
+    CMETA_INFERENCE_RULES_DISPATCH( \
+        CMETA_PP_FIRST_RELATION_ARITY(__VA_ARGS__), name, __VA_ARGS__)
 #endif
 
 #ifndef InferenceRuleCount
