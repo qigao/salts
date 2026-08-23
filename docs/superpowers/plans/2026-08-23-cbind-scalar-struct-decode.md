@@ -15,23 +15,25 @@
 ## Global Constraints
 
 - Repository ownership remains `qigao/turbo-utils`; public target is exactly `TurboUtils::CBind`, concrete target `turbo_cbind`, export name `CBind`.
-- Execution must start from the latest `master`, not historical design base `4216bb8c71cf6564bf88fe6cff3c8a1c227c87d3`. At plan-writing time current master is `5972c4ee986d54befebbc3b4dcb535082a9286cd`; if master advances, use the newer exact head.
-- Before Task 1 execution, create an isolated worktree/feature branch `feat/cbind-scalar-struct-decode` from that latest master, then cherry-pick the approved docs commits `9d47be11fb2a27a50e6928212c6b172a7761eeb8`, `fa456eb00cd3fcf9672e816b6961ff99f95035f5`, and the commit containing this plan so the spec travels with implementation. Do not rebase production work onto the historical design branch.
+- Execution starts from the latest `master`, not historical design base `4216bb8c71cf6564bf88fe6cff3c8a1c227c87d3`. At plan-writing time current master is `5972c4ee986d54befebbc3b4dcb535082a9286cd`; if master advances, use the newer exact head.
+- Before Task 1 execution, create an isolated worktree/feature branch `feat/cbind-scalar-struct-decode` from that latest master, then cherry-pick approved docs commits `9d47be11fb2a27a50e6928212c6b172a7761eeb8`, `fa456eb00cd3fcf9672e816b6961ff99f95035f5`, and the commit containing this plan so the spec travels with implementation. Do not base production work on the historical design branch.
 - Production dependency is exactly `TurboUtils::CMeta + TurboUtils::CSerde`. No production CBind file may include/link TurboSTL, Core/utils, CFlow, TurboParser, or concrete parser code.
 - D2 public API is context-first and decode-only: `cbind_decode(ctx, shape, reader, out, error)`.
 - Supported semantic kinds are exactly `CMETA_DATA_BOOL`, `CMETA_DATA_SINT`, `CMETA_DATA_UINT`, `CMETA_DATA_FLOAT`, and `CMETA_DATA_STRUCT`.
 - Valid STRING/BYTES/ENUM/VARIANT/SEQUENCE/SET/MAP/CUSTOM descriptors return `CBIND_UNSUPPORTED` before reader consumption.
-- Canonical writable scalar storage is limited to CMeta built-ins: bool; int/long; size_t; float/double. Match canonical storage identity with `cmeta_type_equal`, then separately prove exact size/alignment/semantic width; do not use raw descriptor-pointer equality as the sole identity test.
-- All validation/resource/destination-empty failures happen before the first `cserde_reader_next()` call and must leave reader/provider state and destination unchanged.
+- Canonical writable scalar storage is limited to CMeta built-ins: bool; int/long; size_t; float/double. Match canonical storage identity with `cmeta_type_equal`, then separately prove exact size/alignment/semantic width; raw descriptor-pointer equality is not the storage-identity contract.
+- Required pointer ordering is fixed: `shape == NULL`, `reader == NULL`, or `out == NULL` returns `CBIND_INVALID_ARGUMENT`; a non-NULL malformed `cbind_error` returns `CBIND_INVALID_ARGUMENT`; a NULL/malformed `cbind_context` returns `CBIND_INVALID_CONTEXT`.
+- All validation/resource/destination-empty failures happen before the first `cserde_reader_next()` call and leave reader/provider state and destination unchanged.
 - Struct depth semantics are scalar root `0`, root struct `1`, nested struct `2+`.
-- Scratch is caller-owned bookkeeping only. Per active struct bitmap bytes are computed overflow-safely as `field_count / 8u + (field_count % 8u != 0u)`; never evaluate `(field_count + 7u) / 8u` without guarding overflow.
-- No fixed field-count limit and no production heap allocation. D2 production files must not call `malloc`, `calloc`, `realloc`, or `free`.
+- Scratch is caller-owned bookkeeping only. Per active struct bitmap bytes are computed overflow-safely as `field_count / 8u + (field_count % 8u != 0u)`; do not evaluate `(field_count + 7u) / 8u` without an overflow proof.
+- No fixed field-count limit and no production heap allocation. D2 production files do not call `malloc`, `calloc`, `realloc`, or `free`.
 - Decode failure after consumption restores every supported semantic field of the root destination to the D2 empty state; padding and reflected-but-nonsemantic fields remain untouched. Reader position is never rewound and no remainder is silently skipped.
 - CSerde `DONE` while a token is required maps to `CBIND_UNEXPECTED_END` with `source_status=CSERDE_DONE`; every other non-OK reader result maps to `CBIND_SOURCE_ERROR` with the exact returned `cserde_status`.
 - CSerde recording support remains BUILD_TESTS-only and is reused by CBind tests through `cserde_recording_support`; do not copy/fork a second recording token source into CBind.
 - Raw `cserde_token` is structural transport, not a CFlow business stream. D2 adds no CFlow or parser integration and no public `begin/feed/finish` decoder ABI.
 - Public headers compile/link in C11 and C++17; no public `_Generic` or GNU-only declarations.
-- Final exact implementation head must pass fresh Linux and Windows release configure/build/test with `cbind_*` included in `.github/workflows/cmeta.yml`.
+- Repository Linux release preset writes to `build/linux-gcc-release`; Windows release preset writes to `build/Msvc-Release`.
+- Final exact implementation head passes fresh Linux and Windows release configure/build/test with `cbind_*` included in `.github/workflows/cmeta.yml`.
 
 ---
 
@@ -72,7 +74,7 @@ CMakeLists.txt
 .github/workflows/cmeta.yml
 ```
 
-`cbind/tests` reuses the existing global BUILD_TESTS-only target `cserde_recording_support` created by `cserde/tests/CMakeLists.txt` because root module order keeps `cserde` before `cbind`.
+`cbind/tests` reuses global BUILD_TESTS-only target `cserde_recording_support` created by `cserde/tests/CMakeLists.txt`; root module order keeps `cserde` before `cbind`.
 
 ---
 
@@ -150,7 +152,7 @@ cbind_status cbind_decode(
     cbind_error *error);
 ```
 
-- Produces internal prefix helpers in `internal.h` used by later tasks:
+- Produces internal ABI helpers:
 
 ```c
 #define CBIND_FIELD_END(type, member) \
@@ -167,9 +169,9 @@ void cbind_error_set(cbind_error *error,
                      size_t depth);
 ```
 
-- [ ] **Step 1: Add module/test scaffold and ABI declarations, but leave initializer macros absent for the first RED**
+- [ ] **Step 1: Add module/test scaffold and ABI declarations, omitting initializer macros for the first RED**
 
-`cbind/CMakeLists.txt` follows current CMeta/CSerde target style:
+`cbind/CMakeLists.txt`:
 
 ```cmake
 set(TARGET_NAME turbo_cbind)
@@ -208,7 +210,7 @@ if(BUILD_TESTS)
 endif()
 ```
 
-Root `CMakeLists.txt` becomes:
+Root order:
 
 ```cmake
 add_subdirectory(cmeta)
@@ -217,7 +219,7 @@ add_subdirectory(cbind)
 add_subdirectory(cflow)
 ```
 
-Initial `cbind/tests/CMakeLists.txt`:
+Initial test registration:
 
 ```cmake
 cmake_add_test(cbind_scalar_decode_test
@@ -231,9 +233,9 @@ set_target_properties(cbind_scalar_decode_test PROPERTIES
   C_EXTENSIONS OFF)
 ```
 
-At this RED head, declare the structs/enum/function but intentionally omit `CBIND_CONTEXT_INIT` and `CBIND_ERROR_INIT`. `src/decode.c` may contain the internal ABI helpers but does not need to define `cbind_decode` until Task 2 because Task 1 tests only the record declarations/macros.
+Declare enum/struct/function types, but omit `CBIND_CONTEXT_INIT` and `CBIND_ERROR_INIT`. `src/decode.c` can contain ABI helper definitions; `cbind_decode` need not be defined until Task 2 because Task 1 does not call it.
 
-Modify `.github/workflows/cmeta.yml` in both `pull_request.paths` and `push.paths`:
+Modify `.github/workflows/cmeta.yml` in both PR/push path filters:
 
 ```yaml
       - "cbind/**"
@@ -245,17 +247,16 @@ Change both selected-test regexes to:
 ^(cmeta_|cserde_|cbind_|cflow_|turbostl_)
 ```
 
-Rename the Linux step to `Test CMeta, CSerde, CBind, CFlow, and TurboSTL`.
+Rename Linux selected step to `Test CMeta, CSerde, CBind, CFlow, and TurboSTL`.
 
 - [ ] **Step 2: Write ABI RED tests**
-
-Start `cbind/tests/cbind_scalar_decode_test.c` with:
 
 ```c
 #include <cbind/cbind.h>
 #include "tinytest.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 spec("CBind public ABI records") {
   it("initializes a caller-sized context") {
@@ -283,30 +284,27 @@ spec("CBind public ABI records") {
 }
 ```
 
-Also add compile-time/runtime checks that the enum ordering starts at `CBIND_OK == 0` and versions are exactly `1u`.
+Also assert `CBIND_OK == 0`, `CBIND_CONTEXT_ABI_VERSION == 1u`, and `CBIND_ERROR_ABI_VERSION == 1u`.
 
-- [ ] **Step 3: Run RED and commit test contract**
+- [ ] **Step 3: Run RED and commit it**
 
 ```bash
 cmake --preset release-linux-ninja
 cmake --build --preset build-default-linux --target cbind_scalar_decode_test
 ```
 
-Expected: compile fails only because `CBIND_CONTEXT_INIT` / `CBIND_ERROR_INIT` are not yet defined.
+Expected: compile fails only because the two initializer macros are undefined.
 
 ```bash
 git add CMakeLists.txt .github/workflows/cmeta.yml cbind
-
 git commit -m "test(cbind): define public ABI contract"
 ```
 
-Record this exact RED head SHA and failing diagnostic in the draft PR/TDD notes when the PR is opened during execution.
+- [ ] **Step 4: Add header-side initializers and ABI helper implementation**
 
-- [ ] **Step 4: Add header-side initializers and internal ABI validation helpers**
+Add the exact macros above. `decode.h` wraps `cbind_decode` in standard `extern "C"`; `cbind.h` includes all CBind public headers.
 
-`context.h` and `error.h` add the exact macros above. `decode.h` wraps only `cbind_decode` in standard C linkage guards. `cbind.h` includes `status.h`, `context.h`, `error.h`, and `decode.h`.
-
-`src/internal.h` declares the helper signatures above. `src/decode.c` implements:
+`decode.c` implements:
 
 ```c
 bool cbind_context_valid(const cbind_context *context) {
@@ -323,24 +321,17 @@ bool cbind_error_valid(const cbind_error *error) {
 }
 ```
 
-`cbind_error_clear()` writes only the v1 fields after validation has succeeded. `cbind_error_set()` writes `status/source_status/shape/field/depth` and does not dereference a NULL optional error pointer.
+`cbind_error_clear()` normalizes v1 fields to OK/NULL/0. `cbind_error_set()` is NULL-safe and writes only v1 diagnostic fields.
 
-- [ ] **Step 5: Run GREEN and audit target boundary**
+- [ ] **Step 5: Run GREEN and dependency audit**
 
 ```bash
 cmake --build --preset build-default-linux --target turbo_cbind cbind_scalar_decode_test
 ctest --preset test-release-linux -R '^cbind_scalar_decode_test$' --output-on-failure
-```
-
-Expected: PASS.
-
-Audit:
-
-```bash
 rg -n "target_link_libraries|TurboUtils::(STL|Core|CFlow)|TurboParser" cbind CMakeLists.txt
 ```
 
-Expected production link line contains only `TurboUtils::CMeta TurboUtils::CSerde`; forbidden module names do not occur in production CBind sources/headers.
+Expected: test PASS; production CBind link line contains only CMeta/CSerde; no forbidden production dependency/include appears.
 
 - [ ] **Step 6: Commit Task 1 GREEN**
 
@@ -351,7 +342,7 @@ git commit -m "feat(cbind): add public ABI shell"
 
 ---
 
-### Task 2: Scalar graph preflight, destination-empty proof, reader mapping, BOOL and integer decode
+### Task 2: Scalar preflight, destination-empty proof, reader mapping, BOOL and integer decode
 
 **Files:**
 - Create: `cbind/src/scalar.c`
@@ -361,8 +352,6 @@ git commit -m "feat(cbind): add public ABI shell"
 - Modify: `cbind/tests/cbind_scalar_decode_test.c`
 
 **Interfaces:**
-- Consumes: Task 1 public ABI and current CMeta/CSerde contracts.
-- Produces internal scalar/preflight helpers:
 
 ```c
 typedef struct cbind_decode_state {
@@ -405,11 +394,9 @@ cbind_status cbind_decode_scalar(
     void *out);
 ```
 
-At the end of this task, scalar roots BOOL/SINT/UINT are complete; FLOAT receives its full numeric conversion contract in Task 3. Struct-specific recursive proof is completed in Task 4.
+Task 2 completes BOOL/SINT/UINT scalar roots. FLOAT is completed in Task 3; STRUCT graph/runtime is completed in Tasks 4-5.
 
-- [ ] **Step 1: Write scalar RED cases using the existing CSerde recording provider**
-
-Add:
+- [ ] **Step 1: Add recording-reader helper and scalar RED cases**
 
 ```c
 #include "recording.h"
@@ -419,146 +406,75 @@ static void init_recording_reader(cserde_reader *reader,
                                   const cserde_token *tokens,
                                   size_t count) {
     *reader = (cserde_reader){0};
-    *context = (cserde_recording_reader_context){ tokens, count, 0u };
+    *context = (cserde_recording_reader_context){tokens, count, 0u};
     check_equal(cserde_reader_init(reader, &cserde_recording_reader_ops, context),
                 CSERDE_OK);
 }
 ```
 
-Concrete tests must include:
-
-```c
-it("decodes BOOL without scratch at depth zero") {
-    const cserde_token tokens[] = {
-        { .kind = CSERDE_BOOL, .value.boolean = true }
-    };
-    cserde_recording_reader_context source;
-    cserde_reader reader;
-    cbind_context context = CBIND_CONTEXT_INIT(NULL, 0u, 0u);
-    cbind_error error = CBIND_ERROR_INIT;
-    bool out = false;
-
-    init_recording_reader(&reader, &source, tokens, 1u);
-    check_equal(cbind_decode(&context, &cmeta_data_bool, &reader, &out, &error),
-                CBIND_OK);
-    check_true(out);
-    check_equal(source.index, (size_t)1u);
-    check_equal(error.status, CBIND_OK);
-}
-```
-
-Add explicit cases for:
+Required concrete cases:
 
 ```text
-BOOL <- SINT                    => TOKEN_MISMATCH, out reset false
-int  <- SINT(INT_MAX)           => OK
-int  <- SINT(INT_MIN)           => OK
-long <- SINT(LONG_MAX/MIN)      => OK, platform-derived
-int  <- UINT(INT_MAX)           => OK
-int  <- UINT(INT_MAX+1)         => VALUE_OUT_OF_RANGE where representable
-size <- UINT(SIZE_MAX)          => OK
-size <- SINT(-1)                => VALUE_OUT_OF_RANGE
-STRING token -> int             => TOKEN_MISMATCH
+BOOL <- BOOL true/false                         OK
+BOOL <- SINT                                    TOKEN_MISMATCH
+int  <- SINT(INT_MIN/INT_MAX)                   OK
+long <- SINT(LONG_MIN/LONG_MAX)                 OK using platform limits
+int  <- UINT((uint64_t)INT_MAX)                 OK
+int  <- UINT((uint64_t)INT_MAX + 1u)            VALUE_OUT_OF_RANGE
+size <- UINT(SIZE_MAX)                          OK
+size <- SINT(-1)                                VALUE_OUT_OF_RANGE
+STRING token -> int                             TOKEN_MISMATCH
 ```
 
-Use conditional construction for one-step overflow so the test never invokes undefined compile-time conversion on platforms where source and destination maxima coincide.
-
-Add pre-consumption cases asserting `source.index == 0u`:
+Pre-consumption cases all assert recording `source.index == 0u`:
 
 ```text
-context == NULL                                => INVALID_CONTEXT or INVALID_ARGUMENT per API ordering below
-context.struct_size one byte short             => INVALID_CONTEXT
-context wrong ABI                              => INVALID_CONTEXT
-scratch_size > 0 with scratch == NULL          => INVALID_CONTEXT
-malformed non-NULL error prefix                => INVALID_ARGUMENT
-shape == NULL / reader == NULL / out == NULL   => INVALID_ARGUMENT
-valid STRING semantic descriptor               => UNSUPPORTED
-forged canonical int width mismatch            => INVALID_SHAPE
-valid noncanonical scalar storage identity      => UNSUPPORTED
-non-empty int destination                       => DESTINATION_NOT_EMPTY
+shape == NULL / reader == NULL / out == NULL   INVALID_ARGUMENT
+malformed non-NULL error prefix                 INVALID_ARGUMENT
+context == NULL                                INVALID_CONTEXT
+context prefix one byte short                  INVALID_CONTEXT
+context wrong ABI                              INVALID_CONTEXT
+scratch_size > 0 with scratch == NULL          INVALID_CONTEXT
+valid STRING semantic descriptor               UNSUPPORTED
+canonical int descriptor with forged width     INVALID_SHAPE
+valid noncanonical integer storage identity    UNSUPPORTED
+non-empty int destination                      DESTINATION_NOT_EMPTY
 ```
 
-Normative public validation order in tests is:
+For `SIZE_MAX`, only build a canonical UINT token when `(uintmax_t)SIZE_MAX <= UINT64_MAX`; this is true on current Linux/Windows 64-bit targets and keeps the test tied to the CSerde `uint64_t` wire contract.
 
-```text
-required pointer arguments
-optional error prefix
-context
-semantic/storage preflight
-resource preflight
-destination empty state
-reader consumption
-```
-
-- [ ] **Step 2: Run scalar RED**
+- [ ] **Step 2: Run scalar RED and commit tests**
 
 ```bash
 cmake --build --preset build-default-linux --target cbind_scalar_decode_test
 ```
 
-Expected: link fails on `cbind_decode` (or tests fail because scalar decode is absent if Task 1 already introduced a temporary definition). No unrelated CMeta/CSerde failure is acceptable.
+Expected: link fails on `cbind_decode`, or the new behavior tests fail if a definition was introduced while arranging Task 1. Existing CMeta/CSerde targets must still build.
 
 ```bash
-git add cbind/tests/cbind_scalar_decode_test.c cbind/src cbind/CMakeLists.txt
+git add cbind
 git commit -m "test(cbind): specify scalar decode preflight"
 ```
 
-- [ ] **Step 3: Implement public orchestration and source-status mapping**
+- [ ] **Step 3: Implement public validation/preflight orchestration and reader mapping**
 
-`decode.c` implements the public entry with no reader call before preflight/empty checks:
+`cbind_decode()` ordering:
 
 ```c
-cbind_status cbind_decode(const cbind_context *context,
-                          const cmeta_data_desc *shape,
-                          cserde_reader *reader,
-                          void *out,
-                          cbind_error *error) {
-    cbind_decode_state state;
-    size_t max_scratch = 0u;
-    cbind_status status;
-
-    if (shape == NULL || reader == NULL || out == NULL)
-        return CBIND_INVALID_ARGUMENT;
-    if (error != NULL && !cbind_error_valid(error))
-        return CBIND_INVALID_ARGUMENT;
-    if (!cbind_context_valid(context)) {
-        cbind_error_set(error, CBIND_INVALID_CONTEXT, CSERDE_OK,
-                        shape, NULL, 0u);
-        return CBIND_INVALID_CONTEXT;
-    }
-
-    status = cbind_validate_graph(context, shape, 0u, NULL, 0u,
-                                  &max_scratch, error);
-    if (status != CBIND_OK)
-        return status;
-    if (max_scratch > context->scratch_size) {
-        cbind_error_set(error, CBIND_LIMIT_EXCEEDED, CSERDE_OK,
-                        shape, NULL, 0u);
-        return CBIND_LIMIT_EXCEEDED;
-    }
-    if (!cbind_value_is_empty(shape, out)) {
-        cbind_error_set(error, CBIND_DESTINATION_NOT_EMPTY, CSERDE_OK,
-                        shape, NULL, 0u);
-        return CBIND_DESTINATION_NOT_EMPTY;
-    }
-
-    state.context = context;
-    state.reader = reader;
-    state.error = error;
-    state.scratch = (unsigned char *)context->scratch;
-    state.scratch_used = 0u;
-
-    cbind_error_clear(error);
-    status = cbind_decode_scalar(&state, shape, NULL, 0u, out);
-    if (status != CBIND_OK)
-        cbind_value_reset(shape, out);
-    return status;
+if (shape == NULL || reader == NULL || out == NULL)
+    return CBIND_INVALID_ARGUMENT;
+if (error != NULL && !cbind_error_valid(error))
+    return CBIND_INVALID_ARGUMENT;
+if (!cbind_context_valid(context)) {
+    cbind_error_set(error, CBIND_INVALID_CONTEXT, CSERDE_OK,
+                    shape, NULL, 0u);
+    return CBIND_INVALID_CONTEXT;
 }
 ```
 
-This exact final root dispatch is generalized to `cbind_decode_value()` in Task 5 when structs become runtime-decodable; do not expose that helper publicly.
+Then graph/resource preflight, destination-empty check, decode, and root rollback. No reader call appears above successful preflight/empty proof.
 
-`cbind_read_required()` is the single reader mapping point:
+`cbind_read_required()` is the sole source mapping helper:
 
 ```c
 cserde_status source = cserde_reader_next(state->reader, token);
@@ -574,9 +490,9 @@ cbind_error_set(state->error, CBIND_SOURCE_ERROR, source,
 return CBIND_SOURCE_ERROR;
 ```
 
-- [ ] **Step 4: Implement scalar storage proof and semantic empty/reset using `memcpy`**
+- [ ] **Step 4: Implement canonical scalar storage proof and typed `memcpy` access**
 
-In `scalar.c`, canonical matching must use `cmeta_type_equal()` plus size/alignment/width checks. Pattern:
+Identity helper:
 
 ```c
 static bool cbind_type_matches(const cmeta_type_desc *actual,
@@ -588,9 +504,9 @@ static bool cbind_type_matches(const cmeta_type_desc *actual,
 }
 ```
 
-BOOL accepts only canonical bool storage. SINT accepts canonical int or long. UINT accepts canonical size_t. FLOAT accepts canonical float or double. For SINT/UINT/FLOAT, prove shape bits equal `storage_type->size * CHAR_BIT`.
+BOOL accepts canonical bool. SINT accepts canonical int/long. UINT accepts canonical size_t. FLOAT accepts canonical float/double. SINT/UINT/FLOAT require semantic bits equal `storage_type->size * CHAR_BIT`.
 
-For native read/write/reset use typed locals + `memcpy`, e.g.:
+Read/write/reset erased storage only through typed locals plus `memcpy`:
 
 ```c
 static bool cbind_int_empty(const void *src) {
@@ -604,13 +520,11 @@ static void cbind_int_store(void *dst, int value) {
 }
 ```
 
-Do not dereference erased destination as `(int *)out`, `(long *)out`, etc.
+- [ ] **Step 5: Implement BOOL and integer conversion with proof before narrowing**
 
-- [ ] **Step 5: Implement BOOL and integer conversions without pre-check casts**
+Signed token to int/long: compare against `INT_MIN/INT_MAX` or `LONG_MIN/LONG_MAX` before cast. UINT to signed: compare against `(uint64_t)INT_MAX` / `(uint64_t)LONG_MAX`. SINT to size_t: reject negative first; compare magnitude to `SIZE_MAX` before cast.
 
-For signed token to signed target, compare source `int64_t` against target macros before narrowing. For UINT to signed target, compare against `(uint64_t)INT_MAX` / `(uint64_t)LONG_MAX`. For signed to `size_t`, reject negative first, then compare as `uint64_t` when `SIZE_MAX < UINT64_MAX`.
-
-Representative branch:
+Representative int branch:
 
 ```c
 if (cbind_type_matches(shape->storage_type, &cmeta_type_int)) {
@@ -632,22 +546,15 @@ if (cbind_type_matches(shape->storage_type, &cmeta_type_int)) {
 }
 ```
 
-FLOAT-to-integer support is added in Task 3; until then its RED tests remain absent.
-
 - [ ] **Step 6: Run scalar GREEN**
 
 ```bash
 cmake --build --preset build-default-linux --target cbind_scalar_decode_test
 ctest --preset test-release-linux -R '^cbind_scalar_decode_test$' --output-on-failure
-```
-
-Expected: all Task 1/2 scalar cases PASS. Also run:
-
-```bash
 ctest --preset test-release-linux -R '^(cmeta_data_test|cserde_)' --output-on-failure
 ```
 
-Expected: existing semantic/token substrate remains PASS.
+Expected: PASS.
 
 - [ ] **Step 7: Commit Task 2 GREEN**
 
@@ -666,8 +573,6 @@ git commit -m "feat(cbind): decode canonical bool and integers"
 - Modify: `cbind/tests/cbind_scalar_decode_test.c`
 
 **Interfaces:**
-- Extends `cbind_decode_scalar()` to accept the complete D2 numeric token sets.
-- Adds private helpers:
 
 ```c
 bool cbind_u64_exact_in_binary(uint64_t magnitude, unsigned precision_bits);
@@ -677,44 +582,42 @@ bool cbind_double_fits_signed_bits(double value, unsigned bits);
 bool cbind_double_fits_unsigned_bits(double value, unsigned bits);
 ```
 
-These remain private in `internal.h` or `scalar.c`; no numeric policy becomes public ABI.
+All remain private.
 
-- [ ] **Step 1: Add numeric-boundary RED tests**
+- [ ] **Step 1: Write numeric-boundary RED cases**
 
-Add concrete tests:
+Required cases:
 
 ```text
-FLOAT 42.0 -> int/long                  OK
-FLOAT 42.5 -> int                       VALUE_OUT_OF_RANGE
-FLOAT NaN/+Inf/-Inf -> integer          VALUE_OUT_OF_RANGE
-FLOAT exactly signed lower bound        OK
-FLOAT signed upper-exclusive bound      VALUE_OUT_OF_RANGE
-FLOAT -1.0 -> size_t                    VALUE_OUT_OF_RANGE
-FLOAT 0.0 -> size_t                     OK
-FLOAT -> double NaN/Inf                 OK and preserved by isnan/isinf/signbit as applicable
-FLOAT DBL_MAX -> float                  VALUE_OUT_OF_RANGE
-FLOAT smallest positive double -> float VALUE_OUT_OF_RANGE when cast becomes 0
-FLOAT 1.0 + DBL_EPSILON -> float        OK; normal finite rounding allowed
-SINT 2^24 -> float                      OK
-SINT 2^24+1 -> float                    VALUE_OUT_OF_RANGE
-UINT 2^24 -> float                      OK
-UINT 2^24+1 -> float                    VALUE_OUT_OF_RANGE
-SINT/UINT 2^53 -> double                OK
-SINT/UINT 2^53+1 -> double              VALUE_OUT_OF_RANGE
+FLOAT 42.0 -> int/long                       OK
+FLOAT 42.5 -> int                            VALUE_OUT_OF_RANGE
+FLOAT NaN/+Inf/-Inf -> integer               VALUE_OUT_OF_RANGE
+FLOAT signed lower bound                     OK
+FLOAT signed upper-exclusive bound           VALUE_OUT_OF_RANGE
+FLOAT -1.0 -> size_t                         VALUE_OUT_OF_RANGE
+FLOAT 0.0 -> size_t                          OK
+FLOAT -> double NaN/Inf                      OK and preserved
+FLOAT DBL_MAX -> float                       VALUE_OUT_OF_RANGE
+FLOAT DBL_TRUE_MIN -> float                  VALUE_OUT_OF_RANGE when result is zero
+FLOAT 1.0 + DBL_EPSILON -> float             OK; normal rounding allowed
+SINT/UINT 2^24 -> float                      OK
+SINT/UINT 2^24+1 -> float                    VALUE_OUT_OF_RANGE
+SINT/UINT 2^53 -> double                     OK
+SINT/UINT 2^53+1 -> double                   VALUE_OUT_OF_RANGE
+INT64_MIN exactness path                     no signed-overflow in magnitude logic
+UINT64_MAX -> double                         VALUE_OUT_OF_RANGE
 ```
 
-Use `ldexp(1.0, n)`/integer shifts guarded by widths instead of decimal magic numbers where that makes the boundary self-evident. Use `<float.h>`, `<math.h>`, `<limits.h>`, and `<stdint.h>`.
+Use `<float.h>`, `<math.h>`, `<limits.h>`, `<stdint.h>` and `ldexp()` for exact powers of two.
 
-For 64-bit integer exactness, include `UINT64_MAX` and `INT64_MIN` paths so magnitude computation never relies on `-INT64_MIN`.
-
-- [ ] **Step 2: Run numeric RED and commit tests**
+- [ ] **Step 2: Run numeric RED and commit**
 
 ```bash
 cmake --build --preset build-default-linux --target cbind_scalar_decode_test
 ctest --preset test-release-linux -R '^cbind_scalar_decode_test$' --output-on-failure
 ```
 
-Expected: new FLOAT/integer-to-float tests FAIL with `CBIND_TOKEN_MISMATCH` or missing conversion behavior, while Task 2 cases remain PASS.
+Expected: new FLOAT/exactness cases FAIL while Task 2 cases remain PASS.
 
 ```bash
 git add cbind/tests/cbind_scalar_decode_test.c
@@ -722,8 +625,6 @@ git commit -m "test(cbind): specify strict numeric conversion"
 ```
 
 - [ ] **Step 3: Implement safe double-to-integer proof**
-
-Never cast until finite/integral/range checks pass.
 
 Integral proof:
 
@@ -734,35 +635,33 @@ bool cbind_double_is_integral(double value) {
 }
 ```
 
-For signed N-bit two's-complement storage used by supported targets, prove the exact half-open mathematical range with powers of two:
+For supported Linux/MSVC native integer storage, prove signed N-bit half-open range before cast:
 
 ```text
 -2^(N-1) <= value < 2^(N-1)
 ```
 
-For unsigned N-bit:
+and unsigned:
 
 ```text
 0 <= value < 2^N
 ```
 
-Compute powers with `ldexp(1.0, exponent)`, which exactly represents these binary boundaries and avoids the `double(INT64_MAX)` rounding trap. Then narrow only after proof.
-
-Use the actual target width established by the canonical CMeta descriptor (`sizeof(int/long/size_t) * CHAR_BIT`).
+Compute powers with `ldexp(1.0, exponent)`. This avoids accepting binary64 `2^63` because `(double)INT64_MAX` rounded upward. Only cast after finite/integral/range proof.
 
 - [ ] **Step 4: Implement exact integer-to-binary-float proof without unsafe round-trip casts**
 
-Compute signed magnitude safely:
+Safe signed magnitude:
 
 ```c
 uint64_t magnitude;
 if (value < 0)
-    magnitude = (uint64_t)(-(value + 1)) + 1u;
+    magnitude = (uint64_t)(-(value + 1)) + UINT64_C(1);
 else
     magnitude = (uint64_t)value;
 ```
 
-Exactness helper:
+Exactness:
 
 ```c
 bool cbind_u64_exact_in_binary(uint64_t magnitude, unsigned precision_bits) {
@@ -785,11 +684,9 @@ bool cbind_u64_exact_in_binary(uint64_t magnitude, unsigned precision_bits) {
 }
 ```
 
-For D2 64-bit integer inputs, `discarded` is at most 40 for binary32 and 11 for binary64, so this shift is bounded. Call with `FLT_MANT_DIG` or `DBL_MANT_DIG` and only cast to float/double after exactness is proven.
+Call with `FLT_MANT_DIG` / `DBL_MANT_DIG`. For 64-bit input the maximum discarded count is 40 (binary32) or 11 (binary64), so shift width is safe.
 
-- [ ] **Step 5: Implement binary64-to-binary32 overflow/underflow policy**
-
-Pattern:
+- [ ] **Step 5: Implement binary64-to-binary32 policy**
 
 ```c
 if (isnan(source) || isinf(source)) {
@@ -809,9 +706,9 @@ if (isnan(source) || isinf(source)) {
 }
 ```
 
-Finite precision rounding inside the representable nonzero range is accepted by design.
+Finite in-range rounding is accepted.
 
-- [ ] **Step 6: Run numeric GREEN on scalar suite**
+- [ ] **Step 6: Run numeric GREEN**
 
 ```bash
 cmake --build --preset build-default-linux --target cbind_scalar_decode_test
@@ -819,8 +716,6 @@ ctest --preset test-release-linux -R '^cbind_scalar_decode_test$' --output-on-fa
 ```
 
 Expected: PASS with exact `2^24/2^24+1` and `2^53/2^53+1` distinctions.
-
-Run UBSan/ASan preset if the repository's current preset set exposes one; if no sanitizer preset exists, do not invent workflow-local flags. The essential verification is that no rejected conversion performs an out-of-range C cast before proof.
 
 - [ ] **Step 7: Commit Task 3 GREEN**
 
@@ -831,7 +726,7 @@ git commit -m "feat(cbind): enforce exact numeric conversion"
 
 ---
 
-### Task 4: Complete recursive semantic/storage preflight, cycle safety, depth, and exact scratch budget
+### Task 4: Recursive semantic/storage preflight, cycle safety, depth, and exact scratch budget
 
 **Files:**
 - Create: `cbind/src/struct.c`
@@ -842,8 +737,6 @@ git commit -m "feat(cbind): enforce exact numeric conversion"
 - Modify: `cbind/tests/CMakeLists.txt`
 
 **Interfaces:**
-- Completes `cbind_validate_graph()` for STRUCT.
-- Produces private struct helpers:
 
 ```c
 size_t cbind_bitmap_bytes(size_t field_count);
@@ -860,11 +753,9 @@ cbind_status cbind_decode_struct(
     void *out);
 ```
 
-`cbind_decode_struct()` is implemented fully in Task 5; Task 4 establishes its declaration and complete preflight/resource proof.
+Task 4 completes STRUCT preflight/resource proof; runtime struct MAP decode is Task 5.
 
-- [ ] **Step 1: Register struct test target and define reusable semantic test models**
-
-Add to `cbind/tests/CMakeLists.txt`:
+- [ ] **Step 1: Register struct test and define explicit semantic models**
 
 ```cmake
 cmake_add_test(cbind_struct_decode_test
@@ -878,7 +769,7 @@ set_target_properties(cbind_struct_decode_test PROPERTIES
   C_EXTENSIONS OFF)
 ```
 
-In `cbind_struct_decode_test.c`, define reflected/storage/semantic descriptors explicitly using the same CMeta pattern as `cmeta/tests/cmeta_data_test.c`:
+Define reflected models:
 
 ```c
 Struct(cbind_test_inner,
@@ -894,38 +785,35 @@ Struct(cbind_test_record,
 );
 ```
 
-Because `Struct(...)` cannot infer a semantic descriptor for the custom nested struct automatically, define canonical `cmeta_type_identity`, `cmeta_type_desc`, `cmeta_data_field_desc[]`, `cmeta_data_struct_shape`, and `cmeta_data_desc` objects for `cbind_test_inner` and `cbind_test_record`. Include only `id`, `score`, and `inner` in the outer semantic field array; `untouched` is reflected-but-nonsemantic.
+Define explicit `cmeta_type_identity`, `cmeta_type_desc`, semantic field arrays, struct shapes, and data descriptors for both custom structs using the same pattern as `cmeta/tests/cmeta_data_test.c`. Outer semantic fields are `id`, `score`, `inner`; reflected `untouched` is deliberately nonsemantic.
 
-- [ ] **Step 2: Write preflight RED tests with zero provider consumption**
-
-Every case initializes a recording reader and asserts `source.index == 0u` after failure.
+- [ ] **Step 2: Write preflight RED cases with `source.index == 0u` on rejection**
 
 Required cases:
 
 ```text
-valid scalar root max_depth=0, scratch=0                       accepted (existing scalar suite)
 root empty struct max_depth=0                                  LIMIT_EXCEEDED
-root empty struct max_depth=1, scratch=0                       reaches runtime decode path
-one-field root struct scratch=0                                LIMIT_EXCEEDED
-one-field root struct scratch=1                                reaches runtime decode path
-8-field root scratch=1                                         reaches runtime decode path
+root empty struct max_depth=1, scratch=0                       preflight accepted
+one-field root scratch=0                                       LIMIT_EXCEEDED
+one-field root scratch=1                                       preflight accepted
+8-field root scratch=1                                         preflight accepted
 9-field root scratch=1                                         LIMIT_EXCEEDED
-9-field root scratch=2                                         reaches runtime decode path
-nested path root(1 byte)+inner(1 byte), scratch=1               LIMIT_EXCEEDED
-same nested path scratch=2                                     reaches runtime decode path
-sibling nested structs                                         max active-path sum, not schema-total sum
+9-field root scratch=2                                         preflight accepted
+nested root(1 byte)+inner(1 byte), scratch=1                   LIMIT_EXCEEDED
+same nested path scratch=2                                     preflight accepted
+sibling nested structs                                         budget uses max active path, not schema total
 struct storage size mismatch                                   INVALID_SHAPE
 struct storage alignment mismatch                              INVALID_SHAPE
 semantic/reflected offset mismatch                             INVALID_SHAPE
 semantic child storage size mismatch                           INVALID_SHAPE
 semantic child storage alignment mismatch                      INVALID_SHAPE
 duplicate semantic field name/mapping                          INVALID_SHAPE
-semantic field offset + child size overflow/out of parent      INVALID_SHAPE
+field range outside parent storage                             INVALID_SHAPE
 self-referential semantic descriptor cycle                     INVALID_SHAPE
 nested valid-but-unsupported child                             UNSUPPORTED
 ```
 
-For cycle construction use local mutable descriptor objects so no linker trick is needed:
+Cycle fixture:
 
 ```c
 cmeta_data_desc cycle_desc = valid_record_desc;
@@ -938,23 +826,21 @@ cycle_shape.field_count = 1u;
 cycle_desc.shape = &cycle_shape;
 ```
 
-- [ ] **Step 3: Run preflight RED and commit tests**
+- [ ] **Step 3: Run preflight RED and commit**
 
 ```bash
 cmake --build --preset build-default-linux --target cbind_struct_decode_test
 ctest --preset test-release-linux -R '^cbind_struct_decode_test$' --output-on-failure
 ```
 
-Expected: new struct preflight cases FAIL because STRUCT graph/resource proof is not yet implemented. Existing scalar suite remains PASS.
+Expected: struct resource/storage cases FAIL because STRUCT preflight is absent; scalar suite remains PASS.
 
 ```bash
-git add cbind/tests cbind/CMakeLists.txt
+git add cbind
 git commit -m "test(cbind): specify struct preflight budgets"
 ```
 
 - [ ] **Step 4: Implement overflow-safe bitmap and DFS cycle/resource proof**
-
-Bitmap helper:
 
 ```c
 size_t cbind_bitmap_bytes(size_t field_count) {
@@ -962,56 +848,41 @@ size_t cbind_bitmap_bytes(size_t field_count) {
 }
 ```
 
-DFS frame:
+Before STRUCT recursion, scan active `cbind_validation_frame` ancestors by semantic descriptor address; repeat means `CBIND_INVALID_SHAPE`.
 
-```c
-typedef struct cbind_validation_frame {
-    const cmeta_data_desc *shape;
-    const struct cbind_validation_frame *parent;
-} cbind_validation_frame;
-```
-
-Before entering a STRUCT, scan `parent` chain for `shape` address equality; an active repeat is `CBIND_INVALID_SHAPE`. This address comparison is cycle detection only; canonical scalar storage matching still uses `cmeta_type_equal()`.
-
-Compute depth and scratch before recursion:
+Resource proof:
 
 ```text
 next_depth = depth + 1
-if next_depth > context->max_depth -> LIMIT_EXCEEDED
+next_depth > context->max_depth                         => LIMIT_EXCEEDED
 frame_bytes = cbind_bitmap_bytes(field_count)
-if active_scratch > SIZE_MAX - frame_bytes -> LIMIT_EXCEEDED
+active_scratch > SIZE_MAX - frame_bytes                 => LIMIT_EXCEEDED
 next_active = active_scratch + frame_bytes
-*max_scratch = max(*max_scratch, next_active)
+max_scratch = max(max_scratch, next_active)
 ```
 
-Then recurse each semantic child with the same frame and `next_active`. Siblings reuse the same `active_scratch` base because this is path maximum, not cumulative schema total.
+Each child recurses with the same `next_active`; siblings do not accumulate after each other.
 
 - [ ] **Step 5: Implement complete struct storage proof**
 
-For each STRUCT:
+Prove:
 
 ```text
-cmeta_data_desc_valid(desc)
 shape/layout/storage_type non-NULL
-storage_type->size  == layout->size
+storage_type->size == layout->size
 storage_type->align == layout->align
-```
-
-For each semantic field, use `cmeta_struct_find_field(layout, field->name)` and prove:
-
-```text
-name unique among semantic fields
+semantic field names unique
 resolved reflected field exists
 semantic offset == reflected offset
-reflected field size == child storage_type->size
-reflected field align == child storage_type->align
+reflected size == child storage size
+reflected align == child storage align
 field->offset <= parent size
 child_size <= parent size - field->offset
-no second semantic field resolves to same reflected field
+no two semantic entries resolve to the same reflected field
 child graph recursively valid/supported
 ```
 
-Use subtraction form for bounds; do not compute unchecked `offset + child_size`.
+Use subtraction form for range proof; do not evaluate unchecked `offset + child_size`.
 
 - [ ] **Step 6: Run preflight GREEN**
 
@@ -1020,7 +891,7 @@ cmake --build --preset build-default-linux --target cbind_struct_decode_test cbi
 ctest --preset test-release-linux -R '^cbind_(scalar|struct)_decode_test$' --output-on-failure
 ```
 
-Expected: preflight/resource tests PASS. Valid struct inputs may still fail at runtime until Task 5, but the RED cases in this task must distinguish “preflight accepted and reader was touched” from “preflight rejected at source.index==0”. Do not assert successful struct decode until Task 5.
+Expected: rejection/budget tests PASS. Cases labeled “preflight accepted” assert reader/provider was reached rather than expecting final struct success; Task 5 supplies runtime success semantics.
 
 - [ ] **Step 7: Commit Task 4 GREEN**
 
@@ -1040,7 +911,6 @@ git commit -m "feat(cbind): preflight struct storage and budgets"
 - Modify: `cbind/tests/cbind_struct_decode_test.c`
 
 **Interfaces:**
-- Produces private generic recursive runtime dispatch:
 
 ```c
 cbind_status cbind_decode_value(
@@ -1051,62 +921,53 @@ cbind_status cbind_decode_value(
     void *out);
 ```
 
-- `cbind_decode_value()` routes BOOL/SINT/UINT/FLOAT to `cbind_decode_scalar()` and STRUCT to `cbind_decode_struct()`. Unsupported kinds can never reach runtime after successful preflight.
-- `cbind_decode()` calls `cbind_decode_value(..., field=NULL, depth=0, out)` after preflight and empty-state checks.
+`cbind_decode_value()` routes scalar kinds to `cbind_decode_scalar()` and STRUCT to `cbind_decode_struct()`. Unsupported kinds cannot reach runtime after successful preflight.
 
-- [ ] **Step 1: Write strict struct decoding RED cases**
+- [ ] **Step 1: Write strict struct runtime RED cases**
 
-Concrete canonical token arrays must cover:
+Required token sequences:
 
 ```text
-empty semantic struct: MAP_BEGIN MAP_END                              OK
-flat struct descriptor order                                         OK
-flat struct reversed input order                                     OK
-nested struct                                                        OK
-case-sensitive exact field name                                      OK only exact case
-unknown field                                                        UNKNOWN_FIELD
-same known field twice                                               DUPLICATE_FIELD
-MAP_END before every required field                                  MISSING_FIELD
-UINT or other non-STRING map key                                     TOKEN_MISMATCH
-ARRAY_BEGIN as root for struct                                       TOKEN_MISMATCH
-known field followed by wrong scalar token                           TOKEN_MISMATCH
+empty semantic struct: MAP_BEGIN MAP_END                 OK
+flat struct descriptor order                            OK
+flat struct reversed order                              OK
+nested struct                                           OK
+exact case-sensitive field key                          OK only exact case
+unknown key                                             UNKNOWN_FIELD
+known key repeated                                      DUPLICATE_FIELD
+MAP_END before all required fields                      MISSING_FIELD
+UINT/non-STRING map key                                 TOKEN_MISMATCH
+ARRAY_BEGIN root                                        TOKEN_MISMATCH
+known field with wrong scalar token                     TOKEN_MISMATCH
 ```
 
-Transient non-NUL key test must use a byte array without trailing NUL:
+Transient non-NUL key:
 
 ```c
-static const unsigned char id_key_bytes[] = { 'i', 'd' };
-const cserde_token key = {
+static const unsigned char id_key_bytes[] = {'i', 'd'};
+cserde_token key = {
     .kind = CSERDE_STRING,
-    .value.slice = {
-        id_key_bytes,
-        sizeof(id_key_bytes),
-        CSERDE_VIEW_TRANSIENT
-    }
+    .value.slice = {id_key_bytes, sizeof(id_key_bytes), CSERDE_VIEW_TRANSIENT}
 };
 ```
 
-Do not call `cmeta_data_struct_find_field()` with this borrowed slice because that helper requires a C string.
+Add sibling nested-struct success where schema-total bitmap bytes exceed provided scratch but max active path fits.
 
-Add a scratch-reuse success case with two sibling nested structs where the total schema bitmap bytes exceed scratch but the maximum simultaneously active path fits; decoding must succeed.
-
-- [ ] **Step 2: Run struct runtime RED and commit tests**
+- [ ] **Step 2: Run struct RED and commit**
 
 ```bash
 cmake --build --preset build-default-linux --target cbind_struct_decode_test
 ctest --preset test-release-linux -R '^cbind_struct_decode_test$' --output-on-failure
 ```
 
-Expected: preflight cases remain PASS; successful/strict runtime struct cases FAIL because struct MAP consumption is incomplete.
+Expected: new runtime cases FAIL; Task 4 preflight cases remain PASS.
 
 ```bash
 git add cbind/tests/cbind_struct_decode_test.c
 git commit -m "test(cbind): specify strict struct map decode"
 ```
 
-- [ ] **Step 3: Implement length-delimited field lookup**
-
-`cbind_find_field_slice()`:
+- [ ] **Step 3: Implement exact length-delimited field lookup**
 
 ```c
 const cmeta_data_field_desc *cbind_find_field_slice(
@@ -1114,7 +975,6 @@ const cmeta_data_field_desc *cbind_find_field_slice(
     const cserde_slice *key,
     size_t *index) {
     size_t i;
-
     if (shape == NULL || key == NULL)
         return NULL;
     for (i = 0u; i < shape->field_count; ++i) {
@@ -1131,29 +991,22 @@ const cmeta_data_field_desc *cbind_find_field_slice(
 }
 ```
 
-The function neither allocates nor stores `key->data`.
+Never allocate/copy/store the transient key slice.
 
-- [ ] **Step 4: Implement struct scratch-frame ownership and seen bitmap**
+- [ ] **Step 4: Implement scratch-frame and seen bitmap ownership**
 
-At struct entry:
+At struct entry after MAP_BEGIN:
 
 ```text
-require MAP_BEGIN
 frame_bytes = cbind_bitmap_bytes(field_count)
 mark = state->scratch_used
-assert defensive bounds: frame_bytes <= scratch_size - mark
-bitmap = state->scratch + mark
-memset(bitmap, 0, frame_bytes)
+defensive check frame_bytes <= context->scratch_size - mark
+bitmap = state->scratch + mark when frame_bytes != 0
+zero bitmap only when frame_bytes != 0
 state->scratch_used = mark + frame_bytes
 ```
 
-On every exit path from this struct, restore:
-
-```c
-state->scratch_used = mark;
-```
-
-Seen helpers are byte operations only:
+Seen helpers:
 
 ```c
 static bool cbind_seen(const unsigned char *bitmap, size_t index) {
@@ -1165,48 +1018,37 @@ static void cbind_mark_seen(unsigned char *bitmap, size_t index) {
 }
 ```
 
-Zero-field struct with zero scratch must not dereference a NULL scratch pointer; `memset` is called only when `frame_bytes != 0u`.
+Every struct exit restores `state->scratch_used = mark`. Zero-field struct with zero scratch never dereferences NULL scratch.
 
 - [ ] **Step 5: Implement normative struct state machine**
 
-After MAP_BEGIN, loop on `cbind_read_required()`:
-
 ```text
-MAP_END:
-  scan field indices in descriptor order
-  first unseen -> CBIND_MISSING_FIELD with that canonical field
-  none unseen  -> success
-
-STRING key:
-  exact borrowed-slice lookup
-  no field -> CBIND_UNKNOWN_FIELD, field=NULL, value remains unconsumed
-  already seen -> CBIND_DUPLICATE_FIELD, duplicate value remains unconsumed
-  resolve child pointer as (unsigned char *)out + field->offset
-  cbind_decode_value(child, field, current struct depth, child_out)
-  only after child success mark seen
-
-anything else:
-  CBIND_TOKEN_MISMATCH, paired value remains unconsumed
+require MAP_BEGIN
+loop read required token
+  MAP_END:
+    first unseen semantic field in descriptor order -> MISSING_FIELD
+    none unseen -> success
+  STRING:
+    exact slice lookup
+    unknown -> UNKNOWN_FIELD; unknown value remains unconsumed
+    seen -> DUPLICATE_FIELD; duplicate value remains unconsumed
+    child_out = (unsigned char *)out + field->offset
+    recursively decode child
+    mark seen only after child success
+  other:
+    TOKEN_MISMATCH; paired value remains unconsumed
 ```
 
-Depth attribution: entering a struct increments depth before interpreting that struct. Thus root struct errors have depth `1`; scalar field errors in root use depth `1`; nested struct errors use `2+`.
+Entering STRUCT increments semantic depth before reading its content. Root struct errors are depth 1; nested struct errors are depth 2+; scalar fields inherit current struct depth.
 
-- [ ] **Step 6: Run struct GREEN and verify reader positions**
+- [ ] **Step 6: Run struct GREEN and assert reader positions**
 
 ```bash
 cmake --build --preset build-default-linux --target cbind_struct_decode_test
 ctest --preset test-release-linux -R '^cbind_struct_decode_test$' --output-on-failure
 ```
 
-Expected: PASS.
-
-Explicitly assert recording `source.index`:
-
-```text
-unknown field    -> MAP_BEGIN + key consumed, unknown value not consumed
-duplicate field  -> duplicate key consumed, duplicate value not consumed
-non-string key   -> key token consumed, paired value not consumed
-```
+Assert exact recording indices so unknown/duplicate/non-string key failures stop before their paired value.
 
 - [ ] **Step 7: Commit Task 5 GREEN**
 
@@ -1226,14 +1068,11 @@ git commit -m "feat(cbind): decode strict semantic structs"
 - Modify: `cbind/tests/cbind_scalar_decode_test.c`
 - Modify: `cbind/tests/cbind_struct_decode_test.c`
 
-**Interfaces:**
-- Finalizes `cbind_value_reset()` recursively for the complete D2 supported graph.
-- Finalizes `cbind_error_set()` usage so every failure site has deterministic `status/source_status/shape/field/depth`.
-- No new public API.
+**Interfaces:** Finalizes recursive `cbind_value_reset()` and deterministic diagnostic writes; no new public API.
 
-- [ ] **Step 1: Add rollback and source RED tests**
+- [ ] **Step 1: Add rollback/source RED tests**
 
-Add a test-local failure reader provider only for status injection; do not duplicate the recording provider:
+Use a small test-only status-injection provider, not a second recording source:
 
 ```c
 typedef struct failing_reader_context {
@@ -1255,42 +1094,41 @@ static cserde_status failing_reader_next(void *context, cserde_token *out) {
 }
 ```
 
-Required tests:
+Required cases:
 
 ```text
-empty input for scalar                           UNEXPECTED_END / source DONE / depth 0
-empty input for struct                           UNEXPECTED_END / source DONE / depth 1
-mid-struct DONE while key required               UNEXPECTED_END / source DONE
-mid-struct DONE while known value required       UNEXPECTED_END / source DONE + known field
-provider SOURCE_ERROR                            SOURCE_ERROR / exact SOURCE_ERROR
-provider VALUE_OUT_OF_RANGE                      SOURCE_ERROR / exact VALUE_OUT_OF_RANGE
-provider CALLBACK_ERROR sticky result            SOURCE_ERROR / exact CALLBACK_ERROR
-failure after first successful field             root semantic fields all reset
-nested child failure                             entire root semantic graph reset
-wrong second field token                         earlier writes reset
+empty scalar input                               UNEXPECTED_END / source DONE / depth 0
+empty struct input                               UNEXPECTED_END / source DONE / depth 1
+mid-struct DONE                                  UNEXPECTED_END / source DONE
+provider SOURCE_ERROR                            SOURCE_ERROR / exact source status
+provider VALUE_OUT_OF_RANGE                      SOURCE_ERROR / exact source status
+sticky CALLBACK_ERROR from CSerde                SOURCE_ERROR / exact CALLBACK_ERROR
+failure after first field                        all root semantic fields reset
+nested child failure                             complete root semantic graph reset
+wrong later field token                          earlier semantic writes reset
 nonsemantic reflected field on success           unchanged
 nonsemantic reflected field on rollback          unchanged
-no provider call after reported failure          calls exact at failure boundary
+provider calls after failure                     exactly zero additional calls
 ```
 
-Error-site assertions must include:
+Diagnostic cases:
 
 ```text
-root scalar mismatch:       shape=root scalar, field=NULL, depth=0
-known root field mismatch:  shape=child scalar, field=&root_field, depth=1
-unknown root field:         shape=root struct, field=NULL, depth=1
-duplicate root field:       shape=root struct, field=&duplicated_field, depth=1
-missing nested field:       shape=nested struct, field=&first_missing_nested_field, depth=2
+root scalar mismatch        shape=root scalar, field=NULL, depth=0
+known root field mismatch   shape=child scalar, field=&root_field, depth=1
+unknown root field          shape=root struct, field=NULL, depth=1
+duplicate root field        shape=root struct, field=&duplicate_field, depth=1
+missing nested field        shape=nested struct, field=&first_missing_nested_field, depth=2
 ```
 
-- [ ] **Step 2: Run transaction/source RED and commit tests**
+- [ ] **Step 2: Run RED and commit**
 
 ```bash
 cmake --build --preset build-default-linux --target cbind_scalar_decode_test cbind_struct_decode_test
 ctest --preset test-release-linux -R '^cbind_(scalar|struct)_decode_test$' --output-on-failure
 ```
 
-Expected: at least rollback/error-attribution/source-prefix cases FAIL; previous success cases remain PASS.
+Expected: rollback/error-attribution/source-prefix cases FAIL; prior success cases remain PASS.
 
 ```bash
 git add cbind/tests
@@ -1299,19 +1137,15 @@ git commit -m "test(cbind): specify transactional failure semantics"
 
 - [ ] **Step 3: Finalize recursive semantic reset**
 
-`cbind_value_reset()` behavior:
-
 ```text
 BOOL        typed bool false + memcpy
-SINT        typed int/long zero + memcpy according to proven canonical storage
+SINT        typed int/long zero + memcpy
 UINT        typed size_t zero + memcpy
 FLOAT       typed float/double +0 + memcpy
-STRUCT      recurse semantic fields only using field offsets
+STRUCT      recurse semantic fields only by semantic offsets
 ```
 
-Never `memset(out, 0, storage_type->size)` for structs. Never touch reflected fields absent from semantic shape.
-
-`cbind_decode()` owns the root transaction:
+Never raw-zero the whole struct. Root transaction:
 
 ```c
 status = cbind_decode_value(&state, shape, NULL, 0u, out);
@@ -1322,27 +1156,11 @@ else
 return status;
 ```
 
-Child decoders do not independently roll back the whole root; they report the most specific failure and let the root transaction reset once.
+- [ ] **Step 4: Make diagnostic attribution monotonic toward the most-specific child**
 
-- [ ] **Step 4: Make error attribution monotonic toward the most specific child**
+A child failure already carrying deeper `shape/depth` is returned unchanged by outer frames. Local struct errors set current struct shape/depth. Known child decode receives canonical parent field pointer; unknown/non-string key uses field NULL.
 
-Rule: once a child decode has populated an error with a deeper/more specific `shape/depth`, outer frames return the status unchanged and do not overwrite it. Struct-level failures generated locally set the current struct shape/depth and the field rules from the spec.
-
-A known child call receives the canonical parent field pointer:
-
-```c
-status = cbind_decode_value(state,
-                            field->value,
-                            field,
-                            current_depth,
-                            child_out);
-if (status != CBIND_OK)
-    goto fail;
-```
-
-Unknown/non-string current keys pass `field=NULL`.
-
-- [ ] **Step 5: Run complete D2 functional GREEN**
+- [ ] **Step 5: Run complete functional GREEN**
 
 ```bash
 cmake --build --preset build-default-linux --target cbind_scalar_decode_test cbind_struct_decode_test
@@ -1350,7 +1168,7 @@ ctest --preset test-release-linux -R '^cbind_(scalar|struct)_decode_test$' --out
 ctest --preset test-release-linux -R '^(cmeta_|cserde_|cbind_)' --output-on-failure
 ```
 
-Expected: all PASS.
+Expected: PASS.
 
 - [ ] **Step 6: Commit Task 6 GREEN**
 
@@ -1366,16 +1184,10 @@ git commit -m "feat(cbind): guarantee transactional decode failures"
 **Files:**
 - Create: `cbind/tests/cbind_header_cpp_test.cpp`
 - Modify: `cbind/tests/CMakeLists.txt`
-- Modify if needed after export verification: `cbind/CMakeLists.txt`
-- Modify if needed after workflow verification: `.github/workflows/cmeta.yml`
 
-**Interfaces:**
-- Consumes: complete Tasks 1-6 public API.
-- Produces: no new binding semantics; proves public ABI/package/build constraints.
+**Interfaces:** Proves Tasks 1-6 public ABI/package/build constraints; no new binding semantics.
 
-- [ ] **Step 1: Add C++17 RED/linkage test**
-
-`cbind/tests/cbind_header_cpp_test.cpp`:
+- [ ] **Step 1: Add C++17 linkage test without C++20 designated initialization**
 
 ```cpp
 #include <cbind/cbind.h>
@@ -1386,23 +1198,25 @@ git commit -m "feat(cbind): guarantee transactional decode failures"
 #include <cstdint>
 #include <type_traits>
 
-static_assert(std::is_standard_layout<cbind_context>::value,
-              "context ABI");
-static_assert(std::is_standard_layout<cbind_error>::value,
-              "error ABI");
+static_assert(std::is_standard_layout<cbind_context>::value, "context ABI");
+static_assert(std::is_standard_layout<cbind_error>::value, "error ABI");
 static_assert(CBIND_CONTEXT_ABI_VERSION == 1u, "context ABI version");
 static_assert(CBIND_ERROR_ABI_VERSION == 1u, "error ABI version");
 
 spec("CBind C++17 public linkage") {
   it("calls the C decoder from C++") {
-    const cserde_token tokens[] = {
-        { CSERDE_SINT, { .sint = 7 } }
-    };
-    cserde_recording_reader_context source = { tokens, 1u, 0u };
+    cserde_token tokens[1]{};
+    cserde_recording_reader_context source{};
     cserde_reader reader{};
     cbind_context context = CBIND_CONTEXT_INIT(nullptr, 0u, 0u);
     cbind_error error = CBIND_ERROR_INIT;
     int out = 0;
+
+    tokens[0].kind = CSERDE_SINT;
+    tokens[0].value.sint = 7;
+    source.tokens = tokens;
+    source.count = 1u;
+    source.index = 0u;
 
     check_equal(cserde_reader_init(&reader, &cserde_recording_reader_ops, &source),
                 CSERDE_OK);
@@ -1413,70 +1227,45 @@ spec("CBind C++17 public linkage") {
 }
 ```
 
-If designated union initialization above is rejected by the repository's C++17 compiler mode, initialize the token field-by-field instead; do not change the public C structs to accommodate the test.
+Register with C++17/no extensions.
 
-Register:
-
-```cmake
-cmake_add_test(cbind_header_cpp_test
-  SOURCES cbind_header_cpp_test.cpp
-  LIBS TurboUtils::CBind cserde_recording_support TurboUtils::TinyTest
-  FOLDER "cbind/tests")
-
-set_target_properties(cbind_header_cpp_test PROPERTIES
-  CXX_STANDARD 17
-  CXX_STANDARD_REQUIRED ON
-  CXX_EXTENSIONS OFF)
-```
-
-- [ ] **Step 2: Run C++ test and fix only public C/C++ compatibility defects**
+- [ ] **Step 2: Run C++ linkage GREEN**
 
 ```bash
 cmake --build --preset build-default-linux --target cbind_header_cpp_test
 ctest --preset test-release-linux -R '^cbind_header_cpp_test$' --output-on-failure
 ```
 
-Expected final result: PASS. Any fix must preserve natural `cbind_*` C ABI and standard `extern "C"` declarations; do not add C++ wrapper classes.
+Expected: PASS. Public declarations use C linkage; no C++ wrapper layer is introduced.
 
-- [ ] **Step 3: Audit forbidden dependencies, includes, allocation, and duplicate test support**
-
-Run:
+- [ ] **Step 3: Run exact dependency/allocation/test-support audit**
 
 ```bash
-rg -n "TurboUtils::(STL|Core|CFlow)|TurboParser|turbostl|cflow/|turbo_parser|parser/" cbind
+rg -n "TurboUtils::(STL|Core|CFlow)|TurboParser|turbostl|cflow/|turbo_parser|parser/" cbind/include cbind/src cbind/CMakeLists.txt
 rg -n "\b(malloc|calloc|realloc|free)\s*\(" cbind/src cbind/include
-rg -n "cserde_recording_reader_ops|cserde_recording_reader_context" cbind/tests cserde/tests/support
+rg -n "^(const )?cserde_reader_ops cserde_recording_reader_ops|typedef struct cserde_recording_reader_context" cbind cserde/tests/support
 ```
 
 Expected:
 
 ```text
-first command: no production CBind dependency/include matches (test prose is not production)
-second command: no matches
-third command: definitions exist only in cserde/tests/support; CBind only references them
+first command: no forbidden production dependency/include match
+second command: no match
+third command: definitions/type declaration occur only under cserde/tests/support; CBind has no duplicate definition
 ```
 
-Inspect `cbind/CMakeLists.txt` and confirm the only production link dependencies are:
+Also inspect `cbind/CMakeLists.txt`: production `target_link_libraries(turbo_cbind ...)` is exactly PUBLIC CMeta + CSerde. Any mismatch means the responsible earlier task is incomplete; correct that task before continuing.
 
-```cmake
-target_link_libraries(turbo_cbind
-  PUBLIC TurboUtils::CMeta TurboUtils::CSerde)
-```
-
-- [ ] **Step 4: Verify installed export surface from a clean Linux build**
-
-Use a clean staging prefix; do not infer install success from build-tree aliases:
+- [ ] **Step 4: Verify installed export from a clean Linux release tree**
 
 ```bash
-rm -rf build/release-linux-ninja /tmp/turboutils-cbind-install /tmp/cbind-consumer
+rm -rf build/linux-gcc-release /tmp/turboutils-cbind-install /tmp/cbind-consumer
 cmake --preset release-linux-ninja
 cmake --build --preset build-default-linux
-cmake --install build/release-linux-ninja --prefix /tmp/turboutils-cbind-install
+cmake --install build/linux-gcc-release --prefix /tmp/turboutils-cbind-install
 ```
 
-Locate the installed target file and confirm it exports `TurboUtils::CBind`/`CBind` and references only CMeta/CSerde transitively for CBind.
-
-Create a temporary external consumer:
+Create external consumer:
 
 ```bash
 mkdir -p /tmp/cbind-consumer
@@ -1501,25 +1290,30 @@ cmake --build /tmp/cbind-consumer/build
 /tmp/cbind-consumer/build/cbind_consumer
 ```
 
-Expected: configure/build/run PASS without adding TurboSTL/CFlow/Core/parser targets explicitly.
+Expected: configure/build/run PASS with only `TurboUtils::CBind` named by the consumer.
 
-- [ ] **Step 5: Run fresh exact-head Linux conformance**
-
-From the exact final candidate head:
+- [ ] **Step 5: Commit C++ conformance test**
 
 ```bash
-rm -rf build/release-linux-ninja
+git add cbind/tests
+git commit -m "test(cbind): cover C++17 public linkage"
+```
+
+- [ ] **Step 6: Run fresh exact-head Linux acceptance**
+
+```bash
+rm -rf build/linux-gcc-release
 cmake --preset release-linux-ninja
 cmake --build --preset build-default-linux
 ctest --preset test-release-linux --output-on-failure
 ctest --preset test-release-linux -R '^(cmeta_|cserde_|cbind_|cflow_|turbostl_)' --output-on-failure
 ```
 
-Expected: full CTest PASS and selected conformance PASS. Record exact head SHA and counts.
+Expected: full and selected CTest PASS. Record exact head SHA and test counts.
 
-- [ ] **Step 6: Push exact head and require Windows workflow on the same SHA**
+- [ ] **Step 7: Push that exact head and require Windows conformance on the same SHA**
 
-The workflow already uses repository presets and `VsDevCmd`; after the `cbind/**` path/regex update it must execute:
+Existing workflow must execute through `VsDevCmd` and repository presets:
 
 ```text
 cmake --preset release-win-msvc-ninja
@@ -1527,54 +1321,41 @@ cmake --build --preset build-release-windows
 ctest --preset test-release-windows -R "^(cmeta_|cserde_|cbind_|cflow_|turbostl_)" --output-on-failure
 ```
 
-Do not add workflow-local compiler flags or duplicate preset configuration.
-
-Expected on the same exact head SHA:
+Expected on the same SHA:
 
 ```text
-Linux release   configure + build + full/selected tests PASS
-Windows release configure + build + selected tests PASS
+Linux   fresh configure + build + full/selected tests PASS
+Windows fresh configure + build + selected tests PASS
 ```
 
-If Windows exposes a `long`/size boundary failure, fix the implementation/tests using `<limits.h>`/`sizeof` facts rather than weakening the contract or assuming LP64.
-
-- [ ] **Step 7: Commit final compatibility/CI changes**
-
-```bash
-git add cbind .github/workflows/cmeta.yml CMakeLists.txt
-git commit -m "test(cbind): enforce public conformance gates"
-```
-
-If Step 7 produces a new head, rerun/reconfirm Steps 5-6 on that new exact head before calling the implementation complete.
+Any Windows `long`/size boundary defect is corrected using `<limits.h>` and actual `sizeof` facts; the contract is not weakened and LP64 is not assumed. After any correction commit, repeat Steps 6-7 on the new exact head.
 
 ---
 
 ## Final Review Checklist
 
-Before requesting code review, verify every item explicitly:
-
 ```text
-[ ] TurboUtils::CBind exists and exports/install correctly.
-[ ] CBind production links only CMeta + CSerde.
-[ ] Public API remains only context/error/decode D2 surface; no parser/CFlow/incremental ABI leaked in.
-[ ] All unsupported semantic kinds fail before provider consumption.
-[ ] All malformed shape/storage graphs fail before provider consumption.
-[ ] All scratch/depth failures fail before provider consumption.
+[ ] TurboUtils::CBind exports/installs correctly.
+[ ] Production CBind links only CMeta + CSerde.
+[ ] Public D2 surface contains no parser/CFlow/incremental API.
+[ ] Unsupported semantic kinds fail before provider consumption.
+[ ] Malformed semantic/storage graphs fail before provider consumption.
+[ ] Scratch/depth failures fail before provider consumption.
 [ ] Non-empty semantic destination fails before provider consumption.
-[ ] BOOL/int/long/size_t/float/double storage is proven canonically.
+[ ] BOOL/int/long/size_t/float/double storage is canonically proven.
 [ ] Numeric boundaries and exact integer-to-float rules pass.
-[ ] Struct MAP keys are exact STRING slices and need no NUL/copy.
+[ ] Struct MAP keys are exact length-delimited STRING slices.
 [ ] Unknown/duplicate/missing/non-string keys follow strict D2 semantics.
-[ ] Scratch uses active-path maximum and sibling reuse; no field-count cap.
-[ ] Post-consumption failures reset the full semantic root only.
+[ ] Scratch uses active-path maximum with sibling reuse and no field-count cap.
+[ ] Post-consumption failures reset the complete semantic root only.
 [ ] Padding and nonsemantic reflected fields remain untouched.
 [ ] Reader is not rewound/skipped after failure.
-[ ] DONE vs source failures preserve distinct CBind/CSerde status.
+[ ] DONE vs source failure mapping preserves exact CSerde status.
 [ ] Transient key pointers never escape dispatch.
-[ ] No production heap allocation exists.
+[ ] Production heap allocation is absent.
 [ ] CSerde recording support is reused, not duplicated.
 [ ] C11 and C++17 consumers compile/link.
-[ ] Fresh installed-package consumer links `TurboUtils::CBind`.
+[ ] Fresh installed consumer links `TurboUtils::CBind`.
 [ ] Exact same final head passes Linux and Windows conformance.
 ```
 
