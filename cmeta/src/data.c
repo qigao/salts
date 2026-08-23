@@ -180,7 +180,8 @@ const cmeta_data_desc *cmeta_container_data_descriptor(const void *object) {
     ext = cmeta_container_extension(object);
     if (ext == NULL ||
         ext->struct_size < CMETA_FIELD_END(cmeta_container_ext, data) ||
-        ext->data == NULL || !cmeta_data_desc_valid(ext->data))
+        ext->data == NULL || !cmeta_data_desc_valid(ext->data) ||
+        !cmeta_data_kind_is_container(ext->data->kind))
         return NULL;
     return ext->data;
 }
