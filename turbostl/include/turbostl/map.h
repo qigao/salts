@@ -28,7 +28,7 @@ typedef struct map_iter {
   void *node;
 } map_iter_t;
 
-/* Internal typed-storage bridge. Natural typed API is instance-driven below. */
+/* Storage bridge shared by generated facades and explicitly bound raw handles. */
 stl_status map_raw_init(map_t *map, const cmeta_type_desc *key_type,
                         const cmeta_type_desc *value_type,
                         size_t entry_limit);

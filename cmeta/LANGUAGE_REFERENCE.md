@@ -156,6 +156,16 @@ typed(Vec, IntVec, int);
 typed(HashMap, IntValuesById, int, int);
 ```
 
+The declared container type is explicit in semantic calls:
+
+```c
+IntList values = {0};
+
+list_init(IntList, &values, 100u);
+list_add(IntList, &values, 7);
+list_destroy(IntList, &values);
+```
+
 For containers, one `typed(...)` declaration is a complete instantiation. It may
 generate the wrapper type, static-inline typed forwarding functions, metadata,
 container descriptors, Range factories, and relevant traits. Allocation and
@@ -164,7 +174,10 @@ complete facade does not implicitly register its element, key, or value types;
 those types must satisfy the finite type-universe rules described below.
 
 Declare each concrete container with its own `typed(...)` statement, as shown
-above. There is no batch container declaration syntax.
+above. There is no batch container declaration syntax and no parallel
+`Vec(int, variable)`/`Map(int, long, variable)` instance-declaration language.
+Low-level erased handles remain an implementation/ABI facility of TurboSTL,
+not an alternative Generic syntax.
 
 ### `typed_any(...)`
 

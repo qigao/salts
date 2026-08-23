@@ -24,7 +24,7 @@ typedef struct list_iter {
   void *node;
 } list_iter_t;
 
-/* Internal typed-storage bridge. Natural typed API is instance-driven below. */
+/* Storage bridge shared by generated facades and explicitly bound raw handles. */
 stl_status list_raw_init(list_t *list, const cmeta_type_desc *element_type,
                          size_t element_limit);
 stl_status list_raw_from_array(list_t *list, const void *elements,

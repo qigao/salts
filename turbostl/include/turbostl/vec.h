@@ -35,7 +35,7 @@ typedef struct vec {
   bool initialized;
 } vec_t;
 
-/* Internal typed-storage bridge. Natural typed API is instance-driven below. */
+/* Storage bridge shared by generated facades and explicitly bound raw handles. */
 stl_status vec_raw_init(vec_t *vec, const cmeta_type_desc *element_type,
                         size_t element_limit);
 stl_status vec_raw_from_array(vec_t *vec, const void *elements, size_t count,

@@ -20,7 +20,7 @@ typedef struct set_iter {
   void *node;
 } set_iter_t;
 
-/* Internal typed-storage bridge used by the natural instance wrappers. */
+/* Storage bridge shared by generated facades and explicitly bound raw handles. */
 stl_status set_raw_init(set_t *set, const cmeta_type_desc *key_type,
                         size_t element_limit);
 stl_status set_raw_from_array(set_t *set, const void *keys, size_t count,
