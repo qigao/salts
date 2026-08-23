@@ -90,7 +90,9 @@ bool cmeta_type_identity_equal(const cmeta_type_identity *a,
             return cmeta_type_identity_equal(a->base, b->base);
         case CMETA_TYPE_APPLY:
             if (!cmeta_generic_desc_equal(a->constructor, b->constructor) ||
-                a->arity != b->arity || !a->args || !b->args)
+                a->arity != b->arity)
+                return false;
+            if (a->arity != 0u && (!a->args || !b->args))
                 return false;
             for (i = 0; i < a->arity; ++i)
                 if (!cmeta_type_identity_equal(a->args[i], b->args[i]))
