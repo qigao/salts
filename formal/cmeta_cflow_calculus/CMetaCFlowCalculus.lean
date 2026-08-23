@@ -7,6 +7,9 @@ import CMetaCFlowCalculus.CMeta.BuiltinSignatures
 import CMetaCFlowCalculus.CMeta.SignatureHeader
 import CMetaCFlowCalculus.CMeta.Ownership
 import CMetaCFlowCalculus.CFlow.Syntax
+import CMetaCFlowCalculus.CFlow.OperatorPolicyManifest
+import CMetaCFlowCalculus.CFlow.BuiltinOperatorPolicy
+import CMetaCFlowCalculus.CFlow.OperatorPolicyHeader
 import CMetaCFlowCalculus.CFlow.Execution
 import CMetaCFlowCalculus.CFlow.Observation
 import CMetaCFlowCalculus.CFlow.Architecture

@@ -7,6 +7,7 @@ import PhaseATests.PhaseD
 import PhaseATests.PhaseE
 import PhaseATests.PhaseF
 import PhaseATests.SignatureManifest
+import PhaseATests.OperatorPolicyManifest
 
 open CMetaCFlowCalculus.CMeta
 open CMetaCFlowCalculus.CFlow

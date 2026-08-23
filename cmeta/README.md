@@ -117,6 +117,13 @@ The checked-in header means ordinary CMake builds and installed CMeta headers
 do not require Lean. Application-defined `CMETA_USER_TYPE_LIST` and
 `CMETA_USER_*_RELATION_LIST` macros remain manual shared configuration.
 
+Signature lowering exposes `CMETA_VALUE_SIGNATURES(U, B)` for unary and binary
+value callables, while `CMETA_GENERATOR_SIGNATURES(G)` names the generator
+protocol. Runtime invoke/generate dispatch uses these protocol-specific groups;
+the complete ABI surface continues to use `CMETA_ALL_SIGNATURES(U, B, G)`.
+This removes protocol-unreachable generated branches without changing signature
+IDs or rejection results.
+
 ## Multi-TU model
 
 Generated wrapper functions are TU-local `static inline`, and generated

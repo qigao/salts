@@ -7,6 +7,8 @@ on:
       - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
       - "cmeta/include/cmeta/types.h"
       - "cmeta/include/cmeta/relations.h"
+      - "cflow/include/cflow/generated/builtin_operator_policy.h"
+      - "cflow/include/cflow/operator_policy.h"
       - ".github/workflows/cmeta-cflow-calculus.yml"
   push:
     branches: [master]
@@ -15,6 +17,8 @@ on:
       - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
       - "cmeta/include/cmeta/types.h"
       - "cmeta/include/cmeta/relations.h"
+      - "cflow/include/cflow/generated/builtin_operator_policy.h"
+      - "cflow/include/cflow/operator_policy.h"
       - ".github/workflows/cmeta-cflow-calculus.yml"
   workflow_dispatch:
 
@@ -38,3 +42,8 @@ jobs:
         run: >-
           lake exe cmeta-signature-gen --check
           ../../cmeta/include/cmeta/generated/builtin_signature_manifest.h
+      - name: Verify generated CFlow operator policy
+        working-directory: formal/cmeta_cflow_calculus
+        run: >-
+          lake exe cflow-operator-policy-gen --check
+          ../../cflow/include/cflow/generated/builtin_operator_policy.h

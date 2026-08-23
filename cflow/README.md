@@ -80,6 +80,27 @@ All operator-derived declarations and tables consume that named schema as
 CMeta `Schema`, so operator rows have one source of truth and CMeta owns the sole
 tuple-replay mechanism.
 
+## Operator signature policy
+
+CMeta owns the finite registered relation universe; CFlow owns which registered
+relations each operator admits. The six built-in operator lists reuse named
+CMeta relations in
+`formal/cmeta_cflow_calculus/CMetaCFlowCalculus/CFlow/BuiltinOperatorPolicy.lean`.
+Lean validates registry closure and complete built-in coverage, then generates
+`include/cflow/generated/builtin_operator_policy.h`.
+
+Do not edit that generated header manually. From
+`formal/cmeta_cflow_calculus`, regenerate or verify it with:
+
+```text
+lake exe cflow-operator-policy-gen --write ../../cflow/include/cflow/generated/builtin_operator_policy.h
+lake exe cflow-operator-policy-gen --check ../../cflow/include/cflow/generated/builtin_operator_policy.h
+```
+
+Normal CMake builds consume the checked-in header and do not require Lean.
+`CFLOW_USER_*_SIGNATURE_LIST` hooks remain manual shared configuration and are
+appended by `operator_policy.h` after the generated built-ins.
+
 
 ## Descriptor-backed container streams — v47
 

@@ -371,6 +371,14 @@ This generation boundary owns only built-ins. Application rows and
 `CMETA_USER_GENERATOR_RELATION_LIST` remain shared compile-time configuration;
 all translation units must still see the same callable ABI.
 
+Mechanical consumers can select `CMETA_VALUE_SIGNATURES(U, B)` or
+`CMETA_GENERATOR_SIGNATURES(G)` when their protocol is already known.
+`CMETA_ALL_SIGNATURES(U, B, G)` remains the complete ABI universe and preserves
+unary, binary, then generator ordering. Protocol grouping changes only which
+adapters or switch cases are emitted at an already-validated boundary;
+`cmeta_fn_invoke` and `cmeta_fn_generate` retain their documented rejection
+results for the other protocol.
+
 `Struct(T, ...)` and `Traits(T, ...)` generate structural and callable metadata,
 but do not add `T` to either finite type universe. `CMETA_TYPEOF(T)` returns
 `NULL` when no compatible registered type exists. APIs that require a descriptor

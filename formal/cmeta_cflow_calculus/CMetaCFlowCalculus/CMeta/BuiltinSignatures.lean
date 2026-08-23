@@ -2,6 +2,24 @@ import CMetaCFlowCalculus.CMeta.SignatureManifest
 
 namespace CMetaCFlowCalculus.CMeta
 
+def builtinUnaryIntToInt : UnaryRelation := { input := "I", output := "I" }
+def builtinUnaryIntToBool : UnaryRelation := { input := "I", output := "B" }
+def builtinUnaryIntToLong : UnaryRelation := { input := "I", output := "L" }
+def builtinUnaryLongToDouble : UnaryRelation := { input := "L", output := "D" }
+def builtinUnaryDoubleToInt : UnaryRelation := { input := "D", output := "I" }
+def builtinUnaryIntToDouble : UnaryRelation := { input := "I", output := "D" }
+def builtinUnaryIntToFloat : UnaryRelation := { input := "I", output := "F" }
+def builtinUnaryFloatToDouble : UnaryRelation := { input := "F", output := "D" }
+
+def builtinBinaryLongLongToLong : BinaryRelation :=
+  { left := "L", right := "L", output := "L" }
+
+def builtinBinaryLongDoubleToDouble : BinaryRelation :=
+  { left := "L", right := "D", output := "D" }
+
+def builtinGeneratorIntToLong : GeneratorRelation :=
+  { input := "I", output := "L" }
+
 /-- The built-in CMeta type/signature facts in stable public ABI order. -/
 def builtinSignatureManifest : SignatureManifest where
   types := [
@@ -18,21 +36,21 @@ def builtinSignatureManifest : SignatureManifest where
       kind := "CMETA_T_FLOAT", traits := "cmeta_traits_double" }
   ]
   unary := [
-    { input := "I", output := "I" },
-    { input := "I", output := "B" },
-    { input := "I", output := "L" },
-    { input := "L", output := "D" },
-    { input := "D", output := "I" },
-    { input := "I", output := "D" },
-    { input := "I", output := "F" },
-    { input := "F", output := "D" }
+    builtinUnaryIntToInt,
+    builtinUnaryIntToBool,
+    builtinUnaryIntToLong,
+    builtinUnaryLongToDouble,
+    builtinUnaryDoubleToInt,
+    builtinUnaryIntToDouble,
+    builtinUnaryIntToFloat,
+    builtinUnaryFloatToDouble
   ]
   binary := [
-    { left := "L", right := "L", output := "L" },
-    { left := "L", right := "D", output := "D" }
+    builtinBinaryLongLongToLong,
+    builtinBinaryLongDoubleToDouble
   ]
   generators := [
-    { input := "I", output := "L" }
+    builtinGeneratorIntToLong
   ]
 
 theorem builtinSignatureManifest_wellFormed :
