@@ -14,7 +14,7 @@
 - Create: `cmeta/tests/cmeta_compute_test.c`
 - Modify: `cmeta/tests/CMakeLists.txt`
 
-- [x] 写 TypeFunction1/2/3、ValueFunction1/2/3、Predicate/Require、SchemaCount/All/Any 和同名分片的成功用例。
+- [x] 写统一 TypeFunction/TypeEval、ValueFunction/ValueEval、Predicate/Require、SchemaCount/All/Any 和同名分片的成功用例。
 - [x] 重新 configure 并构建 `cmeta_compute_test`，确认因公共宏缺失而失败。
 - [x] 记录 RED 的首个缺失符号，不把语法错误误认成功。
 

@@ -31,7 +31,7 @@
 - Modify: `cmeta/CMakeLists.txt`
 
 **Interfaces:**
-- Produces: `InferenceRules1/2/3`, `cmeta_infer_dfa_init`, `cmeta_infer_dfa_build`, `cmeta_infer_dfa_eval`, `cmeta_infer_status_string`.
+- Produces: `InferenceRules`, `cmeta_infer_dfa_init`, `cmeta_infer_dfa_build`, `cmeta_infer_dfa_eval`, `cmeta_infer_status_string`.
 - Consumes: `CMETA_PP_FOR_EACH_A` and ordinary caller-provided arrays.
 
 - [x] Add TinyTest cases with literal expected results for shared prefixes, missing rules, wrong arity, insufficient capacity, duplicate rows and conflicting rows.
@@ -53,7 +53,7 @@
 - Produces: DFA-derived `cflow_plan_opcode` and `cflow_plan_compile_stats.inference_queries`.
 
 - [x] Add a pipeline assertion that two emitted instructions report two inference queries; confirm RED because the stats field is absent.
-- [x] Declare one `CFLOW_PLAN_INFERENCE_ROWS` source and project it through both `ValueFunction3` and `InferenceRules3`.
+- [x] Declare one `CFLOW_PLAN_INFERENCE_ROWS` source and project it through both `ValueFunction` and `InferenceRules`.
 - [x] Replace `opcode_for` with relation evaluation using `(op, output, cardinality)`.
 - [x] Build the DFA once per capability/compile operation, propagate build/query errors without fallback, and increment the new stat only for emitted instructions.
 - [x] Run pipeline tests and confirm existing interpreted/compiled results and predecoded callback checks remain GREEN.
