@@ -76,10 +76,13 @@ typedef struct cmeta_container_type_ops {
     cmeta_container_type_argument_fn argument;
 } cmeta_container_type_ops;
 
+struct cmeta_data_desc;
+
 typedef struct cmeta_container_ext {
     size_t struct_size;
     uint32_t abi_version;
     const cmeta_container_type_ops *type;
+    const struct cmeta_data_desc *data;
 } cmeta_container_ext;
 
 typedef struct cmeta_container_desc {
