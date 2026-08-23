@@ -80,7 +80,7 @@ jobs:
             executable: build/Msvc-Release/bin/cflow_direct_benchmark.exe
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Linux dependencies
         if: matrix.family == 'linux'
@@ -211,7 +211,7 @@ jobs:
 
       - name: Upload benchmark evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cflow-release-${{ matrix.host }}
           path: benchmark-results
