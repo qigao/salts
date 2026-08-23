@@ -37,3 +37,72 @@ void cbind_error_set(cbind_error *error,
     error->field = field;
     error->depth = depth;
 }
+
+cbind_status cbind_read_required(cbind_decode_state *state,
+                                 cserde_token *token,
+                                 const cmeta_data_desc *shape,
+                                 const cmeta_data_field_desc *field,
+                                 size_t depth) {
+    cserde_status source = cserde_reader_next(state->reader, token);
+
+    if (source == CSERDE_OK)
+        return CBIND_OK;
+    if (source == CSERDE_DONE) {
+        cbind_error_set(state->error, CBIND_UNEXPECTED_END, CSERDE_DONE,
+                        shape, field, depth);
+        return CBIND_UNEXPECTED_END;
+    }
+    cbind_error_set(state->error, CBIND_SOURCE_ERROR, source,
+                    shape, field, depth);
+    return CBIND_SOURCE_ERROR;
+}
+
+cbind_status cbind_decode(const cbind_context *context,
+                          const cmeta_data_desc *shape,
+                          cserde_reader *reader,
+                          void *out,
+                          cbind_error *error) {
+    cbind_decode_state state;
+    size_t max_scratch = 0u;
+    cbind_status status;
+
+    if (shape == NULL || reader == NULL || out == NULL)
+        return CBIND_INVALID_ARGUMENT;
+    if (error != NULL && !cbind_error_valid(error))
+        return CBIND_INVALID_ARGUMENT;
+    if (!cbind_context_valid(context)) {
+        cbind_error_set(error, CBIND_INVALID_CONTEXT, CSERDE_OK,
+                        shape, NULL, 0u);
+        return CBIND_INVALID_CONTEXT;
+    }
+
+    status = cbind_validate_graph(context, shape, 0u, NULL, 0u,
+                                  &max_scratch, error);
+    if (status != CBIND_OK)
+        return status;
+    if (max_scratch > context->scratch_size) {
+        cbind_error_set(error, CBIND_LIMIT_EXCEEDED, CSERDE_OK,
+                        shape, NULL, 0u);
+        return CBIND_LIMIT_EXCEEDED;
+    }
+    if (!cbind_value_is_empty(shape, out)) {
+        cbind_error_set(error, CBIND_DESTINATION_NOT_EMPTY, CSERDE_OK,
+                        shape, NULL, 0u);
+        return CBIND_DESTINATION_NOT_EMPTY;
+    }
+
+    state.context = context;
+    state.reader = reader;
+    state.error = error;
+    state.scratch = (unsigned char *)context->scratch;
+    state.scratch_used = 0u;
+
+    status = cbind_decode_scalar(&state, shape, NULL, 0u, out);
+    if (status != CBIND_OK) {
+        cbind_value_reset(shape, out);
+        return status;
+    }
+
+    cbind_error_clear(error);
+    return CBIND_OK;
+}
