@@ -1,6 +1,7 @@
 #include <cflow/plan_internal.h>
 #include <cflow/lower.h>
 #include <cflow/opt.h>
+#include "dense_successor_index.h"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -30,16 +31,6 @@ void cflow_plan_destroy(cflow_plan *plan) {
 static bool plan_fail(cflow_plan *p, const char *msg) {
     if (p) p->error = msg;
     return false;
-}
-
-static bool append_inst(cflow_plan *p, cflow_plan_inst inst) {
-    cflow_plan_impl *impl = plan_impl(p);
-    if (!impl) return false;
-    cflow_plan_inst *q = realloc(impl->code, (impl->count + 1u) * sizeof(*q));
-    if (!q) return false;
-    impl->code = q;
-    impl->code[impl->count++] = inst;
-    return true;
 }
 
 static bool prepare_unary_call(cflow_plan_call *out, cmeta_callable fn) {
@@ -120,29 +111,57 @@ static cflow_plan_opcode opcode_for(const cflow_node *n, bool *ok) {
     }
 }
 
+static bool plan_path_supported(const cflow_subgraph *subgraph,
+                                const cflow_dense_successor_index *index,
+                                size_t *instruction_count) {
+    cflow_node_id id;
+    size_t instructions = 0u;
+    size_t visited = 0u;
+
+    if (!subgraph || !index || !subgraph->node_count ||
+        subgraph->entry >= subgraph->node_count || index->has_fanout)
+        return false;
+    id = subgraph->entry;
+    for (;;) {
+        cflow_node_id successor;
+        const cflow_node *node;
+        if (++visited > subgraph->node_count) return false;
+        node = cflow_subgraph_node(subgraph, id);
+        if (!node) return false;
+        if (node->op != CFLOW_OP_SOURCE) {
+            bool supported = false;
+            (void)opcode_for(node, &supported);
+            if (!supported || node->op == CFLOW_OP_RELATION || node->subgraph_count)
+                return false;
+            ++instructions;
+        }
+        if (!cflow_dense_successor_index_successor(index, id, &successor)) break;
+        id = successor;
+    }
+    if (instruction_count) *instruction_count = instructions;
+    return true;
+}
+
+static bool plan_compile_fail(cflow_plan *plan,
+                              cflow_dense_successor_index *index,
+                              const char *message) {
+    cflow_dense_successor_index_destroy(index);
+    cflow_plan_destroy(plan);
+    return plan_fail(plan, message);
+}
+
 bool cflow_plan_graph_supported(const cflow_graph *graph) {
+    cflow_dense_successor_index index = {0};
+    bool supported;
+
     if (!graph || !cflow_graph_is_normalized(graph) || graph->root >= graph->subgraph_count)
         return false;
     const cflow_subgraph *sg = &graph->subgraphs[graph->root];
-    if (!sg->node_count || sg->entry >= sg->node_count) return false;
-    cflow_node_id id = sg->entry;
-    size_t visited = 0;
-    while (id != CMETA_INVALID_ID) {
-        if (++visited > sg->node_count) return false;
-        const cflow_node *n = cflow_subgraph_node(sg, id);
-        if (!n) return false;
-        if (n->op != CFLOW_OP_SOURCE) {
-            bool ok = false;
-            (void)opcode_for(n, &ok);
-            if (!ok || n->op == CFLOW_OP_RELATION || n->subgraph_count) return false;
-        }
-        size_t degree = cflow_subgraph_out_degree(sg, id);
-        if (!degree) break;
-        cflow_node_id next = CMETA_INVALID_ID;
-        if (degree != 1u || !cflow_subgraph_single_successor(sg, id, &next)) return false;
-        id = next;
-    }
-    return true;
+    if (cflow_dense_successor_index_build(&index, sg) != CFLOW_DENSE_SUCCESSOR_INDEX_OK)
+        return false;
+    supported = plan_path_supported(sg, &index, NULL);
+    cflow_dense_successor_index_destroy(&index);
+    return supported;
 }
 
 bool cflow_plan_compile(cflow_plan *plan,
@@ -154,27 +173,55 @@ bool cflow_plan_compile(cflow_plan *plan,
     if (!cflow_graph_is_normalized(graph)) return plan_fail(plan, "plan requires normalized Graph");
     const char *err = NULL;
     if (!cflow_graph_validate(graph, &err)) return plan_fail(plan, err ? err : "invalid Graph");
-    if (!cflow_plan_graph_supported(graph)) return plan_fail(plan, "Graph contains a semantic not supported by direct plan");
+    const cflow_subgraph *sg = &graph->subgraphs[graph->root];
+    cflow_dense_successor_index index = {0};
+    cflow_dense_successor_index_status index_status =
+        cflow_dense_successor_index_build(&index, sg);
+    if (index_status != CFLOW_DENSE_SUCCESSOR_INDEX_OK)
+        return plan_fail(plan, index_status == CFLOW_DENSE_SUCCESSOR_INDEX_ALLOCATION_FAILED
+                                   ? "allocation failed"
+                                   : "Graph contains invalid topology");
+    size_t instruction_count = 0u;
+    if (!plan_path_supported(sg, &index, &instruction_count)) {
+        cflow_dense_successor_index_destroy(&index);
+        return plan_fail(plan, "Graph contains a semantic not supported by direct plan");
+    }
 
     cflow_plan_impl *impl = calloc(1, sizeof(*impl));
-    if (!impl) return plan_fail(plan, "allocation failed");
+    if (!impl) {
+        cflow_dense_successor_index_destroy(&index);
+        return plan_fail(plan, "allocation failed");
+    }
+    if (instruction_count) {
+        if (instruction_count > SIZE_MAX / sizeof(*impl->code)) {
+            free(impl);
+            cflow_dense_successor_index_destroy(&index);
+            return plan_fail(plan, "allocation failed");
+        }
+        impl->code = calloc(instruction_count, sizeof(*impl->code));
+        if (!impl->code) {
+            free(impl);
+            cflow_dense_successor_index_destroy(&index);
+            return plan_fail(plan, "allocation failed");
+        }
+    }
     plan->impl = impl;
-    const cflow_subgraph *sg = &graph->subgraphs[graph->root];
     plan->input_type = sg->input_type;
     plan->output_type = sg->output_type;
 
     cflow_node_id id = sg->entry;
     size_t visited = 0;
-    while (id != CMETA_INVALID_ID) {
-        if (++visited > sg->node_count) { cflow_plan_destroy(plan); return plan_fail(plan, "cycle while compiling plan"); }
+    for (;;) {
+        if (++visited > sg->node_count)
+            return plan_compile_fail(plan, &index, "cycle while compiling plan");
         const cflow_node *n = cflow_subgraph_node(sg, id);
-        if (!n) { cflow_plan_destroy(plan); return plan_fail(plan, "invalid node id while compiling plan"); }
+        if (!n) return plan_compile_fail(plan, &index, "invalid node id while compiling plan");
         if (stats) ++stats->graph_nodes;
         if (n->op != CFLOW_OP_SOURCE) {
             bool ok = false;
             cflow_plan_opcode op = opcode_for(n, &ok);
             cflow_plan_step_fn step = ok ? cflow_plan_step_for_opcode(op) : NULL;
-            if (!ok || !step) { cflow_plan_destroy(plan); return plan_fail(plan, "plan step is unavailable"); }
+            if (!ok || !step) return plan_compile_fail(plan, &index, "plan step is unavailable");
             cflow_plan_inst inst;
             memset(&inst, 0, sizeof(inst));
             inst.opcode = op;
@@ -185,28 +232,25 @@ bool cflow_plan_compile(cflow_plan *plan,
                 if (!prepare_unary_call(&inst.call, n->fn) ||
                     !cmeta_type_equal(inst.call.input_type, n->input_type) ||
                     !cmeta_type_equal(inst.call.output_type, &cmeta_type_bool)) {
-                    cflow_plan_destroy(plan);
-                    return plan_fail(plan, "filter callable predecode failed");
+                    return plan_compile_fail(plan, &index, "filter callable predecode failed");
                 }
             } else if (op == CMETA_PLAN_MAP) {
                 const cmeta_callable *src = n->fn_chain_count ? n->fn_chain : &n->fn;
                 size_t count = n->fn_chain_count ? n->fn_chain_count : 1u;
                 inst.fn_chain = malloc(count * sizeof(*inst.fn_chain));
-                if (!inst.fn_chain) { cflow_plan_destroy(plan); return plan_fail(plan, "allocation failed"); }
+                if (!inst.fn_chain) return plan_compile_fail(plan, &index, "allocation failed");
                 const cmeta_type_desc *expected_input = n->input_type;
                 for (size_t k = 0; k < count; ++k) {
                     if (!prepare_unary_call(&inst.fn_chain[k], src[k]) ||
                         !cmeta_type_equal(inst.fn_chain[k].input_type, expected_input)) {
                         inst_destroy(&inst);
-                        cflow_plan_destroy(plan);
-                        return plan_fail(plan, "map callable predecode failed");
+                        return plan_compile_fail(plan, &index, "map callable predecode failed");
                     }
                     expected_input = inst.fn_chain[k].output_type;
                 }
                 if (!cmeta_type_equal(expected_input, n->output_type)) {
                     inst_destroy(&inst);
-                    cflow_plan_destroy(plan);
-                    return plan_fail(plan, "map callable output type mismatch");
+                    return plan_compile_fail(plan, &index, "map callable output type mismatch");
                 }
                 inst.fn_chain_count = count;
                 if (stats) stats->map_callbacks += count;
@@ -214,19 +258,18 @@ bool cflow_plan_compile(cflow_plan *plan,
                 inst.call.fn = n->fn;
                 inst.call.invoke = n->fn.invoke;
             }
-            if (!append_inst(plan, inst)) {
-                inst_destroy(&inst); cflow_plan_destroy(plan); return plan_fail(plan, "allocation failed");
+            if (impl->count >= instruction_count) {
+                inst_destroy(&inst);
+                return plan_compile_fail(plan, &index, "plan instruction count changed");
             }
+            impl->code[impl->count++] = inst;
             if (stats) ++stats->instructions;
         }
-        size_t degree = cflow_subgraph_out_degree(sg, id);
-        if (!degree) break;
-        cflow_node_id next = CMETA_INVALID_ID;
-        if (degree != 1u || !cflow_subgraph_single_successor(sg, id, &next)) {
-            cflow_plan_destroy(plan); return plan_fail(plan, "direct plan requires a single data path");
-        }
-        id = next;
+        cflow_node_id successor;
+        if (!cflow_dense_successor_index_successor(&index, id, &successor)) break;
+        id = successor;
     }
+    cflow_dense_successor_index_destroy(&index);
     prepare_fused_value(impl);
     plan->error = NULL;
     return true;

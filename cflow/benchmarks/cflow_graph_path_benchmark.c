@@ -20,6 +20,10 @@ enum {
   CFLOW_GRAPH_PATH_MEDIUM_REPETITIONS = 4,
   CFLOW_GRAPH_PATH_PEAK_SAMPLES = 4,
   CFLOW_GRAPH_PATH_PEAK_REPETITIONS = 1,
+  CFLOW_GRAPH_PATH_BOUNDARY_COMPILE_SAMPLES = 5000,
+  CFLOW_GRAPH_PATH_TYPICAL_COMPILE_SAMPLES = 1000,
+  CFLOW_GRAPH_PATH_MEDIUM_COMPILE_SAMPLES = 64,
+  CFLOW_GRAPH_PATH_PEAK_COMPILE_SAMPLES = 4,
   CFLOW_GRAPH_PATH_TAG_MAP = 1,
   CFLOW_GRAPH_PATH_TAG_FILTER = 2,
   CFLOW_GRAPH_PATH_TAG_BITS = 2
@@ -380,6 +384,19 @@ static bool cflow_graph_path_representations_equivalent(size_t operator_count) {
   return equivalent;
 }
 
+static bool cflow_graph_path_compile_plan_once(const cflow_graph_path_fixture *fixture) {
+  cflow_plan plan = {0};
+  cflow_plan_compile_stats stats = {0};
+  const bool compiled = fixture &&
+                        cflow_plan_compile(&plan, &fixture->normalized, &stats) &&
+                        !plan.error && stats.graph_nodes == fixture->operator_count + 1u &&
+                        stats.instructions == fixture->operator_count;
+
+  if (compiled) cflow_graph_path_benchmark_sink ^= stats.instructions;
+  cflow_plan_destroy(&plan);
+  return compiled;
+}
+
 #define CFLOW_GRAPH_PATH_BENCHMARK_ROW(title, samples, repetitions, operators, expression,         \
                                        reference)                                                  \
   do {                                                                                             \
@@ -422,6 +439,22 @@ static bool cflow_graph_path_representations_equivalent(size_t operator_count) {
     cflow_graph_path_fixture_destroy(fixture);                                                     \
   } while (0)
 
+#define CFLOW_GRAPH_PATH_COMPILE_BENCHMARK_CASE(label, operators, samples)                        \
+  do {                                                                                             \
+    cflow_graph_path_fixture *fixture = &cflow_graph_path_fixture_state;                           \
+    bool all_compiled = true;                                                                      \
+    const bool initialized = cflow_graph_path_fixture_init(fixture, operators);                    \
+    check_true(initialized);                                                                       \
+    if (initialized) {                                                                             \
+      check_true(cflow_graph_path_compile_plan_once(fixture));                                    \
+      benchmark_batch(label " / normalized Graph -> Plan compile + destroy", samples) {          \
+        if (!cflow_graph_path_compile_plan_once(fixture)) all_compiled = false;                    \
+      }                                                                                            \
+      check_true(all_compiled);                                                                    \
+    }                                                                                              \
+    cflow_graph_path_fixture_destroy(fixture);                                                     \
+  } while (0)
+
 suite("CFlow Graph path representation benchmarks") {
   it("derives equivalent traversal observations from one Graph") {
     check_true(cflow_graph_path_representations_equivalent(CFLOW_GRAPH_PATH_BOUNDARY_OPERATORS));
@@ -439,5 +472,20 @@ suite("CFlow Graph path representation benchmarks") {
     CFLOW_GRAPH_PATH_BENCHMARK_CASE("4096 operators", CFLOW_GRAPH_PATH_PEAK_OPERATORS,
                                     CFLOW_GRAPH_PATH_PEAK_SAMPLES,
                                     CFLOW_GRAPH_PATH_PEAK_REPETITIONS);
+  }
+
+  bench("normalized linear Graph compilation (complete Plan lifecycles)") {
+    CFLOW_GRAPH_PATH_COMPILE_BENCHMARK_CASE(
+        "1 operator", CFLOW_GRAPH_PATH_BOUNDARY_OPERATORS,
+        CFLOW_GRAPH_PATH_BOUNDARY_COMPILE_SAMPLES);
+    CFLOW_GRAPH_PATH_COMPILE_BENCHMARK_CASE(
+        "16 operators", CFLOW_GRAPH_PATH_TYPICAL_OPERATORS,
+        CFLOW_GRAPH_PATH_TYPICAL_COMPILE_SAMPLES);
+    CFLOW_GRAPH_PATH_COMPILE_BENCHMARK_CASE(
+        "256 operators", CFLOW_GRAPH_PATH_MEDIUM_OPERATORS,
+        CFLOW_GRAPH_PATH_MEDIUM_COMPILE_SAMPLES);
+    CFLOW_GRAPH_PATH_COMPILE_BENCHMARK_CASE(
+        "4096 operators", CFLOW_GRAPH_PATH_PEAK_OPERATORS,
+        CFLOW_GRAPH_PATH_PEAK_COMPILE_SAMPLES);
   }
 }

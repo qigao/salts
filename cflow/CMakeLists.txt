@@ -5,6 +5,7 @@ add_library(${TARGET_NAME}
   src/clock.c
   src/coord.c
   src/direct.c
+  src/dense_successor_index.c
   src/effect.c
   src/executor.c
   src/graph.c

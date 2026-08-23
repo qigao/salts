@@ -1,5 +1,6 @@
 #include <cflow/operators.h>
 #include <cflow/graph.h>
+#include "dense_successor_index.h"
 #include "graph_internal.h"
 
 #include <stdatomic.h>
@@ -929,25 +930,6 @@ bool cflow_graph_relation(cflow_graph *g,
     return true;
 }
 
-static bool validate_dfs(const cflow_subgraph *sg,
-                         cflow_node_id node,
-                         unsigned char *state,
-                         const char **error) {
-    if (state[node] == 1u) {
-        if (error) *error = "subgraph contains a topology cycle";
-        return false;
-    }
-    if (state[node] == 2u) return true;
-    state[node] = 1u;
-    for (size_t i = 0; i < sg->edge_count; ++i) {
-        if (sg->edges[i].from == node &&
-            !validate_dfs(sg, sg->edges[i].to, state, error)) return false;
-    }
-    state[node] = 2u;
-    return true;
-}
-
-
 static bool validate_map_chain(const cflow_node *node, const char **error) {
     if (!node || node->fn_chain_count == 0u) return true;
     if (node->op != CFLOW_OP_MAP || !node->fn_chain) {
@@ -976,36 +958,10 @@ static bool validate_map_chain(const cflow_node *node, const char **error) {
     return true;
 }
 
-static bool validate_subgraph(const cflow_graph *g, cflow_subgraph_id sgid, const char **error) {
-    const cflow_subgraph *sg = cflow_graph_subgraph(g, sgid);
-    if (!sg || sg->entry >= sg->node_count || sg->tail >= sg->node_count) {
-        if (error) *error = "subgraph entry/tail is invalid";
-        return false;
-    }
-    if (sg->nodes[sg->entry].op != CFLOW_OP_SOURCE) {
-        if (error) *error = "subgraph entry must be SOURCE";
-        return false;
-    }
-    if (!cmeta_type_equal(sg->input_type, sg->nodes[sg->entry].input_type) ||
-        !cmeta_type_equal(sg->output_type, sg->nodes[sg->tail].output_type)) {
-        if (error) *error = "subgraph boundary type metadata is inconsistent";
-        return false;
-    }
-    for (size_t i = 0; i < sg->edge_count; ++i) {
-        const cflow_edge *e = &sg->edges[i];
-        if (e->from >= sg->node_count || e->to >= sg->node_count) {
-            if (error) *error = "edge references invalid node";
-            return false;
-        }
-        if (!cmeta_type_equal(sg->nodes[e->from].output_type, sg->nodes[e->to].input_type)) {
-            if (error) *error = "data edge type mismatch";
-            return false;
-        }
-    }
-    if (cflow_subgraph_out_degree(sg, sg->tail) != 0) {
-        if (error) *error = "subgraph exit must not have outgoing data edges";
-        return false;
-    }
+static bool validate_subgraph_nodes(const cflow_graph *g,
+                                    const cflow_subgraph *sg,
+                                    const cflow_dense_successor_index *index,
+                                    const char **error) {
     for (size_t n = 0; n < sg->node_count; ++n) {
         const cflow_node *node = &sg->nodes[n];
         if (node->has_fn && !cmeta_callable_contract_valid(node->fn)) {
@@ -1013,7 +969,7 @@ static bool validate_subgraph(const cflow_graph *g, cflow_subgraph_id sgid, cons
             return false;
         }
         if (!validate_map_chain(node, error)) return false;
-        if (cflow_subgraph_out_degree(sg, (cflow_node_id)n) > 1u) {
+        if (index->has_fanout && index->first_fanout == n) {
             if (error) *error = "naked DATA fan-out is forbidden; use an explicit RELATION node";
             return false;
         }
@@ -1082,22 +1038,77 @@ static bool validate_subgraph(const cflow_graph *g, cflow_subgraph_id sgid, cons
             }
         }
     }
-    unsigned char *state = calloc(sg->node_count ? sg->node_count : 1u, 1u);
-    if (!state) {
-        if (error) *error = "graph validation allocation failed";
+    return true;
+}
+
+static bool validate_linear_topology(const cflow_dense_successor_index *index,
+                                     cflow_node_id entry,
+                                     const char **error) {
+    cflow_node_id node = entry;
+    size_t visited = 0u;
+
+    for (;;) {
+        cflow_node_id successor;
+        if (visited == index->node_count) {
+            if (error) *error = "subgraph contains a topology cycle";
+            return false;
+        }
+        ++visited;
+        if (!cflow_dense_successor_index_successor(index, node, &successor)) break;
+        node = successor;
+    }
+    if (visited != index->node_count) {
+        if (error) *error = "subgraph contains unreachable nodes";
         return false;
     }
-    bool ok = validate_dfs(sg, sg->entry, state, error);
-    if (ok) {
-        for (size_t i = 0; i < sg->node_count; ++i) {
-            if (state[i] != 2u) {
-                if (error) *error = "subgraph contains unreachable nodes";
-                ok = false;
-                break;
-            }
+    return true;
+}
+
+static bool validate_subgraph(const cflow_graph *g, cflow_subgraph_id sgid, const char **error) {
+    const cflow_subgraph *sg = cflow_graph_subgraph(g, sgid);
+    cflow_dense_successor_index index = {0};
+    if (!sg || sg->entry >= sg->node_count || sg->tail >= sg->node_count) {
+        if (error) *error = "subgraph entry/tail is invalid";
+        return false;
+    }
+    if (sg->nodes[sg->entry].op != CFLOW_OP_SOURCE) {
+        if (error) *error = "subgraph entry must be SOURCE";
+        return false;
+    }
+    if (!cmeta_type_equal(sg->input_type, sg->nodes[sg->entry].input_type) ||
+        !cmeta_type_equal(sg->output_type, sg->nodes[sg->tail].output_type)) {
+        if (error) *error = "subgraph boundary type metadata is inconsistent";
+        return false;
+    }
+    for (size_t i = 0; i < sg->edge_count; ++i) {
+        const cflow_edge *e = &sg->edges[i];
+        if (e->from >= sg->node_count || e->to >= sg->node_count) {
+            if (error) *error = "edge references invalid node";
+            return false;
+        }
+        if (!cmeta_type_equal(sg->nodes[e->from].output_type, sg->nodes[e->to].input_type)) {
+            if (error) *error = "data edge type mismatch";
+            return false;
         }
     }
-    free(state);
+    cflow_dense_successor_index_status index_status =
+        cflow_dense_successor_index_build(&index, sg);
+    if (index_status != CFLOW_DENSE_SUCCESSOR_INDEX_OK) {
+        if (error) {
+            *error = index_status == CFLOW_DENSE_SUCCESSOR_INDEX_ALLOCATION_FAILED
+                         ? "graph validation allocation failed"
+                         : "subgraph topology index is invalid";
+        }
+        return false;
+    }
+    if (cflow_dense_successor_index_has_successor(&index, sg->tail)) {
+        if (error) *error = "subgraph exit must not have outgoing data edges";
+        cflow_dense_successor_index_destroy(&index);
+        return false;
+    }
+    bool ok = validate_subgraph_nodes(g, sg, &index, error) &&
+              validate_linear_topology(&index, sg->entry, error);
+    cflow_dense_successor_index_destroy(&index);
     return ok;
 }
 
