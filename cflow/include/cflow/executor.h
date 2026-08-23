@@ -12,6 +12,14 @@ extern "C" {
 
 typedef void (*cflow_task_fn)(void *user);
 
+typedef struct cflow_executor_stats {
+    size_t capacity;
+    size_t pending;
+    size_t peak_pending;
+    size_t rejected_full;
+    size_t rejected_closed;
+} cflow_executor_stats;
+
 enum {
     CMETA_EXEC_CAP_MANUAL     = 1u << 0,
     CMETA_EXEC_CAP_SERIAL     = 1u << 1,
@@ -25,6 +33,8 @@ enum {
     X(I,R0,size_t,run_ready,_) \
     X(I,R0,bool,wait_idle,_) \
     X(I,R0,size_t,pending,_) \
+    X(I,R0,bool,shutdown,_) \
+    X(I,R1,bool,get_stats,cflow_executor_stats *,out) \
     X(I,V0,void,destroy,_)
 CMETA_INTERFACE(cflow_executor, CMETA_EXECUTOR_METHODS);
 

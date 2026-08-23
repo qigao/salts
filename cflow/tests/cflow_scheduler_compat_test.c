@@ -41,6 +41,7 @@ spec("CFlow scheduler compatibility") {
 
   it("bounds delayed admission and reuses timer capacity") {
     cflow_scheduler scheduler = {0};
+    cflow_scheduler_stats stats = {0};
     cflow_schedule_result first;
     cflow_schedule_result full;
     cflow_schedule_result reused;
@@ -61,6 +62,12 @@ spec("CFlow scheduler compatibility") {
     check_equal(first.status, CFLOW_ADMISSION_ACCEPTED);
     check_equal(full.status, CFLOW_ADMISSION_FULL);
     check_equal(full.task_id, (cflow_task_id)0u);
+    check_true(cflow_scheduler_get_stats(&scheduler, &stats));
+    check_equal(stats.ready_capacity, (size_t)1u);
+    check_equal(stats.timer_capacity, (size_t)1u);
+    check_equal(stats.timer_pending, (size_t)1u);
+    check_equal(stats.peak_pending, (size_t)1u);
+    check_equal(stats.rejected_full, (size_t)1u);
     check_equal(cflow_scheduler_advance(&scheduler, 1u), (size_t)1u);
     reused = cflow_scheduler_try_post_after(&scheduler, 1u,
                                             record_order, &value);

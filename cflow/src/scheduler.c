@@ -10,7 +10,20 @@ typedef struct cflow_test_loop_state {
     cflow_clock clock;
     cflow_executor executor;
     cflow_timer_queue timers;
+    size_t ready_capacity;
+    size_t timer_capacity;
+    size_t peak_pending;
+    size_t rejected_full;
+    size_t rejected_closed;
+    size_t cancelled_on_shutdown;
+    bool stopping;
 } cflow_test_loop_state;
+
+static void test_update_peak(cflow_test_loop_state *state) {
+    size_t pending = cflow_timer_queue_pending(&state->timers) +
+                     cflow_executor_pending(&state->executor);
+    if (pending > state->peak_pending) state->peak_pending = pending;
+}
 
 static bool test_take_and_run_one(cflow_test_loop_state *state) {
     cflow_timer_task task;
@@ -33,9 +46,21 @@ static cflow_schedule_result test_try_post_after(void *self,
 
     if (!state || !fn)
         return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
+    if (state->stopping) {
+        ++state->rejected_closed;
+        return (cflow_schedule_result){CFLOW_ADMISSION_CLOSED, 0u};
+    }
     now = cflow_clock_now(&state->clock);
     deadline = cflow_deadline_after(now, cflow_duration_from_ms(delay_ms));
-    return cflow_timer_queue_try_schedule(&state->timers, deadline, fn, user);
+    {
+        cflow_schedule_result result = cflow_timer_queue_try_schedule(
+            &state->timers, deadline, fn, user);
+        if (result.status == CFLOW_ADMISSION_ACCEPTED)
+            test_update_peak(state);
+        else if (result.status == CFLOW_ADMISSION_FULL)
+            ++state->rejected_full;
+        return result;
+    }
 }
 
 static cflow_task_id test_post_after(void *self,
@@ -112,9 +137,37 @@ static size_t test_pending(void *self) {
            cflow_executor_pending(&state->executor);
 }
 
+static bool test_shutdown(void *self) {
+    cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    if (!state) return false;
+    if (state->stopping) return true;
+    state->stopping = true;
+    state->cancelled_on_shutdown += cflow_timer_queue_pending(&state->timers);
+    state->timers.count = 0u;
+    return cflow_executor_shutdown(&state->executor);
+}
+
+static bool test_get_stats(void *self, cflow_scheduler_stats *out) {
+    cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    if (!state || !out) return false;
+    *out = (cflow_scheduler_stats){
+        .ready_capacity = state->ready_capacity,
+        .timer_capacity = state->timer_capacity,
+        .ready_pending = cflow_executor_pending(&state->executor),
+        .timer_pending = cflow_timer_queue_pending(&state->timers),
+        .dispatching = 0u,
+        .peak_pending = state->peak_pending,
+        .rejected_full = state->rejected_full,
+        .rejected_closed = state->rejected_closed,
+        .cancelled_on_shutdown = state->cancelled_on_shutdown
+    };
+    return true;
+}
+
 static void test_destroy(void *self) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
     if (!state) return;
+    (void)test_shutdown(state);
     cflow_timer_queue_destroy(&state->timers);
     cflow_executor_destroy(&state->executor);
     cflow_clock_destroy(&state->clock);
@@ -133,6 +186,8 @@ CMETA_IMPLEMENTS(cflow_scheduler, test_loop,
     .wait_idle = test_wait_idle,
     .now = test_now,
     .pending = test_pending,
+    .shutdown = test_shutdown,
+    .get_stats = test_get_stats,
     .destroy = test_destroy
 );
 
@@ -166,6 +221,8 @@ bool cflow_scheduler_test_init_with_capacity(cflow_scheduler *scheduler,
         return false;
     }
 
+    state->ready_capacity = ready_capacity;
+    state->timer_capacity = timer_capacity;
     *scheduler = test_loop_as_cflow_scheduler(state);
     return true;
 }

@@ -14,9 +14,22 @@ typedef struct worker_state {
     cflow_clock clock;
     cflow_executor executor;
     cflow_timer_queue timers;
+    size_t ready_capacity;
+    size_t timer_capacity;
     size_t dispatching;
+    size_t peak_pending;
+    size_t rejected_full;
+    size_t rejected_closed;
+    size_t cancelled_on_shutdown;
     bool stopping;
 } worker_state;
+
+static void worker_update_peak_locked(worker_state *state) {
+    size_t pending = cflow_timer_queue_pending(&state->timers) +
+                     state->dispatching +
+                     cflow_executor_pending(&state->executor);
+    if (pending > state->peak_pending) state->peak_pending = pending;
+}
 
 static void worker_timer_main(void *user) {
     worker_state *state = (worker_state *)user;
@@ -27,6 +40,7 @@ static void worker_timer_main(void *user) {
         cflow_deadline deadline;
         cflow_instant now;
         cflow_timer_task task;
+        bool accepted;
 
         if (state->stopping) break;
         if (!cflow_timer_queue_next_deadline(&state->timers, &deadline)) {
@@ -49,10 +63,14 @@ static void worker_timer_main(void *user) {
         turbo_cond_broadcast(&state->changed);
         turbo_mutex_unlock(&state->mutex);
 
-        (void)cflow_executor_post(&state->executor, task.fn, task.user);
+        accepted = cflow_executor_post(&state->executor, task.fn, task.user);
 
         turbo_mutex_lock(&state->mutex);
         --state->dispatching;
+        if (!accepted) {
+            ++state->cancelled_on_shutdown;
+            ++state->rejected_closed;
+        }
         turbo_cond_broadcast(&state->changed);
     }
     turbo_cond_broadcast(&state->changed);
@@ -72,6 +90,7 @@ static cflow_schedule_result worker_try_post_after(void *self,
         return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
     turbo_mutex_lock(&state->mutex);
     if (state->stopping) {
+        ++state->rejected_closed;
         turbo_mutex_unlock(&state->mutex);
         return (cflow_schedule_result){CFLOW_ADMISSION_CLOSED, 0u};
     }
@@ -79,8 +98,12 @@ static cflow_schedule_result worker_try_post_after(void *self,
     now = cflow_clock_now(&state->clock);
     deadline = cflow_deadline_after(now, cflow_duration_from_ms(delay_ms));
     result = cflow_timer_queue_try_schedule(&state->timers, deadline, fn, user);
-    if (result.status == CFLOW_ADMISSION_ACCEPTED)
+    if (result.status == CFLOW_ADMISSION_ACCEPTED) {
+        worker_update_peak_locked(state);
         turbo_cond_broadcast(&state->changed);
+    } else if (result.status == CFLOW_ADMISSION_FULL) {
+        ++state->rejected_full;
+    }
     turbo_mutex_unlock(&state->mutex);
     return result;
 }
@@ -176,16 +199,60 @@ static size_t worker_pending(void *self) {
     return delayed + cflow_executor_pending(&state->executor);
 }
 
+static bool worker_shutdown(void *self) {
+    worker_state *state = (worker_state *)self;
+    bool join_timer;
+
+    if (!state) return false;
+    turbo_mutex_lock(&state->mutex);
+    if (!state->stopping) {
+        state->stopping = true;
+        state->cancelled_on_shutdown +=
+            cflow_timer_queue_pending(&state->timers);
+        state->timers.count = 0u;
+        turbo_cond_broadcast(&state->changed);
+    }
+    join_timer = state->timer_thread != 0;
+    turbo_mutex_unlock(&state->mutex);
+
+    if (!cflow_executor_shutdown(&state->executor)) return false;
+    if (join_timer) {
+        (void)turbo_thread_join(&state->timer_thread);
+        state->timer_thread = 0;
+    }
+    return true;
+}
+
+static bool worker_get_stats(void *self, cflow_scheduler_stats *out) {
+    worker_state *state = (worker_state *)self;
+    cflow_executor_stats executor_stats;
+
+    if (!state || !out) return false;
+    turbo_mutex_lock(&state->mutex);
+    if (!cflow_executor_get_stats(&state->executor, &executor_stats)) {
+        turbo_mutex_unlock(&state->mutex);
+        return false;
+    }
+    *out = (cflow_scheduler_stats){
+        .ready_capacity = state->ready_capacity,
+        .timer_capacity = state->timer_capacity,
+        .ready_pending = executor_stats.pending,
+        .timer_pending = cflow_timer_queue_pending(&state->timers),
+        .dispatching = state->dispatching,
+        .peak_pending = state->peak_pending,
+        .rejected_full = state->rejected_full,
+        .rejected_closed = state->rejected_closed,
+        .cancelled_on_shutdown = state->cancelled_on_shutdown
+    };
+    turbo_mutex_unlock(&state->mutex);
+    return true;
+}
+
 static void worker_destroy(void *self) {
     worker_state *state = (worker_state *)self;
 
     if (!state) return;
-    turbo_mutex_lock(&state->mutex);
-    state->stopping = true;
-    turbo_cond_broadcast(&state->changed);
-    turbo_mutex_unlock(&state->mutex);
-
-    if (state->timer_thread) (void)turbo_thread_join(&state->timer_thread);
+    (void)worker_shutdown(state);
     cflow_timer_queue_destroy(&state->timers);
     cflow_executor_destroy(&state->executor);
     cflow_clock_destroy(&state->clock);
@@ -206,6 +273,8 @@ CMETA_IMPLEMENTS(cflow_scheduler, worker_scheduler,
     .wait_idle = worker_wait_idle,
     .now = worker_now,
     .pending = worker_pending,
+    .shutdown = worker_shutdown,
+    .get_stats = worker_get_stats,
     .destroy = worker_destroy
 );
 
@@ -248,6 +317,8 @@ bool cflow_scheduler_worker_init_with_capacity(cflow_scheduler *scheduler,
         return false;
     }
 
+    state->ready_capacity = ready_capacity;
+    state->timer_capacity = timer_capacity;
     *scheduler = worker_scheduler_as_cflow_scheduler(state);
     return true;
 }

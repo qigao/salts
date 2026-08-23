@@ -25,6 +25,7 @@ typedef struct {
   int64_t queued_tasks;
   int64_t active_tasks;
   int64_t pending_tasks;
+  int64_t peak_pending_tasks;
 } turbo_threadpool_stats_t;
 
 TURBO_CONCURRENCY_C_API turbo_threadpool_t *turbo_threadpool_create(int num_threads);

@@ -3,6 +3,7 @@
 
 #include <limits.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,18 +16,33 @@ typedef struct cflow_manual_executor_state {
     cflow_manual_task *tasks;
     size_t count;
     size_t capacity;
+    size_t peak_pending;
+    size_t rejected_full;
+    size_t rejected_closed;
+    bool closed;
 } cflow_manual_executor_state;
 
 typedef struct cflow_pool_executor_state {
     turbo_threadpool_t *pool;
+    _Atomic size_t rejected_full;
+    _Atomic size_t rejected_closed;
 } cflow_pool_executor_state;
 
 static cflow_admission_status manual_try_post(void *self, cflow_task_fn fn,
                                               void *user) {
     cflow_manual_executor_state *state = (cflow_manual_executor_state *)self;
     if (!state || !fn) return CFLOW_ADMISSION_INVALID_ARGUMENT;
-    if (state->count >= state->capacity) return CFLOW_ADMISSION_FULL;
+    if (state->closed) {
+        ++state->rejected_closed;
+        return CFLOW_ADMISSION_CLOSED;
+    }
+    if (state->count >= state->capacity) {
+        ++state->rejected_full;
+        return CFLOW_ADMISSION_FULL;
+    }
     state->tasks[state->count++] = (cflow_manual_task){fn, user};
+    if (state->count > state->peak_pending)
+        state->peak_pending = state->count;
     return CFLOW_ADMISSION_ACCEPTED;
 }
 
@@ -67,6 +83,27 @@ static size_t manual_pending(void *self) {
     return state ? state->count : 0u;
 }
 
+static bool manual_shutdown(void *self) {
+    cflow_manual_executor_state *state = (cflow_manual_executor_state *)self;
+    if (!state) return false;
+    state->closed = true;
+    return true;
+}
+
+static bool manual_get_stats(void *self, cflow_executor_stats *out) {
+    const cflow_manual_executor_state *state =
+        (const cflow_manual_executor_state *)self;
+    if (!state || !out) return false;
+    *out = (cflow_executor_stats){
+        .capacity = state->capacity,
+        .pending = state->count,
+        .peak_pending = state->peak_pending,
+        .rejected_full = state->rejected_full,
+        .rejected_closed = state->rejected_closed
+    };
+    return true;
+}
+
 static void manual_destroy(void *self) {
     cflow_manual_executor_state *state = (cflow_manual_executor_state *)self;
     if (!state) return;
@@ -82,6 +119,8 @@ CMETA_IMPLEMENTS(cflow_executor, manual_executor,
     .run_ready = manual_run_ready,
     .wait_idle = manual_wait_idle,
     .pending = manual_pending,
+    .shutdown = manual_shutdown,
+    .get_stats = manual_get_stats,
     .destroy = manual_destroy
 );
 
@@ -95,19 +134,32 @@ static cflow_admission_status pool_admission_status(int status) {
     }
 }
 
+static size_t pool_pending(void *self);
+
 static cflow_admission_status pool_try_post(void *self, cflow_task_fn fn,
                                             void *user) {
     cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
+    cflow_admission_status status;
     if (!state || !state->pool || !fn)
         return CFLOW_ADMISSION_INVALID_ARGUMENT;
-    return pool_admission_status(
+    status = pool_admission_status(
         turbo_threadpool_try_submit(state->pool, fn, user));
+    if (status == CFLOW_ADMISSION_FULL)
+        atomic_fetch_add(&state->rejected_full, 1u);
+    else if (status == CFLOW_ADMISSION_CLOSED)
+        atomic_fetch_add(&state->rejected_closed, 1u);
+    return status;
 }
 
 static bool pool_post(void *self, cflow_task_fn fn, void *user) {
     cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
-    return state && state->pool && fn &&
-           turbo_threadpool_submit(state->pool, fn, user) == TURBO_OK;
+    cflow_admission_status status;
+    if (!state || !state->pool || !fn) return false;
+    status = pool_admission_status(
+        turbo_threadpool_submit(state->pool, fn, user));
+    if (status == CFLOW_ADMISSION_CLOSED)
+        atomic_fetch_add(&state->rejected_closed, 1u);
+    return status == CFLOW_ADMISSION_ACCEPTED;
 }
 
 static bool pool_run_one(void *self) {
@@ -135,6 +187,32 @@ static size_t pool_pending(void *self) {
     return pending > 0 ? (size_t)pending : 0u;
 }
 
+static bool pool_shutdown(void *self) {
+    cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
+    if (!state || !state->pool) return false;
+    turbo_threadpool_shutdown(state->pool);
+    return true;
+}
+
+static bool pool_get_stats(void *self, cflow_executor_stats *out) {
+    cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
+    turbo_threadpool_stats_t pool_stats;
+    if (!state || !state->pool || !out) return false;
+    turbo_threadpool_get_stats(state->pool, &pool_stats);
+    *out = (cflow_executor_stats){
+        .capacity = pool_stats.queue_capacity,
+        .pending = pool_stats.pending_tasks > 0
+                       ? (size_t)pool_stats.pending_tasks
+                       : 0u,
+        .peak_pending = pool_stats.peak_pending_tasks > 0
+                            ? (size_t)pool_stats.peak_pending_tasks
+                            : 0u,
+        .rejected_full = atomic_load(&state->rejected_full),
+        .rejected_closed = atomic_load(&state->rejected_closed)
+    };
+    return true;
+}
+
 static void pool_destroy(void *self) {
     cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
     if (!state) return;
@@ -150,6 +228,8 @@ CMETA_IMPLEMENTS(cflow_executor, serial_executor,
     .run_ready = pool_run_ready,
     .wait_idle = pool_wait_idle,
     .pending = pool_pending,
+    .shutdown = pool_shutdown,
+    .get_stats = pool_get_stats,
     .destroy = pool_destroy
 );
 
@@ -161,6 +241,8 @@ CMETA_IMPLEMENTS(cflow_executor, worker_executor,
     .run_ready = pool_run_ready,
     .wait_idle = pool_wait_idle,
     .pending = pool_pending,
+    .shutdown = pool_shutdown,
+    .get_stats = pool_get_stats,
     .destroy = pool_destroy
 );
 

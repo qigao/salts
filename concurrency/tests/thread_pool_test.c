@@ -280,6 +280,7 @@ spec("Thread Pool Tests") {
         check_equal((int)stats.active_tasks, 1);
         check_equal((int)stats.queued_tasks, 2);
         check_equal((int)stats.pending_tasks, 3);
+        check_equal((int)stats.peak_pending_tasks, 3);
 
         atomic_store(&gate_open, 1);
         turbo_threadpool_wait(pool);
