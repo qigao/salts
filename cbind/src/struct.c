@@ -272,7 +272,7 @@ cbind_status cbind_decode_struct(cbind_decode_state *state,
         size_t field_index = 0u;
         size_t i;
 
-        status = cbind_read_required(state, &token, shape, NULL,
+        status = cbind_read_required(state, &token, shape, parent_field,
                                      current_depth);
         if (status != CBIND_OK)
             break;
@@ -294,7 +294,7 @@ cbind_status cbind_decode_struct(cbind_decode_state *state,
 
         if (token.kind != CSERDE_STRING) {
             status = cbind_struct_error(state->error, CBIND_TOKEN_MISMATCH,
-                                        shape, NULL, current_depth);
+                                        shape, parent_field, current_depth);
             break;
         }
 
@@ -302,7 +302,7 @@ cbind_status cbind_decode_struct(cbind_decode_state *state,
                                        &field_index);
         if (field == NULL) {
             status = cbind_struct_error(state->error, CBIND_UNKNOWN_FIELD,
-                                        shape, NULL, current_depth);
+                                        shape, parent_field, current_depth);
             break;
         }
         if (cbind_field_seen(bitmap, field_index)) {
