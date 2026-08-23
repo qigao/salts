@@ -21,6 +21,85 @@ static bool checked_bytes(size_t n, size_t size, size_t *bytes) {
     return true;
 }
 
+static bool checked_add(size_t left, size_t right, size_t *sum) {
+    if (!sum || left > SIZE_MAX - right) return false;
+    *sum = left + right;
+    return true;
+}
+
+static size_t selection_byte_count(size_t count) {
+    return count / 8u + (count % 8u != 0u);
+}
+
+static bool selection_contains(const unsigned char *selection, size_t index) {
+    return (selection[index / 8u] & (unsigned char)(1u << (index % 8u))) != 0u;
+}
+
+static void selection_remove(unsigned char *selection, size_t index) {
+    selection[index / 8u] &= (unsigned char)~(1u << (index % 8u));
+}
+
+typedef struct cflow_fused_resources {
+    size_t allocation_calls;
+    size_t allocated_bytes;
+    size_t live_bytes;
+    size_t peak_live_bytes;
+    size_t selection_bytes;
+    size_t intermediate_bytes;
+    size_t result_bytes;
+} cflow_fused_resources;
+
+static bool fused_allocate(cflow_fused_resources *resources,
+                           size_t bytes,
+                           unsigned char **allocation) {
+    size_t next_allocated = 0u;
+    size_t next_live = 0u;
+    unsigned char *data;
+    if (!resources || !allocation ||
+        !checked_add(resources->allocated_bytes, bytes, &next_allocated) ||
+        !checked_add(resources->live_bytes, bytes, &next_live))
+        return false;
+    data = bytes ? malloc(bytes) : NULL;
+    if (bytes && !data) return false;
+    if (bytes) ++resources->allocation_calls;
+    resources->allocated_bytes = next_allocated;
+    resources->live_bytes = next_live;
+    if (next_live > resources->peak_live_bytes)
+        resources->peak_live_bytes = next_live;
+    *allocation = data;
+    return true;
+}
+
+static bool fused_release(cflow_fused_resources *resources, size_t bytes) {
+    if (!resources || bytes > resources->live_bytes) return false;
+    resources->live_bytes -= bytes;
+    return true;
+}
+
+static bool eval_fused_filters(const cflow_plan *plan,
+                               const cflow_plan_impl *impl,
+                               const unsigned char *input_bytes,
+                               size_t input_count,
+                               unsigned char *selection,
+                               size_t *selected_count) {
+    if (!plan || !impl || !selection || !selected_count) return false;
+    for (size_t pc = 0u; pc < impl->fused_filter_count; ++pc) {
+        const cflow_plan_call *call = &impl->code[pc].call;
+        for (size_t index = 0u; index < input_count; ++index) {
+            _Bool keep = false;
+            const void *args[1];
+            if (!selection_contains(selection, index)) continue;
+            args[0] = input_bytes + index * plan->input_type->size;
+            if (!call->invoke(&call->fn, &keep, args)) return false;
+            if (!keep) {
+                selection_remove(selection, index);
+                --*selected_count;
+            }
+        }
+    }
+    return true;
+}
+
 static bool copy_values(cflow_plan_value_vec *dst, const void *src, size_t count,
                         const cmeta_type_desc *type) {
     size_t bytes = 0;
@@ -140,13 +219,11 @@ cflow_plan_step_fn cflow_plan_step_for_opcode(cflow_plan_opcode opcode) {
     return NULL;
 }
 
-bool cflow_plan_eval_array(const cflow_plan *plan,
-                           const void *inputs,
-                           size_t input_count,
-                           cflow_result *out) {
-    const cflow_plan_impl *impl = plan_impl(plan);
-    if (!plan || !impl || !out || !plan->input_type || !plan->output_type) return false;
-    memset(out, 0, sizeof(*out));
+static bool eval_materialized(const cflow_plan *plan,
+                              const cflow_plan_impl *impl,
+                              const void *inputs,
+                              size_t input_count,
+                              cflow_result *out) {
     cflow_plan_value_vec v = {0};
     if (!copy_values(&v, inputs, input_count, plan->input_type)) return false;
     for (size_t pc = 0; pc < impl->count; ++pc) {
@@ -156,4 +233,157 @@ bool cflow_plan_eval_array(const cflow_plan *plan,
     if (!cmeta_type_equal(v.type, plan->output_type)) { vec_destroy(&v); return false; }
     out->data = v.data; out->count = v.count; out->type = v.type;
     return true;
+}
+
+static bool eval_fused_value(const cflow_plan *plan,
+                             const cflow_plan_impl *impl,
+                             const void *inputs,
+                             size_t input_count,
+                             cflow_result *out,
+                             cflow_plan_eval_stats *stats) {
+    const unsigned char *input_bytes = inputs;
+    unsigned char *selection = NULL;
+    unsigned char *current_owned = NULL;
+    unsigned char *pending = NULL;
+    const unsigned char *current_data = input_bytes;
+    size_t input_bytes_count = 0u;
+    size_t selected_count = input_count;
+    size_t current_type_size = plan->input_type->size;
+    size_t current_owned_bytes = 0u;
+    cflow_fused_resources resources = {0};
+
+    if (stats) stats->fused_value_path = true;
+    if ((!inputs && input_count) ||
+        !checked_bytes(input_count, plan->input_type->size, &input_bytes_count))
+        return false;
+    if (!input_count) {
+        out->type = plan->output_type;
+        return true;
+    }
+
+    if (impl->fused_filter_count)
+        resources.selection_bytes = selection_byte_count(input_count);
+    if (!fused_allocate(&resources, resources.selection_bytes, &selection)) return false;
+    if (resources.selection_bytes) {
+        memset(selection, 0xff, resources.selection_bytes);
+        if (!eval_fused_filters(plan, impl, input_bytes, input_count,
+                                selection, &selected_count))
+            goto fail;
+    }
+
+    if (impl->fused_map_call_count) {
+        size_t map_index = 0u;
+        for (size_t pc = impl->fused_filter_count; pc < impl->count; ++pc) {
+            const cflow_plan_inst *inst = &impl->code[pc];
+            for (size_t k = 0u; k < inst->fn_chain_count; ++k) {
+                const cflow_plan_call *call = &inst->fn_chain[k];
+                const bool final_map = map_index + 1u == impl->fused_map_call_count;
+                size_t next_bytes = 0u;
+                size_t output_index = 0u;
+                if (!checked_bytes(selected_count, call->output_type->size, &next_bytes) ||
+                    !fused_allocate(&resources, next_bytes, &pending))
+                    goto fail;
+
+                if (!map_index && selection) {
+                    for (size_t input_index = 0u; input_index < input_count; ++input_index) {
+                        const void *args[1];
+                        if (!selection_contains(selection, input_index)) continue;
+                        args[0] = input_bytes + input_index * plan->input_type->size;
+                        if (!call->invoke(&call->fn,
+                                          pending + output_index * call->output_type->size,
+                                          args))
+                            goto fail;
+                        ++output_index;
+                    }
+                } else {
+                    for (size_t index = 0u; index < selected_count; ++index) {
+                        const void *args[1] = { current_data + index * current_type_size };
+                        if (!call->invoke(&call->fn,
+                                          pending + index * call->output_type->size,
+                                          args))
+                            goto fail;
+                    }
+                    output_index = selected_count;
+                }
+                if (output_index != selected_count) goto fail;
+
+                free(current_owned);
+                current_owned = pending;
+                pending = NULL;
+                current_data = current_owned;
+                if (!fused_release(&resources, current_owned_bytes)) goto fail;
+                current_owned_bytes = next_bytes;
+                current_type_size = call->output_type->size;
+                if (!map_index && selection) {
+                    free(selection);
+                    selection = NULL;
+                    if (!fused_release(&resources, resources.selection_bytes)) goto fail;
+                }
+                if (final_map) resources.result_bytes = next_bytes;
+                else if (!checked_add(resources.intermediate_bytes, next_bytes,
+                                      &resources.intermediate_bytes))
+                    goto fail;
+                ++map_index;
+            }
+        }
+        if (map_index != impl->fused_map_call_count) goto fail;
+    } else {
+        size_t output_index = 0u;
+        if (!checked_bytes(selected_count, plan->output_type->size,
+                           &resources.result_bytes) ||
+            !fused_allocate(&resources, resources.result_bytes, &pending))
+            goto fail;
+        for (size_t input_index = 0u; input_index < input_count; ++input_index) {
+            if (selection && !selection_contains(selection, input_index)) continue;
+            memcpy(pending + output_index * plan->output_type->size,
+                   input_bytes + input_index * plan->input_type->size,
+                   plan->output_type->size);
+            ++output_index;
+        }
+        if (output_index != selected_count) goto fail;
+        current_owned = pending;
+        pending = NULL;
+        current_owned_bytes = resources.result_bytes;
+    }
+
+    free(selection);
+    if (stats) {
+        stats->allocation_calls = resources.allocation_calls;
+        stats->allocated_bytes = resources.allocated_bytes;
+        stats->peak_live_bytes = resources.peak_live_bytes;
+        stats->selection_bytes = resources.selection_bytes;
+        stats->intermediate_bytes = resources.intermediate_bytes;
+        stats->result_bytes = resources.result_bytes;
+    }
+    out->data = current_owned;
+    out->count = selected_count;
+    out->type = plan->output_type;
+    return true;
+
+fail:
+    free(pending);
+    free(current_owned);
+    free(selection);
+    return false;
+}
+
+bool cflow_plan_eval_array_profile(const cflow_plan *plan,
+                                   const void *inputs,
+                                   size_t input_count,
+                                   cflow_result *out,
+                                   cflow_plan_eval_stats *stats) {
+    const cflow_plan_impl *impl = plan_impl(plan);
+    if (stats) memset(stats, 0, sizeof(*stats));
+    if (!plan || !impl || !out || !plan->input_type || !plan->output_type) return false;
+    memset(out, 0, sizeof(*out));
+    if (impl->fused_value)
+        return eval_fused_value(plan, impl, inputs, input_count, out, stats);
+    return eval_materialized(plan, impl, inputs, input_count, out);
+}
+
+bool cflow_plan_eval_array(const cflow_plan *plan,
+                           const void *inputs,
+                           size_t input_count,
+                           cflow_result *out) {
+    return cflow_plan_eval_array_profile(plan, inputs, input_count, out, NULL);
 }

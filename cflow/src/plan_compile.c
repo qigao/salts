@@ -3,6 +3,7 @@
 #include <cflow/opt.h>
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
 static cflow_plan_impl *plan_impl(cflow_plan *p) {
@@ -53,6 +54,50 @@ static bool prepare_unary_call(cflow_plan_call *out, cmeta_callable fn) {
     out->input_type = sig->params[0];
     out->output_type = sig->return_type;
     return true;
+}
+
+static bool checked_add(size_t left, size_t right, size_t *sum) {
+    if (!sum || left > SIZE_MAX - right) return false;
+    *sum = left + right;
+    return true;
+}
+
+static bool call_is_fusible_value(const cflow_plan_call *call) {
+    const cmeta_properties required = CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS;
+    return call && call->invoke && cmeta_type_desc_valid(call->input_type) &&
+           call->input_type->size && cmeta_type_desc_valid(call->output_type) &&
+           call->output_type->size && cmeta_callable_contract_valid(call->fn) &&
+           cmeta_effects_are_pure(call->fn.meta.effects) &&
+           cmeta_properties_include(call->fn.meta.properties, required);
+}
+
+static void prepare_fused_value(cflow_plan_impl *impl) {
+    bool saw_map = false;
+    size_t filter_count = 0u;
+    size_t map_call_count = 0u;
+
+    if (!impl || !impl->count) return;
+    for (size_t pc = 0u; pc < impl->count; ++pc) {
+        const cflow_plan_inst *inst = &impl->code[pc];
+        if (inst->opcode == CMETA_PLAN_FILTER) {
+            if (saw_map || !call_is_fusible_value(&inst->call) ||
+                filter_count == SIZE_MAX)
+                return;
+            ++filter_count;
+            continue;
+        }
+        if (inst->opcode != CMETA_PLAN_MAP || !inst->fn_chain_count) return;
+        saw_map = true;
+        for (size_t k = 0u; k < inst->fn_chain_count; ++k) {
+            if (!call_is_fusible_value(&inst->fn_chain[k]) ||
+                !checked_add(map_call_count, 1u, &map_call_count))
+                return;
+        }
+    }
+
+    impl->fused_filter_count = filter_count;
+    impl->fused_map_call_count = map_call_count;
+    impl->fused_value = true;
 }
 
 static cflow_plan_opcode opcode_for(const cflow_node *n, bool *ok) {
@@ -174,6 +219,7 @@ bool cflow_plan_compile(cflow_plan *plan,
         }
         id = next;
     }
+    prepare_fused_value(impl);
     plan->error = NULL;
     return true;
 }

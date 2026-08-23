@@ -1,12 +1,13 @@
 #include "tinytest.h"
 #include <cflow/cflow.h>
+#include <cflow/plan_internal.h>
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define CFLOW_DIRECT_BENCH_ITEMS 1024u
-#define CFLOW_DIRECT_BENCH_SAMPLES 10000u
+#define CFLOW_DIRECT_BENCH_SAMPLES 50000u
 
 static volatile uintptr_t cflow_direct_bench_sink;
 
@@ -171,8 +172,12 @@ suite("CFlow Direct executor benchmarks") {
     size_t index;
     cflow_stream stream = {0};
     cflow_plan plan = {0};
+    cflow_plan materialized_plan = {0};
     cflow_plan_compile_stats plan_stats = {0};
     cflow_result reference = {0};
+    cflow_result profiled = {0};
+    cflow_result materialized_reference = {0};
+    cflow_plan_eval_stats eval_stats = {0};
     cmeta_callable bound_even = {0};
     cmeta_callable bound_square = {0};
     cmeta_callable bound_half = {0};
@@ -186,6 +191,7 @@ suite("CFlow Direct executor benchmarks") {
     size_t erased_count = 0u;
     cflow_direct_status direct_status = CFLOW_DIRECT_INVALID_ARGUMENT;
     bool plan_ok = false;
+    bool materialized_plan_ok = false;
     bool fused_ok = false;
     bool fused_owned_ok = false;
     bool staged_owned_ok = false;
@@ -196,12 +202,39 @@ suite("CFlow Direct executor benchmarks") {
 
     check_true(cflow_direct_bench_pipeline_build(&stream));
     check_true(cflow_plan_compile_surface(&plan, &stream.graph, &plan_stats));
+    check_true(cflow_plan_compile_surface(&materialized_plan, &stream.graph, NULL));
+    /* Use identical compiled instructions as the paired control; only the new
+       eligibility decision differs. */
+    ((cflow_plan_impl *)materialized_plan.impl)->fused_value = false;
     check_equal(plan_stats.instructions, (size_t)2u);
     check_equal(plan_stats.map_callbacks, (size_t)2u);
     check_true(cmeta_callable_bind(cflow_direct_bench_even.fn, &bound_even));
     check_true(cmeta_callable_bind(cflow_direct_bench_square.fn, &bound_square));
     check_true(cmeta_callable_bind(cflow_direct_bench_half.fn, &bound_half));
     check_true(cflow_plan_eval_array(&plan, input, CFLOW_DIRECT_BENCH_ITEMS, &reference));
+    check_true(cflow_plan_eval_array(&materialized_plan, input, CFLOW_DIRECT_BENCH_ITEMS,
+                                     &materialized_reference));
+    check_true(cflow_result_equal(&reference, &materialized_reference));
+    cflow_result_destroy(&materialized_reference);
+    check_true(cflow_plan_eval_array_profile(&plan, input, CFLOW_DIRECT_BENCH_ITEMS,
+                                             &profiled, &eval_stats));
+    check_true(cflow_result_equal(&reference, &profiled));
+    check_true(eval_stats.fused_value_path);
+    check_equal(eval_stats.allocation_calls, (size_t)3u);
+    check_equal(eval_stats.selection_bytes, (size_t)128u);
+    check_equal(eval_stats.intermediate_bytes,
+                (size_t)CFLOW_DIRECT_BENCH_ITEMS / 2u * sizeof(long));
+    check_equal(eval_stats.result_bytes,
+                (size_t)CFLOW_DIRECT_BENCH_ITEMS / 2u * sizeof(double));
+    check_equal(eval_stats.allocated_bytes,
+                (size_t)128u +
+                    (size_t)CFLOW_DIRECT_BENCH_ITEMS / 2u * sizeof(long) +
+                    (size_t)CFLOW_DIRECT_BENCH_ITEMS / 2u * sizeof(double));
+    check_equal(eval_stats.peak_live_bytes,
+                (size_t)CFLOW_DIRECT_BENCH_ITEMS / 2u *
+                    (sizeof(long) + sizeof(double)));
+    check_equal(eval_stats.staged_input_copy_bytes, (size_t)0u);
+    cflow_result_destroy(&profiled);
     check_equal(cflow_direct_bench_pipeline_eval_array(input, CFLOW_DIRECT_BENCH_ITEMS,
                                                        direct_output, CFLOW_DIRECT_BENCH_ITEMS,
                                                        &direct_count),
@@ -283,6 +316,17 @@ suite("CFlow Direct executor benchmarks") {
     }
     check_true(erased_ok);
 
+    benchmark_ops("Plan materialized baseline", CFLOW_DIRECT_BENCH_SAMPLES,
+                  CFLOW_DIRECT_BENCH_ITEMS) {
+      cflow_result result = {0};
+      materialized_plan_ok = cflow_plan_eval_array(&materialized_plan, input,
+                                                   CFLOW_DIRECT_BENCH_ITEMS, &result);
+      cflow_direct_benchmark_consume((const double *)result.data, result.count);
+      cflow_direct_bench_sink ^= result.count;
+      cflow_result_destroy(&result);
+    }
+    check_true(materialized_plan_ok);
+
     benchmark_ops("Plan Filter/Map array", CFLOW_DIRECT_BENCH_SAMPLES, CFLOW_DIRECT_BENCH_ITEMS) {
       cflow_result result = {0};
       plan_ok = cflow_plan_eval_array(&plan, input, CFLOW_DIRECT_BENCH_ITEMS, &result);
@@ -292,6 +336,7 @@ suite("CFlow Direct executor benchmarks") {
     }
     check_true(plan_ok);
 
+    cflow_plan_destroy(&materialized_plan);
     cflow_plan_destroy(&plan);
     cflow_stream_destroy(&stream);
   }

@@ -32,6 +32,10 @@ static bool cflow_test_build_pipeline(cflow_stream *stream) {
            stream->map(stream, cflow_test_half);
 }
 
+typed(map, stateful, long, cflow_test_stateful_add_ten, (int value)) {
+    return (long)value + 10L;
+}
+
 static void cflow_test_check_expected(const cflow_result *result) {
     const double *values;
 
@@ -101,6 +105,185 @@ suite("CFlow pipeline") {
 
         cflow_result_destroy(&compiled);
         cflow_result_destroy(&interpreted);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("reports exact bounded resources for a fused value plan") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        cflow_result result = {0};
+        cflow_plan_eval_stats stats = {0};
+        const int input[] = {1, 2, 3, 4, 5, 6};
+        const size_t expected_intermediate = 3u * sizeof(long);
+        const size_t expected_result = 3u * sizeof(double);
+        const size_t expected_total = 1u + expected_intermediate + expected_result;
+
+        check_true(cflow_test_build_pipeline(&stream));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        check_true(cflow_plan_eval_array_profile(&plan, input, 6u, &result, &stats));
+        cflow_test_check_expected(&result);
+        check_true(stats.fused_value_path);
+        check_equal(stats.allocation_calls, (size_t)3u);
+        check_equal(stats.selection_bytes, (size_t)1u);
+        check_equal(stats.intermediate_bytes, expected_intermediate);
+        check_equal(stats.result_bytes, expected_result);
+        check_equal(stats.allocated_bytes, expected_total);
+        check_equal(stats.peak_live_bytes, expected_intermediate + expected_result);
+        check_equal(stats.staged_input_copy_bytes, (size_t)0u);
+
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("retains the materialized path for a stateful map") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        cflow_result result = {0};
+        cflow_plan_eval_stats stats = {0};
+        const int input[] = {1, 2, 3};
+        const long expected[] = {11L, 12L, 13L};
+
+        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+        check_not_null(stream.map(&stream, cflow_test_stateful_add_ten));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        check_true(cflow_plan_eval_array_profile(&plan, input, 3u, &result, &stats));
+        check_false(stats.fused_value_path);
+        check_equal(result.count, (size_t)3u);
+        check_true(cmeta_type_equal(result.type, &cmeta_type_long));
+        check_equal(result.data, expected, sizeof(expected));
+
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("returns a typed null result without allocations for empty fused input") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        cflow_result result = {0};
+        cflow_plan_eval_stats stats = {0};
+
+        check_true(cflow_test_build_pipeline(&stream));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        check_true(cflow_plan_eval_array_profile(&plan, NULL, 0u, &result, &stats));
+        check_true(stats.fused_value_path);
+        check_equal(stats.allocation_calls, (size_t)0u);
+        check_equal(stats.allocated_bytes, (size_t)0u);
+        check_equal(stats.peak_live_bytes, (size_t)0u);
+        check_equal(result.count, (size_t)0u);
+        check_true(cmeta_type_equal(result.type, &cmeta_type_double));
+        check_null(result.data);
+
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("fails a fused transaction before allocation for a missing input buffer") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        int sentinel = 0;
+        cflow_result result = {&sentinel, 1u, &cmeta_type_int};
+        cflow_plan_eval_stats stats = {0};
+
+        check_true(cflow_test_build_pipeline(&stream));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        check_false(cflow_plan_eval_array_profile(&plan, NULL, 1u, &result, &stats));
+        check_true(stats.fused_value_path);
+        check_equal(stats.allocation_calls, (size_t)0u);
+        check_equal(result.count, (size_t)0u);
+        check_null(result.type);
+        check_null(result.data);
+
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("allocates no result storage when a fused filter rejects every input") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        cflow_result result = {0};
+        cflow_plan_eval_stats stats = {0};
+        const int input[] = {1, 3, 5};
+        const size_t expected_auxiliary = 1u;
+
+        check_true(cflow_test_build_pipeline(&stream));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        check_true(cflow_plan_eval_array_profile(&plan, input, 3u, &result, &stats));
+        check_true(stats.fused_value_path);
+        check_equal(stats.allocation_calls, (size_t)1u);
+        check_equal(stats.selection_bytes, (size_t)1u);
+        check_equal(stats.intermediate_bytes, (size_t)0u);
+        check_equal(stats.result_bytes, (size_t)0u);
+        check_equal(stats.allocated_bytes, expected_auxiliary);
+        check_equal(stats.peak_live_bytes, expected_auxiliary);
+        check_equal(result.count, (size_t)0u);
+        check_true(cmeta_type_equal(result.type, &cmeta_type_double));
+        check_null(result.data);
+
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("uses exact intermediate and result buffers for a map-only plan") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        cflow_result result = {0};
+        cflow_plan_eval_stats stats = {0};
+        const int input[] = {1, 2, 3};
+        const double expected[] = {0.5, 2.0, 4.5};
+        const size_t expected_intermediate = 3u * sizeof(long);
+        const size_t expected_result = sizeof(expected);
+
+        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+        check_not_null(stream.map(&stream, cflow_test_square));
+        check_not_null(stream.map(&stream, cflow_test_half));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        check_true(cflow_plan_eval_array_profile(&plan, input, 3u, &result, &stats));
+        check_true(stats.fused_value_path);
+        check_equal(stats.allocation_calls, (size_t)2u);
+        check_equal(stats.selection_bytes, (size_t)0u);
+        check_equal(stats.intermediate_bytes, expected_intermediate);
+        check_equal(stats.result_bytes, expected_result);
+        check_equal(stats.allocated_bytes, expected_intermediate + expected_result);
+        check_equal(stats.peak_live_bytes, expected_intermediate + expected_result);
+        check_equal(result.count, (size_t)3u);
+        check_true(cmeta_type_equal(result.type, &cmeta_type_double));
+        check_equal(result.data, expected, sizeof(expected));
+
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("copies only selected values for a filter-only plan") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        cflow_result result = {0};
+        cflow_plan_eval_stats stats = {0};
+        const int input[] = {1, 2, 3, 4};
+        const int expected[] = {2, 4};
+        const size_t expected_total = 1u + sizeof(expected);
+
+        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+        check_not_null(stream.filter(&stream, cflow_test_even));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        check_true(cflow_plan_eval_array_profile(&plan, input, 4u, &result, &stats));
+        check_true(stats.fused_value_path);
+        check_equal(stats.allocation_calls, (size_t)2u);
+        check_equal(stats.selection_bytes, (size_t)1u);
+        check_equal(stats.intermediate_bytes, (size_t)0u);
+        check_equal(stats.result_bytes, sizeof(expected));
+        check_equal(stats.allocated_bytes, expected_total);
+        check_equal(stats.peak_live_bytes, expected_total);
+        check_equal(result.count, (size_t)2u);
+        check_true(cmeta_type_equal(result.type, &cmeta_type_int));
+        check_equal(result.data, expected, sizeof(expected));
+
+        cflow_result_destroy(&result);
         cflow_plan_destroy(&plan);
         cflow_stream_destroy(&stream);
     }

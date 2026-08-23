@@ -39,8 +39,28 @@ struct cflow_plan_inst {
 typedef struct cflow_plan_impl {
     cflow_plan_inst *code;
     size_t count;
+    bool fused_value;
+    size_t fused_filter_count;
+    size_t fused_map_call_count;
 } cflow_plan_impl;
 
+typedef struct cflow_plan_eval_stats {
+    bool fused_value_path;
+    size_t allocation_calls;
+    size_t allocated_bytes;
+    size_t peak_live_bytes;
+    size_t selection_bytes;
+    size_t intermediate_bytes;
+    size_t result_bytes;
+    size_t staged_input_copy_bytes;
+} cflow_plan_eval_stats;
+
 cflow_plan_step_fn cflow_plan_step_for_opcode(cflow_plan_opcode opcode);
+
+bool cflow_plan_eval_array_profile(const cflow_plan *plan,
+                                   const void *inputs,
+                                   size_t input_count,
+                                   cflow_result *out,
+                                   cflow_plan_eval_stats *stats);
 
 #endif
