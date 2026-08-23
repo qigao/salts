@@ -44,7 +44,7 @@ typedef struct cflow_graph_path_fixture {
   cflow_graph surface;
   cflow_graph normalized;
   cflow_plan plan;
-  turbo_hash_map_t successor_map;
+  hash_map_t successor_map;
   cflow_node_id dense_successors[CFLOW_GRAPH_PATH_MAX_NODES];
   cflow_graph_path_tree_node tree_nodes[CFLOW_GRAPH_PATH_MAX_NODES];
   const cflow_subgraph *subgraph;
@@ -63,7 +63,7 @@ typed(filter, value, bool, cflow_graph_path_keep, (int value)) {
 
 static void cflow_graph_path_fixture_destroy(cflow_graph_path_fixture *fixture) {
   if (!fixture) return;
-  if (fixture->successor_map_initialized) turbo_hash_map_destroy(&fixture->successor_map);
+  if (fixture->successor_map_initialized) hash_map_destroy(&fixture->successor_map);
   cflow_plan_destroy(&fixture->plan);
   cflow_graph_destroy(&fixture->normalized);
   cflow_graph_destroy(&fixture->surface);
@@ -104,13 +104,13 @@ static bool cflow_graph_path_fixture_init(cflow_graph_path_fixture *fixture,
     fixture->tree_nodes[index].next = NULL;
   }
 
-  if (turbo_hash_map_init_bytes(&fixture->successor_map, sizeof(cflow_node_id),
-                                _Alignof(cflow_node_id), sizeof(cflow_node_id),
-                                _Alignof(cflow_node_id), subgraph->edge_count, turbo_hash_bytes,
-                                turbo_hash_key_equal, NULL) != TURBO_STL_OK)
+  if (hash_map_init_bytes(&fixture->successor_map, sizeof(cflow_node_id),
+                          _Alignof(cflow_node_id), sizeof(cflow_node_id),
+                          _Alignof(cflow_node_id), subgraph->edge_count, hash_bytes,
+                          hash_key_equal, NULL) != STL_OK)
     goto fail;
   fixture->successor_map_initialized = true;
-  if (turbo_hash_map_reserve(&fixture->successor_map, subgraph->edge_count) != TURBO_STL_OK)
+  if (hash_map_reserve(&fixture->successor_map, subgraph->edge_count) != STL_OK)
     goto fail;
 
   for (index = 0u; index < subgraph->edge_count; ++index) {
@@ -119,10 +119,10 @@ static bool cflow_graph_path_fixture_init(cflow_graph_path_fixture *fixture,
         fixture->dense_successors[edge->from] != CMETA_INVALID_ID)
       goto fail;
     fixture->dense_successors[edge->from] = edge->to;
-    if (turbo_hash_map_put(&fixture->successor_map, &edge->from, &edge->to) != TURBO_STL_OK)
+    if (hash_map_put(&fixture->successor_map, &edge->from, &edge->to) != STL_OK)
       goto fail;
   }
-  if (turbo_hash_map_size(&fixture->successor_map) != subgraph->edge_count) goto fail;
+  if (hash_map_size(&fixture->successor_map) != subgraph->edge_count) goto fail;
 
   for (index = 0u; index < subgraph->node_count; ++index) {
     const cflow_node_id successor = fixture->dense_successors[index];
@@ -314,7 +314,7 @@ cflow_graph_path_traverse_hash_map(const cflow_graph_path_fixture *fixture) {
       observation.ok = false;
       return observation;
     }
-    successor = (const cflow_node_id *)turbo_hash_map_get_const(&fixture->successor_map, &current);
+    successor = (const cflow_node_id *)hash_map_get_const(&fixture->successor_map, &current);
     if (!successor) break;
     current = *successor;
   }
