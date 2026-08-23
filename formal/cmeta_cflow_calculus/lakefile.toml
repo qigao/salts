@@ -1,0 +1,11 @@
+name = "cmeta-cflow-calculus"
+version = "0.1.0"
+defaultTargets = ["CMetaCFlowCalculus"]
+testDriver = "PhaseATests"
+
+[[lean_lib]]
+name = "CMetaCFlowCalculus"
+
+[[lean_lib]]
+name = "PhaseATests"
+srcDir = "Test"

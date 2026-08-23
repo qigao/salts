@@ -1,0 +1,29 @@
+name: CMeta-CFlow calculus
+
+on:
+  pull_request:
+    paths:
+      - "formal/cmeta_cflow_calculus/**"
+      - ".github/workflows/cmeta-cflow-calculus.yml"
+  push:
+    branches: [master]
+    paths:
+      - "formal/cmeta_cflow_calculus/**"
+      - ".github/workflows/cmeta-cflow-calculus.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lean:
+    name: Lean build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: true
+          test: true
+          lake-package-directory: formal/cmeta_cflow_calculus
