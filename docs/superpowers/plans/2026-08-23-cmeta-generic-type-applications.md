@@ -8,7 +8,7 @@
 
 **Tech Stack:** C11, C++17 public-header compatibility, CMake presets, TinyTest, TurboUtils::CMeta, TurboUtils::STL.
 
-**Spec:** `docs/superpowers/specs/2026-08-23-serialization-data-binding-design.md` plus the generic-foundation amendment in the same PR.
+**Spec:** `docs/superpowers/specs/2026-08-23-serialization-data-binding-design.md` plus `docs/superpowers/specs/2026-08-23-serialization-data-binding-generic-foundation-amendment.md`.
 
 ## Global Constraints
 
@@ -502,15 +502,15 @@ git commit -m "feat(turbostl): expose generic container identities"
 
 **Files:**
 - Modify: `turbostl/tests/turbostl_header_typed_cpp_test.cpp`
-- Modify if needed by existing install test only: `turbostl/tests/install_consumer/*`
+- Modify if required by the existing install test: files under `turbostl/tests/install_consumer/`
 
 - [ ] **Step 1: Add C++ descriptor/introspection coverage without `_Generic` expansion**
 
-The C++ test should consume the public `cmeta_container_ext` and constructor descriptor types directly. Do not require expansion of C-only declaration macros if they are not currently part of the C++ public surface.
+The C++ test consumes the public `cmeta_container_ext`, `cmeta_container_type_ops`, and constructor descriptor types directly. Do not require expansion of C-only declaration macros if those macros are not already part of the C++ public surface.
 
 - [ ] **Step 2: Build C++ and install-consumer targets**
 
-Run the existing C++ TurboSTL header test and install-consumer test targets from `turbostl/tests/CMakeLists.txt` using repository presets.
+Run the existing C++ TurboSTL header test and install-consumer targets from `turbostl/tests/CMakeLists.txt` using repository presets.
 
 Expected: C++17 headers compile and installed public headers contain all required CMeta declarations.
 
@@ -560,6 +560,6 @@ HashMap<K,V>/Map<K,V>/BTree<K,V>/BPlusTree<K,V> -> MAP semantic shape
 MultiMap<K,V>                                     -> explicit multimap policy/shape decision
 ```
 
-`Option<T>` semantic OPTIONAL is blocked until CMeta value generics themselves expose a valid `CMETA_TYPE_APPLY` identity. Field presence remains a separate CBind/schema concern regardless of that future work.
+Before semantic OPTIONAL is admitted, create a separate value-generic metadata plan for CMeta's existing `typed(Option/Pair/Tuple/Result, ...)` storage types. That plan must produce real `CMETA_TYPE_APPLY` identities without deriving stable identity from raw C spelling. `Option<T>` may then map to semantic OPTIONAL; `Result<A,E>` may map to VARIANT. Field presence remains a separate CBind/schema concern regardless of that future work.
 
 No semantic descriptor should carry a second copy of generic argument truth when it can be derived from the validated type application.
