@@ -18,10 +18,10 @@ static const cmeta_container_type_ops stl_##prefix##_generic_type_ops = {      \
     1u,                                                                        \
     stl_##prefix##_generic_argument};                                          \
 const cmeta_container_ext stl_##prefix##_container_ext = {                     \
-    sizeof(cmeta_container_ext),                                               \
-    CMETA_CONTAINER_EXT_ABI_VERSION,                                           \
-    &stl_##prefix##_generic_type_ops,                                          \
-    (data_desc)};
+    .struct_size = sizeof(cmeta_container_ext),                                \
+    .abi_version = CMETA_CONTAINER_EXT_ABI_VERSION,                            \
+    .type = &stl_##prefix##_generic_type_ops,                                  \
+    .data = (data_desc)};
 
 #define STL_DEFINE_BINARY_GENERIC_META(                                        \
     prefix, display_name, stable_id, handle_type, key_expr, value_expr,       \
@@ -43,10 +43,10 @@ static const cmeta_container_type_ops stl_##prefix##_generic_type_ops = {      \
     2u,                                                                        \
     stl_##prefix##_generic_argument};                                          \
 const cmeta_container_ext stl_##prefix##_container_ext = {                     \
-    sizeof(cmeta_container_ext),                                               \
-    CMETA_CONTAINER_EXT_ABI_VERSION,                                           \
-    &stl_##prefix##_generic_type_ops,                                          \
-    (data_desc)};
+    .struct_size = sizeof(cmeta_container_ext),                                \
+    .abi_version = CMETA_CONTAINER_EXT_ABI_VERSION,                            \
+    .type = &stl_##prefix##_generic_type_ops,                                  \
+    .data = (data_desc)};
 
 STL_DEFINE_UNARY_GENERIC_META(
     vec, "Vec", "turbostl.Vec", vec_t, self->element_type,
