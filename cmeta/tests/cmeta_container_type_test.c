@@ -28,7 +28,8 @@ static const cmeta_type_desc *cmeta_test_sequence_argument(
 }
 
 static const cmeta_container_type_ops cmeta_test_sequence_type_ops = {
-    .struct_size = sizeof(cmeta_container_type_ops),
+    .struct_size = offsetof(cmeta_container_type_ops, argument) +
+                   sizeof(((cmeta_container_type_ops *)0)->argument),
     .abi_version = CMETA_CONTAINER_TYPE_OPS_ABI_VERSION,
     .constructor = &cmeta_test_sequence_generic,
     .arity = 1u,
@@ -36,7 +37,8 @@ static const cmeta_container_type_ops cmeta_test_sequence_type_ops = {
 };
 
 static const cmeta_container_ext cmeta_test_sequence_ext = {
-    .struct_size = sizeof(cmeta_container_ext),
+    .struct_size = offsetof(cmeta_container_ext, type) +
+                   sizeof(((cmeta_container_ext *)0)->type),
     .abi_version = CMETA_CONTAINER_EXT_ABI_VERSION,
     .type = &cmeta_test_sequence_type_ops
 };
@@ -69,6 +71,17 @@ spec("CMeta container generic type applications") {
     check_true(cmeta_container_type_argument(&sequence, 0u) ==
                &cmeta_type_int);
     check_null(cmeta_container_type_argument(&sequence, 1u));
+  }
+
+  it("exposes a validated container extension prefix") {
+    cmeta_test_sequence sequence = {
+        .cmeta = {&cmeta_test_sequence_desc},
+        .element_type = &cmeta_type_int
+    };
+
+    check_true(cmeta_container_extension(&sequence) ==
+               &cmeta_test_sequence_ext);
+    check_null(cmeta_container_extension(NULL));
   }
 
   it("rejects a concrete argument without a CMeta type identity") {
