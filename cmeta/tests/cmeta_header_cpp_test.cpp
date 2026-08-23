@@ -86,18 +86,26 @@ spec("CMeta C++ public headers") {
 
   it("exposes versioned container extension structs through C++") {
     const cmeta_container_type_ops type_ops = {
-        sizeof(cmeta_container_type_ops),
+        offsetof(cmeta_container_type_ops, argument) + sizeof(type_ops.argument),
         CMETA_CONTAINER_TYPE_OPS_ABI_VERSION,
         nullptr,
         0u,
         nullptr};
     const cmeta_container_ext ext = {
-        sizeof(cmeta_container_ext),
+        offsetof(cmeta_container_ext, type) + sizeof(ext.type),
         CMETA_CONTAINER_EXT_ABI_VERSION,
         &type_ops};
+    const cmeta_container_desc desc = {
+        "cpp container", nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, &ext};
+    const cmeta_container_header object = {&desc};
 
-    check_equal(type_ops.struct_size, sizeof(cmeta_container_type_ops));
-    check_equal(ext.struct_size, sizeof(cmeta_container_ext));
+    check_equal(type_ops.struct_size,
+                offsetof(cmeta_container_type_ops, argument) +
+                    sizeof(type_ops.argument));
+    check_equal(ext.struct_size,
+                offsetof(cmeta_container_ext, type) + sizeof(ext.type));
     check_true(ext.type == &type_ops);
+    check_true(cmeta_container_extension(&object) == &ext);
   }
 }

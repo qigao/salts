@@ -105,6 +105,7 @@ static inline const cmeta_container_desc *cmeta_container_descriptor(const void 
     return header != NULL ? header->descriptor : NULL;
 }
 
+const cmeta_container_ext *cmeta_container_extension(const void *object);
 const cmeta_generic_desc *cmeta_container_type_constructor(const void *object);
 size_t cmeta_container_type_arity(const void *object);
 const cmeta_type_desc *cmeta_container_type_argument(const void *object,

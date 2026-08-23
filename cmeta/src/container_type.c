@@ -2,23 +2,37 @@
 
 #include <stdint.h>
 
-static const cmeta_container_type_ops *
-cmeta_container_type_ops_of(const void *object) {
+#define CMETA_FIELD_END(type, member) \
+    (offsetof(type, member) + sizeof(((type *)0)->member))
+
+const cmeta_container_ext *
+cmeta_container_extension(const void *object) {
     const cmeta_container_desc *desc;
     const cmeta_container_ext *ext;
-    const cmeta_container_type_ops *ops;
 
     if (object == NULL)
         return NULL;
     desc = cmeta_container_descriptor(object);
-    if (desc == NULL)
+    if (desc == NULL || desc->ext == NULL)
         return NULL;
     ext = desc->ext;
-    if (ext == NULL || ext->struct_size < sizeof(*ext) ||
-        ext->abi_version != CMETA_CONTAINER_EXT_ABI_VERSION)
+    if (ext->abi_version != CMETA_CONTAINER_EXT_ABI_VERSION ||
+        ext->struct_size < CMETA_FIELD_END(cmeta_container_ext, type))
+        return NULL;
+    return ext;
+}
+
+static const cmeta_container_type_ops *
+cmeta_container_type_ops_of(const void *object) {
+    const cmeta_container_ext *ext;
+    const cmeta_container_type_ops *ops;
+
+    ext = cmeta_container_extension(object);
+    if (ext == NULL)
         return NULL;
     ops = ext->type;
-    if (ops == NULL || ops->struct_size < sizeof(*ops) ||
+    if (ops == NULL ||
+        ops->struct_size < CMETA_FIELD_END(cmeta_container_type_ops, argument) ||
         ops->abi_version != CMETA_CONTAINER_TYPE_OPS_ABI_VERSION)
         return NULL;
     if (ops->arity != 0u && ops->argument == NULL)
@@ -65,3 +79,5 @@ bool cmeta_container_type_application_valid(const void *object) {
     return cmeta_type_application_valid(
         ops->constructor, ops->arity == 0u ? NULL : identities, ops->arity);
 }
+
+#undef CMETA_FIELD_END
