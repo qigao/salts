@@ -39,6 +39,86 @@ static void selection_remove(unsigned char *selection, size_t index) {
     selection[index / 8u] &= (unsigned char)~(1u << (index % 8u));
 }
 
+#define CFLOW_PLAN_RAW_BATCH_NAME_I(id) cflow_plan_raw_batch_##id
+#define CFLOW_PLAN_RAW_BATCH_NAME_E(id) CFLOW_PLAN_RAW_BATCH_NAME_I(id)
+#define CFLOW_PLAN_RAW_BATCH_NAME(id) CFLOW_PLAN_RAW_BATCH_NAME_E(id)
+
+/* Each generated stage is O(input_count) time and O(1) auxiliary space. The
+ * caller owns the bounded selection and exact output buffers. */
+#define CFLOW_DEFINE_RAW_BATCH(in, ret) \
+    static bool CFLOW_PLAN_RAW_BATCH_NAME(CMETA_U_ID(in, ret))( \
+        const cflow_plan_call *call, cflow_plan_unary_batch_mode mode, \
+        const unsigned char *input, size_t input_count, \
+        unsigned char *selection, unsigned char *output, size_t *value_count) { \
+        CMETA_FN_TYPE(CMETA_U_ID(in, ret)) raw; \
+        size_t produced = 0u; \
+        if (!call || !value_count || (!input && input_count) || \
+            call->fn.meta.sig != CMETA_SIG_NAME(CMETA_U_ID(in, ret))) \
+            return false; \
+        raw = call->fn.meta.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret)); \
+        if (!raw) return false; \
+        if (mode == CFLOW_PLAN_BATCH_FILTER) { \
+            size_t selected = *value_count; \
+            if (!selection || output || selected > input_count || \
+                !cmeta_type_equal(call->output_type, &cmeta_type_bool)) \
+                return false; \
+            for (size_t index = 0u; index < input_count; ++index) { \
+                CMETA_TYPE_CTYPE(in) value; \
+                CMETA_TYPE_CTYPE(ret) result; \
+                _Bool keep; \
+                if (!selection_contains(selection, index)) continue; \
+                memcpy(&value, input + index * sizeof(value), sizeof(value)); \
+                result = raw(value); \
+                memcpy(&keep, &result, sizeof(keep)); \
+                if (!keep) { \
+                    if (!selected) return false; \
+                    selection_remove(selection, index); \
+                    --selected; \
+                } \
+            } \
+            *value_count = selected; \
+            return true; \
+        } \
+        if (mode != CFLOW_PLAN_BATCH_MAP) return false; \
+        for (size_t index = 0u; index < input_count; ++index) { \
+            CMETA_TYPE_CTYPE(in) value; \
+            CMETA_TYPE_CTYPE(ret) result; \
+            if (selection && !selection_contains(selection, index)) continue; \
+            if (produced >= *value_count || !output) return false; \
+            memcpy(&value, input + index * sizeof(value), sizeof(value)); \
+            result = raw(value); \
+            memcpy(output + produced * sizeof(result), &result, sizeof(result)); \
+            ++produced; \
+        } \
+        *value_count = produced; \
+        return true; \
+    }
+CMETA_UNARY_SIGNATURES(CFLOW_DEFINE_RAW_BATCH)
+#undef CFLOW_DEFINE_RAW_BATCH
+
+cflow_plan_unary_batch_fn cflow_plan_unary_batch_for_signature(cmeta_sig sig) {
+    switch (sig) {
+#define CFLOW_RAW_BATCH_CASE(in, ret) \
+        case CMETA_SIG_NAME(CMETA_U_ID(in, ret)): \
+            return CFLOW_PLAN_RAW_BATCH_NAME(CMETA_U_ID(in, ret));
+        CMETA_UNARY_SIGNATURES(CFLOW_RAW_BATCH_CASE)
+#undef CFLOW_RAW_BATCH_CASE
+        default:
+            return NULL;
+    }
+}
+
+#undef CFLOW_PLAN_RAW_BATCH_NAME
+#undef CFLOW_PLAN_RAW_BATCH_NAME_E
+#undef CFLOW_PLAN_RAW_BATCH_NAME_I
+
+static bool stats_increment(size_t *counter) {
+    if (!counter) return true;
+    if (*counter == SIZE_MAX) return false;
+    ++*counter;
+    return true;
+}
+
 typedef struct cflow_fused_resources {
     size_t allocation_calls;
     size_t allocated_bytes;
@@ -81,16 +161,26 @@ static bool eval_fused_filters(const cflow_plan *plan,
                                const unsigned char *input_bytes,
                                size_t input_count,
                                unsigned char *selection,
-                               size_t *selected_count) {
+                               size_t *selected_count,
+                               cflow_plan_eval_stats *stats) {
     if (!plan || !impl || !selection || !selected_count) return false;
     for (size_t pc = 0u; pc < impl->fused_filter_count; ++pc) {
         const cflow_plan_call *call = &impl->code[pc].call;
+        if (call->raw_batch) {
+            if (!call->raw_batch(call, CFLOW_PLAN_BATCH_FILTER, input_bytes, input_count,
+                                 selection, NULL, selected_count) ||
+                !stats_increment(stats ? &stats->raw_batch_stage_calls : NULL))
+                return false;
+            continue;
+        }
         for (size_t index = 0u; index < input_count; ++index) {
             _Bool keep = false;
             const void *args[1];
             if (!selection_contains(selection, index)) continue;
             args[0] = input_bytes + index * plan->input_type->size;
-            if (!call->invoke(&call->fn, &keep, args)) return false;
+            if (!call->invoke(&call->fn, &keep, args) ||
+                !stats_increment(stats ? &stats->adapter_item_calls : NULL))
+                return false;
             if (!keep) {
                 selection_remove(selection, index);
                 --*selected_count;
@@ -267,7 +357,7 @@ static bool eval_fused_value(const cflow_plan *plan,
     if (resources.selection_bytes) {
         memset(selection, 0xff, resources.selection_bytes);
         if (!eval_fused_filters(plan, impl, input_bytes, input_count,
-                                selection, &selected_count))
+                                selection, &selected_count, stats))
             goto fail;
     }
 
@@ -285,25 +375,43 @@ static bool eval_fused_value(const cflow_plan *plan,
                     goto fail;
 
                 if (!map_index && selection) {
-                    for (size_t input_index = 0u; input_index < input_count; ++input_index) {
-                        const void *args[1];
-                        if (!selection_contains(selection, input_index)) continue;
-                        args[0] = input_bytes + input_index * plan->input_type->size;
-                        if (!call->invoke(&call->fn,
-                                          pending + output_index * call->output_type->size,
-                                          args))
+                    if (call->raw_batch) {
+                        output_index = selected_count;
+                        if (!call->raw_batch(call, CFLOW_PLAN_BATCH_MAP, input_bytes,
+                                             input_count, selection, pending, &output_index) ||
+                            !stats_increment(stats ? &stats->raw_batch_stage_calls : NULL))
                             goto fail;
-                        ++output_index;
+                    } else {
+                        for (size_t input_index = 0u; input_index < input_count; ++input_index) {
+                            const void *args[1];
+                            if (!selection_contains(selection, input_index)) continue;
+                            args[0] = input_bytes + input_index * plan->input_type->size;
+                            if (!call->invoke(&call->fn,
+                                              pending + output_index * call->output_type->size,
+                                              args) ||
+                                !stats_increment(stats ? &stats->adapter_item_calls : NULL))
+                                goto fail;
+                            ++output_index;
+                        }
                     }
                 } else {
-                    for (size_t index = 0u; index < selected_count; ++index) {
-                        const void *args[1] = { current_data + index * current_type_size };
-                        if (!call->invoke(&call->fn,
-                                          pending + index * call->output_type->size,
-                                          args))
+                    if (call->raw_batch) {
+                        output_index = selected_count;
+                        if (!call->raw_batch(call, CFLOW_PLAN_BATCH_MAP, current_data,
+                                             selected_count, NULL, pending, &output_index) ||
+                            !stats_increment(stats ? &stats->raw_batch_stage_calls : NULL))
                             goto fail;
+                    } else {
+                        for (size_t index = 0u; index < selected_count; ++index) {
+                            const void *args[1] = { current_data + index * current_type_size };
+                            if (!call->invoke(&call->fn,
+                                              pending + index * call->output_type->size,
+                                              args) ||
+                                !stats_increment(stats ? &stats->adapter_item_calls : NULL))
+                                goto fail;
+                        }
+                        output_index = selected_count;
                     }
-                    output_index = selected_count;
                 }
                 if (output_index != selected_count) goto fail;
 

@@ -47,8 +47,8 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
         return self ? cmeta_fn_generate(self->meta, input, out, cursor) : CMETA_GEN_ERROR; \
     } \
     const CFLOW_OP_CALLABLE(op) name = { .fn = \
-        CMETA_CALLABLE_INIT(effect_set, property_set, cmeta_meta_##name, \
-                           cmeta_invoke_##name, cmeta_generate_##name, 0u) }; \
+        CMETA_CANONICAL_RAW_CALLABLE_INIT(effect_set, property_set, cmeta_meta_##name, \
+                                         cmeta_invoke_##name, cmeta_generate_##name, 0u) }; \
     static ret cmeta_typed_##name params
 
 #define CFLOW_TYPED(op, contract, ret, name, params) \

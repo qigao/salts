@@ -10,6 +10,10 @@ _Static_assert(CMETA_FLOAT_TRAITS_OBJECT_HASH_WIDTHS,
                "floating trait hashes require complete object-width copies");
 _Static_assert(CMETA_FLOAT_TRAITS_BINARY32_BINARY64,
                "floating trait tests require the documented binary32/binary64 contract");
+_Static_assert(CMETA_CALLABLE_DISPATCH_ADAPTER == 0,
+               "zero-initialized callables must remain adapter-safe");
+_Static_assert(CMETA_CALLABLE_DISPATCH_CANONICAL_RAW == 1,
+               "canonical raw dispatch is a stable public tag");
 
 typedef struct owned_int {
     int *value;
@@ -91,6 +95,46 @@ Enum(cmeta_test_state,
 typed_any(value, int, cmeta_test_increment, (int value)) {
     return value + 1;
 }
+
+static int cmeta_test_increment_alternate(int value) {
+    return value + 2;
+}
+
+static cmeta_fn cmeta_test_adapter_only_meta(void) {
+    cmeta_fn meta = CMETA_WRAP_TYPED_ANY(cmeta_test_increment_alternate);
+    memset(&meta.call, 0, sizeof(meta.call));
+    meta.effects = CMETA_CONTRACT_EFFECTS(value);
+    meta.properties = CMETA_CONTRACT_PROPERTIES(value);
+    return meta;
+}
+
+static bool cmeta_test_adapter_only_invoke(const cmeta_callable *self,
+                                           void *out,
+                                           const void *const *args) {
+    int value;
+    if (!self || !out || !args || !args[0]) return false;
+    memcpy(&value, args[0], sizeof(value));
+    value += 3;
+    memcpy(out, &value, sizeof(value));
+    return true;
+}
+
+static cmeta_gen_status cmeta_test_adapter_only_generate(
+    const cmeta_callable *self, const void *input, void *out, size_t *cursor) {
+    (void)self;
+    (void)input;
+    (void)out;
+    (void)cursor;
+    return CMETA_GEN_ERROR;
+}
+
+static const cmeta_callable cmeta_test_adapter_only =
+    CMETA_CALLABLE_INIT(CMETA_CONTRACT_EFFECTS(value),
+                        CMETA_CONTRACT_PROPERTIES(value),
+                        cmeta_test_adapter_only_meta,
+                        cmeta_test_adapter_only_invoke,
+                        cmeta_test_adapter_only_generate,
+                        0u);
 
 typed_any(associative, long, cmeta_test_add, (long left, long right)) {
     return left + right;
@@ -659,6 +703,45 @@ suite("CMeta core") {
         check_true(cmeta_callable_contract_valid(cmeta_test_add));
         check_true(cmeta_properties_include(
             cmeta_test_add.meta.properties, CMETA_PROP_ASSOCIATIVE));
+    }
+
+    it("admits canonical raw dispatch only for an explicit valid capability") {
+        cmeta_callable adapter = cmeta_test_increment;
+        cmeta_callable captured = cmeta_test_increment;
+        cmeta_callable invalid = cmeta_test_increment;
+        cmeta_callable rebound;
+        const int input = 41;
+        int output = 0;
+        const void *args[] = {&input};
+
+        check_true(cmeta_callable_can_dispatch_canonical_raw(cmeta_test_increment));
+
+        adapter.dispatch = CMETA_CALLABLE_DISPATCH_ADAPTER;
+        check_true(cmeta_callable_bind(adapter, &rebound));
+        check_false(cmeta_callable_can_dispatch_canonical_raw(adapter));
+
+        check_true(cmeta_callable_bind(cmeta_test_adapter_only, &rebound));
+        check_false(cmeta_callable_can_dispatch_canonical_raw(cmeta_test_adapter_only));
+        check_true(cmeta_callable_invoke(&rebound, &output, args));
+        check_equal(output, 44);
+
+        captured.capture_size = 1u;
+        captured.capture.bytes[0] = 1u;
+        check_false(cmeta_callable_bind(captured, &rebound));
+        check_false(cmeta_callable_can_dispatch_canonical_raw(captured));
+
+        invalid.dispatch = (cmeta_callable_dispatch)99;
+        check_false(cmeta_callable_bind(invalid, &rebound));
+        check_false(cmeta_callable_can_dispatch_canonical_raw(invalid));
+    }
+
+    it("compares the active raw target for canonical callables") {
+        cmeta_callable changed_target;
+
+        check_true(cmeta_callable_bind(cmeta_test_increment, &changed_target));
+        changed_target.meta.call.call_U_I_I = cmeta_test_increment_alternate;
+
+        check_false(cmeta_callable_same(cmeta_test_increment, changed_target));
     }
 
     it("rejects a raw callable whose active target is missing") {

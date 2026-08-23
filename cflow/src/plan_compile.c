@@ -43,16 +43,24 @@ static bool append_inst(cflow_plan *p, cflow_plan_inst inst) {
 }
 
 static bool prepare_unary_call(cflow_plan_call *out, cmeta_callable fn) {
+    cmeta_callable bound;
+    cflow_plan_call prepared = {0};
     const cmeta_sig_desc *sig;
     if (!out || !fn.invoke) return false;
-    sig = cmeta_callable_signature(fn);
+    if (!cmeta_callable_bind(fn, &bound)) return false;
+    sig = cmeta_fn_signature(bound.meta);
     if (!sig || sig->protocol != CMETA_FN_PROTOCOL_VALUE || sig->param_count != 1u ||
         !sig->params[0] || !sig->return_type)
         return false;
-    out->fn = fn;
-    out->invoke = fn.invoke;
-    out->input_type = sig->params[0];
-    out->output_type = sig->return_type;
+    prepared.fn = bound;
+    prepared.invoke = bound.invoke;
+    if (cmeta_callable_can_dispatch_canonical_raw(bound)) {
+        prepared.raw_batch = cflow_plan_unary_batch_for_signature(bound.meta.sig);
+        if (!prepared.raw_batch) return false;
+    }
+    prepared.input_type = sig->params[0];
+    prepared.output_type = sig->return_type;
+    *out = prepared;
     return true;
 }
 

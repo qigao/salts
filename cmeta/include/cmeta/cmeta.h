@@ -218,14 +218,21 @@ typedef cmeta_gen_status (*cmeta_callable_generate_fn)(const cmeta_callable *sel
                                                        void *out,
                                                        size_t *cursor);
 
-/* First-class immutable callable value.  Plain typed functions and capturing
- * C-meta lambdas share this exact representation.  capture is copied by value
+typedef enum cmeta_callable_dispatch {
+    CMETA_CALLABLE_DISPATCH_ADAPTER = 0,
+    CMETA_CALLABLE_DISPATCH_CANONICAL_RAW = 1
+} cmeta_callable_dispatch;
+
+/* First-class immutable callable value. Plain typed functions and capturing
+ * C-meta lambdas share this exact representation. dispatch states whether the
+ * adapter or resolved raw target is authoritative. capture is copied by value
  * with the Graph, Subgraph snapshots and compiled plans. */
 struct cmeta_callable {
     cmeta_fn meta; /* sig may be resolved lazily before Graph insertion */
     cmeta_callable_resolve_fn resolve;
     cmeta_callable_invoke_fn invoke;
     cmeta_callable_generate_fn generate;
+    cmeta_callable_dispatch dispatch;
     size_t capture_size;
     cmeta_capture_storage capture;
 };
@@ -340,12 +347,21 @@ static inline void cmeta_unsupported_signature(void) { }
     _Generic(&(fn), default: cmeta_unsupported_signature \
         CMETA_ALL_SIGNATURES(CMETA_ASSOC_U, CMETA_ASSOC_B, CMETA_ASSOC_G))(&(fn))
 
-#define CMETA_CALLABLE_INIT(effect_set, property_set, resolver_fn, invoke_fn, generate_fn, cap_size) \
+#define CMETA_DETAIL_CALLABLE_INIT(effect_set, property_set, resolver_fn, invoke_fn, generate_fn, dispatch_kind, cap_size) \
     { .meta = { .sig = CMETA_SIG_INVALID, .call = { 0 }, \
                 .effects = (cmeta_effects)(effect_set), \
                 .properties = (cmeta_properties)(property_set) }, \
       .resolve = (resolver_fn), .invoke = (invoke_fn), .generate = (generate_fn), \
+      .dispatch = (dispatch_kind), \
       .capture_size = (cap_size), .capture = { .bytes = { 0 } } }
+
+#define CMETA_CALLABLE_INIT(effect_set, property_set, resolver_fn, invoke_fn, generate_fn, cap_size) \
+    CMETA_DETAIL_CALLABLE_INIT(effect_set, property_set, resolver_fn, invoke_fn, generate_fn, \
+                               CMETA_CALLABLE_DISPATCH_ADAPTER, cap_size)
+
+#define CMETA_CANONICAL_RAW_CALLABLE_INIT(effect_set, property_set, resolver_fn, invoke_fn, generate_fn, cap_size) \
+    CMETA_DETAIL_CALLABLE_INIT(effect_set, property_set, resolver_fn, invoke_fn, generate_fn, \
+                               CMETA_CALLABLE_DISPATCH_CANONICAL_RAW, cap_size)
 
 /* Raw first-class named callable for custom IR code. */
 #define typed_any_raw(effect_set, property_set, ret, name, params) \
@@ -363,8 +379,8 @@ static inline void cmeta_unsupported_signature(void) { }
         return self ? cmeta_fn_generate(self->meta, input, out, cursor) : CMETA_GEN_ERROR; \
     } \
     const cmeta_callable name = \
-        CMETA_CALLABLE_INIT(effect_set, property_set, cmeta_meta_##name, \
-                           cmeta_invoke_##name, cmeta_generate_##name, 0u); \
+        CMETA_CANONICAL_RAW_CALLABLE_INIT(effect_set, property_set, cmeta_meta_##name, \
+                                         cmeta_invoke_##name, cmeta_generate_##name, 0u); \
     static ret cmeta_typed_##name params
 #define typed_any(contract, ret, name, params) \
     typed_any_raw(CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract), ret, name, params)
@@ -396,10 +412,12 @@ cmeta_gen_status cmeta_fn_generate(cmeta_fn fn, const void *input,
                                    void *out, size_t *cursor);
 
 /* First-class callable operations. Graph insertion resolves the logical
- * signature once; runtime invocation thereafter uses the bound erased adapter. */
+ * signature once. Runtime consumers use the bound adapter unless the validated
+ * dispatch contract explicitly permits canonical raw execution. */
 bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out);
 const cmeta_sig_desc *cmeta_callable_signature(cmeta_callable fn);
 bool cmeta_callable_contract_valid(cmeta_callable fn);
+bool cmeta_callable_can_dispatch_canonical_raw(cmeta_callable fn);
 bool cmeta_callable_same(cmeta_callable a, cmeta_callable b);
 bool cmeta_callable_invoke(const cmeta_callable *fn, void *out, const void *const *args);
 cmeta_gen_status cmeta_callable_generate(const cmeta_callable *fn, const void *input,

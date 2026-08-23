@@ -160,6 +160,16 @@ I/O, scheduling, or synchronization policy.
 protocol. `typed_any(...)` attaches effect/property contracts without creating a
 new execution engine.
 
+`cmeta_callable.dispatch` is an explicit dispatch contract. Generated named
+`typed_any(...)` callables advertise `CMETA_CALLABLE_DISPATCH_CANONICAL_RAW`;
+their active `cmeta_fn` target may be batch-decoded by a consumer after a
+successful bind. `CMETA_CALLABLE_INIT` and zero initialization default to
+`CMETA_CALLABLE_DISPATCH_ADAPTER`, so custom adapters and inline captures remain
+authoritative even when capture size is zero. Canonical raw callables must have
+zero capture and a valid active raw target. Adapter callables may intentionally
+omit a raw target when their protocol-specific invoke/generate adapter implements
+the operation.
+
 ### Interface
 
 `interface(...)` produces a conventional `{ self, vtable }` protocol value plus

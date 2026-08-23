@@ -36,6 +36,11 @@ typed(map, stateful, long, cflow_test_stateful_add_ten, (int value)) {
     return (long)value + 10L;
 }
 
+lambda1(map, value, long, cflow_test_captured_add,
+        int, value, long, increment) {
+    return (long)value + increment;
+}
+
 static void cflow_test_check_expected(const cflow_result *result) {
     const double *values;
 
@@ -131,6 +136,47 @@ suite("CFlow pipeline") {
         check_equal(stats.allocated_bytes, expected_total);
         check_equal(stats.peak_live_bytes, expected_intermediate + expected_result);
         check_equal(stats.staged_input_copy_bytes, (size_t)0u);
+        check_equal(stats.raw_batch_stage_calls, (size_t)3u);
+        check_equal(stats.adapter_item_calls, (size_t)0u);
+
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("keeps capturing maps on the adapter path") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        cflow_result result = {0};
+        cflow_plan_eval_stats stats = {0};
+        cflow_map_callable callable = cflow_test_captured_add(10L);
+        const int input[] = {1, 2, 3};
+        const long expected[] = {11L, 12L, 13L};
+        const void *args[] = {&input[0]};
+        long direct = 0L;
+        bool eval_ok;
+
+        check_true(cmeta_callable_invoke(&callable.fn, &direct, args));
+        check_equal(direct, 11L);
+        check_false(cmeta_callable_can_dispatch_canonical_raw(callable.fn));
+        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+        check_not_null(stream.map(&stream, callable));
+        check_true(cflow_stream_ok(&stream));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        check_true(cmeta_callable_invoke(
+            &((const cflow_plan_impl *)plan.impl)->code[0].fn_chain[0].fn,
+            &direct, args));
+        check_equal(direct, 11L);
+        check_null(((const cflow_plan_impl *)plan.impl)->code[0].fn_chain[0].raw_batch);
+        eval_ok = cflow_plan_eval_array_profile(&plan, input, 3u, &result, &stats);
+        check_equal(stats.adapter_item_calls, (size_t)3u);
+        check_true(eval_ok);
+        check_equal(result.count, (size_t)3u);
+        check_equal(((const long *)result.data)[0], 11L);
+        check_equal(((const long *)result.data)[1], 12L);
+        check_equal(((const long *)result.data)[2], 13L);
+        check_equal(result.data, expected, sizeof(expected));
+        check_equal(stats.raw_batch_stage_calls, (size_t)0u);
 
         cflow_result_destroy(&result);
         cflow_plan_destroy(&plan);
@@ -304,6 +350,7 @@ suite("CFlow pipeline") {
         filter = &impl->code[0];
         check_equal(filter->opcode, CMETA_PLAN_FILTER);
         check_not_null(filter->call.invoke);
+        check_not_null(filter->call.raw_batch);
         check_true(cmeta_type_equal(filter->call.input_type, &cmeta_type_int));
         check_true(cmeta_type_equal(filter->call.output_type, &cmeta_type_bool));
 
@@ -311,9 +358,11 @@ suite("CFlow pipeline") {
         check_equal(map->opcode, CMETA_PLAN_MAP);
         check_equal(map->fn_chain_count, (size_t)2u);
         check_not_null(map->fn_chain[0].invoke);
+        check_not_null(map->fn_chain[0].raw_batch);
         check_true(cmeta_type_equal(map->fn_chain[0].input_type, &cmeta_type_int));
         check_true(cmeta_type_equal(map->fn_chain[0].output_type, &cmeta_type_long));
         check_not_null(map->fn_chain[1].invoke);
+        check_not_null(map->fn_chain[1].raw_batch);
         check_true(cmeta_type_equal(map->fn_chain[1].input_type, &cmeta_type_long));
         check_true(cmeta_type_equal(map->fn_chain[1].output_type, &cmeta_type_double));
 

@@ -1,5 +1,6 @@
 #include "tinytest.h"
 #include <cflow/cflow.h>
+#include <cflow/plan_internal.h>
 
 #include <string.h>
 
@@ -197,6 +198,7 @@ suite("CFlow Direct executor") {
     cflow_plan plan = {0};
     cflow_result plan_result = {0};
     cflow_result kernel_result = {0};
+    cflow_plan_eval_stats stats = {0};
 
     check_true(cflow_direct_trap_pipeline_eligible());
     check_equal(cflow_direct_trap_pipeline_eval_array(input, 3u, output, 3u, &output_count),
@@ -212,9 +214,11 @@ suite("CFlow Direct executor") {
     check_equal(cflow_direct_erased_invocations, (size_t)3u);
 
     check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
-    check_true(cflow_plan_eval_array(&plan, input, 3u, &plan_result));
+    check_true(cflow_plan_eval_array_profile(&plan, input, 3u, &plan_result, &stats));
     check_equal(plan_result.data, expected, sizeof(expected));
     check_equal(cflow_direct_erased_invocations, (size_t)6u);
+    check_equal(stats.raw_batch_stage_calls, (size_t)0u);
+    check_equal(stats.adapter_item_calls, (size_t)3u);
 
     cflow_result_destroy(&plan_result);
     cflow_plan_destroy(&plan);
