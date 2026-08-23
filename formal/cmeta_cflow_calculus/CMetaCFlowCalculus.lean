@@ -14,4 +14,5 @@ import CMetaCFlowCalculus.Proofs.Ownership
 import CMetaCFlowCalculus.Proofs.Execution
 import CMetaCFlowCalculus.Proofs.Architecture
 import CMetaCFlowCalculus.Proofs.Rewrite
+import CMetaCFlowCalculus.Proofs.Certificate
 import CMetaCFlowCalculus.Proofs.Cost
