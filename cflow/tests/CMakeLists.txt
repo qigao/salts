@@ -9,6 +9,12 @@ cmake_add_test(cflow_graph_test
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_dense_successor_index_test
+  SOURCES cflow_dense_successor_index_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_pipeline_test
   SOURCES
     cflow_pipeline_test.c
@@ -21,6 +27,18 @@ cmake_add_test(cflow_runtime_test
     cflow_runtime_test.c
     ${CFLOW_TEST_SUPPORT}
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_calculus_conformance_test
+  SOURCES
+    cflow_calculus_conformance_test.c
+    ${CFLOW_TEST_SUPPORT}
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_direct_test
+  SOURCES cflow_direct_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_execution_test
@@ -41,8 +59,11 @@ cmake_add_test(cflow_header_cpp_test
 
 set_target_properties(
   cflow_graph_test
+  cflow_dense_successor_index_test
   cflow_pipeline_test
   cflow_runtime_test
+  cflow_calculus_conformance_test
+  cflow_direct_test
   cflow_execution_test
   cflow_scheduler_compat_test
   PROPERTIES

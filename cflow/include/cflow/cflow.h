@@ -4,6 +4,7 @@
 #include <cflow/meta.h>
 #include <cflow/graph.h>
 #include <cflow/stream.h>
+#include <cflow/direct.h>
 #include <cflow/lower.h>
 #include <cflow/effect.h>
 #include <cflow/property.h>

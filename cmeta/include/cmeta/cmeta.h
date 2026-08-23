@@ -218,19 +218,96 @@ typedef cmeta_gen_status (*cmeta_callable_generate_fn)(const cmeta_callable *sel
                                                        void *out,
                                                        size_t *cursor);
 
-/* First-class immutable callable value.  Plain typed functions and capturing
- * C-meta lambdas share this exact representation.  capture is copied by value
+typedef enum cmeta_callable_dispatch {
+    CMETA_CALLABLE_DISPATCH_ADAPTER = 0,
+    CMETA_CALLABLE_DISPATCH_CANONICAL_RAW = 1
+} cmeta_callable_dispatch;
+
+/* First-class immutable callable value. Plain typed functions and capturing
+ * C-meta lambdas share this exact representation. dispatch states whether the
+ * adapter or resolved raw target is authoritative. capture is copied by value
  * with the Graph, Subgraph snapshots and compiled plans. */
 struct cmeta_callable {
     cmeta_fn meta; /* sig may be resolved lazily before Graph insertion */
     cmeta_callable_resolve_fn resolve;
     cmeta_callable_invoke_fn invoke;
     cmeta_callable_generate_fn generate;
+    cmeta_callable_dispatch dispatch;
     size_t capture_size;
     cmeta_capture_storage capture;
 };
 
 #ifndef __cplusplus
+
+/* Ordinary typed callables use a signature-specific adapter so their bound
+ * metadata is validated once by Graph/Plan construction rather than decoded
+ * again for every value. memcpy keeps erased arguments alignment-safe. */
+#define CMETA_DETAIL_INVOKER_I(id) cmeta_detail_invoke_##id
+#define CMETA_DETAIL_INVOKER_E(id) CMETA_DETAIL_INVOKER_I(id)
+#define CMETA_DETAIL_INVOKER(id) CMETA_DETAIL_INVOKER_E(id)
+
+static inline bool cmeta_detail_unsupported_invoke(
+    const cmeta_callable *self, void *out, const void *const *args) {
+    (void)self;
+    (void)out;
+    (void)args;
+    return false;
+}
+
+#define CMETA_DEFINE_INVOKER_U(in, ret) \
+    static inline bool CMETA_DETAIL_INVOKER(CMETA_U_ID(in, ret))( \
+        const cmeta_callable *self, void *out, const void *const *args) { \
+        CMETA_TYPE_CTYPE(in) a0; \
+        CMETA_TYPE_CTYPE(ret) result; \
+        if (!self || self->meta.sig != CMETA_SIG_NAME(CMETA_U_ID(in, ret)) || \
+            !args || !args[0] || \
+            !self->meta.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret))) \
+            return false; \
+        memcpy(&a0, args[0], sizeof(a0)); \
+        result = self->meta.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret))(a0); \
+        if (out) memcpy(out, &result, sizeof(result)); \
+        return true; \
+    }
+#define CMETA_DEFINE_INVOKER_B(a, b, ret) \
+    static inline bool CMETA_DETAIL_INVOKER(CMETA_B_ID(a, b, ret))( \
+        const cmeta_callable *self, void *out, const void *const *args) { \
+        CMETA_TYPE_CTYPE(a) a0; \
+        CMETA_TYPE_CTYPE(b) a1; \
+        CMETA_TYPE_CTYPE(ret) result; \
+        if (!self || self->meta.sig != CMETA_SIG_NAME(CMETA_B_ID(a, b, ret)) || \
+            !args || !args[0] || !args[1] || \
+            !self->meta.call.CMETA_CALL_MEMBER(CMETA_B_ID(a, b, ret))) \
+            return false; \
+        memcpy(&a0, args[0], sizeof(a0)); \
+        memcpy(&a1, args[1], sizeof(a1)); \
+        result = self->meta.call.CMETA_CALL_MEMBER(CMETA_B_ID(a, b, ret))(a0, a1); \
+        if (out) memcpy(out, &result, sizeof(result)); \
+        return true; \
+    }
+#define CMETA_DEFINE_INVOKER_G(in, out_type) \
+    static inline bool CMETA_DETAIL_INVOKER(CMETA_G_ID(in, out_type))( \
+        const cmeta_callable *self, void *out, const void *const *args) { \
+        (void)self; \
+        (void)out; \
+        (void)args; \
+        return false; \
+    }
+CMETA_ALL_SIGNATURES(CMETA_DEFINE_INVOKER_U, CMETA_DEFINE_INVOKER_B,
+                     CMETA_DEFINE_INVOKER_G)
+#undef CMETA_DEFINE_INVOKER_U
+#undef CMETA_DEFINE_INVOKER_B
+#undef CMETA_DEFINE_INVOKER_G
+
+#define CMETA_INVOKER_ASSOC_U(in, ret) \
+    , CMETA_FN_TYPE(CMETA_U_ID(in, ret)): CMETA_DETAIL_INVOKER(CMETA_U_ID(in, ret))
+#define CMETA_INVOKER_ASSOC_B(a, b, ret) \
+    , CMETA_FN_TYPE(CMETA_B_ID(a, b, ret)): CMETA_DETAIL_INVOKER(CMETA_B_ID(a, b, ret))
+#define CMETA_INVOKER_ASSOC_G(in, out_type) \
+    , CMETA_FN_TYPE(CMETA_G_ID(in, out_type)): CMETA_DETAIL_INVOKER(CMETA_G_ID(in, out_type))
+#define CMETA_TYPED_INVOKER_ANY(fn) \
+    _Generic(&(fn), default: cmeta_detail_unsupported_invoke \
+        CMETA_ALL_SIGNATURES(CMETA_INVOKER_ASSOC_U, CMETA_INVOKER_ASSOC_B, \
+                             CMETA_INVOKER_ASSOC_G))
 
 #define CMETA_MAKE_U(in, ret) \
     static inline cmeta_fn CMETA_MAKER(CMETA_U_ID(in, ret))( \
@@ -270,12 +347,21 @@ static inline void cmeta_unsupported_signature(void) { }
     _Generic(&(fn), default: cmeta_unsupported_signature \
         CMETA_ALL_SIGNATURES(CMETA_ASSOC_U, CMETA_ASSOC_B, CMETA_ASSOC_G))(&(fn))
 
-#define CMETA_CALLABLE_INIT(effect_set, property_set, resolver_fn, invoke_fn, generate_fn, cap_size) \
+#define CMETA_DETAIL_CALLABLE_INIT(effect_set, property_set, resolver_fn, invoke_fn, generate_fn, dispatch_kind, cap_size) \
     { .meta = { .sig = CMETA_SIG_INVALID, .call = { 0 }, \
                 .effects = (cmeta_effects)(effect_set), \
                 .properties = (cmeta_properties)(property_set) }, \
       .resolve = (resolver_fn), .invoke = (invoke_fn), .generate = (generate_fn), \
+      .dispatch = (dispatch_kind), \
       .capture_size = (cap_size), .capture = { .bytes = { 0 } } }
+
+#define CMETA_CALLABLE_INIT(effect_set, property_set, resolver_fn, invoke_fn, generate_fn, cap_size) \
+    CMETA_DETAIL_CALLABLE_INIT(effect_set, property_set, resolver_fn, invoke_fn, generate_fn, \
+                               CMETA_CALLABLE_DISPATCH_ADAPTER, cap_size)
+
+#define CMETA_CANONICAL_RAW_CALLABLE_INIT(effect_set, property_set, resolver_fn, invoke_fn, generate_fn, cap_size) \
+    CMETA_DETAIL_CALLABLE_INIT(effect_set, property_set, resolver_fn, invoke_fn, generate_fn, \
+                               CMETA_CALLABLE_DISPATCH_CANONICAL_RAW, cap_size)
 
 /* Raw first-class named callable for custom IR code. */
 #define typed_any_raw(effect_set, property_set, ret, name, params) \
@@ -287,14 +373,14 @@ static inline void cmeta_unsupported_signature(void) { }
         return x; \
     } \
     static bool cmeta_invoke_##name(const cmeta_callable *self, void *out, const void *const *args) { \
-        return self ? cmeta_fn_invoke(self->meta, out, args) : false; \
+        return CMETA_TYPED_INVOKER_ANY(cmeta_typed_##name)(self, out, args); \
     } \
     static cmeta_gen_status cmeta_generate_##name(const cmeta_callable *self, const void *input, void *out, size_t *cursor) { \
         return self ? cmeta_fn_generate(self->meta, input, out, cursor) : CMETA_GEN_ERROR; \
     } \
     const cmeta_callable name = \
-        CMETA_CALLABLE_INIT(effect_set, property_set, cmeta_meta_##name, \
-                           cmeta_invoke_##name, cmeta_generate_##name, 0u); \
+        CMETA_CANONICAL_RAW_CALLABLE_INIT(effect_set, property_set, cmeta_meta_##name, \
+                                         cmeta_invoke_##name, cmeta_generate_##name, 0u); \
     static ret cmeta_typed_##name params
 #define typed_any(contract, ret, name, params) \
     typed_any_raw(CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract), ret, name, params)
@@ -326,10 +412,14 @@ cmeta_gen_status cmeta_fn_generate(cmeta_fn fn, const void *input,
                                    void *out, size_t *cursor);
 
 /* First-class callable operations. Graph insertion resolves the logical
- * signature once; runtime invocation thereafter uses the bound erased adapter. */
+ * signature once. Runtime consumers use the bound adapter unless the validated
+ * dispatch contract explicitly permits canonical raw execution. */
 bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out);
 const cmeta_sig_desc *cmeta_callable_signature(cmeta_callable fn);
 bool cmeta_callable_contract_valid(cmeta_callable fn);
+bool cmeta_callable_can_dispatch_canonical_raw(cmeta_callable fn);
+/* Canonical-raw identity uses the authoritative raw target across translation
+ * units. Adapter identity uses adapter/generator pointers and capture bytes. */
 bool cmeta_callable_same(cmeta_callable a, cmeta_callable b);
 bool cmeta_callable_invoke(const cmeta_callable *fn, void *out, const void *const *args);
 cmeta_gen_status cmeta_callable_generate(const cmeta_callable *fn, const void *input,
