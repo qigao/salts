@@ -386,15 +386,138 @@ static bool cflow_graph_path_representations_equivalent(size_t operator_count) {
 
 static bool cflow_graph_path_compile_plan_once(const cflow_graph_path_fixture *fixture) {
   cflow_plan plan = {0};
-  cflow_plan_compile_stats stats = {0};
-  const bool compiled = fixture &&
-                        cflow_plan_compile(&plan, &fixture->normalized, &stats) &&
-                        !plan.error && stats.graph_nodes == fixture->operator_count + 1u &&
-                        stats.instructions == fixture->operator_count;
+  const bool compiled = fixture && cflow_plan_compile(&plan, &fixture->normalized, NULL);
 
-  if (compiled) cflow_graph_path_benchmark_sink ^= stats.instructions;
   cflow_plan_destroy(&plan);
   return compiled;
+}
+
+static bool cflow_graph_path_normalize_once(const cflow_graph_path_fixture *fixture) {
+  cflow_graph normalized = {0};
+  bool normalized_ok;
+
+  normalized.root = CMETA_INVALID_ID;
+  normalized_ok = fixture && cflow_graph_normalize(&normalized, &fixture->surface);
+  cflow_graph_destroy(&normalized);
+  return normalized_ok;
+}
+
+static bool cflow_graph_path_optimize_once(const cflow_graph_path_fixture *fixture) {
+  cflow_graph optimized = {0};
+  bool optimized_ok;
+
+  optimized.root = CMETA_INVALID_ID;
+  optimized_ok = fixture &&
+                 cflow_graph_optimize(&optimized, &fixture->normalized,
+                                      (cflow_opt_options){CMETA_OPT_DEFAULT}, NULL);
+  cflow_graph_destroy(&optimized);
+  return optimized_ok;
+}
+
+static bool cflow_graph_path_compile_surface_once(const cflow_graph_path_fixture *fixture) {
+  cflow_plan plan = {0};
+  const bool compiled = fixture && cflow_plan_compile_surface(&plan, &fixture->surface, NULL);
+
+  cflow_plan_destroy(&plan);
+  return compiled;
+}
+
+static bool cflow_graph_path_plan_calls_equal(const cflow_plan_call *left,
+                                              const cflow_plan_call *right) {
+  return left && right && cmeta_callable_same(left->fn, right->fn) &&
+         left->invoke == right->invoke && left->raw_batch == right->raw_batch &&
+         cmeta_type_equal(left->input_type, right->input_type) &&
+         cmeta_type_equal(left->output_type, right->output_type);
+}
+
+static bool cflow_graph_path_plans_equal(const cflow_plan *left, const cflow_plan *right) {
+  const cflow_plan_impl *left_impl;
+  const cflow_plan_impl *right_impl;
+
+  if (!left || !right || !left->impl || !right->impl ||
+      !cmeta_type_equal(left->input_type, right->input_type) ||
+      !cmeta_type_equal(left->output_type, right->output_type))
+    return false;
+  left_impl = (const cflow_plan_impl *)left->impl;
+  right_impl = (const cflow_plan_impl *)right->impl;
+  if (left_impl->count != right_impl->count ||
+      left_impl->fused_value != right_impl->fused_value ||
+      left_impl->fused_filter_count != right_impl->fused_filter_count ||
+      left_impl->fused_map_call_count != right_impl->fused_map_call_count)
+    return false;
+  for (size_t pc = 0u; pc < left_impl->count; ++pc) {
+    const cflow_plan_inst *left_inst = &left_impl->code[pc];
+    const cflow_plan_inst *right_inst = &right_impl->code[pc];
+    if (left_inst->opcode != right_inst->opcode || left_inst->step != right_inst->step ||
+        !cmeta_type_equal(left_inst->input_type, right_inst->input_type) ||
+        !cmeta_type_equal(left_inst->output_type, right_inst->output_type) ||
+        left_inst->fn_chain_count != right_inst->fn_chain_count ||
+        (left_inst->opcode != CMETA_PLAN_MAP &&
+         !cflow_graph_path_plan_calls_equal(&left_inst->call, &right_inst->call)))
+      return false;
+    for (size_t call = 0u; call < left_inst->fn_chain_count; ++call)
+      if (!cflow_graph_path_plan_calls_equal(&left_inst->fn_chain[call],
+                                             &right_inst->fn_chain[call]))
+        return false;
+  }
+  return true;
+}
+
+static bool cflow_graph_path_normalized_plan_valid(const cflow_graph_path_fixture *fixture) {
+  cflow_plan plan = {0};
+  cflow_plan_compile_stats stats = {0};
+  bool valid = false;
+
+  if (fixture && cflow_plan_compile(&plan, &fixture->normalized, &stats) && !plan.error &&
+      stats.graph_nodes == fixture->operator_count + 1u &&
+      stats.instructions == fixture->operator_count)
+    valid = cflow_graph_path_plans_equal(&fixture->plan, &plan);
+  cflow_plan_destroy(&plan);
+  return valid;
+}
+
+static bool cflow_graph_path_pipeline_stages_valid(const cflow_graph_path_fixture *fixture) {
+  const int inputs[] = {1, 2, 3};
+  cflow_graph normalized = {0};
+  cflow_graph optimized = {0};
+  cflow_plan surface_plan = {0};
+  cflow_opt_stats opt_stats = {0};
+  cflow_plan_compile_stats plan_stats = {0};
+  cflow_result reference = {0};
+  cflow_result compiled = {0};
+  const cflow_subgraph *normalized_root;
+  bool valid = false;
+
+  normalized.root = CMETA_INVALID_ID;
+  optimized.root = CMETA_INVALID_ID;
+  if (!fixture || !cflow_graph_normalize(&normalized, &fixture->surface)) goto done;
+  normalized_root = cflow_graph_subgraph(&normalized, normalized.root);
+  if (!normalized_root || normalized_root->node_count != fixture->operator_count + 1u ||
+      normalized_root->edge_count != fixture->operator_count)
+    goto done;
+  if (!cflow_graph_optimize(&optimized, &normalized,
+                            (cflow_opt_options){CMETA_OPT_DEFAULT}, &opt_stats) ||
+      opt_stats.nodes_before != fixture->operator_count + 1u ||
+      opt_stats.nodes_after != fixture->operator_count + 1u)
+    goto done;
+  if (!cflow_plan_compile_surface(&surface_plan, &fixture->surface, &plan_stats) ||
+      plan_stats.graph_nodes != fixture->operator_count + 1u ||
+      plan_stats.instructions != fixture->operator_count)
+    goto done;
+  if (!cflow_graph_path_plans_equal(&fixture->plan, &surface_plan)) goto done;
+  if (!cflow_plan_eval_array(&fixture->plan, inputs, sizeof(inputs) / sizeof(inputs[0]),
+                             &reference) ||
+      !cflow_plan_eval_array(&surface_plan, inputs, sizeof(inputs) / sizeof(inputs[0]), &compiled))
+    goto done;
+  valid = cflow_result_equal(&reference, &compiled);
+
+done:
+  cflow_result_destroy(&compiled);
+  cflow_result_destroy(&reference);
+  cflow_plan_destroy(&surface_plan);
+  cflow_graph_destroy(&optimized);
+  cflow_graph_destroy(&normalized);
+  return valid;
 }
 
 #define CFLOW_GRAPH_PATH_BENCHMARK_ROW(title, samples, repetitions, operators, expression,         \
@@ -446,10 +569,39 @@ static bool cflow_graph_path_compile_plan_once(const cflow_graph_path_fixture *f
     const bool initialized = cflow_graph_path_fixture_init(fixture, operators);                    \
     check_true(initialized);                                                                       \
     if (initialized) {                                                                             \
-      check_true(cflow_graph_path_compile_plan_once(fixture));                                    \
+      check_true(cflow_graph_path_normalized_plan_valid(fixture));                                \
       benchmark_batch(label " / normalized Graph -> Plan compile + destroy", samples) {          \
         if (!cflow_graph_path_compile_plan_once(fixture)) all_compiled = false;                    \
       }                                                                                            \
+      check_true(all_compiled);                                                                    \
+    }                                                                                              \
+    cflow_graph_path_fixture_destroy(fixture);                                                     \
+  } while (0)
+
+#define CFLOW_GRAPH_PATH_SURFACE_PIPELINE_BENCHMARK_CASE(label, operators, samples)               \
+  do {                                                                                             \
+    cflow_graph_path_fixture *fixture = &cflow_graph_path_fixture_state;                           \
+    bool all_normalized = true;                                                                    \
+    bool all_optimized = true;                                                                     \
+    bool all_compiled = true;                                                                      \
+    const bool initialized = cflow_graph_path_fixture_init(fixture, operators);                    \
+    check_true(initialized);                                                                       \
+    if (initialized) {                                                                             \
+      check_true(cflow_graph_path_normalize_once(fixture));                                       \
+      check_true(cflow_graph_path_optimize_once(fixture));                                        \
+      check_true(cflow_graph_path_compile_surface_once(fixture));                                 \
+      check_true(cflow_graph_path_pipeline_stages_valid(fixture));                                \
+      benchmark_batch(label " / Surface -> normalized Graph + destroy", samples) {              \
+        if (!cflow_graph_path_normalize_once(fixture)) all_normalized = false;                     \
+      }                                                                                            \
+      benchmark_batch(label " / normalized Graph -> optimized Graph + destroy", samples) {      \
+        if (!cflow_graph_path_optimize_once(fixture)) all_optimized = false;                       \
+      }                                                                                            \
+      benchmark_batch(label " / Surface -> Plan compile + destroy", samples) {                   \
+        if (!cflow_graph_path_compile_surface_once(fixture)) all_compiled = false;                 \
+      }                                                                                            \
+      check_true(all_normalized);                                                                  \
+      check_true(all_optimized);                                                                   \
       check_true(all_compiled);                                                                    \
     }                                                                                              \
     cflow_graph_path_fixture_destroy(fixture);                                                     \
@@ -485,6 +637,21 @@ suite("CFlow Graph path representation benchmarks") {
         "256 operators", CFLOW_GRAPH_PATH_MEDIUM_OPERATORS,
         CFLOW_GRAPH_PATH_MEDIUM_COMPILE_SAMPLES);
     CFLOW_GRAPH_PATH_COMPILE_BENCHMARK_CASE(
+        "4096 operators", CFLOW_GRAPH_PATH_PEAK_OPERATORS,
+        CFLOW_GRAPH_PATH_PEAK_COMPILE_SAMPLES);
+  }
+
+  bench("linear Surface pipeline stages (complete output lifecycles)") {
+    CFLOW_GRAPH_PATH_SURFACE_PIPELINE_BENCHMARK_CASE(
+        "1 operator", CFLOW_GRAPH_PATH_BOUNDARY_OPERATORS,
+        CFLOW_GRAPH_PATH_BOUNDARY_COMPILE_SAMPLES);
+    CFLOW_GRAPH_PATH_SURFACE_PIPELINE_BENCHMARK_CASE(
+        "16 operators", CFLOW_GRAPH_PATH_TYPICAL_OPERATORS,
+        CFLOW_GRAPH_PATH_TYPICAL_COMPILE_SAMPLES);
+    CFLOW_GRAPH_PATH_SURFACE_PIPELINE_BENCHMARK_CASE(
+        "256 operators", CFLOW_GRAPH_PATH_MEDIUM_OPERATORS,
+        CFLOW_GRAPH_PATH_MEDIUM_COMPILE_SAMPLES);
+    CFLOW_GRAPH_PATH_SURFACE_PIPELINE_BENCHMARK_CASE(
         "4096 operators", CFLOW_GRAPH_PATH_PEAK_OPERATORS,
         CFLOW_GRAPH_PATH_PEAK_COMPILE_SAMPLES);
   }
