@@ -20,6 +20,25 @@ static const cmeta_type_desc generic_only_key_type = {
     .identity = &generic_only_key_identity
 };
 
+/* Canonical constructors are part of the generic metadata contract. Keeping
+ * these references direct makes the public-symbol requirement compile-time
+ * visible instead of relying only on runtime descriptor traversal. */
+static const cmeta_generic_desc *const canonical_constructors[] = {
+    &stl_vec_generic_desc,
+    &stl_deque_generic_desc,
+    &stl_list_generic_desc,
+    &stl_stack_generic_desc,
+    &stl_queue_generic_desc,
+    &stl_heap_generic_desc,
+    &stl_set_generic_desc,
+    &stl_hash_set_generic_desc,
+    &stl_hash_map_generic_desc,
+    &stl_map_generic_desc,
+    &stl_multimap_generic_desc,
+    &stl_btree_generic_desc,
+    &stl_bplus_tree_generic_desc
+};
+
 #define CHECK_UNARY_APPLICATION(handle, stable_id_) do {                      \
     const cmeta_generic_desc *constructor_ =                                  \
         cmeta_container_type_constructor(&(handle));                           \
@@ -64,6 +83,9 @@ suite("TurboSTL generic type identities") {
         BTree(int, long, btree);
         BPlusTree(int, long, bplus_tree);
 
+        check_equal(sizeof(canonical_constructors) /
+                        sizeof(canonical_constructors[0]),
+                    (size_t)13u);
         CHECK_UNARY_APPLICATION(vec, "turbostl.Vec");
         CHECK_UNARY_APPLICATION(deque, "turbostl.Deque");
         CHECK_UNARY_APPLICATION(list, "turbostl.List");
