@@ -52,7 +52,7 @@ suite("TurboSTL typed public header") {
         vec_t vec = {0};
         deque_t deque = DequeOf(int);
         list_t list = ListOf(int);
-        stack_t stack = StackOf(int);
+        turbostl_stack_t stack = StackOf(int);
         queue_t queue = QueueOf(int);
         heap_t heap = HeapOf(int);
         set_t set = SetOf(int);

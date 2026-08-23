@@ -97,6 +97,11 @@ set_target_properties(cmeta_header_cpp_test PROPERTIES
   CXX_STANDARD_REQUIRED ON
   CXX_EXTENSIONS OFF)
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_header_cpp_test PRIVATE
+    -Werror=old-style-cast)
+endif()
+
 set_target_properties(cmeta_core_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON

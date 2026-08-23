@@ -1,8 +1,14 @@
 set(TARGET_NAME turbo_platform)
 
+if(WIN32)
+  set(TURBO_PLATFORM_THREAD_SOURCE src/thread_win32.c)
+else()
+  set(TURBO_PLATFORM_THREAD_SOURCE src/thread_posix.c)
+endif()
+
 add_library(${TARGET_NAME} STATIC
   src/clock.c
-  src/thread.c)
+  ${TURBO_PLATFORM_THREAD_SOURCE})
 
 cmake_config_target(
   ${TARGET_NAME}

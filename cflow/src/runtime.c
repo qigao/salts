@@ -4,12 +4,12 @@
 #include <cflow/subrun.h>
 #include <cflow/coord.h>
 #include <cflow/relation_exec.h>
+#include <turbo/thread.h>
 
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <threads.h>
 
 #ifndef CMETA_RUN_QUANTUM
 #define CMETA_RUN_QUANTUM 64u
@@ -51,8 +51,8 @@ typedef struct run_impl {
     continuation_frame continuations[CMETA_RUN_MAX_CONTINUATIONS];
     size_t continuation_count;
 
-    mtx_t lock;
-    cnd_t task_cv;
+    turbo_mutex_t lock;
+    turbo_cond_t task_cv;
     size_t task_refs;
     size_t demand;
     bool task_scheduled;
@@ -70,24 +70,26 @@ typedef struct run_impl {
     const char *error;
 } run_impl;
 
-static _Thread_local run_impl *active_pump_run;
-static _Thread_local const cflow_run *active_destroy_owner;
-static once_flag run_lifecycle_once = ONCE_FLAG_INIT;
-static mtx_t run_lifecycle_lock;
-static cnd_t run_lifecycle_cv;
+static TURBO_THREAD_LOCAL run_impl *active_pump_run;
+static TURBO_THREAD_LOCAL const cflow_run *active_destroy_owner;
+static turbo_once_t run_lifecycle_once = TURBO_ONCE_INIT;
+static turbo_mutex_t run_lifecycle_lock;
+static turbo_cond_t run_lifecycle_cv;
 static bool run_lifecycle_ready;
 
 static void run_lifecycle_init(void) {
-    if (mtx_init(&run_lifecycle_lock, mtx_plain) != thrd_success) return;
-    if (cnd_init(&run_lifecycle_cv) != thrd_success) {
-        mtx_destroy(&run_lifecycle_lock);
+    turbo_mutex_init(&run_lifecycle_lock);
+    if (!run_lifecycle_lock) return;
+    turbo_cond_init(&run_lifecycle_cv);
+    if (!run_lifecycle_cv) {
+        turbo_mutex_destroy(&run_lifecycle_lock);
         return;
     }
     run_lifecycle_ready = true;
 }
 
 static bool run_lifecycle_ensure(void) {
-    call_once(&run_lifecycle_once, run_lifecycle_init);
+    turbo_once(&run_lifecycle_once, run_lifecycle_init);
     return run_lifecycle_ready;
 }
 
@@ -170,19 +172,17 @@ static void reducers_clear(run_impl *r) {
 
 static size_t demand_get(run_impl *r) {
     size_t n = 0;
-    if (mtx_lock(&r->lock) == thrd_success) {
-        n = r->demand;
-        (void)mtx_unlock(&r->lock);
-    }
+    turbo_mutex_lock(&r->lock);
+    n = r->demand;
+    turbo_mutex_unlock(&r->lock);
     return n;
 }
 
 static bool demand_consume_one(run_impl *r) {
     bool ok = false;
-    if (mtx_lock(&r->lock) == thrd_success) {
-        if (r->demand) { --r->demand; ok = true; }
-        (void)mtx_unlock(&r->lock);
-    }
+    turbo_mutex_lock(&r->lock);
+    if (r->demand) { --r->demand; ok = true; }
+    turbo_mutex_unlock(&r->lock);
     return ok;
 }
 
@@ -190,14 +190,13 @@ static void run_fail(run_impl *r, const char *message) {
     if (!r) return;
     const char *msg = message ? message : "runtime error";
     bool notify = false;
-    if (mtx_lock(&r->lock) == thrd_success) {
-        if (!r->terminated) {
-            r->error = msg;
-            r->terminated = true;
-            notify = true;
-        }
-        (void)mtx_unlock(&r->lock);
+    turbo_mutex_lock(&r->lock);
+    if (!r->terminated) {
+        r->error = msg;
+        r->terminated = true;
+        notify = true;
     }
+    turbo_mutex_unlock(&r->lock);
     if (notify && cflow_sink_valid(&r->sink)) cflow_sink_error(&r->sink, msg);
 }
 
@@ -391,20 +390,16 @@ static bool arm_waitable(run_impl *r, cflow_waitable waitable) {
         run_fail(r, "WAIT step has no armable waitable");
         return false;
     }
-    if (mtx_lock(&r->lock) != thrd_success) {
-        run_fail(r, "runtime lock failed");
-        return false;
-    }
+    turbo_mutex_lock(&r->lock);
     r->waiting = true;
     r->active_wait = waitable;
-    (void)mtx_unlock(&r->lock);
+    turbo_mutex_unlock(&r->lock);
     cflow_waker w = { wake_cb, r->owner };
     if (!cflow_waitable_arm(&waitable, w)) {
-        if (mtx_lock(&r->lock) == thrd_success) {
-            r->waiting = false;
-            memset(&r->active_wait, 0, sizeof(r->active_wait));
-            (void)mtx_unlock(&r->lock);
-        }
+        turbo_mutex_lock(&r->lock);
+        r->waiting = false;
+        memset(&r->active_wait, 0, sizeof(r->active_wait));
+        turbo_mutex_unlock(&r->lock);
         run_fail(r, "waitable arm failed");
         return false;
     }
@@ -457,10 +452,9 @@ static bool flush_one_reducer(run_impl *r) {
 static void finish_if_possible(run_impl *r) {
     if (!r || !r->source_done || r->continuation_count || !reducers_done(r)) return;
     bool notify = false;
-    if (mtx_lock(&r->lock) == thrd_success) {
-        if (!r->terminated) { r->terminated = true; notify = true; }
-        (void)mtx_unlock(&r->lock);
-    }
+    turbo_mutex_lock(&r->lock);
+    if (!r->terminated) { r->terminated = true; notify = true; }
+    turbo_mutex_unlock(&r->lock);
     if (notify && cflow_sink_valid(&r->sink)) cflow_sink_done(&r->sink);
 }
 
@@ -470,11 +464,10 @@ static void wake_cb(void *user) {
     cflow_run *run = (cflow_run *)user;
     run_impl *r = impl_of(run);
     if (!r) return;
-    if (mtx_lock(&r->lock) == thrd_success) {
-        r->waiting = false;
-        memset(&r->active_wait, 0, sizeof(r->active_wait));
-        (void)mtx_unlock(&r->lock);
-    }
+    turbo_mutex_lock(&r->lock);
+    r->waiting = false;
+    memset(&r->active_wait, 0, sizeof(r->active_wait));
+    turbo_mutex_unlock(&r->lock);
     (void)schedule_pump(r);
 }
 
@@ -517,15 +510,14 @@ static bool poll_source_terminal(run_impl *r) {
 
 static bool take_cancel_request(run_impl *r) {
     bool cancel = false;
-    if (mtx_lock(&r->lock) == thrd_success) {
-        if (r->cancel_requested && !r->terminated) {
-            r->cancel_requested = false;
-            r->cancelled = true;
-            r->terminated = true;
-            cancel = true;
-        }
-        (void)mtx_unlock(&r->lock);
+    turbo_mutex_lock(&r->lock);
+    if (r->cancel_requested && !r->terminated) {
+        r->cancel_requested = false;
+        r->cancelled = true;
+        r->terminated = true;
+        cancel = true;
     }
+    turbo_mutex_unlock(&r->lock);
     return cancel;
 }
 
@@ -568,29 +560,29 @@ static void run_destroy_claimed(run_impl *r) {
     continuations_clear(r);
     reducers_clear(r);
     free(r->source_slot);
-    if (mtx_lock(&r->lock) == thrd_success) {
-        r->closed = true;
-        (void)mtx_unlock(&r->lock);
-    }
-    cnd_destroy(&r->task_cv);
-    mtx_destroy(&r->lock);
+    turbo_mutex_lock(&r->lock);
+    r->closed = true;
+    turbo_mutex_unlock(&r->lock);
+    turbo_cond_destroy(&r->task_cv);
+    turbo_mutex_destroy(&r->lock);
     active_destroy_owner = previous_destroy_owner;
 
-    (void)mtx_lock(&run_lifecycle_lock);
+    turbo_mutex_lock(&run_lifecycle_lock);
     if (owner && owner->impl == r) owner->impl = NULL;
     free(r);
-    cnd_broadcast(&run_lifecycle_cv);
-    (void)mtx_unlock(&run_lifecycle_lock);
+    turbo_cond_broadcast(&run_lifecycle_cv);
+    turbo_mutex_unlock(&run_lifecycle_lock);
 }
 
 static bool run_claim_pump_destroy(run_impl *r) {
     bool claimed = false;
-    if (!r || mtx_lock(&run_lifecycle_lock) != thrd_success) return false;
+    if (!r) return false;
+    turbo_mutex_lock(&run_lifecycle_lock);
     if (r->owner && r->owner->impl == r && !r->external_closer && !r->destroying) {
         r->destroying = true;
         claimed = true;
     }
-    (void)mtx_unlock(&run_lifecycle_lock);
+    turbo_mutex_unlock(&run_lifecycle_lock);
     return claimed;
 }
 
@@ -602,18 +594,16 @@ static void pump_task(void *user) {
     if (!r) return;
     previous_active_run = active_pump_run;
     active_pump_run = r;
-    if (mtx_lock(&r->lock) == thrd_success) {
-        r->task_scheduled = false;
-        r->pump_running = true;
-        (void)mtx_unlock(&r->lock);
-    }
+    turbo_mutex_lock(&r->lock);
+    r->task_scheduled = false;
+    r->pump_running = true;
+    turbo_mutex_unlock(&r->lock);
 
     for (unsigned i = 0; i < CMETA_RUN_QUANTUM; ++i) {
         bool waiting = false;
-        if (mtx_lock(&r->lock) == thrd_success) {
-            waiting = r->waiting;
-            (void)mtx_unlock(&r->lock);
-        }
+        turbo_mutex_lock(&r->lock);
+        waiting = r->waiting;
+        turbo_mutex_unlock(&r->lock);
         if (waiting || r->terminated) break;
         if (demand_get(r) == 0 && r->continuation_count &&
             !r->continuations[r->continuation_count - 1].done) break;
@@ -622,12 +612,11 @@ static void pump_task(void *user) {
     }
 
     bool terminated = false, waiting = false;
-    if (mtx_lock(&r->lock) == thrd_success) {
-        r->pump_running = false;
-        terminated = r->terminated;
-        waiting = r->waiting;
-        (void)mtx_unlock(&r->lock);
-    }
+    turbo_mutex_lock(&r->lock);
+    r->pump_running = false;
+    terminated = r->terminated;
+    waiting = r->waiting;
+    turbo_mutex_unlock(&r->lock);
     size_t d = demand_get(r);
     bool continuation_runnable = r->continuation_count &&
                           (r->continuations[r->continuation_count - 1].done || d > 0);
@@ -637,36 +626,34 @@ static void pump_task(void *user) {
                     (r->source_done && !reducers_done(r) && d > 0);
     if (!terminated && !waiting && runnable) (void)schedule_pump(r);
 
-    if (mtx_lock(&r->lock) == thrd_success) {
-        if (r->task_refs) --r->task_refs;
-        if (r->task_refs == 0) {
-            destroy = r->close_requested;
-            cnd_broadcast(&r->task_cv);
-        }
-        (void)mtx_unlock(&r->lock);
+    turbo_mutex_lock(&r->lock);
+    if (r->task_refs) --r->task_refs;
+    if (r->task_refs == 0) {
+        destroy = r->close_requested;
+        turbo_cond_broadcast(&r->task_cv);
     }
+    turbo_mutex_unlock(&r->lock);
     active_pump_run = previous_active_run;
     if (destroy && run_claim_pump_destroy(r)) run_destroy_claimed(r);
 }
 
 static bool schedule_pump(run_impl *r) {
     if (!r || !r->scheduler) return false;
-    if (mtx_lock(&r->lock) != thrd_success) return false;
+    turbo_mutex_lock(&r->lock);
     if (r->closed || r->terminated || r->task_scheduled || r->pump_running || r->waiting) {
-        (void)mtx_unlock(&r->lock);
+        turbo_mutex_unlock(&r->lock);
         return true;
     }
     r->task_scheduled = true;
     ++r->task_refs;
-    (void)mtx_unlock(&r->lock);
+    turbo_mutex_unlock(&r->lock);
     cflow_task_id id = cflow_scheduler_post(r->scheduler, pump_task, r);
     if (!id) {
-        if (mtx_lock(&r->lock) == thrd_success) {
-            r->task_scheduled = false;
-            if (r->task_refs) --r->task_refs;
-            if (r->task_refs == 0) cnd_broadcast(&r->task_cv);
-            (void)mtx_unlock(&r->lock);
-        }
+        turbo_mutex_lock(&r->lock);
+        r->task_scheduled = false;
+        if (r->task_refs) --r->task_refs;
+        if (r->task_refs == 0) turbo_cond_broadcast(&r->task_cv);
+        turbo_mutex_unlock(&r->lock);
         return false;
     }
     return true;
@@ -689,8 +676,10 @@ bool cflow_run_open_subgraph(cflow_run *run,
 
     run_impl *r = calloc(1, sizeof(*r));
     if (!r) return false;
-    if (mtx_init(&r->lock, mtx_plain) != thrd_success) { free(r); return false; }
-    if (cnd_init(&r->task_cv) != thrd_success) { mtx_destroy(&r->lock); free(r); return false; }
+    turbo_mutex_init(&r->lock);
+    if (!r->lock) { free(r); return false; }
+    turbo_cond_init(&r->task_cv);
+    if (!r->task_cv) { turbo_mutex_destroy(&r->lock); free(r); return false; }
     r->owner = run;
     r->graph = graph;
     r->subgraph_id = subgraph_id;
@@ -705,7 +694,10 @@ bool cflow_run_open_subgraph(cflow_run *run,
     r->reduce_flushed = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_flushed));
     if (!r->source_slot || !r->reduce_value || !r->reduce_set || !r->reduce_flushed) {
         free(r->source_slot); reducers_clear(r);
-        cnd_destroy(&r->task_cv); mtx_destroy(&r->lock); free(r); return false;
+        turbo_cond_destroy(&r->task_cv);
+        turbo_mutex_destroy(&r->lock);
+        free(r);
+        return false;
     }
     run->impl = r;
     memset(source, 0, sizeof(*source));
@@ -729,11 +721,11 @@ bool cflow_run_open(cflow_run *run,
 bool cflow_run_request(cflow_run *run, size_t n) {
     run_impl *r = impl_of(run);
     if (!r || n == 0) return false;
-    if (mtx_lock(&r->lock) != thrd_success) return false;
-    if (r->closed || r->terminated) { (void)mtx_unlock(&r->lock); return false; }
+    turbo_mutex_lock(&r->lock);
+    if (r->closed || r->terminated) { turbo_mutex_unlock(&r->lock); return false; }
     if (SIZE_MAX - r->demand < n) r->demand = SIZE_MAX;
     else r->demand += n;
-    (void)mtx_unlock(&r->lock);
+    turbo_mutex_unlock(&r->lock);
     return schedule_pump(r);
 }
 
@@ -741,11 +733,10 @@ void cflow_run_cancel(cflow_run *run) {
     run_impl *r = impl_of(run);
     if (!r) return;
     cflow_waitable wait = {0};
-    if (mtx_lock(&r->lock) == thrd_success) {
-        r->cancel_requested = true;
-        if (r->waiting) { wait = r->active_wait; r->waiting = false; memset(&r->active_wait, 0, sizeof(r->active_wait)); }
-        (void)mtx_unlock(&r->lock);
-    }
+    turbo_mutex_lock(&r->lock);
+    r->cancel_requested = true;
+    if (r->waiting) { wait = r->active_wait; r->waiting = false; memset(&r->active_wait, 0, sizeof(r->active_wait)); }
+    turbo_mutex_unlock(&r->lock);
     if (cflow_waitable_valid(&wait)) cflow_waitable_cancel(&wait);
     (void)schedule_pump(r);
 }
@@ -755,11 +746,11 @@ void cflow_run_close(cflow_run *run) {
     bool initiate_close = false;
 
     if (!run || active_destroy_owner == run || !run_lifecycle_ensure()) return;
-    if (mtx_lock(&run_lifecycle_lock) != thrd_success) return;
+    turbo_mutex_lock(&run_lifecycle_lock);
     for (;;) {
         r = (run_impl *)run->impl;
         if (!r) {
-            (void)mtx_unlock(&run_lifecycle_lock);
+            turbo_mutex_unlock(&run_lifecycle_lock);
             return;
         }
         if (active_pump_run == r) break;
@@ -767,15 +758,14 @@ void cflow_run_close(cflow_run *run) {
             r->external_closer = true;
             break;
         }
-        (void)cnd_wait(&run_lifecycle_cv, &run_lifecycle_lock);
+        turbo_cond_wait(&run_lifecycle_cv, &run_lifecycle_lock);
     }
-    (void)mtx_unlock(&run_lifecycle_lock);
+    turbo_mutex_unlock(&run_lifecycle_lock);
 
-    if (mtx_lock(&r->lock) == thrd_success) {
-        initiate_close = !r->close_requested;
-        r->close_requested = true;
-        (void)mtx_unlock(&r->lock);
-    }
+    turbo_mutex_lock(&r->lock);
+    initiate_close = !r->close_requested;
+    r->close_requested = true;
+    turbo_mutex_unlock(&r->lock);
     if (initiate_close) {
         cflow_run_cancel(run);
         cflow_source_bind_terminal_waker(&r->source, (cflow_waker){0});
@@ -786,41 +776,41 @@ void cflow_run_close(cflow_run *run) {
     unsigned caps = cflow_scheduler_capabilities(r->scheduler);
     for (;;) {
         size_t refs = 0;
-        if (mtx_lock(&r->lock) == thrd_success) {
-            refs = r->task_refs;
-            if (!refs) { (void)mtx_unlock(&r->lock); break; }
-            if (caps & CMETA_SCHED_CAP_CONCURRENT) {
-                (void)cnd_wait(&r->task_cv, &r->lock);
-                (void)mtx_unlock(&r->lock);
-                continue;
-            }
-            (void)mtx_unlock(&r->lock);
+        turbo_mutex_lock(&r->lock);
+        refs = r->task_refs;
+        if (!refs) { turbo_mutex_unlock(&r->lock); break; }
+        if (caps & CMETA_SCHED_CAP_CONCURRENT) {
+            turbo_cond_wait(&r->task_cv, &r->lock);
+            turbo_mutex_unlock(&r->lock);
+            continue;
         }
+        turbo_mutex_unlock(&r->lock);
         (void)cflow_scheduler_run_until_idle(r->scheduler, 0);
     }
 
-    if (mtx_lock(&run_lifecycle_lock) != thrd_success) return;
+    turbo_mutex_lock(&run_lifecycle_lock);
     if (run->impl == r && !r->destroying) r->destroying = true;
-    (void)mtx_unlock(&run_lifecycle_lock);
+    turbo_mutex_unlock(&run_lifecycle_lock);
     run_destroy_claimed(r);
 }
 
 bool cflow_run_is_done(const cflow_run *run) {
     run_impl *r = impl_of(run); bool v = false;
-    if (r && mtx_lock(&r->lock) == thrd_success) {
+    if (r) {
+        turbo_mutex_lock(&r->lock);
         v = r->terminated && !r->cancelled && !r->error;
-        (void)mtx_unlock(&r->lock);
+        turbo_mutex_unlock(&r->lock);
     }
     return v;
 }
 bool cflow_run_is_cancelled(const cflow_run *run) {
     run_impl *r = impl_of(run); bool v = false;
-    if (r && mtx_lock(&r->lock) == thrd_success) { v = r->cancelled; (void)mtx_unlock(&r->lock); }
+    if (r) { turbo_mutex_lock(&r->lock); v = r->cancelled; turbo_mutex_unlock(&r->lock); }
     return v;
 }
 const char *cflow_run_error(const cflow_run *run) {
     run_impl *r = impl_of(run); const char *v = "run is null";
-    if (r && mtx_lock(&r->lock) == thrd_success) { v = r->error; (void)mtx_unlock(&r->lock); }
+    if (r) { turbo_mutex_lock(&r->lock); v = r->error; turbo_mutex_unlock(&r->lock); }
     return v;
 }
 size_t cflow_run_outstanding_demand(const cflow_run *run) {

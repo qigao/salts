@@ -54,7 +54,7 @@
 #define ListOf(T) ((list_t)TURBO_STL_LIST_INITIALIZER(T))
 #endif
 #ifndef StackOf
-#define StackOf(T) ((stack_t)TURBO_STL_STACK_INITIALIZER(T))
+#define StackOf(T) ((turbostl_stack_t)TURBO_STL_STACK_INITIALIZER(T))
 #endif
 #ifndef QueueOf
 #define QueueOf(T) ((queue_t)TURBO_STL_QUEUE_INITIALIZER(T))
@@ -96,7 +96,7 @@
 #define List(T, name) list_t name = TURBO_STL_LIST_INITIALIZER(T)
 #endif
 #ifndef Stack
-#define Stack(T, name) stack_t name = TURBO_STL_STACK_INITIALIZER(T)
+#define Stack(T, name) turbostl_stack_t name = TURBO_STL_STACK_INITIALIZER(T)
 #endif
 #ifndef Queue
 #define Queue(T, name) queue_t name = TURBO_STL_QUEUE_INITIALIZER(T)

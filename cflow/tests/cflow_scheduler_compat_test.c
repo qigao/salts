@@ -21,6 +21,60 @@ spec("CFlow scheduler compatibility") {
     cflow_scheduler_destroy(&scheduler);
   }
 
+  it("reports checked scheduling status with a zero id on failure") {
+    cflow_scheduler scheduler = {0};
+    cflow_schedule_result accepted;
+    cflow_schedule_result invalid;
+    int value = 9;
+
+    check_true(cflow_scheduler_test_init(&scheduler));
+    accepted = cflow_scheduler_try_post_after(&scheduler, 5u,
+                                               record_order, &value);
+    check_equal(accepted.status, CFLOW_ADMISSION_ACCEPTED);
+    check(accepted.task_id != 0u);
+
+    invalid = cflow_scheduler_try_post_after(&scheduler, 5u, NULL, NULL);
+    check_equal(invalid.status, CFLOW_ADMISSION_INVALID_ARGUMENT);
+    check_equal(invalid.task_id, (cflow_task_id)0u);
+    cflow_scheduler_destroy(&scheduler);
+  }
+
+  it("bounds delayed admission and reuses timer capacity") {
+    cflow_scheduler scheduler = {0};
+    cflow_scheduler_stats stats = {0};
+    cflow_schedule_result first;
+    cflow_schedule_result full;
+    cflow_schedule_result reused;
+    int value = 3;
+
+    scheduler_order_count = 0u;
+    check_false(cflow_scheduler_test_init_with_capacity(&scheduler, 0u, 1u));
+    check_false(cflow_scheduler_test_init_with_capacity(&scheduler, 1u, 0u));
+    check_false(cflow_scheduler_worker_init_with_capacity(
+        &scheduler, 1u, 0u, 1u));
+    check_false(cflow_scheduler_worker_init_with_capacity(
+        &scheduler, 1u, 1u, 0u));
+    check_true(cflow_scheduler_test_init_with_capacity(&scheduler, 1u, 1u));
+    first = cflow_scheduler_try_post_after(&scheduler, 1u,
+                                           record_order, &value);
+    full = cflow_scheduler_try_post_after(&scheduler, 2u,
+                                          record_order, &value);
+    check_equal(first.status, CFLOW_ADMISSION_ACCEPTED);
+    check_equal(full.status, CFLOW_ADMISSION_FULL);
+    check_equal(full.task_id, (cflow_task_id)0u);
+    check_true(cflow_scheduler_get_stats(&scheduler, &stats));
+    check_equal(stats.ready_capacity, (size_t)1u);
+    check_equal(stats.timer_capacity, (size_t)1u);
+    check_equal(stats.timer_pending, (size_t)1u);
+    check_equal(stats.peak_pending, (size_t)1u);
+    check_equal(stats.rejected_full, (size_t)1u);
+    check_equal(cflow_scheduler_advance(&scheduler, 1u), (size_t)1u);
+    reused = cflow_scheduler_try_post_after(&scheduler, 1u,
+                                            record_order, &value);
+    check_equal(reused.status, CFLOW_ADMISSION_ACCEPTED);
+    cflow_scheduler_destroy(&scheduler);
+  }
+
   it("preserves FIFO order for equal deadlines") {
     cflow_scheduler scheduler = {0};
     int first = 1;

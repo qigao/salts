@@ -102,6 +102,9 @@ spec("Turbo FS Tests") {
       check_equal((size_t)st.size, strlen(data));
       check_equal((int)st.is_file, 1);
       check_equal((int)st.is_directory, 0);
+      check_greater(st.atime, 0ULL);
+      check_greater(st.mtime, 0ULL);
+      check_greater(st.ctime, 0ULL);
     }
 
     it("stat on missing path returns negative errno") {

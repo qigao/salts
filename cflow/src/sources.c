@@ -1,8 +1,8 @@
 #include <cflow/sources.h>
+#include <turbo/thread.h>
 
 #include <stdlib.h>
 #include <string.h>
-#include <threads.h>
 
 static void source_no_cancel(void *state) { (void)state; }
 static void source_no_terminal_bind(void *state, cflow_waker waker) { (void)state; (void)waker; }
@@ -180,7 +180,7 @@ typedef struct channel_impl {
     size_t capacity;
     size_t head, count;
     bool closed;
-    mtx_t lock;
+    turbo_mutex_t lock;
     cflow_waker waiter;
     cflow_waker terminal_waker;
 } channel_impl;
@@ -198,52 +198,61 @@ bool cflow_channel_init(cflow_channel *ch,
     channel_impl *c = calloc(1, sizeof(*c));
     if (!c) return false;
     c->data = malloc(type->size * capacity);
-    if (!c->data || mtx_init(&c->lock, mtx_plain) != thrd_success) { free(c->data); free(c); return false; }
+    turbo_mutex_init(&c->lock);
+    if (!c->data || !c->lock) {
+        turbo_mutex_destroy(&c->lock);
+        free(c->data);
+        free(c);
+        return false;
+    }
     c->type = type; c->capacity = capacity; ch->impl = c; return true;
 }
 
 bool cflow_channel_push(cflow_channel *ch, const void *value) {
     channel_impl *c = channel_of(ch);
-    if (!c || !value || mtx_lock(&c->lock) != thrd_success) return false;
-    if (c->closed || c->count == c->capacity) { (void)mtx_unlock(&c->lock); return false; }
+    if (!c || !value) return false;
+    turbo_mutex_lock(&c->lock);
+    if (c->closed || c->count == c->capacity) { turbo_mutex_unlock(&c->lock); return false; }
     size_t tail = (c->head + c->count) % c->capacity;
     memcpy(c->data + tail * c->type->size, value, c->type->size); ++c->count;
     cflow_waker w = c->waiter; c->waiter = (cflow_waker){0};
-    (void)mtx_unlock(&c->lock);
+    turbo_mutex_unlock(&c->lock);
     if (w.wake) w.wake(w.user);
     return true;
 }
 
 void cflow_channel_close(cflow_channel *ch) {
     channel_impl *c = channel_of(ch); if (!c) return;
-    if (mtx_lock(&c->lock) != thrd_success) return;
+    turbo_mutex_lock(&c->lock);
     c->closed = true;
     cflow_waker w = c->waiter; c->waiter = (cflow_waker){0};
     cflow_waker tw = c->terminal_waker;
-    (void)mtx_unlock(&c->lock);
+    turbo_mutex_unlock(&c->lock);
     if (w.wake) w.wake(w.user);
     if (tw.wake) tw.wake(tw.user);
 }
 
 void cflow_channel_destroy(cflow_channel *ch) {
     channel_impl *c = channel_of(ch); if (!c) return;
-    cflow_channel_close(ch); mtx_destroy(&c->lock); free(c->data); free(c); ch->impl = NULL;
+    cflow_channel_close(ch); turbo_mutex_destroy(&c->lock); free(c->data); free(c); ch->impl = NULL;
 }
 
 static bool channel_arm(void *state, cflow_waker w) {
     channel_source_state *ss = (channel_source_state *)state;
     channel_impl *c = ss ? ss->ch : NULL; if (!c) return false;
-    if (mtx_lock(&c->lock) != thrd_success) return false;
+    turbo_mutex_lock(&c->lock);
     bool ready = c->count || c->closed;
     if (!ready) c->waiter = w;
-    (void)mtx_unlock(&c->lock);
+    turbo_mutex_unlock(&c->lock);
     if (ready && w.wake) w.wake(w.user);
     return true;
 }
 static void channel_unarm(void *state) {
     channel_source_state *ss = (channel_source_state *)state;
     channel_impl *c = ss ? ss->ch : NULL; if (!c) return;
-    if (mtx_lock(&c->lock) == thrd_success) { c->waiter = (cflow_waker){0}; (void)mtx_unlock(&c->lock); }
+    turbo_mutex_lock(&c->lock);
+    c->waiter = (cflow_waker){0};
+    turbo_mutex_unlock(&c->lock);
 }
 CMETA_IMPLEMENTS(cflow_waitable, channel_waitable, 0,
     .arm = channel_arm,
@@ -253,16 +262,17 @@ static cflow_step channel_resume(void *state, cflow_resume_ctx *ctx, void *out) 
     (void)ctx;
     channel_source_state *ss = (channel_source_state *)state;
     channel_impl *c = ss ? ss->ch : NULL;
-    if (!c || mtx_lock(&c->lock) != thrd_success) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "channel unavailable" };
+    if (!c) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "channel unavailable" };
+    turbo_mutex_lock(&c->lock);
     if (c->count) {
         memcpy(out, c->data + c->head * c->type->size, c->type->size);
         c->head = (c->head + 1) % c->capacity; --c->count;
         bool final = c->closed && c->count == 0;
-        (void)mtx_unlock(&c->lock);
+        turbo_mutex_unlock(&c->lock);
         return (cflow_step){ final ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE, {0}, NULL };
     }
-    if (c->closed) { (void)mtx_unlock(&c->lock); return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL }; }
-    (void)mtx_unlock(&c->lock);
+    if (c->closed) { turbo_mutex_unlock(&c->lock); return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL }; }
+    turbo_mutex_unlock(&c->lock);
     return (cflow_step){ CFLOW_STEP_WAIT, channel_waitable_as_cflow_waitable(ss), NULL };
 }
 static void channel_source_cancel(void *state) { channel_unarm(state); }
@@ -275,15 +285,17 @@ static const cmeta_type_desc *channel_source_type(void *state) {
 static void channel_bind_terminal(void *state, cflow_waker w) {
     channel_source_state *ss = (channel_source_state *)state;
     channel_impl *c = ss ? ss->ch : NULL; if (!c) return;
-    if (mtx_lock(&c->lock) == thrd_success) { c->terminal_waker = w; (void)mtx_unlock(&c->lock); }
+    turbo_mutex_lock(&c->lock);
+    c->terminal_waker = w;
+    turbo_mutex_unlock(&c->lock);
 }
 static cflow_source_terminal channel_poll_terminal(void *state, const char **error) {
     (void)error;
     channel_source_state *ss = (channel_source_state *)state;
     channel_impl *c = ss ? ss->ch : NULL; if (!c) return CFLOW_SOURCE_ERROR;
-    if (mtx_lock(&c->lock) != thrd_success) return CFLOW_SOURCE_ERROR;
+    turbo_mutex_lock(&c->lock);
     bool done = c->closed && c->count == 0;
-    (void)mtx_unlock(&c->lock);
+    turbo_mutex_unlock(&c->lock);
     return done ? CFLOW_SOURCE_DONE : CFLOW_SOURCE_OPEN;
 }
 CMETA_IMPLEMENTS(cflow_source, channel_source, 0,

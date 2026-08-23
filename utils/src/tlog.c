@@ -38,8 +38,12 @@
     #define gettid() (uint32_t)syscall(SYS_gettid)
   #elif defined(__APPLE__)
     #include <pthread.h>
-uint64_t __pthread_threadid_np(void);
-    #define gettid() (uint32_t)__pthread_threadid_np()
+static uint32_t tlog_gettid(void) {
+  uint64_t thread_id = 0;
+  if (pthread_threadid_np(NULL, &thread_id) != 0) return 0;
+  return (uint32_t)thread_id;
+}
+    #define gettid() tlog_gettid()
   #else
     #include <pthread.h>
     #define gettid() (uint32_t)pthread_self()

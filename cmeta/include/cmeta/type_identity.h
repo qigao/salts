@@ -40,8 +40,15 @@ struct cmeta_type_identity {
     size_t arity;
 };
 
+#ifdef __cplusplus
+#define CMETA_GENERIC_ARITY(value) static_cast<uint8_t>(value)
+#else
+#define CMETA_GENERIC_ARITY(value) ((uint8_t)(value))
+#endif
+
 #define CMETA_GENERIC_DESC_INIT(id_, display_, min_, max_, category_) \
-    { (id_), (display_), (uint8_t)(min_), (uint8_t)(max_), (category_) }
+    { (id_), (display_), CMETA_GENERIC_ARITY(min_), \
+      CMETA_GENERIC_ARITY(max_), (category_) }
 #define CMETA_TYPE_ID_ATOM_INIT(id_) \
     { CMETA_TYPE_ATOM, (id_), NULL, NULL, NULL, 0u }
 #define CMETA_TYPE_ID_POINTER_INIT(base_) \

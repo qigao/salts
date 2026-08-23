@@ -268,6 +268,28 @@ spec("turbo_process") {
       free(output);
       free(payload);
     }
+
+    it("reports a broken stdin pipe after the child exits") {
+      turbo_process_options_t options;
+      turbo_process_t *process = NULL;
+      turbo_process_result_t result;
+      size_t written = 1;
+
+#ifdef _WIN32
+      init_shell_options(&options, "exit /b 0");
+#else
+      init_shell_options(&options, "exit 0");
+#endif
+      options.flags |= TURBO_PROCESS_PIPE_STDIN;
+
+      check_equal(turbo_process_spawn(&options, &process), TURBO_OK);
+      check_equal(turbo_process_wait(process, &result), TURBO_OK);
+      check_equal(result.exit_code, 0);
+      check_equal(turbo_process_write_stdin(process, "x", 1, &written), TURBO_EPIPE);
+      check_equal(written, 0U);
+
+      turbo_process_destroy(process);
+    }
   }
 
   group("lifecycle") {

@@ -15,6 +15,11 @@ Struct(cmeta_cpp_record,
     (const char *, name)
 );
 
+Enum(cmeta_cpp_state,
+    (CMETA_CPP_READY, 3, "ready"),
+    (CMETA_CPP_DONE, 7, "done")
+);
+
 TypeFunction(CMetaCppStorage,
     (small, int),
     (wide, long)
@@ -59,6 +64,14 @@ enum {
     (CMETA_CPP_INFER_WIDE, CMETA_CPP_INFER_WIDE)
 
 InferenceRules(cmeta_cpp_infer_relation, CMETA_CPP_INFER_ROWS);
+
+InferenceRules(cmeta_cpp_infer_relation_2,
+    (CMETA_CPP_INFER_SMALL, CMETA_CPP_INFER_WIDE,
+     CMETA_CPP_INFER_WIDE));
+
+InferenceRules(cmeta_cpp_infer_relation_3,
+    (CMETA_CPP_INFER_SMALL, CMETA_CPP_INFER_WIDE,
+     CMETA_CPP_INFER_SMALL, CMETA_CPP_INFER_WIDE));
 
 #define CMETA_CPP_COMPUTE_ROWS(M) \
     Schema(M, (small, int), (wide, long))
@@ -105,6 +118,10 @@ static_assert(InferenceRuleCount(cmeta_cpp_infer_relation) == 2u,
               "C++17 can project CMeta inference rows");
 static_assert(InferenceRuleArity(cmeta_cpp_infer_relation) == 1u,
               "C++17 preserves inference arity");
+static_assert(InferenceRuleArity(cmeta_cpp_infer_relation_2) == 2u,
+              "C++17 can declare binary inference rules");
+static_assert(InferenceRuleArity(cmeta_cpp_infer_relation_3) == 3u,
+              "C++17 can declare ternary inference rules");
 static_assert(std::is_standard_layout_v<cmeta_container_type_ops>,
               "container type ops must remain a C-compatible standard-layout type");
 static_assert(std::is_standard_layout_v<cmeta_container_construct_ops>,
@@ -137,6 +154,15 @@ static bool cmeta_cpp_copy_construct(void *destination, const void *source) {
 }
 
 spec("CMeta C++ public headers") {
+  it("expands enum reflection without C-style casts") {
+    cmeta_cpp_state state = CMETA_CPP_READY;
+
+    check_equal(EnumString(cmeta_cpp_state, state), "ready");
+    check_equal(EnumSymbol(cmeta_cpp_state, CMETA_CPP_DONE), "CMETA_CPP_DONE");
+    check_true(EnumParse(cmeta_cpp_state, "done", &state));
+    check_equal(state, CMETA_CPP_DONE);
+  }
+
   it("reflects struct fields through the C++ public surface") {
     const cmeta_struct_desc *meta = cmeta_cpp_record_meta();
 
@@ -243,5 +269,7 @@ spec("CMeta C++ public headers") {
     check_equal(cmeta_infer_dfa_eval(&dfa, input, 1u, &result),
                 CMETA_INFER_OK);
     check_equal(result, static_cast<cmeta_infer_value>(CMETA_CPP_INFER_WIDE));
+    check_equal(cmeta_cpp_infer_relation_2.arity, static_cast<size_t>(2u));
+    check_equal(cmeta_cpp_infer_relation_3.arity, static_cast<size_t>(3u));
   }
 }

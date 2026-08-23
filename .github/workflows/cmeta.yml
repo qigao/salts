@@ -7,6 +7,7 @@ on:
       - "cserde/**"
       - "cbind/**"
       - "cflow/**"
+      - "formal/cmeta_cflow_calculus/**"
       - "platform/**"
       - "concurrency/**"
       - "tinytest/**"
@@ -28,6 +29,7 @@ on:
       - "cserde/**"
       - "cbind/**"
       - "cflow/**"
+      - "formal/cmeta_cflow_calculus/**"
       - "platform/**"
       - "concurrency/**"
       - "tinytest/**"
@@ -54,6 +56,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify Lean refinement certificate
+        uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: true
+          lake-package-directory: formal/cmeta_cflow_calculus
+
       - name: Setup re2c and vcpkg
         shell: bash
         run: |
@@ -79,11 +89,148 @@ jobs:
       - name: Install release profile
         run: cmake --build --preset install-linux-release-user
 
+      - name: Verify C certificate binding
+        run: ctest --preset test-release-linux -R "^(cflow_certificate_test|cflow_calculus_conformance_test)$" --output-on-failure
+
       - name: Verify installed package targets
         run: cmake --build --preset linux-release-user --target verify_installed_package
 
       - name: Test full Linux suite
         run: ctest --preset linux-release-user --output-on-failure
+
+  macos:
+    name: macOS 15 release
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup re2c and vcpkg
+        shell: bash
+        run: |
+          brew install re2c
+          if [ -n "${VCPKG_ROOT:-}" ] &&
+             [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            true
+          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] &&
+               [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          elif [ -f "$(brew --prefix)/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "VCPKG_ROOT=$(brew --prefix)/share/vcpkg" >> "$GITHUB_ENV"
+          else
+            echo "A valid VCPKG_ROOT is unavailable" >&2
+            exit 1
+          fi
+
+      - name: Configure
+        run: cmake --preset release-mac-ninja
+
+      - name: Build
+        run: cmake --build --preset build-default-mac
+
+      - name: Test execution foundation and typed layers
+        run: ctest --preset test-release-mac -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cflow_|turbostl_|test_execution_compat$)" --output-on-failure
+
+      - name: Verify installed package targets
+        run: cmake --build --preset build-default-mac --target verify_installed_package
+
+      - name: Collect macOS diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p build/macos-diagnostics
+          sw_vers > build/macos-diagnostics/os.txt
+          cmake --version > build/macos-diagnostics/cmake.txt
+          cc --version > build/macos-diagnostics/compiler.txt 2>&1
+          cp build/mac-clang-release/CMakeCache.txt build/macos-diagnostics/ 2>/dev/null || true
+          cp build/mac-clang-release/CMakeFiles/CMakeConfigureLog.yaml build/macos-diagnostics/ 2>/dev/null || true
+
+      - name: Upload macOS diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cflow-macos-15-diagnostics
+          path: build/macos-diagnostics
+          if-no-files-found: error
+
+  android:
+    name: Android arm64 Release cross-build
+    runs-on: ubuntu-24.04
+    env:
+      ANDROID_INSTALL_PREFIX: ${{ github.workspace }}/build/android-arm64-package
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup re2c and validate toolchains
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y re2c
+          if [ -n "${VCPKG_ROOT:-}" ] &&
+             [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            true
+          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] &&
+               [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            echo "A valid VCPKG_ROOT is unavailable" >&2
+            exit 1
+          fi
+          if [ -z "${ANDROID_NDK_HOME:-}" ]; then
+            echo "ANDROID_NDK_HOME is unavailable" >&2
+            exit 1
+          fi
+          if [ ! -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" ]; then
+            echo "Android NDK CMake toolchain is unavailable" >&2
+            exit 1
+          fi
+
+      - name: Configure Android arm64 Release
+        run: cmake --preset android-arm64-v8a-release
+
+      - name: Cross-build Android arm64 Release
+        run: cmake --build --preset build-android-arm64-v8a-release
+
+      - name: Install Android package
+        run: cmake --install build/android-arm64-v8a-release --prefix "$ANDROID_INSTALL_PREFIX"
+
+      - name: Verify Android package exports
+        shell: bash
+        run: |
+          test -f "$ANDROID_INSTALL_PREFIX/include/cflow/cflow.h"
+          test -f "$ANDROID_INSTALL_PREFIX/include/turbo/thread.h"
+          test -f "$ANDROID_INSTALL_PREFIX/lib/cmake/TurboUtils/TurboUtilsConfig.cmake"
+          test -f "$ANDROID_INSTALL_PREFIX/lib/cmake/TurboUtils/TurboUtilsTargets.cmake"
+
+      - name: Collect Android build evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p build/android-evidence
+          {
+            echo "host=ubuntu-24.04"
+            echo "abi=arm64-v8a"
+            echo "api=android-24"
+            echo "ndk=$ANDROID_NDK_HOME"
+          } > build/android-evidence/target.txt
+          cmake --version > build/android-evidence/cmake.txt
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" \
+            --version > build/android-evidence/compiler.txt 2>&1 || true
+          cp "$ANDROID_NDK_HOME/source.properties" \
+            build/android-evidence/ndk-source.properties 2>/dev/null || true
+          cp build/android-arm64-v8a-release/CMakeCache.txt \
+            build/android-evidence/ 2>/dev/null || true
+          cp build/android-arm64-v8a-release/CMakeFiles/CMakeConfigureLog.yaml \
+            build/android-evidence/ 2>/dev/null || true
+
+      - name: Upload Android package evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: turboutils-android-arm64-release
+          path: |
+            build/android-arm64-package
+            build/android-evidence
+          if-no-files-found: error
 
   windows:
     name: Windows release

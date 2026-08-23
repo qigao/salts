@@ -41,6 +41,16 @@ cmake_add_test(cflow_direct_test
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_parallel_reduce_test
+  SOURCES cflow_parallel_reduce_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_certificate_test
+  SOURCES cflow_certificate_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_execution_test
   SOURCES cflow_execution_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
@@ -69,6 +79,8 @@ set_target_properties(
   cflow_runtime_test
   cflow_calculus_conformance_test
   cflow_direct_test
+  cflow_parallel_reduce_test
+  cflow_certificate_test
   cflow_execution_test
   cflow_scheduler_compat_test
   cflow_operator_policy_test

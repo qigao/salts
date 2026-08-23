@@ -204,10 +204,23 @@ spec("Thread Pool Tests") {
         turbo_threadpool_t *pool = turbo_threadpool_create(2);
         turbo_threadpool_shutdown(pool);
         check_equal(turbo_threadpool_is_accepting(pool), 0);
-        check_equal(turbo_threadpool_submit(pool, increment_task, NULL), -1);
+        check_equal(turbo_threadpool_submit(pool, increment_task, NULL),
+                    TURBO_ESHUTDOWN);
         turbo_threadpool_destroy(pool);
 
         check(1);
+    }
+
+    it("should reject invalid submissions with an exact status") {
+        turbo_threadpool_t *pool = turbo_threadpool_create(1);
+
+        check(pool != NULL);
+        check_equal(turbo_threadpool_try_submit(NULL, gated_task, NULL),
+                    TURBO_EINVAL);
+        check_equal(turbo_threadpool_try_submit(pool, NULL, NULL),
+                    TURBO_EINVAL);
+
+        turbo_threadpool_destroy(pool);
     }
 
     it("should honor configured queue capacity for try_submit") {
@@ -219,6 +232,7 @@ spec("Thread Pool Tests") {
         turbo_threadpool_stats_t stats = {0};
         int accepted = 0;
         int rejected = 0;
+        int rejected_status = TURBO_OK;
         int attempts = 0;
 
         check(pool != NULL);
@@ -247,10 +261,12 @@ spec("Thread Pool Tests") {
 
         attempts = 0;
         while ((accepted < 3 || rejected < 1) && attempts < 400) {
-            if (turbo_threadpool_try_submit(pool, gated_task, NULL) == 0) {
+            int status = turbo_threadpool_try_submit(pool, gated_task, NULL);
+            if (status == TURBO_OK) {
                 accepted++;
             } else {
                 rejected++;
+                rejected_status = status;
             }
             turbo_sleep_ms(1);
             attempts++;
@@ -259,10 +275,12 @@ spec("Thread Pool Tests") {
         turbo_threadpool_get_stats(pool, &stats);
         check_equal(accepted, 3);
         check(rejected >= 1);
+        check_equal(rejected_status, TURBO_ENOBUFS);
         check_equal((int)stats.rejected_tasks, 1);
         check_equal((int)stats.active_tasks, 1);
         check_equal((int)stats.queued_tasks, 2);
         check_equal((int)stats.pending_tasks, 3);
+        check_equal((int)stats.peak_pending_tasks, 3);
 
         atomic_store(&gate_open, 1);
         turbo_threadpool_wait(pool);

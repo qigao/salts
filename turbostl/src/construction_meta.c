@@ -104,7 +104,7 @@ STL_DEFINE_UNARY_CONSTRUCTION(
     list, list_t, self->cmeta.descriptor, self->element_type,
     self->impl != NULL)
 STL_DEFINE_UNARY_CONSTRUCTION(
-    stack, stack_t, self->raw.cmeta.descriptor, self->raw.element_type,
+    stack, turbostl_stack_t, self->raw.cmeta.descriptor, self->raw.element_type,
     self->raw.initialized)
 STL_DEFINE_UNARY_CONSTRUCTION(
     queue, queue_t, self->raw.cmeta.descriptor, self->raw.element_type,

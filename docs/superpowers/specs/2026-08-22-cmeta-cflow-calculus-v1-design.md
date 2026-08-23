@@ -1413,6 +1413,16 @@ Calculus 对这些 backend 只引用 capability theorem。
 
 C implementation 必须通过 conformance test / model test 证明它符合 calculus abstraction。
 
+### 16.4 Lean/C refinement certificate boundary
+
+v1 certificate 只覆盖 CFlow 的线性 `Filter / Map / FlatMap / Reduce` Plan，以及显式请求的 encounter-order Parallel Reduce 路径。其证据分为三层：
+
+1. Lean 的 `CertificateValid` 要求 certificate、normalized Graph semantic rows 与 Plan rows 精确有序一致，并要求类型链、Graph identity、path requirements 与逐行 observation-refinement witness；`certificate_preserves_observation` 由行归纳合成整体观察等价。
+2. C 的 `cflow_plan_certificate_check()` 从传入 Graph 重新编译 Plan，并使用稳定 opcode/path/property 数值、`cmeta_type_equal()` 与 `cmeta_callable_same()` 比较每一行；测试覆盖篡改、stale Graph 与 unsupported Relation。
+3. `ordered_chunks_reduce_eq` 在 R11 的 pure、total、associative law、no-alias、executor/source capability 与 encounter-order 前提下证明树形分块归约等于顺序左归约；没有使用 commutativity。
+
+信任边界仍包括：用户或库作者声明与实际 C callback 语义相符、逐行 compiler-conformance witness、certificate builder/checker 的 C 实现、C 编译器、平台 ABI 与 Kernel runtime。Lean 不检查任意机器码，也不从 `ASSOCIATIVE` bit 自动推出 C callback 的结合律。Certificate 是可检查的 refinement witness，不是执行授权令牌；不支持 certificate 的 Relation/WAIT 路径仍可由独立 Kernel 语义执行。
+
 ---
 
 ## 17. Lean Formalization Target

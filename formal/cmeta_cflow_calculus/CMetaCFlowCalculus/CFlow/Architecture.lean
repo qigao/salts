@@ -70,7 +70,9 @@ structure OptimizeContract (Γ : Env) (inputTy outputTy : Ty)
   preservesObservation : ∀ graph, graph.valid →
     ObsEq graph.semantics (optimize graph).semantics
 
-/-- Trusted obligation implemented later by Graph-to-Plan conformance. -/
+/-- Graph-to-Plan obligation. A valid v1 Plan certificate supplies the exact
+row binding and observation-refinement witness; compiler/runtime conformance
+remains outside Lean and is checked independently by C tests. -/
 structure CompileContract (Γ : Env) (inputTy outputTy : Ty)
     (mode : FlowMode) where
   compile : OptimizedGraph Γ inputTy outputTy mode →

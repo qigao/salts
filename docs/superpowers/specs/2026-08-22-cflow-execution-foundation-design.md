@@ -485,7 +485,12 @@ Retain existing disruptor worker-wait, broadcast, worker-pool and ring behavior 
 
 Core-only compatibility consumers include legacy `platform.h`, `turbo_thread.h`, and `disruptor.h` and link only `TurboUtils::Core`, relying on declared transitive dependencies rather than manual link additions.
 
-Linux/Windows/macOS/Android-supported builds exercise the module boundaries and installed package exports.
+Linux/Windows/macOS native builds exercise the module boundaries and installed
+package exports. PR #58 pre-merge execution-model head
+`7396925e2b0a6bb592c2122ff9c321a2b5489f3a` passed conformance run
+[32653089799](https://github.com/qigao/turbo-utils/actions/runs/32653089799).
+The same run verified Android arm64 cross-build/install/package exports; it did
+not execute Android binaries.
 
 ---
 
@@ -506,20 +511,23 @@ Linux/Windows/macOS/Android-supported builds exercise the module boundaries and 
 | 11. Core can depend on CFlow without a cycle. | Implemented + Linux/Windows CI verified | `utils/CMakeLists.txt` links CFlow privately; CFlow links CMeta publicly and Platform/Concurrency privately, never Core. |
 | 12. Owner behavior tests pass. | Implemented + Linux/Windows CI verified | `platform_thread_test`, `platform_clock_test`, `disruptor_test`, `thread_pool_test`, CFlow tests, and `test_execution_compat` are registered under their owning modules. |
 | 13. Installed exports are consumable. | Implemented + Linux/Windows CI verified | `verify_installed_package` installs the SDK and builds external consumers naming only Platform, Concurrency, CMeta, CFlow, STL, or Core. |
+| 14. Built-in execution admission is bounded and observable. | Implemented + Linux/macOS/Windows CI verified; Android cross-build verified | Execution Model v2 adds explicit capacities, checked full/closed results, shutdown operations, statistics, and lossless timer handoff tests. PR #58 run 32653089799 passed native owner tests and Android package compilation. |
 
 ### Host evidence
 
 | Host | Status | Evidence boundary |
 |---|---|---|
-| Windows Release | Implemented + Linux/Windows CI verified | PR #51 passed Windows 2022/2025 benchmark jobs and the Windows conformance/package job. |
-| Linux Release | Implemented + Linux/Windows CI verified | PR #51 passed Ubuntu 22.04/24.04 benchmark jobs and the Linux conformance/package job. |
-| macOS/Android | Implementation present; macOS/Android host evidence absent | The repository has platform presets, but no current workflow executes these foundation boundaries on those hosts. |
+| Windows Release | Implemented + CI verified | [PR #58 Windows job](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595405) passed Release configure/build/test at verified head `7396925`. |
+| Linux Release | Implemented + CI verified | [PR #58 Linux job](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595385) passed owner tests, Lean/C certificate checks, and installed-package consumers at verified head `7396925`. |
+| macOS 15 Release | Implemented + native CI verified | [PR #58 macOS job](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227597826) passed native Release build, owner tests, and installed-package consumers. |
+| Android arm64-v8a Release | Cross-build/package CI verified | [PR #58 Android job](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595331) built and installed `android-24`/`arm64-v8a`, verified exported headers/CMake targets, and uploaded evidence. Android runtime was not tested. |
 
 ## Residual work outside this completion patch
 
 - Event, Mailbox, Machine, Actor, reactor, and minicoro remain explicit design non-goals rather than missing foundation features.
-- macOS Release and Android cross-build automation require a separate host/toolchain plan before those hosts can be claimed as verified.
-- ManualExecutor and TimerQueue capacity limits require a separate resource-policy design because adding limits changes admission and error behavior; this patch does not silently impose a new bound.
+- Android device/emulator runtime remains a separate evidence gap; current Android verification stops at cross-build, install, and package exports.
+- Ordered parallel reduction and the executable Lean/C refinement certificate are complete in Execution Model v2; shared-runner throughput remains measurement evidence rather than a universal performance guarantee.
+- ManualExecutor, WorkerExecutor, and TimerQueue now use explicit bounded admission. The migration, default capacities, byte-budget formulas, compatibility behavior, shutdown terminal states, and metrics are specified in `2026-08-23-cflow-execution-model-v2-design.md`.
 
 ## Architectural consequence
 

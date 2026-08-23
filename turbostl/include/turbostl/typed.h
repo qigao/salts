@@ -39,7 +39,7 @@
 #define CMETA_DECLARED_CONSTRUCTOR_List (&stl_list_generic_desc)
 #define CMETA_DECLARED_CONSTRUCTION_List (&stl_list_construct_ops)
 
-#define CMETA_DECLARED_STORAGE_Stack stack_t
+#define CMETA_DECLARED_STORAGE_Stack turbostl_stack_t
 #define CMETA_DECLARED_STORAGE_DESC_Stack (&stl_stack_storage_type)
 #define CMETA_DECLARED_CONSTRUCTOR_Stack (&stl_stack_generic_desc)
 #define CMETA_DECLARED_CONSTRUCTION_Stack (&stl_stack_construct_ops)

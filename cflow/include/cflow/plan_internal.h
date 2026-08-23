@@ -54,6 +54,8 @@ struct cflow_plan_inst {
 typedef struct cflow_plan_impl {
     cflow_plan_inst *code;
     size_t count;
+    size_t terminal_reduce_index;
+    bool parallel_reduce_supported;
     bool fused_value;
     size_t fused_filter_count;
     size_t fused_map_call_count;
@@ -80,5 +82,12 @@ bool cflow_plan_eval_array_profile(const cflow_plan *plan,
                                    size_t input_count,
                                    cflow_result *out,
                                    cflow_plan_eval_stats *stats);
+
+bool cflow_plan_eval_prefix_materialized(const cflow_plan *plan,
+                                         const void *inputs,
+                                         size_t input_count,
+                                         size_t instruction_count,
+                                         cflow_plan_value_vec *out);
+void cflow_plan_value_vec_destroy(cflow_plan_value_vec *values);
 
 #endif

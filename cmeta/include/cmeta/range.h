@@ -123,7 +123,12 @@ typedef struct cmeta_container_header {
 } cmeta_container_header;
 
 static inline const cmeta_container_desc *cmeta_container_descriptor(const void *object) {
+#ifdef __cplusplus
+    const cmeta_container_header *header =
+        static_cast<const cmeta_container_header *>(object);
+#else
     const cmeta_container_header *header = (const cmeta_container_header *)object;
+#endif
     return header != NULL ? header->descriptor : NULL;
 }
 

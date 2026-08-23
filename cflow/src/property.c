@@ -18,6 +18,24 @@ bool cflow_callable_declares_idempotent_endomap(cmeta_callable fn) {
         cmeta_type_equal(sig->params[0], sig->return_type);
 }
 
+bool cflow_callable_declares_associative_endomap(cmeta_callable fn) {
+    const cmeta_properties required = CMETA_PROP_TOTAL |
+        CMETA_PROP_ASSOCIATIVE | CMETA_PROP_NO_ALIAS;
+    cmeta_callable bound;
+    const cmeta_sig_desc *sig;
+
+    if (!cmeta_callable_bind(fn, &bound) ||
+        !cmeta_callable_contract_valid(bound) ||
+        !cmeta_effects_are_pure(bound.meta.effects) ||
+        !cmeta_properties_include(bound.meta.properties, required))
+        return false;
+    sig = cmeta_fn_signature(bound.meta);
+    return sig && sig->protocol == CMETA_FN_PROTOCOL_VALUE &&
+        sig->param_count == 2u && sig->params[0] && sig->params[1] &&
+        sig->return_type && cmeta_type_equal(sig->params[0], sig->params[1]) &&
+        cmeta_type_equal(sig->params[0], sig->return_type);
+}
+
 static cmeta_properties fn_props(cmeta_callable fn) {
     return cmeta_callable_contract_valid(fn) ? fn.meta.properties : CMETA_PROP_NONE;
 }

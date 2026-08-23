@@ -2,6 +2,7 @@
 #define TURBO_THREAD_POOL_H
 
 #include <turbo/concurrency.h>
+#include <turbo/error_codes.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -24,15 +25,28 @@ typedef struct {
   int64_t queued_tasks;
   int64_t active_tasks;
   int64_t pending_tasks;
+  int64_t peak_pending_tasks;
 } turbo_threadpool_stats_t;
 
 TURBO_CONCURRENCY_C_API turbo_threadpool_t *turbo_threadpool_create(int num_threads);
 TURBO_CONCURRENCY_C_API turbo_threadpool_t *
 turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config);
 TURBO_CONCURRENCY_C_API void turbo_threadpool_destroy(turbo_threadpool_t *pool);
+/**
+ * Submit a task, waiting for bounded queue space when necessary.
+ *
+ * @return TURBO_OK, TURBO_EINVAL for invalid arguments, or TURBO_ESHUTDOWN
+ * when the pool no longer accepts work.
+ */
 TURBO_CONCURRENCY_C_API int turbo_threadpool_submit(turbo_threadpool_t *pool,
                                                     turbo_task_fn task,
                                                     void *arg);
+/**
+ * Attempt to submit a task without waiting for bounded queue space.
+ *
+ * @return TURBO_OK, TURBO_EINVAL for invalid arguments, TURBO_ENOBUFS when
+ * the queue is full, or TURBO_ESHUTDOWN when the pool no longer accepts work.
+ */
 TURBO_CONCURRENCY_C_API int turbo_threadpool_try_submit(turbo_threadpool_t *pool,
                                                         turbo_task_fn task,
                                                         void *arg);

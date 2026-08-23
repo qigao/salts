@@ -1,5 +1,6 @@
 #include <cflow/clock.h>
 #include <cflow/executor.h>
+#include <cflow/scheduler.h>
 #include <cflow/time.h>
 #include <turbo/thread.h>
 #include "timer_queue.h"
@@ -11,9 +12,18 @@ static atomic_int executor_counter;
 static atomic_int active_callbacks;
 static atomic_int max_active_callbacks;
 static atomic_int producer_failures;
+static atomic_int worker_gate_open;
+static atomic_int worker_gate_started;
 
 static void count_task(void *user) {
   (void)user;
+  atomic_fetch_add(&executor_counter, 1);
+}
+
+static void gated_count_task(void *user) {
+  (void)user;
+  atomic_store(&worker_gate_started, 1);
+  while (!atomic_load(&worker_gate_open)) turbo_sleep_ms(1);
   atomic_fetch_add(&executor_counter, 1);
 }
 
@@ -79,7 +89,10 @@ spec("CFlow execution foundation") {
     atomic_store(&executor_counter, 0);
 
     check_true(cflow_executor_manual_init(&executor));
-    check_true(cflow_executor_post(&executor, count_task, NULL));
+    check_equal(cflow_executor_try_post(&executor, NULL, NULL),
+                CFLOW_ADMISSION_INVALID_ARGUMENT);
+    check_equal(cflow_executor_try_post(&executor, count_task, NULL),
+                CFLOW_ADMISSION_ACCEPTED);
     check_equal(cflow_executor_pending(&executor), (size_t)1u);
     check_false(cflow_executor_wait_idle(&executor));
     check_equal(atomic_load(&executor_counter), 0);
@@ -88,6 +101,42 @@ spec("CFlow execution foundation") {
     check_equal(atomic_load(&executor_counter), 1);
     check_equal(cflow_executor_pending(&executor), (size_t)0u);
     check_true(cflow_executor_wait_idle(&executor));
+    cflow_executor_destroy(&executor);
+  }
+
+  it("bounds ManualExecutor storage and reuses released capacity") {
+    cflow_executor executor = {0};
+    cflow_executor_stats stats = {0};
+    const void *task_storage;
+
+    check_false(cflow_executor_manual_init_with_capacity(&executor, 0u));
+    check_false(cflow_executor_valid(&executor));
+    check_false(cflow_executor_manual_init_with_capacity(&executor, SIZE_MAX));
+    check_false(cflow_executor_valid(&executor));
+
+    check_true(cflow_executor_manual_init_with_capacity(&executor, 1u));
+    task_storage = *(void *const *)executor.self;
+    check(task_storage != NULL);
+    check_equal(cflow_executor_try_post(&executor, count_task, NULL),
+                CFLOW_ADMISSION_ACCEPTED);
+    check_equal(cflow_executor_try_post(&executor, count_task, NULL),
+                CFLOW_ADMISSION_FULL);
+    check_false(cflow_executor_post(&executor, count_task, NULL));
+    check_true(cflow_executor_get_stats(&executor, &stats));
+    check_equal(stats.capacity, (size_t)1u);
+    check_equal(stats.pending, (size_t)1u);
+    check_equal(stats.peak_pending, (size_t)1u);
+    check_equal(stats.rejected_full, (size_t)2u);
+    check_true(cflow_executor_run_one(&executor));
+    check_equal(cflow_executor_try_post(&executor, count_task, NULL),
+                CFLOW_ADMISSION_ACCEPTED);
+    check(*(void *const *)executor.self == task_storage);
+    check_true(cflow_executor_run_one(&executor));
+    check_true(cflow_executor_shutdown(&executor));
+    check_equal(cflow_executor_try_post(&executor, count_task, NULL),
+                CFLOW_ADMISSION_CLOSED);
+    check_true(cflow_executor_get_stats(&executor, &stats));
+    check_equal(stats.rejected_closed, (size_t)1u);
     cflow_executor_destroy(&executor);
   }
 
@@ -131,6 +180,117 @@ spec("CFlow execution foundation") {
     cflow_executor_destroy(&executor);
   }
 
+  it("reports WorkerExecutor saturation without growing its queue") {
+    cflow_executor executor = {0};
+    cflow_executor_stats stats = {0};
+    int attempts = 0;
+
+    check_false(cflow_executor_serial_init_with_capacity(&executor, 0u));
+    check_false(cflow_executor_worker_init_with_capacity(&executor, 0u, 1u));
+    check_false(cflow_executor_worker_init_with_capacity(&executor, 1u, 0u));
+    atomic_store(&executor_counter, 0);
+    atomic_store(&worker_gate_open, 0);
+    atomic_store(&worker_gate_started, 0);
+    check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 1u));
+    check_true(cflow_executor_post(&executor, gated_count_task, NULL));
+    while (!atomic_load(&worker_gate_started) && attempts++ < 200)
+      turbo_sleep_ms(1);
+    check_equal(atomic_load(&worker_gate_started), 1);
+    check_equal(cflow_executor_try_post(&executor, count_task, NULL),
+                CFLOW_ADMISSION_ACCEPTED);
+    check_equal(cflow_executor_try_post(&executor, count_task, NULL),
+                CFLOW_ADMISSION_FULL);
+    check_true(cflow_executor_get_stats(&executor, &stats));
+    check_equal(stats.capacity, (size_t)1u);
+    check_equal(stats.pending, (size_t)2u);
+    check_equal(stats.peak_pending, (size_t)2u);
+    check_equal(stats.rejected_full, (size_t)1u);
+
+    atomic_store(&worker_gate_open, 1);
+    check_true(cflow_executor_wait_idle(&executor));
+    check_equal(atomic_load(&executor_counter), 2);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("preserves a ready timer across saturated executor handoff") {
+    cflow_scheduler scheduler = {0};
+    cflow_scheduler_stats stats = {0};
+    int attempts = 0;
+
+    atomic_store(&executor_counter, 0);
+    atomic_store(&worker_gate_open, 0);
+    atomic_store(&worker_gate_started, 0);
+    check_true(cflow_scheduler_worker_init_with_capacity(
+        &scheduler, 1u, 1u, 1u));
+    check(cflow_scheduler_post(&scheduler, gated_count_task, NULL) != 0u);
+    while (!atomic_load(&worker_gate_started) && attempts++ < 200)
+      turbo_sleep_ms(1);
+    check_equal(atomic_load(&worker_gate_started), 1);
+
+    check(cflow_scheduler_post(&scheduler, count_task, NULL) != 0u);
+    attempts = 0;
+    do {
+      check_true(cflow_scheduler_get_stats(&scheduler, &stats));
+      if (stats.ready_pending == 2u && stats.timer_pending == 0u) break;
+      turbo_sleep_ms(1);
+    } while (attempts++ < 200);
+    check_equal(stats.ready_pending, (size_t)2u);
+
+    check(cflow_scheduler_post(&scheduler, count_task, NULL) != 0u);
+    attempts = 0;
+    do {
+      check_true(cflow_scheduler_get_stats(&scheduler, &stats));
+      if (stats.dispatching == 1u) break;
+      turbo_sleep_ms(1);
+    } while (attempts++ < 200);
+    check_equal(stats.dispatching, (size_t)1u);
+    check_equal(stats.peak_pending, (size_t)3u);
+
+    atomic_store(&worker_gate_open, 1);
+    check_true(cflow_scheduler_wait_idle(&scheduler));
+    check_equal(atomic_load(&executor_counter), 3);
+    cflow_scheduler_destroy(&scheduler);
+  }
+
+  it("cancels a blocked timer handoff during shutdown") {
+    cflow_scheduler scheduler = {0};
+    cflow_scheduler_stats stats = {0};
+    int attempts = 0;
+
+    atomic_store(&executor_counter, 0);
+    atomic_store(&worker_gate_open, 0);
+    atomic_store(&worker_gate_started, 0);
+    check_true(cflow_scheduler_worker_init_with_capacity(
+        &scheduler, 1u, 1u, 1u));
+    check(cflow_scheduler_post(&scheduler, gated_count_task, NULL) != 0u);
+    while (!atomic_load(&worker_gate_started) && attempts++ < 200)
+      turbo_sleep_ms(1);
+    check_equal(atomic_load(&worker_gate_started), 1);
+    check(cflow_scheduler_post(&scheduler, count_task, NULL) != 0u);
+    attempts = 0;
+    do {
+      check_true(cflow_scheduler_get_stats(&scheduler, &stats));
+      if (stats.ready_pending == 2u && stats.timer_pending == 0u) break;
+      turbo_sleep_ms(1);
+    } while (attempts++ < 200);
+    check(cflow_scheduler_post(&scheduler, count_task, NULL) != 0u);
+    attempts = 0;
+    do {
+      check_true(cflow_scheduler_get_stats(&scheduler, &stats));
+      if (stats.dispatching == 1u) break;
+      turbo_sleep_ms(1);
+    } while (attempts++ < 200);
+    check_equal(stats.dispatching, (size_t)1u);
+
+    check_true(cflow_scheduler_shutdown(&scheduler));
+    check_true(cflow_scheduler_get_stats(&scheduler, &stats));
+    check_equal(stats.cancelled_on_shutdown, (size_t)1u);
+    check_equal(stats.rejected_closed, (size_t)1u);
+    atomic_store(&worker_gate_open, 1);
+    cflow_scheduler_destroy(&scheduler);
+    check_equal(atomic_load(&executor_counter), 2);
+  }
+
   it("orders TimerQueue by deadline then insertion order") {
     cflow_timer_queue queue;
     cflow_timer_task task;
@@ -172,6 +332,36 @@ spec("CFlow execution foundation") {
     check_true(cflow_timer_queue_take_ready(&queue, (cflow_instant){20u}, &task));
     check(task.user == &b);
     check_false(cflow_timer_queue_cancel(&queue, b_id));
+    cflow_timer_queue_destroy(&queue);
+  }
+
+  it("bounds TimerQueue storage and reuses released capacity") {
+    cflow_timer_queue queue;
+    cflow_timer_task task;
+    cflow_schedule_result result;
+    const void *item_storage;
+
+    check_false(cflow_timer_queue_init_with_capacity(&queue, 0u));
+    check_false(cflow_timer_queue_init_with_capacity(&queue, SIZE_MAX));
+    check_true(cflow_timer_queue_init_with_capacity(&queue, 1u));
+    item_storage = queue.items;
+    check(item_storage != NULL);
+
+    result = cflow_timer_queue_try_schedule(
+        &queue, (cflow_deadline){10u}, count_task, NULL);
+    check_equal(result.status, CFLOW_ADMISSION_ACCEPTED);
+    check(result.task_id != 0u);
+    result = cflow_timer_queue_try_schedule(
+        &queue, (cflow_deadline){20u}, count_task, NULL);
+    check_equal(result.status, CFLOW_ADMISSION_FULL);
+    check_equal(result.task_id, (cflow_task_id)0u);
+
+    check_true(cflow_timer_queue_take_ready(
+        &queue, (cflow_instant){10u}, &task));
+    result = cflow_timer_queue_try_schedule(
+        &queue, (cflow_deadline){20u}, count_task, NULL);
+    check_equal(result.status, CFLOW_ADMISSION_ACCEPTED);
+    check(queue.items == item_storage);
     cflow_timer_queue_destroy(&queue);
   }
 }

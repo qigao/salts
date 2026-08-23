@@ -1,11 +1,11 @@
 #include <cflow/reactive.h>
 #include <cflow/sources.h>
 #include <cflow/stream.h>
+#include <turbo/thread.h>
 #include "ops.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
-#include <threads.h>
 
 typedef struct state {
     atomic_int callbacks;
@@ -33,13 +33,12 @@ typedef struct producer {
     int start;
     int count;
 } producer;
-static int produce(void *arg) {
+static void produce(void *arg) {
     producer *p = (producer *)arg;
     for (int i = 0; i < p->count; ++i) {
         int v = p->start + i;
-        while (!cflow_channel_push(p->ch, &v)) thrd_yield();
+        while (!cflow_channel_push(p->ch, &v)) turbo_thread_yield();
     }
-    return 0;
 }
 
 int main(void) {
@@ -60,12 +59,12 @@ int main(void) {
     cflow_subscription sub;
     if (!cflow_subscribe(&sub, &s.graph, &source, &workers, &obs)) return 4;
 
-    thrd_t threads[4]; producer ps[4];
+    turbo_thread_t threads[4] = {0}; producer ps[4];
     for (int t = 0; t < 4; ++t) {
         ps[t] = (producer){ &ch, t * 250 + 1, 250 };
-        if (thrd_create(&threads[t], produce, &ps[t]) != thrd_success) return 6;
+        if (turbo_thread_create(&threads[t], produce, &ps[t]) != 0) return 6;
     }
-    for (int t = 0; t < 4; ++t) (void)thrd_join(threads[t], NULL);
+    for (int t = 0; t < 4; ++t) (void)turbo_thread_join(&threads[t]);
     cflow_channel_close(&ch);
     if (!cflow_subscription_request(&sub, 1000)) return 5;
     if (!cflow_scheduler_wait_idle(&workers)) return 7;

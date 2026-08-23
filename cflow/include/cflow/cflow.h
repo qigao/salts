@@ -1,6 +1,7 @@
 #ifndef CFLOW_H
 #define CFLOW_H
 
+#include <cflow/admission.h>
 #include <cflow/meta.h>
 #include <cflow/graph.h>
 #include <cflow/stream.h>
@@ -10,6 +11,7 @@
 #include <cflow/property.h>
 #include <cflow/opt.h>
 #include <cflow/plan.h>
+#include <cflow/certificate.h>
 #include <cflow/scheduler.h>
 #include <cflow/runtime.h>
 #include <cflow/sources.h>

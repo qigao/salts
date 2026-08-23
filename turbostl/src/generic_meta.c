@@ -63,7 +63,7 @@ STL_DEFINE_UNARY_GENERIC_META(
     list, "List", "turbostl.List", list_t, self->element_type,
     &cmeta_data_sequence)
 STL_DEFINE_UNARY_GENERIC_META(
-    stack, "Stack", "turbostl.Stack", stack_t, self->raw.element_type,
+    stack, "Stack", "turbostl.Stack", turbostl_stack_t, self->raw.element_type,
     &cmeta_data_sequence)
 STL_DEFINE_UNARY_GENERIC_META(
     queue, "Queue", "turbostl.Queue", queue_t, self->raw.element_type,

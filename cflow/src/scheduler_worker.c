@@ -14,9 +14,22 @@ typedef struct worker_state {
     cflow_clock clock;
     cflow_executor executor;
     cflow_timer_queue timers;
+    size_t ready_capacity;
+    size_t timer_capacity;
     size_t dispatching;
+    size_t peak_pending;
+    size_t rejected_full;
+    size_t rejected_closed;
+    size_t cancelled_on_shutdown;
     bool stopping;
 } worker_state;
+
+static void worker_update_peak_locked(worker_state *state) {
+    size_t pending = cflow_timer_queue_pending(&state->timers) +
+                     state->dispatching +
+                     cflow_executor_pending(&state->executor);
+    if (pending > state->peak_pending) state->peak_pending = pending;
+}
 
 static void worker_timer_main(void *user) {
     worker_state *state = (worker_state *)user;
@@ -27,6 +40,7 @@ static void worker_timer_main(void *user) {
         cflow_deadline deadline;
         cflow_instant now;
         cflow_timer_task task;
+        bool accepted;
 
         if (state->stopping) break;
         if (!cflow_timer_queue_next_deadline(&state->timers, &deadline)) {
@@ -49,38 +63,56 @@ static void worker_timer_main(void *user) {
         turbo_cond_broadcast(&state->changed);
         turbo_mutex_unlock(&state->mutex);
 
-        (void)cflow_executor_post(&state->executor, task.fn, task.user);
+        accepted = cflow_executor_post(&state->executor, task.fn, task.user);
 
         turbo_mutex_lock(&state->mutex);
         --state->dispatching;
+        if (!accepted) {
+            ++state->cancelled_on_shutdown;
+            ++state->rejected_closed;
+        }
         turbo_cond_broadcast(&state->changed);
     }
     turbo_cond_broadcast(&state->changed);
     turbo_mutex_unlock(&state->mutex);
 }
 
-static cflow_task_id worker_post_after(void *self,
-                                       uint64_t delay_ms,
-                                       cflow_task_fn fn,
-                                       void *user) {
+static cflow_schedule_result worker_try_post_after(void *self,
+                                                   uint64_t delay_ms,
+                                                   cflow_task_fn fn,
+                                                   void *user) {
     worker_state *state = (worker_state *)self;
     cflow_instant now;
     cflow_deadline deadline;
-    cflow_task_id id;
+    cflow_schedule_result result;
 
-    if (!state || !fn) return 0u;
+    if (!state || !fn)
+        return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
     turbo_mutex_lock(&state->mutex);
     if (state->stopping) {
+        ++state->rejected_closed;
         turbo_mutex_unlock(&state->mutex);
-        return 0u;
+        return (cflow_schedule_result){CFLOW_ADMISSION_CLOSED, 0u};
     }
 
     now = cflow_clock_now(&state->clock);
     deadline = cflow_deadline_after(now, cflow_duration_from_ms(delay_ms));
-    id = cflow_timer_queue_schedule(&state->timers, deadline, fn, user);
-    if (id != 0u) turbo_cond_broadcast(&state->changed);
+    result = cflow_timer_queue_try_schedule(&state->timers, deadline, fn, user);
+    if (result.status == CFLOW_ADMISSION_ACCEPTED) {
+        worker_update_peak_locked(state);
+        turbo_cond_broadcast(&state->changed);
+    } else if (result.status == CFLOW_ADMISSION_FULL) {
+        ++state->rejected_full;
+    }
     turbo_mutex_unlock(&state->mutex);
-    return id;
+    return result;
+}
+
+static cflow_task_id worker_post_after(void *self,
+                                       uint64_t delay_ms,
+                                       cflow_task_fn fn,
+                                       void *user) {
+    return worker_try_post_after(self, delay_ms, fn, user).task_id;
 }
 
 static bool worker_cancel(void *self, cflow_task_id id) {
@@ -167,16 +199,60 @@ static size_t worker_pending(void *self) {
     return delayed + cflow_executor_pending(&state->executor);
 }
 
+static bool worker_shutdown(void *self) {
+    worker_state *state = (worker_state *)self;
+    bool join_timer;
+
+    if (!state) return false;
+    turbo_mutex_lock(&state->mutex);
+    if (!state->stopping) {
+        state->stopping = true;
+        state->cancelled_on_shutdown +=
+            cflow_timer_queue_pending(&state->timers);
+        state->timers.count = 0u;
+        turbo_cond_broadcast(&state->changed);
+    }
+    join_timer = state->timer_thread != 0;
+    turbo_mutex_unlock(&state->mutex);
+
+    if (!cflow_executor_shutdown(&state->executor)) return false;
+    if (join_timer) {
+        (void)turbo_thread_join(&state->timer_thread);
+        state->timer_thread = 0;
+    }
+    return true;
+}
+
+static bool worker_get_stats(void *self, cflow_scheduler_stats *out) {
+    worker_state *state = (worker_state *)self;
+    cflow_executor_stats executor_stats;
+
+    if (!state || !out) return false;
+    turbo_mutex_lock(&state->mutex);
+    if (!cflow_executor_get_stats(&state->executor, &executor_stats)) {
+        turbo_mutex_unlock(&state->mutex);
+        return false;
+    }
+    *out = (cflow_scheduler_stats){
+        .ready_capacity = state->ready_capacity,
+        .timer_capacity = state->timer_capacity,
+        .ready_pending = executor_stats.pending,
+        .timer_pending = cflow_timer_queue_pending(&state->timers),
+        .dispatching = state->dispatching,
+        .peak_pending = state->peak_pending,
+        .rejected_full = state->rejected_full,
+        .rejected_closed = state->rejected_closed,
+        .cancelled_on_shutdown = state->cancelled_on_shutdown
+    };
+    turbo_mutex_unlock(&state->mutex);
+    return true;
+}
+
 static void worker_destroy(void *self) {
     worker_state *state = (worker_state *)self;
 
     if (!state) return;
-    turbo_mutex_lock(&state->mutex);
-    state->stopping = true;
-    turbo_cond_broadcast(&state->changed);
-    turbo_mutex_unlock(&state->mutex);
-
-    if (state->timer_thread) (void)turbo_thread_join(&state->timer_thread);
+    (void)worker_shutdown(state);
     cflow_timer_queue_destroy(&state->timers);
     cflow_executor_destroy(&state->executor);
     cflow_clock_destroy(&state->clock);
@@ -187,6 +263,7 @@ static void worker_destroy(void *self) {
 
 CMETA_IMPLEMENTS(cflow_scheduler, worker_scheduler,
     CMETA_SCHED_CAP_DELAYED | CMETA_SCHED_CAP_CONCURRENT,
+    .try_post_after = worker_try_post_after,
     .post_after = worker_post_after,
     .cancel = worker_cancel,
     .run_one = worker_run_one,
@@ -196,14 +273,27 @@ CMETA_IMPLEMENTS(cflow_scheduler, worker_scheduler,
     .wait_idle = worker_wait_idle,
     .now = worker_now,
     .pending = worker_pending,
+    .shutdown = worker_shutdown,
+    .get_stats = worker_get_stats,
     .destroy = worker_destroy
 );
 
 bool cflow_scheduler_worker_init(cflow_scheduler *scheduler, size_t workers) {
+    return cflow_scheduler_worker_init_with_capacity(
+        scheduler, workers, CFLOW_EXECUTOR_DEFAULT_CAPACITY,
+        CFLOW_TIMER_DEFAULT_CAPACITY);
+}
+
+bool cflow_scheduler_worker_init_with_capacity(cflow_scheduler *scheduler,
+                                               size_t workers,
+                                               size_t ready_capacity,
+                                               size_t timer_capacity) {
     worker_state *state;
 
-    if (!scheduler || workers == 0u) return false;
+    if (!scheduler) return false;
     memset(scheduler, 0, sizeof(*scheduler));
+    if (workers == 0u || ready_capacity == 0u || timer_capacity == 0u)
+        return false;
     state = (worker_state *)calloc(1, sizeof(*state));
     if (!state) return false;
 
@@ -211,8 +301,10 @@ bool cflow_scheduler_worker_init(cflow_scheduler *scheduler, size_t workers) {
     turbo_cond_init(&state->changed);
     if (!state->mutex || !state->changed ||
         !cflow_clock_system_init(&state->clock) ||
-        !cflow_executor_worker_init(&state->executor, workers) ||
-        !cflow_timer_queue_init(&state->timers) ||
+        !cflow_executor_worker_init_with_capacity(&state->executor, workers,
+                                                  ready_capacity) ||
+        !cflow_timer_queue_init_with_capacity(&state->timers,
+                                              timer_capacity) ||
         turbo_thread_create(&state->timer_thread, worker_timer_main, state) != 0) {
         if (state->timer_thread) (void)turbo_thread_join(&state->timer_thread);
         cflow_timer_queue_destroy(&state->timers);
@@ -225,6 +317,8 @@ bool cflow_scheduler_worker_init(cflow_scheduler *scheduler, size_t workers) {
         return false;
     }
 
+    state->ready_capacity = ready_capacity;
+    state->timer_capacity = timer_capacity;
     *scheduler = worker_scheduler_as_cflow_scheduler(state);
     return true;
 }

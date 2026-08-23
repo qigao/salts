@@ -12,16 +12,27 @@
 extern "C" {
 #endif
 
-typedef uint64_t cflow_task_id;
-
 enum {
     CMETA_SCHED_CAP_DELAYED      = 1u << 0,
     CMETA_SCHED_CAP_MANUAL_CLOCK = 1u << 1,
     CMETA_SCHED_CAP_CONCURRENT   = 1u << 2
 };
 
+typedef struct cflow_scheduler_stats {
+    size_t ready_capacity;
+    size_t timer_capacity;
+    size_t ready_pending;
+    size_t timer_pending;
+    size_t dispatching;
+    size_t peak_pending;
+    size_t rejected_full;
+    size_t rejected_closed;
+    size_t cancelled_on_shutdown;
+} cflow_scheduler_stats;
+
 /* Scheduler is a compatibility/runtime facade, not an inheritance hierarchy. */
 #define CMETA_SCHEDULER_METHODS(X,I) \
+    X(I,R3,cflow_schedule_result,try_post_after,uint64_t,delay_ticks,cflow_task_fn,fn,void *,user) \
     X(I,R3,cflow_task_id,post_after,uint64_t,delay_ticks,cflow_task_fn,fn,void *,user) \
     X(I,R1,bool,cancel,cflow_task_id,id) \
     X(I,R0,bool,run_one,_) \
@@ -31,12 +42,21 @@ enum {
     X(I,R0,bool,wait_idle,_) \
     X(I,R0,uint64_t,now,_) \
     X(I,R0,size_t,pending,_) \
+    X(I,R0,bool,shutdown,_) \
+    X(I,R1,bool,get_stats,cflow_scheduler_stats *,out) \
     X(I,V0,void,destroy,_)
 
 CMETA_INTERFACE(cflow_scheduler, CMETA_SCHEDULER_METHODS);
 
 bool cflow_scheduler_test_init(cflow_scheduler *scheduler);
+bool cflow_scheduler_test_init_with_capacity(cflow_scheduler *scheduler,
+                                             size_t ready_capacity,
+                                             size_t timer_capacity);
 bool cflow_scheduler_worker_init(cflow_scheduler *scheduler, size_t workers);
+bool cflow_scheduler_worker_init_with_capacity(cflow_scheduler *scheduler,
+                                               size_t workers,
+                                               size_t ready_capacity,
+                                               size_t timer_capacity);
 
 cflow_task_id cflow_scheduler_post(cflow_scheduler *scheduler,
                                    cflow_task_fn fn,

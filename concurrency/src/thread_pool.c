@@ -1,4 +1,5 @@
 #include <turbo/disruptor.h>
+#include <turbo/error_codes.h>
 #include <turbo/thread.h>
 #include <turbo/thread_pool.h>
 
@@ -30,6 +31,7 @@ struct turbo_threadpool_s {
   _Atomic int64_t tasks_started;
   _Atomic int64_t tasks_completed;
   _Atomic int64_t tasks_rejected;
+  _Atomic int64_t peak_pending_tasks;
 
   turbo_mutex_t park_mutex;
   turbo_cond_t task_available;
@@ -55,6 +57,14 @@ static int64_t turbo_threadpool_pending_tasks(const turbo_threadpool_t *pool) {
   if (pool == NULL) return 0;
   return atomic_load(&pool->tasks_submitted) -
          atomic_load(&pool->tasks_completed);
+}
+
+static void turbo_threadpool_update_peak_pending(turbo_threadpool_t *pool,
+                                                 int64_t candidate) {
+  int64_t seen = atomic_load(&pool->peak_pending_tasks);
+  while (candidate > seen && !atomic_compare_exchange_weak(
+                                 &pool->peak_pending_tasks, &seen, candidate)) {
+  }
 }
 
 static void turbo_threadpool_notify_progress(turbo_threadpool_t *pool) {
@@ -191,6 +201,7 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
   atomic_store(&pool->tasks_started, 0);
   atomic_store(&pool->tasks_completed, 0);
   atomic_store(&pool->tasks_rejected, 0);
+  atomic_store(&pool->peak_pending_tasks, 0);
 
   queue_config.entry_size = sizeof(task_entry_t);
   queue_config.capacity = ring_capacity;
@@ -293,15 +304,17 @@ static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool,
   task_entry_t *entry;
   unsigned int wait_rounds = 0U;
 
-  if (pool == NULL || task == NULL) return -1;
+  if (pool == NULL || task == NULL) return TURBO_EINVAL;
   if (!atomic_load(&pool->accepting) || atomic_load(&pool->shutdown)) {
     atomic_fetch_add(&pool->tasks_rejected, 1);
-    return -1;
+    return TURBO_ESHUTDOWN;
   }
 
   if (!turbo_threadpool_try_reserve_queue_slot(pool, blocking)) {
     atomic_fetch_add(&pool->tasks_rejected, 1);
-    return -1;
+    return (!atomic_load(&pool->accepting) || atomic_load(&pool->shutdown))
+               ? TURBO_ESHUTDOWN
+               : TURBO_ENOBUFS;
   }
 
   while (!disruptor_publisher_try_claim(pool->queue, &cursor)) {
@@ -309,7 +322,9 @@ static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool,
         atomic_load(&pool->shutdown)) {
       turbo_threadpool_release_queue_slot(pool);
       atomic_fetch_add(&pool->tasks_rejected, 1);
-      return -1;
+      return (!atomic_load(&pool->accepting) || atomic_load(&pool->shutdown))
+                 ? TURBO_ESHUTDOWN
+                 : TURBO_ENOBUFS;
     }
 
     if ((++wait_rounds & 0xFFU) == 0U)
@@ -321,10 +336,14 @@ static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool,
   entry = (task_entry_t *)disruptor_acquire_entry(pool->queue, &cursor);
   entry->fn = task;
   entry->arg = arg;
-  atomic_fetch_add(&pool->tasks_submitted, 1);
+  {
+    int64_t submitted = atomic_fetch_add(&pool->tasks_submitted, 1) + 1;
+    turbo_threadpool_update_peak_pending(
+        pool, submitted - atomic_load(&pool->tasks_completed));
+  }
   (void)disruptor_publisher_publish(pool->queue, &cursor);
   turbo_threadpool_signal_task_available(pool);
-  return 0;
+  return TURBO_OK;
 }
 
 int turbo_threadpool_submit(turbo_threadpool_t *pool,
@@ -386,4 +405,5 @@ void turbo_threadpool_get_stats(turbo_threadpool_t *pool,
   stats->queued_tasks = atomic_load(&pool->queued_depth);
   stats->active_tasks = started - completed;
   stats->pending_tasks = submitted - completed;
+  stats->peak_pending_tasks = atomic_load(&pool->peak_pending_tasks);
 }

@@ -2,6 +2,7 @@ set(TARGET_NAME turbo_cflow)
 
 add_library(${TARGET_NAME}
   src/adapters.c
+  src/certificate.c
   src/clock.c
   src/coord.c
   src/direct.c
@@ -14,6 +15,7 @@ add_library(${TARGET_NAME}
   src/opt.c
   src/plan_compile.c
   src/plan_exec.c
+  src/plan_parallel_reduce.c
   src/property.c
   src/reactive.c
   src/relation_exec.c
