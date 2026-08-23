@@ -1398,7 +1398,7 @@ int turbo_process_write_stdin(turbo_process_t *process, const void *data, size_t
       continue;
     }
     if (written < 0 && errno == EINTR) continue;
-    rc = written < 0 ? -errno : TURBO_EPIPE;
+    rc = written < 0 && errno != EPIPE ? -errno : TURBO_EPIPE;
     break;
   }
   if (out_written) *out_written = total;
