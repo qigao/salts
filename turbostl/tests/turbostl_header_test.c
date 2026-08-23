@@ -58,6 +58,18 @@ suite("TurboSTL public header") {
         heap_destroy(&heap);
     }
 
+#if !defined(__APPLE__)
+    it("keeps the legacy stack_t alias on non-Darwin platforms") {
+        stack_t stack = StackOf(int);
+        int value = 3;
+
+        check_equal(stack_init(&stack, 1u), STL_OK);
+        check_equal(stack_push(&stack, &value), STL_OK);
+        check_equal(*(const int *)stack_top_const(&stack), value);
+        stack_destroy(&stack);
+    }
+#endif
+
     it("infers set hash-set and hash-map types from declarations") {
         Set(int, ordered);
         HashSet(int, hashed);

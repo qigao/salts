@@ -10,7 +10,7 @@ spec("TurboSTL C++ public header") {
     vec_t vec{};
     deque_t deque{};
     list_t list{};
-    stack_t stack{};
+    turbostl_stack_t stack{};
     queue_t queue{};
     heap_t heap{};
     hash_map_t map{};

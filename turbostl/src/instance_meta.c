@@ -135,7 +135,7 @@ STL_DEFINE_INDEXED_INSTANCE_META(
         CMETA_RANGE_REUSABLE)
 
 STL_DEFINE_INDEXED_INSTANCE_META(
-    stack, stack_t, self->raw.element_type, stack_size(self),
+    stack, turbostl_stack_t, self->raw.element_type, stack_size(self),
     stack_at_const(self, cursor->index), stack_generation(self),
     stack_init(output, limit), stack_push(output, value), stack_destroy(output),
     CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_RANDOM_ACCESS |

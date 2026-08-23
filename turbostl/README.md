@@ -46,7 +46,14 @@ Map(int, long, declared_scores);
 
 vec_t values = VecOf(int);
 map_t scores = MapOf(int, long);
+turbostl_stack_t pending = StackOf(int);
 ```
+
+`turbostl_stack_t` is the canonical raw Stack handle. The historical
+`stack_t` alias remains available outside Darwin unless
+`TURBOSTL_NO_LEGACY_STACK_T` is defined. Darwin reserves `stack_t` for its
+signal-stack API, so portable code must use `turbostl_stack_t` or the
+`Stack(T, name)` declaration facade.
 
 These forms bind CMeta descriptors to erased TurboSTL handles without
 allocating storage or generating a concrete C type. They are raw-handle

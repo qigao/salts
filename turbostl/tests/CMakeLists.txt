@@ -18,6 +18,11 @@ cmake_add_test(turbostl_header_typed_cpp_test
   LIBS TurboUtils::STL TurboUtils::TinyTest
   FOLDER "turbostl/tests")
 
+cmake_add_test(turbostl_stack_type_collision_test
+  SOURCES turbostl_stack_type_collision_test.c
+  LIBS TurboUtils::STL TurboUtils::TinyTest
+  FOLDER "turbostl/tests")
+
 cmake_add_test(turbostl_generic_identity_test
   SOURCES turbostl_generic_identity_test.c
   LIBS TurboUtils::STL TurboUtils::TinyTest
@@ -125,6 +130,7 @@ set_target_properties(
     CXX_EXTENSIONS OFF)
 
 set_target_properties(
+  turbostl_stack_type_collision_test
   turbostl_generic_identity_test
   turbostl_semantic_projection_test
   turbostl_construction_binding_test
