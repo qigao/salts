@@ -178,7 +178,6 @@ spec("CSerde push writer") {
 
     it("keeps allowed write callback errors sticky") {
         const cserde_status errors[] = {
-            CSERDE_VALUE_OUT_OF_RANGE,
             CSERDE_LIMIT_EXCEEDED,
             CSERDE_UNSUPPORTED,
             CSERDE_SINK_ERROR
@@ -206,6 +205,7 @@ spec("CSerde push writer") {
 
     it("normalizes disallowed write callback statuses") {
         const cserde_status statuses[] = {
+            CSERDE_VALUE_OUT_OF_RANGE,
             CSERDE_SOURCE_ERROR,
             CSERDE_DONE,
             (cserde_status)999
@@ -264,17 +264,25 @@ spec("CSerde push writer") {
         check_equal(context.write_calls, (size_t)0u);
     }
 
-    it("normalizes a disallowed finish callback status") {
-        fake_writer_context context = { .finish_status = CSERDE_SOURCE_ERROR };
-        cserde_writer_ops ops = writer_ops(fake_writer_write,
-                                            fake_writer_finish);
-        cserde_writer writer = { 0 };
+    it("normalizes disallowed finish callback statuses") {
+        const cserde_status statuses[] = {
+            CSERDE_VALUE_OUT_OF_RANGE,
+            CSERDE_SOURCE_ERROR
+        };
+        size_t i;
 
-        check_equal(cserde_writer_init(&writer, &ops, &context), CSERDE_OK);
-        check_equal(cserde_writer_finish(&writer), CSERDE_CALLBACK_ERROR);
-        check_true(writer.state == CSERDE_WRITER_FAILED);
-        check_true(writer.status == CSERDE_CALLBACK_ERROR);
-        check_equal(context.finish_calls, (size_t)1u);
+        for (i = 0u; i < sizeof(statuses) / sizeof(statuses[0]); ++i) {
+            fake_writer_context context = { .finish_status = statuses[i] };
+            cserde_writer_ops ops = writer_ops(fake_writer_write,
+                                                fake_writer_finish);
+            cserde_writer writer = { 0 };
+
+            check_equal(cserde_writer_init(&writer, &ops, &context), CSERDE_OK);
+            check_equal(cserde_writer_finish(&writer), CSERDE_CALLBACK_ERROR);
+            check_true(writer.state == CSERDE_WRITER_FAILED);
+            check_true(writer.status == CSERDE_CALLBACK_ERROR);
+            check_equal(context.finish_calls, (size_t)1u);
+        }
     }
 
     it("exposes the byte sink callback without casts") {
