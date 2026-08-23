@@ -83,4 +83,11 @@ bool cflow_plan_eval_array_profile(const cflow_plan *plan,
                                    cflow_result *out,
                                    cflow_plan_eval_stats *stats);
 
+bool cflow_plan_eval_prefix_materialized(const cflow_plan *plan,
+                                         const void *inputs,
+                                         size_t input_count,
+                                         size_t instruction_count,
+                                         cflow_plan_value_vec *out);
+void cflow_plan_value_vec_destroy(cflow_plan_value_vec *values);
+
 #endif

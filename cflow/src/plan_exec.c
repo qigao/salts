@@ -14,6 +14,10 @@ static void vec_destroy(cflow_plan_value_vec *v) {
     memset(v, 0, sizeof(*v));
 }
 
+void cflow_plan_value_vec_destroy(cflow_plan_value_vec *values) {
+    vec_destroy(values);
+}
+
 static bool checked_bytes(size_t n, size_t size, size_t *bytes) {
     if (!bytes) return false;
     if (size && n > SIZE_MAX / size) return false;
@@ -315,13 +319,35 @@ static bool eval_materialized(const cflow_plan *plan,
                               size_t input_count,
                               cflow_result *out) {
     cflow_plan_value_vec v = {0};
-    if (!copy_values(&v, inputs, input_count, plan->input_type)) return false;
-    for (size_t pc = 0; pc < impl->count; ++pc) {
-        const cflow_plan_inst *inst = &impl->code[pc];
-        if (!inst->step || !inst->step(inst, &v)) { vec_destroy(&v); return false; }
-    }
+    if (!cflow_plan_eval_prefix_materialized(
+            plan, inputs, input_count, impl->count, &v))
+        return false;
     if (!cmeta_type_equal(v.type, plan->output_type)) { vec_destroy(&v); return false; }
     out->data = v.data; out->count = v.count; out->type = v.type;
+    return true;
+}
+
+bool cflow_plan_eval_prefix_materialized(const cflow_plan *plan,
+                                         const void *inputs,
+                                         size_t input_count,
+                                         size_t instruction_count,
+                                         cflow_plan_value_vec *out) {
+    const cflow_plan_impl *impl = plan_impl(plan);
+    cflow_plan_value_vec values = {0};
+
+    if (!plan || !impl || !out || instruction_count > impl->count ||
+        !plan->input_type)
+        return false;
+    memset(out, 0, sizeof(*out));
+    if (!copy_values(&values, inputs, input_count, plan->input_type)) return false;
+    for (size_t pc = 0u; pc < instruction_count; ++pc) {
+        const cflow_plan_inst *inst = &impl->code[pc];
+        if (!inst->step || !inst->step(inst, &values)) {
+            vec_destroy(&values);
+            return false;
+        }
+    }
+    *out = values;
     return true;
 }
 
@@ -493,5 +519,9 @@ bool cflow_plan_eval_array(const cflow_plan *plan,
                            const void *inputs,
                            size_t input_count,
                            cflow_result *out) {
-    return cflow_plan_eval_array_profile(plan, inputs, input_count, out, NULL);
+    const cflow_plan_eval_options options = {
+        .mode = CFLOW_PLAN_EXECUTION_SEQUENTIAL
+    };
+    return cflow_plan_eval_array_with_options(
+        plan, inputs, input_count, &options, out);
 }

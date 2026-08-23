@@ -2,6 +2,7 @@
 #define CFLOW_PLAN_H
 
 #include <cflow/adapters.h>
+#include <cflow/executor.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -22,6 +23,18 @@ typedef struct cflow_plan_compile_stats {
     size_t instructions;
     size_t map_callbacks;
 } cflow_plan_compile_stats;
+
+typedef enum cflow_plan_execution_mode {
+    CFLOW_PLAN_EXECUTION_SEQUENTIAL = 0,
+    CFLOW_PLAN_EXECUTION_PARALLEL_REDUCE
+} cflow_plan_execution_mode;
+
+typedef struct cflow_plan_eval_options {
+    cflow_plan_execution_mode mode;
+    cflow_executor *executor;
+    size_t max_tasks;
+    size_t min_items_per_task;
+} cflow_plan_eval_options;
 
 /* Compile an already-normalized primitive Graph root into a direct synchronous
  * collection plan. The plan pre-resolves topology and execution step handlers;
@@ -51,6 +64,16 @@ bool cflow_plan_eval_array(const cflow_plan *plan,
                            const void *inputs,
                            size_t input_count,
                            cflow_result *out);
+
+/* Parallel mode is explicit and fail-fast: unsupported plans, insufficient
+ * nonempty chunks, invalid options, or rejected tasks return false without a
+ * sequential retry. The borrowed input and executor must outlive this call. */
+bool cflow_plan_eval_array_with_options(
+    const cflow_plan *plan,
+    const void *inputs,
+    size_t input_count,
+    const cflow_plan_eval_options *options,
+    cflow_result *out);
 
 #ifdef __cplusplus
 }

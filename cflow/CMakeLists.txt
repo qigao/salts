@@ -14,6 +14,7 @@ add_library(${TARGET_NAME}
   src/opt.c
   src/plan_compile.c
   src/plan_exec.c
+  src/plan_parallel_reduce.c
   src/property.c
   src/reactive.c
   src/relation_exec.c
