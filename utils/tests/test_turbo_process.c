@@ -183,12 +183,14 @@ spec("turbo_process") {
       size_t output_size = 0;
       const char *env[] = {"TURBO_PROCESS_VALUE=clean-value", NULL};
 #ifdef _WIN32
-      init_shell_options(&options,
-                         "set PATH 2>nul & echo marker=%TURBO_PROCESS_VALUE%");
+      init_shell_options(
+          &options,
+          "set TURBO_PROCESS_PARENT_SENTINEL 2>nul & echo marker=%TURBO_PROCESS_VALUE%");
 #else
       init_shell_options(
           &options,
-          "printf 'path=%s|marker=%s' \"${PATH-unset}\" \"$TURBO_PROCESS_VALUE\"");
+          "printf 'parent=%s|marker=%s' \"${TURBO_PROCESS_PARENT_SENTINEL-unset}\" "
+          "\"$TURBO_PROCESS_VALUE\"");
 #endif
       options.env = env;
       options.flags |= TURBO_PROCESS_CLEAN_ENVIRONMENT;
@@ -198,10 +200,10 @@ spec("turbo_process") {
       check_equal(result.exit_code, 0);
       read_all(process, 1, output, sizeof(output), &output_size);
 #ifdef _WIN32
-      check_false(strstr(output, "PATH=") != NULL);
+      check_false(strstr(output, "TURBO_PROCESS_PARENT_SENTINEL=") != NULL);
       check_contains(output, "marker=clean-value");
 #else
-      check_equal(output, "path=unset|marker=clean-value");
+      check_equal(output, "parent=unset|marker=clean-value");
 #endif
 
       turbo_process_destroy(process);
@@ -212,10 +214,10 @@ spec("turbo_process") {
       check_equal(result.exit_code, 0);
       read_all(process, 1, output, sizeof(output), &output_size);
 #ifdef _WIN32
-      check_false(strstr(output, "PATH=") != NULL);
+      check_false(strstr(output, "TURBO_PROCESS_PARENT_SENTINEL=") != NULL);
       check_false(strstr(output, "clean-value") != NULL);
 #else
-      check_equal(output, "path=unset|marker=");
+      check_equal(output, "parent=unset|marker=");
 #endif
       turbo_process_destroy(process);
     }
