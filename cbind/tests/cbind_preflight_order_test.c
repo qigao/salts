@@ -89,7 +89,7 @@ static cbind_status decode_with_child(const cmeta_data_desc *child,
 }
 
 spec("CBind struct preflight ordering") {
-  it("rejects a malformed nested shape before applying the depth budget") {
+  it("rejects depth before validating a nested shape beyond the budget") {
     cmeta_type_desc malformed_type = cbind_order_inner_type;
     cmeta_data_desc malformed_child = {
         .struct_size = CBIND_DATA_PREFIX_SIZE,
@@ -105,7 +105,7 @@ spec("CBind struct preflight ordering") {
     malformed_type.size += 1u;
     check_true(cmeta_data_desc_valid(&malformed_child));
     check_equal(decode_with_child(&malformed_child, 1u, &source_index),
-                CBIND_INVALID_SHAPE);
+                CBIND_LIMIT_EXCEEDED);
     check_equal(source_index, (size_t)0u);
   }
 }
