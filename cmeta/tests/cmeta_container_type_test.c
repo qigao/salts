@@ -137,6 +137,22 @@ spec("CMeta container generic type applications") {
     check_null(cmeta_container_data_descriptor(&sequence));
   }
 
+  it("rejects a non-container semantic descriptor in the container tail") {
+    cmeta_container_ext ext = cmeta_test_semantic_sequence_ext;
+    cmeta_container_desc desc = cmeta_test_semantic_sequence_desc;
+    cmeta_test_sequence sequence = {
+        .cmeta = {&desc},
+        .element_type = &cmeta_type_int
+    };
+
+    ext.data = &cmeta_data_int;
+    desc.ext = &ext;
+
+    check_true(cmeta_container_type_application_valid(&sequence));
+    check_true(cmeta_data_desc_valid(&cmeta_data_int));
+    check_null(cmeta_container_data_descriptor(&sequence));
+  }
+
   it("rejects a concrete argument without a CMeta type identity") {
     cmeta_test_sequence sequence = {
         .cmeta = {&cmeta_test_sequence_desc},
