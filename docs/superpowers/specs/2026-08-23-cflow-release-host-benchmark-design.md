@@ -16,10 +16,12 @@ runs it repeatedly on these fixed x64 runner images. The benchmark executable
 contains both the established Direct/Plan data-path suite and a separate
 Graph-path representation suite:
 
-- Ubuntu 22.04 with the `linux-release-user` GCC preset;
-- Ubuntu 24.04 with the `linux-release-user` GCC preset;
-- Windows Server 2022 with the `win-release-user` MSVC preset; and
-- Windows Server 2025 with the `win-release-user` MSVC preset.
+- Ubuntu 22.04 with `release-linux-ninja` for configure and
+  `build-default-linux` for build;
+- Ubuntu 24.04 with the same Linux configure/build preset pair;
+- Windows Server 2022 with `release-win-msvc-ninja` for configure and
+  `build-release-windows` for build; and
+- Windows Server 2025 with the same Windows configure/build preset pair.
 
 Each matrix entry performs five sequential runs. It records the commit, runner
 image, OS, CPU, compiler configuration, CMake cache and complete benchmark
@@ -108,14 +110,15 @@ jobs. Fixed runner labels reduce OS migration noise, while the uploaded metadata
 preserves the remaining runner-image variability.
 
 macOS is not included in this phase: the repository has a base macOS Release
-preset, but no CI-tested user preset with the same vcpkg manifest contract used
-by Linux and Windows. Adding it here would combine platform enablement with
-benchmark collection.
+preset, but no CI-tested repository-level preset pair with the same vcpkg
+manifest contract used by Linux and Windows. Adding it here would combine
+platform enablement with benchmark collection.
 
 ## Verification
 
-- Configure and build `cflow_direct_benchmark` locally with
-  `win-release-user`, `BUILD_BENCHMARKS=ON` and `BUILD_TESTS=ON`.
+- Configure with `release-win-msvc-ninja`, then build
+  `cflow_direct_benchmark` with `build-release-windows`,
+  `BUILD_BENCHMARKS=ON` and `BUILD_TESTS=ON`.
 - Run the Release executable and confirm all data-path semantic assertions and
   graph-path representation equivalence assertions pass.
 - Validate the workflow syntax and its four explicit matrix entries.

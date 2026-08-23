@@ -51,8 +51,10 @@ PowerShell, TinyTest benchmark output.
 
 - [x] Add pull-request, master-push and manual triggers with focused paths.
 - [x] Add Ubuntu 22.04, Ubuntu 24.04, Windows 2022 and Windows 2025 entries.
-- [x] Reuse `linux-release-user` and `win-release-user` with
-  `BUILD_BENCHMARKS=ON`, `BUILD_TESTS=ON` and target-only builds.
+- [x] Use `release-linux-ninja` / `build-default-linux` and
+  `release-win-msvc-ninja` / `build-release-windows` for clean-host configure
+  and target-only build steps, with `BUILD_BENCHMARKS=ON` and
+  `BUILD_TESTS=ON`.
 - [x] Run five sequential benchmark samples and fail on any non-zero exit.
 
 ## Task 3: Preserve interpretable evidence

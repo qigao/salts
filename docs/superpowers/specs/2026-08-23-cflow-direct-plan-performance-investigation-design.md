@@ -69,9 +69,10 @@ contract can be stated independently.
 
 ## Observed Evidence
 
-The final benchmark uses 10,000 samples of 1,024 input items. The following are
-five-run medians in million input items per second, with the observed range in
-parentheses:
+The historical measurement below used 10,000 samples of 1,024 input items. The
+current benchmark source uses 50,000 samples of 1,024 input items. The following
+are five-run medians from the historical measurement in million input items per
+second, with the observed range in parentheses:
 
 | Path | MSVC `/O2` | Clang `-O3` |
 |---|---:|---:|
