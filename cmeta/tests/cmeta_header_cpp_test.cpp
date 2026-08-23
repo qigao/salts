@@ -100,22 +100,33 @@ spec("CMeta C++ public headers") {
         nullptr,
         0u,
         nullptr};
-    const cmeta_container_ext ext = {
-        offsetof(cmeta_container_ext, type) + sizeof(ext.type),
+    const cmeta_container_ext old_ext = {
+        offsetof(cmeta_container_ext, type) + sizeof(old_ext.type),
         CMETA_CONTAINER_EXT_ABI_VERSION,
-        &type_ops};
-    const cmeta_container_desc desc = {
-        "cpp container", nullptr, nullptr, nullptr, nullptr,
-        nullptr, nullptr, nullptr, nullptr, nullptr, &ext};
-    const cmeta_container_header object = {&desc};
+        &type_ops,
+        nullptr};
+    const cmeta_container_ext semantic_ext = {
+        offsetof(cmeta_container_ext, data) + sizeof(semantic_ext.data),
+        CMETA_CONTAINER_EXT_ABI_VERSION,
+        &type_ops,
+        &cmeta_data_sequence};
+    const cmeta_container_desc old_desc = {
+        "cpp old container", nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, &old_ext};
+    const cmeta_container_desc semantic_desc = {
+        "cpp semantic container", nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, &semantic_ext};
+    const cmeta_container_header old_object = {&old_desc};
+    const cmeta_container_header semantic_object = {&semantic_desc};
 
     check_equal(type_ops.struct_size,
                 offsetof(cmeta_container_type_ops, argument) +
                     sizeof(type_ops.argument));
-    check_equal(ext.struct_size,
-                offsetof(cmeta_container_ext, type) + sizeof(ext.type));
-    check_true(ext.type == &type_ops);
-    check_true(cmeta_container_extension(&object) == &ext);
+    check_equal(old_ext.struct_size,
+                offsetof(cmeta_container_ext, type) + sizeof(old_ext.type));
+    check_true(cmeta_container_extension(&old_object) == &old_ext);
+    check_null(cmeta_container_data(&old_object));
+    check_true(cmeta_container_data(&semantic_object) == &cmeta_data_sequence);
   }
 
   it("exposes semantic data descriptors through C++17") {

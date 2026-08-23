@@ -82,6 +82,7 @@ spec("CMeta container generic type applications") {
     check_true(cmeta_container_extension(&sequence) ==
                &cmeta_test_sequence_ext);
     check_null(cmeta_container_extension(NULL));
+    check_null(cmeta_container_data(&sequence));
   }
 
   it("rejects a concrete argument without a CMeta type identity") {

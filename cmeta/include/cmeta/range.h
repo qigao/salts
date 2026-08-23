@@ -3,6 +3,7 @@
 
 #include <cmeta/cmeta.h>
 #include <cmeta/collector.h>
+#include <cmeta/data.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -80,6 +81,7 @@ typedef struct cmeta_container_ext {
     size_t struct_size;
     uint32_t abi_version;
     const cmeta_container_type_ops *type;
+    const cmeta_data_desc *data;
 } cmeta_container_ext;
 
 typedef struct cmeta_container_desc {
@@ -106,6 +108,7 @@ static inline const cmeta_container_desc *cmeta_container_descriptor(const void 
 }
 
 const cmeta_container_ext *cmeta_container_extension(const void *object);
+const cmeta_data_desc *cmeta_container_data(const void *object);
 const cmeta_generic_desc *cmeta_container_type_constructor(const void *object);
 size_t cmeta_container_type_arity(const void *object);
 const cmeta_type_desc *cmeta_container_type_argument(const void *object,

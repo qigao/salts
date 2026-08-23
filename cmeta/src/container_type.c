@@ -22,6 +22,16 @@ cmeta_container_extension(const void *object) {
     return ext;
 }
 
+const cmeta_data_desc *
+cmeta_container_data(const void *object) {
+    const cmeta_container_ext *ext = cmeta_container_extension(object);
+    if (ext == NULL ||
+        ext->struct_size < CMETA_FIELD_END(cmeta_container_ext, data) ||
+        ext->data == NULL || !cmeta_data_desc_valid(ext->data))
+        return NULL;
+    return ext->data;
+}
+
 static const cmeta_container_type_ops *
 cmeta_container_type_ops_of(const void *object) {
     const cmeta_container_ext *ext;
