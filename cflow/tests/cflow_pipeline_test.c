@@ -105,6 +105,7 @@ suite("CFlow pipeline") {
         check_true(cflow_plan_eval_array(&plan, input, 6u, &compiled));
         check_true(cflow_result_equal(&interpreted, &compiled));
         check_equal(stats.instructions, (size_t)2);
+        check_equal(stats.inference_queries, (size_t)2);
         check_equal(stats.map_callbacks, (size_t)2);
         cflow_test_check_expected(&compiled);
 

@@ -114,6 +114,31 @@ enum {
 `SchemaCount` accepts any non-empty row shape. `SchemaAll` and `SchemaAny`
 require exactly one integer constant expression per row.
 
+### Finite DFA inference
+
+The same row list can also project a bounded C relation for admission-time
+inference:
+
+```c
+#define CommonRows \
+    (TYPE_SMALL, TYPE_SMALL, TYPE_SMALL), \
+    (TYPE_SMALL, TYPE_WIDE, TYPE_WIDE)
+
+ValueFunction2(CommonType, CommonRows);
+InferenceRules2(common_type_rules, CommonRows);
+```
+
+`cmeta_infer_dfa_build` converts the explicit relation to a deterministic
+prefix trie using caller-owned state and transition arrays. A successful DFA
+query is bounded by the declared arity (1 through 3). Missing, duplicate,
+ambiguous, invalid, and capacity failures are distinct and never select a
+default result.
+
+The DFA is a control-plane mechanism: build it during validation, admission,
+or plan compilation, then store only the inferred type/action in the execution
+plan. Do not query it for every data item. CMeta performs no hidden allocation;
+the relation borrows its static rows and the DFA borrows caller workspace.
+
 ## Finite generic routing
 
 Libraries register a finite generic kind. The common entry point:

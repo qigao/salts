@@ -11,6 +11,8 @@ schema-driven, and intentionally compositional rather than a universal language.
 - `Enum(...)` single-declaration enum + immutable metadata;
 - tagged-row `Traits(...)` with duplicate/unknown tag rejection;
 - finite generic routing through the single `typed(kind, ...)` entry point;
+- caller-bounded finite DFA inference through `InferenceRules1/2/3` and
+  `cmeta_infer_dfa_build/eval`;
 - CMeta value kinds: `Pair`, `Tuple`, `Option`, `Result`;
 - `typed_any(...)` first-class callable declarations with semantic contracts;
 - `interface(...)` / `implements(...)` protocol/vtable declarations;
@@ -93,6 +95,13 @@ integer constant folds. Count accepts arbitrary non-empty rows; all/any accept
 one integer constant expression per row. This layer generates typedefs, enum
 constants, and static assertions only: it adds no runtime object, ABI symbol, or
 C++ template dependency.
+
+`InferenceRules1/2/3` can project the same integer row list used by a
+`ValueFunction1/2/3` into a runtime finite relation. A caller-owned workspace
+is built into a deterministic prefix trie; missing, duplicate, ambiguous, and
+capacity failures remain distinct. This evaluator belongs in validation or
+plan admission. Hot executors consume the inferred action and do not query the
+DFA per item.
 
 ## Generic value types
 

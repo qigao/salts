@@ -4,6 +4,7 @@
 #include <cmeta/data.h>
 #include <cmeta/declared_type.h>
 #include <cmeta/entry.h>
+#include <cmeta/infer.h>
 #include <cmeta/collector.h>
 #include <cmeta/compute.h>
 #include <cmeta/enum.h>

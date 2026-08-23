@@ -50,6 +50,11 @@ cmake_add_test(cmeta_compute_test
   LIBS TurboUtils::CMeta TurboUtils::TinyTest
   FOLDER "cmeta/tests")
 
+cmake_add_test(cmeta_infer_test
+  SOURCES cmeta_infer_test.c
+  LIBS TurboUtils::CMeta TurboUtils::TinyTest
+  FOLDER "cmeta/tests")
+
 function(cmeta_add_compile_failure_test target_name source expected_diagnostic)
   add_executable(${target_name} EXCLUDE_FROM_ALL ${source})
   target_link_libraries(${target_name} PRIVATE TurboUtils::CMeta)
@@ -134,6 +139,11 @@ set_target_properties(cmeta_collector_test PROPERTIES
   C_EXTENSIONS OFF)
 
 set_target_properties(cmeta_compute_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+set_target_properties(cmeta_infer_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)

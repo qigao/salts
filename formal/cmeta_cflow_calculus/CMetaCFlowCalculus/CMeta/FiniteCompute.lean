@@ -81,4 +81,51 @@ theorem WellFormed.closedOver
     ClosedOver outputs rows = true :=
   wellFormed.2.2
 
+/-- An explicit finite DFA. Transitions and accepting results use the same
+    finite-relation representation as CMeta type and value functions. -/
+structure FiniteDfa (σ ο : Type) where
+  start : Nat
+  transitions : FiniteRelation (Nat × σ) Nat
+  accepts : FiniteRelation Nat ο
+
+/-- Determinism requires one target for each state/symbol pair and one result
+    for each accepting state. -/
+def DfaWellFormed [BEq σ] [LawfulBEq σ]
+    (dfa : FiniteDfa σ ο) : Prop :=
+  Functional dfa.transitions = true ∧
+    Functional dfa.accepts = true
+
+/-- One DFA transition is an ordinary finite-relation lookup. -/
+def dfaStep [DecidableEq σ]
+    (dfa : FiniteDfa σ ο) (state : Nat) (symbol : σ) : Option Nat :=
+  lookup (state, symbol) dfa.transitions
+
+/-- Consume a symbol list and retain the reached state for proof reuse. -/
+def dfaRunFrom [DecidableEq σ]
+    (dfa : FiniteDfa σ ο) : Nat → List σ → Option Nat
+  | state, [] => some state
+  | state, symbol :: rest =>
+      match dfaStep dfa state symbol with
+      | none => none
+      | some next => dfaRunFrom dfa next rest
+
+/-- A run succeeds only when the reached state has an explicit accept row. -/
+def dfaRun [DecidableEq σ] [DecidableEq ο]
+    (dfa : FiniteDfa σ ο) (symbols : List σ) : Option ο :=
+  match dfaRunFrom dfa dfa.start symbols with
+  | none => none
+  | some state => lookup state dfa.accepts
+
+theorem dfaStep_some_mem [DecidableEq σ]
+    (dfa : FiniteDfa σ ο) (source : Nat) (symbol : σ) (target : Nat)
+    (found : dfaStep dfa source symbol = some target) :
+    ((source, symbol), target) ∈ dfa.transitions := by
+  exact lookup_some_mem (source, symbol) dfa.transitions target found
+
+theorem dfaAccept_some_mem [DecidableEq ο]
+    (dfa : FiniteDfa σ ο) (state : Nat) (output : ο)
+    (found : lookup state dfa.accepts = some output) :
+    (state, output) ∈ dfa.accepts := by
+  exact lookup_some_mem state dfa.accepts output found
+
 end CMetaCFlowCalculus.CMeta

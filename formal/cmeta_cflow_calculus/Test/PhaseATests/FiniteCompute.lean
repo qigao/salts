@@ -15,6 +15,11 @@ inductive Operation where
   | compare
   deriving Repr, DecidableEq, BEq, ReflBEq, LawfulBEq
 
+inductive InferSymbol where
+  | operation (value : Operation)
+  | type (value : ComputeType)
+  deriving Repr, DecidableEq, BEq, ReflBEq, LawfulBEq
+
 def numericTypes : List ComputeType := [.small, .wide]
 
 def commonInputs : List (ComputeType × ComputeType) := [
@@ -52,6 +57,37 @@ example : Functional ambiguousRows = false := by decide
 example : lookup (.small, .wide) commonRows = some .wide := by decide
 example : lookup (.wide, .small) commonRows = some .wide := by decide
 example : lookup (.boolean, .small) commonRows = none := by decide
+
+def inferenceDfa : FiniteDfa InferSymbol ComputeType where
+  start := 0
+  transitions := [
+    ((0, .operation .add), 1),
+    ((1, .type .small), 2),
+    ((2, .type .wide), 3),
+    ((0, .operation .compare), 4),
+    ((4, .type .wide), 5),
+    ((5, .type .wide), 6)
+  ]
+  accepts := [(3, .wide), (6, .boolean)]
+
+example : DfaWellFormed inferenceDfa := by
+  constructor <;> decide
+
+example :
+    dfaRun inferenceDfa [
+      .operation .add, .type .small, .type .wide
+    ] = some .wide := by
+  decide
+
+example :
+    dfaRun inferenceDfa [
+      .operation .add, .type .wide, .type .small
+    ] = none := by
+  decide
+
+example :
+    dfaStep inferenceDfa 0 (.operation .compare) = some 4 := by
+  decide
 
 example :
     WellFormed commonInputs numericTypes commonRows := by
