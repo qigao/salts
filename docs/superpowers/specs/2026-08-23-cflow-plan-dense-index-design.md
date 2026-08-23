@@ -105,6 +105,15 @@ remain dominated by fixed allocation and callback-preparation costs. These are
 local measurements, not cross-host performance gates; the inherited PR #44
 Release matrix supplies the multi-host evidence after push.
 
+## Future Work
+
+- [ ] [#46: benchmark a private CSR view for branching Graphs](https://github.com/qigao/turbo-utils/issues/46)
+  tracks the general-adjacency follow-up. CSR is not a Plan replacement and
+  must not enter the public Graph ABI. Adoption requires a measured branching
+  hot path, flat-edge/CSR differential equivalence, preserved outgoing-edge
+  order, checked memory accounting, and Release evidence showing more than 30%
+  improvement without more than 20% memory regression.
+
 ## Rollback
 
 Remove the private index source/header, restore the previous validation and Plan
