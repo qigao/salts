@@ -2,6 +2,7 @@ set(TARGET_NAME turbo_cbind)
 
 add_library(${TARGET_NAME}
   src/decode.c
+  src/buffer.c
   src/container.c
   src/scalar.c
   src/struct.c)
