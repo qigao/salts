@@ -4,11 +4,17 @@ on:
   pull_request:
     paths:
       - "formal/cmeta_cflow_calculus/**"
+      - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
+      - "cmeta/include/cmeta/types.h"
+      - "cmeta/include/cmeta/relations.h"
       - ".github/workflows/cmeta-cflow-calculus.yml"
   push:
     branches: [master]
     paths:
       - "formal/cmeta_cflow_calculus/**"
+      - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
+      - "cmeta/include/cmeta/types.h"
+      - "cmeta/include/cmeta/relations.h"
       - ".github/workflows/cmeta-cflow-calculus.yml"
   workflow_dispatch:
 
@@ -27,3 +33,8 @@ jobs:
           build: true
           test: true
           lake-package-directory: formal/cmeta_cflow_calculus
+      - name: Verify generated signature manifest
+        working-directory: formal/cmeta_cflow_calculus
+        run: >-
+          lake exe cmeta-signature-gen --check
+          ../../cmeta/include/cmeta/generated/builtin_signature_manifest.h

@@ -2,6 +2,9 @@ import CMetaCFlowCalculus.CMeta.Types
 import CMetaCFlowCalculus.CMeta.Effects
 import CMetaCFlowCalculus.CMeta.Properties
 import CMetaCFlowCalculus.CMeta.Environment
+import CMetaCFlowCalculus.CMeta.SignatureManifest
+import CMetaCFlowCalculus.CMeta.BuiltinSignatures
+import CMetaCFlowCalculus.CMeta.SignatureHeader
 import CMetaCFlowCalculus.CMeta.Ownership
 import CMetaCFlowCalculus.CFlow.Syntax
 import CMetaCFlowCalculus.CFlow.Execution

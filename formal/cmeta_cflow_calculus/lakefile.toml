@@ -9,3 +9,7 @@ name = "CMetaCFlowCalculus"
 [[lean_lib]]
 name = "PhaseATests"
 srcDir = "Test"
+
+[[lean_exe]]
+name = "cmeta-signature-gen"
+root = "CMetaSignatureGen"

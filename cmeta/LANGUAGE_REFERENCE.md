@@ -353,6 +353,24 @@ every translation unit and in the linked CMeta library build. Every custom row
 must name descriptors and traits that the program defines with the ownership
 operations required by its consumers.
 
+The built-in type rows and finite callable relation graph are declared in
+`formal/cmeta_cflow_calculus/CMetaCFlowCalculus/CMeta/BuiltinSignatures.lean`.
+Validation rejects empty categories, duplicates, and relations that reference
+unknown built-in type tokens before rendering. The checked-in
+`cmeta/generated/builtin_signature_manifest.h` preserves the public macro and
+signature order, is consumed by normal C/C++ compilation without a Lean
+dependency, and must not be edited manually. From the formal package, use:
+
+```text
+lake exe cmeta-signature-gen --write ../../cmeta/include/cmeta/generated/builtin_signature_manifest.h
+lake exe cmeta-signature-gen --check ../../cmeta/include/cmeta/generated/builtin_signature_manifest.h
+```
+
+This generation boundary owns only built-ins. Application rows and
+`CMETA_USER_UNARY_RELATION_LIST`, `CMETA_USER_BINARY_RELATION_LIST`, and
+`CMETA_USER_GENERATOR_RELATION_LIST` remain shared compile-time configuration;
+all translation units must still see the same callable ABI.
+
 `Struct(T, ...)` and `Traits(T, ...)` generate structural and callable metadata,
 but do not add `T` to either finite type universe. `CMETA_TYPEOF(T)` returns
 `NULL` when no compatible registered type exists. APIs that require a descriptor

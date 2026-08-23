@@ -3,41 +3,6 @@
 
 #include <cmeta/types.h>
 
-#ifndef CMETA_ROW_B
-#define CMETA_ROW_B (B, _Bool,  cmeta_type_bool,   CMETA_T_BOOL)
-#endif
-#ifndef CMETA_ROW_I
-#define CMETA_ROW_I (I, int,    cmeta_type_int,    CMETA_T_INTEGER)
-#endif
-#ifndef CMETA_ROW_L
-#define CMETA_ROW_L (L, long,   cmeta_type_long,   CMETA_T_INTEGER)
-#endif
-#ifndef CMETA_ROW_F
-#define CMETA_ROW_F (F, float,  cmeta_type_float,  CMETA_T_FLOAT)
-#endif
-#ifndef CMETA_ROW_D
-#define CMETA_ROW_D (D, double, cmeta_type_double, CMETA_T_FLOAT)
-#endif
-
-/* Design-artwork default relation graph. Projects may append edges. */
-#define CMETA_BUILTIN_UNARY_RELATION_LIST \
-    (CMETA_ROW_I, CMETA_ROW_I), \
-    (CMETA_ROW_I, CMETA_ROW_B), \
-    (CMETA_ROW_I, CMETA_ROW_L), \
-    (CMETA_ROW_L, CMETA_ROW_D), \
-    (CMETA_ROW_D, CMETA_ROW_I), \
-    (CMETA_ROW_I, CMETA_ROW_D), \
-    (CMETA_ROW_I, CMETA_ROW_F), \
-    (CMETA_ROW_F, CMETA_ROW_D)
-
-#define CMETA_BUILTIN_BINARY_RELATION_LIST \
-    (CMETA_ROW_L, CMETA_ROW_L, CMETA_ROW_L), \
-    (CMETA_ROW_L, CMETA_ROW_D, CMETA_ROW_D)
-
-/* flatMap has one canonical ABI: cursor-aware generator. */
-#define CMETA_BUILTIN_GENERATOR_RELATION_LIST \
-    (CMETA_ROW_I, CMETA_ROW_L)
-
 #ifndef CMETA_USER_UNARY_RELATION_LIST
 #define CMETA_USER_UNARY_RELATION_LIST
 #endif

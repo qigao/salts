@@ -100,6 +100,23 @@ that list acts as both known and callable type universes. New code should use
 `CMETA_KNOWN_TYPE_LIST` and `CMETA_CALLABLE_TYPE_LIST` when the distinction
 matters.
 
+The built-in five type rows and finite `8/2/1` unary, binary, and generator
+relations have one source of truth:
+`formal/cmeta_cflow_calculus/CMetaCFlowCalculus/CMeta/BuiltinSignatures.lean`.
+Lean validates that manifest and generates
+`include/cmeta/generated/builtin_signature_manifest.h`; do not edit the
+generated header by hand. Regenerate or verify it from
+`formal/cmeta_cflow_calculus`:
+
+```text
+lake exe cmeta-signature-gen --write ../../cmeta/include/cmeta/generated/builtin_signature_manifest.h
+lake exe cmeta-signature-gen --check ../../cmeta/include/cmeta/generated/builtin_signature_manifest.h
+```
+
+The checked-in header means ordinary CMake builds and installed CMeta headers
+do not require Lean. Application-defined `CMETA_USER_TYPE_LIST` and
+`CMETA_USER_*_RELATION_LIST` macros remain manual shared configuration.
+
 ## Multi-TU model
 
 Generated wrapper functions are TU-local `static inline`, and generated
