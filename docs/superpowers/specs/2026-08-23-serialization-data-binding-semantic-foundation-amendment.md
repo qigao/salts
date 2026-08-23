@@ -3,17 +3,17 @@
 日期：2026-08-23
 状态：Follow-on amendment to `2026-08-23-serialization-data-binding-design.md`
 
-本 amendment 建立在已合并的 CMeta generic foundation 上：
+本 amendment 建立在已合并的 generic foundation 上：
 
 - `#36` 已完成 `TYPE<A...>` application well-formedness 与跨 TU structural identity；
 - `#37` 已完成 versioned `cmeta_container_ext` root 与 TurboSTL canonical generic constructors / runtime argument introspection；
-- 当前 `master` merge commit 为 `93e68ef443b86aa887cff21d2ceeb134ad32e0e4`。
+- `master` 基线 merge commit 为 `93e68ef443b86aa887cff21d2ceeb134ad32e0e4`。
 
-本文件 supersede 原设计中 semantic model 的 container/optional 实现细节；TurboUtils/TurboParser ownership boundary、CSerde/CBind 分层和 DataBind/TBE 迁移方向不变。
+本文件 supersede 原设计中 semantic model 的 container/optional 实现细节。TurboUtils/TurboParser ownership boundary、CSerde/CBind 分层和 DataBind/TBE 迁移方向不变。
 
-## 1. Semantic shape 必须消费已经证明的 TYPE application
+## 1. Semantic shape 消费已经证明的 TYPE application
 
-现在 TurboSTL typed object 已能提供：
+TurboSTL typed object 已能提供：
 
 ```text
 constructor + arity + T/K/V type descriptors
@@ -43,20 +43,12 @@ semantic projection owns only meaning/category
 例如：
 
 ```text
-Vec<int>
-  TYPE source: turbostl.Vec + int
-  semantic:    SEQUENCE
-
-Set<User>
-  TYPE source: turbostl.Set + User
-  semantic:    SET
-
-Map<string,User>
-  TYPE source: turbostl.Map + string + User
-  semantic:    MAP
+Vec<int>          -> TYPE = turbostl.Vec<int>, semantic = SEQUENCE
+Set<User>         -> TYPE = turbostl.Set<User>, semantic = SET
+Map<string,User>  -> TYPE = turbostl.Map<string,User>, semantic = MAP
 ```
 
-需要 T/K/V 时继续调用既有：
+实际 T/K/V 永远继续来自：
 
 ```c
 cmeta_container_type_constructor(object)
@@ -65,11 +57,11 @@ cmeta_container_type_argument(object, index)
 cmeta_container_type_application_valid(object)
 ```
 
-semantic API 不提供一组平行的 element/key/value argument accessors。
+semantic API 不提供平行的 element/key/value argument accessor。
 
-## 2. `cmeta_container_ext` 的 append-only ABI 必须先修正
+## 2. `cmeta_container_ext` 必须先成为真正 append-only ABI
 
-`#37` 引入：
+`#37` 当前定义：
 
 ```c
 typedef struct cmeta_container_ext {
@@ -79,54 +71,31 @@ typedef struct cmeta_container_ext {
 } cmeta_container_ext;
 ```
 
-设计目标是以后 append semantic / construction capability，而不是继续扩大 `cmeta_container_desc`。
+目标是以后 append semantic / construction capability，而不是继续扩大 `cmeta_container_desc`。
 
-但当前 validator 使用：
+但当前 `container_type.c` 使用：
 
 ```c
 ext->struct_size < sizeof(*ext)
 ops->struct_size < sizeof(*ops)
 ```
 
-这会导致 header 一旦 append 新字段，旧 prefix-sized v1 object 被新 consumer 判 invalid，违背 `struct_size` 的 append-only 目的。
+一旦 header append 新字段，新 consumer 就会把旧 prefix-sized v1 object 判 invalid。这与 `struct_size` 的设计目的冲突。
 
-在第一次 append 之前必须改成 prefix-size validation：
+第一次 append 之前必须改成 field-end prefix validation：
 
 ```text
-base extension accessor:
-  require bytes through ext.type only
-
-type-ops accessor:
-  require bytes through ops.argument only
-
-future semantic accessor:
-  separately require bytes through ext.data
-
-future construct accessor:
-  separately require bytes through ext.construct
+base extension accessor -> require bytes through ext.type
+current type ops        -> require bytes through ops.argument
+semantic accessor       -> separately require bytes through ext.data
+future construct        -> separately require bytes through ext.construct
 ```
 
-`abi_version` 仍表示 incompatible layout/semantic break；append optional tail field 不自动 bump version。
+`abi_version` 表示 incompatible contract break；append optional tail 不自动 bump version。
 
-## 3. Constructor equality 成为公开的单一规则
+semantic projection通过显式 `ext.data` link 完成，不需要再公开一套 constructor matcher；`cmeta_type_identity_equal()` 现有内部 stable-ID equality 保持为 TYPE identity 实现细节即可。
 
-当前 `cmeta_type_identity_equal()` 内部已有 private `cmeta_generic_desc_equal()`，按 constructor `stable_id` 做跨 TU equality。
-
-semantic projection 需要同一规则，不能自行复制 `strcmp(stable_id)`。
-
-因此公开：
-
-```c
-bool cmeta_generic_desc_equal(
-    const cmeta_generic_desc *a,
-    const cmeta_generic_desc *b);
-```
-
-`cmeta_type_identity_equal()` 继续委托该函数。Pointer equality 仍不是跨 TU constructor identity。
-
-## 4. Semantic kinds 的 v1 集合
-
-新的 v1 core kinds 是：
+## 3. Semantic kinds v1
 
 ```c
 typedef enum cmeta_data_kind {
@@ -146,27 +115,25 @@ typedef enum cmeta_data_kind {
 } cmeta_data_kind;
 ```
 
-相对早期设计有两个关键变化：
+两个关键结论：
 
-1. `SET` 是独立 semantic kind。Uniqueness 是数据语义，不能因为 JSON 最终使用 array 就退化为 SEQUENCE。
-2. `OPTIONAL` 暂不进入 v1 core。真实 `typed(Option, Name, T)` 当前只有 C storage shape，还没有完整 `CMETA_TYPE_APPLY(Option,T)` identity。
+1. `SET` 是独立 semantic kind。Uniqueness 是数据语义，不能因为 JSON 可写 array 就退化成 SEQUENCE。
+2. `OPTIONAL` 暂不进入 v1。`typed(Option, Name, T)` 当前只有 C storage shape，还没有完整 `CMETA_TYPE_APPLY(Option,T)` identity。
 
-仍然永久区分：
+永久区分：
 
 ```text
-Option<T> value type     -> CMeta semantic type（等 generic identity 完成后）
+Option<T> value type     -> CMeta semantic type（等 TYPE identity 完成后）
 field may be absent      -> CBind/schema presence policy
-present NULL             -> nullable/token policy
+field present with NULL  -> nullable/token policy
 ```
 
-## 5. v1 `cmeta_data_desc` 只定义已经有明确 contract 的字段
+## 4. `cmeta_data_desc` v1
 
-第一版采用：
+第一版只定义已有明确 contract 的字段：
 
 ```c
-enum {
-    CMETA_DATA_DESC_ABI_VERSION = 1u
-};
+enum { CMETA_DATA_DESC_ABI_VERSION = 1u };
 
 typedef struct cmeta_data_desc {
     size_t struct_size;
@@ -179,34 +146,32 @@ typedef struct cmeta_data_desc {
 } cmeta_data_desc;
 ```
 
-其中：
+含义：
 
-- `stable_id` 是 semantic descriptor identity，不是 schema fingerprint；
-- `storage_type` 描述已有 C storage type，abstract/container-category descriptor 可以为 NULL；
+- `stable_id` 是 semantic descriptor logical identity，不是 schema fingerprint；
+- `storage_type` 描述 C storage；共享 container category descriptor 可以为 NULL；
 - `shape` 指向 immutable kind-specific descriptor；
 - v1 不提前放一个没有签名/生命周期语义的 `cmeta_data_ops *` 占位字段。
 
-`cmeta_data_desc` 自己也必须从 v1 起遵守 append-only `struct_size` 规则。Validator 只要求当前已知 prefix 到 `shape` 字段结束：
+`cmeta_data_desc` 自己也从 v1 起遵守 append-only prefix-size 规则。当前 validator 最低只要求 bytes 覆盖到 `shape` 字段结束：
 
 ```c
 offsetof(cmeta_data_desc, shape) + sizeof(desc->shape)
 ```
 
-而不是要求：
+不得要求：
 
 ```c
 struct_size >= sizeof(cmeta_data_desc)
 ```
 
-这样未来 append fingerprint/access/lifecycle tail 时，旧 v1 descriptor 仍然可被新 consumer 读取其已知 prefix。
+这样未来 append fingerprint/access/lifecycle tail 时，旧 descriptor 仍然可被新 consumer 读取其已知 prefix。
 
-`cmeta_data_ops` 等到 CBind/access/lifecycle contract 真正设计时，通过 versioned descriptor tail 或明确的 shape contract 增加。不要先制造一个“以后会用”的 callback 框。
+Semantic fingerprint 算法仍然需要设计，但在 descriptor graph contract 稳定之后单独实现。
 
-同理，semantic fingerprint 算法仍是必要设计，但不与第一个 descriptor ABI PR 混在一起；先锁定 descriptor graph，再定义 fingerprint domain/version。
+## 5. Kind-specific immutable shapes
 
-## 6. Kind-specific immutable shapes
-
-v1 foundation 至少包含：
+基础 scalar shapes：
 
 ```c
 typedef struct cmeta_data_integer_shape {
@@ -232,7 +197,7 @@ typedef struct cmeta_data_enum_shape {
 } cmeta_data_enum_shape;
 ```
 
-整数 signedness 已由 `CMETA_DATA_SINT` / `CMETA_DATA_UINT` 表达，不在 shape 中重复一个 `is_signed` bit。
+整数 signedness 已由 `CMETA_DATA_SINT` / `CMETA_DATA_UINT` 表达，不再重复 `is_signed`。
 
 Struct：
 
@@ -251,7 +216,7 @@ typedef struct cmeta_data_struct_shape {
 } cmeta_data_struct_shape;
 ```
 
-`external_name / aliases / required / default / emit` 不进入这个 shape，继续属于 CBind/schema policy。
+`external_name / aliases / required / default / emit` 继续属于 CBind/schema policy。
 
 Variant：
 
@@ -272,11 +237,11 @@ typedef struct cmeta_data_variant_shape {
 } cmeta_data_variant_shape;
 ```
 
-v1 descriptor layer只描述 immutable semantic structure 与 lookup/validation；variant active-storage lifecycle/commit 由后续 binding/lifecycle contract 处理。
+v1 只描述 immutable semantic structure、validation 和 lookup。Variant active-storage lifecycle/transaction 由后续 binding/lifecycle contract 处理。
 
-## 7. Container semantic projection 通过 extension 关联，不复制 constructor 或 T/K/V
+## 6. Container semantic projection 通过 `ext.data`，不复制 TYPE
 
-在完成 prefix-safe ABI 后，append：
+完成 prefix-safe ABI 后，append：
 
 ```c
 struct cmeta_data_desc;
@@ -289,9 +254,9 @@ typedef struct cmeta_container_ext {
 } cmeta_container_ext;
 ```
 
-`data` 是 semantic category descriptor；`type` 仍是唯一 generic constructor + argument source。
+`type` 是唯一 generic constructor + argument source；`data` 只是 semantic category。
 
-CMeta 提供三个共享 immutable category descriptors：
+共享 immutable categories：
 
 ```c
 extern const cmeta_data_desc cmeta_data_sequence;
@@ -311,57 +276,57 @@ const cmeta_data_desc *cmeta_container_data_descriptor(const void *object);
 cmeta_container_type_application_valid(object) == true
 ```
 
-再读取 extension 的 `data` tail。这样 raw byte container 即使拥有 canonical container descriptor，也不会被错误投影为 semantic container。
+再检查 `ext.struct_size` 是否覆盖 `data` tail 并读取它。因此 raw-byte container 即使使用 canonical Vec descriptor，也不会错误成为 semantic SEQUENCE。
 
-实际 T/K/V 仍只来自：
+实际 T/K/V 继续只来自：
 
 ```c
 cmeta_container_type_argument(object, index)
 ```
 
-## 8. TurboSTL v1 semantic mapping
+## 7. TurboSTL v1 mapping
 
-v1 明确映射：
+明确映射：
 
 ```text
-Vec<T>        -> SEQUENCE
-Deque<T>      -> SEQUENCE
-List<T>       -> SEQUENCE
-Stack<T>      -> SEQUENCE
-Queue<T>      -> SEQUENCE
+Vec<T>         -> SEQUENCE
+Deque<T>       -> SEQUENCE
+List<T>        -> SEQUENCE
+Stack<T>       -> SEQUENCE
+Queue<T>       -> SEQUENCE
 
-Set<T>        -> SET
-HashSet<T>    -> SET
+Set<T>         -> SET
+HashSet<T>     -> SET
 
-HashMap<K,V>  -> MAP
-Map<K,V>      -> MAP
-BTree<K,V>    -> MAP
-BPlusTree<K,V>-> MAP
+HashMap<K,V>   -> MAP
+Map<K,V>       -> MAP
+BTree<K,V>     -> MAP
+BPlusTree<K,V> -> MAP
 ```
 
-两个 constructor 明确保持 unresolved：
+明确 unresolved：
 
 ```text
-Heap<T>       -> unresolved in v1
-MultiMap<K,V> -> unresolved in v1
+Heap<T>        -> NULL
+MultiMap<K,V>  -> NULL
 ```
 
 原因：
 
-- Heap 的 iteration/storage order 不是稳定的 sequence semantic order，不能因为 wire 可以写 array 就声明为 SEQUENCE；
+- Heap iteration/storage order 不是稳定 sequence semantic order；
 - MultiMap 允许同 key 多 value，不能静默伪装成 ordinary MAP。
 
-以后如果需要 BAG/MULTISET/PRIORITY_QUEUE/MULTIMAP semantic kind，应显式增加，而不是损失语义。
+以后需要 BAG/PRIORITY_QUEUE/MULTIMAP 等 semantic kind 时显式增加，不能通过损失语义获得表面统一。
 
-## 9. Nested erased container field 的边界
+## 8. Nested erased field 的边界
 
-`#37` 证明的是一个已经带 runtime type binding 的 container object，例如：
+`#37` 证明的是已经带 runtime type binding 的 object，例如：
 
 ```c
 Vec(int, values);
 ```
 
-而普通 struct field：
+但：
 
 ```c
 struct X {
@@ -369,45 +334,43 @@ struct X {
 };
 ```
 
-在 zero state 下没有 `element_type`，因此不能凭 C storage spelling 推断 `Vec<int>`。
+zero state 下没有 `element_type`，不能凭 storage spelling 推断 `Vec<int>`。
 
-本 semantic-foundation plan 不通过重新增加 `sequence.element = Int` 来掩盖这个事实。
+本 semantic plan 不通过重新加入 `sequence.element = Int` 掩盖这个事实。
 
-正确的后续 construction/type-binding plan 必须建立：
+后续 construction/static-type plan 必须建立：
 
 ```text
-static field type application contract
+static field TYPE application
         -> construct.bind_types(empty_object, args...)
         -> object becomes valid Vec<T>/Map<K,V>
-        -> Collector builds values transactionally
+        -> Collector transaction
 ```
 
-也就是说 semantic category 与 generic application 分开，但 concrete field application 必须仍然是 CMeta TYPE metadata，而不是 CBind 猜类型或 semantic shape 重复参数。
-
-在 construction plan 完成前，本 amendment 只承诺：
+因此当前只承诺：
 
 ```text
 semantic introspection of already-typed container instances
 ```
 
-不宣称已解决 nested zero-field decode。
+不宣称 nested zero-field decode 已解决。
 
-## 10. Corrected implementation order after #37
+## 9. Implementation order after #37
 
 ```text
 #36  TYPE<A...> contract                         DONE
-#37  container extension root + TurboSTL generic DONE
+#37  container extension + TurboSTL generic      DONE
 
-C0   generic equality + append-only ext ABI hardening
+C0   append-only container-extension ABI hardening
 C1   CMeta semantic descriptor core
 C2   TurboSTL semantic projection through ext.data
 
-next container construction + static field type application
+next construction + static field TYPE application
 next CSerde canonical token protocol
 next CBind
 next TurboParser adapters / DataBind / TBE migration
 ```
 
-新的 implementation plan：
+Current implementation plan:
 
 `docs/superpowers/plans/2026-08-23-cmeta-semantic-data-descriptors.md`
