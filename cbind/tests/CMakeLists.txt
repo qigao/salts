@@ -18,6 +18,11 @@ cmake_add_test(cbind_transaction_test
   LIBS TurboUtils::CBind cserde_recording_support TurboUtils::TinyTest
   FOLDER "cbind/tests")
 
+cmake_add_test(cbind_preflight_order_test
+  SOURCES cbind_preflight_order_test.c
+  LIBS TurboUtils::CBind cserde_recording_support TurboUtils::TinyTest
+  FOLDER "cbind/tests")
+
 cmake_add_test(cbind_header_cpp_test
   SOURCES cbind_header_cpp_test.cpp
   LIBS TurboUtils::CBind TurboUtils::TinyTest
@@ -28,6 +33,7 @@ set_target_properties(
   cbind_struct_decode_test
   cbind_struct_runtime_test
   cbind_transaction_test
+  cbind_preflight_order_test
   PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
