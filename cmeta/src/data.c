@@ -93,9 +93,11 @@ static bool cmeta_data_struct_shape_valid(
 }
 
 static bool cmeta_data_variant_tag_kind_valid(const cmeta_data_desc *tag) {
-    return tag != NULL && cmeta_data_desc_valid(tag) &&
-           (tag->kind == CMETA_DATA_SINT || tag->kind == CMETA_DATA_UINT ||
-            tag->kind == CMETA_DATA_ENUM);
+    if (tag == NULL ||
+        (tag->kind != CMETA_DATA_SINT && tag->kind != CMETA_DATA_UINT &&
+         tag->kind != CMETA_DATA_ENUM))
+        return false;
+    return cmeta_data_desc_valid(tag);
 }
 
 static bool cmeta_data_variant_shape_valid(
