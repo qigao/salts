@@ -1,6 +1,18 @@
 #include <turbostl/typed.h>
 #include "tinytest.h"
 
+static vec_t make_int_vec(void) {
+    return VecOf(int);
+}
+
+static const cmeta_type_desc *map_key_type(map_t map) {
+    return map.key_type;
+}
+
+typedef struct unregistered_element {
+    int value;
+} unregistered_element;
+
 suite("TurboSTL typed public header") {
     it("exposes self-describing declarations without generated type names") {
         Vec(int, vec);
@@ -14,6 +26,88 @@ suite("TurboSTL typed public header") {
         map_destroy(&map);
         list_destroy(&list);
         vec_destroy(&vec);
+    }
+
+    it("constructs unary self-describing handles from expressions") {
+        vec_t vec = {0};
+        deque_t deque = DequeOf(int);
+        list_t list = ListOf(int);
+        stack_t stack = StackOf(int);
+        queue_t queue = QueueOf(int);
+        heap_t heap = HeapOf(int);
+        set_t set = SetOf(int);
+        hash_set_t hash_set = HashSetOf(int);
+
+        vec = VecOf(int);
+
+#define CHECK_UNARY_EXPRESSION(handle_, generic_)                              \
+        do {                                                                    \
+            check_true(cmeta_container_type_application_valid(&(handle_)));    \
+            check_true(cmeta_container_type_constructor(&(handle_)) ==          \
+                       &(generic_));                                             \
+            check_true(cmeta_container_type_argument(&(handle_), 0u) ==         \
+                       &cmeta_type_int);                                         \
+        } while (0)
+
+        CHECK_UNARY_EXPRESSION(vec, stl_vec_generic_desc);
+        CHECK_UNARY_EXPRESSION(deque, stl_deque_generic_desc);
+        CHECK_UNARY_EXPRESSION(list, stl_list_generic_desc);
+        CHECK_UNARY_EXPRESSION(stack, stl_stack_generic_desc);
+        CHECK_UNARY_EXPRESSION(queue, stl_queue_generic_desc);
+        CHECK_UNARY_EXPRESSION(heap, stl_heap_generic_desc);
+        CHECK_UNARY_EXPRESSION(set, stl_set_generic_desc);
+        CHECK_UNARY_EXPRESSION(hash_set, stl_hash_set_generic_desc);
+
+#undef CHECK_UNARY_EXPRESSION
+
+        check_equal(vec_init(&vec, 1u), STL_OK);
+        vec_destroy(&vec);
+    }
+
+    it("constructs associative self-describing handles from expressions") {
+        hash_map_t hash_map = HashMapOf(int, long);
+        map_t map = {0};
+        multimap_t multimap = MultiMapOf(int, long);
+        btree_t btree = BTreeOf(int, long);
+        bplus_tree_t bplus_tree = BPlusTreeOf(int, long);
+
+        map = MapOf(int, long);
+
+#define CHECK_BINARY_EXPRESSION(handle_, generic_)                             \
+        do {                                                                    \
+            check_true(cmeta_container_type_application_valid(&(handle_)));    \
+            check_true(cmeta_container_type_constructor(&(handle_)) ==          \
+                       &(generic_));                                             \
+            check_true(cmeta_container_type_argument(&(handle_), 0u) ==         \
+                       &cmeta_type_int);                                         \
+            check_true(cmeta_container_type_argument(&(handle_), 1u) ==         \
+                       &cmeta_type_long);                                        \
+        } while (0)
+
+        CHECK_BINARY_EXPRESSION(hash_map, stl_hash_map_generic_desc);
+        CHECK_BINARY_EXPRESSION(map, stl_map_generic_desc);
+        CHECK_BINARY_EXPRESSION(multimap, stl_multimap_generic_desc);
+        CHECK_BINARY_EXPRESSION(btree, stl_btree_generic_desc);
+        CHECK_BINARY_EXPRESSION(bplus_tree, stl_bplus_tree_generic_desc);
+
+#undef CHECK_BINARY_EXPRESSION
+
+        check_equal(map_init(&map, 1u), STL_OK);
+        map_destroy(&map);
+    }
+
+    it("supports expression initializers in returns and arguments") {
+        vec_t vec = make_int_vec();
+
+        check_true(vec.element_type == &cmeta_type_int);
+        check_true(map_key_type(MapOf(long, int)) == &cmeta_type_long);
+    }
+
+    it("rejects expression initializers with unregistered types") {
+        vec_t vec = VecOf(unregistered_element);
+
+        check_false(cmeta_container_type_application_valid(&vec));
+        check_equal(vec_init(&vec, 1u), STL_INVALID_ARGUMENT);
     }
 
     it("binds unary kind descriptors and preserves them across reinitialization") {

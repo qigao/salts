@@ -16,48 +16,55 @@ target_link_libraries(my_target PRIVATE TurboUtils::STL)
 #include <turbostl/typed.h>
 ```
 
-## One declaration is enough
+## Self-describing initialization
 
-For a single typed container:
-
-```c
-typed(List, IntList, int);
-```
-
-For several:
+TurboSTL provides declaration and expression forms. Both bind the container's
+canonical CMeta descriptor and type arguments without allocating storage:
 
 ```c
-typed(Vec, IntVec, int);
-typed(List, IntList, int);
-typed(HashSet, IntSet, int);
-typed(HashMap, IntLongMap, int, long);
-typed(BTree, IntTree, int, long);
+Vec(int, declared_values);
+Map(int, long, declared_scores);
+
+vec_t values = VecOf(int);
+map_t scores = MapOf(int, long);
 ```
 
-No `implement(...)`, `DeclareContainers(...)`, or `ImplementContainers(...)` call is required or exposed for typed containers.
+Expression initializers are ordinary C11 expressions, so they also work in
+assignments, return statements, and function arguments:
 
-## What is header-only?
+```c
+static map_t new_scores(void) {
+    return MapOf(int, long);
+}
 
-Only the generated typed layer:
+static void inspect_map(map_t map) {
+    (void)map;
+}
 
-```text
-IntList wrapper type
-IntList_* thin forwarding functions
-container descriptor
-Range factories / traits
+values = VecOf(int);
+scores = new_scores();
+inspect_map(MapOf(int, long));
 ```
 
-The forwarding functions are `static inline`, and descriptors are header-local metadata. The actual algorithms remain compiled C in TurboSTL sources:
+Initialize each handle before use and destroy it afterward:
 
-```text
-vector growth
-list allocation/linking
-hash probing
-heap operations
-B-tree/B+tree balancing
+```c
+int value = 42;
+vec_t values = VecOf(int);
+
+if (vec_init(&values, 8u) != STL_OK)
+    return 1;
+if (vec_push(&values, &value) != STL_OK) {
+    vec_destroy(&values);
+    return 1;
+}
+
+vec_destroy(&values);
 ```
 
-So "header-only typed facade" does not mean "header-only container algorithms".
+The expression form creates the same zero-storage handle as the declaration
+form. Once initialized, a handle owns its container storage and must not be
+copied as a value.
 
 ## Supported kinds
 
@@ -69,26 +76,21 @@ HashMap    Map        MultiMap
 BTree      BPlusTree
 ```
 
+Unary kinds use `VecOf(T)`, `DequeOf(T)`, `ListOf(T)`, `StackOf(T)`,
+`QueueOf(T)`, `HeapOf(T)`, `SetOf(T)`, and `HashSetOf(T)`. Associative kinds
+use `HashMapOf(K, V)`, `MapOf(K, V)`, `MultiMapOf(K, V)`, `BTreeOf(K, V)`, and
+`BPlusTreeOf(K, V)`.
+
 Ordered kinds obtain comparison from the registered CMeta type descriptor;
 their typed declarations do not take a parallel comparator token. `Map` is an
 ordered red-black-tree map and requires key `COMPARE`. `HashMap` is an independent
 open-addressed hash table and requires key `HASH` and `EQUAL`. `List` is an
 independent node-based doubly-linked list with stable iterators across insertion.
 
-## Generated low-level typed ABI
-
-```c
-IntList values = {0};
-IntList_init(&values, 100);
-IntList_push_back(&values, 10);
-IntList_push_back(&values, 20);
-int *p = IntList_front(&values);
-IntList_destroy(&values);
-```
-
-These generated concrete names remain a typed ABI. A later ergonomic `_Generic`
-facade can expose initialization, insertion, and iterator operations without
-changing the underlying instantiation model.
+The public handle types (`vec_t`, `map_t`, and peers) have one ABI per container
+kind. Type arguments live in CMeta descriptors instead of producing a new C
+type for every combination. The concrete allocation, probing, linking, and
+balancing algorithms remain compiled C in TurboSTL sources.
 
 ## CFlow bridge
 
