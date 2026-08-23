@@ -259,12 +259,26 @@ spec("CMeta semantic data descriptors") {
     check_false(cmeta_data_desc_valid(&duplicate_desc));
   }
 
-  it("rejects a variant whose tag is not integer or enum semantic data") {
+  it("rejects an invalid or non-integral variant tag descriptor") {
+    const cmeta_data_integer_shape bad_integer = { .bits = 7u };
+    const cmeta_data_desc invalid_tag = {
+        .struct_size = offsetof(cmeta_data_desc, shape) +
+                       sizeof(((cmeta_data_desc *)0)->shape),
+        .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+        .stable_id = "test.BadTag.data",
+        .display_name = "BadTag",
+        .kind = CMETA_DATA_SINT,
+        .storage_type = &cmeta_type_int,
+        .shape = &bad_integer
+    };
     cmeta_data_variant_shape shape = cmeta_data_test_variant_shape;
     cmeta_data_desc desc = cmeta_data_test_variant_desc;
 
-    shape.tag = &cmeta_data_float;
+    shape.tag = &invalid_tag;
     desc.shape = &shape;
+    check_false(cmeta_data_desc_valid(&desc));
+
+    shape.tag = &cmeta_data_float;
     check_false(cmeta_data_desc_valid(&desc));
   }
 
