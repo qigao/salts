@@ -85,14 +85,21 @@
   #define fs_chmod   chmod
   #define fs_access  access
 
-  #define FS_ST_ATIME_SEC(s)  ((s).st_atim.tv_sec)
-  #define FS_ST_MTIME_SEC(s)  ((s).st_mtim.tv_sec)
-  #define FS_ST_CTIME_SEC(s)  ((s).st_ctim.tv_sec)
-
-  /* nanosecond sub-field for conversion to microseconds */
-  #define FS_ST_ATIME_NSEC(s) ((s).st_atim.tv_nsec)
-  #define FS_ST_MTIME_NSEC(s) ((s).st_mtim.tv_nsec)
-  #define FS_ST_CTIME_NSEC(s) ((s).st_ctim.tv_nsec)
+  #if defined(__APPLE__)
+    #define FS_ST_ATIME_SEC(s)  ((s).st_atimespec.tv_sec)
+    #define FS_ST_MTIME_SEC(s)  ((s).st_mtimespec.tv_sec)
+    #define FS_ST_CTIME_SEC(s)  ((s).st_ctimespec.tv_sec)
+    #define FS_ST_ATIME_NSEC(s) ((s).st_atimespec.tv_nsec)
+    #define FS_ST_MTIME_NSEC(s) ((s).st_mtimespec.tv_nsec)
+    #define FS_ST_CTIME_NSEC(s) ((s).st_ctimespec.tv_nsec)
+  #else
+    #define FS_ST_ATIME_SEC(s)  ((s).st_atim.tv_sec)
+    #define FS_ST_MTIME_SEC(s)  ((s).st_mtim.tv_sec)
+    #define FS_ST_CTIME_SEC(s)  ((s).st_ctim.tv_sec)
+    #define FS_ST_ATIME_NSEC(s) ((s).st_atim.tv_nsec)
+    #define FS_ST_MTIME_NSEC(s) ((s).st_mtim.tv_nsec)
+    #define FS_ST_CTIME_NSEC(s) ((s).st_ctim.tv_nsec)
+  #endif
 #endif
 
 struct turbo_fs_dir_s {

@@ -312,10 +312,11 @@ int turbo_process_read_stderr(turbo_process_t *process, void *buffer, size_t cap
 
 #ifdef _WIN32
 
-static int win32_error(void) {
-  DWORD error = GetLastError();
+static int win32_error_from_code(DWORD error) {
   return error > (DWORD)INT_MAX ? TURBO_UNKNOWN : -(int)error;
 }
+
+static int win32_error(void) { return win32_error_from_code(GetLastError()); }
 
 static void close_win_handle(HANDLE *handle) {
   if (*handle != NULL && *handle != INVALID_HANDLE_VALUE) CloseHandle(*handle);
@@ -879,7 +880,10 @@ int turbo_process_write_stdin(turbo_process_t *process, const void *data, size_t
     DWORD chunk = (DWORD)((size - total) > UINT32_MAX ? UINT32_MAX : (size - total));
     DWORD written = 0;
     if (!WriteFile(process->stdin_write, cursor + total, chunk, &written, NULL)) {
-      rc = win32_error();
+      DWORD error = GetLastError();
+      rc = error == ERROR_BROKEN_PIPE || error == ERROR_NO_DATA
+               ? TURBO_EPIPE
+               : win32_error_from_code(error);
       break;
     }
     if (written == 0) {
@@ -1105,8 +1109,12 @@ static ssize_t write_without_sigpipe(int fd, const void *data, size_t size) {
   if (sigpending(&pending) == 0) had_pending = sigismember(&pending, SIGPIPE);
   result = write(fd, data, size);
   if (result < 0 && errno == EPIPE && !had_pending) {
-    struct timespec timeout = {0, 0};
-    while (sigtimedwait(&blocked, NULL, &timeout) < 0 && errno == EINTR) {
+    int signal_number;
+    int wait_rc;
+    if (sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE) == 1) {
+      do {
+        wait_rc = sigwait(&blocked, &signal_number);
+      } while (wait_rc == EINTR);
     }
     errno = EPIPE;
   }
