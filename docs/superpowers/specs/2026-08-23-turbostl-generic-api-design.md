@@ -40,6 +40,8 @@ The erased `vec_t`, `list_t`, `map_t`, and related implementations remain the co
 - Each generated wrapper owns one raw TurboSTL handle. The wrapper's CMeta header is the source of its public type and Range/collector metadata.
 - The compiled raw handle owns allocated storage. Successful generated `destroy` releases that storage and invalidates the generated wrapper descriptor.
 - CFlow owns stream evaluation. TurboSTL only supplies a collector constructed from the explicitly named output type.
+- Public generated collector factories accept the concrete wrapper pointer;
+  descriptor-based erased adapters are confined to the CMeta metadata boundary.
 
 ## Error, capacity, and lifetime semantics
 
@@ -47,6 +49,8 @@ The erased `vec_t`, `list_t`, `map_t`, and related implementations remain the co
 - Initialization and collection limits remain mandatory and explicit.
 - A Stream source is borrowed and must remain alive and unmodified until the terminal finishes.
 - Collection is transactional: overflow, type mismatch, or callback failure aborts and restores a zero output wrapper.
+- A mismatched output wrapper is diagnosed by the generated collector function
+  signature before the erased CFlow boundary.
 - No fallback from typed operations to erased instance inference is provided.
 
 ## Compatibility and migration

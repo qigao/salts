@@ -33,10 +33,12 @@ int main(void) {
 #elif defined(CONSUME_STL)
 #include <turbostl/typed.h>
 
+typed(Vec, InstalledInts, int);
+
 int main(void) {
-  Vec(int, values);
-  if (vec_init(&values, 1u) != STL_OK) return 1;
-  vec_destroy(&values);
+  InstalledInts values = {0};
+  if (InstalledInts_init(&values, 1u) != STL_OK) return 1;
+  InstalledInts_destroy(&values);
   return 0;
 }
 

@@ -27,7 +27,8 @@ CMETA_INLINE cmeta_status turbo_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
  CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \
- CMETA_INLINE cmeta_collector name##_collector(void *zero_output,size_t limit){cmeta_collector result={&name##_collector_ops,zero_output,zero_output,CMETA_TYPEOF(type),limit,0u,CMETA_COLLECTOR_ZERO,CMETA_OK};return result;}
+ CMETA_INLINE cmeta_collector name##_collector(name *zero_output,size_t limit){cmeta_collector result={&name##_collector_ops,zero_output,zero_output,CMETA_TYPEOF(type),limit,0u,CMETA_COLLECTOR_ZERO,CMETA_OK};return result;} \
+ CMETA_INLINE cmeta_collector name##_collector_erased(void *zero_output,size_t limit){return name##_collector((name*)zero_output,limit);}
 
 #define TURBO_META_C2_COLLECTOR(name) \
  CMETA_LOCAL cmeta_type_desc name##_entry_cmeta_type; \
@@ -36,7 +37,8 @@ CMETA_INLINE cmeta_status turbo_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
  CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \
- CMETA_INLINE cmeta_collector name##_collector(void *zero_output,size_t limit){cmeta_collector result={&name##_collector_ops,zero_output,zero_output,&name##_entry_cmeta_type,limit,0u,CMETA_COLLECTOR_ZERO,CMETA_OK};return result;}
+ CMETA_INLINE cmeta_collector name##_collector(name *zero_output,size_t limit){cmeta_collector result={&name##_collector_ops,zero_output,zero_output,&name##_entry_cmeta_type,limit,0u,CMETA_COLLECTOR_ZERO,CMETA_OK};return result;} \
+ CMETA_INLINE cmeta_collector name##_collector_erased(void *zero_output,size_t limit){return name##_collector((name*)zero_output,limit);}
 
 /* A multimap collector's limit bounds total retained key/value pairs. */
 #define TURBO_META_MULTIMAP_COLLECTOR(name) \
@@ -46,7 +48,8 @@ CMETA_INLINE cmeta_status turbo_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
  CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \
- CMETA_INLINE cmeta_collector name##_collector(void *zero_output,size_t limit){cmeta_collector result={&name##_collector_ops,zero_output,zero_output,&name##_entry_cmeta_type,limit,0u,CMETA_COLLECTOR_ZERO,CMETA_OK};return result;}
+ CMETA_INLINE cmeta_collector name##_collector(name *zero_output,size_t limit){cmeta_collector result={&name##_collector_ops,zero_output,zero_output,&name##_entry_cmeta_type,limit,0u,CMETA_COLLECTOR_ZERO,CMETA_OK};return result;} \
+ CMETA_INLINE cmeta_collector name##_collector_erased(void *zero_output,size_t limit){return name##_collector((name*)zero_output,limit);}
 
 #define TURBO_META_VEC_METHODS(M,C) \
  M(INIT_SIZE,init,raw_init,_,C) M(FROM_ARRAY_SIZE,from,raw_from_array,_,C) \
@@ -304,17 +307,17 @@ CMETA_INLINE bool turbo_stl_typed_map_range_next(
 #define TURBO_STL_KIND_APPLY_I(kind,arity,family,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags,name,...) CMETA_PP_CAT(TURBO_STL_KIND_DEFINE_,family)(name,__VA_ARGS__,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags)
 
 #define TURBO_STL_KIND_DEFINE_C1_INDEX(name,type,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
- CMETA_CONTAINER1_DEFINE(name,type,raw,prefix,STL_OK,_,methods) TURBO_META_C1_GENERATION(name,prefix) TURBO_META_C1_COLLECTOR(name,type,accept) CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name,type,prefix,range_flags,name##_cmeta_generation,name##_collector)
+ CMETA_CONTAINER1_DEFINE(name,type,raw,prefix,STL_OK,_,methods) TURBO_META_C1_GENERATION(name,prefix) TURBO_META_C1_COLLECTOR(name,type,accept) CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name,type,prefix,range_flags,name##_cmeta_generation,name##_collector_erased)
 #define TURBO_STL_KIND_DEFINE_C1_LINK(name,type,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
- CMETA_CONTAINER1_DEFINE(name,type,raw,prefix,STL_OK,_,methods) TURBO_META_C1_GENERATION(name,prefix) TURBO_META_C1_COLLECTOR(name,type,accept) CMETA_CONTAINER1_LINK_RANGE_DEFINE(name,type,prefix,range_flags,name##_cmeta_generation,name##_collector)
+ CMETA_CONTAINER1_DEFINE(name,type,raw,prefix,STL_OK,_,methods) TURBO_META_C1_GENERATION(name,prefix) TURBO_META_C1_COLLECTOR(name,type,accept) CMETA_CONTAINER1_LINK_RANGE_DEFINE(name,type,prefix,range_flags,name##_cmeta_generation,name##_collector_erased)
 #define TURBO_STL_KIND_DEFINE_C1_SLOT(name,type,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
- CMETA_CONTAINER1_DEFINE(name,type,raw,prefix,STL_OK,_,methods) TURBO_META_C1_GENERATION(name,prefix) TURBO_META_C1_COLLECTOR(name,type,accept) CMETA_CONTAINER1_SLOT_RANGE_DEFINE(name,type,prefix,range_flags,name##_cmeta_generation,name##_collector)
+ CMETA_CONTAINER1_DEFINE(name,type,raw,prefix,STL_OK,_,methods) TURBO_META_C1_GENERATION(name,prefix) TURBO_META_C1_COLLECTOR(name,type,accept) CMETA_CONTAINER1_SLOT_RANGE_DEFINE(name,type,prefix,range_flags,name##_cmeta_generation,name##_collector_erased)
 #define TURBO_STL_KIND_DEFINE_C2_HASH(name,k,v,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
- CMETA_CONTAINER2_DEFINE(name,k,v,raw,prefix,STL_OK,_,methods) TURBO_META_C2_GENERATION(name,prefix) TURBO_META_C2_COLLECTOR(name) CMETA_CONTAINER2_RANGES_DEFINE(name,k,v,prefix,key_at_op,value_at_op,key_flags,value_flags,entry_flags,name##_cmeta_generation,name##_collector)
+ CMETA_CONTAINER2_DEFINE(name,k,v,raw,prefix,STL_OK,_,methods) TURBO_META_C2_GENERATION(name,prefix) TURBO_META_C2_COLLECTOR(name) CMETA_CONTAINER2_RANGES_DEFINE(name,k,v,prefix,key_at_op,value_at_op,key_flags,value_flags,entry_flags,name##_cmeta_generation,name##_collector_erased)
 #define TURBO_STL_KIND_DEFINE_C2_MULTIMAP(name,k,v,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
- CMETA_CONTAINER2_DEFINE(name,k,v,raw,prefix,STL_OK,_,methods) TURBO_META_C2_GENERATION(name,prefix) TURBO_META_MULTIMAP_COLLECTOR(name) CMETA_CONTAINER2_RANGES_DEFINE(name,k,v,multimap,key_at_op,value_at_op,key_flags,value_flags,entry_flags,name##_cmeta_generation,name##_collector)
+ CMETA_CONTAINER2_DEFINE(name,k,v,raw,prefix,STL_OK,_,methods) TURBO_META_C2_GENERATION(name,prefix) TURBO_META_MULTIMAP_COLLECTOR(name) CMETA_CONTAINER2_RANGES_DEFINE(name,k,v,multimap,key_at_op,value_at_op,key_flags,value_flags,entry_flags,name##_cmeta_generation,name##_collector_erased)
 #define TURBO_STL_KIND_DEFINE_C2_LINK(name,k,v,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
- CMETA_CONTAINER2_DEFINE(name,k,v,raw,prefix,STL_OK,_,methods) TURBO_META_C2_GENERATION(name,prefix) TURBO_META_C2_COLLECTOR(name) CMETA_CONTAINER2_LINK_RANGES_DEFINE(name,k,v,prefix,key_flags,value_flags,entry_flags,name##_cmeta_generation,name##_collector)
+ CMETA_CONTAINER2_DEFINE(name,k,v,raw,prefix,STL_OK,_,methods) TURBO_META_C2_GENERATION(name,prefix) TURBO_META_C2_COLLECTOR(name) CMETA_CONTAINER2_LINK_RANGES_DEFINE(name,k,v,prefix,key_flags,value_flags,entry_flags,name##_cmeta_generation,name##_collector_erased)
 
 #define TURBO_VEC_DEFINE(name,type) TURBO_STL_KIND_APPLY(TURBO_STL_KIND_ROW_Vec,name,type)
 #define TURBO_DEQUE_DEFINE(name,type) TURBO_STL_KIND_APPLY(TURBO_STL_KIND_ROW_Deque,name,type)

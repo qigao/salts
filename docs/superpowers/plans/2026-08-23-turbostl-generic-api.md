@@ -15,11 +15,13 @@
 ### Task 1: Establish the failing public contract
 
 **Files:**
+- Modify: `tests/install_consumer/consumer.c`
 - Modify: `turbostl/tests/install_consumer/consumer.c`
 - Modify: `turbostl/tests/turbostl_stream_test.c`
 
 - [x] Replace instance declarations with `typed(Vec, InstalledInts, int)` and representative `typed(List, ...)`/`typed(Map, ...)` declarations.
 - [x] Exercise semantic type-token operations and four-argument `to_list`/`collect`.
+- [x] Require generated collector factories to accept their concrete wrapper pointer type.
 - [x] Build the focused targets and confirm they fail because TurboSTL kinds and typed terminals are unavailable.
 
 ### Task 2: Restore TurboSTL-owned finite facade generation

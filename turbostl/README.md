@@ -145,5 +145,7 @@ turbostl_collect_result result =
 ```
 
 `collect(&s, Type, &output, limit)` has the same typed terminal contract.
+The generated public collector takes `Type *`, so a mismatched output wrapper
+is diagnosed before CFlow receives its erased collector context.
 Collection is transactional: failure aborts and restores a zero output.
 The core `TurboUtils::STL` target does not depend on CFlow.

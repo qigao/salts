@@ -14,6 +14,19 @@ typed(List, StreamIntList, int);
 typed(List, StreamLongList, long);
 typed(Map, StreamAgeMap, int, int);
 
+typedef cmeta_collector (*StreamLongListCollector)(StreamLongList *, size_t);
+typedef cmeta_collector (*StreamAgeMapCollector)(StreamAgeMap *, size_t);
+_Static_assert(
+    _Generic(&StreamLongList_collector,
+             StreamLongListCollector: 1,
+             default: 0),
+    "generated collector must require its concrete output wrapper type");
+_Static_assert(
+    _Generic(&StreamAgeMap_collector,
+             StreamAgeMapCollector: 1,
+             default: 0),
+    "associative collector must require its concrete output wrapper type");
+
 typed(filter, value, bool, stream_keep_even, (int value)) {
     return value % 2 == 0;
 }
