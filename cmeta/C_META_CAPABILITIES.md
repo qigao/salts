@@ -63,6 +63,37 @@ CFlow operator declarations use structured `Operators(...)` rows grouped by
 call, function, flow, semantic, and effect metadata. `Operators(...)` normalizes
 those rows back to the established flat consumer ABI.
 
+## Finite compile-time computation
+
+CMeta provides explicit finite relations for type and integer-constant
+computation:
+
+```c
+TypeFunction2(CommonType,
+    (small, small, Small),
+    (small, wide, Wide),
+    (wide, small, Wide),
+    (wide, wide, Wide));
+
+ValueFunction1(TypeRank, (small, 1), (wide, 2));
+Predicate(Hashable, (small, 1), (opaque, 0));
+
+typedef TypeEval2(CommonType, small, wide) result_type;
+enum { rank = ValueEval1(TypeRank, wide) };
+Require(Hashable, small);
+```
+
+Unary, binary, and ternary forms are available. Function names and input keys
+are single stable preprocessing identifiers; each declaration has 1 through 16
+rows and may be extended by another declaration with the same name. Missing and
+conflicting mappings fail during compilation instead of selecting a default.
+
+`SchemaCount(schema)`, `SchemaAll(schema)`, and `SchemaAny(schema)` provide
+integer constant folds. Count accepts arbitrary non-empty rows; all/any accept
+one integer constant expression per row. This layer generates typedefs, enum
+constants, and static assertions only: it adds no runtime object, ABI symbol, or
+C++ template dependency.
+
 ## Generic value types
 
 Header-complete CMeta value kinds include:

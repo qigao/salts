@@ -63,6 +63,57 @@ Application code does not need a separate schema or batch declaration to
 instantiate several generic types; write one `typed(...)` declaration per
 concrete type.
 
+## Finite compile-time computation
+
+CMeta can name finite type and integer-constant relations without introducing
+C++ template syntax:
+
+```c
+TypeFunction2(CommonArithmetic,
+    (int, int, int),
+    (int, double, double),
+    (double, int, double),
+    (double, double, double));
+
+ValueFunction1(TypeRank,
+    (int, 1),
+    (double, 2));
+
+Predicate(Hashable,
+    (int, 1),
+    (opaque, 0));
+
+typedef TypeEval2(CommonArithmetic, int, double) result_type;
+enum { double_rank = ValueEval1(TypeRank, double) };
+Require(Hashable, int);
+```
+
+`TypeFunction1/2/3` and `ValueFunction1/2/3` cover unary through ternary
+relations. `Predicate`, `Satisfies`, and `Require` provide boolean queries and
+compile-time constraints. A missing or conflicting row is a compile error;
+there is no default mapping.
+
+Function names and input keys must each be one stable preprocessor identifier.
+Each declaration accepts 1 through 16 rows; repeat a declaration with the same
+function name to add bounded fragments. Values must be integer constant
+expressions. Use a stable typedef name for types or declarators that contain
+commas or other preprocessing syntax.
+
+Existing schemas can also be folded as constant expressions:
+
+```c
+#define FeatureChecks(M) Schema(M, (1), (1), (0))
+
+enum {
+    feature_count = SchemaCount(FeatureChecks),
+    every_feature = SchemaAll(FeatureChecks),
+    some_feature = SchemaAny(FeatureChecks)
+};
+```
+
+`SchemaCount` accepts any non-empty row shape. `SchemaAll` and `SchemaAny`
+require exactly one integer constant expression per row.
+
 ## Finite generic routing
 
 Libraries register a finite generic kind. The common entry point:

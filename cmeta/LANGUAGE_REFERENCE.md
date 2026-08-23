@@ -318,6 +318,80 @@ Replay = consumer application
 One schema can therefore feed declaration, metadata, validation, counting, or
 other framework mappers without creating another user-facing language layer.
 
+### Finite compile-time functions
+
+Finite functions declare explicit mappings and evaluate them through generated
+C declarations. They do not add C++ template syntax or a runtime evaluator.
+
+```c
+TypeFunction1(StorageType,
+    (small, SmallStorage),
+    (wide, WideStorage));
+
+TypeFunction2(CommonType,
+    (small, small, SmallStorage),
+    (small, wide, WideStorage),
+    (wide, small, WideStorage),
+    (wide, wide, WideStorage));
+
+typedef TypeEval1(StorageType, small) storage_type;
+typedef TypeEval2(CommonType, small, wide) common_type;
+```
+
+The type forms are `TypeFunction1/2/3` and `TypeEval1/2/3`. The corresponding
+integer-constant forms are `ValueFunction1/2/3` and `ValueEval1/2/3`:
+
+```c
+ValueFunction1(TypeRank,
+    (small, 1),
+    (wide, 2));
+
+enum { wide_rank = ValueEval1(TypeRank, wide) };
+```
+
+`Predicate` is a unary boolean value function. `Satisfies` evaluates it and
+`Require` rejects a false row with a C/C++ static assertion:
+
+```c
+Predicate(Hashable, (small, 1), (opaque, 0));
+Require(Hashable, small);
+```
+
+The declaration contract is deliberately finite and fail-fast:
+
+- A function name and every input key must each be one stable preprocessor
+  identifier.
+- A declaration contains 1 through 16 rows. More rows can be added by repeating
+  the same function name in separate bounded declarations.
+- A value result is an integer constant expression. Complex type results should
+  first receive a stable typedef name.
+- Evaluating an absent mapping produces an unknown generated identifier, while
+  declaring conflicting rows produces a C declaration conflict. Neither case
+  has a fallback.
+
+Arity is part of each generated identifier, so unary, binary, and ternary
+functions with the same public name remain distinct. Declaration work is linear
+in the number of rows; an evaluation is fixed token lookup rather than a scan
+or a generated binary/ternary Cartesian product.
+
+### Schema constant folds
+
+`SchemaCount`, `SchemaAll`, and `SchemaAny` turn an existing schema into an
+integer constant expression:
+
+```c
+#define Checks(M) Schema(M, (1), (1), (0))
+
+_Static_assert(SchemaCount(Checks) == 3u, "row count");
+_Static_assert(!SchemaAll(Checks), "not every row is true");
+_Static_assert(SchemaAny(Checks), "at least one row is true");
+```
+
+`SchemaCount` accepts arbitrary non-empty row shapes because it ignores row
+contents. `SchemaAll` and `SchemaAny` require every row to contain exactly one
+integer constant expression. These folds retain the existing 16-row limit of a
+single `Schema(...)` invocation.
+
 ### `Operators(...)`
 
 CFlow's specialized operator-schema normalizer.

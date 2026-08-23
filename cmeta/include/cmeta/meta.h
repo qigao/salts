@@ -5,6 +5,7 @@
 #include <cmeta/declared_type.h>
 #include <cmeta/entry.h>
 #include <cmeta/collector.h>
+#include <cmeta/compute.h>
 #include <cmeta/enum.h>
 #include <cmeta/pp.h>
 #include <cmeta/status.h>

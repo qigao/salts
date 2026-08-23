@@ -15,6 +15,48 @@ Struct(cmeta_cpp_record,
     (const char *, name)
 );
 
+TypeFunction1(CMetaCppStorage,
+    (small, int),
+    (wide, long)
+);
+
+TypeFunction2(CMetaCppCommon,
+    (small, small, int),
+    (small, wide, long)
+);
+
+TypeFunction3(CMetaCppResult,
+    (add, small, wide, long)
+);
+
+ValueFunction1(CMetaCppRank,
+    (small, 1),
+    (wide, 2)
+);
+
+ValueFunction2(CMetaCppCost,
+    (small, wide, 3)
+);
+
+ValueFunction3(CMetaCppDispatch,
+    (add, small, wide, 7)
+);
+
+Predicate(CMetaCppAllowed,
+    (small, 1),
+    (wide, 0)
+);
+
+Require(CMetaCppAllowed, small);
+
+#define CMETA_CPP_COMPUTE_ROWS(M) \
+    Schema(M, (small, int), (wide, long))
+
+#define CMETA_CPP_COMPUTE_CHECKS(M) \
+    Schema(M, \
+        (Satisfies(CMetaCppAllowed, small)), \
+        (!Satisfies(CMetaCppAllowed, wide)))
+
 static_assert(CMETA_ALIGNOF(cmeta_cpp_record) == alignof(cmeta_cpp_record),
               "CMETA_ALIGNOF must use the active language spelling");
 static_assert(CMETA_FLOAT_TRAITS_BINARY32_BINARY64,
@@ -31,6 +73,23 @@ static_assert(CMETA_CONTAINER_EXT_ABI_VERSION == 1u,
               "container extension ABI starts at version 1");
 static_assert(CMETA_DATA_DESC_ABI_VERSION == 1u,
               "semantic data descriptor ABI starts at version 1");
+static_assert(std::is_same_v<TypeEval1(CMetaCppStorage, small), int>,
+              "C++17 can evaluate unary CMeta type functions");
+static_assert(std::is_same_v<TypeEval2(CMetaCppCommon, small, wide), long>,
+              "C++17 can evaluate binary CMeta type functions");
+static_assert(std::is_same_v<
+                  TypeEval3(CMetaCppResult, add, small, wide), long>,
+              "C++17 can evaluate ternary CMeta type functions");
+static_assert(ValueEval1(CMetaCppRank, wide) == 2,
+              "C++17 can evaluate unary CMeta value functions");
+static_assert(ValueEval2(CMetaCppCost, small, wide) == 3,
+              "C++17 can evaluate binary CMeta value functions");
+static_assert(ValueEval3(CMetaCppDispatch, add, small, wide) == 7,
+              "C++17 can evaluate ternary CMeta value functions");
+static_assert(SchemaCount(CMETA_CPP_COMPUTE_ROWS) == 2u,
+              "C++17 can count CMeta schema rows");
+static_assert(SchemaAll(CMETA_CPP_COMPUTE_CHECKS),
+              "C++17 can fold CMeta predicate values");
 static_assert(std::is_standard_layout_v<cmeta_container_type_ops>,
               "container type ops must remain a C-compatible standard-layout type");
 static_assert(std::is_standard_layout_v<cmeta_container_construct_ops>,
