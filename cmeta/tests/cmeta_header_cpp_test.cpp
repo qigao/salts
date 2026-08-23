@@ -21,6 +21,18 @@ static_assert(CMETA_GEN_MUTATED == 5,
 static_assert(CMETA_COLLECTOR_ABORTED == 4,
               "the C++ public enum surface must expose collector states");
 
+static const cmeta_generic_desc cmeta_cpp_pair_generic =
+    CMETA_GENERIC_DESC_INIT("cpp.Pair", "Pair", 2u, 2u, CMETA_GENERIC_VALUE);
+static const cmeta_type_identity cmeta_cpp_atom_a =
+    CMETA_TYPE_ID_ATOM_INIT("cpp.A");
+static const cmeta_type_identity cmeta_cpp_atom_b =
+    CMETA_TYPE_ID_ATOM_INIT("cpp.B");
+static const cmeta_type_identity *const cmeta_cpp_pair_args[] = {
+    &cmeta_cpp_atom_a, &cmeta_cpp_atom_b
+};
+static const cmeta_type_identity cmeta_cpp_pair_identity =
+    CMETA_TYPE_ID_APPLY_INIT(&cmeta_cpp_pair_generic, cmeta_cpp_pair_args);
+
 static bool cmeta_cpp_copy_construct(void *destination, const void *source) {
   if (destination == nullptr || source == nullptr) return false;
   *static_cast<int *>(destination) = *static_cast<const int *>(source);
@@ -50,5 +62,15 @@ spec("CMeta C++ public headers") {
     check_true(traits.copy_construct(&destination, &source));
     check_equal(destination, 7);
     check_equal(cmeta_type_require_traits(&type, CMETA_TRAIT_COPY), CMETA_OK);
+  }
+
+  it("validates generic type applications through the C++ public surface") {
+    check_true(cmeta_type_application_valid(
+        &cmeta_cpp_pair_generic, cmeta_cpp_pair_args, 2u));
+    check_true(cmeta_type_identity_valid(&cmeta_cpp_pair_identity));
+    check_equal(cmeta_type_identity_arity(&cmeta_cpp_pair_identity),
+                static_cast<size_t>(2));
+    check_true(cmeta_type_identity_argument(&cmeta_cpp_pair_identity, 0u) ==
+               &cmeta_cpp_atom_a);
   }
 }
