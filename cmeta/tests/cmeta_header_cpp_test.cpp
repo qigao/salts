@@ -15,6 +15,59 @@ Struct(cmeta_cpp_record,
     (const char *, name)
 );
 
+TypeFunction1(CMetaCppStorage,
+    (small, int),
+    (wide, long)
+);
+
+TypeFunction2(CMetaCppCommon,
+    (small, small, int),
+    (small, wide, long)
+);
+
+TypeFunction3(CMetaCppResult,
+    (add, small, wide, long)
+);
+
+ValueFunction1(CMetaCppRank,
+    (small, 1),
+    (wide, 2)
+);
+
+ValueFunction2(CMetaCppCost,
+    (small, wide, 3)
+);
+
+ValueFunction3(CMetaCppDispatch,
+    (add, small, wide, 7)
+);
+
+Predicate(CMetaCppAllowed,
+    (small, 1),
+    (wide, 0)
+);
+
+Require(CMetaCppAllowed, small);
+
+enum {
+    CMETA_CPP_INFER_SMALL = 1u,
+    CMETA_CPP_INFER_WIDE = 2u
+};
+
+#define CMETA_CPP_INFER_ROWS \
+    (CMETA_CPP_INFER_SMALL, CMETA_CPP_INFER_SMALL), \
+    (CMETA_CPP_INFER_WIDE, CMETA_CPP_INFER_WIDE)
+
+InferenceRules1(cmeta_cpp_infer_relation, CMETA_CPP_INFER_ROWS);
+
+#define CMETA_CPP_COMPUTE_ROWS(M) \
+    Schema(M, (small, int), (wide, long))
+
+#define CMETA_CPP_COMPUTE_CHECKS(M) \
+    Schema(M, \
+        (Satisfies(CMetaCppAllowed, small)), \
+        (!Satisfies(CMetaCppAllowed, wide)))
+
 static_assert(CMETA_ALIGNOF(cmeta_cpp_record) == alignof(cmeta_cpp_record),
               "CMETA_ALIGNOF must use the active language spelling");
 static_assert(CMETA_FLOAT_TRAITS_BINARY32_BINARY64,
@@ -31,6 +84,27 @@ static_assert(CMETA_CONTAINER_EXT_ABI_VERSION == 1u,
               "container extension ABI starts at version 1");
 static_assert(CMETA_DATA_DESC_ABI_VERSION == 1u,
               "semantic data descriptor ABI starts at version 1");
+static_assert(std::is_same_v<TypeEval1(CMetaCppStorage, small), int>,
+              "C++17 can evaluate unary CMeta type functions");
+static_assert(std::is_same_v<TypeEval2(CMetaCppCommon, small, wide), long>,
+              "C++17 can evaluate binary CMeta type functions");
+static_assert(std::is_same_v<
+                  TypeEval3(CMetaCppResult, add, small, wide), long>,
+              "C++17 can evaluate ternary CMeta type functions");
+static_assert(ValueEval1(CMetaCppRank, wide) == 2,
+              "C++17 can evaluate unary CMeta value functions");
+static_assert(ValueEval2(CMetaCppCost, small, wide) == 3,
+              "C++17 can evaluate binary CMeta value functions");
+static_assert(ValueEval3(CMetaCppDispatch, add, small, wide) == 7,
+              "C++17 can evaluate ternary CMeta value functions");
+static_assert(SchemaCount(CMETA_CPP_COMPUTE_ROWS) == 2u,
+              "C++17 can count CMeta schema rows");
+static_assert(SchemaAll(CMETA_CPP_COMPUTE_CHECKS),
+              "C++17 can fold CMeta predicate values");
+static_assert(InferenceRuleCount(cmeta_cpp_infer_relation) == 2u,
+              "C++17 can project CMeta inference rows");
+static_assert(InferenceRuleArity(cmeta_cpp_infer_relation) == 1u,
+              "C++17 preserves inference arity");
 static_assert(std::is_standard_layout_v<cmeta_container_type_ops>,
               "container type ops must remain a C-compatible standard-layout type");
 static_assert(std::is_standard_layout_v<cmeta_container_construct_ops>,
@@ -146,5 +220,28 @@ spec("CMeta C++ public headers") {
     check_equal(cmeta_data_int.kind, CMETA_DATA_SINT);
     check_equal(cmeta_data_set.kind, CMETA_DATA_SET);
     check_true(cmeta_data_kind_is_container(CMETA_DATA_SET));
+  }
+
+  it("builds and evaluates a bounded inference DFA through C++17") {
+    cmeta_infer_state states[
+        CMETA_INFER_STATE_BOUND(
+            InferenceRuleCount(cmeta_cpp_infer_relation),
+            InferenceRuleArity(cmeta_cpp_infer_relation))];
+    cmeta_infer_transition transitions[
+        CMETA_INFER_TRANSITION_BOUND(
+            InferenceRuleCount(cmeta_cpp_infer_relation),
+            InferenceRuleArity(cmeta_cpp_infer_relation))];
+    cmeta_infer_dfa dfa{};
+    cmeta_infer_value result = 0u;
+    const cmeta_infer_symbol input[] = {CMETA_CPP_INFER_WIDE};
+
+    cmeta_infer_dfa_init(
+        &dfa, states, sizeof(states) / sizeof(states[0]), transitions,
+        sizeof(transitions) / sizeof(transitions[0]));
+    check_equal(cmeta_infer_dfa_build(&dfa, &cmeta_cpp_infer_relation),
+                CMETA_INFER_OK);
+    check_equal(cmeta_infer_dfa_eval(&dfa, input, 1u, &result),
+                CMETA_INFER_OK);
+    check_equal(result, static_cast<cmeta_infer_value>(CMETA_CPP_INFER_WIDE));
   }
 }

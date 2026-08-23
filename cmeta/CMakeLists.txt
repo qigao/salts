@@ -6,6 +6,7 @@ add_library(${TARGET_NAME}
   src/data.c
   src/declared_type.c
   src/entry.c
+  src/infer.c
   src/type_identity.c)
 
 cmake_config_target(

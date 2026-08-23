@@ -21,6 +21,7 @@ typedef struct cflow_plan_compile_stats {
     size_t graph_nodes;
     size_t instructions;
     size_t map_callbacks;
+    size_t inference_queries;
 } cflow_plan_compile_stats;
 
 /* Compile an already-normalized primitive Graph root into a direct synchronous
