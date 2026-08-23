@@ -16,7 +16,7 @@ TurboSTL semantic projection
 Struct TYPE(...) + declared construction + zero-handle bind_types
 ```
 
-其中 #42 已经建立真实的 nested zero-container construction contract：字段元数据携带 `cmeta_declared_type`，真正的全零 handle 从 declaration side 调用 `cmeta_container_bind_types()`，成功后继续复用已有 runtime container descriptor 与 Collector。
+其中 #42 已建立真实的 nested zero-container construction contract：字段元数据携带 `cmeta_declared_type`，真正的全零 handle 从 declaration side 调用 `cmeta_container_bind_types()`，成功后继续复用已有 runtime container descriptor 与 Collector。
 
 仓库当前尚无 CSerde/CBind production module。既有 serialization/data-binding 总体设计已经确定依赖方向：
 
@@ -104,7 +104,7 @@ public dependency: none beyond C runtime
 
 `cserde` 不 include/link CMeta、CFlow、TurboSTL、TurboParser 或 `utils` Core。后续 CBind 单向依赖 `TurboUtils::CSerde` 与 `TurboUtils::CMeta`。
 
-Top-level `CMakeLists.txt` 在 `cmeta` 后或独立位置加入 `add_subdirectory(cserde)`；CSerde 本身不依赖 CMeta，因此顺序不构成语义依赖。
+Top-level `CMakeLists.txt` 加入 `add_subdirectory(cserde)`。CSerde 本身不依赖 CMeta，因此目录顺序不构成语义依赖。
 
 ## 5. Status contract
 
@@ -134,13 +134,13 @@ typedef enum cserde_status {
 - `INVALID_ARGUMENT`：调用参数无效。
 - `INVALID_STATE`：在不允许的 reader/writer state 上操作。
 - `INVALID_TOKEN`：canonical token payload 或 ARRAY/MAP 结构非法。
-- `UNEXPECTED_END`：正在读取完整 value 时输入提前 `DONE`。
+- `UNEXPECTED_END`：正在要求一个完整 value 时输入提前 `DONE`。
 - `VALUE_OUT_OF_RANGE`：native source value 无法进入 v1 canonical scalar representation。
-- `LIMIT_EXCEEDED`：例如 `skip_value` 超过显式 `max_depth`。
-- `UNSUPPORTED`：native/canonical 表达之间不存在本次 adapter 支持的无损投影。
-- `SOURCE_ERROR`：reader provider 的下层输入/parse/source 失败。
-- `SINK_ERROR`：writer provider 的下层输出/sink 失败。
-- `CALLBACK_ERROR`：provider 返回未知/违反 callback contract 的状态。
+- `LIMIT_EXCEEDED`：显式资源限制被触发，例如 `skip_value` 超过 `max_depth`。
+- `UNSUPPORTED`：native/canonical 表达之间不存在本 adapter 支持的无损投影。
+- `SOURCE_ERROR`：reader provider 的下层 input/parse/source 失败。
+- `SINK_ERROR`：writer provider 的下层 output/sink 失败。
+- `CALLBACK_ERROR`：provider 返回未知或违反 callback contract 的状态。
 
 CSerde status 只表达 canonical protocol 层粗粒度结果。未来 TurboParser adapter 可在其 context 中保留 format-specific line/column/parser diagnostics；CSerde 不复制第二套 parser error model。
 
@@ -179,8 +179,6 @@ MAP_END
 
 ### 6.2 scalar payload
 
-v1 payload：
-
 ```c
 typedef struct cserde_token {
     cserde_token_kind kind;
@@ -198,7 +196,7 @@ typedef struct cserde_token {
 
 - `SINT` 使用 `int64_t`。
 - `UINT` 使用 `uint64_t`。
-- `FLOAT` 使用 IEEE/binary64 `double` storage；canonical layer 允许 non-finite，具体 writer/format/CBind policy 可拒绝。
+- `FLOAT` 使用 binary64 `double` storage；canonical layer 允许 non-finite，具体 writer/format/CBind policy 可拒绝。
 - native textual adapter 必须先精确区分 integer 与 floating syntax；整数禁止经 `double` round-trip 后再恢复。
 - 超出 int64/uint64 的整数在 D1/D2 v1 返回 `VALUE_OUT_OF_RANGE`，不偷偷转 FLOAT。
 - arbitrary precision decimal/bigint 不属于 D1；后续若需要，以明确 extension/custom semantic contract 增加，而不是改变既有整数含义。
@@ -221,14 +219,13 @@ typedef struct cserde_slice {
 规则：
 
 - CSerde token 永远不拥有 `data`。
-- `size == 0` 时 `data == NULL` 合法。
-- 非空 slice 必须 `data != NULL`。
+- `size == 0` 时 `data == NULL` 合法；非空 slice 必须 `data != NULL`。
 - slice 不保证 NUL terminator，`size` 不包含 terminator。
-- `STRING` producer 保证内容是其 canonical text representation；v1 约定为 UTF-8。core 做 shallow contract validation，不重复执行 native parser 已完成的 Unicode validation。
+- `STRING` producer 保证 canonical text 为 UTF-8。core 只做 shallow contract validation，不重复 native parser 已完成的 Unicode validation。
 - `BYTES` 是任意 bytes。
-- `TRANSIENT`：最迟在下一次会消费/推进 reader 的操作后失效，包括下一次 `cserde_reader_next()` 或 `cserde_reader_skip_value()`。
-- `STABLE`：reader 推进不会使 view 失效；实际终止 lifetime 由 adapter 的 backing source owner contract 决定。报告 `STABLE` 的 adapter 必须在其 constructor/API 中明确 source owner 生命周期。
-- `STABLE` 不等于 ownership transfer。CBind 未来只有在 target 明确允许 borrow、调用方保持 source owner 存活且 token 报告 `STABLE` 时才能 zero-copy borrow。
+- `TRANSIENT`：最迟在下一次消费/推进 reader 的操作后失效，包括下一次 `cserde_reader_next()` 或 `cserde_reader_skip_value()`。
+- `STABLE`：reader 推进不会使 view 失效；终止 lifetime 由 adapter 的 backing source owner contract 决定。报告 `STABLE` 的 adapter 必须在其 constructor/API 中明确 source owner 生命周期。
+- `STABLE` 不等于 ownership transfer。未来 CBind 只有在 target 明确允许 borrow、调用方保持 source owner 存活且 token 报告 `STABLE` 时才能 zero-copy borrow。
 
 ## 7. Token validation
 
@@ -260,7 +257,15 @@ typedef struct cserde_reader_ops {
 } cserde_reader_ops;
 ```
 
-v1 required prefix 到 `.next`。validation 使用 field-end prefix，禁止 `struct_size >= sizeof(current_struct)` 作为兼容条件。未来 optional reader capability 只能尾部追加。
+v1 required prefix 到 `.next`。validation 使用 field-end prefix，禁止以 `struct_size >= sizeof(current_struct)` 判断兼容。未来 optional reader capability 只能尾部追加。
+
+reader provider 的 `next` 允许返回：
+
+```text
+OK / DONE / VALUE_OUT_OF_RANGE / LIMIT_EXCEEDED / UNSUPPORTED / SOURCE_ERROR
+```
+
+其中 `OK` 必须填充合法 token。其它已定义 status（例如 `SINK_ERROR`、`INVALID_STATE`）若从 reader callback 返回，也视为 callback contract violation，facade 规范化为 `CALLBACK_ERROR`。
 
 ### 8.2 reader facade
 
@@ -280,7 +285,7 @@ typedef struct cserde_reader {
 } cserde_reader;
 ```
 
-`cserde_reader` 借用 `ops` 与 `context`，不负责销毁 provider context。facade 是同一 TurboUtils release 内的 stack value type；跨版本 provider extensibility 由 versioned ops 承担，不把 facade 当插件 ABI extension root。
+`cserde_reader` 借用 `ops` 与 `context`，不负责销毁 provider context。`context == NULL` 合法，只要 provider callback 能处理。facade 是同一 TurboUtils release 内的 stack value type；跨版本 provider extensibility 由 versioned ops 承担，不把 facade 当插件 ABI extension root。
 
 公开入口：
 
@@ -303,18 +308,20 @@ cserde_status cserde_reader_skip_value(
 
 `init`：
 
-- reader 必须处于 zero storage；
+- caller 提供 zero-initialized reader；
 - 验证 ops prefix/ABI/next；
 - 成功后 state=`READY`, status=`OK`；
-- 不调用 provider。
+- 不调用 provider；
+- 失败时 reader 保持 ZERO，不留下半初始化 facade。
 
 `next`：
 
+- `reader == NULL`、`out == NULL` 等 caller precondition error 直接返回 `INVALID_ARGUMENT`，不推进 provider、不改变已有 READY/DONE/FAILED state；
 - `READY` 才调用 provider；
-- provider `OK` 时必须产生 `cserde_token_valid()` 的 token，否则 facade 转成 `INVALID_TOKEN` 并进入 `FAILED`；
+- callback 写入临时 token；只有 callback=`OK` 且 `cserde_token_valid()` 后才复制到 caller `out`，因此任何非 OK 返回都不污染 `out`；
 - provider `DONE` -> state=`DONE`；
-- provider 返回已知 error -> state=`FAILED`，status sticky；
-- provider 返回未知枚举值或违反 callback contract -> `CALLBACK_ERROR` + `FAILED`；
+- provider 返回允许的 error -> state=`FAILED`，status sticky；
+- provider 返回非法 status 或违反 callback contract -> `CALLBACK_ERROR` + `FAILED`；
 - `DONE` 后再次 `next` 直接返回 `DONE`，不再次调用 provider；
 - `FAILED` 后再次 `next` 返回 sticky error，禁止继续推进 source。
 
@@ -335,13 +342,14 @@ value := NULL | BOOL | SINT | UINT | FLOAT | STRING | BYTES
 - scalar：消费一个 token，返回 `OK`；
 - ARRAY：递归消费元素直到匹配 `ARRAY_END`；
 - MAP：按 key/value 成对递归消费直到匹配 `MAP_END`；canonical MAP key 可为任意 value；
+- 在第一个 token 前即 `DONE` -> `UNEXPECTED_END`；
 - mismatched/unexpected END -> `INVALID_TOKEN`；
 - MAP 出现孤立 key -> `INVALID_TOKEN`；
 - container 未闭合而 reader `DONE` -> `UNEXPECTED_END`；
 - nesting 深度超过 `max_depth` -> `LIMIT_EXCEEDED`；
 - `max_depth` 计数 opened ARRAY/MAP，root container 深度为 1；scalar 不消耗 depth budget。
 
-实现允许使用受 `max_depth` 约束的 C call stack recursion，不做 heap allocation。任何 skip failure 都把 reader 置为 `FAILED`，因为 stream 已可能部分消费，禁止 caller 猜测恢复点。
+实现允许使用受 `max_depth` 约束的 C call stack recursion，不做 heap allocation。任何 skip failure 都把 reader 置为 `FAILED` 并记录 sticky error；即使内部 `next()` 已先进入 DONE，helper 也把“不完整 value 的 DONE”提升为 `UNEXPECTED_END/FAILED`。stream 已可能部分消费，禁止 caller 猜测恢复点。
 
 该 helper 是未来 CBind “ignore unknown field” 的唯一 generic skip primitive；CBind 不自己复制一套 token nesting walker。
 
@@ -367,6 +375,14 @@ typedef struct cserde_writer_ops {
 ```
 
 v1 required prefix 到 `.finish`，同样使用 field-end prefix validation。
+
+writer `write`/`finish` callback 允许返回：
+
+```text
+OK / LIMIT_EXCEEDED / UNSUPPORTED / SINK_ERROR
+```
+
+`DONE`、reader-only status 或未知枚举值均是 callback contract violation，facade 转为 `CALLBACK_ERROR`。
 
 ### 10.2 writer facade
 
@@ -403,26 +419,28 @@ cserde_status cserde_writer_finish(cserde_writer *writer);
 
 writer 语义：
 
-- `write` 只接受 `READY` + valid token；
-- callback `OK` 保持 READY；已知 error -> FAILED/sticky；未知状态或 callback 返回 `DONE` -> CALLBACK_ERROR/FAILED；
-- `finish` 只接受 READY；callback `OK` -> FINISHED；失败 -> FAILED/sticky；
+- init 需要 zero-initialized writer；失败保持 ZERO，无部分写入；`context == NULL` 合法；
+- caller precondition error 不调用 provider，也不 poison 一个仍可用的 READY writer；
+- `write` 只接受 READY + valid token；invalid token 返回 `INVALID_TOKEN`，provider 不被调用，writer 保持 READY；
+- callback `OK` 保持 READY；允许的 callback error -> FAILED/sticky；非法 callback status -> CALLBACK_ERROR/FAILED；
+- `finish` 只接受 READY；callback `OK` -> FINISHED；允许的 callback error -> FAILED/sticky；
 - FINISHED 后再次 write/finish -> `INVALID_STATE`，不再次调用 provider；
-- CSerde facade v1 不维护完整 output nesting stack。结构正确性由 token producer 与 concrete writer backend共同承担；未来 CBind encoder 自身按 semantic recursion 产生完整 value，JSON/YAML 等 writer state machine 仍应拒绝非法序列。
+- CSerde facade v1 不维护完整 output nesting stack。结构正确性由 token producer 与 concrete writer backend 共同承担；未来 CBind encoder 按 semantic recursion 产生完整 value，JSON/YAML 等 writer state machine 仍应拒绝非法序列。
 
-不在 v1 添加 `abort`。对流式 sink，已经输出的 bytes 通常无法回滚；伪造一个 abort API 不会提供事务语义。CBind encode 的错误模型后续必须明确“已写前缀可能存在”。
+不在 v1 添加 `abort`。对流式 sink，已经输出的 bytes 通常无法回滚；伪造 abort API 不会提供事务语义。CBind encode 的错误模型后续必须明确“已写前缀可能存在”。
 
-## 11. Optional byte sink primitive
+## 11. Byte sink primitive
 
 为 TurboParser format writer adapter 提供最小 byte sink callback type，但 CSerde core 不直接实现 serializer：
 
 ```c
-typedef cserde_status (*cserde_write_fn)(
+typedef cserde_status (*cserde_byte_sink_fn)(
     void *context,
     const void *data,
     size_t size);
 ```
 
-它只表达“adapter 把编码后的 bytes 交给调用者”。D1 不提供 buffering、file/socket sink、allocator 或 retry policy。
+byte sink 的合法成功/失败结果是 `OK / LIMIT_EXCEEDED / SINK_ERROR`；其它 status 由具体 adapter 视为 callback contract violation。D1 不提供 buffering、file/socket sink、allocator 或 retry policy。
 
 ## 12. Threading 与 ownership
 
@@ -458,7 +476,7 @@ cserde/tests/support/recording.{h,c}
 - 使用标准 C11-compatible data types；
 - 在 C++ 下提供 `extern "C"` function linkage；
 - 不暴露 `_Generic`、statement-expression、GNU extension；
-- C++17 consumer 能 include `<cserde/cserde.h>` 并检查 token/ops/facade ABI；
+- C++17 consumer 能 include `<cserde/cserde.h>` 并检查 token/ops/facade surface；
 - 不要求异常；API 全部以 `cserde_status` 返回。
 
 ## 15. ABI 与兼容性
@@ -519,17 +537,20 @@ D1 只有同时证明以下行为才可结束：
 2. empty/non-empty STRING/BYTES slice 与 lifetime 校验正确；
 3. reader ops short prefix / bad ABI / missing next 被拒绝；
 4. writer ops short prefix / bad ABI / missing write/finish 被拒绝；
-5. reader OK -> DONE 与 sticky FAILED 状态正确；
-6. invalid token callback 被 facade 转换为 INVALID_TOKEN；
-7. unknown callback status 被规范化为 CALLBACK_ERROR；
-8. `skip_value` 能跨 nested ARRAY/MAP；
-9. `skip_value` 检测 mismatched END、孤立 MAP key、unexpected end 与 depth limit；
-10. writer write/finish terminal state 正确；
-11. recording reader/writer 可作为无 allocation deterministic test codec；
-12. C++17 public include/ABI contract 通过；
-13. CSerde target 不依赖 CMeta/CFlow/TurboSTL/utils；
-14. 全仓没有 JSON/YAML/XML/CSV parser implementation 被加入 TurboUtils；
-15. exact-head Linux + Windows release CI 通过。
+5. reader init failure 无部分写入；
+6. reader OK -> DONE 与 sticky FAILED 状态正确；
+7. reader 非 OK 不污染 caller `out`；
+8. invalid token callback 被 facade 转换为 INVALID_TOKEN；
+9. reader/writer 非法 callback status 被规范化为 CALLBACK_ERROR；
+10. `skip_value` 能跨 nested ARRAY/MAP；
+11. `skip_value` 检测 initial/unexpected DONE、mismatched END、孤立 MAP key与 depth limit；
+12. writer init failure 无部分写入，invalid input token 不调用 provider 且不 poison READY writer；
+13. writer write/finish terminal state 正确；
+14. recording reader/writer 可作为无 allocation deterministic test codec；
+15. C++17 public include contract 通过；
+16. CSerde target 不依赖 CMeta/CFlow/TurboSTL/utils；
+17. 全仓没有 JSON/YAML/XML/CSV parser implementation 被加入 TurboUtils；
+18. exact-head Linux + Windows release CI 通过。
 
 ## 18. 后续边界
 
