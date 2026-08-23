@@ -15,6 +15,11 @@ typedef enum cflow_admission_status {
     CFLOW_ADMISSION_ALLOCATION_FAILED
 } cflow_admission_status;
 
+enum {
+    CFLOW_EXECUTOR_DEFAULT_CAPACITY = 4096u,
+    CFLOW_TIMER_DEFAULT_CAPACITY = 4096u
+};
+
 typedef uint64_t cflow_task_id;
 
 typedef struct cflow_schedule_result {

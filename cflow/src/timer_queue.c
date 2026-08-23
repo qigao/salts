@@ -4,30 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static cflow_admission_status ensure_capacity(cflow_timer_queue *queue,
-                                              size_t need) {
-    size_t capacity;
-    cflow_timer_task *items;
-
-    if (need <= queue->capacity) return CFLOW_ADMISSION_ACCEPTED;
-    capacity = queue->capacity ? queue->capacity : 16u;
-    while (capacity < need) {
-        if (capacity > SIZE_MAX / 2u) {
-            capacity = need;
-            break;
-        }
-        capacity *= 2u;
-    }
-    if (capacity > SIZE_MAX / sizeof(*queue->items))
-        return CFLOW_ADMISSION_FULL;
-    items = (cflow_timer_task *)realloc(queue->items,
-                                        capacity * sizeof(*queue->items));
-    if (!items) return CFLOW_ADMISSION_ALLOCATION_FAILED;
-    queue->items = items;
-    queue->capacity = capacity;
-    return CFLOW_ADMISSION_ACCEPTED;
-}
-
 static size_t earliest_index(const cflow_timer_queue *queue) {
     size_t best = SIZE_MAX;
     for (size_t i = 0; i < queue->count; ++i) {
@@ -51,8 +27,19 @@ static void remove_at(cflow_timer_queue *queue, size_t index) {
 }
 
 bool cflow_timer_queue_init(cflow_timer_queue *queue) {
+    return cflow_timer_queue_init_with_capacity(
+        queue, CFLOW_TIMER_DEFAULT_CAPACITY);
+}
+
+bool cflow_timer_queue_init_with_capacity(cflow_timer_queue *queue,
+                                          size_t capacity) {
     if (!queue) return false;
     memset(queue, 0, sizeof(*queue));
+    if (capacity == 0u || capacity > SIZE_MAX / sizeof(cflow_timer_task))
+        return false;
+    queue->items = (cflow_timer_task *)calloc(capacity, sizeof(*queue->items));
+    if (!queue->items) return false;
+    queue->capacity = capacity;
     queue->next_id = 1u;
     return true;
 }
@@ -67,17 +54,12 @@ cflow_schedule_result cflow_timer_queue_try_schedule(cflow_timer_queue *queue,
                                                      cflow_deadline deadline,
                                                      cflow_task_fn fn,
                                                      void *user) {
-    cflow_admission_status status;
     cflow_timer_id id;
     if (!queue || !fn)
         return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
-    if (queue->count == SIZE_MAX || queue->next_id == 0u ||
+    if (queue->count >= queue->capacity || queue->next_id == 0u ||
         queue->next_order == UINT64_MAX)
         return (cflow_schedule_result){CFLOW_ADMISSION_FULL, 0u};
-
-    status = ensure_capacity(queue, queue->count + 1u);
-    if (status != CFLOW_ADMISSION_ACCEPTED)
-        return (cflow_schedule_result){status, 0u};
 
     id = queue->next_id++;
     queue->items[queue->count++] = (cflow_timer_task){

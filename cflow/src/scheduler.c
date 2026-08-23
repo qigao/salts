@@ -137,16 +137,27 @@ CMETA_IMPLEMENTS(cflow_scheduler, test_loop,
 );
 
 bool cflow_scheduler_test_init(cflow_scheduler *scheduler) {
+    return cflow_scheduler_test_init_with_capacity(
+        scheduler, CFLOW_EXECUTOR_DEFAULT_CAPACITY,
+        CFLOW_TIMER_DEFAULT_CAPACITY);
+}
+
+bool cflow_scheduler_test_init_with_capacity(cflow_scheduler *scheduler,
+                                             size_t ready_capacity,
+                                             size_t timer_capacity) {
     cflow_test_loop_state *state;
 
     if (!scheduler) return false;
     memset(scheduler, 0, sizeof(*scheduler));
+    if (ready_capacity == 0u || timer_capacity == 0u) return false;
     state = (cflow_test_loop_state *)calloc(1, sizeof(*state));
     if (!state) return false;
 
     if (!cflow_clock_virtual_init(&state->clock, (cflow_instant){0u}) ||
-        !cflow_executor_manual_init(&state->executor) ||
-        !cflow_timer_queue_init(&state->timers)) {
+        !cflow_executor_manual_init_with_capacity(&state->executor,
+                                                  ready_capacity) ||
+        !cflow_timer_queue_init_with_capacity(&state->timers,
+                                              timer_capacity)) {
         if (cflow_clock_valid(&state->clock)) cflow_clock_destroy(&state->clock);
         if (cflow_executor_valid(&state->executor))
             cflow_executor_destroy(&state->executor);

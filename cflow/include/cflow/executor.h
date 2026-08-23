@@ -29,8 +29,15 @@ enum {
 CMETA_INTERFACE(cflow_executor, CMETA_EXECUTOR_METHODS);
 
 bool cflow_executor_manual_init(cflow_executor *executor);
+bool cflow_executor_manual_init_with_capacity(cflow_executor *executor,
+                                              size_t capacity);
 bool cflow_executor_serial_init(cflow_executor *executor);
+bool cflow_executor_serial_init_with_capacity(cflow_executor *executor,
+                                              size_t capacity);
 bool cflow_executor_worker_init(cflow_executor *executor, size_t workers);
+bool cflow_executor_worker_init_with_capacity(cflow_executor *executor,
+                                              size_t workers,
+                                              size_t capacity);
 
 #ifdef __cplusplus
 }

@@ -21,35 +21,11 @@ typedef struct cflow_pool_executor_state {
     turbo_threadpool_t *pool;
 } cflow_pool_executor_state;
 
-static bool manual_ensure_capacity(cflow_manual_executor_state *state, size_t need) {
-    size_t capacity;
-    cflow_manual_task *tasks;
-
-    if (need <= state->capacity) return true;
-    capacity = state->capacity ? state->capacity : 16u;
-    while (capacity < need) {
-        if (capacity > SIZE_MAX / 2u) {
-            capacity = need;
-            break;
-        }
-        capacity *= 2u;
-    }
-    if (capacity > SIZE_MAX / sizeof(*state->tasks)) return false;
-    tasks = (cflow_manual_task *)realloc(state->tasks,
-                                         capacity * sizeof(*state->tasks));
-    if (!tasks) return false;
-    state->tasks = tasks;
-    state->capacity = capacity;
-    return true;
-}
-
 static cflow_admission_status manual_try_post(void *self, cflow_task_fn fn,
                                               void *user) {
     cflow_manual_executor_state *state = (cflow_manual_executor_state *)self;
     if (!state || !fn) return CFLOW_ADMISSION_INVALID_ARGUMENT;
-    if (state->count == SIZE_MAX) return CFLOW_ADMISSION_FULL;
-    if (!manual_ensure_capacity(state, state->count + 1u))
-        return CFLOW_ADMISSION_ALLOCATION_FAILED;
+    if (state->count >= state->capacity) return CFLOW_ADMISSION_FULL;
     state->tasks[state->count++] = (cflow_manual_task){fn, user};
     return CFLOW_ADMISSION_ACCEPTED;
 }
@@ -188,24 +164,43 @@ CMETA_IMPLEMENTS(cflow_executor, worker_executor,
     .destroy = pool_destroy
 );
 
-bool cflow_executor_manual_init(cflow_executor *executor) {
+bool cflow_executor_manual_init_with_capacity(cflow_executor *executor,
+                                              size_t capacity) {
     cflow_manual_executor_state *state;
     if (!executor) return false;
     memset(executor, 0, sizeof(*executor));
+    if (capacity == 0u || capacity > SIZE_MAX / sizeof(cflow_manual_task))
+        return false;
     state = (cflow_manual_executor_state *)calloc(1, sizeof(*state));
     if (!state) return false;
+    state->tasks = (cflow_manual_task *)calloc(capacity, sizeof(*state->tasks));
+    if (!state->tasks) {
+        free(state);
+        return false;
+    }
+    state->capacity = capacity;
     *executor = manual_executor_as_cflow_executor(state);
     return true;
 }
 
+bool cflow_executor_manual_init(cflow_executor *executor) {
+    return cflow_executor_manual_init_with_capacity(
+        executor, CFLOW_EXECUTOR_DEFAULT_CAPACITY);
+}
+
 static bool pool_executor_init(cflow_executor *executor, size_t workers,
-                               bool serial) {
+                               size_t capacity, bool serial) {
     cflow_pool_executor_state *state;
-    if (!executor || workers == 0u || workers > (size_t)INT_MAX) return false;
+    turbo_threadpool_config_t config;
+    if (!executor) return false;
     memset(executor, 0, sizeof(*executor));
+    if (workers == 0u || workers > (size_t)INT_MAX || capacity == 0u)
+        return false;
     state = (cflow_pool_executor_state *)calloc(1, sizeof(*state));
     if (!state) return false;
-    state->pool = turbo_threadpool_create((int)workers);
+    config.num_threads = (int)workers;
+    config.queue_capacity = capacity;
+    state->pool = turbo_threadpool_create_with_config(&config);
     if (!state->pool) {
         free(state);
         return false;
@@ -216,9 +211,22 @@ static bool pool_executor_init(cflow_executor *executor, size_t workers,
 }
 
 bool cflow_executor_serial_init(cflow_executor *executor) {
-    return pool_executor_init(executor, 1u, true);
+    return cflow_executor_serial_init_with_capacity(
+        executor, CFLOW_EXECUTOR_DEFAULT_CAPACITY);
+}
+
+bool cflow_executor_serial_init_with_capacity(cflow_executor *executor,
+                                              size_t capacity) {
+    return pool_executor_init(executor, 1u, capacity, true);
 }
 
 bool cflow_executor_worker_init(cflow_executor *executor, size_t workers) {
-    return pool_executor_init(executor, workers, false);
+    return cflow_executor_worker_init_with_capacity(
+        executor, workers, CFLOW_EXECUTOR_DEFAULT_CAPACITY);
+}
+
+bool cflow_executor_worker_init_with_capacity(cflow_executor *executor,
+                                              size_t workers,
+                                              size_t capacity) {
+    return pool_executor_init(executor, workers, capacity, false);
 }

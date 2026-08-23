@@ -26,6 +26,8 @@ typedef struct cflow_timer_queue {
 } cflow_timer_queue;
 
 bool cflow_timer_queue_init(cflow_timer_queue *queue);
+bool cflow_timer_queue_init_with_capacity(cflow_timer_queue *queue,
+                                          size_t capacity);
 void cflow_timer_queue_destroy(cflow_timer_queue *queue);
 cflow_schedule_result cflow_timer_queue_try_schedule(cflow_timer_queue *queue,
                                                      cflow_deadline deadline,

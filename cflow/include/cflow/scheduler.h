@@ -35,7 +35,14 @@ enum {
 CMETA_INTERFACE(cflow_scheduler, CMETA_SCHEDULER_METHODS);
 
 bool cflow_scheduler_test_init(cflow_scheduler *scheduler);
+bool cflow_scheduler_test_init_with_capacity(cflow_scheduler *scheduler,
+                                             size_t ready_capacity,
+                                             size_t timer_capacity);
 bool cflow_scheduler_worker_init(cflow_scheduler *scheduler, size_t workers);
+bool cflow_scheduler_worker_init_with_capacity(cflow_scheduler *scheduler,
+                                               size_t workers,
+                                               size_t ready_capacity,
+                                               size_t timer_capacity);
 
 cflow_task_id cflow_scheduler_post(cflow_scheduler *scheduler,
                                    cflow_task_fn fn,

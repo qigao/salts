@@ -210,10 +210,21 @@ CMETA_IMPLEMENTS(cflow_scheduler, worker_scheduler,
 );
 
 bool cflow_scheduler_worker_init(cflow_scheduler *scheduler, size_t workers) {
+    return cflow_scheduler_worker_init_with_capacity(
+        scheduler, workers, CFLOW_EXECUTOR_DEFAULT_CAPACITY,
+        CFLOW_TIMER_DEFAULT_CAPACITY);
+}
+
+bool cflow_scheduler_worker_init_with_capacity(cflow_scheduler *scheduler,
+                                               size_t workers,
+                                               size_t ready_capacity,
+                                               size_t timer_capacity) {
     worker_state *state;
 
-    if (!scheduler || workers == 0u) return false;
+    if (!scheduler) return false;
     memset(scheduler, 0, sizeof(*scheduler));
+    if (workers == 0u || ready_capacity == 0u || timer_capacity == 0u)
+        return false;
     state = (worker_state *)calloc(1, sizeof(*state));
     if (!state) return false;
 
@@ -221,8 +232,10 @@ bool cflow_scheduler_worker_init(cflow_scheduler *scheduler, size_t workers) {
     turbo_cond_init(&state->changed);
     if (!state->mutex || !state->changed ||
         !cflow_clock_system_init(&state->clock) ||
-        !cflow_executor_worker_init(&state->executor, workers) ||
-        !cflow_timer_queue_init(&state->timers) ||
+        !cflow_executor_worker_init_with_capacity(&state->executor, workers,
+                                                  ready_capacity) ||
+        !cflow_timer_queue_init_with_capacity(&state->timers,
+                                              timer_capacity) ||
         turbo_thread_create(&state->timer_thread, worker_timer_main, state) != 0) {
         if (state->timer_thread) (void)turbo_thread_join(&state->timer_thread);
         cflow_timer_queue_destroy(&state->timers);
