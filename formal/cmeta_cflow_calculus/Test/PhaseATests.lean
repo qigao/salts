@@ -5,6 +5,7 @@ import PhaseATests.PhaseB
 import PhaseATests.PhaseC
 import PhaseATests.PhaseD
 import PhaseATests.PhaseE
+import PhaseATests.PhaseF
 
 open CMetaCFlowCalculus.CMeta
 open CMetaCFlowCalculus.CFlow

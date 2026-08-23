@@ -85,6 +85,38 @@ structure UnaryMeaning (Γ : Env) (inputTy outputTy : Ty) where
   callable : UnaryCallable Γ inputTy outputTy
   apply : Value inputTy → Value outputTy
 
+/-- Semantic law required to justify duplicate elimination for an endomap. -/
+def IdempotentLaw {Γ : Env} {ty : Ty}
+    (meaning : UnaryMeaning Γ ty ty) : Prop :=
+  ∀ value, meaning.apply (meaning.apply value) = meaning.apply value
+
+/-- Complete premises for optimizer duplicate-idempotent Map elimination. -/
+structure IdempotentEndomapPremises (Γ : Env) (ty : Ty) where
+  meaning : UnaryMeaning Γ ty ty
+  pure : meaning.callable.effect = .pure
+  total : meaning.callable.properties .total
+  declaredIdempotent : meaning.callable.properties .idempotent
+  idempotentLaw : IdempotentLaw meaning
+
+/--
+Proof-carrying semantic rewrites. Unlike the stable R1–R15 catalogue, this
+relation models optimizer implementation certificates and composes individual
+steps without treating a property bit as its mathematical law.
+-/
+inductive CertifiedRewrite :
+    {α : Type} → StreamResult α → StreamResult α → Prop where
+  | refl {α : Type} (stream : StreamResult α) : CertifiedRewrite stream stream
+  | idempotentMap {Γ : Env} {ty : Ty}
+      (premises : IdempotentEndomapPremises Γ ty)
+      (stream : StreamResult (Value ty)) :
+      CertifiedRewrite
+        ((stream.map premises.meaning.apply).map premises.meaning.apply)
+        (stream.map premises.meaning.apply)
+  | trans {α : Type} {first second third : StreamResult α}
+      (firstSecond : CertifiedRewrite first second)
+      (secondThird : CertifiedRewrite second third) :
+      CertifiedRewrite first third
+
 /-- A declared predicate paired with its mathematical interpretation. -/
 structure PredicateMeaning (Γ : Env) (inputTy : Ty) where
   callable : UnaryCallable Γ inputTy .bool

@@ -13,6 +13,16 @@ private theorem list_map_identity (transform : α → α)
       simp only [List.map]
       rw [identity head, ih]
 
+private theorem list_map_idempotent (transform : α → α)
+    (idempotent : ∀ value, transform (transform value) = transform value)
+    (values : List α) :
+    (values.map transform).map transform = values.map transform := by
+  induction values with
+  | nil => rfl
+  | cons head tail ih =>
+      simp only [List.map]
+      rw [idempotent head, ih]
+
 private theorem list_take_map (transform : α → β) (count : Nat)
     (values : List α) :
     (values.map transform).take count = (values.take count).map transform := by
@@ -104,6 +114,28 @@ theorem r2_map_fusion {Γ : Env} {inputTy middleTy outputTy : Ty}
       stream.map (fun value => second.apply (first.apply value)) := by
   cases stream
   simp [StreamResult.map, List.map_map]
+
+/-- A duplicate pure/total endomap may be removed only with its semantic law. -/
+theorem map_idempotent_elimination {Γ : Env} {ty : Ty}
+    (premises : IdempotentEndomapPremises Γ ty)
+    (stream : StreamResult (Value ty)) :
+    (stream.map premises.meaning.apply).map premises.meaning.apply =
+      stream.map premises.meaning.apply := by
+  cases stream
+  simp [StreamResult.map,
+    list_map_idempotent premises.meaning.apply premises.idempotentLaw]
+
+/-- Every finite composition of certified optimizer rewrites preserves all
+`StreamResult` observations, including effects, terminal outcome and ownership. -/
+theorem certified_rewrite_preserves_observations {α : Type}
+    {before after : StreamResult α}
+    (certificate : CertifiedRewrite before after) : before = after := by
+  induction certificate with
+  | refl => rfl
+  | idempotentMap premises stream =>
+      exact map_idempotent_elimination premises stream
+  | trans _ _ firstSecond secondThird =>
+      exact Eq.trans firstSecond secondThird
 
 /-- R3: a declared pure/total always-true predicate can be removed. -/
 theorem r3_filter_true {Γ : Env} {ty : Ty}
