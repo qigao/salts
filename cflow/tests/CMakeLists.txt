@@ -43,7 +43,7 @@ cmake_add_test(cflow_direct_test
 
 cmake_add_test(cflow_parallel_reduce_test
   SOURCES cflow_parallel_reduce_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_execution_test
