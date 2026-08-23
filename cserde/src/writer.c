@@ -17,7 +17,6 @@ static bool cserde_writer_ops_valid(const cserde_writer_ops *ops) {
 static bool cserde_writer_callback_status_valid(cserde_status status) {
     switch (status) {
         case CSERDE_OK:
-        case CSERDE_VALUE_OUT_OF_RANGE:
         case CSERDE_LIMIT_EXCEEDED:
         case CSERDE_UNSUPPORTED:
         case CSERDE_SINK_ERROR:
