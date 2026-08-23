@@ -19,8 +19,19 @@ typedef struct cflow_mailbox_impl {
     size_t capacity;
     size_t payload_stride;
     size_t max_payload_size;
+    size_t reserved_payload_bytes;
+    size_t head;
+    size_t count;
+    size_t peak_pending;
+    uint64_t accepted;
+    uint64_t received;
+    uint64_t rejected_full;
     turbo_mutex_t lock;
 } cflow_mailbox_impl;
+
+static void cflow_counter_increment(uint64_t *counter) {
+    if (*counter != UINT64_MAX) ++*counter;
+}
 
 static bool cflow_size_multiply(size_t left, size_t right, size_t *result) {
     if (result == NULL || left == 0u || right == 0u || left > SIZE_MAX / right)
@@ -127,8 +138,127 @@ cflow_mailbox_status cflow_mailbox_init(cflow_mailbox *mailbox,
     impl->capacity = capacity;
     impl->payload_stride = payload_stride;
     impl->max_payload_size = max_payload_size;
+    impl->reserved_payload_bytes = payload_bytes;
     mailbox->impl = impl;
     return CFLOW_MAILBOX_OK;
+}
+
+static bool cflow_mailbox_type_index(const cflow_mailbox_impl *impl,
+                                     cflow_event_id id,
+                                     size_t *type_index) {
+    size_t index;
+
+    if (impl == NULL || type_index == NULL || id == 0u) return false;
+    for (index = 0u; index < impl->schema_count; ++index) {
+        if (impl->schema[index].id == id) {
+            *type_index = index;
+            return true;
+        }
+    }
+    return false;
+}
+
+cflow_mailbox_status cflow_mailbox_try_send(cflow_mailbox *mailbox,
+                                            const cflow_event_view *event) {
+    cflow_mailbox_impl *impl =
+        mailbox != NULL ? (cflow_mailbox_impl *)mailbox->impl : NULL;
+    const cmeta_type_desc *schema_type;
+    size_t type_index;
+    size_t tail;
+
+    if (impl == NULL || event == NULL || event->payload_type == NULL ||
+        event->payload == NULL ||
+        !cflow_mailbox_type_index(impl, event->id, &type_index))
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    schema_type = impl->schema[type_index].payload_type;
+    if (!cmeta_type_equal(schema_type, event->payload_type))
+        return CFLOW_MAILBOX_TYPE_MISMATCH;
+
+    turbo_mutex_lock(&impl->lock);
+    if (impl->count == impl->capacity) {
+        cflow_counter_increment(&impl->rejected_full);
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_MAILBOX_FULL;
+    }
+    tail = (impl->head + impl->count) % impl->capacity;
+    memcpy(impl->payloads + tail * impl->payload_stride,
+           event->payload, schema_type->size);
+    impl->slots[tail].type_index = type_index;
+    ++impl->count;
+    if (impl->count > impl->peak_pending)
+        impl->peak_pending = impl->count;
+    cflow_counter_increment(&impl->accepted);
+    turbo_mutex_unlock(&impl->lock);
+    return CFLOW_MAILBOX_OK;
+}
+
+cflow_mailbox_status cflow_mailbox_try_receive(
+    cflow_mailbox *mailbox,
+    cflow_event_id *out_id,
+    const cmeta_type_desc **out_type,
+    void *out_payload,
+    size_t out_payload_capacity) {
+    cflow_mailbox_impl *impl =
+        mailbox != NULL ? (cflow_mailbox_impl *)mailbox->impl : NULL;
+    const cflow_event_type *event_type;
+    size_t head;
+
+    if (out_id != NULL) *out_id = 0u;
+    if (out_type != NULL) *out_type = NULL;
+    if (impl == NULL || out_id == NULL || out_type == NULL ||
+        out_payload == NULL)
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
+
+    turbo_mutex_lock(&impl->lock);
+    if (impl->count == 0u) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_MAILBOX_EMPTY;
+    }
+    head = impl->head;
+    event_type = &impl->schema[impl->slots[head].type_index];
+    if (out_payload_capacity < event_type->payload_type->size) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_MAILBOX_BUFFER_TOO_SMALL;
+    }
+    if (((uintptr_t)out_payload % event_type->payload_type->align) != 0u) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    }
+
+    memcpy(out_payload, impl->payloads + head * impl->payload_stride,
+           event_type->payload_type->size);
+    impl->head = (head + 1u) % impl->capacity;
+    --impl->count;
+    cflow_counter_increment(&impl->received);
+    *out_id = event_type->id;
+    *out_type = event_type->payload_type;
+    turbo_mutex_unlock(&impl->lock);
+    return CFLOW_MAILBOX_OK;
+}
+
+bool cflow_mailbox_get_stats(const cflow_mailbox *mailbox,
+                             cflow_mailbox_stats *out) {
+    cflow_mailbox_impl *impl =
+        mailbox != NULL ? (cflow_mailbox_impl *)mailbox->impl : NULL;
+    cflow_mailbox_stats snapshot;
+
+    if (impl == NULL || out == NULL) return false;
+    turbo_mutex_lock(&impl->lock);
+    snapshot.schema_count = impl->schema_count;
+    snapshot.capacity = impl->capacity;
+    snapshot.pending = impl->count;
+    snapshot.peak_pending = impl->peak_pending;
+    snapshot.payload_stride = impl->payload_stride;
+    snapshot.reserved_payload_bytes = impl->reserved_payload_bytes;
+    snapshot.accepted = impl->accepted;
+    snapshot.received = impl->received;
+    snapshot.rejected_full = impl->rejected_full;
+    snapshot.rejected_closed = 0u;
+    snapshot.rejected_cancelled = 0u;
+    snapshot.cancelled = 0u;
+    turbo_mutex_unlock(&impl->lock);
+    *out = snapshot;
+    return true;
 }
 
 size_t cflow_mailbox_payload_capacity(const cflow_mailbox *mailbox) {
