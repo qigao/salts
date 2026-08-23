@@ -57,6 +57,16 @@ cbind_status cbind_read_required(cbind_decode_state *state,
     return CBIND_SOURCE_ERROR;
 }
 
+cbind_status cbind_decode_value(cbind_decode_state *state,
+                                const cmeta_data_desc *shape,
+                                const cmeta_data_field_desc *field,
+                                size_t depth,
+                                void *out) {
+    if (shape->kind == CMETA_DATA_STRUCT)
+        return cbind_decode_struct(state, shape, field, depth, out);
+    return cbind_decode_scalar(state, shape, field, depth, out);
+}
+
 cbind_status cbind_decode(const cbind_context *context,
                           const cmeta_data_desc *shape,
                           cserde_reader *reader,
@@ -106,7 +116,7 @@ cbind_status cbind_decode(const cbind_context *context,
     state.scratch = (unsigned char *)context->scratch;
     state.scratch_used = 0u;
 
-    status = cbind_decode_scalar(&state, shape, NULL, 0u, out);
+    status = cbind_decode_value(&state, shape, NULL, 0u, out);
     if (status != CBIND_OK) {
         if (shape->kind == CMETA_DATA_STRUCT)
             cbind_struct_reset(shape, out);
