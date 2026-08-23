@@ -84,3 +84,95 @@ cserde_status cserde_reader_next(cserde_reader *reader, cserde_token *out) {
     }
     return cserde_reader_fail(reader, status);
 }
+
+static cserde_status cserde_reader_take_token(cserde_reader *reader,
+                                               cserde_token *token) {
+    cserde_status status = cserde_reader_next(reader, token);
+
+    if (status != CSERDE_DONE)
+        return status;
+    return cserde_reader_fail(reader, CSERDE_UNEXPECTED_END);
+}
+
+static cserde_status cserde_reader_skip_token(cserde_reader *reader,
+                                               const cserde_token *token,
+                                               size_t depth,
+                                               size_t max_depth) {
+    cserde_status status;
+    cserde_token child;
+
+    switch (token->kind) {
+        case CSERDE_NULL:
+        case CSERDE_BOOL:
+        case CSERDE_SINT:
+        case CSERDE_UINT:
+        case CSERDE_FLOAT:
+        case CSERDE_STRING:
+        case CSERDE_BYTES:
+            return CSERDE_OK;
+
+        case CSERDE_ARRAY_BEGIN:
+            if (depth >= max_depth)
+                return cserde_reader_fail(reader, CSERDE_LIMIT_EXCEEDED);
+            for (;;) {
+                status = cserde_reader_take_token(reader, &child);
+                if (status != CSERDE_OK)
+                    return status;
+                if (child.kind == CSERDE_ARRAY_END)
+                    return CSERDE_OK;
+                if (child.kind == CSERDE_MAP_END)
+                    return cserde_reader_fail(reader, CSERDE_INVALID_TOKEN);
+                status = cserde_reader_skip_token(
+                    reader, &child, depth + 1u, max_depth);
+                if (status != CSERDE_OK)
+                    return status;
+            }
+
+        case CSERDE_MAP_BEGIN:
+            if (depth >= max_depth)
+                return cserde_reader_fail(reader, CSERDE_LIMIT_EXCEEDED);
+            for (;;) {
+                status = cserde_reader_take_token(reader, &child);
+                if (status != CSERDE_OK)
+                    return status;
+                if (child.kind == CSERDE_MAP_END)
+                    return CSERDE_OK;
+                if (child.kind == CSERDE_ARRAY_END)
+                    return cserde_reader_fail(reader, CSERDE_INVALID_TOKEN);
+                status = cserde_reader_skip_token(
+                    reader, &child, depth + 1u, max_depth);
+                if (status != CSERDE_OK)
+                    return status;
+
+                status = cserde_reader_take_token(reader, &child);
+                if (status != CSERDE_OK)
+                    return status;
+                if (child.kind == CSERDE_ARRAY_END ||
+                    child.kind == CSERDE_MAP_END)
+                    return cserde_reader_fail(reader, CSERDE_INVALID_TOKEN);
+                status = cserde_reader_skip_token(
+                    reader, &child, depth + 1u, max_depth);
+                if (status != CSERDE_OK)
+                    return status;
+            }
+
+        case CSERDE_ARRAY_END:
+        case CSERDE_MAP_END:
+        default:
+            return cserde_reader_fail(reader, CSERDE_INVALID_TOKEN);
+    }
+}
+
+cserde_status cserde_reader_skip_value(cserde_reader *reader,
+                                        size_t max_depth) {
+    cserde_token token;
+    cserde_status status;
+
+    if (reader == NULL)
+        return CSERDE_INVALID_ARGUMENT;
+
+    status = cserde_reader_take_token(reader, &token);
+    if (status != CSERDE_OK)
+        return status;
+    return cserde_reader_skip_token(reader, &token, 0u, max_depth);
+}
