@@ -1,6 +1,7 @@
 #ifndef CFLOW_DIRECT_H
 #define CFLOW_DIRECT_H
 
+#include <cflow/opt.h>
 #include <cflow/stream.h>
 
 #include <stddef.h>
@@ -63,6 +64,14 @@ typedef struct cflow_aot_equivalence_witness {
   size_t matched_stage_count;
 } cflow_aot_equivalence_witness;
 
+/** Result committed after source, trace and optimized Graph all match. */
+typedef struct cflow_aot_optimized_equivalence_witness {
+  uint64_t source_graph_version;
+  uint64_t optimized_graph_version;
+  size_t matched_stage_count;
+  size_t applied_rewrite_count;
+} cflow_aot_optimized_equivalence_witness;
+
 /** Validate type continuity, contracts and dispatch-specific invariants.
  * @param ir Borrowed immutable Stage IR, valid for the call.
  * @param error Optional output receiving a borrowed static message on failure
@@ -96,6 +105,25 @@ bool cflow_aot_pipeline_ir_match_graph(const cflow_aot_pipeline_ir *ir,
                                        const cflow_graph *graph,
                                        cflow_aot_equivalence_witness *witness,
                                        const char **error);
+
+/** Match an exact normalized source, its optimizer-bound trace and output.
+ * The trace may justify only rules understood by this checker. All objects are
+ * borrowed and must remain unchanged for the call.
+ * @param ir Borrowed complete pre-optimization Stage IR.
+ * @param normalized_source Exact borrowed source passed to traced optimization.
+ * @param optimized Exact borrowed destination produced by traced optimization.
+ * @param trace Borrowed committed optimizer trace bound to both Graph objects.
+ * @param witness Optional transactional result, cleared on failure.
+ * @param error Optional borrowed static failure message output.
+ * @return true only when source equivalence, every rewrite event and final
+ *         optimized equivalence are independently validated. */
+bool cflow_aot_pipeline_ir_match_optimized_graph(
+    const cflow_aot_pipeline_ir *ir,
+    const cflow_graph *normalized_source,
+    const cflow_graph *optimized,
+    const cflow_opt_trace *trace,
+    cflow_aot_optimized_equivalence_witness *witness,
+    const char **error);
 
 static inline bool cflow_direct_type_eligible(const cmeta_type_desc *type) {
   const cmeta_trait_flags required = CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY;

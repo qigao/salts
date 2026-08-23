@@ -36,6 +36,10 @@ typed(map, value, int, cflow_direct_plus_one, (int value)) { return value + 1; }
 
 typed(map, value, int, cflow_direct_times_two, (int value)) { return value * 2; }
 
+typed(map, idempotent, int, cflow_direct_clamp_nonnegative, (int value)) {
+  return value < 0 ? 0 : value;
+}
+
 static size_t cflow_direct_erased_invocations;
 
 static long cmeta_typed_cflow_direct_trap_map(int value) { return (long)value * 3L; }
@@ -92,6 +96,13 @@ cflow_direct_pipeline(cflow_direct_trap_pipeline, int, &cmeta_type_int, long, 1,
 
 cflow_direct_pipeline(cflow_direct_chain_pipeline, int, &cmeta_type_int, int, 2,
                       CFlowDirectChainSteps);
+
+#define CFlowDirectIdempotentSteps(M)                                                             \
+  CFlowDirectSteps(M, (map, int, int, cflow_direct_clamp_nonnegative),                            \
+                   (map, int, int, cflow_direct_clamp_nonnegative))
+
+cflow_direct_pipeline(cflow_direct_idempotent_pipeline, int, &cmeta_type_int, int, 2,
+                      CFlowDirectIdempotentSteps);
 
 suite("CFlow Direct executor") {
   before_each() {
@@ -202,6 +213,110 @@ suite("CFlow Direct executor") {
     cflow_graph_destroy(&optimized);
     cflow_graph_destroy(&normalized);
     cflow_stream_destroy(&drifted);
+    cflow_stream_destroy(&generated);
+  }
+
+  it("certifies idempotent Map deletion and preserves every execution result") {
+    const int input[] = {-3, 0, 4};
+    const int expected[] = {0, 0, 4};
+    int direct_output[3] = {-1, -1, -1};
+    size_t direct_count = 0u;
+    cflow_stream generated = {0};
+    cflow_graph normalized = {0};
+    cflow_graph optimized = {0};
+    cflow_opt_trace trace = {0};
+    cflow_opt_rewrite_event event = {0};
+    cflow_result source_result = {0};
+    cflow_result optimized_result = {0};
+    cflow_aot_equivalence_witness ordinary = {99u, 99u};
+    cflow_aot_optimized_equivalence_witness certified = {99u, 99u, 99u, 99u};
+    const cflow_aot_pipeline_ir *ir = cflow_direct_idempotent_pipeline_ir();
+    const char *error = NULL;
+
+    normalized.root = CMETA_INVALID_ID;
+    optimized.root = CMETA_INVALID_ID;
+
+    check_true(cflow_direct_idempotent_pipeline_build(&generated));
+    check_true(cflow_graph_normalize(&normalized, &generated.graph));
+    check_true(cflow_graph_optimize_with_trace(
+        &optimized, &normalized, (cflow_opt_options){CMETA_OPT_DEFAULT}, NULL, &trace));
+    check_equal(cflow_opt_trace_count(&trace), (size_t)1u);
+    check_true(cflow_opt_trace_event_at(&trace, 0u, &event));
+    check_equal(event.rule, CFLOW_OPT_RULE_IDEMPOTENT_MAP_ELIMINATION);
+    check_equal(event.source_subgraph, normalized.root);
+    check_equal(event.retained_node, (cflow_node_id)1u);
+    check_equal(event.retained_callable_index, (size_t)0u);
+    check_equal(event.removed_node, (cflow_node_id)2u);
+    check_equal(event.removed_callable_index, (size_t)0u);
+
+    check_false(cflow_aot_pipeline_ir_match_graph(ir, &optimized, &ordinary, &error));
+    check_not_null(error);
+    check_equal(ordinary.source_graph_version, UINT64_C(0));
+    check_equal(ordinary.matched_stage_count, (size_t)0u);
+
+    check_true(cflow_aot_pipeline_ir_match_optimized_graph(
+        ir, &normalized, &optimized, &trace, &certified, &error));
+    check_null(error);
+    check_equal(certified.source_graph_version, normalized.version);
+    check_equal(certified.optimized_graph_version, optimized.version);
+    check_equal(certified.matched_stage_count, (size_t)2u);
+    check_equal(certified.applied_rewrite_count, (size_t)1u);
+
+    check_equal(cflow_direct_idempotent_pipeline_eval_array(
+                    input, 3u, direct_output, 3u, &direct_count),
+                CFLOW_DIRECT_OK);
+    check_equal(direct_count, (size_t)3u);
+    check_equal(direct_output, expected, sizeof(expected));
+    check_true(cflow_eval_array(&normalized, input, 3u, &source_result));
+    check_true(cflow_eval_array(&optimized, input, 3u, &optimized_result));
+    check_true(cflow_result_equal(&source_result, &optimized_result));
+    check_equal(optimized_result.data, expected, sizeof(expected));
+
+    cflow_result_destroy(&optimized_result);
+    cflow_result_destroy(&source_result);
+    cflow_opt_trace_destroy(&trace);
+    cflow_graph_destroy(&optimized);
+    cflow_graph_destroy(&normalized);
+    cflow_stream_destroy(&generated);
+  }
+
+  it("rejects a certified rewrite trace replayed against another Graph object") {
+    cflow_stream generated = {0};
+    cflow_graph normalized = {0};
+    cflow_graph optimized = {0};
+    cflow_graph cloned = {0};
+    cflow_opt_trace trace = {0};
+    cflow_opt_rewrite_event untouched = {
+        (cflow_opt_rule)99, 99u, 99u, 99u, 99u, 99u};
+    cflow_aot_optimized_equivalence_witness witness = {99u, 99u, 99u, 99u};
+    const cflow_aot_pipeline_ir *ir = cflow_direct_idempotent_pipeline_ir();
+    const char *error = NULL;
+
+    normalized.root = CMETA_INVALID_ID;
+    optimized.root = CMETA_INVALID_ID;
+    cloned.root = CMETA_INVALID_ID;
+
+    check_true(cflow_direct_idempotent_pipeline_build(&generated));
+    check_true(cflow_graph_normalize(&normalized, &generated.graph));
+    check_true(cflow_graph_optimize_with_trace(
+        &optimized, &normalized, (cflow_opt_options){CMETA_OPT_DEFAULT}, NULL, &trace));
+    check_true(cflow_graph_clone(&cloned, &optimized));
+    check_false(cflow_aot_pipeline_ir_match_optimized_graph(
+        ir, &normalized, &cloned, &trace, &witness, &error));
+    check_not_null(error);
+    check_equal(witness.source_graph_version, UINT64_C(0));
+    check_equal(witness.optimized_graph_version, UINT64_C(0));
+    check_equal(witness.matched_stage_count, (size_t)0u);
+    check_equal(witness.applied_rewrite_count, (size_t)0u);
+
+    check_false(cflow_opt_trace_event_at(&trace, 1u, &untouched));
+    check_equal(untouched.rule, (cflow_opt_rule)99);
+    cflow_opt_trace_destroy(&trace);
+    cflow_opt_trace_destroy(&trace);
+
+    cflow_graph_destroy(&cloned);
+    cflow_graph_destroy(&optimized);
+    cflow_graph_destroy(&normalized);
     cflow_stream_destroy(&generated);
   }
 

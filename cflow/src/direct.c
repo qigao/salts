@@ -1,5 +1,6 @@
 #include <cflow/direct.h>
 #include <cflow/lower.h>
+#include <cflow/property.h>
 
 #include <string.h>
 
@@ -207,5 +208,156 @@ done:
   cflow_graph_destroy(&normalized);
   if (!matched) return aot_fail(error, failure != NULL ? failure : "AOT equivalence failed");
   if (error != NULL) *error = NULL;
+  return true;
+}
+
+typedef struct aot_source_coordinate {
+  cflow_node_id node;
+  size_t callable_index;
+} aot_source_coordinate;
+
+static bool aot_collect_source_coordinates(
+    const cflow_aot_pipeline_ir *ir,
+    const cflow_graph *source,
+    aot_source_coordinate coordinates[CFLOW_AOT_STAGE_LIMIT]) {
+  const cflow_subgraph *root;
+  cflow_node_id node_id;
+  size_t stage_index = 0u;
+
+  if (!ir || !source || source->subgraph_count != 1u ||
+      source->root >= source->subgraph_count)
+    return false;
+  root = &source->subgraphs[source->root];
+  node_id = root->entry;
+  while (stage_index < ir->stage_count) {
+    cflow_node_id successor = CMETA_INVALID_ID;
+    size_t first = stage_index;
+    const cflow_node *node;
+    if (!cflow_subgraph_single_successor(root, node_id, &successor)) return false;
+    node = cflow_subgraph_node(root, successor);
+    if (!aot_node_matches_stages(node, ir, &stage_index)) return false;
+    for (size_t index = first; index < stage_index; ++index) {
+      coordinates[index].node = successor;
+      coordinates[index].callable_index =
+          node->op == CFLOW_OP_MAP && node->fn_chain_count ? index - first : 0u;
+    }
+    node_id = successor;
+  }
+  return node_id == root->tail && cflow_subgraph_out_degree(root, node_id) == 0u;
+}
+
+static bool aot_find_coordinate(
+    const aot_source_coordinate coordinates[CFLOW_AOT_STAGE_LIMIT],
+    size_t stage_count,
+    cflow_node_id node,
+    size_t callable_index,
+    size_t *stage_index) {
+  if (!stage_index) return false;
+  for (size_t index = 0u; index < stage_count; ++index) {
+    if (coordinates[index].node == node &&
+        coordinates[index].callable_index == callable_index) {
+      *stage_index = index;
+      return true;
+    }
+  }
+  return false;
+}
+
+/* Time O(stages * rewrites + Graph), auxiliary space O(stages + normalized
+ * optimized Graph). Both stage arrays are hard-bounded by 16. */
+bool cflow_aot_pipeline_ir_match_optimized_graph(
+    const cflow_aot_pipeline_ir *ir,
+    const cflow_graph *normalized_source,
+    const cflow_graph *optimized,
+    const cflow_opt_trace *trace,
+    cflow_aot_optimized_equivalence_witness *witness,
+    const char **error) {
+  aot_source_coordinate coordinates[CFLOW_AOT_STAGE_LIMIT] = {{0}};
+  cflow_aot_stage_ir remaining_stages[CFLOW_AOT_STAGE_LIMIT] = {{0}};
+  bool removed[CFLOW_AOT_STAGE_LIMIT] = {false};
+  cflow_aot_pipeline_ir remaining = {0};
+  cflow_aot_equivalence_witness source_witness = {0};
+  cflow_aot_equivalence_witness optimized_witness = {0};
+  size_t rewrite_count;
+  size_t remaining_count = 0u;
+
+  if (error) *error = NULL;
+  if (witness) memset(witness, 0, sizeof(*witness));
+  if (!cflow_aot_pipeline_ir_validate(ir, error)) return false;
+  if (!normalized_source || !optimized || !trace ||
+      !cflow_graph_is_normalized(normalized_source))
+    return aot_fail(error, "AOT certificate requires a normalized source Graph");
+  if (!cflow_aot_pipeline_ir_match_graph(
+          ir, normalized_source, &source_witness, error))
+    return false;
+  if (!cflow_opt_trace_bound_to(trace, normalized_source, optimized))
+    return aot_fail(error, "AOT optimizer trace Graph binding is stale or different");
+  if (!aot_collect_source_coordinates(ir, normalized_source, coordinates))
+    return aot_fail(error, "AOT certificate could not index source stages");
+
+  rewrite_count = cflow_opt_trace_count(trace);
+  if (rewrite_count >= ir->stage_count)
+    return aot_fail(error, "AOT optimizer trace removes too many stages");
+  for (size_t index = 0u; index < rewrite_count; ++index) {
+    cflow_opt_rewrite_event event = {0};
+    size_t retained_index = 0u;
+    size_t removed_index = 0u;
+    size_t nearest;
+    const cflow_aot_stage_ir *retained;
+    const cflow_aot_stage_ir *deleted;
+
+    if (!cflow_opt_trace_event_at(trace, index, &event) ||
+        event.rule != CFLOW_OPT_RULE_IDEMPOTENT_MAP_ELIMINATION ||
+        event.source_subgraph != normalized_source->root ||
+        !aot_find_coordinate(coordinates, ir->stage_count,
+                             event.retained_node,
+                             event.retained_callable_index,
+                             &retained_index) ||
+        !aot_find_coordinate(coordinates, ir->stage_count,
+                             event.removed_node,
+                             event.removed_callable_index,
+                             &removed_index) ||
+        retained_index >= removed_index || removed[retained_index] ||
+        removed[removed_index])
+      return aot_fail(error, "AOT optimizer trace event coordinates are invalid");
+
+    nearest = removed_index;
+    do {
+      --nearest;
+    } while (removed[nearest] && nearest != 0u);
+    if (nearest != retained_index)
+      return aot_fail(error, "AOT optimizer trace deletion is not adjacent");
+
+    retained = &ir->stages[retained_index];
+    deleted = &ir->stages[removed_index];
+    if (retained->kind != CFLOW_DIRECT_STAGE_MAP ||
+        deleted->kind != CFLOW_DIRECT_STAGE_MAP ||
+        !cmeta_callable_same(*retained->callable, *deleted->callable) ||
+        !cflow_callable_declares_idempotent_endomap(*retained->callable) ||
+        !cflow_callable_declares_idempotent_endomap(*deleted->callable))
+      return aot_fail(error, "AOT optimizer trace lacks idempotent endomap premises");
+    removed[removed_index] = true;
+  }
+
+  for (size_t index = 0u; index < ir->stage_count; ++index)
+    if (!removed[index]) remaining_stages[remaining_count++] = ir->stages[index];
+  if (remaining_count == 0u)
+    return aot_fail(error, "AOT optimizer trace removed the complete pipeline");
+
+  remaining.stages = remaining_stages;
+  remaining.stage_count = remaining_count;
+  remaining.input_type = ir->input_type;
+  remaining.output_type = ir->output_type;
+  if (!cflow_aot_pipeline_ir_match_graph(
+          &remaining, optimized, &optimized_witness, error))
+    return false;
+
+  if (witness) {
+    witness->source_graph_version = source_witness.source_graph_version;
+    witness->optimized_graph_version = optimized_witness.source_graph_version;
+    witness->matched_stage_count = ir->stage_count;
+    witness->applied_rewrite_count = rewrite_count;
+  }
+  if (error) *error = NULL;
   return true;
 }
