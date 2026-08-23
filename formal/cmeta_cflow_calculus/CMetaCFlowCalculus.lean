@@ -3,8 +3,14 @@ import CMetaCFlowCalculus.CMeta.FiniteCompute
 import CMetaCFlowCalculus.CMeta.Effects
 import CMetaCFlowCalculus.CMeta.Properties
 import CMetaCFlowCalculus.CMeta.Environment
+import CMetaCFlowCalculus.CMeta.SignatureManifest
+import CMetaCFlowCalculus.CMeta.BuiltinSignatures
+import CMetaCFlowCalculus.CMeta.SignatureHeader
 import CMetaCFlowCalculus.CMeta.Ownership
 import CMetaCFlowCalculus.CFlow.Syntax
+import CMetaCFlowCalculus.CFlow.OperatorPolicyManifest
+import CMetaCFlowCalculus.CFlow.BuiltinOperatorPolicy
+import CMetaCFlowCalculus.CFlow.OperatorPolicyHeader
 import CMetaCFlowCalculus.CFlow.Execution
 import CMetaCFlowCalculus.CFlow.Observation
 import CMetaCFlowCalculus.CFlow.Architecture

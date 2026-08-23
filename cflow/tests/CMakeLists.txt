@@ -57,6 +57,11 @@ cmake_add_test(cflow_header_cpp_test
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_operator_policy_test
+  SOURCES cflow_operator_policy_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 set_target_properties(
   cflow_graph_test
   cflow_dense_successor_index_test
@@ -66,6 +71,7 @@ set_target_properties(
   cflow_direct_test
   cflow_execution_test
   cflow_scheduler_compat_test
+  cflow_operator_policy_test
   PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON

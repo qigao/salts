@@ -27,14 +27,7 @@
 #define CMETA_BOOL_TYPE _Bool
 #endif
 
-#define CMETA_ROW_B (B, CMETA_BOOL_TYPE, cmeta_type_bool, CMETA_T_BOOL, cmeta_traits_bool)
-#define CMETA_ROW_I (I, int,    cmeta_type_int,    CMETA_T_INTEGER, cmeta_traits_int)
-#define CMETA_ROW_L (L, long,   cmeta_type_long,   CMETA_T_INTEGER, cmeta_traits_long)
-#define CMETA_ROW_F (F, float,  cmeta_type_float,  CMETA_T_FLOAT,   cmeta_traits_float)
-#define CMETA_ROW_D (D, double, cmeta_type_double, CMETA_T_FLOAT,   cmeta_traits_double)
-
-#define CMETA_BUILTIN_TYPE_LIST \
-    CMETA_ROW_B, CMETA_ROW_I, CMETA_ROW_L, CMETA_ROW_F, CMETA_ROW_D
+#include <cmeta/generated/builtin_signature_manifest.h>
 
 #ifndef CMETA_USER_TYPE_LIST
 #define CMETA_USER_TYPE_LIST
