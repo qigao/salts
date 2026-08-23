@@ -14,4 +14,8 @@ typedef struct cbind_context {
     size_t max_depth;
 } cbind_context;
 
+#define CBIND_CONTEXT_INIT(scratch_ptr, scratch_bytes, depth_limit) \
+    { sizeof(cbind_context), CBIND_CONTEXT_ABI_VERSION, \
+      (scratch_ptr), (scratch_bytes), (depth_limit) }
+
 #endif /* CBIND_CONTEXT_H */

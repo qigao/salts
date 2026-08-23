@@ -20,4 +20,8 @@ typedef struct cbind_error {
     size_t depth;
 } cbind_error;
 
+#define CBIND_ERROR_INIT \
+    { sizeof(cbind_error), CBIND_ERROR_ABI_VERSION, CBIND_OK, \
+      CSERDE_OK, NULL, NULL, 0u }
+
 #endif /* CBIND_ERROR_H */
