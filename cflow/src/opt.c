@@ -2,6 +2,7 @@
 #include <cflow/lower.h>
 #include <cflow/effect.h>
 #include <cflow/property.h>
+#include "graph_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -415,7 +416,11 @@ static bool graph_optimize_impl(cflow_graph *dst,
     }
     dst->root = root;
     dst->error = NULL;
-    ++dst->version;
+    if (!cflow_graph_version_acquire(&dst->version)) {
+        free(trace_impl); cflow_graph_destroy(dst);
+        dst->error = "graph version space exhausted";
+        return false;
+    }
 
     if (!cflow_graph_validate(dst, &validation) || !cflow_graph_is_normalized(dst)) {
         const char *err = validation ? validation : "optimized Graph validation failed";

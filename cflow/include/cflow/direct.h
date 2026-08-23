@@ -154,9 +154,9 @@ static inline bool cflow_direct_ranges_overlap(uintptr_t left_begin, uintptr_t l
   return left_begin < right_end && right_begin < left_end;
 }
 
-static inline bool cflow_direct_buffers_valid(const void *inputs, size_t input_count,
-                                              size_t input_size, void *outputs, size_t output_size,
-                                              const size_t *output_count) {
+static inline bool cflow_direct_capacity_buffers_valid(
+    const void *inputs, size_t input_count, size_t input_size, void *outputs,
+    size_t output_capacity, size_t output_size, const size_t *output_count) {
   size_t input_bytes;
   size_t output_bytes;
   uintptr_t input_begin;
@@ -167,7 +167,7 @@ static inline bool cflow_direct_buffers_valid(const void *inputs, size_t input_c
   uintptr_t count_end;
 
   if (output_count == NULL || !cflow_direct_size_bytes(input_count, input_size, &input_bytes) ||
-      !cflow_direct_size_bytes(input_count, output_size, &output_bytes) ||
+      !cflow_direct_size_bytes(output_capacity, output_size, &output_bytes) ||
       !cflow_direct_range(inputs, input_bytes, &input_begin, &input_end) ||
       !cflow_direct_range(outputs, output_bytes, &output_begin, &output_end) ||
       !cflow_direct_range(output_count, sizeof(*output_count), &count_begin, &count_end))
@@ -176,6 +176,14 @@ static inline bool cflow_direct_buffers_valid(const void *inputs, size_t input_c
   return !cflow_direct_ranges_overlap(input_begin, input_end, output_begin, output_end) &&
          !cflow_direct_ranges_overlap(input_begin, input_end, count_begin, count_end) &&
          !cflow_direct_ranges_overlap(output_begin, output_end, count_begin, count_end);
+}
+
+static inline bool cflow_direct_buffers_valid(const void *inputs, size_t input_count,
+                                              size_t input_size, void *outputs,
+                                              size_t output_size,
+                                              const size_t *output_count) {
+  return cflow_direct_capacity_buffers_valid(
+      inputs, input_count, input_size, outputs, input_count, output_size, output_count);
 }
 
 static inline bool cflow_direct_stage_eligible(cmeta_callable callable,
@@ -322,9 +330,10 @@ static inline bool cflow_direct_stage_eligible(cmeta_callable callable,
    * call `cflow_stream_destroy` after a successful or partially failed build.
    *
    * `<name>_eval_array(inputs, input_count, outputs, output_capacity,
-   * output_count)` borrows disjoint input storage and writes to disjoint
-   * caller-owned output storage. For non-empty input, capacity must be at least
-   * `input_count`. No stage callback is indirectly invoked and no allocation or
+   * output_count)` borrows mutually disjoint input, complete output-capacity,
+   * and output-count storage. For non-empty input, capacity must be at least
+   * `input_count`. Capacity byte ranges are overflow-checked before any write.
+   * No stage callback is indirectly invoked and no allocation or
    * scheduler operation occurs. The returned `cflow_direct_status` distinguishes
    * invalid storage, ineligible schemas and insufficient capacity; no failure
    * selects Plan or Kernel implicitly.
@@ -364,9 +373,10 @@ static inline bool cflow_direct_stage_eligible(cmeta_callable callable,
         size_t *_cflow_direct_output_count) {                                                      \
       size_t _cflow_direct_index;                                                                  \
       size_t _cflow_direct_written = 0u;                                                           \
-      if (!cflow_direct_buffers_valid(_cflow_direct_inputs, _cflow_direct_count,                   \
-                                      sizeof(input_type), _cflow_direct_outputs,                   \
-                                      sizeof(output_type), _cflow_direct_output_count))            \
+      if (!cflow_direct_capacity_buffers_valid(                                                    \
+              _cflow_direct_inputs, _cflow_direct_count, sizeof(input_type),                       \
+              _cflow_direct_outputs, _cflow_direct_capacity, sizeof(output_type),                  \
+              _cflow_direct_output_count))                                                         \
         return CFLOW_DIRECT_INVALID_ARGUMENT;                                                      \
       *_cflow_direct_output_count = 0u;                                                            \
       if (!name##_eligible()) return CFLOW_DIRECT_INELIGIBLE;                                      \

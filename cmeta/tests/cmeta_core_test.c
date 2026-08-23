@@ -86,6 +86,7 @@ static const cmeta_type_desc cmeta_test_owned_int_type = {
 };
 
 const cmeta_type_desc *cmeta_traits_peer_owned_int_type(void);
+cmeta_callable cmeta_traits_peer_shared_canonical(void);
 
 Enum(cmeta_test_state,
     (CMETA_TEST_READY, 10, "ready"),
@@ -95,6 +96,34 @@ Enum(cmeta_test_state,
 typed_any(value, int, cmeta_test_increment, (int value)) {
     return value + 1;
 }
+
+int cmeta_test_shared_canonical_target(int value) {
+    return value + 5;
+}
+
+static cmeta_fn cmeta_test_shared_canonical_meta(void) {
+    cmeta_fn meta = CMETA_WRAP_TYPED_ANY(cmeta_test_shared_canonical_target);
+    meta.effects = CMETA_CONTRACT_EFFECTS(value);
+    meta.properties = CMETA_CONTRACT_PROPERTIES(value);
+    return meta;
+}
+
+static bool cmeta_test_shared_canonical_invoke(
+    const cmeta_callable *self, void *out, const void *const *args) {
+    return self != NULL && cmeta_fn_invoke(self->meta, out, args);
+}
+
+static cmeta_gen_status cmeta_test_shared_canonical_generate(
+    const cmeta_callable *self, const void *input, void *out, size_t *cursor) {
+    return self != NULL ? cmeta_fn_generate(self->meta, input, out, cursor)
+                        : CMETA_GEN_ERROR;
+}
+
+static const cmeta_callable cmeta_test_shared_canonical =
+    CMETA_CANONICAL_RAW_CALLABLE_INIT(
+        CMETA_CONTRACT_EFFECTS(value), CMETA_CONTRACT_PROPERTIES(value),
+        cmeta_test_shared_canonical_meta, cmeta_test_shared_canonical_invoke,
+        cmeta_test_shared_canonical_generate, 0u);
 
 static int cmeta_test_increment_alternate(int value) {
     return value + 2;
@@ -742,6 +771,28 @@ suite("CMeta core") {
         changed_target.meta.call.call_U_I_I = cmeta_test_increment_alternate;
 
         check_false(cmeta_callable_same(cmeta_test_increment, changed_target));
+    }
+
+    it("compares canonical callable identity across translation units by raw target") {
+        cmeta_callable peer = cmeta_traits_peer_shared_canonical();
+
+        peer.generate = cmeta_test_adapter_only_generate;
+        check_true(cmeta_callable_same(cmeta_test_shared_canonical, peer));
+    }
+
+    it("keeps adapter callable identity bound to wrappers and captures") {
+        cmeta_callable changed_wrapper = cmeta_test_adapter_only;
+        cmeta_callable first_capture = cmeta_test_adapter_only;
+        cmeta_callable second_capture = cmeta_test_adapter_only;
+
+        changed_wrapper.invoke = cmeta_test_shared_canonical_invoke;
+        check_false(cmeta_callable_same(cmeta_test_adapter_only, changed_wrapper));
+
+        first_capture.capture_size = 1u;
+        first_capture.capture.bytes[0] = 1u;
+        second_capture.capture_size = 1u;
+        second_capture.capture.bytes[0] = 2u;
+        check_false(cmeta_callable_same(first_capture, second_capture));
     }
 
     it("rejects a raw callable whose active target is missing") {

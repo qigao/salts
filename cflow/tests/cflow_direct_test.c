@@ -2,6 +2,7 @@
 #include <cflow/cflow.h>
 #include <cflow/plan_internal.h>
 
+#include <stdlib.h>
 #include <string.h>
 
 _Static_assert(CFLOW_AOT_DISPATCH_STATIC_TARGET == 0,
@@ -38,6 +39,11 @@ typed(map, value, int, cflow_direct_times_two, (int value)) { return value * 2; 
 
 typed(map, idempotent, int, cflow_direct_clamp_nonnegative, (int value)) {
   return value < 0 ? 0 : value;
+}
+
+static bool cflow_direct_alternate_canonical_invoke(
+    const cmeta_callable *self, void *out, const void *const *args) {
+  return self != NULL && cmeta_fn_invoke(self->meta, out, args);
 }
 
 static size_t cflow_direct_erased_invocations;
@@ -320,6 +326,100 @@ suite("CFlow Direct executor") {
     cflow_stream_destroy(&generated);
   }
 
+  it("rejects a trace after both Graph lifetimes restart at the same addresses") {
+    cflow_stream generated = {0};
+    cflow_graph normalized = {0};
+    cflow_graph optimized = {0};
+    cflow_opt_trace trace = {0};
+    cflow_aot_optimized_equivalence_witness witness = {99u, 99u, 99u, 99u};
+    const cflow_aot_pipeline_ir *ir = cflow_direct_idempotent_pipeline_ir();
+    const char *error = NULL;
+
+    normalized.root = CMETA_INVALID_ID;
+    optimized.root = CMETA_INVALID_ID;
+    check_true(cflow_direct_idempotent_pipeline_build(&generated));
+    check_true(cflow_graph_normalize(&normalized, &generated.graph));
+    check_true(cflow_graph_optimize_with_trace(
+        &optimized, &normalized, (cflow_opt_options){CMETA_OPT_DEFAULT}, NULL, &trace));
+
+    cflow_graph_destroy(&optimized);
+    cflow_graph_destroy(&normalized);
+    check_true(cflow_graph_normalize(&normalized, &generated.graph));
+    check_true(cflow_graph_optimize(
+        &optimized, &normalized, (cflow_opt_options){CMETA_OPT_DEFAULT}, NULL));
+
+    check_false(cflow_opt_trace_bound_to(&trace, &normalized, &optimized));
+    check_false(cflow_aot_pipeline_ir_match_optimized_graph(
+        ir, &normalized, &optimized, &trace, &witness, &error));
+    check_not_null(error);
+    check_equal(witness.source_graph_version, UINT64_C(0));
+    check_equal(witness.optimized_graph_version, UINT64_C(0));
+    check_equal(witness.matched_stage_count, (size_t)0u);
+    check_equal(witness.applied_rewrite_count, (size_t)0u);
+
+    cflow_opt_trace_destroy(&trace);
+    cflow_graph_destroy(&optimized);
+    cflow_graph_destroy(&normalized);
+    cflow_stream_destroy(&generated);
+  }
+
+  it("rejects a trace after structural clones replace both bound Graph objects") {
+    cflow_stream generated = {0};
+    cflow_graph normalized = {0};
+    cflow_graph optimized = {0};
+    cflow_graph normalized_snapshot = {0};
+    cflow_graph optimized_snapshot = {0};
+    cflow_opt_trace trace = {0};
+
+    normalized.root = CMETA_INVALID_ID;
+    optimized.root = CMETA_INVALID_ID;
+    normalized_snapshot.root = CMETA_INVALID_ID;
+    optimized_snapshot.root = CMETA_INVALID_ID;
+    check_true(cflow_direct_idempotent_pipeline_build(&generated));
+    check_true(cflow_graph_normalize(&normalized, &generated.graph));
+    check_true(cflow_graph_optimize_with_trace(
+        &optimized, &normalized, (cflow_opt_options){CMETA_OPT_DEFAULT}, NULL, &trace));
+    check_true(cflow_graph_clone(&normalized_snapshot, &normalized));
+    check_true(cflow_graph_clone(&optimized_snapshot, &optimized));
+
+    cflow_graph_destroy(&optimized);
+    cflow_graph_destroy(&normalized);
+    check_true(cflow_graph_clone(&normalized, &normalized_snapshot));
+    check_true(cflow_graph_clone(&optimized, &optimized_snapshot));
+    check_false(cflow_opt_trace_bound_to(&trace, &normalized, &optimized));
+
+    cflow_opt_trace_destroy(&trace);
+    cflow_graph_destroy(&optimized_snapshot);
+    cflow_graph_destroy(&normalized_snapshot);
+    cflow_graph_destroy(&optimized);
+    cflow_graph_destroy(&normalized);
+    cflow_stream_destroy(&generated);
+  }
+
+  it("eliminates canonical duplicates with different adapter wrappers") {
+    cflow_stream generated = {0};
+    cflow_graph normalized = {0};
+    cflow_graph optimized = {0};
+    cflow_opt_trace trace = {0};
+    cflow_map_callable alternate = cflow_direct_clamp_nonnegative;
+
+    normalized.root = CMETA_INVALID_ID;
+    optimized.root = CMETA_INVALID_ID;
+    alternate.fn.invoke = cflow_direct_alternate_canonical_invoke;
+    check_not_null(cflow_stream_init(&generated, &cmeta_type_int));
+    check_not_null(generated.map(&generated, cflow_direct_clamp_nonnegative));
+    check_not_null(generated.map(&generated, alternate));
+    check_true(cflow_graph_normalize(&normalized, &generated.graph));
+    check_true(cflow_graph_optimize_with_trace(
+        &optimized, &normalized, (cflow_opt_options){CMETA_OPT_DEFAULT}, NULL, &trace));
+    check_equal(cflow_opt_trace_count(&trace), (size_t)1u);
+
+    cflow_opt_trace_destroy(&trace);
+    cflow_graph_destroy(&optimized);
+    cflow_graph_destroy(&normalized);
+    cflow_stream_destroy(&generated);
+  }
+
   it("validates canonical batch and adapter dispatch without conflating them") {
     const cflow_aot_stage_ir canonical_stage = {
         CFLOW_DIRECT_STAGE_MAP, CFLOW_AOT_DISPATCH_CANONICAL_RAW_BATCH,
@@ -387,12 +487,43 @@ suite("CFlow Direct executor") {
     check_equal(storage.bytes, original, sizeof(original));
   }
 
+  it("rejects output count storage inside unused output capacity") {
+    const int input = 2;
+    void *storage = malloc(2u * sizeof(double));
+
+    check_not_null(storage);
+    if (storage != NULL) {
+      double *output = (double *)storage;
+      size_t *output_count = (size_t *)(void *)(output + 1u);
+
+      *output_count = 99u;
+      check_equal(cflow_direct_test_pipeline_eval_array(
+                      &input, 1u, output, 2u, output_count),
+                  CFLOW_DIRECT_INVALID_ARGUMENT);
+    }
+    free(storage);
+  }
+
+  it("rejects output capacity byte-size overflow") {
+    const int input = 2;
+    double output = -1.0;
+    size_t output_count = 99u;
+    const size_t overflowing_capacity = SIZE_MAX / sizeof(double) + 1u;
+
+    check_equal(cflow_direct_test_pipeline_eval_array(
+                    &input, 1u, &output, overflowing_capacity, &output_count),
+                CFLOW_DIRECT_INVALID_ARGUMENT);
+    check_equal(output, -1.0);
+  }
+
   it("rejects nonempty null buffers and checked-size overflow") {
     int input = 2;
     double output = -1.0;
     size_t output_count = 99u;
     const size_t overflowing_count = SIZE_MAX / sizeof(int) + 1u;
 
+    check_true(cflow_direct_buffers_valid(&input, 1u, sizeof(input), &output,
+                                          sizeof(output), &output_count));
     check_equal(cflow_direct_test_pipeline_eval_array(NULL, 1u, &output, 1u, &output_count),
                 CFLOW_DIRECT_INVALID_ARGUMENT);
     check_equal(output, -1.0);

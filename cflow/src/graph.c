@@ -1,8 +1,28 @@
 #include <cflow/operators.h>
 #include <cflow/graph.h>
+#include "graph_internal.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+
+static _Atomic uint64_t cflow_graph_next_version = UINT64_C(1);
+
+bool cflow_graph_version_acquire(uint64_t *version) {
+    uint64_t next;
+
+    if (!version) return false;
+    next = atomic_load_explicit(&cflow_graph_next_version, memory_order_relaxed);
+    while (next != UINT64_MAX) {
+        if (atomic_compare_exchange_weak_explicit(
+                &cflow_graph_next_version, &next, next + UINT64_C(1),
+                memory_order_relaxed, memory_order_relaxed)) {
+            *version = next;
+            return true;
+        }
+    }
+    return false;
+}
 
 #define P_RULE(x) CFLOW_PARAM_##x
 #define R_RULE(x) CFLOW_RETURN_##x
@@ -255,7 +275,9 @@ void cflow_graph_destroy(cflow_graph *g) {
 }
 
 bool cflow_graph_clone(cflow_graph *dst, const cflow_graph *src) {
+    uint64_t version;
     if (!dst || !src || src->root >= src->subgraph_count) return false;
+    if (!cflow_graph_version_acquire(&version)) return false;
     memset(dst, 0, sizeof(*dst));
     dst->root = CMETA_INVALID_ID;
     if (!reserve_subgraphs(dst, src->subgraph_count)) return false;
@@ -268,7 +290,7 @@ bool cflow_graph_clone(cflow_graph *dst, const cflow_graph *src) {
         ++dst->subgraph_count;
     }
     dst->root = src->root;
-    dst->version = src->version;
+    dst->version = version;
     dst->error = src->error;
     return true;
 }
@@ -304,10 +326,15 @@ rollback:
 }
 
 void cflow_graph_init(cflow_graph *g, const cmeta_type_desc *source) {
+    uint64_t version;
     if (!g) return;
     memset(g, 0, sizeof(*g));
     g->root = CMETA_INVALID_ID;
     if (!source) { g->error = "source type is null"; return; }
+    if (!cflow_graph_version_acquire(&version)) {
+        g->error = "graph version space exhausted";
+        return;
+    }
     cflow_subgraph_id root = graph_create_subgraph(g, source);
     if (root == CMETA_INVALID_ID) { g->error = "graph allocation failed"; return; }
     cflow_node source_node = {0};
@@ -320,7 +347,7 @@ void cflow_graph_init(cflow_graph *g, const cmeta_type_desc *source) {
         return;
     }
     g->root = root;
-    ++g->version;
+    g->version = version;
 }
 
 const cmeta_type_desc *cflow_subgraph_source_type(const cflow_graph *g, cflow_subgraph_id id) {
@@ -409,7 +436,12 @@ static bool relation_schema_valid(cflow_graph *g, cflow_relation_schema schema);
 
 cflow_subgraph_id cflow_graph_create_subgraph(cflow_graph *g,
                                                const cmeta_type_desc *source_type) {
+    uint64_t version;
     if (!g || !source_type) return CMETA_INVALID_ID;
+    if (!cflow_graph_version_acquire(&version)) {
+        g->error = "graph version space exhausted";
+        return CMETA_INVALID_ID;
+    }
     cflow_subgraph_id id = graph_create_subgraph(g, source_type);
     if (id == CMETA_INVALID_ID) { g->error = "subgraph allocation failed"; return id; }
     cflow_node source_node = {0};
@@ -422,7 +454,7 @@ cflow_subgraph_id cflow_graph_create_subgraph(cflow_graph *g,
         g->error = "subgraph source allocation failed";
         return CMETA_INVALID_ID;
     }
-    ++g->version;
+    g->version = version;
     g->error = NULL;
     return id;
 }
@@ -500,13 +532,18 @@ bool cflow_graph_create_node(cflow_graph *g,
                              const cflow_subgraph_id *nested,
                              size_t nested_count,
                              cflow_node_id *out_node) {
+    uint64_t version;
     cflow_subgraph *sg = g && subgraph < g->subgraph_count ? &g->subgraphs[subgraph] : NULL;
     if (!sg || !out_node) return fail(g, "invalid target subgraph");
     cflow_node node = {0};
     if (!derive_node(g, op, fn, nested, nested_count, &node)) return false;
+    if (!cflow_graph_version_acquire(&version)) {
+        node_destroy(&node);
+        return fail(g, "graph version space exhausted");
+    }
     cflow_node_id id = subgraph_append_node(sg, node);
     if (id == CMETA_INVALID_ID) { node_destroy(&node); return fail(g, "node allocation failed"); }
-    ++g->version;
+    g->version = version;
     g->error = NULL;
     *out_node = id;
     return true;
@@ -520,6 +557,7 @@ bool cflow_graph_create_relation_node(cflow_graph *g,
                                       cflow_relation_schema schema,
                                       cmeta_callable reducer,
                                       cflow_node_id *out_node) {
+    uint64_t version;
     cflow_subgraph *sg = g && subgraph < g->subgraph_count ? &g->subgraphs[subgraph] : NULL;
     if (!sg || !input_type || !branches || branch_count == 0u || !out_node)
         return fail(g, "invalid relation node arguments");
@@ -584,9 +622,13 @@ bool cflow_graph_create_relation_node(cflow_graph *g,
         node.fn = bound_reducer;
         node.has_fn = true;
     }
+    if (!cflow_graph_version_acquire(&version)) {
+        node_destroy(&node);
+        return fail(g, "graph version space exhausted");
+    }
     cflow_node_id id = subgraph_append_node(sg, node);
     if (id == CMETA_INVALID_ID) { node_destroy(&node); return fail(g, "relation node allocation failed"); }
-    ++g->version;
+    g->version = version;
     g->error = NULL;
     *out_node = id;
     return true;
@@ -598,13 +640,16 @@ bool cflow_graph_connect(cflow_graph *g,
                          uint16_t from_port,
                          cflow_node_id to,
                          uint16_t to_port) {
+    uint64_t version;
     cflow_subgraph *sg = g && subgraph < g->subgraph_count ? &g->subgraphs[subgraph] : NULL;
     if (!sg || from >= sg->node_count || to >= sg->node_count) return fail(g, "invalid edge endpoint");
     if (!cmeta_type_equal(sg->nodes[from].output_type, sg->nodes[to].input_type))
         return fail(g, "edge type mismatch");
+    if (!cflow_graph_version_acquire(&version))
+        return fail(g, "graph version space exhausted");
     if (!reserve_edges(sg, sg->edge_count + 1u)) return fail(g, "edge allocation failed");
     sg->edges[sg->edge_count++] = (cflow_edge){ from, from_port, to, to_port };
-    ++g->version;
+    g->version = version;
     g->error = NULL;
     return true;
 }
@@ -612,11 +657,14 @@ bool cflow_graph_connect(cflow_graph *g,
 bool cflow_graph_set_subgraph_exit(cflow_graph *g,
                                    cflow_subgraph_id subgraph,
                                    cflow_node_id exit_node) {
+    uint64_t version;
     cflow_subgraph *sg = g && subgraph < g->subgraph_count ? &g->subgraphs[subgraph] : NULL;
     if (!sg || exit_node >= sg->node_count) return fail(g, "invalid subgraph exit");
+    if (!cflow_graph_version_acquire(&version))
+        return fail(g, "graph version space exhausted");
     sg->tail = exit_node;
     sg->output_type = sg->nodes[exit_node].output_type;
-    ++g->version;
+    g->version = version;
     g->error = NULL;
     return true;
 }
@@ -624,6 +672,7 @@ bool cflow_graph_set_subgraph_exit(cflow_graph *g,
 bool cflow_graph_add(cflow_graph *g, cflow_op op,
                      cmeta_callable fn,
                      const cflow_graph *nested_graph) {
+    uint64_t version;
     if (!g || g->root >= g->subgraph_count) return fail(g, "graph is not initialized");
     cflow_subgraph_id root_id = g->root;
     cflow_subgraph *root = &g->subgraphs[root_id];
@@ -637,6 +686,8 @@ bool cflow_graph_add(cflow_graph *g, cflow_op op,
         return fail(g, "operator function arity mismatch");
     if (!cflow_op_signature_allowed(op, bound.meta.sig))
         return fail(g, "signature is not enabled for this operator");
+    if (!cflow_graph_version_acquire(&version))
+        return fail(g, "graph version space exhausted");
 
     const cmeta_type_desc *in = root->output_type;
     const cmeta_type_desc *subgraph_out = NULL;
@@ -708,7 +759,7 @@ bool cflow_graph_add(cflow_graph *g, cflow_op op,
         truncate_subgraphs(g, subgraph_mark);
         return fail(g, "edge allocation failed");
     }
-    ++g->version;
+    g->version = version;
     g->error = NULL;
     return true;
 }
@@ -766,11 +817,14 @@ static bool build_relation(cflow_graph *g,
                            size_t branch_count,
                            cflow_relation_schema schema,
                            cmeta_callable reducer) {
+    uint64_t version;
     if (!g || g->root >= g->subgraph_count || !branches || branch_count < 1u)
         return fail(g, "relation requires at least one branch");
     if (!relation_schema_valid(g, schema)) return false;
     if (schema.result == CFLOW_REL_RESULT_INVOKE)
         return fail(g, "INVOKE relation is reserved for structured lowering/IR builder");
+    if (!cflow_graph_version_acquire(&version))
+        return fail(g, "graph version space exhausted");
 
     cflow_subgraph_id root_id = g->root;
     cflow_subgraph *root = &g->subgraphs[root_id];
@@ -845,7 +899,7 @@ static bool build_relation(cflow_graph *g,
 
     root->tail = relation_id;
     root->output_type = branch_output;
-    ++g->version;
+    g->version = version;
     g->error = NULL;
     return true;
 }

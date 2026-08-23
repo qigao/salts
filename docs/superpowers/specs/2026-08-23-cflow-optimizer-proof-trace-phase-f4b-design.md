@@ -17,8 +17,10 @@ optimized Graph or explain the result to the AOT matcher.
 
 Add an optional owned `cflow_opt_trace` to optimization. The trace contains a
 bounded contiguous sequence of `cflow_opt_rewrite_event` records and immutable
-bindings to the exact source/destination Graph objects and versions used by the
-optimizer. The first stable rule value is
+bindings to the exact source/destination Graph objects and process-unique
+mutation tokens used by the optimizer. Graph initialization, cloning and every
+successful mutation obtain a new nonzero token; destruction restores zero. The
+first stable rule value is
 `CFLOW_OPT_RULE_IDEMPOTENT_MAP_ELIMINATION = 1`.
 
 Each event records both the retained and removed source coordinates:
@@ -59,11 +61,12 @@ boundary documented by F-4A.
 - **Ownership:** a successful trace owns one contiguous allocation containing
   its header and event capacity. Callers destroy it exactly once; repeated
   destroy is safe. Graphs own no trace storage.
-- **Borrowing:** the trace stores Graph object identity and versions but never
-  dereferences those pointers through public accessors. Matching borrows both
-  live Graphs for the call and compares identity/version before reading events.
-- **Invalidation:** Graph mutation, destruction, struct copying or moving makes
-  the binding unusable. Version mismatch or object mismatch fails explicitly.
+- **Borrowing:** the trace stores Graph object identity and mutation tokens but
+  never dereferences those pointers through public accessors. Matching borrows
+  both live Graphs for the call and compares identity/token before reading events.
+- **Invalidation:** Graph mutation, destruction, cloning, struct copying or moving
+  makes the binding unusable. Token mismatch or object mismatch fails explicitly,
+  including a new Graph lifetime created at the same address.
 - **Capacity:** event capacity equals the checked count of logical callables in
   the source Graph. Each elimination consumes one slot; overflow, capacity
   exhaustion and allocation failure abort optimization transactionally.
@@ -99,8 +102,8 @@ Direct, Plan or Kernel per-item execution.
   both Graph versions.
 - Surface, optimized Kernel and generated Direct evaluation produce identical
   ordered values for negative, zero and positive inputs.
-- Replaying a trace against a cloned or mutated Graph fails and clears the
-  witness.
+- Replaying a trace against a cloned, mutated or same-address replacement Graph
+  fails and clears the witness.
 - Zero-state/repeated trace destruction is safe; event out-of-range access
   fails transactionally.
 - MSVC and Clang CMeta/CFlow matrices pass. Direct benchmark throughput must not

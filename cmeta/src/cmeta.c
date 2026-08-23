@@ -524,13 +524,12 @@ bool cmeta_callable_same(cmeta_callable a, cmeta_callable b) {
     cmeta_callable ba, bb;
     if (!cmeta_callable_bind(a, &ba) || !cmeta_callable_bind(b, &bb)) return false;
     if (ba.meta.sig != bb.meta.sig || ba.meta.effects != bb.meta.effects ||
-        ba.meta.properties != bb.meta.properties || ba.invoke != bb.invoke ||
-        ba.generate != bb.generate || ba.dispatch != bb.dispatch ||
+        ba.meta.properties != bb.meta.properties || ba.dispatch != bb.dispatch ||
         ba.capture_size != bb.capture_size)
         return false;
-    if (ba.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW &&
-        !cmeta_fn_target_same(ba.meta, bb.meta))
-        return false;
+    if (ba.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW)
+        return cmeta_fn_target_same(ba.meta, bb.meta);
+    if (ba.invoke != bb.invoke || ba.generate != bb.generate) return false;
     if (ba.capture_size && memcmp(ba.capture.bytes, bb.capture.bytes, ba.capture_size) != 0)
         return false;
     return true;

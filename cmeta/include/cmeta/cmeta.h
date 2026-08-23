@@ -418,6 +418,8 @@ bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out);
 const cmeta_sig_desc *cmeta_callable_signature(cmeta_callable fn);
 bool cmeta_callable_contract_valid(cmeta_callable fn);
 bool cmeta_callable_can_dispatch_canonical_raw(cmeta_callable fn);
+/* Canonical-raw identity uses the authoritative raw target across translation
+ * units. Adapter identity uses adapter/generator pointers and capture bytes. */
 bool cmeta_callable_same(cmeta_callable a, cmeta_callable b);
 bool cmeta_callable_invoke(const cmeta_callable *fn, void *out, const void *const *args);
 cmeta_gen_status cmeta_callable_generate(const cmeta_callable *fn, const void *input,
