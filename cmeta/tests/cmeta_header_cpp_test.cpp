@@ -15,6 +15,11 @@ Struct(cmeta_cpp_record,
     (const char *, name)
 );
 
+Enum(cmeta_cpp_state,
+    (CMETA_CPP_READY, 3, "ready"),
+    (CMETA_CPP_DONE, 7, "done")
+);
+
 static_assert(CMETA_ALIGNOF(cmeta_cpp_record) == alignof(cmeta_cpp_record),
               "CMETA_ALIGNOF must use the active language spelling");
 static_assert(CMETA_FLOAT_TRAITS_BINARY32_BINARY64,
@@ -63,6 +68,15 @@ static bool cmeta_cpp_copy_construct(void *destination, const void *source) {
 }
 
 spec("CMeta C++ public headers") {
+  it("expands enum reflection without C-style casts") {
+    cmeta_cpp_state state = CMETA_CPP_READY;
+
+    check_equal(EnumString(cmeta_cpp_state, state), "ready");
+    check_equal(EnumSymbol(cmeta_cpp_state, CMETA_CPP_DONE), "CMETA_CPP_DONE");
+    check_true(EnumParse(cmeta_cpp_state, "done", &state));
+    check_equal(state, CMETA_CPP_DONE);
+  }
+
   it("reflects struct fields through the C++ public surface") {
     const cmeta_struct_desc *meta = cmeta_cpp_record_meta();
 
