@@ -80,4 +80,4 @@
 - [x] Run the install consumer workflow.
 - [x] Inspect the diff for unintended raw ABI/storage changes.
 - [x] Commit, request an independent code review, address important findings, and rerun verification.
-- [ ] Push `feat/turbostl-generic-api` and open a PR against `master` with the design, compatibility impact, and exact verification evidence.
+- [x] Push `feat/turbostl-generic-api` and open a PR against `master` with the design, compatibility impact, and exact verification evidence.
