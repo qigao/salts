@@ -2,6 +2,7 @@
 #include <cmeta/type_traits.h>
 #include <cmeta/cmeta.h>
 #include <cmeta/collector.h>
+#include <cmeta/range.h>
 #include <cmeta/meta.h>
 #include "tinytest.hpp"
 
