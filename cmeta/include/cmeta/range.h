@@ -4,6 +4,8 @@
 #include <cmeta/cmeta.h>
 #include <cmeta/collector.h>
 #include <cmeta/data.h>
+#include <cmeta/declared_type.h>
+#include <cmeta/type_select.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -63,6 +65,7 @@ typedef enum cmeta_container_view {
 
 enum {
     CMETA_CONTAINER_TYPE_OPS_ABI_VERSION = 1u,
+    CMETA_CONTAINER_CONSTRUCT_OPS_ABI_VERSION = 1u,
     CMETA_CONTAINER_EXT_ABI_VERSION = 1u
 };
 
@@ -77,11 +80,24 @@ typedef struct cmeta_container_type_ops {
     cmeta_container_type_argument_fn argument;
 } cmeta_container_type_ops;
 
+struct cmeta_container_desc;
+
+typedef cmeta_status (*cmeta_container_bind_types_fn)(
+    void *object, const cmeta_type_desc *const *arguments, size_t arity);
+
+typedef struct cmeta_container_construct_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const struct cmeta_container_desc *descriptor;
+    cmeta_container_bind_types_fn bind_types;
+} cmeta_container_construct_ops;
+
 typedef struct cmeta_container_ext {
     size_t struct_size;
     uint32_t abi_version;
     const cmeta_container_type_ops *type;
     const cmeta_data_desc *data;
+    const cmeta_container_construct_ops *construction;
 } cmeta_container_ext;
 
 typedef struct cmeta_container_desc {
@@ -109,11 +125,15 @@ static inline const cmeta_container_desc *cmeta_container_descriptor(const void 
 
 const cmeta_container_ext *cmeta_container_extension(const void *object);
 const cmeta_data_desc *cmeta_container_data(const void *object);
+const cmeta_container_construct_ops *
+cmeta_container_construction(const void *object);
 const cmeta_generic_desc *cmeta_container_type_constructor(const void *object);
 size_t cmeta_container_type_arity(const void *object);
 const cmeta_type_desc *cmeta_container_type_argument(const void *object,
                                                      size_t index);
 bool cmeta_container_type_application_valid(const void *object);
+cmeta_status cmeta_container_bind_types(
+    void *object, const cmeta_declared_type *declared);
 
 static inline bool cmeta_container_range_view(const void *object,
                                               cmeta_container_view view,
@@ -160,17 +180,6 @@ static inline cmeta_gen_status cmeta_range_next(const cmeta_range *range,
     }
     return range->next(range->object, cursor, out_value);
 }
-
-#define CMETA_RANGE_TYPE_ASSOC(row, ignored) \
-    CMETA_TYPE_CTYPE(row) *: &CMETA_TYPE_DESC(row),
-#define CMETA_TYPE_SELECT(type, fallback_desc) \
-    _Generic((type *)0, \
-        CMETA_PP_FOR_EACH_A(CMETA_RANGE_TYPE_ASSOC, ~, CMETA_TYPE_LIST) \
-        default: (fallback_desc))
-#define CMETA_TYPEOF(type) \
-    CMETA_TYPE_SELECT(type, (const cmeta_type_desc *)0)
-#define CMETA_TYPEOF_OR(type, fallback_desc) \
-    CMETA_TYPE_SELECT(type, (fallback_desc))
 
 #ifdef __cplusplus
 }
