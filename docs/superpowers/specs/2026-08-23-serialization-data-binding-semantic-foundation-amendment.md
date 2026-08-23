@@ -186,6 +186,20 @@ typedef struct cmeta_data_desc {
 - `shape` 指向 immutable kind-specific descriptor；
 - v1 不提前放一个没有签名/生命周期语义的 `cmeta_data_ops *` 占位字段。
 
+`cmeta_data_desc` 自己也必须从 v1 起遵守 append-only `struct_size` 规则。Validator 只要求当前已知 prefix 到 `shape` 字段结束：
+
+```c
+offsetof(cmeta_data_desc, shape) + sizeof(desc->shape)
+```
+
+而不是要求：
+
+```c
+struct_size >= sizeof(cmeta_data_desc)
+```
+
+这样未来 append fingerprint/access/lifecycle tail 时，旧 v1 descriptor 仍然可被新 consumer 读取其已知 prefix。
+
 `cmeta_data_ops` 等到 CBind/access/lifecycle contract 真正设计时，通过 versioned descriptor tail 或明确的 shape contract 增加。不要先制造一个“以后会用”的 callback 框。
 
 同理，semantic fingerprint 算法仍是必要设计，但不与第一个 descriptor ABI PR 混在一起；先锁定 descriptor graph，再定义 fingerprint domain/version。
