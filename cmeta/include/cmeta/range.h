@@ -60,6 +60,28 @@ typedef enum cmeta_container_view {
     CMETA_CONTAINER_VIEW_ENTRIES
 } cmeta_container_view;
 
+enum {
+    CMETA_CONTAINER_TYPE_OPS_ABI_VERSION = 1u,
+    CMETA_CONTAINER_EXT_ABI_VERSION = 1u
+};
+
+typedef const cmeta_type_desc *(*cmeta_container_type_argument_fn)(
+    const void *object, size_t index);
+
+typedef struct cmeta_container_type_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_generic_desc *constructor;
+    size_t arity;
+    cmeta_container_type_argument_fn argument;
+} cmeta_container_type_ops;
+
+typedef struct cmeta_container_ext {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_container_type_ops *type;
+} cmeta_container_ext;
+
 typedef struct cmeta_container_desc {
     const char *name;
     const cmeta_type_desc *container_type;
@@ -71,6 +93,7 @@ typedef struct cmeta_container_desc {
     cmeta_range_factory_fn values_range;
     cmeta_range_factory_fn entries_range;
     cmeta_collector_factory_fn collector;
+    const cmeta_container_ext *ext;
 } cmeta_container_desc;
 
 typedef struct cmeta_container_header {
@@ -81,6 +104,12 @@ static inline const cmeta_container_desc *cmeta_container_descriptor(const void 
     const cmeta_container_header *header = (const cmeta_container_header *)object;
     return header != NULL ? header->descriptor : NULL;
 }
+
+const cmeta_generic_desc *cmeta_container_type_constructor(const void *object);
+size_t cmeta_container_type_arity(const void *object);
+const cmeta_type_desc *cmeta_container_type_argument(const void *object,
+                                                     size_t index);
+bool cmeta_container_type_application_valid(const void *object);
 
 static inline bool cmeta_container_range_view(const void *object,
                                               cmeta_container_view view,
