@@ -4,6 +4,8 @@ add_library(${TARGET_NAME}
   src/adapters.c
   src/clock.c
   src/coord.c
+  src/direct.c
+  src/dense_successor_index.c
   src/effect.c
   src/executor.c
   src/graph.c
@@ -57,4 +59,8 @@ install(
 
 if(BUILD_TESTS)
   add_subdirectory(tests)
+endif()
+
+if(BUILD_BENCHMARKS)
+  add_subdirectory(benchmarks)
 endif()

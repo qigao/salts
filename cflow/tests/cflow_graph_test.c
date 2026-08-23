@@ -79,4 +79,67 @@ suite("CFlow graph") {
 
         cflow_graph_destroy(&graph);
     }
+
+    it("rejects naked data fan-out from the dense validation view") {
+        cflow_graph graph = {0};
+        cflow_node_id left = CMETA_INVALID_ID;
+        cflow_node_id right = CMETA_INVALID_ID;
+        const char *error = NULL;
+
+        cflow_graph_init(&graph, &cmeta_type_int);
+        check_true(cflow_graph_create_node(&graph, graph.root, CFLOW_OP_FILTER,
+                                           cflow_test_even.fn, NULL, 0u, &left));
+        check_true(cflow_graph_create_node(&graph, graph.root, CFLOW_OP_FILTER,
+                                           cflow_test_even.fn, NULL, 0u, &right));
+        check_true(cflow_graph_connect(&graph, graph.root, 0u, 0u, left, 0u));
+        check_true(cflow_graph_connect(&graph, graph.root, 0u, 0u, right, 0u));
+
+        check_false(cflow_graph_validate(&graph, &error));
+        check_equal(error, "naked DATA fan-out is forbidden; use an explicit RELATION node");
+
+        cflow_graph_destroy(&graph);
+    }
+
+    it("detects a reachable cycle without recursive validation") {
+        cflow_graph graph = {0};
+        cflow_node_id first = CMETA_INVALID_ID;
+        cflow_node_id second = CMETA_INVALID_ID;
+        cflow_node_id detached_tail = CMETA_INVALID_ID;
+        const char *error = NULL;
+
+        cflow_graph_init(&graph, &cmeta_type_int);
+        check_true(cflow_graph_create_node(&graph, graph.root, CFLOW_OP_FILTER,
+                                           cflow_test_even.fn, NULL, 0u, &first));
+        check_true(cflow_graph_create_node(&graph, graph.root, CFLOW_OP_FILTER,
+                                           cflow_test_even.fn, NULL, 0u, &second));
+        check_true(cflow_graph_create_node(&graph, graph.root, CFLOW_OP_FILTER,
+                                           cflow_test_even.fn, NULL, 0u, &detached_tail));
+        check_true(cflow_graph_connect(&graph, graph.root, 0u, 0u, first, 0u));
+        check_true(cflow_graph_connect(&graph, graph.root, first, 0u, second, 0u));
+        check_true(cflow_graph_connect(&graph, graph.root, second, 0u, first, 0u));
+
+        check_false(cflow_graph_validate(&graph, &error));
+        check_equal(error, "subgraph contains a topology cycle");
+
+        cflow_graph_destroy(&graph);
+    }
+
+    it("detects nodes outside the entry path") {
+        cflow_graph graph = {0};
+        cflow_node_id reachable = CMETA_INVALID_ID;
+        cflow_node_id detached_tail = CMETA_INVALID_ID;
+        const char *error = NULL;
+
+        cflow_graph_init(&graph, &cmeta_type_int);
+        check_true(cflow_graph_create_node(&graph, graph.root, CFLOW_OP_FILTER,
+                                           cflow_test_even.fn, NULL, 0u, &reachable));
+        check_true(cflow_graph_create_node(&graph, graph.root, CFLOW_OP_FILTER,
+                                           cflow_test_even.fn, NULL, 0u, &detached_tail));
+        check_true(cflow_graph_connect(&graph, graph.root, 0u, 0u, reachable, 0u));
+
+        check_false(cflow_graph_validate(&graph, &error));
+        check_equal(error, "subgraph contains unreachable nodes");
+
+        cflow_graph_destroy(&graph);
+    }
 }

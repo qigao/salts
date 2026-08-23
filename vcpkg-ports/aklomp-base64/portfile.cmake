@@ -1,15 +1,17 @@
 vcpkg_check_linkage(ONLY_STATIC_LIBRARY)
 
-# Pin the exact upstream commit that this repository used to build base64 from
-# (9e8ed65048ff0f703fad3deb03bf66ac7f78a4d7, master after the v0.5.2 release).
-# Building that commit keeps the vcpkg package behavior-identical to the
-# previous vendored static build.
-vcpkg_from_github(
-    OUT_SOURCE_PATH SOURCE_PATH
-    REPO aklomp/base64
-    REF 9e8ed65048ff0f703fad3deb03bf66ac7f78a4d7
-    SHA512 a8868e219f471182884645a295ad8278347106a1823fddda51e264ded6e4067aac444c92f7f90d8f37b104e69aa8e7fcffcb8944a432e5c7948ce90687624978
-    HEAD_REF master
+# Pin the exact upstream commit that this repository used to build base64 from.
+# Its tar archive contains a Unicode CI fixture that Windows CMake/libarchive
+# cannot materialize; the commit ZIP preserves the source and extracts there.
+set(AKLOMP_BASE64_COMMIT 9e8ed65048ff0f703fad3deb03bf66ac7f78a4d7)
+vcpkg_download_distfile(AKLOMP_BASE64_ARCHIVE
+    URLS "https://github.com/aklomp/base64/archive/${AKLOMP_BASE64_COMMIT}.zip"
+    FILENAME "aklomp-base64-${AKLOMP_BASE64_COMMIT}.zip"
+    SHA512 b12a0d7932dd4b2b958efba9faa63878b7e017992511475118a28dcd696203e8459237970a226aaf4fe2be30319b77ae214e67d2509d7e38e908a1921676c09f
+)
+vcpkg_extract_source_archive(
+    SOURCE_PATH
+    ARCHIVE "${AKLOMP_BASE64_ARCHIVE}"
 )
 
 vcpkg_cmake_configure(
