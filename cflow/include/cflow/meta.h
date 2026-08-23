@@ -41,7 +41,7 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
         return x; \
     } \
     static bool cmeta_invoke_##name(const cmeta_callable *self, void *out, const void *const *args) { \
-        return self ? cmeta_fn_invoke(self->meta, out, args) : false; \
+        return CMETA_TYPED_INVOKER_ANY(cmeta_typed_##name)(self, out, args); \
     } \
     static cmeta_gen_status cmeta_generate_##name(const cmeta_callable *self, const void *input, void *out, size_t *cursor) { \
         return self ? cmeta_fn_generate(self->meta, input, out, cursor) : CMETA_GEN_ERROR; \

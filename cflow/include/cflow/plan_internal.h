@@ -19,13 +19,20 @@ typedef struct cflow_plan_value_vec {
 typedef struct cflow_plan_inst cflow_plan_inst;
 typedef bool (*cflow_plan_step_fn)(const cflow_plan_inst *, cflow_plan_value_vec *);
 
+typedef struct cflow_plan_call {
+    cmeta_callable fn;
+    cmeta_callable_invoke_fn invoke;
+    const cmeta_type_desc *input_type;
+    const cmeta_type_desc *output_type;
+} cflow_plan_call;
+
 struct cflow_plan_inst {
     cflow_plan_opcode opcode;
     cflow_plan_step_fn step;
     const cmeta_type_desc *input_type;
     const cmeta_type_desc *output_type;
-    cmeta_callable fn;
-    cmeta_callable *fn_chain;
+    cflow_plan_call call;
+    cflow_plan_call *fn_chain;
     size_t fn_chain_count;
 };
 

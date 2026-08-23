@@ -194,6 +194,8 @@ suite("CFlow Direct executor") {
     long output[3] = {0};
     size_t output_count = 0u;
     cflow_stream stream = {0};
+    cflow_plan plan = {0};
+    cflow_result plan_result = {0};
     cflow_result kernel_result = {0};
 
     check_true(cflow_direct_trap_pipeline_eligible());
@@ -209,6 +211,13 @@ suite("CFlow Direct executor") {
     check_equal(kernel_result.data, expected, sizeof(expected));
     check_equal(cflow_direct_erased_invocations, (size_t)3u);
 
+    check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+    check_true(cflow_plan_eval_array(&plan, input, 3u, &plan_result));
+    check_equal(plan_result.data, expected, sizeof(expected));
+    check_equal(cflow_direct_erased_invocations, (size_t)6u);
+
+    cflow_result_destroy(&plan_result);
+    cflow_plan_destroy(&plan);
     cflow_result_destroy(&kernel_result);
     cflow_stream_destroy(&stream);
   }

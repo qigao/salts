@@ -232,6 +232,76 @@ struct cmeta_callable {
 
 #ifndef __cplusplus
 
+/* Ordinary typed callables use a signature-specific adapter so their bound
+ * metadata is validated once by Graph/Plan construction rather than decoded
+ * again for every value. memcpy keeps erased arguments alignment-safe. */
+#define CMETA_DETAIL_INVOKER_I(id) cmeta_detail_invoke_##id
+#define CMETA_DETAIL_INVOKER_E(id) CMETA_DETAIL_INVOKER_I(id)
+#define CMETA_DETAIL_INVOKER(id) CMETA_DETAIL_INVOKER_E(id)
+
+static inline bool cmeta_detail_unsupported_invoke(
+    const cmeta_callable *self, void *out, const void *const *args) {
+    (void)self;
+    (void)out;
+    (void)args;
+    return false;
+}
+
+#define CMETA_DEFINE_INVOKER_U(in, ret) \
+    static inline bool CMETA_DETAIL_INVOKER(CMETA_U_ID(in, ret))( \
+        const cmeta_callable *self, void *out, const void *const *args) { \
+        CMETA_TYPE_CTYPE(in) a0; \
+        CMETA_TYPE_CTYPE(ret) result; \
+        if (!self || self->meta.sig != CMETA_SIG_NAME(CMETA_U_ID(in, ret)) || \
+            !args || !args[0] || \
+            !self->meta.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret))) \
+            return false; \
+        memcpy(&a0, args[0], sizeof(a0)); \
+        result = self->meta.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret))(a0); \
+        if (out) memcpy(out, &result, sizeof(result)); \
+        return true; \
+    }
+#define CMETA_DEFINE_INVOKER_B(a, b, ret) \
+    static inline bool CMETA_DETAIL_INVOKER(CMETA_B_ID(a, b, ret))( \
+        const cmeta_callable *self, void *out, const void *const *args) { \
+        CMETA_TYPE_CTYPE(a) a0; \
+        CMETA_TYPE_CTYPE(b) a1; \
+        CMETA_TYPE_CTYPE(ret) result; \
+        if (!self || self->meta.sig != CMETA_SIG_NAME(CMETA_B_ID(a, b, ret)) || \
+            !args || !args[0] || !args[1] || \
+            !self->meta.call.CMETA_CALL_MEMBER(CMETA_B_ID(a, b, ret))) \
+            return false; \
+        memcpy(&a0, args[0], sizeof(a0)); \
+        memcpy(&a1, args[1], sizeof(a1)); \
+        result = self->meta.call.CMETA_CALL_MEMBER(CMETA_B_ID(a, b, ret))(a0, a1); \
+        if (out) memcpy(out, &result, sizeof(result)); \
+        return true; \
+    }
+#define CMETA_DEFINE_INVOKER_G(in, out_type) \
+    static inline bool CMETA_DETAIL_INVOKER(CMETA_G_ID(in, out_type))( \
+        const cmeta_callable *self, void *out, const void *const *args) { \
+        (void)self; \
+        (void)out; \
+        (void)args; \
+        return false; \
+    }
+CMETA_ALL_SIGNATURES(CMETA_DEFINE_INVOKER_U, CMETA_DEFINE_INVOKER_B,
+                     CMETA_DEFINE_INVOKER_G)
+#undef CMETA_DEFINE_INVOKER_U
+#undef CMETA_DEFINE_INVOKER_B
+#undef CMETA_DEFINE_INVOKER_G
+
+#define CMETA_INVOKER_ASSOC_U(in, ret) \
+    , CMETA_FN_TYPE(CMETA_U_ID(in, ret)): CMETA_DETAIL_INVOKER(CMETA_U_ID(in, ret))
+#define CMETA_INVOKER_ASSOC_B(a, b, ret) \
+    , CMETA_FN_TYPE(CMETA_B_ID(a, b, ret)): CMETA_DETAIL_INVOKER(CMETA_B_ID(a, b, ret))
+#define CMETA_INVOKER_ASSOC_G(in, out_type) \
+    , CMETA_FN_TYPE(CMETA_G_ID(in, out_type)): CMETA_DETAIL_INVOKER(CMETA_G_ID(in, out_type))
+#define CMETA_TYPED_INVOKER_ANY(fn) \
+    _Generic(&(fn), default: cmeta_detail_unsupported_invoke \
+        CMETA_ALL_SIGNATURES(CMETA_INVOKER_ASSOC_U, CMETA_INVOKER_ASSOC_B, \
+                             CMETA_INVOKER_ASSOC_G))
+
 #define CMETA_MAKE_U(in, ret) \
     static inline cmeta_fn CMETA_MAKER(CMETA_U_ID(in, ret))( \
         CMETA_FN_TYPE(CMETA_U_ID(in, ret)) fn) { \
@@ -287,7 +357,7 @@ static inline void cmeta_unsupported_signature(void) { }
         return x; \
     } \
     static bool cmeta_invoke_##name(const cmeta_callable *self, void *out, const void *const *args) { \
-        return self ? cmeta_fn_invoke(self->meta, out, args) : false; \
+        return CMETA_TYPED_INVOKER_ANY(cmeta_typed_##name)(self, out, args); \
     } \
     static cmeta_gen_status cmeta_generate_##name(const cmeta_callable *self, const void *input, void *out, size_t *cursor) { \
         return self ? cmeta_fn_generate(self->meta, input, out, cursor) : CMETA_GEN_ERROR; \

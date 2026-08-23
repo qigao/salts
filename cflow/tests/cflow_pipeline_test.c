@@ -1,4 +1,5 @@
 #include <cflow/cflow.h>
+#include <cflow/plan_internal.h>
 #include "tinytest.h"
 
 #include "cflow_test_ops.h"
@@ -100,6 +101,39 @@ suite("CFlow pipeline") {
 
         cflow_result_destroy(&compiled);
         cflow_result_destroy(&interpreted);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("predecodes immutable Filter and Map callback records once") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        const cflow_plan_impl *impl;
+        const cflow_plan_inst *filter;
+        const cflow_plan_inst *map;
+
+        check_true(cflow_test_build_pipeline(&stream));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        impl = (const cflow_plan_impl *)plan.impl;
+        check_not_null(impl);
+        check_equal(impl->count, (size_t)2u);
+
+        filter = &impl->code[0];
+        check_equal(filter->opcode, CMETA_PLAN_FILTER);
+        check_not_null(filter->call.invoke);
+        check_true(cmeta_type_equal(filter->call.input_type, &cmeta_type_int));
+        check_true(cmeta_type_equal(filter->call.output_type, &cmeta_type_bool));
+
+        map = &impl->code[1];
+        check_equal(map->opcode, CMETA_PLAN_MAP);
+        check_equal(map->fn_chain_count, (size_t)2u);
+        check_not_null(map->fn_chain[0].invoke);
+        check_true(cmeta_type_equal(map->fn_chain[0].input_type, &cmeta_type_int));
+        check_true(cmeta_type_equal(map->fn_chain[0].output_type, &cmeta_type_long));
+        check_not_null(map->fn_chain[1].invoke);
+        check_true(cmeta_type_equal(map->fn_chain[1].input_type, &cmeta_type_long));
+        check_true(cmeta_type_equal(map->fn_chain[1].output_type, &cmeta_type_double));
+
         cflow_plan_destroy(&plan);
         cflow_stream_destroy(&stream);
     }

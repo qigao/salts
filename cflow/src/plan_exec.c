@@ -39,7 +39,7 @@ static bool step_filter(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
     for (size_t n = 0; n < v->count; ++n) {
         unsigned char *elem = v->data + n * v->type->size;
         _Bool keep = false; const void *args[1] = { elem };
-        if (!cmeta_callable_invoke(&i->fn, &keep, args)) return false;
+        if (!i->call.invoke || !i->call.invoke(&i->call.fn, &keep, args)) return false;
         if (keep) {
             if (out != n) memmove(v->data + out * v->type->size, elem, v->type->size);
             ++out;
@@ -54,21 +54,21 @@ static bool step_map(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
     cflow_plan_value_vec cur = *v;
     v->data = NULL; v->count = 0; v->type = NULL;
     for (size_t k = 0; k < i->fn_chain_count; ++k) {
-        const cmeta_sig_desc *sig = cmeta_callable_signature(i->fn_chain[k]);
-        if (!sig || sig->param_count != 1u || !cmeta_type_equal(sig->params[0], cur.type)) { vec_destroy(&cur); return false; }
+        const cflow_plan_call *call = &i->fn_chain[k];
+        if (!call->invoke || !cmeta_type_equal(call->input_type, cur.type)) { vec_destroy(&cur); return false; }
         size_t bytes = 0;
-        if (!checked_bytes(cur.count, sig->return_type->size, &bytes)) { vec_destroy(&cur); return false; }
+        if (!checked_bytes(cur.count, call->output_type->size, &bytes)) { vec_destroy(&cur); return false; }
         unsigned char *next = bytes ? malloc(bytes) : NULL;
         if (bytes && !next) { vec_destroy(&cur); return false; }
         for (size_t n = 0; n < cur.count; ++n) {
             const void *args[1] = { cur.data + n * cur.type->size };
-            if (!cmeta_callable_invoke(&i->fn_chain[k], next + n * sig->return_type->size, args)) {
+            if (!call->invoke(&call->fn, next + n * call->output_type->size, args)) {
                 free(next); vec_destroy(&cur); return false;
             }
         }
         size_t next_count = cur.count;
         vec_destroy(&cur);
-        cur.data = next; cur.count = next_count; cur.type = sig->return_type;
+        cur.data = next; cur.count = next_count; cur.type = call->output_type;
     }
     if (!cmeta_type_equal(cur.type, i->output_type)) { vec_destroy(&cur); return false; }
     *v = cur;
@@ -99,7 +99,7 @@ static bool step_flat_map(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
         const void *input = v->data + n * v->type->size;
         size_t cursor = 0;
         for (;;) {
-            cmeta_gen_status st = cmeta_callable_generate(&i->fn, input, slot, &cursor);
+            cmeta_gen_status st = cmeta_callable_generate(&i->call.fn, input, slot, &cursor);
             if (st == CMETA_GEN_ERROR) { free(slot); vec_destroy(&out); return false; }
             if (st == CMETA_GEN_DONE) break;
             if (st != CMETA_GEN_VALUE && st != CMETA_GEN_VALUE_AND_DONE) { free(slot); vec_destroy(&out); return false; }
@@ -120,7 +120,9 @@ static bool step_reduce(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
     memcpy(acc, v->data, v->type->size);
     for (size_t n = 1; n < v->count; ++n) {
         const void *args[2] = { acc, v->data + n * v->type->size };
-        if (!cmeta_callable_invoke(&i->fn, tmp, args)) { free(acc); free(tmp); return false; }
+        if (!i->call.invoke || !i->call.invoke(&i->call.fn, tmp, args)) {
+            free(acc); free(tmp); return false;
+        }
         memcpy(acc, tmp, v->type->size);
     }
     free(tmp); vec_destroy(v);
