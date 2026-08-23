@@ -200,14 +200,15 @@ These are local measurements, not a universal threshold. The API remains explici
 
 No claim is made that Lean verifies arbitrary compiled C or the platform ABI. The deliverable is a smaller, checkable contract for the CFlow Plan fragment.
 
-Plan compilation emits an immutable certificate containing:
+The explicit certificate builder derives an immutable runtime witness from one
+normalized Graph and compiled Plan. It contains:
 
 - source normalized-Graph fingerprint;
 - ordered opcode sequence;
 - semantic input/output type identities;
 - callable semantic identities and declared properties;
 - selected execution path and capability requirements;
-- ordered Parallel Reduce chunking policy when present.
+- encounter-order constraint for ordered Parallel Reduce when present.
 
 Certificates are runtime witnesses, not a persistent wire format. Rows retain bounded `cmeta_callable` values and the checker uses `cmeta_callable_same()`; type comparison uses `cmeta_type_equal()`. Only schema version, opcode, path, and property-mask numerals are stable ABI. Pointer values and structure padding are never hashed or serialized.
 
@@ -215,12 +216,22 @@ The C checker validates the certificate transactionally against the normalized G
 
 Lean defines the same certificate schema and proves:
 
-1. a valid linear certificate preserves the normalized Graph's observation;
-2. the sequential Plan interpreter preserves the certificate denotation;
-3. ordered parallel chunk reduction preserves the sequential reduction result under the R11 premises;
-4. rejection of an invalid certificate cannot authorize execution.
+1. exact ordered agreement of certificate, Graph semantic rows, and Plan rows,
+   together with the type chain and row-refinement witnesses, composes to
+   Graph/Plan observational equivalence;
+2. ordered nonempty chunk reduction preserves the sequential left-reduction
+   result under the R11 premises, without assuming commutativity;
+3. `ExecutionRefines.r11` changes the physical form from Reduce to Parallel
+   Reduce while retaining the same semantic result.
 
-The existing `CompileContract` trust note is narrowed to the certificate checker's implementation and the C compiler/runtime. CI builds the Lean project and runs C certificate conformance tests from the same stable enum and schema version. The documentation must continue to call this a refinement certificate, not a full formal verification of the C binary.
+The C checker is tested to reject tampered and stale witnesses, but it is not an
+execution authorization gate: unsupported Relation/WAIT semantics remain on the
+independent Kernel path. The remaining trusted base is the declared callback
+law, the compiler-conformance row witness, certificate builder/checker C code,
+the C compiler, platform ABI, and Kernel runtime. CI uses the repository-pinned
+`lean-toolchain` to run `lake test`, then runs the C certificate and calculus
+conformance tests in the same Linux job. This is a refinement certificate, not
+a formal verification of an arbitrary C binary.
 
 ## Phase G-4: host verification
 
