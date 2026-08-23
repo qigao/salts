@@ -7,6 +7,8 @@
 
 typedef struct cflow_parallel_reduce_frame cflow_parallel_reduce_frame;
 
+enum { CFLOW_PARALLEL_REDUCE_WRITE_ISOLATION = 128u };
+
 typedef struct cflow_parallel_reduce_task {
     cflow_parallel_reduce_frame *frame;
     size_t index;
@@ -22,6 +24,7 @@ struct cflow_parallel_reduce_frame {
     cflow_parallel_reduce_task *tasks;
     unsigned char *partials;
     unsigned char *scratch;
+    size_t slot_stride;
     size_t completed;
     bool failed;
 };
@@ -39,8 +42,8 @@ static void parallel_reduce_task_run(void *user) {
 
     if (ok) {
         const size_t value_size = frame->prefix.type->size;
-        unsigned char *acc = frame->partials + task->index * value_size;
-        unsigned char *tmp = frame->scratch + task->index * value_size;
+        unsigned char *acc = frame->partials + task->index * frame->slot_stride;
+        unsigned char *tmp = frame->scratch + task->index * frame->slot_stride;
         memcpy(acc, frame->prefix.data + task->begin * value_size, value_size);
         for (size_t offset = 1u; offset < task->count; ++offset) {
             const void *args[2] = {
@@ -107,14 +110,21 @@ static bool parallel_reduce_frame_init(cflow_parallel_reduce_frame **out,
 static bool parallel_reduce_frame_allocate_tasks(
     cflow_parallel_reduce_frame *frame, size_t task_count) {
     size_t slot_bytes;
+    size_t stride;
     if (!frame || !task_count ||
         task_count > SIZE_MAX / sizeof(cflow_parallel_reduce_task) ||
-        !checked_bytes(task_count, frame->prefix.type->size, &slot_bytes))
+        frame->prefix.type->size >
+            SIZE_MAX - (CFLOW_PARALLEL_REDUCE_WRITE_ISOLATION - 1u))
         return false;
+    stride = frame->prefix.type->size +
+        (CFLOW_PARALLEL_REDUCE_WRITE_ISOLATION - 1u);
+    stride -= stride % CFLOW_PARALLEL_REDUCE_WRITE_ISOLATION;
+    if (!checked_bytes(task_count, stride, &slot_bytes)) return false;
     frame->tasks = (cflow_parallel_reduce_task *)calloc(
         task_count, sizeof(*frame->tasks));
     frame->partials = (unsigned char *)malloc(slot_bytes);
     frame->scratch = (unsigned char *)malloc(slot_bytes);
+    frame->slot_stride = stride;
     return frame->tasks && frame->partials && frame->scratch;
 }
 
@@ -151,7 +161,7 @@ static bool merge_partials(cflow_parallel_reduce_frame *frame,
     for (size_t index = 1u; ok && index < task_count; ++index) {
         const void *args[2] = {
             result,
-            frame->partials + index * value_size
+            frame->partials + index * frame->slot_stride
         };
         ok = frame->reducer->call.invoke &&
             frame->reducer->call.invoke(&frame->reducer->call.fn, tmp, args);

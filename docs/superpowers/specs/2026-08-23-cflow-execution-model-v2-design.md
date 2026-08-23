@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress. Phase G-1 bounded admission is implemented on the execution-model-v2 branch. Ordered parallel reduction, executable Lean/C refinement evidence, and macOS/Android host verification remain subsequent phases.
+In progress. Phase G-1 bounded admission and Phase G-2 ordered parallel reduction are implemented on the execution-model-v2 branch. Executable Lean/C refinement evidence and macOS/Android host verification remain subsequent phases.
 
 The proposal intentionally does not add Event, Mailbox, Machine, Actor, reactor, or minicoro adapters. Those remain consumers of the execution foundation rather than prerequisites for completing the current Direct/Plan/Kernel model.
 
@@ -170,6 +170,8 @@ The caller owns and keeps the input array and executor alive through return. One
 
 Each task writes only its own partial slot. The caller waits for exactly the number of accepted tasks. If allocation, admission, or a callback fails, no result is committed. Already accepted tasks are joined through the evaluation latch, all temporary objects are destroyed, and the function returns false. It must not restart sequentially after parallel execution begins.
 
+Per-task accumulator and scratch slots use a 128-byte write-isolation stride, which separates worker writes for cache-line sizes up to 128 bytes. The bounded slot payload is `2 * p * round_up(value_size, 128)` bytes. For four `long` chunks this is 1024 bytes instead of 32 bytes on this Windows ABI (64 bytes on an LP64 ABI); the deliberate padding prevents cache-line ownership from bouncing on every reducer invocation. Prefix storage remains `n * value_size` and is the dominant temporary payload for large inputs.
+
 ### Complexity
 
 For `n` prefix values and `p` accepted chunks:
@@ -181,6 +183,18 @@ For `n` prefix values and `p` accepted chunks:
 - result count: zero for empty input, otherwise one.
 
 Benchmarks report sequential and ordered-parallel rows for 1 Ki, 64 Ki, and 1 Mi items. Shared-runner results are evidence, not a hard cross-host speed gate. A local regression greater than 10% for the untouched sequential path blocks the change.
+
+### Local Release evidence
+
+Five post-optimization samples were collected on Windows 11 build 26200, MSVC 19.44, and an AMD Ryzen 9 7940HX (16 cores/32 logical processors). The configuration was four workers, four maximum tasks, and 256 minimum items per task. Every timed row was preceded by independent scalar, sequential Plan, and parallel Plan result comparison.
+
+| Values per sample | Sequential range | Ordered-parallel range | Paired throughput ratio | Decision |
+|---|---:|---:|---:|---|
+| 1 Ki | 176.7–210.9 M items/s | 126.5–183.3 M items/s | 0.68–0.97x | scheduling dominates; keep sequential |
+| 64 Ki | 179.6–199.4 M items/s | 342.5–393.3 M items/s | 1.79–2.18x | parallel crossover observed |
+| 1 Mi | 148.6–168.6 M items/s | 322.8–370.7 M items/s | 1.91–2.31x | parallel wins on this host |
+
+These are local measurements, not a universal threshold. The API remains explicit because reducer cost, host topology, executor load, and memory bandwidth move the crossover. The release-host workflow publishes five raw runs for both the existing Direct/Plan benchmark and the Parallel Reduce benchmark without failing a PR on shared-runner throughput.
 
 ## Phase G-3: Lean/C refinement certificate
 

@@ -45,7 +45,6 @@ concurrency:
 
 env:
   BENCHMARK_RUNS: 5
-  BENCHMARK_TARGET: cflow_direct_benchmark
 
 jobs:
   benchmark:
@@ -63,6 +62,7 @@ jobs:
             build_preset: build-default-linux
             build_dir: build/linux-gcc-release
             executable: build/linux-gcc-release/bin/cflow_direct_benchmark
+            parallel_executable: build/linux-gcc-release/bin/cflow_parallel_reduce_benchmark
           - host: ubuntu-24.04-gcc
             runner: ubuntu-24.04
             family: linux
@@ -70,6 +70,7 @@ jobs:
             build_preset: build-default-linux
             build_dir: build/linux-gcc-release
             executable: build/linux-gcc-release/bin/cflow_direct_benchmark
+            parallel_executable: build/linux-gcc-release/bin/cflow_parallel_reduce_benchmark
           - host: windows-2022-msvc
             runner: windows-2022
             family: windows
@@ -77,6 +78,7 @@ jobs:
             build_preset: build-release-windows
             build_dir: build/Msvc-Release
             executable: build/Msvc-Release/bin/cflow_direct_benchmark.exe
+            parallel_executable: build/Msvc-Release/bin/cflow_parallel_reduce_benchmark.exe
           - host: windows-2025-msvc
             runner: windows-2025
             family: windows
@@ -84,6 +86,7 @@ jobs:
             build_preset: build-release-windows
             build_dir: build/Msvc-Release
             executable: build/Msvc-Release/bin/cflow_direct_benchmark.exe
+            parallel_executable: build/Msvc-Release/bin/cflow_parallel_reduce_benchmark.exe
 
     steps:
       - uses: actions/checkout@v6
@@ -116,7 +119,7 @@ jobs:
             -DBUILD_BENCHMARKS=ON \
             -DBUILD_TESTS=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
-            --target "$BENCHMARK_TARGET"
+            --target cflow_direct_benchmark cflow_parallel_reduce_benchmark
 
       - name: Configure and build Windows Release benchmark
         if: matrix.family == 'windows'
@@ -132,7 +135,7 @@ jobs:
 
           cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --target "%BENCHMARK_TARGET%"
+          cmake --build --preset "${{ matrix.build_preset }}" --target cflow_direct_benchmark cflow_parallel_reduce_benchmark
           if errorlevel 1 exit /b 1
 
       - name: Capture environment and run benchmark
@@ -142,15 +145,20 @@ jobs:
           BENCHMARK_PRESET: ${{ matrix.configure_preset }}
           BENCHMARK_BUILD_DIR: ${{ matrix.build_dir }}
           BENCHMARK_EXECUTABLE: ${{ matrix.executable }}
+          PARALLEL_BENCHMARK_EXECUTABLE: ${{ matrix.parallel_executable }}
         run: |
           $ErrorActionPreference = "Stop"
           $resultDir = Join-Path $env:GITHUB_WORKSPACE "benchmark-results"
           $buildDir = Join-Path $env:GITHUB_WORKSPACE $env:BENCHMARK_BUILD_DIR
           $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:BENCHMARK_EXECUTABLE
+          $parallelBenchmark = Join-Path $env:GITHUB_WORKSPACE $env:PARALLEL_BENCHMARK_EXECUTABLE
           New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
 
           if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
             throw "Benchmark executable not found: $benchmark"
+          }
+          if (-not (Test-Path -LiteralPath $parallelBenchmark -PathType Leaf)) {
+            throw "Benchmark executable not found: $parallelBenchmark"
           }
           if ($env:BENCHMARK_RUNS -notmatch '^[1-9][0-9]*$') {
             throw "BENCHMARK_RUNS must be a positive integer"
@@ -195,10 +203,15 @@ jobs:
           }
 
           for ($run = 1; $run -le [int]$env:BENCHMARK_RUNS; ++$run) {
-            $runFile = Join-Path $resultDir ("run-{0:D2}.txt" -f $run)
+            $runFile = Join-Path $resultDir ("run-direct-{0:D2}.txt" -f $run)
             & $benchmark 2>&1 | Tee-Object -FilePath $runFile
             if ($LASTEXITCODE -ne 0) {
-              throw "Benchmark run $run failed with exit code $LASTEXITCODE"
+              throw "Direct benchmark run $run failed with exit code $LASTEXITCODE"
+            }
+            $parallelRunFile = Join-Path $resultDir ("run-parallel-reduce-{0:D2}.txt" -f $run)
+            & $parallelBenchmark 2>&1 | Tee-Object -FilePath $parallelRunFile
+            if ($LASTEXITCODE -ne 0) {
+              throw "Parallel Reduce benchmark run $run failed with exit code $LASTEXITCODE"
             }
           }
 
@@ -210,7 +223,9 @@ jobs:
           Add-Content -LiteralPath $summary -Value "<details><summary>Representative run</summary>"
           Add-Content -LiteralPath $summary -Value ""
           Add-Content -LiteralPath $summary -Value '```text'
-          Get-Content -LiteralPath (Join-Path $resultDir "run-01.txt") |
+          Get-Content -LiteralPath (Join-Path $resultDir "run-direct-01.txt") |
+            Add-Content -LiteralPath $summary
+          Get-Content -LiteralPath (Join-Path $resultDir "run-parallel-reduce-01.txt") |
             Add-Content -LiteralPath $summary
           Add-Content -LiteralPath $summary -Value '```'
           Add-Content -LiteralPath $summary -Value "</details>"
