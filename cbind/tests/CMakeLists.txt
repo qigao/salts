@@ -25,7 +25,7 @@ cmake_add_test(cbind_preflight_order_test
 
 cmake_add_test(cbind_header_cpp_test
   SOURCES cbind_header_cpp_test.cpp
-  LIBS TurboUtils::CBind TurboUtils::TinyTest
+  LIBS TurboUtils::CBind cserde_recording_support TurboUtils::TinyTest
   FOLDER "cbind/tests")
 
 set_target_properties(
