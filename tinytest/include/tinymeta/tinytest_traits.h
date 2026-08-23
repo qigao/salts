@@ -10,7 +10,7 @@
 #endif
 
 #include <stdbool.h>
-#include "tinymeta/pp.h"
+#include "tinymeta/tinytest_pp.h"
 
 /* Public operation tokens used by the generic assertion layer. */
 #define TTEST_EQ 0
