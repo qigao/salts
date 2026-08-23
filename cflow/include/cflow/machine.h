@@ -110,21 +110,39 @@ typedef struct cflow_machine {
  * Copy, normalize, validate, and atomically publish one immutable Machine.
  * Input arrays are borrowed for this call. CMeta descriptors are borrowed
  * until destroy. `out` must be empty; failure leaves it empty.
+ *
+ * @param out Zero-initialized destination that owns the published Machine.
+ * @param definition Borrowed declaration arrays and their exact counts.
+ * @return CFLOW_MACHINE_OK on success, otherwise a validation or allocation
+ * error from cflow_machine_status. On failure, `out->impl` remains NULL.
  */
 cflow_machine_status cflow_machine_build(
     cflow_machine *out, const cflow_machine_definition *definition);
 
-/** Control-plane destruction requires all readers to be quiescent. */
+/**
+ * Release one Machine and clear its handle.
+ *
+ * @param machine Owning handle, or NULL. Control-plane destruction requires
+ * all readers to be quiescent.
+ */
 void cflow_machine_destroy(cflow_machine *machine);
 
+/** Return the initial state ID, or zero for an empty/NULL handle. */
 cflow_machine_state_id cflow_machine_initial_state(
     const cflow_machine *machine);
+
+/** Return normalized declaration counts, or zero for an empty/NULL handle. */
 size_t cflow_machine_state_count(const cflow_machine *machine);
 size_t cflow_machine_event_count(const cflow_machine *machine);
 size_t cflow_machine_guard_count(const cflow_machine *machine);
 size_t cflow_machine_action_count(const cflow_machine *machine);
 size_t cflow_machine_transition_count(const cflow_machine *machine);
 
+/**
+ * Return a borrowed normalized declaration at `index`, or NULL when the
+ * handle is empty/NULL or the index is out of range. The pointer is invalid
+ * after cflow_machine_destroy().
+ */
 const cflow_machine_state *cflow_machine_state_at(
     const cflow_machine *machine, size_t index);
 const cflow_event_type *cflow_machine_event_at(

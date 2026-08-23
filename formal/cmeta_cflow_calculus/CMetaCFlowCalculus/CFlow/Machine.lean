@@ -114,6 +114,12 @@ def GuardTyped (machine : Machine) (transition : Transition)
       total := true
       noAlias := true } : GuardContract)
 
+def ActionObservationTyped (machine : Machine) : ActionObservationDecl → Prop
+  | .none => True
+  | .value _ => True
+  | .event eventId payloadTy => ∃ event,
+      machine.events.lookup eventId = some event ∧ event.payloadTy = payloadTy
+
 def ActionTyped (machine : Machine) (transition : Transition)
     (source target : StateDecl) (event : EventType) : Prop :=
   (transition.action = 0 ∧ source.valueTy = target.valueTy) ∨ ∃ action,
@@ -140,6 +146,8 @@ structure Machine.Valid (machine : Machine) : Prop where
   guardIdsUnique : (machine.guards.map GuardDecl.id).Nodup
   actionIdsNonzero : ∀ action ∈ machine.actions, action.id ≠ 0
   actionIdsUnique : (machine.actions.map ActionDecl.id).Nodup
+  actionObservationsTyped : ∀ action ∈ machine.actions,
+    ActionObservationTyped machine action.observation
   initialKnown : StateKnown machine machine.initial
   sourceKnown : ∀ transition ∈ machine.transitions,
     StateKnown machine transition.source

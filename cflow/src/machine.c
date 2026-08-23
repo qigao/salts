@@ -69,17 +69,13 @@ static int compare_transition(const void *left, const void *right) {
     return 0;
 }
 
-static bool copy_rows(void **out, const void *rows, size_t bytes) {
+static void *copy_rows(const void *rows, size_t bytes) {
     void *copy;
-    if (bytes == 0u) {
-        *out = NULL;
-        return true;
-    }
+    if (bytes == 0u) return NULL;
     copy = malloc(bytes);
-    if (copy == NULL) return false;
+    if (copy == NULL) return NULL;
     memcpy(copy, rows, bytes);
-    *out = copy;
-    return true;
+    return copy;
 }
 
 static const cflow_machine_state *find_state(
@@ -302,40 +298,49 @@ static cflow_machine_status validate_transitions(
     return CFLOW_MACHINE_OK;
 }
 
-/* O(states * transitions) over immutable build-time rows; storage is exactly
- * one Boolean per state and no data-path allocation survives construction. */
+/* O(states * transitions) over immutable build-time rows; the exact-sized
+ * visited set and queue are construction-only and never reach the data path. */
 static cflow_machine_status validate_reachability(
     const cflow_machine_impl *impl) {
-    bool *reachable = (bool *)calloc(impl->state_count, sizeof(*reachable));
-    bool changed = true;
-    size_t index;
-    if (reachable == NULL) return CFLOW_MACHINE_ALLOCATION_FAILED;
-    for (index = 0u; index < impl->state_count; ++index)
-        if (impl->states[index].id == impl->initial_state) reachable[index] = true;
-    while (changed) {
-        changed = false;
+    bool *reachable;
+    cflow_machine_state_id *queue;
+    const cflow_machine_state *initial;
+    size_t queue_bytes, head = 0u, tail = 0u, index;
+    if (!checked_bytes(impl->state_count, sizeof(*queue), &queue_bytes))
+        return CFLOW_MACHINE_INVALID_ARGUMENT;
+    reachable = (bool *)calloc(impl->state_count, sizeof(*reachable));
+    queue = (cflow_machine_state_id *)malloc(queue_bytes);
+    if (reachable == NULL || queue == NULL) {
+        free(queue);
+        free(reachable);
+        return CFLOW_MACHINE_ALLOCATION_FAILED;
+    }
+    initial = find_state(impl, impl->initial_state);
+    reachable[(size_t)(initial - impl->states)] = true;
+    queue[tail++] = initial->id;
+    while (head < tail) {
+        const cflow_machine_state_id source = queue[head++];
         for (index = 0u; index < impl->transition_count; ++index) {
             const cflow_machine_transition *transition = &impl->transitions[index];
-            size_t source_index, target_index;
-            for (source_index = 0u; source_index < impl->state_count;
-                 ++source_index)
-                if (impl->states[source_index].id == transition->source) break;
-            for (target_index = 0u; target_index < impl->state_count;
-                 ++target_index)
-                if (impl->states[target_index].id == transition->target) break;
-            if (source_index < impl->state_count && target_index < impl->state_count &&
-                reachable[source_index] && !reachable[target_index]) {
+            const cflow_machine_state *target;
+            size_t target_index;
+            if (transition->source != source) continue;
+            target = find_state(impl, transition->target);
+            target_index = (size_t)(target - impl->states);
+            if (!reachable[target_index]) {
                 reachable[target_index] = true;
-                changed = true;
+                queue[tail++] = target->id;
             }
         }
     }
     for (index = 0u; index < impl->state_count; ++index) {
         if (!reachable[index]) {
+            free(queue);
             free(reachable);
             return CFLOW_MACHINE_UNREACHABLE_STATE;
         }
     }
+    free(queue);
     free(reachable);
     return CFLOW_MACHINE_OK;
 }
@@ -407,12 +412,21 @@ cflow_machine_status cflow_machine_build(
 
     impl = (cflow_machine_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL) return CFLOW_MACHINE_ALLOCATION_FAILED;
-    if (!copy_rows((void **)&impl->states, definition->states, state_bytes) ||
-        !copy_rows((void **)&impl->events, definition->events, event_bytes) ||
-        !copy_rows((void **)&impl->guards, definition->guards, guard_bytes) ||
-        !copy_rows((void **)&impl->actions, definition->actions, action_bytes) ||
-        !copy_rows((void **)&impl->transitions, definition->transitions,
-                   transition_bytes)) {
+    impl->states = (cflow_machine_state *)copy_rows(
+        definition->states, state_bytes);
+    impl->events = (cflow_event_type *)copy_rows(
+        definition->events, event_bytes);
+    impl->guards = (cflow_machine_guard *)copy_rows(
+        definition->guards, guard_bytes);
+    impl->actions = (cflow_machine_action *)copy_rows(
+        definition->actions, action_bytes);
+    impl->transitions = (cflow_machine_transition *)copy_rows(
+        definition->transitions, transition_bytes);
+    if ((state_bytes != 0u && impl->states == NULL) ||
+        (event_bytes != 0u && impl->events == NULL) ||
+        (guard_bytes != 0u && impl->guards == NULL) ||
+        (action_bytes != 0u && impl->actions == NULL) ||
+        (transition_bytes != 0u && impl->transitions == NULL)) {
         machine_impl_destroy(impl);
         return CFLOW_MACHINE_ALLOCATION_FAILED;
     }

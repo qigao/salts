@@ -61,6 +61,12 @@ def failingSecond : ActionEvaluation
   | 2 => .error "boom"
   | _ => .success 8 []
 
+example : ActionObservationTyped machine (.event 100 triggerTy) := by
+  exact ⟨{ id := 100, payloadTy := triggerTy }, by decide, rfl⟩
+
+example : ¬ ActionObservationTyped machine (.event 100 longTy) := by
+  simp [ActionObservationTyped, machine, Schema.lookup, triggerTy, longTy]
+
 example : step machine bothEnabled successfulActions initialConfig trigger =
     some { initialConfig with
       state := 30
