@@ -4,13 +4,16 @@
 > to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for
 > tracking.
 
-**Goal:** Collect reproducible CFlow Direct/Plan Release benchmark evidence from
-multiple supported GitHub-hosted runner images.
+**Goal:** Collect reproducible CFlow Direct/Plan data-path and Graph-path
+representation Release benchmark evidence from multiple supported
+GitHub-hosted runner images.
 
 **Architecture:** Add one dedicated matrix workflow. Reuse existing platform
 Release presets, build only the benchmark target, run five samples per host,
-and upload raw output plus enough host/compiler metadata to interpret it. Do not
-turn heterogeneous shared-runner measurements into a throughput gate.
+and upload raw output plus enough host/compiler metadata to interpret it. Extend
+that target with a correctness-checked, benchmark-only comparison of equivalent
+Graph path representations. Do not turn heterogeneous shared-runner
+measurements into a throughput gate.
 
 **Tech Stack:** GitHub Actions, CMake Presets, Ninja, vcpkg, MSVC, GCC,
 PowerShell, TinyTest benchmark output.
@@ -20,7 +23,8 @@ PowerShell, TinyTest benchmark output.
 ## Constraints
 
 - Use Release configuration only.
-- Preserve all CFlow/CMeta behavior and benchmark workload semantics.
+- Preserve all production CFlow/CMeta behavior and existing data-path workload
+  semantics; label the additional graph-path workload separately.
 - Pin OS runner labels and record runner image revisions.
 - Fail fast on setup/build/run errors and missing artifacts.
 - Keep raw per-run evidence; do not enforce cross-host throughput thresholds.
@@ -74,3 +78,25 @@ PowerShell, TinyTest benchmark output.
 - [x] Review the diff for production behavior changes and secret/path leakage.
 - [ ] Commit, push, open a PR against
   `test/cflow-calculus-conformance-phase-f1`, and inspect all matrix jobs.
+
+## Task 5: Compare equivalent Graph-path representations
+
+**Files:**
+
+- Modify: `cflow/benchmarks/CMakeLists.txt`
+- Create: `cflow/benchmarks/cflow_graph_path_benchmark.c`
+- Modify: `docs/superpowers/specs/2026-08-23-cflow-release-host-benchmark-design.md`
+
+- [x] Add a failing representation-equivalence benchmark test before its
+  traversal implementations.
+- [x] Build one validated normalized linear Graph and derive flat, dense,
+  degenerate-tree and bounded TurboSTL HashMap views from its edges.
+- [x] Compile the same normalized Graph into a contiguous Plan instruction tape.
+- [x] Assert operator count and order-sensitive checksum parity outside timing
+  for boundary, typical and peak sizes.
+- [x] Measure complete immutable path traversals with `benchmark_ops`; keep all
+  construction, reservation, allocation and destruction outside timing.
+- [x] Trigger the host matrix for TurboSTL changes because the HashMap control
+  is now a benchmark dependency.
+- [x] Run the target in MSVC Release, then run adjacent CFlow tests and inspect
+  the final diff for production API or executor changes.
