@@ -234,13 +234,14 @@ Struct(Payload,
 );
 ```
 
-- Consumes provider macros named:
+- Consumes provider-macro families formed by appending the kind name to these
+  prefixes:
 
 ```text
-CMETA_DECLARED_STORAGE_<Kind>
-CMETA_DECLARED_STORAGE_DESC_<Kind>
-CMETA_DECLARED_CONSTRUCTOR_<Kind>
-CMETA_DECLARED_CONSTRUCTION_<Kind>
+CMETA_DECLARED_STORAGE_
+CMETA_DECLARED_STORAGE_DESC_
+CMETA_DECLARED_CONSTRUCTOR_
+CMETA_DECLARED_CONSTRUCTION_
 ```
 
 - [ ] **Step 1: Add a tagged-parenthesis probe to `pp.h`**
