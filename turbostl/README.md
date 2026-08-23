@@ -36,10 +36,32 @@ typed(BTree, IntTree, int, long);
 
 No `implement(...)`, `DeclareContainers(...)`, or `ImplementContainers(...)` call is required or exposed for typed containers.
 
-TurboSTL does not expose a second instance-declaration DSL. In particular,
-`Vec(int, values)` and `Map(int, long, values)` are not public declarations.
-The erased `vec_t`, `list_t`, `map_t`, and related handles remain available to
-low-level code through focused component headers such as `<turbostl/vec.h>`.
+## Self-describing raw handles
+
+PR #53's declaration and expression initializers remain supported:
+
+```c
+Vec(int, declared_values);
+Map(int, long, declared_scores);
+
+vec_t values = VecOf(int);
+map_t scores = MapOf(int, long);
+```
+
+These forms bind CMeta descriptors to erased TurboSTL handles without
+allocating storage or generating a concrete C type. They are raw-handle
+initializers, not additional CMeta Generic instantiations. Initialize them with
+the ordinary raw operations and destroy them after use:
+
+```c
+if (vec_init(&values, 8u) != STL_OK)
+    return 1;
+vec_destroy(&values);
+```
+
+The `*Of(...)` compound literals also remain valid in assignments, returns,
+and function arguments. Once an initialized raw handle owns storage, it must
+not be copied by value.
 
 ## What is header-only?
 
@@ -100,8 +122,9 @@ map_destroy(IntLongMap, &index);
 list_destroy(IntList, &values);
 ```
 
-There is no erased-instance fallback: a typed operation that requires a
-declared container always names that container type.
+List and Map use arity dispatch so both representations remain usable. Calls
+with an explicit type token select the generated API; shorter calls such as
+`map_init(&scores, 100u)` and `map_destroy(&scores)` select the raw-handle API.
 
 ## Generated typed ABI
 
@@ -147,5 +170,15 @@ turbostl_collect_result result =
 `collect(&s, Type, &output, limit)` has the same typed terminal contract.
 The generated public collector takes `Type *`, so a mismatched output wrapper
 is diagnosed before CFlow receives its erased collector context.
+
+Self-describing raw outputs retain the three-argument terminal:
+
+```c
+list_t raw_output = ListOf(int);
+turbostl_collect_result raw_result = to_list(&s, &raw_output, 100u);
+```
+
+The erased form validates its descriptor at runtime; the typed form provides
+the stronger compile-time output pointer check.
 Collection is transactional: failure aborts and restores a zero output.
 The core `TurboUtils::STL` target does not depend on CFlow.

@@ -12,7 +12,7 @@ typedef struct owned_entry_value {
     , (O, owned_entry_value, cmeta_type_owned_entry_value, CMETA_T_OBJECT, \
        cmeta_traits_owned_entry_value)
 
-#include "legacy_instance_typed.h"
+#include <turbostl/typed.h>
 #include "tinytest.h"
 
 static size_t owned_entry_live;

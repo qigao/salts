@@ -4,11 +4,16 @@
 
 ## Context
 
-TurboSTL currently exposes two competing application-level forms. Its documentation describes finite CMeta instantiation such as `typed(List, IntList, int)`, while `turbostl/typed.h` actually exposes instance declarations such as `List(int, values)`. CMeta's finite-kind router and TurboSTL's header-local facade generators still exist, but TurboSTL no longer registers its kinds. The Stream facade consequently collects into an erased instance rather than a declared output type.
+After PR #53, TurboSTL exposes declaration forms such as
+`List(int, values)` and expression forms such as `ListOf(int)`, while CMeta's
+language reference describes finite instantiation such as
+`typed(List, IntList, int)`. CMeta's finite-kind router still exists, but
+TurboSTL does not register its kinds. The Stream facade consequently collects
+into an erased instance rather than a declared output type.
 
 ## Decision
 
-TurboSTL has one application-level generic model:
+TurboSTL's concrete-type Generic model is:
 
 ```c
 typed(List, IntList, int);
@@ -24,14 +29,19 @@ list_add(IntList, &values, 7);
 list_destroy(IntList, &values);
 ```
 
-Stream terminals also require that type token:
+Typed Stream terminals also require that type token:
 
 ```c
 result = to_list(&pipeline, IntList, &values, 100u);
 result = collect(&pipeline, IntList, &values, 100u);
 ```
 
-The erased `vec_t`, `list_t`, `map_t`, and related implementations remain the compiled storage/algorithm layer and ABI. They are available through focused component headers. `turbostl/typed.h` does not expose a second `Vec(T, variable)`/`Map(K, V, variable)` declaration language.
+PR #53's `Vec(T, variable)`/`Map(K, V, variable)` declarations and
+`VecOf(T)`/`MapOf(K, V)` expressions remain supported as self-describing
+erased-handle initializers. They allocate no storage and generate no concrete
+C type, so they are not alternative CMeta Generic instantiations. Raw List/Map
+operations and three-argument Stream terminals remain available for these
+handles through arity dispatch.
 
 ## Architecture and state ownership
 
@@ -39,7 +49,9 @@ The erased `vec_t`, `list_t`, `map_t`, and related implementations remain the co
 - TurboSTL owns the thirteen kind registrations, the kind schema, and typed facade generation.
 - Each generated wrapper owns one raw TurboSTL handle. The wrapper's CMeta header is the source of its public type and Range/collector metadata.
 - The compiled raw handle owns allocated storage. Successful generated `destroy` releases that storage and invalidates the generated wrapper descriptor.
-- CFlow owns stream evaluation. TurboSTL only supplies a collector constructed from the explicitly named output type.
+- CFlow owns stream evaluation. TurboSTL supplies either a collector constructed
+  from the explicitly named generated type or one obtained from an erased
+  handle's descriptor.
 - Public generated collector factories accept the concrete wrapper pointer;
   descriptor-based erased adapters are confined to the CMeta metadata boundary.
 
@@ -49,22 +61,34 @@ The erased `vec_t`, `list_t`, `map_t`, and related implementations remain the co
 - Initialization and collection limits remain mandatory and explicit.
 - A Stream source is borrowed and must remain alive and unmodified until the terminal finishes.
 - Collection is transactional: overflow, type mismatch, or callback failure aborts and restores a zero output wrapper.
-- A mismatched output wrapper is diagnosed by the generated collector function
+- A mismatched generated output wrapper is diagnosed by the collector function
   signature before the erased CFlow boundary.
-- No fallback from typed operations to erased instance inference is provided.
+- Erased-handle terminals validate the bound container descriptor at runtime.
 
 ## Compatibility and migration
 
-This intentionally changes the application-level API. Existing `Vec(int, values)` declarations migrate to `typed(Vec, IntVec, int); IntVec values = {0};`. Existing erased code can keep using focused raw headers and raw handles. Aggregate and typed-facing examples/tests migrate to the finite Generic API.
+This is additive to PR #53: existing `Vec(int, values)` declarations and
+`VecOf(int)` expressions continue to compile and retain their erased-handle
+semantics. Code that needs a concrete generated type, compile-time output
+checking, typed Range entries, or a typed collector can opt into
+`typed(Vec, IntVec, int); IntVec values = {0};`.
 
 Generated `Type_method` symbols remain available as the concrete typed ABI, while semantic kind operations are the documented application facade. No `.cmeta` frontend, angle-bracket syntax, parser, or code-generation step is introduced.
 
 ## Alternatives considered
 
-- Keep both declaration forms: rejected because it leaves two equal public models and makes ownership/type identity depend on which syntax a caller selected.
-- Infer the type solely from an erased output instance: rejected because Stream signatures no longer state their output type and compile-time type checking is lost.
+- Remove PR #53's declaration and expression initializers: rejected because the
+  merged feature is compatible when treated as raw-handle initialization rather
+  than concrete Generic instantiation.
+- Offer only erased output inference: rejected because generated callers would
+  lose an explicit result type and compile-time pointer checking. The erased
+  terminal remains as the compatibility form rather than the sole form.
 - Add C++-style `Map<int, long>` syntax: impossible in C11 without a new frontend and explicitly outside this change.
 
 ## Verification and rollback
 
-Verification covers compile-time instantiation of all thirteen kinds, representative typed operations, Range/collector behavior, Stream collection, installed-header consumption, and the adjacent CMeta/CFlow suites. The change can be rolled back by reverting the kind-registration/schema and test migrations; raw algorithms and storage formats are unchanged.
+Verification covers compile-time instantiation of all thirteen kinds, PR #53
+declaration/expression compatibility, raw and typed List/Map arities,
+Range/collector behavior, both Stream terminal forms, installed-header
+consumption, and the adjacent CMeta/CFlow suites. Raw algorithms and storage
+formats are unchanged.

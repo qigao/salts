@@ -2,9 +2,9 @@
 
 > **For Codex:** Execute this plan task-by-task with test-driven development and fresh verification before completion.
 
-**Goal:** Restore TurboSTL's finite CMeta Generic API as the single typed application surface and make Stream terminals explicitly type their output container.
+**Goal:** Restore TurboSTL's finite CMeta Generic API while retaining PR #53's self-describing raw-handle initializers and make typed Stream terminals explicitly name their output container.
 
-**Architecture:** CMeta continues to route `typed(kind, ...)`; a TurboSTL-owned schema generates concrete wrappers over compiled raw handles. Semantic operation macros dispatch through the declared type token. CFlow execution remains unchanged and receives a collector created by the generated output type.
+**Architecture:** CMeta continues to route `typed(kind, ...)`; a TurboSTL-owned schema generates concrete wrappers over compiled raw handles. PR #53 declaration/expression forms remain erased-handle initializers. Arity dispatch separates raw List/Map calls and three-argument Stream terminals from type-token calls and four-argument typed terminals.
 
 **Tech Stack:** C11, CMeta Schema/macros, TurboSTL, CFlow, CMake Presets, TinyTest.
 
@@ -20,6 +20,9 @@
 - Modify: `turbostl/tests/turbostl_stream_test.c`
 
 - [x] Replace instance declarations with `typed(Vec, InstalledInts, int)` and representative `typed(List, ...)`/`typed(Map, ...)` declarations.
+- [x] Preserve and exercise PR #53's `Vec(...)`/`Map(...)` and
+  `VecOf(...)`/`MapOf(...)` erased-handle initializers alongside finite Generic
+  kinds.
 - [x] Exercise semantic type-token operations and four-argument `to_list`/`collect`.
 - [x] Require generated collector factories to accept their concrete wrapper pointer type.
 - [x] Build the focused targets and confirm they fail because TurboSTL kinds and typed terminals are unavailable.
@@ -27,13 +30,14 @@
 ### Task 2: Restore TurboSTL-owned finite facade generation
 
 **Files:**
+- Create: `turbostl/include/turbostl/detail/typed_initializers.h`
 - Create: `turbostl/include/turbostl/detail/typed_facade.h`
 - Modify: `turbostl/include/turbostl/typed.h`
 
 - [x] Move the TurboSTL-specific kind schema and generator adapters behind a TurboSTL detail header.
 - [x] Adapt initialization/destruction rows to current `*_raw_*` storage bridges while retaining existing compiled algorithms.
-- [x] Register all thirteen kinds with CMeta and remove the competing instance declaration macros.
-- [x] Add semantic type-token operations without adding an inference fallback.
+- [x] Register all thirteen kinds with CMeta while retaining PR #53's initializer macros.
+- [x] Add arity-dispatched List/Map operations for raw handles and generated type tokens.
 - [x] Build and run the focused Generic consumer test.
 
 ### Task 3: Restore the typed Stream terminal contract
@@ -43,6 +47,7 @@
 - Modify: `turbostl/tests/turbostl_stream_test.c`
 
 - [x] Restore `collector(Type, out, limit)`, `collect(stream, Type, out, limit)`, and `to_list(stream, Type, out, limit)`.
+- [x] Retain three-argument `collect(stream, out, limit)` and `to_list(stream, out, limit)` for self-describing raw handles.
 - [x] Preserve explicit capacity, transactional abort, and borrowed-source semantics.
 - [x] Build and run `turbostl_stream_test`.
 
@@ -61,9 +66,9 @@
 - Modify: `turbostl/README.md`
 - Modify: `cmeta/LANGUAGE_REFERENCE.md`
 
-- [x] Migrate typed-facing declarations to named generated wrapper types.
-- [x] Keep raw algorithm tests on a test-only compatibility header where appropriate.
-- [x] Document the unique Generic surface, semantic calls, ownership, errors, and Stream usage.
+- [x] Add generated wrapper coverage without dropping declaration/expression initializer coverage.
+- [x] Keep raw algorithm tests on the production compatibility surface.
+- [x] Document generated Generic and erased-handle initializer roles, ownership, errors, and both Stream usages.
 - [x] Run all TurboSTL tests plus adjacent CMeta/CFlow tests.
 
 ### Task 5: Verify installation, review, and publish

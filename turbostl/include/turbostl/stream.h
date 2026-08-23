@@ -42,15 +42,35 @@ static inline void turbostl_stream_destroy(turbostl_stream_t *stream) {
     cflow_stream_destroy(stream);
 }
 
-/* The terminal signature names its output type explicitly. This keeps the
- * Stream result type visible at the call site and avoids erased inference. */
+static inline cmeta_collector
+turbostl_container_collector(void *output, size_t limit) {
+    const cmeta_container_desc *desc = cmeta_container_descriptor(output);
+    cmeta_collector invalid = {0};
+    if (desc != NULL && desc->collector != NULL)
+        return desc->collector(output, limit);
+    invalid.context = output;
+    invalid.zero_output = output;
+    invalid.limit = limit;
+    invalid.status = CMETA_INVALID_ARGUMENT;
+    return invalid;
+}
+
+/* Four-argument terminals keep the generated output type explicit and
+ * compile-time checked. Three-argument terminals preserve #53's
+ * self-describing erased-handle expressions. */
+#define TURBO_STL_STREAM_SELECT_3_4(_1, _2, _3, _4, selected, ...) selected
 #define collector(container_type, output_ptr, limit) \
     CMETA_TYPED_CALL(container_type, collector, (output_ptr), (limit))
-#define collect(stream_ptr, container_type, output_ptr, limit) \
+#define TURBO_STL_COLLECT_ERASED(stream_ptr, output_ptr, limit) \
+    turbostl_stream_collect((stream_ptr), \
+                            turbostl_container_collector((output_ptr), (limit)))
+#define TURBO_STL_COLLECT_TYPED(stream_ptr, container_type, output_ptr, limit) \
     turbostl_stream_collect((stream_ptr), \
                             collector(container_type, (output_ptr), (limit)))
-#define to_list(stream_ptr, list_type, output_ptr, limit) \
-    collect((stream_ptr), list_type, (output_ptr), (limit))
+#define collect(...) \
+    TURBO_STL_STREAM_SELECT_3_4(__VA_ARGS__, TURBO_STL_COLLECT_TYPED, \
+                                TURBO_STL_COLLECT_ERASED)(__VA_ARGS__)
+#define to_list(...) collect(__VA_ARGS__)
 #define to_array(stream_ptr, max_items, output_ptr) \
     cflow_eval_stream_limit((stream_ptr), (max_items), (output_ptr))
 

@@ -37,7 +37,13 @@ typed(Vec, InstalledInts, int);
 
 int main(void) {
   InstalledInts values = {0};
+  vec_t raw_values = VecOf(int);
   if (InstalledInts_init(&values, 1u) != STL_OK) return 1;
+  if (vec_init(&raw_values, 1u) != STL_OK) {
+    InstalledInts_destroy(&values);
+    return 2;
+  }
+  vec_destroy(&raw_values);
   InstalledInts_destroy(&values);
   return 0;
 }

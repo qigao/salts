@@ -87,6 +87,48 @@ suite("TurboSTL CFlow Stream") {
         list_destroy(StreamIntList, &input);
     }
 
+    it("retains PR #53 expression outputs through the erased terminal") {
+        StreamIntList input = {0};
+        list_t output = ListOf(long);
+        turbostl_stream_t pipeline = {0};
+        turbostl_collect_result result;
+
+        check_true(stream_test_input(&input));
+        check_not_null(stream(&input, &pipeline));
+        check_not_null(pipeline.filter(&pipeline, stream_keep_even)
+                                   ->map(&pipeline, stream_square));
+        result = to_list(&pipeline, &output, 3u);
+        check_true(result.ok);
+        check_equal(list_size(&output), (size_t)3u);
+        check_equal(*(const long *)list_front_const(&output), 4L);
+
+        list_destroy(&output);
+        turbostl_stream_destroy(&pipeline);
+        list_destroy(StreamIntList, &input);
+    }
+
+    it("preserves erased expression binding after collection abort") {
+        StreamIntList input = {0};
+        list_t output = ListOf(long);
+        turbostl_stream_t pipeline = {0};
+        turbostl_collect_result result;
+
+        check_true(stream_test_input(&input));
+        check_not_null(stream(&input, &pipeline));
+        check_not_null(pipeline.filter(&pipeline, stream_keep_even)
+                                   ->map(&pipeline, stream_square));
+        result = collect(&pipeline, &output, 2u);
+        check_false(result.ok);
+        check_equal(result.status, CMETA_CAPACITY_EXCEEDED);
+        check_null(output.impl);
+        check_true(output.element_type == CMETA_TYPEOF(long));
+        check_equal(list_init(&output, 2u), STL_OK);
+
+        list_destroy(&output);
+        turbostl_stream_destroy(&pipeline);
+        list_destroy(StreamIntList, &input);
+    }
+
     it("collects an owned generic array through the CFlow terminal") {
         StreamIntList input = {0};
         turbostl_stream_t pipeline = {0};

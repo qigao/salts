@@ -1,4 +1,4 @@
-#include "legacy_instance_typed.h"
+#include <turbostl/typed.h>
 #include <cmeta/data.h>
 #include "tinytest.h"
 

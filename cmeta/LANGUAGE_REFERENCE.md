@@ -174,10 +174,11 @@ complete facade does not implicitly register its element, key, or value types;
 those types must satisfy the finite type-universe rules described below.
 
 Declare each concrete container with its own `typed(...)` statement, as shown
-above. There is no batch container declaration syntax and no parallel
-`Vec(int, variable)`/`Map(int, long, variable)` instance-declaration language.
-Low-level erased handles remain an implementation/ABI facility of TurboSTL,
-not an alternative Generic syntax.
+above. There is no batch syntax inside the CMeta Generic grammar. TurboSTL also
+retains self-describing raw-handle initializers such as `Vec(int, variable)`
+and `VecOf(int)` (plus their associative forms). Those initializers produce
+erased TurboSTL handles; they do not declare a generated Generic type and do
+not change the meaning of `typed(...)`.
 
 ### `typed_any(...)`
 
