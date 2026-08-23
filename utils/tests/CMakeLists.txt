@@ -9,8 +9,11 @@ set(FMT_SURFACE_CONTRACT_C
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fmt_surface_contract.c)
 set(FMT_SURFACE_CONTRACT_CPP
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fmt_surface_contract.cpp)
+set(EXECUTION_COMPAT_C
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_execution_compat.c)
 cmake_add_source(TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
-                 "test_*.c" EXCLUDES ${TLOG_HEADER_COLLISION_C} ${FMT_SURFACE_CONTRACT_C})
+                 "test_*.c" EXCLUDES ${TLOG_HEADER_COLLISION_C} ${FMT_SURFACE_CONTRACT_C}
+                 ${EXECUTION_COMPAT_C})
 cmake_add_source(CXX_TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
                  "test_*.cpp" EXCLUDES ${TLOG_HEADER_COLLISION_CPP} ${FMT_SURFACE_CONTRACT_CPP})
 
@@ -29,6 +32,17 @@ foreach(test_source ${TEST_SOURCES} ${CXX_TEST_SOURCES})
     LIBS ${COMMON_LIBS})
 endforeach()
 
+# This link contract intentionally depends only on Core. Its legacy headers
+# must pull Platform/Concurrency transitively through the exported target graph.
+cmake_add_test(test_execution_compat
+  SOURCES ${EXECUTION_COMPAT_C}
+  FOLDER "utils/tests"
+  LIBS TurboUtils::Core)
+set_target_properties(test_execution_compat PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND TARGET test_tlog)
   target_compile_options(test_tlog PRIVATE -Werror=null-dereference)
 endif()
@@ -41,14 +55,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   endforeach()
 endif()
 
-# Task-1 fmt surface contracts deliberately do not link TurboUtils::Core.
-# They stub fmt_print and validate only the public macro expansion contract,
-# so fmt can be verified before the following TLog migration removes its old
-# dependency on FMT_NARGS/FMT_ARGS().
+# fmt surface contracts deliberately do not link TurboUtils::Core. They stub
+# fmt_print and validate the public macro expansion contract. Because fmt.h
+# reaches the Core compatibility headers directly, these standalone targets
+# explicitly own both canonical execution-substrate include contracts.
 cmake_add_test(test_fmt_surface_contract_c
   SOURCES ${FMT_SURFACE_CONTRACT_C}
   FOLDER "utils/tests"
-  LIBS TurboUtils::CMeta)
+  LIBS TurboUtils::CMeta TurboUtils::Platform TurboUtils::Concurrency)
 target_include_directories(test_fmt_surface_contract_c PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../parser
@@ -70,7 +84,7 @@ endif()
 cmake_add_test(test_fmt_surface_contract_cpp
   SOURCES ${FMT_SURFACE_CONTRACT_CPP}
   FOLDER "utils/tests"
-  LIBS TurboUtils::CMeta)
+  LIBS TurboUtils::CMeta TurboUtils::Platform TurboUtils::Concurrency)
 target_include_directories(test_fmt_surface_contract_cpp PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../parser

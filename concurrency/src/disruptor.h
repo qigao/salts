@@ -1,0 +1,4 @@
+#ifndef TURBO_CONCURRENCY_DISRUPTOR_SOURCE_COMPAT_H
+#define TURBO_CONCURRENCY_DISRUPTOR_SOURCE_COMPAT_H
+#include <turbo/disruptor.h>
+#endif

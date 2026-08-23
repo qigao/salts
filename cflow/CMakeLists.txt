@@ -2,8 +2,10 @@ set(TARGET_NAME turbo_cflow)
 
 add_library(${TARGET_NAME}
   src/adapters.c
+  src/clock.c
   src/coord.c
   src/effect.c
+  src/executor.c
   src/graph.c
   src/interfaces.c
   src/lower.c
@@ -19,6 +21,7 @@ add_library(${TARGET_NAME}
   src/sources.c
   src/stream.c
   src/subrun.c
+  src/timer_queue.c
   src/verify.c)
 
 cmake_config_target(
@@ -35,7 +38,7 @@ target_include_directories(
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC TurboUtils::CMeta
-  PRIVATE Threads::Threads)
+  PRIVATE TurboUtils::Platform TurboUtils::Concurrency)
 
 install(
   TARGETS ${TARGET_NAME}

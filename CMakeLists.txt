@@ -51,9 +51,11 @@ find_package(PkgConfig REQUIRED)
 
 # Additional components
 add_subdirectory(tools)
-include(FindTools) 
+include(FindTools)
 add_subdirectory(vendor)
-add_subdirectory(tinytest) 
+add_subdirectory(tinytest)
+add_subdirectory(platform)
+add_subdirectory(concurrency)
 add_subdirectory(cmeta)
 add_subdirectory(cserde)
 add_subdirectory(cflow)

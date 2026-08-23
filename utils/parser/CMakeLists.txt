@@ -18,6 +18,7 @@ target_include_directories(
                            $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
 find_path(SIMDE_INCLUDE_DIRS "simde/x86/sse2.h" REQUIRED)
 target_include_directories(log_pattern_lexer PRIVATE ${PROJECT_SOURCE_DIR}/parser ${SIMDE_INCLUDE_DIRS})
+target_link_libraries(log_pattern_lexer PRIVATE TurboUtils::Platform)
 
 # Export for parent
 set(LOG_PATTERN_LEXER_LIBRARY
@@ -48,7 +49,9 @@ target_include_directories(
   fmt_lexer PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
                    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
 target_include_directories(fmt_lexer PRIVATE ${PROJECT_SOURCE_DIR}/parser ${SIMDE_INCLUDE_DIRS})
-target_link_libraries(fmt_lexer PUBLIC TurboUtils::CMeta)
+target_link_libraries(fmt_lexer
+  PUBLIC TurboUtils::CMeta
+  PRIVATE TurboUtils::Platform TurboUtils::Concurrency)
 
 # Export for parent
 set(FMT_LEXER_LIBRARY

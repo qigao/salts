@@ -1,6 +1,7 @@
 #ifndef CFLOW_SCHEDULER_H
 #define CFLOW_SCHEDULER_H
 
+#include <cflow/executor.h>
 #include <cmeta/interface.h>
 
 #include <stdbool.h>
@@ -12,7 +13,6 @@ extern "C" {
 #endif
 
 typedef uint64_t cflow_task_id;
-typedef void (*cflow_task_fn)(void *user);
 
 enum {
     CMETA_SCHED_CAP_DELAYED      = 1u << 0,
@@ -20,7 +20,7 @@ enum {
     CMETA_SCHED_CAP_CONCURRENT   = 1u << 2
 };
 
-/* Scheduler is a runtime interface, not an inheritance hierarchy. */
+/* Scheduler is a compatibility/runtime facade, not an inheritance hierarchy. */
 #define CMETA_SCHEDULER_METHODS(X,I) \
     X(I,R3,cflow_task_id,post_after,uint64_t,delay_ticks,cflow_task_fn,fn,void *,user) \
     X(I,R1,bool,cancel,cflow_task_id,id) \
@@ -35,18 +35,12 @@ enum {
 
 CMETA_INTERFACE(cflow_scheduler, CMETA_SCHEDULER_METHODS);
 
-/* Deterministic logical-clock implementation. */
 bool cflow_scheduler_test_init(cflow_scheduler *scheduler);
-
-/* C11 worker-pool implementation. delay_ticks are milliseconds. */
 bool cflow_scheduler_worker_init(cflow_scheduler *scheduler, size_t workers);
 
-/* Convenience operation implemented in terms of post_after(0,...). */
 cflow_task_id cflow_scheduler_post(cflow_scheduler *scheduler,
                                    cflow_task_fn fn,
                                    void *user);
-
-/* Compatibility with the runtime vocabulary: interface implementation name. */
 const char *cflow_scheduler_name(const cflow_scheduler *scheduler);
 
 #ifdef __cplusplus

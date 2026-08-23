@@ -124,40 +124,7 @@ static int turbo_platform_get_windows_version(char *buffer, size_t buffer_size) 
 }
 #endif
 
-// =============================================================================
-// Time utilities - high-resolution native platform timing
-// =============================================================================
-
 #ifdef _WIN32
-uint64_t turbo_hrtime(void) {
-  /* Benign race: worst case two threads both init freq to the same value */
-  static volatile uint64_t freq = 0;
-  uint64_t f = freq;
-  if (f == 0) {
-    LARGE_INTEGER li;
-    QueryPerformanceFrequency(&li);
-    f = li.QuadPart;
-    freq = f;
-  }
-  LARGE_INTEGER li;
-  QueryPerformanceCounter(&li);
-  if (f == 0) return 0;
-  uint64_t whole = (li.QuadPart / f) * 1000000000ULL;
-  uint64_t part = (li.QuadPart % f) * 1000000000ULL / f;
-  return whole + part;
-}
-
-uint64_t turbo_realtime_ms(void) {
-  FILETIME ft;
-  GetSystemTimeAsFileTime(&ft);
-  ULARGE_INTEGER uli;
-  uli.LowPart = ft.dwLowDateTime;
-  uli.HighPart = ft.dwHighDateTime;
-  // 100ns intervals since Jan 1, 1601.
-  // Subtract EPOCH_DIFF (116444736000000000ns) to get Unix epoch in 100ns intervals.
-  return (uli.QuadPart - 116444736000000000ULL) / 10000ULL;
-}
-
 int turbo_gettimeofday(turbo_timeval_t *tv, turbo_timezone_t *tz) {
   UNUSED(tz);
   if (tv) {
@@ -167,7 +134,7 @@ int turbo_gettimeofday(turbo_timeval_t *tv, turbo_timezone_t *tz) {
     uli.LowPart = ft.dwLowDateTime;
     uli.HighPart = ft.dwHighDateTime;
 
-    // 100ns intervals since Jan 1, 1601.
+    /* 100ns intervals since Jan 1, 1601. */
     uint64_t intervals = uli.QuadPart - 116444736000000000ULL;
     tv->tv_sec = (int64_t)(intervals / 10000000ULL);
     tv->tv_usec = (int32_t)((intervals % 10000000ULL) / 10ULL);
@@ -175,18 +142,6 @@ int turbo_gettimeofday(turbo_timeval_t *tv, turbo_timezone_t *tz) {
   return 0;
 }
 #else
-uint64_t turbo_hrtime(void) {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
-}
-
-uint64_t turbo_realtime_ms(void) {
-  struct timespec ts;
-  clock_gettime(CLOCK_REALTIME, &ts);
-  return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
-}
-
 int turbo_gettimeofday(turbo_timeval_t *tv, turbo_timezone_t *tz) {
   UNUSED(tz);
   struct timeval system_tv;
@@ -198,19 +153,6 @@ int turbo_gettimeofday(turbo_timeval_t *tv, turbo_timezone_t *tz) {
   return result;
 }
 #endif
-
-uint64_t turbo_monotonic_ms(void) { return turbo_ns_to_ms(turbo_hrtime()); }
-
-uint64_t turbo_uptime_ms(void) {
-  /* Benign race: worst case start_time shifts by nanoseconds */
-  static volatile uint64_t start_time = 0;
-  uint64_t st = start_time;
-  if (st == 0) {
-    st = turbo_hrtime();
-    start_time = st;
-  }
-  return turbo_ns_to_ms(turbo_hrtime() - st);
-}
 
 int turbo_secure_random(void *buffer, size_t length) {
   uint8_t *cursor = (uint8_t *)buffer;
@@ -828,7 +770,6 @@ struct turbo_native_timer_s {
   int pending_free;
 };
 
-// Windows timer callback wrapper
 static VOID CALLBACK native_timer_callback_win32(PVOID lpParameter, BOOLEAN TimerOrWaitFired) {
   UNUSED(TimerOrWaitFired);
   turbo_timer_t *timer = (turbo_timer_t *)lpParameter;
@@ -878,20 +819,14 @@ int turbo_timer_start(turbo_timer_t *timer, turbo_timer_cb cb, uint64_t timeout,
     return -1;
   }
 
-  // Stop existing timer if running
   turbo_timer_stop(timer);
 
   timer->callback = cb;
   timer->timeout = timeout;
   timer->repeat = repeat;
 
-  // CreateTimerQueueTimer parameters:
-  // - NULL = use default timer queue
-  // - DueTime in ms
-  // - Period in ms (0 for one-shot)
-  // - WT_EXECUTEDEFAULT = execute in timer thread pool
   BOOL result = CreateTimerQueueTimer(&timer->timer_handle,
-                                      NULL, // Use default timer queue
+                                      NULL,
                                       native_timer_callback_win32, timer, (DWORD)timeout,
                                       (DWORD)repeat, WT_EXECUTEDEFAULT);
 
@@ -911,11 +846,8 @@ int turbo_timer_stop(turbo_timer_t *timer) {
 
   timer->active = 0;
 
-  // Atomically swap the handle with NULL to ensure we only call DeleteTimerQueueTimer once
   HANDLE h = InterlockedExchangePointer(&timer->timer_handle, NULL);
   if (h) {
-    // Cannot wait for completion (INVALID_HANDLE_VALUE) if called from within the callback
-    // as it would cause a deadlock or crash (double-deletion in some cases).
     HANDLE completion = INVALID_HANDLE_VALUE;
     if (GetCurrentThreadId() == timer->callback_thread_id) {
       completion = NULL;
@@ -1248,8 +1180,6 @@ int turbo_timer_stop(turbo_timer_t *timer) {
 }
 
 #endif
-
-// Common functions for both platforms
 
 void turbo_timer_set_data(turbo_timer_t *timer, void *data) {
   if (timer) {
