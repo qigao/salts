@@ -11,7 +11,7 @@ typedef struct stack {
   vec_t raw;
 } stack_t;
 
-/* Internal typed-storage bridge used by the natural Stack instance API. */
+/* Storage bridge shared by generated facades and explicitly bound raw handles. */
 static inline stl_status stack_raw_init(stack_t *stack,
                                         const cmeta_type_desc *type,
                                         size_t element_limit) {

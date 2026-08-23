@@ -18,6 +18,10 @@
 #include <turbostl/bplus_tree.h>
 #include <turbostl/detail/instance_meta.h>
 
+#ifndef __cplusplus
+#include <turbostl/detail/typed_facade.h>
+#endif
+
 /* TYPE(...) provider registrations. CMeta owns the generic declaration
  * protocol; TurboSTL supplies only storage, constructor and bind capability. */
 #define CMETA_DECLARED_STORAGE_Vec vec_t
@@ -85,132 +89,64 @@
 #define CMETA_DECLARED_CONSTRUCTOR_BPlusTree (&stl_bplus_tree_generic_desc)
 #define CMETA_DECLARED_CONSTRUCTION_BPlusTree (&stl_bplus_tree_construct_ops)
 
-/* Self-describing initializer facts shared by declaration and expression DSLs.
- * They bind CMeta metadata but perform no allocation. */
-#define TURBO_STL_VEC_INITIALIZER(T) \
-  { .cmeta = { &stl_vec_container_desc }, .element_type = CMETA_TYPEOF(T) }
-#define TURBO_STL_DEQUE_INITIALIZER(T) \
-  { .cmeta = { &stl_deque_container_desc }, .element_type = CMETA_TYPEOF(T) }
-#define TURBO_STL_LIST_INITIALIZER(T) \
-  { { &stl_list_container_desc }, CMETA_TYPEOF(T), NULL, UINT64_C(0) }
-#define TURBO_STL_STACK_INITIALIZER(T) \
-  { .raw = { .cmeta = { &stl_stack_container_desc }, \
-             .element_type = CMETA_TYPEOF(T) } }
-#define TURBO_STL_QUEUE_INITIALIZER(T) \
-  { .raw = { .cmeta = { &stl_queue_container_desc }, \
-             .element_type = CMETA_TYPEOF(T) } }
-#define TURBO_STL_HEAP_INITIALIZER(T) \
-  { .cmeta = { &stl_heap_container_desc }, .element_type = CMETA_TYPEOF(T) }
-#define TURBO_STL_SET_INITIALIZER(T) \
-  { .cmeta = { &stl_set_container_desc }, .element_type = CMETA_TYPEOF(T) }
-#define TURBO_STL_HASH_SET_INITIALIZER(T) \
-  { .cmeta = { &stl_hash_set_container_desc }, \
-    .element_type = CMETA_TYPEOF(T) }
-#define TURBO_STL_HASH_MAP_INITIALIZER(K, V) \
-  { .cmeta = { &stl_hash_map_container_desc }, \
-    .key_type = CMETA_TYPEOF(K), \
-    .value_type = CMETA_TYPEOF(V) }
-#define TURBO_STL_MAP_INITIALIZER(K, V) \
-  { { &stl_map_container_desc }, CMETA_TYPEOF(K), CMETA_TYPEOF(V), NULL, \
-    UINT64_C(0) }
-#define TURBO_STL_MULTIMAP_INITIALIZER(K, V) \
-  { .cmeta = { &stl_multimap_container_desc }, \
-    .key_type = CMETA_TYPEOF(K), \
-    .value_type = CMETA_TYPEOF(V) }
-#define TURBO_STL_BTREE_INITIALIZER(K, V) \
-  { .cmeta = { &stl_btree_container_desc }, \
-    .key_type = CMETA_TYPEOF(K), \
-    .value_type = CMETA_TYPEOF(V) }
-#define TURBO_STL_BPLUS_TREE_INITIALIZER(K, V) \
-  { .cmeta = { &stl_bplus_tree_container_desc }, \
-    .key_type = CMETA_TYPEOF(K), \
-    .value_type = CMETA_TYPEOF(V) }
+#include <turbostl/detail/typed_initializers.h>
 
-/* Expression DSL. Compound literals allow initialization, assignment, return,
- * and argument passing without introducing generated user-visible C types. */
-#ifndef VecOf
-#define VecOf(T) ((vec_t)TURBO_STL_VEC_INITIALIZER(T))
-#endif
-#ifndef DequeOf
-#define DequeOf(T) ((deque_t)TURBO_STL_DEQUE_INITIALIZER(T))
-#endif
-#ifndef ListOf
-#define ListOf(T) ((list_t)TURBO_STL_LIST_INITIALIZER(T))
-#endif
-#ifndef StackOf
-#define StackOf(T) ((stack_t)TURBO_STL_STACK_INITIALIZER(T))
-#endif
-#ifndef QueueOf
-#define QueueOf(T) ((queue_t)TURBO_STL_QUEUE_INITIALIZER(T))
-#endif
-#ifndef HeapOf
-#define HeapOf(T) ((heap_t)TURBO_STL_HEAP_INITIALIZER(T))
-#endif
-#ifndef SetOf
-#define SetOf(T) ((set_t)TURBO_STL_SET_INITIALIZER(T))
-#endif
-#ifndef HashSetOf
-#define HashSetOf(T) ((hash_set_t)TURBO_STL_HASH_SET_INITIALIZER(T))
-#endif
-#ifndef HashMapOf
-#define HashMapOf(K, V) ((hash_map_t)TURBO_STL_HASH_MAP_INITIALIZER(K, V))
-#endif
-#ifndef MapOf
-#define MapOf(K, V) ((map_t)TURBO_STL_MAP_INITIALIZER(K, V))
-#endif
-#ifndef MultiMapOf
-#define MultiMapOf(K, V) ((multimap_t)TURBO_STL_MULTIMAP_INITIALIZER(K, V))
-#endif
-#ifndef BTreeOf
-#define BTreeOf(K, V) ((btree_t)TURBO_STL_BTREE_INITIALIZER(K, V))
-#endif
-#ifndef BPlusTreeOf
-#define BPlusTreeOf(K, V) \
-  ((bplus_tree_t)TURBO_STL_BPLUS_TREE_INITIALIZER(K, V))
-#endif
+#ifndef __cplusplus
 
-/* Declaration DSL retained for source compatibility. */
-#ifndef Vec
-#define Vec(T, name) vec_t name = TURBO_STL_VEC_INITIALIZER(T)
-#endif
-#ifndef Deque
-#define Deque(T, name) deque_t name = TURBO_STL_DEQUE_INITIALIZER(T)
-#endif
-#ifndef List
-#define List(T, name) list_t name = TURBO_STL_LIST_INITIALIZER(T)
-#endif
-#ifndef Stack
-#define Stack(T, name) stack_t name = TURBO_STL_STACK_INITIALIZER(T)
-#endif
-#ifndef Queue
-#define Queue(T, name) queue_t name = TURBO_STL_QUEUE_INITIALIZER(T)
-#endif
-#ifndef Heap
-#define Heap(T, name) heap_t name = TURBO_STL_HEAP_INITIALIZER(T)
-#endif
-#ifndef Set
-#define Set(T, name) set_t name = TURBO_STL_SET_INITIALIZER(T)
-#endif
-#ifndef HashSet
-#define HashSet(T, name) hash_set_t name = TURBO_STL_HASH_SET_INITIALIZER(T)
-#endif
-#ifndef HashMap
-#define HashMap(K, V, name) \
-  hash_map_t name = TURBO_STL_HASH_MAP_INITIALIZER(K, V)
-#endif
-#ifndef Map
-#define Map(K, V, name) map_t name = TURBO_STL_MAP_INITIALIZER(K, V)
-#endif
-#ifndef MultiMap
-#define MultiMap(K, V, name) \
-  multimap_t name = TURBO_STL_MULTIMAP_INITIALIZER(K, V)
-#endif
-#ifndef BTree
-#define BTree(K, V, name) btree_t name = TURBO_STL_BTREE_INITIALIZER(K, V)
-#endif
-#ifndef BPlusTree
-#define BPlusTree(K, V, name) \
-  bplus_tree_t name = TURBO_STL_BPLUS_TREE_INITIALIZER(K, V)
+/* TurboSTL is a finite CMeta Generic provider. One typed(...) declaration
+ * emits the concrete wrapper type, typed ABI, metadata, Range views and
+ * collector. The declaration/expression initializers above remain erased
+ * handle construction forms and do not generate Generic types. */
+#define CMETA_GENERIC_KIND_Vec CMETA_GENERIC_PROBE()
+#define CMETA_GENERIC_KIND_Deque CMETA_GENERIC_PROBE()
+#define CMETA_GENERIC_KIND_List CMETA_GENERIC_PROBE()
+#define CMETA_GENERIC_KIND_Stack CMETA_GENERIC_PROBE()
+#define CMETA_GENERIC_KIND_Queue CMETA_GENERIC_PROBE()
+#define CMETA_GENERIC_KIND_Heap CMETA_GENERIC_PROBE()
+#define CMETA_GENERIC_KIND_Set CMETA_GENERIC_PROBE()
+#define CMETA_GENERIC_KIND_HashSet CMETA_GENERIC_PROBE()
+#define CMETA_GENERIC_KIND_HashMap CMETA_GENERIC_PROBE()
+#define CMETA_GENERIC_KIND_Map CMETA_GENERIC_PROBE()
+#define CMETA_GENERIC_KIND_MultiMap CMETA_GENERIC_PROBE()
+#define CMETA_GENERIC_KIND_BTree CMETA_GENERIC_PROBE()
+#define CMETA_GENERIC_KIND_BPlusTree CMETA_GENERIC_PROBE()
+
+#define CMETA_TYPED_Vec(name, type) \
+  TURBO_VEC_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_Deque(name, type) \
+  TURBO_DEQUE_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_List(name, type) \
+  TURBO_LIST_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_Stack(name, type) \
+  TURBO_STACK_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_Queue(name, type) \
+  TURBO_QUEUE_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_Heap(name, type) \
+  TURBO_HEAP_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_Set(name, type) \
+  TURBO_SET_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_HashSet(name, type) \
+  TURBO_HASH_SET_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_HashMap(name, key_type, value_type) \
+  TURBO_HASH_MAP_DEFINE(name, key_type, value_type) \
+  enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_Map(name, key_type, value_type) \
+  TURBO_MAP_DEFINE(name, key_type, value_type) \
+  enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_MultiMap(name, key_type, value_type) \
+  TURBO_MULTI_MAP_DEFINE(name, key_type, value_type) \
+  enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_BTree(name, key_type, value_type) \
+  TURBO_BTREE_DEFINE(name, key_type, value_type) \
+  enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_BPlusTree(name, key_type, value_type) \
+  TURBO_BPLUS_TREE_DEFINE(name, key_type, value_type) \
+  enum { name##_cmeta_typed = 1 }
+
+/* Generated Type_method functions are the typed calling convention. Raw
+ * list_* and map_* names remain ordinary functions so every valid C argument
+ * expression, including compound literals containing commas, is preserved. */
+
 #endif
 
 #endif /* TURBO_TYPED_H */

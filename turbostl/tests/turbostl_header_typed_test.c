@@ -13,6 +13,17 @@ typedef struct unregistered_element {
     int value;
 } unregistered_element;
 
+typed(Vec, HeaderGenericVec, int);
+typed(List, HeaderGenericList, int);
+typed(Map, HeaderGenericMap, int, long);
+
+#ifndef VecOf
+#error "typed.h must retain PR #53 unary expression initializers"
+#endif
+#ifndef MapOf
+#error "typed.h must retain PR #53 associative expression initializers"
+#endif
+
 suite("TurboSTL typed public header") {
     it("exposes self-describing declarations without generated type names") {
         Vec(int, vec);
@@ -26,6 +37,15 @@ suite("TurboSTL typed public header") {
         map_destroy(&map);
         list_destroy(&list);
         vec_destroy(&vec);
+    }
+
+    it("preserves raw map calls with compound literals") {
+        Map(int, int, values);
+
+        check_equal(map_init(&values, 1u), STL_OK);
+        check_equal(map_put(&values, &(int){1},
+                            (const int[]){2, 3}), STL_OK);
+        map_destroy(&values);
     }
 
     it("constructs unary self-describing handles from expressions") {
@@ -500,5 +520,21 @@ suite("TurboSTL typed public header") {
         multimap_destroy(&multimap);
         btree_destroy(&btree);
         bplus_tree_destroy(&bplus_tree);
+    }
+
+    it("coexists with finite generated Generic types") {
+        HeaderGenericVec vec = {0};
+        HeaderGenericList list = {0};
+        HeaderGenericMap map = {0};
+
+        check_equal(HeaderGenericVec_init(&vec, 2u), STL_OK);
+        check_equal(HeaderGenericList_init(&list, 2u), STL_OK);
+        check_equal(HeaderGenericList_push_back(&list, 7), STL_OK);
+        check_equal(HeaderGenericMap_init(&map, 2u), STL_OK);
+        check_equal(HeaderGenericMap_put(&map, 3, 30L), STL_OK);
+
+        HeaderGenericMap_destroy(&map);
+        HeaderGenericList_destroy(&list);
+        HeaderGenericVec_destroy(&vec);
     }
 }

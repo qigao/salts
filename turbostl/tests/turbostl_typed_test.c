@@ -1,150 +1,106 @@
 #include <turbostl/typed.h>
-#include <cmeta/entry.h>
 #include "tinytest.h"
 
-#include <stdint.h>
 #include <string.h>
 
-#define VERIFY_EMPTY_COLLECTOR(instance, size_fn, destroy_fn) do {            \
-    const cmeta_container_desc *desc__ = cmeta_container_descriptor(&(instance)); \
-    cmeta_collector collector__;                                              \
-    check_not_null(desc__);                                                   \
-    check_not_null(desc__->collector);                                        \
-    collector__ = desc__->collector(&(instance), 2u);                         \
-    check_equal(cmeta_collector_begin(&collector__), CMETA_OK);               \
-    check_equal(cmeta_collector_finish(&collector__), CMETA_OK);              \
-    check_equal(size_fn(&(instance)), (size_t)0u);                            \
-    check_true(cmeta_container_descriptor(&(instance)) == desc__);            \
-    destroy_fn(&(instance));                                                  \
-    check_equal(size_fn(&(instance)), (size_t)0u);                            \
-    check_true(cmeta_container_descriptor(&(instance)) == desc__);            \
+#define COUNT_CONTAINER_KIND(kind,arity,family,raw,prefix,methods,accept,key_at,value_at,range_flags,key_flags,value_flags,entry_flags) + 1
+enum { TURBO_TEST_CONTAINER_KIND_COUNT = 0 Replay(TURBO_STL_KIND_SCHEMA, COUNT_CONTAINER_KIND) };
+#undef COUNT_CONTAINER_KIND
+
+#define DECLARE_CONTAINER_KIND_ARITY(kind,arity,family,raw,prefix,methods,accept,key_at,value_at,range_flags,key_flags,value_flags,entry_flags) TURBO_TEST_ARITY_##kind = arity,
+enum { Replay(TURBO_STL_KIND_SCHEMA, DECLARE_CONTAINER_KIND_ARITY) };
+#undef DECLARE_CONTAINER_KIND_ARITY
+
+_Static_assert(TURBO_TEST_CONTAINER_KIND_COUNT == 13,
+               "TURBO_STL_KIND_SCHEMA_COUNT_MISMATCH");
+_Static_assert(TURBO_TEST_ARITY_Vec == 1 && TURBO_TEST_ARITY_HashMap == 2 &&
+                   TURBO_TEST_ARITY_BPlusTree == 2,
+               "TURBO_STL_KIND_SCHEMA_ARITY_MISMATCH");
+
+typed(Vec, IntVec, int);
+typed(Deque, IntDeque, int);
+typed(List, IntList, int);
+typed(Stack, IntStack, int);
+typed(Queue, IntQueue, int);
+typed(Heap, IntHeap, int);
+typed(Set, IntSet, int);
+typed(HashSet, IntHashSet, int);
+typed(HashMap, IntLongHashMap, int, long);
+typed(Map, IntLongMap, int, long);
+typed(MultiMap, IntLongMultiMap, int, long);
+typed(BTree, IntLongBTree, int, long);
+typed(BPlusTree, IntLongBPlusTree, int, long);
+
+#define VERIFY_EMPTY_COLLECTOR(Name) do {                                  \
+    Name output = {0};                                                      \
+    cmeta_collector collector;                                              \
+    check_true(Name##_cmeta_container_desc.collector != NULL);              \
+    collector = Name##_cmeta_container_desc.collector(&output, 2u);         \
+    check_equal(cmeta_collector_begin(&collector), CMETA_OK);                \
+    check_equal(cmeta_collector_finish(&collector), CMETA_OK);               \
+    check_true(cmeta_container_descriptor(&output) ==                        \
+               &Name##_cmeta_container_desc);                               \
+    Name##_destroy(&output);                                                \
 } while (0)
 
-#define VERIFY_C1_COLLECTOR(instance, size_fn, destroy_fn, Value) do {        \
-    const cmeta_container_desc *desc__ = cmeta_container_descriptor(&(instance)); \
-    int first__ = (Value);                                                    \
-    int second__ = (Value) + 1;                                               \
-    cmeta_collector collector__;                                              \
-    check_not_null(desc__);                                                   \
-    check_not_null(desc__->collector);                                        \
-    collector__ = desc__->collector(&(instance), 1u);                         \
-    check_equal(cmeta_collector_begin(&collector__), CMETA_OK);               \
-    check_equal(cmeta_collector_accept(&collector__, collector__.input_type,  \
-                                       &first__), CMETA_OK);                   \
-    check_equal(cmeta_collector_finish(&collector__), CMETA_OK);              \
-    check_equal(size_fn(&(instance)), (size_t)1u);                            \
-    destroy_fn(&(instance));                                                  \
-    check_equal(size_fn(&(instance)), (size_t)0u);                            \
-    check_true(cmeta_container_descriptor(&(instance)) == desc__);            \
-    collector__ = desc__->collector(&(instance), 1u);                         \
-    check_equal(cmeta_collector_begin(&collector__), CMETA_OK);               \
-    check_equal(cmeta_collector_accept(&collector__, collector__.input_type,  \
-                                       &first__), CMETA_OK);                   \
-    check_equal(cmeta_collector_accept(&collector__, collector__.input_type,  \
-                                       &second__), CMETA_CAPACITY_EXCEEDED);  \
-    check_true(collector__.state == CMETA_COLLECTOR_ABORTED);                 \
-    check_equal(size_fn(&(instance)), (size_t)0u);                            \
-    check_true(cmeta_container_descriptor(&(instance)) == desc__);            \
-    cmeta_collector_abort(&collector__);                                      \
-    check_true(collector__.state == CMETA_COLLECTOR_ABORTED);                 \
-    check_equal(size_fn(&(instance)), (size_t)0u);                            \
+#define VERIFY_C1_COLLECTOR(Name, Value) do {                               \
+    Name committed = {0};                                                   \
+    Name aborted = {0};                                                     \
+    int first = (Value);                                                    \
+    int second = (Value) + 1;                                               \
+    cmeta_collector collector = Name##_collector(&committed, 1u);           \
+    check_equal(cmeta_collector_begin(&collector), CMETA_OK);                \
+    check_equal(cmeta_collector_accept(&collector, collector.input_type,     \
+                                       &first), CMETA_OK);                   \
+    check_equal(cmeta_collector_finish(&collector), CMETA_OK);               \
+    check_equal(Name##_size(&committed), (size_t)1u);                        \
+    Name##_destroy(&committed);                                             \
+    collector = Name##_collector(&aborted, 1u);                              \
+    check_equal(cmeta_collector_begin(&collector), CMETA_OK);                \
+    check_equal(cmeta_collector_accept(&collector, collector.input_type,     \
+                                       &first), CMETA_OK);                   \
+    check_equal(cmeta_collector_accept(&collector, collector.input_type,     \
+                                       &second), CMETA_CAPACITY_EXCEEDED);   \
+    check_equal(memcmp(&aborted, &(Name){0}, sizeof(aborted)), 0);           \
+    cmeta_collector_abort(&collector);                                       \
+    check_equal(memcmp(&aborted, &(Name){0}, sizeof(aborted)), 0);           \
 } while (0)
 
-#define VERIFY_C2_COLLECTOR(instance, size_fn, destroy_fn, Key, Value) do {   \
-    const cmeta_container_desc *desc__ = cmeta_container_descriptor(&(instance)); \
-    int first_key__ = (Key);                                                  \
-    int second_key__ = (Key) + 1;                                            \
-    long first_value__ = (Value);                                             \
-    long second_value__ = (Value) + 1L;                                      \
-    cmeta_entry first__ = {                                                   \
-        .key_type = (instance).key_type,                                      \
-        .value_type = (instance).value_type,                                  \
-        .key = &first_key__,                                                  \
-        .value = &first_value__,                                              \
-        .key_storage = NULL,                                                  \
-        .value_storage = NULL};                                               \
-    cmeta_entry second__ = {                                                  \
-        .key_type = (instance).key_type,                                      \
-        .value_type = (instance).value_type,                                  \
-        .key = &second_key__,                                                 \
-        .value = &second_value__,                                             \
-        .key_storage = NULL,                                                  \
-        .value_storage = NULL};                                               \
-    cmeta_collector collector__;                                              \
-    check_not_null(desc__);                                                   \
-    check_not_null(desc__->collector);                                        \
-    collector__ = desc__->collector(&(instance), 1u);                         \
-    check_equal(cmeta_collector_begin(&collector__), CMETA_OK);               \
-    check_equal(cmeta_collector_accept(&collector__, collector__.input_type,  \
-                                       &first__), CMETA_OK);                   \
-    check_equal(cmeta_collector_finish(&collector__), CMETA_OK);              \
-    check_equal(size_fn(&(instance)), (size_t)1u);                            \
-    destroy_fn(&(instance));                                                  \
-    check_equal(size_fn(&(instance)), (size_t)0u);                            \
-    check_true(cmeta_container_descriptor(&(instance)) == desc__);            \
-    collector__ = desc__->collector(&(instance), 1u);                         \
-    check_equal(cmeta_collector_begin(&collector__), CMETA_OK);               \
-    check_equal(cmeta_collector_accept(&collector__, collector__.input_type,  \
-                                       &first__), CMETA_OK);                   \
-    check_equal(cmeta_collector_accept(&collector__, collector__.input_type,  \
-                                       &second__), CMETA_CAPACITY_EXCEEDED);  \
-    check_true(collector__.state == CMETA_COLLECTOR_ABORTED);                 \
-    check_equal(size_fn(&(instance)), (size_t)0u);                            \
-    check_true(cmeta_container_descriptor(&(instance)) == desc__);            \
-    cmeta_collector_abort(&collector__);                                      \
-    check_true(collector__.state == CMETA_COLLECTOR_ABORTED);                 \
-    check_equal(size_fn(&(instance)), (size_t)0u);                            \
+#define VERIFY_C2_COLLECTOR(Name, Key, Value) do {                           \
+    Name committed = {0};                                                   \
+    Name aborted = {0};                                                     \
+    Name##_entry first = {(Key), (Value)};                                  \
+    Name##_entry second = {(Key) + 1, (Value) + 1};                         \
+    cmeta_collector collector = Name##_collector(&committed, 1u);           \
+    check_equal(cmeta_collector_begin(&collector), CMETA_OK);                \
+    check_equal(cmeta_collector_accept(&collector, collector.input_type,     \
+                                       &first), CMETA_OK);                   \
+    check_equal(cmeta_collector_finish(&collector), CMETA_OK);               \
+    check_equal(Name##_size(&committed), (size_t)1u);                        \
+    Name##_destroy(&committed);                                             \
+    collector = Name##_collector(&aborted, 1u);                              \
+    check_equal(cmeta_collector_begin(&collector), CMETA_OK);                \
+    check_equal(cmeta_collector_accept(&collector, collector.input_type,     \
+                                       &first), CMETA_OK);                   \
+    check_equal(cmeta_collector_accept(&collector, collector.input_type,     \
+                                       &second), CMETA_CAPACITY_EXCEEDED);   \
+    check_equal(memcmp(&aborted, &(Name){0}, sizeof(aborted)), 0);           \
+    cmeta_collector_abort(&collector);                                       \
+    check_equal(memcmp(&aborted, &(Name){0}, sizeof(aborted)), 0);           \
 } while (0)
 
-spec("TurboSTL instance metadata") {
-    it("binds all thirteen standard kinds without generated facade types") {
-        Vec(int, vector);
-        Deque(int, deque);
-        List(int, list);
-        Stack(int, stack);
-        Queue(int, queue);
-        Heap(int, heap);
-        Set(int, set);
-        HashSet(int, hash_set);
-        HashMap(int, long, hash_map);
-        Map(int, long, map);
-        MultiMap(int, long, multimap);
-        BTree(int, long, btree);
-        BPlusTree(int, long, bplus);
-        const void *instances[] = {
-            &vector, &deque, &list, &stack, &queue, &heap, &set,
-            &hash_set, &hash_map, &map, &multimap, &btree, &bplus};
-        size_t index;
-
-        _Static_assert(sizeof(instances) / sizeof(instances[0]) == 13u,
-                       "TURBOSTL_STANDARD_INSTANCE_KIND_COUNT_MISMATCH");
-        for (index = 0u; index < sizeof(instances) / sizeof(instances[0]); ++index) {
-            const cmeta_container_desc *desc =
-                cmeta_container_descriptor(instances[index]);
-            check_not_null(desc);
-            check_not_null(desc->range);
-            check_not_null(desc->collector);
-        }
-        check_not_null(cmeta_container_descriptor(&hash_map)->keys_range);
-        check_not_null(cmeta_container_descriptor(&hash_map)->values_range);
-        check_not_null(cmeta_container_descriptor(&hash_map)->entries_range);
-        check_not_null(cmeta_container_descriptor(&map)->keys_range);
-        check_not_null(cmeta_container_descriptor(&multimap)->entries_range);
-        check_not_null(cmeta_container_descriptor(&btree)->entries_range);
-        check_not_null(cmeta_container_descriptor(&bplus)->entries_range);
-    }
-
-    it("exposes a bounded sequence Range and transactional collector") {
-        Vec(int, source);
-        Vec(int, output);
-        cmeta_range range = {0};
+spec("TurboSTL typed schema") {
+    it("generates a bounded sequence Range and transactional collector") {
+        IntVec source = {0};
+        IntVec output = {0};
+        cmeta_range range;
         cmeta_collector collector;
         cmeta_range_cursor cursor = {0};
         int value = 4;
         int ranged = 0;
 
-        check_equal(vec_init(&source, 2u), STL_OK);
-        check_equal(vec_push(&source, &value), STL_OK);
+        check_equal(IntVec_init(&source, 2u), STL_OK);
+        check_equal(IntVec_push(&source, value), STL_OK);
         check_true(cmeta_container_range_view(&source, CMETA_CONTAINER_VIEW_DEFAULT,
                                               &range));
         check_true(cmeta_type_equal(range.element_type, &cmeta_type_int));
@@ -156,53 +112,51 @@ spec("TurboSTL instance metadata") {
                     CMETA_GEN_VALUE_AND_DONE);
         check_equal(ranged, 4);
 
-        collector = cmeta_container_descriptor(&output)->collector(&output, 1u);
+        collector = IntVec_collector(&output, 1u);
         check_equal(cmeta_collector_begin(&collector), CMETA_OK);
         check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &value),
                     CMETA_OK);
         check_equal(cmeta_collector_finish(&collector), CMETA_OK);
-        check_equal(vec_size(&output), (size_t)1u);
-        check_equal(*(const int *)vec_at_const(&output, 0u), 4);
-        vec_destroy(&output);
-        vec_destroy(&source);
+        check_equal(IntVec_size(&output), (size_t)1u);
+        check_equal(*IntVec_at_const(&output, 0u), 4);
+        IntVec_destroy(&output);
+        IntVec_destroy(&source);
     }
 
     it("invalidates an existing Range without changing cursor or output") {
-        Deque(int, values);
-        cmeta_range range = {0};
+        IntDeque values = {0};
+        cmeta_range range;
         cmeta_range_cursor cursor = {0};
         cmeta_range_cursor before_cursor;
         int one = 1;
         int two = 2;
         int output = 91;
 
-        check_equal(deque_init(&values, 2u), STL_OK);
-        check_equal(deque_push_back(&values, &one), STL_OK);
+        check_equal(IntDeque_init(&values, 2u), STL_OK);
+        check_equal(IntDeque_push_back(&values, one), STL_OK);
         check_true(cmeta_container_range_view(&values,
                                               CMETA_CONTAINER_VIEW_DEFAULT,
                                               &range));
-        check_equal(deque_push_back(&values, &two), STL_OK);
+        check_equal(IntDeque_push_back(&values, two), STL_OK);
         before_cursor = cursor;
         check_equal(cmeta_range_next(&range, &cursor, &output),
                     CMETA_GEN_MUTATED);
         check_equal(memcmp(&cursor, &before_cursor, sizeof(cursor)), 0);
         check_equal(output, 91);
-        deque_destroy(&values);
+        IntDeque_destroy(&values);
     }
 
     it("exposes default entries plus key value and entry views for maps") {
-        HashMap(int, long, map);
-        cmeta_range default_range = {0};
-        cmeta_range keys = {0};
-        cmeta_range values = {0};
-        cmeta_range entries = {0};
-        cmeta_entry entry = {0};
+        IntLongHashMap map = {0};
+        cmeta_range default_range;
+        cmeta_range keys;
+        cmeta_range values;
+        cmeta_range entries;
+        IntLongHashMap_entry entry = {0};
         cmeta_range_cursor cursor = {0};
-        int key = 7;
-        long value = 70L;
 
-        check_equal(hash_map_init(&map, 1u), STL_OK);
-        check_equal(hash_map_put(&map, &key, &value), STL_OK);
+        check_equal(IntLongHashMap_init(&map, 1u), STL_OK);
+        check_equal(IntLongHashMap_put(&map, 7, 70L), STL_OK);
         check_true(cmeta_container_range_view(&map, CMETA_CONTAINER_VIEW_DEFAULT,
                                               &default_range));
         check_true(cmeta_container_range_view(&map, CMETA_CONTAINER_VIEW_KEYS,
@@ -216,156 +170,139 @@ spec("TurboSTL instance metadata") {
         check_true((keys.flags & CMETA_RANGE_UNIQUE) != 0u);
         check_equal(cmeta_range_next(&default_range, &cursor, &entry),
                     CMETA_GEN_VALUE);
-        check_true(cmeta_type_equal(entry.key_type, &cmeta_type_int));
-        check_true(cmeta_type_equal(entry.value_type, &cmeta_type_long));
-        check_equal(*(const int *)entry.key, 7);
-        check_equal(*(const long *)entry.value, 70L);
-        check_equal(entry.key_storage, NULL);
-        check_equal(entry.value_storage, NULL);
-        hash_map_destroy(&map);
+        check_equal(entry.key, 7);
+        check_equal(entry.value, 70L);
+        IntLongHashMap_destroy(&map);
     }
 
-    it("propagates explicit limits through every instance initializer") {
-        Heap(int, heap);
-        Set(int, set);
-        Map(int, long, map);
-        MultiMap(int, long, multimap);
+    it("propagates explicit limits through every generated initializer") {
+        IntHeap heap = {0};
+        IntSet set = {0};
+        IntLongMap map = {0};
+        IntLongMultiMap multimap = {0};
         int one = 1;
-        long value = 1L;
 
-        check_equal(heap_init(&heap, 0u), STL_OK);
-        check_equal(heap_push(&heap, &one), STL_CAPACITY_EXCEEDED);
-        check_equal(set_init(&set, 0u), STL_OK);
-        check_equal(set_add(&set, &one), STL_CAPACITY_EXCEEDED);
-        check_equal(map_init(&map, 0u), STL_OK);
-        check_equal(map_put(&map, &one, &value), STL_CAPACITY_EXCEEDED);
-        check_equal(multimap_init(&multimap, 0u), STL_OK);
-        check_equal(multimap_put(&multimap, &one, &value),
+        check_equal(IntHeap_init(&heap, 0u), STL_OK);
+        check_equal(IntHeap_push(&heap, one), STL_CAPACITY_EXCEEDED);
+        check_equal(IntSet_init(&set, 0u), STL_OK);
+        check_equal(IntSet_add(&set, one), STL_CAPACITY_EXCEEDED);
+        check_equal(IntLongMap_init(&map, 0u), STL_OK);
+        check_equal(IntLongMap_put(&map, one, 1L), STL_CAPACITY_EXCEEDED);
+        check_equal(IntLongMultiMap_init(&multimap, 0u), STL_OK);
+        check_equal(IntLongMultiMap_put(&multimap, one, 1L),
                     STL_CAPACITY_EXCEEDED);
-        multimap_destroy(&multimap);
-        map_destroy(&map);
-        set_destroy(&set);
-        heap_destroy(&heap);
+        IntLongMultiMap_destroy(&multimap);
+        IntLongMap_destroy(&map);
+        IntSet_destroy(&set);
+        IntHeap_destroy(&heap);
     }
 
     it("requires explicit from limits and commits associative inputs once") {
-        Vec(int, vector);
-        HashMap(int, long, map);
-        MultiMap(int, long, multimap);
-        BPlusTree(int, long, tree);
+        IntVec vector = {0};
+        IntLongHashMap map = {0};
+        IntLongMultiMap multimap = {0};
+        IntLongBPlusTree tree = {0};
         int values[] = {1, 2};
-        int map_keys[] = {1, 2};
-        long map_values[] = {10L, 20L};
-        int multi_keys[] = {1, 1};
-        long multi_values[] = {10L, 11L};
-        int tree_keys[] = {2, 1};
-        long tree_values[] = {20L, 10L};
-        int lookup = 2;
-        int multi_key = 1;
-        int tree_key = 1;
+        IntLongHashMap_entry map_entries[] = {{1, 10L}, {2, 20L}};
+        IntLongMultiMap_entry multi_entries[] = {{1, 10L}, {1, 11L}};
+        IntLongBPlusTree_entry tree_entries[] = {{2, 20L}, {1, 10L}};
         uint64_t generation;
 
-        check_equal(vec_from_array(&vector, values, 2u, 1u),
+        check_equal(IntVec_from(&vector, values, 2u, 1u),
                     STL_CAPACITY_EXCEEDED);
-        check_equal(vec_size(&vector), (size_t)0u);
-        check_true(cmeta_container_descriptor(&vector) == &stl_vec_container_desc);
-        check_equal(vec_from_array(&vector, values, 2u, 2u), STL_OK);
-        check_equal(vec_size(&vector), (size_t)2u);
+        check_equal(memcmp(&vector, &(IntVec){0}, sizeof(vector)), 0);
+        check_equal(IntVec_from(&vector, values, 2u, 2u), STL_OK);
+        check_equal(IntVec_size(&vector), (size_t)2u);
 
-        check_equal(hash_map_from_arrays(&map, map_keys, map_values, 2u, 2u),
+        check_equal(IntLongHashMap_from(&map, map_entries, 2u, 2u),
                     STL_OK);
-        check_equal(*(const long *)hash_map_get_const(&map, &lookup), 20L);
-        generation = hash_map_generation(&map);
-        check_equal(hash_map_from_arrays(&map, map_keys, map_values, 2u, 1u),
+        check_equal(*IntLongHashMap_get_const(&map, 2), 20L);
+        generation = hash_map_generation(&map.raw);
+        check_equal(IntLongHashMap_from(&map, map_entries, 2u, 1u),
                     STL_CAPACITY_EXCEEDED);
-        check_equal(hash_map_generation(&map), generation);
-        check_equal(*(const long *)hash_map_get_const(&map, &lookup), 20L);
+        check_equal(hash_map_generation(&map.raw), generation);
+        check_equal(*IntLongHashMap_get_const(&map, 2), 20L);
 
-        check_equal(multimap_from_arrays(&multimap, multi_keys, multi_values,
-                                         2u, 1u), STL_CAPACITY_EXCEEDED);
-        check_true(multimap_empty(&multimap));
-        check_equal(multimap_from_arrays(&multimap, multi_keys, multi_values,
-                                         2u, 2u), STL_OK);
-        check_equal(multimap_count(&multimap, &multi_key), (size_t)2u);
+        check_equal(IntLongMultiMap_from(&multimap, multi_entries, 2u, 1u),
+                    STL_CAPACITY_EXCEEDED);
+        check_true(IntLongMultiMap_empty(&multimap));
+        check_equal(IntLongMultiMap_from(&multimap, multi_entries, 2u, 2u),
+                    STL_OK);
+        check_equal(IntLongMultiMap_count(&multimap, 1), (size_t)2u);
 
-        check_equal(bplus_tree_from_arrays(&tree, tree_keys, tree_values,
-                                           2u, 2u), STL_OK);
-        check_equal(*(const long *)bplus_tree_get_const(&tree, &tree_key), 10L);
+        check_equal(IntLongBPlusTree_from(&tree, tree_entries, 2u, 2u),
+                    STL_OK);
+        check_equal(*IntLongBPlusTree_get_const(&tree, 1), 10L);
 
-        bplus_tree_destroy(&tree);
-        multimap_destroy(&multimap);
-        hash_map_destroy(&map);
-        vec_destroy(&vector);
+        IntLongBPlusTree_destroy(&tree);
+        IntLongMultiMap_destroy(&multimap);
+        IntLongHashMap_destroy(&map);
+        IntVec_destroy(&vector);
     }
 
     it("counts live keys rather than input rows when building associative containers") {
-        HashMap(int, long, hash_map);
-        Map(int, long, map);
-        BTree(int, long, btree);
-        BPlusTree(int, long, bplus);
-        int duplicate_keys[] = {1, 1};
-        int distinct_keys[] = {2, 3};
-        long hash_values[] = {10L, 11L};
-        long map_values[] = {20L, 21L};
-        long btree_values[] = {30L, 31L};
-        long bplus_values[] = {40L, 41L};
-        long hash_distinct[] = {12L, 13L};
-        long map_distinct[] = {22L, 23L};
-        long btree_distinct[] = {32L, 33L};
-        long bplus_distinct[] = {42L, 43L};
-        int key = 1;
+        IntLongHashMap hash_map = {0};
+        IntLongMap map = {0};
+        IntLongBTree btree = {0};
+        IntLongBPlusTree bplus = {0};
+        IntLongHashMap_entry hash_entries[] = {{1, 10L}, {1, 11L}};
+        IntLongMap_entry map_entries[] = {{1, 20L}, {1, 21L}};
+        IntLongBTree_entry btree_entries[] = {{1, 30L}, {1, 31L}};
+        IntLongBPlusTree_entry bplus_entries[] = {{1, 40L}, {1, 41L}};
+        IntLongHashMap_entry hash_distinct[] = {{2, 12L}, {3, 13L}};
+        IntLongMap_entry map_distinct[] = {{2, 22L}, {3, 23L}};
+        IntLongBTree_entry btree_distinct[] = {{2, 32L}, {3, 33L}};
+        IntLongBPlusTree_entry bplus_distinct[] = {{2, 42L}, {3, 43L}};
 
-        check_equal(hash_map_from_arrays(&hash_map, duplicate_keys, hash_values,
-                                         2u, 1u), STL_OK);
-        check_equal(hash_map_size(&hash_map), (size_t)1u);
-        check_equal(*(const long *)hash_map_get_const(&hash_map, &key), 11L);
-        check_equal(hash_map_generation(&hash_map), UINT64_C(1));
-
-        check_equal(map_from_arrays(&map, duplicate_keys, map_values, 2u, 1u),
+        check_equal(IntLongHashMap_from(&hash_map, hash_entries, 2u, 1u),
                     STL_OK);
-        check_equal(map_size(&map), (size_t)1u);
-        check_equal(*(const long *)map_get_const(&map, &key), 21L);
-        check_equal(map_generation(&map), UINT64_C(1));
+        check_equal(IntLongHashMap_size(&hash_map), (size_t)1u);
+        check_equal(*IntLongHashMap_get_const(&hash_map, 1), 11L);
+        check_equal(hash_map_generation(&hash_map.raw), UINT64_C(1));
 
-        check_equal(btree_from_arrays(&btree, duplicate_keys, btree_values,
-                                      2u, 1u), STL_OK);
-        check_equal(btree_size(&btree), (size_t)1u);
-        check_equal(*(const long *)btree_get_const(&btree, &key), 31L);
-        check_equal(btree_generation(&btree), UINT64_C(1));
+        check_equal(IntLongMap_from(&map, map_entries, 2u, 1u), STL_OK);
+        check_equal(IntLongMap_size(&map), (size_t)1u);
+        check_equal(*IntLongMap_get_const(&map, 1), 21L);
+        check_equal(map_generation(&map.raw), UINT64_C(1));
 
-        check_equal(bplus_tree_from_arrays(&bplus, duplicate_keys, bplus_values,
-                                           2u, 1u), STL_OK);
-        check_equal(bplus_tree_size(&bplus), (size_t)1u);
-        check_equal(*(const long *)bplus_tree_get_const(&bplus, &key), 41L);
-        check_equal(bplus_tree_generation(&bplus), UINT64_C(1));
+        check_equal(IntLongBTree_from(&btree, btree_entries, 2u, 1u),
+                    STL_OK);
+        check_equal(IntLongBTree_size(&btree), (size_t)1u);
+        check_equal(*IntLongBTree_get_const(&btree, 1), 31L);
+        check_equal(btree_generation(&btree.raw), UINT64_C(1));
 
-        check_equal(hash_map_from_arrays(&hash_map, distinct_keys, hash_distinct,
-                                         2u, 1u), STL_CAPACITY_EXCEEDED);
-        check_equal(hash_map_generation(&hash_map), UINT64_C(1));
-        check_equal(*(const long *)hash_map_get_const(&hash_map, &key), 11L);
-        check_equal(map_from_arrays(&map, distinct_keys, map_distinct, 2u, 1u),
+        check_equal(IntLongBPlusTree_from(&bplus, bplus_entries, 2u, 1u),
+                    STL_OK);
+        check_equal(IntLongBPlusTree_size(&bplus), (size_t)1u);
+        check_equal(*IntLongBPlusTree_get_const(&bplus, 1), 41L);
+        check_equal(bplus_tree_generation(&bplus.raw), UINT64_C(1));
+
+        check_equal(IntLongHashMap_from(&hash_map, hash_distinct, 2u, 1u),
                     STL_CAPACITY_EXCEEDED);
-        check_equal(map_generation(&map), UINT64_C(1));
-        check_equal(*(const long *)map_get_const(&map, &key), 21L);
-        check_equal(btree_from_arrays(&btree, distinct_keys, btree_distinct,
-                                      2u, 1u), STL_CAPACITY_EXCEEDED);
-        check_equal(btree_generation(&btree), UINT64_C(1));
-        check_equal(*(const long *)btree_get_const(&btree, &key), 31L);
-        check_equal(bplus_tree_from_arrays(&bplus, distinct_keys, bplus_distinct,
-                                           2u, 1u), STL_CAPACITY_EXCEEDED);
-        check_equal(bplus_tree_generation(&bplus), UINT64_C(1));
-        check_equal(*(const long *)bplus_tree_get_const(&bplus, &key), 41L);
+        check_equal(hash_map_generation(&hash_map.raw), UINT64_C(1));
+        check_equal(*IntLongHashMap_get_const(&hash_map, 1), 11L);
+        check_equal(IntLongMap_from(&map, map_distinct, 2u, 1u),
+                    STL_CAPACITY_EXCEEDED);
+        check_equal(map_generation(&map.raw), UINT64_C(1));
+        check_equal(*IntLongMap_get_const(&map, 1), 21L);
+        check_equal(IntLongBTree_from(&btree, btree_distinct, 2u, 1u),
+                    STL_CAPACITY_EXCEEDED);
+        check_equal(btree_generation(&btree.raw), UINT64_C(1));
+        check_equal(*IntLongBTree_get_const(&btree, 1), 31L);
+        check_equal(IntLongBPlusTree_from(&bplus, bplus_distinct, 2u, 1u),
+                    STL_CAPACITY_EXCEEDED);
+        check_equal(bplus_tree_generation(&bplus.raw), UINT64_C(1));
+        check_equal(*IntLongBPlusTree_get_const(&bplus, 1), 41L);
 
-        bplus_tree_destroy(&bplus);
-        btree_destroy(&btree);
-        map_destroy(&map);
-        hash_map_destroy(&hash_map);
+        IntLongBPlusTree_destroy(&bplus);
+        IntLongBTree_destroy(&btree);
+        IntLongMap_destroy(&map);
+        IntLongHashMap_destroy(&hash_map);
     }
 
-    it("aborts a collector exactly once and restores the bound empty instance") {
-        Vec(int, output);
-        const cmeta_container_desc *desc = cmeta_container_descriptor(&output);
-        cmeta_collector collector = desc->collector(&output, 1u);
+    it("aborts a collector exactly once and restores zero output") {
+        IntVec output = {0};
+        cmeta_collector collector = IntVec_collector(&output, 1u);
         int one = 1;
         int two = 2;
 
@@ -375,121 +312,67 @@ spec("TurboSTL instance metadata") {
         check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &two),
                     CMETA_CAPACITY_EXCEEDED);
         check_true(collector.state == CMETA_COLLECTOR_ABORTED);
-        check_equal(vec_size(&output), (size_t)0u);
-        check_true(cmeta_container_descriptor(&output) == desc);
-        check_true(cmeta_type_equal(output.element_type, &cmeta_type_int));
+        check_equal(memcmp(&output, &(IntVec){0}, sizeof(output)), 0);
         cmeta_collector_abort(&collector);
-        check_true(collector.state == CMETA_COLLECTOR_ABORTED);
-        check_equal(vec_size(&output), (size_t)0u);
-        check_true(cmeta_container_descriptor(&output) == desc);
+        check_equal(memcmp(&output, &(IntVec){0}, sizeof(output)), 0);
     }
 
     it("exposes an empty committing collector for all standard kinds") {
-        Vec(int, vector);
-        Deque(int, deque);
-        List(int, list);
-        Stack(int, stack);
-        Queue(int, queue);
-        Heap(int, heap);
-        Set(int, set);
-        HashSet(int, hash_set);
-        HashMap(int, long, hash_map);
-        Map(int, long, map);
-        MultiMap(int, long, multimap);
-        BTree(int, long, btree);
-        BPlusTree(int, long, bplus);
-
-        VERIFY_EMPTY_COLLECTOR(vector, vec_size, vec_destroy);
-        VERIFY_EMPTY_COLLECTOR(deque, deque_size, deque_destroy);
-        VERIFY_EMPTY_COLLECTOR(list, list_size, list_destroy);
-        VERIFY_EMPTY_COLLECTOR(stack, stack_size, stack_destroy);
-        VERIFY_EMPTY_COLLECTOR(queue, queue_size, queue_destroy);
-        VERIFY_EMPTY_COLLECTOR(heap, heap_size, heap_destroy);
-        VERIFY_EMPTY_COLLECTOR(set, set_size, set_destroy);
-        VERIFY_EMPTY_COLLECTOR(hash_set, hash_set_size, hash_set_destroy);
-        VERIFY_EMPTY_COLLECTOR(hash_map, hash_map_size, hash_map_destroy);
-        VERIFY_EMPTY_COLLECTOR(map, map_size, map_destroy);
-        VERIFY_EMPTY_COLLECTOR(multimap, multimap_size, multimap_destroy);
-        VERIFY_EMPTY_COLLECTOR(btree, btree_size, btree_destroy);
-        VERIFY_EMPTY_COLLECTOR(bplus, bplus_tree_size, bplus_tree_destroy);
+        VERIFY_EMPTY_COLLECTOR(IntVec);
+        VERIFY_EMPTY_COLLECTOR(IntDeque);
+        VERIFY_EMPTY_COLLECTOR(IntList);
+        VERIFY_EMPTY_COLLECTOR(IntStack);
+        VERIFY_EMPTY_COLLECTOR(IntQueue);
+        VERIFY_EMPTY_COLLECTOR(IntHeap);
+        VERIFY_EMPTY_COLLECTOR(IntSet);
+        VERIFY_EMPTY_COLLECTOR(IntHashSet);
+        VERIFY_EMPTY_COLLECTOR(IntLongHashMap);
+        VERIFY_EMPTY_COLLECTOR(IntLongMap);
+        VERIFY_EMPTY_COLLECTOR(IntLongMultiMap);
+        VERIFY_EMPTY_COLLECTOR(IntLongBTree);
+        VERIFY_EMPTY_COLLECTOR(IntLongBPlusTree);
     }
 
     it("executes nonempty commit and overflow abort for all standard kinds") {
-        Vec(int, vector);
-        Deque(int, deque);
-        List(int, list);
-        Stack(int, stack);
-        Queue(int, queue);
-        Heap(int, heap);
-        Set(int, set);
-        HashSet(int, hash_set);
-        HashMap(int, long, hash_map);
-        Map(int, long, map);
-        MultiMap(int, long, multimap);
-        BTree(int, long, btree);
-        BPlusTree(int, long, bplus);
-
-        VERIFY_C1_COLLECTOR(vector, vec_size, vec_destroy, 1);
-        VERIFY_C1_COLLECTOR(deque, deque_size, deque_destroy, 2);
-        VERIFY_C1_COLLECTOR(list, list_size, list_destroy, 3);
-        VERIFY_C1_COLLECTOR(stack, stack_size, stack_destroy, 4);
-        VERIFY_C1_COLLECTOR(queue, queue_size, queue_destroy, 5);
-        VERIFY_C1_COLLECTOR(heap, heap_size, heap_destroy, 6);
-        VERIFY_C1_COLLECTOR(set, set_size, set_destroy, 7);
-        VERIFY_C1_COLLECTOR(hash_set, hash_set_size, hash_set_destroy, 8);
-        VERIFY_C2_COLLECTOR(hash_map, hash_map_size, hash_map_destroy, 1, 10L);
-        VERIFY_C2_COLLECTOR(map, map_size, map_destroy, 2, 20L);
-        VERIFY_C2_COLLECTOR(multimap, multimap_size, multimap_destroy, 3, 30L);
-        VERIFY_C2_COLLECTOR(btree, btree_size, btree_destroy, 4, 40L);
-        VERIFY_C2_COLLECTOR(bplus, bplus_tree_size, bplus_tree_destroy, 5, 50L);
+        VERIFY_C1_COLLECTOR(IntVec, 1);
+        VERIFY_C1_COLLECTOR(IntDeque, 2);
+        VERIFY_C1_COLLECTOR(IntList, 3);
+        VERIFY_C1_COLLECTOR(IntStack, 4);
+        VERIFY_C1_COLLECTOR(IntQueue, 5);
+        VERIFY_C1_COLLECTOR(IntHeap, 6);
+        VERIFY_C1_COLLECTOR(IntSet, 7);
+        VERIFY_C1_COLLECTOR(IntHashSet, 8);
+        VERIFY_C2_COLLECTOR(IntLongHashMap, 1, 10L);
+        VERIFY_C2_COLLECTOR(IntLongMap, 2, 20L);
+        VERIFY_C2_COLLECTOR(IntLongMultiMap, 3, 30L);
+        VERIFY_C2_COLLECTOR(IntLongBTree, 4, 40L);
+        VERIFY_C2_COLLECTOR(IntLongBPlusTree, 5, 50L);
     }
 
     it("collects associative tree and multimap entries transactionally") {
-        HashMap(int, long, hash_map);
-        BTree(int, long, tree);
-        MultiMap(int, long, multimap);
-        int hash_key = 3;
-        long hash_value = 30L;
-        int tree_key = 2;
-        long tree_value = 20L;
-        int multi_key = 1;
-        long multi_value_a = 10L;
-        long multi_value_b = 11L;
-        cmeta_entry hash_entry = {
-            .key_type = hash_map.key_type, .value_type = hash_map.value_type,
-            .key = &hash_key, .value = &hash_value,
-            .key_storage = NULL, .value_storage = NULL};
-        cmeta_entry tree_entry = {
-            .key_type = tree.key_type, .value_type = tree.value_type,
-            .key = &tree_key, .value = &tree_value,
-            .key_storage = NULL, .value_storage = NULL};
-        cmeta_entry multi_entries[] = {
-            {.key_type = multimap.key_type, .value_type = multimap.value_type,
-             .key = &multi_key, .value = &multi_value_a,
-             .key_storage = NULL, .value_storage = NULL},
-            {.key_type = multimap.key_type, .value_type = multimap.value_type,
-             .key = &multi_key, .value = &multi_value_b,
-             .key_storage = NULL, .value_storage = NULL}};
-        cmeta_collector hash_collector =
-            cmeta_container_descriptor(&hash_map)->collector(&hash_map, 1u);
-        cmeta_collector tree_collector =
-            cmeta_container_descriptor(&tree)->collector(&tree, 1u);
-        cmeta_collector multi_collector =
-            cmeta_container_descriptor(&multimap)->collector(&multimap, 2u);
+        IntLongHashMap hash_map = {0};
+        IntLongBTree tree = {0};
+        IntLongMultiMap multimap = {0};
+        IntLongHashMap_entry hash_entry = {3, 30L};
+        IntLongBTree_entry tree_entry = {2, 20L};
+        IntLongMultiMap_entry multi_entries[] = {{1, 10L}, {1, 11L}};
+        cmeta_collector hash_collector = IntLongHashMap_collector(&hash_map, 1u);
+        cmeta_collector tree_collector = IntLongBTree_collector(&tree, 1u);
+        cmeta_collector multi_collector = IntLongMultiMap_collector(&multimap, 2u);
 
         check_equal(cmeta_collector_begin(&hash_collector), CMETA_OK);
         check_equal(cmeta_collector_accept(&hash_collector,
                                            hash_collector.input_type,
                                            &hash_entry), CMETA_OK);
         check_equal(cmeta_collector_finish(&hash_collector), CMETA_OK);
-        check_equal(*(const long *)hash_map_get_const(&hash_map, &hash_key), 30L);
+        check_equal(*IntLongHashMap_get_const(&hash_map, 3), 30L);
 
         check_equal(cmeta_collector_begin(&tree_collector), CMETA_OK);
         check_equal(cmeta_collector_accept(&tree_collector,
                                            tree_collector.input_type,
                                            &tree_entry), CMETA_OK);
         check_equal(cmeta_collector_finish(&tree_collector), CMETA_OK);
-        check_equal(*(const long *)btree_get_const(&tree, &tree_key), 20L);
+        check_equal(*IntLongBTree_get_const(&tree, 2), 20L);
 
         check_equal(cmeta_collector_begin(&multi_collector), CMETA_OK);
         check_equal(cmeta_collector_accept(&multi_collector,
@@ -499,33 +382,30 @@ spec("TurboSTL instance metadata") {
                                            multi_collector.input_type,
                                            &multi_entries[1]), CMETA_OK);
         check_equal(cmeta_collector_finish(&multi_collector), CMETA_OK);
-        check_equal(multimap_count(&multimap, &multi_key), (size_t)2u);
+        check_equal(IntLongMultiMap_count(&multimap, 1), (size_t)2u);
 
-        multimap_destroy(&multimap);
-        btree_destroy(&tree);
-        hash_map_destroy(&hash_map);
+        IntLongMultiMap_destroy(&multimap);
+        IntLongBTree_destroy(&tree);
+        IntLongHashMap_destroy(&hash_map);
     }
 
     it("handles collector type mismatch limit zero reuse and terminal states") {
-        Vec(int, output);
-        const cmeta_container_desc *desc = cmeta_container_descriptor(&output);
-        cmeta_collector collector = desc->collector(&output, 0u);
+        IntVec output = {0};
+        cmeta_collector collector = IntVec_collector(&output, 0u);
         int value = 7;
 
         check_equal(cmeta_collector_begin(&collector), CMETA_OK);
         check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &value),
                     CMETA_CAPACITY_EXCEEDED);
-        check_equal(vec_size(&output), (size_t)0u);
-        check_true(cmeta_container_descriptor(&output) == desc);
+        check_equal(memcmp(&output, &(IntVec){0}, sizeof(output)), 0);
         check_equal(cmeta_collector_finish(&collector), CMETA_INVALID_ARGUMENT);
 
-        collector = desc->collector(&output, 1u);
+        collector = IntVec_collector(&output, 1u);
         collector.input_type = &cmeta_type_long;
         check_equal(cmeta_collector_begin(&collector), CMETA_TYPE_MISMATCH);
-        check_equal(vec_size(&output), (size_t)0u);
-        check_true(cmeta_container_descriptor(&output) == desc);
+        check_equal(memcmp(&output, &(IntVec){0}, sizeof(output)), 0);
 
-        collector = desc->collector(&output, 1u);
+        collector = IntVec_collector(&output, 1u);
         check_equal(cmeta_collector_begin(&collector), CMETA_OK);
         check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &value),
                     CMETA_OK);
@@ -533,14 +413,12 @@ spec("TurboSTL instance metadata") {
         check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &value),
                     CMETA_INVALID_ARGUMENT);
         check_equal(cmeta_collector_finish(&collector), CMETA_INVALID_ARGUMENT);
-        check_equal(vec_size(&output), (size_t)1u);
-        vec_destroy(&output);
+        IntVec_destroy(&output);
 
-        collector = desc->collector(&output, 1u);
+        collector = IntVec_collector(&output, 1u);
         check_equal(cmeta_collector_begin(&collector), CMETA_OK);
         check_equal(cmeta_collector_finish(&collector), CMETA_OK);
-        check_equal(vec_size(&output), (size_t)0u);
-        vec_destroy(&output);
+        IntVec_destroy(&output);
     }
 }
 

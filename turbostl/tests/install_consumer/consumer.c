@@ -1,14 +1,21 @@
 #include <turbostl.h>
 #include <turbostl/typed.h>
 
+typed(Vec, InstalledInts, int);
+
 int main(void) {
-  Vec(int, values);
-  const int input = 7;
+  InstalledInts values = {0};
+  vec_t raw_values = VecOf(int);
   int out = 0;
 
-  if (vec_init(&values, 2u) != STL_OK) return 1;
-  if (vec_push(&values, &input) != STL_OK) return 2;
-  if (vec_pop(&values, &out) != STL_OK || out != 7) return 3;
-  vec_destroy(&values);
+  if (InstalledInts_init(&values, 2u) != STL_OK) return 1;
+  if (InstalledInts_push(&values, 7) != STL_OK) return 2;
+  if (InstalledInts_pop(&values, &out) != STL_OK || out != 7) return 3;
+  if (vec_init(&raw_values, 1u) != STL_OK) {
+    InstalledInts_destroy(&values);
+    return 4;
+  }
+  vec_destroy(&raw_values);
+  InstalledInts_destroy(&values);
   return 0;
 }

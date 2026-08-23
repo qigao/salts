@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TurboUtilsInstallConsumer LANGUAGES C)
+project(TurboUtilsInstallConsumer LANGUAGES C CXX)
 
 find_package(TurboUtils CONFIG REQUIRED)
 
@@ -17,3 +17,7 @@ add_turboutils_consumer(consume_cmeta TurboUtils::CMeta CONSUME_CMETA)
 add_turboutils_consumer(consume_cflow TurboUtils::CFlow CONSUME_CFLOW)
 add_turboutils_consumer(consume_stl TurboUtils::STL CONSUME_STL)
 add_turboutils_consumer(consume_core TurboUtils::Core CONSUME_CORE)
+
+add_executable(consume_stl_cpp consumer.cpp)
+target_compile_features(consume_stl_cpp PRIVATE cxx_std_17)
+target_link_libraries(consume_stl_cpp PRIVATE TurboUtils::STL)

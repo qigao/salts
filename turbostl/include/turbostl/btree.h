@@ -59,7 +59,7 @@ typedef struct btree {
   bool initialized;
 } btree_t;
 
-/* Internal typed-storage bridges used by the natural instance wrappers. */
+/* Storage bridges shared by generated facades and explicitly bound raw handles. */
 stl_status btree_raw_init(btree_t *tree,
                           const cmeta_type_desc *key_type,
                           const cmeta_type_desc *value_type,

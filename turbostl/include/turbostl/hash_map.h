@@ -45,7 +45,7 @@ size_t hash_bytes(const void *key, size_t key_size, void *context);
 bool hash_key_equal(const void *left, const void *right, size_t key_size,
                     void *context);
 
-/* Internal typed-storage bridge used by the natural instance wrappers. */
+/* Storage bridge shared by generated facades and explicitly bound raw handles. */
 stl_status hash_map_raw_init(hash_map_t *map,
                              const cmeta_type_desc *key_type,
                              const cmeta_type_desc *value_type,

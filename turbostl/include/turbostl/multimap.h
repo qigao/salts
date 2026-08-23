@@ -22,7 +22,7 @@ typedef struct multimap_iter {
   void *node;
 } multimap_iter_t;
 
-/* Internal typed bridges for legacy/generated callers. */
+/* Storage bridges shared by generated facades and explicitly bound raw handles. */
 stl_status multimap_raw_init(multimap_t *map,
                              const cmeta_type_desc *key_type,
                              const cmeta_type_desc *value_type,
