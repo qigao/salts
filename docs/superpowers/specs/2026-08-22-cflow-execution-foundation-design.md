@@ -493,26 +493,26 @@ Linux/Windows/macOS/Android-supported builds exercise the module boundaries and 
 
 | Criterion | Status | Evidence |
 |---|---|---|
-| 1. Platform exists without upper-layer dependencies. | Implemented + locally verified | `platform/CMakeLists.txt` links only `Threads::Threads`; the Platform tests link `TurboUtils::Platform` directly. |
-| 2. Concurrency depends only on Platform plus standard/OS facilities. | Implemented + locally verified | `concurrency/CMakeLists.txt` publishes only `TurboUtils::Platform`; `concurrency/src/` owns the OS-independent pool/disruptor implementation. |
-| 3. Disruptor and thread-pool implementations are no longer Core-owned. | Implemented + locally verified | Canonical implementations are `concurrency/src/disruptor.c` and `concurrency/src/thread_pool.c`; Core retains compatibility includes only. |
-| 4. Global single-threaded policy remains outside Platform. | Implemented + locally verified | `turbo_sync_set_single_threaded()` and `turbo_sync_is_single_threaded()` remain in `utils/src/turbo_thread.c` and are exercised by `utils/tests/test_execution_compat.c`. |
-| 5. CFlow has no direct native thread-library dependency. | Implemented + locally verified | `cflow/src/scheduler_worker.c` uses `<turbo/thread.h>`; `cflow/CMakeLists.txt` links Platform/Concurrency rather than `Threads::Threads`. |
-| 6. CFlow delayed work uses monotonic time. | Implemented + locally verified | `cflow/src/clock.c` obtains system control time from `turbo_hrtime()`; TimerQueue and scheduler tests exercise typed deadlines and relative waits. |
-| 7. WorkerExecutor reuses Concurrency. | Implemented + locally verified | `cflow/src/executor.c` adapts `turbo_threadpool_*`; no second CFlow worker-pool implementation remains. |
-| 8. VirtualClock is deterministic. | Implemented + locally verified | `cflow/tests/cflow_execution_test.c` verifies exact manual advancement and rejects manual advancement for SystemClock. |
-| 9. Legacy public includes remain source-compatible. | Implemented + locally verified | `utils/include/platform.h`, `utils/include/turbo_thread.h`, and `utils/include/disruptor.h` remain compatibility surfaces; `test_execution_compat` links only Core. |
-| 10. Platform/Concurrency export state is target-scoped. | Implemented + locally verified | Module-local export headers and target definitions live under `platform/include/turbo/platform.h`, `concurrency/include/turbo/concurrency.h`, and their CMake targets. |
-| 11. Core can depend on CFlow without a cycle. | Implemented + locally verified | `utils/CMakeLists.txt` links CFlow privately; CFlow links CMeta publicly and Platform/Concurrency privately, never Core. |
-| 12. Owner behavior tests pass. | Implemented + locally verified | `platform_thread_test`, `platform_clock_test`, `disruptor_test`, `thread_pool_test`, CFlow tests, and `test_execution_compat` are registered under their owning modules. |
-| 13. Installed exports are consumable. | Implemented + locally verified | `verify_installed_package` installs the SDK and builds external consumers naming only Platform, Concurrency, CMeta, CFlow, STL, or Core. |
+| 1. Platform exists without upper-layer dependencies. | Implemented + Linux/Windows CI verified | `platform/CMakeLists.txt` links only `Threads::Threads`; the Platform tests link `TurboUtils::Platform` directly. |
+| 2. Concurrency depends only on Platform plus standard/OS facilities. | Implemented + Linux/Windows CI verified | `concurrency/CMakeLists.txt` publishes only `TurboUtils::Platform`; `concurrency/src/` owns the OS-independent pool/disruptor implementation. |
+| 3. Disruptor and thread-pool implementations are no longer Core-owned. | Implemented + Linux/Windows CI verified | Canonical implementations are `concurrency/src/disruptor.c` and `concurrency/src/thread_pool.c`; Core retains compatibility includes only. |
+| 4. Global single-threaded policy remains outside Platform. | Implemented + Linux/Windows CI verified | `turbo_sync_set_single_threaded()` and `turbo_sync_is_single_threaded()` remain in `utils/src/turbo_thread.c` and are exercised by `utils/tests/test_execution_compat.c`. |
+| 5. CFlow has no direct native thread-library dependency. | Implemented + Linux/Windows CI verified | `cflow/src/scheduler_worker.c` uses `<turbo/thread.h>`; `cflow/CMakeLists.txt` links Platform/Concurrency rather than `Threads::Threads`. |
+| 6. CFlow delayed work uses monotonic time. | Implemented + Linux/Windows CI verified | `cflow/src/clock.c` obtains system control time from `turbo_hrtime()`; TimerQueue and scheduler tests exercise typed deadlines and relative waits. |
+| 7. WorkerExecutor reuses Concurrency. | Implemented + Linux/Windows CI verified | `cflow/src/executor.c` adapts `turbo_threadpool_*`; no second CFlow worker-pool implementation remains. |
+| 8. VirtualClock is deterministic. | Implemented + Linux/Windows CI verified | `cflow/tests/cflow_execution_test.c` verifies exact manual advancement and rejects manual advancement for SystemClock. |
+| 9. Legacy public includes remain source-compatible. | Implemented + Linux/Windows CI verified | `utils/include/platform.h`, `utils/include/turbo_thread.h`, and `utils/include/disruptor.h` remain compatibility surfaces; `test_execution_compat` links only Core. |
+| 10. Platform/Concurrency export state is target-scoped. | Implemented + Linux/Windows CI verified | Module-local export headers and target definitions live under `platform/include/turbo/platform.h`, `concurrency/include/turbo/concurrency.h`, and their CMake targets. |
+| 11. Core can depend on CFlow without a cycle. | Implemented + Linux/Windows CI verified | `utils/CMakeLists.txt` links CFlow privately; CFlow links CMeta publicly and Platform/Concurrency privately, never Core. |
+| 12. Owner behavior tests pass. | Implemented + Linux/Windows CI verified | `platform_thread_test`, `platform_clock_test`, `disruptor_test`, `thread_pool_test`, CFlow tests, and `test_execution_compat` are registered under their owning modules. |
+| 13. Installed exports are consumable. | Implemented + Linux/Windows CI verified | `verify_installed_package` installs the SDK and builds external consumers naming only Platform, Concurrency, CMeta, CFlow, STL, or Core. |
 
 ### Host evidence
 
 | Host | Status | Evidence boundary |
 |---|---|---|
-| Windows Release | Implemented + locally verified | `win-release-user` configure/build/CTest and `verify_installed_package`. |
-| Linux Release | Implementation present; CI verification pending | `.github/workflows/cmeta.yml` runs owner tests and `verify_installed_package` with the existing Linux Release presets. |
+| Windows Release | Implemented + Linux/Windows CI verified | PR #51 passed Windows 2022/2025 benchmark jobs and the Windows conformance/package job. |
+| Linux Release | Implemented + Linux/Windows CI verified | PR #51 passed Ubuntu 22.04/24.04 benchmark jobs and the Linux conformance/package job. |
 | macOS/Android | Implementation present; macOS/Android host evidence absent | The repository has platform presets, but no current workflow executes these foundation boundaries on those hosts. |
 
 ## Residual work outside this completion patch

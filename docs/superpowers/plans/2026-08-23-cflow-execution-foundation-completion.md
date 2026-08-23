@@ -357,4 +357,4 @@ git commit -m "docs(cflow): reconcile execution foundation status"
 - Full CTest result: 101/101 passed.
 - Focused Platform/Concurrency/CFlow regression result: 6/6 passed.
 - Installed-package result: all six external consumers compiled and linked.
-- Linux CI is configured by this plan but remains unverified until the branch workflow completes.
+- PR #51 Linux/Windows CI result: 6/6 jobs passed across Ubuntu 22.04/24.04 and Windows 2022/2025 hosts.
