@@ -19,6 +19,9 @@ static bool cflow_direct_bench_fused_typed_owned(const int *input, size_t input_
                                                  double **output, size_t *output_count);
 static bool cflow_direct_bench_staged_typed_owned(const int *input, size_t input_count,
                                                   double **output, size_t *output_count);
+static bool cflow_direct_bench_raw_staged_owned(
+    const int *input, size_t input_count, double **output, size_t *output_count,
+    cmeta_fn_U_I_B_t even, cmeta_fn_U_I_L_t square, cmeta_fn_U_L_D_t half);
 static bool cflow_direct_bench_fused_erased(const int *input, size_t input_count, double *output,
                                             size_t output_capacity, size_t *output_count,
                                             const cmeta_callable *even,
@@ -133,6 +136,60 @@ fail:
   return false;
 }
 
+static bool cflow_direct_bench_raw_staged_owned(
+    const int *input, size_t input_count, double **output, size_t *output_count,
+    cmeta_fn_U_I_B_t even, cmeta_fn_U_I_L_t square, cmeta_fn_U_L_D_t half) {
+  unsigned char *selection = NULL;
+  long *squared = NULL;
+  double *halved = NULL;
+  size_t selection_bytes;
+  size_t selected_count = input_count;
+  size_t output_index = 0u;
+  size_t index;
+
+  if (!output || !output_count || !even || !square || !half || (!input && input_count != 0u))
+    return false;
+  *output = NULL;
+  *output_count = 0u;
+  selection_bytes = input_count / 8u + (input_count % 8u != 0u);
+  selection = selection_bytes ? (unsigned char *)malloc(selection_bytes) : NULL;
+  if (selection_bytes && !selection) return false;
+  if (selection_bytes) memset(selection, 0xff, selection_bytes);
+
+  for (index = 0u; index < input_count; ++index) {
+    if (even(input[index])) continue;
+    selection[index / 8u] &= (unsigned char)~(1u << (index % 8u));
+    --selected_count;
+  }
+
+  if (selected_count > SIZE_MAX / sizeof(*squared)) goto fail;
+  squared = selected_count ? (long *)malloc(selected_count * sizeof(*squared)) : NULL;
+  if (selected_count && !squared) goto fail;
+  for (index = 0u; index < input_count; ++index) {
+    if ((selection[index / 8u] & (unsigned char)(1u << (index % 8u))) == 0u) continue;
+    squared[output_index++] = square(input[index]);
+  }
+  if (output_index != selected_count) goto fail;
+  free(selection);
+  selection = NULL;
+
+  if (selected_count > SIZE_MAX / sizeof(*halved)) goto fail;
+  halved = selected_count ? (double *)malloc(selected_count * sizeof(*halved)) : NULL;
+  if (selected_count && !halved) goto fail;
+  for (index = 0u; index < selected_count; ++index) halved[index] = half(squared[index]);
+  free(squared);
+
+  *output = halved;
+  *output_count = selected_count;
+  return true;
+
+fail:
+  free(halved);
+  free(squared);
+  free(selection);
+  return false;
+}
+
 static bool cflow_direct_bench_fused_erased(const int *input, size_t input_count, double *output,
                                             size_t output_capacity, size_t *output_count,
                                             const cmeta_callable *even,
@@ -183,11 +240,13 @@ suite("CFlow Direct executor benchmarks") {
     cmeta_callable bound_half = {0};
     double *fused_owned_output = NULL;
     double *staged_owned_output = NULL;
+    double *raw_staged_owned_output = NULL;
     double fused_output[CFLOW_DIRECT_BENCH_ITEMS];
     double erased_output[CFLOW_DIRECT_BENCH_ITEMS];
     size_t fused_count = 0u;
     size_t fused_owned_count = 0u;
     size_t staged_owned_count = 0u;
+    size_t raw_staged_owned_count = 0u;
     size_t erased_count = 0u;
     cflow_direct_status direct_status = CFLOW_DIRECT_INVALID_ARGUMENT;
     bool plan_ok = false;
@@ -195,6 +254,7 @@ suite("CFlow Direct executor benchmarks") {
     bool fused_ok = false;
     bool fused_owned_ok = false;
     bool staged_owned_ok = false;
+    bool raw_staged_owned_ok = false;
     bool erased_ok = false;
 
     for (index = 0u; index < CFLOW_DIRECT_BENCH_ITEMS; ++index)
@@ -255,6 +315,13 @@ suite("CFlow Direct executor benchmarks") {
     check_equal(reference.count, staged_owned_count);
     check_equal(reference.data, staged_owned_output,
                 staged_owned_count * sizeof(staged_owned_output[0]));
+    check_true(cflow_direct_bench_raw_staged_owned(
+        input, CFLOW_DIRECT_BENCH_ITEMS, &raw_staged_owned_output,
+        &raw_staged_owned_count, bound_even.meta.call.call_U_I_B,
+        bound_square.meta.call.call_U_I_L, bound_half.meta.call.call_U_L_D));
+    check_equal(reference.count, raw_staged_owned_count);
+    check_equal(reference.data, raw_staged_owned_output,
+                raw_staged_owned_count * sizeof(raw_staged_owned_output[0]));
     check_true(cflow_direct_bench_fused_erased(input, CFLOW_DIRECT_BENCH_ITEMS, erased_output,
                                                CFLOW_DIRECT_BENCH_ITEMS, &erased_count, &bound_even,
                                                &bound_square, &bound_half));
@@ -262,6 +329,7 @@ suite("CFlow Direct executor benchmarks") {
     check_equal(reference.data, erased_output, erased_count * sizeof(erased_output[0]));
     free(fused_owned_output);
     free(staged_owned_output);
+    free(raw_staged_owned_output);
     cflow_result_destroy(&reference);
 
     benchmark_ops("Direct Filter/Map array", CFLOW_DIRECT_BENCH_SAMPLES, CFLOW_DIRECT_BENCH_ITEMS) {
@@ -315,6 +383,20 @@ suite("CFlow Direct executor benchmarks") {
       cflow_direct_bench_sink ^= erased_count;
     }
     check_true(erased_ok);
+
+    benchmark_ops("Raw predecoded staged owned Filter/Map", CFLOW_DIRECT_BENCH_SAMPLES,
+                  CFLOW_DIRECT_BENCH_ITEMS) {
+      double *result = NULL;
+      size_t result_count = 0u;
+      raw_staged_owned_ok = cflow_direct_bench_raw_staged_owned(
+          input, CFLOW_DIRECT_BENCH_ITEMS, &result, &result_count,
+          bound_even.meta.call.call_U_I_B, bound_square.meta.call.call_U_I_L,
+          bound_half.meta.call.call_U_L_D);
+      cflow_direct_benchmark_consume(result, result_count);
+      cflow_direct_bench_sink ^= result_count;
+      free(result);
+    }
+    check_true(raw_staged_owned_ok);
 
     benchmark_ops("Plan materialized baseline", CFLOW_DIRECT_BENCH_SAMPLES,
                   CFLOW_DIRECT_BENCH_ITEMS) {
