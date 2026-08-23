@@ -24,8 +24,78 @@ typedef enum cflow_direct_status {
 
 typedef enum cflow_direct_stage_kind {
   CFLOW_DIRECT_STAGE_FILTER = 0,
-  CFLOW_DIRECT_STAGE_MAP
+  CFLOW_DIRECT_STAGE_MAP = 1
 } cflow_direct_stage_kind;
+
+/** Execution target retained by typed AOT Stage IR. Values are public ABI. */
+typedef enum cflow_aot_dispatch {
+  /** A build-time schema names a C target which source generation calls directly. */
+  CFLOW_AOT_DISPATCH_STATIC_TARGET = 0,
+  /** Runtime lowering may invoke the callable's validated canonical raw batch. */
+  CFLOW_AOT_DISPATCH_CANONICAL_RAW_BATCH = 1,
+  /** Runtime lowering must preserve the callable invocation adapter. */
+  CFLOW_AOT_DISPATCH_ADAPTER = 2
+} cflow_aot_dispatch;
+
+enum { CFLOW_AOT_STAGE_LIMIT = 16 };
+
+/** One immutable Filter/Map stage. Every pointer is borrowed. */
+typedef struct cflow_aot_stage_ir {
+  cflow_direct_stage_kind kind;
+  cflow_aot_dispatch dispatch;
+  const cmeta_type_desc *input_type;
+  const cmeta_type_desc *output_type;
+  const cmeta_callable *callable;
+  const char *target_name;
+} cflow_aot_stage_ir;
+
+/** Ordered typed Stage IR. Generated instances have translation-unit static lifetime. */
+typedef struct cflow_aot_pipeline_ir {
+  const cflow_aot_stage_ir *stages;
+  size_t stage_count;
+  const cmeta_type_desc *input_type;
+  const cmeta_type_desc *output_type;
+} cflow_aot_pipeline_ir;
+
+/** Result committed only after an exact Stage IR/Graph semantic match. */
+typedef struct cflow_aot_equivalence_witness {
+  uint64_t source_graph_version;
+  size_t matched_stage_count;
+} cflow_aot_equivalence_witness;
+
+/** Validate type continuity, contracts and dispatch-specific invariants.
+ * @param ir Borrowed immutable Stage IR, valid for the call.
+ * @param error Optional output receiving a borrowed static message on failure
+ *              and NULL on success.
+ * @return true only when every row and the complete type chain are valid. */
+bool cflow_aot_pipeline_ir_validate(const cflow_aot_pipeline_ir *ir,
+                                    const char **error);
+
+/** Validate IR and require a build-time StaticTarget for every stage.
+ * This proves source-generation eligibility, not compiler machine-code inlining.
+ * @param ir Borrowed immutable Stage IR, valid for the call.
+ * @param error Optional borrowed static failure message output.
+ * @return true only for valid all-StaticTarget pipelines. */
+bool cflow_aot_pipeline_ir_inline_eligible(const cflow_aot_pipeline_ir *ir,
+                                           const char **error);
+
+/** Normalize and compare one borrowed Graph with the exact ordered Stage IR.
+ * `witness` is cleared on failure and records only the completed comparison;
+ * it is stale after the source Graph mutates.
+ * @param ir Borrowed immutable Stage IR, valid for the call.
+ * @param graph Borrowed Graph which must not mutate during the call.
+ * @param witness Optional transactional equivalence result.
+ * @param error Optional borrowed static failure message output.
+ * @return true only when normalized Graph topology, types and callables match.
+ * @code
+ * cflow_aot_equivalence_witness witness = {0};
+ * cflow_aot_pipeline_ir_match_graph(example_ir(), &stream.graph,
+ *                                   &witness, NULL);
+ * @endcode */
+bool cflow_aot_pipeline_ir_match_graph(const cflow_aot_pipeline_ir *ir,
+                                       const cflow_graph *graph,
+                                       cflow_aot_equivalence_witness *witness,
+                                       const char **error);
 
 static inline bool cflow_direct_type_eligible(const cmeta_type_desc *type) {
   const cmeta_trait_flags required = CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY;
@@ -123,6 +193,12 @@ static inline bool cflow_direct_stage_eligible(cmeta_callable callable,
 
   #define CFLOW_DIRECT_COUNT_INDEXED(index, row, count) +1
 
+  #define CFLOW_DIRECT_IR_INDEXED(index, row, count)                                               \
+    CFLOW_DIRECT_ROW_APPLY(CFLOW_DIRECT_IR_ROW, index, row, count)
+  #define CFLOW_DIRECT_IR_ROW(index, count, kind, input_type, output_type, callable)               \
+    {CFLOW_DIRECT_STAGE_KIND(kind), CFLOW_AOT_DISPATCH_STATIC_TARGET,                              \
+     CMETA_TYPEOF(input_type), CMETA_TYPEOF(output_type), &(callable).fn, #callable},
+
   #define CFLOW_DIRECT_ELIGIBILITY_INDEXED(index, row, count)                                      \
     CFLOW_DIRECT_ROW_APPLY(CFLOW_DIRECT_ELIGIBILITY_ROW, index, row, count)
   #define CFLOW_DIRECT_ELIGIBILITY_ROW(index, count, kind, input_type, output_type, callable)      \
@@ -200,8 +276,9 @@ static inline bool cflow_direct_stage_eligible(cmeta_callable callable,
   /**
    * Generate a closed synchronous Filter/Map pipeline and its Surface builder.
    *
-   * @param name Prefix for the generated `<name>_eligible`, `<name>_build` and
-   *             `<name>_eval_array` translation-unit-local functions.
+   * @param name Prefix for the generated `<name>_ir`, `<name>_eligible`,
+   *             `<name>_build` and `<name>_eval_array` translation-unit-local
+   *             functions.
    * @param input_type C type of each borrowed input array item.
    * @param input_desc Pointer to the matching CMeta source descriptor.
    * @param output_type C type stored in the caller-owned output array.
@@ -211,6 +288,7 @@ static inline bool cflow_direct_stage_eligible(cmeta_callable callable,
    *                        `CFlowDirectSteps` and normalized
    *                        `(kind, in-type, out-type, callable)` Filter/Map rows.
    *
+   * `<name>_ir()` returns an immutable translation-unit-static Stage IR view.
    * `<name>_build(stream)` initializes `stream` and appends the schema's Surface
    * operators. The caller must pass zeroed or otherwise uninitialized storage and
    * call `cflow_stream_destroy` after a successful or partially failed build.
@@ -234,6 +312,13 @@ static inline bool cflow_direct_stage_eligible(cmeta_callable callable,
     enum { name##_direct_stage_count = 0 Replay(pipeline_schema, CFLOW_DIRECT_COUNT_INDEXED) };    \
     _Static_assert(name##_direct_stage_count == (stage_count),                                     \
                    "Direct stage count does not match its schema");                                \
+    static const cflow_aot_stage_ir name##_aot_stages[] = {                                        \
+        Replay(pipeline_schema, CFLOW_DIRECT_IR_INDEXED)};                                         \
+    static const cflow_aot_pipeline_ir name##_aot_ir_value = {                                     \
+        name##_aot_stages, (stage_count), (input_desc), CMETA_TYPEOF(output_type)};                \
+    CMETA_INLINE const cflow_aot_pipeline_ir *name##_ir(void) {                                    \
+      return &name##_aot_ir_value;                                                                 \
+    }                                                                                              \
     CMETA_INLINE bool name##_eligible(void) {                                                      \
       const cmeta_type_desc *_cflow_direct_flow_type = (input_desc);                               \
       Replay(pipeline_schema, CFLOW_DIRECT_ELIGIBILITY_INDEXED) return true;                       \

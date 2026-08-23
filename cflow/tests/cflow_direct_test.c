@@ -4,6 +4,15 @@
 
 #include <string.h>
 
+_Static_assert(CFLOW_AOT_DISPATCH_STATIC_TARGET == 0,
+               "StaticTarget dispatch value is public ABI");
+_Static_assert(CFLOW_AOT_DISPATCH_CANONICAL_RAW_BATCH == 1,
+               "CanonicalRawBatch dispatch value is public ABI");
+_Static_assert(CFLOW_AOT_DISPATCH_ADAPTER == 2,
+               "Adapter dispatch value is public ABI");
+_Static_assert(CFLOW_DIRECT_STAGE_FILTER == 0, "Filter stage value is public ABI");
+_Static_assert(CFLOW_DIRECT_STAGE_MAP == 1, "Map stage value is public ABI");
+
 typedef struct cflow_direct_fixture {
   cflow_stream stream;
   cflow_plan plan;
@@ -116,6 +125,112 @@ suite("CFlow Direct executor") {
     check_equal(state->plan_result.count, direct_count);
     check_equal(state->plan_result.data, direct_output, direct_count * sizeof(direct_output[0]));
     check_true(cflow_result_equal(&state->plan_result, &state->kernel_result));
+  }
+
+  it("exposes one validated static-target IR from the pipeline schema") {
+    const cflow_aot_pipeline_ir *ir = cflow_direct_test_pipeline_ir();
+    const char *error = "not cleared";
+
+    check_not_null(ir);
+    check_true(cflow_aot_pipeline_ir_validate(ir, &error));
+    check_null(error);
+    check_true(cflow_aot_pipeline_ir_inline_eligible(ir, &error));
+    check_null(error);
+    check_equal(ir->stage_count, (size_t)3u);
+    check_true(cmeta_type_equal(ir->input_type, &cmeta_type_int));
+    check_true(cmeta_type_equal(ir->output_type, &cmeta_type_double));
+
+    check_equal(ir->stages[0].kind, CFLOW_DIRECT_STAGE_FILTER);
+    check_equal(ir->stages[0].dispatch, CFLOW_AOT_DISPATCH_STATIC_TARGET);
+    check_true(cmeta_type_equal(ir->stages[0].input_type, &cmeta_type_int));
+    check_true(cmeta_type_equal(ir->stages[0].output_type, &cmeta_type_int));
+    check_true(ir->stages[0].callable == &cflow_direct_even.fn);
+    check_equal(strcmp(ir->stages[0].target_name, "cflow_direct_even"), 0);
+
+    check_equal(ir->stages[1].kind, CFLOW_DIRECT_STAGE_MAP);
+    check_equal(ir->stages[1].dispatch, CFLOW_AOT_DISPATCH_STATIC_TARGET);
+    check_true(cmeta_type_equal(ir->stages[1].input_type, &cmeta_type_int));
+    check_true(cmeta_type_equal(ir->stages[1].output_type, &cmeta_type_long));
+    check_true(ir->stages[1].callable == &cflow_direct_square.fn);
+    check_equal(strcmp(ir->stages[1].target_name, "cflow_direct_square"), 0);
+
+    check_equal(ir->stages[2].kind, CFLOW_DIRECT_STAGE_MAP);
+    check_equal(ir->stages[2].dispatch, CFLOW_AOT_DISPATCH_STATIC_TARGET);
+    check_true(cmeta_type_equal(ir->stages[2].input_type, &cmeta_type_long));
+    check_true(cmeta_type_equal(ir->stages[2].output_type, &cmeta_type_double));
+    check_true(ir->stages[2].callable == &cflow_direct_half.fn);
+    check_equal(strcmp(ir->stages[2].target_name, "cflow_direct_half"), 0);
+  }
+
+  it("matches the exact generated Graph and clears a mismatch witness") {
+    cflow_stream generated = {0};
+    cflow_stream drifted = {0};
+    cflow_graph normalized = {0};
+    cflow_graph optimized = {0};
+    cflow_aot_equivalence_witness witness = {99u, 99u};
+    const cflow_aot_pipeline_ir *ir = cflow_direct_test_pipeline_ir();
+    const char *error = NULL;
+
+    normalized.root = CMETA_INVALID_ID;
+    optimized.root = CMETA_INVALID_ID;
+
+    check_true(cflow_direct_test_pipeline_build(&generated));
+    check_true(cflow_aot_pipeline_ir_match_graph(ir, &generated.graph, &witness, &error));
+    check_null(error);
+    check_equal(witness.source_graph_version, generated.graph.version);
+    check_equal(witness.matched_stage_count, (size_t)3u);
+
+    check_true(cflow_graph_normalize(&normalized, &generated.graph));
+    check_true(cflow_graph_optimize(&optimized, &normalized,
+                                    (cflow_opt_options){CMETA_OPT_DEFAULT}, NULL));
+    check_true(cflow_aot_pipeline_ir_match_graph(ir, &optimized, &witness, &error));
+    check_null(error);
+    check_equal(witness.source_graph_version, optimized.version);
+    check_equal(witness.matched_stage_count, (size_t)3u);
+
+    check_not_null(cflow_stream_init(&drifted, &cmeta_type_int));
+    check_not_null(drifted.filter(&drifted, cflow_direct_even));
+    check_not_null(drifted.map(&drifted, cflow_direct_trap_map));
+    check_not_null(drifted.map(&drifted, cflow_direct_half));
+    witness.source_graph_version = 99u;
+    witness.matched_stage_count = 99u;
+    check_false(cflow_aot_pipeline_ir_match_graph(ir, &drifted.graph, &witness, &error));
+    check_not_null(error);
+    check_equal(witness.source_graph_version, UINT64_C(0));
+    check_equal(witness.matched_stage_count, (size_t)0u);
+
+    cflow_graph_destroy(&optimized);
+    cflow_graph_destroy(&normalized);
+    cflow_stream_destroy(&drifted);
+    cflow_stream_destroy(&generated);
+  }
+
+  it("validates canonical batch and adapter dispatch without conflating them") {
+    const cflow_aot_stage_ir canonical_stage = {
+        CFLOW_DIRECT_STAGE_MAP, CFLOW_AOT_DISPATCH_CANONICAL_RAW_BATCH,
+        &cmeta_type_int, &cmeta_type_long, &cflow_direct_square.fn, NULL};
+    const cflow_aot_stage_ir adapter_stage = {
+        CFLOW_DIRECT_STAGE_MAP, CFLOW_AOT_DISPATCH_ADAPTER,
+        &cmeta_type_int, &cmeta_type_long, &cflow_direct_trap_map.fn, NULL};
+    const cflow_aot_stage_ir contradictory_stage = {
+        CFLOW_DIRECT_STAGE_MAP, CFLOW_AOT_DISPATCH_CANONICAL_RAW_BATCH,
+        &cmeta_type_int, &cmeta_type_long, &cflow_direct_trap_map.fn, NULL};
+    const cflow_aot_pipeline_ir canonical = {
+        &canonical_stage, 1u, &cmeta_type_int, &cmeta_type_long};
+    const cflow_aot_pipeline_ir adapter = {
+        &adapter_stage, 1u, &cmeta_type_int, &cmeta_type_long};
+    const cflow_aot_pipeline_ir contradictory = {
+        &contradictory_stage, 1u, &cmeta_type_int, &cmeta_type_long};
+    const char *error = NULL;
+
+    check_true(cflow_aot_pipeline_ir_validate(&canonical, &error));
+    check_null(error);
+    check_false(cflow_aot_pipeline_ir_inline_eligible(&canonical, &error));
+    check_not_null(error);
+    check_true(cflow_aot_pipeline_ir_validate(&adapter, &error));
+    check_null(error);
+    check_false(cflow_aot_pipeline_ir_validate(&contradictory, &error));
+    check_not_null(error);
   }
 
   it("rejects insufficient capacity before writing output") {

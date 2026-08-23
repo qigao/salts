@@ -4,6 +4,7 @@ add_library(${TARGET_NAME}
   src/adapters.c
   src/clock.c
   src/coord.c
+  src/direct.c
   src/effect.c
   src/executor.c
   src/graph.c
