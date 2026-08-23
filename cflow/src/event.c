@@ -11,6 +11,12 @@ typedef struct cflow_event_slot {
     size_t type_index;
 } cflow_event_slot;
 
+typedef enum cflow_mailbox_terminal {
+    CFLOW_MAILBOX_TERMINAL_OPEN = 0,
+    CFLOW_MAILBOX_TERMINAL_DRAINING,
+    CFLOW_MAILBOX_TERMINAL_CANCELLED
+} cflow_mailbox_terminal;
+
 typedef struct cflow_mailbox_impl {
     cflow_event_type *schema;
     cflow_event_slot *slots;
@@ -26,11 +32,28 @@ typedef struct cflow_mailbox_impl {
     uint64_t accepted;
     uint64_t received;
     uint64_t rejected_full;
+    uint64_t rejected_closed;
+    uint64_t rejected_cancelled;
+    uint64_t cancelled;
+    cflow_mailbox_terminal terminal;
+    cflow_waker waiter;
     turbo_mutex_t lock;
 } cflow_mailbox_impl;
 
 static void cflow_counter_increment(uint64_t *counter) {
     if (*counter != UINT64_MAX) ++*counter;
+}
+
+static void cflow_counter_add_size(uint64_t *counter, size_t amount) {
+    const uint64_t converted = (uint64_t)amount;
+    if (UINT64_MAX - *counter < converted)
+        *counter = UINT64_MAX;
+    else
+        *counter += converted;
+}
+
+static void cflow_waker_invoke(cflow_waker waker) {
+    if (waker.wake != NULL) waker.wake(waker.user);
 }
 
 static bool cflow_size_multiply(size_t left, size_t right, size_t *result) {
@@ -165,6 +188,7 @@ cflow_mailbox_status cflow_mailbox_try_send(cflow_mailbox *mailbox,
     const cmeta_type_desc *schema_type;
     size_t type_index;
     size_t tail;
+    cflow_waker waker = {0};
 
     if (impl == NULL || event == NULL || event->payload_type == NULL ||
         event->payload == NULL ||
@@ -175,6 +199,16 @@ cflow_mailbox_status cflow_mailbox_try_send(cflow_mailbox *mailbox,
         return CFLOW_MAILBOX_TYPE_MISMATCH;
 
     turbo_mutex_lock(&impl->lock);
+    if (impl->terminal == CFLOW_MAILBOX_TERMINAL_CANCELLED) {
+        cflow_counter_increment(&impl->rejected_cancelled);
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_MAILBOX_CANCELLED;
+    }
+    if (impl->terminal == CFLOW_MAILBOX_TERMINAL_DRAINING) {
+        cflow_counter_increment(&impl->rejected_closed);
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_MAILBOX_CLOSED;
+    }
     if (impl->count == impl->capacity) {
         cflow_counter_increment(&impl->rejected_full);
         turbo_mutex_unlock(&impl->lock);
@@ -188,7 +222,10 @@ cflow_mailbox_status cflow_mailbox_try_send(cflow_mailbox *mailbox,
     if (impl->count > impl->peak_pending)
         impl->peak_pending = impl->count;
     cflow_counter_increment(&impl->accepted);
+    waker = impl->waiter;
+    impl->waiter = (cflow_waker){0};
     turbo_mutex_unlock(&impl->lock);
+    cflow_waker_invoke(waker);
     return CFLOW_MAILBOX_OK;
 }
 
@@ -211,8 +248,14 @@ cflow_mailbox_status cflow_mailbox_try_receive(
 
     turbo_mutex_lock(&impl->lock);
     if (impl->count == 0u) {
+        const cflow_mailbox_status status =
+            impl->terminal == CFLOW_MAILBOX_TERMINAL_CANCELLED
+                ? CFLOW_MAILBOX_CANCELLED
+                : impl->terminal == CFLOW_MAILBOX_TERMINAL_DRAINING
+                      ? CFLOW_MAILBOX_CLOSED
+                      : CFLOW_MAILBOX_EMPTY;
         turbo_mutex_unlock(&impl->lock);
-        return CFLOW_MAILBOX_EMPTY;
+        return status;
     }
     head = impl->head;
     event_type = &impl->schema[impl->slots[head].type_index];
@@ -253,12 +296,96 @@ bool cflow_mailbox_get_stats(const cflow_mailbox *mailbox,
     snapshot.accepted = impl->accepted;
     snapshot.received = impl->received;
     snapshot.rejected_full = impl->rejected_full;
-    snapshot.rejected_closed = 0u;
-    snapshot.rejected_cancelled = 0u;
-    snapshot.cancelled = 0u;
+    snapshot.rejected_closed = impl->rejected_closed;
+    snapshot.rejected_cancelled = impl->rejected_cancelled;
+    snapshot.cancelled = impl->cancelled;
     turbo_mutex_unlock(&impl->lock);
     *out = snapshot;
     return true;
+}
+
+cflow_mailbox_status cflow_mailbox_close(cflow_mailbox *mailbox) {
+    cflow_mailbox_impl *impl =
+        mailbox != NULL ? (cflow_mailbox_impl *)mailbox->impl : NULL;
+    cflow_waker waker = {0};
+
+    if (impl == NULL) return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    turbo_mutex_lock(&impl->lock);
+    if (impl->terminal == CFLOW_MAILBOX_TERMINAL_CANCELLED) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_MAILBOX_CANCELLED;
+    }
+    if (impl->terminal == CFLOW_MAILBOX_TERMINAL_DRAINING) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_MAILBOX_CLOSED;
+    }
+    impl->terminal = CFLOW_MAILBOX_TERMINAL_DRAINING;
+    waker = impl->waiter;
+    impl->waiter = (cflow_waker){0};
+    turbo_mutex_unlock(&impl->lock);
+    cflow_waker_invoke(waker);
+    return CFLOW_MAILBOX_OK;
+}
+
+cflow_mailbox_status cflow_mailbox_cancel(cflow_mailbox *mailbox) {
+    cflow_mailbox_impl *impl =
+        mailbox != NULL ? (cflow_mailbox_impl *)mailbox->impl : NULL;
+    cflow_waker waker = {0};
+
+    if (impl == NULL) return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    turbo_mutex_lock(&impl->lock);
+    if (impl->terminal == CFLOW_MAILBOX_TERMINAL_CANCELLED) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_MAILBOX_CANCELLED;
+    }
+    impl->terminal = CFLOW_MAILBOX_TERMINAL_CANCELLED;
+    cflow_counter_add_size(&impl->cancelled, impl->count);
+    impl->head = 0u;
+    impl->count = 0u;
+    waker = impl->waiter;
+    impl->waiter = (cflow_waker){0};
+    turbo_mutex_unlock(&impl->lock);
+    cflow_waker_invoke(waker);
+    return CFLOW_MAILBOX_OK;
+}
+
+static bool cflow_mailbox_wait_arm(void *state, cflow_waker waker) {
+    cflow_mailbox_impl *impl = (cflow_mailbox_impl *)state;
+    bool ready;
+
+    if (impl == NULL || waker.wake == NULL) return false;
+    turbo_mutex_lock(&impl->lock);
+    ready = impl->count != 0u ||
+            impl->terminal != CFLOW_MAILBOX_TERMINAL_OPEN;
+    if (!ready && impl->waiter.wake != NULL) {
+        turbo_mutex_unlock(&impl->lock);
+        return false;
+    }
+    if (!ready) impl->waiter = waker;
+    turbo_mutex_unlock(&impl->lock);
+    if (ready) cflow_waker_invoke(waker);
+    return true;
+}
+
+static void cflow_mailbox_wait_cancel(void *state) {
+    cflow_mailbox_impl *impl = (cflow_mailbox_impl *)state;
+
+    if (impl == NULL) return;
+    turbo_mutex_lock(&impl->lock);
+    impl->waiter = (cflow_waker){0};
+    turbo_mutex_unlock(&impl->lock);
+}
+
+CMETA_IMPLEMENTS(cflow_waitable, cflow_mailbox_waitable, 0,
+    .arm = cflow_mailbox_wait_arm,
+    .cancel = cflow_mailbox_wait_cancel
+);
+
+cflow_waitable cflow_mailbox_as_waitable(cflow_mailbox *mailbox) {
+    cflow_mailbox_impl *impl =
+        mailbox != NULL ? (cflow_mailbox_impl *)mailbox->impl : NULL;
+    if (impl == NULL) return (cflow_waitable){0};
+    return cflow_mailbox_waitable_as_cflow_waitable(impl);
 }
 
 size_t cflow_mailbox_payload_capacity(const cflow_mailbox *mailbox) {

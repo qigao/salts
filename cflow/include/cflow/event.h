@@ -1,7 +1,7 @@
 #ifndef CFLOW_EVENT_H
 #define CFLOW_EVENT_H
 
-#include <cmeta/cmeta.h>
+#include <cflow/runtime.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -129,6 +129,43 @@ cflow_mailbox_status cflow_mailbox_try_receive(
  */
 bool cflow_mailbox_get_stats(const cflow_mailbox *mailbox,
                              cflow_mailbox_stats *out);
+
+/**
+ * Begin graceful shutdown while preserving already accepted FIFO events.
+ *
+ * New sends return `CFLOW_MAILBOX_CLOSED`. A consumer may continue receiving
+ * pending events and observes `CFLOW_MAILBOX_CLOSED` once the queue is empty.
+ * Any armed waker is invoked after the mailbox mutex is released.
+ *
+ * @param mailbox Borrowed initialized mailbox.
+ * @return `OK` for the transition, `CLOSED` if already closing, `CANCELLED` if
+ *         cancellation won, or `INVALID_ARGUMENT`.
+ */
+cflow_mailbox_status cflow_mailbox_close(cflow_mailbox *mailbox);
+
+/**
+ * Cancel the mailbox and atomically discard all pending trivial payloads.
+ *
+ * Later sends and receives return `CFLOW_MAILBOX_CANCELLED`. Discarded events
+ * are reflected in `cflow_mailbox_stats.cancelled`.
+ *
+ * @param mailbox Borrowed initialized mailbox.
+ * @return `OK` for the transition, `CANCELLED` if already cancelled, or
+ *         `INVALID_ARGUMENT`.
+ */
+cflow_mailbox_status cflow_mailbox_cancel(cflow_mailbox *mailbox);
+
+/**
+ * Return a single-consumer waitable borrowing this mailbox.
+ *
+ * Only one waker may remain armed. The first observable event or terminal
+ * transition consumes it; further events coalesce until the consumer rearms.
+ * The waitable becomes invalid when the mailbox is destroyed.
+ *
+ * @param mailbox Borrowed initialized mailbox.
+ * @return Valid waitable interface, or a zero interface for invalid input.
+ */
+cflow_waitable cflow_mailbox_as_waitable(cflow_mailbox *mailbox);
 
 /**
  * Return the largest payload size accepted by this mailbox.
