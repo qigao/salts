@@ -34,7 +34,7 @@
 
 `cmeta/src/data.c` owns runtime validation and lookup helpers. It may include `cmeta/cmeta.h`, `cmeta/struct.h`, and `cmeta/enum.h`, because implementation code can depend on complete reflection definitions.
 
-`cmeta/tests/cmeta_data_test.c` is the C11 semantic descriptor contract test. It constructs explicit scalar, struct, sequence/map, optional, and variant descriptors and checks the version/shape/lookup rules.
+`cmeta/tests/cmeta_data_test.c` is the C11 semantic descriptor contract test. It constructs explicit scalar, struct, and variant descriptors and checks versioning, shallow shape validation, and lookup behavior. Optional/sequence/map storage construction is intentionally not frozen in this PR; their semantic shape types are declared now and their construction/lifecycle behavior is exercised in later CBind/container plans.
 
 `cmeta/tests/cmeta_header_cpp_test.cpp` extends the existing C++ public-header regression so `cmeta_data_desc` and its initializer macro are proven consumable from C++17.
 
@@ -311,11 +311,11 @@ Do not make `data.h` include `cmeta.h`; `data.h` stays independently includable 
 
 - [ ] **Step 5: Extend the existing C++ public-header regression before running green**
 
-In `cmeta/tests/cmeta_header_cpp_test.cpp`, add a C++17 aggregate initialization check using the public macro:
+In `cmeta/tests/cmeta_header_cpp_test.cpp`, add `#include <climits>` and a C++17 aggregate initialization check using the public macro:
 
 ```cpp
 static const cmeta_data_integer_shape cmeta_cpp_data_int_shape = {
-    static_cast<uint8_t>(sizeof(int) * 8u)
+    static_cast<uint8_t>(sizeof(int) * CHAR_BIT)
 };
 
 static const cmeta_data_desc cmeta_cpp_data_int = CMETA_DATA_DESC_INIT(
@@ -411,13 +411,15 @@ static const cmeta_data_variant_case_desc cmeta_data_choice_cases[] = {
     {
         CMETA_DATA_CHOICE_INT,
         "int",
-        offsetof(cmeta_data_choice, value.integer),
+        offsetof(cmeta_data_choice, value) +
+            offsetof(cmeta_data_choice_storage, integer),
         &cmeta_data_int_desc
     },
     {
         CMETA_DATA_CHOICE_TEXT,
         "text",
-        offsetof(cmeta_data_choice, value.text_placeholder),
+        offsetof(cmeta_data_choice, value) +
+            offsetof(cmeta_data_choice_storage, text_placeholder),
         &cmeta_data_int_desc
     }
 };
@@ -615,6 +617,9 @@ bool cmeta_data_desc_valid(const cmeta_data_desc *desc) {
             (const cmeta_data_variant_shape *)desc->shape;
         size_t i;
         if (shape == NULL || shape->tag == NULL ||
+            (shape->tag->kind != CMETA_DATA_ENUM &&
+             shape->tag->kind != CMETA_DATA_SINT &&
+             shape->tag->kind != CMETA_DATA_UINT) ||
             shape->tag_offset >= desc->storage_type->size ||
             shape->case_count == 0u || shape->cases == NULL)
             return false;
@@ -688,7 +693,7 @@ cmake --build --preset build-debug-linux --target \
   cmeta_language_surface_test \
   cmeta_collector_test \
   cmeta_data_test
-ctest --preset test-dev-linux -R '^cmeta_' 
+ctest --preset test-dev-linux -R '^cmeta_'
 ```
 
 Expected: all CMeta tests pass. Pay special attention to `cmeta_header_cpp_test` and GNU/Clang missing-field-initializer warnings; the new public types must not force changes to existing `cmeta_type_desc`, `cmeta_struct_desc`, or `cmeta_enum_desc` initializers.
