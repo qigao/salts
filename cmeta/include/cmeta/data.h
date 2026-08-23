@@ -95,6 +95,7 @@ typedef struct cmeta_data_variant_shape {
 bool cmeta_data_kind_valid(cmeta_data_kind kind);
 bool cmeta_data_kind_is_container(cmeta_data_kind kind);
 bool cmeta_data_desc_valid(const cmeta_data_desc *desc);
+const cmeta_data_desc *cmeta_container_data_descriptor(const void *object);
 
 const cmeta_data_field_desc *cmeta_data_struct_field(
     const cmeta_data_struct_shape *shape, size_t index);
