@@ -165,3 +165,89 @@ fail:
     cflow_plan_certificate_destroy(&built);
     return false;
 }
+
+static bool certificate_fail(const char **error, const char *message) {
+    if (error) *error = message;
+    return false;
+}
+
+static bool certificate_rows_equal(const cflow_plan_certificate *left,
+                                   const cflow_plan_certificate *right,
+                                   const char **error) {
+    if (left->version != right->version)
+        return certificate_fail(error, "certificate version mismatch");
+    if (left->graph_version != right->graph_version)
+        return certificate_fail(error, "certificate graph version mismatch");
+    if (left->graph_fingerprint != right->graph_fingerprint)
+        return certificate_fail(error, "certificate graph fingerprint mismatch");
+    if (left->path != right->path)
+        return certificate_fail(error, "certificate path mismatch");
+    if (left->order != right->order)
+        return certificate_fail(error, "certificate order mismatch");
+    if (left->required_capabilities != right->required_capabilities)
+        return certificate_fail(error, "certificate capability mismatch");
+    if (left->row_count != right->row_count)
+        return certificate_fail(error, "certificate row count mismatch");
+    if (left->row_count && (!left->rows || !right->rows))
+        return certificate_fail(error, "certificate rows are missing");
+    for (size_t index = 0u; index < left->row_count; ++index) {
+        const cflow_plan_certificate_row *a = &left->rows[index];
+        const cflow_plan_certificate_row *b = &right->rows[index];
+        if (a->opcode != b->opcode)
+            return certificate_fail(error, "certificate opcode mismatch");
+        if (a->instruction_index != b->instruction_index ||
+            a->callable_index != b->callable_index)
+            return certificate_fail(error, "certificate row position mismatch");
+        if (!cmeta_type_equal(a->input_type, b->input_type) ||
+            !cmeta_type_equal(a->output_type, b->output_type))
+            return certificate_fail(error, "certificate type mismatch");
+        if (!cmeta_callable_same(a->callable, b->callable))
+            return certificate_fail(error, "certificate callable mismatch");
+        if (a->effects != b->effects)
+            return certificate_fail(error, "certificate effect mismatch");
+        if (a->properties != b->properties)
+            return certificate_fail(error, "certificate property mismatch");
+    }
+    return true;
+}
+
+bool cflow_plan_certificate_check(const cflow_plan_certificate *certificate,
+                                  const cflow_graph *normalized_graph,
+                                  const cflow_plan *plan,
+                                  const char **error) {
+    cflow_plan_certificate expected = {0};
+    cflow_plan_certificate graph_expected = {0};
+    cflow_plan recompiled = {0};
+    bool matched = false;
+
+    if (error) *error = NULL;
+    if (!certificate || !normalized_graph || !plan)
+        return certificate_fail(error, "certificate check requires inputs");
+    if (certificate->version != CFLOW_PLAN_CERTIFICATE_V1)
+        return certificate_fail(error, "certificate version mismatch");
+    if (certificate->path != CFLOW_CERTIFIED_PATH_SEQUENTIAL &&
+        certificate->path != CFLOW_CERTIFIED_PATH_ORDERED_PARALLEL_REDUCE)
+        return certificate_fail(error, "certificate path mismatch");
+    if (!cflow_plan_certificate_build(
+            &expected, normalized_graph, plan,
+            (cflow_certified_path)certificate->path))
+        return certificate_fail(error, "certificate expected rows unavailable");
+    if (!cflow_plan_compile(&recompiled, normalized_graph, NULL) ||
+        !cflow_plan_certificate_build(
+            &graph_expected, normalized_graph, &recompiled,
+            (cflow_certified_path)certificate->path)) {
+        certificate_fail(error, "certificate graph recompilation failed");
+        goto done;
+    }
+    if (!certificate_rows_equal(&expected, &graph_expected, error)) {
+        if (error) *error = "certificate plan does not match graph";
+        goto done;
+    }
+    matched = certificate_rows_equal(certificate, &expected, error);
+
+done:
+    cflow_plan_destroy(&recompiled);
+    cflow_plan_certificate_destroy(&graph_expected);
+    cflow_plan_certificate_destroy(&expected);
+    return matched;
+}

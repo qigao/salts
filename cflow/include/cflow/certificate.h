@@ -62,6 +62,10 @@ bool cflow_plan_certificate_build(cflow_plan_certificate *certificate,
                                   const cflow_plan *plan,
                                   cflow_certified_path path);
 void cflow_plan_certificate_destroy(cflow_plan_certificate *certificate);
+bool cflow_plan_certificate_check(const cflow_plan_certificate *certificate,
+                                  const cflow_graph *normalized_graph,
+                                  const cflow_plan *plan,
+                                  const char **error);
 
 #ifdef __cplusplus
 }
