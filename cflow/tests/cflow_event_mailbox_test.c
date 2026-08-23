@@ -109,7 +109,12 @@ suite("CFlow typed event mailbox") {
             {1u, &cmeta_type_double}
         };
         const cflow_event_type nontrivial[] = {{1u, &owned_payload_type}};
+        cmeta_type_desc invalid_alignment_type = cmeta_type_int;
+        cflow_event_type invalid_alignment[] = {{1u, &invalid_alignment_type}};
+        const cflow_event_type valid[] = {{1u, &cmeta_type_int}};
         cflow_mailbox mailbox = {0};
+
+        invalid_alignment_type.align = 3u;
 
         check_equal(cflow_mailbox_init(&mailbox, zero_id, 1u, 1u),
                     CFLOW_MAILBOX_INVALID_ARGUMENT);
@@ -123,6 +128,19 @@ suite("CFlow typed event mailbox") {
         check_equal(cflow_mailbox_init(&mailbox, zero_id, 1u, 0u),
                     CFLOW_MAILBOX_INVALID_ARGUMENT);
         check_null(mailbox.impl);
+        check_equal(cflow_mailbox_init(&mailbox, invalid_alignment, 1u, 1u),
+                    CFLOW_MAILBOX_INVALID_ARGUMENT);
+        check_null(mailbox.impl);
+        check_equal(cflow_mailbox_init(&mailbox, valid, 1u, SIZE_MAX),
+                    CFLOW_MAILBOX_INVALID_ARGUMENT);
+        check_null(mailbox.impl);
+
+        check_equal(cflow_mailbox_init(&mailbox, valid, 1u, 1u),
+                    CFLOW_MAILBOX_OK);
+        check_equal(cflow_mailbox_init(&mailbox, valid, 1u, 1u),
+                    CFLOW_MAILBOX_INVALID_ARGUMENT);
+        check_not_null(mailbox.impl);
+        cflow_mailbox_destroy(&mailbox);
     }
 
     it("admits and observes heterogeneous events in FIFO order") {
