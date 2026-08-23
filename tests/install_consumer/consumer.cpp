@@ -1,0 +1,29 @@
+#include <turbostl/typed.h>
+
+Struct(InstalledCppPayload,
+    (TYPE(Vec, int), values)
+);
+
+int main() {
+  const cmeta_field_desc *field =
+      cmeta_struct_find_field(InstalledCppPayload_meta(), "values");
+  InstalledCppPayload payload{};
+  const int input = 9;
+  int output = 0;
+  int status = 0;
+
+  if (field == nullptr || field->declared_type == nullptr) return 1;
+  if (cmeta_container_bind_types(&payload.values, field->declared_type) !=
+      CMETA_OK) return 2;
+  if (vec_init(&payload.values, 1u) != STL_OK) return 3;
+  if (vec_push(&payload.values, &input) != STL_OK) {
+    status = 4;
+    goto cleanup;
+  }
+  if (vec_pop(&payload.values, &output) != STL_OK || output != input)
+    status = 5;
+
+cleanup:
+  vec_destroy(&payload.values);
+  return status;
+}

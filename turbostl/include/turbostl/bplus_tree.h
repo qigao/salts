@@ -63,7 +63,7 @@ typedef struct bplus_tree {
   bool initialized;
 } bplus_tree_t;
 
-/* Internal typed-storage bridges used by the natural instance wrappers. */
+/* Storage bridges shared by generated facades and explicitly bound raw handles. */
 stl_status bplus_tree_raw_init(
     bplus_tree_t *tree, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t entry_limit);

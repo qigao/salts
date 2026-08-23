@@ -17,7 +17,7 @@ extern "C" {
  *
  * Example:
  *   stream(&input, &pipeline)->filter(&pipeline, keep)->map(&pipeline, map_fn);
- *   result = to_list(&pipeline, &output, output_limit);
+ *   result = to_list_typed(&pipeline, OutputList, &output, output_limit);
  */
 typedef cflow_stream turbostl_stream_t;
 
@@ -55,13 +55,20 @@ turbostl_container_collector(void *output, size_t limit) {
     return invalid;
 }
 
-/* Instance-driven terminals: the output handle carries its own CMeta type and
- * collector factory, so callers never name a generated output container type. */
+/* Typed terminals use distinct names so the three-argument #53 surface never
+ * relies on variadic-arity dispatch over arbitrary C expressions. */
+#define collector(container_type, output_ptr, limit) \
+    CMETA_TYPED_CALL(container_type, collector, (output_ptr), (limit))
 #define collect(stream_ptr, output_ptr, limit) \
     turbostl_stream_collect((stream_ptr), \
                             turbostl_container_collector((output_ptr), (limit)))
 #define to_list(stream_ptr, output_ptr, limit) \
     collect((stream_ptr), (output_ptr), (limit))
+#define collect_typed(stream_ptr, container_type, output_ptr, limit) \
+    turbostl_stream_collect((stream_ptr), \
+                            collector(container_type, (output_ptr), (limit)))
+#define to_list_typed(stream_ptr, container_type, output_ptr, limit) \
+    collect_typed((stream_ptr), container_type, (output_ptr), (limit))
 #define to_array(stream_ptr, max_items, output_ptr) \
     cflow_eval_stream_limit((stream_ptr), (max_items), (output_ptr))
 
