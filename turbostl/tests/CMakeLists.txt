@@ -23,6 +23,11 @@ cmake_add_test(turbostl_generic_identity_test
   LIBS TurboUtils::STL TurboUtils::TinyTest
   FOLDER "turbostl/tests")
 
+cmake_add_test(turbostl_semantic_data_test
+  SOURCES turbostl_semantic_data_test.c
+  LIBS TurboUtils::STL TurboUtils::CMeta TurboUtils::TinyTest
+  FOLDER "turbostl/tests")
+
 cmake_add_test(turbostl_sequence_test
   SOURCES turbostl_sequence_test.c
   LIBS TurboUtils::STL TurboUtils::TinyTest
@@ -116,6 +121,7 @@ set_target_properties(
 
 set_target_properties(
   turbostl_generic_identity_test
+  turbostl_semantic_data_test
   turbostl_sequence_test
   turbostl_ownership_test
   turbostl_hash_test
