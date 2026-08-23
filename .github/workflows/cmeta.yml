@@ -87,6 +87,58 @@ jobs:
       - name: Verify installed package targets
         run: cmake --build --preset build-default-linux --target verify_installed_package
 
+  macos:
+    name: macOS 15 release
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup re2c and vcpkg
+        shell: bash
+        run: |
+          brew install re2c
+          if [ -n "${VCPKG_ROOT:-}" ] &&
+             [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            true
+          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] &&
+               [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            echo "A valid VCPKG_ROOT is unavailable" >&2
+            exit 1
+          fi
+
+      - name: Configure
+        run: cmake --preset release-mac-ninja
+
+      - name: Build
+        run: cmake --build --preset build-default-mac
+
+      - name: Test execution foundation and typed layers
+        run: ctest --preset test-release-mac -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cflow_|turbostl_|test_execution_compat$)" --output-on-failure
+
+      - name: Verify installed package targets
+        run: cmake --build --preset build-default-mac --target verify_installed_package
+
+      - name: Collect macOS diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p build/macos-diagnostics
+          sw_vers > build/macos-diagnostics/os.txt
+          cmake --version > build/macos-diagnostics/cmake.txt
+          cc --version > build/macos-diagnostics/compiler.txt 2>&1
+          cp build/mac-clang-release/CMakeCache.txt build/macos-diagnostics/ 2>/dev/null || true
+          cp build/mac-clang-release/CMakeFiles/CMakeConfigureLog.yaml build/macos-diagnostics/ 2>/dev/null || true
+
+      - name: Upload macOS diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cflow-macos-15-diagnostics
+          path: build/macos-diagnostics
+          if-no-files-found: error
+
   windows:
     name: Windows release
     runs-on: windows-latest
