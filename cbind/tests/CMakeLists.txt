@@ -13,10 +13,16 @@ cmake_add_test(cbind_struct_runtime_test
   LIBS TurboUtils::CBind cserde_recording_support TurboUtils::TinyTest
   FOLDER "cbind/tests")
 
+cmake_add_test(cbind_transaction_test
+  SOURCES cbind_transaction_test.c
+  LIBS TurboUtils::CBind cserde_recording_support TurboUtils::TinyTest
+  FOLDER "cbind/tests")
+
 set_target_properties(
   cbind_scalar_decode_test
   cbind_struct_decode_test
   cbind_struct_runtime_test
+  cbind_transaction_test
   PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
