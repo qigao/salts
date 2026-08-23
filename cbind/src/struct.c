@@ -81,9 +81,6 @@ static cbind_status cbind_validate_struct_shape(
         }
 
         if (child->kind == CMETA_DATA_STRUCT) {
-            if (current_depth >= context->max_depth)
-                return cbind_struct_error(error, CBIND_LIMIT_EXCEEDED,
-                                          child, field, current_depth + 1u);
             status = cbind_validate_struct_shape(context, child,
                                                  current_depth, &frame, error);
         } else {
