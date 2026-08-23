@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a versioned, format-neutral CMeta semantic descriptor layer and project already-proven TurboSTL generic applications into `SEQUENCE` / `SET` / `MAP` without storing a second copy of `T/K/V`.
+**Goal:** Add a versioned, format-neutral CMeta semantic descriptor layer and project proven TurboSTL generic applications into `SEQUENCE` / `SET` / `MAP` without creating a second source of truth for `T/K/V`.
 
-**Architecture:** `TYPE<A...>` remains the only generic argument source. CMeta semantic descriptors describe meaning, not wire syntax and not generic arguments. TurboSTL container extensions link a valid generic application to one shared semantic category descriptor; concrete type arguments continue to come only from `cmeta_container_type_argument()`. Before appending semantic metadata to `cmeta_container_ext`, harden its `struct_size` handling to true append-only prefix semantics.
+**Architecture:** `TYPE<A...>` remains the sole owner of generic constructor/arity/arguments. Semantic descriptors describe meaning only. TurboSTL links its canonical container extension to one shared semantic category descriptor; callers still obtain concrete type arguments only through `cmeta_container_type_argument()`. Before appending semantic metadata to `cmeta_container_ext`, make its existing `struct_size` checks truly prefix-safe.
 
 **Tech Stack:** C11, C++17 public-header compatibility, CMake presets, TinyTest, TurboUtils::CMeta, TurboUtils::STL.
 
@@ -12,145 +12,40 @@
 
 ## Global Constraints
 
-- Base implementation starts from `master` at or after merge commit `93e68ef443b86aa887cff21d2ceeb134ad32e0e4` (`#37`).
-- `TYPE<A...>` owns generic constructor/arity/argument identity. Semantic container descriptors must not contain `element`, `key`, or `value` type fields.
-- Constructor equality is by valid `stable_id`, never by pointer identity across translation units.
+- Base implementation starts from `master` at or after `93e68ef443b86aa887cff21d2ceeb134ad32e0e4` (`#37`).
+- `TYPE<A...>` owns concrete generic arguments. Semantic container descriptors contain no `element`, `key`, or `value` type field.
 - Type well-formedness remains separate from operation capability/traits.
 - `SET` is a first-class semantic kind.
-- `OPTIONAL` is not part of this plan. It remains blocked until real `Option<T>` value-generic identity exists.
-- Field presence (`required`, missing, default), aliases, external names and emit policy remain CBind/schema policy.
-- No CSerde, CBind, parser, format codec, DataBind or TBE production code is introduced.
-- No TurboSTL raw algorithm, ownership rule, Range traversal or Collector behavior is rewritten.
-- Raw byte containers without valid CMeta type arguments must not resolve to semantic container descriptors.
-- Heap and MultiMap remain semantically unresolved in v1; do not silently map Heap to SEQUENCE or MultiMap to MAP.
-- This plan does not claim nested zero-initialized `vec_t/map_t` struct-field decode. Static field type application + `construct.bind_types` is the next plan.
-- First semantic descriptor ABI does not reserve an unspecified `cmeta_data_ops` callback pointer. Access/lifecycle ops are introduced only when their contract is concrete.
-- Semantic fingerprint generation is a later plan after descriptor graph semantics are stable.
-- Public CMeta/TurboSTL headers must compile as C11 and C++17.
-- Use repository presets. Linux verification uses `release-linux-ninja`, `build-default-linux`, and `test-release-linux`; Windows is required through the repository CI path.
+- `OPTIONAL` is not in this plan. It remains blocked until `Option<T>` has a real `CMETA_TYPE_APPLY` identity.
+- Field presence, aliases, external names, defaults, nullable policy and emit policy remain CBind/schema concerns.
+- No CSerde, CBind, parser, DataBind, TBE, or format-specific production code is introduced.
+- No TurboSTL raw algorithm, ownership rule, Range traversal, or Collector behavior is rewritten.
+- Raw-byte containers without a valid generic application do not resolve semantically.
+- `Heap<T>` and `MultiMap<K,V>` remain semantically unresolved in v1.
+- Nested zero-initialized `vec_t/map_t` struct fields are not solved here; static field TYPE application + construction is the next plan.
+- v1 does not reserve an unspecified `cmeta_data_ops` callback pointer.
+- Semantic fingerprinting is deferred until the descriptor graph contract is stable.
+- `cmeta_container_ext` and `cmeta_data_desc` must both use append-only prefix-size validation; do not validate either with `struct_size >= sizeof(current_struct)`.
+- Public CMeta/TurboSTL headers compile as C11 and C++17.
+- Linux verification uses repository presets `release-linux-ninja`, `build-default-linux`, `test-release-linux`; Windows must pass repository CI on the exact final head.
 
 ---
 
 ## PR decomposition
 
-Execute this plan as three independently reviewable implementation PRs:
-
 ```text
-PR C0  CMeta generic equality + append-only container extension accessor
+PR C0  append-only cmeta_container_ext ABI hardening
 PR C1  CMeta semantic descriptor core
 PR C2  TurboSTL semantic projection via cmeta_container_ext.data
 ```
 
-PR C1 starts only after C0 merges. PR C2 starts only after C1 merges. Do not stack production PRs on unmerged heads.
+C1 starts only after C0 merges. C2 starts only after C1 merges. Do not stack production PRs on unmerged heads.
 
 ---
 
-# PR C0 — Generic equality and extension ABI hardening
+# PR C0 — Append-only container extension ABI
 
-## Task 1: Make generic constructor equality a public single rule
-
-**Files:**
-- Modify: `cmeta/include/cmeta/type_identity.h`
-- Modify: `cmeta/src/type_identity.c`
-- Modify: `cmeta/tests/cmeta_type_identity_test.c`
-- Modify: `cmeta/tests/cmeta_header_cpp_test.cpp`
-
-**Interfaces:**
-- Consumes: `cmeta_generic_desc`, existing private stable-ID comparison inside `cmeta_type_identity_equal()`.
-- Produces:
-
-```c
-bool cmeta_generic_desc_equal(
-    const cmeta_generic_desc *a,
-    const cmeta_generic_desc *b);
-```
-
-`cmeta_type_identity_equal()` must call this public function for `CMETA_TYPE_APPLY`.
-
-- [ ] **Step 1: Write the failing direct constructor-equality test**
-
-In `cmeta/tests/cmeta_type_identity_test.c`, add two independently allocated constructor descriptors with the same stable ID and one different constructor:
-
-```c
-static const cmeta_generic_desc test_seq_a =
-    CMETA_GENERIC_DESC_INIT("test.Sequence", "Sequence", 1u, 1u,
-                            CMETA_GENERIC_CONTAINER);
-static const cmeta_generic_desc test_seq_b =
-    CMETA_GENERIC_DESC_INIT("test.Sequence", "Sequence peer", 1u, 1u,
-                            CMETA_GENERIC_CONTAINER);
-static const cmeta_generic_desc test_set =
-    CMETA_GENERIC_DESC_INIT("test.Set", "Set", 1u, 1u,
-                            CMETA_GENERIC_CONTAINER);
-```
-
-Add:
-
-```c
-it("compares generic constructors by stable identity") {
-    check_true(&test_seq_a != &test_seq_b);
-    check_true(cmeta_generic_desc_equal(&test_seq_a, &test_seq_b));
-    check_false(cmeta_generic_desc_equal(&test_seq_a, &test_set));
-    check_false(cmeta_generic_desc_equal(NULL, &test_seq_a));
-}
-```
-
-- [ ] **Step 2: Run focused build and verify RED**
-
-Run:
-
-```bash
-cmake --preset release-linux-ninja
-cmake --build --preset build-default-linux --target cmeta_type_identity_test
-```
-
-Expected: compile failure because `cmeta_generic_desc_equal()` is not public yet.
-
-- [ ] **Step 3: Promote the existing private helper to the public API**
-
-Declare it in `cmeta/include/cmeta/type_identity.h` immediately after `cmeta_generic_desc_valid()`.
-
-In `cmeta/src/type_identity.c`, remove `static` from the current helper and keep the stable-ID rule centralized there. Require both descriptors to be valid before comparing stable IDs:
-
-```c
-bool cmeta_generic_desc_equal(const cmeta_generic_desc *a,
-                              const cmeta_generic_desc *b) {
-    if (a == b) return a != NULL && cmeta_generic_desc_valid(a);
-    return cmeta_generic_desc_valid(a) && cmeta_generic_desc_valid(b) &&
-           strcmp(a->stable_id, b->stable_id) == 0;
-}
-```
-
-Do not compare `display_name` or addresses. `cmeta_type_identity_equal()` must continue delegating APPLY constructor comparison to this function.
-
-- [ ] **Step 4: Add C++17 direct API coverage**
-
-In `cmeta/tests/cmeta_header_cpp_test.cpp`, construct two `cmeta_generic_desc` values with one stable ID and require `cmeta_generic_desc_equal()` to return true.
-
-- [ ] **Step 5: Verify GREEN**
-
-Run:
-
-```bash
-cmake --build --preset build-default-linux --target \
-  cmeta_type_identity_test cmeta_header_cpp_test
-ctest --preset test-release-linux -R '^cmeta_(type_identity|header_cpp)_test$' \
-  --output-on-failure
-```
-
-Expected: both tests pass.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add \
-  cmeta/include/cmeta/type_identity.h \
-  cmeta/src/type_identity.c \
-  cmeta/tests/cmeta_type_identity_test.c \
-  cmeta/tests/cmeta_header_cpp_test.cpp
-git commit -m "feat(cmeta): expose generic constructor equality"
-```
-
-## Task 2: Add a prefix-safe public container-extension accessor
+## Task 1: Introduce one prefix-safe extension accessor
 
 **Files:**
 - Modify: `cmeta/include/cmeta/range.h`
@@ -159,18 +54,18 @@ git commit -m "feat(cmeta): expose generic constructor equality"
 - Modify: `cmeta/tests/cmeta_header_cpp_test.cpp`
 
 **Interfaces:**
-- Consumes: `cmeta_container_desc.ext`, `CMETA_CONTAINER_EXT_ABI_VERSION`, `CMETA_CONTAINER_TYPE_OPS_ABI_VERSION`.
+- Consumes: existing `cmeta_container_desc.ext`, `cmeta_container_ext.type`, and `cmeta_container_type_ops.argument`.
 - Produces:
 
 ```c
 const cmeta_container_ext *cmeta_container_extension(const void *object);
 ```
 
-The accessor validates only the currently required prefix through `ext.type`; it must not require `struct_size >= sizeof(cmeta_container_ext)`.
+This accessor validates only the v1 prefix through `ext.type`. Existing type-ops validation likewise validates only through `ops.argument`.
 
-- [ ] **Step 1: Write the failing accessor test**
+- [ ] **Step 1: Write the failing public-accessor test**
 
-In `cmeta/tests/cmeta_container_type_test.c`, reuse the existing synthetic sequence object and add:
+Add to `cmeta/tests/cmeta_container_type_test.c`, reusing the existing synthetic typed sequence:
 
 ```c
 it("exposes a validated container extension prefix") {
@@ -185,21 +80,24 @@ it("exposes a validated container extension prefix") {
 }
 ```
 
-- [ ] **Step 2: Verify RED**
-
-Run:
+- [ ] **Step 2: Build the focused target and verify RED**
 
 ```bash
+cmake --preset release-linux-ninja
 cmake --build --preset build-default-linux --target cmeta_container_type_test
 ```
 
 Expected: compile failure because `cmeta_container_extension()` does not exist.
 
-- [ ] **Step 3: Declare the accessor and implement field-end prefix validation**
+- [ ] **Step 3: Declare the accessor and use explicit field-end sizes**
 
-Declare the function in `cmeta/include/cmeta/range.h` before the existing container type helpers.
+Declare in `cmeta/include/cmeta/range.h` before the existing type helpers:
 
-In `cmeta/src/container_type.c`, use a field-end calculation instead of `sizeof(*ext)`:
+```c
+const cmeta_container_ext *cmeta_container_extension(const void *object);
+```
+
+In `cmeta/src/container_type.c`, define a file-local helper:
 
 ```c
 #define CMETA_FIELD_END(type, member) \
@@ -224,48 +122,60 @@ const cmeta_container_ext *cmeta_container_extension(const void *object) {
 }
 ```
 
-Refactor `cmeta_container_type_ops_of()` to use this accessor.
-
-Likewise validate `cmeta_container_type_ops` through its current last required member `argument`, not `sizeof(*ops)`:
+Refactor `cmeta_container_type_ops_of()` to use this accessor and replace:
 
 ```c
-ops->struct_size >= CMETA_FIELD_END(cmeta_container_type_ops, argument)
+ops->struct_size < sizeof(*ops)
 ```
 
-This is required so future optional tail fields do not invalidate v1 prefixes.
+with:
+
+```c
+ops->struct_size < CMETA_FIELD_END(cmeta_container_type_ops, argument)
+```
+
+Do not change generic validity semantics or inspect traits.
 
 - [ ] **Step 4: Add a reported-prefix-size regression**
 
-Copy the existing synthetic extension to a local mutable value and set:
+Build a local extension whose reported size ends exactly at `type`:
 
 ```c
-ext.struct_size = offsetof(cmeta_container_ext, type) + sizeof(ext.type);
+cmeta_container_ext ext = cmeta_test_sequence_ext;
+ext.struct_size =
+    offsetof(cmeta_container_ext, type) + sizeof(ext.type);
 ```
 
-Attach it to a local descriptor and verify both:
+Attach it to a local descriptor and require:
 
 ```c
 check_not_null(cmeta_container_extension(&sequence));
 check_true(cmeta_container_type_application_valid(&sequence));
 ```
 
-This locks the append-only rule before C2 adds the semantic tail.
+Also clone `cmeta_container_type_ops`, report exactly through `argument`, and require the same application to remain valid.
 
 - [ ] **Step 5: Add C++17 surface coverage**
 
-In `cmeta/tests/cmeta_header_cpp_test.cpp`, include `<cmeta/range.h>` and assert that the extension/type-ops structs remain standard layout; construct an extension with `.struct_size` equal to the prefix through `type` and verify the API compiles under C++17.
+In `cmeta/tests/cmeta_header_cpp_test.cpp`, include `<cmeta/range.h>` and require:
 
-- [ ] **Step 6: Run CMeta regression**
+```cpp
+static_assert(std::is_standard_layout_v<cmeta_container_ext>);
+static_assert(std::is_standard_layout_v<cmeta_container_type_ops>);
+```
 
-Run:
+Construct prefix-sized values under C++17 so the public layout/API compiles without `_Generic`.
+
+- [ ] **Step 6: Verify GREEN**
 
 ```bash
 cmake --build --preset build-default-linux --target \
-  cmeta_container_type_test cmeta_type_identity_test cmeta_header_cpp_test
-ctest --preset test-release-linux -R '^cmeta_' --output-on-failure
+  cmeta_container_type_test cmeta_header_cpp_test
+ctest --preset test-release-linux \
+  -R '^cmeta_(container_type|header_cpp)_test$' --output-on-failure
 ```
 
-Expected: all selected CMeta tests pass.
+Expected: PASS.
 
 - [ ] **Step 7: Commit**
 
@@ -280,8 +190,6 @@ git commit -m "refactor(cmeta): make container extensions append-safe"
 
 ### PR C0 verification gate
 
-Run on a fresh tree:
-
 ```bash
 cmake --preset release-linux-ninja
 cmake --build --preset build-default-linux
@@ -290,13 +198,13 @@ ctest --preset test-release-linux -R '^(cmeta_|cflow_|turbostl_)' \
 git diff --check
 ```
 
-The PR must also pass the repository Windows CI path. No semantic descriptor or TurboSTL production file changes belong in C0.
+Windows CI must pass. No semantic descriptor or TurboSTL production file belongs in C0.
 
 ---
 
 # PR C1 — CMeta semantic descriptor core
 
-## Task 3: Define the versioned semantic descriptor public API
+## Task 2: Define the semantic descriptor public contract
 
 **Files:**
 - Create: `cmeta/include/cmeta/data.h`
@@ -306,9 +214,7 @@ The PR must also pass the repository Windows CI path. No semantic descriptor or 
 
 **Interfaces:**
 - Consumes: `cmeta_type_desc`, `cmeta_enum_desc`, `cmeta_struct_desc`.
-- Produces the first semantic descriptor ABI.
-
-The exact public kinds are:
+- Produces:
 
 ```c
 typedef enum cmeta_data_kind {
@@ -326,16 +232,8 @@ typedef enum cmeta_data_kind {
     CMETA_DATA_MAP,
     CMETA_DATA_CUSTOM
 } cmeta_data_kind;
-```
 
-There is deliberately no `CMETA_DATA_OPTIONAL` in this PR.
-
-Descriptor:
-
-```c
-enum {
-    CMETA_DATA_DESC_ABI_VERSION = 1u
-};
+enum { CMETA_DATA_DESC_ABI_VERSION = 1u };
 
 typedef struct cmeta_data_desc {
     size_t struct_size;
@@ -348,7 +246,9 @@ typedef struct cmeta_data_desc {
 } cmeta_data_desc;
 ```
 
-Kind-specific shapes:
+No `CMETA_DATA_OPTIONAL` and no `cmeta_data_ops` are introduced.
+
+Kind-specific immutable shapes:
 
 ```c
 typedef struct cmeta_data_integer_shape {
@@ -372,11 +272,7 @@ typedef struct cmeta_data_buffer_shape {
 typedef struct cmeta_data_enum_shape {
     const cmeta_enum_desc *meta;
 } cmeta_data_enum_shape;
-```
 
-Struct and variant:
-
-```c
 typedef struct cmeta_data_field_desc {
     const char *stable_id;
     const char *name;
@@ -406,7 +302,7 @@ typedef struct cmeta_data_variant_shape {
 } cmeta_data_variant_shape;
 ```
 
-Public helpers declared in this task:
+Public helpers:
 
 ```c
 bool cmeta_data_kind_valid(cmeta_data_kind kind);
@@ -421,7 +317,7 @@ const cmeta_data_variant_case *cmeta_data_variant_case_by_tag(
     const cmeta_data_variant_shape *shape, int64_t tag);
 ```
 
-Built-in descriptor declarations:
+Built-in declarations:
 
 ```c
 extern const cmeta_data_desc cmeta_data_bool;
@@ -436,25 +332,24 @@ extern const cmeta_data_desc cmeta_data_set;
 extern const cmeta_data_desc cmeta_data_map;
 ```
 
-- [ ] **Step 1: Write a test that includes only `<cmeta/data.h>`**
+- [ ] **Step 1: Add the failing independent-header test**
 
-Create `cmeta/tests/cmeta_data_test.c` and initially require the new API to exist:
+Create `cmeta/tests/cmeta_data_test.c`:
 
 ```c
 #include <cmeta/data.h>
 #include "tinytest.h"
 
 spec("CMeta semantic data descriptors") {
-    it("exposes versioned primitive semantic descriptors") {
+    it("exposes primitive semantic descriptors") {
         check_equal(cmeta_data_bool.kind, CMETA_DATA_BOOL);
         check_equal(cmeta_data_int.kind, CMETA_DATA_SINT);
         check_equal(cmeta_data_size.kind, CMETA_DATA_UINT);
         check_equal(cmeta_data_float.kind, CMETA_DATA_FLOAT);
         check_true(cmeta_data_desc_valid(&cmeta_data_bool));
-        check_true(cmeta_data_desc_valid(&cmeta_data_int));
     }
 
-    it("keeps semantic container categories free of concrete type arguments") {
+    it("keeps container categories free of T K V") {
         check_equal(cmeta_data_sequence.kind, CMETA_DATA_SEQUENCE);
         check_equal(cmeta_data_set.kind, CMETA_DATA_SET);
         check_equal(cmeta_data_map.kind, CMETA_DATA_MAP);
@@ -464,11 +359,9 @@ spec("CMeta semantic data descriptors") {
 }
 ```
 
-- [ ] **Step 2: Register the new test target and verify RED**
+- [ ] **Step 2: Register the target and verify RED**
 
-In `cmeta/tests/CMakeLists.txt` add `cmeta_data_test` linked to `TurboUtils::CMeta` and `TurboUtils::TinyTest`, C11, no extensions, and include it in the existing `-Werror=missing-field-initializers` group.
-
-Run:
+Add `cmeta_data_test` to `cmeta/tests/CMakeLists.txt`, linked to `TurboUtils::CMeta` and `TurboUtils::TinyTest`, C11/no extensions, and include it in the existing `-Werror=missing-field-initializers` group.
 
 ```bash
 cmake --preset release-linux-ninja
@@ -477,30 +370,34 @@ cmake --build --preset build-default-linux --target cmeta_data_test
 
 Expected: compile failure because `<cmeta/data.h>` does not exist.
 
-- [ ] **Step 3: Create `data.h` with the exact v1 API above**
+- [ ] **Step 3: Create `data.h` with the exact API above**
 
-`data.h` must be independently includable from C11 and C++17. Include only what is needed:
+Make it independently includable from C11/C++17:
 
 ```c
 #include <cmeta/cmeta.h>
 #include <cmeta/struct.h>
 ```
 
-Do not include CSerde/CBind/TurboSTL headers. Do not add format-specific fields or an unspecified callback table.
+Do not include CSerde/CBind/TurboSTL headers.
 
-- [ ] **Step 4: Re-export semantic metadata through `cmeta/meta.h`**
+- [ ] **Step 4: Re-export semantic metadata from `cmeta/meta.h`**
 
-Add:
+Add outside the C++ guard:
 
 ```c
 #include <cmeta/data.h>
 ```
 
-outside the `#ifndef __cplusplus` block so the semantic descriptor surface is available in C++17 too.
+- [ ] **Step 5: Verify the intended link-level RED boundary**
 
-- [ ] **Step 5: Commit the API/test RED boundary**
+```bash
+cmake --build --preset build-default-linux --target cmeta_data_test
+```
 
-After the header exists but before `data.c`, the test should link-fail on the declared built-in descriptors/helpers. Commit the public surface and tests as one reviewable step:
+Expected: compile succeeds but link fails because built-ins/helpers are declared and not implemented yet.
+
+- [ ] **Step 6: Commit the contract/test boundary**
 
 ```bash
 git add \
@@ -511,7 +408,7 @@ git add \
 git commit -m "test(cmeta): define semantic data descriptor contract"
 ```
 
-## Task 4: Implement shallow semantic validation and built-in descriptors
+## Task 3: Implement shallow validation and immutable built-ins
 
 **Files:**
 - Create: `cmeta/src/data.c`
@@ -519,14 +416,14 @@ git commit -m "test(cmeta): define semantic data descriptor contract"
 - Modify: `cmeta/tests/cmeta_data_test.c`
 
 **Interfaces:**
-- Consumes: Task 3 API.
-- Produces: immutable built-ins, shallow descriptor validation, struct/variant lookup.
+- Consumes: Task 2 API.
+- Produces: built-ins, shallow validation, struct/variant lookup.
 
-Validation is intentionally **shallow**: it validates direct descriptor/shape invariants but does not recursively call `cmeta_data_desc_valid()` through field/case values. This permits recursive semantic graphs and avoids recursion cycles in the validator.
+Validation is deliberately shallow: direct invariants are checked, but field/case `value` descriptors are not recursively validated. This permits recursive semantic graphs.
 
-- [ ] **Step 1: Extend the test with scalar shape validation**
+- [ ] **Step 1: Add scalar-shape and append-safe-size tests**
 
-Add cases such as:
+Add a malformed integer descriptor:
 
 ```c
 cmeta_data_integer_shape bad_int = { .bits = 7u };
@@ -542,11 +439,22 @@ cmeta_data_desc bad = {
 check_false(cmeta_data_desc_valid(&bad));
 ```
 
-Require integer widths to be 8/16/32/64 and float widths to be 32/64. Buffer ownership enum values must be valid.
+Then create a valid copy of `cmeta_data_int` whose reported size is exactly the v1 prefix through `shape`:
 
-- [ ] **Step 2: Add struct semantic lookup tests**
+```c
+cmeta_data_desc prefix = cmeta_data_int;
+prefix.struct_size =
+    offsetof(cmeta_data_desc, shape) + sizeof(prefix.shape);
+check_true(cmeta_data_desc_valid(&prefix));
+```
 
-Define a reflected layout:
+This expression is the v1 ABI minimum. The implementation must not compare against `sizeof(cmeta_data_desc)`.
+
+Require integer widths in `{8,16,32,64}`, float widths in `{32,64}`, and valid buffer ownership enum values.
+
+- [ ] **Step 2: Add struct lookup/layout-consistency tests**
+
+Define:
 
 ```c
 Struct(cmeta_data_test_record,
@@ -555,7 +463,7 @@ Struct(cmeta_data_test_record,
 );
 ```
 
-Create two semantic fields pointing at `cmeta_data_int` / `cmeta_data_long`; verify:
+Create semantic fields pointing to `cmeta_data_int` and `cmeta_data_long`. Require:
 
 ```c
 check_true(cmeta_data_struct_field(&shape, 0u) == &fields[0]);
@@ -563,23 +471,15 @@ check_true(cmeta_data_struct_find_field(&shape, "score") == &fields[1]);
 check_null(cmeta_data_struct_find_field(&shape, "missing"));
 ```
 
-`cmeta_data_desc_valid()` for `CMETA_DATA_STRUCT` must require a valid layout pointer and every semantic field to name an existing layout field at the same offset. Semantic fields may be a subset of layout fields.
+A STRUCT descriptor is valid only when every semantic field has non-empty stable ID/name, non-NULL value descriptor, and matches a reflected layout field with the same name and offset. Semantic fields may be a subset of layout fields.
 
-- [ ] **Step 3: Add variant lookup/duplicate-tag tests**
+- [ ] **Step 3: Add variant lookup and duplicate-tag tests**
 
-Build a synthetic two-case variant descriptor with tags 1 and 2. Verify `cmeta_data_variant_case_by_tag()` finds both and returns NULL for an unknown tag.
-
-A variant descriptor with duplicate tags must be invalid.
-
-The variant tag semantic descriptor must be one of:
-
-```text
-SINT / UINT / ENUM
-```
+Build a synthetic two-case variant with tags 1 and 2. Require lookup by both tags and NULL for an unknown tag. A duplicate tag makes the variant invalid. The tag semantic kind must be `SINT`, `UINT`, or `ENUM`.
 
 - [ ] **Step 4: Implement immutable built-ins in `cmeta/src/data.c`**
 
-Use `CHAR_BIT` for platform-correct primitive widths:
+Use `CHAR_BIT`:
 
 ```c
 static const cmeta_data_integer_shape cmeta_data_int_shape = {
@@ -590,35 +490,46 @@ static const cmeta_data_integer_shape cmeta_data_int_shape = {
 Define:
 
 ```text
-cmeta_data_bool    -> cmeta.bool.data / BOOL / &cmeta_type_bool
-cmeta_data_int     -> cmeta.int.data / SINT / &cmeta_type_int
-cmeta_data_long    -> cmeta.long.data / SINT / &cmeta_type_long
-cmeta_data_size    -> cmeta.size.data / UINT / &cmeta_type_size
-cmeta_data_float   -> cmeta.float.data / FLOAT / &cmeta_type_float
-cmeta_data_double  -> cmeta.double.data / FLOAT / &cmeta_type_double
+cmeta_data_bool    -> stable_id cmeta.bool.data,   BOOL,  &cmeta_type_bool
+cmeta_data_int     -> stable_id cmeta.int.data,    SINT,  &cmeta_type_int
+cmeta_data_long    -> stable_id cmeta.long.data,   SINT,  &cmeta_type_long
+cmeta_data_size    -> stable_id cmeta.size.data,   UINT,  &cmeta_type_size
+cmeta_data_float   -> stable_id cmeta.float.data,  FLOAT, &cmeta_type_float
+cmeta_data_double  -> stable_id cmeta.double.data, FLOAT, &cmeta_type_double
 ```
 
-Use shared abstract category descriptors:
+Define shared abstract container categories with no concrete type arguments:
 
 ```text
-cmeta_data_sequence -> stable_id "cmeta.data.sequence", kind SEQUENCE
-cmeta_data_set      -> stable_id "cmeta.data.set",      kind SET
-cmeta_data_map      -> stable_id "cmeta.data.map",      kind MAP
+cmeta_data_sequence -> stable_id cmeta.data.sequence, kind SEQUENCE,
+                       storage_type NULL, shape NULL
+cmeta_data_set      -> stable_id cmeta.data.set,      kind SET,
+                       storage_type NULL, shape NULL
+cmeta_data_map      -> stable_id cmeta.data.map,      kind MAP,
+                       storage_type NULL, shape NULL
 ```
 
-These three have `storage_type = NULL` and `shape = NULL`; they deliberately contain no T/K/V.
+- [ ] **Step 5: Implement `cmeta_data_desc_valid()` with prefix-size semantics**
 
-- [ ] **Step 5: Implement shallow `cmeta_data_desc_valid()`**
+Use a file-local field-end helper and require:
 
-Rules:
+```c
+desc->struct_size >=
+    offsetof(cmeta_data_desc, shape) + sizeof(desc->shape)
+```
+
+Never require `struct_size >= sizeof(cmeta_data_desc)`.
+
+Direct rules:
 
 ```text
 all kinds:
-  struct_size >= sizeof(cmeta_data_desc)
-  abi_version == 1
+  ABI version == 1
   non-empty stable_id/display_name
   valid kind
-  if storage_type != NULL -> cmeta_type_desc_valid(storage_type)
+
+non-container kinds:
+  storage_type != NULL and cmeta_type_desc_valid(storage_type)
 
 BOOL:
   shape == NULL
@@ -633,27 +544,34 @@ STRING/BYTES:
   buffer shape exists; ownership enum valid
 
 ENUM:
-  enum shape/meta exists; meta name non-empty; items non-NULL when count != 0
+  enum shape/meta exists; meta name non-empty;
+  items non-NULL when count != 0
 
 STRUCT:
-  struct shape/layout exists; fields non-NULL when count != 0;
-  each field has non-empty stable_id/name, value != NULL,
-  matching reflected layout field and exact offset
+  struct shape/layout exists;
+  fields non-NULL when count != 0;
+  every field matches reflected name+offset
 
 VARIANT:
-  variant shape/tag/cases valid; tag kind is SINT/UINT/ENUM;
-  case stable_id/name/value non-NULL; tags unique
+  variant shape/tag/cases valid;
+  tag kind SINT/UINT/ENUM;
+  cases have non-empty stable_id/name, non-NULL value;
+  tags unique
 
 SEQUENCE/SET/MAP:
-  storage_type == NULL and shape == NULL for the shared abstract category descriptors
+  storage_type == NULL and shape == NULL
 
 CUSTOM:
-  shape != NULL
+  storage_type valid and shape != NULL
 ```
 
-Do not recursively validate field/case `value` descriptors.
+Do not recursively call `cmeta_data_desc_valid()` on field/case values.
 
-- [ ] **Step 6: Add `data.c` to `TurboUtils::CMeta` and run focused tests**
+- [ ] **Step 6: Implement lookup helpers**
+
+`cmeta_data_struct_field()` returns by index; `cmeta_data_struct_find_field()` compares semantic field names; `cmeta_data_variant_case_by_tag()` scans immutable cases by tag. All return NULL for invalid/null inputs.
+
+- [ ] **Step 7: Add `data.c` to CMeta and verify GREEN**
 
 Modify `cmeta/CMakeLists.txt`:
 
@@ -674,9 +592,9 @@ cmake --build --preset build-default-linux --target \
 ctest --preset test-release-linux -R '^cmeta_' --output-on-failure
 ```
 
-Expected: all CMeta tests pass.
+Expected: PASS.
 
-- [ ] **Step 7: Commit implementation**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add \
@@ -686,16 +604,12 @@ git add \
 git commit -m "feat(cmeta): add semantic data descriptors"
 ```
 
-## Task 5: Lock C++17 public-header compatibility
+## Task 4: Lock C++17 semantic ABI coverage
 
 **Files:**
 - Modify: `cmeta/tests/cmeta_header_cpp_test.cpp`
 
-**Interfaces:**
-- Consumes: `<cmeta/data.h>` and Task 4 implementation.
-- Produces: C++17 compile/runtime regression for the semantic descriptor ABI.
-
-- [ ] **Step 1: Add C++17 descriptor checks**
+- [ ] **Step 1: Add standard-layout and runtime checks**
 
 Include `<cmeta/data.h>` and add:
 
@@ -703,18 +617,12 @@ Include `<cmeta/data.h>` and add:
 static_assert(std::is_standard_layout_v<cmeta_data_desc>);
 static_assert(std::is_standard_layout_v<cmeta_data_struct_shape>);
 static_assert(std::is_standard_layout_v<cmeta_data_variant_shape>);
-```
 
-At runtime verify:
-
-```cpp
 check_true(cmeta_data_desc_valid(&cmeta_data_int));
 check_equal(cmeta_data_set.kind, CMETA_DATA_SET);
 ```
 
-- [ ] **Step 2: Build and run the C++ test**
-
-Run:
+- [ ] **Step 2: Run the C++ target**
 
 ```bash
 cmake --build --preset build-default-linux --target cmeta_header_cpp_test
@@ -722,7 +630,7 @@ ctest --preset test-release-linux -R '^cmeta_header_cpp_test$' \
   --output-on-failure
 ```
 
-Expected: PASS under C++17 without `_Generic` use.
+Expected: PASS under C++17 without C `_Generic` expansion.
 
 - [ ] **Step 3: Commit**
 
@@ -733,8 +641,6 @@ git commit -m "test(cmeta): cover semantic descriptors in C++"
 
 ### PR C1 verification gate
 
-Run fresh:
-
 ```bash
 cmake --preset release-linux-ninja
 cmake --build --preset build-default-linux
@@ -743,13 +649,13 @@ ctest --preset test-release-linux -R '^(cmeta_|cflow_|turbostl_)' \
 git diff --check
 ```
 
-Windows repository CI must pass. PR C1 must not modify TurboSTL production sources.
+Windows CI must pass. C1 must not modify TurboSTL production sources.
 
 ---
 
-# PR C2 — TurboSTL semantic projection from proven generic applications
+# PR C2 — TurboSTL semantic projection from proven TYPE applications
 
-## Task 6: Append semantic category metadata to the versioned container extension
+## Task 5: Append the semantic category tail to `cmeta_container_ext`
 
 **Files:**
 - Modify: `cmeta/include/cmeta/range.h`
@@ -759,8 +665,8 @@ Windows repository CI must pass. PR C1 must not modify TurboSTL production sourc
 - Modify: `cmeta/tests/cmeta_data_test.c`
 
 **Interfaces:**
-- Consumes: C0 `cmeta_container_extension()`, C1 `cmeta_data_desc`, and existing generic type helpers.
-- Produces one append-only optional extension tail:
+- Consumes: C0 `cmeta_container_extension()`, C1 `cmeta_data_desc`, existing generic type helpers.
+- Produces:
 
 ```c
 struct cmeta_data_desc;
@@ -771,36 +677,33 @@ typedef struct cmeta_container_ext {
     const cmeta_container_type_ops *type;
     const struct cmeta_data_desc *data;
 } cmeta_container_ext;
-```
 
-And one public semantic projection helper:
-
-```c
 const cmeta_data_desc *cmeta_container_data_descriptor(const void *object);
 ```
 
-- [ ] **Step 1: Write the backward-prefix RED test before changing the validator**
+- [ ] **Step 1: Append `data` in the test build and prove the old prefix remains valid**
 
-After appending `data` to the struct declaration, modify the synthetic extension test so one valid extension reports only the old prefix size:
+After adding the field declaration, create a synthetic legacy extension:
 
 ```c
+cmeta_container_ext legacy_ext = cmeta_test_sequence_ext;
 legacy_ext.struct_size =
     offsetof(cmeta_container_ext, type) + sizeof(legacy_ext.type);
 legacy_ext.data = NULL;
 ```
 
-Require:
+Attach it to a local descriptor and require:
 
 ```c
 check_not_null(cmeta_container_extension(&legacy_sequence));
 check_true(cmeta_container_type_application_valid(&legacy_sequence));
 ```
 
-If any code regresses to `struct_size >= sizeof(cmeta_container_ext)`, this test fails. This is the concrete proof that C0's prefix rule survives the first real tail append.
+This must pass even after `sizeof(cmeta_container_ext)` grows.
 
-- [ ] **Step 2: Add the failing semantic projection test**
+- [ ] **Step 2: Add the failing semantic-projection test**
 
-Create a full-size synthetic extension with:
+Create a full-size synthetic extension:
 
 ```c
 .data = &cmeta_data_sequence
@@ -813,55 +716,51 @@ check_true(cmeta_container_data_descriptor(&sequence) ==
            &cmeta_data_sequence);
 ```
 
-Also set the synthetic element type to a descriptor with `identity == NULL` and require semantic projection to return NULL even though `.data` exists.
+For a synthetic element descriptor with `identity == NULL`, require semantic projection to return NULL even when `.data` is set.
 
 Expected before implementation: link failure on missing `cmeta_container_data_descriptor()`.
 
-- [ ] **Step 3: Append `data` and keep ABI version 1**
+- [ ] **Step 3: Append `data` without bumping ABI version**
 
-In `range.h`, forward-declare:
+Forward-declare `struct cmeta_data_desc` in `range.h` and append `data` after `type`. Keep `CMETA_CONTAINER_EXT_ABI_VERSION == 1`; an optional append-only tail is not an incompatible layout break.
 
-```c
-struct cmeta_data_desc;
-```
+- [ ] **Step 4: Implement `cmeta_container_data_descriptor()`**
 
-Append the `data` pointer after `type`. Do not bump `CMETA_CONTAINER_EXT_ABI_VERSION` for this append-only optional tail.
-
-Existing extension producers that only report bytes through `.type` remain valid for generic type introspection.
-
-- [ ] **Step 4: Implement semantic projection in `data.c`**
-
-`cmeta_container_data_descriptor()` must:
+In `data.c`:
 
 ```text
 1. reject NULL object
 2. require cmeta_container_type_application_valid(object)
 3. obtain cmeta_container_extension(object)
-4. require ext.struct_size to cover ext.data
+4. require struct_size through ext.data
 5. require ext.data != NULL
 6. require cmeta_data_desc_valid(ext.data)
-7. require ext.data.kind is SEQUENCE/SET/MAP
+7. require kind is SEQUENCE/SET/MAP
 8. return ext.data
 ```
 
-Use `offsetof(cmeta_container_ext, data) + sizeof(ext->data)` for the tail-size check.
+Use:
 
-Do **not** return or cache T/K/V. Callers continue to use `cmeta_container_type_argument()`.
+```c
+offsetof(cmeta_container_ext, data) + sizeof(ext->data)
+```
 
-- [ ] **Step 5: Run CMeta focused regression**
+before reading `ext->data`.
 
-Run:
+Do not return, copy, or cache T/K/V. Callers still use `cmeta_container_type_argument()`.
+
+- [ ] **Step 5: Verify CMeta regression**
 
 ```bash
 cmake --build --preset build-default-linux --target \
   cmeta_container_type_test cmeta_data_test
-ctest --preset test-release-linux -R '^cmeta_(container_type|data)_test$' \
-  --output-on-failure
+ctest --preset test-release-linux \
+  -R '^cmeta_(container_type|data)_test$' --output-on-failure
 ```
 
-Expected: PASS, including the legacy-prefix regression.
+Expected: PASS, including old-prefix compatibility.
 
-- [ ] **Step 6: Commit CMeta extension tail**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add \
@@ -873,7 +772,7 @@ git add \
 git commit -m "feat(cmeta): project container semantic categories"
 ```
 
-## Task 7: Attach TurboSTL constructors to shared semantic categories
+## Task 6: Attach TurboSTL canonical extensions to shared categories
 
 **Files:**
 - Modify: `turbostl/src/generic_meta.c`
@@ -882,29 +781,29 @@ git commit -m "feat(cmeta): project container semantic categories"
 - Modify: `turbostl/tests/turbostl_header_typed_cpp_test.cpp`
 
 **Interfaces:**
-- Consumes: canonical constructors/ext objects from `#37`, shared CMeta semantic category descriptors from C1, and `cmeta_container_data_descriptor()` from Task 6.
-- Produces this exact v1 mapping:
+- Consumes: canonical ext objects from `#37`, shared CMeta categories from C1, Task 5 projection helper.
+- Produces exactly:
 
 ```text
-Vec<T>         -> cmeta_data_sequence
-Deque<T>       -> cmeta_data_sequence
-List<T>        -> cmeta_data_sequence
-Stack<T>       -> cmeta_data_sequence
-Queue<T>       -> cmeta_data_sequence
+Vec<T>         -> SEQUENCE
+Deque<T>       -> SEQUENCE
+List<T>        -> SEQUENCE
+Stack<T>       -> SEQUENCE
+Queue<T>       -> SEQUENCE
 
-Set<T>         -> cmeta_data_set
-HashSet<T>     -> cmeta_data_set
+Set<T>         -> SET
+HashSet<T>     -> SET
 
-HashMap<K,V>   -> cmeta_data_map
-Map<K,V>       -> cmeta_data_map
-BTree<K,V>     -> cmeta_data_map
-BPlusTree<K,V> -> cmeta_data_map
+HashMap<K,V>   -> MAP
+Map<K,V>       -> MAP
+BTree<K,V>     -> MAP
+BPlusTree<K,V> -> MAP
 
-Heap<T>        -> NULL
-MultiMap<K,V>  -> NULL
+Heap<T>        -> unresolved / NULL
+MultiMap<K,V>  -> unresolved / NULL
 ```
 
-- [ ] **Step 1: Write the TurboSTL semantic mapping test before wiring `.data`**
+- [ ] **Step 1: Write the semantic mapping test before wiring `.data`**
 
 Create `turbostl/tests/turbostl_semantic_data_test.c`:
 
@@ -914,7 +813,7 @@ Create `turbostl/tests/turbostl_semantic_data_test.c`:
 #include "tinytest.h"
 
 spec("TurboSTL semantic data projection") {
-    it("projects ordered sequence containers without copying T") {
+    it("projects sequence containers without copying T") {
         Vec(int, vec);
         Deque(int, deque);
         List(int, list);
@@ -931,18 +830,15 @@ spec("TurboSTL semantic data projection") {
                    &cmeta_data_sequence);
         check_true(cmeta_container_data_descriptor(&queue) ==
                    &cmeta_data_sequence);
-
         check_true(cmeta_container_type_argument(&vec, 0u) ==
                    &cmeta_type_int);
     }
 }
 ```
 
-Add separate tests for Set/HashSet and Map families.
+Add separate tests for Set/HashSet and the four MAP families.
 
-- [ ] **Step 2: Add negative semantic-boundary tests**
-
-Require:
+- [ ] **Step 2: Add the semantic negative cases**
 
 ```c
 Heap(int, heap);
@@ -951,7 +847,7 @@ check_null(cmeta_container_data_descriptor(&heap));
 check_null(cmeta_container_data_descriptor(&multimap));
 ```
 
-For raw storage:
+Raw bytes:
 
 ```c
 vec_t raw = { .cmeta = { &stl_vec_container_desc } };
@@ -960,13 +856,11 @@ check_null(cmeta_container_data_descriptor(&raw));
 vec_raw_destroy_storage(&raw);
 ```
 
-This proves a semantic category pointer on the canonical Vec extension is insufficient without a valid `Vec<T>` application.
+This proves `.data = SEQUENCE` on the canonical Vec extension is insufficient without a valid `Vec<T>` application.
 
 - [ ] **Step 3: Register the new test and verify RED**
 
-Add `turbostl_semantic_data_test` to `turbostl/tests/CMakeLists.txt`, linked to `TurboUtils::STL`, `TurboUtils::CMeta`, and `TurboUtils::TinyTest`, C11/no extensions.
-
-Run:
+Add `turbostl_semantic_data_test` to `turbostl/tests/CMakeLists.txt`, linked to `TurboUtils::STL`, `TurboUtils::CMeta`, `TurboUtils::TinyTest`, C11/no extensions.
 
 ```bash
 cmake --build --preset build-default-linux --target turbostl_semantic_data_test
@@ -974,11 +868,11 @@ ctest --preset test-release-linux -R '^turbostl_semantic_data_test$' \
   --output-on-failure
 ```
 
-Expected: runtime test failure because the current TurboSTL extensions do not populate `.data`.
+Expected: runtime failure because TurboSTL extensions do not yet populate `.data`.
 
-- [ ] **Step 4: Change `generic_meta.c` extension initializers to designated initializers and assign semantic categories**
+- [ ] **Step 4: Wire only `turbostl/src/generic_meta.c`**
 
-Update the generic metadata macros so extension objects use:
+Change its extension initializer macros to designated initializers:
 
 ```c
 const cmeta_container_ext stl_##prefix##_container_ext = {
@@ -989,15 +883,11 @@ const cmeta_container_ext stl_##prefix##_container_ext = {
 };
 ```
 
-Pass the semantic pointer explicitly per constructor. Do not derive meaning from constructor name strings at runtime.
+Pass `&cmeta_data_sequence`, `&cmeta_data_set`, `&cmeta_data_map`, or `NULL` according to the exact mapping above.
 
-Use the exact mapping above. Heap and MultiMap pass `NULL`.
+Do not infer semantics from constructor name strings. Do not modify `instance_meta.c`, `list.c`, `map.c`, or `associative_meta.c`; they already reference the canonical ext objects.
 
-This file is the only TurboSTL production implementation that needs semantic mapping changes. `instance_meta.c`, `list.c`, `map.c`, and `associative_meta.c` already point to the canonical ext objects and must not change.
-
-- [ ] **Step 5: Run the semantic and existing generic tests**
-
-Run:
+- [ ] **Step 5: Verify semantic + generic regressions**
 
 ```bash
 cmake --build --preset build-default-linux --target \
@@ -1008,11 +898,11 @@ ctest --preset test-release-linux \
   --output-on-failure
 ```
 
-Expected: all pass.
+Expected: PASS.
 
-- [ ] **Step 6: Add C++17 metadata coverage**
+- [ ] **Step 6: Add C++17 canonical-metadata coverage**
 
-In `turbostl/tests/turbostl_header_typed_cpp_test.cpp`, include `<cmeta/data.h>` and verify canonical metadata is readable without expanding C-only declaration macros:
+In `turbostl/tests/turbostl_header_typed_cpp_test.cpp`, include `<cmeta/data.h>` and require:
 
 ```cpp
 check_true(stl_vec_container_ext.data == &cmeta_data_sequence);
@@ -1022,7 +912,7 @@ check_true(stl_heap_container_ext.data == nullptr);
 check_true(stl_multimap_container_ext.data == nullptr);
 ```
 
-- [ ] **Step 7: Commit TurboSTL projection**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add \
@@ -1035,8 +925,6 @@ git commit -m "feat(turbostl): expose semantic container categories"
 
 ### PR C2 verification gate
 
-Run fresh Linux:
-
 ```bash
 cmake --preset release-linux-ninja
 cmake --build --preset build-default-linux
@@ -1045,18 +933,19 @@ ctest --preset test-release-linux -R '^(cmeta_|cflow_|turbostl_)' \
 git diff --check
 ```
 
-Required review assertions before Ready:
+Before Ready, verify the final diff establishes all of these:
 
 ```text
-- cmeta_data_sequence/set/map have no T/K/V fields
-- cmeta_container_type_argument remains the only concrete generic argument API
-- raw byte Vec does not resolve semantically
-- Heap and MultiMap remain NULL/unresolved
-- no Range/Collector/container algorithm body changed
-- no CSerde/CBind/TurboParser/DataBind code changed
+cmeta_data_sequence/set/map contain no T/K/V
+cmeta_container_type_argument() remains the sole concrete T/K/V API
+raw-byte Vec does not resolve semantically
+Heap and MultiMap remain unresolved
+only generic_meta.c changes in TurboSTL production code
+no Range/Collector/container algorithm body changes
+no CSerde/CBind/TurboParser/DataBind production code changes
 ```
 
-Windows repository CI must pass on the exact final head.
+Windows CI must pass on the exact final head.
 
 ---
 
@@ -1064,24 +953,23 @@ Windows repository CI must pass on the exact final head.
 
 ## Spec coverage
 
-- Generic constructor equality: PR C0 Task 1.
-- True append-only `struct_size` semantics before extension growth: PR C0 Task 2 and PR C2 Task 6 regression.
-- Versioned semantic descriptor ABI: PR C1 Task 3.
-- Scalar/string/bytes/enum/struct/variant semantic shapes: PR C1 Tasks 3–4.
-- `SET` as distinct semantic kind: PR C1 + C2.
-- No semantic OPTIONAL until `Option<T>` identity exists: global constraint; no task introduces it.
-- No duplicated container T/K/V: shared category descriptors + existing type argument helpers only.
-- Explicit Heap/MultiMap non-mapping: PR C2 Task 7.
-- Raw byte negative contract: PR C2 Task 7.
-- C11/C++17 surface: every PR includes C/C++ verification.
-- Nested erased-field construction: explicitly deferred to the next plan; this plan does not claim that capability.
+- Append-only `cmeta_container_ext`: C0 Task 1 and C2 Task 5 backward-prefix regression.
+- Append-only `cmeta_data_desc`: C1 Task 3 prefix-size regression and validation rule.
+- Versioned semantic core: C1 Tasks 2–4.
+- Scalar/string/bytes/enum/struct/variant shapes: C1 Tasks 2–3.
+- `SET`: C1 + C2.
+- No semantic OPTIONAL: global constraint; no task introduces it.
+- No duplicate T/K/V: shared semantic categories + existing type argument API only.
+- Explicit Heap/MultiMap non-mapping: C2 Task 6.
+- Raw-byte negative contract: C2 Task 6.
+- C11/C++17 compatibility: each PR has public-header coverage.
+- Nested zero-field construction: explicitly deferred; no false completion claim.
 
 ## Type consistency
 
-The same names are used throughout:
+The implementation names are fixed throughout:
 
 ```text
-cmeta_generic_desc_equal
 cmeta_container_extension
 cmeta_data_desc
 cmeta_data_sequence
@@ -1090,17 +978,17 @@ cmeta_data_map
 cmeta_container_data_descriptor
 ```
 
-No semantic container argument accessor is introduced; `cmeta_container_type_argument()` remains the sole concrete T/K/V source.
+No new constructor-equality public API is added because this design performs semantic projection through the explicit extension link and does not need a second constructor matcher.
 
 ## Placeholder scan
 
-This plan contains no TBD/TODO implementation steps. Deferred capabilities are explicit non-goals with a named next plan boundary rather than incomplete steps.
+There are no TBD/TODO implementation steps. Deferred work has explicit boundaries and named follow-on plans.
 
 ---
 
 # Next plan after C2
 
-After C2 merges, write a separate construction/type-application plan for zero-state nested fields. Its contract must build on the same versioned extension root and must not reopen semantic T/K/V duplication:
+After C2 merges, create a separate construction/static-type-application plan for zero-state nested fields:
 
 ```text
 static field TYPE application
