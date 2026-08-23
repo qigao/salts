@@ -1,0 +1,23 @@
+#ifndef CBIND_ERROR_H
+#define CBIND_ERROR_H
+
+#include <cbind/status.h>
+#include <cmeta/data.h>
+#include <cserde/status.h>
+
+#include <stddef.h>
+#include <stdint.h>
+
+enum { CBIND_ERROR_ABI_VERSION = 1u };
+
+typedef struct cbind_error {
+    size_t struct_size;
+    uint32_t abi_version;
+    cbind_status status;
+    cserde_status source_status;
+    const cmeta_data_desc *shape;
+    const cmeta_data_field_desc *field;
+    size_t depth;
+} cbind_error;
+
+#endif /* CBIND_ERROR_H */

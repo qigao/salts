@@ -5,6 +5,7 @@ on:
     paths:
       - "cmeta/**"
       - "cserde/**"
+      - "cbind/**"
       - "cflow/**"
       - "tinytest/**"
       - "turbostl/**"
@@ -19,6 +20,7 @@ on:
     paths:
       - "cmeta/**"
       - "cserde/**"
+      - "cbind/**"
       - "cflow/**"
       - "tinytest/**"
       - "turbostl/**"
@@ -58,8 +60,8 @@ jobs:
       - name: Build
         run: cmake --build --preset build-default-linux
 
-      - name: Test CMeta, CSerde, CFlow, and TurboSTL
-        run: ctest --preset test-release-linux -R "^(cmeta_|cserde_|cflow_|turbostl_)" --output-on-failure
+      - name: Test CMeta, CSerde, CBind, CFlow, and TurboSTL
+        run: ctest --preset test-release-linux -R "^(cmeta_|cserde_|cbind_|cflow_|turbostl_)" --output-on-failure
 
   windows:
     name: Windows release
@@ -86,4 +88,4 @@ jobs:
           if errorlevel 1 exit /b 1
           cmake --build --preset build-release-windows
           if errorlevel 1 exit /b 1
-          ctest --preset test-release-windows -R "^(cmeta_|cserde_|cflow_|turbostl_)" --output-on-failure
+          ctest --preset test-release-windows -R "^(cmeta_|cserde_|cbind_|cflow_|turbostl_)" --output-on-failure
