@@ -68,10 +68,10 @@ those rows back to the established flat consumer ABI.
 Header-complete CMeta value kinds include:
 
 ```text
-Pair<T,U>       first / second
-Tuple<T...>     positional v0..v15, arity 2..16
-Option<T>       has_value + value
-Result<T,E>     ok + value/error union
+Pair            two type arguments; first / second
+Tuple           2..16 type arguments; positional v0..v15
+Option          one type argument; has_value + value
+Result          two type arguments; ok + value/error union
 ```
 
 Canonical forms:

@@ -1,0 +1,432 @@
+{
+    "version": 6,
+    "include": [
+        "CMakePresets.json"
+    ],
+    "configurePresets": [
+        {
+            "name": "win-toolchain",
+            "hidden": true,
+            "environment": {
+                "PROJECT_ROOT": "$penv{PROJECT_ROOT}",
+                "PKG_ROOT": "$env{PROJECT_ROOT}/external/pkgs",
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils",
+                "VCPKG_ROOT": "$penv{VCPKG_ROOT}"
+            }
+        },
+        {
+            "name": "win-paths",
+            "hidden": true,
+            "inherits": "win-toolchain",
+            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "cacheVariables": {
+                "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}",
+                "PKG_CONFIG_EXECUTABLE": "$env{VCPKG_INSTALLED_DIR}/x64-windows/tools/pkgconf/pkgconf.exe",
+                "VCPKG_TARGET_TRIPLET": "x64-windows",
+                "VCPKG_MANIFEST_MODE": "ON"
+            },
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            },
+            "toolset": {
+                "value": "host=x64",
+                "strategy": "external"
+            }
+        },
+        {
+            "name": "linux-paths",
+            "hidden": true,
+            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "cacheVariables": {
+                "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}",
+                "PKG_CONFIG_EXECUTABLE": "$env{VCPKG_INSTALLED_DIR}/x64-linux/tools/pkgconf/pkgconf",
+                "VCPKG_TARGET_TRIPLET": "x64-linux",
+                "VCPKG_MANIFEST_MODE": "ON"
+            },
+            "environment": {
+                "PROJECT_ROOT": "$penv{PROJECT_ROOT}",
+                "PKG_ROOT": "$env{PROJECT_ROOT}/external/pkgs",
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils",
+                "VCPKG_ROOT": "$penv{VCPKG_ROOT}"
+            }
+        },
+        {
+            "name": "android-win-environment",
+            "hidden": true,
+            "inherits": "win-toolchain",
+            "environment": {
+                "ANDROID_SDK_ROOT": "$penv{LOCALAPPDATA}/Android/Sdk",
+                "ANDROID_NDK_VERSION": "28.2.13676358",
+                "ANDROID_NDK_HOME": "$env{ANDROID_SDK_ROOT}/ndk/$env{ANDROID_NDK_VERSION}"
+            }
+        },
+        {
+            "name": "win-dev-user",
+            "cacheVariables": {
+                "ENABLE_SANITIZER_ADDRESS": "ON",
+                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows/debug"
+            },
+            "environment": {
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-debug",
+                "PATH": "${sourceDir}/build/Msvc/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
+            },
+            "inherits": [
+                "base-win-dev-user",
+                "win-paths"
+            ]
+        },
+        {
+            "name": "win-release-user",
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows"
+            },
+            "environment": {
+                "PATH": "${sourceDir}/build/Msvc-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
+            },
+            "inherits": [
+                "base-win-release-user",
+                "win-paths"
+            ]
+        },
+        {
+            "name": "linux-dev-user",
+            "cacheVariables": {
+                "ENABLE_SANITIZER_ADDRESS": "ON",
+                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/debug"
+            },
+            "environment": {
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-debug",
+                "PATH": "${sourceDir}/build/linux-gcc-debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}",
+                "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/lib${pathListSep}$env{TURBOUTILS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
+            },
+            "inherits": [
+                "base-linux-dev-user",
+                "linux-paths"
+            ]
+        },
+        {
+            "name": "linux-release-user",
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux"
+            },
+            "environment": {
+                "PATH": "${sourceDir}/build/linux-gcc-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}",
+                "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/lib${pathListSep}$env{TURBOUTILS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
+            },
+            "inherits": [
+                "release-linux-ninja",
+                "linux-paths"
+            ]
+        },
+        {
+            "name": "linux-sdk-package",
+            "binaryDir": "${sourceDir}/build/linux-gcc-sdk-package",
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux",
+                "ENABLE_SANITIZER_ADDRESS": "OFF",
+                "ENABLE_TESTS": "OFF",
+                "BUILD_TESTS": "OFF",
+                "BUILD_EXAMPLES": "OFF"
+            },
+            "environment": {
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-sdk",
+                "PATH": "${sourceDir}/build/linux-gcc-sdk-package/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}",
+                "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/lib${pathListSep}$env{TURBOUTILS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
+            },
+            "inherits": [
+                "release-linux-ninja",
+                "linux-paths"
+            ]
+        },
+        {
+            "name": "android-arm64-v8a-debug-win",
+            "environment": {
+                "ANDROID_BUILD_VARIANT": "android-arm64-v8a-debug",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android-arm64-v8a-debug"
+            },
+            "inherits": [
+                "android-arm64-v8a-debug",
+                "android-win-paths",
+                "android-win-environment"
+            ]
+        },
+        {
+            "name": "android-arm64-v8a-release-win",
+            "environment": {
+                "ANDROID_BUILD_VARIANT": "android-arm64-v8a-release",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android-arm64-v8a-release"
+            },
+            "inherits": [
+                "android-arm64-v8a-release",
+                "android-win-paths",
+                "android-win-environment"
+            ]
+        },
+        {
+            "name": "android-x86_64-debug-win",
+            "environment": {
+                "ANDROID_BUILD_VARIANT": "android-x86_64-debug",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android-x86_64-debug"
+            },
+            "inherits": [
+                "android-x86_64-debug",
+                "android-win-paths",
+                "android-win-environment"
+            ]
+        },
+        {
+            "name": "android-x86_64-release-win",
+            "environment": {
+                "ANDROID_BUILD_VARIANT": "android-x86_64-release",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android-x86_64-release"
+            },
+            "inherits": [
+                "android-x86_64-release",
+                "android-win-paths",
+                "android-win-environment"
+            ]
+        },
+        {
+            "name": "android-x86-debug-win",
+            "environment": {
+                "ANDROID_BUILD_VARIANT": "android-x86-debug",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android-x86-debug"
+            },
+            "inherits": [
+                "android-x86-debug",
+                "android-win-paths",
+                "android-win-environment"
+            ]
+        },
+        {
+            "name": "android-x86-release-win",
+            "environment": {
+                "ANDROID_BUILD_VARIANT": "android-x86-release",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android-x86-release"
+            },
+            "inherits": [
+                "android-x86-release",
+                "android-win-paths",
+                "android-win-environment"
+            ]
+        },
+        {
+            "name": "win-clang-user",
+            "cacheVariables": {
+                "ENABLE_SANITIZER_ADDRESS": "OFF",
+                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows/debug"
+            },
+            "environment": {
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-clang-debug",
+                "PATH": "${sourceDir}/build/Clang/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
+            },
+            "inherits": [
+                "base-win-dev-clang-user",
+                "win-paths"
+            ]
+        },
+        {
+            "name": "win-clang-release-user",
+            "cacheVariables": {
+                "ENABLE_SANITIZER_ADDRESS": "OFF",
+                "ENABLE_TESTS": "ON",
+                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows"
+            },
+            "environment": {
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-clang",
+                "PATH": "${sourceDir}/build/Clang-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
+            },
+            "inherits": [
+                "base-win-release-clang-user",
+                "win-paths"
+            ]
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "win-dev-user",
+            "configurePreset": "win-dev-user"
+        },
+        {
+            "name": "win-release-user",
+            "configurePreset": "win-release-user"
+        },
+        {
+            "name": "linux-dev-user",
+            "configurePreset": "linux-dev-user"
+        },
+        {
+            "name": "linux-release-user",
+            "configurePreset": "linux-release-user"
+        },
+        {
+            "name": "linux-sdk-package",
+            "configurePreset": "linux-sdk-package"
+        },
+        {
+            "name": "install-win-dev-user",
+            "configurePreset": "win-dev-user",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-win-release-user",
+            "configurePreset": "win-release-user",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-linux-dev-user",
+            "configurePreset": "linux-dev-user",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-linux-release-user",
+            "configurePreset": "linux-release-user",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-linux-sdk-package",
+            "configurePreset": "linux-sdk-package",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "android-arm64-v8a-debug-win",
+            "configurePreset": "android-arm64-v8a-debug-win"
+        },
+        {
+            "name": "android-arm64-v8a-release-win",
+            "configurePreset": "android-arm64-v8a-release-win"
+        },
+        {
+            "name": "android-x86_64-debug-win",
+            "configurePreset": "android-x86_64-debug-win"
+        },
+        {
+            "name": "android-x86_64-release-win",
+            "configurePreset": "android-x86_64-release-win"
+        },
+        {
+            "name": "android-x86-debug-win",
+            "configurePreset": "android-x86-debug-win"
+        },
+        {
+            "name": "android-x86-release-win",
+            "configurePreset": "android-x86-release-win"
+        },
+        {
+            "name": "install-android-arm64-v8a-debug-win",
+            "configurePreset": "android-arm64-v8a-debug-win",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-android-arm64-v8a-release-win",
+            "configurePreset": "android-arm64-v8a-release-win",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-android-x86_64-debug-win",
+            "configurePreset": "android-x86_64-debug-win",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-android-x86_64-release-win",
+            "configurePreset": "android-x86_64-release-win",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-android-x86-debug-win",
+            "configurePreset": "android-x86-debug-win",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-android-x86-release-win",
+            "configurePreset": "android-x86-release-win",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "win-clang-user",
+            "configurePreset": "win-clang-user"
+        },
+        {
+            "name": "win-clang-release-user",
+            "configurePreset": "win-clang-release-user"
+        },
+        {
+            "name": "install-win-clang-user",
+            "configurePreset": "win-clang-user",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-win-clang-release-user",
+            "configurePreset": "win-clang-release-user",
+            "targets": [
+                "install"
+            ]
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "win-dev-user",
+            "inherits": "base-test",
+            "configurePreset": "win-dev-user"
+        },
+        {
+            "name": "win-release-user",
+            "inherits": "base-test",
+            "configurePreset": "win-release-user"
+        },
+        {
+            "name": "linux-dev-user",
+            "inherits": "base-test",
+            "configurePreset": "linux-dev-user"
+        },
+        {
+            "name": "linux-release-user",
+            "inherits": "base-test",
+            "configurePreset": "linux-release-user"
+        },
+        {
+            "name": "win-clang-user",
+            "inherits": "base-test",
+            "configurePreset": "win-clang-user"
+        },
+        {
+            "name": "win-clang-release-user",
+            "inherits": "base-test",
+            "configurePreset": "win-clang-release-user"
+        }
+    ]
+}

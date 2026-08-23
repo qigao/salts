@@ -121,7 +121,7 @@
 
 - [ ] **Step 1: 写完整 grammar 与类型链测试**
 
-  构造 `Source(User) → Filter(User→Bool) → Map(User→Name) → Limit(100) → Collect(List<Name>)`，并验证其类型为 `Flow Γ User NameList .terminal`；另构造 `FlatMap`、`Skip`、`Reduce` 以覆盖全部 v1 grammar，并用 `#guard_msgs` 验证七种 terminal 后继构造均被拒绝。
+  构造 `Source(User) → Filter(User→Bool) → Map(User→Name) → Limit(100) → Collect(NameList)`，并验证其类型为 `Flow Γ User NameList .terminal`；另构造 `FlatMap`、`Skip`、`Reduce` 以覆盖全部 v1 grammar，并用 `#guard_msgs` 验证七种 terminal 后继构造均被拒绝。
 
 - [ ] **Step 2: 运行测试并确认 RED**
 
