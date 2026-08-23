@@ -21,6 +21,49 @@ static const cmeta_generic_desc cmeta_fake_vec_generic =
     CMETA_GENERIC_DESC_INIT("test.FakeVec", "FakeVec", 1u, 1u,
                             CMETA_GENERIC_CONTAINER);
 
+static const cmeta_container_desc cmeta_fake_container_desc = {
+    .name = "fake container",
+    .container_type = NULL,
+    .element_type = NULL,
+    .key_type = NULL,
+    .value_type = NULL,
+    .range = NULL,
+    .keys_range = NULL,
+    .values_range = NULL,
+    .entries_range = NULL,
+    .collector = NULL,
+    .ext = NULL
+};
+
+static cmeta_status cmeta_fake_bind_types(
+    void *object, const cmeta_type_desc *const *arguments, size_t arity) {
+    (void)object;
+    (void)arguments;
+    (void)arity;
+    return CMETA_OK;
+}
+
+static const cmeta_container_construct_ops cmeta_fake_construct_ops = {
+    .struct_size = sizeof(cmeta_container_construct_ops),
+    .abi_version = CMETA_CONTAINER_CONSTRUCT_OPS_ABI_VERSION,
+    .descriptor = &cmeta_fake_container_desc,
+    .bind_types = cmeta_fake_bind_types
+};
+
+static const cmeta_container_construct_ops cmeta_fake_short_construct_ops = {
+    .struct_size = offsetof(cmeta_container_construct_ops, bind_types),
+    .abi_version = CMETA_CONTAINER_CONSTRUCT_OPS_ABI_VERSION,
+    .descriptor = &cmeta_fake_container_desc,
+    .bind_types = cmeta_fake_bind_types
+};
+
+static const cmeta_container_construct_ops cmeta_fake_bad_abi_construct_ops = {
+    .struct_size = sizeof(cmeta_container_construct_ops),
+    .abi_version = CMETA_CONTAINER_CONSTRUCT_OPS_ABI_VERSION + 1u,
+    .descriptor = &cmeta_fake_container_desc,
+    .bind_types = cmeta_fake_bind_types
+};
+
 #define CMETA_DECLARED_STORAGE_FakeVec cmeta_fake_vec
 #define CMETA_DECLARED_STORAGE_DESC_FakeVec (&cmeta_fake_vec_storage_type)
 #define CMETA_DECLARED_CONSTRUCTOR_FakeVec (&cmeta_fake_vec_generic)
@@ -75,5 +118,22 @@ spec("CMeta declared type metadata") {
     check_false(cmeta_declared_type_valid(&wrong_arity));
     check_false(cmeta_declared_type_valid(&missing_arg));
     check_false(cmeta_declared_type_valid(NULL));
+  }
+
+  it("requires a complete versioned construction capability") {
+    static const cmeta_type_desc *const good_args[] = { &cmeta_type_int };
+    cmeta_declared_type valid = {
+        &cmeta_fake_vec_storage_type, &cmeta_fake_vec_generic,
+        good_args, 1u, &cmeta_fake_construct_ops};
+    cmeta_declared_type short_ops = {
+        &cmeta_fake_vec_storage_type, &cmeta_fake_vec_generic,
+        good_args, 1u, &cmeta_fake_short_construct_ops};
+    cmeta_declared_type bad_abi = {
+        &cmeta_fake_vec_storage_type, &cmeta_fake_vec_generic,
+        good_args, 1u, &cmeta_fake_bad_abi_construct_ops};
+
+    check_true(cmeta_declared_type_constructible(&valid));
+    check_false(cmeta_declared_type_constructible(&short_ops));
+    check_false(cmeta_declared_type_constructible(&bad_abi));
   }
 }
