@@ -25,12 +25,16 @@ static_assert(CMETA_COLLECTOR_ABORTED == 4,
               "the C++ public enum surface must expose collector states");
 static_assert(CMETA_CONTAINER_TYPE_OPS_ABI_VERSION == 1u,
               "container type ops ABI starts at version 1");
+static_assert(CMETA_CONTAINER_CONSTRUCT_OPS_ABI_VERSION == 1u,
+              "container construction ops ABI starts at version 1");
 static_assert(CMETA_CONTAINER_EXT_ABI_VERSION == 1u,
               "container extension ABI starts at version 1");
 static_assert(CMETA_DATA_DESC_ABI_VERSION == 1u,
               "semantic data descriptor ABI starts at version 1");
 static_assert(std::is_standard_layout_v<cmeta_container_type_ops>,
               "container type ops must remain a C-compatible standard-layout type");
+static_assert(std::is_standard_layout_v<cmeta_container_construct_ops>,
+              "container construction ops must remain a C-compatible standard-layout type");
 static_assert(std::is_standard_layout_v<cmeta_container_ext>,
               "container extensions must remain C-compatible standard-layout types");
 static_assert(std::is_standard_layout_v<cmeta_data_desc>,
@@ -74,7 +78,8 @@ spec("CMeta C++ public headers") {
         CMETA_TRAIT_COPY, nullptr, nullptr, nullptr,
         cmeta_cpp_copy_construct, nullptr, nullptr};
     const cmeta_type_desc type = {
-        "cpp trait", sizeof(int), alignof(int), CMETA_T_OBJECT, nullptr, &traits};
+        "cpp trait", sizeof(int), alignof(int), CMETA_T_OBJECT,
+        nullptr, &traits, nullptr};
     int source = 7;
     int destination = 0;
 
@@ -104,12 +109,14 @@ spec("CMeta C++ public headers") {
         offsetof(cmeta_container_ext, type) + sizeof(old_ext.type),
         CMETA_CONTAINER_EXT_ABI_VERSION,
         &type_ops,
+        nullptr,
         nullptr};
     const cmeta_container_ext semantic_ext = {
         offsetof(cmeta_container_ext, data) + sizeof(semantic_ext.data),
         CMETA_CONTAINER_EXT_ABI_VERSION,
         &type_ops,
-        &cmeta_data_sequence};
+        &cmeta_data_sequence,
+        nullptr};
     const cmeta_container_desc old_desc = {
         "cpp old container", nullptr, nullptr, nullptr, nullptr,
         nullptr, nullptr, nullptr, nullptr, nullptr, &old_ext};
@@ -126,7 +133,9 @@ spec("CMeta C++ public headers") {
                 offsetof(cmeta_container_ext, type) + sizeof(old_ext.type));
     check_true(cmeta_container_extension(&old_object) == &old_ext);
     check_null(cmeta_container_data(&old_object));
+    check_null(cmeta_container_construction(&old_object));
     check_true(cmeta_container_data(&semantic_object) == &cmeta_data_sequence);
+    check_null(cmeta_container_construction(&semantic_object));
   }
 
   it("exposes semantic data descriptors through C++17") {

@@ -16,6 +16,13 @@
 #define CMETA_ALIGNOF(type) _Alignof(type)
 #endif
 
+/* Small probe layer used by tagged schema tokens such as TYPE(...). */
+#define CMETA_PP_PROBE() ~, 1
+#define CMETA_PP_SECOND(a, b, ...) b
+#define CMETA_PP_IS_PROBE(...) CMETA_PP_SECOND(__VA_ARGS__, 0, 0)
+#define CMETA_PP_PAREN_PROBE(...) CMETA_PP_PROBE()
+#define CMETA_PP_IS_PAREN(x) CMETA_PP_IS_PROBE(CMETA_PP_PAREN_PROBE x)
+
 /* Small, ISO-C-preprocessor iteration toolkit.
  *
  * A/B/C are deliberately separate expansion families. The preprocessor
