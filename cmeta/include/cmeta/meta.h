@@ -1,6 +1,7 @@
 #ifndef CMETA_META_H
 #define CMETA_META_H
 #include <cmeta/cmeta.h>
+#include <cmeta/data.h>
 #include <cmeta/entry.h>
 #include <cmeta/collector.h>
 #include <cmeta/enum.h>
