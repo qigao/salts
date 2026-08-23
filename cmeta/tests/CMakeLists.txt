@@ -6,7 +6,7 @@ cmake_add_test(cmeta_core_test
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_type_identity_test
-  SOURCES cmeta_type_identity_test.c
+  SOURCES cmeta_type_identity_test.c cmeta_type_identity_peer.c
   LIBS TurboUtils::CMeta TurboUtils::TinyTest
   FOLDER "cmeta/tests")
 

@@ -19,12 +19,19 @@ static const cmeta_type_identity *const cmeta_test_box_args[] = {
 };
 static const cmeta_type_identity cmeta_test_box_a =
     CMETA_TYPE_ID_APPLY_INIT(&cmeta_test_box_generic, cmeta_test_box_args);
+static const cmeta_type_identity *const cmeta_test_pair_ab_args[] = {
+    &cmeta_test_atom_a, &cmeta_test_atom_b
+};
+static const cmeta_type_identity cmeta_test_pair_ab =
+    CMETA_TYPE_ID_APPLY_INIT(&cmeta_test_pair_generic, cmeta_test_pair_ab_args);
 static const cmeta_type_identity *const cmeta_test_nested_pair_args[] = {
     &cmeta_test_box_a, &cmeta_test_atom_b
 };
 static const cmeta_type_identity cmeta_test_nested_pair =
     CMETA_TYPE_ID_APPLY_INIT(&cmeta_test_pair_generic,
                              cmeta_test_nested_pair_args);
+
+const cmeta_type_identity *cmeta_type_identity_peer_pair(void);
 
 spec("CMeta generic type applications") {
   it("validates TYPE<A...> from constructor arity and recursive arguments") {
@@ -56,5 +63,21 @@ spec("CMeta generic type applications") {
     check_true(cmeta_type_identity_argument(&cmeta_test_nested_pair, 1u) ==
                &cmeta_test_atom_b);
     check_null(cmeta_type_identity_argument(&cmeta_test_nested_pair, 2u));
+  }
+
+  it("compares generic identities structurally across translation units") {
+    const cmeta_type_identity *peer = cmeta_type_identity_peer_pair();
+    const cmeta_type_identity *peer_a;
+
+    check_not_null(peer);
+    check_true(peer != &cmeta_test_pair_ab);
+    check_true(peer->constructor != cmeta_test_pair_ab.constructor);
+    check_true(cmeta_type_identity_valid(peer));
+    check_true(cmeta_type_identity_equal(&cmeta_test_pair_ab, peer));
+
+    peer_a = cmeta_type_identity_argument(peer, 0u);
+    check_not_null(peer_a);
+    check_true(peer_a != &cmeta_test_atom_a);
+    check_true(cmeta_type_identity_equal(&cmeta_test_atom_a, peer_a));
   }
 }
