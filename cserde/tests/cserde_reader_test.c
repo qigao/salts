@@ -3,7 +3,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 
 typedef struct fake_reader_context {
     cserde_status next_status;
@@ -64,34 +63,40 @@ spec("CSerde pull reader") {
         fake_reader_context context = { .next_status = CSERDE_DONE };
         cserde_reader_ops ops = reader_ops(fake_reader_next);
         cserde_reader reader = { 0 };
-        const cserde_reader zero = { 0 };
 
         ops.struct_size = READER_PREFIX - 1u;
         check_equal(cserde_reader_init(&reader, &ops, &context),
                     CSERDE_INVALID_ARGUMENT);
-        check_equal(memcmp(&reader, &zero, sizeof(reader)), 0);
+        check_true(reader.ops == NULL);
+        check_true(reader.context == NULL);
+        check_true(reader.state == CSERDE_READER_ZERO);
+        check_true(reader.status == CSERDE_OK);
     }
 
     it("rejects wrong ABI without mutation") {
         fake_reader_context context = { .next_status = CSERDE_DONE };
         cserde_reader_ops ops = reader_ops(fake_reader_next);
         cserde_reader reader = { 0 };
-        const cserde_reader zero = { 0 };
 
         ops.abi_version = CSERDE_READER_OPS_ABI_VERSION + 1u;
         check_equal(cserde_reader_init(&reader, &ops, &context),
                     CSERDE_INVALID_ARGUMENT);
-        check_equal(memcmp(&reader, &zero, sizeof(reader)), 0);
+        check_true(reader.ops == NULL);
+        check_true(reader.context == NULL);
+        check_true(reader.state == CSERDE_READER_ZERO);
+        check_true(reader.status == CSERDE_OK);
     }
 
     it("rejects null next callback without mutation") {
         cserde_reader_ops ops = reader_ops(NULL);
         cserde_reader reader = { 0 };
-        const cserde_reader zero = { 0 };
 
         check_equal(cserde_reader_init(&reader, &ops, NULL),
                     CSERDE_INVALID_ARGUMENT);
-        check_equal(memcmp(&reader, &zero, sizeof(reader)), 0);
+        check_true(reader.ops == NULL);
+        check_true(reader.context == NULL);
+        check_true(reader.state == CSERDE_READER_ZERO);
+        check_true(reader.status == CSERDE_OK);
     }
 
     it("accepts null provider context") {

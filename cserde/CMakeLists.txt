@@ -1,6 +1,8 @@
 set(TARGET_NAME turbo_cserde)
 
-add_library(${TARGET_NAME} src/token.c)
+add_library(${TARGET_NAME}
+  src/token.c
+  src/reader.c)
 
 cmake_config_target(
   ${TARGET_NAME}
