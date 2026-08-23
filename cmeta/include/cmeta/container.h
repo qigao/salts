@@ -61,7 +61,7 @@
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, \
         CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), NULL, NULL, \
-        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory) \
+        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory), NULL \
     };
 
 #define CMETA_CONTAINER1_LINK_RANGE_DEFINE(name, type, prefix, flags, version_accessor, collector_factory) \
@@ -94,7 +94,7 @@
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, \
         CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), NULL, NULL, \
-        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory) \
+        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory), NULL \
     };
 
 /* -------------------------------------------------------------------------
@@ -391,7 +391,7 @@
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, \
         CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), NULL, NULL, \
-        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory) \
+        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory), NULL \
     };
 
 /* -------------------------------------------------------------------------
@@ -536,7 +536,7 @@
         CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), \
         CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), \
         name##_cmeta_erased_entries_range, name##_cmeta_erased_keys_range, name##_cmeta_erased_values_range, \
-        name##_cmeta_erased_entries_range, (collector_factory) \
+        name##_cmeta_erased_entries_range, (collector_factory), NULL \
     };
 
 /* Ordered trees expose stable derived entry links. Their cursor follows one
@@ -586,7 +586,7 @@
     CMETA_INLINE cmeta_range name##_cmeta_erased_values_range(const void *object) { return name##_values_range((const name *)object); } \
     CMETA_INLINE cmeta_range name##_cmeta_erased_entries_range(const void *object) { return name##_entries_range((const name *)object); } \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
-        CMETA_CONTAINER_STR(name), &name##_cmeta_type, NULL, CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), name##_cmeta_erased_entries_range, name##_cmeta_erased_keys_range, name##_cmeta_erased_values_range, name##_cmeta_erased_entries_range, (collector_factory) \
+        CMETA_CONTAINER_STR(name), &name##_cmeta_type, NULL, CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), name##_cmeta_erased_entries_range, name##_cmeta_erased_keys_range, name##_cmeta_erased_values_range, name##_cmeta_erased_entries_range, (collector_factory), NULL \
     };
 
 
@@ -597,7 +597,7 @@
     }; \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, NULL, NULL, NULL, \
-        NULL, NULL, NULL, NULL, NULL \
+        NULL, NULL, NULL, NULL, NULL, NULL \
     };
 
 #endif /* CMETA_CONTAINER_H */
