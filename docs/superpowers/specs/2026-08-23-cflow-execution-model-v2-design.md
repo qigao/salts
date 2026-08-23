@@ -2,7 +2,10 @@
 
 ## Status
 
-In progress. Phase G-1 bounded admission and Phase G-2 ordered parallel reduction are implemented on the execution-model-v2 branch. Executable Lean/C refinement evidence and macOS/Android host verification remain subsequent phases.
+In progress. Phase G-1 bounded admission, Phase G-2 ordered parallel reduction,
+and Phase G-3 Lean/C refinement evidence are implemented on the
+execution-model-v2 branch. Phase G-4 macOS/Android jobs are configured; their
+first passing branch workflow run remains required host evidence.
 
 The proposal intentionally does not add Event, Mailbox, Machine, Actor, reactor, or minicoro adapters. Those remain consumers of the execution foundation rather than prerequisites for completing the current Direct/Plan/Kernel model.
 
@@ -245,10 +248,15 @@ The Android job is compile/link/package evidence only. It does not claim device 
 Primary references:
 
 - [Android NDK CMake toolchain contract](https://developer.android.com/ndk/guides/cmake)
-- [GitHub macOS runner image inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-14-Readme.md)
+- [GitHub macOS runner image inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md)
 - [GitHub Ubuntu runner image inventory](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md)
 
 The macOS job runs the same owner-test regex and installed-package consumer target as Linux/Windows. The Android job builds the exported libraries and installs the package for arm64; it cannot run host executables produced for Android.
+
+Before the first successful branch run, these jobs are configured evidence
+requirements rather than completed host verification. The Android artifact
+contains the install tree, CMake cache/configure log, NDK revision, compiler
+version, ABI, and API level so a cross-toolchain failure can be reproduced.
 
 ## Verification matrix
 

@@ -485,7 +485,10 @@ Retain existing disruptor worker-wait, broadcast, worker-pool and ring behavior 
 
 Core-only compatibility consumers include legacy `platform.h`, `turbo_thread.h`, and `disruptor.h` and link only `TurboUtils::Core`, relying on declared transitive dependencies rather than manual link additions.
 
-Linux/Windows/macOS/Android-supported builds exercise the module boundaries and installed package exports.
+Linux/Windows native builds exercise the module boundaries and installed package
+exports. The conformance workflow additionally defines macOS native execution
+and Android arm64 cross-build/package evidence; those hosts are not called
+verified until their first branch workflow run passes.
 
 ---
 
@@ -514,12 +517,13 @@ Linux/Windows/macOS/Android-supported builds exercise the module boundaries and 
 |---|---|---|
 | Windows Release | Implemented + Linux/Windows CI verified | PR #51 passed Windows 2022/2025 benchmark jobs and the Windows conformance/package job. |
 | Linux Release | Implemented + Linux/Windows CI verified | PR #51 passed Ubuntu 22.04/24.04 benchmark jobs and the Linux conformance/package job. |
-| macOS/Android | Implementation present; macOS/Android host evidence absent | The repository has platform presets, but no current workflow executes these foundation boundaries on those hosts. |
+| macOS 15 Release | CI verification configured; first passing run pending | The pinned native job builds Release, runs owner tests, and builds the installed-package consumers. |
+| Android arm64-v8a Release | Cross-build/package verification configured; first passing run pending | The pinned Ubuntu 24.04 job uses the runner NDK, builds and installs `android-24`/`arm64-v8a`, verifies exported headers/CMake targets, and does not run Android binaries. |
 
 ## Residual work outside this completion patch
 
 - Event, Mailbox, Machine, Actor, reactor, and minicoro remain explicit design non-goals rather than missing foundation features.
-- macOS Release and Android cross-build automation require a separate host/toolchain plan before those hosts can be claimed as verified.
+- macOS Release and Android arm64 automation are configured; a passing branch workflow run is still required before either evidence row is promoted to verified.
 - Ordered parallel reduction and an executable Lean/C refinement certificate remain Execution Model v2 work.
 - ManualExecutor, WorkerExecutor, and TimerQueue now use explicit bounded admission. The migration, default capacities, byte-budget formulas, compatibility behavior, shutdown terminal states, and metrics are specified in `2026-08-23-cflow-execution-model-v2-design.md`.
 
