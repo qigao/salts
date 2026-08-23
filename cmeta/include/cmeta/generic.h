@@ -5,9 +5,10 @@
 
 /* Small kind-probe layer -------------------------------------------------
  * A library registers a generic kind with CMETA_GENERIC_REGISTER(Kind).
- * registered kinds route to CMETA_TYPED_<Kind>; unregistered kinds route to
- * CMETA_TYPED_FALLBACK.  CFlow uses that fallback for lowercase operator
- * callables, so typed(List, ...) and typed(map, ...) can coexist.
+ * Registered kinds route to the corresponding CMETA_TYPED_ registration
+ * macro; unregistered kinds route to CMETA_TYPED_FALLBACK. CFlow uses that
+ * fallback for lowercase operator callables, so typed(List, ...) and
+ * typed(map, ...) can coexist.
  */
 #define CMETA_GENERIC_PROBE() ~, 1
 #define CMETA_GENERIC_SECOND(a, b, ...) b

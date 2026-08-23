@@ -71,9 +71,9 @@ Libraries register a finite generic kind. The common entry point:
 typed(kind, ...)
 ```
 
-routes a registered kind to `CMETA_TYPED_<Kind>`. Unregistered kinds can fall
-through to a framework-provided typed fallback; CFlow uses that path for
-lowercase operator callables such as `typed(map, ...)`.
+routes a registered kind to its matching `CMETA_TYPED_` registration macro.
+Unregistered kinds can fall through to a framework-provided typed fallback;
+CFlow uses that path for lowercase operator callables such as `typed(map, ...)`.
 
 There is no `Containers(...)` batch DSL and no container `implement(...)`
 generation phase.

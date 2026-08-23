@@ -6,10 +6,10 @@
 
 PR #41 已在 exact head `6f3951e64ee50bdb5803a781a7bacba7fe211ae7` 通过 CMeta conformance workflow #368，并以 merge commit `b1cdaa6979e1469ab57c329764ddaff9a0cf7c53` 合入 `master`。合并后的契约已经把两个维度明确分开：
 
-- `cmeta_container_ext.type` 描述运行时对象的 generic application：`Vec<T>`、`Map<K,V>` 等；具体 T/K/V 只从 handle 上读取。
+- `cmeta_container_ext.type` 描述运行时对象的 generic application；具体参数只从 handle 上读取。
 - `cmeta_container_ext.data` 只描述 format-neutral semantic category：SEQUENCE / SET / MAP，不拥有第二份 T/K/V。
 
-现在剩下的缺口发生在对象还没有运行时类型绑定的时候。一个结构字段可以静态声明为 `Vec<int>`，但字段存储在 `struct` 中时通常以全零 handle 开始：`descriptor == NULL`、`element_type == NULL`。此时 Collector 需要 `element_type` 才能 begin，而 object-side `cmeta_container_extension(object)` 又需要 `descriptor` 才能找到能力，因此存在先有 descriptor 还是先有 T 的循环。
+现在剩下的缺口发生在对象还没有运行时类型绑定的时候。一个结构字段可以静态声明为 `TYPE(Vec, int)`，但字段存储在 `struct` 中时通常以全零 handle 开始：`descriptor == NULL`、`element_type == NULL`。此时 Collector 需要 `element_type` 才能 begin，而 object-side `cmeta_container_extension(object)` 又需要 `descriptor` 才能找到能力，因此存在先有 descriptor 还是先有类型参数的循环。
 
 本设计建立声明侧到实例侧的唯一 construction 边界：
 
@@ -47,10 +47,10 @@ CBind 不参与本阶段实现。它以后只编排该链路，不解析 Vec/Map
 - 不增加 constructor matcher、全局 type application registry、动态 descriptor cache 或进程级初始化。
 - 不让 Collector 推导、缓存或拥有 declared T/K/V。
 - 不改变 TurboSTL raw container 算法、容量语义、树/哈希实现或现有 natural instance API。
-- 不在本 PR 引入“容器作为另一个容器的 owning element”所需的整容器 copy/move/destroy traits。因此 `TYPE(Vec, TYPE(Vec, int))`、`Vec<Vec<int>>` 作为 owning element 以及 `Map<K, Vec<V>>` 的值 ownership 不属于本阶段。
-- 不以字符串 `"Vec<int>"` 作为类型判断依据；字符串只用于展示。
+- 不在本 PR 引入“容器作为另一个容器的 owning element”所需的整容器 copy/move/destroy traits。因此 nested `TYPE(...)` owning element 以及容器值的 ownership 不属于本阶段。
+- 不以展示字符串作为类型判断依据；字符串只用于展示。
 
-这里的“nested-container”目标是 **对象/Struct 图中嵌套的 container field**：例如一个 `Payload` 内部有全零 `Vec<int>` 字段，CBind 将来需要在读入元素前先给该字段绑定 T。它不是本 PR 顺手实现 container-of-container ownership。
+这里的“nested-container”目标是 **对象/Struct 图中嵌套的 container field**：例如一个 `Payload` 内部有全零 `TYPE(Vec, int)` 字段，CBind 将来需要在读入元素前先给该字段绑定元素类型。它不是本 PR 顺手实现 container-of-container ownership。
 
 ## 已有约束
 
@@ -218,7 +218,7 @@ TurboSTL provider 为每个 handle kind 暴露 canonical storage descriptor，�
 extern const cmeta_type_desc stl_vec_storage_type;
 ```
 
-它只描述 `vec_t` layout，不宣称 `Vec<int>` application identity，也不默认提供 whole-container ownership traits。
+它只描述 `vec_t` layout，不宣称具体 Vec application identity，也不默认提供 whole-container ownership traits。
 
 ## Container construction extension
 
@@ -428,7 +428,7 @@ cmeta_container_bind_types(&payload.values, field->declared_type)
 
 - 字段实际 storage 为 `vec_t`，offset/size/align 正确。
 - declared constructor 为 canonical `stl_vec_generic_desc`，arity=1，argument=int。
-- zero field bind 后 runtime generic introspection 返回 Vec<int>。
+- zero field bind 后 runtime generic introspection 返回参数为 `int` 的 Vec application。
 - Collector begin/accept/finish 成功，结果元素正确。
 
 ### GREEN 2：Map binary binding
@@ -516,4 +516,4 @@ field metadata
 
 下一 PR 才让 CBind 在遇到 container field 时调用上述 primitive。CBind 不获得新的 TurboSTL-specific switch。
 
-若以后需要真正的 `Vec<Vec<int>>` / `Map<K, Vec<V>>` owning-container composition，则另开 ownership PR，为 container application value 提供正确的 whole-container copy/move/destroy traits，并决定 nested TYPE argument 的 descriptor/identity 生成方式；不得把 shallow handle memcpy 偷渡进本 construction PR。
+若以后需要真正的 owning-container composition，则另开 ownership PR，为 container application value 提供正确的 whole-container copy/move/destroy traits，并决定 nested `TYPE(...)` argument 的 descriptor/identity 生成方式；不得把 shallow handle memcpy 偷渡进本 construction PR。
