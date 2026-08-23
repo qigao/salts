@@ -151,6 +151,7 @@ void turbo_cond_wait(turbo_cond_t *cond, turbo_mutex_t *mutex) {
   (void)pthread_cond_wait(&wrapper->native, (pthread_mutex_t *)*mutex);
 }
 
+#if !defined(__APPLE__)
 static void turbo_timespec_add_ns(struct timespec *ts, uint64_t timeout_ns) {
   uint64_t seconds = timeout_ns / 1000000000ULL;
   uint64_t nanos = timeout_ns % 1000000000ULL;
@@ -161,6 +162,7 @@ static void turbo_timespec_add_ns(struct timespec *ts, uint64_t timeout_ns) {
     ts->tv_nsec -= 1000000000L;
   }
 }
+#endif
 
 int turbo_cond_timedwait(turbo_cond_t *cond, turbo_mutex_t *mutex,
                          uint64_t timeout_ns) {

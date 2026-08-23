@@ -1,10 +1,10 @@
 #include <cflow/coord.h>
+#include <turbo/thread.h>
 
 #include <stdint.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
-#include <threads.h>
 
 const cmeta_type_desc cflow_type_coord_event = {
     "cflow_coord_event", sizeof(cflow_coord_event), _Alignof(cflow_coord_event),
@@ -36,7 +36,7 @@ struct coord_state {
     bool cancelled;
     const char *error;
 
-    mtx_t lock;
+    turbo_mutex_t lock;
     cflow_waker waiter;
 };
 
@@ -107,13 +107,12 @@ static void coord_child_wake(void *user) {
     if (!c || !c->owner) return;
     coord_state *s = c->owner;
     cflow_waker parent = {0};
-    if (mtx_lock(&s->lock) == thrd_success) {
-        atomic_store(&c->waiting, false);
-        atomic_store(&c->armed, false);
-        parent = s->waiter;
-        s->waiter = (cflow_waker){0};
-        (void)mtx_unlock(&s->lock);
-    }
+    turbo_mutex_lock(&s->lock);
+    atomic_store(&c->waiting, false);
+    atomic_store(&c->armed, false);
+    parent = s->waiter;
+    s->waiter = (cflow_waker){0};
+    turbo_mutex_unlock(&s->lock);
     if (parent.wake) parent.wake(parent.user);
 }
 
@@ -126,7 +125,7 @@ static bool coord_wait_arm(void *state, cflow_waker waker) {
     size_t arm_count = 0;
     bool ready = false;
 
-    if (mtx_lock(&s->lock) != thrd_success) { free(to_arm); return false; }
+    turbo_mutex_lock(&s->lock);
     if (s->cancelled || s->error) ready = true;
     else {
         s->waiter = waker;
@@ -141,7 +140,7 @@ static bool coord_wait_arm(void *state, cflow_waker waker) {
         }
     }
     if (ready) s->waiter = (cflow_waker){0};
-    (void)mtx_unlock(&s->lock);
+    turbo_mutex_unlock(&s->lock);
 
     bool ok = true;
     for (size_t n = 0; n < arm_count; ++n) {
@@ -150,13 +149,12 @@ static bool coord_wait_arm(void *state, cflow_waker waker) {
         if (!cflow_waitable_valid(&c->waitable) ||
             !cflow_waitable_arm(&c->waitable, cw)) {
             ok = false;
-            if (mtx_lock(&s->lock) == thrd_success) {
-                atomic_store(&c->armed, false);
-                atomic_store(&c->waiting, false);
-                s->error = "coordination child waitable could not be armed";
-                s->waiter = (cflow_waker){0};
-                (void)mtx_unlock(&s->lock);
-            }
+            turbo_mutex_lock(&s->lock);
+            atomic_store(&c->armed, false);
+            atomic_store(&c->waiting, false);
+            s->error = "coordination child waitable could not be armed";
+            s->waiter = (cflow_waker){0};
+            turbo_mutex_unlock(&s->lock);
             break;
         }
     }
@@ -168,19 +166,19 @@ static bool coord_wait_arm(void *state, cflow_waker waker) {
 static void coord_wait_cancel(void *state) {
     coord_state *s = (coord_state *)state;
     if (!s) return;
-    if (mtx_lock(&s->lock) != thrd_success) return;
+    turbo_mutex_lock(&s->lock);
     s->waiter = (cflow_waker){0};
     for (size_t i = 0; i < s->count; ++i) {
         coord_child *c = &s->children[i];
         if (atomic_load(&c->armed) && cflow_waitable_valid(&c->waitable)) {
             cflow_waitable w = c->waitable;
             atomic_store(&c->armed, false);
-            (void)mtx_unlock(&s->lock);
+            turbo_mutex_unlock(&s->lock);
             cflow_waitable_cancel(&w);
-            (void)mtx_lock(&s->lock);
+            turbo_mutex_lock(&s->lock);
         }
     }
-    (void)mtx_unlock(&s->lock);
+    turbo_mutex_unlock(&s->lock);
 }
 
 CMETA_IMPLEMENTS(cflow_waitable, coord_waitable, 0,
@@ -428,7 +426,7 @@ static void coord_destroy(void *state) {
             c->machine.ops->destroy(c->machine.state);
         free(c->value);
     }
-    mtx_destroy(&s->lock);
+    turbo_mutex_destroy(&s->lock);
     free(s->children);
     free(s);
 }
@@ -442,9 +440,10 @@ bool cflow_resumable_from_coordination(cflow_resumable *out,
     if (!out || !children || count == 0) return false;
     coord_state *s = calloc(1, sizeof(*s));
     if (!s) return false;
-    if (mtx_init(&s->lock, mtx_plain) != thrd_success) { free(s); return false; }
+    turbo_mutex_init(&s->lock);
+    if (!s->lock) { free(s); return false; }
     s->children = calloc(count, sizeof(*s->children));
-    if (!s->children) { mtx_destroy(&s->lock); free(s); return false; }
+    if (!s->children) { turbo_mutex_destroy(&s->lock); free(s); return false; }
     s->mode = mode;
     s->count = count;
     for (size_t i = 0; i < count; ++i) {
