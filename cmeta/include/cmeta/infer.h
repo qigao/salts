@@ -16,6 +16,16 @@ enum { CMETA_INFER_MAX_ARITY = 3u };
 typedef uint32_t cmeta_infer_symbol;
 typedef uint32_t cmeta_infer_value;
 
+#ifdef __cplusplus
+#define CMETA_INFER_SIZE(value) static_cast<size_t>(value)
+#define CMETA_INFER_SYMBOL(value) static_cast<cmeta_infer_symbol>(value)
+#define CMETA_INFER_VALUE(value) static_cast<cmeta_infer_value>(value)
+#else
+#define CMETA_INFER_SIZE(value) ((size_t)(value))
+#define CMETA_INFER_SYMBOL(value) ((cmeta_infer_symbol)(value))
+#define CMETA_INFER_VALUE(value) ((cmeta_infer_value)(value))
+#endif
+
 typedef enum cmeta_infer_status {
     CMETA_INFER_OK = 0,
     CMETA_INFER_INVALID_ARGUMENT,
@@ -62,9 +72,9 @@ typedef struct cmeta_infer_dfa {
 } cmeta_infer_dfa;
 
 #define CMETA_INFER_STATE_BOUND(rule_count, arity) \
-    (1u + (size_t)(rule_count) * (size_t)(arity))
+    (1u + CMETA_INFER_SIZE(rule_count) * CMETA_INFER_SIZE(arity))
 #define CMETA_INFER_TRANSITION_BOUND(rule_count, arity) \
-    ((size_t)(rule_count) * (size_t)(arity))
+    (CMETA_INFER_SIZE(rule_count) * CMETA_INFER_SIZE(arity))
 
 void cmeta_infer_dfa_init(cmeta_infer_dfa *dfa,
                           cmeta_infer_state *states,
@@ -91,23 +101,22 @@ const char *cmeta_infer_status_string(cmeta_infer_status status);
     CMETA_INFER_RULE_1_I(CMETA_PP_UNPAREN row)
 #define CMETA_INFER_RULE_1_I(...) CMETA_INFER_RULE_1_II(__VA_ARGS__)
 #define CMETA_INFER_RULE_1_II(first, result) \
-    { { (cmeta_infer_symbol)(first), 0u, 0u }, \
-      (cmeta_infer_value)(result) },
+    { { CMETA_INFER_SYMBOL(first), 0u, 0u }, CMETA_INFER_VALUE(result) },
 
 #define CMETA_INFER_RULE_2(row, ignored) \
     CMETA_INFER_RULE_2_I(CMETA_PP_UNPAREN row)
 #define CMETA_INFER_RULE_2_I(...) CMETA_INFER_RULE_2_II(__VA_ARGS__)
 #define CMETA_INFER_RULE_2_II(first, second, result) \
-    { { (cmeta_infer_symbol)(first), (cmeta_infer_symbol)(second), 0u }, \
-      (cmeta_infer_value)(result) },
+    { { CMETA_INFER_SYMBOL(first), CMETA_INFER_SYMBOL(second), 0u }, \
+      CMETA_INFER_VALUE(result) },
 
 #define CMETA_INFER_RULE_3(row, ignored) \
     CMETA_INFER_RULE_3_I(CMETA_PP_UNPAREN row)
 #define CMETA_INFER_RULE_3_I(...) CMETA_INFER_RULE_3_II(__VA_ARGS__)
 #define CMETA_INFER_RULE_3_II(first, second, third, result) \
-    { { (cmeta_infer_symbol)(first), (cmeta_infer_symbol)(second), \
-        (cmeta_infer_symbol)(third) }, \
-      (cmeta_infer_value)(result) },
+    { { CMETA_INFER_SYMBOL(first), CMETA_INFER_SYMBOL(second), \
+        CMETA_INFER_SYMBOL(third) }, \
+      CMETA_INFER_VALUE(result) },
 
 #define CMETA_INFER_ROWS_NAME_I(name) name##_cmeta_infer_rows
 #define CMETA_INFER_ROWS_NAME(name) CMETA_INFER_ROWS_NAME_I(name)
