@@ -134,6 +134,9 @@ suite("CFlow typed event mailbox") {
         check_equal(cflow_mailbox_init(&mailbox, valid, 1u, SIZE_MAX),
                     CFLOW_MAILBOX_INVALID_ARGUMENT);
         check_null(mailbox.impl);
+        check_equal(cflow_mailbox_init(&mailbox, valid, SIZE_MAX, 1u),
+                    CFLOW_MAILBOX_INVALID_ARGUMENT);
+        check_null(mailbox.impl);
 
         check_equal(cflow_mailbox_init(&mailbox, valid, 1u, 1u),
                     CFLOW_MAILBOX_OK);

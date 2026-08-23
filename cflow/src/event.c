@@ -134,13 +134,15 @@ cflow_mailbox_status cflow_mailbox_init(cflow_mailbox *mailbox,
     size_t slot_bytes;
     size_t payload_bytes;
 
-    if (mailbox == NULL || mailbox->impl != NULL || capacity == 0u ||
-        !cflow_schema_measure(schema, schema_count, &max_payload_size,
+    if (mailbox == NULL || mailbox->impl != NULL || schema == NULL ||
+        schema_count == 0u || capacity == 0u ||
+        !cflow_size_multiply(schema_count, sizeof(*schema), &schema_bytes) ||
+        !cflow_size_multiply(capacity, sizeof(cflow_event_slot), &slot_bytes))
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    if (!cflow_schema_measure(schema, schema_count, &max_payload_size,
                               &max_payload_alignment) ||
         !cflow_align_size(max_payload_size, max_payload_alignment,
                           &payload_stride) ||
-        !cflow_size_multiply(schema_count, sizeof(*schema), &schema_bytes) ||
-        !cflow_size_multiply(capacity, sizeof(cflow_event_slot), &slot_bytes) ||
         !cflow_size_multiply(capacity, payload_stride, &payload_bytes))
         return CFLOW_MAILBOX_INVALID_ARGUMENT;
 
