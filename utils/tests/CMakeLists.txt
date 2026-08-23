@@ -32,6 +32,13 @@ foreach(test_source ${TEST_SOURCES} ${CXX_TEST_SOURCES})
     LIBS ${COMMON_LIBS})
 endforeach()
 
+# Seed a parent-only variable so the process clean-environment contract can be
+# tested without relying on PATH, which command interpreters may synthesize.
+if(TARGET test_turbo_process)
+  set_tests_properties(test_turbo_process PROPERTIES
+    ENVIRONMENT "TURBO_PROCESS_PARENT_SENTINEL=parent-value")
+endif()
+
 # This link contract intentionally depends only on Core. Its legacy headers
 # must pull Platform/Concurrency transitively through the exported target graph.
 cmake_add_test(test_execution_compat
