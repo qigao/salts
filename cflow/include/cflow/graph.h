@@ -149,6 +149,8 @@ typedef struct cflow_graph {
     size_t subgraph_count;
     size_t subgraph_capacity;
     cflow_subgraph_id root;
+    /* Process-unique nonzero mutation token. Successful clone, initialization
+     * and mutation replace it; destroy restores zero. */
     uint64_t version;
     const char *error;
 } cflow_graph;

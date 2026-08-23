@@ -322,7 +322,7 @@ turbo_stl_status turbo_hash_map_from_arrays(turbo_hash_map_t *map, const void *k
     turbo_stl_status status;
     size_t index;
     uint64_t generation;
-    if (map == NULL || map->initialized) return TURBO_STL_INVALID_ARGUMENT;
+    if (map == NULL) return TURBO_STL_INVALID_ARGUMENT;
     if (count != 0u && (keys == NULL || values == NULL)) return TURBO_STL_INVALID_ARGUMENT;
     status = turbo_hash_map_init(&temporary, key_type, value_type, entry_limit);
     if (status != TURBO_STL_OK) return status;
@@ -332,6 +332,7 @@ turbo_stl_status turbo_hash_map_from_arrays(turbo_hash_map_t *map, const void *k
         if (status != TURBO_STL_OK) { turbo_hash_map_destroy(&temporary); return status; }
     }
     generation = map->generation + UINT64_C(1);
+    if (map->initialized) turbo_hash_map_destroy(map);
     temporary.generation = generation;
     *map = temporary;
     return TURBO_STL_OK;
@@ -347,7 +348,7 @@ turbo_stl_status turbo_hash_map_from_arrays_bytes(turbo_hash_map_t *map, const v
     turbo_stl_status status;
     size_t index;
     uint64_t generation;
-    if (map == NULL || map->initialized) return TURBO_STL_INVALID_ARGUMENT;
+    if (map == NULL) return TURBO_STL_INVALID_ARGUMENT;
     if (count != 0u && (keys == NULL || values == NULL)) return TURBO_STL_INVALID_ARGUMENT;
     status = turbo_hash_map_init_bytes(&temporary, key_size, key_align, value_size, value_align,
                                        entry_limit, hash, equal, ctx);
@@ -358,6 +359,7 @@ turbo_stl_status turbo_hash_map_from_arrays_bytes(turbo_hash_map_t *map, const v
         if (status != TURBO_STL_OK) { turbo_hash_map_destroy(&temporary); return status; }
     }
     generation = map->generation + UINT64_C(1);
+    if (map->initialized) turbo_hash_map_destroy(map);
     temporary.generation = generation;
     *map = temporary;
     return TURBO_STL_OK;

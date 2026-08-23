@@ -15,6 +15,10 @@ extern "C" {
  * such semantic step), while ASSOCIATIVE remains a function-local admission
  * contract for binary endomorphisms. */
 bool cmeta_callable_has_properties(cmeta_callable fn, cmeta_properties required);
+/* Runtime declaration gate used by the optimizer and certificate checker.
+ * This validates metadata shape; the callable producer remains responsible
+ * for the mathematical idempotence law. */
+bool cflow_callable_declares_idempotent_endomap(cmeta_callable fn);
 cmeta_properties cflow_node_properties(const cflow_graph *g, const cflow_node *node);
 cmeta_properties cflow_subgraph_properties(const cflow_graph *g, cflow_subgraph_id subgraph);
 cmeta_properties cflow_graph_properties(const cflow_graph *g);

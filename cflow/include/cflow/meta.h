@@ -41,14 +41,14 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
         return x; \
     } \
     static bool cmeta_invoke_##name(const cmeta_callable *self, void *out, const void *const *args) { \
-        return self ? cmeta_fn_invoke(self->meta, out, args) : false; \
+        return CMETA_TYPED_INVOKER_ANY(cmeta_typed_##name)(self, out, args); \
     } \
     static cmeta_gen_status cmeta_generate_##name(const cmeta_callable *self, const void *input, void *out, size_t *cursor) { \
         return self ? cmeta_fn_generate(self->meta, input, out, cursor) : CMETA_GEN_ERROR; \
     } \
     const CFLOW_OP_CALLABLE(op) name = { .fn = \
-        CMETA_CALLABLE_INIT(effect_set, property_set, cmeta_meta_##name, \
-                           cmeta_invoke_##name, cmeta_generate_##name, 0u) }; \
+        CMETA_CANONICAL_RAW_CALLABLE_INIT(effect_set, property_set, cmeta_meta_##name, \
+                                         cmeta_invoke_##name, cmeta_generate_##name, 0u) }; \
     static ret cmeta_typed_##name params
 
 #define CFLOW_TYPED(op, contract, ret, name, params) \
