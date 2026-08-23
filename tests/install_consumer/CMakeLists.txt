@@ -14,6 +14,7 @@ add_turboutils_consumer(consume_platform TurboUtils::Platform CONSUME_PLATFORM)
 add_turboutils_consumer(consume_concurrency TurboUtils::Concurrency
                        CONSUME_CONCURRENCY)
 add_turboutils_consumer(consume_cmeta TurboUtils::CMeta CONSUME_CMETA)
+add_turboutils_consumer(consume_cbind TurboUtils::CBind CONSUME_CBIND)
 add_turboutils_consumer(consume_cflow TurboUtils::CFlow CONSUME_CFLOW)
 add_turboutils_consumer(consume_stl TurboUtils::STL CONSUME_STL)
 add_turboutils_consumer(consume_core TurboUtils::Core CONSUME_CORE)
