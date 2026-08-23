@@ -13,7 +13,29 @@ cmake_add_test(cserde_writer_test
   LIBS TurboUtils::CSerde TurboUtils::TinyTest
   FOLDER "cserde/tests")
 
-set_target_properties(cserde_token_test cserde_reader_test cserde_writer_test PROPERTIES
+add_library(cserde_recording_support STATIC support/recording.c)
+target_link_libraries(cserde_recording_support PUBLIC TurboUtils::CSerde)
+target_include_directories(
+  cserde_recording_support
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/support)
+cmake_config_target(cserde_recording_support FOLDER "cserde/tests")
+
+cmake_add_test(cserde_recording_test
+  SOURCES cserde_recording_test.c
+  LIBS cserde_recording_support TurboUtils::TinyTest
+  FOLDER "cserde/tests")
+
+set_target_properties(
+  cserde_token_test
+  cserde_reader_test
+  cserde_writer_test
+  cserde_recording_test
+  PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)
+
+set_target_properties(cserde_recording_support PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
