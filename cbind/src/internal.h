@@ -69,6 +69,13 @@ cbind_status cbind_read_required(
     const cmeta_data_field_desc *field,
     size_t depth);
 
+cbind_status cbind_decode_value(
+    cbind_decode_state *state,
+    const cmeta_data_desc *shape,
+    const cmeta_data_field_desc *field,
+    size_t depth,
+    void *out);
+
 cbind_status cbind_decode_scalar(
     cbind_decode_state *state,
     const cmeta_data_desc *shape,
