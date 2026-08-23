@@ -2,7 +2,9 @@
 #include "recording.h"
 #include "tinytest.h"
 
+#include <float.h>
 #include <limits.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -285,5 +287,123 @@ spec("CBind canonical bool and integer decode") {
     check_equal(decode_one(&cmeta_data_int, &token, &out),
                 CBIND_TOKEN_MISMATCH);
     check_equal(out, 0);
+  }
+}
+
+spec("CBind strict floating conversion") {
+  it("accepts integral finite float for integer and rejects fractional/nonfinite") {
+    cserde_token token = {.kind = CSERDE_FLOAT};
+    int out = 0;
+
+    token.value.floating = 42.0;
+    check_equal(decode_one(&cmeta_data_int, &token, &out), CBIND_OK);
+    check_equal(out, 42);
+
+    out = 0;
+    token.value.floating = 42.5;
+    check_equal(decode_one(&cmeta_data_int, &token, &out),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(out, 0);
+
+    token.value.floating = NAN;
+    check_equal(decode_one(&cmeta_data_int, &token, &out),
+                CBIND_VALUE_OUT_OF_RANGE);
+    token.value.floating = INFINITY;
+    check_equal(decode_one(&cmeta_data_int, &token, &out),
+                CBIND_VALUE_OUT_OF_RANGE);
+  }
+
+  it("checks float to signed and unsigned bounds before casting") {
+    cserde_token token = {.kind = CSERDE_FLOAT};
+    int signed_out = 0;
+    size_t unsigned_out = 0u;
+
+    token.value.floating = (double)INT_MIN;
+    check_equal(decode_one(&cmeta_data_int, &token, &signed_out), CBIND_OK);
+    check_equal(signed_out, INT_MIN);
+
+    signed_out = 0;
+    token.value.floating = ldexp(1.0, (int)(sizeof(int) * CHAR_BIT - 1u));
+    check_equal(decode_one(&cmeta_data_int, &token, &signed_out),
+                CBIND_VALUE_OUT_OF_RANGE);
+
+    token.value.floating = -1.0;
+    check_equal(decode_one(&cmeta_data_size, &token, &unsigned_out),
+                CBIND_VALUE_OUT_OF_RANGE);
+  }
+
+  it("preserves canonical nonfinite values when decoding double") {
+    cserde_token token = {.kind = CSERDE_FLOAT, .value.floating = NAN};
+    double out = 0.0;
+
+    check_equal(decode_one(&cmeta_data_double, &token, &out), CBIND_OK);
+    check_true(isnan(out));
+
+    out = 0.0;
+    token.value.floating = INFINITY;
+    check_equal(decode_one(&cmeta_data_double, &token, &out), CBIND_OK);
+    check_true(isinf(out) && out > 0.0);
+  }
+
+  it("rejects finite float32 overflow and nonzero underflow but allows rounding") {
+    cserde_token token = {.kind = CSERDE_FLOAT};
+    float out = 0.0f;
+
+    token.value.floating = DBL_MAX;
+    check_equal(decode_one(&cmeta_data_float, &token, &out),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(out, 0.0f);
+
+    token.value.floating = DBL_TRUE_MIN;
+    check_equal(decode_one(&cmeta_data_float, &token, &out),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(out, 0.0f);
+
+    token.value.floating = 1.0 + DBL_EPSILON;
+    check_equal(decode_one(&cmeta_data_float, &token, &out), CBIND_OK);
+    check_equal(out, 1.0f);
+  }
+
+  it("requires exact integer representability in binary32") {
+    cserde_token token = {.kind = CSERDE_SINT};
+    float out = 0.0f;
+
+    token.value.sint = INT64_C(1) << 24;
+    check_equal(decode_one(&cmeta_data_float, &token, &out), CBIND_OK);
+    check_equal(out, 16777216.0f);
+
+    out = 0.0f;
+    token.value.sint = (INT64_C(1) << 24) + 1;
+    check_equal(decode_one(&cmeta_data_float, &token, &out),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(out, 0.0f);
+  }
+
+  it("requires exact integer representability in binary64") {
+    cserde_token token = {.kind = CSERDE_SINT};
+    double out = 0.0;
+
+    token.value.sint = INT64_C(1) << 53;
+    check_equal(decode_one(&cmeta_data_double, &token, &out), CBIND_OK);
+    check_equal(out, 9007199254740992.0);
+
+    out = 0.0;
+    token.value.sint = (INT64_C(1) << 53) + 1;
+    check_equal(decode_one(&cmeta_data_double, &token, &out),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(out, 0.0);
+
+    token.value.sint = INT64_MIN;
+    check_equal(decode_one(&cmeta_data_double, &token, &out), CBIND_OK);
+    check_equal(out, -9223372036854775808.0);
+  }
+
+  it("rejects inexact uint64 to double") {
+    cserde_token token = {.kind = CSERDE_UINT, .value.uint = UINT64_MAX};
+    double out = 0.0;
+
+    check_equal(decode_one(&cmeta_data_double, &token, &out),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(out, 0.0);
   }
 }
