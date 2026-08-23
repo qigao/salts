@@ -2,8 +2,7 @@
     "version": 6,
     "include": [
         "presets/BuildPresets.json",
-        "presets/TestPresets.json",
-        "presets/AndroidPresets.json"
+        "presets/TestPresets.json"
     ],
     "configurePresets": [
         {
