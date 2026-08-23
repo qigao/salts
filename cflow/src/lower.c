@@ -1,4 +1,5 @@
 #include <cflow/lower.h>
+#include "dense_successor_index.h"
 #include "graph_internal.h"
 
 #include <stdlib.h>
@@ -135,6 +136,10 @@ static bool lower_zip(lower_ctx *ctx, cflow_subgraph_id *current,
 
 static bool lower_subgraph(lower_ctx *ctx, cflow_subgraph_id src_id,
                            cflow_subgraph_id *out_id) {
+    cflow_dense_successor_index index = {0};
+    cflow_dense_successor_index_status index_status;
+    bool ok = false;
+
     if (!ctx || !out_id || src_id >= ctx->src->subgraph_count) return false;
     if (ctx->state[src_id] == 2u) { *out_id = ctx->map[src_id]; return true; }
     if (ctx->state[src_id] == 1u) {
@@ -154,34 +159,46 @@ static bool lower_subgraph(lower_ctx *ctx, cflow_subgraph_id src_id,
         return false;
     }
 
+    index_status = cflow_dense_successor_index_build(&index, src_sg);
+    if (index_status != CFLOW_DENSE_SUCCESSOR_INDEX_OK) {
+        ctx->error = index_status == CFLOW_DENSE_SUCCESSOR_INDEX_ALLOCATION_FAILED
+                         ? "normalization successor-index allocation failed"
+                         : "normalization encountered invalid DATA topology";
+        return false;
+    }
+    if (index.has_fanout) {
+        ctx->error = "normalization requires explicit single-path DATA topology";
+        goto done;
+    }
+
     cflow_subgraph_id current = cflow_graph_create_subgraph(ctx->dst, src_sg->input_type);
     if (current == CMETA_INVALID_ID) {
         ctx->error = ctx->dst->error ? ctx->dst->error : "normalization Subgraph allocation failed";
-        return false;
+        goto done;
     }
 
     cflow_node_id at = src_sg->entry;
     while (at != src_sg->tail) {
         cflow_node_id next = CMETA_INVALID_ID;
-        if (!cflow_subgraph_single_successor(src_sg, at, &next)) {
+        if (!cflow_dense_successor_index_successor(&index, at, &next)) {
             ctx->error = "normalization requires explicit single-path DATA topology";
-            return false;
+            goto done;
         }
         const cflow_node *node = cflow_subgraph_node(src_sg, next);
-        if (!node) { ctx->error = "normalization encountered invalid node"; return false; }
+        if (!node) { ctx->error = "normalization encountered invalid node"; goto done; }
 
         if (node->op == CFLOW_OP_ZIP) {
-            if (!lower_zip(ctx, &current, node)) return false;
+            if (!lower_zip(ctx, &current, node)) goto done;
         } else if (node_is_high_level(node)) {
             ctx->error = "no lowering rule exists for high-level operator";
-            return false;
+            goto done;
         } else if (node->op == CFLOW_OP_RELATION) {
-            if (!append_relation_node(ctx, current, node)) return false;
+            if (!append_relation_node(ctx, current, node)) goto done;
         } else if (node->op == CFLOW_OP_SOURCE) {
             ctx->error = "SOURCE may only be a Subgraph entry";
-            return false;
+            goto done;
         } else {
-            if (!append_typed_node(ctx, current, node)) return false;
+            if (!append_typed_node(ctx, current, node)) goto done;
         }
         at = next;
     }
@@ -189,7 +206,11 @@ static bool lower_subgraph(lower_ctx *ctx, cflow_subgraph_id src_id,
     ctx->map[src_id] = current;
     ctx->state[src_id] = 2u;
     *out_id = current;
-    return true;
+    ok = true;
+
+done:
+    cflow_dense_successor_index_destroy(&index);
+    return ok;
 }
 
 bool cflow_graph_is_normalized(const cflow_graph *g) {

@@ -1,0 +1,221 @@
+name: CFlow release host benchmarks
+
+on:
+  pull_request:
+    paths:
+      - "cmeta/**"
+      - "cflow/**"
+      - "turbostl/**"
+      - "concurrency/**"
+      - "platform/**"
+      - "tinytest/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - "cmake/**"
+      - "presets/**"
+      - "vcpkg.json"
+      - "vcpkg-ports/**"
+      - ".github/workflows/cflow-release-benchmarks.yml"
+  push:
+    branches: [master]
+    paths:
+      - "cmeta/**"
+      - "cflow/**"
+      - "turbostl/**"
+      - "concurrency/**"
+      - "platform/**"
+      - "tinytest/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - "cmake/**"
+      - "presets/**"
+      - "vcpkg.json"
+      - "vcpkg-ports/**"
+      - ".github/workflows/cflow-release-benchmarks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cflow-release-benchmarks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BENCHMARK_RUNS: 5
+  BENCHMARK_TARGET: cflow_direct_benchmark
+
+jobs:
+  benchmark:
+    name: ${{ matrix.host }} Release
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: ubuntu-22.04-gcc
+            runner: ubuntu-22.04
+            family: linux
+            preset: linux-release-user
+            build_dir: build/linux-gcc-release
+            executable: build/linux-gcc-release/bin/cflow_direct_benchmark
+          - host: ubuntu-24.04-gcc
+            runner: ubuntu-24.04
+            family: linux
+            preset: linux-release-user
+            build_dir: build/linux-gcc-release
+            executable: build/linux-gcc-release/bin/cflow_direct_benchmark
+          - host: windows-2022-msvc
+            runner: windows-2022
+            family: windows
+            preset: win-release-user
+            build_dir: build/Msvc-Release
+            executable: build/Msvc-Release/bin/cflow_direct_benchmark.exe
+          - host: windows-2025-msvc
+            runner: windows-2025
+            family: windows
+            preset: win-release-user
+            build_dir: build/Msvc-Release
+            executable: build/Msvc-Release/bin/cflow_direct_benchmark.exe
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Linux dependencies
+        if: matrix.family == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ninja-build re2c
+          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
+            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Setup Windows dependencies
+        if: matrix.family == 'windows'
+        shell: powershell
+        run: choco install re2c -y --no-progress
+
+      - name: Configure and build Linux Release benchmark
+        if: matrix.family == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset "${{ matrix.preset }}" \
+            -DBUILD_BENCHMARKS=ON \
+            -DBUILD_TESTS=ON
+          cmake --build --preset "${{ matrix.preset }}" \
+            --target "$BENCHMARK_TARGET"
+
+      - name: Configure and build Windows Release benchmark
+        if: matrix.family == 'windows'
+        shell: cmd
+        run: |
+          if defined VCPKG_INSTALLATION_ROOT set "VCPKG_ROOT=%VCPKG_INSTALLATION_ROOT%"
+          if not defined VCPKG_ROOT exit /b 1
+
+          for /f "usebackq tokens=*" %%I in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%I"
+          if not defined VSINSTALL exit /b 1
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+
+          cmake --preset "${{ matrix.preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
+          if errorlevel 1 exit /b 1
+          cmake --build --preset "${{ matrix.preset }}" --target "%BENCHMARK_TARGET%"
+          if errorlevel 1 exit /b 1
+
+      - name: Capture environment and run benchmark
+        shell: pwsh
+        env:
+          BENCHMARK_HOST: ${{ matrix.host }}
+          BENCHMARK_PRESET: ${{ matrix.preset }}
+          BENCHMARK_BUILD_DIR: ${{ matrix.build_dir }}
+          BENCHMARK_EXECUTABLE: ${{ matrix.executable }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "benchmark-results"
+          $buildDir = Join-Path $env:GITHUB_WORKSPACE $env:BENCHMARK_BUILD_DIR
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:BENCHMARK_EXECUTABLE
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "Benchmark executable not found: $benchmark"
+          }
+          if ($env:BENCHMARK_RUNS -notmatch '^[1-9][0-9]*$') {
+            throw "BENCHMARK_RUNS must be a positive integer"
+          }
+
+          @(
+            "host=$env:BENCHMARK_HOST"
+            "preset=$env:BENCHMARK_PRESET"
+            "commit=$env:GITHUB_SHA"
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+            "runner_name=$env:RUNNER_NAME"
+            "image_os=$env:ImageOS"
+            "image_version=$env:ImageVersion"
+            "benchmark_runs=$env:BENCHMARK_RUNS"
+          ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
+
+          git show --no-patch --format=fuller HEAD |
+            Set-Content -LiteralPath (Join-Path $resultDir "commit.txt")
+          Copy-Item -LiteralPath (Join-Path $buildDir "CMakeCache.txt") -Destination $resultDir
+          $compilerConfig = Get-ChildItem -LiteralPath (Join-Path $buildDir "CMakeFiles") `
+            -Filter "CMakeCCompiler.cmake" -File -Recurse | Select-Object -First 1
+          if ($null -eq $compilerConfig) {
+            throw "C compiler configuration was not generated under: $buildDir"
+          }
+          Copy-Item -LiteralPath $compilerConfig.FullName `
+            -Destination (Join-Path $resultDir "CMakeCCompiler.cmake")
+
+          if ($IsWindows) {
+            Get-CimInstance Win32_OperatingSystem |
+              Select-Object Caption, Version, BuildNumber, OSArchitecture | Format-List |
+              Out-File -LiteralPath (Join-Path $resultDir "operating-system.txt")
+            Get-CimInstance Win32_Processor |
+              Select-Object Name, Manufacturer, NumberOfCores, NumberOfLogicalProcessors, `
+                MaxClockSpeed | Format-List |
+              Out-File -LiteralPath (Join-Path $resultDir "cpu.txt")
+          } else {
+            uname -a | Out-File -LiteralPath (Join-Path $resultDir "operating-system.txt")
+            Get-Content -LiteralPath "/etc/os-release" |
+              Add-Content -LiteralPath (Join-Path $resultDir "operating-system.txt")
+            lscpu | Out-File -LiteralPath (Join-Path $resultDir "cpu.txt")
+          }
+
+          for ($run = 1; $run -le [int]$env:BENCHMARK_RUNS; ++$run) {
+            $runFile = Join-Path $resultDir ("run-{0:D2}.txt" -f $run)
+            & $benchmark 2>&1 | Tee-Object -FilePath $runFile
+            if ($LASTEXITCODE -ne 0) {
+              throw "Benchmark run $run failed with exit code $LASTEXITCODE"
+            }
+          }
+
+          $summary = $env:GITHUB_STEP_SUMMARY
+          Add-Content -LiteralPath $summary -Value "## CFlow Release benchmark: $env:BENCHMARK_HOST"
+          Add-Content -LiteralPath $summary -Value ""
+          Add-Content -LiteralPath $summary -Value "$env:BENCHMARK_RUNS raw runs and host/compiler metadata are stored in the job artifact. Shared-runner throughput is evidence, not a cross-host performance gate."
+          Add-Content -LiteralPath $summary -Value ""
+          Add-Content -LiteralPath $summary -Value "<details><summary>Representative run</summary>"
+          Add-Content -LiteralPath $summary -Value ""
+          Add-Content -LiteralPath $summary -Value '```text'
+          Get-Content -LiteralPath (Join-Path $resultDir "run-01.txt") |
+            Add-Content -LiteralPath $summary
+          Add-Content -LiteralPath $summary -Value '```'
+          Add-Content -LiteralPath $summary -Value "</details>"
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cflow-release-${{ matrix.host }}
+          path: benchmark-results
+          if-no-files-found: error
+          retention-days: 30
