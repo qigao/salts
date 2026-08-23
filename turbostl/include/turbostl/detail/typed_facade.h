@@ -165,9 +165,8 @@ CMETA_INLINE cmeta_status turbo_stl_cmeta_status(stl_status status) {
 #define TURBO_META_BTREE_METHODS(M,C) TURBO_META_TREE_METHODS(M,C)
 #define TURBO_META_BPLUS_TREE_METHODS(M,C) TURBO_META_TREE_METHODS(M,C)
 
-/* list_* and map_* are also semantic public macro names in typed.h. Keep the
- * generator on an internal prefix so preprocessing a later typed(...) call
- * cannot accidentally re-enter those semantic macros. */
+/* List and Map use small storage bridges where their raw initialization or
+ * destruction entry point differs from the generated method contract. */
 CMETA_INLINE stl_status turbo_stl_typed_list_raw_init(
     list_t *self, const cmeta_type_desc *type, size_t limit) {
   return list_raw_init(self, type, limit);

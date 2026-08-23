@@ -104,41 +104,28 @@ independent node-based doubly-linked list with stable iterators across insertion
 
 ## Typed operations
 
-List and Map operations keep the concrete Generic type visible at the call
-site:
+Generated operations keep the concrete Generic type visible in the function
+name:
 
 ```c
 IntList values = {0};
 IntLongMap index = {0};
 
-list_init(IntList, &values, 100u);
-list_add(IntList, &values, 10);
-list_add(IntList, &values, 20);
-
-map_init(IntLongMap, &index, 100u);
-map_put(IntLongMap, &index, 7, 70L);
-
-map_destroy(IntLongMap, &index);
-list_destroy(IntList, &values);
-```
-
-List and Map use arity dispatch so both representations remain usable. Calls
-with an explicit type token select the generated API; shorter calls such as
-`map_init(&scores, 100u)` and `map_destroy(&scores)` select the raw-handle API.
-
-## Generated typed ABI
-
-```c
-IntList values = {0};
-IntList_init(&values, 100);
+IntList_init(&values, 100u);
 IntList_push_back(&values, 10);
 IntList_push_back(&values, 20);
-int *p = IntList_front(&values);
+
+IntLongMap_init(&index, 100u);
+IntLongMap_put(&index, 7, 70L);
+
+IntLongMap_destroy(&index);
 IntList_destroy(&values);
 ```
 
-These generated concrete names remain the complete typed ABI. The semantic
-List/Map calls above are thin type-token dispatch macros over these names.
+These generated `Type_method` names are the complete typed ABI. Raw names such
+as `map_init(&scores, 100u)`, `map_put(&scores, &key, &value)`, and
+`map_destroy(&scores)` remain ordinary functions; typed declarations never
+intercept or reinterpret their C expressions.
 
 ## CFlow bridge
 
@@ -164,10 +151,10 @@ Collection names its output type and retains an explicit capacity bound:
 ```c
 IntList output = {0};
 turbostl_collect_result result =
-    to_list(&s, IntList, &output, 100u);
+    to_list_typed(&s, IntList, &output, 100u);
 ```
 
-`collect(&s, Type, &output, limit)` has the same typed terminal contract.
+`collect_typed(&s, Type, &output, limit)` has the same typed terminal contract.
 The generated public collector takes `Type *`, so a mismatched output wrapper
 is diagnosed before CFlow receives its erased collector context.
 
@@ -179,6 +166,8 @@ turbostl_collect_result raw_result = to_list(&s, &raw_output, 100u);
 ```
 
 The erased form validates its descriptor at runtime; the typed form provides
-the stronger compile-time output pointer check.
-Collection is transactional: failure aborts and restores a zero output.
+the stronger compile-time output pointer check. Collection is transactional.
+On failure, a generated wrapper is reset to zero. An erased raw handle releases
+its storage while retaining the descriptor and type binding supplied by its
+declaration or `*Of(...)` initializer, so it can be initialized again.
 The core `TurboUtils::STL` target does not depend on CFlow.

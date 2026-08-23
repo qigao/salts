@@ -4,7 +4,7 @@
 
 **Goal:** Restore TurboSTL's finite CMeta Generic API while retaining PR #53's self-describing raw-handle initializers and make typed Stream terminals explicitly name their output container.
 
-**Architecture:** CMeta continues to route `typed(kind, ...)`; a TurboSTL-owned schema generates concrete wrappers over compiled raw handles. PR #53 declaration/expression forms remain erased-handle initializers. Arity dispatch separates raw List/Map calls and three-argument Stream terminals from type-token calls and four-argument typed terminals.
+**Architecture:** CMeta continues to route `typed(kind, ...)`; a TurboSTL-owned schema generates concrete wrappers over compiled raw handles. PR #53 declaration/expression forms remain erased-handle initializers. Generated `Type_method` functions and distinctly named typed Stream terminals avoid shadowing raw List/Map calls or three-argument Stream terminals.
 
 **Tech Stack:** C11, CMeta Schema/macros, TurboSTL, CFlow, CMake Presets, TinyTest.
 
@@ -23,7 +23,7 @@
 - [x] Preserve and exercise PR #53's `Vec(...)`/`Map(...)` and
   `VecOf(...)`/`MapOf(...)` erased-handle initializers alongside finite Generic
   kinds.
-- [x] Exercise semantic type-token operations and four-argument `to_list`/`collect`.
+- [x] Exercise generated `Type_method` operations and explicitly typed Stream terminals.
 - [x] Require generated collector factories to accept their concrete wrapper pointer type.
 - [x] Build the focused targets and confirm they fail because TurboSTL kinds and typed terminals are unavailable.
 
@@ -37,7 +37,7 @@
 - [x] Move the TurboSTL-specific kind schema and generator adapters behind a TurboSTL detail header.
 - [x] Adapt initialization/destruction rows to current `*_raw_*` storage bridges while retaining existing compiled algorithms.
 - [x] Register all thirteen kinds with CMeta while retaining PR #53's initializer macros.
-- [x] Add arity-dispatched List/Map operations for raw handles and generated type tokens.
+- [x] Keep raw List/Map functions unshadowed and use generated `Type_method` operations.
 - [x] Build and run the focused Generic consumer test.
 
 ### Task 3: Restore the typed Stream terminal contract
@@ -46,7 +46,7 @@
 - Modify: `turbostl/include/turbostl/stream.h`
 - Modify: `turbostl/tests/turbostl_stream_test.c`
 
-- [x] Restore `collector(Type, out, limit)`, `collect(stream, Type, out, limit)`, and `to_list(stream, Type, out, limit)`.
+- [x] Add `collector(Type, out, limit)`, `collect_typed(stream, Type, out, limit)`, and `to_list_typed(stream, Type, out, limit)`.
 - [x] Retain three-argument `collect(stream, out, limit)` and `to_list(stream, out, limit)` for self-describing raw handles.
 - [x] Preserve explicit capacity, transactional abort, and borrowed-source semantics.
 - [x] Build and run `turbostl_stream_test`.
@@ -79,5 +79,5 @@
 - [x] Run the repository's MSVC preset configure/build and focused CTest suites from a clean environment.
 - [x] Run the install consumer workflow.
 - [x] Inspect the diff for unintended raw ABI/storage changes.
-- [ ] Commit, request an independent code review, address important findings, and rerun verification.
+- [x] Commit, request an independent code review, address important findings, and rerun verification.
 - [ ] Push `feat/turbostl-generic-api` and open a PR against `master` with the design, compatibility impact, and exact verification evidence.

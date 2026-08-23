@@ -17,7 +17,7 @@ extern "C" {
  *
  * Example:
  *   stream(&input, &pipeline)->filter(&pipeline, keep)->map(&pipeline, map_fn);
- *   result = to_list(&pipeline, OutputList, &output, output_limit);
+ *   result = to_list_typed(&pipeline, OutputList, &output, output_limit);
  */
 typedef cflow_stream turbostl_stream_t;
 
@@ -55,22 +55,20 @@ turbostl_container_collector(void *output, size_t limit) {
     return invalid;
 }
 
-/* Four-argument terminals keep the generated output type explicit and
- * compile-time checked. Three-argument terminals preserve #53's
- * self-describing erased-handle expressions. */
-#define TURBO_STL_STREAM_SELECT_3_4(_1, _2, _3, _4, selected, ...) selected
+/* Typed terminals use distinct names so the three-argument #53 surface never
+ * relies on variadic-arity dispatch over arbitrary C expressions. */
 #define collector(container_type, output_ptr, limit) \
     CMETA_TYPED_CALL(container_type, collector, (output_ptr), (limit))
-#define TURBO_STL_COLLECT_ERASED(stream_ptr, output_ptr, limit) \
+#define collect(stream_ptr, output_ptr, limit) \
     turbostl_stream_collect((stream_ptr), \
                             turbostl_container_collector((output_ptr), (limit)))
-#define TURBO_STL_COLLECT_TYPED(stream_ptr, container_type, output_ptr, limit) \
+#define to_list(stream_ptr, output_ptr, limit) \
+    collect((stream_ptr), (output_ptr), (limit))
+#define collect_typed(stream_ptr, container_type, output_ptr, limit) \
     turbostl_stream_collect((stream_ptr), \
                             collector(container_type, (output_ptr), (limit)))
-#define collect(...) \
-    TURBO_STL_STREAM_SELECT_3_4(__VA_ARGS__, TURBO_STL_COLLECT_TYPED, \
-                                TURBO_STL_COLLECT_ERASED)(__VA_ARGS__)
-#define to_list(...) collect(__VA_ARGS__)
+#define to_list_typed(stream_ptr, container_type, output_ptr, limit) \
+    collect_typed((stream_ptr), container_type, (output_ptr), (limit))
 #define to_array(stream_ptr, max_items, output_ptr) \
     cflow_eval_stream_limit((stream_ptr), (max_items), (output_ptr))
 

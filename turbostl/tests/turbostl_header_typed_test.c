@@ -39,6 +39,15 @@ suite("TurboSTL typed public header") {
         vec_destroy(&vec);
     }
 
+    it("preserves raw map calls with compound literals") {
+        Map(int, int, values);
+
+        check_equal(map_init(&values, 1u), STL_OK);
+        check_equal(map_put(&values, &(int){1},
+                            (const int[]){2, 3}), STL_OK);
+        map_destroy(&values);
+    }
+
     it("constructs unary self-describing handles from expressions") {
         vec_t vec = {0};
         deque_t deque = DequeOf(int);
@@ -519,13 +528,13 @@ suite("TurboSTL typed public header") {
         HeaderGenericMap map = {0};
 
         check_equal(HeaderGenericVec_init(&vec, 2u), STL_OK);
-        check_equal(list_init(HeaderGenericList, &list, 2u), STL_OK);
-        check_equal(list_add(HeaderGenericList, &list, 7), STL_OK);
-        check_equal(map_init(HeaderGenericMap, &map, 2u), STL_OK);
-        check_equal(map_put(HeaderGenericMap, &map, 3, 30L), STL_OK);
+        check_equal(HeaderGenericList_init(&list, 2u), STL_OK);
+        check_equal(HeaderGenericList_push_back(&list, 7), STL_OK);
+        check_equal(HeaderGenericMap_init(&map, 2u), STL_OK);
+        check_equal(HeaderGenericMap_put(&map, 3, 30L), STL_OK);
 
-        map_destroy(HeaderGenericMap, &map);
-        list_destroy(HeaderGenericList, &list);
+        HeaderGenericMap_destroy(&map);
+        HeaderGenericList_destroy(&list);
         HeaderGenericVec_destroy(&vec);
     }
 }

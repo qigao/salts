@@ -156,14 +156,14 @@ typed(Vec, IntVec, int);
 typed(HashMap, IntValuesById, int, int);
 ```
 
-The declared container type is explicit in semantic calls:
+The declared container type prefixes its generated operations:
 
 ```c
 IntList values = {0};
 
-list_init(IntList, &values, 100u);
-list_add(IntList, &values, 7);
-list_destroy(IntList, &values);
+IntList_init(&values, 100u);
+IntList_push_back(&values, 7);
+IntList_destroy(&values);
 ```
 
 For containers, one `typed(...)` declaration is a complete instantiation. It may
