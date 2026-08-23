@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. This design closes the four residual execution-model gaps recorded after PR #51: bounded admission, ordered parallel reduction, executable Lean/C refinement evidence, and macOS/Android host verification.
+In progress. Phase G-1 bounded admission is implemented on the execution-model-v2 branch. Ordered parallel reduction, executable Lean/C refinement evidence, and macOS/Android host verification remain subsequent phases.
 
 The proposal intentionally does not add Event, Mailbox, Machine, Actor, reactor, or minicoro adapters. Those remain consumers of the execution foundation rather than prerequisites for completing the current Direct/Plan/Kernel model.
 
@@ -17,11 +17,11 @@ The work is split into four independently reviewable changes:
 
 Each change must pass independently. A failure in a later phase does not weaken or roll back an earlier phase's public contracts.
 
-## Compatibility decision requiring approval
+## Approved compatibility transition
 
 The existing `turbo_threadpool_submit()` and `turbo_threadpool_try_submit()` return `0` on acceptance and an undocumented `-1` for every failure. Exact CFlow admission reporting cannot distinguish invalid input, full queue, or shutdown while that ambiguity remains.
 
-Execution Model v2 therefore proposes stable TurboUtils error returns:
+Execution Model v2 defines stable TurboUtils error returns:
 
 | Condition | Return code |
 |---|---|
@@ -33,13 +33,17 @@ Execution Model v2 therefore proposes stable TurboUtils error returns:
 
 Callers that already test `rc != 0` remain source-compatible. A caller that compares exactly with `-1` must migrate. This is an observable return-code change and must be approved before implementation.
 
-Adding checked methods to the generated Executor/Scheduler operation tables also requires external interface implementers to rebuild and provide the new entries. Ordinary callers retain the same `cflow_executor`/`cflow_scheduler` object layout and convenience calls, but an independently compiled custom implementation is not binary-compatible across this v2 boundary. The repository currently exposes no versioned plugin ABI for these interfaces; the change must nevertheless be treated and documented as an ABI transition.
+The dependency-neutral error constants live in `platform/include/turbo/error_codes.h`; the existing Core `turbo_error.h` includes that header. This preserves the dependency direction `Core -> Concurrency -> Platform` while giving Concurrency and CFlow one error-code fact source.
+
+Adding checked admission, shutdown, and statistics methods to the generated Executor/Scheduler operation tables also requires external interface implementers to rebuild and provide the new entries. Ordinary callers retain the same `cflow_executor`/`cflow_scheduler` object layout and convenience calls, but an independently compiled custom implementation is not binary-compatible across this v2 boundary. The repository currently exposes no versioned plugin ABI for these interfaces; the change is therefore an explicit v2 ABI transition.
 
 Existing CFlow convenience calls remain available:
 
 - `cflow_executor_post()` continues to return `bool`;
 - `cflow_scheduler_post()` and `cflow_scheduler_post_after()` continue to return a nonzero task id or zero;
 - existing initializers continue to exist and use named defaults.
+
+ManualExecutor and both schedulers map compatibility calls directly to checked admission. WorkerExecutor and SerialExecutor preserve the existing blocking `post()` contract so a full bounded queue applies backpressure; their new `try_post()` is the nonblocking exact-status operation. Thus existing producer behavior is preserved while new callers can select fail-fast admission explicitly.
 
 New checked entry points carry the exact status. No implicit retry, allocation beyond the configured limit, or serial fallback is permitted.
 
@@ -79,6 +83,8 @@ cflow_schedule_result cflow_scheduler_try_post_after(
     cflow_task_fn fn, void *user);
 ```
 
+They also expose idempotent `shutdown()` and snapshot `get_stats()` operations. Executor statistics report capacity, current/peak pending, and full/closed rejection counts. Scheduler statistics additionally distinguish ready, timer, and dispatching work and count timers cancelled during shutdown.
+
 Built-in initializers gain explicit capacities:
 
 ```c
@@ -116,7 +122,9 @@ Zero capacity is invalid. Existing initializers delegate to the checked forms wi
 
 ManualExecutor and TimerQueue allocate their complete task arrays during initialization. The data path performs no `realloc`. Capacity arithmetic is checked before allocation. TimerQueue remains protected by the owning scheduler mutex in the worker scheduler and single-owned by the test scheduler.
 
-The timer thread uses blocking executor submission after removing a ready timer. This preserves the accepted timer exactly once under executor backpressure; it must never ignore a failed post. Shutdown is the only interruption, and the shutdown path records the task as cancelled rather than silently executed or lost.
+The fixed-array payload budget is computed rather than hidden: ManualExecutor reserves `capacity * sizeof(cflow_manual_task)` bytes and TimerQueue reserves `capacity * sizeof(cflow_timer_task)` bytes, after checking `capacity <= SIZE_MAX / sizeof(entry)`. On the current 64-bit ABI the entries are respectively 16 and 40 bytes, so the two default 4096-entry arrays reserve 65,536 and 163,840 bytes (229,376 bytes total), excluding executor/scheduler state and thread-pool storage. Exact byte counts remain ABI-dependent; the formulas and hard capacities are the contract.
+
+The timer thread uses blocking executor submission after removing a ready timer. The task is counted as `dispatching` until it reaches exactly one terminal handoff state: accepted by the executor, or `cancelled_on_shutdown`. Shutdown first closes timer admission, cancels queued timers, wakes a blocked executor submission, joins the timer thread, and then drains/destroys accepted executor work. A ready timer is therefore neither silently dropped nor duplicated under backpressure.
 
 ## Phase G-2: ordered Parallel Reduce
 

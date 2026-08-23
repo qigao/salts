@@ -506,6 +506,7 @@ Linux/Windows/macOS/Android-supported builds exercise the module boundaries and 
 | 11. Core can depend on CFlow without a cycle. | Implemented + Linux/Windows CI verified | `utils/CMakeLists.txt` links CFlow privately; CFlow links CMeta publicly and Platform/Concurrency privately, never Core. |
 | 12. Owner behavior tests pass. | Implemented + Linux/Windows CI verified | `platform_thread_test`, `platform_clock_test`, `disruptor_test`, `thread_pool_test`, CFlow tests, and `test_execution_compat` are registered under their owning modules. |
 | 13. Installed exports are consumable. | Implemented + Linux/Windows CI verified | `verify_installed_package` installs the SDK and builds external consumers naming only Platform, Concurrency, CMeta, CFlow, STL, or Core. |
+| 14. Built-in execution admission is bounded and observable. | Implemented + Windows local verification | Execution Model v2 adds explicit capacities, checked full/closed results, shutdown operations, statistics, and lossless timer handoff tests; Linux/macOS/Android evidence remains a CI responsibility. |
 
 ### Host evidence
 
@@ -519,7 +520,8 @@ Linux/Windows/macOS/Android-supported builds exercise the module boundaries and 
 
 - Event, Mailbox, Machine, Actor, reactor, and minicoro remain explicit design non-goals rather than missing foundation features.
 - macOS Release and Android cross-build automation require a separate host/toolchain plan before those hosts can be claimed as verified.
-- ManualExecutor and TimerQueue capacity limits require a separate resource-policy design because adding limits changes admission and error behavior; this patch does not silently impose a new bound.
+- Ordered parallel reduction and an executable Lean/C refinement certificate remain Execution Model v2 work.
+- ManualExecutor, WorkerExecutor, and TimerQueue now use explicit bounded admission. The migration, default capacities, byte-budget formulas, compatibility behavior, shutdown terminal states, and metrics are specified in `2026-08-23-cflow-execution-model-v2-design.md`.
 
 ## Architectural consequence
 
