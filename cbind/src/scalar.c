@@ -6,12 +6,28 @@
 #include <stdint.h>
 #include <string.h>
 
+typedef enum cbind_storage_match {
+    CBIND_STORAGE_DIFFERENT = 0,
+    CBIND_STORAGE_EXACT,
+    CBIND_STORAGE_MALFORMED
+} cbind_storage_match;
+
+static cbind_storage_match cbind_storage_classify(
+    const cmeta_type_desc *actual,
+    const cmeta_type_desc *canonical) {
+    if (actual == NULL || canonical == NULL ||
+        !cmeta_type_equal(actual, canonical))
+        return CBIND_STORAGE_DIFFERENT;
+    if (actual->kind != canonical->kind ||
+        actual->size != canonical->size ||
+        actual->align != canonical->align)
+        return CBIND_STORAGE_MALFORMED;
+    return CBIND_STORAGE_EXACT;
+}
+
 static bool cbind_type_matches(const cmeta_type_desc *actual,
                                const cmeta_type_desc *canonical) {
-    return actual != NULL && canonical != NULL &&
-           cmeta_type_equal(actual, canonical) &&
-           actual->size == canonical->size &&
-           actual->align == canonical->align;
+    return cbind_storage_classify(actual, canonical) == CBIND_STORAGE_EXACT;
 }
 
 static cbind_status cbind_validation_error(cbind_error *error,
@@ -25,15 +41,36 @@ static cbind_status cbind_validation_error(cbind_error *error,
 static bool cbind_integer_width_matches(const cmeta_data_desc *shape) {
     const cmeta_data_integer_shape *integer_shape =
         (const cmeta_data_integer_shape *)shape->shape;
-    return integer_shape != NULL &&
-           (size_t)integer_shape->bits == shape->storage_type->size * CHAR_BIT;
+
+    return integer_shape != NULL && shape->storage_type != NULL &&
+           shape->storage_type->size <= SIZE_MAX / CHAR_BIT &&
+           (size_t)integer_shape->bits ==
+               shape->storage_type->size * CHAR_BIT;
 }
 
 static bool cbind_float_width_matches(const cmeta_data_desc *shape) {
     const cmeta_data_float_shape *float_shape =
         (const cmeta_data_float_shape *)shape->shape;
-    return float_shape != NULL &&
+
+    return float_shape != NULL && shape->storage_type != NULL &&
+           shape->storage_type->size <= SIZE_MAX / CHAR_BIT &&
            (size_t)float_shape->bits == shape->storage_type->size * CHAR_BIT;
+}
+
+static cbind_status cbind_validate_one_storage(
+    const cmeta_data_desc *shape,
+    const cmeta_type_desc *canonical,
+    bool width_matches,
+    size_t depth,
+    cbind_error *error) {
+    cbind_storage_match match =
+        cbind_storage_classify(shape->storage_type, canonical);
+
+    if (match == CBIND_STORAGE_DIFFERENT)
+        return CBIND_UNSUPPORTED;
+    if (match == CBIND_STORAGE_MALFORMED || !width_matches)
+        return cbind_validation_error(error, CBIND_INVALID_SHAPE, shape, depth);
+    return CBIND_OK;
 }
 
 cbind_status cbind_validate_graph(const cbind_context *context,
@@ -43,6 +80,8 @@ cbind_status cbind_validate_graph(const cbind_context *context,
                                   size_t active_scratch,
                                   size_t *max_scratch,
                                   cbind_error *error) {
+    cbind_status status;
+
     (void)context;
     (void)parent;
     (void)active_scratch;
@@ -53,36 +92,46 @@ cbind_status cbind_validate_graph(const cbind_context *context,
 
     switch (shape->kind) {
         case CMETA_DATA_BOOL:
-            return cbind_type_matches(shape->storage_type, &cmeta_type_bool)
-                       ? CBIND_OK
-                       : cbind_validation_error(error, CBIND_UNSUPPORTED,
-                                                shape, depth);
+            status = cbind_validate_one_storage(shape, &cmeta_type_bool,
+                                                true, depth, error);
+            return status == CBIND_UNSUPPORTED
+                       ? cbind_validation_error(error, CBIND_UNSUPPORTED,
+                                                shape, depth)
+                       : status;
         case CMETA_DATA_SINT:
-            if (!cbind_type_matches(shape->storage_type, &cmeta_type_int) &&
-                !cbind_type_matches(shape->storage_type, &cmeta_type_long))
-                return cbind_validation_error(error, CBIND_UNSUPPORTED,
-                                              shape, depth);
-            return cbind_integer_width_matches(shape)
-                       ? CBIND_OK
-                       : cbind_validation_error(error, CBIND_INVALID_SHAPE,
-                                                shape, depth);
+            status = cbind_validate_one_storage(shape, &cmeta_type_int,
+                                                cbind_integer_width_matches(shape),
+                                                depth, error);
+            if (status != CBIND_UNSUPPORTED)
+                return status;
+            status = cbind_validate_one_storage(shape, &cmeta_type_long,
+                                                cbind_integer_width_matches(shape),
+                                                depth, error);
+            return status == CBIND_UNSUPPORTED
+                       ? cbind_validation_error(error, CBIND_UNSUPPORTED,
+                                                shape, depth)
+                       : status;
         case CMETA_DATA_UINT:
-            if (!cbind_type_matches(shape->storage_type, &cmeta_type_size))
-                return cbind_validation_error(error, CBIND_UNSUPPORTED,
-                                              shape, depth);
-            return cbind_integer_width_matches(shape)
-                       ? CBIND_OK
-                       : cbind_validation_error(error, CBIND_INVALID_SHAPE,
-                                                shape, depth);
+            status = cbind_validate_one_storage(shape, &cmeta_type_size,
+                                                cbind_integer_width_matches(shape),
+                                                depth, error);
+            return status == CBIND_UNSUPPORTED
+                       ? cbind_validation_error(error, CBIND_UNSUPPORTED,
+                                                shape, depth)
+                       : status;
         case CMETA_DATA_FLOAT:
-            if (!cbind_type_matches(shape->storage_type, &cmeta_type_float) &&
-                !cbind_type_matches(shape->storage_type, &cmeta_type_double))
-                return cbind_validation_error(error, CBIND_UNSUPPORTED,
-                                              shape, depth);
-            return cbind_float_width_matches(shape)
-                       ? CBIND_OK
-                       : cbind_validation_error(error, CBIND_INVALID_SHAPE,
-                                                shape, depth);
+            status = cbind_validate_one_storage(shape, &cmeta_type_float,
+                                                cbind_float_width_matches(shape),
+                                                depth, error);
+            if (status != CBIND_UNSUPPORTED)
+                return status;
+            status = cbind_validate_one_storage(shape, &cmeta_type_double,
+                                                cbind_float_width_matches(shape),
+                                                depth, error);
+            return status == CBIND_UNSUPPORTED
+                       ? cbind_validation_error(error, CBIND_UNSUPPORTED,
+                                                shape, depth)
+                       : status;
         case CMETA_DATA_STRUCT:
             return cbind_validation_error(error, CBIND_UNSUPPORTED, shape, depth);
         case CMETA_DATA_STRING:
@@ -366,13 +415,15 @@ static cbind_status cbind_decode_floating(cbind_decode_state *state,
         float native;
 
         if (token->kind == CSERDE_FLOAT) {
+            if (isfinite(token->value.floating) &&
+                fabs(token->value.floating) > (double)FLT_MAX)
+                return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
+                                          shape, field, depth);
             native = (float)token->value.floating;
-            if (isfinite(token->value.floating)) {
-                if (isinf(native) ||
-                    (token->value.floating != 0.0 && native == 0.0f))
-                    return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
-                                              shape, field, depth);
-            }
+            if (isfinite(token->value.floating) &&
+                token->value.floating != 0.0 && native == 0.0f)
+                return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
+                                          shape, field, depth);
         } else if (token->kind == CSERDE_SINT) {
             if (!cbind_u64_exact_in_binary(
                     cbind_signed_magnitude(token->value.sint), FLT_MANT_DIG))
