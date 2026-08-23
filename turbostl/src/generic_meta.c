@@ -1,8 +1,8 @@
 #include <turbostl/typed.h>
 
 #define STL_CONTAINER_EXT_PREFIX_SIZE \
-    (offsetof(cmeta_container_ext, data) + \
-     sizeof(((cmeta_container_ext *)0)->data))
+    (offsetof(cmeta_container_ext, construction) + \
+     sizeof(((cmeta_container_ext *)0)->construction))
 
 #define STL_DEFINE_UNARY_GENERIC_META(                                         \
     prefix, display_name, stable_id, handle_type, element_expr, semantic_)    \
@@ -24,7 +24,8 @@ const cmeta_container_ext stl_##prefix##_container_ext = {                     \
     STL_CONTAINER_EXT_PREFIX_SIZE,                                             \
     CMETA_CONTAINER_EXT_ABI_VERSION,                                           \
     &stl_##prefix##_generic_type_ops,                                          \
-    (semantic_)};
+    (semantic_),                                                               \
+    &stl_##prefix##_construct_ops};
 
 #define STL_DEFINE_BINARY_GENERIC_META(                                        \
     prefix, display_name, stable_id, handle_type, key_expr, value_expr,       \
@@ -49,7 +50,8 @@ const cmeta_container_ext stl_##prefix##_container_ext = {                     \
     STL_CONTAINER_EXT_PREFIX_SIZE,                                             \
     CMETA_CONTAINER_EXT_ABI_VERSION,                                           \
     &stl_##prefix##_generic_type_ops,                                          \
-    (semantic_)};
+    (semantic_),                                                               \
+    &stl_##prefix##_construct_ops};
 
 STL_DEFINE_UNARY_GENERIC_META(
     vec, "Vec", "turbostl.Vec", vec_t, self->element_type,

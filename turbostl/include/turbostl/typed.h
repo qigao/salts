@@ -18,6 +18,73 @@
 #include <turbostl/bplus_tree.h>
 #include <turbostl/detail/instance_meta.h>
 
+/* TYPE(...) provider registrations. CMeta owns the generic declaration
+ * protocol; TurboSTL supplies only storage, constructor and bind capability. */
+#define CMETA_DECLARED_STORAGE_Vec vec_t
+#define CMETA_DECLARED_STORAGE_DESC_Vec (&stl_vec_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_Vec (&stl_vec_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_Vec (&stl_vec_construct_ops)
+
+#define CMETA_DECLARED_STORAGE_Deque deque_t
+#define CMETA_DECLARED_STORAGE_DESC_Deque (&stl_deque_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_Deque (&stl_deque_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_Deque (&stl_deque_construct_ops)
+
+#define CMETA_DECLARED_STORAGE_List list_t
+#define CMETA_DECLARED_STORAGE_DESC_List (&stl_list_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_List (&stl_list_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_List (&stl_list_construct_ops)
+
+#define CMETA_DECLARED_STORAGE_Stack stack_t
+#define CMETA_DECLARED_STORAGE_DESC_Stack (&stl_stack_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_Stack (&stl_stack_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_Stack (&stl_stack_construct_ops)
+
+#define CMETA_DECLARED_STORAGE_Queue queue_t
+#define CMETA_DECLARED_STORAGE_DESC_Queue (&stl_queue_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_Queue (&stl_queue_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_Queue (&stl_queue_construct_ops)
+
+#define CMETA_DECLARED_STORAGE_Heap heap_t
+#define CMETA_DECLARED_STORAGE_DESC_Heap (&stl_heap_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_Heap (&stl_heap_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_Heap (&stl_heap_construct_ops)
+
+#define CMETA_DECLARED_STORAGE_Set set_t
+#define CMETA_DECLARED_STORAGE_DESC_Set (&stl_set_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_Set (&stl_set_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_Set (&stl_set_construct_ops)
+
+#define CMETA_DECLARED_STORAGE_HashSet hash_set_t
+#define CMETA_DECLARED_STORAGE_DESC_HashSet (&stl_hash_set_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_HashSet (&stl_hash_set_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_HashSet (&stl_hash_set_construct_ops)
+
+#define CMETA_DECLARED_STORAGE_HashMap hash_map_t
+#define CMETA_DECLARED_STORAGE_DESC_HashMap (&stl_hash_map_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_HashMap (&stl_hash_map_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_HashMap (&stl_hash_map_construct_ops)
+
+#define CMETA_DECLARED_STORAGE_Map map_t
+#define CMETA_DECLARED_STORAGE_DESC_Map (&stl_map_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_Map (&stl_map_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_Map (&stl_map_construct_ops)
+
+#define CMETA_DECLARED_STORAGE_MultiMap multimap_t
+#define CMETA_DECLARED_STORAGE_DESC_MultiMap (&stl_multimap_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_MultiMap (&stl_multimap_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_MultiMap (&stl_multimap_construct_ops)
+
+#define CMETA_DECLARED_STORAGE_BTree btree_t
+#define CMETA_DECLARED_STORAGE_DESC_BTree (&stl_btree_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_BTree (&stl_btree_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_BTree (&stl_btree_construct_ops)
+
+#define CMETA_DECLARED_STORAGE_BPlusTree bplus_tree_t
+#define CMETA_DECLARED_STORAGE_DESC_BPlusTree (&stl_bplus_tree_storage_type)
+#define CMETA_DECLARED_CONSTRUCTOR_BPlusTree (&stl_bplus_tree_generic_desc)
+#define CMETA_DECLARED_CONSTRUCTION_BPlusTree (&stl_bplus_tree_construct_ops)
+
 /* Self-describing declaration DSL. These declarations bind CMeta metadata but
  * perform no allocation and do not create generated user-visible C types. */
 #ifndef Vec
