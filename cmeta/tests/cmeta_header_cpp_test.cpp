@@ -2,6 +2,7 @@
 #include <cmeta/type_traits.h>
 #include <cmeta/cmeta.h>
 #include <cmeta/collector.h>
+#include <cmeta/data.h>
 #include <cmeta/range.h>
 #include <cmeta/meta.h>
 #include "tinytest.hpp"
@@ -26,10 +27,18 @@ static_assert(CMETA_CONTAINER_TYPE_OPS_ABI_VERSION == 1u,
               "container type ops ABI starts at version 1");
 static_assert(CMETA_CONTAINER_EXT_ABI_VERSION == 1u,
               "container extension ABI starts at version 1");
+static_assert(CMETA_DATA_DESC_ABI_VERSION == 1u,
+              "semantic data descriptor ABI starts at version 1");
 static_assert(std::is_standard_layout_v<cmeta_container_type_ops>,
               "container type ops must remain a C-compatible standard-layout type");
 static_assert(std::is_standard_layout_v<cmeta_container_ext>,
               "container extensions must remain C-compatible standard-layout types");
+static_assert(std::is_standard_layout_v<cmeta_data_desc>,
+              "semantic data descriptors must remain C-compatible standard-layout types");
+static_assert(std::is_standard_layout_v<cmeta_data_struct_shape>,
+              "semantic struct shapes must remain standard layout");
+static_assert(std::is_standard_layout_v<cmeta_data_variant_shape>,
+              "semantic variant shapes must remain standard layout");
 
 static const cmeta_generic_desc cmeta_cpp_pair_generic =
     CMETA_GENERIC_DESC_INIT("cpp.Pair", "Pair", 2u, 2u, CMETA_GENERIC_VALUE);
@@ -107,5 +116,15 @@ spec("CMeta C++ public headers") {
                 offsetof(cmeta_container_ext, type) + sizeof(ext.type));
     check_true(ext.type == &type_ops);
     check_true(cmeta_container_extension(&object) == &ext);
+  }
+
+  it("exposes semantic data descriptors through C++17") {
+    cmeta_data_desc prefix = cmeta_data_int;
+    prefix.struct_size = offsetof(cmeta_data_desc, shape) + sizeof(prefix.shape);
+
+    check_true(cmeta_data_desc_valid(&prefix));
+    check_equal(cmeta_data_int.kind, CMETA_DATA_SINT);
+    check_equal(cmeta_data_set.kind, CMETA_DATA_SET);
+    check_true(cmeta_data_kind_is_container(CMETA_DATA_SET));
   }
 }
