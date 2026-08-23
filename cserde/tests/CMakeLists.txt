@@ -8,7 +8,12 @@ cmake_add_test(cserde_reader_test
   LIBS TurboUtils::CSerde TurboUtils::TinyTest
   FOLDER "cserde/tests")
 
-set_target_properties(cserde_token_test cserde_reader_test PROPERTIES
+cmake_add_test(cserde_writer_test
+  SOURCES cserde_writer_test.c
+  LIBS TurboUtils::CSerde TurboUtils::TinyTest
+  FOLDER "cserde/tests")
+
+set_target_properties(cserde_token_test cserde_reader_test cserde_writer_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
