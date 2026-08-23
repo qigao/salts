@@ -33,7 +33,7 @@
 
 - [x] Add `pkg-vcpkg` to the macOS Release configure inheritance without adding machine-local paths.
 - [x] Add a macOS Release test preset pointing at `build/mac-clang-release` and preserving the runner environment.
-- [ ] Run `cmake --list-presets`, `cmake --build --list-presets`, and `ctest --list-presets` on a macOS runner dry run; expected presets are visible only on Darwin.
+- [x] Run `cmake --list-presets`, `cmake --build --list-presets`, and `ctest --list-presets` on a macOS runner dry run; expected presets are visible only on Darwin.
 - [x] Commit as `build(macos): complete release preset contract`.
 
 ### Task 2: Native macOS conformance job
@@ -49,7 +49,7 @@
 - [x] Install `re2c` with Homebrew, derive `VCPKG_ROOT` from the runner environment, configure `release-mac-ninja`, and build `build-default-mac`.
 - [x] Run the existing owner regex through `test-release-mac --output-on-failure` and build `verify_installed_package`.
 - [x] Upload CMake/compiler/OS metadata on failure so host-specific issues are reproducible.
-- [ ] Dispatch the workflow on the branch and require the macOS job to pass.
+- [x] Dispatch the workflow on the branch and require the macOS job to pass.
 - [x] Commit as `ci(cflow): verify macOS execution foundation`.
 
 ### Task 3: Portable Android preset entry
@@ -64,7 +64,7 @@
 
 - [x] Split host-local Windows path settings from the portable Android toolchain contract. Keep `VCPKG_CHAINLOAD_TOOLCHAIN_FILE=$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake`, `ANDROID_PLATFORM=android-24`, and `ANDROID_ABI=arm64-v8a` in the portable preset.
 - [x] Add the build preset and retain `BUILD_TESTS=OFF`, `BUILD_EXAMPLES=OFF`, and `BUILD_BENCHMARKS=OFF` for cross-compilation.
-- [ ] Validate preset listing with Linux environment variables and confirm zero unresolved Windows-only paths.
+- [x] Validate preset listing with Linux environment variables and confirm zero unresolved Windows-only paths.
 - [x] Commit as `build(android): expose portable arm64 release preset`.
 
 ### Task 4: Android cross-build/package job
@@ -81,6 +81,14 @@
 - [x] Add an `android` job on pinned `ubuntu-24.04`; validate `ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake` before configure.
 - [x] Configure and build the arm64 Release preset, install to a job-local prefix, and verify exported headers/config/targets exist. Do not attempt to run Android binaries on the host.
 - [x] Upload the install tree, CMake cache, compiler configuration, NDK revision, ABI, and API level as evidence.
-- [ ] Dispatch the workflow and require configure/build/install success.
-- [x] Update the host evidence table with pending native macOS and cross-build/package Android evidence boundaries; Android runtime remains explicitly absent.
+- [x] Dispatch the workflow and require configure/build/install success.
+- [x] Update the host evidence table with verified native macOS and cross-build/package Android evidence boundaries; Android runtime remains explicitly absent.
 - [x] Run `git diff --check` and commit as `ci(cflow): verify Android arm64 package build`.
+
+## Execution Evidence
+
+- PR #58 branch head `7396925e2b0a6bb592c2122ff9c321a2b5489f3a` passed the manually dispatched [CMeta conformance run 32653089799](https://github.com/qigao/turbo-utils/actions/runs/32653089799) on 2026-08-24 (Asia/Shanghai).
+- [macOS 15 release](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227597826) passed native Release configure/build, owner tests, and installed-package consumer verification.
+- [Android arm64 Release cross-build](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595331) passed portable preset configure, cross-build, install, exported package checks, and evidence upload for `android-24`/`arm64-v8a`. No device or emulator runtime claim is made.
+- [Linux release](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595385) passed the owner-test boundary, Lean refinement certificate check, C certificate binding, and installed-package consumers; [Windows release](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595405) passed its combined Release configure/build/test step.
+- The final Core-only repair required `workflow_dispatch` because `.github/workflows/cmeta.yml` does not currently include `utils/**` in its path filter. The run above verifies the exact final code head despite that trigger-coverage limitation.

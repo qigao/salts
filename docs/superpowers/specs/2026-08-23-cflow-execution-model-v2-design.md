@@ -2,10 +2,13 @@
 
 ## Status
 
-In progress. Phase G-1 bounded admission, Phase G-2 ordered parallel reduction,
-and Phase G-3 Lean/C refinement evidence are implemented on the
-execution-model-v2 branch. Phase G-4 macOS/Android jobs are configured; their
-first passing branch workflow run remains required host evidence.
+Implemented and branch-verified. Phase G-1 bounded admission, Phase G-2 ordered
+parallel reduction, Phase G-3 Lean/C refinement evidence, and Phase G-4 host
+verification are complete on the execution-model-v2 branch. PR #58 branch head
+`7396925e2b0a6bb592c2122ff9c321a2b5489f3a` passed CMeta conformance run
+[32653089799](https://github.com/qigao/turbo-utils/actions/runs/32653089799)
+across Linux, Windows, and native macOS, plus Android arm64 cross-build/install
+evidence. Android device runtime remains outside this evidence boundary.
 
 The proposal intentionally does not add Event, Mailbox, Machine, Actor, reactor, or minicoro adapters. Those remain consumers of the execution foundation rather than prerequisites for completing the current Direct/Plan/Kernel model.
 
@@ -253,10 +256,19 @@ Primary references:
 
 The macOS job runs the same owner-test regex and installed-package consumer target as Linux/Windows. The Android job builds the exported libraries and installs the package for arm64; it cannot run host executables produced for Android.
 
-Before the first successful branch run, these jobs are configured evidence
-requirements rather than completed host verification. The Android artifact
-contains the install tree, CMake cache/configure log, NDK revision, compiler
-version, ABI, and API level so a cross-toolchain failure can be reproduced.
+The first current-head branch verification completed in PR #58 run
+[32653089799](https://github.com/qigao/turbo-utils/actions/runs/32653089799):
+
+| Host job | Result | Evidence boundary |
+|---|---|---|
+| [Linux release](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595385) | Passed | Release build, owner tests, Lean refinement check, C certificate binding, and installed-package consumers. |
+| [Windows release](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595405) | Passed | Release configure, build, and test. |
+| [macOS 15 release](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227597826) | Passed | Native Release build, owner tests, and installed-package consumers. |
+| [Android arm64 Release cross-build](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595331) | Passed | `android-24`/`arm64-v8a` configure, cross-build, install, export checks, and evidence artifact; no runtime execution. |
+
+The Android artifact contains the install tree, CMake cache/configure log, NDK
+revision, compiler version, ABI, and API level so a cross-toolchain failure can
+be reproduced.
 
 ## Verification matrix
 
