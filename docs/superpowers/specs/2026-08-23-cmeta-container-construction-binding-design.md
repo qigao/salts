@@ -47,16 +47,34 @@ CBind 不参与本阶段实现。它以后只编排该链路，不解析 Vec/Map
 - 不增加 constructor matcher、全局 type application registry、动态 descriptor cache 或进程级初始化。
 - 不让 Collector 推导、缓存或拥有 declared T/K/V。
 - 不改变 TurboSTL raw container 算法、容量语义、树/哈希实现或现有 natural instance API。
-- 不在本 PR 引入“容器作为另一个容器的 owning element”所需的整容器 copy/move/destroy traits。`Vec<Vec<int>>` 的 declared identity 可以由后续递归 TYPE 扩展表达，但让外层 Vec 拷贝/销毁内层 Vec 是独立 ownership 能力，不属于 zero-handle binding。
+- 不在本 PR 引入“容器作为另一个容器的 owning element”所需的整容器 copy/move/destroy traits。因此 `TYPE(Vec, TYPE(Vec, int))`、`Vec<Vec<int>>` 作为 owning element 以及 `Map<K, Vec<V>>` 的值 ownership 不属于本阶段。
 - 不以字符串 `"Vec<int>"` 作为类型判断依据；字符串只用于展示。
+
+这里的“nested-container”目标是 **对象/Struct 图中嵌套的 container field**：例如一个 `Payload` 内部有全零 `Vec<int>` 字段，CBind 将来需要在读入元素前先给该字段绑定 T。它不是本 PR 顺手实现 container-of-container ownership。
 
 ## 已有约束
 
-### `cmeta_type_identity` 已负责语义身份
+### `cmeta_type_identity` 已负责运行时语义身份
 
 `cmeta_type_identity` 已支持 `CMETA_TYPE_APPLY`，generic constructor 通过 `stable_id` 比较，参数递归按 identity 比较。`cmeta_type_equal()` 在 descriptor 带 identity 时使用该语义比较，而不是 descriptor 地址。
 
-因此 declared type 不建立第二套 identity equality；它必须复用现有 application identity。
+运行时对象完成 bind 后，现有：
+
+```text
+cmeta_container_type_constructor(object)
+cmeta_container_type_argument(object, i)
+cmeta_container_type_application_valid(object)
+```
+
+继续是 runtime generic identity 的唯一事实源。
+
+### header 不能静态复制 application identity
+
+builtin atom identity（例如 int 对应 identity）目前是 `cmeta.c` 内部 static object。header 生成器可以常量初始化 `&cmeta_type_int`，但不能用 `cmeta_type_int.identity` 去静态初始化另一个全局 `cmeta_type_identity *` 数组，因为读取 extern object member 不是 ISO C static constant initializer。
+
+因此 declared TYPE **不伪造第二个 `CMETA_TYPE_APPLY` object**，也不要求导出所有 atom identity。它保存 canonical generic constructor 和 argument descriptors；validation 时从 descriptor 取得 identity 并调用现有 `cmeta_type_application_valid()`。
+
+这样 declared metadata 是“可构造声明”，不是第二套 type-identity 系统。
 
 ### TurboSTL handle 保存的是 `cmeta_type_desc *`
 
@@ -78,31 +96,41 @@ Sequence collector factory 从 output 读取 element type；Map-family collector
 
 ## 方案比较
 
-### 方案 A：declared application + 独立 construction ops（采用）
+### 方案 A：declared constructor + argument descriptors + construction ops（采用）
 
-字段静态元数据拥有一个 `cmeta_declared_type`。它引用完整 application `cmeta_type_desc`、即时类型参数 descriptor，以及 construction ops。application descriptor 的 identity 使用现有 `CMETA_TYPE_APPLY`。
+字段静态元数据拥有一个 `cmeta_declared_type`。它引用：
 
-construction ops 由具体容器库提供；CMeta 只做通用校验和调度。zero handle 不做 runtime registry lookup。
+- 实际 C storage descriptor（例如 `vec_t` 的 size/align/kind）；
+- canonical generic constructor（例如 `stl_vec_generic_desc`）；
+- 直接写入 handle 的 argument descriptors（例如 `&cmeta_type_int`）；
+- provider construction ops。
 
-优点：依赖方向正确、无全局状态、T/K/V 只有声明和实例这两个自然生命周期位置、可直接给 Collector 准备 output、以后 CBind 只是 orchestration。
+validation 从 argument descriptor 读取现有 identity，调用 CMeta 既有 generic application validation。zero handle 不做 runtime registry lookup。
 
-### 方案 B：identity → descriptor runtime resolver / registry（拒绝）
+优点：所有 static initializer 都是 symbol address/整数常量；依赖方向正确；无全局状态；不复制 identity 实现；以后 CBind 只是 orchestration。
 
-字段只保存 `CMETA_TYPE_APPLY(Vec,int)`，运行时通过 registry 把 identity 解析成 constructible descriptor。
+### 方案 B：header 生成第二个 `cmeta_type_identity APPLY`（拒绝）
+
+除了形成第二个 application representation，还要求 header 能取得 atom identity 的常量地址。当前 identity 是 descriptor member 指向的内部 object，不能在严格 C 静态 initializer 中通过 `descriptor.identity` 取值。为满足该方案导出全部 atom identity 会扩大无必要 public surface。
+
+### 方案 C：identity → descriptor runtime resolver / registry（拒绝）
+
+字段只保存 logical APPLY，运行时通过 registry 解析 constructible storage/ops。
 
 拒绝原因：需要 application canonicalization、registry 生命周期、并发和动态缓存；还会把本来编译期已知的字段类型变成运行时查找。
 
-### 方案 C：Collector/CBind 各自保存 T/K/V（拒绝）
+### 方案 D：Collector/CBind 各自保存 T/K/V（拒绝）
 
 这会重新制造 semantic-data 阶段刚刚消除的多事实源。Collector 也会从“消费已绑定 output”退化为“理解每个具体容器的构造器”。
 
 ## CMeta declared type
 
-新增公开只读结构，放在独立的 type/declaration 层，概念接口为：
+新增公开只读结构，放在独立 `cmeta/declared_type.h`：
 
 ```c
 typedef struct cmeta_declared_type {
-    const cmeta_type_desc *type;
+    const cmeta_type_desc *storage_type;
+    const cmeta_generic_desc *constructor;
     const cmeta_type_desc *const *arguments;
     size_t arity;
     const struct cmeta_container_construct_ops *construction;
@@ -111,10 +139,11 @@ typedef struct cmeta_declared_type {
 
 语义：
 
-- `type` 是完整声明类型的 descriptor。generic container 字段的 `type->identity` 必须是 `CMETA_TYPE_APPLY`。
-- `arguments` 是直接写入 runtime handle 的即时参数 descriptor。它们的 identity 必须逐项等于 `type->identity->args`。
-- `arity` 与 application identity arity 相同。
-- `construction` 为可选 capability；非 constructible generic type 可以为 NULL。
+- `storage_type` 描述字段的实际 C storage：size / align / kind。对 TurboSTL TYPE field，它是 provider 的 canonical handle-storage descriptor，identity 可以为 NULL，因为 generic application identity 不由 storage layout 决定。
+- `constructor` 是 canonical generic constructor。
+- `arguments` 是直接写入 runtime handle 的即时参数 descriptor。
+- `arity` 必须被 constructor 接受。
+- `construction` 为可选 capability；非 constructible generic type可以为 NULL。
 
 提供：
 
@@ -125,7 +154,14 @@ const cmeta_type_desc *cmeta_declared_type_argument(
     const cmeta_declared_type *declared, size_t index);
 ```
 
-validation 是 shallow capability validation + recursive identity validation，不分配内存。
+`cmeta_declared_type_valid()`：
+
+1. 验证 `storage_type`、`constructor`、arity。
+2. 验证每个 argument 是合法 `cmeta_type_desc` 且存在合法 identity。
+3. 在栈上收集 argument identity pointers。
+4. 调用既有 `cmeta_type_application_valid(constructor, identities, arity)`。
+
+不分配、不注册、不缓存 application object。
 
 ## 字段 TYPE DSL
 
@@ -143,10 +179,23 @@ Struct(Payload,
 
 - `TYPE(Vec, int)` 的实际 C storage 是 `vec_t`。
 - `TYPE(Map, int, long)` 的实际 C storage 是 `map_t`。
-- provider header（例如 `<turbostl/typed.h>`）注册 kind → storage / generic constructor / construction ops 的编译期映射。
+- provider header（例如 `<turbostl/typed.h>`）注册 kind → storage C type / storage descriptor / generic constructor / construction ops 的编译期映射。
 - 未注册 kind 在编译期失败，不 fallback 到字符串或 runtime lookup。
+- 本阶段 TYPE argument 必须是 `CMETA_TYPEOF(...)` 能解析到合法 descriptor 的普通具体 C type；nested `TYPE(...)` argument 不在 C3 grammar 中。
 
 `TYPE(...)` 是 CMeta schema/type-position spec，不是新的 C 语言类型，也不生成 `Vec_int`、`Map_int_long` 等用户可见 typedef。
+
+### TYPE spec 的预处理器表示
+
+CMeta 用 tagged parenthesized spec 保存 source tokens，例如概念上：
+
+```c
+#define TYPE(kind, ...) (CMETA_TYPE_SPEC_TAG, kind, __VA_ARGS__)
+```
+
+`Struct` replay 在 declaration pass 中把 spec 降为 provider storage C type；在 metadata pass 中生成 TU-local argument descriptor array 和 `cmeta_declared_type`。
+
+普通 `int`、`double` 等非 TYPE 字段继续走现有 declaration 路径。preprocessor dispatch 只识别带 CMeta tag 的 tuple，不把任意 parenthesized C token 当 generic type。
 
 ### `cmeta_field_desc` 扩展
 
@@ -160,17 +209,16 @@ const cmeta_declared_type *declared_type;
 规则：
 
 - 普通 `(int, id)`：`type == CMETA_TYPEOF(int)`，`declared_type == NULL`。
-- `(TYPE(Vec, int), values)`：`type` 指向该字段 TU-local 的 application descriptor，`declared_type` 指向其 declared metadata。
-- `type_name` 保持展示用途；TYPE 字段允许保留 source spelling，不参与 equality 或 binding。
+- `(TYPE(Vec, int), values)`：`type == declared_type->storage_type`，`declared_type != NULL`。
+- `type_name` 保持展示用途；TYPE 字段允许保留 source spelling `TYPE(Vec, int)`，不参与 equality 或 binding。
 
-TYPE 字段生成的 application descriptor 至少包含：
+TurboSTL provider 为每个 handle kind 暴露 canonical storage descriptor，例如概念上：
 
-```text
-name / sizeof(storage) / alignof(storage) / CMETA_T_OBJECT
-identity = APPLY(canonical constructor, argument identities)
+```c
+extern const cmeta_type_desc stl_vec_storage_type;
 ```
 
-本阶段 application descriptor 不承诺 whole-container ownership traits，因此不能据此声称 `Vec<Vec<int>>` 已经可以作为 owning element 被外层容器复制。
+它只描述 `vec_t` layout，不宣称 `Vec<int>` application identity，也不默认提供 whole-container ownership traits。
 
 ## Container construction extension
 
@@ -222,21 +270,30 @@ cmeta_status cmeta_container_bind_types(
 ```text
 validate declared type
         ↓
-validate construction ops ABI
+require constructible + validate construction ops ABI
         ↓
-validate declared application constructor / arity
-against construction->descriptor ext.type
+obtain canonical runtime constructor from construction->descriptor.ext.type
         ↓
-validate every argument descriptor and identity
+compare constructor stable identity + arity with declared
+        ↓
+validate every argument descriptor / identity
         ↓
 call provider bind_types(object, arguments, arity)
 ```
 
 CMeta 不读取 zero object 的 descriptor 来发现 provider。
 
+成功 bind 后，runtime object 自己的 `.type` introspection 重新成为 authoritative runtime application；declared metadata 不需要生成另一份 runtime identity object。
+
 ## TurboSTL bind contract
 
-TurboSTL 为所有 canonical generic kinds 提供一个 construction ops object。unary/binary adapter 可共享实现宏，但最终每个 kind 都绑定自己的 canonical `cmeta_container_desc`。
+TurboSTL 为所有 canonical generic kinds 提供：
+
+1. canonical storage descriptor；
+2. TYPE provider macro registration；
+3. construction ops object。
+
+unary/binary adapter 可共享实现宏，但最终每个 kind 都绑定自己的 canonical `cmeta_container_desc`。
 
 ### Unary
 
@@ -254,6 +311,8 @@ arity = 2
 argument[0] → key_type
 argument[1] → value_type
 ```
+
+construction 与 semantic `.data` 独立，因此 Heap / MultiMap 即使 `.data == NULL`，仍然必须支持 declared type binding。
 
 ### 状态语义
 
@@ -303,7 +362,7 @@ Map-family 同理，在 collector begin 前 key/value 已存在。
 ## 依赖边界
 
 ```text
-CMeta type identity / Struct metadata
+CMeta type descriptors / identities / Struct metadata
         ↓
 cmeta_declared_type + generic construction protocol
         ↓
@@ -326,17 +385,18 @@ CMeta 不 include TurboSTL。TurboSTL include CMeta 并注册自己的 TYPE prov
 - TurboSTL public handle 字段顺序、size/align 不因 construction binding 改变。
 - 已存在 `Vec(int, name)` 等 declaration DSL 和 natural instance API 继续工作。
 - 旧 synthetic extension 的 `struct_size` 不覆盖 construction 字段时，`cmeta_container_construction()` 安全返回 NULL。
-- TYPE application descriptor 是 TU-local static metadata；跨 TU equality 使用 existing identity semantics，不要求地址相等。
+- declared TYPE metadata 是 TU-local static metadata；其 constructor equality 依赖 existing stable generic ID，argument equality 依赖 existing descriptor identity semantics，不要求 metadata 地址相等。
 
 `cmeta_field_desc` 只在末尾追加字段。旧 5-field aggregate initializer 的新增尾字段按 C/C++ aggregate 规则为零；Struct 生成器更新为填充新字段。
 
 ## 错误与所有权
 
-- declared metadata、application descriptor、construction ops 全部 immutable，不拥有 runtime object。
+- declared metadata、storage descriptor、construction ops 全部 immutable，不拥有 runtime object。
 - bind 不分配内存，因此不存在 OOM 分支。
 - bind 不取得 payload ownership，也不调用 element/key/value copy/move/destroy。
 - argument descriptor 生命周期必须至少覆盖使用它的 bound handle；CMeta/TurboSTL 生成的字段 metadata 为 static storage duration。
 - live container 的 destroy/init 语义仍由 TurboSTL 现有 API 管理。
+- storage descriptor 不提供 shallow handle memcpy 作为 owning copy；后续 whole-container ownership 必须显式实现。
 
 ## TDD 设计
 
@@ -367,7 +427,7 @@ cmeta_container_bind_types(&payload.values, field->declared_type)
 验证：
 
 - 字段实际 storage 为 `vec_t`，offset/size/align 正确。
-- declared application constructor 为 canonical `stl_vec_generic_desc`，arity=1，argument=int。
+- declared constructor 为 canonical `stl_vec_generic_desc`，arity=1，argument=int。
 - zero field bind 后 runtime generic introspection 返回 Vec<int>。
 - Collector begin/accept/finish 成功，结果元素正确。
 
@@ -378,6 +438,16 @@ cmeta_container_bind_types(&payload.values, field->declared_type)
 ### GREEN 3：所有 TurboSTL generic kind construction mapping
 
 用最小 unary/binary matrix 验证 13 个 kind 的 canonical descriptor、arity 与 binding slot，不把 semantic `data` 是否存在作为 construction 前提；因此 Heap/MultiMap 也必须能绑定。
+
+### declared validation
+
+CMeta test 使用 synthetic storage descriptor + generic descriptor 验证：
+
+- arity 被 constructor 接受；
+- NULL / malformed argument 被拒绝；
+- argument identity 缺失或非法被拒绝；
+- constructible helper 只接受合法 construction ops；
+- validation 不依赖 runtime registry。
 
 ### 状态与错误测试
 
@@ -426,9 +496,9 @@ Windows release
 本设计按单 PR 完成，但提交保持可审查边界：
 
 1. RED：TYPE field + construction/bind contract tests。
-2. CMeta declared-type core 与 Struct tail metadata。
+2. CMeta declared-type core、TYPE spec preprocessor dispatch 与 Struct tail metadata。
 3. append-only container construction protocol + validation/accessors。
-4. TurboSTL unary construction binding。
+4. TurboSTL storage descriptors / TYPE provider registration / unary construction binding。
 5. TurboSTL binary construction binding。
 6. Collector integration tests、negative-state tests、C++ ABI tests。
 7. exact-head Linux + Windows CI，扫描 diff 确认没有 CBind/CSerde/parser/DataBind/TBE 改动。
@@ -446,4 +516,4 @@ field metadata
 
 下一 PR 才让 CBind 在遇到 container field 时调用上述 primitive。CBind 不获得新的 TurboSTL-specific switch。
 
-若以后需要真正的 `Vec<Vec<int>>` / `Map<K, Vec<V>>` owning-container composition，则另开 ownership PR，为 container application descriptor 提供正确的 whole-container copy/move/destroy traits；不得把 shallow handle memcpy 偷渡进本 construction PR。
+若以后需要真正的 `Vec<Vec<int>>` / `Map<K, Vec<V>>` owning-container composition，则另开 ownership PR，为 container application value 提供正确的 whole-container copy/move/destroy traits，并决定 nested TYPE argument 的 descriptor/identity 生成方式；不得把 shallow handle memcpy 偷渡进本 construction PR。
