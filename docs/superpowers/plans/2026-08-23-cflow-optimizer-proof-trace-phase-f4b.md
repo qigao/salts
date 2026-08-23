@@ -95,7 +95,7 @@
 - [x] Run the complete Clang Release CMeta/CFlow CTest filter.
 - [x] Run five Direct benchmark samples per compiler and compare medians to F-3.
 - [x] Run `git diff --check` and confirm no unowned files entered the diff.
-- [ ] Commit and push F-4B to Draft PR #35.
+- [x] Commit and push F-4B to Draft PR #35.
 
 Paired same-session throughput medians (ops/s), baseline `0ca17d6` versus
 F-4B:
