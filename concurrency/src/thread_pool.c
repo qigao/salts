@@ -1,4 +1,5 @@
 #include <turbo/disruptor.h>
+#include <turbo/error_codes.h>
 #include <turbo/thread.h>
 #include <turbo/thread_pool.h>
 
@@ -293,15 +294,17 @@ static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool,
   task_entry_t *entry;
   unsigned int wait_rounds = 0U;
 
-  if (pool == NULL || task == NULL) return -1;
+  if (pool == NULL || task == NULL) return TURBO_EINVAL;
   if (!atomic_load(&pool->accepting) || atomic_load(&pool->shutdown)) {
     atomic_fetch_add(&pool->tasks_rejected, 1);
-    return -1;
+    return TURBO_ESHUTDOWN;
   }
 
   if (!turbo_threadpool_try_reserve_queue_slot(pool, blocking)) {
     atomic_fetch_add(&pool->tasks_rejected, 1);
-    return -1;
+    return (!atomic_load(&pool->accepting) || atomic_load(&pool->shutdown))
+               ? TURBO_ESHUTDOWN
+               : TURBO_ENOBUFS;
   }
 
   while (!disruptor_publisher_try_claim(pool->queue, &cursor)) {
@@ -309,7 +312,9 @@ static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool,
         atomic_load(&pool->shutdown)) {
       turbo_threadpool_release_queue_slot(pool);
       atomic_fetch_add(&pool->tasks_rejected, 1);
-      return -1;
+      return (!atomic_load(&pool->accepting) || atomic_load(&pool->shutdown))
+                 ? TURBO_ESHUTDOWN
+                 : TURBO_ENOBUFS;
     }
 
     if ((++wait_rounds & 0xFFU) == 0U)
@@ -324,7 +329,7 @@ static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool,
   atomic_fetch_add(&pool->tasks_submitted, 1);
   (void)disruptor_publisher_publish(pool->queue, &cursor);
   turbo_threadpool_signal_task_available(pool);
-  return 0;
+  return TURBO_OK;
 }
 
 int turbo_threadpool_submit(turbo_threadpool_t *pool,
