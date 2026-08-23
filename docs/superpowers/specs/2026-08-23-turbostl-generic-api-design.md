@@ -79,8 +79,8 @@ checking, typed Range entries, or a typed collector can opt into
 
 Generated `Type_method` symbols are the concrete typed ABI. Distinct
 `collect_typed`/`to_list_typed` terminals accept an explicit output type without
-shadowing raw function names. No `.cmeta` frontend, angle-bracket syntax,
-parser, or code-generation step is introduced.
+shadowing raw function names. No alternate frontend, parser, or code-generation
+step is introduced.
 
 ## Alternatives considered
 
@@ -90,7 +90,7 @@ parser, or code-generation step is introduced.
 - Offer only erased output inference: rejected because generated callers would
   lose an explicit result type and compile-time pointer checking. The erased
   terminal remains as the compatibility form rather than the sole form.
-- Add C++-style `Map<int, long>` syntax: impossible in C11 without a new frontend and explicitly outside this change.
+- Add syntax that requires a non-C11 frontend: explicitly outside this change.
 
 ## Verification and rollback
 

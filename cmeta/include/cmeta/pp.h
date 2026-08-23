@@ -34,9 +34,23 @@
 #define CMETA_PP_CAT_I(a, b) a##b
 #define CMETA_PP_CAT(a, b) CMETA_PP_CAT_I(a, b)
 #define CMETA_PP_UNPAREN(...) __VA_ARGS__
+#define CMETA_PP_FIRST(first, ...) first
 
 #define CMETA_PP_NARG_I(_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,N,...) N
 #define CMETA_PP_NARG(...) CMETA_PP_NARG_I(__VA_ARGS__,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0)
+
+/* A finite relation row contains one through three inputs followed by one
+ * result. These helpers let semantic frontends infer the public arity from
+ * their first packed row while keeping the numbered implementation families. */
+#define CMETA_PP_TUPLE_NARG(tuple) CMETA_PP_TUPLE_NARG_I tuple
+#define CMETA_PP_TUPLE_NARG_I(...) CMETA_PP_NARG(__VA_ARGS__)
+#define CMETA_PP_RELATION_ARITY_2 1
+#define CMETA_PP_RELATION_ARITY_3 2
+#define CMETA_PP_RELATION_ARITY_4 3
+#define CMETA_PP_RELATION_ARITY(row) \
+    CMETA_PP_CAT(CMETA_PP_RELATION_ARITY_, CMETA_PP_TUPLE_NARG(row))
+#define CMETA_PP_FIRST_RELATION_ARITY(...) \
+    CMETA_PP_RELATION_ARITY(CMETA_PP_FIRST(__VA_ARGS__))
 
 #define CMETA_PP_FEA_1(M,C,a) M(a,C)
 #define CMETA_PP_FEA_2(M,C,a,...) M(a,C) CMETA_PP_FEA_1(M,C,__VA_ARGS__)

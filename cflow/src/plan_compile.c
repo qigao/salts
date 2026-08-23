@@ -7,6 +7,46 @@
 #include <stdint.h>
 #include <string.h>
 
+#define CFLOW_PLAN_INFERENCE_ROWS \
+    (CFLOW_OP_FILTER, CFLOW_OUTPUT_SAME, CMETA_CARD_FILTER, \
+     CMETA_PLAN_FILTER), \
+    (CFLOW_OP_MAP, CFLOW_OUTPUT_RETURN, CMETA_CARD_ONE, \
+     CMETA_PLAN_MAP), \
+    (CFLOW_OP_TRANSFORM, CFLOW_OUTPUT_RETURN, CMETA_CARD_ONE, \
+     CMETA_PLAN_MAP), \
+    (CFLOW_OP_FLAT_MAP, CFLOW_OUTPUT_POINTEE1, CMETA_CARD_EXPAND, \
+     CMETA_PLAN_FLAT_MAP), \
+    (CFLOW_OP_REDUCE, CFLOW_OUTPUT_SAME, CMETA_CARD_REDUCE, \
+     CMETA_PLAN_REDUCE)
+
+ValueFunction(CFlowPlanOpcode, CFLOW_PLAN_INFERENCE_ROWS);
+InferenceRules(cflow_plan_inference_relation, CFLOW_PLAN_INFERENCE_ROWS);
+
+typedef struct cflow_plan_inference {
+    cmeta_infer_dfa dfa;
+    cmeta_infer_state states[
+        CMETA_INFER_STATE_BOUND(
+            InferenceRuleCount(cflow_plan_inference_relation),
+            InferenceRuleArity(cflow_plan_inference_relation))];
+    cmeta_infer_transition transitions[
+        CMETA_INFER_TRANSITION_BOUND(
+            InferenceRuleCount(cflow_plan_inference_relation),
+            InferenceRuleArity(cflow_plan_inference_relation))];
+} cflow_plan_inference;
+
+static cmeta_infer_status cflow_plan_inference_build(
+    cflow_plan_inference *inference) {
+    if (inference == NULL) return CMETA_INFER_INVALID_ARGUMENT;
+    cmeta_infer_dfa_init(
+        &inference->dfa,
+        inference->states,
+        sizeof(inference->states) / sizeof(inference->states[0]),
+        inference->transitions,
+        sizeof(inference->transitions) / sizeof(inference->transitions[0]));
+    return cmeta_infer_dfa_build(
+        &inference->dfa, &cflow_plan_inference_relation);
+}
+
 static cflow_plan_impl *plan_impl(cflow_plan *p) {
     return p ? (cflow_plan_impl *)p->impl : NULL;
 }
@@ -99,20 +139,35 @@ static void prepare_fused_value(cflow_plan_impl *impl) {
     impl->fused_value = true;
 }
 
-static cflow_plan_opcode opcode_for(const cflow_node *n, bool *ok) {
-    *ok = true;
-    switch (n->op) {
-        case CFLOW_OP_FILTER: return CMETA_PLAN_FILTER;
-        case CFLOW_OP_MAP:
-        case CFLOW_OP_TRANSFORM: return CMETA_PLAN_MAP;
-        case CFLOW_OP_FLAT_MAP: return CMETA_PLAN_FLAT_MAP;
-        case CFLOW_OP_REDUCE: return CMETA_PLAN_REDUCE;
-        default: *ok = false; return CMETA_PLAN_MAP;
-    }
+static cmeta_infer_status opcode_for(
+    const cflow_plan_inference *inference,
+    const cflow_node *node,
+    cflow_plan_opcode *out_opcode) {
+    const cflow_op_schema *schema;
+    cmeta_infer_symbol symbols[3];
+    cmeta_infer_value result;
+    cmeta_infer_status status;
+
+    if (inference == NULL || node == NULL || out_opcode == NULL)
+        return CMETA_INFER_INVALID_ARGUMENT;
+    schema = cflow_op_schema_get(node->op);
+    if (schema == NULL) return CMETA_INFER_NO_RULE;
+
+    symbols[0] = (cmeta_infer_symbol)node->op;
+    symbols[1] = (cmeta_infer_symbol)schema->output;
+    symbols[2] = (cmeta_infer_symbol)schema->cardinality;
+    status = cmeta_infer_dfa_eval(
+        &inference->dfa, symbols, 3u, &result);
+    if (status != CMETA_INFER_OK) return status;
+    if (result > (cmeta_infer_value)CMETA_PLAN_REDUCE)
+        return CMETA_INFER_AMBIGUOUS_RULE;
+    *out_opcode = (cflow_plan_opcode)result;
+    return CMETA_INFER_OK;
 }
 
 static bool plan_path_supported(const cflow_subgraph *subgraph,
                                 const cflow_dense_successor_index *index,
+                                const cflow_plan_inference *inference,
                                 size_t *instruction_count) {
     cflow_node_id id;
     size_t instructions = 0u;
@@ -129,9 +184,9 @@ static bool plan_path_supported(const cflow_subgraph *subgraph,
         node = cflow_subgraph_node(subgraph, id);
         if (!node) return false;
         if (node->op != CFLOW_OP_SOURCE) {
-            bool supported = false;
-            (void)opcode_for(node, &supported);
-            if (!supported || node->op == CFLOW_OP_RELATION || node->subgraph_count)
+            cflow_plan_opcode opcode;
+            if (opcode_for(inference, node, &opcode) != CMETA_INFER_OK ||
+                node->op == CFLOW_OP_RELATION || node->subgraph_count)
                 return false;
             ++instructions;
         }
@@ -152,14 +207,17 @@ static bool plan_compile_fail(cflow_plan *plan,
 
 bool cflow_plan_graph_supported(const cflow_graph *graph) {
     cflow_dense_successor_index index = {0};
+    cflow_plan_inference inference;
     bool supported;
 
     if (!graph || !cflow_graph_is_normalized(graph) || graph->root >= graph->subgraph_count)
         return false;
     const cflow_subgraph *sg = &graph->subgraphs[graph->root];
+    if (cflow_plan_inference_build(&inference) != CMETA_INFER_OK)
+        return false;
     if (cflow_dense_successor_index_build(&index, sg) != CFLOW_DENSE_SUCCESSOR_INDEX_OK)
         return false;
-    supported = plan_path_supported(sg, &index, NULL);
+    supported = plan_path_supported(sg, &index, &inference, NULL);
     cflow_dense_successor_index_destroy(&index);
     return supported;
 }
@@ -175,6 +233,9 @@ bool cflow_plan_compile(cflow_plan *plan,
     if (!cflow_graph_validate(graph, &err)) return plan_fail(plan, err ? err : "invalid Graph");
     const cflow_subgraph *sg = &graph->subgraphs[graph->root];
     cflow_dense_successor_index index = {0};
+    cflow_plan_inference inference;
+    if (cflow_plan_inference_build(&inference) != CMETA_INFER_OK)
+        return plan_fail(plan, "plan inference rules are invalid");
     cflow_dense_successor_index_status index_status =
         cflow_dense_successor_index_build(&index, sg);
     if (index_status != CFLOW_DENSE_SUCCESSOR_INDEX_OK)
@@ -182,7 +243,7 @@ bool cflow_plan_compile(cflow_plan *plan,
                                    ? "allocation failed"
                                    : "Graph contains invalid topology");
     size_t instruction_count = 0u;
-    if (!plan_path_supported(sg, &index, &instruction_count)) {
+    if (!plan_path_supported(sg, &index, &inference, &instruction_count)) {
         cflow_dense_successor_index_destroy(&index);
         return plan_fail(plan, "Graph contains a semantic not supported by direct plan");
     }
@@ -218,10 +279,16 @@ bool cflow_plan_compile(cflow_plan *plan,
         if (!n) return plan_compile_fail(plan, &index, "invalid node id while compiling plan");
         if (stats) ++stats->graph_nodes;
         if (n->op != CFLOW_OP_SOURCE) {
-            bool ok = false;
-            cflow_plan_opcode op = opcode_for(n, &ok);
-            cflow_plan_step_fn step = ok ? cflow_plan_step_for_opcode(op) : NULL;
-            if (!ok || !step) return plan_compile_fail(plan, &index, "plan step is unavailable");
+            cflow_plan_opcode op;
+            cmeta_infer_status inference_status =
+                opcode_for(&inference, n, &op);
+            cflow_plan_step_fn step =
+                inference_status == CMETA_INFER_OK
+                    ? cflow_plan_step_for_opcode(op)
+                    : NULL;
+            if (inference_status != CMETA_INFER_OK || !step)
+                return plan_compile_fail(
+                    plan, &index, "plan step inference failed");
             cflow_plan_inst inst;
             memset(&inst, 0, sizeof(inst));
             inst.opcode = op;
@@ -263,7 +330,10 @@ bool cflow_plan_compile(cflow_plan *plan,
                 return plan_compile_fail(plan, &index, "plan instruction count changed");
             }
             impl->code[impl->count++] = inst;
-            if (stats) ++stats->instructions;
+            if (stats) {
+                ++stats->instructions;
+                ++stats->inference_queries;
+            }
         }
         cflow_node_id successor;
         if (!cflow_dense_successor_index_successor(&index, id, &successor)) break;

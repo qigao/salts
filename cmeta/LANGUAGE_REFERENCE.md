@@ -318,6 +318,154 @@ Replay = consumer application
 One schema can therefore feed declaration, metadata, validation, counting, or
 other framework mappers without creating another user-facing language layer.
 
+### Finite compile-time functions
+
+Finite functions declare explicit mappings and evaluate them through generated
+C declarations. They do not add C++ template syntax or a runtime evaluator.
+
+```c
+TypeFunction(StorageType,
+    (small, SmallStorage),
+    (wide, WideStorage));
+
+TypeFunction(CommonType,
+    (small, small, SmallStorage),
+    (small, wide, WideStorage),
+    (wide, small, WideStorage),
+    (wide, wide, WideStorage));
+
+typedef TypeEval(StorageType, small) storage_type;
+typedef TypeEval(CommonType, small, wide) common_type;
+```
+
+`TypeFunction` infers the input arity from its first row, while `TypeEval`
+infers it from the number of input keys. The corresponding integer-constant
+forms are `ValueFunction` and `ValueEval`:
+
+```c
+ValueFunction(TypeRank,
+    (small, 1),
+    (wide, 2));
+
+enum { wide_rank = ValueEval(TypeRank, wide) };
+```
+
+`Predicate` is a unary boolean value function. `Satisfies` evaluates it and
+`Require` rejects a false row with a C/C++ static assertion:
+
+```c
+Predicate(Hashable, (small, 1), (opaque, 0));
+Require(Hashable, small);
+```
+
+The declaration contract is deliberately finite and fail-fast:
+
+- A function name and every input key must each be one stable preprocessor
+  identifier.
+- A declaration contains 1 through 16 rows. More rows can be added by repeating
+  the same function name in separate bounded declarations.
+- The first row determines input arity; every later row in that declaration
+  must have the same shape or compilation fails.
+- A value result is an integer constant expression. Complex type results should
+  first receive a stable typedef name.
+- Evaluating an absent mapping produces an unknown generated identifier, while
+  declaring conflicting rows produces a C declaration conflict. Neither case
+  has a fallback.
+
+Arity is part of each generated identifier, so unary, binary, and ternary
+functions with the same public name remain distinct. Declaration work is linear
+in the number of rows; an evaluation is fixed token lookup rather than a scan
+or a generated binary/ternary Cartesian product. Only the unified entry points
+are public; numbered implementation families remain internal.
+
+### Finite DFA inference
+
+`InferenceRules` projects explicit integer-symbol rows into an ordinary C
+relation and infers arity from the first row. A row contains one through three
+input symbols followed by one result.
+Each declaration accepts the same bounded 1–16 row list as the underlying
+`CMETA_PP_FOR_EACH_A` projection.
+The row source may be shared with a matching `ValueFunction` so compile-time and
+admission-time evaluation cannot drift:
+
+```c
+#include <cmeta/meta.h>
+
+enum {
+    OP_ADD = 1,
+    TYPE_SMALL = 10,
+    TYPE_WIDE = 11
+};
+
+#define CommonRows \
+    (TYPE_SMALL, TYPE_SMALL, TYPE_SMALL), \
+    (TYPE_SMALL, TYPE_WIDE, TYPE_WIDE), \
+    (TYPE_WIDE, TYPE_SMALL, TYPE_WIDE)
+
+ValueFunction(CommonType, CommonRows);
+InferenceRules(common_type_relation, CommonRows);
+
+int main(void) {
+    cmeta_infer_state states[
+        CMETA_INFER_STATE_BOUND(
+            InferenceRuleCount(common_type_relation),
+            InferenceRuleArity(common_type_relation))];
+    cmeta_infer_transition transitions[
+        CMETA_INFER_TRANSITION_BOUND(
+            InferenceRuleCount(common_type_relation),
+            InferenceRuleArity(common_type_relation))];
+    cmeta_infer_dfa dfa;
+    cmeta_infer_value result = 0u;
+    const cmeta_infer_symbol input[] = {TYPE_SMALL, TYPE_WIDE};
+
+    cmeta_infer_dfa_init(
+        &dfa, states, sizeof(states) / sizeof(states[0]), transitions,
+        sizeof(transitions) / sizeof(transitions[0]));
+    if (cmeta_infer_dfa_build(&dfa, &common_type_relation) !=
+        CMETA_INFER_OK)
+        return 1;
+    if (cmeta_infer_dfa_eval(&dfa, input, 2u, &result) != CMETA_INFER_OK)
+        return 2;
+    return result == TYPE_WIDE ? 0 : 3;
+}
+```
+
+The relation borrows its macro-projected static row array. The DFA owns no
+memory: it borrows both arrays passed to `cmeta_infer_dfa_init`. The maximum
+required capacities are `1 + rule_count * arity` states and
+`rule_count * arity` transitions. These macros are intended for bounded
+compile-time counts; code deriving capacities from untrusted runtime values
+must perform checked arithmetic first.
+
+`cmeta_infer_dfa_build` rejects duplicate input rows, conflicting results, and
+insufficient workspaces. `cmeta_infer_dfa_eval` rejects wrong arity and reports
+missing rules. Failed evaluation does not modify the output result. There is no
+fallback mapping.
+
+Building or rebuilding a DFA is a control-plane operation that requires no
+concurrent readers. After a successful build, read-only evaluation is safe as
+long as the relation and caller workspaces remain alive and unchanged. A
+compiled executor should retain the inferred result or handler rather than
+querying the DFA per value.
+
+### Schema constant folds
+
+`SchemaCount`, `SchemaAll`, and `SchemaAny` turn an existing schema into an
+integer constant expression:
+
+```c
+#define Checks(M) Schema(M, (1), (1), (0))
+
+_Static_assert(SchemaCount(Checks) == 3u, "row count");
+_Static_assert(!SchemaAll(Checks), "not every row is true");
+_Static_assert(SchemaAny(Checks), "at least one row is true");
+```
+
+`SchemaCount` accepts arbitrary non-empty row shapes because it ignores row
+contents. `SchemaAll` and `SchemaAny` require every row to contain exactly one
+integer constant expression. These folds retain the existing 16-row limit of a
+single `Schema(...)` invocation.
+
 ### `Operators(...)`
 
 CFlow's specialized operator-schema normalizer.

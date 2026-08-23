@@ -1,4 +1,5 @@
 import CMetaCFlowCalculus.CMeta.Types
+import CMetaCFlowCalculus.CMeta.FiniteCompute
 import CMetaCFlowCalculus.CMeta.Effects
 import CMetaCFlowCalculus.CMeta.Properties
 import CMetaCFlowCalculus.CMeta.Environment
