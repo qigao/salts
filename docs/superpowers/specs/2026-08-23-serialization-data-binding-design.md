@@ -11,34 +11,54 @@ TurboUtils 已经具备三块可以直接成为数据绑定基础的能力：
 - TurboSTL 已完成 self-describing instance API，标准容器通过 `cmeta_container_desc` 暴露 Range/Collector；
 - CFlow 能消费 Range/Collector，但它是 execution 层，不应成为序列化核心依赖。
 
-当前缺口在于：CMeta 的 `Struct(...)` 只描述 C ABI layout——字段名、类型文本、offset、size、align——并不描述 wire/data 语义。`vstr` 就是直接反例：其 ABI 是 `{ const char *data; size_t len; }`，但数据语义应当是一个 borrowed string view，而不是一个包含 pointer 和 length 的 object。
+同时，独立仓库 `qigao/turbo-parser` 已经存在成熟的 parser/data-binding runtime：
+
+- JSON、YAML、XML、CSV 等 parser 已有 DOM/SAX 或增量 SAX 能力；
+- JSON raw SAX 能保留 exact number token，并明确 callback view lifetime；
+- DataBind 2.5 已经覆盖 runtime schema、动态值树、existing-C-struct descriptor、generated typed binding、streaming、query/path、ownership/error/ABI；
+- TBE 已经验证 enum、optional、union、collection、typed descriptor ABI、schema fingerprint 和 binary wire layout 等契约。
+
+TurboParser 的既有依赖方向是：
+
+```text
+application -> TurboParser -> TurboUtils
+```
+
+因此本设计不能让 TurboUtils 反向依赖 TurboParser，也不应该在 TurboUtils 内重新实现一套 JSON/YAML/XML/CSV parser 或第二套 DataBind。
+
+当前真正的缺口是：CMeta 的 `Struct(...)` 只描述 C ABI layout——字段名、类型文本、offset、size、align——并不描述 wire/data 语义。`vstr` 就是直接反例：其 ABI 是 `{ const char *data; size_t len; }`，但数据语义应当是一个 borrowed string view，而不是一个包含 pointer 和 length 的 object。
 
 因此本设计严格区分：
 
 ```text
-C layout reflection != semantic data shape != wire format
+C layout reflection != semantic data shape != canonical data events != native format syntax/wire
 ```
 
 另有现存模块 `turbo_serial`，含义是 serial-port/串口。新的 serialization 模块不得使用 `serial` / `turbo_serial` 名称，避免概念冲突。
 
 ## 2. 目标
 
-1. 建立 format-neutral semantic data model，使同一份 C 数据绑定可服务 JSON、CBOR、MessagePack、TOML 等 codec。
-2. 建立 streaming token reader/writer contract，避免 DOM 成为强制中间表示。
+1. 建立 format-neutral semantic data model，使同一份 C 数据绑定可服务 JSON、YAML、XML、CSV、CBOR、MessagePack、TOML 等格式。
+2. 建立 streaming canonical token reader/writer contract，避免 DOM 成为强制中间表示。
 3. 建立 C object <-> token 的通用 binding engine。
 4. 直接复用 TurboSTL 已有 `Range + Collector + cmeta_container_desc`，不为每种容器生成 serialize facade。
-5. 支持 nested struct、enum、owned/borrowed string、sequence、map、optional 和 custom adapter。
+5. 支持 nested struct、enum、variant/union、owned/borrowed string、sequence、map、optional 和 custom adapter。
 6. decode 失败不留下半初始化对象或半构造容器。
 7. 默认严格处理 unknown field、duplicate field、missing required field、numeric overflow 和资源限制。
 8. ownership、reader view lifetime、allocator/limits 必须成为显式 contract。
-9. JSON 作为第一个 reference codec，但核心设计不依赖 JSON object model。
-10. 为后续 CFlow streaming adapter 留边界，但 v1 不让 CFlow 进入核心依赖图。
+9. 复用 TurboParser 已有 parser 作为生产 codec adapter；TurboUtils core 不拥有重复 parser implementation。
+10. 保留 DataBind 的 runtime/dynamic-value 价值，但逐步把公共 binding semantics 下沉到 CMeta/CSerde/CBind。
+11. 保留 TBE 的专用 binary wire/layout 能力，不把 TBE wire metadata 污染到通用 CMeta semantic descriptor。
+12. 为后续 CFlow streaming adapter 留边界，但 v1 不让 CFlow 进入核心依赖图。
 
 ## 3. 非目标
 
 v1 不做：
 
 - mandatory DOM/value tree；
+- 在 TurboUtils 中重写 JSON/YAML/XML/CSV parser；
+- 删除 DataBind 动态对象/runtime-host 能力；
+- 把 TBE fixed-prefix/group/var-data/wire-offset 设计泛化成通用 data shape；
 - runtime network schema registry；
 - 裸 pointer 自动序列化；
 - 根据 `const char *` 猜测 string ownership；
@@ -52,9 +72,9 @@ v1 不做：
 
 ## 4. 采用架构
 
-采用：**CMeta semantic shape + CSerde streaming token + CBind independent binding**。
+采用：**CMeta semantic shape + CSerde canonical token contract + CBind independent binding + TurboParser format adapters**。
 
-正确依赖关系是：
+核心依赖关系：
 
 ```text
                     CMeta semantic shape
@@ -66,29 +86,37 @@ TurboSTL --implements--> CMeta container contract
                          CBind <---------------- CSerde token contract
                            ^                         ^
                            |                         |
-                           |                 +-------+--------+
-                           |                 |                |
-                           |             JSON codec       future codecs
-                           |                              CBOR/MsgPack/...
+                           |                 format projection/adapters
+                           |                         ^
+                           |                         |
+                           |                    TurboParser
+                           |              JSON/YAML/XML/CSV/...
                            |
                       application
 ```
 
-等价的 target 依赖：
+等价 target 依赖：
 
 ```text
 TurboSTL -> CMeta
 CSerde   -> minimal runtime/C runtime only
 CBind    -> CMeta + CSerde
-JSON     -> CSerde implementation
+TurboParser parser adapters -> TurboUtils::CSerde
+TurboParser::DataBind       -> parser adapters + TurboUtils::CBind
 CFlow    -> future adapter only
 ```
 
-JSON/CBOR 是 **CSerde 的 concrete codec**，不是 CBind 的下游模块。CBind 永远只消费 `cserde_reader` / `cserde_writer`。
+关键边界：
+
+- CSerde core 定义 canonical data event protocol，不拥有 JSON/YAML/XML parser；
+- TurboParser 把已有 native parser SAX/event model 投影成 CSerde reader；
+- writer 方向由 TurboParser serializer state machine 消费 CSerde writer events；
+- CBind 永远只消费 `cserde_reader` / `cserde_writer`，不直接 include/link parser；
+- DataBind 可以继续提供动态 `DataBindValue`/`DataBindObject` façade，但 dynamic tree 只是 CBind 的一个可选 sink/source，不是 mandatory core intermediate representation。
 
 拒绝 DOM-first 作为核心，因为它强制完整中间树和额外 allocation/traversal。拒绝 `Type x Format` 代码生成，因为会重新形成 TurboSTL 刚删除的 generated facade 笛卡尔积。
 
-## 5. 模块与目标
+## 5. 模块与 ownership
 
 ### 5.1 CMeta
 
@@ -98,18 +126,17 @@ JSON/CBOR 是 **CSerde 的 concrete codec**，不是 CBind 的下游模块。CBi
 cmeta/include/cmeta/data.h
 ```
 
-CMeta 不解析 JSON，不分配 JSON DOM，不包含 codec callback。
+CMeta 不解析 JSON，不分配 parser DOM，不包含 format-specific callback。
 
 ### 5.2 CSerde
 
-新模块：
+TurboUtils 新模块：
 
 ```text
 cserde/
   include/cserde/token.h
   include/cserde/reader.h
   include/cserde/writer.h
-  include/cserde/json.h
   src/...
 ```
 
@@ -119,17 +146,29 @@ CMake target：
 TurboUtils::CSerde
 ```
 
-职责仅为 token I/O、syntax state 和 concrete codec。
+职责仅为：
+
+```text
+canonical token types
+reader/writer protocol
+view lifetime capabilities
+skip/value-state helpers
+writer sink abstraction
+format-neutral syntax/event errors
+```
+
+**CSerde core 不包含 `json.h`，不实现 JSON parser。**
 
 ### 5.3 CBind
 
-新模块：
+TurboUtils 新模块：
 
 ```text
 cbind/
   include/cbind/cbind.h
   include/cbind/policy.h
   include/cbind/error.h
+  include/cbind/context.h
   src/...
 ```
 
@@ -147,7 +186,57 @@ CBind -> CMeta + CSerde
 
 CBind 不直接 link TurboSTL。任何实现 CMeta container contract 的容器都可以参与 binding。
 
-### 5.4 CFlow
+### 5.4 TurboParser
+
+TurboParser 继续拥有：
+
+```text
+JSON parser / JSONPath
+YAML parser / YPath
+XML parser / XPath
+CSV parser / DSV filter
+TOML / INI / other parser modules
+TBE schema + binary wire
+DataBind public runtime
+```
+
+并新增/重构 adapter：
+
+```text
+native parser events -> format projection -> cserde_reader
+cserde_writer        -> native serializer state machine / byte sink
+```
+
+这使 parser 的 lexical/syntax 能力保持单一事实源。
+
+### 5.5 DataBind
+
+DataBind 不删除。它逐步从“parser + schema + value tree + typed binder 全部集中实现”收敛成：
+
+```text
+TurboParser::DataBind
+  ├── runtime schema host
+  ├── dynamic DataBindValue/DataBindObject sink/source
+  ├── compatibility API
+  ├── query/path integration
+  └── delegates generic native-object binding to CBind
+```
+
+动态对象仍适合 runtime schema、脚本、插件、RulesForge/TurboScript 等不知道最终 C type 的场景。
+
+### 5.6 TBE
+
+TBE 保留为 specialized schema/wire layer：
+
+```text
+cmeta_data_desc      -> logical data semantics
+TBE semantic bridge -> schema name/alias/optional/union/etc.
+tbe_wire_desc        -> wire kind/offset/fixed block/presence/endian/group/var-data
+```
+
+通用 CMeta semantic model 不吸收 TBE 的 fixed-prefix、group、var-data、wire-offset、endianness 约束。
+
+### 5.7 CFlow
 
 未来仅提供 adapter：
 
@@ -172,6 +261,7 @@ typedef enum cmeta_data_kind {
     CMETA_DATA_BYTES,
     CMETA_DATA_ENUM,
     CMETA_DATA_STRUCT,
+    CMETA_DATA_VARIANT,
     CMETA_DATA_OPTIONAL,
     CMETA_DATA_SEQUENCE,
     CMETA_DATA_MAP,
@@ -179,10 +269,14 @@ typedef enum cmeta_data_kind {
 } cmeta_data_kind;
 ```
 
+`VARIANT` 是 core kind：现有 TBE/DataBind 已经支持 union/tagged value，新 semantic foundation 不能退化成只支持 struct/container。
+
 concept descriptor：
 
 ```c
 typedef struct cmeta_data_desc {
+    size_t struct_size;
+    uint32_t abi_version;
     const char *stable_id;
     const char *display_name;
     cmeta_data_kind kind;
@@ -192,13 +286,17 @@ typedef struct cmeta_data_desc {
 } cmeta_data_desc;
 ```
 
-`storage_type` 描述 C storage；`shape` 指向 kind-specific immutable descriptor；`ops` 只负责 generic lifecycle/access，不负责 JSON/CBOR。
+`storage_type` 描述 C storage；`shape` 指向 kind-specific immutable descriptor；`ops` 只负责 generic lifecycle/access，不负责 JSON/CBOR/TBE wire。
+
+公共 descriptor 从 v1 起采用 `struct_size + abi_version`，避免再次形成无版本跨模块 ABI。
 
 ### 6.1 scalar
 
 整数 descriptor 必须记录 signedness 和 width。decode 进行精确范围检查，禁止 silent cast/truncation。
 
 float descriptor 记录 storage width。non-finite/overflow 等转换由 CBind numeric policy 控制。
+
+UUID、datetime、date、time、duration、decimal、bigint、money 等不是全部升级成 core enum kind；默认通过 logical/custom scalar adapter 表达，避免无限扩大基础 kind。
 
 ### 6.2 string / bytes
 
@@ -237,9 +335,22 @@ typedef struct cmeta_data_struct_desc {
 } cmeta_data_struct_desc;
 ```
 
-canonical semantic field name 属于 data shape；rename aliases、required/default 属于 CBind policy，不放进 `cmeta_struct_desc`。
+canonical semantic field name 属于 data shape；external rename/aliases/required/default/emit policy 属于 CBind binding policy 或 schema bridge，不放进 `cmeta_struct_desc`。
 
-### 6.5 sequence / map
+### 6.5 variant
+
+variant shape 至少描述：
+
+```text
+tag semantic descriptor
+alternatives[]
+active-tag <-> alternative mapping
+storage access/lifecycle
+```
+
+CMeta 只描述 tagged semantic value；JSON/TBE 等格式如何表现 discriminator 由 CBind policy / format adapter 决定。
+
+### 6.6 sequence / map
 
 sequence shape 引用 element semantic descriptor；map shape 引用 key/value semantic descriptor。它们不硬编码 `vec_t` / `map_t`。
 
@@ -268,9 +379,39 @@ reflection describes memory;
 binding describes meaning.
 ```
 
-## 8. CSerde token model
+## 8. schema identity 与 descriptor identity
 
-CSerde 使用 pull reader + push writer，共享 format-neutral token：
+`stable_id` 解决逻辑名称/跨 TU identity，但不足以判断 schema compatibility：
+
+```text
+Order v1
+Order v2
+另一个不兼容的 Order
+```
+
+不能仅靠 `stable_id == "Order"` 判断相同 schema。
+
+因此区分：
+
+```text
+stable_id              logical identity
+semantic fingerprint   immutable semantic graph identity
+format/wire fingerprint optional specialized schema/wire identity
+```
+
+要求：
+
+- header-local descriptor 不要求跨 TU 地址相同；
+- pointer equality 不作为跨 TU / 跨 module type identity；
+- dynamic owning object 可以保存 semantic/schema fingerprint；
+- serialize/replace/bridge 时发现不兼容 fingerprint 必须显式拒绝；
+- fingerprint 算法/版本必须带 domain/version，不能依赖内存地址。
+
+这继承现有 DataBindObject 的 schema fingerprint + mismatch rejection 语义，但把它推广成通用 identity contract。
+
+## 9. CSerde canonical token model
+
+CSerde 使用 pull reader + push writer，共享 format-neutral canonical data events：
 
 ```c
 typedef enum cserde_token_kind {
@@ -288,7 +429,7 @@ typedef enum cserde_token_kind {
 } cserde_token_kind;
 ```
 
-不定义 JSON-specific OBJECT。struct/object 在 token 层就是 string-key map：
+不定义 JSON-specific OBJECT。struct/object 在 canonical token 层就是 string-key map：
 
 ```text
 MAP_BEGIN
@@ -299,9 +440,11 @@ STRING("alice")
 MAP_END
 ```
 
-这样 CBOR/MessagePack 可表达 arbitrary-key map；JSON codec 自己施加 key 必须可表示为 string 的限制。
+这样 CBOR/MessagePack 可表达 arbitrary-key map；具体 format adapter 自己施加原生格式限制。
 
-### 8.1 payload lifetime
+**这些 token 不是所有 parser 的 native AST/SAX event model。** 它们是供 binder 使用的 canonical data event model。
+
+### 9.1 payload lifetime
 
 string/bytes token 使用 view：
 
@@ -321,7 +464,7 @@ STABLE:    backing input 生命周期内稳定
 
 CBind 只有在 target 是 borrowed binding 且 token lifetime 足够长时才允许 zero-copy borrow。
 
-### 8.2 reader / writer
+### 9.2 reader / writer
 
 concept：
 
@@ -335,17 +478,7 @@ cserde_status cserde_writer_finish(cserde_writer *);
 
 `skip_value` 必须正确跨过 nested arrays/maps，是 ignore unknown field 的基础。
 
-## 9. JSON reference codec
-
-JSON 是 CSerde 的第一个 concrete codec，只用于证明架构。
-
-- reader 对 unescaped string 可直接返回 input slice；escaped string 若使用 scratch，则必须标记 transient；
-- borrowed target 遇到 transient token 默认失败，不能保存 dangling pointer；
-- writer 通过 caller sink callback 输出，不强依赖 `tstr`/`turbo_buffer`；
-- JSON 无 native bytes，v1 对 `CSERDE_BYTES` 返回 unsupported；base64/hex 必须显式 extension；
-- number parser 必须区分 SINT/UINT/FLOAT，不能全部先转 double。
-
-writer sink concept：
+writer sink：
 
 ```c
 typedef cserde_status (*cserde_write_fn)(void *ctx,
@@ -353,7 +486,93 @@ typedef cserde_status (*cserde_write_fn)(void *ctx,
                                          size_t size);
 ```
 
-## 10. CBind engine
+## 10. native format projection
+
+JSON、YAML、XML、CSV 等 native event model 不完全同构。统一点发生在 **projection 后**，不是 parser lexer/SAX 层。
+
+统一 pipeline：
+
+```text
+native parser events
+        ↓
+format projection
+        ↓
+CSerde canonical tokens
+        ↓
+CBind
+```
+
+### 10.1 JSON
+
+JSON object/array/scalar 基本与 canonical map/array/scalar 一一对应。现有 raw SAX number token 可以精确分类成 SINT/UINT/FLOAT，而不是先转 `double`。
+
+### 10.2 YAML
+
+YAML 原生具有：
+
+```text
+alias/tag/non-string key/duplicate mapping key/document boundaries
+```
+
+projection 必须明确哪些语义：
+
+- 可无损映射为 canonical token；
+- 需要 policy；
+- 不可无损映射时返回 unsupported/type error。
+
+不得先强转 JSON DOM 再声称无损绑定。
+
+### 10.3 XML
+
+XML 原生具有：
+
+```text
+element
+attribute
+text/CDATA
+namespace
+processing instruction
+```
+
+XML adapter 需要明确 schema/binding projection，例如 field 优先来自 child element、attribute 或显式 mapping。CSerde core 不增加 XML-specific token。
+
+### 10.4 CSV
+
+CSV 原生是 header/row/column。adapter 根据 header/schema projection 把一行投影为 map-like canonical record；nested dotted/indexed column 规则属于 CSV binding projection，不属于 CSerde core。
+
+## 11. TurboParser reference adapters
+
+JSON 是第一个 production reference adapter，但**不在 TurboUtils 重写 JSON parser**。
+
+现有 TurboParser JSON 已具备：
+
+```text
+DOM
+one-shot SAX
+incremental SAX
+raw-number SAX
+streamable JSONPath selected-subtree events
+```
+
+reader adapter 直接建立在现有 incremental raw SAX 上，并保持 callback/string/number view lifetime contract。
+
+JSON adapter 要求：
+
+- exact number token 分类为 SINT/UINT/FLOAT，禁止先 double 再恢复整数；
+- escaped string 若需要 scratch，token capability 标记为 TRANSIENT；
+- borrowed target 遇到 transient token 默认失败；
+- JSON 无 native bytes，`CSERDE_BYTES` 默认 unsupported；base64/hex 必须显式 extension；
+- syntax/depth/token-size limits 继续由 parser 自己先执行。
+
+writer 方向优先把现有 TurboParser JSON serializer 的状态机抽成 token consumer，而不是新建第二个 serializer implementation：
+
+```text
+CBind -> cserde_writer -> TurboParser JSON writer state machine -> caller byte sink
+```
+
+YAML/XML/CSV adapters 在 JSON adapter + CBind contract 稳定后逐步迁移。
+
+## 12. CBind engine
 
 公共入口 concept：
 
@@ -376,6 +595,7 @@ encode：
 - scalar -> primitive token；
 - enum -> policy-selected scalar；
 - struct -> string-key MAP；
+- variant -> policy-described tagged value；
 - sequence -> default Range -> ARRAY；
 - map -> entries Range -> MAP；
 - optional empty -> NULL；
@@ -387,11 +607,12 @@ decode：
 - precise numeric conversion；
 - enforce string ownership/lifetime；
 - struct field dispatch；
+- variant tag/alternative validation；
 - sequence/map 通过 Collector 事务构造；
 - failure destroy/reset 已构造字段并 abort container；
 - success 后对象 fully initialized。
 
-## 11. nested container instance binding
+## 13. nested container instance binding
 
 这是本设计必须补齐的 CMeta container contract。
 
@@ -409,18 +630,30 @@ vec_t values;
 
 zero-init 后没有 declaration-time element binding，generic CBind 无法直接调用 collector。
 
-因此 `cmeta_container_desc` 需要 optional hook：
+### 13.1 versioned construction extension
+
+不把未来所有 construction hook 平铺追加到 `cmeta_container_desc`。定义 versioned extension：
 
 ```c
-typedef cmeta_status (*cmeta_container_bind_types_fn)(
-    void *object,
-    const cmeta_type_desc *const *args,
-    size_t arity);
+typedef struct cmeta_container_construct_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    cmeta_status (*bind_types)(
+        void *object,
+        const cmeta_type_desc *const *args,
+        size_t arity);
+} cmeta_container_construct_ops;
 ```
 
-建议把 `bind_types` **追加在 descriptor 结构尾部**，避免改变现有字段顺序。现有 positional initializer 少写尾部成员在 C 中保持 zero-init；仓库内 descriptor 全部更新为显式完整初始化并增加 public-header regression。
+`cmeta_container_desc` 只追加一次 optional pointer：
 
-语义：
+```c
+const cmeta_container_construct_ops *construct;
+```
+
+未来若 construction contract 需要 `prepare`、`capacity_hint`、`move_commit` 等能力，优先扩展 versioned construct ops，而不是重复改变主 descriptor layout。
+
+`bind_types` 语义：
 
 - 只绑定 declaration-time type metadata；
 - 不 malloc；
@@ -432,28 +665,31 @@ typedef cmeta_status (*cmeta_container_bind_types_fn)(
 nested sequence decode：
 
 ```text
-bind_types(field, [int], 1)
+construct->bind_types(field, [int], 1)
   -> collector(field, limit)
   -> begin / accept... / finish
 ```
 
 这不是 serialization 特例，而是补全 self-describing container 的 generic construction contract。
 
-### 11.1 ABI 影响
+### 13.2 ABI 影响
 
-给 public `cmeta_container_desc` 追加字段会改变 `sizeof(cmeta_container_desc)`，因此不是跨版本 binary ABI-neutral 变更。实现 PR 必须：
+给 public `cmeta_container_desc` 追加 `construct` pointer 仍会改变 `sizeof(cmeta_container_desc)`，因此不是跨版本 binary ABI-neutral 变更。
 
-- 明确该版本的 ABI 变化；
-- 只在结构尾部追加；
+实现 PR 必须：
+
+- 明确该版本 ABI 变化；
+- 只在结构尾部追加 `construct`；
+- construction ops 自身从 v1 起 versioned；
 - 更新所有仓库内 descriptor；
-- 增加 C/C++ initializer tests；
+- 增加 C/C++ initializer/public-header regression；
 - 不声称旧 binary 与新 library 可混链。
 
-如果项目在实现前要求冻结 `cmeta_container_desc` binary ABI，则应改为 companion extension descriptor；本设计当前选择尾部追加，因为结构仍处于主动演进期，且这是最小、最直接的 generic construction contract。
+如果实现前要求冻结 `cmeta_container_desc` binary ABI，则改为完全独立 companion extension registry/descriptor；当前设计选择尾部追加一个 versioned extension pointer，因为结构仍处于主动演进期。
 
-## 12. TurboSTL container binding
+## 14. TurboSTL container binding
 
-### 12.1 sequence encode
+### 14.1 sequence encode
 
 CBind 通过 `cmeta_container_descriptor(object)` 获取 DEFAULT Range，逐元素按 element semantic shape encode。
 
@@ -461,18 +697,18 @@ CBind 通过 `cmeta_container_descriptor(object)` 获取 DEFAULT Range，逐元�
 
 Set/HashSet 不保证 canonical order；v1 不承诺 canonical JSON。
 
-### 12.2 map encode
+### 14.2 map encode
 
 选择 ENTRIES Range，读取 `cmeta_entry`，根据 key/value semantic descriptor 输出 pair。
 
-JSON writer 要求 key 最终是 STRING。非 string key 的 JSON map 默认 unsupported；array-of-pairs 只能作为显式 policy，禁止 silent fallback。
+JSON writer 要求 key 最终可表示为 STRING。非 string key 的 JSON map 默认 unsupported；array-of-pairs 只能作为显式 policy，禁止 silent fallback。
 
-### 12.3 decode
+### 14.3 decode
 
 CBind：
 
 ```text
-bind_types
+construct->bind_types
   -> collector
   -> begin
   -> decode child temp
@@ -482,9 +718,11 @@ bind_types
 
 任何 child decode / accept 失败都 abort collector。capacity/ownership/rollback 继续由 container 自己负责。
 
-## 13. transaction 与 destination contract
+## 15. transaction 与 destination contract
 
-v1 `cbind_decode` 定义为“构造新值”：
+现有 DataBind typed parse 已有重要契约：parse 失败时 previous object remains unchanged。新 CBind 不应弱化这个行为。
+
+v1 基础 `cbind_decode` 定义为“构造新值”：
 
 ```text
 precondition: out 处于 shape 定义的 empty state
@@ -494,9 +732,18 @@ failure:      out 回到 empty state
 
 不隐式覆盖 live owned object。
 
-后续可增加 `cbind_decode_replace`：temporary decode + move/destroy commit；只有 lifecycle 足够时开放。
+随后提供 `cbind_decode_replace` 时必须满足：
 
-## 14. ownership / lifecycle
+```text
+decode into temporary
+  -> full validation
+  -> move/commit
+  -> destroy previous value
+```
+
+失败时旧对象保持不变；只有 lifecycle/move contract 足够时开放 replace。
+
+## 16. ownership / lifecycle
 
 不能通过裸 layout 推断 ownership。
 
@@ -508,26 +755,40 @@ semantic data ops 至少覆盖 prepare-empty/reset/read access；replace API 才
 
 裸 pointer：默认 unsupported，只有显式 custom adapter 可绑定。
 
-## 15. allocator 与资源限制
+动态 `DataBindValue`/`DataBindObject` 是 owning sink/source，生命周期保持由 DataBind API 管理，不把内部 allocation ownership 泄露给 CBind caller。
 
-对不可信输入默认 bounded。`cbind_options` 至少包含：
+## 17. allocator 与资源限制
+
+对不可信输入默认 bounded。allocator/pool policy 必须属于 **per-bind/per-context** contract，不能继承现有 DataBind process-global value-pool policy作为通用 CBind 行为。
+
+concept：
 
 ```text
-max_depth
-max_string_bytes
-max_container_elements
-max_map_entries
-max_total_input_bytes（codec 可提供时）
-unknown_field_policy
-duplicate_field_policy
-allow_borrowed
+cbind_context
+  allocator
+  max_depth
+  max_string_bytes
+  max_container_elements
+  max_map_entries
+  max_total_input_bytes（reader 可提供时）
+  unknown_field_policy
+  duplicate_field_policy
+  allow_borrowed
 ```
 
-container collector limit 取 schema/static limit 与 runtime global limit 的较小值。所有 count/size arithmetic 检查 overflow。JSON reader 自身也必须有 depth/token-size 限制，不能完全依赖 binder。
+要求：
 
-## 16. field policy 与 schema evolution
+- allocator 的 alloc/free 必须成对属于同一 context；
+- reusable library 不改变 process-global allocation policy；
+- container collector limit 取 schema/static limit 与 runtime context limit 的较小值；
+- 所有 count/size arithmetic 检查 overflow；
+- native parser 自己也必须有 depth/token-size/input limits，不能完全依赖 binder。
 
-semantic shape 保存 canonical identity；CBind policy 管 external behavior。
+DataBind 可以在 compatibility layer 内继续维护自己的 value pooling，但它不得成为 CBind core 的全局 allocator contract。
+
+## 18. field policy 与 schema evolution
+
+semantic shape 保存 canonical identity；CBind binding policy 管 external behavior。
 
 v1 field policy：
 
@@ -549,9 +810,11 @@ missing required -> error
 
 runtime options 可以放宽 unknown field 为 ignore。
 
-v1 不自动注入 `_version`，不提供 migration graph。兼容演进依靠 additive optional field + aliases + explicit adapter。
+v1 不自动注入 `_version`，不提供 migration graph。兼容演进依靠 additive optional field + aliases + explicit adapter，并通过 semantic/schema fingerprint 防止错误地把同名不兼容 shape 当成相同 schema。
 
-## 17. enum policy
+现有 TBE `[name]` / `[alias]` / optional/default 语义应通过 schema bridge 映射到这套 policy，而不是复制一套不同规则。
+
+## 19. enum policy
 
 默认：
 
@@ -562,11 +825,13 @@ decode -> text
 
 可显式改为 symbol/integer/accept-text-or-symbol。numeric decode 默认要求 descriptor 中存在该值，除非 policy 明确允许 unknown numeric enum。
 
-## 18. error model 与 path
+## 20. error model 与 path
 
-CSerde error：syntax/transport，例如 invalid token、unexpected EOF、escape/UTF-8/number syntax、writer state、sink failure。
+CSerde error：canonical reader/writer/state/transport，例如 invalid token、unexpected EOF、writer state、sink failure、unsupported projection。
 
-CBind error：semantic conversion，例如 type mismatch、numeric overflow、missing/unknown/duplicate field、unsupported map key、ownership/lifetime、container bind/collector failure、resource limit、custom adapter failure。
+TurboParser native parser error：syntax/lexical/location，例如 escape/UTF-8/number syntax、YAML indentation/alias、XML syntax、CSV quoting；adapter 映射到 CSerde error，并保留原生 offset/line/column/location diagnostic。
+
+CBind error：semantic conversion，例如 type mismatch、numeric overflow、missing/unknown/duplicate field、unsupported map key、ownership/lifetime、container bind/collector failure、schema fingerprint mismatch、resource limit、custom adapter failure。
 
 CBind error 必须保存 logical path，例如：
 
@@ -575,9 +840,9 @@ user.addresses[3].zip
 settings["timeout"]
 ```
 
-内部使用 path segment stack，不要求每层动态拼字符串。JSON error 可额外携带 byte offset/line/column。
+内部使用 path segment stack，不要求每层动态拼字符串。
 
-## 19. custom adapter
+## 21. custom adapter
 
 format-neutral adapter concept：
 
@@ -593,9 +858,54 @@ typedef struct cbind_adapter {
 } cbind_adapter;
 ```
 
-adapter 只能看到 token reader/writer，不能 downcast 为 JSON implementation。UUID、timestamp、tstr、vstr 等可以跨 codec 复用。
+adapter 只能看到 token reader/writer，不能 downcast 为 JSON/YAML/TBE implementation。UUID、timestamp、tstr、vstr 等可以跨 codec 复用。
 
-## 20. deterministic / canonical output
+## 22. DataBind / TBE descriptor migration
+
+现有 `TbeTypedField` / `TbeTypedType` / `TbeTypedDescriptor` 已经包含 CBind 所需大量语义：
+
+```text
+field name
+offset
+logical kind
+nested object
+list/set/map
+element type
+optional bit
+```
+
+但它们同时包含 TBE wire metadata：
+
+```text
+wire_kind
+element_wire_kind
+wire_offset
+wire_size
+fixed_block_size
+presence bitmap
+wire_big_endian
+group/var-data
+```
+
+迁移原则：
+
+```text
+TbeTyped semantic subset -> cmeta_data_desc / binding policy
+dedicated TBE metadata   -> tbe_wire_desc
+```
+
+最终 generated/existing-C-struct DataBind typed binding 应复用通用 semantic descriptor，而 TBE binary encode/decode 再额外消费 `tbe_wire_desc`。
+
+DataBind 动态 value tree 则成为：
+
+```text
+CSerde -> CBind -> DataBindValue sink
+DataBindValue source -> CBind -> CSerde
+```
+
+它不再是 native-object binding 的强制中间树。
+
+## 23. deterministic / canonical output
 
 v1 保证 struct fields 按 semantic descriptor 声明顺序 encode。
 
@@ -608,13 +918,15 @@ v1 保证 struct fields 按 semantic descriptor 声明顺序 encode。
 
 需要签名/hash 的 canonical wire format 后续单独设计。
 
-## 21. translation-unit identity
+## 24. translation-unit / module identity
 
-与现有 CMeta 一致：header-local descriptors 不要求跨 TU 地址相同。binding 比较 stable id/type identity/descriptor content，不用 pointer equality 作为跨 TU type identity。
+与现有 CMeta 一致：header-local descriptors 不要求跨 TU 地址相同。binding 比较 stable id + versioned descriptor content/fingerprint，不用 pointer equality 作为跨 TU type identity。
 
-公共 API 必须同时被 C11 和 C++ 消费。
+公共 descriptor/API 必须同时被 C11 和 C++ 消费。
 
-## 22. 安全测试边界
+跨 shared-library/module 使用 descriptor 时先检查 `struct_size` / `abi_version`；跨 schema object/codec 使用时检查 semantic/schema fingerprint。
+
+## 25. 安全测试边界
 
 必须覆盖：
 
@@ -629,38 +941,68 @@ v1 保证 struct fields 按 semantic descriptor 声明顺序 encode。
 - collector abort；
 - custom adapter rollback；
 - borrowed lifetime mismatch；
-- malicious map key type。
+- malicious map key type；
+- variant invalid discriminator；
+- schema fingerprint mismatch；
+- YAML alias/non-string-key projection failure；
+- XML attribute/element projection ambiguity；
+- CSV nested-column projection errors。
 
 任何资源限制错误必须 deterministic，并保证 destination rollback。
 
-## 23. TDD / 验证顺序
+## 26. 迁移与 TDD / 验证顺序
 
-实现时按以下独立 PR/阶段推进：
+实现按小 PR 推进，不一次替换 DataBind。
 
-1. CMeta semantic data descriptors；
-2. `cmeta_container_desc.bind_types` contract；
-3. CSerde token reader/writer + recording test codec；
-4. CBind scalar/struct engine；
+### Phase 0：TurboParser 基线同步
+
+`turbo-parser/main` 当前 `tbe_typed.h` 仍使用旧 TurboSTL public surface（例如旧 `turbo_vec_t` / `turbo_stl_status` / `turbo_vec_*`）。在 DataBind/CMeta integration 前先迁移到最新 natural TurboSTL API：
+
+```text
+vec_t
+stl_status
+vec_* / natural instance API
+```
+
+此阶段只做 dependency/API baseline migration，不混 serialization architecture。
+
+### Core PRs
+
+1. CMeta semantic data descriptors + versioned ABI + VARIANT；
+2. `cmeta_container_desc.construct` + versioned `cmeta_container_construct_ops.bind_types`；
+3. CSerde canonical token reader/writer + recording test codec；
+4. CBind scalar/struct/variant engine；
 5. CBind sequence/map through Range/Collector；
-6. ownership adapters (`tstr`/`vstr`)；
-7. JSON reference codec；
-8. field policy/evolution/error-path hardening；
-9. fuzz/performance/full CI；
-10. 最后再决定 `DataStruct(...)` DSL sugar。
+6. ownership adapters (`tstr`/`vstr`) + per-context allocator/limits；
+7. schema identity/fingerprint + field policy/evolution/error-path hardening。
 
-关键原则：先用 recording codec 证明 CBind 与 JSON 无关，再实现 JSON。
+### TurboParser integration PRs
+
+8. JSON incremental raw-SAX -> CSerde reader adapter；
+9. JSON token writer by refactoring/reusing existing serializer state machine；
+10. DataBind native typed JSON path delegates to CBind without mandatory `DataBindValue` tree；
+11. DataBind dynamic `DataBindValue` sink/source adapter；
+12. migrate `TbeTyped*` semantic subset to CMeta descriptors, keep TBE wire descriptor separate；
+13. YAML/XML/CSV projections/adapters one format at a time；
+14. fuzz/performance/full cross-repo CI；
+15. 最后再决定 `DataStruct(...)` DSL sugar。
+
+关键原则：先用 recording codec 证明 CBind 与任何 concrete format 无关；生产 JSON 验证复用 TurboParser 已有 parser，而不是在 TurboUtils 重写 parser。
 
 最终验证至少包含：
 
 - C/C++ public-header tests；
 - CMeta/CSerde/CBind unit tests；
 - nested TurboSTL integration；
+- TurboParser JSON adapter parity tests；
+- DataBind existing behavioral/ABI regression tests；
+- TBE binary wire regression tests；
 - Linux + Windows fresh configure/build/test；
 - sanitizer/fuzz target（环境允许时）。
 
-## 24. 性能策略
+## 27. 性能策略
 
-核心路径禁止 mandatory DOM allocation。
+核心 native-object 路径禁止 mandatory DOM/DataBindValue allocation。
 
 benchmark：
 
@@ -669,37 +1011,85 @@ flat struct
 nested struct + strings
 large Vec
 large Map
+dynamic DataBindValue sink
 ```
 
-分别测 parse-only、bind decode、bind encode，并记录 allocation count、bytes copied、throughput。borrowed stable-view mode单独测量，不能替代 owned mode 指标。
+分别测：
 
-## 25. Definition of Done
+```text
+native parser parse-only
+parser -> CSerde projection
+CBind decode direct-to-object
+legacy/current DataBind path
+CBind encode -> writer
+```
+
+记录 allocation count、bytes copied、throughput、peak retained bytes。borrowed stable-view mode单独测量，不能替代 owned mode 指标。
+
+迁移的性能目标首先是：direct native-object path 不因新增抽象显著退化，并消除可避免的 mandatory intermediate tree allocation；不以未经 benchmark 的“zero allocation”宣传替代测量。
+
+## 28. compatibility / migration policy
+
+DataBind 2.5 已经有 public ABI、ownership、stream/query 语义，迁移不能借“新架构”无理由破坏它们。
+
+必须保留或显式版本化的行为包括：
+
+- typed parse failure 不修改已有目标对象；
+- owning `DataBindValue` / `DataBindObject` / record view lifetime；
+- schema mismatch rejection；
+- format/query diagnostics；
+- configured stream limits/cancel semantics；
+- generated/existing-C-struct typed routes；
+- TBE binary wire compatibility。
+
+允许的内部替换：
+
+```text
+parser-specific binding logic -> CSerde adapter + CBind
+mandatory DataBindValue tree   -> direct target binding where possible
+TbeTyped duplicated semantic metadata -> CMeta semantic descriptor
+```
+
+不要求一次删除所有 compatibility entry；先把它们变成新 core 上的薄 façade，再单独决定长期 public API 收口。
+
+## 29. Definition of Done
 
 该架构只有在以下条件全部满足时才算实现完成：
 
 - CMeta semantic shape 与 C layout reflection 分离；
-- CSerde 不依赖 CBind/TurboSTL/CFlow；
-- JSON 是 CSerde concrete codec，不是 CBind hard-coded branch；
+- semantic model 覆盖 variant/union，不比现有 DataBind/TBE 表达力倒退；
+- CSerde core 不依赖 CBind/TurboSTL/CFlow/TurboParser；
+- TurboUtils 不包含重复 JSON/YAML/XML/CSV parser implementation；
+- TurboParser concrete parser 通过 format projection/adapter 实现 CSerde reader/writer；
 - CBind 只依赖 CMeta + CSerde；
 - nested TurboSTL container 不需要 CBind type switch/特判；
-- container decode 走 `bind_types + Collector`；
+- container decode 走 versioned construction extension + Collector；
 - container encode 走 Range；
 - owned/borrowed string lifetime 有可测试 contract；
-- decode failure 回到 empty state；
+- allocator/limits 是 per-context contract，不需要 process-global binding policy；
+- decode failure 回到 empty state，replace failure 保留旧对象；
 - strict unknown/duplicate/missing/overflow/resource-limit behavior 有测试；
+- semantic/schema fingerprint mismatch 有测试；
+- DataBind dynamic value tree 是 optional sink/source，不是 native binding mandatory intermediate；
+- TBE semantic metadata 与 binary wire/layout metadata 分层；
+- DataBind 关键 public behavior/ABI contract 有回归验证；
 - C/C++ public API 编译通过；
 - Linux + Windows fresh CI 通过；
+- cross-repo TurboUtils -> TurboParser integration CI 通过；
 - 没有 `Type x Format` generated facade；
-- 没有 DOM 作为 mandatory core intermediate representation。
+- 没有 DOM/DataBindValue 作为 mandatory core intermediate representation。
 
-## 26. 决策摘要
+## 30. 决策摘要
 
 ```text
-CMeta：知道“数据是什么”以及容器 generic construction contract
-CSerde：知道“格式如何变成 token / token 如何写回格式”
-CBind：知道“C 对象如何映射 token”
+CMeta：知道“数据是什么”、如何识别 semantic identity，以及容器 generic construction contract
+CSerde：定义“binder 可消费/产出的 canonical data events”，不知道 JSON/YAML/XML parser
+CBind：知道“C 对象如何映射 canonical events”，并管理 transaction/ownership/policy/context
 TurboSTL：知道“容器如何存储、遍历、事务构造”
+TurboParser：知道“具体格式如何 parse/emit，并把 native events 投影到 CSerde”
+DataBind：保留 runtime schema/dynamic-value/compatibility host，逐步委托 generic binding 给 CBind
+TBE：保留 specialized binary wire/layout，在 semantic CMeta 之上增加 wire descriptor
 CFlow：以后只知道“这些数据如何流动”
 ```
 
-这使 serialization/data binding 成为 CMeta + TurboSTL 能力的自然延伸，而不是新的 generated facade 系统。
+这使 serialization/data binding 成为 CMeta + TurboSTL 能力的自然延伸，同时直接复用 TurboParser 已经成熟的 parser/DataBind/TBE 契约，而不是在 TurboUtils 内建立第二套 generated facade、parser 或 DOM-first binding 系统。
