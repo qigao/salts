@@ -59,25 +59,29 @@ jobs:
           - host: ubuntu-22.04-gcc
             runner: ubuntu-22.04
             family: linux
-            preset: linux-release-user
+            configure_preset: release-linux-ninja
+            build_preset: build-default-linux
             build_dir: build/linux-gcc-release
             executable: build/linux-gcc-release/bin/cflow_direct_benchmark
           - host: ubuntu-24.04-gcc
             runner: ubuntu-24.04
             family: linux
-            preset: linux-release-user
+            configure_preset: release-linux-ninja
+            build_preset: build-default-linux
             build_dir: build/linux-gcc-release
             executable: build/linux-gcc-release/bin/cflow_direct_benchmark
           - host: windows-2022-msvc
             runner: windows-2022
             family: windows
-            preset: win-release-user
+            configure_preset: release-win-msvc-ninja
+            build_preset: build-release-windows
             build_dir: build/Msvc-Release
             executable: build/Msvc-Release/bin/cflow_direct_benchmark.exe
           - host: windows-2025-msvc
             runner: windows-2025
             family: windows
-            preset: win-release-user
+            configure_preset: release-win-msvc-ninja
+            build_preset: build-release-windows
             build_dir: build/Msvc-Release
             executable: build/Msvc-Release/bin/cflow_direct_benchmark.exe
 
@@ -108,10 +112,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "${{ matrix.preset }}" \
+          cmake --preset "${{ matrix.configure_preset }}" \
             -DBUILD_BENCHMARKS=ON \
             -DBUILD_TESTS=ON
-          cmake --build --preset "${{ matrix.preset }}" \
+          cmake --build --preset "${{ matrix.build_preset }}" \
             --target "$BENCHMARK_TARGET"
 
       - name: Configure and build Windows Release benchmark
@@ -126,16 +130,16 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
           if errorlevel 1 exit /b 1
 
-          cmake --preset "${{ matrix.preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
+          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.preset }}" --target "%BENCHMARK_TARGET%"
+          cmake --build --preset "${{ matrix.build_preset }}" --target "%BENCHMARK_TARGET%"
           if errorlevel 1 exit /b 1
 
       - name: Capture environment and run benchmark
         shell: pwsh
         env:
           BENCHMARK_HOST: ${{ matrix.host }}
-          BENCHMARK_PRESET: ${{ matrix.preset }}
+          BENCHMARK_PRESET: ${{ matrix.configure_preset }}
           BENCHMARK_BUILD_DIR: ${{ matrix.build_dir }}
           BENCHMARK_EXECUTABLE: ${{ matrix.executable }}
         run: |
