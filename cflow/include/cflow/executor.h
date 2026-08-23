@@ -1,6 +1,7 @@
 #ifndef CFLOW_EXECUTOR_H
 #define CFLOW_EXECUTOR_H
 
+#include <cflow/admission.h>
 #include <cmeta/interface.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -18,6 +19,7 @@ enum {
 };
 
 #define CMETA_EXECUTOR_METHODS(X,I) \
+    X(I,R2,cflow_admission_status,try_post,cflow_task_fn,fn,void *,user) \
     X(I,R2,bool,post,cflow_task_fn,fn,void *,user) \
     X(I,R0,bool,run_one,_) \
     X(I,R0,size_t,run_ready,_) \

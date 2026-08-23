@@ -43,13 +43,19 @@ static bool manual_ensure_capacity(cflow_manual_executor_state *state, size_t ne
     return true;
 }
 
-static bool manual_post(void *self, cflow_task_fn fn, void *user) {
+static cflow_admission_status manual_try_post(void *self, cflow_task_fn fn,
+                                              void *user) {
     cflow_manual_executor_state *state = (cflow_manual_executor_state *)self;
-    if (!state || !fn || state->count == SIZE_MAX ||
-        !manual_ensure_capacity(state, state->count + 1u))
-        return false;
+    if (!state || !fn) return CFLOW_ADMISSION_INVALID_ARGUMENT;
+    if (state->count == SIZE_MAX) return CFLOW_ADMISSION_FULL;
+    if (!manual_ensure_capacity(state, state->count + 1u))
+        return CFLOW_ADMISSION_ALLOCATION_FAILED;
     state->tasks[state->count++] = (cflow_manual_task){fn, user};
-    return true;
+    return CFLOW_ADMISSION_ACCEPTED;
+}
+
+static bool manual_post(void *self, cflow_task_fn fn, void *user) {
+    return manual_try_post(self, fn, user) == CFLOW_ADMISSION_ACCEPTED;
 }
 
 static bool manual_run_one(void *self) {
@@ -94,6 +100,7 @@ static void manual_destroy(void *self) {
 
 CMETA_IMPLEMENTS(cflow_executor, manual_executor,
     CMETA_EXEC_CAP_MANUAL | CMETA_EXEC_CAP_SERIAL,
+    .try_post = manual_try_post,
     .post = manual_post,
     .run_one = manual_run_one,
     .run_ready = manual_run_ready,
@@ -102,10 +109,29 @@ CMETA_IMPLEMENTS(cflow_executor, manual_executor,
     .destroy = manual_destroy
 );
 
+static cflow_admission_status pool_admission_status(int status) {
+    switch (status) {
+    case TURBO_OK: return CFLOW_ADMISSION_ACCEPTED;
+    case TURBO_EINVAL: return CFLOW_ADMISSION_INVALID_ARGUMENT;
+    case TURBO_ENOBUFS: return CFLOW_ADMISSION_FULL;
+    case TURBO_ESHUTDOWN: return CFLOW_ADMISSION_CLOSED;
+    default: return CFLOW_ADMISSION_CLOSED;
+    }
+}
+
+static cflow_admission_status pool_try_post(void *self, cflow_task_fn fn,
+                                            void *user) {
+    cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
+    if (!state || !state->pool || !fn)
+        return CFLOW_ADMISSION_INVALID_ARGUMENT;
+    return pool_admission_status(
+        turbo_threadpool_try_submit(state->pool, fn, user));
+}
+
 static bool pool_post(void *self, cflow_task_fn fn, void *user) {
     cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
     return state && state->pool && fn &&
-           turbo_threadpool_submit(state->pool, fn, user) == 0;
+           turbo_threadpool_submit(state->pool, fn, user) == TURBO_OK;
 }
 
 static bool pool_run_one(void *self) {
@@ -142,6 +168,7 @@ static void pool_destroy(void *self) {
 
 CMETA_IMPLEMENTS(cflow_executor, serial_executor,
     CMETA_EXEC_CAP_SERIAL,
+    .try_post = pool_try_post,
     .post = pool_post,
     .run_one = pool_run_one,
     .run_ready = pool_run_ready,
@@ -152,6 +179,7 @@ CMETA_IMPLEMENTS(cflow_executor, serial_executor,
 
 CMETA_IMPLEMENTS(cflow_executor, worker_executor,
     CMETA_EXEC_CAP_CONCURRENT,
+    .try_post = pool_try_post,
     .post = pool_post,
     .run_one = pool_run_one,
     .run_ready = pool_run_ready,

@@ -21,6 +21,24 @@ spec("CFlow scheduler compatibility") {
     cflow_scheduler_destroy(&scheduler);
   }
 
+  it("reports checked scheduling status with a zero id on failure") {
+    cflow_scheduler scheduler = {0};
+    cflow_schedule_result accepted;
+    cflow_schedule_result invalid;
+    int value = 9;
+
+    check_true(cflow_scheduler_test_init(&scheduler));
+    accepted = cflow_scheduler_try_post_after(&scheduler, 5u,
+                                               record_order, &value);
+    check_equal(accepted.status, CFLOW_ADMISSION_ACCEPTED);
+    check(accepted.task_id != 0u);
+
+    invalid = cflow_scheduler_try_post_after(&scheduler, 5u, NULL, NULL);
+    check_equal(invalid.status, CFLOW_ADMISSION_INVALID_ARGUMENT);
+    check_equal(invalid.task_id, (cflow_task_id)0u);
+    cflow_scheduler_destroy(&scheduler);
+  }
+
   it("preserves FIFO order for equal deadlines") {
     cflow_scheduler scheduler = {0};
     int first = 1;

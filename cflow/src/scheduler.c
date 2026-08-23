@@ -23,18 +23,26 @@ static bool test_take_and_run_one(cflow_test_loop_state *state) {
     return cflow_executor_run_one(&state->executor);
 }
 
-static cflow_task_id test_post_after(void *self,
-                                     uint64_t delay_ms,
-                                     cflow_task_fn fn,
-                                     void *user) {
+static cflow_schedule_result test_try_post_after(void *self,
+                                                 uint64_t delay_ms,
+                                                 cflow_task_fn fn,
+                                                 void *user) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
     cflow_instant now;
     cflow_deadline deadline;
 
-    if (!state || !fn) return 0u;
+    if (!state || !fn)
+        return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
     now = cflow_clock_now(&state->clock);
     deadline = cflow_deadline_after(now, cflow_duration_from_ms(delay_ms));
-    return cflow_timer_queue_schedule(&state->timers, deadline, fn, user);
+    return cflow_timer_queue_try_schedule(&state->timers, deadline, fn, user);
+}
+
+static cflow_task_id test_post_after(void *self,
+                                     uint64_t delay_ms,
+                                     cflow_task_fn fn,
+                                     void *user) {
+    return test_try_post_after(self, delay_ms, fn, user).task_id;
 }
 
 static bool test_cancel(void *self, cflow_task_id id) {
@@ -115,6 +123,7 @@ static void test_destroy(void *self) {
 
 CMETA_IMPLEMENTS(cflow_scheduler, test_loop,
     CMETA_SCHED_CAP_DELAYED | CMETA_SCHED_CAP_MANUAL_CLOCK,
+    .try_post_after = test_try_post_after,
     .post_after = test_post_after,
     .cancel = test_cancel,
     .run_one = test_run_one,

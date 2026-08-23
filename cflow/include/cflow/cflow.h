@@ -1,6 +1,7 @@
 #ifndef CFLOW_H
 #define CFLOW_H
 
+#include <cflow/admission.h>
 #include <cflow/meta.h>
 #include <cflow/graph.h>
 #include <cflow/stream.h>

@@ -12,8 +12,6 @@
 extern "C" {
 #endif
 
-typedef uint64_t cflow_task_id;
-
 enum {
     CMETA_SCHED_CAP_DELAYED      = 1u << 0,
     CMETA_SCHED_CAP_MANUAL_CLOCK = 1u << 1,
@@ -22,6 +20,7 @@ enum {
 
 /* Scheduler is a compatibility/runtime facade, not an inheritance hierarchy. */
 #define CMETA_SCHEDULER_METHODS(X,I) \
+    X(I,R3,cflow_schedule_result,try_post_after,uint64_t,delay_ticks,cflow_task_fn,fn,void *,user) \
     X(I,R3,cflow_task_id,post_after,uint64_t,delay_ticks,cflow_task_fn,fn,void *,user) \
     X(I,R1,bool,cancel,cflow_task_id,id) \
     X(I,R0,bool,run_one,_) \

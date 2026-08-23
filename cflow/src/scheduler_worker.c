@@ -59,28 +59,37 @@ static void worker_timer_main(void *user) {
     turbo_mutex_unlock(&state->mutex);
 }
 
-static cflow_task_id worker_post_after(void *self,
-                                       uint64_t delay_ms,
-                                       cflow_task_fn fn,
-                                       void *user) {
+static cflow_schedule_result worker_try_post_after(void *self,
+                                                   uint64_t delay_ms,
+                                                   cflow_task_fn fn,
+                                                   void *user) {
     worker_state *state = (worker_state *)self;
     cflow_instant now;
     cflow_deadline deadline;
-    cflow_task_id id;
+    cflow_schedule_result result;
 
-    if (!state || !fn) return 0u;
+    if (!state || !fn)
+        return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
     turbo_mutex_lock(&state->mutex);
     if (state->stopping) {
         turbo_mutex_unlock(&state->mutex);
-        return 0u;
+        return (cflow_schedule_result){CFLOW_ADMISSION_CLOSED, 0u};
     }
 
     now = cflow_clock_now(&state->clock);
     deadline = cflow_deadline_after(now, cflow_duration_from_ms(delay_ms));
-    id = cflow_timer_queue_schedule(&state->timers, deadline, fn, user);
-    if (id != 0u) turbo_cond_broadcast(&state->changed);
+    result = cflow_timer_queue_try_schedule(&state->timers, deadline, fn, user);
+    if (result.status == CFLOW_ADMISSION_ACCEPTED)
+        turbo_cond_broadcast(&state->changed);
     turbo_mutex_unlock(&state->mutex);
-    return id;
+    return result;
+}
+
+static cflow_task_id worker_post_after(void *self,
+                                       uint64_t delay_ms,
+                                       cflow_task_fn fn,
+                                       void *user) {
+    return worker_try_post_after(self, delay_ms, fn, user).task_id;
 }
 
 static bool worker_cancel(void *self, cflow_task_id id) {
@@ -187,6 +196,7 @@ static void worker_destroy(void *self) {
 
 CMETA_IMPLEMENTS(cflow_scheduler, worker_scheduler,
     CMETA_SCHED_CAP_DELAYED | CMETA_SCHED_CAP_CONCURRENT,
+    .try_post_after = worker_try_post_after,
     .post_after = worker_post_after,
     .cancel = worker_cancel,
     .run_one = worker_run_one,

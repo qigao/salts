@@ -79,7 +79,10 @@ spec("CFlow execution foundation") {
     atomic_store(&executor_counter, 0);
 
     check_true(cflow_executor_manual_init(&executor));
-    check_true(cflow_executor_post(&executor, count_task, NULL));
+    check_equal(cflow_executor_try_post(&executor, NULL, NULL),
+                CFLOW_ADMISSION_INVALID_ARGUMENT);
+    check_equal(cflow_executor_try_post(&executor, count_task, NULL),
+                CFLOW_ADMISSION_ACCEPTED);
     check_equal(cflow_executor_pending(&executor), (size_t)1u);
     check_false(cflow_executor_wait_idle(&executor));
     check_equal(atomic_load(&executor_counter), 0);
