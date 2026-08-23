@@ -1,4 +1,5 @@
 #include <cmeta/data.h>
+#include <cmeta/range.h>
 
 #include <limits.h>
 #include <stddef.h>
@@ -169,6 +170,19 @@ bool cmeta_data_desc_valid(const cmeta_data_desc *desc) {
             return false;
     }
     return false;
+}
+
+const cmeta_data_desc *cmeta_container_data_descriptor(const void *object) {
+    const cmeta_container_ext *ext;
+
+    if (!cmeta_container_type_application_valid(object))
+        return NULL;
+    ext = cmeta_container_extension(object);
+    if (ext == NULL ||
+        ext->struct_size < CMETA_FIELD_END(cmeta_container_ext, data) ||
+        ext->data == NULL || !cmeta_data_desc_valid(ext->data))
+        return NULL;
+    return ext->data;
 }
 
 const cmeta_data_field_desc *cmeta_data_struct_field(
