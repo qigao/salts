@@ -114,6 +114,58 @@ suite("CFlow pipeline") {
         cflow_stream_destroy(&stream);
     }
 
+    it("keeps phase results independent of flat edge storage order") {
+        cflow_stream stream = {0};
+        cflow_graph normalized = {0};
+        cflow_graph optimized = {0};
+        cflow_plan plan = {0};
+        cflow_opt_stats opt_stats = {0};
+        cflow_plan_compile_stats plan_stats = {0};
+        cflow_result normalized_result = {0};
+        cflow_result optimized_result = {0};
+        cflow_result compiled_result = {0};
+        cflow_subgraph *surface_root;
+        const char *validation = NULL;
+        const int input[] = {1, 2, 3, 4, 5, 6};
+
+        normalized.root = CMETA_INVALID_ID;
+        optimized.root = CMETA_INVALID_ID;
+        check_true(cflow_test_build_pipeline(&stream));
+        surface_root = &stream.graph.subgraphs[stream.graph.root];
+        check_equal(surface_root->edge_count, (size_t)3u);
+        for (size_t left = 0u, right = surface_root->edge_count - 1u; left < right;
+             ++left, --right) {
+            cflow_edge edge = surface_root->edges[left];
+            surface_root->edges[left] = surface_root->edges[right];
+            surface_root->edges[right] = edge;
+        }
+
+        check_true(cflow_graph_validate(&stream.graph, &validation));
+        check_null(validation);
+        check_true(cflow_graph_normalize(&normalized, &stream.graph));
+        check_true(cflow_graph_optimize(&optimized, &normalized,
+                                        (cflow_opt_options){CMETA_OPT_DEFAULT}, &opt_stats));
+        check_equal(opt_stats.nodes_before, (size_t)4u);
+        check_equal(opt_stats.nodes_after, (size_t)3u);
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, &plan_stats));
+        check_equal(plan_stats.graph_nodes, (size_t)3u);
+        check_equal(plan_stats.instructions, (size_t)2u);
+        check_true(cflow_eval_array(&normalized, input, 6u, &normalized_result));
+        check_true(cflow_eval_array(&optimized, input, 6u, &optimized_result));
+        check_true(cflow_plan_eval_array(&plan, input, 6u, &compiled_result));
+        check_true(cflow_result_equal(&normalized_result, &optimized_result));
+        check_true(cflow_result_equal(&normalized_result, &compiled_result));
+        cflow_test_check_expected(&compiled_result);
+
+        cflow_result_destroy(&compiled_result);
+        cflow_result_destroy(&optimized_result);
+        cflow_result_destroy(&normalized_result);
+        cflow_plan_destroy(&plan);
+        cflow_graph_destroy(&optimized);
+        cflow_graph_destroy(&normalized);
+        cflow_stream_destroy(&stream);
+    }
+
     it("reports exact bounded resources for a fused value plan") {
         cflow_stream stream = {0};
         cflow_plan plan = {0};

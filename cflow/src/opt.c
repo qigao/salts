@@ -2,6 +2,7 @@
 #include <cflow/lower.h>
 #include <cflow/effect.h>
 #include <cflow/property.h>
+#include "dense_successor_index.h"
 #include "graph_internal.h"
 
 #include <stdlib.h>
@@ -204,6 +205,7 @@ static size_t node_chain_count(const cflow_node *n) {
 static bool append_map_chain(opt_ctx *ctx, cflow_subgraph_id src_sgid,
                              cflow_subgraph_id sgid,
                              const cflow_subgraph *srcsg,
+                             const cflow_dense_successor_index *index,
                              cflow_node_id first,
                              cflow_node_id *last_out) {
     size_t total = 0, nodes = 0;
@@ -220,7 +222,7 @@ static bool append_map_chain(opt_ctx *ctx, cflow_subgraph_id src_sgid,
         ++nodes;
         if (at == srcsg->tail) break;
         cflow_node_id next = CMETA_INVALID_ID;
-        if (!cflow_subgraph_single_successor(srcsg, at, &next)) break;
+        if (!cflow_dense_successor_index_successor(index, at, &next)) break;
         const cflow_node *next_node = cflow_subgraph_node(srcsg, next);
         if (!maplike(next_node)) break;
         if (!node_is_pure(ctx, next_node)) {
@@ -270,7 +272,10 @@ static bool append_map_chain(opt_ctx *ctx, cflow_subgraph_id src_sgid,
         }
         if (walk == at) break;
         cflow_node_id next = CMETA_INVALID_ID;
-        if (!cflow_subgraph_single_successor(srcsg, walk, &next)) { free(chain); return false; }
+        if (!cflow_dense_successor_index_successor(index, walk, &next)) {
+            free(chain);
+            return false;
+        }
         walk = next;
     }
 
@@ -293,7 +298,7 @@ static bool append_map_chain(opt_ctx *ctx, cflow_subgraph_id src_sgid,
             if (n->op == CFLOW_OP_TRANSFORM) ++ctx->stats->transforms_canonicalized;
             if (walk == at) break;
             cflow_node_id next = CMETA_INVALID_ID;
-            if (!cflow_subgraph_single_successor(srcsg, walk, &next)) break;
+            if (!cflow_dense_successor_index_successor(index, walk, &next)) break;
             walk = next;
         }
     }
@@ -303,49 +308,66 @@ static bool append_map_chain(opt_ctx *ctx, cflow_subgraph_id src_sgid,
 
 static bool optimize_subgraph(opt_ctx *ctx, cflow_subgraph_id src_id,
                               cflow_subgraph_id *out_id) {
+    cflow_dense_successor_index index = {0};
+    cflow_dense_successor_index_status index_status;
+    bool ok = false;
+
     if (!ctx || !out_id || src_id >= ctx->src->subgraph_count) return false;
     if (ctx->state[src_id] == 2u) { *out_id = ctx->map[src_id]; return true; }
     if (ctx->state[src_id] == 1u) { ctx->error = "recursive subgraph reference is not optimizable"; return false; }
     ctx->state[src_id] = 1u;
 
     const cflow_subgraph *srcsg = cflow_graph_subgraph(ctx->src, src_id);
+    index_status = cflow_dense_successor_index_build(&index, srcsg);
+    if (index_status != CFLOW_DENSE_SUCCESSOR_INDEX_OK) {
+        ctx->error = index_status == CFLOW_DENSE_SUCCESSOR_INDEX_ALLOCATION_FAILED
+                         ? "optimizer successor-index allocation failed"
+                         : "optimizer encountered invalid DATA topology";
+        return false;
+    }
+    if (index.has_fanout) {
+        ctx->error = "optimizer requires explicit single-path DATA topology";
+        goto done;
+    }
+
     cflow_subgraph_id dstid = cflow_graph_create_subgraph(ctx->dst, srcsg->input_type);
-    if (dstid == CMETA_INVALID_ID) { ctx->error = ctx->dst->error; return false; }
+    if (dstid == CMETA_INVALID_ID) { ctx->error = ctx->dst->error; goto done; }
 
     cflow_node_id at = srcsg->entry;
     while (at != srcsg->tail) {
         cflow_node_id next = CMETA_INVALID_ID;
-        if (!cflow_subgraph_single_successor(srcsg, at, &next)) {
+        if (!cflow_dense_successor_index_successor(&index, at, &next)) {
             ctx->error = "optimizer requires explicit single-path DATA topology";
-            return false;
+            goto done;
         }
         const cflow_node *node = cflow_subgraph_node(srcsg, next);
-        if (!node) { ctx->error = "optimizer encountered invalid node"; return false; }
+        if (!node) { ctx->error = "optimizer encountered invalid node"; goto done; }
 
         if ((ctx->passes & CMETA_OPT_MAP_FUSION) && maplike(node) && node_is_pure(ctx, node)) {
             cflow_node_id last = next;
-            if (!append_map_chain(ctx, src_id, dstid, srcsg, next, &last)) return false;
+            if (!append_map_chain(ctx, src_id, dstid, srcsg, &index, next, &last)) goto done;
             at = last;
             continue;
         }
         if ((ctx->passes & CMETA_OPT_MAP_FUSION) && maplike(node) && !node_is_pure(ctx, node)) {
             cflow_node_id after = CMETA_INVALID_ID;
-            if (next != srcsg->tail && cflow_subgraph_single_successor(srcsg, next, &after) &&
+            if (next != srcsg->tail &&
+                cflow_dense_successor_index_successor(&index, next, &after) &&
                 maplike(cflow_subgraph_node(srcsg, after)) && ctx->stats)
                 ++ctx->stats->effect_blocked_map_fusions;
         }
         if (node->op == CFLOW_OP_RELATION) {
-            if (!append_relation(ctx, dstid, node)) return false;
+            if (!append_relation(ctx, dstid, node)) goto done;
         } else if (node->op == CFLOW_OP_SOURCE) {
             ctx->error = "SOURCE may only be a subgraph entry";
-            return false;
+            goto done;
         } else {
             cflow_subgraph_id *nested = NULL;
-            if (!optimize_nested(ctx, node, &nested)) return false;
+            if (!optimize_nested(ctx, node, &nested)) goto done;
             cflow_node_id id = CMETA_INVALID_ID;
-            bool ok = append_plain_node(ctx, dstid, node, nested, node->subgraph_count, &id);
+            bool appended = append_plain_node(ctx, dstid, node, nested, node->subgraph_count, &id);
             free(nested);
-            if (!ok) return false;
+            if (!appended) goto done;
         }
         at = next;
     }
@@ -353,7 +375,11 @@ static bool optimize_subgraph(opt_ctx *ctx, cflow_subgraph_id src_id,
     ctx->map[src_id] = dstid;
     ctx->state[src_id] = 2u;
     *out_id = dstid;
-    return true;
+    ok = true;
+
+done:
+    cflow_dense_successor_index_destroy(&index);
+    return ok;
 }
 
 static bool graph_optimize_impl(cflow_graph *dst,
