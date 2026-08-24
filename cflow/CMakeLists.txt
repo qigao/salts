@@ -27,6 +27,7 @@ endforeach()
 
 add_library(${TARGET_NAME}
   src/adapters.c
+  src/actor.c
   src/certificate.c
   src/clock.c
   src/coord.c

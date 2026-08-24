@@ -1,16 +1,137 @@
 #include <cflow/cflow.h>
+#include <turbo/clock.h>
 #include <turbo/thread.h>
 #include "cflow_test_ops.h"
 #include "../src/value_storage.h"
 #include "tinytest.h"
 
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
+enum { RUNTIME_SATURATION_TIMEOUT_MS = 5000 };
+
 typedef struct lifecycle_test_value {
     int *resource;
 } lifecycle_test_value;
+
+typedef struct coalescing_scheduler_state {
+    atomic_bool entered;
+    atomic_bool release;
+    atomic_bool timed_out;
+    atomic_int posts;
+    uint64_t timeout_ms;
+} coalescing_scheduler_state;
+
+typedef struct coalescing_request_context {
+    cflow_run *run;
+    atomic_bool returned;
+    bool result;
+} coalescing_request_context;
+
+typedef struct coalescing_close_context {
+    cflow_run *run;
+    atomic_int started;
+    atomic_int returned;
+} coalescing_close_context;
+
+typedef struct rejection_callback_close_state {
+    cflow_run *run;
+    atomic_int errors;
+    atomic_bool close_returned;
+} rejection_callback_close_state;
+
+static cflow_schedule_result coalescing_try_post_after(
+    void *self, uint64_t delay, cflow_task_fn fn, void *user) {
+    coalescing_scheduler_state *state = (coalescing_scheduler_state *)self;
+    (void)delay;
+    (void)user;
+    if (state == NULL || fn == NULL)
+        return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
+    atomic_fetch_add(&state->posts, 1);
+    atomic_store(&state->entered, true);
+    {
+        const uint64_t started = turbo_monotonic_ms();
+        const uint64_t timeout = state->timeout_ms != 0u
+            ? state->timeout_ms : RUNTIME_SATURATION_TIMEOUT_MS;
+        while (turbo_monotonic_ms() - started < timeout &&
+               !atomic_load(&state->release))
+            turbo_sleep_ms(1u);
+    }
+    if (!atomic_load(&state->release))
+        atomic_store(&state->timed_out, true);
+    return (cflow_schedule_result){CFLOW_ADMISSION_FULL, 0u};
+}
+
+static void coalescing_barrier_task(void *user) { (void)user; }
+
+static cflow_task_id coalescing_post_after(
+    void *self, uint64_t delay, cflow_task_fn fn, void *user) {
+    return coalescing_try_post_after(self, delay, fn, user).task_id;
+}
+static bool coalescing_cancel(void *self, cflow_task_id id) {
+    (void)self; (void)id; return false;
+}
+static bool coalescing_run_one(void *self) { (void)self; return false; }
+static size_t coalescing_run_ready(void *self) { (void)self; return 0u; }
+static size_t coalescing_advance(void *self, uint64_t ticks) {
+    (void)self; (void)ticks; return 0u;
+}
+static size_t coalescing_run_until_idle(void *self, size_t steps) {
+    (void)self; (void)steps; return 0u;
+}
+static bool coalescing_wait_idle(void *self) { (void)self; return true; }
+static uint64_t coalescing_now(void *self) { (void)self; return 0u; }
+static size_t coalescing_pending(void *self) { (void)self; return 0u; }
+static bool coalescing_shutdown(void *self) { (void)self; return true; }
+static bool coalescing_get_stats(void *self, cflow_scheduler_stats *out) {
+    (void)self;
+    if (out == NULL) return false;
+    *out = (cflow_scheduler_stats){0};
+    return true;
+}
+static void coalescing_destroy(void *self) { (void)self; }
+
+CMETA_IMPLEMENTS(cflow_scheduler, coalescing_scheduler,
+    CMETA_SCHED_CAP_CONCURRENT,
+    .try_post_after = coalescing_try_post_after,
+    .post_after = coalescing_post_after,
+    .cancel = coalescing_cancel,
+    .run_one = coalescing_run_one,
+    .run_ready = coalescing_run_ready,
+    .advance = coalescing_advance,
+    .run_until_idle = coalescing_run_until_idle,
+    .wait_idle = coalescing_wait_idle,
+    .now = coalescing_now,
+    .pending = coalescing_pending,
+    .shutdown = coalescing_shutdown,
+    .get_stats = coalescing_get_stats,
+    .destroy = coalescing_destroy
+);
+
+static void coalescing_request(void *user) {
+    coalescing_request_context *context =
+        (coalescing_request_context *)user;
+    context->result = cflow_run_request(context->run, 1u);
+    atomic_store(&context->returned, true);
+}
+
+static void coalescing_close(void *user) {
+    coalescing_close_context *context = (coalescing_close_context *)user;
+    atomic_store(&context->started, 1);
+    cflow_run_close(context->run);
+    atomic_store(&context->returned, 1);
+}
+
+static void rejection_callback_close_error(void *user, const char *message) {
+    rejection_callback_close_state *state =
+        (rejection_callback_close_state *)user;
+    if (state == NULL || message == NULL) return;
+    atomic_fetch_add(&state->errors, 1);
+    cflow_run_close(state->run);
+    atomic_store(&state->close_returned, true);
+}
 
 static size_t lifecycle_test_copies;
 static size_t lifecycle_test_moves;
@@ -542,7 +663,153 @@ static void machine_run_sink_done(void *user) {
     if (state != NULL) ++state->dones;
 }
 
+typedef struct saturation_source_state {
+    atomic_bool cancelled;
+    atomic_bool destroyed;
+    int next;
+} saturation_source_state;
+
+typedef struct saturation_sink_state {
+    cflow_scheduler *scheduler;
+    atomic_int values;
+    atomic_int errors;
+    atomic_int dones;
+    atomic_int blocker_status;
+} saturation_sink_state;
+
+static const char *saturation_source_name(void *state) {
+    (void)state;
+    return "saturation_source";
+}
+
+static const cmeta_type_desc *saturation_source_type(void *state) {
+    (void)state;
+    return &cmeta_type_int;
+}
+
+static cflow_step saturation_source_resume(void *state,
+                                           cflow_resume_ctx *ctx,
+                                           void *out_value) {
+    saturation_source_state *source = (saturation_source_state *)state;
+    (void)ctx;
+    if (source == NULL || out_value == NULL)
+        return (cflow_step){
+            CFLOW_STEP_ERROR, {0}, "saturation source is invalid"};
+    if (atomic_load(&source->cancelled))
+        return (cflow_step){CFLOW_STEP_DONE, {0}, NULL};
+    *(int *)out_value = source->next++;
+    return (cflow_step){CFLOW_STEP_VALUE, {0}, NULL};
+}
+
+static void saturation_source_cancel(void *state) {
+    saturation_source_state *source = (saturation_source_state *)state;
+    if (source != NULL) atomic_store(&source->cancelled, true);
+}
+
+static void saturation_source_destroy(void *state) {
+    saturation_source_state *source = (saturation_source_state *)state;
+    if (source != NULL) atomic_store(&source->destroyed, true);
+}
+
+static void saturation_source_bind(void *state, cflow_waker waker) {
+    (void)state;
+    (void)waker;
+}
+
+static cflow_source_terminal saturation_source_poll(void *state,
+                                                    const char **error) {
+    saturation_source_state *source = (saturation_source_state *)state;
+    if (error != NULL) *error = NULL;
+    return source != NULL && atomic_load(&source->cancelled)
+        ? CFLOW_SOURCE_DONE : CFLOW_SOURCE_OPEN;
+}
+
+CMETA_IMPLEMENTS(cflow_source, saturation_source, 0,
+    .name = saturation_source_name,
+    .output_type = saturation_source_type,
+    .resume = saturation_source_resume,
+    .cancel = saturation_source_cancel,
+    .destroy = saturation_source_destroy,
+    .bind_terminal_waker = saturation_source_bind,
+    .poll_terminal = saturation_source_poll
+);
+
+static void saturation_blocker(void *user) {
+    (void)user;
+}
+
+static bool saturation_sink_value(void *user,
+                                  const cmeta_type_desc *type,
+                                  const void *value) {
+    saturation_sink_state *state = (saturation_sink_state *)user;
+    int previous;
+    if (state == NULL || !cmeta_type_equal(type, &cmeta_type_int) ||
+        value == NULL)
+        return false;
+    previous = atomic_fetch_add(&state->values, 1);
+    if (previous == 0) {
+        const cflow_schedule_result result =
+            cflow_scheduler_try_post_after(
+                state->scheduler, UINT64_C(1000), saturation_blocker, NULL);
+        atomic_store(&state->blocker_status, (int)result.status);
+    }
+    return true;
+}
+
+static void saturation_sink_error(void *user, const char *message) {
+    saturation_sink_state *state = (saturation_sink_state *)user;
+    if (state != NULL && message != NULL)
+        atomic_fetch_add(&state->errors, 1);
+}
+
+static void saturation_sink_done(void *user) {
+    saturation_sink_state *state = (saturation_sink_state *)user;
+    if (state != NULL) atomic_fetch_add(&state->dones, 1);
+}
+
+static bool runtime_wait_until_at_least(atomic_int *value, int expected) {
+    const uint64_t started = turbo_monotonic_ms();
+    while (turbo_monotonic_ms() - started <
+           RUNTIME_SATURATION_TIMEOUT_MS) {
+        if (atomic_load(value) >= expected) return true;
+        turbo_sleep_ms(1u);
+    }
+    return atomic_load(value) >= expected;
+}
+
+static bool runtime_wait_until_true(atomic_bool *value) {
+    const uint64_t started = turbo_monotonic_ms();
+    while (turbo_monotonic_ms() - started <
+           RUNTIME_SATURATION_TIMEOUT_MS) {
+        if (atomic_load(value)) return true;
+        turbo_sleep_ms(1u);
+    }
+    return atomic_load(value);
+}
+
 suite("CFlow runtime") {
+    it("bounds a stalled controlled Scheduler admission barrier") {
+        enum { CONTROLLED_BARRIER_TIMEOUT_MS = 10 };
+        coalescing_scheduler_state state = {0};
+        cflow_scheduler scheduler =
+            coalescing_scheduler_as_cflow_scheduler(&state);
+        const uint64_t started = turbo_monotonic_ms();
+        cflow_schedule_result result;
+
+        state.timeout_ms = CONTROLLED_BARRIER_TIMEOUT_MS;
+        result = cflow_scheduler_try_post_after(
+            &scheduler, 0u, coalescing_barrier_task, NULL);
+
+        check_equal(result.status, CFLOW_ADMISSION_FULL);
+        check_equal(result.task_id, (cflow_task_id)0u);
+        check_true(atomic_load(&state.entered));
+        check_true(atomic_load(&state.timed_out));
+        check_false(atomic_load(&state.release));
+        check_equal(atomic_load(&state.posts), 1);
+        check_less(turbo_monotonic_ms() - started,
+                   (uint64_t)RUNTIME_SATURATION_TIMEOUT_MS);
+    }
+
     group("managed value slots") {
         before_each() {
             lifecycle_test_reset();
@@ -625,6 +892,222 @@ suite("CFlow runtime") {
         check_null(machine.ops);
         if (initialized)
             machine.ops->destroy(machine.state);
+    }
+
+    it("fails when a quantum reschedule reaches a full Scheduler") {
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        cflow_scheduler scheduler = {0};
+        saturation_source_state source_state = {0};
+        saturation_sink_state sink_state = {0};
+        cflow_source source;
+        cflow_run run = {0};
+        cflow_sink_callbacks callbacks;
+        cflow_sink sink;
+        const char *error;
+
+        normalized.root = CMETA_INVALID_ID;
+        source = saturation_source_as_cflow_source(&source_state);
+        sink_state.scheduler = &scheduler;
+        atomic_init(&sink_state.blocker_status,
+                    (int)CFLOW_ADMISSION_INVALID_ARGUMENT);
+        callbacks = (cflow_sink_callbacks){
+            saturation_sink_value,
+            saturation_sink_error,
+            saturation_sink_done,
+            &sink_state};
+        sink = cflow_sink_from_callbacks(&callbacks);
+
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_scheduler_worker_init_with_capacity(
+            &scheduler, 1u, 1u, 1u));
+        check_true(cflow_run_open(
+            &run, &normalized, &source, &scheduler, &sink));
+        check_true(cflow_run_request(&run, SIZE_MAX));
+
+        check_true(runtime_wait_until_at_least(&sink_state.errors, 1));
+        check_equal(atomic_load(&sink_state.blocker_status),
+                    (int)CFLOW_ADMISSION_ACCEPTED);
+        check_greater(atomic_load(&sink_state.values), 0);
+        check_equal(atomic_load(&sink_state.errors), 1);
+        check_equal(atomic_load(&sink_state.dones), 0);
+        error = cflow_run_error(&run);
+        check_not_null(error);
+        if (error != NULL) check_contains(error, "scheduler is full");
+
+        cflow_run_close(&run);
+        check_true(atomic_load(&source_state.destroyed));
+        cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("preserves an autonomous rejection failure coalesced behind a request") {
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        coalescing_scheduler_state scheduler_state = {0};
+        saturation_source_state source_state = {0};
+        saturation_sink_state sink_state = {0};
+        cflow_source source = saturation_source_as_cflow_source(&source_state);
+        cflow_scheduler scheduler =
+            coalescing_scheduler_as_cflow_scheduler(&scheduler_state);
+        cflow_run run = {0};
+        cflow_sink_callbacks callbacks = {
+            saturation_sink_value,
+            saturation_sink_error,
+            saturation_sink_done,
+            &sink_state};
+        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+        coalescing_request_context request = {&run};
+        turbo_thread_t thread = {0};
+
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_run_open(
+            &run, &normalized, &source, &scheduler, &sink));
+        {
+            const int create_status = turbo_thread_create(
+                &thread, coalescing_request, &request);
+            check_equal(create_status, 0);
+            if (create_status != 0) abort();
+        }
+        check_true(runtime_wait_until_at_least(&scheduler_state.posts, 1));
+        check_true(atomic_load(&scheduler_state.entered));
+
+        cflow_run_wake(&run);
+        atomic_store(&scheduler_state.release, true);
+        check_true(runtime_wait_until_at_least(&sink_state.errors, 1));
+        {
+            const bool returned = runtime_wait_until_true(&request.returned);
+            check_true(returned);
+            if (!returned) abort();
+        }
+        check_equal(turbo_thread_join(&thread), 0);
+        check_true(atomic_load(&request.returned));
+        check_false(request.result);
+        check_equal(atomic_load(&scheduler_state.posts), 1);
+        check_false(atomic_load(&scheduler_state.timed_out));
+        check_equal(atomic_load(&sink_state.errors), 1);
+        check_contains(cflow_run_error(&run), "scheduler is full");
+
+        cflow_run_close(&run);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("hands rejected task destruction to a closing error callback") {
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        coalescing_scheduler_state scheduler_state = {0};
+        saturation_source_state source_state = {0};
+        cflow_source source = saturation_source_as_cflow_source(&source_state);
+        cflow_scheduler scheduler =
+            coalescing_scheduler_as_cflow_scheduler(&scheduler_state);
+        cflow_run run = {0};
+        rejection_callback_close_state close_state = {&run};
+        cflow_sink_callbacks callbacks = {
+            NULL, rejection_callback_close_error, NULL, &close_state};
+        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+        coalescing_request_context request = {&run};
+        turbo_thread_t thread = {0};
+
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_run_open(
+            &run, &normalized, &source, &scheduler, &sink));
+        {
+            const int create_status = turbo_thread_create(
+                &thread, coalescing_request, &request);
+            check_equal(create_status, 0);
+            if (create_status != 0) abort();
+        }
+        check_true(runtime_wait_until_at_least(&scheduler_state.posts, 1));
+        cflow_run_wake(&run);
+        atomic_store(&scheduler_state.release, true);
+
+        {
+            const bool returned = runtime_wait_until_true(&request.returned);
+            check_true(returned);
+            if (!returned) abort();
+        }
+        check_equal(turbo_thread_join(&thread), 0);
+        check_equal(atomic_load(&close_state.errors), 1);
+        check_true(atomic_load(&close_state.close_returned));
+        check_null(run.impl);
+        check_true(atomic_load(&source_state.destroyed));
+        check_false(atomic_load(&scheduler_state.timed_out));
+
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("hands the last rejected task reference to a concurrent closer") {
+        enum { CLOSE_RACE_REPETITIONS = 64 };
+        int repetition;
+        for (repetition = 0; repetition < CLOSE_RACE_REPETITIONS;
+             ++repetition) {
+            cflow_graph surface = {0};
+            cflow_graph normalized = {0};
+            coalescing_scheduler_state scheduler_state = {0};
+            saturation_source_state source_state = {0};
+            saturation_sink_state sink_state = {0};
+            cflow_source source =
+                saturation_source_as_cflow_source(&source_state);
+            cflow_scheduler scheduler =
+                coalescing_scheduler_as_cflow_scheduler(&scheduler_state);
+            cflow_run run = {0};
+            cflow_sink_callbacks callbacks = {
+                saturation_sink_value, saturation_sink_error,
+                saturation_sink_done, &sink_state};
+            cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+            coalescing_request_context request = {&run};
+            coalescing_close_context close = {&run};
+            turbo_thread_t request_thread = {0};
+            turbo_thread_t close_thread = {0};
+
+            cflow_graph_init(&surface, &cmeta_type_int);
+            check_true(cflow_graph_normalize(&normalized, &surface));
+            check_true(cflow_run_open(
+                &run, &normalized, &source, &scheduler, &sink));
+            {
+                const int create_status = turbo_thread_create(
+                    &request_thread, coalescing_request, &request);
+                check_equal(create_status, 0);
+                if (create_status != 0) abort();
+            }
+            check_true(runtime_wait_until_at_least(
+                &scheduler_state.posts, 1));
+            {
+                const int create_status = turbo_thread_create(
+                    &close_thread, coalescing_close, &close);
+                check_equal(create_status, 0);
+                if (create_status != 0) abort();
+            }
+            check_true(runtime_wait_until_at_least(&close.started, 1));
+            atomic_store(&scheduler_state.release, true);
+
+            {
+                const bool request_returned =
+                    runtime_wait_until_true(&request.returned);
+                const bool close_returned = runtime_wait_until_at_least(
+                    &close.returned, 1);
+                check_true(request_returned);
+                check_true(close_returned);
+                if (!request_returned || !close_returned) abort();
+            }
+            check_equal(turbo_thread_join(&request_thread), 0);
+            check_equal(turbo_thread_join(&close_thread), 0);
+            check_true(atomic_load(&request.returned));
+            check_equal(atomic_load(&close.returned), 1);
+            check_null(run.impl);
+            check_true(atomic_load(&source_state.destroyed));
+            check_equal(atomic_load(&sink_state.errors), 0);
+            check_false(atomic_load(&scheduler_state.timed_out));
+
+            cflow_graph_destroy(&normalized);
+            cflow_graph_destroy(&surface);
+        }
     }
 
     it("rejects owning coordination children before ownership transfer") {

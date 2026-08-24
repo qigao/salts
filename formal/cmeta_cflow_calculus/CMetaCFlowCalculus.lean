@@ -18,6 +18,7 @@ import CMetaCFlowCalculus.CFlow.MachineSchemaHeader
 import CMetaCFlowCalculus.CFlow.Machine
 import CMetaCFlowCalculus.CFlow.MachineRuntime
 import CMetaCFlowCalculus.CFlow.TimerEvent
+import CMetaCFlowCalculus.CFlow.Actor
 import CMetaCFlowCalculus.CFlow.Observation
 import CMetaCFlowCalculus.CFlow.Architecture
 import CMetaCFlowCalculus.CFlow.Rewrite
@@ -29,6 +30,7 @@ import CMetaCFlowCalculus.Proofs.Mailbox
 import CMetaCFlowCalculus.Proofs.Machine
 import CMetaCFlowCalculus.Proofs.MachineRuntime
 import CMetaCFlowCalculus.Proofs.TimerEvent
+import CMetaCFlowCalculus.Proofs.Actor
 import CMetaCFlowCalculus.Proofs.Architecture
 import CMetaCFlowCalculus.Proofs.Rewrite
 import CMetaCFlowCalculus.Proofs.Certificate
