@@ -26,6 +26,8 @@ struct readiness_contract_fixture {
   size_t hook_calls[READINESS_CONTRACT_HOOK_COUNT];
   uint64_t hook_last_sequence[READINESS_CONTRACT_HOOK_COUNT];
   uint64_t hook_sequence;
+  int hook_fail_status[READINESS_CONTRACT_HOOK_COUNT];
+  size_t hook_fail_remaining[READINESS_CONTRACT_HOOK_COUNT];
   int next_arm_error;
   atomic_size_t reentrant_checks;
 };
@@ -58,6 +60,17 @@ static void fake_hook_enter(readiness_contract_fixture *fixture, readiness_contr
   turbo_mutex_unlock(&fixture->mutex);
 }
 
+static int fake_hook_error(readiness_contract_fixture *fixture, readiness_contract_hook hook) {
+  int status = TURBO_OK;
+  turbo_mutex_lock(&fixture->mutex);
+  if (fixture->hook_fail_remaining[hook] != 0) {
+    fixture->hook_fail_remaining[hook] -= 1u;
+    status = fixture->hook_fail_status[hook];
+  }
+  turbo_mutex_unlock(&fixture->mutex);
+  return status;
+}
+
 static void fake_check_reentrant(readiness_contract_fixture *fixture) {
   turbo_readiness_stats stats;
   if (turbo_readiness_reactor_stats(fixture->reactor, &stats) == TURBO_OK)
@@ -68,6 +81,8 @@ static int fake_register_resource(void *user, intptr_t native_resource, uint64_t
   readiness_contract_fixture *fixture = (readiness_contract_fixture *)user;
   fake_check_reentrant(fixture);
   fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_REGISTER);
+  int hook_status = fake_hook_error(fixture, READINESS_CONTRACT_HOOK_REGISTER);
+  if (hook_status != TURBO_OK) return hook_status;
   turbo_mutex_lock(&fixture->mutex);
   if (fake_find_resource(fixture, native_resource) != NULL) {
     turbo_mutex_unlock(&fixture->mutex);
@@ -93,6 +108,8 @@ static int fake_arm(void *user, uint64_t token, turbo_readiness_events events) {
   int status = TURBO_OK;
   fake_check_reentrant(fixture);
   fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_ARM);
+  status = fake_hook_error(fixture, READINESS_CONTRACT_HOOK_ARM);
+  if (status != TURBO_OK) return status;
   turbo_mutex_lock(&fixture->mutex);
   if (fixture->next_arm_error != TURBO_OK) {
     status = fixture->next_arm_error;
@@ -112,6 +129,8 @@ static int fake_unarm(void *user, uint64_t token) {
   int status = TURBO_OK;
   fake_check_reentrant(fixture);
   fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_UNARM);
+  status = fake_hook_error(fixture, READINESS_CONTRACT_HOOK_UNARM);
+  if (status != TURBO_OK) return status;
   turbo_mutex_lock(&fixture->mutex);
   record = fake_find_token(fixture, token);
   if (record == NULL) status = TURBO_EINVAL;
@@ -126,6 +145,8 @@ static int fake_close(void *user, uint64_t token) {
   int status = TURBO_OK;
   fake_check_reentrant(fixture);
   fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_CLOSE);
+  status = fake_hook_error(fixture, READINESS_CONTRACT_HOOK_CLOSE);
+  if (status != TURBO_OK) return status;
   turbo_mutex_lock(&fixture->mutex);
   record = fake_find_token(fixture, token);
   if (record == NULL) status = TURBO_EINVAL;
@@ -138,7 +159,7 @@ static int fake_shutdown(void *user) {
   readiness_contract_fixture *fixture = (readiness_contract_fixture *)user;
   fake_check_reentrant(fixture);
   fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_SHUTDOWN);
-  return TURBO_OK;
+  return fake_hook_error(fixture, READINESS_CONTRACT_HOOK_SHUTDOWN);
 }
 
 static const turbo_readiness_backend_ops fake_backend_ops = {fake_register_resource, fake_arm,
@@ -234,6 +255,14 @@ static void fake_fail_next_arm(readiness_contract_fixture *fixture, int status) 
   turbo_mutex_unlock(&fixture->mutex);
 }
 
+static void fake_fail_hook(readiness_contract_fixture *fixture, readiness_contract_hook hook,
+                           int status, size_t calls) {
+  turbo_mutex_lock(&fixture->mutex);
+  fixture->hook_fail_status[hook] = status;
+  fixture->hook_fail_remaining[hook] = calls;
+  turbo_mutex_unlock(&fixture->mutex);
+}
+
 static size_t fake_backend_close_calls(readiness_contract_fixture *fixture) {
   size_t calls;
   turbo_mutex_lock(&fixture->mutex);
@@ -277,6 +306,10 @@ static int fake_wait_hook_calls(readiness_contract_fixture *fixture, readiness_c
   return status;
 }
 
+static int fake_wait_admission_closed(readiness_contract_fixture *fixture) {
+  return turbo_readiness_backend_wait_admission_closed(fixture->reactor);
+}
+
 static uint64_t fake_hook_last_sequence(readiness_contract_fixture *fixture,
                                         readiness_contract_hook hook) {
   uint64_t sequence;
@@ -294,12 +327,14 @@ const readiness_contract_factory *readiness_contract_factory_get(void) {
                                                      fake_fail_backend,
                                                      fake_token_for_resource,
                                                      fake_fail_next_arm,
+                                                     fake_fail_hook,
                                                      fake_backend_close_calls,
                                                      fake_backend_unarm_calls,
                                                      fake_backend_reentrant_checks,
                                                      fake_block_hook,
                                                      fake_release_hook,
                                                      fake_wait_hook_calls,
+                                                     fake_wait_admission_closed,
                                                      fake_hook_last_sequence};
   return &factory;
 }

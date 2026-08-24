@@ -28,6 +28,8 @@ typedef struct readiness_contract_factory {
   int (*fail_backend)(readiness_contract_fixture *fixture, int status);
   uint64_t (*token_for_resource)(readiness_contract_fixture *fixture, intptr_t native_resource);
   void (*fail_next_arm)(readiness_contract_fixture *fixture, int status);
+  void (*fail_hook)(readiness_contract_fixture *fixture, readiness_contract_hook hook, int status,
+                    size_t calls);
   size_t (*backend_close_calls)(readiness_contract_fixture *fixture);
   size_t (*backend_unarm_calls)(readiness_contract_fixture *fixture);
   size_t (*backend_reentrant_checks)(readiness_contract_fixture *fixture);
@@ -35,6 +37,7 @@ typedef struct readiness_contract_factory {
   void (*release_hook)(readiness_contract_fixture *fixture, readiness_contract_hook hook);
   int (*wait_hook_calls)(readiness_contract_fixture *fixture, readiness_contract_hook hook,
                          size_t calls, uint64_t timeout_ns);
+  int (*wait_admission_closed)(readiness_contract_fixture *fixture);
   uint64_t (*hook_last_sequence)(readiness_contract_fixture *fixture, readiness_contract_hook hook);
 } readiness_contract_factory;
 

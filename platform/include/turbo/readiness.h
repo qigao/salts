@@ -43,8 +43,9 @@ typedef void (*turbo_readiness_callback)(void *user, turbo_readiness_events even
 
 /*
  * Reactors and registrations are zero-state handles. A successful register
- * borrows native_resource until turbo_readiness_close() returns. Registration
- * handles are move-only: copying registration.impl is outside the contract.
+ * borrows native_resource until turbo_readiness_close() returns TURBO_OK.
+ * Registration handles are move-only: copying registration.impl is outside
+ * the contract.
  *
  * Capacity is fixed at initialization. registration_capacity and
  * event_batch_capacity must be nonzero, the batch may not exceed capacity + 1,
@@ -58,7 +59,9 @@ TURBO_PLATFORM_C_API int turbo_readiness_reactor_init(turbo_readiness_reactor *r
  * Shutdown atomically closes admission and reserves one TURBO_ESHUTDOWN
  * delivery for every armed registration; ordinary readiness cannot overtake
  * that terminal delivery. Registrations remain owned by their handles and must
- * be closed before destroy. Repeated shutdown returns TURBO_EALREADY.
+ * be closed before destroy. A failed shutdown preserves the reactor and may be
+ * retried; destroy returns TURBO_EBUSY until backend shutdown succeeds.
+ * Repeated shutdown after success returns TURBO_EALREADY.
  */
 TURBO_PLATFORM_C_API int turbo_readiness_reactor_shutdown(turbo_readiness_reactor *reactor);
 TURBO_PLATFORM_C_API int turbo_readiness_reactor_destroy(turbo_readiness_reactor *reactor);
@@ -77,9 +80,11 @@ TURBO_PLATFORM_C_API int turbo_readiness_arm(turbo_readiness_registration *regis
 
 /*
  * External unarm/close calls return only after an inflight callback is
- * quiescent. Unarm from inside that registration's callback fails fast with
- * TURBO_EBUSY. Close from inside that callback marks it closing, clears the
- * handle, returns TURBO_EBUSY, and defers slot reuse to the callback epilogue.
+ * quiescent. Unarm or close from inside that registration's callback fails
+ * fast with TURBO_EBUSY. Close also returns TURBO_EBUSY while terminal
+ * delivery is reserved. Only TURBO_OK consumes and clears the registration;
+ * TURBO_EBUSY and backend errors preserve the handle and cleanup ownership so
+ * the caller can retry after quiescence.
  */
 TURBO_PLATFORM_C_API int turbo_readiness_unarm(turbo_readiness_registration *registration);
 TURBO_PLATFORM_C_API int turbo_readiness_close(turbo_readiness_registration *registration);

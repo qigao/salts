@@ -31,6 +31,7 @@ typedef struct callback_probe {
   int unarm_status;
   int entered;
   int released;
+  int close_completed;
 } callback_probe;
 
 typedef struct close_other_probe {
@@ -142,6 +143,26 @@ static void blocking_callback(void *user, turbo_readiness_events events, int sta
   turbo_mutex_unlock(&probe->mutex);
 }
 
+static void blocking_close_callback(void *user, turbo_readiness_events events, int status) {
+  callback_probe *probe = (callback_probe *)user;
+  turbo_mutex_lock(&probe->mutex);
+  probe->calls += 1;
+  probe->events = events;
+  probe->status = status;
+  probe->entered = 1;
+  turbo_cond_broadcast(&probe->changed);
+  while (!probe->released)
+    turbo_cond_wait(&probe->changed, &probe->mutex);
+  turbo_mutex_unlock(&probe->mutex);
+
+  probe->close_status = turbo_readiness_close(probe->registration);
+
+  turbo_mutex_lock(&probe->mutex);
+  probe->close_completed = 1;
+  turbo_cond_broadcast(&probe->changed);
+  turbo_mutex_unlock(&probe->mutex);
+}
+
 static void emit_worker(void *user) {
   emit_thread_args *args = (emit_thread_args *)user;
   args->status =
@@ -212,6 +233,15 @@ static void release_probe(callback_probe *probe) {
   probe->released = 1;
   turbo_cond_broadcast(&probe->changed);
   turbo_mutex_unlock(&probe->mutex);
+}
+
+static int wait_probe_close_completed(callback_probe *probe, uint64_t timeout_ns) {
+  int status = TURBO_OK;
+  turbo_mutex_lock(&probe->mutex);
+  while (!probe->close_completed && status == TURBO_OK)
+    status = turbo_cond_timedwait(&probe->changed, &probe->mutex, timeout_ns);
+  turbo_mutex_unlock(&probe->mutex);
+  return status;
 }
 
 static readiness_contract_fixture *create_fixture(const readiness_contract_factory *factory,
@@ -443,8 +473,86 @@ spec("Platform readiness contract") {
     }
   }
 
+  group("backend failure ownership") {
+    it("releases a failed backend register slot for caller retry") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {(void *)(uintptr_t)1};
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+
+      factory->fail_hook(fixture, READINESS_CONTRACT_HOOK_REGISTER, TURBO_EIO, 1);
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration),
+                  TURBO_EIO);
+      check_null(registration.impl);
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_not_null(registration.impl);
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("restores an armed registration after backend unarm failure") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_equal(
+          turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_READ, record_callback, &probe),
+          TURBO_OK);
+      factory->fail_hook(fixture, READINESS_CONTRACT_HOOK_UNARM, TURBO_EIO, 1);
+      check_equal(turbo_readiness_unarm(&registration), TURBO_EIO);
+      check_not_null(registration.impl);
+      check_equal(turbo_readiness_unarm(&registration), TURBO_OK);
+      check_equal(factory->emit_resource(fixture, CONTRACT_RESOURCE_A, TURBO_READINESS_EVENT_READ),
+                  TURBO_OK);
+      check_equal(probe.calls, 0);
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      callback_probe_destroy(&probe);
+      close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("retains close ownership after backend close failure") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      factory->fail_hook(fixture, READINESS_CONTRACT_HOOK_CLOSE, TURBO_EIO, 1);
+      check_equal(turbo_readiness_close(&registration), TURBO_EIO);
+      check_not_null(registration.impl);
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      check_null(registration.impl);
+      close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("keeps failed shutdown retryable and blocks destroy") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_equal(
+          turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_READ, record_callback, &probe),
+          TURBO_OK);
+      factory->fail_hook(fixture, READINESS_CONTRACT_HOOK_SHUTDOWN, TURBO_EIO, 1);
+      check_equal(turbo_readiness_reactor_shutdown(&reactor), TURBO_EIO);
+      check_equal(probe.calls, 1);
+      check_equal(probe.status, TURBO_ESHUTDOWN);
+      check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_EBUSY);
+      check_not_null(reactor.impl);
+      check_not_null(registration.impl);
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      check_equal(turbo_readiness_reactor_shutdown(&reactor), TURBO_OK);
+      check_equal(probe.calls, 1);
+      check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_OK);
+      callback_probe_destroy(&probe);
+      factory->destroy(fixture);
+    }
+  }
+
   group("quiescence and callback reentrancy") {
-    it("defers callback-close reclamation without deadlocking") {
+    it("retains callback-close ownership until a successful retry") {
       turbo_readiness_reactor reactor = {0};
       turbo_readiness_registration registration = {0};
       turbo_readiness_stats stats;
@@ -459,10 +567,13 @@ spec("Platform readiness contract") {
                   TURBO_OK);
       check_equal(probe.calls, 1);
       check_equal(probe.close_status, TURBO_EBUSY);
-      check_null(registration.impl);
+      check_not_null(registration.impl);
+      check_equal(factory->backend_close_calls(fixture), (size_t)0);
       check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
-      check_equal(stats.registered_count, (size_t)0);
+      check_equal(stats.registered_count, (size_t)1);
       check_equal(stats.callbacks_inflight, (size_t)0);
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      check_null(registration.impl);
       callback_probe_destroy(&probe);
       close_and_destroy_fixture(factory, fixture, &reactor);
     }
@@ -484,6 +595,48 @@ spec("Platform readiness contract") {
       check_equal(turbo_readiness_close(&registration), TURBO_OK);
       callback_probe_destroy(&probe);
       close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("returns callback-close before a blocked shutdown hook can join it") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      turbo_thread_t emit_thread = NULL;
+      turbo_thread_t shutdown_thread = NULL;
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+      emit_thread_args emit_args = {factory, fixture, CONTRACT_RESOURCE_A, TURBO_EIO};
+      terminal_thread_args shutdown_args = {factory, fixture, &reactor, TURBO_ESHUTDOWN, TURBO_EIO};
+      int close_completed_before_shutdown_release;
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_equal(turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_READ,
+                                      blocking_close_callback, &probe),
+                  TURBO_OK);
+      check_equal(turbo_thread_create(&emit_thread, emit_worker, &emit_args), TURBO_OK);
+      wait_probe_entered(&probe);
+
+      factory->block_hook(fixture, READINESS_CONTRACT_HOOK_SHUTDOWN);
+      check_equal(turbo_thread_create(&shutdown_thread, shutdown_worker, &shutdown_args), TURBO_OK);
+      check_equal(factory->wait_hook_calls(fixture, READINESS_CONTRACT_HOOK_SHUTDOWN, 1,
+                                           CONTRACT_LONG_WAIT_NS),
+                  TURBO_OK);
+      release_probe(&probe);
+      close_completed_before_shutdown_release =
+          wait_probe_close_completed(&probe, CONTRACT_SHORT_WAIT_NS) == TURBO_OK;
+      factory->release_hook(fixture, READINESS_CONTRACT_HOOK_SHUTDOWN);
+
+      check_equal(turbo_thread_join(&emit_thread), TURBO_OK);
+      check_equal(turbo_thread_join(&shutdown_thread), TURBO_OK);
+      check_equal(close_completed_before_shutdown_release, 1);
+      check_equal(probe.close_status, TURBO_EBUSY);
+      check_not_null(registration.impl);
+      check_equal(factory->backend_close_calls(fixture), (size_t)0);
+      check_equal(shutdown_args.result, TURBO_OK);
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      check_null(registration.impl);
+      check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_OK);
+      callback_probe_destroy(&probe);
+      factory->destroy(fixture);
     }
 
     it("external close waits until an inflight callback returns") {
@@ -717,6 +870,36 @@ spec("Platform readiness contract") {
       factory->destroy(fixture);
     }
 
+    it("keeps failed register rollback reactor-owned for shutdown retry") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_thread_t register_thread = NULL;
+      turbo_thread_t shutdown_thread = NULL;
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      register_thread_args register_args = {&reactor, CONTRACT_RESOURCE_A, {0}, TURBO_OK};
+      terminal_thread_args shutdown_args = {factory, fixture, &reactor, TURBO_ESHUTDOWN, TURBO_OK};
+
+      factory->block_hook(fixture, READINESS_CONTRACT_HOOK_REGISTER);
+      factory->fail_hook(fixture, READINESS_CONTRACT_HOOK_CLOSE, TURBO_EIO, 2);
+      check_equal(turbo_thread_create(&register_thread, register_worker, &register_args), TURBO_OK);
+      check_equal(factory->wait_hook_calls(fixture, READINESS_CONTRACT_HOOK_REGISTER, 1,
+                                           CONTRACT_LONG_WAIT_NS),
+                  TURBO_OK);
+      check_equal(turbo_thread_create(&shutdown_thread, shutdown_worker, &shutdown_args), TURBO_OK);
+      check_equal(factory->wait_admission_closed(fixture), TURBO_OK);
+      factory->release_hook(fixture, READINESS_CONTRACT_HOOK_REGISTER);
+      check_equal(turbo_thread_join(&register_thread), TURBO_OK);
+      check_equal(turbo_thread_join(&shutdown_thread), TURBO_OK);
+
+      check_equal(register_args.status, TURBO_EIO);
+      check_null(register_args.registration.impl);
+      check_equal(shutdown_args.result, TURBO_EIO);
+      check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_EBUSY);
+      check_not_null(reactor.impl);
+      check_equal(turbo_readiness_reactor_shutdown(&reactor), TURBO_OK);
+      check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_OK);
+      factory->destroy(fixture);
+    }
+
     it("waits for an already-started close hook before destroy") {
       turbo_readiness_reactor reactor = {0};
       turbo_readiness_registration registration = {0};
@@ -835,9 +1018,12 @@ spec("Platform readiness contract") {
       check_equal(first_probe.other_close_status, TURBO_EBUSY);
       check_equal(second_probe.calls, 1);
       check_equal(second_probe.status, TURBO_EIO);
-      check_null(second.impl);
+      check_not_null(second.impl);
+      check_equal(factory->backend_close_calls(fixture), (size_t)0);
 
       check_equal(turbo_readiness_close(&first), TURBO_OK);
+      check_equal(turbo_readiness_close(&second), TURBO_OK);
+      check_null(second.impl);
       callback_probe_destroy(&second_probe);
       callback_probe_destroy(&first_probe.base);
       check_equal(turbo_readiness_reactor_shutdown(&reactor), TURBO_OK);
@@ -929,9 +1115,12 @@ spec("Platform readiness contract") {
       check_equal(first_probe.other_close_status, TURBO_EBUSY);
       check_equal(second_probe.calls, 1);
       check_equal(second_probe.status, TURBO_ESHUTDOWN);
-      check_null(second.impl);
+      check_not_null(second.impl);
+      check_equal(factory->backend_close_calls(fixture), (size_t)0);
 
       check_equal(turbo_readiness_close(&first), TURBO_OK);
+      check_equal(turbo_readiness_close(&second), TURBO_OK);
+      check_null(second.impl);
       callback_probe_destroy(&second_probe);
       callback_probe_destroy(&first_probe.base);
       check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_OK);
