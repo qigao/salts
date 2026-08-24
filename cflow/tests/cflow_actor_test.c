@@ -1,5 +1,6 @@
 #include <cflow/actor.h>
 
+#include <turbo/clock.h>
 #include <turbo/thread.h>
 
 #include "tinytest.h"
@@ -94,9 +95,41 @@ typedef struct actor_sender_context {
     atomic_bool completed;
 } actor_sender_context;
 
+typedef struct actor_destroy_sender_context {
+    const cflow_actor_ref *ref;
+    cflow_event_id event_id;
+    atomic_bool *go;
+    atomic_bool *destroy_returned;
+    atomic_int *race_attempts;
+    atomic_int attempted;
+    atomic_int accepted;
+    atomic_int full;
+    atomic_int stopping;
+    atomic_int stopped;
+    atomic_int failed;
+    atomic_int stale;
+    atomic_int post_destroy_stale;
+    atomic_int unexpected;
+    atomic_bool completed;
+} actor_destroy_sender_context;
+
+typedef struct actor_wait_stats_context {
+    cflow_actor *actor;
+    atomic_bool started;
+    atomic_bool completed;
+    cflow_actor_state state;
+    bool stats_valid;
+    cflow_actor_stats stats;
+} actor_wait_stats_context;
+
+typedef struct actor_destroy_context {
+    cflow_actor *actor;
+    atomic_bool *returned;
+} actor_destroy_context;
+
 static bool wait_until_true(atomic_bool *value) {
-    const size_t timeout_ms = 5000u;
-    for (size_t elapsed = 0u; elapsed < timeout_ms; ++elapsed) {
+    const uint64_t started = turbo_monotonic_ms();
+    while (turbo_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
         if (atomic_load(value)) return true;
         turbo_sleep_ms(1u);
     }
@@ -104,8 +137,8 @@ static bool wait_until_true(atomic_bool *value) {
 }
 
 static bool wait_until_at_least(atomic_int *value, int expected) {
-    const size_t timeout_ms = ACTOR_TEST_TIMEOUT_MS;
-    for (size_t elapsed = 0u; elapsed < timeout_ms; ++elapsed) {
+    const uint64_t started = turbo_monotonic_ms();
+    while (turbo_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
         if (atomic_load(value) >= expected) return true;
         turbo_sleep_ms(1u);
     }
@@ -114,7 +147,8 @@ static bool wait_until_at_least(atomic_int *value, int expected) {
 
 static bool wait_actor_state(const cflow_actor *actor,
                              cflow_actor_state expected) {
-    for (size_t elapsed = 0u; elapsed < ACTOR_TEST_TIMEOUT_MS; ++elapsed) {
+    const uint64_t started = turbo_monotonic_ms();
+    while (turbo_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
         if (cflow_actor_current_state(actor) == expected) return true;
         turbo_sleep_ms(1u);
     }
@@ -122,7 +156,8 @@ static bool wait_actor_state(const cflow_actor *actor,
 }
 
 static bool wait_actor_terminal(const cflow_actor *actor) {
-    for (size_t elapsed = 0u; elapsed < ACTOR_TEST_TIMEOUT_MS; ++elapsed) {
+    const uint64_t started = turbo_monotonic_ms();
+    while (turbo_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
         const cflow_actor_state state = cflow_actor_current_state(actor);
         if (state == CFLOW_ACTOR_STATE_STOPPED ||
             state == CFLOW_ACTOR_STATE_FAILED)
@@ -135,12 +170,15 @@ static bool wait_actor_terminal(const cflow_actor *actor) {
 
 static void block_scheduler(void *user) {
     actor_blocker *blocker = (actor_blocker *)user;
-    const size_t timeout_ms = 5000u;
+    const uint64_t started = turbo_monotonic_ms();
     atomic_store(&blocker->entered, true);
-    for (size_t elapsed = 0u;
-         elapsed < timeout_ms && !atomic_load(&blocker->release);
-         ++elapsed)
+    while (turbo_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS &&
+           !atomic_load(&blocker->release))
         turbo_sleep_ms(1u);
+}
+
+static void actor_scheduler_slot(void *user) {
+    (void)user;
 }
 
 static bool actor_edge_guard(void *user,
@@ -177,11 +215,10 @@ static bool actor_edge_action(void *user,
         return false;
     atomic_fetch_add(&probe->action_calls, 1);
     if (atomic_load(&probe->block_action) && probe->blocker != NULL) {
+        const uint64_t started = turbo_monotonic_ms();
         atomic_store(&probe->blocker->entered, true);
-        for (size_t elapsed = 0u;
-             elapsed < ACTOR_TEST_TIMEOUT_MS &&
-             !atomic_load(&probe->blocker->release);
-             ++elapsed)
+        while (turbo_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS &&
+               !atomic_load(&probe->blocker->release))
             turbo_sleep_ms(1u);
         if (!atomic_load(&probe->blocker->release)) {
             *out_error = "actor edge action timed out";
@@ -247,8 +284,11 @@ static void actor_edge_on_done(void *user) {
     if (probe != NULL) atomic_fetch_add(&probe->dones, 1);
 }
 
-static bool actor_edge_fixture_init(actor_edge_fixture *fixture,
-                                    size_t mailbox_capacity) {
+static bool actor_edge_fixture_init_with_scheduler_capacity(
+    actor_edge_fixture *fixture,
+    size_t mailbox_capacity,
+    size_t scheduler_ready_capacity,
+    size_t scheduler_timer_capacity) {
     cflow_machine_state states[1];
     cflow_event_type events[ACTOR_EDGE_EVENT_TYPES];
     cflow_machine_guard guards[ACTOR_EDGE_EVENT_TYPES];
@@ -297,7 +337,10 @@ static bool actor_edge_fixture_init(actor_edge_fixture *fixture,
         CFLOW_MACHINE_OK)
         return false;
     if (!cflow_executor_serial_init(&fixture->executor)) return false;
-    if (!cflow_scheduler_worker_init(&fixture->scheduler, 1u)) return false;
+    if (!cflow_scheduler_worker_init_with_capacity(
+            &fixture->scheduler, 1u, scheduler_ready_capacity,
+            scheduler_timer_capacity))
+        return false;
     fixture->probe.actor = &fixture->actor;
     atomic_init(&fixture->probe.self_send_status,
                 (int)CFLOW_ACTOR_SEND_INVALID_ARGUMENT);
@@ -319,6 +362,13 @@ static bool actor_edge_fixture_init(actor_edge_fixture *fixture,
         actor_edge_on_done,
         &fixture->probe};
     return cflow_actor_init(&fixture->actor, &config).status == CFLOW_ACTOR_OK;
+}
+
+static bool actor_edge_fixture_init(actor_edge_fixture *fixture,
+                                    size_t mailbox_capacity) {
+    return actor_edge_fixture_init_with_scheduler_capacity(
+        fixture, mailbox_capacity, CFLOW_EXECUTOR_DEFAULT_CAPACITY,
+        CFLOW_TIMER_DEFAULT_CAPACITY);
 }
 
 static void actor_edge_fixture_destroy(actor_edge_fixture *fixture) {
@@ -372,6 +422,88 @@ static void actor_sender(void *user) {
         }
     }
     atomic_store(&context->completed, true);
+}
+
+static void actor_destroy_sender(void *user) {
+    enum {
+        DESTROY_RACE_MAX_SENDS = 4096,
+        DESTROY_POST_SENDS = 16
+    };
+    actor_destroy_sender_context *context =
+        (actor_destroy_sender_context *)user;
+    int index;
+    if (context == NULL) return;
+    if (!wait_until_true(context->go)) {
+        atomic_fetch_add(&context->unexpected, 1);
+        atomic_store(&context->completed, true);
+        return;
+    }
+    for (index = 0; index < DESTROY_RACE_MAX_SENDS &&
+                    !atomic_load(context->destroy_returned); ++index) {
+        const int payload = index % ACTOR_EDGE_OBSERVATIONS;
+        const cflow_event_view event = {
+            context->event_id, &cmeta_type_int, &payload};
+        const cflow_actor_send_status status =
+            cflow_actor_ref_try_send(context->ref, &event);
+        atomic_fetch_add(context->race_attempts, 1);
+        atomic_fetch_add(&context->attempted, 1);
+        switch (status) {
+            case CFLOW_ACTOR_SEND_ACCEPTED:
+                atomic_fetch_add(&context->accepted, 1);
+                break;
+            case CFLOW_ACTOR_SEND_FULL:
+                atomic_fetch_add(&context->full, 1);
+                break;
+            case CFLOW_ACTOR_SEND_STOPPING:
+                atomic_fetch_add(&context->stopping, 1);
+                break;
+            case CFLOW_ACTOR_SEND_STOPPED:
+                atomic_fetch_add(&context->stopped, 1);
+                break;
+            case CFLOW_ACTOR_SEND_FAILED:
+                atomic_fetch_add(&context->failed, 1);
+                break;
+            case CFLOW_ACTOR_SEND_STALE:
+                atomic_fetch_add(&context->stale, 1);
+                break;
+            default:
+                atomic_fetch_add(&context->unexpected, 1);
+                break;
+        }
+    }
+    if (!wait_until_true(context->destroy_returned)) {
+        atomic_fetch_add(&context->unexpected, 1);
+        atomic_store(&context->completed, true);
+        return;
+    }
+    for (index = 0; index < DESTROY_POST_SENDS; ++index) {
+        const int payload = index;
+        const cflow_event_view event = {
+            context->event_id, &cmeta_type_int, &payload};
+        if (cflow_actor_ref_try_send(context->ref, &event) ==
+            CFLOW_ACTOR_SEND_STALE)
+            atomic_fetch_add(&context->post_destroy_stale, 1);
+        else
+            atomic_fetch_add(&context->unexpected, 1);
+    }
+    atomic_store(&context->completed, true);
+}
+
+static void actor_wait_and_snapshot(void *user) {
+    actor_wait_stats_context *context = (actor_wait_stats_context *)user;
+    if (context == NULL) return;
+    atomic_store(&context->started, true);
+    context->state = cflow_actor_wait(context->actor);
+    context->stats_valid = cflow_actor_get_stats(
+        context->actor, &context->stats);
+    atomic_store(&context->completed, true);
+}
+
+static void actor_destroy_owner(void *user) {
+    actor_destroy_context *context = (actor_destroy_context *)user;
+    if (context == NULL) return;
+    cflow_actor_destroy(context->actor);
+    atomic_store(context->returned, true);
 }
 
 static bool actor_sender_wait_and_join(actor_sender_context *context,
@@ -1090,6 +1222,111 @@ suite("CFlow Actor lifecycle") {
         actor_edge_fixture_destroy(&fixture);
     }
 
+    it("settles queued sink failure accounting before wait returns") {
+        enum { WAITERS = 8 };
+        actor_edge_fixture fixture;
+        actor_blocker blocker = {0};
+        cflow_actor_ref ref = {0};
+        actor_wait_stats_context waiters[WAITERS] = {0};
+        turbo_thread_t threads[WAITERS] = {0};
+        int payloads[] = {41, 42, 43};
+        cflow_event_view events[] = {
+            {100u, &cmeta_type_int, &payloads[0]},
+            {101u, &cmeta_type_int, &payloads[1]},
+            {102u, &cmeta_type_int, &payloads[2]}
+        };
+        int created = 0;
+        int index;
+
+        check_true(actor_edge_fixture_init(&fixture, 4u));
+        fixture.probe.blocker = &blocker;
+        atomic_store(&fixture.probe.block_action, true);
+        atomic_store(&fixture.probe.reject_value, true);
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+        check_equal(cflow_actor_ref_try_send(&ref, &events[0]),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        check_true(wait_until_true(&blocker.entered));
+        check_equal(cflow_actor_ref_try_send(&ref, &events[1]),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        check_equal(cflow_actor_ref_try_send(&ref, &events[2]),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        for (index = 0; index < WAITERS; ++index) {
+            waiters[index].actor = &fixture.actor;
+            if (turbo_thread_create(
+                    &threads[index], actor_wait_and_snapshot,
+                    &waiters[index]) != 0)
+                break;
+            ++created;
+        }
+        check_equal(created, WAITERS);
+        for (index = 0; index < created; ++index)
+            check_true(wait_until_true(&waiters[index].started));
+
+        atomic_store(&blocker.release, true);
+        for (index = 0; index < created; ++index) {
+            const bool completed = wait_until_true(&waiters[index].completed);
+            check_true(completed);
+            if (!completed) abort();
+            check_equal(turbo_thread_join(&threads[index]), 0);
+            check_equal(waiters[index].state, CFLOW_ACTOR_STATE_FAILED);
+            check_true(waiters[index].stats_valid);
+            check_equal(waiters[index].stats.machine.accepted, (uint64_t)3u);
+            check_equal(waiters[index].stats.machine.completed, (uint64_t)1u);
+            check_equal(waiters[index].stats.machine.cancelled_events,
+                        (uint64_t)2u);
+            check_equal(waiters[index].stats.machine.pending, (size_t)0u);
+            check_equal(waiters[index].stats.machine.in_flight, (size_t)0u);
+            check_equal(
+                waiters[index].stats.machine.accepted,
+                waiters[index].stats.machine.completed +
+                    waiters[index].stats.machine.cancelled_events);
+        }
+
+        cflow_actor_ref_release(&ref);
+        actor_edge_fixture_destroy(&fixture);
+    }
+
+    it("fails an idle Actor when its Mailbox wake reaches a full Scheduler") {
+        actor_edge_fixture fixture;
+        cflow_actor_ref ref = {0};
+        cflow_scheduler_stats scheduler_stats = {0};
+        cflow_actor_stats actor_stats = {0};
+        const int payload = 51;
+        const cflow_event_view event = {
+            100u, &cmeta_type_int, &payload};
+        cflow_schedule_result occupied;
+
+        check_true(actor_edge_fixture_init_with_scheduler_capacity(
+            &fixture, 2u, 1u, 1u));
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_true(cflow_scheduler_wait_idle(&fixture.scheduler));
+        occupied = cflow_scheduler_try_post_after(
+            &fixture.scheduler, UINT64_C(1000),
+            actor_scheduler_slot, NULL);
+        check_equal(occupied.status, CFLOW_ADMISSION_ACCEPTED);
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        check_true(wait_until_at_least(&fixture.probe.action_calls, 1));
+        check_true(wait_actor_state(
+            &fixture.actor, CFLOW_ACTOR_STATE_FAILED));
+        check_true(wait_until_at_least(&fixture.probe.errors, 1));
+        check_true(cflow_actor_get_stats(&fixture.actor, &actor_stats));
+        check_equal(actor_stats.machine.accepted, (uint64_t)1u);
+        check_equal(actor_stats.machine.accepted,
+                    actor_stats.machine.completed +
+                        actor_stats.machine.cancelled_events);
+        check_true(cflow_scheduler_get_stats(
+            &fixture.scheduler, &scheduler_stats));
+        check_greater(scheduler_stats.rejected_full, (size_t)0u);
+        check_contains(cflow_actor_error(&fixture.actor), "scheduler is full");
+
+        cflow_actor_ref_release(&ref);
+        actor_edge_fixture_destroy(&fixture);
+    }
+
     it("keeps retained refs stale until each shell reference is released") {
         actor_edge_fixture fixture;
         cflow_actor_ref first = {0};
@@ -1119,6 +1356,87 @@ suite("CFlow Actor lifecycle") {
         check_null(third.impl);
         cflow_actor_ref_release(&third);
 
+        actor_edge_fixture_destroy(&fixture);
+    }
+
+    it("keeps concurrent senders stale across owner destruction") {
+        enum {
+            DESTROY_PRODUCERS = 4,
+            DESTROY_POST_SENDS = 16
+        };
+        actor_edge_fixture fixture;
+        cflow_actor_ref refs[DESTROY_PRODUCERS] = {0};
+        actor_destroy_sender_context contexts[DESTROY_PRODUCERS] = {0};
+        turbo_thread_t threads[DESTROY_PRODUCERS] = {0};
+        turbo_thread_t destroy_thread = {0};
+        atomic_bool go = false;
+        atomic_bool destroy_returned = false;
+        atomic_int race_attempts = 0;
+        actor_destroy_context destroy_context = {
+            &fixture.actor, &destroy_returned};
+        int created = 0;
+        int producer;
+
+        check_true(actor_edge_fixture_init(&fixture, 8u));
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &refs[0]));
+        for (producer = 1; producer < DESTROY_PRODUCERS; ++producer)
+            check_true(cflow_actor_ref_retain(&refs[0], &refs[producer]));
+        for (producer = 0; producer < DESTROY_PRODUCERS; ++producer) {
+            contexts[producer].ref = &refs[producer];
+            contexts[producer].event_id =
+                (cflow_event_id)(100u + (unsigned)producer);
+            contexts[producer].go = &go;
+            contexts[producer].destroy_returned = &destroy_returned;
+            contexts[producer].race_attempts = &race_attempts;
+            if (turbo_thread_create(
+                    &threads[producer], actor_destroy_sender,
+                    &contexts[producer]) != 0)
+                break;
+            ++created;
+        }
+        check_equal(created, DESTROY_PRODUCERS);
+        atomic_store(&go, true);
+        for (producer = 0; producer < created; ++producer)
+            check_true(wait_until_at_least(
+                &contexts[producer].attempted, 1));
+
+        {
+            const int create_status = turbo_thread_create(
+                &destroy_thread, actor_destroy_owner, &destroy_context);
+            check_equal(create_status, 0);
+            if (create_status != 0) abort();
+        }
+        {
+            const bool returned = wait_until_true(&destroy_returned);
+            check_true(returned);
+            if (!returned) abort();
+        }
+        check_equal(turbo_thread_join(&destroy_thread), 0);
+        check_null(fixture.actor.impl);
+        for (producer = 0; producer < created; ++producer) {
+            const bool completed = wait_until_true(
+                &contexts[producer].completed);
+            const int classified =
+                atomic_load(&contexts[producer].accepted) +
+                atomic_load(&contexts[producer].full) +
+                atomic_load(&contexts[producer].stopping) +
+                atomic_load(&contexts[producer].stopped) +
+                atomic_load(&contexts[producer].failed) +
+                atomic_load(&contexts[producer].stale);
+            check_true(completed);
+            if (!completed) abort();
+            check_equal(turbo_thread_join(&threads[producer]), 0);
+            check_equal(classified,
+                        atomic_load(&contexts[producer].attempted));
+            check_equal(atomic_load(&contexts[producer].post_destroy_stale),
+                        DESTROY_POST_SENDS);
+            check_equal(atomic_load(&contexts[producer].unexpected), 0);
+        }
+        check_greater(atomic_load(&race_attempts), 0);
+
+        for (producer = 0; producer < DESTROY_PRODUCERS; ++producer)
+            cflow_actor_ref_release(&refs[producer]);
         actor_edge_fixture_destroy(&fixture);
     }
 

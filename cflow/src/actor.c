@@ -14,6 +14,8 @@ typedef struct cflow_actor_impl {
     turbo_mutex_t gate;
     turbo_cond_t changed;
     cflow_actor_state state;
+    /* FAILED stays externally visible while waiters remain behind settlement. */
+    bool terminal_settled;
     bool stale;
     cflow_machine_instance machine;
     cflow_graph graph;
@@ -79,6 +81,7 @@ static void actor_mark_failed(cflow_actor_impl *impl, const char *message) {
     turbo_mutex_lock(&impl->gate);
     if (impl->state != CFLOW_ACTOR_STATE_STOPPED &&
         impl->state != CFLOW_ACTOR_STATE_FAILED) {
+        impl->terminal_settled = false;
         impl->state = CFLOW_ACTOR_STATE_FAILED;
         first = true;
         turbo_cond_broadcast(&impl->changed);
@@ -89,7 +92,13 @@ static void actor_mark_failed(cflow_actor_impl *impl, const char *message) {
     }
     turbo_mutex_unlock(&impl->gate);
     free(copy);
-    if (first) cflow_machine_instance_cancel(&impl->machine);
+    if (first) {
+        cflow_machine_instance_cancel(&impl->machine);
+        turbo_mutex_lock(&impl->gate);
+        impl->terminal_settled = true;
+        turbo_cond_broadcast(&impl->changed);
+        turbo_mutex_unlock(&impl->gate);
+    }
 }
 
 static bool actor_sink_value(void *user,
@@ -138,6 +147,7 @@ static void actor_sink_done(void *user) {
             copy = NULL;
         }
         error = impl->error != NULL ? impl->error : actor_generic_failure;
+        impl->terminal_settled = false;
         impl->state = CFLOW_ACTOR_STATE_FAILED;
         turbo_cond_broadcast(&impl->changed);
         error_callback = impl->callbacks.on_error;
@@ -147,7 +157,13 @@ static void actor_sink_done(void *user) {
     turbo_mutex_unlock(&impl->gate);
     free(copy);
 
-    if (failed) cflow_machine_instance_cancel(&impl->machine);
+    if (failed) {
+        cflow_machine_instance_cancel(&impl->machine);
+        turbo_mutex_lock(&impl->gate);
+        impl->terminal_settled = true;
+        turbo_cond_broadcast(&impl->changed);
+        turbo_mutex_unlock(&impl->gate);
+    }
     if (error_callback != NULL) error_callback(callback_user, error);
     if (done_callback != NULL) done_callback(callback_user);
 }
@@ -259,6 +275,7 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor) {
     turbo_mutex_lock(&impl->gate);
     impl->state = CFLOW_ACTOR_STATE_RUNNING;
     if (!cflow_run_request(&impl->run, SIZE_MAX)) {
+        impl->terminal_settled = false;
         impl->state = CFLOW_ACTOR_STATE_FAILED;
         turbo_cond_broadcast(&impl->changed);
         status = CFLOW_ACTOR_FAILED;
@@ -269,6 +286,10 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor) {
     if (status != CFLOW_ACTOR_OK) {
         actor_mark_failed(impl, "actor could not request Run demand");
         cflow_run_close(&impl->run);
+        turbo_mutex_lock(&impl->gate);
+        impl->terminal_settled = true;
+        turbo_cond_broadcast(&impl->changed);
+        turbo_mutex_unlock(&impl->gate);
     }
     return status;
 }
@@ -318,7 +339,8 @@ cflow_actor_state cflow_actor_wait(cflow_actor *actor) {
     if (impl == NULL) return CFLOW_ACTOR_STATE_FAILED;
     turbo_mutex_lock(&impl->gate);
     while (impl->state != CFLOW_ACTOR_STATE_STOPPED &&
-           impl->state != CFLOW_ACTOR_STATE_FAILED)
+           (impl->state != CFLOW_ACTOR_STATE_FAILED ||
+            !impl->terminal_settled))
         turbo_cond_wait(&impl->changed, &impl->gate);
     state = impl->state;
     turbo_mutex_unlock(&impl->gate);
