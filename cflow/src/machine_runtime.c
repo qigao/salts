@@ -61,6 +61,8 @@ typedef struct cflow_machine_instance_impl {
     cflow_machine_ready_kind ready;
     cflow_machine_transition_commit_hook commit_hook;
     void *commit_user;
+    cflow_machine_commit_boundary_hook boundary_hook;
+    void *boundary_user;
 } cflow_machine_instance_impl;
 
 static void machine_executor_task(void *user);
@@ -445,6 +447,8 @@ static bool process_event(cflow_machine_instance_impl *impl,
         }
     }
 
+    if (impl->boundary_hook != NULL)
+        impl->boundary_hook(impl->boundary_user);
     if (impl->commit_hook != NULL)
         impl->commit_hook(impl->commit_user, transition_index, true);
     turbo_mutex_lock(&impl->lock);
@@ -940,7 +944,9 @@ cflow_machine_runtime_status cflow_machine_instance_init_internal(
     cflow_machine_instance *instance,
     const cflow_machine_instance_config *config,
     cflow_machine_transition_commit_hook commit_hook,
-    void *commit_user) {
+    void *commit_user,
+    cflow_machine_commit_boundary_hook boundary_hook,
+    void *boundary_user) {
     cflow_machine_instance_impl *impl;
     cflow_machine_runtime_status status;
     const cflow_machine_state *initial;
@@ -967,6 +973,8 @@ cflow_machine_runtime_status cflow_machine_instance_init_internal(
     impl->state = initial;
     impl->commit_hook = commit_hook;
     impl->commit_user = commit_user;
+    impl->boundary_hook = boundary_hook;
+    impl->boundary_user = boundary_user;
 
     status = copy_and_validate_bindings(impl, config);
     if (status != CFLOW_MACHINE_RUNTIME_OK) {
@@ -1020,7 +1028,7 @@ cflow_machine_runtime_status cflow_machine_instance_init(
     cflow_machine_instance *instance,
     const cflow_machine_instance_config *config) {
     return cflow_machine_instance_init_internal(
-        instance, config, NULL, NULL);
+        instance, config, NULL, NULL, NULL, NULL);
 }
 
 cflow_mailbox_status cflow_machine_instance_try_send(

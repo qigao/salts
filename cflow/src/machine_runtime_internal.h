@@ -9,11 +9,15 @@ typedef void (*cflow_machine_transition_commit_hook)(
     size_t normalized_transition_index,
     bool begin);
 
+typedef void (*cflow_machine_commit_boundary_hook)(void *user);
+
 cflow_machine_runtime_status cflow_machine_instance_init_internal(
     cflow_machine_instance *instance,
     const cflow_machine_instance_config *config,
     cflow_machine_transition_commit_hook commit_hook,
-    void *commit_user);
+    void *commit_user,
+    cflow_machine_commit_boundary_hook boundary_hook,
+    void *boundary_user);
 
 bool cflow_machine_instance_timer_payload_capacity(
     const cflow_machine_instance *instance,
