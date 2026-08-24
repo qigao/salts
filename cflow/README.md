@@ -206,13 +206,24 @@ and Machine. On partial initialization, destroy only successfully published
 handles in the same reverse dependency order.
 
 `close` rejects new Events, cancels queued Events, and allows an already-running
-callback to commit once. `cancel` also discards an executing callback's result,
-preserving the last committed state. At terminal executor quiescence, statistics
-satisfy `accepted == completed + failed + cancelled_events`, with zero pending
-and in-flight Events. Both operations are idempotent. Producers/control-plane
-callers and the attached adapter must be quiescent before instance destruction;
-the borrowed Machine, executor, callbacks, and callback user data must outlive
-the instance.
+callback to commit once. `cancel` and commit share one mutex-protected decision:
+if cancellation wins before commit, the staged state and observation are
+discarded; if commit wins first, its state and prepared VALUE remain observable
+exactly once and cancellation prevents later Events. Action callbacks execute
+outside the instance mutex, so cancellation cannot roll back their arbitrary
+external effects. Such effects require an application-level typed outbox,
+idempotency, or compensation contract.
+
+The internal lifecycle (`OPEN`, close requested, cancel requested, terminal)
+and worker phase (idle, scheduled, executing, committing) are separate facts.
+The Machine instance remains the sole mutable state owner and its
+SerialExecutor remains the sole transition consumer; Actor, Hierarchy, Graph,
+and Run do not maintain a second commit state. At terminal executor quiescence,
+statistics satisfy `accepted == completed + failed + cancelled_events`, with
+zero pending and in-flight Events. Both control operations are idempotent.
+Producers/control-plane callers and the attached adapter must be quiescent
+before instance destruction; the borrowed Machine, executor, callbacks, and
+callback user data must outlive the instance.
 
 Lean models WAIT and transition steps in `CFlow/MachineRuntime.lean`. Every
 runtime transition carries an existing `Machine.SmallStep` witness and an exact
