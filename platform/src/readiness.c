@@ -31,6 +31,7 @@ typedef struct turbo_readiness_slot {
   turbo_readiness_slot_state state;
   int inflight;
   int control_inflight;
+  uint32_t arm_waiters;
   int native_registered;
   int terminal_pending;
   int terminal_status;
@@ -81,8 +82,8 @@ static void readiness_slot_reclaim(turbo_readiness_slot *slot) {
 
 static int readiness_slot_can_reclaim(const turbo_readiness_slot *slot) {
   return slot->state == TURBO_READINESS_SLOT_CLOSING && !slot->inflight &&
-         !slot->control_inflight && !slot->native_registered && !slot->terminal_pending &&
-         !slot->orphaned;
+         !slot->control_inflight && slot->arm_waiters == 0u &&
+         !slot->native_registered && !slot->terminal_pending && !slot->orphaned;
 }
 
 static void readiness_slot_try_reclaim(turbo_readiness_slot *slot) {
@@ -340,23 +341,44 @@ int turbo_readiness_arm(turbo_readiness_registration *registration, turbo_readin
   if (slot == NULL || callback == NULL || !readiness_events_valid(events)) return TURBO_EINVAL;
   impl = slot->owner;
   turbo_mutex_lock(&impl->mutex);
-  generation = slot->generation;
-  status = readiness_wait_public_slot_control(impl, slot, generation);
-  if (status != TURBO_OK) {
-    turbo_mutex_unlock(&impl->mutex);
-    return status;
-  }
-  if (!impl->admission_open) {
-    turbo_mutex_unlock(&impl->mutex);
-    return TURBO_ESHUTDOWN;
-  }
-  if (slot->state == TURBO_READINESS_SLOT_ARMED) {
-    turbo_mutex_unlock(&impl->mutex);
-    return TURBO_EALREADY;
-  }
-  if (slot->state != TURBO_READINESS_SLOT_REGISTERED) {
+  if (readiness_callback_slot == slot && slot->inflight) {
     turbo_mutex_unlock(&impl->mutex);
     return TURBO_EBUSY;
+  }
+  generation = slot->generation;
+  for (;;) {
+    status = readiness_wait_public_slot_control(impl, slot, generation);
+    if (status != TURBO_OK) {
+      turbo_mutex_unlock(&impl->mutex);
+      return status;
+    }
+    if (!impl->admission_open) {
+      turbo_mutex_unlock(&impl->mutex);
+      return TURBO_ESHUTDOWN;
+    }
+    if (slot->state == TURBO_READINESS_SLOT_ARMED) {
+      turbo_mutex_unlock(&impl->mutex);
+      return TURBO_EALREADY;
+    }
+    if (slot->state == TURBO_READINESS_SLOT_REGISTERED) break;
+    if (slot->state != TURBO_READINESS_SLOT_FIRING) {
+      turbo_mutex_unlock(&impl->mutex);
+      return TURBO_EBUSY;
+    }
+    if (slot->arm_waiters == UINT32_MAX) {
+      turbo_mutex_unlock(&impl->mutex);
+      return -EOVERFLOW;
+    }
+    ++slot->arm_waiters;
+    turbo_cond_broadcast(&impl->changed);
+    while (slot->generation == generation &&
+           slot->state == TURBO_READINESS_SLOT_FIRING &&
+           !slot->control_inflight && impl->admission_open &&
+           !impl->terminalizing)
+      turbo_cond_wait(&impl->changed, &impl->mutex);
+    --slot->arm_waiters;
+    readiness_slot_try_reclaim(slot);
+    turbo_cond_broadcast(&impl->changed);
   }
   status = turbo_readiness_generation_prepare(slot->arm_generation, &arm_generation_step);
   if (status != TURBO_OK) {
@@ -389,6 +411,31 @@ int turbo_readiness_arm(turbo_readiness_registration *registration, turbo_readin
   slot->control_inflight = 0;
   readiness_slot_try_reclaim(slot);
   turbo_cond_broadcast(&impl->changed);
+  turbo_mutex_unlock(&impl->mutex);
+  return status;
+}
+
+int turbo_readiness_backend_wait_arm_waiter(
+    turbo_readiness_registration *registration, uint32_t waiters,
+    uint64_t timeout_ns) {
+  turbo_readiness_slot *slot = readiness_slot_from_registration(registration);
+  turbo_readiness_impl *impl;
+  uint32_t generation;
+  int status = TURBO_OK;
+
+  if (slot == NULL || waiters == 0u || timeout_ns == 0u) return TURBO_EINVAL;
+  impl = slot->owner;
+  turbo_mutex_lock(&impl->mutex);
+  generation = slot->generation;
+  while (slot->generation == generation &&
+         slot->state == TURBO_READINESS_SLOT_FIRING &&
+         slot->arm_waiters < waiters && status == TURBO_OK)
+    status = turbo_cond_timedwait(&impl->changed, &impl->mutex, timeout_ns);
+  if (status == TURBO_OK &&
+      (slot->generation != generation ||
+       slot->state != TURBO_READINESS_SLOT_FIRING ||
+       slot->arm_waiters < waiters))
+    status = TURBO_EBUSY;
   turbo_mutex_unlock(&impl->mutex);
   return status;
 }

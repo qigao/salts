@@ -75,6 +75,9 @@ TURBO_PLATFORM_C_API int turbo_readiness_register(turbo_readiness_reactor *react
  * released after its commit clears the control gate, and may race the
  * function's final return and the caller's observation of that return. Keep
  * callback and user valid until callback completion or successful unarm/close.
+ * An external arm of the same registration waits for an inflight callback to
+ * return, then re-evaluates terminal, admission, generation, and slot state.
+ * Arm from inside that registration's callback fails fast with TURBO_EBUSY.
  * The backend event and user callback are dispatched without a Platform lock
  * held. status is TURBO_OK for readiness or an exact negative terminal backend
  * code; terminal delivery uses events == 0.

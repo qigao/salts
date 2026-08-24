@@ -66,6 +66,9 @@ int turbo_readiness_backend_dispatch_generation(turbo_readiness_reactor *reactor
                                                 turbo_readiness_events events, int status);
 int turbo_readiness_backend_fail(turbo_readiness_reactor *reactor, int status);
 int turbo_readiness_backend_wait_admission_closed(turbo_readiness_reactor *reactor);
+int turbo_readiness_backend_wait_arm_waiter(
+    turbo_readiness_registration *registration, uint32_t waiters,
+    uint64_t timeout_ns);
 
 #if defined(__linux__)
 uint32_t turbo_readiness_epoll_interest_events(turbo_readiness_events events);
