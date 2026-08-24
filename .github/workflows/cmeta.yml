@@ -98,6 +98,28 @@ jobs:
       - name: Test full Linux suite
         run: ctest --preset linux-release-user --output-on-failure
 
+      - name: Verify optional CFlow minicoro adapter
+        run: |
+          cmake --preset linux-release-user -DCFLOW_ENABLE_MINICORO=ON
+          cmake --build --preset linux-release-user --target cflow_minicoro_test verify_installed_package
+          ctest --preset linux-release-user -R "^cflow_minicoro_test$" --output-on-failure
+          archive=build/linux-gcc-release/lib/libturbo_cflow_minicoro.a
+          if ! symbols="$(nm -g --defined-only "$archive")"; then
+            echo "Failed to inspect CFlowMinicoro symbols" >&2
+            exit 1
+          fi
+          if printf '%s\n' "$symbols" |
+             awk '$2 ~ /^[A-Z]$/ && $3 ~ /^_?mco_/ { found = 1 } END { exit !found }'; then
+            echo "CFlowMinicoro exports a raw minicoro backend symbol" >&2
+            exit 1
+          fi
+
+      - name: Verify CFlow minicoro adapter with AddressSanitizer
+        run: |
+          cmake --preset linux-dev-user -DCFLOW_ENABLE_MINICORO=ON -DBUILD_BENCHMARKS=OFF
+          cmake --build --preset linux-dev-user --target cflow_minicoro_test
+          ctest --preset linux-dev-user -R "^cflow_minicoro_test$" --output-on-failure
+
   macos:
     name: macOS 15 release
     runs-on: macos-15
@@ -132,6 +154,12 @@ jobs:
 
       - name: Verify installed package targets
         run: cmake --build --preset build-default-mac --target verify_installed_package
+
+      - name: Verify optional CFlow minicoro adapter
+        run: |
+          cmake --preset release-mac-ninja -DCFLOW_ENABLE_MINICORO=ON
+          cmake --build --preset build-default-mac --target cflow_minicoro_test verify_installed_package
+          ctest --preset test-release-mac -R "^cflow_minicoro_test$" --output-on-failure
 
       - name: Collect macOS diagnostics
         if: failure()
@@ -263,3 +291,10 @@ jobs:
           cmake --build --preset install-win-release-user
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user --target verify_installed_package
+          if errorlevel 1 exit /b 1
+
+          cmake --preset win-release-user -DCFLOW_ENABLE_MINICORO=ON
+          if errorlevel 1 exit /b 1
+          cmake --build --preset win-release-user --target cflow_minicoro_test verify_installed_package
+          if errorlevel 1 exit /b 1
+          ctest --preset win-release-user -R "^cflow_minicoro_test$" --output-on-failure
