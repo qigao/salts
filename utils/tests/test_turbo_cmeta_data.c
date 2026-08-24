@@ -6,6 +6,29 @@
 #include <stdint.h>
 #include <string.h>
 
+const turbo_uuid_cmeta_adapter_desc *
+turbo_uuid_cmeta_adapter_from_peer(void);
+
+static bool replaced_uuid_is_zero(const void *object) {
+  (void)object;
+  return true;
+}
+
+static cmeta_status replaced_uuid_assign(void *object,
+                                         const unsigned char *data,
+                                         size_t size,
+                                         size_t max_bytes) {
+  (void)object;
+  (void)data;
+  (void)size;
+  (void)max_bytes;
+  return CMETA_OK;
+}
+
+static void replaced_uuid_restore_zero(void *object) {
+  (void)object;
+}
+
 static const cmeta_data_buffer_shape owned_shape = {
     .ownership = CMETA_DATA_BUFFER_OWNED
 };
@@ -163,6 +186,64 @@ spec("TurboUtils fixed-width CMeta descriptors") {
 }
 
 spec("TurboUtils UUID CMeta adapter") {
+  it("accepts canonical UUID provenance instantiated in another TU") {
+    static const unsigned char input[] =
+        "00112233-4455-6677-8899-aabbccddeeff";
+    static const uint8_t expected[TURBO_UUID_SIZE] = {
+        0x00u, 0x11u, 0x22u, 0x33u, 0x44u, 0x55u, 0x66u, 0x77u,
+        0x88u, 0x99u, 0xaau, 0xbbu, 0xccu, 0xddu, 0xeeu, 0xffu
+    };
+    const turbo_uuid_cmeta_adapter_desc *peer =
+        turbo_uuid_cmeta_adapter_from_peer();
+    turbo_uuid_t value = {{0}};
+
+    check_not_null(peer);
+    check_true(turbo_uuid_cmeta_adapter_valid(peer, peer->data));
+    check_true(cmeta_type_equal(peer->data->storage_type,
+                                &turbo_uuid_cmeta_type));
+    check_equal(cmeta_data_buffer_assign(peer->data, &value, input,
+                                         TURBO_UUID_STRING_LENGTH,
+                                         TURBO_UUID_STRING_LENGTH),
+                CMETA_OK);
+    check_equal(value.bytes, expected, sizeof(expected));
+  }
+
+  it("rejects each UUID callback replacement under copied provenance") {
+    const turbo_uuid_cmeta_adapter_desc *peer =
+        turbo_uuid_cmeta_adapter_from_peer();
+    turbo_uuid_cmeta_adapter_desc forged_adapter = *peer;
+    cmeta_data_buffer_ops forged_ops = *peer->buffer_ops;
+    cmeta_data_desc forged_data = *peer->data;
+
+    forged_adapter.data = &forged_data;
+    forged_adapter.buffer_ops = &forged_ops;
+    forged_data.buffer_ops = &forged_ops;
+
+    check_true(turbo_uuid_cmeta_adapter_valid(&forged_adapter,
+                                               &forged_data));
+
+    forged_ops.is_zero = replaced_uuid_is_zero;
+    check_false(turbo_uuid_cmeta_adapter_valid(&forged_adapter,
+                                                &forged_data));
+
+    forged_ops = *peer->buffer_ops;
+    forged_ops.assign = replaced_uuid_assign;
+    check_false(turbo_uuid_cmeta_adapter_valid(&forged_adapter,
+                                                &forged_data));
+
+    forged_ops = *peer->buffer_ops;
+    forged_ops.restore_zero = replaced_uuid_restore_zero;
+    check_false(turbo_uuid_cmeta_adapter_valid(&forged_adapter,
+                                                &forged_data));
+  }
+
+  it("rejects a truncated UUID provenance record before its extension") {
+    turbo_uuid_cmeta_adapter_desc truncated = turbo_uuid_cmeta_adapter;
+
+    truncated.struct_size = TURBO_UUID_CMETA_ADAPTER_PREFIX_SIZE - 1u;
+    check_false(turbo_uuid_cmeta_adapter_valid(&truncated, truncated.data));
+  }
+
   it("parses lowercase canonical text from a non-NUL-terminated slice") {
     static const char canonical[] =
         "00112233-4455-6677-8899-aabbccddeeff";

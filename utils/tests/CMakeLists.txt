@@ -113,6 +113,12 @@ if(TARGET test_turbo_str_meta)
   target_sources(test_turbo_str_meta PRIVATE turbo_str_meta_peer.c)
 endif()
 
+foreach(tgt test_turbo_cmeta_data test_turbo_cmeta_data_cpp)
+  if(TARGET ${tgt})
+    target_sources(${tgt} PRIVATE turbo_cmeta_data_peer.c)
+  endif()
+endforeach()
+
 cmake_add_test(test_tlog_header_collision_c
   SOURCES ${TLOG_HEADER_COLLISION_C}
   FOLDER "utils/tests"

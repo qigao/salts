@@ -105,3 +105,17 @@
    conversion、UUID size/hyphen/hex/max/occupied/rollback 任一保护被删除时至少一项测试失败。
 5. 提交 Task 1 branch；不 push、不建 PR。把 base/commit SHA、RED/verification evidence、
    ownership notes 与 remaining risks 写入 controller 指定 implementer report。
+
+## Reviewer fix: UUID adapter provenance
+
+1. 用独立 C peer TU 实例化 UUID metadata；C/C++ consumer tests 必须接受该 provenance，
+   且能用其 data descriptor 完成真实 UUID assignment。
+2. 复制 canonical provenance/data/ops，分别只替换 `is_zero`、`assign`、
+   `restore_zero`，先观察缺少 UUID-specific admission surface 的 RED。
+3. 在 `turbo_cmeta_data.h` 增加 UUID 专用 size-prefixed adapter descriptor、v1 ABI 与
+   header-local self validator；consumer validator 在完整 prefix 得到 size 证明前不得读取
+   extension 字段。
+4. 保留全部既有 UUID/fixed-width 名称与 generic CMeta ABI，不改变 tstr/vstr，不给 CBind
+   增加 Core 依赖。
+5. 重新执行 focused、相邻、全量 Release CTest、installed-package consumers、dependency
+   closure、CodeGraph/diff/vendor checks，并以独立 fix commit 交付。
