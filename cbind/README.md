@@ -38,5 +38,19 @@ The executable behavior examples are maintained with the implementation in
 cover complete descriptors, context setup, root and struct decode, embedded
 NUL bytes, lifetime rejection, limits, target failures, and rollback.
 
-String/bytes container elements, custom ownership, enum, and variant decoding
-remain unsupported in this slice and fail without an implicit fallback.
+## ENUM storage
+
+CBind decodes an enum only when its descriptor exposes a complete
+`cmeta_data_enum_ops` adapter. Input may be an exact reflected `text`, exact
+`symbol`, declared signed integer, or declared unsigned integer not greater
+than `INT64_MAX`. Float coercion and undeclared values are rejected. String
+slices are compared directly and never retained.
+
+Provider assignment failures surface as `CBIND_TARGET_ERROR` and restore the
+adapter-defined semantic-zero state. See
+[`tests/cbind_enum_decode_test.c`](tests/cbind_enum_decode_test.c) for complete
+descriptor and rollback examples.
+
+String/bytes/enum container elements, custom buffer ownership, and variant
+decoding remain unsupported in this slice and fail without an implicit
+fallback.

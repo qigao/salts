@@ -134,6 +134,14 @@ cbind_status cbind_decode_scalar_token(
     const cserde_token *token,
     void *out);
 
+cbind_status cbind_enum_value_from_token(
+    cbind_decode_state *state,
+    const cmeta_data_desc *shape,
+    const cmeta_data_field_desc *field,
+    size_t depth,
+    const cserde_token *token,
+    int64_t *out);
+
 cbind_status cbind_decode_struct(
     cbind_decode_state *state,
     const cmeta_data_desc *shape,

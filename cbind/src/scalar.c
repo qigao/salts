@@ -152,9 +152,18 @@ cbind_status cbind_validate_graph(const cbind_context *context,
         case CMETA_DATA_STRING:
         case CMETA_DATA_BYTES:
             return cbind_validate_buffer(context, shape, NULL, depth, error);
+        case CMETA_DATA_ENUM:
+            if (shape->struct_size <
+                    CBIND_FIELD_END(cmeta_data_desc, enum_ops) ||
+                shape->enum_ops == NULL)
+                return cbind_validation_error(error, CBIND_UNSUPPORTED,
+                                              shape, depth);
+            return cmeta_data_enum_ops_of(shape) != NULL
+                       ? CBIND_OK
+                       : cbind_validation_error(error, CBIND_INVALID_SHAPE,
+                                                shape, depth);
         case CMETA_DATA_STRUCT:
             return cbind_validation_error(error, CBIND_UNSUPPORTED, shape, depth);
-        case CMETA_DATA_ENUM:
         case CMETA_DATA_VARIANT:
         case CMETA_DATA_SEQUENCE:
         case CMETA_DATA_SET:
@@ -206,6 +215,11 @@ bool cbind_value_is_empty(const cmeta_data_desc *shape, const void *value) {
             return cmeta_data_buffer_is_zero(shape, value, &empty) == CMETA_OK &&
                    empty;
         }
+        case CMETA_DATA_ENUM: {
+            bool empty = false;
+            return cmeta_data_enum_is_zero(shape, value, &empty) == CMETA_OK &&
+                   empty;
+        }
         default:
             return false;
     }
@@ -248,6 +262,9 @@ void cbind_value_reset(const cmeta_data_desc *shape, void *value) {
         case CMETA_DATA_BYTES:
             (void)cmeta_data_buffer_restore_zero(shape, value);
             break;
+        case CMETA_DATA_ENUM:
+            (void)cmeta_data_enum_restore_zero(shape, value);
+            break;
         default:
             break;
     }
@@ -260,6 +277,85 @@ static cbind_status cbind_scalar_error(cbind_decode_state *state,
                                        size_t depth) {
     cbind_error_set(state->error, status, CSERDE_OK, shape, field, depth);
     return status;
+}
+
+static bool cbind_slice_equal_text(const cserde_slice *slice,
+                                   const char *text) {
+    size_t text_size;
+
+    if (slice == NULL || text == NULL)
+        return false;
+    text_size = strlen(text);
+    return slice->size == text_size &&
+           (text_size == 0u || memcmp(slice->data, text, text_size) == 0);
+}
+
+cbind_status cbind_enum_value_from_token(
+    cbind_decode_state *state, const cmeta_data_desc *shape,
+    const cmeta_data_field_desc *field, size_t depth,
+    const cserde_token *token, int64_t *out) {
+    const cmeta_data_enum_shape *enum_shape;
+    int64_t value;
+    size_t i;
+
+    if (token == NULL || out == NULL)
+        return cbind_scalar_error(state, CBIND_INVALID_ARGUMENT,
+                                  shape, field, depth);
+    enum_shape = (const cmeta_data_enum_shape *)shape->shape;
+
+    if (token->kind == CSERDE_STRING) {
+        for (i = 0u; i < enum_shape->meta->count; ++i) {
+            const cmeta_enum_item_desc *item = &enum_shape->meta->items[i];
+            if (cbind_slice_equal_text(&token->value.slice, item->text) ||
+                cbind_slice_equal_text(&token->value.slice, item->symbol)) {
+                *out = item->value;
+                return CBIND_OK;
+            }
+        }
+        return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
+                                  shape, field, depth);
+    }
+
+    if (token->kind == CSERDE_SINT) {
+        value = token->value.sint;
+    } else if (token->kind == CSERDE_UINT) {
+        if (token->value.uint > (uint64_t)INT64_MAX)
+            return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
+                                      shape, field, depth);
+        value = (int64_t)token->value.uint;
+    } else {
+        return cbind_scalar_error(state, CBIND_TOKEN_MISMATCH,
+                                  shape, field, depth);
+    }
+
+    if (cmeta_enum_item_by_value(enum_shape->meta, value) == NULL)
+        return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
+                                  shape, field, depth);
+    *out = value;
+    return CBIND_OK;
+}
+
+static cbind_status cbind_decode_enum(cbind_decode_state *state,
+                                      const cmeta_data_desc *shape,
+                                      const cmeta_data_field_desc *field,
+                                      size_t depth,
+                                      const cserde_token *token,
+                                      void *out) {
+    int64_t value = 0;
+    cmeta_status target;
+    cbind_status status = cbind_enum_value_from_token(
+        state, shape, field, depth, token, &value);
+
+    if (status != CBIND_OK)
+        return status;
+    target = cmeta_data_enum_assign(shape, out, value);
+    if (target != CMETA_OK) {
+        cbind_error_set(state->error, CBIND_TARGET_ERROR, CSERDE_OK,
+                        shape, field, depth);
+        cbind_error_set_target(state->error, target);
+        return CBIND_TARGET_ERROR;
+    }
+    return CBIND_OK;
 }
 
 static bool cbind_double_is_integral(double value) {
@@ -494,6 +590,8 @@ cbind_status cbind_decode_scalar_token(cbind_decode_state *state,
             return cbind_decode_unsigned(state, shape, field, depth, token, out);
         case CMETA_DATA_FLOAT:
             return cbind_decode_floating(state, shape, field, depth, token, out);
+        case CMETA_DATA_ENUM:
+            return cbind_decode_enum(state, shape, field, depth, token, out);
         default:
             return cbind_scalar_error(state, CBIND_UNSUPPORTED,
                                       shape, field, depth);
