@@ -48,14 +48,14 @@ CFlow stream   -> CSerde writer sink
 
 该表达过于宽泛，现由本 amendment 收紧。
 
-raw `cserde_token` 是结构协议，不是业务独立元素；它不能作为允许普通 `filter/map` 的 public `Stream<T>` surface。
+raw `cserde_token` 是结构协议，不是业务独立元素；它不能作为允许普通 `filter/map` 的 public typed CFlow stream surface。
 
 固定边界：
 
 ```text
 CSerde token stream = structural transport
 CBind               = semantic/native binding
-CFlow Stream<T>      = complete semantic/native values
+CFlow typed stream   = complete semantic/native values
 ```
 
 因此 parser + binding + flow 的组合应当是：
@@ -65,13 +65,13 @@ parser source
     -> complete semantic value
     -> CBind
     -> native object T
-    -> CFlow Stream<T>
+    -> CFlow typed stream
 ```
 
 而不是：
 
 ```text
-Stream<cserde_token> -> filter/map
+cserde_token stream -> filter/map
 ```
 
 ## 4. Pull CSerde reader vs push parser

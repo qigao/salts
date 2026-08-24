@@ -24,6 +24,13 @@ typedef struct cbind_validation_frame {
     const struct cbind_validation_frame *parent;
 } cbind_validation_frame;
 
+bool cbind_validation_cycle_contains(
+    const cbind_validation_frame *parent,
+    const cmeta_data_desc *shape);
+bool cbind_depth_advance(const cbind_context *context,
+                         size_t depth,
+                         size_t *next_depth);
+
 bool cbind_context_valid(const cbind_context *context);
 bool cbind_error_valid(const cbind_error *error);
 void cbind_error_clear(cbind_error *error);
@@ -49,6 +56,31 @@ cbind_status cbind_validate_struct_graph(
     const cmeta_data_desc *shape,
     size_t depth,
     const cbind_validation_frame *parent,
+    size_t active_scratch,
+    size_t *max_scratch,
+    cbind_error *error);
+
+cbind_status cbind_measure_struct_resources(
+    const cbind_context *context,
+    const cmeta_data_desc *shape,
+    size_t depth,
+    size_t active_scratch,
+    size_t *max_scratch,
+    cbind_error *error);
+
+cbind_status cbind_validate_variant_graph(
+    const cbind_context *context,
+    const cmeta_data_desc *shape,
+    size_t depth,
+    const cbind_validation_frame *parent,
+    size_t active_scratch,
+    size_t *max_scratch,
+    cbind_error *error);
+
+cbind_status cbind_measure_variant_resources(
+    const cbind_context *context,
+    const cmeta_data_desc *shape,
+    size_t depth,
     size_t active_scratch,
     size_t *max_scratch,
     cbind_error *error);
@@ -134,7 +166,22 @@ cbind_status cbind_decode_scalar_token(
     const cserde_token *token,
     void *out);
 
+cbind_status cbind_enum_value_from_token(
+    cbind_decode_state *state,
+    const cmeta_data_desc *shape,
+    const cmeta_data_field_desc *field,
+    size_t depth,
+    const cserde_token *token,
+    int64_t *out);
+
 cbind_status cbind_decode_struct(
+    cbind_decode_state *state,
+    const cmeta_data_desc *shape,
+    const cmeta_data_field_desc *parent_field,
+    size_t depth,
+    void *out);
+
+cbind_status cbind_decode_variant(
     cbind_decode_state *state,
     const cmeta_data_desc *shape,
     const cmeta_data_field_desc *parent_field,
