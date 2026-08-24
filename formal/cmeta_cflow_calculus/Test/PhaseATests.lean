@@ -15,6 +15,7 @@ import PhaseATests.MachineSchema
 import PhaseATests.Machine
 import PhaseATests.MachineRuntime
 import PhaseATests.TimerEvent
+import PhaseATests.Actor
 
 open CMetaCFlowCalculus.CMeta
 open CMetaCFlowCalculus.CFlow
