@@ -647,7 +647,7 @@ cflow_machine_hierarchy_instance_init(
     };
     result.machine_status = cflow_machine_instance_init_internal(
         &impl->machine, &machine_config,
-        hierarchy_transition_committed, impl);
+        hierarchy_transition_committed, impl, NULL, NULL);
     if (result.machine_status != CFLOW_MACHINE_RUNTIME_OK) {
         result.status = CFLOW_MACHINE_HIERARCHY_INSTANCE_MACHINE_REJECTED;
         hierarchy_instance_impl_destroy(impl);

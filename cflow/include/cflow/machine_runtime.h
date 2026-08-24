@@ -114,13 +114,21 @@ bool cflow_machine_instance_as_source(
 
 /**
  * Gracefully stop admission, cancel queued Events, and preserve an in-flight
- * transition commit. Repeated calls are idempotent.
+ * transition commit. If close overlaps an executing transition, that
+ * transition commits exactly once before terminal settlement. Repeated calls
+ * are idempotent.
  */
 void cflow_machine_instance_close(cflow_machine_instance *instance);
 
 /**
- * Stop admission and discard queued and in-flight Event results. Repeated
- * calls are idempotent and the last committed state remains observable.
+ * Stop admission and cancel queued Events.
+ *
+ * Cancellation and transition commit are linearized by the instance mutex.
+ * Cancellation that wins before commit discards the staged state and
+ * observation. A commit that wins first remains observable exactly once,
+ * including a prepared VALUE, and cancellation prevents subsequent Events.
+ * Action callback effects outside Machine-owned state are not rolled back.
+ * Repeated calls are idempotent.
  */
 void cflow_machine_instance_cancel(cflow_machine_instance *instance);
 

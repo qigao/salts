@@ -2,6 +2,7 @@
 
 #include <turbo/thread.h>
 
+#include "../src/machine_runtime_internal.h"
 #include "tinytest.h"
 
 #include <stdatomic.h>
@@ -17,6 +18,14 @@ typedef struct runtime_control_probe {
     cflow_machine_instance *instance;
     bool cancel;
 } runtime_control_probe;
+
+typedef struct runtime_commit_barrier {
+    turbo_mutex_t lock;
+    turbo_cond_t changed;
+    bool entered;
+    bool released;
+    bool committed;
+} runtime_commit_barrier;
 
 typedef struct runtime_producer_context {
     cflow_machine_instance *instance;
@@ -38,6 +47,70 @@ static void runtime_producer(void *user) {
             CFLOW_MAILBOX_OK)
             atomic_fetch_add(&context->failures, 1);
     }
+}
+
+static bool runtime_commit_barrier_init(runtime_commit_barrier *barrier) {
+    if (barrier == NULL) return false;
+    memset(barrier, 0, sizeof(*barrier));
+    turbo_mutex_init(&barrier->lock);
+    turbo_cond_init(&barrier->changed);
+    if (barrier->lock == NULL || barrier->changed == NULL) {
+        if (barrier->changed != NULL) turbo_cond_destroy(&barrier->changed);
+        if (barrier->lock != NULL) turbo_mutex_destroy(&barrier->lock);
+        *barrier = (runtime_commit_barrier){0};
+        return false;
+    }
+    return true;
+}
+
+static void runtime_commit_barrier_destroy(runtime_commit_barrier *barrier) {
+    if (barrier == NULL) return;
+    if (barrier->changed != NULL) turbo_cond_destroy(&barrier->changed);
+    if (barrier->lock != NULL) turbo_mutex_destroy(&barrier->lock);
+    *barrier = (runtime_commit_barrier){0};
+}
+
+static void runtime_commit_boundary(void *user) {
+    runtime_commit_barrier *barrier = (runtime_commit_barrier *)user;
+    if (barrier == NULL) return;
+    turbo_mutex_lock(&barrier->lock);
+    barrier->entered = true;
+    turbo_cond_broadcast(&barrier->changed);
+    while (!barrier->released)
+        turbo_cond_wait(&barrier->changed, &barrier->lock);
+    turbo_mutex_unlock(&barrier->lock);
+}
+
+static void runtime_commit_barrier_wait(runtime_commit_barrier *barrier) {
+    turbo_mutex_lock(&barrier->lock);
+    while (!barrier->entered)
+        turbo_cond_wait(&barrier->changed, &barrier->lock);
+    turbo_mutex_unlock(&barrier->lock);
+}
+
+static void runtime_commit_barrier_release(runtime_commit_barrier *barrier) {
+    turbo_mutex_lock(&barrier->lock);
+    barrier->released = true;
+    turbo_cond_broadcast(&barrier->changed);
+    turbo_mutex_unlock(&barrier->lock);
+}
+
+static void runtime_transition_commit_probe(
+    void *user, size_t transition_index, bool begin) {
+    runtime_commit_barrier *barrier = (runtime_commit_barrier *)user;
+    if (barrier == NULL || begin || transition_index == SIZE_MAX) return;
+    turbo_mutex_lock(&barrier->lock);
+    barrier->committed = true;
+    turbo_cond_broadcast(&barrier->changed);
+    turbo_mutex_unlock(&barrier->lock);
+}
+
+static void runtime_commit_barrier_wait_committed(
+    runtime_commit_barrier *barrier) {
+    turbo_mutex_lock(&barrier->lock);
+    while (!barrier->committed)
+        turbo_cond_wait(&barrier->changed, &barrier->lock);
+    turbo_mutex_unlock(&barrier->lock);
 }
 
 static bool guard_enabled(void *user,
@@ -829,6 +902,163 @@ suite("CFlow Machine Resumable runtime") {
         check_equal(stats.in_flight, (size_t)0u);
 
         cflow_machine_instance_destroy(&instance);
+        cflow_executor_destroy(&executor);
+        cflow_machine_destroy(&machine);
+    }
+
+    it("lets cancellation win before transition commit arbitration") {
+        cflow_machine_state states[2];
+        cflow_event_type events[1];
+        cflow_machine_guard guards[1];
+        cflow_machine_action actions[1];
+        cflow_machine_transition transitions[1];
+        cflow_machine_definition definition = runtime_definition(
+            states, events, guards, actions, transitions);
+        cflow_machine machine = {0};
+        cflow_executor executor = {0};
+        cflow_machine_instance instance = {0};
+        cflow_resumable resumable = {0};
+        runtime_commit_barrier barrier = {0};
+        const cflow_machine_guard_binding guard_bindings[] = {
+            {200u, guard_enabled, NULL}
+        };
+        const cflow_machine_action_binding action_bindings[] = {
+            {300u, action_to_long, NULL}
+        };
+        const int initial = 7;
+        const bool payload = true;
+        const cflow_event_view event = {
+            100u, &cmeta_type_bool, &payload
+        };
+        const cflow_machine_instance_config config = {
+            &machine, &initial, &cmeta_type_long,
+            guard_bindings, 1u, action_bindings, 1u, 4u, &executor
+        };
+        cflow_machine_instance_stats stats = {0};
+        cflow_resume_ctx resume_context = {NULL};
+        cflow_step step;
+        long output = -1L;
+        int copied_state = 0;
+        const cmeta_type_desc *state_type = NULL;
+
+        check_equal(cflow_machine_build(&machine, &definition),
+                    CFLOW_MACHINE_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_true(runtime_commit_barrier_init(&barrier));
+        check_equal(cflow_machine_instance_init_internal(
+                        &instance, &config, NULL, NULL,
+                        runtime_commit_boundary, &barrier),
+                    CFLOW_MACHINE_RUNTIME_OK);
+        check_true(cflow_machine_instance_as_resumable(
+            &instance, &resumable));
+        check_equal(cflow_machine_instance_try_send(&instance, &event),
+                    CFLOW_MAILBOX_OK);
+        step = resumable.ops->resume(
+            resumable.state, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+
+        runtime_commit_barrier_wait(&barrier);
+        cflow_machine_instance_cancel(&instance);
+        runtime_commit_barrier_release(&barrier);
+        check_true(cflow_executor_wait_idle(&executor));
+
+        step = resumable.ops->resume(
+            resumable.state, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_DONE);
+        check_true(cflow_machine_instance_copy_state(
+            &instance, &state_type, &copied_state, sizeof(copied_state)));
+        check_true(state_type == &cmeta_type_int);
+        check_equal(copied_state, initial);
+        check_true(cflow_machine_instance_get_stats(&instance, &stats));
+        check_equal(stats.completed, (uint64_t)0u);
+        check_equal(stats.cancelled_events, (uint64_t)1u);
+        check_equal(stats.accepted,
+                    stats.completed + stats.failed + stats.cancelled_events);
+        check_equal(stats.in_flight, (size_t)0u);
+
+        destroy_resumable(&resumable);
+        cflow_machine_instance_destroy(&instance);
+        runtime_commit_barrier_destroy(&barrier);
+        cflow_executor_destroy(&executor);
+        cflow_machine_destroy(&machine);
+    }
+
+    it("preserves one committed value when commit wins cancellation") {
+        cflow_machine_state states[2];
+        cflow_event_type events[1];
+        cflow_machine_guard guards[1];
+        cflow_machine_action actions[1];
+        cflow_machine_transition transitions[1];
+        cflow_machine_definition definition = runtime_definition(
+            states, events, guards, actions, transitions);
+        cflow_machine machine = {0};
+        cflow_executor executor = {0};
+        cflow_machine_instance instance = {0};
+        cflow_resumable resumable = {0};
+        runtime_commit_barrier barrier = {0};
+        const cflow_machine_guard_binding guard_bindings[] = {
+            {200u, guard_enabled, NULL}
+        };
+        const cflow_machine_action_binding action_bindings[] = {
+            {300u, action_to_long, NULL}
+        };
+        const int initial = 7;
+        const bool payload = true;
+        const cflow_event_view event = {
+            100u, &cmeta_type_bool, &payload
+        };
+        const cflow_machine_instance_config config = {
+            &machine, &initial, &cmeta_type_long,
+            guard_bindings, 1u, action_bindings, 1u, 4u, &executor
+        };
+        cflow_machine_instance_stats stats = {0};
+        cflow_resume_ctx resume_context = {NULL};
+        cflow_step step;
+        long output = -1L;
+
+        states[1].kind = CFLOW_MACHINE_STATE_ACTIVE;
+        check_equal(cflow_machine_build(&machine, &definition),
+                    CFLOW_MACHINE_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_true(runtime_commit_barrier_init(&barrier));
+        check_equal(cflow_machine_instance_init_internal(
+                        &instance, &config,
+                        runtime_transition_commit_probe, &barrier,
+                        runtime_commit_boundary, &barrier),
+                    CFLOW_MACHINE_RUNTIME_OK);
+        check_true(cflow_machine_instance_as_resumable(
+            &instance, &resumable));
+        check_equal(cflow_machine_instance_try_send(&instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_equal(cflow_machine_instance_try_send(&instance, &event),
+                    CFLOW_MAILBOX_OK);
+        step = resumable.ops->resume(
+            resumable.state, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+
+        runtime_commit_barrier_wait(&barrier);
+        runtime_commit_barrier_release(&barrier);
+        runtime_commit_barrier_wait_committed(&barrier);
+        cflow_machine_instance_cancel(&instance);
+        check_true(cflow_executor_wait_idle(&executor));
+
+        step = resumable.ops->resume(
+            resumable.state, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_VALUE_AND_DONE);
+        check_equal(output, 70L);
+        check_equal(cflow_machine_instance_current_state(&instance),
+                    (cflow_machine_state_id)20u);
+        check_true(cflow_machine_instance_get_stats(&instance, &stats));
+        check_equal(stats.accepted, (uint64_t)2u);
+        check_equal(stats.completed, (uint64_t)1u);
+        check_equal(stats.cancelled_events, (uint64_t)1u);
+        check_equal(stats.accepted,
+                    stats.completed + stats.failed + stats.cancelled_events);
+        check_equal(stats.in_flight, (size_t)0u);
+
+        destroy_resumable(&resumable);
+        cflow_machine_instance_destroy(&instance);
+        runtime_commit_barrier_destroy(&barrier);
         cflow_executor_destroy(&executor);
         cflow_machine_destroy(&machine);
     }
