@@ -8,7 +8,7 @@
 
 ## 已实施
 
-- [x] 用 `tinytest/traits.h` 建立内建类型族和关系分派，不依赖 CMeta。
+- [x] 用 `tinytest/include/tinymeta/traits.h` 建立内建类型族和关系分派，不依赖 CMeta。
 - [x] 删除 typed、array、GTest 兼容、`check_str_*` 与 `check_mem_*` 公开宏。
 - [x] 将二参数值比较和三参数内存比较统一到 `check_equal/check_not_equal`。
 - [x] 为 C++ 保留模板值语义、字符串内容语义和异常展开。

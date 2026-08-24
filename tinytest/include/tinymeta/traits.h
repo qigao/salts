@@ -2,7 +2,7 @@
 #define TINYTEST_TRAITS_H
 
 #ifdef __cplusplus
-#error "traits.h is the strict-C11 trait layer; use tinytest.hpp from C++"
+#error "tinymeta/traits.h is the strict-C11 trait layer; use tinytest.hpp from C++"
 #endif
 
 #if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 201112L
@@ -10,7 +10,7 @@
 #endif
 
 #include <stdbool.h>
-#include "tinymeta/pp.h"
+#include "pp.h"
 
 /* Public operation tokens used by the generic assertion layer. */
 #define TTEST_EQ 0
@@ -51,6 +51,17 @@
   const char *:       string_handler, \
   void *:             pointer_handler, \
   const void *:       pointer_handler
+
+/* Complex values are outside TinyTest's scalar assertion contract. Keep the
+ * rejection in the shared selector so builtins and CMeta traits agree. */
+#if !defined(__STDC_NO_COMPLEX__) && (!defined(_MSC_VER) || defined(__clang__))
+#define TTEST_C11_COMPLEX_ASSOCIATIONS__(handler) \
+  , float _Complex:       handler \
+  , double _Complex:      handler \
+  , long double _Complex: handler
+#else
+#define TTEST_C11_COMPLEX_ASSOCIATIONS__(handler)
+#endif
 
 /* Equality rows are (TOKEN, C_TYPE, COMPARATOR). COMPARATOR borrows two
  * `const C_TYPE *` values. Define the list before including tinytest.h:
@@ -179,6 +190,8 @@ static inline void ttest_c11_check_pointer__(
   }
 }
 
+static inline void ttest_c11_complex_values_are_unsupported__(void) {}
+
 #define TTEST_C11_DEFINE_RANGE_HANDLER__(suffix, type, format) \
   static inline void ttest_c11_check_range_##suffix##__( \
       type actual, type minimum, type maximum, bool warning, \
@@ -221,14 +234,18 @@ static inline void ttest_c11_check_within__(
     TTEST_C11_EQUAL_ASSOCIATIONS__(ttest_c11_check_signed__, \
       ttest_c11_check_unsigned__, ttest_c11_check_float__, \
       ttest_c11_check_double__, ttest_c11_check_long_double__, \
-      ttest_c11_check_string__, ttest_c11_check_pointer__), \
+      ttest_c11_check_string__, ttest_c11_check_pointer__) \
+    TTEST_C11_COMPLEX_ASSOCIATIONS__( \
+      ttest_c11_complex_values_are_unsupported__), \
     __VA_ARGS__)
 
 #define TTEST_C11_CHECK_NUMERIC_SELECT__(actual) \
   _Generic((actual), \
     TTEST_C11_NUMERIC_ASSOCIATIONS__(ttest_c11_check_signed__, \
       ttest_c11_check_unsigned__, ttest_c11_check_float__, \
-      ttest_c11_check_double__, ttest_c11_check_long_double__), \
+      ttest_c11_check_double__, ttest_c11_check_long_double__) \
+    TTEST_C11_COMPLEX_ASSOCIATIONS__( \
+      ttest_c11_complex_values_are_unsupported__), \
     default: ttest_c11_check_signed__)
 
 #define TTEST_C11_CHECK_RELATION__(actual, expected, relation, warning) \
@@ -293,7 +310,9 @@ static inline void ttest_c11_check_within__(
   _Generic((actual), \
     TTEST_C11_NUMERIC_ASSOCIATIONS__(ttest_c11_check_range_signed__, \
       ttest_c11_check_range_unsigned__, ttest_c11_check_range_float__, \
-      ttest_c11_check_range_double__, ttest_c11_check_range_long_double__), \
+      ttest_c11_check_range_double__, ttest_c11_check_range_long_double__) \
+    TTEST_C11_COMPLEX_ASSOCIATIONS__( \
+      ttest_c11_complex_values_are_unsupported__), \
     default: ttest_c11_check_range_signed__)
 #define check_in_range(actual, minimum, maximum) \
   TTEST_C11_CHECK_RANGE_SELECT__((actual))( \

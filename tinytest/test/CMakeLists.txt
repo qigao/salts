@@ -56,6 +56,30 @@ cmake_add_test(tinytest_cmeta_equal_test
   LIBS TurboUtils::TinyTest
   FOLDER "tinytest/tests")
 
+function(tinytest_add_compile_failure_test target_name source expected_diagnostic)
+  add_executable(${target_name} EXCLUDE_FROM_ALL ${source})
+  target_link_libraries(${target_name} PRIVATE TurboUtils::TinyTest)
+  set_target_properties(${target_name} PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    FOLDER "tinytest/tests/compile_fail")
+  add_test(
+    NAME ${target_name}
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+            --config $<CONFIG> --target ${target_name})
+  set_tests_properties(${target_name} PROPERTIES
+    PASS_REGULAR_EXPRESSION "${expected_diagnostic}"
+    RUN_SERIAL TRUE)
+endfunction()
+
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  tinytest_add_compile_failure_test(
+    tinytest_complex_equal_compile_fail
+    complex_equal_compile_fail.c
+    "ttest_c11_complex_values_are_unsupported__")
+endif()
+
 cmake_add_test(tinytest_result_x_macro
   SOURCES result_x_macro_test.c
   LIBS TurboUtils::TinyTest
@@ -71,7 +95,7 @@ add_test(
   NAME tinymock_public_header_structure
   COMMAND ${CMAKE_COMMAND}
     "-DTINYMOCK_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/tinymock.h"
-    "-DTRAITS_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/traits.h"
+    "-DTRAITS_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/tinymeta/traits.h"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tinymock_header_structure.cmake")
 
 cmake_add_test(tinymock_test

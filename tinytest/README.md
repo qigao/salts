@@ -117,6 +117,7 @@ check_equal((Point){1, 2}, (Point){1, 2});
 
 Each row is `(TOKEN, C_TYPE, COMPARATOR)`. The comparator borrows two
 `const C_TYPE *` values. Unregistered structures are rejected at compile time.
+Complex values are unsupported and rejected at compile time.
 `tinytest_cmeta.h` and `tinytest_internal.h` are transitive implementation
 headers; applications include only `tinytest.h` (or `tinytest.hpp` for C++).
 Language-neutral runner, reporting, benchmark, temporary-file, and tree-management

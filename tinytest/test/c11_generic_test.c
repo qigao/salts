@@ -10,8 +10,30 @@ struct Foo {
     int value;
 };
 
+enum c11_generic_signed_enum {
+    C11_GENERIC_ENUM_NEGATIVE = -7,
+    C11_GENERIC_ENUM_POSITIVE = 9
+};
+
+static int c11_generic_enum_evaluations;
+
+static enum c11_generic_signed_enum c11_generic_next_enum(void) {
+    ++c11_generic_enum_evaluations;
+    return C11_GENERIC_ENUM_POSITIVE;
+}
+
 spec("C11 _Generic assertions") {
     it("should route check_equal for diverse integral and floating-point types") {
+        char c1 = 12;
+        char c2 = 12;
+        signed char sc1 = -12;
+        signed char sc2 = -12;
+        unsigned char uc1 = 200u;
+        unsigned char uc2 = 200u;
+        short short1 = -42;
+        short short2 = -42;
+        unsigned short us1 = 42u;
+        unsigned short us2 = 42u;
         int i1 = -12;
         int i2 = -12;
         unsigned int ui1 = 100u;
@@ -31,6 +53,11 @@ spec("C11 _Generic assertions") {
         long double ld1 = 2.718281828459045L;
         long double ld2 = 2.718281828459045L;
 
+        check_equal(c1, c2);
+        check_equal(sc1, sc2);
+        check_equal(uc1, uc2);
+        check_equal(short1, short2);
+        check_equal(us1, us2);
         check_equal(i1, i2);
         check_equal(b1, b2);
         check_equal(ui1, ui2);
@@ -49,6 +76,19 @@ spec("C11 _Generic assertions") {
         check_equal_warn(f1, f2);
         check_equal_warn(d1, d2);
         check_equal_warn(ld1, ld2);
+    }
+
+    it("should route signed enums through integer comparisons once") {
+        c11_generic_enum_evaluations = 0;
+
+        check_equal(C11_GENERIC_ENUM_NEGATIVE, C11_GENERIC_ENUM_NEGATIVE);
+        check_not_equal(C11_GENERIC_ENUM_NEGATIVE, C11_GENERIC_ENUM_POSITIVE);
+        check_less(C11_GENERIC_ENUM_NEGATIVE, C11_GENERIC_ENUM_POSITIVE);
+        check_in_range(C11_GENERIC_ENUM_NEGATIVE,
+                       C11_GENERIC_ENUM_NEGATIVE,
+                       C11_GENERIC_ENUM_POSITIVE);
+        check_equal(c11_generic_next_enum(), C11_GENERIC_ENUM_POSITIVE);
+        check_equal(c11_generic_enum_evaluations, 1);
     }
 
     it("should route string helpers for check_equal and check_not_equal") {
