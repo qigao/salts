@@ -52,7 +52,7 @@ cmake_add_test(cbind_enum_decode_test
 
 cmake_add_test(cbind_variant_decode_test
   SOURCES cbind_variant_decode_test.c
-  LIBS TurboUtils::CBind TurboUtils::Core cserde_recording_support
+  LIBS TurboUtils::CBind TurboUtils::Core TurboUtils::STL cserde_recording_support
        TurboUtils::TinyTest
   FOLDER "cbind/tests")
 

@@ -1,4 +1,5 @@
 #include <cbind/cbind.h>
+#include <turbostl/typed.h>
 #include "turbo_cmeta_data.h"
 #include "turbo_str.h"
 #include "recording.h"
@@ -9,7 +10,8 @@
 #include <string.h>
 
 Struct(cbind_variant_pair,
-    (int, value)
+    (int, value),
+    (TYPE(Vec, int), items)
 );
 
 Enum(cbind_variant_tag,
@@ -62,12 +64,14 @@ static const cmeta_type_desc cbind_variant_tag_type = {
 
 static const cmeta_data_field_desc cbind_variant_pair_fields[] = {
     {"test.cbind.variant.Pair.value", "value",
-     offsetof(cbind_variant_pair, value), &cmeta_data_int}
+     offsetof(cbind_variant_pair, value), &cmeta_data_int},
+    {"test.cbind.variant.Pair.items", "items",
+     offsetof(cbind_variant_pair, items), &cmeta_data_sequence}
 };
 static const cmeta_data_struct_shape cbind_variant_pair_shape = {
     .layout = StructMeta(cbind_variant_pair),
     .fields = cbind_variant_pair_fields,
-    .field_count = 1u
+    .field_count = 2u
 };
 static const cmeta_data_desc cbind_variant_pair_data = {
     .struct_size = offsetof(cmeta_data_desc, shape) +
@@ -115,8 +119,14 @@ static void cbind_variant_restore_zero(void *object) {
     cbind_variant_value *value = (cbind_variant_value *)object;
     if (value == NULL)
         return;
-    if (value->tag == CBIND_VARIANT_TEXT)
+    if (value->tag == CBIND_VARIANT_PAIR) {
+        const cmeta_field_desc *items = cmeta_struct_find_field(
+            StructMeta(cbind_variant_pair), "items");
+        (void)cmeta_container_restore_zero(
+            &value->payload.pair.items, items->declared_type);
+    } else if (value->tag == CBIND_VARIANT_TEXT) {
         turbo_tstr_cmeta_restore_zero(&value->payload.text);
+    }
     memset(value, 0, sizeof(*value));
 }
 
@@ -270,7 +280,7 @@ static cbind_status decode_tokens(const cmeta_data_desc *shape,
     cserde_reader reader = {0};
     cbind_context context = CBIND_CONTEXT_WITH_BUFFERS_INIT(
         scratch_size == 0u ? NULL : scratch, scratch_size, max_depth,
-        0u, 64u);
+        4u, 64u);
     cbind_status status;
 
     check(scratch_size <= sizeof(scratch));
@@ -357,6 +367,7 @@ spec("CBind variant decode") {
 
   it("decodes scalar and struct cases with the exact array grammar") {
     static const unsigned char value_key[] = {'v', 'a', 'l', 'u', 'e'};
+    static const unsigned char items_key[] = {'i', 't', 'e', 'm', 's'};
     const cserde_token scalar_tokens[] = {
         {.kind = CSERDE_ARRAY_BEGIN},
         {.kind = CSERDE_SINT, .value.sint = CBIND_VARIANT_NUMBER},
@@ -370,10 +381,17 @@ spec("CBind variant decode") {
         {.kind = CSERDE_STRING,
          .value.slice = {value_key, sizeof(value_key), CSERDE_VIEW_TRANSIENT}},
         {.kind = CSERDE_SINT, .value.sint = 7},
+        {.kind = CSERDE_STRING,
+         .value.slice = {items_key, sizeof(items_key), CSERDE_VIEW_STABLE}},
+        {.kind = CSERDE_ARRAY_BEGIN},
+        {.kind = CSERDE_SINT, .value.sint = 4},
+        {.kind = CSERDE_SINT, .value.sint = 6},
+        {.kind = CSERDE_ARRAY_END},
         {.kind = CSERDE_MAP_END},
         {.kind = CSERDE_ARRAY_END}
     };
     cbind_variant_value out = {0};
+    const cbind_variant_value zero = {0};
 
     check_equal(decode_tokens(&cbind_variant_data, scalar_tokens, 4u, &out,
                               2u, 1u, NULL, NULL), CBIND_OK);
@@ -381,11 +399,15 @@ spec("CBind variant decode") {
     check_equal(out.payload.number, 42);
 
     cbind_variant_restore_zero(&out);
-    check_equal(decode_tokens(&cbind_variant_data, struct_tokens, 7u, &out,
+    check_equal(decode_tokens(&cbind_variant_data, struct_tokens, 12u, &out,
                               2u, 1u, NULL, NULL), CBIND_OK);
     check_equal(out.tag, CBIND_VARIANT_PAIR);
     check_equal(out.payload.pair.value, 7);
+    check_equal(vec_size(&out.payload.pair.items), (size_t)2u);
+    check_equal(*(const int *)vec_at_const(&out.payload.pair.items, 0u), 4);
+    check_equal(*(const int *)vec_at_const(&out.payload.pair.items, 1u), 6);
     cbind_variant_restore_zero(&out);
+    check_equal(memcmp(&out, &zero, sizeof(out)), 0);
   }
 
   it("decodes an enum tag by reflected text without enum storage ops") {
