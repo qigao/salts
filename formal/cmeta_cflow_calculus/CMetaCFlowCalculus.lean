@@ -19,6 +19,7 @@ import CMetaCFlowCalculus.CFlow.Machine
 import CMetaCFlowCalculus.CFlow.MachineHierarchy
 import CMetaCFlowCalculus.CFlow.MachineRuntime
 import CMetaCFlowCalculus.CFlow.ManagedMachineState
+import CMetaCFlowCalculus.CFlow.ExecutorProtocol
 import CMetaCFlowCalculus.CFlow.Readiness
 import CMetaCFlowCalculus.CFlow.TimerEvent
 import CMetaCFlowCalculus.CFlow.Temporal
@@ -35,6 +36,7 @@ import CMetaCFlowCalculus.Proofs.Machine
 import CMetaCFlowCalculus.Proofs.MachineHierarchy
 import CMetaCFlowCalculus.Proofs.MachineRuntime
 import CMetaCFlowCalculus.Proofs.ManagedMachineState
+import CMetaCFlowCalculus.Proofs.ExecutorProtocol
 import CMetaCFlowCalculus.Proofs.Readiness
 import CMetaCFlowCalculus.Proofs.TimerEvent
 import CMetaCFlowCalculus.Proofs.Temporal
