@@ -63,6 +63,14 @@ example : (acknowledge dispatched.actor 1).state.requests = [] := by
 example : (trySubmit (close initial).state 100).status = .closed := by
   native_decide
 
+def closeAdmitted : CloseResult := close submitted.state
+def closePending : CloseResult := close backendStarted.state
+
+example : (findRequest closeAdmitted.state.requests 1).map Request.phase =
+    some (.completed .cancelled) := by native_decide
+example : (findRequest closePending.state.requests 1).map Request.phase =
+    some (.backendPending true) := by native_decide
+
 def requestFull : Actor.State :=
   { initial with capacity := 1, requests := submitted.state.requests }
 

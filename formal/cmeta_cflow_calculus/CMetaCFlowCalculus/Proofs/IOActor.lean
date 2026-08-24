@@ -65,6 +65,18 @@ theorem removeRequest_length_of_find_some {requests : List Request}
       · simp [findRequest, removeRequest, same] at found ⊢
         exact inductionHypothesis found
 
+theorem cancelAll_length (requests : List Request) :
+    (cancelAll requests).length = requests.length := by
+  simp [cancelAll]
+
+theorem cancelAll_ids (requests : List Request) :
+    (cancelAll requests).map Request.id = requests.map Request.id := by
+  simp [cancelAll]
+
+theorem cancelAll_leases (requests : List Request) :
+    (cancelAll requests).map Request.lease = requests.map Request.lease := by
+  simp [cancelAll]
+
 theorem trySubmit_preserves_valid (state : State) (lease : LeaseId)
     (valid : state.Valid) : (trySubmit state lease).state.Valid := by
   rcases valid with ⟨capacityPositive, requestsBounded, commandsValid⟩
@@ -422,14 +434,15 @@ theorem close_preserves_valid (state : State) (valid : state.Valid) :
   | running =>
       rcases valid with ⟨capacityPositive, requestsBounded, commandsValid⟩
       simp only [close, terminal]
-      exact ⟨capacityPositive, requestsBounded,
+      exact ⟨capacityPositive, by simpa [cancelAll_length] using requestsBounded,
         BoundedMpsc.close_preserves_valid state.commands commandsValid⟩
 
 theorem close_preserves_ownership (state : State)
     (valid : state.OwnershipValid) :
     (close state).state.OwnershipValid := by
   cases terminal : state.terminal <;>
-    simpa [close, terminal, State.OwnershipValid] using valid
+    simpa [close, terminal, State.OwnershipValid, cancelAll_ids,
+      cancelAll_leases] using valid
 
 theorem close_rejects_submit (state : State) (lease : LeaseId) :
     (trySubmit (close state).state lease).status = .closed := by

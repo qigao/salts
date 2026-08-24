@@ -104,6 +104,11 @@ def requestCancel : RequestPhase → RequestPhase
   | .backendPending _ => .backendPending true
   | phase => phase
 
+/-- Shutdown cancels work not yet submitted and requests cancellation in flight. -/
+def cancelAll (requests : List Request) : List Request :=
+  requests.map fun request =>
+    { request with phase := requestCancel request.phase }
+
 inductive SubmitStatus where
   | accepted
   | full
@@ -319,6 +324,7 @@ def close (state : State) : CloseResult :=
         state :=
           { state with
             commands := (BoundedMpsc.close state.commands).2
+            requests := cancelAll state.requests
             terminal := .closing } }
 
 def Quiescent (state : State) : Prop :=
