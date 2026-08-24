@@ -5,7 +5,8 @@ add_library(${TARGET_NAME}
   src/buffer.c
   src/container.c
   src/scalar.c
-  src/struct.c)
+  src/struct.c
+  src/variant.c)
 
 cmake_config_target(
   ${TARGET_NAME}

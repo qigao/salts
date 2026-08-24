@@ -17,6 +17,14 @@ static volatile int counter = 0;
 static atomic_int gate_open;
 static atomic_int mpmc_counter;
 
+typedef struct callback_protocol_ctx {
+    turbo_threadpool_t *pool;
+    atomic_int entered;
+    int first_post_status;
+    int second_post_status;
+    int wait_status;
+} callback_protocol_ctx;
+
 typedef struct {
     turbo_threadpool_t *pool;
     int tasks;
@@ -53,6 +61,22 @@ static void gated_task(void *arg) {
 static void mpmc_count_task(void *arg) {
     UNUSED(arg);
     atomic_fetch_add(&mpmc_counter, 1);
+}
+
+static void gated_count_task(void *arg) {
+    UNUSED(arg);
+    while (!atomic_load(&gate_open)) turbo_sleep_ms(1);
+    atomic_fetch_add(&mpmc_counter, 1);
+}
+
+static void callback_protocol_probe(void *arg) {
+    callback_protocol_ctx *ctx = (callback_protocol_ctx *)arg;
+    atomic_store(&ctx->entered, 1);
+    ctx->first_post_status = turbo_threadpool_submit(
+        ctx->pool, mpmc_count_task, NULL);
+    ctx->second_post_status = turbo_threadpool_submit(
+        ctx->pool, mpmc_count_task, NULL);
+    ctx->wait_status = turbo_threadpool_wait_status(ctx->pool);
 }
 
 static void submitter_thread(void *arg) {
@@ -286,6 +310,66 @@ spec("Thread Pool Tests") {
         turbo_threadpool_wait(pool);
         turbo_threadpool_get_stats(pool, &stats);
         check_equal((int)stats.pending_tasks, 0);
+        turbo_threadpool_destroy(pool);
+    }
+
+    it("fails callback self-blocking operations without deadlock") {
+        turbo_threadpool_config_t config = {
+            .num_threads = 1,
+            .queue_capacity = 1,
+        };
+        turbo_threadpool_t *pool = turbo_threadpool_create_with_config(&config);
+        callback_protocol_ctx ctx = {
+            .pool = pool,
+            .first_post_status = TURBO_UNKNOWN,
+            .second_post_status = TURBO_UNKNOWN,
+            .wait_status = TURBO_UNKNOWN,
+        };
+
+        check_not_null(pool);
+        atomic_init(&ctx.entered, 0);
+        check_equal(turbo_threadpool_submit(
+                        pool, callback_protocol_probe, &ctx), TURBO_OK);
+        check_equal(turbo_threadpool_wait_status(pool), TURBO_OK);
+        check_equal(atomic_load(&ctx.entered), 1);
+        check_equal(ctx.first_post_status, TURBO_OK);
+        check_equal(ctx.second_post_status, TURBO_EBUSY);
+        check_equal(ctx.wait_status, TURBO_EBUSY);
+        check_equal(atomic_load(&mpmc_counter), 1);
+        turbo_threadpool_destroy(pool);
+    }
+
+    it("cancels queued callbacks while allowing running work to finish") {
+        turbo_threadpool_config_t config = {
+            .num_threads = 1,
+            .queue_capacity = 2,
+        };
+        turbo_threadpool_t *pool = turbo_threadpool_create_with_config(&config);
+        turbo_threadpool_stats_t stats = {0};
+        int attempts = 0;
+
+        check_not_null(pool);
+        check_equal(turbo_threadpool_submit(pool, gated_count_task, NULL),
+                    TURBO_OK);
+        do {
+            turbo_threadpool_get_stats(pool, &stats);
+            if (stats.active_tasks == 1) break;
+            turbo_sleep_ms(1);
+        } while (++attempts < 200);
+        check_equal((int)stats.active_tasks, 1);
+        check_equal(turbo_threadpool_submit(pool, mpmc_count_task, NULL),
+                    TURBO_OK);
+        check_equal(turbo_threadpool_submit(pool, mpmc_count_task, NULL),
+                    TURBO_OK);
+
+        check_equal(turbo_threadpool_shutdown_with_policy(
+                        pool, TURBO_THREADPOOL_SHUTDOWN_CANCEL_PENDING),
+                    TURBO_OK);
+        atomic_store(&gate_open, 1);
+        check_equal(turbo_threadpool_wait_status(pool), TURBO_OK);
+        check_equal(atomic_load(&mpmc_counter), 1);
+        check_equal(turbo_threadpool_cancelled(pool), (int64_t)2);
+        check_equal(turbo_threadpool_pending(pool), 0);
         turbo_threadpool_destroy(pool);
     }
 }

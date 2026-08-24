@@ -13,14 +13,41 @@ static_assert(std::is_standard_layout<cflow_mailbox>::value,
               "cflow_mailbox must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine>::value,
               "cflow_machine must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_machine_hierarchy>::value,
+              "machine hierarchy must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_machine_hierarchy_instance>::value,
+              "hierarchy instance must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_instance>::value,
               "cflow_machine_instance must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_instance_config>::value,
               "machine runtime config must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_actor>::value,
+              "cflow_actor must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_actor_ref>::value,
+              "cflow_actor_ref must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_actor_config>::value,
+              "actor config must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_timer_event_queue>::value,
               "timer Event queue must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_transition>::value,
               "cflow_machine_transition must remain a C-compatible row");
+static_assert(std::is_standard_layout<turbo_readiness_registration>::value,
+              "reactor registration must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_reactor_source_owner>::value,
+              "reactor Source owner must remain a C-compatible handle");
+
+using cflow_reactor_factory = int (*)(
+    cflow_source *, cflow_reactor_source_owner *,
+    turbo_readiness_registration *, turbo_readiness_events, const char *,
+    const cmeta_type_desc *, cflow_read_fn, cflow_resource_close_fn, void *);
+static_assert(std::is_same<
+                  decltype(&cflow_source_from_reactor_registration),
+                  cflow_reactor_factory>::value,
+              "reactor Source factory must keep its C linkage signature");
+using cflow_reactor_owner_close = int (*)(cflow_reactor_source_owner *);
+static_assert(std::is_same<decltype(&cflow_reactor_source_owner_close),
+                           cflow_reactor_owner_close>::value,
+              "reactor Source owner close must keep its C linkage signature");
 
 suite("CFlow C++ public header") {
     it("exposes the aggregate API to C++ consumers") {
@@ -35,8 +62,11 @@ suite("CFlow C++ public header") {
         const cflow_event_view event = {1u, &cmeta_type_int, &sent};
         cflow_mailbox mailbox = {};
         cflow_machine machine = {};
+        cflow_machine_hierarchy hierarchy = {};
         cflow_machine_instance instance = {};
         cflow_machine_instance_config machine_config = {};
+        cflow_actor actor = {};
+        cflow_actor_ref actor_ref = {};
         cflow_timer_event_queue timer_events = {};
         cflow_event_id event_id = 0u;
         const cmeta_type_desc *event_type = nullptr;
@@ -68,8 +98,14 @@ suite("CFlow C++ public header") {
         cflow_mailbox_destroy(&mailbox);
         check_null(machine.impl);
         cflow_machine_destroy(&machine);
+        check_null(hierarchy.impl);
+        cflow_machine_hierarchy_destroy(&hierarchy);
         check_null(instance.impl);
         check_null(machine_config.machine);
+        check_null(actor.impl);
+        check_null(actor_ref.impl);
+        cflow_actor_ref_release(&actor_ref);
+        cflow_actor_destroy(&actor);
         check_null(timer_events.impl);
         cflow_machine_instance_destroy(&instance);
     }

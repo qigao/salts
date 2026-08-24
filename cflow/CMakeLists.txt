@@ -27,6 +27,7 @@ endforeach()
 
 add_library(${TARGET_NAME}
   src/adapters.c
+  src/actor.c
   src/certificate.c
   src/clock.c
   src/coord.c
@@ -39,12 +40,14 @@ add_library(${TARGET_NAME}
   src/interfaces.c
   src/lower.c
   src/machine.c
+  src/machine_hierarchy.c
   src/machine_runtime.c
   src/opt.c
   src/plan_compile.c
   src/plan_exec.c
   src/plan_parallel_reduce.c
   src/property.c
+  src/readiness.c
   src/reactive.c
   src/relation_exec.c
   src/runtime.c
@@ -53,6 +56,7 @@ add_library(${TARGET_NAME}
   src/sources.c
   src/stream.c
   src/subrun.c
+  src/temporal.c
   src/timer_queue.c
   src/timer_event.c
   src/verify.c)
@@ -78,8 +82,8 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC TurboUtils::CMeta
-  PRIVATE TurboUtils::Platform TurboUtils::Concurrency)
+  PUBLIC TurboUtils::CMeta TurboUtils::Platform
+  PRIVATE TurboUtils::Concurrency)
 
 install(
   TARGETS ${TARGET_NAME}
@@ -102,4 +106,8 @@ endif()
 
 if(BUILD_BENCHMARKS)
   add_subdirectory(benchmarks)
+endif()
+
+if(CFLOW_ENABLE_MINICORO)
+  add_subdirectory(minicoro)
 endif()

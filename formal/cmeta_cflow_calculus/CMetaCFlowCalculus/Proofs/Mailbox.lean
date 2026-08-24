@@ -26,6 +26,55 @@ theorem send_preserves_valid (state : State) (event : TypedEvent)
       · simp [send, lookup, typeMatches, State.Valid,
           capacityPositive, bounded]
 
+/-- Admission classification never changes the Mailbox terminal mode. -/
+theorem send_preserves_terminal (state : State) (event : TypedEvent) :
+    (send state event).2.terminal = state.terminal := by
+  cases lookup : state.schema.lookup event.id with
+  | none => simp [send, lookup]
+  | some expected =>
+      by_cases typeMatches : expected.payloadTy = event.payloadTy
+      · cases terminal : state.terminal with
+        | «open» =>
+            by_cases hasCapacity : state.queue.length < state.capacity <;>
+              simp [send, lookup, typeMatches, terminal, hasCapacity]
+        | draining => simp [send, lookup, typeMatches, terminal]
+        | cancelled => simp [send, lookup, typeMatches, terminal]
+      · simp [send, lookup, typeMatches]
+
+/-- Every non-OK send leaves the bounded FIFO queue unchanged. -/
+theorem send_rejected_preserves_queue {before after : State}
+    {event : TypedEvent} {status : Status}
+    (transition : send before event = (status, after))
+    (rejected : status ≠ .ok) : after.queue = before.queue := by
+  cases lookup : before.schema.lookup event.id with
+  | none =>
+      simp [send, lookup] at transition
+      rcases transition with ⟨rfl, rfl⟩
+      rfl
+  | some expected =>
+      by_cases typeMatches : expected.payloadTy = event.payloadTy
+      · cases terminal : before.terminal with
+        | «open» =>
+            by_cases hasCapacity : before.queue.length < before.capacity
+            · simp [send, lookup, typeMatches, terminal,
+                hasCapacity] at transition
+              exact (rejected transition.1.symm).elim
+            · simp [send, lookup, typeMatches, terminal,
+                hasCapacity] at transition
+              rcases transition with ⟨rfl, rfl⟩
+              rfl
+        | draining =>
+            simp [send, lookup, typeMatches, terminal] at transition
+            rcases transition with ⟨rfl, rfl⟩
+            rfl
+        | cancelled =>
+            simp [send, lookup, typeMatches, terminal] at transition
+            rcases transition with ⟨rfl, rfl⟩
+            rfl
+      · simp [send, lookup, typeMatches] at transition
+        rcases transition with ⟨rfl, rfl⟩
+        rfl
+
 /-- Successful admission appends the event exactly once and changes no bound. -/
 theorem send_ok_appends_once {before after : State} {event : TypedEvent}
     (transition : send before event = (.ok, after)) :

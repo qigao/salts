@@ -24,6 +24,7 @@ include/cflow/
 ├── plan.h
 ├── machine.h       typed state-machine semantic IR
 ├── machine_runtime.h executor-owned Machine execution and adapters
+├── actor.h         bounded Actor lifecycle over Machine and Run
 ├── runtime.h
 ├── scheduler.h
 ├── sources.h
@@ -205,19 +206,236 @@ and Machine. On partial initialization, destroy only successfully published
 handles in the same reverse dependency order.
 
 `close` rejects new Events, cancels queued Events, and allows an already-running
-callback to commit once. `cancel` also discards an executing callback's result,
-preserving the last committed state. At terminal executor quiescence, statistics
-satisfy `accepted == completed + failed + cancelled_events`, with zero pending
-and in-flight Events. Both operations are idempotent. Producers/control-plane
-callers and the attached adapter must be quiescent before instance destruction;
-the borrowed Machine, executor, callbacks, and callback user data must outlive
-the instance.
+callback to commit once. `cancel` and commit share one mutex-protected decision:
+if cancellation wins before commit, the staged state and observation are
+discarded; if commit wins first, its state and prepared VALUE remain observable
+exactly once and cancellation prevents later Events. Action callbacks execute
+outside the instance mutex, so cancellation cannot roll back their arbitrary
+external effects. Such effects require an application-level typed outbox,
+idempotency, or compensation contract.
+
+The internal lifecycle (`OPEN`, close requested, cancel requested, terminal)
+and worker phase (idle, scheduled, executing, committing) are separate facts.
+The Machine instance remains the sole mutable state owner and its
+SerialExecutor remains the sole transition consumer; Actor, Hierarchy, Graph,
+and Run do not maintain a second commit state. At terminal executor quiescence,
+statistics satisfy `accepted == completed + failed + cancelled_events`, with
+zero pending and in-flight Events. Both control operations are idempotent.
+Producers/control-plane callers and the attached adapter must be quiescent
+before instance destruction; the borrowed Machine, executor, callbacks, and
+callback user data must outlive the instance.
 
 Lean models WAIT and transition steps in `CFlow/MachineRuntime.lean`. Every
 runtime transition carries an existing `Machine.SmallStep` witness and an exact
 committed trace suffix; `runtime_trace_refines_machine` composes this refinement
 over finite Event sequences.
 
+## Bounded Actor lifecycle
+
+`cflow_actor` is a lifecycle and admission boundary over one existing Machine
+instance and one identity Run. It does not create an Actor thread or another
+state-machine runtime. The Machine's borrowed SerialExecutor remains the sole
+transition serializer, and the borrowed concurrent Scheduler dispatches the
+Run. A manual Scheduler is rejected by `cflow_actor_init()`.
+
+Construction copies the Actor configuration and creates a fixed-capacity
+Machine Mailbox. The Actor owns that Machine instance, its identity Graph and
+Run, the lifecycle control block, and its first error string. It borrows the
+Machine declaration, SerialExecutor, concurrent Scheduler, type descriptors,
+guard/action functions and user data, and sink callbacks/user data. Keep every
+borrowed object operational through `cflow_actor_destroy()`; destroy the Actor
+before the Scheduler, SerialExecutor, or Machine.
+
+Acquire one `cflow_actor_ref` per producer and release every acquired or
+retained ref. Producers may send concurrently through distinct refs. A send
+borrows its `cflow_event_view` only for the call; acceptance copies the trivial
+payload into the bounded Actor-owned Mailbox. Destroying the owner first makes
+old refs stale, synchronously closes the runtime resources, and leaves only the
+small retained control block. Such refs return `CFLOW_ACTOR_SEND_STALE` until
+released and never access destroyed Machine or Run storage.
+
+Admission is exact and non-blocking:
+
+| Observation | `cflow_actor_ref_try_send()` result |
+| --- | --- |
+| Running and admitted | `CFLOW_ACTOR_SEND_ACCEPTED` |
+| Invalid ref or Event | `CFLOW_ACTOR_SEND_INVALID_ARGUMENT` |
+| Declared Event with a wrong payload descriptor | `CFLOW_ACTOR_SEND_TYPE_MISMATCH` |
+| Fixed Mailbox capacity is exhausted | `CFLOW_ACTOR_SEND_FULL` |
+| Actor has not started | `CFLOW_ACTOR_SEND_NOT_STARTED` |
+| Actor is stopping | `CFLOW_ACTOR_SEND_STOPPING` |
+| Actor is stopped | `CFLOW_ACTOR_SEND_STOPPED` |
+| Actor has failed | `CFLOW_ACTOR_SEND_FAILED` |
+| Owner destruction has begun | `CFLOW_ACTOR_SEND_STALE` |
+
+The send path does not retry, wait, overwrite, resize, silently drop, or
+allocate. `machine.mailbox_capacity` is required and non-zero; callers decide
+whether and when to retry `FULL`.
+
+Sink values are borrowed only until `on_value` returns. Machine guard/action
+and Actor sink callbacks run without the Actor admission gate held, so they may
+send through a retained ref or call `cflow_actor_request_stop()`. They must not
+call `cflow_actor_wait()` or `cflow_actor_destroy()`; scheduler worker callbacks
+also must not wait, and destruction is forbidden from any callback. Returning
+false from `on_value`, an unhandled Event, or a failing guard/action makes the
+Actor `FAILED`, preserves the first Actor-owned error, cancels queued Events,
+and rejects later sends. Lifecycle state and waiters are updated before
+`on_error` or `on_done` runs; callback state must therefore stay valid through
+Actor destruction, not merely until `cflow_actor_wait()` returns.
+
+The first stop request closes admission before closing the Machine. From
+`START` it moves directly to `STOPPED`; from `RUNNING` it moves through
+`STOPPING`. Queued Events are cancelled, while one already executing
+transition may commit exactly once. `cflow_actor_wait()` is an owner-side
+control-plane call that blocks for `STOPPED` or `FAILED`; it must be serialized
+against destruction. Terminal states cannot restart, and repeated start/stop
+calls return the exact current or terminal status.
+
+This complete C11 example processes one typed Event and requests stop from the
+value callback. Error paths destroy only published handles, in reverse
+dependency order:
+
+```c
+#include <cflow/actor.h>
+
+#include <stdio.h>
+
+enum {
+    STATE_ACTIVE = 1,
+    EVENT_ADD = 2,
+    ACTION_ADD = 3,
+    MAILBOX_CAPACITY = 8
+};
+
+static bool add_action(void *user,
+                       const void *state,
+                       const void *event,
+                       void *out_target_state,
+                       void *out_observation,
+                       const char **out_error) {
+    (void)user;
+    if (state == NULL || event == NULL || out_target_state == NULL ||
+        out_observation == NULL || out_error == NULL)
+        return false;
+    *(int *)out_target_state = *(const int *)state + *(const int *)event;
+    *(int *)out_observation = *(int *)out_target_state;
+    *out_error = NULL;
+    return true;
+}
+
+static bool on_value(void *user,
+                     const cmeta_type_desc *type,
+                     const void *value) {
+    cflow_actor *actor = (cflow_actor *)user;
+    if (actor == NULL || value == NULL ||
+        !cmeta_type_equal(type, &cmeta_type_int))
+        return false;
+    printf("state = %d\n", *(const int *)value);
+    return cflow_actor_request_stop(actor) == CFLOW_ACTOR_OK;
+}
+
+static void on_error(void *user, const char *message) {
+    (void)user;
+    fprintf(stderr, "actor failed: %s\n", message != NULL ? message : "unknown");
+}
+
+static void on_done(void *user) {
+    (void)user;
+}
+
+int main(void) {
+    const cflow_machine_state states[] = {
+        {STATE_ACTIVE, &cmeta_type_int, CFLOW_MACHINE_STATE_ACTIVE}
+    };
+    const cflow_event_type events[] = {
+        {EVENT_ADD, &cmeta_type_int}
+    };
+    const cflow_machine_action actions[] = {
+        {ACTION_ADD, &cmeta_type_int, EVENT_ADD, &cmeta_type_int,
+         &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+         CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS,
+         CFLOW_MACHINE_ACTION_VALUE, &cmeta_type_int, 0u}
+    };
+    const cflow_machine_transition transitions[] = {
+        {STATE_ACTIVE, EVENT_ADD, 0u, ACTION_ADD, STATE_ACTIVE, 1u}
+    };
+    const cflow_machine_definition definition = {
+        states, 1u, STATE_ACTIVE,
+        events, 1u,
+        NULL, 0u,
+        actions, 1u,
+        transitions, 1u
+    };
+    cflow_machine machine = {0};
+    cflow_executor executor = {0};
+    cflow_scheduler scheduler = {0};
+    cflow_actor actor = {0};
+    cflow_actor_ref producer = {0};
+    cflow_machine_action_binding action_binding = {
+        ACTION_ADD, add_action, NULL
+    };
+    int initial_state = 10;
+    int exit_code = 1;
+
+    if (cflow_machine_build(&machine, &definition) != CFLOW_MACHINE_OK)
+        goto cleanup;
+    if (!cflow_executor_serial_init(&executor))
+        goto cleanup;
+    if (!cflow_scheduler_worker_init(&scheduler, 1u))
+        goto cleanup;
+
+    cflow_actor_config config = {0};
+    config.machine = (cflow_machine_instance_config){
+        &machine,
+        &initial_state,
+        &cmeta_type_int,
+        NULL,
+        0u,
+        &action_binding,
+        1u,
+        MAILBOX_CAPACITY,
+        &executor
+    };
+    config.scheduler = &scheduler;
+    config.callbacks = (cflow_sink_callbacks){
+        on_value, on_error, on_done, &actor
+    };
+
+    cflow_actor_init_result initialized = cflow_actor_init(&actor, &config);
+    if (initialized.status != CFLOW_ACTOR_OK)
+        goto cleanup;
+    if (!cflow_actor_ref_acquire(&actor, &producer))
+        goto cleanup;
+    if (cflow_actor_start(&actor) != CFLOW_ACTOR_OK)
+        goto cleanup;
+
+    const int amount = 5;
+    const cflow_event_view event = {
+        EVENT_ADD, &cmeta_type_int, &amount
+    };
+    if (cflow_actor_ref_try_send(&producer, &event) !=
+        CFLOW_ACTOR_SEND_ACCEPTED)
+        goto cleanup;
+    if (cflow_actor_wait(&actor) != CFLOW_ACTOR_STATE_STOPPED)
+        goto cleanup;
+
+    exit_code = 0;
+
+cleanup:
+    cflow_actor_ref_release(&producer);
+    cflow_actor_destroy(&actor);
+    if (cflow_scheduler_valid(&scheduler))
+        cflow_scheduler_destroy(&scheduler);
+    if (cflow_executor_valid(&executor))
+        cflow_executor_destroy(&executor);
+    cflow_machine_destroy(&machine);
+    return exit_code;
+}
+```
+
+Link the example with `TurboUtils::CFlow`. Supervision, restart, parent/child
+hierarchies, remoting, persistence, and Mailbox resizing are intentionally
+unavailable; there are no placeholder APIs or implicit fallbacks for them.
 
 ## Descriptor-backed container streams — v47
 

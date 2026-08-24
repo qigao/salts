@@ -8,7 +8,7 @@
 
 **Goal:** Add a versioned, format-neutral CMeta semantic descriptor layer and project proven TurboSTL generic applications into `SEQUENCE` / `SET` / `MAP` without creating a second source of truth for `T/K/V`.
 
-**Architecture:** `TYPE<A...>` remains the sole owner of generic constructor/arity/arguments. Semantic descriptors describe meaning only. TurboSTL links its canonical container extension to one shared semantic category descriptor; callers still obtain concrete type arguments only through `cmeta_container_type_argument()`. Before appending semantic metadata to `cmeta_container_ext`, make its existing `struct_size` checks truly prefix-safe.
+**Architecture:** `CMETA_TYPE_APPLY` remains the sole owner of type constructor/arity/arguments. Semantic descriptors describe meaning only. TurboSTL links its canonical container extension to one shared semantic category descriptor; callers still obtain concrete type arguments only through `cmeta_container_type_argument()`. Before appending semantic metadata to `cmeta_container_ext`, make its existing `struct_size` checks truly prefix-safe.
 
 **Tech Stack:** C11, C++17 public-header compatibility, CMake presets, TinyTest, TurboUtils::CMeta, TurboUtils::STL.
 
@@ -17,15 +17,15 @@
 ## Global Constraints
 
 - Base implementation starts from `master` at or after `93e68ef443b86aa887cff21d2ceeb134ad32e0e4` (`#37`).
-- `TYPE<A...>` owns concrete generic arguments. Semantic container descriptors contain no `element`, `key`, or `value` type field.
+- `CMETA_TYPE_APPLY` owns concrete type arguments. Semantic container descriptors contain no `element`, `key`, or `value` type field.
 - Type well-formedness remains separate from operation capability/traits.
 - `SET` is a first-class semantic kind.
-- `OPTIONAL` is not in this plan. It remains blocked until `Option<T>` has a real `CMETA_TYPE_APPLY` identity.
+- `OPTIONAL` is not in this plan. It remains blocked until a typed Option value has a real `CMETA_TYPE_APPLY` identity.
 - Field presence, aliases, external names, defaults, nullable policy and emit policy remain CBind/schema concerns.
 - No CSerde, CBind, parser, DataBind, TBE, or format-specific production code is introduced.
 - No TurboSTL raw algorithm, ownership rule, Range traversal, or Collector behavior is rewritten.
 - Semantic category projection is independent of runtime generic validity. A raw-byte canonical Vec may project as `SEQUENCE`, but it has no T and cannot enter typed binding; typed consumers must validate the generic application separately.
-- `Heap<T>` and `MultiMap<K,V>` remain semantically unresolved in v1.
+- Typed Heap and MultiMap instances remain semantically unresolved in v1.
 - Nested zero-initialized `vec_t/map_t` struct fields are not solved here; static field TYPE application + construction is the next plan.
 - v1 does not reserve an unspecified `cmeta_data_ops` callback pointer.
 - Semantic fingerprinting is deferred until the descriptor graph contract is stable.
@@ -795,22 +795,22 @@ git commit -m "feat(cmeta): project container semantic categories"
 - Produces exactly:
 
 ```text
-Vec<T>         -> SEQUENCE
-Deque<T>       -> SEQUENCE
-List<T>        -> SEQUENCE
-Stack<T>       -> SEQUENCE
-Queue<T>       -> SEQUENCE
+typed(Vec, VecName, T)       -> SEQUENCE
+typed(Deque, DequeName, T)   -> SEQUENCE
+typed(List, ListName, T)     -> SEQUENCE
+typed(Stack, StackName, T)   -> SEQUENCE
+typed(Queue, QueueName, T)   -> SEQUENCE
 
-Set<T>         -> SET
-HashSet<T>     -> SET
+typed(Set, SetName, T)           -> SET
+typed(HashSet, HashSetName, T)   -> SET
 
-HashMap<K,V>   -> MAP
-Map<K,V>       -> MAP
-BTree<K,V>     -> MAP
-BPlusTree<K,V> -> MAP
+typed(HashMap, HashMapName, K, V)     -> MAP
+typed(Map, MapName, K, V)             -> MAP
+typed(BTree, BTreeName, K, V)         -> MAP
+typed(BPlusTree, BPlusTreeName, K, V) -> MAP
 
-Heap<T>        -> unresolved / NULL
-MultiMap<K,V>  -> unresolved / NULL
+typed(Heap, HeapName, T)               -> unresolved / NULL
+typed(MultiMap, MultiMapName, K, V)    -> unresolved / NULL
 ```
 
 - [ ] **Step 1: Write the semantic mapping test before wiring `.data`**

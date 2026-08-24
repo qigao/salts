@@ -133,7 +133,8 @@
             "name": "linux-release-user",
             "cacheVariables": {
                 "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux"
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux",
+                "TURBO_ENABLE_EPOLL_READINESS": "ON"
             },
             "environment": {
                 "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/release",

@@ -3,6 +3,10 @@
 **Status:** Approved for implementation under GitHub issue #64
 **Date:** 2026-08-24
 
+The concurrent cancel/commit boundary is refined by
+`2026-08-24-cflow-actor-runtime-linearization-design.md`. That decision is
+authoritative when cancellation overlaps the final transition commit.
+
 ## Context
 
 Issue #63 delivered an immutable, transactionally validated Machine IR and a
@@ -187,6 +191,12 @@ Close and cancel are idempotent and first stop new admission.
 - `cancel` lets an already entered callback return but discards its result,
   preserves the source state, cancels the in-flight Event and every queued
   Event, and publishes DONE without a value.
+
+For an overlapping cancel, “discards” means cancellation linearizes before the
+mutex-protected `begin_commit` decision. If commit linearizes first, that
+transition commits exactly once and cancellation prevents subsequent Events.
+Arbitrary external effects already performed by an action callback are not
+rolled back.
 
 Both paths detach the Mailbox waitable, reject later Events, and prevent stale
 downstream callbacks. An ERROR transition or callback failure settles the

@@ -15,6 +15,14 @@ cmake_add_test(cflow_dense_successor_index_test
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_branching_views_test
+  SOURCES
+    cflow_branching_views_test.c
+    ../benchmarks/cflow_branching_views.c
+  LIBS TurboUtils::CFlow TurboUtils::STL TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../benchmarks
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_pipeline_test
   SOURCES
     cflow_pipeline_test.c
@@ -29,6 +37,19 @@ cmake_add_test(cflow_runtime_test
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_readiness_test
+  SOURCES
+    cflow_readiness_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../platform/tests/readiness_fake_backend.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../../platform/tests
+  FOLDER "cflow/tests")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   TURBO_ENABLE_EPOLL_READINESS)
+  target_compile_definitions(cflow_readiness_test PRIVATE
+    CFLOW_TEST_EPOLL_READINESS=1)
+endif()
+
 cmake_add_test(cflow_event_mailbox_test
   SOURCES cflow_event_mailbox_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
@@ -39,8 +60,18 @@ cmake_add_test(cflow_machine_test
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_machine_hierarchy_test
+  SOURCES cflow_machine_hierarchy_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_machine_runtime_test
   SOURCES cflow_machine_runtime_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_actor_test
+  SOURCES cflow_actor_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
@@ -48,6 +79,11 @@ cmake_add_test(cflow_timer_event_test
   SOURCES cflow_timer_event_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_temporal_test
+  SOURCES cflow_temporal_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_calculus_conformance_test
@@ -96,12 +132,17 @@ cmake_add_test(cflow_operator_policy_test
 set_target_properties(
   cflow_graph_test
   cflow_dense_successor_index_test
+  cflow_branching_views_test
   cflow_pipeline_test
   cflow_runtime_test
+  cflow_readiness_test
   cflow_event_mailbox_test
   cflow_machine_test
+  cflow_machine_hierarchy_test
   cflow_machine_runtime_test
+  cflow_actor_test
   cflow_timer_event_test
+  cflow_temporal_test
   cflow_calculus_conformance_test
   cflow_direct_test
   cflow_parallel_reduce_test

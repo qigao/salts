@@ -45,6 +45,17 @@ cmake_add_test(cbind_buffer_decode_test
        TurboUtils::TinyTest
   FOLDER "cbind/tests")
 
+cmake_add_test(cbind_enum_decode_test
+  SOURCES cbind_enum_decode_test.c
+  LIBS TurboUtils::CBind cserde_recording_support TurboUtils::TinyTest
+  FOLDER "cbind/tests")
+
+cmake_add_test(cbind_variant_decode_test
+  SOURCES cbind_variant_decode_test.c
+  LIBS TurboUtils::CBind TurboUtils::Core TurboUtils::STL cserde_recording_support
+       TurboUtils::TinyTest
+  FOLDER "cbind/tests")
+
 set_target_properties(
   cbind_scalar_decode_test
   cbind_struct_decode_test
@@ -54,6 +65,8 @@ set_target_properties(
   cbind_error_attribution_test
   cbind_container_decode_test
   cbind_buffer_decode_test
+  cbind_enum_decode_test
+  cbind_variant_decode_test
   PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON

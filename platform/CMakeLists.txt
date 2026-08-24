@@ -8,7 +8,15 @@ endif()
 
 add_library(${TARGET_NAME} STATIC
   src/clock.c
+  src/readiness.c
   ${TURBO_PLATFORM_THREAD_SOURCE})
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   TURBO_ENABLE_EPOLL_READINESS)
+  target_sources(${TARGET_NAME} PRIVATE src/readiness_epoll.c)
+  target_compile_definitions(${TARGET_NAME}
+    PRIVATE TURBO_ENABLE_EPOLL_READINESS=1)
+endif()
 
 cmake_config_target(
   ${TARGET_NAME}

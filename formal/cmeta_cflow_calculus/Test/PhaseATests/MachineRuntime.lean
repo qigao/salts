@@ -66,4 +66,50 @@ example : RuntimeStep machine (fun _ => false) successfulActions
     native_decide
   · native_decide
 
+def executingControl : CommitControl :=
+  CommitControl.executing initialConfig doneConfig
+
+example : executingControl.Valid :=
+  CommitControl.executing_valid initialConfig doneConfig
+
+example :
+    CommitControl.beginCommit
+      (CommitControl.requestCancel executingControl) = none :=
+  CommitControl.cancel_before_begin_commit initialConfig doneConfig
+
+example :
+    let after := CommitControl.Legacy.unconditionalCommit
+      (CommitControl.requestCancel executingControl)
+    after.lifecycle = .cancelRequested ∧
+      after.source = doneConfig ∧
+      after.source ≠ initialConfig ∧
+      after.completed = 1 := by
+  exact CommitControl.legacy_cancel_then_commit_counterexample
+    initialConfig doneConfig (by native_decide)
+
+example :
+    ∃ after,
+      CommitControl.discardCancelled
+          (CommitControl.requestCancel executingControl) = some after ∧
+      after.source = initialConfig ∧
+      after.completed = 0 ∧
+      after.cancelled = 1 := by
+  obtain ⟨after, settled, _, _, source, _, completed, cancelled⟩ :=
+    CommitControl.cancel_before_commit_preserves_source
+      initialConfig doneConfig
+  exact ⟨after, settled, source, completed, cancelled⟩
+
+example :
+    ∃ begun after,
+      CommitControl.beginCommit executingControl = some begun ∧
+      CommitControl.commit (CommitControl.requestCancel begun) = some after ∧
+      after.source = doneConfig ∧
+      after.completed = 1 ∧
+      after.cancelled = 0 := by
+  obtain ⟨begun, after, admitted, committed, _, _, source, _, completed,
+      cancelled⟩ :=
+    CommitControl.begin_commit_before_cancel_commits_once
+      initialConfig doneConfig
+  exact ⟨begun, after, admitted, committed, source, completed, cancelled⟩
+
 end CMetaCFlowCalculus.Tests.MachineRuntime
