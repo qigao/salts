@@ -620,7 +620,7 @@ int main(int argc, char **argv) {
   benchmark_ops(title, samples, operations_per_sample)
 
 #if defined(TTEST_HAS_C11_GENERIC__)
-  #include "traits.h"
+  #include "tinymeta/tinytest_traits.h"
   #include "tinymeta/tinytest_cmeta.h"
 #endif
 

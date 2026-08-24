@@ -1,5 +1,5 @@
-#ifndef TINYTEST_PP_H
-#define TINYTEST_PP_H
+#ifndef TINYTEST_TINYMETA_PP_H
+#define TINYTEST_TINYMETA_PP_H
 
 /* Strict-C11 preprocessor kernel shared by TinyTest's trait and mock layers. */
 #define TTEST_PP_CAT_I__(left, right) left##right
@@ -127,4 +127,4 @@
   TTEST_PP_INDEXED_NAME__(TTEST_PP_FE_, TTEST_PP_NARG__(__VA_ARGS__))( \
       mapper, context, __VA_ARGS__)
 
-#endif /* TINYTEST_PP_H */
+#endif /* TINYTEST_TINYMETA_PP_H */

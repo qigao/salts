@@ -34,7 +34,7 @@ CMeta remains finite and deliberately bounded. New empty-variadic detection mach
 
 ### TinyTest
 
-TinyTest remains an independent product and must not depend on CMeta. Therefore `tinytest/include/tinymeta/pp.h` remains as TinyTest's one minimal PP kernel. TinyTest and TinyMock must reuse it rather than maintaining additional count/dispatch families in public headers.
+TinyTest remains an independent product and must not depend on CMeta. Therefore `tinytest/include/tinymeta/tinytest_pp.h` remains as TinyTest's one minimal PP kernel. TinyTest and TinyMock must reuse it rather than maintaining additional count/dispatch families in public headers.
 
 ## Formatting API Cleanup
 
@@ -107,8 +107,8 @@ TinyTest's independent PP kernel remains. The cleanup target is duplication outs
 
 `tinytest.h` currently defines additional helpers such as `TTEST_COUNT_ARGS__`, `TTEST_OVERLOAD__`, and `TT_invoke` comma-elision logic. The target state is explicit:
 
-- non-empty arity selection uses `TTEST_PP_NARG__` from `tinymeta/pp.h`;
-- any reusable token concatenation/selection helper needed by TinyTest/TinyMock lives in `tinymeta/pp.h` rather than being reimplemented in `tinytest.h`;
+- non-empty arity selection uses `TTEST_PP_NARG__` from `tinymeta/tinytest_pp.h`;
+- any reusable token concatenation/selection helper needed by TinyTest/TinyMock lives in `tinymeta/tinytest_pp.h` rather than being reimplemented in `tinytest.h`;
 - `TTEST_COUNT_ARGS__` is removed;
 - generic zero-or-N invocation via `func(config, ##__VA_ARGS__)` is removed;
 - zero-argument invocation uses an explicit zero-argument helper/form, while non-empty invocation requires at least one forwarded argument;
@@ -181,7 +181,7 @@ Source compatibility may break for old zero-argument `fmt(...)` and old formatte
 
 The implementation is complete only when all of the following hold:
 
-1. Repository search shows no surviving business-layer `NARGS`, `WRAP_1..N`, `APPLY_1..N`, or equivalent arity families except the canonical kernels in `cmeta/pp.h` and `tinytest/include/tinymeta/pp.h`.
+1. Repository search shows no surviving business-layer `NARGS`, `WRAP_1..N`, `APPLY_1..N`, or equivalent arity families except the canonical kernels in `cmeta/pp.h` and `tinytest/include/tinymeta/tinytest_pp.h`.
 2. Repository search shows no `##__VA_ARGS__` in the touched `fmt.h`, `tlog.h`, `tinytest.h`, TinyMock/TinyMeta surface, CFlow surface, or TurboSTL typed-facade surface. Any untouched occurrence elsewhere is inventoried rather than silently ignored.
 3. `fmt` tests cover `fmt_text(...)` and non-empty `fmt(...)` separately, including C11 type detection and C++ overload behavior.
 4. TLog tests cover raw and formatted macros, source capture, level filtering, default logger use, and C++ formatted helper behavior.

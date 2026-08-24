@@ -20,7 +20,7 @@ TinyTest 只支持 C11 及以上 C 编译模式，不依赖 CMeta。断言 API �
 
 ## C11 traits
 
-`tinytest/traits.h` 是 TinyTest 自己的编译期事实源。`TTEST_EQ`、`TTEST_NE`、
+`tinytest/include/tinymeta/tinytest_traits.h` 是 TinyTest 自己的编译期事实源。`TTEST_EQ`、`TTEST_NE`、
 `TTEST_GT`、`TTEST_GE`、`TTEST_LT`、`TTEST_LE` 表示关系，有限的类型族 handler
 处理 signed、unsigned、float、double、long double、C string 和 pointer。
 
@@ -34,7 +34,7 @@ TinyTest 只支持 C11 及以上 C 编译模式，不依赖 CMeta。断言 API �
 
 每行是 `(TOKEN, C_TYPE, COMPARATOR)`；比较器语义为
 `bool(const C_TYPE *, const C_TYPE *)`，只借用参数。历史文件名
-`tinytest_cmeta.h` 由 `tinytest.h` 在 `traits.h` 之后单向包含；它不是独立入口，且不包含或链接 CMeta。
+`tinytest_cmeta.h` 由 `tinytest.h` 在 `tinymeta/tinytest_traits.h` 之后单向包含；它不是独立入口，且不包含或链接 CMeta。
 未注册结构体必须编译失败，不能退回 `memcmp`；整数默认 handler 仅用于兼容 MSVC
 无法按底层整数类型匹配 enum 的 `_Generic` 行为，结构体无法转换为该 handler 的参数。
 
@@ -53,7 +53,7 @@ spec 函数继续使用头文件中的 select-any TLS 定义；共享 spec 链�
 
 `tinytest` CMake target 是 `STATIC`，安装导出名仍为 `TurboUtils::TinyTest`。所有使用者
 必须链接该 target；直接只包含头文件再调用运行时 API 不再受支持。这是有意的构建
-兼容性破坏。安装内容包括静态库以及 `tinytest.h`、`tinytest.hpp`、`traits.h`、
+兼容性破坏。安装内容包括静态库以及 `tinytest.h`、`tinytest.hpp`、`tinymeta/tinytest_traits.h`、
 `tinytest_cmeta.h`、传递依赖 `tinytest_internal.h` 和 `tinymock.h`。
 
 ## 验收
