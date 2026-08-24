@@ -7,6 +7,19 @@ bool cbind_context_valid(const cbind_context *context) {
            (context->scratch_size == 0u || context->scratch != NULL);
 }
 
+bool cbind_depth_advance(const cbind_context *context,
+                         size_t depth,
+                         size_t *next_depth) {
+    if (context == NULL || next_depth == NULL)
+        return false;
+    if (depth == SIZE_MAX) {
+        *next_depth = SIZE_MAX;
+        return false;
+    }
+    *next_depth = depth + 1u;
+    return *next_depth <= context->max_depth;
+}
+
 bool cbind_error_valid(const cbind_error *error) {
     return error != NULL &&
            error->struct_size >= CBIND_FIELD_END(cbind_error, depth) &&

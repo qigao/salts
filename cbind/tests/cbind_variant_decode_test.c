@@ -358,6 +358,70 @@ spec("CBind variant preflight") {
                 CBIND_LIMIT_EXCEEDED);
     check_equal(consumed, (size_t)0u);
   }
+
+  it("stops shape traversal at max depth before inspecting deeper nodes") {
+    enum { CBIND_DEEP_VARIANT_COUNT = 256 };
+    const cserde_token tokens[] = {{.kind = CSERDE_ARRAY_BEGIN}};
+    cmeta_data_desc data[CBIND_DEEP_VARIANT_COUNT];
+    cmeta_data_variant_shape shapes[CBIND_DEEP_VARIANT_COUNT];
+    cmeta_data_variant_case cases[CBIND_DEEP_VARIANT_COUNT];
+    cbind_variant_value out = {0};
+    size_t consumed = 99u;
+    size_t i;
+
+    for (i = 0u; i < CBIND_DEEP_VARIANT_COUNT; ++i) {
+        data[i] = cbind_variant_data;
+        shapes[i] = cbind_variant_shape;
+        cases[i] = cbind_variant_cases[0];
+        cases[i].offset = 0u;
+        cases[i].value = i + 1u < CBIND_DEEP_VARIANT_COUNT
+                             ? &data[i + 1u]
+                             : &cmeta_data_sequence;
+        shapes[i].cases = &cases[i];
+        shapes[i].case_count = 1u;
+        data[i].shape = &shapes[i];
+    }
+
+    check_equal(decode_tokens(&data[0], tokens, 1u, &out, 2u, 1u,
+                              &consumed, NULL),
+                CBIND_LIMIT_EXCEEDED);
+    check_equal(consumed, (size_t)0u);
+  }
+
+  it("rejects under-aligned tag and payload storage before input") {
+    const cserde_token tokens[] = {{.kind = CSERDE_ARRAY_BEGIN}};
+    cmeta_data_variant_case bad_case = cbind_variant_cases[0];
+    cmeta_data_variant_shape bad_shape = cbind_variant_shape;
+    cmeta_data_desc bad_data = cbind_variant_data;
+    cmeta_type_desc under_aligned_type = cbind_variant_value_type;
+    cmeta_data_variant_ops under_aligned_ops = cbind_variant_ops;
+    cbind_variant_value out = {0};
+    size_t consumed = 99u;
+
+    bad_shape.tag_offset = 1u;
+    bad_data.shape = &bad_shape;
+    check_equal(decode_tokens(&bad_data, tokens, 1u, &out, 2u, 1u,
+                              &consumed, NULL), CBIND_INVALID_SHAPE);
+    check_equal(consumed, (size_t)0u);
+
+    bad_shape = cbind_variant_shape;
+    bad_case.offset = 1u;
+    bad_shape.cases = &bad_case;
+    bad_shape.case_count = 1u;
+    bad_data.shape = &bad_shape;
+    check_equal(decode_tokens(&bad_data, tokens, 1u, &out, 2u, 1u,
+                              &consumed, NULL), CBIND_INVALID_SHAPE);
+    check_equal(consumed, (size_t)0u);
+
+    under_aligned_type.align = 1u;
+    under_aligned_ops.storage_type = &under_aligned_type;
+    bad_data = cbind_variant_data;
+    bad_data.storage_type = &under_aligned_type;
+    bad_data.variant_ops = &under_aligned_ops;
+    check_equal(decode_tokens(&bad_data, tokens, 1u, &out, 2u, 1u,
+                              &consumed, NULL), CBIND_INVALID_SHAPE);
+    check_equal(consumed, (size_t)0u);
+  }
 }
 
 spec("CBind variant decode") {

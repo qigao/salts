@@ -54,39 +54,53 @@ static bool cbind_variant_case_tag_valid(
         tag, ((const cmeta_data_integer_shape *)tag_shape->shape)->bits);
 }
 
+static bool cbind_variant_member_fits(
+    const cmeta_type_desc *storage_type,
+    size_t offset,
+    const cmeta_type_desc *member_type) {
+    if (storage_type == NULL || member_type == NULL ||
+        storage_type->align == 0u || member_type->align == 0u ||
+        storage_type->align % member_type->align != 0u ||
+        offset % member_type->align != 0u ||
+        offset > storage_type->size)
+        return false;
+    return member_type->size <= storage_type->size - offset;
+}
+
 static cbind_status cbind_validate_variant_shape(
     const cbind_context *context, const cmeta_data_desc *shape, size_t depth,
     const cbind_validation_frame *parent, size_t active_scratch,
     size_t *max_scratch, cbind_error *error) {
     const cmeta_data_variant_shape *variant_shape;
     cbind_validation_frame frame;
-    size_t storage_size;
+    size_t current_depth;
     size_t i;
 
+    if (!cbind_depth_advance(context, depth, &current_depth))
+        return cbind_variant_error(error, CBIND_LIMIT_EXCEEDED, shape, NULL,
+                                   current_depth);
     if (shape == NULL || !cmeta_data_desc_valid(shape) ||
         shape->kind != CMETA_DATA_VARIANT)
         return cbind_variant_error(error, CBIND_INVALID_SHAPE, shape, NULL,
-                                   depth + 1u);
+                                   current_depth);
     if (cbind_validation_cycle_contains(parent, shape))
         return cbind_variant_error(error, CBIND_INVALID_SHAPE, shape, NULL,
-                                   depth + 1u);
+                                   current_depth);
     if (shape->struct_size <
             CBIND_FIELD_END(cmeta_data_desc, variant_ops) ||
         shape->variant_ops == NULL)
         return cbind_variant_error(error, CBIND_UNSUPPORTED, shape, NULL,
-                                   depth + 1u);
+                                   current_depth);
     if (cmeta_data_variant_ops_of(shape) == NULL)
         return cbind_variant_error(error, CBIND_INVALID_SHAPE, shape, NULL,
-                                   depth + 1u);
+                                   current_depth);
 
     variant_shape = (const cmeta_data_variant_shape *)shape->shape;
-    storage_size = shape->storage_type->size;
-    if (variant_shape->tag->storage_type == NULL ||
-        variant_shape->tag_offset > storage_size ||
-        variant_shape->tag->storage_type->size >
-            storage_size - variant_shape->tag_offset)
+    if (!cbind_variant_member_fits(shape->storage_type,
+                                   variant_shape->tag_offset,
+                                   variant_shape->tag->storage_type))
         return cbind_variant_error(error, CBIND_INVALID_SHAPE, shape, NULL,
-                                   depth + 1u);
+                                   current_depth);
 
     frame.shape = shape;
     frame.parent = parent;
@@ -97,24 +111,24 @@ static cbind_status cbind_validate_variant_shape(
 
         if (!cbind_variant_case_tag_valid(variant_shape->tag, item->tag))
             return cbind_variant_error(error, CBIND_INVALID_SHAPE, shape, NULL,
-                                       depth + 1u);
+                                       current_depth);
         if (child == NULL || cbind_data_kind_is_container(child->kind))
             return cbind_variant_error(
                 error, child != NULL ? CBIND_UNSUPPORTED : CBIND_INVALID_SHAPE,
-                shape, NULL, depth + 1u);
-        if (!cmeta_data_desc_valid(child) || child->storage_type == NULL ||
-            item->offset > storage_size ||
-            child->storage_type->size > storage_size - item->offset)
+                shape, NULL, current_depth);
+        if (!cmeta_data_desc_valid(child) ||
+            !cbind_variant_member_fits(shape->storage_type, item->offset,
+                                       child->storage_type))
             return cbind_variant_error(error, CBIND_INVALID_SHAPE, shape, NULL,
-                                       depth + 1u);
+                                       current_depth);
 
         if (child->kind == CMETA_DATA_STRUCT) {
             status = cbind_validate_struct_graph(
-                context, child, depth + 1u, &frame, active_scratch,
+                context, child, current_depth, &frame, active_scratch,
                 max_scratch, error);
         } else {
             status = cbind_validate_graph(
-                context, child, depth + 1u, &frame, active_scratch,
+                context, child, current_depth, &frame, active_scratch,
                 max_scratch, error);
         }
         if (status != CBIND_OK)
@@ -128,10 +142,10 @@ cbind_status cbind_measure_variant_resources(
     size_t active_scratch, size_t *max_scratch, cbind_error *error) {
     const cmeta_data_variant_shape *variant_shape =
         (const cmeta_data_variant_shape *)shape->shape;
-    size_t current_depth = depth + 1u;
+    size_t current_depth;
     size_t i;
 
-    if (current_depth > context->max_depth)
+    if (!cbind_depth_advance(context, depth, &current_depth))
         return cbind_variant_error(error, CBIND_LIMIT_EXCEEDED, shape, NULL,
                                    current_depth);
 

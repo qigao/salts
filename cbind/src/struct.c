@@ -35,10 +35,13 @@ static cbind_status cbind_validate_struct_shape(
     const cmeta_data_struct_shape *struct_shape;
     const cmeta_struct_desc *layout;
     cbind_validation_frame frame;
-    size_t current_depth = depth + 1u;
+    size_t current_depth;
     size_t i;
     size_t j;
 
+    if (!cbind_depth_advance(context, depth, &current_depth))
+        return cbind_struct_error(error, CBIND_LIMIT_EXCEEDED, shape, NULL,
+                                  current_depth);
     if (shape == NULL || !cmeta_data_desc_valid(shape) ||
         shape->kind != CMETA_DATA_STRUCT)
         return cbind_struct_error(error, CBIND_INVALID_SHAPE, shape, NULL,
@@ -81,9 +84,6 @@ static cbind_status cbind_validate_struct_shape(
         }
 
         if (child->kind == CMETA_DATA_STRUCT) {
-            if (current_depth >= context->max_depth)
-                return cbind_struct_error(error, CBIND_LIMIT_EXCEEDED,
-                                          child, field, current_depth + 1u);
             status = cbind_validate_struct_shape(context, child,
                                                  current_depth, &frame, error);
         } else if (cbind_data_kind_is_container(child->kind)) {
@@ -120,12 +120,12 @@ cbind_status cbind_measure_struct_resources(
     cbind_error *error) {
     const cmeta_data_struct_shape *struct_shape =
         (const cmeta_data_struct_shape *)shape->shape;
-    size_t current_depth = depth + 1u;
+    size_t current_depth;
     size_t frame_bytes = cbind_bitmap_bytes(struct_shape->field_count);
     size_t next_active;
     size_t i;
 
-    if (current_depth > context->max_depth)
+    if (!cbind_depth_advance(context, depth, &current_depth))
         return cbind_struct_error(error, CBIND_LIMIT_EXCEEDED, shape, NULL,
                                   current_depth);
     if (active_scratch > SIZE_MAX - frame_bytes)

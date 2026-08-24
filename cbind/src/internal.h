@@ -27,6 +27,9 @@ typedef struct cbind_validation_frame {
 bool cbind_validation_cycle_contains(
     const cbind_validation_frame *parent,
     const cmeta_data_desc *shape);
+bool cbind_depth_advance(const cbind_context *context,
+                         size_t depth,
+                         size_t *next_depth);
 
 bool cbind_context_valid(const cbind_context *context);
 bool cbind_error_valid(const cbind_error *error);

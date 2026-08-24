@@ -90,6 +90,20 @@ enum {
     CMETA_DATA_ENUM_OPS_ABI_VERSION = 1u
 };
 
+/**
+ * Enum adapter callback contract.
+ *
+ * Every object points to one correctly aligned instance of storage_type.
+ * is_zero and read do not mutate it. On successful read, out must receive a
+ * value declared by the descriptor's enum metadata. assign is called only for
+ * a semantic-zero object and a declared value; success must make read return
+ * that exact value. assign may partially mutate on failure because the checked
+ * facade always follows failure with restore_zero.
+ *
+ * restore_zero is a no-fail cleanup callback. It must release provider-owned
+ * resources, be safe for both zero and partially/fully initialized objects,
+ * be idempotent, and leave is_zero(object) true.
+ */
 typedef bool (*cmeta_data_enum_is_zero_fn)(const void *object);
 typedef cmeta_status (*cmeta_data_enum_read_fn)(const void *object,
                                                 int64_t *out);
@@ -111,6 +125,22 @@ enum {
     CMETA_DATA_VARIANT_OPS_ABI_VERSION = 1u
 };
 
+/**
+ * Variant adapter callback contract.
+ *
+ * Every object points to one correctly aligned instance of storage_type.
+ * is_zero and active_tag do not mutate it. active_tag is called only for an
+ * active object and, on success, must return a declared case tag. select is
+ * called only for a semantic-zero object and a declared tag. On success it
+ * must engage exactly that tag and initialize the selected payload to the
+ * payload descriptor's semantic-zero state. It may partially mutate on
+ * failure because the checked facade always follows failure with restore_zero.
+ *
+ * restore_zero is the single no-fail destruction path. It must release the
+ * active payload and all provider-owned resources, accept zero or partially
+ * initialized objects, be idempotent, and leave is_zero(object) true. Callback
+ * implementations must not retain object or out pointers after returning.
+ */
 typedef bool (*cmeta_data_variant_is_zero_fn)(const void *object);
 typedef cmeta_status (*cmeta_data_variant_active_tag_fn)(
     const void *object, int64_t *out);
