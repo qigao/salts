@@ -212,4 +212,3 @@ Required tests cover:
   container cases;
 - C11 and C++17 public-header compilation;
 - existing CMeta/CSerde/CBind regression tests.
-
