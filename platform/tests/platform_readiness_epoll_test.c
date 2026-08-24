@@ -476,8 +476,8 @@ spec("Platform epoll readiness") {
     turbo_readiness_registration registration = {0};
     epoll_callback_probe probe;
     int original_pipe[2];
-    int replacement_pipe[2];
     int borrowed_fd;
+    int saved_fd = -1;
 
     probe_init(&probe);
     check_equal(make_pipe(original_pipe), TURBO_OK);
@@ -487,29 +487,33 @@ spec("Platform epoll readiness") {
     check_equal(turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_READ,
                                     record_callback, &probe),
                 TURBO_OK);
+    saved_fd = dup(borrowed_fd);
+    check_greater(saved_fd, -1);
+    check_not_equal(saved_fd, borrowed_fd);
+    check_equal(fcntl(saved_fd, F_SETFD, FD_CLOEXEC), 0);
     check_equal(close(original_pipe[0]), 0);
     original_pipe[0] = -1;
 
     check_equal(turbo_readiness_unarm(&registration), -EBADF);
     check_not_null(registration.impl);
 
-    check_equal(make_pipe(replacement_pipe), TURBO_OK);
-    if (replacement_pipe[0] != borrowed_fd) {
-      check_equal(dup2(replacement_pipe[0], borrowed_fd), borrowed_fd);
-      check_equal(close(replacement_pipe[0]), 0);
-      replacement_pipe[0] = borrowed_fd;
-      check_equal(set_nonblocking_cloexec(replacement_pipe[0]), TURBO_OK);
-    }
+    check_equal(dup2(saved_fd, borrowed_fd), borrowed_fd);
+    original_pipe[0] = borrowed_fd;
+    check_equal(close(saved_fd), 0);
+    saved_fd = -1;
     check_equal(turbo_readiness_unarm(&registration), TURBO_OK);
     check_not_null(registration.impl);
+    check_equal(turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_READ,
+                                    record_callback, &probe),
+                TURBO_OK);
     check_equal(turbo_readiness_close(&registration), TURBO_OK);
     check_null(registration.impl);
 
     check_equal(turbo_readiness_reactor_shutdown(&reactor), TURBO_OK);
     check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_OK);
+    (void)close(original_pipe[0]);
     (void)close(original_pipe[1]);
-    (void)close(replacement_pipe[0]);
-    (void)close(replacement_pipe[1]);
+    if (saved_fd >= 0) (void)close(saved_fd);
     probe_destroy(&probe);
   }
 

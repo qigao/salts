@@ -240,8 +240,8 @@ int turbo_readiness_register(turbo_readiness_reactor *reactor, intptr_t native_r
                              turbo_readiness_registration *registration) {
   turbo_readiness_impl *impl;
   turbo_readiness_slot *slot = NULL;
+  turbo_readiness_generation_step generation_step;
   uint64_t token;
-  uint32_t previous_generation;
   int exhausted_slot = 0;
   int status;
 
@@ -261,8 +261,8 @@ int turbo_readiness_register(turbo_readiness_reactor *reactor, intptr_t native_r
   }
   for (size_t i = 0; i < impl->capacity; ++i) {
     if (impl->slots[i].state == TURBO_READINESS_SLOT_FREE) {
-      if (impl->slots[i].generation == UINT32_MAX ||
-          impl->slots[i].arm_generation == UINT32_MAX) {
+      if (!turbo_readiness_generation_available(impl->slots[i].generation) ||
+          !turbo_readiness_generation_available(impl->slots[i].arm_generation)) {
         exhausted_slot = 1;
         continue;
       }
@@ -280,8 +280,12 @@ int turbo_readiness_register(turbo_readiness_reactor *reactor, intptr_t native_r
     return TURBO_ENOBUFS;
   }
 
-  previous_generation = slot->generation;
-  slot->generation += 1u;
+  status = turbo_readiness_generation_prepare(slot->generation, &generation_step);
+  if (status != TURBO_OK) {
+    turbo_mutex_unlock(&impl->mutex);
+    return status;
+  }
+  slot->generation = turbo_readiness_generation_commit(&generation_step);
   slot->native_resource = native_resource;
   slot->state = TURBO_READINESS_SLOT_REGISTERED;
   slot->control_inflight = 1;
@@ -292,7 +296,7 @@ int turbo_readiness_register(turbo_readiness_reactor *reactor, intptr_t native_r
   turbo_mutex_lock(&impl->mutex);
   if (status != TURBO_OK) {
     slot->control_inflight = 0;
-    slot->generation = previous_generation;
+    slot->generation = turbo_readiness_generation_rollback(&generation_step);
     readiness_slot_reclaim(slot);
     turbo_cond_broadcast(&impl->changed);
     turbo_mutex_unlock(&impl->mutex);
@@ -327,8 +331,8 @@ int turbo_readiness_arm(turbo_readiness_registration *registration, turbo_readin
                         turbo_readiness_callback callback, void *user) {
   turbo_readiness_slot *slot = readiness_slot_from_registration(registration);
   turbo_readiness_impl *impl;
+  turbo_readiness_generation_step arm_generation_step;
   uint32_t generation;
-  uint32_t previous_arm_generation;
   uint64_t token;
   uint64_t arm_token;
   int status;
@@ -354,16 +358,16 @@ int turbo_readiness_arm(turbo_readiness_registration *registration, turbo_readin
     turbo_mutex_unlock(&impl->mutex);
     return TURBO_EBUSY;
   }
-  if (slot->arm_generation == UINT32_MAX) {
+  status = turbo_readiness_generation_prepare(slot->arm_generation, &arm_generation_step);
+  if (status != TURBO_OK) {
     turbo_mutex_unlock(&impl->mutex);
-    return -EOVERFLOW;
+    return status;
   }
   slot->callback = callback;
   slot->callback_user = user;
   slot->state = TURBO_READINESS_SLOT_ARMED;
   slot->control_inflight = 1;
-  previous_arm_generation = slot->arm_generation;
-  slot->arm_generation += 1u;
+  slot->arm_generation = turbo_readiness_generation_commit(&arm_generation_step);
   slot->arm_token = ((uint64_t)slot->arm_generation << 32) | (uint64_t)slot->index;
   token = readiness_slot_token(slot);
   arm_token = slot->arm_token;
@@ -372,7 +376,7 @@ int turbo_readiness_arm(turbo_readiness_registration *registration, turbo_readin
   status = impl->backend_ops.arm(impl->backend_user, token, arm_token, events);
   turbo_mutex_lock(&impl->mutex);
   if (status != TURBO_OK && readiness_slot_token(slot) == token) {
-    slot->arm_generation = previous_arm_generation;
+    slot->arm_generation = turbo_readiness_generation_rollback(&arm_generation_step);
     slot->terminal_pending = 0;
     slot->terminal_status = TURBO_OK;
     if (slot->state == TURBO_READINESS_SLOT_ARMED) {
@@ -691,38 +695,6 @@ int turbo_readiness_backend_wait_admission_closed(turbo_readiness_reactor *react
   turbo_mutex_lock(&impl->mutex);
   while (impl->admission_open)
     turbo_cond_wait(&impl->changed, &impl->mutex);
-  turbo_mutex_unlock(&impl->mutex);
-  return TURBO_OK;
-}
-
-int turbo_readiness_test_seed_registration_generation(turbo_readiness_reactor *reactor,
-                                                      size_t index, uint32_t generation) {
-  turbo_readiness_impl *impl = readiness_impl_from_reactor(reactor);
-  turbo_readiness_slot *slot;
-  if (impl == NULL || generation == 0 || index >= impl->capacity) return TURBO_EINVAL;
-  turbo_mutex_lock(&impl->mutex);
-  slot = &impl->slots[index];
-  if (slot->state != TURBO_READINESS_SLOT_FREE || slot->control_inflight || slot->inflight) {
-    turbo_mutex_unlock(&impl->mutex);
-    return TURBO_EBUSY;
-  }
-  slot->generation = generation;
-  turbo_mutex_unlock(&impl->mutex);
-  return TURBO_OK;
-}
-
-int turbo_readiness_test_seed_arm_generation(turbo_readiness_registration *registration,
-                                             uint32_t generation) {
-  turbo_readiness_slot *slot = readiness_slot_from_registration(registration);
-  turbo_readiness_impl *impl;
-  if (slot == NULL) return TURBO_EINVAL;
-  impl = slot->owner;
-  turbo_mutex_lock(&impl->mutex);
-  if (slot->state != TURBO_READINESS_SLOT_REGISTERED || slot->control_inflight || slot->inflight) {
-    turbo_mutex_unlock(&impl->mutex);
-    return TURBO_EBUSY;
-  }
-  slot->arm_generation = generation;
   turbo_mutex_unlock(&impl->mutex);
   return TURBO_OK;
 }

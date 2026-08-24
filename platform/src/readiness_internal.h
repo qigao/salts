@@ -1,7 +1,38 @@
 #ifndef TURBO_READINESS_INTERNAL_H
 #define TURBO_READINESS_INTERNAL_H
 
+#include <turbo/error_codes.h>
 #include <turbo/readiness.h>
+
+#include <errno.h>
+
+typedef struct turbo_readiness_generation_step {
+  uint32_t previous;
+  uint32_t next;
+} turbo_readiness_generation_step;
+
+static inline int turbo_readiness_generation_available(uint32_t generation) {
+  return generation != UINT32_MAX;
+}
+
+static inline int turbo_readiness_generation_prepare(
+    uint32_t generation, turbo_readiness_generation_step *step) {
+  if (step == NULL) return TURBO_EINVAL;
+  if (!turbo_readiness_generation_available(generation)) return -EOVERFLOW;
+  step->previous = generation;
+  step->next = generation + 1u;
+  return TURBO_OK;
+}
+
+static inline uint32_t turbo_readiness_generation_commit(
+    const turbo_readiness_generation_step *step) {
+  return step->next;
+}
+
+static inline uint32_t turbo_readiness_generation_rollback(
+    const turbo_readiness_generation_step *step) {
+  return step->previous;
+}
 
 typedef struct turbo_readiness_backend_ops {
   /* A failing register/arm/unarm/close hook leaves its native effect uncommitted and
@@ -28,12 +59,6 @@ int turbo_readiness_backend_dispatch_generation(turbo_readiness_reactor *reactor
                                                 turbo_readiness_events events, int status);
 int turbo_readiness_backend_fail(turbo_readiness_reactor *reactor, int status);
 int turbo_readiness_backend_wait_admission_closed(turbo_readiness_reactor *reactor);
-
-/* Internal test seams.  Call only while the selected slot is quiescent. */
-int turbo_readiness_test_seed_registration_generation(turbo_readiness_reactor *reactor,
-                                                      size_t index, uint32_t generation);
-int turbo_readiness_test_seed_arm_generation(turbo_readiness_registration *registration,
-                                             uint32_t generation);
 
 #if defined(__linux__)
 uint32_t turbo_readiness_epoll_interest_events(turbo_readiness_events events);
