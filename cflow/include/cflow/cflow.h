@@ -19,6 +19,8 @@
 #include <cflow/machine_hierarchy.h>
 #include <cflow/machine_runtime.h>
 #include <cflow/actor.h>
+#include <cflow/io_actor.h>
+#include <cflow/io_native.h>
 #include <cflow/timer_event.h>
 #include <cflow/sources.h>
 #include <cflow/readiness.h>

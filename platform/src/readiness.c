@@ -537,6 +537,8 @@ int turbo_readiness_reactor_init(turbo_readiness_reactor *reactor,
   if (reactor == NULL || config == NULL) return TURBO_EINVAL;
 #if defined(TURBO_ENABLE_EPOLL_READINESS)
   return turbo_readiness_epoll_init(reactor, config);
+#elif defined(TURBO_ENABLE_KQUEUE_READINESS)
+  return turbo_readiness_kqueue_init(reactor, config);
 #else
   return TURBO_ENOTSUP;
 #endif

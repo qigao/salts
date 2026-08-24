@@ -141,4 +141,9 @@ int turbo_readiness_epoll_init(turbo_readiness_reactor *reactor,
                                const turbo_readiness_config *config);
 #endif
 
+#if defined(TURBO_ENABLE_KQUEUE_READINESS)
+int turbo_readiness_kqueue_init(turbo_readiness_reactor *reactor,
+                                const turbo_readiness_config *config);
+#endif
+
 #endif /* TURBO_READINESS_INTERNAL_H */

@@ -75,6 +75,23 @@ cmake_add_test(cflow_actor_test
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_io_actor_test
+  SOURCES cflow_io_actor_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_io_native_test
+  SOURCES cflow_io_native_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+if(WIN32)
+  target_link_libraries(cflow_io_native_test PRIVATE ws2_32)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+       TURBO_ENABLE_EPOLL_READINESS)
+  target_compile_definitions(cflow_io_native_test PRIVATE
+    CFLOW_TEST_NATIVE_EPOLL=1)
+endif()
+
 cmake_add_test(cflow_timer_event_test
   SOURCES cflow_timer_event_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
@@ -141,6 +158,8 @@ set_target_properties(
   cflow_machine_hierarchy_test
   cflow_machine_runtime_test
   cflow_actor_test
+  cflow_io_actor_test
+  cflow_io_native_test
   cflow_timer_event_test
   cflow_temporal_test
   cflow_calculus_conformance_test

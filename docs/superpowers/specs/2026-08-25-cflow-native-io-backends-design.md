@@ -1,0 +1,160 @@
+# CFlow Native IO Backends Design
+
+## 背景与决策
+
+已实现的 `cflow_io_actor` 固化了有界 mailbox、请求完成信用、Executor 投递和确认释放；
+它刻意把 OS I/O 放在 `cflow_io_backend_ops` 之后。本期增加四个明确选择、无 fallback 的
+socket backend：Linux epoll、Apple kqueue、Windows IOCP 和 Linux io_uring。
+
+四者不能统一成 readiness：epoll/kqueue 是 Reactor，IOCP/io_uring 是 Proactor。
+统一边界因此是 Actor backend，而不是把四者都改造成 `turbo_readiness_reactor`。
+epoll 复用现有 Platform readiness；kqueue 以相同内部 contract 加入 Platform；
+IOCP/io_uring 则直接实现 Actor completion backend。既有 one-shot registration ABI 和
+CFlow Source 适配保持不变。
+
+```text
+cflow_io_actor
+  | cflow_io_backend_ops (统一 submit/cancel)
+  v
+cflow_io_native_backend (显式 backend kind)
+  |-- epoll/kqueue: Platform one-shot readiness -> nonblocking syscall retry
+  `-- IOCP/io_uring: submit native async request -> consume completion
+  |
+  `-> cflow_io_actor_complete (唯一 terminal evidence)
+```
+
+## 公开接口与兼容性
+
+新增 `cflow/io_native.h`，不修改既有 `io_actor.h` 结构：
+
+- opaque `cflow_io_native_backend`；
+- `cflow_io_native_backend_kind`：EPOLL、KQUEUE、IOCP、IO_URING；
+- `cflow_io_native_operation`：TCP recv/send 与 UDP recvfrom/sendto；
+- init、Actor ops、stats、closed-socket identity release、shutdown、destroy。
+
+连接建立、监听和 socket 配置属于控制面，不在本期异步 operation 集合。公开的四种
+operation 在所有已支持 backend 上都完整实现；不公开 accept/connect 占位接口。
+显式选择当前构建或 OS 不支持的 backend 返回 `TURBO_ENOTSUP`，不得自动转 epoll、
+线程池或阻塞 I/O。
+
+地址通过 caller-owned native `sockaddr` byte storage 传递。TCP operation 不使用地址；
+UDP send 输入 `address_length`，UDP recv 输入 `address_capacity` 并在完成前写回
+`address_length`。长度统一限制到 `UINT32_MAX`，使 Windows `WSABUF` 与 POSIX 具有
+同一可验证上界。
+
+## 数据、事实源与所有权
+
+- Actor request table 仍是 operation/lease/completion 的业务事实源。
+- Native backend 的固定 record table 只是派生的 OS in-flight 索引，主键为非零
+  `request_id`；completion 接受后 record 立即可复用。
+- `cflow_io_native_operation` 与 buffer/address 均由 Actor operation token 的调用方拥有。
+  submit 接受后，到 Actor completion callback 返回前不得释放或修改 send buffer、
+  socket 或 address；recv buffer/address 仅由 backend 写入。
+- Backend 不关闭 caller socket。epoll/kqueue 可为每个 pending request 持有一个有界
+  duplicate descriptor，terminal/cancel 时关闭 duplicate，不转移原 socket 所有权；
+  socket syscall 逐次使用 `MSG_DONTWAIT`，不要求也不修改 caller 的 `O_NONBLOCK`。
+  Linux/Apple send 路径逐次使用 `MSG_NOSIGNAL`，避免修改 socket option，也避免对端关闭
+  把进程级 `SIGPIPE` 变成隐藏的控制流。
+- Windows socket 与 IOCP 的关联在 handle 存活期间不可撤销；backend 因而维护
+  `request_capacity` 大小的固定关联表。caller 在 socket 已关闭且相关请求归零后调用
+  `cflow_io_native_backend_forget_socket()`，显式释放旧 handle identity，避免把 Windows
+  后续复用的数值误认为仍关联当前 IOCP。
+- Readiness adapter 的 controller worker 和 Platform reactor worker，以及 Proactor worker，
+  都借用 Actor completion handle，直至该 backend 的 active count 为零。
+
+## 并发、状态机与线性化
+
+Actor driver 串行调用 submit/cancel；backend worker 可并发调用
+`cflow_io_actor_complete()`。epoll/kqueue 使用 Platform reactor worker 产生 one-shot
+callback；callback 只标记 record 并唤醒 adapter controller，controller 在 callback
+返回后执行 syscall/rearm/registration close，避免从 callback 内调用 quiescent close。
+IOCP/io_uring 各有一个 completion worker。
+
+```text
+FREE -> SUBMITTING -> PENDING -> COMPLETING -> FREE
+                     | cancel request
+                     `-> native cancel/remove -> completion(CANCELLED)
+```
+
+- submit 线性化：固定 record 成功保留；满时返回 `TURBO_EBUSY`，不产生 native effect。
+- terminal 线性化：record 首次从 PENDING 转为 COMPLETING；重复 native event/CQE 计为 stale。
+- epoll/kqueue 在 nonblocking syscall 返回 EAGAIN/EWOULDBLOCK 时通过
+  `turbo_readiness_arm()` one-shot arm；事件到达后由 controller 重试，仍 would-block
+  则 rearm。每 request duplicate fd 允许同一 socket 的 read/write 分别注册，又不转移
+  caller socket 所有权。
+- Apple kqueue 对纯 `ERROR/HANGUP` interest 使用带 `NOTE_LOWAT` 的内部 read filter；
+  普通可读数据不会作为 READ 泄露给调用方，socket 无法继续接收时仍产生 EOF/error
+  evidence。
+- IOCP 的 `OVERLAPPED` 和 `WSABUF` 内嵌于固定 record，并保持到 GQCS completion。
+- io_uring SQ 写入由 backend mutex 串行化，CQ 只由 worker 消费；每次槽位 claim 生成
+  `(generation, record_index)` `user_data`，cancel 只匹配该 generation，避免迟到 cancel
+  误伤复用槽位。cancel completion 使用零、shutdown NOP 使用保留值并由控制面消费。
+- cancel 是 best effort，但若 backend 成功移除尚未执行的 readiness watch，则主动提交
+  CANCELLED completion；Proactor cancel 后仍以 native CQE/IOCP packet 为 terminal evidence。
+
+用户 callback、Actor callback、socket syscall、native wait、Executor 操作均不在 backend
+mutex 内执行。
+
+## 容量、背压与内存预算
+
+配置 `request_capacity` 和 `completion_batch_capacity` 都必须为正，batch 不超过
+`request_capacity`。初始化一次性分配 record 与 completion/event batch，数据面不扩容。
+
+```text
+active_native_requests <= request_capacity
+live_iocp_socket_identities <= request_capacity
+resident metadata = backend header
+                  + request_capacity * backend_record_size
+                  + IOCP(request_capacity * socket_identity_record_size)
+                  + completion_batch_capacity * native_event_size
+```
+
+epoll/kqueue pending request 额外占一个 duplicate descriptor 和一个 Platform registration；
+其 Platform registration/event batch 容量等于 native 配置。IOCP 每个 request 占一个
+`OVERLAPPED`；io_uring 的 SQ/CQ mmap 大小由 kernel 对请求容量取整后的 entries 决定。
+满额返回 `TURBO_EBUSY`，由 Actor 转为 FAILED completion；不建立 fallback queue，
+不无界分配，不覆盖旧请求。
+
+## 错误与关闭协议
+
+- 参数/operation shape 错误：`TURBO_EINVAL`。
+- backend 容量满：`TURBO_EBUSY`。
+- OS 错误：POSIX 返回负 errno，Windows 返回负 Win32/WSA code。
+- TCP recv 零字节映射 EOF；UDP 零长度 datagram 是成功的 OK(0)。
+- native cancellation 映射 CANCELLED；其他 terminal 错误映射 FAILED(error)。
+- `shutdown` 首次关闭 backend admission；active 非零返回 `TURBO_EBUSY`，保留 worker 和
+  cancel/completion 能力。active 为零时唤醒、join worker 并返回 `TURBO_OK`。
+- `destroy` 只在 shutdown 成功后释放资源，否则 `TURBO_EBUSY`。
+
+调用顺序是：Actor close → drive cancel/completion → Executor drain → acknowledge →
+Actor destroy → native backend shutdown/destroy → Executor shutdown。该顺序保持原 Actor
+证明与公开行为。
+
+## 候选方案与取舍
+
+1. 把 IOCP/io_uring 塞进 `turbo_readiness_reactor`：拒绝，completion 不是 readiness，
+   会丢失 buffer/OVERLAPPED 生命周期语义。
+2. 每个平台暴露不同 Actor API：拒绝，会复制 admission、completion credit 与关闭协议。
+3. 复制现有 epoll backend：拒绝。Platform 已有经过 generation/shutdown/race 测试的
+   readiness contract；CFlow 只增加从 readiness 到 Actor completion 的薄适配。
+4. 引入 libuv/liburing：本期拒绝。仓库没有该依赖，引入会改变部署与许可面；薄 native
+   adapter 已能表达本期四种 operation。io_uring 仅在适配层封装 raw ABI。
+5. 每 request 创建线程执行 blocking socket：拒绝，不是请求的 native model，也无法给出
+   同等有界资源与取消语义。
+
+## 迁移、回滚与验证
+
+这是新增 API。现有 Actor、自定义 backend、readiness Source、数据格式和错误码不变。
+调用方可先保持自定义 backend，再显式迁移到 native backend。回滚可移除新增 header/source/
+CMake 条目，不需要数据迁移。
+
+验证包括：Platform kqueue backend-neutral contract、公共 C/C++ header、
+invalid/unsupported/full、真实 TCP/UDP loopback、短读写、
+zero-length UDP、pending cancel、Actor/Executor 关闭顺序、backend stats、各 OS 编译与运行，
+以及 io_actor/readiness/disruptor 相邻回归。
+
+## 一手接口资料
+
+- [Apple XNU `sys/event.h`](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/event.h)
+- [Linux io_uring userspace API](https://www.kernel.org/doc/html/latest/userspace-api/io_uring.html)
+- [Microsoft I/O completion ports](https://learn.microsoft.com/windows/win32/fileio/i-o-completion-ports)
