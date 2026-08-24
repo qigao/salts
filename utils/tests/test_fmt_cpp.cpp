@@ -20,6 +20,7 @@ spec("FMT C++ Tests") {
   }
 
   it("should preserve builtin overload mappings") {
+    fmt_arg_t float_arg = FMT_ARG(3.25f);
     char mutable_text[] = "hello";
     const char *const_text = "world";
     int value = 10;
@@ -39,7 +40,8 @@ spec("FMT C++ Tests") {
     check_equal(FMT_ARG(42UL).type, FMT_TYPE_ULONG);
     check_equal(FMT_ARG(42LL).type, FMT_TYPE_LLONG);
     check_equal(FMT_ARG(42ULL).type, FMT_TYPE_ULLONG);
-    check_equal(FMT_ARG(3.14f).type, FMT_TYPE_DOUBLE);
+    check_equal(float_arg.type, FMT_TYPE_DOUBLE);
+    check_equal(float_arg.val.f, 3.25);
     check_equal(FMT_ARG(3.14).type, FMT_TYPE_DOUBLE);
     check_equal(FMT_ARG(true).type, FMT_TYPE_BOOL);
     check_equal(FMT_ARG(mutable_text).type, FMT_TYPE_STR);
