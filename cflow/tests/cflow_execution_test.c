@@ -15,6 +15,13 @@ static atomic_int producer_failures;
 static atomic_int worker_gate_open;
 static atomic_int worker_gate_started;
 
+typedef struct executor_control_probe {
+  cflow_executor_control *control;
+  cflow_executor_post_status first_post;
+  cflow_executor_post_status second_post;
+  cflow_executor_wait_status wait;
+} executor_control_probe;
+
 static void count_task(void *user) {
   (void)user;
   atomic_fetch_add(&executor_counter, 1);
@@ -40,6 +47,15 @@ static void serial_probe(void *user) {
   turbo_sleep_ms(1);
   atomic_fetch_add(&executor_counter, 1);
   atomic_fetch_sub(&active_callbacks, 1);
+}
+
+static void executor_control_callback(void *user) {
+  executor_control_probe *probe = (executor_control_probe *)user;
+  probe->first_post = cflow_executor_control_post(
+      probe->control, count_task, NULL);
+  probe->second_post = cflow_executor_control_post(
+      probe->control, count_task, NULL);
+  probe->wait = cflow_executor_control_wait_idle(probe->control);
 }
 
 typedef struct executor_producer_ctx {
@@ -209,6 +225,151 @@ spec("CFlow execution foundation") {
     atomic_store(&worker_gate_open, 1);
     check_true(cflow_executor_wait_idle(&executor));
     check_equal(atomic_load(&executor_counter), 2);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("drains accepted ManualExecutor work after closing admission") {
+    cflow_executor executor = {0};
+    cflow_executor_control control = {0};
+    cflow_executor_protocol_stats stats = {0};
+
+    atomic_store(&executor_counter, 0);
+    check_true(cflow_executor_manual_init_with_capacity(&executor, 2u));
+    check_true(cflow_executor_as_control(&executor, &control));
+    check_equal(cflow_executor_control_post(&control, count_task, NULL),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_equal(cflow_executor_control_post(&control, count_task, NULL),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_true(cflow_executor_control_shutdown(
+        &control, CFLOW_EXECUTOR_SHUTDOWN_DRAIN));
+    check_equal(cflow_executor_try_post(&executor, count_task, NULL),
+                CFLOW_ADMISSION_CLOSED);
+    check_equal(cflow_executor_run_ready(&executor), (size_t)2u);
+    check_equal(cflow_executor_control_wait_idle(&control),
+                CFLOW_EXECUTOR_WAIT_IDLE);
+    check_true(cflow_executor_control_get_stats(&control, &stats));
+    check_equal(stats.lifecycle, CFLOW_EXECUTOR_CLOSED);
+    check_equal(stats.accepted, (size_t)2u);
+    check_equal(stats.completed, (size_t)2u);
+    check_equal(stats.cancelled, (size_t)0u);
+    check_equal(atomic_load(&executor_counter), 2);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("cancels pending ManualExecutor work without invoking callbacks") {
+    cflow_executor executor = {0};
+    cflow_executor_control control = {0};
+    cflow_executor_protocol_stats stats = {0};
+
+    atomic_store(&executor_counter, 0);
+    check_true(cflow_executor_manual_init_with_capacity(&executor, 2u));
+    check_true(cflow_executor_as_control(&executor, &control));
+    check_equal(cflow_executor_control_post(&control, count_task, NULL),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_equal(cflow_executor_control_post(&control, count_task, NULL),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_true(cflow_executor_control_shutdown(
+        &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+    check_equal(cflow_executor_run_ready(&executor), (size_t)0u);
+    check_equal(cflow_executor_control_wait_idle(&control),
+                CFLOW_EXECUTOR_WAIT_IDLE);
+    check_true(cflow_executor_control_get_stats(&control, &stats));
+    check_equal(stats.accepted, (size_t)2u);
+    check_equal(stats.completed, (size_t)0u);
+    check_equal(stats.cancelled, (size_t)2u);
+    check_equal(stats.accepted, stats.completed + stats.cancelled);
+    check_equal(atomic_load(&executor_counter), 0);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("rejects ManualExecutor callback self-blocking through control") {
+    cflow_executor executor = {0};
+    cflow_executor_control control = {0};
+    cflow_executor_protocol_stats stats = {0};
+    executor_control_probe probe = {0};
+
+    atomic_store(&executor_counter, 0);
+    check_true(cflow_executor_manual_init_with_capacity(&executor, 1u));
+    check_true(cflow_executor_as_control(&executor, &control));
+    probe.control = &control;
+    check_equal(cflow_executor_control_post(
+                    &control, executor_control_callback, &probe),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_equal(cflow_executor_run_ready(&executor), (size_t)2u);
+    check_equal(probe.first_post, CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_equal(probe.second_post, CFLOW_EXECUTOR_POST_WOULD_BLOCK);
+    check_equal(probe.wait, CFLOW_EXECUTOR_WAIT_WOULD_BLOCK);
+    check_true(cflow_executor_control_get_stats(&control, &stats));
+    check_equal(stats.rejected_would_block, (size_t)2u);
+    check_equal(atomic_load(&executor_counter), 1);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("rejects WorkerExecutor callback self-blocking through control") {
+    cflow_executor executor = {0};
+    cflow_executor_control control = {0};
+    executor_control_probe probe = {0};
+
+    atomic_store(&executor_counter, 0);
+    check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 1u));
+    check_true(cflow_executor_as_control(&executor, &control));
+    probe.control = &control;
+    check_equal(cflow_executor_control_post(
+                    &control, executor_control_callback, &probe),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_equal(cflow_executor_control_wait_idle(&control),
+                CFLOW_EXECUTOR_WAIT_IDLE);
+    check_equal(probe.first_post, CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_equal(probe.second_post, CFLOW_EXECUTOR_POST_WOULD_BLOCK);
+    check_equal(probe.wait, CFLOW_EXECUTOR_WAIT_WOULD_BLOCK);
+    {
+      cflow_executor_protocol_stats stats = {0};
+      check_true(cflow_executor_control_get_stats(&control, &stats));
+      check_equal(stats.rejected_would_block, (size_t)2u);
+    }
+    check_equal(atomic_load(&executor_counter), 1);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("conserves terminal WorkerExecutor accounting after cancellation") {
+    cflow_executor executor = {0};
+    cflow_executor_control control = {0};
+    cflow_executor_protocol_stats stats = {0};
+    int attempts = 0;
+
+    atomic_store(&executor_counter, 0);
+    atomic_store(&worker_gate_open, 0);
+    atomic_store(&worker_gate_started, 0);
+    check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 2u));
+    check_true(cflow_executor_as_control(&executor, &control));
+    check_equal(cflow_executor_control_post(
+                    &control, gated_count_task, NULL),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    while (!atomic_load(&worker_gate_started) && attempts++ < 200)
+      turbo_sleep_ms(1);
+    check_equal(atomic_load(&worker_gate_started), 1);
+    check_equal(cflow_executor_control_post(&control, count_task, NULL),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_equal(cflow_executor_control_post(&control, count_task, NULL),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_true(cflow_executor_control_shutdown(
+        &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+    check_true(cflow_executor_control_shutdown(
+        &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+    check_false(cflow_executor_control_shutdown(
+        &control, CFLOW_EXECUTOR_SHUTDOWN_DRAIN));
+    atomic_store(&worker_gate_open, 1);
+    check_equal(cflow_executor_control_wait_idle(&control),
+                CFLOW_EXECUTOR_WAIT_IDLE);
+    check_true(cflow_executor_control_get_stats(&control, &stats));
+    check_equal(stats.lifecycle, CFLOW_EXECUTOR_CLOSED);
+    check_equal(stats.accepted, (size_t)3u);
+    check_equal(stats.queued, (size_t)0u);
+    check_equal(stats.running, (size_t)0u);
+    check_equal(stats.completed, (size_t)1u);
+    check_equal(stats.cancelled, (size_t)2u);
+    check_equal(stats.accepted, stats.completed + stats.cancelled);
+    check_equal(atomic_load(&executor_counter), 1);
     cflow_executor_destroy(&executor);
   }
 
