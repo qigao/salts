@@ -868,7 +868,7 @@ vec_raw_destroy_storage(&raw);
 ```
 
 This proves semantic category discovery does not invent `T`: `.data = SEQUENCE`
-is visible, while the raw object still has no valid `Vec<T>` application and
+is visible, while the raw object still has no valid  Vec`<T>` application and
 must be rejected by typed consumers.
 
 - [ ] **Step 3: Register the new test and verify RED**
