@@ -2,11 +2,13 @@
 #include <cflow/executor.h>
 #include <cflow/scheduler.h>
 #include "timer_queue.h"
+#include <turbo/thread.h>
 
 #include <stdlib.h>
 #include <string.h>
 
 typedef struct cflow_test_loop_state {
+    turbo_mutex_t mutex;
     cflow_clock clock;
     cflow_executor executor;
     cflow_timer_queue timers;
@@ -19,20 +21,43 @@ typedef struct cflow_test_loop_state {
     bool stopping;
 } cflow_test_loop_state;
 
-static void test_update_peak(cflow_test_loop_state *state) {
-    size_t pending = cflow_timer_queue_pending(&state->timers) +
-                     cflow_executor_pending(&state->executor);
+static void test_update_peak_locked(cflow_test_loop_state *state) {
+    size_t pending = cflow_timer_queue_pending(&state->timers);
     if (pending > state->peak_pending) state->peak_pending = pending;
 }
 
-static bool test_take_and_run_one(cflow_test_loop_state *state) {
+static bool test_take_and_run_one(cflow_test_loop_state *state,
+                                  bool advance_to_next) {
     cflow_timer_task task;
     cflow_instant now;
+    bool accepted;
 
     if (!state) return false;
+    turbo_mutex_lock(&state->mutex);
     now = cflow_clock_now(&state->clock);
-    if (!cflow_timer_queue_take_ready(&state->timers, now, &task)) return false;
-    if (!cflow_executor_post(&state->executor, task.fn, task.user)) return false;
+    if (advance_to_next) {
+        cflow_deadline deadline;
+        if (!cflow_timer_queue_next_deadline(&state->timers, &deadline)) {
+            turbo_mutex_unlock(&state->mutex);
+            return false;
+        }
+        if (deadline.ns > now.ns &&
+            !cflow_clock_advance(&state->clock,
+                                 cflow_deadline_remaining(deadline, now))) {
+            turbo_mutex_unlock(&state->mutex);
+            return false;
+        }
+        now = cflow_clock_now(&state->clock);
+    }
+    if (!cflow_timer_queue_take_ready(&state->timers, now, &task)) {
+        turbo_mutex_unlock(&state->mutex);
+        return false;
+    }
+    accepted = cflow_executor_post(&state->executor, task.fn, task.user);
+    turbo_mutex_unlock(&state->mutex);
+    if (!accepted) return false;
+
+    /* The task can re-enter the scheduler, so callbacks run without its lock. */
     return cflow_executor_run_one(&state->executor);
 }
 
@@ -43,24 +68,26 @@ static cflow_schedule_result test_try_post_after(void *self,
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
     cflow_instant now;
     cflow_deadline deadline;
+    cflow_schedule_result result;
 
     if (!state || !fn)
         return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
+    turbo_mutex_lock(&state->mutex);
     if (state->stopping) {
         ++state->rejected_closed;
+        turbo_mutex_unlock(&state->mutex);
         return (cflow_schedule_result){CFLOW_ADMISSION_CLOSED, 0u};
     }
     now = cflow_clock_now(&state->clock);
     deadline = cflow_deadline_after(now, cflow_duration_from_ms(delay_ms));
-    {
-        cflow_schedule_result result = cflow_timer_queue_try_schedule(
-            &state->timers, deadline, fn, user);
-        if (result.status == CFLOW_ADMISSION_ACCEPTED)
-            test_update_peak(state);
-        else if (result.status == CFLOW_ADMISSION_FULL)
-            ++state->rejected_full;
-        return result;
-    }
+    result = cflow_timer_queue_try_schedule(
+        &state->timers, deadline, fn, user);
+    if (result.status == CFLOW_ADMISSION_ACCEPTED)
+        test_update_peak_locked(state);
+    else if (result.status == CFLOW_ADMISSION_FULL)
+        ++state->rejected_full;
+    turbo_mutex_unlock(&state->mutex);
+    return result;
 }
 
 static cflow_task_id test_post_after(void *self,
@@ -72,25 +99,37 @@ static cflow_task_id test_post_after(void *self,
 
 static bool test_cancel(void *self, cflow_task_id id) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
-    return state && cflow_timer_queue_cancel(&state->timers, id);
+    bool cancelled;
+
+    if (!state || id == 0u) return false;
+    turbo_mutex_lock(&state->mutex);
+    cancelled = !state->stopping &&
+                cflow_timer_queue_cancel(&state->timers, id);
+    turbo_mutex_unlock(&state->mutex);
+    return cancelled;
 }
 
 static bool test_run_one(void *self) {
-    return test_take_and_run_one((cflow_test_loop_state *)self);
+    return test_take_and_run_one((cflow_test_loop_state *)self, false);
 }
 
 static size_t test_run_ready(void *self) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
     size_t count = 0u;
-    while (test_take_and_run_one(state)) ++count;
+    while (test_take_and_run_one(state, false)) ++count;
     return count;
 }
 
 static size_t test_advance(void *self, uint64_t ticks_ms) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
-    if (!state || !cflow_clock_advance(&state->clock,
-                                       cflow_duration_from_ms(ticks_ms)))
-        return 0u;
+    bool advanced;
+
+    if (!state) return 0u;
+    turbo_mutex_lock(&state->mutex);
+    advanced = cflow_clock_advance(&state->clock,
+                                   cflow_duration_from_ms(ticks_ms));
+    turbo_mutex_unlock(&state->mutex);
+    if (!advanced) return 0u;
     return test_run_ready(state);
 }
 
@@ -99,19 +138,8 @@ static size_t test_run_until_idle(void *self, size_t max_steps) {
     size_t ran = 0u;
 
     if (!state) return 0u;
-    while (cflow_timer_queue_pending(&state->timers) != 0u &&
-           (max_steps == 0u || ran < max_steps)) {
-        cflow_deadline deadline;
-        cflow_instant now = cflow_clock_now(&state->clock);
-
-        if (!cflow_timer_queue_next_deadline(&state->timers, &deadline)) break;
-        if (deadline.ns > now.ns) {
-            if (!cflow_clock_advance(
-                    &state->clock,
-                    cflow_deadline_remaining(deadline, now)))
-                break;
-        }
-        if (!test_take_and_run_one(state)) break;
+    while (max_steps == 0u || ran < max_steps) {
+        if (!test_take_and_run_one(state, true)) break;
         ++ran;
     }
     return ran;
@@ -119,37 +147,60 @@ static size_t test_run_until_idle(void *self, size_t max_steps) {
 
 static bool test_wait_idle(void *self) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    bool timers_idle;
+
     if (!state) return false;
     (void)test_run_until_idle(state, 0u);
-    return cflow_timer_queue_pending(&state->timers) == 0u &&
-           cflow_executor_wait_idle(&state->executor);
+    turbo_mutex_lock(&state->mutex);
+    timers_idle = cflow_timer_queue_pending(&state->timers) == 0u;
+    turbo_mutex_unlock(&state->mutex);
+    return timers_idle && cflow_executor_wait_idle(&state->executor);
 }
 
 static uint64_t test_now(void *self) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
-    return state ? cflow_instant_to_ms(cflow_clock_now(&state->clock)) : 0u;
+    uint64_t now;
+
+    if (!state) return 0u;
+    turbo_mutex_lock(&state->mutex);
+    now = cflow_instant_to_ms(cflow_clock_now(&state->clock));
+    turbo_mutex_unlock(&state->mutex);
+    return now;
 }
 
 static size_t test_pending(void *self) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    size_t pending;
+
     if (!state) return 0u;
-    return cflow_timer_queue_pending(&state->timers) +
-           cflow_executor_pending(&state->executor);
+    turbo_mutex_lock(&state->mutex);
+    pending = cflow_timer_queue_pending(&state->timers) +
+              cflow_executor_pending(&state->executor);
+    turbo_mutex_unlock(&state->mutex);
+    return pending;
 }
 
 static bool test_shutdown(void *self) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    bool should_shutdown = false;
+
     if (!state) return false;
-    if (state->stopping) return true;
-    state->stopping = true;
-    state->cancelled_on_shutdown += cflow_timer_queue_pending(&state->timers);
-    state->timers.count = 0u;
-    return cflow_executor_shutdown(&state->executor);
+    turbo_mutex_lock(&state->mutex);
+    if (!state->stopping) {
+        state->stopping = true;
+        state->cancelled_on_shutdown +=
+            cflow_timer_queue_pending(&state->timers);
+        state->timers.count = 0u;
+        should_shutdown = true;
+    }
+    turbo_mutex_unlock(&state->mutex);
+    return !should_shutdown || cflow_executor_shutdown(&state->executor);
 }
 
 static bool test_get_stats(void *self, cflow_scheduler_stats *out) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
     if (!state || !out) return false;
+    turbo_mutex_lock(&state->mutex);
     *out = (cflow_scheduler_stats){
         .ready_capacity = state->ready_capacity,
         .timer_capacity = state->timer_capacity,
@@ -161,6 +212,7 @@ static bool test_get_stats(void *self, cflow_scheduler_stats *out) {
         .rejected_closed = state->rejected_closed,
         .cancelled_on_shutdown = state->cancelled_on_shutdown
     };
+    turbo_mutex_unlock(&state->mutex);
     return true;
 }
 
@@ -171,6 +223,7 @@ static void test_destroy(void *self) {
     cflow_timer_queue_destroy(&state->timers);
     cflow_executor_destroy(&state->executor);
     cflow_clock_destroy(&state->clock);
+    turbo_mutex_destroy(&state->mutex);
     free(state);
 }
 
@@ -208,7 +261,9 @@ bool cflow_scheduler_test_init_with_capacity(cflow_scheduler *scheduler,
     state = (cflow_test_loop_state *)calloc(1, sizeof(*state));
     if (!state) return false;
 
-    if (!cflow_clock_virtual_init(&state->clock, (cflow_instant){0u}) ||
+    turbo_mutex_init(&state->mutex);
+    if (!state->mutex ||
+        !cflow_clock_virtual_init(&state->clock, (cflow_instant){0u}) ||
         !cflow_executor_manual_init_with_capacity(&state->executor,
                                                   ready_capacity) ||
         !cflow_timer_queue_init_with_capacity(&state->timers,
@@ -217,6 +272,7 @@ bool cflow_scheduler_test_init_with_capacity(cflow_scheduler *scheduler,
         if (cflow_executor_valid(&state->executor))
             cflow_executor_destroy(&state->executor);
         cflow_timer_queue_destroy(&state->timers);
+        turbo_mutex_destroy(&state->mutex);
         free(state);
         return false;
     }
