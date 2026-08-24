@@ -18,6 +18,7 @@ typedef enum timer_event_slot_state {
 typedef struct timer_event_slot {
     cflow_timer_event_id timer_id;
     cflow_event_id event_id;
+    cflow_machine_state_id scope;
     const cmeta_type_desc *payload_type;
     timer_event_slot_state state;
 } timer_event_slot;
@@ -109,7 +110,8 @@ static void release_slot(timer_event_slot *slot) {
 static cflow_timer_event_schedule_result schedule_at(
     cflow_timer_event_queue_impl *impl,
     cflow_deadline deadline,
-    const cflow_event_view *event) {
+    const cflow_event_view *event,
+    cflow_machine_state_id scope) {
     cflow_timer_event_schedule_result result = {
         CFLOW_TIMER_EVENT_INVALID_ARGUMENT, 0u
     };
@@ -144,6 +146,7 @@ static cflow_timer_event_schedule_result schedule_at(
     }
 
     slot->event_id = event->id;
+    slot->scope = scope;
     slot->payload_type = canonical_type;
     slot->state = TIMER_EVENT_SLOT_PENDING;
     memcpy(slot_payload(impl, slot), event->payload, canonical_type->size);
@@ -231,7 +234,7 @@ cflow_timer_event_schedule_result cflow_timer_event_queue_try_schedule_at(
     const cflow_event_view *event) {
     cflow_timer_event_queue_impl *impl = queue != NULL
         ? (cflow_timer_event_queue_impl *)queue->impl : NULL;
-    return schedule_at(impl, deadline, event);
+    return schedule_at(impl, deadline, event, 0u);
 }
 
 cflow_timer_event_schedule_result cflow_timer_event_queue_try_schedule_after(
@@ -246,7 +249,75 @@ cflow_timer_event_schedule_result cflow_timer_event_queue_try_schedule_after(
     cflow_instant now;
     if (impl == NULL) return invalid;
     now = cflow_clock_now(impl->clock);
-    return schedule_at(impl, cflow_deadline_after(now, delay), event);
+    return schedule_at(impl, cflow_deadline_after(now, delay), event, 0u);
+}
+
+cflow_timer_event_schedule_result cflow_timer_event_queue_try_schedule_scoped_at(
+    cflow_timer_event_queue *queue,
+    cflow_deadline deadline,
+    const cflow_event_view *event,
+    cflow_machine_state_id scope) {
+    cflow_timer_event_queue_impl *impl = queue != NULL
+        ? (cflow_timer_event_queue_impl *)queue->impl : NULL;
+    cflow_timer_event_schedule_result invalid = {
+        CFLOW_TIMER_EVENT_INVALID_ARGUMENT, 0u
+    };
+    if (impl == NULL || scope == 0u) return invalid;
+    return schedule_at(impl, deadline, event, scope);
+}
+
+cflow_timer_event_schedule_result cflow_timer_event_queue_try_schedule_scoped_after(
+    cflow_timer_event_queue *queue,
+    cflow_duration delay,
+    const cflow_event_view *event,
+    cflow_machine_state_id scope) {
+    cflow_timer_event_queue_impl *impl = queue != NULL
+        ? (cflow_timer_event_queue_impl *)queue->impl : NULL;
+    cflow_timer_event_schedule_result invalid = {
+        CFLOW_TIMER_EVENT_INVALID_ARGUMENT, 0u
+    };
+    cflow_instant now;
+    if (impl == NULL || scope == 0u) return invalid;
+    now = cflow_clock_now(impl->clock);
+    return schedule_at(impl, cflow_deadline_after(now, delay), event, scope);
+}
+
+static bool scope_list_contains(const cflow_machine_state_id *scopes,
+                                size_t scope_count,
+                                cflow_machine_state_id scope) {
+    size_t index;
+    for (index = 0u; index < scope_count; ++index) {
+        if (scopes[index] == scope) return true;
+    }
+    return false;
+}
+
+size_t cflow_timer_event_queue_cancel_scopes(
+    cflow_timer_event_queue *queue,
+    const cflow_machine_state_id *scopes,
+    size_t scope_count) {
+    cflow_timer_event_queue_impl *impl = queue != NULL
+        ? (cflow_timer_event_queue_impl *)queue->impl : NULL;
+    size_t cancelled = 0u;
+    size_t index;
+    if (impl == NULL || (scope_count != 0u && scopes == NULL)) return 0u;
+    if (scope_count == 0u) return 0u;
+    turbo_mutex_lock(&impl->mutex);
+    if (!impl->closed) {
+        for (index = 0u; index < impl->capacity; ++index) {
+            timer_event_slot *slot = &impl->slots[index];
+            if (slot->state != TIMER_EVENT_SLOT_PENDING ||
+                !scope_list_contains(scopes, scope_count, slot->scope))
+                continue;
+            if (cflow_timer_queue_cancel(&impl->timers, slot->timer_id)) {
+                release_slot(slot);
+                ++impl->cancelled;
+                ++cancelled;
+            }
+        }
+    }
+    turbo_mutex_unlock(&impl->mutex);
+    return cancelled;
 }
 
 cflow_timer_event_status cflow_timer_event_queue_cancel(

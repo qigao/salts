@@ -39,6 +39,11 @@ cmake_add_test(cflow_machine_test
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_machine_hierarchy_test
+  SOURCES cflow_machine_hierarchy_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_machine_runtime_test
   SOURCES cflow_machine_runtime_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
@@ -53,6 +58,11 @@ cmake_add_test(cflow_timer_event_test
   SOURCES cflow_timer_event_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_temporal_test
+  SOURCES cflow_temporal_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_calculus_conformance_test
@@ -105,9 +115,11 @@ set_target_properties(
   cflow_runtime_test
   cflow_event_mailbox_test
   cflow_machine_test
+  cflow_machine_hierarchy_test
   cflow_machine_runtime_test
   cflow_actor_test
   cflow_timer_event_test
+  cflow_temporal_test
   cflow_calculus_conformance_test
   cflow_direct_test
   cflow_parallel_reduce_test

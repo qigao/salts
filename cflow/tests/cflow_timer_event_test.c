@@ -551,4 +551,58 @@ suite("CFlow monotonic Timer Events") {
 
         timer_event_fixture_destroy(&fixture);
     }
+
+    it("cancels only pending timers in exited internal scopes") {
+        timer_event_fixture fixture;
+        const bool payload = true;
+        const cflow_event_view event = timer_bool_event(&payload);
+        const cflow_machine_state_id exited[] = {10u};
+        cflow_timer_event_schedule_result first;
+        cflow_timer_event_schedule_result second;
+        cflow_timer_event_fire_result fired;
+        cflow_timer_event_stats stats = {0};
+
+        check_true(timer_event_fixture_init(
+            &fixture, 2u, 2u, (cflow_instant){0u}, false));
+        first = cflow_timer_event_queue_try_schedule_scoped_at(
+            &fixture.timers, (cflow_deadline){0u}, &event, 10u);
+        second = cflow_timer_event_queue_try_schedule_scoped_at(
+            &fixture.timers, (cflow_deadline){0u}, &event, 20u);
+        check_equal(first.status, CFLOW_TIMER_EVENT_OK);
+        check_equal(second.status, CFLOW_TIMER_EVENT_OK);
+        check_equal(cflow_timer_event_queue_cancel_scopes(
+                        &fixture.timers, exited, 1u),
+                    (size_t)1u);
+        fired = cflow_timer_event_queue_run_one_ready(&fixture.timers);
+        check_equal(fired.status, CFLOW_TIMER_EVENT_FIRE_DELIVERED);
+        check_equal(fired.timer_id, second.timer_id);
+        check_true(cflow_timer_event_queue_get_stats(&fixture.timers, &stats));
+        check_equal(stats.cancelled, (uint64_t)1u);
+        check_timer_accounting(&stats);
+        timer_event_fixture_destroy(&fixture);
+    }
+
+    it("lets an internal scoped timer fire after its claim wins") {
+        timer_event_fixture fixture;
+        const bool payload = true;
+        const cflow_event_view event = timer_bool_event(&payload);
+        const cflow_machine_state_id exited[] = {10u};
+        cflow_timer_event_claim claim = {0};
+        cflow_timer_event_fire_result fired;
+        cflow_timer_event_schedule_result scheduled;
+
+        check_true(timer_event_fixture_init(
+            &fixture, 1u, 1u, (cflow_instant){0u}, false));
+        scheduled = cflow_timer_event_queue_try_schedule_scoped_at(
+            &fixture.timers, (cflow_deadline){0u}, &event, 10u);
+        check_equal(scheduled.status, CFLOW_TIMER_EVENT_OK);
+        check_true(cflow_timer_event_queue_claim_one_ready(
+            &fixture.timers, &claim, &fired));
+        check_equal(cflow_timer_event_queue_cancel_scopes(
+                        &fixture.timers, exited, 1u),
+                    (size_t)0u);
+        fired = cflow_timer_event_queue_commit_claim(&claim);
+        check_equal(fired.status, CFLOW_TIMER_EVENT_FIRE_DELIVERED);
+        timer_event_fixture_destroy(&fixture);
+    }
 }

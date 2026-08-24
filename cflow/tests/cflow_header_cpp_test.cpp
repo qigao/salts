@@ -13,6 +13,10 @@ static_assert(std::is_standard_layout<cflow_mailbox>::value,
               "cflow_mailbox must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine>::value,
               "cflow_machine must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_machine_hierarchy>::value,
+              "machine hierarchy must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_machine_hierarchy_instance>::value,
+              "hierarchy instance must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_instance>::value,
               "cflow_machine_instance must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_instance_config>::value,
@@ -41,6 +45,7 @@ suite("CFlow C++ public header") {
         const cflow_event_view event = {1u, &cmeta_type_int, &sent};
         cflow_mailbox mailbox = {};
         cflow_machine machine = {};
+        cflow_machine_hierarchy hierarchy = {};
         cflow_machine_instance instance = {};
         cflow_machine_instance_config machine_config = {};
         cflow_actor actor = {};
@@ -76,6 +81,8 @@ suite("CFlow C++ public header") {
         cflow_mailbox_destroy(&mailbox);
         check_null(machine.impl);
         cflow_machine_destroy(&machine);
+        check_null(hierarchy.impl);
+        cflow_machine_hierarchy_destroy(&hierarchy);
         check_null(instance.impl);
         check_null(machine_config.machine);
         check_null(actor.impl);
