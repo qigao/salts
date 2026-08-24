@@ -15,6 +15,14 @@ cmake_add_test(cflow_dense_successor_index_test
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_branching_views_test
+  SOURCES
+    cflow_branching_views_test.c
+    ../benchmarks/cflow_branching_views.c
+  LIBS TurboUtils::CFlow TurboUtils::STL TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../benchmarks
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_pipeline_test
   SOURCES
     cflow_pipeline_test.c
@@ -111,6 +119,7 @@ cmake_add_test(cflow_operator_policy_test
 set_target_properties(
   cflow_graph_test
   cflow_dense_successor_index_test
+  cflow_branching_views_test
   cflow_pipeline_test
   cflow_runtime_test
   cflow_event_mailbox_test
