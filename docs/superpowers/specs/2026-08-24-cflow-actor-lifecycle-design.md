@@ -12,6 +12,12 @@ The feature deliberately excludes supervision, restart, parent/child
 hierarchies, remoting, persistence, and mailbox resizing. Those capabilities
 remain unavailable rather than being represented by inert or partial APIs.
 
+The Actor/Graph ownership boundary and concurrent Machine cancel/commit
+semantics are refined by
+`2026-08-24-cflow-actor-runtime-linearization-design.md`. Graph owns typed
+output topology, while Actor/Machine/runtime owners retain mutable state and
+move-only resources.
+
 ## Public API
 
 Add `cflow/include/cflow/actor.h` and include it from `cflow/cflow.h`.
