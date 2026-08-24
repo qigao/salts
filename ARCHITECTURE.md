@@ -135,7 +135,7 @@ flowchart TB
 
     classDef layer4 fill:#fbf8ff,stroke:#a78bfa,color:#3b1c88,stroke-width:1px;
     classDef kernel fill:#f5faff,stroke:#60a5fa,color:#174ea6,stroke-width:1px;
-    classDef graph fill:#f7fbf4,stroke:#86b874,color:#176126,stroke-width:1px;
+    classDef graphStyle fill:#f7fbf4,stroke:#86b874,color:#176126,stroke-width:1px;
     classDef meta fill:#fff9f1,stroke:#f6a34a,color:#c74f00,stroke-width:1px;
     classDef platformStyle fill:#f7f9fc,stroke:#8296b3,color:#183a64,stroke-width:1px;
     classDef cross fill:#f4fbf8,stroke:#72b8a3,color:#075d4c,stroke-width:1px;
@@ -143,7 +143,7 @@ flowchart TB
 
     class STREAM,ACTOR,STATECHART,WORKFLOW,REACTIVE,MORE layer4;
     class RUN,SOURCE,WAIT,EXEC,CLOCK,SCHED,TQ,CANCEL,DEMAND,ERROR,KTRACE kernel;
-    class GRAPH,OPS,SEM,PROCESS graph;
+    class GRAPH,OPS,SEM,PROCESS graphStyle;
     class TYPE,TRAIT,INTERFACE,CALLABLE,REFLECT,CODEGEN meta;
     class THREAD,EVENT,POLLER,TIMER,IO platformStyle;
     class LOG,METRICS,CONFIG,TESTING cross;
