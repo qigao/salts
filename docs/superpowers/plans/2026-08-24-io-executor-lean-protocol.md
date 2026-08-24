@@ -169,10 +169,10 @@ and theorem style.
 - [ ] **Step 1: Write failing Actor examples**
 
   Cover transactional submit, request-full and command-full rejection,
-  admitted-to-pending processing, cancel-before-submit completion,
-  cancel-request-after-submit, one backend terminal result, Executor-full
-  preservation, accepted dispatch, acknowledgement release, and close
-  rejection.
+  admitted-to-ready processing, ready-to-pending submission,
+  cancel-before-backend completion, cancel-request-after-submit, one backend
+  terminal result, Executor-full preservation, accepted dispatch,
+  acknowledgement release, close cancellation, and close rejection.
 
 - [ ] **Step 2: Verify RED**
 

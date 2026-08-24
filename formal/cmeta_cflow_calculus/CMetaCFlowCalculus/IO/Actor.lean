@@ -61,6 +61,10 @@ def OwnershipValid (state : State) : Prop :=
 
 end State
 
+/-- A live request slot is the reserved storage for that request's completion. -/
+def HasCompletionCredit (state : State) (requestId : RequestId) : Prop :=
+  ∃ request ∈ state.requests, request.id = requestId
+
 def findRequest : List Request → RequestId → Option Request
   | [], _ => none
   | request :: remaining, requestId =>

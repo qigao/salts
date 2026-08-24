@@ -32,6 +32,11 @@ example : (start started.state).status = .saturated := by native_decide
 example : (finish started.state 1).status = .finished := by native_decide
 example : (finish (finish started.state 1).state 1).status = .notFound := by
   native_decide
+example : (finish (finish started.state 1).state 1).status = .notFound :=
+  finish_twice_from_identifiers started.state 1
+    (start_preserves_identifiers posted.state
+      (tryPost_preserves_identifiers initial 7 initialIdentifiersValid))
+    (by native_decide)
 example : (tryPost (shutdown initial).state 7).status = .closed := by
   native_decide
 

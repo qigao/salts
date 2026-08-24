@@ -42,6 +42,8 @@ def dispatched : DispatchResult := tryDispatch completed.state executor
 
 example : submitted.status = .accepted := by native_decide
 example : submitted.requestId = some 1 := by native_decide
+example : HasCompletionCredit submitted.state 1 :=
+  accepted_submit_has_completion_credit initial submitted.state 100 1 rfl
 example : submitProcessed.status = .processed := by native_decide
 example : (findRequest submitProcessed.state.requests 1).map Request.phase =
     some .ready := by native_decide

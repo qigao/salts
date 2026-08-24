@@ -192,6 +192,15 @@ theorem finish_twice_is_not_found (state : State α) (taskId : Nat)
     (finish (finish state taskId).state taskId).status = .notFound := by
   simp [finish, present, List.Nodup.not_mem_erase unique]
 
+theorem finish_twice_from_identifiers (state : State α) (taskId : Nat)
+    (valid : state.IdentifiersValid) (present : taskId ∈ state.running) :
+    (finish (finish state taskId).state taskId).status = .notFound := by
+  have runningUnique : state.running.Nodup := by
+    exact (List.sublist_append_left state.running
+      (state.queue.map Task.id)).nodup (by
+        simpa [State.knownIds] using valid.1)
+  exact finish_twice_is_not_found state taskId present runningUnique
+
 theorem serial_running_at_most_one (state : State α) (valid : state.Valid)
     (serial : state.capability = .serial) : state.running.length ≤ 1 := by
   rcases valid with ⟨_, _, _, runningBounded, capabilityBound⟩

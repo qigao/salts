@@ -239,6 +239,31 @@ theorem active_requests_are_completion_credits (state : State)
     (valid : state.Valid) : state.requests.length ≤ state.capacity :=
   valid.2.1
 
+theorem accepted_submit_has_completion_credit (before after : State)
+    (lease : LeaseId) (requestId : RequestId)
+    (transition : trySubmit before lease =
+      { status := .accepted, requestId := some requestId, state := after }) :
+    HasCompletionCredit after requestId := by
+  cases terminal : before.terminal with
+  | closing => simp [trySubmit, terminal] at transition
+  | running =>
+      by_cases leaseUsed : containsLease before.requests lease
+      · simp [trySubmit, terminal, leaseUsed] at transition
+      · by_cases hasCapacity : before.requests.length < before.capacity
+        · cases publication :
+            BoundedMpsc.tryPublish before.commands (.submit before.nextId) with
+          | mk admission commandsAfter =>
+              cases admission with
+              | full | closed =>
+                  simp [trySubmit, terminal, leaseUsed, hasCapacity,
+                    publication] at transition
+              | accepted =>
+                  simp [trySubmit, terminal, leaseUsed, hasCapacity,
+                    publication] at transition
+                  rcases transition with ⟨rfl, rfl⟩
+                  simp [HasCompletionCredit]
+        · simp [trySubmit, terminal, leaseUsed, hasCapacity] at transition
+
 theorem processOne_preserves_valid (state : State) (valid : state.Valid) :
     (processOne state).state.Valid := by
   rcases valid with ⟨capacityPositive, requestsBounded, commandsValid⟩
