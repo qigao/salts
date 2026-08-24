@@ -23,6 +23,7 @@ struct readiness_contract_fixture {
   turbo_mutex_t mutex;
   turbo_cond_t changed;
   int hook_blocked[READINESS_CONTRACT_HOOK_COUNT];
+  size_t hook_block_on_call[READINESS_CONTRACT_HOOK_COUNT];
   size_t hook_calls[READINESS_CONTRACT_HOOK_COUNT];
   uint64_t hook_last_sequence[READINESS_CONTRACT_HOOK_COUNT];
   uint64_t hook_sequence;
@@ -50,12 +51,14 @@ static readiness_fake_record *fake_find_token(readiness_contract_fixture *fixtur
 }
 
 static void fake_hook_enter(readiness_contract_fixture *fixture, readiness_contract_hook hook) {
+  size_t call;
   turbo_mutex_lock(&fixture->mutex);
   fixture->hook_calls[hook] += 1u;
+  call = fixture->hook_calls[hook];
   fixture->hook_sequence += 1u;
   fixture->hook_last_sequence[hook] = fixture->hook_sequence;
   turbo_cond_broadcast(&fixture->changed);
-  while (fixture->hook_blocked[hook])
+  while (fixture->hook_blocked[hook] || fixture->hook_block_on_call[hook] == call)
     turbo_cond_wait(&fixture->changed, &fixture->mutex);
   turbo_mutex_unlock(&fixture->mutex);
 }
@@ -289,9 +292,17 @@ static void fake_block_hook(readiness_contract_fixture *fixture, readiness_contr
   turbo_mutex_unlock(&fixture->mutex);
 }
 
+static void fake_block_hook_on_call(readiness_contract_fixture *fixture,
+                                    readiness_contract_hook hook, size_t call) {
+  turbo_mutex_lock(&fixture->mutex);
+  fixture->hook_block_on_call[hook] = call;
+  turbo_mutex_unlock(&fixture->mutex);
+}
+
 static void fake_release_hook(readiness_contract_fixture *fixture, readiness_contract_hook hook) {
   turbo_mutex_lock(&fixture->mutex);
   fixture->hook_blocked[hook] = 0;
+  fixture->hook_block_on_call[hook] = 0;
   turbo_cond_broadcast(&fixture->changed);
   turbo_mutex_unlock(&fixture->mutex);
 }
@@ -332,6 +343,7 @@ const readiness_contract_factory *readiness_contract_factory_get(void) {
                                                      fake_backend_unarm_calls,
                                                      fake_backend_reentrant_checks,
                                                      fake_block_hook,
+                                                     fake_block_hook_on_call,
                                                      fake_release_hook,
                                                      fake_wait_hook_calls,
                                                      fake_wait_admission_closed,

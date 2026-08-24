@@ -4,6 +4,9 @@
 #include <turbo/readiness.h>
 
 typedef struct turbo_readiness_backend_ops {
+  /* A failing control hook must leave its native effect uncommitted and retryable.
+   * TURBO_OK commits the requested effect.  shutdown returning TURBO_OK additionally
+   * guarantees that backend callbacks and native access to the reactor are quiescent. */
   int (*register_resource)(void *user, intptr_t native_resource, uint64_t token);
   int (*arm)(void *user, uint64_t token, turbo_readiness_events events);
   int (*unarm)(void *user, uint64_t token);

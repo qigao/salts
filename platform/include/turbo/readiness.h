@@ -84,7 +84,9 @@ TURBO_PLATFORM_C_API int turbo_readiness_arm(turbo_readiness_registration *regis
  * fast with TURBO_EBUSY. Close also returns TURBO_EBUSY while terminal
  * delivery is reserved. Only TURBO_OK consumes and clears the registration;
  * TURBO_EBUSY and backend errors preserve the handle and cleanup ownership so
- * the caller can retry after quiescence.
+ * the caller can retry after quiescence. While fatal or shutdown terminalization
+ * is in progress, registration controls invoked by any callback on that reactor
+ * fail fast with TURBO_EBUSY; external callers wait and then re-evaluate state.
  */
 TURBO_PLATFORM_C_API int turbo_readiness_unarm(turbo_readiness_registration *registration);
 TURBO_PLATFORM_C_API int turbo_readiness_close(turbo_readiness_registration *registration);

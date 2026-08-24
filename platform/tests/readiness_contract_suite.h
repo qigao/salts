@@ -34,6 +34,8 @@ typedef struct readiness_contract_factory {
   size_t (*backend_unarm_calls)(readiness_contract_fixture *fixture);
   size_t (*backend_reentrant_checks)(readiness_contract_fixture *fixture);
   void (*block_hook)(readiness_contract_fixture *fixture, readiness_contract_hook hook);
+  void (*block_hook_on_call)(readiness_contract_fixture *fixture, readiness_contract_hook hook,
+                             size_t call);
   void (*release_hook)(readiness_contract_fixture *fixture, readiness_contract_hook hook);
   int (*wait_hook_calls)(readiness_contract_fixture *fixture, readiness_contract_hook hook,
                          size_t calls, uint64_t timeout_ns);
