@@ -170,7 +170,7 @@ Presets, GitHub Actions fixed Release hosts.
   Review benchmark semantics, ownership, arithmetic, source-order parity,
   memory accounting and the absence of production/public changes.
 
-- [ ] **Step 5: Commit, push and create the PR**
+- [x] **Step 5: Commit, push and create the PR**
 
   Use a PR body that closes #46 only when the evidence document selects adopt
   or reject, and keep the worktree for CI/review fixes.
