@@ -36,7 +36,8 @@ def initial : CMetaCFlowCalculus.CFlow.Actor.State := initState (mailbox 1)
 def running : CMetaCFlowCalculus.CFlow.Actor.State := (start initial true).2
 def accepted : SendResult := send running firstEvent
 def full : SendResult := send accepted.state secondEvent
-def stopping : CMetaCFlowCalculus.CFlow.Actor.State := (requestStop running).2
+def stopping : CMetaCFlowCalculus.CFlow.Actor.State :=
+  (requestStop accepted.state).2
 def stopped : CMetaCFlowCalculus.CFlow.Actor.State := settle stopping
 def failed : CMetaCFlowCalculus.CFlow.Actor.State := fail running
 def stale : CMetaCFlowCalculus.CFlow.Actor.State := destroy running
@@ -57,9 +58,11 @@ example : (send running unknownEvent).status = .invalidArgument := by native_dec
 example : (send running wrongTypeEvent).status = .typeMismatch := by native_decide
 example : accepted.status = .accepted := by native_decide
 example : accepted.state.mailbox.queue = [firstEvent] := by rfl
+example : accepted.state.mailbox.queue.length = 1 := by native_decide
 example : full.status = .full := by native_decide
 example : full.state.mailbox.queue.length = 1 := by native_decide
 example : full.state.mailbox.queue = [firstEvent] := by rfl
+example : stopping.lifecycle = .stopping := by native_decide
 example : (send stopping firstEvent).status = .stopping := by native_decide
 example : stopping.mailbox.queue = [] := by rfl
 example : stopping.mailbox.queue.length = 0 := by native_decide

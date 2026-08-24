@@ -101,57 +101,6 @@ theorem fail_cancels_pending (state : State)
   rcases nonterminal with lifecycle | lifecycle | lifecycle <;>
     simp [fail, lifecycle, cancelAs, Mailbox.cancel]
 
-private theorem mailbox_send_preserves_terminal
-    (mailbox : Mailbox.State) (event : Mailbox.TypedEvent) :
-    (Mailbox.send mailbox event).2.terminal = mailbox.terminal := by
-  cases lookup : mailbox.schema.lookup event.id with
-  | none => simp [Mailbox.send, lookup]
-  | some expected =>
-      by_cases typeMatches : expected.payloadTy = event.payloadTy
-      · cases terminal : mailbox.terminal with
-        | «open» =>
-            by_cases hasCapacity : mailbox.queue.length < mailbox.capacity <;>
-              simp [Mailbox.send, lookup, typeMatches, terminal, hasCapacity]
-        | draining =>
-            simp [Mailbox.send, lookup, typeMatches, terminal]
-        | cancelled =>
-            simp [Mailbox.send, lookup, typeMatches, terminal]
-      · simp [Mailbox.send, lookup, typeMatches]
-
-private theorem mailbox_send_rejected_preserves_queue
-    {before after : Mailbox.State} {event : Mailbox.TypedEvent}
-    {status : Mailbox.Status}
-    (transition : Mailbox.send before event = (status, after))
-    (rejected : status ≠ .ok) : after.queue = before.queue := by
-  cases lookup : before.schema.lookup event.id with
-  | none =>
-      simp [Mailbox.send, lookup] at transition
-      rcases transition with ⟨rfl, rfl⟩
-      rfl
-  | some expected =>
-      by_cases typeMatches : expected.payloadTy = event.payloadTy
-      · cases terminal : before.terminal with
-        | «open» =>
-            by_cases hasCapacity : before.queue.length < before.capacity
-            · simp [Mailbox.send, lookup, typeMatches, terminal,
-                hasCapacity] at transition
-              exact (rejected transition.1.symm).elim
-            · simp [Mailbox.send, lookup, typeMatches, terminal,
-                hasCapacity] at transition
-              rcases transition with ⟨rfl, rfl⟩
-              rfl
-        | draining =>
-            simp [Mailbox.send, lookup, typeMatches, terminal] at transition
-            rcases transition with ⟨rfl, rfl⟩
-            rfl
-        | cancelled =>
-            simp [Mailbox.send, lookup, typeMatches, terminal] at transition
-            rcases transition with ⟨rfl, rfl⟩
-            rfl
-      · simp [Mailbox.send, lookup, typeMatches] at transition
-        rcases transition with ⟨rfl, rfl⟩
-        rfl
-
 theorem send_preserves_valid (state : State) (event : Mailbox.TypedEvent)
     (valid : state.Valid) : (send state event).state.Valid := by
   by_cases live : state.live
@@ -162,7 +111,7 @@ theorem send_preserves_valid (state : State) (event : Mailbox.TypedEvent)
         · simpa [send, live, lifecycle] using
             Mailbox.send_preserves_valid state.mailbox event valid.1
         · simpa [send, live, lifecycle] using
-            (mailbox_send_preserves_terminal state.mailbox event).trans valid.2
+            (Mailbox.send_preserves_terminal state.mailbox event).trans valid.2
     | stopping => simpa [send, live, lifecycle] using valid
     | stopped => simpa [send, live, lifecycle] using valid
     | failed => simpa [send, live, lifecycle] using valid
@@ -225,7 +174,7 @@ theorem send_rejected_preserves_queue {before after : State}
               subst mailboxStatus
               exact rejected statusEq.symm
             rw [← afterEq]
-            exact mailbox_send_rejected_preserves_queue sent mailboxRejected
+            exact Mailbox.send_rejected_preserves_queue sent mailboxRejected
   · simpa [send, live] using (congrArg (fun result =>
       result.state.mailbox.queue) transition).symm
 
