@@ -17,17 +17,19 @@ static_assert(std::is_same_v<decltype(turbo_int8_cmeta_type),
 static_assert(std::is_same_v<decltype(turbo_uint64_cmeta_data),
                              const cmeta_data_desc>,
               "fixed-width data metadata is immutable");
-static_assert(std::is_same_v<decltype(turbo_uuid_cmeta_buffer_ops),
-                             const cmeta_data_buffer_ops>,
-              "UUID adapter is immutable");
-static_assert(std::is_same_v<decltype(turbo_uuid_cmeta_adapter),
-                             const turbo_uuid_cmeta_adapter_desc>,
-              "UUID provenance is immutable");
+static_assert(
+    std::is_same_v<
+        std::remove_reference_t<decltype((turbo_uuid_cmeta_buffer_ops))>,
+        const cmeta_data_buffer_ops>,
+    "UUID adapter facade remains an immutable base lvalue");
+static_assert(
+    std::is_same_v<decltype(&(turbo_uuid_cmeta_buffer_ops)),
+                   const cmeta_data_buffer_ops *>,
+    "UUID adapter facade preserves the public address type");
 static_assert(sizeof(turbo_uuid_t) == TURBO_UUID_SIZE,
               "UUID storage has the installed fixed size");
 
-extern "C" const turbo_uuid_cmeta_adapter_desc *
-turbo_uuid_cmeta_adapter_from_peer(void);
+extern "C" const cmeta_data_desc *turbo_uuid_cmeta_data_from_peer(void);
 
 spec("TurboUtils CMeta buffer adapter C++ surface") {
   it("exposes semantically distinct tstr and vstr storage types") {
@@ -54,14 +56,8 @@ spec("TurboUtils fixed-width and UUID CMeta C++ surface") {
   }
 
   it("validates header-local UUID provenance from a C translation unit") {
-    const turbo_uuid_cmeta_adapter_desc *peer =
-        turbo_uuid_cmeta_adapter_from_peer();
-    turbo_uuid_cmeta_adapter_desc copied = *peer;
+    const cmeta_data_desc *peer = turbo_uuid_cmeta_data_from_peer();
 
-    check_true(turbo_uuid_cmeta_adapter_valid(peer, peer->data));
-    check_true(turbo_uuid_cmeta_adapter_valid(&copied, copied.data));
-
-    copied.struct_size = TURBO_UUID_CMETA_ADAPTER_PREFIX_SIZE - 1u;
-    check_false(turbo_uuid_cmeta_adapter_valid(&copied, copied.data));
+    check_true(turbo_uuid_cmeta_data_valid(peer));
   }
 }

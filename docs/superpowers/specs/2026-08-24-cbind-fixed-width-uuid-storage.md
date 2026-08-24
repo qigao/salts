@@ -126,26 +126,28 @@ header-local immutable metadata；不同 translation unit 的地址不同，消�
 
 Generic `cmeta_data_buffer_ops` 只承诺 buffer adapter 的结构、ownership 与 callback 完整性，
 不能证明三个 callback 实现 canonical UUID 语义。UUID 因此额外提供 header-local、
-size-prefixed `turbo_uuid_cmeta_adapter_desc`，canonical 实例名为
-`turbo_uuid_cmeta_adapter`，消费方通过 `turbo_uuid_cmeta_adapter_valid` admission 后使用其
-`data` 字段。admission 必须同时传入即将使用的 candidate descriptor；provider validator
-要求它正是该 provenance record 的 `data`。完整复制 provenance/data/ops 后仍可验证，
-但不能先验证 record 再改用未被该 record 引用的 generic descriptor。
+size-prefixed `turbo_uuid_cmeta_buffer_ops_desc`。它把 generic
+`cmeta_data_buffer_ops base` 置于 offset zero，并把 UUID ABI version 与 provider validation
+callback 放在 tail；`base.struct_size` 覆盖完整 tail。candidate 通过自己的 `buffer_ops`
+直接携带 provenance，消费方只需调用 `turbo_uuid_cmeta_data_valid(candidate)`，不需要带外
+record 或改变既有 candidate-only admission API。
 
-provenance record 的 `validate` callback 由创建该组 UUID type/data/ops metadata 的同一 TU
-实例化，并在该 TU 内验证 data、ops 与三个 callback 的一致性。消费 TU 不比较任何
-header-local descriptor、table 或 function 地址；它调用 provenance owner 的 validator，
-因此来自另一 TU 的 canonical metadata，以及保留 owner metadata/function pointers 的完整
-副本均可通过；复制 ops 后单独替换 `is_zero`、`assign` 或 `restore_zero` 都被拒绝。
+provider validation callback 由创建该组 UUID metadata/callbacks 的同一 TU 实例化。
+consumer 只在验证 generic descriptor/ops prefix 与 extension size 后调用它，不把自己的
+header-local descriptor、table 或 function 地址与 provider 比较。provider callback 在其
+自身 TU 内验证 UUID stable identity、精确 storage ABI、owned shape、extension ABI/self
+callback，以及三个 base callbacks。因此来自另一 TU 的 canonical candidate 与完整深复制
+均可通过；复制 provenance 后单独替换 `is_zero`、`assign` 或 `restore_zero` 都被拒绝。
 
-validator 只先读取公共首字段 `struct_size`；只有当它至少覆盖完整 v1 prefix 时才读取
-ABI、metadata pointers 或 validation callback。该 UUID 专用 additive record 不修改
-`cmeta_data_desc`、`cmeta_data_buffer_ops`、它们的 ABI version 或 generic tstr/vstr 行为。
-既有 `turbo_uuid_cmeta_type`、`turbo_uuid_cmeta_buffer_ops`、
-`turbo_uuid_cmeta_data` 名称和类型保持不变；普通 source consumer 无迁移成本。需要证明
-UUID adapter 语义的 admission boundary 应改为携带/验证 provenance record，并使用
-`turbo_uuid_cmeta_adapter_valid(record, record->data)` 联合校验，而不是接受任意语义
-identity 相同、但未由该 provenance record 引用的 generic descriptor。
+该 UUID 专用 additive tail 不修改 `cmeta_data_desc`、`cmeta_data_buffer_ops` layout、generic
+ABI version 或 tstr/vstr 行为。既有 `turbo_uuid_cmeta_type` 和
+`turbo_uuid_cmeta_data` 仍是相同类型的 header-local const objects。
+`turbo_uuid_cmeta_buffer_ops` 为保持 `&name`、field access、`sizeof(name)` 和 const-lvalue
+source 用法，成为指向 extension base member 的 macro lvalue facade；依赖
+`decltype(turbo_uuid_cmeta_buffer_ops)` 精确 object-declaration 规则的 C++ metaprogram 需改为
+`decltype((turbo_uuid_cmeta_buffer_ops))` 后移除 reference。C/C++ compile assertions 固化了
+其 const base lvalue 与 address type；这是为实现 candidate discovery 的唯一 source-level
+影响，没有 link ABI 影响。
 
 ## 架构、依赖与公开行为影响
 
@@ -175,8 +177,9 @@ UUID 伪装为普通 `tstr`。
   以及 legacy `int/long/size_t`。
 - CMeta/Core：fixed-width descriptor validity/semantic identity；UUID lower/uppercase、精确
   length/hyphen/hex、non-NUL slice、max buffer、occupied destination、失败归零、幂等 reset。
-- UUID provenance：跨 C/C++ translation unit canonical adapter admission，三种 callback
-  replacement rejection，以及 v1 prefix 边界前的 size-gated rejection。
+- UUID provenance：跨 C/C++ translation unit canonical candidate admission，三种 callback
+  replacement rejection、intact deep-copy acceptance，以及 generic/extension prefix 边界前的
+  size-gated rejection；fixture 只向 consumer 暴露 candidate pointer。
 - C++：安装头可编译，descriptor const/type/size assumptions 成立。
 - 构建：focused targets、完整 Release CTest、`verify_installed_package`、依赖闭包、
   `git diff --check`，并确认无 vendor 与 `.codegraph` 产物进入提交。

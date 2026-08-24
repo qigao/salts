@@ -119,3 +119,17 @@
    增加 Core 依赖。
 5. 重新执行 focused、相邻、全量 Release CTest、installed-package consumers、dependency
    closure、CodeGraph/diff/vendor checks，并以独立 fix commit 交付。
+
+## Reviewer fix round 2: candidate-discoverable UUID provenance
+
+1. peer TU 只返回 `const cmeta_data_desc *`；C/C++ tests 只用 candidate 调用 admission，先
+   观察现有二参数、带外 record API 无法编译的 RED。
+2. 把 UUID-specific v1 provenance 作为 `candidate->buffer_ops` 可达的 size-prefixed tail；
+   generic base 保持 offset zero，所有 tail read 必须先由 `base.struct_size` 证明。
+3. provider-TU callback 接受 canonical cross-TU candidate 与 intact deep copy，并逐项拒绝
+   copied provenance 下的 `is_zero`、`assign`、`restore_zero` replacement。
+4. 删除不可从 candidate 获得的二参数 API；以 C/C++ compile assertions 验证
+   `turbo_uuid_cmeta_buffer_ops` macro facade 仍保留 const base lvalue、address 与 field/sizeof
+   source usage。
+5. 保持 generic records/ABI、tstr/vstr、CBind 依赖不变；重跑 focused、相邻、全量、安装
+   consumer 与静态范围检查，用新的独立 fix commit 交付。

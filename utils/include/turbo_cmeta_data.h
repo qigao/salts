@@ -81,35 +81,39 @@ TURBO_CMETA_DEFINE_INTEGER(turbo_uint64, uint64_t, CMETA_DATA_UINT, 64u,
 #undef TURBO_CMETA_DEFINE_INTEGER
 
 enum {
-    TURBO_UUID_CMETA_ADAPTER_ABI_VERSION = 1u
+    TURBO_UUID_CMETA_BUFFER_OPS_ABI_VERSION = 1u
 };
 
-typedef struct turbo_uuid_cmeta_adapter_desc
-    turbo_uuid_cmeta_adapter_desc;
-typedef bool (*turbo_uuid_cmeta_adapter_validate_fn)(
-    const turbo_uuid_cmeta_adapter_desc *adapter,
-    const cmeta_data_desc *candidate);
+typedef struct turbo_uuid_cmeta_buffer_ops_desc
+    turbo_uuid_cmeta_buffer_ops_desc;
+typedef bool (*turbo_uuid_cmeta_buffer_ops_validate_fn)(
+    const cmeta_data_desc *candidate,
+    const turbo_uuid_cmeta_buffer_ops_desc *extension);
 
 /**
- * UUID-specific provenance for one header-local metadata instance.
+ * Candidate-discoverable UUID provenance appended to generic buffer ops.
  *
- * Consumers validate this record together with the generic CMeta descriptor
- * they intend to use. The validate callback belongs to the translation unit
- * that instantiated data and buffer_ops, so no address is compared across
- * TUs. As with generic CMeta descriptors, the record and callback are trusted
- * immutable metadata and must outlive every validation call.
+ * base.struct_size covers the extension prefix. A consumer reaches this
+ * record only through candidate->buffer_ops and calls the provider-owned
+ * validator, so it does not compare header-local addresses across TUs.
  */
-struct turbo_uuid_cmeta_adapter_desc {
-    size_t struct_size;
-    uint32_t abi_version;
-    const cmeta_data_desc *data;
-    const cmeta_data_buffer_ops *buffer_ops;
-    turbo_uuid_cmeta_adapter_validate_fn validate;
+struct turbo_uuid_cmeta_buffer_ops_desc {
+    cmeta_data_buffer_ops base;
+    uint32_t uuid_abi_version;
+    turbo_uuid_cmeta_buffer_ops_validate_fn validate;
 };
 
-#define TURBO_UUID_CMETA_ADAPTER_PREFIX_SIZE                            \
-    (offsetof(turbo_uuid_cmeta_adapter_desc, validate) +                \
-     sizeof(((turbo_uuid_cmeta_adapter_desc *)0)->validate))
+#ifdef __cplusplus
+static_assert(offsetof(turbo_uuid_cmeta_buffer_ops_desc, base) == 0u,
+              "UUID provenance requires a zero-offset generic base");
+#else
+_Static_assert(offsetof(turbo_uuid_cmeta_buffer_ops_desc, base) == 0u,
+               "UUID provenance requires a zero-offset generic base");
+#endif
+
+#define TURBO_UUID_CMETA_BUFFER_OPS_PREFIX_SIZE                         \
+    (offsetof(turbo_uuid_cmeta_buffer_ops_desc, validate) +            \
+     sizeof(((turbo_uuid_cmeta_buffer_ops_desc *)0)->validate))
 
 static const cmeta_type_identity turbo_uuid_cmeta_identity =
     CMETA_TYPE_ID_ATOM_INIT("turbo.uuid");
@@ -184,19 +188,64 @@ static const cmeta_data_buffer_shape turbo_uuid_cmeta_shape = {
     CMETA_DATA_BUFFER_OWNED
 };
 
+static inline bool turbo_uuid_cmeta_buffer_ops_validate_self(
+    const cmeta_data_desc *candidate,
+    const turbo_uuid_cmeta_buffer_ops_desc *extension) {
+    const cmeta_data_buffer_ops *ops;
+
+    if (extension == NULL ||
+        extension->base.struct_size <
+            TURBO_UUID_CMETA_BUFFER_OPS_PREFIX_SIZE)
+        return false;
+
+    ops = cmeta_data_buffer_ops_of(candidate);
+    if (ops == NULL || ops != &extension->base)
+        return false;
+
+    return candidate->abi_version == CMETA_DATA_DESC_ABI_VERSION &&
+           strcmp(candidate->stable_id, "turbo.uuid.data") == 0 &&
+           strcmp(candidate->display_name, "turbo_uuid_t") == 0 &&
+           candidate->kind == CMETA_DATA_STRING &&
+           cmeta_type_equal(candidate->storage_type,
+                            &turbo_uuid_cmeta_type) &&
+           candidate->storage_type->kind == turbo_uuid_cmeta_type.kind &&
+           candidate->storage_type->size == sizeof(turbo_uuid_t) &&
+           candidate->storage_type->align == CMETA_ALIGNOF(turbo_uuid_t) &&
+           extension->uuid_abi_version ==
+               TURBO_UUID_CMETA_BUFFER_OPS_ABI_VERSION &&
+           extension->validate ==
+               turbo_uuid_cmeta_buffer_ops_validate_self &&
+           ops->abi_version == CMETA_DATA_BUFFER_OPS_ABI_VERSION &&
+           ops->ownership == CMETA_DATA_BUFFER_OWNED &&
+           ops->is_zero == turbo_uuid_cmeta_is_zero &&
+           ops->assign == turbo_uuid_cmeta_assign &&
+           ops->restore_zero == turbo_uuid_cmeta_restore_zero;
+}
+
 /**
- * Owned UUID string adapter.
+ * Owned UUID string adapter with candidate-discoverable provenance.
  *
  * Assignment parses an exact borrowed 36-byte canonical string into the
  * destination's fixed storage. No input address is retained and no allocation
  * occurs; restore clears all 16 bytes.
  */
-static const cmeta_data_buffer_ops turbo_uuid_cmeta_buffer_ops = {
-    sizeof(cmeta_data_buffer_ops), CMETA_DATA_BUFFER_OPS_ABI_VERSION,
-    &turbo_uuid_cmeta_type, CMETA_DATA_BUFFER_OWNED,
-    turbo_uuid_cmeta_is_zero, turbo_uuid_cmeta_assign,
-    turbo_uuid_cmeta_restore_zero
+static const turbo_uuid_cmeta_buffer_ops_desc
+    turbo_uuid_cmeta_buffer_ops_storage = {
+        {
+            sizeof(turbo_uuid_cmeta_buffer_ops_desc),
+            CMETA_DATA_BUFFER_OPS_ABI_VERSION,
+            &turbo_uuid_cmeta_type,
+            CMETA_DATA_BUFFER_OWNED,
+            turbo_uuid_cmeta_is_zero,
+            turbo_uuid_cmeta_assign,
+            turbo_uuid_cmeta_restore_zero
+        },
+        TURBO_UUID_CMETA_BUFFER_OPS_ABI_VERSION,
+        turbo_uuid_cmeta_buffer_ops_validate_self
 };
+
+#define turbo_uuid_cmeta_buffer_ops                                    \
+    (turbo_uuid_cmeta_buffer_ops_storage.base)
 
 static const cmeta_data_desc turbo_uuid_cmeta_data = {
     sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
@@ -205,69 +254,38 @@ static const cmeta_data_desc turbo_uuid_cmeta_data = {
     &turbo_uuid_cmeta_buffer_ops, NULL, NULL
 };
 
-static inline bool turbo_uuid_cmeta_adapter_validate_self(
-    const turbo_uuid_cmeta_adapter_desc *adapter,
+/**
+ * Discover and validate UUID provenance using only candidate metadata.
+ *
+ * The generic descriptor and buffer-ops prefixes are validated before the
+ * UUID extension tail is read. The provider callback then authenticates its
+ * own copied callbacks inside the provider TU.
+ *
+ * @param candidate Trusted immutable generic descriptor, or NULL.
+ * @return true only when candidate retains the provider's UUID semantics.
+ */
+static inline bool turbo_uuid_cmeta_data_valid(
     const cmeta_data_desc *candidate) {
     const cmeta_data_buffer_ops *ops;
+    const turbo_uuid_cmeta_buffer_ops_desc *extension;
     const size_t data_buffer_ops_size =
         offsetof(cmeta_data_desc, buffer_ops) +
         sizeof(((cmeta_data_desc *)0)->buffer_ops);
-    const size_t ops_prefix_size =
-        offsetof(cmeta_data_buffer_ops, restore_zero) +
-        sizeof(((cmeta_data_buffer_ops *)0)->restore_zero);
 
-    if (adapter == NULL ||
-        adapter->struct_size < TURBO_UUID_CMETA_ADAPTER_PREFIX_SIZE ||
-        candidate == NULL || adapter->data != candidate ||
+    if (candidate == NULL ||
         candidate->struct_size < data_buffer_ops_size)
         return false;
 
-    ops = adapter->buffer_ops;
-    if (ops == NULL || candidate->buffer_ops != ops ||
-        ops->struct_size < ops_prefix_size)
+    ops = cmeta_data_buffer_ops_of(candidate);
+    if (ops == NULL ||
+        ops->struct_size < TURBO_UUID_CMETA_BUFFER_OPS_PREFIX_SIZE)
         return false;
 
-    return candidate->abi_version == CMETA_DATA_DESC_ABI_VERSION &&
-           candidate->stable_id == turbo_uuid_cmeta_data.stable_id &&
-           candidate->display_name == turbo_uuid_cmeta_data.display_name &&
-           candidate->kind == CMETA_DATA_STRING &&
-           candidate->storage_type == &turbo_uuid_cmeta_type &&
-           candidate->shape == &turbo_uuid_cmeta_shape &&
-           ops->abi_version == CMETA_DATA_BUFFER_OPS_ABI_VERSION &&
-           ops->storage_type == &turbo_uuid_cmeta_type &&
-           ops->ownership == CMETA_DATA_BUFFER_OWNED &&
-           ops->is_zero == turbo_uuid_cmeta_is_zero &&
-           ops->assign == turbo_uuid_cmeta_assign &&
-           ops->restore_zero == turbo_uuid_cmeta_restore_zero;
-}
-
-static const turbo_uuid_cmeta_adapter_desc turbo_uuid_cmeta_adapter = {
-    sizeof(turbo_uuid_cmeta_adapter_desc),
-    TURBO_UUID_CMETA_ADAPTER_ABI_VERSION,
-    &turbo_uuid_cmeta_data,
-    &turbo_uuid_cmeta_buffer_ops,
-    turbo_uuid_cmeta_adapter_validate_self
-};
-
-/**
- * Validate UUID adapter provenance for candidate without comparing
- * header-local addresses in the consuming translation unit.
- *
- * Only struct_size is observed before the complete v1 prefix is proven.
- *
- * @param adapter Trusted immutable provenance record, or NULL.
- * @param candidate Generic descriptor intended for the UUID operation.
- * @return true only when candidate retains the provider's UUID semantics.
- */
-static inline bool turbo_uuid_cmeta_adapter_valid(
-    const turbo_uuid_cmeta_adapter_desc *adapter,
-    const cmeta_data_desc *candidate) {
-    if (adapter == NULL ||
-        adapter->struct_size < TURBO_UUID_CMETA_ADAPTER_PREFIX_SIZE)
-        return false;
-    return adapter->abi_version == TURBO_UUID_CMETA_ADAPTER_ABI_VERSION &&
-           adapter->validate != NULL &&
-           adapter->validate(adapter, candidate);
+    extension = (const turbo_uuid_cmeta_buffer_ops_desc *)ops;
+    return extension->uuid_abi_version ==
+               TURBO_UUID_CMETA_BUFFER_OPS_ABI_VERSION &&
+           extension->validate != NULL &&
+           extension->validate(candidate, extension);
 }
 
 static const cmeta_type_identity turbo_tstr_cmeta_identity =

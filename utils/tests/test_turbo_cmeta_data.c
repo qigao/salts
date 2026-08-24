@@ -6,8 +6,16 @@
 #include <stdint.h>
 #include <string.h>
 
-const turbo_uuid_cmeta_adapter_desc *
-turbo_uuid_cmeta_adapter_from_peer(void);
+const cmeta_data_desc *turbo_uuid_cmeta_data_from_peer(void);
+
+_Static_assert(
+    _Generic(&(turbo_uuid_cmeta_buffer_ops),
+             const cmeta_data_buffer_ops *: 1,
+             default: 0),
+    "UUID adapter facade preserves the public address type");
+_Static_assert(sizeof(turbo_uuid_cmeta_buffer_ops) ==
+                   sizeof(cmeta_data_buffer_ops),
+               "UUID adapter facade preserves base-object sizeof");
 
 static bool replaced_uuid_is_zero(const void *object) {
   (void)object;
@@ -193,15 +201,14 @@ spec("TurboUtils UUID CMeta adapter") {
         0x00u, 0x11u, 0x22u, 0x33u, 0x44u, 0x55u, 0x66u, 0x77u,
         0x88u, 0x99u, 0xaau, 0xbbu, 0xccu, 0xddu, 0xeeu, 0xffu
     };
-    const turbo_uuid_cmeta_adapter_desc *peer =
-        turbo_uuid_cmeta_adapter_from_peer();
+    const cmeta_data_desc *peer = turbo_uuid_cmeta_data_from_peer();
     turbo_uuid_t value = {{0}};
 
     check_not_null(peer);
-    check_true(turbo_uuid_cmeta_adapter_valid(peer, peer->data));
-    check_true(cmeta_type_equal(peer->data->storage_type,
+    check_true(turbo_uuid_cmeta_data_valid(peer));
+    check_true(cmeta_type_equal(peer->storage_type,
                                 &turbo_uuid_cmeta_type));
-    check_equal(cmeta_data_buffer_assign(peer->data, &value, input,
+    check_equal(cmeta_data_buffer_assign(peer, &value, input,
                                          TURBO_UUID_STRING_LENGTH,
                                          TURBO_UUID_STRING_LENGTH),
                 CMETA_OK);
@@ -209,39 +216,60 @@ spec("TurboUtils UUID CMeta adapter") {
   }
 
   it("rejects each UUID callback replacement under copied provenance") {
-    const turbo_uuid_cmeta_adapter_desc *peer =
-        turbo_uuid_cmeta_adapter_from_peer();
-    turbo_uuid_cmeta_adapter_desc forged_adapter = *peer;
-    cmeta_data_buffer_ops forged_ops = *peer->buffer_ops;
-    cmeta_data_desc forged_data = *peer->data;
+    const cmeta_data_desc *peer = turbo_uuid_cmeta_data_from_peer();
+    const turbo_uuid_cmeta_buffer_ops_desc *peer_ops =
+        (const turbo_uuid_cmeta_buffer_ops_desc *)peer->buffer_ops;
+    turbo_uuid_cmeta_buffer_ops_desc forged_ops = *peer_ops;
+    cmeta_data_buffer_shape forged_shape =
+        *(const cmeta_data_buffer_shape *)peer->shape;
+    cmeta_type_identity forged_identity = *peer->storage_type->identity;
+    cmeta_type_desc forged_type = *peer->storage_type;
+    cmeta_data_desc forged_data = *peer;
+    char forged_atom[] = "turbo.uuid";
+    char forged_stable_id[] = "turbo.uuid.data";
+    char forged_display_name[] = "turbo_uuid_t";
 
-    forged_adapter.data = &forged_data;
-    forged_adapter.buffer_ops = &forged_ops;
-    forged_data.buffer_ops = &forged_ops;
+    forged_identity.stable_atom_id = forged_atom;
+    forged_type.identity = &forged_identity;
+    forged_data.stable_id = forged_stable_id;
+    forged_data.display_name = forged_display_name;
+    forged_data.storage_type = &forged_type;
+    forged_data.shape = &forged_shape;
+    forged_data.buffer_ops = &forged_ops.base;
+    forged_ops.base.storage_type = &forged_type;
 
-    check_true(turbo_uuid_cmeta_adapter_valid(&forged_adapter,
-                                               &forged_data));
+    check_true(turbo_uuid_cmeta_data_valid(&forged_data));
 
-    forged_ops.is_zero = replaced_uuid_is_zero;
-    check_false(turbo_uuid_cmeta_adapter_valid(&forged_adapter,
-                                                &forged_data));
+    forged_ops.base.is_zero = replaced_uuid_is_zero;
+    check_false(turbo_uuid_cmeta_data_valid(&forged_data));
 
-    forged_ops = *peer->buffer_ops;
-    forged_ops.assign = replaced_uuid_assign;
-    check_false(turbo_uuid_cmeta_adapter_valid(&forged_adapter,
-                                                &forged_data));
+    forged_ops = *peer_ops;
+    forged_ops.base.storage_type = &forged_type;
+    forged_ops.base.assign = replaced_uuid_assign;
+    check_false(turbo_uuid_cmeta_data_valid(&forged_data));
 
-    forged_ops = *peer->buffer_ops;
-    forged_ops.restore_zero = replaced_uuid_restore_zero;
-    check_false(turbo_uuid_cmeta_adapter_valid(&forged_adapter,
-                                                &forged_data));
+    forged_ops = *peer_ops;
+    forged_ops.base.storage_type = &forged_type;
+    forged_ops.base.restore_zero = replaced_uuid_restore_zero;
+    check_false(turbo_uuid_cmeta_data_valid(&forged_data));
   }
 
   it("rejects a truncated UUID provenance record before its extension") {
-    turbo_uuid_cmeta_adapter_desc truncated = turbo_uuid_cmeta_adapter;
+    const cmeta_data_desc *peer = turbo_uuid_cmeta_data_from_peer();
+    const turbo_uuid_cmeta_buffer_ops_desc *peer_ops =
+        (const turbo_uuid_cmeta_buffer_ops_desc *)peer->buffer_ops;
+    turbo_uuid_cmeta_buffer_ops_desc truncated_ops = *peer_ops;
+    cmeta_data_desc truncated_data = *peer;
 
-    truncated.struct_size = TURBO_UUID_CMETA_ADAPTER_PREFIX_SIZE - 1u;
-    check_false(turbo_uuid_cmeta_adapter_valid(&truncated, truncated.data));
+    truncated_data.buffer_ops = &truncated_ops.base;
+    truncated_ops.base.struct_size =
+        TURBO_UUID_CMETA_BUFFER_OPS_PREFIX_SIZE - 1u;
+    check_false(turbo_uuid_cmeta_data_valid(&truncated_data));
+
+    truncated_data = *peer;
+    truncated_data.struct_size =
+        offsetof(cmeta_data_desc, buffer_ops);
+    check_false(turbo_uuid_cmeta_data_valid(&truncated_data));
   }
 
   it("parses lowercase canonical text from a non-NUL-terminated slice") {
