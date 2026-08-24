@@ -69,15 +69,13 @@ static turbo_readiness_events epoll_translate_events(uint32_t native_events) {
   return events;
 }
 
-static uint32_t epoll_interest_events(turbo_readiness_events events) {
+uint32_t turbo_readiness_epoll_interest_events(turbo_readiness_events events) {
   uint32_t native_events = (uint32_t)EPOLLONESHOT;
   if ((events & TURBO_READINESS_EVENT_READ) != 0) native_events |= (uint32_t)EPOLLIN;
   if ((events & TURBO_READINESS_EVENT_WRITE) != 0) native_events |= (uint32_t)EPOLLOUT;
 #if defined(EPOLLRDHUP)
   if ((events & TURBO_READINESS_EVENT_HANGUP) != 0) native_events |= (uint32_t)EPOLLRDHUP;
 #endif
-  if ((native_events & (uint32_t)(EPOLLIN | EPOLLOUT)) == 0)
-    native_events |= (uint32_t)EPOLLIN;
   return native_events;
 }
 
@@ -160,7 +158,7 @@ static int epoll_arm(void *user, uint64_t token, uint64_t arm_token,
   backend->records[index].armed = 1;
   turbo_mutex_unlock(&backend->mutex);
 
-  event.events = epoll_interest_events(events);
+  event.events = turbo_readiness_epoll_interest_events(events);
   event.data.u64 = arm_token;
   status = epoll_ctl_retry(backend->epoll_fd, watched ? EPOLL_CTL_MOD : EPOLL_CTL_ADD, fd, &event);
   if (status != TURBO_OK) {
@@ -190,7 +188,7 @@ static int epoll_remove_watch(turbo_readiness_epoll_backend *backend, uint64_t t
 
   if (watched) {
     status = epoll_ctl_retry(backend->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
-    if (status == -ENOENT || status == -EBADF) status = TURBO_OK;
+    if (status == -ENOENT) status = TURBO_OK;
     if (status != TURBO_OK) return status;
   }
 

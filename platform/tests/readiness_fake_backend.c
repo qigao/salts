@@ -1,4 +1,5 @@
 #include "readiness_fake_backend.h"
+#include "readiness_backend_contract.h"
 
 #include "../src/readiness_internal.h"
 
@@ -375,5 +376,42 @@ const readiness_contract_factory *readiness_contract_factory_get(void) {
                                                      fake_wait_hook_calls,
                                                      fake_wait_admission_closed,
                                                      fake_hook_last_sequence};
+  return &factory;
+}
+
+static readiness_backend_contract_fixture *fake_backend_contract_create(
+    turbo_readiness_config config, turbo_readiness_reactor *reactor, int *status) {
+  return (readiness_backend_contract_fixture *)fake_create(config, reactor, status);
+}
+
+static void fake_backend_contract_destroy(readiness_backend_contract_fixture *fixture) {
+  fake_destroy((readiness_contract_fixture *)fixture);
+}
+
+static intptr_t fake_backend_contract_resource(readiness_backend_contract_fixture *fixture,
+                                               size_t index) {
+  (void)fixture;
+  return (intptr_t)(1001u + index);
+}
+
+static int fake_backend_contract_make_readable(readiness_backend_contract_fixture *fixture,
+                                               size_t index) {
+  return fake_emit_resource((readiness_contract_fixture *)fixture,
+                            fake_backend_contract_resource(fixture, index),
+                            TURBO_READINESS_EVENT_READ);
+}
+
+static int fake_backend_contract_drain_readable(readiness_backend_contract_fixture *fixture,
+                                                size_t index) {
+  (void)fixture;
+  (void)index;
+  return TURBO_OK;
+}
+
+const readiness_backend_contract_factory *readiness_backend_contract_factory_get(void) {
+  static const readiness_backend_contract_factory factory = {
+      fake_backend_contract_create, fake_backend_contract_destroy,
+      fake_backend_contract_resource, fake_backend_contract_make_readable,
+      fake_backend_contract_drain_readable};
   return &factory;
 }

@@ -28,6 +28,7 @@ set_target_properties(platform_header_cpp_test PROPERTIES
 cmake_add_test(platform_readiness_fake_test
   SOURCES
     platform_readiness_fake_test.c
+    readiness_backend_contract.c
     readiness_contract_suite.c
     readiness_fake_backend.c
   LIBS TurboUtils::Platform TurboUtils::TinyTest
@@ -40,7 +41,9 @@ set_target_properties(platform_readiness_fake_test PROPERTIES
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
    TURBO_ENABLE_EPOLL_READINESS)
   cmake_add_test(platform_readiness_epoll_test
-    SOURCES platform_readiness_epoll_test.c
+    SOURCES
+      platform_readiness_epoll_test.c
+      readiness_backend_contract.c
     LIBS TurboUtils::Platform TurboUtils::TinyTest
     FOLDER "platform/tests")
   set_target_properties(platform_readiness_epoll_test PROPERTIES

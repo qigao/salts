@@ -3,9 +3,12 @@
 
 #include "readiness_contract_suite.h"
 
+#include "../src/readiness_internal.h"
+
 #include <turbo/error_codes.h>
 #include <turbo/thread.h>
 
+#include <errno.h>
 #include <limits.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -572,6 +575,98 @@ spec("Platform readiness contract") {
       check_equal(stats.duplicate_events, (uint64_t)1);
 
       check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      callback_probe_destroy(&probe);
+      close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("retires a slot after its registration generation is exhausted") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration last = {0};
+      turbo_readiness_registration survivor = {0};
+      turbo_readiness_registration rejected = {(void *)(uintptr_t)1};
+      turbo_readiness_stats stats;
+      readiness_contract_fixture *fixture = create_fixture(factory, 2, 2, &reactor);
+
+      check_equal(turbo_readiness_test_seed_registration_generation(
+                      &reactor, 0, UINT32_MAX - 1u),
+                  TURBO_OK);
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &last), TURBO_OK);
+      check_equal(turbo_readiness_close(&last), TURBO_OK);
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_B, &survivor), TURBO_OK);
+      check_equal((uint32_t)factory->token_for_resource(fixture, CONTRACT_RESOURCE_B),
+                  (uint32_t)1);
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_C, &rejected),
+                  -EOVERFLOW);
+      check_null(rejected.impl);
+      check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
+      check_equal(stats.registered_count, (size_t)1);
+      check_equal(stats.rejected_full, (uint64_t)0);
+
+      check_equal(turbo_readiness_close(&survivor), TURBO_OK);
+      close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("does not consume the last registration generation on backend failure") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      turbo_readiness_registration rejected = {(void *)(uintptr_t)1};
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+
+      check_equal(turbo_readiness_test_seed_registration_generation(
+                      &reactor, 0, UINT32_MAX - 1u),
+                  TURBO_OK);
+      factory->fail_hook(fixture, READINESS_CONTRACT_HOOK_REGISTER, TURBO_EIO, 1);
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration),
+                  TURBO_EIO);
+      check_null(registration.impl);
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration),
+                  TURBO_OK);
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_B, &rejected),
+                  -EOVERFLOW);
+      check_null(rejected.impl);
+
+      close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("retires a slot after its arm generation is exhausted") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      turbo_readiness_registration survivor = {0};
+      turbo_readiness_registration rejected = {(void *)(uintptr_t)1};
+      readiness_contract_fixture *fixture = create_fixture(factory, 2, 2, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration),
+                  TURBO_OK);
+      check_equal(turbo_readiness_test_seed_arm_generation(&registration,
+                                                           UINT32_MAX - 1u),
+                  TURBO_OK);
+      factory->fail_next_arm(fixture, TURBO_EIO);
+      check_equal(turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_READ,
+                                      record_callback, &probe),
+                  TURBO_EIO);
+      check_not_null(registration.impl);
+      check_equal(turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_READ,
+                                      record_callback, &probe),
+                  TURBO_OK);
+      check_equal(factory->emit_resource(fixture, CONTRACT_RESOURCE_A,
+                                         TURBO_READINESS_EVENT_READ),
+                  TURBO_OK);
+      check_equal(probe.calls, 1);
+      check_equal(turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_READ,
+                                      record_callback, &probe),
+                  -EOVERFLOW);
+      check_not_null(registration.impl);
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_B, &survivor), TURBO_OK);
+      check_equal((uint32_t)factory->token_for_resource(fixture, CONTRACT_RESOURCE_B),
+                  (uint32_t)1);
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_C, &rejected),
+                  -EOVERFLOW);
+      check_null(rejected.impl);
+
+      check_equal(turbo_readiness_close(&survivor), TURBO_OK);
       callback_probe_destroy(&probe);
       close_and_destroy_fixture(factory, fixture, &reactor);
     }
