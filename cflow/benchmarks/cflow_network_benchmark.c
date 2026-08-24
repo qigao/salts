@@ -42,7 +42,8 @@ enum {
   NETWORK_LATENCY_PAYLOAD = 64u,
   NETWORK_THROUGHPUT_SAMPLES = 50u,
   NETWORK_THROUGHPUT_EXCHANGES = 128u,
-  NETWORK_THROUGHPUT_PAYLOAD = 16384u,
+  NETWORK_TCP_THROUGHPUT_PAYLOAD = 16384u,
+  NETWORK_UDP_THROUGHPUT_PAYLOAD = 8192u,
   NETWORK_MAX_SAMPLES = 10000u,
   NETWORK_MAX_EXCHANGES = 10000u,
   NETWORK_MAX_PAYLOAD = 65507u
@@ -631,7 +632,11 @@ suite("CFlow native network benchmarks") {
         NETWORK_MAX_EXCHANGES);
     const size_t payload_size = network_env_size(
         "CFLOW_NETWORK_PAYLOAD",
-        throughput ? NETWORK_THROUGHPUT_PAYLOAD : NETWORK_LATENCY_PAYLOAD,
+        throughput
+            ? (protocol == NETWORK_PROTOCOL_UDP
+                   ? NETWORK_UDP_THROUGHPUT_PAYLOAD
+                   : NETWORK_TCP_THROUGHPUT_PAYLOAD)
+            : NETWORK_LATENCY_PAYLOAD,
         NETWORK_MAX_PAYLOAD);
     const size_t total_exchanges =
         samples != 0u && exchanges <= SIZE_MAX / samples
