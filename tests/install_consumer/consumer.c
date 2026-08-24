@@ -86,6 +86,30 @@ int main(void) {
   return 0;
 }
 
+#elif defined(CONSUME_CFLOW_MINICORO)
+#include <cflow/minicoro.h>
+
+static void complete(cflow_minicoro *coroutine, void *user) {
+  (void)coroutine;
+  (void)user;
+}
+
+int main(void) {
+  cflow_minicoro_config config = {
+      "installed-minicoro", &cmeta_type_int, complete, NULL,
+      0u, NULL, NULL, NULL};
+  cflow_resumable resumable = {0};
+  cflow_resume_ctx context = {0};
+  int output = 0;
+  cflow_step step;
+
+  if (!cflow_resumable_from_minicoro(&resumable, &config)) return 1;
+  step = resumable.ops->resume(resumable.state, &context, &output);
+  if (step.kind != CFLOW_STEP_DONE) return 2;
+  resumable.ops->destroy(resumable.state);
+  return 0;
+}
+
 #elif defined(CONSUME_CORE)
 #include <platform.h>
 #include <turbo_thread.h>

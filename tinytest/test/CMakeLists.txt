@@ -138,13 +138,43 @@ cmake_add_executable(tinytest_benchmark_output
   LIBS TurboUtils::TinyTest
   FOLDER "tinytest/tests")
 
+set(tinytest_benchmark_decimal_regex "[0-9]+\\.[0-9][0-9][0-9]")
+set(tinytest_benchmark_integer_regex "[0-9]+")
+set(tinytest_benchmark_mib_regex "[0-9]+\\.[0-9][0-9]")
+string(CONCAT tinytest_benchmark_table_regex
+  "\\| io \\| 2 \\| 4 \\| 16 \\| "
+  "${tinytest_benchmark_decimal_regex} \\| ${tinytest_benchmark_decimal_regex} \\| "
+  "${tinytest_benchmark_decimal_regex} \\| ${tinytest_benchmark_decimal_regex} \\| "
+  "${tinytest_benchmark_integer_regex} \\| ${tinytest_benchmark_mib_regex} \\|")
+string(CONCAT tinytest_benchmark_plain_regex
+  "io  samples=2  ops/sample=4  bytes/sample=16  "
+  "avg/op\\(ns\\)=${tinytest_benchmark_decimal_regex}  "
+  "avg/sample\\(us\\)=${tinytest_benchmark_decimal_regex}  "
+  "min/sample\\(us\\)=${tinytest_benchmark_decimal_regex}  "
+  "max/sample\\(us\\)=${tinytest_benchmark_decimal_regex}  "
+  "ops/s=${tinytest_benchmark_integer_regex}  MiB/s=${tinytest_benchmark_mib_regex}")
+
+add_test(
+  NAME tinytest_benchmark_table_output
+  COMMAND tinytest_benchmark_output --no-color)
+set_tests_properties(tinytest_benchmark_table_output PROPERTIES
+  PASS_REGULAR_EXPRESSION "${tinytest_benchmark_table_regex}"
+  FAIL_REGULAR_EXPRESSION "\\[ OK[ ]*\\]")
+
 cmake_add_executable(tinytest_benchmark_output_plain
   SOURCES benchmark_output_cases.c
   LIBS TurboUtils::TinyTest
   FOLDER "tinytest/tests")
 
 target_compile_definitions(tinytest_benchmark_output_plain
-  PRIVATE BDD_BENCH_TABLE=0)
+  PRIVATE TT_BENCH_TABLE=0)
+
+add_test(
+  NAME tinytest_benchmark_plain_output
+  COMMAND tinytest_benchmark_output_plain --no-color)
+set_tests_properties(tinytest_benchmark_plain_output PROPERTIES
+  PASS_REGULAR_EXPRESSION "${tinytest_benchmark_plain_regex}"
+  FAIL_REGULAR_EXPRESSION "\\[ OK[ ]*\\]")
 
 if(CMAKE_CXX_COMPILER OR CMAKE_CXX_COMPILER_ID)
   cmake_add_test(tinytest_regression_cpp
