@@ -11,10 +11,14 @@
     CMETA_FIELD_END(cmeta_data_desc, buffer_ops)
 #define CMETA_DATA_DESC_ENUM_OPS_SIZE \
     CMETA_FIELD_END(cmeta_data_desc, enum_ops)
+#define CMETA_DATA_DESC_VARIANT_OPS_SIZE \
+    CMETA_FIELD_END(cmeta_data_desc, variant_ops)
 #define CMETA_DATA_BUFFER_OPS_PREFIX_SIZE \
     CMETA_FIELD_END(cmeta_data_buffer_ops, restore_zero)
 #define CMETA_DATA_ENUM_OPS_PREFIX_SIZE \
     CMETA_FIELD_END(cmeta_data_enum_ops, restore_zero)
+#define CMETA_DATA_VARIANT_OPS_PREFIX_SIZE \
+    CMETA_FIELD_END(cmeta_data_variant_ops, restore_zero)
 
 static bool cmeta_data_nonempty(const char *text) {
     return text != NULL && text[0] != '\0';
@@ -375,6 +379,118 @@ cmeta_status cmeta_data_enum_restore_zero(
     return ops->is_zero(object) ? CMETA_OK : CMETA_CALLBACK_ERROR;
 }
 
+static cmeta_status cmeta_data_variant_ops_status(
+    const cmeta_data_desc *desc, const cmeta_data_variant_ops **out) {
+    const cmeta_data_variant_ops *ops;
+
+    if (out != NULL)
+        *out = NULL;
+    if (!cmeta_data_desc_valid(desc) || desc->kind != CMETA_DATA_VARIANT ||
+        desc->struct_size < CMETA_DATA_DESC_VARIANT_OPS_SIZE ||
+        desc->variant_ops == NULL)
+        return CMETA_INVALID_ARGUMENT;
+
+    ops = desc->variant_ops;
+    if (ops->struct_size < CMETA_DATA_VARIANT_OPS_PREFIX_SIZE ||
+        ops->abi_version != CMETA_DATA_VARIANT_OPS_ABI_VERSION ||
+        ops->storage_type == NULL ||
+        !cmeta_type_desc_valid(ops->storage_type) ||
+        ops->is_zero == NULL || ops->active_tag == NULL ||
+        ops->select == NULL || ops->restore_zero == NULL)
+        return CMETA_INVALID_ARGUMENT;
+
+    if (!cmeta_type_equal(desc->storage_type, ops->storage_type) ||
+        desc->storage_type->kind != ops->storage_type->kind ||
+        desc->storage_type->size != ops->storage_type->size ||
+        desc->storage_type->align != ops->storage_type->align)
+        return CMETA_TYPE_MISMATCH;
+
+    if (out != NULL)
+        *out = ops;
+    return CMETA_OK;
+}
+
+const cmeta_data_variant_ops *cmeta_data_variant_ops_of(
+    const cmeta_data_desc *desc) {
+    const cmeta_data_variant_ops *ops = NULL;
+    return cmeta_data_variant_ops_status(desc, &ops) == CMETA_OK ? ops : NULL;
+}
+
+cmeta_status cmeta_data_variant_is_zero(
+    const cmeta_data_desc *desc, const void *object, bool *out) {
+    const cmeta_data_variant_ops *ops = NULL;
+    cmeta_status status;
+
+    if (object == NULL || out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_variant_ops_status(desc, &ops);
+    if (status != CMETA_OK)
+        return status;
+    *out = ops->is_zero(object);
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_variant_active_tag(
+    const cmeta_data_desc *desc, const void *object, int64_t *out) {
+    const cmeta_data_variant_ops *ops = NULL;
+    cmeta_status status;
+
+    if (object == NULL || out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_variant_ops_status(desc, &ops);
+    if (status != CMETA_OK)
+        return status;
+    if (ops->is_zero(object))
+        return CMETA_INVALID_ARGUMENT;
+    return ops->active_tag(object, out);
+}
+
+cmeta_status cmeta_data_variant_select(
+    const cmeta_data_desc *desc, void *object, int64_t tag) {
+    const cmeta_data_variant_ops *ops = NULL;
+    const cmeta_data_variant_shape *shape;
+    int64_t active = 0;
+    cmeta_status status;
+
+    if (object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_variant_ops_status(desc, &ops);
+    if (status != CMETA_OK)
+        return status;
+    shape = (const cmeta_data_variant_shape *)desc->shape;
+    if (cmeta_data_variant_case_by_tag(shape, tag) == NULL ||
+        !ops->is_zero(object))
+        return CMETA_INVALID_ARGUMENT;
+
+    status = ops->select(object, tag);
+    if (status == CMETA_OK) {
+        if (ops->is_zero(object)) {
+            status = CMETA_CALLBACK_ERROR;
+        } else {
+            status = ops->active_tag(object, &active);
+            if (status == CMETA_OK && active != tag)
+                status = CMETA_CALLBACK_ERROR;
+        }
+    }
+    if (status != CMETA_OK)
+        ops->restore_zero(object);
+    return status;
+}
+
+cmeta_status cmeta_data_variant_restore_zero(
+    const cmeta_data_desc *desc, void *object) {
+    const cmeta_data_variant_ops *ops = NULL;
+    cmeta_status status;
+
+    if (object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_variant_ops_status(desc, &ops);
+    if (status != CMETA_OK)
+        return status;
+    ops->restore_zero(object);
+    return ops->is_zero(object) ? CMETA_OK : CMETA_CALLBACK_ERROR;
+}
+
 const cmeta_data_field_desc *cmeta_data_struct_field(
     const cmeta_data_struct_shape *shape, size_t index) {
     return shape != NULL && shape->fields != NULL && index < shape->field_count
@@ -464,8 +580,10 @@ const cmeta_data_desc cmeta_data_map = {
     "cmeta.data.map", "map", CMETA_DATA_MAP, NULL, NULL, NULL
 };
 
+#undef CMETA_DATA_VARIANT_OPS_PREFIX_SIZE
 #undef CMETA_DATA_ENUM_OPS_PREFIX_SIZE
 #undef CMETA_DATA_BUFFER_OPS_PREFIX_SIZE
+#undef CMETA_DATA_DESC_VARIANT_OPS_SIZE
 #undef CMETA_DATA_DESC_ENUM_OPS_SIZE
 #undef CMETA_DATA_DESC_BUFFER_OPS_SIZE
 #undef CMETA_DATA_DESC_PREFIX_SIZE

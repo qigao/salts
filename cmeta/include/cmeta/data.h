@@ -107,6 +107,27 @@ struct cmeta_data_enum_ops {
     cmeta_data_enum_restore_zero_fn restore_zero;
 };
 
+enum {
+    CMETA_DATA_VARIANT_OPS_ABI_VERSION = 1u
+};
+
+typedef bool (*cmeta_data_variant_is_zero_fn)(const void *object);
+typedef cmeta_status (*cmeta_data_variant_active_tag_fn)(
+    const void *object, int64_t *out);
+typedef cmeta_status (*cmeta_data_variant_select_fn)(void *object,
+                                                     int64_t tag);
+typedef void (*cmeta_data_variant_restore_zero_fn)(void *object);
+
+struct cmeta_data_variant_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_type_desc *storage_type;
+    cmeta_data_variant_is_zero_fn is_zero;
+    cmeta_data_variant_active_tag_fn active_tag;
+    cmeta_data_variant_select_fn select;
+    cmeta_data_variant_restore_zero_fn restore_zero;
+};
+
 typedef struct cmeta_data_enum_shape {
     const cmeta_enum_desc *meta;
 } cmeta_data_enum_shape;
@@ -214,6 +235,31 @@ cmeta_status cmeta_data_enum_assign(
 
 /** Restore and verify the provider-defined enum semantic-zero state. */
 cmeta_status cmeta_data_enum_restore_zero(
+    const cmeta_data_desc *desc, void *object);
+
+/** Return a complete, storage-matching variant adapter, or NULL. */
+const cmeta_data_variant_ops *cmeta_data_variant_ops_of(
+    const cmeta_data_desc *desc);
+
+/** Query the provider-defined unselected semantic-zero state. */
+cmeta_status cmeta_data_variant_is_zero(
+    const cmeta_data_desc *desc, const void *object, bool *out);
+
+/** Read the active tag; an unselected object is not an active variant. */
+cmeta_status cmeta_data_variant_active_tag(
+    const cmeta_data_desc *desc, const void *object, int64_t *out);
+
+/**
+ * Select a declared case in a semantic-zero object and verify engagement.
+ *
+ * On provider failure or postcondition violation the object is restored to
+ * semantic zero before returning.
+ */
+cmeta_status cmeta_data_variant_select(
+    const cmeta_data_desc *desc, void *object, int64_t tag);
+
+/** Destroy any active payload, restore semantic zero, and verify the result. */
+cmeta_status cmeta_data_variant_restore_zero(
     const cmeta_data_desc *desc, void *object);
 
 const cmeta_data_field_desc *cmeta_data_struct_field(
