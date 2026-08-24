@@ -13,4 +13,3 @@ cflow_mailbox_status cflow_machine_instance_timer_event_contract(
     const cmeta_type_desc **out_canonical_type);
 
 #endif /* CFLOW_MACHINE_RUNTIME_INTERNAL_H */
-

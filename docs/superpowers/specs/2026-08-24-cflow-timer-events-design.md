@@ -77,14 +77,21 @@ destructor.
 ## Concurrency and lifecycle
 
 Schedule, cancel, close, and statistics are thread-safe. `run_one_ready` has one
-consumer; concurrent consumers are rejected as invalid operation. The mutex
-protects slot state, TimerQueue mutation, close state, and counters. No Machine
-or Clock operation and no external callback runs while holding that mutex.
+logical handoff consumer: after one call claims a ready timer, another handoff
+attempt returns `BUSY` until the Mailbox send finishes. Calls that overlap only
+while observing no ready timer may each return `NOT_READY`. The mutex protects
+slot state, TimerQueue mutation, close state, and counters. No Machine or Clock
+operation and no external callback runs while holding that mutex.
 
 Close stops admission, cancels every pending timer, and waits for any firing
 handoff to finish. Therefore no Timer Event is emitted after close returns.
-Repeated close is idempotent. Destroy is a quiescent control-plane operation;
-the Clock and Machine instance must outlive it.
+Repeated close is idempotent. Destroy is a quiescent control-plane operation:
+all queue callers have stopped, and the Clock and Machine instance remain alive
+until destroy returns. Machine close/cancel may race with a fire and becomes the
+exact Mailbox result; Machine destroy may not race with any queue operation.
+Because VirtualClock mutation is not internally synchronized, callers must also
+serialize Clock advance with schedule-after and ready observation unless a
+different Clock implementation documents a stronger contract.
 
 The Machine instance itself may reject delivery because its Mailbox is full,
 closed, cancelled, or otherwise invalid. That result is a terminal fire outcome
@@ -144,7 +151,7 @@ TinyTest uses only VirtualClock for semantic timing:
 - cancel before fire;
 - deterministic cancel during a claimed handoff;
 - close/shutdown with pending and in-flight work;
-- full/closed/cancelled Machine Mailbox results;
+- full Mailbox results and the Machine close/cancel terminal rejection;
 - repeated run with no duplicate Event;
 - accounting identity, fixed storage, and repeated test execution.
 
@@ -152,9 +159,11 @@ Machine runtime tests verify that delivered Timer Events use the same serialized
 transition path as directly sent Events. Public C and C++ header tests cover the
 new API. Native Release and sanitizer tests provide executable conformance.
 
-Lean adds a pure Timer Event state machine and proves deadline/FIFO selection,
-cancel-versus-fire exclusivity, bounded pending state, append-once Mailbox
-handoff, and composition with the existing Machine runtime trace refinement.
-The proof does not claim arbitrary C memory-model, OS scheduling, or fairness
-verification.
-
+Lean adds a pure Timer Event state machine with one `active` fact source for
+pending and claimed slots. It proves combined capacity, non-zero and unique
+timer IDs, unique schedule order, next-ID/order bounds, preservation across all
+five state operations, and arbitrary-list deadline/order minimum selection. Its
+composed relation connects one successful commit to reception of that same
+Event and the Machine runtime step driven by it, proving append-once,
+receive-once, and the resulting observation suffix together. The proof does not
+claim arbitrary C memory-model, OS scheduling, or fairness verification.

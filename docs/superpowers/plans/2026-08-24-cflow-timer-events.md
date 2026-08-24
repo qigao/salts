@@ -97,4 +97,3 @@ Turbo Platform synchronization, TinyTest, CMake Presets, Lean 4.
    validated HIGH/MED finding through a failing regression test.
 5. Commit remaining synchronization changes, push `feat/cflow-timer-events`,
    and create a PR that closes #65 with exact verification evidence.
-

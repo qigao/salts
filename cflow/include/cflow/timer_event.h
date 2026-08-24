@@ -70,7 +70,24 @@ typedef struct cflow_timer_event_stats {
     bool closed;
 } cflow_timer_event_stats;
 
-/** Opaque fixed-capacity Timer Event Queue. Zero initialization is required. */
+/**
+ * Opaque fixed-capacity Timer Event Queue. Zero initialization is required.
+ *
+ * Thread topology and lifetime contract:
+ *
+ * - schedule, cancel, statistics, and close may run concurrently;
+ * - ready-timer handoff has one logical consumer; once a handoff is claimed,
+ *   another handoff attempt returns `CFLOW_TIMER_EVENT_FIRE_BUSY`;
+ * - the borrowed Clock, Machine instance, Machine schema, and CMeta descriptors
+ *   must remain alive until destroy returns;
+ * - Machine close or cancel may race with handoff and is reported as the exact
+ *   terminal Mailbox rejection; Machine destroy may not race with the queue;
+ * - Clock mutation must be externally synchronized with schedule-after and
+ *   ready-timer handoff unless that Clock implementation documents stronger
+ *   thread-safety; and
+ * - destroy is control-plane only: every schedule, cancel, handoff, statistics,
+ *   and close caller must already be quiescent.
+ */
 typedef struct cflow_timer_event_queue {
     void *impl;
 } cflow_timer_event_queue;
@@ -124,9 +141,11 @@ cflow_timer_event_status cflow_timer_event_queue_cancel(
 /**
  * Hand off at most one ready Event to the target Machine Mailbox.
  *
- * Only one consumer may call this operation at a time. Mailbox rejection is a
- * terminal Timer outcome and is returned exactly; this function never retries
- * and never executes a Machine transition inline.
+ * Once this operation claims a ready timer, another handoff attempt returns
+ * `CFLOW_TIMER_EVENT_FIRE_BUSY` until the Mailbox send finishes. Overlapping
+ * observations that claim no timer may each return `NOT_READY`. Mailbox
+ * rejection is a terminal Timer outcome and is returned exactly; this function
+ * never retries and never executes a Machine transition inline.
  */
 cflow_timer_event_fire_result cflow_timer_event_queue_run_one_ready(
     cflow_timer_event_queue *queue);
@@ -138,12 +157,18 @@ bool cflow_timer_event_queue_get_stats(
 
 /**
  * Stop admission, cancel pending timers, and wait for a claimed handoff.
- * No Timer Event can be emitted after this function returns.
+ * This operation may run concurrently with data-plane calls and blocks until
+ * an already claimed Mailbox send has recorded its terminal result. No Timer
+ * Event can be emitted after this function returns.
  */
 cflow_timer_event_status cflow_timer_event_queue_close(
     cflow_timer_event_queue *queue);
 
-/** Destroy a quiescent queue, release owned storage, and clear its handle. */
+/**
+ * Destroy a quiescent queue, release owned storage, and clear its handle.
+ * No queue operation may be active, and the borrowed Clock and Machine instance
+ * must still be alive. Destroying either borrowed object first is invalid.
+ */
 void cflow_timer_event_queue_destroy(cflow_timer_event_queue *queue);
 
 #ifdef __cplusplus
@@ -151,4 +176,3 @@ void cflow_timer_event_queue_destroy(cflow_timer_event_queue *queue);
 #endif
 
 #endif /* CFLOW_TIMER_EVENT_H */
-

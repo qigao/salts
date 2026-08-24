@@ -30,7 +30,8 @@ structure Timer where
 
 structure State where
   capacity : Nat
-  pending : List Timer
+  /-- All non-terminal timer slots, including the uniquely claimed slot. -/
+  active : List Timer
   claimed : Option Timer
   nextId : Nat
   nextOrder : Nat
@@ -39,8 +40,17 @@ structure State where
 
 namespace State
 
+def TimerBounded (state : State) (timer : Timer) : Prop :=
+  timer.id ≠ 0 ∧ timer.id < state.nextId ∧ timer.order < state.nextOrder
+
 def Valid (state : State) : Prop :=
-  0 < state.capacity ∧ state.pending.length ≤ state.capacity
+  0 < state.capacity ∧
+    state.active.length ≤ state.capacity ∧
+    (state.active.map Timer.id).Nodup ∧
+    (state.active.map Timer.order).Nodup ∧
+    0 < state.nextId ∧
+    (∀ timer ∈ state.active, state.TimerBounded timer) ∧
+    (∀ timer, state.claimed = some timer → timer ∈ state.active)
 
 end State
 
@@ -69,6 +79,11 @@ def earlier (left right : Timer) : Bool :=
   left.deadline < right.deadline ||
     (left.deadline == right.deadline && left.order < right.order)
 
+/-- Lexicographic deadline/order comparison used by the selection proof. -/
+def KeyLE (left right : Timer) : Prop :=
+  left.deadline < right.deadline ∨
+    (left.deadline = right.deadline ∧ left.order ≤ right.order)
+
 def earliest : List Timer → Option Timer
   | [] => none
   | timer :: remaining =>
@@ -92,7 +107,7 @@ def schedule (state : State) (deadline : Nat)
   match state.terminal with
   | .closed => { status := .closed, timerId := none, state := state }
   | .open =>
-      if state.pending.length + state.claimed.toList.length < state.capacity then
+      if state.active.length < state.capacity then
         let timer : Timer :=
           { id := state.nextId
             deadline := deadline
@@ -102,7 +117,7 @@ def schedule (state : State) (deadline : Nat)
           timerId := some timer.id
           state :=
             { state with
-              pending := state.pending ++ [timer]
+              active := state.active ++ [timer]
               nextId := state.nextId + 1
               nextOrder := state.nextOrder + 1 } }
       else
@@ -116,16 +131,13 @@ def claim (state : State) (now : Nat) : ClaimResult :=
       match state.claimed with
       | some timer => { status := .busy, timer := some timer, state := state }
       | none =>
-          match earliest state.pending with
+          match earliest state.active with
           | none => { status := .notReady, timer := none, state := state }
           | some timer =>
               if timer.deadline ≤ now then
                 { status := .ok
                   timer := some timer
-                  state :=
-                    { state with
-                      pending := removeId state.pending timer.id
-                      claimed := some timer } }
+                  state := { state with claimed := some timer } }
               else
                 { status := .notReady, timer := none, state := state }
 
@@ -138,15 +150,15 @@ def cancel (state : State) (timerId : Nat) : ControlResult :=
       | some timer =>
           if timer.id = timerId then
             { status := .fireWon, state := state }
-          else if containsId state.pending timerId then
+          else if containsId state.active timerId then
             { status := .ok,
-              state := { state with pending := removeId state.pending timerId } }
+              state := { state with active := removeId state.active timerId } }
           else
             { status := .notFound, state := state }
       | none =>
-          if containsId state.pending timerId then
+          if containsId state.active timerId then
             { status := .ok,
-              state := { state with pending := removeId state.pending timerId } }
+              state := { state with active := removeId state.active timerId } }
           else
             { status := .notFound, state := state }
 
@@ -163,7 +175,11 @@ def commit (state : State) : FireResult :=
       { status := if sent.1 = .ok then .delivered else .mailboxRejected
         timer := some timer
         mailboxStatus := some sent.1
-        state := { state with claimed := none, mailbox := sent.2 } }
+        state :=
+          { state with
+            active := removeId state.active timer.id
+            claimed := none
+            mailbox := sent.2 } }
 
 /-- Close cancels pending timers but preserves a fire claim that already won. -/
 def close (state : State) : ControlResult :=
@@ -171,7 +187,7 @@ def close (state : State) : ControlResult :=
   | .closed => { status := .closed, state := state }
   | .open =>
       { status := .ok,
-        state := { state with pending := [], terminal := .closed } }
+        state :=
+          { state with active := state.claimed.toList, terminal := .closed } }
 
 end CMetaCFlowCalculus.CFlow.TimerEvent
-

@@ -18,7 +18,7 @@ def mailbox : CMetaCFlowCalculus.CFlow.Mailbox.State :=
 
 def initial : CMetaCFlowCalculus.CFlow.TimerEvent.State :=
   { capacity := 2
-    pending := []
+    active := []
     claimed := none
     nextId := 1
     nextOrder := 0
@@ -37,7 +37,8 @@ def firstClaimed : ClaimResult := claim bothScheduled.state 10
 example : firstScheduled.timerId = some 1 := by native_decide
 example : bothScheduled.timerId = some 2 := by native_decide
 example : firstClaimed.timer.map Timer.id = some 1 := by native_decide
-example : firstClaimed.state.pending.map Timer.id = [2] := by native_decide
+example : firstClaimed.state.active.map Timer.id = [1, 2] := by native_decide
+example : firstClaimed.state.claimed.map Timer.id = some 1 := by native_decide
 example : (cancel firstClaimed.state 1).status = .fireWon := by native_decide
 example : (commit firstClaimed.state).status = .delivered := by native_decide
 example : (commit firstClaimed.state).state.mailbox.queue.length = 1 := by
@@ -53,7 +54,9 @@ example : (claim cancelledBeforeClaim.state 10).status = .notReady := by
 example : (claim firstScheduled.state 9).status = .notReady := by native_decide
 example : (claim firstScheduled.state 10).status = .ok := by native_decide
 
-example : (close bothScheduled.state).state.pending = [] := by native_decide
+example : (commit firstClaimed.state).state.active.map Timer.id = [2] := by
+  native_decide
+example : (close bothScheduled.state).state.active = [] := by native_decide
 example : (claim (close bothScheduled.state).state 10).status = .closed := by
   native_decide
 
@@ -74,9 +77,37 @@ theorem initialValid : initial.Valid := by
 example : initial.Valid := initialValid
 example : (schedule initial 10 event).state.Valid :=
   schedule_preserves_valid initial 10 event initialValid
-example : firstClaimed.state.Valid :=
-  claim_preserves_valid bothScheduled.state 10
-    (schedule_preserves_valid firstScheduled.state 10 secondEvent
-      (schedule_preserves_valid initial 10 event initialValid))
+
+theorem firstScheduledValid : firstScheduled.state.Valid :=
+  schedule_preserves_valid initial 10 event initialValid
+
+theorem bothScheduledValid : bothScheduled.state.Valid :=
+  schedule_preserves_valid firstScheduled.state 10 secondEvent
+    firstScheduledValid
+
+theorem firstClaimedValid : firstClaimed.state.Valid :=
+  claim_preserves_valid bothScheduled.state 10 bothScheduledValid
+
+example : firstClaimed.state.active.length ≤ firstClaimed.state.capacity :=
+  firstClaimedValid.2.1
+example : (firstClaimed.state.active.map Timer.id).Nodup :=
+  firstClaimedValid.2.2.1
+example : (firstClaimed.state.active.map Timer.order).Nodup :=
+  firstClaimedValid.2.2.2.1
+example : (cancel firstClaimed.state 2).state.Valid :=
+  cancel_preserves_valid firstClaimed.state 2 firstClaimedValid
+example : (commit firstClaimed.state).state.Valid :=
+  commit_preserves_valid firstClaimed.state firstClaimedValid
+example : (close firstClaimed.state).state.Valid :=
+  close_preserves_valid firstClaimed.state firstClaimedValid
+
+def laterDeadline : Timer :=
+  { id := 3, deadline := 20, order := 2, event := event }
+
+example : (earliest [laterDeadline,
+    { id := 1, deadline := 10, order := 0, event := event },
+    { id := 2, deadline := 10, order := 1, event := secondEvent }]).map
+      Timer.id = some 1 := by
+  native_decide
 
 end CMetaCFlowCalculus.Tests.TimerEvent

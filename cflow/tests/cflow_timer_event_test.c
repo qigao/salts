@@ -17,6 +17,40 @@ typedef struct timer_event_fixture {
     cflow_timer_event_queue timers;
 } timer_event_fixture;
 
+static bool timer_event_apply_payload(void *user,
+                                      const void *state,
+                                      const void *event,
+                                      void *out_target_state,
+                                      void *out_observation,
+                                      const char **out_error) {
+    (void)user;
+    (void)out_observation;
+    if (state == NULL || event == NULL || out_target_state == NULL ||
+        out_error == NULL)
+        return false;
+    *(int *)out_target_state =
+        *(const int *)state + (*(const bool *)event ? 1 : 0);
+    *out_error = NULL;
+    return true;
+}
+
+static bool timer_event_apply_double_payload(void *user,
+                                             const void *state,
+                                             const void *event,
+                                             void *out_target_state,
+                                             void *out_observation,
+                                             const char **out_error) {
+    (void)user;
+    (void)out_observation;
+    if (state == NULL || event == NULL || out_target_state == NULL ||
+        out_error == NULL)
+        return false;
+    *(int *)out_target_state =
+        *(const int *)state + (int)*(const double *)event;
+    *out_error = NULL;
+    return true;
+}
+
 static void timer_event_resumable_destroy(cflow_resumable *resumable) {
     if (resumable == NULL) return;
     if (resumable->ops != NULL && resumable->ops->destroy != NULL)
@@ -33,17 +67,35 @@ static bool timer_event_fixture_init(timer_event_fixture *fixture,
         {10u, &cmeta_type_int, CFLOW_MACHINE_STATE_ACTIVE}
     };
     const cflow_event_type events[] = {
-        {100u, &cmeta_type_bool}
+        {100u, &cmeta_type_bool},
+        {101u, &cmeta_type_double}
+    };
+    const cflow_machine_action actions[] = {
+        {300u, &cmeta_type_int, 100u, &cmeta_type_bool,
+         &cmeta_type_int, CMETA_EFFECT_PURE,
+         CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL |
+             CMETA_PROP_NO_ALIAS,
+         CFLOW_MACHINE_ACTION_NONE, NULL, 0u},
+        {301u, &cmeta_type_int, 101u, &cmeta_type_double,
+         &cmeta_type_int, CMETA_EFFECT_PURE,
+         CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL |
+             CMETA_PROP_NO_ALIAS,
+         CFLOW_MACHINE_ACTION_NONE, NULL, 0u}
     };
     const cflow_machine_transition transitions[] = {
-        {10u, 100u, 0u, 0u, 10u, 1u}
+        {10u, 100u, 0u, 300u, 10u, 1u},
+        {10u, 101u, 0u, 301u, 10u, 1u}
     };
     const cflow_machine_definition definition = {
         states, 1u, 10u,
-        events, 1u,
+        events, 2u,
         NULL, 0u,
-        NULL, 0u,
-        transitions, 1u
+        actions, 2u,
+        transitions, 2u
+    };
+    const cflow_machine_action_binding action_bindings[] = {
+        {300u, timer_event_apply_payload, NULL},
+        {301u, timer_event_apply_double_payload, NULL}
     };
     const int initial_state = 7;
     cflow_machine_instance_config machine_config;
@@ -61,7 +113,7 @@ static bool timer_event_fixture_init(timer_event_fixture *fixture,
 
     machine_config = (cflow_machine_instance_config){
         &fixture->machine, &initial_state, &cmeta_type_int,
-        NULL, 0u, NULL, 0u, mailbox_capacity, &fixture->executor
+        NULL, 0u, action_bindings, 2u, mailbox_capacity, &fixture->executor
     };
     if (cflow_machine_instance_init(&fixture->instance, &machine_config) !=
         CFLOW_MACHINE_RUNTIME_OK)
@@ -124,13 +176,15 @@ static void timer_event_fixture_destroy(timer_event_fixture *fixture) {
 suite("CFlow monotonic Timer Events") {
     it("fires at the exact VirtualClock boundary through Machine Mailbox") {
         timer_event_fixture fixture;
-        const bool payload = true;
+        bool payload = true;
         const cflow_event_view event = {
             100u, &cmeta_type_bool, &payload
         };
         cflow_timer_event_schedule_result scheduled;
         cflow_timer_event_fire_result fired;
         cflow_machine_instance_stats machine_stats = {0};
+        const cmeta_type_desc *state_type = NULL;
+        int state_value = 0;
 
         check_true(timer_event_fixture_init(
             &fixture, 2u, 2u, (cflow_instant){100u}, true));
@@ -138,6 +192,7 @@ suite("CFlow monotonic Timer Events") {
             &fixture.timers, (cflow_duration){10u}, &event);
         check_equal(scheduled.status, CFLOW_TIMER_EVENT_OK);
         check(scheduled.timer_id != 0u);
+        payload = false;
 
         check_true(cflow_clock_advance(
             &fixture.clock, (cflow_duration){9u}));
@@ -156,6 +211,41 @@ suite("CFlow monotonic Timer Events") {
             &fixture.instance, &machine_stats));
         check_equal(machine_stats.accepted, (uint64_t)1u);
         check_equal(machine_stats.completed, (uint64_t)1u);
+        check_true(cflow_machine_instance_copy_state(
+            &fixture.instance, &state_type, &state_value,
+            sizeof(state_value)));
+        check_true(cmeta_type_equal(state_type, &cmeta_type_int));
+        check_equal(state_value, 8);
+
+        timer_event_fixture_destroy(&fixture);
+    }
+
+    it("copies caller payload storage across size and alignment boundaries") {
+        timer_event_fixture fixture;
+        double payload = 2.5;
+        const cflow_event_view event = {
+            101u, &cmeta_type_double, &payload
+        };
+        cflow_timer_event_schedule_result scheduled;
+        cflow_timer_event_fire_result fired;
+        const cmeta_type_desc *state_type = NULL;
+        int state_value = 0;
+
+        check_true(timer_event_fixture_init(
+            &fixture, 1u, 1u, (cflow_instant){0u}, true));
+        scheduled = cflow_timer_event_queue_try_schedule_at(
+            &fixture.timers, (cflow_deadline){0u}, &event);
+        check_equal(scheduled.status, CFLOW_TIMER_EVENT_OK);
+        payload = 0.0;
+
+        fired = cflow_timer_event_queue_run_one_ready(&fixture.timers);
+        check_equal(fired.status, CFLOW_TIMER_EVENT_FIRE_DELIVERED);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_machine_instance_copy_state(
+            &fixture.instance, &state_type, &state_value,
+            sizeof(state_value)));
+        check_true(cmeta_type_equal(state_type, &cmeta_type_int));
+        check_equal(state_value, 9);
 
         timer_event_fixture_destroy(&fixture);
     }
@@ -289,6 +379,8 @@ suite("CFlow monotonic Timer Events") {
             &fixture.timers, (cflow_deadline){0u}, &event);
         check_true(cflow_timer_event_queue_claim_one_ready(
             &fixture.timers, &claim, &fired));
+        fired = cflow_timer_event_queue_run_one_ready(&fixture.timers);
+        check_equal(fired.status, CFLOW_TIMER_EVENT_FIRE_BUSY);
         check_equal(cflow_timer_event_queue_cancel(
             &fixture.timers, scheduled.timer_id), CFLOW_TIMER_EVENT_FIRE_WON);
         fired = cflow_timer_event_queue_commit_claim(&claim);
@@ -339,6 +431,43 @@ suite("CFlow monotonic Timer Events") {
         check_equal(machine_stats.accepted, (uint64_t)1u);
         check_equal(machine_stats.pending, (size_t)1u);
 
+        timer_event_fixture_destroy(&fixture);
+    }
+
+    it("preserves Machine close and cancel Mailbox outcomes") {
+        timer_event_fixture fixture;
+        const bool payload = true;
+        const cflow_event_view event = timer_bool_event(&payload);
+        cflow_timer_event_schedule_result scheduled;
+        cflow_timer_event_fire_result fired;
+        cflow_timer_event_stats stats = {0};
+
+        check_true(timer_event_fixture_init(
+            &fixture, 1u, 1u, (cflow_instant){0u}, false));
+        scheduled = cflow_timer_event_queue_try_schedule_at(
+            &fixture.timers, (cflow_deadline){0u}, &event);
+        check_equal(scheduled.status, CFLOW_TIMER_EVENT_OK);
+        cflow_machine_instance_close(&fixture.instance);
+        fired = cflow_timer_event_queue_run_one_ready(&fixture.timers);
+        check_equal(fired.status, CFLOW_TIMER_EVENT_FIRE_MAILBOX_REJECTED);
+        check_equal(fired.mailbox_status, CFLOW_MAILBOX_CANCELLED);
+        check_true(cflow_timer_event_queue_get_stats(&fixture.timers, &stats));
+        check_equal(stats.mailbox_rejected_cancelled, (uint64_t)1u);
+        check_timer_accounting(&stats);
+        timer_event_fixture_destroy(&fixture);
+
+        check_true(timer_event_fixture_init(
+            &fixture, 1u, 1u, (cflow_instant){0u}, false));
+        scheduled = cflow_timer_event_queue_try_schedule_at(
+            &fixture.timers, (cflow_deadline){0u}, &event);
+        check_equal(scheduled.status, CFLOW_TIMER_EVENT_OK);
+        cflow_machine_instance_cancel(&fixture.instance);
+        fired = cflow_timer_event_queue_run_one_ready(&fixture.timers);
+        check_equal(fired.status, CFLOW_TIMER_EVENT_FIRE_MAILBOX_REJECTED);
+        check_equal(fired.mailbox_status, CFLOW_MAILBOX_CANCELLED);
+        check_true(cflow_timer_event_queue_get_stats(&fixture.timers, &stats));
+        check_equal(stats.mailbox_rejected_cancelled, (uint64_t)1u);
+        check_timer_accounting(&stats);
         timer_event_fixture_destroy(&fixture);
     }
 
