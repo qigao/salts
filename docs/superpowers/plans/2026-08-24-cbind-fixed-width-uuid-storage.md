@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:test-driven-development for every behavior change and superpowers:verification-before-completion before commit.
 
-**Goal:** 让 TurboUtils CBind 安全解码 descriptor-driven 8/16/32/64 位整数，并提供可供 TurboParser 使用的 fixed-width/UUID header-local CMeta metadata。
+**Goal:** 让 TurboUtils CBind 安全解码 descriptor-driven 8/16/32/64 位整数，并提供 header-local fixed-width metadata 与 Core-exported canonical UUID metadata。
 
-**Architecture:** CBind 继续拥有格式无关 scalar conversion；CMeta descriptor 是 native storage 事实源。整数在 preflight 验证 width/size/alignment，在 64-bit token 域校验后经 exact-width temporary + `memcpy` 提交。UUID 作为 owned STRING adapter 同步解析 bounded slice 到固定 16-byte value。
+**Architecture:** CBind 继续拥有格式无关 scalar conversion；CMeta descriptor 是 native storage 事实源。整数在 preflight 验证 width/size/alignment，在 64-bit token 域校验后经 exact-width temporary + `memcpy` 提交。独立窄头承载无 Core 依赖的 fixed-width metadata；Core 导出 process-wide UUID objects/callback authority，并把 bounded slice 同步解析到固定 16-byte value。
 
 **Tech Stack:** C11、C++17 header consumer、TurboUtils CMeta/CSerde/CBind/Core、TinyTest、CMake user presets、MSVC Release。
 
@@ -15,7 +15,7 @@
 - 不改变 CBind public ABI、status enum、CSerde token protocol 或 legacy scalar 行为。
 - 不修改 `vendor/`，不提交 `.codegraph/`，不修改原始 dirty TurboUtils worktree。
 - 所有失败在写 destination 前判定；descriptor 错误在消费 input 前 fail fast。
-- 不给 CBind 添加 Core 依赖；UUID adapter 保持 header-local、无分配、bounded。
+- 不给 CBind 添加 Core 依赖；UUID adapter 保持无分配、bounded，canonical metadata/callback authority 由 Core 导出。
 - production code 前必须存在能够观察 missing behavior 的 RED test。
 
 ## Task 1: Fixed-width integer RED
@@ -133,3 +133,20 @@
    source usage。
 5. 保持 generic records/ABI、tstr/vstr、CBind 依赖不变；重跑 focused、相邻、全量、安装
    consumer 与静态范围检查，用新的独立 fix commit 交付。
+
+## Reviewer fix round 3: canonical Core UUID authority
+
+1. 先测试跨 TU canonical object 地址必须一致，并构造 callback mutation + candidate-owned
+   always-true validator bypass；在 round-2 实现上观察两个独立 runtime RED。
+2. 经用户批准，把既有 UUID public object names/types 改为 `TURBO_API extern const`
+   declarations，并在 Core `.c` 中提供唯一 definitions 与 static canonical callbacks。
+3. 保留 candidate-only `turbo_uuid_cmeta_data_valid`，但 authority 只来自 canonical external
+   ops callbacks；删除 extension/wrapper/macro 与 candidate-supplied validator。
+4. 验证 canonical cross-TU addresses、intact deep copy、三 callback mutation、C/C++ 精确
+   declared type/`&name` source behavior，以及 UUID parse/rollback 全部契约。
+5. 将 header-local fixed-width descriptors 提取到独立
+   `turbo_cmeta_fixed_width.h`，既有 `turbo_cmeta_data.h` 聚合该窄头以保持 source
+   compatibility。installed CBind-only consumer 只包含窄头并引用 fixed-width metadata，
+   证明 CBind export deps 仍为 CMeta+CSerde 且不产生 UUID/Core unresolved references。
+6. fresh、focused、adjacent、clean-first、full Release、installed-package、exported-symbol/
+   dependency/diff/vendor checks 后，用新的独立 fix commit 交付。
