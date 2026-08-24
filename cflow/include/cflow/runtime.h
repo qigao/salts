@@ -6,6 +6,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,9 +69,16 @@ Enum(cflow_source_terminal,
     X(I,R1,cflow_source_terminal,poll_terminal,const char **,error)
 CMETA_INTERFACE(cflow_source, CFLOW_SOURCE_METHODS);
 
+enum {
+    /* resume() constructs a live value in empty out_value storage only when it
+     * returns VALUE or VALUE_AND_DONE. Other results leave storage empty. */
+    CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES = UINT64_C(1) << 0
+};
+
 /* Move a Source interface into a generic resumable machine. */
 bool cflow_resumable_from_source(cflow_resumable *out, cflow_source *source);
 
+/* value is borrowed and remains live only until the callback returns. */
 typedef bool (*cflow_value_fn)(void *user,
                                const cmeta_type_desc *type,
                                const void *value);
@@ -97,7 +105,10 @@ typedef struct cflow_run {
 } cflow_run;
 
 /* Move-style ownership: on success the run takes source and clears *source.
- * Graph and scheduler are borrowed. */
+ * Graph and scheduler are borrowed. Admission failure leaves source ownership
+ * with the caller. Source-only graphs accept managed COPY/MOVE/DESTROY values
+ * from a CONSTRUCTS_VALUES Source. Graphs containing current typed operators,
+ * resumable composition, or relation execution remain trivial-only. */
 bool cflow_run_open(cflow_run *run,
                     const cflow_graph *graph,
                     cflow_source *source,

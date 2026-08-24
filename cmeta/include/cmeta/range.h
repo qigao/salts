@@ -22,8 +22,11 @@ enum {
     CMETA_RANGE_SORTED        = 1u << 2,
     CMETA_RANGE_UNIQUE        = 1u << 3,
     CMETA_RANGE_CONTIGUOUS    = 1u << 4,
-    CMETA_RANGE_RANDOM_ACCESS = 1u << 5,
-    CMETA_RANGE_REUSABLE      = 1u << 6
+    CMETA_RANGE_RANDOM_ACCESS  = 1u << 5,
+    CMETA_RANGE_REUSABLE       = 1u << 6,
+    /* next() constructs a live element in previously empty out_value storage.
+     * On DONE, MUTATED, or ERROR it must leave that storage empty. */
+    CMETA_RANGE_CONSTRUCTS_VALUES = 1u << 7
 };
 
 typedef size_t (*cmeta_range_size_fn)(const void *object);
@@ -133,6 +136,9 @@ static inline const cmeta_container_desc *cmeta_container_descriptor(const void 
 }
 
 const cmeta_container_ext *cmeta_container_extension(const void *object);
+/* Returns the container's semantic data-shape descriptor. This is not a raw
+ * storage pointer, does not imply contiguous layout, and does not extend the
+ * lifetime of either the container or any borrowed element storage. */
 const cmeta_data_desc *cmeta_container_data(const void *object);
 const cmeta_container_construct_ops *
 cmeta_container_construction(const void *object);

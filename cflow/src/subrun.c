@@ -2,6 +2,8 @@
 #include <cflow/sources.h>
 #include <turbo/thread.h>
 
+#include "value_storage.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -204,7 +206,9 @@ bool cflow_resumable_from_subgraph(cflow_resumable *out,
                                     const cflow_graph *graph,
                                     cflow_subgraph_id subgraph,
                                     const void *source_value) {
-    if (!out || !graph || !cflow_graph_subgraph(graph, subgraph) || !source_value) return false;
+    if (!out || !graph || !cflow_graph_subgraph(graph, subgraph) ||
+        !source_value || !cflow_value_storage_graph_supported(graph))
+        return false;
     subrun_state *s = calloc(1, sizeof(*s));
     if (!s) return false;
     turbo_mutex_init(&s->lock);

@@ -2,6 +2,8 @@
 #include <cflow/lower.h>
 #include <cflow/sources.h>
 
+#include "value_storage.h"
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,6 +102,14 @@ static bool cflow_eval_result_source(const cflow_graph *graph,
 
     if (!out) return false;
     memset(out, 0, sizeof(*out));
+    if (!graph || !source || !cflow_source_valid(source) ||
+        !cflow_value_storage_type_supported(
+            cflow_source_output_type(source)) ||
+        !cflow_value_storage_graph_supported(graph)) {
+        if (source)
+            cflow_source_destroy(source);
+        return false;
+    }
     ok = cflow_eval_source(graph, source, &sink, &c.eval);
     if (ok) {
         out->data = c.data;

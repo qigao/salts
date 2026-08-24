@@ -18,6 +18,10 @@ typedef struct cflow_result {
     const cmeta_type_desc *type;
 } cflow_result;
 
+/* cflow_result owns one byte buffer and has no per-element destructor.
+ * Result-producing adapters therefore accept only graphs whose value types
+ * have TRIVIAL_COPY and TRIVIAL_DESTROY. */
+
 /* Collection is a façade over the unified resumable runtime:
  * array source + unbounded demand + collecting observer. */
 bool cflow_eval_array(const cflow_graph *graph,
@@ -44,6 +48,10 @@ bool cflow_eval_stream_limit(const cflow_stream *stream,
  * collector failure aborts it. Returns true only after commit. out_error
  * receives a borrowed static diagnostic when non-NULL; collector->status
  * preserves a more specific collector failure such as capacity exceeded.
+ * Source-only streams may carry managed COPY/MOVE/DESTROY values when their
+ * Range declares CMETA_RANGE_CONSTRUCTS_VALUES. accept() borrows each live
+ * value only for the duration of the callback and must copy or move it before
+ * returning.
  */
 bool cflow_eval_collect(const cflow_stream *stream,
                         cmeta_collector *collector,
