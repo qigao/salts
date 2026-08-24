@@ -1,6 +1,6 @@
 # CFlow Machine Resumable Runtime Design
 
-**Status:** Approved for implementation under GitHub issue #64  
+**Status:** Approved for implementation under GitHub issue #64
 **Date:** 2026-08-24
 
 ## Context

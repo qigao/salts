@@ -267,14 +267,28 @@ static const cflow_machine_transition *select_transition(
     const void *event_value,
     const char **error) {
     const size_t count = cflow_machine_transition_count(impl->machine);
+    size_t left = 0u;
+    size_t right = count;
     size_t index;
-    for (index = 0u; index < count; ++index) {
+
+    while (left < right) {
+        const size_t middle = left + (right - left) / 2u;
+        const cflow_machine_transition *transition =
+            cflow_machine_transition_at(impl->machine, middle);
+        if (transition->source < impl->state->id ||
+            (transition->source == impl->state->id &&
+             transition->event < event_id))
+            left = middle + 1u;
+        else
+            right = middle;
+    }
+    for (index = left; index < count; ++index) {
         const cflow_machine_transition *transition =
             cflow_machine_transition_at(impl->machine, index);
         bool enabled = false;
         if (transition->source != impl->state->id ||
             transition->event != event_id)
-            continue;
+            break;
         if (!transition_enabled(impl, transition, event_value,
                                 &enabled, error))
             return NULL;

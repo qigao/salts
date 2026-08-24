@@ -1,5 +1,7 @@
 #include <cflow/machine_runtime.h>
 
+#include <turbo/thread.h>
+
 #include "tinytest.h"
 
 #include <stdatomic.h>
@@ -15,6 +17,28 @@ typedef struct runtime_control_probe {
     cflow_machine_instance *instance;
     bool cancel;
 } runtime_control_probe;
+
+typedef struct runtime_producer_context {
+    cflow_machine_instance *instance;
+    size_t count;
+    atomic_int failures;
+} runtime_producer_context;
+
+static void runtime_producer(void *user) {
+    runtime_producer_context *context =
+        (runtime_producer_context *)user;
+    const bool payload = true;
+    const cflow_event_view event = {
+        100u, &cmeta_type_bool, &payload
+    };
+    size_t index;
+    if (context == NULL) return;
+    for (index = 0u; index < context->count; ++index) {
+        if (cflow_machine_instance_try_send(context->instance, &event) !=
+            CFLOW_MAILBOX_OK)
+            atomic_fetch_add(&context->failures, 1);
+    }
+}
 
 static bool guard_enabled(void *user,
                           const void *state,
@@ -513,7 +537,7 @@ suite("CFlow Machine Resumable runtime") {
         cflow_machine_instance instance = {0};
         cflow_resumable resumable = {0};
         runtime_probe probe;
-        const cflow_machine_guard_binding guard_bindings[] = {
+        cflow_machine_guard_binding guard_bindings[] = {
             {200u, guard_disabled, &probe}
         };
         const cflow_machine_action_binding action_bindings[] = {
@@ -524,7 +548,7 @@ suite("CFlow Machine Resumable runtime") {
         const cflow_event_view event = {
             100u, &cmeta_type_bool, &payload
         };
-        const cflow_machine_instance_config config = {
+        cflow_machine_instance_config config = {
             &machine, &initial, &cmeta_type_long,
             guard_bindings, 1u, action_bindings, 1u, 4u, &executor
         };
@@ -567,6 +591,30 @@ suite("CFlow Machine Resumable runtime") {
         check_equal(stats.accepted, (uint64_t)1u);
         check_equal(stats.failed, (uint64_t)1u);
         check_equal(stats.completed, (uint64_t)0u);
+
+        destroy_resumable(&resumable);
+        cflow_machine_instance_destroy(&instance);
+
+        guard_bindings[0].fn = guard_enabled;
+        check_equal(cflow_machine_instance_init(&instance, &config),
+                    CFLOW_MACHINE_RUNTIME_OK);
+        check_true(cflow_machine_instance_as_resumable(
+            &instance, &resumable));
+        check_equal(cflow_machine_instance_try_send(&instance, &event),
+                    CFLOW_MAILBOX_OK);
+        step = resumable.ops->resume(
+            resumable.state, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_true(cflow_executor_wait_idle(&executor));
+        step = resumable.ops->resume(
+            resumable.state, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_ERROR);
+        check_equal(strcmp(step.error, "literal action failure"), 0);
+        check_equal(strcmp(cflow_machine_instance_error(&instance),
+                           "literal action failure"), 0);
+        check_true(cflow_machine_instance_copy_state(
+            &instance, &state_type, &state_value, sizeof(state_value)));
+        check_equal(state_value, 7);
 
         destroy_resumable(&resumable);
         cflow_machine_instance_destroy(&instance);
@@ -912,6 +960,77 @@ suite("CFlow Machine Resumable runtime") {
                     stats.completed + stats.failed + stats.cancelled_events);
         check_equal(stats.in_flight, (size_t)0u);
         check_true(stats.cancelled);
+
+        destroy_resumable(&resumable);
+        cflow_machine_instance_destroy(&instance);
+        cflow_executor_destroy(&executor);
+        cflow_machine_destroy(&machine);
+    }
+
+    it("serializes transitions admitted by concurrent producers") {
+        enum {
+            PRODUCER_COUNT = 4,
+            EVENTS_PER_PRODUCER = 8,
+            TOTAL_EVENTS = PRODUCER_COUNT * EVENTS_PER_PRODUCER
+        };
+        const cflow_machine_state states[] = {
+            {10u, &cmeta_type_int, CFLOW_MACHINE_STATE_ACTIVE}
+        };
+        const cflow_event_type events[] = {
+            {100u, &cmeta_type_bool}
+        };
+        const cflow_machine_transition transitions[] = {
+            {10u, 100u, 0u, 0u, 10u, 1u}
+        };
+        const cflow_machine_definition definition = {
+            states, 1u, 10u, events, 1u, NULL, 0u,
+            NULL, 0u, transitions, 1u
+        };
+        cflow_machine machine = {0};
+        cflow_executor executor = {0};
+        cflow_machine_instance instance = {0};
+        cflow_resumable resumable = {0};
+        runtime_producer_context producer = {
+            &instance, EVENTS_PER_PRODUCER
+        };
+        turbo_thread_t threads[PRODUCER_COUNT];
+        const int initial = 7;
+        const cflow_machine_instance_config config = {
+            &machine, &initial, &cmeta_type_long,
+            NULL, 0u, NULL, 0u, TOTAL_EVENTS, &executor
+        };
+        cflow_machine_instance_stats stats = {0};
+        cflow_resume_ctx resume_context = {NULL};
+        cflow_step step;
+        long output = -1L;
+        size_t index;
+
+        atomic_init(&producer.failures, 0);
+        check_equal(cflow_machine_build(&machine, &definition),
+                    CFLOW_MACHINE_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_machine_instance_init(&instance, &config),
+                    CFLOW_MACHINE_RUNTIME_OK);
+        check_true(cflow_machine_instance_as_resumable(
+            &instance, &resumable));
+        for (index = 0u; index < PRODUCER_COUNT; ++index)
+            check_equal(turbo_thread_create(
+                &threads[index], runtime_producer, &producer), 0);
+        for (index = 0u; index < PRODUCER_COUNT; ++index)
+            check_equal(turbo_thread_join(&threads[index]), 0);
+        check_equal(atomic_load(&producer.failures), 0);
+
+        step = resumable.ops->resume(
+            resumable.state, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_true(cflow_executor_wait_idle(&executor));
+        cflow_machine_instance_close(&instance);
+        check_true(cflow_machine_instance_get_stats(&instance, &stats));
+        check_equal(stats.accepted, (uint64_t)TOTAL_EVENTS);
+        check_equal(stats.completed, (uint64_t)TOTAL_EVENTS);
+        check_equal(stats.cancelled_events, (uint64_t)0u);
+        check_equal(stats.in_flight, (size_t)0u);
+        check_equal(stats.pending, (size_t)0u);
 
         destroy_resumable(&resumable);
         cflow_machine_instance_destroy(&instance);

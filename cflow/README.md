@@ -23,6 +23,7 @@ include/cflow/
 ├── opt.h
 ├── plan.h
 ├── machine.h       typed state-machine semantic IR
+├── machine_runtime.h executor-owned Machine execution and adapters
 ├── runtime.h
 ├── scheduler.h
 ├── sources.h
@@ -169,9 +170,53 @@ lake exe cflow-machine-schema-gen --write ../../cflow/include/cflow/generated/ma
 lake exe cflow-machine-schema-gen --check ../../cflow/include/cflow/generated/machine_schema.h
 ```
 
-This phase defines and validates Machine only. Callback binding, Mailbox
-consumption, Resumable execution, SerialExecutor ownership, cancellation, and
-runtime trace refinement belong to issue #64.
+## Machine runtime
+
+`cflow_machine_instance_init()` binds an immutable Machine to a caller-owned,
+non-manual SerialExecutor. The instance copies its initial state and binding
+rows, owns a bounded typed Event Mailbox and its scratch/output storage, and is
+the sole mutable owner of committed Machine state. Producers only call
+`cflow_machine_instance_try_send()`; guards, actions, state commits, and
+self-emitted Events execute through the SerialExecutor after downstream demand.
+There is no implicit worker, scheduler, demand, unbounded queue, or inline
+execution fallback.
+
+Guard and action callbacks borrow their state/Event inputs for the duration of
+the callback. Action target and observation pointers address instance-owned
+buffers of the exact types declared by the selected action. A successful
+callback must completely initialize both required outputs before returning.
+The admitted runtime fragment requires non-empty, ABI-aligned, trivially
+copyable/destructible state, Event, and observation types; every VALUE action
+must use the configured homogeneous output type. Callback error text is
+borrowed only for the call and the instance preserves its first error as an
+owned string until destroy.
+
+Attach either one `cflow_resumable` or one `cflow_source`. A Source can be moved
+into `cflow_run_open()` normally; Run demand then drives Machine progress while
+the Machine executor remains distinct from the Run scheduler. Destroying the
+adapter detaches it and requests cancellation when the Machine is still open;
+it never destroys the caller-owned instance.
+
+The lifecycle order is: build Machine and SerialExecutor; initialize the
+instance; attach its Source; move that Source into `cflow_run_open()`; enqueue
+Events and request Run demand; close Run (which destroys and detaches its moved
+Source); close and destroy the instance; finally destroy the borrowed executor
+and Machine. On partial initialization, destroy only successfully published
+handles in the same reverse dependency order.
+
+`close` rejects new Events, cancels queued Events, and allows an already-running
+callback to commit once. `cancel` also discards an executing callback's result,
+preserving the last committed state. At terminal executor quiescence, statistics
+satisfy `accepted == completed + failed + cancelled_events`, with zero pending
+and in-flight Events. Both operations are idempotent. Producers/control-plane
+callers and the attached adapter must be quiescent before instance destruction;
+the borrowed Machine, executor, callbacks, and callback user data must outlive
+the instance.
+
+Lean models WAIT and transition steps in `CFlow/MachineRuntime.lean`. Every
+runtime transition carries an existing `Machine.SmallStep` witness and an exact
+committed trace suffix; `runtime_trace_refines_machine` composes this refinement
+over finite Event sequences.
 
 
 ## Descriptor-backed container streams — v47
