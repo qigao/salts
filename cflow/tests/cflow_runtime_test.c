@@ -14,6 +14,110 @@ typedef struct lifecycle_test_value {
     int *resource;
 } lifecycle_test_value;
 
+typedef struct coalescing_scheduler_state {
+    atomic_bool entered;
+    atomic_bool release;
+    atomic_int posts;
+} coalescing_scheduler_state;
+
+typedef struct coalescing_request_context {
+    cflow_run *run;
+    atomic_bool returned;
+    bool result;
+} coalescing_request_context;
+
+typedef struct coalescing_close_context {
+    cflow_run *run;
+    atomic_int started;
+    atomic_int returned;
+} coalescing_close_context;
+
+typedef struct rejection_callback_close_state {
+    cflow_run *run;
+    atomic_int errors;
+    atomic_bool close_returned;
+} rejection_callback_close_state;
+
+static cflow_schedule_result coalescing_try_post_after(
+    void *self, uint64_t delay, cflow_task_fn fn, void *user) {
+    coalescing_scheduler_state *state = (coalescing_scheduler_state *)self;
+    (void)delay;
+    (void)user;
+    if (state == NULL || fn == NULL)
+        return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
+    atomic_fetch_add(&state->posts, 1);
+    atomic_store(&state->entered, true);
+    while (!atomic_load(&state->release)) turbo_sleep_ms(1u);
+    return (cflow_schedule_result){CFLOW_ADMISSION_FULL, 0u};
+}
+
+static cflow_task_id coalescing_post_after(
+    void *self, uint64_t delay, cflow_task_fn fn, void *user) {
+    return coalescing_try_post_after(self, delay, fn, user).task_id;
+}
+static bool coalescing_cancel(void *self, cflow_task_id id) {
+    (void)self; (void)id; return false;
+}
+static bool coalescing_run_one(void *self) { (void)self; return false; }
+static size_t coalescing_run_ready(void *self) { (void)self; return 0u; }
+static size_t coalescing_advance(void *self, uint64_t ticks) {
+    (void)self; (void)ticks; return 0u;
+}
+static size_t coalescing_run_until_idle(void *self, size_t steps) {
+    (void)self; (void)steps; return 0u;
+}
+static bool coalescing_wait_idle(void *self) { (void)self; return true; }
+static uint64_t coalescing_now(void *self) { (void)self; return 0u; }
+static size_t coalescing_pending(void *self) { (void)self; return 0u; }
+static bool coalescing_shutdown(void *self) { (void)self; return true; }
+static bool coalescing_get_stats(void *self, cflow_scheduler_stats *out) {
+    (void)self;
+    if (out == NULL) return false;
+    *out = (cflow_scheduler_stats){0};
+    return true;
+}
+static void coalescing_destroy(void *self) { (void)self; }
+
+CMETA_IMPLEMENTS(cflow_scheduler, coalescing_scheduler,
+    CMETA_SCHED_CAP_CONCURRENT,
+    .try_post_after = coalescing_try_post_after,
+    .post_after = coalescing_post_after,
+    .cancel = coalescing_cancel,
+    .run_one = coalescing_run_one,
+    .run_ready = coalescing_run_ready,
+    .advance = coalescing_advance,
+    .run_until_idle = coalescing_run_until_idle,
+    .wait_idle = coalescing_wait_idle,
+    .now = coalescing_now,
+    .pending = coalescing_pending,
+    .shutdown = coalescing_shutdown,
+    .get_stats = coalescing_get_stats,
+    .destroy = coalescing_destroy
+);
+
+static void coalescing_request(void *user) {
+    coalescing_request_context *context =
+        (coalescing_request_context *)user;
+    context->result = cflow_run_request(context->run, 1u);
+    atomic_store(&context->returned, true);
+}
+
+static void coalescing_close(void *user) {
+    coalescing_close_context *context = (coalescing_close_context *)user;
+    atomic_store(&context->started, 1);
+    cflow_run_close(context->run);
+    atomic_store(&context->returned, 1);
+}
+
+static void rejection_callback_close_error(void *user, const char *message) {
+    rejection_callback_close_state *state =
+        (rejection_callback_close_state *)user;
+    if (state == NULL || message == NULL) return;
+    atomic_fetch_add(&state->errors, 1);
+    cflow_run_close(state->run);
+    atomic_store(&state->close_returned, true);
+}
+
 static size_t lifecycle_test_copies;
 static size_t lifecycle_test_moves;
 static size_t lifecycle_test_destroys;
@@ -792,6 +896,133 @@ suite("CFlow runtime") {
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
+    }
+
+    it("preserves an autonomous rejection failure coalesced behind a request") {
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        coalescing_scheduler_state scheduler_state = {0};
+        saturation_source_state source_state = {0};
+        saturation_sink_state sink_state = {0};
+        cflow_source source = saturation_source_as_cflow_source(&source_state);
+        cflow_scheduler scheduler =
+            coalescing_scheduler_as_cflow_scheduler(&scheduler_state);
+        cflow_run run = {0};
+        cflow_sink_callbacks callbacks = {
+            saturation_sink_value,
+            saturation_sink_error,
+            saturation_sink_done,
+            &sink_state};
+        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+        coalescing_request_context request = {&run};
+        turbo_thread_t thread = {0};
+
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_run_open(
+            &run, &normalized, &source, &scheduler, &sink));
+        check_equal(turbo_thread_create(&thread, coalescing_request, &request), 0);
+        check_true(runtime_wait_until_at_least(&scheduler_state.posts, 1));
+        check_true(atomic_load(&scheduler_state.entered));
+
+        cflow_run_wake(&run);
+        atomic_store(&scheduler_state.release, true);
+        check_true(runtime_wait_until_at_least(&sink_state.errors, 1));
+        check_equal(turbo_thread_join(&thread), 0);
+        check_true(atomic_load(&request.returned));
+        check_false(request.result);
+        check_equal(atomic_load(&scheduler_state.posts), 1);
+        check_equal(atomic_load(&sink_state.errors), 1);
+        check_contains(cflow_run_error(&run), "scheduler is full");
+
+        cflow_run_close(&run);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("hands rejected task destruction to a closing error callback") {
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        coalescing_scheduler_state scheduler_state = {0};
+        saturation_source_state source_state = {0};
+        cflow_source source = saturation_source_as_cflow_source(&source_state);
+        cflow_scheduler scheduler =
+            coalescing_scheduler_as_cflow_scheduler(&scheduler_state);
+        cflow_run run = {0};
+        rejection_callback_close_state close_state = {&run};
+        cflow_sink_callbacks callbacks = {
+            NULL, rejection_callback_close_error, NULL, &close_state};
+        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+        coalescing_request_context request = {&run};
+        turbo_thread_t thread = {0};
+
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_run_open(
+            &run, &normalized, &source, &scheduler, &sink));
+        check_equal(turbo_thread_create(&thread, coalescing_request, &request), 0);
+        check_true(runtime_wait_until_at_least(&scheduler_state.posts, 1));
+        cflow_run_wake(&run);
+        atomic_store(&scheduler_state.release, true);
+
+        check_equal(turbo_thread_join(&thread), 0);
+        check_equal(atomic_load(&close_state.errors), 1);
+        check_true(atomic_load(&close_state.close_returned));
+        check_null(run.impl);
+        check_true(atomic_load(&source_state.destroyed));
+
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("hands the last rejected task reference to a concurrent closer") {
+        enum { CLOSE_RACE_REPETITIONS = 64 };
+        int repetition;
+        for (repetition = 0; repetition < CLOSE_RACE_REPETITIONS;
+             ++repetition) {
+            cflow_graph surface = {0};
+            cflow_graph normalized = {0};
+            coalescing_scheduler_state scheduler_state = {0};
+            saturation_source_state source_state = {0};
+            saturation_sink_state sink_state = {0};
+            cflow_source source =
+                saturation_source_as_cflow_source(&source_state);
+            cflow_scheduler scheduler =
+                coalescing_scheduler_as_cflow_scheduler(&scheduler_state);
+            cflow_run run = {0};
+            cflow_sink_callbacks callbacks = {
+                saturation_sink_value, saturation_sink_error,
+                saturation_sink_done, &sink_state};
+            cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+            coalescing_request_context request = {&run};
+            coalescing_close_context close = {&run};
+            turbo_thread_t request_thread = {0};
+            turbo_thread_t close_thread = {0};
+
+            cflow_graph_init(&surface, &cmeta_type_int);
+            check_true(cflow_graph_normalize(&normalized, &surface));
+            check_true(cflow_run_open(
+                &run, &normalized, &source, &scheduler, &sink));
+            check_equal(turbo_thread_create(
+                &request_thread, coalescing_request, &request), 0);
+            check_true(runtime_wait_until_at_least(
+                &scheduler_state.posts, 1));
+            check_equal(turbo_thread_create(
+                &close_thread, coalescing_close, &close), 0);
+            check_true(runtime_wait_until_at_least(&close.started, 1));
+            atomic_store(&scheduler_state.release, true);
+
+            check_equal(turbo_thread_join(&request_thread), 0);
+            check_equal(turbo_thread_join(&close_thread), 0);
+            check_true(atomic_load(&request.returned));
+            check_equal(atomic_load(&close.returned), 1);
+            check_null(run.impl);
+            check_true(atomic_load(&source_state.destroyed));
+            check_equal(atomic_load(&sink_state.errors), 0);
+
+            cflow_graph_destroy(&normalized);
+            cflow_graph_destroy(&surface);
+        }
     }
 
     it("rejects owning coordination children before ownership transfer") {

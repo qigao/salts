@@ -58,6 +58,7 @@ typedef struct run_impl {
     size_t task_refs;
     size_t demand;
     bool task_scheduled;
+    bool rejection_must_fail;
     bool pump_running;
     bool waiting;
     cflow_waitable active_wait;
@@ -612,28 +613,36 @@ static void run_destroy_claimed(run_impl *r) {
     turbo_mutex_unlock(&run_lifecycle_lock);
 }
 
-static bool run_claim_pump_destroy(run_impl *r) {
-    bool claimed = false;
+static bool run_release_task_ref(run_impl *r) {
+    bool destroy = false;
     if (!r) return false;
     turbo_mutex_lock(&run_lifecycle_lock);
-    if (r->owner && r->owner->impl == r && !r->external_closer && !r->destroying) {
-        r->destroying = true;
-        claimed = true;
+    turbo_mutex_lock(&r->lock);
+    if (r->task_refs != 0u) --r->task_refs;
+    if (r->task_refs == 0u) {
+        if (r->close_requested && r->owner && r->owner->impl == r &&
+            !r->external_closer && !r->destroying) {
+            r->destroying = true;
+            destroy = true;
+        }
+        turbo_cond_broadcast(&r->task_cv);
     }
+    turbo_mutex_unlock(&r->lock);
     turbo_mutex_unlock(&run_lifecycle_lock);
-    return claimed;
+    return destroy;
 }
 
 static void pump_task(void *user) {
     run_impl *r = (run_impl *)user;
     run_impl *previous_active_run;
-    bool destroy = false;
+    bool destroy;
 
     if (!r) return;
     previous_active_run = active_pump_run;
     active_pump_run = r;
     turbo_mutex_lock(&r->lock);
     r->task_scheduled = false;
+    r->rejection_must_fail = false;
     r->pump_running = true;
     turbo_mutex_unlock(&r->lock);
 
@@ -664,15 +673,9 @@ static void pump_task(void *user) {
                     (r->source_done && !reducers_done(r) && d > 0);
     if (!terminated && !waiting && runnable) (void)schedule_pump(r, true);
 
-    turbo_mutex_lock(&r->lock);
-    if (r->task_refs) --r->task_refs;
-    if (r->task_refs == 0) {
-        destroy = r->close_requested;
-        turbo_cond_broadcast(&r->task_cv);
-    }
-    turbo_mutex_unlock(&r->lock);
     active_pump_run = previous_active_run;
-    if (destroy && run_claim_pump_destroy(r)) run_destroy_claimed(r);
+    destroy = run_release_task_ref(r);
+    if (destroy) run_destroy_claimed(r);
 }
 
 static const char *scheduler_rejection_error(cflow_admission_status status) {
@@ -692,17 +695,25 @@ static const char *scheduler_rejection_error(cflow_admission_status status) {
 
 static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
     cflow_schedule_result result;
-    bool destroy = false;
+    bool destroy;
     bool notify = false;
+    bool must_fail = false;
     const char *error = NULL;
     run_impl *previous_active_run;
     if (!r || !r->scheduler) return false;
     turbo_mutex_lock(&r->lock);
-    if (r->closed || r->terminated || r->task_scheduled || r->pump_running || r->waiting) {
+    if (r->closed || r->terminated || r->pump_running || r->waiting) {
+        turbo_mutex_unlock(&r->lock);
+        return true;
+    }
+    if (r->task_scheduled) {
+        r->rejection_must_fail =
+            r->rejection_must_fail || fail_on_rejection;
         turbo_mutex_unlock(&r->lock);
         return true;
     }
     r->task_scheduled = true;
+    r->rejection_must_fail = fail_on_rejection;
     ++r->task_refs;
     turbo_mutex_unlock(&r->lock);
     result = cflow_scheduler_try_post_after(
@@ -710,7 +721,9 @@ static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
     if (result.status != CFLOW_ADMISSION_ACCEPTED || result.task_id == 0u) {
         turbo_mutex_lock(&r->lock);
         r->task_scheduled = false;
-        if (fail_on_rejection && !r->cancel_requested &&
+        must_fail = r->rejection_must_fail;
+        r->rejection_must_fail = false;
+        if (must_fail && !r->cancel_requested &&
             !r->close_requested && !r->terminated) {
             error = scheduler_rejection_error(result.status);
             r->error = error;
@@ -726,15 +739,9 @@ static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
         if (notify && cflow_sink_valid(&r->sink))
             cflow_sink_error(&r->sink, error);
 
-        turbo_mutex_lock(&r->lock);
-        if (r->task_refs) --r->task_refs;
-        if (r->task_refs == 0u) {
-            destroy = r->close_requested;
-            turbo_cond_broadcast(&r->task_cv);
-        }
-        turbo_mutex_unlock(&r->lock);
         active_pump_run = previous_active_run;
-        if (destroy && run_claim_pump_destroy(r)) run_destroy_claimed(r);
+        destroy = run_release_task_ref(r);
+        if (destroy) run_destroy_claimed(r);
         return false;
     }
     return true;

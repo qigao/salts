@@ -95,24 +95,6 @@ typedef struct actor_sender_context {
     atomic_bool completed;
 } actor_sender_context;
 
-typedef struct actor_destroy_sender_context {
-    const cflow_actor_ref *ref;
-    cflow_event_id event_id;
-    atomic_bool *go;
-    atomic_bool *destroy_returned;
-    atomic_int *race_attempts;
-    atomic_int attempted;
-    atomic_int accepted;
-    atomic_int full;
-    atomic_int stopping;
-    atomic_int stopped;
-    atomic_int failed;
-    atomic_int stale;
-    atomic_int post_destroy_stale;
-    atomic_int unexpected;
-    atomic_bool completed;
-} actor_destroy_sender_context;
-
 typedef struct actor_wait_stats_context {
     cflow_actor *actor;
     atomic_bool started;
@@ -125,6 +107,7 @@ typedef struct actor_wait_stats_context {
 typedef struct actor_destroy_context {
     cflow_actor *actor;
     atomic_bool *returned;
+    atomic_bool *started;
 } actor_destroy_context;
 
 static bool wait_until_true(atomic_bool *value) {
@@ -424,71 +407,6 @@ static void actor_sender(void *user) {
     atomic_store(&context->completed, true);
 }
 
-static void actor_destroy_sender(void *user) {
-    enum {
-        DESTROY_RACE_MAX_SENDS = 4096,
-        DESTROY_POST_SENDS = 16
-    };
-    actor_destroy_sender_context *context =
-        (actor_destroy_sender_context *)user;
-    int index;
-    if (context == NULL) return;
-    if (!wait_until_true(context->go)) {
-        atomic_fetch_add(&context->unexpected, 1);
-        atomic_store(&context->completed, true);
-        return;
-    }
-    for (index = 0; index < DESTROY_RACE_MAX_SENDS &&
-                    !atomic_load(context->destroy_returned); ++index) {
-        const int payload = index % ACTOR_EDGE_OBSERVATIONS;
-        const cflow_event_view event = {
-            context->event_id, &cmeta_type_int, &payload};
-        const cflow_actor_send_status status =
-            cflow_actor_ref_try_send(context->ref, &event);
-        atomic_fetch_add(context->race_attempts, 1);
-        atomic_fetch_add(&context->attempted, 1);
-        switch (status) {
-            case CFLOW_ACTOR_SEND_ACCEPTED:
-                atomic_fetch_add(&context->accepted, 1);
-                break;
-            case CFLOW_ACTOR_SEND_FULL:
-                atomic_fetch_add(&context->full, 1);
-                break;
-            case CFLOW_ACTOR_SEND_STOPPING:
-                atomic_fetch_add(&context->stopping, 1);
-                break;
-            case CFLOW_ACTOR_SEND_STOPPED:
-                atomic_fetch_add(&context->stopped, 1);
-                break;
-            case CFLOW_ACTOR_SEND_FAILED:
-                atomic_fetch_add(&context->failed, 1);
-                break;
-            case CFLOW_ACTOR_SEND_STALE:
-                atomic_fetch_add(&context->stale, 1);
-                break;
-            default:
-                atomic_fetch_add(&context->unexpected, 1);
-                break;
-        }
-    }
-    if (!wait_until_true(context->destroy_returned)) {
-        atomic_fetch_add(&context->unexpected, 1);
-        atomic_store(&context->completed, true);
-        return;
-    }
-    for (index = 0; index < DESTROY_POST_SENDS; ++index) {
-        const int payload = index;
-        const cflow_event_view event = {
-            context->event_id, &cmeta_type_int, &payload};
-        if (cflow_actor_ref_try_send(context->ref, &event) ==
-            CFLOW_ACTOR_SEND_STALE)
-            atomic_fetch_add(&context->post_destroy_stale, 1);
-        else
-            atomic_fetch_add(&context->unexpected, 1);
-    }
-    atomic_store(&context->completed, true);
-}
-
 static void actor_wait_and_snapshot(void *user) {
     actor_wait_stats_context *context = (actor_wait_stats_context *)user;
     if (context == NULL) return;
@@ -502,6 +420,7 @@ static void actor_wait_and_snapshot(void *user) {
 static void actor_destroy_owner(void *user) {
     actor_destroy_context *context = (actor_destroy_context *)user;
     if (context == NULL) return;
+    if (context->started != NULL) atomic_store(context->started, true);
     cflow_actor_destroy(context->actor);
     atomic_store(context->returned, true);
 }
@@ -1359,84 +1278,56 @@ suite("CFlow Actor lifecycle") {
         actor_edge_fixture_destroy(&fixture);
     }
 
-    it("keeps concurrent senders stale across owner destruction") {
-        enum {
-            DESTROY_PRODUCERS = 4,
-            DESTROY_POST_SENDS = 16
-        };
+    it("keeps an in-flight retained-ref send safe across owner destruction") {
+        enum { DESTROY_OVERLAP_MAX_SENDS = 4096, DESTROY_POST_SENDS = 16 };
         actor_edge_fixture fixture;
-        cflow_actor_ref refs[DESTROY_PRODUCERS] = {0};
-        actor_destroy_sender_context contexts[DESTROY_PRODUCERS] = {0};
-        turbo_thread_t threads[DESTROY_PRODUCERS] = {0};
+        cflow_actor_ref ref = {0};
+        actor_blocker blocker = {0};
+        const int payload = 37;
+        const cflow_event_view event = {100u, &cmeta_type_int, &payload};
         turbo_thread_t destroy_thread = {0};
-        atomic_bool go = false;
+        atomic_bool destroy_started = false;
         atomic_bool destroy_returned = false;
-        atomic_int race_attempts = 0;
         actor_destroy_context destroy_context = {
-            &fixture.actor, &destroy_returned};
-        int created = 0;
-        int producer;
+            &fixture.actor, &destroy_returned, &destroy_started};
+        int overlap_attempts = 0;
+        int index;
 
         check_true(actor_edge_fixture_init(&fixture, 8u));
+        fixture.probe.blocker = &blocker;
+        atomic_store(&fixture.probe.block_action, true);
         check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
-        check_true(cflow_actor_ref_acquire(&fixture.actor, &refs[0]));
-        for (producer = 1; producer < DESTROY_PRODUCERS; ++producer)
-            check_true(cflow_actor_ref_retain(&refs[0], &refs[producer]));
-        for (producer = 0; producer < DESTROY_PRODUCERS; ++producer) {
-            contexts[producer].ref = &refs[producer];
-            contexts[producer].event_id =
-                (cflow_event_id)(100u + (unsigned)producer);
-            contexts[producer].go = &go;
-            contexts[producer].destroy_returned = &destroy_returned;
-            contexts[producer].race_attempts = &race_attempts;
-            if (turbo_thread_create(
-                    &threads[producer], actor_destroy_sender,
-                    &contexts[producer]) != 0)
-                break;
-            ++created;
-        }
-        check_equal(created, DESTROY_PRODUCERS);
-        atomic_store(&go, true);
-        for (producer = 0; producer < created; ++producer)
-            check_true(wait_until_at_least(
-                &contexts[producer].attempted, 1));
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        check_true(wait_until_true(&blocker.entered));
+        check_equal(turbo_thread_create(
+            &destroy_thread, actor_destroy_owner, &destroy_context), 0);
+        check_true(wait_until_true(&destroy_started));
 
-        {
-            const int create_status = turbo_thread_create(
-                &destroy_thread, actor_destroy_owner, &destroy_context);
-            check_equal(create_status, 0);
-            if (create_status != 0) abort();
+        for (index = 0; index < DESTROY_OVERLAP_MAX_SENDS; ++index) {
+            ++overlap_attempts;
+            if (cflow_actor_ref_try_send(&ref, &event) ==
+                CFLOW_ACTOR_SEND_STALE)
+                break;
+            turbo_sleep_ms(1u);
         }
-        {
-            const bool returned = wait_until_true(&destroy_returned);
-            check_true(returned);
-            if (!returned) abort();
-        }
+        check_less(index, DESTROY_OVERLAP_MAX_SENDS);
+        check_greater(overlap_attempts, 0);
+        check_false(atomic_load(&destroy_returned));
+        for (index = 0; index < DESTROY_POST_SENDS; ++index)
+            check_equal(cflow_actor_ref_try_send(&ref, &event),
+                        CFLOW_ACTOR_SEND_STALE);
+
+        atomic_store(&blocker.release, true);
+        check_true(wait_until_true(&destroy_returned));
         check_equal(turbo_thread_join(&destroy_thread), 0);
         check_null(fixture.actor.impl);
-        for (producer = 0; producer < created; ++producer) {
-            const bool completed = wait_until_true(
-                &contexts[producer].completed);
-            const int classified =
-                atomic_load(&contexts[producer].accepted) +
-                atomic_load(&contexts[producer].full) +
-                atomic_load(&contexts[producer].stopping) +
-                atomic_load(&contexts[producer].stopped) +
-                atomic_load(&contexts[producer].failed) +
-                atomic_load(&contexts[producer].stale);
-            check_true(completed);
-            if (!completed) abort();
-            check_equal(turbo_thread_join(&threads[producer]), 0);
-            check_equal(classified,
-                        atomic_load(&contexts[producer].attempted));
-            check_equal(atomic_load(&contexts[producer].post_destroy_stale),
-                        DESTROY_POST_SENDS);
-            check_equal(atomic_load(&contexts[producer].unexpected), 0);
-        }
-        check_greater(atomic_load(&race_attempts), 0);
+        for (index = 0; index < DESTROY_POST_SENDS; ++index)
+            check_equal(cflow_actor_ref_try_send(&ref, &event),
+                        CFLOW_ACTOR_SEND_STALE);
 
-        for (producer = 0; producer < DESTROY_PRODUCERS; ++producer)
-            cflow_actor_ref_release(&refs[producer]);
+        cflow_actor_ref_release(&ref);
         actor_edge_fixture_destroy(&fixture);
     }
 
