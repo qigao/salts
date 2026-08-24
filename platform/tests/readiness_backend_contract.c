@@ -109,7 +109,7 @@ spec("Platform readiness backend-neutral contract") {
     turbo_readiness_reactor reactor = {0};
     turbo_readiness_registration first = {0};
     turbo_readiness_registration second = {0};
-    turbo_readiness_registration rejected = {(void *)(uintptr_t)1};
+    turbo_readiness_registration rejected = {(void *)(uintptr_t)1, 0u};
     readiness_backend_contract_fixture *fixture =
         backend_fixture_create(factory, 2, 2, &reactor);
     check_equal(turbo_readiness_register(&reactor, factory->resource(fixture, 0), &first),

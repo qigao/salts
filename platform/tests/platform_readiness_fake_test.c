@@ -42,7 +42,7 @@ spec("Platform fake readiness stress") {
 
     for (size_t iteration = 0; iteration < FAKE_STRESS_ITERATIONS; ++iteration) {
       turbo_readiness_registration registrations[FAKE_STRESS_CAPACITY] = {{0}};
-      turbo_readiness_registration rejected = {(void *)(uintptr_t)1u};
+      turbo_readiness_registration rejected = {(void *)(uintptr_t)1u, 0u};
       turbo_readiness_stats stats = {0};
       intptr_t resources[FAKE_STRESS_CAPACITY];
 

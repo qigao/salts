@@ -5,6 +5,7 @@
 
 #include "readiness_contract_suite.h"
 #include "tinytest.h"
+#include "../../platform/src/readiness_internal.h"
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -22,8 +23,7 @@ enum {
     CFLOW_READINESS_TEST_TIMEOUT_NS = 2 * 1000 * 1000 * 1000,
     CFLOW_DIFFERENTIAL_VALUE_COUNT = 3,
     CFLOW_DIFFERENTIAL_DEMAND = 5,
-    CFLOW_DIFFERENTIAL_ITERATIONS = 16,
-    CFLOW_NATIVE_QUIESCENCE_YIELDS = 100000
+    CFLOW_DIFFERENTIAL_ITERATIONS = 16
 };
 
 typedef struct managed_test_value {
@@ -110,6 +110,161 @@ typedef struct destroy_thread_args {
     wake_probe *probe;
     bool returned;
 } destroy_thread_args;
+
+typedef struct arm_observing_scheduler_state {
+    cflow_scheduler inner;
+    turbo_readiness_registration registration;
+    turbo_mutex_t lock;
+    bool observe_next_post;
+    int observation_status;
+} arm_observing_scheduler_state;
+
+static cflow_schedule_result arm_observing_try_post_after(
+    void *self, uint64_t delay_ticks, cflow_task_fn fn, void *user) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    return cflow_scheduler_try_post_after(
+        &state->inner, delay_ticks, fn, user);
+}
+
+static cflow_task_id arm_observing_post_after(
+    void *self, uint64_t delay_ticks, cflow_task_fn fn, void *user) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    cflow_task_id task;
+    bool observe;
+
+    turbo_mutex_lock(&state->lock);
+    observe = state->observe_next_post;
+    state->observe_next_post = false;
+    turbo_mutex_unlock(&state->lock);
+    task = cflow_scheduler_post_after(&state->inner, delay_ticks, fn, user);
+    if (task != 0u && observe) {
+        int status = turbo_readiness_backend_wait_arm_waiter(
+            &state->registration, 1u, CFLOW_READINESS_TEST_TIMEOUT_NS);
+        turbo_mutex_lock(&state->lock);
+        state->observation_status = status;
+        turbo_mutex_unlock(&state->lock);
+    }
+    return task;
+}
+
+static bool arm_observing_cancel(void *self, cflow_task_id task) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    return cflow_scheduler_cancel(&state->inner, task);
+}
+
+static bool arm_observing_run_one(void *self) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    return cflow_scheduler_run_one(&state->inner);
+}
+
+static size_t arm_observing_run_ready(void *self) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    return cflow_scheduler_run_ready(&state->inner);
+}
+
+static size_t arm_observing_advance(void *self, uint64_t ticks) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    return cflow_scheduler_advance(&state->inner, ticks);
+}
+
+static size_t arm_observing_run_until_idle(void *self, size_t max_steps) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    return cflow_scheduler_run_until_idle(&state->inner, max_steps);
+}
+
+static bool arm_observing_wait_idle(void *self) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    return cflow_scheduler_wait_idle(&state->inner);
+}
+
+static uint64_t arm_observing_now(void *self) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    return cflow_scheduler_now(&state->inner);
+}
+
+static size_t arm_observing_pending(void *self) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    return cflow_scheduler_pending(&state->inner);
+}
+
+static bool arm_observing_shutdown(void *self) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    return cflow_scheduler_shutdown(&state->inner);
+}
+
+static bool arm_observing_get_stats(void *self, cflow_scheduler_stats *out) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    return cflow_scheduler_get_stats(&state->inner, out);
+}
+
+static void arm_observing_destroy(void *self) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    cflow_scheduler_destroy(&state->inner);
+    turbo_mutex_destroy(&state->lock);
+}
+
+CMETA_IMPLEMENTS(cflow_scheduler, arm_observing_scheduler,
+    CMETA_SCHED_CAP_DELAYED | CMETA_SCHED_CAP_CONCURRENT,
+    .try_post_after = arm_observing_try_post_after,
+    .post_after = arm_observing_post_after,
+    .cancel = arm_observing_cancel,
+    .run_one = arm_observing_run_one,
+    .run_ready = arm_observing_run_ready,
+    .advance = arm_observing_advance,
+    .run_until_idle = arm_observing_run_until_idle,
+    .wait_idle = arm_observing_wait_idle,
+    .now = arm_observing_now,
+    .pending = arm_observing_pending,
+    .shutdown = arm_observing_shutdown,
+    .get_stats = arm_observing_get_stats,
+    .destroy = arm_observing_destroy
+);
+
+static bool arm_observing_scheduler_init(
+    arm_observing_scheduler_state *state,
+    const turbo_readiness_registration *registration,
+    cflow_scheduler *scheduler) {
+    memset(state, 0, sizeof(*state));
+    state->registration = *registration;
+    state->observation_status = TURBO_EIO;
+    turbo_mutex_init(&state->lock);
+    if (!state->lock ||
+        !cflow_scheduler_worker_init_with_capacity(&state->inner, 1u, 8u, 8u)) {
+        turbo_mutex_destroy(&state->lock);
+        return false;
+    }
+    *scheduler = arm_observing_scheduler_as_cflow_scheduler(state);
+    return true;
+}
+
+static void arm_observing_scheduler_observe_next(
+    arm_observing_scheduler_state *state) {
+    turbo_mutex_lock(&state->lock);
+    state->observe_next_post = true;
+    turbo_mutex_unlock(&state->lock);
+}
+
+static int arm_observing_scheduler_status(
+    arm_observing_scheduler_state *state) {
+    int status;
+    turbo_mutex_lock(&state->lock);
+    status = state->observation_status;
+    turbo_mutex_unlock(&state->lock);
+    return status;
+}
 
 static bool fake_env_init(fake_env *env, size_t capacity) {
     int status = TURBO_EINVAL;
@@ -356,6 +511,91 @@ typedef struct native_pipe_read_probe {
     size_t closes;
 } native_pipe_read_probe;
 
+typedef struct concurrent_sink_probe {
+    turbo_mutex_t lock;
+    turbo_cond_t changed;
+    int values[CFLOW_DIFFERENTIAL_VALUE_COUNT];
+    size_t value_count;
+    size_t done_count;
+    const char *error;
+} concurrent_sink_probe;
+
+static bool concurrent_sink_value(void *user,
+                                  const cmeta_type_desc *type,
+                                  const void *value) {
+    concurrent_sink_probe *probe = (concurrent_sink_probe *)user;
+    bool accepted = false;
+    if (!probe || !cmeta_type_equal(type, &cmeta_type_int) || !value)
+        return false;
+    turbo_mutex_lock(&probe->lock);
+    if (probe->value_count < CFLOW_DIFFERENTIAL_VALUE_COUNT) {
+        probe->values[probe->value_count++] = *(const int *)value;
+        accepted = true;
+        turbo_cond_broadcast(&probe->changed);
+    }
+    turbo_mutex_unlock(&probe->lock);
+    return accepted;
+}
+
+static void concurrent_sink_error(void *user, const char *message) {
+    concurrent_sink_probe *probe = (concurrent_sink_probe *)user;
+    turbo_mutex_lock(&probe->lock);
+    probe->error = message;
+    turbo_cond_broadcast(&probe->changed);
+    turbo_mutex_unlock(&probe->lock);
+}
+
+static void concurrent_sink_done(void *user) {
+    concurrent_sink_probe *probe = (concurrent_sink_probe *)user;
+    turbo_mutex_lock(&probe->lock);
+    ++probe->done_count;
+    turbo_cond_broadcast(&probe->changed);
+    turbo_mutex_unlock(&probe->lock);
+}
+
+static int concurrent_sink_wait_values(concurrent_sink_probe *probe,
+                                       size_t expected) {
+    int status = TURBO_OK;
+    turbo_mutex_lock(&probe->lock);
+    while (probe->value_count < expected && probe->error == NULL &&
+           probe->done_count == 0u && status == TURBO_OK)
+        status = turbo_cond_timedwait(
+            &probe->changed, &probe->lock, CFLOW_READINESS_TEST_TIMEOUT_NS);
+    if (status == TURBO_OK && probe->value_count < expected)
+        status = TURBO_EIO;
+    turbo_mutex_unlock(&probe->lock);
+    return status;
+}
+
+static int concurrent_sink_wait_done(concurrent_sink_probe *probe) {
+    int status = TURBO_OK;
+    turbo_mutex_lock(&probe->lock);
+    while (probe->done_count == 0u && probe->error == NULL &&
+           status == TURBO_OK)
+        status = turbo_cond_timedwait(
+            &probe->changed, &probe->lock, CFLOW_READINESS_TEST_TIMEOUT_NS);
+    if (status == TURBO_OK && probe->done_count == 0u)
+        status = TURBO_EIO;
+    turbo_mutex_unlock(&probe->lock);
+    return status;
+}
+
+static void capture_concurrent_observation(
+    differential_observation *out, concurrent_sink_probe *sink,
+    const cflow_run *run) {
+    memset(out, 0, sizeof(*out));
+    turbo_mutex_lock(&sink->lock);
+    out->value_count = sink->value_count;
+    out->done_count = sink->done_count;
+    out->errored = sink->error != NULL;
+    for (size_t index = 0; index < sink->value_count; ++index)
+        out->values[index] = sink->values[index];
+    turbo_mutex_unlock(&sink->lock);
+    out->outstanding_demand = cflow_run_outstanding_demand(run);
+    out->done = cflow_run_is_done(run);
+    out->errored = out->errored || cflow_run_error(run) != NULL;
+}
+
 static int set_nonblocking_fd(int fd) {
     int flags;
     do {
@@ -419,22 +659,6 @@ static void native_pipe_close(void *user) {
     probe->closes += 1u;
 }
 
-static int wait_native_callback_quiescent(
-    turbo_readiness_reactor *reactor) {
-    for (size_t attempt = 0u;
-         attempt < CFLOW_NATIVE_QUIESCENCE_YIELDS; ++attempt) {
-        turbo_readiness_stats stats = {0};
-        int status = turbo_readiness_reactor_stats(reactor, &stats);
-        if (status != TURBO_OK)
-            return status;
-        if (stats.registered_count == 1u && stats.armed_count == 0u &&
-            stats.callbacks_inflight == 0u)
-            return TURBO_OK;
-        turbo_thread_yield();
-    }
-    return TURBO_ETIMEDOUT;
-}
-
 static void run_native_readiness_differential(
     const int *values, differential_observation *out) {
     const turbo_readiness_config config = {1u, 1u};
@@ -447,14 +671,19 @@ static void run_native_readiness_differential(
     cflow_scheduler scheduler = {0};
     cflow_run run = {0};
     native_pipe_read_probe read = {-1, 0u};
-    sink_probe observed = {0};
+    concurrent_sink_probe observed = {0};
     cflow_sink_callbacks callbacks = {
-        sink_value, sink_error, sink_done, &observed
+        concurrent_sink_value, concurrent_sink_error,
+        concurrent_sink_done, &observed
     };
     cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
     int fds[2] = {-1, -1};
 
     check_equal(make_native_pipe(fds), TURBO_OK);
+    turbo_mutex_init(&observed.lock);
+    turbo_cond_init(&observed.changed);
+    check_not_null(observed.lock);
+    check_not_null(observed.changed);
     read.read_fd = fds[0];
     check_equal(turbo_readiness_reactor_init(&reactor, &config), TURBO_OK);
     check_equal(turbo_readiness_register(&reactor, read.read_fd, &registration),
@@ -467,10 +696,11 @@ static void run_native_readiness_differential(
     check_null(registration.impl);
     check_not_null(owner.impl);
     cflow_graph_init(&graph, &cmeta_type_int);
-    check_true(cflow_scheduler_test_init(&scheduler));
+    check_true(cflow_scheduler_worker_init_with_capacity(
+        &scheduler, 1u, 8u, 8u));
     check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
     check_true(cflow_run_request(&run, CFLOW_DIFFERENTIAL_DEMAND));
-    (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+    check_true(cflow_scheduler_wait_idle(&scheduler));
 
     for (size_t index = 0; index < CFLOW_DIFFERENTIAL_VALUE_COUNT; ++index) {
         check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
@@ -478,19 +708,23 @@ static void run_native_readiness_differential(
         check_equal(stats.armed_count, (size_t)1u);
         check_equal(stats.callbacks_inflight, (size_t)0u);
         check_equal(write_native_int(fds[1], values[index]), TURBO_OK);
-        check_equal(wait_native_callback_quiescent(&reactor),
+        check_equal(concurrent_sink_wait_values(&observed, index + 1u),
                     TURBO_OK);
-        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+        check_true(cflow_scheduler_wait_idle(&scheduler));
+        turbo_mutex_lock(&observed.lock);
         check_equal(observed.value_count, index + 1u);
         check_null(observed.error);
+        turbo_mutex_unlock(&observed.lock);
     }
     check_equal(close(fds[1]), 0);
     fds[1] = -1;
-    check_equal(wait_native_callback_quiescent(&reactor), TURBO_OK);
-    (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+    check_equal(concurrent_sink_wait_done(&observed), TURBO_OK);
+    check_true(cflow_scheduler_wait_idle(&scheduler));
+    turbo_mutex_lock(&observed.lock);
     check_equal(observed.done_count, (size_t)1u);
     check_null(observed.error);
-    capture_observation(out, &observed, &run);
+    turbo_mutex_unlock(&observed.lock);
+    capture_concurrent_observation(out, &observed, &run);
 
     check_not_equal(read.read_fd, -1);
     cflow_run_close(&run);
@@ -506,6 +740,8 @@ static void run_native_readiness_differential(
     check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_OK);
     cflow_scheduler_destroy(&scheduler);
     cflow_graph_destroy(&graph);
+    turbo_cond_destroy(&observed.changed);
+    turbo_mutex_destroy(&observed.lock);
     if (fds[1] >= 0)
         (void)close(fds[1]);
 }
@@ -1068,6 +1304,74 @@ suite("CFlow reactor registration Source") {
             run_fake_readiness_differential(values, &readiness);
             check_differential_observation(&array, &readiness, values);
         }
+    }
+
+    it("rearms on a worker before the readiness callback returns") {
+        fake_env env;
+        turbo_readiness_registration registration = {0};
+        turbo_readiness_stats stats = {0};
+        cflow_source source = {0};
+        cflow_graph graph = {0};
+        cflow_scheduler scheduler = {0};
+        cflow_run run = {0};
+        arm_observing_scheduler_state scheduler_state;
+        read_probe read = {
+            {CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE,
+             CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE_AND_DONE},
+            {0, 41, 0, 73}, 4u, 0u, 0u, 0u, {NULL}
+        };
+        sink_probe observed = {0};
+        cflow_sink_callbacks callbacks = {
+            sink_value, sink_error, sink_done, &observed
+        };
+        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+
+        check_true(fake_env_init(&env, 1u));
+        check_equal(turbo_readiness_register(
+                        &env.reactor, CFLOW_READINESS_TEST_RESOURCE,
+                        &registration), TURBO_OK);
+        check_true(arm_observing_scheduler_init(
+            &scheduler_state, &registration, &scheduler));
+        check_equal(cflow_source_from_reactor_registration(
+                        &source, &env.owner, &registration,
+                        TURBO_READINESS_EVENT_READ, "worker-rearm",
+                        &cmeta_type_int, probe_read, probe_close, &read),
+                    TURBO_OK);
+        cflow_graph_init(&graph, &cmeta_type_int);
+        check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
+        check_true(cflow_run_request(&run, 2u));
+        check_true(cflow_scheduler_wait_idle(&scheduler));
+
+        arm_observing_scheduler_observe_next(&scheduler_state);
+        check_equal(env.factory->emit_resource(
+                        env.fixture, CFLOW_READINESS_TEST_RESOURCE,
+                        TURBO_READINESS_EVENT_READ), TURBO_OK);
+        check_true(cflow_scheduler_wait_idle(&scheduler));
+        check_equal(observed.error ? observed.error : "no error", "no error");
+        check_equal(arm_observing_scheduler_status(&scheduler_state), TURBO_OK);
+        check_equal(observed.value_count, (size_t)1u);
+        check_equal(observed.values[0], 41);
+
+        check_equal(env.factory->emit_resource(
+                        env.fixture, CFLOW_READINESS_TEST_RESOURCE,
+                        TURBO_READINESS_EVENT_READ), TURBO_OK);
+        check_true(cflow_scheduler_wait_idle(&scheduler));
+        check_equal(observed.value_count, (size_t)2u);
+        check_equal(observed.values[1], 73);
+        check_equal(observed.done_count, (size_t)1u);
+        check_null(observed.error);
+        check_true(cflow_run_is_done(&run));
+
+        cflow_run_close(&run);
+        check_equal(read.closes, (size_t)1u);
+        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        check_equal(turbo_readiness_reactor_stats(&env.reactor, &stats), TURBO_OK);
+        check_equal(stats.registered_count, (size_t)0u);
+        check_equal(stats.armed_count, (size_t)0u);
+        check_equal(stats.callbacks_inflight, (size_t)0u);
+        cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&graph);
+        fake_env_destroy(&env);
     }
 
 #if defined(CFLOW_TEST_EPOLL_READINESS)

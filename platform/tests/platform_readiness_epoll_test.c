@@ -323,7 +323,7 @@ spec("Platform epoll readiness") {
     turbo_readiness_config config = {2, 2};
     turbo_readiness_registration first = {0};
     turbo_readiness_registration second = {0};
-    turbo_readiness_registration rejected = {(void *)(uintptr_t)1};
+    turbo_readiness_registration rejected = {(void *)(uintptr_t)1, 0u};
     turbo_readiness_stats stats;
     int first_pipe[2];
     int second_pipe[2];
@@ -683,7 +683,7 @@ spec("Platform epoll readiness") {
 
     for (size_t iteration = 0; iteration < EPOLL_STRESS_ITERATIONS; ++iteration) {
       turbo_readiness_registration registrations[EPOLL_STRESS_CAPACITY] = {{0}};
-      turbo_readiness_registration rejected = {(void *)(uintptr_t)1u};
+      turbo_readiness_registration rejected = {(void *)(uintptr_t)1u, 0u};
       turbo_readiness_stats stats = {0};
 
       for (size_t index = 0; index < EPOLL_STRESS_CAPACITY; ++index) {

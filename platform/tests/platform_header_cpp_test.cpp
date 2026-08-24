@@ -16,6 +16,11 @@ static_assert(std::is_same_v<decltype(&turbo_readiness_arm),
 
 int main() {
   turbo_readiness_reactor reactor{};
+  turbo_readiness_registration registration{};
   turbo_readiness_config config{1, 1};
-  return turbo_hrtime() > 0 && reactor.impl == nullptr && config.registration_capacity == 1 ? 0 : 1;
+  return turbo_hrtime() > 0 && reactor.impl == nullptr &&
+                 registration.impl == nullptr && registration._admission == 0 &&
+                 config.registration_capacity == 1
+             ? 0
+             : 1;
 }
