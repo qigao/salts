@@ -22,6 +22,7 @@ include/cflow/
 ├── property.h
 ├── opt.h
 ├── plan.h
+├── machine.h       typed state-machine semantic IR
 ├── runtime.h
 ├── scheduler.h
 ├── sources.h
@@ -100,6 +101,77 @@ lake exe cflow-operator-policy-gen --check ../../cflow/include/cflow/generated/b
 Normal CMake builds consume the checked-in header and do not require Lean.
 `CFLOW_USER_*_SIGNATURE_LIST` hooks remain manual shared configuration and are
 appended by `operator_policy.h` after the generated built-ins.
+
+## Typed Machine IR
+
+`cflow_machine_build()` transactionally normalizes a finite state/Event
+definition into immutable semantic IR. It copies every declaration array and
+transition row; referenced CMeta descriptors remain borrowed and must outlive
+the Machine. Failed construction publishes no partial handle.
+
+```c
+#include <cflow/machine.h>
+
+const cflow_machine_state states[] = {
+    {1u, &cmeta_type_int, CFLOW_MACHINE_STATE_ACTIVE},
+    {2u, &cmeta_type_int, CFLOW_MACHINE_STATE_DONE}
+};
+const cflow_event_type events[] = {
+    {10u, &cmeta_type_bool}
+};
+const cflow_machine_transition transitions[] = {
+    /* guard/action zero mean unconditional and identity. */
+    {1u, 10u, 0u, 0u, 2u, 0u}
+};
+const cflow_machine_definition definition = {
+    states, 2u, 1u,
+    events, 1u,
+    NULL, 0u,
+    NULL, 0u,
+    transitions, 1u
+};
+cflow_machine machine = {0};
+
+if (cflow_machine_build(&machine, &definition) != CFLOW_MACHINE_OK) {
+    /* Definition is invalid; machine.impl remains NULL. */
+    return 1;
+}
+
+/* Canonical rows are read-only and sorted by stable semantic IDs. */
+const cflow_machine_state *initial = cflow_machine_state_at(&machine, 0u);
+(void)initial;
+cflow_machine_destroy(&machine);
+```
+
+Construction rejects empty state sets, invalid or duplicate IDs, unknown
+references, CMeta type mismatch, invalid guard/action contracts, observations
+without matching types, outgoing terminal transitions, equal-priority
+ambiguity, unreachable states, and unused guard/action declarations. Guard ID
+zero is unconditional. Action ID zero is an identity transition and therefore
+requires equal source/target types.
+
+Construction is bounded before any input traversal or allocation. Default
+limits are 65,536 states, Events, guards, and actions, plus 1,048,576
+transitions. Reconfigure `CFLOW_MACHINE_MAX_STATES`,
+`CFLOW_MACHINE_MAX_EVENTS`, `CFLOW_MACHINE_MAX_GUARDS`,
+`CFLOW_MACHINE_MAX_ACTIONS`, or `CFLOW_MACHINE_MAX_TRANSITIONS` through CMake
+when a host has a different control-plane resource budget. Each configured
+limit must be in `[1, 1048576]`; C compilation also proves the configured count
+cannot overflow its row-byte calculation on the target platform. Excess input
+returns `CFLOW_MACHINE_LIMIT_EXCEEDED` without publishing a handle.
+
+Lean owns the state/action enum schema and the Event-driven small-step model.
+Regenerate or verify the checked-in C enum header from
+`formal/cmeta_cflow_calculus`:
+
+```text
+lake exe cflow-machine-schema-gen --write ../../cflow/include/cflow/generated/machine_schema.h
+lake exe cflow-machine-schema-gen --check ../../cflow/include/cflow/generated/machine_schema.h
+```
+
+This phase defines and validates Machine only. Callback binding, Mailbox
+consumption, Resumable execution, SerialExecutor ownership, cancellation, and
+runtime trace refinement belong to issue #64.
 
 
 ## Descriptor-backed container streams — v47

@@ -97,6 +97,8 @@ static_assert(CMETA_CONTAINER_EXT_ABI_VERSION == 1u,
               "container extension ABI starts at version 1");
 static_assert(CMETA_DATA_DESC_ABI_VERSION == 1u,
               "semantic data descriptor ABI starts at version 1");
+static_assert(CMETA_DATA_BUFFER_OPS_ABI_VERSION == 1u,
+              "semantic buffer ops ABI starts at version 1");
 static_assert(std::is_same_v<TypeEval(CMetaCppStorage, small), int>,
               "C++17 can evaluate unary CMeta type functions");
 static_assert(std::is_same_v<TypeEval(CMetaCppCommon, small, wide), long>,
@@ -130,6 +132,8 @@ static_assert(std::is_standard_layout_v<cmeta_container_ext>,
               "container extensions must remain C-compatible standard-layout types");
 static_assert(std::is_standard_layout_v<cmeta_data_desc>,
               "semantic data descriptors must remain C-compatible standard-layout types");
+static_assert(std::is_standard_layout_v<cmeta_data_buffer_ops>,
+              "semantic buffer ops must remain C-compatible standard-layout types");
 static_assert(std::is_standard_layout_v<cmeta_data_struct_shape>,
               "semantic struct shapes must remain standard layout");
 static_assert(std::is_standard_layout_v<cmeta_data_variant_shape>,

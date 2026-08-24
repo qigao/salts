@@ -57,6 +57,49 @@ static const cmeta_type_desc cmeta_data_test_enum_type = {
     .identity = &cmeta_data_test_enum_identity
 };
 
+static bool cmeta_data_test_buffer_is_zero(const void *object) {
+    return object != NULL && *(const int *)object == 0;
+}
+
+static cmeta_status cmeta_data_test_buffer_assign(
+    void *object, const unsigned char *data, size_t size, size_t max_bytes) {
+    (void)data;
+    if (object == NULL || size > max_bytes)
+        return CMETA_INVALID_ARGUMENT;
+    *(int *)object = (int)size;
+    return size == 13u ? CMETA_CALLBACK_ERROR : CMETA_OK;
+}
+
+static void cmeta_data_test_buffer_restore_zero(void *object) {
+    if (object != NULL)
+        *(int *)object = 0;
+}
+
+static const cmeta_data_buffer_shape cmeta_data_test_owned_buffer_shape = {
+    .ownership = CMETA_DATA_BUFFER_OWNED
+};
+
+static const cmeta_data_buffer_ops cmeta_data_test_buffer_ops = {
+    .struct_size = sizeof(cmeta_data_buffer_ops),
+    .abi_version = CMETA_DATA_BUFFER_OPS_ABI_VERSION,
+    .storage_type = &cmeta_type_int,
+    .ownership = CMETA_DATA_BUFFER_OWNED,
+    .is_zero = cmeta_data_test_buffer_is_zero,
+    .assign = cmeta_data_test_buffer_assign,
+    .restore_zero = cmeta_data_test_buffer_restore_zero
+};
+
+static const cmeta_data_desc cmeta_data_test_buffer_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.Buffer.data",
+    .display_name = "Buffer",
+    .kind = CMETA_DATA_BYTES,
+    .storage_type = &cmeta_type_int,
+    .shape = &cmeta_data_test_owned_buffer_shape,
+    .buffer_ops = &cmeta_data_test_buffer_ops
+};
+
 static const cmeta_data_field_desc cmeta_data_test_record_fields[] = {
     {
         .stable_id = "test.Record.id",
@@ -180,6 +223,103 @@ spec("CMeta semantic data descriptors") {
     desc.kind = CMETA_DATA_BYTES;
     desc.shape = &invalid_buffer;
     check_false(cmeta_data_desc_valid(&desc));
+  }
+
+  it("keeps legacy buffer descriptors valid without inventing storage ops") {
+    cmeta_data_desc prefix = cmeta_data_test_buffer_desc;
+    prefix.struct_size = offsetof(cmeta_data_desc, shape) + sizeof(prefix.shape);
+
+    check_true(cmeta_data_desc_valid(&prefix));
+    check_null(cmeta_data_buffer_ops_of(&prefix));
+  }
+
+  it("assigns and restores buffers through a checked adapter") {
+    static const unsigned char input[] = {'a', 'b', 'c'};
+    int object = 0;
+    bool is_zero = false;
+
+    check_true(cmeta_data_buffer_ops_of(&cmeta_data_test_buffer_desc) ==
+               &cmeta_data_test_buffer_ops);
+    check_equal(cmeta_data_buffer_is_zero(&cmeta_data_test_buffer_desc,
+                                          &object, &is_zero), CMETA_OK);
+    check_true(is_zero);
+    check_equal(cmeta_data_buffer_assign(&cmeta_data_test_buffer_desc, &object,
+                                         input, sizeof(input), sizeof(input)),
+                CMETA_OK);
+    check_equal(object, 3);
+    check_equal(cmeta_data_buffer_restore_zero(&cmeta_data_test_buffer_desc,
+                                               &object), CMETA_OK);
+    check_equal(object, 0);
+  }
+
+  it("rejects invalid buffer assignment without mutating the destination") {
+    static const unsigned char input[] = {'a', 'b', 'c'};
+    int object = 0;
+
+    check_equal(cmeta_data_buffer_assign(&cmeta_data_test_buffer_desc, &object,
+                                         input, sizeof(input), 2u),
+                CMETA_CAPACITY_EXCEEDED);
+    check_equal(object, 0);
+
+    check_equal(cmeta_data_buffer_assign(&cmeta_data_test_buffer_desc, &object,
+                                         NULL, 1u, 1u),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(object, 0);
+
+    object = 1;
+    check_equal(cmeta_data_buffer_assign(&cmeta_data_test_buffer_desc, &object,
+                                         input, sizeof(input), sizeof(input)),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(object, 1);
+  }
+
+  it("restores semantic zero when a provider assignment fails") {
+    static const unsigned char input[13] = {0};
+    int object = 0;
+
+    check_equal(cmeta_data_buffer_assign(&cmeta_data_test_buffer_desc, &object,
+                                         input, sizeof(input), sizeof(input)),
+                CMETA_CALLBACK_ERROR);
+    check_equal(object, 0);
+  }
+
+  it("rejects malformed or mismatched buffer adapters") {
+    cmeta_data_buffer_ops ops = cmeta_data_test_buffer_ops;
+    cmeta_data_desc desc = cmeta_data_test_buffer_desc;
+    int object = 0;
+    bool is_zero = false;
+
+    ops.abi_version += 1u;
+    desc.buffer_ops = &ops;
+    check_null(cmeta_data_buffer_ops_of(&desc));
+    check_equal(cmeta_data_buffer_is_zero(&desc, &object, &is_zero),
+                CMETA_INVALID_ARGUMENT);
+
+    ops = cmeta_data_test_buffer_ops;
+    ops.storage_type = &cmeta_type_long;
+    desc.buffer_ops = &ops;
+    check_null(cmeta_data_buffer_ops_of(&desc));
+    check_equal(cmeta_data_buffer_is_zero(&desc, &object, &is_zero),
+                CMETA_TYPE_MISMATCH);
+
+    ops = cmeta_data_test_buffer_ops;
+    ops.ownership = CMETA_DATA_BUFFER_BORROWED;
+    desc.buffer_ops = &ops;
+    check_null(cmeta_data_buffer_ops_of(&desc));
+    check_equal(cmeta_data_buffer_is_zero(&desc, &object, &is_zero),
+                CMETA_TYPE_MISMATCH);
+
+    ops = cmeta_data_test_buffer_ops;
+    {
+        cmeta_type_desc forged = cmeta_type_int;
+        forged.size += 1u;
+        ops.storage_type = &forged;
+        desc.buffer_ops = &ops;
+        check_true(cmeta_type_equal(desc.storage_type, ops.storage_type));
+        check_null(cmeta_data_buffer_ops_of(&desc));
+        check_equal(cmeta_data_buffer_is_zero(&desc, &object, &is_zero),
+                    CMETA_TYPE_MISMATCH);
+    }
   }
 
   it("validates enum semantic metadata") {
