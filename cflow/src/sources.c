@@ -1,6 +1,7 @@
 #include <cflow/sources.h>
 #include <turbo/thread.h>
 
+#include "sources_internal.h"
 #include "value_storage.h"
 
 #include <stdlib.h>
@@ -109,19 +110,44 @@ CMETA_IMPLEMENTS(cflow_source, range_source,
     .poll_terminal = source_open_terminal
 );
 
-bool cflow_source_from_range(cflow_source *out, cmeta_range range) {
+cmeta_status cflow_source_from_range_checked(cflow_source *out,
+                                              cmeta_range range,
+                                              const char **out_error) {
     range_state *s;
-    if (!out || !range.object ||
-        !cflow_value_type_supported(range.element_type) ||
-        (!cflow_value_storage_type_supported(range.element_type) &&
-         (range.flags & CMETA_RANGE_CONSTRUCTS_VALUES) == 0u) ||
-        !range.next)
-        return false;
+
+    if (out_error)
+        *out_error = NULL;
+    if (!out || !range.object || !range.next ||
+        !cmeta_type_desc_valid(range.element_type)) {
+        if (out_error)
+            *out_error = "invalid range source";
+        return CMETA_INVALID_ARGUMENT;
+    }
+    if (!cflow_value_type_supported(range.element_type)) {
+        if (out_error)
+            *out_error =
+                "range element type lacks required lifecycle traits";
+        return CMETA_TRAIT_MISSING;
+    }
+    if (!cflow_value_storage_type_supported(range.element_type) &&
+        (range.flags & CMETA_RANGE_CONSTRUCTS_VALUES) == 0u) {
+        if (out_error)
+            *out_error = "managed range must construct values";
+        return CMETA_INVALID_ARGUMENT;
+    }
     s = calloc(1, sizeof(*s));
-    if (!s) return false;
+    if (!s) {
+        if (out_error)
+            *out_error = "range source allocation failed";
+        return CMETA_OUT_OF_MEMORY;
+    }
     s->range = range;
     *out = range_source_as_cflow_source(s);
-    return true;
+    return CMETA_OK;
+}
+
+bool cflow_source_from_range(cflow_source *out, cmeta_range range) {
+    return cflow_source_from_range_checked(out, range, NULL) == CMETA_OK;
 }
 
 /* ---------------- timer ---------------- */

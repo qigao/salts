@@ -979,6 +979,114 @@ suite("CFlow runtime") {
         cflow_stream_destroy(&stream);
     }
 
+    it("rejects a legacy managed range before starting collection") {
+        lifecycle_range_owner owner = {{
+            lifecycle_test_make(23), {0}
+        }, 1u};
+        lifecycle_collect_output output = {0};
+        lifecycle_collector_state collector_state = {0};
+        cmeta_collector collector =
+            lifecycle_collector(&collector_state, &output);
+        cmeta_range range = {
+            .object = &owner,
+            .element_type = &lifecycle_test_type,
+            .flags = CMETA_RANGE_SIZED,
+            .size = lifecycle_range_size,
+            .next = lifecycle_range_next,
+            .version = 0u,
+            .current_version = NULL
+        };
+        cflow_stream stream = {0};
+        const char *error = NULL;
+
+        lifecycle_test_reset();
+        check_not_null(owner.values[0].resource);
+        check_not_null(cflow_stream_from_range(&stream, range));
+        check_false(cflow_eval_collect(&stream, &collector, &error));
+        check_equal(error, "managed range must construct values");
+        check_true(collector.state == CMETA_COLLECTOR_ABORTED);
+        check_true(collector.status == CMETA_INVALID_ARGUMENT);
+        check_equal(collector_state.aborts, (size_t)0u);
+        check_equal(output.count, (size_t)0u);
+        check_equal(lifecycle_test_copies, (size_t)0u);
+
+        lifecycle_test_destroy(&owner.values[0]);
+        cflow_stream_destroy(&stream);
+        check_equal(lifecycle_test_destroys, (size_t)1u);
+    }
+
+    it("reports missing range traits before starting collection") {
+        lifecycle_range_owner owner = {0};
+        cmeta_type_desc missing_traits_type = lifecycle_test_type;
+        lifecycle_collect_output output = {0};
+        lifecycle_collector_state collector_state = {0};
+        cmeta_collector collector =
+            lifecycle_collector(&collector_state, &output);
+        cmeta_range range = {
+            .object = &owner,
+            .element_type = &missing_traits_type,
+            .flags = CMETA_RANGE_SIZED,
+            .size = lifecycle_range_size,
+            .next = lifecycle_range_next,
+            .version = 0u,
+            .current_version = NULL
+        };
+        cflow_stream stream = {0};
+        const char *error = NULL;
+
+        missing_traits_type.traits = NULL;
+        collector.input_type = &missing_traits_type;
+        check_not_null(cflow_stream_from_range(&stream, range));
+        check_false(cflow_eval_collect(&stream, &collector, &error));
+        check_equal(error,
+                    "range element type lacks required lifecycle traits");
+        check_true(collector.state == CMETA_COLLECTOR_ABORTED);
+        check_true(collector.status == CMETA_TRAIT_MISSING);
+        check_equal(collector_state.aborts, (size_t)0u);
+        check_equal(output.count, (size_t)0u);
+
+        cflow_stream_destroy(&stream);
+    }
+
+    it("zeroes byte results when managed range admission fails") {
+        lifecycle_range_owner owner = {{
+            lifecycle_test_make(31), {0}
+        }, 1u};
+        cmeta_range range = {
+            .object = &owner,
+            .element_type = &lifecycle_test_type,
+            .flags = CMETA_RANGE_SIZED,
+            .size = lifecycle_range_size,
+            .next = lifecycle_range_next,
+            .version = 0u,
+            .current_version = NULL
+        };
+        cflow_stream stream = {0};
+        cflow_result result = {&owner, 1u, &lifecycle_test_type};
+        cflow_result limited = {&owner, 1u, &lifecycle_test_type};
+
+        lifecycle_test_reset();
+        check_not_null(owner.values[0].resource);
+        check_not_null(cflow_stream_from_range(&stream, range));
+        check_false(cflow_eval_stream(&stream, &result));
+        check_null(result.data);
+        check_equal(result.count, (size_t)0u);
+        check_null(result.type);
+        check_false(cflow_eval_stream_limit(&stream, 1u, &limited));
+        check_null(limited.data);
+        check_equal(limited.count, (size_t)0u);
+        check_null(limited.type);
+        check_equal(lifecycle_test_copies, (size_t)0u);
+
+        lifecycle_test_destroy(&owner.values[0]);
+        if (!result.data)
+            cflow_result_destroy(&result);
+        if (!limited.data)
+            cflow_result_destroy(&limited);
+        cflow_stream_destroy(&stream);
+        check_equal(lifecycle_test_destroys, (size_t)1u);
+    }
+
     it("keeps byte results fail-fast for managed streams") {
         lifecycle_range_owner owner = {{
             lifecycle_test_make(29), {0}

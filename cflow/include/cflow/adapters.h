@@ -29,7 +29,9 @@ bool cflow_eval_array(const cflow_graph *graph,
                       size_t input_count,
                       cflow_result *out);
 
-/* Evaluate a stream whose source was bound by cflow_stream_from_range/stream(). */
+/* Evaluate a stream whose source was bound by cflow_stream_from_range/stream().
+ * Returns false and leaves out zeroed when source admission or evaluation
+ * fails. */
 bool cflow_eval_stream(const cflow_stream *stream, cflow_result *out);
 
 /**
@@ -48,6 +50,8 @@ bool cflow_eval_stream_limit(const cflow_stream *stream,
  * collector failure aborts it. Returns true only after commit. out_error
  * receives a borrowed static diagnostic when non-NULL; collector->status
  * preserves a more specific collector failure such as capacity exceeded.
+ * Deterministic Range admission failures terminate the collector before begin
+ * without invoking its abort callback.
  * Source-only streams may carry managed COPY/MOVE/DESTROY values when their
  * Range declares CMETA_RANGE_CONSTRUCTS_VALUES. accept() borrows each live
  * value only for the duration of the callback and must copy or move it before
