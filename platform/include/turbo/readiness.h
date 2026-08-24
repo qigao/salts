@@ -39,9 +39,7 @@ typedef struct turbo_readiness_stats {
   uint64_t backend_errors;
 } turbo_readiness_stats;
 
-typedef void (*turbo_readiness_callback)(void *user,
-                                         turbo_readiness_events events,
-                                         int status);
+typedef void (*turbo_readiness_callback)(void *user, turbo_readiness_events events, int status);
 
 /*
  * Reactors and registrations are zero-state handles. A successful register
@@ -53,42 +51,39 @@ typedef void (*turbo_readiness_callback)(void *user,
  * and registration_capacity may not exceed UINT32_MAX - 1. The native factory
  * returns TURBO_ENOTSUP when no configured backend exists; it never falls back.
  */
-TURBO_PLATFORM_C_API int turbo_readiness_reactor_init(
-    turbo_readiness_reactor *reactor, const turbo_readiness_config *config);
+TURBO_PLATFORM_C_API int turbo_readiness_reactor_init(turbo_readiness_reactor *reactor,
+                                                      const turbo_readiness_config *config);
 
 /*
- * Shutdown closes admission and delivers TURBO_ESHUTDOWN once to every armed
- * registration. Registrations remain owned by their handles and must be closed
- * before destroy. Repeated shutdown returns TURBO_EALREADY.
+ * Shutdown atomically closes admission and reserves one TURBO_ESHUTDOWN
+ * delivery for every armed registration; ordinary readiness cannot overtake
+ * that terminal delivery. Registrations remain owned by their handles and must
+ * be closed before destroy. Repeated shutdown returns TURBO_EALREADY.
  */
-TURBO_PLATFORM_C_API int turbo_readiness_reactor_shutdown(
-    turbo_readiness_reactor *reactor);
-TURBO_PLATFORM_C_API int turbo_readiness_reactor_destroy(
-    turbo_readiness_reactor *reactor);
-TURBO_PLATFORM_C_API int turbo_readiness_register(
-    turbo_readiness_reactor *reactor, intptr_t native_resource,
-    turbo_readiness_registration *registration);
+TURBO_PLATFORM_C_API int turbo_readiness_reactor_shutdown(turbo_readiness_reactor *reactor);
+TURBO_PLATFORM_C_API int turbo_readiness_reactor_destroy(turbo_readiness_reactor *reactor);
+TURBO_PLATFORM_C_API int turbo_readiness_register(turbo_readiness_reactor *reactor,
+                                                  intptr_t native_resource,
+                                                  turbo_readiness_registration *registration);
 
 /*
  * Arm is one-shot. The backend event and user callback are dispatched without
  * a Platform lock held. status is TURBO_OK for readiness or an exact negative
  * terminal backend code; terminal delivery uses events == 0.
  */
-TURBO_PLATFORM_C_API int turbo_readiness_arm(
-    turbo_readiness_registration *registration, turbo_readiness_events events,
-    turbo_readiness_callback callback, void *user);
+TURBO_PLATFORM_C_API int turbo_readiness_arm(turbo_readiness_registration *registration,
+                                             turbo_readiness_events events,
+                                             turbo_readiness_callback callback, void *user);
 
 /*
  * External unarm/close calls return only after an inflight callback is
- * quiescent. Close from inside that registration's callback marks it closing,
- * clears the handle, returns TURBO_EBUSY, and defers slot reuse to the callback
- * epilogue.
+ * quiescent. Unarm from inside that registration's callback fails fast with
+ * TURBO_EBUSY. Close from inside that callback marks it closing, clears the
+ * handle, returns TURBO_EBUSY, and defers slot reuse to the callback epilogue.
  */
-TURBO_PLATFORM_C_API int turbo_readiness_unarm(
-    turbo_readiness_registration *registration);
-TURBO_PLATFORM_C_API int turbo_readiness_close(
-    turbo_readiness_registration *registration);
-TURBO_PLATFORM_C_API int turbo_readiness_reactor_stats(
-    turbo_readiness_reactor *reactor, turbo_readiness_stats *stats);
+TURBO_PLATFORM_C_API int turbo_readiness_unarm(turbo_readiness_registration *registration);
+TURBO_PLATFORM_C_API int turbo_readiness_close(turbo_readiness_registration *registration);
+TURBO_PLATFORM_C_API int turbo_readiness_reactor_stats(turbo_readiness_reactor *reactor,
+                                                       turbo_readiness_stats *stats);
 
 #endif /* TURBO_READINESS_H */

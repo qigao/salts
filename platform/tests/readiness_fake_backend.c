@@ -3,12 +3,11 @@
 #include "../src/readiness_internal.h"
 
 #include <turbo/error_codes.h>
+#include <turbo/thread.h>
 
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
-
-enum { READINESS_FAKE_MAX_REGISTRATIONS = 8 };
 
 typedef struct readiness_fake_record {
   intptr_t native_resource;
@@ -19,30 +18,44 @@ typedef struct readiness_fake_record {
 
 struct readiness_contract_fixture {
   turbo_readiness_reactor *reactor;
-  readiness_fake_record records[READINESS_FAKE_MAX_REGISTRATIONS];
+  readiness_fake_record *records;
+  size_t record_capacity;
+  turbo_mutex_t mutex;
+  turbo_cond_t changed;
+  int hook_blocked[READINESS_CONTRACT_HOOK_COUNT];
+  size_t hook_calls[READINESS_CONTRACT_HOOK_COUNT];
+  uint64_t hook_last_sequence[READINESS_CONTRACT_HOOK_COUNT];
+  uint64_t hook_sequence;
   int next_arm_error;
-  atomic_size_t close_calls;
-  atomic_size_t unarm_calls;
   atomic_size_t reentrant_checks;
 };
 
-static readiness_fake_record *fake_find_resource(
-    readiness_contract_fixture *fixture, intptr_t native_resource) {
-  for (size_t i = 0; i < READINESS_FAKE_MAX_REGISTRATIONS; ++i) {
-    if (fixture->records[i].active &&
-        fixture->records[i].native_resource == native_resource)
+static readiness_fake_record *fake_find_resource(readiness_contract_fixture *fixture,
+                                                 intptr_t native_resource) {
+  for (size_t i = 0; i < fixture->record_capacity; ++i) {
+    if (fixture->records[i].active && fixture->records[i].native_resource == native_resource)
       return &fixture->records[i];
   }
   return NULL;
 }
 
-static readiness_fake_record *fake_find_token(
-    readiness_contract_fixture *fixture, uint64_t token) {
-  for (size_t i = 0; i < READINESS_FAKE_MAX_REGISTRATIONS; ++i) {
+static readiness_fake_record *fake_find_token(readiness_contract_fixture *fixture, uint64_t token) {
+  for (size_t i = 0; i < fixture->record_capacity; ++i) {
     if (fixture->records[i].active && fixture->records[i].token == token)
       return &fixture->records[i];
   }
   return NULL;
+}
+
+static void fake_hook_enter(readiness_contract_fixture *fixture, readiness_contract_hook hook) {
+  turbo_mutex_lock(&fixture->mutex);
+  fixture->hook_calls[hook] += 1u;
+  fixture->hook_sequence += 1u;
+  fixture->hook_last_sequence[hook] = fixture->hook_sequence;
+  turbo_cond_broadcast(&fixture->changed);
+  while (fixture->hook_blocked[hook])
+    turbo_cond_wait(&fixture->changed, &fixture->mutex);
+  turbo_mutex_unlock(&fixture->mutex);
 }
 
 static void fake_check_reentrant(readiness_contract_fixture *fixture) {
@@ -51,73 +64,88 @@ static void fake_check_reentrant(readiness_contract_fixture *fixture) {
     atomic_fetch_add(&fixture->reentrant_checks, 1u);
 }
 
-static int fake_register_resource(void *user, intptr_t native_resource,
-                                  uint64_t token) {
+static int fake_register_resource(void *user, intptr_t native_resource, uint64_t token) {
   readiness_contract_fixture *fixture = (readiness_contract_fixture *)user;
   fake_check_reentrant(fixture);
-  if (fake_find_resource(fixture, native_resource) != NULL) return TURBO_EALREADY;
-  for (size_t i = 0; i < READINESS_FAKE_MAX_REGISTRATIONS; ++i) {
+  fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_REGISTER);
+  turbo_mutex_lock(&fixture->mutex);
+  if (fake_find_resource(fixture, native_resource) != NULL) {
+    turbo_mutex_unlock(&fixture->mutex);
+    return TURBO_EALREADY;
+  }
+  for (size_t i = 0; i < fixture->record_capacity; ++i) {
     if (!fixture->records[i].active) {
       fixture->records[i].native_resource = native_resource;
       fixture->records[i].token = token;
       fixture->records[i].events = 0;
       fixture->records[i].active = 1;
+      turbo_mutex_unlock(&fixture->mutex);
       return TURBO_OK;
     }
   }
+  turbo_mutex_unlock(&fixture->mutex);
   return TURBO_ENOBUFS;
 }
 
-static int fake_arm(void *user, uint64_t token,
-                    turbo_readiness_events events) {
+static int fake_arm(void *user, uint64_t token, turbo_readiness_events events) {
   readiness_contract_fixture *fixture = (readiness_contract_fixture *)user;
   readiness_fake_record *record;
+  int status = TURBO_OK;
   fake_check_reentrant(fixture);
-  atomic_fetch_add(&fixture->unarm_calls, 1u);
+  fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_ARM);
+  turbo_mutex_lock(&fixture->mutex);
   if (fixture->next_arm_error != TURBO_OK) {
-    int status = fixture->next_arm_error;
+    status = fixture->next_arm_error;
     fixture->next_arm_error = TURBO_OK;
-    return status;
+  } else {
+    record = fake_find_token(fixture, token);
+    if (record == NULL) status = TURBO_EINVAL;
+    else record->events = events;
   }
-  record = fake_find_token(fixture, token);
-  if (record == NULL) return TURBO_EINVAL;
-  record->events = events;
-  return TURBO_OK;
+  turbo_mutex_unlock(&fixture->mutex);
+  return status;
 }
 
 static int fake_unarm(void *user, uint64_t token) {
   readiness_contract_fixture *fixture = (readiness_contract_fixture *)user;
   readiness_fake_record *record;
+  int status = TURBO_OK;
   fake_check_reentrant(fixture);
+  fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_UNARM);
+  turbo_mutex_lock(&fixture->mutex);
   record = fake_find_token(fixture, token);
-  if (record == NULL) return TURBO_EINVAL;
-  record->events = 0;
-  return TURBO_OK;
+  if (record == NULL) status = TURBO_EINVAL;
+  else record->events = 0;
+  turbo_mutex_unlock(&fixture->mutex);
+  return status;
 }
 
 static int fake_close(void *user, uint64_t token) {
   readiness_contract_fixture *fixture = (readiness_contract_fixture *)user;
   readiness_fake_record *record;
+  int status = TURBO_OK;
   fake_check_reentrant(fixture);
-  atomic_fetch_add(&fixture->close_calls, 1u);
+  fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_CLOSE);
+  turbo_mutex_lock(&fixture->mutex);
   record = fake_find_token(fixture, token);
-  if (record == NULL) return TURBO_EINVAL;
-  memset(record, 0, sizeof(*record));
-  return TURBO_OK;
+  if (record == NULL) status = TURBO_EINVAL;
+  else memset(record, 0, sizeof(*record));
+  turbo_mutex_unlock(&fixture->mutex);
+  return status;
 }
 
 static int fake_shutdown(void *user) {
   readiness_contract_fixture *fixture = (readiness_contract_fixture *)user;
   fake_check_reentrant(fixture);
+  fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_SHUTDOWN);
   return TURBO_OK;
 }
 
-static const turbo_readiness_backend_ops fake_backend_ops = {
-    fake_register_resource, fake_arm, fake_unarm, fake_close, fake_shutdown};
+static const turbo_readiness_backend_ops fake_backend_ops = {fake_register_resource, fake_arm,
+                                                             fake_unarm, fake_close, fake_shutdown};
 
 static readiness_contract_fixture *fake_create(turbo_readiness_config config,
-                                               turbo_readiness_reactor *reactor,
-                                               int *status) {
+                                               turbo_readiness_reactor *reactor, int *status) {
   readiness_contract_fixture *fixture;
   if (reactor != NULL) reactor->impl = NULL;
   if (status == NULL) return NULL;
@@ -130,27 +158,54 @@ static readiness_contract_fixture *fake_create(turbo_readiness_config config,
     return NULL;
   }
   fixture->reactor = reactor;
-  atomic_init(&fixture->close_calls, 0u);
-  atomic_init(&fixture->unarm_calls, 0u);
   atomic_init(&fixture->reentrant_checks, 0u);
-  *status = turbo_readiness_reactor_init_backend(
-      reactor, &config, &fake_backend_ops, fixture);
+  turbo_mutex_init(&fixture->mutex);
+  turbo_cond_init(&fixture->changed);
+  if (fixture->mutex == NULL || fixture->changed == NULL) {
+    turbo_cond_destroy(&fixture->changed);
+    turbo_mutex_destroy(&fixture->mutex);
+    free(fixture);
+    *status = TURBO_ENOMEM;
+    return NULL;
+  }
+  *status = turbo_readiness_reactor_init_backend(reactor, &config, &fake_backend_ops, fixture);
   if (*status != TURBO_OK) {
+    turbo_cond_destroy(&fixture->changed);
+    turbo_mutex_destroy(&fixture->mutex);
     free(fixture);
     return NULL;
   }
+  fixture->records =
+      (readiness_fake_record *)calloc(config.registration_capacity, sizeof(*fixture->records));
+  if (fixture->records == NULL) {
+    (void)turbo_readiness_reactor_shutdown(reactor);
+    (void)turbo_readiness_reactor_destroy(reactor);
+    turbo_cond_destroy(&fixture->changed);
+    turbo_mutex_destroy(&fixture->mutex);
+    free(fixture);
+    *status = TURBO_ENOMEM;
+    return NULL;
+  }
+  fixture->record_capacity = config.registration_capacity;
   return fixture;
 }
 
-static void fake_destroy(readiness_contract_fixture *fixture) { free(fixture); }
+static void fake_destroy(readiness_contract_fixture *fixture) {
+  free(fixture->records);
+  turbo_cond_destroy(&fixture->changed);
+  turbo_mutex_destroy(&fixture->mutex);
+  free(fixture);
+}
 
-static int fake_emit_resource(readiness_contract_fixture *fixture,
-                              intptr_t native_resource,
+static int fake_emit_resource(readiness_contract_fixture *fixture, intptr_t native_resource,
                               turbo_readiness_events events) {
+  uint64_t token = 0;
+  turbo_mutex_lock(&fixture->mutex);
   readiness_fake_record *record = fake_find_resource(fixture, native_resource);
-  if (record == NULL || record->events == 0) return TURBO_OK;
-  return turbo_readiness_backend_dispatch(fixture->reactor, record->token,
-                                          events, TURBO_OK);
+  if (record != NULL && record->events != 0) token = record->token;
+  turbo_mutex_unlock(&fixture->mutex);
+  return token == 0 ? TURBO_OK
+                    : turbo_readiness_backend_dispatch(fixture->reactor, token, events, TURBO_OK);
 }
 
 static int fake_emit_token(readiness_contract_fixture *fixture, uint64_t token,
@@ -164,38 +219,87 @@ static int fake_fail_backend(readiness_contract_fixture *fixture, int status) {
 
 static uint64_t fake_token_for_resource(readiness_contract_fixture *fixture,
                                         intptr_t native_resource) {
-  readiness_fake_record *record = fake_find_resource(fixture, native_resource);
-  return record != NULL ? record->token : 0;
+  readiness_fake_record *record;
+  uint64_t token;
+  turbo_mutex_lock(&fixture->mutex);
+  record = fake_find_resource(fixture, native_resource);
+  token = record != NULL ? record->token : 0;
+  turbo_mutex_unlock(&fixture->mutex);
+  return token;
 }
 
 static void fake_fail_next_arm(readiness_contract_fixture *fixture, int status) {
+  turbo_mutex_lock(&fixture->mutex);
   fixture->next_arm_error = status;
+  turbo_mutex_unlock(&fixture->mutex);
 }
 
 static size_t fake_backend_close_calls(readiness_contract_fixture *fixture) {
-  return atomic_load(&fixture->close_calls);
+  size_t calls;
+  turbo_mutex_lock(&fixture->mutex);
+  calls = fixture->hook_calls[READINESS_CONTRACT_HOOK_CLOSE];
+  turbo_mutex_unlock(&fixture->mutex);
+  return calls;
 }
 
 static size_t fake_backend_unarm_calls(readiness_contract_fixture *fixture) {
-  return atomic_load(&fixture->unarm_calls);
+  size_t calls;
+  turbo_mutex_lock(&fixture->mutex);
+  calls = fixture->hook_calls[READINESS_CONTRACT_HOOK_UNARM];
+  turbo_mutex_unlock(&fixture->mutex);
+  return calls;
 }
 
-static size_t fake_backend_reentrant_checks(
-    readiness_contract_fixture *fixture) {
+static size_t fake_backend_reentrant_checks(readiness_contract_fixture *fixture) {
   return atomic_load(&fixture->reentrant_checks);
 }
 
+static void fake_block_hook(readiness_contract_fixture *fixture, readiness_contract_hook hook) {
+  turbo_mutex_lock(&fixture->mutex);
+  fixture->hook_blocked[hook] = 1;
+  turbo_mutex_unlock(&fixture->mutex);
+}
+
+static void fake_release_hook(readiness_contract_fixture *fixture, readiness_contract_hook hook) {
+  turbo_mutex_lock(&fixture->mutex);
+  fixture->hook_blocked[hook] = 0;
+  turbo_cond_broadcast(&fixture->changed);
+  turbo_mutex_unlock(&fixture->mutex);
+}
+
+static int fake_wait_hook_calls(readiness_contract_fixture *fixture, readiness_contract_hook hook,
+                                size_t calls, uint64_t timeout_ns) {
+  int status = TURBO_OK;
+  turbo_mutex_lock(&fixture->mutex);
+  while (fixture->hook_calls[hook] < calls && status == TURBO_OK)
+    status = turbo_cond_timedwait(&fixture->changed, &fixture->mutex, timeout_ns);
+  turbo_mutex_unlock(&fixture->mutex);
+  return status;
+}
+
+static uint64_t fake_hook_last_sequence(readiness_contract_fixture *fixture,
+                                        readiness_contract_hook hook) {
+  uint64_t sequence;
+  turbo_mutex_lock(&fixture->mutex);
+  sequence = fixture->hook_last_sequence[hook];
+  turbo_mutex_unlock(&fixture->mutex);
+  return sequence;
+}
+
 const readiness_contract_factory *readiness_contract_factory_get(void) {
-  static const readiness_contract_factory factory = {
-      fake_create,
-      fake_destroy,
-      fake_emit_resource,
-      fake_emit_token,
-      fake_fail_backend,
-      fake_token_for_resource,
-      fake_fail_next_arm,
-      fake_backend_close_calls,
-      fake_backend_unarm_calls,
-      fake_backend_reentrant_checks};
+  static const readiness_contract_factory factory = {fake_create,
+                                                     fake_destroy,
+                                                     fake_emit_resource,
+                                                     fake_emit_token,
+                                                     fake_fail_backend,
+                                                     fake_token_for_resource,
+                                                     fake_fail_next_arm,
+                                                     fake_backend_close_calls,
+                                                     fake_backend_unarm_calls,
+                                                     fake_backend_reentrant_checks,
+                                                     fake_block_hook,
+                                                     fake_release_hook,
+                                                     fake_wait_hook_calls,
+                                                     fake_hook_last_sequence};
   return &factory;
 }
