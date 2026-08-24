@@ -18,4 +18,12 @@ cmake_dependent_option(BUILD_BENCHMARKS "Build benchmark executables" ON
 option(CFLOW_ENABLE_MINICORO
        "Build the optional minicoro-backed CFlow Resumable adapter" OFF)
 
+option(TURBO_ENABLE_EPOLL_READINESS
+       "Enable the Linux epoll readiness backend" OFF)
+if(TURBO_ENABLE_EPOLL_READINESS AND
+   NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  message(FATAL_ERROR
+          "TURBO_ENABLE_EPOLL_READINESS is supported only on Linux")
+endif()
+
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)

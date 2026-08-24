@@ -78,7 +78,11 @@ jobs:
           fi
 
       - name: Configure
-        run: cmake --preset linux-release-user
+        shell: bash
+        run: |
+          cmake --preset linux-release-user
+          grep -Fx 'TURBO_ENABLE_EPOLL_READINESS:BOOL=ON' \
+            build/linux-gcc-release/CMakeCache.txt
 
       - name: Build
         run: cmake --build --preset linux-release-user

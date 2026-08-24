@@ -21,6 +21,7 @@
 #include <cflow/actor.h>
 #include <cflow/timer_event.h>
 #include <cflow/sources.h>
+#include <cflow/readiness.h>
 #include <cflow/temporal.h>
 #include <cflow/reactive.h>
 #include <cflow/adapters.h>
