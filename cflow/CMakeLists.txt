@@ -54,6 +54,7 @@ add_library(${TARGET_NAME}
   src/stream.c
   src/subrun.c
   src/timer_queue.c
+  src/timer_event.c
   src/verify.c)
 
 cmake_config_target(
