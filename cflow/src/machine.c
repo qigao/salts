@@ -311,8 +311,8 @@ static cflow_machine_status validate_transitions(
     return CFLOW_MACHINE_OK;
 }
 
-/* O(states log transitions + transitions) over source-sorted rows; the
- * exact-sized visited set and queue never reach the data path. */
+/* O(states log transitions + transitions log states) over source-sorted rows;
+ * the exact-sized visited set and queue never reach the data path. */
 static cflow_machine_status validate_reachability(
     const cflow_machine_impl *impl) {
     bool *reachable;

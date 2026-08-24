@@ -79,6 +79,35 @@ suite("CFlow typed Machine IR") {
 
         cflow_machine_destroy(&machine);
         check_null(machine.impl);
+        cflow_machine_destroy(&machine);
+        check_null(machine.impl);
+    }
+
+    it("sorts multiple transitions by source Event and priority") {
+        cflow_machine_state states[3];
+        cflow_event_type events[1];
+        cflow_machine_guard guards[1];
+        cflow_machine_action actions[1];
+        cflow_machine_transition transitions[2];
+        cflow_machine_definition definition = valid_definition(
+            states, events, guards, actions, transitions);
+        states[2] = (cflow_machine_state){
+            30u, &cmeta_type_long, CFLOW_MACHINE_STATE_DONE};
+        transitions[1] = transitions[0];
+        transitions[1].target = 30u;
+        transitions[1].priority = 3u;
+        definition.state_count = 3u;
+        definition.transition_count = 2u;
+        {
+            cflow_machine machine = {0};
+            check_equal(cflow_machine_build(&machine, &definition),
+                        CFLOW_MACHINE_OK);
+            check_equal(cflow_machine_transition_at(&machine, 0u)->priority,
+                        (uint32_t)3u);
+            check_equal(cflow_machine_transition_at(&machine, 1u)->priority,
+                        (uint32_t)7u);
+            cflow_machine_destroy(&machine);
+        }
     }
 
     it("rejects an empty state set without publishing a partial machine") {
@@ -292,6 +321,26 @@ suite("CFlow typed Machine IR") {
         check_equal(build_status(&definition), CFLOW_MACHINE_INVALID_CONTRACT);
     }
 
+    it("rejects guards without total deterministic no-alias properties") {
+        cflow_machine_state states[2]; cflow_event_type events[1];
+        cflow_machine_guard guards[1]; cflow_machine_action actions[1];
+        cflow_machine_transition transitions[1];
+        cflow_machine_definition definition = valid_definition(
+            states, events, guards, actions, transitions);
+        guards[0].properties = CMETA_PROP_NO_ALIAS;
+        check_equal(build_status(&definition), CFLOW_MACHINE_INVALID_CONTRACT);
+    }
+
+    it("rejects a guard Event payload mismatch") {
+        cflow_machine_state states[2]; cflow_event_type events[1];
+        cflow_machine_guard guards[1]; cflow_machine_action actions[1];
+        cflow_machine_transition transitions[1];
+        cflow_machine_definition definition = valid_definition(
+            states, events, guards, actions, transitions);
+        guards[0].event_type = &cmeta_type_int;
+        check_equal(build_status(&definition), CFLOW_MACHINE_TYPE_MISMATCH);
+    }
+
     it("rejects declarations whose Event type is unknown") {
         cflow_machine_state states[2]; cflow_event_type events[1];
         cflow_machine_guard guards[1]; cflow_machine_action actions[1];
@@ -313,6 +362,19 @@ suite("CFlow typed Machine IR") {
             states, events, guards, actions, transitions);
         actions[0].properties = CMETA_PROP_NO_ALIAS;
         check_equal(build_status(&definition), CFLOW_MACHINE_INVALID_CONTRACT);
+    }
+
+    it("rejects action source and Event payload mismatches") {
+        cflow_machine_state states[2]; cflow_event_type events[1];
+        cflow_machine_guard guards[1]; cflow_machine_action actions[1];
+        cflow_machine_transition transitions[1];
+        cflow_machine_definition definition = valid_definition(
+            states, events, guards, actions, transitions);
+        actions[0].source_type = &cmeta_type_long;
+        check_equal(build_status(&definition), CFLOW_MACHINE_TYPE_MISMATCH);
+        definition = valid_definition(states, events, guards, actions, transitions);
+        actions[0].event_type = &cmeta_type_int;
+        check_equal(build_status(&definition), CFLOW_MACHINE_TYPE_MISMATCH);
     }
 
     it("rejects an action contract that is both total and may-fail") {
@@ -392,6 +454,40 @@ suite("CFlow typed Machine IR") {
         actions[0].output_type = &cmeta_type_int;
         actions[0].output_event_id = 100u;
         check_equal(build_status(&definition), CFLOW_MACHINE_TYPE_MISMATCH);
+    }
+
+    it("rejects an Event observation for an unknown output Event") {
+        cflow_machine_state states[2]; cflow_event_type events[1];
+        cflow_machine_guard guards[1]; cflow_machine_action actions[1];
+        cflow_machine_transition transitions[1];
+        cflow_machine_definition definition = valid_definition(
+            states, events, guards, actions, transitions);
+        actions[0].observation = CFLOW_MACHINE_ACTION_EVENT;
+        actions[0].output_type = &cmeta_type_bool;
+        actions[0].output_event_id = 999u;
+        check_equal(build_status(&definition), CFLOW_MACHINE_UNKNOWN_EVENT);
+    }
+
+    it("rejects an unknown observation kind") {
+        cflow_machine_state states[2]; cflow_event_type events[1];
+        cflow_machine_guard guards[1]; cflow_machine_action actions[1];
+        cflow_machine_transition transitions[1];
+        cflow_machine_definition definition = valid_definition(
+            states, events, guards, actions, transitions);
+        actions[0].observation = (cflow_machine_action_observation)99;
+        check_equal(build_status(&definition),
+                    CFLOW_MACHINE_INVALID_OBSERVATION);
+    }
+
+    it("rejects an output Event ID on a VALUE observation") {
+        cflow_machine_state states[2]; cflow_event_type events[1];
+        cflow_machine_guard guards[1]; cflow_machine_action actions[1];
+        cflow_machine_transition transitions[1];
+        cflow_machine_definition definition = valid_definition(
+            states, events, guards, actions, transitions);
+        actions[0].output_event_id = 100u;
+        check_equal(build_status(&definition),
+                    CFLOW_MACHINE_INVALID_OBSERVATION);
     }
 
     it("rejects payload fields on a NONE observation") {

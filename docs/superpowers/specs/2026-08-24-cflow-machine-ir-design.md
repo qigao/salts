@@ -175,8 +175,9 @@ count bounds, unknown reference/type mismatch classes, contract contradictions,
 all observation modes, equal-priority ambiguity, terminal outgoing edges,
 unreachable states, unused declarations, transactional failure, immutable
 queries, and C++ header compatibility. Reachability uses source-sorted ranges
-in `O(states log transitions + transitions)` time; declaration-use validation
-is `O(transitions log declarations + declarations)`. Lean tests include a full
+in `O(states log transitions + transitions log states)` time;
+declaration-use validation is
+`O(transitions log declarations + declarations)`. Lean tests include a full
 `Machine.Valid` witness, selection order, invalid action results, action failure
 consumption, initial/runtime terminal absorption, typed state-value
 preservation, determinism, and trace contents. Release, ASan, complete CTest,

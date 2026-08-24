@@ -21,6 +21,7 @@ example : stateKindRows.map (fun row => row.kind) = MachineStateKind.all := by
 example : actionObservationRows.map (fun row => row.kind) =
     MachineActionObservationKind.all := by decide
 example : MachineSchema.validate = .ok () := by rfl
+example : MachineSchema.ConstructorComplete := MachineSchema.wellFormed.2
 example : renderedSchemaHasRequiredFacts = true := by native_decide
 
 end CMetaCFlowCalculus.Tests.MachineSchema

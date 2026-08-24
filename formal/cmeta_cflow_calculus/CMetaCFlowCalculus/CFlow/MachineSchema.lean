@@ -84,9 +84,20 @@ def validate : Except MachineSchemaError Unit :=
     | .error failure => .error failure
     | .ok () => rowsValid actionObservationRows
 
-def WellFormed : Prop := validate = .ok ()
+def ConstructorComplete : Prop :=
+  (∀ kind, kind ∈ MachineStateKind.all) ∧
+  (∀ kind, kind ∈ MachineActionObservationKind.all)
 
-theorem wellFormed : WellFormed := by rfl
+def WellFormed : Prop := validate = .ok () ∧ ConstructorComplete
+
+theorem wellFormed : WellFormed := by
+  constructor
+  · rfl
+  · constructor
+    · intro kind
+      cases kind <;> simp [MachineStateKind.all]
+    · intro kind
+      cases kind <;> simp [MachineActionObservationKind.all]
 
 end MachineSchema
 
