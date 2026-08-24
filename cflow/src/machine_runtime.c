@@ -715,6 +715,7 @@ static bool schedule_machine_task(cflow_machine_instance_impl *impl) {
         return true;
     }
     if (impl->worker_phase == CFLOW_MACHINE_WORKER_SCHEDULED) {
+        impl->rerun = true;
         turbo_mutex_unlock(&impl->lock);
         return true;
     }
