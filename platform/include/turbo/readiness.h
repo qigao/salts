@@ -66,7 +66,9 @@ TURBO_PLATFORM_C_API int turbo_readiness_reactor_init(turbo_readiness_reactor *r
  * that terminal delivery. Registrations remain owned by their handles and must
  * be closed before destroy. A failed shutdown preserves the reactor and may be
  * retried; destroy returns TURBO_EBUSY until backend shutdown succeeds.
- * Repeated shutdown after success returns TURBO_EALREADY.
+ * Shutdown invoked from any callback owned by this reactor returns
+ * TURBO_EBUSY without committing a state transition. Repeated shutdown after
+ * success returns TURBO_EALREADY.
  */
 TURBO_PLATFORM_C_API int turbo_readiness_reactor_shutdown(turbo_readiness_reactor *reactor);
 TURBO_PLATFORM_C_API int turbo_readiness_reactor_destroy(turbo_readiness_reactor *reactor);
