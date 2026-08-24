@@ -14,7 +14,7 @@
 #include "tinytest.h"
 
 #ifndef __cplusplus
-#include "tinymeta/tinytest_traits.h"
+#include "tinymeta/traits.h"
 #endif
 
 #ifndef TINYMOCk_ASSERT

@@ -126,7 +126,7 @@ extern "C" {
 #define TTEST_COLOR_BOLD__ "\x1B[1m"
 #define TTEST_COLOR_MAGENTA__ "\x1B[35m"
 
-#include "tinymeta/tinytest_internal.h"
+#include "tinymeta/internal.h"
 
 #if defined(__cplusplus)
   #define TTEST_CONSTRUCTOR__(fn)                                                                  \
@@ -620,8 +620,8 @@ int main(int argc, char **argv) {
   benchmark_ops(title, samples, operations_per_sample)
 
 #if defined(TTEST_HAS_C11_GENERIC__)
-  #include "tinymeta/tinytest_traits.h"
-  #include "tinymeta/tinytest_cmeta.h"
+  #include "tinymeta/traits.h"
+  #include "tinymeta/cmeta.h"
 #endif
 
 /* Use before_all()/after_all() as the cross-language names for one-time setup/teardown hooks. */

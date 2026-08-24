@@ -2,7 +2,7 @@
 #define TINYTEST_TRAITS_H
 
 #ifdef __cplusplus
-#error "tinymeta/tinytest_traits.h is the strict-C11 trait layer; use tinytest.hpp from C++"
+#error "tinymeta/traits.h is the strict-C11 trait layer; use tinytest.hpp from C++"
 #endif
 
 #if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 201112L
@@ -10,7 +10,7 @@
 #endif
 
 #include <stdbool.h>
-#include "tinytest_pp.h"
+#include "pp.h"
 
 /* Public operation tokens used by the generic assertion layer. */
 #define TTEST_EQ 0

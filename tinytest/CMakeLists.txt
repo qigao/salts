@@ -12,10 +12,10 @@ set(tinytest_public_headers
   "${tinytest_include_dir}/tinymock.hpp")
 
 set(tinytest_meta_headers
-  "${tinytest_include_dir}/tinymeta/tinytest_traits.h"
-  "${tinytest_include_dir}/tinymeta/tinytest_pp.h"
-  "${tinytest_include_dir}/tinymeta/tinytest_cmeta.h"
-  "${tinytest_include_dir}/tinymeta/tinytest_internal.h")
+  "${tinytest_include_dir}/tinymeta/traits.h"
+  "${tinytest_include_dir}/tinymeta/pp.h"
+  "${tinytest_include_dir}/tinymeta/cmeta.h"
+  "${tinytest_include_dir}/tinymeta/internal.h")
 
 set(tinytest_sources
   "${tinytest_source_dir}/tinytest.c"

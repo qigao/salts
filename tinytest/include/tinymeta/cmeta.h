@@ -2,11 +2,11 @@
 #define TINYTEST_CMETA_H
 
 #if !defined(TINYTEST_H) || !defined(TINYTEST_TRAITS_H)
-#error "tinytest_cmeta.h is included by tinytest.h and is not a standalone header"
+#error "cmeta.h is included by tinytest.h and is not a standalone header"
 #endif
 
 #ifdef __cplusplus
-#error "tinytest_cmeta.h requires strict C11 _Generic support"
+#error "cmeta.h requires strict C11 _Generic support"
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
