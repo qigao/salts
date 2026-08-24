@@ -222,7 +222,7 @@ git commit -m "refactor(tlog): separate raw and formatted logging"
 ### Task 3: Make TinyMeta the only TinyTest PP kernel
 
 **Files:**
-- Modify: `tinytest/include/tinymeta/tinytest_pp.h`
+- Modify: `tinytest/include/tinymeta/pp.h`
 - Modify: `tinytest/include/tinytest.h`
 - Modify invocation sites reported by `git grep -n 'TT_invoke(' -- tinytest`.
 - Test: `tinytest/test/regression_fixes.c`
@@ -269,7 +269,7 @@ Expected before implementation: compile failure because `TT_invoke0` is not defi
 
 - [ ] **Step 2: Add canonical selectors to TinyMeta**
 
-Add to `tinymeta/tinytest_pp.h`:
+Add to `tinymeta/pp.h`:
 
 ```c
 #define TTEST_PP_OVERLOAD_I__(prefix, count) TTEST_PP_CAT__(prefix, count)
@@ -480,7 +480,7 @@ git grep -n '__VA_OPT__' -- ':!vendor/**' || true
 git grep -nE 'FMT_(NARGS|WRAP_[0-9]+|WRAP_N)|TTEST_COUNT_ARGS__|TTEST_PATTERN_MATCH__' -- ':!docs/**' || true
 ```
 
-Only `cmeta/include/cmeta/pp.h` and `tinytest/include/tinymeta/tinytest_pp.h` may contain generic numbered iteration/count/select families. The final command must return no matches.
+Only `cmeta/include/cmeta/pp.h` and `tinytest/include/tinymeta/pp.h` may contain generic numbered iteration/count/select families. The final command must return no matches.
 
 - [ ] **Step 3: Record literal audit results**
 
@@ -490,7 +490,7 @@ Create `docs/superpowers/plans/2026-08-22-pp-variadic-surface-cleanup-audit.md` 
 # PP/Variadic Cleanup Audit
 ## Canonical kernels
 - cmeta/include/cmeta/pp.h
-- tinytest/include/tinymeta/tinytest_pp.h
+- tinytest/include/tinymeta/pp.h
 ## Removed business-layer engines
 ## Remaining numbered PP families
 ## Remaining comma-elision / __VA_OPT__ uses
