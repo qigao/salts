@@ -12,6 +12,45 @@ extern "C" {
 
 typedef void (*cflow_task_fn)(void *user);
 
+typedef enum cflow_executor_lifecycle {
+    CFLOW_EXECUTOR_OPEN = 0,
+    CFLOW_EXECUTOR_CLOSING,
+    CFLOW_EXECUTOR_CLOSED
+} cflow_executor_lifecycle;
+
+typedef enum cflow_executor_shutdown_policy {
+    CFLOW_EXECUTOR_SHUTDOWN_DRAIN = 0,
+    CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING
+} cflow_executor_shutdown_policy;
+
+typedef enum cflow_executor_post_status {
+    CFLOW_EXECUTOR_POST_ACCEPTED = 0,
+    CFLOW_EXECUTOR_POST_INVALID_ARGUMENT,
+    CFLOW_EXECUTOR_POST_FULL,
+    CFLOW_EXECUTOR_POST_CLOSED,
+    CFLOW_EXECUTOR_POST_WOULD_BLOCK
+} cflow_executor_post_status;
+
+typedef enum cflow_executor_wait_status {
+    CFLOW_EXECUTOR_WAIT_IDLE = 0,
+    CFLOW_EXECUTOR_WAIT_PENDING,
+    CFLOW_EXECUTOR_WAIT_INVALID_ARGUMENT,
+    CFLOW_EXECUTOR_WAIT_WOULD_BLOCK
+} cflow_executor_wait_status;
+
+typedef struct cflow_executor_protocol_stats {
+    size_t capacity;
+    size_t accepted;
+    size_t queued;
+    size_t running;
+    size_t completed;
+    size_t cancelled;
+    size_t rejected_full;
+    size_t rejected_closed;
+    size_t rejected_would_block;
+    cflow_executor_lifecycle lifecycle;
+} cflow_executor_protocol_stats;
+
 typedef struct cflow_executor_stats {
     size_t capacity;
     size_t pending;
@@ -37,6 +76,43 @@ enum {
     X(I,R1,bool,get_stats,cflow_executor_stats *,out) \
     X(I,V0,void,destroy,_)
 CMETA_INTERFACE(cflow_executor, CMETA_EXECUTOR_METHODS);
+
+/**
+ * Optional protocol control plane for repository-owned Executor backends.
+ *
+ * post() borrows fn/user until the callback completes or is cancelled and
+ * returns an exact admission result. wait_idle() blocks pool callers until all
+ * accepted work settles, returns PENDING for an explicitly driven Manual
+ * executor, and returns WOULD_BLOCK from the same executor callback. shutdown()
+ * closes admission and selects drain or cancel-pending exactly once. get_stats()
+ * returns an observational snapshot; after WAIT_IDLE it obeys
+ * accepted == completed + cancelled. The control view borrows the executor
+ * backend and becomes invalid when the owning cflow_executor is destroyed.
+ *
+ * Example:
+ *   cflow_executor executor = {0};
+ *   cflow_executor_control control = {0};
+ *   cflow_executor_serial_init(&executor);
+ *   cflow_executor_as_control(&executor, &control);
+ *   cflow_executor_control_post(&control, task, user);
+ *   cflow_executor_control_shutdown(&control, CFLOW_EXECUTOR_SHUTDOWN_DRAIN);
+ *   cflow_executor_control_wait_idle(&control);
+ *   cflow_executor_destroy(&executor);
+ */
+#define CMETA_EXECUTOR_CONTROL_METHODS(X,I) \
+    X(I,R2,cflow_executor_post_status,post,cflow_task_fn,fn,void *,user) \
+    X(I,R0,cflow_executor_wait_status,wait_idle,_) \
+    X(I,R1,bool,shutdown,cflow_executor_shutdown_policy,policy) \
+    X(I,R1,bool,get_stats,cflow_executor_protocol_stats *,out)
+CMETA_INTERFACE(cflow_executor_control, CMETA_EXECUTOR_CONTROL_METHODS);
+
+/**
+ * Bind the protocol control plane to a built-in Manual, Serial, or Worker
+ * executor. `out` must be zero-initialized. Custom implementations, invalid
+ * executors, and a non-empty `out` return false without changing `out`.
+ */
+bool cflow_executor_as_control(cflow_executor *executor,
+                               cflow_executor_control *out);
 
 bool cflow_executor_manual_init(cflow_executor *executor);
 bool cflow_executor_manual_init_with_capacity(cflow_executor *executor,

@@ -14,6 +14,11 @@ typedef struct {
   size_t queue_capacity;
 } turbo_threadpool_config_t;
 
+typedef enum turbo_threadpool_shutdown_policy {
+  TURBO_THREADPOOL_SHUTDOWN_DRAIN = 0,
+  TURBO_THREADPOOL_SHUTDOWN_CANCEL_PENDING
+} turbo_threadpool_shutdown_policy_t;
+
 typedef struct {
   int num_threads;
   size_t queue_capacity;
@@ -35,8 +40,9 @@ TURBO_CONCURRENCY_C_API void turbo_threadpool_destroy(turbo_threadpool_t *pool);
 /**
  * Submit a task, waiting for bounded queue space when necessary.
  *
- * @return TURBO_OK, TURBO_EINVAL for invalid arguments, or TURBO_ESHUTDOWN
- * when the pool no longer accepts work.
+ * @return TURBO_OK, TURBO_EINVAL for invalid arguments, TURBO_ESHUTDOWN when
+ * the pool no longer accepts work, or TURBO_EBUSY when a callback on this pool
+ * would have to wait for the same saturated pool to make progress.
  */
 TURBO_CONCURRENCY_C_API int turbo_threadpool_submit(turbo_threadpool_t *pool,
                                                     turbo_task_fn task,
@@ -50,9 +56,20 @@ TURBO_CONCURRENCY_C_API int turbo_threadpool_submit(turbo_threadpool_t *pool,
 TURBO_CONCURRENCY_C_API int turbo_threadpool_try_submit(turbo_threadpool_t *pool,
                                                         turbo_task_fn task,
                                                         void *arg);
+/** Wait for accepted work to settle, rejecting a wait from this pool's callback. */
+TURBO_CONCURRENCY_C_API int
+turbo_threadpool_wait_status(turbo_threadpool_t *pool);
 TURBO_CONCURRENCY_C_API void turbo_threadpool_wait(turbo_threadpool_t *pool);
+/**
+ * End admission and either drain queued callbacks or settle them as cancelled.
+ * Repeating the selected policy is idempotent; changing it returns TURBO_EBUSY.
+ */
+TURBO_CONCURRENCY_C_API int turbo_threadpool_shutdown_with_policy(
+    turbo_threadpool_t *pool, turbo_threadpool_shutdown_policy_t policy);
 TURBO_CONCURRENCY_C_API void turbo_threadpool_shutdown(turbo_threadpool_t *pool);
 TURBO_CONCURRENCY_C_API int turbo_threadpool_pending(turbo_threadpool_t *pool);
+TURBO_CONCURRENCY_C_API int64_t
+turbo_threadpool_cancelled(turbo_threadpool_t *pool);
 TURBO_CONCURRENCY_C_API int turbo_threadpool_size(turbo_threadpool_t *pool);
 TURBO_CONCURRENCY_C_API size_t turbo_threadpool_capacity(turbo_threadpool_t *pool);
 TURBO_CONCURRENCY_C_API int turbo_threadpool_is_accepting(turbo_threadpool_t *pool);
