@@ -124,8 +124,9 @@ CFlow 本身不依赖 TurboSTL。`TurboUtils::STLStream` 是显式 INTERFACE com
 
 ### Platform / Concurrency — execution substrate
 
-`TurboUtils::Platform` 提供最底层 platform abstraction。`TurboUtils::Concurrency` 在其上
-提供 thread pool、Disruptor 等并发基础能力，并公开依赖 Platform。
+`TurboUtils::Platform` 提供最底层 platform abstraction，并公开依赖 CMake 的
+`Threads::Threads`。`TurboUtils::Concurrency` 在其上提供 thread pool、Disruptor 等并发
+基础能力，并公开依赖 Platform。
 
 CFlow 私有消费 Platform/Concurrency，因此这些 runtime implementation dependencies 不会
 改变 CFlow 的 public semantic dependency：`CFlow -> CMeta`。
@@ -138,7 +139,9 @@ metadata、data binding 或 execution semantics 的第二事实源。
 
 ## 3. CFlow internal architecture
 
-CFlow 当前主链路为：
+CFlow 当前存在两个互补入口：dataflow graph/stream pipeline 与 typed Machine pipeline。
+两者共享 CMeta semantics 和 CFlow runtime，但 Machine 不是从 Normalized Graph 派生的
+第二种表示。
 
 ```mermaid
 flowchart LR
@@ -149,15 +152,20 @@ flowchart LR
     Optimize[Optimize]
     Plan[Primitive IR / Execution Plan]
     Direct[Direct executor]
-    Runtime[Runtime / Scheduler / Reactive]
-    Machine[Typed Machine IR]
+    Runtime[CFlow Run<br/>Runtime / Scheduler / Reactive]
+
+    MachineDef[Typed Machine Definition]
+    MachineBuild[Validate / Normalize]
+    Machine[Immutable Machine IR]
     MachineRuntime[Machine Runtime]
 
     Surface --> Lower --> Normalized
     Normalized --> Analysis --> Optimize --> Plan
     Plan --> Direct
     Plan --> Runtime
-    Normalized --> Machine --> MachineRuntime --> Runtime
+
+    MachineDef --> MachineBuild --> Machine --> MachineRuntime
+    MachineRuntime -. source adapter / demand .-> Runtime
 ```
 
 等价职责流：
@@ -176,7 +184,7 @@ Typed Machine definition
 Immutable Machine IR
         ↓ instance / Event mailbox / executor
 Machine Runtime
-        ↓ source adapter / demand
+        ↓ optional Source adapter / Run demand
 CFlow Run
 ```
 
@@ -226,7 +234,7 @@ TurboParser 当前是独立 package，其现有公共 parser runtime 仍以 `Tur
 | `TurboUtils::CMeta` | none | none | type / semantic metadata |
 | `TurboUtils::CSerde` | none | none | canonical token protocol |
 | `TurboUtils::CBind` | `CMeta`, `CSerde` | none | native data binding |
-| `TurboUtils::Platform` | none | platform libraries | platform abstraction |
+| `TurboUtils::Platform` | `Threads::Threads` | platform implementation | platform abstraction |
 | `TurboUtils::Concurrency` | `Platform` | none | concurrency substrate |
 | `TurboUtils::CFlow` | `CMeta` | `Platform`, `Concurrency` | graph/dataflow execution |
 | `TurboUtils::STL` | `CMeta` | none | container algorithms |
