@@ -32,11 +32,11 @@
 - Consumes: existing `cflow_machine_instance_init_internal()` and transition commit hook.
 - Produces: a test-only/internal commit-boundary hook capable of blocking immediately before arbitration, without changing installed headers.
 
-- [ ] **Step 1: Add a two-party barrier fixture to the Machine runtime test**
+- [x] **Step 1: Add a two-party barrier fixture to the Machine runtime test**
 
 Define a fixture using repository thread/mutex/condition primitives. Its internal hook records entry at the transition boundary, waits until the test thread releases it, and never calls public Machine APIs while holding the fixture lock.
 
-- [ ] **Step 2: Write the cancel-wins test**
+- [x] **Step 2: Write the cancel-wins test**
 
 The test sends one Event, waits until the executor reaches the boundary, calls `cflow_machine_instance_cancel()` from the test thread, releases the executor, waits for quiescence, and asserts:
 
@@ -50,7 +50,7 @@ check_equal(stats.accepted,
 check_equal(stats.in_flight, (size_t)0u);
 ```
 
-- [ ] **Step 3: Run the focused test and record RED**
+- [x] **Step 3: Run the focused test and record RED**
 
 Run:
 
@@ -62,11 +62,11 @@ ctest --preset win-release-user -R '^cflow_machine_runtime_test$' --output-on-fa
 
 The new cancel-wins case must fail on the copied state or completed counter before the runtime fix.
 
-- [ ] **Step 4: Write the commit-wins test harness path**
+- [x] **Step 4: Write the commit-wins test harness path**
 
 Let the executor cross the commit boundary before issuing cancel, then assert one target-state commit, at most one downstream VALUE, no processing of a second queued Event, and quiescent accounting identity.
 
-- [ ] **Step 5: Commit the RED tests**
+- [x] **Step 5: Commit the RED tests**
 
 Commit only the internal test hook and deterministic tests with message:
 
@@ -85,7 +85,7 @@ test(cflow): expose machine cancel commit race
 - Consumes: the deterministic tests from Task 1 and existing public Machine runtime functions unchanged.
 - Produces: internal `control_lifecycle` and `worker_phase` state plus one locked `begin_commit` decision.
 
-- [ ] **Step 1: Replace overlapping execution booleans with explicit internal phases**
+- [x] **Step 1: Replace overlapping execution booleans with explicit internal phases**
 
 Introduce internal enums equivalent to:
 
@@ -107,19 +107,19 @@ typedef enum cflow_machine_worker_phase {
 
 Keep compatibility booleans only where public statistics require them, derive them from the authoritative phase under the lock, and reject impossible transitions internally.
 
-- [ ] **Step 2: Add the locked commit decision**
+- [x] **Step 2: Add the locked commit decision**
 
 After action completion and target validation, acquire the instance mutex once. If lifecycle is `CANCEL_REQUESTED`, clear staged readiness, decrement in-flight once, increment cancelled once, and leave source state untouched. Otherwise change worker phase from `EXECUTING` to `COMMITTING` and perform state ID/value, output readiness, and completion accounting in the same critical section.
 
-- [ ] **Step 3: Make cancel use the same phase fact source**
+- [x] **Step 3: Make cancel use the same phase fact source**
 
 Under the instance mutex, stop admission first. For `EXECUTING`, publish `CANCEL_REQUESTED`; for `COMMITTING`, preserve the already-linearized commit and prevent subsequent work. Extract wakers under the lock and invoke them only after unlocking.
 
-- [ ] **Step 4: Preserve close semantics**
+- [x] **Step 4: Preserve close semantics**
 
 Close changes `OPEN` to `CLOSE_REQUESTED`. An executing or committing turn completes once; queued Events are cancelled; VALUE produces VALUE_AND_DONE before terminal settlement. Repeated close/cancel calls remain idempotent and cancellation dominates a prior close only before commit linearizes.
 
-- [ ] **Step 5: Run focused GREEN tests**
+- [x] **Step 5: Run focused GREEN tests**
 
 Run:
 
@@ -130,7 +130,7 @@ ctest --preset win-release-user -R '^cflow_machine_runtime_test$' --output-on-fa
 
 Both deterministic race cases, reentrant cancel, reentrant close, queued cancellation, and concurrent producer accounting must pass.
 
-- [ ] **Step 6: Commit the runtime fix**
+- [x] **Step 6: Commit the runtime fix**
 
 Commit with message:
 
@@ -150,19 +150,19 @@ fix(cflow): linearize machine cancel and commit
 - Consumes: the linearized Machine runtime from Task 2.
 - Produces: public documentation of overlapping cancel semantics and adjacent regression evidence.
 
-- [ ] **Step 1: Document the linearization rule**
+- [x] **Step 1: Document the linearization rule**
 
 State that cancel winning before commit discards staged logical state/output, while commit winning first permits exactly one commit and then prevents later Events. Explicitly state that arbitrary external callback effects are not rolled back.
 
-- [ ] **Step 2: Add Actor failure/stop regression coverage**
+- [x] **Step 2: Add Actor failure/stop regression coverage**
 
 Exercise Actor stop as close semantics and Actor failure as cancellation semantics. Assert exact lifecycle state, first error, Machine accounting identity, and no post-terminal values.
 
-- [ ] **Step 3: Add hierarchy timer ordering coverage**
+- [x] **Step 3: Add hierarchy timer ordering coverage**
 
 For a scoped timer on an exited state, prove it is cancelled exactly once after the winning commit; for cancel-wins, prove the source state and active scope remain logically unchanged until terminal cleanup closes the timer queue.
 
-- [ ] **Step 4: Run adjacent CFlow tests**
+- [x] **Step 4: Run adjacent CFlow tests**
 
 Run:
 
@@ -171,7 +171,7 @@ cmake --build --preset win-release-user --target cflow_machine_runtime_test cflo
 ctest --preset win-release-user -R '^cflow_(machine_runtime|actor|machine_hierarchy|timer_event|event_mailbox|runtime)_test$' --output-on-failure
 ```
 
-- [ ] **Step 5: Commit the contract propagation**
+- [x] **Step 5: Commit the contract propagation**
 
 Commit with message:
 
@@ -188,7 +188,7 @@ docs(cflow): define overlapping machine cancellation
 - Consumes: all prior tasks.
 - Produces: fresh evidence suitable for PR review and merge.
 
-- [ ] **Step 1: Run Lean verification sequentially**
+- [x] **Step 1: Run Lean verification sequentially**
 
 From `formal/cmeta_cflow_calculus`, run:
 
@@ -198,7 +198,7 @@ lake test
 rg.exe -n '\b(sorry|axiom|admit|unsafe)\b' CMetaCFlowCalculus/CFlow/MachineRuntime.lean CMetaCFlowCalculus/Proofs/MachineRuntime.lean Test/PhaseATests/MachineRuntime.lean
 ```
 
-- [ ] **Step 2: Run Windows verification**
+- [x] **Step 2: Run Windows verification**
 
 Run the adjacent command from Task 3 with `win-release-user`, then run:
 
@@ -210,7 +210,7 @@ ctest --preset win-dev-user -R '^cflow_(machine_runtime|actor|machine_hierarchy|
 
 `win-dev-user` enables the repository's AddressSanitizer configuration. Record exact test counts, failures, and unsupported sanitizer limitations.
 
-- [ ] **Step 3: Run remote Linux verification**
+- [x] **Step 3: Run remote Linux verification**
 
 On `root@eu`, fetch the exact commit, then run:
 
@@ -222,14 +222,22 @@ ctest --preset linux-dev-user -R '^cflow_(machine_runtime|actor|machine_hierarch
 
 Run additional UBSan/TSan jobs only through repository presets or CI jobs that explicitly enable them. An unavailable tool is reported as residual risk, not replaced by ordinary unit tests.
 
-- [ ] **Step 4: Review the final diff and affected graph**
+- [x] **Step 4: Review the final diff and affected graph**
 
 Run `codegraph affected` for the changed runtime/header/test files, inspect `git diff --check`, confirm no public ABI or generated artifact drift, and verify the worktree contains only intended files.
 
-- [ ] **Step 5: Commit verification-only documentation if changed**
+- [x] **Step 5: Commit verification-only documentation if changed**
 
 Use message:
 
 ```text
 test(cflow): verify machine commit arbitration
 ```
+
+### Verification evidence
+
+- Lean: `lake build` completed 46 jobs, `lake test` exited successfully, and the proof sources contain no `sorry`, `axiom`, `admit`, or `unsafe` escape.
+- Windows Release: the six adjacent CFlow tests passed 6/6 at `f2405776b1d51cef3de859aeca4b7290a08928c5`; the focused Machine runtime and Actor tests also passed 20 consecutive runs each.
+- Windows AddressSanitizer: the same six-test matrix passed 6/6 after adding the installed MSVC ASan runtime directory to the test process `PATH`.
+- Remote Linux AddressSanitizer: `root@eu` tested exact commit `f2405776b1d51cef3de859aeca4b7290a08928c5`; all six tests passed `--repeat until-fail:20`, for 120 successful process runs.
+- CodeGraph: the refreshed affected-test set contains `cflow/tests/cflow_machine_runtime_test.c`; the adjacent Actor, hierarchy, timer, mailbox, and Runtime tests were retained as explicit protocol regressions.
