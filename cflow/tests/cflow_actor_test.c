@@ -5,10 +5,11 @@
 #include "tinytest.h"
 
 #include <stdatomic.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
-    ACTOR_EDGE_EVENT_TYPES = 2,
+    ACTOR_EDGE_EVENT_TYPES = 4,
     ACTOR_EDGE_OBSERVATIONS = 256,
     ACTOR_TEST_TIMEOUT_MS = 5000
 };
@@ -55,8 +56,14 @@ typedef struct actor_edge_probe {
     atomic_int self_send_status;
     atomic_int stop_status;
     atomic_int seen[ACTOR_EDGE_OBSERVATIONS];
+    atomic_int pair_seen[ACTOR_EDGE_EVENT_TYPES][ACTOR_EDGE_OBSERVATIONS];
     int observations[ACTOR_EDGE_OBSERVATIONS];
 } actor_edge_probe;
+
+typedef struct actor_edge_action_context {
+    actor_edge_probe *probe;
+    cflow_event_id event_id;
+} actor_edge_action_context;
 
 typedef struct actor_edge_fixture {
     cflow_machine machine;
@@ -65,6 +72,7 @@ typedef struct actor_edge_fixture {
     cflow_actor actor;
     cflow_machine_guard_binding guard_bindings[ACTOR_EDGE_EVENT_TYPES];
     cflow_machine_action_binding action_bindings[ACTOR_EDGE_EVENT_TYPES];
+    actor_edge_action_context action_contexts[ACTOR_EDGE_EVENT_TYPES];
     actor_edge_probe probe;
     int initial_state;
 } actor_edge_fixture;
@@ -83,6 +91,7 @@ typedef struct actor_sender_context {
     atomic_int failed;
     atomic_int stale;
     atomic_int unexpected;
+    atomic_bool completed;
 } actor_sender_context;
 
 static bool wait_until_true(atomic_bool *value) {
@@ -158,7 +167,9 @@ static bool actor_edge_action(void *user,
                               void *out_target_state,
                               void *out_observation,
                               const char **out_error) {
-    actor_edge_probe *probe = (actor_edge_probe *)user;
+    actor_edge_action_context *context =
+        (actor_edge_action_context *)user;
+    actor_edge_probe *probe = context != NULL ? context->probe : NULL;
     const int payload = event != NULL ? *(const int *)event : -1;
     if (probe == NULL || state == NULL || event == NULL ||
         out_target_state == NULL || out_observation == NULL ||
@@ -180,6 +191,12 @@ static bool actor_edge_action(void *user,
     if (atomic_load(&probe->fail_action)) {
         *out_error = "actor edge action failure";
         return false;
+    }
+    if (context->event_id >= 100u &&
+        context->event_id < 100u + ACTOR_EDGE_EVENT_TYPES &&
+        payload >= 0 && payload < ACTOR_EDGE_OBSERVATIONS) {
+        atomic_fetch_add(
+            &probe->pair_seen[context->event_id - 100u][payload], 1);
     }
     if (atomic_load(&probe->self_send) && payload == 1 &&
         !atomic_exchange(&probe->self_sent, true)) {
@@ -265,8 +282,10 @@ static bool actor_edge_fixture_init(actor_edge_fixture *fixture,
             10u, event_id, guard_id, action_id, 10u, 1u};
         fixture->guard_bindings[index] = (cflow_machine_guard_binding){
             guard_id, actor_edge_guard, &fixture->probe};
+        fixture->action_contexts[index] = (actor_edge_action_context){
+            &fixture->probe, event_id};
         fixture->action_bindings[index] = (cflow_machine_action_binding){
-            action_id, actor_edge_action, &fixture->probe};
+            action_id, actor_edge_action, &fixture->action_contexts[index]};
     }
     definition = (cflow_machine_definition){
         states, 1u, 10u,
@@ -315,13 +334,9 @@ static void actor_sender(void *user) {
     actor_sender_context *context = (actor_sender_context *)user;
     int index;
     if (context == NULL) return;
-    for (size_t elapsed = 0u;
-         context->go != NULL && !atomic_load(context->go) &&
-         elapsed < ACTOR_TEST_TIMEOUT_MS;
-         ++elapsed)
-        turbo_thread_yield();
-    if (context->go != NULL && !atomic_load(context->go)) {
+    if (context->go != NULL && !wait_until_true(context->go)) {
         atomic_fetch_add(&context->unexpected, 1);
+        atomic_store(&context->completed, true);
         return;
     }
     for (index = 0; index < context->count; ++index) {
@@ -356,6 +371,15 @@ static void actor_sender(void *user) {
                 break;
         }
     }
+    atomic_store(&context->completed, true);
+}
+
+static bool actor_sender_wait_and_join(actor_sender_context *context,
+                                       turbo_thread_t *thread) {
+    const bool completed = wait_until_true(&context->completed);
+    check_true(completed);
+    if (!completed) abort();
+    return turbo_thread_join(thread) == 0;
 }
 
 static bool actor_action(void *user,
@@ -602,6 +626,7 @@ suite("CFlow Actor lifecycle") {
                     (cflow_machine_state_id)20u);
         check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
         check_equal(cflow_actor_wait(&fixture.actor), CFLOW_ACTOR_STATE_STOPPED);
+        check_true(wait_until_at_least(&fixture.probe.dones, 1));
         check_equal(atomic_load(&fixture.probe.errors), 0);
         check_equal(atomic_load(&fixture.probe.dones), 1);
 
@@ -682,6 +707,7 @@ suite("CFlow Actor lifecycle") {
 
         atomic_store(&blocker.release, true);
         check_equal(cflow_actor_wait(&fixture.actor), CFLOW_ACTOR_STATE_STOPPED);
+        check_true(wait_until_at_least(&fixture.probe.dones, 1));
         check_equal(cflow_actor_current_state(&fixture.actor),
                     CFLOW_ACTOR_STATE_STOPPED);
         check_equal(cflow_actor_request_stop(&fixture.actor),
@@ -722,6 +748,7 @@ suite("CFlow Actor lifecycle") {
         check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
         check_true(wait_actor_state(
             &fixture.actor, CFLOW_ACTOR_STATE_STOPPED));
+        check_true(wait_until_at_least(&fixture.probe.dones, 1));
         check_true(cflow_actor_get_stats(&fixture.actor, &stats));
         check_equal(stats.machine.accepted, (uint64_t)2u);
         check_equal(stats.machine.completed, (uint64_t)2u);
@@ -745,6 +772,7 @@ suite("CFlow Actor lifecycle") {
         turbo_thread_t threads[PRODUCERS] = {0};
         atomic_bool go = false;
         cflow_actor_stats stats = {0};
+        int created = 0;
         int producer;
         int payload;
 
@@ -756,19 +784,24 @@ suite("CFlow Actor lifecycle") {
         for (producer = 0; producer < PRODUCERS; ++producer) {
             contexts[producer].ref = &refs[producer];
             contexts[producer].event_id =
-                (cflow_event_id)(100u + (unsigned)(producer % 2));
+                (cflow_event_id)(100u + (unsigned)producer);
             contexts[producer].first_payload =
                 producer * EVENTS_PER_PRODUCER;
             contexts[producer].count = EVENTS_PER_PRODUCER;
             contexts[producer].go = &go;
-            check_equal(turbo_thread_create(
-                            &threads[producer], actor_sender,
-                            &contexts[producer]),
-                        0);
+            {
+                const int create_status = turbo_thread_create(
+                    &threads[producer], actor_sender, &contexts[producer]);
+                check_equal(create_status, 0);
+                if (create_status != 0) break;
+                ++created;
+            }
         }
         atomic_store(&go, true);
-        for (producer = 0; producer < PRODUCERS; ++producer)
-            check_equal(turbo_thread_join(&threads[producer]), 0);
+        check_equal(created, PRODUCERS);
+        for (producer = 0; producer < created; ++producer)
+            check_true(actor_sender_wait_and_join(
+                &contexts[producer], &threads[producer]));
         check_true(wait_until_at_least(
             &fixture.probe.values, TOTAL_EVENTS));
         for (producer = 0; producer < PRODUCERS; ++producer) {
@@ -776,11 +809,24 @@ suite("CFlow Actor lifecycle") {
                         EVENTS_PER_PRODUCER);
             check_equal(atomic_load(&contexts[producer].unexpected), 0);
         }
-        for (payload = 0; payload < TOTAL_EVENTS; ++payload)
+        for (payload = 0; payload < TOTAL_EVENTS; ++payload) {
+            const int expected_event_index =
+                payload / EVENTS_PER_PRODUCER;
+            int event_index;
             check_equal(atomic_load(&fixture.probe.seen[payload]), 1);
+            for (event_index = 0;
+                 event_index < ACTOR_EDGE_EVENT_TYPES;
+                 ++event_index) {
+                check_equal(
+                    atomic_load(
+                        &fixture.probe.pair_seen[event_index][payload]),
+                    event_index == expected_event_index ? 1 : 0);
+            }
+        }
         check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
         check_true(wait_actor_state(
             &fixture.actor, CFLOW_ACTOR_STATE_STOPPED));
+        check_true(wait_until_at_least(&fixture.probe.dones, 1));
         check_true(cflow_actor_get_stats(&fixture.actor, &stats));
         check_equal(stats.machine.accepted, (uint64_t)TOTAL_EVENTS);
         check_equal(stats.machine.completed, (uint64_t)TOTAL_EVENTS);
@@ -816,6 +862,7 @@ suite("CFlow Actor lifecycle") {
         check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
         check_true(wait_actor_state(
             &fixture.actor, CFLOW_ACTOR_STATE_STOPPED));
+        check_true(wait_until_at_least(&fixture.probe.dones, 1));
         check_true(cflow_actor_get_stats(&fixture.actor, &stats));
         check_equal(stats.machine.accepted, (uint64_t)2u);
         check_equal(stats.machine.completed, (uint64_t)2u);
@@ -840,6 +887,7 @@ suite("CFlow Actor lifecycle") {
                     CFLOW_ACTOR_SEND_ACCEPTED);
         check_true(wait_actor_state(
             &fixture.actor, CFLOW_ACTOR_STATE_STOPPED));
+        check_true(wait_until_at_least(&fixture.probe.dones, 1));
         check_true(atomic_load(&fixture.probe.stop_requested));
         check_equal(atomic_load(&fixture.probe.stop_status),
                     (int)CFLOW_ACTOR_OK);
@@ -889,6 +937,7 @@ suite("CFlow Actor lifecycle") {
         atomic_store(&blocker.release, true);
         check_true(wait_actor_state(
             &fixture.actor, CFLOW_ACTOR_STATE_STOPPED));
+        check_true(wait_until_at_least(&fixture.probe.dones, 1));
         check_true(cflow_actor_get_stats(&fixture.actor, &stats));
         check_equal(stats.machine.accepted, (uint64_t)3u);
         check_equal(stats.machine.completed, (uint64_t)1u);
@@ -921,6 +970,7 @@ suite("CFlow Actor lifecycle") {
                     CFLOW_ACTOR_SEND_ACCEPTED);
         check_true(wait_actor_state(
             &fixture.actor, CFLOW_ACTOR_STATE_FAILED));
+        check_true(wait_until_at_least(&fixture.probe.errors, 1));
         first_error = cflow_actor_error(&fixture.actor);
         check_not_null(first_error);
         check_contains(first_error, "no enabled transition");
@@ -957,6 +1007,7 @@ suite("CFlow Actor lifecycle") {
                     CFLOW_ACTOR_SEND_ACCEPTED);
         check_true(wait_actor_state(
             &fixture.actor, CFLOW_ACTOR_STATE_FAILED));
+        check_true(wait_until_at_least(&fixture.probe.errors, 1));
         check_contains(cflow_actor_error(&fixture.actor),
                        "actor edge guard failure");
         check_true(cflow_actor_get_stats(&fixture.actor, &stats));
@@ -987,6 +1038,7 @@ suite("CFlow Actor lifecycle") {
                     CFLOW_ACTOR_SEND_ACCEPTED);
         check_true(wait_actor_state(
             &fixture.actor, CFLOW_ACTOR_STATE_FAILED));
+        check_true(wait_until_at_least(&fixture.probe.errors, 1));
         check_contains(cflow_actor_error(&fixture.actor),
                        "actor edge action failure");
         check_true(cflow_actor_get_stats(&fixture.actor, &stats));
@@ -1018,6 +1070,7 @@ suite("CFlow Actor lifecycle") {
                     CFLOW_ACTOR_SEND_ACCEPTED);
         check_true(wait_actor_state(
             &fixture.actor, CFLOW_ACTOR_STATE_FAILED));
+        check_true(wait_until_at_least(&fixture.probe.errors, 1));
         first_error = cflow_actor_error(&fixture.actor);
         check_not_null(first_error);
         check_contains(first_error, "observer rejected value");
@@ -1107,6 +1160,8 @@ suite("CFlow Actor lifecycle") {
         check_equal(cflow_actor_request_stop(&second.actor), CFLOW_ACTOR_OK);
         check_true(wait_actor_state(&first.actor, CFLOW_ACTOR_STATE_STOPPED));
         check_true(wait_actor_state(&second.actor, CFLOW_ACTOR_STATE_STOPPED));
+        check_true(wait_until_at_least(&first.probe.dones, 1));
+        check_true(wait_until_at_least(&second.probe.dones, 1));
         check_true(cflow_actor_get_stats(&first.actor, &first_stats));
         check_true(cflow_actor_get_stats(&second.actor, &second_stats));
         check_equal(first_stats.machine.accepted, (uint64_t)REPLAY_COUNT);
@@ -1146,6 +1201,7 @@ suite("CFlow Actor lifecycle") {
             uint64_t classified_accepted = 1u;
             uint64_t classified_stopping = 0u;
             uint64_t classified_stopped = 0u;
+            int created = 0;
             int producer;
 
             check_true(actor_edge_fixture_init(&fixture, 8u));
@@ -1162,23 +1218,29 @@ suite("CFlow Actor lifecycle") {
             for (producer = 0; producer < STRESS_PRODUCERS; ++producer) {
                 contexts[producer].ref = &refs[producer];
                 contexts[producer].event_id =
-                    (cflow_event_id)(100u + (unsigned)(producer % 2));
+                    (cflow_event_id)(100u + (unsigned)producer);
                 contexts[producer].first_payload =
                     producer * STRESS_SENDS_PER_PRODUCER;
                 contexts[producer].count = STRESS_SENDS_PER_PRODUCER;
                 contexts[producer].go = &go;
                 contexts[producer].attempted = &attempted;
-                check_equal(turbo_thread_create(
-                                &threads[producer], actor_sender,
-                                &contexts[producer]),
-                            0);
+                {
+                    const int create_status = turbo_thread_create(
+                        &threads[producer], actor_sender,
+                        &contexts[producer]);
+                    check_equal(create_status, 0);
+                    if (create_status != 0) break;
+                    ++created;
+                }
             }
             atomic_store(&go, true);
+            check_equal(created, STRESS_PRODUCERS);
             check_equal(cflow_actor_request_stop(&fixture.actor),
                         CFLOW_ACTOR_OK);
             atomic_store(&blocker.release, true);
-            for (producer = 0; producer < STRESS_PRODUCERS; ++producer) {
-                check_equal(turbo_thread_join(&threads[producer]), 0);
+            for (producer = 0; producer < created; ++producer) {
+                check_true(actor_sender_wait_and_join(
+                    &contexts[producer], &threads[producer]));
                 classified_accepted += (uint64_t)atomic_load(
                     &contexts[producer].accepted);
                 classified_stopping += (uint64_t)atomic_load(
@@ -1193,6 +1255,7 @@ suite("CFlow Actor lifecycle") {
             check_true(wait_actor_terminal(&fixture.actor));
             check_equal(cflow_actor_current_state(&fixture.actor),
                         CFLOW_ACTOR_STATE_STOPPED);
+            check_true(wait_until_at_least(&fixture.probe.dones, 1));
             check_true(cflow_actor_get_stats(&fixture.actor, &stats));
             check_equal(stats.machine.accepted, classified_accepted);
             check_equal(stats.machine.accepted,
