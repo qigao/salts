@@ -30,6 +30,8 @@ typedef struct cflow_actor_impl {
 } cflow_actor_impl;
 
 static const char actor_generic_failure[] = "actor failed";
+static const char actor_unexpected_done[] =
+    "Run completed while Actor was RUNNING";
 
 static char *actor_copy_error(const char *message) {
     const char *source = message != NULL && message[0] != '\0'
@@ -111,19 +113,43 @@ static void actor_sink_error(void *user, const char *message) {
 
 static void actor_sink_done(void *user) {
     cflow_actor_impl *impl = (cflow_actor_impl *)user;
-    cflow_done_fn callback;
+    cflow_done_fn done_callback = NULL;
+    cflow_error_fn error_callback = NULL;
     void *callback_user;
+    char *copy = NULL;
+    const char *error = NULL;
+    bool running;
+    bool failed = false;
     if (impl == NULL) return;
+
     turbo_mutex_lock(&impl->gate);
-    if (impl->state == CFLOW_ACTOR_STATE_RUNNING ||
-        impl->state == CFLOW_ACTOR_STATE_STOPPING) {
+    running = impl->state == CFLOW_ACTOR_STATE_RUNNING;
+    turbo_mutex_unlock(&impl->gate);
+    if (running) copy = actor_copy_error(actor_unexpected_done);
+
+    turbo_mutex_lock(&impl->gate);
+    if (impl->state == CFLOW_ACTOR_STATE_STOPPING) {
         impl->state = CFLOW_ACTOR_STATE_STOPPED;
         turbo_cond_broadcast(&impl->changed);
+        done_callback = impl->callbacks.on_done;
+    } else if (impl->state == CFLOW_ACTOR_STATE_RUNNING) {
+        if (impl->error == NULL && copy != NULL) {
+            impl->error = copy;
+            copy = NULL;
+        }
+        error = impl->error != NULL ? impl->error : actor_generic_failure;
+        impl->state = CFLOW_ACTOR_STATE_FAILED;
+        turbo_cond_broadcast(&impl->changed);
+        error_callback = impl->callbacks.on_error;
+        failed = true;
     }
-    callback = impl->callbacks.on_done;
     callback_user = impl->callbacks.user;
     turbo_mutex_unlock(&impl->gate);
-    if (callback != NULL) callback(callback_user);
+    free(copy);
+
+    if (failed) cflow_machine_instance_cancel(&impl->machine);
+    if (error_callback != NULL) error_callback(callback_user, error);
+    if (done_callback != NULL) done_callback(callback_user);
 }
 
 static cflow_actor_status actor_state_status(cflow_actor_state state) {
@@ -381,14 +407,15 @@ cflow_actor_send_status cflow_actor_ref_try_send(
         ? (cflow_actor_impl *)ref->impl : NULL;
     cflow_mailbox_status mailbox_status;
     cflow_actor_send_status result;
-    if (impl == NULL || event == NULL || event->id == 0u ||
-        event->payload_type == NULL || event->payload == NULL)
-        return CFLOW_ACTOR_SEND_INVALID_ARGUMENT;
+    if (impl == NULL) return CFLOW_ACTOR_SEND_INVALID_ARGUMENT;
 
     turbo_mutex_lock(&impl->gate);
     if (impl->stale) {
         ++impl->rejected_stale;
         result = CFLOW_ACTOR_SEND_STALE;
+    } else if (event == NULL || event->id == 0u ||
+               event->payload_type == NULL || event->payload == NULL) {
+        result = CFLOW_ACTOR_SEND_INVALID_ARGUMENT;
     } else if (impl->state == CFLOW_ACTOR_STATE_START) {
         ++impl->rejected_not_started;
         result = CFLOW_ACTOR_SEND_NOT_STARTED;

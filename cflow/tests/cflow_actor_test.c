@@ -103,11 +103,12 @@ static cflow_machine_definition actor_definition(
     cflow_machine_state *states,
     cflow_event_type *events,
     cflow_machine_action *actions,
-    cflow_machine_transition *transitions) {
+    cflow_machine_transition *transitions,
+    cflow_machine_state_kind target_kind) {
     states[0] = (cflow_machine_state){
         10u, &cmeta_type_int, CFLOW_MACHINE_STATE_ACTIVE};
     states[1] = (cflow_machine_state){
-        20u, &cmeta_type_long, CFLOW_MACHINE_STATE_ACTIVE};
+        20u, &cmeta_type_long, target_kind};
     events[0] = (cflow_event_type){100u, &cmeta_type_bool};
     actions[0] = (cflow_machine_action){
         300u, &cmeta_type_int, 100u, &cmeta_type_bool,
@@ -124,13 +125,14 @@ static cflow_machine_definition actor_definition(
         transitions, 1u};
 }
 
-static bool actor_fixture_init(actor_fixture *fixture) {
+static bool actor_fixture_init_with_target_kind(
+    actor_fixture *fixture, cflow_machine_state_kind target_kind) {
     cflow_machine_state states[2];
     cflow_event_type events[1];
     cflow_machine_action actions[1];
     cflow_machine_transition transitions[1];
     const cflow_machine_definition definition = actor_definition(
-        states, events, actions, transitions);
+        states, events, actions, transitions, target_kind);
     cflow_actor_config config = {0};
 
     *fixture = (actor_fixture){0};
@@ -157,6 +159,11 @@ static bool actor_fixture_init(actor_fixture *fixture) {
     config.callbacks = (cflow_sink_callbacks){
         actor_on_value, actor_on_error, actor_on_done, &fixture->probe};
     return cflow_actor_init(&fixture->actor, &config).status == CFLOW_ACTOR_OK;
+}
+
+static bool actor_fixture_init(actor_fixture *fixture) {
+    return actor_fixture_init_with_target_kind(
+        fixture, CFLOW_MACHINE_STATE_ACTIVE);
 }
 
 static void actor_fixture_destroy(actor_fixture *fixture) {
@@ -296,6 +303,52 @@ suite("CFlow Actor lifecycle") {
         check_equal(cflow_actor_wait(&fixture.actor), CFLOW_ACTOR_STATE_STOPPED);
         check_equal(atomic_load(&fixture.probe.errors), 0);
         check_equal(atomic_load(&fixture.probe.dones), 1);
+
+        cflow_actor_ref_release(&ref);
+        actor_fixture_destroy(&fixture);
+    }
+
+    it("fails when Run reports done while Actor is RUNNING") {
+        actor_fixture fixture;
+        cflow_actor_ref ref = {0};
+        const bool payload = true;
+        const cflow_event_view event = {
+            100u, &cmeta_type_bool, &payload};
+        const char *first_error;
+
+        check_true(actor_fixture_init_with_target_kind(
+            &fixture, CFLOW_MACHINE_STATE_DONE));
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        check_equal(cflow_actor_wait(&fixture.actor), CFLOW_ACTOR_STATE_FAILED);
+        first_error = cflow_actor_error(&fixture.actor);
+        check_not_null(first_error);
+        check_contains(first_error, "RUNNING");
+        check_true(wait_until_at_least(&fixture.probe.errors, 1));
+        check_equal(atomic_load(&fixture.probe.errors), 1);
+        check_equal(atomic_load(&fixture.probe.dones), 0);
+        check_equal(cflow_actor_request_stop(&fixture.actor),
+                    CFLOW_ACTOR_FAILED);
+        check_true(cflow_actor_error(&fixture.actor) == first_error);
+
+        cflow_actor_ref_release(&ref);
+        actor_fixture_destroy(&fixture);
+    }
+
+    it("returns STALE before validating an Event after owner destruction") {
+        actor_fixture fixture;
+        cflow_actor_ref ref = {0};
+        const cflow_event_view malformed = {0};
+
+        check_true(actor_fixture_init(&fixture));
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+        cflow_actor_destroy(&fixture.actor);
+        check_equal(cflow_actor_ref_try_send(&ref, NULL),
+                    CFLOW_ACTOR_SEND_STALE);
+        check_equal(cflow_actor_ref_try_send(&ref, &malformed),
+                    CFLOW_ACTOR_SEND_STALE);
 
         cflow_actor_ref_release(&ref);
         actor_fixture_destroy(&fixture);
