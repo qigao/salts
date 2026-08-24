@@ -173,10 +173,10 @@ JSON/YAML 更接近 canonical MAP/ARRAY event model；XML/CSV 需要 format-spec
 
 CFlow 与 CBind 都在 TurboUtils，但二者 core 仍不互相依赖。
 
-禁止把 raw `cserde_token` 暴露成允许任意业务 operator 的普通 `Stream<T>`：
+禁止把 raw `cserde_token` 暴露成允许任意业务 operator 的普通 typed CFlow stream：
 
 ```text
-Stream<cserde_token>
+cserde_token stream
     -> filter/map
 ```
 
@@ -187,7 +187,7 @@ Stream<cserde_token>
 ```text
 CSerde token stream = structural transport
 CBind               = semantic/native binding
-CFlow Stream<T>      = complete semantic/native values
+CFlow typed stream   = complete semantic/native values
 ```
 
 Parser/CBind/CFlow composition 应位于 complete value boundary：
@@ -197,11 +197,11 @@ parser source
     -> complete semantic value
     -> CBind
     -> native object T
-    -> CFlow Stream<T>
+    -> CFlow typed stream
     -> filter/map/flatMap/distinct/sorted/limit/collect
 ```
 
-适合未来形成 `Stream<T>` 的 source 包括：
+适合未来形成 typed CFlow stream 的 source 包括：
 
 ```text
 JSON root array items

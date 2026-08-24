@@ -5,7 +5,7 @@
 
 ## 1. Why this amendment exists
 
-Before CMeta can say that a value has semantic shape `SEQUENCE<T>`, `SET<T>`, `MAP<K,V>` or `OPTION<T>`, the underlying generic type application must first be a valid CMeta type.
+Before CMeta can assign a SEQUENCE, SET, MAP, or OPTIONAL semantic shape with concrete type arguments, the underlying CMeta type application must first be valid.
 
 Therefore the implementation order is corrected from:
 
@@ -16,7 +16,7 @@ semantic descriptor -> container binding
 to:
 
 ```text
-TYPE<A...> well-formedness
+CMeta type-application well-formedness
     -> real generic consumers (TurboSTL)
     -> semantic shape resolution
     -> CSerde canonical token protocol
@@ -40,7 +40,7 @@ constructor + args + arity
 The canonical invariant is now explicit:
 
 ```text
-TYPE<A...> is well formed iff
+A CMeta type application is well formed iff
   constructor is valid
   arity is accepted by the constructor
   every argument identity exists
@@ -49,7 +49,7 @@ TYPE<A...> is well formed iff
 
 Pointer equality is not type identity. Constructor `stable_id` plus recursive argument identity defines cross-TU equality.
 
-Type well-formedness is intentionally separate from operation capability. For example, `Set<T>` can be a valid type application while a concrete `set_init()` rejects `T` because comparison traits are missing.
+Type well-formedness is intentionally separate from operation capability. For example, `typed(Set, SetName, T)` can describe a valid type application while a concrete `set_init()` rejects `T` because comparison traits are missing.
 
 This contract was implemented by `#36`.
 
@@ -65,10 +65,10 @@ HashMap/Map/MultiMap/BTree/BPlusTree         -> key_type + value_type
 The missing contract was constructor identity. TurboSTL now exposes canonical generic constructors and lets CMeta introspect a concrete instance as:
 
 ```text
-Vec<int>
-Set<int>
-Map<int,long>
-HashMap<string,User>
+typed(Vec, IntVec, int)
+typed(Set, IntSet, int)
+typed(Map, IntLongMap, int, long)
+typed(HashMap, UserByString, string, User)
 ```
 
 without generating a new per-`T` facade or rewriting raw algorithms.
@@ -110,11 +110,11 @@ Map/HashMap/BTree/...      -> MAP semantic shape
 
 A semantic descriptor must not become a second source of truth for `T`, `K`, or `V` when the validated type application already owns those arguments.
 
-`MultiMap<K,V>` requires an explicit semantic decision rather than silently pretending to be an ordinary single-value MAP.
+`typed(MultiMap, MultiMapName, K, V)` requires an explicit semantic decision rather than silently pretending to be an ordinary single-value MAP.
 
 The exact post-`#37` mapping, including Heap/MultiMap non-mapping, is defined by the semantic-foundation amendment and its implementation plan.
 
-## 6. Option<T> is not field optionality
+## 6. A typed Option value is not field optionality
 
 CMeta already has a real storage form created by:
 
@@ -127,7 +127,7 @@ but that generated value currently lacks a complete `CMETA_TYPE_APPLY(Option,T)`
 The following remain separate forever:
 
 ```text
-Option<T> value type     -> CMeta semantic type, once generic identity exists
+typed(Option, OptionName, T) value -> CMeta semantic type, once type identity exists
 field may be absent      -> CBind/schema field-presence policy
 field present with NULL  -> nullable/token policy
 ```

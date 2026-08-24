@@ -5,7 +5,7 @@
 
 本 amendment 建立在已合并的 generic foundation 上：
 
-- `#36` 已完成 `TYPE<A...>` application well-formedness 与跨 TU structural identity；
+- `#36` 已完成 `CMETA_TYPE_APPLY` application well-formedness 与跨 TU structural identity；
 - `#37` 已完成 versioned `cmeta_container_ext` root 与 TurboSTL canonical generic constructors / runtime argument introspection；
 - `master` 基线 merge commit 为 `93e68ef443b86aa887cff21d2ceeb134ad32e0e4`。
 
@@ -43,9 +43,9 @@ semantic projection owns only meaning/category
 例如：
 
 ```text
-Vec<int>          -> TYPE = turbostl.Vec<int>, semantic = SEQUENCE
-Set<User>         -> TYPE = turbostl.Set<User>, semantic = SET
-Map<string,User>  -> TYPE = turbostl.Map<string,User>, semantic = MAP
+typed(Vec, IntVec, int)                   -> constructor = turbostl.Vec, semantic = SEQUENCE
+typed(Set, UserSet, User)                 -> constructor = turbostl.Set, semantic = SET
+typed(Map, UserByString, string, User)    -> constructor = turbostl.Map, semantic = MAP
 ```
 
 实际 T/K/V 永远继续来自：
@@ -62,7 +62,7 @@ semantic API 不提供平行的 element/key/value argument accessor。
 `cmeta_container_data()` 本身只发现 category，不把上述两项检查合并成一个
 结果。typed consumer 必须同时取得 semantic category 并验证 TYPE application；
 这样 raw-byte handle 可说明自身是 sequence-like storage，却不会被误当成
-`Vec<T>`。
+一个完成类型绑定的 Vec 实例。
 
 ## 2. `cmeta_container_ext` 必须先成为真正 append-only ABI
 
@@ -128,7 +128,7 @@ typedef enum cmeta_data_kind {
 永久区分：
 
 ```text
-Option<T> value type     -> CMeta semantic type（等 TYPE identity 完成后）
+typed(Option, OptionName, T) value -> CMeta semantic type（等 TYPE identity 完成后）
 field may be absent      -> CBind/schema presence policy
 field present with NULL  -> nullable/token policy
 ```
@@ -290,7 +290,7 @@ cmeta_container_type_application_valid(object) == true
 ```
 
 因此 raw-byte container 使用 canonical Vec descriptor 时可以投影为 semantic
-SEQUENCE，但仍没有可用的 `Vec<T>` type application，不能进入 typed binding。
+SEQUENCE，但仍没有包含元素类型参数的 Vec type application，不能进入 typed binding。
 
 实际 T/K/V 继续只来自：
 
@@ -303,26 +303,26 @@ cmeta_container_type_argument(object, index)
 明确映射：
 
 ```text
-Vec<T>         -> SEQUENCE
-Deque<T>       -> SEQUENCE
-List<T>        -> SEQUENCE
-Stack<T>       -> SEQUENCE
-Queue<T>       -> SEQUENCE
+typed(Vec, VecName, T)       -> SEQUENCE
+typed(Deque, DequeName, T)   -> SEQUENCE
+typed(List, ListName, T)     -> SEQUENCE
+typed(Stack, StackName, T)   -> SEQUENCE
+typed(Queue, QueueName, T)   -> SEQUENCE
 
-Set<T>         -> SET
-HashSet<T>     -> SET
+typed(Set, SetName, T)           -> SET
+typed(HashSet, HashSetName, T)   -> SET
 
-HashMap<K,V>   -> MAP
-Map<K,V>       -> MAP
-BTree<K,V>     -> MAP
-BPlusTree<K,V> -> MAP
+typed(HashMap, HashMapName, K, V)     -> MAP
+typed(Map, MapName, K, V)             -> MAP
+typed(BTree, BTreeName, K, V)         -> MAP
+typed(BPlusTree, BPlusTreeName, K, V) -> MAP
 ```
 
 明确 unresolved：
 
 ```text
-Heap<T>        -> NULL
-MultiMap<K,V>  -> NULL
+typed(Heap, HeapName, T)                  -> NULL
+typed(MultiMap, MultiMapName, K, V)       -> NULL
 ```
 
 原因：
@@ -348,7 +348,7 @@ struct X {
 };
 ```
 
-zero state 下没有 `element_type`，不能凭 storage spelling 推断 `Vec<int>`。
+zero state 下没有 `element_type`，不能凭 storage spelling 推断 `typed(Vec, IntVec, int)`。
 
 本 semantic plan 不通过重新加入 `sequence.element = Int` 掩盖这个事实。
 
@@ -357,7 +357,7 @@ zero state 下没有 `element_type`，不能凭 storage spelling 推断 `Vec<int
 ```text
 static field TYPE application
         -> cmeta_container_bind_types(empty_object, declared_type)
-        -> object becomes valid Vec<T>/Map<K,V>
+        -> object becomes a valid typed Vec/Map instance
         -> Collector transaction
 ```
 
@@ -372,7 +372,7 @@ semantic introspection of already-typed container instances
 ## 9. Implementation order after #37
 
 ```text
-#36  TYPE<A...> contract                         DONE
+#36  CMETA_TYPE_APPLY contract                   DONE
 #37  container extension + TurboSTL generic      DONE
 
 C0   append-only container-extension ABI hardening

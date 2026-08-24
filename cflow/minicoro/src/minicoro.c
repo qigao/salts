@@ -1,3 +1,8 @@
+#if defined(__APPLE__) && !defined(_XOPEN_SOURCE)
+/* Darwin exposes the deprecated ucontext API through X/Open Issue 6. */
+#define _XOPEN_SOURCE 600
+#endif
+
 #include <cflow/minicoro.h>
 
 /* Minicoro's x64 assembly backend emits fixed global context-switch symbols.
