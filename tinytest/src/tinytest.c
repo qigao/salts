@@ -13,7 +13,8 @@
 #endif
 #endif
 
-#include "tinymeta/tinytest_internal.h"
+#include "tinymeta/internal.h"
+#include "tinymeta/pp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -563,6 +564,7 @@ ttest_bench_entry__ ttest_bench_make_entry__(
   entry.bytes_per_sample = tracks_bytes ? bytes_per_sample : 0;
   entry.tracks_bytes = tracks_bytes;
   entry.avg_op_us = total_operations > 0.0 ? (sum_ms * 1000.0) / total_operations : 0.0;
+  entry.avg_sample_us = samples > 0 ? (sum_ms * 1000.0) / TTEST_CAST(double, samples) : 0.0;
   entry.min_sample_us = min_ms * 1000.0;
   entry.max_sample_us = max_ms * 1000.0;
   entry.ops_s = elapsed_s > 0.0 ? total_operations / elapsed_s : 0.0;
@@ -786,20 +788,74 @@ void ttest_indent__(FILE *fp, size_t level) {
   }
 }
 
-static void ttest_bench_print_header__(ttest_config_type__ *config, size_t level,
-                                      int name_width, bool table) {
+/* One row list drives every output view so adding a metric cannot desynchronize the columns. */
+#define TTEST_BENCH_COLUMNS__                                                                     \
+  ("benchmark", ":---", TTEST_BENCH_RENDER_TITLE__),                                            \
+  ("samples", "---:", TTEST_BENCH_RENDER_SAMPLES__),                                            \
+  ("ops/sample", "---:", TTEST_BENCH_RENDER_OPS_PER_SAMPLE__),                                  \
+  ("bytes/sample", "---:", TTEST_BENCH_RENDER_BYTES_PER_SAMPLE__),                              \
+  ("avg/op(ns)", "---:", TTEST_BENCH_RENDER_AVG_OP_NS__),                                       \
+  ("avg/sample(us)", "---:", TTEST_BENCH_RENDER_AVG_SAMPLE_US__),                               \
+  ("min/sample(us)", "---:", TTEST_BENCH_RENDER_MIN_SAMPLE_US__),                               \
+  ("max/sample(us)", "---:", TTEST_BENCH_RENDER_MAX_SAMPLE_US__),                               \
+  ("ops/s", "---:", TTEST_BENCH_RENDER_OPS_S__),                                                \
+  ("MiB/s", "---:", TTEST_BENCH_RENDER_MIB_S__)
+
+#define TTEST_BENCH_COLUMN_LABEL__(row) TTEST_BENCH_COLUMN_LABEL_I__ row
+#define TTEST_BENCH_COLUMN_LABEL_I__(label, alignment, renderer) label
+#define TTEST_BENCH_COLUMN_ALIGNMENT__(row) TTEST_BENCH_COLUMN_ALIGNMENT_I__ row
+#define TTEST_BENCH_COLUMN_ALIGNMENT_I__(label, alignment, renderer) alignment
+#define TTEST_BENCH_COLUMN_RENDERER__(row) TTEST_BENCH_COLUMN_RENDERER_I__ row
+#define TTEST_BENCH_COLUMN_RENDERER_I__(label, alignment, renderer) renderer
+
+#define TTEST_BENCH_RENDER_TITLE__(entry, bytes, mib_s, use_color)                                 \
+  printf("%s%s%s", (use_color) ? TTEST_COLOR_MAGENTA__ : "", (entry)->title,                       \
+         (use_color) ? TTEST_COLOR_RESET__ : "")
+#define TTEST_BENCH_RENDER_SAMPLES__(entry, bytes, mib_s, use_color) printf("%zu", (entry)->samples)
+#define TTEST_BENCH_RENDER_OPS_PER_SAMPLE__(entry, bytes, mib_s, use_color)                        \
+  printf("%zu", (entry)->operations_per_sample)
+#define TTEST_BENCH_RENDER_BYTES_PER_SAMPLE__(entry, bytes, mib_s, use_color) printf("%s", (bytes))
+#define TTEST_BENCH_RENDER_AVG_OP_NS__(entry, bytes, mib_s, use_color)                             \
+  printf("%.3f", (entry)->avg_op_us * 1000.0)
+#define TTEST_BENCH_RENDER_AVG_SAMPLE_US__(entry, bytes, mib_s, use_color)                         \
+  printf("%.3f", (entry)->avg_sample_us)
+#define TTEST_BENCH_RENDER_MIN_SAMPLE_US__(entry, bytes, mib_s, use_color)                         \
+  printf("%.3f", (entry)->min_sample_us)
+#define TTEST_BENCH_RENDER_MAX_SAMPLE_US__(entry, bytes, mib_s, use_color)                         \
+  printf("%.3f", (entry)->max_sample_us)
+#define TTEST_BENCH_RENDER_OPS_S__(entry, bytes, mib_s, use_color) printf("%.0f", (entry)->ops_s)
+#define TTEST_BENCH_RENDER_MIB_S__(entry, bytes, mib_s, use_color) printf("%s", (mib_s))
+
+#define TTEST_BENCH_PRINT_HEADER_CELL__(row, ignored)                                              \
+  printf("| %s ", TTEST_BENCH_COLUMN_LABEL__(row));
+#define TTEST_BENCH_PRINT_ALIGNMENT_CELL__(row, ignored)                                           \
+  printf("| %s ", TTEST_BENCH_COLUMN_ALIGNMENT__(row));
+#define TTEST_BENCH_PRINT_TABLE_CELL__(row, ignored)                                               \
+  do {                                                                                             \
+    printf("| ");                                                                                  \
+    TTEST_BENCH_COLUMN_RENDERER__(row)(&e, bytes, mib_s, use_color);                               \
+    printf(" ");                                                                                   \
+  } while (0);
+#define TTEST_BENCH_PRINT_PLAIN_CELL__(row, ignored)                                               \
+  do {                                                                                             \
+    if (!first_column) printf("  %s=", TTEST_BENCH_COLUMN_LABEL__(row));                           \
+    TTEST_BENCH_COLUMN_RENDERER__(row)(&e, bytes, mib_s, use_color);                               \
+    first_column = false;                                                                          \
+  } while (0);
+
+static void ttest_bench_print_header__(ttest_config_type__ *config, size_t level, bool table) {
   if (!config || !table) return;
   if (config->bench_header_printed && config->bench_header_level == level) return;
   config->bench_header_printed = 1;
   config->bench_header_level = level;
   ttest_indent__(stdout, level);
-  printf("  %-*s  %8s  %10s  %12s  %11s  %14s  %14s  %11s  %11s\n", name_width,
-         "benchmark", "samples", "ops/sample", "bytes/sample", "avg/op(us)", "min/sample(us)",
-         "max/sample(us)", "ops/s", "MiB/s");
+  printf("  ");
+  TTEST_PP_FOR_EACH__(TTEST_BENCH_PRINT_HEADER_CELL__, ~, TTEST_BENCH_COLUMNS__)
+  printf("|\n");
   ttest_indent__(stdout, level);
-  printf("  %-*s  %8s  %10s  %12s  %11s  %14s  %14s  %11s  %11s\n", name_width,
-         "---------", "-------", "----------", "------------", "----------", "--------------",
-         "--------------", "-----", "-----");
+  printf("  ");
+  TTEST_PP_FOR_EACH__(TTEST_BENCH_PRINT_ALIGNMENT_CELL__, ~, TTEST_BENCH_COLUMNS__)
+  printf("|\n");
 }
 
 void ttest_bench_print__(
@@ -812,21 +868,19 @@ void ttest_bench_print__(
   char bytes[32];
   char mib_s[32];
 
+  (void)name_width;
   ttest_bench_format_optional_metrics__(&e, bytes, sizeof(bytes), mib_s, sizeof(mib_s));
 
-  ttest_bench_print_header__(config, level, name_width, table);
+  ttest_bench_print_header__(config, level, table);
   ttest_indent__(stdout, level);
   if (table) {
-    printf("  %s%-*s%s  %8zu  %10zu  %12s  %11.3f  %14.3f  %14.3f  %11.0f  %11s\n",
-           use_color ? TTEST_COLOR_MAGENTA__ : "", name_width, e.title,
-           use_color ? TTEST_COLOR_RESET__ : "", e.samples, e.operations_per_sample, bytes,
-           e.avg_op_us, e.min_sample_us, e.max_sample_us, e.ops_s, mib_s);
+    printf("  ");
+    TTEST_PP_FOR_EACH__(TTEST_BENCH_PRINT_TABLE_CELL__, ~, TTEST_BENCH_COLUMNS__)
+    printf("|\n");
   } else {
-    printf("%s%-*s%s  samples=%zu  ops/sample=%zu  bytes/sample=%s  avg/op=%9.3f us  "
-           "min/sample=%9.3f us  max/sample=%9.3f us  ops/s=%9.0f  MiB/s=%s\n",
-           use_color ? TTEST_COLOR_MAGENTA__ : "", name_width, e.title,
-           use_color ? TTEST_COLOR_RESET__ : "", e.samples, e.operations_per_sample, bytes,
-           e.avg_op_us, e.min_sample_us, e.max_sample_us, e.ops_s, mib_s);
+    bool first_column = true;
+    TTEST_PP_FOR_EACH__(TTEST_BENCH_PRINT_PLAIN_CELL__, ~, TTEST_BENCH_COLUMNS__)
+    printf("\n");
   }
 }
 

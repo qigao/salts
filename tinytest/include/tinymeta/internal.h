@@ -114,6 +114,7 @@ typedef struct ttest_bench_entry__ {
   size_t bytes_per_sample;
   bool tracks_bytes;
   double avg_op_us;
+  double avg_sample_us;
   double min_sample_us;
   double max_sample_us;
   double ops_s;

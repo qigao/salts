@@ -151,6 +151,12 @@ static inline fmt_arg_t fmt_arg_time(time_t x) {
 
 #define FMT_TIME(t) fmt_arg_time(t)
 
+/* fmt_arg_t has one floating representation. Keep the widening explicit so
+ * strict C++ consumers do not diagnose the intentional float adapter. */
+static inline fmt_arg_t fmt_arg_float(float x) {
+  return fmt_arg_double(FMT_DETAIL_CAST(double, x));
+}
+
 #undef FMT_MAKE_ARG
 #undef FMT_DETAIL_CAST
 
@@ -194,7 +200,7 @@ static inline fmt_arg_t fmt_arg_uchar(unsigned char x) {
          (unsigned long, fmt_arg_ulong),                                                          \
          (long long, fmt_arg_llong),                                                              \
          (unsigned long long, fmt_arg_ullong),                                                    \
-         (float, fmt_arg_double),                                                                 \
+         (float, fmt_arg_float),                                                                  \
          (double, fmt_arg_double),                                                                \
          (FMT_DETAIL_BOOL_SOURCE, fmt_arg_bool))
 

@@ -56,6 +56,30 @@ cmake_add_test(tinytest_cmeta_equal_test
   LIBS TurboUtils::TinyTest
   FOLDER "tinytest/tests")
 
+function(tinytest_add_compile_failure_test target_name source expected_diagnostic)
+  add_executable(${target_name} EXCLUDE_FROM_ALL ${source})
+  target_link_libraries(${target_name} PRIVATE TurboUtils::TinyTest)
+  set_target_properties(${target_name} PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    FOLDER "tinytest/tests/compile_fail")
+  add_test(
+    NAME ${target_name}
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+            --config $<CONFIG> --target ${target_name})
+  set_tests_properties(${target_name} PROPERTIES
+    PASS_REGULAR_EXPRESSION "${expected_diagnostic}"
+    RUN_SERIAL TRUE)
+endfunction()
+
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  tinytest_add_compile_failure_test(
+    tinytest_complex_equal_compile_fail
+    complex_equal_compile_fail.c
+    "ttest_c11_complex_values_are_unsupported__")
+endif()
+
 cmake_add_test(tinytest_result_x_macro
   SOURCES result_x_macro_test.c
   LIBS TurboUtils::TinyTest
@@ -71,7 +95,7 @@ add_test(
   NAME tinymock_public_header_structure
   COMMAND ${CMAKE_COMMAND}
     "-DTINYMOCK_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/tinymock.h"
-    "-DTRAITS_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/traits.h"
+    "-DTRAITS_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/tinymeta/traits.h"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tinymock_header_structure.cmake")
 
 cmake_add_test(tinymock_test
@@ -114,13 +138,43 @@ cmake_add_executable(tinytest_benchmark_output
   LIBS TurboUtils::TinyTest
   FOLDER "tinytest/tests")
 
+set(tinytest_benchmark_decimal_regex "[0-9]+\\.[0-9][0-9][0-9]")
+set(tinytest_benchmark_integer_regex "[0-9]+")
+set(tinytest_benchmark_mib_regex "[0-9]+\\.[0-9][0-9]")
+string(CONCAT tinytest_benchmark_table_regex
+  "\\| io \\| 2 \\| 4 \\| 16 \\| "
+  "${tinytest_benchmark_decimal_regex} \\| ${tinytest_benchmark_decimal_regex} \\| "
+  "${tinytest_benchmark_decimal_regex} \\| ${tinytest_benchmark_decimal_regex} \\| "
+  "${tinytest_benchmark_integer_regex} \\| ${tinytest_benchmark_mib_regex} \\|")
+string(CONCAT tinytest_benchmark_plain_regex
+  "io  samples=2  ops/sample=4  bytes/sample=16  "
+  "avg/op\\(ns\\)=${tinytest_benchmark_decimal_regex}  "
+  "avg/sample\\(us\\)=${tinytest_benchmark_decimal_regex}  "
+  "min/sample\\(us\\)=${tinytest_benchmark_decimal_regex}  "
+  "max/sample\\(us\\)=${tinytest_benchmark_decimal_regex}  "
+  "ops/s=${tinytest_benchmark_integer_regex}  MiB/s=${tinytest_benchmark_mib_regex}")
+
+add_test(
+  NAME tinytest_benchmark_table_output
+  COMMAND tinytest_benchmark_output --no-color)
+set_tests_properties(tinytest_benchmark_table_output PROPERTIES
+  PASS_REGULAR_EXPRESSION "${tinytest_benchmark_table_regex}"
+  FAIL_REGULAR_EXPRESSION "\\[ OK[ ]*\\]")
+
 cmake_add_executable(tinytest_benchmark_output_plain
   SOURCES benchmark_output_cases.c
   LIBS TurboUtils::TinyTest
   FOLDER "tinytest/tests")
 
 target_compile_definitions(tinytest_benchmark_output_plain
-  PRIVATE BDD_BENCH_TABLE=0)
+  PRIVATE TT_BENCH_TABLE=0)
+
+add_test(
+  NAME tinytest_benchmark_plain_output
+  COMMAND tinytest_benchmark_output_plain --no-color)
+set_tests_properties(tinytest_benchmark_plain_output PROPERTIES
+  PASS_REGULAR_EXPRESSION "${tinytest_benchmark_plain_regex}"
+  FAIL_REGULAR_EXPRESSION "\\[ OK[ ]*\\]")
 
 if(CMAKE_CXX_COMPILER OR CMAKE_CXX_COMPILER_ID)
   cmake_add_test(tinytest_regression_cpp

@@ -117,6 +117,7 @@ check_equal((Point){1, 2}, (Point){1, 2});
 
 Each row is `(TOKEN, C_TYPE, COMPARATOR)`. The comparator borrows two
 `const C_TYPE *` values. Unregistered structures are rejected at compile time.
+Complex values are unsupported and rejected at compile time.
 `tinytest_cmeta.h` and `tinytest_internal.h` are transitive implementation
 headers; applications include only `tinytest.h` (or `tinytest.hpp` for C++).
 Language-neutral runner, reporting, benchmark, temporary-file, and tree-management
@@ -287,8 +288,9 @@ Count arguments are evaluated once, converted to `size_t`, and must be greater t
 selected macro reports that unit. The macros return no value; an invalid count is a framework error.
 
 Output keeps timed samples separate from logical work: `samples`, `ops/sample`, `bytes/sample`,
-`avg/op(us)`, `min/sample(us)`, `max/sample(us)`, `ops/s`, and `MiB/s`. Sample min/max are not
-divided by the batch size because they are measurements of the complete timed block.
+`avg/op(ns)`, `avg/sample(us)`, `min/sample(us)`, `max/sample(us)`, `ops/s`, and `MiB/s`. The
+compact pipe table does not pad columns to fixed widths. Sample average/min/max are not divided by
+the batch size because they are measurements of the complete timed block.
 
 The legacy `benchmark(title, samples, operations_per_sample)` macro remains available as a
 source-compatible alias of `benchmark_ops`, but new code should use an explicit macro. In

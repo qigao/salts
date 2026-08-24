@@ -27,6 +27,7 @@ endforeach()
 
 add_library(${TARGET_NAME}
   src/adapters.c
+  src/actor.c
   src/certificate.c
   src/clock.c
   src/coord.c
@@ -39,6 +40,7 @@ add_library(${TARGET_NAME}
   src/interfaces.c
   src/lower.c
   src/machine.c
+  src/machine_hierarchy.c
   src/machine_runtime.c
   src/opt.c
   src/plan_compile.c
@@ -54,7 +56,9 @@ add_library(${TARGET_NAME}
   src/sources.c
   src/stream.c
   src/subrun.c
+  src/temporal.c
   src/timer_queue.c
+  src/timer_event.c
   src/verify.c)
 
 cmake_config_target(
@@ -102,4 +106,8 @@ endif()
 
 if(BUILD_BENCHMARKS)
   add_subdirectory(benchmarks)
+endif()
+
+if(CFLOW_ENABLE_MINICORO)
+  add_subdirectory(minicoro)
 endif()

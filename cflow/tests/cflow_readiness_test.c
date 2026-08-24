@@ -122,27 +122,18 @@ typedef struct arm_observing_scheduler_state {
     uint32_t observation_api_borrows;
 } arm_observing_scheduler_state;
 
-static cflow_schedule_result arm_observing_try_post_after(
-    void *self, uint64_t delay_ticks, cflow_task_fn fn, void *user) {
-    arm_observing_scheduler_state *state =
-        (arm_observing_scheduler_state *)self;
-    return cflow_scheduler_try_post_after(
-        &state->inner, delay_ticks, fn, user);
-}
-
-static cflow_task_id arm_observing_post_after(
-    void *self, uint64_t delay_ticks, cflow_task_fn fn, void *user) {
-    arm_observing_scheduler_state *state =
-        (arm_observing_scheduler_state *)self;
-    cflow_task_id task;
+static bool arm_observing_take_next(arm_observing_scheduler_state *state) {
     bool observe;
-
     turbo_mutex_lock(&state->lock);
     observe = state->observe_next_post;
     state->observe_next_post = false;
     turbo_mutex_unlock(&state->lock);
-    task = cflow_scheduler_post_after(&state->inner, delay_ticks, fn, user);
-    if (task != 0u && observe) {
+    return observe;
+}
+
+static void arm_observing_wait_for_rearm(
+    arm_observing_scheduler_state *state, bool observe, bool accepted) {
+    if (observe && accepted) {
         uint32_t api_borrows = UINT32_MAX;
         int status = turbo_readiness_backend_wait_arm_waiter_observe(
             state->registration, 1u, CFLOW_READINESS_TEST_TIMEOUT_NS,
@@ -152,6 +143,30 @@ static cflow_task_id arm_observing_post_after(
         state->observation_api_borrows = api_borrows;
         turbo_mutex_unlock(&state->lock);
     }
+}
+
+static cflow_schedule_result arm_observing_try_post_after(
+    void *self, uint64_t delay_ticks, cflow_task_fn fn, void *user) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    bool observe = arm_observing_take_next(state);
+    cflow_schedule_result result = cflow_scheduler_try_post_after(
+        &state->inner, delay_ticks, fn, user);
+    arm_observing_wait_for_rearm(
+        state, observe,
+        result.status == CFLOW_ADMISSION_ACCEPTED && result.task_id != 0u);
+    return result;
+}
+
+static cflow_task_id arm_observing_post_after(
+    void *self, uint64_t delay_ticks, cflow_task_fn fn, void *user) {
+    arm_observing_scheduler_state *state =
+        (arm_observing_scheduler_state *)self;
+    cflow_task_id task;
+    bool observe = arm_observing_take_next(state);
+
+    task = cflow_scheduler_post_after(&state->inner, delay_ticks, fn, user);
+    arm_observing_wait_for_rearm(state, observe, task != 0u);
     return task;
 }
 

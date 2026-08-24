@@ -13,10 +13,22 @@ static_assert(std::is_standard_layout<cflow_mailbox>::value,
               "cflow_mailbox must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine>::value,
               "cflow_machine must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_machine_hierarchy>::value,
+              "machine hierarchy must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_machine_hierarchy_instance>::value,
+              "hierarchy instance must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_instance>::value,
               "cflow_machine_instance must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_instance_config>::value,
               "machine runtime config must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_actor>::value,
+              "cflow_actor must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_actor_ref>::value,
+              "cflow_actor_ref must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_actor_config>::value,
+              "actor config must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_timer_event_queue>::value,
+              "timer Event queue must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_transition>::value,
               "cflow_machine_transition must remain a C-compatible row");
 static_assert(std::is_standard_layout<turbo_readiness_registration>::value,
@@ -50,8 +62,12 @@ suite("CFlow C++ public header") {
         const cflow_event_view event = {1u, &cmeta_type_int, &sent};
         cflow_mailbox mailbox = {};
         cflow_machine machine = {};
+        cflow_machine_hierarchy hierarchy = {};
         cflow_machine_instance instance = {};
         cflow_machine_instance_config machine_config = {};
+        cflow_actor actor = {};
+        cflow_actor_ref actor_ref = {};
+        cflow_timer_event_queue timer_events = {};
         cflow_event_id event_id = 0u;
         const cmeta_type_desc *event_type = nullptr;
         int received = 0;
@@ -82,8 +98,15 @@ suite("CFlow C++ public header") {
         cflow_mailbox_destroy(&mailbox);
         check_null(machine.impl);
         cflow_machine_destroy(&machine);
+        check_null(hierarchy.impl);
+        cflow_machine_hierarchy_destroy(&hierarchy);
         check_null(instance.impl);
         check_null(machine_config.machine);
+        check_null(actor.impl);
+        check_null(actor_ref.impl);
+        cflow_actor_ref_release(&actor_ref);
+        cflow_actor_destroy(&actor);
+        check_null(timer_events.impl);
         cflow_machine_instance_destroy(&instance);
     }
 }

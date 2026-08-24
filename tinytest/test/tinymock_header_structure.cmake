@@ -48,7 +48,7 @@ endif()
 foreach(forbidden "FECI" "TTEST_TRAIT_PP_")
   string(FIND "${traits_header}" "${forbidden}" position)
   if(NOT position EQUAL -1)
-    message(FATAL_ERROR "traits.h retains non-trait PP machinery: ${forbidden}")
+    message(FATAL_ERROR "tinytest_traits.h retains non-trait PP machinery: ${forbidden}")
   endif()
 endforeach()
 

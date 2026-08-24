@@ -16,8 +16,12 @@ import CMetaCFlowCalculus.CFlow.Mailbox
 import CMetaCFlowCalculus.CFlow.MachineSchema
 import CMetaCFlowCalculus.CFlow.MachineSchemaHeader
 import CMetaCFlowCalculus.CFlow.Machine
+import CMetaCFlowCalculus.CFlow.MachineHierarchy
 import CMetaCFlowCalculus.CFlow.MachineRuntime
 import CMetaCFlowCalculus.CFlow.Readiness
+import CMetaCFlowCalculus.CFlow.TimerEvent
+import CMetaCFlowCalculus.CFlow.Temporal
+import CMetaCFlowCalculus.CFlow.Actor
 import CMetaCFlowCalculus.CFlow.Observation
 import CMetaCFlowCalculus.CFlow.Architecture
 import CMetaCFlowCalculus.CFlow.Rewrite
@@ -27,8 +31,12 @@ import CMetaCFlowCalculus.Proofs.Ownership
 import CMetaCFlowCalculus.Proofs.Execution
 import CMetaCFlowCalculus.Proofs.Mailbox
 import CMetaCFlowCalculus.Proofs.Machine
+import CMetaCFlowCalculus.Proofs.MachineHierarchy
 import CMetaCFlowCalculus.Proofs.MachineRuntime
 import CMetaCFlowCalculus.Proofs.Readiness
+import CMetaCFlowCalculus.Proofs.TimerEvent
+import CMetaCFlowCalculus.Proofs.Temporal
+import CMetaCFlowCalculus.Proofs.Actor
 import CMetaCFlowCalculus.Proofs.Architecture
 import CMetaCFlowCalculus.Proofs.Rewrite
 import CMetaCFlowCalculus.Proofs.Certificate

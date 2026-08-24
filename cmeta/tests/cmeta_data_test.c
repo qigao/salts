@@ -21,6 +21,13 @@ typedef struct cmeta_data_test_variant_storage {
     } value;
 } cmeta_data_test_variant_storage;
 
+typedef enum cmeta_data_test_variant_select_mode {
+    CMETA_DATA_TEST_VARIANT_SELECT_OK,
+    CMETA_DATA_TEST_VARIANT_SELECT_FAIL,
+    CMETA_DATA_TEST_VARIANT_SELECT_WRONG_TAG,
+    CMETA_DATA_TEST_VARIANT_SELECT_STAYS_ZERO
+} cmeta_data_test_variant_select_mode;
+
 static const cmeta_type_identity cmeta_data_test_record_identity =
     CMETA_TYPE_ID_ATOM_INIT("test.Record");
 static const cmeta_type_desc cmeta_data_test_record_type = {
@@ -45,6 +52,49 @@ static const cmeta_type_desc cmeta_data_test_variant_type = {
     .identity = &cmeta_data_test_variant_identity
 };
 
+static cmeta_data_test_variant_select_mode cmeta_data_test_variant_mode;
+
+static bool cmeta_data_test_variant_is_zero(const void *object) {
+    const cmeta_data_test_variant_storage *value =
+        (const cmeta_data_test_variant_storage *)object;
+    return value != NULL && value->tag == 0;
+}
+
+static cmeta_status cmeta_data_test_variant_active_tag(const void *object,
+                                                       int64_t *out) {
+    const cmeta_data_test_variant_storage *value =
+        (const cmeta_data_test_variant_storage *)object;
+    if (value == NULL || out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    *out = value->tag;
+    return CMETA_OK;
+}
+
+static cmeta_status cmeta_data_test_variant_select(void *object, int64_t tag) {
+    cmeta_data_test_variant_storage *value =
+        (cmeta_data_test_variant_storage *)object;
+    if (value == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    memset(&value->value, 0, sizeof(value->value));
+    if (cmeta_data_test_variant_mode ==
+        CMETA_DATA_TEST_VARIANT_SELECT_STAYS_ZERO) {
+        value->tag = 0;
+        return CMETA_OK;
+    }
+    value->tag = (int)tag;
+    if (cmeta_data_test_variant_mode ==
+        CMETA_DATA_TEST_VARIANT_SELECT_WRONG_TAG)
+        value->tag += 1;
+    return cmeta_data_test_variant_mode == CMETA_DATA_TEST_VARIANT_SELECT_FAIL
+               ? CMETA_CALLBACK_ERROR
+               : CMETA_OK;
+}
+
+static void cmeta_data_test_variant_restore_zero(void *object) {
+    if (object != NULL)
+        memset(object, 0, sizeof(cmeta_data_test_variant_storage));
+}
+
 static const cmeta_type_identity cmeta_data_test_enum_identity =
     CMETA_TYPE_ID_ATOM_INIT("test.State");
 static const cmeta_type_desc cmeta_data_test_enum_type = {
@@ -55,6 +105,66 @@ static const cmeta_type_desc cmeta_data_test_enum_type = {
     .pointee = NULL,
     .traits = NULL,
     .identity = &cmeta_data_test_enum_identity
+};
+
+static bool cmeta_data_test_enum_assign_fails;
+
+static bool cmeta_data_test_enum_is_zero(const void *object) {
+    cmeta_data_test_state value;
+    if (object == NULL)
+        return false;
+    memcpy(&value, object, sizeof(value));
+    return CMETA_ENUM_TO_INT64(value) == 0;
+}
+
+static cmeta_status cmeta_data_test_enum_read(const void *object,
+                                              int64_t *out) {
+    cmeta_data_test_state value;
+    if (object == NULL || out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    memcpy(&value, object, sizeof(value));
+    *out = CMETA_ENUM_TO_INT64(value);
+    return CMETA_OK;
+}
+
+static cmeta_status cmeta_data_test_enum_assign(void *object, int64_t value) {
+    cmeta_data_test_state native;
+    if (object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    native = CMETA_ENUM_FROM_INT64(cmeta_data_test_state, value);
+    memcpy(object, &native, sizeof(native));
+    return cmeta_data_test_enum_assign_fails ? CMETA_CALLBACK_ERROR : CMETA_OK;
+}
+
+static void cmeta_data_test_enum_restore_zero(void *object) {
+    cmeta_data_test_state value = CMETA_ENUM_FROM_INT64(cmeta_data_test_state, 0);
+    if (object != NULL)
+        memcpy(object, &value, sizeof(value));
+}
+
+static const cmeta_data_enum_shape cmeta_data_test_enum_shape = {
+    .meta = EnumMeta(cmeta_data_test_state)
+};
+
+static const cmeta_data_enum_ops cmeta_data_test_enum_ops = {
+    .struct_size = sizeof(cmeta_data_enum_ops),
+    .abi_version = CMETA_DATA_ENUM_OPS_ABI_VERSION,
+    .storage_type = &cmeta_data_test_enum_type,
+    .is_zero = cmeta_data_test_enum_is_zero,
+    .read = cmeta_data_test_enum_read,
+    .assign = cmeta_data_test_enum_assign,
+    .restore_zero = cmeta_data_test_enum_restore_zero
+};
+
+static const cmeta_data_desc cmeta_data_test_enum_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.State.data",
+    .display_name = "State",
+    .kind = CMETA_DATA_ENUM,
+    .storage_type = &cmeta_data_test_enum_type,
+    .shape = &cmeta_data_test_enum_shape,
+    .enum_ops = &cmeta_data_test_enum_ops
 };
 
 static bool cmeta_data_test_buffer_is_zero(const void *object) {
@@ -158,15 +268,25 @@ static const cmeta_data_variant_shape cmeta_data_test_variant_shape = {
                   sizeof(cmeta_data_test_variant_cases[0])
 };
 
+static const cmeta_data_variant_ops cmeta_data_test_variant_ops = {
+    .struct_size = sizeof(cmeta_data_variant_ops),
+    .abi_version = CMETA_DATA_VARIANT_OPS_ABI_VERSION,
+    .storage_type = &cmeta_data_test_variant_type,
+    .is_zero = cmeta_data_test_variant_is_zero,
+    .active_tag = cmeta_data_test_variant_active_tag,
+    .select = cmeta_data_test_variant_select,
+    .restore_zero = cmeta_data_test_variant_restore_zero
+};
+
 static const cmeta_data_desc cmeta_data_test_variant_desc = {
-    .struct_size = offsetof(cmeta_data_desc, shape) +
-                   sizeof(((cmeta_data_desc *)0)->shape),
+    .struct_size = sizeof(cmeta_data_desc),
     .abi_version = CMETA_DATA_DESC_ABI_VERSION,
     .stable_id = "test.Variant.data",
     .display_name = "Variant",
     .kind = CMETA_DATA_VARIANT,
     .storage_type = &cmeta_data_test_variant_type,
-    .shape = &cmeta_data_test_variant_shape
+    .shape = &cmeta_data_test_variant_shape,
+    .variant_ops = &cmeta_data_test_variant_ops
 };
 
 spec("CMeta semantic data descriptors") {
@@ -340,6 +460,48 @@ spec("CMeta semantic data descriptors") {
     check_equal(enum_shape.meta->count, (size_t)2u);
   }
 
+  it("checks enum storage adapters and restores zero after failure") {
+    cmeta_data_test_state object =
+        CMETA_ENUM_FROM_INT64(cmeta_data_test_state, 0);
+    cmeta_data_enum_ops ops = cmeta_data_test_enum_ops;
+    cmeta_data_desc desc = cmeta_data_test_enum_desc;
+    int64_t value = -1;
+    bool is_zero = false;
+
+    cmeta_data_test_enum_assign_fails = false;
+    check_true(cmeta_data_enum_ops_of(&desc) == &cmeta_data_test_enum_ops);
+    check_equal(cmeta_data_enum_is_zero(&desc, &object, &is_zero), CMETA_OK);
+    check_true(is_zero);
+    check_equal(cmeta_data_enum_assign(&desc, &object,
+                                       CMETA_DATA_TEST_READY), CMETA_OK);
+    check_equal(cmeta_data_enum_read(&desc, &object, &value), CMETA_OK);
+    check_equal(value, (int64_t)CMETA_DATA_TEST_READY);
+    check_equal(cmeta_data_enum_restore_zero(&desc, &object), CMETA_OK);
+    check_equal(CMETA_ENUM_TO_INT64(object), INT64_C(0));
+
+    object = CMETA_ENUM_FROM_INT64(cmeta_data_test_state, 99);
+    check_equal(cmeta_data_enum_read(&desc, &object, &value),
+                CMETA_CALLBACK_ERROR);
+    check_equal(cmeta_data_enum_restore_zero(&desc, &object), CMETA_OK);
+
+    check_equal(cmeta_data_enum_assign(&desc, &object, INT64_C(99)),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(CMETA_ENUM_TO_INT64(object), INT64_C(0));
+
+    cmeta_data_test_enum_assign_fails = true;
+    check_equal(cmeta_data_enum_assign(&desc, &object,
+                                       CMETA_DATA_TEST_IDLE),
+                CMETA_CALLBACK_ERROR);
+    check_equal(CMETA_ENUM_TO_INT64(object), INT64_C(0));
+    cmeta_data_test_enum_assign_fails = false;
+
+    ops.storage_type = &cmeta_type_int;
+    desc.enum_ops = &ops;
+    check_null(cmeta_data_enum_ops_of(&desc));
+    check_equal(cmeta_data_enum_read(&desc, &object, &value),
+                CMETA_TYPE_MISMATCH);
+  }
+
   it("looks up struct semantic fields and checks reflected offsets") {
     cmeta_data_field_desc bad_field = cmeta_data_test_record_fields[0];
     cmeta_data_struct_shape bad_shape = cmeta_data_test_record_shape;
@@ -397,6 +559,59 @@ spec("CMeta semantic data descriptors") {
     duplicate_shape.cases = duplicate_cases;
     duplicate_desc.shape = &duplicate_shape;
     check_false(cmeta_data_desc_valid(&duplicate_desc));
+  }
+
+  it("checks variant lifecycle adapters and enforces select postconditions") {
+    cmeta_data_test_variant_storage object = {0};
+    cmeta_data_variant_ops ops = cmeta_data_test_variant_ops;
+    cmeta_data_desc desc = cmeta_data_test_variant_desc;
+    int64_t tag = 0;
+    bool is_zero = false;
+
+    cmeta_data_test_variant_mode = CMETA_DATA_TEST_VARIANT_SELECT_OK;
+    check_true(cmeta_data_variant_ops_of(&desc) ==
+               &cmeta_data_test_variant_ops);
+    check_equal(cmeta_data_variant_is_zero(&desc, &object, &is_zero),
+                CMETA_OK);
+    check_true(is_zero);
+    check_equal(cmeta_data_variant_select(&desc, &object, INT64_C(1)),
+                CMETA_OK);
+    check_equal(cmeta_data_variant_active_tag(&desc, &object, &tag),
+                CMETA_OK);
+    check_equal(tag, INT64_C(1));
+    check_equal(cmeta_data_variant_restore_zero(&desc, &object), CMETA_OK);
+    check_equal(object.tag, 0);
+
+    object.tag = 99;
+    check_equal(cmeta_data_variant_active_tag(&desc, &object, &tag),
+                CMETA_CALLBACK_ERROR);
+    check_equal(cmeta_data_variant_restore_zero(&desc, &object), CMETA_OK);
+
+    check_equal(cmeta_data_variant_select(&desc, &object, INT64_C(99)),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(object.tag, 0);
+
+    cmeta_data_test_variant_mode = CMETA_DATA_TEST_VARIANT_SELECT_FAIL;
+    check_equal(cmeta_data_variant_select(&desc, &object, INT64_C(1)),
+                CMETA_CALLBACK_ERROR);
+    check_equal(object.tag, 0);
+
+    cmeta_data_test_variant_mode = CMETA_DATA_TEST_VARIANT_SELECT_WRONG_TAG;
+    check_equal(cmeta_data_variant_select(&desc, &object, INT64_C(1)),
+                CMETA_CALLBACK_ERROR);
+    check_equal(object.tag, 0);
+
+    cmeta_data_test_variant_mode = CMETA_DATA_TEST_VARIANT_SELECT_STAYS_ZERO;
+    check_equal(cmeta_data_variant_select(&desc, &object, INT64_C(1)),
+                CMETA_CALLBACK_ERROR);
+    check_equal(object.tag, 0);
+    cmeta_data_test_variant_mode = CMETA_DATA_TEST_VARIANT_SELECT_OK;
+
+    ops.storage_type = &cmeta_type_int;
+    desc.variant_ops = &ops;
+    check_null(cmeta_data_variant_ops_of(&desc));
+    check_equal(cmeta_data_variant_active_tag(&desc, &object, &tag),
+                CMETA_TYPE_MISMATCH);
   }
 
   it("rejects an invalid or non-integral variant tag descriptor") {
