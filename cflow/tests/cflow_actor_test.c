@@ -1300,10 +1300,22 @@ suite("CFlow Actor lifecycle") {
         check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
         check_equal(cflow_actor_ref_try_send(&ref, &event),
                     CFLOW_ACTOR_SEND_ACCEPTED);
-        check_true(wait_until_true(&blocker.entered));
-        check_equal(turbo_thread_create(
-            &destroy_thread, actor_destroy_owner, &destroy_context), 0);
-        check_true(wait_until_true(&destroy_started));
+        {
+            const bool entered = wait_until_true(&blocker.entered);
+            check_true(entered);
+            if (!entered) abort();
+        }
+        {
+            const int create_status = turbo_thread_create(
+                &destroy_thread, actor_destroy_owner, &destroy_context);
+            check_equal(create_status, 0);
+            if (create_status != 0) abort();
+        }
+        {
+            const bool started = wait_until_true(&destroy_started);
+            check_true(started);
+            if (!started) abort();
+        }
 
         for (index = 0; index < DESTROY_OVERLAP_MAX_SENDS; ++index) {
             ++overlap_attempts;
@@ -1320,7 +1332,11 @@ suite("CFlow Actor lifecycle") {
                         CFLOW_ACTOR_SEND_STALE);
 
         atomic_store(&blocker.release, true);
-        check_true(wait_until_true(&destroy_returned));
+        {
+            const bool returned = wait_until_true(&destroy_returned);
+            check_true(returned);
+            if (!returned) abort();
+        }
         check_equal(turbo_thread_join(&destroy_thread), 0);
         check_null(fixture.actor.impl);
         for (index = 0; index < DESTROY_POST_SENDS; ++index)
