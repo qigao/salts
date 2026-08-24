@@ -211,6 +211,6 @@ git add .github cflow docs formal
 git commit -m "docs(cflow): document typed machine ir delivery"
 ```
 
-- [ ] **Step 5: Request independent review and prepare the stacked PR**
+- [x] **Step 5: Request independent review and prepare the stacked PR**
 
 Review against issue #63 and this spec, fix every validated finding through a failing regression test, rerun verification, push `feat/cflow-machine-ir`, and create a PR based on `feat/cflow-typed-event-mailbox` that closes #63. Retarget to `master` after #73 merges.
