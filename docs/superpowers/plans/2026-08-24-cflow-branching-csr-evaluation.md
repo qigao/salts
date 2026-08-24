@@ -175,7 +175,7 @@ Presets, GitHub Actions fixed Release hosts.
   Use a PR body that closes #46 only when the evidence document selects adopt
   or reject, and keep the worktree for CI/review fixes.
 
-- [ ] **Step 6: Inspect all fixed-host evidence**
+- [x] **Step 6: Inspect all fixed-host evidence**
 
   Confirm Ubuntu 22.04/24.04 and Windows 2022/2025 jobs succeeded and artifacts
   contain five raw runs plus metadata. Amend the evidence document if a host

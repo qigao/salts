@@ -171,10 +171,27 @@ The decision is **reject CSR for production CFlow phases**. The flat edge array
 remains the topology fact source and the private dense successor remains the
 derived representation used by validation, lowering, optimization and Plan
 compilation. Synthetic general-adjacency rows remain in the benchmark as
-reproducible controls, but cannot override the valid-Graph result. The
-pull-request workflow will collect five raw runs plus metadata on each fixed
-Ubuntu and Windows host; those artifacts are evidence rather than timing
-gates.
+reproducible controls, but cannot override the valid-Graph result.
+
+### Fixed-host confirmation
+
+[CFlow release host benchmarks run 118](https://github.com/qigao/turbo-utils/actions/runs/32712195163)
+completed successfully on all four fixed Release hosts. Every artifact contains
+host/compiler metadata, five direct benchmark runs and five parallel-reduce
+runs. All 20 direct runs passed. Median valid nested results are:
+
+| Host | Compiler | Dense (ns/lookup) | CSR (ns/lookup) | CSR time change |
+| --- | --- | ---: | ---: | ---: |
+| Ubuntu 22.04 | GCC 11.4.0 | 4.853 | 7.847 | +61.69% |
+| Ubuntu 24.04 | GCC 13.3.0 | 5.419 | 7.229 | +33.40% |
+| Windows 2022 | MSVC 19.44.35228 | 5.173 | 10.798 | +108.74% |
+| Windows 2025 | MSVC 19.51.36256 | 5.836 | 10.057 | +72.33% |
+
+Each host reports the same deterministic allocator-request totals: dense
+retains and peaks at 132 bytes, while CSR retains and peaks at 400 bytes
+(`+203.03%`). CSR therefore fails the performance and memory gates on every
+fixed host. These shared-runner measurements confirm the rejection decision;
+they remain evidence rather than timing gates.
 
 ## Compatibility and Rollback
 
