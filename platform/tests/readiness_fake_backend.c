@@ -12,6 +12,7 @@
 typedef struct readiness_fake_record {
   intptr_t native_resource;
   uint64_t token;
+  uint64_t arm_token;
   turbo_readiness_events events;
   int active;
 } readiness_fake_record;
@@ -105,7 +106,8 @@ static int fake_register_resource(void *user, intptr_t native_resource, uint64_t
   return TURBO_ENOBUFS;
 }
 
-static int fake_arm(void *user, uint64_t token, turbo_readiness_events events) {
+static int fake_arm(void *user, uint64_t token, uint64_t arm_token,
+                    turbo_readiness_events events) {
   readiness_contract_fixture *fixture = (readiness_contract_fixture *)user;
   readiness_fake_record *record;
   int status = TURBO_OK;
@@ -120,7 +122,10 @@ static int fake_arm(void *user, uint64_t token, turbo_readiness_events events) {
   } else {
     record = fake_find_token(fixture, token);
     if (record == NULL) status = TURBO_EINVAL;
-    else record->events = events;
+    else {
+      record->arm_token = arm_token;
+      record->events = events;
+    }
   }
   turbo_mutex_unlock(&fixture->mutex);
   return status;
@@ -165,8 +170,11 @@ static int fake_shutdown(void *user) {
   return fake_hook_error(fixture, READINESS_CONTRACT_HOOK_SHUTDOWN);
 }
 
+static void fake_backend_destroy(void *user) { (void)user; }
+
 static const turbo_readiness_backend_ops fake_backend_ops = {fake_register_resource, fake_arm,
-                                                             fake_unarm, fake_close, fake_shutdown};
+                                                             fake_unarm, fake_close, fake_shutdown,
+                                                             fake_backend_destroy};
 
 static readiness_contract_fixture *fake_create(turbo_readiness_config config,
                                                turbo_readiness_reactor *reactor, int *status) {
@@ -250,6 +258,23 @@ static uint64_t fake_token_for_resource(readiness_contract_fixture *fixture,
   token = record != NULL ? record->token : 0;
   turbo_mutex_unlock(&fixture->mutex);
   return token;
+}
+
+static uint64_t fake_arm_token_for_resource(readiness_contract_fixture *fixture,
+                                            intptr_t native_resource) {
+  readiness_fake_record *record;
+  uint64_t token;
+  turbo_mutex_lock(&fixture->mutex);
+  record = fake_find_resource(fixture, native_resource);
+  token = record != NULL ? record->arm_token : 0;
+  turbo_mutex_unlock(&fixture->mutex);
+  return token;
+}
+
+static int fake_emit_arm_token(readiness_contract_fixture *fixture, uint64_t token,
+                               uint64_t arm_token, turbo_readiness_events events) {
+  return turbo_readiness_backend_dispatch_generation(fixture->reactor, token, arm_token, events,
+                                                     TURBO_OK);
 }
 
 static void fake_fail_next_arm(readiness_contract_fixture *fixture, int status) {
@@ -337,6 +362,8 @@ const readiness_contract_factory *readiness_contract_factory_get(void) {
                                                      fake_emit_token,
                                                      fake_fail_backend,
                                                      fake_token_for_resource,
+                                                     fake_arm_token_for_resource,
+                                                     fake_emit_arm_token,
                                                      fake_fail_next_arm,
                                                      fake_fail_hook,
                                                      fake_backend_close_calls,

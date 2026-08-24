@@ -27,6 +27,10 @@ typedef struct readiness_contract_factory {
                     turbo_readiness_events events, int status);
   int (*fail_backend)(readiness_contract_fixture *fixture, int status);
   uint64_t (*token_for_resource)(readiness_contract_fixture *fixture, intptr_t native_resource);
+  uint64_t (*arm_token_for_resource)(readiness_contract_fixture *fixture,
+                                     intptr_t native_resource);
+  int (*emit_arm_token)(readiness_contract_fixture *fixture, uint64_t token,
+                        uint64_t arm_token, turbo_readiness_events events);
   void (*fail_next_arm)(readiness_contract_fixture *fixture, int status);
   void (*fail_hook)(readiness_contract_fixture *fixture, readiness_contract_hook hook, int status,
                     size_t calls);

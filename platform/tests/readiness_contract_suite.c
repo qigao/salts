@@ -530,6 +530,51 @@ spec("Platform readiness contract") {
       callback_probe_destroy(&probe);
       close_and_destroy_fixture(factory, fixture, &reactor);
     }
+
+    it("rejects an event copied from an earlier arm generation") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      turbo_readiness_stats stats;
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_equal(
+          turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_READ, record_callback, &probe),
+          TURBO_OK);
+      uint64_t token = factory->token_for_resource(fixture, CONTRACT_RESOURCE_A);
+      uint64_t stale_arm_token =
+          factory->arm_token_for_resource(fixture, CONTRACT_RESOURCE_A);
+      check_not_equal(stale_arm_token, (uint64_t)0);
+      check_equal(turbo_readiness_unarm(&registration), TURBO_OK);
+      check_equal(
+          turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_READ, record_callback, &probe),
+          TURBO_OK);
+      check_not_equal(factory->arm_token_for_resource(fixture, CONTRACT_RESOURCE_A),
+                      stale_arm_token);
+
+      check_equal(factory->emit_arm_token(fixture, token, stale_arm_token,
+                                          TURBO_READINESS_EVENT_READ),
+                  TURBO_OK);
+      check_equal(probe.calls, 0);
+      uint64_t current_arm_token =
+          factory->arm_token_for_resource(fixture, CONTRACT_RESOURCE_A);
+      check_equal(factory->emit_resource(fixture, CONTRACT_RESOURCE_A,
+                                         TURBO_READINESS_EVENT_READ),
+                  TURBO_OK);
+      check_equal(probe.calls, 1);
+      check_equal(factory->emit_arm_token(fixture, token, current_arm_token,
+                                          TURBO_READINESS_EVENT_READ),
+                  TURBO_OK);
+      check_equal(probe.calls, 1);
+      check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
+      check_equal(stats.stale_events, (uint64_t)1);
+      check_equal(stats.duplicate_events, (uint64_t)1);
+
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      callback_probe_destroy(&probe);
+      close_and_destroy_fixture(factory, fixture, &reactor);
+    }
   }
 
   group("backend failure ownership") {
