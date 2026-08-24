@@ -70,11 +70,14 @@ TURBO_PLATFORM_C_API int turbo_readiness_register(turbo_readiness_reactor *react
                                                   turbo_readiness_registration *registration);
 
 /*
- * Arm is one-shot. Callback delivery for this arm begins only after
- * turbo_readiness_arm() returns; backend events are serialized behind the arm
- * control operation. The backend event and user callback are dispatched
- * without a Platform lock held. status is TURBO_OK for readiness or an exact
- * negative terminal backend code; terminal delivery uses events == 0.
+ * Arm is one-shot. callback and user must already be valid before this call.
+ * Backend events are serialized behind the arm control operation; delivery is
+ * released after its commit clears the control gate, and may race the
+ * function's final return and the caller's observation of that return. Keep
+ * callback and user valid until callback completion or successful unarm/close.
+ * The backend event and user callback are dispatched without a Platform lock
+ * held. status is TURBO_OK for readiness or an exact negative terminal backend
+ * code; terminal delivery uses events == 0.
  */
 TURBO_PLATFORM_C_API int turbo_readiness_arm(turbo_readiness_registration *registration,
                                              turbo_readiness_events events,

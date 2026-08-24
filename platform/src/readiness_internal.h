@@ -40,6 +40,13 @@ typedef struct turbo_readiness_backend_ops {
    * backend ownership for a later retry.  Only shutdown TURBO_OK proves backend callbacks,
    * its thread, and all native reactor access are quiescent. */
   int (*register_resource)(void *user, intptr_t native_resource, uint64_t token);
+  /* The arm hook must not call turbo_readiness_backend_dispatch() or
+   * turbo_readiness_backend_dispatch_generation() inline on its own execution
+   * thread, nor wait for a dispatch it triggered: dispatch waits for this arm's
+   * control gate and such a hook would wait for itself. The hook may notify an
+   * independent reactor/producer thread; its queued dispatch is released after
+   * the hook returns and the state engine commits or rolls back the arm control
+   * operation and clears that gate. */
   int (*arm)(void *user, uint64_t token, uint64_t arm_token,
              turbo_readiness_events events);
   int (*unarm)(void *user, uint64_t token);
