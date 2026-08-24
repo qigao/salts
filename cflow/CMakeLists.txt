@@ -39,6 +39,7 @@ add_library(${TARGET_NAME}
   src/interfaces.c
   src/lower.c
   src/machine.c
+  src/machine_runtime.c
   src/opt.c
   src/plan_compile.c
   src/plan_exec.c

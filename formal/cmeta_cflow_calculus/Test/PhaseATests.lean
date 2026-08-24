@@ -13,6 +13,7 @@ import PhaseATests.FiniteCompute
 import PhaseATests.Mailbox
 import PhaseATests.MachineSchema
 import PhaseATests.Machine
+import PhaseATests.MachineRuntime
 
 open CMetaCFlowCalculus.CMeta
 open CMetaCFlowCalculus.CFlow
