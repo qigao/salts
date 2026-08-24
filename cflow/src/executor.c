@@ -8,14 +8,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct cflow_manual_task {
-    cflow_task_fn fn;
-    void *user;
-} cflow_manual_task;
-
 typedef struct cflow_manual_executor_state {
-    cflow_manual_task *tasks;
+    cflow_executor_task *tasks;
     size_t count;
+    size_t settling;
     size_t capacity;
     size_t peak_pending;
     size_t accepted;
@@ -42,14 +38,14 @@ static _Thread_local cflow_manual_executor_state *manual_current = NULL;
 
 static void manual_maybe_close(cflow_manual_executor_state *state) {
     if (state->lifecycle == CFLOW_EXECUTOR_CLOSING &&
-        state->count == 0u && !state->running)
+        state->count == 0u && state->settling == 0u && !state->running)
         state->lifecycle = CFLOW_EXECUTOR_CLOSED;
 }
 
-static cflow_admission_status manual_try_post(void *self, cflow_task_fn fn,
-                                              void *user) {
-    cflow_manual_executor_state *state = (cflow_manual_executor_state *)self;
-    if (!state || !fn) return CFLOW_ADMISSION_INVALID_ARGUMENT;
+static cflow_admission_status manual_try_post_task_state(
+    cflow_manual_executor_state *state, const cflow_executor_task *task) {
+    if (!state || !task || !task->run)
+        return CFLOW_ADMISSION_INVALID_ARGUMENT;
     if (state->lifecycle != CFLOW_EXECUTOR_OPEN) {
         ++state->rejected_closed;
         return CFLOW_ADMISSION_CLOSED;
@@ -58,18 +54,30 @@ static cflow_admission_status manual_try_post(void *self, cflow_task_fn fn,
         ++state->rejected_full;
         return CFLOW_ADMISSION_FULL;
     }
-    state->tasks[state->count++] = (cflow_manual_task){fn, user};
+    state->tasks[state->count++] = *task;
     ++state->accepted;
     if (state->count > state->peak_pending)
         state->peak_pending = state->count;
     return CFLOW_ADMISSION_ACCEPTED;
 }
 
-static cflow_executor_post_status manual_control_post(
-    void *self, cflow_task_fn fn, void *user) {
+static cflow_admission_status manual_try_post(void *self, cflow_task_fn fn,
+                                              void *user) {
     cflow_manual_executor_state *state = (cflow_manual_executor_state *)self;
+    const cflow_executor_task task = {
+        .run = fn,
+        .cancel = NULL,
+        .finalize = NULL,
+        .user = user
+    };
+    return manual_try_post_task_state(state, &task);
+}
+
+static cflow_executor_post_status manual_control_post_task_state(
+    cflow_manual_executor_state *state, const cflow_executor_task *task) {
     cflow_admission_status admitted;
-    if (!state || !fn) return CFLOW_EXECUTOR_POST_INVALID_ARGUMENT;
+    if (!state || !task || !task->run)
+        return CFLOW_EXECUTOR_POST_INVALID_ARGUMENT;
     if (state->lifecycle != CFLOW_EXECUTOR_OPEN) {
         ++state->rejected_closed;
         return CFLOW_EXECUTOR_POST_CLOSED;
@@ -78,13 +86,25 @@ static cflow_executor_post_status manual_control_post(
         ++state->rejected_would_block;
         return CFLOW_EXECUTOR_POST_WOULD_BLOCK;
     }
-    admitted = manual_try_post(state, fn, user);
+    admitted = manual_try_post_task_state(state, task);
     switch (admitted) {
     case CFLOW_ADMISSION_ACCEPTED: return CFLOW_EXECUTOR_POST_ACCEPTED;
     case CFLOW_ADMISSION_FULL: return CFLOW_EXECUTOR_POST_FULL;
     case CFLOW_ADMISSION_CLOSED: return CFLOW_EXECUTOR_POST_CLOSED;
     default: return CFLOW_EXECUTOR_POST_INVALID_ARGUMENT;
     }
+}
+
+static cflow_executor_post_status manual_control_post(
+    void *self, cflow_task_fn fn, void *user) {
+    cflow_manual_executor_state *state = (cflow_manual_executor_state *)self;
+    const cflow_executor_task task = {
+        .run = fn,
+        .cancel = NULL,
+        .finalize = NULL,
+        .user = user
+    };
+    return manual_control_post_task_state(state, &task);
 }
 
 static cflow_executor_wait_status manual_control_wait_idle(void *self) {
@@ -95,8 +115,28 @@ static cflow_executor_wait_status manual_control_wait_idle(void *self) {
         return CFLOW_EXECUTOR_WAIT_WOULD_BLOCK;
     }
     manual_maybe_close(state);
-    return state->count == 0u && !state->running
+    return state->count == 0u && state->settling == 0u && !state->running
                ? CFLOW_EXECUTOR_WAIT_IDLE : CFLOW_EXECUTOR_WAIT_PENDING;
+}
+
+static void manual_cancel_pending(cflow_manual_executor_state *state) {
+    cflow_manual_executor_state *previous;
+    size_t task_count;
+    if (!state || state->count == 0u) return;
+
+    task_count = state->count;
+    state->count = 0u;
+    state->settling = task_count;
+    previous = manual_current;
+    manual_current = state;
+    for (size_t i = 0u; i < task_count; ++i) {
+        cflow_executor_task *task = &state->tasks[i];
+        if (task->cancel) task->cancel(task->user);
+        if (task->finalize) task->finalize(task->user);
+        --state->settling;
+        ++state->cancelled;
+    }
+    manual_current = previous;
 }
 
 static bool manual_control_shutdown(
@@ -111,10 +151,8 @@ static bool manual_control_shutdown(
         state->shutdown_policy = policy;
         state->shutdown_policy_selected = true;
         state->lifecycle = CFLOW_EXECUTOR_CLOSING;
-        if (policy == CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING) {
-            state->cancelled += state->count;
-            state->count = 0u;
-        }
+        if (policy == CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING)
+            manual_cancel_pending(state);
     }
     manual_maybe_close(state);
     return true;
@@ -128,7 +166,7 @@ static bool manual_control_get_stats(void *self,
     *out = (cflow_executor_protocol_stats){
         .capacity = state->capacity,
         .accepted = state->accepted,
-        .queued = state->count,
+        .queued = state->count + state->settling,
         .running = state->running ? 1u : 0u,
         .completed = state->completed,
         .cancelled = state->cancelled,
@@ -148,9 +186,10 @@ static bool manual_post(void *self, cflow_task_fn fn, void *user) {
 static bool manual_run_one(void *self) {
     cflow_manual_executor_state *state = (cflow_manual_executor_state *)self;
     cflow_manual_executor_state *previous;
-    cflow_manual_task task;
+    cflow_executor_task task;
 
-    if (!state || state->count == 0u || state->running) return false;
+    if (!state || state->count == 0u || state->running || state->settling > 0u)
+        return false;
     task = state->tasks[0];
     if (state->count > 1u) {
         memmove(&state->tasks[0], &state->tasks[1],
@@ -160,7 +199,8 @@ static bool manual_run_one(void *self) {
     state->running = true;
     previous = manual_current;
     manual_current = state;
-    task.fn(task.user);
+    task.run(task.user);
+    if (task.finalize) task.finalize(task.user);
     manual_current = previous;
     state->running = false;
     ++state->completed;
@@ -181,7 +221,8 @@ static bool manual_wait_idle(void *self) {
 static size_t manual_pending(void *self) {
     const cflow_manual_executor_state *state =
         (const cflow_manual_executor_state *)self;
-    return state ? state->count + (state->running ? 1u : 0u) : 0u;
+    return state ? state->count + state->settling +
+                       (state->running ? 1u : 0u) : 0u;
 }
 
 static bool manual_shutdown(void *self) {
@@ -194,7 +235,8 @@ static bool manual_get_stats(void *self, cflow_executor_stats *out) {
     if (!state || !out) return false;
     *out = (cflow_executor_stats){
         .capacity = state->capacity,
-        .pending = state->count + (state->running ? 1u : 0u),
+        .pending = state->count + state->settling +
+                   (state->running ? 1u : 0u),
         .peak_pending = state->peak_pending,
         .rejected_full = state->rejected_full,
         .rejected_closed = state->rejected_closed
@@ -205,8 +247,8 @@ static bool manual_get_stats(void *self, cflow_executor_stats *out) {
 static void manual_destroy(void *self) {
     cflow_manual_executor_state *state = (cflow_manual_executor_state *)self;
     if (!state) return;
-    state->cancelled += state->count;
-    state->count = 0u;
+    state->lifecycle = CFLOW_EXECUTOR_CLOSING;
+    manual_cancel_pending(state);
     state->lifecycle = CFLOW_EXECUTOR_CLOSED;
     free(state->tasks);
     free(state);
@@ -267,14 +309,25 @@ static void pool_refresh_lifecycle(cflow_pool_executor_state *state) {
             &state->lifecycle, &expected, CFLOW_EXECUTOR_CLOSED);
 }
 
-static cflow_admission_status pool_try_post(void *self, cflow_task_fn fn,
-                                            void *user) {
-    cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
+static turbo_threadpool_task_t pool_task_descriptor(
+    const cflow_executor_task *task) {
+    return (turbo_threadpool_task_t){
+        .run = task->run,
+        .cancel = task->cancel,
+        .finalize = task->finalize,
+        .arg = task->user
+    };
+}
+
+static cflow_admission_status pool_try_post_task_state(
+    cflow_pool_executor_state *state, const cflow_executor_task *task) {
     cflow_admission_status status;
-    if (!state || !state->pool || !fn)
+    turbo_threadpool_task_t pool_task;
+    if (!state || !state->pool || !task || !task->run)
         return CFLOW_ADMISSION_INVALID_ARGUMENT;
+    pool_task = pool_task_descriptor(task);
     status = pool_admission_status(
-        turbo_threadpool_try_submit(state->pool, fn, user));
+        turbo_threadpool_try_submit_task(state->pool, &pool_task));
     if (status == CFLOW_ADMISSION_FULL)
         atomic_fetch_add(&state->rejected_full, 1u);
     else if (status == CFLOW_ADMISSION_CLOSED)
@@ -282,13 +335,27 @@ static cflow_admission_status pool_try_post(void *self, cflow_task_fn fn,
     return status;
 }
 
-static cflow_executor_post_status pool_control_post(
-    void *self, cflow_task_fn fn, void *user) {
+static cflow_admission_status pool_try_post(void *self, cflow_task_fn fn,
+                                            void *user) {
     cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
+    const cflow_executor_task task = {
+        .run = fn,
+        .cancel = NULL,
+        .finalize = NULL,
+        .user = user
+    };
+    return pool_try_post_task_state(state, &task);
+}
+
+static cflow_executor_post_status pool_control_post_task_state(
+    cflow_pool_executor_state *state, const cflow_executor_task *task) {
     cflow_executor_post_status status;
-    if (!state || !state->pool || !fn)
+    turbo_threadpool_task_t pool_task;
+    if (!state || !state->pool || !task || !task->run)
         return CFLOW_EXECUTOR_POST_INVALID_ARGUMENT;
-    status = pool_post_status(turbo_threadpool_submit(state->pool, fn, user));
+    pool_task = pool_task_descriptor(task);
+    status = pool_post_status(
+        turbo_threadpool_submit_task(state->pool, &pool_task));
     if (status == CFLOW_EXECUTOR_POST_FULL)
         atomic_fetch_add(&state->rejected_full, 1u);
     else if (status == CFLOW_EXECUTOR_POST_CLOSED)
@@ -296,6 +363,18 @@ static cflow_executor_post_status pool_control_post(
     else if (status == CFLOW_EXECUTOR_POST_WOULD_BLOCK)
         atomic_fetch_add(&state->rejected_would_block, 1u);
     return status;
+}
+
+static cflow_executor_post_status pool_control_post(
+    void *self, cflow_task_fn fn, void *user) {
+    cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
+    const cflow_executor_task task = {
+        .run = fn,
+        .cancel = NULL,
+        .finalize = NULL,
+        .user = user
+    };
+    return pool_control_post_task_state(state, &task);
 }
 
 static bool pool_post(void *self, cflow_task_fn fn, void *user) {
@@ -477,16 +556,45 @@ bool cflow_executor_as_control(cflow_executor *executor,
     return false;
 }
 
+cflow_admission_status cflow_executor_try_post_task(
+    cflow_executor *executor, const cflow_executor_task *task) {
+    if (!cflow_executor_valid(executor) || !task || !task->run)
+        return CFLOW_ADMISSION_INVALID_ARGUMENT;
+    if (executor->vtable == &manual_executor_vtable)
+        return manual_try_post_task_state(
+            (cflow_manual_executor_state *)executor->self, task);
+    if (executor->vtable == &serial_executor_vtable ||
+        executor->vtable == &worker_executor_vtable)
+        return pool_try_post_task_state(
+            (cflow_pool_executor_state *)executor->self, task);
+    return CFLOW_ADMISSION_INVALID_ARGUMENT;
+}
+
+cflow_executor_post_status cflow_executor_control_post_task(
+    cflow_executor_control *control, const cflow_executor_task *task) {
+    if (!cflow_executor_control_valid(control) || !task || !task->run)
+        return CFLOW_EXECUTOR_POST_INVALID_ARGUMENT;
+    if (control->vtable == &manual_control_vtable)
+        return manual_control_post_task_state(
+            (cflow_manual_executor_state *)control->self, task);
+    if (control->vtable == &serial_control_vtable ||
+        control->vtable == &worker_control_vtable)
+        return pool_control_post_task_state(
+            (cflow_pool_executor_state *)control->self, task);
+    return CFLOW_EXECUTOR_POST_INVALID_ARGUMENT;
+}
+
 bool cflow_executor_manual_init_with_capacity(cflow_executor *executor,
                                               size_t capacity) {
     cflow_manual_executor_state *state;
     if (!executor) return false;
     memset(executor, 0, sizeof(*executor));
-    if (capacity == 0u || capacity > SIZE_MAX / sizeof(cflow_manual_task))
+    if (capacity == 0u || capacity > SIZE_MAX / sizeof(cflow_executor_task))
         return false;
     state = (cflow_manual_executor_state *)calloc(1, sizeof(*state));
     if (!state) return false;
-    state->tasks = (cflow_manual_task *)calloc(capacity, sizeof(*state->tasks));
+    state->tasks = (cflow_executor_task *)calloc(
+        capacity, sizeof(*state->tasks));
     if (!state->tasks) {
         free(state);
         return false;
