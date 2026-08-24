@@ -61,6 +61,7 @@ cbind_status cbind_prepare_struct_containers(
     size_t depth);
 
 bool cbind_data_kind_is_container(cmeta_data_kind kind);
+bool cbind_data_kind_is_buffer(cmeta_data_kind kind);
 const cmeta_data_desc *cbind_scalar_shape_for_type(
     const cmeta_type_desc *type);
 cbind_status cbind_validate_container_field(
@@ -73,6 +74,19 @@ cbind_status cbind_validate_container_field(
 bool cbind_container_is_zero(const cmeta_field_desc *reflected,
                              const void *value);
 void cbind_container_reset(const cmeta_field_desc *reflected, void *value);
+
+cbind_status cbind_validate_buffer(
+    const cbind_context *context,
+    const cmeta_data_desc *shape,
+    const cmeta_data_field_desc *field,
+    size_t depth,
+    cbind_error *error);
+cbind_status cbind_decode_buffer(
+    cbind_decode_state *state,
+    const cmeta_data_desc *shape,
+    const cmeta_data_field_desc *field,
+    size_t depth,
+    void *out);
 
 const cmeta_data_field_desc *cbind_find_field_slice(
     const cmeta_data_struct_shape *shape,

@@ -78,6 +78,8 @@ cbind_status cbind_decode_value(cbind_decode_state *state,
     if (cbind_data_kind_is_container(shape->kind))
         return cbind_decode_container(state, shape, field, reflected,
                                       depth, out);
+    if (cbind_data_kind_is_buffer(shape->kind))
+        return cbind_decode_buffer(state, shape, field, depth, out);
     return cbind_decode_scalar(state, shape, field, depth, out);
 }
 

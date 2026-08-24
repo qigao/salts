@@ -32,6 +32,8 @@ enum {
     CMETA_DATA_DESC_ABI_VERSION = 1u
 };
 
+typedef struct cmeta_data_buffer_ops cmeta_data_buffer_ops;
+
 typedef struct cmeta_data_desc {
     size_t struct_size;
     uint32_t abi_version;
@@ -40,6 +42,7 @@ typedef struct cmeta_data_desc {
     cmeta_data_kind kind;
     const cmeta_type_desc *storage_type;
     const void *shape;
+    const cmeta_data_buffer_ops *buffer_ops;
 } cmeta_data_desc;
 
 typedef struct cmeta_data_integer_shape {
@@ -59,6 +62,25 @@ typedef enum cmeta_data_buffer_ownership {
 typedef struct cmeta_data_buffer_shape {
     cmeta_data_buffer_ownership ownership;
 } cmeta_data_buffer_shape;
+
+enum {
+    CMETA_DATA_BUFFER_OPS_ABI_VERSION = 1u
+};
+
+typedef bool (*cmeta_data_buffer_is_zero_fn)(const void *object);
+typedef cmeta_status (*cmeta_data_buffer_assign_fn)(
+    void *object, const unsigned char *data, size_t size, size_t max_bytes);
+typedef void (*cmeta_data_buffer_restore_zero_fn)(void *object);
+
+struct cmeta_data_buffer_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_type_desc *storage_type;
+    cmeta_data_buffer_ownership ownership;
+    cmeta_data_buffer_is_zero_fn is_zero;
+    cmeta_data_buffer_assign_fn assign;
+    cmeta_data_buffer_restore_zero_fn restore_zero;
+};
 
 typedef struct cmeta_data_enum_shape {
     const cmeta_enum_desc *meta;
@@ -95,6 +117,54 @@ typedef struct cmeta_data_variant_shape {
 bool cmeta_data_kind_valid(cmeta_data_kind kind);
 bool cmeta_data_kind_is_container(cmeta_data_kind kind);
 bool cmeta_data_desc_valid(const cmeta_data_desc *desc);
+
+/**
+ * Return a validated STRING/BYTES adapter, or NULL when the descriptor does
+ * not expose a complete, matching v1 adapter. Descriptor and adapter addresses
+ * are not type identities; storage types are compared semantically and then
+ * checked for exact kind, size, and alignment.
+ */
+const cmeta_data_buffer_ops *cmeta_data_buffer_ops_of(
+    const cmeta_data_desc *desc);
+
+/**
+ * Query the provider-defined semantic zero state.
+ *
+ * @param desc STRING/BYTES descriptor with an accessible matching adapter.
+ * @param object Address of one object of desc->storage_type.
+ * @param out Receives true only when object is in semantic zero state.
+ * @return CMETA_OK, CMETA_INVALID_ARGUMENT, or CMETA_TYPE_MISMATCH.
+ */
+cmeta_status cmeta_data_buffer_is_zero(
+    const cmeta_data_desc *desc, const void *object, bool *out);
+
+/**
+ * Assign one bounded byte slice to a semantic-zero destination.
+ *
+ * The provider chooses copy or borrow semantics from its ownership contract.
+ * On failure the checked facade invokes restore_zero before returning.
+ *
+ * @param data Borrowed input for this call; may be NULL only when size is zero.
+ * @param size Input byte count.
+ * @param max_bytes Hard per-value byte limit; larger input is rejected before
+ *        the provider callback.
+ * @return The exact provider status, CMETA_CAPACITY_EXCEEDED for the bound,
+ *         or a validation error.
+ *
+ * Example: `cmeta_data_buffer_assign(desc, &value, bytes, count, 4096u)`.
+ */
+cmeta_status cmeta_data_buffer_assign(
+    const cmeta_data_desc *desc, void *object,
+    const unsigned char *data, size_t size, size_t max_bytes);
+
+/**
+ * Release owned state or clear borrowed state, then verify semantic zero.
+ *
+ * @return CMETA_OK, a descriptor validation error, or CMETA_CALLBACK_ERROR
+ *         when the provider did not establish its declared zero state.
+ */
+cmeta_status cmeta_data_buffer_restore_zero(
+    const cmeta_data_desc *desc, void *object);
 
 const cmeta_data_field_desc *cmeta_data_struct_field(
     const cmeta_data_struct_shape *shape, size_t index);

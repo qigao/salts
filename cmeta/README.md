@@ -42,6 +42,24 @@ such as `Pair`, `Tuple`, `Option`, and `Result`. Container kinds such as `List`,
 `Vec`, and `HashMap` are provided by `turbostl`, not by the CMeta aggregate
 header.
 
+## Semantic string and byte storage adapters
+
+`cmeta/data.h` keeps STRING/BYTES meaning separate from native storage layout.
+A full `cmeta_data_desc` may point at versioned `cmeta_data_buffer_ops` that
+define semantic-zero detection, bounded assignment, and restore-to-zero. The
+checked facade validates adapter ABI, storage identity plus exact physical
+layout, and owned/borrowed agreement before calling it.
+
+Assignment is single-owner and failure-atomic: the destination must start in
+the provider's semantic zero state, and a failed assignment is restored to
+that state. The adapter is format-neutral and does not interpret UTF-8 or
+source-reader lifetimes. A format binder must enforce those rules before it
+passes a byte slice to CMeta.
+
+TurboUtils Core provides header-local `tstr` and `vstr` adapter metadata in
+`turbo_cmeta_data.h`. As with other header-generated CMeta metadata, descriptor
+addresses may differ across translation units; use semantic type comparison.
+
 ## Unified Schema / Replay kernel
 
 Framework authors can define row schemas with:

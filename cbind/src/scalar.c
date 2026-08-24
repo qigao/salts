@@ -149,10 +149,11 @@ cbind_status cbind_validate_graph(const cbind_context *context,
                        ? cbind_validation_error(error, CBIND_UNSUPPORTED,
                                                 shape, depth)
                        : status;
-        case CMETA_DATA_STRUCT:
-            return cbind_validation_error(error, CBIND_UNSUPPORTED, shape, depth);
         case CMETA_DATA_STRING:
         case CMETA_DATA_BYTES:
+            return cbind_validate_buffer(context, shape, NULL, depth, error);
+        case CMETA_DATA_STRUCT:
+            return cbind_validation_error(error, CBIND_UNSUPPORTED, shape, depth);
         case CMETA_DATA_ENUM:
         case CMETA_DATA_VARIANT:
         case CMETA_DATA_SEQUENCE:
@@ -199,6 +200,12 @@ bool cbind_value_is_empty(const cmeta_data_desc *shape, const void *value) {
                 memcpy(&native, value, sizeof(native));
                 return native == 0.0;
             }
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES: {
+            bool empty = false;
+            return cmeta_data_buffer_is_zero(shape, value, &empty) == CMETA_OK &&
+                   empty;
+        }
         default:
             return false;
     }
@@ -236,6 +243,10 @@ void cbind_value_reset(const cmeta_data_desc *shape, void *value) {
                 double native = 0.0;
                 memcpy(value, &native, sizeof(native));
             }
+            break;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES:
+            (void)cmeta_data_buffer_restore_zero(shape, value);
             break;
         default:
             break;
