@@ -1,5 +1,7 @@
 #include <cflow/cflow.h>
 #include <cflow/readiness.h>
+
+#include "../src/readiness_internal.h"
 #include <turbo/error_codes.h>
 #include <turbo/thread.h>
 
@@ -113,10 +115,11 @@ typedef struct destroy_thread_args {
 
 typedef struct arm_observing_scheduler_state {
     cflow_scheduler inner;
-    turbo_readiness_registration registration;
+    turbo_readiness_registration *registration;
     turbo_mutex_t lock;
     bool observe_next_post;
     int observation_status;
+    uint32_t observation_api_borrows;
 } arm_observing_scheduler_state;
 
 static cflow_schedule_result arm_observing_try_post_after(
@@ -140,10 +143,13 @@ static cflow_task_id arm_observing_post_after(
     turbo_mutex_unlock(&state->lock);
     task = cflow_scheduler_post_after(&state->inner, delay_ticks, fn, user);
     if (task != 0u && observe) {
-        int status = turbo_readiness_backend_wait_arm_waiter(
-            &state->registration, 1u, CFLOW_READINESS_TEST_TIMEOUT_NS);
+        uint32_t api_borrows = UINT32_MAX;
+        int status = turbo_readiness_backend_wait_arm_waiter_observe(
+            state->registration, 1u, CFLOW_READINESS_TEST_TIMEOUT_NS,
+            &api_borrows);
         turbo_mutex_lock(&state->lock);
         state->observation_status = status;
+        state->observation_api_borrows = api_borrows;
         turbo_mutex_unlock(&state->lock);
     }
     return task;
@@ -235,11 +241,12 @@ CMETA_IMPLEMENTS(cflow_scheduler, arm_observing_scheduler,
 
 static bool arm_observing_scheduler_init(
     arm_observing_scheduler_state *state,
-    const turbo_readiness_registration *registration,
+    turbo_readiness_registration *registration,
     cflow_scheduler *scheduler) {
     memset(state, 0, sizeof(*state));
-    state->registration = *registration;
+    state->registration = registration;
     state->observation_status = TURBO_EIO;
+    state->observation_api_borrows = UINT32_MAX;
     turbo_mutex_init(&state->lock);
     if (!state->lock ||
         !cflow_scheduler_worker_init_with_capacity(&state->inner, 1u, 8u, 8u)) {
@@ -264,6 +271,15 @@ static int arm_observing_scheduler_status(
     status = state->observation_status;
     turbo_mutex_unlock(&state->lock);
     return status;
+}
+
+static uint32_t arm_observing_scheduler_api_borrows(
+    arm_observing_scheduler_state *state) {
+    uint32_t api_borrows;
+    turbo_mutex_lock(&state->lock);
+    api_borrows = state->observation_api_borrows;
+    turbo_mutex_unlock(&state->lock);
+    return api_borrows;
 }
 
 static bool fake_env_init(fake_env *env, size_t capacity) {
@@ -1315,6 +1331,7 @@ suite("CFlow reactor registration Source") {
         cflow_scheduler scheduler = {0};
         cflow_run run = {0};
         arm_observing_scheduler_state scheduler_state;
+        turbo_readiness_registration *owner_registration;
         read_probe read = {
             {CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE,
              CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE_AND_DONE},
@@ -1330,13 +1347,18 @@ suite("CFlow reactor registration Source") {
         check_equal(turbo_readiness_register(
                         &env.reactor, CFLOW_READINESS_TEST_RESOURCE,
                         &registration), TURBO_OK);
-        check_true(arm_observing_scheduler_init(
-            &scheduler_state, &registration, &scheduler));
         check_equal(cflow_source_from_reactor_registration(
                         &source, &env.owner, &registration,
                         TURBO_READINESS_EVENT_READ, "worker-rearm",
                         &cmeta_type_int, probe_read, probe_close, &read),
                     TURBO_OK);
+        check_null(registration.impl);
+        owner_registration =
+            cflow_reactor_source_owner_observe_registration(&env.owner);
+        check_not_null(owner_registration);
+        check_not_null(owner_registration->impl);
+        check_true(arm_observing_scheduler_init(
+            &scheduler_state, owner_registration, &scheduler));
         cflow_graph_init(&graph, &cmeta_type_int);
         check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
         check_true(cflow_run_request(&run, 2u));
@@ -1349,6 +1371,8 @@ suite("CFlow reactor registration Source") {
         check_true(cflow_scheduler_wait_idle(&scheduler));
         check_equal(observed.error ? observed.error : "no error", "no error");
         check_equal(arm_observing_scheduler_status(&scheduler_state), TURBO_OK);
+        check_equal(arm_observing_scheduler_api_borrows(&scheduler_state),
+                    (uint32_t)1u);
         check_equal(observed.value_count, (size_t)1u);
         check_equal(observed.values[0], 41);
 

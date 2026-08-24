@@ -772,19 +772,40 @@ int turbo_readiness_arm(turbo_readiness_registration *registration, turbo_readin
 int turbo_readiness_backend_wait_arm_waiter(
     turbo_readiness_registration *registration, uint32_t waiters,
     uint64_t timeout_ns) {
-  turbo_readiness_api_borrow borrow = {0};
+  return turbo_readiness_backend_wait_arm_waiter_observe(
+      registration, waiters, timeout_ns, NULL);
+}
+
+int turbo_readiness_backend_wait_arm_waiter_observe(
+    turbo_readiness_registration *registration, uint32_t waiters,
+    uint64_t timeout_ns, uint32_t *api_borrows) {
   turbo_readiness_slot *slot;
   turbo_readiness_impl *impl;
+  void *pointer;
   uint32_t generation;
   int status = TURBO_OK;
 
+  if (api_borrows != NULL) *api_borrows = UINT32_MAX;
   if (waiters == 0u || timeout_ns == 0u) return TURBO_EINVAL;
-  status = readiness_api_borrow_acquire(registration, &borrow);
+  if (registration == NULL) return TURBO_EINVAL;
+  status = turbo_readiness_registration_admission_enter(
+      &registration->_admission);
   if (status != TURBO_OK) return status;
-  slot = borrow.slot;
+  pointer = readiness_handle_load(registration);
+  slot = readiness_slot_from_pointer(pointer);
+  if (slot == NULL) {
+    turbo_readiness_registration_admission_leave(&registration->_admission);
+    return TURBO_EINVAL;
+  }
   impl = slot->owner;
+  generation = atomic_load_explicit(&slot->generation, memory_order_acquire);
   turbo_mutex_lock(&impl->mutex);
-  generation = borrow.generation;
+  if (readiness_handle_load(registration) != pointer ||
+      slot->generation != generation ||
+      slot->lifecycle == TURBO_READINESS_LIFECYCLE_FREE ||
+      slot->lifecycle == TURBO_READINESS_LIFECYCLE_RETIRED) {
+    status = TURBO_EBUSY;
+  }
   while (slot->generation == generation &&
          slot->lifecycle == TURBO_READINESS_LIFECYCLE_OPEN &&
          slot->delivery == TURBO_READINESS_DELIVERY_CALLBACK &&
@@ -796,8 +817,11 @@ int turbo_readiness_backend_wait_arm_waiter(
        slot->delivery != TURBO_READINESS_DELIVERY_CALLBACK ||
        slot->arm_waiters < waiters))
     status = TURBO_EBUSY;
+  if (api_borrows != NULL) *api_borrows = slot->api_borrows;
+  turbo_readiness_registration_admission_leave(&registration->_admission);
+  turbo_cond_broadcast(&impl->changed);
   turbo_mutex_unlock(&impl->mutex);
-  return readiness_api_borrow_return(&borrow, status);
+  return status;
 }
 
 int turbo_readiness_unarm(turbo_readiness_registration *registration) {
@@ -1147,11 +1171,11 @@ int turbo_readiness_reactor_shutdown(turbo_readiness_reactor *reactor) {
   if (impl == NULL) return TURBO_EINVAL;
 
   turbo_mutex_lock(&impl->mutex);
+  if (readiness_callback_on_impl(impl)) {
+    turbo_mutex_unlock(&impl->mutex);
+    return TURBO_EBUSY;
+  }
   while (impl->terminalizing) {
-    if (readiness_callback_on_impl(impl)) {
-      turbo_mutex_unlock(&impl->mutex);
-      return TURBO_EBUSY;
-    }
     turbo_cond_wait(&impl->changed, &impl->mutex);
   }
   if (impl->shutdown_complete || impl->shutdown_inflight) {

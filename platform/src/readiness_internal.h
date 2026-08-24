@@ -128,6 +128,9 @@ int turbo_readiness_backend_wait_admission_closed(turbo_readiness_reactor *react
 int turbo_readiness_backend_wait_arm_waiter(
     turbo_readiness_registration *registration, uint32_t waiters,
     uint64_t timeout_ns);
+int turbo_readiness_backend_wait_arm_waiter_observe(
+    turbo_readiness_registration *registration, uint32_t waiters,
+    uint64_t timeout_ns, uint32_t *api_borrows);
 
 #if defined(__linux__)
 uint32_t turbo_readiness_epoll_interest_events(turbo_readiness_events events);

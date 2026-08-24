@@ -1,5 +1,7 @@
 #include <cflow/readiness.h>
 
+#include "readiness_internal.h"
+
 #include <turbo/error_codes.h>
 #include <turbo/thread.h>
 
@@ -410,4 +412,12 @@ int cflow_reactor_source_owner_close(cflow_reactor_source_owner *owner) {
         free(state);
     }
     return TURBO_OK;
+}
+
+turbo_readiness_registration *
+cflow_reactor_source_owner_observe_registration(
+    cflow_reactor_source_owner *owner) {
+    cflow_reactor_adapter_state *state =
+        owner ? (cflow_reactor_adapter_state *)owner->impl : NULL;
+    return state ? &state->registration : NULL;
 }

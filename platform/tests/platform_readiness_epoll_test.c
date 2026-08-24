@@ -23,6 +23,7 @@ enum {
 };
 
 typedef struct epoll_callback_probe {
+  turbo_readiness_reactor *reactor;
   turbo_mutex_t mutex;
   turbo_cond_t changed;
   size_t calls;
@@ -30,6 +31,8 @@ typedef struct epoll_callback_probe {
   int status;
   int blocked;
   int entered;
+  int shutdown_completed;
+  int shutdown_status;
 } epoll_callback_probe;
 
 typedef struct epoll_shutdown_args {
@@ -46,6 +49,7 @@ struct readiness_backend_contract_fixture {
 };
 
 static void probe_init(epoll_callback_probe *probe) {
+  probe->reactor = NULL;
   probe->mutex = NULL;
   probe->changed = NULL;
   probe->calls = 0;
@@ -53,6 +57,8 @@ static void probe_init(epoll_callback_probe *probe) {
   probe->status = TURBO_OK;
   probe->blocked = 0;
   probe->entered = 0;
+  probe->shutdown_completed = 0;
+  probe->shutdown_status = TURBO_EIO;
   turbo_mutex_init(&probe->mutex);
   turbo_cond_init(&probe->changed);
 }
@@ -75,6 +81,19 @@ static void record_callback(void *user, turbo_readiness_events events, int statu
   turbo_mutex_unlock(&probe->mutex);
 }
 
+static void shutdown_from_callback(void *user, turbo_readiness_events events,
+                                   int status) {
+  epoll_callback_probe *probe = (epoll_callback_probe *)user;
+  int shutdown_status;
+  record_callback(user, events, status);
+  shutdown_status = turbo_readiness_reactor_shutdown(probe->reactor);
+  turbo_mutex_lock(&probe->mutex);
+  probe->shutdown_status = shutdown_status;
+  probe->shutdown_completed = 1;
+  turbo_cond_broadcast(&probe->changed);
+  turbo_mutex_unlock(&probe->mutex);
+}
+
 static int probe_wait_calls(epoll_callback_probe *probe, size_t calls) {
   int status = TURBO_OK;
   turbo_mutex_lock(&probe->mutex);
@@ -89,6 +108,16 @@ static int probe_wait_entered(epoll_callback_probe *probe) {
   turbo_mutex_lock(&probe->mutex);
   while (!probe->entered && status == TURBO_OK)
     status = turbo_cond_timedwait(&probe->changed, &probe->mutex, EPOLL_TEST_TIMEOUT_NS);
+  turbo_mutex_unlock(&probe->mutex);
+  return status;
+}
+
+static int probe_wait_shutdown(epoll_callback_probe *probe) {
+  int status = TURBO_OK;
+  turbo_mutex_lock(&probe->mutex);
+  while (!probe->shutdown_completed && status == TURBO_OK)
+    status = turbo_cond_timedwait(&probe->changed, &probe->mutex,
+                                  EPOLL_TEST_TIMEOUT_NS);
   turbo_mutex_unlock(&probe->mutex);
   return status;
 }
@@ -280,6 +309,35 @@ static void shutdown_args_destroy(epoll_shutdown_args *args) {
 }
 
 spec("Platform epoll readiness") {
+  it("rejects the first shutdown invoked from the reactor callback") {
+    const turbo_readiness_config config = {1u, 1u};
+    turbo_readiness_reactor reactor = {0};
+    turbo_readiness_registration registration = {0};
+    epoll_callback_probe probe;
+    int fds[2];
+
+    probe_init(&probe);
+    probe.reactor = &reactor;
+    check_equal(make_pipe(fds), TURBO_OK);
+    check_equal(turbo_readiness_reactor_init(&reactor, &config), TURBO_OK);
+    check_equal(turbo_readiness_register(&reactor, fds[0], &registration),
+                TURBO_OK);
+    check_equal(turbo_readiness_arm(&registration,
+                                    TURBO_READINESS_EVENT_READ,
+                                    shutdown_from_callback, &probe),
+                TURBO_OK);
+    check_equal(write_byte(fds[1], 1u), TURBO_OK);
+    check_equal(probe_wait_shutdown(&probe), TURBO_OK);
+    check_equal(probe.shutdown_status, TURBO_EBUSY);
+    check_not_null(registration.impl);
+    check_equal(turbo_readiness_reactor_shutdown(&reactor), TURBO_OK);
+    check_equal(turbo_readiness_close(&registration), TURBO_OK);
+    check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_OK);
+    (void)close(fds[0]);
+    (void)close(fds[1]);
+    probe_destroy(&probe);
+  }
+
   it("does not subscribe read readiness for hangup-only or error-only arms") {
     turbo_readiness_reactor reactor = {0};
     turbo_readiness_config config = {1, 1};
