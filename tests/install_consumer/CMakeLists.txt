@@ -19,6 +19,20 @@ add_turboutils_consumer(consume_cflow TurboUtils::CFlow CONSUME_CFLOW)
 add_turboutils_consumer(consume_stl TurboUtils::STL CONSUME_STL)
 add_turboutils_consumer(consume_core TurboUtils::Core CONSUME_CORE)
 
+if(TURBOUTILS_EXPECT_CFLOW_MINICORO)
+  if(NOT TARGET TurboUtils::CFlowMinicoro)
+    message(FATAL_ERROR
+            "TurboUtils::CFlowMinicoro was requested but is not exported")
+  endif()
+  add_turboutils_consumer(consume_cflow_minicoro
+                         TurboUtils::CFlowMinicoro
+                         CONSUME_CFLOW_MINICORO)
+  target_link_libraries(consume_cflow_minicoro PRIVATE TurboUtils::Core)
+elseif(TARGET TurboUtils::CFlowMinicoro)
+  message(FATAL_ERROR
+          "feature-off TurboUtils package unexpectedly exports CFlowMinicoro")
+endif()
+
 add_executable(consume_stl_cpp consumer.cpp)
 target_compile_features(consume_stl_cpp PRIVATE cxx_std_17)
 target_link_libraries(consume_stl_cpp PRIVATE TurboUtils::STL)
