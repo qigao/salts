@@ -57,6 +57,66 @@ static const cmeta_type_desc cmeta_data_test_enum_type = {
     .identity = &cmeta_data_test_enum_identity
 };
 
+static bool cmeta_data_test_enum_assign_fails;
+
+static bool cmeta_data_test_enum_is_zero(const void *object) {
+    cmeta_data_test_state value;
+    if (object == NULL)
+        return false;
+    memcpy(&value, object, sizeof(value));
+    return CMETA_ENUM_TO_INT64(value) == 0;
+}
+
+static cmeta_status cmeta_data_test_enum_read(const void *object,
+                                              int64_t *out) {
+    cmeta_data_test_state value;
+    if (object == NULL || out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    memcpy(&value, object, sizeof(value));
+    *out = CMETA_ENUM_TO_INT64(value);
+    return CMETA_OK;
+}
+
+static cmeta_status cmeta_data_test_enum_assign(void *object, int64_t value) {
+    cmeta_data_test_state native;
+    if (object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    native = CMETA_ENUM_FROM_INT64(cmeta_data_test_state, value);
+    memcpy(object, &native, sizeof(native));
+    return cmeta_data_test_enum_assign_fails ? CMETA_CALLBACK_ERROR : CMETA_OK;
+}
+
+static void cmeta_data_test_enum_restore_zero(void *object) {
+    cmeta_data_test_state value = CMETA_ENUM_FROM_INT64(cmeta_data_test_state, 0);
+    if (object != NULL)
+        memcpy(object, &value, sizeof(value));
+}
+
+static const cmeta_data_enum_shape cmeta_data_test_enum_shape = {
+    .meta = EnumMeta(cmeta_data_test_state)
+};
+
+static const cmeta_data_enum_ops cmeta_data_test_enum_ops = {
+    .struct_size = sizeof(cmeta_data_enum_ops),
+    .abi_version = CMETA_DATA_ENUM_OPS_ABI_VERSION,
+    .storage_type = &cmeta_data_test_enum_type,
+    .is_zero = cmeta_data_test_enum_is_zero,
+    .read = cmeta_data_test_enum_read,
+    .assign = cmeta_data_test_enum_assign,
+    .restore_zero = cmeta_data_test_enum_restore_zero
+};
+
+static const cmeta_data_desc cmeta_data_test_enum_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.State.data",
+    .display_name = "State",
+    .kind = CMETA_DATA_ENUM,
+    .storage_type = &cmeta_data_test_enum_type,
+    .shape = &cmeta_data_test_enum_shape,
+    .enum_ops = &cmeta_data_test_enum_ops
+};
+
 static bool cmeta_data_test_buffer_is_zero(const void *object) {
     return object != NULL && *(const int *)object == 0;
 }
@@ -338,6 +398,43 @@ spec("CMeta semantic data descriptors") {
 
     check_true(cmeta_data_desc_valid(&desc));
     check_equal(enum_shape.meta->count, (size_t)2u);
+  }
+
+  it("checks enum storage adapters and restores zero after failure") {
+    cmeta_data_test_state object =
+        CMETA_ENUM_FROM_INT64(cmeta_data_test_state, 0);
+    cmeta_data_enum_ops ops = cmeta_data_test_enum_ops;
+    cmeta_data_desc desc = cmeta_data_test_enum_desc;
+    int64_t value = -1;
+    bool is_zero = false;
+
+    cmeta_data_test_enum_assign_fails = false;
+    check_true(cmeta_data_enum_ops_of(&desc) == &cmeta_data_test_enum_ops);
+    check_equal(cmeta_data_enum_is_zero(&desc, &object, &is_zero), CMETA_OK);
+    check_true(is_zero);
+    check_equal(cmeta_data_enum_assign(&desc, &object,
+                                       CMETA_DATA_TEST_READY), CMETA_OK);
+    check_equal(cmeta_data_enum_read(&desc, &object, &value), CMETA_OK);
+    check_equal(value, (int64_t)CMETA_DATA_TEST_READY);
+    check_equal(cmeta_data_enum_restore_zero(&desc, &object), CMETA_OK);
+    check_equal(CMETA_ENUM_TO_INT64(object), INT64_C(0));
+
+    check_equal(cmeta_data_enum_assign(&desc, &object, INT64_C(99)),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(CMETA_ENUM_TO_INT64(object), INT64_C(0));
+
+    cmeta_data_test_enum_assign_fails = true;
+    check_equal(cmeta_data_enum_assign(&desc, &object,
+                                       CMETA_DATA_TEST_IDLE),
+                CMETA_CALLBACK_ERROR);
+    check_equal(CMETA_ENUM_TO_INT64(object), INT64_C(0));
+    cmeta_data_test_enum_assign_fails = false;
+
+    ops.storage_type = &cmeta_type_int;
+    desc.enum_ops = &ops;
+    check_null(cmeta_data_enum_ops_of(&desc));
+    check_equal(cmeta_data_enum_read(&desc, &object, &value),
+                CMETA_TYPE_MISMATCH);
   }
 
   it("looks up struct semantic fields and checks reflected offsets") {
