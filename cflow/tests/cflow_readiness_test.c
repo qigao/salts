@@ -55,6 +55,7 @@ typedef struct read_probe {
     size_t next;
     size_t reads;
     size_t closes;
+    const char *errors[8];
 } read_probe;
 
 typedef struct wake_probe {
@@ -76,6 +77,7 @@ typedef struct fake_env {
     const readiness_contract_factory *factory;
     readiness_contract_fixture *fixture;
     turbo_readiness_reactor reactor;
+    cflow_reactor_source_owner owner;
 } fake_env;
 
 typedef struct emit_thread_args {
@@ -123,6 +125,8 @@ static cflow_read_status probe_read(void *user, void *out_value,
     }
     ++probe->reads;
     status = probe->statuses[probe->next];
+    if (status == CFLOW_READ_ERROR && error)
+        *error = probe->errors[probe->next];
     if ((status == CFLOW_READ_VALUE ||
          status == CFLOW_READ_VALUE_AND_DONE) && out_value)
         *(int *)out_value = probe->values[probe->next];
@@ -203,7 +207,7 @@ static int make_source(fake_env *env, intptr_t resource, read_probe *probe,
     if (status != TURBO_OK)
         return status;
     return cflow_source_from_reactor_registration(
-        source, registration, TURBO_READINESS_EVENT_READ,
+        source, &env->owner, registration, TURBO_READINESS_EVENT_READ,
         "reactor-test", &cmeta_type_int, probe_read, probe_close, probe);
 }
 
@@ -219,21 +223,55 @@ suite("CFlow reactor registration Source") {
                         &env.reactor, CFLOW_READINESS_TEST_RESOURCE,
                         &registration), TURBO_OK);
         check_not_null(registration.impl);
+        memset(&source, 0xa5, sizeof(source));
+        env.owner.impl = (void *)(uintptr_t)1u;
 
         check_equal(cflow_source_from_reactor_registration(
-                        &source, &registration, TURBO_READINESS_EVENT_READ,
+                        &source, &env.owner, &registration,
+                        TURBO_READINESS_EVENT_READ,
                         "managed", &managed_test_type, probe_read,
                         probe_close, &probe), TURBO_ENOTSUP);
         check_false(cflow_source_valid(&source));
+        check_null(env.owner.impl);
         check_not_null(registration.impl);
         check_equal(cflow_source_from_reactor_registration(
-                        &source, &registration, TURBO_READINESS_EVENT_READ,
+                        &source, &env.owner, &registration,
+                        TURBO_READINESS_EVENT_READ,
                         "missing-read", &cmeta_type_int, NULL,
                         probe_close, &probe), TURBO_EINVAL);
         check_false(cflow_source_valid(&source));
+        check_null(env.owner.impl);
         check_not_null(registration.impl);
         check_equal(turbo_readiness_close(&registration), TURBO_OK);
         check_null(registration.impl);
+        fake_env_destroy(&env);
+    }
+
+    it("keeps external owner live and side-effect free while Source exists") {
+        fake_env env;
+        turbo_readiness_registration registration = {0};
+        cflow_source source = {0};
+        read_probe probe = {0};
+        void *owner_impl;
+
+        check_true(fake_env_init(&env, 2u));
+        check_equal(make_source(
+                        &env, CFLOW_READINESS_TEST_RESOURCE, &probe,
+                        &source, &registration), TURBO_OK);
+        owner_impl = env.owner.impl;
+        check_not_null(owner_impl);
+
+        check_equal(cflow_reactor_source_owner_close(&env.owner),
+                    TURBO_EBUSY);
+        check_equal(env.owner.impl, owner_impl);
+        check_equal(env.factory->backend_close_calls(env.fixture),
+                    (size_t)0u);
+        check_equal(probe.closes, (size_t)0u);
+
+        cflow_source_destroy(&source);
+        check_equal(probe.closes, (size_t)1u);
+        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        check_null(env.owner.impl);
         fake_env_destroy(&env);
     }
 
@@ -248,12 +286,15 @@ suite("CFlow reactor registration Source") {
                         &env, CFLOW_READINESS_TEST_RESOURCE, &probe,
                         &source, &registration), TURBO_OK);
         check_true(cflow_source_valid(&source));
+        check_not_null(env.owner.impl);
         check_null(registration.impl);
 
         cflow_source_destroy(&source);
         check_equal(probe.closes, (size_t)1u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)1u);
+        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        check_null(env.owner.impl);
         fake_env_destroy(&env);
     }
 
@@ -276,6 +317,7 @@ suite("CFlow reactor registration Source") {
         check_equal(probe.closes, (size_t)1u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)1u);
+        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
         fake_env_destroy(&env);
     }
 
@@ -306,7 +348,127 @@ suite("CFlow reactor registration Source") {
         check_equal(probe.closes, (size_t)1u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)2u);
+        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
         fake_env_destroy(&env);
+    }
+
+    it("keeps persistent close ownership reachable after Run release") {
+        enum { PERSISTENT_CLOSE_FAILURES = 16 };
+        fake_env env;
+        turbo_readiness_registration registration = {0};
+        cflow_source source = {0};
+        cflow_graph graph = {0};
+        cflow_scheduler scheduler = {0};
+        cflow_run run = {0};
+        read_probe read = {
+            {CFLOW_READ_WOULD_BLOCK}, {0}, 1u, 0u, 0u, 0u, {NULL}
+        };
+        sink_probe observed = {0};
+        cflow_sink_callbacks callbacks = {
+            sink_value, sink_error, sink_done, &observed
+        };
+        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+        void *owner_impl;
+
+        check_true(fake_env_init(&env, 2u));
+        check_equal(make_source(
+                        &env, CFLOW_READINESS_TEST_RESOURCE, &read,
+                        &source, &registration), TURBO_OK);
+        owner_impl = env.owner.impl;
+        env.factory->fail_hook(env.fixture, READINESS_CONTRACT_HOOK_CLOSE,
+                               TURBO_EIO, PERSISTENT_CLOSE_FAILURES);
+        cflow_graph_init(&graph, &cmeta_type_int);
+        check_true(cflow_scheduler_test_init(&scheduler));
+        check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
+        check_true(cflow_run_request(&run, 1u));
+        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+
+        cflow_run_close(&run);
+        check_equal(env.owner.impl, owner_impl);
+        check_equal(read.closes, (size_t)0u);
+        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_EIO);
+        check_equal(env.owner.impl, owner_impl);
+        check_equal(read.closes, (size_t)0u);
+
+        env.factory->fail_hook(env.fixture, READINESS_CONTRACT_HOOK_CLOSE,
+                               TURBO_EIO, 0u);
+        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        check_null(env.owner.impl);
+        check_equal(read.closes, (size_t)1u);
+        check_equal(turbo_readiness_reactor_shutdown(&env.reactor), TURBO_OK);
+        check_equal(turbo_readiness_reactor_destroy(&env.reactor), TURBO_OK);
+        env.factory->destroy(env.fixture);
+        env.fixture = NULL;
+        cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&graph);
+    }
+
+    it("maps terminal and invalid read statuses through Run") {
+        typedef struct read_case {
+            cflow_read_status status;
+            const char *read_error;
+            const char *expected_error;
+            size_t expected_done;
+        } read_case;
+        static const read_case cases[] = {
+            {CFLOW_READ_DONE, NULL, NULL, 1u},
+            {CFLOW_READ_ERROR, "scripted read error", "scripted read error", 0u},
+            {CFLOW_READ_ERROR, NULL, "reactor readiness source error", 0u},
+            {CFLOW_READ_ERROR, "", "reactor readiness source error", 0u},
+            {(cflow_read_status)99, NULL,
+             "invalid reactor readiness read status", 0u}
+        };
+
+        for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+            fake_env env;
+            turbo_readiness_registration registration = {0};
+            cflow_source source = {0};
+            cflow_graph graph = {0};
+            cflow_scheduler scheduler = {0};
+            cflow_run run = {0};
+            read_probe read = {0};
+            sink_probe observed = {0};
+            cflow_sink_callbacks callbacks = {
+                sink_value, sink_error, sink_done, &observed
+            };
+            cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+
+            read.statuses[0] = cases[i].status;
+            read.errors[0] = cases[i].read_error;
+            read.count = 1u;
+            check_true(fake_env_init(&env, 2u));
+            check_equal(make_source(
+                            &env, CFLOW_READINESS_TEST_RESOURCE, &read,
+                            &source, &registration), TURBO_OK);
+            cflow_graph_init(&graph, &cmeta_type_int);
+            check_true(cflow_scheduler_test_init(&scheduler));
+            check_true(cflow_run_open(
+                &run, &graph, &source, &scheduler, &sink));
+            check_true(cflow_run_request(&run, 1u));
+            (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+
+            check_equal(observed.value_count, (size_t)0u);
+            check_equal(observed.done_count, cases[i].expected_done);
+            check_equal(read.reads, (size_t)1u);
+            if (cases[i].expected_error) {
+                check_equal(observed.error, cases[i].expected_error);
+                check_equal(cflow_run_error(&run), cases[i].expected_error);
+            } else {
+                check_null(observed.error);
+                check_null(cflow_run_error(&run));
+            }
+            check_equal(cflow_run_is_done(&run),
+                        cases[i].expected_error == NULL);
+            cflow_run_close(&run);
+            check_not_null(env.owner.impl);
+            check_equal(read.closes, (size_t)1u);
+            check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+            check_null(env.owner.impl);
+            check_equal(read.closes, (size_t)1u);
+            cflow_scheduler_destroy(&scheduler);
+            cflow_graph_destroy(&graph);
+            fake_env_destroy(&env);
+        }
     }
 
     it("drives Run through WOULD_BLOCK WAIT wake rearm and final value") {
@@ -374,6 +536,7 @@ suite("CFlow reactor registration Source") {
         check_equal(stats.stale_events, (uint64_t)1u);
 
         cflow_run_close(&run);
+        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&graph);
         fake_env_destroy(&env);
@@ -410,6 +573,7 @@ suite("CFlow reactor registration Source") {
                     "reactor readiness arm failed: -4017");
         check_equal(observed.value_count, (size_t)0u);
         cflow_run_close(&run);
+        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&graph);
         fake_env_destroy(&env);
@@ -447,6 +611,7 @@ suite("CFlow reactor registration Source") {
         check_equal(observed.error,
                     "reactor readiness backend failed: -4017");
         cflow_run_close(&run);
+        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&graph);
         fake_env_destroy(&env);
@@ -515,6 +680,7 @@ suite("CFlow reactor registration Source") {
         check_equal(read.closes, (size_t)1u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)1u);
+        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
         turbo_cond_destroy(&wake.changed);
         turbo_mutex_destroy(&wake.lock);
         fake_env_destroy(&env);
@@ -581,6 +747,7 @@ suite("CFlow reactor registration Source") {
         check_equal(read.closes, (size_t)1u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)1u);
+        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
         turbo_cond_destroy(&wake.changed);
         turbo_mutex_destroy(&wake.lock);
         fake_env_destroy(&env);

@@ -35,6 +35,8 @@ typedef struct cflow_reactor_adapter_state {
     cflow_waker waker;
     size_t references;
     int exact_status;
+    bool source_live;
+    bool owner_live;
     bool cancelled;
     bool cleanup_inflight;
     bool cleanup_complete;
@@ -240,7 +242,9 @@ static cflow_step cflow_reactor_resume(void *self,
         case CFLOW_READ_ERROR:
             return (cflow_step){
                 CFLOW_STEP_ERROR, {0},
-                read_error ? read_error : "reactor readiness source error"};
+                read_error && read_error[0]
+                    ? read_error
+                    : "reactor readiness source error"};
     }
     return (cflow_step){CFLOW_STEP_ERROR, {0},
                         "invalid reactor readiness read status"};
@@ -253,19 +257,27 @@ static void cflow_reactor_cancel(void *self) {
 static void cflow_reactor_destroy(void *self) {
     cflow_reactor_adapter_state *state =
         (cflow_reactor_adapter_state *)self;
+    bool free_state = false;
 
-    if (!state || cflow_reactor_close(state) != TURBO_OK)
+    if (!state)
         return;
 
+    (void)cflow_reactor_close(state);
+
     turbo_mutex_lock(&state->lock);
-    while (state->references != 1u)
-        turbo_cond_wait(&state->changed, &state->lock);
-    --state->references;
+    if (state->source_live) {
+        state->source_live = false;
+        --state->references;
+        free_state = state->references == 0u;
+        turbo_cond_broadcast(&state->changed);
+    }
     turbo_mutex_unlock(&state->lock);
 
-    turbo_cond_destroy(&state->changed);
-    turbo_mutex_destroy(&state->lock);
-    free(state);
+    if (free_state) {
+        turbo_cond_destroy(&state->changed);
+        turbo_mutex_destroy(&state->lock);
+        free(state);
+    }
 }
 
 static const char *cflow_reactor_name(void *self) {
@@ -304,6 +316,7 @@ CMETA_IMPLEMENTS(cflow_source, cflow_reactor_source, 0,
 
 int cflow_source_from_reactor_registration(
     cflow_source *out,
+    cflow_reactor_source_owner *owner,
     turbo_readiness_registration *registration,
     turbo_readiness_events events,
     const char *name,
@@ -316,7 +329,12 @@ int cflow_source_from_reactor_registration(
         TURBO_READINESS_EVENT_ERROR | TURBO_READINESS_EVENT_HANGUP;
     cflow_reactor_adapter_state *state;
 
-    if (!out || !registration || !registration->impl || !read ||
+    if (out)
+        *out = (cflow_source){0};
+    if (owner)
+        owner->impl = NULL;
+
+    if (!out || !owner || !registration || !registration->impl || !read ||
         !cmeta_type_desc_valid(type) || events == 0u ||
         (events & ~supported_events) != 0u)
         return TURBO_EINVAL;
@@ -342,10 +360,54 @@ int cflow_source_from_reactor_registration(
     state->user = user;
     state->events = events;
     state->registration = *registration;
-    state->references = 1u;
+    state->references = 2u;
+    state->source_live = true;
+    state->owner_live = true;
     state->phase = CFLOW_REACTOR_ADAPTER_IDLE;
 
     *out = cflow_reactor_source_as_cflow_source(state);
+    owner->impl = state;
     memset(registration, 0, sizeof(*registration));
+    return TURBO_OK;
+}
+
+int cflow_reactor_source_owner_close(cflow_reactor_source_owner *owner) {
+    cflow_reactor_adapter_state *state;
+    bool free_state;
+    int status;
+
+    if (!owner)
+        return TURBO_EINVAL;
+    if (!owner->impl)
+        return TURBO_OK;
+    state = (cflow_reactor_adapter_state *)owner->impl;
+
+    turbo_mutex_lock(&state->lock);
+    if (state->source_live) {
+        turbo_mutex_unlock(&state->lock);
+        return TURBO_EBUSY;
+    }
+    turbo_mutex_unlock(&state->lock);
+
+    status = cflow_reactor_close(state);
+    if (status != TURBO_OK)
+        return status;
+
+    turbo_mutex_lock(&state->lock);
+    if (!state->owner_live) {
+        turbo_mutex_unlock(&state->lock);
+        return TURBO_EINVAL;
+    }
+    state->owner_live = false;
+    --state->references;
+    free_state = state->references == 0u;
+    owner->impl = NULL;
+    turbo_mutex_unlock(&state->lock);
+
+    if (free_state) {
+        turbo_cond_destroy(&state->changed);
+        turbo_mutex_destroy(&state->lock);
+        free(state);
+    }
     return TURBO_OK;
 }
