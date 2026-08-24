@@ -16,6 +16,10 @@ def renderedSchemaHasRequiredFacts : Bool :=
 example : machineSchemaVersion = 1 := by decide
 example : stateKindRows.length = 3 := by decide
 example : actionObservationRows.length = 3 := by decide
+example : stateKindRows.map (fun row => row.kind) = MachineStateKind.all := by
+  decide
+example : actionObservationRows.map (fun row => row.kind) =
+    MachineActionObservationKind.all := by decide
 example : MachineSchema.validate = .ok () := by rfl
 example : renderedSchemaHasRequiredFacts = true := by native_decide
 

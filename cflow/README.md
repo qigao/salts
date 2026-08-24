@@ -22,6 +22,7 @@ include/cflow/
 ├── property.h
 ├── opt.h
 ├── plan.h
+├── machine.h       typed state-machine semantic IR
 ├── runtime.h
 ├── scheduler.h
 ├── sources.h
@@ -148,6 +149,14 @@ without matching types, outgoing terminal transitions, equal-priority
 ambiguity, unreachable states, and unused guard/action declarations. Guard ID
 zero is unconditional. Action ID zero is an identity transition and therefore
 requires equal source/target types.
+
+Construction is bounded before any input traversal or allocation. Default
+limits are 65,536 states, Events, guards, and actions, plus 1,048,576
+transitions. Reconfigure `CFLOW_MACHINE_MAX_STATES`,
+`CFLOW_MACHINE_MAX_EVENTS`, `CFLOW_MACHINE_MAX_GUARDS`,
+`CFLOW_MACHINE_MAX_ACTIONS`, or `CFLOW_MACHINE_MAX_TRANSITIONS` through CMake
+when a host has a different control-plane resource budget. Excess input returns
+`CFLOW_MACHINE_LIMIT_EXCEEDED` without publishing a handle.
 
 Lean owns the state/action enum schema and the Event-driven small-step model.
 Regenerate or verify the checked-in C enum header from

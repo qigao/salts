@@ -130,6 +130,17 @@ static const cflow_machine_action *find_action(
     return NULL;
 }
 
+static size_t first_transition_for_source(
+    const cflow_machine_impl *impl, cflow_machine_state_id source) {
+    size_t left = 0u, right = impl->transition_count;
+    while (left < right) {
+        const size_t middle = left + (right - left) / 2u;
+        if (impl->transitions[middle].source < source) left = middle + 1u;
+        else right = middle;
+    }
+    return left;
+}
+
 static bool valid_value_type(const cmeta_type_desc *type) {
     return cmeta_type_desc_valid(type) && type->size != 0u;
 }
@@ -238,7 +249,9 @@ static cflow_machine_status validate_action_domain(
             return CFLOW_MACHINE_INVALID_TYPE;
         if (!cmeta_effects_valid(action->effects) ||
             !cmeta_properties_valid(action->properties) ||
-            !cmeta_properties_include(action->properties, required))
+            !cmeta_properties_include(action->properties, required) ||
+            ((action->properties & CMETA_PROP_TOTAL) != 0u &&
+             (action->effects & CMETA_EFFECT_MAY_FAIL) != 0u))
             return CFLOW_MACHINE_INVALID_CONTRACT;
         event = find_event(impl, action->event_id);
         if (event == NULL) return CFLOW_MACHINE_UNKNOWN_EVENT;
@@ -298,8 +311,8 @@ static cflow_machine_status validate_transitions(
     return CFLOW_MACHINE_OK;
 }
 
-/* O(states * transitions) over immutable build-time rows; the exact-sized
- * visited set and queue are construction-only and never reach the data path. */
+/* O(states log transitions + transitions) over source-sorted rows; the
+ * exact-sized visited set and queue never reach the data path. */
 static cflow_machine_status validate_reachability(
     const cflow_machine_impl *impl) {
     bool *reachable;
@@ -320,17 +333,19 @@ static cflow_machine_status validate_reachability(
     queue[tail++] = initial->id;
     while (head < tail) {
         const cflow_machine_state_id source = queue[head++];
-        for (index = 0u; index < impl->transition_count; ++index) {
+        index = first_transition_for_source(impl, source);
+        while (index < impl->transition_count &&
+               impl->transitions[index].source == source) {
             const cflow_machine_transition *transition = &impl->transitions[index];
             const cflow_machine_state *target;
             size_t target_index;
-            if (transition->source != source) continue;
             target = find_state(impl, transition->target);
             target_index = (size_t)(target - impl->states);
             if (!reachable[target_index]) {
                 reachable[target_index] = true;
                 queue[tail++] = target->id;
             }
+            ++index;
         }
     }
     for (index = 0u; index < impl->state_count; ++index) {
@@ -347,21 +362,46 @@ static cflow_machine_status validate_reachability(
 
 static cflow_machine_status validate_declaration_use(
     const cflow_machine_impl *impl) {
+    bool *guards_used = NULL, *actions_used = NULL;
     size_t declaration, transition;
+    if (impl->guard_count != 0u) {
+        guards_used = (bool *)calloc(impl->guard_count, sizeof(*guards_used));
+        if (guards_used == NULL) return CFLOW_MACHINE_ALLOCATION_FAILED;
+    }
+    if (impl->action_count != 0u) {
+        actions_used = (bool *)calloc(impl->action_count, sizeof(*actions_used));
+        if (actions_used == NULL) {
+            free(guards_used);
+            return CFLOW_MACHINE_ALLOCATION_FAILED;
+        }
+    }
+    for (transition = 0u; transition < impl->transition_count; ++transition) {
+        const cflow_machine_transition *row = &impl->transitions[transition];
+        if (row->guard != 0u) {
+            const cflow_machine_guard *guard = find_guard(impl, row->guard);
+            guards_used[(size_t)(guard - impl->guards)] = true;
+        }
+        if (row->action != 0u) {
+            const cflow_machine_action *action = find_action(impl, row->action);
+            actions_used[(size_t)(action - impl->actions)] = true;
+        }
+    }
     for (declaration = 0u; declaration < impl->guard_count; ++declaration) {
-        for (transition = 0u; transition < impl->transition_count; ++transition)
-            if (impl->transitions[transition].guard == impl->guards[declaration].id)
-                break;
-        if (transition == impl->transition_count)
+        if (!guards_used[declaration]) {
+            free(actions_used);
+            free(guards_used);
             return CFLOW_MACHINE_UNUSED_DECLARATION;
+        }
     }
     for (declaration = 0u; declaration < impl->action_count; ++declaration) {
-        for (transition = 0u; transition < impl->transition_count; ++transition)
-            if (impl->transitions[transition].action == impl->actions[declaration].id)
-                break;
-        if (transition == impl->transition_count)
+        if (!actions_used[declaration]) {
+            free(actions_used);
+            free(guards_used);
             return CFLOW_MACHINE_UNUSED_DECLARATION;
+        }
     }
+    free(actions_used);
+    free(guards_used);
     return CFLOW_MACHINE_OK;
 }
 
@@ -391,6 +431,12 @@ cflow_machine_status cflow_machine_build(
     if (out == NULL || definition == NULL || out->impl != NULL)
         return CFLOW_MACHINE_INVALID_ARGUMENT;
     if (definition->state_count == 0u) return CFLOW_MACHINE_EMPTY;
+    if (definition->state_count > CFLOW_MACHINE_MAX_STATES ||
+        definition->event_count > CFLOW_MACHINE_MAX_EVENTS ||
+        definition->guard_count > CFLOW_MACHINE_MAX_GUARDS ||
+        definition->action_count > CFLOW_MACHINE_MAX_ACTIONS ||
+        definition->transition_count > CFLOW_MACHINE_MAX_TRANSITIONS)
+        return CFLOW_MACHINE_LIMIT_EXCEEDED;
     if (definition->states == NULL ||
         (definition->event_count != 0u && definition->events == NULL) ||
         (definition->guard_count != 0u && definition->guards == NULL) ||

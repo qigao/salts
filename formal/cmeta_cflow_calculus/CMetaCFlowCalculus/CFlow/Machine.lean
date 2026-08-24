@@ -244,6 +244,21 @@ inductive MachineObservation where
   | done
   deriving Repr, DecidableEq
 
+def MachineObservation.FromAction : MachineObservation → Prop
+  | .value _ _ | .event _ _ _ => True
+  | .state _ | .error _ | .done => False
+
+structure TypedValue where
+  ty : Ty
+  token : Nat
+  deriving Repr, DecidableEq
+
+inductive ActionOutput where
+  | none
+  | value (output : TypedValue)
+  | event (id : Nat) (output : TypedValue)
+  deriving Repr, DecidableEq
+
 inductive Terminal where
   | running
   | done
@@ -252,21 +267,40 @@ inductive Terminal where
 
 structure Config where
   state : StateId
-  stateToken : Nat
+  stateValue : TypedValue
   terminal : Terminal
   trace : List MachineObservation
   consumedEvents : Nat
   deriving Repr, DecidableEq
 
-def Config.WellTyped (machine : Machine) (config : Config) : Prop :=
-  StateKnown machine config.state
+def Terminal.Coherent (kind : MachineStateKind) : Terminal → Prop
+  | .running => kind = .active
+  | .done => kind = .done
+  | .error _ => kind ≠ .done
+
+def Config.WellTyped (machine : Machine) (config : Config) : Prop := ∃ state,
+  lookupState machine.states config.state = some state ∧
+  state.valueTy = config.stateValue.ty ∧
+  config.terminal.Coherent state.kind
 
 inductive ActionResult where
-  | success (stateToken : Nat) (observations : List MachineObservation)
+  | success (target : TypedValue) (output : ActionOutput)
   | error (message : String)
   deriving Repr, DecidableEq
 
 abbrev ActionEvaluation := ActionId → ActionResult
+
+def ActionOutput.matches : ActionOutput → ActionObservationDecl → Bool
+  | .none, .none => true
+  | .value output, .value outputTy => output.ty == outputTy
+  | .event id output, .event eventId payloadTy =>
+      id == eventId && output.ty == payloadTy
+  | _, _ => false
+
+def ActionOutput.trace : ActionOutput → List MachineObservation
+  | .none => []
+  | .value output => [.value output.ty output.token]
+  | .event id output => [.event id output.ty output.token]
 
 def failureConfig (before : Config) (message : String) : Config :=
   { before with
@@ -275,43 +309,69 @@ def failureConfig (before : Config) (message : String) : Config :=
     consumedEvents := before.consumedEvents + 1 }
 
 def commitTarget (machine : Machine) (before : Config)
-    (transition : Transition) (stateToken : Nat)
-    (observations : List MachineObservation) : Config :=
+    (transition : Transition) (stateValue : TypedValue)
+    (output : ActionOutput) : Config :=
   match lookupState machine.states transition.target with
   | none => failureConfig before "invalid transition target"
   | some target =>
-      let tracePrefix := before.trace ++ observations ++ [.state target.id]
-      match target.kind with
-      | .active =>
-          { before with
-            state := target.id
-            stateToken := stateToken
-            trace := tracePrefix
-            consumedEvents := before.consumedEvents + 1 }
-      | .done =>
-          { before with
-            state := target.id
-            stateToken := stateToken
-            terminal := .done
-            trace := tracePrefix ++ [.done]
-            consumedEvents := before.consumedEvents + 1 }
-      | .error =>
-          { before with
-            state := target.id
-            stateToken := stateToken
-            terminal := .error "entered error state"
-            trace := tracePrefix ++ [.error "entered error state"]
-            consumedEvents := before.consumedEvents + 1 }
+      if target.valueTy = stateValue.ty then
+        let tracePrefix := before.trace ++ output.trace ++ [.state target.id]
+        match target.kind with
+        | .active =>
+            { before with
+              state := target.id
+              stateValue := stateValue
+              trace := tracePrefix
+              consumedEvents := before.consumedEvents + 1 }
+        | .done =>
+            { before with
+              state := target.id
+              stateValue := stateValue
+              terminal := .done
+              trace := tracePrefix ++ [.done]
+              consumedEvents := before.consumedEvents + 1 }
+        | .error =>
+            { before with
+              state := target.id
+              stateValue := stateValue
+              terminal := .error "entered error state"
+              trace := tracePrefix ++ [.error "entered error state"]
+              consumedEvents := before.consumedEvents + 1 }
+      else failureConfig before "action contract violation"
 
 def applyTransition (machine : Machine) (actions : ActionEvaluation)
     (before : Config) (transition : Transition) : Config :=
-  let result := if transition.action = 0
-    then ActionResult.success before.stateToken []
-    else actions transition.action
-  match result with
-  | .error message => failureConfig before message
-  | .success stateToken observations =>
-      commitTarget machine before transition stateToken observations
+  if transition.action = 0 then
+    commitTarget machine before transition before.stateValue .none
+  else
+    match lookupAction machine.actions transition.action with
+    | none => failureConfig before "invalid transition action"
+    | some action =>
+        match actions transition.action with
+        | .error message =>
+            if action.mayFail then failureConfig before message
+            else failureConfig before "action contract violation"
+        | .success target output =>
+            if target.ty = action.targetTy ∧ output.matches action.observation then
+              commitTarget machine before transition target output
+            else failureConfig before "action contract violation"
+
+def initConfig (machine : Machine) (value : TypedValue) : Option Config :=
+  match lookupState machine.states machine.initial with
+  | none => none
+  | some state =>
+      if state.valueTy = value.ty then
+        let terminal := match state.kind with
+          | .active => Terminal.running
+          | .done => Terminal.done
+          | .error => Terminal.error "initial error state"
+        some {
+          state := state.id
+          stateValue := value
+          terminal := terminal
+          trace := []
+          consumedEvents := 0 }
+      else none
 
 def step (machine : Machine) (guards : GuardValuation)
     (actions : ActionEvaluation) (before : Config)
@@ -319,15 +379,21 @@ def step (machine : Machine) (guards : GuardValuation)
   match before.terminal with
   | .done | .error _ => none
   | .running =>
-      match machine.events.lookup event.id with
+      match lookupState machine.states before.state with
       | none => none
-      | some expected =>
-          if expected.payloadTy = event.payloadTy then
-            match selectTransition machine before.state event.id guards with
-            | none => some (failureConfig before "no enabled transition")
-            | some transition =>
-                some (applyTransition machine actions before transition)
-          else none
+      | some state =>
+          match state.kind with
+          | .done | .error => none
+          | .active =>
+              match machine.events.lookup event.id with
+              | none => none
+              | some expected =>
+                  if expected.payloadTy = event.payloadTy then
+                    match selectTransition machine before.state event.id guards with
+                    | none => some (failureConfig before "no enabled transition")
+                    | some transition =>
+                        some (applyTransition machine actions before transition)
+                  else none
 
 def SmallStep (machine : Machine) (guards : GuardValuation)
     (actions : ActionEvaluation) (before : Config) (event : TypedEvent)

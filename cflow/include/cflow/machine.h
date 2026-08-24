@@ -15,6 +15,24 @@ typedef uint32_t cflow_machine_state_id;
 typedef uint32_t cflow_machine_guard_id;
 typedef uint32_t cflow_machine_action_id;
 
+/* CMake exports the library's configured limits to consumers. Defaults keep
+ * direct header use consistent with a default TurboUtils build. */
+#ifndef CFLOW_MACHINE_MAX_STATES
+#define CFLOW_MACHINE_MAX_STATES 65536u
+#endif
+#ifndef CFLOW_MACHINE_MAX_EVENTS
+#define CFLOW_MACHINE_MAX_EVENTS 65536u
+#endif
+#ifndef CFLOW_MACHINE_MAX_GUARDS
+#define CFLOW_MACHINE_MAX_GUARDS 65536u
+#endif
+#ifndef CFLOW_MACHINE_MAX_ACTIONS
+#define CFLOW_MACHINE_MAX_ACTIONS 65536u
+#endif
+#ifndef CFLOW_MACHINE_MAX_TRANSITIONS
+#define CFLOW_MACHINE_MAX_TRANSITIONS 1048576u
+#endif
+
 typedef enum cflow_machine_state_kind {
 #define CFLOW_MACHINE_STATE_KIND_ROW(name, value) \
     CFLOW_MACHINE_STATE_##name = value,
@@ -33,6 +51,7 @@ typedef enum cflow_machine_action_observation {
 typedef enum cflow_machine_status {
     CFLOW_MACHINE_OK = 0,
     CFLOW_MACHINE_INVALID_ARGUMENT,
+    CFLOW_MACHINE_LIMIT_EXCEEDED,
     CFLOW_MACHINE_ALLOCATION_FAILED,
     CFLOW_MACHINE_EMPTY,
     CFLOW_MACHINE_INVALID_ID,

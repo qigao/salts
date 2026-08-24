@@ -1,6 +1,6 @@
 # CFlow Typed Machine IR Design
 
-**Status:** Approved for implementation under GitHub issue #63  
+**Status:** Implemented under GitHub issue #63
 **Date:** 2026-08-24
 
 ## Context
@@ -88,7 +88,10 @@ immutable Machine from becoming a second, partially live fact source.
 ## Small-step contract
 
 The Lean semantic evaluator receives an already typed Event, a guard valuation,
-and an action result for the selected action.
+and an action result for the selected action. Config carries a packed typed
+state value. Action results carry a typed target value plus exactly one
+`NONE`, `VALUE`, or `EVENT` output; action code cannot inject Machine-owned
+state, done, or error observations.
 
 1. Candidate transitions match the current state and Event ID.
 2. The lowest-priority enabled candidate is selected.
@@ -119,6 +122,7 @@ domain. Validation covers:
 - unknown initial/source/target/Event/guard/action IDs;
 - state/Event/source/target type mismatch;
 - invalid guard effects/properties and invalid action observation declarations;
+- contradictory action contracts such as `TOTAL + MAY_FAIL`;
 - outgoing transitions from terminal states;
 - duplicate `(source, event, priority)` rows;
 - unreachable states and unused guard/action rows.
@@ -129,8 +133,9 @@ Machine reads are safe concurrently when borrowed descriptors remain alive.
 
 ## C and Lean schema alignment
 
-Lean owns the finite enum manifest for state kinds, action observation kinds,
-and schema version. `cflow-machine-schema-gen` renders
+Lean owns the typed finite enum manifest for state kinds, action observation
+kinds, and schema version. Typed rows are checked against the complete
+constructor lists before `cflow-machine-schema-gen` renders
 `cflow/include/cflow/generated/machine_schema.h`; C enums replay those rows.
 CI runs the generator in `--check` mode, and C conformance tests assert the
 generated counts/version. This makes schema drift a build-time failure without
@@ -145,8 +150,10 @@ claiming a full C memory-model refinement theorem.
 - Owner: one caller owns and destroys the Machine; readers borrow it.
 - Topology: construction/destruction are single-owner control-plane operations;
   post-build queries are read-only and may be concurrent.
-- Capacity: all arrays are exact-sized, checked allocations; no post-build
-  growth or allocation occurs.
+- Capacity: all arrays are exact-sized, checked allocations. Defaults are
+  65,536 rows per declaration domain and 1,048,576 transitions, configurable
+  through the same-named CMake cache variables. No post-build growth or
+  allocation occurs.
 - Backpressure: not applicable in semantic IR; Event capacity belongs to
   Mailbox.
 - Failure: explicit `cflow_machine_status`; failed build publishes nothing.
@@ -163,11 +170,14 @@ function pointers, scheduler ownership, or protocol formats to this core.
 
 ## Verification
 
-C tests cover canonical valid construction, empty definitions, every unknown
-reference/type mismatch class, equal-priority ambiguity, terminal outgoing
-edges, unreachable states, unused declarations, error-capable actions,
-transactional failure, immutable queries, and C++ header compatibility. Lean
-tests cover selection order, no-transition error, action failure consumption,
-terminal absorption, state/Event typing preservation, determinism, and trace
-contents. Release, ASan, complete CTest, generator checks, and `lake test` form
-the delivery gate.
+C tests cover canonical valid construction, empty definitions, domain ID and
+count bounds, unknown reference/type mismatch classes, contract contradictions,
+all observation modes, equal-priority ambiguity, terminal outgoing edges,
+unreachable states, unused declarations, transactional failure, immutable
+queries, and C++ header compatibility. Reachability uses source-sorted ranges
+in `O(states log transitions + transitions)` time; declaration-use validation
+is `O(transitions log declarations + declarations)`. Lean tests include a full
+`Machine.Valid` witness, selection order, invalid action results, action failure
+consumption, initial/runtime terminal absorption, typed state-value
+preservation, determinism, and trace contents. Release, ASan, complete CTest,
+generator checks, and `lake test` form the delivery gate.

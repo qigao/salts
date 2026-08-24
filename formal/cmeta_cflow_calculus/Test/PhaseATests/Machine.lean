@@ -14,6 +14,14 @@ def triggerTy : Ty := .named "Trigger"
 def trigger : TypedEvent :=
   { id := 100, payloadTy := triggerTy, payload := { token := 41 } }
 
+def toDone : Transition :=
+  { source := 10, event := 100, guard := 1, action := 1,
+    target := 20, priority := 9 }
+
+def toActive : Transition :=
+  { source := 10, event := 100, guard := 2, action := 2,
+    target := 30, priority := 3 }
+
 def machine : Machine := {
   states := [
     { id := 10, valueTy := intTy, kind := .active },
@@ -35,16 +43,12 @@ def machine : Machine := {
     { id := 2, sourceTy := intTy, eventId := 100, eventTy := triggerTy,
       targetTy := intTy, deterministic := true, noAlias := true,
       mayFail := true, observation := .none }]
-  transitions := [
-    { source := 10, event := 100, guard := 1, action := 1,
-      target := 20, priority := 9 },
-    { source := 10, event := 100, guard := 2, action := 2,
-      target := 30, priority := 3 }]
+  transitions := [toDone, toActive]
 }
 
 def initialConfig : Config := {
   state := 10
-  stateToken := 7
+  stateValue := { ty := intTy, token := 7 }
   terminal := .running
   trace := []
   consumedEvents := 0
@@ -54,12 +58,85 @@ def bothEnabled : GuardValuation := fun _ => true
 def onlyFirstEnabled : GuardValuation := fun id => id = 1
 
 def successfulActions : ActionEvaluation
-  | 1 => .success 8 [.value longTy 70]
-  | _ => .success 9 []
+  | 1 => .success { ty := longTy, token := 8 }
+      (.value { ty := longTy, token := 70 })
+  | _ => .success { ty := intTy, token := 9 } .none
 
 def failingSecond : ActionEvaluation
   | 2 => .error "boom"
-  | _ => .success 8 []
+  | _ => .success { ty := longTy, token := 8 } .none
+
+def mistypedSecond : ActionEvaluation
+  | 2 => .success { ty := longTy, token := 9 } .none
+  | _ => .success { ty := longTy, token := 8 } .none
+
+def wrongObservation : ActionEvaluation
+  | 1 => .success { ty := longTy, token := 8 }
+      (.event 100 { ty := triggerTy, token := 70 })
+  | _ => .success { ty := intTy, token := 9 } .none
+
+def forbiddenFailure : ActionEvaluation
+  | 1 => .error "unexpected"
+  | _ => .success { ty := intTy, token := 9 } .none
+
+theorem machineValid : machine.Valid where
+  statesNonempty := by native_decide
+  stateIdsNonzero := by native_decide
+  stateIdsUnique := by native_decide
+  eventSchemaValid := by simp [machine, Schema.Valid]
+  guardIdsNonzero := by native_decide
+  guardIdsUnique := by native_decide
+  actionIdsNonzero := by native_decide
+  actionIdsUnique := by native_decide
+  actionObservationsTyped := by
+    simp [machine, ActionObservationTyped, Schema.lookup]
+  initialKnown := by simp [machine, StateKnown, lookupState]
+  sourceKnown := by
+    simp [machine, toDone, toActive, StateKnown, lookupState]
+  targetKnown := by
+    simp [machine, toDone, toActive, StateKnown, lookupState]
+  eventKnown := by
+    simp [machine, toDone, toActive, Schema.lookup]
+  guardTyped := by
+    simp [machine, toDone, toActive, lookupState, lookupGuard, GuardTyped,
+      Schema.lookup]
+  actionTyped := by
+    simp [machine, toDone, toActive, lookupState, lookupAction, ActionTyped,
+      Schema.lookup]
+  activeSource := by native_decide
+  priorityKeysUnique := by native_decide
+  allStatesReachable := by
+    intro state member
+    simp [machine] at member
+    rcases member with rfl | rfl | rfl
+    · simpa [machine] using (Reachable.initial : Reachable machine machine.initial)
+    · apply Reachable.target (transition := toDone)
+      · simp [machine, toDone, toActive]
+      · simpa [machine, toDone] using
+          (Reachable.initial : Reachable machine machine.initial)
+    · apply Reachable.target (transition := toActive)
+      · simp [machine, toDone, toActive]
+      · simpa [machine, toActive] using
+          (Reachable.initial : Reachable machine machine.initial)
+  guardsUsed := by native_decide
+  actionsUsed := by native_decide
+
+def initialDoneMachine : Machine := {
+  states := [{ id := 1, valueTy := intTy, kind := .done }]
+  initial := 1
+  events := []
+  guards := []
+  actions := []
+  transitions := []
+}
+
+def initialDoneConfig : Config := {
+  state := 1
+  stateValue := { ty := intTy, token := 4 }
+  terminal := .done
+  trace := []
+  consumedEvents := 0
+}
 
 example : ActionObservationTyped machine (.event 100 triggerTy) := by
   exact ⟨{ id := 100, payloadTy := triggerTy }, by decide, rfl⟩
@@ -70,14 +147,14 @@ example : ¬ ActionObservationTyped machine (.event 100 longTy) := by
 example : step machine bothEnabled successfulActions initialConfig trigger =
     some { initialConfig with
       state := 30
-      stateToken := 9
+      stateValue := { ty := intTy, token := 9 }
       trace := [.state 30]
       consumedEvents := 1 } := by native_decide
 
 example : step machine onlyFirstEnabled successfulActions initialConfig trigger =
     some { initialConfig with
       state := 20
-      stateToken := 8
+      stateValue := { ty := longTy, token := 8 }
       terminal := .done
       trace := [.value longTy 70, .state 20, .done]
       consumedEvents := 1 } := by native_decide
@@ -93,6 +170,37 @@ example : step machine bothEnabled failingSecond initialConfig trigger =
       terminal := .error "boom"
       trace := [.error "boom"]
       consumedEvents := 1 } := by native_decide
+
+example : step machine bothEnabled mistypedSecond initialConfig trigger =
+    some { initialConfig with
+      terminal := .error "action contract violation"
+      trace := [.error "action contract violation"]
+      consumedEvents := 1 } := by native_decide
+
+example : step machine onlyFirstEnabled wrongObservation initialConfig trigger =
+    some { initialConfig with
+      terminal := .error "action contract violation"
+      trace := [.error "action contract violation"]
+      consumedEvents := 1 } := by native_decide
+
+example : step machine onlyFirstEnabled forbiddenFailure initialConfig trigger =
+    some { initialConfig with
+      terminal := .error "action contract violation"
+      trace := [.error "action contract violation"]
+      consumedEvents := 1 } := by native_decide
+
+example : step machine bothEnabled successfulActions
+    { initialConfig with state := 20, stateValue := { ty := longTy, token := 8 } }
+    trigger = none := by native_decide
+
+example : initConfig machine { ty := intTy, token := 7 } = some initialConfig := by
+  native_decide
+
+example : initConfig initialDoneMachine { ty := intTy, token := 4 } =
+    some initialDoneConfig := by native_decide
+
+example : step initialDoneMachine bothEnabled successfulActions
+    initialDoneConfig trigger = none := by native_decide
 
 example : step machine bothEnabled successfulActions
     { initialConfig with terminal := .done } trigger = none := by native_decide
@@ -132,12 +240,15 @@ example {candidate : Machine} {guards : GuardValuation}
   smallStep_requires_event_typing transition
 
 example {candidate : Machine} {actions : ActionEvaluation}
-    {before : Config} {transition : Transition} {message : String}
+    {before : Config} {transition : Transition} {action : ActionDecl}
+    {message : String}
     (nonzero : transition.action ≠ 0)
+    (actionLookup : lookupAction candidate.actions transition.action = some action)
+    (mayFail : action.mayFail = true)
     (failure : actions transition.action = .error message) :
     let after := applyTransition candidate actions before transition
-    after.state = before.state ∧ after.stateToken = before.stateToken ∧
+    after.state = before.state ∧ after.stateValue = before.stateValue ∧
       after.terminal = .error message :=
-  applyTransition_action_failure nonzero failure
+  applyTransition_action_failure nonzero actionLookup mayFail failure
 
 end CMetaCFlowCalculus.Tests.Machine

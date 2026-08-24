@@ -5,14 +5,15 @@ namespace CMetaCFlowCalculus.CFlow.MachineSchemaHeader
 private def continuation : String :=
   " " ++ String.singleton '\\' ++ String.singleton '\n'
 
-private def renderRows : List MachineEnumRow → String
+private def renderRows : List (MachineEnumRow α) → String
   | [] => ""
   | [row] => "    X(" ++ row.cName ++ ", " ++ toString row.value ++ ")\n"
   | row :: rest =>
       "    X(" ++ row.cName ++ ", " ++ toString row.value ++ ")" ++
         continuation ++ renderRows rest
 
-private def renderListMacro (name : String) (rows : List MachineEnumRow) : String :=
+private def renderListMacro (name : String)
+    (rows : List (MachineEnumRow α)) : String :=
   "#define " ++ name ++ "(X)" ++ continuation ++ renderRows rows
 
 private def renderValidated : String :=

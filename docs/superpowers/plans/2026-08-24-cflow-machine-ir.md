@@ -44,7 +44,7 @@ Add literal expectations for schema version `1`, three state rows, three action-
 
 - [x] **Step 2: Run the tests and observe the missing-module failure**
 
-Run: `lake env lean Test/PhaseATests/MachineSchema.lean`  
+Run: `lake env lean Test/PhaseATests/MachineSchema.lean`
 Expected: FAIL because `MachineSchema` and `MachineSchemaHeader` do not exist.
 
 - [x] **Step 3: Implement the finite manifest, renderer, and generator CLI**
@@ -104,7 +104,7 @@ Use one private implementation with exact-sized arrays. Preflight every count/by
 
 - [x] **Step 4: Run focused tests to green**
 
-Run: `ctest --preset win-release-user -R "^cflow_machine_test$" --output-on-failure`  
+Run: `ctest --preset win-release-user -R "^cflow_machine_test$" --output-on-failure`
 Expected: PASS.
 
 - [x] **Step 5: Add failing validation matrix tests**
@@ -143,7 +143,7 @@ Construct literal Machines showing lowest enabled priority selection, no-transit
 
 - [x] **Step 2: Run and observe missing semantics**
 
-Run: `lake env lean Test/PhaseATests/Machine.lean`  
+Run: `lake env lean Test/PhaseATests/Machine.lean`
 Expected: FAIL because `CFlow.Machine` does not exist.
 
 - [x] **Step 3: Implement minimal typed semantic definitions**
