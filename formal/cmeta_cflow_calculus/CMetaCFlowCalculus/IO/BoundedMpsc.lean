@@ -21,6 +21,7 @@ structure State (α : Type) where
   capacity : Nat
   queue : List α
   terminal : Terminal
+  deriving Repr, DecidableEq
 
 namespace State
 

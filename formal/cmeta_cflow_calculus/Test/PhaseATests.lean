@@ -17,6 +17,7 @@ import PhaseATests.MachineRuntime
 import PhaseATests.TimerEvent
 import PhaseATests.IOBoundedMpsc
 import PhaseATests.IOExecutor
+import PhaseATests.IOActor
 
 open CMetaCFlowCalculus.CMeta
 open CMetaCFlowCalculus.CFlow

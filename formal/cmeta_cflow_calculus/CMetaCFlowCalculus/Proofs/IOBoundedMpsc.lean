@@ -62,6 +62,11 @@ theorem close_preserves_queue (state : State α) :
     (close state).2.queue = state.queue := by
   cases terminal : state.terminal <;> simp [close, terminal]
 
+theorem close_preserves_valid (state : State α) (valid : state.Valid) :
+    (close state).2.Valid := by
+  cases terminal : state.terminal <;>
+    simpa [close, terminal, State.Valid] using valid
+
 theorem close_rejects_publish (state : State α) (value : α) :
     (tryPublish (close state).2 value).1 = .closed := by
   cases terminal : state.terminal <;>
