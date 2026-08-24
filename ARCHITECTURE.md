@@ -7,67 +7,167 @@
 TurboParser 的集成边界。专项 API、错误语义、ABI 和阶段能力仍以公开头文件、测试及
 `docs/superpowers/specs/` 中的专项设计为事实源；本文不重复低层契约。
 
-> 图中实线表示当前 TurboUtils CMake target 依赖；虚线表示已经接受的跨仓库集成方向，
-> 不表示对应 TurboParser migration 已经落地。
+> 主图采用客户文稿视角，表达产品、语义 IR、CMeta 与 Platform/OS 的分层关系；右侧
+> `Cross-Cutting Capabilities` 表达跨层能力归属，不等价于 CMake target 的层级包含关系。
+> 实际 public/private target 依赖仍以第 5 节 dependency matrix 为准。
 
-## 1. Canonical module map
+## 1. Layered canonical architecture
 
 ```mermaid
 flowchart TB
-    subgraph TU[TurboUtils]
-        subgraph Foundation[Semantic / protocol foundation]
-            CMeta[TurboUtils::CMeta<br/>type identity / traits / reflection<br/>semantic data / container contracts]
-            CSerde[TurboUtils::CSerde<br/>canonical token reader / writer protocol]
-            CBind[TurboUtils::CBind<br/>native C data ↔ canonical values]
+
+    subgraph BODY[" "]
+        direction LR
+
+        subgraph STACK[" "]
+            direction TB
+
+            subgraph L4["Layer 4 — User Models (Products / APIs)<br/>面向应用开发者"]
+                direction LR
+                STREAM["<b>Stream</b><br/>Java-aligned Stream API<br/>stream(&amp;users, &amp;s) → filter → map → to_list"]
+                ACTOR["<b>Actor</b><br/>Actor Model · future"]
+                STATECHART["<b>Statechart</b><br/>State Machine · future"]
+                WORKFLOW["<b>Workflow</b><br/>Workflow / Pipeline · future"]
+                REACTIVE["<b>IO / Reactive</b><br/>IO Pipeline / Reactive Style · future"]
+                MORE["<b>...</b><br/>More Abstractions"]
+            end
+
+            subgraph L3["Layer 3 — CFlow Kernel (Execution Runtime)<br/>可独立使用的运行时产品"]
+                direction TB
+
+                subgraph KERNEL["Execution Kernel — Portable Semantic Execution Runtime"]
+                    direction LR
+                    RUN["<b>Run / Task</b><br/>run / resume<br/>state machine<br/>demand / backpressure<br/>cancel / error"]
+                    SOURCE["<b>Source / Sink</b><br/>Source: VALUE / WAIT / DONE / ERROR<br/>Sink: value / error / done"]
+                    WAIT["<b>Waitable / Waker</b><br/>WAIT → Waitable<br/>Waker.wake()<br/>OS event integration"]
+                    EXEC["<b>Executor</b><br/>post(task)<br/>thread pool<br/>coroutine executor<br/>serial / manual"]
+                    CLOCK["<b>Clock / Timer</b><br/>Clock<br/>Timer<br/>VirtualClock"]
+                end
+
+                subgraph KSVC["Kernel Services"]
+                    direction LR
+                    SCHED["Scheduler"]
+                    TQ["TimerQueue"]
+                    CANCEL["Cancellation"]
+                    DEMAND["Demand / Backpressure"]
+                    ERROR["Error Propagation"]
+                    KTRACE["Metrics / Tracing"]
+                end
+            end
+
+            subgraph L2["Layer 2 — CFlow Graph IR (Semantic Framework)<br/>框架内部语义模型与执行合同"]
+                direction LR
+                GRAPH["<b>Graph Model</b><br/>Graph / Subgraph<br/>Node / Edge / Relation"]
+                OPS["<b>Operators (Relational)</b><br/>source · map · filter · flat_map · relation<br/>zip · merge · group_by · window · ..."]
+                SEM["<b>Semantic Info</b><br/>Type / Trait — from CMeta<br/>Cardinality<br/>Effects / Purity<br/>Properties"]
+                PROCESS["<b>Graph Processing</b><br/>Validation<br/>Optimization<br/>Lowering → Execution Plan"]
+            end
+
+            subgraph L1["Layer 1 — CMeta (Semantic Toolkit)<br/>语义工具 / DSL / 代码生成基础设施"]
+                direction LR
+                TYPE["<b>Type System</b><br/>type / struct / union / enum<br/>alias / generic<br/>const / volatile / ..."]
+                TRAIT["<b>Trait & Property</b><br/>trivial / copyable<br/>comparable / hashable<br/>range / sized / sorted / ..."]
+                INTERFACE["<b>Interface</b><br/>interface(...)<br/>vtable / impl<br/>capability / contract"]
+                CALLABLE["<b>Callable</b><br/>function signature<br/>pure / side-effect<br/>noexcept / async / ..."]
+                REFLECT["<b>Reflection & Schema</b><br/>type descriptor<br/>struct offset / size<br/>schema / reflection"]
+                CODEGEN["<b>Codegen & Tools</b><br/>header / impl generation<br/>mock / stub generation<br/>tooling"]
+            end
+
+            subgraph PLATFORM["Platform / OS — Platform Abstraction (OS Primitives)<br/>基础设施"]
+                direction LR
+                THREAD["<b>Threading</b><br/>thread<br/>mutex / rwlock<br/>condvar"]
+                EVENT["<b>Event / Waitable</b><br/>binary event<br/>wait / signal<br/>reset / wait_for"]
+                POLLER["<b>Poller</b><br/>epoll / kqueue<br/>IOCP / poll<br/>native handle"]
+                TIMER["<b>Timer</b><br/>sleep / timerfd<br/>CreateTimerQueue<br/>dispatch source"]
+                IO["<b>I/O</b><br/>socket / pipe<br/>file / device<br/>async I/O"]
+            end
         end
 
-        subgraph Execution[Execution]
-            CFlow[TurboUtils::CFlow<br/>typed graph / stream / machine<br/>lower / analyze / optimize / execute]
-            Platform[TurboUtils::Platform]
-            Concurrency[TurboUtils::Concurrency]
+        subgraph CROSS["Cross-Cutting Capabilities"]
+            direction TB
+            LOG["<b>Logging & Tracing</b>"]
+            METRICS["<b>Metrics & Monitoring</b>"]
+            CONFIG["<b>Configuration</b>"]
+            CSERDE["<b>CSerde</b><br/>Canonical Token Protocol"]
+            CBIND["<b>CBind</b><br/>Native Data Binding"]
+            TESTING["<b>Testing & Simulation</b>"]
         end
-
-        subgraph Containers[Containers]
-            STL[TurboUtils::STL<br/>canonical containers + CMeta projection]
-            STLStream[TurboUtils::STLStream<br/>STL + CFlow composition]
-        end
-
-        Core[TurboUtils::Core<br/>general utilities]
-
-        CBind --> CMeta
-        CBind --> CSerde
-
-        Concurrency --> Platform
-        CFlow --> CMeta
-        CFlow -. private .-> Platform
-        CFlow -. private .-> Concurrency
-
-        STL --> CMeta
-        STLStream --> STL
-        STLStream --> CFlow
-
-        Core --> CMeta
-        Core --> Platform
-        Core --> Concurrency
-        Core -. private .-> STL
-        Core -. private .-> CFlow
     end
 
-    subgraph TP[TurboParser]
-        Parsers[parser/*<br/>JSON / YAML / XML / CSV / ...]
-        DataBind[TurboParser::DataBind]
-        TBE[TBE schema / wire]
-        FlowAdapters[Parser + CBind + CFlow composition]
-    end
+    STREAM -->|"Build on"| RUN
+    ACTOR -.-> RUN
+    STATECHART -.-> RUN
+    WORKFLOW -.-> RUN
+    REACTIVE -.-> SOURCE
 
-    Parsers -. format projection .-> CSerde
-    DataBind -. generic native binding .-> CBind
-    TBE -. semantic bridge .-> CMeta
-    FlowAdapters -. bind complete values .-> CBind
-    FlowAdapters -. Stream&lt;T&gt; execution .-> CFlow
+    RUN -->|"Execute"| GRAPH
+    SOURCE --> OPS
+    WAIT --> SEM
+    EXEC --> PROCESS
+
+    GRAPH -->|"Define & Describe"| TYPE
+    OPS --> CALLABLE
+    SEM --> TRAIT
+    PROCESS --> REFLECT
+
+    TYPE -. "Describe Types & Contracts" .-> THREAD
+    INTERFACE -.-> EVENT
+    CALLABLE -.-> POLLER
+    REFLECT -.-> TIMER
+
+    RUN --- SCHED
+    SOURCE --- TQ
+    WAIT --- CANCEL
+    EXEC --- DEMAND
+    CLOCK --- ERROR
+    ERROR --- KTRACE
+
+    %% Cross-cutting ownership does not change target dependencies.
+    CSERDE -. "canonical token transport" .-> SOURCE
+    CBIND -->|"semantic types / reflection"| REFLECT
+    CBIND -->|"depends on"| CSERDE
+    CBIND -. "native values" .-> STREAM
+
+    LOG -.-> RUN
+    METRICS -.-> KTRACE
+    CONFIG -.-> RUN
+    TESTING -.-> GRAPH
+
+    classDef layer4 fill:#fbf8ff,stroke:#a78bfa,color:#3b1c88,stroke-width:1px;
+    classDef kernel fill:#f5faff,stroke:#60a5fa,color:#174ea6,stroke-width:1px;
+    classDef graph fill:#f7fbf4,stroke:#86b874,color:#176126,stroke-width:1px;
+    classDef meta fill:#fff9f1,stroke:#f6a34a,color:#c74f00,stroke-width:1px;
+    classDef platformStyle fill:#f7f9fc,stroke:#8296b3,color:#183a64,stroke-width:1px;
+    classDef cross fill:#f4fbf8,stroke:#72b8a3,color:#075d4c,stroke-width:1px;
+    classDef binding fill:#effaf5,stroke:#41a27c,color:#075d4c,stroke-width:1.5px;
+
+    class STREAM,ACTOR,STATECHART,WORKFLOW,REACTIVE,MORE layer4;
+    class RUN,SOURCE,WAIT,EXEC,CLOCK,SCHED,TQ,CANCEL,DEMAND,ERROR,KTRACE kernel;
+    class GRAPH,OPS,SEM,PROCESS graph;
+    class TYPE,TRAIT,INTERFACE,CALLABLE,REFLECT,CODEGEN meta;
+    class THREAD,EVENT,POLLER,TIMER,IO platformStyle;
+    class LOG,METRICS,CONFIG,TESTING cross;
+    class CSERDE,CBIND binding;
+
+    style L4 fill:#fcfaff,stroke:#b7a2ef,stroke-width:1px,color:#38137a
+    style L3 fill:#f4f9ff,stroke:#72aef5,stroke-width:1px,color:#124694
+    style L2 fill:#f7fbf4,stroke:#91bb7b,stroke-width:1px,color:#176126
+    style L1 fill:#fff8ef,stroke:#f1a452,stroke-width:1px,color:#c44e00
+    style PLATFORM fill:#f6f8fb,stroke:#8798b0,stroke-width:1px,color:#183a64
+    style CROSS fill:#f4fbf8,stroke:#72b8a3,stroke-width:1px,color:#075d4c
+    style BODY fill:transparent,stroke:transparent
+    style STACK fill:transparent,stroke:transparent
 ```
 
-依赖箭头统一解释为“箭头起点依赖箭头终点”。TurboUtils 不反向依赖 TurboParser。
+这张图描述的是**分层产品模型**：Stream 是当前首要用户产品；Actor、Statechart、Workflow、
+IO/Reactive 是可在同一 Kernel 上构建的后续 façade/model，不表示当前已经存在独立 public
+runtime target。Layer 2/3 共同属于 CFlow；Layer 1 是 CMeta 语义工具层；Platform/OS 提供
+底层执行原语。
+
+`CSerde` 与 `CBind` 在客户视角中属于 `Cross-Cutting Capabilities`：它们横跨 parser、native
+value、Stream/Graph 等使用场景，但这不改变模块依赖事实。当前 target 仍然是
+`CBind -> CMeta + CSerde`，`CSerde` 不依赖 CFlow/CMeta，CBind 也不依赖 CFlow、TurboSTL、
+Core 或 TurboParser。
 
 `tinytest/`、vendor、build tools 与 Lean/formal generation 属于测试、构建或验证平面，
 不进入上面的 runtime ownership 图。`turbo_serial` 是 serial-port/串口子系统，与
