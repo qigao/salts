@@ -11,6 +11,65 @@ typedef struct turbo_readiness_generation_step {
   uint32_t next;
 } turbo_readiness_generation_step;
 
+typedef enum turbo_readiness_lifecycle {
+  TURBO_READINESS_LIFECYCLE_FREE = 0,
+  TURBO_READINESS_LIFECYCLE_OPEN,
+  TURBO_READINESS_LIFECYCLE_CLOSING,
+  TURBO_READINESS_LIFECYCLE_RETIRED
+} turbo_readiness_lifecycle;
+
+typedef enum turbo_readiness_interest {
+  TURBO_READINESS_INTEREST_IDLE = 0,
+  TURBO_READINESS_INTEREST_ARMING,
+  TURBO_READINESS_INTEREST_ARMED,
+  TURBO_READINESS_INTEREST_UNARMING
+} turbo_readiness_interest;
+
+typedef enum turbo_readiness_delivery {
+  TURBO_READINESS_DELIVERY_IDLE = 0,
+  TURBO_READINESS_DELIVERY_CALLBACK
+} turbo_readiness_delivery;
+
+typedef enum turbo_readiness_terminal {
+  TURBO_READINESS_TERMINAL_NONE = 0,
+  TURBO_READINESS_TERMINAL_RESERVED,
+  TURBO_READINESS_TERMINAL_DELIVERING
+} turbo_readiness_terminal;
+
+typedef enum turbo_readiness_control {
+  TURBO_READINESS_CONTROL_NONE = 0,
+  TURBO_READINESS_CONTROL_REGISTER,
+  TURBO_READINESS_CONTROL_ARM,
+  TURBO_READINESS_CONTROL_UNARM,
+  TURBO_READINESS_CONTROL_CLOSE
+} turbo_readiness_control;
+
+typedef struct turbo_readiness_state_view {
+  turbo_readiness_lifecycle lifecycle;
+  turbo_readiness_interest interest;
+  turbo_readiness_delivery delivery;
+  turbo_readiness_terminal terminal;
+  turbo_readiness_control control;
+  turbo_readiness_callback callback;
+  uint64_t arm_token;
+  uint32_t arm_waiters;
+  uint32_t api_borrows;
+  int native_registered;
+  int orphaned;
+} turbo_readiness_state_view;
+
+int turbo_readiness_state_model_valid(
+    const turbo_readiness_state_view *view);
+int turbo_readiness_registration_admission_enter(uintptr_t *admission);
+int turbo_readiness_registration_admission_reserve_register(
+    uintptr_t *admission);
+int turbo_readiness_registration_admission_close(uintptr_t *admission);
+void turbo_readiness_registration_admission_leave(uintptr_t *admission);
+int turbo_readiness_registration_admission_reset(uintptr_t *admission);
+uintptr_t turbo_readiness_registration_admission_max_entrants(void);
+uint32_t turbo_readiness_registration_admission_entrants(
+    const uintptr_t *admission);
+
 static inline int turbo_readiness_generation_available(uint32_t generation) {
   return generation != UINT32_MAX;
 }

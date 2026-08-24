@@ -12,6 +12,7 @@ typedef struct turbo_readiness_reactor {
 
 typedef struct turbo_readiness_registration {
   void *impl;
+  uintptr_t _admission;
 } turbo_readiness_registration;
 
 typedef uint32_t turbo_readiness_events;
@@ -44,8 +45,12 @@ typedef void (*turbo_readiness_callback)(void *user, turbo_readiness_events even
 /*
  * Reactors and registrations are zero-state handles. A successful register
  * borrows native_resource until turbo_readiness_close() returns TURBO_OK.
- * Registration handles are move-only: copying registration.impl is outside
- * the contract.
+ * Registration handles are move-only: copying the complete handle is allowed
+ * only at a quiescent ownership-transfer boundary. Controls on one handle are
+ * concurrency-safe; register, close, or reuse of that handle must not race its
+ * ownership transfer. Reactor destroy requires every registration handle and
+ * every public registration API call associated with the reactor to be
+ * quiescent.
  *
  * Capacity is fixed at initialization. registration_capacity and
  * event_batch_capacity must be nonzero, the batch may not exceed capacity + 1,
