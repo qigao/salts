@@ -7,9 +7,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `TYPE<A...>` a first-class, verifiable CMeta contract and make TurboSTL typed instances expose their real generic constructor and arguments before semantic serialization descriptors are introduced.
+**Goal:** Make `CMETA_TYPE_APPLY` a first-class, verifiable CMeta contract and make TurboSTL typed instances expose their real type constructor and arguments before semantic serialization descriptors are introduced.
 
-**Architecture:** Keep `cmeta_generic_desc` + `cmeta_type_identity(CMETA_TYPE_APPLY)` as the canonical type-language foundation. First tighten and directly test application well-formedness in CMeta. Then add one versioned extension root to `cmeta_container_desc` and let TurboSTL expose `Vec<T>`, `Set<T>`, `Map<K,V>`, etc. as concrete generic applications using the type descriptors already stored on each handle. Container algorithms and ownership remain unchanged.
+**Architecture:** Keep `cmeta_generic_desc` + `cmeta_type_identity(CMETA_TYPE_APPLY)` as the canonical type-language foundation. First tighten and directly test application well-formedness in CMeta. Then add one versioned extension root to `cmeta_container_desc` and let TurboSTL instances declared with `typed(Vec, ...)`, `typed(Set, ...)`, `typed(Map, ...)`, etc. expose concrete type applications using the type descriptors already stored on each handle. Container algorithms and ownership remain unchanged.
 
 **Tech Stack:** C11, C++17 public-header compatibility, CMake presets, TinyTest, TurboUtils::CMeta, TurboUtils::STL.
 
@@ -17,16 +17,16 @@
 
 ## Global Constraints
 
-- `TYPE<A...>` well-formedness is a CMeta concern and must be established before CMeta semantic data descriptors.
-- Type identity and operation capability are separate contracts. `Set<T>` may be a well-formed type application even when a concrete Set operation later rejects `T` for missing compare traits.
+- `CMETA_TYPE_APPLY` well-formedness is a CMeta concern and must be established before CMeta semantic data descriptors.
+- Type identity and operation capability are separate contracts. `typed(Set, SetName, T)` may describe a well-formed type application even when a concrete Set operation later rejects `T` for missing compare traits.
 - Generic identity compares constructor `stable_id` + recursively validated argument identities; pointer equality is never cross-TU type identity.
 - No serialization, CSerde, CBind, parser, schema-policy, or format-specific code is introduced by this plan.
 - No TurboSTL raw algorithm is rewritten. Genericization changes metadata/introspection only.
 - Raw byte containers with no `cmeta_type_desc` binding are not semantic generic applications.
 - Existing typed handle metadata (`element_type`, `key_type`, `value_type`) remains the storage of concrete type arguments.
 - Add exactly one extension pointer to `cmeta_container_desc`; future construction metadata must extend the versioned extension object instead of repeatedly growing the main descriptor.
-- `typed(Option/Pair/Tuple/Result, ...)` already creates real C storage shapes but does not yet attach a complete generic type identity. This plan does not fake identity from C spelling. A later value-generic metadata plan must solve that before semantic `Option<T>` is admitted.
-- Therefore field presence (`required`, missing field, default) remains CBind/schema policy. A future semantic OPTIONAL applies only to a real `Option<T>` type identity, not to a field merely allowed to be absent.
+- `typed(Option/Pair/Tuple/Result, ...)` already creates real C storage shapes but does not yet attach a complete type identity. This plan does not fake identity from C spelling. A later value-type metadata plan must solve that before a typed Option value is admitted as semantic OPTIONAL.
+- Therefore field presence (`required`, missing field, default) remains CBind/schema policy. A future semantic OPTIONAL applies only to a typed Option value with real type identity, not to a field merely allowed to be absent.
 - Public CMeta/TurboSTL headers must compile as C11 and C++17.
 - Linux and Windows fresh CI are required before each implementation PR is merged.
 
@@ -80,7 +80,7 @@ static const cmeta_type_identity cmeta_test_atom_b =
 Add tests:
 
 ```c
-it("validates TYPE<A...> from constructor arity and recursive arguments") {
+it("validates CMETA_TYPE_APPLY from constructor arity and recursive arguments") {
     const cmeta_type_identity *box_args[] = {&cmeta_test_atom_a};
     const cmeta_type_identity *pair_args[] = {
         &cmeta_test_atom_a, &cmeta_test_atom_b};
@@ -96,7 +96,7 @@ it("validates TYPE<A...> from constructor arity and recursive arguments") {
 }
 ```
 
-Also construct nested `Pair<Box<A>, B>` with `CMETA_TYPE_ID_APPLY_INIT` and verify `cmeta_type_identity_valid()` accepts it.
+Also construct a nested Pair application whose first argument is a Box application and whose second argument is B with `CMETA_TYPE_ID_APPLY_INIT`, then verify `cmeta_type_identity_valid()` accepts it.
 
 - [ ] **Step 2: Build the focused CMeta test and verify red**
 
@@ -192,7 +192,7 @@ git commit -m "feat(cmeta): formalize generic type applications"
 
 **Interfaces:**
 - Consumes: `cmeta_type_identity_equal()` and the application contract from Task 1.
-- Produces: a regression proving two separately instantiated `TYPE<A,B>` graphs with equal constructor stable IDs and equal argument identities compare equal without sharing addresses.
+- Produces: a regression proving two separately instantiated two-argument `CMETA_TYPE_APPLY` graphs with equal constructor stable IDs and equal argument identities compare equal without sharing addresses.
 
 - [ ] **Step 1: Add a peer-TU application identity**
 
@@ -471,7 +471,7 @@ A typed `Vec(int, typed_values)` must stay valid before init, after successful i
 
 - [ ] **Step 8: Keep capability validation separate**
 
-Add a test type with a valid atom identity but missing compare/hash traits. Its `Set<T>` / `HashSet<T>` generic type application is well-formed, while `set_init()` / `hash_set_init()` continues to fail with the existing trait error. This proves “type exists” and “operation is admissible” are different contracts.
+Add a test type with a valid atom identity but missing compare/hash traits. Its `typed(Set, SetName, T)` / `typed(HashSet, HashSetName, T)` type applications are well-formed, while `set_init()` / `hash_set_init()` continues to fail with the existing trait error. This proves “type exists” and “operation is admissible” are different contracts.
 
 - [ ] **Step 9: Run focused TurboSTL regression**
 
@@ -567,12 +567,21 @@ Only after PR A and PR B are merged may the semantic-data-descriptor plan be reg
 The intended mapping is:
 
 ```text
-Vec<T>/Deque<T>/List<T>/Stack<T>/Queue<T>/Heap<T> -> sequence-like semantic shape
-Set<T>/HashSet<T>                                 -> SET semantic shape
-HashMap<K,V>/Map<K,V>/BTree<K,V>/BPlusTree<K,V> -> MAP semantic shape
-MultiMap<K,V>                                     -> explicit multimap policy/shape decision
+typed(Vec, VecName, T)                       -> sequence-like semantic shape
+typed(Deque, DequeName, T)                   -> sequence-like semantic shape
+typed(List, ListName, T)                     -> sequence-like semantic shape
+typed(Stack, StackName, T)                   -> sequence-like semantic shape
+typed(Queue, QueueName, T)                   -> sequence-like semantic shape
+typed(Heap, HeapName, T)                     -> sequence-like semantic shape
+typed(Set, SetName, T)                       -> SET semantic shape
+typed(HashSet, HashSetName, T)               -> SET semantic shape
+typed(HashMap, HashMapName, K, V)            -> MAP semantic shape
+typed(Map, MapName, K, V)                    -> MAP semantic shape
+typed(BTree, BTreeName, K, V)                -> MAP semantic shape
+typed(BPlusTree, BPlusTreeName, K, V)        -> MAP semantic shape
+typed(MultiMap, MultiMapName, K, V)          -> explicit multimap policy/shape decision
 ```
 
-Before semantic OPTIONAL is admitted, create a separate value-generic metadata plan for CMeta's existing `typed(Option/Pair/Tuple/Result, ...)` storage types. That plan must produce real `CMETA_TYPE_APPLY` identities without deriving stable identity from raw C spelling. `Option<T>` may then map to semantic OPTIONAL; `Result<A,E>` may map to VARIANT. Field presence remains a separate CBind/schema concern regardless of that future work.
+Before semantic OPTIONAL is admitted, create a separate value-type metadata plan for CMeta's existing `typed(Option/Pair/Tuple/Result, ...)` storage types. That plan must produce real `CMETA_TYPE_APPLY` identities without deriving stable identity from raw C spelling. A typed Option value may then map to semantic OPTIONAL, and a typed Result value may map to VARIANT. Field presence remains a separate CBind/schema concern regardless of that future work.
 
 No semantic descriptor should carry a second copy of generic argument truth when it can be derived from the validated type application.

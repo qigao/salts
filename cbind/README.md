@@ -38,5 +38,42 @@ The executable behavior examples are maintained with the implementation in
 cover complete descriptors, context setup, root and struct decode, embedded
 NUL bytes, lifetime rejection, limits, target failures, and rollback.
 
-String/bytes container elements, custom ownership, enum, and variant decoding
-remain unsupported in this slice and fail without an implicit fallback.
+## ENUM storage
+
+CBind decodes an enum only when its descriptor exposes a complete
+`cmeta_data_enum_ops` adapter. Input may be an exact reflected `text`, exact
+`symbol`, declared signed integer, or declared unsigned integer not greater
+than `INT64_MAX`. Float coercion and undeclared values are rejected. String
+slices are compared directly and never retained.
+
+Provider assignment failures surface as `CBIND_TARGET_ERROR` and restore the
+adapter-defined semantic-zero state. See
+[`tests/cbind_enum_decode_test.c`](tests/cbind_enum_decode_test.c) for complete
+descriptor and rollback examples.
+
+## VARIANT storage
+
+CBind represents a tagged variant as an exact two-element canonical array:
+
+```text
+ARRAY_BEGIN, tag, payload, ARRAY_END
+```
+
+The descriptor must expose `cmeta_data_variant_ops`. Its `select` callback
+initializes and engages a declared case; `restore_zero` owns destruction of the
+complete active payload. CBind checks the selected tag and empty payload before
+decoding, so malformed providers fail as `CBIND_TARGET_ERROR` instead of
+leaving a half-active union.
+
+Integer discriminators use exact SINT/UINT tokens in the signed 64-bit case-tag
+domain. Enum discriminators additionally accept reflected text or symbol.
+Scalar, enum, buffer, struct, and nested-variant payloads are supported. Direct
+container cases are rejected before input because variant case metadata does
+not yet carry a declared container type; containers nested in a struct case
+remain supported.
+
+See [`tests/cbind_variant_decode_test.c`](tests/cbind_variant_decode_test.c) for
+preflight, lifecycle, nested payload, resource-limit, and rollback examples.
+
+String/bytes/enum container elements and custom buffer ownership remain
+unsupported and fail without an implicit fallback.

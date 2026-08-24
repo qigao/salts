@@ -134,6 +134,10 @@ static_assert(std::is_standard_layout_v<cmeta_data_desc>,
               "semantic data descriptors must remain C-compatible standard-layout types");
 static_assert(std::is_standard_layout_v<cmeta_data_buffer_ops>,
               "semantic buffer ops must remain C-compatible standard-layout types");
+static_assert(std::is_standard_layout_v<cmeta_data_enum_ops>,
+              "semantic enum ops must remain C-compatible standard-layout types");
+static_assert(std::is_standard_layout_v<cmeta_data_variant_ops>,
+              "semantic variant ops must remain C-compatible standard-layout types");
 static_assert(std::is_standard_layout_v<cmeta_data_struct_shape>,
               "semantic struct shapes must remain standard layout");
 static_assert(std::is_standard_layout_v<cmeta_data_variant_shape>,
