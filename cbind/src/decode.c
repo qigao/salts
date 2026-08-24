@@ -75,6 +75,8 @@ cbind_status cbind_decode_value(cbind_decode_state *state,
                                 void *out) {
     if (shape->kind == CMETA_DATA_STRUCT)
         return cbind_decode_struct(state, shape, field, depth, out);
+    if (shape->kind == CMETA_DATA_VARIANT)
+        return cbind_decode_variant(state, shape, field, depth, out);
     if (cbind_data_kind_is_container(shape->kind))
         return cbind_decode_container(state, shape, field, reflected,
                                       depth, out);

@@ -51,6 +51,29 @@ adapter-defined semantic-zero state. See
 [`tests/cbind_enum_decode_test.c`](tests/cbind_enum_decode_test.c) for complete
 descriptor and rollback examples.
 
-String/bytes/enum container elements, custom buffer ownership, and variant
-decoding remain unsupported in this slice and fail without an implicit
-fallback.
+## VARIANT storage
+
+CBind represents a tagged variant as an exact two-element canonical array:
+
+```text
+ARRAY_BEGIN, tag, payload, ARRAY_END
+```
+
+The descriptor must expose `cmeta_data_variant_ops`. Its `select` callback
+initializes and engages a declared case; `restore_zero` owns destruction of the
+complete active payload. CBind checks the selected tag and empty payload before
+decoding, so malformed providers fail as `CBIND_TARGET_ERROR` instead of
+leaving a half-active union.
+
+Integer discriminators use exact SINT/UINT tokens in the signed 64-bit case-tag
+domain. Enum discriminators additionally accept reflected text or symbol.
+Scalar, enum, buffer, struct, and nested-variant payloads are supported. Direct
+container cases are rejected before input because variant case metadata does
+not yet carry a declared container type; containers nested in a struct case
+remain supported.
+
+See [`tests/cbind_variant_decode_test.c`](tests/cbind_variant_decode_test.c) for
+preflight, lifecycle, nested payload, resource-limit, and rollback examples.
+
+String/bytes/enum container elements and custom buffer ownership remain
+unsupported and fail without an implicit fallback.

@@ -99,11 +99,6 @@ cbind_status cbind_validate_graph(const cbind_context *context,
                                   cbind_error *error) {
     cbind_status status;
 
-    (void)context;
-    (void)parent;
-    (void)active_scratch;
-    (void)max_scratch;
-
     if (shape == NULL || !cmeta_data_desc_valid(shape))
         return cbind_validation_error(error, CBIND_INVALID_SHAPE, shape, depth);
 
@@ -165,6 +160,9 @@ cbind_status cbind_validate_graph(const cbind_context *context,
         case CMETA_DATA_STRUCT:
             return cbind_validation_error(error, CBIND_UNSUPPORTED, shape, depth);
         case CMETA_DATA_VARIANT:
+            return cbind_validate_variant_graph(
+                context, shape, depth, parent, active_scratch,
+                max_scratch, error);
         case CMETA_DATA_SEQUENCE:
         case CMETA_DATA_SET:
         case CMETA_DATA_MAP:
@@ -220,6 +218,11 @@ bool cbind_value_is_empty(const cmeta_data_desc *shape, const void *value) {
             return cmeta_data_enum_is_zero(shape, value, &empty) == CMETA_OK &&
                    empty;
         }
+        case CMETA_DATA_VARIANT: {
+            bool empty = false;
+            return cmeta_data_variant_is_zero(shape, value, &empty) ==
+                       CMETA_OK && empty;
+        }
         default:
             return false;
     }
@@ -264,6 +267,9 @@ void cbind_value_reset(const cmeta_data_desc *shape, void *value) {
             break;
         case CMETA_DATA_ENUM:
             (void)cmeta_data_enum_restore_zero(shape, value);
+            break;
+        case CMETA_DATA_VARIANT:
+            (void)cmeta_data_variant_restore_zero(shape, value);
             break;
         default:
             break;

@@ -16,8 +16,8 @@ size_t cbind_bitmap_bytes(size_t field_count) {
     return field_count / 8u + (field_count % 8u != 0u ? 1u : 0u);
 }
 
-static bool cbind_cycle_contains(const cbind_validation_frame *parent,
-                                 const cmeta_data_desc *shape) {
+bool cbind_validation_cycle_contains(const cbind_validation_frame *parent,
+                                     const cmeta_data_desc *shape) {
     const cbind_validation_frame *frame;
 
     for (frame = parent; frame != NULL; frame = frame->parent)
@@ -43,7 +43,7 @@ static cbind_status cbind_validate_struct_shape(
         shape->kind != CMETA_DATA_STRUCT)
         return cbind_struct_error(error, CBIND_INVALID_SHAPE, shape, NULL,
                                   current_depth);
-    if (cbind_cycle_contains(parent, shape))
+    if (cbind_validation_cycle_contains(parent, shape))
         return cbind_struct_error(error, CBIND_INVALID_SHAPE, shape, NULL,
                                   current_depth);
 
@@ -140,10 +140,15 @@ static cbind_status cbind_measure_struct_resources(
         const cmeta_data_desc *child = struct_shape->fields[i].value;
         cbind_status status;
 
-        if (child->kind != CMETA_DATA_STRUCT)
+        if (child->kind == CMETA_DATA_STRUCT) {
+            status = cbind_measure_struct_resources(
+                context, child, current_depth, next_active, max_scratch, error);
+        } else if (child->kind == CMETA_DATA_VARIANT) {
+            status = cbind_measure_variant_resources(
+                context, child, current_depth, next_active, max_scratch, error);
+        } else {
             continue;
-        status = cbind_measure_struct_resources(context, child, current_depth,
-                                                next_active, max_scratch, error);
+        }
         if (status != CBIND_OK)
             return status;
     }
