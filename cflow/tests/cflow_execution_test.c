@@ -22,6 +22,25 @@ typedef struct executor_control_probe {
   cflow_executor_wait_status wait;
 } executor_control_probe;
 
+typedef struct cflow_task_lifecycle_probe {
+  atomic_int run_count;
+  atomic_int cancel_count;
+  atomic_int finalize_count;
+  atomic_int finalize_entered;
+  atomic_int finalize_gate;
+  atomic_int sequence;
+  atomic_int run_sequence;
+  atomic_int cancel_sequence;
+  atomic_int finalize_sequence;
+} cflow_task_lifecycle_probe;
+
+typedef struct cflow_wait_probe {
+  cflow_executor_control *control;
+  atomic_int entered;
+  atomic_int done;
+  cflow_executor_wait_status status;
+} cflow_wait_probe;
+
 static void count_task(void *user) {
   (void)user;
   atomic_fetch_add(&executor_counter, 1);
@@ -32,6 +51,41 @@ static void gated_count_task(void *user) {
   atomic_store(&worker_gate_started, 1);
   while (!atomic_load(&worker_gate_open)) turbo_sleep_ms(1);
   atomic_fetch_add(&executor_counter, 1);
+}
+
+static void cflow_lifecycle_run(void *user) {
+  cflow_task_lifecycle_probe *probe = (cflow_task_lifecycle_probe *)user;
+  atomic_fetch_add(&probe->run_count, 1);
+  atomic_store(&probe->run_sequence,
+               atomic_fetch_add(&probe->sequence, 1) + 1);
+}
+
+static void cflow_lifecycle_cancel(void *user) {
+  cflow_task_lifecycle_probe *probe = (cflow_task_lifecycle_probe *)user;
+  atomic_fetch_add(&probe->cancel_count, 1);
+  atomic_store(&probe->cancel_sequence,
+               atomic_fetch_add(&probe->sequence, 1) + 1);
+}
+
+static void cflow_lifecycle_finalize(void *user) {
+  cflow_task_lifecycle_probe *probe = (cflow_task_lifecycle_probe *)user;
+  atomic_fetch_add(&probe->finalize_count, 1);
+  atomic_store(&probe->finalize_sequence,
+               atomic_fetch_add(&probe->sequence, 1) + 1);
+}
+
+static void cflow_blocking_lifecycle_finalize(void *user) {
+  cflow_task_lifecycle_probe *probe = (cflow_task_lifecycle_probe *)user;
+  cflow_lifecycle_finalize(user);
+  atomic_store(&probe->finalize_entered, 1);
+  while (!atomic_load(&probe->finalize_gate)) turbo_sleep_ms(1);
+}
+
+static void cflow_wait_for_executor(void *user) {
+  cflow_wait_probe *probe = (cflow_wait_probe *)user;
+  atomic_store(&probe->entered, 1);
+  probe->status = cflow_executor_control_wait_idle(probe->control);
+  atomic_store(&probe->done, 1);
 }
 
 static void serial_probe(void *user) {
@@ -282,6 +336,109 @@ spec("CFlow execution foundation") {
     cflow_executor_destroy(&executor);
   }
 
+  it("runs and finalizes accepted ManualExecutor descriptor exactly once") {
+    cflow_executor executor = {0};
+    cflow_task_lifecycle_probe probe = {0};
+    cflow_executor_task task = {
+        .run = cflow_lifecycle_run,
+        .cancel = cflow_lifecycle_cancel,
+        .finalize = cflow_lifecycle_finalize,
+        .user = &probe,
+    };
+
+    check_true(cflow_executor_manual_init_with_capacity(&executor, 1u));
+    check_equal(cflow_executor_try_post_task(&executor, &task),
+                CFLOW_ADMISSION_ACCEPTED);
+    check_true(cflow_executor_run_one(&executor));
+    check_equal(atomic_load(&probe.run_count), 1);
+    check_equal(atomic_load(&probe.cancel_count), 0);
+    check_equal(atomic_load(&probe.finalize_count), 1);
+    check_equal(atomic_load(&probe.run_sequence), 1);
+    check_equal(atomic_load(&probe.finalize_sequence), 2);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("cancels and finalizes ManualExecutor descriptor exactly once") {
+    cflow_executor executor = {0};
+    cflow_executor_control control = {0};
+    cflow_task_lifecycle_probe probe = {0};
+    cflow_executor_task task = {
+        .run = cflow_lifecycle_run,
+        .cancel = cflow_lifecycle_cancel,
+        .finalize = cflow_lifecycle_finalize,
+        .user = &probe,
+    };
+
+    check_true(cflow_executor_manual_init_with_capacity(&executor, 1u));
+    check_true(cflow_executor_as_control(&executor, &control));
+    check_equal(cflow_executor_control_post_task(&control, &task),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_true(cflow_executor_control_shutdown(
+        &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+    check_equal(cflow_executor_control_wait_idle(&control),
+                CFLOW_EXECUTOR_WAIT_IDLE);
+    check_equal(atomic_load(&probe.run_count), 0);
+    check_equal(atomic_load(&probe.cancel_count), 1);
+    check_equal(atomic_load(&probe.finalize_count), 1);
+    check_equal(atomic_load(&probe.cancel_sequence), 1);
+    check_equal(atomic_load(&probe.finalize_sequence), 2);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("cancels and finalizes pending ManualExecutor descriptor on destroy") {
+    cflow_executor executor = {0};
+    cflow_task_lifecycle_probe probe = {0};
+    cflow_executor_task task = {
+        .run = cflow_lifecycle_run,
+        .cancel = cflow_lifecycle_cancel,
+        .finalize = cflow_lifecycle_finalize,
+        .user = &probe,
+    };
+
+    check_true(cflow_executor_manual_init_with_capacity(&executor, 1u));
+    check_equal(cflow_executor_try_post_task(&executor, &task),
+                CFLOW_ADMISSION_ACCEPTED);
+    cflow_executor_destroy(&executor);
+    check_equal(atomic_load(&probe.run_count), 0);
+    check_equal(atomic_load(&probe.cancel_count), 1);
+    check_equal(atomic_load(&probe.finalize_count), 1);
+    check_equal(atomic_load(&probe.cancel_sequence), 1);
+    check_equal(atomic_load(&probe.finalize_sequence), 2);
+  }
+
+  it("does not invoke ManualExecutor descriptor after full rejection") {
+    cflow_executor executor = {0};
+    cflow_executor_control control = {0};
+    cflow_task_lifecycle_probe accepted_probe = {0};
+    cflow_task_lifecycle_probe rejected_probe = {0};
+    cflow_executor_task accepted = {
+        .run = cflow_lifecycle_run,
+        .cancel = cflow_lifecycle_cancel,
+        .finalize = cflow_lifecycle_finalize,
+        .user = &accepted_probe,
+    };
+    cflow_executor_task rejected = {
+        .run = cflow_lifecycle_run,
+        .cancel = cflow_lifecycle_cancel,
+        .finalize = cflow_lifecycle_finalize,
+        .user = &rejected_probe,
+    };
+
+    check_true(cflow_executor_manual_init_with_capacity(&executor, 1u));
+    check_true(cflow_executor_as_control(&executor, &control));
+    check_equal(cflow_executor_try_post_task(&executor, &accepted),
+                CFLOW_ADMISSION_ACCEPTED);
+    check_equal(cflow_executor_try_post_task(&executor, &rejected),
+                CFLOW_ADMISSION_FULL);
+    check_equal(atomic_load(&rejected_probe.sequence), 0);
+    check_true(cflow_executor_control_shutdown(
+        &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+    check_equal(atomic_load(&accepted_probe.cancel_count), 1);
+    check_equal(atomic_load(&accepted_probe.finalize_count), 1);
+    check_equal(atomic_load(&rejected_probe.sequence), 0);
+    cflow_executor_destroy(&executor);
+  }
+
   it("rejects ManualExecutor callback self-blocking through control") {
     cflow_executor executor = {0};
     cflow_executor_control control = {0};
@@ -370,6 +527,117 @@ spec("CFlow execution foundation") {
     check_equal(stats.cancelled, (size_t)2u);
     check_equal(stats.accepted, stats.completed + stats.cancelled);
     check_equal(atomic_load(&executor_counter), 1);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("cancels and finalizes queued WorkerExecutor descriptor exactly once") {
+    cflow_executor executor = {0};
+    cflow_executor_control control = {0};
+    cflow_task_lifecycle_probe probe = {0};
+    cflow_executor_task task = {
+        .run = cflow_lifecycle_run,
+        .cancel = cflow_lifecycle_cancel,
+        .finalize = cflow_lifecycle_finalize,
+        .user = &probe,
+    };
+    int attempts = 0;
+
+    atomic_store(&worker_gate_open, 0);
+    atomic_store(&worker_gate_started, 0);
+    check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 1u));
+    check_true(cflow_executor_as_control(&executor, &control));
+    check_equal(cflow_executor_control_post(
+                    &control, gated_count_task, NULL),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    while (!atomic_load(&worker_gate_started) && attempts++ < 200)
+      turbo_sleep_ms(1);
+    check_equal(atomic_load(&worker_gate_started), 1);
+    check_equal(cflow_executor_control_post_task(&control, &task),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_true(cflow_executor_control_shutdown(
+        &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+    atomic_store(&worker_gate_open, 1);
+    check_equal(cflow_executor_control_wait_idle(&control),
+                CFLOW_EXECUTOR_WAIT_IDLE);
+    check_equal(atomic_load(&probe.run_count), 0);
+    check_equal(atomic_load(&probe.cancel_count), 1);
+    check_equal(atomic_load(&probe.finalize_count), 1);
+    check_equal(atomic_load(&probe.cancel_sequence), 1);
+    check_equal(atomic_load(&probe.finalize_sequence), 2);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("keeps WorkerExecutor cancellation observable until finalize returns") {
+    cflow_executor executor = {0};
+    cflow_executor_control control = {0};
+    cflow_executor_protocol_stats stats = {0};
+    cflow_task_lifecycle_probe lifecycle = {0};
+    cflow_wait_probe waiter = {
+        .control = &control,
+        .status = CFLOW_EXECUTOR_WAIT_INVALID_ARGUMENT,
+    };
+    cflow_executor_task task = {
+        .run = cflow_lifecycle_run,
+        .cancel = cflow_lifecycle_cancel,
+        .finalize = cflow_blocking_lifecycle_finalize,
+        .user = &lifecycle,
+    };
+    turbo_thread_t wait_thread;
+    int attempts = 0;
+
+    atomic_store(&worker_gate_open, 0);
+    atomic_store(&worker_gate_started, 0);
+    check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 1u));
+    check_true(cflow_executor_as_control(&executor, &control));
+    check_equal(cflow_executor_control_post(
+                    &control, gated_count_task, NULL),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    while (!atomic_load(&worker_gate_started) && ++attempts < 200)
+      turbo_sleep_ms(1);
+    check_equal(atomic_load(&worker_gate_started), 1);
+    check_equal(cflow_executor_control_post_task(&control, &task),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_true(cflow_executor_control_shutdown(
+        &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+
+    atomic_store(&worker_gate_open, 1);
+    attempts = 0;
+    while (!atomic_load(&lifecycle.finalize_entered) && ++attempts < 200)
+      turbo_sleep_ms(1);
+    check_equal(atomic_load(&lifecycle.finalize_entered), 1);
+
+    check_true(cflow_executor_control_get_stats(&control, &stats));
+    check_equal(stats.lifecycle, CFLOW_EXECUTOR_CLOSING);
+    check_equal(stats.accepted, (size_t)2u);
+    check_equal(stats.queued, (size_t)1u);
+    check_equal(stats.running, (size_t)0u);
+    check_equal(stats.completed, (size_t)1u);
+    check_equal(stats.cancelled, (size_t)0u);
+    check_equal(stats.accepted,
+                stats.queued + stats.running + stats.completed +
+                    stats.cancelled);
+
+    check_equal(turbo_thread_create(
+                    &wait_thread, cflow_wait_for_executor, &waiter),
+                0);
+    attempts = 0;
+    while (!atomic_load(&waiter.entered) && ++attempts < 200)
+      turbo_sleep_ms(1);
+    check_equal(atomic_load(&waiter.entered), 1);
+    turbo_sleep_ms(10);
+    check_equal(atomic_load(&waiter.done), 0);
+
+    atomic_store(&lifecycle.finalize_gate, 1);
+    turbo_thread_join(&wait_thread);
+    check_equal(waiter.status, CFLOW_EXECUTOR_WAIT_IDLE);
+    check_equal(atomic_load(&waiter.done), 1);
+    check_true(cflow_executor_control_get_stats(&control, &stats));
+    check_equal(stats.lifecycle, CFLOW_EXECUTOR_CLOSED);
+    check_equal(stats.queued, (size_t)0u);
+    check_equal(stats.running, (size_t)0u);
+    check_equal(stats.completed, (size_t)1u);
+    check_equal(stats.cancelled, (size_t)1u);
+    check_equal(stats.accepted, stats.completed + stats.cancelled);
     cflow_executor_destroy(&executor);
   }
 

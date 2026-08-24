@@ -7,11 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct task_entry_s {
-  turbo_task_fn fn;
-  void *arg;
-} task_entry_t;
-
 typedef struct worker_context_s {
   turbo_threadpool_t *pool;
   int worker_id;
@@ -47,6 +42,24 @@ struct turbo_threadpool_s {
 #define TURBO_THREADPOOL_NO_SHUTDOWN_POLICY (-1)
 
 static _Thread_local turbo_threadpool_t *turbo_threadpool_current = NULL;
+
+static void turbo_threadpool_run_descriptor(
+    turbo_threadpool_t *pool, const turbo_threadpool_task_t *task) {
+  turbo_threadpool_t *previous = turbo_threadpool_current;
+  turbo_threadpool_current = pool;
+  task->run(task->arg);
+  if (task->finalize != NULL) task->finalize(task->arg);
+  turbo_threadpool_current = previous;
+}
+
+static void turbo_threadpool_cancel_descriptor(
+    turbo_threadpool_t *pool, const turbo_threadpool_task_t *task) {
+  turbo_threadpool_t *previous = turbo_threadpool_current;
+  turbo_threadpool_current = pool;
+  if (task->cancel != NULL) task->cancel(task->arg);
+  if (task->finalize != NULL) task->finalize(task->arg);
+  turbo_threadpool_current = previous;
+}
 
 static uint64_t turbo_threadpool_round_up_pow2(size_t value) {
   uint64_t rounded = 1U;
@@ -139,7 +152,7 @@ static void worker_entry(void *arg) {
 
   while (1) {
     disruptor_cursor_t cursor = {0};
-    const task_entry_t *entry;
+    const turbo_threadpool_task_t *entry;
 
     if (!disruptor_worker_try_claim(pool->queue, &cursor)) {
       if (atomic_load(&pool->shutdown) &&
@@ -162,27 +175,25 @@ static void worker_entry(void *arg) {
       continue;
     }
 
-    entry = (const task_entry_t *)disruptor_show_entry(pool->queue, &cursor);
-    if (entry == NULL || entry->fn == NULL) {
+    entry = (const turbo_threadpool_task_t *)
+        disruptor_show_entry(pool->queue, &cursor);
+    if (entry == NULL || entry->run == NULL) {
       turbo_threadpool_release_queue_slot(pool);
       disruptor_worker_release_entry(pool->queue, &cursor);
       turbo_threadpool_cancel_task(pool);
       continue;
     }
 
-    turbo_threadpool_release_queue_slot(pool);
     if (atomic_load(&pool->cancel_pending)) {
+      turbo_threadpool_cancel_descriptor(pool, entry);
       disruptor_worker_release_entry(pool->queue, &cursor);
+      turbo_threadpool_release_queue_slot(pool);
       turbo_threadpool_cancel_task(pool);
       continue;
     }
     atomic_fetch_add(&pool->tasks_started, 1);
-    {
-      turbo_threadpool_t *previous = turbo_threadpool_current;
-      turbo_threadpool_current = pool;
-      entry->fn(entry->arg);
-      turbo_threadpool_current = previous;
-    }
+    turbo_threadpool_release_queue_slot(pool);
+    turbo_threadpool_run_descriptor(pool, entry);
     disruptor_worker_release_entry(pool->queue, &cursor);
     turbo_threadpool_signal_queue_space(pool);
     turbo_threadpool_finish_task(pool);
@@ -231,7 +242,7 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
   atomic_store(&pool->tasks_rejected, 0);
   atomic_store(&pool->peak_pending_tasks, 0);
 
-  queue_config.entry_size = sizeof(task_entry_t);
+  queue_config.entry_size = sizeof(turbo_threadpool_task_t);
   queue_config.capacity = ring_capacity;
   queue_config.consumer_capacity = 1U;
   queue_config.mode = DISRUPTOR_MODE_WORKER_POOL;
@@ -342,14 +353,13 @@ void turbo_threadpool_destroy(turbo_threadpool_t *pool) {
 }
 
 static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool,
-                                            turbo_task_fn task,
-                                            void *arg,
+                                            const turbo_threadpool_task_t *task,
                                             int blocking) {
   disruptor_cursor_t cursor = {0};
-  task_entry_t *entry;
+  turbo_threadpool_task_t *entry;
   unsigned int wait_rounds = 0U;
 
-  if (pool == NULL || task == NULL) return TURBO_EINVAL;
+  if (pool == NULL || task == NULL || task->run == NULL) return TURBO_EINVAL;
   if (!atomic_load(&pool->accepting) || atomic_load(&pool->shutdown)) {
     atomic_fetch_add(&pool->tasks_rejected, 1);
     return TURBO_ESHUTDOWN;
@@ -384,9 +394,9 @@ static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool,
       turbo_thread_yield();
   }
 
-  entry = (task_entry_t *)disruptor_acquire_entry(pool->queue, &cursor);
-  entry->fn = task;
-  entry->arg = arg;
+  entry = (turbo_threadpool_task_t *)
+      disruptor_acquire_entry(pool->queue, &cursor);
+  *entry = *task;
   {
     int64_t submitted = atomic_fetch_add(&pool->tasks_submitted, 1) + 1;
     turbo_threadpool_update_peak_pending(
@@ -397,16 +407,38 @@ static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool,
   return TURBO_OK;
 }
 
+int turbo_threadpool_submit_task(turbo_threadpool_t *pool,
+                                 const turbo_threadpool_task_t *task) {
+  return turbo_threadpool_submit_internal(pool, task, 1);
+}
+
+int turbo_threadpool_try_submit_task(turbo_threadpool_t *pool,
+                                     const turbo_threadpool_task_t *task) {
+  return turbo_threadpool_submit_internal(pool, task, 0);
+}
+
 int turbo_threadpool_submit(turbo_threadpool_t *pool,
                             turbo_task_fn task,
                             void *arg) {
-  return turbo_threadpool_submit_internal(pool, task, arg, 1);
+  const turbo_threadpool_task_t descriptor = {
+      .run = task,
+      .cancel = NULL,
+      .finalize = NULL,
+      .arg = arg,
+  };
+  return turbo_threadpool_submit_task(pool, &descriptor);
 }
 
 int turbo_threadpool_try_submit(turbo_threadpool_t *pool,
                                 turbo_task_fn task,
                                 void *arg) {
-  return turbo_threadpool_submit_internal(pool, task, arg, 0);
+  const turbo_threadpool_task_t descriptor = {
+      .run = task,
+      .cancel = NULL,
+      .finalize = NULL,
+      .arg = arg,
+  };
+  return turbo_threadpool_try_submit_task(pool, &descriptor);
 }
 
 int turbo_threadpool_wait_status(turbo_threadpool_t *pool) {

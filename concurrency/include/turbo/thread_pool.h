@@ -9,6 +9,24 @@
 typedef struct turbo_threadpool_s turbo_threadpool_t;
 typedef void (*turbo_task_fn)(void *arg);
 
+/**
+ * Copied task descriptor for exact terminal lifecycle notification.
+ *
+ * A successful submission invokes exactly one of run or cancel, then invokes
+ * finalize when non-NULL. A rejected submission invokes no callback. The arg
+ * payload is borrowed until finalize returns, or until run/cancel returns when
+ * finalize is NULL. When finalize is present, run/cancel must leave arg valid
+ * for it; final ownership release belongs in finalize. All callbacks run in
+ * the pool's callback context and must not destroy or synchronously wait on the
+ * same pool.
+ */
+typedef struct turbo_threadpool_task_s {
+  turbo_task_fn run;
+  turbo_task_fn cancel;
+  turbo_task_fn finalize;
+  void *arg;
+} turbo_threadpool_task_t;
+
 typedef struct {
   int num_threads;
   size_t queue_capacity;
@@ -37,6 +55,24 @@ TURBO_CONCURRENCY_C_API turbo_threadpool_t *turbo_threadpool_create(int num_thre
 TURBO_CONCURRENCY_C_API turbo_threadpool_t *
 turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config);
 TURBO_CONCURRENCY_C_API void turbo_threadpool_destroy(turbo_threadpool_t *pool);
+/**
+ * Submit a copied descriptor, waiting for bounded queue space if necessary.
+ *
+ * @return TURBO_OK, TURBO_EINVAL for an invalid pool/descriptor/run callback,
+ * TURBO_ESHUTDOWN when admission is closed, or TURBO_EBUSY when a callback on
+ * this pool would have to wait for the same saturated pool to make progress.
+ */
+TURBO_CONCURRENCY_C_API int turbo_threadpool_submit_task(
+    turbo_threadpool_t *pool, const turbo_threadpool_task_t *task);
+/**
+ * Attempt to submit a copied descriptor without waiting for queue space.
+ *
+ * @return TURBO_OK, TURBO_EINVAL for an invalid pool/descriptor/run callback,
+ * TURBO_ENOBUFS when the queue is full, or TURBO_ESHUTDOWN when admission is
+ * closed.
+ */
+TURBO_CONCURRENCY_C_API int turbo_threadpool_try_submit_task(
+    turbo_threadpool_t *pool, const turbo_threadpool_task_t *task);
 /**
  * Submit a task, waiting for bounded queue space when necessary.
  *

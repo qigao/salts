@@ -12,6 +12,23 @@ extern "C" {
 
 typedef void (*cflow_task_fn)(void *user);
 
+/**
+ * Copied task descriptor for built-in Executor terminal notification.
+ *
+ * Successful admission invokes exactly one of run or cancel, then invokes
+ * finalize when non-NULL. Rejected admission invokes no callback. `user` is
+ * borrowed until the final callback returns. When finalize is present,
+ * run/cancel must leave `user` valid for it; final ownership release belongs
+ * in finalize. Callbacks must not destroy or synchronously wait on the same
+ * Executor.
+ */
+typedef struct cflow_executor_task {
+    cflow_task_fn run;
+    cflow_task_fn cancel;
+    cflow_task_fn finalize;
+    void *user;
+} cflow_executor_task;
+
 typedef enum cflow_executor_lifecycle {
     CFLOW_EXECUTOR_OPEN = 0,
     CFLOW_EXECUTOR_CLOSING,
@@ -94,7 +111,11 @@ CMETA_INTERFACE(cflow_executor, CMETA_EXECUTOR_METHODS);
  *   cflow_executor_control control = {0};
  *   cflow_executor_serial_init(&executor);
  *   cflow_executor_as_control(&executor, &control);
- *   cflow_executor_control_post(&control, task, user);
+ *   cflow_executor_task descriptor = {
+ *       .run = task, .cancel = cancel_task,
+ *       .finalize = release_task, .user = user
+ *   };
+ *   cflow_executor_control_post_task(&control, &descriptor);
  *   cflow_executor_control_shutdown(&control, CFLOW_EXECUTOR_SHUTDOWN_DRAIN);
  *   cflow_executor_control_wait_idle(&control);
  *   cflow_executor_destroy(&executor);
@@ -113,6 +134,22 @@ CMETA_INTERFACE(cflow_executor_control, CMETA_EXECUTOR_CONTROL_METHODS);
  */
 bool cflow_executor_as_control(cflow_executor *executor,
                                cflow_executor_control *out);
+
+/**
+ * Attempt non-blocking descriptor admission to a built-in Executor.
+ * The descriptor is copied on success; foreign backends return
+ * CFLOW_ADMISSION_INVALID_ARGUMENT.
+ */
+cflow_admission_status cflow_executor_try_post_task(
+    cflow_executor *executor, const cflow_executor_task *task);
+
+/**
+ * Submit a descriptor through a built-in control view.
+ * Pool callers may wait for bounded capacity; same-Executor callbacks fail
+ * with CFLOW_EXECUTOR_POST_WOULD_BLOCK when waiting would be required.
+ */
+cflow_executor_post_status cflow_executor_control_post_task(
+    cflow_executor_control *control, const cflow_executor_task *task);
 
 bool cflow_executor_manual_init(cflow_executor *executor);
 bool cflow_executor_manual_init_with_capacity(cflow_executor *executor,
