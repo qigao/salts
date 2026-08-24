@@ -155,8 +155,10 @@ limits are 65,536 states, Events, guards, and actions, plus 1,048,576
 transitions. Reconfigure `CFLOW_MACHINE_MAX_STATES`,
 `CFLOW_MACHINE_MAX_EVENTS`, `CFLOW_MACHINE_MAX_GUARDS`,
 `CFLOW_MACHINE_MAX_ACTIONS`, or `CFLOW_MACHINE_MAX_TRANSITIONS` through CMake
-when a host has a different control-plane resource budget. Excess input returns
-`CFLOW_MACHINE_LIMIT_EXCEEDED` without publishing a handle.
+when a host has a different control-plane resource budget. Each configured
+limit must be in `[1, 1048576]`; C compilation also proves the configured count
+cannot overflow its row-byte calculation on the target platform. Excess input
+returns `CFLOW_MACHINE_LIMIT_EXCEEDED` without publishing a handle.
 
 Lean owns the state/action enum schema and the Event-driven small-step model.
 Regenerate or verify the checked-in C enum header from

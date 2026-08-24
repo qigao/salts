@@ -17,6 +17,22 @@ typedef struct cflow_machine_impl {
     size_t transition_count;
 } cflow_machine_impl;
 
+_Static_assert(CFLOW_MACHINE_MAX_STATES <=
+                   SIZE_MAX / sizeof(cflow_machine_state),
+               "configured state limit overflows size_t bytes");
+_Static_assert(CFLOW_MACHINE_MAX_EVENTS <=
+                   SIZE_MAX / sizeof(cflow_event_type),
+               "configured Event limit overflows size_t bytes");
+_Static_assert(CFLOW_MACHINE_MAX_GUARDS <=
+                   SIZE_MAX / sizeof(cflow_machine_guard),
+               "configured guard limit overflows size_t bytes");
+_Static_assert(CFLOW_MACHINE_MAX_ACTIONS <=
+                   SIZE_MAX / sizeof(cflow_machine_action),
+               "configured action limit overflows size_t bytes");
+_Static_assert(CFLOW_MACHINE_MAX_TRANSITIONS <=
+                   SIZE_MAX / sizeof(cflow_machine_transition),
+               "configured transition limit overflows size_t bytes");
+
 static bool checked_bytes(size_t count, size_t width, size_t *bytes) {
     if (bytes == NULL || (width != 0u && count > SIZE_MAX / width)) return false;
     *bytes = count * width;

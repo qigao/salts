@@ -190,19 +190,19 @@ git commit -m "formal(cflow): prove machine transition semantics"
 - Consumes: completed generator, C Machine API/tests, and Lean proofs.
 - Produces: CI stale-header gate, user-facing ownership/error example, and reproducible delivery evidence.
 
-- [ ] **Step 1: Add the generator CI check and README example**
+- [x] **Step 1: Add the generator CI check and README example**
 
 Run `lake exe cflow-machine-schema-gen --check ../../cflow/include/cflow/generated/machine_schema.h` next to existing generated checks. Document build/destroy ownership, descriptor lifetime, canonical queries, validation failures, and the explicit boundary that execution begins in #64.
 
-- [ ] **Step 2: Run focused Release and ASan verification**
+- [x] **Step 2: Run focused Release and ASan verification**
 
 Run the Machine CTest plus C++ header test under `win-release-user`, then configure/build `win-dev-user` and run `cflow_machine_test` under ASan. Expected: all pass with no sanitizer report.
 
-- [ ] **Step 3: Run complete regression and formal verification**
+- [x] **Step 3: Run complete regression and formal verification**
 
 Run complete `ctest --preset win-release-user --output-on-failure`, `lake test`, and all three generated-header `--check` commands. Expected: zero failures.
 
-- [ ] **Step 4: Inspect the final diff and commit delivery metadata**
+- [x] **Step 4: Inspect the final diff and commit delivery metadata**
 
 Confirm `.codegraph/`, build outputs, and local generated caches are absent from the diff; mark completed plan steps and commit:
 

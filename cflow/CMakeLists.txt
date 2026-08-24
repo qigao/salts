@@ -19,6 +19,10 @@ foreach(machine_limit IN ITEMS
   if(NOT "${${machine_limit}}" MATCHES "^[1-9][0-9]*$")
     message(FATAL_ERROR "${machine_limit} must be a positive integer")
   endif()
+  if(${machine_limit} GREATER 1048576)
+    message(FATAL_ERROR
+      "${machine_limit} must not exceed the verified ceiling 1048576")
+  endif()
 endforeach()
 
 add_library(${TARGET_NAME}

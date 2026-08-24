@@ -152,7 +152,9 @@ claiming a full C memory-model refinement theorem.
   post-build queries are read-only and may be concurrent.
 - Capacity: all arrays are exact-sized, checked allocations. Defaults are
   65,536 rows per declaration domain and 1,048,576 transitions, configurable
-  through the same-named CMake cache variables. No post-build growth or
+  from 1 through 1,048,576 via the same-named CMake cache variables. CMake
+  rejects values outside that range and C static assertions prove row-byte
+  multiplication cannot overflow on the target. No post-build growth or
   allocation occurs.
 - Backpressure: not applicable in semantic IR; Event capacity belongs to
   Mailbox.
