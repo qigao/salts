@@ -31,7 +31,6 @@
             "hidden": true,
             "inherits": "ISWindows",
             "cacheVariables": {
-                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
                 "PKG_CONFIG_EXECUTABLE": "${sourceDir}/vcpkg_installed/x64-windows/tools/pkgconf/pkgconf.exe",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed"
             }
