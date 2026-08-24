@@ -4,6 +4,7 @@
 
 #include "tinytest.h"
 
+#include <errno.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -95,7 +96,7 @@ spec("Platform kqueue readiness") {
     } while (!probe.called && wait_status == TURBO_OK);
     check_equal(probe.called, 0);
     turbo_mutex_unlock(&probe.gate);
-    check_equal(wait_status, TURBO_ETIMEDOUT);
+    check_equal(wait_status, -ETIMEDOUT);
 
     check_equal(shutdown(sockets[1], SHUT_WR), 0);
     turbo_mutex_lock(&probe.gate);
