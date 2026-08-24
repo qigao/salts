@@ -8,6 +8,7 @@ on:
       - "cmeta/include/cmeta/types.h"
       - "cmeta/include/cmeta/relations.h"
       - "cflow/include/cflow/generated/builtin_operator_policy.h"
+      - "cflow/include/cflow/generated/machine_schema.h"
       - "cflow/include/cflow/operator_policy.h"
       - ".github/workflows/cmeta-cflow-calculus.yml"
   push:
@@ -18,6 +19,7 @@ on:
       - "cmeta/include/cmeta/types.h"
       - "cmeta/include/cmeta/relations.h"
       - "cflow/include/cflow/generated/builtin_operator_policy.h"
+      - "cflow/include/cflow/generated/machine_schema.h"
       - "cflow/include/cflow/operator_policy.h"
       - ".github/workflows/cmeta-cflow-calculus.yml"
   workflow_dispatch:
@@ -47,3 +49,8 @@ jobs:
         run: >-
           lake exe cflow-operator-policy-gen --check
           ../../cflow/include/cflow/generated/builtin_operator_policy.h
+      - name: Verify generated CFlow Machine schema
+        working-directory: formal/cmeta_cflow_calculus
+        run: >-
+          lake exe cflow-machine-schema-gen --check
+          ../../cflow/include/cflow/generated/machine_schema.h

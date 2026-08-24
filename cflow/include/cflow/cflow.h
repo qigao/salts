@@ -15,6 +15,7 @@
 #include <cflow/scheduler.h>
 #include <cflow/runtime.h>
 #include <cflow/event.h>
+#include <cflow/machine.h>
 #include <cflow/sources.h>
 #include <cflow/reactive.h>
 #include <cflow/adapters.h>

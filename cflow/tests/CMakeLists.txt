@@ -34,6 +34,11 @@ cmake_add_test(cflow_event_mailbox_test
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_machine_test
+  SOURCES cflow_machine_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_calculus_conformance_test
   SOURCES
     cflow_calculus_conformance_test.c
@@ -83,6 +88,7 @@ set_target_properties(
   cflow_pipeline_test
   cflow_runtime_test
   cflow_event_mailbox_test
+  cflow_machine_test
   cflow_calculus_conformance_test
   cflow_direct_test
   cflow_parallel_reduce_test

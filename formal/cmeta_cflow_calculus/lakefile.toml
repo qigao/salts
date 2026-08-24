@@ -17,3 +17,7 @@ root = "CMetaSignatureGen"
 [[lean_exe]]
 name = "cflow-operator-policy-gen"
 root = "CFlowOperatorPolicyGen"
+
+[[lean_exe]]
+name = "cflow-machine-schema-gen"
+root = "CFlowMachineSchemaGen"

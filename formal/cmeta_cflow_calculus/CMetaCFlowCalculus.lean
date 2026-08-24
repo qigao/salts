@@ -13,6 +13,9 @@ import CMetaCFlowCalculus.CFlow.BuiltinOperatorPolicy
 import CMetaCFlowCalculus.CFlow.OperatorPolicyHeader
 import CMetaCFlowCalculus.CFlow.Execution
 import CMetaCFlowCalculus.CFlow.Mailbox
+import CMetaCFlowCalculus.CFlow.MachineSchema
+import CMetaCFlowCalculus.CFlow.MachineSchemaHeader
+import CMetaCFlowCalculus.CFlow.Machine
 import CMetaCFlowCalculus.CFlow.Observation
 import CMetaCFlowCalculus.CFlow.Architecture
 import CMetaCFlowCalculus.CFlow.Rewrite
@@ -21,6 +24,7 @@ import CMetaCFlowCalculus.CFlow.Certificate
 import CMetaCFlowCalculus.Proofs.Ownership
 import CMetaCFlowCalculus.Proofs.Execution
 import CMetaCFlowCalculus.Proofs.Mailbox
+import CMetaCFlowCalculus.Proofs.Machine
 import CMetaCFlowCalculus.Proofs.Architecture
 import CMetaCFlowCalculus.Proofs.Rewrite
 import CMetaCFlowCalculus.Proofs.Certificate
