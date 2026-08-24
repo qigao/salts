@@ -67,6 +67,19 @@ static bool cbind_variant_member_fits(
     return member_type->size <= storage_type->size - offset;
 }
 
+static bool cbind_variant_members_overlap(
+    size_t first_offset,
+    const cmeta_type_desc *first_type,
+    size_t second_offset,
+    const cmeta_type_desc *second_type) {
+    size_t first_end = first_offset + first_type->size;
+    size_t second_end = second_offset + second_type->size;
+
+    if (first_type->size == 0u || second_type->size == 0u)
+        return false;
+    return first_offset < second_end && second_offset < first_end;
+}
+
 static cbind_status cbind_validate_variant_shape(
     const cbind_context *context, const cmeta_data_desc *shape, size_t depth,
     const cbind_validation_frame *parent, size_t active_scratch,
@@ -118,7 +131,10 @@ static cbind_status cbind_validate_variant_shape(
                 shape, NULL, current_depth);
         if (!cmeta_data_desc_valid(child) ||
             !cbind_variant_member_fits(shape->storage_type, item->offset,
-                                       child->storage_type))
+                                       child->storage_type) ||
+            cbind_variant_members_overlap(
+                variant_shape->tag_offset, variant_shape->tag->storage_type,
+                item->offset, child->storage_type))
             return cbind_variant_error(error, CBIND_INVALID_SHAPE, shape, NULL,
                                        current_depth);
 
