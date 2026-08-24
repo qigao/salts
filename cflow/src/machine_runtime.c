@@ -59,6 +59,8 @@ typedef struct cflow_machine_instance_impl {
     cflow_waker downstream_waiter;
     cflow_waker terminal_waiter;
     cflow_machine_ready_kind ready;
+    cflow_machine_transition_commit_hook commit_hook;
+    void *commit_user;
 } cflow_machine_instance_impl;
 
 static void machine_executor_task(void *user);
@@ -166,6 +168,8 @@ static void fail_runtime(cflow_machine_instance_impl *impl,
     cflow_waker terminal_waker = {0};
     if (impl == NULL) return;
     copy = runtime_copy_error(message);
+    if (impl->commit_hook != NULL)
+        impl->commit_hook(impl->commit_user, SIZE_MAX, true);
     turbo_mutex_lock(&impl->lock);
     if (impl->error == NULL) {
         if (copy != NULL) {
@@ -185,6 +189,8 @@ static void fail_runtime(cflow_machine_instance_impl *impl,
     waker = take_downstream_waiter_locked(impl);
     terminal_waker = take_terminal_waiter_locked(impl);
     turbo_mutex_unlock(&impl->lock);
+    if (impl->commit_hook != NULL)
+        impl->commit_hook(impl->commit_user, SIZE_MAX, false);
     free(copy);
     cancel_mailbox(impl);
     invoke_waker(waker);
@@ -267,7 +273,8 @@ static const cflow_machine_transition *select_transition(
     cflow_machine_instance_impl *impl,
     cflow_event_id event_id,
     const void *event_value,
-    const char **error) {
+    const char **error,
+    size_t *out_index) {
     const size_t count = cflow_machine_transition_count(impl->machine);
     size_t left = 0u;
     size_t right = count;
@@ -294,7 +301,10 @@ static const cflow_machine_transition *select_transition(
         if (!transition_enabled(impl, transition, event_value,
                                 &enabled, error))
             return NULL;
-        if (enabled) return transition;
+        if (enabled) {
+            *out_index = index;
+            return transition;
+        }
     }
     if (*error == NULL) *error = "no enabled transition";
     return NULL;
@@ -357,12 +367,16 @@ static void publish_done(cflow_machine_instance_impl *impl,
                          cflow_machine_ready_kind ready) {
     cflow_waker waker;
     cflow_waker terminal_waker;
+    if (impl->commit_hook != NULL)
+        impl->commit_hook(impl->commit_user, SIZE_MAX, true);
     turbo_mutex_lock(&impl->lock);
     impl->done = true;
     impl->ready = ready;
     waker = take_downstream_waiter_locked(impl);
     terminal_waker = take_terminal_waiter_locked(impl);
     turbo_mutex_unlock(&impl->lock);
+    if (impl->commit_hook != NULL)
+        impl->commit_hook(impl->commit_user, SIZE_MAX, false);
     cancel_mailbox(impl);
     invoke_waker(waker);
     invoke_waker(terminal_waker);
@@ -400,8 +414,10 @@ static bool process_event(cflow_machine_instance_impl *impl,
     const char *error = NULL;
     cflow_waker waker = {0};
     bool runtime_closed = false;
+    size_t transition_index = 0u;
 
-    transition = select_transition(impl, event_id, event_value, &error);
+    transition = select_transition(impl, event_id, event_value, &error,
+                                   &transition_index);
     if (settle_cancelled_in_flight(impl)) return false;
     if (transition == NULL) {
         fail_runtime(impl, error, true);
@@ -429,6 +445,8 @@ static bool process_event(cflow_machine_instance_impl *impl,
         }
     }
 
+    if (impl->commit_hook != NULL)
+        impl->commit_hook(impl->commit_user, transition_index, true);
     turbo_mutex_lock(&impl->lock);
     memcpy(impl->state_value, impl->target_value, target->value_type->size);
     impl->state = target;
@@ -470,6 +488,8 @@ static bool process_event(cflow_machine_instance_impl *impl,
         if (impl->done && target->kind != CFLOW_MACHINE_STATE_ERROR)
             terminal_waker = take_terminal_waiter_locked(impl);
         turbo_mutex_unlock(&impl->lock);
+        if (impl->commit_hook != NULL)
+            impl->commit_hook(impl->commit_user, transition_index, false);
         if (target->kind == CFLOW_MACHINE_STATE_ERROR) {
             fail_runtime(impl, "entered error state", false);
             return false;
@@ -689,10 +709,14 @@ static void request_cancel(cflow_machine_instance_impl *impl) {
     bool mailbox_armed;
     bool already_done;
     if (impl == NULL) return;
+    if (impl->commit_hook != NULL)
+        impl->commit_hook(impl->commit_user, SIZE_MAX, true);
     turbo_mutex_lock(&impl->lock);
     already_done = impl->done;
     if (already_done) {
         turbo_mutex_unlock(&impl->lock);
+        if (impl->commit_hook != NULL)
+            impl->commit_hook(impl->commit_user, SIZE_MAX, false);
         return;
     }
     mailbox_armed = impl->mailbox_armed;
@@ -704,6 +728,8 @@ static void request_cancel(cflow_machine_instance_impl *impl) {
     waker = take_downstream_waiter_locked(impl);
     terminal_waker = take_terminal_waiter_locked(impl);
     turbo_mutex_unlock(&impl->lock);
+    if (impl->commit_hook != NULL)
+        impl->commit_hook(impl->commit_user, SIZE_MAX, false);
     if (mailbox_armed) cflow_waitable_cancel(&impl->mailbox_waitable);
     cancel_mailbox(impl);
     invoke_waker(waker);
@@ -910,9 +936,11 @@ static cflow_machine_runtime_status initialize_mailbox(
     return CFLOW_MACHINE_RUNTIME_OK;
 }
 
-cflow_machine_runtime_status cflow_machine_instance_init(
+cflow_machine_runtime_status cflow_machine_instance_init_internal(
     cflow_machine_instance *instance,
-    const cflow_machine_instance_config *config) {
+    const cflow_machine_instance_config *config,
+    cflow_machine_transition_commit_hook commit_hook,
+    void *commit_user) {
     cflow_machine_instance_impl *impl;
     cflow_machine_runtime_status status;
     const cflow_machine_state *initial;
@@ -937,6 +965,8 @@ cflow_machine_runtime_status cflow_machine_instance_init(
     impl->executor = config->executor;
     impl->output_type = config->output_type;
     impl->state = initial;
+    impl->commit_hook = commit_hook;
+    impl->commit_user = commit_user;
 
     status = copy_and_validate_bindings(impl, config);
     if (status != CFLOW_MACHINE_RUNTIME_OK) {
@@ -984,6 +1014,13 @@ cflow_machine_runtime_status cflow_machine_instance_init(
     instance->impl = impl;
     if (impl->done) cancel_mailbox(impl);
     return CFLOW_MACHINE_RUNTIME_OK;
+}
+
+cflow_machine_runtime_status cflow_machine_instance_init(
+    cflow_machine_instance *instance,
+    const cflow_machine_instance_config *config) {
+    return cflow_machine_instance_init_internal(
+        instance, config, NULL, NULL);
 }
 
 cflow_mailbox_status cflow_machine_instance_try_send(
@@ -1086,6 +1123,8 @@ void cflow_machine_instance_close(cflow_machine_instance *instance) {
     bool mailbox_armed;
     bool terminal;
     if (impl == NULL) return;
+    if (impl->commit_hook != NULL)
+        impl->commit_hook(impl->commit_user, SIZE_MAX, true);
     turbo_mutex_lock(&impl->lock);
     impl->closed = true;
     mailbox_armed = impl->mailbox_armed;
@@ -1103,6 +1142,8 @@ void cflow_machine_instance_close(cflow_machine_instance *instance) {
         terminal_waker = take_terminal_waiter_locked(impl);
     }
     turbo_mutex_unlock(&impl->lock);
+    if (impl->commit_hook != NULL)
+        impl->commit_hook(impl->commit_user, SIZE_MAX, false);
     if (mailbox_armed) cflow_waitable_cancel(&impl->mailbox_waitable);
     cancel_mailbox(impl);
     invoke_waker(waker);
