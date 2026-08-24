@@ -1,5 +1,7 @@
 #include <cflow/machine_runtime.h>
 
+#include "machine_runtime_internal.h"
+
 #include <turbo/thread.h>
 
 #include <stdint.h>
@@ -992,6 +994,51 @@ cflow_mailbox_status cflow_machine_instance_try_send(
     if (impl == NULL || !impl->mailbox_initialized)
         return CFLOW_MAILBOX_INVALID_ARGUMENT;
     return cflow_mailbox_try_send(&impl->mailbox, event);
+}
+
+bool cflow_machine_instance_timer_payload_capacity(
+    const cflow_machine_instance *instance,
+    size_t *out_capacity) {
+    const cflow_machine_instance_impl *impl = instance != NULL
+        ? (const cflow_machine_instance_impl *)instance->impl : NULL;
+    if (impl == NULL || !impl->mailbox_initialized || out_capacity == NULL ||
+        impl->event_capacity == 0u)
+        return false;
+    *out_capacity = impl->event_capacity;
+    return true;
+}
+
+cflow_mailbox_status cflow_machine_instance_timer_event_contract(
+    const cflow_machine_instance *instance,
+    const cflow_event_view *event,
+    const cmeta_type_desc **out_canonical_type) {
+    const cflow_machine_instance_impl *impl = instance != NULL
+        ? (const cflow_machine_instance_impl *)instance->impl : NULL;
+    size_t left = 0u;
+    size_t right;
+    if (out_canonical_type != NULL) *out_canonical_type = NULL;
+    if (impl == NULL || event == NULL || event->id == 0u ||
+        event->payload_type == NULL || event->payload == NULL ||
+        out_canonical_type == NULL)
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    right = cflow_machine_event_count(impl->machine);
+    while (left < right) {
+        const size_t middle = left + (right - left) / 2u;
+        const cflow_event_type *expected =
+            cflow_machine_event_at(impl->machine, middle);
+        if (expected->id == event->id) {
+            if (!cmeta_type_equal(expected->payload_type,
+                                  event->payload_type))
+                return CFLOW_MAILBOX_TYPE_MISMATCH;
+            *out_canonical_type = expected->payload_type;
+            return CFLOW_MAILBOX_OK;
+        }
+        if (expected->id < event->id)
+            left = middle + 1u;
+        else
+            right = middle;
+    }
+    return CFLOW_MAILBOX_INVALID_ARGUMENT;
 }
 
 bool cflow_machine_instance_as_resumable(
