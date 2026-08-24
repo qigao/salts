@@ -2,6 +2,9 @@
 #include <cflow/lower.h>
 #include <cflow/sources.h>
 
+#include "sources_internal.h"
+#include "value_storage.h"
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,6 +103,14 @@ static bool cflow_eval_result_source(const cflow_graph *graph,
 
     if (!out) return false;
     memset(out, 0, sizeof(*out));
+    if (!graph || !source || !cflow_source_valid(source) ||
+        !cflow_value_storage_type_supported(
+            cflow_source_output_type(source)) ||
+        !cflow_value_storage_graph_supported(graph)) {
+        if (source)
+            cflow_source_destroy(source);
+        return false;
+    }
     ok = cflow_eval_source(graph, source, &sink, &c.eval);
     if (ok) {
         out->data = c.data;
@@ -125,7 +136,9 @@ bool cflow_eval_array(const cflow_graph *graph,
 
 bool cflow_eval_stream(const cflow_stream *stream, cflow_result *out) {
     cflow_source source = {0};
-    if (!stream || !stream->has_source_range || !out) return false;
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    if (!stream || !stream->has_source_range) return false;
     if (!cflow_source_from_range(&source, stream->source_range)) return false;
     return cflow_eval_result_source(&stream->graph, &source, SIZE_MAX, out);
 }
@@ -134,7 +147,9 @@ bool cflow_eval_stream_limit(const cflow_stream *stream,
                              size_t max_items,
                              cflow_result *out) {
     cflow_source source = {0};
-    if (!stream || !stream->has_source_range || !out) return false;
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    if (!stream || !stream->has_source_range) return false;
     if (!cflow_source_from_range(&source, stream->source_range)) return false;
     return cflow_eval_result_source(&stream->graph, &source, max_items, out);
 }
@@ -178,6 +193,8 @@ bool cflow_eval_collect(const cflow_stream *stream,
     };
     cflow_sink sink = cflow_sink_from_callbacks(&sink_cb);
     cflow_source source = {0};
+    const char *source_error = NULL;
+    cmeta_status source_status;
     bool ok;
 
     if (out_error) *out_error = NULL;
@@ -185,13 +202,20 @@ bool cflow_eval_collect(const cflow_stream *stream,
         if (out_error) *out_error = "invalid stream collection arguments";
         return false;
     }
-    if (cmeta_collector_begin(collector) != CMETA_OK) {
+    if (collector->state != CMETA_COLLECTOR_ZERO) {
         if (out_error) *out_error = "collector begin failed";
         return false;
     }
-    if (!cflow_source_from_range(&source, stream->source_range)) {
-        cmeta_collector_fail(collector, CMETA_OUT_OF_MEMORY);
-        if (out_error) *out_error = "range source allocation failed";
+    source_status = cflow_source_from_range_checked(
+        &source, stream->source_range, &source_error);
+    if (source_status != CMETA_OK) {
+        cmeta_collector_terminate_pre_begin(collector, source_status);
+        if (out_error) *out_error = source_error;
+        return false;
+    }
+    if (cmeta_collector_begin(collector) != CMETA_OK) {
+        cflow_source_destroy(&source);
+        if (out_error) *out_error = "collector begin failed";
         return false;
     }
     ok = cflow_eval_source(&stream->graph, &source, &sink, &state.eval);

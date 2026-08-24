@@ -55,6 +55,25 @@ static void cflow_test_check_expected(const cflow_result *result) {
 }
 
 suite("CFlow pipeline") {
+    it("rejects plans whose values require lifecycle callbacks") {
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        cflow_plan plan = {0};
+
+        normalized.root = CMETA_INVALID_ID;
+        cflow_graph_init(&surface, &cflow_test_owned_value_type);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+
+        check_false(cflow_plan_graph_supported(&normalized));
+        check_false(cflow_plan_compile(&plan, &normalized, NULL));
+        check_null(plan.impl);
+        check_equal(plan.error, "plan requires trivial value storage");
+
+        cflow_plan_destroy(&plan);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
     it("reports a mutated borrowed range owner") {
         cflow_test_range_owner owner = {7u, 42};
         cmeta_range range = {

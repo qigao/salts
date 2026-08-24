@@ -6,6 +6,8 @@
 #include <cflow/relation_exec.h>
 #include <turbo/thread.h>
 
+#include "value_storage.h"
+
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -43,7 +45,7 @@ typedef struct run_impl {
     cflow_sink sink;
     cflow_resume_ctx resume_ctx;
 
-    unsigned char *source_slot;
+    cflow_value_slot source_slot;
     unsigned char **reduce_value;
     bool *reduce_set;
     bool *reduce_flushed;
@@ -473,19 +475,55 @@ static void wake_cb(void *user) {
 
 void cflow_run_wake(cflow_run *run) { wake_cb(run); }
 
+static bool process_source_value(run_impl *r,
+                                 bool has_first,
+                                 cflow_node_id first,
+                                 const cmeta_type_desc *source_type) {
+    bool processed;
+
+    r->source_slot.live = true;
+    if (!has_first && !cflow_value_storage_type_supported(source_type)) {
+        if (!demand_consume_one(r)) {
+            cflow_value_slot_reset(&r->source_slot);
+            run_fail(r, "runtime produced value without demand");
+            return false;
+        }
+        processed = !cflow_sink_valid(&r->sink) ||
+            cflow_sink_value(&r->sink, source_type,
+                             r->source_slot.storage);
+        cflow_value_slot_reset(&r->source_slot);
+        if (!processed)
+            run_fail(r, "observer rejected value");
+        return processed;
+    }
+
+    processed = process_path(
+        r, has_first ? first : CMETA_INVALID_ID, r->source_slot.storage,
+        source_type, r->source_slot.storage);
+    cflow_value_slot_reset(&r->source_slot);
+    return processed;
+}
+
 static bool process_source_step(run_impl *r) {
-    cflow_step step = cflow_source_resume(&r->source, &r->resume_ctx, r->source_slot);
+    const cmeta_type_desc *source_type =
+        cflow_source_output_type(&r->source);
+    cflow_step step;
     cflow_node_id first = CMETA_INVALID_ID;
     bool has_first = false;
+
+    if (r->source_slot.live) {
+        run_fail(r, "source output slot is not empty");
+        return false;
+    }
+    step = cflow_source_resume(&r->source, &r->resume_ctx,
+                               r->source_slot.storage);
     if (!successor_of(r, r->subgraph->entry, &first, &has_first)) return false;
     switch (step.kind) {
         case CFLOW_STEP_VALUE:
-            return process_path(r, has_first ? first : CMETA_INVALID_ID,
-                                r->source_slot, cflow_source_output_type(&r->source), r->source_slot);
+            return process_source_value(r, has_first, first, source_type);
         case CFLOW_STEP_VALUE_AND_DONE:
             r->source_done = true;
-            return process_path(r, has_first ? first : CMETA_INVALID_ID,
-                                r->source_slot, cflow_source_output_type(&r->source), r->source_slot);
+            return process_source_value(r, has_first, first, source_type);
         case CFLOW_STEP_WAIT:
             return arm_waitable(r, step.waitable);
         case CFLOW_STEP_DONE:
@@ -559,7 +597,7 @@ static void run_destroy_claimed(run_impl *r) {
     if (cflow_source_valid(&r->source)) cflow_source_destroy(&r->source);
     continuations_clear(r);
     reducers_clear(r);
-    free(r->source_slot);
+    cflow_value_slot_destroy(&r->source_slot);
     turbo_mutex_lock(&r->lock);
     r->closed = true;
     turbo_mutex_unlock(&r->lock);
@@ -666,13 +704,27 @@ bool cflow_run_open_subgraph(cflow_run *run,
                              cflow_source *source,
                              cflow_scheduler *scheduler,
                              const cflow_sink *sink) {
-    const cflow_subgraph *subgraph = cflow_graph_subgraph(graph, subgraph_id);
-    if (!cflow_graph_is_normalized(graph)) return false;
-    if (!run || !graph || !subgraph || !scheduler || !source || !cflow_source_valid(source) || !cflow_source_output_type(source)) return false;
-    if (!run_lifecycle_ensure()) return false;
-    if (!cmeta_type_equal(cflow_subgraph_source_type(graph, subgraph_id), cflow_source_output_type(source))) return false;
+    const cflow_subgraph *subgraph;
+    const cmeta_type_desc *source_type;
     const char *validation_error = NULL;
+
+    if (!run || !graph || !scheduler || !source ||
+        !cflow_source_valid(source) || !cflow_graph_is_normalized(graph))
+        return false;
+    subgraph = cflow_graph_subgraph(graph, subgraph_id);
+    source_type = cflow_source_output_type(source);
+    if (!subgraph || !source_type)
+        return false;
     if (!cflow_graph_validate(graph, &validation_error)) return false;
+    if (!cflow_value_type_supported(source_type) ||
+        !cflow_value_runtime_graph_supported(graph) ||
+        (!cflow_value_storage_type_supported(source_type) &&
+         !cflow_source_has(source, CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES)))
+        return false;
+    if (!cmeta_type_equal(cflow_subgraph_source_type(graph, subgraph_id),
+                          source_type))
+        return false;
+    if (!run_lifecycle_ensure()) return false;
 
     run_impl *r = calloc(1, sizeof(*r));
     if (!r) return false;
@@ -688,12 +740,17 @@ bool cflow_run_open_subgraph(cflow_run *run,
     r->scheduler = scheduler;
     r->resume_ctx.scheduler = scheduler;
     if (sink) r->sink = *sink;
-    r->source_slot = malloc(cflow_source_output_type(source)->size ? cflow_source_output_type(source)->size : 1);
+    if (!cflow_value_slot_init(&r->source_slot, source_type)) {
+        turbo_cond_destroy(&r->task_cv);
+        turbo_mutex_destroy(&r->lock);
+        free(r);
+        return false;
+    }
     r->reduce_value = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_value));
     r->reduce_set = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_set));
     r->reduce_flushed = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_flushed));
-    if (!r->source_slot || !r->reduce_value || !r->reduce_set || !r->reduce_flushed) {
-        free(r->source_slot); reducers_clear(r);
+    if (!r->reduce_value || !r->reduce_set || !r->reduce_flushed) {
+        cflow_value_slot_destroy(&r->source_slot); reducers_clear(r);
         turbo_cond_destroy(&r->task_cv);
         turbo_mutex_destroy(&r->lock);
         free(r);

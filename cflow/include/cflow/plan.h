@@ -39,8 +39,9 @@ typedef struct cflow_plan_eval_options {
 
 /* Compile an already-normalized primitive Graph root into a direct synchronous
  * collection plan. The plan pre-resolves topology and execution step handlers;
- * execution never queries Graph/Node/Edge/Subgraph. Structured RELATION and
- * other unsupported resumable semantics are rejected instead of falling back. */
+ * execution never queries Graph/Node/Edge/Subgraph. Every Graph value type
+ * must have TRIVIAL_COPY and TRIVIAL_DESTROY. Structured RELATION and other
+ * unsupported resumable semantics are rejected instead of falling back. */
 bool cflow_plan_compile(cflow_plan *plan,
                         const cflow_graph *graph,
                         cflow_plan_compile_stats *stats);

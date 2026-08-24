@@ -1,4 +1,6 @@
 #include <cflow/plan_internal.h>
+
+#include "value_storage.h"
 #include <cflow/lower.h>
 #include <cflow/opt.h>
 #include <cflow/property.h>
@@ -250,7 +252,9 @@ bool cflow_plan_graph_supported(const cflow_graph *graph) {
     cflow_plan_inference inference;
     bool supported;
 
-    if (!graph || !cflow_graph_is_normalized(graph) || graph->root >= graph->subgraph_count)
+    if (!graph || !cflow_graph_is_normalized(graph) ||
+        graph->root >= graph->subgraph_count ||
+        !cflow_value_storage_graph_supported(graph))
         return false;
     const cflow_subgraph *sg = &graph->subgraphs[graph->root];
     if (cflow_plan_inference_build(&inference) != CMETA_INFER_OK)
@@ -271,6 +275,8 @@ bool cflow_plan_compile(cflow_plan *plan,
     if (!cflow_graph_is_normalized(graph)) return plan_fail(plan, "plan requires normalized Graph");
     const char *err = NULL;
     if (!cflow_graph_validate(graph, &err)) return plan_fail(plan, err ? err : "invalid Graph");
+    if (!cflow_value_storage_graph_supported(graph))
+        return plan_fail(plan, "plan requires trivial value storage");
     const cflow_subgraph *sg = &graph->subgraphs[graph->root];
     cflow_dense_successor_index index = {0};
     cflow_plan_inference inference;

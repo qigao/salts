@@ -2,6 +2,8 @@
 #include <cflow/coord.h>
 #include <cflow/subrun.h>
 
+#include "value_storage.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -192,7 +194,8 @@ bool cflow_resumable_from_relation(cflow_resumable *out,
                                     const cflow_graph *graph,
                                     const cflow_node *node,
                                     const void *input) {
-    if (!out || !graph || !node || node->op != CFLOW_OP_RELATION ||
+    if (!out || !graph || !cflow_value_storage_graph_supported(graph) ||
+        !node || node->op != CFLOW_OP_RELATION ||
         !node->has_relation || !input || node->subgraph_count == 0u || !node->output_type)
         return false;
 

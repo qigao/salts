@@ -1,6 +1,9 @@
 #include <cflow/sources.h>
 #include <turbo/thread.h>
 
+#include "sources_internal.h"
+#include "value_storage.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,10 +22,18 @@ typedef struct array_state {
 } array_state;
 
 static cflow_step array_resume(void *state, cflow_resume_ctx *ctx, void *out) {
+    const void *element;
+
     (void)ctx;
     array_state *s = (array_state *)state;
     if (!s || s->index >= s->count) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
-    memcpy(out, s->data + s->index * s->type->size, s->type->size);
+    element = s->data + s->index * s->type->size;
+    if (cflow_value_storage_type_supported(s->type)) {
+        memcpy(out, element, s->type->size);
+    } else if (!s->type->traits->copy_construct(out, element)) {
+        return (cflow_step){ CFLOW_STEP_ERROR, {0},
+                             "array value construction failed" };
+    }
     ++s->index;
     return (cflow_step){ s->index == s->count ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE, {0}, NULL };
 }
@@ -31,7 +42,8 @@ static const char *array_name(void *state) { (void)state; return "array"; }
 static const cmeta_type_desc *array_type(void *state) {
     array_state *s = (array_state *)state; return s ? s->type : NULL;
 }
-CMETA_IMPLEMENTS(cflow_source, array_source, 0,
+CMETA_IMPLEMENTS(cflow_source, array_source,
+    CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES,
     .name = array_name,
     .output_type = array_type,
     .resume = array_resume,
@@ -45,7 +57,10 @@ bool cflow_source_from_array(cflow_source *out,
                              const cmeta_type_desc *type,
                              const void *data,
                              size_t count) {
-    if (!out || !type || (count && !data)) return false;
+    if (!out || !cmeta_type_desc_valid(type) ||
+        !cflow_value_type_supported(type) || (count && !data) ||
+        (count != 0u && type->size > SIZE_MAX / count))
+        return false;
     array_state *s = calloc(1, sizeof(*s));
     if (!s) return false;
     s->data = (const unsigned char *)data; s->type = type; s->count = count;
@@ -84,7 +99,8 @@ static const cmeta_type_desc *range_type(void *state) {
     range_state *s = (range_state *)state;
     return s ? s->range.element_type : NULL;
 }
-CMETA_IMPLEMENTS(cflow_source, range_source, 0,
+CMETA_IMPLEMENTS(cflow_source, range_source,
+    CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES,
     .name = range_name,
     .output_type = range_type,
     .resume = range_resume,
@@ -94,14 +110,44 @@ CMETA_IMPLEMENTS(cflow_source, range_source, 0,
     .poll_terminal = source_open_terminal
 );
 
-bool cflow_source_from_range(cflow_source *out, cmeta_range range) {
+cmeta_status cflow_source_from_range_checked(cflow_source *out,
+                                              cmeta_range range,
+                                              const char **out_error) {
     range_state *s;
-    if (!out || !range.object || !range.element_type || !range.next) return false;
+
+    if (out_error)
+        *out_error = NULL;
+    if (!out || !range.object || !range.next ||
+        !cmeta_type_desc_valid(range.element_type)) {
+        if (out_error)
+            *out_error = "invalid range source";
+        return CMETA_INVALID_ARGUMENT;
+    }
+    if (!cflow_value_type_supported(range.element_type)) {
+        if (out_error)
+            *out_error =
+                "range element type lacks required lifecycle traits";
+        return CMETA_TRAIT_MISSING;
+    }
+    if (!cflow_value_storage_type_supported(range.element_type) &&
+        (range.flags & CMETA_RANGE_CONSTRUCTS_VALUES) == 0u) {
+        if (out_error)
+            *out_error = "managed range must construct values";
+        return CMETA_INVALID_ARGUMENT;
+    }
     s = calloc(1, sizeof(*s));
-    if (!s) return false;
+    if (!s) {
+        if (out_error)
+            *out_error = "range source allocation failed";
+        return CMETA_OUT_OF_MEMORY;
+    }
     s->range = range;
     *out = range_source_as_cflow_source(s);
-    return true;
+    return CMETA_OK;
+}
+
+bool cflow_source_from_range(cflow_source *out, cmeta_range range) {
+    return cflow_source_from_range_checked(out, range, NULL) == CMETA_OK;
 }
 
 /* ---------------- timer ---------------- */
@@ -192,7 +238,8 @@ static channel_impl *channel_of(cflow_channel *ch) { return ch ? (channel_impl *
 bool cflow_channel_init(cflow_channel *ch,
                         const cmeta_type_desc *type,
                         size_t capacity) {
-    if (!ch || !type || type->size == 0u || capacity == 0u ||
+    if (!ch || !cflow_value_storage_type_supported(type) ||
+        type->size == 0u || capacity == 0u ||
         capacity > SIZE_MAX / type->size)
         return false;
     channel_impl *c = calloc(1, sizeof(*c));
@@ -379,7 +426,8 @@ bool cflow_source_from_readiness(cflow_source *out,
                                  cflow_unwatch_fn cancel,
                                  cflow_resource_close_fn close,
                                  void *user) {
-    if (!out || !type || !read || !arm) return false;
+    if (!out || !cflow_value_storage_type_supported(type) || !read || !arm)
+        return false;
     readiness_state *s = calloc(1, sizeof(*s)); if (!s) return false;
     s->name = name ? name : "readiness"; s->type = type;
     s->read = read; s->arm = arm; s->cancel = cancel; s->close = close; s->user = user;

@@ -1,14 +1,25 @@
 #include <cflow/coord.h>
 #include <turbo/thread.h>
 
+#include "value_storage.h"
+
 #include <stdint.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
+static const cmeta_type_traits cflow_coord_event_traits = {
+    .flags = CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY
+};
+
 const cmeta_type_desc cflow_type_coord_event = {
-    "cflow_coord_event", sizeof(cflow_coord_event), _Alignof(cflow_coord_event),
-    CMETA_T_OBJECT, NULL
+    .name = "cflow_coord_event",
+    .size = sizeof(cflow_coord_event),
+    .align = _Alignof(cflow_coord_event),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cflow_coord_event_traits,
+    .identity = NULL
 };
 
 typedef struct coord_state coord_state;
@@ -68,7 +79,9 @@ static const cflow_resumable_ops value_ops = { value_resume, NULL, value_destroy
 bool cflow_resumable_from_value(cflow_resumable *out,
                                  const cmeta_type_desc *type,
                                  const void *value) {
-    if (!out || !type || !value || !type->size) return false;
+    if (!out || !cflow_value_storage_type_supported(type) || !value ||
+        !type->size)
+        return false;
     value_state *s = calloc(1, sizeof(*s));
     if (!s) return false;
     s->value = malloc(type->size);
@@ -438,6 +451,11 @@ bool cflow_resumable_from_coordination(cflow_resumable *out,
                                         cflow_resumable *children,
                                         size_t count) {
     if (!out || !children || count == 0) return false;
+    for (size_t i = 0; i < count; ++i) {
+        if (!children[i].ops || !children[i].ops->resume ||
+            !cflow_value_storage_type_supported(children[i].output_type))
+            return false;
+    }
     coord_state *s = calloc(1, sizeof(*s));
     if (!s) return false;
     turbo_mutex_init(&s->lock);
@@ -447,10 +465,6 @@ bool cflow_resumable_from_coordination(cflow_resumable *out,
     s->mode = mode;
     s->count = count;
     for (size_t i = 0; i < count; ++i) {
-        if (!children[i].ops || !children[i].ops->resume || !children[i].output_type) {
-            coord_destroy(s);
-            return false;
-        }
         s->children[i].owner = s;
         s->children[i].index = i;
         atomic_init(&s->children[i].waiting, false);

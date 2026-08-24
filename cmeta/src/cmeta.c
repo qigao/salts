@@ -64,6 +64,9 @@ const cmeta_type_traits cmeta_traits_int = { CMETA_TRIVIAL_TRAIT_FLAGS,
 const cmeta_type_traits cmeta_traits_long = { CMETA_TRIVIAL_TRAIT_FLAGS,
     cmeta_long_equal, cmeta_long_hash, cmeta_long_compare,
     cmeta_long_copy_construct, cmeta_long_move_construct, cmeta_long_destroy };
+static const cmeta_type_traits cmeta_traits_size_storage = {
+    .flags = CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY
+};
 
 #define CMETA_DEFINE_FLOAT_TRAITS(prefix, type, bits_type, zero, nan_hash) \
     static bool prefix##_equal(const void *left, const void *right) { \
@@ -184,7 +187,7 @@ const cmeta_type_desc cmeta_type_void = {
 const cmeta_type_desc cmeta_type_size = {
     .name = "size_t", .size = sizeof(size_t), .align = _Alignof(size_t),
     .kind = CMETA_T_INTEGER, .pointee = NULL,
-    .traits = NULL, .identity = &cmeta_id_size
+    .traits = &cmeta_traits_size_storage, .identity = &cmeta_id_size
 };
 const cmeta_type_desc cmeta_type_size_ptr = {
     .name = "size_t *", .size = sizeof(size_t *), .align = _Alignof(size_t *),

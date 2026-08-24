@@ -11,7 +11,6 @@
                 "PROJECT_ROOT": "$penv{PROJECT_ROOT}",
                 "PKG_ROOT": "$env{PROJECT_ROOT}/external/pkgs",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils",
                 "VCPKG_ROOT": "$penv{VCPKG_ROOT}"
             }
         },
@@ -49,7 +48,6 @@
                 "PROJECT_ROOT": "$penv{PROJECT_ROOT}",
                 "PKG_ROOT": "$env{PROJECT_ROOT}/external/pkgs",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils",
                 "VCPKG_ROOT": "$penv{VCPKG_ROOT}"
             }
         },
@@ -64,6 +62,26 @@
             }
         },
         {
+            "name": "android-dependencies-debug",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}"
+            },
+            "environment": {
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android/debug"
+            }
+        },
+        {
+            "name": "android-dependencies-release",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}"
+            },
+            "environment": {
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android/release"
+            }
+        },
+        {
             "name": "win-dev-user",
             "cacheVariables": {
                 "ENABLE_SANITIZER_ADDRESS": "ON",
@@ -71,7 +89,7 @@
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows/debug"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-debug",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/debug",
                 "PATH": "${sourceDir}/build/Msvc/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
@@ -86,6 +104,7 @@
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows"
             },
             "environment": {
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/release",
                 "PATH": "${sourceDir}/build/Msvc-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
@@ -101,7 +120,7 @@
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/debug"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-debug",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/debug",
                 "PATH": "${sourceDir}/build/linux-gcc-debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}",
                 "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/lib${pathListSep}$env{TURBOUTILS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
             },
@@ -117,6 +136,7 @@
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux"
             },
             "environment": {
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/release",
                 "PATH": "${sourceDir}/build/linux-gcc-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}",
                 "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/lib${pathListSep}$env{TURBOUTILS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
             },
@@ -137,7 +157,7 @@
                 "BUILD_EXAMPLES": "OFF"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-sdk",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/release",
                 "PATH": "${sourceDir}/build/linux-gcc-sdk-package/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}",
                 "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/lib${pathListSep}$env{TURBOUTILS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
             },
@@ -149,10 +169,10 @@
         {
             "name": "android-arm64-v8a-debug-win",
             "environment": {
-                "ANDROID_BUILD_VARIANT": "android-arm64-v8a-debug",
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android-arm64-v8a-debug"
+                "ANDROID_BUILD_VARIANT": "android-arm64-v8a-debug"
             },
             "inherits": [
+                "android-dependencies-debug",
                 "android-arm64-v8a-debug",
                 "android-win-paths",
                 "android-win-environment"
@@ -161,10 +181,10 @@
         {
             "name": "android-arm64-v8a-release-win",
             "environment": {
-                "ANDROID_BUILD_VARIANT": "android-arm64-v8a-release",
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android-arm64-v8a-release"
+                "ANDROID_BUILD_VARIANT": "android-arm64-v8a-release"
             },
             "inherits": [
+                "android-dependencies-release",
                 "android-arm64-v8a-release",
                 "android-win-paths",
                 "android-win-environment"
@@ -173,10 +193,10 @@
         {
             "name": "android-x86_64-debug-win",
             "environment": {
-                "ANDROID_BUILD_VARIANT": "android-x86_64-debug",
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android-x86_64-debug"
+                "ANDROID_BUILD_VARIANT": "android-x86_64-debug"
             },
             "inherits": [
+                "android-dependencies-debug",
                 "android-x86_64-debug",
                 "android-win-paths",
                 "android-win-environment"
@@ -185,10 +205,10 @@
         {
             "name": "android-x86_64-release-win",
             "environment": {
-                "ANDROID_BUILD_VARIANT": "android-x86_64-release",
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android-x86_64-release"
+                "ANDROID_BUILD_VARIANT": "android-x86_64-release"
             },
             "inherits": [
+                "android-dependencies-release",
                 "android-x86_64-release",
                 "android-win-paths",
                 "android-win-environment"
@@ -197,10 +217,10 @@
         {
             "name": "android-x86-debug-win",
             "environment": {
-                "ANDROID_BUILD_VARIANT": "android-x86-debug",
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android-x86-debug"
+                "ANDROID_BUILD_VARIANT": "android-x86-debug"
             },
             "inherits": [
+                "android-dependencies-debug",
                 "android-x86-debug",
                 "android-win-paths",
                 "android-win-environment"
@@ -209,10 +229,10 @@
         {
             "name": "android-x86-release-win",
             "environment": {
-                "ANDROID_BUILD_VARIANT": "android-x86-release",
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android-x86-release"
+                "ANDROID_BUILD_VARIANT": "android-x86-release"
             },
             "inherits": [
+                "android-dependencies-release",
                 "android-x86-release",
                 "android-win-paths",
                 "android-win-environment"
@@ -226,7 +246,7 @@
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows/debug"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-clang-debug",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/debug",
                 "PATH": "${sourceDir}/build/Clang/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
@@ -243,7 +263,7 @@
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-clang",
+                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/release",
                 "PATH": "${sourceDir}/build/Clang-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [

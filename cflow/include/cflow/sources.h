@@ -13,14 +13,19 @@ extern "C" {
 #endif
 
 /* Finite contiguous array -> resumable source. The returned source owns only
- * its small cursor state; the caller retains the array bytes until run close. */
+ * its small cursor state; the caller retains every array element until run
+ * close. Trivial elements are copied as bytes. Managed elements must provide
+ * COPY, MOVE, and DESTROY traits and are copy-constructed per resume. */
 bool cflow_source_from_array(cflow_source *out,
                              const cmeta_type_desc *type,
                              const void *data,
                              size_t count);
 
 /* Borrowed CMeta Range -> resumable source. The source owns only cursor state;
- * the underlying range object must remain valid until the source/run closes. */
+ * the underlying range object must remain valid until the source/run closes.
+ * A managed element type requires COPY, MOVE, and DESTROY traits plus
+ * CMETA_RANGE_CONSTRUCTS_VALUES. Such a Range next() callback constructs a live
+ * value only when returning VALUE or VALUE_AND_DONE. */
 bool cflow_source_from_range(cflow_source *out, cmeta_range range);
 
 /* Timer source. Each requested output waits interval_ticks on the run scheduler.
@@ -29,7 +34,8 @@ bool cflow_source_from_timer(cflow_source *out,
                              size_t count,
                              uint64_t interval_ticks);
 
-/* Channel is a resource/control-plane object. The graph sees only its source. */
+/* Channel is a resource/control-plane object. The graph sees only its source.
+ * Stored values must have TRIVIAL_COPY and TRIVIAL_DESTROY traits. */
 typedef struct cflow_channel {
     void *impl;
 } cflow_channel;
@@ -42,7 +48,8 @@ void cflow_channel_close(cflow_channel *ch);
 void cflow_channel_destroy(cflow_channel *ch);
 bool cflow_source_from_channel(cflow_source *out, cflow_channel *ch);
 
-/* Generic readiness/completion adapter for real IO/UI drivers.
+/* Generic readiness/completion adapter for real IO/UI drivers. Its value type
+ * must have TRIVIAL_COPY and TRIVIAL_DESTROY traits.
  * read() may return WOULD_BLOCK; arm() then registers the supplied waker with
  * epoll/kqueue/IOCP/libuv/Qt/etc. Runtime itself never knows the driver kind. */
 Enum(cflow_read_status,

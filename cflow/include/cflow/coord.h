@@ -25,13 +25,15 @@ typedef struct cflow_coord_event {
 extern const cmeta_type_desc cflow_type_coord_event;
 
 /* Move-style construction. On success the coordinator owns every child and
- * clears children[0..count). All child output types may differ. */
+ * clears children[0..count). All child output types may differ, but current
+ * retained byte storage requires TRIVIAL_COPY and TRIVIAL_DESTROY on each. */
 bool cflow_resumable_from_coordination(cflow_resumable *out,
                                         cflow_coord_mode mode,
                                         cflow_resumable *children,
                                         size_t count);
 
-/* One-shot typed value machine, useful as a participant in coordination. */
+/* One-shot typed value machine, useful as a participant in coordination.
+ * Current byte storage requires TRIVIAL_COPY and TRIVIAL_DESTROY. */
 bool cflow_resumable_from_value(cflow_resumable *out,
                                  const cmeta_type_desc *type,
                                  const void *value);
