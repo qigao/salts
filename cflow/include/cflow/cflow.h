@@ -16,6 +16,7 @@
 #include <cflow/runtime.h>
 #include <cflow/event.h>
 #include <cflow/machine.h>
+#include <cflow/machine_runtime.h>
 #include <cflow/sources.h>
 #include <cflow/reactive.h>
 #include <cflow/adapters.h>
