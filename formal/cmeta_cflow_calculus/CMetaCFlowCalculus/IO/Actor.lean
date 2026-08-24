@@ -74,7 +74,7 @@ end State
 
 /-- A live request slot is the reserved storage for that request's completion. -/
 def HasCompletionCredit (state : State) (requestId : RequestId) : Prop :=
-  state.OwnershipValid ∧ ∃ request ∈ state.requests, request.id = requestId
+  state.OwnershipValid ∧ requestId ∈ state.requests.map Request.id
 
 def findRequest : List Request → RequestId → Option Request
   | [], _ => none
@@ -312,31 +312,6 @@ inductive DeliveryStatus where
   | executorRejected
   deriving Repr, DecidableEq
 
-structure DeliveryResult where
-  status : DeliveryStatus
-  state : State
-  deriving Repr, DecidableEq
-
-/-- Records evidence returned by `Executor.start`; queued callbacks remain retained. -/
-def observeDispatchStart (state : State)
-    (started : Option (Executor.Task RequestId)) : DeliveryResult :=
-  match started with
-  | none => { status := .executorRejected, state := state }
-  | some task =>
-      match findRequest state.requests task.payload with
-      | none => { status := .notFound, state := state }
-      | some request =>
-          match request.phase with
-          | .dispatchQueued taskId result =>
-              if taskId = task.id then
-                { status := .observed
-                  state := { state with requests :=
-                    (modifyPhase state.requests request.id
-                      (fun _ => .dispatchRunning taskId result)) } }
-              else
-                { status := .phaseMismatch, state := state }
-          | _ => { status := .phaseMismatch, state := state }
-
 def firstDispatchRunning : List Request → Nat → Option Request
   | [], _ => none
   | request :: remaining, taskId =>
@@ -345,23 +320,6 @@ def firstDispatchRunning : List Request → Nat → Option Request
           if runningId = taskId then some request
           else firstDispatchRunning remaining taskId
       | _ => firstDispatchRunning remaining taskId
-
-/-- Records successful `Executor.finish` evidence before a completion may be released. -/
-def observeDispatchFinish (state : State) (taskId : Nat)
-    (finishStatus : Executor.FinishStatus) : DeliveryResult :=
-  match finishStatus with
-  | .notFound => { status := .executorRejected, state := state }
-  | .finished =>
-      match firstDispatchRunning state.requests taskId with
-      | none => { status := .notFound, state := state }
-      | some request =>
-          match request.phase with
-          | .dispatchRunning _ result =>
-              { status := .observed
-                state := { state with requests :=
-                  (modifyPhase state.requests request.id
-                    (fun _ => .delivered result)) } }
-          | _ => { status := .phaseMismatch, state := state }
 
 structure DeliverySystemResult where
   status : DeliveryStatus
@@ -372,21 +330,42 @@ structure DeliverySystemResult where
 def startDelivery (actor : State)
     (executor : Executor.State RequestId) : DeliverySystemResult :=
   let started := Executor.start executor
-  let observed := observeDispatchStart actor started.task
-  if observed.status = .observed then
-    { status := .observed, actor := observed.state, executor := started.state }
-  else
-    { status := observed.status, actor := actor, executor := executor }
+  match started.task with
+  | none => { status := .executorRejected, actor := actor, executor := executor }
+  | some task =>
+      match findRequest actor.requests task.payload with
+      | none => { status := .notFound, actor := actor, executor := executor }
+      | some request =>
+          match request.phase with
+          | .dispatchQueued taskId result =>
+              if taskId = task.id then
+                { status := .observed
+                  actor := { actor with requests :=
+                    (modifyPhase actor.requests request.id
+                      (fun _ => .dispatchRunning taskId result)) }
+                  executor := started.state }
+              else
+                { status := .phaseMismatch, actor := actor, executor := executor }
+          | _ =>
+              { status := .phaseMismatch, actor := actor, executor := executor }
 
 /-- Atomically binds Executor finish to delivery; mismatch rolls back both sides. -/
 def finishDelivery (actor : State) (executor : Executor.State RequestId)
     (taskId : Nat) : DeliverySystemResult :=
-  let finished := Executor.finish executor taskId
-  let observed := observeDispatchFinish actor taskId finished.status
-  if observed.status = .observed then
-    { status := .observed, actor := observed.state, executor := finished.state }
-  else
-    { status := observed.status, actor := actor, executor := executor }
+  match firstDispatchRunning actor.requests taskId with
+  | none => { status := .notFound, actor := actor, executor := executor }
+  | some request =>
+      let finished := Executor.finish executor taskId
+      match finished.status, request.phase with
+      | .finished, .dispatchRunning _ result =>
+          { status := .observed
+            actor := { actor with requests :=
+              (modifyPhase actor.requests request.id (fun _ => .delivered result)) }
+            executor := finished.state }
+      | .notFound, _ =>
+          { status := .executorRejected, actor := actor, executor := executor }
+      | .finished, _ =>
+          { status := .phaseMismatch, actor := actor, executor := executor }
 
 inductive AckStatus where
   | released

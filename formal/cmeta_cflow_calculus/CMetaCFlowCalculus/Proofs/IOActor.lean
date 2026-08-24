@@ -284,7 +284,9 @@ theorem completion_credit_is_exactly_one (state : State)
     (requestId : RequestId) (credit : HasCompletionCredit state requestId) :
     ∃ request ∈ state.requests, request.id = requestId ∧
       ∀ other ∈ state.requests, other.id = requestId → other = request := by
-  rcases credit with ⟨ownership, request, member, requestIdEqual⟩
+  rcases credit with ⟨ownership, creditMember⟩
+  rcases List.mem_map.mp creditMember with
+    ⟨request, member, requestIdEqual⟩
   refine ⟨request, member, requestIdEqual, ?_⟩
   intro other otherMember otherId
   exact nodup_ids_same_request ownership.1 otherMember member
@@ -403,11 +405,16 @@ theorem backendComplete_preserves_ownership (state : State)
 theorem backend_terminal_is_stable (state : State) (request : Request)
     (found : findRequest state.requests request.id = some request)
     (terminal : (∃ result, request.phase = .completed result) ∨
-      (∃ taskId result, request.phase = .dispatchQueued taskId result))
+      (∃ taskId result, request.phase = .dispatchQueued taskId result) ∨
+      (∃ taskId result, request.phase = .dispatchRunning taskId result) ∨
+      (∃ result, request.phase = .delivered result))
     (result : Completion) :
     (backendComplete state request.id result).status = .notPending ∧
       (backendComplete state request.id result).state = state := by
-  rcases terminal with ⟨oldResult, phase⟩ | ⟨taskId, oldResult, phase⟩ <;>
+  rcases terminal with ⟨oldResult, phase⟩ |
+      ⟨taskId, oldResult, phase⟩ |
+      ⟨taskId, oldResult, phase⟩ |
+      ⟨oldResult, phase⟩ <;>
     simp [backendComplete, found, phase]
 
 theorem dispatch_full_preserves_actor (actor : State)
@@ -463,150 +470,249 @@ theorem tryDispatch_preserves_actor_ownership (actor : State)
             simpa [tryDispatch, completed, posted, State.OwnershipValid,
               modifyPhase_ids, modifyPhase_leases] using valid
 
-theorem observeDispatchStart_preserves_valid (state : State)
-    (started : Option (Executor.Task RequestId)) (valid : state.Valid) :
-    (observeDispatchStart state started).state.Valid := by
-  cases started with
-  | none => simpa [observeDispatchStart] using valid
-  | some task =>
-      cases found : findRequest state.requests task.payload with
-      | none => simpa [observeDispatchStart, found] using valid
-      | some request =>
-          cases phase : request.phase with
-          | dispatchQueued taskId result =>
-              by_cases sameTask : taskId = task.id <;>
-                simpa [observeDispatchStart, found, phase, sameTask,
-                  State.Valid, modifyPhase_length] using valid
-          | admitted | ready | backendPending | completed | dispatchRunning |
-              delivered =>
-              simpa [observeDispatchStart, found, phase] using valid
-
-theorem observeDispatchStart_preserves_ownership (state : State)
-    (started : Option (Executor.Task RequestId))
-    (valid : state.OwnershipValid) :
-    (observeDispatchStart state started).state.OwnershipValid := by
-  cases started with
-  | none => simpa [observeDispatchStart] using valid
-  | some task =>
-      cases found : findRequest state.requests task.payload with
-      | none => simpa [observeDispatchStart, found] using valid
-      | some request =>
-          cases phase : request.phase with
-          | dispatchQueued taskId result =>
-              by_cases sameTask : taskId = task.id <;>
-                simpa [observeDispatchStart, found, phase, sameTask,
-                  State.OwnershipValid, modifyPhase_ids,
-                  modifyPhase_leases] using valid
-          | admitted | ready | backendPending | completed | dispatchRunning |
-              delivered =>
-              simpa [observeDispatchStart, found, phase] using valid
-
-theorem observeDispatchFinish_preserves_valid (state : State) (taskId : Nat)
-    (finishStatus : Executor.FinishStatus) (valid : state.Valid) :
-    (observeDispatchFinish state taskId finishStatus).state.Valid := by
-  cases finishStatus with
-  | notFound => simpa [observeDispatchFinish] using valid
-  | finished =>
-      cases found : firstDispatchRunning state.requests taskId with
-      | none => simpa [observeDispatchFinish, found] using valid
-      | some request =>
-          cases phase : request.phase <;>
-            simpa [observeDispatchFinish, found, phase, State.Valid,
-              modifyPhase_length] using valid
-
-theorem observeDispatchFinish_preserves_ownership (state : State)
-    (taskId : Nat) (finishStatus : Executor.FinishStatus)
-    (valid : state.OwnershipValid) :
-    (observeDispatchFinish state taskId finishStatus).state.OwnershipValid := by
-  cases finishStatus with
-  | notFound => simpa [observeDispatchFinish] using valid
-  | finished =>
-      cases found : firstDispatchRunning state.requests taskId with
-      | none => simpa [observeDispatchFinish, found] using valid
-      | some request =>
-          cases phase : request.phase <;>
-            simpa [observeDispatchFinish, found, phase, State.OwnershipValid,
-              modifyPhase_ids, modifyPhase_leases] using valid
-
 theorem startDelivery_preserves_actor_valid (actor : State)
     (executor : Executor.State RequestId) (valid : actor.Valid) :
     (startDelivery actor executor).actor.Valid := by
-  unfold startDelivery
-  dsimp only
-  split
-  · exact observeDispatchStart_preserves_valid actor
-      (Executor.start executor).task valid
-  · exact valid
+  cases started : Executor.start executor with
+  | mk startStatus task executorAfter =>
+      cases task with
+      | none => simpa [startDelivery, started] using valid
+      | some task =>
+          cases found : findRequest actor.requests task.payload with
+          | none => simpa [startDelivery, started, found] using valid
+          | some request =>
+              cases phase : request.phase with
+              | dispatchQueued taskId result =>
+                  by_cases sameTask : taskId = task.id <;>
+                    simpa [startDelivery, started, found, phase, sameTask,
+                      State.Valid, modifyPhase_length] using valid
+              | admitted | ready | backendPending | completed |
+                  dispatchRunning | delivered =>
+                  simpa [startDelivery, started, found, phase] using valid
 
 theorem startDelivery_preserves_actor_ownership (actor : State)
     (executor : Executor.State RequestId) (valid : actor.OwnershipValid) :
     (startDelivery actor executor).actor.OwnershipValid := by
-  unfold startDelivery
-  dsimp only
-  split
-  · exact observeDispatchStart_preserves_ownership actor
-      (Executor.start executor).task valid
-  · exact valid
+  cases started : Executor.start executor with
+  | mk startStatus task executorAfter =>
+      cases task with
+      | none => simpa [startDelivery, started] using valid
+      | some task =>
+          cases found : findRequest actor.requests task.payload with
+          | none => simpa [startDelivery, started, found] using valid
+          | some request =>
+              cases phase : request.phase with
+              | dispatchQueued taskId result =>
+                  by_cases sameTask : taskId = task.id <;>
+                    simpa [startDelivery, started, found, phase, sameTask,
+                      State.OwnershipValid, modifyPhase_ids,
+                      modifyPhase_leases] using valid
+              | admitted | ready | backendPending | completed |
+                  dispatchRunning | delivered =>
+                  simpa [startDelivery, started, found, phase] using valid
+
+theorem startDelivery_preserves_actor_ids (actor : State)
+    (executor : Executor.State RequestId) :
+    (startDelivery actor executor).actor.requests.map Request.id =
+      actor.requests.map Request.id := by
+  cases started : Executor.start executor with
+  | mk startStatus task executorAfter =>
+      cases task with
+      | none => simp [startDelivery, started]
+      | some task =>
+          cases found : findRequest actor.requests task.payload with
+          | none => simp [startDelivery, started, found]
+          | some request =>
+              cases phase : request.phase with
+              | dispatchQueued taskId result =>
+                  by_cases sameTask : taskId = task.id <;>
+                    simp [startDelivery, started, found, phase, sameTask,
+                      modifyPhase_ids]
+              | admitted | ready | backendPending | completed |
+                  dispatchRunning | delivered =>
+                  simp [startDelivery, started, found, phase]
+
+theorem startDelivery_preserves_completion_credit (actor : State)
+    (executor : Executor.State RequestId) (requestId : RequestId)
+    (credit : HasCompletionCredit actor requestId) :
+    HasCompletionCredit (startDelivery actor executor).actor requestId := by
+  refine ⟨startDelivery_preserves_actor_ownership actor executor credit.1, ?_⟩
+  rw [startDelivery_preserves_actor_ids actor executor]
+  exact credit.2
 
 theorem startDelivery_preserves_executor_valid (actor : State)
     (executor : Executor.State RequestId) (valid : executor.Valid) :
     (startDelivery actor executor).executor.Valid := by
-  unfold startDelivery
-  dsimp only
-  split
-  · exact Executor.start_preserves_valid executor valid
-  · exact valid
+  have startedValid := Executor.start_preserves_valid executor valid
+  cases started : Executor.start executor with
+  | mk startStatus task executorAfter =>
+      have executorAfterValid : executorAfter.Valid := by simpa [started] using startedValid
+      cases task with
+      | none => simpa [startDelivery, started] using valid
+      | some task =>
+          cases found : findRequest actor.requests task.payload with
+          | none => simpa [startDelivery, started, found] using valid
+          | some request =>
+              cases phase : request.phase with
+              | dispatchQueued taskId result =>
+                by_cases sameTask : taskId = task.id <;>
+                  simp [startDelivery, started, found, phase, sameTask,
+                    executorAfterValid, valid]
+              | admitted | ready | backendPending | completed |
+                  dispatchRunning | delivered =>
+                  simp [startDelivery, started, found, phase, valid]
 
 theorem startDelivery_preserves_executor_identifiers (actor : State)
     (executor : Executor.State RequestId) (valid : executor.IdentifiersValid) :
     (startDelivery actor executor).executor.IdentifiersValid := by
-  unfold startDelivery
-  dsimp only
-  split
-  · exact Executor.start_preserves_identifiers executor valid
-  · exact valid
+  have startedValid := Executor.start_preserves_identifiers executor valid
+  cases started : Executor.start executor with
+  | mk startStatus task executorAfter =>
+      have executorAfterValid : executorAfter.IdentifiersValid := by
+        simpa [started] using startedValid
+      cases task with
+      | none => simpa [startDelivery, started] using valid
+      | some task =>
+          cases found : findRequest actor.requests task.payload with
+          | none => simpa [startDelivery, started, found] using valid
+          | some request =>
+              cases phase : request.phase with
+              | dispatchQueued taskId result =>
+                by_cases sameTask : taskId = task.id <;>
+                  simp [startDelivery, started, found, phase, sameTask,
+                    executorAfterValid, valid]
+              | admitted | ready | backendPending | completed |
+                  dispatchRunning | delivered =>
+                  simp [startDelivery, started, found, phase, valid]
 
 theorem finishDelivery_preserves_actor_valid (actor : State)
     (executor : Executor.State RequestId) (taskId : Nat)
     (valid : actor.Valid) :
     (finishDelivery actor executor taskId).actor.Valid := by
-  unfold finishDelivery
-  dsimp only
-  split
-  · exact observeDispatchFinish_preserves_valid actor taskId
-      (Executor.finish executor taskId).status valid
-  · exact valid
+  cases found : firstDispatchRunning actor.requests taskId with
+  | none => simpa [finishDelivery, found] using valid
+  | some request =>
+      cases finished : Executor.finish executor taskId with
+      | mk finishStatus executorAfter =>
+          cases finishStatus <;> cases phase : request.phase <;>
+            simpa [finishDelivery, found, finished, phase, State.Valid,
+              modifyPhase_length] using valid
 
 theorem finishDelivery_preserves_actor_ownership (actor : State)
     (executor : Executor.State RequestId) (taskId : Nat)
     (valid : actor.OwnershipValid) :
     (finishDelivery actor executor taskId).actor.OwnershipValid := by
-  unfold finishDelivery
-  dsimp only
-  split
-  · exact observeDispatchFinish_preserves_ownership actor taskId
-      (Executor.finish executor taskId).status valid
-  · exact valid
+  cases found : firstDispatchRunning actor.requests taskId with
+  | none => simpa [finishDelivery, found] using valid
+  | some request =>
+      cases finished : Executor.finish executor taskId with
+      | mk finishStatus executorAfter =>
+          cases finishStatus <;> cases phase : request.phase <;>
+            simpa [finishDelivery, found, finished, phase,
+              State.OwnershipValid, modifyPhase_ids,
+              modifyPhase_leases] using valid
+
+theorem finishDelivery_preserves_actor_ids (actor : State)
+    (executor : Executor.State RequestId) (taskId : Nat) :
+    (finishDelivery actor executor taskId).actor.requests.map Request.id =
+      actor.requests.map Request.id := by
+  cases found : firstDispatchRunning actor.requests taskId with
+  | none => simp [finishDelivery, found]
+  | some request =>
+      cases finished : Executor.finish executor taskId with
+      | mk finishStatus executorAfter =>
+          cases finishStatus <;> cases phase : request.phase <;>
+            simp [finishDelivery, found, finished, phase, modifyPhase_ids]
+
+theorem finishDelivery_preserves_completion_credit (actor : State)
+    (executor : Executor.State RequestId) (taskId : Nat)
+    (requestId : RequestId) (credit : HasCompletionCredit actor requestId) :
+    HasCompletionCredit (finishDelivery actor executor taskId).actor requestId := by
+  refine ⟨finishDelivery_preserves_actor_ownership actor executor taskId credit.1, ?_⟩
+  rw [finishDelivery_preserves_actor_ids actor executor taskId]
+  exact credit.2
 
 theorem finishDelivery_preserves_executor_valid (actor : State)
     (executor : Executor.State RequestId) (taskId : Nat)
     (valid : executor.Valid) :
     (finishDelivery actor executor taskId).executor.Valid := by
-  unfold finishDelivery
-  dsimp only
-  split
-  · exact Executor.finish_preserves_valid executor taskId valid
-  · exact valid
+  have finishedValid := Executor.finish_preserves_valid executor taskId valid
+  cases found : firstDispatchRunning actor.requests taskId with
+  | none => simpa [finishDelivery, found] using valid
+  | some request =>
+      cases finished : Executor.finish executor taskId with
+      | mk finishStatus executorAfter =>
+          have executorAfterValid : executorAfter.Valid := by
+            simpa [finished] using finishedValid
+          cases finishStatus <;> cases phase : request.phase <;>
+            simp [finishDelivery, found, finished, phase,
+              executorAfterValid, valid]
 
 theorem finishDelivery_preserves_executor_identifiers (actor : State)
     (executor : Executor.State RequestId) (taskId : Nat)
     (valid : executor.IdentifiersValid) :
     (finishDelivery actor executor taskId).executor.IdentifiersValid := by
-  unfold finishDelivery
-  dsimp only
-  split
-  · exact Executor.finish_preserves_identifiers executor taskId valid
-  · exact valid
+  have finishedValid := Executor.finish_preserves_identifiers executor taskId valid
+  cases found : firstDispatchRunning actor.requests taskId with
+  | none => simpa [finishDelivery, found] using valid
+  | some request =>
+      cases finished : Executor.finish executor taskId with
+      | mk finishStatus executorAfter =>
+          have executorAfterValid : executorAfter.IdentifiersValid := by
+            simpa [finished] using finishedValid
+          cases finishStatus <;> cases phase : request.phase <;>
+            simp [finishDelivery, found, finished, phase,
+              executorAfterValid, valid]
+
+theorem startDelivery_rejected_unchanged (actor : State)
+    (executor : Executor.State RequestId) (status : DeliveryStatus)
+    (rejected : status ≠ .observed)
+    (resultStatus : (startDelivery actor executor).status = status) :
+    (startDelivery actor executor).actor = actor ∧
+      (startDelivery actor executor).executor = executor := by
+  cases started : Executor.start executor with
+  | mk startStatus task executorAfter =>
+      cases task with
+      | none => simp [startDelivery, started]
+      | some task =>
+          cases found : findRequest actor.requests task.payload with
+          | none => simp [startDelivery, started, found]
+          | some request =>
+              cases phase : request.phase with
+              | dispatchQueued taskId result =>
+                  by_cases sameTask : taskId = task.id
+                  · have observedStatus : status = .observed := by
+                      simpa [startDelivery, started, found, phase, sameTask]
+                        using resultStatus.symm
+                    exact False.elim (rejected observedStatus)
+                  · simp [startDelivery, started, found, phase, sameTask]
+              | admitted | ready | backendPending | completed |
+                  dispatchRunning | delivered =>
+                  simp [startDelivery, started, found, phase]
+
+theorem finishDelivery_rejected_unchanged (actor : State)
+    (executor : Executor.State RequestId) (taskId : Nat)
+    (status : DeliveryStatus) (rejected : status ≠ .observed)
+    (resultStatus : (finishDelivery actor executor taskId).status = status) :
+    (finishDelivery actor executor taskId).actor = actor ∧
+      (finishDelivery actor executor taskId).executor = executor := by
+  cases found : firstDispatchRunning actor.requests taskId with
+  | none => simp [finishDelivery, found]
+  | some request =>
+      cases finished : Executor.finish executor taskId with
+      | mk finishStatus executorAfter =>
+          cases finishStatus with
+          | notFound => simp [finishDelivery, found, finished]
+          | finished =>
+              cases phase : request.phase with
+              | dispatchRunning runningId result =>
+                  have observedStatus : status = .observed := by
+                    simpa [finishDelivery, found, finished, phase]
+                      using resultStatus.symm
+                  exact False.elim (rejected observedStatus)
+              | admitted | ready | backendPending | completed |
+                  dispatchQueued | delivered =>
+                  simp [finishDelivery, found, finished, phase]
 
 theorem acknowledge_dispatchQueued_retains (state : State)
     (requestId taskId : Nat) (result : Completion)

@@ -92,6 +92,17 @@ example : (startDelivery mismatchedDispatch dispatched.executor).executor.queue 
     dispatched.executor.queue := by native_decide
 example : (startDelivery mismatchedDispatch dispatched.executor).executor.running =
     dispatched.executor.running := by native_decide
+example : (startDelivery mismatchedDispatch dispatched.executor).actor =
+      mismatchedDispatch ∧
+    (startDelivery mismatchedDispatch dispatched.executor).executor =
+      dispatched.executor :=
+  startDelivery_rejected_unchanged mismatchedDispatch dispatched.executor
+    .phaseMismatch (by decide) (by native_decide)
+example : (finishDelivery deliveryStarted.actor executor 1).actor =
+      deliveryStarted.actor ∧
+    (finishDelivery deliveryStarted.actor executor 1).executor = executor :=
+  finishDelivery_rejected_unchanged deliveryStarted.actor executor 1
+    .executorRejected (by decide) (by native_decide)
 example : ¬ SystemQuiescent (close dispatched.actor).state dispatched.executor := by
   intro quiescent
   have queueEmpty := quiescent.2.1
