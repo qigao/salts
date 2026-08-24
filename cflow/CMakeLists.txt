@@ -8,6 +8,7 @@ add_library(${TARGET_NAME}
   src/direct.c
   src/dense_successor_index.c
   src/effect.c
+  src/event.c
   src/executor.c
   src/graph.c
   src/interfaces.c
