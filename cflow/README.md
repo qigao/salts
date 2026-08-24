@@ -252,7 +252,9 @@ Admission is exact and non-blocking:
 | Declared Event with a wrong payload descriptor | `CFLOW_ACTOR_SEND_TYPE_MISMATCH` |
 | Fixed Mailbox capacity is exhausted | `CFLOW_ACTOR_SEND_FULL` |
 | Actor has not started | `CFLOW_ACTOR_SEND_NOT_STARTED` |
-| Actor is stopping, stopped, or failed | `CFLOW_ACTOR_SEND_STOPPING`, `CFLOW_ACTOR_SEND_STOPPED`, or `CFLOW_ACTOR_SEND_FAILED` |
+| Actor is stopping | `CFLOW_ACTOR_SEND_STOPPING` |
+| Actor is stopped | `CFLOW_ACTOR_SEND_STOPPED` |
+| Actor has failed | `CFLOW_ACTOR_SEND_FAILED` |
 | Owner destruction has begun | `CFLOW_ACTOR_SEND_STALE` |
 
 The send path does not retry, wait, overwrite, resize, silently drop, or
