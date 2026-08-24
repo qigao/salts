@@ -496,6 +496,52 @@ CMETA_IMPLEMENTS(cflow_source, owned_source, 0,
     .poll_terminal = owned_source_poll
 );
 
+typedef struct machine_run_sink_state {
+    long value;
+    size_t values;
+    size_t dones;
+    const char *error;
+} machine_run_sink_state;
+
+static bool machine_run_action(void *user,
+                               const void *state,
+                               const void *event,
+                               void *out_target_state,
+                               void *out_observation,
+                               const char **out_error) {
+    (void)user;
+    if (state == NULL || event == NULL || out_target_state == NULL ||
+        out_observation == NULL || out_error == NULL)
+        return false;
+    *(long *)out_target_state =
+        (long)*(const int *)state + (long)*(const bool *)event;
+    *(long *)out_observation = 42L;
+    *out_error = NULL;
+    return true;
+}
+
+static bool machine_run_sink_value(void *user,
+                                   const cmeta_type_desc *type,
+                                   const void *value) {
+    machine_run_sink_state *state = (machine_run_sink_state *)user;
+    if (state == NULL || value == NULL ||
+        !cmeta_type_equal(type, &cmeta_type_long))
+        return false;
+    state->value = *(const long *)value;
+    ++state->values;
+    return true;
+}
+
+static void machine_run_sink_error(void *user, const char *message) {
+    machine_run_sink_state *state = (machine_run_sink_state *)user;
+    if (state != NULL) state->error = message;
+}
+
+static void machine_run_sink_done(void *user) {
+    machine_run_sink_state *state = (machine_run_sink_state *)user;
+    if (state != NULL) ++state->dones;
+}
+
 suite("CFlow runtime") {
     group("managed value slots") {
         before_each() {
@@ -1299,6 +1345,91 @@ suite("CFlow runtime") {
 
         check_true(state.close_returned);
         check_null(run.impl);
+        cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("drives a Machine Source through Run demand") {
+        const cflow_machine_state states[] = {
+            {10u, &cmeta_type_int, CFLOW_MACHINE_STATE_ACTIVE},
+            {20u, &cmeta_type_long, CFLOW_MACHINE_STATE_DONE}
+        };
+        const cflow_event_type events[] = {
+            {100u, &cmeta_type_bool}
+        };
+        const cflow_machine_action actions[] = {
+            {300u, &cmeta_type_int, 100u, &cmeta_type_bool,
+             &cmeta_type_long, CMETA_EFFECT_PURE,
+             CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL |
+                 CMETA_PROP_NO_ALIAS,
+             CFLOW_MACHINE_ACTION_VALUE, &cmeta_type_long, 0u}
+        };
+        const cflow_machine_transition transitions[] = {
+            {10u, 100u, 0u, 300u, 20u, 1u}
+        };
+        const cflow_machine_definition definition = {
+            states, 2u, 10u, events, 1u, NULL, 0u,
+            actions, 1u, transitions, 1u
+        };
+        const cflow_machine_action_binding action_bindings[] = {
+            {300u, machine_run_action, NULL}
+        };
+        cflow_machine machine = {0};
+        cflow_executor executor = {0};
+        cflow_machine_instance instance = {0};
+        cflow_source source = {0};
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        cflow_scheduler scheduler = {0};
+        cflow_run run = {0};
+        machine_run_sink_state sink_state = {0};
+        cflow_sink_callbacks callbacks = {
+            machine_run_sink_value,
+            machine_run_sink_error,
+            machine_run_sink_done,
+            &sink_state
+        };
+        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+        const int initial = 5;
+        const bool payload = true;
+        const cflow_event_view event = {
+            100u, &cmeta_type_bool, &payload
+        };
+        const cflow_machine_instance_config config = {
+            &machine, &initial, &cmeta_type_long,
+            NULL, 0u, action_bindings, 1u, 4u, &executor
+        };
+
+        normalized.root = CMETA_INVALID_ID;
+        check_equal(cflow_machine_build(&machine, &definition),
+                    CFLOW_MACHINE_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_machine_instance_init(&instance, &config),
+                    CFLOW_MACHINE_RUNTIME_OK);
+        check_true(cflow_machine_instance_as_source(&instance, &source));
+        cflow_graph_init(&surface, &cmeta_type_long);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_scheduler_test_init(&scheduler));
+        check_true(cflow_run_open(
+            &run, &normalized, &source, &scheduler, &sink));
+        check_equal(cflow_machine_instance_try_send(&instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_run_request(&run, 1u));
+        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+        check_true(cflow_executor_wait_idle(&executor));
+        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+
+        check_equal(sink_state.values, (size_t)1u);
+        check_equal(sink_state.value, 42L);
+        check_equal(sink_state.dones, (size_t)1u);
+        check_null(sink_state.error);
+        check_true(cflow_run_is_done(&run));
+
+        cflow_run_close(&run);
+        cflow_machine_instance_destroy(&instance);
+        cflow_executor_destroy(&executor);
+        cflow_machine_destroy(&machine);
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);

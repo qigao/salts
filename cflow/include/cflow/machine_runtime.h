@@ -92,6 +92,38 @@ cflow_machine_runtime_status cflow_machine_instance_init(
     cflow_machine_instance *instance,
     const cflow_machine_instance_config *config);
 
+/** Copy one typed Event into the instance-owned bounded Mailbox. */
+cflow_mailbox_status cflow_machine_instance_try_send(
+    cflow_machine_instance *instance,
+    const cflow_event_view *event);
+
+/**
+ * Attach one Resumable adapter borrowing this instance.
+ *
+ * Only one Resumable or Source adapter may be attached at a time. The
+ * adapter's destroy operation detaches it but does not destroy the instance.
+ */
+bool cflow_machine_instance_as_resumable(
+    cflow_machine_instance *instance,
+    cflow_resumable *out);
+
+/** Attach one Source adapter borrowing this instance. */
+bool cflow_machine_instance_as_source(
+    cflow_machine_instance *instance,
+    cflow_source *out);
+
+/**
+ * Gracefully stop admission, cancel queued Events, and preserve an in-flight
+ * transition commit. Repeated calls are idempotent.
+ */
+void cflow_machine_instance_close(cflow_machine_instance *instance);
+
+/**
+ * Stop admission and discard queued and in-flight Event results. Repeated
+ * calls are idempotent and the last committed state remains observable.
+ */
+void cflow_machine_instance_cancel(cflow_machine_instance *instance);
+
 /** Copy one mutex-consistent state snapshot into caller-owned storage. */
 bool cflow_machine_instance_copy_state(
     const cflow_machine_instance *instance,
