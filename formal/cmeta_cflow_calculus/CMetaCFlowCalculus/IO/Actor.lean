@@ -19,6 +19,8 @@ inductive RequestPhase where
   | backendPending (cancelRequested : Bool)
   | completed (result : Completion)
   | dispatchQueued (taskId : Nat) (result : Completion)
+  | dispatchRunning (taskId : Nat) (result : Completion)
+  | delivered (result : Completion)
   deriving Repr, DecidableEq
 
 structure Request where
@@ -59,11 +61,20 @@ def OwnershipValid (state : State) : Prop :=
       requestId < state.nextId) ∧
     0 < state.nextId
 
+/-- Actor terminal state and mailbox admission state have one lifecycle source. -/
+def LifecycleValid (state : State) : Prop :=
+  match state.terminal with
+  | .running => state.commands.terminal = .open
+  | .closing => state.commands.terminal = .draining
+
+def WellFormed (state : State) : Prop :=
+  state.Valid ∧ state.OwnershipValid ∧ state.LifecycleValid
+
 end State
 
 /-- A live request slot is the reserved storage for that request's completion. -/
 def HasCompletionCredit (state : State) (requestId : RequestId) : Prop :=
-  ∃ request ∈ state.requests, request.id = requestId
+  state.OwnershipValid ∧ ∃ request ∈ state.requests, request.id = requestId
 
 def findRequest : List Request → RequestId → Option Request
   | [], _ => none
@@ -294,6 +305,89 @@ def tryDispatch (actor : State)
           { status := .closed, requestId := some request.id,
             actor := actor, executor := executor }
 
+inductive DeliveryStatus where
+  | observed
+  | notFound
+  | phaseMismatch
+  | executorRejected
+  deriving Repr, DecidableEq
+
+structure DeliveryResult where
+  status : DeliveryStatus
+  state : State
+  deriving Repr, DecidableEq
+
+/-- Records evidence returned by `Executor.start`; queued callbacks remain retained. -/
+def observeDispatchStart (state : State)
+    (started : Option (Executor.Task RequestId)) : DeliveryResult :=
+  match started with
+  | none => { status := .executorRejected, state := state }
+  | some task =>
+      match findRequest state.requests task.payload with
+      | none => { status := .notFound, state := state }
+      | some request =>
+          match request.phase with
+          | .dispatchQueued taskId result =>
+              if taskId = task.id then
+                { status := .observed
+                  state := { state with requests :=
+                    (modifyPhase state.requests request.id
+                      (fun _ => .dispatchRunning taskId result)) } }
+              else
+                { status := .phaseMismatch, state := state }
+          | _ => { status := .phaseMismatch, state := state }
+
+def firstDispatchRunning : List Request → Nat → Option Request
+  | [], _ => none
+  | request :: remaining, taskId =>
+      match request.phase with
+      | .dispatchRunning runningId _ =>
+          if runningId = taskId then some request
+          else firstDispatchRunning remaining taskId
+      | _ => firstDispatchRunning remaining taskId
+
+/-- Records successful `Executor.finish` evidence before a completion may be released. -/
+def observeDispatchFinish (state : State) (taskId : Nat)
+    (finishStatus : Executor.FinishStatus) : DeliveryResult :=
+  match finishStatus with
+  | .notFound => { status := .executorRejected, state := state }
+  | .finished =>
+      match firstDispatchRunning state.requests taskId with
+      | none => { status := .notFound, state := state }
+      | some request =>
+          match request.phase with
+          | .dispatchRunning _ result =>
+              { status := .observed
+                state := { state with requests :=
+                  (modifyPhase state.requests request.id
+                    (fun _ => .delivered result)) } }
+          | _ => { status := .phaseMismatch, state := state }
+
+structure DeliverySystemResult where
+  status : DeliveryStatus
+  actor : State
+  executor : Executor.State RequestId
+
+/-- Atomically binds an Executor start observation to its Actor request. -/
+def startDelivery (actor : State)
+    (executor : Executor.State RequestId) : DeliverySystemResult :=
+  let started := Executor.start executor
+  let observed := observeDispatchStart actor started.task
+  if observed.status = .observed then
+    { status := .observed, actor := observed.state, executor := started.state }
+  else
+    { status := observed.status, actor := actor, executor := executor }
+
+/-- Atomically binds Executor finish to delivery; mismatch rolls back both sides. -/
+def finishDelivery (actor : State) (executor : Executor.State RequestId)
+    (taskId : Nat) : DeliverySystemResult :=
+  let finished := Executor.finish executor taskId
+  let observed := observeDispatchFinish actor taskId finished.status
+  if observed.status = .observed then
+    { status := .observed, actor := observed.state, executor := finished.state }
+  else
+    { status := observed.status, actor := actor, executor := executor }
+
 inductive AckStatus where
   | released
   | busy
@@ -310,7 +404,7 @@ def acknowledge (state : State) (requestId : RequestId) : AckResult :=
   | none => { status := .notFound, state := state }
   | some request =>
       match request.phase with
-      | .dispatchQueued _ _ =>
+      | .delivered _ =>
           { status := .released
             state := { state with requests := removeRequest state.requests requestId } }
       | _ => { status := .busy, state := state }
@@ -333,5 +427,9 @@ def close (state : State) : CloseResult :=
 
 def Quiescent (state : State) : Prop :=
   state.terminal = .closing ∧ state.commands.queue = [] ∧ state.requests = []
+
+/-- Global quiescence also excludes callback tasks retained by the Executor. -/
+def SystemQuiescent (actor : State) (executor : Executor.State RequestId) : Prop :=
+  Quiescent actor ∧ executor.queue = [] ∧ executor.running = []
 
 end CMetaCFlowCalculus.IO.Actor

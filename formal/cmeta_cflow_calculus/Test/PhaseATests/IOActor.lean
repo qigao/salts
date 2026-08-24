@@ -30,6 +30,9 @@ theorem initialValid : initial.Valid := by
 theorem initialOwnershipValid : initial.OwnershipValid := by
   simp [Actor.State.OwnershipValid, initial]
 
+theorem initialLifecycleValid : initial.LifecycleValid := by
+  simp [Actor.State.LifecycleValid, initial, commands]
+
 def submitted : SubmitResult := trySubmit initial 100
 def submitProcessed : ProcessResult := processOne submitted.state
 def backendStarted : ControlResult := beginBackend submitProcessed.state 1
@@ -39,11 +42,27 @@ def pendingCancelQueued : CancelResult := tryCancel backendStarted.state 1
 def pendingCancelled : ProcessResult := processOne pendingCancelQueued.state
 def completed : CompletionResult := backendComplete pendingCancelled.state 1 (.ok 4)
 def dispatched : DispatchResult := tryDispatch completed.state executor
+def deliveryStarted : DeliverySystemResult :=
+  startDelivery dispatched.actor dispatched.executor
+def deliveryFinished : DeliverySystemResult :=
+  finishDelivery deliveryStarted.actor deliveryStarted.executor 1
+def mismatchedDispatch : Actor.State :=
+  { dispatched.actor with requests :=
+      (modifyPhase dispatched.actor.requests 1
+        (fun _ => .dispatchQueued 99 (.ok 4))) }
 
 example : submitted.status = .accepted := by native_decide
 example : submitted.requestId = some 1 := by native_decide
 example : HasCompletionCredit submitted.state 1 :=
-  accepted_submit_has_completion_credit initial submitted.state 100 1 rfl
+  accepted_submit_has_completion_credit initial submitted.state 100 1
+    initialOwnershipValid rfl
+example : ∃ request ∈ submitted.state.requests, request.id = 1 ∧
+    ∀ other ∈ submitted.state.requests, other.id = 1 → other = request :=
+  completion_credit_is_exactly_one submitted.state 1 (by
+    exact accepted_submit_has_completion_credit initial submitted.state 100 1
+      initialOwnershipValid rfl)
+example : submitted.state.LifecycleValid :=
+  trySubmit_preserves_lifecycle initial 100 initialLifecycleValid
 example : submitProcessed.status = .processed := by native_decide
 example : (findRequest submitProcessed.state.requests 1).map Request.phase =
     some .ready := by native_decide
@@ -58,10 +77,26 @@ example : completed.status = .completed := by native_decide
 example : (backendComplete completed.state 1 .eof).status = .notPending := by
   native_decide
 example : dispatched.status = .accepted := by native_decide
-example : (acknowledge dispatched.actor 1).status = .released := by
+example : (acknowledge dispatched.actor 1).status = .busy := by
   native_decide
-example : (acknowledge dispatched.actor 1).state.requests = [] := by
+example : deliveryStarted.status = .observed := by native_decide
+example : (acknowledge deliveryStarted.actor 1).status = .busy := by native_decide
+example : deliveryFinished.status = .observed := by native_decide
+example : (acknowledge deliveryFinished.actor 1).status = .released := by
   native_decide
+example : (acknowledge deliveryFinished.actor 1).state.requests = [] := by
+  native_decide
+example : (startDelivery mismatchedDispatch dispatched.executor).actor =
+    mismatchedDispatch := by native_decide
+example : (startDelivery mismatchedDispatch dispatched.executor).executor.queue =
+    dispatched.executor.queue := by native_decide
+example : (startDelivery mismatchedDispatch dispatched.executor).executor.running =
+    dispatched.executor.running := by native_decide
+example : ¬ SystemQuiescent (close dispatched.actor).state dispatched.executor := by
+  intro quiescent
+  have queueEmpty := quiescent.2.1
+  have queueRetained : dispatched.executor.queue ≠ [] := by native_decide
+  exact queueRetained queueEmpty
 example : (trySubmit (close initial).state 100).status = .closed := by
   native_decide
 
@@ -131,6 +166,23 @@ theorem dispatchedValid : dispatched.actor.Valid :=
 theorem dispatchedOwnershipValid : dispatched.actor.OwnershipValid :=
   tryDispatch_preserves_actor_ownership completed.state executor
     completedOwnershipValid
+theorem deliveryStartedValid : deliveryStarted.actor.Valid :=
+  startDelivery_preserves_actor_valid dispatched.actor dispatched.executor
+    dispatchedValid
+theorem deliveryStartedOwnershipValid : deliveryStarted.actor.OwnershipValid :=
+  startDelivery_preserves_actor_ownership dispatched.actor dispatched.executor
+    dispatchedOwnershipValid
+theorem deliveryFinishedValid : deliveryFinished.actor.Valid :=
+  finishDelivery_preserves_actor_valid deliveryStarted.actor
+    deliveryStarted.executor 1 deliveryStartedValid
+theorem deliveryFinishedOwnershipValid : deliveryFinished.actor.OwnershipValid :=
+  finishDelivery_preserves_actor_ownership deliveryStarted.actor
+    deliveryStarted.executor 1 deliveryStartedOwnershipValid
+example : (acknowledge dispatched.actor 1).state = dispatched.actor :=
+  acknowledge_dispatchQueued_retains dispatched.actor 1 1 (.ok 4) (by native_decide)
+example : (acknowledge deliveryStarted.actor 1).state = deliveryStarted.actor :=
+  acknowledge_dispatchRunning_retains deliveryStarted.actor 1 1 (.ok 4)
+    (by native_decide)
 example : (acknowledge dispatched.actor 1).state.Valid :=
   acknowledge_preserves_valid dispatched.actor 1 dispatchedValid
 example : (acknowledge dispatched.actor 1).state.OwnershipValid :=
@@ -139,13 +191,18 @@ example : (close initial).state.Valid :=
   close_preserves_valid initial initialValid
 example : (close initial).state.OwnershipValid :=
   close_preserves_ownership initial initialOwnershipValid
+example : (close initial).state.LifecycleValid :=
+  close_preserves_lifecycle initial initialLifecycleValid
 example : (tryDispatch completed.state fullExecutor).actor = completed.state :=
   dispatch_full_preserves_actor completed.state fullExecutor (by native_decide)
-example : (acknowledge dispatched.actor 1).state.requests.length + 1 =
-    dispatched.actor.requests.length := by native_decide
-example : (acknowledge dispatched.actor 1).state.requests.length + 1 =
-    dispatched.actor.requests.length :=
-  acknowledge_released_removes_one dispatched.actor
-    (acknowledge dispatched.actor 1).state 1 rfl
+example : (tryDispatch completed.state fullExecutor).executor = fullExecutor :=
+  dispatch_rejected_preserves_executor completed.state fullExecutor .full
+    (by decide) (by native_decide)
+example : (acknowledge deliveryFinished.actor 1).state.requests.length + 1 =
+    deliveryFinished.actor.requests.length := by native_decide
+example : (acknowledge deliveryFinished.actor 1).state.requests.length + 1 =
+    deliveryFinished.actor.requests.length :=
+  acknowledge_released_removes_one deliveryFinished.actor
+    (acknowledge deliveryFinished.actor 1).state 1 rfl
 
 end CMetaCFlowCalculus.Tests.IOActor

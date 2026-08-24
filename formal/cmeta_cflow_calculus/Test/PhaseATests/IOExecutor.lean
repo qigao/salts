@@ -19,12 +19,17 @@ theorem initialValid : initial.Valid := by
 theorem initialIdentifiersValid : initial.IdentifiersValid := by
   simp [State.IdentifiersValid, State.knownIds, initial]
 
+theorem initialLifecycleValid : initial.LifecycleValid := by
+  simp [State.LifecycleValid, initial]
+
 def posted : PostResult Nat := tryPost initial 7
 def started : StartResult Nat := start posted.state
 
 example : posted.status = .accepted := by native_decide
 example : posted.taskId = some 1 := by native_decide
 example : (tryPost posted.state 8).status = .full := by native_decide
+example : (tryPost posted.state 8).state = posted.state :=
+  rejected_post_unchanged posted.state 8 .full (by decide) (by native_decide)
 example : started.status = .started := by native_decide
 example : started.task.map Task.payload = some 7 := by native_decide
 example : started.state.running = [1] := by native_decide
@@ -59,5 +64,8 @@ example : (finish started.state 1).state.IdentifiersValid :=
 example : (shutdown posted.state).state.Valid :=
   shutdown_preserves_valid posted.state
     (tryPost_preserves_valid initial 7 initialValid)
+example : (settle (shutdown initial).state).state.LifecycleValid :=
+  settle_preserves_lifecycle (shutdown initial).state
+    (shutdown_preserves_lifecycle initial initialLifecycleValid)
 
 end CMetaCFlowCalculus.Tests.IOExecutor

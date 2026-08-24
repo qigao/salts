@@ -12,9 +12,10 @@ The model has three independent state machines:
 
 1. `BoundedMpsc` is a bounded FIFO command mailbox with many logical
    publishers, one logical consumer, explicit `full`, and graceful close.
-2. `Executor` owns accepted tasks and moves each task through queued, running,
-   and completed states. Queue capacity and execution parallelism are separate
-   limits.
+2. `Executor` owns accepted tasks and moves each task through queued and running
+   states. Successful `finish` is consumed as delivery evidence by the Actor;
+   the bounded Actor request slot is the completion observation record. Queue
+   capacity and execution parallelism are separate limits.
 3. `Actor` is the single owner of I/O request state. Concurrent callers publish
    submit and cancel commands; backend completion and dispatch are actor-owned
    transitions.
@@ -28,8 +29,10 @@ worker release sequences to the abstract mailbox transitions.
 - A command is a fixed-size value containing a command kind and request ID.
 - A request slot is the fact source for operation data, completion result, and
   buffer lease.
-- Successful submit transfers the lease to the Actor. Failed submit leaves the
-  caller's ownership unchanged.
+- Successful submit establishes unique Actor-side ownership of the lease ID.
+  Failed submit leaves Actor state unchanged. The concrete caller-to-Actor
+  move-only token ledger is a C/refinement obligation; this abstract phase does
+  not model caller-local storage.
 - Every non-free request occupies exactly one bounded request slot. That slot
   is also the reserved completion credit.
 - A request slot is released only by completion acknowledgement.
@@ -97,8 +100,16 @@ Admitted/Ready + cancel -> Completed(Cancelled)
 BackendPending + cancel -> BackendPending(cancelRequested = true)
 BackendPending + backend result -> Completed(result)
 Completed + executor accepts -> DispatchQueued
-DispatchQueued + acknowledge -> released
+DispatchQueued + executor start observed -> DispatchRunning
+DispatchRunning + executor finish observed -> Delivered
+Delivered + acknowledge -> released
 ```
+
+`DispatchQueued` and `DispatchRunning` retain the request slot and reject
+acknowledgement. This prevents lease reuse while Executor still references the
+request ID. `startDelivery` and `finishDelivery` are the canonical composition
+transitions: they advance Actor and Executor together, and a phase/task mismatch
+leaves both input states unchanged.
 
 Cancel after native submission is a request, not proof that cancellation won.
 The backend terminal result remains authoritative. Backend completion applied
@@ -116,21 +127,24 @@ Closing rejects new submit commands, but consumes commands accepted before the
 close linearization point. At close, `Admitted` and `Ready` requests become
 cancelled completions; `BackendPending` requests retain their slot and set
 `cancelRequested = true` until a native terminal result arrives. Quiescence
-requires no queued commands and no active request slots. A client that does not
-acknowledge a dispatched completion can therefore prevent quiescence; the
-implementation must report busy/timeout rather than free the lease.
+requires no queued commands, no active request slots, no queued Executor task,
+and no running Executor task. A client that does not acknowledge a delivered
+completion can therefore prevent quiescence; the implementation must report
+busy/timeout rather than free the lease.
 
 ## Required safety properties
 
 - Every transition preserves configured capacity bounds.
 - Successful mailbox publication appends exactly once.
 - Mailbox consumption is FIFO.
-- Failed submit leaves request ownership unchanged.
+- Failed submit leaves Actor request/lease ownership unchanged.
 - Accepted request IDs and active leases are unique.
-- Every accepted request retains one completion credit until acknowledgement.
+- Every accepted request has exactly one completion credit and retains it until
+  delivery acknowledgement.
 - Backend completion generates at most one terminal result.
 - Executor full preserves the completed request for retry.
-- Completion acknowledgement releases exactly one request slot.
+- Completion acknowledgement is rejected before Executor finish is observed
+  and releases exactly one delivered request slot.
 - Closing rejects new admissions and preserves already accepted work.
 
 ## Deferred refinements
@@ -143,3 +157,5 @@ implementation must report busy/timeout rather than free the lease.
   the same abstract request protocol.
 - C conformance tests and generated manifests connecting implementation enums
   and transitions to this Lean model.
+- A concrete caller/Actor ownership ledger proving move on accepted submit and
+  caller retention on rejected submit.

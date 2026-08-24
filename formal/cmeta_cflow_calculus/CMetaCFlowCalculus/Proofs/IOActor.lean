@@ -182,6 +182,26 @@ theorem trySubmit_preserves_ownership (state : State) (lease : LeaseId)
             ↓reduceIte]
           exact ⟨idsUnique, leasesUnique, idsBounded, nextIdPositive⟩
 
+theorem trySubmit_preserves_lifecycle (state : State) (lease : LeaseId)
+    (valid : state.LifecycleValid) :
+    (trySubmit state lease).state.LifecycleValid := by
+  cases actorTerminal : state.terminal with
+  | closing => simpa [trySubmit, actorTerminal] using valid
+  | running =>
+      have mailboxOpen : state.commands.terminal = .open := by
+        simpa [State.LifecycleValid, actorTerminal] using valid
+      by_cases leaseUsed : containsLease state.requests lease
+      · simp [trySubmit, actorTerminal, leaseUsed, State.LifecycleValid,
+          mailboxOpen]
+      · by_cases requestCapacity : state.requests.length < state.capacity
+        · by_cases commandCapacity :
+              state.commands.queue.length < state.commands.capacity <;>
+            simp [trySubmit, actorTerminal, leaseUsed, requestCapacity,
+              BoundedMpsc.tryPublish, mailboxOpen, commandCapacity,
+              State.LifecycleValid]
+        · simp [trySubmit, actorTerminal, leaseUsed, requestCapacity,
+            State.LifecycleValid, mailboxOpen]
+
 theorem failed_submit_unchanged (state : State) (lease : LeaseId)
     (rejected : (trySubmit state lease).status ≠ .accepted) :
     (trySubmit state lease).state = state := by
@@ -239,11 +259,48 @@ theorem active_requests_are_completion_credits (state : State)
     (valid : state.Valid) : state.requests.length ≤ state.capacity :=
   valid.2.1
 
+theorem nodup_ids_same_request {requests : List Request}
+    (idsUnique : (requests.map Request.id).Nodup)
+    {left right : Request} (leftMember : left ∈ requests)
+    (rightMember : right ∈ requests) (sameId : left.id = right.id) :
+    left = right := by
+  induction requests with
+  | nil => simp at leftMember
+  | cons head remaining inductionHypothesis =>
+      simp only [List.map_cons, List.nodup_cons] at idsUnique
+      rcases idsUnique with ⟨headFresh, remainingUnique⟩
+      simp only [List.mem_cons] at leftMember rightMember
+      rcases leftMember with rfl | leftRemaining
+      · rcases rightMember with rfl | rightRemaining
+        · rfl
+        · exact False.elim (headFresh (List.mem_map.mpr
+            ⟨right, rightRemaining, sameId.symm⟩))
+      · rcases rightMember with rfl | rightRemaining
+        · exact False.elim (headFresh (List.mem_map.mpr
+            ⟨left, leftRemaining, sameId⟩))
+        · exact inductionHypothesis remainingUnique leftRemaining rightRemaining
+
+theorem completion_credit_is_exactly_one (state : State)
+    (requestId : RequestId) (credit : HasCompletionCredit state requestId) :
+    ∃ request ∈ state.requests, request.id = requestId ∧
+      ∀ other ∈ state.requests, other.id = requestId → other = request := by
+  rcases credit with ⟨ownership, request, member, requestIdEqual⟩
+  refine ⟨request, member, requestIdEqual, ?_⟩
+  intro other otherMember otherId
+  exact nodup_ids_same_request ownership.1 otherMember member
+    (otherId.trans requestIdEqual.symm)
+
 theorem accepted_submit_has_completion_credit (before after : State)
     (lease : LeaseId) (requestId : RequestId)
+    (valid : before.OwnershipValid)
     (transition : trySubmit before lease =
       { status := .accepted, requestId := some requestId, state := after }) :
     HasCompletionCredit after requestId := by
+  have ownershipAfter : after.OwnershipValid := by
+    have preserved := trySubmit_preserves_ownership before lease valid
+    rw [transition] at preserved
+    exact preserved
+  refine ⟨ownershipAfter, ?_⟩
   cases terminal : before.terminal with
   | closing => simp [trySubmit, terminal] at transition
   | running =>
@@ -261,7 +318,7 @@ theorem accepted_submit_has_completion_credit (before after : State)
                   simp [trySubmit, terminal, leaseUsed, hasCapacity,
                     publication] at transition
                   rcases transition with ⟨rfl, rfl⟩
-                  simp [HasCompletionCredit]
+                  simp
         · simp [trySubmit, terminal, leaseUsed, hasCapacity] at transition
 
 theorem processOne_preserves_valid (state : State) (valid : state.Valid) :
@@ -365,6 +422,21 @@ theorem dispatch_full_preserves_actor (actor : State)
         cases postedId : (Executor.tryPost executor request.id).taskId <;>
         simp [tryDispatch, completed, postedStatus, postedId] at full ⊢
 
+theorem dispatch_rejected_preserves_executor (actor : State)
+    (executor : Executor.State RequestId) (status : DispatchStatus)
+    (rejected : status ≠ .accepted)
+    (resultStatus : (tryDispatch actor executor).status = status) :
+    (tryDispatch actor executor).executor = executor := by
+  cases completed : firstCompleted actor.requests with
+  | none => simp [tryDispatch, completed]
+  | some selected =>
+      rcases selected with ⟨request, result⟩
+      cases posted : Executor.tryPost executor request.id with
+      | mk postStatus taskId executorAfter =>
+          cases postStatus <;> cases taskId <;>
+            simp [tryDispatch, completed, posted] at resultStatus ⊢
+          exact False.elim (rejected resultStatus.symm)
+
 theorem tryDispatch_preserves_actor_valid (actor : State)
     (executor : Executor.State RequestId) (valid : actor.Valid) :
     (tryDispatch actor executor).actor.Valid := by
@@ -391,6 +463,175 @@ theorem tryDispatch_preserves_actor_ownership (actor : State)
             simpa [tryDispatch, completed, posted, State.OwnershipValid,
               modifyPhase_ids, modifyPhase_leases] using valid
 
+theorem observeDispatchStart_preserves_valid (state : State)
+    (started : Option (Executor.Task RequestId)) (valid : state.Valid) :
+    (observeDispatchStart state started).state.Valid := by
+  cases started with
+  | none => simpa [observeDispatchStart] using valid
+  | some task =>
+      cases found : findRequest state.requests task.payload with
+      | none => simpa [observeDispatchStart, found] using valid
+      | some request =>
+          cases phase : request.phase with
+          | dispatchQueued taskId result =>
+              by_cases sameTask : taskId = task.id <;>
+                simpa [observeDispatchStart, found, phase, sameTask,
+                  State.Valid, modifyPhase_length] using valid
+          | admitted | ready | backendPending | completed | dispatchRunning |
+              delivered =>
+              simpa [observeDispatchStart, found, phase] using valid
+
+theorem observeDispatchStart_preserves_ownership (state : State)
+    (started : Option (Executor.Task RequestId))
+    (valid : state.OwnershipValid) :
+    (observeDispatchStart state started).state.OwnershipValid := by
+  cases started with
+  | none => simpa [observeDispatchStart] using valid
+  | some task =>
+      cases found : findRequest state.requests task.payload with
+      | none => simpa [observeDispatchStart, found] using valid
+      | some request =>
+          cases phase : request.phase with
+          | dispatchQueued taskId result =>
+              by_cases sameTask : taskId = task.id <;>
+                simpa [observeDispatchStart, found, phase, sameTask,
+                  State.OwnershipValid, modifyPhase_ids,
+                  modifyPhase_leases] using valid
+          | admitted | ready | backendPending | completed | dispatchRunning |
+              delivered =>
+              simpa [observeDispatchStart, found, phase] using valid
+
+theorem observeDispatchFinish_preserves_valid (state : State) (taskId : Nat)
+    (finishStatus : Executor.FinishStatus) (valid : state.Valid) :
+    (observeDispatchFinish state taskId finishStatus).state.Valid := by
+  cases finishStatus with
+  | notFound => simpa [observeDispatchFinish] using valid
+  | finished =>
+      cases found : firstDispatchRunning state.requests taskId with
+      | none => simpa [observeDispatchFinish, found] using valid
+      | some request =>
+          cases phase : request.phase <;>
+            simpa [observeDispatchFinish, found, phase, State.Valid,
+              modifyPhase_length] using valid
+
+theorem observeDispatchFinish_preserves_ownership (state : State)
+    (taskId : Nat) (finishStatus : Executor.FinishStatus)
+    (valid : state.OwnershipValid) :
+    (observeDispatchFinish state taskId finishStatus).state.OwnershipValid := by
+  cases finishStatus with
+  | notFound => simpa [observeDispatchFinish] using valid
+  | finished =>
+      cases found : firstDispatchRunning state.requests taskId with
+      | none => simpa [observeDispatchFinish, found] using valid
+      | some request =>
+          cases phase : request.phase <;>
+            simpa [observeDispatchFinish, found, phase, State.OwnershipValid,
+              modifyPhase_ids, modifyPhase_leases] using valid
+
+theorem startDelivery_preserves_actor_valid (actor : State)
+    (executor : Executor.State RequestId) (valid : actor.Valid) :
+    (startDelivery actor executor).actor.Valid := by
+  unfold startDelivery
+  dsimp only
+  split
+  · exact observeDispatchStart_preserves_valid actor
+      (Executor.start executor).task valid
+  · exact valid
+
+theorem startDelivery_preserves_actor_ownership (actor : State)
+    (executor : Executor.State RequestId) (valid : actor.OwnershipValid) :
+    (startDelivery actor executor).actor.OwnershipValid := by
+  unfold startDelivery
+  dsimp only
+  split
+  · exact observeDispatchStart_preserves_ownership actor
+      (Executor.start executor).task valid
+  · exact valid
+
+theorem startDelivery_preserves_executor_valid (actor : State)
+    (executor : Executor.State RequestId) (valid : executor.Valid) :
+    (startDelivery actor executor).executor.Valid := by
+  unfold startDelivery
+  dsimp only
+  split
+  · exact Executor.start_preserves_valid executor valid
+  · exact valid
+
+theorem startDelivery_preserves_executor_identifiers (actor : State)
+    (executor : Executor.State RequestId) (valid : executor.IdentifiersValid) :
+    (startDelivery actor executor).executor.IdentifiersValid := by
+  unfold startDelivery
+  dsimp only
+  split
+  · exact Executor.start_preserves_identifiers executor valid
+  · exact valid
+
+theorem finishDelivery_preserves_actor_valid (actor : State)
+    (executor : Executor.State RequestId) (taskId : Nat)
+    (valid : actor.Valid) :
+    (finishDelivery actor executor taskId).actor.Valid := by
+  unfold finishDelivery
+  dsimp only
+  split
+  · exact observeDispatchFinish_preserves_valid actor taskId
+      (Executor.finish executor taskId).status valid
+  · exact valid
+
+theorem finishDelivery_preserves_actor_ownership (actor : State)
+    (executor : Executor.State RequestId) (taskId : Nat)
+    (valid : actor.OwnershipValid) :
+    (finishDelivery actor executor taskId).actor.OwnershipValid := by
+  unfold finishDelivery
+  dsimp only
+  split
+  · exact observeDispatchFinish_preserves_ownership actor taskId
+      (Executor.finish executor taskId).status valid
+  · exact valid
+
+theorem finishDelivery_preserves_executor_valid (actor : State)
+    (executor : Executor.State RequestId) (taskId : Nat)
+    (valid : executor.Valid) :
+    (finishDelivery actor executor taskId).executor.Valid := by
+  unfold finishDelivery
+  dsimp only
+  split
+  · exact Executor.finish_preserves_valid executor taskId valid
+  · exact valid
+
+theorem finishDelivery_preserves_executor_identifiers (actor : State)
+    (executor : Executor.State RequestId) (taskId : Nat)
+    (valid : executor.IdentifiersValid) :
+    (finishDelivery actor executor taskId).executor.IdentifiersValid := by
+  unfold finishDelivery
+  dsimp only
+  split
+  · exact Executor.finish_preserves_identifiers executor taskId valid
+  · exact valid
+
+theorem acknowledge_dispatchQueued_retains (state : State)
+    (requestId taskId : Nat) (result : Completion)
+    (phase : (findRequest state.requests requestId).map Request.phase =
+      some (.dispatchQueued taskId result)) :
+    (acknowledge state requestId).state = state := by
+  cases found : findRequest state.requests requestId with
+  | none => simp [found] at phase
+  | some request =>
+      have requestPhase : request.phase = .dispatchQueued taskId result := by
+        simpa [found] using phase
+      simp [acknowledge, found, requestPhase]
+
+theorem acknowledge_dispatchRunning_retains (state : State)
+    (requestId taskId : Nat) (result : Completion)
+    (phase : (findRequest state.requests requestId).map Request.phase =
+      some (.dispatchRunning taskId result)) :
+    (acknowledge state requestId).state = state := by
+  cases found : findRequest state.requests requestId with
+  | none => simp [found] at phase
+  | some request =>
+      have requestPhase : request.phase = .dispatchRunning taskId result := by
+        simpa [found] using phase
+      simp [acknowledge, found, requestPhase]
+
 theorem acknowledge_releases_sublist (state : State) (requestId : RequestId) :
     List.Sublist (acknowledge state requestId).state.requests state.requests := by
   cases found : findRequest state.requests requestId with
@@ -409,7 +650,7 @@ theorem acknowledge_released_removes_one (state before : State)
   | some request =>
       cases phase : request.phase <;>
         simp [acknowledge, found, phase] at transition
-      rename_i taskId result
+      rename_i result
       subst before
       exact removeRequest_length_of_find_some found
 
@@ -421,14 +662,15 @@ theorem acknowledge_preserves_valid (state : State) (requestId : RequestId)
       requestsBounded, commandsValid]
   | some request =>
       cases phase : request.phase with
-      | dispatchQueued taskId result =>
+      | delivered result =>
           simp only [acknowledge, found, phase]
           exact ⟨capacityPositive,
             Nat.le_trans
               (removeRequest_sublist state.requests requestId).length_le
               requestsBounded,
             commandsValid⟩
-      | admitted | ready | backendPending | completed =>
+      | admitted | ready | backendPending | completed | dispatchQueued |
+          dispatchRunning =>
           simpa [acknowledge, found, phase, State.Valid] using
             ⟨capacityPositive, requestsBounded, commandsValid⟩
 
@@ -439,7 +681,7 @@ theorem acknowledge_preserves_ownership (state : State)
   | none => simpa [acknowledge, found] using valid
   | some request =>
       cases phase : request.phase with
-      | dispatchQueued taskId result =>
+      | delivered result =>
           rcases valid with
             ⟨idsUnique, leasesUnique, idsBounded, nextIdPositive⟩
           have sublist := removeRequest_sublist state.requests requestId
@@ -449,7 +691,8 @@ theorem acknowledge_preserves_ownership (state : State)
             fun existing member =>
               idsBounded existing ((sublist.map Request.id).subset member),
             nextIdPositive⟩
-      | admitted | ready | backendPending | completed =>
+      | admitted | ready | backendPending | completed | dispatchQueued |
+          dispatchRunning =>
           simpa [acknowledge, found, phase] using valid
 
 theorem close_preserves_valid (state : State) (valid : state.Valid) :
@@ -468,6 +711,13 @@ theorem close_preserves_ownership (state : State)
   cases terminal : state.terminal <;>
     simpa [close, terminal, State.OwnershipValid, cancelAll_ids,
       cancelAll_leases] using valid
+
+theorem close_preserves_lifecycle (state : State)
+    (valid : state.LifecycleValid) : (close state).state.LifecycleValid := by
+  cases actorTerminal : state.terminal <;>
+    cases mailboxTerminal : state.commands.terminal <;>
+      simp [close, actorTerminal, State.LifecycleValid, mailboxTerminal,
+        BoundedMpsc.close] at valid ⊢
 
 theorem close_rejects_submit (state : State) (lease : LeaseId) :
     (trySubmit (close state).state lease).status = .closed := by

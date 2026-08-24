@@ -71,6 +71,63 @@ theorem settle_preserves_valid (state : State α) (valid : state.Valid) :
       by_cases idle : state.queue.isEmpty && state.running.isEmpty <;>
         simpa [settle, terminal, idle, State.Valid] using valid
 
+theorem tryPost_preserves_lifecycle (state : State α) (payload : α)
+    (valid : state.LifecycleValid) :
+    (tryPost state payload).state.LifecycleValid := by
+  cases terminal : state.terminal with
+  | draining | closed =>
+      have preserved := valid
+      simp only [tryPost, terminal, State.LifecycleValid] at preserved ⊢
+      try exact preserved
+  | «open» =>
+      by_cases hasCapacity : state.queue.length < state.capacity <;>
+        simp [tryPost, terminal, hasCapacity, State.LifecycleValid]
+
+theorem start_preserves_lifecycle (state : State α)
+    (valid : state.LifecycleValid) :
+    (start state).state.LifecycleValid := by
+  cases terminal : state.terminal with
+  | closed => simpa [start, terminal, State.LifecycleValid] using valid
+  | «open» | draining =>
+      by_cases permit : state.running.length < state.parallelism
+      · cases queue : state.queue <;>
+          simp [start, terminal, permit, queue, State.LifecycleValid]
+      · simp [start, terminal, permit, State.LifecycleValid]
+
+theorem finish_preserves_lifecycle (state : State α) (taskId : Nat)
+    (valid : state.LifecycleValid) :
+    (finish state taskId).state.LifecycleValid := by
+  cases terminal : state.terminal with
+  | «open» | draining =>
+      by_cases present : taskId ∈ state.running <;>
+        simp [finish, present, terminal, State.LifecycleValid]
+  | closed =>
+      have closedValid : state.queue = [] ∧ state.running = [] := by
+        simpa [State.LifecycleValid, terminal] using valid
+      rcases closedValid with ⟨queueEmpty, runningEmpty⟩
+      simp [finish, terminal, State.LifecycleValid, queueEmpty, runningEmpty]
+
+theorem shutdown_preserves_lifecycle (state : State α)
+    (valid : state.LifecycleValid) :
+    (shutdown state).state.LifecycleValid := by
+  cases terminal : state.terminal with
+  | «open» | draining | closed =>
+      have preserved := valid
+      simp only [shutdown, terminal, State.LifecycleValid] at preserved ⊢
+      try exact preserved
+
+theorem settle_preserves_lifecycle (state : State α)
+    (valid : state.LifecycleValid) :
+    (settle state).state.LifecycleValid := by
+  cases terminal : state.terminal with
+  | «open» | closed =>
+      have preserved := valid
+      simp only [settle, terminal, State.LifecycleValid] at preserved ⊢
+      try exact preserved
+  | draining =>
+      cases queue : state.queue <;> cases running : state.running <;>
+        simp [settle, terminal, queue, running, State.LifecycleValid]
+
 theorem tryPost_preserves_identifiers (state : State α) (payload : α)
     (valid : state.IdentifiersValid) :
     (tryPost state payload).state.IdentifiersValid := by
@@ -162,6 +219,20 @@ theorem accepted_post_appends_once {before after : State α} {payload : α}
         rcases transition with ⟨rfl, rfl⟩
         simp
       · simp [tryPost, terminal, hasCapacity] at transition
+
+theorem rejected_post_unchanged (state : State α) (payload : α)
+    (status : PostStatus) (rejected : status ≠ .accepted)
+    (resultStatus : (tryPost state payload).status = status) :
+    (tryPost state payload).state = state := by
+  cases terminal : state.terminal with
+  | draining | closed => simp [tryPost, terminal]
+  | «open» =>
+      by_cases hasCapacity : state.queue.length < state.capacity
+      · have accepted : (tryPost state payload).status = .accepted := by
+          simp [tryPost, terminal, hasCapacity]
+        rw [accepted] at resultStatus
+        exact False.elim (rejected resultStatus.symm)
+      · simp [tryPost, terminal, hasCapacity]
 
 theorem started_task_is_fifo_head {before after : State α} {task : Task α}
     (transition : start before =

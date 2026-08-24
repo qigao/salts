@@ -45,6 +45,15 @@ def IdentifiersValid (state : State α) : Prop :=
     (∀ taskId ∈ state.knownIds, taskId < state.nextId) ∧
     0 < state.nextId
 
+/-- Closed is a settled terminal state; draining may still retain accepted work. -/
+def LifecycleValid (state : State α) : Prop :=
+  match state.terminal with
+  | .closed => state.queue = [] ∧ state.running = []
+  | .open | .draining => True
+
+def WellFormed (state : State α) : Prop :=
+  state.Valid ∧ state.IdentifiersValid ∧ state.LifecycleValid
+
 end State
 
 inductive PostStatus where

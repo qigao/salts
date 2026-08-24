@@ -127,7 +127,8 @@ and theorem style.
 - [ ] **Step 3: Implement the minimum generic Executor transition system**
 
   Use monotonic nonzero task IDs, bounded queued tasks, positive execution
-  parallelism, unique queued/running IDs, and a completed-ID observation trace.
+  parallelism and unique queued/running IDs. Successful finish is observed in
+  the Actor's bounded delivery phase rather than an unbounded Executor history.
   A rejected transition returns its input state unchanged.
 
 - [ ] **Step 4: Prove Executor safety**
@@ -187,14 +188,17 @@ and theorem style.
   Represent each live request as `{ id, lease, phase }`. Allocate monotonic
   nonzero IDs. Keep result data in `completed`; dispatch posts only the request
   ID to Executor. On Executor `full`, preserve the Actor and Executor states.
+  Retain the request through `DispatchQueued` and `DispatchRunning`; allow
+  acknowledgement only after Executor finish is observed as `Delivered`.
 
 - [ ] **Step 4: Prove Actor safety**
 
   Prove capacity and uniqueness preservation, failed-submit transactional
   ownership, accepted submit adds one request and one command, request slots
   imply completion credit, stale completion leaves terminal state unchanged,
-  dispatch-full preserves completion, acknowledgement releases exactly one
-  request, and close rejects admission.
+  dispatch-full preserves completion, pre-delivery acknowledgement is rejected,
+  delivered acknowledgement releases exactly one request, and close rejects
+  admission.
 
 - [ ] **Step 5: Run focused and aggregate tests**
 
