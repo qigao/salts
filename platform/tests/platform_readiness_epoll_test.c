@@ -17,7 +17,9 @@
 
 enum {
   EPOLL_TEST_TIMEOUT_NS = 2000000000ULL,
-  EPOLL_TEST_QUIESCENCE_YIELDS = 100000
+  EPOLL_TEST_QUIESCENCE_YIELDS = 100000,
+  EPOLL_STRESS_CAPACITY = 3,
+  EPOLL_STRESS_ITERATIONS = 32
 };
 
 typedef struct epoll_callback_probe {
@@ -664,5 +666,81 @@ spec("Platform epoll readiness") {
     (void)close(fds[0]);
     (void)close(fds[1]);
     probe_destroy(&probe);
+  }
+
+  it("keeps bounded native registrations quiescent across repeated reuse") {
+    const turbo_readiness_config config = {EPOLL_STRESS_CAPACITY, 2u};
+    turbo_readiness_reactor reactor = {0};
+    readiness_backend_contract_fixture *fixture;
+    epoll_callback_probe probes[EPOLL_STRESS_CAPACITY];
+    int init_status = TURBO_EINVAL;
+
+    fixture = epoll_backend_contract_create(config, &reactor, &init_status);
+    check_equal(init_status, TURBO_OK);
+    check_not_null(fixture);
+    for (size_t index = 0; index < EPOLL_STRESS_CAPACITY; ++index)
+      probe_init(&probes[index]);
+
+    for (size_t iteration = 0; iteration < EPOLL_STRESS_ITERATIONS; ++iteration) {
+      turbo_readiness_registration registrations[EPOLL_STRESS_CAPACITY] = {{0}};
+      turbo_readiness_registration rejected = {(void *)(uintptr_t)1u};
+      turbo_readiness_stats stats = {0};
+
+      for (size_t index = 0; index < EPOLL_STRESS_CAPACITY; ++index) {
+        check_equal(turbo_readiness_register(
+                        &reactor, epoll_backend_contract_resource(fixture, index),
+                        &registrations[index]),
+                    TURBO_OK);
+      }
+      check_equal(turbo_readiness_register(
+                      &reactor,
+                      epoll_backend_contract_resource(fixture, EPOLL_STRESS_CAPACITY),
+                      &rejected),
+                  TURBO_ENOBUFS);
+      check_null(rejected.impl);
+
+      for (size_t index = 0; index < EPOLL_STRESS_CAPACITY; ++index) {
+        size_t calls_before = probe_calls(&probes[index]);
+
+        check_equal(turbo_readiness_arm(&registrations[index], TURBO_READINESS_EVENT_READ,
+                                        record_callback, &probes[index]),
+                    TURBO_OK);
+        check_equal(epoll_backend_contract_make_readable(fixture, index), TURBO_OK);
+        check_equal(probe_wait_calls(&probes[index], calls_before + 1u), TURBO_OK);
+        check_equal(turbo_readiness_close(&registrations[index]), TURBO_OK);
+        check_null(registrations[index].impl);
+        check_equal(epoll_backend_contract_drain_readable(fixture, index), TURBO_OK);
+        check_equal(turbo_readiness_register(
+                        &reactor, epoll_backend_contract_resource(fixture, index),
+                        &registrations[index]),
+                    TURBO_OK);
+
+        check_equal(turbo_readiness_arm(&registrations[index], TURBO_READINESS_EVENT_READ,
+                                        record_callback, &probes[index]),
+                    TURBO_OK);
+        check_equal(turbo_readiness_unarm(&registrations[index]), TURBO_OK);
+        check_equal(epoll_backend_contract_make_readable(fixture, index), TURBO_OK);
+        check_equal(turbo_readiness_arm(&registrations[index], TURBO_READINESS_EVENT_READ,
+                                        record_callback, &probes[index]),
+                    TURBO_OK);
+        check_equal(probe_wait_calls(&probes[index], calls_before + 2u), TURBO_OK);
+        check_equal(turbo_readiness_close(&registrations[index]), TURBO_OK);
+        check_null(registrations[index].impl);
+        check_equal(probe_calls(&probes[index]), calls_before + 2u);
+        check_equal(epoll_backend_contract_drain_readable(fixture, index), TURBO_OK);
+      }
+
+      check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
+      check_equal(stats.registered_count, (size_t)0u);
+      check_equal(stats.armed_count, (size_t)0u);
+      check_equal(stats.callbacks_inflight, (size_t)0u);
+      check_equal(stats.rejected_full, (uint64_t)(iteration + 1u));
+    }
+
+    check_equal(turbo_readiness_reactor_shutdown(&reactor), TURBO_OK);
+    check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_OK);
+    for (size_t index = 0; index < EPOLL_STRESS_CAPACITY; ++index)
+      probe_destroy(&probes[index]);
+    epoll_backend_contract_destroy(fixture);
   }
 }

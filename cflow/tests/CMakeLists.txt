@@ -36,6 +36,11 @@ cmake_add_test(cflow_readiness_test
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../../platform/tests
   FOLDER "cflow/tests")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   TURBO_ENABLE_EPOLL_READINESS)
+  target_compile_definitions(cflow_readiness_test PRIVATE
+    CFLOW_TEST_EPOLL_READINESS=1)
+endif()
 
 cmake_add_test(cflow_event_mailbox_test
   SOURCES cflow_event_mailbox_test.c

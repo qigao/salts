@@ -10,10 +10,20 @@
 #include <stdint.h>
 #include <string.h>
 
+#if defined(CFLOW_TEST_EPOLL_READINESS)
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 enum {
     CFLOW_READINESS_TEST_RESOURCE = 7001,
     CFLOW_READINESS_TEST_OTHER_RESOURCE = 7002,
-    CFLOW_READINESS_TEST_TIMEOUT_NS = 2 * 1000 * 1000 * 1000
+    CFLOW_READINESS_TEST_TIMEOUT_NS = 2 * 1000 * 1000 * 1000,
+    CFLOW_DIFFERENTIAL_VALUE_COUNT = 3,
+    CFLOW_DIFFERENTIAL_DEMAND = 5,
+    CFLOW_DIFFERENTIAL_ITERATIONS = 16,
+    CFLOW_NATIVE_QUIESCENCE_YIELDS = 100000
 };
 
 typedef struct managed_test_value {
@@ -72,6 +82,15 @@ typedef struct sink_probe {
     size_t done_count;
     const char *error;
 } sink_probe;
+
+typedef struct differential_observation {
+    int values[CFLOW_DIFFERENTIAL_VALUE_COUNT];
+    size_t value_count;
+    size_t done_count;
+    size_t outstanding_demand;
+    bool done;
+    bool errored;
+} differential_observation;
 
 typedef struct fake_env {
     const readiness_contract_factory *factory;
@@ -210,6 +229,287 @@ static int make_source(fake_env *env, intptr_t resource, read_probe *probe,
         source, &env->owner, registration, TURBO_READINESS_EVENT_READ,
         "reactor-test", &cmeta_type_int, probe_read, probe_close, probe);
 }
+
+static void capture_observation(differential_observation *out,
+                                const sink_probe *sink,
+                                const cflow_run *run) {
+    memset(out, 0, sizeof(*out));
+    out->value_count = sink->value_count;
+    out->done_count = sink->done_count;
+    out->outstanding_demand = cflow_run_outstanding_demand(run);
+    out->done = cflow_run_is_done(run);
+    out->errored = sink->error != NULL || cflow_run_error(run) != NULL;
+    for (size_t index = 0; index < sink->value_count &&
+                           index < CFLOW_DIFFERENTIAL_VALUE_COUNT;
+         ++index)
+        out->values[index] = sink->values[index];
+}
+
+static void run_array_differential(const int *values,
+                                   differential_observation *out) {
+    cflow_source source = {0};
+    cflow_graph graph = {0};
+    cflow_scheduler scheduler = {0};
+    cflow_run run = {0};
+    sink_probe observed = {0};
+    cflow_sink_callbacks callbacks = {
+        sink_value, sink_error, sink_done, &observed
+    };
+    cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+
+    cflow_graph_init(&graph, &cmeta_type_int);
+    check_true(cflow_scheduler_test_init(&scheduler));
+    check_true(cflow_source_from_array(&source, &cmeta_type_int, values,
+                                       CFLOW_DIFFERENTIAL_VALUE_COUNT));
+    check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
+    check_true(cflow_run_request(&run, CFLOW_DIFFERENTIAL_DEMAND));
+    (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+    capture_observation(out, &observed, &run);
+
+    cflow_run_close(&run);
+    cflow_scheduler_destroy(&scheduler);
+    cflow_graph_destroy(&graph);
+}
+
+static void run_fake_readiness_differential(const int *values,
+                                            differential_observation *out) {
+    fake_env env;
+    turbo_readiness_registration registration = {0};
+    turbo_readiness_stats stats = {0};
+    cflow_source source = {0};
+    cflow_graph graph = {0};
+    cflow_scheduler scheduler = {0};
+    cflow_run run = {0};
+    read_probe read = {
+        {CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE,
+         CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE,
+         CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE_AND_DONE},
+        {0}, 6u, 0u, 0u, 0u, {NULL}
+    };
+    sink_probe observed = {0};
+    cflow_sink_callbacks callbacks = {
+        sink_value, sink_error, sink_done, &observed
+    };
+    cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+
+    read.values[1] = values[0];
+    read.values[3] = values[1];
+    read.values[5] = values[2];
+    check_true(fake_env_init(&env, 1u));
+    check_equal(make_source(&env, CFLOW_READINESS_TEST_RESOURCE, &read,
+                            &source, &registration), TURBO_OK);
+    check_null(registration.impl);
+    check_not_null(env.owner.impl);
+    cflow_graph_init(&graph, &cmeta_type_int);
+    check_true(cflow_scheduler_test_init(&scheduler));
+    check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
+    check_true(cflow_run_request(&run, CFLOW_DIFFERENTIAL_DEMAND));
+    (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+
+    for (size_t index = 0; index < CFLOW_DIFFERENTIAL_VALUE_COUNT; ++index) {
+        check_equal(env.factory->emit_resource(
+                        env.fixture, CFLOW_READINESS_TEST_RESOURCE,
+                        TURBO_READINESS_EVENT_READ), TURBO_OK);
+        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+        check_equal(observed.value_count, index + 1u);
+    }
+    capture_observation(out, &observed, &run);
+
+    cflow_run_close(&run);
+    check_equal(read.closes, (size_t)1u);
+    check_equal(turbo_readiness_reactor_stats(&env.reactor, &stats), TURBO_OK);
+    check_equal(stats.registered_count, (size_t)0u);
+    check_equal(stats.armed_count, (size_t)0u);
+    check_equal(stats.callbacks_inflight, (size_t)0u);
+    check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+    check_null(env.owner.impl);
+    cflow_scheduler_destroy(&scheduler);
+    cflow_graph_destroy(&graph);
+    fake_env_destroy(&env);
+}
+
+static void check_differential_observation(
+    const differential_observation *array,
+    const differential_observation *readiness,
+    const int *expected_values) {
+    check_equal(array->value_count, (size_t)CFLOW_DIFFERENTIAL_VALUE_COUNT);
+    check_equal(readiness->value_count, array->value_count);
+    check_equal(array->values, expected_values,
+                sizeof(int) * CFLOW_DIFFERENTIAL_VALUE_COUNT);
+    check_equal(readiness->values, array->values,
+                sizeof(int) * CFLOW_DIFFERENTIAL_VALUE_COUNT);
+    check_equal(readiness->done_count, array->done_count);
+    check_equal(readiness->errored, array->errored);
+    check_equal(readiness->outstanding_demand, array->outstanding_demand);
+    check_equal(readiness->done, array->done);
+    check_equal(array->done_count, (size_t)1u);
+    check_false(array->errored);
+    check_true(array->done);
+    check_equal(array->outstanding_demand,
+                (size_t)(CFLOW_DIFFERENTIAL_DEMAND -
+                         CFLOW_DIFFERENTIAL_VALUE_COUNT));
+}
+
+#if defined(CFLOW_TEST_EPOLL_READINESS)
+typedef struct native_pipe_read_probe {
+    int read_fd;
+    size_t closes;
+} native_pipe_read_probe;
+
+static int set_nonblocking_fd(int fd) {
+    int flags;
+    do {
+        flags = fcntl(fd, F_GETFL);
+    } while (flags < 0 && errno == EINTR);
+    if (flags < 0)
+        return -errno;
+    while (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        if (errno != EINTR)
+            return -errno;
+    }
+    return TURBO_OK;
+}
+
+static int make_native_pipe(int fds[2]) {
+    int status;
+    if (pipe(fds) != 0)
+        return -errno;
+    status = set_nonblocking_fd(fds[0]);
+    if (status == TURBO_OK)
+        status = set_nonblocking_fd(fds[1]);
+    if (status != TURBO_OK) {
+        (void)close(fds[0]);
+        (void)close(fds[1]);
+    }
+    return status;
+}
+
+static int write_native_int(int fd, int value) {
+    ssize_t written;
+    do {
+        written = write(fd, &value, sizeof(value));
+    } while (written < 0 && errno == EINTR);
+    return written == (ssize_t)sizeof(value) ? TURBO_OK : -errno;
+}
+
+static cflow_read_status native_pipe_read(void *user, void *out_value,
+                                          const char **error) {
+    native_pipe_read_probe *probe = (native_pipe_read_probe *)user;
+    ssize_t count;
+    do {
+        count = read(probe->read_fd, out_value, sizeof(int));
+    } while (count < 0 && errno == EINTR);
+    if (count == (ssize_t)sizeof(int))
+        return CFLOW_READ_VALUE;
+    if (count == 0)
+        return CFLOW_READ_DONE;
+    if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        return CFLOW_READ_WOULD_BLOCK;
+    if (error)
+        *error = "native pipe read failed";
+    return CFLOW_READ_ERROR;
+}
+
+static void native_pipe_close(void *user) {
+    native_pipe_read_probe *probe = (native_pipe_read_probe *)user;
+    if (probe->read_fd >= 0) {
+        (void)close(probe->read_fd);
+        probe->read_fd = -1;
+    }
+    probe->closes += 1u;
+}
+
+static int wait_native_callback_quiescent(
+    turbo_readiness_reactor *reactor) {
+    for (size_t attempt = 0u;
+         attempt < CFLOW_NATIVE_QUIESCENCE_YIELDS; ++attempt) {
+        turbo_readiness_stats stats = {0};
+        int status = turbo_readiness_reactor_stats(reactor, &stats);
+        if (status != TURBO_OK)
+            return status;
+        if (stats.registered_count == 1u && stats.armed_count == 0u &&
+            stats.callbacks_inflight == 0u)
+            return TURBO_OK;
+        turbo_thread_yield();
+    }
+    return TURBO_ETIMEDOUT;
+}
+
+static void run_native_readiness_differential(
+    const int *values, differential_observation *out) {
+    const turbo_readiness_config config = {1u, 1u};
+    turbo_readiness_reactor reactor = {0};
+    turbo_readiness_registration registration = {0};
+    turbo_readiness_stats stats = {0};
+    cflow_reactor_source_owner owner = {0};
+    cflow_source source = {0};
+    cflow_graph graph = {0};
+    cflow_scheduler scheduler = {0};
+    cflow_run run = {0};
+    native_pipe_read_probe read = {-1, 0u};
+    sink_probe observed = {0};
+    cflow_sink_callbacks callbacks = {
+        sink_value, sink_error, sink_done, &observed
+    };
+    cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+    int fds[2] = {-1, -1};
+
+    check_equal(make_native_pipe(fds), TURBO_OK);
+    read.read_fd = fds[0];
+    check_equal(turbo_readiness_reactor_init(&reactor, &config), TURBO_OK);
+    check_equal(turbo_readiness_register(&reactor, read.read_fd, &registration),
+                TURBO_OK);
+    check_equal(cflow_source_from_reactor_registration(
+                    &source, &owner, &registration,
+                    TURBO_READINESS_EVENT_READ | TURBO_READINESS_EVENT_HANGUP,
+                    "native-pipe", &cmeta_type_int, native_pipe_read,
+                    native_pipe_close, &read), TURBO_OK);
+    check_null(registration.impl);
+    check_not_null(owner.impl);
+    cflow_graph_init(&graph, &cmeta_type_int);
+    check_true(cflow_scheduler_test_init(&scheduler));
+    check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
+    check_true(cflow_run_request(&run, CFLOW_DIFFERENTIAL_DEMAND));
+    (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+
+    for (size_t index = 0; index < CFLOW_DIFFERENTIAL_VALUE_COUNT; ++index) {
+        check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
+        check_equal(stats.registered_count, (size_t)1u);
+        check_equal(stats.armed_count, (size_t)1u);
+        check_equal(stats.callbacks_inflight, (size_t)0u);
+        check_equal(write_native_int(fds[1], values[index]), TURBO_OK);
+        check_equal(wait_native_callback_quiescent(&reactor),
+                    TURBO_OK);
+        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+        check_equal(observed.value_count, index + 1u);
+        check_null(observed.error);
+    }
+    check_equal(close(fds[1]), 0);
+    fds[1] = -1;
+    check_equal(wait_native_callback_quiescent(&reactor), TURBO_OK);
+    (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+    check_equal(observed.done_count, (size_t)1u);
+    check_null(observed.error);
+    capture_observation(out, &observed, &run);
+
+    check_not_equal(read.read_fd, -1);
+    cflow_run_close(&run);
+    check_equal(read.closes, (size_t)1u);
+    check_equal(read.read_fd, -1);
+    check_equal(cflow_reactor_source_owner_close(&owner), TURBO_OK);
+    check_null(owner.impl);
+    check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
+    check_equal(stats.registered_count, (size_t)0u);
+    check_equal(stats.armed_count, (size_t)0u);
+    check_equal(stats.callbacks_inflight, (size_t)0u);
+    check_equal(turbo_readiness_reactor_shutdown(&reactor), TURBO_OK);
+    check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_OK);
+    cflow_scheduler_destroy(&scheduler);
+    cflow_graph_destroy(&graph);
+    if (fds[1] >= 0)
+        (void)close(fds[1]);
+}
+#endif
 
 suite("CFlow reactor registration Source") {
     it("keeps caller registration ownership on precise admission failure") {
@@ -752,4 +1052,33 @@ suite("CFlow reactor registration Source") {
         turbo_mutex_destroy(&wake.lock);
         fake_env_destroy(&env);
     }
+
+    it("matches synchronous array observations under bounded readiness reuse") {
+        for (size_t iteration = 0;
+             iteration < CFLOW_DIFFERENTIAL_ITERATIONS; ++iteration) {
+            int values[CFLOW_DIFFERENTIAL_VALUE_COUNT] = {
+                (int)(iteration * 10u + 1u),
+                (int)(iteration * 10u + 4u),
+                (int)(iteration * 10u + 9u)
+            };
+            differential_observation array = {0};
+            differential_observation readiness = {0};
+
+            run_array_differential(values, &array);
+            run_fake_readiness_differential(values, &readiness);
+            check_differential_observation(&array, &readiness, values);
+        }
+    }
+
+#if defined(CFLOW_TEST_EPOLL_READINESS)
+    it("matches synchronous array observations through a native pipe") {
+        const int values[CFLOW_DIFFERENTIAL_VALUE_COUNT] = {31, 47, 59};
+        differential_observation array = {0};
+        differential_observation readiness = {0};
+
+        run_array_differential(values, &array);
+        run_native_readiness_differential(values, &readiness);
+        check_differential_observation(&array, &readiness, values);
+    }
+#endif
 }

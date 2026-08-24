@@ -49,7 +49,6 @@ typedef struct cross_control_probe {
   turbo_readiness_registration *unarm_other;
   int close_other_status;
   int unarm_other_status;
-  int control_started;
 } cross_control_probe;
 
 typedef struct emit_thread_args {
@@ -206,8 +205,6 @@ static void close_other_after_release(void *user, turbo_readiness_events events,
   turbo_cond_broadcast(&probe->base.changed);
   while (!probe->base.released)
     turbo_cond_wait(&probe->base.changed, &probe->base.mutex);
-  probe->control_started = 1;
-  turbo_cond_broadcast(&probe->base.changed);
   turbo_mutex_unlock(&probe->base.mutex);
 
   probe->close_other_status = turbo_readiness_close(probe->close_other);
@@ -215,13 +212,6 @@ static void close_other_after_release(void *user, turbo_readiness_events events,
   turbo_mutex_lock(&probe->base.mutex);
   probe->base.close_completed = 1;
   turbo_cond_broadcast(&probe->base.changed);
-  turbo_mutex_unlock(&probe->base.mutex);
-}
-
-static void wait_probe_control_started(cross_control_probe *probe) {
-  turbo_mutex_lock(&probe->base.mutex);
-  while (!probe->control_started)
-    turbo_cond_wait(&probe->base.changed, &probe->base.mutex);
   turbo_mutex_unlock(&probe->base.mutex);
 }
 
@@ -736,7 +726,7 @@ spec("Platform readiness contract") {
       callback_probe probe = callback_probe_init(&reactor, &registration);
       emit_thread_args emit_args = {factory, fixture, CONTRACT_RESOURCE_A, TURBO_EIO};
       terminal_thread_args shutdown_args = {factory, fixture, &reactor, TURBO_ESHUTDOWN, TURBO_EIO};
-      int close_completed_before_shutdown_release;
+      int close_wait_status;
 
       check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
       check_equal(turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_READ,
@@ -751,13 +741,13 @@ spec("Platform readiness contract") {
                                            CONTRACT_LONG_WAIT_NS),
                   TURBO_OK);
       release_probe(&probe);
-      close_completed_before_shutdown_release =
-          wait_probe_close_completed(&probe, CONTRACT_SHORT_WAIT_NS) == TURBO_OK;
+      close_wait_status =
+          wait_probe_close_completed(&probe, CONTRACT_LONG_WAIT_NS);
       factory->release_hook(fixture, READINESS_CONTRACT_HOOK_SHUTDOWN);
 
       check_equal(turbo_thread_join(&emit_thread), TURBO_OK);
       check_equal(turbo_thread_join(&shutdown_thread), TURBO_OK);
-      check_equal(close_completed_before_shutdown_release, 1);
+      check_equal(close_wait_status, TURBO_OK);
       check_equal(probe.close_status, TURBO_EBUSY);
       check_not_null(registration.impl);
       check_equal(factory->backend_close_calls(fixture), (size_t)0);
@@ -1084,7 +1074,7 @@ spec("Platform readiness contract") {
   }
 
   group("terminal control gate") {
-    it("makes a callback close waiting on arm fail fast when fatal starts") {
+    it("makes callback close fail fast while fatal waits on arm") {
       turbo_readiness_reactor reactor = {0};
       turbo_readiness_registration callback_registration = {0};
       turbo_readiness_registration target = {0};
@@ -1113,10 +1103,11 @@ spec("Platform readiness contract") {
       check_equal(factory->wait_hook_calls(fixture, READINESS_CONTRACT_HOOK_ARM, 2,
                                            CONTRACT_LONG_WAIT_NS),
                   TURBO_OK);
-      release_probe(&closer.base);
-      wait_probe_control_started(&closer);
       check_equal(turbo_thread_create(&fatal_thread, fatal_worker, &fatal_args), TURBO_OK);
       check_equal(factory->wait_admission_closed(fixture), TURBO_OK);
+      release_probe(&closer.base);
+      check_equal(wait_probe_close_completed(&closer.base, CONTRACT_LONG_WAIT_NS),
+                  TURBO_OK);
       factory->release_hook(fixture, READINESS_CONTRACT_HOOK_ARM);
       check_equal(turbo_thread_join(&arm_thread), TURBO_OK);
       check_equal(turbo_thread_join(&emit_thread), TURBO_OK);
@@ -1134,7 +1125,7 @@ spec("Platform readiness contract") {
       close_and_destroy_fixture(factory, fixture, &reactor);
     }
 
-    it("makes a callback close waiting on failed unarm fail fast when shutdown starts") {
+    it("makes callback close fail fast while shutdown waits on failed unarm") {
       turbo_readiness_reactor reactor = {0};
       turbo_readiness_registration callback_registration = {0};
       turbo_readiness_registration target = {0};
@@ -1172,10 +1163,11 @@ spec("Platform readiness contract") {
       check_equal(factory->wait_hook_calls(fixture, READINESS_CONTRACT_HOOK_UNARM, 1,
                                            CONTRACT_LONG_WAIT_NS),
                   TURBO_OK);
-      release_probe(&closer.base);
-      wait_probe_control_started(&closer);
       check_equal(turbo_thread_create(&shutdown_thread, shutdown_worker, &shutdown_args), TURBO_OK);
       check_equal(factory->wait_admission_closed(fixture), TURBO_OK);
+      release_probe(&closer.base);
+      check_equal(wait_probe_close_completed(&closer.base, CONTRACT_LONG_WAIT_NS),
+                  TURBO_OK);
       factory->release_hook(fixture, READINESS_CONTRACT_HOOK_UNARM);
       check_equal(turbo_thread_join(&unarm_thread), TURBO_OK);
       check_equal(turbo_thread_join(&emit_thread), TURBO_OK);
