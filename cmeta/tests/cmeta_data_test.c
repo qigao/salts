@@ -479,6 +479,11 @@ spec("CMeta semantic data descriptors") {
     check_equal(cmeta_data_enum_restore_zero(&desc, &object), CMETA_OK);
     check_equal(CMETA_ENUM_TO_INT64(object), INT64_C(0));
 
+    object = CMETA_ENUM_FROM_INT64(cmeta_data_test_state, 99);
+    check_equal(cmeta_data_enum_read(&desc, &object, &value),
+                CMETA_CALLBACK_ERROR);
+    check_equal(cmeta_data_enum_restore_zero(&desc, &object), CMETA_OK);
+
     check_equal(cmeta_data_enum_assign(&desc, &object, INT64_C(99)),
                 CMETA_INVALID_ARGUMENT);
     check_equal(CMETA_ENUM_TO_INT64(object), INT64_C(0));
@@ -576,6 +581,11 @@ spec("CMeta semantic data descriptors") {
     check_equal(tag, INT64_C(1));
     check_equal(cmeta_data_variant_restore_zero(&desc, &object), CMETA_OK);
     check_equal(object.tag, 0);
+
+    object.tag = 99;
+    check_equal(cmeta_data_variant_active_tag(&desc, &object, &tag),
+                CMETA_CALLBACK_ERROR);
+    check_equal(cmeta_data_variant_restore_zero(&desc, &object), CMETA_OK);
 
     check_equal(cmeta_data_variant_select(&desc, &object, INT64_C(99)),
                 CMETA_INVALID_ARGUMENT);

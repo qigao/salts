@@ -57,6 +57,14 @@ cbind_status cbind_validate_struct_graph(
     size_t *max_scratch,
     cbind_error *error);
 
+cbind_status cbind_measure_struct_resources(
+    const cbind_context *context,
+    const cmeta_data_desc *shape,
+    size_t depth,
+    size_t active_scratch,
+    size_t *max_scratch,
+    cbind_error *error);
+
 cbind_status cbind_validate_variant_graph(
     const cbind_context *context,
     const cmeta_data_desc *shape,

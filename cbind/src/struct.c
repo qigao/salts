@@ -111,7 +111,7 @@ static cbind_status cbind_validate_struct_shape(
     return CBIND_OK;
 }
 
-static cbind_status cbind_measure_struct_resources(
+cbind_status cbind_measure_struct_resources(
     const cbind_context *context,
     const cmeta_data_desc *shape,
     size_t depth,

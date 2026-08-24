@@ -140,8 +140,8 @@ cbind_status cbind_measure_variant_resources(
         cbind_status status;
 
         if (child->kind == CMETA_DATA_STRUCT) {
-            status = cbind_validate_struct_graph(
-                context, child, current_depth, NULL, active_scratch,
+            status = cbind_measure_struct_resources(
+                context, child, current_depth, active_scratch,
                 max_scratch, error);
         } else if (child->kind == CMETA_DATA_VARIANT) {
             status = cbind_measure_variant_resources(

@@ -328,13 +328,22 @@ cmeta_status cmeta_data_enum_is_zero(
 
 cmeta_status cmeta_data_enum_read(
     const cmeta_data_desc *desc, const void *object, int64_t *out) {
+    const cmeta_data_enum_shape *shape;
     const cmeta_data_enum_ops *ops = NULL;
     cmeta_status status;
 
     if (object == NULL || out == NULL)
         return CMETA_INVALID_ARGUMENT;
     status = cmeta_data_enum_ops_status(desc, &ops);
-    return status == CMETA_OK ? ops->read(object, out) : status;
+    if (status != CMETA_OK)
+        return status;
+    status = ops->read(object, out);
+    if (status != CMETA_OK)
+        return status;
+    shape = (const cmeta_data_enum_shape *)desc->shape;
+    return cmeta_enum_item_by_value(shape->meta, *out) != NULL
+               ? CMETA_OK
+               : CMETA_CALLBACK_ERROR;
 }
 
 cmeta_status cmeta_data_enum_assign(
@@ -432,6 +441,7 @@ cmeta_status cmeta_data_variant_is_zero(
 
 cmeta_status cmeta_data_variant_active_tag(
     const cmeta_data_desc *desc, const void *object, int64_t *out) {
+    const cmeta_data_variant_shape *shape;
     const cmeta_data_variant_ops *ops = NULL;
     cmeta_status status;
 
@@ -442,7 +452,13 @@ cmeta_status cmeta_data_variant_active_tag(
         return status;
     if (ops->is_zero(object))
         return CMETA_INVALID_ARGUMENT;
-    return ops->active_tag(object, out);
+    status = ops->active_tag(object, out);
+    if (status != CMETA_OK)
+        return status;
+    shape = (const cmeta_data_variant_shape *)desc->shape;
+    return cmeta_data_variant_case_by_tag(shape, *out) != NULL
+               ? CMETA_OK
+               : CMETA_CALLBACK_ERROR;
 }
 
 cmeta_status cmeta_data_variant_select(
