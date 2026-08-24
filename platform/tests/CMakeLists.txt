@@ -24,3 +24,15 @@ set_target_properties(platform_header_cpp_test PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON
   CXX_EXTENSIONS OFF)
+
+cmake_add_test(platform_readiness_fake_test
+  SOURCES
+    platform_readiness_fake_test.c
+    readiness_contract_suite.c
+    readiness_fake_backend.c
+  LIBS TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "platform/tests")
+set_target_properties(platform_readiness_fake_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)

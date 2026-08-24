@@ -8,6 +8,7 @@ endif()
 
 add_library(${TARGET_NAME} STATIC
   src/clock.c
+  src/readiness.c
   ${TURBO_PLATFORM_THREAD_SOURCE})
 
 cmake_config_target(
