@@ -45,6 +45,7 @@ add_library(${TARGET_NAME}
   src/plan_exec.c
   src/plan_parallel_reduce.c
   src/property.c
+  src/readiness.c
   src/reactive.c
   src/relation_exec.c
   src/runtime.c
@@ -77,8 +78,8 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC TurboUtils::CMeta
-  PRIVATE TurboUtils::Platform TurboUtils::Concurrency)
+  PUBLIC TurboUtils::CMeta TurboUtils::Platform
+  PRIVATE TurboUtils::Concurrency)
 
 install(
   TARGETS ${TARGET_NAME}

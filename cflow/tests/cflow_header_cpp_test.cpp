@@ -19,6 +19,17 @@ static_assert(std::is_standard_layout<cflow_machine_instance_config>::value,
               "machine runtime config must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_machine_transition>::value,
               "cflow_machine_transition must remain a C-compatible row");
+static_assert(std::is_standard_layout<turbo_readiness_registration>::value,
+              "reactor registration must remain a C-compatible handle");
+
+using cflow_reactor_factory = int (*)(
+    cflow_source *, turbo_readiness_registration *, turbo_readiness_events,
+    const char *, const cmeta_type_desc *, cflow_read_fn,
+    cflow_resource_close_fn, void *);
+static_assert(std::is_same<
+                  decltype(&cflow_source_from_reactor_registration),
+                  cflow_reactor_factory>::value,
+              "reactor Source factory must keep its C linkage signature");
 
 suite("CFlow C++ public header") {
     it("exposes the aggregate API to C++ consumers") {

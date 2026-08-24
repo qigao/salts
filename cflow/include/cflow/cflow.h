@@ -18,6 +18,7 @@
 #include <cflow/machine.h>
 #include <cflow/machine_runtime.h>
 #include <cflow/sources.h>
+#include <cflow/readiness.h>
 #include <cflow/reactive.h>
 #include <cflow/adapters.h>
 #include <cflow/coord.h>
