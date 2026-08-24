@@ -57,6 +57,7 @@ spec("tinytest runtime regression") {
     check_equal(entry.bytes_per_sample, 1024 * 1024);
     check_true(entry.tracks_bytes);
     check_within(entry.avg_op_us, 200.0, 0.001);
+    check_within(entry.avg_sample_us, 2000.0, 0.001);
     check_within(entry.min_sample_us, 1500.0, 0.001);
     check_within(entry.max_sample_us, 2500.0, 0.001);
     check_within(entry.ops_s, 5000.0, 0.001);
