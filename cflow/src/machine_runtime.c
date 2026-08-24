@@ -20,6 +20,26 @@ typedef enum cflow_machine_ready_kind {
     CFLOW_MACHINE_READY_ERROR
 } cflow_machine_ready_kind;
 
+typedef enum cflow_machine_control_lifecycle {
+    CFLOW_MACHINE_CONTROL_OPEN = 0,
+    CFLOW_MACHINE_CONTROL_CLOSE_REQUESTED,
+    CFLOW_MACHINE_CONTROL_CANCEL_REQUESTED,
+    CFLOW_MACHINE_CONTROL_TERMINAL
+} cflow_machine_control_lifecycle;
+
+typedef enum cflow_machine_worker_phase {
+    CFLOW_MACHINE_WORKER_IDLE = 0,
+    CFLOW_MACHINE_WORKER_SCHEDULED,
+    CFLOW_MACHINE_WORKER_EXECUTING,
+    CFLOW_MACHINE_WORKER_COMMITTING
+} cflow_machine_worker_phase;
+
+typedef enum cflow_machine_commit_decision {
+    CFLOW_MACHINE_COMMIT_ALLOWED = 0,
+    CFLOW_MACHINE_COMMIT_CANCELLED,
+    CFLOW_MACHINE_COMMIT_INVALID
+} cflow_machine_commit_decision;
+
 typedef struct cflow_machine_instance_impl {
     const cflow_machine *machine;
     cflow_executor *executor;
@@ -51,10 +71,10 @@ typedef struct cflow_machine_instance_impl {
     bool cancelled;
     bool done;
     bool adapter_attached;
-    bool task_scheduled;
-    bool task_running;
     bool rerun;
     bool mailbox_armed;
+    cflow_machine_control_lifecycle lifecycle;
+    cflow_machine_worker_phase worker_phase;
     cflow_waitable mailbox_waitable;
     cflow_waker downstream_waiter;
     cflow_waker terminal_waiter;
@@ -157,6 +177,28 @@ static cflow_waker take_terminal_waiter_locked(
     return waker;
 }
 
+static void publish_control_terminal_locked(
+    cflow_machine_instance_impl *impl) {
+    impl->lifecycle = CFLOW_MACHINE_CONTROL_TERMINAL;
+    impl->done = true;
+    if (impl->ready == CFLOW_MACHINE_READY_VALUE)
+        impl->ready = CFLOW_MACHINE_READY_VALUE_AND_DONE;
+    else if (impl->ready == CFLOW_MACHINE_READY_NONE)
+        impl->ready = CFLOW_MACHINE_READY_DONE;
+}
+
+static cflow_machine_commit_decision begin_commit_locked(
+    cflow_machine_instance_impl *impl) {
+    if (impl->lifecycle == CFLOW_MACHINE_CONTROL_CANCEL_REQUESTED)
+        return CFLOW_MACHINE_COMMIT_CANCELLED;
+    if (impl->worker_phase != CFLOW_MACHINE_WORKER_EXECUTING ||
+        (impl->lifecycle != CFLOW_MACHINE_CONTROL_OPEN &&
+         impl->lifecycle != CFLOW_MACHINE_CONTROL_CLOSE_REQUESTED))
+        return CFLOW_MACHINE_COMMIT_INVALID;
+    impl->worker_phase = CFLOW_MACHINE_WORKER_COMMITTING;
+    return CFLOW_MACHINE_COMMIT_ALLOWED;
+}
+
 static void cancel_mailbox(cflow_machine_instance_impl *impl) {
     if (impl->mailbox_initialized)
         (void)cflow_mailbox_cancel(&impl->mailbox);
@@ -168,12 +210,14 @@ static void fail_runtime(cflow_machine_instance_impl *impl,
     char *copy;
     cflow_waker waker = {0};
     cflow_waker terminal_waker = {0};
+    bool cancel_won = false;
     if (impl == NULL) return;
     copy = runtime_copy_error(message);
     if (impl->commit_hook != NULL)
         impl->commit_hook(impl->commit_user, SIZE_MAX, true);
     turbo_mutex_lock(&impl->lock);
-    if (impl->error == NULL) {
+    cancel_won = impl->lifecycle == CFLOW_MACHINE_CONTROL_CANCEL_REQUESTED;
+    if (!cancel_won && impl->error == NULL) {
         if (copy != NULL) {
             impl->error = copy;
             impl->error_owned = true;
@@ -184,10 +228,18 @@ static void fail_runtime(cflow_machine_instance_impl *impl,
     }
     if (settle_current_event) {
         if (impl->in_flight != 0u) --impl->in_flight;
-        if (impl->failed != UINT64_MAX) ++impl->failed;
+        if (cancel_won) {
+            if (impl->cancelled_in_flight != UINT64_MAX)
+                ++impl->cancelled_in_flight;
+        } else if (impl->failed != UINT64_MAX) {
+            ++impl->failed;
+        }
     }
+    impl->worker_phase = CFLOW_MACHINE_WORKER_IDLE;
+    impl->lifecycle = CFLOW_MACHINE_CONTROL_TERMINAL;
     impl->done = true;
-    impl->ready = CFLOW_MACHINE_READY_ERROR;
+    impl->ready = cancel_won
+        ? CFLOW_MACHINE_READY_DONE : CFLOW_MACHINE_READY_ERROR;
     waker = take_downstream_waiter_locked(impl);
     terminal_waker = take_terminal_waiter_locked(impl);
     turbo_mutex_unlock(&impl->lock);
@@ -372,6 +424,8 @@ static void publish_done(cflow_machine_instance_impl *impl,
     if (impl->commit_hook != NULL)
         impl->commit_hook(impl->commit_user, SIZE_MAX, true);
     turbo_mutex_lock(&impl->lock);
+    impl->worker_phase = CFLOW_MACHINE_WORKER_IDLE;
+    impl->lifecycle = CFLOW_MACHINE_CONTROL_TERMINAL;
     impl->done = true;
     impl->ready = ready;
     waker = take_downstream_waiter_locked(impl);
@@ -389,11 +443,14 @@ static bool settle_cancelled_in_flight(cflow_machine_instance_impl *impl) {
     cflow_waker terminal_waker = {0};
     bool cancelled;
     turbo_mutex_lock(&impl->lock);
-    cancelled = impl->cancelled;
+    cancelled =
+        impl->lifecycle == CFLOW_MACHINE_CONTROL_CANCEL_REQUESTED;
     if (cancelled) {
         if (impl->in_flight != 0u) --impl->in_flight;
         if (impl->cancelled_in_flight != UINT64_MAX)
             ++impl->cancelled_in_flight;
+        impl->worker_phase = CFLOW_MACHINE_WORKER_IDLE;
+        impl->lifecycle = CFLOW_MACHINE_CONTROL_TERMINAL;
         impl->done = true;
         impl->ready = CFLOW_MACHINE_READY_DONE;
         waker = take_downstream_waiter_locked(impl);
@@ -415,9 +472,13 @@ static bool process_event(cflow_machine_instance_impl *impl,
     const cflow_machine_state *target;
     const char *error = NULL;
     cflow_waker waker = {0};
+    cflow_waker terminal_waker = {0};
     bool runtime_closed = false;
+    bool cancel_won = false;
+    bool invalid_commit = false;
     size_t transition_index = 0u;
 
+    if (settle_cancelled_in_flight(impl)) return false;
     transition = select_transition(impl, event_id, event_value, &error,
                                    &transition_index);
     if (settle_cancelled_in_flight(impl)) return false;
@@ -452,6 +513,38 @@ static bool process_event(cflow_machine_instance_impl *impl,
     if (impl->commit_hook != NULL)
         impl->commit_hook(impl->commit_user, transition_index, true);
     turbo_mutex_lock(&impl->lock);
+    switch (begin_commit_locked(impl)) {
+    case CFLOW_MACHINE_COMMIT_CANCELLED:
+        if (impl->in_flight != 0u) --impl->in_flight;
+        if (impl->cancelled_in_flight != UINT64_MAX)
+            ++impl->cancelled_in_flight;
+        impl->worker_phase = CFLOW_MACHINE_WORKER_IDLE;
+        impl->lifecycle = CFLOW_MACHINE_CONTROL_TERMINAL;
+        impl->done = true;
+        impl->ready = CFLOW_MACHINE_READY_DONE;
+        waker = take_downstream_waiter_locked(impl);
+        terminal_waker = take_terminal_waiter_locked(impl);
+        cancel_won = true;
+        break;
+    case CFLOW_MACHINE_COMMIT_INVALID:
+        invalid_commit = true;
+        break;
+    case CFLOW_MACHINE_COMMIT_ALLOWED:
+        break;
+    }
+    if (cancel_won || invalid_commit) {
+        turbo_mutex_unlock(&impl->lock);
+        if (impl->commit_hook != NULL)
+            impl->commit_hook(impl->commit_user, SIZE_MAX, false);
+        if (invalid_commit) {
+            fail_runtime(impl, "machine commit phase is invalid", true);
+            return false;
+        }
+        cancel_mailbox(impl);
+        invoke_waker(waker);
+        invoke_waker(terminal_waker);
+        return false;
+    }
     memcpy(impl->state_value, impl->target_value, target->value_type->size);
     impl->state = target;
     if (impl->in_flight != 0u) --impl->in_flight;
@@ -478,7 +571,8 @@ static bool process_event(cflow_machine_instance_impl *impl,
         impl->ready = CFLOW_MACHINE_READY_DONE;
         waker = take_downstream_waiter_locked(impl);
     }
-    runtime_closed = impl->closed;
+    runtime_closed =
+        impl->lifecycle == CFLOW_MACHINE_CONTROL_CLOSE_REQUESTED;
     if (runtime_closed && target->kind == CFLOW_MACHINE_STATE_ACTIVE) {
         impl->done = true;
         impl->ready = action != NULL &&
@@ -487,22 +581,22 @@ static bool process_event(cflow_machine_instance_impl *impl,
             : CFLOW_MACHINE_READY_DONE;
         waker = take_downstream_waiter_locked(impl);
     }
-    {
-        cflow_waker terminal_waker = {0};
-        if (impl->done && target->kind != CFLOW_MACHINE_STATE_ERROR)
-            terminal_waker = take_terminal_waiter_locked(impl);
-        turbo_mutex_unlock(&impl->lock);
-        if (impl->commit_hook != NULL)
-            impl->commit_hook(impl->commit_user, transition_index, false);
-        if (target->kind == CFLOW_MACHINE_STATE_ERROR) {
-            fail_runtime(impl, "entered error state", false);
-            return false;
-        }
-        if (target->kind == CFLOW_MACHINE_STATE_DONE || runtime_closed)
-            cancel_mailbox(impl);
-        invoke_waker(waker);
-        invoke_waker(terminal_waker);
+    impl->worker_phase = CFLOW_MACHINE_WORKER_SCHEDULED;
+    if (impl->done || target->kind == CFLOW_MACHINE_STATE_ERROR)
+        impl->lifecycle = CFLOW_MACHINE_CONTROL_TERMINAL;
+    if (impl->done && target->kind != CFLOW_MACHINE_STATE_ERROR)
+        terminal_waker = take_terminal_waiter_locked(impl);
+    turbo_mutex_unlock(&impl->lock);
+    if (impl->commit_hook != NULL)
+        impl->commit_hook(impl->commit_user, transition_index, false);
+    if (target->kind == CFLOW_MACHINE_STATE_ERROR) {
+        fail_runtime(impl, "entered error state", false);
+        return false;
     }
+    if (target->kind == CFLOW_MACHINE_STATE_DONE || runtime_closed)
+        cancel_mailbox(impl);
+    invoke_waker(waker);
+    invoke_waker(terminal_waker);
     return target->kind == CFLOW_MACHINE_STATE_ACTIVE &&
            !runtime_closed &&
            (action == NULL ||
@@ -545,8 +639,6 @@ static void machine_executor_task(void *user) {
     bool repost = false;
     if (impl == NULL) return;
     turbo_mutex_lock(&impl->lock);
-    impl->task_scheduled = false;
-    impl->task_running = true;
     impl->rerun = false;
     turbo_mutex_unlock(&impl->lock);
 
@@ -559,13 +651,24 @@ static void machine_executor_task(void *user) {
         turbo_mutex_lock(&impl->lock);
         terminal = impl->done || impl->error != NULL ||
                    impl->ready != CFLOW_MACHINE_READY_NONE;
+        if (!terminal)
+            impl->worker_phase = CFLOW_MACHINE_WORKER_EXECUTING;
         turbo_mutex_unlock(&impl->lock);
         if (terminal) break;
         status = cflow_mailbox_try_receive(
             &impl->mailbox, &event_id, &event_type,
             impl->event_value, impl->event_capacity);
         if (status == CFLOW_MAILBOX_EMPTY) {
-            (void)arm_mailbox(impl);
+            bool control_requested;
+            turbo_mutex_lock(&impl->lock);
+            impl->worker_phase = CFLOW_MACHINE_WORKER_SCHEDULED;
+            control_requested =
+                impl->lifecycle != CFLOW_MACHINE_CONTROL_OPEN;
+            turbo_mutex_unlock(&impl->lock);
+            if (control_requested)
+                publish_done(impl, CFLOW_MACHINE_READY_DONE);
+            else
+                (void)arm_mailbox(impl);
             break;
         }
         if (status == CFLOW_MAILBOX_CLOSED ||
@@ -584,7 +687,8 @@ static void machine_executor_task(void *user) {
     }
 
     turbo_mutex_lock(&impl->lock);
-    impl->task_running = false;
+    if (impl->worker_phase == CFLOW_MACHINE_WORKER_SCHEDULED)
+        impl->worker_phase = CFLOW_MACHINE_WORKER_IDLE;
     repost = impl->rerun && !impl->done && impl->error == NULL &&
              impl->ready == CFLOW_MACHINE_READY_NONE;
     if (iteration == CFLOW_MACHINE_RUNTIME_QUANTUM &&
@@ -604,23 +708,24 @@ static bool schedule_machine_task(cflow_machine_instance_impl *impl) {
         turbo_mutex_unlock(&impl->lock);
         return true;
     }
-    if (impl->task_running) {
+    if (impl->worker_phase == CFLOW_MACHINE_WORKER_EXECUTING ||
+        impl->worker_phase == CFLOW_MACHINE_WORKER_COMMITTING) {
         impl->rerun = true;
         turbo_mutex_unlock(&impl->lock);
         return true;
     }
-    if (impl->task_scheduled) {
+    if (impl->worker_phase == CFLOW_MACHINE_WORKER_SCHEDULED) {
         turbo_mutex_unlock(&impl->lock);
         return true;
     }
-    impl->task_scheduled = true;
+    impl->worker_phase = CFLOW_MACHINE_WORKER_SCHEDULED;
     turbo_mutex_unlock(&impl->lock);
 
     status = cflow_executor_try_post(
         impl->executor, machine_executor_task, impl);
     if (status != CFLOW_ADMISSION_ACCEPTED) {
         turbo_mutex_lock(&impl->lock);
-        impl->task_scheduled = false;
+        impl->worker_phase = CFLOW_MACHINE_WORKER_IDLE;
         turbo_mutex_unlock(&impl->lock);
         fail_runtime(impl,
                      status == CFLOW_ADMISSION_FULL
@@ -711,13 +816,13 @@ static void request_cancel(cflow_machine_instance_impl *impl) {
     cflow_waker waker = {0};
     cflow_waker terminal_waker = {0};
     bool mailbox_armed;
-    bool already_done;
+    bool settle_now;
     if (impl == NULL) return;
     if (impl->commit_hook != NULL)
         impl->commit_hook(impl->commit_user, SIZE_MAX, true);
     turbo_mutex_lock(&impl->lock);
-    already_done = impl->done;
-    if (already_done) {
+    if (impl->done ||
+        impl->lifecycle == CFLOW_MACHINE_CONTROL_TERMINAL) {
         turbo_mutex_unlock(&impl->lock);
         if (impl->commit_hook != NULL)
             impl->commit_hook(impl->commit_user, SIZE_MAX, false);
@@ -727,10 +832,14 @@ static void request_cancel(cflow_machine_instance_impl *impl) {
     impl->mailbox_armed = false;
     impl->closed = true;
     impl->cancelled = true;
-    impl->done = true;
-    impl->ready = CFLOW_MACHINE_READY_DONE;
-    waker = take_downstream_waiter_locked(impl);
-    terminal_waker = take_terminal_waiter_locked(impl);
+    impl->lifecycle = CFLOW_MACHINE_CONTROL_CANCEL_REQUESTED;
+    settle_now = impl->worker_phase != CFLOW_MACHINE_WORKER_EXECUTING &&
+                 impl->worker_phase != CFLOW_MACHINE_WORKER_COMMITTING;
+    if (settle_now) {
+        publish_control_terminal_locked(impl);
+        waker = take_downstream_waiter_locked(impl);
+        terminal_waker = take_terminal_waiter_locked(impl);
+    }
     turbo_mutex_unlock(&impl->lock);
     if (impl->commit_hook != NULL)
         impl->commit_hook(impl->commit_user, SIZE_MAX, false);
@@ -1008,6 +1117,8 @@ cflow_machine_runtime_status cflow_machine_instance_init_internal(
     memcpy(impl->state_value, config->initial_state,
            initial->value_type->size);
     impl->done = initial->kind != CFLOW_MACHINE_STATE_ACTIVE;
+    if (impl->done)
+        impl->lifecycle = CFLOW_MACHINE_CONTROL_TERMINAL;
     if (initial->kind == CFLOW_MACHINE_STATE_DONE)
         impl->ready = CFLOW_MACHINE_READY_DONE;
     else if (initial->kind == CFLOW_MACHINE_STATE_ERROR) {
@@ -1135,15 +1246,15 @@ void cflow_machine_instance_close(cflow_machine_instance *instance) {
         impl->commit_hook(impl->commit_user, SIZE_MAX, true);
     turbo_mutex_lock(&impl->lock);
     impl->closed = true;
+    if (impl->lifecycle == CFLOW_MACHINE_CONTROL_OPEN)
+        impl->lifecycle = CFLOW_MACHINE_CONTROL_CLOSE_REQUESTED;
     mailbox_armed = impl->mailbox_armed;
     impl->mailbox_armed = false;
-    terminal = impl->done || impl->error != NULL || impl->in_flight == 0u;
+    terminal = impl->done || impl->error != NULL ||
+               (impl->worker_phase != CFLOW_MACHINE_WORKER_EXECUTING &&
+                impl->worker_phase != CFLOW_MACHINE_WORKER_COMMITTING);
     if (terminal && impl->error == NULL) {
-        impl->done = true;
-        if (impl->ready == CFLOW_MACHINE_READY_VALUE)
-            impl->ready = CFLOW_MACHINE_READY_VALUE_AND_DONE;
-        else if (impl->ready == CFLOW_MACHINE_READY_NONE)
-            impl->ready = CFLOW_MACHINE_READY_DONE;
+        publish_control_terminal_locked(impl);
     }
     if (terminal) {
         waker = take_downstream_waiter_locked(impl);
