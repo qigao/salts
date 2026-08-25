@@ -319,6 +319,7 @@ static int readiness_attempt(cflow_readiness_record *record,
                         return normalized;
                     }
                     *accepted_fd = (int)result;
+                    result = 0;
                 }
                 break;
             case CFLOW_IO_NATIVE_TCP_CONNECT:
