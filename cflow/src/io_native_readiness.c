@@ -285,6 +285,9 @@ static int readiness_attempt_connect(cflow_readiness_record *record) {
 
 static ssize_t readiness_write_without_sigpipe(
     int fd, const void *buffer, size_t length) {
+#if defined(F_SETNOSIGPIPE)
+    return write(fd, buffer, length);
+#else
     sigset_t blocked;
     sigset_t previous;
     sigset_t pending;
@@ -314,6 +317,7 @@ static ssize_t readiness_write_without_sigpipe(
     }
     (void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
     return result;
+#endif
 }
 
 static int readiness_attempt(cflow_readiness_record *record,
@@ -683,7 +687,8 @@ static turbo_readiness_callback_result readiness_drive_lane(
 }
 
 static int readiness_ensure_lane(cflow_readiness_lane *lane,
-                                 int original_fd) {
+                                 int original_fd,
+                                 bool suppress_sigpipe) {
     cflow_readiness_impl *impl = lane->owner;
     int duplicate;
     int status;
@@ -703,8 +708,22 @@ static int readiness_ensure_lane(cflow_readiness_lane *lane,
     turbo_mutex_unlock(&impl->gate);
 
     duplicate = readiness_duplicate_socket(original_fd);
-    status = duplicate < 0 ? duplicate : turbo_readiness_register(
-        &impl->reactor, duplicate, &lane->registration);
+    status = duplicate < 0 ? duplicate : TURBO_OK;
+#if defined(F_SETNOSIGPIPE)
+    if (status == TURBO_OK && suppress_sigpipe) {
+        int result;
+        do {
+            result = fcntl(duplicate, F_SETNOSIGPIPE, 1);
+        } while (result < 0 && errno == EINTR);
+        if (result < 0)
+            status = -errno;
+    }
+#else
+    (void)suppress_sigpipe;
+#endif
+    if (status == TURBO_OK)
+        status = turbo_readiness_register(
+            &impl->reactor, duplicate, &lane->registration);
     if (status != TURBO_OK && duplicate >= 0)
         (void)close(duplicate);
 
@@ -769,7 +788,10 @@ static int readiness_submit_record(
     ++socket_record->active_requests;
     turbo_mutex_unlock(&impl->gate);
 
-    status = readiness_ensure_lane(lane, (int)identity);
+    status = readiness_ensure_lane(
+        lane, (int)identity,
+        pipe_operation != NULL &&
+            pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_WRITE);
     if (status != TURBO_OK) {
         turbo_mutex_lock(&impl->gate);
         --impl->active_requests;
