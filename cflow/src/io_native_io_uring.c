@@ -11,6 +11,8 @@
 #include <fcntl.h>
 #include <linux/io_uring.h>
 #include <limits.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -26,6 +28,11 @@ typedef enum cflow_uring_record_phase {
     CFLOW_URING_RECORD_PENDING
 } cflow_uring_record_phase;
 
+typedef enum cflow_uring_resource_kind {
+    CFLOW_URING_RESOURCE_SOCKET = 0,
+    CFLOW_URING_RESOURCE_PIPE
+} cflow_uring_resource_kind;
+
 typedef struct cflow_uring_record {
     cflow_uring_record_phase phase;
     uint32_t index;
@@ -33,7 +40,9 @@ typedef struct cflow_uring_record {
     uint64_t native_token;
     cflow_io_request_id request_id;
     cflow_io_actor *actor;
+    cflow_uring_resource_kind resource_kind;
     cflow_io_native_operation *operation;
+    cflow_io_native_pipe_operation *pipe_operation;
     struct iovec vector;
     struct msghdr message;
     struct sockaddr_storage peer_address;
@@ -81,6 +90,13 @@ typedef struct cflow_uring_impl {
 
 enum { CFLOW_URING_CANCEL_TOKEN = 0u, CFLOW_URING_STOP_TOKEN = 1u };
 
+typedef struct cflow_uring_sigpipe_guard {
+    sigset_t blocked;
+    sigset_t previous;
+    bool active;
+    bool had_pending;
+} cflow_uring_sigpipe_guard;
+
 static uint64_t uring_make_record_token(uint32_t index,
                                         uint32_t generation) {
     return ((uint64_t)generation << 32u) | (uint64_t)index;
@@ -93,6 +109,38 @@ static uint32_t uring_next_generation(uint32_t generation) {
 static void uring_counter_increment(uint64_t *counter) {
     if (*counter != UINT64_MAX)
         ++*counter;
+}
+
+static int uring_sigpipe_guard_begin(cflow_uring_sigpipe_guard *guard) {
+    sigset_t pending;
+    int status;
+    memset(guard, 0, sizeof(*guard));
+    sigemptyset(&guard->blocked);
+    sigaddset(&guard->blocked, SIGPIPE);
+    status = pthread_sigmask(SIG_BLOCK, &guard->blocked,
+                             &guard->previous);
+    if (status != 0)
+        return -status;
+    guard->active = true;
+    if (sigpending(&pending) == 0)
+        guard->had_pending = sigismember(&pending, SIGPIPE) == 1;
+    return TURBO_OK;
+}
+
+static void uring_sigpipe_guard_end(cflow_uring_sigpipe_guard *guard) {
+    sigset_t pending;
+    if (guard == NULL || !guard->active)
+        return;
+    if (!guard->had_pending && sigpending(&pending) == 0 &&
+        sigismember(&pending, SIGPIPE) == 1) {
+        int signal_number;
+        int status;
+        do {
+            status = sigwait(&guard->blocked, &signal_number);
+        } while (status == EINTR);
+    }
+    (void)pthread_sigmask(SIG_SETMASK, &guard->previous, NULL);
+    guard->active = false;
 }
 
 static int uring_enter(cflow_uring_impl *impl, unsigned submit,
@@ -154,6 +202,19 @@ static void uring_prepare_operation(cflow_uring_record *record,
                                     struct io_uring_sqe *sqe) {
     cflow_io_native_operation *operation = record->operation;
     memset(sqe, 0, sizeof(*sqe));
+    if (record->resource_kind == CFLOW_URING_RESOURCE_PIPE) {
+        cflow_io_native_pipe_operation *pipe_operation =
+            record->pipe_operation;
+        sqe->fd = (int)pipe_operation->handle;
+        sqe->user_data = record->native_token;
+        sqe->opcode = pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ
+                          ? IORING_OP_READ
+                          : IORING_OP_WRITE;
+        sqe->addr = (uint64_t)(uintptr_t)pipe_operation->buffer;
+        sqe->len = (uint32_t)pipe_operation->length;
+        sqe->off = UINT64_MAX;
+        return;
+    }
     sqe->fd = (int)operation->socket;
     sqe->user_data = record->native_token;
     switch (operation->kind) {
@@ -234,6 +295,8 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     cflow_io_actor *actor;
     cflow_io_request_id request_id;
     cflow_io_native_operation *operation;
+    cflow_io_native_pipe_operation *pipe_operation;
+    cflow_uring_resource_kind resource_kind;
     cflow_io_completion completion;
     cflow_io_complete_status delivery_status;
     struct sockaddr_storage peer_address;
@@ -252,26 +315,33 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     }
     actor = record->actor;
     request_id = record->request_id;
+    resource_kind = record->resource_kind;
     operation = record->operation;
+    pipe_operation = record->pipe_operation;
     cancelled = record->cancel_requested && result == -ECANCELED;
-    if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT && result >= 0) {
+    if (resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
+        operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT && result >= 0) {
         peer_address = record->peer_address;
         peer_address_length = record->peer_address_length;
     }
-    if (result >= 0 && operation->kind == CFLOW_IO_NATIVE_UDP_RECV_FROM)
+    if (resource_kind == CFLOW_URING_RESOURCE_SOCKET && result >= 0 &&
+        operation->kind == CFLOW_IO_NATIVE_UDP_RECV_FROM)
         operation->address_length = (size_t)record->message.msg_namelen;
     record->phase = CFLOW_URING_RECORD_FREE;
     record->request_id = 0u;
     record->native_token = 0u;
     record->actor = NULL;
+    record->resource_kind = CFLOW_URING_RESOURCE_SOCKET;
     record->operation = NULL;
+    record->pipe_operation = NULL;
     record->cancel_requested = false;
     --impl->active_requests;
     uring_counter_increment(&impl->completed);
     if (cancelled) uring_counter_increment(&impl->cancelled);
     turbo_mutex_unlock(&impl->gate);
 
-    if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT && result >= 0) {
+    if (resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
+        operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT && result >= 0) {
         accepted_fd = result;
         effective_result = TURBO_OK;
         if (operation->address != NULL) {
@@ -295,20 +365,25 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     } else if (effective_result < 0) {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_FAILED, 0u, effective_result};
-    } else if (operation->kind == CFLOW_IO_NATIVE_TCP_RECV && result == 0) {
+    } else if (((resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
+                 operation->kind == CFLOW_IO_NATIVE_TCP_RECV) ||
+                (resource_kind == CFLOW_URING_RESOURCE_PIPE &&
+                 pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ)) &&
+               result == 0) {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK};
     } else {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_OK,
-            operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT ||
-                    operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT
+            resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
+                    (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT ||
+                     operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT)
                 ? 0u : (size_t)effective_result,
             TURBO_OK};
     }
     delivery_status = cflow_io_actor_complete(
         actor, request_id, &completion);
-    if (accepted_fd >= 0 &&
+    if (resource_kind == CFLOW_URING_RESOURCE_SOCKET && accepted_fd >= 0 &&
         (completion.kind != CFLOW_IO_COMPLETION_OK ||
          delivery_status != CFLOW_IO_COMPLETE_ACCEPTED)) {
         (void)close(accepted_fd);
@@ -334,7 +409,15 @@ static void uring_fail_all(cflow_uring_impl *impl, int status) {
 
 static void uring_worker(void *user) {
     cflow_uring_impl *impl = (cflow_uring_impl *)user;
+    sigset_t blocked;
     int terminal_status = TURBO_OK;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGPIPE);
+    terminal_status = pthread_sigmask(SIG_BLOCK, &blocked, NULL);
+    if (terminal_status != 0) {
+        terminal_status = -terminal_status;
+        goto failed;
+    }
     for (;;) {
         unsigned head;
         unsigned tail;
@@ -371,6 +454,7 @@ static void uring_worker(void *user) {
             uring_finish(impl, token, result);
         }
     }
+failed:
     turbo_mutex_lock(&impl->gate);
     impl->admission_open = false;
     turbo_mutex_unlock(&impl->gate);
@@ -382,28 +466,18 @@ stopped:
     turbo_mutex_unlock(&impl->gate);
 }
 
-static int uring_submit(cflow_io_native_impl *base,
-                        cflow_io_actor *actor,
-                        cflow_io_request_id request_id,
-                        cflow_io_native_operation *operation) {
-    cflow_uring_impl *impl = (cflow_uring_impl *)base;
+static int uring_submit_record(
+    cflow_uring_impl *impl, cflow_io_actor *actor,
+    cflow_io_request_id request_id, cflow_uring_resource_kind resource_kind,
+    cflow_io_native_operation *operation,
+    cflow_io_native_pipe_operation *pipe_operation) {
     cflow_uring_record *record;
+    cflow_uring_sigpipe_guard sigpipe_guard = {0};
     struct io_uring_sqe sqe;
+    const bool guard_sigpipe =
+        resource_kind == CFLOW_URING_RESOURCE_PIPE &&
+        pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_WRITE;
     int status;
-
-    if (operation->socket > (uintptr_t)INT_MAX)
-        return TURBO_EINVAL;
-    if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT ||
-        operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT) {
-        int flags;
-        do {
-            flags = fcntl((int)operation->socket, F_GETFL);
-        } while (flags < 0 && errno == EINTR);
-        if (flags < 0)
-            return -errno;
-        if ((flags & O_NONBLOCK) == 0)
-            return TURBO_EINVAL;
-    }
     turbo_mutex_lock(&impl->gate);
     if (!impl->admission_open) {
         turbo_mutex_unlock(&impl->gate);
@@ -423,10 +497,17 @@ static int uring_submit(cflow_io_native_impl *base,
         record->index, record->generation);
     record->request_id = request_id;
     record->actor = actor;
+    record->resource_kind = resource_kind;
     record->operation = operation;
+    record->pipe_operation = pipe_operation;
     record->cancel_requested = false;
     uring_prepare_operation(record, &sqe);
-    status = uring_publish_sqe_locked(impl, &sqe);
+    status = guard_sigpipe
+                 ? uring_sigpipe_guard_begin(&sigpipe_guard)
+                 : TURBO_OK;
+    if (status == TURBO_OK)
+        status = uring_publish_sqe_locked(impl, &sqe);
+    uring_sigpipe_guard_end(&sigpipe_guard);
     if (status == TURBO_OK) {
         ++impl->active_requests;
         uring_counter_increment(&impl->submitted);
@@ -435,12 +516,51 @@ static int uring_submit(cflow_io_native_impl *base,
         record->native_token = 0u;
         record->request_id = 0u;
         record->actor = NULL;
+        record->resource_kind = CFLOW_URING_RESOURCE_SOCKET;
         record->operation = NULL;
+        record->pipe_operation = NULL;
         record->cancel_requested = false;
         uring_counter_increment(&impl->native_submit_errors);
     }
     turbo_mutex_unlock(&impl->gate);
     return status;
+}
+
+static int uring_submit(cflow_io_native_impl *base,
+                        cflow_io_actor *actor,
+                        cflow_io_request_id request_id,
+                        cflow_io_native_operation *operation) {
+    cflow_uring_impl *impl = (cflow_uring_impl *)base;
+    if (operation->socket > (uintptr_t)INT_MAX)
+        return TURBO_EINVAL;
+    if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT ||
+        operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT) {
+        int flags;
+        do {
+            flags = fcntl((int)operation->socket, F_GETFL);
+        } while (flags < 0 && errno == EINTR);
+        if (flags < 0)
+            return -errno;
+        if ((flags & O_NONBLOCK) == 0)
+            return TURBO_EINVAL;
+    }
+    return uring_submit_record(
+        impl, actor, request_id, CFLOW_URING_RESOURCE_SOCKET,
+        operation, NULL);
+}
+
+static int uring_submit_pipe(
+    cflow_io_native_impl *base, cflow_io_actor *actor,
+    cflow_io_request_id request_id,
+    cflow_io_native_pipe_operation *operation) {
+    cflow_uring_impl *impl = (cflow_uring_impl *)base;
+    if ((operation->flags & CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE) == 0u)
+        return TURBO_ENOTSUP;
+    if (operation->handle > (uintptr_t)INT_MAX)
+        return TURBO_EINVAL;
+    return uring_submit_record(
+        impl, actor, request_id, CFLOW_URING_RESOURCE_PIPE,
+        NULL, operation);
 }
 
 static int uring_cancel(cflow_io_native_impl *base,
@@ -494,6 +614,11 @@ static int uring_forget_socket(cflow_io_native_impl *base,
     }
     turbo_mutex_unlock(&impl->gate);
     return TURBO_OK;
+}
+
+static int uring_forget_pipe(cflow_io_native_impl *base,
+                             uintptr_t closed_handle) {
+    return uring_forget_socket(base, closed_handle);
 }
 
 static int uring_shutdown(cflow_io_native_impl *base) {
@@ -560,8 +685,8 @@ static int uring_destroy(cflow_io_native_impl *base) {
 }
 
 static const cflow_io_native_impl_ops uring_ops = {
-    uring_submit, uring_cancel, uring_get_stats, uring_forget_socket,
-    uring_shutdown, uring_destroy};
+    uring_submit, uring_submit_pipe, uring_cancel, uring_get_stats,
+    uring_forget_socket, uring_forget_pipe, uring_shutdown, uring_destroy};
 
 static bool uring_mapped_extent(size_t offset, size_t count,
                                 size_t element_size, size_t *out) {

@@ -26,7 +26,7 @@ include/cflow/
 ├── machine_runtime.h executor-owned Machine execution and adapters
 ├── actor.h         bounded Actor lifecycle over Machine and Run
 ├── io_actor.h      bounded asynchronous operation ownership/runtime
-├── io_native.h     epoll/kqueue/poll/IOCP/io_uring socket operations
+├── io_native.h     epoll/kqueue/poll/IOCP/io_uring socket and pipe operations
 ├── runtime.h
 ├── scheduler.h
 ├── sources.h
@@ -439,7 +439,7 @@ Link the example with `TurboUtils::CFlow`. Supervision, restart, parent/child
 hierarchies, remoting, persistence, and Mailbox resizing are intentionally
 unavailable; there are no placeholder APIs or implicit fallbacks for them.
 
-## Native TCP lifecycle
+## Native socket and byte-pipe I/O
 
 `<cflow/io_native.h>` exposes one explicitly selected, bounded platform
 backend. TCP now covers accept, connect, receive, and send; UDP covers
@@ -462,18 +462,41 @@ be nonblocking; the backend checks this without changing caller flags. IOCP uses
 `AcceptEx`/`ConnectEx`, io_uring uses native accept/connect opcodes, and the
 readiness adapter completes connect through write readiness plus `SO_ERROR`.
 
-All six operation kinds share the existing `request_capacity`, cancellation,
-statistics, explicit socket-forget, and quiescent shutdown contracts. Pipe,
-file, device/USB, DNS, and TLS are outside this layer. `poll` is an explicit
-portable POSIX socket backend, not a fallback and not a new operation kind.
+All six socket operation kinds share the existing `request_capacity`,
+cancellation, statistics, explicit socket-forget, and quiescent shutdown
+contracts. DNS and TLS remain outside this layer. `poll` is an explicit portable
+POSIX backend, not a fallback and not a new operation kind.
 
-| Backend | Host | Execution model | Socket operations | Default |
-|---|---|---|---|---|
-| epoll | Linux | readiness, O(ready) delivery | TCP/UDP plus accept/connect | Linux when enabled |
-| kqueue | macOS | readiness, O(ready) delivery | TCP/UDP plus accept/connect | macOS |
-| poll | POSIX | readiness, O(registration capacity) snapshot scan | TCP/UDP plus accept/connect | explicit only |
-| IOCP | Windows | completion | TCP/UDP plus accept/connect | Windows |
-| io_uring | Linux | completion | TCP/UDP plus accept/connect | explicit only |
+| Backend | Host | Execution model | Socket operations | Pipe operations | Default |
+|---|---|---|---|---|---|
+| epoll | Linux | readiness, O(ready) delivery | TCP/UDP plus accept/connect | nonblocking byte read/write | Linux when enabled |
+| kqueue | macOS | readiness, O(ready) delivery | TCP/UDP plus accept/connect | nonblocking byte read/write | macOS |
+| poll | POSIX | readiness, O(registration capacity) snapshot scan | TCP/UDP plus accept/connect | nonblocking byte read/write | explicit only |
+| IOCP | Windows | completion | TCP/UDP plus accept/connect | overlapped named byte-pipe read/write | Windows |
+| io_uring | Linux | completion | TCP/UDP plus accept/connect | native byte read/write | explicit only |
+
+Pipe operations use the separate `cflow_io_native_pipe_operation` and
+`cflow_io_native_backend_pipe_actor_ops()` contract; socket aggregate layout and
+entry points remain unchanged. A successful read or write may transfer fewer
+than `length` bytes. A zero-byte read after peer close maps to
+`CFLOW_IO_COMPLETION_EOF`; a broken write maps its native error to
+`CFLOW_IO_COMPLETION_FAILED` without exposing `SIGPIPE` to the process.
+
+The caller must set `CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE`. epoll, kqueue, and
+poll additionally require an `O_NONBLOCK` descriptor and reject a blocking
+descriptor with `TURBO_EINVAL`. IOCP accepts already-connected, byte-mode named
+pipe handles opened with `FILE_FLAG_OVERLAPPED`; handles returned directly by
+`CreatePipe` are synchronous and are not supported. The flag is a caller
+attestation because Windows cannot query `FILE_FLAG_OVERLAPPED` from an
+arbitrary handle. io_uring uses native `IORING_OP_READ`/`IORING_OP_WRITE` with
+current-position semantics and does not require `O_NONBLOCK`.
+
+The caller owns every endpoint and buffer through terminal callback return.
+After all requests for an endpoint are terminal and acknowledged, close the
+endpoint first, then call `cflow_io_native_backend_forget_pipe()` for retained
+readiness/IOCP identity. io_uring retains no endpoint identity but preserves its
+existing quiescent forget contract. No backend closes a caller endpoint or
+silently moves the operation to a fallback backend or blocking worker.
 
 The poll reactor owns one worker, a fixed registration table, fixed snapshot
 storage, and a nonblocking control pipe. It borrows descriptors until close,
@@ -489,11 +512,13 @@ CFlow may retain up to two Platform
 registrations per socket identity (one read lane and one write lane), so a
 request capacity of N produces a checked reactor capacity of 2N.
 
-Future pipe/file/device support needs separate operation and ownership contracts.
-POSIX regular-file readiness, for example, does not represent asynchronous disk
-completion. “Device” would mean an OS-specific descriptor/handle adapter; USB
-transfer semantics, discovery, permissions, cancellation, and hot-unplug require
-a dedicated transport rather than treating every device as a socket.
+Named-pipe connection lifecycle, POSIX FIFO pathname/open rendezvous, subprocess
+standard-stream ownership, message framing, regular files, and devices remain
+separate contracts. POSIX regular-file readiness does not represent asynchronous
+disk completion. “Device” would mean an OS-specific descriptor/handle adapter;
+USB transfer semantics, discovery, permissions, cancellation, and hot-unplug
+require a dedicated transport rather than treating every device as a pipe or
+socket.
 
 ## Descriptor-backed container streams — v47
 
