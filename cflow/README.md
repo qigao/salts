@@ -439,9 +439,30 @@ unavailable; there are no placeholder APIs or implicit fallbacks for them.
 
 ## Descriptor-backed container streams — v47
 
+The Stream facade is CFlow's typed convenience layer for modern container
+operations. TurboSTL supplies container algorithms and Range/Collector
+adapters; CFlow supplies the Graph, operators, optimizer, runtime, and error
+semantics. Its fluent spelling is intentionally familiar, but compatibility
+with Java or any other language's Stream contract is not a design goal.
+
+In particular, a CFlow Stream is a reusable Graph description rather than a
+single-use traversal. Operators append to that Graph, `reduce` remains a Graph
+stage, and terminal adapters create independent executions. General parallel
+execution is selected through explicit CFlow plan/executor capabilities rather
+than a Stream mode. Bounded terminals treat their limits as resource contracts,
+not as truncating operators.
+
 CFlow consumes, but does not own, CMeta Range metadata:
 
 ```c
+typed(filter, value, bool, even, (int value)) {
+    return value % 2 == 0;
+}
+
+typed(map, value, int, square, (int value)) {
+    return value * value;
+}
+
 cflow_stream s;
 stream(&list, &s)
     ->filter(&s, even)
@@ -452,6 +473,10 @@ if (cflow_eval_stream(&s, &result)) {
     /* result contains the terminal values */
 }
 ```
+
+`typed(filter, ...)` creates a CMeta callable carrying the predicate's type and
+contract. CFlow validates that callable when the node is added and remains
+responsible for traversal, filtering, and value lifetime during execution.
 
 `cflow_stream_from_object()` first resolves the object's CMeta descriptor and default Range.
 `cflow_source_from_range()` then converts that Range to the same resumable

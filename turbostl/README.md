@@ -136,9 +136,54 @@ intercept or reinterpret their C expressions.
 
 ## CFlow bridge
 
-Link `TurboUtils::STLStream` for the optional CFlow facade. Sequence/set wrappers
-derive Range information in the same declaration, so CFlow can bind an
-initialized typed object directly:
+Link `TurboUtils::STLStream` for the optional modern container-operation facade.
+Its purpose is to make filtering, transformation, aggregation, and typed
+collection convenient for TurboSTL containers without introducing another
+container implementation. Familiar fluent names improve readability, but no
+external Stream API defines this facade's lifecycle, reuse, terminal, ordering,
+or parallel-execution semantics.
+
+The facade is a reusable typed CFlow Graph bound to a borrowed container Range,
+not a single-use traversal object. Operators append nodes to that Graph;
+evaluation creates fresh runtime and cursor state. A `REUSABLE` Range may be
+evaluated again while its container remains alive and unmodified. `reduce` is a
+Graph stage and collection remains an explicit terminal. Capacity arguments are
+hard resource bounds: exceeding one fails the collection transaction instead of
+silently truncating the result.
+
+Element predicates are already represented by CMeta callables. The callable
+owns the typed signature and declared contract; CFlow owns traversal, predicate
+invocation, value lifetime, and Graph execution. For example:
+
+```c
+typed(filter, value, bool, keep_even, (int value)) {
+    return value % 2 == 0;
+}
+
+cflow_stream pipeline = {0};
+stream(&values, &pipeline)->filter(&pipeline, keep_even);
+```
+
+Captured predicates use `lambda(filter, ...)` or `cmeta_bindable(filter, ...)`
+and enter the same Graph as immutable callable values. Filtering should not be
+reimplemented separately for `Vec`, `List`, `Set`, or other container kinds.
+
+New convenience operations follow the same ownership boundary:
+
+- An element operation such as a new transform or selection rule belongs in
+  CFlow as a typed operator accepting a CMeta callable.
+- A result operation such as counting, matching, or finding belongs in the
+  terminal/collector layer, with explicit short-circuit, ownership, error, and
+  capacity semantics.
+- TurboSTL remains responsible for container storage and Range/collector
+  adapters; it does not duplicate the CFlow algorithm for each container kind.
+
+Names alone do not create API. A new operation is public only after its Graph or
+terminal semantics, managed-value lifetime behavior, failure contract, and
+tests are all present.
+
+Sequence/set wrappers derive Range information in the same declaration, so
+CFlow can bind an initialized typed object directly:
 
 ```c
 cflow_stream s;
