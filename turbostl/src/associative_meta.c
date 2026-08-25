@@ -82,10 +82,12 @@ static cmeta_gen_status stl_hash_map_next(
     const void *object, cmeta_range_cursor *cursor, void *out_value,
     stl_assoc_view view) {
     const hash_map_t *map = (const hash_map_t *)object;
+    cmeta_range_cursor start_cursor;
     size_t capacity;
     if (map == NULL || cursor == NULL || out_value == NULL ||
         map->key_type == NULL || map->value_type == NULL)
         return CMETA_GEN_ERROR;
+    start_cursor = *cursor;
     capacity = hash_map_capacity(map);
     while (cursor->index < capacity) {
         size_t slot = cursor->index;
@@ -95,18 +97,29 @@ static cmeta_gen_status stl_hash_map_next(
         if (key == NULL || value == NULL)
             continue;
         if (view == STL_ASSOC_KEYS) {
-            memcpy(out_value, key, map->key_type->size);
+            if (!stl_cmeta_range_construct(map->key_type, out_value, key)) {
+                *cursor = start_cursor;
+                return CMETA_GEN_ERROR;
+            }
         } else if (view == STL_ASSOC_VALUES) {
-            memcpy(out_value, value, map->value_type->size);
+            if (!stl_cmeta_range_construct(
+                    map->value_type, out_value, value)) {
+                *cursor = start_cursor;
+                return CMETA_GEN_ERROR;
+            }
         } else {
-            cmeta_entry *entry = (cmeta_entry *)out_value;
-            *entry = (cmeta_entry){
+            const cmeta_entry entry = {
                 .key_type = map->key_type,
                 .value_type = map->value_type,
                 .key = key,
                 .value = value,
                 .key_storage = NULL,
                 .value_storage = NULL};
+            if (!stl_cmeta_range_construct(
+                    &cmeta_type_hash_entry, out_value, &entry)) {
+                *cursor = start_cursor;
+                return CMETA_GEN_ERROR;
+            }
         }
         return CMETA_GEN_VALUE;
     }
@@ -135,7 +148,9 @@ static cmeta_range stl_hash_map_keys_range_factory(const void *object) {
         return range;
     range = (cmeta_range){
         object, map->key_type,
-        CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
+        stl_cmeta_range_flags_for(
+            map->key_type,
+            CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE),
         stl_hash_map_range_size, stl_hash_map_keys_next,
         stl_hash_map_range_version(object), stl_hash_map_range_version};
     return range;
@@ -148,7 +163,9 @@ static cmeta_range stl_hash_map_values_range_factory(const void *object) {
         return range;
     range = (cmeta_range){
         object, map->value_type,
-        CMETA_RANGE_SIZED | CMETA_RANGE_REUSABLE,
+        stl_cmeta_range_flags_for(
+            map->value_type,
+            CMETA_RANGE_SIZED | CMETA_RANGE_REUSABLE),
         stl_hash_map_range_size, stl_hash_map_values_next,
         stl_hash_map_range_version(object), stl_hash_map_range_version};
     return range;
@@ -162,7 +179,9 @@ static cmeta_range stl_hash_map_entries_range_factory(const void *object) {
         return range;
     range = (cmeta_range){
         object, &cmeta_type_hash_entry,
-        CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
+        stl_cmeta_range_flags_for(
+            &cmeta_type_hash_entry,
+            CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE),
         stl_hash_map_range_size, stl_hash_map_entries_next,
         stl_hash_map_range_version(object), stl_hash_map_range_version};
     return range;
@@ -255,27 +274,34 @@ static cmeta_gen_status stl_##prefix##_next(                                    
     const handle_type *self = (const handle_type *)object;                      \
     const void *key = NULL;                                                      \
     const void *value = NULL;                                                    \
+    cmeta_range_cursor next_cursor;                                              \
     if (self == NULL || cursor == NULL || out_value == NULL ||                  \
         self->key_type == NULL || self->value_type == NULL)                     \
         return CMETA_GEN_ERROR;                                                  \
-    if (!range_next_fn(self, cursor, &key, &value))                             \
+    next_cursor = *cursor;                                                       \
+    if (!range_next_fn(self, &next_cursor, &key, &value))                       \
         return CMETA_GEN_DONE;                                                   \
     if (key == NULL || value == NULL)                                            \
         return CMETA_GEN_ERROR;                                                  \
     if (view == STL_ASSOC_KEYS) {                                                \
-        memcpy(out_value, key, self->key_type->size);                           \
+        if (!stl_cmeta_range_construct(self->key_type, out_value, key))          \
+            return CMETA_GEN_ERROR;                                              \
     } else if (view == STL_ASSOC_VALUES) {                                      \
-        memcpy(out_value, value, self->value_type->size);                       \
+        if (!stl_cmeta_range_construct(self->value_type, out_value, value))      \
+            return CMETA_GEN_ERROR;                                              \
     } else {                                                                     \
-        cmeta_entry *entry = (cmeta_entry *)out_value;                          \
-        *entry = (cmeta_entry){                                                  \
+        const cmeta_entry entry = {                                              \
             .key_type = self->key_type,                                          \
             .value_type = self->value_type,                                      \
             .key = key,                                                          \
             .value = value,                                                      \
             .key_storage = NULL,                                                 \
             .value_storage = NULL};                                              \
+        if (!stl_cmeta_range_construct(                                          \
+                &cmeta_type_ordered_entry, out_value, &entry))                  \
+            return CMETA_GEN_ERROR;                                              \
     }                                                                            \
+    *cursor = next_cursor;                                                       \
     return cursor->state[0] == NULL ? CMETA_GEN_VALUE_AND_DONE :                \
                                       CMETA_GEN_VALUE;                           \
 }                                                                                \
@@ -297,7 +323,9 @@ static cmeta_range stl_##prefix##_keys_range_factory(const void *object) {      
     if (self == NULL || self->key_type == NULL)                                 \
         return range;                                                            \
     range = (cmeta_range){                                                       \
-        object, self->key_type, (key_flags), stl_##prefix##_range_size,          \
+        object, self->key_type,                                                   \
+        stl_cmeta_range_flags_for(self->key_type, (key_flags)),                  \
+        stl_##prefix##_range_size,                                               \
         stl_##prefix##_keys_next, stl_##prefix##_range_version(object),          \
         stl_##prefix##_range_version};                                           \
     return range;                                                                \
@@ -308,7 +336,9 @@ static cmeta_range stl_##prefix##_values_range_factory(const void *object) {    
     if (self == NULL || self->value_type == NULL)                               \
         return range;                                                            \
     range = (cmeta_range){                                                       \
-        object, self->value_type, (value_flags), stl_##prefix##_range_size,      \
+        object, self->value_type,                                                 \
+        stl_cmeta_range_flags_for(self->value_type, (value_flags)),              \
+        stl_##prefix##_range_size,                                               \
         stl_##prefix##_values_next, stl_##prefix##_range_version(object),        \
         stl_##prefix##_range_version};                                           \
     return range;                                                                \
@@ -320,7 +350,8 @@ static cmeta_range stl_##prefix##_entries_range_factory(const void *object) {   
         !stl_ordered_entry_binding_valid(self->key_type, self->value_type))      \
         return range;                                                            \
     range = (cmeta_range){                                                       \
-        object, &cmeta_type_ordered_entry, (entry_flags),                        \
+        object, &cmeta_type_ordered_entry,                                       \
+        stl_cmeta_range_flags_for(&cmeta_type_ordered_entry, (entry_flags)),     \
         stl_##prefix##_range_size, stl_##prefix##_entries_next,                  \
         stl_##prefix##_range_version(object), stl_##prefix##_range_version};     \
     return range;                                                                \

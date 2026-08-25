@@ -22,8 +22,10 @@ int main(void) {
 
 #elif defined(CONSUME_CBIND)
 #include <cbind/cbind.h>
+#include <turbo_cmeta_fixed_width.h>
 
 #include <stddef.h>
+#include <stdint.h>
 
 typedef struct cbind_consumer_reader_context {
   int emitted;
@@ -41,6 +43,7 @@ static cserde_status cbind_consumer_next(void *context, cserde_token *out) {
 }
 
 int main(void) {
+  const cmeta_data_desc *fixed_width = &turbo_int32_cmeta_data;
   cbind_consumer_reader_context source = {0};
   cserde_reader_ops ops = {
       offsetof(cserde_reader_ops, next) + sizeof(cserde_reader_next_fn),
@@ -51,6 +54,7 @@ int main(void) {
   cbind_error error = CBIND_ERROR_INIT;
   int out = 0;
 
+  if (fixed_width->storage_type->size != sizeof(int32_t)) return 1;
   if (cserde_reader_init(&reader, &ops, &source) != CSERDE_OK) return 1;
   if (cbind_decode(&context, &cmeta_data_int, &reader, &out, &error) !=
       CBIND_OK)
@@ -112,12 +116,14 @@ int main(void) {
 
 #elif defined(CONSUME_CORE)
 #include <platform.h>
+#include <turbo_cmeta_data.h>
 #include <turbo_thread.h>
 
 int main(void) {
   turbo_threadpool_t *pool = turbo_threadpool_create(1);
   if (!pool) return 1;
   turbo_threadpool_destroy(pool);
+  if (!turbo_uuid_cmeta_data_valid(&turbo_uuid_cmeta_data)) return 1;
   return turbo_hrtime() == 0u;
 }
 

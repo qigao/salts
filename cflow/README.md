@@ -439,9 +439,30 @@ unavailable; there are no placeholder APIs or implicit fallbacks for them.
 
 ## Descriptor-backed container streams — v47
 
+The Stream facade is CFlow's typed convenience layer for modern container
+operations. TurboSTL supplies container algorithms and Range/Collector
+adapters; CFlow supplies the Graph, operators, optimizer, runtime, and error
+semantics. Its fluent spelling is intentionally familiar, but compatibility
+with Java or any other language's Stream contract is not a design goal.
+
+In particular, a CFlow Stream is a reusable Graph description rather than a
+single-use traversal. Operators append to that Graph, `reduce` remains a Graph
+stage, and terminal adapters create independent executions. General parallel
+execution is selected through explicit CFlow plan/executor capabilities rather
+than a Stream mode. Bounded terminals treat their limits as resource contracts,
+not as truncating operators.
+
 CFlow consumes, but does not own, CMeta Range metadata:
 
 ```c
+typed(filter, value, bool, even, (int value)) {
+    return value % 2 == 0;
+}
+
+typed(map, value, int, square, (int value)) {
+    return value * value;
+}
+
 cflow_stream s;
 stream(&list, &s)
     ->filter(&s, even)
@@ -453,6 +474,10 @@ if (cflow_eval_stream(&s, &result)) {
 }
 ```
 
+`typed(filter, ...)` creates a CMeta callable carrying the predicate's type and
+contract. CFlow validates that callable when the node is added and remains
+responsible for traversal, filtering, and value lifetime during execution.
+
 `cflow_stream_from_object()` first resolves the object's CMeta descriptor and default Range.
 `cflow_source_from_range()` then converts that Range to the same resumable
 Source interface used by arrays, timers, channels, and readiness-based IO.
@@ -461,19 +486,21 @@ to the fluent Stream object. Each evaluation creates fresh cursor state, so a
 `REUSABLE` container range can be evaluated repeatedly while the container is
 unchanged.
 
-Run has one lifecycle-aware execution slice: a normalized source-only Graph may
-consume managed values whose type provides `COPY`, `MOVE`, and `DESTROY`. The
-Source must advertise `CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES`; a managed Range must
-also advertise `CMETA_RANGE_CONSTRUCTS_VALUES`. Run owns the live aligned slot
-and lends its value to Sink or Collector only until the callback returns.
+The interpreted Run is lifecycle-aware for values whose type provides `COPY`,
+`MOVE`, and `DESTROY`. The Source must advertise
+`CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES`; a managed Range must also advertise
+`CMETA_RANGE_CONSTRUCTS_VALUES`. Sources, operator paths, reduce accumulators,
+flatMap/relation continuations, SubRuns, and coordination retain live values in
+typed ownership slots. Filter and Sink borrow during callbacks; map/reduce
+callbacks construct their result in empty output storage. Cancellation, error,
+and close destroy every live slot exactly once.
 
-Current typed operators still pass inputs by value through a byte-copy ABI.
-Therefore any managed Graph containing filter/map/reduce/flatMap/relation or
-resumable composition fails before Source ownership transfer. Compiled Plans,
-channels, readiness sources, SubRun/coordination, and `cflow_result` byte-array
-adapters likewise remain trivial-only. `cflow_eval_collect()` is the managed
-terminal path: the transactional Collector must copy or move each borrowed
-value before `accept()` returns.
+Compiled Plans, direct byte execution, channels, readiness sources, and
+`cflow_result` byte-array adapters remain trivial-only and fail admission for
+managed values. `cflow_eval_collect()` is the managed terminal path: the
+transactional Collector copies or moves each borrowed value before `accept()`
+returns. Optimizer map fusion remains available for trivial values; managed map
+nodes stay separate so every intermediate descriptor retains its lifecycle.
 
 Range flags describe traversal semantics. The current Range Source consumes
 items through `cmeta_range_next()` and does not treat

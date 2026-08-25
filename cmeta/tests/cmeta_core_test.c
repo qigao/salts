@@ -464,6 +464,19 @@ CMETA_IMPLEMENTS(cmeta_test_counter, cmeta_test_basic_counter,
     .reset = cmeta_test_basic_reset
 );
 
+#define CMETA_TEST_OWNER_METHODS(X,I) \
+    X(I,D0,void,destroy,_)
+
+CMETA_INTERFACE(cmeta_test_owner, CMETA_TEST_OWNER_METHODS);
+
+static void cmeta_test_basic_owner_destroy(void *self) {
+    *(int *)self += 1;
+}
+
+CMETA_IMPLEMENTS(cmeta_test_owner, cmeta_test_basic_owner, 0u,
+    .destroy = cmeta_test_basic_owner_destroy
+);
+
 suite("CMeta core") {
     it("defines a complete interface without a separate implementation replay") {
         cmeta_test_counter_state state = {4};
@@ -505,6 +518,21 @@ suite("CMeta core") {
             cmeta_test_counter_bind(&state, &incomplete_vtable);
 
         check_false(cmeta_test_counter_valid(&counter));
+    }
+
+    it("clears an owning interface after destructive dispatch") {
+        int destroy_count = 0;
+        cmeta_test_owner owner =
+            cmeta_test_basic_owner_as_cmeta_test_owner(&destroy_count);
+
+        check_true(cmeta_test_owner_valid(&owner));
+        cmeta_test_owner_destroy(&owner);
+        check_equal(destroy_count, 1);
+        check_false(cmeta_test_owner_valid(&owner));
+        check_null(owner.self);
+        check_null(owner.vtable);
+        cmeta_test_owner_destroy(&owner);
+        check_equal(destroy_count, 1);
     }
 
     it("exposes builtin type metadata through a bounded registry") {

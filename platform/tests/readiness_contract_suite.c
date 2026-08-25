@@ -153,6 +153,46 @@ static void arm_from_callback(void *user, turbo_readiness_events events, int sta
       probe->registration, TURBO_READINESS_EVENT_READ, record_callback, probe);
 }
 
+static turbo_readiness_callback_result rearm_once_continuation(
+    void *user, turbo_readiness_events events, int status) {
+  callback_probe *probe = (callback_probe *)user;
+  record_callback(user, events, status);
+  if (probe->calls == 1u)
+    return (turbo_readiness_callback_result){
+        TURBO_READINESS_REARM, TURBO_READINESS_EVENT_READ};
+  return (turbo_readiness_callback_result){TURBO_READINESS_COMPLETE, 0u};
+}
+
+static turbo_readiness_callback_result invalid_continuation_result(
+    void *user, turbo_readiness_events events, int status) {
+  record_callback(user, events, status);
+  return (turbo_readiness_callback_result){
+      (turbo_readiness_action)UINT32_MAX, 0u};
+}
+
+static turbo_readiness_callback_result always_rearm_continuation(
+    void *user, turbo_readiness_events events, int status) {
+  record_callback(user, events, status);
+  return (turbo_readiness_callback_result){
+      TURBO_READINESS_REARM, TURBO_READINESS_EVENT_READ};
+}
+
+static turbo_readiness_callback_result blocking_rearm_continuation(
+    void *user, turbo_readiness_events events, int status) {
+  callback_probe *probe = (callback_probe *)user;
+  turbo_mutex_lock(&probe->mutex);
+  probe->calls += 1;
+  probe->events = events;
+  probe->status = status;
+  probe->entered = 1;
+  turbo_cond_broadcast(&probe->changed);
+  while (!probe->released)
+    turbo_cond_wait(&probe->changed, &probe->mutex);
+  turbo_mutex_unlock(&probe->mutex);
+  return (turbo_readiness_callback_result){
+      TURBO_READINESS_REARM, TURBO_READINESS_EVENT_READ};
+}
+
 static void shutdown_from_callback(void *user, turbo_readiness_events events,
                                    int status) {
   callback_probe *probe = (callback_probe *)user;
@@ -845,6 +885,271 @@ spec("Platform readiness contract") {
       check_equal(turbo_readiness_close(&registration), TURBO_OK);
       callback_probe_destroy(&probe);
       close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("commits continuation rearm after the callback returns") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      turbo_readiness_stats stats = {0};
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_equal(turbo_readiness_arm_continuation(
+                      &registration, TURBO_READINESS_EVENT_READ,
+                      rearm_once_continuation, &probe),
+                  TURBO_OK);
+      check_equal(factory->emit_resource(
+                      fixture, CONTRACT_RESOURCE_A,
+                      TURBO_READINESS_EVENT_READ),
+                  TURBO_OK);
+      check_equal(probe.calls, 1u);
+      check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
+      check_equal(stats.armed_count, (size_t)1u);
+
+      check_equal(factory->emit_resource(
+                      fixture, CONTRACT_RESOURCE_A,
+                      TURBO_READINESS_EVENT_READ),
+                  TURBO_OK);
+      check_equal(probe.calls, 2u);
+      check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
+      check_equal(stats.armed_count, (size_t)0u);
+
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      callback_probe_destroy(&probe);
+      close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("lets external close win over a blocked continuation rearm") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      turbo_thread_t emit_thread = NULL;
+      turbo_thread_t close_thread = NULL;
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+      emit_thread_args emit_args = {factory, fixture, CONTRACT_RESOURCE_A, TURBO_EIO};
+      close_thread_args close_args;
+      atomic_init(&close_args.started, 0);
+      atomic_init(&close_args.completed, 0);
+      close_args.registration = &registration;
+      close_args.status = TURBO_EIO;
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_equal(turbo_readiness_arm_continuation(
+                      &registration, TURBO_READINESS_EVENT_READ,
+                      blocking_rearm_continuation, &probe),
+                  TURBO_OK);
+      check_equal(turbo_thread_create(&emit_thread, emit_worker, &emit_args), TURBO_OK);
+      wait_probe_entered(&probe);
+      check_equal(turbo_thread_create(&close_thread, close_worker, &close_args), TURBO_OK);
+      check_equal(factory->wait_hook_calls(
+                      fixture, READINESS_CONTRACT_HOOK_CLOSE, 1u,
+                      CONTRACT_LONG_WAIT_NS),
+                  TURBO_OK);
+      check_equal(atomic_load(&close_args.completed), 0);
+
+      release_probe(&probe);
+      check_equal(turbo_thread_join(&emit_thread), TURBO_OK);
+      check_equal(turbo_thread_join(&close_thread), TURBO_OK);
+      check_equal(emit_args.status, TURBO_OK);
+      check_equal(close_args.status, TURBO_OK);
+      check_equal(probe.calls, 1);
+      check_null(registration.impl);
+      callback_probe_destroy(&probe);
+      close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("lets external unarm win over a blocked continuation rearm") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      turbo_readiness_stats stats = {0};
+      turbo_thread_t emit_thread = NULL;
+      turbo_thread_t unarm_thread = NULL;
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+      emit_thread_args emit_args = {factory, fixture, CONTRACT_RESOURCE_A, TURBO_EIO};
+      unarm_thread_args unarm_args;
+      atomic_init(&unarm_args.started, 0);
+      atomic_init(&unarm_args.completed, 0);
+      unarm_args.registration = &registration;
+      unarm_args.status = TURBO_EIO;
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_equal(turbo_readiness_arm_continuation(
+                      &registration, TURBO_READINESS_EVENT_READ,
+                      blocking_rearm_continuation, &probe),
+                  TURBO_OK);
+      check_equal(turbo_thread_create(&emit_thread, emit_worker, &emit_args), TURBO_OK);
+      wait_probe_entered(&probe);
+      check_equal(turbo_thread_create(&unarm_thread, unarm_worker, &unarm_args), TURBO_OK);
+      check_equal(factory->wait_hook_calls(
+                      fixture, READINESS_CONTRACT_HOOK_UNARM, 1u,
+                      CONTRACT_LONG_WAIT_NS),
+                  TURBO_OK);
+      check_equal(atomic_load(&unarm_args.completed), 0);
+
+      release_probe(&probe);
+      check_equal(turbo_thread_join(&emit_thread), TURBO_OK);
+      check_equal(turbo_thread_join(&unarm_thread), TURBO_OK);
+      check_equal(emit_args.status, TURBO_OK);
+      check_equal(unarm_args.status, TURBO_OK);
+      check_equal(probe.calls, 1);
+      check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
+      check_equal(stats.armed_count, (size_t)0u);
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      callback_probe_destroy(&probe);
+      close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("lets shutdown win over a blocked continuation rearm") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      turbo_thread_t emit_thread = NULL;
+      turbo_thread_t shutdown_thread = NULL;
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+      emit_thread_args emit_args = {factory, fixture, CONTRACT_RESOURCE_A, TURBO_EIO};
+      terminal_thread_args shutdown_args = {
+          factory, fixture, &reactor, TURBO_ESHUTDOWN, TURBO_EIO};
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_equal(turbo_readiness_arm_continuation(
+                      &registration, TURBO_READINESS_EVENT_READ,
+                      blocking_rearm_continuation, &probe),
+                  TURBO_OK);
+      check_equal(turbo_thread_create(&emit_thread, emit_worker, &emit_args), TURBO_OK);
+      wait_probe_entered(&probe);
+      check_equal(turbo_thread_create(&shutdown_thread, shutdown_worker, &shutdown_args), TURBO_OK);
+      check_equal(factory->wait_admission_closed(fixture), TURBO_OK);
+
+      release_probe(&probe);
+      check_equal(turbo_thread_join(&emit_thread), TURBO_OK);
+      check_equal(turbo_thread_join(&shutdown_thread), TURBO_OK);
+      check_equal(emit_args.status, TURBO_OK);
+      check_equal(shutdown_args.result, TURBO_OK);
+      check_equal(probe.calls, 1);
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_OK);
+      callback_probe_destroy(&probe);
+      factory->destroy(fixture);
+    }
+
+    it("serializes shutdown behind a blocked continuation rearm hook") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      turbo_thread_t emit_thread = NULL;
+      turbo_thread_t shutdown_thread = NULL;
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+      emit_thread_args emit_args = {factory, fixture, CONTRACT_RESOURCE_A, TURBO_EIO};
+      terminal_thread_args shutdown_args = {
+          factory, fixture, &reactor, TURBO_ESHUTDOWN, TURBO_EIO};
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_equal(turbo_readiness_arm_continuation(
+                      &registration, TURBO_READINESS_EVENT_READ,
+                      rearm_once_continuation, &probe),
+                  TURBO_OK);
+      factory->block_hook_on_call(
+          fixture, READINESS_CONTRACT_HOOK_ARM, 2u);
+      check_equal(turbo_thread_create(&emit_thread, emit_worker, &emit_args), TURBO_OK);
+      check_equal(factory->wait_hook_calls(
+                      fixture, READINESS_CONTRACT_HOOK_ARM, 2u,
+                      CONTRACT_LONG_WAIT_NS),
+                  TURBO_OK);
+      check_equal(turbo_thread_create(&shutdown_thread, shutdown_worker, &shutdown_args), TURBO_OK);
+      check_equal(factory->wait_admission_closed(fixture), TURBO_OK);
+
+      factory->release_hook(fixture, READINESS_CONTRACT_HOOK_ARM);
+      check_equal(turbo_thread_join(&emit_thread), TURBO_OK);
+      check_equal(turbo_thread_join(&shutdown_thread), TURBO_OK);
+      check_equal(emit_args.status, TURBO_OK);
+      check_equal(shutdown_args.result, TURBO_OK);
+      check_equal(probe.calls, 2);
+      check_equal(probe.events, (turbo_readiness_events)0u);
+      check_equal(probe.status, TURBO_ESHUTDOWN);
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_OK);
+      callback_probe_destroy(&probe);
+      factory->destroy(fixture);
+    }
+
+    it("completes an invalid continuation result without rearming") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      turbo_readiness_stats stats = {0};
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_equal(turbo_readiness_arm_continuation(
+                      &registration, TURBO_READINESS_EVENT_READ,
+                      invalid_continuation_result, &probe),
+                  TURBO_OK);
+      check_equal(factory->emit_resource(
+                      fixture, CONTRACT_RESOURCE_A,
+                      TURBO_READINESS_EVENT_READ),
+                  TURBO_EINVAL);
+      check_equal(probe.calls, 1u);
+      check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
+      check_equal(stats.armed_count, (size_t)0u);
+
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      callback_probe_destroy(&probe);
+      close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("delivers a continuation rearm backend error exactly once") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      turbo_readiness_stats stats = {0};
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_equal(turbo_readiness_arm_continuation(
+                      &registration, TURBO_READINESS_EVENT_READ,
+                      rearm_once_continuation, &probe),
+                  TURBO_OK);
+      factory->fail_next_arm(fixture, TURBO_EIO);
+      check_equal(factory->emit_resource(
+                      fixture, CONTRACT_RESOURCE_A,
+                      TURBO_READINESS_EVENT_READ),
+                  TURBO_OK);
+      check_equal(probe.calls, 2u);
+      check_equal(probe.events, (turbo_readiness_events)0u);
+      check_equal(probe.status, TURBO_EIO);
+      check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
+      check_equal(stats.armed_count, (size_t)0u);
+
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      callback_probe_destroy(&probe);
+      close_and_destroy_fixture(factory, fixture, &reactor);
+    }
+
+    it("ignores a continuation rearm result during shutdown delivery") {
+      turbo_readiness_reactor reactor = {0};
+      turbo_readiness_registration registration = {0};
+      turbo_readiness_stats stats = {0};
+      readiness_contract_fixture *fixture = create_fixture(factory, 1, 1, &reactor);
+      callback_probe probe = callback_probe_init(&reactor, &registration);
+
+      check_equal(turbo_readiness_register(&reactor, CONTRACT_RESOURCE_A, &registration), TURBO_OK);
+      check_equal(turbo_readiness_arm_continuation(
+                      &registration, TURBO_READINESS_EVENT_READ,
+                      always_rearm_continuation, &probe),
+                  TURBO_OK);
+      check_equal(turbo_readiness_reactor_shutdown(&reactor), TURBO_OK);
+      check_equal(probe.calls, 1u);
+      check_equal(probe.events, (turbo_readiness_events)0u);
+      check_equal(probe.status, TURBO_ESHUTDOWN);
+      check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
+      check_equal(stats.armed_count, (size_t)0u);
+
+      check_equal(turbo_readiness_close(&registration), TURBO_OK);
+      check_equal(turbo_readiness_reactor_destroy(&reactor), TURBO_OK);
+      callback_probe_destroy(&probe);
+      factory->destroy(fixture);
     }
 
     it("serializes multiple external rearms after a firing callback") {

@@ -18,6 +18,17 @@ cmake_add_benchmark(cflow_machine_hierarchy_benchmark
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/benchmarks")
 
+cmake_add_benchmark(cflow_network_benchmark
+  SOURCES cflow_network_benchmark.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/benchmarks")
+
+if(WIN32)
+  target_link_libraries(cflow_network_benchmark PRIVATE ws2_32 psapi)
+  target_compile_definitions(cflow_network_benchmark
+    PRIVATE _CRT_SECURE_NO_WARNINGS=1)
+endif()
+
 set_target_properties(cflow_direct_benchmark PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
@@ -32,6 +43,11 @@ set_target_properties(cflow_parallel_reduce_benchmark PROPERTIES
   C_EXTENSIONS OFF)
 
 set_target_properties(cflow_machine_hierarchy_benchmark PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+set_target_properties(cflow_network_benchmark PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)

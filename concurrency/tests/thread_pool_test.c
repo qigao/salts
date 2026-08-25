@@ -367,6 +367,49 @@ spec("Thread Pool Tests") {
         turbo_threadpool_destroy(pool);
     }
 
+    it("keeps running tasks outside configured queue capacity") {
+        enum { WORKERS = 4 };
+        turbo_threadpool_config_t config = {
+            .num_threads = WORKERS,
+            .queue_capacity = 1,
+        };
+        turbo_threadpool_t *pool = turbo_threadpool_create_with_config(&config);
+        turbo_threadpool_stats_t stats = {0};
+        int submit_status[WORKERS] = {0};
+        int queued_status;
+        int full_status;
+
+        check_not_null(pool);
+        for (int i = 0; i < WORKERS; ++i) {
+            int attempts = 0;
+            submit_status[i] =
+                turbo_threadpool_try_submit(pool, gated_count_task, NULL);
+            if (submit_status[i] != TURBO_OK) continue;
+            do {
+                turbo_threadpool_get_stats(pool, &stats);
+                if (stats.active_tasks >= i + 1) break;
+                turbo_sleep_ms(1);
+            } while (++attempts < 200);
+        }
+
+        queued_status =
+            turbo_threadpool_try_submit(pool, gated_count_task, NULL);
+        full_status =
+            turbo_threadpool_try_submit(pool, gated_count_task, NULL);
+        turbo_threadpool_get_stats(pool, &stats);
+        atomic_store(&gate_open, 1);
+        check_equal(turbo_threadpool_wait_status(pool), TURBO_OK);
+        turbo_threadpool_destroy(pool);
+
+        for (int i = 0; i < WORKERS; ++i)
+            check_equal(submit_status[i], TURBO_OK);
+        check_equal((int)stats.active_tasks, WORKERS);
+        check_equal((int)stats.queued_tasks, 1);
+        check_equal(queued_status, TURBO_OK);
+        check_equal(full_status, TURBO_ENOBUFS);
+        check_equal(atomic_load(&mpmc_counter), WORKERS + 1);
+    }
+
     it("fails callback self-blocking operations without deadlock") {
         turbo_threadpool_config_t config = {
             .num_threads = 1,

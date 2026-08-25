@@ -20,6 +20,7 @@ typedef struct turbo_readiness_slot {
   turbo_readiness_impl *owner;
   intptr_t native_resource;
   turbo_readiness_callback callback;
+  turbo_readiness_continuation continuation;
   void *callback_user;
   uint32_t index;
   _Atomic uint32_t generation;
@@ -62,6 +63,12 @@ struct turbo_readiness_impl {
 };
 
 static TURBO_THREAD_LOCAL turbo_readiness_slot *readiness_callback_slot;
+
+static void readiness_slot_clear_callback(turbo_readiness_slot *slot) {
+  slot->callback = NULL;
+  slot->continuation = NULL;
+  slot->callback_user = NULL;
+}
 
 static void *readiness_handle_load(
     const turbo_readiness_registration *registration) {
@@ -275,6 +282,12 @@ int turbo_readiness_state_model_valid(
   return 1;
 }
 
+int turbo_readiness_callback_forms_valid(
+    turbo_readiness_callback callback,
+    turbo_readiness_continuation continuation) {
+  return (callback == NULL) != (continuation == NULL);
+}
+
 static int readiness_callback_on_impl(const turbo_readiness_impl *impl) {
   return readiness_callback_slot != NULL && readiness_callback_slot->owner == impl;
 }
@@ -290,8 +303,7 @@ static void readiness_slot_reclaim(turbo_readiness_slot *slot) {
           ? TURBO_READINESS_LIFECYCLE_FREE
           : TURBO_READINESS_LIFECYCLE_RETIRED;
   slot->native_resource = 0;
-  slot->callback = NULL;
-  slot->callback_user = NULL;
+  readiness_slot_clear_callback(slot);
   slot->interest = TURBO_READINESS_INTEREST_IDLE;
   slot->delivery = TURBO_READINESS_DELIVERY_IDLE;
   slot->terminal = TURBO_READINESS_TERMINAL_NONE;
@@ -537,6 +549,8 @@ int turbo_readiness_reactor_init(turbo_readiness_reactor *reactor,
   if (reactor == NULL || config == NULL) return TURBO_EINVAL;
 #if defined(TURBO_ENABLE_EPOLL_READINESS)
   return turbo_readiness_epoll_init(reactor, config);
+#elif defined(TURBO_ENABLE_KQUEUE_READINESS)
+  return turbo_readiness_kqueue_init(reactor, config);
 #else
   return TURBO_ENOTSUP;
 #endif
@@ -667,8 +681,12 @@ int turbo_readiness_register(turbo_readiness_reactor *reactor, intptr_t native_r
   return status == TURBO_OK ? TURBO_ESHUTDOWN : status;
 }
 
-int turbo_readiness_arm(turbo_readiness_registration *registration, turbo_readiness_events events,
-                        turbo_readiness_callback callback, void *user) {
+static int readiness_arm_impl(
+    turbo_readiness_registration *registration,
+    turbo_readiness_events events,
+    turbo_readiness_callback callback,
+    turbo_readiness_continuation continuation,
+    void *user) {
   turbo_readiness_api_borrow borrow = {0};
   turbo_readiness_slot *slot;
   turbo_readiness_impl *impl;
@@ -678,7 +696,9 @@ int turbo_readiness_arm(turbo_readiness_registration *registration, turbo_readin
   uint64_t arm_token;
   int status;
 
-  if (callback == NULL || !readiness_events_valid(events)) return TURBO_EINVAL;
+  if (!turbo_readiness_callback_forms_valid(callback, continuation) ||
+      !readiness_events_valid(events))
+    return TURBO_EINVAL;
   status = readiness_api_borrow_acquire(registration, &borrow);
   if (status != TURBO_OK) return status;
   slot = borrow.slot;
@@ -736,6 +756,7 @@ int turbo_readiness_arm(turbo_readiness_registration *registration, turbo_readin
     return readiness_api_borrow_return(&borrow, status);
   }
   slot->callback = callback;
+  slot->continuation = continuation;
   slot->callback_user = user;
   slot->interest = TURBO_READINESS_INTEREST_ARMING;
   slot->control = TURBO_READINESS_CONTROL_ARM;
@@ -753,8 +774,7 @@ int turbo_readiness_arm(turbo_readiness_registration *registration, turbo_readin
     if (slot->interest == TURBO_READINESS_INTEREST_ARMING &&
         slot->control == TURBO_READINESS_CONTROL_ARM) {
       slot->interest = TURBO_READINESS_INTEREST_IDLE;
-      slot->callback = NULL;
-      slot->callback_user = NULL;
+      readiness_slot_clear_callback(slot);
       slot->arm_token = 0;
     }
   } else if (status == TURBO_OK && readiness_slot_token(slot) == token &&
@@ -767,6 +787,19 @@ int turbo_readiness_arm(turbo_readiness_registration *registration, turbo_readin
   turbo_cond_broadcast(&impl->changed);
   turbo_mutex_unlock(&impl->mutex);
   return readiness_api_borrow_return(&borrow, status);
+}
+
+int turbo_readiness_arm(turbo_readiness_registration *registration,
+                        turbo_readiness_events events,
+                        turbo_readiness_callback callback, void *user) {
+  return readiness_arm_impl(registration, events, callback, NULL, user);
+}
+
+int turbo_readiness_arm_continuation(
+    turbo_readiness_registration *registration,
+    turbo_readiness_events events,
+    turbo_readiness_continuation continuation, void *user) {
+  return readiness_arm_impl(registration, events, NULL, continuation, user);
 }
 
 int turbo_readiness_backend_wait_arm_waiter(
@@ -873,8 +906,7 @@ int turbo_readiness_unarm(turbo_readiness_registration *registration) {
     turbo_cond_wait(&impl->changed, &impl->mutex);
   if (status == TURBO_OK) {
     slot->interest = TURBO_READINESS_INTEREST_IDLE;
-    slot->callback = NULL;
-    slot->callback_user = NULL;
+    readiness_slot_clear_callback(slot);
     slot->arm_token = 0;
   } else {
     slot->interest = previous_interest;
@@ -946,8 +978,7 @@ int turbo_readiness_close(turbo_readiness_registration *registration) {
   }
   slot->native_registered = 0;
   if (slot->delivery == TURBO_READINESS_DELIVERY_IDLE) {
-    slot->callback = NULL;
-    slot->callback_user = NULL;
+    readiness_slot_clear_callback(slot);
   }
   slot->interest = TURBO_READINESS_INTEREST_IDLE;
   slot->arm_token = 0;
@@ -973,25 +1004,119 @@ int turbo_readiness_close(turbo_readiness_registration *registration) {
 static int readiness_dispatch_slot(turbo_readiness_impl *impl, turbo_readiness_slot *slot,
                                    turbo_readiness_events events, int status) {
   turbo_readiness_callback callback;
+  turbo_readiness_continuation continuation;
+  turbo_readiness_callback_result result = {
+      TURBO_READINESS_COMPLETE, 0u};
+  turbo_readiness_generation_step arm_generation_step;
   turbo_readiness_slot *previous_callback_slot;
   void *callback_user;
+  uint64_t token;
+  uint64_t arm_token;
+  int rearm_status;
 
   slot->interest = TURBO_READINESS_INTEREST_IDLE;
   slot->delivery = TURBO_READINESS_DELIVERY_CALLBACK;
   slot->arm_token = 0;
   callback = slot->callback;
+  continuation = slot->continuation;
   callback_user = slot->callback_user;
   turbo_mutex_unlock(&impl->mutex);
 
   previous_callback_slot = readiness_callback_slot;
   readiness_callback_slot = slot;
-  callback(callback_user, events, status);
+  if (continuation != NULL)
+    result = continuation(callback_user, events, status);
+  else
+    callback(callback_user, events, status);
   readiness_callback_slot = previous_callback_slot;
 
   turbo_mutex_lock(&impl->mutex);
+  if (continuation != NULL && status == TURBO_OK &&
+      result.action != TURBO_READINESS_COMPLETE &&
+      result.action != TURBO_READINESS_REARM) {
+    slot->delivery = TURBO_READINESS_DELIVERY_IDLE;
+    readiness_slot_clear_callback(slot);
+    readiness_slot_try_reclaim(slot);
+    turbo_cond_broadcast(&impl->changed);
+    turbo_mutex_unlock(&impl->mutex);
+    return TURBO_EINVAL;
+  }
+  if (continuation != NULL && status == TURBO_OK &&
+      result.action == TURBO_READINESS_REARM &&
+      !readiness_events_valid(result.interests)) {
+    slot->delivery = TURBO_READINESS_DELIVERY_IDLE;
+    readiness_slot_clear_callback(slot);
+    readiness_slot_try_reclaim(slot);
+    turbo_cond_broadcast(&impl->changed);
+    turbo_mutex_unlock(&impl->mutex);
+    return TURBO_EINVAL;
+  }
+  if (continuation != NULL && status == TURBO_OK &&
+      result.action == TURBO_READINESS_REARM &&
+      slot->lifecycle == TURBO_READINESS_LIFECYCLE_OPEN &&
+      slot->terminal == TURBO_READINESS_TERMINAL_NONE &&
+      slot->control == TURBO_READINESS_CONTROL_NONE &&
+      impl->admission_open && !impl->terminalizing) {
+    rearm_status = turbo_readiness_generation_prepare(
+        slot->arm_generation, &arm_generation_step);
+    if (rearm_status == TURBO_OK) {
+      slot->delivery = TURBO_READINESS_DELIVERY_IDLE;
+      slot->interest = TURBO_READINESS_INTEREST_ARMING;
+      slot->control = TURBO_READINESS_CONTROL_ARM;
+      slot->arm_generation =
+          turbo_readiness_generation_commit(&arm_generation_step);
+      slot->arm_token =
+          ((uint64_t)slot->arm_generation << 32) | (uint64_t)slot->index;
+      token = readiness_slot_token(slot);
+      arm_token = slot->arm_token;
+      turbo_mutex_unlock(&impl->mutex);
+
+      rearm_status = impl->backend_ops.arm(
+          impl->backend_user, token, arm_token, result.interests);
+
+      turbo_mutex_lock(&impl->mutex);
+      if (rearm_status == TURBO_OK &&
+          readiness_slot_token(slot) == token &&
+          slot->interest == TURBO_READINESS_INTEREST_ARMING &&
+          slot->control == TURBO_READINESS_CONTROL_ARM) {
+        slot->interest = TURBO_READINESS_INTEREST_ARMED;
+        slot->control = TURBO_READINESS_CONTROL_NONE;
+        turbo_cond_broadcast(&impl->changed);
+        turbo_mutex_unlock(&impl->mutex);
+        return TURBO_OK;
+      }
+      if (readiness_slot_token(slot) == token &&
+          slot->interest == TURBO_READINESS_INTEREST_ARMING &&
+          slot->control == TURBO_READINESS_CONTROL_ARM) {
+        slot->arm_generation =
+            turbo_readiness_generation_rollback(&arm_generation_step);
+        slot->interest = TURBO_READINESS_INTEREST_IDLE;
+        slot->arm_token = 0u;
+      }
+    }
+    if (slot->control == TURBO_READINESS_CONTROL_ARM)
+      slot->control = TURBO_READINESS_CONTROL_NONE;
+    slot->terminal = TURBO_READINESS_TERMINAL_DELIVERING;
+    slot->delivery = TURBO_READINESS_DELIVERY_CALLBACK;
+    turbo_cond_broadcast(&impl->changed);
+    turbo_mutex_unlock(&impl->mutex);
+
+    previous_callback_slot = readiness_callback_slot;
+    readiness_callback_slot = slot;
+    (void)continuation(callback_user, 0u, rearm_status);
+    readiness_callback_slot = previous_callback_slot;
+
+    turbo_mutex_lock(&impl->mutex);
+    slot->delivery = TURBO_READINESS_DELIVERY_IDLE;
+    slot->terminal = TURBO_READINESS_TERMINAL_NONE;
+    readiness_slot_clear_callback(slot);
+    readiness_slot_try_reclaim(slot);
+    turbo_cond_broadcast(&impl->changed);
+    turbo_mutex_unlock(&impl->mutex);
+    return TURBO_OK;
+  }
   slot->delivery = TURBO_READINESS_DELIVERY_IDLE;
-  slot->callback = NULL;
-  slot->callback_user = NULL;
+  readiness_slot_clear_callback(slot);
   readiness_slot_try_reclaim(slot);
   turbo_cond_broadcast(&impl->changed);
   turbo_mutex_unlock(&impl->mutex);
@@ -1068,6 +1193,7 @@ int turbo_readiness_backend_dispatch_generation(turbo_readiness_reactor *reactor
 static void readiness_fanout(turbo_readiness_impl *impl, int status) {
   for (size_t i = 0; i < impl->capacity; ++i) {
     turbo_readiness_callback callback;
+    turbo_readiness_continuation continuation;
     turbo_readiness_slot *previous_callback_slot;
     turbo_readiness_slot *slot;
     void *callback_user;
@@ -1085,20 +1211,26 @@ static void readiness_fanout(turbo_readiness_impl *impl, int status) {
     slot->delivery = TURBO_READINESS_DELIVERY_CALLBACK;
     slot->arm_token = 0;
     callback = slot->callback;
+    continuation = slot->continuation;
     callback_user = slot->callback_user;
     terminal_status = slot->terminal_status;
     turbo_mutex_unlock(&impl->mutex);
 
     previous_callback_slot = readiness_callback_slot;
     readiness_callback_slot = slot;
-    callback(callback_user, 0, terminal_status != TURBO_OK ? terminal_status : status);
+    if (continuation != NULL)
+      (void)continuation(
+          callback_user, 0,
+          terminal_status != TURBO_OK ? terminal_status : status);
+    else
+      callback(callback_user, 0,
+               terminal_status != TURBO_OK ? terminal_status : status);
     readiness_callback_slot = previous_callback_slot;
 
     turbo_mutex_lock(&impl->mutex);
     slot->delivery = TURBO_READINESS_DELIVERY_IDLE;
     slot->terminal = TURBO_READINESS_TERMINAL_NONE;
-    slot->callback = NULL;
-    slot->callback_user = NULL;
+    readiness_slot_clear_callback(slot);
     slot->terminal_status = TURBO_OK;
     readiness_slot_try_reclaim(slot);
     turbo_cond_broadcast(&impl->changed);

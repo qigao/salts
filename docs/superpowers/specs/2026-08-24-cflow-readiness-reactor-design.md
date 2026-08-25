@@ -102,9 +102,33 @@ typedef struct turbo_readiness_stats {
 - reactor init/shutdown/destroy；
 - register native resource；
 - arm one-shot callback；
+- additive callback-return continuation arm；
 - unarm and wait for callback quiescence；
 - close registration and release its slot；
 - snapshot stats。
+
+continuation 的最小用法如下；真实 callback 必须把 `blocked` 替换为一次有界、非阻塞的
+I/O 尝试结果：
+
+```c
+#include <turbo/readiness.h>
+
+#include <stdbool.h>
+
+static turbo_readiness_callback_result continue_read(
+    void *user, turbo_readiness_events events, int status) {
+  const bool blocked = status == TURBO_OK && events != 0u &&
+                       *(const bool *)user;
+  return (turbo_readiness_callback_result){
+      blocked ? TURBO_READINESS_REARM : TURBO_READINESS_COMPLETE,
+      blocked ? TURBO_READINESS_EVENT_READ : 0u};
+}
+
+int arm_read(turbo_readiness_registration *registration, bool *blocked) {
+  return turbo_readiness_arm_continuation(
+      registration, TURBO_READINESS_EVENT_READ, continue_read, blocked);
+}
+```
 
 错误映射使用已有 `TURBO_EINVAL`、`TURBO_ENOMEM`、`TURBO_ENOBUFS`、
 `TURBO_EALREADY`、`TURBO_EBUSY`、`TURBO_ESHUTDOWN`、`TURBO_ENOTSUP`
@@ -287,6 +311,17 @@ Windows/macOS/Android 验证公共头、fake suite、CFlow adapter 和明确 ENO
   `TURBO_ENABLE_EPOLL_READINESS`，保留 fake contract 和 CFlow adapter，不回退到
   polling；若公共契约本身有缺陷，可完整回滚新增 header/source/tests，旧 API
   仍可工作。
+
+`turbo_readiness_arm_continuation()` 不改变旧 arm 的 callback 内 `TURBO_EBUSY` 判定。
+continuation 只返回 `COMPLETE` 或 `REARM + interests`；Platform 在 callback 返回后与
+close/unarm/external arm/shutdown 共用同一 control gate 提交后续 backend arm。terminal
+callback 忽略返回值，backend rearm 失败则以 `events == 0` 和精确错误再投递一次 terminal
+callback。当前 Lean `Readiness` 模型仍覆盖旧 one-shot/self-rearm 判定与共享 slot safety，
+尚未刻画该新增 callback-return rearm commit；现有 C state-model 也只校验公共状态投影与
+legacy callback presence，另以 callback-form XOR helper 校验两种具体函数指针，不表达
+continuation transition。新增 commit、invalid result、backend rearm failure，以及与
+close/unarm/shutdown 和阻塞 backend arm hook 的并发边界由 fake backend contract 覆盖，
+epoll/kqueue native tests 继续验证真实 OS 集成。
 
 ## 一手资料
 

@@ -38,6 +38,8 @@ add_library(${TARGET_NAME}
   src/executor.c
   src/graph.c
   src/interfaces.c
+  src/io_actor.c
+  src/io_native.c
   src/lower.c
   src/machine.c
   src/machine_hierarchy.c
@@ -60,6 +62,22 @@ add_library(${TARGET_NAME}
   src/timer_queue.c
   src/timer_event.c
   src/verify.c)
+
+if(WIN32)
+  target_sources(${TARGET_NAME} PRIVATE src/io_native_iocp.c)
+  target_compile_definitions(${TARGET_NAME} PRIVATE CFLOW_HAS_NATIVE_IOCP=1)
+  target_link_libraries(${TARGET_NAME} PRIVATE ws2_32)
+elseif(APPLE)
+  target_sources(${TARGET_NAME} PRIVATE src/io_native_readiness.c)
+  target_compile_definitions(${TARGET_NAME} PRIVATE CFLOW_HAS_NATIVE_KQUEUE=1)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(${TARGET_NAME} PRIVATE src/io_native_io_uring.c)
+  target_compile_definitions(${TARGET_NAME} PRIVATE CFLOW_HAS_NATIVE_IO_URING=1)
+  if(TURBO_ENABLE_EPOLL_READINESS)
+    target_sources(${TARGET_NAME} PRIVATE src/io_native_readiness.c)
+    target_compile_definitions(${TARGET_NAME} PRIVATE CFLOW_HAS_NATIVE_EPOLL=1)
+  endif()
+endif()
 
 cmake_config_target(
   ${TARGET_NAME}

@@ -59,6 +59,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
+elseif(APPLE)
+  cmake_add_test(platform_readiness_kqueue_test
+    SOURCES platform_readiness_kqueue_test.c
+    LIBS TurboUtils::Platform TurboUtils::TinyTest
+    FOLDER "platform/tests")
+  set_target_properties(platform_readiness_kqueue_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)
 else()
   cmake_add_test(platform_readiness_unsupported_test
     SOURCES platform_readiness_unsupported_test.c

@@ -31,7 +31,11 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
 #undef CFLOW_STREAM_METHOD_1
 #undef CFLOW_STREAM_METHOD_2
 
-/* Explicit-self ISO C11 fluent object. */
+/* Explicit-self ISO C11 fluent Graph builder for modern typed collection
+ * operations. This is not a single-use traversal object or a compatibility
+ * implementation of another language's Stream contract. Operators append to
+ * this Graph; each evaluation creates independent runtime state. A bound Range
+ * may be evaluated repeatedly only when its own REUSABLE contract permits it. */
 struct cflow_stream {
     cflow_graph graph;
     cmeta_range source_range;

@@ -41,6 +41,8 @@ typedef struct cflow_resume_ctx {
 } cflow_resume_ctx;
 
 typedef struct cflow_resumable_ops {
+    /* resume receives empty output storage and constructs a live value only
+     * for VALUE or VALUE_AND_DONE. All other steps leave it empty. */
     cflow_step (*resume)(void *state, cflow_resume_ctx *ctx, void *out_value);
     void (*cancel)(void *state);
     void (*destroy)(void *state);
@@ -106,9 +108,8 @@ typedef struct cflow_run {
 
 /* Move-style ownership: on success the run takes source and clears *source.
  * Graph and scheduler are borrowed. Admission failure leaves source ownership
- * with the caller. Source-only graphs accept managed COPY/MOVE/DESTROY values
- * from a CONSTRUCTS_VALUES Source. Graphs containing current typed operators,
- * resumable composition, or relation execution remain trivial-only. */
+ * with the caller. Interpreted graphs accept managed COPY/MOVE/DESTROY values
+ * from a CONSTRUCTS_VALUES Source. Compiled byte plans remain trivial-only. */
 bool cflow_run_open(cflow_run *run,
                     const cflow_graph *graph,
                     cflow_source *source,

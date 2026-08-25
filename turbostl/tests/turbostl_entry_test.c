@@ -110,13 +110,53 @@ const cmeta_type_desc cmeta_type_owned_entry_value_ptr = {
 };
 
 spec("TurboSTL composed entry descriptors") {
-    it("copies a borrowed Range entry into an owned collector transient") {
+    it("constructs managed values returned by a generated List Range") {
+        List(owned_entry_value, source);
+        owned_entry_value input = owned_entry_make(7);
+        owned_entry_value output = {0};
+        cmeta_range range;
+        cmeta_range_cursor cursor = {0};
+        size_t live_before_next;
+        bool constructs;
+
+        owned_entry_fail_copy_at = 0u;
+        check_equal(list_init(&source, 1u), STL_OK);
+        check_equal(list_push_back(&source, &input, NULL), STL_OK);
+        check_true(cmeta_container_range_view(&source,
+                                              CMETA_CONTAINER_VIEW_DEFAULT,
+                                              &range));
+        constructs = (range.flags & CMETA_RANGE_CONSTRUCTS_VALUES) != 0u;
+        live_before_next = owned_entry_live;
+
+        check_true(constructs);
+        owned_entry_fail_copy_at = owned_entry_copy_calls + 1u;
+        check_true(cmeta_range_next(&range, &cursor, &output) ==
+                       CMETA_GEN_ERROR);
+        check_equal(cursor.index, (size_t)0u);
+        check_null(cursor.state[0]);
+        check_null(output.value);
+        check_equal(owned_entry_live, live_before_next);
+
+        owned_entry_fail_copy_at = 0u;
+        check_true(cmeta_range_next(&range, &cursor, &output) ==
+                       CMETA_GEN_VALUE_AND_DONE);
+        check_equal(owned_entry_live, live_before_next + 1u);
+        check_not_null(output.value);
+        check_equal(*output.value, 7);
+
+        if (constructs && owned_entry_live == live_before_next + 1u)
+            owned_entry_destroy(&output);
+        list_destroy(&source);
+        owned_entry_destroy(&input);
+        check_equal(owned_entry_live, (size_t)0u);
+    }
+
+    it("constructs an owned Range entry for collector transfer") {
         HashMap(owned_entry_value, owned_entry_value, source);
         HashMap(owned_entry_value, owned_entry_value, output);
         owned_entry_value input_key = owned_entry_make(1);
         owned_entry_value input_value = owned_entry_make(10);
         cmeta_entry borrowed = {0};
-        cmeta_entry transient = {0};
         cmeta_entry moved = {0};
         cmeta_range range;
         cmeta_range_cursor cursor = {0};
@@ -135,6 +175,7 @@ spec("TurboSTL composed entry descriptors") {
                                               &range));
         check_true(cmeta_type_equal(range.element_type,
                                     &cmeta_type_hash_entry));
+        check_true((range.flags & CMETA_RANGE_CONSTRUCTS_VALUES) != 0u);
         check_equal(cmeta_type_require_traits(
                         range.element_type,
                         CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
@@ -146,17 +187,15 @@ spec("TurboSTL composed entry descriptors") {
             check_true(status == CMETA_GEN_VALUE ||
                        status == CMETA_GEN_VALUE_AND_DONE);
         }
-        check_true(range.element_type->traits->copy_construct(&transient,
-                                                               &borrowed));
-        check_not_null(transient.key_storage);
-        check_not_null(transient.value_storage);
+        check_not_null(borrowed.key_storage);
+        check_not_null(borrowed.value_storage);
         moves_before = owned_entry_move_calls;
-        range.element_type->traits->move_construct(&moved, &transient);
+        range.element_type->traits->move_construct(&moved, &borrowed);
         check_equal(owned_entry_move_calls, moves_before);
-        check_null(transient.key);
-        check_null(transient.value);
-        check_null(transient.key_storage);
-        check_null(transient.value_storage);
+        check_null(borrowed.key);
+        check_null(borrowed.value);
+        check_null(borrowed.key_storage);
+        check_null(borrowed.value_storage);
 
         output_desc = cmeta_container_descriptor(&output);
         check_not_null(output_desc);
@@ -171,7 +210,7 @@ spec("TurboSTL composed entry descriptors") {
         check_true(stored != NULL && stored->value != NULL);
         check_equal(*stored->value, 10);
 
-        range.element_type->traits->destroy(&transient);
+        range.element_type->traits->destroy(&borrowed);
         range.element_type->traits->destroy(&moved);
         hash_map_destroy(&output);
         hash_map_destroy(&source);

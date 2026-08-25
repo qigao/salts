@@ -11,9 +11,19 @@ extern "C" {
 /*
  * Optional TurboSTL/CFlow integration facade.
  *
+ * This API provides modern, typed operations over TurboSTL containers. Fluent
+ * names are a readability choice, not a promise of Java Stream compatibility.
+ * The object retains a reusable CFlow Graph rather than single-use traversal
+ * state. Each terminal adapter creates independent execution state; repeated
+ * evaluation requires the source Range's REUSABLE contract. CFlow defines
+ * operator, terminal, ordering, error, and parallel semantics.
+ *
  * stream()/stream_keys()/stream_values()/stream_entries() and every fluent
  * operator are owned by CFlow. The bound TurboSTL container is borrowed and
  * must remain alive and unmodified until collection finishes.
+ * Interpreted collection supports managed COPY/MOVE/DESTROY element types.
+ * to_array() remains a trivial-value byte terminal and fails for managed T.
+ * Its max_items argument is a hard capacity bound, not a truncating operation.
  *
  * Example:
  *   stream(&input, &pipeline)->filter(&pipeline, keep)->map(&pipeline, map_fn);

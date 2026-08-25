@@ -587,8 +587,7 @@ cflow_executor_post_status cflow_executor_control_post_task(
 bool cflow_executor_manual_init_with_capacity(cflow_executor *executor,
                                               size_t capacity) {
     cflow_manual_executor_state *state;
-    if (!executor) return false;
-    memset(executor, 0, sizeof(*executor));
+    if (!executor || executor->self || executor->vtable) return false;
     if (capacity == 0u || capacity > SIZE_MAX / sizeof(cflow_executor_task))
         return false;
     state = (cflow_manual_executor_state *)calloc(1, sizeof(*state));
@@ -614,8 +613,7 @@ static bool pool_executor_init(cflow_executor *executor, size_t workers,
                                size_t capacity, bool serial) {
     cflow_pool_executor_state *state;
     turbo_threadpool_config_t config;
-    if (!executor) return false;
-    memset(executor, 0, sizeof(*executor));
+    if (!executor || executor->self || executor->vtable) return false;
     if (workers == 0u || workers > (size_t)INT_MAX || capacity == 0u)
         return false;
     state = (cflow_pool_executor_state *)calloc(1, sizeof(*state));
