@@ -85,6 +85,16 @@ jobs:
             parallel_executable: build/linux-gcc-release/bin/cflow_parallel_reduce_benchmark
             network_executable: build/linux-gcc-release/bin/cflow_network_benchmark
             network_backend: io_uring
+          - host: ubuntu-24.04-gcc-poll
+            runner: ubuntu-24.04
+            family: linux
+            configure_preset: linux-release-user
+            build_preset: linux-release-user
+            build_dir: build/linux-gcc-release
+            executable: build/linux-gcc-release/bin/cflow_direct_benchmark
+            parallel_executable: build/linux-gcc-release/bin/cflow_parallel_reduce_benchmark
+            network_executable: build/linux-gcc-release/bin/cflow_network_benchmark
+            network_backend: poll
           - host: windows-2022-msvc
             runner: windows-2022
             family: windows

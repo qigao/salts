@@ -358,6 +358,7 @@ static int network_select_backend(cflow_io_native_backend_kind *out) {
     else if (strcmp(requested, "kqueue") == 0) *out = CFLOW_IO_NATIVE_KQUEUE;
     else if (strcmp(requested, "iocp") == 0) *out = CFLOW_IO_NATIVE_IOCP;
     else if (strcmp(requested, "io_uring") == 0) *out = CFLOW_IO_NATIVE_IO_URING;
+    else if (strcmp(requested, "poll") == 0) *out = CFLOW_IO_NATIVE_POLL;
     else return TURBO_EINVAL;
     return cflow_io_native_backend_supported(*out) ? TURBO_OK : TURBO_ENOTSUP;
   }
@@ -441,6 +442,8 @@ static const char *network_backend_name(cflow_io_native_backend_kind kind) {
     return "iocp";
   case CFLOW_IO_NATIVE_IO_URING:
     return "io_uring";
+  case CFLOW_IO_NATIVE_POLL:
+    return "poll";
   }
   return "unknown";
 }
