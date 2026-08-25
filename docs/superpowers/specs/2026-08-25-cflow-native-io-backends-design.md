@@ -185,9 +185,10 @@ Echo 按 client→server、server→client 两个方向顺序执行，最后逐�
 `SetBytes(payload_size)` 约定一致；`wire_bytes = 2 * application_bytes` 只是 loopback 双向传输
 估算。JSON schema 继续使用 `cflow-network-benchmark/v1`，兼容字段 `peer_mode` 与
 `exchanges_per_second` 保持不变。CI 对 TCP 的 1 KiB、4 KiB、64 KiB 与 UDP 的 1 KiB、
-4 KiB、65,507 B，分别在 blocking/busy 模式运行五个独立进程，形成 12 个协议/负载/等待
+4 KiB、8 KiB，分别在 blocking/busy 模式运行五个独立进程，形成 12 个协议/负载/等待
 组合；记录 Echo/s、应用 MiB/s、P99、process CPU、RSS、errors、rejections 与 stale
-completions。共享 runner 数据只作为可比较证据，不设性能阈值。Ubuntu 24.04 另有显式
+completions。UDP CI 上限采用各目标均可运行的共同负载；实现仍允许 host 支持时显式请求
+65,507 B。共享 runner 数据只作为可比较证据，不设性能阈值。Ubuntu 24.04 另有显式
 `io_uring` 行；初始化不支持、策略拒绝或报告 backend 不匹配都使任务失败，不允许回退。
 
 关闭顺序为：关闭原 socket → Actor close/drain/destroy → forget closed socket identity →

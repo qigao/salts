@@ -14,8 +14,9 @@ This change closes those evidence gaps without changing the public CFlow API.
 
 - Permit `CFLOW_NETWORK_PEER=native` for UDP.
 - Echo one complete UDP datagram through two independently owned native endpoints.
-- Add TCP and UDP dual-native throughput evidence for 1 KiB, 4 KiB, and the legal
-  per-protocol maximum (`65536` TCP, `65507` UDP), in blocking and busy wait modes.
+- Add dual-native throughput evidence for 1 KiB and 4 KiB plus a larger portable
+  payload (`65536` TCP, `8192` UDP), in blocking and busy wait modes. The 8 KiB UDP
+  cell stays below macOS's runtime datagram limit while preserving cross-host comparability.
 - Add an explicit Ubuntu 24.04 io_uring matrix row. Selecting io_uring is mandatory
   in that row: unsupported or policy-rejected initialization fails the job.
 - Preserve the existing JSON schema and raw-peer matrix.
@@ -27,7 +28,7 @@ are outside this hardening slice.
 
 | Concern | Contract |
 | --- | --- |
-| Data unit | One datagram with `1..65507` payload bytes. Partial datagrams are errors. |
+| Data unit | One datagram with `1..65507` payload bytes where the host permits it. CI uses a portable 8 KiB maximum cell. Partial datagrams are errors. |
 | Fact source | The caller-owned `sent` bytes are authoritative; the server buffer and final client buffer are derived copies and must compare exactly. |
 | Ownership | The fixture owns sockets and payload buffers. Each accepted Actor operation owns one heap operation wrapper until completion acknowledgement releases it exactly once. |
 | Address lifetime | Each heap operation wrapper embeds its own `sockaddr_storage`; submit deep-copies send addresses and redirects receive storage there. The completion callback copies received bytes and length into the probe before acknowledgement, so timeout cleanup never leaves native I/O borrowing a caller stack address. |

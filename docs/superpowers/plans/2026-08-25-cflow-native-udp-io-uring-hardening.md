@@ -14,7 +14,8 @@
 
 - Preserve `cflow-network-benchmark/v1` and default `CFLOW_NETWORK_PEER=raw` behavior.
 - Do not change `cflow/io_native.h`, Actor, Executor, or backend public contracts.
-- Native UDP payload is one atomic datagram in `1..65507`; short send/receive is an error.
+- Native UDP payload is one atomic datagram in `1..65507` where supported; CI uses 8 KiB as
+  the portable cross-host maximum cell. Short send/receive is an error.
 - Keep at most one outstanding operation per endpoint and acknowledge every delivered completion exactly once.
 - Explicit io_uring selection must fail fast; no epoll, thread, or blocking-I/O fallback.
 - Performance values are evidence, not hard cross-host thresholds.
@@ -121,7 +122,7 @@ Change the dual-native loop to the declared matrix:
 ```powershell
 $nativePayloads = @{
   tcp = @(1024, 4096, 65536)
-  udp = @(1024, 4096, 65507)
+  udp = @(1024, 4096, 8192)
 }
 foreach ($protocol in @("tcp", "udp")) {
   foreach ($payloadBytes in $nativePayloads[$protocol]) {
