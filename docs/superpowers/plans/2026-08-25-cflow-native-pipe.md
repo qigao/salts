@@ -304,7 +304,7 @@ git commit -m "feat(cflow): add POSIX readiness pipe I/O"
 - Consumes: Task 1 pipe contract and existing generation-token io_uring records.
 - Produces: native io_uring pipe read/write, cancellation, EOF, and quiescent forget behavior.
 
-- [ ] **Step 1: Route the shared pipe tests through io_uring and verify RED**
+- [x] **Step 1: Route the shared pipe tests through io_uring and verify RED**
 
 When io_uring initialization succeeds, call the same read/write, EOF,
 cancellation, capacity, and slot-reuse checks used by readiness. The test skips
@@ -313,7 +313,7 @@ only when the existing runtime probe cannot initialize io_uring.
 Expected RED: accepted Actor submission fails because the io_uring
 `submit_pipe` callback is absent.
 
-- [ ] **Step 2: Add pipe records and SQE preparation**
+- [x] **Step 2: Add pipe records and SQE preparation**
 
 Store a resource discriminator and pipe operation pointer in each record. Add
 pipe preparation using current-position semantics for non-seekable endpoints:
