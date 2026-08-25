@@ -119,7 +119,7 @@ Linux/macOS jobs for epoll/kqueue/poll. Commit as
 **Produces:** bounded overlapped regular-file reads/writes, EOF and partial
 completion mapping, cancellation races, and retained file identity cleanup.
 
-- [ ] **Step 1: Write real-file IOCP tests and observe RED**
+- [x] **Step 1: Write real-file IOCP tests and observe RED**
 
 Create a TinyTest temporary path and open it with `CreateFileA` using
 `GENERIC_READ | GENERIC_WRITE`, `FILE_ATTRIBUTE_TEMPORARY`, and
@@ -138,14 +138,14 @@ Create a TinyTest temporary path and open it with `CreateFileA` using
 Expected RED: core accepts the shape and IOCP reports unsupported because
 `submit_file` is absent.
 
-- [ ] **Step 2: Generalize IOCP records without changing socket/pipe behavior**
+- [x] **Step 2: Generalize IOCP records without changing socket/pipe behavior**
 
 Add a file resource discriminator and file-operation pointer. Preserve a
 single `HANDLE` fact source for association, cancellation, retained identity,
 and forget. Validate operation support, async declaration, nonzero handle, and
 `GetFileType(handle) == FILE_TYPE_DISK` before reserving a record.
 
-- [ ] **Step 3: Start overlapped operations with explicit offsets**
+- [x] **Step 3: Start overlapped operations with explicit offsets**
 
 After zeroing `OVERLAPPED`, assign:
 
@@ -159,7 +159,7 @@ accepted native request, and consume completion only through IOCP. Do not call
 `FlushFileBuffers`. Map read zero/`ERROR_HANDLE_EOF` to EOF, preserve partial
 byte counts, and target cancellation with the record's `OVERLAPPED`.
 
-- [ ] **Step 4: Verify GREEN and socket/pipe regression, then commit**
+- [x] **Step 4: Verify GREEN and socket/pipe regression, then commit**
 
 Run the filtered file cases and the complete `cflow_io_native_test`. Commit as
 `feat(cflow): add IOCP regular-file I/O`.
