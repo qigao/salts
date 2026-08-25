@@ -26,17 +26,28 @@ typedef enum cflow_io_native_operation_kind {
     CFLOW_IO_NATIVE_TCP_RECV = 0,
     CFLOW_IO_NATIVE_TCP_SEND,
     CFLOW_IO_NATIVE_UDP_RECV_FROM,
-    CFLOW_IO_NATIVE_UDP_SEND_TO
+    CFLOW_IO_NATIVE_UDP_SEND_TO,
+    CFLOW_IO_NATIVE_TCP_ACCEPT,
+    CFLOW_IO_NATIVE_TCP_CONNECT
 } cflow_io_native_operation_kind;
+
+#define CFLOW_IO_NATIVE_INVALID_SOCKET UINTPTR_MAX
 
 /**
  * Caller-owned native socket operation borrowed from successful Actor submit
  * until its completion callback returns. buffer is immutable for send and is
  * backend-exclusive mutable storage for recv. The backend never closes socket.
  *
- * UDP send consumes address[0..address_length). UDP recv writes at most
- * address_capacity bytes and publishes address_length before completion.
- * address bytes use the host OS sockaddr representation. TCP ignores address.
+ * UDP send and TCP connect consume address[0..address_length). UDP recv and
+ * TCP accept write at most address_capacity bytes and publish address_length
+ * before completion. address bytes use the host OS sockaddr representation.
+ * TCP recv/send ignore address.
+ *
+ * TCP accept requires result_socket == CFLOW_IO_NATIVE_INVALID_SOCKET on
+ * submit. The backend owns a provisional accepted socket and closes it on
+ * failure, cancellation, or stale Actor completion. Successful Actor terminal
+ * publication transfers a nonblocking accepted socket to result_socket; the
+ * caller must close it. TCP connect never transfers or closes a socket.
  */
 typedef struct cflow_io_native_operation {
     cflow_io_native_operation_kind kind;
@@ -46,6 +57,7 @@ typedef struct cflow_io_native_operation {
     void *address;
     size_t address_capacity;
     size_t address_length;
+    uintptr_t result_socket;
 } cflow_io_native_operation;
 
 typedef struct cflow_io_native_backend_config {

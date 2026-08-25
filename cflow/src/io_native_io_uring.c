@@ -8,6 +8,7 @@
 #include <turbo/thread.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <linux/io_uring.h>
 #include <limits.h>
 #include <stdatomic.h>
@@ -35,6 +36,8 @@ typedef struct cflow_uring_record {
     cflow_io_native_operation *operation;
     struct iovec vector;
     struct msghdr message;
+    struct sockaddr_storage peer_address;
+    socklen_t peer_address_length;
     bool cancel_requested;
 } cflow_uring_record;
 
@@ -196,6 +199,23 @@ static void uring_prepare_operation(cflow_uring_record *record,
             sqe->msg_flags = MSG_NOSIGNAL;
 #endif
             break;
+        case CFLOW_IO_NATIVE_TCP_ACCEPT:
+            memset(&record->peer_address, 0,
+                   sizeof(record->peer_address));
+            record->peer_address_length =
+                (socklen_t)sizeof(record->peer_address);
+            sqe->opcode = IORING_OP_ACCEPT;
+            sqe->addr =
+                (uint64_t)(uintptr_t)&record->peer_address;
+            sqe->addr2 =
+                (uint64_t)(uintptr_t)&record->peer_address_length;
+            sqe->accept_flags = SOCK_NONBLOCK | SOCK_CLOEXEC;
+            break;
+        case CFLOW_IO_NATIVE_TCP_CONNECT:
+            sqe->opcode = IORING_OP_CONNECT;
+            sqe->addr = (uint64_t)(uintptr_t)operation->address;
+            sqe->off = (uint64_t)operation->address_length;
+            break;
     }
 }
 
@@ -215,6 +235,11 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     cflow_io_request_id request_id;
     cflow_io_native_operation *operation;
     cflow_io_completion completion;
+    cflow_io_complete_status delivery_status;
+    struct sockaddr_storage peer_address;
+    socklen_t peer_address_length = 0u;
+    int accepted_fd = -1;
+    int effective_result = result;
     bool cancelled;
 
     turbo_mutex_lock(&impl->gate);
@@ -229,6 +254,10 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     request_id = record->request_id;
     operation = record->operation;
     cancelled = record->cancel_requested && result == -ECANCELED;
+    if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT && result >= 0) {
+        peer_address = record->peer_address;
+        peer_address_length = record->peer_address_length;
+    }
     if (result >= 0 && operation->kind == CFLOW_IO_NATIVE_UDP_RECV_FROM)
         operation->address_length = (size_t)record->message.msg_namelen;
     record->phase = CFLOW_URING_RECORD_FREE;
@@ -242,20 +271,50 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     if (cancelled) uring_counter_increment(&impl->cancelled);
     turbo_mutex_unlock(&impl->gate);
 
+    if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT && result >= 0) {
+        accepted_fd = result;
+        effective_result = TURBO_OK;
+        if (operation->address != NULL) {
+            if ((size_t)peer_address_length >
+                operation->address_capacity) {
+                effective_result = TURBO_ERANGE;
+            } else {
+                memcpy(operation->address, &peer_address,
+                       (size_t)peer_address_length);
+                operation->address_length =
+                    (size_t)peer_address_length;
+            }
+        }
+        if (effective_result == TURBO_OK)
+            operation->result_socket = (uintptr_t)accepted_fd;
+    }
+
     if (cancelled) {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
-    } else if (result < 0) {
+    } else if (effective_result < 0) {
         completion = (cflow_io_completion){
-            CFLOW_IO_COMPLETION_FAILED, 0u, result};
+            CFLOW_IO_COMPLETION_FAILED, 0u, effective_result};
     } else if (operation->kind == CFLOW_IO_NATIVE_TCP_RECV && result == 0) {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK};
     } else {
         completion = (cflow_io_completion){
-            CFLOW_IO_COMPLETION_OK, (size_t)result, TURBO_OK};
+            CFLOW_IO_COMPLETION_OK,
+            operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT ||
+                    operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT
+                ? 0u : (size_t)effective_result,
+            TURBO_OK};
     }
-    (void)cflow_io_actor_complete(actor, request_id, &completion);
+    delivery_status = cflow_io_actor_complete(
+        actor, request_id, &completion);
+    if (accepted_fd >= 0 &&
+        (completion.kind != CFLOW_IO_COMPLETION_OK ||
+         delivery_status != CFLOW_IO_COMPLETE_ACCEPTED)) {
+        (void)close(accepted_fd);
+        operation->result_socket = CFLOW_IO_NATIVE_INVALID_SOCKET;
+        operation->address_length = 0u;
+    }
 }
 
 static void uring_fail_all(cflow_uring_impl *impl, int status) {
@@ -334,6 +393,17 @@ static int uring_submit(cflow_io_native_impl *base,
 
     if (operation->socket > (uintptr_t)INT_MAX)
         return TURBO_EINVAL;
+    if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT ||
+        operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT) {
+        int flags;
+        do {
+            flags = fcntl((int)operation->socket, F_GETFL);
+        } while (flags < 0 && errno == EINTR);
+        if (flags < 0)
+            return -errno;
+        if ((flags & O_NONBLOCK) == 0)
+            return TURBO_EINVAL;
+    }
     turbo_mutex_lock(&impl->gate);
     if (!impl->admission_open) {
         turbo_mutex_unlock(&impl->gate);

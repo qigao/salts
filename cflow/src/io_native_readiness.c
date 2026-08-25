@@ -52,6 +52,9 @@ typedef struct cflow_readiness_record {
     cflow_io_native_operation *operation;
     cflow_readiness_socket_record *socket_record;
     cflow_readiness_lane *lane;
+    struct sockaddr_storage peer_address;
+    socklen_t peer_address_length;
+    bool connect_started;
     bool cancel_requested;
 } cflow_readiness_record;
 
@@ -104,7 +107,9 @@ struct cflow_readiness_impl {
 typedef struct cflow_readiness_delivery {
     cflow_io_actor *actor;
     cflow_io_request_id request_id;
+    cflow_io_native_operation *operation;
     cflow_io_completion completion;
+    int accepted_fd;
     bool valid;
 } cflow_readiness_delivery;
 
@@ -116,7 +121,8 @@ static void readiness_counter_increment(uint64_t *counter) {
 static unsigned readiness_lane_kind(
     const cflow_io_native_operation *operation) {
     return operation->kind == CFLOW_IO_NATIVE_TCP_RECV ||
-                   operation->kind == CFLOW_IO_NATIVE_UDP_RECV_FROM
+                   operation->kind == CFLOW_IO_NATIVE_UDP_RECV_FROM ||
+                   operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT
                ? CFLOW_READINESS_LANE_READ
                : CFLOW_READINESS_LANE_WRITE;
 }
@@ -208,8 +214,67 @@ static int readiness_duplicate_socket(int fd) {
     return duplicate < 0 ? -errno : duplicate;
 }
 
+static int readiness_normalize_accepted_fd(int accepted_fd) {
+    int status_flags;
+    int descriptor_flags;
+    do {
+        status_flags = fcntl(accepted_fd, F_GETFL);
+    } while (status_flags < 0 && errno == EINTR);
+    if (status_flags < 0)
+        return -errno;
+    while (fcntl(accepted_fd, F_SETFL,
+                 status_flags | O_NONBLOCK) < 0) {
+        if (errno != EINTR)
+            return -errno;
+    }
+    do {
+        descriptor_flags = fcntl(accepted_fd, F_GETFD);
+    } while (descriptor_flags < 0 && errno == EINTR);
+    if (descriptor_flags < 0)
+        return -errno;
+    while (fcntl(accepted_fd, F_SETFD,
+                 descriptor_flags | FD_CLOEXEC) < 0) {
+        if (errno != EINTR)
+            return -errno;
+    }
+    return TURBO_OK;
+}
+
+static int readiness_attempt_connect(cflow_readiness_record *record) {
+    cflow_io_native_operation *operation = record->operation;
+    const int fd = record->lane->duplicated_fd;
+    if (!record->connect_started) {
+        int result;
+        do {
+            result = connect(fd,
+                (const struct sockaddr *)operation->address,
+                (socklen_t)operation->address_length);
+        } while (result < 0 && errno == EINTR);
+        if (result == 0)
+            return TURBO_OK;
+        if (errno != EINPROGRESS && errno != EALREADY &&
+            errno != EWOULDBLOCK)
+            return -errno;
+        record->connect_started = true;
+        return -EAGAIN;
+    }
+    {
+        int socket_error = 0;
+        socklen_t error_length = (socklen_t)sizeof(socket_error);
+        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error,
+                       &error_length) != 0)
+            return -errno;
+        if (socket_error == 0)
+            return TURBO_OK;
+        if (socket_error == EINPROGRESS || socket_error == EALREADY ||
+            socket_error == EWOULDBLOCK)
+            return -EAGAIN;
+        return -socket_error;
+    }
+}
+
 static int readiness_attempt(cflow_readiness_record *record,
-                             size_t *bytes) {
+                             size_t *bytes, int *accepted_fd) {
     cflow_io_native_operation *operation = record->operation;
     const int fd = record->lane->duplicated_fd;
     ssize_t result;
@@ -240,6 +305,24 @@ static int readiness_attempt(cflow_readiness_record *record,
                                 (const struct sockaddr *)operation->address,
                                 (socklen_t)operation->address_length);
                 break;
+            case CFLOW_IO_NATIVE_TCP_ACCEPT:
+                record->peer_address_length =
+                    (socklen_t)sizeof(record->peer_address);
+                result = accept(
+                    fd, (struct sockaddr *)&record->peer_address,
+                    &record->peer_address_length);
+                if (result >= 0) {
+                    const int normalized =
+                        readiness_normalize_accepted_fd((int)result);
+                    if (normalized != TURBO_OK) {
+                        (void)close((int)result);
+                        return normalized;
+                    }
+                    *accepted_fd = (int)result;
+                }
+                break;
+            case CFLOW_IO_NATIVE_TCP_CONNECT:
+                return readiness_attempt_connect(record);
             default:
                 return TURBO_EINVAL;
         }
@@ -320,12 +403,30 @@ static cflow_io_completion readiness_completion_for(
 
 static cflow_readiness_delivery readiness_finish_record_locked(
     cflow_readiness_impl *impl, cflow_readiness_record *record,
-    int status, size_t bytes) {
-    cflow_readiness_delivery delivery = {
-        record->actor, record->request_id,
-        readiness_completion_for(record, status, bytes), true};
+    int status, size_t bytes, int accepted_fd) {
+    cflow_readiness_delivery delivery;
     cflow_readiness_socket_record *socket_record = record->socket_record;
     cflow_readiness_lane *lane = record->lane;
+    if (record->operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT &&
+        !record->cancel_requested && status == TURBO_OK) {
+        if (record->operation->address != NULL) {
+            if ((size_t)record->peer_address_length >
+                record->operation->address_capacity) {
+                status = TURBO_ERANGE;
+            } else {
+                memcpy(record->operation->address,
+                       &record->peer_address,
+                       (size_t)record->peer_address_length);
+                record->operation->address_length =
+                    (size_t)record->peer_address_length;
+            }
+        }
+        if (status == TURBO_OK)
+            record->operation->result_socket = (uintptr_t)accepted_fd;
+    }
+    delivery = (cflow_readiness_delivery){
+        record->actor, record->request_id, record->operation,
+        readiness_completion_for(record, status, bytes), accepted_fd, true};
     (void)readiness_lane_remove_locked(impl, lane, record);
     if (delivery.completion.kind == CFLOW_IO_COMPLETION_CANCELLED)
         readiness_counter_increment(&impl->cancelled);
@@ -337,9 +438,19 @@ static cflow_readiness_delivery readiness_finish_record_locked(
 }
 
 static void readiness_deliver(cflow_readiness_delivery delivery) {
-    if (delivery.valid)
-        (void)cflow_io_actor_complete(delivery.actor, delivery.request_id,
-                                      &delivery.completion);
+    cflow_io_complete_status status;
+    if (!delivery.valid)
+        return;
+    status = cflow_io_actor_complete(delivery.actor, delivery.request_id,
+                                     &delivery.completion);
+    if (delivery.accepted_fd >= 0 &&
+        (delivery.completion.kind != CFLOW_IO_COMPLETION_OK ||
+         status != CFLOW_IO_COMPLETE_ACCEPTED)) {
+        (void)close(delivery.accepted_fd);
+        delivery.operation->result_socket =
+            CFLOW_IO_NATIVE_INVALID_SOCKET;
+        delivery.operation->address_length = 0u;
+    }
 }
 
 static turbo_readiness_callback_result readiness_drive_lane(
@@ -424,8 +535,10 @@ static turbo_readiness_callback_result readiness_drive_lane(
 
     for (;;) {
         cflow_readiness_record *record;
-        cflow_readiness_delivery delivery = {0};
+        cflow_readiness_delivery delivery = {
+            .accepted_fd = -1};
         size_t bytes = 0u;
+        int accepted_fd = -1;
         int attempt_status;
 
         turbo_mutex_lock(&impl->gate);
@@ -450,7 +563,7 @@ static turbo_readiness_callback_result readiness_drive_lane(
         if (terminal_status != TURBO_OK) {
             record = &impl->records[lane->head];
             delivery = readiness_finish_record_locked(
-                impl, record, terminal_status, 0u);
+                impl, record, terminal_status, 0u, -1);
             turbo_mutex_unlock(&impl->gate);
             readiness_deliver(delivery);
             continue;
@@ -459,7 +572,7 @@ static turbo_readiness_callback_result readiness_drive_lane(
         record = readiness_find_cancelled_locked(impl, lane);
         if (record != NULL) {
             delivery = readiness_finish_record_locked(
-                impl, record, TURBO_OK, 0u);
+                impl, record, TURBO_OK, 0u, -1);
             ++processed;
             turbo_mutex_unlock(&impl->gate);
             readiness_deliver(delivery);
@@ -483,13 +596,13 @@ static turbo_readiness_callback_result readiness_drive_lane(
         record->phase = CFLOW_READINESS_RECORD_PROCESSING;
         turbo_mutex_unlock(&impl->gate);
 
-        attempt_status = readiness_attempt(record, &bytes);
+        attempt_status = readiness_attempt(record, &bytes, &accepted_fd);
 
         turbo_mutex_lock(&impl->gate);
         if (record->cancel_requested || attempt_status == TURBO_OK ||
             !readiness_would_block(attempt_status)) {
             delivery = readiness_finish_record_locked(
-                impl, record, attempt_status, bytes);
+                impl, record, attempt_status, bytes, accepted_fd);
             ++processed;
             turbo_mutex_unlock(&impl->gate);
             readiness_deliver(delivery);
@@ -559,6 +672,17 @@ static int readiness_submit(cflow_io_native_impl *base,
 
     if (operation->socket > (uintptr_t)INT_MAX)
         return TURBO_EINVAL;
+    if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT ||
+        operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT) {
+        int flags;
+        do {
+            flags = fcntl((int)operation->socket, F_GETFL);
+        } while (flags < 0 && errno == EINTR);
+        if (flags < 0)
+            return -errno;
+        if ((flags & O_NONBLOCK) == 0)
+            return TURBO_EINVAL;
+    }
 
     turbo_mutex_lock(&impl->gate);
     if (!impl->admission_open) {
@@ -593,6 +717,7 @@ static int readiness_submit(cflow_io_native_impl *base,
     record->operation = operation;
     record->socket_record = socket_record;
     record->lane = lane;
+    record->connect_started = false;
     ++impl->active_requests;
     ++socket_record->active_requests;
     turbo_mutex_unlock(&impl->gate);

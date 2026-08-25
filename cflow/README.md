@@ -25,6 +25,8 @@ include/cflow/
 ├── machine.h       typed state-machine semantic IR
 ├── machine_runtime.h executor-owned Machine execution and adapters
 ├── actor.h         bounded Actor lifecycle over Machine and Run
+├── io_actor.h      bounded asynchronous operation ownership/runtime
+├── io_native.h     epoll/kqueue/IOCP/io_uring socket operations
 ├── runtime.h
 ├── scheduler.h
 ├── sources.h
@@ -436,6 +438,33 @@ cleanup:
 Link the example with `TurboUtils::CFlow`. Supervision, restart, parent/child
 hierarchies, remoting, persistence, and Mailbox resizing are intentionally
 unavailable; there are no placeholder APIs or implicit fallbacks for them.
+
+## Native TCP lifecycle
+
+`<cflow/io_native.h>` exposes one explicitly selected, bounded platform
+backend. TCP now covers accept, connect, receive, and send; UDP covers
+receive-from and send-to. Backend availability is compile-time and initialization
+may still fail at runtime. CFlow never substitutes another backend implicitly.
+
+The caller owns listening, connecting, and connected sockets and must keep them
+live through terminal completion. `CFLOW_IO_NATIVE_TCP_ACCEPT` is the only
+operation that creates a handle: initialize `result_socket` to
+`CFLOW_IO_NATIVE_INVALID_SOCKET`; successful Actor completion transfers a
+nonblocking accepted socket to the caller. Failure, cancellation, address
+overflow, and stale completion close the provisional socket in the backend.
+Optional accept peer-address storage follows the same bounded
+`address`/`address_capacity`/`address_length` convention as UDP receive.
+
+`CFLOW_IO_NATIVE_TCP_CONNECT` borrows a host-OS `sockaddr` from
+`address[0..address_length)` and reports success with zero bytes. It never closes
+the caller's socket. epoll/kqueue and io_uring lifecycle sockets must already be
+nonblocking; the backend checks this without changing caller flags. IOCP uses
+`AcceptEx`/`ConnectEx`, io_uring uses native accept/connect opcodes, and the
+readiness adapter completes connect through write readiness plus `SO_ERROR`.
+
+All six operation kinds share the existing `request_capacity`, cancellation,
+statistics, explicit socket-forget, and quiescent shutdown contracts. Pipe,
+file, device/USB, DNS, TLS, and generic `poll` are outside this layer.
 
 ## Descriptor-backed container streams — v47
 
