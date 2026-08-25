@@ -1789,6 +1789,12 @@ spec("CFlow native IO backend") {
                 native_check_backend(CFLOW_IO_NATIVE_IO_URING);
                 native_check_cancelled_slot_reuse(
                     CFLOW_IO_NATIVE_IO_URING);
+                native_check_pipe_read_write(
+                    CFLOW_IO_NATIVE_IO_URING);
+                native_check_pipe_cancel(CFLOW_IO_NATIVE_IO_URING);
+                native_check_pipe_eof(CFLOW_IO_NATIVE_IO_URING);
+                native_check_pipe_write_contains_sigpipe(
+                    CFLOW_IO_NATIVE_IO_URING);
             } else {
                 check_true(status < 0);
                 check_null(probe.impl);
