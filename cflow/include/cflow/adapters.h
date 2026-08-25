@@ -52,10 +52,10 @@ bool cflow_eval_stream_limit(const cflow_stream *stream,
  * preserves a more specific collector failure such as capacity exceeded.
  * Deterministic Range admission failures terminate the collector before begin
  * without invoking its abort callback.
- * Source-only streams may carry managed COPY/MOVE/DESTROY values when their
- * Range declares CMETA_RANGE_CONSTRUCTS_VALUES. accept() borrows each live
- * value only for the duration of the callback and must copy or move it before
- * returning.
+ * Interpreted streams may carry managed COPY/MOVE/DESTROY values through their
+ * operator Graph when the Range declares CMETA_RANGE_CONSTRUCTS_VALUES.
+ * accept() borrows each live value only for the duration of the callback and
+ * must copy or move it before returning.
  */
 bool cflow_eval_collect(const cflow_stream *stream,
                         cmeta_collector *collector,

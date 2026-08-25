@@ -2,6 +2,12 @@
 
 日期：2026-08-21
 
+> 定位更新（2026-08-25）：Stream 的目标是为 TurboSTL 容器提供便利、现代、
+> 类型安全且资源有界的操作方式，不追求 Java Stream API 或语义兼容。本文中
+> “Java 风格”仅表示 fluent spelling 的历史来源；single-use、terminal 分类、
+> parallel mode、异常和关闭规则均不构成设计约束。当前公开头文件与测试是
+> 具体语义的事实源。
+
 ## 背景
 
 仓库当前存在三套相互重叠的能力：
@@ -16,7 +22,7 @@
 
 1. 将 Core 中的标准容器和旧 `turbo/` 容器统一迁入 `turbostl/`，使其成为唯一标准容器库。
 2. 以 CMeta `typed(...)` 和显式 traits 生成 typed facade、Range 与 collector 能力。
-3. 由 TurboSTL 提供 CFlow 的容器实现适配，使有限容器获得 Java 风格 lazy pipeline 与 terminal API。
+3. 由 TurboSTL 提供 CFlow 的容器实现适配，使有限容器获得现代化、lazy、类型安全且资源有界的 pipeline 与 collection API。
 4. 保持 CFlow 不依赖具体 TurboSTL；STLCFlow 在构造 stream 时显式注入状态后端和 collector。
 5. 对所有增长状态设置硬上限，明确所有权、失效点、错误、清理与重复执行语义。
 6. 删除旧公开 include、typed 宏和 `TurboUtils::Stream` target，不保留兼容层。
@@ -24,6 +30,7 @@
 ## 非目标
 
 - 不复刻旧 `stream_live`、`stream_spsc`、window、count/time debounce、snapshot 或 C++ Stream wrapper。
+- 不追求 Java Stream API 或语义兼容；不以 single-use、Java terminal 分类或 Java parallel mode 约束 CFlow Graph。
 - 不在本次增加 parallel/unordered stream。
 - 不让 CMeta 实现容器分配、hash probing、树平衡、排序或 CFlow runtime。
 - 不让 CFlow include、链接或运行时发现 Turbo 容器。
@@ -322,7 +329,11 @@ stream(&values, &stream)
 
 没有 backend 时，无状态 CFlow pipeline 正常工作；请求 distinct、sorted 或 typed collection 时返回 `CFLOW_UNSUPPORTED`。该结果是显式能力检查，不触发 interpreter/container fallback。
 
-## Java 风格操作面
+## 现代容器操作面
+
+下列名称是容器操作能力词汇，不是 Java 兼容矩阵。具体 API 只有在公开
+header、执行语义和测试同时落地后才视为可用；Graph stage 与 terminal 的
+划分由 CFlow 自身的数据流和结果所有权决定。
 
 Lazy intermediate operations：
 
@@ -358,23 +369,26 @@ groupingBy
 partitioningBy
 ```
 
-`CFlowOperators` 只描述 graph 节点。独立的 `CFlowTerminals` schema 生成 terminal method typedef、成员、声明与 dispatch。现有 `REDUCE` primitive 继续作为内部执行 IR，公开 `reduce` 是 Java 语义 terminal，不再返回可继续串联的 stream。
+`CFlowOperators` 描述 Graph 节点，terminal adapter 负责执行和结果提交。
+`reduce` 保持为可继续组合的 Graph stage；`to_array`、`collect` 和 `to_list`
+等 adapter 才建立结果所有权边界。命名相似不改变这一分层。
 
-容器流是确定性顺序流：`findAny` 等同 `findFirst`；distinct 稳定保留首次出现值；sorted 对有 encounter order 的输入执行稳定排序；take/drop while 保持输入顺序；peek 标为 effectful，优化器不得跨越、删除或重排。
+容器 Range 的顺序属性是 CFlow 优化和执行的输入。未来若加入 `distinct`、
+`sorted`、`take/drop while` 等操作，必须分别定义有界状态、顺序保持、错误与
+优化约束，不从同名外部 API 隐式继承语义。
 
 示例：
 
 ```c
 cflow_stream stream = {0};
-IntVec output = {0};
+IntList output = {0};
 
-cflow_status status =
-    stream(&values, &stream)
-        ->filter(&stream, even)
-        ->map(&stream, square)
-        ->distinct(&stream, max_unique)
-        ->sorted(&stream, max_items)
-        ->collect(&stream, IntVec_collector(&output), max_output);
+stream(&values, &stream)
+    ->filter(&stream, even)
+    ->map(&stream, square);
+
+turbostl_collect_result result =
+    to_list_typed(&stream, IntList, &output, max_output);
 ```
 
 同一 graph 可重复执行。terminal 不消费或修改 graph；只要 source container 未修改且仍存活，每次 terminal 都创建新的 cursor、run state 和 collector transaction。
@@ -521,7 +535,7 @@ install_consumer_smoke
 - Map/Set/MultiMap 的全部 insertion/deletion rotation 情形、随机操作后的红黑不变量、中序顺序、bounds 和重复 key 顺序；
 - HashMap/HashSet 的极端 collision、tombstone 复用、70% load boundary、rehash 和未指定遍历顺序；
 - default/key/value/entry Range、generation mismatch 和 source lifetime；
-- Java 空流语义、短路、顺序、稳定 distinct/sort、重复执行；
+- 空 Range、短路、顺序、稳定 distinct/sort（若对应操作公开）和重复执行语义；
 - grouping/partition conflict policy、bucket/entry/payload 三重容量；
 - peek effect 不被优化器移动，Surface/normalized/optimized parity；
 - unsupported plan/backend 明确失败且无 fallback；
@@ -582,7 +596,7 @@ Windows 首选仓库实际可用的 user preset：
 - 标准容器文件只存在于 `turbostl/`，Core 和旧 `turbo/` 无重复实现；
 - CFlow target 不依赖 TurboSTL，STLCFlow 是唯一适配实现；
 - 公开 typed API 只有 CMeta `typed/Containers`；
-- 有限容器 Java 风格操作面按本设计完整公开，没有占位 terminal；
+- 有限容器现代化操作面只公开已有完整语义和测试覆盖的能力，没有占位 API；
 - ownership、capacity、mutation、status 和 collector 状态机测试通过；
 - MSVC、Clang/GCC、C++ public-header、全量 CTest 和 install consumer 验证通过；
 - 文档、examples、安装树和 CMake exports 与新架构一致。
