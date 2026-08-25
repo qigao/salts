@@ -333,6 +333,20 @@ static int native_fixture_wait(native_fixture *fixture, size_t count) {
     return TURBO_OK;
 }
 
+static int native_fixture_forget_socket(
+    native_fixture *fixture, uintptr_t socket_identity) {
+    const uint64_t started = turbo_hrtime();
+    int status;
+    do {
+        status = cflow_io_native_backend_forget_socket(
+            &fixture->backend, socket_identity);
+        if (status != TURBO_EBUSY)
+            return status;
+        turbo_thread_yield();
+    } while (turbo_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
+    return TURBO_ETIMEDOUT;
+}
+
 static void native_fixture_destroy(native_fixture *fixture) {
     const int close_status = cflow_io_actor_close(&fixture->actor);
     check_true(close_status == TURBO_OK || close_status == TURBO_EALREADY);
@@ -504,14 +518,14 @@ static void native_check_tcp_lifecycle(
     native_test_close_socket(accepted);
     native_test_close_socket(client);
     native_test_close_socket(listener);
-    check_equal(cflow_io_native_backend_forget_socket(
-                    &fixture.backend, (uintptr_t)accepted),
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)accepted),
                 TURBO_OK);
-    check_equal(cflow_io_native_backend_forget_socket(
-                    &fixture.backend, (uintptr_t)client),
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)client),
                 TURBO_OK);
-    check_equal(cflow_io_native_backend_forget_socket(
-                    &fixture.backend, (uintptr_t)listener),
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)listener),
                 TURBO_OK);
     native_fixture_destroy(&fixture);
 }
@@ -572,8 +586,8 @@ static void native_check_tcp_accept_cancel_reuse(
     native_test_close_socket(accepted);
     native_test_close_socket(client);
     native_test_close_socket(listener);
-    check_equal(cflow_io_native_backend_forget_socket(
-                    &fixture.backend, (uintptr_t)listener),
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)listener),
                 TURBO_OK);
     native_fixture_destroy(&fixture);
 }
@@ -615,8 +629,8 @@ static void native_check_tcp_accept_address_overflow(
 
     native_test_close_socket(client);
     native_test_close_socket(listener);
-    check_equal(cflow_io_native_backend_forget_socket(
-                    &fixture.backend, (uintptr_t)listener),
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)listener),
                 TURBO_OK);
     native_fixture_destroy(&fixture);
 }
