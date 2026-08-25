@@ -4,7 +4,7 @@
 
 **Goal:** Add dual-native UDP Echo evidence and a mandatory hosted io_uring benchmark path without changing public APIs.
 
-**Architecture:** Reuse the existing two-endpoint Actor fixture. UDP preposts a receive before each send, captures the receive operation's published source-address length in the completion probe, and echoes the exact datagram back through the other native endpoint. CI expands grouping by protocol and adds a dedicated Ubuntu 24.04 io_uring row.
+**Architecture:** Reuse the existing two-endpoint Actor fixture. Each heap operation wrapper owns its native address storage. UDP preposts a receive before each send, captures the receive operation's published source endpoint in the completion probe, validates it against the bound peer, and echoes the exact datagram back through the other native endpoint. CI expands grouping by protocol and adds a dedicated Ubuntu 24.04 io_uring row.
 
 **Tech Stack:** C11, CFlow I/O Actor/native backends, TurboUtils Platform synchronization, TinyTest benchmark assertions, GitHub Actions PowerShell, CMake Presets.
 
@@ -70,9 +70,10 @@ Expected: FAIL because `network_fixture_init()` returns `TURBO_ENOTSUP`.
 
 - [x] **Step 3: Implement the minimal UDP paired path**
 
-Extend `network_completion_probe` with the address length observed from
-`network_operation.native.address_length`. Add an optional address-length output to
-the internal completion finish helper. Implement this sequence in `network_exchange()`:
+Extend each heap `network_operation` with owned native address storage and extend
+`network_completion_probe` with the address and length observed from the completed operation.
+Add optional address output to the internal completion finish helper. Implement this sequence
+in `network_exchange()`:
 
 ```c
 server_recvfrom(source_address)
@@ -178,18 +179,18 @@ git commit -m "ci(cflow): cover native UDP and io_uring"
 - Consumes: Windows IOCP local tests, Linux epoll/io_uring isolated-host tests, and GitHub artifacts.
 - Produces: reproducible correctness and performance evidence attached to PR #95.
 
-- [ ] **Step 1: Run local Release verification**
+- [x] **Step 1: Run local Release verification**
 
 Run the benchmark target, `cflow_io_native_test`, affected readiness tests, then the
 full `win-release-user` CTest suite. Record exact pass/fail counts.
 
-- [ ] **Step 2: Verify Linux epoll and io_uring without fallback**
+- [x] **Step 2: Verify Linux epoll and io_uring without fallback**
 
 In the existing isolated `root@eu` worktree, build the benchmark and run reduced
 dual-native UDP with `CFLOW_NETWORK_BACKEND=epoll` and `io_uring`. Assert the JSON
 backend exactly matches the request and all outcomes are zero.
 
-- [ ] **Step 3: Run review and source checks**
+- [x] **Step 3: Run review and source checks**
 
 Run `codegraph sync .`, `git diff --check`, inspect the complete diff, and obtain an
 independent HIGH/MED review. Resolve every HIGH/MED before pushing.

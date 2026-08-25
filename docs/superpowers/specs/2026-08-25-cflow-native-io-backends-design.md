@@ -173,9 +173,11 @@ acknowledge 的唯一 owner；backend worker 只发布 completion 并唤醒 latc
 视为 `TURBO_EIO`；UDP 以单个 datagram 为数据单元，send/recv 字节数不完整即失败。
 
 每个传输方向先提交 receiver read，再提交匹配的 sender write，并共同 pump 两个 endpoint；
-两端 completion 均 acknowledge 后再推进下一阶段。UDP receiver 在 completion callback
-返回前把 native operation 发布的 source address length 复制到 completion probe，server
-随后使用该来源地址发送响应；地址缺失、越界或 datagram 长度不完整均为显式错误。完整
+两端 completion 均 acknowledge 后再推进下一阶段。benchmark 的 heap operation wrapper
+深拷贝 send address，并为 recv 内嵌独立 address storage；UDP receiver 在 completion callback
+返回前把 native operation 发布的 source address 与 length 复制到 completion probe，server
+随后使用该来源地址发送响应。地址缺失、越界、来源 endpoint 不匹配或 datagram 长度不完整
+均为显式错误。完整
 Echo 按 client→server、server→client 两个方向顺序执行，最后逐字节校验 payload。TCP 的
 配对也避免 payload 超过当前 socket send window 时 sender 等 receiver、receiver 又尚未提交
 的互等。报告中的

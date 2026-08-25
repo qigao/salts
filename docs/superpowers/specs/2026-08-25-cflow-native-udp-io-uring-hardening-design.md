@@ -30,12 +30,12 @@ are outside this hardening slice.
 | Data unit | One datagram with `1..65507` payload bytes. Partial datagrams are errors. |
 | Fact source | The caller-owned `sent` bytes are authoritative; the server buffer and final client buffer are derived copies and must compare exactly. |
 | Ownership | The fixture owns sockets and payload buffers. Each accepted Actor operation owns one heap operation wrapper until completion acknowledgement releases it exactly once. |
-| Address lifetime | Stack `sockaddr_storage` remains live through both completion callbacks. UDP receive publishes its source length before callback; the benchmark copies that length into its completion probe before acknowledgement. |
+| Address lifetime | Each heap operation wrapper embeds its own `sockaddr_storage`; submit deep-copies send addresses and redirects receive storage there. The completion callback copies received bytes and length into the probe before acknowledgement, so timeout cleanup never leaves native I/O borrowing a caller stack address. |
 | Topology | The benchmark thread is the sole submit/pump/ack owner. Each endpoint has one native backend, one Actor, and one manual Executor. Native workers may publish completion and signal the shared latch. |
 | Ordering | Prepost server receive, submit client send, finish both; then prepost client receive, submit server send to the captured source address, and finish both. |
 | Capacity | Each endpoint retains the existing fixed request/command capacity. The benchmark has at most one outstanding operation per endpoint. |
 | Backpressure | Non-accepted submit returns `TURBO_EBUSY`; there is no retry queue, fallback, overwrite, or unbounded allocation. |
-| Failure | Wrong byte count, absent/oversized source address, non-OK completion, timeout, acknowledgement failure, or payload mismatch returns an explicit error. |
+| Failure | Wrong byte count, absent/oversized or unexpected source endpoint, non-OK completion, timeout, acknowledgement failure, or payload mismatch returns an explicit error. |
 | Shutdown | Existing close, Actor drain/ack, socket identity forget, backend shutdown, and Executor shutdown order remains authoritative. |
 | Observation | Existing errors, rejections, stale completions, P50/P95/P99, CPU, RSS, Echo/s, and application MiB/s fields remain unchanged. |
 
@@ -58,4 +58,3 @@ The default peer remains raw and the report schema remains
 `cflow-network-benchmark/v1`. Existing TCP filenames gain no semantic change; new UDP
 files and the io_uring artifact are additive. Rollback removes the new matrix row and
 UDP native benchmark branch without migrating data or changing installed headers.
-

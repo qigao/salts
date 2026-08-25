@@ -215,6 +215,7 @@ jobs:
           BENCHMARK_EXECUTABLE: ${{ matrix.executable }}
           PARALLEL_BENCHMARK_EXECUTABLE: ${{ matrix.parallel_executable }}
           NETWORK_BENCHMARK_EXECUTABLE: ${{ matrix.network_executable }}
+          CFLOW_NETWORK_BACKEND: ${{ matrix.network_backend }}
           NETWORK_EXPECTED_BACKEND: ${{ matrix.network_backend }}
         run: |
           $ErrorActionPreference = "Stop"

@@ -68,11 +68,13 @@ static double network_exchanges_per_second(size_t exchanges, uint64_t elapsed_ns
 
 typedef struct network_operation {
   cflow_io_native_operation native;
+  struct sockaddr_storage address;
 } network_operation;
 
 typedef struct network_completion_probe {
   cflow_io_request_id ids[NETWORK_REQUEST_CAPACITY];
   cflow_io_completion values[NETWORK_REQUEST_CAPACITY];
+  struct sockaddr_storage addresses[NETWORK_REQUEST_CAPACITY];
   size_t address_lengths[NETWORK_REQUEST_CAPACITY];
   size_t count;
 } network_completion_probe;
@@ -110,6 +112,7 @@ typedef struct network_fixture {
   network_peer_mode peer_mode;
   network_socket client_socket;
   network_socket server_socket;
+  struct sockaddr_in client_address;
   struct sockaddr_in server_address;
   turbo_thread_t server_thread;
   network_server server;
@@ -232,14 +235,13 @@ static int network_make_tcp_pair(network_fixture *fixture) {
 }
 
 static int network_make_udp_pair(network_fixture *fixture) {
-  struct sockaddr_in client_address;
   int status;
   fixture->client_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   fixture->server_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (fixture->client_socket == NETWORK_INVALID_SOCKET ||
       fixture->server_socket == NETWORK_INVALID_SOCKET)
     return network_last_error();
-  status = network_bind_loopback(fixture->client_socket, &client_address);
+  status = network_bind_loopback(fixture->client_socket, &fixture->client_address);
   if (status == TURBO_OK)
     status = network_bind_loopback(fixture->server_socket, &fixture->server_address);
   if (status == TURBO_OK) status = network_set_nonblocking(fixture->client_socket);
@@ -301,6 +303,23 @@ static void network_server_entry(void *user) {
   }
 }
 
+static int network_operation_prepare(network_operation *owned,
+                                     cflow_io_native_operation operation) {
+  if (owned == NULL) return TURBO_EINVAL;
+  memset(owned, 0, sizeof(*owned));
+  owned->native = operation;
+  if (operation.address == NULL)
+    return operation.address_capacity == 0u && operation.address_length == 0u ? TURBO_OK
+                                                                              : TURBO_EINVAL;
+  if (operation.address_capacity > sizeof(owned->address) ||
+      operation.address_length > operation.address_capacity)
+    return TURBO_EINVAL;
+  if (operation.address_length != 0u)
+    memcpy(&owned->address, operation.address, operation.address_length);
+  owned->native.address = &owned->address;
+  return TURBO_OK;
+}
+
 static void network_operation_release(void *user) { free(user); }
 
 static void network_completion_record(void *user, cflow_io_request_id request_id,
@@ -310,10 +329,14 @@ static void network_completion_record(void *user, cflow_io_request_id request_id
   network_operation *operation = (network_operation *)operation_user;
   (void)lease_id;
   if (probe->count < NETWORK_REQUEST_CAPACITY) {
+    const size_t address_length = operation != NULL ? operation->native.address_length : 0u;
     probe->ids[probe->count] = request_id;
     probe->values[probe->count] = *completion;
-    probe->address_lengths[probe->count] =
-        operation != NULL ? operation->native.address_length : 0u;
+    probe->address_lengths[probe->count] = address_length;
+    if (operation != NULL && address_length != 0u &&
+        address_length <= sizeof(probe->addresses[probe->count]) &&
+        operation->native.address != NULL)
+      memcpy(&probe->addresses[probe->count], operation->native.address, address_length);
     ++probe->count;
   }
 }
@@ -557,8 +580,13 @@ static int network_submit_native_operation(network_endpoint *endpoint,
   network_operation *owned = (network_operation *)malloc(sizeof(*owned));
   cflow_io_operation actor_operation;
   cflow_io_submit_result submitted;
+  int status;
   if (owned == NULL) return TURBO_ENOMEM;
-  owned->native = operation;
+  status = network_operation_prepare(owned, operation);
+  if (status != TURBO_OK) {
+    free(owned);
+    return status;
+  }
   actor_operation = (cflow_io_operation){owned, network_operation_release};
   endpoint->completions.count = 0u;
   submitted = cflow_io_actor_try_submit(&endpoint->actor, lease, &actor_operation);
@@ -571,6 +599,7 @@ static int network_submit_native_operation(network_endpoint *endpoint,
 
 static int network_finish_native_operation_details(network_fixture *fixture,
                                                    network_endpoint *endpoint, size_t *bytes,
+                                                   void *address, size_t address_capacity,
                                                    size_t *address_length) {
   int status = network_wait(fixture, endpoint, 1u);
   if (status == TURBO_OK) {
@@ -580,7 +609,12 @@ static int network_finish_native_operation_details(network_fixture *fixture,
                    : TURBO_EIO;
     else {
       *bytes = endpoint->completions.values[0].bytes;
-      if (address_length != NULL) *address_length = endpoint->completions.address_lengths[0];
+      if (address_length != NULL) {
+        *address_length = endpoint->completions.address_lengths[0];
+        if (address == NULL || *address_length == 0u || *address_length > address_capacity)
+          status = TURBO_EIO;
+        else memcpy(address, &endpoint->completions.addresses[0], *address_length);
+      }
     }
   }
   if (endpoint->completions.count != 0u &&
@@ -593,7 +627,16 @@ static int network_finish_native_operation_details(network_fixture *fixture,
 
 static int network_finish_native_operation(network_fixture *fixture, network_endpoint *endpoint,
                                            size_t *bytes) {
-  return network_finish_native_operation_details(fixture, endpoint, bytes, NULL);
+  return network_finish_native_operation_details(fixture, endpoint, bytes, NULL, 0u, NULL);
+}
+
+static bool network_ipv4_endpoint_equal(const void *actual_address, size_t actual_length,
+                                        const struct sockaddr_in *expected) {
+  const struct sockaddr_in *actual = (const struct sockaddr_in *)actual_address;
+  return actual != NULL && expected != NULL && actual_length >= sizeof(*actual) &&
+         actual->sin_family == AF_INET && expected->sin_family == AF_INET &&
+         actual->sin_addr.s_addr == expected->sin_addr.s_addr &&
+         actual->sin_port == expected->sin_port;
 }
 
 static int network_run_native_operation(network_fixture *fixture, network_endpoint *endpoint,
@@ -659,6 +702,7 @@ static int network_transfer_udp_datagram(network_fixture *fixture, network_endpo
                                          network_endpoint *receiver, network_socket receiver_socket,
                                          unsigned char *receiver_buffer, void *source_address,
                                          size_t source_capacity, size_t *source_length,
+                                         const struct sockaddr_in *expected_source,
                                          size_t payload_size, uint64_t *next_lease) {
   size_t sent = 0u;
   size_t received = 0u;
@@ -675,20 +719,23 @@ static int network_transfer_udp_datagram(network_fixture *fixture, network_endpo
   int receive_status;
   int send_status;
   if (source_length == NULL || next_lease == NULL || destination_address == NULL ||
-      destination_length == 0u || source_address == NULL || source_capacity == 0u)
+      destination_length == 0u || source_address == NULL || source_capacity == 0u ||
+      expected_source == NULL)
     return TURBO_EINVAL;
   *source_length = 0u;
+  memset(source_address, 0, source_capacity);
   receive_status = network_submit_native_operation(receiver, receive_operation, (*next_lease)++);
   if (receive_status != TURBO_OK) return receive_status;
   send_status = network_submit_native_operation(sender, send_operation, (*next_lease)++);
   if (send_status != TURBO_OK) return send_status;
   send_status = network_finish_native_operation(fixture, sender, &sent);
-  receive_status =
-      network_finish_native_operation_details(fixture, receiver, &received, source_length);
+  receive_status = network_finish_native_operation_details(
+      fixture, receiver, &received, source_address, source_capacity, source_length);
   if (send_status != TURBO_OK) return send_status;
   if (receive_status != TURBO_OK) return receive_status;
   if (sent != payload_size || received != payload_size || *source_length == 0u ||
-      *source_length > source_capacity)
+      *source_length > source_capacity ||
+      !network_ipv4_endpoint_equal(source_address, *source_length, expected_source))
     return TURBO_EIO;
   return TURBO_OK;
 }
@@ -723,13 +770,13 @@ static int network_exchange(network_fixture *fixture, network_protocol protocol,
           fixture, &fixture->client, fixture->client_socket, sent, &fixture->server_address,
           sizeof(fixture->server_address), &fixture->native_server, fixture->server_socket,
           fixture->server.buffer, &source_address, sizeof(source_address), &source_length,
-          payload_size, &next_lease);
+          &fixture->client_address, payload_size, &next_lease);
       if (status == TURBO_OK)
         status = network_transfer_udp_datagram(
             fixture, &fixture->native_server, fixture->server_socket, fixture->server.buffer,
             &source_address, source_length, &fixture->client, fixture->client_socket, received,
-            &response_address, sizeof(response_address), &response_length, payload_size,
-            &next_lease);
+            &response_address, sizeof(response_address), &response_length, &fixture->server_address,
+            payload_size, &next_lease);
     }
     if (status == TURBO_OK && memcmp(sent, received, payload_size) != 0) status = TURBO_EIO;
     return status;
@@ -958,6 +1005,49 @@ static uint64_t network_percentile(uint64_t *sorted, size_t count, size_t numera
 }
 
 spec("CFlow network benchmark configuration") {
+  it("owns native UDP address storage independently from the caller") {
+    struct sockaddr_in caller_address;
+    network_operation owned = {0};
+    cflow_io_native_operation operation;
+    const struct sockaddr_in *owned_address;
+
+    memset(&caller_address, 0, sizeof(caller_address));
+    caller_address.sin_family = AF_INET;
+    caller_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    caller_address.sin_port = htons(4242u);
+    operation = (cflow_io_native_operation){CFLOW_IO_NATIVE_UDP_SEND_TO,
+                                            (uintptr_t)NETWORK_INVALID_SOCKET,
+                                            NULL,
+                                            0u,
+                                            &caller_address,
+                                            sizeof(caller_address),
+                                            sizeof(caller_address)};
+
+    check_equal(network_operation_prepare(&owned, operation), TURBO_OK);
+    check_true(owned.native.address != &caller_address);
+    caller_address.sin_port = htons(4343u);
+    owned_address = (const struct sockaddr_in *)owned.native.address;
+    check_equal(owned_address->sin_family, AF_INET);
+    check_equal(owned_address->sin_addr.s_addr, htonl(INADDR_LOOPBACK));
+    check_equal(owned_address->sin_port, htons(4242u));
+  }
+
+  it("compares UDP source endpoints by family address and port") {
+    struct sockaddr_storage actual_storage;
+    struct sockaddr_in expected;
+    struct sockaddr_in *actual = (struct sockaddr_in *)&actual_storage;
+
+    memset(&actual_storage, 0, sizeof(actual_storage));
+    memset(&expected, 0, sizeof(expected));
+    actual->sin_family = AF_INET;
+    actual->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    actual->sin_port = htons(4242u);
+    expected = *actual;
+    check_true(network_ipv4_endpoint_equal(&actual_storage, sizeof(*actual), &expected));
+    actual->sin_port = htons(4343u);
+    check_false(network_ipv4_endpoint_equal(&actual_storage, sizeof(*actual), &expected));
+  }
+
   it("round trips one TCP payload through dual native endpoints") {
     cflow_io_native_backend_kind backend_kind = CFLOW_IO_NATIVE_EPOLL;
     network_fixture fixture = {0};
