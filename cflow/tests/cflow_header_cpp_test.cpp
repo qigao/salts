@@ -39,6 +39,8 @@ static_assert(std::is_standard_layout<cflow_io_native_operation>::value,
               "native IO operation must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_native_pipe_operation>::value,
               "native pipe operation must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_io_native_file_operation>::value,
+              "native file operation must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_timer_event_queue>::value,
               "timer Event queue must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_transition>::value,
@@ -84,11 +86,16 @@ suite("CFlow C++ public header") {
         cflow_io_native_backend native_backend = {};
         cflow_io_native_operation native_operation = {};
         cflow_io_native_pipe_operation native_pipe_operation = {};
+        cflow_io_native_file_operation native_file_operation = {};
         cflow_io_native_backend_kind native_backend_kind = CFLOW_IO_NATIVE_POLL;
         cflow_io_native_pipe_operation_kind native_pipe_kind =
             CFLOW_IO_NATIVE_PIPE_READ;
+        cflow_io_native_file_operation_kind native_file_kind =
+            CFLOW_IO_NATIVE_FILE_READ_AT;
         cflow_io_backend_ops native_pipe_ops =
             cflow_io_native_backend_pipe_actor_ops();
+        cflow_io_backend_ops native_file_ops =
+            cflow_io_native_backend_file_actor_ops();
         cflow_timer_event_queue timer_events = {};
         cflow_event_id event_id = 0u;
         const cmeta_type_desc *event_type = nullptr;
@@ -135,6 +142,11 @@ suite("CFlow C++ public header") {
         check_true(native_pipe_kind == CFLOW_IO_NATIVE_PIPE_READ);
         check_not_null(native_pipe_ops.submit);
         (void)cflow_io_native_backend_pipe_supported(native_backend_kind);
+        check_true(native_file_operation.kind == CFLOW_IO_NATIVE_FILE_READ_AT);
+        check_true(native_file_kind == CFLOW_IO_NATIVE_FILE_READ_AT);
+        check_not_null(native_file_ops.submit);
+        (void)cflow_io_native_backend_file_operation_supported(
+            native_backend_kind, native_file_kind);
         cflow_actor_ref_release(&actor_ref);
         cflow_actor_destroy(&actor);
         check_null(timer_events.impl);
