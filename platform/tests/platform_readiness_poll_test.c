@@ -30,7 +30,6 @@ static turbo_readiness_callback_result poll_test_rearm_first(
   poll_fairness_probe *probe = (poll_fairness_probe *)user;
   turbo_mutex_lock(&probe->mutex);
   ++probe->first_calls;
-  turbo_cond_broadcast(&probe->changed);
   turbo_mutex_unlock(&probe->mutex);
   return status == TURBO_OK &&
                  (events & TURBO_READINESS_EVENT_READ) != 0u
