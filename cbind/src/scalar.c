@@ -55,14 +55,41 @@ static cbind_status cbind_validation_error(cbind_error *error,
     return status;
 }
 
-static bool cbind_integer_width_matches(const cmeta_data_desc *shape) {
+static size_t cbind_integer_alignment(cmeta_data_kind kind, uint8_t bits) {
+    if (kind == CMETA_DATA_SINT) {
+        switch (bits) {
+            case 8u: return _Alignof(int8_t);
+            case 16u: return _Alignof(int16_t);
+            case 32u: return _Alignof(int32_t);
+            case 64u: return _Alignof(int64_t);
+            default: return 0u;
+        }
+    }
+
+    switch (bits) {
+        case 8u: return _Alignof(uint8_t);
+        case 16u: return _Alignof(uint16_t);
+        case 32u: return _Alignof(uint32_t);
+        case 64u: return _Alignof(uint64_t);
+        default: return 0u;
+    }
+}
+
+static bool cbind_integer_storage_valid(const cmeta_data_desc *shape) {
     const cmeta_data_integer_shape *integer_shape =
         (const cmeta_data_integer_shape *)shape->shape;
+    size_t expected_alignment;
 
-    return integer_shape != NULL && shape->storage_type != NULL &&
-           shape->storage_type->size <= SIZE_MAX / CHAR_BIT &&
-           (size_t)integer_shape->bits ==
-               shape->storage_type->size * CHAR_BIT;
+    if (CHAR_BIT != 8 || integer_shape == NULL ||
+        shape->storage_type == NULL ||
+        shape->storage_type->kind != CMETA_T_INTEGER)
+        return false;
+    expected_alignment = cbind_integer_alignment(shape->kind,
+                                                 integer_shape->bits);
+    return expected_alignment != 0u &&
+           shape->storage_type->size ==
+               (size_t)integer_shape->bits / (size_t)CHAR_BIT &&
+           shape->storage_type->align == expected_alignment;
 }
 
 static bool cbind_float_width_matches(const cmeta_data_desc *shape) {
@@ -111,26 +138,11 @@ cbind_status cbind_validate_graph(const cbind_context *context,
                                                 shape, depth)
                        : status;
         case CMETA_DATA_SINT:
-            status = cbind_validate_one_storage(shape, &cmeta_type_int,
-                                                cbind_integer_width_matches(shape),
-                                                depth, error);
-            if (status != CBIND_UNSUPPORTED)
-                return status;
-            status = cbind_validate_one_storage(shape, &cmeta_type_long,
-                                                cbind_integer_width_matches(shape),
-                                                depth, error);
-            return status == CBIND_UNSUPPORTED
-                       ? cbind_validation_error(error, CBIND_UNSUPPORTED,
-                                                shape, depth)
-                       : status;
         case CMETA_DATA_UINT:
-            status = cbind_validate_one_storage(shape, &cmeta_type_size,
-                                                cbind_integer_width_matches(shape),
-                                                depth, error);
-            return status == CBIND_UNSUPPORTED
-                       ? cbind_validation_error(error, CBIND_UNSUPPORTED,
-                                                shape, depth)
-                       : status;
+            return cbind_integer_storage_valid(shape)
+                       ? CBIND_OK
+                       : cbind_validation_error(error, CBIND_INVALID_SHAPE,
+                                                shape, depth);
         case CMETA_DATA_FLOAT:
             status = cbind_validate_one_storage(shape, &cmeta_type_float,
                                                 cbind_float_width_matches(shape),
@@ -182,20 +194,59 @@ bool cbind_value_is_empty(const cmeta_data_desc *shape, const void *value) {
             memcpy(&native, value, sizeof(native));
             return !native;
         }
-        case CMETA_DATA_SINT:
-            if (cbind_type_matches(shape->storage_type, &cmeta_type_int)) {
-                int native;
-                memcpy(&native, value, sizeof(native));
-                return native == 0;
-            } else {
-                long native;
-                memcpy(&native, value, sizeof(native));
-                return native == 0;
+        case CMETA_DATA_SINT: {
+            const cmeta_data_integer_shape *integer_shape =
+                (const cmeta_data_integer_shape *)shape->shape;
+            switch (integer_shape->bits) {
+                case 8u: {
+                    int8_t native;
+                    memcpy(&native, value, sizeof(native));
+                    return native == 0;
+                }
+                case 16u: {
+                    int16_t native;
+                    memcpy(&native, value, sizeof(native));
+                    return native == 0;
+                }
+                case 32u: {
+                    int32_t native;
+                    memcpy(&native, value, sizeof(native));
+                    return native == 0;
+                }
+                case 64u: {
+                    int64_t native;
+                    memcpy(&native, value, sizeof(native));
+                    return native == 0;
+                }
+                default: return false;
             }
+        }
         case CMETA_DATA_UINT: {
-            size_t native;
-            memcpy(&native, value, sizeof(native));
-            return native == 0u;
+            const cmeta_data_integer_shape *integer_shape =
+                (const cmeta_data_integer_shape *)shape->shape;
+            switch (integer_shape->bits) {
+                case 8u: {
+                    uint8_t native;
+                    memcpy(&native, value, sizeof(native));
+                    return native == 0u;
+                }
+                case 16u: {
+                    uint16_t native;
+                    memcpy(&native, value, sizeof(native));
+                    return native == 0u;
+                }
+                case 32u: {
+                    uint32_t native;
+                    memcpy(&native, value, sizeof(native));
+                    return native == 0u;
+                }
+                case 64u: {
+                    uint64_t native;
+                    memcpy(&native, value, sizeof(native));
+                    return native == 0u;
+                }
+                default: return false;
+            }
         }
         case CMETA_DATA_FLOAT:
             if (cbind_type_matches(shape->storage_type, &cmeta_type_float)) {
@@ -228,6 +279,9 @@ bool cbind_value_is_empty(const cmeta_data_desc *shape, const void *value) {
     }
 }
 
+static void cbind_store_signed(uint8_t bits, int64_t value, void *out);
+static void cbind_store_unsigned(uint8_t bits, uint64_t value, void *out);
+
 void cbind_value_reset(const cmeta_data_desc *shape, void *value) {
     if (shape == NULL || value == NULL)
         return;
@@ -238,18 +292,16 @@ void cbind_value_reset(const cmeta_data_desc *shape, void *value) {
             memcpy(value, &native, sizeof(native));
             break;
         }
-        case CMETA_DATA_SINT:
-            if (cbind_type_matches(shape->storage_type, &cmeta_type_int)) {
-                int native = 0;
-                memcpy(value, &native, sizeof(native));
-            } else {
-                long native = 0;
-                memcpy(value, &native, sizeof(native));
-            }
+        case CMETA_DATA_SINT: {
+            const cmeta_data_integer_shape *integer_shape =
+                (const cmeta_data_integer_shape *)shape->shape;
+            cbind_store_signed(integer_shape->bits, INT64_C(0), value);
             break;
+        }
         case CMETA_DATA_UINT: {
-            size_t native = 0u;
-            memcpy(value, &native, sizeof(native));
+            const cmeta_data_integer_shape *integer_shape =
+                (const cmeta_data_integer_shape *)shape->shape;
+            cbind_store_unsigned(integer_shape->bits, UINT64_C(0), value);
             break;
         }
         case CMETA_DATA_FLOAT:
@@ -416,65 +468,105 @@ static bool cbind_u64_exact_in_binary(uint64_t value, unsigned precision) {
     return (value & mask) == 0u;
 }
 
+static void cbind_store_signed(uint8_t bits, int64_t value, void *out) {
+    switch (bits) {
+        case 8u: {
+            int8_t native = (int8_t)value;
+            memcpy(out, &native, sizeof(native));
+            break;
+        }
+        case 16u: {
+            int16_t native = (int16_t)value;
+            memcpy(out, &native, sizeof(native));
+            break;
+        }
+        case 32u: {
+            int32_t native = (int32_t)value;
+            memcpy(out, &native, sizeof(native));
+            break;
+        }
+        case 64u: {
+            int64_t native = value;
+            memcpy(out, &native, sizeof(native));
+            break;
+        }
+    }
+}
+
+static void cbind_store_unsigned(uint8_t bits, uint64_t value, void *out) {
+    switch (bits) {
+        case 8u: {
+            uint8_t native = (uint8_t)value;
+            memcpy(out, &native, sizeof(native));
+            break;
+        }
+        case 16u: {
+            uint16_t native = (uint16_t)value;
+            memcpy(out, &native, sizeof(native));
+            break;
+        }
+        case 32u: {
+            uint32_t native = (uint32_t)value;
+            memcpy(out, &native, sizeof(native));
+            break;
+        }
+        case 64u: {
+            uint64_t native = value;
+            memcpy(out, &native, sizeof(native));
+            break;
+        }
+    }
+}
+
+static int64_t cbind_signed_min(uint8_t bits) {
+    return bits == 64u ? INT64_MIN
+                       : -(INT64_C(1) << (bits - 1u));
+}
+
+static int64_t cbind_signed_max(uint8_t bits) {
+    return bits == 64u ? INT64_MAX
+                       : (INT64_C(1) << (bits - 1u)) - INT64_C(1);
+}
+
+static uint64_t cbind_unsigned_max(uint8_t bits) {
+    return bits == 64u ? UINT64_MAX
+                       : (UINT64_C(1) << bits) - UINT64_C(1);
+}
+
 static cbind_status cbind_decode_signed(cbind_decode_state *state,
                                         const cmeta_data_desc *shape,
                                         const cmeta_data_field_desc *field,
                                         size_t depth,
                                         const cserde_token *token,
                                         void *out) {
-    if (cbind_type_matches(shape->storage_type, &cmeta_type_int)) {
-        int native;
-        if (token->kind == CSERDE_SINT) {
-            if (token->value.sint < (int64_t)INT_MIN ||
-                token->value.sint > (int64_t)INT_MAX)
-                return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
-                                          shape, field, depth);
-            native = (int)token->value.sint;
-        } else if (token->kind == CSERDE_UINT) {
-            if (token->value.uint > (uint64_t)INT_MAX)
-                return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
-                                          shape, field, depth);
-            native = (int)token->value.uint;
-        } else if (token->kind == CSERDE_FLOAT) {
-            if (!cbind_double_in_signed_width(token->value.floating,
-                                              sizeof(native) * CHAR_BIT))
-                return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
-                                          shape, field, depth);
-            native = (int)token->value.floating;
-        } else {
-            return cbind_scalar_error(state, CBIND_TOKEN_MISMATCH,
+    const cmeta_data_integer_shape *integer_shape =
+        (const cmeta_data_integer_shape *)shape->shape;
+    uint8_t bits = integer_shape->bits;
+    int64_t value;
+
+    if (token->kind == CSERDE_SINT) {
+        if (token->value.sint < cbind_signed_min(bits) ||
+            token->value.sint > cbind_signed_max(bits))
+            return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
                                       shape, field, depth);
-        }
-        memcpy(out, &native, sizeof(native));
-        return CBIND_OK;
+        value = token->value.sint;
+    } else if (token->kind == CSERDE_UINT) {
+        if (token->value.uint > (uint64_t)cbind_signed_max(bits))
+            return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
+                                      shape, field, depth);
+        value = (int64_t)token->value.uint;
+    } else if (token->kind == CSERDE_FLOAT) {
+        if (!cbind_double_in_signed_width(token->value.floating, bits))
+            return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
+                                      shape, field, depth);
+        value = (int64_t)token->value.floating;
+    } else {
+        return cbind_scalar_error(state, CBIND_TOKEN_MISMATCH,
+                                  shape, field, depth);
     }
 
-    {
-        long native;
-        if (token->kind == CSERDE_SINT) {
-            if (token->value.sint < (int64_t)LONG_MIN ||
-                token->value.sint > (int64_t)LONG_MAX)
-                return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
-                                          shape, field, depth);
-            native = (long)token->value.sint;
-        } else if (token->kind == CSERDE_UINT) {
-            if (token->value.uint > (uint64_t)LONG_MAX)
-                return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
-                                          shape, field, depth);
-            native = (long)token->value.uint;
-        } else if (token->kind == CSERDE_FLOAT) {
-            if (!cbind_double_in_signed_width(token->value.floating,
-                                              sizeof(native) * CHAR_BIT))
-                return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
-                                          shape, field, depth);
-            native = (long)token->value.floating;
-        } else {
-            return cbind_scalar_error(state, CBIND_TOKEN_MISMATCH,
-                                      shape, field, depth);
-        }
-        memcpy(out, &native, sizeof(native));
-        return CBIND_OK;
-    }
+    cbind_store_signed(bits, value, out);
+    return CBIND_OK;
 }
 
 static cbind_status cbind_decode_unsigned(cbind_decode_state *state,
@@ -483,31 +575,33 @@ static cbind_status cbind_decode_unsigned(cbind_decode_state *state,
                                           size_t depth,
                                           const cserde_token *token,
                                           void *out) {
-    size_t native;
+    const cmeta_data_integer_shape *integer_shape =
+        (const cmeta_data_integer_shape *)shape->shape;
+    uint8_t bits = integer_shape->bits;
+    uint64_t value;
 
     if (token->kind == CSERDE_UINT) {
-        if (token->value.uint > (uint64_t)SIZE_MAX)
+        if (token->value.uint > cbind_unsigned_max(bits))
             return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
                                       shape, field, depth);
-        native = (size_t)token->value.uint;
+        value = token->value.uint;
     } else if (token->kind == CSERDE_SINT) {
         if (token->value.sint < 0 ||
-            (uint64_t)token->value.sint > (uint64_t)SIZE_MAX)
+            (uint64_t)token->value.sint > cbind_unsigned_max(bits))
             return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
                                       shape, field, depth);
-        native = (size_t)token->value.sint;
+        value = (uint64_t)token->value.sint;
     } else if (token->kind == CSERDE_FLOAT) {
-        if (!cbind_double_in_unsigned_width(token->value.floating,
-                                            sizeof(native) * CHAR_BIT))
+        if (!cbind_double_in_unsigned_width(token->value.floating, bits))
             return cbind_scalar_error(state, CBIND_VALUE_OUT_OF_RANGE,
                                       shape, field, depth);
-        native = (size_t)token->value.floating;
+        value = (uint64_t)token->value.floating;
     } else {
         return cbind_scalar_error(state, CBIND_TOKEN_MISMATCH,
                                   shape, field, depth);
     }
 
-    memcpy(out, &native, sizeof(native));
+    cbind_store_unsigned(bits, value, out);
     return CBIND_OK;
 }
 

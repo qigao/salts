@@ -55,6 +55,49 @@ static const cmeta_data_desc noncanonical_int_data = {
     .shape = &noncanonical_int_shape
 };
 
+#define DEFINE_FIXED_INTEGER_DATA(name_, c_type_, kind_, bits_, id_)         \
+    static const cmeta_type_identity name_##_identity =                     \
+        CMETA_TYPE_ID_ATOM_INIT(id_);                                        \
+    static const cmeta_type_desc name_##_type = {                            \
+        .name = #c_type_,                                                    \
+        .size = sizeof(c_type_),                                             \
+        .align = _Alignof(c_type_),                                          \
+        .kind = CMETA_T_INTEGER,                                             \
+        .pointee = NULL,                                                     \
+        .traits = NULL,                                                      \
+        .identity = &name_##_identity                                        \
+    };                                                                       \
+    static const cmeta_data_integer_shape name_##_shape = {.bits = bits_};   \
+    static const cmeta_data_desc name_##_data = {                            \
+        .struct_size = offsetof(cmeta_data_desc, shape) +                    \
+                       sizeof(((cmeta_data_desc *)0)->shape),                 \
+        .abi_version = CMETA_DATA_DESC_ABI_VERSION,                          \
+        .stable_id = id_ ".data",                                           \
+        .display_name = #c_type_,                                            \
+        .kind = kind_,                                                       \
+        .storage_type = &name_##_type,                                       \
+        .shape = &name_##_shape                                              \
+    }
+
+DEFINE_FIXED_INTEGER_DATA(test_i8, int8_t, CMETA_DATA_SINT, 8u,
+                          "test.cbind.int8");
+DEFINE_FIXED_INTEGER_DATA(test_i16, int16_t, CMETA_DATA_SINT, 16u,
+                          "test.cbind.int16");
+DEFINE_FIXED_INTEGER_DATA(test_i32, int32_t, CMETA_DATA_SINT, 32u,
+                          "test.cbind.int32");
+DEFINE_FIXED_INTEGER_DATA(test_i64, int64_t, CMETA_DATA_SINT, 64u,
+                          "test.cbind.int64");
+DEFINE_FIXED_INTEGER_DATA(test_u8, uint8_t, CMETA_DATA_UINT, 8u,
+                          "test.cbind.uint8");
+DEFINE_FIXED_INTEGER_DATA(test_u16, uint16_t, CMETA_DATA_UINT, 16u,
+                          "test.cbind.uint16");
+DEFINE_FIXED_INTEGER_DATA(test_u32, uint32_t, CMETA_DATA_UINT, 32u,
+                          "test.cbind.uint32");
+DEFINE_FIXED_INTEGER_DATA(test_u64, uint64_t, CMETA_DATA_UINT, 64u,
+                          "test.cbind.uint64");
+
+#undef DEFINE_FIXED_INTEGER_DATA
+
 spec("CBind public ABI records") {
   it("initializes a caller-sized context") {
     unsigned char scratch[3] = {0};
@@ -188,8 +231,9 @@ spec("CBind scalar decode preflight") {
                 CBIND_INVALID_SHAPE);
     check_equal(source.index, (size_t)0u);
     check_equal(cbind_decode(&context, &noncanonical_int_data, &reader, &out, NULL),
-                CBIND_UNSUPPORTED);
-    check_equal(source.index, (size_t)0u);
+                CBIND_OK);
+    check_equal(source.index, (size_t)1u);
+    check_equal(out, 1);
   }
 
   it("rejects a non-empty destination before input") {
@@ -204,6 +248,231 @@ spec("CBind scalar decode preflight") {
                 CBIND_DESTINATION_NOT_EMPTY);
     check_equal(source.index, (size_t)0u);
     check_equal(out, 9);
+  }
+}
+
+spec("CBind fixed-width integer decode") {
+  it("decodes every signed fixed-width minimum and maximum") {
+    cserde_token token = {.kind = CSERDE_SINT};
+    int8_t i8 = 0;
+    int16_t i16 = 0;
+    int32_t i32 = 0;
+    int64_t i64 = 0;
+
+    token.value.sint = INT8_MIN;
+    check_equal(decode_one(&test_i8_data, &token, &i8), CBIND_OK);
+    check_equal(i8, INT8_MIN);
+    i8 = 0;
+    token.value.sint = INT8_MAX;
+    check_equal(decode_one(&test_i8_data, &token, &i8), CBIND_OK);
+    check_equal(i8, INT8_MAX);
+
+    token.value.sint = INT16_MIN;
+    check_equal(decode_one(&test_i16_data, &token, &i16), CBIND_OK);
+    check_equal(i16, INT16_MIN);
+    i16 = 0;
+    token.value.sint = INT16_MAX;
+    check_equal(decode_one(&test_i16_data, &token, &i16), CBIND_OK);
+    check_equal(i16, INT16_MAX);
+
+    token.value.sint = INT32_MIN;
+    check_equal(decode_one(&test_i32_data, &token, &i32), CBIND_OK);
+    check_equal(i32, INT32_MIN);
+    i32 = 0;
+    token.value.sint = INT32_MAX;
+    check_equal(decode_one(&test_i32_data, &token, &i32), CBIND_OK);
+    check_equal(i32, INT32_MAX);
+
+    token.value.sint = INT64_MIN;
+    check_equal(decode_one(&test_i64_data, &token, &i64), CBIND_OK);
+    check_equal(i64, INT64_MIN);
+    i64 = 0;
+    token.value.sint = INT64_MAX;
+    check_equal(decode_one(&test_i64_data, &token, &i64), CBIND_OK);
+    check_equal(i64, INT64_MAX);
+  }
+
+  it("accepts unsigned tokens within signed fixed-width ranges") {
+    cserde_token token = {.kind = CSERDE_UINT};
+    int8_t i8 = 0;
+    int16_t i16 = 0;
+    int32_t i32 = 0;
+    int64_t i64 = 0;
+
+    token.value.uint = INT8_MAX;
+    check_equal(decode_one(&test_i8_data, &token, &i8), CBIND_OK);
+    check_equal(i8, INT8_MAX);
+    token.value.uint = INT16_MAX;
+    check_equal(decode_one(&test_i16_data, &token, &i16), CBIND_OK);
+    check_equal(i16, INT16_MAX);
+    token.value.uint = INT32_MAX;
+    check_equal(decode_one(&test_i32_data, &token, &i32), CBIND_OK);
+    check_equal(i32, INT32_MAX);
+    token.value.uint = INT64_MAX;
+    check_equal(decode_one(&test_i64_data, &token, &i64), CBIND_OK);
+    check_equal(i64, INT64_MAX);
+  }
+
+  it("rejects one-past signed fixed-width ranges without changing output") {
+    cserde_token token = {.kind = CSERDE_SINT};
+    int8_t i8 = 0;
+    int16_t i16 = 0;
+    int32_t i32 = 0;
+    int64_t i64 = 0;
+
+    token.value.sint = (int64_t)INT8_MAX + 1;
+    check_equal(decode_one(&test_i8_data, &token, &i8),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(i8, 0);
+    token.value.sint = (int64_t)INT16_MIN - 1;
+    check_equal(decode_one(&test_i16_data, &token, &i16),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(i16, 0);
+    token.value.sint = (int64_t)INT32_MAX + 1;
+    check_equal(decode_one(&test_i32_data, &token, &i32),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(i32, 0);
+
+    token.kind = CSERDE_UINT;
+    token.value.uint = (uint64_t)INT64_MAX + UINT64_C(1);
+    check_equal(decode_one(&test_i64_data, &token, &i64),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(i64, INT64_C(0));
+  }
+
+  it("decodes every unsigned fixed-width maximum and signed positive token") {
+    cserde_token token = {.kind = CSERDE_UINT};
+    uint8_t u8 = 0;
+    uint16_t u16 = 0;
+    uint32_t u32 = 0;
+    uint64_t u64 = 0;
+
+    token.value.uint = UINT8_MAX;
+    check_equal(decode_one(&test_u8_data, &token, &u8), CBIND_OK);
+    check_equal(u8, UINT8_MAX);
+    token.value.uint = UINT16_MAX;
+    check_equal(decode_one(&test_u16_data, &token, &u16), CBIND_OK);
+    check_equal(u16, UINT16_MAX);
+    token.value.uint = UINT32_MAX;
+    check_equal(decode_one(&test_u32_data, &token, &u32), CBIND_OK);
+    check_equal(u32, UINT32_MAX);
+    token.value.uint = UINT64_MAX;
+    check_equal(decode_one(&test_u64_data, &token, &u64), CBIND_OK);
+    check_equal(u64, UINT64_MAX);
+
+    u8 = 0;
+    token.kind = CSERDE_SINT;
+    token.value.sint = INT8_MAX;
+    check_equal(decode_one(&test_u8_data, &token, &u8), CBIND_OK);
+    check_equal(u8, (uint8_t)INT8_MAX);
+  }
+
+  it("rejects negative and one-past unsigned ranges without changing output") {
+    cserde_token token = {.kind = CSERDE_SINT, .value.sint = -1};
+    uint8_t u8 = 0;
+    uint16_t u16 = 0;
+    uint32_t u32 = 0;
+    uint64_t u64 = 0;
+
+    check_equal(decode_one(&test_u64_data, &token, &u64),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(u64, UINT64_C(0));
+
+    token.kind = CSERDE_UINT;
+    token.value.uint = (uint64_t)UINT8_MAX + UINT64_C(1);
+    check_equal(decode_one(&test_u8_data, &token, &u8),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(u8, 0);
+    token.value.uint = (uint64_t)UINT16_MAX + UINT64_C(1);
+    check_equal(decode_one(&test_u16_data, &token, &u16),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(u16, 0);
+    token.value.uint = (uint64_t)UINT32_MAX + UINT64_C(1);
+    check_equal(decode_one(&test_u32_data, &token, &u32),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(u32, 0u);
+  }
+
+  it("accepts integral floats and rejects fractional or nonfinite values") {
+    cserde_token token = {.kind = CSERDE_FLOAT, .value.floating = 42.0};
+    int8_t i8 = 0;
+    int16_t i16 = 0;
+    uint32_t u32 = 0;
+    uint64_t u64 = 0;
+
+    check_equal(decode_one(&test_i8_data, &token, &i8), CBIND_OK);
+    check_equal(i8, 42);
+    check_equal(decode_one(&test_i16_data, &token, &i16), CBIND_OK);
+    check_equal(i16, 42);
+    check_equal(decode_one(&test_u32_data, &token, &u32), CBIND_OK);
+    check_equal(u32, 42u);
+    check_equal(decode_one(&test_u64_data, &token, &u64), CBIND_OK);
+    check_equal(u64, UINT64_C(42));
+
+    i8 = 0;
+    token.value.floating = 42.5;
+    check_equal(decode_one(&test_i8_data, &token, &i8),
+                CBIND_VALUE_OUT_OF_RANGE);
+    check_equal(i8, 0);
+    token.value.floating = NAN;
+    check_equal(decode_one(&test_i8_data, &token, &i8),
+                CBIND_VALUE_OUT_OF_RANGE);
+    token.value.floating = INFINITY;
+    check_equal(decode_one(&test_i8_data, &token, &i8),
+                CBIND_VALUE_OUT_OF_RANGE);
+  }
+
+  it("rejects wrong integer bits size alignment and storage kind before input") {
+    cmeta_data_integer_shape bad_bits = {.bits = 7u};
+    cmeta_type_desc bad_size_type = test_i8_type;
+    cmeta_type_desc bad_align_type = test_i8_type;
+    cmeta_type_desc bad_kind_type = test_i8_type;
+    cmeta_data_desc bad_bits_data = test_i8_data;
+    cmeta_data_desc bad_size_data = test_i8_data;
+    cmeta_data_desc bad_align_data = test_i8_data;
+    cmeta_data_desc bad_kind_data = test_i8_data;
+    cserde_token token = {.kind = CSERDE_SINT, .value.sint = 1};
+    cserde_recording_reader_context source;
+    cserde_reader reader;
+    cbind_context context = CBIND_CONTEXT_INIT(NULL, 0u, 0u);
+    int8_t out = 0;
+
+    bad_bits_data.shape = &bad_bits;
+    bad_size_type.size = sizeof(int16_t);
+    bad_size_data.storage_type = &bad_size_type;
+    bad_align_type.align = _Alignof(int8_t) + 1u;
+    bad_align_data.storage_type = &bad_align_type;
+    bad_kind_type.kind = CMETA_T_OBJECT;
+    bad_kind_data.storage_type = &bad_kind_type;
+
+    init_recording_reader(&reader, &source, &token, 1u);
+    check_equal(cbind_decode(&context, &bad_bits_data, &reader, &out, NULL),
+                CBIND_INVALID_SHAPE);
+    check_equal(source.index, (size_t)0u);
+    check_equal(cbind_decode(&context, &bad_size_data, &reader, &out, NULL),
+                CBIND_INVALID_SHAPE);
+    check_equal(source.index, (size_t)0u);
+    check_equal(cbind_decode(&context, &bad_align_data, &reader, &out, NULL),
+                CBIND_INVALID_SHAPE);
+    check_equal(source.index, (size_t)0u);
+    check_equal(cbind_decode(&context, &bad_kind_data, &reader, &out, NULL),
+                CBIND_INVALID_SHAPE);
+    check_equal(source.index, (size_t)0u);
+    check_equal(out, 0);
+  }
+
+  it("detects occupied narrow destinations without reading adjacent bytes") {
+    struct guarded_i8 {
+      int8_t value;
+      unsigned char guard[7];
+    } out = {1, {0}};
+    cserde_token token = {.kind = CSERDE_SINT, .value.sint = 2};
+
+    check_equal(decode_one(&test_i8_data, &token, &out.value),
+                CBIND_DESTINATION_NOT_EMPTY);
+    check_equal(out.value, 1);
+    check_equal(out.guard[0], 0);
+    check_equal(out.guard[6], 0);
   }
 }
 

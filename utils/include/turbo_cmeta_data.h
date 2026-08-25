@@ -1,14 +1,58 @@
 #ifndef TURBO_CMETA_DATA_H
 #define TURBO_CMETA_DATA_H
 
+#include "turbo_cmeta_fixed_width.h"
 #include "turbo_str.h"
+#include "turbo_api.h"
+#include "turbo_uuid.h"
 #include "turbo_vstr.h"
 
 #include <cmeta/data.h>
 
+#include <limits.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#ifdef __cplusplus
+#define TURBO_CMETA_STATIC_ASSERT(condition_, message_) \
+    static_assert((condition_), message_)
+#else
+#define TURBO_CMETA_STATIC_ASSERT(condition_, message_) \
+    _Static_assert((condition_), message_)
+#endif
+
+TURBO_CMETA_STATIC_ASSERT(sizeof(turbo_uuid_t) == TURBO_UUID_SIZE,
+                          "turbo_uuid_t must have exactly 16 bytes");
+
+#undef TURBO_CMETA_STATIC_ASSERT
+
+/**
+ * Canonical process-wide UUID metadata exported by TurboUtils::Core.
+ *
+ * These objects have stable linkage identities across translation units.
+ * Semantic admission still uses turbo_uuid_cmeta_data_valid rather than
+ * descriptor address equality so intact metadata copies remain valid.
+ */
+TURBO_API extern const cmeta_type_desc turbo_uuid_cmeta_type;
+TURBO_API extern const cmeta_data_buffer_shape turbo_uuid_cmeta_shape;
+TURBO_API extern const cmeta_data_buffer_ops turbo_uuid_cmeta_buffer_ops;
+TURBO_API extern const cmeta_data_desc turbo_uuid_cmeta_data;
+
+/**
+ * Validate UUID metadata against the canonical Core callback authority.
+ *
+ * Intact semantic copies are accepted; callback replacements are rejected.
+ *
+ * @param candidate Trusted immutable generic descriptor, or NULL.
+ * @return true only when candidate retains the provider's UUID semantics.
+ */
+TURBO_API bool turbo_uuid_cmeta_data_valid(
+    const cmeta_data_desc *candidate);
 
 static const cmeta_type_identity turbo_tstr_cmeta_identity =
     CMETA_TYPE_ID_ATOM_INIT("turbo.tstr");
