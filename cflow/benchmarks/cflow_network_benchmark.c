@@ -56,6 +56,17 @@ typedef enum network_protocol {
   NETWORK_PROTOCOL_UDP
 } network_protocol;
 
+typedef enum network_wait_mode {
+  NETWORK_WAIT_BLOCKING = 0,
+  NETWORK_WAIT_BUSY
+} network_wait_mode;
+
+static int network_parse_wait_mode(const char *text, network_wait_mode *out);
+static double network_application_mib_per_second(
+    uint64_t application_bytes, uint64_t elapsed_ns);
+static double network_application_mib_per_cpu_second(
+    uint64_t application_bytes, uint64_t cpu_ns);
+
 typedef struct network_operation {
   cflow_io_native_operation native;
 } network_operation;
@@ -65,6 +76,12 @@ typedef struct network_completion_probe {
   cflow_io_completion values[NETWORK_REQUEST_CAPACITY];
   size_t count;
 } network_completion_probe;
+
+typedef struct network_wake_latch {
+  turbo_mutex_t mutex;
+  turbo_cond_t changed;
+  bool pending;
+} network_wake_latch;
 
 typedef struct network_server {
   network_protocol protocol;
@@ -80,6 +97,8 @@ typedef struct network_fixture {
   cflow_executor executor;
   cflow_io_actor actor;
   network_completion_probe completions;
+  network_wake_latch wake_latch;
+  network_wait_mode wait_mode;
   network_socket client_socket;
   network_socket server_socket;
   struct sockaddr_in server_address;
@@ -89,6 +108,7 @@ typedef struct network_fixture {
   bool executor_initialized;
   bool backend_initialized;
   bool server_started;
+  bool wake_latch_initialized;
 } network_fixture;
 
 typedef struct network_measurement {
@@ -300,6 +320,15 @@ static void network_completion_record(
   }
 }
 
+static void network_wake_signal(void *user) {
+  network_wake_latch *latch = (network_wake_latch *)user;
+  if (latch == NULL) return;
+  turbo_mutex_lock(&latch->mutex);
+  latch->pending = true;
+  turbo_cond_signal(&latch->changed);
+  turbo_mutex_unlock(&latch->mutex);
+}
+
 static int network_select_backend(cflow_io_native_backend_kind *out) {
   const char *requested = getenv("CFLOW_NETWORK_BACKEND");
   if (out == NULL) return TURBO_EINVAL;
@@ -352,6 +381,23 @@ static int network_parse_profile(const char *text, bool *throughput) {
   return TURBO_EINVAL;
 }
 
+static int network_parse_wait_mode(const char *text, network_wait_mode *out) {
+  if (out == NULL) return TURBO_EINVAL;
+  if (text == NULL || strcmp(text, "blocking") == 0) {
+    *out = NETWORK_WAIT_BLOCKING;
+    return TURBO_OK;
+  }
+  if (strcmp(text, "busy") == 0) {
+    *out = NETWORK_WAIT_BUSY;
+    return TURBO_OK;
+  }
+  return TURBO_EINVAL;
+}
+
+static const char *network_wait_mode_name(network_wait_mode mode) {
+  return mode == NETWORK_WAIT_BUSY ? "busy" : "blocking";
+}
+
 static const char *network_backend_name(cflow_io_native_backend_kind kind) {
   switch (kind) {
     case CFLOW_IO_NATIVE_EPOLL: return "epoll";
@@ -365,6 +411,7 @@ static const char *network_backend_name(cflow_io_native_backend_kind kind) {
 static int network_fixture_init(network_fixture *fixture,
                                 network_protocol protocol,
                                 cflow_io_native_backend_kind backend_kind,
+                                network_wait_mode wait_mode,
                                 size_t total_exchanges,
                                 size_t payload_size) {
   cflow_io_native_backend_config backend_config = {
@@ -372,8 +419,19 @@ static int network_fixture_init(network_fixture *fixture,
   cflow_io_actor_config actor_config;
   int status;
   memset(fixture, 0, sizeof(*fixture));
+  fixture->wait_mode = wait_mode;
   fixture->client_socket = NETWORK_INVALID_SOCKET;
   fixture->server_socket = NETWORK_INVALID_SOCKET;
+  if (wait_mode == NETWORK_WAIT_BLOCKING) {
+    turbo_mutex_init(&fixture->wake_latch.mutex);
+    if (fixture->wake_latch.mutex == NULL) return TURBO_ENOMEM;
+    turbo_cond_init(&fixture->wake_latch.changed);
+    if (fixture->wake_latch.changed == NULL) {
+      turbo_mutex_destroy(&fixture->wake_latch.mutex);
+      return TURBO_ENOMEM;
+    }
+    fixture->wake_latch_initialized = true;
+  }
   status = cflow_io_native_backend_init(&fixture->backend, &backend_config);
   if (status != TURBO_OK) return status;
   fixture->backend_initialized = true;
@@ -389,6 +447,10 @@ static int network_fixture_init(network_fixture *fixture,
   actor_config.backend_user = &fixture->backend;
   actor_config.completion = network_completion_record;
   actor_config.completion_user = &fixture->completions;
+  if (wait_mode == NETWORK_WAIT_BLOCKING) {
+    actor_config.wake = network_wake_signal;
+    actor_config.wake_user = &fixture->wake_latch;
+  }
   status = cflow_io_actor_init(&fixture->actor, &actor_config);
   if (status != TURBO_OK) return status;
   fixture->actor_initialized = true;
@@ -411,7 +473,8 @@ static int network_fixture_init(network_fixture *fixture,
   return TURBO_OK;
 }
 
-static int network_wait(network_fixture *fixture, size_t completion_count) {
+static int network_wait_busy(network_fixture *fixture,
+                             size_t completion_count) {
   uint64_t started = turbo_hrtime();
   while (fixture->completions.count < completion_count) {
     (void)cflow_io_actor_run_ready(&fixture->actor, 64u);
@@ -421,6 +484,34 @@ static int network_wait(network_fixture *fixture, size_t completion_count) {
     turbo_thread_yield();
   }
   return TURBO_OK;
+}
+
+static int network_wait_blocking(network_fixture *fixture,
+                                 size_t completion_count) {
+  const uint64_t started = turbo_hrtime();
+  while (fixture->completions.count < completion_count) {
+    uint64_t elapsed;
+    uint64_t remaining;
+    (void)cflow_io_actor_run_ready(&fixture->actor, 64u);
+    (void)cflow_executor_run_ready(&fixture->executor);
+    if (fixture->completions.count >= completion_count) break;
+    elapsed = turbo_hrtime() - started;
+    if (elapsed >= NETWORK_WAIT_TIMEOUT_NS) return TURBO_ETIMEDOUT;
+    remaining = NETWORK_WAIT_TIMEOUT_NS - elapsed;
+    turbo_mutex_lock(&fixture->wake_latch.mutex);
+    if (!fixture->wake_latch.pending)
+      (void)turbo_cond_timedwait(&fixture->wake_latch.changed,
+                                 &fixture->wake_latch.mutex, remaining);
+    fixture->wake_latch.pending = false;
+    turbo_mutex_unlock(&fixture->wake_latch.mutex);
+  }
+  return TURBO_OK;
+}
+
+static int network_wait(network_fixture *fixture, size_t completion_count) {
+  return fixture->wait_mode == NETWORK_WAIT_BUSY
+             ? network_wait_busy(fixture, completion_count)
+             : network_wait_blocking(fixture, completion_count);
 }
 
 static int network_run_native_operation(
@@ -541,6 +632,10 @@ static void network_fixture_destroy(network_fixture *fixture) {
     (void)cflow_executor_shutdown(&fixture->executor);
     cflow_executor_destroy(&fixture->executor);
   }
+  if (fixture->wake_latch_initialized) {
+    turbo_cond_destroy(&fixture->wake_latch.changed);
+    turbo_mutex_destroy(&fixture->wake_latch.mutex);
+  }
   free(fixture->server.buffer);
 }
 
@@ -597,6 +692,20 @@ static uint64_t network_peak_rss_bytes(void) {
 #endif
 }
 
+static double network_application_mib_per_second(
+    uint64_t application_bytes, uint64_t elapsed_ns) {
+  const double bytes_per_mib = 1048576.0;
+  const double ns_per_second = 1000000000.0;
+  if (elapsed_ns == 0u) return 0.0;
+  return ((double)application_bytes / bytes_per_mib) /
+         ((double)elapsed_ns / ns_per_second);
+}
+
+static double network_application_mib_per_cpu_second(
+    uint64_t application_bytes, uint64_t cpu_ns) {
+  return network_application_mib_per_second(application_bytes, cpu_ns);
+}
+
 static int network_u64_compare(const void *left, const void *right) {
   const uint64_t a = *(const uint64_t *)left;
   const uint64_t b = *(const uint64_t *)right;
@@ -610,16 +719,50 @@ static uint64_t network_percentile(uint64_t *sorted, size_t count,
   return sorted[rank - 1u];
 }
 
+spec("CFlow network benchmark configuration") {
+  it("parses blocking and busy wait modes and rejects unknown input") {
+    network_wait_mode mode = NETWORK_WAIT_BUSY;
+
+    check_equal(network_parse_wait_mode(NULL, &mode), TURBO_OK);
+    check_equal(mode, NETWORK_WAIT_BLOCKING);
+    check_equal(network_parse_wait_mode("blocking", &mode), TURBO_OK);
+    check_equal(mode, NETWORK_WAIT_BLOCKING);
+    check_equal(network_parse_wait_mode("busy", &mode), TURBO_OK);
+    check_equal(mode, NETWORK_WAIT_BUSY);
+    check_equal(network_parse_wait_mode("spin", &mode), TURBO_EINVAL);
+    check_equal(network_parse_wait_mode("blocking", NULL), TURBO_EINVAL);
+  }
+
+  it("normalizes application throughput by process CPU time") {
+    const double one_mib_per_second = network_application_mib_per_second(
+        UINT64_C(1048576), UINT64_C(1000000000));
+    const double two_mib_per_cpu_second =
+        network_application_mib_per_cpu_second(
+            UINT64_C(1048576), UINT64_C(500000000));
+
+    check_true(one_mib_per_second > 0.999999);
+    check_true(one_mib_per_second < 1.000001);
+    check_true(two_mib_per_cpu_second > 1.999999);
+    check_true(two_mib_per_cpu_second < 2.000001);
+    check_true(network_application_mib_per_second(1u, 0u) == 0.0);
+    check_true(network_application_mib_per_cpu_second(1u, 0u) == 0.0);
+  }
+}
+
 suite("CFlow native network benchmarks") {
   bench("reports loopback TCP or UDP native-backend performance") {
     const char *protocol_text = getenv("CFLOW_NETWORK_PROTOCOL");
     const char *profile_text = getenv("CFLOW_NETWORK_PROFILE");
+    const char *wait_mode_text = getenv("CFLOW_NETWORK_WAIT_MODE");
     network_protocol protocol = NETWORK_PROTOCOL_TCP;
+    network_wait_mode wait_mode = NETWORK_WAIT_BLOCKING;
     bool throughput = false;
     cflow_io_native_backend_kind backend_kind = CFLOW_IO_NATIVE_EPOLL;
     int config_status = network_parse_protocol(protocol_text, &protocol);
     if (config_status == TURBO_OK)
       config_status = network_parse_profile(profile_text, &throughput);
+    if (config_status == TURBO_OK)
+      config_status = network_parse_wait_mode(wait_mode_text, &wait_mode);
     if (config_status == TURBO_OK)
       config_status = network_select_backend(&backend_kind);
     const size_t samples = network_env_size(
@@ -644,6 +787,8 @@ suite("CFlow native network benchmarks") {
     const size_t bytes_per_sample =
         payload_size != 0u && exchanges <= SIZE_MAX / payload_size
             ? exchanges * payload_size : 0u;
+    const uint64_t application_bytes =
+        (uint64_t)total_exchanges * (uint64_t)payload_size;
     network_fixture fixture;
     network_measurement measured = {0};
     cflow_io_actor_stats actor_stats = {0};
@@ -673,11 +818,13 @@ suite("CFlow native network benchmarks") {
     measured.latency_capacity = total_exchanges;
     memset(sent, 0x5a, payload_size);
     check_equal(network_fixture_init(&fixture, protocol, backend_kind,
+                                     wait_mode,
                                      total_exchanges, payload_size), TURBO_OK);
-    (void)snprintf(title, sizeof(title), "%s-%s-%s",
+    (void)snprintf(title, sizeof(title), "%s-%s-%s-%s",
                    protocol == NETWORK_PROTOCOL_TCP ? "tcp" : "udp",
                    throughput ? "throughput" : "latency",
-                   network_backend_name(backend_kind));
+                   network_backend_name(backend_kind),
+                   network_wait_mode_name(wait_mode));
     wall_started = turbo_hrtime();
     cpu_started = network_process_cpu_ns();
     benchmark_io(title, samples, exchanges, bytes_per_sample) {
@@ -715,23 +862,34 @@ suite("CFlow native network benchmarks") {
             sizeof(*measured.latencies), network_u64_compare);
       printf("CFLOW_BENCHMARK_JSON {\"schema\":\"cflow-network-benchmark/v1\","
            "\"protocol\":\"%s\",\"profile\":\"%s\",\"backend\":\"%s\","
+           "\"wait_mode\":\"%s\","
            "\"samples\":%zu,\"exchanges_per_sample\":%zu,"
            "\"payload_bytes\":%zu,\"application_bytes\":%" PRIu64 ","
            "\"wire_bytes\":%" PRIu64 ",\"wall_ns\":%" PRIu64 ","
            "\"process_cpu_ns\":%" PRIu64 ",\"process_cpu_pct\":%.3f,"
+           "\"cpu_core_equivalents\":%.6f,"
+           "\"application_mib_per_second\":%.6f,"
+           "\"application_mib_per_cpu_second\":%.6f,"
            "\"peak_rss_bytes\":%" PRIu64 ",\"p50_ns\":%" PRIu64 ","
            "\"p95_ns\":%" PRIu64 ",\"p99_ns\":%" PRIu64 ","
            "\"attempted\":%zu,\"errors\":0,\"rejections\":%" PRIu64 ","
            "\"stale_completions\":%" PRIu64 "}\n",
            protocol == NETWORK_PROTOCOL_TCP ? "tcp" : "udp",
            throughput ? "throughput" : "latency",
-           network_backend_name(backend_kind), samples, exchanges, payload_size,
-           (uint64_t)total_exchanges * (uint64_t)payload_size,
-           (uint64_t)total_exchanges * (uint64_t)payload_size * UINT64_C(2),
+           network_backend_name(backend_kind),
+           network_wait_mode_name(wait_mode), samples, exchanges, payload_size,
+           application_bytes, application_bytes * UINT64_C(2),
            measured.wall_ns, measured.cpu_ns,
            measured.wall_ns != 0u
                ? (double)measured.cpu_ns * 100.0 / (double)measured.wall_ns
                : 0.0,
+           measured.wall_ns != 0u
+               ? (double)measured.cpu_ns / (double)measured.wall_ns
+               : 0.0,
+           network_application_mib_per_second(application_bytes,
+                                              measured.wall_ns),
+           network_application_mib_per_cpu_second(application_bytes,
+                                                  measured.cpu_ns),
            measured.peak_rss_bytes,
            network_percentile(measured.latencies, measured.latency_count, 50u),
            network_percentile(measured.latencies, measured.latency_count, 95u),

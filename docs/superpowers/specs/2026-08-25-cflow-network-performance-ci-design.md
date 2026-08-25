@@ -14,7 +14,11 @@ Executor；结果用于 PR/主分支证据与 artifact，不作为共享 runner 
 - 独立固定 latency 数组：nearest-rank P50/P95/P99，`index = ceil(p*n)-1`。
 - wall time：`turbo_hrtime()`；进程 CPU：Windows `GetProcessTimes`，POSIX `getrusage`；
   `process_cpu_pct = process_cpu_ns / wall_ns * 100`。它是进程跨线程消耗的 core-equivalent，
-  多个 worker/server 线程并行时允许超过 100%。
+  多个 worker/server 线程并行时允许超过 100%。同时报告
+  `application_mib_per_second = application_bytes / MiB / wall_seconds`、
+  `cpu_core_equivalents = process_cpu_pct / 100`，以及
+  `application_mib_per_cpu_second = application_bytes / MiB / process_cpu_seconds`，用于同一
+  runner 内比较单位 CPU 时间完成的应用数据量。
 - peak RSS：Windows `PeakWorkingSetSize` bytes；Linux/macOS `ru_maxrss` 按平台单位归一化。
 - Actor/native stats 是 accepted、错误、full/closed/lease/executor rejection 和 stale 的
   唯一事实源。错误率 = errors / attempted；拒绝率 = rejected / attempted。
@@ -33,13 +37,19 @@ Executor；结果用于 PR/主分支证据与 artifact，不作为共享 runner 
 `epoll|kqueue|iocp|io_uring`；未设置时选本机默认值，设置为空、未知值或选择本机未编译
 backend 时 fail fast。samples、exchanges、payload 的环境值同样要求正整数且不超过硬上限。
 
+`CFLOW_NETWORK_WAIT_MODE` 仅接受 `blocking|busy`，默认 `blocking`。`busy` 保留主动调用
+Actor/Executor 并 yield 的基线；`blocking` 使用 Actor 已有 advisory wake 驱动条件变量 edge
+latch，在每次休眠前持锁复查 latch，避免 native completion 与 wait 之间丢唤醒。两种模式
+都由 benchmark 主线程串行驱动 Actor 和 Manual Executor，不改变生产 API、请求所有权或
+完成 acknowledge 协议。
+
 所有 samples、ops、payload 和 latency storage 使用 checked multiplication 与硬上限。
 server/client 使用 `127.0.0.1:0`，无外网、固定端口或持久化状态。TCP 必须循环处理
 短读短写；UDP 一 datagram 对应一次 exchange，长度不符即失败。
 
 ## CI 报告与兼容性
 
-扩展现有 release benchmark workflow：构建/正确性测试新 target，逐场景保存 raw 输出，
+扩展现有 release benchmark workflow：构建/正确性测试新 target，对两种 wait mode 逐场景保存 raw 输出，
 验证唯一 JSON，汇总 JSONL 和 Markdown 到现有 `benchmark-results/network/`，并上传 30 天。
 job summary 显示同 host 重复运行的中位数/范围，同时明确 shared-runner evidence 非 gate。
 

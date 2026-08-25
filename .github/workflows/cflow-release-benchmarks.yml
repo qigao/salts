@@ -238,9 +238,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path $networkDir | Out-Null
           $networkJsonl = Join-Path $networkDir "network-results.jsonl"
           $networkSummary = Join-Path $networkDir "network-summary.md"
-          "| Run | Protocol | Profile | Backend | P50 ns | P95 ns | P99 ns | CPU % | Peak RSS bytes |" |
+          "| Run | Protocol | Profile | Backend | Wait mode | P50 ns | P95 ns | P99 ns | MiB/s | CPU % | CPU cores | MiB/CPU-s | Peak RSS bytes |" |
             Set-Content -LiteralPath $networkSummary
-          "| ---: | :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: |" |
+          "| ---: | :--- | :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
             Add-Content -LiteralPath $networkSummary
 
           git show --no-patch --format=fuller HEAD |
@@ -286,37 +286,56 @@ jobs:
             }
             foreach ($protocol in @("tcp", "udp")) {
               foreach ($profile in @("latency", "throughput")) {
-                $env:CFLOW_NETWORK_PROTOCOL = $protocol
-                $env:CFLOW_NETWORK_PROFILE = $profile
-                $networkRunFile = Join-Path $networkDir `
-                  ("run-{0}-{1}-{2:D2}.txt" -f $protocol, $profile, $run)
-                & $networkBenchmark --no-color 2>&1 |
-                  Tee-Object -FilePath $networkRunFile
-                if ($LASTEXITCODE -ne 0) {
-                  throw "Network benchmark $protocol/$profile run $run failed with exit code $LASTEXITCODE"
+                foreach ($waitMode in @("blocking", "busy")) {
+                  $env:CFLOW_NETWORK_PROTOCOL = $protocol
+                  $env:CFLOW_NETWORK_PROFILE = $profile
+                  $env:CFLOW_NETWORK_WAIT_MODE = $waitMode
+                  $networkRunFile = Join-Path $networkDir `
+                    ("run-{0}-{1}-{2}-{3:D2}.txt" -f `
+                      $protocol, $profile, $waitMode, $run)
+                  & $networkBenchmark --no-color 2>&1 |
+                    Tee-Object -FilePath $networkRunFile
+                  if ($LASTEXITCODE -ne 0) {
+                    throw "Network benchmark $protocol/$profile/$waitMode run $run failed with exit code $LASTEXITCODE"
+                  }
+                  $jsonLines = @(Get-Content -LiteralPath $networkRunFile |
+                    Where-Object { $_ -match '^CFLOW_BENCHMARK_JSON ' })
+                  if ($jsonLines.Count -ne 1) {
+                    throw "Expected exactly one network JSON record, found $($jsonLines.Count): $networkRunFile"
+                  }
+                  $jsonText = $jsonLines[0].Substring("CFLOW_BENCHMARK_JSON ".Length)
+                  $report = $jsonText | ConvertFrom-Json
+                  $cpuCores = [double]$report.cpu_core_equivalents
+                  $throughput = [double]$report.application_mib_per_second
+                  $cpuEfficiency = [double]$report.application_mib_per_cpu_second
+                  if ($report.schema -ne "cflow-network-benchmark/v1" -or
+                      $report.protocol -ne $protocol -or
+                      $report.profile -ne $profile -or
+                      $report.wait_mode -ne $waitMode -or
+                      [double]::IsNaN($cpuCores) -or
+                      [double]::IsInfinity($cpuCores) -or
+                      $cpuCores -lt 0.0 -or
+                      [double]::IsNaN($throughput) -or
+                      [double]::IsInfinity($throughput) -or
+                      $throughput -lt 0.0 -or
+                      [double]::IsNaN($cpuEfficiency) -or
+                      [double]::IsInfinity($cpuEfficiency) -or
+                      $cpuEfficiency -lt 0.0 -or
+                      [int64]$report.errors -ne 0 -or
+                      [int64]$report.rejections -ne 0 -or
+                      [int64]$report.stale_completions -ne 0 -or
+                      [int64]$report.attempted -le 0) {
+                    throw "Invalid or unsuccessful network report: $jsonText"
+                  }
+                  Add-Content -LiteralPath $networkJsonl -Value $jsonText
+                  Add-Content -LiteralPath $networkSummary -Value `
+                    ("| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8:N3} | {9:N3} | {10:N3} | {11:N3} | {12} |" -f `
+                      $run, $report.protocol, $report.profile, $report.backend,
+                      $report.wait_mode, $report.p50_ns, $report.p95_ns,
+                      $report.p99_ns, $throughput,
+                      [double]$report.process_cpu_pct, $cpuCores,
+                      $cpuEfficiency, $report.peak_rss_bytes)
                 }
-                $jsonLines = @(Get-Content -LiteralPath $networkRunFile |
-                  Where-Object { $_ -match '^CFLOW_BENCHMARK_JSON ' })
-                if ($jsonLines.Count -ne 1) {
-                  throw "Expected exactly one network JSON record, found $($jsonLines.Count): $networkRunFile"
-                }
-                $jsonText = $jsonLines[0].Substring("CFLOW_BENCHMARK_JSON ".Length)
-                $report = $jsonText | ConvertFrom-Json
-                if ($report.schema -ne "cflow-network-benchmark/v1" -or
-                    $report.protocol -ne $protocol -or
-                    $report.profile -ne $profile -or
-                    [int64]$report.errors -ne 0 -or
-                    [int64]$report.rejections -ne 0 -or
-                    [int64]$report.stale_completions -ne 0 -or
-                    [int64]$report.attempted -le 0) {
-                  throw "Invalid or unsuccessful network report: $jsonText"
-                }
-                Add-Content -LiteralPath $networkJsonl -Value $jsonText
-                Add-Content -LiteralPath $networkSummary -Value `
-                  ("| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7:N3} | {8} |" -f `
-                    $run, $report.protocol, $report.profile, $report.backend,
-                    $report.p50_ns, $report.p95_ns, $report.p99_ns,
-                    [double]$report.process_cpu_pct, $report.peak_rss_bytes)
               }
             }
           }
