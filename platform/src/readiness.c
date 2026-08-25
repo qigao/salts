@@ -543,16 +543,60 @@ int turbo_readiness_reactor_init_backend(turbo_readiness_reactor *reactor,
   return TURBO_OK;
 }
 
-int turbo_readiness_reactor_init(turbo_readiness_reactor *reactor,
-                                 const turbo_readiness_config *config) {
+bool turbo_readiness_backend_supported(turbo_readiness_backend_kind kind) {
+  switch (kind) {
+#if defined(TURBO_ENABLE_EPOLL_READINESS)
+    case TURBO_READINESS_BACKEND_EPOLL:
+      return true;
+#endif
+#if defined(TURBO_ENABLE_KQUEUE_READINESS)
+    case TURBO_READINESS_BACKEND_KQUEUE:
+      return true;
+#endif
+#if defined(TURBO_ENABLE_POLL_READINESS)
+    case TURBO_READINESS_BACKEND_POLL:
+      return true;
+#endif
+    default:
+      return false;
+  }
+}
+
+int turbo_readiness_reactor_init_kind(
+    turbo_readiness_reactor *reactor, const turbo_readiness_config *config,
+    turbo_readiness_backend_kind kind) {
   if (reactor != NULL) reactor->impl = NULL;
   if (reactor == NULL || config == NULL) return TURBO_EINVAL;
+
+  switch (kind) {
 #if defined(TURBO_ENABLE_EPOLL_READINESS)
-  return turbo_readiness_epoll_init(reactor, config);
+    case TURBO_READINESS_BACKEND_EPOLL:
+      return turbo_readiness_epoll_init(reactor, config);
+#endif
+#if defined(TURBO_ENABLE_KQUEUE_READINESS)
+    case TURBO_READINESS_BACKEND_KQUEUE:
+      return turbo_readiness_kqueue_init(reactor, config);
+#endif
+#if defined(TURBO_ENABLE_POLL_READINESS)
+    case TURBO_READINESS_BACKEND_POLL:
+      return turbo_readiness_poll_init(reactor, config);
+#endif
+    default:
+      return TURBO_ENOTSUP;
+  }
+}
+
+int turbo_readiness_reactor_init(turbo_readiness_reactor *reactor,
+                                 const turbo_readiness_config *config) {
+#if defined(TURBO_ENABLE_EPOLL_READINESS)
+  return turbo_readiness_reactor_init_kind(
+      reactor, config, TURBO_READINESS_BACKEND_EPOLL);
 #elif defined(TURBO_ENABLE_KQUEUE_READINESS)
-  return turbo_readiness_kqueue_init(reactor, config);
+  return turbo_readiness_reactor_init_kind(
+      reactor, config, TURBO_READINESS_BACKEND_KQUEUE);
 #else
-  return TURBO_ENOTSUP;
+  if (reactor != NULL) reactor->impl = NULL;
+  return reactor == NULL || config == NULL ? TURBO_EINVAL : TURBO_ENOTSUP;
 #endif
 }
 

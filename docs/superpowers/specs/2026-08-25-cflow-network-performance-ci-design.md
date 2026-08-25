@@ -34,7 +34,7 @@ Executor；结果用于 PR/主分支证据与 artifact，不作为共享 runner 
 
 `CFLOW_NETWORK_PROTOCOL` 仅接受 `tcp|udp`，`CFLOW_NETWORK_PROFILE` 仅接受
 `latency|throughput`，`CFLOW_NETWORK_BACKEND` 仅接受
-`epoll|kqueue|iocp|io_uring`；未设置时选本机默认值，设置为空、未知值或选择本机未编译
+`epoll|kqueue|poll|iocp|io_uring`；未设置时选本机默认值，设置为空、未知值或选择本机未编译
 backend 时 fail fast。samples、exchanges、payload 的环境值同样要求正整数且不超过硬上限。
 
 `CFLOW_NETWORK_WAIT_MODE` 仅接受 `blocking|busy`，默认 `blocking`。`busy` 保留主动调用

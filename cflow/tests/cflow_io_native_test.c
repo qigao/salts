@@ -967,7 +967,7 @@ static void native_check_preserves_caller_socket_flags(
 }
 #endif
 
-#if defined(__linux__)
+#if !defined(_WIN32)
 static void native_check_cancelled_slot_reuse(
     cflow_io_native_backend_kind kind) {
     static const unsigned char payload[] = {0x5au};
@@ -1123,6 +1123,17 @@ spec("CFlow native IO backend") {
     }
 
 #if defined(_WIN32)
+    it("rejects explicit POSIX poll without fallback") {
+        cflow_io_native_backend backend = {(void *)(uintptr_t)1};
+        const cflow_io_native_backend_config config = {
+            CFLOW_IO_NATIVE_POLL, 1u, 1u};
+
+        check_false(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_POLL));
+        check_equal(cflow_io_native_backend_init(&backend, &config),
+                    TURBO_ENOTSUP);
+        check_null(backend.impl);
+    }
+
     it("runs TCP lifecycle UDP and cancellation through IOCP") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_IOCP));
         native_check_backend(CFLOW_IO_NATIVE_IOCP);
@@ -1183,6 +1194,28 @@ spec("CFlow native IO backend") {
                 check_null(probe.impl);
             }
         }
+    }
+#endif
+
+#if !defined(_WIN32)
+    it("runs the shared TCP UDP and cancellation contract through poll") {
+        check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_POLL));
+        native_check_backend(CFLOW_IO_NATIVE_POLL);
+    }
+    it("retains each poll socket identity until it is forgotten") {
+        native_check_forget_socket_identity(CFLOW_IO_NATIVE_POLL);
+    }
+    it("forgets one poll socket while another socket is pending") {
+        native_check_forget_is_socket_scoped(CFLOW_IO_NATIVE_POLL);
+    }
+    it("uses only the platform poll reactor worker") {
+        native_check_readiness_has_no_adapter_worker(CFLOW_IO_NATIVE_POLL);
+    }
+    it("cancels a queued poll follower without waiting for the head") {
+        native_check_cancel_queued_follower(CFLOW_IO_NATIVE_POLL);
+    }
+    it("reuses a poll request slot after cancellation") {
+        native_check_cancelled_slot_reuse(CFLOW_IO_NATIVE_POLL);
     }
 #endif
 }

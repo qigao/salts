@@ -965,16 +965,29 @@ int cflow_io_native_readiness_init(
     const cflow_io_native_backend_config *config) {
     cflow_readiness_impl *impl;
     turbo_readiness_config reactor_config;
+    turbo_readiness_backend_kind reactor_kind;
     size_t reactor_capacity;
     int status;
 
+    switch (config->kind) {
 #if defined(CFLOW_HAS_NATIVE_EPOLL)
-    if (config->kind != CFLOW_IO_NATIVE_EPOLL)
-        return TURBO_ENOTSUP;
-#elif defined(CFLOW_HAS_NATIVE_KQUEUE)
-    if (config->kind != CFLOW_IO_NATIVE_KQUEUE)
-        return TURBO_ENOTSUP;
+        case CFLOW_IO_NATIVE_EPOLL:
+            reactor_kind = TURBO_READINESS_BACKEND_EPOLL;
+            break;
 #endif
+#if defined(CFLOW_HAS_NATIVE_KQUEUE)
+        case CFLOW_IO_NATIVE_KQUEUE:
+            reactor_kind = TURBO_READINESS_BACKEND_KQUEUE;
+            break;
+#endif
+#if defined(CFLOW_HAS_NATIVE_POLL)
+        case CFLOW_IO_NATIVE_POLL:
+            reactor_kind = TURBO_READINESS_BACKEND_POLL;
+            break;
+#endif
+        default:
+            return TURBO_ENOTSUP;
+    }
     if (config->request_capacity > ((size_t)UINT32_MAX - 1u) /
                                        CFLOW_READINESS_LANE_COUNT ||
         config->request_capacity > SIZE_MAX / sizeof(cflow_readiness_record) ||
@@ -1020,7 +1033,8 @@ int cflow_io_native_readiness_init(
         free(impl);
         return TURBO_ENOMEM;
     }
-    status = turbo_readiness_reactor_init(&impl->reactor, &reactor_config);
+    status = turbo_readiness_reactor_init_kind(
+        &impl->reactor, &reactor_config, reactor_kind);
     if (status != TURBO_OK) {
         turbo_cond_destroy(&impl->changed);
         turbo_mutex_destroy(&impl->gate);

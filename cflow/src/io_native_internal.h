@@ -31,7 +31,8 @@ int cflow_io_native_iocp_init(cflow_io_native_backend *backend,
                               const cflow_io_native_backend_config *config);
 #endif
 
-#if defined(CFLOW_HAS_NATIVE_EPOLL) || defined(CFLOW_HAS_NATIVE_KQUEUE)
+#if defined(CFLOW_HAS_NATIVE_EPOLL) || defined(CFLOW_HAS_NATIVE_KQUEUE) || \
+    defined(CFLOW_HAS_NATIVE_POLL)
 int cflow_io_native_readiness_init(
     cflow_io_native_backend *backend,
     const cflow_io_native_backend_config *config);

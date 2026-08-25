@@ -75,6 +75,10 @@ bool cflow_io_native_backend_supported(cflow_io_native_backend_kind kind) {
         case CFLOW_IO_NATIVE_IO_URING:
             return true;
 #endif
+#if defined(CFLOW_HAS_NATIVE_POLL)
+        case CFLOW_IO_NATIVE_POLL:
+            return true;
+#endif
         default:
             return false;
     }
@@ -95,9 +99,11 @@ int cflow_io_native_backend_init(
         return TURBO_ENOTSUP;
 
     switch (config->kind) {
-#if defined(CFLOW_HAS_NATIVE_EPOLL) || defined(CFLOW_HAS_NATIVE_KQUEUE)
+#if defined(CFLOW_HAS_NATIVE_EPOLL) || defined(CFLOW_HAS_NATIVE_KQUEUE) || \
+    defined(CFLOW_HAS_NATIVE_POLL)
         case CFLOW_IO_NATIVE_EPOLL:
         case CFLOW_IO_NATIVE_KQUEUE:
+        case CFLOW_IO_NATIVE_POLL:
             return cflow_io_native_readiness_init(backend, config);
 #endif
 #if defined(CFLOW_HAS_NATIVE_IOCP)

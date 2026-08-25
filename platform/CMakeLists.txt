@@ -22,6 +22,12 @@ elseif(APPLE)
     PRIVATE TURBO_ENABLE_KQUEUE_READINESS=1)
 endif()
 
+if(UNIX)
+  target_sources(${TARGET_NAME} PRIVATE src/readiness_poll.c)
+  target_compile_definitions(${TARGET_NAME}
+    PRIVATE TURBO_ENABLE_POLL_READINESS=1)
+endif()
+
 cmake_config_target(
   ${TARGET_NAME}
   ALIAS TurboUtils::Platform

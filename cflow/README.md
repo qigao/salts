@@ -26,7 +26,7 @@ include/cflow/
 ├── machine_runtime.h executor-owned Machine execution and adapters
 ├── actor.h         bounded Actor lifecycle over Machine and Run
 ├── io_actor.h      bounded asynchronous operation ownership/runtime
-├── io_native.h     epoll/kqueue/IOCP/io_uring socket operations
+├── io_native.h     epoll/kqueue/poll/IOCP/io_uring socket operations
 ├── runtime.h
 ├── scheduler.h
 ├── sources.h
@@ -457,14 +457,43 @@ Optional accept peer-address storage follows the same bounded
 
 `CFLOW_IO_NATIVE_TCP_CONNECT` borrows a host-OS `sockaddr` from
 `address[0..address_length)` and reports success with zero bytes. It never closes
-the caller's socket. epoll/kqueue and io_uring lifecycle sockets must already be
-nonblocking; the backend checks this without changing caller flags. IOCP uses
+the caller's socket. epoll/kqueue/poll and io_uring lifecycle sockets must already
+be nonblocking; the backend checks this without changing caller flags. IOCP uses
 `AcceptEx`/`ConnectEx`, io_uring uses native accept/connect opcodes, and the
 readiness adapter completes connect through write readiness plus `SO_ERROR`.
 
 All six operation kinds share the existing `request_capacity`, cancellation,
 statistics, explicit socket-forget, and quiescent shutdown contracts. Pipe,
-file, device/USB, DNS, TLS, and generic `poll` are outside this layer.
+file, device/USB, DNS, and TLS are outside this layer. `poll` is an explicit
+portable POSIX socket backend, not a fallback and not a new operation kind.
+
+| Backend | Host | Execution model | Socket operations | Default |
+|---|---|---|---|---|
+| epoll | Linux | readiness, O(ready) delivery | TCP/UDP plus accept/connect | Linux when enabled |
+| kqueue | macOS | readiness, O(ready) delivery | TCP/UDP plus accept/connect | macOS |
+| poll | POSIX | readiness, O(registration capacity) snapshot scan | TCP/UDP plus accept/connect | explicit only |
+| IOCP | Windows | completion | TCP/UDP plus accept/connect | Windows |
+| io_uring | Linux | completion | TCP/UDP plus accept/connect | explicit only |
+
+The poll reactor owns one worker, a fixed registration table, fixed snapshot
+storage, and a nonblocking control pipe. It borrows descriptors until close,
+uses generation tokens to reject stale snapshots, and attempts at most
+`event_batch_capacity` callbacks per scan. A worker-owned round-robin cursor
+advances after each claimed event, so a continuously ready low-index descriptor
+cannot starve later registrations when the batch is smaller than the ready set.
+Portable poll consumers should request `HANGUP` together with the relevant
+`READ` or `WRITE` interest; Darwin does not surface terminal bits for a
+descriptor whose native poll interest is empty. CFlow socket lanes already use
+that combined form.
+CFlow may retain up to two Platform
+registrations per socket identity (one read lane and one write lane), so a
+request capacity of N produces a checked reactor capacity of 2N.
+
+Future pipe/file/device support needs separate operation and ownership contracts.
+POSIX regular-file readiness, for example, does not represent asynchronous disk
+completion. “Device” would mean an OS-specific descriptor/handle adapter; USB
+transfer semantics, discovery, permissions, cancellation, and hot-unplug require
+a dedicated transport rather than treating every device as a socket.
 
 ## Descriptor-backed container streams — v47
 

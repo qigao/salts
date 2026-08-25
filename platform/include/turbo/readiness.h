@@ -3,6 +3,7 @@
 
 #include <turbo/platform.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,6 +29,12 @@ typedef struct turbo_readiness_config {
   size_t registration_capacity;
   size_t event_batch_capacity;
 } turbo_readiness_config;
+
+typedef enum turbo_readiness_backend_kind {
+  TURBO_READINESS_BACKEND_EPOLL = 1,
+  TURBO_READINESS_BACKEND_KQUEUE,
+  TURBO_READINESS_BACKEND_POLL
+} turbo_readiness_backend_kind;
 
 typedef struct turbo_readiness_stats {
   size_t capacity;
@@ -69,9 +76,22 @@ typedef turbo_readiness_callback_result (*turbo_readiness_continuation)(
  * event_batch_capacity must be nonzero, the batch may not exceed capacity + 1,
  * and registration_capacity may not exceed UINT32_MAX - 1. The native factory
  * returns TURBO_ENOTSUP when no configured backend exists; it never falls back.
+ * The explicit poll backend additionally rejects registration_capacity above
+ * INT_MAX - 1 because poll() reports the ready descriptor count as int.
  */
 TURBO_PLATFORM_C_API int turbo_readiness_reactor_init(turbo_readiness_reactor *reactor,
                                                       const turbo_readiness_config *config);
+
+/** Returns compile-time availability; it does not probe runtime OS policy. */
+TURBO_PLATFORM_C_API bool turbo_readiness_backend_supported(turbo_readiness_backend_kind kind);
+
+/**
+ * Initializes exactly kind. Unsupported kinds return TURBO_ENOTSUP and clear
+ * reactor; this selector never falls back to another backend.
+ */
+TURBO_PLATFORM_C_API int turbo_readiness_reactor_init_kind(turbo_readiness_reactor *reactor,
+                                                           const turbo_readiness_config *config,
+                                                           turbo_readiness_backend_kind kind);
 
 /*
  * Shutdown atomically closes admission and reserves one TURBO_ESHUTDOWN
@@ -101,6 +121,9 @@ TURBO_PLATFORM_C_API int turbo_readiness_register(turbo_readiness_reactor *react
  * The backend event and user callback are dispatched without a Platform lock
  * held. status is TURBO_OK for readiness or an exact negative terminal backend
  * code; terminal delivery uses events == 0.
+ * For portable explicit-poll behavior, request ERROR/HANGUP together with the
+ * related READ or WRITE interest; some poll implementations do not report
+ * terminal bits for a descriptor whose native interest mask is empty.
  */
 TURBO_PLATFORM_C_API int turbo_readiness_arm(turbo_readiness_registration *registration,
                                              turbo_readiness_events events,
