@@ -73,6 +73,7 @@ typedef struct network_operation {
 typedef struct network_completion_probe {
   cflow_io_request_id ids[NETWORK_REQUEST_CAPACITY];
   cflow_io_completion values[NETWORK_REQUEST_CAPACITY];
+  size_t address_lengths[NETWORK_REQUEST_CAPACITY];
   size_t count;
 } network_completion_probe;
 
@@ -306,11 +307,13 @@ static void network_completion_record(void *user, cflow_io_request_id request_id
                                       cflow_io_lease_id lease_id, void *operation_user,
                                       const cflow_io_completion *completion) {
   network_completion_probe *probe = (network_completion_probe *)user;
+  network_operation *operation = (network_operation *)operation_user;
   (void)lease_id;
-  (void)operation_user;
   if (probe->count < NETWORK_REQUEST_CAPACITY) {
     probe->ids[probe->count] = request_id;
     probe->values[probe->count] = *completion;
+    probe->address_lengths[probe->count] =
+        operation != NULL ? operation->native.address_length : 0u;
     ++probe->count;
   }
 }
@@ -462,7 +465,6 @@ static int network_fixture_init(network_fixture *fixture, network_protocol proto
   fixture->peer_mode = peer_mode;
   fixture->client_socket = NETWORK_INVALID_SOCKET;
   fixture->server_socket = NETWORK_INVALID_SOCKET;
-  if (peer_mode == NETWORK_PEER_NATIVE && protocol != NETWORK_PROTOCOL_TCP) return TURBO_ENOTSUP;
   if (wait_mode == NETWORK_WAIT_BLOCKING) {
     turbo_mutex_init(&fixture->wake_latch.mutex);
     if (fixture->wake_latch.mutex == NULL) return TURBO_ENOMEM;
@@ -567,15 +569,19 @@ static int network_submit_native_operation(network_endpoint *endpoint,
   return TURBO_OK;
 }
 
-static int network_finish_native_operation(network_fixture *fixture, network_endpoint *endpoint,
-                                           size_t *bytes) {
+static int network_finish_native_operation_details(network_fixture *fixture,
+                                                   network_endpoint *endpoint, size_t *bytes,
+                                                   size_t *address_length) {
   int status = network_wait(fixture, endpoint, 1u);
   if (status == TURBO_OK) {
     if (endpoint->completions.values[0].kind != CFLOW_IO_COMPLETION_OK)
       status = endpoint->completions.values[0].kind == CFLOW_IO_COMPLETION_FAILED
                    ? endpoint->completions.values[0].error
                    : TURBO_EIO;
-    else *bytes = endpoint->completions.values[0].bytes;
+    else {
+      *bytes = endpoint->completions.values[0].bytes;
+      if (address_length != NULL) *address_length = endpoint->completions.address_lengths[0];
+    }
   }
   if (endpoint->completions.count != 0u &&
       cflow_io_actor_acknowledge(&endpoint->actor, endpoint->completions.ids[0]) !=
@@ -583,6 +589,11 @@ static int network_finish_native_operation(network_fixture *fixture, network_end
     status = TURBO_EIO;
   endpoint->completions.count = 0u;
   return status;
+}
+
+static int network_finish_native_operation(network_fixture *fixture, network_endpoint *endpoint,
+                                           size_t *bytes) {
+  return network_finish_native_operation_details(fixture, endpoint, bytes, NULL);
 }
 
 static int network_run_native_operation(network_fixture *fixture, network_endpoint *endpoint,
@@ -642,6 +653,46 @@ static int network_transfer_tcp_exact(network_fixture *fixture, network_endpoint
   return sent == received ? TURBO_OK : TURBO_EIO;
 }
 
+static int network_transfer_udp_datagram(network_fixture *fixture, network_endpoint *sender,
+                                         network_socket sender_socket, unsigned char *sender_buffer,
+                                         const void *destination_address, size_t destination_length,
+                                         network_endpoint *receiver, network_socket receiver_socket,
+                                         unsigned char *receiver_buffer, void *source_address,
+                                         size_t source_capacity, size_t *source_length,
+                                         size_t payload_size, uint64_t *next_lease) {
+  size_t sent = 0u;
+  size_t received = 0u;
+  cflow_io_native_operation receive_operation = {CFLOW_IO_NATIVE_UDP_RECV_FROM,
+                                                 (uintptr_t)receiver_socket,
+                                                 receiver_buffer,
+                                                 payload_size,
+                                                 source_address,
+                                                 source_capacity,
+                                                 0u};
+  cflow_io_native_operation send_operation = {
+      CFLOW_IO_NATIVE_UDP_SEND_TO, (uintptr_t)sender_socket, sender_buffer,     payload_size,
+      (void *)destination_address, destination_length,       destination_length};
+  int receive_status;
+  int send_status;
+  if (source_length == NULL || next_lease == NULL || destination_address == NULL ||
+      destination_length == 0u || source_address == NULL || source_capacity == 0u)
+    return TURBO_EINVAL;
+  *source_length = 0u;
+  receive_status = network_submit_native_operation(receiver, receive_operation, (*next_lease)++);
+  if (receive_status != TURBO_OK) return receive_status;
+  send_status = network_submit_native_operation(sender, send_operation, (*next_lease)++);
+  if (send_status != TURBO_OK) return send_status;
+  send_status = network_finish_native_operation(fixture, sender, &sent);
+  receive_status =
+      network_finish_native_operation_details(fixture, receiver, &received, source_length);
+  if (send_status != TURBO_OK) return send_status;
+  if (receive_status != TURBO_OK) return receive_status;
+  if (sent != payload_size || received != payload_size || *source_length == 0u ||
+      *source_length > source_capacity)
+    return TURBO_EIO;
+  return TURBO_OK;
+}
+
 static int network_exchange(network_fixture *fixture, network_protocol protocol,
                             unsigned char *sent, unsigned char *received, size_t payload_size,
                             uint64_t lease_base) {
@@ -654,15 +705,32 @@ static int network_exchange(network_fixture *fixture, network_protocol protocol,
   memset(&source_address, 0, sizeof(source_address));
   if (fixture->peer_mode == NETWORK_PEER_NATIVE) {
     uint64_t next_lease = lease_base;
-    if (protocol != NETWORK_PROTOCOL_TCP) return TURBO_ENOTSUP;
     memset(fixture->server.buffer, 0, payload_size);
-    status = network_transfer_tcp_exact(fixture, &fixture->client, fixture->client_socket, sent,
-                                        &fixture->native_server, fixture->server_socket,
-                                        fixture->server.buffer, payload_size, &next_lease);
-    if (status == TURBO_OK)
-      status = network_transfer_tcp_exact(
-          fixture, &fixture->native_server, fixture->server_socket, fixture->server.buffer,
-          &fixture->client, fixture->client_socket, received, payload_size, &next_lease);
+    if (protocol == NETWORK_PROTOCOL_TCP) {
+      status = network_transfer_tcp_exact(fixture, &fixture->client, fixture->client_socket, sent,
+                                          &fixture->native_server, fixture->server_socket,
+                                          fixture->server.buffer, payload_size, &next_lease);
+      if (status == TURBO_OK)
+        status = network_transfer_tcp_exact(
+            fixture, &fixture->native_server, fixture->server_socket, fixture->server.buffer,
+            &fixture->client, fixture->client_socket, received, payload_size, &next_lease);
+    } else {
+      struct sockaddr_storage response_address;
+      size_t source_length = 0u;
+      size_t response_length = 0u;
+      memset(&response_address, 0, sizeof(response_address));
+      status = network_transfer_udp_datagram(
+          fixture, &fixture->client, fixture->client_socket, sent, &fixture->server_address,
+          sizeof(fixture->server_address), &fixture->native_server, fixture->server_socket,
+          fixture->server.buffer, &source_address, sizeof(source_address), &source_length,
+          payload_size, &next_lease);
+      if (status == TURBO_OK)
+        status = network_transfer_udp_datagram(
+            fixture, &fixture->native_server, fixture->server_socket, fixture->server.buffer,
+            &source_address, source_length, &fixture->client, fixture->client_socket, received,
+            &response_address, sizeof(response_address), &response_length, payload_size,
+            &next_lease);
+    }
     if (status == TURBO_OK && memcmp(sent, received, payload_size) != 0) status = TURBO_EIO;
     return status;
   }
@@ -916,6 +984,31 @@ spec("CFlow network benchmark configuration") {
     if (init_attempted) check_equal(network_fixture_destroy(&fixture), TURBO_OK);
   }
 
+  it("round trips one UDP datagram through dual native endpoints") {
+    cflow_io_native_backend_kind backend_kind = CFLOW_IO_NATIVE_EPOLL;
+    network_fixture fixture = {0};
+    unsigned char sent[1024];
+    unsigned char received[1024];
+    int status = network_select_backend(&backend_kind);
+    bool init_attempted = false;
+
+    memset(sent, 0x5a, sizeof(sent));
+    memset(received, 0, sizeof(received));
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) {
+      init_attempted = true;
+      status = network_fixture_init(&fixture, NETWORK_PROTOCOL_UDP, backend_kind,
+                                    NETWORK_WAIT_BLOCKING, NETWORK_PEER_NATIVE, 1u, sizeof(sent));
+    }
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK)
+      status = network_exchange(&fixture, NETWORK_PROTOCOL_UDP, sent, received, sizeof(sent),
+                                UINT64_C(1));
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) check_equal(memcmp(received, sent, sizeof(sent)), 0);
+    if (init_attempted) check_equal(network_fixture_destroy(&fixture), TURBO_OK);
+  }
+
   it("round trips a payload larger than both native send windows") {
     cflow_io_native_backend_kind backend_kind = CFLOW_IO_NATIVE_EPOLL;
     network_fixture fixture = {0};
@@ -1057,9 +1150,6 @@ suite("CFlow native network benchmarks") {
       config_status = network_parse_wait_mode(wait_mode_text, &wait_mode);
     if (config_status == TURBO_OK)
       config_status = network_parse_peer_mode(peer_mode_text, &peer_mode);
-    if (config_status == TURBO_OK && peer_mode == NETWORK_PEER_NATIVE &&
-        protocol != NETWORK_PROTOCOL_TCP)
-      config_status = TURBO_ENOTSUP;
     if (config_status == TURBO_OK) config_status = network_select_backend(&backend_kind);
     const size_t samples = network_env_size(
         "CFLOW_NETWORK_SAMPLES", throughput ? NETWORK_THROUGHPUT_SAMPLES : NETWORK_LATENCY_SAMPLES,
