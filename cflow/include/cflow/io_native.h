@@ -19,7 +19,8 @@ typedef enum cflow_io_native_backend_kind {
     CFLOW_IO_NATIVE_EPOLL = 1,
     CFLOW_IO_NATIVE_KQUEUE,
     CFLOW_IO_NATIVE_IOCP,
-    CFLOW_IO_NATIVE_IO_URING
+    CFLOW_IO_NATIVE_IO_URING,
+    CFLOW_IO_NATIVE_POLL
 } cflow_io_native_backend_kind;
 
 typedef enum cflow_io_native_operation_kind {

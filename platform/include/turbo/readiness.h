@@ -3,6 +3,7 @@
 
 #include <turbo/platform.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,6 +29,12 @@ typedef struct turbo_readiness_config {
   size_t registration_capacity;
   size_t event_batch_capacity;
 } turbo_readiness_config;
+
+typedef enum turbo_readiness_backend_kind {
+  TURBO_READINESS_BACKEND_EPOLL = 1,
+  TURBO_READINESS_BACKEND_KQUEUE,
+  TURBO_READINESS_BACKEND_POLL
+} turbo_readiness_backend_kind;
 
 typedef struct turbo_readiness_stats {
   size_t capacity;
@@ -72,6 +79,18 @@ typedef turbo_readiness_callback_result (*turbo_readiness_continuation)(
  */
 TURBO_PLATFORM_C_API int turbo_readiness_reactor_init(turbo_readiness_reactor *reactor,
                                                       const turbo_readiness_config *config);
+
+/** Returns compile-time availability; it does not probe runtime OS policy. */
+TURBO_PLATFORM_C_API bool turbo_readiness_backend_supported(
+    turbo_readiness_backend_kind kind);
+
+/**
+ * Initializes exactly kind. Unsupported kinds return TURBO_ENOTSUP and clear
+ * reactor; this selector never falls back to another backend.
+ */
+TURBO_PLATFORM_C_API int turbo_readiness_reactor_init_kind(
+    turbo_readiness_reactor *reactor, const turbo_readiness_config *config,
+    turbo_readiness_backend_kind kind);
 
 /*
  * Shutdown atomically closes admission and reserves one TURBO_ESHUTDOWN

@@ -13,4 +13,16 @@ spec("Platform unsupported native readiness") {
     check_equal(turbo_readiness_reactor_init(&reactor, &config), TURBO_ENOTSUP);
     check_null(reactor.impl);
   }
+
+  it("rejects an explicit poll backend without fallback") {
+    turbo_readiness_reactor reactor = {(void *)(uintptr_t)1};
+    turbo_readiness_config config = {1, 1};
+
+    check_false(turbo_readiness_backend_supported(
+        TURBO_READINESS_BACKEND_POLL));
+    check_equal(turbo_readiness_reactor_init_kind(
+                    &reactor, &config, TURBO_READINESS_BACKEND_POLL),
+                TURBO_ENOTSUP);
+    check_null(reactor.impl);
+  }
 }

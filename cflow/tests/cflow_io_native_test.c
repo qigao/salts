@@ -1123,6 +1123,17 @@ spec("CFlow native IO backend") {
     }
 
 #if defined(_WIN32)
+    it("rejects explicit POSIX poll without fallback") {
+        cflow_io_native_backend backend = {(void *)(uintptr_t)1};
+        const cflow_io_native_backend_config config = {
+            CFLOW_IO_NATIVE_POLL, 1u, 1u};
+
+        check_false(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_POLL));
+        check_equal(cflow_io_native_backend_init(&backend, &config),
+                    TURBO_ENOTSUP);
+        check_null(backend.impl);
+    }
+
     it("runs TCP lifecycle UDP and cancellation through IOCP") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_IOCP));
         native_check_backend(CFLOW_IO_NATIVE_IOCP);
