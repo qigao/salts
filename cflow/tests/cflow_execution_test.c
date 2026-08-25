@@ -210,6 +210,50 @@ spec("CFlow execution foundation") {
     cflow_executor_destroy(&executor);
   }
 
+  it("clears an Executor handle after destroy") {
+    cflow_executor executor = {0};
+    bool cleared;
+
+    check_true(cflow_executor_manual_init(&executor));
+    cflow_executor_destroy(&executor);
+    cleared = !cflow_executor_valid(&executor) && executor.self == NULL &&
+              executor.vtable == NULL;
+    check_true(cleared);
+    if (cleared) cflow_executor_destroy(&executor);
+  }
+
+  it("preserves a live Executor when reinitialization is rejected") {
+    cflow_executor executor = {0};
+    cflow_executor original;
+
+    check_true(cflow_executor_manual_init(&executor));
+    original = executor;
+    check_false(cflow_executor_manual_init_with_capacity(&executor, 2u));
+    check_false(cflow_executor_worker_init_with_capacity(&executor, 1u, 1u));
+    check(executor.self == original.self);
+    check(executor.vtable == original.vtable);
+    if (executor.self != original.self || executor.vtable != original.vtable)
+      executor = original;
+    cflow_executor_destroy(&executor);
+    check_true(cflow_executor_manual_init_with_capacity(&executor, 2u));
+    cflow_executor_destroy(&executor);
+  }
+
+  it("preserves a live WorkerExecutor when reinitialization is rejected") {
+    cflow_executor executor = {0};
+    cflow_executor original;
+
+    check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 1u));
+    original = executor;
+    check_false(cflow_executor_worker_init_with_capacity(&executor, 2u, 2u));
+    check_false(cflow_executor_serial_init_with_capacity(&executor, 2u));
+    check(executor.self == original.self);
+    check(executor.vtable == original.vtable);
+    if (executor.self != original.self || executor.vtable != original.vtable)
+      executor = original;
+    cflow_executor_destroy(&executor);
+  }
+
   it("serializes callbacks from concurrent producers") {
     enum { PRODUCERS = 4, TASKS_PER_PRODUCER = 8 };
     cflow_executor executor = {0};

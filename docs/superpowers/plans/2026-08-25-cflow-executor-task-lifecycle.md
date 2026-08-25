@@ -17,7 +17,9 @@
 - Rejected admission invokes no callback.
 - Wait-idle returns only after finalization has completed.
 - No lock is held while invoking run, cancel, or finalize.
-- Existing vtable layout, constructors, and legacy entry points remain unchanged.
+- Existing vtable layout, function signatures, and legacy entry points remain
+  unchanged. Owning constructors now require a zero handle, reject live-handle
+  reinitialization, and return the handle to zero after destroy.
 - Capacity remains task-slot based and no per-task allocation is added.
 
 ---
@@ -46,9 +48,12 @@
 
 - [x] **Step 3: Implement the minimal descriptor path**
 
-  Copy the descriptor into the bounded queue slot. Execute hooks without locks
-  while retaining the slot; keep callback TLS active for all hooks; update the
-  completed/cancelled terminal counter only after finalize returns.
+  Copy the descriptor into the bounded queue slot. A worker copies a claimed
+  descriptor locally and releases the physical slot before executing hooks
+  without locks. Serialize only claim/copy/release because Disruptor reclaims a
+  contiguous completion prefix. Keep the logical queue reservation through
+  cancellation finalization, keep callback TLS active for all hooks, and update
+  the completed/cancelled terminal counter only after finalize returns.
 
 - [x] **Step 4: Run focused GREEN**
 
