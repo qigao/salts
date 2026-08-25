@@ -60,6 +60,9 @@ typedef struct turbo_readiness_state_view {
 
 int turbo_readiness_state_model_valid(
     const turbo_readiness_state_view *view);
+int turbo_readiness_callback_forms_valid(
+    turbo_readiness_callback callback,
+    turbo_readiness_continuation continuation);
 int turbo_readiness_registration_admission_enter(uintptr_t *admission);
 int turbo_readiness_registration_admission_reserve_register(
     uintptr_t *admission);

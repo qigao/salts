@@ -16,6 +16,15 @@ static void state_model_callback(void *user,
   (void)status;
 }
 
+static turbo_readiness_callback_result state_model_continuation(
+    void *user, turbo_readiness_events events, int status) {
+  (void)user;
+  (void)events;
+  (void)status;
+  return (turbo_readiness_callback_result){
+      TURBO_READINESS_COMPLETE, 0u};
+}
+
 spec("Platform readiness state model") {
   it("validates orthogonal lifecycle interest delivery terminal and control facts") {
     static const state_model_case cases[] = {
@@ -201,6 +210,16 @@ spec("Platform readiness state model") {
       check_equal(turbo_readiness_state_model_valid(&cases[index].view),
                   cases[index].valid);
     }
+  }
+
+  it("requires exactly one callback form") {
+    check_true(turbo_readiness_callback_forms_valid(
+        state_model_callback, NULL));
+    check_true(turbo_readiness_callback_forms_valid(
+        NULL, state_model_continuation));
+    check_false(turbo_readiness_callback_forms_valid(NULL, NULL));
+    check_false(turbo_readiness_callback_forms_valid(
+        state_model_callback, state_model_continuation));
   }
 
   it("keeps a paused old entrant out of a reused handle generation") {

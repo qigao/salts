@@ -42,6 +42,19 @@ typedef struct turbo_readiness_stats {
 
 typedef void (*turbo_readiness_callback)(void *user, turbo_readiness_events events, int status);
 
+typedef enum turbo_readiness_action {
+  TURBO_READINESS_COMPLETE = 0,
+  TURBO_READINESS_REARM = 1
+} turbo_readiness_action;
+
+typedef struct turbo_readiness_callback_result {
+  turbo_readiness_action action;
+  turbo_readiness_events interests;
+} turbo_readiness_callback_result;
+
+typedef turbo_readiness_callback_result (*turbo_readiness_continuation)(
+    void *user, turbo_readiness_events events, int status);
+
 /*
  * Reactors and registrations are zero-state handles. A successful register
  * borrows native_resource until turbo_readiness_close() returns TURBO_OK.
@@ -92,6 +105,36 @@ TURBO_PLATFORM_C_API int turbo_readiness_register(turbo_readiness_reactor *react
 TURBO_PLATFORM_C_API int turbo_readiness_arm(turbo_readiness_registration *registration,
                                              turbo_readiness_events events,
                                              turbo_readiness_callback callback, void *user);
+
+/*
+ * Continuation arm is the additive persistent-reactor form of the one-shot
+ * contract. For ordinary readiness, the callback returns COMPLETE or REARM
+ * with the next nonzero interest set. Platform serializes and commits REARM
+ * only after the callback returns; callers must not invoke registration
+ * controls recursively from the callback. Terminal callbacks use events == 0,
+ * ignore the returned action, and never rearm. An invalid action or invalid
+ * REARM interests completes the arm and makes dispatch return TURBO_EINVAL.
+ * If the backend rejects a continuation rearm, Platform invokes the same
+ * continuation exactly once more with events == 0 and the backend error.
+ *
+ * @param registration Open registration owned by the caller.
+ * @param events Initial nonzero interest set.
+ * @param continuation Bounded nonblocking callback kept valid through its
+ *        terminal invocation or successful unarm/close.
+ * @param user Borrowed callback context with the same lifetime as continuation.
+ * @return TURBO_OK after the initial arm commits; TURBO_EINVAL for invalid
+ *         arguments; TURBO_EALREADY if already armed; TURBO_EBUSY for callback
+ *         reentry or conflicting control; TURBO_ESHUTDOWN after admission
+ *         closes; otherwise the exact initial backend arm error.
+ *
+ * A continuing callback returns (turbo_readiness_callback_result){
+ *     work_remains ? TURBO_READINESS_REARM : TURBO_READINESS_COMPLETE,
+ *     work_remains ? TURBO_READINESS_EVENT_READ : 0u};
+ */
+TURBO_PLATFORM_C_API int turbo_readiness_arm_continuation(
+    turbo_readiness_registration *registration,
+    turbo_readiness_events events,
+    turbo_readiness_continuation continuation, void *user);
 
 /*
  * External unarm/close calls return only after an inflight callback is

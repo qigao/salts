@@ -439,6 +439,160 @@ static void native_check_cancel(cflow_io_native_backend_kind kind) {
     native_fixture_destroy(&fixture);
 }
 
+#if defined(__linux__) || defined(__APPLE__)
+static void native_check_forget_socket_identity(
+    cflow_io_native_backend_kind kind) {
+    static const unsigned char payload[] = {0x5au};
+    native_fixture fixture;
+    native_test_socket sockets[2];
+    native_test_operation send_operation = {0};
+    cflow_io_submit_result submitted;
+
+    check_equal(native_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    send_operation.native = (cflow_io_native_operation){
+        CFLOW_IO_NATIVE_TCP_SEND, (uintptr_t)sockets[0],
+        (void *)payload, sizeof(payload), NULL, 0u, 0u};
+    submitted = native_submit(&fixture, 51u, &send_operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_OK);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    native_test_close_socket(sockets[0]);
+    native_test_close_socket(sockets[1]);
+    check_equal(cflow_io_native_backend_forget_socket(
+                    &fixture.backend, (uintptr_t)sockets[0]),
+                TURBO_OK);
+    check_equal(cflow_io_native_backend_forget_socket(
+                    &fixture.backend, (uintptr_t)sockets[0]),
+                TURBO_ENOENT);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_forget_is_socket_scoped(
+    cflow_io_native_backend_kind kind) {
+    static const unsigned char payload[] = {0x63u};
+    native_fixture fixture;
+    native_test_socket pending_sockets[2];
+    native_test_socket completed_sockets[2];
+    native_test_operation pending_receive = {0};
+    native_test_operation completed_send = {0};
+    unsigned char received = 0u;
+    cflow_io_submit_result pending;
+    cflow_io_submit_result completed;
+
+    check_equal(native_fixture_init(&fixture, kind, 2u), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(pending_sockets), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(completed_sockets), TURBO_OK);
+    pending_receive.native = (cflow_io_native_operation){
+        CFLOW_IO_NATIVE_TCP_RECV, (uintptr_t)pending_sockets[1],
+        &received, sizeof(received), NULL, 0u, 0u};
+    completed_send.native = (cflow_io_native_operation){
+        CFLOW_IO_NATIVE_TCP_SEND, (uintptr_t)completed_sockets[0],
+        (void *)payload, sizeof(payload), NULL, 0u, 0u};
+    pending = native_submit(&fixture, 71u, &pending_receive);
+    completed = native_submit(&fixture, 72u, &completed_send);
+    check_equal(pending.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(completed.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.ids[0], completed.request_id);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, completed.request_id),
+                CFLOW_IO_ACK_RELEASED);
+
+    native_test_close_socket(completed_sockets[0]);
+    native_test_close_socket(completed_sockets[1]);
+    check_equal(cflow_io_native_backend_forget_socket(
+                    &fixture.backend,
+                    (uintptr_t)completed_sockets[0]),
+                TURBO_OK);
+
+    check_equal(cflow_io_actor_try_cancel(
+                    &fixture.actor, pending.request_id),
+                CFLOW_IO_CANCEL_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, pending.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    native_test_close_socket(pending_sockets[0]);
+    native_test_close_socket(pending_sockets[1]);
+    check_equal(cflow_io_native_backend_forget_socket(
+                    &fixture.backend, (uintptr_t)pending_sockets[1]),
+                TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_readiness_has_no_adapter_worker(
+    cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    cflow_io_native_backend_stats stats = {0};
+
+    check_equal(native_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_true(cflow_io_native_backend_get_stats(&fixture.backend, &stats));
+    check_false(stats.worker_running);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_cancel_queued_follower(
+    cflow_io_native_backend_kind kind) {
+    static const unsigned char payload[] = {0x71u};
+    native_fixture fixture;
+    native_test_socket sockets[2];
+    native_test_operation first_receive = {0};
+    native_test_operation second_receive = {0};
+    unsigned char first_byte = 0u;
+    unsigned char second_byte = 0u;
+    cflow_io_submit_result first;
+    cflow_io_submit_result second;
+
+    check_equal(native_fixture_init(&fixture, kind, 2u), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    first_receive.native = (cflow_io_native_operation){
+        CFLOW_IO_NATIVE_TCP_RECV, (uintptr_t)sockets[1],
+        &first_byte, sizeof(first_byte), NULL, 0u, 0u};
+    second_receive.native = (cflow_io_native_operation){
+        CFLOW_IO_NATIVE_TCP_RECV, (uintptr_t)sockets[1],
+        &second_byte, sizeof(second_byte), NULL, 0u, 0u};
+    first = native_submit(&fixture, 81u, &first_receive);
+    second = native_submit(&fixture, 82u, &second_receive);
+    check_equal(first.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(second.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
+
+    check_equal(cflow_io_actor_try_cancel(
+                    &fixture.actor, second.request_id),
+                CFLOW_IO_CANCEL_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.ids[0], second.request_id);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_CANCELLED);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, second.request_id),
+                CFLOW_IO_ACK_RELEASED);
+
+    check_equal(send(sockets[0], (const char *)payload,
+                     (int)sizeof(payload), 0), (int)sizeof(payload));
+    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(fixture.completions.ids[1], first.request_id);
+    check_equal(fixture.completions.values[1].kind,
+                CFLOW_IO_COMPLETION_OK);
+    check_equal(first_byte, payload[0]);
+    check_equal(second_byte, 0u);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, first.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    native_test_close_socket(sockets[0]);
+    native_test_close_socket(sockets[1]);
+    check_equal(cflow_io_native_backend_forget_socket(
+                    &fixture.backend, (uintptr_t)sockets[1]),
+                TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+#endif
+
 #if !defined(_WIN32)
 static void native_check_rejects_truncated_socket(
     cflow_io_native_backend_kind kind) {
@@ -619,11 +773,38 @@ spec("CFlow native IO backend") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_KQUEUE));
         native_check_backend(CFLOW_IO_NATIVE_KQUEUE);
     }
+    it("retains each kqueue socket identity until it is forgotten") {
+        native_check_forget_socket_identity(CFLOW_IO_NATIVE_KQUEUE);
+    }
+    it("forgets a quiescent kqueue socket while another socket is pending") {
+        native_check_forget_is_socket_scoped(CFLOW_IO_NATIVE_KQUEUE);
+    }
+    it("uses only the platform kqueue reactor worker") {
+        native_check_readiness_has_no_adapter_worker(CFLOW_IO_NATIVE_KQUEUE);
+    }
+    it("cancels a queued kqueue follower without waiting for the head") {
+        native_check_cancel_queued_follower(CFLOW_IO_NATIVE_KQUEUE);
+    }
 #elif defined(__linux__)
 #if defined(CFLOW_TEST_NATIVE_EPOLL)
     it("runs TCP UDP and cancellation through epoll") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_EPOLL));
         native_check_backend(CFLOW_IO_NATIVE_EPOLL);
+    }
+    it("retains each epoll socket identity until it is forgotten") {
+        native_check_forget_socket_identity(CFLOW_IO_NATIVE_EPOLL);
+    }
+    it("forgets a quiescent epoll socket while another socket is pending") {
+        native_check_forget_is_socket_scoped(CFLOW_IO_NATIVE_EPOLL);
+    }
+    it("uses only the platform epoll reactor worker") {
+        native_check_readiness_has_no_adapter_worker(CFLOW_IO_NATIVE_EPOLL);
+    }
+    it("cancels a queued epoll follower without waiting for the head") {
+        native_check_cancel_queued_follower(CFLOW_IO_NATIVE_EPOLL);
+    }
+    it("reuses an epoll request slot after cancellation") {
+        native_check_cancelled_slot_reuse(CFLOW_IO_NATIVE_EPOLL);
     }
 #endif
     it("runs TCP UDP and cancellation through io_uring when available") {

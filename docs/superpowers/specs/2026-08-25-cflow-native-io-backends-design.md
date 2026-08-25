@@ -9,8 +9,9 @@ socket backend：Linux epoll、Apple kqueue、Windows IOCP 和 Linux io_uring。
 四者不能统一成 readiness：epoll/kqueue 是 Reactor，IOCP/io_uring 是 Proactor。
 统一边界因此是 Actor backend，而不是把四者都改造成 `turbo_readiness_reactor`。
 epoll 复用现有 Platform readiness；kqueue 以相同内部 contract 加入 Platform；
-IOCP/io_uring 则直接实现 Actor completion backend。既有 one-shot registration ABI 和
-CFlow Source 适配保持不变。
+IOCP/io_uring 则直接实现 Actor completion backend。既有 `turbo_readiness_arm()` one-shot
+语义和 CFlow Source 适配保持不变；Platform 另增 callback-return continuation arm，供
+readiness native adapter 在 callback 返回后由状态引擎提交 rearm。
 
 ```text
 cflow_io_actor
@@ -50,8 +51,10 @@ UDP send 输入 `address_length`，UDP recv 输入 `address_capacity` 并在完�
 - `cflow_io_native_operation` 与 buffer/address 均由 Actor operation token 的调用方拥有。
   submit 接受后，到 Actor completion callback 返回前不得释放或修改 send buffer、
   socket 或 address；recv buffer/address 仅由 backend 写入。
-- Backend 不关闭 caller socket。epoll/kqueue 可为每个 pending request 持有一个有界
-  duplicate descriptor，terminal/cancel 时关闭 duplicate，不转移原 socket 所有权；
+- Backend 不关闭 caller socket。epoll/kqueue 为每个已知 socket identity 至多持有 read、
+  write 两条 lane；每条 lane 各有一个 duplicate descriptor、一个 Platform registration
+  和一个固定容量 intrusive FIFO。duplicate 在 `forget_socket` 或 shutdown 时关闭，不转移
+  原 socket 所有权；
   socket syscall 逐次使用 `MSG_DONTWAIT`，不要求也不修改 caller 的 `O_NONBLOCK`。
   Linux/Apple send 路径逐次使用 `MSG_NOSIGNAL`，避免修改 socket option，也避免对端关闭
   把进程级 `SIGPIPE` 变成隐藏的控制流。
@@ -59,16 +62,19 @@ UDP send 输入 `address_length`，UDP recv 输入 `address_capacity` 并在完�
   `request_capacity` 大小的固定关联表。caller 在 socket 已关闭且相关请求归零后调用
   `cflow_io_native_backend_forget_socket()`，显式释放旧 handle identity，避免把 Windows
   后续复用的数值误认为仍关联当前 IOCP。
-- Readiness adapter 的 controller worker 和 Platform reactor worker，以及 Proactor worker，
-  都借用 Actor completion handle，直至该 backend 的 active count 为零。
+- readiness caller 同样必须在 socket 关闭且该 identity 的请求归零后调用
+  `forget_socket`；否则 bounded socket table 会保留旧 identity，并可能把复用后的同数值 fd
+  误认作旧 socket。
+- Platform reactor worker 与 Proactor worker 借用 Actor completion handle，直至该
+  backend 的 active count 为零；readiness adapter 不再创建 controller worker。
 
 ## 并发、状态机与线性化
 
 Actor driver 串行调用 submit/cancel；backend worker 可并发调用
 `cflow_io_actor_complete()`。epoll/kqueue 使用 Platform reactor worker 产生 one-shot
-callback；callback 只标记 record 并唤醒 adapter controller，controller 在 callback
-返回后执行 syscall/rearm/registration close，避免从 callback 内调用 quiescent close。
-IOCP/io_uring 各有一个 completion worker。
+callback，直接在对应 read/write lane 上执行正常 I/O 有界批次 syscall 与 Actor completion；若仍
+would-block，callback 返回 `REARM + 固定 lane interest`，由 Platform 在 callback 返回后
+串行提交。IOCP/io_uring 各有一个 completion worker。
 
 ```text
 FREE -> SUBMITTING -> PENDING -> COMPLETING -> FREE
@@ -79,9 +85,13 @@ FREE -> SUBMITTING -> PENDING -> COMPLETING -> FREE
 - submit 线性化：固定 record 成功保留；满时返回 `TURBO_EBUSY`，不产生 native effect。
 - terminal 线性化：record 首次从 PENDING 转为 COMPLETING；重复 native event/CQE 计为 stale。
 - epoll/kqueue 在 nonblocking syscall 返回 EAGAIN/EWOULDBLOCK 时通过
-  `turbo_readiness_arm()` one-shot arm；事件到达后由 controller 重试，仍 would-block
-  则 rearm。每 request duplicate fd 允许同一 socket 的 read/write 分别注册，又不转移
-  caller socket 所有权。
+  `turbo_readiness_arm_continuation()` one-shot arm；事件到达后由 reactor callback 重试，
+  仍 would-block 则返回 rearm。read/write lane 各自 FIFO，取消可从队列移除非队首请求，
+  普通完成不越过同方向队首。
+- readiness terminal error 无法安全 rearm；为保持 accepted request 的 exact-once terminal
+  evidence，callback 会 drain 该 lane，最大工作量由 `request_capacity` 硬限制，而不是
+  `completion_batch_capacity`。因此 `request_capacity` 同时是故障回调的延迟预算，配置时
+  必须结合 reactor 上其他 registration 的可接受暂停时间。
 - Apple kqueue 对纯 `ERROR/HANGUP` interest 使用带 `NOTE_LOWAT` 的内部 read filter；
   普通可读数据不会作为 READ 泄露给调用方，socket 无法继续接收时仍产生 EOF/error
   evidence。
@@ -98,20 +108,25 @@ mutex 内执行。
 ## 容量、背压与内存预算
 
 配置 `request_capacity` 和 `completion_batch_capacity` 都必须为正，batch 不超过
+`request_capacity`。batch 约束正常 I/O 事件；terminal drain 的硬上限是
 `request_capacity`。初始化一次性分配 record 与 completion/event batch，数据面不扩容。
 
 ```text
 active_native_requests <= request_capacity
+live_readiness_socket_identities <= request_capacity
+live_readiness_registrations <= 2 * request_capacity
 live_iocp_socket_identities <= request_capacity
 resident metadata = backend header
                   + request_capacity * backend_record_size
+                  + readiness(request_capacity * socket_lane_record_size)
                   + IOCP(request_capacity * socket_identity_record_size)
                   + completion_batch_capacity * native_event_size
 ```
 
-epoll/kqueue pending request 额外占一个 duplicate descriptor 和一个 Platform registration；
-其 Platform registration/event batch 容量等于 native 配置。IOCP 每个 request 占一个
-`OVERLAPPED`；io_uring 的 SQ/CQ mmap 大小由 kernel 对请求容量取整后的 entries 决定。
+epoll/kqueue 每个已使用方向额外占一个 duplicate descriptor 和一个 Platform registration；
+其 Platform registration 容量是 `2 * request_capacity`，event batch 仍使用配置值。IOCP
+每个 request 占一个 `OVERLAPPED`；io_uring 的 SQ/CQ mmap 大小由 kernel 对请求容量取整后的
+entries 决定。
 满额返回 `TURBO_EBUSY`，由 Actor 转为 FAILED completion；不建立 fallback queue，
 不无界分配，不覆盖旧请求。
 
@@ -122,8 +137,9 @@ epoll/kqueue pending request 额外占一个 duplicate descriptor 和一个 Plat
 - OS 错误：POSIX 返回负 errno，Windows 返回负 Win32/WSA code。
 - TCP recv 零字节映射 EOF；UDP 零长度 datagram 是成功的 OK(0)。
 - native cancellation 映射 CANCELLED；其他 terminal 错误映射 FAILED(error)。
-- `shutdown` 首次关闭 backend admission；active 非零返回 `TURBO_EBUSY`，保留 worker 和
-  cancel/completion 能力。active 为零时唤醒、join worker 并返回 `TURBO_OK`。
+- `shutdown` 首次关闭 backend admission；active 非零返回 `TURBO_EBUSY`，保留
+  cancel/completion 能力。readiness active 为零时关闭所有 retained lane 后 shutdown/join
+  Platform reactor；Proactor 则唤醒、join completion worker。
 - `destroy` 只在 shutdown 成功后释放资源，否则 `TURBO_EBUSY`。
 
 调用顺序是：Actor close → drive cancel/completion → Executor drain → acknowledge →

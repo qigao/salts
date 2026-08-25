@@ -50,8 +50,14 @@ typedef struct cflow_io_native_operation {
 
 typedef struct cflow_io_native_backend_config {
     cflow_io_native_backend_kind kind;
-    /** Hard cap for in-flight requests and live IOCP-associated sockets. */
+    /** Hard cap for in-flight requests and retained native socket identities. */
     size_t request_capacity;
+    /**
+     * Maximum normal I/O completions attempted per native event. A terminal
+     * backend error drains the affected bounded lane, up to request_capacity,
+     * because failed readiness cannot be rearmed and every accepted request
+     * still requires one authoritative completion.
+     */
     size_t completion_batch_capacity;
 } cflow_io_native_backend_config;
 
@@ -91,16 +97,21 @@ bool cflow_io_native_backend_get_stats(
 /**
  * Releases backend-side identity retained for a socket after the caller has
  * closed it and all operations using it have completed. IOCP association is
- * permanent for a live handle, so this explicit boundary makes its bounded
- * socket table reusable without guessing whether Windows recycled a handle.
- * Readiness and io_uring backends validate quiescence but retain no identity.
+ * permanent for a live handle. Readiness backends retain at most one read lane
+ * and one write lane per identity so duplicate descriptors and registrations
+ * scale with live sockets instead of operations. This explicit boundary makes
+ * each bounded socket table reusable without guessing whether the OS recycled
+ * a handle. TURBO_EBUSY means this socket is not quiescent; TURBO_ENOENT means
+ * the identity is unknown or was already forgotten. io_uring retains no
+ * identity and only validates its existing global quiescence contract.
  */
 int cflow_io_native_backend_forget_socket(
     cflow_io_native_backend *backend, uintptr_t closed_socket);
 
 /**
  * Closes admission. Returns TURBO_EBUSY while native requests remain active;
- * retry after Actor cancellation/completion drain. TURBO_OK joins the worker.
+ * retry after Actor cancellation/completion drain. TURBO_OK joins any backend
+ * worker; readiness adapters rely only on the Platform reactor worker.
  */
 int cflow_io_native_backend_shutdown(cflow_io_native_backend *backend);
 
