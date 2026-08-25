@@ -553,6 +553,10 @@ bool turbo_readiness_backend_supported(turbo_readiness_backend_kind kind) {
     case TURBO_READINESS_BACKEND_KQUEUE:
       return true;
 #endif
+#if defined(TURBO_ENABLE_POLL_READINESS)
+    case TURBO_READINESS_BACKEND_POLL:
+      return true;
+#endif
     default:
       return false;
   }
@@ -572,6 +576,10 @@ int turbo_readiness_reactor_init_kind(
 #if defined(TURBO_ENABLE_KQUEUE_READINESS)
     case TURBO_READINESS_BACKEND_KQUEUE:
       return turbo_readiness_kqueue_init(reactor, config);
+#endif
+#if defined(TURBO_ENABLE_POLL_READINESS)
+    case TURBO_READINESS_BACKEND_POLL:
+      return turbo_readiness_poll_init(reactor, config);
 #endif
     default:
       return TURBO_ENOTSUP;

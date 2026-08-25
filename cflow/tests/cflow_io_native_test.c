@@ -1196,4 +1196,26 @@ spec("CFlow native IO backend") {
         }
     }
 #endif
+
+#if !defined(_WIN32)
+    it("runs the shared TCP UDP and cancellation contract through poll") {
+        check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_POLL));
+        native_check_backend(CFLOW_IO_NATIVE_POLL);
+    }
+    it("retains each poll socket identity until it is forgotten") {
+        native_check_forget_socket_identity(CFLOW_IO_NATIVE_POLL);
+    }
+    it("forgets one poll socket while another socket is pending") {
+        native_check_forget_is_socket_scoped(CFLOW_IO_NATIVE_POLL);
+    }
+    it("uses only the platform poll reactor worker") {
+        native_check_readiness_has_no_adapter_worker(CFLOW_IO_NATIVE_POLL);
+    }
+    it("cancels a queued poll follower without waiting for the head") {
+        native_check_cancel_queued_follower(CFLOW_IO_NATIVE_POLL);
+    }
+    it("reuses a poll request slot after cancellation") {
+        native_check_cancelled_slot_reuse(CFLOW_IO_NATIVE_POLL);
+    }
+#endif
 }

@@ -47,6 +47,19 @@ set_target_properties(platform_readiness_state_model_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+if(UNIX)
+  cmake_add_test(platform_readiness_poll_test
+    SOURCES
+      platform_readiness_poll_test.c
+      readiness_backend_contract.c
+    LIBS TurboUtils::Platform TurboUtils::TinyTest
+    FOLDER "platform/tests")
+  set_target_properties(platform_readiness_poll_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
    TURBO_ENABLE_EPOLL_READINESS)
   cmake_add_test(platform_readiness_epoll_test
