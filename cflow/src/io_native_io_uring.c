@@ -11,6 +11,8 @@
 #include <fcntl.h>
 #include <linux/io_uring.h>
 #include <limits.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -88,6 +90,13 @@ typedef struct cflow_uring_impl {
 
 enum { CFLOW_URING_CANCEL_TOKEN = 0u, CFLOW_URING_STOP_TOKEN = 1u };
 
+typedef struct cflow_uring_sigpipe_guard {
+    sigset_t blocked;
+    sigset_t previous;
+    bool active;
+    bool had_pending;
+} cflow_uring_sigpipe_guard;
+
 static uint64_t uring_make_record_token(uint32_t index,
                                         uint32_t generation) {
     return ((uint64_t)generation << 32u) | (uint64_t)index;
@@ -100,6 +109,38 @@ static uint32_t uring_next_generation(uint32_t generation) {
 static void uring_counter_increment(uint64_t *counter) {
     if (*counter != UINT64_MAX)
         ++*counter;
+}
+
+static int uring_sigpipe_guard_begin(cflow_uring_sigpipe_guard *guard) {
+    sigset_t pending;
+    int status;
+    memset(guard, 0, sizeof(*guard));
+    sigemptyset(&guard->blocked);
+    sigaddset(&guard->blocked, SIGPIPE);
+    status = pthread_sigmask(SIG_BLOCK, &guard->blocked,
+                             &guard->previous);
+    if (status != 0)
+        return -status;
+    guard->active = true;
+    if (sigpending(&pending) == 0)
+        guard->had_pending = sigismember(&pending, SIGPIPE) == 1;
+    return TURBO_OK;
+}
+
+static void uring_sigpipe_guard_end(cflow_uring_sigpipe_guard *guard) {
+    sigset_t pending;
+    if (guard == NULL || !guard->active)
+        return;
+    if (!guard->had_pending && sigpending(&pending) == 0 &&
+        sigismember(&pending, SIGPIPE) == 1) {
+        int signal_number;
+        int status;
+        do {
+            status = sigwait(&guard->blocked, &signal_number);
+        } while (status == EINTR);
+    }
+    (void)pthread_sigmask(SIG_SETMASK, &guard->previous, NULL);
+    guard->active = false;
 }
 
 static int uring_enter(cflow_uring_impl *impl, unsigned submit,
@@ -368,7 +409,15 @@ static void uring_fail_all(cflow_uring_impl *impl, int status) {
 
 static void uring_worker(void *user) {
     cflow_uring_impl *impl = (cflow_uring_impl *)user;
+    sigset_t blocked;
     int terminal_status = TURBO_OK;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGPIPE);
+    terminal_status = pthread_sigmask(SIG_BLOCK, &blocked, NULL);
+    if (terminal_status != 0) {
+        terminal_status = -terminal_status;
+        goto failed;
+    }
     for (;;) {
         unsigned head;
         unsigned tail;
@@ -405,6 +454,7 @@ static void uring_worker(void *user) {
             uring_finish(impl, token, result);
         }
     }
+failed:
     turbo_mutex_lock(&impl->gate);
     impl->admission_open = false;
     turbo_mutex_unlock(&impl->gate);
@@ -422,7 +472,11 @@ static int uring_submit_record(
     cflow_io_native_operation *operation,
     cflow_io_native_pipe_operation *pipe_operation) {
     cflow_uring_record *record;
+    cflow_uring_sigpipe_guard sigpipe_guard = {0};
     struct io_uring_sqe sqe;
+    const bool guard_sigpipe =
+        resource_kind == CFLOW_URING_RESOURCE_PIPE &&
+        pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_WRITE;
     int status;
     turbo_mutex_lock(&impl->gate);
     if (!impl->admission_open) {
@@ -448,7 +502,12 @@ static int uring_submit_record(
     record->pipe_operation = pipe_operation;
     record->cancel_requested = false;
     uring_prepare_operation(record, &sqe);
-    status = uring_publish_sqe_locked(impl, &sqe);
+    status = guard_sigpipe
+                 ? uring_sigpipe_guard_begin(&sigpipe_guard)
+                 : TURBO_OK;
+    if (status == TURBO_OK)
+        status = uring_publish_sqe_locked(impl, &sqe);
+    uring_sigpipe_guard_end(&sigpipe_guard);
     if (status == TURBO_OK) {
         ++impl->active_requests;
         uring_counter_increment(&impl->submitted);
