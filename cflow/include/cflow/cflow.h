@@ -21,6 +21,7 @@
 #include <cflow/actor.h>
 #include <cflow/io_actor.h>
 #include <cflow/io_native.h>
+#include <cflow/io_file.h>
 #include <cflow/timer_event.h>
 #include <cflow/sources.h>
 #include <cflow/readiness.h>

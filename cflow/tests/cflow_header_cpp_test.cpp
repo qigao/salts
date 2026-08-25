@@ -41,6 +41,12 @@ static_assert(std::is_standard_layout<cflow_io_native_pipe_operation>::value,
               "native pipe operation must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_native_file_operation>::value,
               "native file operation must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_io_file>::value,
+              "IO file facade must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_io_file_config>::value,
+              "IO file config must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_io_file_stats>::value,
+              "IO file stats must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_timer_event_queue>::value,
               "timer Event queue must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_transition>::value,
@@ -87,6 +93,10 @@ suite("CFlow C++ public header") {
         cflow_io_native_operation native_operation = {};
         cflow_io_native_pipe_operation native_pipe_operation = {};
         cflow_io_native_file_operation native_file_operation = {};
+        cflow_io_file io_file = {};
+        cflow_io_file_config io_file_config = {};
+        cflow_io_file_stats io_file_stats = {};
+        cflow_io_file_submit_result io_file_submit = {};
         cflow_io_native_backend_kind native_backend_kind = CFLOW_IO_NATIVE_POLL;
         cflow_io_native_pipe_operation_kind native_pipe_kind =
             CFLOW_IO_NATIVE_PIPE_READ;
@@ -145,6 +155,10 @@ suite("CFlow C++ public header") {
         check_true(native_file_operation.kind == CFLOW_IO_NATIVE_FILE_READ_AT);
         check_true(native_file_kind == CFLOW_IO_NATIVE_FILE_READ_AT);
         check_not_null(native_file_ops.submit);
+        check_null(io_file.impl);
+        check_true(io_file_config.open_flags == 0u);
+        check_true(io_file_stats.operation_slots_in_use == 0u);
+        check_true(io_file_submit.status == CFLOW_IO_FILE_SUBMIT_ACCEPTED);
         (void)cflow_io_native_backend_file_operation_supported(
             native_backend_kind, native_file_kind);
         cflow_actor_ref_release(&actor_ref);
