@@ -175,7 +175,7 @@ Run the filtered file cases and the complete `cflow_io_native_test`. Commit as
 **Produces:** bounded native Linux file operations with explicit offsets,
 full-fsync completion, resource validation, cancellation, and slot reuse.
 
-- [ ] **Step 1: Route real-file tests through io_uring and observe RED**
+- [x] **Step 1: Route real-file tests through io_uring and observe RED**
 
 Open a TinyTest temporary file with `O_RDWR | O_CLOEXEC | O_TRUNC`. Reuse the
 offset/EOF/partial/capacity/cancellation checks where portable. Add Linux-only
@@ -184,7 +184,7 @@ did not change. Add a flush completion case and reject a pipe descriptor via
 the file API. Skip only when the existing runtime probe cannot initialize
 io_uring.
 
-- [ ] **Step 2: Add file records, validation, and SQE preparation**
+- [x] **Step 2: Add file records, validation, and SQE preparation**
 
 Validate the descriptor fits `int`, call checked `fstat`, and require
 `S_ISREG(st_mode)` before reservation. Prepare read/write SQEs with the supplied
