@@ -230,7 +230,7 @@ git commit -m "feat(cflow): run named pipe I/O through IOCP"
 - Consumes: Task 1 pipe contract and existing two-lane readiness state machine.
 - Produces: nonblocking pipe/FIFO read/write for epoll, kqueue, and poll with contained `SIGPIPE`.
 
-- [ ] **Step 1: Write failing POSIX pipe behavior tests**
+- [x] **Step 1: Write failing POSIX pipe behavior tests**
 
 Create a POSIX helper using `pipe2(O_NONBLOCK | O_CLOEXEC)` on Linux and
 `pipe` plus checked `fcntl` on other POSIX hosts. Add shared checks for read,
