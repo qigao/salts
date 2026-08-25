@@ -14,7 +14,7 @@ static const cflow_io_native_impl *native_const_impl(
 }
 
 bool cflow_io_native_operation_valid(const cflow_io_native_operation *operation) {
-    if (operation == NULL || operation->kind > CFLOW_IO_NATIVE_UDP_SEND_TO ||
+    if (operation == NULL || operation->kind > CFLOW_IO_NATIVE_TCP_CONNECT ||
         operation->socket == UINTPTR_MAX ||
         operation->length > UINT32_MAX ||
         (operation->length != 0u && operation->buffer == NULL))
@@ -35,6 +35,23 @@ bool cflow_io_native_operation_valid(const cflow_io_native_operation *operation)
             return operation->address != NULL &&
                    operation->address_length != 0u &&
                    operation->address_length <= operation->address_capacity &&
+                   operation->address_length <= UINT32_MAX;
+        case CFLOW_IO_NATIVE_TCP_ACCEPT:
+            return operation->buffer == NULL && operation->length == 0u &&
+                   operation->result_socket ==
+                       CFLOW_IO_NATIVE_INVALID_SOCKET &&
+                   operation->address_length == 0u &&
+                   ((operation->address == NULL &&
+                     operation->address_capacity == 0u) ||
+                    (operation->address != NULL &&
+                     operation->address_capacity != 0u &&
+                     operation->address_capacity <= UINT32_MAX));
+        case CFLOW_IO_NATIVE_TCP_CONNECT:
+            return operation->buffer == NULL && operation->length == 0u &&
+                   operation->address != NULL &&
+                   operation->address_length != 0u &&
+                   operation->address_length <=
+                       operation->address_capacity &&
                    operation->address_length <= UINT32_MAX;
     }
     return false;

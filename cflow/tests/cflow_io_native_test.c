@@ -5,6 +5,7 @@
 #include <turbo/thread.h>
 
 #include "tinytest.h"
+#include "io_native_internal.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -31,6 +32,7 @@ static const uint64_t NATIVE_TEST_TIMEOUT_NS = UINT64_C(5000000000);
 enum {
     NATIVE_TEST_CAPACITY = 4,
     NATIVE_TEST_PAYLOAD_CAPACITY = 64,
+    NATIVE_TEST_LISTEN_BACKLOG = 4,
     NATIVE_TEST_CANCEL_REUSE_ITERATIONS = 32,
     NATIVE_TEST_CANCEL_SETTLE_YIELDS = 64
 };
@@ -178,6 +180,69 @@ static int native_test_make_tcp_pair(native_test_socket sockets[2]) {
     return status;
 }
 
+static int native_test_make_tcp_listener(
+    native_test_socket *listener, native_test_socket *client,
+    struct sockaddr_in *address) {
+    int status;
+    *listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    *client = NATIVE_TEST_INVALID_SOCKET;
+    if (*listener == NATIVE_TEST_INVALID_SOCKET)
+        return native_test_last_socket_error();
+    status = native_test_bind_loopback(*listener, address);
+    if (status == TURBO_OK &&
+        listen(*listener, NATIVE_TEST_LISTEN_BACKLOG) != 0)
+        status = native_test_last_socket_error();
+    if (status == TURBO_OK)
+        status = native_test_set_nonblocking(*listener);
+    if (status == TURBO_OK) {
+        *client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (*client == NATIVE_TEST_INVALID_SOCKET)
+            status = native_test_last_socket_error();
+    }
+    if (status == TURBO_OK)
+        status = native_test_set_nonblocking(*client);
+    if (status != TURBO_OK) {
+        native_test_close_socket(*client);
+        native_test_close_socket(*listener);
+        *client = NATIVE_TEST_INVALID_SOCKET;
+        *listener = NATIVE_TEST_INVALID_SOCKET;
+    }
+    return status;
+}
+
+static int native_test_start_connect(native_test_socket socket_value,
+                                     const struct sockaddr_in *address) {
+    if (connect(socket_value, (const struct sockaddr *)address,
+                (int)sizeof(*address)) == 0)
+        return TURBO_OK;
+#if defined(_WIN32)
+    {
+        const int error = WSAGetLastError();
+        return error == WSAEWOULDBLOCK || error == WSAEINPROGRESS
+                   ? TURBO_OK : -error;
+    }
+#else
+    return errno == EINPROGRESS || errno == EWOULDBLOCK ||
+                   errno == EALREADY
+               ? TURBO_OK : -errno;
+#endif
+}
+
+static bool native_test_socket_is_nonblocking(
+    native_test_socket socket_value) {
+#if defined(_WIN32)
+    unsigned char byte = 0u;
+    const int result = recv(socket_value, (char *)&byte, 1, 0);
+    return result == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+    int flags;
+    do {
+        flags = fcntl(socket_value, F_GETFL);
+    } while (flags < 0 && errno == EINTR);
+    return flags >= 0 && (flags & O_NONBLOCK) != 0;
+#endif
+}
+
 static int native_test_make_udp_pair(native_test_socket sockets[2],
                                      struct sockaddr_in addresses[2]) {
     int status = TURBO_OK;
@@ -268,6 +333,20 @@ static int native_fixture_wait(native_fixture *fixture, size_t count) {
     return TURBO_OK;
 }
 
+static int native_fixture_forget_socket(
+    native_fixture *fixture, uintptr_t socket_identity) {
+    const uint64_t started = turbo_hrtime();
+    int status;
+    do {
+        status = cflow_io_native_backend_forget_socket(
+            &fixture->backend, socket_identity);
+        if (status != TURBO_EBUSY)
+            return status;
+        turbo_thread_yield();
+    } while (turbo_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
+    return TURBO_ETIMEDOUT;
+}
+
 static void native_fixture_destroy(native_fixture *fixture) {
     const int close_status = cflow_io_actor_close(&fixture->actor);
     check_true(close_status == TURBO_OK || close_status == TURBO_EALREADY);
@@ -287,6 +366,11 @@ static cflow_io_submit_result native_submit(
         operation, native_operation_release};
     return cflow_io_actor_try_submit(
         &fixture->actor, lease, &actor_operation);
+}
+
+static void native_check_rejected_operation(
+    cflow_io_native_operation operation) {
+    check_false(cflow_io_native_operation_valid(&operation));
 }
 
 static void native_check_tcp(cflow_io_native_backend_kind kind) {
@@ -326,6 +410,228 @@ static void native_check_tcp(cflow_io_native_backend_kind kind) {
     check_equal(send_operation.released, 1);
     native_test_close_socket(sockets[0]);
     native_test_close_socket(sockets[1]);
+    native_fixture_destroy(&fixture);
+}
+
+static const cflow_io_completion *native_completion_for(
+    const native_fixture *fixture, cflow_io_request_id request_id) {
+    for (size_t index = 0u; index < fixture->completions.count; ++index) {
+        if (fixture->completions.ids[index] == request_id)
+            return &fixture->completions.values[index];
+    }
+    return NULL;
+}
+
+static void native_check_tcp_lifecycle(
+    cflow_io_native_backend_kind kind) {
+    static const unsigned char payload[] = {0x41u, 0x63u};
+    native_fixture fixture;
+    native_test_socket listener = NATIVE_TEST_INVALID_SOCKET;
+    native_test_socket client = NATIVE_TEST_INVALID_SOCKET;
+    native_test_socket accepted = NATIVE_TEST_INVALID_SOCKET;
+    struct sockaddr_in destination;
+    struct sockaddr_storage peer;
+    native_test_operation accept_operation = {0};
+    native_test_operation connect_operation = {0};
+    native_test_operation receive_operation = {0};
+    native_test_operation send_operation = {0};
+    cflow_io_submit_result accept_result;
+    cflow_io_submit_result connect_result;
+    cflow_io_submit_result receive_result;
+    cflow_io_submit_result send_result;
+    const cflow_io_completion *completion;
+    unsigned char received[sizeof(payload)] = {0};
+
+    memset(&peer, 0, sizeof(peer));
+    check_equal(native_fixture_init(
+                    &fixture, kind, NATIVE_TEST_CAPACITY),
+                TURBO_OK);
+    check_equal(native_test_make_tcp_listener(
+                    &listener, &client, &destination),
+                TURBO_OK);
+    accept_operation.native = (cflow_io_native_operation){
+        .kind = CFLOW_IO_NATIVE_TCP_ACCEPT,
+        .socket = (uintptr_t)listener,
+        .address = &peer,
+        .address_capacity = sizeof(peer),
+        .result_socket = CFLOW_IO_NATIVE_INVALID_SOCKET};
+    connect_operation.native = (cflow_io_native_operation){
+        .kind = CFLOW_IO_NATIVE_TCP_CONNECT,
+        .socket = (uintptr_t)client,
+        .address = &destination,
+        .address_capacity = sizeof(destination),
+        .address_length = sizeof(destination)};
+
+    accept_result = native_submit(&fixture, 91u, &accept_operation);
+    connect_result = native_submit(&fixture, 92u, &connect_operation);
+    check_equal(accept_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(connect_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    completion = native_completion_for(&fixture, accept_result.request_id);
+    check_not_null(completion);
+    if (completion != NULL) {
+        check_equal(completion->kind, CFLOW_IO_COMPLETION_OK);
+        check_equal(completion->bytes, 0u);
+    }
+    completion = native_completion_for(&fixture, connect_result.request_id);
+    check_not_null(completion);
+    if (completion != NULL) {
+        check_equal(completion->kind, CFLOW_IO_COMPLETION_OK);
+        check_equal(completion->bytes, 0u);
+    }
+    check_true(accept_operation.native.address_length > 0u);
+    check_not_equal(accept_operation.native.result_socket,
+                    CFLOW_IO_NATIVE_INVALID_SOCKET);
+    accepted = (native_test_socket)accept_operation.native.result_socket;
+    check_true(native_test_socket_is_nonblocking(accepted));
+    check_equal(((const struct sockaddr *)&peer)->sa_family, AF_INET);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, accept_result.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, connect_result.request_id),
+                CFLOW_IO_ACK_RELEASED);
+
+    fixture.completions.count = 0u;
+    receive_operation.native = (cflow_io_native_operation){
+        CFLOW_IO_NATIVE_TCP_RECV, (uintptr_t)accepted, received,
+        sizeof(received), NULL, 0u, 0u};
+    send_operation.native = (cflow_io_native_operation){
+        CFLOW_IO_NATIVE_TCP_SEND, (uintptr_t)client, (void *)payload,
+        sizeof(payload), NULL, 0u, 0u};
+    receive_result = native_submit(&fixture, 93u, &receive_operation);
+    send_result = native_submit(&fixture, 94u, &send_operation);
+    check_equal(receive_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(send_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(received, payload, sizeof(payload));
+    for (size_t index = 0u; index < fixture.completions.count; ++index) {
+        check_equal(fixture.completions.values[index].kind,
+                    CFLOW_IO_COMPLETION_OK);
+        check_equal(fixture.completions.values[index].bytes,
+                    sizeof(payload));
+        check_equal(cflow_io_actor_acknowledge(
+                        &fixture.actor, fixture.completions.ids[index]),
+                    CFLOW_IO_ACK_RELEASED);
+    }
+
+    native_test_close_socket(accepted);
+    native_test_close_socket(client);
+    native_test_close_socket(listener);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)accepted),
+                TURBO_OK);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)client),
+                TURBO_OK);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)listener),
+                TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_tcp_accept_cancel_reuse(
+    cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    native_test_socket listener = NATIVE_TEST_INVALID_SOCKET;
+    native_test_socket client = NATIVE_TEST_INVALID_SOCKET;
+    native_test_socket accepted = NATIVE_TEST_INVALID_SOCKET;
+    struct sockaddr_in destination;
+    native_test_operation cancelled = {0};
+    native_test_operation replacement = {0};
+    cflow_io_submit_result submitted;
+
+    check_equal(native_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_tcp_listener(
+                    &listener, &client, &destination),
+                TURBO_OK);
+    cancelled.native = (cflow_io_native_operation){
+        .kind = CFLOW_IO_NATIVE_TCP_ACCEPT,
+        .socket = (uintptr_t)listener,
+        .result_socket = CFLOW_IO_NATIVE_INVALID_SOCKET};
+    submitted = native_submit(&fixture, 95u, &cancelled);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
+    check_equal(cflow_io_actor_try_cancel(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_CANCEL_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_CANCELLED);
+    check_equal(cancelled.native.result_socket,
+                CFLOW_IO_NATIVE_INVALID_SOCKET);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+
+    fixture.completions.count = 0u;
+    replacement.native = (cflow_io_native_operation){
+        .kind = CFLOW_IO_NATIVE_TCP_ACCEPT,
+        .socket = (uintptr_t)listener,
+        .result_socket = CFLOW_IO_NATIVE_INVALID_SOCKET};
+    submitted = native_submit(&fixture, 96u, &replacement);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
+    check_equal(native_test_start_connect(client, &destination), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_OK);
+    check_not_equal(replacement.native.result_socket,
+                    CFLOW_IO_NATIVE_INVALID_SOCKET);
+    accepted = (native_test_socket)replacement.native.result_socket;
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+
+    native_test_close_socket(accepted);
+    native_test_close_socket(client);
+    native_test_close_socket(listener);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)listener),
+                TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_tcp_accept_address_overflow(
+    cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    native_test_socket listener = NATIVE_TEST_INVALID_SOCKET;
+    native_test_socket client = NATIVE_TEST_INVALID_SOCKET;
+    struct sockaddr_in destination;
+    native_test_operation accept_operation = {0};
+    cflow_io_submit_result submitted;
+    unsigned char peer_byte = 0u;
+
+    check_equal(native_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_tcp_listener(
+                    &listener, &client, &destination),
+                TURBO_OK);
+    accept_operation.native = (cflow_io_native_operation){
+        .kind = CFLOW_IO_NATIVE_TCP_ACCEPT,
+        .socket = (uintptr_t)listener,
+        .address = &peer_byte,
+        .address_capacity = sizeof(peer_byte),
+        .result_socket = CFLOW_IO_NATIVE_INVALID_SOCKET};
+    submitted = native_submit(&fixture, 97u, &accept_operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
+    check_equal(native_test_start_connect(client, &destination), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_FAILED);
+    check_equal(fixture.completions.values[0].error, TURBO_ERANGE);
+    check_equal(accept_operation.native.result_socket,
+                CFLOW_IO_NATIVE_INVALID_SOCKET);
+    check_equal(accept_operation.native.address_length, 0u);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+
+    native_test_close_socket(client);
+    native_test_close_socket(listener);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)listener),
+                TURBO_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -730,10 +1036,13 @@ static void native_check_cancelled_slot_reuse(
 #endif
 
 static void native_check_backend(cflow_io_native_backend_kind kind) {
+    native_check_tcp_lifecycle(kind);
     native_check_tcp(kind);
     native_check_udp(kind);
     native_check_same_tcp_socket_bidirectional(kind);
     native_check_cancel(kind);
+    native_check_tcp_accept_cancel_reuse(kind);
+    native_check_tcp_accept_address_overflow(kind);
 #if !defined(_WIN32)
     native_check_rejects_truncated_socket(kind);
     native_check_preserves_caller_socket_flags(kind);
@@ -741,6 +1050,56 @@ static void native_check_backend(cflow_io_native_backend_kind kind) {
 }
 
 spec("CFlow native IO backend") {
+    it("rejects malformed TCP lifecycle operation contracts") {
+        unsigned char byte = 0u;
+        struct sockaddr_in address;
+
+        memset(&address, 0, sizeof(address));
+        check_true(cflow_io_native_operation_valid(
+            &(cflow_io_native_operation){
+                .kind = CFLOW_IO_NATIVE_TCP_ACCEPT,
+                .socket = 1u,
+                .result_socket = CFLOW_IO_NATIVE_INVALID_SOCKET}));
+        check_true(cflow_io_native_operation_valid(
+            &(cflow_io_native_operation){
+                .kind = CFLOW_IO_NATIVE_TCP_CONNECT,
+                .socket = 1u,
+                .address = &address,
+                .address_capacity = sizeof(address),
+                .address_length = sizeof(address)}));
+        native_check_rejected_operation((cflow_io_native_operation){
+            .kind = CFLOW_IO_NATIVE_TCP_ACCEPT,
+            .socket = 1u,
+            .buffer = &byte,
+            .length = sizeof(byte),
+            .result_socket = CFLOW_IO_NATIVE_INVALID_SOCKET});
+        native_check_rejected_operation((cflow_io_native_operation){
+            .kind = CFLOW_IO_NATIVE_TCP_ACCEPT,
+            .socket = 1u});
+        native_check_rejected_operation((cflow_io_native_operation){
+            .kind = CFLOW_IO_NATIVE_TCP_ACCEPT,
+            .socket = 1u,
+            .address_capacity = sizeof(address),
+            .result_socket = CFLOW_IO_NATIVE_INVALID_SOCKET});
+        native_check_rejected_operation((cflow_io_native_operation){
+            .kind = CFLOW_IO_NATIVE_TCP_CONNECT,
+            .socket = 1u,
+            .buffer = &byte,
+            .length = sizeof(byte),
+            .address = &address,
+            .address_capacity = sizeof(address),
+            .address_length = sizeof(address)});
+        native_check_rejected_operation((cflow_io_native_operation){
+            .kind = CFLOW_IO_NATIVE_TCP_CONNECT,
+            .socket = 1u});
+        native_check_rejected_operation((cflow_io_native_operation){
+            .kind = CFLOW_IO_NATIVE_TCP_CONNECT,
+            .socket = 1u,
+            .address = &address,
+            .address_capacity = sizeof(address) - 1u,
+            .address_length = sizeof(address)});
+    }
+
     it("rejects invalid bounded configuration without mutating output") {
         cflow_io_native_backend backend = {(void *)(uintptr_t)1u};
         cflow_io_native_backend_config config = {
@@ -764,7 +1123,7 @@ spec("CFlow native IO backend") {
     }
 
 #if defined(_WIN32)
-    it("runs TCP UDP and cancellation through IOCP") {
+    it("runs TCP lifecycle UDP and cancellation through IOCP") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_IOCP));
         native_check_backend(CFLOW_IO_NATIVE_IOCP);
     }

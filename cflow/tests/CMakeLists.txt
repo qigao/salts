@@ -83,6 +83,7 @@ cmake_add_test(cflow_io_actor_test
 cmake_add_test(cflow_io_native_test
   SOURCES cflow_io_native_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 if(WIN32)
   target_link_libraries(cflow_io_native_test PRIVATE ws2_32)

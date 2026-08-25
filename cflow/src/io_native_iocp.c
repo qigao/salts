@@ -8,6 +8,8 @@
 #endif
 #include <winsock2.h>
 #include <windows.h>
+#include <mswsock.h>
+#include <ws2tcpip.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -28,6 +30,9 @@ typedef struct cflow_iocp_record {
     SOCKET socket_value;
     DWORD flags;
     int address_length;
+    SOCKET accepted_socket;
+    unsigned char accept_addresses[
+        2u * (sizeof(SOCKADDR_STORAGE) + 16u)];
     bool cancel_requested;
 } cflow_iocp_record;
 
@@ -73,6 +78,82 @@ static void iocp_counter_increment(uint64_t *counter) {
 
 static int iocp_error(DWORD error) {
     return error == ERROR_SUCCESS ? TURBO_EIO : -(int)error;
+}
+
+static int iocp_accept_extension(SOCKET socket_value,
+                                 LPFN_ACCEPTEX *out) {
+    GUID id = WSAID_ACCEPTEX;
+    DWORD bytes = 0u;
+    if (WSAIoctl(socket_value, SIO_GET_EXTENSION_FUNCTION_POINTER,
+                 &id, sizeof(id), out, sizeof(*out), &bytes,
+                 NULL, NULL) == 0)
+        return TURBO_OK;
+    return -(int)WSAGetLastError();
+}
+
+static int iocp_connect_extension(SOCKET socket_value,
+                                  LPFN_CONNECTEX *out) {
+    GUID id = WSAID_CONNECTEX;
+    DWORD bytes = 0u;
+    if (WSAIoctl(socket_value, SIO_GET_EXTENSION_FUNCTION_POINTER,
+                 &id, sizeof(id), out, sizeof(*out), &bytes,
+                 NULL, NULL) == 0)
+        return TURBO_OK;
+    return -(int)WSAGetLastError();
+}
+
+static int iocp_create_accept_socket(SOCKET listener, SOCKET *out) {
+    WSAPROTOCOL_INFO protocol;
+    int protocol_length = (int)sizeof(protocol);
+    SOCKET accepted;
+    if (getsockopt(listener, SOL_SOCKET, SO_PROTOCOL_INFO,
+                   (char *)&protocol, &protocol_length) != 0)
+        return -(int)WSAGetLastError();
+    accepted = WSASocket(protocol.iAddressFamily, protocol.iSocketType,
+                         protocol.iProtocol, NULL, 0u,
+                         WSA_FLAG_OVERLAPPED);
+    if (accepted == INVALID_SOCKET)
+        return -(int)WSAGetLastError();
+    *out = accepted;
+    return TURBO_OK;
+}
+
+static int iocp_bind_connect_socket(SOCKET socket_value) {
+    WSAPROTOCOL_INFO protocol;
+    SOCKADDR_STORAGE local;
+    int protocol_length = (int)sizeof(protocol);
+    int local_length = (int)sizeof(local);
+    int bind_length;
+    int error;
+    memset(&local, 0, sizeof(local));
+    if (getsockname(socket_value, (struct sockaddr *)&local,
+                    &local_length) == 0)
+        return TURBO_OK;
+    error = WSAGetLastError();
+    if (error != WSAEINVAL)
+        return -(int)error;
+    if (getsockopt(socket_value, SOL_SOCKET, SO_PROTOCOL_INFO,
+                   (char *)&protocol, &protocol_length) != 0)
+        return -(int)WSAGetLastError();
+    if (protocol.iAddressFamily == AF_INET) {
+        struct sockaddr_in *ipv4 = (struct sockaddr_in *)&local;
+        ipv4->sin_family = AF_INET;
+        bind_length = (int)sizeof(*ipv4);
+    } else if (protocol.iAddressFamily == AF_INET6) {
+        struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)&local;
+        ipv6->sin6_family = AF_INET6;
+        bind_length = (int)sizeof(*ipv6);
+    } else {
+        return TURBO_ENOTSUP;
+    }
+    if (bind(socket_value, (const struct sockaddr *)&local,
+             bind_length) == 0)
+        return TURBO_OK;
+    error = WSAGetLastError();
+    /* Winsock may report WSAEINVAL from getsockname for a socket already
+       bound to ADDR_ANY. In that case ConnectEx remains the authoritative
+       state check; every other bind error is terminal here. */
+    return error == WSAEINVAL ? TURBO_OK : -(int)error;
 }
 
 static cflow_iocp_record *iocp_find_free_locked(cflow_iocp_impl *impl) {
@@ -128,6 +209,44 @@ static int iocp_begin_operation(cflow_iocp_record *record) {
                                (int)operation->address_length,
                                &record->overlapped, NULL);
             break;
+        case CFLOW_IO_NATIVE_TCP_ACCEPT: {
+            LPFN_ACCEPTEX accept_ex = NULL;
+            const DWORD address_bytes =
+                (DWORD)(sizeof(SOCKADDR_STORAGE) + 16u);
+            status = iocp_accept_extension(record->socket_value,
+                                           &accept_ex);
+            if (status != TURBO_OK)
+                return status;
+            status = iocp_create_accept_socket(
+                record->socket_value, &record->accepted_socket);
+            if (status != TURBO_OK)
+                return status;
+            status = accept_ex(
+                         record->socket_value, record->accepted_socket,
+                         record->accept_addresses, 0u, address_bytes,
+                         address_bytes, &bytes, &record->overlapped)
+                         ? 0
+                         : SOCKET_ERROR;
+            break;
+        }
+        case CFLOW_IO_NATIVE_TCP_CONNECT: {
+            LPFN_CONNECTEX connect_ex = NULL;
+            status = iocp_connect_extension(record->socket_value,
+                                            &connect_ex);
+            if (status != TURBO_OK)
+                return status;
+            status = iocp_bind_connect_socket(record->socket_value);
+            if (status != TURBO_OK)
+                return status;
+            status = connect_ex(
+                         record->socket_value,
+                         (const struct sockaddr *)operation->address,
+                         (int)operation->address_length, NULL, 0u, &bytes,
+                         &record->overlapped)
+                         ? 0
+                         : SOCKET_ERROR;
+            break;
+        }
         default:
             return TURBO_EINVAL;
     }
@@ -135,6 +254,38 @@ static int iocp_begin_operation(cflow_iocp_record *record) {
         return TURBO_OK;
     status = WSAGetLastError();
     return status == WSA_IO_PENDING ? TURBO_OK : -(int)status;
+}
+
+static int iocp_finish_accept(SOCKET listener,
+                              cflow_io_native_operation *operation,
+                              SOCKET accepted_socket) {
+    SOCKADDR_STORAGE peer;
+    int peer_length = (int)sizeof(peer);
+    u_long nonblocking = 1u;
+    if (setsockopt(accepted_socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
+                   (const char *)&listener,
+                   (int)sizeof(listener)) != 0)
+        return -(int)WSAGetLastError();
+    if (ioctlsocket(accepted_socket, FIONBIO, &nonblocking) != 0)
+        return -(int)WSAGetLastError();
+    if (operation->address == NULL)
+        return TURBO_OK;
+    memset(&peer, 0, sizeof(peer));
+    if (getpeername(accepted_socket, (struct sockaddr *)&peer,
+                    &peer_length) != 0)
+        return -(int)WSAGetLastError();
+    if ((size_t)peer_length > operation->address_capacity)
+        return TURBO_ERANGE;
+    memcpy(operation->address, &peer, (size_t)peer_length);
+    operation->address_length = (size_t)peer_length;
+    return TURBO_OK;
+}
+
+static int iocp_finish_connect(SOCKET socket_value) {
+    if (setsockopt(socket_value, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT,
+                   NULL, 0) == 0)
+        return TURBO_OK;
+    return -(int)WSAGetLastError();
 }
 
 static void iocp_finish_record(cflow_iocp_impl *impl,
@@ -145,6 +296,9 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     cflow_io_request_id request_id;
     cflow_io_native_operation *operation;
     cflow_io_completion completion;
+    cflow_io_complete_status delivery_status;
+    SOCKET socket_value;
+    SOCKET accepted_socket;
     bool cancelled;
 
     turbo_mutex_lock(&impl->gate);
@@ -156,6 +310,8 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     actor = record->actor;
     request_id = record->request_id;
     operation = record->operation;
+    socket_value = record->socket_value;
+    accepted_socket = record->accepted_socket;
     cancelled = record->cancel_requested &&
                 (native_error == ERROR_OPERATION_ABORTED ||
                  native_error == WSA_OPERATION_ABORTED);
@@ -168,6 +324,7 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     record->actor = NULL;
     record->operation = NULL;
     record->socket_value = INVALID_SOCKET;
+    record->accepted_socket = INVALID_SOCKET;
     record->cancel_requested = false;
     --impl->active_requests;
     iocp_counter_increment(&impl->completed);
@@ -181,6 +338,24 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     } else if (native_error != ERROR_SUCCESS) {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_FAILED, 0u, iocp_error(native_error)};
+    } else if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT) {
+        const int status = iocp_finish_accept(
+            socket_value, operation, accepted_socket);
+        if (status == TURBO_OK) {
+            operation->result_socket = (uintptr_t)accepted_socket;
+            completion = (cflow_io_completion){
+                CFLOW_IO_COMPLETION_OK, 0u, TURBO_OK};
+        } else {
+            completion = (cflow_io_completion){
+                CFLOW_IO_COMPLETION_FAILED, 0u, status};
+        }
+    } else if (operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT) {
+        const int status = iocp_finish_connect(socket_value);
+        completion = status == TURBO_OK
+                         ? (cflow_io_completion){
+                               CFLOW_IO_COMPLETION_OK, 0u, TURBO_OK}
+                         : (cflow_io_completion){
+                               CFLOW_IO_COMPLETION_FAILED, 0u, status};
     } else if (operation->kind == CFLOW_IO_NATIVE_TCP_RECV && bytes == 0u) {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK};
@@ -188,7 +363,16 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_OK, (size_t)bytes, TURBO_OK};
     }
-    (void)cflow_io_actor_complete(actor, request_id, &completion);
+    delivery_status = cflow_io_actor_complete(
+        actor, request_id, &completion);
+    if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT &&
+        (completion.kind != CFLOW_IO_COMPLETION_OK ||
+         delivery_status != CFLOW_IO_COMPLETE_ACCEPTED)) {
+        if (accepted_socket != INVALID_SOCKET)
+            (void)closesocket(accepted_socket);
+        operation->result_socket = CFLOW_IO_NATIVE_INVALID_SOCKET;
+        operation->address_length = 0u;
+    }
 }
 
 static cflow_iocp_socket_record *iocp_find_socket_locked(
@@ -316,6 +500,7 @@ static int iocp_submit(cflow_io_native_impl *base,
     record->actor = actor;
     record->operation = operation;
     record->socket_value = (SOCKET)operation->socket;
+    record->accepted_socket = INVALID_SOCKET;
     record->cancel_requested = false;
     ++impl->active_requests;
     turbo_mutex_unlock(&impl->gate);
@@ -336,6 +521,9 @@ static int iocp_submit(cflow_io_native_impl *base,
     record->actor = NULL;
     record->operation = NULL;
     record->socket_value = INVALID_SOCKET;
+    if (record->accepted_socket != INVALID_SOCKET)
+        (void)closesocket(record->accepted_socket);
+    record->accepted_socket = INVALID_SOCKET;
     --impl->active_requests;
     iocp_counter_increment(&impl->native_submit_errors);
     turbo_mutex_unlock(&impl->gate);
