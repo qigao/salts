@@ -13,7 +13,9 @@
 
 #if defined(_WIN32)
 #include <winsock2.h>
+#include <windows.h>
 #include <ws2tcpip.h>
+#include <wchar.h>
 typedef SOCKET native_test_socket;
 #define NATIVE_TEST_INVALID_SOCKET INVALID_SOCKET
 #else
@@ -32,6 +34,7 @@ static const uint64_t NATIVE_TEST_TIMEOUT_NS = UINT64_C(5000000000);
 enum {
     NATIVE_TEST_CAPACITY = 4,
     NATIVE_TEST_PAYLOAD_CAPACITY = 64,
+    NATIVE_TEST_PIPE_BUFFER_CAPACITY = 4096,
     NATIVE_TEST_LISTEN_BACKLOG = 4,
     NATIVE_TEST_CANCEL_REUSE_ITERATIONS = 32,
     NATIVE_TEST_CANCEL_SETTLE_YIELDS = 64
@@ -41,6 +44,11 @@ typedef struct native_test_operation {
     cflow_io_native_operation native;
     int released;
 } native_test_operation;
+
+typedef struct native_test_pipe_operation {
+    cflow_io_native_pipe_operation native;
+    int released;
+} native_test_pipe_operation;
 
 typedef struct native_completion_probe {
     cflow_io_request_id ids[NATIVE_TEST_CAPACITY];
@@ -273,6 +281,12 @@ static void native_operation_release(void *user) {
     ++operation->released;
 }
 
+static void native_pipe_operation_release(void *user) {
+    native_test_pipe_operation *operation =
+        (native_test_pipe_operation *)user;
+    ++operation->released;
+}
+
 static void native_completion_record(
     void *user, cflow_io_request_id request_id,
     cflow_io_lease_id lease_id, void *operation_user,
@@ -287,9 +301,9 @@ static void native_completion_record(
     }
 }
 
-static int native_fixture_init(native_fixture *fixture,
-                               cflow_io_native_backend_kind kind,
-                               size_t capacity) {
+static int native_fixture_init_with_ops(
+    native_fixture *fixture, cflow_io_native_backend_kind kind,
+    size_t capacity, cflow_io_backend_ops backend_ops) {
     cflow_io_native_backend_config backend_config = {
         kind, capacity, capacity};
     cflow_io_actor_config actor_config;
@@ -308,7 +322,7 @@ static int native_fixture_init(native_fixture *fixture,
     actor_config.request_capacity = capacity;
     actor_config.command_capacity = capacity;
     actor_config.executor = &fixture->executor;
-    actor_config.backend = cflow_io_native_backend_actor_ops();
+    actor_config.backend = backend_ops;
     actor_config.backend_user = &fixture->backend;
     actor_config.completion = native_completion_record;
     actor_config.completion_user = &fixture->completions;
@@ -319,6 +333,21 @@ static int native_fixture_init(native_fixture *fixture,
         (void)cflow_io_native_backend_destroy(&fixture->backend);
     }
     return status;
+}
+
+static int native_fixture_init(native_fixture *fixture,
+                               cflow_io_native_backend_kind kind,
+                               size_t capacity) {
+    return native_fixture_init_with_ops(
+        fixture, kind, capacity, cflow_io_native_backend_actor_ops());
+}
+
+static int native_pipe_fixture_init(native_fixture *fixture,
+                                    cflow_io_native_backend_kind kind,
+                                    size_t capacity) {
+    return native_fixture_init_with_ops(
+        fixture, kind, capacity,
+        cflow_io_native_backend_pipe_actor_ops());
 }
 
 static int native_fixture_wait(native_fixture *fixture, size_t count) {
@@ -347,6 +376,20 @@ static int native_fixture_forget_socket(
     return TURBO_ETIMEDOUT;
 }
 
+static int native_fixture_forget_pipe(
+    native_fixture *fixture, uintptr_t pipe_identity) {
+    const uint64_t started = turbo_hrtime();
+    int status;
+    do {
+        status = cflow_io_native_backend_forget_pipe(
+            &fixture->backend, pipe_identity);
+        if (status != TURBO_EBUSY)
+            return status;
+        turbo_thread_yield();
+    } while (turbo_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
+    return TURBO_ETIMEDOUT;
+}
+
 static void native_fixture_destroy(native_fixture *fixture) {
     const int close_status = cflow_io_actor_close(&fixture->actor);
     check_true(close_status == TURBO_OK || close_status == TURBO_EALREADY);
@@ -367,6 +410,224 @@ static cflow_io_submit_result native_submit(
     return cflow_io_actor_try_submit(
         &fixture->actor, lease, &actor_operation);
 }
+
+static cflow_io_submit_result native_pipe_submit(
+    native_fixture *fixture, cflow_io_lease_id lease,
+    native_test_pipe_operation *operation) {
+    cflow_io_operation actor_operation = {
+        operation, native_pipe_operation_release};
+    return cflow_io_actor_try_submit(
+        &fixture->actor, lease, &actor_operation);
+}
+
+#if defined(_WIN32)
+static void native_test_close_pipe(HANDLE pipe) {
+    if (pipe != NULL && pipe != INVALID_HANDLE_VALUE)
+        (void)CloseHandle(pipe);
+}
+
+static int native_test_make_named_pipe_pair(HANDLE pipes[2]) {
+    static LONG sequence = 0;
+    wchar_t name[128];
+    OVERLAPPED connected = {0};
+    HANDLE event = NULL;
+    DWORD error = ERROR_SUCCESS;
+    BOOL pending = FALSE;
+
+    pipes[0] = INVALID_HANDLE_VALUE;
+    pipes[1] = INVALID_HANDLE_VALUE;
+    if (_snwprintf_s(name, sizeof(name) / sizeof(name[0]), _TRUNCATE,
+                     L"\\\\.\\pipe\\cflow-native-test-%lu-%ld",
+                     GetCurrentProcessId(),
+                     InterlockedIncrement(&sequence)) < 0)
+        return TURBO_ERANGE;
+    pipes[0] = CreateNamedPipeW(
+        name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u,
+        NATIVE_TEST_PIPE_BUFFER_CAPACITY,
+        NATIVE_TEST_PIPE_BUFFER_CAPACITY, 0u, NULL);
+    if (pipes[0] == INVALID_HANDLE_VALUE)
+        return -(int)GetLastError();
+    event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (event == NULL) {
+        error = GetLastError();
+        goto failed;
+    }
+    connected.hEvent = event;
+    if (!ConnectNamedPipe(pipes[0], &connected)) {
+        error = GetLastError();
+        if (error == ERROR_IO_PENDING)
+            pending = TRUE;
+        else if (error != ERROR_PIPE_CONNECTED)
+            goto failed;
+    }
+    pipes[1] = CreateFileW(
+        name, GENERIC_READ | GENERIC_WRITE, 0u, NULL, OPEN_EXISTING,
+        FILE_FLAG_OVERLAPPED, NULL);
+    if (pipes[1] == INVALID_HANDLE_VALUE) {
+        error = GetLastError();
+        goto failed;
+    }
+    if (pending) {
+        DWORD transferred = 0u;
+        if (!GetOverlappedResult(pipes[0], &connected, &transferred, TRUE)) {
+            error = GetLastError();
+            goto failed;
+        }
+    }
+    (void)CloseHandle(event);
+    return TURBO_OK;
+
+failed:
+    native_test_close_pipe(pipes[1]);
+    native_test_close_pipe(pipes[0]);
+    if (event != NULL)
+        (void)CloseHandle(event);
+    pipes[0] = INVALID_HANDLE_VALUE;
+    pipes[1] = INVALID_HANDLE_VALUE;
+    return -(int)error;
+}
+
+static void native_check_pipe_read_write(
+    cflow_io_native_backend_kind kind) {
+    static const unsigned char payload[] = {0x70u, 0x69u, 0x70u, 0x65u};
+    native_fixture fixture;
+    HANDLE pipes[2];
+    native_test_pipe_operation write_operation = {0};
+    native_test_pipe_operation read_operation = {0};
+    unsigned char received[sizeof(payload)] = {0};
+    cflow_io_submit_result submitted;
+
+    check_equal(native_pipe_fixture_init(&fixture, kind, 2u), TURBO_OK);
+    check_equal(native_test_make_named_pipe_pair(pipes), TURBO_OK);
+    write_operation.native = (cflow_io_native_pipe_operation){
+        CFLOW_IO_NATIVE_PIPE_WRITE, (uintptr_t)pipes[1],
+        (void *)payload, sizeof(payload),
+        CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
+    submitted = native_pipe_submit(&fixture, 91u, &write_operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_OK);
+    check_equal(fixture.completions.values[0].bytes, sizeof(payload));
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    check_equal(write_operation.released, 1);
+
+    read_operation.native = (cflow_io_native_pipe_operation){
+        CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)pipes[0], received,
+        sizeof(received), CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
+    submitted = native_pipe_submit(&fixture, 92u, &read_operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(fixture.completions.values[1].kind,
+                CFLOW_IO_COMPLETION_OK);
+    check_equal(fixture.completions.values[1].bytes, sizeof(payload));
+    check_equal(received, payload, sizeof(payload));
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    check_equal(read_operation.released, 1);
+
+    native_test_close_pipe(pipes[0]);
+    native_test_close_pipe(pipes[1]);
+    check_equal(native_fixture_forget_pipe(
+                    &fixture, (uintptr_t)pipes[0]), TURBO_OK);
+    check_equal(native_fixture_forget_pipe(
+                    &fixture, (uintptr_t)pipes[1]), TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_pipe_cancel(cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    HANDLE pipes[2];
+    native_test_pipe_operation read_operation = {0};
+    unsigned char received = 0u;
+    cflow_io_submit_result submitted;
+
+    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_named_pipe_pair(pipes), TURBO_OK);
+    read_operation.native = (cflow_io_native_pipe_operation){
+        CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)pipes[0], &received,
+        sizeof(received), CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
+    submitted = native_pipe_submit(&fixture, 93u, &read_operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
+    check_equal(cflow_io_actor_try_cancel(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_CANCEL_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_CANCELLED);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    native_test_close_pipe(pipes[0]);
+    native_test_close_pipe(pipes[1]);
+    check_equal(native_fixture_forget_pipe(
+                    &fixture, (uintptr_t)pipes[0]), TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_pipe_eof(cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    HANDLE pipes[2];
+    native_test_pipe_operation read_operation = {0};
+    unsigned char received = 0u;
+    cflow_io_submit_result submitted;
+
+    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_named_pipe_pair(pipes), TURBO_OK);
+    read_operation.native = (cflow_io_native_pipe_operation){
+        CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)pipes[0], &received,
+        sizeof(received), CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
+    submitted = native_pipe_submit(&fixture, 94u, &read_operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
+    native_test_close_pipe(pipes[1]);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_EOF);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    native_test_close_pipe(pipes[0]);
+    check_equal(native_fixture_forget_pipe(
+                    &fixture, (uintptr_t)pipes[0]), TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_rejects_sync_anonymous_pipe(
+    cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    SECURITY_ATTRIBUTES security = {
+        sizeof(SECURITY_ATTRIBUTES), NULL, FALSE};
+    HANDLE read_pipe = INVALID_HANDLE_VALUE;
+    HANDLE write_pipe = INVALID_HANDLE_VALUE;
+    native_test_pipe_operation read_operation = {0};
+    unsigned char received = 0u;
+    cflow_io_submit_result submitted;
+
+    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_true(CreatePipe(&read_pipe, &write_pipe, &security, 0u));
+    read_operation.native = (cflow_io_native_pipe_operation){
+        CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)read_pipe, &received,
+        sizeof(received), 0u};
+    submitted = native_pipe_submit(&fixture, 95u, &read_operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_FAILED);
+    check_equal(fixture.completions.values[0].error, TURBO_ENOTSUP);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    native_test_close_pipe(read_pipe);
+    native_test_close_pipe(write_pipe);
+    native_fixture_destroy(&fixture);
+}
+#endif
 
 static void native_check_rejected_operation(
     cflow_io_native_operation operation) {
@@ -1162,6 +1423,18 @@ spec("CFlow native IO backend") {
     it("runs TCP lifecycle UDP and cancellation through IOCP") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_IOCP));
         native_check_backend(CFLOW_IO_NATIVE_IOCP);
+    }
+    it("runs byte pipe read and write through IOCP") {
+        native_check_pipe_read_write(CFLOW_IO_NATIVE_IOCP);
+    }
+    it("cancels a pending byte pipe read through IOCP") {
+        native_check_pipe_cancel(CFLOW_IO_NATIVE_IOCP);
+    }
+    it("reports named pipe peer close as EOF through IOCP") {
+        native_check_pipe_eof(CFLOW_IO_NATIVE_IOCP);
+    }
+    it("rejects synchronous anonymous pipes without blocking IOCP") {
+        native_check_rejects_sync_anonymous_pipe(CFLOW_IO_NATIVE_IOCP);
     }
 #elif defined(__APPLE__)
     it("runs TCP UDP and cancellation through kqueue") {

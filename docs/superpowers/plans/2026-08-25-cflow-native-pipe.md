@@ -134,7 +134,7 @@ git commit -m "feat(cflow): define native pipe I/O contract"
 - Consumes: Task 1 pipe operation, pipe Actor strategy, and internal `submit_pipe`/`forget_pipe` callbacks.
 - Produces: bounded overlapped byte-pipe read/write, cancellation, EOF mapping, and resource identity cleanup on IOCP.
 
-- [ ] **Step 1: Write failing real named-pipe tests**
+- [x] **Step 1: Write failing real named-pipe tests**
 
 Add a Windows-only helper that creates a unique byte-mode named pipe server
 with `PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED`, opens its client with
@@ -166,7 +166,7 @@ Each helper submits through `cflow_io_native_backend_pipe_actor_ops`, waits for
 the real Actor completion, acknowledges the request, closes both handles, calls
 `forget_pipe` for retained identities, and destroys the fixture.
 
-- [ ] **Step 2: Build and verify RED**
+- [x] **Step 2: Build and verify RED**
 
 Run the native-I/O target and executable filtered to `pipe`.
 
@@ -177,7 +177,7 @@ cmd /c 'call "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7
 Expected: the pipe Actor accepts the core shape but IOCP returns
 `TURBO_ENOTSUP` because `submit_pipe` is not implemented.
 
-- [ ] **Step 3: Generalize IOCP records and implement pipe primitives**
+- [x] **Step 3: Generalize IOCP records and implement pipe primitives**
 
 Give each IOCP record a resource discriminator, a `HANDLE native_handle`, and a
 union of socket/pipe operation pointers. Generalize the retained socket table
@@ -208,12 +208,12 @@ Associate the handle with the existing completion port, use `CancelIoEx` with
 the record's `native_handle`, and map `ERROR_BROKEN_PIPE`/`ERROR_HANDLE_EOF` on
 a pipe read to Actor EOF. Pipe writes keep the native failure.
 
-- [ ] **Step 4: Verify GREEN and socket regression**
+- [x] **Step 4: Verify GREEN and socket regression**
 
 Run the filtered pipe executable, then the complete `cflow_io_native_test`.
 Expected: all pipe tests and the existing TCP/UDP/accept/connect cases pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add cflow/src/io_native_iocp.c cflow/tests/cflow_io_native_test.c
