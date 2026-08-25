@@ -290,7 +290,9 @@ spec("Platform poll readiness selector") {
 
     check_equal(poll_test_make_pipe(fds), TURBO_OK);
     check_equal(turbo_readiness_register(&reactor, fds[0], &registration), TURBO_OK);
-    check_equal(turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_HANGUP,
+    check_equal(turbo_readiness_arm(&registration,
+                                    TURBO_READINESS_EVENT_READ |
+                                        TURBO_READINESS_EVENT_HANGUP,
                                     poll_record_callback, &probe),
                 TURBO_OK);
     check_equal(close(fds[1]), 0);

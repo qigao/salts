@@ -121,6 +121,9 @@ TURBO_PLATFORM_C_API int turbo_readiness_register(turbo_readiness_reactor *react
  * The backend event and user callback are dispatched without a Platform lock
  * held. status is TURBO_OK for readiness or an exact negative terminal backend
  * code; terminal delivery uses events == 0.
+ * For portable explicit-poll behavior, request ERROR/HANGUP together with the
+ * related READ or WRITE interest; some poll implementations do not report
+ * terminal bits for a descriptor whose native interest mask is empty.
  */
 TURBO_PLATFORM_C_API int turbo_readiness_arm(turbo_readiness_registration *registration,
                                              turbo_readiness_events events,

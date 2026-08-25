@@ -123,6 +123,9 @@ arm token 全部匹配。只有匹配项才把 `armed` 改为 false 并调用
 
 - `POLLIN`/`POLLPRI` -> `READ`；`POLLOUT` -> `WRITE`。
 - `POLLERR`/`POLLNVAL` -> `ERROR`；`POLLHUP` -> `HANGUP`。
+- poll consumer 应把 `HANGUP` 与相关 `READ`/`WRITE` interest 一起 arm；Darwin 对 native
+  `events == 0` 的 descriptor 不提供可移植的 terminal notification。CFlow socket lane 已满足
+  此条件，不依赖 HANGUP-only arm。
 - worker `poll()` 的 `EINTR` 重试；其他错误以负 errno 调用一次
   `turbo_readiness_backend_fail()`。
 - CFlow 只把 generic readiness 当作再次执行 nonblocking socket syscall 的证据；

@@ -481,6 +481,10 @@ uses generation tokens to reject stale snapshots, and attempts at most
 `event_batch_capacity` callbacks per scan. A worker-owned round-robin cursor
 advances after each claimed event, so a continuously ready low-index descriptor
 cannot starve later registrations when the batch is smaller than the ready set.
+Portable poll consumers should request `HANGUP` together with the relevant
+`READ` or `WRITE` interest; Darwin does not surface terminal bits for a
+descriptor whose native poll interest is empty. CFlow socket lanes already use
+that combined form.
 CFlow may retain up to two Platform
 registrations per socket identity (one read lane and one write lane), so a
 request capacity of N produces a checked reactor capacity of 2N.

@@ -81,7 +81,7 @@ elseif(APPLE)
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
-elseif(NOT UNIX)
+else()
   cmake_add_test(platform_readiness_unsupported_test
     SOURCES platform_readiness_unsupported_test.c
     LIBS TurboUtils::Platform TurboUtils::TinyTest
@@ -90,4 +90,8 @@ elseif(NOT UNIX)
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
+  if(NOT UNIX)
+    target_compile_definitions(platform_readiness_unsupported_test PRIVATE
+      TURBO_TEST_EXPECT_POLL_UNSUPPORTED=1)
+  endif()
 endif()
