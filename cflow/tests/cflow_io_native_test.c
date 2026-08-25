@@ -967,7 +967,7 @@ static void native_check_preserves_caller_socket_flags(
 }
 #endif
 
-#if defined(__linux__)
+#if !defined(_WIN32)
 static void native_check_cancelled_slot_reuse(
     cflow_io_native_backend_kind kind) {
     static const unsigned char payload[] = {0x5au};
