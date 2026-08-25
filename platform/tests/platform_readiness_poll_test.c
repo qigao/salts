@@ -263,7 +263,7 @@ spec("Platform poll readiness selector") {
     check_true(turbo_readiness_backend_supported(TURBO_READINESS_BACKEND_POLL));
   }
 
-  it("reports write readiness and peer hangup through the generic mask") {
+  it("reports socket write readiness and pipe hangup through the generic mask") {
     turbo_readiness_reactor reactor = {0};
     turbo_readiness_registration registration = {0};
     const turbo_readiness_config config = {1u, 1u};
@@ -282,11 +282,19 @@ spec("Platform poll readiness selector") {
     check_equal(probe.events & TURBO_READINESS_EVENT_WRITE, TURBO_READINESS_EVENT_WRITE);
     check_equal(probe.status, TURBO_OK);
 
+    check_equal(turbo_readiness_close(&registration), TURBO_OK);
+    check_equal(close(fds[0]), 0);
     check_equal(close(fds[1]), 0);
+    fds[0] = -1;
     fds[1] = -1;
+
+    check_equal(poll_test_make_pipe(fds), TURBO_OK);
+    check_equal(turbo_readiness_register(&reactor, fds[0], &registration), TURBO_OK);
     check_equal(turbo_readiness_arm(&registration, TURBO_READINESS_EVENT_HANGUP,
                                     poll_record_callback, &probe),
                 TURBO_OK);
+    check_equal(close(fds[1]), 0);
+    fds[1] = -1;
     check_equal(poll_probe_wait_calls(&probe, 2u), TURBO_OK);
     check_equal(probe.events & TURBO_READINESS_EVENT_HANGUP, TURBO_READINESS_EVENT_HANGUP);
     check_equal(probe.status, TURBO_OK);
