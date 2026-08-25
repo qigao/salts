@@ -62,6 +62,7 @@ add_subdirectory(cbind)
 add_subdirectory(cflow)
 add_subdirectory(turbostl)
 add_subdirectory(utils)
+add_subdirectory(cflow-fs)
 add_subdirectory(turbo_serial)
 
 set(verify_installed_dependencies
@@ -72,7 +73,8 @@ set(verify_installed_dependencies
     turbo_cbind
     turbo_cflow
     turbo_stl
-    turbo_utils)
+    turbo_utils
+    turbo_cflow_fs)
 if(CFLOW_ENABLE_MINICORO)
   list(APPEND verify_installed_dependencies turbo_cflow_minicoro)
 endif()

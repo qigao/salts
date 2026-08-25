@@ -90,6 +90,29 @@ int main(void) {
   return 0;
 }
 
+#elif defined(CONSUME_CFLOW_FS)
+#include <cflow/fs.h>
+
+static void fs_complete(void *user, uint64_t request_id,
+                        cflow_fs_operation_kind operation, int result) {
+  (void)user;
+  (void)request_id;
+  (void)operation;
+  (void)result;
+}
+
+int main(void) {
+  cflow_fs_service service = {0};
+  cflow_fs_config config = {1u, 1u, 64u, fs_complete, NULL};
+  if (cflow_fs_service_init(&service, &config) != 0) return 1;
+  if (cflow_fs_close(&service) != 0) return 2;
+  while (!cflow_fs_is_quiescent(&service)) {
+    size_t completed = 0u;
+    if (cflow_fs_run_ready(&service, 1u, &completed) != 0) return 3;
+  }
+  return cflow_fs_destroy(&service) == 0 ? 0 : 4;
+}
+
 #elif defined(CONSUME_CFLOW_MINICORO)
 #include <cflow/minicoro.h>
 
