@@ -242,7 +242,7 @@ Run the shared checks for epoll/kqueue/poll under their existing platform
 guards. A mutation replacing guarded write with raw process-visible `write`
 must terminate or fail the broken-reader test.
 
-- [ ] **Step 2: Build on Linux/macOS CI or a native host and verify RED**
+- [x] **Step 2: Build on Linux/macOS CI or a native host and verify RED**
 
 Run:
 
