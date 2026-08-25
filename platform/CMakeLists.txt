@@ -16,6 +16,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   target_sources(${TARGET_NAME} PRIVATE src/readiness_epoll.c)
   target_compile_definitions(${TARGET_NAME}
     PRIVATE TURBO_ENABLE_EPOLL_READINESS=1)
+elseif(APPLE)
+  target_sources(${TARGET_NAME} PRIVATE src/readiness_kqueue.c)
+  target_compile_definitions(${TARGET_NAME}
+    PRIVATE TURBO_ENABLE_KQUEUE_READINESS=1)
 endif()
 
 cmake_config_target(

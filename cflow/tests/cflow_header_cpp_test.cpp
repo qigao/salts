@@ -27,6 +27,16 @@ static_assert(std::is_standard_layout<cflow_actor_ref>::value,
               "cflow_actor_ref must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_actor_config>::value,
               "actor config must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_io_actor>::value,
+              "IO Actor must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_io_operation>::value,
+              "IO operation must remain a C-compatible move token");
+static_assert(std::is_standard_layout<cflow_io_actor_config>::value,
+              "IO Actor config must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_io_native_backend>::value,
+              "native IO backend must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_io_native_operation>::value,
+              "native IO operation must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_timer_event_queue>::value,
               "timer Event queue must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_transition>::value,
@@ -67,6 +77,10 @@ suite("CFlow C++ public header") {
         cflow_machine_instance_config machine_config = {};
         cflow_actor actor = {};
         cflow_actor_ref actor_ref = {};
+        cflow_io_actor io_actor = {};
+        cflow_io_operation io_operation = {};
+        cflow_io_native_backend native_backend = {};
+        cflow_io_native_operation native_operation = {};
         cflow_timer_event_queue timer_events = {};
         cflow_event_id event_id = 0u;
         const cmeta_type_desc *event_type = nullptr;
@@ -104,6 +118,10 @@ suite("CFlow C++ public header") {
         check_null(machine_config.machine);
         check_null(actor.impl);
         check_null(actor_ref.impl);
+        check_null(io_actor.impl);
+        check_null(io_operation.user);
+        check_null(native_backend.impl);
+        check_true(native_operation.kind == CFLOW_IO_NATIVE_TCP_RECV);
         cflow_actor_ref_release(&actor_ref);
         cflow_actor_destroy(&actor);
         check_null(timer_events.impl);
