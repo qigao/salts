@@ -58,6 +58,7 @@ add_library(${TARGET_NAME}
   src/scheduler_worker.c
   src/sources.c
   src/stream.c
+  src/stream_execution.c
   src/subrun.c
   src/temporal.c
   src/timer_queue.c

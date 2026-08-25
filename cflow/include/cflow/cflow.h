@@ -5,6 +5,7 @@
 #include <cflow/meta.h>
 #include <cflow/graph.h>
 #include <cflow/stream.h>
+#include <cflow/stream_execution.h>
 #include <cflow/direct.h>
 #include <cflow/lower.h>
 #include <cflow/effect.h>
