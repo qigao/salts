@@ -128,7 +128,7 @@ cmake --build --preset win-release-user --target cflow_io_native_test cflow_io_a
 ctest --preset win-release-user -R "cflow_io_(native|actor)_test" --output-on-failure
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add cflow/include/cflow/io_native.h cflow/src/io_native_readiness.c cflow/tests/cflow_io_native_test.c docs/superpowers/plans/2026-08-25-cflow-single-owner-readiness.md
@@ -170,7 +170,7 @@ git diff --check
 git status --short
 ```
 
-- [ ] **Step 6: Push the existing feature branch**
+- [x] **Step 6: Push the existing feature branch**
 
 Push only after fresh test and benchmark evidence, then update PR #95 with measured before/after results and remaining limitations.
 
