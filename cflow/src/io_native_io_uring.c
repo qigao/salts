@@ -554,6 +554,8 @@ static int uring_submit_pipe(
     cflow_io_request_id request_id,
     cflow_io_native_pipe_operation *operation) {
     cflow_uring_impl *impl = (cflow_uring_impl *)base;
+    if ((operation->flags & CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE) == 0u)
+        return TURBO_ENOTSUP;
     if (operation->handle > (uintptr_t)INT_MAX)
         return TURBO_EINVAL;
     return uring_submit_record(

@@ -864,6 +864,32 @@ static void native_check_pipe_rejects_blocking_fd(
     native_fixture_destroy(&fixture);
 }
 
+static void native_check_pipe_requires_async_flag(
+    cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    int pipes[2];
+    native_test_pipe_operation read_operation = {0};
+    unsigned char received = 0u;
+    cflow_io_submit_result submitted;
+
+    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_pipe_pair(pipes, true), TURBO_OK);
+    read_operation.native = (cflow_io_native_pipe_operation){
+        CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)pipes[0], &received, 1u, 0u};
+    submitted = native_pipe_submit(&fixture, 100u, &read_operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_FAILED);
+    check_equal(fixture.completions.values[0].error, TURBO_ENOTSUP);
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    native_test_close_pipe(pipes[0]);
+    native_test_close_pipe(pipes[1]);
+    native_fixture_destroy(&fixture);
+}
+
 static void native_check_pipe_write_contains_sigpipe(
     cflow_io_native_backend_kind kind) {
     static const unsigned char payload[] = {0x78u};
@@ -1734,6 +1760,9 @@ spec("CFlow native IO backend") {
     it("rejects a blocking pipe descriptor through kqueue") {
         native_check_pipe_rejects_blocking_fd(CFLOW_IO_NATIVE_KQUEUE);
     }
+    it("requires the async-capable pipe declaration through kqueue") {
+        native_check_pipe_requires_async_flag(CFLOW_IO_NATIVE_KQUEUE);
+    }
     it("contains broken-pipe SIGPIPE through kqueue") {
         native_check_pipe_write_contains_sigpipe(CFLOW_IO_NATIVE_KQUEUE);
     }
@@ -1773,6 +1802,9 @@ spec("CFlow native IO backend") {
     it("rejects a blocking pipe descriptor through epoll") {
         native_check_pipe_rejects_blocking_fd(CFLOW_IO_NATIVE_EPOLL);
     }
+    it("requires the async-capable pipe declaration through epoll") {
+        native_check_pipe_requires_async_flag(CFLOW_IO_NATIVE_EPOLL);
+    }
     it("contains broken-pipe SIGPIPE through epoll") {
         native_check_pipe_write_contains_sigpipe(CFLOW_IO_NATIVE_EPOLL);
     }
@@ -1793,6 +1825,8 @@ spec("CFlow native IO backend") {
                     CFLOW_IO_NATIVE_IO_URING);
                 native_check_pipe_cancel(CFLOW_IO_NATIVE_IO_URING);
                 native_check_pipe_eof(CFLOW_IO_NATIVE_IO_URING);
+                native_check_pipe_requires_async_flag(
+                    CFLOW_IO_NATIVE_IO_URING);
                 native_check_pipe_write_contains_sigpipe(
                     CFLOW_IO_NATIVE_IO_URING);
             } else {
@@ -1837,6 +1871,9 @@ spec("CFlow native IO backend") {
     }
     it("rejects a blocking pipe descriptor through poll") {
         native_check_pipe_rejects_blocking_fd(CFLOW_IO_NATIVE_POLL);
+    }
+    it("requires the async-capable pipe declaration through poll") {
+        native_check_pipe_requires_async_flag(CFLOW_IO_NATIVE_POLL);
     }
     it("contains broken-pipe SIGPIPE through poll") {
         native_check_pipe_write_contains_sigpipe(CFLOW_IO_NATIVE_POLL);
