@@ -84,13 +84,15 @@ CFlow 在现有 enum 末尾追加 `CFLOW_IO_NATIVE_POLL`，保持旧数值稳定
 poll_snapshot_slots = C + 1        # slot 0 是 control pipe read end
 record_bytes = C * sizeof(poll_record)
 snapshot_bytes = (C + 1) *
-                 (sizeof(struct pollfd) + 2 * sizeof(uint64_t))
+                 (sizeof(struct pollfd) + sizeof(poll_snapshot_record))
 ```
 
 所有 `C + 1` 和乘法在分配前做 checked arithmetic。CFlow readiness 仍使用
 `C = 2 * request_capacity`，对应每个 live socket 最多一个 read lane 与一个 write lane。
-`poll()` 每轮构造/扫描 O(C)；`B` 只限制一轮 callback 数，未处理的 level readiness 留到
-下一轮，不丢弃也不扩容。
+`poll()` 每轮构造/扫描 O(C)；poll backend 额外限制 `C <= INT_MAX - 1`，使 control fd
+加 registration 数量始终可由 `poll()` 的 `int` ready-count 表达。`B` 只限制一轮 callback
+数。worker 在每次成功 claim 后推进 round-robin scan cursor，因此未处理的 level
+readiness 留到下一轮且不会被持续就绪的低索引 record 永久饿死；数据不丢弃，也不扩容。
 
 ## Poll worker 与控制事务
 

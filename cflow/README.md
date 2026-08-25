@@ -478,7 +478,10 @@ portable POSIX socket backend, not a fallback and not a new operation kind.
 The poll reactor owns one worker, a fixed registration table, fixed snapshot
 storage, and a nonblocking control pipe. It borrows descriptors until close,
 uses generation tokens to reject stale snapshots, and attempts at most
-`event_batch_capacity` callbacks per scan. CFlow may retain up to two Platform
+`event_batch_capacity` callbacks per scan. A worker-owned round-robin cursor
+advances after each claimed event, so a continuously ready low-index descriptor
+cannot starve later registrations when the batch is smaller than the ready set.
+CFlow may retain up to two Platform
 registrations per socket identity (one read lane and one write lane), so a
 request capacity of N produces a checked reactor capacity of 2N.
 

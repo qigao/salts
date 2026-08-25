@@ -1,5 +1,5 @@
 #if defined(__linux__) && !defined(_GNU_SOURCE)
-#define _GNU_SOURCE
+  #define _GNU_SOURCE
 #endif
 
 #include "readiness_internal.h"
@@ -26,6 +26,7 @@ typedef struct turbo_readiness_poll_record {
 } turbo_readiness_poll_record;
 
 typedef struct turbo_readiness_poll_snapshot {
+  size_t record_index;
   uint64_t registration_token;
   uint64_t event_token;
   turbo_readiness_events events;
@@ -38,6 +39,7 @@ typedef struct turbo_readiness_poll_backend {
   turbo_readiness_poll_snapshot *snapshots;
   size_t capacity;
   size_t event_batch_capacity;
+  size_t next_scan_index;
   size_t controls_pending;
   turbo_mutex_t mutex;
   turbo_cond_t changed;
@@ -56,9 +58,7 @@ typedef enum poll_record_change {
   POLL_RECORD_CLOSE
 } poll_record_change;
 
-static uint32_t poll_token_index(uint64_t token) {
-  return (uint32_t)token;
-}
+static uint32_t poll_token_index(uint64_t token) { return (uint32_t)token; }
 
 static int poll_fd_valid(int fd) {
   int status;
@@ -97,8 +97,7 @@ static int poll_control_pipe_create(int fds[2]) {
   int status;
   if (pipe(fds) != 0) return -errno;
   status = poll_set_nonblocking_cloexec(fds[0]);
-  if (status == TURBO_OK)
-    status = poll_set_nonblocking_cloexec(fds[1]);
+  if (status == TURBO_OK) status = poll_set_nonblocking_cloexec(fds[1]);
   if (status != TURBO_OK) {
     (void)close(fds[0]);
     (void)close(fds[1]);
@@ -125,8 +124,7 @@ static int poll_control_drain(turbo_readiness_poll_backend *backend) {
     ssize_t count = read(backend->control_read_fd, bytes, sizeof(bytes));
     if (count > 0) continue;
     if (count < 0 && errno == EINTR) continue;
-    if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-      return TURBO_OK;
+    if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return TURBO_OK;
     return count == 0 ? TURBO_EIO : -errno;
   }
 }
@@ -142,32 +140,26 @@ static short poll_interest_events(turbo_readiness_events events) {
 
 static turbo_readiness_events poll_translate_events(short native_events) {
   turbo_readiness_events events = 0u;
-  if ((native_events & (POLLIN | POLLPRI)) != 0)
-    events |= TURBO_READINESS_EVENT_READ;
-  if ((native_events & POLLOUT) != 0)
-    events |= TURBO_READINESS_EVENT_WRITE;
-  if ((native_events & (POLLERR | POLLNVAL)) != 0)
-    events |= TURBO_READINESS_EVENT_ERROR;
-  if ((native_events & POLLHUP) != 0)
-    events |= TURBO_READINESS_EVENT_HANGUP;
+  if ((native_events & (POLLIN | POLLPRI)) != 0) events |= TURBO_READINESS_EVENT_READ;
+  if ((native_events & POLLOUT) != 0) events |= TURBO_READINESS_EVENT_WRITE;
+  if ((native_events & (POLLERR | POLLNVAL)) != 0) events |= TURBO_READINESS_EVENT_ERROR;
+  if ((native_events & POLLHUP) != 0) events |= TURBO_READINESS_EVENT_HANGUP;
   return events;
 }
 
-static int poll_record_change_apply(
-    turbo_readiness_poll_backend *backend, poll_record_change change,
-    intptr_t native_resource, uint64_t token, uint64_t event_token,
-    turbo_readiness_events events) {
+static int poll_record_change_apply(turbo_readiness_poll_backend *backend,
+                                    poll_record_change change, intptr_t native_resource,
+                                    uint64_t token, uint64_t event_token,
+                                    turbo_readiness_events events) {
   const uint32_t index = poll_token_index(token);
   turbo_readiness_poll_record previous;
   turbo_readiness_poll_record desired;
   int fd = -1;
   int status;
 
-  if ((uint32_t)(token >> 32) == 0u || (size_t)index >= backend->capacity)
-    return TURBO_EINVAL;
+  if ((uint32_t)(token >> 32) == 0u || (size_t)index >= backend->capacity) return TURBO_EINVAL;
   if (change == POLL_RECORD_REGISTER) {
-    if (native_resource < 0 || native_resource > INT_MAX)
-      return TURBO_EINVAL;
+    if (native_resource < 0 || native_resource > INT_MAX) return TURBO_EINVAL;
     fd = (int)native_resource;
     status = poll_fd_valid(fd);
     if (status != TURBO_OK) return status;
@@ -179,49 +171,48 @@ static int poll_record_change_apply(
   previous = backend->records[index];
   desired = previous;
   switch (change) {
-    case POLL_RECORD_REGISTER:
-      if (previous.active) {
+  case POLL_RECORD_REGISTER:
+    if (previous.active) {
+      turbo_mutex_unlock(&backend->mutex);
+      return TURBO_EALREADY;
+    }
+    for (size_t i = 0u; i < backend->capacity; ++i) {
+      if (backend->records[i].active && backend->records[i].fd == fd) {
         turbo_mutex_unlock(&backend->mutex);
         return TURBO_EALREADY;
       }
-      for (size_t i = 0u; i < backend->capacity; ++i) {
-        if (backend->records[i].active && backend->records[i].fd == fd) {
-          turbo_mutex_unlock(&backend->mutex);
-          return TURBO_EALREADY;
-        }
-      }
-      desired.fd = fd;
-      desired.registration_token = token;
-      desired.event_token = 0u;
-      desired.events = 0u;
-      desired.active = 1;
-      desired.armed = 0;
-      break;
-    case POLL_RECORD_ARM:
-      if (!previous.active || previous.registration_token != token ||
-          previous.armed) {
-        turbo_mutex_unlock(&backend->mutex);
-        return previous.armed ? TURBO_EALREADY : TURBO_EINVAL;
-      }
-      desired.event_token = event_token;
-      desired.events = events;
-      desired.armed = 1;
-      break;
-    case POLL_RECORD_UNARM:
-    case POLL_RECORD_CLOSE:
-      if (!previous.active || previous.registration_token != token) {
-        turbo_mutex_unlock(&backend->mutex);
-        return TURBO_EINVAL;
-      }
-      desired.event_token = 0u;
-      desired.events = 0u;
-      desired.armed = 0;
-      if (change == POLL_RECORD_CLOSE) {
-        desired.fd = -1;
-        desired.registration_token = 0u;
-        desired.active = 0;
-      }
-      break;
+    }
+    desired.fd = fd;
+    desired.registration_token = token;
+    desired.event_token = 0u;
+    desired.events = 0u;
+    desired.active = 1;
+    desired.armed = 0;
+    break;
+  case POLL_RECORD_ARM:
+    if (!previous.active || previous.registration_token != token || previous.armed) {
+      turbo_mutex_unlock(&backend->mutex);
+      return previous.armed ? TURBO_EALREADY : TURBO_EINVAL;
+    }
+    desired.event_token = event_token;
+    desired.events = events;
+    desired.armed = 1;
+    break;
+  case POLL_RECORD_UNARM:
+  case POLL_RECORD_CLOSE:
+    if (!previous.active || previous.registration_token != token) {
+      turbo_mutex_unlock(&backend->mutex);
+      return TURBO_EINVAL;
+    }
+    desired.event_token = 0u;
+    desired.events = 0u;
+    desired.armed = 0;
+    if (change == POLL_RECORD_CLOSE) {
+      desired.fd = -1;
+      desired.registration_token = 0u;
+      desired.active = 0;
+    }
+    break;
   }
   backend->records[index] = desired;
   backend->controls_pending = 1u;
@@ -230,36 +221,32 @@ static int poll_record_change_apply(
   status = poll_control_write(backend);
 
   turbo_mutex_lock(&backend->mutex);
-  if (status != TURBO_OK)
-    backend->records[index] = previous;
+  if (status != TURBO_OK) backend->records[index] = previous;
   backend->controls_pending = 0u;
   turbo_cond_broadcast(&backend->changed);
   turbo_mutex_unlock(&backend->mutex);
   return status;
 }
 
-static int poll_register_resource(void *user, intptr_t native_resource,
-                                  uint64_t token) {
-  return poll_record_change_apply((turbo_readiness_poll_backend *)user,
-                                  POLL_RECORD_REGISTER, native_resource,
-                                  token, 0u, 0u);
+static int poll_register_resource(void *user, intptr_t native_resource, uint64_t token) {
+  return poll_record_change_apply((turbo_readiness_poll_backend *)user, POLL_RECORD_REGISTER,
+                                  native_resource, token, 0u, 0u);
 }
 
 static int poll_arm(void *user, uint64_t token, uint64_t event_token,
                     turbo_readiness_events events) {
-  return poll_record_change_apply((turbo_readiness_poll_backend *)user,
-                                  POLL_RECORD_ARM, -1, token,
+  return poll_record_change_apply((turbo_readiness_poll_backend *)user, POLL_RECORD_ARM, -1, token,
                                   event_token, events);
 }
 
 static int poll_unarm(void *user, uint64_t token) {
-  return poll_record_change_apply((turbo_readiness_poll_backend *)user,
-                                  POLL_RECORD_UNARM, -1, token, 0u, 0u);
+  return poll_record_change_apply((turbo_readiness_poll_backend *)user, POLL_RECORD_UNARM, -1,
+                                  token, 0u, 0u);
 }
 
 static int poll_close_registration(void *user, uint64_t token) {
-  return poll_record_change_apply((turbo_readiness_poll_backend *)user,
-                                  POLL_RECORD_CLOSE, -1, token, 0u, 0u);
+  return poll_record_change_apply((turbo_readiness_poll_backend *)user, POLL_RECORD_CLOSE, -1,
+                                  token, 0u, 0u);
 }
 
 static size_t poll_snapshot_build(turbo_readiness_poll_backend *backend) {
@@ -273,14 +260,18 @@ static size_t poll_snapshot_build(turbo_readiness_poll_backend *backend) {
   backend->snapshots[0].registration_token = 0u;
   backend->snapshots[0].event_token = 0u;
   backend->snapshots[0].events = 0u;
-  for (size_t i = 0u; i < backend->capacity; ++i) {
-    const turbo_readiness_poll_record *record = &backend->records[i];
+  backend->snapshots[0].record_index = SIZE_MAX;
+  for (size_t offset = 0u; offset < backend->capacity; ++offset) {
+    size_t index = backend->next_scan_index + offset;
+    const turbo_readiness_poll_record *record;
+    if (index >= backend->capacity) index -= backend->capacity;
+    record = &backend->records[index];
     if (!record->active || !record->armed) continue;
     backend->pollfds[count].fd = record->fd;
     backend->pollfds[count].events = poll_interest_events(record->events);
     backend->pollfds[count].revents = 0;
-    backend->snapshots[count].registration_token =
-        record->registration_token;
+    backend->snapshots[count].record_index = index;
+    backend->snapshots[count].registration_token = record->registration_token;
     backend->snapshots[count].event_token = record->event_token;
     backend->snapshots[count].events = record->events;
     ++count;
@@ -289,20 +280,19 @@ static size_t poll_snapshot_build(turbo_readiness_poll_backend *backend) {
   return count;
 }
 
-static int poll_snapshot_claim(turbo_readiness_poll_backend *backend,
-                               size_t snapshot_index) {
-  const turbo_readiness_poll_snapshot *snapshot =
-      &backend->snapshots[snapshot_index];
-  const uint32_t index = poll_token_index(snapshot->registration_token);
+static int poll_snapshot_claim(turbo_readiness_poll_backend *backend, size_t snapshot_index) {
+  const turbo_readiness_poll_snapshot *snapshot = &backend->snapshots[snapshot_index];
+  const size_t index = snapshot->record_index;
   int claimed = 0;
   turbo_mutex_lock(&backend->mutex);
-  if ((size_t)index < backend->capacity) {
+  if (index < backend->capacity) {
     turbo_readiness_poll_record *record = &backend->records[index];
-    if (record->active && record->armed &&
-        record->fd == backend->pollfds[snapshot_index].fd &&
+    if (record->active && record->armed && record->fd == backend->pollfds[snapshot_index].fd &&
         record->registration_token == snapshot->registration_token &&
         record->event_token == snapshot->event_token) {
       record->armed = 0;
+      backend->next_scan_index = index + 1u;
+      if (backend->next_scan_index == backend->capacity) backend->next_scan_index = 0u;
       claimed = 1;
     }
   }
@@ -318,8 +308,7 @@ static void poll_thread_mark_exited(turbo_readiness_poll_backend *backend) {
 }
 
 static void poll_thread_entry(void *user) {
-  turbo_readiness_poll_backend *backend =
-      (turbo_readiness_poll_backend *)user;
+  turbo_readiness_poll_backend *backend = (turbo_readiness_poll_backend *)user;
   int terminal_status = TURBO_OK;
   for (;;) {
     const size_t count = poll_snapshot_build(backend);
@@ -334,8 +323,7 @@ static void poll_thread_entry(void *user) {
     }
 
     if (backend->pollfds[0].revents != 0) {
-      if ((backend->pollfds[0].revents &
-           (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+      if ((backend->pollfds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
         terminal_status = TURBO_EIO;
         break;
       }
@@ -343,24 +331,18 @@ static void poll_thread_entry(void *user) {
       if (terminal_status != TURBO_OK) break;
     }
 
-    for (size_t i = 1u;
-         i < count && delivered < backend->event_batch_capacity; ++i) {
+    for (size_t i = 1u; i < count && delivered < backend->event_batch_capacity; ++i) {
       turbo_readiness_events events;
-      if (backend->pollfds[i].revents == 0 ||
-          !poll_snapshot_claim(backend, i))
-        continue;
+      if (backend->pollfds[i].revents == 0 || !poll_snapshot_claim(backend, i)) continue;
       events = poll_translate_events(backend->pollfds[i].revents);
-      if ((backend->snapshots[i].events &
-           TURBO_READINESS_EVENT_READ) == 0u)
+      if ((backend->snapshots[i].events & TURBO_READINESS_EVENT_READ) == 0u)
         events &= ~TURBO_READINESS_EVENT_READ;
-      if ((backend->snapshots[i].events &
-           TURBO_READINESS_EVENT_WRITE) == 0u)
+      if ((backend->snapshots[i].events & TURBO_READINESS_EVENT_WRITE) == 0u)
         events &= ~TURBO_READINESS_EVENT_WRITE;
       if (events == 0u) continue;
       ++delivered;
       (void)turbo_readiness_backend_dispatch_generation(
-          backend->reactor,
-          backend->snapshots[i].registration_token,
+          backend->reactor, backend->snapshots[i].registration_token,
           backend->snapshots[i].event_token, events, TURBO_OK);
     }
     if (backend->pollfds[0].revents != 0 &&
@@ -373,8 +355,7 @@ static void poll_thread_entry(void *user) {
 }
 
 static int poll_shutdown(void *user) {
-  turbo_readiness_poll_backend *backend =
-      (turbo_readiness_poll_backend *)user;
+  turbo_readiness_poll_backend *backend = (turbo_readiness_poll_backend *)user;
   int status;
   if (!backend->thread_started) return TURBO_OK;
   atomic_store_explicit(&backend->stopping, 1, memory_order_release);
@@ -394,13 +375,10 @@ static int poll_shutdown(void *user) {
 }
 
 static void poll_backend_destroy(void *user) {
-  turbo_readiness_poll_backend *backend =
-      (turbo_readiness_poll_backend *)user;
+  turbo_readiness_poll_backend *backend = (turbo_readiness_poll_backend *)user;
   if (backend == NULL) return;
-  if (backend->control_read_fd >= 0)
-    (void)close(backend->control_read_fd);
-  if (backend->control_write_fd >= 0)
-    (void)close(backend->control_write_fd);
+  if (backend->control_read_fd >= 0) (void)close(backend->control_read_fd);
+  if (backend->control_write_fd >= 0) (void)close(backend->control_write_fd);
   turbo_cond_destroy(&backend->changed);
   turbo_mutex_destroy(&backend->mutex);
   free(backend->snapshots);
@@ -410,25 +388,21 @@ static void poll_backend_destroy(void *user) {
 }
 
 static const turbo_readiness_backend_ops poll_backend_ops = {
-    poll_register_resource, poll_arm, poll_unarm,
+    poll_register_resource,  poll_arm,      poll_unarm,
     poll_close_registration, poll_shutdown, poll_backend_destroy};
 
 static int poll_config_validate(const turbo_readiness_config *config) {
   size_t snapshot_capacity;
-  if (config == NULL || config->registration_capacity == 0u ||
-      config->event_batch_capacity == 0u)
+  if (config == NULL || config->registration_capacity == 0u || config->event_batch_capacity == 0u)
     return TURBO_EINVAL;
   if (config->registration_capacity > (size_t)UINT32_MAX - 1u ||
       config->registration_capacity > (size_t)INT_MAX - 1u)
     return TURBO_ERANGE;
-  if (config->event_batch_capacity > config->registration_capacity + 1u)
-    return TURBO_EINVAL;
+  if (config->event_batch_capacity > config->registration_capacity + 1u) return TURBO_EINVAL;
   snapshot_capacity = config->registration_capacity + 1u;
-  if (config->registration_capacity >
-          SIZE_MAX / sizeof(turbo_readiness_poll_record) ||
+  if (config->registration_capacity > SIZE_MAX / sizeof(turbo_readiness_poll_record) ||
       snapshot_capacity > SIZE_MAX / sizeof(struct pollfd) ||
-      snapshot_capacity >
-          SIZE_MAX / sizeof(turbo_readiness_poll_snapshot))
+      snapshot_capacity > SIZE_MAX / sizeof(turbo_readiness_poll_snapshot))
     return TURBO_ERANGE;
   return TURBO_OK;
 }
@@ -436,8 +410,7 @@ static int poll_config_validate(const turbo_readiness_config *config) {
 int turbo_readiness_poll_init(turbo_readiness_reactor *reactor,
                               const turbo_readiness_config *config) {
   turbo_readiness_poll_backend *backend;
-  const size_t snapshot_capacity =
-      config != NULL ? config->registration_capacity + 1u : 0u;
+  const size_t snapshot_capacity = config != NULL ? config->registration_capacity + 1u : 0u;
   int control_fds[2] = {-1, -1};
   int status = poll_config_validate(config);
   if (reactor != NULL) reactor->impl = NULL;
@@ -451,17 +424,15 @@ int turbo_readiness_poll_init(turbo_readiness_reactor *reactor,
   backend->capacity = config->registration_capacity;
   backend->event_batch_capacity = config->event_batch_capacity;
   atomic_init(&backend->stopping, 0);
-  backend->records = (turbo_readiness_poll_record *)calloc(
-      backend->capacity, sizeof(*backend->records));
-  backend->pollfds = (struct pollfd *)calloc(snapshot_capacity,
-                                             sizeof(*backend->pollfds));
-  backend->snapshots = (turbo_readiness_poll_snapshot *)calloc(
-      snapshot_capacity, sizeof(*backend->snapshots));
+  backend->records =
+      (turbo_readiness_poll_record *)calloc(backend->capacity, sizeof(*backend->records));
+  backend->pollfds = (struct pollfd *)calloc(snapshot_capacity, sizeof(*backend->pollfds));
+  backend->snapshots =
+      (turbo_readiness_poll_snapshot *)calloc(snapshot_capacity, sizeof(*backend->snapshots));
   turbo_mutex_init(&backend->mutex);
   turbo_cond_init(&backend->changed);
-  if (backend->records == NULL || backend->pollfds == NULL ||
-      backend->snapshots == NULL || backend->mutex == NULL ||
-      backend->changed == NULL) {
+  if (backend->records == NULL || backend->pollfds == NULL || backend->snapshots == NULL ||
+      backend->mutex == NULL || backend->changed == NULL) {
     poll_backend_destroy(backend);
     return TURBO_ENOMEM;
   }
@@ -473,8 +444,7 @@ int turbo_readiness_poll_init(turbo_readiness_reactor *reactor,
   }
   backend->control_read_fd = control_fds[0];
   backend->control_write_fd = control_fds[1];
-  status = turbo_readiness_reactor_init_backend(
-      reactor, config, &poll_backend_ops, backend);
+  status = turbo_readiness_reactor_init_backend(reactor, config, &poll_backend_ops, backend);
   if (status != TURBO_OK) {
     poll_backend_destroy(backend);
     return status;
