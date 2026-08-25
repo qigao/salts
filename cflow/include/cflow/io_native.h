@@ -32,6 +32,15 @@ typedef enum cflow_io_native_operation_kind {
     CFLOW_IO_NATIVE_TCP_CONNECT
 } cflow_io_native_operation_kind;
 
+typedef enum cflow_io_native_pipe_operation_kind {
+    CFLOW_IO_NATIVE_PIPE_READ = 0,
+    CFLOW_IO_NATIVE_PIPE_WRITE
+} cflow_io_native_pipe_operation_kind;
+
+typedef enum cflow_io_native_pipe_operation_flags {
+    CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE = 1u << 0
+} cflow_io_native_pipe_operation_flags;
+
 #define CFLOW_IO_NATIVE_INVALID_SOCKET UINTPTR_MAX
 
 /**
@@ -60,6 +69,27 @@ typedef struct cflow_io_native_operation {
     size_t address_length;
     uintptr_t result_socket;
 } cflow_io_native_operation;
+
+/**
+ * Caller-owned byte-pipe operation borrowed from successful Actor submit
+ * until its terminal completion callback returns. The buffer is immutable for
+ * write and backend-exclusive mutable storage for read. The backend never
+ * closes handle. A read may complete with fewer than length bytes or EOF; a
+ * write may complete with a partial byte count.
+ *
+ * CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE declares that the caller created or
+ * opened the endpoint for asynchronous operation. POSIX readiness backends
+ * additionally verify O_NONBLOCK. IOCP cannot recover FILE_FLAG_OVERLAPPED
+ * from an arbitrary pipe handle, so a false declaration violates this API's
+ * precondition and may block the submitting thread.
+ */
+typedef struct cflow_io_native_pipe_operation {
+    cflow_io_native_pipe_operation_kind kind;
+    uintptr_t handle;
+    void *buffer;
+    size_t length;
+    uint32_t flags;
+} cflow_io_native_pipe_operation;
 
 typedef struct cflow_io_native_backend_config {
     cflow_io_native_backend_kind kind;
@@ -92,6 +122,10 @@ typedef struct cflow_io_native_backend_stats {
 /** Returns compile-time availability only; runtime kernel policy may still reject init. */
 bool cflow_io_native_backend_supported(cflow_io_native_backend_kind kind);
 
+/** Returns compile-time pipe capability; per-endpoint checks occur on submit. */
+bool cflow_io_native_backend_pipe_supported(
+    cflow_io_native_backend_kind kind);
+
 /**
  * Initializes one explicitly selected bounded backend. Unsupported kinds return
  * TURBO_ENOTSUP without fallback. The backend handle must be zero-initialized.
@@ -102,6 +136,9 @@ int cflow_io_native_backend_init(
 
 /** Ops are used with backend_user pointing at cflow_io_native_backend. */
 cflow_io_backend_ops cflow_io_native_backend_actor_ops(void);
+
+/** Ops are used with pipe operations and backend_user pointing at the backend. */
+cflow_io_backend_ops cflow_io_native_backend_pipe_actor_ops(void);
 
 bool cflow_io_native_backend_get_stats(
     const cflow_io_native_backend *backend,
@@ -120,6 +157,13 @@ bool cflow_io_native_backend_get_stats(
  */
 int cflow_io_native_backend_forget_socket(
     cflow_io_native_backend *backend, uintptr_t closed_socket);
+
+/**
+ * Releases backend-side identity retained for a pipe endpoint after the caller
+ * has closed it and all operations using it have completed.
+ */
+int cflow_io_native_backend_forget_pipe(
+    cflow_io_native_backend *backend, uintptr_t closed_handle);
 
 /**
  * Closes admission. Returns TURBO_EBUSY while native requests remain active;

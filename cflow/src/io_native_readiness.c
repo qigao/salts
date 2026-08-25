@@ -957,8 +957,8 @@ static int readiness_destroy(cflow_io_native_impl *base) {
 }
 
 static const cflow_io_native_impl_ops readiness_ops = {
-    readiness_submit, readiness_cancel, readiness_get_stats,
-    readiness_forget_socket, readiness_shutdown, readiness_destroy};
+    readiness_submit, NULL, readiness_cancel, readiness_get_stats,
+    readiness_forget_socket, NULL, readiness_shutdown, readiness_destroy};
 
 int cflow_io_native_readiness_init(
     cflow_io_native_backend *backend,

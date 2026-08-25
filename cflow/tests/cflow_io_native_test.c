@@ -1050,6 +1050,31 @@ static void native_check_backend(cflow_io_native_backend_kind kind) {
 }
 
 spec("CFlow native IO backend") {
+    it("validates the bounded native pipe operation contract") {
+        unsigned char byte = 0u;
+
+        check_true(cflow_io_native_pipe_operation_valid(
+            &(cflow_io_native_pipe_operation){
+                CFLOW_IO_NATIVE_PIPE_READ, 1u, &byte, 1u,
+                CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE}));
+        check_false(cflow_io_native_pipe_operation_valid(
+            &(cflow_io_native_pipe_operation){
+                CFLOW_IO_NATIVE_PIPE_READ, UINTPTR_MAX, &byte, 1u,
+                CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE}));
+        check_false(cflow_io_native_pipe_operation_valid(
+            &(cflow_io_native_pipe_operation){
+                CFLOW_IO_NATIVE_PIPE_WRITE, 1u, NULL, 1u,
+                CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE}));
+        check_false(cflow_io_native_pipe_operation_valid(
+            &(cflow_io_native_pipe_operation){
+                CFLOW_IO_NATIVE_PIPE_WRITE, 1u, &byte, 0u,
+                CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE}));
+        check_false(cflow_io_native_pipe_operation_valid(
+            &(cflow_io_native_pipe_operation){
+                CFLOW_IO_NATIVE_PIPE_WRITE, 1u, &byte, 1u,
+                CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE << 1u}));
+    }
+
     it("rejects malformed TCP lifecycle operation contracts") {
         unsigned char byte = 0u;
         struct sockaddr_in address;
