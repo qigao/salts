@@ -353,27 +353,34 @@ static cmeta_gen_status stl_map_next(
   const map_t *map = (const map_t *)object;
   const void *key = NULL;
   const void *value = NULL;
+  cmeta_range_cursor next_cursor;
   if (map == NULL || cursor == NULL || out_value == NULL ||
       map->key_type == NULL || map->value_type == NULL)
     return CMETA_GEN_ERROR;
-  if (!map_range_next(map, cursor, &key, &value))
+  next_cursor = *cursor;
+  if (!map_range_next(map, &next_cursor, &key, &value))
     return CMETA_GEN_DONE;
   if (key == NULL || value == NULL)
     return CMETA_GEN_ERROR;
   if (view == STL_MAP_KEYS) {
-    memcpy(out_value, key, map->key_type->size);
+    if (!stl_cmeta_range_construct(map->key_type, out_value, key))
+      return CMETA_GEN_ERROR;
   } else if (view == STL_MAP_VALUES) {
-    memcpy(out_value, value, map->value_type->size);
+    if (!stl_cmeta_range_construct(map->value_type, out_value, value))
+      return CMETA_GEN_ERROR;
   } else {
-    cmeta_entry *entry = (cmeta_entry *)out_value;
-    *entry = (cmeta_entry){
+    const cmeta_entry entry = {
         .key_type = map->key_type,
         .value_type = map->value_type,
         .key = key,
         .value = value,
         .key_storage = NULL,
         .value_storage = NULL};
+    if (!stl_cmeta_range_construct(
+            &cmeta_type_ordered_entry, out_value, &entry))
+      return CMETA_GEN_ERROR;
   }
+  *cursor = next_cursor;
   return cursor->state[0] == NULL ? CMETA_GEN_VALUE_AND_DONE :
                                     CMETA_GEN_VALUE;
 }
@@ -401,8 +408,10 @@ static cmeta_range stl_map_keys_range_factory(const void *object) {
   range = (cmeta_range){
       object,
       map->key_type,
-      CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
-          CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
+      stl_cmeta_range_flags_for(
+          map->key_type,
+          CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+              CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE),
       stl_map_range_size,
       stl_map_keys_next,
       stl_map_range_version(object),
@@ -418,7 +427,9 @@ static cmeta_range stl_map_values_range_factory(const void *object) {
   range = (cmeta_range){
       object,
       map->value_type,
-      CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
+      stl_cmeta_range_flags_for(
+          map->value_type,
+          CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE),
       stl_map_range_size,
       stl_map_values_next,
       stl_map_range_version(object),
@@ -435,8 +446,10 @@ static cmeta_range stl_map_entries_range_factory(const void *object) {
   range = (cmeta_range){
       object,
       &cmeta_type_ordered_entry,
-      CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
-          CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
+      stl_cmeta_range_flags_for(
+          &cmeta_type_ordered_entry,
+          CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+              CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE),
       stl_map_range_size,
       stl_map_entries_next,
       stl_map_range_version(object),

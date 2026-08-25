@@ -395,6 +395,7 @@ suite("TurboSTL typed public header") {
     check_true((keys_range.flags & (key_flags)) == (key_flags));                \
     check_true((values_range.flags & (value_flags)) == (value_flags));          \
     check_true((entries_range.flags & (entry_flags)) == (entry_flags));         \
+    check_true((entries_range.flags & CMETA_RANGE_CONSTRUCTS_VALUES) != 0u);    \
     check_equal(cmeta_range_next(&keys_range, &key_cursor, &key_out) ==         \
                     CMETA_GEN_ERROR, false);                                    \
     check_equal(key_out, key);                                                  \
@@ -408,8 +409,9 @@ suite("TurboSTL typed public header") {
     check_true(cmeta_type_equal(entry.value_type, &cmeta_type_int));            \
     check_equal(*(const int *)entry.key, key);                                  \
     check_equal(*(const int *)entry.value, value);                              \
-    check_null(entry.key_storage);                                              \
-    check_null(entry.value_storage);                                            \
+    check_not_null(entry.key_storage);                                          \
+    check_not_null(entry.value_storage);                                        \
+    entries_range.element_type->traits->destroy(&entry);                        \
 } while (0)
 
         CHECK_ASSOC_VIEWS(hash_map, &cmeta_type_hash_entry,

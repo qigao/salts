@@ -1,6 +1,7 @@
 #include <cflow/cflow.h>
 #include <turbo/clock.h>
 #include <turbo/thread.h>
+#include <cflow/opt.h>
 #include "cflow_test_ops.h"
 #include "../src/value_storage.h"
 #include "tinytest.h"
@@ -192,6 +193,93 @@ static const cmeta_type_desc lifecycle_test_type = {
     .traits = &lifecycle_test_traits,
     .identity = NULL
 };
+
+static size_t tracked_int_copies;
+static size_t tracked_int_moves;
+static size_t tracked_int_destroys;
+static size_t tracked_long_copies;
+static size_t tracked_long_moves;
+static size_t tracked_long_destroys;
+
+static bool tracked_int_copy(void *destination, const void *source) {
+    ++tracked_int_copies;
+    memcpy(destination, source, sizeof(int));
+    return true;
+}
+
+static void tracked_int_move(void *destination, void *source) {
+    ++tracked_int_moves;
+    memcpy(destination, source, sizeof(int));
+    memset(source, 0, sizeof(int));
+}
+
+static void tracked_int_destroy(void *value) {
+    ++tracked_int_destroys;
+    memset(value, 0, sizeof(int));
+}
+
+static bool tracked_long_copy(void *destination, const void *source) {
+    ++tracked_long_copies;
+    memcpy(destination, source, sizeof(long));
+    return true;
+}
+
+static void tracked_long_move(void *destination, void *source) {
+    ++tracked_long_moves;
+    memcpy(destination, source, sizeof(long));
+    memset(source, 0, sizeof(long));
+}
+
+static void tracked_long_destroy(void *value) {
+    ++tracked_long_destroys;
+    memset(value, 0, sizeof(long));
+}
+
+static const cmeta_type_traits tracked_int_traits = {
+    .flags = CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
+    .copy_construct = tracked_int_copy,
+    .move_construct = tracked_int_move,
+    .destroy = tracked_int_destroy
+};
+
+static const cmeta_type_traits tracked_long_traits = {
+    .flags = CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
+    .copy_construct = tracked_long_copy,
+    .move_construct = tracked_long_move,
+    .destroy = tracked_long_destroy
+};
+
+typed(reduce, associative, long, runtime_sum_long,
+      (long left, long right)) {
+    return left + right;
+}
+
+typedef struct tracked_long_sink_state {
+    long value;
+    size_t values;
+    const char *error;
+    bool done;
+} tracked_long_sink_state;
+
+static bool tracked_long_sink_value(
+    void *user, const cmeta_type_desc *type, const void *value) {
+    tracked_long_sink_state *state = (tracked_long_sink_state *)user;
+    if (!state || !value || !cmeta_type_equal(type, &cmeta_type_long))
+        return false;
+    state->value = *(const long *)value;
+    ++state->values;
+    return true;
+}
+
+static void tracked_long_sink_error(void *user, const char *message) {
+    tracked_long_sink_state *state = (tracked_long_sink_state *)user;
+    if (state) state->error = message;
+}
+
+static void tracked_long_sink_done(void *user) {
+    tracked_long_sink_state *state = (tracked_long_sink_state *)user;
+    if (state) state->done = true;
+}
 
 static const cmeta_type_traits lifecycle_overaligned_traits = {
     .flags = CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY
@@ -882,16 +970,30 @@ suite("CFlow runtime") {
         }
     }
 
-    it("rejects one-shot values that require lifecycle callbacks") {
-        const cflow_test_owned_value value = {0};
+    it("owns one-shot values that require lifecycle callbacks") {
+        lifecycle_test_value value = lifecycle_test_make(37);
         cflow_resumable machine = {0};
-        const bool initialized = cflow_resumable_from_value(
-            &machine, &cflow_test_owned_value_type, &value);
+        lifecycle_test_value output = {0};
+        cflow_resume_ctx context = {0};
+        cflow_step step;
 
-        check_false(initialized);
-        check_null(machine.ops);
-        if (initialized)
+        lifecycle_test_reset();
+        const bool initialized = cflow_resumable_from_value(
+            &machine, &lifecycle_test_type, &value);
+
+        check_true(initialized);
+        check_not_null(machine.ops);
+        if (initialized) {
+            step = machine.ops->resume(machine.state, &context, &output);
+            check_true(step.kind == CFLOW_STEP_VALUE_AND_DONE);
+            check_not_null(output.resource);
+            check_equal(*output.resource, 37);
+            lifecycle_test_destroy(&output);
             machine.ops->destroy(machine.state);
+        }
+        lifecycle_test_destroy(&value);
+        check_equal(lifecycle_test_copies, (size_t)2u);
+        check_equal(lifecycle_test_destroys, (size_t)3u);
     }
 
     it("fails when a quantum reschedule reaches a full Scheduler") {
@@ -1110,7 +1212,7 @@ suite("CFlow runtime") {
         }
     }
 
-    it("rejects owning coordination children before ownership transfer") {
+    it("takes ownership of managed coordination children") {
         owned_source_state state = {false};
         cflow_resumable children[] = {{
             "owned_machine",
@@ -1122,9 +1224,9 @@ suite("CFlow runtime") {
         const bool initialized = cflow_resumable_from_coordination(
             &coordination, CFLOW_COORD_ALL, children, 1u);
 
-        check_false(initialized);
-        check_null(coordination.ops);
-        check_not_null(children[0].ops);
+        check_true(initialized);
+        check_not_null(coordination.ops);
+        check_null(children[0].ops);
         check_false(state.destroyed);
         if (initialized)
             coordination.ops->destroy(coordination.state);
@@ -1133,7 +1235,44 @@ suite("CFlow runtime") {
         check_true(state.destroyed);
     }
 
-    it("rejects owning SubRuns before copying their input") {
+    it("retains independently owned managed coordination values") {
+        lifecycle_test_value values[] = {
+            lifecycle_test_make(6), lifecycle_test_make(9)
+        };
+        cflow_resumable children[2] = {{0}};
+        cflow_resumable coordination = {0};
+        cflow_resume_ctx context = {0};
+        cflow_coord_event event = {0};
+        const void *retained = NULL;
+        cflow_step step;
+
+        lifecycle_test_reset();
+        check_true(cflow_resumable_from_value(
+            &children[0], &lifecycle_test_type, &values[0]));
+        check_true(cflow_resumable_from_value(
+            &children[1], &lifecycle_test_type, &values[1]));
+        check_true(cflow_resumable_from_coordination(
+            &coordination, CFLOW_COORD_ALL, children, 2u));
+        step = coordination.ops->resume(
+            coordination.state, &context, &event);
+        check_true(step.kind == CFLOW_STEP_VALUE_AND_DONE);
+        check_equal(event.child_index, SIZE_MAX);
+        check_true(cflow_coord_value(
+            &coordination, 0u, NULL, &retained));
+        check_equal(*((const lifecycle_test_value *)retained)->resource, 6);
+        check_true(cflow_coord_value(
+            &coordination, 1u, NULL, &retained));
+        check_equal(*((const lifecycle_test_value *)retained)->resource, 9);
+
+        coordination.ops->destroy(coordination.state);
+        lifecycle_test_destroy(&values[0]);
+        lifecycle_test_destroy(&values[1]);
+        check_equal(lifecycle_test_copies, (size_t)4u);
+        check_equal(lifecycle_test_moves, (size_t)2u);
+        check_equal(lifecycle_test_destroys, (size_t)8u);
+    }
+
+    it("copies managed SubRun input before ownership transfer") {
         const cflow_test_owned_value value = {0};
         cflow_graph surface = {0};
         cflow_graph normalized = {0};
@@ -1147,8 +1286,8 @@ suite("CFlow runtime") {
         initialized = cflow_resumable_from_subgraph(
             &machine, &normalized, normalized.root, &value);
 
-        check_false(initialized);
-        check_null(machine.ops);
+        check_true(initialized);
+        check_not_null(machine.ops);
         if (initialized)
             machine.ops->destroy(machine.state);
 
@@ -1188,7 +1327,7 @@ suite("CFlow runtime") {
         cflow_graph_destroy(&surface);
     }
 
-    it("rejects managed graphs once an operator enters the path") {
+    it("admits managed graphs when an operator enters the path") {
         cflow_graph surface = {0};
         cflow_graph normalized = {0};
         cflow_subgraph *root;
@@ -1200,8 +1339,94 @@ suite("CFlow runtime") {
 
         root = &normalized.subgraphs[normalized.root];
         root->nodes[root->entry].op = CFLOW_OP_FILTER;
-        check_false(cflow_value_runtime_graph_supported(&normalized));
+        check_true(cflow_value_runtime_graph_supported(&normalized));
 
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("executes managed filter map and reduce slots") {
+        int input[] = {1, 2, 3, 4};
+        cmeta_type_desc managed_int = cmeta_type_int;
+        cmeta_type_desc managed_long = cmeta_type_long;
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        cflow_graph optimized = {0};
+        cflow_scheduler scheduler = {0};
+        cflow_source source = {0};
+        cflow_run run = {0};
+        tracked_long_sink_state state = {0};
+        cflow_sink_callbacks callbacks = {
+            tracked_long_sink_value,
+            tracked_long_sink_error,
+            tracked_long_sink_done,
+            &state
+        };
+        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+
+        managed_int.traits = &tracked_int_traits;
+        managed_long.traits = &tracked_long_traits;
+        normalized.root = CMETA_INVALID_ID;
+        optimized.root = CMETA_INVALID_ID;
+        tracked_int_copies = tracked_int_moves = tracked_int_destroys = 0u;
+        tracked_long_copies = tracked_long_moves = tracked_long_destroys = 0u;
+
+        cflow_graph_init(&surface, &managed_int);
+        check_true(cflow_graph_add(
+            &surface, CFLOW_OP_FILTER, cflow_test_even.fn, NULL));
+        check_true(cflow_graph_add(
+            &surface, CFLOW_OP_MAP, cflow_test_square.fn, NULL));
+        check_true(cflow_graph_add(
+            &surface, CFLOW_OP_REDUCE, runtime_sum_long.fn, NULL));
+        {
+            cflow_subgraph *root = &surface.subgraphs[surface.root];
+            root->input_type = &managed_int;
+            root->output_type = &managed_long;
+            for (size_t i = 0u; i < root->node_count; ++i) {
+                cflow_node *node = &root->nodes[i];
+                if (node->op == CFLOW_OP_SOURCE) {
+                    node->input_type = &managed_int;
+                    node->output_type = &managed_int;
+                } else if (node->op == CFLOW_OP_FILTER) {
+                    node->input_type = &managed_int;
+                    node->output_type = &managed_int;
+                } else if (node->op == CFLOW_OP_MAP) {
+                    node->input_type = &managed_int;
+                    node->output_type = &managed_long;
+                } else if (node->op == CFLOW_OP_REDUCE) {
+                    node->input_type = &managed_long;
+                    node->output_type = &managed_long;
+                }
+            }
+        }
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_graph_optimize(
+            &optimized, &normalized,
+            (cflow_opt_options){CMETA_OPT_DEFAULT}, NULL));
+        check_true(cflow_subgraph_output_type(
+            &optimized, optimized.root) == &managed_long);
+        check_true(cflow_scheduler_test_init(&scheduler));
+        check_true(cflow_source_from_array(
+            &source, &managed_int, input, 4u));
+        check_true(cflow_run_open(
+            &run, &optimized, &source, &scheduler, &sink));
+        check_true(cflow_run_request(&run, 1u));
+        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+
+        check_null(state.error);
+        check_true(state.done);
+        check_equal(state.values, (size_t)1u);
+        check_equal(state.value, 20L);
+        cflow_run_close(&run);
+        check_equal(tracked_int_copies, (size_t)8u);
+        check_equal(tracked_int_moves, (size_t)0u);
+        check_equal(tracked_int_destroys, (size_t)8u);
+        check_equal(tracked_long_copies, (size_t)1u);
+        check_equal(tracked_long_moves, (size_t)2u);
+        check_equal(tracked_long_destroys, (size_t)6u);
+
+        cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&optimized);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
     }

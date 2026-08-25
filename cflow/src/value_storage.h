@@ -37,6 +37,26 @@ static inline bool cflow_value_type_supported(const cmeta_type_desc *type) {
            cflow_value_lifecycle_type_supported(type);
 }
 
+static inline bool cflow_value_construct(const cmeta_type_desc *type,
+                                         void *destination,
+                                         const void *source) {
+    if (!destination || !source || !cflow_value_type_supported(type))
+        return false;
+    if (cflow_value_storage_type_supported(type)) {
+        memcpy(destination, source, type->size);
+        return true;
+    }
+    return type->traits->copy_construct(destination, source);
+}
+
+static inline void cflow_value_destroy(const cmeta_type_desc *type,
+                                       void *value) {
+    if (!value || !cflow_value_type_supported(type) ||
+        cflow_value_storage_type_supported(type))
+        return;
+    type->traits->destroy(value);
+}
+
 static inline bool cflow_value_slot_init(cflow_value_slot *slot,
                                          const cmeta_type_desc *type) {
     size_t allocation_size;
@@ -73,9 +93,7 @@ static inline bool cflow_value_slot_copy(cflow_value_slot *slot,
     if (!slot || !slot->storage || !slot->type || slot->live || !source)
         return false;
 
-    if (cflow_value_storage_type_supported(slot->type)) {
-        memcpy(slot->storage, source, slot->type->size);
-    } else if (!slot->type->traits->copy_construct(slot->storage, source)) {
+    if (!cflow_value_construct(slot->type, slot->storage, source)) {
         return false;
     }
     slot->live = true;
@@ -105,8 +123,7 @@ static inline bool cflow_value_slot_move(cflow_value_slot *destination,
 static inline void cflow_value_slot_reset(cflow_value_slot *slot) {
     if (!slot || !slot->live)
         return;
-    if (!cflow_value_storage_type_supported(slot->type))
-        slot->type->traits->destroy(slot->storage);
+    cflow_value_destroy(slot->type, slot->storage);
     slot->live = false;
 }
 
@@ -120,7 +137,6 @@ static inline void cflow_value_slot_destroy(cflow_value_slot *slot) {
 
 static inline bool cflow_value_runtime_graph_supported(
     const cflow_graph *graph) {
-    bool requires_lifecycle = false;
     size_t subgraph_index;
 
     if (!graph || (graph->subgraph_count != 0u && !graph->subgraphs))
@@ -135,9 +151,6 @@ static inline bool cflow_value_runtime_graph_supported(
         if (!cflow_value_type_supported(subgraph->input_type) ||
             !cflow_value_type_supported(subgraph->output_type))
             return false;
-        requires_lifecycle = requires_lifecycle ||
-            !cflow_value_storage_type_supported(subgraph->input_type) ||
-            !cflow_value_storage_type_supported(subgraph->output_type);
         for (node_index = 0u; node_index < subgraph->node_count;
              ++node_index) {
             const cflow_node *node = &subgraph->nodes[node_index];
@@ -145,21 +158,7 @@ static inline bool cflow_value_runtime_graph_supported(
             if (!cflow_value_type_supported(node->input_type) ||
                 !cflow_value_type_supported(node->output_type))
                 return false;
-            requires_lifecycle = requires_lifecycle ||
-                !cflow_value_storage_type_supported(node->input_type) ||
-                !cflow_value_storage_type_supported(node->output_type);
         }
-    }
-    if (!requires_lifecycle)
-        return true;
-
-    for (subgraph_index = 0u; subgraph_index < graph->subgraph_count;
-         ++subgraph_index) {
-        const cflow_subgraph *subgraph = &graph->subgraphs[subgraph_index];
-
-        if (subgraph->node_count != 1u ||
-            subgraph->nodes[0].op != CFLOW_OP_SOURCE)
-            return false;
     }
     return true;
 }

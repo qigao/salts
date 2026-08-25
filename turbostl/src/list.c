@@ -457,12 +457,16 @@ static cmeta_gen_status stl_list_meta_range_next(
     const void *object, cmeta_range_cursor *cursor, void *out_value) {
   const list_t *list = (const list_t *)object;
   const void *value = NULL;
+  cmeta_range_cursor next_cursor;
   if (list == NULL || cursor == NULL || out_value == NULL ||
       list->element_type == NULL)
     return CMETA_GEN_ERROR;
-  if (!list_range_next(list, cursor, &value))
+  next_cursor = *cursor;
+  if (!list_range_next(list, &next_cursor, &value))
     return CMETA_GEN_DONE;
-  memcpy(out_value, value, list->element_type->size);
+  if (!stl_cmeta_range_construct(list->element_type, out_value, value))
+    return CMETA_GEN_ERROR;
+  *cursor = next_cursor;
   return cursor->state[0] == NULL ? CMETA_GEN_VALUE_AND_DONE :
                                     CMETA_GEN_VALUE;
 }
@@ -472,7 +476,9 @@ static cmeta_range stl_list_range_factory(const void *object) {
   cmeta_range range = {
       object,
       list != NULL ? list->element_type : NULL,
-      CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
+      stl_cmeta_range_flags_for(
+          list != NULL ? list->element_type : NULL,
+          CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE),
       stl_list_range_size,
       stl_list_meta_range_next,
       stl_list_range_version(object),

@@ -2,10 +2,43 @@
 #define TURBOSTL_DETAIL_INSTANCE_META_H
 
 #include <cmeta/range.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+static inline bool stl_cmeta_range_constructs_values(
+    const cmeta_type_desc *type) {
+  return type != NULL && type->traits != NULL &&
+         (type->traits->flags &
+          (CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY)) !=
+             (CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY) &&
+         cmeta_type_require_traits(
+             type, CMETA_TRAIT_COPY | CMETA_TRAIT_DESTROY) == CMETA_OK;
+}
+
+static inline bool stl_cmeta_range_construct(
+    const cmeta_type_desc *type, void *destination, const void *source) {
+  if (type == NULL || destination == NULL || source == NULL)
+    return false;
+  if (stl_cmeta_range_constructs_values(type))
+    return type->traits->copy_construct(destination, source);
+  if (type->traits != NULL &&
+      (type->traits->flags &
+       (CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY)) !=
+          (CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY))
+    return false;
+  memcpy(destination, source, type->size);
+  return true;
+}
+
+static inline cmeta_range_flags stl_cmeta_range_flags_for(
+    const cmeta_type_desc *type, cmeta_range_flags flags) {
+  return stl_cmeta_range_constructs_values(type)
+             ? flags | CMETA_RANGE_CONSTRUCTS_VALUES
+             : flags;
+}
 
 /* Canonical generic constructors. Stable IDs, not object addresses, define
  * constructor identity across translation units. */

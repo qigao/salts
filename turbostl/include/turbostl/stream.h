@@ -14,6 +14,8 @@ extern "C" {
  * stream()/stream_keys()/stream_values()/stream_entries() and every fluent
  * operator are owned by CFlow. The bound TurboSTL container is borrowed and
  * must remain alive and unmodified until collection finishes.
+ * Interpreted collection supports managed COPY/MOVE/DESTROY element types.
+ * to_array() remains a trivial-value byte terminal and fails for managed T.
  *
  * Example:
  *   stream(&input, &pipeline)->filter(&pipeline, keep)->map(&pipeline, map_fn);

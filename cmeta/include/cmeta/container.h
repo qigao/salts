@@ -18,6 +18,36 @@
 #define CMETA_CONTAINER_API_I(prefix, suffix) prefix##_##suffix
 #define CMETA_CONTAINER_API(prefix, suffix) CMETA_CONTAINER_API_I(prefix, suffix)
 
+CMETA_INLINE bool cmeta_container_range_constructs_values(
+    const cmeta_type_desc *type) {
+    return type != NULL && type->traits != NULL &&
+           (type->traits->flags &
+            (CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY)) !=
+               (CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY) &&
+           cmeta_type_require_traits(
+               type, CMETA_TRAIT_COPY | CMETA_TRAIT_DESTROY) == CMETA_OK;
+}
+
+CMETA_INLINE bool cmeta_container_range_construct(
+    const cmeta_type_desc *type, void *destination, const void *source) {
+    if (!type || !destination || !source) return false;
+    if (cmeta_container_range_constructs_values(type))
+        return type->traits->copy_construct(destination, source);
+    if (type->traits != NULL &&
+        (type->traits->flags &
+         (CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY)) !=
+            (CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY))
+        return false;
+    memcpy(destination, source, type->size);
+    return true;
+}
+
+CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
+    const cmeta_type_desc *type, cmeta_range_flags flags) {
+    return cmeta_container_range_constructs_values(type)
+        ? flags | CMETA_RANGE_CONSTRUCTS_VALUES : flags;
+}
+
 
 /* -------------------------------------------------------------------------
  * Header-local Range capability generators
@@ -43,13 +73,17 @@
         if (cursor->index >= count) return CMETA_GEN_DONE; \
         value = (const type *)CMETA_CONTAINER_API(prefix, at_const)(&self->raw, cursor->index); \
         if (!value) return CMETA_GEN_ERROR; \
-        memcpy(out_value, value, sizeof(type)); \
+        if (!cmeta_container_range_construct( \
+                CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), \
+                out_value, value)) return CMETA_GEN_ERROR; \
         ++cursor->index; \
         return cursor->index == count ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE; \
     } \
     CMETA_INLINE cmeta_range name##_range(const name *self) { \
         cmeta_range range = { \
-            self, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), (flags), \
+            self, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), \
+            cmeta_container_range_flags_for( \
+                CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), (flags)), \
             name##_cmeta_range_size, name##_cmeta_range_next, \
             cmeta_range_capture_version((version_accessor), self), (version_accessor) \
         }; \
@@ -77,13 +111,20 @@
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_range_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
         const name *self = (const name *)object; const void *value = NULL; \
+        cmeta_range_cursor next_cursor; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
-        if (!CMETA_CONTAINER_API(prefix, range_next)(&self->raw, cursor, &value)) return CMETA_GEN_DONE; \
-        memcpy(out_value, value, sizeof(type)); \
+        next_cursor = *cursor; \
+        if (!CMETA_CONTAINER_API(prefix, range_next)(&self->raw, &next_cursor, &value)) return CMETA_GEN_DONE; \
+        if (!cmeta_container_range_construct( \
+                CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), \
+                out_value, value)) return CMETA_GEN_ERROR; \
+        *cursor = next_cursor; \
         return cursor->state[0] == NULL ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE; \
     } \
     CMETA_INLINE cmeta_range name##_range(const name *self) { \
-        cmeta_range range = { self, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), (flags), \
+        cmeta_range range = { self, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), \
+            cmeta_container_range_flags_for( \
+                CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), (flags)), \
             name##_cmeta_range_size, name##_cmeta_range_next, \
             cmeta_range_capture_version((version_accessor), self), (version_accessor) }; \
         return range; \
@@ -367,19 +408,28 @@
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_range_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
         const name *self = (const name *)object; \
+        cmeta_range_cursor start_cursor; \
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
+        start_cursor = *cursor; \
         limit = CMETA_CONTAINER_API(prefix, capacity)(&self->raw); \
         while (cursor->index < limit) { \
             const type *value = (const type *)CMETA_CONTAINER_API(prefix, key_at)(&self->raw, cursor->index); \
             ++cursor->index; \
-            if (value) { memcpy(out_value, value, sizeof(type)); return CMETA_GEN_VALUE; } \
+            if (value) { \
+                if (!cmeta_container_range_construct( \
+                        CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), \
+                        out_value, value)) { *cursor = start_cursor; return CMETA_GEN_ERROR; } \
+                return CMETA_GEN_VALUE; \
+            } \
         } \
         return CMETA_GEN_DONE; \
     } \
     CMETA_INLINE cmeta_range name##_range(const name *self) { \
         cmeta_range range = { \
-            self, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), (flags), \
+            self, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), \
+            cmeta_container_range_flags_for( \
+                CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), (flags)), \
             name##_cmeta_range_size, name##_cmeta_range_next, \
             cmeta_range_capture_version((version_accessor), self), (version_accessor) \
         }; \
@@ -463,32 +513,48 @@
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_keys_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
         const name *self = (const name *)object; \
+        cmeta_range_cursor start_cursor; \
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
+        start_cursor = *cursor; \
         limit = CMETA_CONTAINER_API(prefix, capacity)(&self->raw); \
         while (cursor->index < limit) { \
             const key_type *key = (const key_type *)CMETA_CONTAINER_API(prefix, key_at_op)(&self->raw, cursor->index); \
             ++cursor->index; \
-            if (key) { memcpy(out_value, key, sizeof(key_type)); return CMETA_GEN_VALUE; } \
+            if (key) { \
+                if (!cmeta_container_range_construct( \
+                        CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), \
+                        out_value, key)) { *cursor = start_cursor; return CMETA_GEN_ERROR; } \
+                return CMETA_GEN_VALUE; \
+            } \
         } \
         return CMETA_GEN_DONE; \
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_values_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
         const name *self = (const name *)object; \
+        cmeta_range_cursor start_cursor; \
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
+        start_cursor = *cursor; \
         limit = CMETA_CONTAINER_API(prefix, capacity)(&self->raw); \
         while (cursor->index < limit) { \
             const value_type *value = (const value_type *)CMETA_CONTAINER_API(prefix, value_at_op)(&self->raw, cursor->index); \
             ++cursor->index; \
-            if (value) { memcpy(out_value, value, sizeof(value_type)); return CMETA_GEN_VALUE; } \
+            if (value) { \
+                if (!cmeta_container_range_construct( \
+                        CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), \
+                        out_value, value)) { *cursor = start_cursor; return CMETA_GEN_ERROR; } \
+                return CMETA_GEN_VALUE; \
+            } \
         } \
         return CMETA_GEN_DONE; \
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_entries_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
         const name *self = (const name *)object; \
+        cmeta_range_cursor start_cursor; \
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
+        start_cursor = *cursor; \
         limit = CMETA_CONTAINER_API(prefix, capacity)(&self->raw); \
         while (cursor->index < limit) { \
             size_t slot = cursor->index; \
@@ -496,28 +562,37 @@
             const value_type *value = (const value_type *)CMETA_CONTAINER_API(prefix, value_at_op)(&self->raw, slot); \
             ++cursor->index; \
             if (key && value) { \
-                name##_entry *entry = (name##_entry *)out_value; \
-                memcpy(&entry->key, key, sizeof(key_type)); \
-                memcpy(&entry->value, value, sizeof(value_type)); \
+                name##_entry entry; \
+                memcpy(&entry.key, key, sizeof(key_type)); \
+                memcpy(&entry.value, value, sizeof(value_type)); \
+                if (!cmeta_container_range_construct( \
+                        &name##_entry_cmeta_type, out_value, &entry)) { \
+                    *cursor = start_cursor; return CMETA_GEN_ERROR; \
+                } \
                 return CMETA_GEN_VALUE; \
             } \
         } \
         return CMETA_GEN_DONE; \
     } \
     CMETA_INLINE cmeta_range name##_keys_range(const name *self) { \
-        cmeta_range range = { self, CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), (key_flags), \
+        cmeta_range range = { self, CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), \
+            cmeta_container_range_flags_for( \
+                CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), (key_flags)), \
             name##_cmeta_assoc_range_size, name##_cmeta_keys_next, \
             cmeta_range_capture_version((version_accessor), self), (version_accessor) }; \
         return range; \
     } \
     CMETA_INLINE cmeta_range name##_values_range(const name *self) { \
-        cmeta_range range = { self, CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), (value_flags), \
+        cmeta_range range = { self, CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), \
+            cmeta_container_range_flags_for( \
+                CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), (value_flags)), \
             name##_cmeta_assoc_range_size, name##_cmeta_values_next, \
             cmeta_range_capture_version((version_accessor), self), (version_accessor) }; \
         return range; \
     } \
     CMETA_INLINE cmeta_range name##_entries_range(const name *self) { \
-        cmeta_range range = { self, &name##_entry_cmeta_type, (entry_flags), \
+        cmeta_range range = { self, &name##_entry_cmeta_type, \
+            cmeta_container_range_flags_for(&name##_entry_cmeta_type, (entry_flags)), \
             name##_cmeta_assoc_range_size, name##_cmeta_entries_next, \
             cmeta_range_capture_version((version_accessor), self), (version_accessor) }; \
         return range; \
@@ -563,24 +638,40 @@
     CMETA_INLINE cmeta_gen_status name##_cmeta_link_next(const void *object, cmeta_range_cursor *cursor, void *out_value, int view) { \
         const name *self = (const name *)object; \
         const void *key = NULL; const void *value = NULL; \
+        cmeta_range_cursor next_cursor; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
-        if (!CMETA_CONTAINER_API(prefix, range_next)(&self->raw, cursor, &key, &value)) return CMETA_GEN_DONE; \
-        if (view == 0) memcpy(out_value, key, sizeof(key_type)); \
-        else if (view == 1) memcpy(out_value, value, sizeof(value_type)); \
-        else { name##_entry *entry = (name##_entry *)out_value; memcpy(&entry->key, key, sizeof(key_type)); memcpy(&entry->value, value, sizeof(value_type)); } \
+        next_cursor = *cursor; \
+        if (!CMETA_CONTAINER_API(prefix, range_next)(&self->raw, &next_cursor, &key, &value)) return CMETA_GEN_DONE; \
+        if (view == 0) { \
+            if (!cmeta_container_range_construct( \
+                    CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), \
+                    out_value, key)) return CMETA_GEN_ERROR; \
+        } else if (view == 1) { \
+            if (!cmeta_container_range_construct( \
+                    CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), \
+                    out_value, value)) return CMETA_GEN_ERROR; \
+        } else { \
+            name##_entry entry; \
+            memcpy(&entry.key, key, sizeof(key_type)); \
+            memcpy(&entry.value, value, sizeof(value_type)); \
+            if (!cmeta_container_range_construct( \
+                    &name##_entry_cmeta_type, out_value, &entry)) \
+                return CMETA_GEN_ERROR; \
+        } \
+        *cursor = next_cursor; \
         return cursor->state[0] == NULL ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE; \
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_keys_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { return name##_cmeta_link_next(object, cursor, out_value, 0); } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_values_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { return name##_cmeta_link_next(object, cursor, out_value, 1); } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_entries_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { return name##_cmeta_link_next(object, cursor, out_value, 2); } \
     CMETA_INLINE cmeta_range name##_keys_range(const name *self) { \
-        cmeta_range range = { self, CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), (key_flags), name##_cmeta_assoc_range_size, name##_cmeta_keys_next, cmeta_range_capture_version((version_accessor), self), (version_accessor) }; return range; \
+        cmeta_range range = { self, CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), cmeta_container_range_flags_for(CMETA_TYPEOF_OR(key_type, &name##_key_cmeta_type), (key_flags)), name##_cmeta_assoc_range_size, name##_cmeta_keys_next, cmeta_range_capture_version((version_accessor), self), (version_accessor) }; return range; \
     } \
     CMETA_INLINE cmeta_range name##_values_range(const name *self) { \
-        cmeta_range range = { self, CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), (value_flags), name##_cmeta_assoc_range_size, name##_cmeta_values_next, cmeta_range_capture_version((version_accessor), self), (version_accessor) }; return range; \
+        cmeta_range range = { self, CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), cmeta_container_range_flags_for(CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), (value_flags)), name##_cmeta_assoc_range_size, name##_cmeta_values_next, cmeta_range_capture_version((version_accessor), self), (version_accessor) }; return range; \
     } \
     CMETA_INLINE cmeta_range name##_entries_range(const name *self) { \
-        cmeta_range range = { self, &name##_entry_cmeta_type, (entry_flags), name##_cmeta_assoc_range_size, name##_cmeta_entries_next, cmeta_range_capture_version((version_accessor), self), (version_accessor) }; return range; \
+        cmeta_range range = { self, &name##_entry_cmeta_type, cmeta_container_range_flags_for(&name##_entry_cmeta_type, (entry_flags)), name##_cmeta_assoc_range_size, name##_cmeta_entries_next, cmeta_range_capture_version((version_accessor), self), (version_accessor) }; return range; \
     } \
     CMETA_INLINE cmeta_range name##_cmeta_erased_keys_range(const void *object) { return name##_keys_range((const name *)object); } \
     CMETA_INLINE cmeta_range name##_cmeta_erased_values_range(const void *object) { return name##_values_range((const name *)object); } \
