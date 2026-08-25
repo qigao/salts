@@ -6,6 +6,7 @@
 #include <cmeta/types.h>
 
 #ifdef __cplusplus
+extern "C++" {
 
 template <typename T>
 inline constexpr const cmeta_type_desc *cmeta_typeof_cpp() noexcept {
@@ -25,6 +26,8 @@ CMETA_PP_FOR_EACH_A(CMETA_CPP_TYPEOF_SPECIALIZE, ~, CMETA_KNOWN_TYPE_LIST)
 #define CMETA_TYPEOF_OR(type, fallback_desc) \
     (::cmeta_typeof_cpp<type>() != nullptr ? \
          ::cmeta_typeof_cpp<type>() : (fallback_desc))
+
+}
 
 #else
 

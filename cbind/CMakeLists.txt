@@ -22,6 +22,10 @@ target_include_directories(
 target_link_libraries(${TARGET_NAME}
   PUBLIC TurboUtils::CMeta TurboUtils::CSerde)
 
+if(NOT WIN32)
+  target_link_libraries(${TARGET_NAME} PRIVATE m)
+endif()
+
 install(
   TARGETS ${TARGET_NAME}
   EXPORT TurboUtilsTargets
