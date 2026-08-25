@@ -45,7 +45,8 @@ static cmeta_gen_status stl_##prefix##_range_next(                              
     value = (at_expr);                                                           \
     if (value == NULL)                                                           \
         return CMETA_GEN_ERROR;                                                  \
-    memcpy(out_value, value, type->size);                                        \
+    if (!stl_cmeta_range_construct(type, out_value, value))                     \
+        return CMETA_GEN_ERROR;                                                  \
     ++cursor->index;                                                             \
     return cursor->index == count ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE; \
 }                                                                                \
@@ -54,7 +55,8 @@ static cmeta_range stl_##prefix##_range_factory(const void *object) {           
     cmeta_range range = {                                                        \
         object,                                                                  \
         stl_##prefix##_element_type(self),                                       \
-        (range_flags),                                                           \
+        stl_cmeta_range_flags_for(stl_##prefix##_element_type(self),             \
+                                  (range_flags)),                                \
         stl_##prefix##_range_size,                                               \
         stl_##prefix##_range_next,                                               \
         stl_##prefix##_range_version(object),                                    \
@@ -173,13 +175,17 @@ static cmeta_gen_status stl_set_range_next_cb(
     const set_t *set = (const set_t *)object;
     const cmeta_type_desc *type = stl_set_element_type(set);
     const void *value = NULL;
+    cmeta_range_cursor next_cursor;
     if (set == NULL || type == NULL || cursor == NULL || out_value == NULL)
         return CMETA_GEN_ERROR;
-    if (!set_range_next(set, cursor, &value))
+    next_cursor = *cursor;
+    if (!set_range_next(set, &next_cursor, &value))
         return CMETA_GEN_DONE;
     if (value == NULL)
         return CMETA_GEN_ERROR;
-    memcpy(out_value, value, type->size);
+    if (!stl_cmeta_range_construct(type, out_value, value))
+        return CMETA_GEN_ERROR;
+    *cursor = next_cursor;
     return cursor->state[0] == NULL ? CMETA_GEN_VALUE_AND_DONE :
                                       CMETA_GEN_VALUE;
 }
@@ -189,8 +195,10 @@ static cmeta_range stl_set_range_factory(const void *object) {
     cmeta_range range = {
         object,
         stl_set_element_type(set),
-        CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
-            CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
+        stl_cmeta_range_flags_for(
+            stl_set_element_type(set),
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_SORTED |
+                CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE),
         stl_set_range_size,
         stl_set_range_next_cb,
         stl_set_range_version(object),
@@ -267,15 +275,21 @@ static cmeta_gen_status stl_hash_set_range_next_cb(
     const void *object, cmeta_range_cursor *cursor, void *out_value) {
     const hash_set_t *set = (const hash_set_t *)object;
     const cmeta_type_desc *type = stl_hash_set_element_type(set);
+    cmeta_range_cursor start_cursor;
     size_t capacity;
     if (set == NULL || type == NULL || cursor == NULL || out_value == NULL)
         return CMETA_GEN_ERROR;
+    start_cursor = *cursor;
     capacity = hash_set_capacity(set);
     while (cursor->index < capacity) {
         const void *value = hash_set_key_at(set, cursor->index);
         ++cursor->index;
         if (value != NULL) {
-            memcpy(out_value, value, type->size);
+            if (!stl_cmeta_range_construct(type, out_value, value))
+            {
+                *cursor = start_cursor;
+                return CMETA_GEN_ERROR;
+            }
             return CMETA_GEN_VALUE;
         }
     }
@@ -287,7 +301,9 @@ static cmeta_range stl_hash_set_range_factory(const void *object) {
     cmeta_range range = {
         object,
         stl_hash_set_element_type(set),
-        CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE,
+        stl_cmeta_range_flags_for(
+            stl_hash_set_element_type(set),
+            CMETA_RANGE_SIZED | CMETA_RANGE_UNIQUE | CMETA_RANGE_REUSABLE),
         stl_hash_set_range_size,
         stl_hash_set_range_next_cb,
         stl_hash_set_range_version(object),

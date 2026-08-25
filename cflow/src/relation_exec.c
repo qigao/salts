@@ -19,8 +19,7 @@ typedef struct relation_state {
     cflow_resumable coord;
     size_t child_count;
     const cmeta_type_desc *value_type;
-    unsigned char *last_value;
-    bool has_last_value;
+    cflow_value_slot last_value;
 } relation_state;
 
 static cflow_step child_policy_resume(void *state, cflow_resume_ctx *ctx, void *out) {
@@ -79,22 +78,36 @@ static bool fold_values(relation_state *rel, void *out) {
     if (!rel || !out || !rel->has_reducer || rel->child_count == 0 ||
         !cflow_coord_value(&rel->coord, 0, &type, &value) ||
         !cmeta_type_equal(type, rel->value_type) || !value) return false;
-    memcpy(out, value, rel->value_type->size);
-    unsigned char *tmp = malloc(rel->value_type->size ? rel->value_type->size : 1u);
-    if (!tmp) return false;
+    cflow_value_slot accumulator = {0};
+    if (!cflow_value_slot_init(&accumulator, rel->value_type) ||
+        !cflow_value_slot_copy(&accumulator, value)) {
+        cflow_value_slot_destroy(&accumulator);
+        return false;
+    }
     for (size_t i = 1; i < rel->child_count; ++i) {
+        cflow_value_slot next = {0};
         const cmeta_type_desc *child_type = NULL;
         const void *child_value = NULL;
         if (!cflow_coord_value(&rel->coord, i, &child_type, &child_value) ||
             !cmeta_type_equal(child_type, rel->value_type) || !child_value) {
-            free(tmp); return false;
+            cflow_value_slot_destroy(&accumulator);
+            return false;
         }
-        const void *args[2] = { out, child_value };
-        if (!cmeta_callable_invoke(&rel->reducer, tmp, args)) { free(tmp); return false; }
-        memcpy(out, tmp, rel->value_type->size);
+        const void *args[2] = { accumulator.storage, child_value };
+        if (!cflow_value_slot_init(&next, rel->value_type) ||
+            !cmeta_callable_invoke(&rel->reducer, next.storage, args)) {
+            cflow_value_slot_destroy(&next);
+            cflow_value_slot_destroy(&accumulator);
+            return false;
+        }
+        next.live = true;
+        cflow_value_slot_destroy(&accumulator);
+        accumulator = next;
     }
-    free(tmp);
-    return true;
+    const bool copied = cflow_value_construct(
+        rel->value_type, out, accumulator.storage);
+    cflow_value_slot_destroy(&accumulator);
+    return copied;
 }
 
 static bool invoke_values(relation_state *rel, void *out) {
@@ -124,8 +137,7 @@ static bool relation_result(relation_state *rel, cflow_coord_event event, void *
         !cflow_coord_value(&rel->coord, event.child_index, &type, &value) ||
         !cmeta_type_equal(type, rel->value_type) || !value)
         return false;
-    memcpy(out, value, rel->value_type->size);
-    return true;
+    return cflow_value_construct(rel->value_type, out, value);
 }
 
 static cflow_step relation_resume(void *state, cflow_resume_ctx *ctx, void *out) {
@@ -139,9 +151,13 @@ static cflow_step relation_resume(void *state, cflow_resume_ctx *ctx, void *out)
         if (step.kind == CFLOW_STEP_WAIT || step.kind == CFLOW_STEP_ERROR)
             return step;
         if (step.kind == CFLOW_STEP_DONE) {
-            if (rel->schema.completion == CFLOW_REL_COMPLETE_ALL_DONE && rel->has_last_value) {
-                memcpy(out, rel->last_value, rel->value_type->size);
-                rel->has_last_value = false;
+            if (rel->schema.completion == CFLOW_REL_COMPLETE_ALL_DONE &&
+                rel->last_value.live) {
+                if (!cflow_value_construct(rel->value_type, out,
+                                           rel->last_value.storage))
+                    return (cflow_step){ CFLOW_STEP_ERROR, {0},
+                                         "relation result construction failed" };
+                cflow_value_slot_reset(&rel->last_value);
                 return (cflow_step){ CFLOW_STEP_VALUE_AND_DONE, {0}, NULL };
             }
             return step;
@@ -149,9 +165,11 @@ static cflow_step relation_resume(void *state, cflow_resume_ctx *ctx, void *out)
         if (step.kind != CFLOW_STEP_VALUE && step.kind != CFLOW_STEP_VALUE_AND_DONE)
             return (cflow_step){ CFLOW_STEP_ERROR, {0}, "relation coordinator returned invalid step" };
 
-        unsigned char *target = out;
-        if (rel->schema.completion == CFLOW_REL_COMPLETE_ALL_DONE)
-            target = rel->last_value;
+        void *target = out;
+        if (rel->schema.completion == CFLOW_REL_COMPLETE_ALL_DONE) {
+            cflow_value_slot_reset(&rel->last_value);
+            target = rel->last_value.storage;
+        }
         if (!relation_result(rel, event, target))
             return (cflow_step){ CFLOW_STEP_ERROR, {0}, "relation result materialization failed" };
 
@@ -161,10 +179,13 @@ static cflow_step relation_resume(void *state, cflow_resume_ctx *ctx, void *out)
             return (cflow_step){ CFLOW_STEP_VALUE_AND_DONE, {0}, NULL };
         }
         if (rel->schema.completion == CFLOW_REL_COMPLETE_ALL_DONE) {
-            rel->has_last_value = true;
+            rel->last_value.live = true;
             if (done) {
-                memcpy(out, rel->last_value, rel->value_type->size);
-                rel->has_last_value = false;
+                if (!cflow_value_construct(rel->value_type, out,
+                                           rel->last_value.storage))
+                    return (cflow_step){ CFLOW_STEP_ERROR, {0},
+                                         "relation result construction failed" };
+                cflow_value_slot_reset(&rel->last_value);
                 return (cflow_step){ CFLOW_STEP_VALUE_AND_DONE, {0}, NULL };
             }
             continue; /* swallow intermediate relation values */
@@ -182,7 +203,7 @@ static void relation_destroy(void *state) {
     relation_state *rel = (relation_state *)state;
     if (!rel) return;
     if (rel->coord.ops && rel->coord.ops->destroy) rel->coord.ops->destroy(rel->coord.state);
-    free(rel->last_value);
+    cflow_value_slot_destroy(&rel->last_value);
     free(rel);
 }
 
@@ -194,7 +215,7 @@ bool cflow_resumable_from_relation(cflow_resumable *out,
                                     const cflow_graph *graph,
                                     const cflow_node *node,
                                     const void *input) {
-    if (!out || !graph || !cflow_value_storage_graph_supported(graph) ||
+    if (!out || !graph || !cflow_value_runtime_graph_supported(graph) ||
         !node || node->op != CFLOW_OP_RELATION ||
         !node->has_relation || !input || node->subgraph_count == 0u || !node->output_type)
         return false;
@@ -229,12 +250,14 @@ bool cflow_resumable_from_relation(cflow_resumable *out,
     rel->child_count = node->subgraph_count;
     rel->value_type = node->output_type;
     if (node->relation.completion == CFLOW_REL_COMPLETE_ALL_DONE) {
-        rel->last_value = malloc(rel->value_type->size ? rel->value_type->size : 1u);
-        if (!rel->last_value) { free(rel); goto fail_children; }
+        if (!cflow_value_slot_init(&rel->last_value, rel->value_type)) {
+            free(rel);
+            goto fail_children;
+        }
     }
     if (!cflow_resumable_from_coordination(&rel->coord, coord_mode(node->relation),
                                             children, node->subgraph_count)) {
-        free(rel->last_value);
+        cflow_value_slot_destroy(&rel->last_value);
         free(rel);
         goto fail_children;
     }

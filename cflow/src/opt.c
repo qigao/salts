@@ -4,6 +4,7 @@
 #include <cflow/property.h>
 #include "dense_successor_index.h"
 #include "graph_internal.h"
+#include "value_storage.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -125,6 +126,9 @@ static bool append_plain_node(opt_ctx *ctx, cflow_subgraph_id sgid,
     }
     if (!append_edge(ctx, sgid, prev, *out)) return false;
 
+    ctx->dst->subgraphs[sgid].nodes[*out].input_type = src->input_type;
+    ctx->dst->subgraphs[sgid].nodes[*out].output_type = src->output_type;
+
     /* Preserve a pre-existing optimized chain if optimization is run again. */
     if (src->fn_chain_count) {
         cflow_node *dstn = &ctx->dst->subgraphs[sgid].nodes[*out];
@@ -195,6 +199,8 @@ static bool append_relation(opt_ctx *ctx, cflow_subgraph_id sgid,
         return false;
     }
     if (!append_edge(ctx, sgid, prev, id)) return false;
+    ctx->dst->subgraphs[sgid].nodes[id].input_type = src->input_type;
+    ctx->dst->subgraphs[sgid].nodes[id].output_type = src->output_type;
     return cflow_graph_set_subgraph_exit(ctx->dst, sgid, id);
 }
 
@@ -343,7 +349,10 @@ static bool optimize_subgraph(opt_ctx *ctx, cflow_subgraph_id src_id,
         const cflow_node *node = cflow_subgraph_node(srcsg, next);
         if (!node) { ctx->error = "optimizer encountered invalid node"; goto done; }
 
-        if ((ctx->passes & CMETA_OPT_MAP_FUSION) && maplike(node) && node_is_pure(ctx, node)) {
+        if ((ctx->passes & CMETA_OPT_MAP_FUSION) && maplike(node) &&
+            cflow_value_storage_type_supported(node->input_type) &&
+            cflow_value_storage_type_supported(node->output_type) &&
+            node_is_pure(ctx, node)) {
             cflow_node_id last = next;
             if (!append_map_chain(ctx, src_id, dstid, srcsg, &index, next, &last)) goto done;
             at = last;

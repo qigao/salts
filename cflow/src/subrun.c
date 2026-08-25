@@ -10,8 +10,8 @@
 typedef struct subrun_state {
     const cflow_graph *graph;
     cflow_subgraph_id subgraph;
-    unsigned char *input;
-    unsigned char *value;
+    cflow_value_slot input;
+    cflow_value_slot value;
     cflow_run run;
     cflow_scheduler *scheduler;
 
@@ -29,19 +29,30 @@ static bool subrun_on_value(void *user,
                            const cmeta_type_desc *type,
                            const void *value) {
     subrun_state *s = (subrun_state *)user;
+    cflow_value_slot incoming = {0};
+    cflow_value_slot empty = {0};
     if (!s || !value ||
         !cmeta_type_equal(type, cflow_subgraph_output_type(s->graph, s->subgraph))) return false;
+    if (!cflow_value_slot_init(&incoming, type) ||
+        !cflow_value_slot_copy(&incoming, value)) {
+        cflow_value_slot_destroy(&incoming);
+        return false;
+    }
     turbo_mutex_lock(&s->lock);
     if (s->cancelled || s->value_ready) {
         turbo_mutex_unlock(&s->lock);
+        cflow_value_slot_destroy(&incoming);
         return false;
     }
-    memcpy(s->value, value, type->size);
+    empty = s->value;
+    s->value = incoming;
+    memset(&incoming, 0, sizeof(incoming));
     s->value_ready = true;
     s->requested = false;
     cflow_waker w = s->waiter;
     s->waiter = (cflow_waker){0};
     turbo_mutex_unlock(&s->lock);
+    cflow_value_slot_destroy(&empty);
     if (w.wake) w.wake(w.user);
     return true;
 }
@@ -84,7 +95,7 @@ static bool subrun_start(subrun_state *s, cflow_resume_ctx *ctx) {
     cflow_sink sink = subrun_sink_as_cflow_sink(s);
     if (!cflow_source_from_array(&source,
                                  cflow_subgraph_source_type(s->graph, s->subgraph),
-                                 s->input,
+                                 s->input.storage,
                                  1)) return false;
     if (!cflow_run_open_subgraph(&s->run, s->graph, s->subgraph, &source, ctx->scheduler, &sink)) {
         cflow_source_destroy(&source);
@@ -144,10 +155,17 @@ static cflow_step subrun_resume(void *state,
     }
     if (s->value_ready) {
         const cmeta_type_desc *type = cflow_subgraph_output_type(s->graph, s->subgraph);
-        memcpy(out_value, s->value, type->size);
+        cflow_value_slot value = s->value;
+        memset(&s->value, 0, sizeof(s->value));
         s->value_ready = false;
         bool done = s->done;
         turbo_mutex_unlock(&s->lock);
+        if (!cflow_value_construct(type, out_value, value.storage)) {
+            cflow_value_slot_destroy(&value);
+            return (cflow_step){ CFLOW_STEP_ERROR, {0},
+                                 "subgraph value construction failed" };
+        }
+        cflow_value_slot_destroy(&value);
         return (cflow_step){ done ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE, {0}, NULL };
     }
     if (s->done) {
@@ -191,8 +209,8 @@ static void subrun_destroy(void *state) {
     subrun_cancel(s);
     if (s->started) cflow_run_close(&s->run);
     turbo_mutex_destroy(&s->lock);
-    free(s->value);
-    free(s->input);
+    cflow_value_slot_destroy(&s->value);
+    cflow_value_slot_destroy(&s->input);
     free(s);
 }
 
@@ -207,7 +225,7 @@ bool cflow_resumable_from_subgraph(cflow_resumable *out,
                                     cflow_subgraph_id subgraph,
                                     const void *source_value) {
     if (!out || !graph || !cflow_graph_subgraph(graph, subgraph) ||
-        !source_value || !cflow_value_storage_graph_supported(graph))
+        !source_value || !cflow_value_runtime_graph_supported(graph))
         return false;
     subrun_state *s = calloc(1, sizeof(*s));
     if (!s) return false;
@@ -218,13 +236,15 @@ bool cflow_resumable_from_subgraph(cflow_resumable *out,
     }
     const cmeta_type_desc *in = cflow_subgraph_source_type(graph, subgraph);
     const cmeta_type_desc *out_type = cflow_subgraph_output_type(graph, subgraph);
-    s->input = malloc(in->size ? in->size : 1);
-    s->value = malloc(out_type->size ? out_type->size : 1);
-    if (!s->input || !s->value) {
-        free(s->value); free(s->input); turbo_mutex_destroy(&s->lock); free(s);
+    if (!cflow_value_slot_init(&s->input, in) ||
+        !cflow_value_slot_copy(&s->input, source_value) ||
+        !cflow_value_slot_init(&s->value, out_type)) {
+        cflow_value_slot_destroy(&s->value);
+        cflow_value_slot_destroy(&s->input);
+        turbo_mutex_destroy(&s->lock);
+        free(s);
         return false;
     }
-    memcpy(s->input, source_value, in->size);
     s->graph = graph;
     s->subgraph = subgraph;
     *out = (cflow_resumable){ "subrun", out_type, &subrun_ops, s };

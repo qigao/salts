@@ -23,15 +23,15 @@
 
 typedef struct generator_state {
     cmeta_callable fn;
-    unsigned char *input;
+    cflow_value_slot input;
     size_t cursor;
 } generator_state;
 
 typedef struct continuation_frame {
     cflow_node_id node_id;
     cflow_resumable machine;
-    unsigned char *root;
-    unsigned char *output;
+    cflow_value_slot root;
+    cflow_value_slot output;
     bool done;
 } continuation_frame;
 
@@ -46,8 +46,7 @@ typedef struct run_impl {
     cflow_resume_ctx resume_ctx;
 
     cflow_value_slot source_slot;
-    unsigned char **reduce_value;
-    bool *reduce_set;
+    cflow_value_slot *reduce_value;
     bool *reduce_flushed;
 
     continuation_frame continuations[CMETA_RUN_MAX_CONTINUATIONS];
@@ -104,7 +103,8 @@ static cflow_step generator_resume_machine(void *state, cflow_resume_ctx *ctx, v
     (void)ctx;
     generator_state *g = (generator_state *)state;
     if (!g) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "generator state is null" };
-    cmeta_gen_status st = cmeta_callable_generate(&g->fn, g->input, out, &g->cursor);
+    cmeta_gen_status st = cmeta_callable_generate(
+        &g->fn, g->input.storage, out, &g->cursor);
     switch (st) {
         case CMETA_GEN_VALUE: return (cflow_step){ CFLOW_STEP_VALUE, {0}, NULL };
         case CMETA_GEN_VALUE_AND_DONE: return (cflow_step){ CFLOW_STEP_VALUE_AND_DONE, {0}, NULL };
@@ -115,7 +115,7 @@ static cflow_step generator_resume_machine(void *state, cflow_resume_ctx *ctx, v
 }
 static void generator_destroy_machine(void *state) {
     generator_state *g = (generator_state *)state;
-    if (g) { free(g->input); free(g); }
+    if (g) { cflow_value_slot_destroy(&g->input); free(g); }
 }
 static const cflow_resumable_ops generator_machine_ops = {
     generator_resume_machine, NULL, generator_destroy_machine
@@ -125,7 +125,8 @@ static const cflow_resumable_ops generator_machine_ops = {
 static void continuation_clear(continuation_frame *f) {
     if (!f) return;
     if (f->machine.ops && f->machine.ops->destroy) f->machine.ops->destroy(f->machine.state);
-    free(f->root); free(f->output);
+    cflow_value_slot_destroy(&f->root);
+    cflow_value_slot_destroy(&f->output);
     memset(f, 0, sizeof(*f));
 }
 
@@ -145,16 +146,19 @@ static bool push_continuation(run_impl *r,
     memset(f, 0, sizeof(*f));
     f->node_id = node_id;
     f->machine = machine;
-    f->output = malloc(machine.output_type->size ? machine.output_type->size : 1);
-    if (root_source) {
-        const cmeta_type_desc *src_type = cflow_subgraph_source_type(r->graph, r->subgraph_id);
-        f->root = malloc(src_type->size ? src_type->size : 1);
-        if (f->root) memcpy(f->root, root_source, src_type->size);
-    }
-    if (!f->output || (root_source && !f->root)) {
+    if (!cflow_value_slot_init(&f->output, machine.output_type)) {
         continuation_clear(f);
         --r->continuation_count;
         return false;
+    }
+    if (root_source) {
+        const cmeta_type_desc *src_type = cflow_subgraph_source_type(r->graph, r->subgraph_id);
+        if (!cflow_value_slot_init(&f->root, src_type) ||
+            !cflow_value_slot_copy(&f->root, root_source)) {
+            continuation_clear(f);
+            --r->continuation_count;
+            return false;
+        }
     }
     return true;
 }
@@ -162,13 +166,12 @@ static bool push_continuation(run_impl *r,
 static void reducers_clear(run_impl *r) {
     if (!r) return;
     if (r->reduce_value) {
-        for (size_t i = 0; i < r->subgraph->node_count; ++i) free(r->reduce_value[i]);
+        for (size_t i = 0; i < r->subgraph->node_count; ++i)
+            cflow_value_slot_destroy(&r->reduce_value[i]);
     }
     free(r->reduce_value);
-    free(r->reduce_set);
     free(r->reduce_flushed);
     r->reduce_value = NULL;
-    r->reduce_set = NULL;
     r->reduce_flushed = NULL;
 }
 
@@ -209,7 +212,7 @@ static bool reducers_done(const run_impl *r) {
         const cflow_node *node = cflow_subgraph_node(r->subgraph, (cflow_node_id)i);
         const cflow_op_schema *schema = node ? cflow_op_schema_get(node->op) : NULL;
         if (schema && schema->cardinality == CMETA_CARD_REDUCE &&
-            r->reduce_set[i] && !r->reduce_flushed[i]) return false;
+            r->reduce_value[i].live && !r->reduce_flushed[i]) return false;
     }
     return true;
 }
@@ -224,22 +227,22 @@ typedef enum node_action {
 typedef node_action (*node_handler)(run_impl *r,
                                     cflow_node_id node_id,
                                     const cflow_node *n,
-                                    unsigned char **owned,
+                                    cflow_value_slot *owned,
                                     const cmeta_type_desc **cur_type,
                                     const void *root_source);
 
 static node_action semantic_filter(run_impl *r, cflow_node_id i, const cflow_node *n,
-                                   unsigned char **owned, const cmeta_type_desc **cur_type,
+                                   cflow_value_slot *owned, const cmeta_type_desc **cur_type,
                                    const void *root_source) {
     (void)r; (void)i; (void)cur_type; (void)root_source;
-    _Bool keep = false; const void *args[1] = { *owned };
+    _Bool keep = false; const void *args[1] = { owned->storage };
     if (!cmeta_callable_invoke(&n->fn, &keep, args)) return NODE_FAIL;
-    if (!keep) { free(*owned); *owned = NULL; return NODE_STOP; }
+    if (!keep) { cflow_value_slot_reset(owned); return NODE_STOP; }
     return NODE_CONTINUE;
 }
 
 static node_action semantic_map(run_impl *r, cflow_node_id i, const cflow_node *n,
-                                unsigned char **owned, const cmeta_type_desc **cur_type,
+                                cflow_value_slot *owned, const cmeta_type_desc **cur_type,
                                 const void *root_source) {
     (void)r; (void)i; (void)root_source;
     const cmeta_callable *chain = n->fn_chain_count ? n->fn_chain : &n->fn;
@@ -249,35 +252,41 @@ static node_action semantic_map(run_impl *r, cflow_node_id i, const cflow_node *
         const cmeta_sig_desc *sig = cmeta_callable_signature(chain[k]);
         if (!sig || sig->param_count != 1u || !cmeta_type_equal(sig->params[0], type))
             return NODE_FAIL;
-        unsigned char *next = malloc(sig->return_type->size ? sig->return_type->size : 1u);
-        const void *args[1] = { *owned };
-        if (!next) return NODE_FAIL;
-        if (!cmeta_callable_invoke(&chain[k], next, args)) { free(next); return NODE_FAIL; }
-        free(*owned);
+        const cmeta_type_desc *next_type =
+            k + 1u == count ? n->output_type : sig->return_type;
+        cflow_value_slot next = {0};
+        const void *args[1] = { owned->storage };
+        if (!cflow_value_slot_init(&next, next_type)) return NODE_FAIL;
+        if (!cmeta_callable_invoke(&chain[k], next.storage, args)) {
+            cflow_value_slot_destroy(&next);
+            return NODE_FAIL;
+        }
+        next.live = true;
+        cflow_value_slot_destroy(owned);
         *owned = next;
-        type = sig->return_type;
+        type = next_type;
     }
     *cur_type = type;
     return cmeta_type_equal(type, n->output_type) ? NODE_CONTINUE : NODE_FAIL;
 }
 
 static node_action semantic_high_level(run_impl *r, cflow_node_id i, const cflow_node *n,
-                                       unsigned char **owned, const cmeta_type_desc **cur_type,
+                                       cflow_value_slot *owned, const cmeta_type_desc **cur_type,
                                        const void *root_source) {
     (void)r; (void)i; (void)n; (void)owned; (void)cur_type; (void)root_source;
     return NODE_FAIL;
 }
 
 static node_action semantic_relation(run_impl *r, cflow_node_id i, const cflow_node *n,
-                                     unsigned char **owned, const cmeta_type_desc **cur_type,
+                                     cflow_value_slot *owned, const cmeta_type_desc **cur_type,
                                      const void *root_source) {
     (void)cur_type;
-    if (!r || !n || !owned || !*owned || r->continuation_count >= CMETA_RUN_MAX_CONTINUATIONS)
+    if (!r || !n || !owned || !owned->live || r->continuation_count >= CMETA_RUN_MAX_CONTINUATIONS)
         return NODE_FAIL;
     cflow_resumable machine = {0};
-    if (!cflow_resumable_from_relation(&machine, r->graph, n, *owned)) return NODE_FAIL;
-    free(*owned);
-    *owned = NULL;
+    if (!cflow_resumable_from_relation(&machine, r->graph, n,
+                                        owned->storage)) return NODE_FAIL;
+    cflow_value_slot_reset(owned);
     if (!push_continuation(r, i, machine, root_source)) {
         if (machine.ops && machine.ops->destroy) machine.ops->destroy(machine.state);
         return NODE_FAIL;
@@ -286,32 +295,47 @@ static node_action semantic_relation(run_impl *r, cflow_node_id i, const cflow_n
 }
 
 static node_action semantic_reduce(run_impl *r, cflow_node_id i, const cflow_node *n,
-                                   unsigned char **owned, const cmeta_type_desc **cur_type,
+                                   cflow_value_slot *owned, const cmeta_type_desc **cur_type,
                                    const void *root_source) {
     (void)root_source;
-    if (!r->reduce_set[i]) {
-        r->reduce_value[i] = malloc((*cur_type)->size ? (*cur_type)->size : 1);
-        if (!r->reduce_value[i]) return NODE_FAIL;
-        memcpy(r->reduce_value[i], *owned, (*cur_type)->size);
-        r->reduce_set[i] = true;
+    if (!r->reduce_value[i].live) {
+        if (!cflow_value_slot_move(&r->reduce_value[i], owned))
+            return NODE_FAIL;
     } else {
-        unsigned char *next = malloc((*cur_type)->size ? (*cur_type)->size : 1);
-        const void *args[2] = { r->reduce_value[i], *owned };
-        if (!next) return NODE_FAIL;
-        if (!cmeta_callable_invoke(&n->fn, next, args)) { free(next); return NODE_FAIL; }
-        free(r->reduce_value[i]); r->reduce_value[i] = next;
+        cflow_value_slot next = {0};
+        const void *args[2] = {
+            r->reduce_value[i].storage, owned->storage };
+        if (!cflow_value_slot_init(&next, n->output_type))
+            return NODE_FAIL;
+        if (!cmeta_callable_invoke(&n->fn, next.storage, args)) {
+            cflow_value_slot_destroy(&next);
+            return NODE_FAIL;
+        }
+        next.live = true;
+        cflow_value_slot_reset(&r->reduce_value[i]);
+        cflow_value_slot_reset(owned);
+        if (!cflow_value_slot_move(&r->reduce_value[i], &next)) {
+            cflow_value_slot_destroy(&next);
+            return NODE_FAIL;
+        }
+        cflow_value_slot_destroy(&next);
     }
-    free(*owned); *owned = NULL; return NODE_STOP;
+    return NODE_STOP;
 }
 
 static node_action semantic_flat_map(run_impl *r, cflow_node_id i, const cflow_node *n,
-                                     unsigned char **owned, const cmeta_type_desc **cur_type,
+                                     cflow_value_slot *owned, const cmeta_type_desc **cur_type,
                                      const void *root_source) {
     (void)cur_type;
     if (r->continuation_count >= CMETA_RUN_MAX_CONTINUATIONS) return NODE_FAIL;
     generator_state *gs = calloc(1, sizeof(*gs));
     if (!gs) return NODE_FAIL;
-    gs->fn = n->fn; gs->input = *owned; *owned = NULL;
+    gs->fn = n->fn;
+    if (!cflow_value_slot_init(&gs->input, owned->type) ||
+        !cflow_value_slot_move(&gs->input, owned)) {
+        generator_destroy_machine(gs);
+        return NODE_FAIL;
+    }
     cflow_resumable machine = { "flatMap-generator", n->output_type,
                                 &generator_machine_ops, gs };
     if (!push_continuation(r, i, machine, root_source)) {
@@ -353,36 +377,43 @@ static bool process_path(run_impl *r,
                          const void *value,
                          const cmeta_type_desc *type,
                          const void *root_source) {
-    unsigned char *owned = malloc(type->size ? type->size : 1);
-    if (!owned) { run_fail(r, "allocation failed"); return false; }
-    memcpy(owned, value, type->size);
+    cflow_value_slot owned = {0};
+    if (!cflow_value_slot_init(&owned, type) ||
+        !cflow_value_slot_copy(&owned, value)) {
+        cflow_value_slot_destroy(&owned);
+        run_fail(r, "value construction failed");
+        return false;
+    }
     const cmeta_type_desc *cur_type = type;
 
     cflow_node_id current = node_id;
     while (current != CMETA_INVALID_ID) {
         const cflow_node *n = cflow_subgraph_node(r->subgraph, current);
         if (!n || n->op <= CFLOW_OP_SOURCE || n->op >= CFLOW_OP_COUNT || !handlers[n->op]) {
-            free(owned); run_fail(r, "operator has no execution semantic"); return false;
+            cflow_value_slot_destroy(&owned); run_fail(r, "operator has no execution semantic"); return false;
         }
         node_action a = handlers[n->op](r, current, n, &owned, &cur_type, root_source);
         if (a == NODE_FAIL) {
-            free(owned); run_fail(r, "operator semantic failed"); return false;
+            cflow_value_slot_destroy(&owned); run_fail(r, "operator semantic failed"); return false;
         }
-        if (a == NODE_STOP) return true;
+        if (a == NODE_STOP) {
+            cflow_value_slot_destroy(&owned);
+            return true;
+        }
 
         cflow_node_id next = CMETA_INVALID_ID;
         bool has_next = false;
-        if (!successor_of(r, current, &next, &has_next)) { free(owned); return false; }
+        if (!successor_of(r, current, &next, &has_next)) { cflow_value_slot_destroy(&owned); return false; }
         current = has_next ? next : CMETA_INVALID_ID;
     }
 
     if (!demand_consume_one(r)) {
-        free(owned); run_fail(r, "runtime produced value without demand"); return false;
+        cflow_value_slot_destroy(&owned); run_fail(r, "runtime produced value without demand"); return false;
     }
-    if (cflow_sink_valid(&r->sink) && !cflow_sink_value(&r->sink, cur_type, owned)) {
-        free(owned); run_fail(r, "observer rejected value"); return false;
+    if (cflow_sink_valid(&r->sink) && !cflow_sink_value(&r->sink, cur_type, owned.storage)) {
+        cflow_value_slot_destroy(&owned); run_fail(r, "observer rejected value"); return false;
     }
-    free(owned); return true;
+    cflow_value_slot_destroy(&owned); return true;
 }
 
 
@@ -417,19 +448,27 @@ static bool resume_top_continuation(run_impl *r) {
     if (f->done) {
         continuation_clear(f); --r->continuation_count; return true;
     }
-    cflow_step step = f->machine.ops->resume(f->machine.state, &r->resume_ctx, f->output);
+    if (f->output.live) {
+        run_fail(r, "continuation output slot is not empty");
+        return false;
+    }
+    cflow_step step = f->machine.ops->resume(
+        f->machine.state, &r->resume_ctx, f->output.storage);
     if (step.kind == CFLOW_STEP_ERROR) { run_fail(r, step.error ? step.error : "operator resumable error"); return false; }
     if (step.kind == CFLOW_STEP_WAIT) return arm_waitable(r, step.waitable);
     if (step.kind == CFLOW_STEP_DONE) { f->done = true; return true; }
     if (step.kind != CFLOW_STEP_VALUE && step.kind != CFLOW_STEP_VALUE_AND_DONE) {
         run_fail(r, "invalid operator resumable step"); return false;
     }
+    f->output.live = true;
     if (step.kind == CFLOW_STEP_VALUE_AND_DONE) f->done = true;
     cflow_node_id next = CMETA_INVALID_ID;
     bool has_next = false;
     if (!successor_of(r, f->node_id, &next, &has_next)) return false;
     if (!process_path(r, has_next ? next : CMETA_INVALID_ID,
-                      f->output, n->output_type, f->root)) return false;
+                      f->output.storage, n->output_type,
+                      f->root.live ? f->root.storage : NULL)) return false;
+    cflow_value_slot_reset(&f->output);
     return true;
 }
 
@@ -439,13 +478,15 @@ static bool flush_one_reducer(run_impl *r) {
         const cflow_node *node = cflow_subgraph_node(r->subgraph, (cflow_node_id)i);
         const cflow_op_schema *schema = node ? cflow_op_schema_get(node->op) : NULL;
         if (!schema || schema->cardinality != CMETA_CARD_REDUCE ||
-            !r->reduce_set[i] || r->reduce_flushed[i]) continue;
+            !r->reduce_value[i].live || r->reduce_flushed[i]) continue;
         r->reduce_flushed[i] = true;
         cflow_node_id next = CMETA_INVALID_ID;
         bool has_next = false;
         if (!successor_of(r, (cflow_node_id)i, &next, &has_next)) return false;
         if (!process_path(r, has_next ? next : CMETA_INVALID_ID,
-                          r->reduce_value[i], node->output_type, NULL)) return false;
+                          r->reduce_value[i].storage,
+                          node->output_type, NULL)) return false;
+        cflow_value_slot_reset(&r->reduce_value[i]);
         return true;
     }
     return true;
@@ -480,26 +521,24 @@ static bool process_source_value(run_impl *r,
                                  bool has_first,
                                  cflow_node_id first,
                                  const cmeta_type_desc *source_type) {
-    bool processed;
-
     r->source_slot.live = true;
-    if (!has_first && !cflow_value_storage_type_supported(source_type)) {
+    if (!has_first) {
+        bool accepted;
         if (!demand_consume_one(r)) {
             cflow_value_slot_reset(&r->source_slot);
             run_fail(r, "runtime produced value without demand");
             return false;
         }
-        processed = !cflow_sink_valid(&r->sink) ||
+        accepted = !cflow_sink_valid(&r->sink) ||
             cflow_sink_value(&r->sink, source_type,
                              r->source_slot.storage);
         cflow_value_slot_reset(&r->source_slot);
-        if (!processed)
+        if (!accepted)
             run_fail(r, "observer rejected value");
-        return processed;
+        return accepted;
     }
-
-    processed = process_path(
-        r, has_first ? first : CMETA_INVALID_ID, r->source_slot.storage,
+    bool processed = process_path(
+        r, first, r->source_slot.storage,
         source_type, r->source_slot.storage);
     cflow_value_slot_reset(&r->source_slot);
     return processed;
@@ -797,14 +836,29 @@ bool cflow_run_open_subgraph(cflow_run *run,
         return false;
     }
     r->reduce_value = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_value));
-    r->reduce_set = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_set));
     r->reduce_flushed = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_flushed));
-    if (!r->reduce_value || !r->reduce_set || !r->reduce_flushed) {
+    if (!r->reduce_value || !r->reduce_flushed) {
         cflow_value_slot_destroy(&r->source_slot); reducers_clear(r);
         turbo_cond_destroy(&r->task_cv);
         turbo_mutex_destroy(&r->lock);
         free(r);
         return false;
+    }
+    for (size_t i = 0; i < subgraph->node_count; ++i) {
+        const cflow_node *node = cflow_subgraph_node(
+            subgraph, (cflow_node_id)i);
+        const cflow_op_schema *schema = node
+            ? cflow_op_schema_get(node->op) : NULL;
+        if (schema && schema->cardinality == CMETA_CARD_REDUCE &&
+            !cflow_value_slot_init(&r->reduce_value[i],
+                                   node->output_type)) {
+            cflow_value_slot_destroy(&r->source_slot);
+            reducers_clear(r);
+            turbo_cond_destroy(&r->task_cv);
+            turbo_mutex_destroy(&r->lock);
+            free(r);
+            return false;
+        }
     }
     run->impl = r;
     memset(source, 0, sizeof(*source));

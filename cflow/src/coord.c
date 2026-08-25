@@ -28,7 +28,8 @@ typedef struct coord_child {
     coord_state *owner;
     size_t index;
     cflow_resumable machine;
-    unsigned char *value;
+    cflow_value_slot value;
+    cflow_value_slot pending;
     bool has_value;
     bool done;
     atomic_bool waiting;
@@ -52,8 +53,7 @@ struct coord_state {
 };
 
 typedef struct value_state {
-    const cmeta_type_desc *type;
-    unsigned char *value;
+    cflow_value_slot value;
     bool emitted;
 } value_state;
 
@@ -62,7 +62,8 @@ static cflow_step value_resume(void *state, cflow_resume_ctx *ctx, void *out) {
     value_state *s = (value_state *)state;
     if (!s || !out) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "value machine is invalid" };
     if (s->emitted) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
-    memcpy(out, s->value, s->type->size);
+    if (!cflow_value_construct(s->value.type, out, s->value.storage))
+        return (cflow_step){ CFLOW_STEP_ERROR, {0}, "value construction failed" };
     s->emitted = true;
     return (cflow_step){ CFLOW_STEP_VALUE_AND_DONE, {0}, NULL };
 }
@@ -70,7 +71,7 @@ static cflow_step value_resume(void *state, cflow_resume_ctx *ctx, void *out) {
 static void value_destroy(void *state) {
     value_state *s = (value_state *)state;
     if (!s) return;
-    free(s->value);
+    cflow_value_slot_destroy(&s->value);
     free(s);
 }
 
@@ -79,15 +80,16 @@ static const cflow_resumable_ops value_ops = { value_resume, NULL, value_destroy
 bool cflow_resumable_from_value(cflow_resumable *out,
                                  const cmeta_type_desc *type,
                                  const void *value) {
-    if (!out || !cflow_value_storage_type_supported(type) || !value ||
+    if (!out || !cflow_value_type_supported(type) || !value ||
         !type->size)
         return false;
     value_state *s = calloc(1, sizeof(*s));
     if (!s) return false;
-    s->value = malloc(type->size);
-    if (!s->value) { free(s); return false; }
-    memcpy(s->value, value, type->size);
-    s->type = type;
+    if (!cflow_value_slot_init(&s->value, type) ||
+        !cflow_value_slot_copy(&s->value, value)) {
+        value_destroy(s);
+        return false;
+    }
     *out = (cflow_resumable){ "value", type, &value_ops, s };
     return true;
 }
@@ -240,13 +242,30 @@ static cflow_step resume_child(coord_state *s,
     if (c->done || atomic_load(&c->waiting))
         return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
 
-    cflow_step step = c->machine.ops->resume(c->machine.state, ctx, c->value);
+    if (c->pending.live) {
+        s->error = "coordination child output slot is not empty";
+        return (cflow_step){ CFLOW_STEP_ERROR, {0}, s->error };
+    }
+    cflow_step step = c->machine.ops->resume(
+        c->machine.state, ctx, c->pending.storage);
     switch (step.kind) {
         case CFLOW_STEP_VALUE:
+            c->pending.live = true;
+            cflow_value_slot_reset(&c->value);
+            if (!cflow_value_slot_move(&c->value, &c->pending)) {
+                s->error = "coordination child value transfer failed";
+                return (cflow_step){ CFLOW_STEP_ERROR, {0}, s->error };
+            }
             c->has_value = true;
             *produced = true;
             return step;
         case CFLOW_STEP_VALUE_AND_DONE:
+            c->pending.live = true;
+            cflow_value_slot_reset(&c->value);
+            if (!cflow_value_slot_move(&c->value, &c->pending)) {
+                s->error = "coordination child value transfer failed";
+                return (cflow_step){ CFLOW_STEP_ERROR, {0}, s->error };
+            }
             c->has_value = true;
             c->done = true;
             *produced = true;
@@ -437,7 +456,8 @@ static void coord_destroy(void *state) {
         coord_child *c = &s->children[i];
         if (c->machine.ops && c->machine.ops->destroy)
             c->machine.ops->destroy(c->machine.state);
-        free(c->value);
+        cflow_value_slot_destroy(&c->pending);
+        cflow_value_slot_destroy(&c->value);
     }
     turbo_mutex_destroy(&s->lock);
     free(s->children);
@@ -453,7 +473,7 @@ bool cflow_resumable_from_coordination(cflow_resumable *out,
     if (!out || !children || count == 0) return false;
     for (size_t i = 0; i < count; ++i) {
         if (!children[i].ops || !children[i].ops->resume ||
-            !cflow_value_storage_type_supported(children[i].output_type))
+            !cflow_value_type_supported(children[i].output_type))
             return false;
     }
     coord_state *s = calloc(1, sizeof(*s));
@@ -469,14 +489,16 @@ bool cflow_resumable_from_coordination(cflow_resumable *out,
         s->children[i].index = i;
         atomic_init(&s->children[i].waiting, false);
         atomic_init(&s->children[i].armed, false);
-        s->children[i].machine = children[i];
-        s->children[i].value = malloc(children[i].output_type->size ? children[i].output_type->size : 1);
-        if (!s->children[i].value) {
-            /* Only machines already moved into s are destroyed here. */
-            for (size_t j = i + 1; j < count; ++j) memset(&s->children[j].machine, 0, sizeof(s->children[j].machine));
+        if (!cflow_value_slot_init(&s->children[i].value,
+                                   children[i].output_type) ||
+            !cflow_value_slot_init(&s->children[i].pending,
+                                   children[i].output_type)) {
             coord_destroy(s);
             return false;
         }
+    }
+    for (size_t i = 0; i < count; ++i) {
+        s->children[i].machine = children[i];
         memset(&children[i], 0, sizeof(children[i]));
     }
     *out = (cflow_resumable){ "coordination", &cflow_type_coord_event, &coord_ops, s };
@@ -491,6 +513,6 @@ bool cflow_coord_value(const cflow_resumable *coord,
     coord_state *s = (coord_state *)coord->state;
     if (child_index >= s->count || !s->children[child_index].has_value) return false;
     if (type) *type = s->children[child_index].machine.output_type;
-    if (value) *value = s->children[child_index].value;
+    if (value) *value = s->children[child_index].value.storage;
     return true;
 }

@@ -54,8 +54,12 @@ static bool append_typed_node(lower_ctx *ctx, cflow_subgraph_id sgid,
         ctx->error = ctx->dst->error ? ctx->dst->error : "normalization edge creation failed";
         return false;
     }
+    /* Callable signatures establish semantic compatibility, while the source
+     * Graph descriptor carries the concrete lifecycle traits used at runtime. */
+    cflow_node *dstn = &ctx->dst->subgraphs[sgid].nodes[id];
+    dstn->input_type = node->input_type;
+    dstn->output_type = node->output_type;
     if (node->fn_chain_count) {
-        cflow_node *dstn = &ctx->dst->subgraphs[sgid].nodes[id];
         dstn->fn_chain = malloc(node->fn_chain_count * sizeof(*dstn->fn_chain));
         if (!dstn->fn_chain) { ctx->error = "normalization map-chain allocation failed"; return false; }
         memcpy(dstn->fn_chain, node->fn_chain, node->fn_chain_count * sizeof(*dstn->fn_chain));
@@ -84,6 +88,8 @@ static bool append_relation_node(lower_ctx *ctx, cflow_subgraph_id sgid,
         ctx->error = ctx->dst->error ? ctx->dst->error : "normalization relation edge failed";
         return false;
     }
+    ctx->dst->subgraphs[sgid].nodes[id].input_type = node->input_type;
+    ctx->dst->subgraphs[sgid].nodes[id].output_type = node->output_type;
     return cflow_graph_set_subgraph_exit(ctx->dst, sgid, id);
 }
 
