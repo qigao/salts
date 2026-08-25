@@ -86,14 +86,16 @@ tests, spec, and plan as `feat(cflow): define native file I/O contract`.
 **Produces:** stable unsupported behavior for epoll, kqueue, and poll without
 opening a hidden blocking path.
 
-- [ ] **Step 1: Add failing readiness capability/submission tests**
+- [x] **Step 1: Add readiness capability/submission regression tests**
 
 For every compiled readiness backend, assert all three file capability queries
 are false. Submit a valid file operation through the file Actor strategy and
 assert unsupported completion while checking that the real temporary file's
-contents and current position are unchanged.
+contents and current position are unchanged. Task 1's RED/GREEN core contract
+already supplies this result, so this step adds backend regression evidence and
+does not manufacture a second production change.
 
-- [ ] **Step 2: Implement explicit unsupported callbacks**
+- [x] **Step 2: Keep explicit unsupported callbacks**
 
 Keep `submit_file` absent or route it to the existing unsupported core result;
 do not call `read`, `write`, `pread`, `pwrite`, `fsync`, or a worker pool from a

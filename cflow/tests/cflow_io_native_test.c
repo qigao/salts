@@ -13,6 +13,7 @@
 
 #include <limits.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(_WIN32)
@@ -53,6 +54,11 @@ typedef struct native_test_pipe_operation {
     cflow_io_native_pipe_operation native;
     int released;
 } native_test_pipe_operation;
+
+typedef struct native_test_file_operation {
+    cflow_io_native_file_operation native;
+    int released;
+} native_test_file_operation;
 
 typedef struct native_completion_probe {
     cflow_io_request_id ids[NATIVE_TEST_CAPACITY];
@@ -291,6 +297,12 @@ static void native_pipe_operation_release(void *user) {
     ++operation->released;
 }
 
+static void native_file_operation_release(void *user) {
+    native_test_file_operation *operation =
+        (native_test_file_operation *)user;
+    ++operation->released;
+}
+
 static void native_completion_record(
     void *user, cflow_io_request_id request_id,
     cflow_io_lease_id lease_id, void *operation_user,
@@ -352,6 +364,14 @@ static int native_pipe_fixture_init(native_fixture *fixture,
     return native_fixture_init_with_ops(
         fixture, kind, capacity,
         cflow_io_native_backend_pipe_actor_ops());
+}
+
+static int native_file_fixture_init(native_fixture *fixture,
+                                    cflow_io_native_backend_kind kind,
+                                    size_t capacity) {
+    return native_fixture_init_with_ops(
+        fixture, kind, capacity,
+        cflow_io_native_backend_file_actor_ops());
 }
 
 static int native_fixture_wait(native_fixture *fixture, size_t count) {
@@ -420,6 +440,15 @@ static cflow_io_submit_result native_pipe_submit(
     native_test_pipe_operation *operation) {
     cflow_io_operation actor_operation = {
         operation, native_pipe_operation_release};
+    return cflow_io_actor_try_submit(
+        &fixture->actor, lease, &actor_operation);
+}
+
+static cflow_io_submit_result native_file_submit(
+    native_fixture *fixture, cflow_io_lease_id lease,
+    native_test_file_operation *operation) {
+    cflow_io_operation actor_operation = {
+        operation, native_file_operation_release};
     return cflow_io_actor_try_submit(
         &fixture->actor, lease, &actor_operation);
 }
@@ -918,6 +947,62 @@ static void native_check_pipe_write_contains_sigpipe(
     check_equal(native_fixture_forget_pipe(
                     &fixture, (uintptr_t)pipes[1]), TURBO_OK);
     native_fixture_destroy(&fixture);
+}
+#endif
+
+#if !defined(_WIN32)
+static void native_check_readiness_rejects_regular_file(
+    cflow_io_native_backend_kind kind) {
+    static const unsigned char payload[] = {0x66u, 0x69u, 0x6cu, 0x65u};
+    native_fixture fixture;
+    native_test_file_operation read_operation = {0};
+    unsigned char received = 0u;
+    unsigned char observed[sizeof(payload)] = {0};
+    cflow_io_submit_result submitted;
+    char *path = tt_make_temp_file("cflow-native-readiness-", ".bin");
+    int fd;
+
+    check_not_null(path);
+    if (path == NULL)
+        return;
+    fd = open(path, O_RDWR | O_TRUNC);
+    check_true(fd >= 0);
+    if (fd < 0) {
+        (void)tt_remove_file(path);
+        free(path);
+        return;
+    }
+    check_equal(write(fd, payload, sizeof(payload)),
+                (ssize_t)sizeof(payload));
+    check_equal(lseek(fd, 1, SEEK_SET), (off_t)1);
+    check_equal(native_file_fixture_init(&fixture, kind, 1u), TURBO_OK);
+
+    read_operation.native = (cflow_io_native_file_operation){
+        .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
+        .handle = (uintptr_t)fd,
+        .buffer = &received,
+        .length = 1u,
+        .offset = 0u};
+    submitted = native_file_submit(&fixture, 101u, &read_operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_FAILED);
+    check_equal(fixture.completions.values[0].error, TURBO_ENOTSUP);
+    check_equal(received, 0u);
+    check_equal(lseek(fd, 0, SEEK_CUR), (off_t)1);
+    check_equal(pread(fd, observed, sizeof(observed), 0),
+                (ssize_t)sizeof(observed));
+    check_equal(observed, payload, sizeof(payload));
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    check_equal(read_operation.released, 1);
+
+    native_fixture_destroy(&fixture);
+    check_equal(close(fd), 0);
+    check_equal(tt_remove_file(path), 0);
+    free(path);
 }
 #endif
 
@@ -1846,6 +1931,10 @@ spec("CFlow native IO backend") {
         native_check_rejects_sync_anonymous_pipe(CFLOW_IO_NATIVE_IOCP);
     }
 #elif defined(__APPLE__)
+    it("rejects regular files without touching them through kqueue") {
+        native_check_readiness_rejects_regular_file(
+            CFLOW_IO_NATIVE_KQUEUE);
+    }
     it("runs TCP UDP and cancellation through kqueue") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_KQUEUE));
         native_check_backend(CFLOW_IO_NATIVE_KQUEUE);
@@ -1885,6 +1974,9 @@ spec("CFlow native IO backend") {
     }
 #elif defined(__linux__)
 #if defined(CFLOW_TEST_NATIVE_EPOLL)
+    it("rejects regular files without touching them through epoll") {
+        native_check_readiness_rejects_regular_file(CFLOW_IO_NATIVE_EPOLL);
+    }
     it("runs TCP UDP and cancellation through epoll") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_EPOLL));
         native_check_backend(CFLOW_IO_NATIVE_EPOLL);
@@ -1955,6 +2047,9 @@ spec("CFlow native IO backend") {
 #endif
 
 #if !defined(_WIN32)
+    it("rejects regular files without touching them through poll") {
+        native_check_readiness_rejects_regular_file(CFLOW_IO_NATIVE_POLL);
+    }
     it("runs the shared TCP UDP and cancellation contract through poll") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_POLL));
         native_check_backend(CFLOW_IO_NATIVE_POLL);
