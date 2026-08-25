@@ -93,6 +93,11 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
     CFLOW_TEST_NATIVE_EPOLL=1)
 endif()
 
+cmake_add_test(cflow_io_file_test
+  SOURCES cflow_io_file_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_timer_event_test
   SOURCES cflow_timer_event_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
@@ -161,6 +166,7 @@ set_target_properties(
   cflow_actor_test
   cflow_io_actor_test
   cflow_io_native_test
+  cflow_io_file_test
   cflow_timer_event_test
   cflow_temporal_test
   cflow_calculus_conformance_test

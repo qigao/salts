@@ -3,9 +3,7 @@
  * @brief TurboUtils FS unit tests - zero libuv, pure POSIX/Win32 backend
  */
 #include "tinytest.h"
-#include "turbo_coro.h"
 #include "turbo_fs.h"
-#include "turbo_thread.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -22,22 +20,6 @@ static char g_file[1024];
 static char g_dir[1024];
 static char g_file2[1024]; /* rename target */
 static char g_link[1024];  /* symlink path */
-static const char g_async_write_file[] = "turbo_fs_async_writer.txt";
-static const char g_async_read_file[] = "turbo_fs_async_reader.txt";
-
-typedef struct {
-  turbo_fs_async_t *req;
-  int wait_result;
-  int took_result;
-  turbo_fs_buf_t output;
-} async_coro_ctx_t;
-
-static void async_read_wait_coro(coro_t *co, void *arg) {
-  UNUSED(co);
-  async_coro_ctx_t *ctx = (async_coro_ctx_t *)arg;
-  ctx->wait_result = turbo_fs_async_wait(ctx->req);
-  ctx->took_result = turbo_fs_async_take_buf(ctx->req, &ctx->output);
-}
 
 spec("Turbo FS Tests") {
 
@@ -58,8 +40,6 @@ spec("Turbo FS Tests") {
     turbo_fs_unlink(g_file);
     turbo_fs_unlink(g_file2);
     turbo_fs_rmdir(g_dir);
-    turbo_fs_unlink(g_async_write_file);
-    turbo_fs_unlink(g_async_read_file);
   }
 
   /* ── Bulk read / write ──────────────────────────────────────────────────── */
@@ -367,73 +347,6 @@ spec("Turbo FS Tests") {
       check_equal(turbo_fs_read_file(g_file, &rb), 0);
       check_equal(rb.base, "aZcdef");
       turbo_fs_buf_free(&rb);
-    }
-  }
-
-  describe("Async file operations") {
-    it("submits whole-file read/write requests to a thread pool") {
-      const char *writer_data = "Async write payload from turbo_fs";
-      const char *reader_data = "Async source data ready for reader";
-      turbo_fs_async_t *write_req = NULL;
-      turbo_fs_async_t *read_req = NULL;
-      turbo_fs_buf_t read_output = {0};
-      turbo_fs_buf_t writer_input = turbo_fs_buf_init((char *)writer_data, strlen(writer_data));
-      turbo_fs_buf_t reader_input = turbo_fs_buf_init((char *)reader_data, strlen(reader_data));
-      turbo_threadpool_t *pool = turbo_threadpool_create(2);
-      check_true(pool != NULL);
-
-      check_equal(turbo_fs_write_file(g_async_read_file, &reader_input), 0);
-      check_equal(turbo_fs_write_file_async(pool, g_async_write_file, &writer_input,
-                                             &write_req), 0);
-      check_equal(turbo_fs_read_file_async(pool, g_async_read_file, &read_req), 0);
-
-      check_equal(turbo_fs_async_wait(write_req), 0);
-      check_equal(turbo_fs_async_wait(read_req), 0);
-      check_equal(turbo_fs_async_take_buf(read_req, &read_output), 0);
-      check_equal(read_output.len, strlen(reader_data));
-      check_equal(read_output.base, reader_data);
-
-      turbo_fs_stat_t wrote_file_stat = {0};
-      check_equal(turbo_fs_stat(g_async_write_file, &wrote_file_stat), 0);
-      check_equal((size_t)wrote_file_stat.size, strlen(writer_data));
-
-      turbo_fs_buf_free(&read_output);
-      turbo_fs_async_destroy(read_req);
-      turbo_fs_async_destroy(write_req);
-      check_equal(turbo_fs_unlink(g_async_write_file), 0);
-      check_equal(turbo_fs_unlink(g_async_read_file), 0);
-      turbo_threadpool_destroy(pool);
-    }
-
-    it("can wait for async reads from a coroutine") {
-      const char *reader_data = "Async coroutine reader payload";
-      turbo_fs_async_t *read_req = NULL;
-      turbo_fs_buf_t reader_input = turbo_fs_buf_init((char *)reader_data, strlen(reader_data));
-      turbo_threadpool_t *pool = turbo_threadpool_create(1);
-      async_coro_ctx_t ctx = {0};
-      coro_t *co = NULL;
-
-      check_true(pool != NULL);
-      check_equal(turbo_fs_write_file(g_async_read_file, &reader_input), 0);
-      check_equal(turbo_fs_read_file_async(pool, g_async_read_file, &read_req), 0);
-
-      ctx.req = read_req;
-      co = coro_create(async_read_wait_coro, &ctx, NULL);
-      check_not_null(co);
-      while (coro_alive(co)) {
-        check_equal(coro_resume(co), 0);
-      }
-
-      check_equal(ctx.wait_result, 0);
-      check_equal(ctx.took_result, 0);
-      check_equal(ctx.output.len, strlen(reader_data));
-      check_equal(ctx.output.base, reader_data);
-
-      turbo_fs_buf_free(&ctx.output);
-      coro_destroy(co);
-      turbo_fs_async_destroy(read_req);
-      check_equal(turbo_fs_unlink(g_async_read_file), 0);
-      turbo_threadpool_destroy(pool);
     }
   }
 

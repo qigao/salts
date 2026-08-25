@@ -39,6 +39,7 @@ add_library(${TARGET_NAME}
   src/graph.c
   src/interfaces.c
   src/io_actor.c
+  src/io_file.c
   src/io_native.c
   src/lower.c
   src/machine.c

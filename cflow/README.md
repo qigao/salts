@@ -522,6 +522,100 @@ After terminal completion and acknowledgement, close the file and call
 `cflow_io_native_backend_forget_file()` for a retained IOCP identity. Backend
 shutdown neither closes nor implicitly flushes caller files.
 
+For ordinary consumers, `<cflow/io_file.h>` owns that assembly as one bounded
+facade. `cflow_io_file_open()` performs pathname resolution synchronously on the
+calling thread, opens an IOCP-compatible overlapped handle or a close-on-exec
+POSIX descriptor, and owns the native backend, manual Executor, Actor, handle,
+and exactly `request_capacity` operation slots. `try_read_at`, `try_write_at`,
+and supported `try_flush` remain native asynchronous operations. There is no
+readiness or blocking-worker fallback.
+
+```c
+#include <cflow/io_file.h>
+#include <turbo/error_codes.h>
+#include <turbo/thread.h>
+
+#include <stdio.h>
+
+typedef struct example_state {
+    int done;
+    int result;
+} example_state;
+
+static void on_file_complete(
+    void *user, cflow_io_request_id request_id, cflow_io_lease_id lease_id,
+    cflow_io_native_file_operation_kind kind,
+    const cflow_io_completion *completion) {
+    example_state *state = (example_state *)user;
+    (void)request_id;
+    (void)lease_id;
+    (void)kind;
+    state->result = completion->kind == CFLOW_IO_COMPLETION_OK
+        ? TURBO_OK : completion->error;
+    state->done = 1;
+}
+
+int main(void) {
+    static const char payload[] = "native async file\n";
+    cflow_io_file file = {0};
+    example_state state = {0};
+    cflow_io_file_config config = {0};
+    cflow_io_file_submit_result submitted;
+
+#if defined(_WIN32)
+    config.backend_kind = CFLOW_IO_NATIVE_IOCP;
+#elif defined(__linux__)
+    config.backend_kind = CFLOW_IO_NATIVE_IO_URING;
+#else
+    return TURBO_ENOTSUP;
+#endif
+    config.request_capacity = 4u;
+    config.command_capacity = 4u;
+    config.completion_batch_capacity = 4u;
+    config.open_flags = CFLOW_IO_FILE_WRITE | CFLOW_IO_FILE_CREATE |
+                        CFLOW_IO_FILE_TRUNCATE;
+    config.create_mode = 0600u;
+    config.completion = on_file_complete;
+    config.completion_user = &state;
+
+    if (cflow_io_file_open(&file, "cflow-output.bin", &config) != TURBO_OK)
+        return 1;
+    submitted = cflow_io_file_try_write_at(
+        &file, 1u, payload, sizeof(payload) - 1u, 0u);
+    if (submitted.status != CFLOW_IO_FILE_SUBMIT_ACCEPTED) {
+        (void)cflow_io_file_close(&file);
+        (void)cflow_io_file_destroy(&file);
+        return 2;
+    }
+    while (!state.done) {
+        size_t progressed = 0u;
+        if (cflow_io_file_run_ready(&file, 64u, &progressed) != TURBO_OK)
+            return 3;
+        if (progressed == 0u)
+            turbo_thread_yield();
+    }
+    if (cflow_io_file_close(&file) != TURBO_OK)
+        return 4;
+    while (!cflow_io_file_is_quiescent(&file)) {
+        size_t progressed = 0u;
+        if (cflow_io_file_run_ready(&file, 64u, &progressed) != TURBO_OK)
+            return 5;
+        if (progressed == 0u)
+            turbo_thread_yield();
+    }
+    if (cflow_io_file_destroy(&file) != TURBO_OK)
+        return 6;
+    printf("write status: %d\n", state.result);
+    return state.result == TURBO_OK ? 0 : 7;
+}
+```
+
+Submission is MPSC, but exactly one thread drives callbacks and lifecycle.
+Accepted buffers remain borrowed through callback return. Stop and join all
+producer threads before destroy. `close()` stops admission and requests
+cancellation; continue driving until quiescent, then destroy closes the handle,
+forgets retained backend identity, and releases the execution resources.
+
 The poll reactor owns one worker, a fixed registration table, fixed snapshot
 storage, and a nonblocking control pipe. It borrows descriptors until close,
 uses generation tokens to reject stale snapshots, and attempts at most
@@ -537,8 +631,9 @@ registrations per socket identity (one read lane and one write lane), so a
 request capacity of N produces a checked reactor capacity of 2N.
 
 Named-pipe connection lifecycle, POSIX FIFO pathname/open rendezvous, subprocess
-standard-stream ownership, message framing, file pathname/open policy, and
-devices remain separate contracts. POSIX regular-file readiness does not
+standard-stream ownership, message framing, asynchronous pathname open,
+file metadata/directory operations, and devices remain separate contracts.
+POSIX regular-file readiness does not
 represent asynchronous disk completion. “Device” would mean an OS-specific descriptor/handle adapter;
 USB transfer semantics, discovery, permissions, cancellation, and hot-unplug
 require a dedicated transport rather than treating every device as a pipe or

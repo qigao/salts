@@ -3,8 +3,7 @@
  * @brief TurboUtils File System Utilities
  * @author "Simple, direct, no bullshit" - Linus philosophy applied to file I/O
  *
- * This header provides simple file system utilities without exposing libuv.
- * Asynchronous file operations are handled through the main TurboUtils API.
+ * This header provides simple synchronous file system utilities without exposing libuv.
  */
 
 #ifndef turboutils_FS_H
@@ -23,8 +22,6 @@ typedef struct {
   char *base;
   size_t len;
 } turbo_fs_buf_t;
-
-typedef struct turbo_threadpool_s turbo_threadpool_t;
 
 // File information structure
 typedef struct {
@@ -86,90 +83,6 @@ TURBO_C_API int turbo_fs_read_file(const char *path, turbo_fs_buf_t *buf);
  * @note Creates the file if it doesn't exist, overwrites if it does
  */
 TURBO_C_API int turbo_fs_write_file(const char *path, const turbo_fs_buf_t *buf);
-
-// =============================================================================
-// Asynchronous File Operations - thread-pool backed cooperative I/O
-// =============================================================================
-
-/** Opaque asynchronous file request handle. */
-typedef struct turbo_fs_async_s turbo_fs_async_t;
-
-/**
- * @brief Submit an asynchronous whole-file read to a thread pool.
- *
- * The request owns its copied path and the eventual read buffer. Call
- * turbo_fs_async_wait() before taking the buffer, then release the request with
- * turbo_fs_async_destroy().
- *
- * @param pool Thread pool used to execute the blocking file operation
- * @param path File path to read
- * @param req_out Receives the owned request handle
- * @return 0 on successful submission, negative error code on failure
- */
-TURBO_C_API int turbo_fs_read_file_async(turbo_threadpool_t *pool, const char *path,
-                                       turbo_fs_async_t **req_out);
-
-/**
- * @brief Submit an asynchronous whole-file write to a thread pool.
- *
- * The request copies the path and input bytes before submission, so the caller
- * may release or reuse the input buffer after this function returns.
- *
- * @param pool Thread pool used to execute the blocking file operation
- * @param path File path to write
- * @param buf Buffer to write
- * @param req_out Receives the owned request handle
- * @return 0 on successful submission, negative error code on failure
- */
-TURBO_C_API int turbo_fs_write_file_async(turbo_threadpool_t *pool, const char *path,
-                                        const turbo_fs_buf_t *buf,
-                                        turbo_fs_async_t **req_out);
-
-/**
- * @brief Check whether an async request has completed.
- *
- * @param req Request handle
- * @return 1 if complete, 0 if pending
- */
-TURBO_C_API int turbo_fs_async_ready(turbo_fs_async_t *req);
-
-/**
- * @brief Wait for an async request to complete.
- *
- * When called inside a Turbo coroutine this cooperatively yields until the
- * request finishes. Outside a coroutine it parks briefly between polls.
- *
- * @param req Request handle
- * @return Underlying file operation result, or negative error code
- */
-TURBO_C_API int turbo_fs_async_wait(turbo_fs_async_t *req);
-
-/**
- * @brief Return the completed async operation result without waiting.
- *
- * @param req Request handle
- * @return Operation result, -EAGAIN if still pending, or negative error code
- */
-TURBO_C_API int turbo_fs_async_result(turbo_fs_async_t *req);
-
-/**
- * @brief Take ownership of the buffer produced by an async read request.
- *
- * @param req Completed read request
- * @param buf_out Receives the owned buffer; release with turbo_fs_buf_free()
- * @return 0 on success, -EAGAIN if pending, or negative error code
- */
-TURBO_C_API int turbo_fs_async_take_buf(turbo_fs_async_t *req, turbo_fs_buf_t *buf_out);
-
-/**
- * @brief Destroy an async request.
- *
- * If the request is still pending, this waits for completion before releasing
- * request-owned memory.
- *
- * @param req Request handle
- */
-TURBO_C_API void turbo_fs_async_destroy(turbo_fs_async_t *req);
 
 /**
  * @brief Get file information
