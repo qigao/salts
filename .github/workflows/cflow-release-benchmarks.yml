@@ -64,6 +64,7 @@ jobs:
             executable: build/linux-gcc-release/bin/cflow_direct_benchmark
             parallel_executable: build/linux-gcc-release/bin/cflow_parallel_reduce_benchmark
             network_executable: build/linux-gcc-release/bin/cflow_network_benchmark
+            network_backend: epoll
           - host: ubuntu-24.04-gcc
             runner: ubuntu-24.04
             family: linux
@@ -73,6 +74,7 @@ jobs:
             executable: build/linux-gcc-release/bin/cflow_direct_benchmark
             parallel_executable: build/linux-gcc-release/bin/cflow_parallel_reduce_benchmark
             network_executable: build/linux-gcc-release/bin/cflow_network_benchmark
+            network_backend: epoll
           - host: windows-2022-msvc
             runner: windows-2022
             family: windows
@@ -82,6 +84,7 @@ jobs:
             executable: build/Msvc-Release/bin/cflow_direct_benchmark.exe
             parallel_executable: build/Msvc-Release/bin/cflow_parallel_reduce_benchmark.exe
             network_executable: build/Msvc-Release/bin/cflow_network_benchmark.exe
+            network_backend: iocp
           - host: windows-2025-msvc
             runner: windows-2025
             family: windows
@@ -91,6 +94,7 @@ jobs:
             executable: build/Msvc-Release/bin/cflow_direct_benchmark.exe
             parallel_executable: build/Msvc-Release/bin/cflow_parallel_reduce_benchmark.exe
             network_executable: build/Msvc-Release/bin/cflow_network_benchmark.exe
+            network_backend: iocp
           - host: macos-15-appleclang
             runner: macos-15
             family: mac
@@ -100,6 +104,7 @@ jobs:
             executable: build/mac-clang-release/bin/cflow_direct_benchmark
             parallel_executable: build/mac-clang-release/bin/cflow_parallel_reduce_benchmark
             network_executable: build/mac-clang-release/bin/cflow_network_benchmark
+            network_backend: kqueue
 
     steps:
       - uses: actions/checkout@v6
@@ -200,6 +205,7 @@ jobs:
           BENCHMARK_EXECUTABLE: ${{ matrix.executable }}
           PARALLEL_BENCHMARK_EXECUTABLE: ${{ matrix.parallel_executable }}
           NETWORK_BENCHMARK_EXECUTABLE: ${{ matrix.network_executable }}
+          NETWORK_EXPECTED_BACKEND: ${{ matrix.network_backend }}
         run: |
           $ErrorActionPreference = "Stop"
           $resultDir = Join-Path $env:GITHUB_WORKSPACE "benchmark-results"
@@ -242,6 +248,58 @@ jobs:
             Set-Content -LiteralPath $networkSummary
           "| ---: | :--- | :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
             Add-Content -LiteralPath $networkSummary
+          $dualNativeDir = Join-Path $networkDir "dual-native"
+          New-Item -ItemType Directory -Force -Path $dualNativeDir | Out-Null
+          $dualNativeJsonl = Join-Path $dualNativeDir "dual-native-results.jsonl"
+          $dualNativeSummary = Join-Path $dualNativeDir "dual-native-summary.md"
+          $dualNativeMedianSummary = Join-Path $dualNativeDir "dual-native-medians.md"
+          "| Run | Backend | Wait mode | Payload bytes | Echo/s | MiB/s | P99 ns | CPU % | CPU cores | MiB/CPU-s | Peak RSS bytes |" |
+            Set-Content -LiteralPath $dualNativeSummary
+          "| ---: | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
+            Add-Content -LiteralPath $dualNativeSummary
+
+          function Assert-NetworkMetricFields($report, $jsonText) {
+            foreach ($field in @(
+                "backend", "wall_ns", "process_cpu_ns", "process_cpu_pct",
+                "cpu_core_equivalents", "exchanges_per_second",
+                "application_mib_per_second", "application_mib_per_cpu_second",
+                "peak_rss_bytes", "p50_ns", "p95_ns", "p99_ns", "errors",
+                "rejections", "stale_completions")) {
+              if ($null -eq $report.$field) {
+                throw "Missing network report field '$field': $jsonText"
+              }
+            }
+            $cpuPct = [double]$report.process_cpu_pct
+            $cpuCores = [double]$report.cpu_core_equivalents
+            $throughput = [double]$report.application_mib_per_second
+            $cpuEfficiency = [double]$report.application_mib_per_cpu_second
+            $echoRate = [double]$report.exchanges_per_second
+            if ($report.backend -ne $env:NETWORK_EXPECTED_BACKEND -or
+                [int64]$report.wall_ns -le 0 -or
+                [int64]$report.process_cpu_ns -lt 0 -or
+                [int64]$report.peak_rss_bytes -le 0 -or
+                [int64]$report.p50_ns -lt 0 -or
+                [int64]$report.p95_ns -lt [int64]$report.p50_ns -or
+                [int64]$report.p99_ns -lt [int64]$report.p95_ns -or
+                [int64]$report.p99_ns -le 0 -or
+                [double]::IsNaN($cpuPct) -or
+                [double]::IsInfinity($cpuPct) -or
+                $cpuPct -lt 0.0 -or
+                [double]::IsNaN($cpuCores) -or
+                [double]::IsInfinity($cpuCores) -or
+                $cpuCores -lt 0.0 -or
+                [double]::IsNaN($echoRate) -or
+                [double]::IsInfinity($echoRate) -or
+                $echoRate -le 0.0 -or
+                [double]::IsNaN($throughput) -or
+                [double]::IsInfinity($throughput) -or
+                $throughput -le 0.0 -or
+                [double]::IsNaN($cpuEfficiency) -or
+                [double]::IsInfinity($cpuEfficiency) -or
+                $cpuEfficiency -lt 0.0) {
+              throw "Invalid network metric fields: $jsonText"
+            }
+          }
 
           git show --no-patch --format=fuller HEAD |
             Set-Content -LiteralPath (Join-Path $resultDir "commit.txt")
@@ -284,6 +342,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               throw "Parallel Reduce benchmark run $run failed with exit code $LASTEXITCODE"
             }
+            $env:CFLOW_NETWORK_PEER = "raw"
+            Remove-Item Env:CFLOW_NETWORK_PAYLOAD -ErrorAction SilentlyContinue
             foreach ($protocol in @("tcp", "udp")) {
               foreach ($profile in @("latency", "throughput")) {
                 foreach ($waitMode in @("blocking", "busy")) {
@@ -305,6 +365,7 @@ jobs:
                   }
                   $jsonText = $jsonLines[0].Substring("CFLOW_BENCHMARK_JSON ".Length)
                   $report = $jsonText | ConvertFrom-Json
+                  Assert-NetworkMetricFields $report $jsonText
                   $cpuCores = [double]$report.cpu_core_equivalents
                   $throughput = [double]$report.application_mib_per_second
                   $cpuEfficiency = [double]$report.application_mib_per_cpu_second
@@ -312,6 +373,7 @@ jobs:
                       $report.protocol -ne $protocol -or
                       $report.profile -ne $profile -or
                       $report.wait_mode -ne $waitMode -or
+                      $report.peer_mode -ne "raw" -or
                       [double]::IsNaN($cpuCores) -or
                       [double]::IsInfinity($cpuCores) -or
                       $cpuCores -lt 0.0 -or
@@ -338,6 +400,116 @@ jobs:
                 }
               }
             }
+            foreach ($payloadBytes in @(1024, 4096, 65536)) {
+              foreach ($waitMode in @("blocking", "busy")) {
+                $env:CFLOW_NETWORK_PROTOCOL = "tcp"
+                $env:CFLOW_NETWORK_PROFILE = "throughput"
+                $env:CFLOW_NETWORK_WAIT_MODE = $waitMode
+                $env:CFLOW_NETWORK_PEER = "native"
+                $env:CFLOW_NETWORK_PAYLOAD = $payloadBytes.ToString()
+                $networkRunFile = Join-Path $dualNativeDir `
+                  ("run-tcp-throughput-{0}-{1}-{2:D2}.txt" -f `
+                    $waitMode, $payloadBytes, $run)
+                & $networkBenchmark --no-color 2>&1 |
+                  Tee-Object -FilePath $networkRunFile
+                if ($LASTEXITCODE -ne 0) {
+                  throw "Dual-native TCP benchmark $waitMode/$payloadBytes run $run failed with exit code $LASTEXITCODE"
+                }
+                $jsonLines = @(Get-Content -LiteralPath $networkRunFile |
+                  Where-Object { $_ -match '^CFLOW_BENCHMARK_JSON ' })
+                if ($jsonLines.Count -ne 1) {
+                  throw "Expected exactly one dual-native JSON record, found $($jsonLines.Count): $networkRunFile"
+                }
+                $jsonText = $jsonLines[0].Substring("CFLOW_BENCHMARK_JSON ".Length)
+                $report = $jsonText | ConvertFrom-Json
+                Assert-NetworkMetricFields $report $jsonText
+                $cpuCores = [double]$report.cpu_core_equivalents
+                $throughput = [double]$report.application_mib_per_second
+                $cpuEfficiency = [double]$report.application_mib_per_cpu_second
+                $echoRate = [double]$report.exchanges_per_second
+                $expectedAttempts =
+                  [int64]$report.samples * [int64]$report.exchanges_per_sample
+                $expectedApplicationBytes =
+                  $expectedAttempts * [int64]$payloadBytes
+                if ($report.schema -ne "cflow-network-benchmark/v1" -or
+                    $report.protocol -ne "tcp" -or
+                    $report.profile -ne "throughput" -or
+                    $report.wait_mode -ne $waitMode -or
+                    $report.peer_mode -ne "dual-native" -or
+                    [int64]$report.payload_bytes -ne $payloadBytes -or
+                    [int64]$report.attempted -ne $expectedAttempts -or
+                    [int64]$report.application_bytes -ne $expectedApplicationBytes -or
+                    [int64]$report.wire_bytes -ne (2 * $expectedApplicationBytes) -or
+                    [double]::IsNaN($echoRate) -or
+                    [double]::IsInfinity($echoRate) -or
+                    $echoRate -le 0.0 -or
+                    [double]::IsNaN($cpuCores) -or
+                    [double]::IsInfinity($cpuCores) -or
+                    $cpuCores -lt 0.0 -or
+                    [double]::IsNaN($throughput) -or
+                    [double]::IsInfinity($throughput) -or
+                    $throughput -le 0.0 -or
+                    [double]::IsNaN($cpuEfficiency) -or
+                    [double]::IsInfinity($cpuEfficiency) -or
+                    $cpuEfficiency -lt 0.0 -or
+                    [int64]$report.errors -ne 0 -or
+                    [int64]$report.rejections -ne 0 -or
+                    [int64]$report.stale_completions -ne 0 -or
+                    $expectedAttempts -le 0) {
+                  throw "Invalid or unsuccessful dual-native report: $jsonText"
+                }
+                Add-Content -LiteralPath $dualNativeJsonl -Value $jsonText
+                Add-Content -LiteralPath $dualNativeSummary -Value `
+                  ("| {0} | {1} | {2} | {3} | {4:N3} | {5:N3} | {6} | {7:N3} | {8:N3} | {9:N3} | {10} |" -f `
+                    $run, $report.backend, $report.wait_mode,
+                    $report.payload_bytes, $echoRate, $throughput,
+                    $report.p99_ns, [double]$report.process_cpu_pct,
+                    $cpuCores, $cpuEfficiency, $report.peak_rss_bytes)
+              }
+            }
+          }
+
+          Remove-Item Env:CFLOW_NETWORK_PAYLOAD -ErrorAction SilentlyContinue
+          Remove-Item Env:CFLOW_NETWORK_PEER -ErrorAction SilentlyContinue
+
+          function Get-Median([double[]]$values) {
+            $ordered = @($values | Sort-Object)
+            if ($ordered.Count -eq 0) {
+              throw "Cannot calculate a median from an empty value set"
+            }
+            $middle = [int][math]::Floor($ordered.Count / 2)
+            if (($ordered.Count % 2) -eq 1) {
+              return $ordered[$middle]
+            }
+            return ($ordered[$middle - 1] + $ordered[$middle]) / 2.0
+          }
+
+          $dualReports = @(Get-Content -LiteralPath $dualNativeJsonl |
+            ForEach-Object { $_ | ConvertFrom-Json })
+          $dualGroups = @($dualReports | Group-Object payload_bytes, wait_mode)
+          if ($dualGroups.Count -ne 6) {
+            throw "Expected six dual-native payload/wait groups, found $($dualGroups.Count)"
+          }
+          "| Backend | Wait mode | Payload bytes | Runs | Median Echo/s | Median MiB/s | Median P99 ns | Median CPU % | Median CPU cores | Median MiB/CPU-s | Median peak RSS bytes |" |
+            Set-Content -LiteralPath $dualNativeMedianSummary
+          "| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
+            Add-Content -LiteralPath $dualNativeMedianSummary
+          foreach ($group in $dualGroups) {
+            if ($group.Count -ne [int]$env:BENCHMARK_RUNS) {
+              throw "Expected $env:BENCHMARK_RUNS reports for $($group.Name), found $($group.Count)"
+            }
+            $first = $group.Group[0]
+            Add-Content -LiteralPath $dualNativeMedianSummary -Value `
+              ("| {0} | {1} | {2} | {3} | {4:N3} | {5:N3} | {6:N0} | {7:N3} | {8:N3} | {9:N3} | {10:N0} |" -f `
+                $first.backend, $first.wait_mode, $first.payload_bytes,
+                $group.Count,
+                (Get-Median @($group.Group.exchanges_per_second)),
+                (Get-Median @($group.Group.application_mib_per_second)),
+                (Get-Median @($group.Group.p99_ns)),
+                (Get-Median @($group.Group.process_cpu_pct)),
+                (Get-Median @($group.Group.cpu_core_equivalents)),
+                (Get-Median @($group.Group.application_mib_per_cpu_second)),
+                (Get-Median @($group.Group.peak_rss_bytes)))
           }
 
           $summary = $env:GITHUB_STEP_SUMMARY
@@ -358,6 +530,18 @@ jobs:
           Add-Content -LiteralPath $summary -Value "### Native TCP/UDP loopback evidence"
           Add-Content -LiteralPath $summary -Value ""
           Get-Content -LiteralPath $networkSummary | Add-Content -LiteralPath $summary
+          Add-Content -LiteralPath $summary -Value ""
+          Add-Content -LiteralPath $summary -Value "### Dual-native TCP Echo evidence"
+          Add-Content -LiteralPath $summary -Value ""
+          Add-Content -LiteralPath $summary -Value "Application throughput counts one echoed payload; estimated loopback wire bytes are twice that value."
+          Add-Content -LiteralPath $summary -Value ""
+          Get-Content -LiteralPath $dualNativeMedianSummary | Add-Content -LiteralPath $summary
+          Add-Content -LiteralPath $summary -Value ""
+          Add-Content -LiteralPath $summary -Value "<details><summary>All dual-native raw runs</summary>"
+          Add-Content -LiteralPath $summary -Value ""
+          Get-Content -LiteralPath $dualNativeSummary | Add-Content -LiteralPath $summary
+          Add-Content -LiteralPath $summary -Value ""
+          Add-Content -LiteralPath $summary -Value "</details>"
 
       - name: Upload benchmark evidence
         if: always()
