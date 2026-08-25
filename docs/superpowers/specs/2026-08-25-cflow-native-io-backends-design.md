@@ -158,30 +158,35 @@ Actor destroy → native backend shutdown/destroy → Executor shutdown。该顺
 5. 每 request 创建线程执行 blocking socket：拒绝，不是请求的 native model，也无法给出
    同等有界资源与取消语义。
 
-## 双 Native TCP Echo 性能契约
+## 双 Native TCP/UDP Echo 性能契约
 
 原有 network benchmark 默认保持 `CFLOW_NETWORK_PEER=raw`：client 经过 CFlow native
 backend/Actor/Executor，peer 由阻塞式 socket server thread 驱动，并继续覆盖 TCP/UDP、
-latency/throughput 与 blocking/busy wait。新增的 `CFLOW_NETWORK_PEER=native` 只支持 TCP；
-若与 UDP 组合则返回 `TURBO_ENOTSUP`，不隐式回退到 raw peer。
+latency/throughput 与 blocking/busy wait。`CFLOW_NETWORK_PEER=native` 支持 TCP 与 UDP，
+两种协议都通过两个独立 native endpoint 完成 Echo，不隐式回退到 raw peer。
 
 双 native fixture 有两个彼此独立的 endpoint owner。每个 endpoint 独占一个 native
 backend、I/O Actor、manual Executor、completion probe 与 socket identity；fixture 只拥有
 两者共同借用的 wake latch。benchmark thread 是 submit、pump、completion validation、
 acknowledge 的唯一 owner；backend worker 只发布 completion 并唤醒 latch。每个 endpoint
-最多存在一个 outstanding operation，TCP short send/recv 通过有界循环完成，零字节进展
-视为 `TURBO_EIO`。
+最多存在一个 outstanding operation。TCP short send/recv 通过有界循环完成，零字节进展
+视为 `TURBO_EIO`；UDP 以单个 datagram 为数据单元，send/recv 字节数不完整即失败。
 
 每个传输方向先提交 receiver read，再提交匹配的 sender write，并共同 pump 两个 endpoint；
-两端 completion 均 acknowledge 后处理 short I/O remainder。完整 Echo 仍按 client→server、
-server→client 两个方向顺序执行，最后逐字节校验 payload。这个配对避免 payload 超过当前
-socket send window 时 sender 等 receiver、receiver 又尚未提交的互等。报告中的
+两端 completion 均 acknowledge 后再推进下一阶段。UDP receiver 在 completion callback
+返回前把 native operation 发布的 source address length 复制到 completion probe，server
+随后使用该来源地址发送响应；地址缺失、越界或 datagram 长度不完整均为显式错误。完整
+Echo 按 client→server、server→client 两个方向顺序执行，最后逐字节校验 payload。TCP 的
+配对也避免 payload 超过当前 socket send window 时 sender 等 receiver、receiver 又尚未提交
+的互等。报告中的
 `application_bytes` 只计一次 payload，与 ogrenet Echo benchmark 的
 `SetBytes(payload_size)` 约定一致；`wire_bytes = 2 * application_bytes` 只是 loopback 双向传输
-估算。JSON schema 继续使用 `cflow-network-benchmark/v1`，新增兼容字段 `peer_mode` 与
-`exchanges_per_second`。CI 对 1 KiB、4 KiB、64 KiB × blocking/busy 各运行五个独立进程，
-记录 Echo/s、应用 MiB/s、P99、process CPU、RSS、errors、rejections 与 stale completions；
-共享 runner 数据只作为可比较证据，不设性能阈值。
+估算。JSON schema 继续使用 `cflow-network-benchmark/v1`，兼容字段 `peer_mode` 与
+`exchanges_per_second` 保持不变。CI 对 TCP 的 1 KiB、4 KiB、64 KiB 与 UDP 的 1 KiB、
+4 KiB、65,507 B，分别在 blocking/busy 模式运行五个独立进程，形成 12 个协议/负载/等待
+组合；记录 Echo/s、应用 MiB/s、P99、process CPU、RSS、errors、rejections 与 stale
+completions。共享 runner 数据只作为可比较证据，不设性能阈值。Ubuntu 24.04 另有显式
+`io_uring` 行；初始化不支持、策略拒绝或报告 backend 不匹配都使任务失败，不允许回退。
 
 关闭顺序为：关闭原 socket → Actor close/drain/destroy → forget closed socket identity →
 backend shutdown/destroy → Executor shutdown/destroy → shared wake latch destroy。成功报告要求
