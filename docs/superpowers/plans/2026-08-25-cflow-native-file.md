@@ -216,7 +216,7 @@ poll native tests. Commit as `feat(cflow): add io_uring regular-file I/O`.
 **Produces:** public capability/ownership documentation and reproducible
 cross-platform evidence for issue #107.
 
-- [ ] **Step 1: Update user-facing documentation**
+- [x] **Step 1: Update user-facing documentation**
 
 Document the per-operation matrix, offset and partial-transfer semantics,
 Windows async declaration, io_uring flush, readiness rejection, borrowed

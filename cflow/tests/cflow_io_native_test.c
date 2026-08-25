@@ -2315,6 +2315,14 @@ spec("CFlow native IO backend") {
                 .kind = CFLOW_IO_NATIVE_FILE_WRITE_AT,
                 .handle = 1u,
                 .buffer = &byte}));
+#if SIZE_MAX > UINT32_MAX
+        check_false(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_WRITE_AT,
+                .handle = 1u,
+                .buffer = &byte,
+                .length = (size_t)UINT32_MAX + 1u}));
+#endif
         check_false(cflow_io_native_file_operation_valid(
             &(cflow_io_native_file_operation){
                 .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
