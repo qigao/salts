@@ -1,6 +1,6 @@
 # CFlow Native Pipe Read/Write Design
 
-Issue: [#105](https://github.com/qigao/turbo-utils/issues/105)  
+Issue: [#105](https://github.com/qigao/turbo-utils/issues/105)
 Parent tracker: [#100](https://github.com/qigao/turbo-utils/issues/100)
 
 ## Decision
