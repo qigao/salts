@@ -34,6 +34,7 @@ struct turbo_threadpool_s {
   turbo_mutex_t park_mutex;
   turbo_cond_t task_available;
   turbo_cond_t queue_space;
+  turbo_mutex_t dispatch_mutex;
   turbo_mutex_t wait_mutex;
   turbo_cond_t all_done;
 };
@@ -146,15 +147,58 @@ static void turbo_threadpool_release_queue_slot(turbo_threadpool_t *pool) {
   turbo_threadpool_signal_queue_space(pool);
 }
 
+static void turbo_threadpool_destroy_sync(turbo_threadpool_t *pool) {
+  turbo_mutex_destroy(&pool->park_mutex);
+  turbo_cond_destroy(&pool->task_available);
+  turbo_cond_destroy(&pool->queue_space);
+  turbo_mutex_destroy(&pool->dispatch_mutex);
+  turbo_mutex_destroy(&pool->wait_mutex);
+  turbo_cond_destroy(&pool->all_done);
+}
+
+typedef enum turbo_threadpool_take_status {
+  TURBO_THREADPOOL_TAKE_NONE = 0,
+  TURBO_THREADPOOL_TAKE_VALID,
+  TURBO_THREADPOOL_TAKE_INVALID
+} turbo_threadpool_take_status;
+
+static turbo_threadpool_take_status turbo_threadpool_try_take_task(
+    turbo_threadpool_t *pool, turbo_threadpool_task_t *task) {
+  disruptor_cursor_t cursor = {0};
+  const turbo_threadpool_task_t *entry;
+
+  /* Worker completion advances a contiguous cursor. Serializing this short
+   * transfer prevents an out-of-order release from pinning reusable slots. */
+  turbo_mutex_lock(&pool->dispatch_mutex);
+  if (!disruptor_worker_try_claim(pool->queue, &cursor)) {
+    turbo_mutex_unlock(&pool->dispatch_mutex);
+    return TURBO_THREADPOOL_TAKE_NONE;
+  }
+
+  entry = (const turbo_threadpool_task_t *)
+      disruptor_show_entry(pool->queue, &cursor);
+  if (entry == NULL || entry->run == NULL) {
+    disruptor_worker_release_entry(pool->queue, &cursor);
+    turbo_mutex_unlock(&pool->dispatch_mutex);
+    return TURBO_THREADPOOL_TAKE_INVALID;
+  }
+
+  *task = *entry;
+  disruptor_worker_release_entry(pool->queue, &cursor);
+  turbo_mutex_unlock(&pool->dispatch_mutex);
+  return TURBO_THREADPOOL_TAKE_VALID;
+}
+
 static void worker_entry(void *arg) {
   worker_context_t *ctx = (worker_context_t *)arg;
   turbo_threadpool_t *pool = ctx->pool;
 
   while (1) {
-    disruptor_cursor_t cursor = {0};
-    const turbo_threadpool_task_t *entry;
+    turbo_threadpool_task_t task;
+    turbo_threadpool_take_status take_status =
+        turbo_threadpool_try_take_task(pool, &task);
 
-    if (!disruptor_worker_try_claim(pool->queue, &cursor)) {
+    if (take_status == TURBO_THREADPOOL_TAKE_NONE) {
       if (atomic_load(&pool->shutdown) &&
           turbo_threadpool_pending_tasks(pool) <= 0 &&
           atomic_load(&pool->queued_depth) <= 0) {
@@ -175,27 +219,21 @@ static void worker_entry(void *arg) {
       continue;
     }
 
-    entry = (const turbo_threadpool_task_t *)
-        disruptor_show_entry(pool->queue, &cursor);
-    if (entry == NULL || entry->run == NULL) {
+    if (take_status == TURBO_THREADPOOL_TAKE_INVALID) {
       turbo_threadpool_release_queue_slot(pool);
-      disruptor_worker_release_entry(pool->queue, &cursor);
       turbo_threadpool_cancel_task(pool);
       continue;
     }
 
     if (atomic_load(&pool->cancel_pending)) {
-      turbo_threadpool_cancel_descriptor(pool, entry);
-      disruptor_worker_release_entry(pool->queue, &cursor);
+      turbo_threadpool_cancel_descriptor(pool, &task);
       turbo_threadpool_release_queue_slot(pool);
       turbo_threadpool_cancel_task(pool);
       continue;
     }
     atomic_fetch_add(&pool->tasks_started, 1);
     turbo_threadpool_release_queue_slot(pool);
-    turbo_threadpool_run_descriptor(pool, entry);
-    disruptor_worker_release_entry(pool->queue, &cursor);
-    turbo_threadpool_signal_queue_space(pool);
+    turbo_threadpool_run_descriptor(pool, &task);
     turbo_threadpool_finish_task(pool);
   }
 
@@ -219,7 +257,7 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
                        : TURBO_THREADPOOL_DEFAULT_QUEUE_CAPACITY;
   if (queue_capacity == SIZE_MAX) return NULL;
 
-  ring_capacity = turbo_threadpool_round_up_pow2(queue_capacity + 1U);
+  ring_capacity = turbo_threadpool_round_up_pow2(queue_capacity);
   if (ring_capacity == 0U || ring_capacity > (uint64_t)SIZE_MAX ||
       ring_capacity > (uint64_t)INT64_MAX)
     return NULL;
@@ -255,8 +293,17 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
   turbo_mutex_init(&pool->park_mutex);
   turbo_cond_init(&pool->task_available);
   turbo_cond_init(&pool->queue_space);
+  turbo_mutex_init(&pool->dispatch_mutex);
   turbo_mutex_init(&pool->wait_mutex);
   turbo_cond_init(&pool->all_done);
+  if (pool->park_mutex == NULL || pool->task_available == NULL ||
+      pool->queue_space == NULL || pool->dispatch_mutex == NULL ||
+      pool->wait_mutex == NULL || pool->all_done == NULL) {
+    turbo_threadpool_destroy_sync(pool);
+    disruptor_destroy(pool->queue);
+    free(pool);
+    return NULL;
+  }
 
   pool->threads = (turbo_thread_t *)calloc((size_t)num_threads,
                                            sizeof(*pool->threads));
@@ -265,11 +312,7 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
   if (pool->threads == NULL || pool->workers == NULL) {
     free(pool->threads);
     free(pool->workers);
-    turbo_mutex_destroy(&pool->park_mutex);
-    turbo_cond_destroy(&pool->task_available);
-    turbo_cond_destroy(&pool->queue_space);
-    turbo_mutex_destroy(&pool->wait_mutex);
-    turbo_cond_destroy(&pool->all_done);
+    turbo_threadpool_destroy_sync(pool);
     disruptor_destroy(pool->queue);
     free(pool);
     return NULL;
@@ -280,17 +323,13 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
     pool->workers[i].worker_id = i;
     if (turbo_thread_create(&pool->threads[i], worker_entry,
                             &pool->workers[i]) != 0) {
-      atomic_store(&pool->accepting, 0);
-      atomic_store(&pool->shutdown, 1);
+      (void)turbo_threadpool_shutdown_with_policy(
+          pool, TURBO_THREADPOOL_SHUTDOWN_DRAIN);
       for (int j = 0; j < i; ++j)
         (void)turbo_thread_join(&pool->threads[j]);
       free(pool->threads);
       free(pool->workers);
-      turbo_mutex_destroy(&pool->park_mutex);
-      turbo_cond_destroy(&pool->task_available);
-      turbo_cond_destroy(&pool->queue_space);
-      turbo_mutex_destroy(&pool->wait_mutex);
-      turbo_cond_destroy(&pool->all_done);
+      turbo_threadpool_destroy_sync(pool);
       disruptor_destroy(pool->queue);
       free(pool);
       return NULL;
@@ -341,11 +380,7 @@ void turbo_threadpool_destroy(turbo_threadpool_t *pool) {
   for (int i = 0; i < pool->num_threads; ++i)
     (void)turbo_thread_join(&pool->threads[i]);
 
-  turbo_mutex_destroy(&pool->park_mutex);
-  turbo_cond_destroy(&pool->task_available);
-  turbo_cond_destroy(&pool->queue_space);
-  turbo_mutex_destroy(&pool->wait_mutex);
-  turbo_cond_destroy(&pool->all_done);
+  turbo_threadpool_destroy_sync(pool);
   disruptor_destroy(pool->queue);
   free(pool->workers);
   free(pool->threads);

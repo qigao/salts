@@ -91,7 +91,7 @@ enum {
     X(I,R0,size_t,pending,_) \
     X(I,R0,bool,shutdown,_) \
     X(I,R1,bool,get_stats,cflow_executor_stats *,out) \
-    X(I,V0,void,destroy,_)
+    X(I,D0,void,destroy,_)
 CMETA_INTERFACE(cflow_executor, CMETA_EXECUTOR_METHODS);
 
 /**
@@ -151,6 +151,13 @@ cflow_admission_status cflow_executor_try_post_task(
 cflow_executor_post_status cflow_executor_control_post_task(
     cflow_executor_control *control, const cflow_executor_task *task);
 
+/**
+ * Initialize an owning Executor handle.
+ *
+ * `executor` must be zero-initialized. Reinitializing a live handle fails
+ * without changing it. Other initialization failures also leave it unchanged,
+ * and destroy restores it to the zero state.
+ */
 bool cflow_executor_manual_init(cflow_executor *executor);
 bool cflow_executor_manual_init_with_capacity(cflow_executor *executor,
                                               size_t capacity);

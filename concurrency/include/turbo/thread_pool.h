@@ -29,6 +29,7 @@ typedef struct turbo_threadpool_task_s {
 
 typedef struct {
   int num_threads;
+  /* Maximum queued work; running callbacks do not consume this capacity. */
   size_t queue_capacity;
 } turbo_threadpool_config_t;
 
@@ -39,6 +40,7 @@ typedef enum turbo_threadpool_shutdown_policy {
 
 typedef struct {
   int num_threads;
+  /* Configured queued-work limit, excluding active callbacks. */
   size_t queue_capacity;
   int accepting;
   int64_t submitted_tasks;

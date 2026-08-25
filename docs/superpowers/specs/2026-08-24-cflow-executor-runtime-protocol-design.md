@@ -33,6 +33,12 @@ and concurrent handle reclamation without adding value for this scope.
 - Accepted work is partitioned into queued, running, completed, or cancelled.
   Public protocol snapshots derive accepted as the sum of those categories.
 - Queue capacity bounds queued work only; running work is separate.
+- A pool worker copies a claimed descriptor into worker-local storage and
+  releases its physical Disruptor slot before invoking hooks. Claim, copy, and
+  physical release use a short dispatch mutex because Disruptor reclaims only a
+  contiguous completion prefix. The logical queued reservation remains
+  authoritative until start, or until cancellation finalization returns, so
+  slot reuse cannot weaken configured backpressure.
 - The descriptor is copied during successful admission. `user` remains
   borrowed until terminal finalization completes.
 - Every accepted descriptor follows exactly one path: `run -> finalize` or
@@ -70,10 +76,12 @@ transactional cross-counter database snapshot.
 ## Architecture and compatibility
 
 `cflow_executor` remains the execution data-plane interface, so existing vtable
-layout, constructors, source behavior, and ABI stay unchanged. The optional
-`cflow_executor_control` view is an Interface Segregation/Adapter boundary over
-the same backend state; custom executor implementations that do not implement
-the built-in protocol simply fail the view conversion.
+layout, function signatures, and ABI stay unchanged. Owning initialization is
+now explicitly `ZERO -> LIVE`; reinitializing a live handle fails unchanged,
+and destroy returns it to `ZERO`. The optional `cflow_executor_control` view is
+an Interface Segregation/Adapter boundary over the same backend state; custom
+executor implementations that do not implement the built-in protocol simply
+fail the view conversion.
 
 `turbo_threadpool_submit` gains a documented `TURBO_EBUSY` result only for the
 previously deadlocking same-pool/full callback case. Existing external blocking
@@ -81,10 +89,11 @@ submission and drain shutdown behavior remain unchanged. New functions are
 additive, and no serialized format, Graph IR, or generated metadata changes.
 
 The ThreadPool queue entry and Manual fixed-array entry each grow from two
-pointers to four pointers. Capacity continues to be measured in task slots, so
-configured backpressure and public capacity values do not change; resident
-task metadata increases by two pointers per physical slot. No per-submission
-allocation is introduced.
+pointers to four pointers. Capacity continues to be measured in queued task
+slots, so configured backpressure and public capacity values do not change.
+Pool workers release physical slots before callbacks; running work therefore
+cannot consume queue capacity. Resident task metadata increases by two pointers
+per physical slot. No per-submission allocation is introduced.
 
 Migration is opt-in: owners that require terminal cleanup use the descriptor
 entry points; existing callers remain unchanged. Rolling back removes the

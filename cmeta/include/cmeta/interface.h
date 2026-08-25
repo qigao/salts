@@ -26,6 +26,7 @@
  *
  *   R0..R4  non-void return, 0..4 arguments after self
  *   V0..V4  void return,     0..4 arguments after self
+ *   D0       owning destructor; V0 ABI plus handle invalidation after return
  *
  * Example:
  *
@@ -58,6 +59,7 @@ typedef struct cmeta_interface_desc {
 #define CMETA_IFACE_ARITY_V2 2u
 #define CMETA_IFACE_ARITY_V3 3u
 #define CMETA_IFACE_ARITY_V4 4u
+#define CMETA_IFACE_ARITY_D0 0u
 
 /* vtable fields */
 #define CMETA_IFACE_VT_R0(I,R,N,_) R (*N)(void *self);
@@ -70,9 +72,11 @@ typedef struct cmeta_interface_desc {
 #define CMETA_IFACE_VT_V2(I,R,N,T1,A1,T2,A2) void (*N)(void *self, T1 A1, T2 A2);
 #define CMETA_IFACE_VT_V3(I,R,N,T1,A1,T2,A2,T3,A3) void (*N)(void *self, T1 A1, T2 A2, T3 A3);
 #define CMETA_IFACE_VT_V4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) void (*N)(void *self, T1 A1, T2 A2, T3 A3, T4 A4);
+#define CMETA_IFACE_VT_D0(I,R,N,_) void (*N)(void *self);
 #define CMETA_IFACE_VT_ROW(I,K,R,N,...) CMETA_PP_CAT(CMETA_IFACE_VT_,K)(I,R,N,__VA_ARGS__)
 
-/* wrapper definitions */
+/* wrapper definitions. D0 is an owning zero-argument destructor: it preserves
+ * the V0 vtable ABI and clears the interface handle after dispatch returns. */
 #define CMETA_IFACE_IMPL_R0(I,R,N,_) CMETA_INLINE R I##_##N(I *self) { return self->vtable->N(self->self); }
 #define CMETA_IFACE_IMPL_R1(I,R,N,T1,A1) CMETA_INLINE R I##_##N(I *self, T1 A1) { return self->vtable->N(self->self, A1); }
 #define CMETA_IFACE_IMPL_R2(I,R,N,T1,A1,T2,A2) CMETA_INLINE R I##_##N(I *self, T1 A1, T2 A2) { return self->vtable->N(self->self, A1, A2); }
@@ -83,6 +87,13 @@ typedef struct cmeta_interface_desc {
 #define CMETA_IFACE_IMPL_V2(I,R,N,T1,A1,T2,A2) CMETA_INLINE void I##_##N(I *self, T1 A1, T2 A2) { self->vtable->N(self->self, A1, A2); }
 #define CMETA_IFACE_IMPL_V3(I,R,N,T1,A1,T2,A2,T3,A3) CMETA_INLINE void I##_##N(I *self, T1 A1, T2 A2, T3 A3) { self->vtable->N(self->self, A1, A2, A3); }
 #define CMETA_IFACE_IMPL_V4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) CMETA_INLINE void I##_##N(I *self, T1 A1, T2 A2, T3 A3, T4 A4) { self->vtable->N(self->self, A1, A2, A3, A4); }
+#define CMETA_IFACE_IMPL_D0(I,R,N,_) \
+    CMETA_INLINE void I##_##N(I *self) { \
+        if (!self || !self->self || !self->vtable || !self->vtable->N) return; \
+        self->vtable->N(self->self); \
+        self->self = NULL; \
+        self->vtable = NULL; \
+    }
 #define CMETA_IFACE_IMPL_ROW(I,K,R,N,...) CMETA_PP_CAT(CMETA_IFACE_IMPL_,K)(I,R,N,__VA_ARGS__)
 
 /* required-method validation */
@@ -96,6 +107,7 @@ typedef struct cmeta_interface_desc {
 #define CMETA_IFACE_VALID_V2(I,R,N,T1,A1,T2,A2) && self->vtable->N != NULL
 #define CMETA_IFACE_VALID_V3(I,R,N,T1,A1,T2,A2,T3,A3) && self->vtable->N != NULL
 #define CMETA_IFACE_VALID_V4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_D0(I,R,N,_) && self->vtable->N != NULL
 #define CMETA_IFACE_VALID_ROW(I,K,R,N,...) CMETA_PP_CAT(CMETA_IFACE_VALID_,K)(I,R,N,__VA_ARGS__)
 
 #define CMETA_IFACE_META_ROW(I,K,R,N,...) { #N, #R, CMETA_PP_CAT(CMETA_IFACE_ARITY_,K) },
