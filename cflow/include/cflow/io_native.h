@@ -93,7 +93,7 @@ typedef struct cflow_io_native_pipe_operation {
 
 typedef struct cflow_io_native_backend_config {
     cflow_io_native_backend_kind kind;
-    /** Hard cap for in-flight requests and retained native socket identities. */
+    /** Hard cap for in-flight requests and retained native resource identities. */
     size_t request_capacity;
     /**
      * Maximum normal I/O completions attempted per native event. A terminal

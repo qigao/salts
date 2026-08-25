@@ -134,6 +134,13 @@ record whether it was already pending, call `write`, consume only a newly
 generated pending `SIGPIPE` after `EPIPE`, and restore the previous mask. Both
 paths preserve the caller's process-wide signal disposition.
 
+Linux io_uring pipe writes use the same thread-scoped principle without
+requiring `RWF_NOSIGNAL`, which was added only in Linux 6.18. The submitting
+thread is guarded around `io_uring_enter`, while the backend's dedicated
+completion worker blocks `SIGPIPE` for its lifetime so inline and deferred
+request execution both report `-EPIPE` through the CQE instead of terminating
+the process.
+
 Readiness backends keep FIFO ordering within the existing read and write lanes.
 They may execute one read and one write lane for the same full-duplex FIFO
 identity where the OS endpoint supports both directions. A conventional POSIX

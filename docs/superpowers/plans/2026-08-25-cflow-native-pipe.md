@@ -332,13 +332,13 @@ detection to a zero-result pipe read, clear the correct union member before
 slot reuse, and implement `forget_pipe` with the existing global-quiescence
 contract.
 
-- [ ] **Step 3: Verify GREEN**
+- [x] **Step 3: Verify GREEN**
 
 Run the Linux Release native-I/O test with io_uring available, then run it once
 with the epoll test definition and once for explicit poll. Expected: all socket
 and pipe cases pass without changing the runtime-probe behavior.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```sh
 git add cflow/src/io_native_io_uring.c cflow/tests/cflow_io_native_test.c
@@ -356,7 +356,7 @@ git commit -m "feat(cflow): add io_uring pipe I/O"
 - Consumes: completed backend behavior from Tasks 1-4.
 - Produces: user-facing capability matrix, ownership instructions, limitations, and CI evidence.
 
-- [ ] **Step 1: Update documentation**
+- [x] **Step 1: Update documentation**
 
 Replace the sentence that says pipe support is future work with the exact
 byte-stream contract. Split the capability matrix into socket and pipe columns,
@@ -364,7 +364,7 @@ state the POSIX `O_NONBLOCK` requirement, Windows async declaration, lack of
 anonymous `CreatePipe` support, partial-transfer behavior, EOF mapping,
 close-then-forget order, and the explicitly deferred lifecycle operations.
 
-- [ ] **Step 2: Run local Windows Release verification**
+- [x] **Step 2: Run local Windows Release verification**
 
 Run:
 
@@ -374,7 +374,7 @@ cmd /c 'call "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7
 
 Expected: all configured tests pass with zero failures.
 
-- [ ] **Step 3: Inspect the diff and affected tests**
+- [x] **Step 3: Inspect the diff and affected tests**
 
 Run:
 
@@ -388,7 +388,7 @@ git status --short
 Confirm no `.codegraph` files are tracked and all changed production paths have
 direct tests.
 
-- [ ] **Step 4: Commit documentation**
+- [x] **Step 4: Commit documentation**
 
 ```powershell
 git add cflow/README.md .github/workflows/ci.yml .github/workflows/cflow-release-benchmarks.yml
@@ -397,7 +397,7 @@ git commit -m "docs(cflow): document native pipe capabilities"
 
 Stage workflow files only if their contents actually changed.
 
-- [ ] **Step 5: Push and open the PR**
+- [x] **Step 5: Push and open the PR**
 
 ```powershell
 git push -u origin feat/cflow-native-pipe
