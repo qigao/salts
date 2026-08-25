@@ -767,8 +767,8 @@ static int iocp_destroy(cflow_io_native_impl *base) {
 }
 
 static const cflow_io_native_impl_ops iocp_ops = {
-    iocp_submit, iocp_submit_pipe, iocp_cancel, iocp_get_stats,
-    iocp_forget_socket, iocp_forget_pipe, iocp_shutdown, iocp_destroy};
+    iocp_submit, iocp_submit_pipe, NULL, iocp_cancel, iocp_get_stats,
+    iocp_forget_socket, iocp_forget_pipe, NULL, iocp_shutdown, iocp_destroy};
 
 int cflow_io_native_iocp_init(cflow_io_native_backend *backend,
                               const cflow_io_native_backend_config *config) {

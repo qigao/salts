@@ -685,8 +685,9 @@ static int uring_destroy(cflow_io_native_impl *base) {
 }
 
 static const cflow_io_native_impl_ops uring_ops = {
-    uring_submit, uring_submit_pipe, uring_cancel, uring_get_stats,
-    uring_forget_socket, uring_forget_pipe, uring_shutdown, uring_destroy};
+    uring_submit, uring_submit_pipe, NULL, uring_cancel, uring_get_stats,
+    uring_forget_socket, uring_forget_pipe, NULL, uring_shutdown,
+    uring_destroy};
 
 static bool uring_mapped_extent(size_t offset, size_t count,
                                 size_t element_size, size_t *out) {

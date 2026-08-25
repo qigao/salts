@@ -1603,6 +1603,123 @@ static void native_check_backend(cflow_io_native_backend_kind kind) {
 }
 
 spec("CFlow native IO backend") {
+    it("validates the bounded native file operation contract") {
+        unsigned char byte = 0u;
+
+        check_true(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
+                .handle = 1u,
+                .buffer = &byte,
+                .length = 1u,
+                .offset = 0u,
+                .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE}));
+        check_true(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_WRITE_AT,
+                .handle = 1u,
+                .buffer = &byte,
+                .length = 1u,
+                .offset = (uint64_t)INT64_MAX - 1u}));
+        check_true(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_FLUSH,
+                .handle = 1u}));
+        check_false(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = (cflow_io_native_file_operation_kind)99,
+                .handle = 1u}));
+        check_false(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = (cflow_io_native_file_operation_kind)-1,
+                .handle = 1u}));
+        check_false(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
+                .handle = UINTPTR_MAX,
+                .buffer = &byte,
+                .length = 1u}));
+        check_false(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
+                .handle = 1u,
+                .length = 1u}));
+        check_false(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_WRITE_AT,
+                .handle = 1u,
+                .buffer = &byte}));
+        check_false(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
+                .handle = 1u,
+                .buffer = &byte,
+                .length = 1u,
+                .offset = (uint64_t)INT64_MAX}));
+        check_false(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
+                .handle = 1u,
+                .buffer = &byte,
+                .length = 1u,
+                .offset = (uint64_t)INT64_MAX + 1u}));
+        check_false(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_FLUSH,
+                .handle = 1u,
+                .buffer = &byte}));
+        check_false(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_FLUSH,
+                .handle = 1u,
+                .length = 1u}));
+        check_false(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_FLUSH,
+                .handle = 1u,
+                .offset = 1u}));
+        check_false(cflow_io_native_file_operation_valid(
+            &(cflow_io_native_file_operation){
+                .kind = CFLOW_IO_NATIVE_FILE_FLUSH,
+                .handle = 1u,
+                .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE << 1u}));
+    }
+
+    it("reports file support per backend and operation") {
+        check_false(cflow_io_native_backend_file_operation_supported(
+            (cflow_io_native_backend_kind)0,
+            CFLOW_IO_NATIVE_FILE_READ_AT));
+        check_false(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_IOCP,
+            (cflow_io_native_file_operation_kind)-1));
+#if defined(_WIN32)
+        check_true(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_IOCP, CFLOW_IO_NATIVE_FILE_READ_AT));
+        check_true(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_IOCP, CFLOW_IO_NATIVE_FILE_WRITE_AT));
+        check_false(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_IOCP, CFLOW_IO_NATIVE_FILE_FLUSH));
+        check_false(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_POLL, CFLOW_IO_NATIVE_FILE_READ_AT));
+#elif defined(__linux__)
+        check_true(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_IO_URING, CFLOW_IO_NATIVE_FILE_READ_AT));
+        check_true(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_IO_URING, CFLOW_IO_NATIVE_FILE_WRITE_AT));
+        check_true(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_IO_URING, CFLOW_IO_NATIVE_FILE_FLUSH));
+        check_false(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_EPOLL, CFLOW_IO_NATIVE_FILE_READ_AT));
+        check_false(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_POLL, CFLOW_IO_NATIVE_FILE_FLUSH));
+#elif defined(__APPLE__)
+        check_false(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_KQUEUE, CFLOW_IO_NATIVE_FILE_WRITE_AT));
+        check_false(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_POLL, CFLOW_IO_NATIVE_FILE_FLUSH));
+#endif
+    }
+
     it("validates the bounded native pipe operation contract") {
         unsigned char byte = 0u;
 

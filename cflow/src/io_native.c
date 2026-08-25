@@ -67,6 +67,28 @@ bool cflow_io_native_pipe_operation_valid(
            (operation->flags & ~known_flags) == 0u;
 }
 
+bool cflow_io_native_file_operation_valid(
+    const cflow_io_native_file_operation *operation) {
+    const uint32_t known_flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE;
+    if (operation == NULL || operation->handle == UINTPTR_MAX ||
+        (operation->flags & ~known_flags) != 0u)
+        return false;
+
+    switch (operation->kind) {
+        case CFLOW_IO_NATIVE_FILE_READ_AT:
+        case CFLOW_IO_NATIVE_FILE_WRITE_AT:
+            return operation->buffer != NULL && operation->length != 0u &&
+                   operation->length <= UINT32_MAX &&
+                   operation->offset <= (uint64_t)INT64_MAX &&
+                   operation->length <=
+                       (uint64_t)INT64_MAX - operation->offset;
+        case CFLOW_IO_NATIVE_FILE_FLUSH:
+            return operation->buffer == NULL && operation->length == 0u &&
+                   operation->offset == 0u;
+    }
+    return false;
+}
+
 bool cflow_io_native_backend_supported(cflow_io_native_backend_kind kind) {
     switch (kind) {
 #if defined(CFLOW_HAS_NATIVE_EPOLL)
@@ -97,6 +119,31 @@ bool cflow_io_native_backend_supported(cflow_io_native_backend_kind kind) {
 bool cflow_io_native_backend_pipe_supported(
     cflow_io_native_backend_kind kind) {
     return cflow_io_native_backend_supported(kind);
+}
+
+bool cflow_io_native_backend_file_operation_supported(
+    cflow_io_native_backend_kind kind,
+    cflow_io_native_file_operation_kind operation_kind) {
+    switch (operation_kind) {
+        case CFLOW_IO_NATIVE_FILE_READ_AT:
+        case CFLOW_IO_NATIVE_FILE_WRITE_AT:
+        case CFLOW_IO_NATIVE_FILE_FLUSH:
+            break;
+        default:
+            return false;
+    }
+    switch (kind) {
+#if defined(CFLOW_HAS_NATIVE_IOCP)
+        case CFLOW_IO_NATIVE_IOCP:
+            return operation_kind != CFLOW_IO_NATIVE_FILE_FLUSH;
+#endif
+#if defined(CFLOW_HAS_NATIVE_IO_URING)
+        case CFLOW_IO_NATIVE_IO_URING:
+            return true;
+#endif
+        default:
+            return false;
+    }
 }
 
 int cflow_io_native_backend_init(
@@ -180,6 +227,27 @@ static int native_pipe_actor_submit(void *backend_user,
     return impl->ops->submit_pipe(impl, actor, request_id, operation);
 }
 
+static int native_file_actor_submit(void *backend_user,
+                                    cflow_io_actor *actor,
+                                    cflow_io_request_id request_id,
+                                    cflow_io_lease_id lease_id,
+                                    void *operation_user) {
+    cflow_io_native_backend *backend = (cflow_io_native_backend *)backend_user;
+    cflow_io_native_impl *impl = native_impl(backend);
+    cflow_io_native_file_operation *operation =
+        (cflow_io_native_file_operation *)operation_user;
+    (void)lease_id;
+    if (impl == NULL || impl->ops == NULL || actor == NULL ||
+        request_id == 0u ||
+        !cflow_io_native_file_operation_valid(operation))
+        return TURBO_EINVAL;
+    if (impl->ops->submit_file == NULL ||
+        !cflow_io_native_backend_file_operation_supported(impl->kind,
+                                                          operation->kind))
+        return TURBO_ENOTSUP;
+    return impl->ops->submit_file(impl, actor, request_id, operation);
+}
+
 cflow_io_backend_ops cflow_io_native_backend_actor_ops(void) {
     cflow_io_backend_ops ops = {native_actor_submit, native_actor_cancel};
     return ops;
@@ -187,6 +255,12 @@ cflow_io_backend_ops cflow_io_native_backend_actor_ops(void) {
 
 cflow_io_backend_ops cflow_io_native_backend_pipe_actor_ops(void) {
     cflow_io_backend_ops ops = {native_pipe_actor_submit,
+                                native_actor_cancel};
+    return ops;
+}
+
+cflow_io_backend_ops cflow_io_native_backend_file_actor_ops(void) {
+    cflow_io_backend_ops ops = {native_file_actor_submit,
                                 native_actor_cancel};
     return ops;
 }
@@ -216,6 +290,16 @@ int cflow_io_native_backend_forget_pipe(
     if (impl->ops->forget_pipe == NULL)
         return TURBO_ENOTSUP;
     return impl->ops->forget_pipe(impl, closed_handle);
+}
+
+int cflow_io_native_backend_forget_file(
+    cflow_io_native_backend *backend, uintptr_t closed_handle) {
+    cflow_io_native_impl *impl = native_impl(backend);
+    if (impl == NULL || impl->ops == NULL || closed_handle == UINTPTR_MAX)
+        return TURBO_EINVAL;
+    if (impl->ops->forget_file == NULL)
+        return TURBO_ENOTSUP;
+    return impl->ops->forget_file(impl, closed_handle);
 }
 
 int cflow_io_native_backend_shutdown(cflow_io_native_backend *backend) {

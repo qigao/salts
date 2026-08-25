@@ -41,6 +41,16 @@ typedef enum cflow_io_native_pipe_operation_flags {
     CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE = 1u << 0
 } cflow_io_native_pipe_operation_flags;
 
+typedef enum cflow_io_native_file_operation_kind {
+    CFLOW_IO_NATIVE_FILE_READ_AT = 0,
+    CFLOW_IO_NATIVE_FILE_WRITE_AT,
+    CFLOW_IO_NATIVE_FILE_FLUSH
+} cflow_io_native_file_operation_kind;
+
+typedef enum cflow_io_native_file_operation_flags {
+    CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE = 1u << 0
+} cflow_io_native_file_operation_flags;
+
 #define CFLOW_IO_NATIVE_INVALID_SOCKET UINTPTR_MAX
 
 /**
@@ -91,6 +101,27 @@ typedef struct cflow_io_native_pipe_operation {
     uint32_t flags;
 } cflow_io_native_pipe_operation;
 
+/**
+ * Caller-owned regular-file operation borrowed from successful Actor submit
+ * until its terminal completion callback returns. READ_AT and WRITE_AT use the
+ * supplied offset without consuming a shared file position. The buffer is
+ * immutable for WRITE_AT and backend-exclusive mutable storage for READ_AT.
+ * FLUSH requires a null buffer, zero length, and zero offset. The backend never
+ * closes handle.
+ *
+ * CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE declares that a Windows disk handle was
+ * opened with FILE_FLAG_OVERLAPPED. IOCP cannot recover that creation flag
+ * from an arbitrary handle and rejects read/write without the declaration.
+ */
+typedef struct cflow_io_native_file_operation {
+    cflow_io_native_file_operation_kind kind;
+    uintptr_t handle;
+    void *buffer;
+    size_t length;
+    uint64_t offset;
+    uint32_t flags;
+} cflow_io_native_file_operation;
+
 typedef struct cflow_io_native_backend_config {
     cflow_io_native_backend_kind kind;
     /** Hard cap for in-flight requests and retained native resource identities. */
@@ -126,6 +157,11 @@ bool cflow_io_native_backend_supported(cflow_io_native_backend_kind kind);
 bool cflow_io_native_backend_pipe_supported(
     cflow_io_native_backend_kind kind);
 
+/** Returns compile-time file-operation capability; handle checks occur on submit. */
+bool cflow_io_native_backend_file_operation_supported(
+    cflow_io_native_backend_kind kind,
+    cflow_io_native_file_operation_kind operation_kind);
+
 /**
  * Initializes one explicitly selected bounded backend. Unsupported kinds return
  * TURBO_ENOTSUP without fallback. The backend handle must be zero-initialized.
@@ -139,6 +175,9 @@ cflow_io_backend_ops cflow_io_native_backend_actor_ops(void);
 
 /** Ops are used with pipe operations and backend_user pointing at the backend. */
 cflow_io_backend_ops cflow_io_native_backend_pipe_actor_ops(void);
+
+/** Ops are used with file operations and backend_user pointing at the backend. */
+cflow_io_backend_ops cflow_io_native_backend_file_actor_ops(void);
 
 bool cflow_io_native_backend_get_stats(
     const cflow_io_native_backend *backend,
@@ -163,6 +202,10 @@ int cflow_io_native_backend_forget_socket(
  * has closed it and all operations using it have completed.
  */
 int cflow_io_native_backend_forget_pipe(
+    cflow_io_native_backend *backend, uintptr_t closed_handle);
+
+/** Releases a retained regular-file identity after terminal drain and close. */
+int cflow_io_native_backend_forget_file(
     cflow_io_native_backend *backend, uintptr_t closed_handle);
 
 /**
