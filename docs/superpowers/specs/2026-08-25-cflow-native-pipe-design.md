@@ -125,11 +125,14 @@ backend is not changed into a multi-Actor request-ID namespace in this issue.
 | io_uring | `IORING_OP_READ` / `IORING_OP_WRITE` | valid fd | read CQE result is 0 |
 | IOCP | overlapped `ReadFile` / `WriteFile` | declared async-capable byte pipe | zero-byte read or `ERROR_BROKEN_PIPE` |
 
-The POSIX guarded write temporarily blocks `SIGPIPE` on the executing thread,
-records whether the signal was already pending, calls `write`, consumes only a
-newly generated pending `SIGPIPE` after `EPIPE`, and restores the previous mask.
-This matches the existing `turbo_process_write_stdin` safety protocol without
-changing process-wide signal disposition.
+On Darwin, each backend-owned write descriptor duplicate is configured once
+with `F_SETNOSIGPIPE` before reactor registration. Apple's XNU header defines
+that descriptor command as suppressing `SIGPIPE` when an operation returns
+`EPIPE`: <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/fcntl.h>.
+Other POSIX guarded writes temporarily block `SIGPIPE` on the executing thread,
+record whether it was already pending, call `write`, consume only a newly
+generated pending `SIGPIPE` after `EPIPE`, and restore the previous mask. Both
+paths preserve the caller's process-wide signal disposition.
 
 Readiness backends keep FIFO ordering within the existing read and write lanes.
 They may execute one read and one write lane for the same full-duplex FIFO

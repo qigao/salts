@@ -256,7 +256,7 @@ Expected: pipe cases fail with unsupported submit before readiness pipe logic
 exists. On macOS use the repository's macOS CI configure/build commands and
 the same CTest target.
 
-- [ ] **Step 3: Implement resource-neutral readiness lanes**
+- [x] **Step 3: Implement resource-neutral readiness lanes**
 
 Add a resource discriminator and pipe pointer to each request record. Replace
 socket-only identity helpers with internal resource identity helpers while
@@ -281,13 +281,13 @@ if (((record->resource_kind == CFLOW_NATIVE_RESOURCE_SOCKET &&
     return (cflow_io_completion){CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK};
 ```
 
-- [ ] **Step 4: Verify GREEN on each readiness backend**
+- [x] **Step 4: Verify GREEN on each readiness backend**
 
 Run the native test for epoll and poll on Linux and kqueue and poll on macOS.
 Then run the existing socket contract on the same backends. Expected: no
 hang, no process signal termination, and all cases pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```sh
 git add cflow/src/io_native_readiness.c cflow/tests/cflow_io_native_test.c
