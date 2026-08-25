@@ -196,12 +196,12 @@ backend exactly matches the request and all outcomes are zero.
 Run `codegraph sync .`, `git diff --check`, inspect the complete diff, and obtain an
 independent HIGH/MED review. Resolve every HIGH/MED before pushing.
 
-- [ ] **Step 4: Push and monitor PR checks**
+- [x] **Step 4: Push and monitor PR checks**
 
 Push the feature branch and monitor the full PR matrix until terminal. Any io_uring
 unsupported/policy failure is a real failed acceptance criterion, not a skip.
 
-- [ ] **Step 5: Validate artifacts and publish evidence**
+- [x] **Step 5: Validate artifacts and publish evidence**
 
 Download all artifacts, verify each normal host has sixty dual-native reports and the
 io_uring host reports backend `io_uring`; verify zero errors/rejections/stale
