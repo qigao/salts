@@ -86,6 +86,23 @@ static void cflow_parallel_eval_thread_run(void *user) {
       ctx->plan, ctx->inputs, ctx->input_count, &ctx->options, &ctx->result);
 }
 
+typedef struct cflow_parallel_callback_eval {
+  const cflow_plan *plan;
+  const long *inputs;
+  size_t input_count;
+  cflow_plan_eval_options options;
+  cflow_result result;
+  _Atomic bool returned;
+  bool ok;
+} cflow_parallel_callback_eval;
+
+static void cflow_parallel_callback_eval_run(void *user) {
+  cflow_parallel_callback_eval *ctx = (cflow_parallel_callback_eval *)user;
+  ctx->ok = cflow_plan_eval_array_with_options(
+      ctx->plan, ctx->inputs, ctx->input_count, &ctx->options, &ctx->result);
+  atomic_store(&ctx->returned, true);
+}
+
 typedef struct cflow_closing_executor_state {
   turbo_mutex_t mutex;
   turbo_cond_t condition;
@@ -476,6 +493,84 @@ suite("CFlow ordered parallel reduce") {
     check_true(cflow_executor_get_stats(&executor, &stats));
     check_equal(stats.pending, (size_t)0u);
     check_equal(stats.rejected_closed, (size_t)1u);
+
+    cflow_result_destroy(&eval.result);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("settles accepted shards cancelled by WorkerExecutor shutdown") {
+    const long input[] = {31L, 32L, 33L, 34L, 35L, 36L, 37L, 38L};
+    cflow_parallel_reduce_fixture *state = &cflow_parallel_state;
+    cflow_executor executor = {0};
+    cflow_executor_control control = {0};
+    cflow_executor_protocol_stats stats = {0};
+    cflow_parallel_eval_thread eval = {
+        .plan = &state->plan,
+        .inputs = input,
+        .input_count = 8u,
+        .options = state->options
+    };
+    turbo_thread_t thread = NULL;
+    size_t attempts = 0u;
+
+    atomic_store(&cflow_parallel_gate_open, false);
+    atomic_store(&cflow_parallel_gate_started, false);
+    check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 4u));
+    check_true(cflow_executor_as_control(&executor, &control));
+    check_true(cflow_executor_post(&executor, cflow_parallel_gate_task, NULL));
+    while (!atomic_load(&cflow_parallel_gate_started) && attempts++ < 500u)
+      turbo_sleep_ms(1u);
+    check_true(atomic_load(&cflow_parallel_gate_started));
+
+    eval.options.executor = &executor;
+    check_equal(turbo_thread_create(
+        &thread, cflow_parallel_eval_thread_run, &eval), 0);
+    attempts = 0u;
+    do {
+      check_true(cflow_executor_control_get_stats(&control, &stats));
+      if (stats.accepted == 5u) break;
+      turbo_sleep_ms(1u);
+    } while (attempts++ < 500u);
+    check_equal(stats.accepted, (size_t)5u);
+
+    check_true(cflow_executor_control_shutdown(
+        &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+    atomic_store(&cflow_parallel_gate_open, true);
+    check_equal(turbo_thread_join(&thread), 0);
+
+    check_false(eval.ok);
+    check_null(eval.result.data);
+    check_equal(cflow_executor_control_wait_idle(&control),
+                CFLOW_EXECUTOR_WAIT_IDLE);
+    check_true(cflow_executor_control_get_stats(&control, &stats));
+    check_equal(stats.accepted, stats.completed + stats.cancelled);
+    check_equal(stats.cancelled, (size_t)4u);
+
+    cflow_result_destroy(&eval.result);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("rejects a synchronous join from the same single WorkerExecutor") {
+    const long input[] = {41L, 42L, 43L, 44L};
+    cflow_parallel_reduce_fixture *state = &cflow_parallel_state;
+    cflow_executor executor = {0};
+    cflow_parallel_callback_eval eval = {
+        .plan = &state->plan,
+        .inputs = input,
+        .input_count = 4u,
+        .options = state->options
+    };
+
+    atomic_init(&eval.returned, false);
+    check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 4u));
+    eval.options.executor = &executor;
+    check_true(cflow_executor_post(
+        &executor, cflow_parallel_callback_eval_run, &eval));
+
+    check_true(cflow_executor_wait_idle(&executor));
+    check_true(atomic_load(&eval.returned));
+    check_false(eval.ok);
+    check_null(eval.result.data);
 
     cflow_result_destroy(&eval.result);
     cflow_executor_destroy(&executor);

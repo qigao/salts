@@ -1,4 +1,5 @@
 #include <cflow/executor.h>
+#include "executor_internal.h"
 #include <turbo/error_codes.h>
 #include <turbo/thread_pool.h>
 
@@ -582,6 +583,20 @@ cflow_executor_post_status cflow_executor_control_post_task(
         return pool_control_post_task_state(
             (cflow_pool_executor_state *)control->self, task);
     return CFLOW_EXECUTOR_POST_INVALID_ARGUMENT;
+}
+
+bool cflow_executor_is_current_internal(const cflow_executor *executor) {
+    if (!cflow_executor_valid(executor)) return false;
+    if (executor->vtable == &manual_executor_vtable)
+        return executor->self == manual_current;
+    if (executor->vtable == &serial_executor_vtable ||
+        executor->vtable == &worker_executor_vtable) {
+        const cflow_pool_executor_state *state =
+            (const cflow_pool_executor_state *)executor->self;
+        return state &&
+            turbo_threadpool_is_current_internal(state->pool) != 0;
+    }
+    return false;
 }
 
 bool cflow_executor_manual_init_with_capacity(cflow_executor *executor,

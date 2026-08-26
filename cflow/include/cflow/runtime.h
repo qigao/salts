@@ -106,7 +106,9 @@ typedef struct cflow_run {
     void *impl;
 } cflow_run;
 
-/* Move-style ownership: on success the run takes source and clears *source.
+/* Move-style ownership: run must be zero-initialized. Reopening a live Run
+ * fails without changing either owner. On success the run takes source and
+ * clears *source.
  * Graph and scheduler are borrowed. Admission failure leaves source ownership
  * with the caller. Interpreted graphs accept managed COPY/MOVE/DESTROY values
  * from a CONSTRUCTS_VALUES Source. Compiled byte plans remain trivial-only. */

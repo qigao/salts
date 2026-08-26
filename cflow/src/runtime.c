@@ -1,5 +1,6 @@
 #include <cflow/operators.h>
 #include <cflow/runtime.h>
+#include "scheduler_internal.h"
 #include <cflow/lower.h>
 #include <cflow/subrun.h>
 #include <cflow/coord.h>
@@ -717,6 +718,35 @@ static void pump_task(void *user) {
     if (destroy) run_destroy_claimed(r);
 }
 
+static void pump_task_cancel(void *user) {
+    run_impl *r = (run_impl *)user;
+    run_impl *previous_active_run;
+    bool cancel_source = false;
+    bool destroy;
+
+    if (!r) return;
+    previous_active_run = active_pump_run;
+    active_pump_run = r;
+    turbo_mutex_lock(&r->lock);
+    r->task_scheduled = false;
+    r->rejection_must_fail = false;
+    if (!r->terminated) {
+        r->cancel_requested = false;
+        r->cancelled = true;
+        r->terminated = true;
+        cancel_source = true;
+    }
+    turbo_mutex_unlock(&r->lock);
+
+    if (cancel_source) {
+        cflow_source_cancel(&r->source);
+        continuations_clear(r);
+    }
+    active_pump_run = previous_active_run;
+    destroy = run_release_task_ref(r);
+    if (destroy) run_destroy_claimed(r);
+}
+
 static const char *scheduler_rejection_error(cflow_admission_status status) {
     switch (status) {
         case CFLOW_ADMISSION_FULL:
@@ -734,6 +764,12 @@ static const char *scheduler_rejection_error(cflow_admission_status status) {
 
 static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
     cflow_schedule_result result;
+    const cflow_executor_task task = {
+        .run = pump_task,
+        .cancel = pump_task_cancel,
+        .finalize = NULL,
+        .user = r
+    };
     bool destroy;
     bool notify = false;
     bool must_fail = false;
@@ -755,8 +791,11 @@ static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
     r->rejection_must_fail = fail_on_rejection;
     ++r->task_refs;
     turbo_mutex_unlock(&r->lock);
-    result = cflow_scheduler_try_post_after(
-        r->scheduler, 0u, pump_task, r);
+    if (!cflow_scheduler_try_post_task_after_internal(
+            r->scheduler, 0u, &task, &result)) {
+        result = cflow_scheduler_try_post_after(
+            r->scheduler, 0u, pump_task, r);
+    }
     if (result.status != CFLOW_ADMISSION_ACCEPTED || result.task_id == 0u) {
         turbo_mutex_lock(&r->lock);
         r->task_scheduled = false;
@@ -797,7 +836,7 @@ bool cflow_run_open_subgraph(cflow_run *run,
     const cmeta_type_desc *source_type;
     const char *validation_error = NULL;
 
-    if (!run || !graph || !scheduler || !source ||
+    if (!run || run->impl || !graph || !scheduler || !source ||
         !cflow_source_valid(source) || !cflow_graph_is_normalized(graph))
         return false;
     subgraph = cflow_graph_subgraph(graph, subgraph_id);

@@ -54,8 +54,20 @@ cflow_schedule_result cflow_timer_queue_try_schedule(cflow_timer_queue *queue,
                                                      cflow_deadline deadline,
                                                      cflow_task_fn fn,
                                                      void *user) {
+    const cflow_executor_task task = {
+        .run = fn,
+        .cancel = NULL,
+        .finalize = NULL,
+        .user = user
+    };
+    return cflow_timer_queue_try_schedule_task(queue, deadline, &task);
+}
+
+cflow_schedule_result cflow_timer_queue_try_schedule_task(
+    cflow_timer_queue *queue, cflow_deadline deadline,
+    const cflow_executor_task *task) {
     cflow_timer_id id;
-    if (!queue || !fn)
+    if (!queue || !task || !task->run)
         return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
     if (queue->count >= queue->capacity || queue->next_id == 0u ||
         queue->next_order == UINT64_MAX)
@@ -66,8 +78,10 @@ cflow_schedule_result cflow_timer_queue_try_schedule(cflow_timer_queue *queue,
         .id = id,
         .deadline = deadline,
         .order = queue->next_order++,
-        .fn = fn,
-        .user = user
+        .fn = task->run,
+        .cancel = task->cancel,
+        .finalize = task->finalize,
+        .user = task->user
     };
     return (cflow_schedule_result){CFLOW_ADMISSION_ACCEPTED, id};
 }
@@ -80,14 +94,29 @@ cflow_timer_id cflow_timer_queue_schedule(cflow_timer_queue *queue,
 }
 
 bool cflow_timer_queue_cancel(cflow_timer_queue *queue, cflow_timer_id id) {
-    if (!queue || id == 0u) return false;
+    cflow_timer_task discarded;
+    return cflow_timer_queue_take(queue, id, &discarded);
+}
+
+bool cflow_timer_queue_take(cflow_timer_queue *queue, cflow_timer_id id,
+                            cflow_timer_task *out) {
+    if (!queue || id == 0u || !out) return false;
     for (size_t i = 0; i < queue->count; ++i) {
         if (queue->items[i].id == id) {
+            *out = queue->items[i];
             remove_at(queue, i);
             return true;
         }
     }
     return false;
+}
+
+bool cflow_timer_queue_take_any(cflow_timer_queue *queue,
+                                cflow_timer_task *out) {
+    if (!queue || queue->count == 0u || !out) return false;
+    *out = queue->items[queue->count - 1u];
+    --queue->count;
+    return true;
 }
 
 bool cflow_timer_queue_next_deadline(const cflow_timer_queue *queue,

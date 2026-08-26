@@ -48,6 +48,13 @@ typedef struct cflow_scheduler_stats {
 
 CMETA_INTERFACE(cflow_scheduler, CMETA_SCHEDULER_METHODS);
 
+/**
+ * Initialize an owning Scheduler handle.
+ *
+ * `scheduler` must be zero-initialized. Reinitializing a live handle fails
+ * without changing it. Other initialization failures also leave it unchanged,
+ * and destroy restores it to the zero state.
+ */
 bool cflow_scheduler_test_init(cflow_scheduler *scheduler);
 bool cflow_scheduler_test_init_with_capacity(cflow_scheduler *scheduler,
                                              size_t ready_capacity,

@@ -14,8 +14,21 @@ typedef struct cflow_timer_task {
     cflow_deadline deadline;
     uint64_t order;
     cflow_task_fn fn;
+    cflow_task_fn cancel;
+    cflow_task_fn finalize;
     void *user;
 } cflow_timer_task;
+
+static inline cflow_executor_task cflow_timer_task_descriptor(
+    const cflow_timer_task *task) {
+    if (!task) return (cflow_executor_task){0};
+    return (cflow_executor_task){
+        .run = task->fn,
+        .cancel = task->cancel,
+        .finalize = task->finalize,
+        .user = task->user
+    };
+}
 
 typedef struct cflow_timer_queue {
     cflow_timer_task *items;
@@ -33,11 +46,18 @@ cflow_schedule_result cflow_timer_queue_try_schedule(cflow_timer_queue *queue,
                                                      cflow_deadline deadline,
                                                      cflow_task_fn fn,
                                                      void *user);
+cflow_schedule_result cflow_timer_queue_try_schedule_task(
+    cflow_timer_queue *queue, cflow_deadline deadline,
+    const cflow_executor_task *task);
 cflow_timer_id cflow_timer_queue_schedule(cflow_timer_queue *queue,
                                           cflow_deadline deadline,
                                           cflow_task_fn fn,
                                           void *user);
 bool cflow_timer_queue_cancel(cflow_timer_queue *queue, cflow_timer_id id);
+bool cflow_timer_queue_take(cflow_timer_queue *queue, cflow_timer_id id,
+                            cflow_timer_task *out);
+bool cflow_timer_queue_take_any(cflow_timer_queue *queue,
+                                cflow_timer_task *out);
 bool cflow_timer_queue_next_deadline(const cflow_timer_queue *queue,
                                      cflow_deadline *out);
 bool cflow_timer_queue_take_ready(cflow_timer_queue *queue,
