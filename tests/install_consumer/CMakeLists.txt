@@ -20,6 +20,16 @@ add_turboutils_consumer(consume_cflow_fs TurboUtils::CFlowFS CONSUME_CFLOW_FS)
 add_turboutils_consumer(consume_stl TurboUtils::STL CONSUME_STL)
 add_turboutils_consumer(consume_core TurboUtils::Core CONSUME_CORE)
 
+if(TURBOUTILS_EXPECT_CAPTURE)
+  if(NOT TARGET TurboUtils::Capture)
+    message(FATAL_ERROR "TurboUtils::Capture was requested but is not exported")
+  endif()
+  add_turboutils_consumer(consume_capture TurboUtils::Capture CONSUME_CAPTURE)
+elseif(TARGET TurboUtils::Capture)
+  message(FATAL_ERROR
+          "feature-off TurboUtils package unexpectedly exports Capture")
+endif()
+
 if(TURBOUTILS_EXPECT_CFLOW_MINICORO)
   if(NOT TARGET TurboUtils::CFlowMinicoro)
     message(FATAL_ERROR

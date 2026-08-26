@@ -65,7 +65,9 @@
             "name": "android-dependencies-debug",
             "hidden": true,
             "cacheVariables": {
-                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}"
+                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "TURBO_ENABLE_CAPTURE": "ON",
+                "VCPKG_MANIFEST_FEATURES": "capture"
             },
             "environment": {
                 "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android/debug"
@@ -75,7 +77,9 @@
             "name": "android-dependencies-release",
             "hidden": true,
             "cacheVariables": {
-                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}"
+                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "TURBO_ENABLE_CAPTURE": "ON",
+                "VCPKG_MANIFEST_FEATURES": "capture"
             },
             "environment": {
                 "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android/release"
@@ -113,6 +117,30 @@
             ]
         },
         {
+            "name": "win-capture-dev-user",
+            "binaryDir": "${sourceDir}/build/Msvc-Capture",
+            "cacheVariables": {
+                "TURBO_ENABLE_CAPTURE": "ON",
+                "VCPKG_MANIFEST_FEATURES": "capture"
+            },
+            "environment": {
+                "PATH": "${sourceDir}/build/Msvc-Capture/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
+            },
+            "inherits": "win-dev-user"
+        },
+        {
+            "name": "win-capture-release-user",
+            "binaryDir": "${sourceDir}/build/Msvc-Capture-Release",
+            "cacheVariables": {
+                "TURBO_ENABLE_CAPTURE": "ON",
+                "VCPKG_MANIFEST_FEATURES": "capture"
+            },
+            "environment": {
+                "PATH": "${sourceDir}/build/Msvc-Capture-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
+            },
+            "inherits": "win-release-user"
+        },
+        {
             "name": "linux-dev-user",
             "cacheVariables": {
                 "ENABLE_SANITIZER_ADDRESS": "ON",
@@ -130,6 +158,18 @@
             ]
         },
         {
+            "name": "linux-capture-dev-user",
+            "binaryDir": "${sourceDir}/build/linux-gcc-capture-debug",
+            "cacheVariables": {
+                "TURBO_ENABLE_CAPTURE": "ON",
+                "VCPKG_MANIFEST_FEATURES": "capture"
+            },
+            "environment": {
+                "PATH": "${sourceDir}/build/linux-gcc-capture-debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
+            },
+            "inherits": "linux-dev-user"
+        },
+        {
             "name": "linux-release-user",
             "cacheVariables": {
                 "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
@@ -145,6 +185,18 @@
                 "release-linux-ninja",
                 "linux-paths"
             ]
+        },
+        {
+            "name": "linux-capture-release-user",
+            "binaryDir": "${sourceDir}/build/linux-gcc-capture-release",
+            "cacheVariables": {
+                "TURBO_ENABLE_CAPTURE": "ON",
+                "VCPKG_MANIFEST_FEATURES": "capture"
+            },
+            "environment": {
+                "PATH": "${sourceDir}/build/linux-gcc-capture-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
+            },
+            "inherits": "linux-release-user"
         },
         {
             "name": "linux-sdk-package",
@@ -283,12 +335,28 @@
             "configurePreset": "win-release-user"
         },
         {
+            "name": "win-capture-dev-user",
+            "configurePreset": "win-capture-dev-user"
+        },
+        {
+            "name": "win-capture-release-user",
+            "configurePreset": "win-capture-release-user"
+        },
+        {
             "name": "linux-dev-user",
             "configurePreset": "linux-dev-user"
         },
         {
+            "name": "linux-capture-dev-user",
+            "configurePreset": "linux-capture-dev-user"
+        },
+        {
             "name": "linux-release-user",
             "configurePreset": "linux-release-user"
+        },
+        {
+            "name": "linux-capture-release-user",
+            "configurePreset": "linux-capture-release-user"
         },
         {
             "name": "linux-sdk-package",
@@ -309,6 +377,20 @@
             ]
         },
         {
+            "name": "install-win-capture-dev-user",
+            "configurePreset": "win-capture-dev-user",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-win-capture-release-user",
+            "configurePreset": "win-capture-release-user",
+            "targets": [
+                "install"
+            ]
+        },
+        {
             "name": "install-linux-dev-user",
             "configurePreset": "linux-dev-user",
             "targets": [
@@ -318,6 +400,20 @@
         {
             "name": "install-linux-release-user",
             "configurePreset": "linux-release-user",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-linux-capture-dev-user",
+            "configurePreset": "linux-capture-dev-user",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-linux-capture-release-user",
+            "configurePreset": "linux-capture-release-user",
             "targets": [
                 "install"
             ]
@@ -430,14 +526,34 @@
             "configurePreset": "win-release-user"
         },
         {
+            "name": "win-capture-dev-user",
+            "inherits": "base-test",
+            "configurePreset": "win-capture-dev-user"
+        },
+        {
+            "name": "win-capture-release-user",
+            "inherits": "base-test",
+            "configurePreset": "win-capture-release-user"
+        },
+        {
             "name": "linux-dev-user",
             "inherits": "base-test",
             "configurePreset": "linux-dev-user"
         },
         {
+            "name": "linux-capture-dev-user",
+            "inherits": "base-test",
+            "configurePreset": "linux-capture-dev-user"
+        },
+        {
             "name": "linux-release-user",
             "inherits": "base-test",
             "configurePreset": "linux-release-user"
+        },
+        {
+            "name": "linux-capture-release-user",
+            "inherits": "base-test",
+            "configurePreset": "linux-capture-release-user"
         },
         {
             "name": "win-clang-user",

@@ -18,6 +18,9 @@ cmake_dependent_option(BUILD_BENCHMARKS "Build benchmark executables" ON
 option(CFLOW_ENABLE_MINICORO
        "Build the optional minicoro-backed CFlow Resumable adapter" OFF)
 
+option(TURBO_ENABLE_CAPTURE
+       "Build the optional native audio/video/screen capture component" OFF)
+
 option(TURBO_ENABLE_EPOLL_READINESS
        "Enable the Linux epoll readiness backend" OFF)
 if(TURBO_ENABLE_EPOLL_READINESS AND

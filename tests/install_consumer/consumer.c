@@ -1,4 +1,13 @@
-#if defined(CONSUME_PLATFORM)
+#if defined(CONSUME_CAPTURE)
+#include <turbo_capture.h>
+
+int main(void) {
+  const turbo_video_native_mode_t ntsc = {
+      1920, 1080, 30000u, 1001u, TURBO_VIDEO_CAPTURE_FORMAT_NV12, 1u};
+  return turbo_video_mode_fps(&ntsc) == 30 ? 0 : 1;
+}
+
+#elif defined(CONSUME_PLATFORM)
 #include <turbo/clock.h>
 
 int main(void) { return turbo_hrtime() == 0u; }

@@ -62,6 +62,9 @@ add_subdirectory(cbind)
 add_subdirectory(cflow)
 add_subdirectory(turbostl)
 add_subdirectory(utils)
+if(TURBO_ENABLE_CAPTURE)
+  add_subdirectory(capture)
+endif()
 add_subdirectory(cflow-fs)
 option(CFLOW_ENABLE_USB "Build the optional libusb CFlow adapter" OFF)
 if(CFLOW_ENABLE_USB)
@@ -86,6 +89,9 @@ endif()
 if(CFLOW_ENABLE_USB)
   list(APPEND verify_installed_dependencies turbo_cflow_usb)
 endif()
+if(TURBO_ENABLE_CAPTURE)
+  list(APPEND verify_installed_dependencies turbo_capture)
+endif()
 
 add_custom_target(
   verify_installed_package
@@ -98,6 +104,7 @@ add_custom_target(
     -DBUILD_GENERATOR=${CMAKE_GENERATOR}
     -DEXPECT_CFLOW_MINICORO=${CFLOW_ENABLE_MINICORO}
     -DEXPECT_CFLOW_USB=${CFLOW_ENABLE_USB}
+    -DEXPECT_CAPTURE=${TURBO_ENABLE_CAPTURE}
     -P
     ${CMAKE_SOURCE_DIR}/cmake/VerifyInstalledPackage.cmake
   DEPENDS ${verify_installed_dependencies}
