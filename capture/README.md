@@ -27,7 +27,8 @@ target_link_libraries(app PRIVATE TurboUtils::Capture)
 Windows 使用 Media Foundation、DirectShow、D3D11 与 DXGI；Linux 配置时要求
 PipeWire 0.3、X11 和 Xext；macOS/iOS 使用系统 Framework；Android 使用 NDK
 Camera2、Media、OpenSL ES 和 NativeWindow。miniaudio 与 libyuv 是实现依赖，其类型
-不会进入公开头文件。
+不会进入公开头文件。Windows 动态构建会把 `libyuv.dll` 及其 `jpeg62.dll` 运行时依赖
+安装到 SDK 的 `bin/`，与 `turbo_capture.dll` 一起部署即可满足加载依赖。
 
 ## 所有权、线程与关闭
 
@@ -44,8 +45,9 @@ Camera2、Media、OpenSL ES 和 NativeWindow。miniaudio 与 libyuv 是实现依
   `RUNNING`。
 
 设备不存在时，枚举返回零项。参数、权限、格式协商、原生资源或模式身份无效时接口会
-明确失败，不会静默切换为另一种设备语义。Android 屏幕采集还需要应用层完成 Java
-MediaProjection 授权与 surface 交接；未交接时 start 明确失败。
+明确失败，不会静默切换为另一种设备语义。Android 屏幕采集的 native 生命周期可以先
+启动，但应用层仍必须完成 Java MediaProjection 授权与 ImageReader surface 交接后才会
+产生视频帧。
 
 ## 下游迁移
 

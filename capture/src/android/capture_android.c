@@ -2,7 +2,7 @@
  * Android Capture Dispatcher
  *
  * Adapts the Android native capture backends to the TurboUtils capture API.
- * Screen capture fails fast until the Java MediaProjection handoff is present.
+ * Screen frames require the application-owned Java MediaProjection surface.
  */
 
 #include "turbo_capture.h"
@@ -575,6 +575,9 @@ int turbo_capture_start(turbo_capture_t *capture) {
         case TURBO_CAPTURE_TYPE_SCREEN: {
             android_screen_platform_t *platform =
                 (android_screen_platform_t *)capture->platform_ctx;
+            /* The Java layer owns MediaProjection and attaches the native
+             * ImageReader surface before it produces frames.  Preserve the
+             * public native lifecycle while that external surface is idle. */
             result = platform ? android_screen_start(platform->native, NULL) : -1;
             break;
         }

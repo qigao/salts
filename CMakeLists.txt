@@ -89,8 +89,12 @@ endif()
 if(CFLOW_ENABLE_USB)
   list(APPEND verify_installed_dependencies turbo_cflow_usb)
 endif()
+set(verify_capture_windows_runtime OFF)
 if(TURBO_ENABLE_CAPTURE)
   list(APPEND verify_installed_dependencies turbo_capture)
+  if(WIN32)
+    set(verify_capture_windows_runtime ON)
+  endif()
 endif()
 
 add_custom_target(
@@ -105,6 +109,7 @@ add_custom_target(
     -DEXPECT_CFLOW_MINICORO=${CFLOW_ENABLE_MINICORO}
     -DEXPECT_CFLOW_USB=${CFLOW_ENABLE_USB}
     -DEXPECT_CAPTURE=${TURBO_ENABLE_CAPTURE}
+    -DEXPECT_CAPTURE_WINDOWS_RUNTIME=${verify_capture_windows_runtime}
     -P
     ${CMAKE_SOURCE_DIR}/cmake/VerifyInstalledPackage.cmake
   DEPENDS ${verify_installed_dependencies}
