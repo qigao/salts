@@ -49,6 +49,9 @@ static const uint32_t watch_linux_mask =
     IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE_SELF | IN_MOVE_SELF |
     IN_UNMOUNT | IN_ONLYDIR;
 
+static void watch_linux_remove_prefix(cflow_fs_watch_linux *backend,
+                                      const char *prefix);
+
 static bool watch_linux_multiply(size_t left, size_t right, size_t *out) {
     if (out == NULL || (right != 0u && left > SIZE_MAX / right))
         return false;
@@ -57,6 +60,9 @@ static bool watch_linux_multiply(size_t left, size_t right, size_t *out) {
 }
 
 static void watch_linux_loss(cflow_fs_watch_linux *backend) {
+    if (backend->recursive && backend->rename_pending &&
+        backend->rename_type == CFLOW_FS_WATCH_ENTRY_DIRECTORY)
+        watch_linux_remove_prefix(backend, backend->rename_old_path);
     backend->rename_pending = false;
     backend->rename_cookie = 0u;
     cflow_fs_watch_publish_loss(backend->owner);
@@ -296,7 +302,7 @@ static void watch_linux_process(cflow_fs_watch_linux *backend,
             continue;
         }
         if (watch_index == SIZE_MAX) {
-            watch_linux_loss(backend);
+            /* Native removal can leave already-queued events for that wd. */
             offset += sizeof(*native) + native->len;
             continue;
         }
@@ -333,14 +339,12 @@ static void watch_linux_process(cflow_fs_watch_linux *backend,
             : CFLOW_FS_WATCH_ENTRY_FILE;
         if ((native->mask & IN_MOVED_FROM) != 0u) {
             size_t length = strlen(path);
-            if (backend->rename_pending) {
+            if (backend->rename_pending)
                 watch_linux_loss(backend);
-            } else {
-                memcpy(backend->rename_old_path, path, length + 1u);
-                backend->rename_cookie = native->cookie;
-                backend->rename_type = entry_type;
-                backend->rename_pending = true;
-            }
+            memcpy(backend->rename_old_path, path, length + 1u);
+            backend->rename_cookie = native->cookie;
+            backend->rename_type = entry_type;
+            backend->rename_pending = true;
         } else if ((native->mask & IN_MOVED_TO) != 0u) {
             if (!backend->rename_pending || native->cookie == 0u ||
                 native->cookie != backend->rename_cookie) {
