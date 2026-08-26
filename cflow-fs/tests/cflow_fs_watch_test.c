@@ -175,6 +175,22 @@ spec("CFlow filesystem watch") {
             }
             check_true(probe_saw(&probe, CFLOW_FS_WATCH_RENAMED, "second.txt"));
         }
+#elif defined(__APPLE__)
+        {
+            size_t attempts = 0u;
+            while (!probe_saw(&probe,
+                              CFLOW_FS_WATCH_RESCAN_REQUIRED, NULL) &&
+                   attempts++ < 5000u) {
+                size_t delivered = 0u;
+                check_equal(cflow_fs_watch_run_ready(
+                                &watch, 8u, &delivered), TURBO_OK);
+                if (delivered == 0u)
+                    turbo_sleep_ms(1u);
+            }
+            check_true(probe_saw(&probe,
+                                 CFLOW_FS_WATCH_RESCAN_REQUIRED, NULL));
+            check_equal(cflow_fs_watch_acknowledge_rescan(&watch), TURBO_OK);
+        }
 #endif
         check_equal(tt_remove_file(second), TURBO_OK);
         {
@@ -245,7 +261,7 @@ spec("CFlow filesystem watch") {
     }
 #endif
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__linux__)
     it("reports recursive descendants with normalized relative paths") {
         char *root = tt_make_temp_dir("cflow-watch-recursive-");
         char nested[1024];

@@ -77,9 +77,6 @@ static void watch_macos_events(ConstFSEventStreamRef stream,
                                const FSEventStreamEventId ids[]) {
     cflow_fs_watch_macos *backend = (cflow_fs_watch_macos *)user;
     char **paths = (char **)event_paths;
-    const char *rename_old = NULL;
-    cflow_fs_watch_entry_type rename_type =
-        CFLOW_FS_WATCH_ENTRY_UNKNOWN;
     size_t index;
     (void)stream;
     (void)ids;
@@ -92,14 +89,12 @@ static void watch_macos_events(ConstFSEventStreamRef stream,
                        kFSEventStreamEventFlagUserDropped |
                        kFSEventStreamEventFlagKernelDropped |
                        kFSEventStreamEventFlagEventIdsWrapped)) != 0u) {
-            rename_old = NULL;
             cflow_fs_watch_publish_loss(backend->owner);
             continue;
         }
         if ((native & (kFSEventStreamEventFlagRootChanged |
                        kFSEventStreamEventFlagMount |
                        kFSEventStreamEventFlagUnmount)) != 0u) {
-            rename_old = NULL;
             (void)cflow_fs_watch_publish(
                 backend->owner, CFLOW_FS_WATCH_ROOT_CHANGED,
                 NULL, NULL, CFLOW_FS_WATCH_ENTRY_DIRECTORY);
@@ -109,32 +104,16 @@ static void watch_macos_events(ConstFSEventStreamRef stream,
         if (relative == NULL)
             continue;
         if (strlen(relative) >= backend->path_capacity) {
-            rename_old = NULL;
             cflow_fs_watch_publish_loss(backend->owner);
             continue;
         }
         if ((native & kFSEventStreamEventFlagItemRenamed) != 0u) {
-            if (rename_old == NULL) {
-                rename_old = relative;
-                rename_type = watch_macos_entry_type(native);
-            } else {
-                (void)cflow_fs_watch_publish(
-                    backend->owner, CFLOW_FS_WATCH_RENAMED,
-                    relative, rename_old,
-                    rename_type != CFLOW_FS_WATCH_ENTRY_UNKNOWN
-                        ? rename_type : watch_macos_entry_type(native));
-                rename_old = NULL;
-            }
-            continue;
-        }
-        if (rename_old != NULL) {
-            rename_old = NULL;
+            /* FSEvents supplies paths but no correlation cookie. */
             cflow_fs_watch_publish_loss(backend->owner);
+            continue;
         }
         watch_macos_publish(backend, relative, native);
     }
-    if (rename_old != NULL)
-        cflow_fs_watch_publish_loss(backend->owner);
 }
 
 static void watch_macos_mark_done(void *user) {
