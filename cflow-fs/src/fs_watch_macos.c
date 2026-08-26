@@ -19,6 +19,8 @@ typedef struct cflow_fs_watch_macos {
     bool recursive;
 } cflow_fs_watch_macos;
 
+static char watch_macos_queue_key;
+
 static const char *watch_macos_relative(cflow_fs_watch_macos *backend,
                                         const char *path) {
     const char *relative;
@@ -122,6 +124,13 @@ static void watch_macos_mark_done(void *user) {
     cflow_fs_watch_backend_mark_done(backend->owner);
 }
 
+static void watch_macos_stop_and_mark_done(void *user) {
+    cflow_fs_watch_macos *backend = (cflow_fs_watch_macos *)user;
+    FSEventStreamStop(backend->stream);
+    FSEventStreamInvalidate(backend->stream);
+    watch_macos_mark_done(backend);
+}
+
 int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
                                 const char *path,
                                 const cflow_fs_watch_config *config) {
@@ -183,6 +192,8 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
         free(backend);
         return TURBO_ENOMEM;
     }
+    dispatch_queue_set_specific(backend->queue, &watch_macos_queue_key,
+                                backend, NULL);
     FSEventStreamSetDispatchQueue(backend->stream, backend->queue);
     cflow_fs_watch_backend_set(impl, backend);
     if (!FSEventStreamStart(backend->stream)) {
@@ -204,9 +215,13 @@ void cflow_fs_watch_backend_request_close(cflow_fs_watch_impl *impl) {
         (cflow_fs_watch_macos *)cflow_fs_watch_backend_get(impl);
     if (backend == NULL)
         return;
-    FSEventStreamStop(backend->stream);
-    FSEventStreamInvalidate(backend->stream);
-    dispatch_sync_f(backend->queue, backend, watch_macos_mark_done);
+    if (dispatch_get_specific(&watch_macos_queue_key) != NULL) {
+        dispatch_async_f(backend->queue, backend,
+                         watch_macos_stop_and_mark_done);
+        return;
+    }
+    dispatch_sync_f(backend->queue, backend,
+                    watch_macos_stop_and_mark_done);
 }
 
 int cflow_fs_watch_backend_destroy(cflow_fs_watch_impl *impl) {

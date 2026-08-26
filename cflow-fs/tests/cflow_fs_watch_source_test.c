@@ -410,9 +410,11 @@ spec("CFlow filesystem watch Source") {
     cflow_resume_ctx resume = {0};
     cflow_step step;
     watch_value value = {0};
-    reentrant_close_probe probe = {&source, &owner};
+    reentrant_close_probe probe = {0};
     size_t attempts = 0u;
 
+    probe.source = &source;
+    probe.owner = &owner;
     atomic_init(&probe.completed, false);
     check_not_null(root);
     check_equal(turbo_fs_path_join(path, sizeof(path), root, "reentrant.txt"), TURBO_OK);
