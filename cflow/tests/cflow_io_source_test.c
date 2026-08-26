@@ -4,6 +4,8 @@
 
 #include <turbo/thread.h>
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
@@ -620,18 +622,20 @@ spec("CFlow reactive IO source") {
         check_equal(turbo_thread_create(
                         &closer, io_source_close_thread,
                         &close_context), TURBO_OK);
+        turbo_mutex_lock(&wake.lock);
         waits = 0u;
         do {
             stats_valid = cflow_io_source_owner_get_stats(
                 &owner, &close_stats);
             if (!stats_valid || close_stats.close_requested)
                 break;
-            turbo_thread_yield();
+            (void)turbo_cond_timedwait(
+                &wake.changed, &wake.lock,
+                IO_SOURCE_WAIT_SLICE_NS);
         } while (++waits < IO_SOURCE_WAIT_LIMIT);
         check_true(stats_valid);
         check_true(close_stats.close_requested);
 
-        turbo_mutex_lock(&wake.lock);
         if (!wake.close_returned)
             (void)turbo_cond_timedwait(
                 &wake.changed, &wake.lock,
@@ -717,6 +721,7 @@ spec("CFlow reactive IO source") {
         turbo_thread_t worker = NULL;
         size_t progressed = 0u;
         size_t waits = 0u;
+        bool worker_completed;
         int output_a = 0;
         int output_b = 0;
 
@@ -753,35 +758,36 @@ spec("CFlow reactive IO source") {
             (void)turbo_cond_timedwait(
                 &probe.changed, &probe.lock,
                 IO_SOURCE_WAIT_SLICE_NS);
-        check_true(probe.worker_completed);
+        worker_completed = probe.worker_completed;
         turbo_mutex_unlock(&probe.lock);
 
-        if (probe.worker_completed) {
-            check_equal(turbo_thread_join(&worker), TURBO_OK);
-            turbo_thread_destroy(&worker);
-            check_true(probe.arm_a_accepted);
-            check_true(probe.arm_b_accepted);
-            check_true(probe.destroy_a_returned);
-            check_true(probe.outer_a_returned);
-            check_false(probe.rearm_a_accepted);
-            check_equal(probe.wake_a_calls, (size_t)1u);
-            check_equal(probe.wake_b_calls, (size_t)1u);
-            check_equal(probe.unexpected_a_calls, (size_t)0u);
-            check_equal(probe.owner_a_close_status, TURBO_EBUSY);
-            check_true(cflow_io_source_owner_is_quiescent(&owner_a));
-            check_equal(cflow_io_source_owner_close(
-                            &owner_a), TURBO_OK);
-            cflow_source_destroy(&source_b);
-            check_true(cflow_io_source_owner_is_quiescent(&owner_b));
-            check_equal(cflow_io_source_owner_close(
-                            &owner_b), TURBO_OK);
-            turbo_cond_destroy(&probe.changed);
-            turbo_mutex_destroy(&probe.lock);
-        } else {
-            /* A regression is deadlocked inside cancel(A); process exit
-             * terminates the isolated worker after TinyTest reports RED. */
-            turbo_thread_destroy(&worker);
+        if (!worker_completed) {
+            fprintf(stderr,
+                    "fatal: nested IO Source waker worker did not "
+                    "quiesce before watchdog timeout\n");
+            fflush(stderr);
+            abort();
         }
+        check_equal(turbo_thread_join(&worker), TURBO_OK);
+        turbo_thread_destroy(&worker);
+        check_true(probe.arm_a_accepted);
+        check_true(probe.arm_b_accepted);
+        check_true(probe.destroy_a_returned);
+        check_true(probe.outer_a_returned);
+        check_false(probe.rearm_a_accepted);
+        check_equal(probe.wake_a_calls, (size_t)1u);
+        check_equal(probe.wake_b_calls, (size_t)1u);
+        check_equal(probe.unexpected_a_calls, (size_t)0u);
+        check_equal(probe.owner_a_close_status, TURBO_EBUSY);
+        check_true(cflow_io_source_owner_is_quiescent(&owner_a));
+        check_equal(cflow_io_source_owner_close(
+                        &owner_a), TURBO_OK);
+        cflow_source_destroy(&source_b);
+        check_true(cflow_io_source_owner_is_quiescent(&owner_b));
+        check_equal(cflow_io_source_owner_close(
+                        &owner_b), TURBO_OK);
+        turbo_cond_destroy(&probe.changed);
+        turbo_mutex_destroy(&probe.lock);
     }
 
     it("bounds owner progress and permits VALUE consumption before ACK") {
