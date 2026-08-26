@@ -2,7 +2,15 @@
 
 #include "tinytest.h"
 
+#include <turbo/thread.h>
+
 #include <string.h>
+
+enum {
+    IO_SOURCE_WAIT_SLICE_NS = 10 * 1000 * 1000,
+    IO_SOURCE_WAIT_LIMIT = 500,
+    IO_SOURCE_CANCEL_OBSERVATION_NS = 20 * 1000 * 1000
+};
 
 typedef struct io_source_fixture {
     cflow_io_source_prepare_status prepare_status;
@@ -50,6 +58,77 @@ typedef struct io_source_run_fixture {
     cflow_sink_callbacks sink_callbacks;
     cflow_sink sink;
 } io_source_run_fixture;
+
+typedef struct io_source_blocking_wake_probe {
+    turbo_mutex_t lock;
+    turbo_cond_t changed;
+    bool entered;
+    bool released;
+    bool close_started;
+    bool close_returned;
+} io_source_blocking_wake_probe;
+
+typedef struct io_source_close_context {
+    cflow_source *source;
+    io_source_blocking_wake_probe *probe;
+} io_source_close_context;
+
+typedef struct io_source_drive_context {
+    cflow_io_source_owner *owner;
+    size_t max_steps;
+    size_t progressed;
+    int status;
+} io_source_drive_context;
+
+typedef struct io_source_reentrant_cancel_probe {
+    cflow_source *source;
+    bool returned;
+} io_source_reentrant_cancel_probe;
+
+static void io_source_blocking_wake(void *user) {
+    io_source_blocking_wake_probe *probe =
+        (io_source_blocking_wake_probe *)user;
+
+    if (probe == NULL)
+        return;
+    turbo_mutex_lock(&probe->lock);
+    probe->entered = true;
+    turbo_cond_broadcast(&probe->changed);
+    while (!probe->released)
+        turbo_cond_wait(&probe->changed, &probe->lock);
+    turbo_mutex_unlock(&probe->lock);
+}
+
+static void io_source_close_thread(void *user) {
+    io_source_close_context *context =
+        (io_source_close_context *)user;
+
+    turbo_mutex_lock(&context->probe->lock);
+    context->probe->close_started = true;
+    turbo_cond_broadcast(&context->probe->changed);
+    turbo_mutex_unlock(&context->probe->lock);
+    cflow_source_destroy(context->source);
+    turbo_mutex_lock(&context->probe->lock);
+    context->probe->close_returned = true;
+    turbo_cond_broadcast(&context->probe->changed);
+    turbo_mutex_unlock(&context->probe->lock);
+}
+
+static void io_source_drive_thread(void *user) {
+    io_source_drive_context *context =
+        (io_source_drive_context *)user;
+
+    context->status = cflow_io_source_owner_run_ready(
+        context->owner, context->max_steps, &context->progressed);
+}
+
+static void io_source_reentrant_cancel(void *user) {
+    io_source_reentrant_cancel_probe *probe =
+        (io_source_reentrant_cancel_probe *)user;
+
+    cflow_source_cancel(probe->source);
+    probe->returned = true;
+}
 
 static void io_source_operation_release(void *user) {
     io_source_fixture *fixture = (io_source_fixture *)user;
@@ -417,6 +496,7 @@ spec("CFlow reactive IO source") {
         check_equal(fixture.release_calls, (size_t)1u);
         check_true(fixture.drive_run_calls >= (size_t)1u);
         check_true(fixture.drive_run_progressed > (size_t)0u);
+        check_true(fixture.drive_run_busy >= (size_t)1u);
         check_equal(fixture.drive_run_error, TURBO_OK);
         check_true(cflow_io_source_owner_get_stats(
             &run_fixture.owner, &stats));
@@ -425,6 +505,298 @@ spec("CFlow reactive IO source") {
 
         io_source_run_fixture_close(&run_fixture);
         check_equal(fixture.release_calls, (size_t)1u);
+    }
+
+    it("waits for an extracted Source waker before close returns") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE,
+            .encoded_value = 41,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true
+        };
+        cflow_io_source_config config = io_source_config(&fixture);
+        cflow_source source = {0};
+        cflow_io_source_owner owner = {0};
+        cflow_step step;
+        int output = 0;
+        io_source_blocking_wake_probe wake = {0};
+        io_source_close_context close_context = {&source, &wake};
+        io_source_drive_context drive_context = {
+            &owner, 32u, 0u, TURBO_EINVAL
+        };
+        turbo_thread_t driver = NULL;
+        turbo_thread_t closer = NULL;
+        size_t waits = 0u;
+
+        turbo_mutex_init(&wake.lock);
+        turbo_cond_init(&wake.changed);
+        check_not_null(wake.lock);
+        check_not_null(wake.changed);
+        check_equal(cflow_source_from_io_actor(
+                        &source, &owner, &config), TURBO_OK);
+        step = cflow_source_resume(&source, NULL, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_true(cflow_waitable_arm(
+            &step.waitable,
+            (cflow_waker){io_source_blocking_wake, &wake}));
+        check_equal(turbo_thread_create(
+                        &driver, io_source_drive_thread,
+                        &drive_context), TURBO_OK);
+
+        turbo_mutex_lock(&wake.lock);
+        while (!wake.entered && waits++ < IO_SOURCE_WAIT_LIMIT)
+            (void)turbo_cond_timedwait(
+                &wake.changed, &wake.lock, IO_SOURCE_WAIT_SLICE_NS);
+        if (!wake.entered) {
+            wake.released = true;
+            turbo_cond_broadcast(&wake.changed);
+        }
+        check_true(wake.entered);
+        turbo_mutex_unlock(&wake.lock);
+
+        check_equal(turbo_thread_create(
+                        &closer, io_source_close_thread,
+                        &close_context), TURBO_OK);
+        turbo_mutex_lock(&wake.lock);
+        waits = 0u;
+        while (!wake.close_started && waits++ < IO_SOURCE_WAIT_LIMIT)
+            (void)turbo_cond_timedwait(
+                &wake.changed, &wake.lock, IO_SOURCE_WAIT_SLICE_NS);
+        check_true(wake.close_started);
+        if (!wake.close_returned)
+            (void)turbo_cond_timedwait(
+                &wake.changed, &wake.lock,
+                IO_SOURCE_CANCEL_OBSERVATION_NS);
+        check_false(wake.close_returned);
+        wake.released = true;
+        turbo_cond_broadcast(&wake.changed);
+        turbo_mutex_unlock(&wake.lock);
+
+        check_equal(turbo_thread_join(&driver), TURBO_OK);
+        turbo_thread_destroy(&driver);
+        check_equal(turbo_thread_join(&closer), TURBO_OK);
+        turbo_thread_destroy(&closer);
+        check_equal(drive_context.status, TURBO_OK);
+        check_true(drive_context.progressed > (size_t)0u);
+        check_true(wake.close_returned);
+        check_true(cflow_io_source_owner_is_quiescent(&owner));
+        check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
+        turbo_cond_destroy(&wake.changed);
+        turbo_mutex_destroy(&wake.lock);
+    }
+
+    it("allows Source cancel to return from inside its own waker") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE,
+            .encoded_value = 43,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true
+        };
+        cflow_io_source_config config = io_source_config(&fixture);
+        cflow_source source = {0};
+        cflow_io_source_owner owner = {0};
+        io_source_reentrant_cancel_probe wake = {&source, false};
+        cflow_step step;
+        size_t progressed = 0u;
+        int output = 0;
+
+        check_equal(cflow_source_from_io_actor(
+                        &source, &owner, &config), TURBO_OK);
+        step = cflow_source_resume(&source, NULL, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_true(cflow_waitable_arm(
+            &step.waitable,
+            (cflow_waker){io_source_reentrant_cancel, &wake}));
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner, 32u, &progressed), TURBO_OK);
+        check_true(wake.returned);
+        check_true(progressed > (size_t)0u);
+        cflow_source_destroy(&source);
+        check_true(cflow_io_source_owner_is_quiescent(&owner));
+        check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
+    }
+
+    it("bounds owner progress and permits VALUE consumption before ACK") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE,
+            .encoded_value = 47,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true
+        };
+        cflow_io_source_config config = io_source_config(&fixture);
+        cflow_source source = {0};
+        cflow_io_source_owner owner = {0};
+        cflow_io_source_stats stats = {0};
+        cflow_step step;
+        size_t progressed = SIZE_MAX;
+        int output = 0;
+
+        check_equal(cflow_source_from_io_actor(
+                        &source, &owner, &config), TURBO_OK);
+        step = cflow_source_resume(&source, NULL, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner, 1u, &progressed), TURBO_OK);
+        check_equal(progressed, (size_t)1u);
+        check_equal(fixture.backend_submit_calls, (size_t)0u);
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner, 1u, &progressed), TURBO_OK);
+        check_equal(progressed, (size_t)1u);
+        check_equal(fixture.backend_submit_calls, (size_t)1u);
+        check_equal(fixture.encode_calls, (size_t)0u);
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner, 1u, &progressed), TURBO_OK);
+        check_equal(progressed, (size_t)1u);
+        check_equal(fixture.encode_calls, (size_t)0u);
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner, 1u, &progressed), TURBO_OK);
+        check_equal(progressed, (size_t)1u);
+        check_equal(fixture.encode_calls, (size_t)1u);
+        check_equal(fixture.release_calls, (size_t)0u);
+        check_true(cflow_io_source_owner_get_stats(&owner, &stats));
+        check_true(stats.result_ready);
+        check_true(stats.request_active);
+
+        step = cflow_source_resume(&source, NULL, &output);
+        check_equal(step.kind, CFLOW_STEP_VALUE);
+        check_equal(output, 47);
+        check_equal(fixture.release_calls, (size_t)0u);
+        check_true(cflow_io_source_owner_get_stats(&owner, &stats));
+        check_false(stats.result_ready);
+        check_true(stats.request_active);
+
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner, 1u, &progressed), TURBO_OK);
+        check_equal(progressed, (size_t)1u);
+        check_equal(fixture.release_calls, (size_t)1u);
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner, 1u, &progressed), TURBO_OK);
+        check_equal(progressed, (size_t)0u);
+        cflow_source_destroy(&source);
+        check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
+    }
+
+    it("maps encoder DONE to Source completion") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_DONE,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true
+        };
+        cflow_io_source_config config = io_source_config(&fixture);
+        cflow_source source = {0};
+        cflow_io_source_owner owner = {0};
+        cflow_step step;
+        size_t progressed = 0u;
+        int output = 0;
+
+        check_equal(cflow_source_from_io_actor(
+                        &source, &owner, &config), TURBO_OK);
+        step = cflow_source_resume(&source, NULL, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner, 32u, &progressed), TURBO_OK);
+        step = cflow_source_resume(&source, NULL, &output);
+        check_equal(step.kind, CFLOW_STEP_DONE);
+        check_equal(fixture.encode_calls, (size_t)1u);
+        check_equal(fixture.release_calls, (size_t)1u);
+        cflow_source_destroy(&source);
+        check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
+    }
+
+    it("preserves the stable encoder ERROR") {
+        static const char encode_error[] = "literal encode failure";
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_ERROR,
+            .encode_error = encode_error,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true
+        };
+        cflow_io_source_config config = io_source_config(&fixture);
+        cflow_source source = {0};
+        cflow_io_source_owner owner = {0};
+        cflow_step step;
+        size_t progressed = 0u;
+        int output = 0;
+
+        check_equal(cflow_source_from_io_actor(
+                        &source, &owner, &config), TURBO_OK);
+        step = cflow_source_resume(&source, NULL, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner, 32u, &progressed), TURBO_OK);
+        step = cflow_source_resume(&source, NULL, &output);
+        check_equal(step.kind, CFLOW_STEP_ERROR);
+        check_true(step.error == encode_error);
+        check_equal(fixture.encode_calls, (size_t)1u);
+        check_equal(fixture.release_calls, (size_t)1u);
+        cflow_source_destroy(&source);
+        check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
+    }
+
+    it("maps encoder WOULD_BLOCK to its protocol error") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_WOULD_BLOCK,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true
+        };
+        cflow_io_source_config config = io_source_config(&fixture);
+        cflow_source source = {0};
+        cflow_io_source_owner owner = {0};
+        cflow_step step;
+        size_t progressed = 0u;
+        int output = 0;
+
+        check_equal(cflow_source_from_io_actor(
+                        &source, &owner, &config), TURBO_OK);
+        step = cflow_source_resume(&source, NULL, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner, 32u, &progressed), TURBO_OK);
+        step = cflow_source_resume(&source, NULL, &output);
+        check_equal(step.kind, CFLOW_STEP_ERROR);
+        check_equal(step.error,
+                    "IO source completion encoder returned WOULD_BLOCK");
+        check_equal(fixture.encode_calls, (size_t)1u);
+        check_equal(fixture.release_calls, (size_t)1u);
+        cflow_source_destroy(&source);
+        check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
+    }
+
+    it("distinguishes an invalid encoder status") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = (cflow_read_status)99,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true
+        };
+        cflow_io_source_config config = io_source_config(&fixture);
+        cflow_source source = {0};
+        cflow_io_source_owner owner = {0};
+        cflow_step step;
+        size_t progressed = 0u;
+        int output = 0;
+
+        check_equal(cflow_source_from_io_actor(
+                        &source, &owner, &config), TURBO_OK);
+        step = cflow_source_resume(&source, NULL, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner, 32u, &progressed), TURBO_OK);
+        step = cflow_source_resume(&source, NULL, &output);
+        check_equal(step.kind, CFLOW_STEP_ERROR);
+        check_equal(step.error,
+                    "IO source completion encoder returned an invalid status");
+        check_equal(fixture.encode_calls, (size_t)1u);
+        check_equal(fixture.release_calls, (size_t)1u);
+        cflow_source_destroy(&source);
+        check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
     }
 
     it("reports an accepted operation active during Actor admission transfer") {
