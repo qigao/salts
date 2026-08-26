@@ -80,6 +80,11 @@ cmake_add_test(cflow_io_actor_test
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_io_source_test
+  SOURCES cflow_io_source_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_io_native_test
   SOURCES cflow_io_native_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest

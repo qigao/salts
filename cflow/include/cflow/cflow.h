@@ -24,6 +24,7 @@
 #include <cflow/io_file.h>
 #include <cflow/timer_event.h>
 #include <cflow/sources.h>
+#include <cflow/io_source.h>
 #include <cflow/readiness.h>
 #include <cflow/temporal.h>
 #include <cflow/reactive.h>
