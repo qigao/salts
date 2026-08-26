@@ -139,6 +139,7 @@ spec("CFlow filesystem watch") {
             default: 0));
     }
 
+#if defined(_WIN32) || defined(__linux__)
     it("reports create rename and remove through the driver") {
         char *root = tt_make_temp_dir("cflow-watch-");
         char first[1024];
@@ -229,6 +230,20 @@ spec("CFlow filesystem watch") {
         check_equal(tt_remove_tree(root), TURBO_OK);
         free(root);
     }
+#else
+    it("fails fast when the native watch backend is unavailable") {
+        char *root = tt_make_temp_dir("cflow-watch-unsupported-");
+        cflow_fs_watch watch = {0};
+        watch_probe probe = {0};
+        cflow_fs_watch_config config = watch_config(&probe, 1u);
+
+        check_not_null(root);
+        check_equal(cflow_fs_watch_open(&watch, root, &config), TURBO_ENOTSUP);
+        check_null(watch.impl);
+        check_equal(tt_remove_tree(root), TURBO_OK);
+        free(root);
+    }
+#endif
 
 #if defined(_WIN32)
     it("reports recursive descendants with normalized relative paths") {
