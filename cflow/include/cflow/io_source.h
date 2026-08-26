@@ -84,7 +84,10 @@ typedef struct cflow_io_source_stats {
  * zero state; on every failure they remain zero state. The adapter owns a
  * request-capacity-one Actor, a capacity-one manual Executor, and one typed
  * completion slot. It borrows every config field and callback context until a
- * successful owner close. Returns TURBO_OK, TURBO_EINVAL, or TURBO_ENOMEM.
+ * successful owner close. prepare is called only for positive downstream
+ * demand. After an operation is accepted, no next operation is prepared until
+ * that operation's completion delivery has completed and its Actor request has
+ * been acknowledged. Returns TURBO_OK, TURBO_EINVAL, or TURBO_ENOMEM.
  *
  * Thread safety: construction requires exclusive access. The Run scheduler is
  * the only Source resume consumer after success.
