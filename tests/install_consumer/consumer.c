@@ -140,6 +140,14 @@ int main(void) {
   return 0;
 }
 
+#elif defined(CONSUME_CFLOW_USB)
+#include <cflow/usb.h>
+
+int main(void) {
+  cflow_usb_context context = {0};
+  return context.impl == NULL ? 0 : 1;
+}
+
 #elif defined(CONSUME_CORE)
 #include <platform.h>
 #include <turbo_cmeta_data.h>

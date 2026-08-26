@@ -34,6 +34,18 @@ elseif(TARGET TurboUtils::CFlowMinicoro)
           "feature-off TurboUtils package unexpectedly exports CFlowMinicoro")
 endif()
 
+if(TURBOUTILS_EXPECT_CFLOW_USB)
+  if(NOT TARGET TurboUtils::CFlowUSB)
+    message(FATAL_ERROR "TurboUtils::CFlowUSB was requested but is not exported")
+  endif()
+  add_turboutils_consumer(consume_cflow_usb
+                         TurboUtils::CFlowUSB
+                         CONSUME_CFLOW_USB)
+elseif(TARGET TurboUtils::CFlowUSB)
+  message(FATAL_ERROR
+          "feature-off TurboUtils package unexpectedly exports CFlowUSB")
+endif()
+
 add_executable(consume_stl_cpp consumer.cpp)
 target_compile_features(consume_stl_cpp PRIVATE cxx_std_17)
 target_link_libraries(consume_stl_cpp PRIVATE TurboUtils::STL)
