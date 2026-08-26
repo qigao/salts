@@ -286,12 +286,12 @@
 - Consumes: finished public API and implementation.
 - Produces: installed-header compatibility, runnable example documentation, reproducible evidence.
 
-- [ ] **Step 1: Add C++17 aggregate-header coverage**
+- [x] **Step 1: Add C++17 aggregate-header coverage**
 
   Add `static_assert` checks for prepare/encode callback signatures and compile a zero-state owner,
   config, and stats object through `<cflow/cflow.h>`.
 
-- [ ] **Step 2: Document the two I/O entry points**
+- [x] **Step 2: Document the two I/O entry points**
 
   Add a decision table to `cflow/README.md`:
 
@@ -304,7 +304,7 @@
   Include a complete prepare/encode/drive/Run/close example and explicitly state buffer and backend
   lifetimes, capacity one, no-demand behavior, and shutdown order.
 
-- [ ] **Step 3: Run focused and adjacent Release tests**
+- [x] **Step 3: Run focused and adjacent Release tests**
 
   Build the CFlow target and run:
 
@@ -320,27 +320,36 @@
   cflow_graph_test
   ```
 
-- [ ] **Step 4: Run full Release and install verification**
+- [x] **Step 4: Run full Release and install verification**
 
   Execute `ctest --preset win-release-user --output-on-failure`, then
   `cmake --build --preset install-win-release-user`. Confirm the installed SDK contains
   `include/cflow/io_source.h` and the existing installed-package consumer remains green.
 
-- [ ] **Step 5: Run available sanitizer/platform coverage**
+- [x] **Step 5: Run available sanitizer/platform coverage**
 
   Configure/build/test the focused target with `win-dev-user`. If the environment cannot run ASan
   or another native backend, record the exact command, error, and residual platform risk rather than
   substituting a fallback backend.
 
-- [ ] **Step 6: Final structural and patch verification**
+- [x] **Step 6: Final structural and patch verification**
 
   Run `codegraph sync .`, `codegraph affected` for the new header/source/test, `git diff --check`,
   and clean-worktree status. Review the public ownership comments against the design spec and verify
   every accepted operation has exactly one release path.
 
-- [ ] **Step 7: Commit the verified documentation/package surface**
+  Evidence (2026-08-27): Release focused CFlow tests passed 9/9; full
+  `win-release-user` CTest passed 147/147; `install-win-release-user` installed
+  `include/cflow/io_source.h`; `verify_installed_package` built its installed
+  consumer 18/18. Fresh `win-dev-user` configure enabled AddressSanitizer, found
+  `clang_rt.asan_dynamic-x86_64.dll`, and passed the same focused tests 9/9,
+  including the Windows IOCP native test. CodeGraph sync and affected analysis
+  completed, identifying the aggregate-header and focused adapter tests;
+  `git diff --check` passed. After the Step 7 commit, `git status --short`
+  reported no remaining worktree changes.
+
+- [x] **Step 7: Commit the verified documentation/package surface**
 
   ```text
   docs(cflow): document reactive IO source adapter
   ```
-

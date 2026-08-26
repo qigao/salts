@@ -47,6 +47,12 @@ static_assert(std::is_standard_layout<cflow_io_file_config>::value,
               "IO file config must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_file_stats>::value,
               "IO file stats must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_io_source_owner>::value,
+              "IO Source owner must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_io_source_config>::value,
+              "IO Source config must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_io_source_stats>::value,
+              "IO Source stats must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_timer_event_queue>::value,
               "timer Event queue must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_transition>::value,
@@ -68,6 +74,18 @@ using cflow_reactor_owner_close = int (*)(cflow_reactor_source_owner *);
 static_assert(std::is_same<decltype(&cflow_reactor_source_owner_close),
                            cflow_reactor_owner_close>::value,
               "reactor Source owner close must keep its C linkage signature");
+
+using cflow_io_source_prepare_callback = cflow_io_source_prepare_status (*)(
+    void *, cflow_io_operation *, const char **);
+static_assert(std::is_same<cflow_io_source_prepare_fn,
+                           cflow_io_source_prepare_callback>::value,
+              "IO Source prepare callback must keep its exact C signature");
+using cflow_io_source_encode_callback = cflow_read_status (*)(
+    void *, cflow_io_request_id, cflow_io_lease_id, void *,
+    const cflow_io_completion *, void *, const char **);
+static_assert(std::is_same<cflow_io_source_encode_fn,
+                           cflow_io_source_encode_callback>::value,
+              "IO Source encode callback must keep its exact C signature");
 
 suite("CFlow C++ public header") {
     it("exposes the aggregate API to C++ consumers") {
@@ -97,6 +115,9 @@ suite("CFlow C++ public header") {
         cflow_io_file_config io_file_config = {};
         cflow_io_file_stats io_file_stats = {};
         cflow_io_file_submit_result io_file_submit = {};
+        cflow_io_source_owner io_source_owner = {};
+        cflow_io_source_config io_source_config = {};
+        cflow_io_source_stats io_source_stats = {};
         cflow_io_native_backend_kind native_backend_kind = CFLOW_IO_NATIVE_POLL;
         cflow_io_native_pipe_operation_kind native_pipe_kind =
             CFLOW_IO_NATIVE_PIPE_READ;
@@ -159,6 +180,12 @@ suite("CFlow C++ public header") {
         check_true(io_file_config.open_flags == 0u);
         check_true(io_file_stats.operation_slots_in_use == 0u);
         check_true(io_file_submit.status == CFLOW_IO_FILE_SUBMIT_ACCEPTED);
+        check_null(io_source_owner.impl);
+        check_null(io_source_config.name);
+        check_null(io_source_config.prepare);
+        check_null(io_source_config.encode);
+        check_true(io_source_stats.actor.request_capacity == 0u);
+        check_false(io_source_stats.source_live);
         (void)cflow_io_native_backend_file_operation_supported(
             native_backend_kind, native_file_kind);
         cflow_actor_ref_release(&actor_ref);
