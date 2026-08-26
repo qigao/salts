@@ -32,6 +32,12 @@ if(WIN32 OR ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_libraries(turbo_capture PRIVATE yuv)
 endif()
 
+if(WIN32)
+  find_package(libjpeg-turbo CONFIG REQUIRED)
+  install(FILES "$<TARGET_FILE:yuv>" "$<TARGET_FILE:libjpeg-turbo::jpeg>"
+          DESTINATION bin)
+endif()
+
 if(ANDROID)
   target_sources(
     turbo_capture

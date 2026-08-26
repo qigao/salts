@@ -27,7 +27,8 @@ target_link_libraries(app PRIVATE TurboUtils::Capture)
 Windows 使用 Media Foundation、DirectShow、D3D11 与 DXGI；Linux 配置时要求
 PipeWire 0.3、X11 和 Xext；macOS/iOS 使用系统 Framework；Android 使用 NDK
 Camera2、Media、OpenSL ES 和 NativeWindow。miniaudio 与 libyuv 是实现依赖，其类型
-不会进入公开头文件。
+不会进入公开头文件。Windows 动态构建会把 `libyuv.dll` 及其 `jpeg62.dll` 运行时依赖
+安装到 SDK 的 `bin/`，与 `turbo_capture.dll` 一起部署即可满足加载依赖。
 
 ## 所有权、线程与关闭
 
