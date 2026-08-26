@@ -25,6 +25,14 @@ if(WIN32)
     FOLDER "capture/tests")
 endif()
 
+if(ANDROID)
+  cmake_add_test(
+    capture_android_test
+    SOURCES test_capture_android.c
+    LIBS TurboUtils::Capture TurboUtils::TinyTest
+    FOLDER "capture/tests")
+endif()
+
 if(UNIX AND NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
   cmake_add_test(
     capture_posix_test

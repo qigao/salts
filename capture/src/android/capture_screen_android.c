@@ -211,11 +211,12 @@ void android_screen_destroy(android_screen_ctx_t *ctx) {
     free(ctx);
 }
 
-/* Note: Start/stop require Java bridge for MediaProjection */
-/* These are called from JNI after permission is granted */
+/* Java owns MediaProjection and the VirtualDisplay.  The native lifecycle may
+ * start before Java attaches the ImageReader surface; frames begin only after
+ * that attachment. */
 
 int android_screen_start(android_screen_ctx_t *ctx, jobject media_projection) {
-    if (!ctx || !media_projection || ctx->capturing) return -1;
+    if (!ctx || ctx->capturing) return -1;
 
     ctx->media_projection = media_projection;
     ctx->capturing = 1;

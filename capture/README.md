@@ -44,8 +44,9 @@ Camera2、Media、OpenSL ES 和 NativeWindow。miniaudio 与 libyuv 是实现依
   `RUNNING`。
 
 设备不存在时，枚举返回零项。参数、权限、格式协商、原生资源或模式身份无效时接口会
-明确失败，不会静默切换为另一种设备语义。Android 屏幕采集还需要应用层完成 Java
-MediaProjection 授权与 surface 交接；未交接时 start 明确失败。
+明确失败，不会静默切换为另一种设备语义。Android 屏幕采集的 native 生命周期可以先
+启动，但应用层仍必须完成 Java MediaProjection 授权与 ImageReader surface 交接后才会
+产生视频帧。
 
 ## 下游迁移
 
