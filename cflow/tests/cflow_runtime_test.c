@@ -11,7 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { RUNTIME_SATURATION_TIMEOUT_MS = 5000 };
+enum {
+    RUNTIME_SATURATION_TIMEOUT_MS = 5000
+};
 
 typedef struct lifecycle_test_value {
     int *resource;
@@ -42,6 +44,181 @@ typedef struct rejection_callback_close_state {
     atomic_int errors;
     atomic_bool close_returned;
 } rejection_callback_close_state;
+
+typedef struct pending_foreign_scheduler_state {
+    turbo_mutex_t mutex;
+    turbo_cond_t changed;
+    cflow_task_fn pending_fn;
+    void *pending_user;
+    cflow_task_id pending_id;
+    cflow_task_id next_id;
+    cflow_task_id last_cancelled_id;
+    size_t post_calls;
+    size_t block_on_post;
+    bool release_blocked_post;
+    atomic_int blocked_posts;
+    atomic_int cancel_calls;
+} pending_foreign_scheduler_state;
+
+typedef struct pending_foreign_run_context {
+    pending_foreign_scheduler_state *state;
+    atomic_int returned;
+    bool ran;
+} pending_foreign_run_context;
+
+static cflow_schedule_result pending_foreign_try_post_after(
+    void *self, uint64_t delay, cflow_task_fn fn, void *user) {
+    pending_foreign_scheduler_state *state =
+        (pending_foreign_scheduler_state *)self;
+    cflow_task_id id;
+    (void)delay;
+    if (state == NULL || fn == NULL)
+        return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
+    turbo_mutex_lock(&state->mutex);
+    if (state->pending_fn != NULL) {
+        turbo_mutex_unlock(&state->mutex);
+        return (cflow_schedule_result){CFLOW_ADMISSION_FULL, 0u};
+    }
+    ++state->post_calls;
+    if (state->block_on_post == state->post_calls) {
+        atomic_fetch_add(&state->blocked_posts, 1);
+        turbo_cond_broadcast(&state->changed);
+        while (!state->release_blocked_post)
+            turbo_cond_wait(&state->changed, &state->mutex);
+    }
+    id = ++state->next_id;
+    state->pending_fn = fn;
+    state->pending_user = user;
+    state->pending_id = id;
+    turbo_mutex_unlock(&state->mutex);
+    return (cflow_schedule_result){CFLOW_ADMISSION_ACCEPTED, id};
+}
+
+static cflow_task_id pending_foreign_post_after(
+    void *self, uint64_t delay, cflow_task_fn fn, void *user) {
+    return pending_foreign_try_post_after(self, delay, fn, user).task_id;
+}
+
+static bool pending_foreign_cancel(void *self, cflow_task_id id) {
+    pending_foreign_scheduler_state *state =
+        (pending_foreign_scheduler_state *)self;
+    bool cancelled = false;
+    if (state == NULL || id == 0u) return false;
+    turbo_mutex_lock(&state->mutex);
+    if (state->pending_fn != NULL && state->pending_id == id) {
+        state->pending_fn = NULL;
+        state->pending_user = NULL;
+        state->pending_id = 0u;
+        state->last_cancelled_id = id;
+        cancelled = true;
+    }
+    turbo_mutex_unlock(&state->mutex);
+    if (cancelled) atomic_fetch_add(&state->cancel_calls, 1);
+    return cancelled;
+}
+
+static bool pending_foreign_run_one(void *self) {
+    pending_foreign_scheduler_state *state =
+        (pending_foreign_scheduler_state *)self;
+    cflow_task_fn fn;
+    void *user;
+    if (state == NULL) return false;
+    turbo_mutex_lock(&state->mutex);
+    fn = state->pending_fn;
+    user = state->pending_user;
+    state->pending_fn = NULL;
+    state->pending_user = NULL;
+    state->pending_id = 0u;
+    turbo_mutex_unlock(&state->mutex);
+    if (fn == NULL) return false;
+    fn(user);
+    return true;
+}
+
+static void pending_foreign_run_one_thread(void *user) {
+    pending_foreign_run_context *context =
+        (pending_foreign_run_context *)user;
+    context->ran = pending_foreign_run_one(context->state);
+    atomic_store(&context->returned, 1);
+}
+
+static void pending_foreign_release_blocked_post(
+    pending_foreign_scheduler_state *state) {
+    turbo_mutex_lock(&state->mutex);
+    state->release_blocked_post = true;
+    turbo_cond_broadcast(&state->changed);
+    turbo_mutex_unlock(&state->mutex);
+}
+
+static size_t pending_foreign_run_ready(void *self) {
+    return pending_foreign_run_one(self) ? 1u : 0u;
+}
+
+static size_t pending_foreign_advance(void *self, uint64_t ticks) {
+    (void)ticks;
+    return pending_foreign_run_ready(self);
+}
+
+static size_t pending_foreign_run_until_idle(void *self, size_t max_steps) {
+    size_t ran = 0u;
+    while ((max_steps == 0u || ran < max_steps) &&
+           pending_foreign_run_one(self))
+        ++ran;
+    return ran;
+}
+
+static bool pending_foreign_wait_idle(void *self) {
+    pending_foreign_scheduler_state *state =
+        (pending_foreign_scheduler_state *)self;
+    bool idle;
+    if (state == NULL) return false;
+    turbo_mutex_lock(&state->mutex);
+    idle = state->pending_fn == NULL;
+    turbo_mutex_unlock(&state->mutex);
+    return idle;
+}
+
+static uint64_t pending_foreign_now(void *self) {
+    (void)self;
+    return 0u;
+}
+
+static size_t pending_foreign_pending(void *self) {
+    return pending_foreign_wait_idle(self) ? 0u : 1u;
+}
+
+static bool pending_foreign_shutdown(void *self) {
+    return self != NULL;
+}
+
+static bool pending_foreign_get_stats(void *self,
+                                      cflow_scheduler_stats *out) {
+    if (self == NULL || out == NULL) return false;
+    *out = (cflow_scheduler_stats){0};
+    out->ready_pending = pending_foreign_pending(self);
+    return true;
+}
+
+static void pending_foreign_destroy(void *self) {
+    (void)self;
+}
+
+CMETA_IMPLEMENTS(cflow_scheduler, pending_foreign_scheduler,
+    CMETA_SCHED_CAP_CONCURRENT,
+    .try_post_after = pending_foreign_try_post_after,
+    .post_after = pending_foreign_post_after,
+    .cancel = pending_foreign_cancel,
+    .run_one = pending_foreign_run_one,
+    .run_ready = pending_foreign_run_ready,
+    .advance = pending_foreign_advance,
+    .run_until_idle = pending_foreign_run_until_idle,
+    .wait_idle = pending_foreign_wait_idle,
+    .now = pending_foreign_now,
+    .pending = pending_foreign_pending,
+    .shutdown = pending_foreign_shutdown,
+    .get_stats = pending_foreign_get_stats,
+    .destroy = pending_foreign_destroy
+);
 
 static cflow_schedule_result coalescing_try_post_after(
     void *self, uint64_t delay, cflow_task_fn fn, void *user) {
@@ -855,14 +1032,19 @@ static void saturation_sink_done(void *user) {
     if (state != NULL) atomic_fetch_add(&state->dones, 1);
 }
 
-static bool runtime_wait_until_at_least(atomic_int *value, int expected) {
+static bool runtime_wait_until_at_least_for(atomic_int *value, int expected,
+                                            uint64_t timeout_ms) {
     const uint64_t started = turbo_monotonic_ms();
-    while (turbo_monotonic_ms() - started <
-           RUNTIME_SATURATION_TIMEOUT_MS) {
+    while (turbo_monotonic_ms() - started < timeout_ms) {
         if (atomic_load(value) >= expected) return true;
         turbo_sleep_ms(1u);
     }
     return atomic_load(value) >= expected;
+}
+
+static bool runtime_wait_until_at_least(atomic_int *value, int expected) {
+    return runtime_wait_until_at_least_for(
+        value, expected, RUNTIME_SATURATION_TIMEOUT_MS);
 }
 
 static bool runtime_wait_until_true(atomic_bool *value) {
@@ -939,6 +1121,142 @@ suite("CFlow runtime") {
 
         check_null(run.impl);
         cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("cancels an accepted foreign Scheduler pump before closing Run") {
+        const int input[] = {44};
+        pending_foreign_scheduler_state state = {0};
+        cflow_scheduler scheduler;
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        cflow_source source = {0};
+        cflow_run run = {0};
+        coalescing_close_context close_context = {0};
+        turbo_thread_t close_thread = 0;
+        bool cancel_observed;
+        bool close_returned_before_rescue;
+        bool close_started;
+
+        turbo_mutex_init(&state.mutex);
+        turbo_cond_init(&state.changed);
+        scheduler = pending_foreign_scheduler_as_cflow_scheduler(&state);
+        normalized.root = CMETA_INVALID_ID;
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_not_null(state.mutex);
+        check_not_null(state.changed);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_source_from_array(
+            &source, &cmeta_type_int, input, 1u));
+        check_true(cflow_run_open(
+            &run, &normalized, &source, &scheduler, NULL));
+        check_true(cflow_run_request(&run, 1u));
+        check_equal(pending_foreign_pending(&state), (size_t)1u);
+
+        close_context.run = &run;
+        check_equal(turbo_thread_create(
+            &close_thread, coalescing_close, &close_context), 0);
+        close_started = runtime_wait_until_at_least(
+            &close_context.started, 1);
+        if (!close_started) abort();
+        cancel_observed = runtime_wait_until_at_least(
+            &state.cancel_calls, 1);
+        close_returned_before_rescue = runtime_wait_until_at_least(
+            &close_context.returned, 1);
+
+        if (!close_returned_before_rescue) {
+            if (cancel_observed) abort();
+            (void)pending_foreign_run_one(&state);
+            if (!runtime_wait_until_at_least(&close_context.returned, 1))
+                abort();
+        }
+        check_equal(turbo_thread_join(&close_thread), 0);
+        close_thread = 0;
+
+        check_true(close_started);
+        check_true(cancel_observed);
+        check_true(close_returned_before_rescue);
+        check_equal(atomic_load(&state.cancel_calls), 1);
+        check_equal(state.last_cancelled_id, (cflow_task_id)1u);
+        check_null(run.impl);
+
+        cflow_scheduler_destroy(&scheduler);
+        turbo_cond_destroy(&state.changed);
+        turbo_mutex_destroy(&state.mutex);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("closes while a running pump publishes its next generation") {
+        pending_foreign_scheduler_state scheduler_state = {0};
+        saturation_source_state source_state = {0};
+        cflow_scheduler scheduler;
+        cflow_source source = saturation_source_as_cflow_source(&source_state);
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        cflow_run run = {0};
+        pending_foreign_run_context pump_context = {&scheduler_state};
+        coalescing_close_context close_context = {&run};
+        turbo_thread_t pump_thread = 0;
+        turbo_thread_t close_thread = 0;
+        bool pump_returned;
+        bool close_started;
+        bool close_returned_before_rescue;
+
+        turbo_mutex_init(&scheduler_state.mutex);
+        turbo_cond_init(&scheduler_state.changed);
+        scheduler_state.block_on_post = 2u;
+        scheduler = pending_foreign_scheduler_as_cflow_scheduler(
+            &scheduler_state);
+        normalized.root = CMETA_INVALID_ID;
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_not_null(scheduler_state.mutex);
+        check_not_null(scheduler_state.changed);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_run_open(
+            &run, &normalized, &source, &scheduler, NULL));
+        check_true(cflow_run_request(&run, SIZE_MAX));
+        check_equal(pending_foreign_pending(&scheduler_state), (size_t)1u);
+
+        check_equal(turbo_thread_create(
+            &pump_thread, pending_foreign_run_one_thread, &pump_context), 0);
+        if (!runtime_wait_until_at_least(
+                &scheduler_state.blocked_posts, 1))
+            abort();
+
+        check_equal(turbo_thread_create(
+            &close_thread, coalescing_close, &close_context), 0);
+        close_started = runtime_wait_until_at_least(
+            &close_context.started, 1);
+        if (!close_started) abort();
+
+        pending_foreign_release_blocked_post(&scheduler_state);
+        pump_returned = runtime_wait_until_at_least(
+            &pump_context.returned, 1);
+        if (!pump_returned) abort();
+        close_returned_before_rescue = runtime_wait_until_at_least(
+            &close_context.returned, 1);
+        if (!close_returned_before_rescue) {
+            (void)pending_foreign_run_one(&scheduler_state);
+            if (!runtime_wait_until_at_least(&close_context.returned, 1))
+                abort();
+        }
+
+        check_equal(turbo_thread_join(&pump_thread), 0);
+        check_equal(turbo_thread_join(&close_thread), 0);
+        check_true(pump_context.ran);
+        check_true(close_started);
+        check_true(close_returned_before_rescue);
+        check_equal(atomic_load(&scheduler_state.cancel_calls), 1);
+        check_equal(scheduler_state.last_cancelled_id, (cflow_task_id)2u);
+        check_true(atomic_load(&source_state.cancelled));
+        check_true(atomic_load(&source_state.destroyed));
+        check_null(run.impl);
+
+        cflow_scheduler_destroy(&scheduler);
+        turbo_cond_destroy(&scheduler_state.changed);
+        turbo_mutex_destroy(&scheduler_state.mutex);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
     }

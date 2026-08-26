@@ -30,7 +30,16 @@ typedef struct cflow_scheduler_stats {
     size_t cancelled_on_shutdown;
 } cflow_scheduler_stats;
 
-/* Scheduler is a compatibility/runtime facade, not an inheritance hierarchy. */
+/**
+ * Scheduler is a compatibility/runtime facade, not an inheritance hierarchy.
+ *
+ * Successful admission returns a nonzero task ID and borrows `fn` plus `user`
+ * until `fn` returns or `cancel(id)` returns true. A true cancel result means
+ * the pending task was removed and `fn` will not execute; false means no such
+ * ownership transfer occurred. An implementation may execute `fn` inline
+ * before admission returns; the returned ID remains nonzero and later cancel
+ * then returns false.
+ */
 #define CMETA_SCHEDULER_METHODS(X,I) \
     X(I,R3,cflow_schedule_result,try_post_after,uint64_t,delay_ticks,cflow_task_fn,fn,void *,user) \
     X(I,R3,cflow_task_id,post_after,uint64_t,delay_ticks,cflow_task_fn,fn,void *,user) \
