@@ -58,6 +58,13 @@ typedef struct run_impl {
     size_t task_refs;
     size_t demand;
     bool task_scheduled;
+    /* A posting ref keeps the Run alive when a foreign Scheduler invokes the
+     * pump inline; the task ref settles only through run or cancellation. */
+    size_t task_posting;
+    cflow_task_id scheduled_task_id;
+    uint64_t scheduled_task_generation;
+    uint64_t next_task_generation;
+    bool scheduler_settles_cancel;
     bool rejection_must_fail;
     bool pump_running;
     bool waiting;
@@ -672,6 +679,12 @@ static bool run_release_task_ref(run_impl *r) {
     return destroy;
 }
 
+static void run_clear_scheduled_task_locked(run_impl *r) {
+    r->task_scheduled = false;
+    r->scheduled_task_id = 0u;
+    r->scheduler_settles_cancel = false;
+}
+
 static void pump_task(void *user) {
     run_impl *r = (run_impl *)user;
     run_impl *previous_active_run;
@@ -681,7 +694,7 @@ static void pump_task(void *user) {
     previous_active_run = active_pump_run;
     active_pump_run = r;
     turbo_mutex_lock(&r->lock);
-    r->task_scheduled = false;
+    run_clear_scheduled_task_locked(r);
     r->rejection_must_fail = false;
     r->pump_running = true;
     turbo_mutex_unlock(&r->lock);
@@ -728,7 +741,7 @@ static void pump_task_cancel(void *user) {
     previous_active_run = active_pump_run;
     active_pump_run = r;
     turbo_mutex_lock(&r->lock);
-    r->task_scheduled = false;
+    run_clear_scheduled_task_locked(r);
     r->rejection_must_fail = false;
     if (!r->terminated) {
         r->cancel_requested = false;
@@ -771,8 +784,10 @@ static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
         .user = r
     };
     bool destroy;
+    bool scheduler_settles_cancel;
     bool notify = false;
     bool must_fail = false;
+    uint64_t generation;
     const char *error = NULL;
     run_impl *previous_active_run;
     if (!r || !r->scheduler) return false;
@@ -787,18 +802,38 @@ static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
         turbo_mutex_unlock(&r->lock);
         return true;
     }
+    if (r->task_refs > SIZE_MAX - 2u || r->task_posting == SIZE_MAX ||
+        r->next_task_generation == UINT64_MAX) {
+        turbo_mutex_unlock(&r->lock);
+        return false;
+    }
     r->task_scheduled = true;
+    r->scheduled_task_id = 0u;
+    r->scheduler_settles_cancel = false;
+    generation = ++r->next_task_generation;
+    r->scheduled_task_generation = generation;
     r->rejection_must_fail = fail_on_rejection;
-    ++r->task_refs;
+    ++r->task_posting;
+    r->task_refs += 2u;
     turbo_mutex_unlock(&r->lock);
-    if (!cflow_scheduler_try_post_task_after_internal(
-            r->scheduler, 0u, &task, &result)) {
+    scheduler_settles_cancel =
+        cflow_scheduler_try_post_task_after_internal(
+            r->scheduler, 0u, &task, &result);
+    if (!scheduler_settles_cancel) {
         result = cflow_scheduler_try_post_after(
             r->scheduler, 0u, pump_task, r);
     }
-    if (result.status != CFLOW_ADMISSION_ACCEPTED || result.task_id == 0u) {
-        turbo_mutex_lock(&r->lock);
-        r->task_scheduled = false;
+    turbo_mutex_lock(&r->lock);
+    --r->task_posting;
+    if (result.status == CFLOW_ADMISSION_ACCEPTED && result.task_id != 0u) {
+        if (r->task_scheduled &&
+            r->scheduled_task_generation == generation) {
+            r->scheduled_task_id = result.task_id;
+            r->scheduler_settles_cancel = scheduler_settles_cancel;
+        }
+    } else if (r->task_scheduled &&
+               r->scheduled_task_generation == generation) {
+        run_clear_scheduled_task_locked(r);
         must_fail = r->rejection_must_fail;
         r->rejection_must_fail = false;
         if (must_fail && !r->cancel_requested &&
@@ -808,10 +843,12 @@ static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
             r->terminated = true;
             notify = true;
         }
-        turbo_mutex_unlock(&r->lock);
-
-        /* The rejected task ref protects r through synchronous Sink delivery;
-         * the TLS marker preserves close-from-callback deferred destruction. */
+    }
+    turbo_cond_broadcast(&r->task_cv);
+    turbo_mutex_unlock(&r->lock);
+    if (result.status != CFLOW_ADMISSION_ACCEPTED || result.task_id == 0u) {
+        /* The rejected task and posting refs protect r through synchronous
+         * Sink delivery; the TLS marker preserves callback-close deferral. */
         previous_active_run = active_pump_run;
         active_pump_run = r;
         if (notify && cflow_sink_valid(&r->sink))
@@ -819,9 +856,12 @@ static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
 
         active_pump_run = previous_active_run;
         destroy = run_release_task_ref(r);
+        if (!destroy) destroy = run_release_task_ref(r);
         if (destroy) run_destroy_claimed(r);
         return false;
     }
+    destroy = run_release_task_ref(r);
+    if (destroy) run_destroy_claimed(r);
     return true;
 }
 
@@ -944,6 +984,7 @@ void cflow_run_cancel(cflow_run *run) {
 void cflow_run_close(cflow_run *run) {
     run_impl *r;
     bool initiate_close = false;
+    uint64_t cancel_attempted_generation = 0u;
 
     if (!run || active_destroy_owner == run || !run_lifecycle_ensure()) return;
     turbo_mutex_lock(&run_lifecycle_lock);
@@ -976,15 +1017,38 @@ void cflow_run_close(cflow_run *run) {
     unsigned caps = cflow_scheduler_capabilities(r->scheduler);
     for (;;) {
         size_t refs = 0;
+        cflow_task_id task_id = 0u;
+        uint64_t task_generation = 0u;
+        bool scheduler_settles_cancel = false;
         turbo_mutex_lock(&r->lock);
         refs = r->task_refs;
         if (!refs) { turbo_mutex_unlock(&r->lock); break; }
-        if (caps & CMETA_SCHED_CAP_CONCURRENT) {
+        if (r->task_posting != 0u) {
+            turbo_cond_wait(&r->task_cv, &r->lock);
+            turbo_mutex_unlock(&r->lock);
+            continue;
+        }
+        if (r->task_scheduled && r->scheduled_task_id != 0u &&
+            r->scheduled_task_generation != cancel_attempted_generation) {
+            task_id = r->scheduled_task_id;
+            task_generation = r->scheduled_task_generation;
+            scheduler_settles_cancel = r->scheduler_settles_cancel;
+        }
+        if (task_id == 0u && (caps & CMETA_SCHED_CAP_CONCURRENT)) {
             turbo_cond_wait(&r->task_cv, &r->lock);
             turbo_mutex_unlock(&r->lock);
             continue;
         }
         turbo_mutex_unlock(&r->lock);
+        if (task_id != 0u) {
+            cancel_attempted_generation = task_generation;
+            /* Built-ins own the descriptor cancel callback. A foreign
+             * Scheduler only removes fn/user, so Run settles that task ref. */
+            if (cflow_scheduler_cancel(r->scheduler, task_id) &&
+                !scheduler_settles_cancel)
+                pump_task_cancel(r);
+            continue;
+        }
         (void)cflow_scheduler_run_until_idle(r->scheduler, 0);
     }
 
