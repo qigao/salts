@@ -1,4 +1,5 @@
 #include <cflow/plan_internal.h>
+#include "executor_internal.h"
 #include <turbo/thread.h>
 
 #include <stdint.h>
@@ -35,6 +36,17 @@ static bool checked_bytes(size_t count, size_t size, size_t *bytes) {
     return true;
 }
 
+static void parallel_reduce_task_settle(cflow_parallel_reduce_task *task,
+                                        bool succeeded) {
+    cflow_parallel_reduce_frame *frame = task ? task->frame : NULL;
+    if (!frame) return;
+    turbo_mutex_lock(&frame->mutex);
+    if (!succeeded) frame->failed = true;
+    ++frame->completed;
+    turbo_cond_broadcast(&frame->condition);
+    turbo_mutex_unlock(&frame->mutex);
+}
+
 static void parallel_reduce_task_run(void *user) {
     cflow_parallel_reduce_task *task = (cflow_parallel_reduce_task *)user;
     cflow_parallel_reduce_frame *frame = task ? task->frame : NULL;
@@ -59,11 +71,12 @@ static void parallel_reduce_task_run(void *user) {
         }
     }
 
-    turbo_mutex_lock(&frame->mutex);
-    if (!ok) frame->failed = true;
-    ++frame->completed;
-    turbo_cond_broadcast(&frame->condition);
-    turbo_mutex_unlock(&frame->mutex);
+    parallel_reduce_task_settle(task, ok);
+}
+
+static void parallel_reduce_task_cancel(void *user) {
+    parallel_reduce_task_settle(
+        (cflow_parallel_reduce_task *)user, false);
 }
 
 static void parallel_reduce_frame_destroy(cflow_parallel_reduce_frame *frame) {
@@ -193,7 +206,8 @@ static bool eval_parallel_reduce(const cflow_plan *plan,
     if (!plan || !plan->impl || !out || !options ||
         !options->max_tasks || !options->min_items_per_task ||
         !cflow_plan_parallel_reduce_supported(plan) ||
-        !cflow_executor_has(options->executor, CMETA_EXEC_CAP_CONCURRENT))
+        !cflow_executor_has(options->executor, CMETA_EXEC_CAP_CONCURRENT) ||
+        cflow_executor_is_current_internal(options->executor))
         return false;
 
     if (!parallel_reduce_frame_init(&frame, plan, inputs, input_count))
@@ -210,13 +224,24 @@ static bool eval_parallel_reduce(const cflow_plan *plan,
             cflow_parallel_reduce_task *task = &frame->tasks[index];
             const size_t count = base + (index < remainder ? 1u : 0u);
             cflow_admission_status status;
+            cflow_executor_task descriptor;
             task->frame = frame;
             task->index = index;
             task->begin = begin;
             task->count = count;
             begin += count;
-            status = cflow_executor_try_post(
-                options->executor, parallel_reduce_task_run, task);
+            descriptor = (cflow_executor_task){
+                .run = parallel_reduce_task_run,
+                .cancel = parallel_reduce_task_cancel,
+                .finalize = NULL,
+                .user = task
+            };
+            status = cflow_executor_try_post_task(
+                options->executor, &descriptor);
+            if (status == CFLOW_ADMISSION_INVALID_ARGUMENT) {
+                status = cflow_executor_try_post(
+                    options->executor, parallel_reduce_task_run, task);
+            }
             if (status != CFLOW_ADMISSION_ACCEPTED) {
                 admission_failed = true;
                 break;

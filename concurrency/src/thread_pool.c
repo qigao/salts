@@ -44,6 +44,12 @@ struct turbo_threadpool_s {
 
 static _Thread_local turbo_threadpool_t *turbo_threadpool_current = NULL;
 
+/* Private cross-library query used by CFlow to reject synchronous joins that
+ * cannot make progress from the same pool callback. */
+int turbo_threadpool_is_current_internal(const turbo_threadpool_t *pool) {
+  return pool != NULL && turbo_threadpool_current == pool;
+}
+
 static void turbo_threadpool_run_descriptor(
     turbo_threadpool_t *pool, const turbo_threadpool_task_t *task) {
   turbo_threadpool_t *previous = turbo_threadpool_current;

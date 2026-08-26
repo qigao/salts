@@ -876,6 +876,73 @@ static bool runtime_wait_until_true(atomic_bool *value) {
 }
 
 suite("CFlow runtime") {
+    it("preserves a live Run when a second open is rejected") {
+        const int first_input[] = {11};
+        const int second_input[] = {22};
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        cflow_scheduler scheduler = {0};
+        cflow_source first_source = {0};
+        cflow_source second_source = {0};
+        cflow_run run = {0};
+        cflow_run original;
+        bool reopened;
+
+        normalized.root = CMETA_INVALID_ID;
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_scheduler_test_init(&scheduler));
+        check_true(cflow_source_from_array(
+            &first_source, &cmeta_type_int, first_input, 1u));
+        check_true(cflow_source_from_array(
+            &second_source, &cmeta_type_int, second_input, 1u));
+        check_true(cflow_run_open(
+            &run, &normalized, &first_source, &scheduler, NULL));
+        original = run;
+
+        reopened = cflow_run_open(
+            &run, &normalized, &second_source, &scheduler, NULL);
+        check_false(reopened);
+        check_true(run.impl == original.impl);
+
+        if (run.impl != original.impl) {
+            cflow_run_close(&run);
+            run = original;
+        }
+        cflow_run_close(&run);
+        if (!reopened) cflow_source_destroy(&second_source);
+        cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("settles an accepted Run pump when Scheduler shutdown cancels it") {
+        const int input[] = {33};
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        cflow_scheduler scheduler = {0};
+        cflow_source source = {0};
+        cflow_run run = {0};
+
+        normalized.root = CMETA_INVALID_ID;
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_scheduler_test_init(&scheduler));
+        check_true(cflow_source_from_array(
+            &source, &cmeta_type_int, input, 1u));
+        check_true(cflow_run_open(
+            &run, &normalized, &source, &scheduler, NULL));
+        check_true(cflow_run_request(&run, 1u));
+
+        check_true(cflow_scheduler_shutdown(&scheduler));
+        cflow_run_close(&run);
+
+        check_null(run.impl);
+        cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
     it("bounds a stalled controlled Scheduler admission barrier") {
         enum { CONTROLLED_BARRIER_TIMEOUT_MS = 10 };
         coalescing_scheduler_state state = {0};

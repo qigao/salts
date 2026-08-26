@@ -1,6 +1,7 @@
 #include <cflow/clock.h>
 #include <cflow/executor.h>
 #include <cflow/scheduler.h>
+#include "scheduler_internal.h"
 #include "timer_queue.h"
 #include <turbo/thread.h>
 
@@ -29,8 +30,9 @@ static void test_update_peak_locked(cflow_test_loop_state *state) {
 static bool test_take_and_run_one(cflow_test_loop_state *state,
                                   bool advance_to_next) {
     cflow_timer_task task;
+    cflow_executor_task descriptor;
     cflow_instant now;
-    bool accepted;
+    cflow_admission_status admitted;
 
     if (!state) return false;
     turbo_mutex_lock(&state->mutex);
@@ -53,24 +55,26 @@ static bool test_take_and_run_one(cflow_test_loop_state *state,
         turbo_mutex_unlock(&state->mutex);
         return false;
     }
-    accepted = cflow_executor_post(&state->executor, task.fn, task.user);
     turbo_mutex_unlock(&state->mutex);
-    if (!accepted) return false;
+    descriptor = cflow_timer_task_descriptor(&task);
+    admitted = cflow_executor_try_post_task(&state->executor, &descriptor);
+    if (admitted != CFLOW_ADMISSION_ACCEPTED) {
+        cflow_scheduler_settle_cancelled_task_internal(&descriptor);
+        return false;
+    }
 
     /* The task can re-enter the scheduler, so callbacks run without its lock. */
     return cflow_executor_run_one(&state->executor);
 }
 
-static cflow_schedule_result test_try_post_after(void *self,
-                                                 uint64_t delay_ms,
-                                                 cflow_task_fn fn,
-                                                 void *user) {
-    cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+static cflow_schedule_result test_try_post_task_after(
+    cflow_test_loop_state *state, uint64_t delay_ms,
+    const cflow_executor_task *task) {
     cflow_instant now;
     cflow_deadline deadline;
     cflow_schedule_result result;
 
-    if (!state || !fn)
+    if (!state || !task || !task->run)
         return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
     turbo_mutex_lock(&state->mutex);
     if (state->stopping) {
@@ -80,14 +84,28 @@ static cflow_schedule_result test_try_post_after(void *self,
     }
     now = cflow_clock_now(&state->clock);
     deadline = cflow_deadline_after(now, cflow_duration_from_ms(delay_ms));
-    result = cflow_timer_queue_try_schedule(
-        &state->timers, deadline, fn, user);
+    result = cflow_timer_queue_try_schedule_task(
+        &state->timers, deadline, task);
     if (result.status == CFLOW_ADMISSION_ACCEPTED)
         test_update_peak_locked(state);
     else if (result.status == CFLOW_ADMISSION_FULL)
         ++state->rejected_full;
     turbo_mutex_unlock(&state->mutex);
     return result;
+}
+
+static cflow_schedule_result test_try_post_after(void *self,
+                                                 uint64_t delay_ms,
+                                                 cflow_task_fn fn,
+                                                 void *user) {
+    const cflow_executor_task task = {
+        .run = fn,
+        .cancel = NULL,
+        .finalize = NULL,
+        .user = user
+    };
+    return test_try_post_task_after(
+        (cflow_test_loop_state *)self, delay_ms, &task);
 }
 
 static cflow_task_id test_post_after(void *self,
@@ -99,13 +117,19 @@ static cflow_task_id test_post_after(void *self,
 
 static bool test_cancel(void *self, cflow_task_id id) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    cflow_timer_task timer_task = {0};
+    cflow_executor_task task;
     bool cancelled;
 
     if (!state || id == 0u) return false;
     turbo_mutex_lock(&state->mutex);
     cancelled = !state->stopping &&
-                cflow_timer_queue_cancel(&state->timers, id);
+                cflow_timer_queue_take(&state->timers, id, &timer_task);
     turbo_mutex_unlock(&state->mutex);
+    if (cancelled) {
+        task = cflow_timer_task_descriptor(&timer_task);
+        cflow_scheduler_settle_cancelled_task_internal(&task);
+    }
     return cancelled;
 }
 
@@ -182,16 +206,22 @@ static size_t test_pending(void *self) {
 
 static bool test_shutdown(void *self) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
+    cflow_timer_task timer_task;
     bool should_shutdown = false;
 
     if (!state) return false;
     turbo_mutex_lock(&state->mutex);
     if (!state->stopping) {
         state->stopping = true;
-        state->cancelled_on_shutdown +=
-            cflow_timer_queue_pending(&state->timers);
-        state->timers.count = 0u;
         should_shutdown = true;
+    }
+    while (cflow_timer_queue_take_any(&state->timers, &timer_task)) {
+        const cflow_executor_task task =
+            cflow_timer_task_descriptor(&timer_task);
+        ++state->cancelled_on_shutdown;
+        turbo_mutex_unlock(&state->mutex);
+        cflow_scheduler_settle_cancelled_task_internal(&task);
+        turbo_mutex_lock(&state->mutex);
     }
     turbo_mutex_unlock(&state->mutex);
     return !should_shutdown || cflow_executor_shutdown(&state->executor);
@@ -255,8 +285,7 @@ bool cflow_scheduler_test_init_with_capacity(cflow_scheduler *scheduler,
                                              size_t timer_capacity) {
     cflow_test_loop_state *state;
 
-    if (!scheduler) return false;
-    memset(scheduler, 0, sizeof(*scheduler));
+    if (!scheduler || scheduler->self || scheduler->vtable) return false;
     if (ready_capacity == 0u || timer_capacity == 0u) return false;
     state = (cflow_test_loop_state *)calloc(1, sizeof(*state));
     if (!state) return false;
@@ -291,4 +320,17 @@ cflow_task_id cflow_scheduler_post(cflow_scheduler *scheduler,
 
 const char *cflow_scheduler_name(const cflow_scheduler *scheduler) {
     return cflow_scheduler_implementation(scheduler);
+}
+
+bool cflow_scheduler_try_post_task_after_internal(
+    cflow_scheduler *scheduler, uint64_t delay_ms,
+    const cflow_executor_task *task, cflow_schedule_result *out) {
+    if (!scheduler || !task || !task->run || !out) return false;
+    if (scheduler->vtable == &test_loop_vtable) {
+        *out = test_try_post_task_after(
+            (cflow_test_loop_state *)scheduler->self, delay_ms, task);
+        return true;
+    }
+    return cflow_scheduler_worker_try_post_task_after_internal(
+        scheduler, delay_ms, task, out);
 }

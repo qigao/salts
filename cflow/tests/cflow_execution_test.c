@@ -3,6 +3,7 @@
 #include <cflow/scheduler.h>
 #include <cflow/time.h>
 #include <turbo/thread.h>
+#include "scheduler_internal.h"
 #include "timer_queue.h"
 #include "tinytest.h"
 
@@ -252,6 +253,44 @@ spec("CFlow execution foundation") {
     if (executor.self != original.self || executor.vtable != original.vtable)
       executor = original;
     cflow_executor_destroy(&executor);
+  }
+
+  it("preserves a live test Scheduler when reinitialization is rejected") {
+    cflow_scheduler scheduler = {0};
+    cflow_scheduler original;
+
+    check_true(cflow_scheduler_test_init_with_capacity(&scheduler, 2u, 2u));
+    original = scheduler;
+    check_false(cflow_scheduler_test_init_with_capacity(&scheduler, 4u, 4u));
+    check_true(scheduler.self == original.self);
+    check_true(scheduler.vtable == original.vtable);
+    if (scheduler.self != original.self || scheduler.vtable != original.vtable) {
+      cflow_scheduler_destroy(&scheduler);
+      scheduler = original;
+    }
+    check(cflow_scheduler_post(&scheduler, count_task, NULL) != 0u);
+    check_equal(cflow_scheduler_run_until_idle(&scheduler, 0u), (size_t)1u);
+    cflow_scheduler_destroy(&scheduler);
+  }
+
+  it("preserves a live worker Scheduler when reinitialization is rejected") {
+    cflow_scheduler scheduler = {0};
+    cflow_scheduler original;
+
+    check_true(cflow_scheduler_worker_init_with_capacity(
+        &scheduler, 1u, 2u, 2u));
+    original = scheduler;
+    check_false(cflow_scheduler_worker_init_with_capacity(
+        &scheduler, 2u, 4u, 4u));
+    check_true(scheduler.self == original.self);
+    check_true(scheduler.vtable == original.vtable);
+    if (scheduler.self != original.self || scheduler.vtable != original.vtable) {
+      cflow_scheduler_destroy(&scheduler);
+      scheduler = original;
+    }
+    check(cflow_scheduler_post(&scheduler, count_task, NULL) != 0u);
+    check_true(cflow_scheduler_wait_idle(&scheduler));
+    cflow_scheduler_destroy(&scheduler);
   }
 
   it("serializes callbacks from concurrent producers") {
@@ -762,6 +801,54 @@ spec("CFlow execution foundation") {
     atomic_store(&worker_gate_open, 1);
     cflow_scheduler_destroy(&scheduler);
     check_equal(atomic_load(&executor_counter), 2);
+  }
+
+  it("settles a test Scheduler descriptor exactly once on cancel") {
+    cflow_scheduler scheduler = {0};
+    cflow_task_lifecycle_probe probe = {0};
+    cflow_executor_task task = {
+        .run = cflow_lifecycle_run,
+        .cancel = cflow_lifecycle_cancel,
+        .finalize = cflow_lifecycle_finalize,
+        .user = &probe,
+    };
+    cflow_schedule_result result = {0};
+
+    check_true(cflow_scheduler_test_init(&scheduler));
+    check_true(cflow_scheduler_try_post_task_after_internal(
+        &scheduler, 100u, &task, &result));
+    check_equal(result.status, CFLOW_ADMISSION_ACCEPTED);
+    check_true(cflow_scheduler_cancel(&scheduler, result.task_id));
+    check_equal(atomic_load(&probe.run_count), 0);
+    check_equal(atomic_load(&probe.cancel_count), 1);
+    check_equal(atomic_load(&probe.finalize_count), 1);
+    check_equal(atomic_load(&probe.cancel_sequence), 1);
+    check_equal(atomic_load(&probe.finalize_sequence), 2);
+    cflow_scheduler_destroy(&scheduler);
+  }
+
+  it("settles a worker Scheduler descriptor exactly once on shutdown") {
+    cflow_scheduler scheduler = {0};
+    cflow_task_lifecycle_probe probe = {0};
+    cflow_executor_task task = {
+        .run = cflow_lifecycle_run,
+        .cancel = cflow_lifecycle_cancel,
+        .finalize = cflow_lifecycle_finalize,
+        .user = &probe,
+    };
+    cflow_schedule_result result = {0};
+
+    check_true(cflow_scheduler_worker_init(&scheduler, 1u));
+    check_true(cflow_scheduler_try_post_task_after_internal(
+        &scheduler, 60000u, &task, &result));
+    check_equal(result.status, CFLOW_ADMISSION_ACCEPTED);
+    check_true(cflow_scheduler_shutdown(&scheduler));
+    check_equal(atomic_load(&probe.run_count), 0);
+    check_equal(atomic_load(&probe.cancel_count), 1);
+    check_equal(atomic_load(&probe.finalize_count), 1);
+    check_equal(atomic_load(&probe.cancel_sequence), 1);
+    check_equal(atomic_load(&probe.finalize_sequence), 2);
+    cflow_scheduler_destroy(&scheduler);
   }
 
   it("orders TimerQueue by deadline then insertion order") {
