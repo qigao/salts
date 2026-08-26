@@ -300,6 +300,22 @@ spec("CFlow filesystem watch") {
         free(root);
     }
 
+    it("reports deletion of the watched root") {
+        char *root = tt_make_temp_dir("cflow-watch-root-");
+        cflow_fs_watch watch = {0};
+        watch_probe probe = {0};
+        cflow_fs_watch_config config = watch_config(&probe, 8u);
+
+        check_not_null(root);
+        check_equal(cflow_fs_watch_open(&watch, root, &config), TURBO_OK);
+        check_equal(tt_remove_tree(root), TURBO_OK);
+        check_equal(watch_drive_until(&watch, &probe, 1u), TURBO_OK);
+        check_true(probe_saw(&probe, CFLOW_FS_WATCH_ROOT_CHANGED, NULL));
+
+        watch_close_destroy(&watch);
+        free(root);
+    }
+
 #else
     it("fails fast when the native watch backend is unavailable") {
         char *root = tt_make_temp_dir("cflow-watch-unsupported-");
@@ -315,7 +331,7 @@ spec("CFlow filesystem watch") {
     }
 #endif
 
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
     it("reports recursive descendants with normalized relative paths") {
         char *root = tt_make_temp_dir("cflow-watch-recursive-");
         char nested[1024];
