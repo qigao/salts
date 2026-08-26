@@ -5,6 +5,7 @@
 #include <CoreServices/CoreServices.h>
 #include <dispatch/dispatch.h>
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -135,13 +136,13 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
     backend = (cflow_fs_watch_macos *)calloc(1u, sizeof(*backend));
     if (backend == NULL)
         return TURBO_ENOMEM;
-    backend->root_length = strlen(path);
-    backend->root = (char *)malloc(backend->root_length + 1u);
+    /* FSEvents reports physical paths (for example /private/var for /var). */
+    backend->root = realpath(path, NULL);
     if (backend->root == NULL) {
         free(backend);
-        return TURBO_ENOMEM;
+        return -errno;
     }
-    memcpy(backend->root, path, backend->root_length + 1u);
+    backend->root_length = strlen(backend->root);
     while (backend->root_length > 1u &&
            backend->root[backend->root_length - 1u] == '/')
         backend->root[--backend->root_length] = '\0';
@@ -193,6 +194,8 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
         free(backend);
         return TURBO_EIO;
     }
+    /* Match the synchronous readiness guarantee of the other native backends. */
+    FSEventStreamFlushSync(backend->stream);
     return TURBO_OK;
 }
 
