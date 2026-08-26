@@ -1,9 +1,9 @@
 # CFlowFS
 
 `TurboUtils::CFlowFS` is the filesystem control-plane adapter between the
-synchronous `turbo_fs` implementation and CFlow's bounded Worker Executor. It
-is separate from `TurboUtils::CFlow`: Core already depends on CFlow, so this
-target preserves an acyclic dependency graph.
+synchronous `turbo_fs` implementation and CFlow's bounded execution model. It
+is separate from `TurboUtils::CFlow` so the portable kernel has no reverse
+dependency on filesystem policy or native watcher backends.
 
 The distinction is intentional:
 
@@ -81,3 +81,51 @@ UTF-8 paths borrowed until callback return. Rename events contain `old_path`
 only when the backend proved the pair with its native correlation mechanism.
 FSEvents can mark rename and unlink observations ambiguously; those observations
 request a rescan rather than fabricating a precise rename or removal event.
+
+## Typed watch Source
+
+`<cflow/fs_watch_source.h>` adapts the same bounded native watcher directly to
+a `cflow_source`. Publication wakes an armed CFlow waitable from the backend
+thread; no polling loop and no per-watch helper thread are introduced. The
+Source can therefore be moved into `cflow_run_open()` and used by identity or
+operator Graphs. A sink may also convert the resulting value to a
+`cflow_event_view` and send it through an existing `cflow_actor_ref`; the Actor
+does not need a second filesystem-specific input implementation.
+
+The output type and encoder are application-defined:
+
+```c
+#include <cflow/fs_watch_source.h>
+#include <stdio.h>
+
+typedef struct file_change {
+    cflow_fs_watch_event_kind kind;
+    char path[256];
+} file_change;
+
+static bool encode_change(void *user, const cflow_fs_watch_event *event,
+                          void *out_value) {
+    file_change *out = (file_change *)out_value;
+    (void)user;
+    out->kind = event->kind;
+    if (event->path != NULL)
+        snprintf(out->path, sizeof(out->path), "%s", event->path);
+    return true;
+}
+```
+
+`output_type` must advertise trivial copy and trivial destruction. `name`,
+`output_type`, and `encode_user` are borrowed until Source destruction. The
+encoder runs on the CFlow driver thread and must copy every required path because
+the watch event strings expire when it returns. `event_capacity`, `watch_capacity`,
+`path_capacity`, and `native_buffer_capacity` remain hard bounds; overflow is
+still represented by the generation-safe `CFLOW_FS_WATCH_RESCAN_REQUIRED`
+value. After rebuilding its authoritative view, the consumer calls
+`cflow_fs_watch_source_owner_acknowledge_rescan()`.
+
+Ownership is deliberately split. Run owns the moved Source, while the caller
+retains `cflow_fs_watch_source_owner`. Close Run (or destroy the standalone
+Source) first, then retry `cflow_fs_watch_source_owner_close()` while it returns
+`TURBO_EBUSY`; success means the backend stopped, queued events were drained,
+native handles were released, and the owner was cleared. Owner operations are
+control-plane calls and must not race each other or Source destruction.

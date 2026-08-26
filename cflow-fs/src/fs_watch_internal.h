@@ -4,6 +4,14 @@
 #include <cflow/fs_watch.h>
 
 typedef struct cflow_fs_watch_impl cflow_fs_watch_impl;
+typedef void (*cflow_fs_watch_ready_fn)(void *user);
+
+int cflow_fs_watch_open_notified(cflow_fs_watch *watch, const char *path,
+                                 const cflow_fs_watch_config *config,
+                                 cflow_fs_watch_ready_fn ready,
+                                 void *ready_user);
+bool cflow_fs_watch_has_ready_or_done(const cflow_fs_watch *watch);
+bool cflow_fs_watch_backend_done_and_empty(const cflow_fs_watch *watch);
 
 int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
                                 const char *path,

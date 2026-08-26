@@ -1,6 +1,7 @@
 add_library(turbo_cflow_fs STATIC
   src/fs.c
-  src/fs_watch.c)
+  src/fs_watch.c
+  src/fs_watch_source.c)
 if(WIN32)
   target_sources(turbo_cflow_fs PRIVATE src/fs_watch_windows.c)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -23,8 +24,8 @@ target_include_directories(turbo_cflow_fs PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(turbo_cflow_fs
-  PUBLIC TurboUtils::Core
-  PRIVATE TurboUtils::CFlow TurboUtils::Platform)
+  PUBLIC TurboUtils::Core TurboUtils::CFlow
+  PRIVATE TurboUtils::Platform)
 
 install(TARGETS turbo_cflow_fs EXPORT TurboUtilsTargets)
 install(

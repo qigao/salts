@@ -29,6 +29,8 @@ struct cflow_fs_watch_impl {
     turbo_mutex_t gate;
     cflow_fs_watch_event_fn event;
     void *event_user;
+    cflow_fs_watch_ready_fn ready;
+    void *ready_user;
     void *backend;
     atomic_bool close_requested;
     atomic_bool backend_done;
@@ -37,10 +39,28 @@ struct cflow_fs_watch_impl {
     size_t suppressed;
     size_t rescan_required;
     size_t rescan_delivery_suppressed;
+    size_t notifications_inflight;
     bool awaiting_rescan;
     bool rescan_pending;
     bool rescan_delivered;
 };
+
+static bool cflow_fs_watch_prepare_notify_locked(cflow_fs_watch_impl *impl) {
+    if (impl == NULL || impl->ready == NULL)
+        return false;
+    ++impl->notifications_inflight;
+    return true;
+}
+
+static void cflow_fs_watch_notify_prepared(cflow_fs_watch_impl *impl,
+                                           bool prepared) {
+    if (!prepared)
+        return;
+    impl->ready(impl->ready_user);
+    turbo_mutex_lock(&impl->gate);
+    --impl->notifications_inflight;
+    turbo_mutex_unlock(&impl->gate);
+}
 
 static bool watch_multiply(size_t left, size_t right, size_t *out) {
     if (out == NULL || (right != 0u && left > SIZE_MAX / right))
@@ -78,11 +98,18 @@ bool cflow_fs_watch_close_requested(const cflow_fs_watch_impl *impl) {
 }
 
 void cflow_fs_watch_backend_mark_done(cflow_fs_watch_impl *impl) {
-    if (impl != NULL)
+    bool notify;
+    if (impl != NULL) {
+        turbo_mutex_lock(&impl->gate);
         atomic_store(&impl->backend_done, true);
+        notify = cflow_fs_watch_prepare_notify_locked(impl);
+        turbo_mutex_unlock(&impl->gate);
+        cflow_fs_watch_notify_prepared(impl, notify);
+    }
 }
 
 void cflow_fs_watch_publish_loss(cflow_fs_watch_impl *impl) {
+    bool notify = false;
     if (impl == NULL)
         return;
     turbo_mutex_lock(&impl->gate);
@@ -92,8 +119,10 @@ void cflow_fs_watch_publish_loss(cflow_fs_watch_impl *impl) {
         impl->rescan_pending = true;
         impl->rescan_delivered = false;
         ++impl->rescan_required;
+        notify = cflow_fs_watch_prepare_notify_locked(impl);
     }
     turbo_mutex_unlock(&impl->gate);
+    cflow_fs_watch_notify_prepared(impl, notify);
 }
 
 int cflow_fs_watch_publish(cflow_fs_watch_impl *impl,
@@ -104,6 +133,7 @@ int cflow_fs_watch_publish(cflow_fs_watch_impl *impl,
     size_t path_length;
     size_t old_length;
     cflow_fs_watch_slot *slot;
+    bool notify;
     if (impl == NULL || kind > CFLOW_FS_WATCH_ROOT_CHANGED ||
         !watch_path_length(path, impl->path_capacity, &path_length) ||
         !watch_path_length(old_path, impl->path_capacity, &old_length)) {
@@ -140,12 +170,16 @@ int cflow_fs_watch_publish(cflow_fs_watch_impl *impl,
         slot->old_path[0] = '\0';
     impl->tail = (impl->tail + 1u) % impl->capacity;
     ++impl->count;
+    notify = cflow_fs_watch_prepare_notify_locked(impl);
     turbo_mutex_unlock(&impl->gate);
+    cflow_fs_watch_notify_prepared(impl, notify);
     return TURBO_OK;
 }
 
-int cflow_fs_watch_open(cflow_fs_watch *watch, const char *path,
-                        const cflow_fs_watch_config *config) {
+int cflow_fs_watch_open_notified(cflow_fs_watch *watch, const char *path,
+                                 const cflow_fs_watch_config *config,
+                                 cflow_fs_watch_ready_fn ready,
+                                 void *ready_user) {
     cflow_fs_watch_impl *impl;
     size_t slot_bytes;
     size_t pair_capacity;
@@ -182,6 +216,8 @@ int cflow_fs_watch_open(cflow_fs_watch *watch, const char *path,
     impl->path_capacity = config->path_capacity;
     impl->event = config->event;
     impl->event_user = config->event_user;
+    impl->ready = ready;
+    impl->ready_user = ready_user;
     turbo_mutex_init(&impl->gate);
     atomic_init(&impl->close_requested, false);
     atomic_init(&impl->backend_done, false);
@@ -202,6 +238,37 @@ int cflow_fs_watch_open(cflow_fs_watch *watch, const char *path,
     }
     watch->impl = impl;
     return TURBO_OK;
+}
+
+int cflow_fs_watch_open(cflow_fs_watch *watch, const char *path,
+                        const cflow_fs_watch_config *config) {
+    return cflow_fs_watch_open_notified(watch, path, config, NULL, NULL);
+}
+
+bool cflow_fs_watch_has_ready_or_done(const cflow_fs_watch *watch) {
+    const cflow_fs_watch_impl *impl;
+    bool ready;
+    if (watch == NULL || watch->impl == NULL)
+        return true;
+    impl = (const cflow_fs_watch_impl *)watch->impl;
+    turbo_mutex_lock((turbo_mutex_t *)&impl->gate);
+    ready = impl->count != 0u || impl->rescan_pending ||
+            atomic_load(&impl->backend_done);
+    turbo_mutex_unlock((turbo_mutex_t *)&impl->gate);
+    return ready;
+}
+
+bool cflow_fs_watch_backend_done_and_empty(const cflow_fs_watch *watch) {
+    const cflow_fs_watch_impl *impl;
+    bool done;
+    if (watch == NULL || watch->impl == NULL)
+        return true;
+    impl = (const cflow_fs_watch_impl *)watch->impl;
+    turbo_mutex_lock((turbo_mutex_t *)&impl->gate);
+    done = impl->count == 0u && !impl->rescan_pending &&
+           atomic_load(&impl->backend_done);
+    turbo_mutex_unlock((turbo_mutex_t *)&impl->gate);
+    return done;
 }
 
 int cflow_fs_watch_run_ready(cflow_fs_watch *watch, size_t max_events,
@@ -265,6 +332,7 @@ int cflow_fs_watch_run_ready(cflow_fs_watch *watch, size_t max_events,
 
 int cflow_fs_watch_acknowledge_rescan(cflow_fs_watch *watch) {
     cflow_fs_watch_impl *impl;
+    bool notify = false;
     if (watch == NULL || watch->impl == NULL)
         return TURBO_EINVAL;
     impl = (cflow_fs_watch_impl *)watch->impl;
@@ -277,11 +345,13 @@ int cflow_fs_watch_acknowledge_rescan(cflow_fs_watch *watch) {
         impl->rescan_pending = true;
         impl->rescan_delivered = false;
         ++impl->rescan_required;
+        notify = cflow_fs_watch_prepare_notify_locked(impl);
     } else {
         impl->awaiting_rescan = false;
         impl->rescan_delivered = false;
     }
     turbo_mutex_unlock(&impl->gate);
+    cflow_fs_watch_notify_prepared(impl, notify);
     return TURBO_OK;
 }
 
@@ -305,7 +375,8 @@ bool cflow_fs_watch_is_quiescent(const cflow_fs_watch *watch) {
         return false;
     impl = (const cflow_fs_watch_impl *)watch->impl;
     turbo_mutex_lock((turbo_mutex_t *)&impl->gate);
-    empty = impl->count == 0u && !impl->rescan_pending;
+    empty = impl->count == 0u && !impl->rescan_pending &&
+            impl->notifications_inflight == 0u;
     turbo_mutex_unlock((turbo_mutex_t *)&impl->gate);
     return atomic_load(&impl->close_requested) &&
            atomic_load(&impl->backend_done) && empty;
