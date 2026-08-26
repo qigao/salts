@@ -42,6 +42,11 @@ typedef struct cflow_io_source_state {
     const char *terminal_error;
 } cflow_io_source_state;
 
+typedef struct io_source_wake_frame {
+    cflow_io_source_state *state;
+    struct io_source_wake_frame *previous;
+} io_source_wake_frame;
+
 static const char io_source_unavailable_error[] =
     "IO source is unavailable";
 static const char io_source_cancelled_error[] =
@@ -71,7 +76,7 @@ static const char io_source_encode_invalid_status_error[] =
 static const char io_source_result_state_error[] =
     "IO source completion result state is invalid";
 
-static TURBO_THREAD_LOCAL cflow_io_source_state *io_source_active_waker;
+static TURBO_THREAD_LOCAL io_source_wake_frame *io_source_wake_stack;
 
 static bool io_source_type_valid(const cmeta_type_desc *type) {
     return cmeta_type_desc_valid(type) &&
@@ -127,14 +132,15 @@ static void io_source_retain_waker_locked(
 
 static void io_source_wake(
     cflow_io_source_state *state, cflow_waker waker) {
-    cflow_io_source_state *previous;
+    io_source_wake_frame frame;
 
     if (waker.wake == NULL)
         return;
-    previous = io_source_active_waker;
-    io_source_active_waker = state;
+    frame.state = state;
+    frame.previous = io_source_wake_stack;
+    io_source_wake_stack = &frame;
     waker.wake(waker.user);
-    io_source_active_waker = previous;
+    io_source_wake_stack = frame.previous;
     turbo_mutex_lock(&state->gate);
     --state->wake_inflight;
     turbo_cond_broadcast(&state->changed);
@@ -143,8 +149,16 @@ static void io_source_wake(
 
 static void io_source_wait_wakers_locked(
     cflow_io_source_state *state) {
-    while (state->wake_inflight != 0u &&
-           io_source_active_waker != state)
+    io_source_wake_frame *frame = io_source_wake_stack;
+    size_t current_thread_credits = 0u;
+
+    while (frame != NULL) {
+        if (frame->state == state)
+            ++current_thread_credits;
+        frame = frame->previous;
+    }
+    /* These frames cannot return their credits until cancel unwinds. */
+    while (state->wake_inflight > current_thread_credits)
         turbo_cond_wait(&state->changed, &state->gate);
 }
 

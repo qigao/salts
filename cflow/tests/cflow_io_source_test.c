@@ -9,6 +9,7 @@
 enum {
     IO_SOURCE_WAIT_SLICE_NS = 10 * 1000 * 1000,
     IO_SOURCE_WAIT_LIMIT = 500,
+    IO_SOURCE_NESTED_WAIT_LIMIT = 50,
     IO_SOURCE_CANCEL_OBSERVATION_NS = 20 * 1000 * 1000
 };
 
@@ -64,7 +65,6 @@ typedef struct io_source_blocking_wake_probe {
     turbo_cond_t changed;
     bool entered;
     bool released;
-    bool close_started;
     bool close_returned;
 } io_source_blocking_wake_probe;
 
@@ -85,6 +85,25 @@ typedef struct io_source_reentrant_cancel_probe {
     bool returned;
 } io_source_reentrant_cancel_probe;
 
+typedef struct io_source_nested_wake_probe {
+    turbo_mutex_t lock;
+    turbo_cond_t changed;
+    cflow_source *source_a;
+    cflow_io_source_owner *owner_a;
+    cflow_waitable waitable_a;
+    cflow_waitable waitable_b;
+    size_t wake_a_calls;
+    size_t wake_b_calls;
+    size_t unexpected_a_calls;
+    int owner_a_close_status;
+    bool arm_a_accepted;
+    bool arm_b_accepted;
+    bool rearm_a_accepted;
+    bool destroy_a_returned;
+    bool outer_a_returned;
+    bool worker_completed;
+} io_source_nested_wake_probe;
+
 static void io_source_blocking_wake(void *user) {
     io_source_blocking_wake_probe *probe =
         (io_source_blocking_wake_probe *)user;
@@ -103,10 +122,6 @@ static void io_source_close_thread(void *user) {
     io_source_close_context *context =
         (io_source_close_context *)user;
 
-    turbo_mutex_lock(&context->probe->lock);
-    context->probe->close_started = true;
-    turbo_cond_broadcast(&context->probe->changed);
-    turbo_mutex_unlock(&context->probe->lock);
     cflow_source_destroy(context->source);
     turbo_mutex_lock(&context->probe->lock);
     context->probe->close_returned = true;
@@ -128,6 +143,51 @@ static void io_source_reentrant_cancel(void *user) {
 
     cflow_source_cancel(probe->source);
     probe->returned = true;
+}
+
+static void io_source_unexpected_wake(void *user) {
+    io_source_nested_wake_probe *probe =
+        (io_source_nested_wake_probe *)user;
+
+    ++probe->unexpected_a_calls;
+}
+
+static void io_source_nested_wake_b(void *user) {
+    io_source_nested_wake_probe *probe =
+        (io_source_nested_wake_probe *)user;
+
+    ++probe->wake_b_calls;
+    cflow_source_destroy(probe->source_a);
+    probe->destroy_a_returned = true;
+    probe->rearm_a_accepted = cflow_waitable_arm(
+        &probe->waitable_a,
+        (cflow_waker){io_source_unexpected_wake, probe});
+    probe->owner_a_close_status =
+        cflow_io_source_owner_close(probe->owner_a);
+}
+
+static void io_source_nested_wake_a(void *user) {
+    io_source_nested_wake_probe *probe =
+        (io_source_nested_wake_probe *)user;
+
+    ++probe->wake_a_calls;
+    probe->arm_b_accepted = cflow_waitable_arm(
+        &probe->waitable_b,
+        (cflow_waker){io_source_nested_wake_b, probe});
+    probe->outer_a_returned = true;
+}
+
+static void io_source_nested_arm_thread(void *user) {
+    io_source_nested_wake_probe *probe =
+        (io_source_nested_wake_probe *)user;
+
+    probe->arm_a_accepted = cflow_waitable_arm(
+        &probe->waitable_a,
+        (cflow_waker){io_source_nested_wake_a, probe});
+    turbo_mutex_lock(&probe->lock);
+    probe->worker_completed = true;
+    turbo_cond_broadcast(&probe->changed);
+    turbo_mutex_unlock(&probe->lock);
 }
 
 static void io_source_operation_release(void *user) {
@@ -518,6 +578,7 @@ spec("CFlow reactive IO source") {
         cflow_io_source_config config = io_source_config(&fixture);
         cflow_source source = {0};
         cflow_io_source_owner owner = {0};
+        cflow_io_source_stats close_stats = {0};
         cflow_step step;
         int output = 0;
         io_source_blocking_wake_probe wake = {0};
@@ -528,6 +589,7 @@ spec("CFlow reactive IO source") {
         turbo_thread_t driver = NULL;
         turbo_thread_t closer = NULL;
         size_t waits = 0u;
+        bool stats_valid = true;
 
         turbo_mutex_init(&wake.lock);
         turbo_cond_init(&wake.changed);
@@ -558,17 +620,27 @@ spec("CFlow reactive IO source") {
         check_equal(turbo_thread_create(
                         &closer, io_source_close_thread,
                         &close_context), TURBO_OK);
-        turbo_mutex_lock(&wake.lock);
         waits = 0u;
-        while (!wake.close_started && waits++ < IO_SOURCE_WAIT_LIMIT)
-            (void)turbo_cond_timedwait(
-                &wake.changed, &wake.lock, IO_SOURCE_WAIT_SLICE_NS);
-        check_true(wake.close_started);
+        do {
+            stats_valid = cflow_io_source_owner_get_stats(
+                &owner, &close_stats);
+            if (!stats_valid || close_stats.close_requested)
+                break;
+            turbo_thread_yield();
+        } while (++waits < IO_SOURCE_WAIT_LIMIT);
+        check_true(stats_valid);
+        check_true(close_stats.close_requested);
+
+        turbo_mutex_lock(&wake.lock);
         if (!wake.close_returned)
             (void)turbo_cond_timedwait(
                 &wake.changed, &wake.lock,
                 IO_SOURCE_CANCEL_OBSERVATION_NS);
         check_false(wake.close_returned);
+        check_true(cflow_io_source_owner_get_stats(
+            &owner, &close_stats));
+        check_true(close_stats.close_requested);
+        check_true(close_stats.source_live);
         wake.released = true;
         turbo_cond_broadcast(&wake.changed);
         turbo_mutex_unlock(&wake.lock);
@@ -616,6 +688,100 @@ spec("CFlow reactive IO source") {
         cflow_source_destroy(&source);
         check_true(cflow_io_source_owner_is_quiescent(&owner));
         check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
+    }
+
+    it("keeps A owner alive while nested adapter wakers unwind") {
+        io_source_fixture fixture_a = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE,
+            .encoded_value = 53,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true
+        };
+        io_source_fixture fixture_b = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE,
+            .encoded_value = 59,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true
+        };
+        cflow_io_source_config config_a = io_source_config(&fixture_a);
+        cflow_io_source_config config_b = io_source_config(&fixture_b);
+        cflow_source source_a = {0};
+        cflow_source source_b = {0};
+        cflow_io_source_owner owner_a = {0};
+        cflow_io_source_owner owner_b = {0};
+        cflow_step step_a;
+        cflow_step step_b;
+        io_source_nested_wake_probe probe = {0};
+        turbo_thread_t worker = NULL;
+        size_t progressed = 0u;
+        size_t waits = 0u;
+        int output_a = 0;
+        int output_b = 0;
+
+        turbo_mutex_init(&probe.lock);
+        turbo_cond_init(&probe.changed);
+        check_not_null(probe.lock);
+        check_not_null(probe.changed);
+        check_equal(cflow_source_from_io_actor(
+                        &source_a, &owner_a, &config_a), TURBO_OK);
+        check_equal(cflow_source_from_io_actor(
+                        &source_b, &owner_b, &config_b), TURBO_OK);
+        step_a = cflow_source_resume(&source_a, NULL, &output_a);
+        step_b = cflow_source_resume(&source_b, NULL, &output_b);
+        check_equal(step_a.kind, CFLOW_STEP_WAIT);
+        check_equal(step_b.kind, CFLOW_STEP_WAIT);
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner_a, 32u, &progressed), TURBO_OK);
+        check_true(progressed > (size_t)0u);
+        check_equal(cflow_io_source_owner_run_ready(
+                        &owner_b, 32u, &progressed), TURBO_OK);
+        check_true(progressed > (size_t)0u);
+
+        probe.source_a = &source_a;
+        probe.owner_a = &owner_a;
+        probe.waitable_a = step_a.waitable;
+        probe.waitable_b = step_b.waitable;
+        probe.owner_a_close_status = TURBO_EINVAL;
+        check_equal(turbo_thread_create(
+                        &worker, io_source_nested_arm_thread,
+                        &probe), TURBO_OK);
+        turbo_mutex_lock(&probe.lock);
+        while (!probe.worker_completed &&
+               waits++ < IO_SOURCE_NESTED_WAIT_LIMIT)
+            (void)turbo_cond_timedwait(
+                &probe.changed, &probe.lock,
+                IO_SOURCE_WAIT_SLICE_NS);
+        check_true(probe.worker_completed);
+        turbo_mutex_unlock(&probe.lock);
+
+        if (probe.worker_completed) {
+            check_equal(turbo_thread_join(&worker), TURBO_OK);
+            turbo_thread_destroy(&worker);
+            check_true(probe.arm_a_accepted);
+            check_true(probe.arm_b_accepted);
+            check_true(probe.destroy_a_returned);
+            check_true(probe.outer_a_returned);
+            check_false(probe.rearm_a_accepted);
+            check_equal(probe.wake_a_calls, (size_t)1u);
+            check_equal(probe.wake_b_calls, (size_t)1u);
+            check_equal(probe.unexpected_a_calls, (size_t)0u);
+            check_equal(probe.owner_a_close_status, TURBO_EBUSY);
+            check_true(cflow_io_source_owner_is_quiescent(&owner_a));
+            check_equal(cflow_io_source_owner_close(
+                            &owner_a), TURBO_OK);
+            cflow_source_destroy(&source_b);
+            check_true(cflow_io_source_owner_is_quiescent(&owner_b));
+            check_equal(cflow_io_source_owner_close(
+                            &owner_b), TURBO_OK);
+            turbo_cond_destroy(&probe.changed);
+            turbo_mutex_destroy(&probe.lock);
+        } else {
+            /* A regression is deadlocked inside cancel(A); process exit
+             * terminates the isolated worker after TinyTest reports RED. */
+            turbo_thread_destroy(&worker);
+        }
     }
 
     it("bounds owner progress and permits VALUE consumption before ACK") {
