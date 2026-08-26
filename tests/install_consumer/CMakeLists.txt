@@ -16,6 +16,7 @@ add_turboutils_consumer(consume_concurrency TurboUtils::Concurrency
 add_turboutils_consumer(consume_cmeta TurboUtils::CMeta CONSUME_CMETA)
 add_turboutils_consumer(consume_cbind TurboUtils::CBind CONSUME_CBIND)
 add_turboutils_consumer(consume_cflow TurboUtils::CFlow CONSUME_CFLOW)
+add_turboutils_consumer(consume_cflow_fs TurboUtils::CFlowFS CONSUME_CFLOW_FS)
 add_turboutils_consumer(consume_stl TurboUtils::STL CONSUME_STL)
 add_turboutils_consumer(consume_core TurboUtils::Core CONSUME_CORE)
 
@@ -31,6 +32,18 @@ if(TURBOUTILS_EXPECT_CFLOW_MINICORO)
 elseif(TARGET TurboUtils::CFlowMinicoro)
   message(FATAL_ERROR
           "feature-off TurboUtils package unexpectedly exports CFlowMinicoro")
+endif()
+
+if(TURBOUTILS_EXPECT_CFLOW_USB)
+  if(NOT TARGET TurboUtils::CFlowUSB)
+    message(FATAL_ERROR "TurboUtils::CFlowUSB was requested but is not exported")
+  endif()
+  add_turboutils_consumer(consume_cflow_usb
+                         TurboUtils::CFlowUSB
+                         CONSUME_CFLOW_USB)
+elseif(TARGET TurboUtils::CFlowUSB)
+  message(FATAL_ERROR
+          "feature-off TurboUtils package unexpectedly exports CFlowUSB")
 endif()
 
 add_executable(consume_stl_cpp consumer.cpp)

@@ -90,6 +90,32 @@ int main(void) {
   return 0;
 }
 
+#elif defined(CONSUME_CFLOW_FS)
+#include <cflow/fs.h>
+#include <cflow/fs_watch.h>
+
+static void fs_complete(void *user, uint64_t request_id,
+                        cflow_fs_operation_kind operation, int result) {
+  (void)user;
+  (void)request_id;
+  (void)operation;
+  (void)result;
+}
+
+int main(void) {
+  cflow_fs_service service = {0};
+  cflow_fs_watch watch = {0};
+  cflow_fs_config config = {1u, 1u, 64u, fs_complete, NULL};
+  if (watch.impl != NULL) return 1;
+  if (cflow_fs_service_init(&service, &config) != 0) return 2;
+  if (cflow_fs_close(&service) != 0) return 3;
+  while (!cflow_fs_is_quiescent(&service)) {
+    size_t completed = 0u;
+    if (cflow_fs_run_ready(&service, 1u, &completed) != 0) return 4;
+  }
+  return cflow_fs_destroy(&service) == 0 ? 0 : 5;
+}
+
 #elif defined(CONSUME_CFLOW_MINICORO)
 #include <cflow/minicoro.h>
 
@@ -112,6 +138,14 @@ int main(void) {
   if (step.kind != CFLOW_STEP_DONE) return 2;
   resumable.ops->destroy(resumable.state);
   return 0;
+}
+
+#elif defined(CONSUME_CFLOW_USB)
+#include <cflow/usb.h>
+
+int main(void) {
+  cflow_usb_context context = {0};
+  return context.impl == NULL ? 0 : 1;
 }
 
 #elif defined(CONSUME_CORE)

@@ -37,6 +37,7 @@ execute_process(
           "-DCMAKE_PREFIX_PATH=${install_prefix}"
           "-DTurboUtils_DIR=${install_prefix}/lib/cmake/TurboUtils"
           "-DTURBOUTILS_EXPECT_CFLOW_MINICORO=${EXPECT_CFLOW_MINICORO}"
+          "-DTURBOUTILS_EXPECT_CFLOW_USB=${EXPECT_CFLOW_USB}"
   RESULT_VARIABLE configure_result)
 if(NOT configure_result EQUAL 0)
   message(FATAL_ERROR
