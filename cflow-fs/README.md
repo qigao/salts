@@ -61,3 +61,16 @@ Accepted paths are copied. Stat and directory result storage remains borrowed
 until callback return. `close` cancels queued requests but does not interrupt a
 blocking syscall already executing; callers must keep driving callbacks until
 the service is quiescent before destruction.
+
+## Filesystem watch
+
+`<cflow/fs_watch.h>` exposes a native event source with fixed event, watch,
+path, and kernel-buffer capacities. Windows uses overlapped
+`ReadDirectoryChangesW`; Linux uses inotify for the currently supported
+non-recursive contract. A full detailed queue, kernel overflow, invalid UTF-8,
+or an unpairable rename produces one `CFLOW_FS_WATCH_RESCAN_REQUIRED` marker
+and suppresses further detail until `cflow_fs_watch_acknowledge_rescan()`.
+
+Callbacks run only from `cflow_fs_watch_run_ready()`. Event paths are normalized
+UTF-8 paths borrowed until callback return. Rename events contain `old_path`
+only when the backend proved the pair with its native correlation mechanism.

@@ -15,7 +15,7 @@
 
 ### Task 2: Native bridges
 
-- [ ] Implement and test Windows overlapped `ReadDirectoryChangesW` parsing,
+- [x] Implement and test Windows overlapped `ReadDirectoryChangesW` parsing,
   cancellation, rename pairing, overflow, and root removal.
 - [ ] Implement and test Linux inotify recursion, dynamic watch maintenance,
   cookies, `IN_Q_OVERFLOW`, and root removal.

@@ -40,6 +40,12 @@ native publication, cancels or wakes the backend wait, drains already accepted
 events, and then permits destroy. Root deletion produces `ROOT_CHANGED` before
 terminal close.
 
+`event_capacity` bounds detailed event slots, while one allocation-free
+emergency rescan marker is retained in the control state. `watch_capacity`
+bounds native directory registrations for recursive backends. `path_capacity`
+bounds each normalized UTF-8 relative path, and `native_buffer_capacity`
+bounds one kernel read buffer.
+
 ## Compatibility and validation
 
 This is additive to `TurboUtils::CFlowFS`; neither `TurboUtils::Core` nor core

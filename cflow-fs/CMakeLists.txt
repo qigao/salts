@@ -1,5 +1,13 @@
 add_library(turbo_cflow_fs STATIC
-  src/fs.c)
+  src/fs.c
+  src/fs_watch.c)
+if(WIN32)
+  target_sources(turbo_cflow_fs PRIVATE src/fs_watch_windows.c)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(turbo_cflow_fs PRIVATE src/fs_watch_linux.c)
+else()
+  target_sources(turbo_cflow_fs PRIVATE src/fs_watch_unsupported.c)
+endif()
 cmake_config_target(
   turbo_cflow_fs
   ALIAS TurboUtils::CFlowFS

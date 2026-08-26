@@ -1,4 +1,5 @@
 #include <cflow/fs.h>
+#include <cflow/fs_watch.h>
 #include <tinytest.h>
 
 #include <type_traits>
@@ -16,6 +17,8 @@ spec("CFlow filesystem C++ header") {
             decltype(&cflow_fs_run_ready),
             int (*)(cflow_fs_service *, size_t, size_t *)>);
         cflow_fs_service service{};
+        cflow_fs_watch watch{};
         check_null(service.impl);
+        check_null(watch.impl);
     }
 }
