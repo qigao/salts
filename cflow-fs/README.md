@@ -72,6 +72,9 @@ serial dispatch queue. A full detailed queue, native registration capacity,
 kernel overflow, invalid UTF-8, or an
 unpairable rename produces one `CFLOW_FS_WATCH_RESCAN_REQUIRED` marker and
 suppresses further detail until `cflow_fs_watch_acknowledge_rescan()`.
+If changes are suppressed after a marker is delivered while the caller rebuilds
+its view, acknowledgement schedules another marker; callers repeat the snapshot
+and acknowledgement cycle until `awaiting_rescan` becomes false.
 
 Callbacks run only from `cflow_fs_watch_run_ready()`. Event paths are normalized
 UTF-8 paths borrowed until callback return. Rename events contain `old_path`

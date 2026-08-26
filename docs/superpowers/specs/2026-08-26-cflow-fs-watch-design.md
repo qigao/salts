@@ -30,6 +30,10 @@ rename sequence, or an event whose path exceeds configured storage transitions
 the source to `RESCAN_REQUIRED`. Exactly one coalesced rescan event is retained;
 detailed events are suppressed until the driver acknowledges the rescan. The
 library never silently claims a complete stream after loss.
+Acknowledgement compares the suppression generation captured when the marker
+was delivered. A change suppressed while the caller rebuilt its view retains
+the loss state and schedules another marker, so recovery repeats until a clean
+generation is acknowledged.
 
 ## Ownership and shutdown
 

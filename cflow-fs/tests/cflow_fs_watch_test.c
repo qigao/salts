@@ -76,6 +76,17 @@ static bool probe_saw(const watch_probe *probe,
     return false;
 }
 
+static size_t probe_count_kind(const watch_probe *probe,
+                               cflow_fs_watch_event_kind kind) {
+    size_t count = 0u;
+    size_t index;
+    for (index = 0u; index < probe->count; ++index) {
+        if (probe->kinds[index] == kind)
+            ++count;
+    }
+    return count;
+}
+
 static void watch_close_destroy(cflow_fs_watch *watch) {
     size_t attempts = 0u;
     int status = cflow_fs_watch_close(watch);
@@ -195,15 +206,35 @@ spec("CFlow filesystem watch") {
         check_equal(tt_remove_file(second), TURBO_OK);
         {
             size_t attempts = 0u;
+#if defined(__APPLE__)
+            const size_t rescans_before_remove = probe_count_kind(
+                &probe, CFLOW_FS_WATCH_RESCAN_REQUIRED);
+            while (!probe_saw(&probe, CFLOW_FS_WATCH_REMOVED, "second.txt") &&
+                   probe_count_kind(&probe, CFLOW_FS_WATCH_RESCAN_REQUIRED) ==
+                       rescans_before_remove &&
+                   attempts++ < 5000u) {
+#else
             while (!probe_saw(&probe, CFLOW_FS_WATCH_REMOVED, "second.txt") &&
                    attempts++ < 5000u) {
+#endif
                 size_t delivered = 0u;
                 check_equal(cflow_fs_watch_run_ready(
                                 &watch, 8u, &delivered), TURBO_OK);
                 if (delivered == 0u)
                     turbo_sleep_ms(1u);
             }
+#if defined(__APPLE__)
+            check_true(probe_saw(&probe, CFLOW_FS_WATCH_REMOVED, "second.txt") ||
+                       probe_count_kind(&probe,
+                           CFLOW_FS_WATCH_RESCAN_REQUIRED) >
+                           rescans_before_remove);
+            if (probe_count_kind(&probe, CFLOW_FS_WATCH_RESCAN_REQUIRED) >
+                rescans_before_remove) {
+                check_equal(cflow_fs_watch_acknowledge_rescan(&watch), TURBO_OK);
+            }
+#else
             check_true(probe_saw(&probe, CFLOW_FS_WATCH_REMOVED, "second.txt"));
+#endif
         }
 
         watch_close_destroy(&watch);
@@ -215,6 +246,7 @@ spec("CFlow filesystem watch") {
         char *root = tt_make_temp_dir("cflow-watch-overflow-");
         char first[1024];
         char second[1024];
+        char during_rescan[1024];
         cflow_fs_watch watch = {0};
         watch_probe probe = {0};
         cflow_fs_watch_config config = watch_config(&probe, 1u);
@@ -226,6 +258,8 @@ spec("CFlow filesystem watch") {
                                        "one.txt"), TURBO_OK);
         check_equal(turbo_fs_path_join(second, sizeof(second), root,
                                        "two.txt"), TURBO_OK);
+        check_equal(turbo_fs_path_join(during_rescan, sizeof(during_rescan),
+                                       root, "during-rescan.txt"), TURBO_OK);
         check_equal(cflow_fs_watch_open(&watch, root, &config), TURBO_OK);
         check_equal(tt_write_file(first, "1", 1u), TURBO_OK);
         check_equal(tt_write_file(second, "2", 1u), TURBO_OK);
@@ -238,6 +272,25 @@ spec("CFlow filesystem watch") {
         check_true(stats.awaiting_rescan);
         check_equal(watch_drive_until(&watch, &probe, 2u), TURBO_OK);
         check_true(probe_saw(&probe, CFLOW_FS_WATCH_RESCAN_REQUIRED, NULL));
+        check_true(cflow_fs_watch_get_stats(&watch, &stats));
+        {
+            const size_t suppressed_at_delivery = stats.suppressed;
+            attempts = 0u;
+            check_equal(tt_write_file(during_rescan, "3", 1u), TURBO_OK);
+            while (attempts++ < 5000u) {
+                check_true(cflow_fs_watch_get_stats(&watch, &stats));
+                if (stats.suppressed > suppressed_at_delivery)
+                    break;
+                turbo_sleep_ms(1u);
+            }
+            check_true(stats.suppressed > suppressed_at_delivery);
+        }
+        check_equal(cflow_fs_watch_acknowledge_rescan(&watch), TURBO_OK);
+        check_true(cflow_fs_watch_get_stats(&watch, &stats));
+        check_true(stats.awaiting_rescan);
+        check_equal(watch_drive_until(&watch, &probe, 3u), TURBO_OK);
+        check_equal(probe_count_kind(&probe,
+                        CFLOW_FS_WATCH_RESCAN_REQUIRED), (size_t)2u);
         check_equal(cflow_fs_watch_acknowledge_rescan(&watch), TURBO_OK);
         check_true(cflow_fs_watch_get_stats(&watch, &stats));
         check_false(stats.awaiting_rescan);
@@ -246,6 +299,29 @@ spec("CFlow filesystem watch") {
         check_equal(tt_remove_tree(root), TURBO_OK);
         free(root);
     }
+
+#if defined(__APPLE__)
+    it("reports an unambiguous remove through FSEvents") {
+        char *root = tt_make_temp_dir("cflow-watch-remove-");
+        char path[1024];
+        cflow_fs_watch watch = {0};
+        watch_probe probe = {0};
+        cflow_fs_watch_config config = watch_config(&probe, 8u);
+
+        check_not_null(root);
+        check_equal(turbo_fs_path_join(path, sizeof(path), root,
+                                       "remove.txt"), TURBO_OK);
+        check_equal(tt_write_file(path, "value", 5u), TURBO_OK);
+        check_equal(cflow_fs_watch_open(&watch, root, &config), TURBO_OK);
+        check_equal(tt_remove_file(path), TURBO_OK);
+        check_equal(watch_drive_until(&watch, &probe, 1u), TURBO_OK);
+        check_true(probe_saw(&probe, CFLOW_FS_WATCH_REMOVED, "remove.txt"));
+
+        watch_close_destroy(&watch);
+        check_equal(tt_remove_tree(root), TURBO_OK);
+        free(root);
+    }
+#endif
 #else
     it("fails fast when the native watch backend is unavailable") {
         char *root = tt_make_temp_dir("cflow-watch-unsupported-");

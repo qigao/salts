@@ -36,6 +36,7 @@ struct cflow_fs_watch_impl {
     size_t delivered;
     size_t suppressed;
     size_t rescan_required;
+    size_t rescan_delivery_suppressed;
     bool awaiting_rescan;
     bool rescan_pending;
     bool rescan_delivered;
@@ -239,6 +240,7 @@ int cflow_fs_watch_run_ready(cflow_fs_watch *watch, size_t max_events,
         } else if (impl->rescan_pending) {
             impl->rescan_pending = false;
             impl->rescan_delivered = true;
+            impl->rescan_delivery_suppressed = impl->suppressed;
             event = (cflow_fs_watch_event){
                 .kind = CFLOW_FS_WATCH_RESCAN_REQUIRED,
                 .path = NULL,
@@ -271,8 +273,14 @@ int cflow_fs_watch_acknowledge_rescan(cflow_fs_watch *watch) {
         turbo_mutex_unlock(&impl->gate);
         return TURBO_EALREADY;
     }
-    impl->awaiting_rescan = false;
-    impl->rescan_delivered = false;
+    if (impl->suppressed != impl->rescan_delivery_suppressed) {
+        impl->rescan_pending = true;
+        impl->rescan_delivered = false;
+        ++impl->rescan_required;
+    } else {
+        impl->awaiting_rescan = false;
+        impl->rescan_delivered = false;
+    }
     turbo_mutex_unlock(&impl->gate);
     return TURBO_OK;
 }

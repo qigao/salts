@@ -89,7 +89,9 @@ int cflow_fs_watch_run_ready(cflow_fs_watch *watch, size_t max_events,
                              size_t *delivered);
 /**
  * Resume detailed publication after the rescan callback has been delivered
- * and the caller has rebuilt its authoritative filesystem view.
+ * and the caller has rebuilt its authoritative filesystem view. If native
+ * events were suppressed after marker delivery, acknowledgement retains the
+ * loss state and queues another rescan marker instead of losing that race.
  */
 int cflow_fs_watch_acknowledge_rescan(cflow_fs_watch *watch);
 /** Stop native publication and wake the backend thread without blocking. */
