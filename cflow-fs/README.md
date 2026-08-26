@@ -79,3 +79,5 @@ and acknowledgement cycle until `awaiting_rescan` becomes false.
 Callbacks run only from `cflow_fs_watch_run_ready()`. Event paths are normalized
 UTF-8 paths borrowed until callback return. Rename events contain `old_path`
 only when the backend proved the pair with its native correlation mechanism.
+FSEvents can mark rename and unlink observations ambiguously; those observations
+request a rescan rather than fabricating a precise rename or removal event.

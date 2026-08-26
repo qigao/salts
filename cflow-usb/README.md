@@ -30,6 +30,9 @@ Detailed hotplug overflow is explicit: one allocation-free
 `CFLOW_USB_HOTPLUG_RESCAN_REQUIRED` marker is delivered, subsequent detailed
 events are suppressed, and delivery resumes only after
 `cflow_usb_acknowledge_hotplug_rescan()`.
+If another hotplug change is suppressed after marker delivery while the caller
+re-enumerates, acknowledgement queues another marker instead of losing that
+race; repeat enumeration and acknowledgement until the marker queue stays empty.
 
 Minimal lifecycle:
 

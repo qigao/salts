@@ -35,6 +35,9 @@ Unplug transitions matching handles to lost, requests cancellation for live
 transfers, and completes each accepted transfer exactly once from libusb's
 terminal callback. Handles never reconnect silently. Event queue loss emits a
 rescan-required hotplug event.
+If a change is suppressed after marker delivery while the caller re-enumerates,
+acknowledgement retains the loss state and schedules another marker. Recovery
+repeats until a clean generation is acknowledged.
 
 ## Build and validation
 

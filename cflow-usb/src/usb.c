@@ -70,6 +70,7 @@ struct cflow_usb_impl {
     size_t transfers_delivered;
     size_t hotplug_suppressed;
     size_t hotplug_rescan_required;
+    size_t hotplug_rescan_delivery_suppressed;
     cflow_usb_transfer_id next_id;
     unsigned int event_poll_timeout_ms;
     cflow_usb_context_config config;
@@ -808,6 +809,8 @@ int cflow_usb_run_ready(cflow_usb_context *context, size_t max_events,
             } else if (impl->hotplug_rescan_pending) {
                 impl->hotplug_rescan_pending = false;
                 impl->hotplug_rescan_delivered = true;
+                impl->hotplug_rescan_delivery_suppressed =
+                    impl->hotplug_suppressed;
                 hotplug = (cflow_usb_hotplug_event){
                     .kind = CFLOW_USB_HOTPLUG_RESCAN_REQUIRED,
                 };
@@ -843,8 +846,16 @@ int cflow_usb_acknowledge_hotplug_rescan(cflow_usb_context *context) {
         turbo_mutex_unlock(&impl->gate);
         return TURBO_EALREADY;
     }
-    impl->hotplug_awaiting_rescan = false;
-    impl->hotplug_rescan_delivered = false;
+    if (impl->hotplug_suppressed !=
+        impl->hotplug_rescan_delivery_suppressed) {
+        impl->hotplug_rescan_pending = true;
+        impl->hotplug_rescan_delivered = false;
+        impl->hotplug_rescan_required = usb_saturating_add(
+            impl->hotplug_rescan_required, 1u);
+    } else {
+        impl->hotplug_awaiting_rescan = false;
+        impl->hotplug_rescan_delivered = false;
+    }
     turbo_mutex_unlock(&impl->gate);
     return TURBO_OK;
 }

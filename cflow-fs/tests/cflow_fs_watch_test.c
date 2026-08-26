@@ -300,28 +300,6 @@ spec("CFlow filesystem watch") {
         free(root);
     }
 
-#if defined(__APPLE__)
-    it("reports an unambiguous remove through FSEvents") {
-        char *root = tt_make_temp_dir("cflow-watch-remove-");
-        char path[1024];
-        cflow_fs_watch watch = {0};
-        watch_probe probe = {0};
-        cflow_fs_watch_config config = watch_config(&probe, 8u);
-
-        check_not_null(root);
-        check_equal(turbo_fs_path_join(path, sizeof(path), root,
-                                       "remove.txt"), TURBO_OK);
-        check_equal(tt_write_file(path, "value", 5u), TURBO_OK);
-        check_equal(cflow_fs_watch_open(&watch, root, &config), TURBO_OK);
-        check_equal(tt_remove_file(path), TURBO_OK);
-        check_equal(watch_drive_until(&watch, &probe, 1u), TURBO_OK);
-        check_true(probe_saw(&probe, CFLOW_FS_WATCH_REMOVED, "remove.txt"));
-
-        watch_close_destroy(&watch);
-        check_equal(tt_remove_tree(root), TURBO_OK);
-        free(root);
-    }
-#endif
 #else
     it("fails fast when the native watch backend is unavailable") {
         char *root = tt_make_temp_dir("cflow-watch-unsupported-");

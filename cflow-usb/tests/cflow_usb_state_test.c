@@ -184,6 +184,17 @@ spec("CFlow USB bounded state machine") {
         check_true(cflow_usb_get_stats(&context, &stats));
         check_equal(stats.hotplug_suppressed, (size_t)1u);
         check_equal(stats.hotplug_rescan_required, (size_t)1u);
+        fake_libusb_emit_hotplug(LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED);
+        check_true(cflow_usb_get_stats(&context, &stats));
+        check_equal(stats.hotplug_suppressed, (size_t)2u);
+        check_equal(cflow_usb_acknowledge_hotplug_rescan(&context), TURBO_OK);
+        check_true(cflow_usb_get_stats(&context, &stats));
+        check_equal(stats.hotplug_queued, (size_t)1u);
+        check_equal(stats.hotplug_rescan_required, (size_t)2u);
+        drive_until(&context, 1u, &delivered);
+        check_equal(delivered, (size_t)1u);
+        check_equal(probe.calls, (size_t)3u);
+        check_equal(probe.kinds[2], CFLOW_USB_HOTPLUG_RESCAN_REQUIRED);
         check_equal(cflow_usb_acknowledge_hotplug_rescan(&context), TURBO_OK);
         check_equal(cflow_usb_acknowledge_hotplug_rescan(&context),
                     TURBO_EALREADY);

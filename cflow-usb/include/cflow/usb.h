@@ -198,7 +198,9 @@ int cflow_usb_run_ready(cflow_usb_context *context, size_t max_events,
                         size_t *delivered);
 /**
  * Resume detailed hotplug delivery after the rescan marker was observed.
- * Calling before marker delivery returns TURBO_EALREADY.
+ * Changes suppressed after marker delivery retain the loss state and queue
+ * another marker; callers repeat until hotplug_queued remains zero. Calling
+ * before marker delivery returns TURBO_EALREADY.
  */
 int cflow_usb_acknowledge_hotplug_rescan(cflow_usb_context *context);
 /** Copy an observational enumeration/capacity snapshot. */
