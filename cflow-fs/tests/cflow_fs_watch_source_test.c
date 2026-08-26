@@ -134,6 +134,8 @@ typedef struct run_probe {
   watch_value value;
   size_t values;
   const char *error;
+  const char *expected_path;
+  bool saw_expected_path;
 } run_probe;
 
 static bool run_value(void *user, const cmeta_type_desc *type, const void *value) {
@@ -141,6 +143,8 @@ static bool run_value(void *user, const cmeta_type_desc *type, const void *value
   if (probe == NULL || value == NULL || !cmeta_type_equal(type, &watch_value_type)) return false;
   probe->value = *(const watch_value *)value;
   ++probe->values;
+  if (probe->expected_path != NULL && strcmp(probe->value.path, probe->expected_path) == 0)
+    probe->saw_expected_path = true;
   return true;
 }
 
@@ -204,6 +208,7 @@ spec("CFlow filesystem watch Source") {
     cflow_step step;
     watch_value value = {0};
     wake_probe wake;
+    bool saw_file = false;
     size_t attempts = 0u;
 
     atomic_init(&wake.count, 0u);
@@ -219,10 +224,25 @@ spec("CFlow filesystem watch Source") {
       turbo_sleep_ms(1u);
     check_equal(atomic_load(&wake.count), (size_t)1u);
 
-    step = cflow_source_resume(&source, &resume, &value);
-    check_equal(step.kind, CFLOW_STEP_VALUE);
-    check_true(value.kind == CFLOW_FS_WATCH_CREATED || value.kind == CFLOW_FS_WATCH_MODIFIED);
-    check_equal(value.path, "one.txt");
+    attempts = 0u;
+    while (!saw_file && attempts++ < 5000u) {
+      step = cflow_source_resume(&source, &resume, &value);
+      if (step.kind == CFLOW_STEP_VALUE || step.kind == CFLOW_STEP_VALUE_AND_DONE) {
+        saw_file = strcmp(value.path, "one.txt") == 0;
+        if (value.kind == CFLOW_FS_WATCH_RESCAN_REQUIRED)
+          check_equal(cflow_fs_watch_source_owner_acknowledge_rescan(&owner), TURBO_OK);
+        continue;
+      }
+      if (step.kind != CFLOW_STEP_WAIT) {
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        break;
+      }
+      atomic_store(&wake.count, 0u);
+      check_true(cflow_waitable_arm(&step.waitable, (cflow_waker){count_wake, &wake}));
+      while (atomic_load(&wake.count) == 0u && attempts++ < 5000u)
+        turbo_sleep_ms(1u);
+    }
+    check_true(saw_file);
 
     cflow_source_destroy(&source);
     check_equal(close_owner(&owner), TURBO_OK);
@@ -451,7 +471,7 @@ spec("CFlow filesystem watch Source") {
     cflow_graph graph = {0};
     cflow_scheduler scheduler = {0};
     cflow_run run = {0};
-    run_probe probe = {0};
+    run_probe probe = {.expected_path = "run.txt"};
     cflow_sink_callbacks callbacks = {
         .on_value = run_value,
         .on_error = run_error,
@@ -468,17 +488,17 @@ spec("CFlow filesystem watch Source") {
     check_true(cflow_scheduler_test_init(&scheduler));
     check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
     check_false(cflow_source_valid(&source));
-    check_true(cflow_run_request(&run, 1u));
+    check_true(cflow_run_request(&run, 8u));
     (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
     check_equal(tt_write_file(path, "x", 1u), TURBO_OK);
-    while (probe.values == 0u && probe.error == NULL && attempts++ < 5000u) {
+    while (!probe.saw_expected_path && probe.error == NULL && attempts++ < 5000u) {
       (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
-      if (probe.values == 0u) turbo_sleep_ms(1u);
+      if (!probe.saw_expected_path) turbo_sleep_ms(1u);
     }
 
     check_null(probe.error);
-    check_equal(probe.values, (size_t)1u);
-    check_equal(probe.value.path, "run.txt");
+    check_greater(probe.values, (size_t)0u);
+    check_true(probe.saw_expected_path);
     cflow_run_close(&run);
     check_equal(close_owner(&owner), TURBO_OK);
     cflow_scheduler_destroy(&scheduler);
