@@ -7,22 +7,33 @@
 typedef struct io_source_fixture {
     cflow_io_source_prepare_status prepare_status;
     const char *prepare_error;
+    cflow_read_status encode_status;
+    const char *encode_error;
+    int encoded_value;
     size_t prepare_calls;
     size_t encode_calls;
     size_t backend_submit_calls;
     size_t backend_cancel_calls;
     size_t drive_calls;
     size_t release_calls;
+    size_t drive_run_calls;
+    size_t drive_run_progressed;
+    size_t drive_run_busy;
+    int drive_run_error;
     cflow_io_source_owner *stats_owner;
+    cflow_io_source_owner *drive_owner;
     cflow_source *cancel_source_during_prepare;
     cflow_io_source_stats drive_stats;
     bool prepare_valid_operation;
+    bool complete_during_submit;
+    bool drive_owner_inline;
     bool capture_stats_on_drive;
     bool drive_stats_captured;
 } io_source_fixture;
 
 typedef struct io_source_sink_probe {
     size_t values;
+    int received[4];
     size_t errors;
     size_t done;
     const char *error;
@@ -77,10 +88,13 @@ static cflow_read_status io_source_encode(
     (void)lease_id;
     (void)operation_user;
     (void)completion;
-    (void)out_value;
-    (void)error;
     ++fixture->encode_calls;
-    return CFLOW_READ_DONE;
+    if (fixture->encode_status == CFLOW_READ_VALUE ||
+        fixture->encode_status == CFLOW_READ_VALUE_AND_DONE)
+        *(int *)out_value = fixture->encoded_value;
+    if (fixture->encode_status == CFLOW_READ_ERROR)
+        *error = fixture->encode_error;
+    return fixture->encode_status;
 }
 
 static int io_source_backend_submit(
@@ -96,6 +110,11 @@ static int io_source_backend_submit(
     (void)lease_id;
     (void)operation_user;
     ++fixture->backend_submit_calls;
+    if (fixture->complete_during_submit) {
+        const cflow_io_completion completion = {
+            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+        (void)cflow_io_actor_complete(actor, request_id, &completion);
+    }
     return TURBO_OK;
 }
 
@@ -111,6 +130,18 @@ static int io_source_backend_cancel(
 static void io_source_drive(void *user) {
     io_source_fixture *fixture = (io_source_fixture *)user;
     ++fixture->drive_calls;
+    if (fixture->drive_owner_inline && fixture->drive_owner != NULL) {
+        size_t progressed = 0u;
+        const int status = cflow_io_source_owner_run_ready(
+            fixture->drive_owner, 32u, &progressed);
+
+        ++fixture->drive_run_calls;
+        fixture->drive_run_progressed += progressed;
+        if (status == TURBO_EBUSY)
+            ++fixture->drive_run_busy;
+        else if (status != TURBO_OK)
+            fixture->drive_run_error = status;
+    }
     if (fixture->capture_stats_on_drive &&
         fixture->stats_owner != NULL) {
         fixture->drive_stats_captured =
@@ -141,7 +172,8 @@ static bool io_source_sink_value(
     io_source_sink_probe *probe = (io_source_sink_probe *)user;
 
     (void)type;
-    (void)value;
+    if (probe->values < sizeof(probe->received) / sizeof(probe->received[0]))
+        probe->received[probe->values] = *(const int *)value;
     ++probe->values;
     return true;
 }
@@ -305,6 +337,96 @@ spec("CFlow reactive IO source") {
         check_equal(fixture.release_calls, (size_t)0u);
     }
 
+    it("delivers one authoritative completion as a typed value") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE_AND_DONE,
+            .encoded_value = 37,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true
+        };
+        io_source_run_fixture run_fixture;
+        cflow_io_source_stats stats = {0};
+        size_t progressed = 0u;
+
+        check_true(io_source_run_fixture_init(&run_fixture, &fixture));
+        check_true(cflow_run_open(
+            &run_fixture.run, &run_fixture.normalized,
+            &run_fixture.source, &run_fixture.scheduler,
+            &run_fixture.sink));
+
+        check_true(cflow_run_request(&run_fixture.run, 1u));
+        check_equal(cflow_scheduler_run_until_idle(
+                        &run_fixture.scheduler, 0u), (size_t)1u);
+        check_equal(fixture.prepare_calls, (size_t)1u);
+        check_equal(fixture.backend_submit_calls, (size_t)0u);
+        check_true(fixture.drive_calls >= (size_t)1u);
+
+        check_equal(cflow_io_source_owner_run_ready(
+                        &run_fixture.owner, 32u, &progressed), TURBO_OK);
+        check_true(progressed > (size_t)0u);
+        check_equal(cflow_scheduler_run_until_idle(
+                        &run_fixture.scheduler, 0u), (size_t)1u);
+        check_equal(run_fixture.sink_probe.values, (size_t)1u);
+        check_equal(run_fixture.sink_probe.received[0], 37);
+        check_equal(run_fixture.sink_probe.done, (size_t)1u);
+        check_true(cflow_run_is_done(&run_fixture.run));
+        check_equal(fixture.prepare_calls, (size_t)1u);
+        check_equal(fixture.backend_submit_calls, (size_t)1u);
+        check_equal(fixture.encode_calls, (size_t)1u);
+        check_equal(fixture.release_calls, (size_t)1u);
+        check_true(cflow_io_source_owner_get_stats(
+            &run_fixture.owner, &stats));
+        check_equal(stats.actor.acknowledged, (uint64_t)1u);
+        check_false(stats.request_active);
+
+        io_source_run_fixture_close(&run_fixture);
+        check_equal(fixture.release_calls, (size_t)1u);
+    }
+
+    it("wakes when synchronous completion precedes WAIT arm") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE_AND_DONE,
+            .encoded_value = 37,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true,
+            .drive_owner_inline = true
+        };
+        io_source_run_fixture run_fixture;
+        cflow_io_source_stats stats = {0};
+
+        check_true(io_source_run_fixture_init(&run_fixture, &fixture));
+        fixture.drive_owner = &run_fixture.owner;
+        check_true(cflow_run_open(
+            &run_fixture.run, &run_fixture.normalized,
+            &run_fixture.source, &run_fixture.scheduler,
+            &run_fixture.sink));
+
+        check_true(cflow_run_request(&run_fixture.run, 1u));
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+
+        check_equal(run_fixture.sink_probe.values, (size_t)1u);
+        check_equal(run_fixture.sink_probe.received[0], 37);
+        check_equal(run_fixture.sink_probe.done, (size_t)1u);
+        check_true(cflow_run_is_done(&run_fixture.run));
+        check_equal(fixture.prepare_calls, (size_t)1u);
+        check_equal(fixture.backend_submit_calls, (size_t)1u);
+        check_equal(fixture.encode_calls, (size_t)1u);
+        check_equal(fixture.release_calls, (size_t)1u);
+        check_true(fixture.drive_run_calls >= (size_t)1u);
+        check_true(fixture.drive_run_progressed > (size_t)0u);
+        check_equal(fixture.drive_run_error, TURBO_OK);
+        check_true(cflow_io_source_owner_get_stats(
+            &run_fixture.owner, &stats));
+        check_equal(stats.actor.acknowledged, (uint64_t)1u);
+        check_false(stats.request_active);
+
+        io_source_run_fixture_close(&run_fixture);
+        check_equal(fixture.release_calls, (size_t)1u);
+    }
+
     it("reports an accepted operation active during Actor admission transfer") {
         io_source_fixture fixture = {
             .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
@@ -313,6 +435,7 @@ spec("CFlow reactive IO source") {
         };
         io_source_run_fixture run_fixture;
         cflow_io_source_stats stats = {0};
+        size_t progressed = 0u;
 
         check_true(io_source_run_fixture_init(&run_fixture, &fixture));
         fixture.stats_owner = &run_fixture.owner;
@@ -339,10 +462,14 @@ spec("CFlow reactive IO source") {
 
         cflow_run_close(&run_fixture.run);
         check_equal(fixture.release_calls, (size_t)0u);
-        /* Task 2 deliberately stops before delivery/ack, so this accepted
-         * owner remains busy until the Task 3 lifecycle is available. */
+        check_equal(cflow_io_source_owner_run_ready(
+                        &run_fixture.owner, 32u, &progressed), TURBO_OK);
+        check_true(progressed > (size_t)0u);
+        check_equal(fixture.release_calls, (size_t)1u);
+        check_true(cflow_io_source_owner_is_quiescent(
+            &run_fixture.owner));
         check_equal(cflow_io_source_owner_close(
-                        &run_fixture.owner), TURBO_EBUSY);
+                        &run_fixture.owner), TURBO_OK);
         cflow_scheduler_destroy(&run_fixture.scheduler);
         cflow_graph_destroy(&run_fixture.normalized);
         cflow_graph_destroy(&run_fixture.surface);

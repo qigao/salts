@@ -25,8 +25,12 @@ typedef struct cflow_io_source_state {
     bool close_requested;
     bool driver_active;
     bool submission_in_progress;
+    bool result_encoding;
     bool result_ready;
+    bool completion_delivered;
     bool acknowledged;
+    cflow_read_status result_status;
+    const char *result_error;
     const char *name;
     const cmeta_type_desc *type;
     cflow_io_source_prepare_fn prepare;
@@ -56,6 +60,12 @@ static const char io_source_submit_id_error[] =
     "IO source Actor request IDs are exhausted";
 static const char io_source_submit_invalid_error[] =
     "IO source Actor rejected the operation";
+static const char io_source_encode_error[] =
+    "IO source completion encoding failed";
+static const char io_source_encode_status_error[] =
+    "IO source completion encoder returned WOULD_BLOCK";
+static const char io_source_result_state_error[] =
+    "IO source completion result state is invalid";
 
 static bool io_source_type_valid(const cmeta_type_desc *type) {
     return cmeta_type_desc_valid(type) &&
@@ -93,6 +103,67 @@ static cflow_step io_source_set_terminal(
     return step;
 }
 
+static cflow_waker io_source_take_waker_locked(
+    cflow_io_source_state *state) {
+    cflow_waker waker = state->source_waker;
+
+    state->source_waker = (cflow_waker){0};
+    return waker;
+}
+
+static void io_source_wake(cflow_waker waker) {
+    if (waker.wake != NULL)
+        waker.wake(waker.user);
+}
+
+static bool io_source_take_result_locked(
+    cflow_io_source_state *state,
+    void *out_value,
+    cflow_step *step) {
+    cflow_read_status status;
+    const char *error;
+
+    if (!state->result_ready)
+        return false;
+    status = state->result_status;
+    error = state->result_error;
+    state->result_ready = false;
+    state->result_error = NULL;
+    if (state->request_id == 0u)
+        state->acknowledged = false;
+
+    if (status == CFLOW_READ_VALUE ||
+        status == CFLOW_READ_VALUE_AND_DONE) {
+        if (!state->result.live) {
+            state->terminal = CFLOW_SOURCE_ERROR;
+            state->terminal_error = io_source_result_state_error;
+            *step = io_source_terminal_step(state);
+            return true;
+        }
+        memcpy(out_value, state->result.storage, state->type->size);
+        cflow_value_slot_reset(&state->result);
+        if (status == CFLOW_READ_VALUE_AND_DONE)
+            state->terminal = CFLOW_SOURCE_DONE;
+        *step = (cflow_step){
+            status == CFLOW_READ_VALUE_AND_DONE
+                ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE,
+            {0}, NULL};
+        return true;
+    }
+
+    cflow_value_slot_reset(&state->result);
+    if (status == CFLOW_READ_DONE) {
+        state->terminal = CFLOW_SOURCE_DONE;
+        *step = (cflow_step){CFLOW_STEP_DONE, {0}, NULL};
+    } else {
+        state->terminal = CFLOW_SOURCE_ERROR;
+        state->terminal_error = error != NULL
+            ? error : io_source_encode_error;
+        *step = io_source_terminal_step(state);
+    }
+    return true;
+}
+
 static bool io_source_wait_arm(void *self, cflow_waker waker) {
     cflow_io_source_state *state = (cflow_io_source_state *)self;
     cflow_waker wake_now = {0};
@@ -107,26 +178,33 @@ static bool io_source_wait_arm(void *self, cflow_waker waker) {
     if (state->terminal != CFLOW_SOURCE_OPEN || state->result_ready ||
         state->acknowledged) {
         wake_now = waker;
-    } else if (state->request_id == 0u) {
+    } else if (state->request_id == 0u ||
+               state->source_waker.wake != NULL) {
         turbo_mutex_unlock(&state->gate);
         return false;
     } else {
         state->source_waker = waker;
     }
     turbo_mutex_unlock(&state->gate);
-    if (wake_now.wake != NULL)
-        wake_now.wake(wake_now.user);
+    io_source_wake(wake_now);
     return true;
 }
 
 static void io_source_wait_cancel(void *self) {
     cflow_io_source_state *state = (cflow_io_source_state *)self;
+    bool close_actor = false;
 
     if (state == NULL)
         return;
     turbo_mutex_lock(&state->gate);
-    state->source_waker = (cflow_waker){0};
+    (void)io_source_take_waker_locked(state);
+    if (!state->close_requested) {
+        state->close_requested = true;
+        close_actor = true;
+    }
     turbo_mutex_unlock(&state->gate);
+    if (close_actor)
+        (void)cflow_io_actor_close(&state->actor);
 }
 
 CMETA_IMPLEMENTS(cflow_waitable, io_source_waitable, 0,
@@ -176,8 +254,14 @@ static cflow_step io_source_resume(
         return io_source_set_terminal(
             state, CFLOW_SOURCE_ERROR, io_source_cancelled_error);
     }
+    if (io_source_take_result_locked(state, out_value, &step)) {
+        turbo_mutex_unlock(&state->gate);
+        return step;
+    }
+    if (state->acknowledged && state->request_id == 0u)
+        state->acknowledged = false;
     if (state->submission_in_progress || state->request_id != 0u ||
-        state->result_ready) {
+        state->result_encoding || state->completion_delivered) {
         turbo_mutex_unlock(&state->gate);
         return (cflow_step){
             CFLOW_STEP_WAIT,
@@ -214,9 +298,14 @@ static cflow_step io_source_resume(
     }
 
     turbo_mutex_lock(&state->gate);
-    state->request_id = submitted.request_id;
     state->submission_in_progress = false;
-    state->acknowledged = false;
+    if (state->request_id == 0u && !state->acknowledged)
+        state->request_id = submitted.request_id;
+    else if (state->request_id != 0u &&
+             state->request_id != submitted.request_id) {
+        state->terminal = CFLOW_SOURCE_ERROR;
+        state->terminal_error = io_source_result_state_error;
+    }
     turbo_mutex_unlock(&state->gate);
     return (cflow_step){
         CFLOW_STEP_WAIT,
@@ -224,20 +313,7 @@ static cflow_step io_source_resume(
 }
 
 static void io_source_cancel(void *self) {
-    cflow_io_source_state *state = (cflow_io_source_state *)self;
-    bool close_actor = false;
-
-    if (state == NULL)
-        return;
-    turbo_mutex_lock(&state->gate);
-    if (!state->close_requested) {
-        state->close_requested = true;
-        close_actor = true;
-    }
-    state->source_waker = (cflow_waker){0};
-    turbo_mutex_unlock(&state->gate);
-    if (close_actor)
-        (void)cflow_io_actor_close(&state->actor);
+    io_source_wait_cancel(self);
 }
 
 static void io_source_destroy(void *self) {
@@ -248,7 +324,7 @@ static void io_source_destroy(void *self) {
     io_source_cancel(state);
     turbo_mutex_lock(&state->gate);
     state->source_live = false;
-    state->source_waker = (cflow_waker){0};
+    (void)io_source_take_waker_locked(state);
     turbo_mutex_unlock(&state->gate);
 }
 
@@ -302,16 +378,60 @@ static void io_source_completion(
     const cflow_io_completion *completion) {
     cflow_io_source_state *state =
         (cflow_io_source_state *)completion_user;
+    cflow_read_status encoded = CFLOW_READ_ERROR;
+    const char *error = NULL;
+    cflow_waker waker = {0};
+    bool encode = false;
 
-    (void)lease_id;
-    (void)operation_user;
-    (void)completion;
-    if (state == NULL)
+    if (state == NULL || completion == NULL)
         return;
     turbo_mutex_lock(&state->gate);
-    if (state->request_id == request_id)
-        state->acknowledged = false;
+    if (state->request_id == 0u && state->submission_in_progress)
+        state->request_id = request_id;
+    if (state->request_id == request_id &&
+        !state->result_encoding && !state->result_ready &&
+        !state->completion_delivered && !state->result.live) {
+        state->result_encoding = true;
+        encode = true;
+    } else {
+        state->result_status = CFLOW_READ_ERROR;
+        state->result_error = io_source_result_state_error;
+        state->result_ready = true;
+        state->completion_delivered = true;
+        waker = io_source_take_waker_locked(state);
+    }
     turbo_mutex_unlock(&state->gate);
+    if (!encode) {
+        io_source_wake(waker);
+        return;
+    }
+
+    encoded = state->encode(
+        state->user, request_id, lease_id, operation_user,
+        completion, state->result.storage, &error);
+
+    turbo_mutex_lock(&state->gate);
+    state->result_encoding = false;
+    if (encoded == CFLOW_READ_VALUE ||
+        encoded == CFLOW_READ_VALUE_AND_DONE) {
+        state->result.live = true;
+        state->result_status = encoded;
+        state->result_error = NULL;
+    } else if (encoded == CFLOW_READ_DONE) {
+        state->result_status = encoded;
+        state->result_error = NULL;
+    } else {
+        state->result_status = CFLOW_READ_ERROR;
+        state->result_error = encoded == CFLOW_READ_ERROR
+            ? (error != NULL && error[0] != '\0'
+                ? error : io_source_encode_error)
+            : io_source_encode_status_error;
+    }
+    state->result_ready = true;
+    state->completion_delivered = true;
+    waker = io_source_take_waker_locked(state);
+    turbo_mutex_unlock(&state->gate);
+    io_source_wake(waker);
 }
 
 int cflow_source_from_io_actor(
@@ -397,6 +517,7 @@ int cflow_io_source_owner_run_ready(
     size_t max_steps,
     size_t *progressed) {
     cflow_io_source_state *state;
+    size_t count = 0u;
     int status = TURBO_OK;
 
     if (progressed != NULL)
@@ -413,21 +534,65 @@ int cflow_io_source_owner_run_ready(
     state->driver_active = true;
     turbo_mutex_unlock(&state->gate);
 
-    while (*progressed < max_steps) {
-        cflow_io_run_result result =
-            cflow_io_actor_run_one(&state->actor);
-        if (result.status == CFLOW_IO_RUN_BUSY) {
+    while (count < max_steps) {
+        cflow_io_request_id delivered_request_id = 0u;
+        cflow_io_run_result actor_result;
+
+        turbo_mutex_lock(&state->gate);
+        if (state->completion_delivered &&
+            state->request_id != 0u)
+            delivered_request_id = state->request_id;
+        turbo_mutex_unlock(&state->gate);
+        if (delivered_request_id != 0u) {
+            const cflow_io_ack_status ack_status =
+                cflow_io_actor_acknowledge(
+                    &state->actor, delivered_request_id);
+
+            if (ack_status == CFLOW_IO_ACK_RELEASED) {
+                cflow_waker waker = {0};
+
+                turbo_mutex_lock(&state->gate);
+                if (state->request_id == delivered_request_id &&
+                    state->completion_delivered) {
+                    state->request_id = 0u;
+                    state->completion_delivered = false;
+                    state->acknowledged = true;
+                    waker = io_source_take_waker_locked(state);
+                }
+                turbo_mutex_unlock(&state->gate);
+                ++count;
+                io_source_wake(waker);
+                continue;
+            }
+            status = ack_status == CFLOW_IO_ACK_BUSY
+                ? TURBO_EBUSY : TURBO_EPROTO;
+            break;
+        }
+
+        actor_result = cflow_io_actor_run_one(&state->actor);
+        if (actor_result.status == CFLOW_IO_RUN_PROGRESSED) {
+            ++count;
+            continue;
+        }
+        if (actor_result.status == CFLOW_IO_RUN_BUSY) {
             status = TURBO_EBUSY;
             break;
         }
-        if (result.status != CFLOW_IO_RUN_PROGRESSED)
+        if (actor_result.status == CFLOW_IO_RUN_INVALID_ARGUMENT) {
+            status = TURBO_EINVAL;
             break;
-        ++*progressed;
+        }
+        if (cflow_executor_run_one(&state->executor)) {
+            ++count;
+            continue;
+        }
+        break;
     }
 
     turbo_mutex_lock(&state->gate);
     state->driver_active = false;
     turbo_mutex_unlock(&state->gate);
+    *progressed = count;
     return status;
 }
 
