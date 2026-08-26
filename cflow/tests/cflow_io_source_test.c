@@ -13,7 +13,12 @@ typedef struct io_source_fixture {
     size_t backend_cancel_calls;
     size_t drive_calls;
     size_t release_calls;
+    cflow_io_source_owner *stats_owner;
+    cflow_source *cancel_source_during_prepare;
+    cflow_io_source_stats drive_stats;
     bool prepare_valid_operation;
+    bool capture_stats_on_drive;
+    bool drive_stats_captured;
 } io_source_fixture;
 
 typedef struct io_source_sink_probe {
@@ -50,6 +55,8 @@ static cflow_io_source_prepare_status io_source_prepare(
         operation->user = fixture;
         operation->release = fixture->prepare_valid_operation
             ? io_source_operation_release : NULL;
+        if (fixture->cancel_source_during_prepare != NULL)
+            cflow_source_cancel(fixture->cancel_source_during_prepare);
     } else if (fixture->prepare_status == CFLOW_IO_SOURCE_PREPARE_ERROR) {
         *error = fixture->prepare_error;
     }
@@ -104,6 +111,12 @@ static int io_source_backend_cancel(
 static void io_source_drive(void *user) {
     io_source_fixture *fixture = (io_source_fixture *)user;
     ++fixture->drive_calls;
+    if (fixture->capture_stats_on_drive &&
+        fixture->stats_owner != NULL) {
+        fixture->drive_stats_captured =
+            cflow_io_source_owner_get_stats(
+                fixture->stats_owner, &fixture->drive_stats);
+    }
 }
 
 static cflow_io_source_config io_source_config(
@@ -148,19 +161,25 @@ static void io_source_sink_done(void *user) {
 static bool io_source_run_fixture_init(
     io_source_run_fixture *run_fixture, io_source_fixture *fixture) {
     cflow_io_source_config config = io_source_config(fixture);
+    bool surface_initialized = false;
+    bool normalized_initialized = false;
+    bool scheduler_initialized = false;
 
     memset(run_fixture, 0, sizeof(*run_fixture));
     run_fixture->normalized.root = CMETA_INVALID_ID;
     cflow_graph_init(&run_fixture->surface, &cmeta_type_int);
+    surface_initialized = true;
     if (!cflow_graph_normalize(
             &run_fixture->normalized, &run_fixture->surface))
-        return false;
+        goto cleanup;
+    normalized_initialized = true;
     if (!cflow_scheduler_test_init(&run_fixture->scheduler))
-        return false;
+        goto cleanup;
+    scheduler_initialized = true;
     if (cflow_source_from_io_actor(
             &run_fixture->source, &run_fixture->owner,
             &config) != TURBO_OK)
-        return false;
+        goto cleanup;
 
     run_fixture->sink_callbacks = (cflow_sink_callbacks){
         io_source_sink_value,
@@ -171,6 +190,19 @@ static bool io_source_run_fixture_init(
     run_fixture->sink = cflow_sink_from_callbacks(
         &run_fixture->sink_callbacks);
     return true;
+
+cleanup:
+    if (cflow_source_valid(&run_fixture->source)) {
+        cflow_source_destroy(&run_fixture->source);
+        (void)cflow_io_source_owner_close(&run_fixture->owner);
+    }
+    if (scheduler_initialized)
+        cflow_scheduler_destroy(&run_fixture->scheduler);
+    if (normalized_initialized)
+        cflow_graph_destroy(&run_fixture->normalized);
+    if (surface_initialized)
+        cflow_graph_destroy(&run_fixture->surface);
+    return false;
 }
 
 static void io_source_run_fixture_close(
@@ -271,6 +303,82 @@ spec("CFlow reactive IO source") {
 
         io_source_run_fixture_close(&run_fixture);
         check_equal(fixture.release_calls, (size_t)0u);
+    }
+
+    it("reports an accepted operation active during Actor admission transfer") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .prepare_valid_operation = true,
+            .capture_stats_on_drive = true
+        };
+        io_source_run_fixture run_fixture;
+        cflow_io_source_stats stats = {0};
+
+        check_true(io_source_run_fixture_init(&run_fixture, &fixture));
+        fixture.stats_owner = &run_fixture.owner;
+        check_true(cflow_run_open(
+            &run_fixture.run, &run_fixture.normalized,
+            &run_fixture.source, &run_fixture.scheduler,
+            &run_fixture.sink));
+        check_true(cflow_run_request(&run_fixture.run, 1u));
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+
+        check_true(fixture.drive_stats_captured);
+        check_equal(fixture.drive_stats.actor.accepted, (uint64_t)1u);
+        check_equal(fixture.drive_stats.actor.active_requests, (size_t)1u);
+        check_true(fixture.drive_stats.request_active);
+        check_equal(fixture.prepare_calls, (size_t)1u);
+        check_equal(fixture.backend_submit_calls, (size_t)0u);
+        check_equal(fixture.release_calls, (size_t)0u);
+        check_true(cflow_io_source_owner_get_stats(
+            &run_fixture.owner, &stats));
+        check_equal(stats.actor.accepted, (uint64_t)1u);
+        check_equal(stats.actor.active_requests, (size_t)1u);
+        check_true(stats.request_active);
+
+        cflow_run_close(&run_fixture.run);
+        check_equal(fixture.release_calls, (size_t)0u);
+        /* Task 2 deliberately stops before delivery/ack, so this accepted
+         * owner remains busy until the Task 3 lifecycle is available. */
+        check_equal(cflow_io_source_owner_close(
+                        &run_fixture.owner), TURBO_EBUSY);
+        cflow_scheduler_destroy(&run_fixture.scheduler);
+        cflow_graph_destroy(&run_fixture.normalized);
+        cflow_graph_destroy(&run_fixture.surface);
+    }
+
+    it("releases an adapter-owned operation once when Actor admission rejects") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .prepare_valid_operation = true
+        };
+        cflow_io_source_config config = io_source_config(&fixture);
+        cflow_source source = {0};
+        cflow_io_source_owner owner = {0};
+        cflow_io_source_stats stats = {0};
+        cflow_step step;
+        int output = 0;
+
+        check_equal(cflow_source_from_io_actor(
+                        &source, &owner, &config), TURBO_OK);
+        fixture.cancel_source_during_prepare = &source;
+        step = cflow_source_resume(&source, NULL, &output);
+
+        check_equal(step.kind, CFLOW_STEP_ERROR);
+        check_equal(fixture.prepare_calls, (size_t)1u);
+        check_equal(fixture.release_calls, (size_t)1u);
+        check_equal(fixture.backend_submit_calls, (size_t)0u);
+        check_true(cflow_io_source_owner_get_stats(&owner, &stats));
+        check_equal(stats.actor.accepted, (uint64_t)0u);
+        check_equal(stats.actor.rejected_closed, (uint64_t)1u);
+        check_false(stats.request_active);
+        check_true(stats.close_requested);
+
+        cflow_source_destroy(&source);
+        check_equal(fixture.release_calls, (size_t)1u);
+        check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
+        check_equal(fixture.release_calls, (size_t)1u);
     }
 
     it("maps prepare DONE to one terminal sink notification") {

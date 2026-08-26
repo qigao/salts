@@ -24,6 +24,7 @@ typedef struct cflow_io_source_state {
     bool owner_live;
     bool close_requested;
     bool driver_active;
+    bool submission_in_progress;
     bool result_ready;
     bool acknowledged;
     const char *name;
@@ -82,6 +83,7 @@ static cflow_step io_source_set_terminal(
     cflow_step step;
 
     turbo_mutex_lock(&state->gate);
+    state->submission_in_progress = false;
     if (state->terminal == CFLOW_SOURCE_OPEN) {
         state->terminal = terminal;
         state->terminal_error = error;
@@ -174,12 +176,14 @@ static cflow_step io_source_resume(
         return io_source_set_terminal(
             state, CFLOW_SOURCE_ERROR, io_source_cancelled_error);
     }
-    if (state->request_id != 0u || state->result_ready) {
+    if (state->submission_in_progress || state->request_id != 0u ||
+        state->result_ready) {
         turbo_mutex_unlock(&state->gate);
         return (cflow_step){
             CFLOW_STEP_WAIT,
             io_source_waitable_as_cflow_waitable(state), NULL};
     }
+    state->submission_in_progress = true;
     turbo_mutex_unlock(&state->gate);
 
     prepared = state->prepare(state->user, &operation, &error);
@@ -211,6 +215,7 @@ static cflow_step io_source_resume(
 
     turbo_mutex_lock(&state->gate);
     state->request_id = submitted.request_id;
+    state->submission_in_progress = false;
     state->acknowledged = false;
     turbo_mutex_unlock(&state->gate);
     return (cflow_step){
@@ -451,12 +456,15 @@ bool cflow_io_source_owner_get_stats(
     state = (cflow_io_source_state *)owner->impl;
     turbo_mutex_lock(&state->gate);
     snapshot.source_live = state->source_live;
-    snapshot.request_active = state->request_id != 0u;
+    snapshot.request_active = state->submission_in_progress ||
+        state->request_id != 0u;
     snapshot.result_ready = state->result_ready;
     snapshot.close_requested = state->close_requested;
     turbo_mutex_unlock(&state->gate);
     if (!cflow_io_actor_get_stats(&state->actor, &snapshot.actor))
         return false;
+    snapshot.request_active = snapshot.request_active ||
+        snapshot.actor.active_requests != 0u;
     *out = snapshot;
     return true;
 }

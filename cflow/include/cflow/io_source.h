@@ -70,7 +70,7 @@ typedef struct cflow_io_source_config {
     void *drive_user;
 } cflow_io_source_config;
 
-/** Consistent adapter snapshot; actor storage and all adapter queues are fixed at capacity one. */
+/** Diagnostic adapter snapshot; Actor storage and adapter queues have capacity one. */
 typedef struct cflow_io_source_stats {
     cflow_io_actor_stats actor;
     bool source_live;
@@ -118,8 +118,14 @@ bool cflow_io_source_owner_is_quiescent(
     const cflow_io_source_owner *owner);
 
 /**
- * Copies a consistent owner and Actor snapshot. Returns false for invalid
- * arguments; the returned state does not authorize concurrent close/destroy.
+ * Samples adapter state and Actor counters separately. request_active is a
+ * conservative diagnostic: it is true during preparation, admission handoff
+ * and rejection cleanup, while the adapter tracks an accepted request, or when
+ * this returned Actor sample has active_requests. Concurrent transitions may
+ * make either sample stale, but a returned snapshot never reports
+ * request_active false alongside a nonzero actor.active_requests. Returns
+ * false for invalid arguments; the returned state does not authorize
+ * concurrent close/destroy.
  */
 bool cflow_io_source_owner_get_stats(
     const cflow_io_source_owner *owner,
