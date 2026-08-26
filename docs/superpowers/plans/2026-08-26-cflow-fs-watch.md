@@ -7,11 +7,11 @@
 
 ### Task 1: Contract and fake backend
 
-- [ ] Define the opaque source, event/capability types, config, statistics,
+- [x] Define the opaque source, event/capability types, config, statistics,
   rescan acknowledgement, close, drive, and destroy API.
 - [ ] Add a fake backend and RED tests for ownership, bounds, overflow
   coalescing, callback affinity, and lifecycle.
-- [ ] Implement the bounded backend-neutral state machine GREEN.
+- [x] Implement the bounded backend-neutral state machine GREEN.
 
 ### Task 2: Native bridges
 

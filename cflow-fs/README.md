@@ -66,9 +66,10 @@ the service is quiescent before destruction.
 
 `<cflow/fs_watch.h>` exposes a native event source with fixed event, watch,
 path, and kernel-buffer capacities. Windows uses overlapped
-`ReadDirectoryChangesW`, Linux uses inotify for the currently supported
-non-recursive contract, and macOS uses per-item FSEvents on a private serial
-dispatch queue. A full detailed queue, kernel overflow, invalid UTF-8, or an
+`ReadDirectoryChangesW`, Linux uses one bounded inotify registration per
+directory for recursive mode, and macOS uses per-item FSEvents on a private
+serial dispatch queue. A full detailed queue, native registration capacity,
+kernel overflow, invalid UTF-8, or an
 unpairable rename produces one `CFLOW_FS_WATCH_RESCAN_REQUIRED` marker and
 suppresses further detail until `cflow_fs_watch_acknowledge_rescan()`.
 
