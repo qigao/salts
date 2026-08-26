@@ -139,7 +139,7 @@ spec("CFlow filesystem watch") {
             default: 0));
     }
 
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
     it("reports create rename and remove through the driver") {
         char *root = tt_make_temp_dir("cflow-watch-");
         char first[1024];
