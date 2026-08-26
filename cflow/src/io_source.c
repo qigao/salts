@@ -441,8 +441,13 @@ static void io_source_completion(
     if (state->request_id == request_id &&
         !state->result_encoding && !state->result_ready &&
         !state->completion_delivered && !state->result.live) {
-        state->result_encoding = true;
-        encode = true;
+        if (state->close_requested) {
+            state->completion_delivered = true;
+            waker = io_source_take_waker_locked(state);
+        } else {
+            state->result_encoding = true;
+            encode = true;
+        }
     } else {
         state->result_status = CFLOW_READ_ERROR;
         state->result_error = io_source_result_state_error;
