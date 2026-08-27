@@ -37,6 +37,13 @@ static_assert(std::is_standard_layout<cflow_actor_ref>::value,
               "cflow_actor_ref must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_actor_config>::value,
               "actor config must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_statechart_actor_config>::value,
+              "Statechart Actor config must remain C-compatible");
+static_assert(
+    std::is_standard_layout<cflow_statechart_actor_init_result>::value,
+    "Statechart Actor init result must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_statechart_actor_stats>::value,
+              "Statechart Actor stats must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_actor>::value,
               "IO Actor must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_io_operation>::value,
@@ -130,8 +137,15 @@ suite("CFlow C++ public header") {
         cflow_statechart_instance statechart_instance = {};
         cflow_statechart_instance_config statechart_config = {};
         cflow_statechart_instance_stats statechart_stats = {};
+        cflow_statechart_terminal_status statechart_terminal =
+            CFLOW_STATECHART_TERMINAL_OPEN;
+        cflow_waitable statechart_terminal_waitable =
+            cflow_statechart_instance_terminal_waitable(&statechart_instance);
         cflow_actor actor = {};
         cflow_actor_ref actor_ref = {};
+        cflow_statechart_actor_config statechart_actor_config = {};
+        cflow_statechart_actor_init_result statechart_actor_result = {};
+        cflow_statechart_actor_stats statechart_actor_stats = {};
         cflow_io_actor io_actor = {};
         cflow_io_operation io_operation = {};
         cflow_io_native_backend native_backend = {};
@@ -200,9 +214,17 @@ suite("CFlow C++ public header") {
         check_null(statechart_config.statechart);
         check_true(statechart_stats.last_status ==
                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(statechart_terminal == CFLOW_STATECHART_TERMINAL_OPEN);
+        check_false(cflow_waitable_valid(&statechart_terminal_waitable));
         cflow_statechart_destroy(&statechart);
         check_null(actor.impl);
         check_null(actor_ref.impl);
+        check_null(statechart_actor_config.statechart.statechart);
+        check_null(statechart_actor_config.callbacks.user);
+        check_true(statechart_actor_result.status == CFLOW_ACTOR_OK);
+        check_true(statechart_actor_result.statechart_status ==
+                   CFLOW_STATECHART_RUNTIME_OK);
+        check_true(statechart_actor_stats.state == CFLOW_ACTOR_STATE_START);
         check_null(io_actor.impl);
         check_null(io_operation.user);
         check_null(native_backend.impl);

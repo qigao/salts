@@ -146,30 +146,35 @@ cflow_actor_init_result cflow_actor_init(
 cflow_statechart_actor_init_result cflow_actor_init_statechart(
     cflow_actor *actor, const cflow_statechart_actor_config *config);
 
-/** Start the single owned Run and request `SIZE_MAX` downstream demand. */
+/**
+ * Start the owned backend. Machine Actors open their Run and request
+ * `SIZE_MAX` demand; Statechart Actors arm terminal observation.
+ */
 cflow_actor_status cflow_actor_start(cflow_actor *actor);
 
 /**
- * Stop admission before closing the Machine. The first request is successful;
- * later calls report the exact current or terminal lifecycle status.
+ * Stop admission before closing the owned Machine or Statechart. The first
+ * request is successful; later calls report the exact current or terminal
+ * lifecycle status.
  */
 cflow_actor_status cflow_actor_request_stop(cflow_actor *actor);
 
 /**
  * Block until `STOPPED` or `FAILED`.
  *
- * This control-plane call must not run from a Machine action/guard, Actor sink
- * callback, scheduler worker callback, or concurrently with destruction.
+ * This control-plane call must not run from a Machine/Statechart callback,
+ * Actor terminal/sink callback, scheduler worker callback, or concurrently
+ * with destruction.
  */
 cflow_actor_state cflow_actor_wait(cflow_actor *actor);
 
 /** Return the current lifecycle state; an empty handle reports `START`. */
 cflow_actor_state cflow_actor_current_state(const cflow_actor *actor);
 
-/** Read one mutex-consistent Actor and Machine statistics snapshot. */
+/** Read Machine Actor stats; returns false for a Statechart-backed Actor. */
 bool cflow_actor_get_stats(const cflow_actor *actor, cflow_actor_stats *out);
 
-/** Read one mutex-consistent Actor and Statechart statistics snapshot. */
+/** Read Statechart Actor stats; returns false for a Machine-backed Actor. */
 bool cflow_actor_get_statechart_stats(
     const cflow_actor *actor, cflow_statechart_actor_stats *out);
 

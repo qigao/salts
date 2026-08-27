@@ -29,7 +29,7 @@ include/cflow/
 ├── statechart.h    native compound/parallel/history Statechart IR
 ├── statechart_runtime.h bounded run-to-completion Statechart runtime
 ├── statechart_hierarchy_adapter.h explicit exclusive compatibility adapter
-├── actor.h         bounded Actor lifecycle over Machine and Run
+├── actor.h         bounded Actor lifecycle over Machine or Statechart
 ├── io_actor.h      bounded asynchronous operation ownership/runtime
 ├── io_native.h     epoll/kqueue/poll/IOCP/io_uring socket, pipe, and file I/O
 ├── io_source.h     demand-gated IO Actor completion Source adapter
@@ -367,6 +367,22 @@ instance, then destroy Clock, Executor, and immutable Statechart in that order.
 Destroy waits only for this instance's admitted executor work and any claimed
 timer handoff, not unrelated work on a shared Executor.
 
+`cflow_statechart_instance_poll_terminal()` reports exact OPEN, DONE, or ERROR
+without constructing a stream value; ERROR returns the instance-owned first
+diagnostic. `cflow_statechart_instance_terminal_waitable()` returns a borrowed
+single-waiter projection. One waiter may be armed while open, cancellation
+detaches it, and arming after terminal publication invokes it inline. Waiter
+operations and all other concurrent instance calls must be quiescent before
+instance destruction.
+
+There is deliberately no Statechart `cflow_source` yet. Statechart actions
+transform the instance's extended state but do not declare one downstream
+`output_type` or transactionally construct a VALUE observation. Active
+configuration snapshots are variable-length queries, not implicit stream
+values. A future Source therefore requires an explicit typed output contract
+and bounded output queue; CFlow does not substitute extended-state copies,
+partial configuration records, or a dummy value.
+
 `cflow_statechart_hierarchy_adapter_build()` is an explicit migration and
 differential-testing tool; it never redirects the existing hierarchy runtime or
 caches a mutable current state. It admits the normalized exclusive subset with
@@ -392,19 +408,20 @@ coordination. Those require separate frontends and runtime protocols.
 
 ## Bounded Actor lifecycle
 
-`cflow_actor` is a lifecycle and admission boundary over one existing Machine
-instance and one identity Run. It does not create an Actor thread or another
-state-machine runtime. The Machine's borrowed SerialExecutor remains the sole
-transition serializer, and the borrowed concurrent Scheduler dispatches the
-Run. A manual Scheduler is rejected by `cflow_actor_init()`.
+`cflow_actor` is a lifecycle and admission boundary over one owned Machine
+instance plus identity Run, or one owned Statechart instance. It does not create
+an Actor thread or another state-machine runtime. The backend's borrowed
+SerialExecutor remains the sole transition serializer. Machine Actors also
+borrow a concurrent Scheduler to dispatch the Run; a manual Scheduler is
+rejected by `cflow_actor_init()`. Statechart Actors need no Scheduler or Run.
 
-Construction copies the Actor configuration and creates a fixed-capacity
-Machine Mailbox. The Actor owns that Machine instance, its identity Graph and
-Run, the lifecycle control block, and its first error string. It borrows the
-Machine declaration, SerialExecutor, concurrent Scheduler, type descriptors,
-guard/action functions and user data, and sink callbacks/user data. Keep every
-borrowed object operational through `cflow_actor_destroy()`; destroy the Actor
-before the Scheduler, SerialExecutor, or Machine.
+`cflow_actor_init()` owns a Machine instance, identity Graph, and Run;
+`cflow_actor_init_statechart()` owns a Statechart instance and its borrowed
+terminal projection. Both own the lifecycle control block and first error
+string. Each backend preserves its runtime's existing borrowed declarations,
+executors, descriptors, callbacks, and user data. Keep every borrowed object
+operational through `cflow_actor_destroy()` and destroy the Actor before those
+dependencies.
 
 Acquire one `cflow_actor_ref` per producer and release every acquired or
 retained ref. Producers may send concurrently through distinct refs. A send
@@ -412,7 +429,7 @@ borrows its `cflow_event_view` only for the call; acceptance copies the trivial
 payload into the bounded Actor-owned Mailbox. Destroying the owner first makes
 old refs stale, synchronously closes the runtime resources, and leaves only the
 small retained control block. Such refs return `CFLOW_ACTOR_SEND_STALE` until
-released and never access destroyed Machine or Run storage.
+released and never access destroyed backend storage.
 
 Admission is exact and non-blocking:
 
@@ -429,21 +446,22 @@ Admission is exact and non-blocking:
 | Owner destruction has begun | `CFLOW_ACTOR_SEND_STALE` |
 
 The send path does not retry, wait, overwrite, resize, silently drop, or
-allocate. `machine.mailbox_capacity` is required and non-zero; callers decide
+allocate. Machine Actors use required `machine.mailbox_capacity`; Statechart
+Actors use required `statechart.external_event_capacity`. Callers decide
 whether and when to retry `FULL`.
 
-Sink values are borrowed only until `on_value` returns. Machine guard/action
-and Actor sink callbacks run without the Actor admission gate held, so they may
-send through a retained ref or call `cflow_actor_request_stop()`. They must not
-call `cflow_actor_wait()` or `cflow_actor_destroy()`; scheduler worker callbacks
-also must not wait, and destruction is forbidden from any callback. Returning
-false from `on_value`, an unhandled Event, or a failing guard/action makes the
-Actor `FAILED`, preserves the first Actor-owned error, cancels queued Events,
-and rejects later sends. Lifecycle state and waiters are updated before
-`on_error` or `on_done` runs; callback state must therefore stay valid through
-Actor destruction, not merely until `cflow_actor_wait()` returns.
+Sink values are borrowed only until `on_value` returns. Machine/Statechart
+guard/action and Actor sink/terminal callbacks run without the Actor admission
+gate held, so they may send through a retained ref or call
+`cflow_actor_request_stop()`. They must not call `cflow_actor_wait()` or
+`cflow_actor_destroy()`; scheduler worker callbacks also must not wait, and
+destruction is forbidden from any callback. A runtime failure makes the Actor
+`FAILED`, preserves the first Actor-owned error, cancels queued Events, and
+rejects later sends. Lifecycle state and waiters are updated before `on_error`
+or `on_done` runs; callback state must therefore stay valid through Actor
+destruction, not merely until `cflow_actor_wait()` returns.
 
-The first stop request closes admission before closing the Machine. From
+The first stop request closes admission before closing the backend. From
 `START` it moves directly to `STOPPED`; from `RUNNING` it moves through
 `STOPPING`. Queued Events are cancelled, while one already executing
 transition may commit exactly once. `cflow_actor_wait()` is an owner-side
@@ -451,9 +469,111 @@ control-plane call that blocks for `STOPPED` or `FAILED`; it must be serialized
 against destruction. Terminal states cannot restart, and repeated start/stop
 calls return the exact current or terminal status.
 
-This complete C11 example processes one typed Event and requests stop from the
-value callback. Error paths destroy only published handles, in reverse
-dependency order:
+For Statechart Actors, `start` arms the terminal projection after publishing
+RUNNING. Clean root-final completion and controlled close publish STOPPED and
+invoke `on_done` once; a runtime error publishes FAILED and invokes `on_error`
+once. Stop from START closes directly to STOPPED without a callback, matching
+the existing Actor lifecycle. `cflow_actor_get_statechart_stats()` combines the
+Actor state/rejection counters with the Statechart's own accounting snapshot;
+`cflow_actor_get_stats()` remains the Machine-only query.
+
+This complete C11 example runs a literal Statechart through the Actor facade:
+
+```c
+#include <cflow/actor.h>
+
+#include <stdio.h>
+
+enum { ROOT = 1u, INITIAL = 2u, ACTIVE = 3u, FINAL = 4u, GO = 10u };
+
+static void on_statechart_error(void *user, const char *message) {
+    (void)user;
+    fprintf(stderr, "Statechart Actor failed: %s\n",
+            message != NULL ? message : "unknown error");
+}
+
+static void on_statechart_done(void *user) {
+    (void)user;
+    puts("Statechart Actor stopped");
+}
+
+int main(void) {
+    const cflow_statechart_state states[] = {
+        {ROOT, 0u, CFLOW_STATECHART_COMPOUND, 0u},
+        {INITIAL, ROOT, CFLOW_STATECHART_INITIAL, 1u},
+        {ACTIVE, ROOT, CFLOW_STATECHART_ATOMIC, 2u},
+        {FINAL, ROOT, CFLOW_STATECHART_FINAL, 3u}
+    };
+    const cflow_event_type events[] = {{GO, &cmeta_type_bool}};
+    const cflow_statechart_transition transitions[] = {
+        {1u, INITIAL, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+         0u, 0u, 0u, ACTIVE, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u},
+        {2u, ACTIVE, CFLOW_STATECHART_TRIGGER_EVENT,
+         GO, 0u, 0u, FINAL, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u}
+    };
+    const cflow_statechart_definition definition = {
+        .state_type = &cmeta_type_int,
+        .states = states,
+        .state_count = 4u,
+        .events = events,
+        .event_count = 1u,
+        .transitions = transitions,
+        .transition_count = 2u
+    };
+    const int initial_state = 0;
+    const bool payload = true;
+    const cflow_event_view event = {GO, &cmeta_type_bool, &payload};
+    cflow_statechart chart = {0};
+    cflow_executor executor = {0};
+    cflow_actor actor = {0};
+    cflow_actor_ref producer = {0};
+    cflow_statechart_actor_config config = {0};
+    cflow_statechart_actor_init_result initialized;
+    cflow_statechart_actor_stats stats = {0};
+    int result = 1;
+
+    if (cflow_statechart_build(&chart, &definition) != CFLOW_STATECHART_OK)
+        return 1;
+    if (!cflow_executor_serial_init(&executor)) {
+        cflow_statechart_destroy(&chart);
+        return 2;
+    }
+    config.statechart = (cflow_statechart_instance_config){
+        .statechart = &chart,
+        .initial_state = &initial_state,
+        .external_event_capacity = 4u,
+        .internal_event_capacity = 4u,
+        .completion_capacity = 4u,
+        .microstep_limit = 16u,
+        .executor = &executor
+    };
+    config.callbacks = (cflow_statechart_actor_callbacks){
+        on_statechart_error, on_statechart_done, NULL
+    };
+    initialized = cflow_actor_init_statechart(&actor, &config);
+    if (initialized.status != CFLOW_ACTOR_OK ||
+        !cflow_actor_ref_acquire(&actor, &producer) ||
+        cflow_actor_start(&actor) != CFLOW_ACTOR_OK ||
+        cflow_actor_ref_try_send(&producer, &event) !=
+            CFLOW_ACTOR_SEND_ACCEPTED ||
+        cflow_actor_wait(&actor) != CFLOW_ACTOR_STATE_STOPPED ||
+        !cflow_actor_get_statechart_stats(&actor, &stats) ||
+        stats.statechart.external_completed != 1u)
+        goto cleanup;
+    result = 0;
+
+cleanup:
+    cflow_actor_ref_release(&producer);
+    cflow_actor_destroy(&actor);
+    cflow_executor_destroy(&executor);
+    cflow_statechart_destroy(&chart);
+    return result;
+}
+```
+
+The following complete Machine Actor example processes one typed Event and
+requests stop from the value callback. Error paths destroy only published
+handles, in reverse dependency order:
 
 ```c
 #include <cflow/actor.h>
