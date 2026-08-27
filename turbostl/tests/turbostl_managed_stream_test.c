@@ -122,6 +122,38 @@ const cmeta_type_desc cmeta_type_managed_stream_value_ptr = {
 typed(List, ManagedStreamList, managed_stream_value);
 
 spec("TurboSTL managed CFlow Stream") {
+    it("counts managed values without retaining terminal copies") {
+        managed_stream_value values[] = {
+            managed_stream_make(4), managed_stream_make(12)
+        };
+        ManagedStreamList input = {0};
+        turbostl_stream_t pipeline = {0};
+        const char *error = NULL;
+        size_t count = 99u;
+
+        managed_stream_copies = 0u;
+        managed_stream_moves = 0u;
+        managed_stream_destroys = 0u;
+        check_equal(managed_stream_live_resources, (size_t)2u);
+        check_equal(ManagedStreamList_init(&input, 2u), STL_OK);
+        check_equal(ManagedStreamList_push_back(&input, values[0]), STL_OK);
+        check_equal(ManagedStreamList_push_back(&input, values[1]), STL_OK);
+        check_not_null(stream(&input, &pipeline));
+
+        check_true(turbostl_stream_count(&pipeline, &count, &error));
+        check_equal(count, (size_t)2u);
+        check_null(error);
+
+        turbostl_stream_destroy(&pipeline);
+        ManagedStreamList_destroy(&input);
+        managed_stream_destroy(&values[0]);
+        managed_stream_destroy(&values[1]);
+        check_equal(managed_stream_copies, (size_t)4u);
+        check_equal(managed_stream_moves, (size_t)0u);
+        check_equal(managed_stream_destroys, (size_t)6u);
+        check_equal(managed_stream_live_resources, (size_t)0u);
+    }
+
     it("sorts managed values with independent balanced ownership") {
         managed_stream_value values[] = {
             managed_stream_make(12),
