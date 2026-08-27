@@ -125,6 +125,25 @@ suite("TurboSTL CFlow Stream") {
         StreamIntList_destroy(&input);
     }
 
+    it("counts values after fluent operators") {
+        StreamIntList input = {0};
+        turbostl_stream_t pipeline = {0};
+        turbostl_count_result result;
+
+        check_true(stream_test_input(&input));
+        check_not_null(stream(&input, &pipeline));
+        check_not_null(pipeline.filter(&pipeline, stream_keep_even)
+                                   ->skip(&pipeline, 1u)
+                                   ->take(&pipeline, 2u));
+        result = turbostl_stream_count(&pipeline);
+        check_true(result.ok);
+        check_null(result.error);
+        check_equal(result.count, (size_t)2u);
+
+        turbostl_stream_destroy(&pipeline);
+        StreamIntList_destroy(&input);
+    }
+
     it("retains PR #53 expression outputs through the erased terminal") {
         StreamIntList input = {0};
         list_t output = ListOf(long);

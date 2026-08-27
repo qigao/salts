@@ -28,6 +28,8 @@ extern "C" {
  * Fluent skip()/take() are positional CFlow Graph operations. Their immutable
  * bounds are reusable, while every execution owns fresh counters. take(0)
  * performs no Source resume and reaching a limit completes normally.
+ * turbostl_stream_count() executes the complete interpreted Graph, borrows
+ * each terminal value without retaining it, and publishes only on completion.
  *
  * Example:
  *   stream(&input, &pipeline)->filter(&pipeline, keep)->map(&pipeline, map_fn);
@@ -43,6 +45,12 @@ typedef struct turbostl_collect_result {
     size_t count;
 } turbostl_collect_result;
 
+typedef struct turbostl_count_result {
+    bool ok;
+    const char *error;
+    size_t count;
+} turbostl_count_result;
+
 static inline turbostl_collect_result
 turbostl_stream_collect(const turbostl_stream_t *stream,
                         cmeta_collector collector) {
@@ -50,6 +58,14 @@ turbostl_stream_collect(const turbostl_stream_t *stream,
     result.ok = cflow_eval_collect(stream, &collector, &result.error);
     result.status = collector.status;
     result.count = collector.count;
+    return result;
+}
+
+static inline turbostl_count_result
+turbostl_stream_count(const turbostl_stream_t *stream) {
+    turbostl_count_result result = {false, NULL, 0u};
+
+    result.ok = cflow_eval_count(stream, &result.count, &result.error);
     return result;
 }
 
@@ -80,7 +96,9 @@ turbostl_container_collector(void *output, size_t limit) {
 }
 
 /* Typed terminals use distinct names so the three-argument #53 surface never
- * relies on variadic-arity dispatch over arbitrary C expressions. */
+ * relies on variadic-arity dispatch over arbitrary C expressions. Count stays
+ * a prefixed function because a global count(...) macro would intercept C++
+ * calls such as std::count(...). */
 #define collector(container_type, output_ptr, limit) \
     CMETA_TYPED_CALL(container_type, collector, (output_ptr), (limit))
 #define collect(stream_ptr, output_ptr, limit) \

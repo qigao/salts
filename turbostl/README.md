@@ -176,6 +176,25 @@ collection supports managed values with the same COPY/MOVE/DESTROY ownership
 rules as other CFlow nodes. Direct compiled plans currently reject slice
 nodes explicitly.
 
+`turbostl_stream_count(&pipeline)` is the counting terminal:
+
+```c
+turbostl_count_result result = turbostl_stream_count(&pipeline);
+if (!result.ok) {
+    /* result.error is a borrowed diagnostic. */
+}
+```
+
+It executes the complete interpreted Graph and counts values after every
+preceding operator. Empty input succeeds with zero. It does not short-circuit,
+so an unbounded source needs an upstream bound such as `take`. Each call owns a
+fresh accumulator; repeated evaluation still requires the bound Range to be
+`REUSABLE`. Terminal callbacks only borrow managed values and add no
+count-specific COPY/MOVE/DESTROY operation. Failure, including Range mutation,
+callback/runtime error, or count overflow, returns `ok == false` and
+`count == 0`; `error` remains borrowed from CFlow. No global `count(...)` macro
+is defined because it would intercept C++ algorithms such as `std::count(...)`.
+
 Captured predicates use `lambda(filter, ...)` or `cmeta_bindable(filter, ...)`
 and enter the same Graph as immutable callable values. Filtering should not be
 reimplemented separately for `Vec`, `List`, `Set`, or other container kinds.

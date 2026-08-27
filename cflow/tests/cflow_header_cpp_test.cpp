@@ -84,12 +84,17 @@ static_assert(std::is_standard_layout<cflow_slice_parameter>::value,
               "slice parameters must remain C-compatible metadata");
 
 using cflow_stream_slice_function = cflow_stream *(*)(cflow_stream *, size_t);
+using cflow_stream_count_function = bool (*)(
+    const cflow_stream *, size_t *, const char **);
 static_assert(std::is_same<decltype(&cflow_stream_take),
                            cflow_stream_slice_function>::value,
               "Stream take must keep its C signature");
 static_assert(std::is_same<decltype(&cflow_stream_skip),
                            cflow_stream_slice_function>::value,
               "Stream skip must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_eval_count),
+                           cflow_stream_count_function>::value,
+              "Stream count must expose its exact C signature");
 
 using cflow_reactor_factory = int (*)(
     cflow_source *, cflow_reactor_source_owner *,

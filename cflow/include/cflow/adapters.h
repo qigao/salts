@@ -61,6 +61,21 @@ bool cflow_eval_collect(const cflow_stream *stream,
                         cmeta_collector *collector,
                         const char **out_error);
 
+/*
+ * Count values that reach the terminal after executing the bound Stream's
+ * Graph. This uses the interpreted resumable runtime and does not infer the
+ * result from Range size metadata. Managed values are borrowed only for each
+ * sink callback and are never retained by this terminal.
+ *
+ * out_count is required, is zeroed before validation, and is published only
+ * after normal completion. out_error is optional and receives a borrowed
+ * diagnostic for invalid input, Range admission, runtime, or size overflow.
+ * An unbounded source must be bounded upstream (for example with take()).
+ */
+bool cflow_eval_count(const cflow_stream *stream,
+                      size_t *out_count,
+                      const char **out_error);
+
 void cflow_result_destroy(cflow_result *result);
 
 #ifdef __cplusplus
