@@ -1216,6 +1216,8 @@ typed(map, value, int, square, (int value)) {
 cflow_stream s;
 stream(&list, &s)
     ->filter(&s, even)
+    ->skip(&s, 1u)
+    ->take(&s, 2u)
     ->map(&s, square);
 
 cflow_result result = {0};
@@ -1227,6 +1229,21 @@ if (cflow_eval_stream(&s, &result)) {
 `typed(filter, ...)` creates a CMeta callable carrying the predicate's type and
 contract. CFlow validates that callable when the node is added and remains
 responsible for traversal, filtering, and value lifetime during execution.
+
+`skip(n)` discards the first `n` values that reach its Graph position;
+`take(n)` forwards at most the first `n` values that reach its position. Both
+preserve encounter order, and each Run owns fresh counters, so a reusable
+Stream does not retain position between evaluations. `take(0)` does not resume
+its Source. Reaching a take limit cancels only unneeded upstream work and
+finishes the Run normally: `cflow_run_is_done()` is true and
+`cflow_run_is_cancelled()` is false. Values already admitted by take may still
+complete downstream flatMap/Relation continuations.
+
+Interpreted execution supports slice nodes for trivial and managed values.
+The direct compiled plan currently rejects Graphs containing TAKE/SKIP through
+`cflow_plan_graph_supported()`/compile failure; no implicit interpreter
+fallback occurs. Bounded terminal limits remain capacity contracts and are not
+equivalent to `take`.
 
 `cflow_stream_from_object()` first resolves the object's CMeta descriptor and default Range.
 `cflow_source_from_range()` then converts that Range to the same resumable
