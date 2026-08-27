@@ -39,6 +39,11 @@ typedef struct cflow_step {
 
 typedef struct cflow_resume_ctx {
     cflow_scheduler *scheduler;
+    /**
+     * Exact outstanding downstream-value demand immediately before Runtime
+     * invokes resume. Zero means a direct caller supplied no Runtime snapshot.
+     */
+    size_t downstream_demand;
 } cflow_resume_ctx;
 
 typedef struct cflow_resumable_ops {

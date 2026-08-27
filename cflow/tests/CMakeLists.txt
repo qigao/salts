@@ -35,6 +35,12 @@ cmake_add_test(cflow_stream_slice_test
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_stream_execution_test
+  SOURCES cflow_stream_execution_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_adapter_lifecycle_test
   SOURCES cflow_adapter_lifecycle_test.c
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
@@ -133,6 +139,11 @@ cmake_add_test(cflow_io_actor_test
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_io_source_test
+  SOURCES cflow_io_source_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_io_native_test
   SOURCES cflow_io_native_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
@@ -211,6 +222,7 @@ set_target_properties(
   cflow_branching_views_test
   cflow_pipeline_test
   cflow_stream_slice_test
+  cflow_stream_execution_test
   cflow_adapter_lifecycle_test
   cflow_stream_terminal_test
   cflow_status_test
@@ -228,6 +240,7 @@ set_target_properties(
   cflow_actor_test
   cflow_statechart_actor_test
   cflow_io_actor_test
+  cflow_io_source_test
   cflow_io_native_test
   cflow_io_file_test
   cflow_timer_event_test

@@ -2,6 +2,7 @@
 #define TURBOSTL_STREAM_H
 
 #include <cflow/adapters.h>
+#include <cflow/stream_execution.h>
 #include <turbostl/typed.h>
 
 #ifdef __cplusplus
@@ -32,6 +33,7 @@ extern "C" {
  *   result = to_list_typed(&pipeline, OutputList, &output, output_limit);
  */
 typedef cflow_stream turbostl_stream_t;
+typedef cflow_stream_execution turbostl_stream_execution_t;
 typedef cflow_find_result turbostl_find_result;
 typedef cflow_status_result turbostl_status_result;
 
@@ -88,6 +90,15 @@ turbostl_stream_collect(const turbostl_stream_t *stream,
     result.count = collected.count;
     result.flow_status = collected.status;
     return result;
+}
+
+static inline cflow_stream_execution_status
+turbostl_stream_collect_async(turbostl_stream_execution_t *execution,
+                              const turbostl_stream_t *stream,
+                              cflow_scheduler *scheduler,
+                              cmeta_collector collector) {
+    return cflow_stream_execution_start(
+        execution, stream, scheduler, collector);
 }
 
 static inline void turbostl_stream_destroy(turbostl_stream_t *stream) {
@@ -217,6 +228,15 @@ turbostl_container_collector(void *output, size_t limit) {
                             collector(container_type, (output_ptr), (limit)))
 #define to_list_typed(stream_ptr, container_type, output_ptr, limit) \
     collect_typed((stream_ptr), container_type, (output_ptr), (limit))
+#define collect_async(execution_ptr, stream_ptr, scheduler_ptr, output_ptr, limit) \
+    turbostl_stream_collect_async(                                      \
+        (execution_ptr), (stream_ptr), (scheduler_ptr),                 \
+        turbostl_container_collector((output_ptr), (limit)))
+#define collect_async_typed(execution_ptr, stream_ptr, scheduler_ptr,          \
+                            container_type, output_ptr, limit)                 \
+    turbostl_stream_collect_async(                                             \
+        (execution_ptr), (stream_ptr), (scheduler_ptr),                        \
+        collector(container_type, (output_ptr), (limit)))
 #define to_array(stream_ptr, max_items, output_ptr) \
     cflow_eval_stream_limit((stream_ptr), (max_items), (output_ptr))
 #define to_array_result(stream_ptr, max_items, output_ptr) \

@@ -8,6 +8,7 @@
 #include <turbo/thread.h>
 
 #include "value_storage.h"
+#include "runtime_internal.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -114,6 +115,12 @@ static bool run_lifecycle_ensure(void) {
 
 static run_impl *impl_of(const cflow_run *run) {
     return run ? (run_impl *)run->impl : NULL;
+}
+
+bool cflow_run_active_on_current_thread(const cflow_run *run) {
+    run_impl *impl = impl_of(run);
+    return (impl != NULL && active_pump_run == impl) ||
+           (run != NULL && active_destroy_owner == run);
 }
 
 static cflow_step generator_resume_machine(void *state, cflow_resume_ctx *ctx, void *out) {
@@ -235,6 +242,11 @@ static size_t demand_get(run_impl *r) {
     n = r->demand;
     turbo_mutex_unlock(&r->lock);
     return n;
+}
+
+static cflow_resume_ctx *run_resume_context(run_impl *r) {
+    r->resume_ctx.downstream_demand = demand_get(r);
+    return &r->resume_ctx;
 }
 
 static bool demand_consume_one(run_impl *r) {
@@ -640,7 +652,7 @@ static bool resume_top_continuation(run_impl *r) {
         return false;
     }
     cflow_step step = f->machine.ops->resume(
-        f->machine.state, &r->resume_ctx, f->output.storage);
+        f->machine.state, run_resume_context(r), f->output.storage);
     if (step.kind == CFLOW_STEP_ERROR) { run_fail(r, step.error ? step.error : "operator resumable error"); return false; }
     if (step.kind == CFLOW_STEP_WAIT) return arm_waitable(r, step.waitable);
     if (step.kind == CFLOW_STEP_DONE) { f->done = true; return true; }
@@ -832,7 +844,7 @@ static bool process_source_step(run_impl *r) {
         run_fail(r, "source output slot is not empty");
         return false;
     }
-    step = cflow_source_resume(&r->source, &r->resume_ctx,
+    step = cflow_source_resume(&r->source, run_resume_context(r),
                                r->source_slot.storage);
     if (!successor_of(r, r->subgraph->entry, &first, &has_first)) return false;
     switch (step.kind) {

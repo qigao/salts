@@ -7,6 +7,7 @@
 #include <cflow/meta.h>
 #include <cflow/graph.h>
 #include <cflow/stream.h>
+#include <cflow/stream_execution.h>
 #include <cflow/direct.h>
 #include <cflow/lower.h>
 #include <cflow/effect.h>
@@ -29,6 +30,7 @@
 #include <cflow/io_file.h>
 #include <cflow/timer_event.h>
 #include <cflow/sources.h>
+#include <cflow/io_source.h>
 #include <cflow/readiness.h>
 #include <cflow/temporal.h>
 #include <cflow/reactive.h>

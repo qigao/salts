@@ -307,3 +307,59 @@ with the Collector's abort status, while output-collector overflow reports
 `CMETA_CAPACITY_EXCEEDED` directly. `error` remains a borrowed diagnostic and
 must not be freed or retained beyond its documented source lifetime.
 The core `TurboUtils::STL` target does not depend on CFlow.
+
+### Worker-scheduler terminal
+
+`collect_async_typed()` submits the complete pipeline to an existing CFlow
+worker scheduler. TurboSTL does not create or own another thread pool. Multiple
+independent handles may share that scheduler; one handle remains ordered and
+its Collector is never invoked concurrently. This is pipeline-level
+concurrency, not implicit per-element parallelism.
+
+The input container, output container, and scheduler are borrowed through
+execution destruction. Cleanup order is therefore execution, scheduler,
+output, Stream Graph, then input. Capacity is still a hard transaction bound:
+failure or cancellation aborts the output instead of publishing a partial
+container.
+
+```c
+#include <turbostl/stream.h>
+
+typed(List, AsyncIntList, int);
+
+int main(void) {
+    AsyncIntList input = {0};
+    AsyncIntList output = {0};
+    turbostl_stream_t pipeline = {0};
+    turbostl_stream_execution_t execution = {0};
+    cflow_stream_execution_snapshot snapshot = {0};
+    cflow_scheduler workers = {0};
+    int exit_code = 1;
+
+    if (AsyncIntList_init(&input, 2u) != STL_OK ||
+        AsyncIntList_push_back(&input, 10) != STL_OK ||
+        AsyncIntList_push_back(&input, 20) != STL_OK ||
+        stream(&input, &pipeline) == NULL ||
+        !cflow_scheduler_worker_init(&workers, 2u))
+        goto cleanup;
+
+    if (collect_async_typed(&execution, &pipeline, &workers,
+                            AsyncIntList, &output, 2u) !=
+            CFLOW_STREAM_EXECUTION_OK ||
+        cflow_stream_execution_wait(&execution) !=
+            CFLOW_STREAM_EXECUTION_OK ||
+        !cflow_stream_execution_get_snapshot(&execution, &snapshot) ||
+        snapshot.state != CFLOW_STREAM_EXECUTION_COMPLETED)
+        goto cleanup;
+    exit_code = 0;
+
+cleanup:
+    (void)cflow_stream_execution_destroy(&execution);
+    if (cflow_scheduler_valid(&workers))
+        cflow_scheduler_destroy(&workers);
+    AsyncIntList_destroy(&output);
+    turbostl_stream_destroy(&pipeline);
+    AsyncIntList_destroy(&input);
+    return exit_code;
+}
+```

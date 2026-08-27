@@ -77,6 +77,44 @@ static bool stream_test_input(StreamIntList *input) {
 }
 
 suite("TurboSTL CFlow Stream") {
+    it("collects a typed pipeline asynchronously on a worker scheduler") {
+        StreamIntList input = {0};
+        StreamLongList output = {0};
+        turbostl_stream_t pipeline = {0};
+        turbostl_stream_execution_t execution = {0};
+        cflow_stream_execution_snapshot snapshot = {0};
+        cflow_scheduler workers = {0};
+        long value = 0;
+
+        check_true(stream_test_input(&input));
+        check_not_null(stream(&input, &pipeline));
+        check_not_null(pipeline.filter(&pipeline, stream_keep_even)
+                                   ->map(&pipeline, stream_square));
+        check_true(cflow_scheduler_worker_init(&workers, 2u));
+        check_equal(collect_async_typed(
+                        &execution, &pipeline, &workers,
+                        StreamLongList, &output, 3u),
+                    CFLOW_STREAM_EXECUTION_OK);
+        check_equal(cflow_stream_execution_wait(&execution),
+                    CFLOW_STREAM_EXECUTION_OK);
+        check_true(cflow_stream_execution_get_snapshot(&execution, &snapshot));
+        check_equal(snapshot.state, CFLOW_STREAM_EXECUTION_COMPLETED);
+        check_equal(snapshot.count, (size_t)3u);
+        check_equal(cflow_stream_execution_destroy(&execution),
+                    CFLOW_STREAM_EXECUTION_OK);
+        check_equal(StreamLongList_pop_front(&output, &value), STL_OK);
+        check_equal(value, 4L);
+        check_equal(StreamLongList_pop_front(&output, &value), STL_OK);
+        check_equal(value, 16L);
+        check_equal(StreamLongList_pop_front(&output, &value), STL_OK);
+        check_equal(value, 36L);
+
+        cflow_scheduler_destroy(&workers);
+        StreamLongList_destroy(&output);
+        turbostl_stream_destroy(&pipeline);
+        StreamIntList_destroy(&input);
+    }
+
     it("collects a fluent pipeline into an explicitly typed output") {
         StreamIntList input = {0};
         StreamLongList output = {0};

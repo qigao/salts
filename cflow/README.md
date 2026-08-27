@@ -19,6 +19,7 @@ include/cflow/
 ├── operators.h      single-source Operators(...) schema
 ├── graph.h
 ├── stream.h
+├── stream_execution.h asynchronous Stream collection handle
 ├── lower.h
 ├── effect.h
 ├── property.h
@@ -33,6 +34,7 @@ include/cflow/
 ├── actor.h         bounded Actor lifecycle over Machine/Statechart and Run
 ├── io_actor.h      bounded asynchronous operation ownership/runtime
 ├── io_native.h     epoll/kqueue/poll/IOCP/io_uring socket, pipe, and file I/O
+├── io_source.h     demand-gated IO Actor completion Source adapter
 ├── runtime.h
 ├── scheduler.h
 ├── sources.h
@@ -671,6 +673,255 @@ Link the example with `TurboUtils::CFlow`. Supervision, restart, parent/child
 hierarchies, remoting, persistence, and Mailbox resizing are intentionally
 unavailable; there are no placeholder APIs or implicit fallbacks for them.
 
+## Reactive I/O Source adapter
+
+Choose the I/O boundary from the fact that makes an item available:
+
+| Resource/lifecycle model | Entry point |
+| --- | --- |
+| Readiness resource (`read` may report `WOULD_BLOCK`, then arm interest) | `cflow_source_from_reactor_registration()` |
+| One authoritative completion operation per demanded value | `cflow_source_from_io_actor()` |
+| Bounded independent completion operations for throughput | `cflow_source_from_io_actor_windowed()` |
+| Direct multi-request or manually managed I/O lifecycle | `cflow_io_actor` / `cflow_io_file` |
+
+`cflow_source_from_io_actor()` owns a request-capacity-one Actor, a
+capacity-one manual Executor, and one typed completion slot. It prepares
+nothing until the Run has positive downstream demand, and it never prepares a
+second operation before the accepted operation has completed, been delivered,
+and been acknowledged. This remains the compatibility path and its capacity is
+always one.
+
+For independent operations, opt in explicitly with a capacity in
+`[1, CFLOW_IO_SOURCE_MAX_WINDOW]`:
+
+```c
+if (cflow_source_from_io_actor_windowed(
+        &source, &owner, &config, 8u) != TURBO_OK)
+    goto cleanup;
+```
+
+The Runtime's outstanding downstream demand limits how many operations are
+prepared, and the configured capacity is a hard upper bound for Actor
+requests, commands, Executor jobs, adapter entries, and typed result slots.
+Full capacity stops preparation; it does not allocate a fallback queue, retry,
+drop, or overwrite. Results are emitted in authoritative completion-delivery
+order, not preparation order, so this API is unsuitable when request order is
+part of the protocol. `prepare` failure or a terminal encoder result closes
+admission and drains accepted operations without encoding later completions.
+
+Capacity must budget both control state and retained payload:
+
+```text
+capacity * (adapter entry + aligned typed value + Actor request
+            + manual Executor job)
++ round_up_pow2(capacity) * Actor command entry
++ capacity * maximum retained operation/backend payload
+```
+
+The adapter performs bounded linear scans, so a larger window is not
+automatically faster. Measure the intended workload with
+`cflow_io_source_benchmark` and select the smallest capacity that saturates the
+backend. On shutdown, stop/destroy the Run Source, continue owner driving until
+`cflow_io_source_owner_is_quiescent()` is true, then call
+`cflow_io_source_owner_close()` while every borrowed config and callback
+context remains alive.
+
+This complete C11 example uses a synchronous demonstration backend so the
+authoritative `cflow_io_actor_complete()` edge is visible. A real backend may
+complete on another thread; its `drive` callback must schedule the same owner
+drain on the event-loop thread, not call close or destroy synchronously.
+
+```c
+#include <cflow/cflow.h>
+#include <turbo/error_codes.h>
+
+#include <stdbool.h>
+#include <stdio.h>
+
+typedef struct io_example {
+    int backend_buffer;
+    int received;
+    const char *error;
+    size_t prepare_calls;
+    bool drive_pending;
+    bool operation_released;
+    bool done;
+} io_example;
+
+static void release_operation(void *operation_user) {
+    io_example *state = (io_example *)operation_user;
+    state->operation_released = true;
+}
+
+static cflow_io_source_prepare_status prepare_operation(
+    void *user, cflow_io_operation *operation, const char **error) {
+    io_example *state = (io_example *)user;
+    (void)error;
+    ++state->prepare_calls;
+    operation->user = state;
+    operation->release = release_operation;
+    return CFLOW_IO_SOURCE_PREPARE_OPERATION;
+}
+
+static int submit_operation(
+    void *backend_user, cflow_io_actor *actor,
+    cflow_io_request_id request_id, cflow_io_lease_id lease_id,
+    void *operation_user) {
+    io_example *state = (io_example *)backend_user;
+    const cflow_io_completion completion = {
+        CFLOW_IO_COMPLETION_OK, sizeof(state->backend_buffer), TURBO_OK
+    };
+    (void)lease_id;
+    if (operation_user != state)
+        return TURBO_EINVAL;
+    state->backend_buffer = 37;
+    return cflow_io_actor_complete(actor, request_id, &completion) ==
+                   CFLOW_IO_COMPLETE_ACCEPTED
+        ? TURBO_OK : TURBO_EINVAL;
+}
+
+static int cancel_operation(
+    void *backend_user, cflow_io_request_id request_id) {
+    (void)backend_user;
+    (void)request_id;
+    return TURBO_OK; /* Best effort only; completion remains authoritative. */
+}
+
+static cflow_read_status encode_completion(
+    void *user, cflow_io_request_id request_id,
+    cflow_io_lease_id lease_id, void *operation_user,
+    const cflow_io_completion *completion, void *out_value,
+    const char **error) {
+    static const char failed[] = "example backend did not produce one int";
+    io_example *state = (io_example *)user;
+    (void)request_id;
+    (void)lease_id;
+    if (operation_user != state ||
+        completion->kind != CFLOW_IO_COMPLETION_OK ||
+        completion->bytes != sizeof(state->backend_buffer)) {
+        *error = failed;
+        return CFLOW_READ_ERROR;
+    }
+    *(int *)out_value = state->backend_buffer;
+    return CFLOW_READ_VALUE_AND_DONE;
+}
+
+static void schedule_owner_drive(void *user) {
+    io_example *state = (io_example *)user;
+    state->drive_pending = true;
+}
+
+static bool receive_value(
+    void *user, const cmeta_type_desc *type, const void *value) {
+    io_example *state = (io_example *)user;
+    if (!cmeta_type_equal(type, &cmeta_type_int))
+        return false;
+    state->received = *(const int *)value;
+    return true;
+}
+
+static void receive_error(void *user, const char *error) {
+    ((io_example *)user)->error = error;
+}
+
+static void receive_done(void *user) {
+    ((io_example *)user)->done = true;
+}
+
+int main(void) {
+    cflow_graph surface = {0};
+    cflow_graph graph = {0};
+    cflow_scheduler scheduler = {0};
+    cflow_source source = {0};
+    cflow_io_source_owner owner = {0};
+    cflow_run run = {0};
+    io_example state = {0};
+    cflow_sink_callbacks callbacks = {
+        receive_value, receive_error, receive_done, &state
+    };
+    cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+    cflow_io_source_config config = {0};
+    int status = 1;
+
+    graph.root = CMETA_INVALID_ID;
+    cflow_graph_init(&surface, &cmeta_type_int);
+    if (!cflow_graph_normalize(&graph, &surface))
+        goto cleanup;
+    if (!cflow_scheduler_test_init(&scheduler))
+        goto cleanup;
+
+    config.name = "completion-example";
+    config.type = &cmeta_type_int;
+    config.backend = (cflow_io_backend_ops){
+        submit_operation, cancel_operation
+    };
+    config.backend_user = &state;
+    config.prepare = prepare_operation;
+    config.encode = encode_completion;
+    config.user = &state;
+    config.drive = schedule_owner_drive;
+    config.drive_user = &state;
+    if (cflow_source_from_io_actor(&source, &owner, &config) != TURBO_OK)
+        goto cleanup;
+    if (!cflow_run_open(&run, &graph, &source, &scheduler, &sink))
+        goto cleanup;
+
+    /* Opening and pumping without demand cannot call prepare(). */
+    (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+    if (state.prepare_calls != 0u || !cflow_run_request(&run, 1u))
+        goto cleanup;
+
+    while (!state.done && state.error == NULL) {
+        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+        if (state.drive_pending) {
+            size_t progressed = 0u;
+            state.drive_pending = false;
+            if (cflow_io_source_owner_run_ready(
+                    &owner, 32u, &progressed) != TURBO_OK)
+                goto cleanup;
+        }
+    }
+    status = state.error == NULL && state.received == 37 &&
+             state.operation_released ? 0 : 2;
+
+cleanup:
+    /* Run close destroys the moved Source and requests Actor cancellation. */
+    cflow_run_close(&run);
+    if (cflow_source_valid(&source))
+        cflow_source_destroy(&source);
+
+    /* Keep backend, buffer, and callback context alive while completions drain. */
+    while (owner.impl != NULL &&
+           !cflow_io_source_owner_is_quiescent(&owner)) {
+        size_t progressed = 0u;
+        if (cflow_io_source_owner_run_ready(
+                &owner, 32u, &progressed) != TURBO_OK) {
+            status = 3;
+            break;
+        }
+    }
+    if (owner.impl != NULL &&
+        cflow_io_source_owner_close(&owner) != TURBO_OK)
+        status = 4;
+    if (cflow_scheduler_valid(&scheduler))
+        cflow_scheduler_destroy(&scheduler);
+    cflow_graph_destroy(&graph);
+    cflow_graph_destroy(&surface);
+    printf("value = %d\n", state.received);
+    return status;
+}
+```
+
+The configuration, backend strategy, backend buffer, operation context, sink
+context, and stable callback error strings are borrowed until
+`cflow_io_source_owner_close()` succeeds. For cancellation or failure, first
+stop new external work, then cancel/close the Run, continue servicing backend
+completion and `cflow_io_source_owner_run_ready()` until the owner is
+quiescent, close the owner, and only then destroy the backend or release its
+buffers and contexts. There is deliberately no synchronous owner-close
+shortcut: native cancellation is best effort and authoritative completion must
+still be delivered and acknowledged exactly once.
+
 ## Native socket, byte-pipe, and regular-file I/O
 
 `<cflow/io_native.h>` exposes one explicitly selected, bounded platform
@@ -885,6 +1136,27 @@ stage, and terminal adapters create independent executions. General parallel
 execution is selected through explicit CFlow plan/executor capabilities rather
 than a Stream mode. Bounded terminals treat their limits as resource contracts,
 not as truncating operators.
+
+`cflow_stream_execution_start()` is the asynchronous terminal for an existing
+concurrent scheduler. A worker scheduler may advance several independent
+executions concurrently, but each Run still serializes its own pump and
+Collector callbacks. It therefore adds pipeline-level concurrency without
+changing operator order or implying per-element parallel `filter`/`map`.
+
+The execution handle owns a normalized Graph copy, Run, Collector state, and
+terminal error. It borrows the scheduler, the Range's backing container, and
+the Collector's output/context until `cflow_stream_execution_destroy()`
+returns. `wait()` observes completion but does not release those borrows;
+destroy closes the Run synchronously. `cancel()` also closes synchronously and
+aborts an uncommitted Collector transaction. A manual scheduler is rejected,
+and scheduler/Collector capacity failure does not fall back to inline or
+unbounded execution.
+
+Control-plane calls are serialized by one external owner. Snapshot queries may
+run concurrently with workers. Calling wait, cancel, or destroy from any Range,
+operator, or Collector callback on the same active Run returns
+`CFLOW_STREAM_EXECUTION_WOULD_BLOCK` so an active callback cannot wait for or
+free its own Run.
 
 CFlow consumes, but does not own, CMeta Range metadata:
 

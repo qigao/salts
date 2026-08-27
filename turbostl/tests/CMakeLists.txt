@@ -101,6 +101,11 @@ cmake_add_test(turbostl_stream_test
   LIBS TurboUtils::STLStream TurboUtils::TinyTest
   FOLDER "turbostl/tests")
 
+cmake_add_test(turbostl_stream_cpp_test
+  SOURCES turbostl_stream_cpp_test.cpp
+  LIBS TurboUtils::STLStream TurboUtils::TinyTest
+  FOLDER "turbostl/tests")
+
 cmake_add_test(turbostl_managed_stream_test
   SOURCES turbostl_managed_stream_test.c
   LIBS TurboUtils::STLStream TurboUtils::TinyTest
@@ -112,6 +117,11 @@ set_target_properties(
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
+
+set_target_properties(turbostl_stream_cpp_test PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF)
 
 set_target_properties(
   turbostl_header_cpp_test
