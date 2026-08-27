@@ -145,8 +145,10 @@ typedef struct cflow_statechart {
 
 /**
  * Copy, normalize, validate, and atomically publish one immutable Statechart.
- * Input rows are borrowed only for this call. CMeta descriptors remain
- * borrowed until destroy. Failure leaves `out` empty.
+ * `out` must point to a zero-initialized empty handle. Input rows are borrowed
+ * only for this call. CMeta descriptors remain borrowed until destroy. A
+ * failed build with an empty output leaves it empty; passing a nonempty output
+ * returns INVALID_ARGUMENT and preserves its existing handle.
  */
 cflow_statechart_status cflow_statechart_build(
     cflow_statechart *out, const cflow_statechart_definition *definition);

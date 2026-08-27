@@ -1,29 +1,9 @@
 #include <cflow/statechart.h>
+#include "statechart_internal.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct cflow_statechart_impl {
-    const cmeta_type_desc *state_type;
-    cflow_statechart_state *states;
-    size_t state_count;
-    size_t *parents;
-    size_t *depths;
-    size_t root;
-    cflow_event_type *events;
-    size_t event_count;
-    cflow_statechart_guard *guards;
-    size_t guard_count;
-    cflow_statechart_executable *executables;
-    size_t executable_count;
-    cflow_statechart_transition *transitions;
-    size_t transition_count;
-    cflow_statechart_state_action *state_actions;
-    size_t state_action_count;
-    cflow_statechart_transition_action *transition_actions;
-    size_t transition_action_count;
-} cflow_statechart_impl;
 
 typedef struct statechart_transition_key {
     cflow_machine_state_id source;
@@ -31,6 +11,15 @@ typedef struct statechart_transition_key {
     uint32_t trigger_id;
     uint32_t priority;
 } statechart_transition_key;
+
+typedef struct statechart_index_ref {
+    size_t bucket;
+    uint32_t trigger;
+    uint32_t trigger_id;
+    uint32_t priority;
+    uint32_t order;
+    size_t index;
+} statechart_index_ref;
 
 _Static_assert(CFLOW_MACHINE_MAX_STATES <=
                    SIZE_MAX / sizeof(cflow_statechart_state),
@@ -47,10 +36,19 @@ _Static_assert(CFLOW_MACHINE_MAX_TRANSITIONS <=
 _Static_assert(CFLOW_STATECHART_MAX_ACTION_REFS <=
                    SIZE_MAX / sizeof(cflow_statechart_state_action),
                "configured Statechart action-ref limit overflows size_t bytes");
+_Static_assert(CFLOW_STATECHART_MAX_ACTION_REFS <=
+                   SIZE_MAX / sizeof(cflow_statechart_transition_action),
+               "configured transition action-ref limit overflows size_t bytes");
 
 static bool checked_bytes(size_t count, size_t width, size_t *out) {
     if (out == NULL || (width != 0u && count > SIZE_MAX / width)) return false;
     *out = count * width;
+    return true;
+}
+
+static bool checked_add(size_t left, size_t right, size_t *out) {
+    if (out == NULL || left > SIZE_MAX - right) return false;
+    *out = left + right;
     return true;
 }
 
@@ -70,16 +68,41 @@ static void *copy_rows(const void *rows, size_t count, size_t width) {
 
 static void statechart_impl_destroy(cflow_statechart_impl *impl) {
     if (impl == NULL) return;
+    free(impl->transition_action_indices);
+    free(impl->transition_action_offsets);
     free(impl->transition_actions);
+    free(impl->state_action_indices);
+    free(impl->state_action_offsets);
     free(impl->state_actions);
+    free(impl->default_target_indices);
+    free(impl->default_transition_indices);
+    free(impl->transition_domains);
+    free(impl->transition_indices);
+    free(impl->transition_offsets);
     free(impl->transitions);
     free(impl->executables);
     free(impl->guards);
     free(impl->events);
+    free(impl->children);
+    free(impl->child_offsets);
+    free(impl->document_order_indices);
     free(impl->depths);
     free(impl->parents);
     free(impl->states);
     free(impl);
+}
+
+static int compare_index_ref(const void *left, const void *right) {
+    const statechart_index_ref *a = (const statechart_index_ref *)left;
+    const statechart_index_ref *b = (const statechart_index_ref *)right;
+    if (a->bucket != b->bucket) return a->bucket < b->bucket ? -1 : 1;
+    if (a->trigger != b->trigger) return a->trigger < b->trigger ? -1 : 1;
+    if (a->trigger_id != b->trigger_id)
+        return a->trigger_id < b->trigger_id ? -1 : 1;
+    if (a->priority != b->priority)
+        return a->priority < b->priority ? -1 : 1;
+    if (a->order != b->order) return a->order < b->order ? -1 : 1;
+    return a->index < b->index ? -1 : a->index > b->index;
 }
 
 static int compare_state_id(const void *left, const void *right) {
@@ -248,6 +271,19 @@ static bool is_descendant(
         node = impl->parents[node];
     }
     return false;
+}
+
+static size_t least_common_ancestor(
+    const cflow_statechart_impl *impl, size_t left, size_t right) {
+    while (impl->depths[left] > impl->depths[right])
+        left = impl->parents[left];
+    while (impl->depths[right] > impl->depths[left])
+        right = impl->parents[right];
+    while (left != right) {
+        left = impl->parents[left];
+        right = impl->parents[right];
+    }
+    return left;
 }
 
 static cflow_statechart_status validate_unique_orders(
@@ -796,6 +832,236 @@ static cflow_statechart_status validate_declaration_use(
     return CFLOW_STATECHART_OK;
 }
 
+static cflow_statechart_status allocate_indices(
+    size_t count, size_t **out) {
+    size_t bytes;
+    if (out == NULL) return CFLOW_STATECHART_INVALID_ARGUMENT;
+    *out = NULL;
+    if (count == 0u) return CFLOW_STATECHART_OK;
+    if (!checked_bytes(count, sizeof(**out), &bytes))
+        return CFLOW_STATECHART_LIMIT_EXCEEDED;
+    *out = (size_t *)malloc(bytes);
+    return *out != NULL
+        ? CFLOW_STATECHART_OK : CFLOW_STATECHART_ALLOCATION_FAILED;
+}
+
+static cflow_statechart_status allocate_index_refs(
+    size_t count, statechart_index_ref **out) {
+    size_t bytes;
+    if (out == NULL) return CFLOW_STATECHART_INVALID_ARGUMENT;
+    *out = NULL;
+    if (count == 0u) return CFLOW_STATECHART_OK;
+    if (!checked_bytes(count, sizeof(**out), &bytes))
+        return CFLOW_STATECHART_LIMIT_EXCEEDED;
+    *out = (statechart_index_ref *)calloc(1u, bytes);
+    return *out != NULL
+        ? CFLOW_STATECHART_OK : CFLOW_STATECHART_ALLOCATION_FAILED;
+}
+
+static cflow_statechart_status materialize_spans(
+    statechart_index_ref *refs, size_t ref_count, size_t bucket_count,
+    size_t **out_offsets, size_t **out_indices) {
+    cflow_statechart_status status;
+    size_t offset_count, bucket, cursor = 0u;
+    if (!checked_add(bucket_count, 1u, &offset_count))
+        return CFLOW_STATECHART_LIMIT_EXCEEDED;
+    status = allocate_indices(offset_count, out_offsets);
+    if (status != CFLOW_STATECHART_OK) return status;
+    status = allocate_indices(ref_count, out_indices);
+    if (status != CFLOW_STATECHART_OK) return status;
+    if (ref_count > 1u)
+        qsort(refs, ref_count, sizeof(*refs), compare_index_ref);
+    for (bucket = 0u; bucket < bucket_count; ++bucket) {
+        (*out_offsets)[bucket] = cursor;
+        while (cursor < ref_count && refs[cursor].bucket == bucket) {
+            (*out_indices)[cursor] = refs[cursor].index;
+            ++cursor;
+        }
+    }
+    (*out_offsets)[bucket_count] = cursor;
+    return cursor == ref_count
+        ? CFLOW_STATECHART_OK : CFLOW_STATECHART_INVALID_ARGUMENT;
+}
+
+static cflow_statechart_status normalize_document_order(
+    cflow_statechart_impl *impl) {
+    statechart_index_ref *refs = NULL;
+    cflow_statechart_status status =
+        allocate_index_refs(impl->state_count, &refs);
+    size_t index;
+    if (status != CFLOW_STATECHART_OK) return status;
+    status = allocate_indices(impl->state_count,
+                              &impl->document_order_indices);
+    if (status != CFLOW_STATECHART_OK) {
+        free(refs);
+        return status;
+    }
+    for (index = 0u; index < impl->state_count; ++index) {
+        refs[index].bucket = 0u;
+        refs[index].order = impl->states[index].document_order;
+        refs[index].index = index;
+    }
+    if (impl->state_count > 1u)
+        qsort(refs, impl->state_count, sizeof(*refs), compare_index_ref);
+    for (index = 0u; index < impl->state_count; ++index)
+        impl->document_order_indices[index] = refs[index].index;
+    free(refs);
+    return CFLOW_STATECHART_OK;
+}
+
+static cflow_statechart_status normalize_children(
+    cflow_statechart_impl *impl) {
+    const size_t child_count = impl->state_count - 1u;
+    statechart_index_ref *refs = NULL;
+    cflow_statechart_status status = allocate_index_refs(child_count, &refs);
+    size_t index, cursor = 0u;
+    if (status != CFLOW_STATECHART_OK) return status;
+    for (index = 0u; index < impl->state_count; ++index) {
+        if (impl->parents[index] == SIZE_MAX) continue;
+        refs[cursor].bucket = impl->parents[index];
+        refs[cursor].order = impl->states[index].document_order;
+        refs[cursor].index = index;
+        ++cursor;
+    }
+    status = materialize_spans(refs, child_count, impl->state_count,
+                               &impl->child_offsets, &impl->children);
+    free(refs);
+    return status;
+}
+
+static cflow_statechart_status normalize_transitions(
+    cflow_statechart_impl *impl) {
+    statechart_index_ref *refs = NULL;
+    cflow_statechart_status status =
+        allocate_index_refs(impl->transition_count, &refs);
+    size_t index;
+    if (status != CFLOW_STATECHART_OK) return status;
+    for (index = 0u; index < impl->transition_count; ++index) {
+        const cflow_statechart_transition *transition =
+            &impl->transitions[index];
+        refs[index].bucket = find_state_index(impl, transition->source);
+        refs[index].trigger = (uint32_t)transition->trigger;
+        refs[index].trigger_id = transition_trigger_id(transition);
+        refs[index].priority = transition->priority;
+        refs[index].order = transition->document_order;
+        refs[index].index = index;
+    }
+    status = materialize_spans(refs, impl->transition_count,
+                               impl->state_count,
+                               &impl->transition_offsets,
+                               &impl->transition_indices);
+    free(refs);
+    if (status != CFLOW_STATECHART_OK) return status;
+    status = allocate_indices(impl->transition_count,
+                              &impl->transition_domains);
+    if (status != CFLOW_STATECHART_OK) return status;
+    for (index = 0u; index < impl->transition_count; ++index) {
+        const cflow_statechart_transition *transition =
+            &impl->transitions[index];
+        const size_t source = find_state_index(impl, transition->source);
+        if (transition->target == 0u) {
+            impl->transition_domains[index] = SIZE_MAX;
+        } else {
+            const size_t target = find_state_index(impl, transition->target);
+            impl->transition_domains[index] =
+                transition->kind == CFLOW_STATECHART_TRANSITION_INTERNAL &&
+                is_descendant(impl, target, source)
+                ? source : least_common_ancestor(impl, source, target);
+        }
+    }
+    return CFLOW_STATECHART_OK;
+}
+
+static cflow_statechart_status normalize_defaults(
+    cflow_statechart_impl *impl) {
+    cflow_statechart_status status = allocate_indices(
+        impl->state_count, &impl->default_transition_indices);
+    size_t index;
+    if (status != CFLOW_STATECHART_OK) return status;
+    status = allocate_indices(impl->state_count,
+                              &impl->default_target_indices);
+    if (status != CFLOW_STATECHART_OK) return status;
+    for (index = 0u; index < impl->state_count; ++index) {
+        impl->default_transition_indices[index] = SIZE_MAX;
+        impl->default_target_indices[index] = SIZE_MAX;
+    }
+    for (index = 0u; index < impl->transition_count; ++index) {
+        const size_t source = find_state_index(
+            impl, impl->transitions[index].source);
+        if (!pseudo_kind(impl->states[source].kind)) continue;
+        impl->default_transition_indices[source] = index;
+        impl->default_target_indices[source] = find_state_index(
+            impl, impl->transitions[index].target);
+    }
+    return CFLOW_STATECHART_OK;
+}
+
+static cflow_statechart_status normalize_state_actions(
+    cflow_statechart_impl *impl) {
+    statechart_index_ref *refs = NULL;
+    cflow_statechart_status status =
+        allocate_index_refs(impl->state_action_count, &refs);
+    size_t bucket_count, index;
+    if (status != CFLOW_STATECHART_OK) return status;
+    if (impl->state_count > (SIZE_MAX - 1u) / 2u) {
+        free(refs);
+        return CFLOW_STATECHART_LIMIT_EXCEEDED;
+    }
+    bucket_count = impl->state_count * 2u;
+    for (index = 0u; index < impl->state_action_count; ++index) {
+        const cflow_statechart_state_action *action =
+            &impl->state_actions[index];
+        refs[index].bucket = find_state_index(impl, action->state) * 2u +
+            (size_t)action->kind;
+        refs[index].order = action->order;
+        refs[index].index = index;
+    }
+    status = materialize_spans(refs, impl->state_action_count, bucket_count,
+                               &impl->state_action_offsets,
+                               &impl->state_action_indices);
+    free(refs);
+    return status;
+}
+
+static cflow_statechart_status normalize_transition_actions(
+    cflow_statechart_impl *impl) {
+    statechart_index_ref *refs = NULL;
+    cflow_statechart_status status =
+        allocate_index_refs(impl->transition_action_count, &refs);
+    size_t index;
+    if (status != CFLOW_STATECHART_OK) return status;
+    for (index = 0u; index < impl->transition_action_count; ++index) {
+        const cflow_statechart_transition_action *action =
+            &impl->transition_actions[index];
+        const cflow_statechart_transition *transition =
+            find_transition(impl, action->transition);
+        refs[index].bucket = (size_t)(transition - impl->transitions);
+        refs[index].order = action->order;
+        refs[index].index = index;
+    }
+    status = materialize_spans(refs, impl->transition_action_count,
+                               impl->transition_count,
+                               &impl->transition_action_offsets,
+                               &impl->transition_action_indices);
+    free(refs);
+    return status;
+}
+
+static cflow_statechart_status normalize_statechart(
+    cflow_statechart_impl *impl) {
+    cflow_statechart_status status = normalize_document_order(impl);
+    if (status != CFLOW_STATECHART_OK) return status;
+    status = normalize_children(impl);
+    if (status != CFLOW_STATECHART_OK) return status;
+    status = normalize_transitions(impl);
+    if (status != CFLOW_STATECHART_OK) return status;
+    status = normalize_defaults(impl);
+    if (status != CFLOW_STATECHART_OK) return status;
+    status = normalize_state_actions(impl);
+    if (status != CFLOW_STATECHART_OK) return status;
+    return normalize_transition_actions(impl);
+}
+
 static cflow_statechart_status validate_statechart(
     cflow_statechart_impl *impl) {
     cflow_statechart_status status = validate_state_ids(impl);
@@ -838,6 +1104,7 @@ static bool definition_rows_valid(
 
 static bool definition_within_limits(
     const cflow_statechart_definition *definition) {
+    size_t action_ref_count;
     return definition->state_count <= CFLOW_MACHINE_MAX_STATES &&
         definition->event_count <= CFLOW_MACHINE_MAX_EVENTS &&
         definition->guard_count <= CFLOW_MACHINE_MAX_GUARDS &&
@@ -845,7 +1112,11 @@ static bool definition_within_limits(
         definition->transition_count <= CFLOW_MACHINE_MAX_TRANSITIONS &&
         definition->state_action_count <= CFLOW_STATECHART_MAX_ACTION_REFS &&
         definition->transition_action_count <=
-            CFLOW_STATECHART_MAX_ACTION_REFS;
+            CFLOW_STATECHART_MAX_ACTION_REFS &&
+        checked_add(definition->state_action_count,
+                    definition->transition_action_count,
+                    &action_ref_count) &&
+        action_ref_count <= CFLOW_STATECHART_MAX_ACTION_REFS;
 }
 
 cflow_statechart_status cflow_statechart_build(
@@ -911,6 +1182,11 @@ cflow_statechart_status cflow_statechart_build(
         statechart_impl_destroy(impl);
         return status;
     }
+    status = normalize_statechart(impl);
+    if (status != CFLOW_STATECHART_OK) {
+        statechart_impl_destroy(impl);
+        return status;
+    }
     out->impl = impl;
     return CFLOW_STATECHART_OK;
 }
@@ -925,6 +1201,11 @@ static const cflow_statechart_impl *statechart_impl(
     const cflow_statechart *statechart) {
     return statechart != NULL
         ? (const cflow_statechart_impl *)statechart->impl : NULL;
+}
+
+const cflow_statechart_impl *cflow_statechart_internal_get(
+    const cflow_statechart *statechart) {
+    return statechart_impl(statechart);
 }
 
 const cmeta_type_desc *cflow_statechart_state_type(

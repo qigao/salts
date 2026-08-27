@@ -1,4 +1,5 @@
 #include <cflow/statechart.h>
+#include "statechart_internal.h"
 #include "tinytest.h"
 
 #include <string.h>
@@ -129,6 +130,21 @@ suite("CFlow format-neutral Statechart IR") {
         check_null(statechart.impl);
     }
 
+    it("rejects reuse of a nonempty output without changing its handle") {
+        statechart_fixture fixture;
+        cflow_statechart statechart = {0};
+        void *published;
+        valid_fixture(&fixture);
+
+        check_equal(cflow_statechart_build(&statechart, &fixture.definition),
+                    CFLOW_STATECHART_OK);
+        published = statechart.impl;
+        check_equal(cflow_statechart_build(&statechart, &fixture.definition),
+                    CFLOW_STATECHART_INVALID_ARGUMENT);
+        check_equal(statechart.impl, published);
+        cflow_statechart_destroy(&statechart);
+    }
+
     it("rejects duplicate IDs and document order") {
         statechart_fixture fixture;
         valid_fixture(&fixture);
@@ -208,6 +224,36 @@ suite("CFlow format-neutral Statechart IR") {
         fixture.transitions[0].target = 1u;
         check_equal(build_status(&fixture.definition),
                     CFLOW_STATECHART_INVALID_INITIAL);
+
+        valid_fixture(&fixture);
+        fixture.transitions[0].source = 3u;
+        check_equal(build_status(&fixture.definition),
+                    CFLOW_STATECHART_INVALID_INITIAL);
+    }
+
+    it("rejects invalid shallow and deep history defaults literally") {
+        cflow_statechart_state states[] = {
+            {1u, 0u, CFLOW_STATECHART_COMPOUND, 0u},
+            {2u, 1u, CFLOW_STATECHART_INITIAL, 1u},
+            {3u, 1u, CFLOW_STATECHART_ATOMIC, 2u},
+            {4u, 1u, CFLOW_STATECHART_FINAL, 3u},
+            {5u, 1u, CFLOW_STATECHART_HISTORY_SHALLOW, 4u}
+        };
+        cflow_statechart_transition transitions[] = {
+            {10u, 2u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 3u,
+             CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u},
+            {11u, 5u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 1u,
+             CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u}
+        };
+        cflow_statechart_definition definition = {
+            &cmeta_type_int, states, 5u, NULL, 0u, NULL, 0u, NULL, 0u,
+            transitions, 2u, NULL, 0u, NULL, 0u};
+
+        check_equal(build_status(&definition),
+                    CFLOW_STATECHART_INVALID_HISTORY);
+        states[4].kind = CFLOW_STATECHART_HISTORY_DEEP;
+        check_equal(build_status(&definition),
+                    CFLOW_STATECHART_INVALID_HISTORY);
     }
 
     it("reports duplicate transition IDs before duplicate document order") {
@@ -229,6 +275,18 @@ suite("CFlow format-neutral Statechart IR") {
             (const cflow_statechart_state_action *)(uintptr_t)1u;
         check_equal(build_status(&fixture.definition),
                     CFLOW_STATECHART_LIMIT_EXCEEDED);
+
+        valid_fixture(&fixture);
+        fixture.definition.state_action_count =
+            (size_t)CFLOW_STATECHART_MAX_ACTION_REFS / 2u + 1u;
+        fixture.definition.transition_action_count =
+            (size_t)CFLOW_STATECHART_MAX_ACTION_REFS / 2u + 1u;
+        fixture.definition.state_actions =
+            (const cflow_statechart_state_action *)(uintptr_t)1u;
+        fixture.definition.transition_actions =
+            (const cflow_statechart_transition_action *)(uintptr_t)1u;
+        check_equal(build_status(&fixture.definition),
+                    CFLOW_STATECHART_LIMIT_EXCEEDED);
     }
 
     it("validates Event and completion triggers") {
@@ -248,6 +306,14 @@ suite("CFlow format-neutral Statechart IR") {
 
         fixture.transitions[1].completion = 1u;
         check_equal(build_status(&fixture.definition), CFLOW_STATECHART_OK);
+
+        valid_fixture(&fixture);
+        fixture.transitions[1].trigger =
+            CFLOW_STATECHART_TRIGGER_COMPLETION;
+        fixture.transitions[1].event = 0u;
+        fixture.transitions[1].completion = 999u;
+        check_equal(build_status(&fixture.definition),
+                    CFLOW_STATECHART_INVALID_COMPLETION);
     }
 
     it("rejects unknown guards executables and ambiguous transitions") {
@@ -315,6 +381,129 @@ suite("CFlow format-neutral Statechart IR") {
         check_equal(cflow_statechart_transition_action_at(
                         &statechart, 0u)->transition,
                     (cflow_statechart_transition_id)11u);
+        cflow_statechart_destroy(&statechart);
+    }
+
+    it("rejects guard and executable state type mismatches literally") {
+        statechart_fixture fixture;
+        const cflow_statechart_guard guard = {
+            20u, &cmeta_type_bool, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        const cflow_statechart_executable executable = {
+            30u, &cmeta_type_bool, CMETA_EFFECT_PURE,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        const cflow_statechart_state_action state_action = {
+            3u, CFLOW_STATECHART_STATE_ACTION_ENTRY, 30u, 0u};
+
+        valid_fixture(&fixture);
+        fixture.transitions[1].guard = 20u;
+        fixture.definition.guards = &guard;
+        fixture.definition.guard_count = 1u;
+        check_equal(build_status(&fixture.definition),
+                    CFLOW_STATECHART_TYPE_MISMATCH);
+
+        valid_fixture(&fixture);
+        fixture.definition.executables = &executable;
+        fixture.definition.executable_count = 1u;
+        fixture.definition.state_actions = &state_action;
+        fixture.definition.state_action_count = 1u;
+        check_equal(build_status(&fixture.definition),
+                    CFLOW_STATECHART_TYPE_MISMATCH);
+    }
+
+    it("materializes deterministic dense spans defaults and domains") {
+        cflow_statechart_state states[] = {
+            {10u, 0u, CFLOW_STATECHART_COMPOUND, 0u},
+            {20u, 10u, CFLOW_STATECHART_INITIAL, 1u},
+            {30u, 10u, CFLOW_STATECHART_COMPOUND, 2u},
+            {40u, 30u, CFLOW_STATECHART_INITIAL, 3u},
+            {60u, 30u, CFLOW_STATECHART_ATOMIC, 4u},
+            {50u, 30u, CFLOW_STATECHART_FINAL, 5u}
+        };
+        cflow_event_type events[] = {{100u, &cmeta_type_bool}};
+        cflow_statechart_transition transitions[] = {
+            {100u, 20u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u,
+             30u, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u},
+            {101u, 40u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u,
+             60u, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u},
+            {102u, 60u, CFLOW_STATECHART_TRIGGER_EVENT, 100u, 0u, 0u,
+             50u, CFLOW_STATECHART_TRANSITION_EXTERNAL, 2u, 3u},
+            {103u, 60u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u,
+             0u, CFLOW_STATECHART_TRANSITION_INTERNAL, 1u, 2u},
+            {104u, 60u, CFLOW_STATECHART_TRIGGER_EVENT, 100u, 0u, 0u,
+             0u, CFLOW_STATECHART_TRANSITION_INTERNAL, 1u, 4u}
+        };
+        const cflow_statechart_executable executable = {
+            200u, &cmeta_type_int, CMETA_EFFECT_PURE,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        cflow_statechart_state_action state_actions[] = {
+            {60u, CFLOW_STATECHART_STATE_ACTION_EXIT, 200u, 0u},
+            {60u, CFLOW_STATECHART_STATE_ACTION_ENTRY, 200u, 1u},
+            {60u, CFLOW_STATECHART_STATE_ACTION_ENTRY, 200u, 0u}
+        };
+        cflow_statechart_transition_action transition_actions[] = {
+            {102u, 200u, 1u}, {102u, 200u, 0u}
+        };
+        const cflow_statechart_definition definition = {
+            &cmeta_type_int, states, 6u, events, 1u, NULL, 0u,
+            &executable, 1u, transitions, 5u, state_actions, 3u,
+            transition_actions, 2u};
+        const size_t expected_document[] = {0u, 1u, 2u, 3u, 5u, 4u};
+        const size_t expected_child_offsets[] = {0u, 2u, 2u, 5u, 5u, 5u, 5u};
+        const size_t expected_children[] = {1u, 2u, 3u, 5u, 4u};
+        const size_t expected_transition_offsets[] = {
+            0u, 0u, 1u, 1u, 2u, 2u, 5u};
+        const size_t expected_transition_indices[] = {0u, 1u, 3u, 4u, 2u};
+        const size_t expected_parents[] = {
+            SIZE_MAX, 0u, 0u, 2u, 2u, 2u};
+        const size_t expected_depths[] = {0u, 1u, 1u, 2u, 2u, 2u};
+        cflow_statechart statechart = {0};
+        const cflow_statechart_impl *impl;
+        size_t index;
+
+        check_equal(cflow_statechart_build(&statechart, &definition),
+                    CFLOW_STATECHART_OK);
+        impl = cflow_statechart_internal_get(&statechart);
+        check_not_null(impl);
+        check_equal(impl->root, (size_t)0u);
+        for (index = 0u; index < 6u; ++index) {
+            check_equal(impl->document_order_indices[index],
+                        expected_document[index]);
+            check_equal(impl->child_offsets[index],
+                        expected_child_offsets[index]);
+            check_equal(impl->transition_offsets[index],
+                        expected_transition_offsets[index]);
+            check_equal(impl->parents[index], expected_parents[index]);
+            check_equal(impl->depths[index], expected_depths[index]);
+        }
+        check_equal(impl->child_offsets[6], expected_child_offsets[6]);
+        check_equal(impl->transition_offsets[6],
+                    expected_transition_offsets[6]);
+        for (index = 0u; index < 5u; ++index)
+            check_equal(impl->children[index], expected_children[index]);
+        for (index = 0u; index < 5u; ++index)
+            check_equal(impl->transition_indices[index],
+                        expected_transition_indices[index]);
+        check_equal(impl->default_transition_indices[1], (size_t)0u);
+        check_equal(impl->default_target_indices[1], (size_t)2u);
+        check_equal(impl->default_transition_indices[3], (size_t)1u);
+        check_equal(impl->default_target_indices[3], (size_t)5u);
+        check_equal(impl->default_transition_indices[0], SIZE_MAX);
+        check_equal(impl->transition_domains[0], (size_t)0u);
+        check_equal(impl->transition_domains[1], (size_t)2u);
+        check_equal(impl->transition_domains[2], (size_t)2u);
+        check_equal(impl->transition_domains[3], SIZE_MAX);
+        check_equal(impl->transition_domains[4], SIZE_MAX);
+        check_equal(impl->state_action_offsets[10], (size_t)0u);
+        check_equal(impl->state_action_offsets[11], (size_t)2u);
+        check_equal(impl->state_action_offsets[12], (size_t)3u);
+        check_equal(impl->state_action_indices[0], (size_t)0u);
+        check_equal(impl->state_action_indices[1], (size_t)1u);
+        check_equal(impl->state_action_indices[2], (size_t)2u);
+        check_equal(impl->transition_action_offsets[2], (size_t)0u);
+        check_equal(impl->transition_action_offsets[3], (size_t)2u);
+        check_equal(impl->transition_action_indices[0], (size_t)0u);
+        check_equal(impl->transition_action_indices[1], (size_t)1u);
         cflow_statechart_destroy(&statechart);
     }
 }

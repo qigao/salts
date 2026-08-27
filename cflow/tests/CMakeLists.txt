@@ -68,6 +68,7 @@ cmake_add_test(cflow_machine_hierarchy_test
 cmake_add_test(cflow_statechart_test
   SOURCES cflow_statechart_test.c
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_machine_runtime_test
