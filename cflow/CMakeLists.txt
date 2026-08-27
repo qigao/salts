@@ -61,6 +61,7 @@ add_library(${TARGET_NAME}
   src/scheduler_worker.c
   src/sources.c
   src/statechart.c
+  src/statechart_runtime.c
   src/stream.c
   src/subrun.c
   src/temporal.c
