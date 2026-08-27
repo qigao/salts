@@ -63,14 +63,16 @@ typedef enum network_peer_mode { NETWORK_PEER_RAW = 0, NETWORK_PEER_NATIVE } net
 
 typedef enum network_driver_mode {
   NETWORK_DRIVER_ACTOR = 0,
-  NETWORK_DRIVER_SOURCE
+  NETWORK_DRIVER_SOURCE,
+  NETWORK_DRIVER_DIRECT
 } network_driver_mode;
 
 static int network_parse_wait_mode(const char *text, network_wait_mode *out);
 static int network_parse_peer_mode(const char *text, network_peer_mode *out);
 static int network_parse_driver_mode(const char *text, network_driver_mode *out);
 static int network_parse_stage_timing(const char *text, bool *out);
-static int network_validate_driver_peer(network_driver_mode driver, network_peer_mode peer);
+static int network_validate_configuration(network_driver_mode driver, network_peer_mode peer,
+                                          network_wait_mode wait_mode, bool stage_timing);
 static void network_preserve_cleanup_status(int candidate, int *status);
 static double network_application_mib_per_second(uint64_t application_bytes, uint64_t elapsed_ns);
 static double network_application_mib_per_cpu_second(uint64_t application_bytes, uint64_t cpu_ns);
@@ -167,6 +169,7 @@ typedef struct network_fixture {
   network_server server;
   bool server_started;
   bool wake_latch_initialized;
+  bool socket_runtime_initialized;
 } network_fixture;
 
 typedef struct network_measurement {
@@ -183,6 +186,24 @@ static int network_last_error(void) {
   return -WSAGetLastError();
 #else
   return -errno;
+#endif
+}
+
+static int network_socket_runtime_init(void) {
+#if defined(_WIN32)
+  WSADATA data;
+  const int status = WSAStartup(MAKEWORD(2, 2), &data);
+  return status == 0 ? TURBO_OK : -status;
+#else
+  return TURBO_OK;
+#endif
+}
+
+static int network_socket_runtime_destroy(void) {
+#if defined(_WIN32)
+  return WSACleanup() == 0 ? TURBO_OK : network_last_error();
+#else
+  return TURBO_OK;
 #endif
 }
 
@@ -212,7 +233,7 @@ static int network_set_nonblocking(network_socket socket_value) {
 #endif
 }
 
-static int network_set_server_timeout(network_socket socket_value) {
+static int network_set_timeout(network_socket socket_value) {
 #if defined(_WIN32)
   const DWORD timeout_ms = 5000u;
   if (setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms,
@@ -259,7 +280,7 @@ static int network_bind_loopback(network_socket socket_value, struct sockaddr_in
   return TURBO_OK;
 }
 
-static int network_make_tcp_pair(network_fixture *fixture) {
+static int network_make_tcp_pair(network_fixture *fixture, bool client_nonblocking) {
   network_socket listener = NETWORK_INVALID_SOCKET;
   int status;
   listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -279,11 +300,12 @@ static int network_make_tcp_pair(network_fixture *fixture) {
     if (fixture->server_socket == NETWORK_INVALID_SOCKET) status = network_last_error();
   }
   network_close(listener);
-  if (status == TURBO_OK) status = network_set_nonblocking(fixture->client_socket);
+  if (status == TURBO_OK && client_nonblocking)
+    status = network_set_nonblocking(fixture->client_socket);
   return status;
 }
 
-static int network_make_udp_pair(network_fixture *fixture) {
+static int network_make_udp_pair(network_fixture *fixture, bool client_nonblocking) {
   int status;
   fixture->client_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   fixture->server_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -293,7 +315,8 @@ static int network_make_udp_pair(network_fixture *fixture) {
   status = network_bind_loopback(fixture->client_socket, &fixture->client_address);
   if (status == TURBO_OK)
     status = network_bind_loopback(fixture->server_socket, &fixture->server_address);
-  if (status == TURBO_OK) status = network_set_nonblocking(fixture->client_socket);
+  if (status == TURBO_OK && client_nonblocking)
+    status = network_set_nonblocking(fixture->client_socket);
   return status;
 }
 
@@ -622,6 +645,10 @@ static int network_parse_driver_mode(const char *text, network_driver_mode *out)
     *out = NETWORK_DRIVER_SOURCE;
     return TURBO_OK;
   }
+  if (strcmp(text, "direct") == 0) {
+    *out = NETWORK_DRIVER_DIRECT;
+    return TURBO_OK;
+  }
   return TURBO_EINVAL;
 }
 
@@ -638,8 +665,13 @@ static int network_parse_stage_timing(const char *text, bool *out) {
   return TURBO_EINVAL;
 }
 
-static int network_validate_driver_peer(network_driver_mode driver, network_peer_mode peer) {
-  return driver == NETWORK_DRIVER_SOURCE && peer != NETWORK_PEER_RAW ? TURBO_EINVAL : TURBO_OK;
+static int network_validate_configuration(network_driver_mode driver, network_peer_mode peer,
+                                          network_wait_mode wait_mode, bool stage_timing) {
+  if (driver == NETWORK_DRIVER_SOURCE && peer != NETWORK_PEER_RAW) return TURBO_EINVAL;
+  if (driver == NETWORK_DRIVER_DIRECT &&
+      (peer != NETWORK_PEER_RAW || wait_mode != NETWORK_WAIT_BLOCKING || stage_timing))
+    return TURBO_EINVAL;
+  return TURBO_OK;
 }
 
 static int network_stage_measurement_add(network_stage_measurement *measurement,
@@ -665,7 +697,9 @@ static const char *network_peer_mode_name(network_peer_mode mode) {
 }
 
 static const char *network_driver_mode_name(network_driver_mode mode) {
-  return mode == NETWORK_DRIVER_SOURCE ? "source" : "actor";
+  if (mode == NETWORK_DRIVER_SOURCE) return "source";
+  if (mode == NETWORK_DRIVER_DIRECT) return "direct";
+  return "actor";
 }
 
 static const char *network_backend_name(cflow_io_native_backend_kind kind) {
@@ -684,6 +718,11 @@ static const char *network_backend_name(cflow_io_native_backend_kind kind) {
   return "unknown";
 }
 
+static const char *network_result_backend_name(network_driver_mode driver,
+                                               cflow_io_native_backend_kind kind) {
+  return driver == NETWORK_DRIVER_DIRECT ? "socket" : network_backend_name(kind);
+}
+
 static int network_endpoint_init(network_endpoint *endpoint,
                                  cflow_io_native_backend_kind backend_kind,
                                  network_wait_mode wait_mode, network_wake_latch *wake_latch,
@@ -694,6 +733,7 @@ static int network_endpoint_init(network_endpoint *endpoint,
   int status;
   memset(endpoint, 0, sizeof(*endpoint));
   endpoint->driver_mode = driver_mode;
+  if (driver_mode == NETWORK_DRIVER_DIRECT) return TURBO_OK;
   status = cflow_io_native_backend_init(&endpoint->backend, &backend_config);
   if (status != TURBO_OK) return status;
   endpoint->backend_initialized = true;
@@ -710,7 +750,7 @@ static int network_endpoint_init(network_endpoint *endpoint,
   actor_config.backend_user = &endpoint->backend;
   actor_config.completion = network_completion_record;
   actor_config.completion_user = &endpoint->completions;
-  if (wait_mode == NETWORK_WAIT_BLOCKING) {
+  if (wait_mode == NETWORK_WAIT_BLOCKING && driver_mode != NETWORK_DRIVER_DIRECT) {
     actor_config.wake = network_wake_signal;
     actor_config.wake_user = wake_latch;
   }
@@ -728,7 +768,7 @@ static int network_fixture_init_with_driver(network_fixture *fixture, network_pr
                                             size_t payload_size) {
   int status;
   if (fixture == NULL || total_exchanges == 0u || payload_size == 0u) return TURBO_EINVAL;
-  status = network_validate_driver_peer(driver_mode, peer_mode);
+  status = network_validate_configuration(driver_mode, peer_mode, wait_mode, false);
   if (status != TURBO_OK) return status;
   memset(fixture, 0, sizeof(*fixture));
   fixture->wait_mode = wait_mode;
@@ -736,7 +776,12 @@ static int network_fixture_init_with_driver(network_fixture *fixture, network_pr
   fixture->driver_mode = driver_mode;
   fixture->client_socket = NETWORK_INVALID_SOCKET;
   fixture->server_socket = NETWORK_INVALID_SOCKET;
-  if (wait_mode == NETWORK_WAIT_BLOCKING) {
+  if (driver_mode == NETWORK_DRIVER_DIRECT) {
+    status = network_socket_runtime_init();
+    if (status != TURBO_OK) return status;
+    fixture->socket_runtime_initialized = true;
+  }
+  if (wait_mode == NETWORK_WAIT_BLOCKING && driver_mode != NETWORK_DRIVER_DIRECT) {
     turbo_mutex_init(&fixture->wake_latch.mutex);
     if (fixture->wake_latch.mutex == NULL) return TURBO_ENOMEM;
     turbo_cond_init(&fixture->wake_latch.changed);
@@ -756,12 +801,15 @@ static int network_fixture_init_with_driver(network_fixture *fixture, network_pr
     if (status != TURBO_OK) return status;
     fixture->native_server.stages = &fixture->stages;
   }
-  status = protocol == NETWORK_PROTOCOL_TCP ? network_make_tcp_pair(fixture)
-                                            : network_make_udp_pair(fixture);
+  status = protocol == NETWORK_PROTOCOL_TCP
+               ? network_make_tcp_pair(fixture, driver_mode != NETWORK_DRIVER_DIRECT)
+               : network_make_udp_pair(fixture, driver_mode != NETWORK_DRIVER_DIRECT);
   if (status == TURBO_OK && peer_mode == NETWORK_PEER_NATIVE)
     status = network_set_nonblocking(fixture->server_socket);
   if (status == TURBO_OK && peer_mode == NETWORK_PEER_RAW)
-    status = network_set_server_timeout(fixture->server_socket);
+    status = network_set_timeout(fixture->server_socket);
+  if (status == TURBO_OK && driver_mode == NETWORK_DRIVER_DIRECT)
+    status = network_set_timeout(fixture->client_socket);
   if (status != TURBO_OK) return status;
   fixture->server.protocol = protocol;
   fixture->server.socket_value = fixture->server_socket;
@@ -982,6 +1030,35 @@ static bool network_ipv4_endpoint_equal(const void *actual_address, size_t actua
          actual->sin_port == expected->sin_port;
 }
 
+static int network_exchange_direct(network_fixture *fixture, network_protocol protocol,
+                                   const unsigned char *sent, unsigned char *received,
+                                   size_t payload_size) {
+  if (protocol == NETWORK_PROTOCOL_TCP) {
+    int status = network_send_exact(fixture->client_socket, sent, payload_size);
+    if (status == TURBO_OK)
+      status = network_recv_exact(fixture->client_socket, received, payload_size);
+    if (status != TURBO_OK) return status;
+  } else {
+    struct sockaddr_storage source;
+#if defined(_WIN32)
+    int source_length = (int)sizeof(source);
+#else
+    socklen_t source_length = (socklen_t)sizeof(source);
+#endif
+    int count = sendto(fixture->client_socket, (const char *)sent, (int)payload_size, 0,
+                       (const struct sockaddr *)&fixture->server_address,
+                       (int)sizeof(fixture->server_address));
+    if (count != (int)payload_size) return count < 0 ? network_last_error() : TURBO_EIO;
+    memset(&source, 0, sizeof(source));
+    count = recvfrom(fixture->client_socket, (char *)received, (int)payload_size, 0,
+                     (struct sockaddr *)&source, &source_length);
+    if (count != (int)payload_size) return count < 0 ? network_last_error() : TURBO_EIO;
+    if (!network_ipv4_endpoint_equal(&source, (size_t)source_length, &fixture->server_address))
+      return TURBO_EIO;
+  }
+  return memcmp(sent, received, payload_size) == 0 ? TURBO_OK : TURBO_EIO;
+}
+
 static int network_run_native_operation(network_fixture *fixture, network_endpoint *endpoint,
                                         cflow_io_native_operation operation,
                                         cflow_io_lease_id lease, size_t *bytes) {
@@ -1097,6 +1174,8 @@ static int network_exchange(network_fixture *fixture, network_protocol protocol,
   int status = TURBO_OK;
   memset(received, 0, payload_size);
   memset(&source_address, 0, sizeof(source_address));
+  if (fixture->driver_mode == NETWORK_DRIVER_DIRECT)
+    return network_exchange_direct(fixture, protocol, sent, received, payload_size);
   if (fixture->peer_mode == NETWORK_PEER_NATIVE) {
     uint64_t next_lease = lease_base;
     memset(fixture->server.buffer, 0, payload_size);
@@ -1320,6 +1399,11 @@ static int network_fixture_destroy(network_fixture *fixture) {
     free(fixture->server.buffer);
     fixture->server.buffer = NULL;
   }
+  if (fixture->socket_runtime_initialized) {
+    const int runtime_status = network_socket_runtime_destroy();
+    network_preserve_cleanup_status(runtime_status, &status);
+    if (runtime_status == TURBO_OK) fixture->socket_runtime_initialized = false;
+  }
   return status;
 }
 
@@ -1446,6 +1530,69 @@ spec("CFlow network benchmark configuration") {
     check_true(network_ipv4_endpoint_equal(&actual_storage, sizeof(*actual), &expected));
     actual->sin_port = htons(4343u);
     check_false(network_ipv4_endpoint_equal(&actual_storage, sizeof(*actual), &expected));
+  }
+
+  it("round trips one TCP payload through the direct socket driver") {
+    cflow_io_native_backend_kind backend_kind = CFLOW_IO_NATIVE_EPOLL;
+    network_fixture fixture = {0};
+    unsigned char sent[1024];
+    unsigned char received[1024];
+    int status = TURBO_OK;
+    bool init_attempted = false;
+
+    for (size_t index = 0u; index < sizeof(sent); ++index)
+      sent[index] = (unsigned char)(index * 7u + 5u);
+    memset(received, 0, sizeof(received));
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) {
+      init_attempted = true;
+      status = network_fixture_init_with_driver(&fixture, NETWORK_PROTOCOL_TCP, backend_kind,
+                                                NETWORK_WAIT_BLOCKING, NETWORK_PEER_RAW,
+                                                NETWORK_DRIVER_DIRECT, 1u, sizeof(sent));
+    }
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) {
+      check_false(fixture.client.backend_initialized);
+      check_false(fixture.client.executor_initialized);
+      check_false(fixture.client.actor_initialized);
+      check_false(fixture.wake_latch_initialized);
+      status = network_exchange(&fixture, NETWORK_PROTOCOL_TCP, sent, received, sizeof(sent),
+                                UINT64_C(1));
+    }
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) check_equal(memcmp(received, sent, sizeof(sent)), 0);
+    if (init_attempted) check_equal(network_fixture_destroy(&fixture), TURBO_OK);
+  }
+
+  it("round trips one UDP payload through the direct socket driver") {
+    cflow_io_native_backend_kind backend_kind = CFLOW_IO_NATIVE_EPOLL;
+    network_fixture fixture = {0};
+    unsigned char sent[1024];
+    unsigned char received[1024];
+    int status = TURBO_OK;
+    bool init_attempted = false;
+
+    memset(sent, 0xa7, sizeof(sent));
+    memset(received, 0, sizeof(received));
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) {
+      init_attempted = true;
+      status = network_fixture_init_with_driver(&fixture, NETWORK_PROTOCOL_UDP, backend_kind,
+                                                NETWORK_WAIT_BLOCKING, NETWORK_PEER_RAW,
+                                                NETWORK_DRIVER_DIRECT, 1u, sizeof(sent));
+    }
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) {
+      check_false(fixture.client.backend_initialized);
+      check_false(fixture.client.executor_initialized);
+      check_false(fixture.client.actor_initialized);
+      check_false(fixture.wake_latch_initialized);
+      status = network_exchange(&fixture, NETWORK_PROTOCOL_UDP, sent, received, sizeof(sent),
+                                UINT64_C(1));
+    }
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) check_equal(memcmp(received, sent, sizeof(sent)), 0);
+    if (init_attempted) check_equal(network_fixture_destroy(&fixture), TURBO_OK);
   }
 
   it("round trips one TCP payload through the reactive Source driver") {
@@ -1655,7 +1802,7 @@ spec("CFlow network benchmark configuration") {
     check_equal(network_parse_peer_mode("raw", NULL), TURBO_EINVAL);
   }
 
-  it("parses actor and source drivers and rejects unsupported peer combinations") {
+  it("parses direct, actor, and source drivers and rejects unsupported combinations") {
     network_driver_mode driver = NETWORK_DRIVER_SOURCE;
 
     check_equal(network_parse_driver_mode(NULL, &driver), TURBO_OK);
@@ -1664,12 +1811,33 @@ spec("CFlow network benchmark configuration") {
     check_equal(driver, NETWORK_DRIVER_ACTOR);
     check_equal(network_parse_driver_mode("source", &driver), TURBO_OK);
     check_equal(driver, NETWORK_DRIVER_SOURCE);
+    check_equal(network_parse_driver_mode("direct", &driver), TURBO_OK);
+    check_equal(driver, NETWORK_DRIVER_DIRECT);
     check_equal(network_parse_driver_mode("socket", &driver), TURBO_EINVAL);
     check_equal(network_parse_driver_mode("actor", NULL), TURBO_EINVAL);
-    check_equal(network_validate_driver_peer(NETWORK_DRIVER_ACTOR, NETWORK_PEER_RAW), TURBO_OK);
-    check_equal(network_validate_driver_peer(NETWORK_DRIVER_ACTOR, NETWORK_PEER_NATIVE), TURBO_OK);
-    check_equal(network_validate_driver_peer(NETWORK_DRIVER_SOURCE, NETWORK_PEER_RAW), TURBO_OK);
-    check_equal(network_validate_driver_peer(NETWORK_DRIVER_SOURCE, NETWORK_PEER_NATIVE),
+    check_equal(network_validate_configuration(NETWORK_DRIVER_ACTOR, NETWORK_PEER_RAW,
+                                               NETWORK_WAIT_BLOCKING, false),
+                TURBO_OK);
+    check_equal(network_validate_configuration(NETWORK_DRIVER_ACTOR, NETWORK_PEER_NATIVE,
+                                               NETWORK_WAIT_BUSY, true),
+                TURBO_OK);
+    check_equal(network_validate_configuration(NETWORK_DRIVER_SOURCE, NETWORK_PEER_RAW,
+                                               NETWORK_WAIT_BLOCKING, true),
+                TURBO_OK);
+    check_equal(network_validate_configuration(NETWORK_DRIVER_SOURCE, NETWORK_PEER_NATIVE,
+                                               NETWORK_WAIT_BLOCKING, false),
+                TURBO_EINVAL);
+    check_equal(network_validate_configuration(NETWORK_DRIVER_DIRECT, NETWORK_PEER_RAW,
+                                               NETWORK_WAIT_BLOCKING, false),
+                TURBO_OK);
+    check_equal(network_validate_configuration(NETWORK_DRIVER_DIRECT, NETWORK_PEER_NATIVE,
+                                               NETWORK_WAIT_BLOCKING, false),
+                TURBO_EINVAL);
+    check_equal(network_validate_configuration(NETWORK_DRIVER_DIRECT, NETWORK_PEER_RAW,
+                                               NETWORK_WAIT_BUSY, false),
+                TURBO_EINVAL);
+    check_equal(network_validate_configuration(NETWORK_DRIVER_DIRECT, NETWORK_PEER_RAW,
+                                               NETWORK_WAIT_BLOCKING, true),
                 TURBO_EINVAL);
   }
 
@@ -1721,6 +1889,7 @@ spec("CFlow network benchmark configuration") {
 
     check_equal(strcmp(network_driver_mode_name(NETWORK_DRIVER_ACTOR), "actor"), 0);
     check_equal(strcmp(network_driver_mode_name(NETWORK_DRIVER_SOURCE), "source"), 0);
+    check_equal(strcmp(network_driver_mode_name(NETWORK_DRIVER_DIRECT), "direct"), 0);
     check_true(network_stage_mean_ns(stages.admission_ns, stages.operations) > 9.999);
     check_true(network_stage_mean_ns(stages.admission_ns, stages.operations) < 10.001);
     check_true(network_stage_mean_ns(stages.completion_drive_ns, stages.operations) > 24.999);
@@ -1759,8 +1928,8 @@ spec("CFlow network benchmark configuration") {
   }
 }
 
-suite("CFlow native network benchmarks") {
-  bench("reports loopback TCP or UDP native-backend performance") {
+suite("CFlow network benchmarks") {
+  bench("reports loopback TCP or UDP driver performance") {
     const char *protocol_text = getenv("CFLOW_NETWORK_PROTOCOL");
     const char *profile_text = getenv("CFLOW_NETWORK_PROFILE");
     const char *wait_mode_text = getenv("CFLOW_NETWORK_WAIT_MODE");
@@ -1785,8 +1954,10 @@ suite("CFlow native network benchmarks") {
     if (config_status == TURBO_OK)
       config_status = network_parse_stage_timing(stage_timing_text, &stage_timing);
     if (config_status == TURBO_OK)
-      config_status = network_validate_driver_peer(driver_mode, peer_mode);
-    if (config_status == TURBO_OK) config_status = network_select_backend(&backend_kind);
+      config_status =
+          network_validate_configuration(driver_mode, peer_mode, wait_mode, stage_timing);
+    if (config_status == TURBO_OK && driver_mode != NETWORK_DRIVER_DIRECT)
+      config_status = network_select_backend(&backend_kind);
     const size_t samples = network_env_size(
         "CFLOW_NETWORK_SAMPLES", throughput ? NETWORK_THROUGHPUT_SAMPLES : NETWORK_LATENCY_SAMPLES,
         NETWORK_MAX_SAMPLES);
@@ -1828,7 +1999,8 @@ suite("CFlow native network benchmarks") {
     check_equal(config_status, TURBO_OK);
     check_true(samples != 0u && exchanges != 0u && payload_size != 0u && total_exchanges != 0u &&
                bytes_per_sample != 0u);
-    check_true(cflow_io_native_backend_supported(backend_kind));
+    check_true(driver_mode == NETWORK_DRIVER_DIRECT ||
+               cflow_io_native_backend_supported(backend_kind));
     measured.latencies = (uint64_t *)calloc(total_exchanges, sizeof(*measured.latencies));
     sent = (unsigned char *)malloc(payload_size);
     received = (unsigned char *)malloc(payload_size);
@@ -1847,6 +2019,11 @@ suite("CFlow native network benchmarks") {
                      protocol == NETWORK_PROTOCOL_TCP ? "tcp" : "udp",
                      throughput ? "throughput" : "latency", network_backend_name(backend_kind),
                      network_wait_mode_name(wait_mode), network_peer_mode_name(peer_mode));
+    else if (driver_mode == NETWORK_DRIVER_DIRECT)
+      (void)snprintf(title, sizeof(title), "%s-%s-socket-%s-%s-direct",
+                     protocol == NETWORK_PROTOCOL_TCP ? "tcp" : "udp",
+                     throughput ? "throughput" : "latency", network_wait_mode_name(wait_mode),
+                     network_peer_mode_name(peer_mode));
     else
       (void)snprintf(title, sizeof(title), "%s-%s-%s-%s-%s",
                      protocol == NETWORK_PROTOCOL_TCP ? "tcp" : "udp",
@@ -1879,8 +2056,13 @@ suite("CFlow native network benchmarks") {
       }
     }
     server_status = fixture.server.status;
-    actor_stats_ok = network_endpoint_get_actor_stats(&fixture.client, &actor_stats);
-    native_stats_ok = cflow_io_native_backend_get_stats(&fixture.client.backend, &native_stats);
+    if (driver_mode == NETWORK_DRIVER_DIRECT) {
+      actor_stats_ok = true;
+      native_stats_ok = true;
+    } else {
+      actor_stats_ok = network_endpoint_get_actor_stats(&fixture.client, &actor_stats);
+      native_stats_ok = cflow_io_native_backend_get_stats(&fixture.client.backend, &native_stats);
+    }
     if (peer_mode == NETWORK_PEER_NATIVE) {
       server_actor_stats_ok =
           cflow_io_actor_get_stats(&fixture.native_server.actor, &server_actor_stats);
@@ -1914,7 +2096,7 @@ suite("CFlow native network benchmarks") {
           "\"attempted\":%zu,\"errors\":0,\"rejections\":%" PRIu64 ","
           "\"stale_completions\":%" PRIu64 "}\n",
           protocol == NETWORK_PROTOCOL_TCP ? "tcp" : "udp", throughput ? "throughput" : "latency",
-          network_backend_name(backend_kind), network_wait_mode_name(wait_mode),
+          network_result_backend_name(driver_mode, backend_kind), network_wait_mode_name(wait_mode),
           network_peer_mode_name(peer_mode), network_driver_mode_name(driver_mode),
           stage_timing ? "true" : "false", samples, exchanges, payload_size, application_bytes,
           application_bytes * UINT64_C(2), measured.wall_ns, fixture.stages.operations,

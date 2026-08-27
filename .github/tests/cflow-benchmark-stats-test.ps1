@@ -54,6 +54,15 @@ Assert-Sequence `
 Assert-Sequence `
   (Get-CflowDriverOrder -Run 1 -WaitMode blocking -BackendIndex 0 -PayloadIndex 1) `
   @("source", "actor") "next-payload driver order"
+Assert-Sequence `
+  (Get-CflowBaselineDriverOrder -Run 1 -BackendIndex 0 -PayloadIndex 0) `
+  @("direct", "actor") "first baseline driver order"
+Assert-Sequence `
+  (Get-CflowBaselineDriverOrder -Run 2 -BackendIndex 0 -PayloadIndex 0) `
+  @("actor", "direct") "next-run baseline driver order"
+Assert-Sequence `
+  (Get-CflowBaselineDriverOrder -Run 1 -BackendIndex 1 -PayloadIndex 0) `
+  @("actor", "direct") "next-backend baseline driver order"
 
 $reports = @(
   [pscustomobject]@{ benchmark_run=1; backend="epoll"; payload_bytes=64; driver="actor"; wait_mode="blocking"; attempted=10; p50_ns=100; p99_ns=200; wall_ns=1000; process_cpu_ns=500; process_cpu_pct=50; application_mib_per_cpu_second=10; admission_mean_ns=10; completion_drive_mean_ns=90 },
@@ -122,5 +131,45 @@ Assert-Throws {
   Get-CflowPairedSourceSummary -Reports $mismatchedAttempts `
     -Backend epoll -WaitMode blocking -PayloadBytes 64 -ExpectedRuns 3
 } "mismatched pair attempt counts"
+
+$baselineReports = @(
+  [pscustomobject]@{ benchmark_run=1; comparison_backend="epoll"; payload_bytes=64; driver="direct"; attempted=10; exchanges_per_second=100; application_mib_per_second=10; p99_ns=100 },
+  [pscustomobject]@{ benchmark_run=1; comparison_backend="epoll"; payload_bytes=64; driver="actor"; attempted=10; exchanges_per_second=80; application_mib_per_second=8; p99_ns=120 },
+  [pscustomobject]@{ benchmark_run=2; comparison_backend="epoll"; payload_bytes=64; driver="direct"; attempted=10; exchanges_per_second=1000; application_mib_per_second=100; p99_ns=1000 },
+  [pscustomobject]@{ benchmark_run=2; comparison_backend="epoll"; payload_bytes=64; driver="actor"; attempted=10; exchanges_per_second=1000; application_mib_per_second=100; p99_ns=900 },
+  [pscustomobject]@{ benchmark_run=3; comparison_backend="epoll"; payload_bytes=64; driver="direct"; attempted=10; exchanges_per_second=1100; application_mib_per_second=110; p99_ns=1100 },
+  [pscustomobject]@{ benchmark_run=3; comparison_backend="epoll"; payload_bytes=64; driver="actor"; attempted=10; exchanges_per_second=550; application_mib_per_second=55; p99_ns=1300 }
+)
+$baselineSummary = Get-CflowPairedDirectSummary -Reports $baselineReports `
+  -Backend epoll -PayloadBytes 64 -ExpectedRuns 3
+Assert-Equal $baselineSummary.runs 3 "direct baseline paired run count"
+Assert-Equal $baselineSummary.direct_median_echo_per_second 1000.0 `
+  "direct Echo/s median"
+Assert-Equal $baselineSummary.actor_median_echo_per_second 550.0 `
+  "Actor Echo/s median"
+Assert-Equal $baselineSummary.paired_actor_direct_echo_ratio 0.8 `
+  "paired Echo/s ratio"
+Assert-Equal $baselineSummary.direct_median_application_mib_per_second 100.0 `
+  "direct application throughput median"
+Assert-Equal $baselineSummary.actor_median_application_mib_per_second 55.0 `
+  "Actor application throughput median"
+Assert-Equal $baselineSummary.paired_actor_direct_application_mib_ratio 0.8 `
+  "paired application throughput ratio"
+Assert-Equal $baselineSummary.direct_median_p99_ns 1000.0 "direct P99 median"
+Assert-Equal $baselineSummary.actor_median_p99_ns 900.0 "Actor P99 median"
+Assert-Equal $baselineSummary.paired_p99_delta_ns 20.0 "paired P99 delta"
+
+$missingDirectPair = @($baselineReports | Select-Object -First 5)
+Assert-Throws {
+  Get-CflowPairedDirectSummary -Reports $missingDirectPair `
+    -Backend epoll -PayloadBytes 64 -ExpectedRuns 3
+} "missing direct baseline pair"
+
+$mismatchedDirectAttempts = @($baselineReports | ForEach-Object { $_.psobject.Copy() })
+$mismatchedDirectAttempts[1].attempted = 9
+Assert-Throws {
+  Get-CflowPairedDirectSummary -Reports $mismatchedDirectAttempts `
+    -Backend epoll -PayloadBytes 64 -ExpectedRuns 3
+} "mismatched direct baseline attempts"
 
 Write-Output "cflow benchmark stats tests passed"

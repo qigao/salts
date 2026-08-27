@@ -67,6 +67,30 @@ function Get-CflowDriverOrder {
   return @("actor", "source")
 }
 
+function Get-CflowBaselineDriverOrder {
+  param(
+    [Parameter(Mandatory = $true)]
+    [int]$Run,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(0, [int]::MaxValue)]
+    [int]$BackendIndex,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(0, [int]::MaxValue)]
+    [int]$PayloadIndex
+  )
+
+  if ($Run -le 0) {
+    throw "Run must be positive"
+  }
+  $directFirst = (($Run - 1 + $BackendIndex + $PayloadIndex) % 2) -eq 0
+  if ($directFirst) {
+    return @("direct", "actor")
+  }
+  return @("actor", "direct")
+}
+
 function Get-CflowPercentDelta {
   param(
     [Parameter(Mandatory = $true)]
@@ -224,5 +248,93 @@ function Get-CflowPairedSourceSummary {
       $sources | ForEach-Object {
         [double]$_.admission_mean_ns + [double]$_.completion_drive_mean_ns
       })
+  }
+}
+
+function Get-CflowPairedDirectSummary {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object[]]$Reports,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Backend,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$PayloadBytes,
+
+    [Parameter(Mandatory = $true)]
+    [int]$ExpectedRuns
+  )
+
+  if ($ExpectedRuns -le 0) {
+    throw "ExpectedRuns must be positive"
+  }
+  $matching = @($Reports | Where-Object {
+      $_.comparison_backend -eq $Backend -and
+      [int64]$_.payload_bytes -eq $PayloadBytes
+    })
+  if ($matching.Count -ne 2 * $ExpectedRuns) {
+    throw "Expected $ExpectedRuns Actor/direct pairs for $Backend/$PayloadBytes, found $($matching.Count) records"
+  }
+
+  $actors = @()
+  $directs = @()
+  $echoRatios = @()
+  $throughputRatios = @()
+  $p99Deltas = @()
+  for ($run = 1; $run -le $ExpectedRuns; ++$run) {
+    $actor = @($matching | Where-Object {
+        [int]$_.benchmark_run -eq $run -and $_.driver -eq "actor"
+      })
+    $direct = @($matching | Where-Object {
+        [int]$_.benchmark_run -eq $run -and $_.driver -eq "direct"
+      })
+    if ($actor.Count -ne 1 -or $direct.Count -ne 1) {
+      throw "Expected one Actor and one direct report for $Backend/$PayloadBytes run $run, found $($actor.Count) and $($direct.Count)"
+    }
+    $actor = $actor[0]
+    $direct = $direct[0]
+    $actorAttempts = [int64]$actor.attempted
+    $directAttempts = [int64]$direct.attempted
+    if ($directAttempts -le 0 -or $actorAttempts -ne $directAttempts) {
+      throw "Actor and direct attempted counts must be equal and positive for $Backend/$PayloadBytes run $run"
+    }
+    foreach ($metric in @("exchanges_per_second", "application_mib_per_second", "p99_ns")) {
+      $actorValue = [double]$actor.$metric
+      $directValue = [double]$direct.$metric
+      if ([double]::IsNaN($actorValue) -or [double]::IsInfinity($actorValue) -or
+          $actorValue -le 0.0 -or [double]::IsNaN($directValue) -or
+          [double]::IsInfinity($directValue) -or $directValue -le 0.0) {
+        throw "$metric values must be finite and positive for $Backend/$PayloadBytes run $run"
+      }
+    }
+    $echoRatios +=
+      [double]$actor.exchanges_per_second / [double]$direct.exchanges_per_second
+    $throughputRatios +=
+      [double]$actor.application_mib_per_second /
+        [double]$direct.application_mib_per_second
+    $p99Deltas += [double]$actor.p99_ns - [double]$direct.p99_ns
+    $actors += $actor
+    $directs += $direct
+  }
+
+  return [pscustomobject][ordered]@{
+    backend = $Backend
+    payload_bytes = $PayloadBytes
+    runs = $ExpectedRuns
+    direct_median_echo_per_second = Get-CflowMedian @($directs.exchanges_per_second)
+    actor_median_echo_per_second = Get-CflowMedian @($actors.exchanges_per_second)
+    paired_actor_direct_echo_ratio =
+      [math]::Round((Get-CflowMedian $echoRatios), 6)
+    direct_median_application_mib_per_second =
+      Get-CflowMedian @($directs.application_mib_per_second)
+    actor_median_application_mib_per_second =
+      Get-CflowMedian @($actors.application_mib_per_second)
+    paired_actor_direct_application_mib_ratio =
+      [math]::Round((Get-CflowMedian $throughputRatios), 6)
+    direct_median_p99_ns = Get-CflowMedian @($directs.p99_ns)
+    actor_median_p99_ns = Get-CflowMedian @($actors.p99_ns)
+    paired_p99_delta_ns = [math]::Round((Get-CflowMedian $p99Deltas), 6)
   }
 }
