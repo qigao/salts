@@ -25,6 +25,9 @@ extern "C" {
  * Interpreted collection supports managed COPY/MOVE/DESTROY element types.
  * to_array() remains a trivial-value byte terminal and fails for managed T.
  * Its max_items argument is a hard capacity bound, not a truncating operation.
+ * Fluent skip()/take() are positional CFlow Graph operations. Their immutable
+ * bounds are reusable, while every execution owns fresh counters. take(0)
+ * performs no Source resume and reaching a limit completes normally.
  *
  * Example:
  *   stream(&input, &pipeline)->filter(&pipeline, keep)->map(&pipeline, map_fn);

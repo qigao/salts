@@ -123,4 +123,46 @@ spec("TurboSTL managed CFlow Stream") {
         check_equal(managed_stream_moves, (size_t)2u);
         check_equal(managed_stream_destroys, (size_t)10u);
     }
+
+    it("destroys skipped values and retains taken values independently") {
+        managed_stream_value values[] = {
+            managed_stream_make(4),
+            managed_stream_make(12),
+            managed_stream_make(20)
+        };
+        ManagedStreamList input = {0};
+        ManagedStreamList output = {0};
+        turbostl_stream_t pipeline = {0};
+        turbostl_collect_result result;
+        managed_stream_value selected = {0};
+
+        managed_stream_copies = 0u;
+        managed_stream_moves = 0u;
+        managed_stream_destroys = 0u;
+        check_equal(ManagedStreamList_init(&input, 3u), STL_OK);
+        check_equal(ManagedStreamList_push_back(&input, values[0]), STL_OK);
+        check_equal(ManagedStreamList_push_back(&input, values[1]), STL_OK);
+        check_equal(ManagedStreamList_push_back(&input, values[2]), STL_OK);
+        check_not_null(stream(&input, &pipeline));
+        check_not_null(pipeline.skip(&pipeline, 1u)->take(&pipeline, 1u));
+
+        result = to_list_typed(
+            &pipeline, ManagedStreamList, &output, 1u);
+        check_true(result.ok);
+        check_equal(result.status, CMETA_OK);
+        check_equal(result.count, (size_t)1u);
+        check_equal(ManagedStreamList_pop_front(&output, &selected), STL_OK);
+        check_equal(*selected.resource, 12);
+
+        managed_stream_destroy(&selected);
+        ManagedStreamList_destroy(&output);
+        turbostl_stream_destroy(&pipeline);
+        ManagedStreamList_destroy(&input);
+        managed_stream_destroy(&values[0]);
+        managed_stream_destroy(&values[1]);
+        managed_stream_destroy(&values[2]);
+        check_equal(managed_stream_copies, (size_t)8u);
+        check_equal(managed_stream_moves, (size_t)1u);
+        check_equal(managed_stream_destroys, (size_t)12u);
+    }
 }

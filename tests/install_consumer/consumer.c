@@ -73,11 +73,16 @@ int main(void) {
 
 #elif defined(CONSUME_CFLOW)
 #include <cflow/clock.h>
+#include <cflow/stream.h>
 
 int main(void) {
   cflow_clock clock = {0};
+  cflow_stream stream = {0};
   if (!cflow_clock_system_init(&clock)) return 1;
   cflow_clock_destroy(&clock);
+  if (!cflow_stream_init(&stream, &cmeta_type_int)) return 2;
+  if (stream.skip(&stream, 1u)->take(&stream, 2u) != &stream) return 3;
+  cflow_stream_destroy(&stream);
   return 0;
 }
 

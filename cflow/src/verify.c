@@ -23,6 +23,8 @@ static bool node_shallow_equal(const cflow_node *a, const cflow_node *b) {
     if (a->op != b->op || a->has_fn != b->has_fn ||
         a->fn_chain_count != b->fn_chain_count ||
         a->has_relation != b->has_relation ||
+        a->slice.present != b->slice.present ||
+        a->slice.count != b->slice.count ||
         !cmeta_type_equal(a->input_type, b->input_type) ||
         !cmeta_type_equal(a->output_type, b->output_type) ||
         a->subgraph_count != b->subgraph_count) return false;

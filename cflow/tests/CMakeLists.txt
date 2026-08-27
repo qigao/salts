@@ -30,6 +30,11 @@ cmake_add_test(cflow_pipeline_test
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_stream_slice_test
+  SOURCES cflow_stream_slice_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_stream_execution_test
   SOURCES cflow_stream_execution_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
@@ -190,6 +195,7 @@ set_target_properties(
   cflow_dense_successor_index_test
   cflow_branching_views_test
   cflow_pipeline_test
+  cflow_stream_slice_test
   cflow_stream_execution_test
   cflow_runtime_test
   cflow_readiness_test

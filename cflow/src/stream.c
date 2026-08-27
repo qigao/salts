@@ -32,6 +32,8 @@ cflow_stream *cflow_stream_init(cflow_stream *s, const cmeta_type_desc *source_t
     s->method = cflow_stream_##method;
 Replay(CFlowOperators, CFLOW_OP_ROW)
 #undef CFLOW_OP_ROW
+    s->take = cflow_stream_take;
+    s->skip = cflow_stream_skip;
     return s;
 }
 
@@ -58,6 +60,16 @@ void cflow_stream_destroy(cflow_stream *s) {
     if (!s) return;
     cflow_graph_destroy(&s->graph);
     memset(s, 0, sizeof(*s));
+}
+
+cflow_stream *cflow_stream_take(cflow_stream *s, size_t limit) {
+    if (!s || s->failed) return s;
+    return mark_result(s, cflow_graph_take(&s->graph, limit));
+}
+
+cflow_stream *cflow_stream_skip(cflow_stream *s, size_t count) {
+    if (!s || s->failed) return s;
+    return mark_result(s, cflow_graph_skip(&s->graph, count));
 }
 
 #define CFLOW_STREAM_IMPL_1(E, method) \

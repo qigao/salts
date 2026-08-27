@@ -161,8 +161,20 @@ typed(filter, value, bool, keep_even, (int value)) {
 }
 
 cflow_stream pipeline = {0};
-stream(&values, &pipeline)->filter(&pipeline, keep_even);
+stream(&values, &pipeline)
+    ->filter(&pipeline, keep_even)
+    ->skip(&pipeline, 1u)
+    ->take(&pipeline, 2u);
 ```
+
+`skip` and `take` are CFlow Graph operations, not TurboSTL container
+algorithms. They count values at their exact pipeline position and preserve
+encounter order. Every evaluation creates independent counters. `take(0)`
+performs no Range/Source resume; reaching a positive limit stops unneeded
+upstream work as normal completion rather than user cancellation. Interpreted
+collection supports managed values with the same COPY/MOVE/DESTROY ownership
+rules as other CFlow nodes. Direct compiled plans currently reject slice
+nodes explicitly.
 
 Captured predicates use `lambda(filter, ...)` or `cmeta_bindable(filter, ...)`
 and enter the same Graph as immutable callable values. Filtering should not be
@@ -172,6 +184,9 @@ New convenience operations follow the same ownership boundary:
 
 - An element operation such as a new transform or selection rule belongs in
   CFlow as a typed operator accepting a CMeta callable.
+- A positional operation such as `skip` or `take` belongs in CFlow Graph/Run;
+  its immutable bound is Graph metadata and its mutable position belongs to
+  one execution.
 - A result operation such as counting, matching, or finding belongs in the
   terminal/collector layer, with explicit short-circuit, ownership, error, and
   capacity semantics.

@@ -69,6 +69,30 @@ static bool append_typed_node(lower_ctx *ctx, cflow_subgraph_id sgid,
     return cflow_graph_set_subgraph_exit(ctx->dst, sgid, id);
 }
 
+static bool append_slice_node(lower_ctx *ctx, cflow_subgraph_id sgid,
+                              const cflow_node *node) {
+    cflow_subgraph *sg = &ctx->dst->subgraphs[sgid];
+    cflow_node_id prev = sg->tail;
+    cflow_node_id id = CMETA_INVALID_ID;
+
+    if (!cflow_graph_create_slice_node(
+            ctx->dst, sgid, node->op, node->input_type,
+            node->slice.count, &id)) {
+        ctx->error = ctx->dst->error
+            ? ctx->dst->error : "normalization slice creation failed";
+        return false;
+    }
+    if (prev != CMETA_INVALID_ID &&
+        !cflow_graph_connect(ctx->dst, sgid, prev, 0u, id, 0u)) {
+        ctx->error = ctx->dst->error
+            ? ctx->dst->error : "normalization slice edge failed";
+        return false;
+    }
+    ctx->dst->subgraphs[sgid].nodes[id].input_type = node->input_type;
+    ctx->dst->subgraphs[sgid].nodes[id].output_type = node->output_type;
+    return cflow_graph_set_subgraph_exit(ctx->dst, sgid, id);
+}
+
 static bool append_relation_node(lower_ctx *ctx, cflow_subgraph_id sgid,
                                  const cflow_node *node) {
     cflow_subgraph_id *branches = NULL;
@@ -195,6 +219,9 @@ static bool lower_subgraph(lower_ctx *ctx, cflow_subgraph_id src_id,
 
         if (node->op == CFLOW_OP_ZIP) {
             if (!lower_zip(ctx, &current, node)) goto done;
+        } else if (node->op == CFLOW_OP_TAKE ||
+                   node->op == CFLOW_OP_SKIP) {
+            if (!append_slice_node(ctx, current, node)) goto done;
         } else if (node_is_high_level(node)) {
             ctx->error = "no lowering rule exists for high-level operator";
             goto done;
