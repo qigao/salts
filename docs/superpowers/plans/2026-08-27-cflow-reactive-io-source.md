@@ -353,3 +353,59 @@
   ```text
   docs(cflow): document reactive IO source adapter
   ```
+
+### Task 6: Close the adapter-driver completion tail window
+
+**Files:**
+- Modify: `cflow/src/io_source.c`
+- Modify: `cflow/tests/cflow_io_source_test.c`
+- Modify: `docs/superpowers/plans/2026-08-27-cflow-reactive-io-source.md`
+
+**Interfaces:**
+- Consumes: the final Actor/adapter driver and external `drive` edge contract.
+- Produces: a lossless coalesced pending-drive handoff across adapter driver release.
+
+- [x] **Step 1: Add a deterministic tail-window RED test**
+
+  Use barriers to deliver a real `cflow_io_actor_complete()` after the last Actor idle result but
+  before `cflow_io_source_owner_run_ready()` releases its adapter driver credit. Make `drive`
+  immediately reenter `owner_run_ready()` and observe `TURBO_EBUSY` with zero progress. Assert the
+  outer call still preserves or reissues the pending edge and eventually encodes, emits,
+  acknowledges, releases exactly once, and reaches owner quiescence without a caller polling loop.
+
+- [x] **Step 2: Linearize internal drive edges with adapter driver release**
+
+  Route the Actor wake through an adapter-owned wrapper that records a coalesced pending generation
+  under the adapter gate before notifying the borrowed external `drive`. On driver exit, atomically
+  consume a newly observed pending generation and continue draining, or clear `driver_active` and
+  re-notify the external driver outside the gate. Preserve `TURBO_EBUSY + progressed=0` for genuine
+  concurrent/reentrant calls, all callback-outside-gate rules, `max_steps` bounds, and capacity one.
+
+- [x] **Step 3: Run focused, race repetition, adjacent and full verification**
+
+  Run the new filter, the full `cflow_io_source_test`, repeat the tail-window filter, then the
+  Release/ASan focused CFlow set and full Release CTest. Re-run install/package-smoke verification
+  because this is the final production tree.
+
+- [x] **Step 4: Commit and record evidence**
+
+  ```text
+  fix(cflow): preserve IO source driver wake edges
+  ```
+
+  Evidence (2026-08-27): the barrier RED placed a manual-Executor task after
+  the Actor's idle result and completed the real backend request while the
+  adapter driver remained active. Both immediate drive reentries returned
+  `TURBO_EBUSY` with zero progress, while the old implementation failed both
+  value and cancellation cases (2 failed, 39 passing assertions) without an
+  external polling call. The adapter-owned Actor drive wrapper now records one
+  coalesced, saturating generation/credit under the adapter gate. Driver exit
+  either consumes that credit within the remaining `max_steps` budget or
+  releases `driver_active`, retains callback lifetime, and re-notifies outside
+  the gate. The GREEN filter passed 2/2 with 55 assertions, full Source passed
+  26/26 with 436 assertions, and the filter repeated 1000/1000. Release and
+  fresh AddressSanitizer focused sets passed 9/9; all CFlow passed 29/29; full
+  Release passed 147/147; install included `cflow/io_source.h`; and the
+  installed-package consumer built 18/18. A callback-local close probe returned
+  `TURBO_EBUSY` while the retained drive credit was live, preserved the owner,
+  and the final close succeeded after callback return.

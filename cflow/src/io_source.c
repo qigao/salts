@@ -22,10 +22,13 @@ typedef struct cflow_io_source_state {
     cflow_waker source_waker;
     cflow_io_request_id request_id;
     size_t wake_inflight;
+    size_t drive_inflight;
+    uint64_t drive_generation;
     bool source_live;
     bool owner_live;
     bool close_requested;
     bool driver_active;
+    bool drive_pending;
     bool submission_in_progress;
     bool result_encoding;
     bool result_ready;
@@ -38,6 +41,8 @@ typedef struct cflow_io_source_state {
     cflow_io_source_prepare_fn prepare;
     cflow_io_source_encode_fn encode;
     void *user;
+    cflow_io_wake_fn drive;
+    void *drive_user;
     cflow_source_terminal terminal;
     const char *terminal_error;
 } cflow_io_source_state;
@@ -160,6 +165,59 @@ static void io_source_wait_wakers_locked(
     /* These frames cannot return their credits until cancel unwinds. */
     while (state->wake_inflight > current_thread_credits)
         turbo_cond_wait(&state->changed, &state->gate);
+}
+
+static bool io_source_record_drive_locked(
+    cflow_io_source_state *state) {
+    if (state->drive_pending)
+        return false;
+    state->drive_pending = true;
+    /* The coalesced credit remains authoritative after the generation
+       saturates, so counter exhaustion cannot lose a future edge. */
+    if (state->drive_generation != UINT64_MAX)
+        ++state->drive_generation;
+    return true;
+}
+
+static bool io_source_retain_drive_locked(
+    cflow_io_source_state *state,
+    cflow_io_wake_fn *drive,
+    void **drive_user) {
+    if (!state->owner_live || state->drive == NULL)
+        return false;
+    ++state->drive_inflight;
+    *drive = state->drive;
+    *drive_user = state->drive_user;
+    return true;
+}
+
+static void io_source_invoke_drive(
+    cflow_io_source_state *state,
+    cflow_io_wake_fn drive,
+    void *drive_user) {
+    if (drive == NULL)
+        return;
+    drive(drive_user);
+    turbo_mutex_lock(&state->gate);
+    --state->drive_inflight;
+    turbo_cond_broadcast(&state->changed);
+    turbo_mutex_unlock(&state->gate);
+}
+
+static void io_source_actor_drive(void *user) {
+    cflow_io_source_state *state =
+        (cflow_io_source_state *)user;
+    cflow_io_wake_fn drive = NULL;
+    void *drive_user = NULL;
+
+    if (state == NULL)
+        return;
+    turbo_mutex_lock(&state->gate);
+    if (io_source_record_drive_locked(state))
+        (void)io_source_retain_drive_locked(
+            state, &drive, &drive_user);
+    turbo_mutex_unlock(&state->gate);
+    io_source_invoke_drive(state, drive, drive_user);
 }
 
 static bool io_source_take_result_locked(
@@ -539,8 +597,10 @@ int cflow_source_from_io_actor(
     actor_config.backend_user = config->backend_user;
     actor_config.completion = io_source_completion;
     actor_config.completion_user = state;
-    actor_config.wake = config->drive;
-    actor_config.wake_user = config->drive_user;
+    actor_config.wake = io_source_actor_drive;
+    actor_config.wake_user = state;
+    state->drive = config->drive;
+    state->drive_user = config->drive_user;
     status = cflow_io_actor_init(&state->actor, &actor_config);
     if (status != TURBO_OK) {
         if (status != TURBO_ENOMEM)
@@ -579,6 +639,7 @@ int cflow_io_source_owner_run_ready(
     size_t *progressed) {
     cflow_io_source_state *state;
     size_t count = 0u;
+    uint64_t observed_generation;
     int status = TURBO_OK;
 
     if (progressed != NULL)
@@ -593,66 +654,98 @@ int cflow_io_source_owner_run_ready(
         return TURBO_EBUSY;
     }
     state->driver_active = true;
+    state->drive_pending = false;
+    observed_generation = state->drive_generation;
     turbo_mutex_unlock(&state->gate);
 
-    while (count < max_steps) {
-        cflow_io_request_id delivered_request_id = 0u;
-        cflow_io_run_result actor_result;
+    for (;;) {
+        while (count < max_steps) {
+            cflow_io_request_id delivered_request_id = 0u;
+            cflow_io_run_result actor_result;
 
-        turbo_mutex_lock(&state->gate);
-        if (state->completion_delivered &&
-            state->request_id != 0u)
-            delivered_request_id = state->request_id;
-        turbo_mutex_unlock(&state->gate);
-        if (delivered_request_id != 0u) {
-            const cflow_io_ack_status ack_status =
-                cflow_io_actor_acknowledge(
-                    &state->actor, delivered_request_id);
+            turbo_mutex_lock(&state->gate);
+            if (state->completion_delivered &&
+                state->request_id != 0u)
+                delivered_request_id = state->request_id;
+            turbo_mutex_unlock(&state->gate);
+            if (delivered_request_id != 0u) {
+                const cflow_io_ack_status ack_status =
+                    cflow_io_actor_acknowledge(
+                        &state->actor, delivered_request_id);
 
-            if (ack_status == CFLOW_IO_ACK_RELEASED) {
-                cflow_waker waker = {0};
+                if (ack_status == CFLOW_IO_ACK_RELEASED) {
+                    cflow_waker waker = {0};
 
-                turbo_mutex_lock(&state->gate);
-                if (state->request_id == delivered_request_id &&
-                    state->completion_delivered) {
-                    state->request_id = 0u;
-                    state->completion_delivered = false;
-                    state->acknowledged = true;
-                    waker = io_source_take_waker_locked(state);
+                    turbo_mutex_lock(&state->gate);
+                    if (state->request_id == delivered_request_id &&
+                        state->completion_delivered) {
+                        state->request_id = 0u;
+                        state->completion_delivered = false;
+                        state->acknowledged = true;
+                        waker = io_source_take_waker_locked(state);
+                    }
+                    turbo_mutex_unlock(&state->gate);
+                    ++count;
+                    io_source_wake(state, waker);
+                    continue;
                 }
-                turbo_mutex_unlock(&state->gate);
+                status = ack_status == CFLOW_IO_ACK_BUSY
+                    ? TURBO_EBUSY : TURBO_EPROTO;
+                break;
+            }
+
+            actor_result = cflow_io_actor_run_one(&state->actor);
+            if (actor_result.status == CFLOW_IO_RUN_PROGRESSED) {
                 ++count;
-                io_source_wake(state, waker);
                 continue;
             }
-            status = ack_status == CFLOW_IO_ACK_BUSY
-                ? TURBO_EBUSY : TURBO_EPROTO;
+            if (actor_result.status == CFLOW_IO_RUN_BUSY) {
+                status = TURBO_EBUSY;
+                break;
+            }
+            if (actor_result.status == CFLOW_IO_RUN_INVALID_ARGUMENT) {
+                status = TURBO_EINVAL;
+                break;
+            }
+            if (cflow_executor_run_one(&state->executor)) {
+                ++count;
+                continue;
+            }
             break;
         }
 
-        actor_result = cflow_io_actor_run_one(&state->actor);
-        if (actor_result.status == CFLOW_IO_RUN_PROGRESSED) {
-            ++count;
-            continue;
-        }
-        if (actor_result.status == CFLOW_IO_RUN_BUSY) {
-            status = TURBO_EBUSY;
-            break;
-        }
-        if (actor_result.status == CFLOW_IO_RUN_INVALID_ARGUMENT) {
-            status = TURBO_EINVAL;
-            break;
-        }
-        if (cflow_executor_run_one(&state->executor)) {
-            ++count;
-            continue;
+        {
+            cflow_io_wake_fn drive = NULL;
+            void *drive_user = NULL;
+            bool continue_draining = false;
+            bool pending_drive;
+
+            /* This gate orders the final pending-edge observation against
+               driver release; callbacks remain outside the critical section. */
+            turbo_mutex_lock(&state->gate);
+            pending_drive = state->drive_pending ||
+                state->drive_generation != observed_generation;
+            if (pending_drive && status == TURBO_OK &&
+                count < max_steps) {
+                state->drive_pending = false;
+                observed_generation = state->drive_generation;
+                continue_draining = true;
+            } else {
+                state->driver_active = false;
+                if (pending_drive) {
+                    state->drive_pending = false;
+                    (void)io_source_retain_drive_locked(
+                        state, &drive, &drive_user);
+                }
+            }
+            turbo_mutex_unlock(&state->gate);
+            if (continue_draining)
+                continue;
+            io_source_invoke_drive(state, drive, drive_user);
         }
         break;
     }
 
-    turbo_mutex_lock(&state->gate);
-    state->driver_active = false;
-    turbo_mutex_unlock(&state->gate);
     *progressed = count;
     return status;
 }
@@ -667,7 +760,7 @@ bool cflow_io_source_owner_is_quiescent(
     state = (cflow_io_source_state *)owner->impl;
     turbo_mutex_lock(&state->gate);
     adapter_quiescent = !state->driver_active &&
-        state->wake_inflight == 0u;
+        state->wake_inflight == 0u && state->drive_inflight == 0u;
     turbo_mutex_unlock(&state->gate);
     return adapter_quiescent &&
         cflow_io_actor_is_quiescent(&state->actor);
@@ -708,7 +801,7 @@ int cflow_io_source_owner_close(cflow_io_source_owner *owner) {
     state = (cflow_io_source_state *)owner->impl;
     turbo_mutex_lock(&state->gate);
     if (!state->owner_live || state->source_live || state->driver_active ||
-        state->wake_inflight != 0u) {
+        state->wake_inflight != 0u || state->drive_inflight != 0u) {
         turbo_mutex_unlock(&state->gate);
         return TURBO_EBUSY;
     }

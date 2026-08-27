@@ -48,8 +48,12 @@ typedef struct io_source_fixture {
     bool prepare_empty_operation;
     bool complete_during_submit;
     bool drive_owner_inline;
+    bool close_owner_after_successful_drive;
+    bool drive_close_owner_preserved;
     bool capture_stats_on_drive;
     bool drive_stats_captured;
+    size_t drive_close_calls;
+    int drive_close_status;
 } io_source_fixture;
 
 typedef struct io_source_inline_scheduler {
@@ -98,6 +102,18 @@ typedef struct io_source_drive_context {
     size_t progressed;
     int status;
 } io_source_drive_context;
+
+typedef struct io_source_owner_state_prefix {
+    cflow_io_actor actor;
+    cflow_executor executor;
+} io_source_owner_state_prefix;
+
+typedef struct io_source_tail_barrier {
+    turbo_mutex_t lock;
+    turbo_cond_t changed;
+    bool entered;
+    bool released;
+} io_source_tail_barrier;
 
 typedef struct io_source_reentrant_cancel_probe {
     cflow_source *source;
@@ -262,6 +278,52 @@ static void io_source_drive_thread(void *user) {
 
     context->status = cflow_io_source_owner_run_ready(
         context->owner, context->max_steps, &context->progressed);
+}
+
+static void io_source_tail_barrier_task(void *user) {
+    io_source_tail_barrier *barrier =
+        (io_source_tail_barrier *)user;
+
+    turbo_mutex_lock(&barrier->lock);
+    barrier->entered = true;
+    turbo_cond_broadcast(&barrier->changed);
+    while (!barrier->released)
+        turbo_cond_wait(&barrier->changed, &barrier->lock);
+    turbo_mutex_unlock(&barrier->lock);
+}
+
+static bool io_source_tail_barrier_wait(
+    io_source_tail_barrier *barrier) {
+    size_t waits = 0u;
+    bool entered;
+
+    turbo_mutex_lock(&barrier->lock);
+    while (!barrier->entered && waits++ < IO_SOURCE_WAIT_LIMIT)
+        (void)turbo_cond_timedwait(
+            &barrier->changed, &barrier->lock,
+            IO_SOURCE_WAIT_SLICE_NS);
+    entered = barrier->entered;
+    turbo_mutex_unlock(&barrier->lock);
+    return entered;
+}
+
+static void io_source_tail_barrier_release(
+    io_source_tail_barrier *barrier) {
+    turbo_mutex_lock(&barrier->lock);
+    barrier->released = true;
+    turbo_cond_broadcast(&barrier->changed);
+    turbo_mutex_unlock(&barrier->lock);
+}
+
+static cflow_executor *io_source_owner_executor(
+    cflow_io_source_owner *owner) {
+    if (owner == NULL || owner->impl == NULL)
+        return NULL;
+    /* The private prefix gives this concurrency test a deterministic task
+       between the Actor idle result and adapter-driver release. */
+    return (cflow_executor *)(void *)(
+        (unsigned char *)owner->impl +
+        offsetof(io_source_owner_state_prefix, executor));
 }
 
 static void io_source_reentrant_cancel(void *user) {
@@ -445,6 +507,14 @@ static void io_source_drive(void *user) {
             fixture->drive_run_busy_progressed += progressed;
         } else if (status != TURBO_OK) {
             fixture->drive_run_error = status;
+        }
+        if (status == TURBO_OK &&
+            fixture->close_owner_after_successful_drive) {
+            ++fixture->drive_close_calls;
+            fixture->drive_close_status =
+                cflow_io_source_owner_close(fixture->drive_owner);
+            fixture->drive_close_owner_preserved =
+                fixture->drive_owner->impl != NULL;
         }
     }
     if (fixture->capture_stats_on_drive &&
@@ -791,6 +861,177 @@ spec("CFlow reactive IO source") {
 
         io_source_run_fixture_close(&run_fixture);
         check_equal(fixture.release_calls, (size_t)1u);
+    }
+
+    it("preserves completion across the adapter driver tail window") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE_AND_DONE,
+            .encoded_value = 61,
+            .prepare_valid_operation = true
+        };
+        io_source_run_fixture run_fixture;
+        io_source_tail_barrier barrier = {0};
+        io_source_drive_context drive_context = {
+            &run_fixture.owner, 1u, 0u, TURBO_EINVAL
+        };
+        const cflow_io_completion completed = {
+            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+        cflow_executor *executor;
+        turbo_thread_t driver = NULL;
+        size_t progressed = 0u;
+        bool entered;
+
+        turbo_mutex_init(&barrier.lock);
+        turbo_cond_init(&barrier.changed);
+        check_not_null(barrier.lock);
+        check_not_null(barrier.changed);
+        check_true(io_source_run_fixture_init_with_scheduler(
+            &run_fixture, &fixture, true));
+        fixture.drive_owner = &run_fixture.owner;
+        check_true(cflow_run_open(
+            &run_fixture.run, &run_fixture.normalized,
+            &run_fixture.source, &run_fixture.scheduler,
+            &run_fixture.sink));
+        check_true(cflow_run_request(&run_fixture.run, 1u));
+
+        check_equal(cflow_io_source_owner_run_ready(
+                        &run_fixture.owner, 2u, &progressed), TURBO_OK);
+        check_equal(progressed, (size_t)2u);
+        check_equal(fixture.backend_submit_calls, (size_t)1u);
+        check_equal(fixture.backend_active, (size_t)1u);
+
+        executor = io_source_owner_executor(&run_fixture.owner);
+        check_not_null(executor);
+        check_equal(cflow_executor_try_post(
+                        executor, io_source_tail_barrier_task,
+                        &barrier), CFLOW_ADMISSION_ACCEPTED);
+        fixture.drive_owner_inline = true;
+        check_equal(turbo_thread_create(
+                        &driver, io_source_drive_thread,
+                        &drive_context), TURBO_OK);
+        entered = io_source_tail_barrier_wait(&barrier);
+        check_true(entered);
+        if (entered) {
+            check_equal(io_source_complete_backend(
+                            &fixture, &completed),
+                        CFLOW_IO_COMPLETE_ACCEPTED);
+            check_true(fixture.drive_run_busy >= (size_t)1u);
+            check_equal(fixture.drive_run_busy_progressed,
+                        (size_t)0u);
+        }
+        io_source_tail_barrier_release(&barrier);
+        check_equal(turbo_thread_join(&driver), TURBO_OK);
+        turbo_thread_destroy(&driver);
+
+        check_equal(drive_context.status, TURBO_OK);
+        check_equal(drive_context.progressed, (size_t)1u);
+        check_equal(run_fixture.sink_probe.values, (size_t)1u);
+        check_equal(run_fixture.sink_probe.received[0], 61);
+        check_equal(run_fixture.sink_probe.done, (size_t)1u);
+        check_true(cflow_run_is_done(&run_fixture.run));
+        check_equal(fixture.encode_calls, (size_t)1u);
+        check_equal(fixture.release_calls, (size_t)1u);
+        check_true(fixture.drive_run_progressed > (size_t)0u);
+
+        cflow_run_close(&run_fixture.run);
+        check_true(cflow_io_source_owner_is_quiescent(
+            &run_fixture.owner));
+        if (!cflow_io_source_owner_is_quiescent(&run_fixture.owner))
+            (void)cflow_io_source_owner_run_ready(
+                &run_fixture.owner, 32u, &progressed);
+        check_equal(cflow_io_source_owner_close(
+                        &run_fixture.owner), TURBO_OK);
+        cflow_scheduler_destroy(&run_fixture.scheduler);
+        cflow_graph_destroy(&run_fixture.normalized);
+        cflow_graph_destroy(&run_fixture.surface);
+        turbo_cond_destroy(&barrier.changed);
+        turbo_mutex_destroy(&barrier.lock);
+    }
+
+    it("drains cancellation across the adapter driver tail window") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE,
+            .encoded_value = 67,
+            .prepare_valid_operation = true
+        };
+        io_source_run_fixture run_fixture;
+        io_source_tail_barrier barrier = {0};
+        io_source_drive_context drive_context = {
+            &run_fixture.owner, 1u, 0u, TURBO_EINVAL
+        };
+        const cflow_io_completion cancelled = {
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+        cflow_executor *executor;
+        turbo_thread_t driver = NULL;
+        size_t progressed = 0u;
+        bool entered;
+
+        turbo_mutex_init(&barrier.lock);
+        turbo_cond_init(&barrier.changed);
+        check_not_null(barrier.lock);
+        check_not_null(barrier.changed);
+        check_true(io_source_run_fixture_init_with_scheduler(
+            &run_fixture, &fixture, true));
+        fixture.drive_owner = &run_fixture.owner;
+        check_true(cflow_run_open(
+            &run_fixture.run, &run_fixture.normalized,
+            &run_fixture.source, &run_fixture.scheduler,
+            &run_fixture.sink));
+        check_true(cflow_run_request(&run_fixture.run, 1u));
+        check_equal(cflow_io_source_owner_run_ready(
+                        &run_fixture.owner, 2u, &progressed), TURBO_OK);
+        check_equal(progressed, (size_t)2u);
+        check_equal(fixture.backend_submit_calls, (size_t)1u);
+
+        executor = io_source_owner_executor(&run_fixture.owner);
+        check_not_null(executor);
+        check_equal(cflow_executor_try_post(
+                        executor, io_source_tail_barrier_task,
+                        &barrier), CFLOW_ADMISSION_ACCEPTED);
+        fixture.drive_owner_inline = true;
+        fixture.close_owner_after_successful_drive = true;
+        fixture.drive_close_status = TURBO_EINVAL;
+        check_equal(turbo_thread_create(
+                        &driver, io_source_drive_thread,
+                        &drive_context), TURBO_OK);
+        entered = io_source_tail_barrier_wait(&barrier);
+        check_true(entered);
+        if (entered) {
+            cflow_run_close(&run_fixture.run);
+            check_equal(io_source_complete_backend(
+                            &fixture, &cancelled),
+                        CFLOW_IO_COMPLETE_ACCEPTED);
+            check_true(fixture.drive_run_busy >= (size_t)1u);
+            check_equal(fixture.drive_run_busy_progressed,
+                        (size_t)0u);
+        }
+        io_source_tail_barrier_release(&barrier);
+        check_equal(turbo_thread_join(&driver), TURBO_OK);
+        turbo_thread_destroy(&driver);
+
+        check_equal(drive_context.status, TURBO_OK);
+        check_equal(drive_context.progressed, (size_t)1u);
+        check_equal(run_fixture.sink_probe.values, (size_t)0u);
+        check_equal(fixture.encode_calls, (size_t)0u);
+        check_equal(fixture.release_calls, (size_t)1u);
+        check_true(fixture.drive_run_progressed > (size_t)0u);
+        check_equal(fixture.drive_close_calls, (size_t)1u);
+        check_equal(fixture.drive_close_status, TURBO_EBUSY);
+        check_true(fixture.drive_close_owner_preserved);
+        check_true(cflow_io_source_owner_is_quiescent(
+            &run_fixture.owner));
+        if (!cflow_io_source_owner_is_quiescent(&run_fixture.owner))
+            (void)cflow_io_source_owner_run_ready(
+                &run_fixture.owner, 32u, &progressed);
+        check_equal(cflow_io_source_owner_close(
+                        &run_fixture.owner), TURBO_OK);
+        cflow_scheduler_destroy(&run_fixture.scheduler);
+        cflow_graph_destroy(&run_fixture.normalized);
+        cflow_graph_destroy(&run_fixture.surface);
+        turbo_cond_destroy(&barrier.changed);
+        turbo_mutex_destroy(&barrier.lock);
     }
 
     it("serializes two demanded values through ACK under inline scheduling") {
