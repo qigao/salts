@@ -3,6 +3,7 @@
 
 #include <cflow/clock.h>
 #include <cflow/executor.h>
+#include <cflow/runtime.h>
 #include <cflow/statechart.h>
 #include <cflow/timer_event.h>
 
@@ -100,6 +101,14 @@ typedef enum cflow_statechart_snapshot_status {
     CFLOW_STATECHART_SNAPSHOT_INVALID_ARGUMENT,
     CFLOW_STATECHART_SNAPSHOT_TOO_SMALL
 } cflow_statechart_snapshot_status;
+
+/** Exact terminal projection for integrations that do not consume values. */
+typedef enum cflow_statechart_terminal_status {
+    CFLOW_STATECHART_TERMINAL_OPEN = 0,
+    CFLOW_STATECHART_TERMINAL_DONE,
+    CFLOW_STATECHART_TERMINAL_ERROR,
+    CFLOW_STATECHART_TERMINAL_INVALID_ARGUMENT
+} cflow_statechart_terminal_status;
 
 typedef enum cflow_statechart_configuration_status {
     CFLOW_STATECHART_CONFIGURATION_OK = 0,
@@ -246,6 +255,26 @@ cflow_timer_event_status cflow_statechart_instance_cancel_timer(
  * retried. Delivery enters the normal run-to-completion path.
  */
 cflow_timer_event_fire_result cflow_statechart_instance_run_one_ready_timer(
+    cflow_statechart_instance *instance);
+
+/**
+ * Poll the terminal state without constructing a stream value.
+ *
+ * `out_error` is optional and cleared on every call. ERROR returns the
+ * instance-owned first diagnostic, borrowed until instance destroy.
+ */
+cflow_statechart_terminal_status cflow_statechart_instance_poll_terminal(
+    const cflow_statechart_instance *instance, const char **out_error);
+
+/**
+ * Return a borrowed single-waiter terminal projection.
+ *
+ * One waiter may be armed while the instance is open. A terminal instance
+ * invokes a newly armed waiter inline. Cancel removes a waiter that has not
+ * already been detached by the terminal winner. The waitable and concurrent
+ * instance operations must be quiescent before instance destroy.
+ */
+cflow_waitable cflow_statechart_instance_terminal_waitable(
     cflow_statechart_instance *instance);
 
 /**

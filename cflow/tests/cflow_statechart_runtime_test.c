@@ -89,6 +89,16 @@ typedef struct runtime_shared_executor_probe {
     atomic_int destroy_status;
 } runtime_shared_executor_probe;
 
+typedef struct statechart_terminal_probe {
+    atomic_int wakes;
+} statechart_terminal_probe;
+
+static void statechart_terminal_wake(void *user) {
+    statechart_terminal_probe *probe =
+        (statechart_terminal_probe *)user;
+    if (probe != NULL) atomic_fetch_add(&probe->wakes, 1);
+}
+
 enum { RUNTIME_SHARED_WAIT_ATTEMPTS = 1000 };
 
 static bool runtime_wait_flag(atomic_bool *flag) {
@@ -3564,6 +3574,82 @@ static void check_control_wins_before_external_receive(bool cancel) {
 }
 
 suite("CFlow Statechart public run-to-completion runtime") {
+    it("projects open cancellation and exactly one close terminal wake") {
+        rtc_fixture fixture;
+        statechart_terminal_probe first;
+        statechart_terminal_probe second;
+        cflow_waitable waitable;
+        const char *error = "untouched";
+
+        atomic_init(&first.wakes, 0);
+        atomic_init(&second.wakes, 0);
+        check_equal(cflow_statechart_instance_poll_terminal(NULL, &error),
+                    CFLOW_STATECHART_TERMINAL_INVALID_ARGUMENT);
+        check_null(error);
+
+        rtc_definition(&fixture, true, false);
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_poll_terminal(
+                        &fixture.instance, &error),
+                    CFLOW_STATECHART_TERMINAL_OPEN);
+        check_null(error);
+
+        waitable = cflow_statechart_instance_terminal_waitable(
+            &fixture.instance);
+        check_true(cflow_waitable_valid(&waitable));
+        check_true(cflow_waitable_arm(
+            &waitable, (cflow_waker){statechart_terminal_wake, &first}));
+        check_false(cflow_waitable_arm(
+            &waitable, (cflow_waker){statechart_terminal_wake, &second}));
+        cflow_waitable_cancel(&waitable);
+        check_true(cflow_waitable_arm(
+            &waitable, (cflow_waker){statechart_terminal_wake, &second}));
+
+        cflow_statechart_instance_close(&fixture.instance);
+        check_equal(atomic_load(&first.wakes), 0);
+        check_equal(atomic_load(&second.wakes), 1);
+        check_equal(cflow_statechart_instance_poll_terminal(
+                        &fixture.instance, &error),
+                    CFLOW_STATECHART_TERMINAL_DONE);
+        check_null(error);
+
+        check_true(cflow_waitable_arm(
+            &waitable, (cflow_waker){statechart_terminal_wake, &second}));
+        check_equal(atomic_load(&second.wakes), 2);
+        rtc_destroy(&fixture);
+    }
+
+    it("projects the first runtime error through one terminal wake") {
+        rtc_fixture fixture;
+        statechart_terminal_probe probe;
+        cflow_waitable waitable;
+        const int payload = 1;
+        const cflow_event_view go = {
+            RTC_GO, &cmeta_type_int, &payload};
+        const char *error = NULL;
+
+        atomic_init(&probe.wakes, 0);
+        rtc_definition(&fixture, true, false);
+        fixture.fail_action = true;
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        waitable = cflow_statechart_instance_terminal_waitable(
+            &fixture.instance);
+        check_true(cflow_waitable_arm(
+            &waitable, (cflow_waker){statechart_terminal_wake, &probe}));
+
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(atomic_load(&probe.wakes), 1);
+        check_equal(cflow_statechart_instance_poll_terminal(
+                        &fixture.instance, &error),
+                    CFLOW_STATECHART_TERMINAL_ERROR);
+        check_equal(error, "deliberate RTC action failure");
+        rtc_destroy(&fixture);
+    }
+
     it("saturates the public accounting identity without intermediate wrap") {
         check_equal(cflow_statechart_external_identity_sum_internal(
                         UINT64_MAX - UINT64_C(2), UINT64_C(1),
@@ -3736,7 +3822,11 @@ suite("CFlow Statechart public run-to-completion runtime") {
         cflow_executor executor = {0};
         cflow_statechart_instance instance = {0};
         cflow_statechart_instance_stats stats = {0};
+        statechart_terminal_probe probe;
+        cflow_waitable waitable;
+        const char *terminal_error = NULL;
         cflow_statechart_instance_config config;
+        atomic_init(&probe.wakes, 0);
         check_equal(cflow_statechart_build(&statechart, &definition),
                     CFLOW_STATECHART_OK);
         check_true(cflow_executor_serial_init(&executor));
@@ -3754,6 +3844,14 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_true(stats.done);
         check_false(stats.errored);
         check_equal(stats.completion_pending, (size_t)0u);
+        check_equal(cflow_statechart_instance_poll_terminal(
+                        &instance, &terminal_error),
+                    CFLOW_STATECHART_TERMINAL_DONE);
+        check_null(terminal_error);
+        waitable = cflow_statechart_instance_terminal_waitable(&instance);
+        check_true(cflow_waitable_arm(
+            &waitable, (cflow_waker){statechart_terminal_wake, &probe}));
+        check_equal(atomic_load(&probe.wakes), 1);
         check_equal(cflow_statechart_instance_destroy(&instance),
                     CFLOW_STATECHART_RUNTIME_OK);
         cflow_executor_destroy(&executor);

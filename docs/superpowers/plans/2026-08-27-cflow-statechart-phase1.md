@@ -226,7 +226,10 @@
 
 **Interfaces:**
 - Consumes: existing bounded typed Mailbox for external MPSC admission, one instance-owned internal FIFO, SerialExecutor scheduling, eventless triggers, and completion triggers.
-- Produces: `try_send`, bounded internal raise, macrostep scheduling, close/cancel, Source/Resumable terminal projection, and complete accounting.
+- Produces: `try_send`, bounded internal raise, macrostep scheduling,
+  close/cancel, terminal state/error facts, and complete accounting. The
+  terminal Waitable projection was added later under issue #125; Phase 1 did
+  not define typed Source/Resumable output semantics.
 
 - [x] **Step 1: Add failing run-to-completion tests**
 
@@ -251,12 +254,13 @@
   until quiescent. Schedule every quantum through the non-manual SerialExecutor;
   never execute inline.
 
-- [x] **Step 4: Implement Source/Resumable and shutdown protocol**
+- [x] **Step 4: Implement terminal state and shutdown protocol**
 
-  Expose WAIT/DONE/ERROR and optional action VALUE observations through the
-  existing adapter pattern. Stop admission first, linearize commit versus
-  cancel under the instance mutex, cancel queued Events/timers, detach waits,
-  and wait for executor idle before storage destruction.
+  Publish exact DONE/ERROR runtime facts without inventing action VALUE
+  observations. Stop admission first, linearize commit versus cancel under the
+  instance mutex, cancel queued Events/timers, and wait for executor idle before
+  storage destruction. Issue #125 later exposed those facts as a borrowed
+  single-waiter terminal projection.
 
 - [x] **Step 5: Extend Lean macrostep trace refinement**
 
@@ -266,8 +270,8 @@
 
 - [x] **Step 6: Verify GREEN**
 
-  Run Statechart, Mailbox, executor, runtime, Source/Run, and aggregate Lean
-  tests.
+  Run Statechart, Mailbox, executor, runtime, adjacent Source/Run, and aggregate
+  Lean tests.
 
 ## Task 6: Extend scoped timers to active configurations
 
