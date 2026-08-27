@@ -386,6 +386,13 @@ Windows Release and ASan run locally; Linux GCC/ASan runs remotely through
 `root@eu`. A merge can be rolled back by removing the additive Statechart
 module because existing APIs are not redirected.
 
+The Phase 1 implementation was verified on 2026-08-27. Windows Release passed
+149/149 full tests and its installed-package consumers; Windows ASan passed the
+eight focused binaries. Remote Linux GCC Release passed 154/154 full tests and
+Linux ASan passed the same eight focused targets. Lean passed the focused proof,
+the aggregate Phase A import, and all 81 `lake test` build targets without
+`sorry` or `admit`.
+
 ## Compatibility risks
 
 - **HIGH:** prematurely redirecting hierarchy execution would change callback

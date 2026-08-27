@@ -12,13 +12,13 @@
 
 ## Global Constraints
 
-- [ ] Existing Machine, hierarchy, Actor, Graph, Run, Source, executor, Mailbox, and timer public behavior remains unchanged.
-- [ ] Statechart semantic state has one mutable owner: work executing on the borrowed non-manual SerialExecutor.
-- [ ] Build/init and each microstep are transactional; failure never publishes partial configuration, history, or extended state.
-- [ ] External/internal queues, configuration, history, selected-transition scratch, timers, and per-macrostep work have explicit hard bounds.
-- [ ] No XML, data-model interpreter, external communication, durable workflow, inline execution fallback, implicit worker, or unbounded allocation is introduced.
-- [ ] New C behavior follows a witnessed RED/GREEN TinyTest cycle; new Lean behavior follows a witnessed failing/passing focused file.
-- [ ] Public objects remain opaque and all borrowed/owned lifetimes, errors, shutdown rules, and snapshot invalidation are documented.
+- [x] Existing Machine, hierarchy, Actor, Graph, Run, Source, executor, Mailbox, and timer public behavior remains unchanged.
+- [x] Statechart semantic state has one mutable owner: work executing on the borrowed non-manual SerialExecutor.
+- [x] Build/init and each microstep are transactional; failure never publishes partial configuration, history, or extended state.
+- [x] External/internal queues, configuration, history, selected-transition scratch, timers, and per-macrostep work have explicit hard bounds.
+- [x] No XML, data-model interpreter, external communication, durable workflow, inline execution fallback, implicit worker, or unbounded allocation is introduced.
+- [x] New C behavior follows a witnessed RED/GREEN TinyTest cycle; new Lean behavior follows a witnessed failing/passing focused file.
+- [x] Public objects remain opaque and all borrowed/owned lifetimes, errors, shutdown rules, and snapshot invalidation are documented.
 
 ## Task 1: Define and validate the immutable native Statechart IR
 
@@ -87,7 +87,7 @@
 - Consumes: immutable normalized Statechart, CMeta trivial state traits, borrowed SerialExecutor, and exact guard/executable bindings.
 - Produces: transactional instance init, active-configuration snapshot, exclusive-fragment current-state projection, copied extended-state query, stats, first error, and destroy.
 
-- [ ] **Step 1: Add failing initial-configuration and snapshot tests**
+- [x] **Step 1: Add failing initial-configuration and snapshot tests**
 
   Assert literal document-ordered configurations for nested compound entry and
   two parallel regions. Assert pseudo-nodes are absent, every ancestor is
@@ -95,11 +95,11 @@
   returns one leaf while parallel returns zero. Assert insufficient snapshot
   capacity reports the exact required count and leaves the output untouched.
 
-- [ ] **Step 2: Build and witness RED**
+- [x] **Step 2: Build and witness RED**
 
   Expected failure: Statechart instance and configuration query APIs are absent.
 
-- [ ] **Step 3: Implement bounded double-buffer configuration storage**
+- [x] **Step 3: Implement bounded double-buffer configuration storage**
 
   At init allocate two bitsets, two state lists, two history tables, two
   extended-state buffers, and fixed work arrays sized from validated IR counts.
@@ -108,13 +108,13 @@
   invariants, then publish once. Do not recurse or allocate in entry
   computation.
 
-- [ ] **Step 4: Implement transactional queries and lifecycle shell**
+- [x] **Step 4: Implement transactional queries and lifecycle shell**
 
   Copy configuration/version and extended state under the instance mutex.
   Normalize exact executable bindings but do not execute them yet. Init failure
   clears all allocations; destroy requires executor/caller quiescence.
 
-- [ ] **Step 5: Verify GREEN**
+- [x] **Step 5: Verify GREEN**
 
   Run the focused runtime test and mutation-check wrong-child, missing-ancestor,
   duplicate-state, partial-copy, and parallel-current-state branches.
@@ -135,7 +135,7 @@
 - Consumes: active leaf list, normalized ancestry/transition spans, exact guard bindings, and trigger value.
 - Produces: ordered immutable selected-transition IDs and exit-set bitsets.
 
-- [ ] **Step 1: Add failing C selection traces**
+- [x] **Step 1: Add failing C selection traces**
 
   Use two parallel regions to assert: one compatible transition per region;
   child transition preempts ancestor transition; two exit-set-conflicting
@@ -143,26 +143,26 @@
   targetless transitions coexist; guards observe the same published state;
   and repeated runs yield the same literal selected-ID sequence.
 
-- [ ] **Step 2: Add failing Lean selection witnesses**
+- [x] **Step 2: Add failing Lean selection witnesses**
 
   Define literal candidates/exit sets and expected conflict-filter results.
   Import the absent Statechart module and run the focused Lean file to witness
   failure.
 
-- [ ] **Step 3: Implement candidate enumeration and filtering**
+- [x] **Step 3: Implement candidate enumeration and filtering**
 
   Visit active leaves in document order, walk each ancestry chain, evaluate
   first enabled rows in priority/order, deduplicate transition IDs, compute
   preallocated exit bitsets from transition domains, and apply the specified
   intersection/preemption algorithm without state mutation.
 
-- [ ] **Step 4: Prove deterministic conflict-free selection**
+- [x] **Step 4: Prove deterministic conflict-free selection**
 
   Model ordered candidates and exit sets. Prove the filter result is
   conflict-free, descendant preemption is respected, and evaluation is a
   function yielding one deterministic list.
 
-- [ ] **Step 5: Verify C and Lean GREEN**
+- [x] **Step 5: Verify C and Lean GREEN**
 
   Run the focused TinyTest executable, focused Lean file, and aggregate Phase A
   Lean tests.
@@ -181,7 +181,7 @@
 - Consumes: selected transition set, staged configuration/history/state, ordered executable bindings, and optional trigger Event.
 - Produces: one committed configuration/version/state or one first terminal error with no semantic publication.
 
-- [ ] **Step 1: Add failing exact action-order tests**
+- [x] **Step 1: Add failing exact action-order tests**
 
   Capture literal action traces for cross-region transition sets: all exits in
   descendant-first/reverse-document order, then transition actions in selection
@@ -189,13 +189,13 @@
   external descendant transitions and targetless actions. Assert sequential
   staged state updates.
 
-- [ ] **Step 2: Add failing atomicity/error tests**
+- [x] **Step 2: Add failing atomicity/error tests**
 
   Fail one exit, transition, and entry action separately. Assert the published
   configuration/version/state remain unchanged, later actions do not run, the
   first error is stable, and accepted work settles failed once.
 
-- [ ] **Step 3: Implement exit/history/action/entry staging**
+- [x] **Step 3: Implement exit/history/action/entry staging**
 
   Copy published buffers to staged buffers; save shallow/deep history before
   exit actions; compute union exit/entry sets; invoke ordered actions unlocked
@@ -204,13 +204,13 @@
   atomically swap staged/published buffers plus append staged Events after all
   phases succeed.
 
-- [ ] **Step 4: Extend Lean legality and ordering proofs**
+- [x] **Step 4: Extend Lean legality and ordering proofs**
 
   Prove exit/entry order predicates, legal-configuration preservation for the
   modeled microstep constructor, and shallow/deep history restoration
   predicates. The C callback and allocation boundary remains explicit.
 
-- [ ] **Step 5: Verify GREEN and existing runtime regressions**
+- [x] **Step 5: Verify GREEN and existing runtime regressions**
 
   Run Statechart runtime, Machine runtime, hierarchy, Actor, and executor tests.
 
@@ -228,7 +228,7 @@
 - Consumes: existing bounded typed Mailbox for external MPSC admission, one instance-owned internal FIFO, SerialExecutor scheduling, eventless triggers, and completion triggers.
 - Produces: `try_send`, bounded internal raise, macrostep scheduling, close/cancel, Source/Resumable terminal projection, and complete accounting.
 
-- [ ] **Step 1: Add failing run-to-completion tests**
+- [x] **Step 1: Add failing run-to-completion tests**
 
   Assert initialization stabilizes eventless transitions; one external Event
   runs all following eventless/internal/completion microsteps before the next
@@ -236,14 +236,14 @@
   a final root terminates; unhandled Events are discarded rather than treated
   as runtime errors; and macrostep traces are deterministic.
 
-- [ ] **Step 2: Add failing capacity/cycle/lifecycle tests**
+- [x] **Step 2: Add failing capacity/cycle/lifecycle tests**
 
   Cover external FULL/CLOSED/type mismatch, internal FULL, completion overflow,
   zero/invalid capacities, eventless cycle exceeding `microstep_limit`, executor
   FULL/CLOSED, close during action, cancel before/after commit, concurrent
   producers, and terminal accounting identity.
 
-- [ ] **Step 3: Implement dual-queue scheduling**
+- [x] **Step 3: Implement dual-queue scheduling**
 
   Reuse `cflow_mailbox` for external copied Events. Implement a fixed internal
   FIFO over preallocated typed slots plus completion-trigger rows. After one
@@ -251,20 +251,20 @@
   until quiescent. Schedule every quantum through the non-manual SerialExecutor;
   never execute inline.
 
-- [ ] **Step 4: Implement Source/Resumable and shutdown protocol**
+- [x] **Step 4: Implement Source/Resumable and shutdown protocol**
 
   Expose WAIT/DONE/ERROR and optional action VALUE observations through the
   existing adapter pattern. Stop admission first, linearize commit versus
   cancel under the instance mutex, cancel queued Events/timers, detach waits,
   and wait for executor idle before storage destruction.
 
-- [ ] **Step 5: Extend Lean macrostep trace refinement**
+- [x] **Step 5: Extend Lean macrostep trace refinement**
 
   Model eventless-before-internal-before-external ordering and finite bounded
   macrosteps. Prove trace concatenation and add a C conformance-row projection
   theorem analogous to existing Machine runtime refinement.
 
-- [ ] **Step 6: Verify GREEN**
+- [x] **Step 6: Verify GREEN**
 
   Run Statechart, Mailbox, executor, runtime, Source/Run, and aggregate Lean
   tests.
@@ -283,21 +283,21 @@
 - Consumes: published configuration bitset, Clock, fixed Timer Event queue, committed union exit set, and external Event admission.
 - Produces: scoped schedule/cancel/fire APIs and per-commit batch scope cancellation.
 
-- [ ] **Step 1: Add failing configuration-scope tests**
+- [x] **Step 1: Add failing configuration-scope tests**
 
   Schedule timers in both parallel regions and their ancestors. Exit one region
   and assert only its exited-state timers cancel; exit the parallel parent and
   assert every descendant scope cancels. Cover inactive scope rejection,
   equal-deadline FIFO, FIRE_WON, external-queue FULL, close, and cancel.
 
-- [ ] **Step 2: Implement bitset scope admission and batch cancellation**
+- [x] **Step 2: Implement bitset scope admission and batch cancellation**
 
   Check scope membership under the Statechart publication gate. On successful
   microstep, pass the exact exited ID set to one Timer queue batch-cancel call
   before configuration publication. Fired timer Events enter the external
   Mailbox and do not bypass the current macrostep.
 
-- [ ] **Step 3: Verify GREEN and hierarchy timer compatibility**
+- [x] **Step 3: Verify GREEN and hierarchy timer compatibility**
 
   Run Statechart runtime, Timer Event, hierarchy, and temporal tests.
 
@@ -317,26 +317,26 @@
 - Consumes: existing immutable hierarchy declaration and existing action/guard semantics in the admitted exclusive subset.
 - Produces: explicit build adapter and differential traces; it does not redirect the old runtime.
 
-- [ ] **Step 1: Add failing differential tests**
+- [x] **Step 1: Add failing differential tests**
 
   Compile literal existing hierarchy fixtures into Statechart declarations and
   assert equal initial leaf, selected transition, LCA exit/entry route, final
   result, first error, and scoped timer cancellation. Reject declarations that
   cannot preserve callback/observation contracts exactly.
 
-- [ ] **Step 2: Implement a thin explicit adapter**
+- [x] **Step 2: Implement a thin explicit adapter**
 
   Map one initial-child chain to initial pseudo-nodes and existing transitions
   to external Event transitions. Keep existing hierarchy and Machine handles
   caller-owned and do not cache a second mutable state.
 
-- [ ] **Step 3: Prove exclusive projection**
+- [x] **Step 3: Prove exclusive projection**
 
   Show that legal Statechart configurations without parallel/history contain
   one active leaf and that candidate/route projection matches the existing
   hierarchy model for the admitted fixture domain.
 
-- [ ] **Step 4: Document the supported native fragment**
+- [x] **Step 4: Document the supported native fragment**
 
   Add one complete C example, declaration rules, queue/limit guidance,
   configuration queries, callback ownership, timer scope, shutdown order,
@@ -349,25 +349,25 @@
 - Modify: `docs/superpowers/plans/2026-08-27-cflow-statechart-phase1.md`
 - Modify: `docs/superpowers/specs/2026-08-27-cflow-statechart-phase1-design.md`
 
-- [ ] **Step 1: Run Windows focused and full verification**
+- [x] **Step 1: Run Windows focused and full verification**
 
   Reconfigure/build `win-release-user`; run all Statechart tests, all CFlow
   tests, and then full CTest. Configure/build `win-dev-user` and repeat focused
   Statechart/Machine/Timer tests under ASan. Run C++/installed header consumers.
 
-- [ ] **Step 2: Run complete Lean verification**
+- [x] **Step 2: Run complete Lean verification**
 
   Run the focused Statechart Lean file, aggregate Phase A tests, and `lake test`.
   Search with `rg.exe` for `sorry`, `admit`, focused TinyTest markers, and
   unowned placeholder comments in changed files.
 
-- [ ] **Step 3: Run remote Linux verification**
+- [x] **Step 3: Run remote Linux verification**
 
   Push the branch, use `root@eu` to fetch it into an isolated remote worktree,
   configure/build/test with `linux-release-user`, and run the focused Linux
   sanitizer profile available on that host. Record exact commands/results.
 
-- [ ] **Step 4: Review impact and diff**
+- [x] **Step 4: Review impact and diff**
 
   Run `codegraph sync .`, `codegraph affected` for public headers and runtime
   sources, `git diff --check`, inspect every changed file, verify `.codegraph`
@@ -380,3 +380,33 @@
   `feat/cflow-statechart-phase1`, create a PR against `master` with `Refs #122`
   until every issue phase remains tracked, include exact local/remote/CI
   evidence, and do not merge until required CI passes.
+
+## Verification evidence (2026-08-27)
+
+- Windows Release: `cmake --preset win-release-user` with the local pkgconf and
+  SIMDE paths, followed by `cmake --build --preset win-release-user`, completed
+  all 513 build steps. Statechart tests passed 3/3, all CFlow tests passed
+  31/31, and full CTest passed 149/149. The incremental
+  `verify_installed_package` target also built and linked all installed C/C++
+  consumers.
+- Windows ASan: `cmake --build --preset win-dev-user --target` for the eight
+  Statechart/Machine/Timer/Temporal/C++ targets followed by direct execution in
+  the Visual Studio developer environment passed 162 tests and 3423 assertions
+  with zero failures.
+- Lean: `lake env lean CMetaCFlowCalculus/Proofs/Statechart.lean`,
+  `lake env lean Test/PhaseATests.lean`, and `lake test` all passed; the full
+  build completed 81/81 targets. The changed Statechart C/Lean files contain no
+  `sorry`, `admit`, `TODO`, `FIXME`, `HACK`, placeholder abort, or focused test.
+- Linux Release on `root@eu`: in isolated worktree
+  `/root/codex-worktrees/turbo-utils-statechart-c8b4f2a`, run
+  `PROJECT_ROOT="$PWD" VCPKG_ROOT=/opt/vcpkg cmake --preset linux-release-user
+  -DENABLE_TESTS=ON`, then `cmake --build --preset linux-release-user -j2`.
+  All 534 build steps passed; focused Statechart tests passed 8/8, all CFlow
+  tests passed 31/31, and full CTest passed 154/154.
+- Linux ASan on `root@eu`: configure with
+  `PROJECT_ROOT="$PWD" VCPKG_ROOT=/opt/vcpkg cmake --preset linux-dev-user
+  -DENABLE_TESTS=ON`, build the same eight focused targets, then run focused
+  CTest. All 8/8 tests passed under AddressSanitizer.
+- Final structural review: `codegraph sync .` succeeded; `codegraph affected`
+  identified the three expected Statechart test files; `git diff --check`
+  passed. Build trees and `.codegraph/` remained absent from the Git diff.
