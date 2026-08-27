@@ -519,7 +519,6 @@ static cflow_statechart_status validate_events(cflow_statechart_impl *impl) {
 }
 
 static cflow_statechart_status validate_guards(cflow_statechart_impl *impl) {
-    const cmeta_properties required = CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS;
     size_t index;
     if (impl->guard_count == 0u) return CFLOW_STATECHART_OK;
     qsort(impl->guards, impl->guard_count, sizeof(*impl->guards),
@@ -533,12 +532,22 @@ static cflow_statechart_status validate_guards(cflow_statechart_impl *impl) {
             return CFLOW_STATECHART_INVALID_TYPE;
         if (!cmeta_type_equal(guard->state_type, impl->state_type))
             return CFLOW_STATECHART_TYPE_MISMATCH;
-        if (!cmeta_effects_valid(guard->effects) ||
-            !cmeta_properties_valid(guard->properties) ||
-            (guard->effects != CMETA_EFFECT_PURE &&
-             guard->effects != CMETA_EFFECT_MAY_FAIL) ||
-            !cmeta_properties_include(guard->properties, required))
+        if (!cmeta_effect_property_contract_valid(
+                guard->effects, guard->properties))
             return CFLOW_STATECHART_INVALID_CONTRACT;
+        if (guard->effects == CMETA_EFFECT_PURE) {
+            const cmeta_properties required =
+                CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS;
+            if (!cmeta_properties_include(guard->properties, required))
+                return CFLOW_STATECHART_INVALID_CONTRACT;
+        } else if (guard->effects == CMETA_EFFECT_MAY_FAIL) {
+            const cmeta_properties required =
+                CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS;
+            if (!cmeta_properties_include(guard->properties, required))
+                return CFLOW_STATECHART_INVALID_CONTRACT;
+        } else {
+            return CFLOW_STATECHART_INVALID_CONTRACT;
+        }
     }
     return CFLOW_STATECHART_OK;
 }

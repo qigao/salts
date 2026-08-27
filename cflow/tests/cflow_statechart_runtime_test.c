@@ -1147,7 +1147,7 @@ suite("CFlow Statechart deterministic transition selection") {
         selection_fixture(&fixture);
         fixture.guards[0] = (cflow_statechart_guard){
             300u, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
-            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
         fixture.definition.guards = fixture.guards;
         fixture.definition.guard_count = 1u;
         add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
@@ -1182,7 +1182,7 @@ suite("CFlow Statechart deterministic transition selection") {
         selection_fixture(&fixture);
         fixture.guards[0] = (cflow_statechart_guard){
             300u, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
-            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
         fixture.definition.guards = fixture.guards;
         fixture.definition.guard_count = 1u;
         add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
