@@ -15,6 +15,7 @@ import PhaseATests.MachineSchema
 import PhaseATests.Machine
 import PhaseATests.MachineHierarchy
 import PhaseATests.MachineRuntime
+import PhaseATests.Statechart
 import PhaseATests.ManagedMachineState
 import PhaseATests.ExecutorProtocol
 import PhaseATests.Readiness

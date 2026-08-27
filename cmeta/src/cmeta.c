@@ -384,9 +384,8 @@ static bool cmeta_fn_target_same(cmeta_fn a, cmeta_fn b) {
 
 static bool cmeta_fn_semantic_contract_valid(cmeta_fn fn) {
     const cmeta_sig_desc *sig = cmeta_fn_signature(fn);
-    if (!sig || !cmeta_effects_valid(fn.effects) || !cmeta_properties_valid(fn.properties))
-        return false;
-    if ((fn.properties & CMETA_PROP_TOTAL) && (fn.effects & CMETA_EFFECT_MAY_FAIL))
+    if (!sig || !cmeta_effect_property_contract_valid(
+                    fn.effects, fn.properties))
         return false;
     if (fn.properties & CMETA_PROP_IDEMPOTENT) {
         if (sig->protocol != CMETA_FN_PROTOCOL_VALUE || sig->param_count != 1u ||

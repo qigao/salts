@@ -27,7 +27,7 @@ typedef struct cflow_timer_event_queue_impl {
     turbo_mutex_t mutex;
     turbo_cond_t changed;
     cflow_clock *clock;
-    cflow_machine_instance *machine;
+    cflow_timer_event_target_internal target;
     cflow_timer_queue timers;
     timer_event_slot *slots;
     unsigned char *payloads;
@@ -76,6 +76,25 @@ static bool aligned_stride(size_t size, size_t *out) {
     return *out >= size;
 }
 
+bool cflow_timer_event_queue_storage_requirements_internal(
+    size_t payload_capacity,
+    size_t capacity,
+    size_t *out_bytes) {
+    size_t stride, slot_bytes, timer_bytes, payload_bytes, total;
+    if (out_bytes == NULL || capacity == 0u ||
+        !aligned_stride(payload_capacity, &stride) ||
+        !checked_mul(capacity, sizeof(timer_event_slot), &slot_bytes) ||
+        !checked_mul(capacity, sizeof(cflow_timer_task), &timer_bytes) ||
+        !checked_mul(capacity, stride, &payload_bytes) ||
+        !checked_add(sizeof(cflow_timer_event_queue_impl), slot_bytes,
+                     &total) ||
+        !checked_add(total, timer_bytes, &total) ||
+        !checked_add(total, payload_bytes, &total))
+        return false;
+    *out_bytes = total;
+    return true;
+}
+
 static unsigned char *slot_payload(cflow_timer_event_queue_impl *impl,
                                    const timer_event_slot *slot) {
     const size_t index = (size_t)(slot - impl->slots);
@@ -121,12 +140,17 @@ static cflow_timer_event_schedule_result schedule_at(
     cflow_schedule_result timer_result;
 
     if (impl == NULL || event == NULL) return result;
-    contract_status = cflow_machine_instance_timer_event_contract(
-        impl->machine, event, &canonical_type);
+    contract_status = impl->target.contract(
+        impl->target.user, event, &canonical_type);
     if (contract_status != CFLOW_MAILBOX_OK) {
         result.status = contract_status == CFLOW_MAILBOX_TYPE_MISMATCH
             ? CFLOW_TIMER_EVENT_TYPE_MISMATCH
             : CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
+        return result;
+    }
+    if (!cmeta_type_desc_valid(canonical_type) ||
+        canonical_type->size > impl->payload_stride) {
+        result.status = CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
         return result;
     }
 
@@ -170,40 +194,37 @@ static cflow_timer_event_schedule_result schedule_at(
     return result;
 }
 
-cflow_timer_event_status cflow_timer_event_queue_init(
+cflow_timer_event_status cflow_timer_event_queue_init_target_internal(
     cflow_timer_event_queue *queue,
-    const cflow_timer_event_queue_config *config) {
+    cflow_clock *clock,
+    size_t capacity,
+    cflow_timer_event_target_internal target,
+    size_t payload_capacity) {
     cflow_timer_event_queue_impl *impl;
-    size_t payload_capacity;
-    size_t slot_bytes;
-    size_t timer_bytes;
-    size_t reserved_without_impl;
+    size_t total_storage_bytes;
 
-    if (queue == NULL || config == NULL || queue->impl != NULL ||
-        config->clock == NULL || !cflow_clock_valid(config->clock) ||
-        config->machine == NULL || config->capacity == 0u ||
-        !cflow_machine_instance_timer_payload_capacity(
-            config->machine, &payload_capacity))
+    if (queue == NULL || queue->impl != NULL || clock == NULL ||
+        !cflow_clock_valid(clock) || capacity == 0u ||
+        target.contract == NULL || target.send == NULL ||
+        payload_capacity == 0u)
         return CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
     if (!aligned_stride(payload_capacity, &payload_capacity) ||
-        !checked_mul(config->capacity, sizeof(timer_event_slot), &slot_bytes) ||
-        !checked_mul(config->capacity, sizeof(cflow_timer_task), &timer_bytes))
+        !cflow_timer_event_queue_storage_requirements_internal(
+            payload_capacity, capacity, &total_storage_bytes))
         return CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
 
     impl = (cflow_timer_event_queue_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL) return CFLOW_TIMER_EVENT_ALLOCATION_FAILED;
-    impl->capacity = config->capacity;
+    impl->capacity = capacity;
     impl->payload_stride = payload_capacity;
-    if (!checked_mul(config->capacity, impl->payload_stride,
-                     &impl->reserved_payload_bytes) ||
-        !checked_add(slot_bytes, timer_bytes, &reserved_without_impl) ||
-        !checked_add(reserved_without_impl, impl->reserved_payload_bytes,
-                     &impl->reserved_bytes)) {
+    if (!checked_mul(capacity, impl->payload_stride,
+                     &impl->reserved_payload_bytes)) {
         free(impl);
         return CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
     }
+    impl->reserved_bytes = total_storage_bytes - sizeof(*impl);
 
-    impl->slots = (timer_event_slot *)calloc(config->capacity,
+    impl->slots = (timer_event_slot *)calloc(capacity,
                                                sizeof(*impl->slots));
     impl->payloads = (unsigned char *)calloc(
         1u, impl->reserved_payload_bytes);
@@ -212,7 +233,7 @@ cflow_timer_event_status cflow_timer_event_queue_init(
     if (impl->slots == NULL || impl->payloads == NULL || impl->mutex == NULL ||
         impl->changed == NULL ||
         !cflow_timer_queue_init_with_capacity(&impl->timers,
-                                              config->capacity)) {
+                                              capacity)) {
         cflow_timer_queue_destroy(&impl->timers);
         turbo_cond_destroy(&impl->changed);
         turbo_mutex_destroy(&impl->mutex);
@@ -222,10 +243,38 @@ cflow_timer_event_status cflow_timer_event_queue_init(
         return CFLOW_TIMER_EVENT_ALLOCATION_FAILED;
     }
 
-    impl->clock = config->clock;
-    impl->machine = config->machine;
+    impl->clock = clock;
+    impl->target = target;
     queue->impl = impl;
     return CFLOW_TIMER_EVENT_OK;
+}
+
+static cflow_mailbox_status machine_timer_contract(
+    void *user, const cflow_event_view *event,
+    const cmeta_type_desc **out_canonical_type) {
+    return cflow_machine_instance_timer_event_contract(
+        (cflow_machine_instance *)user, event, out_canonical_type);
+}
+
+static cflow_mailbox_status machine_timer_send(
+    void *user, const cflow_event_view *event) {
+    return cflow_machine_instance_try_send(
+        (cflow_machine_instance *)user, event);
+}
+
+cflow_timer_event_status cflow_timer_event_queue_init(
+    cflow_timer_event_queue *queue,
+    const cflow_timer_event_queue_config *config) {
+    size_t payload_capacity;
+    cflow_timer_event_target_internal target;
+    if (config == NULL || config->machine == NULL ||
+        !cflow_machine_instance_timer_payload_capacity(
+            config->machine, &payload_capacity))
+        return CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
+    target = (cflow_timer_event_target_internal){
+        config->machine, machine_timer_contract, machine_timer_send};
+    return cflow_timer_event_queue_init_target_internal(
+        queue, config->clock, config->capacity, target, payload_capacity);
 }
 
 cflow_timer_event_schedule_result cflow_timer_event_queue_try_schedule_at(
@@ -431,8 +480,8 @@ cflow_timer_event_fire_result cflow_timer_event_queue_commit_claim(
         slot->event_id, slot->payload_type, slot_payload(impl, slot)
     };
 
-    result.mailbox_status = cflow_machine_instance_try_send(
-        impl->machine, &event);
+    result.mailbox_status = impl->target.send(
+        impl->target.user, &event);
 
     turbo_mutex_lock(&impl->mutex);
     if (result.mailbox_status == CFLOW_MAILBOX_OK) {
@@ -499,7 +548,7 @@ bool cflow_timer_event_queue_get_stats(
     return true;
 }
 
-cflow_timer_event_status cflow_timer_event_queue_close(
+cflow_timer_event_status cflow_timer_event_queue_close_begin_internal(
     cflow_timer_event_queue *queue) {
     cflow_timer_event_queue_impl *impl = queue != NULL
         ? (cflow_timer_event_queue_impl *)queue->impl : NULL;
@@ -522,6 +571,18 @@ cflow_timer_event_status cflow_timer_event_queue_close(
         }
         impl->timers.count = 0u;
     }
+    turbo_mutex_unlock(&impl->mutex);
+    return status;
+}
+
+cflow_timer_event_status cflow_timer_event_queue_close(
+    cflow_timer_event_queue *queue) {
+    cflow_timer_event_queue_impl *impl = queue != NULL
+        ? (cflow_timer_event_queue_impl *)queue->impl : NULL;
+    cflow_timer_event_status status;
+    if (impl == NULL) return CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
+    status = cflow_timer_event_queue_close_begin_internal(queue);
+    turbo_mutex_lock(&impl->mutex);
     while (impl->in_flight != 0u)
         turbo_cond_wait(&impl->changed, &impl->mutex);
     turbo_mutex_unlock(&impl->mutex);

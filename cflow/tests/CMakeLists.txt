@@ -65,6 +65,23 @@ cmake_add_test(cflow_machine_hierarchy_test
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_statechart_test
+  SOURCES cflow_statechart_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_statechart_runtime_test
+  SOURCES cflow_statechart_runtime_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_statechart_hierarchy_adapter_test
+  SOURCES cflow_statechart_hierarchy_adapter_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_machine_runtime_test
   SOURCES cflow_machine_runtime_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
@@ -162,6 +179,9 @@ set_target_properties(
   cflow_event_mailbox_test
   cflow_machine_test
   cflow_machine_hierarchy_test
+  cflow_statechart_test
+  cflow_statechart_runtime_test
+  cflow_statechart_hierarchy_adapter_test
   cflow_machine_runtime_test
   cflow_actor_test
   cflow_io_actor_test

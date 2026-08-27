@@ -170,6 +170,16 @@ static inline bool cmeta_properties_include(cmeta_properties p, cmeta_properties
     return (p & required) == required;
 }
 
+/* Shared effect/property consistency boundary for callable-like declarations.
+ * Signature-specific laws remain the responsibility of callable admission. */
+static inline bool cmeta_effect_property_contract_valid(
+    cmeta_effects effects, cmeta_properties properties) {
+    return cmeta_effects_valid(effects) &&
+           cmeta_properties_valid(properties) &&
+           !((properties & CMETA_PROP_TOTAL) &&
+             (effects & CMETA_EFFECT_MAY_FAIL));
+}
+
 #include <cmeta/contract.h>
 
 typedef union cmeta_raw_call {

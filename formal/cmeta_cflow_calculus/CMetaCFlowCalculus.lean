@@ -18,6 +18,7 @@ import CMetaCFlowCalculus.CFlow.MachineSchemaHeader
 import CMetaCFlowCalculus.CFlow.Machine
 import CMetaCFlowCalculus.CFlow.MachineHierarchy
 import CMetaCFlowCalculus.CFlow.MachineRuntime
+import CMetaCFlowCalculus.CFlow.Statechart
 import CMetaCFlowCalculus.CFlow.ManagedMachineState
 import CMetaCFlowCalculus.CFlow.ExecutorProtocol
 import CMetaCFlowCalculus.CFlow.Readiness
@@ -38,6 +39,7 @@ import CMetaCFlowCalculus.Proofs.Mailbox
 import CMetaCFlowCalculus.Proofs.Machine
 import CMetaCFlowCalculus.Proofs.MachineHierarchy
 import CMetaCFlowCalculus.Proofs.MachineRuntime
+import CMetaCFlowCalculus.Proofs.Statechart
 import CMetaCFlowCalculus.Proofs.ManagedMachineState
 import CMetaCFlowCalculus.Proofs.ExecutorProtocol
 import CMetaCFlowCalculus.Proofs.Readiness

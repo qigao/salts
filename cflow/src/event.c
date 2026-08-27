@@ -1,5 +1,7 @@
 #include <cflow/event.h>
 
+#include "event_internal.h"
+
 #include <turbo/thread.h>
 
 #include <stdbool.h>
@@ -110,6 +112,31 @@ static bool cflow_schema_measure(const cflow_event_type *schema,
 
     *max_payload_size = largest_size;
     *max_payload_alignment = largest_alignment;
+    return true;
+}
+
+bool cflow_mailbox_storage_requirements_internal(
+    const cflow_event_type *schema, size_t schema_count, size_t capacity,
+    size_t *out_bytes) {
+    size_t max_payload_size, max_payload_alignment, payload_stride;
+    size_t schema_bytes, slot_bytes, payload_bytes, total;
+    if (out_bytes == NULL ||
+        !cflow_size_multiply(schema_count, sizeof(cflow_event_type),
+                             &schema_bytes) ||
+        !cflow_size_multiply(capacity, sizeof(cflow_event_slot),
+                             &slot_bytes) ||
+        !cflow_schema_measure(schema, schema_count, &max_payload_size,
+                              &max_payload_alignment) ||
+        !cflow_align_size(max_payload_size, max_payload_alignment,
+                          &payload_stride) ||
+        !cflow_size_multiply(capacity, payload_stride, &payload_bytes) ||
+        sizeof(cflow_mailbox_impl) > SIZE_MAX - schema_bytes)
+        return false;
+    total = sizeof(cflow_mailbox_impl) + schema_bytes;
+    if (slot_bytes > SIZE_MAX - total) return false;
+    total += slot_bytes;
+    if (payload_bytes > SIZE_MAX - total) return false;
+    *out_bytes = total + payload_bytes;
     return true;
 }
 
@@ -330,11 +357,21 @@ cflow_mailbox_status cflow_mailbox_close(cflow_mailbox *mailbox) {
 }
 
 cflow_mailbox_status cflow_mailbox_cancel(cflow_mailbox *mailbox) {
+    cflow_waker waker = {0};
+    const cflow_mailbox_status status =
+        cflow_mailbox_cancel_detach_internal(mailbox, &waker);
+    cflow_waker_invoke(waker);
+    return status;
+}
+
+cflow_mailbox_status cflow_mailbox_cancel_detach_internal(
+    cflow_mailbox *mailbox, cflow_waker *out_waker) {
     cflow_mailbox_impl *impl =
         mailbox != NULL ? (cflow_mailbox_impl *)mailbox->impl : NULL;
-    cflow_waker waker = {0};
 
-    if (impl == NULL) return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    if (out_waker != NULL) *out_waker = (cflow_waker){0};
+    if (impl == NULL || out_waker == NULL)
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
     turbo_mutex_lock(&impl->lock);
     if (impl->terminal == CFLOW_MAILBOX_TERMINAL_CANCELLED) {
         turbo_mutex_unlock(&impl->lock);
@@ -344,10 +381,9 @@ cflow_mailbox_status cflow_mailbox_cancel(cflow_mailbox *mailbox) {
     cflow_counter_add_size(&impl->cancelled, impl->count);
     impl->head = 0u;
     impl->count = 0u;
-    waker = impl->waiter;
+    *out_waker = impl->waiter;
     impl->waiter = (cflow_waker){0};
     turbo_mutex_unlock(&impl->lock);
-    cflow_waker_invoke(waker);
     return CFLOW_MAILBOX_OK;
 }
 

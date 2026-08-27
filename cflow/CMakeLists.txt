@@ -10,12 +10,19 @@ set(CFLOW_MACHINE_MAX_ACTIONS 65536 CACHE STRING
     "Maximum action declarations accepted by one CFlow Machine")
 set(CFLOW_MACHINE_MAX_TRANSITIONS 1048576 CACHE STRING
     "Maximum transitions accepted by one CFlow Machine")
+set(CFLOW_STATECHART_MAX_ACTION_REFS 1048576 CACHE STRING
+    "Maximum ordered action references accepted by one CFlow Statechart")
+set(CFLOW_STATECHART_MAX_INSTANCE_BYTES 67108864 CACHE STRING
+    "Maximum dynamically allocated bytes accepted by one Statechart instance")
+set(CFLOW_STATECHART_ERROR_CAPACITY 512 CACHE STRING
+    "Bytes reserved for the first owned Statechart runtime error")
 foreach(machine_limit IN ITEMS
     CFLOW_MACHINE_MAX_STATES
     CFLOW_MACHINE_MAX_EVENTS
     CFLOW_MACHINE_MAX_GUARDS
     CFLOW_MACHINE_MAX_ACTIONS
-    CFLOW_MACHINE_MAX_TRANSITIONS)
+    CFLOW_MACHINE_MAX_TRANSITIONS
+    CFLOW_STATECHART_MAX_ACTION_REFS)
   if(NOT "${${machine_limit}}" MATCHES "^[1-9][0-9]*$")
     message(FATAL_ERROR "${machine_limit} must be a positive integer")
   endif()
@@ -24,6 +31,22 @@ foreach(machine_limit IN ITEMS
       "${machine_limit} must not exceed the verified ceiling 1048576")
   endif()
 endforeach()
+if(NOT "${CFLOW_STATECHART_MAX_INSTANCE_BYTES}" MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR
+    "CFLOW_STATECHART_MAX_INSTANCE_BYTES must be a positive integer")
+endif()
+if(CFLOW_STATECHART_MAX_INSTANCE_BYTES GREATER 1073741824)
+  message(FATAL_ERROR
+    "CFLOW_STATECHART_MAX_INSTANCE_BYTES must not exceed 1073741824")
+endif()
+if(NOT "${CFLOW_STATECHART_ERROR_CAPACITY}" MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR
+    "CFLOW_STATECHART_ERROR_CAPACITY must be a positive integer")
+endif()
+if(CFLOW_STATECHART_ERROR_CAPACITY GREATER 1048576)
+  message(FATAL_ERROR
+    "CFLOW_STATECHART_ERROR_CAPACITY must not exceed 1048576")
+endif()
 
 add_library(${TARGET_NAME}
   src/adapters.c
@@ -57,6 +80,9 @@ add_library(${TARGET_NAME}
   src/scheduler.c
   src/scheduler_worker.c
   src/sources.c
+  src/statechart.c
+  src/statechart_hierarchy_adapter.c
+  src/statechart_runtime.c
   src/stream.c
   src/subrun.c
   src/temporal.c
@@ -96,7 +122,11 @@ target_compile_definitions(
     CFLOW_MACHINE_MAX_EVENTS=${CFLOW_MACHINE_MAX_EVENTS}
     CFLOW_MACHINE_MAX_GUARDS=${CFLOW_MACHINE_MAX_GUARDS}
     CFLOW_MACHINE_MAX_ACTIONS=${CFLOW_MACHINE_MAX_ACTIONS}
-    CFLOW_MACHINE_MAX_TRANSITIONS=${CFLOW_MACHINE_MAX_TRANSITIONS})
+    CFLOW_MACHINE_MAX_TRANSITIONS=${CFLOW_MACHINE_MAX_TRANSITIONS}
+    CFLOW_STATECHART_MAX_ACTION_REFS=${CFLOW_STATECHART_MAX_ACTION_REFS}
+    CFLOW_STATECHART_MAX_INSTANCE_BYTES=${CFLOW_STATECHART_MAX_INSTANCE_BYTES}
+  PRIVATE
+    CFLOW_STATECHART_ERROR_CAPACITY=${CFLOW_STATECHART_ERROR_CAPACITY})
 target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
