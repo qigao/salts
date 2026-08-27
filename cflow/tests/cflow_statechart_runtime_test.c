@@ -76,6 +76,73 @@ typedef struct runtime_destroy_probe {
     atomic_bool query_succeeded;
 } runtime_destroy_probe;
 
+typedef struct runtime_shared_executor_probe {
+    cflow_executor *executor;
+    cflow_statechart_instance *instance;
+    const cflow_statechart_instance_config *config;
+    atomic_bool blocker_entered;
+    atomic_bool blocker_release;
+    atomic_bool init_done;
+    atomic_bool destroy_done;
+    atomic_int hook_status;
+    atomic_int init_status;
+    atomic_int destroy_status;
+} runtime_shared_executor_probe;
+
+enum { RUNTIME_SHARED_WAIT_ATTEMPTS = 1000 };
+
+static bool runtime_wait_flag(atomic_bool *flag) {
+    size_t attempt;
+    for (attempt = 0u; attempt < RUNTIME_SHARED_WAIT_ATTEMPTS; ++attempt) {
+        if (atomic_load(flag)) return true;
+        turbo_sleep_ms(1u);
+    }
+    return atomic_load(flag);
+}
+
+static void runtime_unrelated_blocker(void *user) {
+    runtime_shared_executor_probe *probe =
+        (runtime_shared_executor_probe *)user;
+    atomic_store(&probe->blocker_entered, true);
+    while (!atomic_load(&probe->blocker_release)) turbo_thread_yield();
+}
+
+static void runtime_queue_unrelated_after_statechart_idle(void *user) {
+    runtime_shared_executor_probe *probe =
+        (runtime_shared_executor_probe *)user;
+    int status = 0;
+    if (!cflow_executor_wait_idle(probe->executor)) {
+        status = 1;
+    } else if (cflow_executor_try_post(
+                   probe->executor, runtime_unrelated_blocker, probe) !=
+               CFLOW_ADMISSION_ACCEPTED) {
+        status = 2;
+    } else if (!runtime_wait_flag(&probe->blocker_entered)) {
+        status = 3;
+    }
+    atomic_store(&probe->hook_status, status);
+}
+
+static void runtime_init_on_shared_executor(void *user) {
+    runtime_shared_executor_probe *probe =
+        (runtime_shared_executor_probe *)user;
+    const cflow_statechart_runtime_status status =
+        cflow_statechart_instance_init_test_internal(
+            probe->instance, probe->config,
+            runtime_queue_unrelated_after_statechart_idle, probe);
+    atomic_store(&probe->init_status, (int)status);
+    atomic_store(&probe->init_done, true);
+}
+
+static void runtime_destroy_on_shared_executor(void *user) {
+    runtime_shared_executor_probe *probe =
+        (runtime_shared_executor_probe *)user;
+    const cflow_statechart_runtime_status status =
+        cflow_statechart_instance_destroy(probe->instance);
+    atomic_store(&probe->destroy_status, (int)status);
+    atomic_store(&probe->destroy_done, true);
+}
+
 static void destroy_from_executor_callback(void *user) {
     runtime_destroy_probe *probe = (runtime_destroy_probe *)user;
     cflow_machine_state_id states[3] = {0};
@@ -611,6 +678,93 @@ suite("CFlow Statechart runtime initial configuration") {
         check_null(fixture.instance.impl);
         check_equal(cflow_statechart_instance_destroy(&fixture.instance),
                     CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&fixture.executor);
+        cflow_statechart_destroy(&fixture.statechart);
+    }
+
+    it("initializes after its own work settles while shared work remains") {
+        runtime_fixture fixture;
+        cflow_statechart_instance_config config;
+        runtime_shared_executor_probe probe;
+        turbo_thread_t thread = NULL;
+        bool returned_while_blocked;
+        nested_compound_fixture(&fixture);
+        check_equal(cflow_statechart_build(
+                        &fixture.statechart, &fixture.definition),
+                    CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&fixture.executor));
+        config = (cflow_statechart_instance_config){
+            .statechart = &fixture.statechart,
+            .initial_state = &fixture.initial_state,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 64u,
+            .executor = &fixture.executor};
+        memset(&probe, 0, sizeof(probe));
+        probe.executor = &fixture.executor;
+        probe.instance = &fixture.instance;
+        probe.config = &config;
+        atomic_init(&probe.blocker_entered, false);
+        atomic_init(&probe.blocker_release, false);
+        atomic_init(&probe.init_done, false);
+        atomic_init(&probe.destroy_done, false);
+        atomic_init(&probe.hook_status, -1);
+        atomic_init(&probe.init_status, -1);
+        atomic_init(&probe.destroy_status, -1);
+
+        check_equal(turbo_thread_create(
+                        &thread, runtime_init_on_shared_executor, &probe),
+                    TURBO_OK);
+        check_true(runtime_wait_flag(&probe.blocker_entered));
+        returned_while_blocked = runtime_wait_flag(&probe.init_done);
+        atomic_store(&probe.blocker_release, true);
+        check_equal(turbo_thread_join(&thread), TURBO_OK);
+
+        check_equal(atomic_load(&probe.hook_status), 0);
+        check_equal(atomic_load(&probe.init_status),
+                    (int)CFLOW_STATECHART_RUNTIME_OK);
+        check_true(returned_while_blocked);
+        if (fixture.instance.impl != NULL)
+            check_equal(cflow_statechart_instance_destroy(&fixture.instance),
+                        CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&fixture.executor);
+        cflow_statechart_destroy(&fixture.statechart);
+    }
+
+    it("destroys after its own work settles while shared work remains") {
+        runtime_fixture fixture;
+        runtime_shared_executor_probe probe;
+        turbo_thread_t thread = NULL;
+        bool returned_while_blocked;
+        nested_compound_fixture(&fixture);
+        check_equal(runtime_fixture_init(&fixture),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        memset(&probe, 0, sizeof(probe));
+        probe.executor = &fixture.executor;
+        probe.instance = &fixture.instance;
+        atomic_init(&probe.blocker_entered, false);
+        atomic_init(&probe.blocker_release, false);
+        atomic_init(&probe.init_done, false);
+        atomic_init(&probe.destroy_done, false);
+        atomic_init(&probe.hook_status, -1);
+        atomic_init(&probe.init_status, -1);
+        atomic_init(&probe.destroy_status, -1);
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor, runtime_unrelated_blocker, &probe),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_true(runtime_wait_flag(&probe.blocker_entered));
+        check_equal(turbo_thread_create(
+                        &thread, runtime_destroy_on_shared_executor, &probe),
+                    TURBO_OK);
+        returned_while_blocked = runtime_wait_flag(&probe.destroy_done);
+        atomic_store(&probe.blocker_release, true);
+        check_equal(turbo_thread_join(&thread), TURBO_OK);
+
+        check_equal(atomic_load(&probe.destroy_status),
+                    (int)CFLOW_STATECHART_RUNTIME_OK);
+        check_true(returned_while_blocked);
+        check_null(fixture.instance.impl);
         cflow_executor_destroy(&fixture.executor);
         cflow_statechart_destroy(&fixture.statechart);
     }

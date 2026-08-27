@@ -64,6 +64,8 @@ typedef struct cflow_statechart_runtime_test_hooks {
     void *user;
 } cflow_statechart_runtime_test_hooks;
 
+typedef void (*cflow_statechart_init_wait_hook_internal)(void *user);
+
 cflow_statechart_runtime_status
 cflow_statechart_instance_storage_requirements_internal(
     const cflow_statechart *statechart, size_t external_event_capacity,
@@ -105,5 +107,10 @@ uint64_t cflow_statechart_external_identity_sum_internal(
 bool cflow_statechart_instance_set_test_hooks_internal(
     cflow_statechart_instance *instance,
     const cflow_statechart_runtime_test_hooks *hooks);
+cflow_statechart_runtime_status cflow_statechart_instance_init_test_internal(
+    cflow_statechart_instance *instance,
+    const cflow_statechart_instance_config *config,
+    cflow_statechart_init_wait_hook_internal before_wait,
+    void *hook_user);
 
 #endif

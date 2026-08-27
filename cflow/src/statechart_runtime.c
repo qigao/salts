@@ -107,6 +107,7 @@ typedef struct cflow_statechart_instance_impl {
     bool driver_after_microstep;
     bool skip_to_external;
     bool microstep_pending;
+    size_t task_reservations;
     cflow_statechart_runtime_status microstep_result;
     uint64_t microstep_accepted;
     uint64_t microstep_completed;
@@ -117,6 +118,7 @@ typedef struct cflow_statechart_instance_impl {
     /* External transfer/accounting order is this lock, then mailbox lock.
        The private mailbox is never armed with a waker. */
     turbo_mutex_t lock;
+    turbo_cond_t tasks_changed;
     const char *error;
     bool error_owned;
     uint64_t configuration_version;
@@ -140,6 +142,8 @@ static atomic_uint_fast64_t statechart_instance_token_source =
     UINT64_C(1);
 
 static cflow_admission_status schedule_statechart_driver(
+    cflow_statechart_instance_impl *impl);
+static cflow_admission_status schedule_statechart_driver_reserved(
     cflow_statechart_instance_impl *impl);
 static void latch_terminal_failure(cflow_statechart_instance_impl *impl,
                                    cflow_statechart_runtime_status status,
@@ -454,6 +458,8 @@ static void instance_impl_free(cflow_statechart_instance_impl *impl) {
     if (impl == NULL) return;
     if (impl->external_mailbox_initialized)
         cflow_mailbox_destroy(&impl->external_mailbox);
+    if (impl->tasks_changed != NULL)
+        turbo_cond_destroy(&impl->tasks_changed);
     if (impl->lock != NULL) turbo_mutex_destroy(&impl->lock);
     if (impl->error_owned) free((void *)impl->error);
     free(impl->internal_event_payloads);
@@ -496,6 +502,31 @@ static void instance_impl_free(cflow_statechart_instance_impl *impl) {
     free(impl->executables);
     free(impl->guards);
     free(impl);
+}
+
+static bool reserve_instance_task_locked(
+    cflow_statechart_instance_impl *impl) {
+    if (impl->task_reservations == SIZE_MAX) return false;
+    ++impl->task_reservations;
+    return true;
+}
+
+static void release_instance_task_locked(
+    cflow_statechart_instance_impl *impl) {
+    if (impl->task_reservations != 0u) --impl->task_reservations;
+    if (impl->task_reservations == 0u)
+        turbo_cond_broadcast(&impl->tasks_changed);
+}
+
+static cflow_statechart_runtime_status wait_instance_tasks(
+    cflow_statechart_instance_impl *impl) {
+    if (cflow_executor_is_current_internal(impl->executor))
+        return CFLOW_STATECHART_RUNTIME_WOULD_BLOCK;
+    turbo_mutex_lock(&impl->lock);
+    while (impl->task_reservations != 0u)
+        turbo_cond_wait(&impl->tasks_changed, &impl->lock);
+    turbo_mutex_unlock(&impl->lock);
+    return CFLOW_STATECHART_RUNTIME_OK;
 }
 
 static bool binding_rows_shape_valid(
@@ -2192,17 +2223,16 @@ static void statechart_microstep_finalize(void *user) {
     cflow_statechart_instance_impl *impl =
         (cflow_statechart_instance_impl *)user;
     cflow_statechart_runtime_status result;
-    bool continue_driver = false;
+    bool continue_driver;
     turbo_mutex_lock(&impl->lock);
     if (impl->microstep_finalized != UINT64_MAX)
         ++impl->microstep_finalized;
-    impl->microstep_pending = false;
     result = impl->microstep_result;
     if (impl->driver_after_microstep) {
         impl->driver_after_microstep = false;
         if (result == CFLOW_STATECHART_RUNTIME_OK &&
             impl->terminal_outcome == STATECHART_TERMINAL_NONE) {
-            continue_driver = true;
+            impl->driver_repost = true;
         } else if (!impl->done) {
             const cflow_statechart_runtime_status settlement =
                 impl->terminal_outcome == STATECHART_TERMINAL_CLOSE &&
@@ -2213,9 +2243,14 @@ static void statechart_microstep_finalize(void *user) {
             clear_semantic_queues_locked(impl);
         }
     }
+    impl->microstep_pending = false;
+    continue_driver = impl->driver_repost && !impl->done &&
+        impl->error == NULL;
+    impl->driver_repost = false;
+    if (!continue_driver) release_instance_task_locked(impl);
     turbo_mutex_unlock(&impl->lock);
     if (continue_driver) {
-        (void)schedule_statechart_driver(impl);
+        (void)schedule_statechart_driver_reserved(impl);
     }
 }
 
@@ -2276,6 +2311,10 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
         turbo_mutex_unlock(&impl->lock);
         return CFLOW_ADMISSION_INVALID_ARGUMENT;
     }
+    if (!reserve_instance_task_locked(impl)) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_ADMISSION_FULL;
+    }
     impl->microstep_pending = true;
     impl->selection_consumed = true;
     impl->request_transition_count = impl->selected_count;
@@ -2317,6 +2356,7 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
                 impl, CFLOW_STATECHART_RUNTIME_TASK_CANCELLED);
             clear_semantic_queues_locked(impl);
         }
+        release_instance_task_locked(impl);
         turbo_mutex_unlock(&impl->lock);
     }
     return admission;
@@ -2586,14 +2626,15 @@ static void statechart_driver_finalize(void *user) {
     repost = impl->driver_repost && !impl->done && impl->error == NULL &&
         !impl->microstep_pending;
     impl->driver_repost = false;
+    if (!repost) release_instance_task_locked(impl);
     turbo_mutex_unlock(&impl->lock);
     if (repost) {
-        (void)schedule_statechart_driver(impl);
+        (void)schedule_statechart_driver_reserved(impl);
     }
 }
 
-static cflow_admission_status schedule_statechart_driver(
-    cflow_statechart_instance_impl *impl) {
+static cflow_admission_status schedule_statechart_driver_impl(
+    cflow_statechart_instance_impl *impl, bool transfer_reservation) {
     const cflow_executor_task task = {
         statechart_driver_run, statechart_driver_cancel,
         statechart_driver_finalize, impl};
@@ -2601,13 +2642,19 @@ static cflow_admission_status schedule_statechart_driver(
     if (impl == NULL) return CFLOW_ADMISSION_INVALID_ARGUMENT;
     turbo_mutex_lock(&impl->lock);
     if (impl->done || impl->error != NULL) {
+        if (transfer_reservation) release_instance_task_locked(impl);
         turbo_mutex_unlock(&impl->lock);
         return CFLOW_ADMISSION_CLOSED;
     }
     if (impl->driver_scheduled || impl->microstep_pending) {
         impl->driver_repost = true;
+        if (transfer_reservation) release_instance_task_locked(impl);
         turbo_mutex_unlock(&impl->lock);
         return CFLOW_ADMISSION_ACCEPTED;
+    }
+    if (!transfer_reservation && !reserve_instance_task_locked(impl)) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_ADMISSION_FULL;
     }
     impl->driver_scheduled = true;
     turbo_mutex_unlock(&impl->lock);
@@ -2629,10 +2676,21 @@ static cflow_admission_status schedule_statechart_driver(
                 impl, STATECHART_TERMINAL_ERROR, failure, message,
                 true, failure, &waker);
         }
+        release_instance_task_locked(impl);
         turbo_mutex_unlock(&impl->lock);
         invoke_detached_waker(waker);
     }
     return admission;
+}
+
+static cflow_admission_status schedule_statechart_driver(
+    cflow_statechart_instance_impl *impl) {
+    return schedule_statechart_driver_impl(impl, false);
+}
+
+static cflow_admission_status schedule_statechart_driver_reserved(
+    cflow_statechart_instance_impl *impl) {
+    return schedule_statechart_driver_impl(impl, true);
 }
 
 bool cflow_statechart_instance_get_microstep_stats_internal(
@@ -2756,9 +2814,11 @@ cflow_statechart_instance_copy_history_internal(
         : CFLOW_STATECHART_SNAPSHOT_INVALID_ARGUMENT;
 }
 
-cflow_statechart_runtime_status cflow_statechart_instance_init(
+static cflow_statechart_runtime_status statechart_instance_init_with_hook(
     cflow_statechart_instance *instance,
-    const cflow_statechart_instance_config *config) {
+    const cflow_statechart_instance_config *config,
+    cflow_statechart_init_wait_hook_internal before_wait,
+    void *hook_user) {
     cflow_statechart_instance_impl *impl;
     const cflow_statechart_impl *ir;
     cflow_statechart_storage_requirements requirements;
@@ -2826,7 +2886,8 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
         return status;
     }
     turbo_mutex_init(&impl->lock);
-    if (impl->lock == NULL) {
+    turbo_cond_init(&impl->tasks_changed);
+    if (impl->lock == NULL || impl->tasks_changed == NULL) {
         instance_impl_free(impl);
         return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
     }
@@ -2870,9 +2931,11 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
                 : CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED;
         }
     }
-    if (!cflow_executor_wait_idle(impl->executor)) {
+    if (before_wait != NULL) before_wait(hook_user);
+    status = wait_instance_tasks(impl);
+    if (status != CFLOW_STATECHART_RUNTIME_OK) {
         instance_impl_free(impl);
-        return CFLOW_STATECHART_RUNTIME_WOULD_BLOCK;
+        return status;
     }
     if (impl->error != NULL) {
         status = impl->last_status;
@@ -2882,6 +2945,22 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
     }
     instance->impl = impl;
     return CFLOW_STATECHART_RUNTIME_OK;
+}
+
+cflow_statechart_runtime_status cflow_statechart_instance_init(
+    cflow_statechart_instance *instance,
+    const cflow_statechart_instance_config *config) {
+    return statechart_instance_init_with_hook(
+        instance, config, NULL, NULL);
+}
+
+cflow_statechart_runtime_status cflow_statechart_instance_init_test_internal(
+    cflow_statechart_instance *instance,
+    const cflow_statechart_instance_config *config,
+    cflow_statechart_init_wait_hook_internal before_wait,
+    void *hook_user) {
+    return statechart_instance_init_with_hook(
+        instance, config, before_wait, hook_user);
 }
 
 cflow_statechart_snapshot_status
@@ -3078,7 +3157,7 @@ cflow_statechart_runtime_status cflow_statechart_instance_destroy(
     if (instance == NULL) return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
     impl = (cflow_statechart_instance_impl *)instance->impl;
     if (impl == NULL) return CFLOW_STATECHART_RUNTIME_OK;
-    if (!cflow_executor_wait_idle(impl->executor))
+    if (wait_instance_tasks(impl) != CFLOW_STATECHART_RUNTIME_OK)
         return CFLOW_STATECHART_RUNTIME_WOULD_BLOCK;
     instance->impl = NULL;
     instance_impl_free(impl);

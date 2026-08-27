@@ -167,8 +167,9 @@ typedef struct cflow_statechart_instance { void *impl; }
  * are copied. Phase 1 admits only trivial CMeta state/Event storage; managed
  * copy/move/destroy traits are rejected with `UNSUPPORTED_TYPE`. All three
  * queue capacities and `microstep_limit` must be positive. Initialization
- * returns only after posted eventless/completion work reaches quiescence;
- * failure leaves `instance` empty.
+ * returns only after this instance's posted eventless/completion work reaches
+ * quiescence; unrelated work on a shared Executor is not awaited. Failure
+ * leaves `instance` empty.
  *
  * Guard and executable callbacks run only on the borrowed SerialExecutor.
  * Initial stabilization callbacks may run before this function returns; the
@@ -235,7 +236,8 @@ bool cflow_statechart_instance_get_stats(
 const char *cflow_statechart_instance_error(
     const cflow_statechart_instance *instance);
 /**
- * Wait for Executor quiescence, free owned storage, and clear the handle.
+ * Wait for this instance's posted work to settle, free owned storage, and
+ * clear the handle. Unrelated work on a shared Executor is not awaited.
  * Returns `WOULD_BLOCK` from a callback on the same Executor without freeing.
  * Concurrent admission/control calls must already have stopped.
  */
