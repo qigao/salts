@@ -357,11 +357,21 @@ cflow_mailbox_status cflow_mailbox_close(cflow_mailbox *mailbox) {
 }
 
 cflow_mailbox_status cflow_mailbox_cancel(cflow_mailbox *mailbox) {
+    cflow_waker waker = {0};
+    const cflow_mailbox_status status =
+        cflow_mailbox_cancel_detach_internal(mailbox, &waker);
+    cflow_waker_invoke(waker);
+    return status;
+}
+
+cflow_mailbox_status cflow_mailbox_cancel_detach_internal(
+    cflow_mailbox *mailbox, cflow_waker *out_waker) {
     cflow_mailbox_impl *impl =
         mailbox != NULL ? (cflow_mailbox_impl *)mailbox->impl : NULL;
-    cflow_waker waker = {0};
 
-    if (impl == NULL) return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    if (out_waker != NULL) *out_waker = (cflow_waker){0};
+    if (impl == NULL || out_waker == NULL)
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
     turbo_mutex_lock(&impl->lock);
     if (impl->terminal == CFLOW_MAILBOX_TERMINAL_CANCELLED) {
         turbo_mutex_unlock(&impl->lock);
@@ -371,10 +381,9 @@ cflow_mailbox_status cflow_mailbox_cancel(cflow_mailbox *mailbox) {
     cflow_counter_add_size(&impl->cancelled, impl->count);
     impl->head = 0u;
     impl->count = 0u;
-    waker = impl->waiter;
+    *out_waker = impl->waiter;
     impl->waiter = (cflow_waker){0};
     turbo_mutex_unlock(&impl->lock);
-    cflow_waker_invoke(waker);
     return CFLOW_MAILBOX_OK;
 }
 

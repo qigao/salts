@@ -57,6 +57,13 @@ typedef struct cflow_statechart_selection_snapshot {
     cflow_machine_state_id completion;
 } cflow_statechart_selection_snapshot;
 
+typedef struct cflow_statechart_runtime_test_hooks {
+    void (*before_external_receive)(void *user);
+    void (*before_microstep_post)(void *user);
+    void (*after_microstep_cancel)(void *user);
+    void *user;
+} cflow_statechart_runtime_test_hooks;
+
 cflow_statechart_runtime_status
 cflow_statechart_instance_storage_requirements_internal(
     const cflow_statechart *statechart, size_t external_event_capacity,
@@ -92,5 +99,11 @@ bool cflow_statechart_selection_exits_internal(
     const cflow_statechart_instance *instance,
     const cflow_statechart_selection_snapshot *selection,
     size_t transition_position, cflow_machine_state_id state);
+uint64_t cflow_statechart_external_identity_sum_internal(
+    uint64_t completed, uint64_t failed, uint64_t cancelled,
+    uint64_t pending, uint64_t in_flight);
+bool cflow_statechart_instance_set_test_hooks_internal(
+    cflow_statechart_instance *instance,
+    const cflow_statechart_runtime_test_hooks *hooks);
 
 #endif

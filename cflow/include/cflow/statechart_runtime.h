@@ -165,10 +165,10 @@ typedef struct cflow_statechart_instance { void *impl; }
  *
  * The initial extended state, binding rows, and all accepted Event payloads
  * are copied. Phase 1 admits only trivial CMeta state/Event storage; managed
- * copy/move/destroy traits are rejected with `UNSUPPORTED_TYPE`. All four
- * capacities and `microstep_limit` must be positive. Initialization returns
- * only after posted eventless/completion work reaches quiescence; failure
- * leaves `instance` empty.
+ * copy/move/destroy traits are rejected with `UNSUPPORTED_TYPE`. All three
+ * queue capacities and `microstep_limit` must be positive. Initialization
+ * returns only after posted eventless/completion work reaches quiescence;
+ * failure leaves `instance` empty.
  *
  * Guard and executable callbacks run only on the borrowed SerialExecutor.
  * Initial stabilization callbacks may run before this function returns; the
@@ -195,9 +195,15 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
 cflow_mailbox_status cflow_statechart_instance_try_send(
     cflow_statechart_instance *instance, const cflow_event_view *event);
 
-/** Stop admission, preserve a microstep whose commit wins, then reach DONE. */
+/**
+ * Stop admission, preserve a microstep whose commit wins, then reach DONE.
+ * No-op after any clean, controlled, or error terminal outcome already won.
+ */
 void cflow_statechart_instance_close(cflow_statechart_instance *instance);
-/** Stop admission and discard a microstep if cancellation wins before commit. */
+/**
+ * Stop admission and discard a microstep if cancellation wins before commit.
+ * No-op after any clean, controlled, or error terminal outcome already won.
+ */
 void cflow_statechart_instance_cancel(cflow_statechart_instance *instance);
 
 /**
@@ -219,7 +225,8 @@ bool cflow_statechart_instance_copy_state(
 /**
  * Copy one linearizable accounting snapshot. At every snapshot, including
  * while producers and the driver are active:
- * accepted = completed + failed + cancelled + pending + in_flight.
+ * accepted = sat(completed + failed + cancelled + pending + in_flight),
+ * where every counter and intermediate sum saturates at `UINT64_MAX`.
  */
 bool cflow_statechart_instance_get_stats(
     const cflow_statechart_instance *instance,

@@ -2976,6 +2976,7 @@ typedef struct rtc_fixture {
     bool cancel_during_action;
     bool queue_cancel_after_commit;
     bool raise_on_other;
+    bool fail_action;
     struct microstep_executor_blocker *guard_blocker;
     cflow_statechart_guard guards[1];
 } rtc_fixture;
@@ -3016,6 +3017,10 @@ static bool rtc_action(void *user, cflow_statechart_action_phase phase,
     fixture->trace[fixture->trace_count++] = (int)owner;
     *(int *)out_state = *(const int *)state + 1;
     *out_error = NULL;
+    if (fixture->fail_action) {
+        *out_error = "deliberate RTC action failure";
+        return false;
+    }
     if (phase == CFLOW_STATECHART_ACTION_TRANSITION && event != NULL &&
         (event->id == RTC_GO ||
          (fixture->raise_on_other && event->id == RTC_OTHER))) {
@@ -3078,10 +3083,11 @@ static void rtc_stats_poller(void *user) {
         atomic_fetch_add(context->polls, 1);
         if (!cflow_statechart_instance_get_stats(context->instance, &stats) ||
             stats.external_accepted !=
-                stats.external_completed + stats.external_failed +
-                    stats.external_cancelled +
-                    (uint64_t)stats.external_pending +
-                    (uint64_t)stats.external_in_flight)
+                cflow_statechart_external_identity_sum_internal(
+                    stats.external_completed, stats.external_failed,
+                    stats.external_cancelled,
+                    (uint64_t)stats.external_pending,
+                    (uint64_t)stats.external_in_flight))
             atomic_fetch_add(context->violations, 1);
         turbo_thread_yield();
     }
@@ -3370,7 +3376,68 @@ static void check_explicit_control_survives_driver_cancel(bool cancel) {
     rtc_destroy(&fixture);
 }
 
+static void check_control_wins_before_external_receive(bool cancel) {
+    rtc_fixture fixture;
+    microstep_executor_blocker receive_blocker;
+    const int payload = 1;
+    const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+    cflow_statechart_instance_stats stats = {0};
+    const cflow_statechart_runtime_test_hooks hooks = {
+        .before_external_receive = microstep_block_executor,
+        .user = &receive_blocker};
+    rtc_definition(&fixture, true, false);
+    check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                CFLOW_STATECHART_RUNTIME_OK);
+    atomic_init(&receive_blocker.entered, false);
+    atomic_init(&receive_blocker.release, false);
+    check_true(cflow_statechart_instance_set_test_hooks_internal(
+        &fixture.instance, &hooks));
+    check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                CFLOW_MAILBOX_OK);
+    while (!atomic_load(&receive_blocker.entered)) turbo_thread_yield();
+    if (cancel)
+        cflow_statechart_instance_cancel(&fixture.instance);
+    else
+        cflow_statechart_instance_close(&fixture.instance);
+    check_true(cflow_statechart_instance_get_stats(&fixture.instance, &stats));
+    check_equal(stats.external_accepted, UINT64_C(1));
+    check_equal(stats.external_pending, (size_t)0u);
+    check_equal(stats.external_in_flight, (size_t)0u);
+    check_equal(stats.external_cancelled, UINT64_C(1));
+    check_equal(stats.external_completed, UINT64_C(0));
+    check_equal(stats.external_failed, UINT64_C(0));
+    check_equal(stats.cancelled, cancel);
+    if (cancel)
+        cflow_statechart_instance_close(&fixture.instance);
+    else
+        cflow_statechart_instance_cancel(&fixture.instance);
+    atomic_store(&receive_blocker.release, true);
+    check_true(cflow_executor_wait_idle(&fixture.executor));
+    check_true(cflow_statechart_instance_get_stats(&fixture.instance, &stats));
+    check_equal(stats.external_accepted, UINT64_C(1));
+    check_equal(stats.external_pending, (size_t)0u);
+    check_equal(stats.external_in_flight, (size_t)0u);
+    check_equal(stats.external_cancelled, UINT64_C(1));
+    check_equal(stats.cancelled, cancel);
+    rtc_destroy(&fixture);
+}
+
 suite("CFlow Statechart public run-to-completion runtime") {
+    it("saturates the public accounting identity without intermediate wrap") {
+        check_equal(cflow_statechart_external_identity_sum_internal(
+                        UINT64_MAX - UINT64_C(2), UINT64_C(1),
+                        UINT64_C(1), UINT64_C(0), UINT64_C(0)),
+                    UINT64_MAX);
+        check_equal(cflow_statechart_external_identity_sum_internal(
+                        UINT64_MAX - UINT64_C(1), UINT64_C(0),
+                        UINT64_C(0), UINT64_C(1), UINT64_C(1)),
+                    UINT64_MAX);
+        check_equal(cflow_statechart_external_identity_sum_internal(
+                        UINT64_C(3), UINT64_C(5), UINT64_C(7),
+                        UINT64_C(11), UINT64_C(13)),
+                    UINT64_C(39));
+    }
+
     it("reissues compound completion once for each immediate reentry") {
         completion_reentry_fixture fixture;
         const cflow_machine_state_id expected[] = {
@@ -3579,8 +3646,6 @@ suite("CFlow Statechart public run-to-completion runtime") {
         microstep_executor_blocker blocker;
         const int payload = 1;
         const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
-        const cflow_event_view other = {
-            RTC_OTHER, &cmeta_type_int, &payload};
         rtc_definition(&fixture, true, false);
         check_equal(rtc_init_with_external(
                         &fixture, 1u, 4u, 4u, 16u, 2u),
@@ -3926,6 +3991,96 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_destroy(&fixture);
     }
 
+    it("keeps clean terminal completion as the winner over later control") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats before = {0}, after = {0};
+        rtc_definition(&fixture, false, false);
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &before));
+        check_true(before.done);
+        check_false(before.cancelled);
+        check_false(before.errored);
+        cflow_statechart_instance_cancel(&fixture.instance);
+        cflow_statechart_instance_close(&fixture.instance);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &after));
+        check_equal(after.cancelled, before.cancelled);
+        check_equal(after.last_status, before.last_status);
+        check_equal(after.external_completed, before.external_completed);
+        check_equal(after.external_failed, before.external_failed);
+        check_equal(after.external_cancelled, before.external_cancelled);
+        rtc_destroy(&fixture);
+    }
+
+    it("keeps action failure as the winner over later control") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats before = {0}, after = {0};
+        rtc_definition(&fixture, true, false);
+        fixture.fail_action = true;
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &before));
+        check_true(before.done);
+        check_true(before.errored);
+        check_equal(before.external_failed, UINT64_C(1));
+        check_equal(cflow_statechart_instance_error(&fixture.instance),
+                    "deliberate RTC action failure");
+        cflow_statechart_instance_cancel(&fixture.instance);
+        cflow_statechart_instance_close(&fixture.instance);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &after));
+        check_true(after.errored);
+        check_false(after.cancelled);
+        check_equal(after.last_status, before.last_status);
+        check_equal(after.external_failed, UINT64_C(1));
+        check_equal(after.external_cancelled, UINT64_C(0));
+        rtc_destroy(&fixture);
+    }
+
+    it("keeps executor failure as the winner over later control") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats before = {0}, after = {0};
+        rtc_definition(&fixture, true, false);
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_executor_shutdown(&fixture.executor));
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &before));
+        check_true(before.done);
+        check_true(before.errored);
+        check_equal(before.last_status,
+                    CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED);
+        check_equal(before.external_failed, UINT64_C(1));
+        cflow_statechart_instance_cancel(&fixture.instance);
+        cflow_statechart_instance_close(&fixture.instance);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &after));
+        check_true(after.errored);
+        check_false(after.cancelled);
+        check_equal(after.last_status,
+                    CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED);
+        check_equal(after.external_failed, UINT64_C(1));
+        check_equal(after.external_cancelled, UINT64_C(0));
+        rtc_destroy(&fixture);
+    }
+
     it("fails the oldest accepted event when shutdown cancels its driver") {
         rtc_fixture fixture;
         microstep_executor_blocker blocker;
@@ -3968,6 +4123,53 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_explicit_control_survives_driver_cancel(true);
     }
 
+    it("does not dequeue after close wins before external receive") {
+        check_control_wins_before_external_receive(false);
+    }
+
+    it("does not dequeue after cancel wins before external receive") {
+        check_control_wins_before_external_receive(true);
+    }
+
+    it("settles close when its reserved microstep post is rejected") {
+        rtc_fixture fixture;
+        microstep_executor_blocker post_blocker;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats stats = {0};
+        cflow_statechart_runtime_test_hooks hooks;
+        rtc_definition(&fixture, true, false);
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        atomic_init(&post_blocker.entered, false);
+        atomic_init(&post_blocker.release, false);
+        hooks = (cflow_statechart_runtime_test_hooks){
+            .before_microstep_post = microstep_block_executor,
+            .user = &post_blocker};
+        check_true(cflow_statechart_instance_set_test_hooks_internal(
+            &fixture.instance, &hooks));
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        while (!atomic_load(&post_blocker.entered)) turbo_thread_yield();
+        cflow_statechart_instance_close(&fixture.instance);
+        check_true(cflow_executor_shutdown(&fixture.executor));
+        atomic_store(&post_blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.closed);
+        check_true(stats.done);
+        check_false(stats.cancelled);
+        check_false(stats.errored);
+        check_equal(stats.last_status, CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(stats.external_accepted, UINT64_C(1));
+        check_equal(stats.external_completed, UINT64_C(0));
+        check_equal(stats.external_failed, UINT64_C(0));
+        check_equal(stats.external_cancelled, UINT64_C(1));
+        check_equal(stats.external_in_flight, (size_t)0u);
+        rtc_destroy(&fixture);
+    }
+
     it("fails an accepted macrostep when shutdown cancels its queued microstep") {
         rtc_fixture fixture;
         microstep_executor_blocker blocker;
@@ -4008,6 +4210,129 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_equal(stats.external_failed, UINT64_C(1));
         check_equal(stats.external_cancelled, UINT64_C(1));
         check_equal(stats.external_completed, UINT64_C(0));
+        rtc_destroy(&fixture);
+    }
+
+    it("keeps executor microstep cancellation over control before finalize") {
+        rtc_fixture fixture;
+        microstep_executor_blocker worker_blocker, cancel_blocker;
+        cflow_executor_control control = {0};
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats stats = {0};
+        cflow_statechart_runtime_test_hooks hooks;
+        rtc_definition(&fixture, true, false);
+        atomic_init(&worker_blocker.entered, false);
+        atomic_init(&worker_blocker.release, false);
+        atomic_init(&cancel_blocker.entered, false);
+        atomic_init(&cancel_blocker.release, false);
+        fixture.guard_blocker = &worker_blocker;
+        fixture.guards[0] = (cflow_statechart_guard){
+            RTC_QUEUE_GUARD, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        fixture.transitions[1].guard = RTC_QUEUE_GUARD;
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        hooks = (cflow_statechart_runtime_test_hooks){
+            .after_microstep_cancel = microstep_block_executor,
+            .user = &cancel_blocker};
+        check_true(cflow_statechart_instance_set_test_hooks_internal(
+            &fixture.instance, &hooks));
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        while (!atomic_load(&worker_blocker.entered)) turbo_thread_yield();
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &other),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_as_control(&fixture.executor, &control));
+        check_true(cflow_executor_control_shutdown(
+            &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+        atomic_store(&worker_blocker.release, true);
+        while (!atomic_load(&cancel_blocker.entered)) turbo_thread_yield();
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED);
+        check_true(stats.errored);
+        check_false(stats.cancelled);
+        check_equal(stats.external_accepted, UINT64_C(2));
+        check_equal(stats.external_failed, UINT64_C(1));
+        check_equal(stats.external_cancelled, UINT64_C(1));
+        check_equal(stats.external_pending, (size_t)0u);
+        check_equal(stats.external_in_flight, (size_t)0u);
+        cflow_statechart_instance_cancel(&fixture.instance);
+        cflow_statechart_instance_close(&fixture.instance);
+        atomic_store(&cancel_blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED);
+        check_true(stats.errored);
+        check_false(stats.cancelled);
+        check_equal(stats.external_failed, UINT64_C(1));
+        check_equal(stats.external_cancelled, UINT64_C(1));
+        rtc_destroy(&fixture);
+    }
+
+    it("reports deterministic pending transfer settle and bulk-cancel snapshots") {
+        rtc_fixture fixture;
+        microstep_executor_blocker blocker;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats stats = {0};
+        rtc_definition(&fixture, true, false);
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        fixture.guard_blocker = &blocker;
+        fixture.guards[0] = (cflow_statechart_guard){
+            RTC_QUEUE_GUARD, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        fixture.transitions[1].guard = RTC_QUEUE_GUARD;
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_accepted, UINT64_C(1));
+        check_equal(stats.external_pending, (size_t)0u);
+        check_equal(stats.external_in_flight, (size_t)1u);
+        check_equal(stats.external_completed, UINT64_C(0));
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &other),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_accepted, UINT64_C(2));
+        check_equal(stats.external_pending, (size_t)1u);
+        check_equal(stats.external_in_flight, (size_t)1u);
+        cflow_statechart_instance_cancel(&fixture.instance);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_accepted, UINT64_C(2));
+        check_equal(stats.external_pending, (size_t)0u);
+        check_equal(stats.external_in_flight, (size_t)1u);
+        check_equal(stats.external_cancelled, UINT64_C(1));
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_accepted, UINT64_C(2));
+        check_equal(stats.external_pending, (size_t)0u);
+        check_equal(stats.external_in_flight, (size_t)0u);
+        check_equal(stats.external_cancelled, UINT64_C(2));
+        check_true(stats.done);
+        check_true(stats.cancelled);
         rtc_destroy(&fixture);
     }
 

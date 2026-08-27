@@ -291,10 +291,13 @@ cancellation, and snapshot copy perform no unbounded allocation. The runtime
 uses a mutex for control/state publication and does not introduce a lock-free
 configuration structure. External mailbox transfer and accepted-Event
 accounting linearize under that instance mutex. If both locks are needed, the
-only order is instance mutex then private mailbox mutex; the private mailbox
-exposes no waitable/waker, and callbacks and Executor posts occur only after
-the instance mutex is released. Every live stats snapshot therefore satisfies
-`accepted = completed + failed + cancelled + pending + in_flight`.
+only order is instance mutex then private mailbox mutex. The runtime never arms
+the private mailbox waker. Terminal paths cancel the mailbox and detach any
+waker while both state changes are linearized, then release the instance mutex
+before invoking the detached callback or posting Executor work. Every live
+stats snapshot therefore satisfies
+`accepted = sat(completed + failed + cancelled + pending + in_flight)`, with
+all counters and intermediate additions saturating at `UINT64_MAX`.
 
 ## Query and compatibility API
 
@@ -328,6 +331,10 @@ processing. Close/cancel rejects schedules and settles pending timer slots.
 - Guard/executable failure, queue overflow during internal raise/completion,
   invalid runtime phase, or microstep-limit exhaustion stores one stable first
   error and cancels queued work.
+- Exactly one terminal outcome wins under the instance mutex: clean root
+  completion, explicit close, explicit cancel, or error. That winner owns all
+  terminal flags, first status/error, and external settlement; later control or
+  Executor cancellation is a no-op and cannot replace the cause.
 - `close` rejects new external events and timers, lets a commit that already
   won finish, then settles queued events canceled and exposes DONE.
 - `cancel` rejects admission and discards an uncommitted staged microstep. A
