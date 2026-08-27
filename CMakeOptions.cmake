@@ -10,6 +10,7 @@ cmake_dependent_option(ENABLE_ASAN "Enable Address Sanitizer" ON
                        "CMAKE_BUILD_TYPE STREQUAL Debug" OFF)
 
 
+option(CFLOW_ENABLE_USB "Build the optional libusb CFlow adapter" OFF)
 
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_TESTS "Build test suite" ON)
