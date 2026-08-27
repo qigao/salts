@@ -76,15 +76,17 @@ def entryPrecedes (ancestors : Nat → List Nat) (documentOrder : Nat → Nat)
   else if (ancestors left).contains right then false
   else documentOrder left < documentOrder right
 
-def ExitOrdered (ancestors : Nat → List Nat) (documentOrder : Nat → Nat)
-    (states : List Nat) : Prop :=
-  states.Pairwise fun left right =>
-    exitPrecedes ancestors documentOrder left right = true
+def exitOrder (documentOrder : Nat → Nat) (states : List Nat) : List Nat :=
+  states.mergeSort fun left right => decide (documentOrder right ≤ documentOrder left)
 
-def EntryOrdered (ancestors : Nat → List Nat) (documentOrder : Nat → Nat)
-    (states : List Nat) : Prop :=
-  states.Pairwise fun left right =>
-    entryPrecedes ancestors documentOrder left right = true
+def entryOrder (documentOrder : Nat → Nat) (states : List Nat) : List Nat :=
+  states.mergeSort fun left right => decide (documentOrder left ≤ documentOrder right)
+
+def ExitOrdered (documentOrder : Nat → Nat) (states : List Nat) : Prop :=
+  states.Pairwise fun left right => documentOrder right ≤ documentOrder left
+
+def EntryOrdered (documentOrder : Nat → Nat) (states : List Nat) : Prop :=
+  states.Pairwise fun left right => documentOrder left ≤ documentOrder right
 
 /-- The normalized facts consumed by C's dense configuration validator. -/
 structure ConfigurationModel where
@@ -95,6 +97,7 @@ structure ConfigurationModel where
   isCompound : Nat → Bool
   isParallel : Nat → Bool
   isLeaf : Nat → Bool
+  documentOrder : Nat → Nat
 
 /-- The pure proof boundary after C has constructed and validated a staged
     configuration. It mirrors no-pseudo, ancestry, compound exclusivity,
@@ -103,24 +106,58 @@ structure ConfigurationModel where
 def LegalConfiguration (model : ConfigurationModel)
     (active : List Nat) : Prop :=
   active.Nodup ∧
-  (∀ state ∈ active, state ∈ model.stateUniverse) ∧
-  (∀ state ∈ active, model.isReal state = true) ∧
-  (∀ state ∈ active, ∀ ancestor ∈ model.ancestors state,
-    ancestor ∈ active) ∧
-  (∀ state ∈ active, model.isCompound state = true →
-    ((model.children state).filter (active.contains ·)).length = 1) ∧
-  (∀ state ∈ active, model.isParallel state = true →
-    ∀ child ∈ model.children state,
-      model.isReal child = true → child ∈ active) ∧
-  ∃ leaf ∈ active, model.isLeaf leaf = true
+  active.all model.stateUniverse.contains = true ∧
+  active.all model.isReal = true ∧
+  active.all (fun state =>
+    (model.ancestors state).all active.contains) = true ∧
+  active.all (fun state =>
+    !model.isCompound state ||
+      ((model.children state).filter active.contains).length == 1) = true ∧
+  active.all (fun state =>
+    !model.isParallel state ||
+      (model.children state).all fun child =>
+        !model.isReal child || active.contains child) = true ∧
+  active.any model.isLeaf = true ∧
+  EntryOrdered model.documentOrder active
 
-structure ModeledMicrostep (model : ConfigurationModel) where
-  nextActive : List Nat
-  nextLegal : LegalConfiguration model nextActive
+/-- The four state sources built by C after exit-domain selection. Targetless
+    transitions contribute no target state. Defaults and history are already
+    iteratively resolved to real states at this boundary. -/
+structure MicrostepPlan where
+  exitSet : List Nat
+  directTargets : List Nat
+  defaultTargets : List Nat
+  historyTargets : List Nat
+  deriving Repr, DecidableEq
 
-def applyMicrostep {model : ConfigurationModel}
-    (microstep : ModeledMicrostep model) : List Nat :=
-  microstep.nextActive
+/-- Mirrors C's staged configuration constructor: retain states outside the
+    selected exit union, append resolved targets, deduplicate, then normalize
+    into document order. -/
+def constructNext (model : ConfigurationModel) (published : List Nat)
+    (plan : MicrostepPlan) : List Nat :=
+  entryOrder model.documentOrder
+    ((published.filter fun state => !plan.exitSet.contains state) ++
+      plan.directTargets ++ plan.defaultTargets ++ plan.historyTargets).eraseDups
+
+/-- Executable counterpart of C's finite staged-configuration validation.
+    This is deliberately separate from `MicrostepPlan`, so legality is checked
+    after construction rather than supplied as a circular plan field. -/
+def validateConfiguration (model : ConfigurationModel)
+    (active : List Nat) : Bool :=
+  decide active.Nodup &&
+  (active.all model.stateUniverse.contains &&
+  (active.all model.isReal &&
+  (active.all (fun state => (model.ancestors state).all active.contains) &&
+  (active.all (fun state =>
+    !model.isCompound state ||
+      ((model.children state).filter active.contains).length == 1) &&
+  (active.all (fun state =>
+    !model.isParallel state ||
+      (model.children state).all fun child =>
+        !model.isReal child || active.contains child) &&
+  (active.any model.isLeaf &&
+  decide (active.Pairwise fun left right =>
+    model.documentOrder left ≤ model.documentOrder right)))))))
 
 /-- Mirrors C's publication gate: a failed microstep selects the old published
     buffer, while success selects the fully validated staged buffer. -/
@@ -128,31 +165,32 @@ def commitConfiguration (succeeded : Bool)
     (published staged : List Nat) : List Nat :=
   if succeeded then staged else published
 
-private def appendUnique (states : List Nat) (state : Nat) : List Nat :=
-  if states.contains state then states else states ++ [state]
-
-private def stableUnique (states : List Nat) : List Nat :=
-  states.foldl appendUnique []
-
 /-- Shallow history either follows its explicit default or default-enters
     below every remembered immediate child. -/
 def restoreShallow (remembered defaultTarget : List Nat)
     (defaultBelow : Nat → List Nat) : List Nat :=
-  if remembered.isEmpty then defaultTarget
-  else remembered.flatMap defaultBelow
+  match remembered with
+  | [] => defaultTarget
+  | _ => remembered.flatMap fun child => child :: defaultBelow child
 
 /-- Deep history reconstructs remembered leaves and ancestors, with C's bitset
     uniqueness represented by stable left-to-right deduplication. -/
 def restoreDeep (rememberedLeaves : List Nat)
     (ancestorsIncludingSelf : Nat → List Nat) : List Nat :=
-  stableUnique (rememberedLeaves.flatMap ancestorsIncludingSelf)
+  (rememberedLeaves.flatMap ancestorsIncludingSelf).eraseDups
 
 def ShallowRestored (remembered defaultTarget : List Nat)
     (defaultBelow : Nat → List Nat) (result : List Nat) : Prop :=
-  result = restoreShallow remembered defaultTarget defaultBelow
+  match remembered with
+  | [] => ∀ state ∈ defaultTarget, state ∈ result
+  | _ =>
+      (∀ child ∈ remembered, child ∈ result) ∧
+      (∀ child ∈ remembered, ∀ state ∈ defaultBelow child,
+        state ∈ result)
 
 def DeepRestored (rememberedLeaves : List Nat)
     (ancestorsIncludingSelf : Nat → List Nat) (result : List Nat) : Prop :=
-  result = restoreDeep rememberedLeaves ancestorsIncludingSelf
+  ∀ leaf ∈ rememberedLeaves, ∀ state ∈ ancestorsIncludingSelf leaf,
+    state ∈ result
 
 end CMetaCFlowCalculus.CFlow.Statechart

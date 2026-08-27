@@ -186,6 +186,14 @@ typedef struct cflow_statechart_selection_snapshot {
     /** One dense-state bitset per transition, at `exit_set_stride` bytes. */
     const unsigned char *exit_sets;
     size_t exit_set_stride;
+    /** Identity and fact-source version captured by the successful selection. */
+    uint64_t instance_token;
+    uint64_t generation;
+    uint64_t configuration_version;
+    /** Trigger identity is bound at selection; EVENT payload bytes are owned. */
+    cflow_statechart_trigger_kind trigger_kind;
+    cflow_event_id event_id;
+    cflow_machine_state_id completion;
 } cflow_statechart_selection_snapshot;
 
 /*

@@ -1327,17 +1327,17 @@ typedef struct microstep_action_probe {
 } microstep_action_probe;
 
 enum {
-    MICRO_ROOT = 100u,
-    MICRO_LEFT = 200u,
-    MICRO_LEFT_INITIAL = 201u,
-    MICRO_LEFT_NESTED = 220u,
-    MICRO_NESTED_INITIAL = 221u,
-    MICRO_LEFT_A = 210u,
-    MICRO_LEFT_B = 211u,
-    MICRO_RIGHT = 300u,
-    MICRO_RIGHT_INITIAL = 301u,
-    MICRO_RIGHT_C = 310u,
-    MICRO_RIGHT_D = 311u,
+    MICRO_ROOT = 990u,
+    MICRO_LEFT = 900u,
+    MICRO_LEFT_INITIAL = 890u,
+    MICRO_LEFT_NESTED = 800u,
+    MICRO_NESTED_INITIAL = 790u,
+    MICRO_LEFT_A = 700u,
+    MICRO_LEFT_B = 690u,
+    MICRO_RIGHT = 400u,
+    MICRO_RIGHT_INITIAL = 390u,
+    MICRO_RIGHT_C = 300u,
+    MICRO_RIGHT_D = 290u,
     MICRO_EVENT = 10u,
     MICRO_RAISED_EVENT = 11u,
     MICRO_LEFT_TRANSITION = 1000u,
@@ -1515,6 +1515,29 @@ static cflow_statechart_runtime_status microstep_fixture_init(
     return cflow_statechart_instance_init(&fixture->instance, &config);
 }
 
+static cflow_statechart_runtime_status microstep_fixture_init_with_binding(
+    microstep_fixture *fixture,
+    const cflow_statechart_executable_binding *binding,
+    size_t internal_event_capacity,
+    size_t executor_capacity) {
+    cflow_statechart_instance_config config;
+    check_equal(cflow_statechart_build(
+                    &fixture->statechart, &fixture->definition),
+                CFLOW_STATECHART_OK);
+    check_true(executor_capacity == 0u
+        ? cflow_executor_serial_init(&fixture->executor)
+        : cflow_executor_serial_init_with_capacity(
+              &fixture->executor, executor_capacity));
+    config = (cflow_statechart_instance_config){
+        .statechart = &fixture->statechart,
+        .initial_state = &fixture->initial_state,
+        .executables = binding,
+        .executable_count = 1u,
+        .internal_event_capacity = internal_event_capacity,
+        .executor = &fixture->executor};
+    return cflow_statechart_instance_init(&fixture->instance, &config);
+}
+
 static void microstep_fixture_destroy(microstep_fixture *fixture) {
     check_equal(cflow_statechart_instance_destroy(&fixture->instance),
                 CFLOW_STATECHART_RUNTIME_OK);
@@ -1563,11 +1586,219 @@ typedef struct microstep_executor_blocker {
     atomic_bool release;
 } microstep_executor_blocker;
 
+typedef enum microstep_raise_case {
+    MICROSTEP_RAISE_VALID = 0,
+    MICROSTEP_RAISE_UNKNOWN,
+    MICROSTEP_RAISE_TYPE_MISMATCH
+} microstep_raise_case;
+
+typedef struct microstep_raise_probe {
+    microstep_raise_case sequence[4];
+    bool results[4];
+    const char *errors[4];
+    size_t count;
+} microstep_raise_probe;
+
+static bool microstep_raise_sequence_action(
+    void *user, cflow_statechart_action_phase phase,
+    cflow_machine_state_id owner, const void *state,
+    const cflow_event_view *event, void *out_state,
+    cflow_statechart_raise_fn raise_internal, void *raise_user,
+    const char **out_error) {
+    microstep_raise_probe *probe = (microstep_raise_probe *)user;
+    size_t index;
+    (void)phase;
+    (void)owner;
+    if (probe == NULL || state == NULL || event == NULL || out_state == NULL ||
+        raise_internal == NULL || out_error == NULL)
+        return false;
+    *(int *)out_state = *(const int *)state;
+    for (index = 0u; index < probe->count; ++index) {
+        int int_payload = 100 + (int)index;
+        long long_payload = 200 + (long)index;
+        cflow_event_view raised = {
+            MICRO_RAISED_EVENT, &cmeta_type_int, &int_payload};
+        const char *raise_error = NULL;
+        if (probe->sequence[index] == MICROSTEP_RAISE_UNKNOWN)
+            raised.id = 999999u;
+        else if (probe->sequence[index] == MICROSTEP_RAISE_TYPE_MISMATCH) {
+            raised.payload_type = &cmeta_type_long;
+            raised.payload = &long_payload;
+        }
+        probe->results[index] = raise_internal(
+            raise_user, &raised, &raise_error);
+        probe->errors[index] = raise_error;
+    }
+    *out_error = probe->errors[probe->count - 1u];
+    return false;
+}
+
 static void microstep_block_executor(void *user) {
     microstep_executor_blocker *blocker =
         (microstep_executor_blocker *)user;
     atomic_store(&blocker->entered, true);
     while (!atomic_load(&blocker->release)) turbo_thread_yield();
+}
+
+static void microstep_noop(void *user) {
+    (void)user;
+}
+
+static void check_raise_latch_case(
+    const microstep_raise_case *sequence, size_t sequence_count,
+    const bool *expected_results,
+    cflow_statechart_runtime_status expected_status,
+    const char *expected_error) {
+    microstep_fixture fixture;
+    microstep_raise_probe probe = {0};
+    cflow_statechart_selection_snapshot selection = {0};
+    cflow_statechart_microstep_stats stats = {0};
+    const cflow_statechart_executable_binding binding = {
+        MICRO_EXECUTABLE, microstep_raise_sequence_action, &probe};
+    size_t index;
+    microstep_fixture_definition(
+        &fixture, false, false, CFLOW_STATECHART_TRANSITION_EXTERNAL);
+    for (index = 0u; index < sequence_count; ++index)
+        probe.sequence[index] = sequence[index];
+    probe.count = sequence_count;
+    check_equal(microstep_fixture_init_with_binding(
+                    &fixture, &binding, 1u, 0u),
+                CFLOW_STATECHART_RUNTIME_OK);
+    check_equal(microstep_submit_event(&fixture, &selection),
+                CFLOW_ADMISSION_ACCEPTED);
+    check_true(cflow_executor_wait_idle(&fixture.executor));
+    for (index = 0u; index < sequence_count; ++index) {
+        check_equal(probe.results[index], expected_results[index]);
+        if (expected_results[index])
+            check_null(probe.errors[index]);
+        else
+            check_equal(probe.errors[index], expected_error);
+    }
+    check_true(cflow_statechart_instance_get_microstep_stats_internal(
+        &fixture.instance, &stats));
+    check_equal(stats.last_status, expected_status);
+    check_equal(stats.internal_pending, (size_t)0u);
+    check_equal(cflow_statechart_instance_error(&fixture.instance),
+                expected_error);
+    microstep_fixture_destroy(&fixture);
+}
+
+typedef struct parallel_entry_fixture {
+    cflow_statechart_state states[10];
+    cflow_event_type events[1];
+    cflow_statechart_executable executables[1];
+    cflow_statechart_transition transitions[4];
+    cflow_statechart_transition_action transition_actions[2];
+    cflow_statechart_definition definition;
+    cflow_statechart statechart;
+    cflow_executor executor;
+    cflow_statechart_instance instance;
+    int initial_state;
+} parallel_entry_fixture;
+
+enum {
+    PARALLEL_ENTRY_ROOT = 900u,
+    PARALLEL_ENTRY_ROOT_INITIAL = 800u,
+    PARALLEL_ENTRY_OUTSIDE = 700u,
+    PARALLEL_ENTRY_PARALLEL = 600u,
+    PARALLEL_ENTRY_FIRST_REGION = 500u,
+    PARALLEL_ENTRY_FIRST_INITIAL = 950u,
+    PARALLEL_ENTRY_FIRST_LEAF = 400u,
+    PARALLEL_ENTRY_SECOND_REGION = 300u,
+    PARALLEL_ENTRY_SECOND_INITIAL = 50u,
+    PARALLEL_ENTRY_SECOND_LEAF = 200u
+};
+
+static void parallel_entry_fixture_init(
+    parallel_entry_fixture *fixture, microstep_action_probe *probe) {
+    cflow_statechart_instance_config config;
+    const cflow_statechart_executable_binding binding = {
+        MICRO_EXECUTABLE, microstep_action, probe};
+    memset(fixture, 0, sizeof(*fixture));
+    fixture->states[0] = (cflow_statechart_state){
+        PARALLEL_ENTRY_ROOT, 0u, CFLOW_STATECHART_COMPOUND, 0u};
+    fixture->states[1] = (cflow_statechart_state){
+        PARALLEL_ENTRY_ROOT_INITIAL, PARALLEL_ENTRY_ROOT,
+        CFLOW_STATECHART_INITIAL, 1u};
+    fixture->states[2] = (cflow_statechart_state){
+        PARALLEL_ENTRY_OUTSIDE, PARALLEL_ENTRY_ROOT,
+        CFLOW_STATECHART_ATOMIC, 2u};
+    fixture->states[3] = (cflow_statechart_state){
+        PARALLEL_ENTRY_PARALLEL, PARALLEL_ENTRY_ROOT,
+        CFLOW_STATECHART_PARALLEL, 3u};
+    fixture->states[4] = (cflow_statechart_state){
+        PARALLEL_ENTRY_FIRST_REGION, PARALLEL_ENTRY_PARALLEL,
+        CFLOW_STATECHART_COMPOUND, 4u};
+    fixture->states[5] = (cflow_statechart_state){
+        PARALLEL_ENTRY_FIRST_INITIAL, PARALLEL_ENTRY_FIRST_REGION,
+        CFLOW_STATECHART_INITIAL, 5u};
+    fixture->states[6] = (cflow_statechart_state){
+        PARALLEL_ENTRY_FIRST_LEAF, PARALLEL_ENTRY_FIRST_REGION,
+        CFLOW_STATECHART_ATOMIC, 6u};
+    fixture->states[7] = (cflow_statechart_state){
+        PARALLEL_ENTRY_SECOND_REGION, PARALLEL_ENTRY_PARALLEL,
+        CFLOW_STATECHART_COMPOUND, 7u};
+    fixture->states[8] = (cflow_statechart_state){
+        PARALLEL_ENTRY_SECOND_INITIAL, PARALLEL_ENTRY_SECOND_REGION,
+        CFLOW_STATECHART_INITIAL, 8u};
+    fixture->states[9] = (cflow_statechart_state){
+        PARALLEL_ENTRY_SECOND_LEAF, PARALLEL_ENTRY_SECOND_REGION,
+        CFLOW_STATECHART_ATOMIC, 9u};
+    fixture->events[0] = (cflow_event_type){
+        MICRO_EVENT, &cmeta_type_int};
+    fixture->executables[0] = (cflow_statechart_executable){
+        MICRO_EXECUTABLE, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+        CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+    fixture->transitions[0] = (cflow_statechart_transition){
+        1u, PARALLEL_ENTRY_ROOT_INITIAL,
+        CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u,
+        PARALLEL_ENTRY_OUTSIDE, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u};
+    fixture->transitions[1] = (cflow_statechart_transition){
+        2u, PARALLEL_ENTRY_OUTSIDE, CFLOW_STATECHART_TRIGGER_EVENT,
+        MICRO_EVENT, 0u, 0u, PARALLEL_ENTRY_PARALLEL,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u};
+    fixture->transitions[2] = (cflow_statechart_transition){
+        3u, PARALLEL_ENTRY_FIRST_INITIAL,
+        CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u,
+        PARALLEL_ENTRY_FIRST_LEAF,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 2u};
+    fixture->transitions[3] = (cflow_statechart_transition){
+        4u, PARALLEL_ENTRY_SECOND_INITIAL,
+        CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u,
+        PARALLEL_ENTRY_SECOND_LEAF,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 3u};
+    fixture->transition_actions[0] =
+        (cflow_statechart_transition_action){3u, MICRO_EXECUTABLE, 0u};
+    fixture->transition_actions[1] =
+        (cflow_statechart_transition_action){4u, MICRO_EXECUTABLE, 0u};
+    fixture->definition = (cflow_statechart_definition){
+        &cmeta_type_int, fixture->states, 10u, fixture->events, 1u,
+        NULL, 0u, fixture->executables, 1u, fixture->transitions, 4u,
+        NULL, 0u, fixture->transition_actions, 2u};
+    fixture->initial_state = 10;
+    check_equal(cflow_statechart_build(
+                    &fixture->statechart, &fixture->definition),
+                CFLOW_STATECHART_OK);
+    check_true(cflow_executor_serial_init(&fixture->executor));
+    probe->executor = &fixture->executor;
+    probe->executor_only = true;
+    probe->no_alias = true;
+    config = (cflow_statechart_instance_config){
+        .statechart = &fixture->statechart,
+        .initial_state = &fixture->initial_state,
+        .executables = &binding,
+        .executable_count = 1u,
+        .internal_event_capacity = 2u,
+        .executor = &fixture->executor};
+    check_equal(cflow_statechart_instance_init(&fixture->instance, &config),
+                CFLOW_STATECHART_RUNTIME_OK);
+}
+
+static void parallel_entry_fixture_destroy(parallel_entry_fixture *fixture) {
+    check_equal(cflow_statechart_instance_destroy(&fixture->instance),
+                CFLOW_STATECHART_RUNTIME_OK);
+    cflow_executor_destroy(&fixture->executor);
+    cflow_statechart_destroy(&fixture->statechart);
 }
 
 suite("CFlow Statechart ordered atomic microsteps") {
@@ -1788,6 +2019,281 @@ suite("CFlow Statechart ordered atomic microsteps") {
         check_true(cflow_executor_wait_idle(&fixture.executor));
         check_equal(probe.observed_event_payload, 77);
         microstep_fixture_destroy(&fixture);
+    }
+
+    it("binds the selection-time payload before reservation") {
+        microstep_fixture fixture;
+        microstep_action_probe probe = {0};
+        cflow_statechart_selection_snapshot selection = {0};
+        int payload = 77;
+        cflow_event_view event = {MICRO_EVENT, &cmeta_type_int, &payload};
+        const cflow_statechart_selection_trigger trigger = {
+            CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
+        microstep_fixture_definition(
+            &fixture, false, false, CFLOW_STATECHART_TRANSITION_EXTERNAL);
+        check_equal(microstep_fixture_init(&fixture, &probe, 2u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_select_internal(
+                        &fixture.instance, &trigger, &selection),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        payload = 99;
+        check_equal(cflow_statechart_instance_try_microstep_internal(
+                        &fixture.instance, &trigger, &selection),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.observed_event_payload, 77);
+        microstep_fixture_destroy(&fixture);
+    }
+
+    it("rejects an overwritten selection generation") {
+        microstep_fixture fixture;
+        microstep_action_probe probe = {0};
+        cflow_statechart_selection_snapshot old_selection = {0};
+        cflow_statechart_selection_snapshot current_selection = {0};
+        const int payload = 77;
+        const cflow_event_view event = {
+            MICRO_EVENT, &cmeta_type_int, &payload};
+        const cflow_statechart_selection_trigger trigger = {
+            CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
+        cflow_admission_status admission;
+        microstep_fixture_definition(
+            &fixture, false, false, CFLOW_STATECHART_TRANSITION_EXTERNAL);
+        check_equal(microstep_fixture_init(&fixture, &probe, 2u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_select_internal(
+                        &fixture.instance, &trigger, &old_selection),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_select_internal(
+                        &fixture.instance, &trigger, &current_selection),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        admission = cflow_statechart_instance_try_microstep_internal(
+            &fixture.instance, &trigger, &old_selection);
+        check_equal(admission, CFLOW_ADMISSION_INVALID_ARGUMENT);
+        if (admission == CFLOW_ADMISSION_ACCEPTED)
+            check_true(cflow_executor_wait_idle(&fixture.executor));
+        else {
+            check_equal(cflow_statechart_instance_try_microstep_internal(
+                            &fixture.instance, &trigger, &current_selection),
+                        CFLOW_ADMISSION_ACCEPTED);
+            check_true(cflow_executor_wait_idle(&fixture.executor));
+        }
+        microstep_fixture_destroy(&fixture);
+    }
+
+    it("rejects selection reuse after its commit") {
+        microstep_fixture fixture;
+        microstep_action_probe probe = {0};
+        cflow_statechart_selection_snapshot selection = {0};
+        const int payload = 77;
+        const cflow_event_view event = {
+            MICRO_EVENT, &cmeta_type_int, &payload};
+        const cflow_statechart_selection_trigger trigger = {
+            CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
+        cflow_admission_status admission;
+        microstep_fixture_definition(
+            &fixture, false, false, CFLOW_STATECHART_TRANSITION_EXTERNAL);
+        check_equal(microstep_fixture_init(&fixture, &probe, 2u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_select_internal(
+                        &fixture.instance, &trigger, &selection),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_microstep_internal(
+                        &fixture.instance, &trigger, &selection),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        admission = cflow_statechart_instance_try_microstep_internal(
+            &fixture.instance, &trigger, &selection);
+        check_equal(admission, CFLOW_ADMISSION_INVALID_ARGUMENT);
+        if (admission == CFLOW_ADMISSION_ACCEPTED)
+            check_true(cflow_executor_wait_idle(&fixture.executor));
+        microstep_fixture_destroy(&fixture);
+    }
+
+    it("rejects a selection submitted with a different event ID") {
+        microstep_fixture fixture;
+        microstep_action_probe probe = {0};
+        cflow_statechart_selection_snapshot selection = {0};
+        const int payload = 77;
+        const cflow_event_view selected_event = {
+            MICRO_EVENT, &cmeta_type_int, &payload};
+        const cflow_event_view different_event = {
+            MICRO_RAISED_EVENT, &cmeta_type_int, &payload};
+        const cflow_statechart_selection_trigger selected_trigger = {
+            CFLOW_STATECHART_TRIGGER_EVENT, &selected_event, 0u};
+        const cflow_statechart_selection_trigger different_trigger = {
+            CFLOW_STATECHART_TRIGGER_EVENT, &different_event, 0u};
+        cflow_admission_status admission;
+        microstep_fixture_definition(
+            &fixture, false, false, CFLOW_STATECHART_TRANSITION_EXTERNAL);
+        check_equal(microstep_fixture_init(&fixture, &probe, 2u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_select_internal(
+                        &fixture.instance, &selected_trigger, &selection),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        admission = cflow_statechart_instance_try_microstep_internal(
+            &fixture.instance, &different_trigger, &selection);
+        check_equal(admission, CFLOW_ADMISSION_INVALID_ARGUMENT);
+        if (admission == CFLOW_ADMISSION_ACCEPTED)
+            check_true(cflow_executor_wait_idle(&fixture.executor));
+        microstep_fixture_destroy(&fixture);
+    }
+
+    it("rejects a selection token from another instance") {
+        microstep_fixture first, second;
+        microstep_action_probe first_probe = {0}, second_probe = {0};
+        cflow_statechart_selection_snapshot selection = {0};
+        const int payload = 77;
+        const cflow_event_view event = {
+            MICRO_EVENT, &cmeta_type_int, &payload};
+        const cflow_statechart_selection_trigger trigger = {
+            CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
+        microstep_fixture_definition(
+            &first, false, false, CFLOW_STATECHART_TRANSITION_EXTERNAL);
+        microstep_fixture_definition(
+            &second, false, false, CFLOW_STATECHART_TRANSITION_EXTERNAL);
+        check_equal(microstep_fixture_init(&first, &first_probe, 2u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(microstep_fixture_init(&second, &second_probe, 2u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_select_internal(
+                        &first.instance, &trigger, &selection),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_microstep_internal(
+                        &second.instance, &trigger, &selection),
+                    CFLOW_ADMISSION_INVALID_ARGUMENT);
+        microstep_fixture_destroy(&second);
+        microstep_fixture_destroy(&first);
+    }
+
+    it("retries the same generation after executor FULL rejection") {
+        microstep_fixture fixture;
+        microstep_action_probe probe = {0};
+        microstep_executor_blocker blocker;
+        cflow_statechart_selection_snapshot selection = {0};
+        const cflow_statechart_executable_binding binding = {
+            MICRO_EXECUTABLE, microstep_action, &probe};
+        const cflow_executor_task blocking_task = {
+            microstep_block_executor, NULL, NULL, &blocker};
+        const cflow_executor_task queued_task = {
+            microstep_noop, NULL, NULL, NULL};
+        const int payload = 77;
+        const cflow_event_view event = {
+            MICRO_EVENT, &cmeta_type_int, &payload};
+        const cflow_statechart_selection_trigger trigger = {
+            CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        microstep_fixture_definition(
+            &fixture, false, false, CFLOW_STATECHART_TRANSITION_EXTERNAL);
+        check_equal(microstep_fixture_init_with_binding(
+                        &fixture, &binding, 2u, 1u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        probe.executor = &fixture.executor;
+        probe.executor_only = true;
+        probe.no_alias = true;
+        check_equal(cflow_executor_try_post_task(
+                        &fixture.executor, &blocking_task),
+                    CFLOW_ADMISSION_ACCEPTED);
+        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        check_equal(cflow_executor_try_post_task(
+                        &fixture.executor, &queued_task),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_equal(cflow_statechart_instance_select_internal(
+                        &fixture.instance, &trigger, &selection),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_microstep_internal(
+                        &fixture.instance, &trigger, &selection),
+                    CFLOW_ADMISSION_FULL);
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(cflow_statechart_instance_try_microstep_internal(
+                        &fixture.instance, &trigger, &selection),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.observed_event_payload, 77);
+        microstep_fixture_destroy(&fixture);
+    }
+
+    it("runs multiple actions on one owner in row order") {
+        microstep_fixture fixture;
+        microstep_action_probe probe = {0};
+        cflow_statechart_selection_snapshot selection = {0};
+        const int expected_trace[] = {
+            microstep_trace_code(CFLOW_STATECHART_ACTION_EXIT, MICRO_LEFT_A),
+            microstep_trace_code(CFLOW_STATECHART_ACTION_EXIT, MICRO_LEFT_A),
+            microstep_trace_code(CFLOW_STATECHART_ACTION_TRANSITION,
+                                 MICRO_LEFT_A),
+            microstep_trace_code(CFLOW_STATECHART_ACTION_ENTRY, MICRO_LEFT_B)};
+        microstep_fixture_definition(
+            &fixture, false, false, CFLOW_STATECHART_TRANSITION_EXTERNAL);
+        fixture.state_actions[5] = (cflow_statechart_state_action){
+            MICRO_LEFT_A, CFLOW_STATECHART_STATE_ACTION_EXIT,
+            MICRO_EXECUTABLE, 1u};
+        fixture.definition.state_action_count = 6u;
+        check_equal(microstep_fixture_init(&fixture, &probe, 2u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(microstep_submit_event(&fixture, &selection),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trace, expected_trace, sizeof(expected_trace));
+        check_equal(probe.calls, (size_t)4u);
+        microstep_fixture_destroy(&fixture);
+    }
+
+    it("runs newly entered parallel defaults in document order") {
+        parallel_entry_fixture fixture;
+        microstep_action_probe probe = {0};
+        cflow_statechart_selection_snapshot selection = {0};
+        const int payload = 77;
+        const cflow_event_view event = {
+            MICRO_EVENT, &cmeta_type_int, &payload};
+        const cflow_statechart_selection_trigger trigger = {
+            CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
+        const int expected_trace[] = {
+            microstep_trace_code(
+                CFLOW_STATECHART_ACTION_INITIAL,
+                PARALLEL_ENTRY_FIRST_INITIAL),
+            microstep_trace_code(
+                CFLOW_STATECHART_ACTION_INITIAL,
+                PARALLEL_ENTRY_SECOND_INITIAL)};
+        parallel_entry_fixture_init(&fixture, &probe);
+        check_equal(cflow_statechart_instance_select_internal(
+                        &fixture.instance, &trigger, &selection),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_microstep_internal(
+                        &fixture.instance, &trigger, &selection),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trace, expected_trace, sizeof(expected_trace));
+        check_true(probe.executor_only);
+        check_true(probe.no_alias);
+        parallel_entry_fixture_destroy(&fixture);
+    }
+
+    it("keeps the first raise failure across later raise attempts") {
+        const microstep_raise_case unknown_first[] = {
+            MICROSTEP_RAISE_UNKNOWN, MICROSTEP_RAISE_TYPE_MISMATCH,
+            MICROSTEP_RAISE_VALID};
+        const microstep_raise_case mismatch_first[] = {
+            MICROSTEP_RAISE_TYPE_MISMATCH, MICROSTEP_RAISE_UNKNOWN,
+            MICROSTEP_RAISE_VALID};
+        const microstep_raise_case full_first[] = {
+            MICROSTEP_RAISE_VALID, MICROSTEP_RAISE_VALID,
+            MICROSTEP_RAISE_TYPE_MISMATCH, MICROSTEP_RAISE_UNKNOWN};
+        const bool all_failed[] = {false, false, false};
+        const bool full_results[] = {true, false, false, false};
+        check_raise_latch_case(
+            unknown_first, 3u, all_failed,
+            CFLOW_STATECHART_RUNTIME_INTERNAL_EVENT_INVALID,
+            "Statechart internal event is unknown");
+        check_raise_latch_case(
+            mismatch_first, 3u, all_failed,
+            CFLOW_STATECHART_RUNTIME_INTERNAL_EVENT_TYPE_MISMATCH,
+            "Statechart internal event type mismatch");
+        check_raise_latch_case(
+            full_first, 4u, full_results,
+            CFLOW_STATECHART_RUNTIME_INTERNAL_QUEUE_FULL,
+            "Statechart internal event queue is full");
     }
 
     it("rolls back exit failure and settles accepted work once") {

@@ -97,11 +97,19 @@ def stateDocumentOrder : Nat → Nat
   | 4 => 3
   | _ => 99
 
-example : ExitOrdered stateAncestors stateDocumentOrder [4, 3, 2, 1] := by
-  simp [ExitOrdered, exitPrecedes, stateAncestors, stateDocumentOrder]
+example : exitOrder stateDocumentOrder [2, 4, 1, 3] = [4, 3, 2, 1] := by
+  native_decide
 
-example : EntryOrdered stateAncestors stateDocumentOrder [1, 2, 3, 4] := by
-  simp [EntryOrdered, entryPrecedes, stateAncestors, stateDocumentOrder]
+example : ExitOrdered stateDocumentOrder
+    (exitOrder stateDocumentOrder [2, 4, 1, 3]) := by
+  exact exitOrder_ordered _ _
+
+example : entryOrder stateDocumentOrder [3, 1, 4, 2] = [1, 2, 3, 4] := by
+  native_decide
+
+example : EntryOrdered stateDocumentOrder
+    (entryOrder stateDocumentOrder [3, 1, 4, 2]) := by
+  exact entryOrder_ordered _ _
 
 def configurationModel : ConfigurationModel where
   stateUniverse := [1, 2, 3, 4]
@@ -118,20 +126,30 @@ def configurationModel : ConfigurationModel where
   isCompound := fun state => decide (state = 1 ∨ state = 2)
   isParallel := fun _ => false
   isLeaf := fun state => decide (state = 3 ∨ state = 4)
+  documentOrder := stateDocumentOrder
 
-def legalPlan : ModeledMicrostep configurationModel where
-  nextActive := [1, 2, 4]
-  nextLegal := by
-    simp [LegalConfiguration, configurationModel]
+def microstepPlan : MicrostepPlan where
+  exitSet := [3]
+  directTargets := [4]
+  defaultTargets := []
+  historyTargets := []
 
-example : LegalConfiguration configurationModel (applyMicrostep legalPlan) := by
-  exact modeled_microstep_preserves_legality legalPlan
+example : constructNext configurationModel [1, 2, 3] microstepPlan =
+    [1, 2, 4] := by
+  native_decide
+
+example : LegalConfiguration configurationModel
+    (constructNext configurationModel [1, 2, 3] microstepPlan) := by
+  apply constructed_microstep_preserves_legality
+  · simp [LegalConfiguration, configurationModel, EntryOrdered,
+      stateDocumentOrder]
+  · native_decide
 
 example : commitConfiguration false [1, 2, 3] [1, 4] = [1, 2, 3] := by
   exact failed_commit_preserves _ _
 
 def shallowDefaults : Nat → List Nat
-  | 2 => [2, 3]
+  | 2 => [3]
   | _ => []
 
 example : restoreShallow [2] [4] shallowDefaults = [2, 3] := by

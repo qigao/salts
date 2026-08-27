@@ -114,11 +114,52 @@ theorem ancestor_precedes_descendant_on_entry
   have member : ancestor ∈ ancestors descendant := by simpa using descends
   simp [entryPrecedes, member]
 
-theorem modeled_microstep_preserves_legality
-    {model : ConfigurationModel}
-    (microstep : ModeledMicrostep model) :
-    LegalConfiguration model (applyMicrostep microstep) := by
-  exact microstep.nextLegal
+theorem exitOrder_ordered (documentOrder : Nat → Nat) (states : List Nat) :
+    ExitOrdered documentOrder (exitOrder documentOrder states) := by
+  unfold ExitOrdered exitOrder
+  simpa only [decide_eq_true_eq] using
+    (List.pairwise_mergeSort
+      (le := fun left right => decide (documentOrder right ≤ documentOrder left))
+      (fun _ _ _ leftRight rightThird => by
+        simp only [decide_eq_true_eq] at leftRight rightThird ⊢
+        exact Nat.le_trans rightThird leftRight)
+      (fun left right => by
+        simp only [Bool.or_eq_true, decide_eq_true_eq]
+        exact Nat.le_total (documentOrder right) (documentOrder left))
+      states)
+
+theorem entryOrder_ordered (documentOrder : Nat → Nat) (states : List Nat) :
+    EntryOrdered documentOrder (entryOrder documentOrder states) := by
+  unfold EntryOrdered entryOrder
+  simpa only [decide_eq_true_eq] using
+    (List.pairwise_mergeSort
+      (le := fun left right => decide (documentOrder left ≤ documentOrder right))
+      (fun _ _ _ leftRight rightThird => by
+        simp only [decide_eq_true_eq] at leftRight rightThird ⊢
+        exact Nat.le_trans leftRight rightThird)
+      (fun left right => by
+        simp only [Bool.or_eq_true, decide_eq_true_eq]
+        exact Nat.le_total (documentOrder left) (documentOrder right))
+      states)
+
+theorem validateConfiguration_sound {model : ConfigurationModel}
+    {active : List Nat}
+    (validated : validateConfiguration model active = true) :
+    LegalConfiguration model active := by
+  simpa [validateConfiguration, LegalConfiguration, EntryOrdered] using
+    validated
+
+/-- The C correspondence theorem is validation-gated: construction has no
+    legality witness field, and the executable validator checks the fully
+    resolved staged list before publication. -/
+theorem constructed_microstep_preserves_legality
+    {model : ConfigurationModel} {published : List Nat}
+    (plan : MicrostepPlan)
+    (_publishedLegal : LegalConfiguration model published)
+    (validated :
+      validateConfiguration model (constructNext model published plan) = true) :
+    LegalConfiguration model (constructNext model published plan) := by
+  exact validateConfiguration_sound validated
 
 theorem failed_commit_preserves (published staged : List Nat) :
     commitConfiguration false published staged = published := by
@@ -134,13 +175,23 @@ theorem restoreShallow_satisfies
     (defaultBelow : Nat → List Nat) :
     ShallowRestored remembered defaultTarget defaultBelow
       (restoreShallow remembered defaultTarget defaultBelow) := by
-  rfl
+  cases remembered with
+  | nil => simp [ShallowRestored, restoreShallow]
+  | cons head tail =>
+      simp only [ShallowRestored, restoreShallow]
+      constructor
+      · intro child childMember
+        exact List.mem_flatMap.mpr ⟨child, childMember, by simp⟩
+      · intro child childMember state stateMember
+        exact List.mem_flatMap.mpr ⟨child, childMember, by simp [stateMember]⟩
 
 theorem restoreDeep_satisfies
     (rememberedLeaves : List Nat)
     (ancestorsIncludingSelf : Nat → List Nat) :
     DeepRestored rememberedLeaves ancestorsIncludingSelf
       (restoreDeep rememberedLeaves ancestorsIncludingSelf) := by
-  rfl
+  intro leaf leafMember state stateMember
+  simp only [restoreDeep, List.mem_eraseDups, List.mem_flatMap]
+  exact ⟨leaf, leafMember, stateMember⟩
 
 end CMetaCFlowCalculus.CFlow.Statechart

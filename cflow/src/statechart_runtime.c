@@ -6,6 +6,7 @@
 
 #include <turbo/thread.h>
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -48,6 +49,15 @@ typedef struct cflow_statechart_instance_impl {
     unsigned char *candidate_exit_set;
     unsigned char *candidate_seen;
     size_t selected_count;
+    cflow_statechart_selection_trigger selection_trigger;
+    cflow_event_view selection_event;
+    unsigned char *selection_event_payload;
+    uint64_t instance_token;
+    uint64_t selection_generation;
+    uint64_t selected_configuration_version;
+    bool selection_in_progress;
+    bool selection_valid;
+    bool selection_consumed;
     size_t *request_transition_indices;
     unsigned char *request_exit_sets;
     size_t request_transition_count;
@@ -85,6 +95,25 @@ typedef struct cflow_statechart_instance_impl {
     bool cancelled;
     bool done;
 } cflow_statechart_instance_impl;
+
+static atomic_uint_fast64_t statechart_instance_token_source =
+    UINT64_C(1);
+
+static bool acquire_instance_token(uint64_t *out) {
+    uint_fast64_t current;
+    if (out == NULL) return false;
+    current = atomic_load_explicit(
+        &statechart_instance_token_source, memory_order_relaxed);
+    while (current != UINT_FAST64_MAX) {
+        if (atomic_compare_exchange_weak_explicit(
+                &statechart_instance_token_source, &current, current + 1u,
+                memory_order_relaxed, memory_order_relaxed)) {
+            *out = (uint64_t)current;
+            return true;
+        }
+    }
+    return false;
+}
 
 static bool checked_add(size_t left, size_t right, size_t *out) {
     if (out == NULL || left > SIZE_MAX - right) return false;
@@ -246,7 +275,8 @@ static cflow_statechart_runtime_status calculate_storage_requirements(
                               &one_binding_kind) ||
             !checked_accumulate(one_binding_kind,
                                 &requirements.internal_event_bytes) ||
-            !checked_accumulate(event_stride,
+            !checked_multiply(event_stride, 2u, &one_binding_kind) ||
+            !checked_accumulate(one_binding_kind,
                                 &requirements.internal_event_bytes))
             return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
     }
@@ -326,6 +356,7 @@ static void instance_impl_free(cflow_statechart_instance_impl *impl) {
     free(impl->action_scratch);
     free(impl->entry_bits);
     free(impl->exit_union);
+    free(impl->selection_event_payload);
     free(impl->request_event_payload);
     free(impl->request_exit_sets);
     free(impl->request_transition_indices);
@@ -609,6 +640,8 @@ static cflow_statechart_runtime_status allocate_storage(
             (unsigned char *)malloc(payload_bytes);
         impl->request_event_payload =
             (unsigned char *)malloc(impl->event_payload_stride);
+        impl->selection_event_payload =
+            (unsigned char *)malloc(impl->event_payload_stride);
     }
     for (index = 0u; index < 2u; ++index) {
         impl->configurations[index].bits =
@@ -640,6 +673,7 @@ static cflow_statechart_runtime_status allocate_storage(
           impl->internal_event_slots == NULL ||
           impl->staged_event_payloads == NULL ||
           impl->internal_event_payloads == NULL ||
+          impl->selection_event_payload == NULL ||
           impl->request_event_payload == NULL)) ||
         impl->configurations[0].bits == NULL ||
         impl->configurations[1].bits == NULL ||
@@ -816,22 +850,6 @@ static void preserve_first_error(cflow_statechart_instance_impl *impl,
     turbo_mutex_unlock(&impl->lock);
 }
 
-static bool instance_has_error(cflow_statechart_instance_impl *impl) {
-    bool has_error;
-    turbo_mutex_lock(&impl->lock);
-    has_error = impl->error != NULL;
-    turbo_mutex_unlock(&impl->lock);
-    return has_error;
-}
-
-static bool instance_microstep_pending(cflow_statechart_instance_impl *impl) {
-    bool pending;
-    turbo_mutex_lock(&impl->lock);
-    pending = impl->microstep_pending;
-    turbo_mutex_unlock(&impl->lock);
-    return pending;
-}
-
 static bool source_is_proper_descendant(const cflow_statechart_impl *ir,
                                         size_t descendant,
                                         size_t ancestor) {
@@ -867,6 +885,9 @@ static bool trigger_valid(const cflow_statechart_instance_impl *impl,
         cmeta_type_equal(event_type->payload_type,
                          trigger->event->payload_type);
 }
+
+static size_t find_event_index(const cflow_statechart_impl *ir,
+                               cflow_event_id id);
 
 static bool trigger_matches(const cflow_statechart_transition *transition,
                             const cflow_statechart_selection_trigger *trigger) {
@@ -1013,10 +1034,37 @@ cflow_statechart_runtime_status cflow_statechart_instance_select_internal(
     if (impl == NULL || trigger == NULL || out == NULL ||
         !trigger_valid(impl, trigger))
         return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
-    if (instance_has_error(impl))
+    turbo_mutex_lock(&impl->lock);
+    if (impl->error != NULL) {
+        turbo_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_RUNTIME_GUARD_FAILED;
-    if (instance_microstep_pending(impl))
+    }
+    if (impl->microstep_pending || impl->selection_in_progress) {
+        turbo_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_RUNTIME_WOULD_BLOCK;
+    }
+    if (impl->selection_generation == UINT64_MAX) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
+    }
+    impl->selection_in_progress = true;
+    impl->selection_valid = false;
+    impl->selection_consumed = false;
+    impl->selected_count = 0u;
+    impl->selected_configuration_version = impl->configuration_version;
+    impl->selection_trigger = *trigger;
+    if (trigger->kind == CFLOW_STATECHART_TRIGGER_EVENT) {
+        const size_t type_index = find_event_index(
+            impl->ir, trigger->event->id);
+        const cmeta_type_desc *type = impl->ir->events[type_index].payload_type;
+        memcpy(impl->selection_event_payload, trigger->event->payload,
+               type->size);
+        impl->selection_event = *trigger->event;
+        impl->selection_event.payload_type = type;
+        impl->selection_event.payload = impl->selection_event_payload;
+        impl->selection_trigger.event = &impl->selection_event;
+    }
+    turbo_mutex_unlock(&impl->lock);
     impl->selected_count = 0u;
     if (impl->ir->transition_count != 0u)
         memset(impl->candidate_seen, 0,
@@ -1037,10 +1085,15 @@ cflow_statechart_runtime_status cflow_statechart_instance_select_internal(
                     &impl->ir->transitions[transition_index];
                 cflow_statechart_runtime_status status;
                 bool enabled = false;
-                if (!trigger_matches(transition, trigger)) continue;
-                status = guard_enabled(impl, transition, trigger, &enabled);
+                if (!trigger_matches(transition, &impl->selection_trigger))
+                    continue;
+                status = guard_enabled(
+                    impl, transition, &impl->selection_trigger, &enabled);
                 if (status != CFLOW_STATECHART_RUNTIME_OK) {
+                    turbo_mutex_lock(&impl->lock);
                     impl->selected_count = 0u;
+                    impl->selection_in_progress = false;
+                    turbo_mutex_unlock(&impl->lock);
                     return status;
                 }
                 if (!enabled) continue;
@@ -1057,10 +1110,24 @@ cflow_statechart_runtime_status cflow_statechart_instance_select_internal(
         }
         ++leaf_order;
     }
-    out->transition_ids = impl->selected_transition_ids;
-    out->transition_count = impl->selected_count;
-    out->exit_sets = impl->selected_exit_sets;
-    out->exit_set_stride = impl->bitset_bytes;
+    turbo_mutex_lock(&impl->lock);
+    ++impl->selection_generation;
+    impl->selection_valid = true;
+    impl->selection_in_progress = false;
+    *out = (cflow_statechart_selection_snapshot){
+        impl->selected_transition_ids,
+        impl->selected_count,
+        impl->selected_exit_sets,
+        impl->bitset_bytes,
+        impl->instance_token,
+        impl->selection_generation,
+        impl->selected_configuration_version,
+        impl->selection_trigger.kind,
+        impl->selection_trigger.kind == CFLOW_STATECHART_TRIGGER_EVENT
+            ? impl->selection_event.id : 0u,
+        impl->selection_trigger.kind == CFLOW_STATECHART_TRIGGER_COMPLETION
+            ? impl->selection_trigger.completion : 0u};
+    turbo_mutex_unlock(&impl->lock);
     return CFLOW_STATECHART_RUNTIME_OK;
 }
 
@@ -1069,20 +1136,32 @@ bool cflow_statechart_selection_exits_internal(
     const cflow_statechart_selection_snapshot *selection,
     size_t transition_position,
     cflow_machine_state_id state) {
-    const cflow_statechart_instance_impl *impl = instance != NULL
-        ? (const cflow_statechart_instance_impl *)instance->impl : NULL;
+    cflow_statechart_instance_impl *impl = instance != NULL
+        ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     size_t state_index;
-    if (impl == NULL || selection == NULL ||
+    bool exits = false;
+    if (impl == NULL || selection == NULL) return false;
+    turbo_mutex_lock(&impl->lock);
+    if (!impl->selection_valid ||
+        selection->instance_token != impl->instance_token ||
+        selection->generation != impl->selection_generation ||
+        selection->configuration_version != impl->configuration_version ||
         selection->transition_ids != impl->selected_transition_ids ||
         selection->exit_sets != impl->selected_exit_sets ||
         selection->exit_set_stride != impl->bitset_bytes ||
         selection->transition_count != impl->selected_count ||
-        transition_position >= selection->transition_count)
+        transition_position >= selection->transition_count) {
+        turbo_mutex_unlock(&impl->lock);
         return false;
+    }
     state_index = find_state_index(impl->ir, state);
-    return state_index != SIZE_MAX && bit_test(
-        selection->exit_sets + transition_position * selection->exit_set_stride,
-        state_index);
+    if (state_index != SIZE_MAX)
+        exits = bit_test(
+            selection->exit_sets +
+                transition_position * selection->exit_set_stride,
+            state_index);
+    turbo_mutex_unlock(&impl->lock);
+    return exits;
 }
 
 static const cflow_statechart_executable *find_executable_declaration(
@@ -1143,6 +1222,11 @@ static bool stage_internal_event(void *user, const cflow_event_view *event,
         context != NULL ? context->impl : NULL;
     size_t type_index;
     const cmeta_type_desc *type;
+    if (context != NULL &&
+        context->raise_status != CFLOW_STATECHART_RUNTIME_OK) {
+        if (out_error != NULL) *out_error = context->raise_error;
+        return false;
+    }
     if (out_error != NULL) *out_error = NULL;
     if (impl == NULL || event == NULL || out_error == NULL ||
         event->payload_type == NULL || event->payload == NULL) {
@@ -1431,8 +1515,9 @@ static bool enter_default_descendants(
                     return false;
             }
         } else if (kind == CFLOW_STATECHART_PARALLEL) {
-            for (child = impl->ir->child_offsets[state];
-                 child < impl->ir->child_offsets[state + 1u]; ++child) {
+            child = impl->ir->child_offsets[state + 1u];
+            while (child != impl->ir->child_offsets[state]) {
+                --child;
                 const size_t child_state = impl->ir->children[child];
                 if (!pseudo_kind(impl->ir->states[child_state].kind) &&
                     !activate_staged(
@@ -1711,6 +1796,24 @@ static void statechart_microstep_finalize(void *user) {
     turbo_mutex_unlock(&impl->lock);
 }
 
+static bool trigger_matches_selection(
+    const cflow_statechart_instance_impl *impl,
+    const cflow_statechart_selection_trigger *trigger,
+    const cflow_statechart_selection_snapshot *selection) {
+    if (trigger->kind != selection->trigger_kind ||
+        impl->selection_trigger.kind != selection->trigger_kind)
+        return false;
+    if (trigger->kind == CFLOW_STATECHART_TRIGGER_EVENT)
+        return selection->completion == 0u &&
+            trigger->event->id == selection->event_id &&
+            impl->selection_event.id == selection->event_id;
+    if (trigger->kind == CFLOW_STATECHART_TRIGGER_COMPLETION)
+        return selection->event_id == 0u &&
+            trigger->completion == selection->completion &&
+            impl->selection_trigger.completion == selection->completion;
+    return selection->event_id == 0u && selection->completion == 0u;
+}
+
 cflow_admission_status cflow_statechart_instance_try_microstep_internal(
     cflow_statechart_instance *instance,
     const cflow_statechart_selection_trigger *trigger,
@@ -1723,32 +1826,43 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
     cflow_admission_status admission;
     size_t index;
     if (impl == NULL || trigger == NULL || selection == NULL ||
-        !trigger_valid(impl, trigger) || selection->transition_count == 0u ||
-        selection->transition_ids != impl->selected_transition_ids ||
-        selection->exit_sets != impl->selected_exit_sets ||
-        selection->exit_set_stride != impl->bitset_bytes ||
-        selection->transition_count != impl->selected_count)
+        !trigger_valid(impl, trigger))
         return CFLOW_ADMISSION_INVALID_ARGUMENT;
     turbo_mutex_lock(&impl->lock);
-    if (impl->microstep_pending || impl->error != NULL) {
+    if (impl->microstep_pending || impl->selection_in_progress ||
+        impl->error != NULL) {
         turbo_mutex_unlock(&impl->lock);
         return CFLOW_ADMISSION_FULL;
     }
+    if (!impl->selection_valid || impl->selection_consumed ||
+        selection->instance_token != impl->instance_token ||
+        selection->generation != impl->selection_generation ||
+        selection->configuration_version != impl->configuration_version ||
+        selection->configuration_version !=
+            impl->selected_configuration_version ||
+        selection->transition_count == 0u ||
+        selection->transition_ids != impl->selected_transition_ids ||
+        selection->exit_sets != impl->selected_exit_sets ||
+        selection->exit_set_stride != impl->bitset_bytes ||
+        selection->transition_count != impl->selected_count ||
+        !trigger_matches_selection(impl, trigger, selection)) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_ADMISSION_INVALID_ARGUMENT;
+    }
     impl->microstep_pending = true;
+    impl->selection_consumed = true;
     impl->request_transition_count = impl->selected_count;
     for (index = 0u; index < impl->selected_count; ++index)
         impl->request_transition_indices[index] =
             impl->selected_transition_indices[index];
     memcpy(impl->request_exit_sets, impl->selected_exit_sets,
            impl->selected_count * impl->bitset_bytes);
-    impl->request_trigger = *trigger;
-    if (trigger->kind == CFLOW_STATECHART_TRIGGER_EVENT) {
-        const size_t type_index = find_event_index(
-            impl->ir, trigger->event->id);
-        const cmeta_type_desc *type = impl->ir->events[type_index].payload_type;
-        memcpy(impl->request_event_payload, trigger->event->payload,
+    impl->request_trigger = impl->selection_trigger;
+    if (impl->selection_trigger.kind == CFLOW_STATECHART_TRIGGER_EVENT) {
+        const cmeta_type_desc *type = impl->selection_event.payload_type;
+        memcpy(impl->request_event_payload, impl->selection_event_payload,
                type->size);
-        impl->request_event = *trigger->event;
+        impl->request_event = impl->selection_event;
         impl->request_event.payload_type = type;
         impl->request_event.payload = impl->request_event_payload;
         impl->request_trigger.event = &impl->request_event;
@@ -1761,6 +1875,7 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
     if (admission != CFLOW_ADMISSION_ACCEPTED) {
         turbo_mutex_lock(&impl->lock);
         impl->microstep_pending = false;
+        impl->selection_consumed = false;
         if (impl->microstep_accepted != 0u) --impl->microstep_accepted;
         turbo_mutex_unlock(&impl->lock);
     }
@@ -1922,6 +2037,10 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
     impl->executor = config->executor;
     impl->internal_event_capacity = internal_event_capacity;
     impl->microstep_result = CFLOW_STATECHART_RUNTIME_OK;
+    if (!acquire_instance_token(&impl->instance_token)) {
+        instance_impl_free(impl);
+        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
+    }
     status = copy_bindings(impl, config);
     if (status != CFLOW_STATECHART_RUNTIME_OK) {
         instance_impl_free(impl);
