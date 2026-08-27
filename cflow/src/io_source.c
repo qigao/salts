@@ -1,10 +1,5 @@
-#include <cflow/io_source.h>
+#include "io_source_internal.h"
 
-#include <turbo/thread.h>
-
-#include "value_storage.h"
-
-#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -12,40 +7,6 @@ enum {
     CFLOW_IO_SOURCE_CAPACITY = 1,
     CFLOW_IO_SOURCE_LEASE_ID = 1
 };
-
-typedef struct cflow_io_source_state {
-    cflow_io_actor actor;
-    cflow_executor executor;
-    cflow_value_slot result;
-    turbo_mutex_t gate;
-    turbo_cond_t changed;
-    cflow_waker source_waker;
-    cflow_io_request_id request_id;
-    size_t wake_inflight;
-    size_t drive_inflight;
-    uint64_t drive_generation;
-    bool source_live;
-    bool owner_live;
-    bool close_requested;
-    bool driver_active;
-    bool drive_pending;
-    bool submission_in_progress;
-    bool result_encoding;
-    bool result_ready;
-    bool completion_delivered;
-    bool acknowledged;
-    cflow_read_status result_status;
-    const char *result_error;
-    const char *name;
-    const cmeta_type_desc *type;
-    cflow_io_source_prepare_fn prepare;
-    cflow_io_source_encode_fn encode;
-    void *user;
-    cflow_io_wake_fn drive;
-    void *drive_user;
-    cflow_source_terminal terminal;
-    const char *terminal_error;
-} cflow_io_source_state;
 
 typedef struct io_source_wake_frame {
     cflow_io_source_state *state;

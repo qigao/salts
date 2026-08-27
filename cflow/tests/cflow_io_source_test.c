@@ -1,5 +1,6 @@
 #include <cflow/cflow.h>
 
+#include "../src/io_source_internal.h"
 #include "tinytest.h"
 
 #include <turbo/thread.h>
@@ -102,11 +103,6 @@ typedef struct io_source_drive_context {
     size_t progressed;
     int status;
 } io_source_drive_context;
-
-typedef struct io_source_owner_state_prefix {
-    cflow_io_actor actor;
-    cflow_executor executor;
-} io_source_owner_state_prefix;
 
 typedef struct io_source_tail_barrier {
     turbo_mutex_t lock;
@@ -313,17 +309,6 @@ static void io_source_tail_barrier_release(
     barrier->released = true;
     turbo_cond_broadcast(&barrier->changed);
     turbo_mutex_unlock(&barrier->lock);
-}
-
-static cflow_executor *io_source_owner_executor(
-    cflow_io_source_owner *owner) {
-    if (owner == NULL || owner->impl == NULL)
-        return NULL;
-    /* The private prefix gives this concurrency test a deterministic task
-       between the Actor idle result and adapter-driver release. */
-    return (cflow_executor *)(void *)(
-        (unsigned char *)owner->impl +
-        offsetof(io_source_owner_state_prefix, executor));
 }
 
 static void io_source_reentrant_cancel(void *user) {
@@ -901,7 +886,7 @@ spec("CFlow reactive IO source") {
         check_equal(fixture.backend_submit_calls, (size_t)1u);
         check_equal(fixture.backend_active, (size_t)1u);
 
-        executor = io_source_owner_executor(&run_fixture.owner);
+        executor = cflow_io_source_test_executor(&run_fixture.owner);
         check_not_null(executor);
         check_equal(cflow_executor_try_post(
                         executor, io_source_tail_barrier_task,
@@ -985,7 +970,7 @@ spec("CFlow reactive IO source") {
         check_equal(progressed, (size_t)2u);
         check_equal(fixture.backend_submit_calls, (size_t)1u);
 
-        executor = io_source_owner_executor(&run_fixture.owner);
+        executor = cflow_io_source_test_executor(&run_fixture.owner);
         check_not_null(executor);
         check_equal(cflow_executor_try_post(
                         executor, io_source_tail_barrier_task,
