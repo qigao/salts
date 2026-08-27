@@ -212,6 +212,7 @@ suite("CFlow Statechart Actor facade") {
         statechart_actor_fixture fixture;
         cflow_actor_ref ref = {0};
         cflow_actor_ref retained = {0};
+        cflow_actor_stats machine_stats = {0};
         cflow_statechart_actor_stats stats = {0};
         const int payload = 5;
         const long wrong_payload = 5;
@@ -252,6 +253,8 @@ suite("CFlow Statechart Actor facade") {
         check_equal(atomic_load(&fixture.probe.error_calls), 0);
         check_true(cflow_actor_get_statechart_stats(
             &fixture.actor, &stats));
+        check_false(cflow_actor_get_stats(
+            &fixture.actor, &machine_stats));
         check_equal(stats.state, CFLOW_ACTOR_STATE_STOPPED);
         check_equal(stats.statechart.external_accepted, UINT64_C(1));
         check_equal(stats.statechart.external_completed, UINT64_C(1));
@@ -265,6 +268,52 @@ suite("CFlow Statechart Actor facade") {
         cflow_actor_ref_release(&retained);
         cflow_actor_ref_release(&ref);
         statechart_actor_fixture_destroy(&fixture);
+    }
+
+    it("settles an initially final Statechart inline during start") {
+        const cflow_statechart_state states[] = {
+            {STATECHART_ACTOR_ROOT, 0u, CFLOW_STATECHART_FINAL, 0u}};
+        const cflow_statechart_definition definition = {
+            .state_type = &cmeta_type_int,
+            .states = states,
+            .state_count = 1u};
+        cflow_statechart statechart = {0};
+        cflow_executor executor = {0};
+        cflow_actor actor = {0};
+        statechart_actor_probe probe = {0};
+        const int initial_state = 0;
+        cflow_statechart_actor_config config = {
+            .statechart = {
+                .statechart = &statechart,
+                .initial_state = &initial_state,
+                .external_event_capacity = 1u,
+                .internal_event_capacity = 1u,
+                .completion_capacity = 1u,
+                .microstep_limit = 1u,
+                .executor = &executor},
+            .callbacks = {
+                .on_error = statechart_actor_error,
+                .on_done = statechart_actor_done,
+                .user = &probe}};
+        cflow_statechart_actor_init_result result;
+
+        atomic_init(&probe.done_calls, 0);
+        atomic_init(&probe.error_calls, 0);
+        check_equal(cflow_statechart_build(&statechart, &definition),
+                    CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        result = cflow_actor_init_statechart(&actor, &config);
+        check_equal(result.status, CFLOW_ACTOR_OK);
+        check_equal(cflow_actor_start(&actor), CFLOW_ACTOR_OK);
+        check_equal(cflow_actor_current_state(&actor),
+                    CFLOW_ACTOR_STATE_STOPPED);
+        check_equal(cflow_actor_wait(&actor), CFLOW_ACTOR_STATE_STOPPED);
+        check_equal(atomic_load(&probe.done_calls), 1);
+        check_equal(atomic_load(&probe.error_calls), 0);
+
+        cflow_actor_destroy(&actor);
+        cflow_executor_destroy(&executor);
+        cflow_statechart_destroy(&statechart);
     }
 
     it("stops from START and RUNNING without publishing an error") {

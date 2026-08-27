@@ -625,8 +625,16 @@ cflow_actor_send_status cflow_actor_ref_try_send(
                 break;
             case CFLOW_MAILBOX_CLOSED:
             case CFLOW_MAILBOX_CANCELLED:
-                ++impl->rejected_failed;
-                result = CFLOW_ACTOR_SEND_FAILED;
+                if (impl->backend == CFLOW_ACTOR_BACKEND_STATECHART &&
+                    cflow_statechart_instance_poll_terminal(
+                        &impl->statechart, NULL) ==
+                        CFLOW_STATECHART_TERMINAL_DONE) {
+                    ++impl->rejected_stopped;
+                    result = CFLOW_ACTOR_SEND_STOPPED;
+                } else {
+                    ++impl->rejected_failed;
+                    result = CFLOW_ACTOR_SEND_FAILED;
+                }
                 break;
             case CFLOW_MAILBOX_INVALID_ARGUMENT:
             case CFLOW_MAILBOX_EMPTY:
