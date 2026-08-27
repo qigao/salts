@@ -1442,20 +1442,15 @@ returns. Optimizer map fusion remains available for trivial values; managed map
 nodes stay separate so every intermediate descriptor retains its lifecycle.
 
 Range flags describe traversal semantics. The current Range Source consumes
-items through `cmeta_range_next()`. For `cflow_result` collection, a `SIZED`
-Range supplies one initial-capacity hint only when
-`cflow_graph_is_one_to_one()` proves exact output cardinality. The hint is
-clamped to the explicit terminal limit; filtering, expansion, reduction, and
-other non-1:1 Graphs retain bounded geometric growth. This changes allocation
-shape only: every item still crosses the version-checked Range cursor and all
-failure paths discard the partial result transactionally.
-
-`cflow_direct_benchmark --filter "compares SIZED capacity hints"` compares
-16-, 256-, and 4096-item exact-cardinality collections against an otherwise
-identical Range without `SIZED`. For those powers of two, the collector's
-8-item geometric policy requires 2, 6, and 10 allocation attempts respectively;
-the admitted hint requires one. Wall-clock results remain platform-dependent
-and the benchmark retains both paths as the regression control.
+items through `cmeta_range_next()`, and the `cflow_result` collector retains its
+bounded geometric growth policy. A candidate that queried `SIZED` and scanned
+the Graph for exact 1:1 cardinality reduced allocator calls, but Windows Release
+showed only low-single-digit timing changes and Linux did not reproduce a
+consistent gain at 16, 256, and 4096 items. The extra per-evaluation Graph scan
+therefore did not meet the optimization admission threshold and is not part of
+the execution path. Reconsider `SIZED` preallocation only with a cached
+cardinality property or other evidence that avoids replacing allocation work
+with equivalent analysis work.
 
 `CMETA_RANGE_CONTIGUOUS` does not make
 `cmeta_container_data()` a physical storage pointer: that API returns a semantic

@@ -10,8 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { CFLOW_RESULT_DEFAULT_CAPACITY = 8u };
-
 typedef struct eval_state {
     bool done;
     const char *error;
@@ -30,7 +28,6 @@ typedef struct result_collector {
     unsigned char *data;
     size_t count;
     size_t capacity;
-    size_t initial_capacity;
     size_t limit;
     const cmeta_type_desc *type;
 } result_collector;
@@ -58,8 +55,7 @@ static bool collect_value(void *user, const cmeta_type_desc *type, const void *v
         return false;
     }
     if (c->count == c->capacity) {
-        size_t next = c->capacity ? c->capacity * 2u : c->initial_capacity;
-        if (next == 0u) next = CFLOW_RESULT_DEFAULT_CAPACITY;
+        size_t next = c->capacity ? c->capacity * 2 : 8;
         if (next < c->capacity) {
             c->status = CFLOW_STATUS_CAPACITY_EXCEEDED;
             return false;
@@ -176,12 +172,11 @@ static cflow_status cflow_eval_result_source(
     const cflow_graph *graph,
     cflow_source *source,
     size_t max_items,
-    size_t initial_capacity,
     const cflow_eval_options *options,
     cflow_result *out) {
     result_collector c = {
         {false, NULL, NULL, CFLOW_STATUS_OK},
-        CFLOW_STATUS_OK, NULL, 0u, 0u, initial_capacity, max_items, NULL};
+        CFLOW_STATUS_OK, NULL, 0u, 0u, max_items, NULL};
     cflow_sink_callbacks sink_cb = { collect_value, collect_error, collect_done, &c };
     cflow_sink sink = cflow_sink_from_callbacks(&sink_cb);
     bool ok;
@@ -236,7 +231,7 @@ cflow_status_result cflow_eval_array_result(
     if (source_status != CMETA_OK)
         return stream_status_result(stream_status_from_cmeta(source_status));
     status = cflow_eval_result_source(
-        graph, &source, SIZE_MAX, 0u, NULL, out);
+        graph, &source, SIZE_MAX, NULL, out);
     return stream_status_result(status);
 }
 
@@ -247,7 +242,6 @@ static cflow_status_result cflow_eval_bound_stream_result(
     cflow_source source = {0};
     cmeta_status source_status;
     cflow_status status;
-    size_t initial_capacity = 0u;
 
     if (out) memset(out, 0, sizeof(*out));
     if (!stream || !stream->has_source_range || !out)
@@ -256,15 +250,8 @@ static cflow_status_result cflow_eval_bound_stream_result(
         &source, stream->source_range, NULL);
     if (source_status != CMETA_OK)
         return stream_status_result(stream_status_from_cmeta(source_status));
-    if ((stream->source_range.flags & CMETA_RANGE_SIZED) != 0u &&
-        stream->source_range.size != NULL &&
-        cflow_graph_is_one_to_one(&stream->graph)) {
-        initial_capacity = cmeta_range_size(&stream->source_range);
-        if (initial_capacity > max_items) initial_capacity = max_items;
-    }
     status = cflow_eval_result_source(
-        &stream->graph, &source, max_items, initial_capacity,
-        &stream->eval_options, out);
+        &stream->graph, &source, max_items, &stream->eval_options, out);
     return stream_status_result(status);
 }
 

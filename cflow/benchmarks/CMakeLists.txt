@@ -2,7 +2,6 @@ cmake_add_benchmark(cflow_direct_benchmark
   SOURCES
     cflow_direct_benchmark.c
     cflow_direct_benchmark_consume.c
-    cflow_range_benchmark.c
     cflow_graph_path_benchmark.c
     cflow_branching_views.c
     cflow_branching_csr_benchmark.c
