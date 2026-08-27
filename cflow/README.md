@@ -23,7 +23,11 @@ include/cflow/
 ├── opt.h
 ├── plan.h
 ├── machine.h       typed state-machine semantic IR
+├── machine_hierarchy.h exclusive hierarchical Machine facade
 ├── machine_runtime.h executor-owned Machine execution and adapters
+├── statechart.h    native compound/parallel/history Statechart IR
+├── statechart_runtime.h bounded run-to-completion Statechart runtime
+├── statechart_hierarchy_adapter.h explicit exclusive compatibility adapter
 ├── actor.h         bounded Actor lifecycle over Machine and Run
 ├── io_actor.h      bounded asynchronous operation ownership/runtime
 ├── io_native.h     epoll/kqueue/poll/IOCP/io_uring socket, pipe, and file I/O
@@ -231,6 +235,158 @@ Lean models WAIT and transition steps in `CFlow/MachineRuntime.lean`. Every
 runtime transition carries an existing `Machine.SmallStep` witness and an exact
 committed trace suffix; `runtime_trace_refines_machine` composes this refinement
 over finite Event sequences.
+
+## Native Statechart runtime
+
+The native Statechart API is a format-neutral C11 execution model, not an XML
+parser. Its immutable IR supports compound, parallel, initial, final, shallow-
+history, and deep-history states; Event, eventless, and completion transitions;
+ordered exit/transition/entry executables; deterministic conflict selection;
+and document-ordered active-configuration snapshots. The runtime owns one
+published configuration, one copied extended-state value, bounded internal,
+completion, and external Event queues, and an optional bounded scoped-timer
+queue. All semantic mutation is serialized by the borrowed non-manual
+SerialExecutor.
+
+This complete example declares a compound root, queries its initial
+configuration, and delivers a zero-delay scoped Timer Event through the normal
+external Mailbox and run-to-completion path:
+
+```c
+#include <cflow/cflow.h>
+
+enum { ROOT = 1u, INITIAL = 2u, IDLE = 3u, DONE = 4u, GO = 10u };
+
+int main(void) {
+    const cflow_statechart_state states[] = {
+        {ROOT, 0u, CFLOW_STATECHART_COMPOUND, 0u},
+        {INITIAL, ROOT, CFLOW_STATECHART_INITIAL, 1u},
+        {IDLE, ROOT, CFLOW_STATECHART_ATOMIC, 2u},
+        {DONE, ROOT, CFLOW_STATECHART_FINAL, 3u}
+    };
+    const cflow_event_type events[] = {{GO, &cmeta_type_bool}};
+    const cflow_statechart_transition transitions[] = {
+        {1u, INITIAL, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+         0u, 0u, 0u, IDLE, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u},
+        {2u, IDLE, CFLOW_STATECHART_TRIGGER_EVENT,
+         GO, 0u, 0u, DONE, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u}
+    };
+    const cflow_statechart_definition definition = {
+        .state_type = &cmeta_type_int,
+        .states = states,
+        .state_count = 4u,
+        .events = events,
+        .event_count = 1u,
+        .transitions = transitions,
+        .transition_count = 2u
+    };
+    cflow_statechart chart = {0};
+    cflow_executor executor = {0};
+    cflow_clock clock = {0};
+    cflow_statechart_instance instance = {0};
+    cflow_statechart_instance_config config;
+    cflow_statechart_instance_stats stats = {0};
+    cflow_machine_state_id active[2];
+    size_t active_count = 0u;
+    uint64_t version = 0u;
+    const int initial_state = 0;
+    const bool payload = true;
+    const cflow_event_view event = {GO, &cmeta_type_bool, &payload};
+    cflow_timer_event_schedule_result scheduled;
+    cflow_timer_event_fire_result fired;
+    int result = 1;
+
+    if (cflow_statechart_build(&chart, &definition) != CFLOW_STATECHART_OK)
+        return 1;
+    if (!cflow_executor_serial_init(&executor)) {
+        cflow_statechart_destroy(&chart);
+        return 2;
+    }
+    if (!cflow_clock_virtual_init(&clock, (cflow_instant){0u})) {
+        cflow_executor_destroy(&executor);
+        cflow_statechart_destroy(&chart);
+        return 3;
+    }
+    config = (cflow_statechart_instance_config){
+        .statechart = &chart,
+        .initial_state = &initial_state,
+        .external_event_capacity = 2u,
+        .internal_event_capacity = 2u,
+        .completion_capacity = 2u,
+        .microstep_limit = 16u,
+        .executor = &executor,
+        .clock = &clock,
+        .timer_capacity = 2u
+    };
+    if (cflow_statechart_instance_init(&instance, &config) !=
+            CFLOW_STATECHART_RUNTIME_OK) {
+        cflow_clock_destroy(&clock);
+        cflow_executor_destroy(&executor);
+        cflow_statechart_destroy(&chart);
+        return 4;
+    }
+    if (cflow_statechart_instance_copy_configuration(
+            &instance, active, 2u, &active_count, &version) !=
+            CFLOW_STATECHART_SNAPSHOT_OK ||
+        active_count != 2u || active[1] != IDLE)
+        goto cleanup;
+    scheduled = cflow_statechart_instance_try_schedule_after(
+        &instance, IDLE, (cflow_duration){0u}, &event);
+    if (scheduled.status != CFLOW_TIMER_EVENT_OK) goto cleanup;
+    fired = cflow_statechart_instance_run_one_ready_timer(&instance);
+    if (fired.status != CFLOW_TIMER_EVENT_FIRE_DELIVERED ||
+        !cflow_executor_wait_idle(&executor) ||
+        !cflow_statechart_instance_get_stats(&instance, &stats) ||
+        !stats.done)
+        goto cleanup;
+    result = 0;
+
+cleanup:
+    (void)cflow_statechart_instance_destroy(&instance);
+    cflow_clock_destroy(&clock);
+    cflow_executor_destroy(&executor);
+    cflow_statechart_destroy(&chart);
+    return result;
+}
+```
+
+All queue capacities and `microstep_limit` are positive hard bounds. Optional
+Timer Events require both a borrowed Clock and positive `timer_capacity`; their
+slots and copied payload storage count against `max_storage_bytes`. A timer
+scope must be an active real state. Every successfully committed microstep
+cancels pending timers for exactly its exited states before publishing the new
+configuration. A claimed timer retains `FIRE_WON`; delivery attempts external
+Mailbox admission once and is never retried.
+
+Callbacks borrow their inputs only for the call. The Statechart and CMeta type
+descriptors, SerialExecutor, Clock, callback functions, and callback users must
+outlive the instance. Stop producers first, call close/cancel, destroy the
+instance, then destroy Clock, Executor, and immutable Statechart in that order.
+Destroy waits only for this instance's admitted executor work and any claimed
+timer handoff, not unrelated work on a shared Executor.
+
+`cflow_statechart_hierarchy_adapter_build()` is an explicit migration and
+differential-testing tool; it never redirects the existing hierarchy runtime or
+caches a mutable current state. It admits the normalized exclusive subset with
+the root's declared initial chain, ACTIVE/DONE leaves, non-observing actions,
+and typed guards/actions. ERROR leaves, a different initial leaf, and VALUE or
+Event observations fail fast. Binding bridge contexts are caller-owned and must
+outlive the new Statechart instance. Enabled transition, LCA route, state,
+timer-cancellation, final, and user-error traces are tested against the old
+runtime. Unhandled Events remain a documented proof boundary: legacy Machine
+turns one into an error, while native Statechart semantics consume it without a
+transition.
+
+Lean proves deterministic conflict selection, legal configuration admission,
+ordered routes, and that a legal configuration satisfying the explicit
+exclusive adapter invariant has exactly one active leaf. Callback execution,
+allocation, and the legacy unhandled-Event difference remain outside that pure
+proof boundary.
+
+This module is not an SCXML processor or a durable workflow engine. It does not
+parse XML or implement SCXML data models, `send`, `invoke`, `finalize`, external
+communication, persistence, recovery, retries, compensation, or distributed
+coordination. Those require separate frontends and runtime protocols.
 
 ## Bounded Actor lifecycle
 

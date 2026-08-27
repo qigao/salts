@@ -268,6 +268,51 @@ theorem validateConfiguration_sound {model : ConfigurationModel}
   simpa [validateConfiguration, LegalConfiguration, DocumentOrdered] using
     validated
 
+/-- The explicit adapter proof boundary: an admitted exclusive configuration
+    may contain at most one active leaf. C establishes this from its validated
+    single-root hierarchy and absence of parallel/history nodes. -/
+def ExclusiveConfiguration (model : ConfigurationModel)
+    (active : List Nat) : Prop :=
+  ∀ left, left ∈ active → model.isLeaf left = true →
+    ∀ right, right ∈ active → model.isLeaf right = true → left = right
+
+theorem legal_exclusive_configuration_has_unique_leaf
+    {model : ConfigurationModel} {active : List Nat}
+    (legal : LegalConfiguration model active)
+    (exclusive : ExclusiveConfiguration model active) :
+    ∃ leaf, (leaf ∈ active ∧ model.isLeaf leaf = true) ∧
+      ∀ candidate, candidate ∈ active ∧ model.isLeaf candidate = true →
+        candidate = leaf := by
+  have hasLeaf : active.any model.isLeaf = true :=
+    legal.2.2.2.2.2.2.1
+  obtain ⟨leaf, leafMember, leafIsLeaf⟩ := List.any_eq_true.mp hasLeaf
+  refine ⟨leaf, ⟨leafMember, leafIsLeaf⟩, ?_⟩
+  intro candidate candidateLeaf
+  exact exclusive candidate candidateLeaf.1 candidateLeaf.2
+    leaf leafMember leafIsLeaf
+
+/-- One enabled row in the exclusive adapter domain projects to the same sole
+    selected transition; multi-row guard priority remains C differential-test
+    evidence rather than a stronger theorem about callback execution. -/
+theorem exclusive_single_candidate_projection (candidate : Candidate) :
+    select [candidate] = [candidate] := by
+  simp [select, evaluateFrom, initialSelection, stepCandidate,
+    insertCandidate, rejectedBySelected, retainNonconflicting]
+
+/-- For the hierarchy-preorder admitted by the adapter, Statechart route
+    comparators reduce to reverse/forward document order, respectively. -/
+theorem hierarchy_adapter_route_projection
+    {stateUniverse : List Nat} {ancestors : Nat → List Nat}
+    {documentOrder : Nat → Nat}
+    (preorder : HierarchyPreorder stateUniverse ancestors documentOrder)
+    (left right : Nat) :
+    exitSortLe stateUniverse ancestors documentOrder left right =
+        decide (documentOrder right ≤ documentOrder left) ∧
+      entrySortLe stateUniverse ancestors documentOrder left right =
+        decide (documentOrder left ≤ documentOrder right) := by
+  exact ⟨exitSortLe_eq_document preorder left right,
+    entrySortLe_eq_document preorder left right⟩
+
 /-- The C correspondence theorem is validation-gated: construction has no
     legality witness field, and the executable validator checks the fully
     resolved staged list before publication. -/

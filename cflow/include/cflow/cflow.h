@@ -19,6 +19,7 @@
 #include <cflow/machine_hierarchy.h>
 #include <cflow/machine_runtime.h>
 #include <cflow/statechart.h>
+#include <cflow/statechart_hierarchy_adapter.h>
 #include <cflow/statechart_runtime.h>
 #include <cflow/actor.h>
 #include <cflow/io_actor.h>
