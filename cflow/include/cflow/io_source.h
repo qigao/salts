@@ -75,7 +75,7 @@ typedef struct cflow_io_source_config {
     void *drive_user;
 } cflow_io_source_config;
 
-/** Diagnostic adapter snapshot; Actor storage and adapter queues have capacity one. */
+/** Diagnostic adapter snapshot; Actor counters reflect the configured capacity. */
 typedef struct cflow_io_source_stats {
     cflow_io_actor_stats actor;
     bool source_live;

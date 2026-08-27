@@ -448,14 +448,50 @@ Choose the I/O boundary from the fact that makes an item available:
 | --- | --- |
 | Readiness resource (`read` may report `WOULD_BLOCK`, then arm interest) | `cflow_source_from_reactor_registration()` |
 | One authoritative completion operation per demanded value | `cflow_source_from_io_actor()` |
+| Bounded independent completion operations for throughput | `cflow_source_from_io_actor_windowed()` |
 | Direct multi-request or manually managed I/O lifecycle | `cflow_io_actor` / `cflow_io_file` |
 
 `cflow_source_from_io_actor()` owns a request-capacity-one Actor, a
 capacity-one manual Executor, and one typed completion slot. It prepares
 nothing until the Run has positive downstream demand, and it never prepares a
 second operation before the accepted operation has completed, been delivered,
-and been acknowledged. Use the direct Actor or file facade when capacity one
-and strict serial order are not the intended throughput model.
+and been acknowledged. This remains the compatibility path and its capacity is
+always one.
+
+For independent operations, opt in explicitly with a capacity in
+`[1, CFLOW_IO_SOURCE_MAX_WINDOW]`:
+
+```c
+if (cflow_source_from_io_actor_windowed(
+        &source, &owner, &config, 8u) != TURBO_OK)
+    goto cleanup;
+```
+
+The Runtime's outstanding downstream demand limits how many operations are
+prepared, and the configured capacity is a hard upper bound for Actor
+requests, commands, Executor jobs, adapter entries, and typed result slots.
+Full capacity stops preparation; it does not allocate a fallback queue, retry,
+drop, or overwrite. Results are emitted in authoritative completion-delivery
+order, not preparation order, so this API is unsuitable when request order is
+part of the protocol. `prepare` failure or a terminal encoder result closes
+admission and drains accepted operations without encoding later completions.
+
+Capacity must budget both control state and retained payload:
+
+```text
+capacity * (adapter entry + aligned typed value + Actor request
+            + manual Executor job)
++ round_up_pow2(capacity) * Actor command entry
++ capacity * maximum retained operation/backend payload
+```
+
+The adapter performs bounded linear scans, so a larger window is not
+automatically faster. Measure the intended workload with
+`cflow_io_source_benchmark` and select the smallest capacity that saturates the
+backend. On shutdown, stop/destroy the Run Source, continue owner driving until
+`cflow_io_source_owner_is_quiescent()` is true, then call
+`cflow_io_source_owner_close()` while every borrowed config and callback
+context remains alive.
 
 This complete C11 example uses a synchronous demonstration backend so the
 authoritative `cflow_io_actor_complete()` edge is visible. A real backend may

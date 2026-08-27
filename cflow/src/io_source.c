@@ -44,12 +44,99 @@ static const char io_source_result_state_error[] =
 
 static TURBO_THREAD_LOCAL io_source_wake_frame *io_source_wake_stack;
 
+static cflow_waitable io_source_waitable_as_cflow_waitable(void *self);
+static const char *io_source_submit_error(cflow_io_submit_status status);
+
 static bool io_source_type_valid(const cmeta_type_desc *type) {
     return cmeta_type_desc_valid(type) &&
            cflow_value_storage_type_supported(type) &&
            type->size != 0u && type->align != 0u &&
            (type->align & (type->align - 1u)) == 0u &&
            type->size <= SIZE_MAX - (type->align - 1u);
+}
+
+static bool io_source_windowed(const cflow_io_source_state *state) {
+    return state->window_capacity > 1u;
+}
+
+static cflow_io_source_entry *io_source_window_find_free_locked(
+    cflow_io_source_state *state) {
+    size_t index;
+
+    for (index = 0u; index < state->window_capacity; ++index) {
+        if (!state->entries[index].occupied)
+            return &state->entries[index];
+    }
+    return NULL;
+}
+
+static cflow_io_source_entry *io_source_window_find_ready_locked(
+    cflow_io_source_state *state) {
+    cflow_io_source_entry *ready = NULL;
+    size_t index;
+
+    for (index = 0u; index < state->window_capacity; ++index) {
+        cflow_io_source_entry *candidate = &state->entries[index];
+        if (candidate->result_ready &&
+            (ready == NULL || candidate->delivery_sequence <
+                                  ready->delivery_sequence))
+            ready = candidate;
+    }
+    return ready;
+}
+
+static cflow_io_source_entry *io_source_window_find_delivered_locked(
+    cflow_io_source_state *state) {
+    cflow_io_source_entry *delivered = NULL;
+    size_t index;
+
+    for (index = 0u; index < state->window_capacity; ++index) {
+        cflow_io_source_entry *candidate = &state->entries[index];
+        if (candidate->occupied && candidate->completion_delivered &&
+            !candidate->acknowledged && candidate->request_id != 0u &&
+            (delivered == NULL || candidate->request_id <
+                                      delivered->request_id))
+            delivered = candidate;
+    }
+    return delivered;
+}
+
+static void io_source_window_release_entry_locked(
+    cflow_io_source_state *state, cflow_io_source_entry *entry) {
+    if (entry == NULL || !entry->occupied)
+        return;
+    cflow_value_slot_reset(&entry->result);
+    entry->request_id = 0u;
+    entry->delivery_sequence = 0u;
+    entry->result_status = CFLOW_READ_WOULD_BLOCK;
+    entry->result_error = NULL;
+    entry->occupied = false;
+    entry->submission_in_progress = false;
+    entry->result_encoding = false;
+    entry->result_ready = false;
+    entry->completion_delivered = false;
+    entry->acknowledged = false;
+    entry->demand_reserved = false;
+    --state->window_occupied;
+}
+
+static void io_source_window_discard_result_locked(
+    cflow_io_source_state *state, cflow_io_source_entry *entry) {
+    if (entry == NULL || !entry->occupied)
+        return;
+    if (entry->result_ready) {
+        cflow_value_slot_reset(&entry->result);
+        entry->result_ready = false;
+        entry->result_error = NULL;
+        --state->window_results_ready;
+    }
+    if (entry->completion_delivered && entry->demand_reserved) {
+        entry->demand_reserved = false;
+        --state->window_demand_reserved;
+    }
+    if (entry->acknowledged && !entry->result_encoding &&
+        !entry->demand_reserved)
+        io_source_window_release_entry_locked(state, entry);
 }
 
 static cflow_step io_source_terminal_step(
@@ -229,9 +316,203 @@ static bool io_source_take_result_locked(
     return true;
 }
 
+static bool io_source_window_take_result_locked(
+    cflow_io_source_state *state, void *out_value,
+    cflow_step *step, bool *close_actor) {
+    cflow_io_source_entry *entry =
+        io_source_window_find_ready_locked(state);
+    cflow_read_status status;
+    const char *error;
+
+    if (entry == NULL)
+        return false;
+    status = entry->result_status;
+    error = entry->result_error;
+    entry->result_ready = false;
+    entry->result_error = NULL;
+    --state->window_results_ready;
+    if (entry->demand_reserved) {
+        entry->demand_reserved = false;
+        --state->window_demand_reserved;
+    }
+
+    if (status == CFLOW_READ_VALUE ||
+        status == CFLOW_READ_VALUE_AND_DONE) {
+        if (!entry->result.live) {
+            state->terminal = CFLOW_SOURCE_ERROR;
+            state->terminal_error = io_source_result_state_error;
+            *close_actor = true;
+            *step = io_source_terminal_step(state);
+        } else {
+            memcpy(out_value, entry->result.storage, state->type->size);
+            cflow_value_slot_reset(&entry->result);
+            if (status == CFLOW_READ_VALUE_AND_DONE) {
+                state->terminal = CFLOW_SOURCE_DONE;
+                *close_actor = true;
+            }
+            *step = (cflow_step){
+                status == CFLOW_READ_VALUE_AND_DONE
+                    ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE,
+                {0}, NULL};
+        }
+    } else {
+        cflow_value_slot_reset(&entry->result);
+        if (status == CFLOW_READ_DONE) {
+            state->terminal = CFLOW_SOURCE_DONE;
+            *step = (cflow_step){CFLOW_STEP_DONE, {0}, NULL};
+        } else {
+            state->terminal = CFLOW_SOURCE_ERROR;
+            state->terminal_error = error != NULL
+                ? error : io_source_encode_error;
+            *step = io_source_terminal_step(state);
+        }
+        *close_actor = true;
+    }
+    if (entry->acknowledged)
+        io_source_window_release_entry_locked(state, entry);
+    return true;
+}
+
+static cflow_step io_source_window_resume(
+    cflow_io_source_state *state, cflow_resume_ctx *ctx,
+    void *out_value) {
+    const size_t hinted = ctx != NULL && ctx->downstream_demand != 0u
+        ? ctx->downstream_demand : 1u;
+    const size_t target = hinted < state->window_capacity
+        ? hinted : state->window_capacity;
+
+    for (;;) {
+        cflow_io_source_entry *entry;
+        cflow_io_operation operation = {0};
+        cflow_io_submit_result submitted;
+        cflow_io_source_prepare_status prepared;
+        const char *error = NULL;
+        cflow_step step;
+        bool close_actor = false;
+
+        turbo_mutex_lock(&state->gate);
+        if (state->terminal != CFLOW_SOURCE_OPEN) {
+            step = io_source_terminal_step(state);
+            turbo_mutex_unlock(&state->gate);
+            return step;
+        }
+        if (state->close_requested || !state->source_live) {
+            turbo_mutex_unlock(&state->gate);
+            return io_source_set_terminal(
+                state, CFLOW_SOURCE_ERROR, io_source_cancelled_error);
+        }
+        if (io_source_window_take_result_locked(
+                state, out_value, &step, &close_actor)) {
+            turbo_mutex_unlock(&state->gate);
+            if (close_actor)
+                (void)cflow_io_actor_close(&state->actor);
+            return step;
+        }
+        if (state->prepare_done) {
+            if (state->window_demand_reserved == 0u) {
+                state->terminal = CFLOW_SOURCE_DONE;
+                step = io_source_terminal_step(state);
+                turbo_mutex_unlock(&state->gate);
+                return step;
+            }
+            turbo_mutex_unlock(&state->gate);
+            return (cflow_step){
+                CFLOW_STEP_WAIT,
+                io_source_waitable_as_cflow_waitable(state), NULL};
+        }
+        if (state->window_demand_reserved >= target ||
+            state->window_occupied >= state->window_capacity) {
+            turbo_mutex_unlock(&state->gate);
+            return (cflow_step){
+                CFLOW_STEP_WAIT,
+                io_source_waitable_as_cflow_waitable(state), NULL};
+        }
+        entry = io_source_window_find_free_locked(state);
+        if (entry == NULL) {
+            state->terminal = CFLOW_SOURCE_ERROR;
+            state->terminal_error = io_source_result_state_error;
+            step = io_source_terminal_step(state);
+            turbo_mutex_unlock(&state->gate);
+            (void)cflow_io_actor_close(&state->actor);
+            return step;
+        }
+        entry->occupied = true;
+        entry->submission_in_progress = true;
+        ++state->window_occupied;
+        if (state->window_occupied > state->window_peak_occupied)
+            state->window_peak_occupied = state->window_occupied;
+        state->submission_in_progress = true;
+        turbo_mutex_unlock(&state->gate);
+
+        prepared = state->prepare(state->user, &operation, &error);
+        if (prepared == CFLOW_IO_SOURCE_PREPARE_DONE) {
+            turbo_mutex_lock(&state->gate);
+            io_source_window_release_entry_locked(state, entry);
+            state->submission_in_progress = false;
+            state->prepare_done = true;
+            turbo_mutex_unlock(&state->gate);
+            continue;
+        }
+        if (prepared != CFLOW_IO_SOURCE_PREPARE_OPERATION ||
+            operation.release == NULL) {
+            const char *terminal_error = prepared ==
+                    CFLOW_IO_SOURCE_PREPARE_ERROR
+                ? (error != NULL && error[0] != '\0'
+                       ? error : io_source_prepare_error)
+                : (prepared == CFLOW_IO_SOURCE_PREPARE_OPERATION
+                       ? io_source_operation_error
+                       : io_source_prepare_status_error);
+            turbo_mutex_lock(&state->gate);
+            io_source_window_release_entry_locked(state, entry);
+            state->submission_in_progress = false;
+            state->terminal = CFLOW_SOURCE_ERROR;
+            state->terminal_error = terminal_error;
+            step = io_source_terminal_step(state);
+            turbo_mutex_unlock(&state->gate);
+            (void)cflow_io_actor_close(&state->actor);
+            return step;
+        }
+
+        turbo_mutex_lock(&state->gate);
+        entry->demand_reserved = true;
+        ++state->window_demand_reserved;
+        turbo_mutex_unlock(&state->gate);
+        submitted = cflow_io_actor_try_submit(
+            &state->actor, entry->lease_id, &operation);
+        if (submitted.status != CFLOW_IO_SUBMIT_ACCEPTED) {
+            const char *submit_error =
+                io_source_submit_error(submitted.status);
+            operation.release(operation.user);
+            turbo_mutex_lock(&state->gate);
+            --state->window_demand_reserved;
+            io_source_window_release_entry_locked(state, entry);
+            state->submission_in_progress = false;
+            state->terminal = CFLOW_SOURCE_ERROR;
+            state->terminal_error = submit_error;
+            step = io_source_terminal_step(state);
+            turbo_mutex_unlock(&state->gate);
+            (void)cflow_io_actor_close(&state->actor);
+            return step;
+        }
+
+        turbo_mutex_lock(&state->gate);
+        entry->submission_in_progress = false;
+        if (entry->request_id == 0u)
+            entry->request_id = submitted.request_id;
+        else if (entry->request_id != submitted.request_id) {
+            state->terminal = CFLOW_SOURCE_ERROR;
+            state->terminal_error = io_source_result_state_error;
+        }
+        state->submission_in_progress = false;
+        turbo_mutex_unlock(&state->gate);
+    }
+}
+
 static bool io_source_wait_arm(void *self, cflow_waker waker) {
     cflow_io_source_state *state = (cflow_io_source_state *)self;
     cflow_waker wake_now = {0};
+    bool ready;
+    bool waitable;
 
     if (state == NULL || waker.wake == NULL)
         return false;
@@ -240,12 +521,18 @@ static bool io_source_wait_arm(void *self, cflow_waker waker) {
         turbo_mutex_unlock(&state->gate);
         return false;
     }
-    if (state->terminal != CFLOW_SOURCE_OPEN || state->result_ready ||
-        state->acknowledged) {
+    ready = io_source_windowed(state)
+        ? state->window_results_ready != 0u ||
+              (state->prepare_done &&
+               state->window_demand_reserved == 0u)
+        : state->result_ready || state->acknowledged;
+    waitable = io_source_windowed(state)
+        ? state->window_occupied != 0u
+        : state->request_id != 0u;
+    if (state->terminal != CFLOW_SOURCE_OPEN || ready) {
         wake_now = waker;
         io_source_retain_waker_locked(state, wake_now);
-    } else if (state->request_id == 0u ||
-               state->source_waker.wake != NULL) {
+    } else if (!waitable || state->source_waker.wake != NULL) {
         turbo_mutex_unlock(&state->gate);
         return false;
     } else {
@@ -259,6 +546,7 @@ static bool io_source_wait_arm(void *self, cflow_waker waker) {
 static void io_source_wait_cancel(void *self) {
     cflow_io_source_state *state = (cflow_io_source_state *)self;
     bool close_actor = false;
+    size_t index;
 
     if (state == NULL)
         return;
@@ -267,6 +555,11 @@ static void io_source_wait_cancel(void *self) {
     if (!state->close_requested) {
         state->close_requested = true;
         close_actor = true;
+    }
+    if (io_source_windowed(state)) {
+        for (index = 0u; index < state->window_capacity; ++index)
+            io_source_window_discard_result_locked(
+                state, &state->entries[index]);
     }
     turbo_mutex_unlock(&state->gate);
     if (close_actor)
@@ -311,6 +604,8 @@ static cflow_step io_source_resume(
     if (state == NULL || out_value == NULL)
         return (cflow_step){CFLOW_STEP_ERROR, {0},
                             io_source_unavailable_error};
+    if (io_source_windowed(state))
+        return io_source_window_resume(state, ctx, out_value);
 
     turbo_mutex_lock(&state->gate);
     if (state->terminal != CFLOW_SOURCE_OPEN) {
@@ -337,6 +632,7 @@ static cflow_step io_source_resume(
             io_source_waitable_as_cflow_waitable(state), NULL};
     }
     state->submission_in_progress = true;
+    state->window_peak_occupied = 1u;
     turbo_mutex_unlock(&state->gate);
 
     prepared = state->prepare(state->user, &operation, &error);
@@ -439,6 +735,116 @@ CMETA_IMPLEMENTS(cflow_source, io_actor_source, 0,
     .poll_terminal = io_source_poll_terminal
 );
 
+static void io_source_window_completion(
+    cflow_io_source_state *state,
+    cflow_io_request_id request_id,
+    cflow_io_lease_id lease_id,
+    void *operation_user,
+    const cflow_io_completion *completion) {
+    cflow_io_source_entry *entry = NULL;
+    cflow_read_status encoded = CFLOW_READ_ERROR;
+    const char *error = NULL;
+    cflow_waker waker = {0};
+    bool encode = false;
+    bool close_actor = false;
+    size_t index;
+
+    if (lease_id == 0u || lease_id > state->window_capacity)
+        index = state->window_capacity;
+    else
+        index = (size_t)(lease_id - 1u);
+    turbo_mutex_lock(&state->gate);
+    if (index < state->window_capacity)
+        entry = &state->entries[index];
+    if (entry == NULL || !entry->occupied ||
+        entry->lease_id != lease_id ||
+        (entry->request_id != 0u &&
+         entry->request_id != request_id) ||
+        entry->result_encoding || entry->completion_delivered) {
+        state->terminal = CFLOW_SOURCE_ERROR;
+        state->terminal_error = io_source_result_state_error;
+        close_actor = true;
+        waker = io_source_take_waker_locked(state);
+    } else {
+        if (entry->request_id == 0u)
+            entry->request_id = request_id;
+        if (state->close_requested ||
+            state->terminal != CFLOW_SOURCE_OPEN ||
+            state->terminal_delivery_seen) {
+            entry->completion_delivered = true;
+            if (entry->demand_reserved) {
+                entry->demand_reserved = false;
+                --state->window_demand_reserved;
+            }
+            waker = io_source_take_waker_locked(state);
+        } else {
+            entry->result_encoding = true;
+            encode = true;
+        }
+    }
+    turbo_mutex_unlock(&state->gate);
+    if (!encode) {
+        if (close_actor)
+            (void)cflow_io_actor_close(&state->actor);
+        io_source_wake(state, waker);
+        return;
+    }
+
+    encoded = state->encode(
+        state->user, request_id, lease_id, operation_user,
+        completion, entry->result.storage, &error);
+
+    turbo_mutex_lock(&state->gate);
+    entry->result_encoding = false;
+    if (state->close_requested ||
+        state->terminal != CFLOW_SOURCE_OPEN ||
+        state->terminal_delivery_seen) {
+        entry->completion_delivered = true;
+        if (entry->demand_reserved) {
+            entry->demand_reserved = false;
+            --state->window_demand_reserved;
+        }
+        if (entry->acknowledged)
+            io_source_window_release_entry_locked(state, entry);
+        waker = io_source_take_waker_locked(state);
+        turbo_mutex_unlock(&state->gate);
+        io_source_wake(state, waker);
+        return;
+    }
+    if (state->next_delivery_sequence == UINT64_MAX) {
+        encoded = CFLOW_READ_ERROR;
+        error = io_source_result_state_error;
+    } else {
+        entry->delivery_sequence = ++state->next_delivery_sequence;
+    }
+    if (encoded == CFLOW_READ_VALUE ||
+        encoded == CFLOW_READ_VALUE_AND_DONE) {
+        entry->result.live = true;
+        entry->result_status = encoded;
+        entry->result_error = NULL;
+    } else if (encoded == CFLOW_READ_DONE) {
+        entry->result_status = encoded;
+        entry->result_error = NULL;
+    } else if (encoded == CFLOW_READ_ERROR) {
+        entry->result_status = CFLOW_READ_ERROR;
+        entry->result_error = error != NULL && error[0] != '\0'
+            ? error : io_source_encode_error;
+    } else {
+        entry->result_status = CFLOW_READ_ERROR;
+        entry->result_error = encoded == CFLOW_READ_WOULD_BLOCK
+            ? io_source_encode_status_error
+            : io_source_encode_invalid_status_error;
+    }
+    if (entry->result_status != CFLOW_READ_VALUE)
+        state->terminal_delivery_seen = true;
+    entry->result_ready = true;
+    entry->completion_delivered = true;
+    ++state->window_results_ready;
+    waker = io_source_take_waker_locked(state);
+    turbo_mutex_unlock(&state->gate);
+    io_source_wake(state, waker);
+}
+
 static void io_source_completion(
     void *completion_user,
     cflow_io_request_id request_id,
@@ -454,6 +860,11 @@ static void io_source_completion(
 
     if (state == NULL || completion == NULL)
         return;
+    if (io_source_windowed(state)) {
+        io_source_window_completion(
+            state, request_id, lease_id, operation_user, completion);
+        return;
+    }
     turbo_mutex_lock(&state->gate);
     if (state->request_id == 0u && state->submission_in_progress)
         state->request_id = request_id;
@@ -511,10 +922,11 @@ static void io_source_completion(
     io_source_wake(state, waker);
 }
 
-int cflow_source_from_io_actor(
+static int io_source_construct(
     cflow_source *out,
     cflow_io_source_owner *owner,
-    const cflow_io_source_config *config) {
+    const cflow_io_source_config *config,
+    size_t window_capacity) {
     const bool out_zero = out != NULL &&
         out->self == NULL && out->vtable == NULL;
     const bool owner_zero = owner != NULL && owner->impl == NULL;
@@ -523,18 +935,22 @@ int cflow_source_from_io_actor(
     bool gate_initialized = false;
     bool changed_initialized = false;
     bool result_initialized = false;
+    size_t entries_initialized = 0u;
     bool executor_initialized = false;
     int status = TURBO_ENOMEM;
 
     if (!out_zero || !owner_zero || config == NULL ||
         config->backend.submit == NULL || config->prepare == NULL ||
         config->encode == NULL || config->drive == NULL ||
-        !io_source_type_valid(config->type))
+        !io_source_type_valid(config->type) || window_capacity == 0u ||
+        window_capacity > CFLOW_IO_SOURCE_MAX_WINDOW ||
+        window_capacity > SIZE_MAX / sizeof(cflow_io_source_entry))
         return TURBO_EINVAL;
 
     state = (cflow_io_source_state *)calloc(1u, sizeof(*state));
     if (state == NULL)
         goto cleanup;
+    state->window_capacity = window_capacity;
     turbo_mutex_init(&state->gate);
     if (state->gate == NULL)
         goto cleanup;
@@ -543,16 +959,33 @@ int cflow_source_from_io_actor(
     if (state->changed == NULL)
         goto cleanup;
     changed_initialized = true;
-    if (!cflow_value_slot_init(&state->result, config->type))
-        goto cleanup;
-    result_initialized = true;
+    if (window_capacity == 1u) {
+        if (!cflow_value_slot_init(&state->result, config->type))
+            goto cleanup;
+        result_initialized = true;
+    } else {
+        size_t index;
+
+        state->entries = (cflow_io_source_entry *)calloc(
+            window_capacity, sizeof(*state->entries));
+        if (state->entries == NULL)
+            goto cleanup;
+        for (index = 0u; index < window_capacity; ++index) {
+            if (!cflow_value_slot_init(
+                    &state->entries[index].result, config->type))
+                goto cleanup;
+            state->entries[index].lease_id =
+                (cflow_io_lease_id)(index + 1u);
+            ++entries_initialized;
+        }
+    }
     if (!cflow_executor_manual_init_with_capacity(
-            &state->executor, CFLOW_IO_SOURCE_CAPACITY))
+            &state->executor, window_capacity))
         goto cleanup;
     executor_initialized = true;
 
-    actor_config.request_capacity = CFLOW_IO_SOURCE_CAPACITY;
-    actor_config.command_capacity = CFLOW_IO_SOURCE_CAPACITY;
+    actor_config.request_capacity = window_capacity;
+    actor_config.command_capacity = window_capacity;
     actor_config.executor = &state->executor;
     actor_config.backend = config->backend;
     actor_config.backend_user = config->backend_user;
@@ -586,12 +1019,37 @@ cleanup:
         cflow_executor_destroy(&state->executor);
     if (result_initialized)
         cflow_value_slot_destroy(&state->result);
+    if (state != NULL) {
+        while (entries_initialized != 0u) {
+            --entries_initialized;
+            cflow_value_slot_destroy(
+                &state->entries[entries_initialized].result);
+        }
+        free(state->entries);
+    }
     if (changed_initialized)
         turbo_cond_destroy(&state->changed);
     if (gate_initialized)
         turbo_mutex_destroy(&state->gate);
     free(state);
     return status;
+}
+
+int cflow_source_from_io_actor(
+    cflow_source *out,
+    cflow_io_source_owner *owner,
+    const cflow_io_source_config *config) {
+    return io_source_construct(
+        out, owner, config, CFLOW_IO_SOURCE_CAPACITY);
+}
+
+int cflow_source_from_io_actor_windowed(
+    cflow_source *out,
+    cflow_io_source_owner *owner,
+    const cflow_io_source_config *config,
+    size_t window_capacity) {
+    return io_source_construct(
+        out, owner, config, window_capacity);
 }
 
 int cflow_io_source_owner_run_ready(
@@ -622,12 +1080,19 @@ int cflow_io_source_owner_run_ready(
     for (;;) {
         while (count < max_steps) {
             cflow_io_request_id delivered_request_id = 0u;
+            cflow_io_source_entry *delivered_entry = NULL;
             cflow_io_run_result actor_result;
 
             turbo_mutex_lock(&state->gate);
-            if (state->completion_delivered &&
-                state->request_id != 0u)
+            if (io_source_windowed(state)) {
+                delivered_entry =
+                    io_source_window_find_delivered_locked(state);
+                if (delivered_entry != NULL)
+                    delivered_request_id = delivered_entry->request_id;
+            } else if (state->completion_delivered &&
+                       state->request_id != 0u) {
                 delivered_request_id = state->request_id;
+            }
             turbo_mutex_unlock(&state->gate);
             if (delivered_request_id != 0u) {
                 const cflow_io_ack_status ack_status =
@@ -638,8 +1103,22 @@ int cflow_io_source_owner_run_ready(
                     cflow_waker waker = {0};
 
                     turbo_mutex_lock(&state->gate);
-                    if (state->request_id == delivered_request_id &&
-                        state->completion_delivered) {
+                    if (io_source_windowed(state) &&
+                        delivered_entry != NULL &&
+                        delivered_entry->occupied &&
+                        delivered_entry->request_id ==
+                            delivered_request_id &&
+                        delivered_entry->completion_delivered) {
+                        delivered_entry->acknowledged = true;
+                        if (!delivered_entry->result_ready &&
+                            !delivered_entry->demand_reserved)
+                            io_source_window_release_entry_locked(
+                                state, delivered_entry);
+                        waker = io_source_take_waker_locked(state);
+                    } else if (!io_source_windowed(state) &&
+                               state->request_id ==
+                                   delivered_request_id &&
+                               state->completion_delivered) {
                         state->request_id = 0u;
                         state->completion_delivered = false;
                         state->acknowledged = true;
@@ -721,7 +1200,9 @@ bool cflow_io_source_owner_is_quiescent(
     state = (cflow_io_source_state *)owner->impl;
     turbo_mutex_lock(&state->gate);
     adapter_quiescent = !state->driver_active &&
-        state->wake_inflight == 0u && state->drive_inflight == 0u;
+        state->wake_inflight == 0u && state->drive_inflight == 0u &&
+        (!io_source_windowed(state) ||
+         state->window_occupied == 0u);
     turbo_mutex_unlock(&state->gate);
     return adapter_quiescent &&
         cflow_io_actor_is_quiescent(&state->actor);
@@ -738,15 +1219,47 @@ bool cflow_io_source_owner_get_stats(
     state = (cflow_io_source_state *)owner->impl;
     turbo_mutex_lock(&state->gate);
     snapshot.source_live = state->source_live;
-    snapshot.request_active = state->submission_in_progress ||
-        state->request_id != 0u;
-    snapshot.result_ready = state->result_ready;
+    snapshot.request_active = io_source_windowed(state)
+        ? state->submission_in_progress || state->window_occupied != 0u
+        : state->submission_in_progress || state->request_id != 0u;
+    snapshot.result_ready = io_source_windowed(state)
+        ? state->window_results_ready != 0u : state->result_ready;
     snapshot.close_requested = state->close_requested;
     turbo_mutex_unlock(&state->gate);
     if (!cflow_io_actor_get_stats(&state->actor, &snapshot.actor))
         return false;
     snapshot.request_active = snapshot.request_active ||
         snapshot.actor.active_requests != 0u;
+    *out = snapshot;
+    return true;
+}
+
+bool cflow_io_source_owner_get_window_stats(
+    const cflow_io_source_owner *owner,
+    cflow_io_source_window_stats *out) {
+    cflow_io_source_state *state;
+    cflow_io_source_window_stats snapshot = {0};
+
+    if (owner == NULL || owner->impl == NULL || out == NULL)
+        return false;
+    state = (cflow_io_source_state *)owner->impl;
+    turbo_mutex_lock(&state->gate);
+    snapshot.capacity = state->window_capacity;
+    if (io_source_windowed(state)) {
+        snapshot.occupied = state->window_occupied;
+        snapshot.demand_reserved = state->window_demand_reserved;
+        snapshot.results_ready = state->window_results_ready;
+        snapshot.peak_occupied = state->window_peak_occupied;
+    } else {
+        snapshot.occupied = state->submission_in_progress ||
+            state->request_id != 0u || state->result_ready ||
+            state->completion_delivered || state->acknowledged
+            ? 1u : 0u;
+        snapshot.demand_reserved = snapshot.occupied;
+        snapshot.results_ready = state->result_ready ? 1u : 0u;
+        snapshot.peak_occupied = state->window_peak_occupied;
+    }
+    turbo_mutex_unlock(&state->gate);
     *out = snapshot;
     return true;
 }
@@ -762,7 +1275,9 @@ int cflow_io_source_owner_close(cflow_io_source_owner *owner) {
     state = (cflow_io_source_state *)owner->impl;
     turbo_mutex_lock(&state->gate);
     if (!state->owner_live || state->source_live || state->driver_active ||
-        state->wake_inflight != 0u || state->drive_inflight != 0u) {
+        state->wake_inflight != 0u || state->drive_inflight != 0u ||
+        (io_source_windowed(state) &&
+         state->window_occupied != 0u)) {
         turbo_mutex_unlock(&state->gate);
         return TURBO_EBUSY;
     }
@@ -779,6 +1294,12 @@ int cflow_io_source_owner_close(cflow_io_source_owner *owner) {
     (void)cflow_executor_shutdown(&state->executor);
     cflow_executor_destroy(&state->executor);
     cflow_value_slot_destroy(&state->result);
+    if (state->entries != NULL) {
+        size_t index;
+        for (index = 0u; index < state->window_capacity; ++index)
+            cflow_value_slot_destroy(&state->entries[index].result);
+        free(state->entries);
+    }
     owner->impl = NULL;
     turbo_cond_destroy(&state->changed);
     turbo_mutex_destroy(&state->gate);

@@ -16,6 +16,13 @@ enum {
     IO_SOURCE_CANCEL_OBSERVATION_NS = 20 * 1000 * 1000
 };
 
+typedef struct io_source_backend_request {
+    cflow_io_actor *actor;
+    cflow_io_request_id request_id;
+    cflow_io_lease_id lease_id;
+    bool active;
+} io_source_backend_request;
+
 typedef struct io_source_fixture {
     cflow_io_source_prepare_status prepare_status;
     const char *prepare_error;
@@ -35,12 +42,17 @@ typedef struct io_source_fixture {
     int drive_run_error;
     int encoded_values[4];
     size_t encoded_value_count;
+    size_t prepare_operation_limit;
+    bool prepare_error_at_limit;
     uint64_t acknowledged_before_prepare[4];
     cflow_io_source_owner *prepare_stats_owner;
     cflow_io_source_owner *stats_owner;
     cflow_io_source_owner *drive_owner;
     cflow_io_actor *backend_actor;
     cflow_io_request_id backend_request_id;
+    io_source_backend_request
+        backend_requests[CFLOW_IO_SOURCE_MAX_WINDOW];
+    size_t backend_request_count;
     size_t backend_active;
     size_t backend_active_max;
     cflow_source *cancel_source_during_prepare;
@@ -65,7 +77,7 @@ typedef struct io_source_inline_scheduler {
 
 typedef struct io_source_sink_probe {
     size_t values;
-    int received[4];
+    int received[8];
     size_t errors;
     size_t done;
     const char *error;
@@ -384,6 +396,15 @@ static cflow_io_source_prepare_status io_source_prepare(
         fixture->acknowledged_before_prepare[call_index] =
             stats.actor.acknowledged;
     ++fixture->prepare_calls;
+    if (fixture->prepare_status == CFLOW_IO_SOURCE_PREPARE_OPERATION &&
+        fixture->prepare_operation_limit != 0u &&
+        call_index >= fixture->prepare_operation_limit) {
+        if (fixture->prepare_error_at_limit) {
+            *error = fixture->prepare_error;
+            return CFLOW_IO_SOURCE_PREPARE_ERROR;
+        }
+        return CFLOW_IO_SOURCE_PREPARE_DONE;
+    }
     if (fixture->prepare_status == CFLOW_IO_SOURCE_PREPARE_OPERATION) {
         if (!fixture->prepare_empty_operation) {
             operation->user = fixture;
@@ -425,21 +446,33 @@ static cflow_read_status io_source_encode(
     return fixture->encode_status;
 }
 
+static cflow_io_complete_status io_source_complete_backend_at(
+    io_source_fixture *fixture, size_t request_index,
+    const cflow_io_completion *completion) {
+    cflow_io_complete_status status;
+    io_source_backend_request *request;
+
+    if (fixture == NULL ||
+        request_index >= fixture->backend_request_count)
+        return CFLOW_IO_COMPLETE_INVALID_ARGUMENT;
+    request = &fixture->backend_requests[request_index];
+    status = cflow_io_actor_complete(
+        request->actor, request->request_id,
+        completion);
+    if (status == CFLOW_IO_COMPLETE_ACCEPTED && request->active) {
+        request->active = false;
+        --fixture->backend_active;
+    }
+    return status;
+}
+
 static cflow_io_complete_status io_source_complete_backend(
     io_source_fixture *fixture,
     const cflow_io_completion *completion) {
-    cflow_io_complete_status status;
-
-    if (fixture == NULL || fixture->backend_actor == NULL ||
-        fixture->backend_request_id == 0u)
+    if (fixture == NULL || fixture->backend_request_count == 0u)
         return CFLOW_IO_COMPLETE_INVALID_ARGUMENT;
-    status = cflow_io_actor_complete(
-        fixture->backend_actor, fixture->backend_request_id,
-        completion);
-    if (status == CFLOW_IO_COMPLETE_ACCEPTED &&
-        fixture->backend_active != 0u)
-        --fixture->backend_active;
-    return status;
+    return io_source_complete_backend_at(
+        fixture, fixture->backend_request_count - 1u, completion);
 }
 
 static int io_source_backend_submit(
@@ -457,6 +490,14 @@ static int io_source_backend_submit(
     ++fixture->backend_submit_calls;
     fixture->backend_actor = actor;
     fixture->backend_request_id = request_id;
+    if (fixture->backend_request_count < CFLOW_IO_SOURCE_MAX_WINDOW) {
+        io_source_backend_request *request =
+            &fixture->backend_requests[fixture->backend_request_count++];
+        request->actor = actor;
+        request->request_id = request_id;
+        request->lease_id = lease_id;
+        request->active = true;
+    }
     ++fixture->backend_active;
     if (fixture->backend_active > fixture->backend_active_max)
         fixture->backend_active_max = fixture->backend_active;
@@ -550,9 +591,9 @@ static void io_source_sink_done(void *user) {
     ++probe->done;
 }
 
-static bool io_source_run_fixture_init_with_scheduler(
+static bool io_source_run_fixture_init_mode(
     io_source_run_fixture *run_fixture, io_source_fixture *fixture,
-    bool inline_scheduler) {
+    bool inline_scheduler, size_t window_capacity) {
     cflow_io_source_config config = io_source_config(fixture);
     bool surface_initialized = false;
     bool normalized_initialized = false;
@@ -574,10 +615,16 @@ static bool io_source_run_fixture_init_with_scheduler(
         goto cleanup;
     }
     scheduler_initialized = true;
-    if (cflow_source_from_io_actor(
-            &run_fixture->source, &run_fixture->owner,
-            &config) != TURBO_OK)
+    if (window_capacity == 0u) {
+        if (cflow_source_from_io_actor(
+                &run_fixture->source, &run_fixture->owner,
+                &config) != TURBO_OK)
+            goto cleanup;
+    } else if (cflow_source_from_io_actor_windowed(
+                   &run_fixture->source, &run_fixture->owner,
+                   &config, window_capacity) != TURBO_OK) {
         goto cleanup;
+    }
 
     run_fixture->sink_callbacks = (cflow_sink_callbacks){
         io_source_sink_value,
@@ -603,10 +650,24 @@ cleanup:
     return false;
 }
 
+static bool io_source_run_fixture_init_with_scheduler(
+    io_source_run_fixture *run_fixture, io_source_fixture *fixture,
+    bool inline_scheduler) {
+    return io_source_run_fixture_init_mode(
+        run_fixture, fixture, inline_scheduler, 0u);
+}
+
 static bool io_source_run_fixture_init(
     io_source_run_fixture *run_fixture, io_source_fixture *fixture) {
     return io_source_run_fixture_init_with_scheduler(
         run_fixture, fixture, false);
+}
+
+static bool io_source_run_fixture_init_windowed(
+    io_source_run_fixture *run_fixture, io_source_fixture *fixture,
+    size_t window_capacity) {
+    return io_source_run_fixture_init_mode(
+        run_fixture, fixture, false, window_capacity);
 }
 
 static void io_source_run_fixture_close(
@@ -650,6 +711,84 @@ spec("CFlow reactive IO source") {
                     TURBO_EINVAL);
         check_false(cflow_source_valid(&source));
         check_null(owner.impl);
+    }
+
+    it("keeps capacity one identical through the windowed constructor") {
+        io_source_fixture sequential = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE_AND_DONE,
+            .encoded_value = 37,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true
+        };
+        io_source_fixture windowed = sequential;
+        io_source_run_fixture sequential_run;
+        io_source_run_fixture windowed_run;
+        cflow_io_source_stats sequential_stats = {0};
+        cflow_io_source_stats windowed_stats = {0};
+        cflow_io_source_window_stats sequential_window = {0};
+        cflow_io_source_window_stats windowed_window = {0};
+        size_t progressed = 0u;
+
+        check_true(io_source_run_fixture_init(
+            &sequential_run, &sequential));
+        check_true(cflow_run_open(
+            &sequential_run.run, &sequential_run.normalized,
+            &sequential_run.source, &sequential_run.scheduler,
+            &sequential_run.sink));
+        check_true(cflow_run_request(&sequential_run.run, 1u));
+        (void)cflow_scheduler_run_until_idle(
+            &sequential_run.scheduler, 0u);
+        check_equal(cflow_io_source_owner_run_ready(
+            &sequential_run.owner, 32u, &progressed), TURBO_OK);
+        (void)cflow_scheduler_run_until_idle(
+            &sequential_run.scheduler, 0u);
+        check_true(cflow_io_source_owner_get_stats(
+            &sequential_run.owner, &sequential_stats));
+        check_true(cflow_io_source_owner_get_window_stats(
+            &sequential_run.owner, &sequential_window));
+
+        progressed = 0u;
+        check_true(io_source_run_fixture_init_windowed(
+            &windowed_run, &windowed, 1u));
+        check_true(cflow_run_open(
+            &windowed_run.run, &windowed_run.normalized,
+            &windowed_run.source, &windowed_run.scheduler,
+            &windowed_run.sink));
+        check_true(cflow_run_request(&windowed_run.run, 1u));
+        (void)cflow_scheduler_run_until_idle(
+            &windowed_run.scheduler, 0u);
+        check_equal(cflow_io_source_owner_run_ready(
+            &windowed_run.owner, 32u, &progressed), TURBO_OK);
+        (void)cflow_scheduler_run_until_idle(
+            &windowed_run.scheduler, 0u);
+        check_true(cflow_io_source_owner_get_stats(
+            &windowed_run.owner, &windowed_stats));
+        check_true(cflow_io_source_owner_get_window_stats(
+            &windowed_run.owner, &windowed_window));
+
+        check_equal(windowed.prepare_calls, sequential.prepare_calls);
+        check_equal(windowed.backend_submit_calls,
+                    sequential.backend_submit_calls);
+        check_equal(windowed.encode_calls, sequential.encode_calls);
+        check_equal(windowed.release_calls, sequential.release_calls);
+        check_equal(windowed_run.sink_probe.values,
+                    sequential_run.sink_probe.values);
+        check_equal(windowed_run.sink_probe.received[0],
+                    sequential_run.sink_probe.received[0]);
+        check_equal(windowed_run.sink_probe.done,
+                    sequential_run.sink_probe.done);
+        check_equal(windowed_stats.actor.request_capacity,
+                    sequential_stats.actor.request_capacity);
+        check_equal(windowed_stats.actor.command_capacity,
+                    sequential_stats.actor.command_capacity);
+        check_equal(windowed_stats.actor.acknowledged,
+                    sequential_stats.actor.acknowledged);
+        check_equal(sequential_window.peak_occupied, (size_t)1u);
+        check_equal(windowed_window.peak_occupied, (size_t)1u);
+
+        io_source_run_fixture_close(&windowed_run);
+        io_source_run_fixture_close(&sequential_run);
     }
 
     it("preserves an occupied Source on rejected construction") {
@@ -774,6 +913,411 @@ spec("CFlow reactive IO source") {
 
         io_source_run_fixture_close(&run_fixture);
         check_equal(fixture.release_calls, (size_t)0u);
+    }
+
+    it("fills a bounded window from one downstream demand snapshot") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .prepare_valid_operation = true
+        };
+        io_source_run_fixture run_fixture;
+        cflow_io_source_stats stats = {0};
+        cflow_io_source_window_stats window = {0};
+        const cflow_io_completion cancelled = {
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+        size_t progressed = 0u;
+
+        check_true(io_source_run_fixture_init_windowed(
+            &run_fixture, &fixture, 4u));
+        check_true(cflow_run_open(
+            &run_fixture.run, &run_fixture.normalized,
+            &run_fixture.source, &run_fixture.scheduler,
+            &run_fixture.sink));
+        check_true(cflow_run_request(&run_fixture.run, 6u));
+
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+
+        check_equal(fixture.prepare_calls, (size_t)4u);
+        check_equal(fixture.backend_submit_calls, (size_t)0u);
+        check_true(cflow_io_source_owner_get_stats(
+            &run_fixture.owner, &stats));
+        check_equal(stats.actor.request_capacity, (size_t)4u);
+        check_equal(stats.actor.command_capacity, (size_t)4u);
+        check_equal(stats.actor.active_requests, (size_t)4u);
+        check_true(cflow_io_source_owner_get_window_stats(
+            &run_fixture.owner, &window));
+        check_equal(window.capacity, (size_t)4u);
+        check_equal(window.occupied, (size_t)4u);
+        check_equal(window.demand_reserved, (size_t)4u);
+        check_equal(window.results_ready, (size_t)0u);
+        check_equal(window.peak_occupied, (size_t)4u);
+
+        check_equal(cflow_io_source_owner_run_ready(
+            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+        check_true(progressed >= (size_t)4u);
+        check_equal(fixture.backend_submit_calls, (size_t)4u);
+        check_equal(fixture.backend_active, (size_t)4u);
+        check_equal(fixture.backend_active_max, (size_t)4u);
+
+        cflow_run_close(&run_fixture.run);
+        for (size_t index = 0u;
+             index < fixture.backend_request_count; ++index) {
+            if (fixture.backend_requests[index].active)
+                check_equal(io_source_complete_backend_at(
+                    &fixture, index, &cancelled),
+                    CFLOW_IO_COMPLETE_ACCEPTED);
+        }
+        while (!cflow_io_source_owner_is_quiescent(
+                   &run_fixture.owner)) {
+            progressed = 0u;
+            check_equal(cflow_io_source_owner_run_ready(
+                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            check_true(progressed > (size_t)0u);
+        }
+        check_equal(cflow_io_source_owner_close(
+            &run_fixture.owner), TURBO_OK);
+        cflow_scheduler_destroy(&run_fixture.scheduler);
+        cflow_graph_destroy(&run_fixture.normalized);
+        cflow_graph_destroy(&run_fixture.surface);
+        check_equal(fixture.release_calls, (size_t)4u);
+    }
+
+    it("emits windowed values in authoritative completion delivery order") {
+        const size_t completion_order[] = {2u, 0u, 3u, 1u};
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE,
+            .encoded_values = {30, 10, 40, 20},
+            .encoded_value_count = 4u,
+            .encoded_value = 7,
+            .prepare_valid_operation = true
+        };
+        io_source_run_fixture run_fixture;
+        cflow_io_source_stats stats = {0};
+        cflow_io_source_window_stats window = {0};
+        const cflow_io_completion completion = {
+            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+        size_t progressed = 0u;
+
+        check_true(io_source_run_fixture_init_windowed(
+            &run_fixture, &fixture, 4u));
+        check_true(cflow_run_open(
+            &run_fixture.run, &run_fixture.normalized,
+            &run_fixture.source, &run_fixture.scheduler,
+            &run_fixture.sink));
+        check_true(cflow_run_request(&run_fixture.run, 4u));
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+        check_equal(cflow_io_source_owner_run_ready(
+            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+        check_equal(fixture.backend_submit_calls, (size_t)4u);
+
+        for (size_t index = 0u;
+             index < sizeof(completion_order) /
+                         sizeof(completion_order[0]); ++index) {
+            progressed = 0u;
+            check_equal(io_source_complete_backend_at(
+                &fixture, completion_order[index], &completion),
+                CFLOW_IO_COMPLETE_ACCEPTED);
+            check_equal(cflow_io_source_owner_run_ready(
+                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            check_true(progressed > (size_t)0u);
+            check_equal(fixture.encode_calls, index + 1u);
+        }
+
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+
+        check_equal(run_fixture.sink_probe.values, (size_t)4u);
+        check_equal(run_fixture.sink_probe.received[0], 30);
+        check_equal(run_fixture.sink_probe.received[1], 10);
+        check_equal(run_fixture.sink_probe.received[2], 40);
+        check_equal(run_fixture.sink_probe.received[3], 20);
+        check_equal(fixture.release_calls, (size_t)4u);
+        check_true(cflow_io_source_owner_get_stats(
+            &run_fixture.owner, &stats));
+        check_equal(stats.actor.acknowledged, (uint64_t)4u);
+        check_equal(stats.actor.stale_completions, (uint64_t)0u);
+        check_equal(stats.actor.rejected_request_full, (uint64_t)0u);
+        check_equal(stats.actor.rejected_command_full, (uint64_t)0u);
+        check_true(cflow_io_source_owner_get_window_stats(
+            &run_fixture.owner, &window));
+        check_equal(window.occupied, (size_t)0u);
+        check_equal(window.demand_reserved, (size_t)0u);
+        check_equal(window.results_ready, (size_t)0u);
+
+        check_true(cflow_run_request(&run_fixture.run, 4u));
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+        progressed = 0u;
+        check_equal(cflow_io_source_owner_run_ready(
+            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+        check_equal(fixture.backend_request_count, (size_t)8u);
+        for (size_t index = 4u; index < 8u; ++index) {
+            check_equal(fixture.backend_requests[index].lease_id,
+                        fixture.backend_requests[index - 4u].lease_id);
+            check_equal(io_source_complete_backend_at(
+                &fixture, index, &completion),
+                CFLOW_IO_COMPLETE_ACCEPTED);
+            progressed = 0u;
+            check_equal(cflow_io_source_owner_run_ready(
+                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            check_true(progressed > (size_t)0u);
+        }
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+
+        check_equal(run_fixture.sink_probe.values, (size_t)8u);
+        check_equal(fixture.release_calls, (size_t)8u);
+        check_true(cflow_io_source_owner_get_stats(
+            &run_fixture.owner, &stats));
+        check_equal(stats.actor.acknowledged, (uint64_t)8u);
+        check_true(cflow_io_source_owner_get_window_stats(
+            &run_fixture.owner, &window));
+        check_equal(window.occupied, (size_t)0u);
+        check_equal(window.demand_reserved, (size_t)0u);
+        check_equal(window.results_ready, (size_t)0u);
+
+        io_source_run_fixture_close(&run_fixture);
+    }
+
+    it("drains accepted window entries before prepare done terminates") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE,
+            .encoded_values = {11, 22, 33},
+            .encoded_value_count = 3u,
+            .prepare_operation_limit = 3u,
+            .prepare_valid_operation = true
+        };
+        io_source_run_fixture run_fixture;
+        const cflow_io_completion completion = {
+            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+        size_t progressed = 0u;
+
+        check_true(io_source_run_fixture_init_windowed(
+            &run_fixture, &fixture, 4u));
+        check_true(cflow_run_open(
+            &run_fixture.run, &run_fixture.normalized,
+            &run_fixture.source, &run_fixture.scheduler,
+            &run_fixture.sink));
+        check_true(cflow_run_request(&run_fixture.run, 4u));
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+        check_equal(fixture.prepare_calls, (size_t)4u);
+        check_equal(cflow_io_source_owner_run_ready(
+            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+        check_equal(fixture.backend_submit_calls, (size_t)3u);
+
+        for (size_t index = 0u; index < 3u; ++index) {
+            check_equal(io_source_complete_backend_at(
+                &fixture, index, &completion),
+                CFLOW_IO_COMPLETE_ACCEPTED);
+            progressed = 0u;
+            check_equal(cflow_io_source_owner_run_ready(
+                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            check_true(progressed > (size_t)0u);
+        }
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+
+        check_equal(run_fixture.sink_probe.values, (size_t)3u);
+        check_equal(run_fixture.sink_probe.received[0], 11);
+        check_equal(run_fixture.sink_probe.received[1], 22);
+        check_equal(run_fixture.sink_probe.received[2], 33);
+        check_equal(run_fixture.sink_probe.done, (size_t)1u);
+        check_equal(run_fixture.sink_probe.errors, (size_t)0u);
+        check_true(cflow_run_is_done(&run_fixture.run));
+        check_equal(fixture.release_calls, (size_t)3u);
+
+        io_source_run_fixture_close(&run_fixture);
+    }
+
+    it("discards accepted window entries after prepare error") {
+        static const char prepare_error[] = "window prepare failure";
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .prepare_error = prepare_error,
+            .encode_status = CFLOW_READ_VALUE,
+            .encoded_value = 99,
+            .prepare_operation_limit = 2u,
+            .prepare_error_at_limit = true,
+            .prepare_valid_operation = true
+        };
+        io_source_run_fixture run_fixture;
+        cflow_io_source_window_stats window = {0};
+        size_t progressed = 0u;
+
+        check_true(io_source_run_fixture_init_windowed(
+            &run_fixture, &fixture, 4u));
+        check_true(cflow_run_open(
+            &run_fixture.run, &run_fixture.normalized,
+            &run_fixture.source, &run_fixture.scheduler,
+            &run_fixture.sink));
+        check_true(cflow_run_request(&run_fixture.run, 4u));
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+
+        check_equal(fixture.prepare_calls, (size_t)3u);
+        check_equal(fixture.backend_submit_calls, (size_t)0u);
+        check_equal(run_fixture.sink_probe.errors, (size_t)1u);
+        check_true(run_fixture.sink_probe.error == prepare_error);
+
+        while (!cflow_io_source_owner_is_quiescent(
+                   &run_fixture.owner)) {
+            progressed = 0u;
+            check_equal(cflow_io_source_owner_run_ready(
+                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            check_true(progressed > (size_t)0u);
+        }
+
+        check_equal(fixture.encode_calls, (size_t)0u);
+        check_equal(fixture.release_calls, (size_t)2u);
+        check_true(cflow_io_source_owner_get_window_stats(
+            &run_fixture.owner, &window));
+        check_equal(window.occupied, (size_t)0u);
+        check_equal(window.demand_reserved, (size_t)0u);
+        check_equal(window.results_ready, (size_t)0u);
+
+        io_source_run_fixture_close(&run_fixture);
+    }
+
+    it("cuts off later window completions after value and done") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE_AND_DONE,
+            .encoded_value = 77,
+            .prepare_valid_operation = true
+        };
+        io_source_run_fixture run_fixture;
+        const cflow_io_completion completed = {
+            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+        const cflow_io_completion cancelled = {
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+        size_t progressed = 0u;
+
+        check_true(io_source_run_fixture_init_windowed(
+            &run_fixture, &fixture, 4u));
+        check_true(cflow_run_open(
+            &run_fixture.run, &run_fixture.normalized,
+            &run_fixture.source, &run_fixture.scheduler,
+            &run_fixture.sink));
+        check_true(cflow_run_request(&run_fixture.run, 4u));
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+        check_equal(cflow_io_source_owner_run_ready(
+            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+        check_equal(fixture.backend_submit_calls, (size_t)4u);
+
+        check_equal(io_source_complete_backend_at(
+            &fixture, 2u, &completed), CFLOW_IO_COMPLETE_ACCEPTED);
+        progressed = 0u;
+        check_equal(cflow_io_source_owner_run_ready(
+            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+        check_true(progressed > (size_t)0u);
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+
+        check_equal(run_fixture.sink_probe.values, (size_t)1u);
+        check_equal(run_fixture.sink_probe.received[0], 77);
+        check_equal(run_fixture.sink_probe.done, (size_t)1u);
+        check_equal(run_fixture.sink_probe.errors, (size_t)0u);
+        check_true(cflow_run_is_done(&run_fixture.run));
+        check_equal(fixture.encode_calls, (size_t)1u);
+
+        cflow_run_close(&run_fixture.run);
+        for (size_t index = 0u;
+             index < fixture.backend_request_count; ++index) {
+            if (fixture.backend_requests[index].active)
+                check_equal(io_source_complete_backend_at(
+                    &fixture, index, &cancelled),
+                    CFLOW_IO_COMPLETE_ACCEPTED);
+        }
+        while (!cflow_io_source_owner_is_quiescent(
+                   &run_fixture.owner)) {
+            progressed = 0u;
+            check_equal(cflow_io_source_owner_run_ready(
+                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            check_true(progressed > (size_t)0u);
+        }
+
+        check_equal(fixture.encode_calls, (size_t)1u);
+        check_equal(fixture.release_calls, (size_t)4u);
+        check_equal(cflow_io_source_owner_close(
+            &run_fixture.owner), TURBO_OK);
+        cflow_scheduler_destroy(&run_fixture.scheduler);
+        cflow_graph_destroy(&run_fixture.normalized);
+        cflow_graph_destroy(&run_fixture.surface);
+    }
+
+    it("discards a ready window result when the run is cancelled") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE,
+            .encoded_value = 55,
+            .prepare_valid_operation = true
+        };
+        io_source_run_fixture run_fixture;
+        cflow_io_source_window_stats window = {0};
+        const cflow_io_completion completed = {
+            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+        const cflow_io_completion cancelled = {
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+        size_t progressed = 0u;
+
+        check_true(io_source_run_fixture_init_windowed(
+            &run_fixture, &fixture, 4u));
+        check_true(cflow_run_open(
+            &run_fixture.run, &run_fixture.normalized,
+            &run_fixture.source, &run_fixture.scheduler,
+            &run_fixture.sink));
+        check_true(cflow_run_request(&run_fixture.run, 4u));
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+        check_equal(cflow_io_source_owner_run_ready(
+            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+
+        check_equal(io_source_complete_backend_at(
+            &fixture, 0u, &completed), CFLOW_IO_COMPLETE_ACCEPTED);
+        progressed = 0u;
+        check_equal(cflow_io_source_owner_run_ready(
+            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+        check_equal(fixture.encode_calls, (size_t)1u);
+        check_true(cflow_io_source_owner_get_window_stats(
+            &run_fixture.owner, &window));
+        check_equal(window.results_ready, (size_t)1u);
+
+        cflow_run_close(&run_fixture.run);
+        for (size_t index = 0u;
+             index < fixture.backend_request_count; ++index) {
+            if (fixture.backend_requests[index].active)
+                check_equal(io_source_complete_backend_at(
+                    &fixture, index, &cancelled),
+                    CFLOW_IO_COMPLETE_ACCEPTED);
+        }
+        while (!cflow_io_source_owner_is_quiescent(
+                   &run_fixture.owner)) {
+            progressed = 0u;
+            check_equal(cflow_io_source_owner_run_ready(
+                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            check_true(progressed > (size_t)0u);
+        }
+
+        check_equal(run_fixture.sink_probe.values, (size_t)0u);
+        check_equal(fixture.encode_calls, (size_t)1u);
+        check_equal(fixture.release_calls, (size_t)4u);
+        check_true(cflow_io_source_owner_get_window_stats(
+            &run_fixture.owner, &window));
+        check_equal(window.occupied, (size_t)0u);
+        check_equal(window.demand_reserved, (size_t)0u);
+        check_equal(window.results_ready, (size_t)0u);
+
+        check_equal(cflow_io_source_owner_close(
+            &run_fixture.owner), TURBO_OK);
+        cflow_scheduler_destroy(&run_fixture.scheduler);
+        cflow_graph_destroy(&run_fixture.normalized);
+        cflow_graph_destroy(&run_fixture.surface);
     }
 
     it("delivers one authoritative completion as a typed value") {
