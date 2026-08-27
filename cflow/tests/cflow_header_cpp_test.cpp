@@ -21,6 +21,10 @@ static_assert(std::is_standard_layout<cflow_machine_instance>::value,
               "cflow_machine_instance must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_instance_config>::value,
               "machine runtime config must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_statechart>::value,
+              "statechart must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_statechart_definition>::value,
+              "statechart definition must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_actor>::value,
               "cflow_actor must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_actor_ref>::value,
@@ -85,6 +89,8 @@ suite("CFlow C++ public header") {
         cflow_machine_hierarchy hierarchy = {};
         cflow_machine_instance instance = {};
         cflow_machine_instance_config machine_config = {};
+        cflow_statechart statechart = {};
+        cflow_statechart_definition statechart_definition = {};
         cflow_actor actor = {};
         cflow_actor_ref actor_ref = {};
         cflow_io_actor io_actor = {};
@@ -141,6 +147,9 @@ suite("CFlow C++ public header") {
         cflow_machine_hierarchy_destroy(&hierarchy);
         check_null(instance.impl);
         check_null(machine_config.machine);
+        check_null(statechart.impl);
+        check_null(statechart_definition.state_type);
+        cflow_statechart_destroy(&statechart);
         check_null(actor.impl);
         check_null(actor_ref.impl);
         check_null(io_actor.impl);

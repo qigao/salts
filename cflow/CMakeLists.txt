@@ -10,12 +10,15 @@ set(CFLOW_MACHINE_MAX_ACTIONS 65536 CACHE STRING
     "Maximum action declarations accepted by one CFlow Machine")
 set(CFLOW_MACHINE_MAX_TRANSITIONS 1048576 CACHE STRING
     "Maximum transitions accepted by one CFlow Machine")
+set(CFLOW_STATECHART_MAX_ACTION_REFS 1048576 CACHE STRING
+    "Maximum ordered action references accepted by one CFlow Statechart")
 foreach(machine_limit IN ITEMS
     CFLOW_MACHINE_MAX_STATES
     CFLOW_MACHINE_MAX_EVENTS
     CFLOW_MACHINE_MAX_GUARDS
     CFLOW_MACHINE_MAX_ACTIONS
-    CFLOW_MACHINE_MAX_TRANSITIONS)
+    CFLOW_MACHINE_MAX_TRANSITIONS
+    CFLOW_STATECHART_MAX_ACTION_REFS)
   if(NOT "${${machine_limit}}" MATCHES "^[1-9][0-9]*$")
     message(FATAL_ERROR "${machine_limit} must be a positive integer")
   endif()
@@ -57,6 +60,7 @@ add_library(${TARGET_NAME}
   src/scheduler.c
   src/scheduler_worker.c
   src/sources.c
+  src/statechart.c
   src/stream.c
   src/subrun.c
   src/temporal.c
@@ -96,7 +100,8 @@ target_compile_definitions(
     CFLOW_MACHINE_MAX_EVENTS=${CFLOW_MACHINE_MAX_EVENTS}
     CFLOW_MACHINE_MAX_GUARDS=${CFLOW_MACHINE_MAX_GUARDS}
     CFLOW_MACHINE_MAX_ACTIONS=${CFLOW_MACHINE_MAX_ACTIONS}
-    CFLOW_MACHINE_MAX_TRANSITIONS=${CFLOW_MACHINE_MAX_TRANSITIONS})
+    CFLOW_MACHINE_MAX_TRANSITIONS=${CFLOW_MACHINE_MAX_TRANSITIONS}
+    CFLOW_STATECHART_MAX_ACTION_REFS=${CFLOW_STATECHART_MAX_ACTION_REFS})
 target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
