@@ -11,11 +11,14 @@
 extern "C" {
 #endif
 
+/* Owning compiled-plan handle. Zero-initialize the complete object and use the
+ * compile/destroy APIs for every state change. */
 typedef struct cflow_plan {
-    void *impl;
+    void *impl; /* Internal implementation carrier; never dereference or assign. */
+    /* Read-only introspection, valid until the next compile or destroy. */
     const cmeta_type_desc *input_type;
     const cmeta_type_desc *output_type;
-    const char *error;
+    const char *error; /* Borrowed diagnostic retained by the Plan. */
 } cflow_plan;
 
 typedef struct cflow_plan_compile_stats {

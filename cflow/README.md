@@ -95,6 +95,31 @@ borrowed read-only view for introspection; applications needing advanced Graph
 construction should build and own a Graph directly rather than mutate Stream
 internals.
 
+### Public struct field stability
+
+Public visibility does not make every field caller-mutable. CFlow uses three
+field classes:
+
+| Class | Caller contract | Representative fields and types |
+|---|---|---|
+| **stable contract** | Initialize documented input/config fields before a call, invoke documented function-pointer fields, and read documented result/stat fields after a successful call. Field meaning and ownership are part of the public source contract. | Relation/config/binding/callback structs; result, status, stats, snapshot, Event and time values; Stream operator method fields |
+| **read-only introspection** | Inspect while the owner is live and quiescent. Never write through the view or retain pointers across owner mutation/destruction. | `cflow_op_schema`; `cflow_edge`, `cflow_node`, `cflow_subgraph`, and `cflow_graph`; `cflow_stream.graph` through `cflow_stream_graph()`; `cflow_plan.input_type`, `output_type`, and `error` |
+| **internal/advanced surface** | Ordinary consumers use free-function wrappers. Only adapter/backend implementers use documented interface/vtable extension points. No ownership or semantic state may be inferred from private carrier values. | Every owning handle's `impl`; Stream Range/options/failure storage; CMeta-generated interface `self`/vtable carriers; explicitly documented backend ops and AOT integration structs |
+
+For owning handles, `Type value = {0}` is the supported direct initialization;
+creation/open/build and destroy/close APIs perform every later state change.
+Do not copy a live owning handle, dereference or assign `impl`, serialize a
+public struct by raw bytes, or use `sizeof`/`offsetof` as a persistent or
+cross-version protocol. A documented empty-handle guarantee may be observed
+through its API, but the carrier pointer has no additional public meaning.
+
+Graph IR remains concrete so verification, diagnostics, and advanced tooling
+can inspect topology without a second mirror model. Mutation still goes through
+`cflow_graph_*`: successful mutation changes `version` and may invalidate every
+previous Node/Subgraph/Edge pointer. Stream keeps method fields concrete for the
+ISO C11 explicit-self facade; their values are initialized by CFlow and are not
+caller-replaceable strategies.
+
 ### Lifecycle and ownership matrix
 
 | Object | Owned state | Borrowed dependencies | Mutable fact source | Required release boundary |
