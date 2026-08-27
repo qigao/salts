@@ -199,6 +199,11 @@ static size_t demand_get(run_impl *r) {
     return n;
 }
 
+static cflow_resume_ctx *run_resume_context(run_impl *r) {
+    r->resume_ctx.downstream_demand = demand_get(r);
+    return &r->resume_ctx;
+}
+
 static bool demand_consume_one(run_impl *r) {
     bool ok = false;
     turbo_mutex_lock(&r->lock);
@@ -468,7 +473,7 @@ static bool resume_top_continuation(run_impl *r) {
         return false;
     }
     cflow_step step = f->machine.ops->resume(
-        f->machine.state, &r->resume_ctx, f->output.storage);
+        f->machine.state, run_resume_context(r), f->output.storage);
     if (step.kind == CFLOW_STEP_ERROR) { run_fail(r, step.error ? step.error : "operator resumable error"); return false; }
     if (step.kind == CFLOW_STEP_WAIT) return arm_waitable(r, step.waitable);
     if (step.kind == CFLOW_STEP_DONE) { f->done = true; return true; }
@@ -570,7 +575,7 @@ static bool process_source_step(run_impl *r) {
         run_fail(r, "source output slot is not empty");
         return false;
     }
-    step = cflow_source_resume(&r->source, &r->resume_ctx,
+    step = cflow_source_resume(&r->source, run_resume_context(r),
                                r->source_slot.storage);
     if (!successor_of(r, r->subgraph->entry, &first, &has_first)) return false;
     switch (step.kind) {
