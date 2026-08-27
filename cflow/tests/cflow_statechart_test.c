@@ -191,6 +191,38 @@ suite("CFlow format-neutral Statechart IR") {
                     CFLOW_STATECHART_INVALID_TREE);
     }
 
+    it("requires hierarchy-compatible depth-first document order") {
+        statechart_fixture fixture;
+        cflow_statechart_state interleaved_states[] = {
+            {10u, 0u, CFLOW_STATECHART_PARALLEL, 0u},
+            {20u, 10u, CFLOW_STATECHART_COMPOUND, 1u},
+            {21u, 20u, CFLOW_STATECHART_INITIAL, 2u},
+            {30u, 10u, CFLOW_STATECHART_COMPOUND, 3u},
+            {22u, 20u, CFLOW_STATECHART_ATOMIC, 4u},
+            {31u, 30u, CFLOW_STATECHART_INITIAL, 5u},
+            {32u, 30u, CFLOW_STATECHART_ATOMIC, 6u}
+        };
+        cflow_statechart_transition interleaved_transitions[] = {
+            {40u, 21u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u,
+             22u, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u},
+            {41u, 31u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u,
+             32u, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u}
+        };
+        cflow_statechart_definition interleaved = {
+            &cmeta_type_int, interleaved_states, 7u, NULL, 0u,
+            NULL, 0u, NULL, 0u, interleaved_transitions, 2u,
+            NULL, 0u, NULL, 0u};
+
+        valid_fixture(&fixture);
+        fixture.states[0].document_order = 1u;
+        fixture.states[1].document_order = 0u;
+        check_equal(rejected_build_status(&fixture.definition),
+                    CFLOW_STATECHART_INVALID_TREE);
+
+        check_equal(rejected_build_status(&interleaved),
+                    CFLOW_STATECHART_INVALID_TREE);
+    }
+
     it("rejects illegal compound parallel and pseudo-state children") {
         statechart_fixture fixture;
         valid_fixture(&fixture);

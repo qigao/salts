@@ -131,6 +131,8 @@ typedef struct cflow_statechart_instance_config {
 } cflow_statechart_instance_config;
 
 typedef struct cflow_statechart_storage_requirements {
+    /** Effective queue capacity after applying the zero-means-default rule. */
+    size_t internal_event_capacity;
     size_t control_bytes;
     size_t binding_bytes;
     size_t configuration_bytes;
@@ -208,12 +210,15 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
 
 /*
  * Compute the exact configured allocation budget before reading binding rows.
+ * Zero capacity selects CFLOW_STATECHART_DEFAULT_INTERNAL_EVENT_CAPACITY; the
+ * result reports that effective capacity alongside its exact byte budget.
  * `control_bytes` includes the instance control block; allocator metadata and
  * the platform mutex's private allocation are intentionally not counted.
  */
 cflow_statechart_runtime_status
 cflow_statechart_instance_storage_requirements_internal(
     const cflow_statechart *statechart,
+    size_t internal_event_capacity,
     cflow_statechart_storage_requirements *out);
 
 /**

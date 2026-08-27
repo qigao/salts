@@ -57,7 +57,9 @@
   parent/depth, child spans, document order, transition spans, default
   transitions, state-action spans, and transition-action spans. Use checked
   addition/multiplication before every allocation. Validate all tree and typed
-  declaration invariants before assigning `out->impl`.
+  declaration invariants before assigning `out->impl`. State document order is
+  a hierarchy-compatible depth-first preorder: every parent precedes its
+  descendants and every subtree occupies one contiguous interval.
 
 - [x] **Step 4: Implement immutable queries and aggregate exposure**
 

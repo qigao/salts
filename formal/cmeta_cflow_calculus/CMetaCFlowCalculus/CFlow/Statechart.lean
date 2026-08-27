@@ -76,16 +76,64 @@ def entryPrecedes (ancestors : Nat → List Nat) (documentOrder : Nat → Nat)
   else if (ancestors left).contains right then false
   else documentOrder left < documentOrder right
 
-def exitOrder (documentOrder : Nat → Nat) (states : List Nat) : List Nat :=
-  states.mergeSort fun left right => decide (documentOrder right ≤ documentOrder left)
+/- The build-time tree/document invariant. `ancestorEarlier` corresponds to
+   parent-before-descendant preorder; `subtreeContiguous` excludes reopening a
+   subtree after an unrelated state. The remaining fields state the tree and
+   unique-document facts consumed by the ordering proof. -/
+structure HierarchyPreorder (stateUniverse : List Nat)
+    (ancestors : Nat → List Nat) (documentOrder : Nat → Nat) : Prop where
+  ancestorIrreflexive : ∀ state ∈ stateUniverse, state ∉ ancestors state
+  ancestorTransitive : ∀ descendant middle ancestor,
+    descendant ∈ stateUniverse → middle ∈ stateUniverse →
+    ancestor ∈ stateUniverse →
+    middle ∈ ancestors descendant → ancestor ∈ ancestors middle →
+    ancestor ∈ ancestors descendant
+  documentUnique : ∀ left ∈ stateUniverse, ∀ right ∈ stateUniverse,
+    documentOrder left = documentOrder right → left = right
+  ancestorEarlier : ∀ descendant ∈ stateUniverse,
+    ∀ ancestor ∈ stateUniverse,
+    ancestor ∈ ancestors descendant →
+    documentOrder ancestor < documentOrder descendant
+  subtreeContiguous : ∀ ancestor ∈ stateUniverse,
+    ∀ descendant ∈ stateUniverse, ∀ between ∈ stateUniverse,
+    ancestor ∈ ancestors descendant →
+    documentOrder ancestor < documentOrder between →
+    documentOrder between < documentOrder descendant →
+    ancestor ∈ ancestors between
 
-def entryOrder (documentOrder : Nat → Nat) (states : List Nat) : List Nat :=
-  states.mergeSort fun left right => decide (documentOrder left ≤ documentOrder right)
+def exitSortLe (stateUniverse : List Nat) (ancestors : Nat → List Nat)
+    (documentOrder : Nat → Nat) (left right : Nat) : Bool :=
+  if stateUniverse.contains left && stateUniverse.contains right then
+    decide (left = right) || exitPrecedes ancestors documentOrder left right
+  else decide (documentOrder right ≤ documentOrder left)
 
-def ExitOrdered (documentOrder : Nat → Nat) (states : List Nat) : Prop :=
-  states.Pairwise fun left right => documentOrder right ≤ documentOrder left
+def entrySortLe (stateUniverse : List Nat) (ancestors : Nat → List Nat)
+    (documentOrder : Nat → Nat) (left right : Nat) : Bool :=
+  if stateUniverse.contains left && stateUniverse.contains right then
+    decide (left = right) || entryPrecedes ancestors documentOrder left right
+  else decide (documentOrder left ≤ documentOrder right)
 
-def EntryOrdered (documentOrder : Nat → Nat) (states : List Nat) : Prop :=
+def exitOrder (stateUniverse : List Nat) (ancestors : Nat → List Nat)
+    (documentOrder : Nat → Nat) (states : List Nat) : List Nat :=
+  states.mergeSort (exitSortLe stateUniverse ancestors documentOrder)
+
+def entryOrder (stateUniverse : List Nat) (ancestors : Nat → List Nat)
+    (documentOrder : Nat → Nat) (states : List Nat) : List Nat :=
+  states.mergeSort (entrySortLe stateUniverse ancestors documentOrder)
+
+def ExitOrdered (ancestors : Nat → List Nat) (documentOrder : Nat → Nat)
+    (states : List Nat) : Prop :=
+  states.Pairwise fun left right =>
+    decide (left = right) ||
+      exitPrecedes ancestors documentOrder left right = true
+
+def EntryOrdered (ancestors : Nat → List Nat) (documentOrder : Nat → Nat)
+    (states : List Nat) : Prop :=
+  states.Pairwise fun left right =>
+    decide (left = right) ||
+      entryPrecedes ancestors documentOrder left right = true
+
+def DocumentOrdered (documentOrder : Nat → Nat) (states : List Nat) : Prop :=
   states.Pairwise fun left right => documentOrder left ≤ documentOrder right
 
 /-- The normalized facts consumed by C's dense configuration validator. -/
@@ -118,7 +166,7 @@ def LegalConfiguration (model : ConfigurationModel)
       (model.children state).all fun child =>
         !model.isReal child || active.contains child) = true ∧
   active.any model.isLeaf = true ∧
-  EntryOrdered model.documentOrder active
+  DocumentOrdered model.documentOrder active
 
 /-- The four state sources built by C after exit-domain selection. Targetless
     transitions contribute no target state. Defaults and history are already
@@ -135,7 +183,7 @@ structure MicrostepPlan where
     into document order. -/
 def constructNext (model : ConfigurationModel) (published : List Nat)
     (plan : MicrostepPlan) : List Nat :=
-  entryOrder model.documentOrder
+  entryOrder model.stateUniverse model.ancestors model.documentOrder
     ((published.filter fun state => !plan.exitSet.contains state) ++
       plan.directTargets ++ plan.defaultTargets ++ plan.historyTargets).eraseDups
 

@@ -422,6 +422,45 @@ static cflow_statechart_status initialize_tree(cflow_statechart_impl *impl) {
     return CFLOW_STATECHART_OK;
 }
 
+/* A hierarchy-compatible preorder is the fact source that makes the
+ * ancestry-first/document-order comparators strict and transitive. */
+static cflow_statechart_status validate_document_preorder(
+    const cflow_statechart_impl *impl) {
+    statechart_index_ref *refs;
+    size_t *path;
+    size_t ref_bytes, path_bytes, index;
+    if (!checked_bytes(impl->state_count, sizeof(*refs), &ref_bytes) ||
+        !checked_bytes(impl->state_count, sizeof(*path), &path_bytes))
+        return CFLOW_STATECHART_LIMIT_EXCEEDED;
+    refs = (statechart_index_ref *)calloc(1u, ref_bytes);
+    path = (size_t *)malloc(path_bytes);
+    if (refs == NULL || path == NULL) {
+        free(path);
+        free(refs);
+        return CFLOW_STATECHART_ALLOCATION_FAILED;
+    }
+    for (index = 0u; index < impl->state_count; ++index) {
+        refs[index].order = impl->states[index].document_order;
+        refs[index].index = index;
+    }
+    qsort(refs, impl->state_count, sizeof(*refs), compare_index_ref);
+    for (index = 0u; index < impl->state_count; ++index) {
+        const size_t state = refs[index].index;
+        const size_t depth = impl->depths[state];
+        if ((index == 0u && state != impl->root) ||
+            (index != 0u &&
+             (depth == 0u || path[depth - 1u] != impl->parents[state]))) {
+            free(path);
+            free(refs);
+            return CFLOW_STATECHART_INVALID_TREE;
+        }
+        path[depth] = state;
+    }
+    free(path);
+    free(refs);
+    return CFLOW_STATECHART_OK;
+}
+
 static cflow_statechart_status validate_child_kinds(
     const cflow_statechart_impl *impl) {
     size_t *real_children, *initial_children, *all_children;
@@ -1085,6 +1124,8 @@ static cflow_statechart_status validate_statechart(
     status = validate_unique_orders(impl);
     if (status != CFLOW_STATECHART_OK) return status;
     status = initialize_tree(impl);
+    if (status != CFLOW_STATECHART_OK) return status;
+    status = validate_document_preorder(impl);
     if (status != CFLOW_STATECHART_OK) return status;
     status = validate_child_kinds(impl);
     if (status != CFLOW_STATECHART_OK) return status;

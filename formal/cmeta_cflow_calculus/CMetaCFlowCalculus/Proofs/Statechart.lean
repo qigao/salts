@@ -114,39 +114,158 @@ theorem ancestor_precedes_descendant_on_entry
   have member : ancestor ∈ ancestors descendant := by simpa using descends
   simp [entryPrecedes, member]
 
-theorem exitOrder_ordered (documentOrder : Nat → Nat) (states : List Nat) :
-    ExitOrdered documentOrder (exitOrder documentOrder states) := by
-  unfold ExitOrdered exitOrder
-  simpa only [decide_eq_true_eq] using
-    (List.pairwise_mergeSort
-      (le := fun left right => decide (documentOrder right ≤ documentOrder left))
-      (fun _ _ _ leftRight rightThird => by
-        simp only [decide_eq_true_eq] at leftRight rightThird ⊢
-        exact Nat.le_trans rightThird leftRight)
-      (fun left right => by
-        simp only [Bool.or_eq_true, decide_eq_true_eq]
-        exact Nat.le_total (documentOrder right) (documentOrder left))
-      states)
+theorem exitSortLe_eq_document {stateUniverse : List Nat}
+    {ancestors : Nat → List Nat} {documentOrder : Nat → Nat}
+    (preorder : HierarchyPreorder stateUniverse ancestors documentOrder)
+    (left right : Nat) :
+    exitSortLe stateUniverse ancestors documentOrder left right =
+      decide (documentOrder right ≤ documentOrder left) := by
+  by_cases leftMember : left ∈ stateUniverse
+  · by_cases rightMember : right ∈ stateUniverse
+    · have leftContains : stateUniverse.contains left = true := by
+        simpa using leftMember
+      have rightContains : stateUniverse.contains right = true := by
+        simpa using rightMember
+      rw [exitSortLe]
+      simp only [leftContains, rightContains, Bool.true_and, if_true]
+      by_cases same : left = right
+      · subst right
+        simp
+      by_cases leftDescends : right ∈ ancestors left
+      · have earlier := preorder.ancestorEarlier
+          left leftMember right rightMember leftDescends
+        simp [same, exitPrecedes, leftDescends, Nat.le_of_lt earlier]
+      by_cases rightDescends : left ∈ ancestors right
+      · have earlier := preorder.ancestorEarlier
+          right rightMember left leftMember rightDescends
+        have notLe : ¬documentOrder right ≤ documentOrder left :=
+          Nat.not_le_of_lt earlier
+        simp [same, exitPrecedes, leftDescends, rightDescends, notLe]
+      · have documentNe : documentOrder right ≠ documentOrder left := by
+          intro equal
+          apply same
+          exact (preorder.documentUnique
+            right rightMember left leftMember equal).symm
+        simp [same, exitPrecedes, leftDescends, rightDescends,
+              Nat.lt_iff_le_and_ne, documentNe]
+    · have rightContains : stateUniverse.contains right = false := by
+        simpa using rightMember
+      simp [exitSortLe, leftMember, rightMember]
+  · have leftContains : stateUniverse.contains left = false := by
+      simpa using leftMember
+    simp [exitSortLe, leftMember]
 
-theorem entryOrder_ordered (documentOrder : Nat → Nat) (states : List Nat) :
-    EntryOrdered documentOrder (entryOrder documentOrder states) := by
+theorem entrySortLe_eq_document {stateUniverse : List Nat}
+    {ancestors : Nat → List Nat} {documentOrder : Nat → Nat}
+    (preorder : HierarchyPreorder stateUniverse ancestors documentOrder)
+    (left right : Nat) :
+    entrySortLe stateUniverse ancestors documentOrder left right =
+      decide (documentOrder left ≤ documentOrder right) := by
+  by_cases leftMember : left ∈ stateUniverse
+  · by_cases rightMember : right ∈ stateUniverse
+    · have leftContains : stateUniverse.contains left = true := by
+        simpa using leftMember
+      have rightContains : stateUniverse.contains right = true := by
+        simpa using rightMember
+      rw [entrySortLe]
+      simp only [leftContains, rightContains, Bool.true_and, if_true]
+      by_cases same : left = right
+      · subst right
+        simp
+      by_cases rightDescends : left ∈ ancestors right
+      · have earlier := preorder.ancestorEarlier
+          right rightMember left leftMember rightDescends
+        simp [same, entryPrecedes, rightDescends, Nat.le_of_lt earlier]
+      by_cases leftDescends : right ∈ ancestors left
+      · have earlier := preorder.ancestorEarlier
+          left leftMember right rightMember leftDescends
+        have notLe : ¬documentOrder left ≤ documentOrder right :=
+          Nat.not_le_of_lt earlier
+        simp [same, entryPrecedes, rightDescends, leftDescends, notLe]
+      · have documentNe : documentOrder left ≠ documentOrder right := by
+          intro equal
+          apply same
+          exact preorder.documentUnique left leftMember right rightMember equal
+        simp [same, entryPrecedes, rightDescends, leftDescends,
+              Nat.lt_iff_le_and_ne, documentNe]
+    · have rightContains : stateUniverse.contains right = false := by
+        simpa using rightMember
+      simp [entrySortLe, leftMember, rightMember]
+  · have leftContains : stateUniverse.contains left = false := by
+      simpa using leftMember
+    simp [entrySortLe, leftMember]
+
+theorem exitOrder_ordered {stateUniverse : List Nat}
+    {ancestors : Nat → List Nat} {documentOrder : Nat → Nat}
+    (preorder : HierarchyPreorder stateUniverse ancestors documentOrder)
+    (states : List Nat)
+    (statesInUniverse : ∀ state ∈ states, state ∈ stateUniverse) :
+    ExitOrdered ancestors documentOrder
+      (exitOrder stateUniverse ancestors documentOrder states) := by
+  unfold ExitOrdered exitOrder
+  have sorted : List.Pairwise
+      (fun left right =>
+        exitSortLe stateUniverse ancestors documentOrder left right = true)
+      (states.mergeSort
+        (exitSortLe stateUniverse ancestors documentOrder)) := by
+    apply List.pairwise_mergeSort
+    · intro first second third firstSecond secondThird
+      rw [exitSortLe_eq_document preorder] at firstSecond secondThird ⊢
+      simp only [decide_eq_true_eq] at firstSecond secondThird ⊢
+      exact Nat.le_trans secondThird firstSecond
+    · intro left right
+      rw [exitSortLe_eq_document preorder,
+          exitSortLe_eq_document preorder]
+      simp only [Bool.or_eq_true, decide_eq_true_eq]
+      exact Nat.le_total (documentOrder right) (documentOrder left)
+  apply List.Pairwise.imp_of_mem (p := sorted)
+  intro left right leftMember rightMember ordered
+  have leftStateUniverse : left ∈ stateUniverse := by
+    apply statesInUniverse left
+    simpa using leftMember
+  have rightStateUniverse : right ∈ stateUniverse := by
+    apply statesInUniverse right
+    simpa using rightMember
+  simpa [exitSortLe, leftStateUniverse, rightStateUniverse] using ordered
+
+theorem entryOrder_ordered {stateUniverse : List Nat}
+    {ancestors : Nat → List Nat} {documentOrder : Nat → Nat}
+    (preorder : HierarchyPreorder stateUniverse ancestors documentOrder)
+    (states : List Nat)
+    (statesInUniverse : ∀ state ∈ states, state ∈ stateUniverse) :
+    EntryOrdered ancestors documentOrder
+      (entryOrder stateUniverse ancestors documentOrder states) := by
   unfold EntryOrdered entryOrder
-  simpa only [decide_eq_true_eq] using
-    (List.pairwise_mergeSort
-      (le := fun left right => decide (documentOrder left ≤ documentOrder right))
-      (fun _ _ _ leftRight rightThird => by
-        simp only [decide_eq_true_eq] at leftRight rightThird ⊢
-        exact Nat.le_trans leftRight rightThird)
-      (fun left right => by
-        simp only [Bool.or_eq_true, decide_eq_true_eq]
-        exact Nat.le_total (documentOrder left) (documentOrder right))
-      states)
+  have sorted : List.Pairwise
+      (fun left right =>
+        entrySortLe stateUniverse ancestors documentOrder left right = true)
+      (states.mergeSort
+        (entrySortLe stateUniverse ancestors documentOrder)) := by
+    apply List.pairwise_mergeSort
+    · intro first second third firstSecond secondThird
+      rw [entrySortLe_eq_document preorder] at firstSecond secondThird ⊢
+      simp only [decide_eq_true_eq] at firstSecond secondThird ⊢
+      exact Nat.le_trans firstSecond secondThird
+    · intro left right
+      rw [entrySortLe_eq_document preorder,
+          entrySortLe_eq_document preorder]
+      simp only [Bool.or_eq_true, decide_eq_true_eq]
+      exact Nat.le_total (documentOrder left) (documentOrder right)
+  apply List.Pairwise.imp_of_mem (p := sorted)
+  intro left right leftMember rightMember ordered
+  have leftStateUniverse : left ∈ stateUniverse := by
+    apply statesInUniverse left
+    simpa using leftMember
+  have rightStateUniverse : right ∈ stateUniverse := by
+    apply statesInUniverse right
+    simpa using rightMember
+  simpa [entrySortLe, leftStateUniverse, rightStateUniverse] using ordered
 
 theorem validateConfiguration_sound {model : ConfigurationModel}
     {active : List Nat}
     (validated : validateConfiguration model active = true) :
     LegalConfiguration model active := by
-  simpa [validateConfiguration, LegalConfiguration, EntryOrdered] using
+  simpa [validateConfiguration, LegalConfiguration, DocumentOrdered] using
     validated
 
 /-- The C correspondence theorem is validation-gated: construction has no

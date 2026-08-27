@@ -98,13 +98,13 @@ static void nested_compound_fixture(runtime_fixture *fixture) {
     fixture->states[0] = (cflow_statechart_state){
         90u, 20u, CFLOW_STATECHART_ATOMIC, 50u};
     fixture->states[1] = (cflow_statechart_state){
-        40u, 70u, CFLOW_STATECHART_INITIAL, 30u};
+        40u, 70u, CFLOW_STATECHART_INITIAL, 20u};
     fixture->states[2] = (cflow_statechart_state){
         70u, 0u, CFLOW_STATECHART_COMPOUND, 10u};
     fixture->states[3] = (cflow_statechart_state){
         80u, 20u, CFLOW_STATECHART_INITIAL, 40u};
     fixture->states[4] = (cflow_statechart_state){
-        20u, 70u, CFLOW_STATECHART_COMPOUND, 20u};
+        20u, 70u, CFLOW_STATECHART_COMPOUND, 30u};
     fixture->transitions[0] = (cflow_statechart_transition){
         10u, 40u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 20u,
         CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u};
@@ -215,7 +215,7 @@ static void selection_fixture(runtime_fixture *fixture) {
     memset(fixture, 0, sizeof(*fixture));
     fixture->states[0] = (cflow_statechart_state){
         SELECTION_RIGHT_LEAF, SELECTION_RIGHT_REGION,
-        CFLOW_STATECHART_ATOMIC, 6u};
+        CFLOW_STATECHART_ATOMIC, 7u};
     fixture->states[1] = (cflow_statechart_state){
         SELECTION_LEFT_INITIAL, SELECTION_LEFT_REGION,
         CFLOW_STATECHART_INITIAL, 2u};
@@ -223,16 +223,16 @@ static void selection_fixture(runtime_fixture *fixture) {
         SELECTION_ROOT, 0u, CFLOW_STATECHART_PARALLEL, 0u};
     fixture->states[3] = (cflow_statechart_state){
         SELECTION_LEFT_FINAL, SELECTION_LEFT_REGION,
-        CFLOW_STATECHART_FINAL, 7u};
+        CFLOW_STATECHART_FINAL, 4u};
     fixture->states[4] = (cflow_statechart_state){
         SELECTION_RIGHT_REGION, SELECTION_ROOT,
-        CFLOW_STATECHART_COMPOUND, 4u};
+        CFLOW_STATECHART_COMPOUND, 5u};
     fixture->states[5] = (cflow_statechart_state){
         SELECTION_LEFT_REGION, SELECTION_ROOT,
         CFLOW_STATECHART_COMPOUND, 1u};
     fixture->states[6] = (cflow_statechart_state){
         SELECTION_RIGHT_INITIAL, SELECTION_RIGHT_REGION,
-        CFLOW_STATECHART_INITIAL, 5u};
+        CFLOW_STATECHART_INITIAL, 6u};
     fixture->states[7] = (cflow_statechart_state){
         SELECTION_LEFT_LEAF, SELECTION_LEFT_REGION,
         CFLOW_STATECHART_ATOMIC, 3u};
@@ -265,13 +265,13 @@ static void mixed_conflict_fixture(runtime_fixture *fixture) {
     fixture->states[4] = (cflow_statechart_state){
         302u, 300u, CFLOW_STATECHART_ATOMIC, 4u};
     fixture->states[5] = (cflow_statechart_state){
-        200u, 500u, CFLOW_STATECHART_COMPOUND, 5u};
+        200u, 500u, CFLOW_STATECHART_COMPOUND, 6u};
     fixture->states[6] = (cflow_statechart_state){
-        201u, 200u, CFLOW_STATECHART_INITIAL, 6u};
+        201u, 200u, CFLOW_STATECHART_INITIAL, 7u};
     fixture->states[7] = (cflow_statechart_state){
-        202u, 200u, CFLOW_STATECHART_ATOMIC, 7u};
+        202u, 200u, CFLOW_STATECHART_ATOMIC, 8u};
     fixture->states[8] = (cflow_statechart_state){
-        102u, 300u, CFLOW_STATECHART_ATOMIC, 8u};
+        102u, 300u, CFLOW_STATECHART_ATOMIC, 5u};
     fixture->events[0] = (cflow_event_type){100u, &cmeta_type_int};
     fixture->transitions[0] = (cflow_statechart_transition){
         100u, 401u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 300u,
@@ -520,7 +520,7 @@ suite("CFlow Statechart runtime initial configuration") {
                         &fixture.statechart, &fixture.definition),
                     CFLOW_STATECHART_OK);
         check_equal(cflow_statechart_instance_storage_requirements_internal(
-                        &fixture.statechart, &requirements),
+                        &fixture.statechart, 0u, &requirements),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(requirements.history_bitset_bytes, (size_t)4u);
         check_equal(requirements.history_count_bytes,
@@ -747,7 +747,7 @@ suite("CFlow Statechart runtime initial configuration") {
             .executor = &fixture.executor};
 
         check_equal(cflow_statechart_instance_storage_requirements_internal(
-                        &fixture.statechart, &requirements),
+                        &fixture.statechart, 0u, &requirements),
                     CFLOW_STATECHART_RUNTIME_OK);
         config.max_storage_bytes = 1u;
         config.guards =
@@ -1105,16 +1105,16 @@ suite("CFlow Statechart deterministic transition selection") {
         runtime_fixture_destroy(&fixture);
     }
 
-    it("keeps the full prefix when a descendant also conflicts unrelated") {
+    it("finishes one contiguous subtree before unrelated conflict selection") {
         runtime_fixture fixture;
         cflow_statechart_selection_snapshot selected = {0};
-        const cflow_statechart_transition_id expected[] = {200u, 201u};
+        const cflow_statechart_transition_id expected[] = {202u};
         mixed_conflict_fixture(&fixture);
         check_equal(selection_fixture_init(&fixture, NULL, 0u),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(select_event(&fixture, &selected),
                     CFLOW_STATECHART_RUNTIME_OK);
-        check_equal(selected.transition_count, (size_t)2u);
+        check_equal(selected.transition_count, (size_t)1u);
         check_equal(selected.transition_ids, expected, sizeof(expected));
         runtime_fixture_destroy(&fixture);
     }
@@ -1299,7 +1299,7 @@ suite("CFlow Statechart deterministic transition selection") {
 typedef struct microstep_fixture {
     cflow_statechart_state states[12];
     cflow_event_type events[2];
-    cflow_statechart_executable executables[1];
+    cflow_statechart_executable executables[2];
     cflow_statechart_transition transitions[8];
     cflow_statechart_state_action state_actions[8];
     cflow_statechart_transition_action transition_actions[4];
@@ -1314,6 +1314,7 @@ typedef struct microstep_action_probe {
     cflow_executor *executor;
     int trace[24];
     int input_states[24];
+    int markers[24];
     size_t calls;
     size_t fail_call;
     size_t raise_call;
@@ -1342,7 +1343,8 @@ enum {
     MICRO_RAISED_EVENT = 11u,
     MICRO_LEFT_TRANSITION = 1000u,
     MICRO_RIGHT_TRANSITION = 1001u,
-    MICRO_EXECUTABLE = 500u
+    MICRO_EXECUTABLE = 500u,
+    MICRO_SECOND_EXECUTABLE = 501u
 };
 
 static int microstep_trace_code(cflow_statechart_action_phase phase,
@@ -1409,6 +1411,30 @@ static bool microstep_action(void *user,
         return false;
     }
     return true;
+}
+
+typedef struct microstep_marker_binding {
+    microstep_action_probe *probe;
+    int marker;
+} microstep_marker_binding;
+
+static bool microstep_marked_action(
+    void *user, cflow_statechart_action_phase phase,
+    cflow_machine_state_id owner, const void *state,
+    const cflow_event_view *event, void *out_state,
+    cflow_statechart_raise_fn raise_internal, void *raise_user,
+    const char **out_error) {
+    microstep_marker_binding *binding = (microstep_marker_binding *)user;
+    size_t call;
+    bool succeeded;
+    if (binding == NULL || binding->probe == NULL) return false;
+    call = binding->probe->calls;
+    succeeded = microstep_action(
+        binding->probe, phase, owner, state, event, out_state,
+        raise_internal, raise_user, out_error);
+    if (binding->probe->calls > call)
+        binding->probe->markers[call] = binding->marker;
+    return succeeded;
 }
 
 static void microstep_fixture_definition(microstep_fixture *fixture,
@@ -1518,6 +1544,7 @@ static cflow_statechart_runtime_status microstep_fixture_init(
 static cflow_statechart_runtime_status microstep_fixture_init_with_binding(
     microstep_fixture *fixture,
     const cflow_statechart_executable_binding *binding,
+    size_t binding_count,
     size_t internal_event_capacity,
     size_t executor_capacity) {
     cflow_statechart_instance_config config;
@@ -1532,7 +1559,7 @@ static cflow_statechart_runtime_status microstep_fixture_init_with_binding(
         .statechart = &fixture->statechart,
         .initial_state = &fixture->initial_state,
         .executables = binding,
-        .executable_count = 1u,
+        .executable_count = binding_count,
         .internal_event_capacity = internal_event_capacity,
         .executor = &fixture->executor};
     return cflow_statechart_instance_init(&fixture->instance, &config);
@@ -1662,7 +1689,7 @@ static void check_raise_latch_case(
         probe.sequence[index] = sequence[index];
     probe.count = sequence_count;
     check_equal(microstep_fixture_init_with_binding(
-                    &fixture, &binding, 1u, 0u),
+                    &fixture, &binding, 1u, 1u, 0u),
                 CFLOW_STATECHART_RUNTIME_OK);
     check_equal(microstep_submit_event(&fixture, &selection),
                 CFLOW_ADMISSION_ACCEPTED);
@@ -1802,19 +1829,103 @@ static void parallel_entry_fixture_destroy(parallel_entry_fixture *fixture) {
 }
 
 suite("CFlow Statechart ordered atomic microsteps") {
+    it("uses one effective internal event capacity for sizing and init") {
+        microstep_fixture fixture;
+        microstep_action_probe probe = {0};
+        cflow_statechart_storage_requirements default_requirements = {0};
+        cflow_statechart_storage_requirements one_requirements = {0};
+        cflow_statechart_storage_requirements seventeen_requirements = {0};
+        cflow_statechart_instance_config config;
+        cflow_statechart_executable_binding binding;
+        microstep_fixture_definition(
+            &fixture, false, false, CFLOW_STATECHART_TRANSITION_EXTERNAL);
+        check_equal(cflow_statechart_build(
+                        &fixture.statechart, &fixture.definition),
+                    CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&fixture.executor));
+        probe.executor = &fixture.executor;
+        probe.executor_only = true;
+        probe.no_alias = true;
+        binding = (cflow_statechart_executable_binding){
+            MICRO_EXECUTABLE, microstep_action, &probe};
+        config = (cflow_statechart_instance_config){
+            .statechart = &fixture.statechart,
+            .initial_state = &fixture.initial_state,
+            .executables = &binding,
+            .executable_count = 1u,
+            .executor = &fixture.executor};
+
+        check_equal(cflow_statechart_instance_storage_requirements_internal(
+                        &fixture.statechart, 0u, &default_requirements),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(default_requirements.internal_event_capacity,
+                    (size_t)CFLOW_STATECHART_DEFAULT_INTERNAL_EVENT_CAPACITY);
+        check_equal(cflow_statechart_instance_storage_requirements_internal(
+                        &fixture.statechart, 1u, &one_requirements),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(one_requirements.internal_event_capacity, (size_t)1u);
+        check_equal(cflow_statechart_instance_storage_requirements_internal(
+                        &fixture.statechart, 17u, &seventeen_requirements),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(seventeen_requirements.internal_event_capacity,
+                    (size_t)17u);
+        check_true(one_requirements.total_bytes <
+                   default_requirements.total_bytes);
+        check_true(default_requirements.total_bytes <
+                   seventeen_requirements.total_bytes);
+
+        config.internal_event_capacity = 0u;
+        config.max_storage_bytes = default_requirements.total_bytes;
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_destroy(&fixture.instance),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        config.internal_event_capacity = 1u;
+        config.max_storage_bytes = one_requirements.total_bytes;
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_destroy(&fixture.instance),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        config.internal_event_capacity = 17u;
+        config.max_storage_bytes = seventeen_requirements.total_bytes - 1u;
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED);
+        check_null(fixture.instance.impl);
+        config.max_storage_bytes = seventeen_requirements.total_bytes;
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_destroy(&fixture.instance),
+                    CFLOW_STATECHART_RUNTIME_OK);
+
+        check_equal(cflow_statechart_instance_storage_requirements_internal(
+                        &fixture.statechart, SIZE_MAX, &one_requirements),
+                    CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED);
+        check_equal(cflow_statechart_instance_storage_requirements_internal(
+                        &fixture.statechart,
+                        (size_t)CFLOW_STATECHART_MAX_INSTANCE_BYTES,
+                        &one_requirements),
+                    CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED);
+        config.internal_event_capacity =
+            (size_t)CFLOW_STATECHART_MAX_INSTANCE_BYTES;
+        config.max_storage_bytes = 0u;
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED);
+        check_null(fixture.instance.impl);
+        config.internal_event_capacity = SIZE_MAX;
+        config.max_storage_bytes = 0u;
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED);
+        check_null(fixture.instance.impl);
+        cflow_executor_destroy(&fixture.executor);
+        cflow_statechart_destroy(&fixture.statechart);
+    }
+
     it("runs cross-region exits transitions and entries in exact global order") {
         microstep_fixture fixture;
         microstep_action_probe probe = {0};
         cflow_statechart_selection_snapshot selection = {0};
         const int expected_trace[] = {
-            microstep_trace_code(CFLOW_STATECHART_ACTION_EXIT, MICRO_RIGHT_C),
-            microstep_trace_code(CFLOW_STATECHART_ACTION_EXIT, MICRO_LEFT_A),
-            microstep_trace_code(CFLOW_STATECHART_ACTION_TRANSITION,
-                                 MICRO_LEFT_A),
-            microstep_trace_code(CFLOW_STATECHART_ACTION_TRANSITION,
-                                 MICRO_RIGHT_C),
-            microstep_trace_code(CFLOW_STATECHART_ACTION_ENTRY, MICRO_LEFT_B),
-            microstep_trace_code(CFLOW_STATECHART_ACTION_ENTRY, MICRO_RIGHT_D)};
+            300, 700, 10700, 10300, 20690, 20290};
         const int expected_states[] = {10, 11, 12, 13, 14, 15};
         const cflow_machine_state_id expected_configuration[] = {
             MICRO_ROOT, MICRO_LEFT, MICRO_LEFT_NESTED, MICRO_LEFT_B,
@@ -2186,7 +2297,7 @@ suite("CFlow Statechart ordered atomic microsteps") {
         microstep_fixture_definition(
             &fixture, false, false, CFLOW_STATECHART_TRANSITION_EXTERNAL);
         check_equal(microstep_fixture_init_with_binding(
-                        &fixture, &binding, 2u, 1u),
+                        &fixture, &binding, 1u, 2u, 1u),
                     CFLOW_STATECHART_RUNTIME_OK);
         probe.executor = &fixture.executor;
         probe.executor_only = true;
@@ -2217,25 +2328,38 @@ suite("CFlow Statechart ordered atomic microsteps") {
     it("runs multiple actions on one owner in row order") {
         microstep_fixture fixture;
         microstep_action_probe probe = {0};
+        microstep_marker_binding first = {&probe, 101};
+        microstep_marker_binding second = {&probe, 202};
         cflow_statechart_selection_snapshot selection = {0};
+        cflow_statechart_executable_binding bindings[2];
         const int expected_trace[] = {
-            microstep_trace_code(CFLOW_STATECHART_ACTION_EXIT, MICRO_LEFT_A),
-            microstep_trace_code(CFLOW_STATECHART_ACTION_EXIT, MICRO_LEFT_A),
-            microstep_trace_code(CFLOW_STATECHART_ACTION_TRANSITION,
-                                 MICRO_LEFT_A),
-            microstep_trace_code(CFLOW_STATECHART_ACTION_ENTRY, MICRO_LEFT_B)};
+            700, 700, 10700, 20690};
+        const int expected_markers[] = {101, 202, 101, 101};
         microstep_fixture_definition(
             &fixture, false, false, CFLOW_STATECHART_TRANSITION_EXTERNAL);
+        fixture.executables[1] = (cflow_statechart_executable){
+            MICRO_SECOND_EXECUTABLE, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        fixture.definition.executable_count = 2u;
         fixture.state_actions[5] = (cflow_statechart_state_action){
             MICRO_LEFT_A, CFLOW_STATECHART_STATE_ACTION_EXIT,
-            MICRO_EXECUTABLE, 1u};
+            MICRO_SECOND_EXECUTABLE, 1u};
         fixture.definition.state_action_count = 6u;
-        check_equal(microstep_fixture_init(&fixture, &probe, 2u),
+        bindings[0] = (cflow_statechart_executable_binding){
+            MICRO_EXECUTABLE, microstep_marked_action, &first};
+        bindings[1] = (cflow_statechart_executable_binding){
+            MICRO_SECOND_EXECUTABLE, microstep_marked_action, &second};
+        check_equal(microstep_fixture_init_with_binding(
+                        &fixture, bindings, 2u, 2u, 0u),
                     CFLOW_STATECHART_RUNTIME_OK);
+        probe.executor = &fixture.executor;
+        probe.executor_only = true;
+        probe.no_alias = true;
         check_equal(microstep_submit_event(&fixture, &selection),
                     CFLOW_ADMISSION_ACCEPTED);
         check_true(cflow_executor_wait_idle(&fixture.executor));
         check_equal(probe.trace, expected_trace, sizeof(expected_trace));
+        check_equal(probe.markers, expected_markers, sizeof(expected_markers));
         check_equal(probe.calls, (size_t)4u);
         microstep_fixture_destroy(&fixture);
     }

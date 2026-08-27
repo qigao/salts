@@ -190,6 +190,17 @@ static bool leaf_kind(cflow_statechart_state_kind kind) {
     return kind == CFLOW_STATECHART_ATOMIC || kind == CFLOW_STATECHART_FINAL;
 }
 
+static cflow_statechart_runtime_status normalize_internal_event_capacity(
+    size_t requested, size_t *out) {
+    const size_t effective = requested != 0u
+        ? requested
+        : (size_t)CFLOW_STATECHART_DEFAULT_INTERNAL_EVENT_CAPACITY;
+    if (out == NULL) return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+    if (effective == 0u) return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
+    *out = effective;
+    return CFLOW_STATECHART_RUNTIME_OK;
+}
+
 static cflow_statechart_runtime_status calculate_storage_requirements(
     const cflow_statechart_impl *ir, size_t internal_event_capacity,
     cflow_statechart_storage_requirements *out) {
@@ -220,6 +231,7 @@ static cflow_statechart_runtime_status calculate_storage_requirements(
             ++history_count;
     }
 
+    requirements.internal_event_capacity = internal_event_capacity;
     requirements.control_bytes = sizeof(cflow_statechart_instance_impl);
     if (!checked_multiply(ir->guard_count,
                           sizeof(cflow_statechart_guard_binding),
@@ -303,15 +315,35 @@ static cflow_statechart_runtime_status calculate_storage_requirements(
     return CFLOW_STATECHART_RUNTIME_OK;
 }
 
+static cflow_statechart_runtime_status storage_requirements_for_ir(
+    const cflow_statechart_impl *ir, size_t requested_internal_event_capacity,
+    cflow_statechart_storage_requirements *out) {
+    cflow_statechart_storage_requirements requirements;
+    size_t effective_internal_event_capacity;
+    cflow_statechart_runtime_status status =
+        normalize_internal_event_capacity(
+            requested_internal_event_capacity,
+            &effective_internal_event_capacity);
+    if (status != CFLOW_STATECHART_RUNTIME_OK) return status;
+    status = calculate_storage_requirements(
+        ir, effective_internal_event_capacity, &requirements);
+    if (status != CFLOW_STATECHART_RUNTIME_OK) return status;
+    if (requirements.total_bytes >
+        (size_t)CFLOW_STATECHART_MAX_INSTANCE_BYTES)
+        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
+    *out = requirements;
+    return CFLOW_STATECHART_RUNTIME_OK;
+}
+
 cflow_statechart_runtime_status
 cflow_statechart_instance_storage_requirements_internal(
     const cflow_statechart *statechart,
+    size_t internal_event_capacity,
     cflow_statechart_storage_requirements *out) {
     const cflow_statechart_impl *ir = cflow_statechart_internal_get(statechart);
     if (ir == NULL || out == NULL)
         return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
-    return calculate_storage_requirements(
-        ir, (size_t)CFLOW_STATECHART_DEFAULT_INTERNAL_EVENT_CAPACITY, out);
+    return storage_requirements_for_ir(ir, internal_event_capacity, out);
 }
 
 static size_t find_state_index(const cflow_statechart_impl *ir,
@@ -1993,7 +2025,7 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
     const cflow_statechart_impl *ir;
     cflow_statechart_storage_requirements requirements;
     cflow_statechart_runtime_status status;
-    size_t effective_storage_limit, internal_event_capacity;
+    size_t effective_storage_limit;
     if (instance == NULL || config == NULL || instance->impl != NULL ||
         config->statechart == NULL || config->initial_state == NULL ||
         config->executor == NULL)
@@ -2013,16 +2045,11 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
         return CFLOW_STATECHART_RUNTIME_UNSUPPORTED_TYPE;
     if (!binding_rows_shape_valid(ir, config))
         return CFLOW_STATECHART_RUNTIME_BINDING_MISMATCH;
-    internal_event_capacity = config->internal_event_capacity != 0u
-        ? config->internal_event_capacity
-        : (size_t)CFLOW_STATECHART_DEFAULT_INTERNAL_EVENT_CAPACITY;
-    if (internal_event_capacity == 0u)
-        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
     if (config->max_storage_bytes >
         (size_t)CFLOW_STATECHART_MAX_INSTANCE_BYTES)
         return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
-    status = calculate_storage_requirements(
-        ir, internal_event_capacity, &requirements);
+    status = storage_requirements_for_ir(
+        ir, config->internal_event_capacity, &requirements);
     if (status != CFLOW_STATECHART_RUNTIME_OK) return status;
     effective_storage_limit = config->max_storage_bytes != 0u
         ? config->max_storage_bytes
@@ -2035,7 +2062,7 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
     impl->statechart = config->statechart;
     impl->ir = ir;
     impl->executor = config->executor;
-    impl->internal_event_capacity = internal_event_capacity;
+    impl->internal_event_capacity = requirements.internal_event_capacity;
     impl->microstep_result = CFLOW_STATECHART_RUNTIME_OK;
     if (!acquire_instance_token(&impl->instance_token)) {
         instance_impl_free(impl);

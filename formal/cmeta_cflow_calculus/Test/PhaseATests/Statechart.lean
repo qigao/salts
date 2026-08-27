@@ -97,19 +97,81 @@ def stateDocumentOrder : Nat → Nat
   | 4 => 3
   | _ => 99
 
-example : exitOrder stateDocumentOrder [2, 4, 1, 3] = [4, 3, 2, 1] := by
+theorem stateHierarchyPreorder :
+    HierarchyPreorder [1, 2, 3, 4] stateAncestors stateDocumentOrder := by
+  constructor
+  · simp [stateAncestors]
+  · intro descendant middle ancestor descendantMember middleMember
+      ancestorMember middleAncestor ancestorAncestor
+    have descendantCases : descendant = 1 ∨ descendant = 2 ∨
+        descendant = 3 ∨ descendant = 4 := by simpa using descendantMember
+    have middleCases : middle = 1 ∨ middle = 2 ∨
+        middle = 3 ∨ middle = 4 := by simpa using middleMember
+    have ancestorCases : ancestor = 1 ∨ ancestor = 2 ∨
+        ancestor = 3 ∨ ancestor = 4 := by simpa using ancestorMember
+    rcases descendantCases with rfl | rfl | rfl | rfl <;>
+      rcases middleCases with rfl | rfl | rfl | rfl <;>
+      rcases ancestorCases with rfl | rfl | rfl | rfl <;>
+      simp [stateAncestors] at middleAncestor ancestorAncestor ⊢
+  · intro left leftMember right rightMember equal
+    have leftCases : left = 1 ∨ left = 2 ∨ left = 3 ∨ left = 4 := by
+      simpa using leftMember
+    have rightCases : right = 1 ∨ right = 2 ∨ right = 3 ∨ right = 4 := by
+      simpa using rightMember
+    rcases leftCases with rfl | rfl | rfl | rfl <;>
+      rcases rightCases with rfl | rfl | rfl | rfl <;>
+      simp [stateDocumentOrder] at equal ⊢
+  · intro descendant descendantMember ancestor ancestorMember ancestorOf
+    have descendantCases : descendant = 1 ∨ descendant = 2 ∨
+        descendant = 3 ∨ descendant = 4 := by simpa using descendantMember
+    have ancestorCases : ancestor = 1 ∨ ancestor = 2 ∨
+        ancestor = 3 ∨ ancestor = 4 := by simpa using ancestorMember
+    rcases descendantCases with rfl | rfl | rfl | rfl <;>
+      rcases ancestorCases with rfl | rfl | rfl | rfl <;>
+      simp [stateAncestors, stateDocumentOrder] at ancestorOf ⊢
+  · intro ancestor ancestorMember descendant descendantMember between
+      betweenMember ancestorOf ancestorBeforeBetween betweenBeforeDescendant
+    have ancestorCases : ancestor = 1 ∨ ancestor = 2 ∨
+        ancestor = 3 ∨ ancestor = 4 := by simpa using ancestorMember
+    have descendantCases : descendant = 1 ∨ descendant = 2 ∨
+        descendant = 3 ∨ descendant = 4 := by simpa using descendantMember
+    have betweenCases : between = 1 ∨ between = 2 ∨
+        between = 3 ∨ between = 4 := by simpa using betweenMember
+    rcases ancestorCases with rfl | rfl | rfl | rfl <;>
+      rcases descendantCases with rfl | rfl | rfl | rfl <;>
+      rcases betweenCases with rfl | rfl | rfl | rfl <;>
+      simp [stateAncestors, stateDocumentOrder] at ancestorOf ancestorBeforeBetween betweenBeforeDescendant ⊢
+
+def reversedAncestorDocumentOrder : Nat → Nat
+  | 1 => 2
+  | 2 => 1
+  | 3 => 0
+  | 4 => 3
+  | _ => 99
+
+example : ¬HierarchyPreorder [1, 2, 3, 4] stateAncestors
+    reversedAncestorDocumentOrder := by
+  intro invalid
+  have contradiction := invalid.ancestorEarlier 2 (by simp) 1 (by simp) (by simp [stateAncestors])
+  simp [reversedAncestorDocumentOrder] at contradiction
+
+example : exitOrder [1, 2, 3, 4] stateAncestors stateDocumentOrder
+    [2, 4, 1, 3] = [4, 3, 2, 1] := by
   native_decide
 
-example : ExitOrdered stateDocumentOrder
-    (exitOrder stateDocumentOrder [2, 4, 1, 3]) := by
-  exact exitOrder_ordered _ _
+example : ExitOrdered stateAncestors stateDocumentOrder
+    (exitOrder [1, 2, 3, 4] stateAncestors stateDocumentOrder
+      [2, 4, 1, 3]) := by
+  exact exitOrder_ordered stateHierarchyPreorder _ (by simp)
 
-example : entryOrder stateDocumentOrder [3, 1, 4, 2] = [1, 2, 3, 4] := by
+example : entryOrder [1, 2, 3, 4] stateAncestors stateDocumentOrder
+    [3, 1, 4, 2] = [1, 2, 3, 4] := by
   native_decide
 
-example : EntryOrdered stateDocumentOrder
-    (entryOrder stateDocumentOrder [3, 1, 4, 2]) := by
-  exact entryOrder_ordered _ _
+example : EntryOrdered stateAncestors stateDocumentOrder
+    (entryOrder [1, 2, 3, 4] stateAncestors stateDocumentOrder
+      [3, 1, 4, 2]) := by
+  exact entryOrder_ordered stateHierarchyPreorder _ (by simp)
 
 def configurationModel : ConfigurationModel where
   stateUniverse := [1, 2, 3, 4]
@@ -141,7 +203,7 @@ example : constructNext configurationModel [1, 2, 3] microstepPlan =
 example : LegalConfiguration configurationModel
     (constructNext configurationModel [1, 2, 3] microstepPlan) := by
   apply constructed_microstep_preserves_legality
-  · simp [LegalConfiguration, configurationModel, EntryOrdered,
+  · simp [LegalConfiguration, configurationModel, DocumentOrdered,
       stateDocumentOrder]
   · native_decide
 

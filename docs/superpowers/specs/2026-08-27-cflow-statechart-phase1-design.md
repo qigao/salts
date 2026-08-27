@@ -155,6 +155,10 @@ and publishes only after complete validation. It rejects:
 - zero, duplicate, unknown, or out-of-limit IDs;
 - parent cycles, multiple roots, duplicate document order, and illegal child
   kinds;
+- document order that is not a hierarchy-compatible depth-first preorder:
+  parents must precede descendants and each subtree must be one contiguous
+  interval (otherwise ancestry-first and document-order action rules can form
+  a comparator cycle);
 - missing or multiple initial pseudo-children for compound states;
 - initial/history defaults with missing, multiple, guarded, event-triggered, or
   targetless transitions;
@@ -224,6 +228,11 @@ A microstep executes one selected transition set in three global phases:
 2. run selected transition actions in selection order;
 3. compute effective targets, initial/history/default descendants and required
    ancestors, then run entry actions in ancestor-first/document order.
+
+The build-time depth-first-preorder invariant makes these ancestry/document
+comparators strict total orders over normalized states. Without that invariant,
+unique numeric document values alone are insufficient: an unrelated state may
+sort between an ancestor and descendant and create a comparison cycle.
 
 Executable actions update one staged extended-state value sequentially. The
 next action observes the prior action's staged value. A callback may enqueue a
