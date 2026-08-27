@@ -257,6 +257,11 @@ int cflow_io_file_open(cflow_io_file *file,
     impl->completion = config->completion;
     impl->completion_user = config->completion_user;
     turbo_mutex_init(&impl->gate);
+    if (impl->gate == NULL) {
+        free(impl->slots);
+        free(impl);
+        return TURBO_ENOMEM;
+    }
     for (index = 0u; index < impl->slot_capacity; ++index)
         impl->slots[index].owner = impl;
 

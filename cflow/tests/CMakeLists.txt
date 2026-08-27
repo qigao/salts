@@ -140,7 +140,7 @@ cmake_add_test(cflow_io_actor_test
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_io_source_test
-  SOURCES cflow_io_source_test.c
+  SOURCES cflow_io_source_test.c cflow_io_source_init_failure_test.c
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
@@ -158,7 +158,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
 endif()
 
 cmake_add_test(cflow_io_file_test
-  SOURCES cflow_io_file_test.c
+  SOURCES cflow_io_file_test.c cflow_io_file_init_failure_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 

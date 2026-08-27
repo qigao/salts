@@ -208,7 +208,8 @@ TurboParser、TurboSTL、CFlow 或 Core。
 ### CFlow — execution truth
 
 `TurboUtils::CFlow` 是 typed structured graph/dataflow compiler and runtime。其 public
-依赖只有 CMeta；Platform 与 Concurrency 是 private execution substrate。
+依赖为 CMeta 与 Platform；公开 readiness API 直接暴露 Platform 类型。Concurrency 是
+private execution substrate。
 
 CFlow 不拥有容器算法、不解析 serialization format，也不把 raw `cserde_token` 当作可
 任意 `filter/map` 的业务 `Stream<T>`。Parser/CBind/CFlow 的组合边界位于完整
@@ -228,8 +229,9 @@ CFlow 本身不依赖 TurboSTL。`TurboUtils::STLStream` 是显式 INTERFACE com
 `Threads::Threads`。`TurboUtils::Concurrency` 在其上提供 thread pool、Disruptor 等并发
 基础能力，并公开依赖 Platform。
 
-CFlow 私有消费 Platform/Concurrency，因此这些 runtime implementation dependencies 不会
-改变 CFlow 的 public semantic dependency：`CFlow -> CMeta`。
+CFlow 通过公开 readiness API 消费 Platform，并私有消费 Concurrency。因此 CFlow 的 public
+target dependency 是 `CFlow -> CMeta + Platform`；执行语义仍由 CFlow 自身拥有，而不是由
+Platform 定义。
 
 ### Core — general utility layer
 
@@ -336,7 +338,7 @@ TurboParser 当前是独立 package，其现有公共 parser runtime 仍以 `Tur
 | `TurboUtils::CBind` | `CMeta`, `CSerde` | none | native data binding |
 | `TurboUtils::Platform` | `Threads::Threads` | platform implementation | platform abstraction |
 | `TurboUtils::Concurrency` | `Platform` | none | concurrency substrate |
-| `TurboUtils::CFlow` | `CMeta` | `Platform`, `Concurrency` | graph/dataflow execution |
+| `TurboUtils::CFlow` | `CMeta`, `Platform` | `Concurrency` | graph/dataflow execution |
 | `TurboUtils::STL` | `CMeta` | none | container algorithms |
 | `TurboUtils::STLStream` | `STL`, `CFlow` | INTERFACE composition | container stream integration |
 | `TurboUtils::Core` | `CMeta`, `Platform`, `Concurrency` | `STL`, `CFlow` plus utility vendors | general utilities |
@@ -357,8 +359,9 @@ target 不属于此表的 ownership 语义。
    不通过反向依赖污染底层 kernel。
 5. **raw structural transport 不是业务 stream。** CSerde token grammar 必须完整保留；CFlow
    pipeline 从完整 semantic/native value 边界开始。
-6. **PUBLIC 与 PRIVATE dependency 不混淆。** execution implementation 可以私有依赖
-   Platform/Concurrency，但不能把无关 substrate 泄漏为 CFlow public semantic contract。
+6. **PUBLIC 与 PRIVATE dependency 不混淆。** 公开头若暴露 Platform 类型，则 Platform 必须是
+   public target dependency；仅供 execution implementation 使用的 Concurrency 保持 private，
+   且 target 可见性不改变各模块的 semantic ownership。
 7. **canonical 边界不得静默漂移。** 如果 public target ownership 或依赖方向改变，先更新
    本文，并在对应专项 spec 中明确 migration 与验证方式。
 

@@ -320,6 +320,12 @@ int cflow_fs_service_init(cflow_fs_service *service,
         return TURBO_ENOMEM;
     }
     turbo_mutex_init(&impl->gate);
+    if (impl->gate == NULL) {
+        free(impl->paths);
+        free(impl->slots);
+        free(impl);
+        return TURBO_ENOMEM;
+    }
     impl->capacity = config->request_capacity;
     impl->path_capacity = config->path_capacity;
     impl->completion = config->completion;

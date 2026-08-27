@@ -996,11 +996,8 @@ static int io_source_construct(
     state->drive = config->drive;
     state->drive_user = config->drive_user;
     status = cflow_io_actor_init(&state->actor, &actor_config);
-    if (status != TURBO_OK) {
-        if (status != TURBO_ENOMEM)
-            status = TURBO_ENOMEM;
+    if (status != TURBO_OK)
         goto cleanup;
-    }
 
     state->name = config->name;
     state->type = config->type;

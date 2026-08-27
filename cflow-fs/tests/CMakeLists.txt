@@ -1,5 +1,5 @@
 cmake_add_test(cflow_fs_test
-  SOURCES cflow_fs_test.c
+  SOURCES cflow_fs_test.c cflow_fs_init_failure_test.c
   LIBS TurboUtils::CFlowFS TurboUtils::Platform
        TurboUtils::TinyTest
   FOLDER "cflow-fs/tests")

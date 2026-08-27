@@ -151,10 +151,11 @@ bool cflow_io_file_get_stats(const cflow_io_file *file,
 /**
  * Destroys a closed quiescent facade and restores it to zero state.
  *
- * The caller must stop and join all submit/cancel producers before destroy.
- * TURBO_EBUSY leaves the object owned and retryable. After quiescence, native
- * close errors are returned after remaining owned resources are released and
- * the public handle is cleared.
+ * The caller must stop and join the driver and all submit/cancel producers
+ * before destroy. Destroy is an exclusive control-plane operation and must not
+ * race any other facade API entry. TURBO_EBUSY leaves the object owned and
+ * retryable. After quiescence, native close errors are returned after remaining
+ * owned resources are released and the public handle is cleared.
  */
 int cflow_io_file_destroy(cflow_io_file *file);
 
