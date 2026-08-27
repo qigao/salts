@@ -1196,6 +1196,19 @@ static int network_acknowledge_completions(network_endpoint *endpoint) {
   return status;
 }
 
+static int network_forget_closed_socket(network_endpoint *endpoint,
+                                        network_socket closed_socket) {
+  const uint64_t started = turbo_hrtime();
+  int status;
+  do {
+    status = cflow_io_native_backend_forget_socket(&endpoint->backend,
+                                                   (uintptr_t)closed_socket);
+    if (status != TURBO_EBUSY) return status;
+    turbo_thread_yield();
+  } while (turbo_hrtime() - started < NETWORK_WAIT_TIMEOUT_NS);
+  return TURBO_ETIMEDOUT;
+}
+
 static int network_source_driver_destroy(network_source_driver *driver) {
   int status = TURBO_OK;
   if (driver == NULL) return TURBO_EINVAL;
@@ -1264,8 +1277,7 @@ static int network_endpoint_destroy(network_endpoint *endpoint, network_socket c
   }
   if (endpoint->backend_initialized) {
     if (closed_socket != NETWORK_INVALID_SOCKET) {
-      const int forget_status =
-          cflow_io_native_backend_forget_socket(&endpoint->backend, (uintptr_t)closed_socket);
+      const int forget_status = network_forget_closed_socket(endpoint, closed_socket);
       if (forget_status != TURBO_OK && forget_status != TURBO_ENOENT) return forget_status;
     }
     status = cflow_io_native_backend_shutdown(&endpoint->backend);
