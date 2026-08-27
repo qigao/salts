@@ -278,14 +278,27 @@ jobs:
             Set-Content -LiteralPath $dualNativeSummary
           "| ---: | :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
             Add-Content -LiteralPath $dualNativeSummary
+          $runSourceComparison = $env:BENCHMARK_HOST -eq "ubuntu-22.04-gcc"
+          $sourceDir = Join-Path $networkDir "reactive-source"
+          $sourceJsonl = Join-Path $sourceDir "reactive-source-results.jsonl"
+          $sourceSummary = Join-Path $sourceDir "reactive-source-summary.md"
+          $sourceMedianSummary = Join-Path $sourceDir "reactive-source-medians.md"
+          if ($runSourceComparison) {
+            New-Item -ItemType Directory -Force -Path $sourceDir | Out-Null
+            "| Run | Driver | Wait mode | P50 ns | P99 ns | CPU % | IO operations | Admission mean ns | Completion/drive mean ns |" |
+              Set-Content -LiteralPath $sourceSummary
+            "| ---: | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: |" |
+              Add-Content -LiteralPath $sourceSummary
+          }
 
           function Assert-NetworkMetricFields($report, $jsonText) {
             foreach ($field in @(
-                "backend", "wall_ns", "process_cpu_ns", "process_cpu_pct",
+                "backend", "driver", "stage_timing", "wall_ns", "process_cpu_ns", "process_cpu_pct",
                 "cpu_core_equivalents", "exchanges_per_second",
                 "application_mib_per_second", "application_mib_per_cpu_second",
                 "peak_rss_bytes", "p50_ns", "p95_ns", "p99_ns", "errors",
-                "rejections", "stale_completions")) {
+                "rejections", "stale_completions", "io_operations", "admission_ns",
+                "completion_drive_ns", "admission_mean_ns", "completion_drive_mean_ns")) {
               if ($null -eq $report.$field) {
                 throw "Missing network report field '$field': $jsonText"
               }
@@ -352,6 +365,8 @@ jobs:
             lscpu | Out-File -LiteralPath (Join-Path $resultDir "cpu.txt")
           }
 
+          $env:CFLOW_NETWORK_DRIVER = "actor"
+          $env:CFLOW_NETWORK_STAGE_TIMING = "0"
           for ($run = 1; $run -le [int]$env:BENCHMARK_RUNS; ++$run) {
             $runFile = Join-Path $resultDir ("run-direct-{0:D2}.txt" -f $run)
             & $benchmark 2>&1 | Tee-Object -FilePath $runFile
@@ -395,6 +410,11 @@ jobs:
                       $report.profile -ne $profile -or
                       $report.wait_mode -ne $waitMode -or
                       $report.peer_mode -ne "raw" -or
+                      $report.driver -ne "actor" -or
+                      [bool]$report.stage_timing -or
+                      [int64]$report.io_operations -ne 0 -or
+                      [int64]$report.admission_ns -ne 0 -or
+                      [int64]$report.completion_drive_ns -ne 0 -or
                       [double]::IsNaN($cpuCores) -or
                       [double]::IsInfinity($cpuCores) -or
                       $cpuCores -lt 0.0 -or
@@ -420,6 +440,68 @@ jobs:
                       $cpuEfficiency, $report.peak_rss_bytes)
                 }
               }
+            }
+            if ($runSourceComparison) {
+              $env:CFLOW_NETWORK_PROTOCOL = "tcp"
+              $env:CFLOW_NETWORK_PROFILE = "latency"
+              $env:CFLOW_NETWORK_PEER = "raw"
+              $env:CFLOW_NETWORK_STAGE_TIMING = "1"
+              Remove-Item Env:CFLOW_NETWORK_PAYLOAD -ErrorAction SilentlyContinue
+              foreach ($waitMode in @("blocking", "busy")) {
+                $env:CFLOW_NETWORK_WAIT_MODE = $waitMode
+                foreach ($driver in @("actor", "source")) {
+                  $env:CFLOW_NETWORK_DRIVER = $driver
+                  $sourceRunFile = Join-Path $sourceDir `
+                    ("run-tcp-latency-{0}-{1}-{2:D2}.txt" -f $driver, $waitMode, $run)
+                  & $networkBenchmark --no-color 2>&1 |
+                    Tee-Object -FilePath $sourceRunFile
+                  if ($LASTEXITCODE -ne 0) {
+                    throw "Diagnostic $driver TCP/latency/$waitMode run $run failed with exit code $LASTEXITCODE"
+                  }
+                  $jsonLines = @(Get-Content -LiteralPath $sourceRunFile |
+                    Where-Object { $_ -match '^CFLOW_BENCHMARK_JSON ' })
+                  if ($jsonLines.Count -ne 1) {
+                    throw "Expected exactly one diagnostic JSON record, found $($jsonLines.Count): $sourceRunFile"
+                  }
+                  $jsonText = $jsonLines[0].Substring("CFLOW_BENCHMARK_JSON ".Length)
+                  $report = $jsonText | ConvertFrom-Json
+                  Assert-NetworkMetricFields $report $jsonText
+                  $expectedAttempts =
+                    [int64]$report.samples * [int64]$report.exchanges_per_sample
+                  $admissionMean = [double]$report.admission_mean_ns
+                  $completionDriveMean = [double]$report.completion_drive_mean_ns
+                  if ($report.schema -ne "cflow-network-benchmark/v1" -or
+                      $report.protocol -ne "tcp" -or
+                      $report.profile -ne "latency" -or
+                      $report.wait_mode -ne $waitMode -or
+                      $report.peer_mode -ne "raw" -or
+                      $report.driver -ne $driver -or
+                      -not [bool]$report.stage_timing -or
+                      [int64]$report.attempted -ne $expectedAttempts -or
+                      [int64]$report.io_operations -lt (2 * $expectedAttempts) -or
+                      [int64]$report.admission_ns -le 0 -or
+                      [int64]$report.completion_drive_ns -le 0 -or
+                      [double]::IsNaN($admissionMean) -or
+                      [double]::IsInfinity($admissionMean) -or
+                      $admissionMean -le 0.0 -or
+                      [double]::IsNaN($completionDriveMean) -or
+                      [double]::IsInfinity($completionDriveMean) -or
+                      $completionDriveMean -le 0.0 -or
+                      [int64]$report.errors -ne 0 -or
+                      [int64]$report.rejections -ne 0 -or
+                      [int64]$report.stale_completions -ne 0) {
+                    throw "Invalid or unsuccessful diagnostic report: $jsonText"
+                  }
+                  Add-Content -LiteralPath $sourceJsonl -Value $jsonText
+                  Add-Content -LiteralPath $sourceSummary -Value `
+                    ("| {0} | {1} | {2} | {3} | {4} | {5:N3} | {6} | {7:N3} | {8:N3} |" -f `
+                      $run, $report.driver, $report.wait_mode, $report.p50_ns, $report.p99_ns,
+                      [double]$report.process_cpu_pct, $report.io_operations,
+                      $admissionMean, $completionDriveMean)
+                }
+              }
+              $env:CFLOW_NETWORK_DRIVER = "actor"
+              $env:CFLOW_NETWORK_STAGE_TIMING = "0"
             }
             $nativePayloads = @{
               tcp = @(1024, 4096, 65536)
@@ -462,6 +544,9 @@ jobs:
                       $report.profile -ne "throughput" -or
                       $report.wait_mode -ne $waitMode -or
                       $report.peer_mode -ne "dual-native" -or
+                      $report.driver -ne "actor" -or
+                      [bool]$report.stage_timing -or
+                      [int64]$report.io_operations -ne 0 -or
                       [int64]$report.payload_bytes -ne $payloadBytes -or
                       [int64]$report.attempted -ne $expectedAttempts -or
                       [int64]$report.application_bytes -ne $expectedApplicationBytes -or
@@ -499,6 +584,8 @@ jobs:
 
           Remove-Item Env:CFLOW_NETWORK_PAYLOAD -ErrorAction SilentlyContinue
           Remove-Item Env:CFLOW_NETWORK_PEER -ErrorAction SilentlyContinue
+          Remove-Item Env:CFLOW_NETWORK_DRIVER -ErrorAction SilentlyContinue
+          Remove-Item Env:CFLOW_NETWORK_STAGE_TIMING -ErrorAction SilentlyContinue
 
           function Get-Median([double[]]$values) {
             $ordered = @($values | Sort-Object)
@@ -510,6 +597,48 @@ jobs:
               return $ordered[$middle]
             }
             return ($ordered[$middle - 1] + $ordered[$middle]) / 2.0
+          }
+
+          if ($runSourceComparison) {
+            $diagnosticReports = @(Get-Content -LiteralPath $sourceJsonl |
+              ForEach-Object { $_ | ConvertFrom-Json })
+            $diagnosticGroups = @($diagnosticReports | Group-Object driver, wait_mode)
+            if ($diagnosticGroups.Count -ne 4) {
+              throw "Expected four driver/wait-mode diagnostic groups, found $($diagnosticGroups.Count)"
+            }
+            "| Wait mode | Runs | Actor median P50 ns | Source median P50 ns | P50 delta % | Actor median P99 ns | Source median P99 ns | P99 delta % | Actor median CPU % | Source median CPU % | Actor admission mean ns | Source admission mean ns | Actor completion/drive mean ns | Source completion/drive mean ns |" |
+              Set-Content -LiteralPath $sourceMedianSummary
+            "| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
+              Add-Content -LiteralPath $sourceMedianSummary
+            foreach ($waitMode in @("blocking", "busy")) {
+              $matchingActor = @($diagnosticReports |
+                Where-Object { $_.driver -eq "actor" -and $_.wait_mode -eq $waitMode })
+              $matchingSource = @($diagnosticReports |
+                Where-Object { $_.driver -eq "source" -and $_.wait_mode -eq $waitMode })
+              if ($matchingActor.Count -ne [int]$env:BENCHMARK_RUNS -or
+                  $matchingSource.Count -ne [int]$env:BENCHMARK_RUNS) {
+                throw "Expected $env:BENCHMARK_RUNS Actor and Source reports for $waitMode, found $($matchingActor.Count) and $($matchingSource.Count)"
+              }
+              $actorP50 = Get-Median @($matchingActor.p50_ns)
+              $sourceP50 = Get-Median @($matchingSource.p50_ns)
+              $actorP99 = Get-Median @($matchingActor.p99_ns)
+              $sourceP99 = Get-Median @($matchingSource.p99_ns)
+              if ($actorP50 -le 0.0 -or $actorP99 -le 0.0) {
+                throw "Actor diagnostic percentiles must be positive for $waitMode"
+              }
+              $p50Delta = 100.0 * ($sourceP50 - $actorP50) / $actorP50
+              $p99Delta = 100.0 * ($sourceP99 - $actorP99) / $actorP99
+              Add-Content -LiteralPath $sourceMedianSummary -Value `
+                ("| {0} | {1} | {2:N0} | {3:N0} | {4:N3} | {5:N0} | {6:N0} | {7:N3} | {8:N3} | {9:N3} | {10:N3} | {11:N3} | {12:N3} | {13:N3} |" -f `
+                  $waitMode, $matchingActor.Count, $actorP50, $sourceP50, $p50Delta,
+                  $actorP99, $sourceP99, $p99Delta,
+                  (Get-Median @($matchingActor.process_cpu_pct)),
+                  (Get-Median @($matchingSource.process_cpu_pct)),
+                  (Get-Median @($matchingActor.admission_mean_ns)),
+                  (Get-Median @($matchingSource.admission_mean_ns)),
+                  (Get-Median @($matchingActor.completion_drive_mean_ns)),
+                  (Get-Median @($matchingSource.completion_drive_mean_ns)))
+            }
           }
 
           $dualReports = @(Get-Content -LiteralPath $dualNativeJsonl |
@@ -559,6 +688,20 @@ jobs:
           Add-Content -LiteralPath $summary -Value ""
           Get-Content -LiteralPath $networkSummary | Add-Content -LiteralPath $summary
           Add-Content -LiteralPath $summary -Value ""
+          if ($runSourceComparison) {
+            Add-Content -LiteralPath $summary -Value "### Actor versus Reactive Source TCP latency"
+            Add-Content -LiteralPath $summary -Value ""
+            Add-Content -LiteralPath $summary -Value "Both drivers use the same raw loopback echo peer, epoll backend, 64-byte payload, samples, exchanges, wait mode, and enabled stage timing."
+            Add-Content -LiteralPath $summary -Value ""
+            Get-Content -LiteralPath $sourceMedianSummary | Add-Content -LiteralPath $summary
+            Add-Content -LiteralPath $summary -Value ""
+            Add-Content -LiteralPath $summary -Value "<details><summary>All Reactive Source raw runs</summary>"
+            Add-Content -LiteralPath $summary -Value ""
+            Get-Content -LiteralPath $sourceSummary | Add-Content -LiteralPath $summary
+            Add-Content -LiteralPath $summary -Value ""
+            Add-Content -LiteralPath $summary -Value "</details>"
+            Add-Content -LiteralPath $summary -Value ""
+          }
           Add-Content -LiteralPath $summary -Value "### Dual-native TCP/UDP Echo evidence"
           Add-Content -LiteralPath $summary -Value ""
           Add-Content -LiteralPath $summary -Value "Application throughput counts one echoed payload; estimated loopback wire bytes are twice that value."
