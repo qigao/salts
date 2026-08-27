@@ -25,8 +25,17 @@ typedef enum cflow_op {
 #define CFLOW_OP_ROW(E, method, margc, fnarg, subgrapharg, farity, p0, p1, p2, ret, out, card, subgraphrule, semantic, intrinsic_effects) CFLOW_OP_##E,
 Replay(CFlowOperators, CFLOW_OP_ROW)
 #undef CFLOW_OP_ROW
+    /* Positional operators are appended to preserve existing opcode values. */
+    CFLOW_OP_TAKE,
+    CFLOW_OP_SKIP,
     CFLOW_OP_COUNT
 } cflow_op;
+
+typedef struct cflow_slice_parameter {
+    /* Public read-only IR metadata; mutate only through Graph builders. */
+    bool present;
+    size_t count;
+} cflow_slice_parameter;
 
 Enum(cflow_param_rule,
     (CFLOW_PARAM_NONE,     "none"),
@@ -129,6 +138,8 @@ typedef struct cflow_node {
     const cmeta_type_desc *output_type;
     cflow_subgraph_id *subgraphs; /* graph-owned nested IR references */
     size_t subgraph_count;
+    /* Immutable Graph metadata. Mutable position belongs to each Run. */
+    cflow_slice_parameter slice;
 } cflow_node;
 
 typedef struct cflow_subgraph {
@@ -177,6 +188,21 @@ bool cflow_graph_create_node(cflow_graph *g,
                              const cflow_subgraph_id *nested,
                              size_t nested_count,
                              cflow_node_id *out_node);
+/**
+ * Append one detached TAKE or SKIP node to `subgraph`.
+ *
+ * `input_type` is borrowed with the Graph and is also the output type. `count`
+ * is immutable Graph metadata; execution position belongs to each Run.
+ * Returns false for invalid arguments/opcodes, version exhaustion, or
+ * allocation failure. On success `out_node` receives the new node id; callers
+ * wire its data edges and select the subgraph exit explicitly.
+ */
+bool cflow_graph_create_slice_node(cflow_graph *g,
+                                   cflow_subgraph_id subgraph,
+                                   cflow_op op,
+                                   const cmeta_type_desc *input_type,
+                                   size_t count,
+                                   cflow_node_id *out_node);
 bool cflow_graph_create_relation_node(cflow_graph *g,
                                       cflow_subgraph_id subgraph,
                                       const cmeta_type_desc *input_type,
@@ -197,6 +223,10 @@ bool cflow_graph_set_subgraph_exit(cflow_graph *g,
 
 bool cflow_graph_add(cflow_graph *g, cflow_op op, cmeta_callable fn,
                      const cflow_graph *nested_graph);
+/** Append a linear TAKE node that forwards at most `limit` arriving values. */
+bool cflow_graph_take(cflow_graph *g, size_t limit);
+/** Append a linear SKIP node that drops the first `count` arriving values. */
+bool cflow_graph_skip(cflow_graph *g, size_t count);
 
 /* Data-driven structured relation. Every branch is snapshot-imported as a
  * Subgraph and receives the current value at the relation node. The relation

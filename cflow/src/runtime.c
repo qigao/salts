@@ -50,6 +50,12 @@ typedef struct run_impl {
     cflow_value_slot source_slot;
     cflow_value_slot *reduce_value;
     bool *reduce_flushed;
+    size_t *slice_positions;
+
+    /* Pump-owned normal-short-circuit state. */
+    bool slice_short_circuit_pending;
+    size_t slice_upstream_depth;
+    bool zero_take_pending;
 
     continuation_frame continuations[CMETA_RUN_MAX_CONTINUATIONS];
     size_t continuation_count;
@@ -147,6 +153,21 @@ static void continuation_clear(continuation_frame *f) {
 
 static void continuations_clear(run_impl *r) {
     while (r && r->continuation_count) continuation_clear(&r->continuations[--r->continuation_count]);
+}
+
+static void continuations_drop_prefix(run_impl *r, size_t count) {
+    if (!r || count == 0u) return;
+    if (count > r->continuation_count) count = r->continuation_count;
+    for (size_t i = 0u; i < count; ++i)
+        continuation_clear(&r->continuations[i]);
+    size_t remaining = r->continuation_count - count;
+    if (remaining != 0u) {
+        memmove(r->continuations, r->continuations + count,
+                remaining * sizeof(*r->continuations));
+    }
+    memset(r->continuations + remaining, 0,
+           count * sizeof(*r->continuations));
+    r->continuation_count = remaining;
 }
 
 /* Takes ownership of machine on success. root_source is copied so nested
@@ -261,6 +282,50 @@ static node_action semantic_filter(run_impl *r, cflow_node_id i, const cflow_nod
     return NODE_CONTINUE;
 }
 
+static void request_slice_short_circuit(run_impl *r) {
+    if (!r) return;
+    r->slice_short_circuit_pending = true;
+    if (r->continuation_count > r->slice_upstream_depth)
+        r->slice_upstream_depth = r->continuation_count;
+}
+
+static node_action semantic_take(run_impl *r, cflow_node_id i,
+                                 const cflow_node *n,
+                                 cflow_value_slot *owned,
+                                 const cmeta_type_desc **cur_type,
+                                 const void *root_source) {
+    (void)cur_type;
+    (void)root_source;
+    if (!r || !n || !owned || !owned->live || !r->slice_positions)
+        return NODE_FAIL;
+    if (r->slice_positions[i] >= n->slice.count) {
+        request_slice_short_circuit(r);
+        cflow_value_slot_reset(owned);
+        return NODE_STOP;
+    }
+    ++r->slice_positions[i];
+    if (r->slice_positions[i] == n->slice.count)
+        request_slice_short_circuit(r);
+    return NODE_CONTINUE;
+}
+
+static node_action semantic_skip(run_impl *r, cflow_node_id i,
+                                 const cflow_node *n,
+                                 cflow_value_slot *owned,
+                                 const cmeta_type_desc **cur_type,
+                                 const void *root_source) {
+    (void)cur_type;
+    (void)root_source;
+    if (!r || !n || !owned || !owned->live || !r->slice_positions)
+        return NODE_FAIL;
+    if (r->slice_positions[i] < n->slice.count) {
+        ++r->slice_positions[i];
+        cflow_value_slot_reset(owned);
+        return NODE_STOP;
+    }
+    return NODE_CONTINUE;
+}
+
 static node_action semantic_map(run_impl *r, cflow_node_id i, const cflow_node *n,
                                 cflow_value_slot *owned, const cmeta_type_desc **cur_type,
                                 const void *root_source) {
@@ -371,7 +436,23 @@ static node_handler handlers[CFLOW_OP_COUNT] = {
     [CFLOW_OP_##E] = semantic_##semantic,
 Replay(CFlowOperators, CFLOW_OP_ROW)
 #undef CFLOW_OP_ROW
+    [CFLOW_OP_TAKE] = semantic_take,
+    [CFLOW_OP_SKIP] = semantic_skip,
 };
+
+static void settle_slice_short_circuit(run_impl *r) {
+    bool cancel_source;
+    size_t upstream_depth;
+
+    if (!r || !r->slice_short_circuit_pending) return;
+    upstream_depth = r->slice_upstream_depth;
+    r->slice_short_circuit_pending = false;
+    r->slice_upstream_depth = 0u;
+    cancel_source = !r->source_done;
+    r->source_done = true;
+    if (cancel_source) cflow_source_cancel(&r->source);
+    continuations_drop_prefix(r, upstream_depth);
+}
 
 static bool successor_of(run_impl *r,
                          cflow_node_id node,
@@ -418,6 +499,7 @@ static bool process_path(run_impl *r,
         }
         if (a == NODE_STOP) {
             cflow_value_slot_destroy(&owned);
+            settle_slice_short_circuit(r);
             return true;
         }
 
@@ -433,7 +515,9 @@ static bool process_path(run_impl *r,
     if (cflow_sink_valid(&r->sink) && !cflow_sink_value(&r->sink, cur_type, owned.storage)) {
         cflow_value_slot_destroy(&owned); run_fail(r, "observer rejected value"); return false;
     }
-    cflow_value_slot_destroy(&owned); return true;
+    cflow_value_slot_destroy(&owned);
+    settle_slice_short_circuit(r);
+    return true;
 }
 
 
@@ -626,6 +710,12 @@ static bool process_unit(run_impl *r) {
         continuations_clear(r);
         return false;
     }
+    if (r->zero_take_pending) {
+        r->zero_take_pending = false;
+        if (!r->source_done) cflow_source_cancel(&r->source);
+        r->source_done = true;
+        return true;
+    }
     if (r->continuation_count) {
         continuation_frame *top = &r->continuations[r->continuation_count - 1];
         if (top->done) return resume_top_continuation(r); /* pop is terminal bookkeeping, not a value */
@@ -657,6 +747,7 @@ static void run_destroy_claimed(run_impl *r) {
     if (cflow_source_valid(&r->source)) cflow_source_destroy(&r->source);
     continuations_clear(r);
     reducers_clear(r);
+    free(r->slice_positions);
     cflow_value_slot_destroy(&r->source_slot);
     turbo_mutex_lock(&r->lock);
     r->closed = true;
@@ -928,8 +1019,12 @@ bool cflow_run_open_subgraph(cflow_run *run,
     }
     r->reduce_value = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_value));
     r->reduce_flushed = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_flushed));
-    if (!r->reduce_value || !r->reduce_flushed) {
+    r->slice_positions = calloc(
+        subgraph->node_count ? subgraph->node_count : 1u,
+        sizeof(*r->slice_positions));
+    if (!r->reduce_value || !r->reduce_flushed || !r->slice_positions) {
         cflow_value_slot_destroy(&r->source_slot); reducers_clear(r);
+        free(r->slice_positions);
         turbo_cond_destroy(&r->task_cv);
         turbo_mutex_destroy(&r->lock);
         free(r);
@@ -940,11 +1035,15 @@ bool cflow_run_open_subgraph(cflow_run *run,
             subgraph, (cflow_node_id)i);
         const cflow_op_schema *schema = node
             ? cflow_op_schema_get(node->op) : NULL;
+        if (node && node->op == CFLOW_OP_TAKE &&
+            node->slice.count == 0u)
+            r->zero_take_pending = true;
         if (schema && schema->cardinality == CMETA_CARD_REDUCE &&
             !cflow_value_slot_init(&r->reduce_value[i],
                                    node->output_type)) {
             cflow_value_slot_destroy(&r->source_slot);
             reducers_clear(r);
+            free(r->slice_positions);
             turbo_cond_destroy(&r->task_cv);
             turbo_mutex_destroy(&r->lock);
             free(r);

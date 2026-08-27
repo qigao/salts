@@ -80,6 +80,16 @@ static_assert(std::is_standard_layout<turbo_readiness_registration>::value,
               "reactor registration must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_reactor_source_owner>::value,
               "reactor Source owner must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_slice_parameter>::value,
+              "slice parameters must remain C-compatible metadata");
+
+using cflow_stream_slice_function = cflow_stream *(*)(cflow_stream *, size_t);
+static_assert(std::is_same<decltype(&cflow_stream_take),
+                           cflow_stream_slice_function>::value,
+              "Stream take must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_stream_skip),
+                           cflow_stream_slice_function>::value,
+              "Stream skip must keep its C signature");
 
 using cflow_reactor_factory = int (*)(
     cflow_source *, cflow_reactor_source_owner *,
@@ -187,6 +197,7 @@ suite("CFlow C++ public header") {
         cflow_graph_destroy(&graph);
 
         check_true(cflow_stream_init(&stream, &cmeta_type_int) == &stream);
+        check_true(stream.skip(&stream, 1u)->take(&stream, 2u) == &stream);
         cflow_stream_destroy(&stream);
         check_false(cflow_subscription_is_done(&subscription));
         cflow_result_destroy(&result);
