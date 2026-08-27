@@ -38,7 +38,15 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
  * operations. This is not a single-use traversal object or a compatibility
  * implementation of another language's Stream contract. Operators append to
  * this Graph; each evaluation creates independent runtime state. A bound Range
- * may be evaluated repeatedly only when its own REUSABLE contract permits it. */
+ * may be evaluated repeatedly only when its own REUSABLE contract permits it.
+ *
+ * Public field policy:
+ * - generated operator methods and take/skip/distinct/sorted are stable
+ *   explicit-self invocation fields; initialization owns their values;
+ * - graph is read-only advanced introspection, preferably obtained through
+ *   cflow_stream_graph();
+ * - source_range, has_source_range, eval_options, and failed are internal
+ *   execution-admission state and must not be read or written directly. */
 struct cflow_stream {
     cflow_graph graph;
     cmeta_range source_range;

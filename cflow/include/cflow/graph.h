@@ -82,6 +82,8 @@ Enum(cflow_subgraph_rule,
     (CFLOW_SUBGRAPH_1TO1, "1to1")
 );
 
+/* Read-only metadata returned by cflow_op_schema_get(). Callers may inspect
+ * these fields but must not construct or modify registry rows. */
 typedef struct cflow_op_schema {
     cflow_op op;
     const char *method;
@@ -98,6 +100,7 @@ typedef struct cflow_op_schema {
     cmeta_effects intrinsic_effects;
 } cflow_op_schema;
 
+/* Read-only concrete IR row. Graph builder functions are the mutation API. */
 typedef struct cflow_edge {
     cflow_node_id from;
     uint16_t from_port;
@@ -130,6 +133,7 @@ Enum(cflow_relation_result,
     (CFLOW_REL_RESULT_INVOKE, "invoke")
 );
 
+/* Stable caller-constructed relation policy passed by value to Graph builders. */
 typedef struct cflow_relation_schema {
     cflow_relation_coordination coordination;
     cflow_relation_completion completion;
@@ -137,6 +141,8 @@ typedef struct cflow_relation_schema {
     cflow_relation_error error;
 } cflow_relation_schema;
 
+/* Read-only concrete IR row. Pointers into a Graph are invalidated by the next
+ * successful Graph mutation or destroy. */
 typedef struct cflow_node {
     cflow_op op;
     cmeta_callable fn;
@@ -161,6 +167,8 @@ typedef struct cflow_node {
     cflow_node_params params;
 } cflow_node;
 
+/* Read-only concrete IR view. Capacity and storage fields are implementation
+ * state even though advanced tooling may inspect the logical rows and types. */
 typedef struct cflow_subgraph {
     cflow_node *nodes;
     size_t node_count;
@@ -174,6 +182,9 @@ typedef struct cflow_subgraph {
     const cmeta_type_desc *output_type;
 } cflow_subgraph;
 
+/* Owning concrete IR handle. Zero initialization and cflow_graph_* builders
+ * are the only supported writes. Fields are read-only introspection; direct
+ * storage/capacity edits bypass validation and are not a public contract. */
 typedef struct cflow_graph {
     cflow_subgraph *subgraphs;
     size_t subgraph_count;
