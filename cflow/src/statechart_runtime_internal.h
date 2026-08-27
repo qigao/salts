@@ -16,6 +16,10 @@
 #define CFLOW_STATECHART_ERROR_CAPACITY 512u
 #endif
 
+#if CFLOW_STATECHART_ERROR_CAPACITY < 1
+#error "CFLOW_STATECHART_ERROR_CAPACITY must be greater than zero"
+#endif
+
 /*
  * @internal @incomplete
  *

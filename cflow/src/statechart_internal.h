@@ -61,4 +61,8 @@ typedef struct cflow_statechart_impl {
 const cflow_statechart_impl *cflow_statechart_internal_get(
     const cflow_statechart *statechart);
 
+/** Private completion capability shared by IR admission and runtime triggers. */
+bool cflow_statechart_internal_state_can_complete(
+    const cflow_statechart_impl *impl, size_t state_index);
+
 #endif /* CFLOW_STATECHART_INTERNAL_H */

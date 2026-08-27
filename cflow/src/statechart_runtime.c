@@ -684,9 +684,14 @@ static bool trigger_valid(const cflow_statechart_instance_impl *impl,
     const cflow_event_type *event_type;
     if (trigger->kind == CFLOW_STATECHART_TRIGGER_EVENTLESS)
         return trigger->event == NULL && trigger->completion == 0u;
-    if (trigger->kind == CFLOW_STATECHART_TRIGGER_COMPLETION)
+    if (trigger->kind == CFLOW_STATECHART_TRIGGER_COMPLETION) {
+        const size_t completed = find_state_index(
+            impl->ir, trigger->completion);
         return trigger->event == NULL && trigger->completion != 0u &&
-            find_state_index(impl->ir, trigger->completion) != SIZE_MAX;
+            completed != SIZE_MAX &&
+            cflow_statechart_internal_state_can_complete(
+                impl->ir, completed);
+    }
     if (trigger->kind != CFLOW_STATECHART_TRIGGER_EVENT ||
         trigger->event == NULL || trigger->completion != 0u ||
         trigger->event->id == 0u || trigger->event->payload_type == NULL ||

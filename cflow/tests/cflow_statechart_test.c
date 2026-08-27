@@ -351,6 +351,32 @@ suite("CFlow format-neutral Statechart IR") {
                     CFLOW_STATECHART_AMBIGUOUS_TRANSITION);
     }
 
+    it("admits only pure or independently fallible guard effects") {
+        statechart_fixture fixture;
+        cflow_statechart_guard guard = {
+            20u, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+
+        valid_fixture(&fixture);
+        fixture.transitions[1].guard = guard.id;
+        fixture.definition.guards = &guard;
+        fixture.definition.guard_count = 1u;
+        check_equal(build_status(&fixture.definition), CFLOW_STATECHART_OK);
+
+        guard.effects = CMETA_EFFECT_STATEFUL;
+        check_equal(rejected_build_status(&fixture.definition),
+                    CFLOW_STATECHART_INVALID_CONTRACT);
+        guard.effects = CMETA_EFFECT_IO | CMETA_EFFECT_MAY_FAIL;
+        check_equal(rejected_build_status(&fixture.definition),
+                    CFLOW_STATECHART_INVALID_CONTRACT);
+        guard.effects = CMETA_EFFECT_ASYNC;
+        check_equal(rejected_build_status(&fixture.definition),
+                    CFLOW_STATECHART_INVALID_CONTRACT);
+        guard.effects = CMETA_EFFECT_UNKNOWN;
+        check_equal(rejected_build_status(&fixture.definition),
+                    CFLOW_STATECHART_INVALID_CONTRACT);
+    }
+
     it("normalizes typed guard executable and ordered action references") {
         statechart_fixture fixture;
         valid_fixture(&fixture);

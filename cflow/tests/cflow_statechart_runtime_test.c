@@ -40,6 +40,16 @@ typedef struct selection_error_reader_probe {
 } selection_error_reader_probe;
 
 enum { SELECTION_ERROR_OBSERVE_ATTEMPTS = 1000 };
+enum {
+    SELECTION_ROOT = 700,
+    SELECTION_LEFT_REGION = 40,
+    SELECTION_LEFT_INITIAL = 900,
+    SELECTION_LEFT_LEAF = 800,
+    SELECTION_RIGHT_REGION = 300,
+    SELECTION_RIGHT_INITIAL = 5,
+    SELECTION_RIGHT_LEAF = 10,
+    SELECTION_LEFT_FINAL = 600
+};
 static const char selection_guard_contract_error[] =
     "Statechart guard contract violation";
 
@@ -183,32 +193,102 @@ static bool selection_guard(void *user, const void *state,
     return !probe->fail;
 }
 
+static bool selection_nullable_event_guard(
+    void *user, const void *state, const cflow_event_view *event,
+    bool *out_enabled, const char **out_error) {
+    selection_guard_probe *probe = (selection_guard_probe *)user;
+    if (probe == NULL || state == NULL || event != NULL ||
+        out_enabled == NULL || out_error == NULL ||
+        *(const int *)state != probe->expected_state)
+        return false;
+    if (probe->first_state == NULL) probe->first_state = state;
+    else if (probe->first_state != state) return false;
+    ++probe->calls;
+    *out_error = probe->error;
+    *out_enabled = probe->enabled;
+    return !probe->fail;
+}
+
 static void selection_fixture(runtime_fixture *fixture) {
     memset(fixture, 0, sizeof(*fixture));
     fixture->states[0] = (cflow_statechart_state){
-        1u, 0u, CFLOW_STATECHART_PARALLEL, 0u};
+        SELECTION_RIGHT_LEAF, SELECTION_RIGHT_REGION,
+        CFLOW_STATECHART_ATOMIC, 6u};
     fixture->states[1] = (cflow_statechart_state){
-        10u, 1u, CFLOW_STATECHART_COMPOUND, 1u};
+        SELECTION_LEFT_INITIAL, SELECTION_LEFT_REGION,
+        CFLOW_STATECHART_INITIAL, 2u};
     fixture->states[2] = (cflow_statechart_state){
-        11u, 10u, CFLOW_STATECHART_INITIAL, 2u};
+        SELECTION_ROOT, 0u, CFLOW_STATECHART_PARALLEL, 0u};
     fixture->states[3] = (cflow_statechart_state){
-        12u, 10u, CFLOW_STATECHART_ATOMIC, 3u};
+        SELECTION_LEFT_FINAL, SELECTION_LEFT_REGION,
+        CFLOW_STATECHART_FINAL, 7u};
     fixture->states[4] = (cflow_statechart_state){
-        20u, 1u, CFLOW_STATECHART_COMPOUND, 4u};
+        SELECTION_RIGHT_REGION, SELECTION_ROOT,
+        CFLOW_STATECHART_COMPOUND, 4u};
     fixture->states[5] = (cflow_statechart_state){
-        21u, 20u, CFLOW_STATECHART_INITIAL, 5u};
+        SELECTION_LEFT_REGION, SELECTION_ROOT,
+        CFLOW_STATECHART_COMPOUND, 1u};
     fixture->states[6] = (cflow_statechart_state){
-        22u, 20u, CFLOW_STATECHART_ATOMIC, 6u};
+        SELECTION_RIGHT_INITIAL, SELECTION_RIGHT_REGION,
+        CFLOW_STATECHART_INITIAL, 5u};
+    fixture->states[7] = (cflow_statechart_state){
+        SELECTION_LEFT_LEAF, SELECTION_LEFT_REGION,
+        CFLOW_STATECHART_ATOMIC, 3u};
     fixture->events[0] = (cflow_event_type){100u, &cmeta_type_int};
     fixture->transitions[0] = (cflow_statechart_transition){
-        100u, 11u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 12u,
+        100u, SELECTION_LEFT_INITIAL, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+        0u, 0u, 0u, SELECTION_LEFT_LEAF,
         CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u};
     fixture->transitions[1] = (cflow_statechart_transition){
-        101u, 21u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 22u,
+        101u, SELECTION_RIGHT_INITIAL, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+        0u, 0u, 0u, SELECTION_RIGHT_LEAF,
         CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u};
     fixture->definition = (cflow_statechart_definition){
-        &cmeta_type_int, fixture->states, 7u, fixture->events, 1u,
+        &cmeta_type_int, fixture->states, 8u, fixture->events, 1u,
         NULL, 0u, NULL, 0u, fixture->transitions, 2u,
+        NULL, 0u, NULL, 0u};
+    fixture->initial_state = 41;
+}
+
+static void mixed_conflict_fixture(runtime_fixture *fixture) {
+    memset(fixture, 0, sizeof(*fixture));
+    fixture->states[0] = (cflow_statechart_state){
+        500u, 0u, CFLOW_STATECHART_PARALLEL, 0u};
+    fixture->states[1] = (cflow_statechart_state){
+        400u, 500u, CFLOW_STATECHART_COMPOUND, 1u};
+    fixture->states[2] = (cflow_statechart_state){
+        401u, 400u, CFLOW_STATECHART_INITIAL, 2u};
+    fixture->states[3] = (cflow_statechart_state){
+        300u, 400u, CFLOW_STATECHART_PARALLEL, 3u};
+    fixture->states[4] = (cflow_statechart_state){
+        302u, 300u, CFLOW_STATECHART_ATOMIC, 4u};
+    fixture->states[5] = (cflow_statechart_state){
+        200u, 500u, CFLOW_STATECHART_COMPOUND, 5u};
+    fixture->states[6] = (cflow_statechart_state){
+        201u, 200u, CFLOW_STATECHART_INITIAL, 6u};
+    fixture->states[7] = (cflow_statechart_state){
+        202u, 200u, CFLOW_STATECHART_ATOMIC, 7u};
+    fixture->states[8] = (cflow_statechart_state){
+        102u, 300u, CFLOW_STATECHART_ATOMIC, 8u};
+    fixture->events[0] = (cflow_event_type){100u, &cmeta_type_int};
+    fixture->transitions[0] = (cflow_statechart_transition){
+        100u, 401u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 300u,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u};
+    fixture->transitions[1] = (cflow_statechart_transition){
+        101u, 201u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 202u,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u};
+    fixture->transitions[2] = (cflow_statechart_transition){
+        200u, 400u, CFLOW_STATECHART_TRIGGER_EVENT, 100u, 0u, 0u, 302u,
+        CFLOW_STATECHART_TRANSITION_INTERNAL, 0u, 2u};
+    fixture->transitions[3] = (cflow_statechart_transition){
+        201u, 202u, CFLOW_STATECHART_TRIGGER_EVENT, 100u, 0u, 0u, 202u,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 3u};
+    fixture->transitions[4] = (cflow_statechart_transition){
+        202u, 102u, CFLOW_STATECHART_TRIGGER_EVENT, 100u, 0u, 0u, 202u,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 4u};
+    fixture->definition = (cflow_statechart_definition){
+        &cmeta_type_int, fixture->states, 9u, fixture->events, 1u,
+        NULL, 0u, NULL, 0u, fixture->transitions, 5u,
         NULL, 0u, NULL, 0u};
     fixture->initial_state = 41;
 }
@@ -223,6 +303,28 @@ static void add_event_transition(runtime_fixture *fixture,
     fixture->transitions[index] = (cflow_statechart_transition){
         id, source, CFLOW_STATECHART_TRIGGER_EVENT, 100u, 0u, guard, target,
         CFLOW_STATECHART_TRANSITION_EXTERNAL, priority, (uint32_t)index};
+}
+
+static void add_eventless_transition(
+    runtime_fixture *fixture, cflow_statechart_transition_id id,
+    cflow_machine_state_id source, cflow_statechart_guard_id guard,
+    cflow_machine_state_id target, uint32_t priority) {
+    const size_t index = fixture->definition.transition_count++;
+    fixture->transitions[index] = (cflow_statechart_transition){
+        id, source, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, guard, target,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, priority, (uint32_t)index};
+}
+
+static void add_completion_transition(
+    runtime_fixture *fixture, cflow_statechart_transition_id id,
+    cflow_machine_state_id source, cflow_machine_state_id completion,
+    cflow_statechart_guard_id guard, cflow_machine_state_id target,
+    uint32_t priority) {
+    const size_t index = fixture->definition.transition_count++;
+    fixture->transitions[index] = (cflow_statechart_transition){
+        id, source, CFLOW_STATECHART_TRIGGER_COMPLETION, 0u, completion,
+        guard, target, CFLOW_STATECHART_TRANSITION_EXTERNAL, priority,
+        (uint32_t)index};
 }
 
 static cflow_statechart_runtime_status selection_fixture_init(
@@ -251,6 +353,24 @@ static cflow_statechart_runtime_status select_event(
     const cflow_event_view event = {100u, &cmeta_type_int, &payload};
     const cflow_statechart_selection_trigger trigger = {
         CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
+    return cflow_statechart_instance_select_internal(
+        &fixture->instance, &trigger, out);
+}
+
+static cflow_statechart_runtime_status select_eventless(
+    runtime_fixture *fixture, const cflow_event_view *event,
+    cflow_statechart_selection_snapshot *out) {
+    const cflow_statechart_selection_trigger trigger = {
+        CFLOW_STATECHART_TRIGGER_EVENTLESS, event, 0u};
+    return cflow_statechart_instance_select_internal(
+        &fixture->instance, &trigger, out);
+}
+
+static cflow_statechart_runtime_status select_completion(
+    runtime_fixture *fixture, cflow_machine_state_id completion,
+    cflow_statechart_selection_snapshot *out) {
+    const cflow_statechart_selection_trigger trigger = {
+        CFLOW_STATECHART_TRIGGER_COMPLETION, NULL, completion};
     return cflow_statechart_instance_select_internal(
         &fixture->instance, &trigger, out);
 }
@@ -672,8 +792,10 @@ suite("CFlow Statechart deterministic transition selection") {
         cflow_statechart_selection_snapshot selected = {0};
         const cflow_statechart_transition_id expected[] = {200u, 201u};
         selection_fixture(&fixture);
-        add_event_transition(&fixture, 200u, 12u, 0u, 12u, 0u);
-        add_event_transition(&fixture, 201u, 22u, 0u, 22u, 0u);
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF, 0u,
+                             SELECTION_LEFT_LEAF, 0u);
+        add_event_transition(&fixture, 201u, SELECTION_RIGHT_LEAF, 0u,
+                             SELECTION_RIGHT_LEAF, 0u);
         check_equal(selection_fixture_init(&fixture, NULL, 0u),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(select_event(&fixture, &selected),
@@ -681,21 +803,25 @@ suite("CFlow Statechart deterministic transition selection") {
         check_equal(selected.transition_count, (size_t)2u);
         check_equal(selected.transition_ids, expected, sizeof(expected));
         check_true(cflow_statechart_selection_exits_internal(
-            &fixture.instance, &selected, 0u, 12u));
+            &fixture.instance, &selected, 0u, SELECTION_LEFT_LEAF));
         check_false(cflow_statechart_selection_exits_internal(
-            &fixture.instance, &selected, 0u, 22u));
+            &fixture.instance, &selected, 0u, SELECTION_RIGHT_LEAF));
         check_true(cflow_statechart_selection_exits_internal(
-            &fixture.instance, &selected, 1u, 22u));
+            &fixture.instance, &selected, 1u, SELECTION_RIGHT_LEAF));
         runtime_fixture_destroy(&fixture);
     }
 
-    it("bubbles only after disabled child guards and keeps one state snapshot") {
+    it("bubbles only after every same-source guard is disabled") {
         runtime_fixture fixture;
-        selection_guard_probe child = {NULL, 41, 0u, false, false, NULL};
+        selection_guard_probe first_child = {
+            NULL, 41, 0u, false, false, NULL};
+        selection_guard_probe second_child = {
+            NULL, 41, 0u, false, false, NULL};
         selection_guard_probe parent = {NULL, 41, 0u, true, false, NULL};
         cflow_statechart_guard_binding bindings[] = {
-            {300u, selection_guard, &child},
-            {301u, selection_guard, &parent}};
+            {300u, selection_guard, &first_child},
+            {301u, selection_guard, &second_child},
+            {302u, selection_guard, &parent}};
         cflow_statechart_selection_snapshot selected = {0};
         selection_fixture(&fixture);
         fixture.guards[0] = (cflow_statechart_guard){
@@ -704,20 +830,29 @@ suite("CFlow Statechart deterministic transition selection") {
         fixture.guards[1] = (cflow_statechart_guard){
             301u, &cmeta_type_int, CMETA_EFFECT_PURE,
             CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        fixture.guards[2] = (cflow_statechart_guard){
+            302u, &cmeta_type_int, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
         fixture.definition.guards = fixture.guards;
-        fixture.definition.guard_count = 2u;
-        add_event_transition(&fixture, 200u, 12u, 300u, 0u, 0u);
-        add_event_transition(&fixture, 201u, 10u, 301u, 0u, 0u);
-        check_equal(selection_fixture_init(&fixture, bindings, 2u),
+        fixture.definition.guard_count = 3u;
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                             300u, 0u, 0u);
+        add_event_transition(&fixture, 201u, SELECTION_LEFT_LEAF,
+                             301u, 0u, 1u);
+        add_event_transition(&fixture, 202u, SELECTION_LEFT_REGION,
+                             302u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, bindings, 3u),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(select_event(&fixture, &selected),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(selected.transition_count, (size_t)1u);
         check_equal(selected.transition_ids[0],
-                    (cflow_statechart_transition_id)201u);
-        check_equal(child.calls, (size_t)1u);
+                    (cflow_statechart_transition_id)202u);
+        check_equal(first_child.calls, (size_t)1u);
+        check_equal(second_child.calls, (size_t)1u);
         check_equal(parent.calls, (size_t)1u);
-        check_equal(child.first_state, parent.first_state);
+        check_equal(first_child.first_state, second_child.first_state);
+        check_equal(first_child.first_state, parent.first_state);
         runtime_fixture_destroy(&fixture);
     }
 
@@ -725,8 +860,10 @@ suite("CFlow Statechart deterministic transition selection") {
         runtime_fixture fixture;
         cflow_statechart_selection_snapshot selected = {0};
         selection_fixture(&fixture);
-        add_event_transition(&fixture, 200u, 12u, 0u, 12u, 0u);
-        add_event_transition(&fixture, 201u, 10u, 0u, 12u, 0u);
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF, 0u,
+                             SELECTION_LEFT_LEAF, 0u);
+        add_event_transition(&fixture, 201u, SELECTION_LEFT_REGION, 0u,
+                             SELECTION_LEFT_LEAF, 0u);
         check_equal(selection_fixture_init(&fixture, NULL, 0u),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(select_event(&fixture, &selected),
@@ -741,8 +878,10 @@ suite("CFlow Statechart deterministic transition selection") {
         runtime_fixture fixture;
         cflow_statechart_selection_snapshot selected = {0};
         selection_fixture(&fixture);
-        add_event_transition(&fixture, 200u, 12u, 0u, 0u, 5u);
-        add_event_transition(&fixture, 201u, 12u, 0u, 0u, 1u);
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                             0u, 0u, 5u);
+        add_event_transition(&fixture, 201u, SELECTION_LEFT_LEAF,
+                             0u, 0u, 1u);
         check_equal(selection_fixture_init(&fixture, NULL, 0u),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(select_event(&fixture, &selected),
@@ -753,11 +892,139 @@ suite("CFlow Statechart deterministic transition selection") {
         runtime_fixture_destroy(&fixture);
     }
 
+    it("continues within one source after a higher-priority guard disables") {
+        runtime_fixture fixture;
+        selection_guard_probe higher = {
+            NULL, 41, 0u, false, false, NULL};
+        selection_guard_probe lower = {
+            NULL, 41, 0u, true, false, NULL};
+        selection_guard_probe ancestor = {
+            NULL, 41, 0u, true, false, NULL};
+        cflow_statechart_guard_binding bindings[] = {
+            {300u, selection_guard, &higher},
+            {301u, selection_guard, &lower},
+            {302u, selection_guard, &ancestor}};
+        cflow_statechart_selection_snapshot selected = {0};
+        size_t index;
+        selection_fixture(&fixture);
+        for (index = 0u; index < 3u; ++index) {
+            fixture.guards[index] = (cflow_statechart_guard){
+                (cflow_statechart_guard_id)(300u + index), &cmeta_type_int,
+                CMETA_EFFECT_PURE,
+                CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        }
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 3u;
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                             300u, 0u, 0u);
+        add_event_transition(&fixture, 201u, SELECTION_LEFT_LEAF,
+                             301u, 0u, 1u);
+        add_event_transition(&fixture, 202u, SELECTION_LEFT_REGION,
+                             302u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, bindings, 3u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)1u);
+        check_equal(selected.transition_ids[0],
+                    (cflow_statechart_transition_id)201u);
+        check_equal(higher.calls, (size_t)1u);
+        check_equal(lower.calls, (size_t)1u);
+        check_equal(ancestor.calls, (size_t)0u);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("selects an eventless transition with a null guard event") {
+        runtime_fixture fixture;
+        selection_guard_probe guard = {
+            NULL, 41, 0u, true, false, NULL};
+        const cflow_statechart_guard_binding binding = {
+            300u, selection_nullable_event_guard, &guard};
+        const int payload = 7;
+        const cflow_event_view unexpected_event = {
+            100u, &cmeta_type_int, &payload};
+        cflow_statechart_selection_snapshot selected = {0};
+        selection_fixture(&fixture);
+        fixture.guards[0] = (cflow_statechart_guard){
+            300u, &cmeta_type_int, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        add_eventless_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                                 300u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, &binding, 1u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_eventless(&fixture, NULL, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)1u);
+        check_equal(selected.transition_ids[0],
+                    (cflow_statechart_transition_id)200u);
+        check_equal(guard.calls, (size_t)1u);
+        check_equal(select_eventless(
+                        &fixture, &unexpected_event, &selected),
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("selects compound and parallel completion with a null guard event") {
+        runtime_fixture fixture;
+        selection_guard_probe guard = {
+            NULL, 41, 0u, true, false, NULL};
+        const cflow_statechart_guard_binding binding = {
+            300u, selection_nullable_event_guard, &guard};
+        cflow_statechart_selection_snapshot selected = {0};
+        selection_fixture(&fixture);
+        fixture.guards[0] = (cflow_statechart_guard){
+            300u, &cmeta_type_int, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        add_completion_transition(
+            &fixture, 200u, SELECTION_LEFT_LEAF,
+            SELECTION_LEFT_REGION, 300u, 0u, 0u);
+        add_completion_transition(
+            &fixture, 201u, SELECTION_RIGHT_LEAF,
+            SELECTION_ROOT, 300u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, &binding, 1u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_completion(
+                        &fixture, SELECTION_LEFT_REGION, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)1u);
+        check_equal(selected.transition_ids[0],
+                    (cflow_statechart_transition_id)200u);
+        check_equal(select_completion(
+                        &fixture, SELECTION_ROOT, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)1u);
+        check_equal(selected.transition_ids[0],
+                    (cflow_statechart_transition_id)201u);
+        check_equal(guard.calls, (size_t)2u);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("rejects completion for atomic final pseudo and unknown states") {
+        runtime_fixture fixture;
+        cflow_statechart_selection_snapshot selected = {0};
+        const cflow_machine_state_id invalid[] = {
+            SELECTION_LEFT_LEAF, SELECTION_LEFT_FINAL,
+            SELECTION_LEFT_INITIAL, 999999u};
+        size_t index;
+        selection_fixture(&fixture);
+        check_equal(selection_fixture_init(&fixture, NULL, 0u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        for (index = 0u; index < sizeof(invalid) / sizeof(invalid[0]); ++index)
+            check_equal(select_completion(
+                            &fixture, invalid[index], &selected),
+                        CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        runtime_fixture_destroy(&fixture);
+    }
+
     it("deduplicates one ancestor candidate reached from both leaves") {
         runtime_fixture fixture;
         cflow_statechart_selection_snapshot selected = {0};
         selection_fixture(&fixture);
-        add_event_transition(&fixture, 200u, 1u, 0u, 0u, 0u);
+        add_event_transition(&fixture, 200u, SELECTION_ROOT, 0u, 0u, 0u);
         check_equal(selection_fixture_init(&fixture, NULL, 0u),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(select_event(&fixture, &selected),
@@ -772,8 +1039,10 @@ suite("CFlow Statechart deterministic transition selection") {
         runtime_fixture fixture;
         cflow_statechart_selection_snapshot selected = {0};
         selection_fixture(&fixture);
-        add_event_transition(&fixture, 200u, 12u, 0u, 22u, 0u);
-        add_event_transition(&fixture, 201u, 22u, 0u, 12u, 0u);
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF, 0u,
+                             SELECTION_RIGHT_LEAF, 0u);
+        add_event_transition(&fixture, 201u, SELECTION_RIGHT_LEAF, 0u,
+                             SELECTION_LEFT_LEAF, 0u);
         check_equal(selection_fixture_init(&fixture, NULL, 0u),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(select_event(&fixture, &selected),
@@ -788,8 +1057,10 @@ suite("CFlow Statechart deterministic transition selection") {
         runtime_fixture fixture;
         cflow_statechart_selection_snapshot selected = {0};
         selection_fixture(&fixture);
-        add_event_transition(&fixture, 200u, 1u, 0u, 12u, 0u);
-        add_event_transition(&fixture, 201u, 22u, 0u, 12u, 0u);
+        add_event_transition(&fixture, 200u, SELECTION_ROOT, 0u,
+                             SELECTION_LEFT_LEAF, 0u);
+        add_event_transition(&fixture, 201u, SELECTION_RIGHT_LEAF, 0u,
+                             SELECTION_LEFT_LEAF, 0u);
         check_equal(selection_fixture_init(&fixture, NULL, 0u),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(select_event(&fixture, &selected),
@@ -800,14 +1071,30 @@ suite("CFlow Statechart deterministic transition selection") {
         runtime_fixture_destroy(&fixture);
     }
 
+    it("keeps the full prefix when a descendant also conflicts unrelated") {
+        runtime_fixture fixture;
+        cflow_statechart_selection_snapshot selected = {0};
+        const cflow_statechart_transition_id expected[] = {200u, 201u};
+        mixed_conflict_fixture(&fixture);
+        check_equal(selection_fixture_init(&fixture, NULL, 0u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)2u);
+        check_equal(selected.transition_ids, expected, sizeof(expected));
+        runtime_fixture_destroy(&fixture);
+    }
+
     it("keeps targetless candidates from both regions") {
         runtime_fixture fixture;
         cflow_statechart_selection_snapshot selected = {0};
         const cflow_statechart_transition_id expected[] = {200u, 201u};
         size_t byte;
         selection_fixture(&fixture);
-        add_event_transition(&fixture, 200u, 12u, 0u, 0u, 0u);
-        add_event_transition(&fixture, 201u, 22u, 0u, 0u, 0u);
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                             0u, 0u, 0u);
+        add_event_transition(&fixture, 201u, SELECTION_RIGHT_LEAF,
+                             0u, 0u, 0u);
         check_equal(selection_fixture_init(&fixture, NULL, 0u),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(select_event(&fixture, &selected),
@@ -827,8 +1114,10 @@ suite("CFlow Statechart deterministic transition selection") {
         cflow_statechart_transition_id saved[2] = {0};
         const cflow_statechart_transition_id expected[] = {200u, 201u};
         selection_fixture(&fixture);
-        add_event_transition(&fixture, 200u, 12u, 0u, 12u, 0u);
-        add_event_transition(&fixture, 201u, 22u, 0u, 22u, 0u);
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF, 0u,
+                             SELECTION_LEFT_LEAF, 0u);
+        add_event_transition(&fixture, 201u, SELECTION_RIGHT_LEAF, 0u,
+                             SELECTION_RIGHT_LEAF, 0u);
         check_equal(selection_fixture_init(&fixture, NULL, 0u),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(select_event(&fixture, &first),
@@ -838,6 +1127,72 @@ suite("CFlow Statechart deterministic transition selection") {
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(saved, expected, sizeof(expected));
         check_equal(second.transition_ids, expected, sizeof(expected));
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("owns the first user error from an independently fallible guard") {
+        runtime_fixture fixture;
+        char callback_error[64] = "fallible guard failed";
+        selection_guard_probe guard = {
+            NULL, 41, 0u, false, true, callback_error};
+        const cflow_statechart_guard_binding binding = {
+            300u, selection_guard, &guard};
+        cflow_statechart_selection_snapshot selected = {0};
+        cflow_machine_state_id states[5] = {0};
+        const cflow_machine_state_id expected[] = {
+            SELECTION_ROOT, SELECTION_LEFT_REGION, SELECTION_LEFT_LEAF,
+            SELECTION_RIGHT_REGION, SELECTION_RIGHT_LEAF};
+        size_t state_count = 0u;
+        uint64_t version = 0u;
+        selection_fixture(&fixture);
+        fixture.guards[0] = (cflow_statechart_guard){
+            300u, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                             300u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, &binding, 1u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_GUARD_FAILED);
+        memcpy(callback_error, "mutated callback bytes", 23u);
+        check_equal(cflow_statechart_instance_error(&fixture.instance),
+                    "fallible guard failed");
+        check_equal(selected.transition_count, (size_t)0u);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_GUARD_FAILED);
+        check_equal(guard.calls, (size_t)1u);
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 5u,
+                        &state_count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(version, UINT64_C(1));
+        check_equal(states, expected, sizeof(expected));
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("uses a stable default when a fallible guard returns no error") {
+        runtime_fixture fixture;
+        selection_guard_probe guard = {
+            NULL, 41, 0u, false, true, NULL};
+        const cflow_statechart_guard_binding binding = {
+            300u, selection_guard, &guard};
+        cflow_statechart_selection_snapshot selected = {0};
+        selection_fixture(&fixture);
+        fixture.guards[0] = (cflow_statechart_guard){
+            300u, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                             300u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, &binding, 1u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_GUARD_FAILED);
+        check_equal(cflow_statechart_instance_error(&fixture.instance),
+                    "Statechart guard failed");
         runtime_fixture_destroy(&fixture);
     }
 
@@ -852,7 +1207,9 @@ suite("CFlow Statechart deterministic transition selection") {
             {301u, selection_guard, &second_guard}};
         cflow_statechart_selection_snapshot selected = {0};
         cflow_machine_state_id states[5] = {0};
-        const cflow_machine_state_id expected[] = {1u, 10u, 12u, 20u, 22u};
+        const cflow_machine_state_id expected[] = {
+            SELECTION_ROOT, SELECTION_LEFT_REGION, SELECTION_LEFT_LEAF,
+            SELECTION_RIGHT_REGION, SELECTION_RIGHT_LEAF};
         size_t count = 0u;
         uint64_t version = 0u;
         selection_error_reader_probe reader_probe;
@@ -867,8 +1224,10 @@ suite("CFlow Statechart deterministic transition selection") {
             CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
         fixture.definition.guards = fixture.guards;
         fixture.definition.guard_count = 2u;
-        add_event_transition(&fixture, 200u, 12u, 300u, 0u, 0u);
-        add_event_transition(&fixture, 201u, 22u, 301u, 0u, 0u);
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                             300u, 0u, 0u);
+        add_event_transition(&fixture, 201u, SELECTION_RIGHT_LEAF,
+                             301u, 0u, 0u);
         check_equal(selection_fixture_init(&fixture, bindings, 2u),
                     CFLOW_STATECHART_RUNTIME_OK);
         reader_probe.instance = &fixture.instance;

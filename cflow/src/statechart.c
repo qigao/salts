@@ -254,9 +254,11 @@ static bool pseudo_kind(cflow_statechart_state_kind kind) {
            kind == CFLOW_STATECHART_HISTORY_DEEP;
 }
 
-static bool completion_kind(cflow_statechart_state_kind kind) {
-    return kind == CFLOW_STATECHART_COMPOUND ||
-           kind == CFLOW_STATECHART_PARALLEL;
+bool cflow_statechart_internal_state_can_complete(
+    const cflow_statechart_impl *impl, size_t state_index) {
+    if (impl == NULL || state_index >= impl->state_count) return false;
+    return impl->states[state_index].kind == CFLOW_STATECHART_COMPOUND ||
+           impl->states[state_index].kind == CFLOW_STATECHART_PARALLEL;
 }
 
 static bool state_kind_valid(cflow_statechart_state_kind kind) {
@@ -389,7 +391,7 @@ static cflow_statechart_status initialize_tree(cflow_statechart_impl *impl) {
         }
     }
     if (root_count != 1u || pseudo_kind(impl->states[impl->root].kind) ||
-        !completion_kind(impl->states[impl->root].kind)) {
+        !cflow_statechart_internal_state_can_complete(impl, impl->root)) {
         free(stack);
         free(colors);
         return CFLOW_STATECHART_INVALID_TREE;
@@ -456,7 +458,7 @@ static cflow_statechart_status validate_child_kinds(
         }
         if ((impl->states[index].kind == CFLOW_STATECHART_HISTORY_SHALLOW ||
              impl->states[index].kind == CFLOW_STATECHART_HISTORY_DEEP) &&
-            !completion_kind(impl->states[parent].kind)) {
+            !cflow_statechart_internal_state_can_complete(impl, parent)) {
             free(all_children);
             free(initial_children);
             free(real_children);
@@ -533,7 +535,8 @@ static cflow_statechart_status validate_guards(cflow_statechart_impl *impl) {
             return CFLOW_STATECHART_TYPE_MISMATCH;
         if (!cmeta_effects_valid(guard->effects) ||
             !cmeta_properties_valid(guard->properties) ||
-            !cmeta_effects_are_pure(guard->effects) ||
+            (guard->effects != CMETA_EFFECT_PURE &&
+             guard->effects != CMETA_EFFECT_MAY_FAIL) ||
             !cmeta_properties_include(guard->properties, required))
             return CFLOW_STATECHART_INVALID_CONTRACT;
     }
@@ -587,7 +590,7 @@ static cflow_statechart_status validate_transition_trigger(
             if (transition->event != 0u || transition->completion == 0u)
                 return CFLOW_STATECHART_INVALID_TRIGGER;
             return completed != SIZE_MAX &&
-                   completion_kind(impl->states[completed].kind)
+                   cflow_statechart_internal_state_can_complete(impl, completed)
                 ? CFLOW_STATECHART_OK
                 : CFLOW_STATECHART_INVALID_COMPLETION;
         }

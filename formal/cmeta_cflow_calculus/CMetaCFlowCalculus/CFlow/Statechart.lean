@@ -32,14 +32,30 @@ def insertCandidate (selected : List Candidate)
   if rejectedBySelected candidate selected then selected
   else retainNonconflicting candidate selected ++ [candidate]
 
-def selectFrom : List Candidate → List Candidate → List Candidate
-  | selected, [] => selected
-  | selected, candidate :: remaining =>
-      selectFrom (insertCandidate selected candidate) remaining
+structure Selection where
+  seenTransitions : List Nat
+  selected : List Candidate
+  deriving Repr, DecidableEq
 
-/-- Active-leaf candidate order is consumed once, from earliest to latest. -/
+def initialSelection : Selection :=
+  { seenTransitions := [], selected := [] }
+
+def stepCandidate (state : Selection) (candidate : Candidate) : Selection :=
+  if state.seenTransitions.contains candidate.transition then state
+  else
+    { seenTransitions := state.seenTransitions ++ [candidate.transition]
+      selected := insertCandidate state.selected candidate }
+
+def evaluateFrom : Selection → List Candidate → Selection
+  | state, [] => state
+  | state, candidate :: remaining =>
+      evaluateFrom (stepCandidate state candidate) remaining
+
+/-- The input is C's active-leaf/document order, leaf-to-ancestor bubbling
+    order, and normalized trigger/priority/document row order. The forward
+    evaluation consumes that order once and stably ignores repeated IDs. -/
 def select (candidates : List Candidate) : List Candidate :=
-  selectFrom [] candidates
+  (evaluateFrom initialSelection candidates).selected
 
 def ConflictFree (candidates : List Candidate) : Prop :=
   candidates.Pairwise fun left right => conflicts left right = false
