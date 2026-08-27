@@ -242,6 +242,9 @@ jobs:
               @($networkBackends | Sort-Object -Unique).Count -ne $networkBackends.Count) {
             throw "NETWORK_BACKENDS must contain unique comma-separated backend names"
           }
+          [string[]]$sourcePayloads = @("64", "1024", "65536")
+          $sourceSamples = 100
+          $sourceExchanges = 64
 
           @(
             "host=$env:BENCHMARK_HOST"
@@ -254,6 +257,9 @@ jobs:
             "image_version=$env:ImageVersion"
             "benchmark_runs=$env:BENCHMARK_RUNS"
             "network_backends=$($networkBackends -join ',')"
+            "source_payload_bytes=$($sourcePayloads -join ',')"
+            "source_samples=$sourceSamples"
+            "source_exchanges_per_sample=$sourceExchanges"
           ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
 
           $networkDir = Join-Path $resultDir "network"
@@ -278,9 +284,9 @@ jobs:
           $sourceSummary = Join-Path $sourceDir "reactive-source-summary.md"
           $sourceMedianSummary = Join-Path $sourceDir "reactive-source-medians.md"
           New-Item -ItemType Directory -Force -Path $sourceDir | Out-Null
-          "| Run | Backend | Driver | Wait mode | P50 ns | P99 ns | CPU % | IO operations | Admission mean ns | Completion/drive mean ns |" |
+          "| Run | Backend | Payload bytes | Driver | Wait mode | P50 ns | P99 ns | CPU % | IO operations | Admission mean ns | Completion/drive mean ns |" |
             Set-Content -LiteralPath $sourceSummary
-          "| ---: | :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: |" |
+          "| ---: | :--- | ---: | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: |" |
             Add-Content -LiteralPath $sourceSummary
 
           function Assert-NetworkMetricFields($report, $jsonText, $expectedBackend) {
@@ -445,20 +451,28 @@ jobs:
               $env:CFLOW_NETWORK_PROFILE = "latency"
               $env:CFLOW_NETWORK_PEER = "raw"
               $env:CFLOW_NETWORK_STAGE_TIMING = "1"
-              Remove-Item Env:CFLOW_NETWORK_PAYLOAD -ErrorAction SilentlyContinue
+              $env:CFLOW_NETWORK_SAMPLES = $sourceSamples.ToString()
+              $env:CFLOW_NETWORK_EXCHANGES = $sourceExchanges.ToString()
+              $orderedSourcePayloads = @(
+                Get-CflowRotatedOrder -Values $sourcePayloads -Run $run)
+              foreach ($payloadText in $orderedSourcePayloads) {
+              $payloadBytes = [int64]$payloadText
+              $payloadIndex = [array]::IndexOf($sourcePayloads, $payloadText)
+              $env:CFLOW_NETWORK_PAYLOAD = $payloadText
               foreach ($waitMode in @("blocking", "busy")) {
                 $env:CFLOW_NETWORK_WAIT_MODE = $waitMode
                 $driverOrder = @(Get-CflowDriverOrder `
-                  -Run $run -WaitMode $waitMode -BackendIndex $backendIndex)
+                  -Run $run -WaitMode $waitMode -BackendIndex $backendIndex `
+                  -PayloadIndex $payloadIndex)
                 foreach ($driver in $driverOrder) {
                   $env:CFLOW_NETWORK_DRIVER = $driver
                   $sourceRunFile = Join-Path $sourceDir `
-                    ("run-{0}-tcp-latency-{1}-{2}-{3:D2}.txt" -f `
-                      $backend, $driver, $waitMode, $run)
+                    ("run-{0}-tcp-latency-{1}-{2}-{3}-{4:D2}.txt" -f `
+                      $backend, $payloadBytes, $driver, $waitMode, $run)
                   & $networkBenchmark --no-color 2>&1 |
                     Tee-Object -FilePath $sourceRunFile
                   if ($LASTEXITCODE -ne 0) {
-                    throw "Diagnostic $driver TCP/latency/$waitMode run $run failed with exit code $LASTEXITCODE"
+                    throw "Diagnostic $driver TCP/latency/$payloadBytes/$waitMode run $run failed with exit code $LASTEXITCODE"
                   }
                   $jsonLines = @(Get-Content -LiteralPath $sourceRunFile |
                     Where-Object { $_ -match '^CFLOW_BENCHMARK_JSON ' })
@@ -470,8 +484,7 @@ jobs:
                   $report | Add-Member -NotePropertyName benchmark_run -NotePropertyValue $run
                   $jsonText = $report | ConvertTo-Json -Compress
                   Assert-NetworkMetricFields $report $jsonText $backend
-                  $expectedAttempts =
-                    [int64]$report.samples * [int64]$report.exchanges_per_sample
+                  $expectedAttempts = [int64]$sourceSamples * [int64]$sourceExchanges
                   $admissionMean = [double]$report.admission_mean_ns
                   $completionDriveMean = [double]$report.completion_drive_mean_ns
                   if ($report.schema -ne "cflow-network-benchmark/v1" -or
@@ -481,6 +494,9 @@ jobs:
                       $report.peer_mode -ne "raw" -or
                       $report.driver -ne $driver -or
                       -not [bool]$report.stage_timing -or
+                      [int64]$report.samples -ne $sourceSamples -or
+                      [int64]$report.exchanges_per_sample -ne $sourceExchanges -or
+                      [int64]$report.payload_bytes -ne $payloadBytes -or
                       [int64]$report.attempted -ne $expectedAttempts -or
                       [int64]$report.io_operations -lt (2 * $expectedAttempts) -or
                       [int64]$report.admission_ns -le 0 -or
@@ -498,13 +514,16 @@ jobs:
                   }
                   Add-Content -LiteralPath $sourceJsonl -Value $jsonText
                   Add-Content -LiteralPath $sourceSummary -Value `
-                    ("| {0} | {1} | {2} | {3} | {4} | {5} | {6:N3} | {7} | {8:N3} | {9:N3} |" -f `
-                      $run, $report.backend, $report.driver, $report.wait_mode,
-                      $report.p50_ns, $report.p99_ns,
-                      [double]$report.process_cpu_pct, $report.io_operations,
-                      $admissionMean, $completionDriveMean)
+                    ("| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7:N3} | {8} | {9:N3} | {10:N3} |" -f `
+                      $run, $report.backend, $report.payload_bytes,
+                      $report.driver, $report.wait_mode, $report.p50_ns,
+                      $report.p99_ns, [double]$report.process_cpu_pct,
+                      $report.io_operations, $admissionMean, $completionDriveMean)
                 }
               }
+              }
+              Remove-Item Env:CFLOW_NETWORK_SAMPLES -ErrorAction SilentlyContinue
+              Remove-Item Env:CFLOW_NETWORK_EXCHANGES -ErrorAction SilentlyContinue
               $env:CFLOW_NETWORK_DRIVER = "actor"
               $env:CFLOW_NETWORK_STAGE_TIMING = "0"
               $nativePayloads = @{
@@ -594,42 +613,53 @@ jobs:
           Remove-Item Env:CFLOW_NETWORK_DRIVER -ErrorAction SilentlyContinue
           Remove-Item Env:CFLOW_NETWORK_STAGE_TIMING -ErrorAction SilentlyContinue
           Remove-Item Env:CFLOW_NETWORK_BACKEND -ErrorAction SilentlyContinue
+          Remove-Item Env:CFLOW_NETWORK_SAMPLES -ErrorAction SilentlyContinue
+          Remove-Item Env:CFLOW_NETWORK_EXCHANGES -ErrorAction SilentlyContinue
 
           $diagnosticReports = @(Get-Content -LiteralPath $sourceJsonl |
             ForEach-Object { $_ | ConvertFrom-Json })
           $diagnosticGroups = @($diagnosticReports |
-            Group-Object backend, driver, wait_mode)
-          $expectedDiagnosticGroups = 4 * $networkBackends.Count
+            Group-Object backend, payload_bytes, driver, wait_mode)
+          $expectedDiagnosticGroups = 4 * $sourcePayloads.Count * $networkBackends.Count
           if ($diagnosticGroups.Count -ne $expectedDiagnosticGroups) {
-            throw "Expected $expectedDiagnosticGroups backend/driver/wait diagnostic groups, found $($diagnosticGroups.Count)"
+            throw "Expected $expectedDiagnosticGroups backend/payload/driver/wait diagnostic groups, found $($diagnosticGroups.Count)"
           }
           foreach ($group in $diagnosticGroups) {
             if ($group.Count -ne [int]$env:BENCHMARK_RUNS) {
               throw "Expected $env:BENCHMARK_RUNS reports for $($group.Name), found $($group.Count)"
             }
           }
-          "| Backend | Wait mode | Runs | Actor median P50 ns | Source median P50 ns | Paired P50 delta % | Source slower P50 runs | Actor median P99 ns | Source median P99 ns | Paired P99 delta % | Source slower P99 runs | Paired wall delta % | Paired CPU-time delta % | Paired CPU-efficiency delta % | Actor median combined stage ns | Source median combined stage ns | Paired combined-stage delta % |" |
+          "| Backend | Payload bytes | Wait mode | Runs | Actor median P50 ns | Source median P50 ns | Paired P50 delta ns | Paired P50 delta % | Source slower P50 runs | Actor median P99 ns | Source median P99 ns | Paired P99 delta ns | Paired P99 delta % | Source slower P99 runs | Paired wall delta ns/exchange | Paired wall delta % | Paired CPU-time delta ns/exchange | Paired CPU-time delta % | Paired CPU-efficiency delta % | Actor median combined stage ns | Source median combined stage ns | Paired combined-stage delta ns | Paired combined-stage delta % |" |
             Set-Content -LiteralPath $sourceMedianSummary
-          "| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
+          "| :--- | ---: | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
             Add-Content -LiteralPath $sourceMedianSummary
           foreach ($backend in $networkBackends) {
+            foreach ($payloadText in $sourcePayloads) {
             foreach ($waitMode in @("blocking", "busy")) {
               $comparison = Get-CflowPairedSourceSummary `
                 -Reports $diagnosticReports -Backend $backend `
-                -WaitMode $waitMode -ExpectedRuns ([int]$env:BENCHMARK_RUNS)
+                -WaitMode $waitMode -PayloadBytes ([int64]$payloadText) `
+                -ExpectedRuns ([int]$env:BENCHMARK_RUNS)
               Add-Content -LiteralPath $sourceMedianSummary -Value `
-                ("| {0} | {1} | {2} | {3:N0} | {4:N0} | {5:N3} | {6}/{2} | {7:N0} | {8:N0} | {9:N3} | {10}/{2} | {11:N3} | {12:N3} | {13:N3} | {14:N3} | {15:N3} | {16:N3} |" -f `
-                  $comparison.backend, $comparison.wait_mode, $comparison.runs,
+                ("| {0} | {1} | {2} | {3} | {4:N0} | {5:N0} | {6:N3} | {7:N3} | {8}/{3} | {9:N0} | {10:N0} | {11:N3} | {12:N3} | {13}/{3} | {14:N3} | {15:N3} | {16:N3} | {17:N3} | {18:N3} | {19:N3} | {20:N3} | {21:N3} | {22:N3} |" -f `
+                  $comparison.backend, $comparison.payload_bytes,
+                  $comparison.wait_mode, $comparison.runs,
                   $comparison.actor_median_p50_ns, $comparison.source_median_p50_ns,
-                  $comparison.paired_p50_delta_pct, $comparison.source_slower_p50_runs,
+                  $comparison.paired_p50_delta_ns, $comparison.paired_p50_delta_pct,
+                  $comparison.source_slower_p50_runs,
                   $comparison.actor_median_p99_ns, $comparison.source_median_p99_ns,
-                  $comparison.paired_p99_delta_pct, $comparison.source_slower_p99_runs,
+                  $comparison.paired_p99_delta_ns, $comparison.paired_p99_delta_pct,
+                  $comparison.source_slower_p99_runs,
+                  $comparison.paired_wall_delta_ns_per_exchange,
                   $comparison.paired_wall_delta_pct,
+                  $comparison.paired_cpu_time_delta_ns_per_exchange,
                   $comparison.paired_cpu_time_delta_pct,
                   $comparison.paired_cpu_efficiency_delta_pct,
                   $comparison.actor_median_combined_stage_mean_ns,
                   $comparison.source_median_combined_stage_mean_ns,
+                  $comparison.paired_combined_stage_delta_ns,
                   $comparison.paired_combined_stage_delta_pct)
+            }
             }
           }
 
@@ -684,9 +714,10 @@ jobs:
           Add-Content -LiteralPath $summary -Value ""
           Add-Content -LiteralPath $summary -Value "### Actor versus Reactive Source TCP latency"
           Add-Content -LiteralPath $summary -Value ""
-          Add-Content -LiteralPath $summary -Value "Within each backend, both drivers use the same raw loopback echo peer, 64-byte payload, samples, exchanges, wait mode, and enabled stage timing. Driver order is balanced and deltas are medians of same-run Source-versus-Actor pairs."
+          Add-Content -LiteralPath $summary -Value "Within each backend, both drivers use the same raw loopback echo peer, wait mode, enabled stage timing, and a fixed $sourceSamples x $sourceExchanges observation budget at 64 B, 1 KiB, and 64 KiB. Payload order rotates by run; driver order is counterbalanced; deltas are medians of same-run Source-versus-Actor pairs."
           Add-Content -LiteralPath $summary -Value ""
           Add-Content -LiteralPath $summary -Value "Admission is API handoff: Actor through try_submit, Source through cflow_run_request; deferred Source Actor submission is included in completion/drive. Combined stage is the comparable external handoff-to-delivery total."
+          Add-Content -LiteralPath $summary -Value "Absolute ns/exchange and combined-stage deltas are the payload-scaling evidence; percentages are contextual. The CFlow native operation stores the caller-owned payload pointer, so increasing payload does not add a framework payload copy by contract."
           Add-Content -LiteralPath $summary -Value ""
           Get-Content -LiteralPath $sourceMedianSummary | Add-Content -LiteralPath $summary
           Add-Content -LiteralPath $summary -Value ""

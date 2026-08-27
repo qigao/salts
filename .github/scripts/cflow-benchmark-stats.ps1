@@ -49,14 +49,18 @@ function Get-CflowDriverOrder {
 
     [Parameter(Mandatory = $true)]
     [ValidateRange(0, [int]::MaxValue)]
-    [int]$BackendIndex
+    [int]$BackendIndex,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(0, [int]::MaxValue)]
+    [int]$PayloadIndex
   )
 
   if ($Run -le 0) {
     throw "Run must be positive"
   }
   $waitOffset = if ($WaitMode -eq "busy") { 1 } else { 0 }
-  $sourceFirst = (($Run - 1 + $BackendIndex + $waitOffset) % 2) -eq 1
+  $sourceFirst = (($Run - 1 + $BackendIndex + $PayloadIndex + $waitOffset) % 2) -eq 1
   if ($sourceFirst) {
     return @("source", "actor")
   }
@@ -99,6 +103,10 @@ function Get-CflowPairedSourceSummary {
     [string]$WaitMode,
 
     [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$PayloadBytes,
+
+    [Parameter(Mandatory = $true)]
     [int]$ExpectedRuns
   )
 
@@ -106,10 +114,12 @@ function Get-CflowPairedSourceSummary {
     throw "ExpectedRuns must be positive"
   }
   $matching = @($Reports | Where-Object {
-      $_.backend -eq $Backend -and $_.wait_mode -eq $WaitMode
+      $_.backend -eq $Backend -and
+      [int64]$_.payload_bytes -eq $PayloadBytes -and
+      $_.wait_mode -eq $WaitMode
     })
   if ($matching.Count -ne 2 * $ExpectedRuns) {
-    throw "Expected $ExpectedRuns Actor/Source pairs for $Backend/$WaitMode, found $($matching.Count) records"
+    throw "Expected $ExpectedRuns Actor/Source pairs for $Backend/$PayloadBytes/$WaitMode, found $($matching.Count) records"
   }
 
   $actors = @()
@@ -120,6 +130,11 @@ function Get-CflowPairedSourceSummary {
   $cpuTimeDeltas = @()
   $cpuEfficiencyDeltas = @()
   $combinedStageDeltas = @()
+  $p50AbsoluteDeltas = @()
+  $p99AbsoluteDeltas = @()
+  $wallAbsoluteDeltasPerExchange = @()
+  $cpuTimeAbsoluteDeltasPerExchange = @()
+  $combinedStageAbsoluteDeltas = @()
 
   for ($run = 1; $run -le $ExpectedRuns; ++$run) {
     $actor = @($matching | Where-Object {
@@ -129,11 +144,16 @@ function Get-CflowPairedSourceSummary {
         [int]$_.benchmark_run -eq $run -and $_.driver -eq "source"
       })
     if ($actor.Count -ne 1 -or $source.Count -ne 1) {
-      throw "Expected one Actor and one Source report for $Backend/$WaitMode run $run, found $($actor.Count) and $($source.Count)"
+      throw "Expected one Actor and one Source report for $Backend/$PayloadBytes/$WaitMode run $run, found $($actor.Count) and $($source.Count)"
     }
 
     $actor = $actor[0]
     $source = $source[0]
+    $actorAttempts = [int64]$actor.attempted
+    $sourceAttempts = [int64]$source.attempted
+    if ($actorAttempts -le 0 -or $sourceAttempts -ne $actorAttempts) {
+      throw "Actor and Source attempted counts must be equal and positive for $Backend/$PayloadBytes/$WaitMode run $run"
+    }
     $actorCombinedStage =
       [double]$actor.admission_mean_ns + [double]$actor.completion_drive_mean_ns
     $sourceCombinedStage =
@@ -149,12 +169,20 @@ function Get-CflowPairedSourceSummary {
       $source.application_mib_per_cpu_second "CPU efficiency"
     $combinedStageDeltas += Get-CflowPercentDelta `
       $actorCombinedStage $sourceCombinedStage "combined stage"
+    $p50AbsoluteDeltas += [double]$source.p50_ns - [double]$actor.p50_ns
+    $p99AbsoluteDeltas += [double]$source.p99_ns - [double]$actor.p99_ns
+    $wallAbsoluteDeltasPerExchange +=
+      ([double]$source.wall_ns - [double]$actor.wall_ns) / $actorAttempts
+    $cpuTimeAbsoluteDeltasPerExchange +=
+      ([double]$source.process_cpu_ns - [double]$actor.process_cpu_ns) / $actorAttempts
+    $combinedStageAbsoluteDeltas += $sourceCombinedStage - $actorCombinedStage
     $actors += $actor
     $sources += $source
   }
 
   return [pscustomobject][ordered]@{
     backend = $Backend
+    payload_bytes = $PayloadBytes
     wait_mode = $WaitMode
     runs = $ExpectedRuns
     actor_median_p50_ns = Get-CflowMedian @($actors.p50_ns)
@@ -170,6 +198,14 @@ function Get-CflowPairedSourceSummary {
       [math]::Round((Get-CflowMedian $cpuEfficiencyDeltas), 6)
     paired_combined_stage_delta_pct =
       [math]::Round((Get-CflowMedian $combinedStageDeltas), 6)
+    paired_p50_delta_ns = [math]::Round((Get-CflowMedian $p50AbsoluteDeltas), 6)
+    paired_p99_delta_ns = [math]::Round((Get-CflowMedian $p99AbsoluteDeltas), 6)
+    paired_wall_delta_ns_per_exchange =
+      [math]::Round((Get-CflowMedian $wallAbsoluteDeltasPerExchange), 6)
+    paired_cpu_time_delta_ns_per_exchange =
+      [math]::Round((Get-CflowMedian $cpuTimeAbsoluteDeltasPerExchange), 6)
+    paired_combined_stage_delta_ns =
+      [math]::Round((Get-CflowMedian $combinedStageAbsoluteDeltas), 6)
     source_slower_p50_runs = @($p50Deltas | Where-Object { $_ -gt 0.0 }).Count
     source_slower_p99_runs = @($p99Deltas | Where-Object { $_ -gt 0.0 }).Count
     actor_median_cpu_pct = Get-CflowMedian @($actors.process_cpu_pct)
