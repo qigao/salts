@@ -273,17 +273,16 @@ static bool is_descendant(
     return false;
 }
 
-static size_t least_common_ancestor(
-    const cflow_statechart_impl *impl, size_t left, size_t right) {
-    while (impl->depths[left] > impl->depths[right])
-        left = impl->parents[left];
-    while (impl->depths[right] > impl->depths[left])
-        right = impl->parents[right];
-    while (left != right) {
-        left = impl->parents[left];
-        right = impl->parents[right];
+static size_t proper_least_common_compound_ancestor(
+    const cflow_statechart_impl *impl, size_t source, size_t target) {
+    size_t ancestor = impl->parents[source];
+    while (ancestor != SIZE_MAX) {
+        if (impl->states[ancestor].kind == CFLOW_STATECHART_COMPOUND &&
+            target != ancestor && is_descendant(impl, target, ancestor))
+            return ancestor;
+        ancestor = impl->parents[ancestor];
     }
-    return left;
+    return SIZE_MAX;
 }
 
 static cflow_statechart_status validate_unique_orders(
@@ -965,8 +964,11 @@ static cflow_statechart_status normalize_transitions(
             const size_t target = find_state_index(impl, transition->target);
             impl->transition_domains[index] =
                 transition->kind == CFLOW_STATECHART_TRANSITION_INTERNAL &&
-                is_descendant(impl, target, source)
-                ? source : least_common_ancestor(impl, source, target);
+                impl->states[source].kind == CFLOW_STATECHART_COMPOUND &&
+                target != source && is_descendant(impl, target, source)
+                ? source
+                : proper_least_common_compound_ancestor(
+                      impl, source, target);
         }
     }
     return CFLOW_STATECHART_OK;

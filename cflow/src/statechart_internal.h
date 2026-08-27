@@ -48,7 +48,12 @@ typedef struct cflow_statechart_impl {
  * children use document order, transitions use trigger key/priority/document
  * order, and actions use declared action order. Offsets have owner_count + 1
  * entries. Missing defaults, targetless domains, and the root parent use
- * SIZE_MAX. All arrays are immutable after a successful build.
+ * SIZE_MAX. A targetless transition uses SIZE_MAX for no exit domain. A
+ * target-bearing external transition with no modeled proper common compound
+ * ancestor also uses SIZE_MAX for the virtual outer domain; its nonzero target
+ * distinguishes the full-configuration exit case. Internal transitions use
+ * their compound source as domain only for a proper descendant target. All
+ * arrays are immutable after a successful build.
  */
 
 /** Private borrowed normalized IR; invalid after cflow_statechart_destroy(). */
