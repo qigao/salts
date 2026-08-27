@@ -20,11 +20,39 @@ typedef enum cflow_statechart_action_phase {
     CFLOW_STATECHART_ACTION_HISTORY
 } cflow_statechart_action_phase;
 
+/**
+ * Copy one internal Event into the current microstep's bounded staging FIFO.
+ * `event`, its payload, `user`, and `out_error` are borrowed for this call.
+ * Success means the payload was copied; failure returns false and writes a
+ * borrowed diagnostic to `*out_error`. The function and `user` are valid only
+ * during their enclosing executable callback and must not be retained.
+ */
 typedef bool (*cflow_statechart_raise_fn)(void *user,
     const cflow_event_view *event, const char **out_error);
+/**
+ * Evaluate one guard against borrowed immutable state and an optional Event.
+ * `event` is non-NULL only for an EVENT trigger; all inputs and payload bytes
+ * are valid only until return and must not be retained or modified. On true,
+ * the callback must write `*out_enabled` and leave `*out_error` NULL. On
+ * false, enabled is ignored; a MAY_FAIL declaration may place a borrowed
+ * diagnostic in `*out_error`, which need remain valid only until return.
+ */
 typedef bool (*cflow_statechart_guard_fn)(void *user, const void *state,
     const cflow_event_view *event, bool *out_enabled,
     const char **out_error);
+/**
+ * Execute one action over a staged state value.
+ *
+ * `state` is a borrowed immutable input of the declared state type. `event`
+ * and its payload are borrowed until return and are NULL for eventless and
+ * completion work. `out_state` is a distinct, non-aliasing writable object of
+ * exactly that type; a successful callback must fully initialize it. The
+ * next action observes that value. A false return discards `out_state` and all
+ * staged raises. Error text follows the guard lifetime rule. `raise_internal`
+ * copies a valid Event before returning and may be called repeatedly until it
+ * reports bounded-queue/type failure; neither it nor `raise_user` may escape
+ * this callback.
+ */
 typedef bool (*cflow_statechart_executable_fn)(void *user,
     cflow_statechart_action_phase phase, cflow_machine_state_id owner,
     const void *state, const cflow_event_view *event, void *out_state,
@@ -143,9 +171,12 @@ typedef struct cflow_statechart_instance { void *impl; }
  * leaves `instance` empty.
  *
  * Guard and executable callbacks run only on the borrowed SerialExecutor.
- * They may call close/cancel, but must not destroy the instance or wait on the
- * same Executor. External callers may invoke `try_send` concurrently (MPSC);
- * semantic mutation has exactly one Executor owner.
+ * Initial stabilization callbacks may run before this function returns; the
+ * instance handle is not yet published, so no public instance API (including
+ * close/cancel) is available from those callbacks. After successful return,
+ * callbacks may call close/cancel, but must not destroy the instance or wait
+ * on the same Executor. External callers may invoke `try_send` concurrently
+ * (MPSC); semantic mutation has exactly one Executor owner.
  */
 cflow_statechart_runtime_status cflow_statechart_instance_init(
     cflow_statechart_instance *instance,
@@ -185,6 +216,11 @@ bool cflow_statechart_instance_copy_state(
     const cflow_statechart_instance *instance,
     const cmeta_type_desc **out_type, void *out_state,
     size_t state_capacity);
+/**
+ * Copy one linearizable accounting snapshot. At every snapshot, including
+ * while producers and the driver are active:
+ * accepted = completed + failed + cancelled + pending + in_flight.
+ */
 bool cflow_statechart_instance_get_stats(
     const cflow_statechart_instance *instance,
     cflow_statechart_instance_stats *out);

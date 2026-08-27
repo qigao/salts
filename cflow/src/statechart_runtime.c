@@ -106,6 +106,8 @@ typedef struct cflow_statechart_instance_impl {
     uint64_t microstep_cancelled;
     uint64_t microstep_finalized;
     char *error_storage;
+    /* External transfer/accounting order is this lock, then mailbox lock.
+       The private mailbox is never armed with a waker. */
     turbo_mutex_t lock;
     const char *error;
     bool error_owned;
@@ -113,9 +115,11 @@ typedef struct cflow_statechart_instance_impl {
     uint64_t macrosteps;
     uint64_t microsteps;
     uint64_t actions;
+    uint64_t external_accepted;
     uint64_t external_completed;
     uint64_t external_failed;
-    uint64_t external_cancelled_in_flight;
+    uint64_t external_cancelled;
+    size_t external_pending;
     cflow_statechart_runtime_status last_status;
     bool closed;
     bool cancelled;
@@ -974,9 +978,19 @@ static void settle_external_locked(cflow_statechart_instance_impl *impl,
     if (status == CFLOW_STATECHART_RUNTIME_OK)
         counter_increment(&impl->external_completed);
     else if (status == CFLOW_STATECHART_RUNTIME_TASK_CANCELLED)
-        counter_increment(&impl->external_cancelled_in_flight);
+        counter_increment(&impl->external_cancelled);
     else
         counter_increment(&impl->external_failed);
+}
+
+static void cancel_pending_external_locked(
+    cflow_statechart_instance_impl *impl) {
+    const uint64_t pending = (uint64_t)impl->external_pending;
+    impl->external_pending = 0u;
+    if (UINT64_MAX - impl->external_cancelled < pending)
+        impl->external_cancelled = UINT64_MAX;
+    else
+        impl->external_cancelled += pending;
 }
 
 static void clear_semantic_queues_locked(
@@ -999,8 +1013,10 @@ static void claim_external_for_failure_locked(
     if (cflow_mailbox_try_receive(
             &impl->external_mailbox, &event_id, &event_type,
             impl->driver_event_payload,
-            impl->driver_event_capacity) == CFLOW_MAILBOX_OK)
+            impl->driver_event_capacity) == CFLOW_MAILBOX_OK) {
+        if (impl->external_pending != 0u) --impl->external_pending;
         impl->external_in_flight = true;
+    }
 }
 
 static void latch_terminal_failure(cflow_statechart_instance_impl *impl,
@@ -1013,6 +1029,7 @@ static void latch_terminal_failure(cflow_statechart_instance_impl *impl,
     if (impl->last_status == CFLOW_STATECHART_RUNTIME_OK)
         impl->last_status = status;
     settle_external_locked(impl, status);
+    cancel_pending_external_locked(impl);
     clear_semantic_queues_locked(impl);
     impl->closed = true;
     impl->done = true;
@@ -2013,6 +2030,14 @@ static cflow_statechart_runtime_status execute_microstep(
             return status;
         }
     }
+    for (position = 0u; position < impl->ir->state_count; ++position) {
+        const cflow_statechart_state_kind kind =
+            impl->ir->states[position].kind;
+        if (bit_test(impl->exit_union, position) &&
+            (kind == CFLOW_STATECHART_COMPOUND ||
+             kind == CFLOW_STATECHART_PARALLEL))
+            bit_clear(impl->completion_bits[staged], position);
+    }
     status = stage_completions(impl, staged);
     if (status != CFLOW_STATECHART_RUNTIME_OK) {
         microstep_fail(impl, status,
@@ -2058,11 +2083,30 @@ static void statechart_microstep_run(void *user) {
 static void statechart_microstep_cancel(void *user) {
     cflow_statechart_instance_impl *impl =
         (cflow_statechart_instance_impl *)user;
+    bool cancel_mailbox = false;
     turbo_mutex_lock(&impl->lock);
-    impl->microstep_result = CFLOW_STATECHART_RUNTIME_TASK_CANCELLED;
+    if (!impl->closed && !impl->cancelled && !impl->done &&
+        impl->error == NULL) {
+        preserve_first_error_locked(
+            impl, "Statechart SerialExecutor cancelled a queued microstep");
+        impl->last_status = CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED;
+        impl->microstep_result = CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED;
+        impl->closed = true;
+        impl->done = true;
+        cancel_pending_external_locked(impl);
+        clear_semantic_queues_locked(impl);
+        cancel_mailbox = true;
+    } else {
+        impl->microstep_result = impl->error != NULL &&
+                impl->last_status != CFLOW_STATECHART_RUNTIME_OK
+            ? impl->last_status
+            : CFLOW_STATECHART_RUNTIME_TASK_CANCELLED;
+    }
     if (impl->microstep_cancelled != UINT64_MAX)
         ++impl->microstep_cancelled;
     turbo_mutex_unlock(&impl->lock);
+    if (cancel_mailbox && impl->external_mailbox_initialized)
+        (void)cflow_mailbox_cancel(&impl->external_mailbox);
 }
 
 static void statechart_microstep_finalize(void *user) {
@@ -2096,6 +2140,7 @@ static void statechart_microstep_finalize(void *user) {
             if (impl->macrostep_active) counter_increment(&impl->macrosteps);
             impl->macrostep_active = false;
             clear_semantic_queues_locked(impl);
+            cancel_pending_external_locked(impl);
             impl->done = true;
             impl->closed = true;
             terminal = true;
@@ -2301,6 +2346,7 @@ static int driver_try_trigger(cflow_statechart_instance_impl *impl,
 }
 
 static void settle_quiescent_macrostep(cflow_statechart_instance_impl *impl) {
+    bool terminal;
     turbo_mutex_lock(&impl->lock);
     settle_external_locked(impl, CFLOW_STATECHART_RUNTIME_OK);
     if (impl->macrostep_active) counter_increment(&impl->macrosteps);
@@ -2311,9 +2357,11 @@ static void settle_quiescent_macrostep(cflow_statechart_instance_impl *impl) {
     if (root_configuration_complete(impl) || impl->closed) {
         impl->closed = true;
         impl->done = true;
+        cancel_pending_external_locked(impl);
     }
+    terminal = impl->done;
     turbo_mutex_unlock(&impl->lock);
-    if (impl->done && impl->external_mailbox_initialized)
+    if (terminal && impl->external_mailbox_initialized)
         (void)cflow_mailbox_cancel(&impl->external_mailbox);
 }
 
@@ -2378,32 +2426,32 @@ static void statechart_driver_run(void *user) {
 
 external_admission:
     if (!impl->external_mailbox_initialized) return;
+    turbo_mutex_lock(&impl->lock);
     mailbox_status = cflow_mailbox_try_receive(
         &impl->external_mailbox, &event_id, &event_type,
         impl->driver_event_payload, impl->driver_event_capacity);
     if (mailbox_status == CFLOW_MAILBOX_EMPTY) {
-        turbo_mutex_lock(&impl->lock);
         impl->skip_to_external = true;
         turbo_mutex_unlock(&impl->lock);
         return;
     }
     if (mailbox_status == CFLOW_MAILBOX_CLOSED ||
         mailbox_status == CFLOW_MAILBOX_CANCELLED) {
-        turbo_mutex_lock(&impl->lock);
         impl->closed = true;
         impl->done = true;
         turbo_mutex_unlock(&impl->lock);
         return;
     }
     if (mailbox_status != CFLOW_MAILBOX_OK) {
+        turbo_mutex_unlock(&impl->lock);
         latch_terminal_failure(
             impl, CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION,
             "Statechart external mailbox receive failed");
         return;
     }
+    if (impl->external_pending != 0u) --impl->external_pending;
     event = (cflow_event_view){
         event_id, event_type, impl->driver_event_payload};
-    turbo_mutex_lock(&impl->lock);
     impl->external_in_flight = true;
     if (impl->closed || impl->done || impl->cancelled ||
         impl->error != NULL) {
@@ -2431,10 +2479,29 @@ external_admission:
 }
 
 static void statechart_driver_cancel(void *user) {
-    latch_terminal_failure(
-        (cflow_statechart_instance_impl *)user,
-        CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED,
-        "Statechart SerialExecutor cancelled a queued quantum");
+    cflow_statechart_instance_impl *impl =
+        (cflow_statechart_instance_impl *)user;
+    bool executor_won = false;
+    if (impl == NULL) return;
+    turbo_mutex_lock(&impl->lock);
+    if (!impl->closed && !impl->cancelled && !impl->done &&
+        impl->error == NULL) {
+        claim_external_for_failure_locked(impl);
+        preserve_first_error_locked(
+            impl, "Statechart SerialExecutor cancelled a queued quantum");
+        impl->last_status = CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED;
+        settle_external_locked(
+            impl, CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED);
+        cancel_pending_external_locked(impl);
+        clear_semantic_queues_locked(impl);
+        impl->closed = true;
+        impl->done = true;
+        impl->driver_repost = false;
+        executor_won = true;
+    }
+    turbo_mutex_unlock(&impl->lock);
+    if (executor_won && impl->external_mailbox_initialized)
+        (void)cflow_mailbox_cancel(&impl->external_mailbox);
 }
 
 static void statechart_driver_finalize(void *user) {
@@ -2480,19 +2547,24 @@ static cflow_admission_status schedule_statechart_driver(
         const char *message = admission == CFLOW_ADMISSION_FULL
             ? "Statechart SerialExecutor is full"
             : "Statechart SerialExecutor is closed";
+        bool executor_won = false;
         turbo_mutex_lock(&impl->lock);
         impl->driver_scheduled = false;
-        claim_external_for_failure_locked(impl);
-        preserve_first_error_locked(impl, message);
-        if (impl->last_status == CFLOW_STATECHART_RUNTIME_OK)
+        if (!impl->closed && !impl->cancelled && !impl->done &&
+            impl->error == NULL) {
+            claim_external_for_failure_locked(impl);
+            preserve_first_error_locked(impl, message);
             impl->last_status = failure;
-        settle_external_locked(impl, failure);
-        clear_semantic_queues_locked(impl);
-        impl->closed = true;
-        impl->done = true;
-        impl->driver_repost = false;
+            settle_external_locked(impl, failure);
+            cancel_pending_external_locked(impl);
+            clear_semantic_queues_locked(impl);
+            impl->closed = true;
+            impl->done = true;
+            impl->driver_repost = false;
+            executor_won = true;
+        }
         turbo_mutex_unlock(&impl->lock);
-        if (impl->external_mailbox_initialized)
+        if (executor_won && impl->external_mailbox_initialized)
             (void)cflow_mailbox_cancel(&impl->external_mailbox);
     }
     return admission;
@@ -2769,24 +2841,26 @@ cflow_mailbox_status cflow_statechart_instance_try_send(
     cflow_statechart_instance_impl *impl = instance != NULL
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     cflow_mailbox_status status;
-    bool closed, cancelled;
+    bool cancelled;
     if (impl == NULL || !impl->external_mailbox_initialized)
         return CFLOW_MAILBOX_INVALID_ARGUMENT;
     turbo_mutex_lock(&impl->lock);
-    closed = impl->closed || impl->done || impl->error != NULL;
+    cancelled = impl->cancelled;
+    if (impl->closed || impl->done || impl->error != NULL) {
+        turbo_mutex_unlock(&impl->lock);
+        return cancelled ? CFLOW_MAILBOX_CANCELLED : CFLOW_MAILBOX_CLOSED;
+    }
+    status = cflow_mailbox_try_send(&impl->external_mailbox, event);
+    if (status == CFLOW_MAILBOX_OK) {
+        counter_increment(&impl->external_accepted);
+        ++impl->external_pending;
+    }
     cancelled = impl->cancelled;
     turbo_mutex_unlock(&impl->lock);
-    if (closed)
-        return cancelled ? CFLOW_MAILBOX_CANCELLED : CFLOW_MAILBOX_CLOSED;
-    status = cflow_mailbox_try_send(&impl->external_mailbox, event);
     if (status != CFLOW_MAILBOX_OK) {
-        if (status == CFLOW_MAILBOX_CANCELLED) {
-            turbo_mutex_lock(&impl->lock);
-            cancelled = impl->cancelled;
-            turbo_mutex_unlock(&impl->lock);
+        if (status == CFLOW_MAILBOX_CANCELLED)
             return cancelled ? CFLOW_MAILBOX_CANCELLED
                              : CFLOW_MAILBOX_CLOSED;
-        }
         return status;
     }
     (void)schedule_statechart_driver(impl);
@@ -2811,6 +2885,7 @@ void cflow_statechart_instance_close(cflow_statechart_instance *instance) {
         if (impl->macrostep_active) counter_increment(&impl->macrosteps);
         impl->macrostep_active = false;
         clear_semantic_queues_locked(impl);
+        cancel_pending_external_locked(impl);
         impl->done = true;
     }
     turbo_mutex_unlock(&impl->lock);
@@ -2837,6 +2912,7 @@ void cflow_statechart_instance_cancel(cflow_statechart_instance *instance) {
         if (impl->macrostep_active) counter_increment(&impl->macrosteps);
         impl->macrostep_active = false;
         clear_semantic_queues_locked(impl);
+        cancel_pending_external_locked(impl);
         impl->done = true;
     }
     turbo_mutex_unlock(&impl->lock);
@@ -2894,24 +2970,15 @@ bool cflow_statechart_instance_get_stats(
     cflow_statechart_instance_impl *impl = instance != NULL
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     cflow_statechart_instance_stats snapshot = {0};
-    cflow_mailbox_stats mailbox_stats = {0};
     size_t index;
     if (impl == NULL || out == NULL) return false;
-    if (impl->external_mailbox_initialized &&
-        !cflow_mailbox_get_stats(&impl->external_mailbox, &mailbox_stats))
-        return false;
     turbo_mutex_lock(&impl->lock);
     snapshot.configuration_version = impl->configuration_version;
-    snapshot.external_accepted = mailbox_stats.accepted;
+    snapshot.external_accepted = impl->external_accepted;
     snapshot.external_completed = impl->external_completed;
     snapshot.external_failed = impl->external_failed;
-    snapshot.external_cancelled =
-        UINT64_MAX - mailbox_stats.cancelled <
-                impl->external_cancelled_in_flight
-            ? UINT64_MAX
-            : mailbox_stats.cancelled +
-                impl->external_cancelled_in_flight;
-    snapshot.external_pending = mailbox_stats.pending;
+    snapshot.external_cancelled = impl->external_cancelled;
+    snapshot.external_pending = impl->external_pending;
     snapshot.external_in_flight = impl->external_in_flight ? 1u : 0u;
     snapshot.macrosteps = impl->macrosteps;
     snapshot.microsteps = impl->microsteps;

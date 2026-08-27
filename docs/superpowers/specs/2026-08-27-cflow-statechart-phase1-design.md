@@ -91,7 +91,8 @@ Initial and history nodes are pseudo-nodes and never appear in an active
 configuration. Each has exactly one target-bearing, eventless default
 transition. A compound state has exactly one direct initial pseudo-child. A
 parallel state enters every direct non-pseudo child. An atomic or final state
-has no children. The root is a single compound or parallel state.
+has no children. The root is a compound or parallel state, or the sole
+childless final state.
 
 Transition triggers are typed instead of encoded as strings:
 
@@ -250,16 +251,20 @@ application's idempotency/compensation responsibility.
 After successful entry, completion is computed bottom-up. Entering a final
 child completes its compound parent; a parallel completes only when every
 direct region is in a final configuration. Newly completed states enqueue one
-deduplicated internal COMPLETION trigger. Then staged extended state, history,
-configuration, and queue writes are committed exactly once under the mutex.
+deduplicated internal COMPLETION trigger. The latch is once per active entry:
+exiting a compound/parallel state clears its staged latch before bottom-up
+completion detection, so immediate exit/reentry generates a fresh trigger.
+Then staged extended state, history, configuration, and queue writes are
+committed exactly once under the mutex.
 
 One macrostep consumes at most one external Event and then runs to quiescence:
 
 1. repeatedly select eventless transitions;
-2. if none, consume one internal Event/completion trigger;
-3. execute an enabled transition set and repeat;
-4. stop when no eventless transition and no internal event remain;
-5. only then admit the next external Event to execution.
+2. if none, consume one internal Event FIFO item;
+3. if none, consume one completion FIFO item;
+4. execute an enabled transition set and repeat;
+5. stop when all three semantic sources are quiescent;
+6. only then admit the next external Event to execution.
 
 `microstep_limit` is a required positive hard bound per macrostep. Exceeding it
 is a terminal first error; there is no silent truncation or fallback. This
@@ -274,7 +279,7 @@ turns eventless cycles into a diagnosable bounded failure.
 | Ownership | definition copies rows; instance copies state/Event bytes and binding rows; descriptors/executor/callback users are borrowed |
 | Lifetime | borrowed objects outlive instance destroy; snapshots are caller-owned copies; no borrowed configuration view crosses a commit |
 | Topology | external admission is MPSC; exactly one non-manual SerialExecutor callback consumes and mutates semantic state |
-| Ordering | external FIFO; internal FIFO; eventless before internal; internal before next external; document-order selection/action rules |
+| Ordering | external/internal/completion FIFO; eventless, then internal, then completion, then at most one external per macrostep; document-order selection/action rules |
 | Capacity | configured external/internal queue capacities, state count, selected-transition count, action count, timer capacity, and microstep limit |
 | Backpressure | external/internal FULL, CLOSED, trigger/type mismatch, and limit exceeded are distinct results; nothing is dropped or expanded |
 | Failure | first owned error; failed microstep publishes no staged semantic state; accepted external Event is settled failed exactly once |
@@ -284,7 +289,12 @@ turns eventless cycles into a diagnosable bounded failure.
 All storage is allocated at build/init. Selection, microstep, timer scope
 cancellation, and snapshot copy perform no unbounded allocation. The runtime
 uses a mutex for control/state publication and does not introduce a lock-free
-configuration structure.
+configuration structure. External mailbox transfer and accepted-Event
+accounting linearize under that instance mutex. If both locks are needed, the
+only order is instance mutex then private mailbox mutex; the private mailbox
+exposes no waitable/waker, and callbacks and Executor posts occur only after
+the instance mutex is released. Every live stats snapshot therefore satisfies
+`accepted = completed + failed + cancelled + pending + in_flight`.
 
 ## Query and compatibility API
 
@@ -321,7 +331,13 @@ processing. Close/cancel rejects schedules and settles pending timer slots.
 - `close` rejects new external events and timers, lets a commit that already
   won finish, then settles queued events canceled and exposes DONE.
 - `cancel` rejects admission and discards an uncommitted staged microstep. A
-  commit that linearized first remains visible exactly once.
+  commit that linearized first remains visible exactly once. If cancel wins
+  after commit but before the external macrostep reaches quiescence, the
+  committed state remains visible while that Event settles `cancelled`, not
+  `completed`; no rollback is attempted.
+- Initialization stabilization may invoke callbacks before init returns. The
+  public instance handle is not published yet, so public instance control APIs
+  are unavailable from those callbacks.
 - Destroy is a quiescent control-plane operation. It waits for the borrowed
   executor to become idle before freeing callback-visible storage.
 

@@ -2631,7 +2631,9 @@ suite("CFlow Statechart ordered atomic microsteps") {
         check_equal(stats.cancelled, UINT64_C(1));
         check_equal(stats.finalized, UINT64_C(1));
         check_equal(stats.last_status,
-                    CFLOW_STATECHART_RUNTIME_TASK_CANCELLED);
+                    CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED);
+        check_equal(cflow_statechart_instance_error(&fixture.instance),
+                    "Statechart SerialExecutor cancelled a queued microstep");
         microstep_fixture_destroy(&fixture);
     }
 
@@ -2972,6 +2974,10 @@ typedef struct rtc_fixture {
     bool raise_twice;
     bool close_during_action;
     bool cancel_during_action;
+    bool queue_cancel_after_commit;
+    bool raise_on_other;
+    struct microstep_executor_blocker *guard_blocker;
+    cflow_statechart_guard guards[1];
 } rtc_fixture;
 
 typedef struct rtc_producer_context {
@@ -2980,11 +2986,23 @@ typedef struct rtc_producer_context {
     atomic_int *failures;
 } rtc_producer_context;
 
+typedef struct rtc_stats_poller_context {
+    cflow_statechart_instance *instance;
+    atomic_bool *stop;
+    atomic_int *polls;
+    atomic_int *violations;
+} rtc_stats_poller_context;
+
 enum {
     RTC_ROOT = 100u, RTC_INITIAL = 101u, RTC_A = 110u, RTC_B = 120u,
     RTC_C = 130u, RTC_FINAL = 140u, RTC_D = 150u, RTC_E = 160u,
-    RTC_GO = 10u, RTC_NEXT = 11u, RTC_OTHER = 12u, RTC_EXEC = 500u
+    RTC_GO = 10u, RTC_NEXT = 11u, RTC_OTHER = 12u, RTC_EXEC = 500u,
+    RTC_QUEUE_GUARD = 501u
 };
+
+static void rtc_cancel_instance(void *user) {
+    cflow_statechart_instance_cancel((cflow_statechart_instance *)user);
+}
 
 static bool rtc_action(void *user, cflow_statechart_action_phase phase,
                        cflow_machine_state_id owner, const void *state,
@@ -2998,8 +3016,9 @@ static bool rtc_action(void *user, cflow_statechart_action_phase phase,
     fixture->trace[fixture->trace_count++] = (int)owner;
     *(int *)out_state = *(const int *)state + 1;
     *out_error = NULL;
-    if (phase == CFLOW_STATECHART_ACTION_TRANSITION &&
-        event != NULL && event->id == RTC_GO) {
+    if (phase == CFLOW_STATECHART_ACTION_TRANSITION && event != NULL &&
+        (event->id == RTC_GO ||
+         (fixture->raise_on_other && event->id == RTC_OTHER))) {
         const int payload = 77;
         const cflow_event_view raised = {
             RTC_NEXT, &cmeta_type_int, &payload};
@@ -3009,12 +3028,34 @@ static bool rtc_action(void *user, cflow_statechart_action_phase phase,
         if (fixture->raise_twice &&
             !raise_internal(raise_user, &raised, out_error))
             return false;
-        if (fixture->close_during_action)
+        if (event->id == RTC_GO && fixture->close_during_action)
             cflow_statechart_instance_close(&fixture->instance);
-        if (fixture->cancel_during_action)
+        if (event->id == RTC_GO && fixture->cancel_during_action)
             cflow_statechart_instance_cancel(&fixture->instance);
+        if (event->id == RTC_GO && fixture->queue_cancel_after_commit &&
+            cflow_executor_try_post(&fixture->executor, rtc_cancel_instance,
+                                    &fixture->instance) !=
+                CFLOW_ADMISSION_ACCEPTED)
+            return false;
     }
     return true;
+}
+
+static bool rtc_queue_microstep_guard(void *user, const void *state,
+                                      const cflow_event_view *event,
+                                      bool *out_enabled,
+                                      const char **out_error) {
+    rtc_fixture *fixture = (rtc_fixture *)user;
+    (void)state;
+    (void)event;
+    if (fixture == NULL || fixture->guard_blocker == NULL ||
+        out_enabled == NULL || out_error == NULL)
+        return false;
+    *out_error = NULL;
+    *out_enabled = cflow_executor_try_post(
+        &fixture->executor, microstep_block_executor,
+        fixture->guard_blocker) == CFLOW_ADMISSION_ACCEPTED;
+    return *out_enabled;
 }
 
 static void rtc_producer(void *user) {
@@ -3027,6 +3068,22 @@ static void rtc_producer(void *user) {
         if (cflow_statechart_instance_try_send(
                 context->instance, &event) != CFLOW_MAILBOX_OK)
             atomic_fetch_add(context->failures, 1);
+    }
+}
+
+static void rtc_stats_poller(void *user) {
+    rtc_stats_poller_context *context = (rtc_stats_poller_context *)user;
+    while (!atomic_load(context->stop)) {
+        cflow_statechart_instance_stats stats = {0};
+        atomic_fetch_add(context->polls, 1);
+        if (!cflow_statechart_instance_get_stats(context->instance, &stats) ||
+            stats.external_accepted !=
+                stats.external_completed + stats.external_failed +
+                    stats.external_cancelled +
+                    (uint64_t)stats.external_pending +
+                    (uint64_t)stats.external_in_flight)
+            atomic_fetch_add(context->violations, 1);
+        turbo_thread_yield();
     }
 }
 
@@ -3106,11 +3163,15 @@ static cflow_statechart_runtime_status rtc_init_with_external(
     size_t executor_capacity) {
     const cflow_statechart_executable_binding binding = {
         RTC_EXEC, rtc_action, fixture};
+    const cflow_statechart_guard_binding guard_binding = {
+        RTC_QUEUE_GUARD, rtc_queue_microstep_guard, fixture};
     cflow_statechart_instance_config config = {
         .statechart = &fixture->statechart,
         .initial_state = &fixture->initial_state,
         .executables = &binding,
         .executable_count = 1u,
+        .guards = fixture->guard_blocker != NULL ? &guard_binding : NULL,
+        .guard_count = fixture->guard_blocker != NULL ? 1u : 0u,
         .external_event_capacity = external_capacity,
         .internal_event_capacity = internal_capacity,
         .completion_capacity = completion_capacity,
@@ -3122,6 +3183,138 @@ static cflow_statechart_runtime_status rtc_init_with_external(
     check_true(cflow_executor_serial_init_with_capacity(
         &fixture->executor, executor_capacity));
     return cflow_statechart_instance_init(&fixture->instance, &config);
+}
+
+typedef struct completion_reentry_fixture {
+    cflow_statechart_state states[3];
+    cflow_statechart_guard guards[1];
+    cflow_statechart_executable executables[1];
+    cflow_statechart_transition transitions[2];
+    cflow_statechart_transition_action actions[1];
+    cflow_statechart_definition definition;
+    cflow_statechart statechart;
+    cflow_executor executor;
+    cflow_statechart_instance instance;
+    int initial_state;
+    size_t enabled_count;
+    size_t guard_calls;
+    cflow_machine_state_id trace[4];
+    size_t trace_count;
+} completion_reentry_fixture;
+
+enum {
+    REENTRY_ROOT = 900u, REENTRY_INITIAL = 901u, REENTRY_FINAL_ONE = 902u,
+    REENTRY_FINAL_TWO = 903u, REENTRY_GUARD = 910u, REENTRY_EXEC = 911u
+};
+
+static bool completion_reentry_guard(void *user, const void *state,
+                                     const cflow_event_view *event,
+                                     bool *out_enabled,
+                                     const char **out_error) {
+    completion_reentry_fixture *fixture =
+        (completion_reentry_fixture *)user;
+    (void)state;
+    if (fixture == NULL || event != NULL || out_enabled == NULL ||
+        out_error == NULL)
+        return false;
+    ++fixture->guard_calls;
+    *out_enabled = fixture->guard_calls <= fixture->enabled_count;
+    *out_error = NULL;
+    return true;
+}
+
+static bool completion_reentry_action(
+    void *user, cflow_statechart_action_phase phase,
+    cflow_machine_state_id owner, const void *state,
+    const cflow_event_view *event, void *out_state,
+    cflow_statechart_raise_fn raise_internal, void *raise_user,
+    const char **out_error) {
+    completion_reentry_fixture *fixture =
+        (completion_reentry_fixture *)user;
+    (void)raise_internal;
+    (void)raise_user;
+    if (fixture == NULL || phase != CFLOW_STATECHART_ACTION_TRANSITION ||
+        event != NULL || state == NULL || out_state == NULL ||
+        out_error == NULL || fixture->trace_count >= 4u)
+        return false;
+    fixture->trace[fixture->trace_count++] = owner;
+    *(int *)out_state = *(const int *)state + 1;
+    *out_error = NULL;
+    return true;
+}
+
+static cflow_statechart_runtime_status completion_reentry_init(
+    completion_reentry_fixture *fixture,
+    cflow_statechart_state_kind root_kind, size_t completion_capacity,
+    size_t enabled_count) {
+    const cflow_statechart_guard_binding guard_binding = {
+        REENTRY_GUARD, completion_reentry_guard, fixture};
+    const cflow_statechart_executable_binding executable_binding = {
+        REENTRY_EXEC, completion_reentry_action, fixture};
+    cflow_statechart_instance_config config;
+    memset(fixture, 0, sizeof(*fixture));
+    fixture->enabled_count = enabled_count;
+    fixture->states[0] = (cflow_statechart_state){
+        REENTRY_ROOT, 0u, root_kind, 0u};
+    if (root_kind == CFLOW_STATECHART_COMPOUND) {
+        fixture->states[1] = (cflow_statechart_state){
+            REENTRY_INITIAL, REENTRY_ROOT, CFLOW_STATECHART_INITIAL, 1u};
+        fixture->states[2] = (cflow_statechart_state){
+            REENTRY_FINAL_ONE, REENTRY_ROOT, CFLOW_STATECHART_FINAL, 2u};
+        fixture->transitions[0] = (cflow_statechart_transition){
+            1u, REENTRY_INITIAL, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+            0u, 0u, 0u, REENTRY_FINAL_ONE,
+            CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u};
+    } else {
+        fixture->states[1] = (cflow_statechart_state){
+            REENTRY_FINAL_ONE, REENTRY_ROOT, CFLOW_STATECHART_FINAL, 1u};
+        fixture->states[2] = (cflow_statechart_state){
+            REENTRY_FINAL_TWO, REENTRY_ROOT, CFLOW_STATECHART_FINAL, 2u};
+    }
+    fixture->guards[0] = (cflow_statechart_guard){
+        REENTRY_GUARD, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+        CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+    fixture->executables[0] = (cflow_statechart_executable){
+        REENTRY_EXEC, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+        CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+    fixture->transitions[1] = (cflow_statechart_transition){
+        2u, REENTRY_ROOT, CFLOW_STATECHART_TRIGGER_COMPLETION,
+        0u, REENTRY_ROOT, REENTRY_GUARD, REENTRY_ROOT,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u};
+    fixture->actions[0] = (cflow_statechart_transition_action){
+        2u, REENTRY_EXEC, 0u};
+    fixture->definition = (cflow_statechart_definition){
+        &cmeta_type_int, fixture->states, 3u, NULL, 0u,
+        fixture->guards, 1u, fixture->executables, 1u,
+        root_kind == CFLOW_STATECHART_COMPOUND
+            ? fixture->transitions : fixture->transitions + 1u,
+        root_kind == CFLOW_STATECHART_COMPOUND ? 2u : 1u,
+        NULL, 0u, fixture->actions, 1u};
+    check_equal(cflow_statechart_build(
+                    &fixture->statechart, &fixture->definition),
+                CFLOW_STATECHART_OK);
+    check_true(cflow_executor_serial_init(&fixture->executor));
+    config = (cflow_statechart_instance_config){
+        .statechart = &fixture->statechart,
+        .initial_state = &fixture->initial_state,
+        .guards = &guard_binding,
+        .guard_count = 1u,
+        .executables = &executable_binding,
+        .executable_count = 1u,
+        .external_event_capacity = 1u,
+        .internal_event_capacity = 1u,
+        .completion_capacity = completion_capacity,
+        .microstep_limit = 16u,
+        .executor = &fixture->executor};
+    return cflow_statechart_instance_init(&fixture->instance, &config);
+}
+
+static void completion_reentry_destroy(
+    completion_reentry_fixture *fixture) {
+    check_equal(cflow_statechart_instance_destroy(&fixture->instance),
+                CFLOW_STATECHART_RUNTIME_OK);
+    cflow_executor_destroy(&fixture->executor);
+    cflow_statechart_destroy(&fixture->statechart);
 }
 
 static cflow_statechart_runtime_status rtc_init(
@@ -3140,7 +3333,106 @@ static void rtc_destroy(rtc_fixture *fixture) {
     cflow_statechart_destroy(&fixture->statechart);
 }
 
+static void check_explicit_control_survives_driver_cancel(bool cancel) {
+    rtc_fixture fixture;
+    microstep_executor_blocker blocker;
+    cflow_executor_control control = {0};
+    const int payload = 1;
+    const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+    cflow_statechart_instance_stats stats = {0};
+    rtc_definition(&fixture, true, false);
+    check_equal(rtc_init(&fixture, 4u, 4u, 16u, 2u),
+                CFLOW_STATECHART_RUNTIME_OK);
+    atomic_init(&blocker.entered, false);
+    atomic_init(&blocker.release, false);
+    check_equal(cflow_executor_try_post(
+                    &fixture.executor, microstep_block_executor, &blocker),
+                CFLOW_ADMISSION_ACCEPTED);
+    while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+    check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                CFLOW_MAILBOX_OK);
+    if (cancel)
+        cflow_statechart_instance_cancel(&fixture.instance);
+    else
+        cflow_statechart_instance_close(&fixture.instance);
+    check_true(cflow_executor_as_control(&fixture.executor, &control));
+    check_true(cflow_executor_control_shutdown(
+        &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+    atomic_store(&blocker.release, true);
+    check_true(cflow_executor_wait_idle(&fixture.executor));
+    check_true(cflow_statechart_instance_get_stats(&fixture.instance, &stats));
+    check_equal(stats.last_status, CFLOW_STATECHART_RUNTIME_OK);
+    check_false(stats.errored);
+    check_equal(stats.external_accepted, UINT64_C(1));
+    check_equal(stats.external_cancelled, UINT64_C(1));
+    check_equal(stats.external_failed, UINT64_C(0));
+    check_equal(stats.cancelled, cancel);
+    rtc_destroy(&fixture);
+}
+
 suite("CFlow Statechart public run-to-completion runtime") {
+    it("reissues compound completion once for each immediate reentry") {
+        completion_reentry_fixture fixture;
+        const cflow_machine_state_id expected[] = {
+            REENTRY_ROOT, REENTRY_ROOT, REENTRY_ROOT};
+        check_equal(completion_reentry_init(
+                        &fixture, CFLOW_STATECHART_COMPOUND, 2u, 3u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(fixture.trace_count, (size_t)3u);
+        check_equal(fixture.trace, expected, sizeof(expected));
+        check_equal(fixture.guard_calls, (size_t)4u);
+        completion_reentry_destroy(&fixture);
+    }
+
+    it("reissues parallel completion once for each immediate reentry") {
+        completion_reentry_fixture fixture;
+        const cflow_machine_state_id expected[] = {
+            REENTRY_ROOT, REENTRY_ROOT, REENTRY_ROOT};
+        check_equal(completion_reentry_init(
+                        &fixture, CFLOW_STATECHART_PARALLEL, 1u, 6u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(fixture.trace_count, (size_t)3u);
+        check_equal(fixture.trace, expected, sizeof(expected));
+        check_equal(fixture.guard_calls, (size_t)8u);
+        completion_reentry_destroy(&fixture);
+    }
+
+    it("wraps internal FIFO capacities one and two across macrosteps") {
+        const size_t capacities[] = {1u, 2u};
+        size_t capacity_index;
+        for (capacity_index = 0u; capacity_index < 2u; ++capacity_index) {
+            rtc_fixture fixture;
+            const int payload = 1;
+            const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+            const cflow_event_view other = {
+                RTC_OTHER, &cmeta_type_int, &payload};
+            cflow_statechart_instance_stats stats = {0};
+            size_t index;
+            rtc_definition(&fixture, true, false);
+            fixture.raise_on_other = true;
+            fixture.actions[3].transition = 6u;
+            check_equal(rtc_init(
+                            &fixture, capacities[capacity_index], 2u,
+                            16u, 4u),
+                        CFLOW_STATECHART_RUNTIME_OK);
+            check_equal(cflow_statechart_instance_try_send(
+                            &fixture.instance, &go),
+                        CFLOW_MAILBOX_OK);
+            check_true(cflow_executor_wait_idle(&fixture.executor));
+            for (index = 0u; index < 4u; ++index) {
+                check_equal(cflow_statechart_instance_try_send(
+                                &fixture.instance, &other),
+                            CFLOW_MAILBOX_OK);
+                check_true(cflow_executor_wait_idle(&fixture.executor));
+            }
+            check_true(cflow_statechart_instance_get_stats(
+                &fixture.instance, &stats));
+            check_equal(stats.external_completed, UINT64_C(5));
+            check_equal(stats.internal_pending, (size_t)0u);
+            check_false(stats.errored);
+            rtc_destroy(&fixture);
+        }
+    }
     it("rejects every zero runtime bound before publishing an instance") {
         runtime_fixture fixture;
         cflow_statechart_instance_config config;
@@ -3287,6 +3579,8 @@ suite("CFlow Statechart public run-to-completion runtime") {
         microstep_executor_blocker blocker;
         const int payload = 1;
         const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
         rtc_definition(&fixture, true, false);
         check_equal(rtc_init_with_external(
                         &fixture, 1u, 4u, 4u, 16u, 2u),
@@ -3582,6 +3876,36 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_destroy(&fixture);
     }
 
+    it("keeps a committed microstep visible but cancels its unsettled macrostep") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const cflow_machine_state_id expected[] = {RTC_ROOT, RTC_B};
+        cflow_machine_state_id states[2] = {0};
+        cflow_statechart_instance_stats stats = {0};
+        size_t count = 0u;
+        uint64_t version = 0u;
+        rtc_definition(&fixture, true, false);
+        fixture.queue_cancel_after_commit = true;
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 2u, &count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(states, expected, sizeof(expected));
+        check_equal(version, UINT64_C(2));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_completed, UINT64_C(0));
+        check_equal(stats.external_cancelled, UINT64_C(1));
+        check_equal(stats.external_failed, UINT64_C(0));
+        check_true(stats.cancelled);
+        rtc_destroy(&fixture);
+    }
+
     it("keeps mailbox OK but settles failed when executor is closed") {
         rtc_fixture fixture;
         const int payload = 1;
@@ -3636,6 +3960,57 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_destroy(&fixture);
     }
 
+    it("does not overwrite explicit close when its queued driver is cancelled") {
+        check_explicit_control_survives_driver_cancel(false);
+    }
+
+    it("does not overwrite explicit cancel when its queued driver is cancelled") {
+        check_explicit_control_survives_driver_cancel(true);
+    }
+
+    it("fails an accepted macrostep when shutdown cancels its queued microstep") {
+        rtc_fixture fixture;
+        microstep_executor_blocker blocker;
+        cflow_executor_control control = {0};
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats stats = {0};
+        rtc_definition(&fixture, true, false);
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        fixture.guard_blocker = &blocker;
+        fixture.guards[0] = (cflow_statechart_guard){
+            RTC_QUEUE_GUARD, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        fixture.transitions[1].guard = RTC_QUEUE_GUARD;
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &other),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_as_control(&fixture.executor, &control));
+        check_true(cflow_executor_control_shutdown(
+            &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED);
+        check_equal(stats.external_accepted, UINT64_C(2));
+        check_equal(stats.external_failed, UINT64_C(1));
+        check_equal(stats.external_cancelled, UINT64_C(1));
+        check_equal(stats.external_completed, UINT64_C(0));
+        rtc_destroy(&fixture);
+    }
+
     it("keeps mailbox OK but settles failed when executor post is full") {
         rtc_fixture fixture;
         microstep_executor_blocker blocker;
@@ -3682,10 +4057,15 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_fixture fixture;
         rtc_producer_context context;
         turbo_thread_t producers[PRODUCER_COUNT] = {0};
+        turbo_thread_t poller = {0};
         atomic_int failures;
+        atomic_int polls;
+        atomic_int violations;
+        atomic_bool stop;
         const int payload = 1;
         const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
         cflow_statechart_instance_stats stats = {0};
+        rtc_stats_poller_context poller_context;
         size_t index;
         rtc_definition(&fixture, true, false);
         check_equal(rtc_init_with_external(
@@ -3696,8 +4076,16 @@ suite("CFlow Statechart public run-to-completion runtime") {
                     CFLOW_MAILBOX_OK);
         check_true(cflow_executor_wait_idle(&fixture.executor));
         atomic_init(&failures, 0);
+        atomic_init(&polls, 0);
+        atomic_init(&violations, 0);
+        atomic_init(&stop, false);
         context = (rtc_producer_context){
             &fixture.instance, EVENTS_PER_PRODUCER, &failures};
+        poller_context = (rtc_stats_poller_context){
+            &fixture.instance, &stop, &polls, &violations};
+        check_equal(turbo_thread_create(
+            &poller, rtc_stats_poller, &poller_context), 0);
+        while (atomic_load(&polls) == 0) turbo_thread_yield();
         for (index = 0u; index < PRODUCER_COUNT; ++index)
             check_equal(turbo_thread_create(
                 &producers[index], rtc_producer, &context), 0);
@@ -3705,6 +4093,10 @@ suite("CFlow Statechart public run-to-completion runtime") {
             check_equal(turbo_thread_join(&producers[index]), 0);
         check_equal(atomic_load(&failures), 0);
         check_true(cflow_executor_wait_idle(&fixture.executor));
+        atomic_store(&stop, true);
+        check_equal(turbo_thread_join(&poller), 0);
+        check_true(atomic_load(&polls) > 0);
+        check_equal(atomic_load(&violations), 0);
         check_true(cflow_statechart_instance_get_stats(
             &fixture.instance, &stats));
         check_equal(stats.external_accepted,

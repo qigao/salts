@@ -293,13 +293,41 @@ def popRuntimeTrigger (allowExternal : Bool) : RuntimeQueues →
 
 structure MacrostepResult where
   queues : RuntimeQueues
-  trace : List Nat
+  trace : List RuntimeTrigger
   quanta : Nat
   limited : Bool
   deriving Repr, DecidableEq
 
-abbrev RuntimeQuantum := RuntimeTrigger → RuntimeQueues →
-  RuntimeQueues × List Nat
+abbrev RuntimeQuantum := RuntimeTrigger → RuntimeQueues → RuntimeQueues
+
+def externalCardinality : List RuntimeTrigger → Nat
+  | [] => 0
+  | trigger :: remaining =>
+      (if trigger.isExternal then 1 else 0) +
+        externalCardinality remaining
+
+/-- A structural, non-circular statement of the driver's queue priority. -/
+inductive RuntimePriorityStep : Bool → RuntimeQueues → RuntimeTrigger →
+    RuntimeQueues → Prop where
+  | eventless (allowExternal : Bool) (id : Nat)
+      (remaining internal completions external : List Nat) :
+      RuntimePriorityStep allowExternal
+        ⟨id :: remaining, internal, completions, external⟩
+        (.eventless id) ⟨remaining, internal, completions, external⟩
+  | internal (allowExternal : Bool) (id : Nat)
+      (remaining completions external : List Nat) :
+      RuntimePriorityStep allowExternal
+        ⟨[], id :: remaining, completions, external⟩
+        (.internal id) ⟨[], remaining, completions, external⟩
+  | completion (allowExternal : Bool) (id : Nat)
+      (remaining external : List Nat) :
+      RuntimePriorityStep allowExternal
+        ⟨[], [], id :: remaining, external⟩
+        (.completion id) ⟨[], [], remaining, external⟩
+  | external (id : Nat) (remaining : List Nat) :
+      RuntimePriorityStep true
+        ⟨[], [], [], id :: remaining⟩
+        (.external id) ⟨[], [], [], remaining⟩
 
 /-- A fuel-indexed executable macrostep. Every recursive call consumes one
     posted semantic quantum, making finiteness structural rather than assumed.
@@ -317,11 +345,11 @@ def runMacrostep (execute : RuntimeQuantum) : Nat → Bool → RuntimeQueues →
       | none =>
           { queues := queues, trace := [], quanta := 0, limited := false }
       | some (trigger, remaining) =>
-          let executed := execute trigger remaining
+          let next := execute trigger remaining
           let later := runMacrostep execute fuel
-            (allowExternal && !trigger.isExternal) executed.1
+            (allowExternal && !trigger.isExternal) next
           { queues := later.queues
-            trace := executed.2 ++ later.trace
+            trace := trigger :: later.trace
             quanta := later.quanta + 1
             limited := later.limited }
 
@@ -332,7 +360,7 @@ structure CMacrostepRow where
   allowExternal : Bool
   before : RuntimeQueues
   after : RuntimeQueues
-  trace : List Nat
+  trace : List RuntimeTrigger
   quanta : Nat
   limited : Bool
   deriving Repr, DecidableEq

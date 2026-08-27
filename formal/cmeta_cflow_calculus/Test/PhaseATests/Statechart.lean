@@ -240,14 +240,13 @@ def macroQueues : RuntimeQueues :=
     completions := [3]
     external := [4, 5] }
 
-def recordTrigger (trigger : RuntimeTrigger)
-    (queues : RuntimeQueues) : RuntimeQueues × List Nat :=
-  (queues, [trigger.id])
+def recordTrigger (_trigger : RuntimeTrigger)
+    (queues : RuntimeQueues) : RuntimeQueues := queues
 
 example : runMacrostep recordTrigger 4 true macroQueues =
     { queues := { eventless := [], internal := [], completions := [],
                   external := [5] }
-      trace := [1, 2, 3, 4]
+      trace := [.eventless 1, .internal 2, .completion 3, .external 4]
       quanta := 4
       limited := false } := by
   native_decide
@@ -258,13 +257,25 @@ example : (runMacrostep recordTrigger 3 true macroQueues).limited = true := by
 example : (runMacrostep recordTrigger 4 true macroQueues).quanta ≤ 4 := by
   exact runMacrostep_quanta_bounded _ _ _ _
 
+example : externalCardinality
+    (runMacrostep recordTrigger 8 true macroQueues).trace = 1 := by
+  native_decide
+
+example : (runMacrostep recordTrigger 4 true macroQueues).trace.length =
+    (runMacrostep recordTrigger 4 true macroQueues).quanta := by
+  exact runMacrostep_trace_length _ _ _ _
+
+example : RuntimePriorityStep true macroQueues (.eventless 1)
+    { macroQueues with eventless := [] } := by
+  exact popRuntimeTrigger_priority (by native_decide)
+
 def cMacrostepRow : CMacrostepRow :=
   { fuel := 4
     allowExternal := true
     before := macroQueues
     after := { eventless := [], internal := [], completions := [],
                external := [5] }
-    trace := [1, 2, 3, 4]
+    trace := [.eventless 1, .internal 2, .completion 3, .external 4]
     quanta := 4
     limited := false }
 
@@ -273,5 +284,11 @@ example : checkCMacrostepRow recordTrigger cMacrostepRow = true := by
 
 example : CMacrostepRowRefines recordTrigger cMacrostepRow := by
   exact c_macrostep_row_sound (by native_decide)
+
+example : checkCMacrostepRow recordTrigger
+    { cMacrostepRow with
+      trace := [.internal 2, .eventless 1, .completion 3, .external 4] } =
+    false := by
+  native_decide
 
 end CMetaCFlowCalculus.Tests.Statechart

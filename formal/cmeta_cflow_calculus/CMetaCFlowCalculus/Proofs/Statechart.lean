@@ -325,23 +325,142 @@ theorem runMacrostep_quanta_bounded (execute : RuntimeQuantum)
       | some pair =>
           rcases pair with ⟨trigger, remaining⟩
           simp only
-          cases execute trigger remaining with
-          | mk next emitted =>
-              simp only
-              have bounded := inductionHypothesis
-                (allowExternal && !trigger.isExternal) next
-              omega
+          have bounded := inductionHypothesis
+            (allowExternal && !trigger.isExternal)
+            (execute trigger remaining)
+          omega
+
+theorem popRuntimeTrigger_priority {allowExternal : Bool}
+    {queues remaining : RuntimeQueues} {trigger : RuntimeTrigger}
+    (popped : popRuntimeTrigger allowExternal queues =
+      some (trigger, remaining)) :
+    RuntimePriorityStep allowExternal queues trigger remaining := by
+  rcases queues with ⟨eventless, internal, completions, external⟩
+  cases eventless with
+  | cons id tail =>
+      have pair_eq :
+          (RuntimeTrigger.eventless id,
+            RuntimeQueues.mk tail internal completions external) =
+          (trigger, remaining) := by
+        simpa [popRuntimeTrigger] using popped
+      cases pair_eq
+      exact .eventless _ _ _ _ _ _
+  | nil =>
+      cases internal with
+      | cons id tail =>
+          have pair_eq :
+              (RuntimeTrigger.internal id,
+                RuntimeQueues.mk [] tail completions external) =
+              (trigger, remaining) := by
+            simpa [popRuntimeTrigger] using popped
+          cases pair_eq
+          exact .internal _ _ _ _ _
+      | nil =>
+          cases completions with
+          | cons id tail =>
+              have pair_eq :
+                  (RuntimeTrigger.completion id,
+                    RuntimeQueues.mk [] [] tail external) =
+                  (trigger, remaining) := by
+                simpa [popRuntimeTrigger] using popped
+              cases pair_eq
+              exact .completion _ _ _ _
+          | nil =>
+              cases allowExternal with
+              | false => simp [popRuntimeTrigger] at popped
+              | true =>
+                  cases external with
+                  | nil => simp [popRuntimeTrigger] at popped
+                  | cons id tail =>
+                      have pair_eq :
+                          (RuntimeTrigger.external id,
+                            RuntimeQueues.mk [] [] [] tail) =
+                          (trigger, remaining) := by
+                        simpa [popRuntimeTrigger] using popped
+                      cases pair_eq
+                      exact .external _ _
+
+theorem runMacrostep_trace_length (execute : RuntimeQuantum)
+    (fuel : Nat) (allowExternal : Bool) (queues : RuntimeQueues) :
+    (runMacrostep execute fuel allowExternal queues).trace.length =
+      (runMacrostep execute fuel allowExternal queues).quanta := by
+  induction fuel generalizing allowExternal queues with
+  | zero => simp [runMacrostep]
+  | succ fuel inductionHypothesis =>
+      simp only [runMacrostep]
+      cases popRuntimeTrigger allowExternal queues with
+      | none => simp
+      | some pair =>
+          rcases pair with ⟨trigger, remaining⟩
+          simp only [List.length_cons]
+          rw [inductionHypothesis]
+
+theorem runMacrostep_no_external_when_disallowed
+    (execute : RuntimeQuantum) (fuel : Nat) (queues : RuntimeQueues) :
+    externalCardinality (runMacrostep execute fuel false queues).trace = 0 := by
+  induction fuel generalizing queues with
+  | zero => simp [runMacrostep, externalCardinality]
+  | succ fuel inductionHypothesis =>
+      simp only [runMacrostep]
+      cases popped : popRuntimeTrigger false queues with
+      | none => simp [externalCardinality]
+      | some pair =>
+          rcases pair with ⟨trigger, remaining⟩
+          have priority := popRuntimeTrigger_priority popped
+          cases priority with
+          | eventless _ id tail internal completions external =>
+              simp [externalCardinality, RuntimeTrigger.isExternal,
+                    inductionHypothesis]
+          | internal _ id tail completions external =>
+              simp [externalCardinality, RuntimeTrigger.isExternal,
+                    inductionHypothesis]
+          | completion _ id tail external =>
+              simp [externalCardinality, RuntimeTrigger.isExternal,
+                    inductionHypothesis]
+
+theorem runMacrostep_external_cardinality_le_one
+    (execute : RuntimeQuantum) (fuel : Nat) (allowExternal : Bool)
+    (queues : RuntimeQueues) :
+    externalCardinality
+      (runMacrostep execute fuel allowExternal queues).trace ≤ 1 := by
+  induction fuel generalizing allowExternal queues with
+  | zero => simp [runMacrostep, externalCardinality]
+  | succ fuel inductionHypothesis =>
+      simp only [runMacrostep]
+      cases popped : popRuntimeTrigger allowExternal queues with
+      | none => simp [externalCardinality]
+      | some pair =>
+          rcases pair with ⟨trigger, remaining⟩
+          have priority := popRuntimeTrigger_priority popped
+          cases priority with
+          | eventless allow id tail internal completions external =>
+              simpa [externalCardinality, RuntimeTrigger.isExternal] using
+                inductionHypothesis allowExternal
+                  (execute (.eventless id)
+                    ⟨tail, internal, completions, external⟩)
+          | internal allow id tail completions external =>
+              simpa [externalCardinality, RuntimeTrigger.isExternal] using
+                inductionHypothesis allowExternal
+                  (execute (.internal id)
+                    ⟨[], tail, completions, external⟩)
+          | completion allow id tail external =>
+              simpa [externalCardinality, RuntimeTrigger.isExternal] using
+                inductionHypothesis allowExternal
+                  (execute (.completion id) ⟨[], [], tail, external⟩)
+          | external id tail =>
+              simp [externalCardinality, RuntimeTrigger.isExternal,
+                    runMacrostep_no_external_when_disallowed]
 
 /-- The trace of a nonempty macrostep is the current quantum's committed trace
     followed by the remaining finite macrostep trace. -/
 theorem runMacrostep_trace_cons (execute : RuntimeQuantum) (fuel : Nat)
     (allowExternal : Bool) (queues remaining next : RuntimeQueues)
-    (trigger : RuntimeTrigger) (emitted : List Nat)
+    (trigger : RuntimeTrigger)
     (popped : popRuntimeTrigger allowExternal queues =
       some (trigger, remaining))
-    (executed : execute trigger remaining = (next, emitted)) :
+    (executed : execute trigger remaining = next) :
     (runMacrostep execute (fuel + 1) allowExternal queues).trace =
-      emitted ++
+      trigger ::
         (runMacrostep execute fuel
           (allowExternal && !trigger.isExternal) next).trace := by
   simp [runMacrostep, popped, executed]
