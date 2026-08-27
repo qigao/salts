@@ -238,19 +238,6 @@ static void runtime_fixture_destroy(runtime_fixture *fixture) {
     cflow_statechart_destroy(&fixture->statechart);
 }
 
-static bool guard_binding(void *user, const void *state,
-                          const cflow_event_view *event,
-                          bool *out_enabled, const char **out_error) {
-    (void)user;
-    (void)state;
-    (void)event;
-    if (out_enabled == NULL || out_error == NULL) return false;
-    *out_enabled = true;
-    *out_error = NULL;
-    if (user != NULL) atomic_fetch_add((atomic_int *)user, 1);
-    return true;
-}
-
 static bool guard_binding_disabled(void *user, const void *state,
                                    const cflow_event_view *event,
                                    bool *out_enabled,

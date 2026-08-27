@@ -1681,16 +1681,6 @@ static cflow_statechart_runtime_status invoke_executable(
     return CFLOW_STATECHART_RUNTIME_OK;
 }
 
-static bool state_is_descendant_or_self(const cflow_statechart_impl *ir,
-                                        size_t state, size_t ancestor) {
-    size_t current = state;
-    while (current != SIZE_MAX) {
-        if (current == ancestor) return true;
-        current = ir->parents[current];
-    }
-    return false;
-}
-
 static bool exit_before(const cflow_statechart_impl *ir,
                         size_t left, size_t right) {
     if (source_is_proper_descendant(ir, left, right)) return true;
