@@ -1442,8 +1442,18 @@ returns. Optimizer map fusion remains available for trivial values; managed map
 nodes stay separate so every intermediate descriptor retains its lifecycle.
 
 Range flags describe traversal semantics. The current Range Source consumes
-items through `cmeta_range_next()` and does not treat
-`cmeta_container_data()` as physical storage: that API returns a semantic
+items through `cmeta_range_next()`, and the `cflow_result` collector retains its
+bounded geometric growth policy. A candidate that queried `SIZED` and scanned
+the Graph for exact 1:1 cardinality reduced allocator calls, but Windows Release
+showed only low-single-digit timing changes and Linux did not reproduce a
+consistent gain at 16, 256, and 4096 items. The extra per-evaluation Graph scan
+therefore did not meet the optimization admission threshold and is not part of
+the execution path. Reconsider `SIZED` preallocation only with a cached
+cardinality property or other evidence that avoids replacing allocation work
+with equivalent analysis work.
+
+`CMETA_RANGE_CONTIGUOUS` does not make
+`cmeta_container_data()` a physical storage pointer: that API returns a semantic
 `cmeta_data_desc`. A contiguous batch fast path requires a separate versioned
 storage-view contract with explicit pointer, extent, stride, and invalidation
 rules, plus profiling evidence for the added path.
