@@ -23,11 +23,32 @@ static bool node_shallow_equal(const cflow_node *a, const cflow_node *b) {
     if (a->op != b->op || a->has_fn != b->has_fn ||
         a->fn_chain_count != b->fn_chain_count ||
         a->has_relation != b->has_relation ||
-        a->slice.present != b->slice.present ||
-        a->slice.count != b->slice.count ||
+        a->has_size_parameter != b->has_size_parameter ||
+        a->size_parameter != b->size_parameter ||
+        a->param_kind != b->param_kind ||
         !cmeta_type_equal(a->input_type, b->input_type) ||
         !cmeta_type_equal(a->output_type, b->output_type) ||
         a->subgraph_count != b->subgraph_count) return false;
+    switch (a->param_kind) {
+        case CFLOW_NODE_PARAM_NONE:
+            break;
+        case CFLOW_NODE_PARAM_TAKE:
+            if (a->params.take.count != b->params.take.count) return false;
+            break;
+        case CFLOW_NODE_PARAM_SKIP:
+            if (a->params.skip.count != b->params.skip.count) return false;
+            break;
+        case CFLOW_NODE_PARAM_DISTINCT:
+            if (a->params.distinct.max_unique !=
+                b->params.distinct.max_unique) return false;
+            break;
+        case CFLOW_NODE_PARAM_SORTED:
+            if (a->params.sorted.max_elements !=
+                b->params.sorted.max_elements) return false;
+            break;
+        default:
+            return false;
+    }
     if (a->has_fn && !fn_equal(a->fn, b->fn)) return false;
     if (a->has_relation && memcmp(&a->relation, &b->relation, sizeof(a->relation)) != 0)
         return false;

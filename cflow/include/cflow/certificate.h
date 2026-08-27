@@ -18,7 +18,9 @@ typedef enum cflow_certified_opcode {
     CFLOW_CERTIFIED_FILTER = 0,
     CFLOW_CERTIFIED_MAP = 1,
     CFLOW_CERTIFIED_FLAT_MAP = 2,
-    CFLOW_CERTIFIED_REDUCE = 3
+    CFLOW_CERTIFIED_REDUCE = 3,
+    CFLOW_CERTIFIED_TAKE = 4,
+    CFLOW_CERTIFIED_SKIP = 5
 } cflow_certified_opcode;
 
 typedef enum cflow_certified_path {
@@ -40,6 +42,8 @@ typedef struct cflow_plan_certificate_row {
     const cmeta_type_desc *input_type;
     const cmeta_type_desc *output_type;
     cmeta_callable callable;
+    bool has_size_parameter;
+    size_t size_parameter;
 } cflow_plan_certificate_row;
 
 /* Runtime-only witness. Pointer-bearing rows are owned by this instance and

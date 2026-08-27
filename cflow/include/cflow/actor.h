@@ -29,7 +29,7 @@ typedef enum cflow_actor_status {
     CFLOW_ACTOR_STOPPING,
     CFLOW_ACTOR_STOPPED,
     CFLOW_ACTOR_FAILED,
-    /** Appended to preserve the numeric values of existing statuses. */
+    /** Appended to preserve every existing Actor status value. */
     CFLOW_ACTOR_STATECHART_REJECTED
 } cflow_actor_status;
 
@@ -79,25 +79,20 @@ typedef struct cflow_actor_stats {
     uint64_t rejected_stale;
 } cflow_actor_stats;
 
-/** Terminal callbacks for a Statechart-backed Actor. */
-typedef struct cflow_statechart_actor_callbacks {
-    cflow_error_fn on_error;
-    cflow_done_fn on_done;
-    void *user;
-} cflow_statechart_actor_callbacks;
-
 /**
- * Statechart Actor configuration copied during initialization.
+ * Statechart-backed Actor configuration copied during initialization.
  *
- * The Actor owns the resulting Statechart instance and lifecycle control
- * block. It borrows everything borrowed by `statechart`, plus callback
- * functions/user data, until `cflow_actor_destroy` returns. Callbacks run
- * without the Actor gate held. They may self-send or request stop, but must not
- * wait for or destroy the Actor.
+ * The Actor owns the resulting Statechart instance, its terminal-only Source,
+ * identity Graph, Run, and lifecycle shell. The Statechart declaration,
+ * SerialExecutor, optional Clock, concurrent Scheduler, bindings, and callback
+ * contexts are borrowed until `cflow_actor_destroy` returns. The terminal
+ * Source emits no values: root FINAL or explicit close calls `on_done`, while
+ * the stable first runtime error calls `on_error`.
  */
 typedef struct cflow_statechart_actor_config {
     cflow_statechart_instance_config statechart;
-    cflow_statechart_actor_callbacks callbacks;
+    cflow_scheduler *scheduler;
+    cflow_sink_callbacks callbacks;
 } cflow_statechart_actor_config;
 
 typedef struct cflow_statechart_actor_init_result {
@@ -138,44 +133,45 @@ cflow_actor_init_result cflow_actor_init(
 /**
  * Initialize a Statechart-backed Actor in `START`.
  *
- * `statechart_status` is `CFLOW_STATECHART_RUNTIME_OK` unless `status` is
- * `CFLOW_ACTOR_STATECHART_REJECTED`, when it preserves the exact rejection.
- * Starting arms the Statechart terminal projection; clean final completion or
- * controlled close reaches `STOPPED`, while a runtime error reaches `FAILED`.
+ * `statechart_status` is `CFLOW_STATECHART_RUNTIME_OK` unless status is
+ * `CFLOW_ACTOR_STATECHART_REJECTED`, when the exact runtime rejection is
+ * preserved. The scheduler must be concurrent. Initialization may execute
+ * Statechart initial stabilization before returning, as specified by the
+ * embedded runtime configuration.
  */
-cflow_statechart_actor_init_result cflow_actor_init_statechart(
+cflow_statechart_actor_init_result cflow_statechart_actor_init(
     cflow_actor *actor, const cflow_statechart_actor_config *config);
 
-/**
- * Start the owned backend. Machine Actors open their Run and request
- * `SIZE_MAX` demand; Statechart Actors arm terminal observation.
- */
+/** Start the single owned Run and request `SIZE_MAX` downstream demand. */
 cflow_actor_status cflow_actor_start(cflow_actor *actor);
 
 /**
- * Stop admission before closing the owned Machine or Statechart. The first
- * request is successful; later calls report the exact current or terminal
- * lifecycle status.
+ * Stop admission before closing the owned Machine or Statechart runtime. The
+ * first request is successful; later calls report the exact current or
+ * terminal lifecycle status.
  */
 cflow_actor_status cflow_actor_request_stop(cflow_actor *actor);
 
 /**
  * Block until `STOPPED` or `FAILED`.
  *
- * This control-plane call must not run from a Machine/Statechart callback,
- * Actor terminal/sink callback, scheduler worker callback, or concurrently
- * with destruction.
+ * This control-plane call must not run from a Machine/Statechart guard or
+ * action, Actor sink callback, scheduler worker callback, or concurrently with
+ * destruction.
  */
 cflow_actor_state cflow_actor_wait(cflow_actor *actor);
 
 /** Return the current lifecycle state; an empty handle reports `START`. */
 cflow_actor_state cflow_actor_current_state(const cflow_actor *actor);
 
-/** Read Machine Actor stats; returns false for a Statechart-backed Actor. */
+/** Read one mutex-consistent Actor and Machine statistics snapshot. */
 bool cflow_actor_get_stats(const cflow_actor *actor, cflow_actor_stats *out);
 
-/** Read Statechart Actor stats; returns false for a Machine-backed Actor. */
-bool cflow_actor_get_statechart_stats(
+/**
+ * Read one mutex-consistent Actor and Statechart statistics snapshot.
+ * Returns false without changing `out` for an invalid or Machine-backed Actor.
+ */
+bool cflow_statechart_actor_get_stats(
     const cflow_actor *actor, cflow_statechart_actor_stats *out);
 
 /** Return the first Actor-owned failure text, or NULL when no failure exists. */
@@ -201,10 +197,10 @@ cflow_actor_send_status cflow_actor_ref_try_send(
     const cflow_actor_ref *ref, const cflow_event_view *event);
 
 /**
- * Mark producer refs stale, synchronously close owned runtime resources, clear
- * the owner handle, and release the root reference. The small control block is
- * reclaimed after the last producer ref is released. Destruction must not run
- * from callbacks and requires owner-side serialization.
+ * Mark producer refs stale, synchronously close the selected runtime and Run,
+ * clear the owner handle, and release the root reference. The small control
+ * block is reclaimed after the last producer ref is released. Destruction
+ * must not run from callbacks and requires owner-side serialization.
  */
 void cflow_actor_destroy(cflow_actor *actor);
 

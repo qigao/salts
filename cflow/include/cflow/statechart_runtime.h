@@ -3,7 +3,6 @@
 
 #include <cflow/clock.h>
 #include <cflow/executor.h>
-#include <cflow/runtime.h>
 #include <cflow/statechart.h>
 #include <cflow/timer_event.h>
 
@@ -101,14 +100,6 @@ typedef enum cflow_statechart_snapshot_status {
     CFLOW_STATECHART_SNAPSHOT_INVALID_ARGUMENT,
     CFLOW_STATECHART_SNAPSHOT_TOO_SMALL
 } cflow_statechart_snapshot_status;
-
-/** Exact terminal projection for integrations that do not consume values. */
-typedef enum cflow_statechart_terminal_status {
-    CFLOW_STATECHART_TERMINAL_OPEN = 0,
-    CFLOW_STATECHART_TERMINAL_DONE,
-    CFLOW_STATECHART_TERMINAL_ERROR,
-    CFLOW_STATECHART_TERMINAL_INVALID_ARGUMENT
-} cflow_statechart_terminal_status;
 
 typedef enum cflow_statechart_configuration_status {
     CFLOW_STATECHART_CONFIGURATION_OK = 0,
@@ -223,6 +214,24 @@ cflow_mailbox_status cflow_statechart_instance_try_send(
     cflow_statechart_instance *instance, const cflow_event_view *event);
 
 /**
+ * Attach the instance's terminal lifecycle as one borrowed Resumable.
+ *
+ * The adapter returns WAIT while the Statechart is active, DONE after clean
+ * completion/close/cancel settles, and ERROR for the stable first error. It
+ * never returns VALUE or VALUE_AND_DONE; `output_type` is the Statechart state
+ * type as an empty-sequence type witness. Only one Resumable or Source adapter
+ * may be attached at a time. Destroying the adapter cancels and detaches it,
+ * but does not destroy the instance. `out` must be zero-initialized; rejection
+ * leaves both the instance and destination unchanged.
+ */
+bool cflow_statechart_instance_as_terminal_resumable(
+    cflow_statechart_instance *instance, cflow_resumable *out);
+
+/** Attach the same terminal-only projection to a zero-initialized Source. */
+bool cflow_statechart_instance_as_terminal_source(
+    cflow_statechart_instance *instance, cflow_source *out);
+
+/**
  * Schedule one copied Event at an absolute deadline in an active real-state
  * scope. Unknown, pseudo, or inactive scopes return `INVALID_ARGUMENT`.
  * Equal deadlines fire in schedule order. The Event payload is copied before
@@ -255,26 +264,6 @@ cflow_timer_event_status cflow_statechart_instance_cancel_timer(
  * retried. Delivery enters the normal run-to-completion path.
  */
 cflow_timer_event_fire_result cflow_statechart_instance_run_one_ready_timer(
-    cflow_statechart_instance *instance);
-
-/**
- * Poll the terminal state without constructing a stream value.
- *
- * `out_error` is optional and cleared on every call. ERROR returns the
- * instance-owned first diagnostic, borrowed until instance destroy.
- */
-cflow_statechart_terminal_status cflow_statechart_instance_poll_terminal(
-    const cflow_statechart_instance *instance, const char **out_error);
-
-/**
- * Return a borrowed single-waiter terminal projection.
- *
- * One waiter may be armed while the instance is open. A terminal instance
- * invokes a newly armed waiter inline. Cancel removes a waiter that has not
- * already been detached by the terminal winner. The waitable and concurrent
- * instance operations must be quiescent before instance destroy.
- */
-cflow_waitable cflow_statechart_instance_terminal_waitable(
     cflow_statechart_instance *instance);
 
 /**
@@ -322,6 +311,8 @@ const char *cflow_statechart_instance_error(
  * Wait for this instance's posted work to settle, free owned storage, and
  * clear the handle. Unrelated work on a shared Executor is not awaited.
  * Returns `WOULD_BLOCK` from a callback on the same Executor without freeing.
+ * An attached terminal adapter also returns `WOULD_BLOCK`; destroy that
+ * adapter first. The instance handle remains valid in either case.
  * Concurrent admission/control calls must already have stopped.
  */
 cflow_statechart_runtime_status cflow_statechart_instance_destroy(

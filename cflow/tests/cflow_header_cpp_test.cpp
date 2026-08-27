@@ -7,6 +7,18 @@ static_assert(std::is_standard_layout<cflow_run>::value,
               "cflow_run must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_resume_ctx>::value,
               "resume context must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_find_result>::value,
+              "find result must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_status_result>::value,
+              "status result must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_collect_result>::value,
+              "collect result must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_eval_options>::value,
+              "evaluation options must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_set_state_ops>::value,
+              "set backend interface must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_sequence_state_ops>::value,
+              "sequence backend interface must remain C-compatible");
 static_assert(std::is_standard_layout<cmeta_callable>::value,
               "cmeta_callable must remain a C-compatible value");
 static_assert(std::is_standard_layout<cflow_event_type>::value,
@@ -44,6 +56,15 @@ static_assert(
     "Statechart Actor init result must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_statechart_actor_stats>::value,
               "Statechart Actor stats must remain C-compatible");
+static_assert(CFLOW_ACTOR_FAILED == 8,
+              "existing Actor status values are ABI-visible");
+static_assert(CFLOW_ACTOR_STATECHART_REJECTED == 9,
+              "Statechart rejection must remain appended");
+static_assert(CFLOW_OP_SOURCE == 0 && CFLOW_OP_RELATION == 1 &&
+                   CFLOW_OP_FILTER == 2 && CFLOW_OP_ZIP == 7 &&
+                   CFLOW_OP_TAKE == 8 && CFLOW_OP_SKIP == 9 &&
+                   CFLOW_OP_DISTINCT == 10 && CFLOW_OP_SORTED == 11,
+              "stateful opcodes must append without renumbering existing IR");
 static_assert(std::is_standard_layout<cflow_io_actor>::value,
               "IO Actor must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_io_operation>::value,
@@ -80,21 +101,6 @@ static_assert(std::is_standard_layout<turbo_readiness_registration>::value,
               "reactor registration must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_reactor_source_owner>::value,
               "reactor Source owner must remain a C-compatible handle");
-static_assert(std::is_standard_layout<cflow_slice_parameter>::value,
-              "slice parameters must remain C-compatible metadata");
-
-using cflow_stream_slice_function = cflow_stream *(*)(cflow_stream *, size_t);
-using cflow_stream_count_function = bool (*)(
-    const cflow_stream *, size_t *, const char **);
-static_assert(std::is_same<decltype(&cflow_stream_take),
-                           cflow_stream_slice_function>::value,
-              "Stream take must keep its C signature");
-static_assert(std::is_same<decltype(&cflow_stream_skip),
-                           cflow_stream_slice_function>::value,
-              "Stream skip must keep its C signature");
-static_assert(std::is_same<decltype(&cflow_eval_count),
-                           cflow_stream_count_function>::value,
-              "Stream count must expose its exact C signature");
 
 using cflow_reactor_factory = int (*)(
     cflow_source *, cflow_reactor_source_owner *,
@@ -108,7 +114,6 @@ using cflow_reactor_owner_close = int (*)(cflow_reactor_source_owner *);
 static_assert(std::is_same<decltype(&cflow_reactor_source_owner_close),
                            cflow_reactor_owner_close>::value,
               "reactor Source owner close must keep its C linkage signature");
-
 using cflow_io_source_prepare_callback = cflow_io_source_prepare_status (*)(
     void *, cflow_io_operation *, const char **);
 static_assert(std::is_same<cflow_io_source_prepare_fn,
@@ -127,6 +132,103 @@ static_assert(std::is_same<
                   decltype(&cflow_source_from_io_actor_windowed),
                   cflow_io_source_windowed_factory>::value,
               "windowed IO Source factory must keep its exact C signature");
+using cflow_statechart_terminal_resumable_factory = bool (*)(
+    cflow_statechart_instance *, cflow_resumable *);
+static_assert(std::is_same<
+                  decltype(&cflow_statechart_instance_as_terminal_resumable),
+                  cflow_statechart_terminal_resumable_factory>::value,
+              "Statechart Resumable adapter must keep its C signature");
+using cflow_statechart_terminal_source_factory = bool (*)(
+    cflow_statechart_instance *, cflow_source *);
+static_assert(std::is_same<
+                  decltype(&cflow_statechart_instance_as_terminal_source),
+                  cflow_statechart_terminal_source_factory>::value,
+              "Statechart Source adapter must keep its C signature");
+using cflow_statechart_actor_factory = cflow_statechart_actor_init_result (*)(
+    cflow_actor *, const cflow_statechart_actor_config *);
+static_assert(std::is_same<decltype(&cflow_statechart_actor_init),
+                           cflow_statechart_actor_factory>::value,
+              "Statechart Actor initializer must keep its C signature");
+using cflow_statechart_actor_stats_reader = bool (*)(
+    const cflow_actor *, cflow_statechart_actor_stats *);
+static_assert(std::is_same<decltype(&cflow_statechart_actor_get_stats),
+                           cflow_statechart_actor_stats_reader>::value,
+              "Statechart Actor stats must keep its C signature");
+using cflow_stream_slice_function = cflow_stream *(*)(cflow_stream *, size_t);
+static_assert(std::is_same<decltype(&cflow_stream_take),
+                           cflow_stream_slice_function>::value,
+              "Stream take must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_stream_skip),
+                            cflow_stream_slice_function>::value,
+              "Stream skip must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_stream_distinct),
+                           cflow_stream_slice_function>::value,
+              "Stream distinct must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_stream_sorted),
+                           cflow_stream_slice_function>::value,
+              "Stream sorted must keep its C signature");
+using cflow_stream_range_options_function = cflow_stream *(*) (
+    cflow_stream *, cmeta_range, const cflow_eval_options *);
+static_assert(std::is_same<
+                  decltype(&cflow_stream_from_range_with_options),
+                  cflow_stream_range_options_function>::value,
+              "Stream backend injection must keep its C signature");
+using cflow_stream_count_function = bool (*)(
+    const cflow_stream *, size_t *, const char **);
+static_assert(std::is_same<decltype(&cflow_stream_count),
+                           cflow_stream_count_function>::value,
+              "Stream count must keep its C signature");
+using cflow_stream_match_function = bool (*)(
+    const cflow_stream *, cflow_filter_callable, bool *, const char **);
+static_assert(std::is_same<decltype(&cflow_stream_any_match),
+                           cflow_stream_match_function>::value,
+              "Stream any_match must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_stream_all_match),
+                           cflow_stream_match_function>::value,
+              "Stream all_match must keep its C signature");
+using cflow_stream_count_result_function = cflow_status_result (*)(
+    const cflow_stream *, size_t *);
+using cflow_eval_array_result_function = cflow_status_result (*)(
+    const cflow_graph *, const void *, size_t, cflow_result *);
+using cflow_eval_stream_result_function = cflow_status_result (*)(
+    const cflow_stream *, cflow_result *);
+using cflow_eval_stream_limit_result_function = cflow_status_result (*)(
+    const cflow_stream *, size_t, cflow_result *);
+using cflow_eval_collect_result_function = cflow_collect_result (*)(
+    const cflow_stream *, cmeta_collector *, const char **);
+using cflow_stream_match_result_function = cflow_status_result (*)(
+    const cflow_stream *, cflow_filter_callable, bool *);
+using cflow_stream_find_result_function = cflow_status_result (*)(
+    const cflow_stream *, cflow_find_result *);
+using cflow_stream_for_each_result_function = cflow_status_result (*)(
+    const cflow_stream *, cflow_value_fn, void *);
+static_assert(std::is_same<decltype(&cflow_stream_count_result),
+                           cflow_stream_count_result_function>::value,
+              "structured Stream count must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_eval_array_result),
+                           cflow_eval_array_result_function>::value,
+              "structured array evaluation must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_eval_stream_result),
+                           cflow_eval_stream_result_function>::value,
+              "structured Stream evaluation must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_eval_stream_limit_result),
+                           cflow_eval_stream_limit_result_function>::value,
+              "structured bounded Stream evaluation must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_eval_collect_result),
+                           cflow_eval_collect_result_function>::value,
+              "structured collection must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_stream_any_match_result),
+                           cflow_stream_match_result_function>::value,
+              "structured Stream any_match must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_stream_all_match_result),
+                           cflow_stream_match_result_function>::value,
+              "structured Stream all_match must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_stream_find_first_result),
+                           cflow_stream_find_result_function>::value,
+              "structured Stream find_first must keep its C signature");
+static_assert(std::is_same<decltype(&cflow_stream_for_each_result),
+                           cflow_stream_for_each_result_function>::value,
+              "structured Stream for_each must keep its C signature");
 
 suite("CFlow C++ public header") {
     it("exposes the aggregate API to C++ consumers") {
@@ -139,6 +241,8 @@ suite("CFlow C++ public header") {
         cflow_stream stream = {};
         cflow_subscription subscription = {};
         cflow_result result = {};
+        cflow_find_result find_result = {};
+        cflow_status_result status_result = {CFLOW_STATUS_OK};
         const cflow_event_type event_schema[] = {{1u, &cmeta_type_int}};
         const int sent = 23;
         const cflow_event_view event = {1u, &cmeta_type_int, &sent};
@@ -150,16 +254,14 @@ suite("CFlow C++ public header") {
         cflow_statechart statechart = {};
         cflow_statechart_definition statechart_definition = {};
         cflow_statechart_instance statechart_instance = {};
+        cflow_resumable statechart_terminal_resumable = {};
+        cflow_source statechart_terminal_source = {};
         cflow_statechart_instance_config statechart_config = {};
         cflow_statechart_instance_stats statechart_stats = {};
-        cflow_statechart_terminal_status statechart_terminal =
-            CFLOW_STATECHART_TERMINAL_OPEN;
-        cflow_waitable statechart_terminal_waitable =
-            cflow_statechart_instance_terminal_waitable(&statechart_instance);
         cflow_actor actor = {};
         cflow_actor_ref actor_ref = {};
         cflow_statechart_actor_config statechart_actor_config = {};
-        cflow_statechart_actor_init_result statechart_actor_result = {};
+        cflow_statechart_actor_init_result statechart_actor_init = {};
         cflow_statechart_actor_stats statechart_actor_stats = {};
         cflow_io_actor io_actor = {};
         cflow_io_operation io_operation = {};
@@ -206,6 +308,11 @@ suite("CFlow C++ public header") {
         cflow_stream_destroy(&stream);
         check_false(cflow_subscription_is_done(&subscription));
         cflow_result_destroy(&result);
+        check_false(cflow_find_result_has_value(&find_result));
+        cflow_find_result_destroy(&find_result);
+        check_true(cflow_status_result_is_ok(status_result));
+        check_true(cflow_status_result_message(status_result) ==
+                   cflow_status_string(CFLOW_STATUS_OK));
 
         check_true(cflow_mailbox_init(&mailbox, event_schema, 1u, 1u) ==
                    CFLOW_MAILBOX_OK);
@@ -227,19 +334,16 @@ suite("CFlow C++ public header") {
         check_null(statechart.impl);
         check_null(statechart_definition.state_type);
         check_null(statechart_instance.impl);
+        check_null(statechart_terminal_resumable.ops);
+        check_false(cflow_source_valid(&statechart_terminal_source));
         check_null(statechart_config.statechart);
         check_true(statechart_stats.last_status ==
                    CFLOW_STATECHART_RUNTIME_OK);
-        check_true(statechart_terminal == CFLOW_STATECHART_TERMINAL_OPEN);
-        check_false(cflow_waitable_valid(&statechart_terminal_waitable));
         cflow_statechart_destroy(&statechart);
         check_null(actor.impl);
         check_null(actor_ref.impl);
         check_null(statechart_actor_config.statechart.statechart);
-        check_null(statechart_actor_config.callbacks.user);
-        check_true(statechart_actor_result.status == CFLOW_ACTOR_OK);
-        check_true(statechart_actor_result.statechart_status ==
-                   CFLOW_STATECHART_RUNTIME_OK);
+        check_true(statechart_actor_init.status == CFLOW_ACTOR_OK);
         check_true(statechart_actor_stats.state == CFLOW_ACTOR_STATE_START);
         check_null(io_actor.impl);
         check_null(io_operation.user);

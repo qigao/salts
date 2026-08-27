@@ -20,7 +20,11 @@
     (CFLOW_OP_FLAT_MAP, CFLOW_OUTPUT_POINTEE1, CMETA_CARD_EXPAND, \
      CMETA_PLAN_FLAT_MAP), \
     (CFLOW_OP_REDUCE, CFLOW_OUTPUT_SAME, CMETA_CARD_REDUCE, \
-     CMETA_PLAN_REDUCE)
+     CMETA_PLAN_REDUCE), \
+    (CFLOW_OP_TAKE, CFLOW_OUTPUT_SAME, CMETA_CARD_FILTER, \
+     CMETA_PLAN_TAKE), \
+    (CFLOW_OP_SKIP, CFLOW_OUTPUT_SAME, CMETA_CARD_FILTER, \
+     CMETA_PLAN_SKIP)
 
 ValueFunction(CFlowPlanOpcode, CFLOW_PLAN_INFERENCE_ROWS);
 InferenceRules(cflow_plan_inference_relation, CFLOW_PLAN_INFERENCE_ROWS);
@@ -201,7 +205,7 @@ static cmeta_infer_status opcode_for(
     status = cmeta_infer_dfa_eval(
         &inference->dfa, symbols, 3u, &result);
     if (status != CMETA_INFER_OK) return status;
-    if (result > (cmeta_infer_value)CMETA_PLAN_REDUCE)
+    if (result > (cmeta_infer_value)CMETA_PLAN_SKIP)
         return CMETA_INFER_AMBIGUOUS_RULE;
     *out_opcode = (cflow_plan_opcode)result;
     return CMETA_INFER_OK;
@@ -239,6 +243,36 @@ static bool plan_path_supported(const cflow_subgraph *subgraph,
     return true;
 }
 
+static bool plan_path_mixes_slices_and_callables(
+    const cflow_subgraph *subgraph,
+    const cflow_dense_successor_index *index) {
+    cflow_node_id id;
+    size_t visited = 0u;
+    bool saw_slice = false;
+    bool saw_callable = false;
+
+    if (!subgraph || !index || !subgraph->node_count ||
+        subgraph->entry >= subgraph->node_count)
+        return false;
+    id = subgraph->entry;
+    for (;;) {
+        cflow_node_id successor;
+        const cflow_node *node;
+        if (++visited > subgraph->node_count) return false;
+        node = cflow_subgraph_node(subgraph, id);
+        if (!node) return false;
+        if (node->op == CFLOW_OP_TAKE || node->op == CFLOW_OP_SKIP)
+            saw_slice = true;
+        else if (node->op != CFLOW_OP_SOURCE)
+            saw_callable = true;
+        if (saw_slice && saw_callable) return true;
+        if (!cflow_dense_successor_index_successor(index, id, &successor))
+            break;
+        id = successor;
+    }
+    return false;
+}
+
 static bool plan_compile_fail(cflow_plan *plan,
                               cflow_dense_successor_index *index,
                               const char *message) {
@@ -261,7 +295,8 @@ bool cflow_plan_graph_supported(const cflow_graph *graph) {
         return false;
     if (cflow_dense_successor_index_build(&index, sg) != CFLOW_DENSE_SUCCESSOR_INDEX_OK)
         return false;
-    supported = plan_path_supported(sg, &index, &inference, NULL);
+    supported = !plan_path_mixes_slices_and_callables(sg, &index) &&
+        plan_path_supported(sg, &index, &inference, NULL);
     cflow_dense_successor_index_destroy(&index);
     return supported;
 }
@@ -288,6 +323,10 @@ bool cflow_plan_compile(cflow_plan *plan,
         return plan_fail(plan, index_status == CFLOW_DENSE_SUCCESSOR_INDEX_ALLOCATION_FAILED
                                    ? "allocation failed"
                                    : "Graph contains invalid topology");
+    if (plan_path_mixes_slices_and_callables(sg, &index))
+        return plan_compile_fail(
+            plan, &index,
+            "Graph mixes slice and callable plan semantics");
     size_t instruction_count = 0u;
     if (!plan_path_supported(sg, &index, &inference, &instruction_count)) {
         cflow_dense_successor_index_destroy(&index);
@@ -342,6 +381,8 @@ bool cflow_plan_compile(cflow_plan *plan,
             inst.step = step;
             inst.input_type = n->input_type;
             inst.output_type = n->output_type;
+            inst.has_size_parameter = n->has_size_parameter;
+            inst.size_parameter = n->size_parameter;
             if (op == CMETA_PLAN_FILTER) {
                 if (!prepare_unary_call(&inst.call, n->fn) ||
                     !cmeta_type_equal(inst.call.input_type, n->input_type) ||
@@ -368,6 +409,11 @@ bool cflow_plan_compile(cflow_plan *plan,
                 }
                 inst.fn_chain_count = count;
                 if (stats) stats->map_callbacks += count;
+            } else if (op == CMETA_PLAN_TAKE || op == CMETA_PLAN_SKIP) {
+                if (!n->has_size_parameter || n->has_fn ||
+                    !cmeta_type_equal(n->input_type, n->output_type))
+                    return plan_compile_fail(
+                        plan, &index, "slice instruction metadata is invalid");
             } else {
                 inst.call.fn = n->fn;
                 inst.call.invoke = n->fn.invoke;

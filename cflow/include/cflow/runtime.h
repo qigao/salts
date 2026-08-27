@@ -2,6 +2,7 @@
 #define CFLOW_RUNTIME_H
 
 #include <cflow/graph.h>
+#include <cflow/backend.h>
 #include <cflow/scheduler.h>
 
 #include <stdbool.h>
@@ -120,8 +121,19 @@ typedef struct cflow_run {
 bool cflow_run_open(cflow_run *run,
                     const cflow_graph *graph,
                     cflow_source *source,
-                    cflow_scheduler *scheduler,
-                    const cflow_sink *sink);
+                     cflow_scheduler *scheduler,
+                     const cflow_sink *sink);
+/* Structured admission variant. The options value and interface tables are
+ * borrowed; their function pointers and contexts reachable through them must
+ * remain valid until cflow_run_close(). Missing state capability is reported
+ * as UNSUPPORTED before Source ownership moves or any value is pulled. */
+cflow_status_result cflow_run_open_with_options(
+    cflow_run *run,
+    const cflow_graph *graph,
+    cflow_source *source,
+    cflow_scheduler *scheduler,
+    const cflow_sink *sink,
+    const cflow_eval_options *options);
 
 /* Execute a specific immutable subgraph from the same Graph-wide IR table.
  * Primarily used by SubRun composition; public to keep Run/SubRun symmetric. */
@@ -129,8 +141,17 @@ bool cflow_run_open_subgraph(cflow_run *run,
                              const cflow_graph *graph,
                              cflow_subgraph_id subgraph,
                              cflow_source *source,
-                             cflow_scheduler *scheduler,
-                             const cflow_sink *sink);
+                              cflow_scheduler *scheduler,
+                              const cflow_sink *sink);
+/* Subgraph form of cflow_run_open_with_options(). */
+cflow_status_result cflow_run_open_subgraph_with_options(
+    cflow_run *run,
+    const cflow_graph *graph,
+    cflow_subgraph_id subgraph,
+    cflow_source *source,
+    cflow_scheduler *scheduler,
+    const cflow_sink *sink,
+    const cflow_eval_options *options);
 
 /* Demand is always downstream-value demand, never source-item demand. */
 bool cflow_run_request(cflow_run *run, size_t n);
@@ -142,6 +163,9 @@ void cflow_run_close(cflow_run *run);
 bool cflow_run_is_done(const cflow_run *run);
 bool cflow_run_is_cancelled(const cflow_run *run);
 const char *cflow_run_error(const cflow_run *run);
+/* Generic cross-layer category. Domain-specific runtime text remains available
+ * through cflow_run_error(); a cancelled live Run reports CANCELLED. */
+cflow_status cflow_run_status(const cflow_run *run);
 size_t cflow_run_outstanding_demand(const cflow_run *run);
 
 /* Advanced integration hook: safe to call from arbitrary event-loop/driver callbacks. */

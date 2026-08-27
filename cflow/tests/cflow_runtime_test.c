@@ -2260,13 +2260,19 @@ suite("CFlow runtime") {
             .current_version = NULL
         };
         cflow_stream stream = {0};
+        cflow_collect_result result;
         const char *error = NULL;
 
         lifecycle_test_reset();
         check_not_null(owner.values[0].resource);
         check_not_null(owner.values[1].resource);
         check_not_null(cflow_stream_from_range(&stream, range));
-        check_true(cflow_eval_collect(&stream, &collector, &error));
+        result = cflow_eval_collect_result(&stream, &collector, &error);
+        check_true(cflow_collect_result_is_ok(result));
+        check_equal(result.status, CFLOW_STATUS_OK);
+        check_equal(result.collector_status, CMETA_OK);
+        check_equal(result.collector_state, CMETA_COLLECTOR_COMMITTED);
+        check_equal(result.count, (size_t)2u);
         check_null(error);
         check_true(collector.state == CMETA_COLLECTOR_COMMITTED);
         check_equal(output.count, (size_t)2u);
@@ -2305,6 +2311,7 @@ suite("CFlow runtime") {
             .current_version = NULL
         };
         cflow_stream stream = {0};
+        cflow_collect_result result;
         const char *error = NULL;
 
         lifecycle_test_reset();
@@ -2312,7 +2319,12 @@ suite("CFlow runtime") {
         check_not_null(owner.values[0].resource);
         check_not_null(owner.values[1].resource);
         check_not_null(cflow_stream_from_range(&stream, range));
-        check_false(cflow_eval_collect(&stream, &collector, &error));
+        result = cflow_eval_collect_result(&stream, &collector, &error);
+        check_false(cflow_collect_result_is_ok(result));
+        check_equal(result.status, CFLOW_STATUS_ALLOCATION_FAILED);
+        check_equal(result.collector_status, CMETA_OUT_OF_MEMORY);
+        check_equal(result.collector_state, CMETA_COLLECTOR_ABORTED);
+        check_equal(result.count, (size_t)1u);
         check_not_null(error);
         check_true(collector.state == CMETA_COLLECTOR_ABORTED);
         check_true(collector.status == CMETA_OUT_OF_MEMORY);
@@ -2380,12 +2392,18 @@ suite("CFlow runtime") {
             .current_version = NULL
         };
         cflow_stream stream = {0};
+        cflow_collect_result result;
         const char *error = NULL;
 
         missing_traits_type.traits = NULL;
         collector.input_type = &missing_traits_type;
         check_not_null(cflow_stream_from_range(&stream, range));
-        check_false(cflow_eval_collect(&stream, &collector, &error));
+        result = cflow_eval_collect_result(&stream, &collector, &error);
+        check_false(cflow_collect_result_is_ok(result));
+        check_equal(result.status, CFLOW_STATUS_UNSUPPORTED);
+        check_equal(result.collector_status, CMETA_TRAIT_MISSING);
+        check_equal(result.collector_state, CMETA_COLLECTOR_ABORTED);
+        check_equal(result.count, (size_t)0u);
         check_equal(error,
                     "range element type lacks required lifecycle traits");
         check_true(collector.state == CMETA_COLLECTOR_ABORTED);
@@ -2412,15 +2430,20 @@ suite("CFlow runtime") {
         cflow_stream stream = {0};
         cflow_result result = {&owner, 1u, &lifecycle_test_type};
         cflow_result limited = {&owner, 1u, &lifecycle_test_type};
+        cflow_status_result status;
+        cflow_status_result limited_status;
 
         lifecycle_test_reset();
         check_not_null(owner.values[0].resource);
         check_not_null(cflow_stream_from_range(&stream, range));
-        check_false(cflow_eval_stream(&stream, &result));
+        status = cflow_eval_stream_result(&stream, &result);
+        check_equal(status.status, CFLOW_STATUS_INVALID_ARGUMENT);
         check_null(result.data);
         check_equal(result.count, (size_t)0u);
         check_null(result.type);
-        check_false(cflow_eval_stream_limit(&stream, 1u, &limited));
+        limited_status =
+            cflow_eval_stream_limit_result(&stream, 1u, &limited);
+        check_equal(limited_status.status, CFLOW_STATUS_INVALID_ARGUMENT);
         check_null(limited.data);
         check_equal(limited.count, (size_t)0u);
         check_null(limited.type);
@@ -2450,11 +2473,13 @@ suite("CFlow runtime") {
         };
         cflow_stream stream = {0};
         cflow_result result = {0};
+        cflow_status_result status;
 
         lifecycle_test_reset();
         check_not_null(owner.values[0].resource);
         check_not_null(cflow_stream_from_range(&stream, range));
-        check_false(cflow_eval_stream(&stream, &result));
+        status = cflow_eval_stream_result(&stream, &result);
+        check_equal(status.status, CFLOW_STATUS_UNSUPPORTED);
         check_null(result.data);
         check_equal(result.count, (size_t)0u);
         check_null(result.type);

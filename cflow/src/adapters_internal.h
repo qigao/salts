@@ -1,21 +1,17 @@
 #ifndef CFLOW_ADAPTERS_INTERNAL_H
 #define CFLOW_ADAPTERS_INTERNAL_H
 
-#include <cflow/adapters.h>
+#include <cflow/lower.h>
+#include <cflow/sources.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/* Internal bounded form used to verify the public SIZE_MAX boundary without
- * requiring SIZE_MAX source values. */
-bool cflow_eval_count_bounded(const cflow_stream *stream,
-                              size_t max_count,
-                              size_t *out_count,
-                              const char **out_error);
-
-#ifdef __cplusplus
-}
-#endif
+/* Prepare the executable Graph for a synchronous adapter that owns source.
+ * On success, ownership remains with the caller until Run admission. On any
+ * failure after entry, source is destroyed exactly once and restored to zero.
+ * normalized must be empty and remains owned by the caller. */
+bool cflow_adapter_prepare_owned_source_graph(
+    cflow_graph *normalized,
+    const cflow_graph *graph,
+    cflow_source *source,
+    const cflow_graph **out_graph);
 
 #endif /* CFLOW_ADAPTERS_INTERNAL_H */

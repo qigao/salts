@@ -72,23 +72,92 @@ int main(void) {
 }
 
 #elif defined(CONSUME_CFLOW)
+#include <cflow/actor.h>
 #include <cflow/adapters.h>
 #include <cflow/clock.h>
 #include <cflow/stream.h>
 
 int main(void) {
   cflow_clock clock = {0};
+  cflow_statechart_actor_config actor_config = {0};
+  cflow_statechart_actor_stats actor_stats = {0};
+  cflow_statechart_actor_init_result (*actor_init)(
+      cflow_actor *, const cflow_statechart_actor_config *) =
+      cflow_statechart_actor_init;
+  bool (*actor_get_stats)(const cflow_actor *,
+                          cflow_statechart_actor_stats *) =
+      cflow_statechart_actor_get_stats;
   cflow_stream stream = {0};
-  const char *error = NULL;
-  size_t count = 1u;
+  cflow_result byte_result = {0};
+  cflow_find_result found = {0};
+  cflow_status_result terminal_result = {CFLOW_STATUS_OK};
+  const char *terminal_error = NULL;
+  size_t terminal_count = 1u;
+  if (actor_config.statechart.statechart != NULL ||
+      actor_stats.state != CFLOW_ACTOR_STATE_START ||
+      actor_init == NULL || actor_get_stats == NULL)
+    return 1;
   if (!cflow_clock_system_init(&clock)) return 1;
   cflow_clock_destroy(&clock);
   if (!cflow_stream_init(&stream, &cmeta_type_int)) return 2;
   if (stream.skip(&stream, 1u)->take(&stream, 2u) != &stream) return 3;
-  if (cflow_eval_count(&stream, &count, &error)) return 4;
-  if (count != 0u || error == NULL) return 5;
+  if (cflow_stream_count(&stream, &terminal_count, &terminal_error)) return 4;
+  if (terminal_count != 0u || terminal_error == NULL) return 5;
+  terminal_count = 1u;
+  terminal_result = cflow_stream_count_result(&stream, &terminal_count);
+  if (terminal_result.status != CFLOW_STATUS_INVALID_ARGUMENT ||
+      terminal_count != 0u ||
+      cflow_status_result_message(terminal_result) == NULL)
+    return 6;
+  terminal_result = cflow_eval_stream_result(&stream, &byte_result);
+  if (terminal_result.status != CFLOW_STATUS_INVALID_ARGUMENT ||
+      byte_result.data != NULL || byte_result.count != 0u ||
+      byte_result.type != NULL)
+    return 7;
+  cflow_result_destroy(&byte_result);
+  cflow_find_result_destroy(&found);
   cflow_stream_destroy(&stream);
   return 0;
+}
+
+#elif defined(CONSUME_STL_STREAM)
+#include <turbostl/stream.h>
+
+typed(List, InstalledStreamInts, int);
+
+int main(void) {
+  const int input[] = {1, 2, 1};
+  InstalledStreamInts values = {0};
+  InstalledStreamInts output = {0};
+  turbostl_stream_t pipeline = {0};
+  turbostl_collect_result result;
+  turbostl_status_result byte_status;
+  cflow_result bytes = {0};
+  size_t index;
+
+  if (InstalledStreamInts_init(&values, 3u) != STL_OK) return 1;
+  for (index = 0u; index < 3u; ++index) {
+    if (InstalledStreamInts_push_back(&values, input[index]) != STL_OK)
+      return 2;
+  }
+  if (!stream(&values, &pipeline)) return 3;
+  if (!pipeline.distinct(&pipeline, 2u)) return 4;
+  if (!pipeline.sorted(&pipeline, 2u)) return 5;
+  byte_status = to_array_result(&pipeline, 2u, &bytes);
+  if (!turbostl_status_result_is_ok(byte_status) || bytes.count != 2u) {
+    cflow_result_destroy(&bytes);
+    turbostl_stream_destroy(&pipeline);
+    InstalledStreamInts_destroy(&values);
+    return 6;
+  }
+  cflow_result_destroy(&bytes);
+  result = collect_typed(
+      &pipeline, InstalledStreamInts, &output, 2u);
+  turbostl_stream_destroy(&pipeline);
+  InstalledStreamInts_destroy(&output);
+  InstalledStreamInts_destroy(&values);
+  return result.ok && result.flow_status == CFLOW_STATUS_OK &&
+         result.status == CMETA_OK && result.count == 2u ? 0 : 7;
 }
 
 #elif defined(CONSUME_STL)

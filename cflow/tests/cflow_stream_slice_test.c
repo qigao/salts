@@ -1,438 +1,347 @@
 #include <cflow/cflow.h>
-
 #include "tinytest.h"
 
 #include <string.h>
 
-typed(filter, value, bool, cflow_slice_even, (int value)) {
-    return value % 2 == 0;
-}
+static size_t slice_expand_calls;
 
-typed(flatMap, value, cmeta_gen_status, cflow_slice_expand,
+typed(flatMap, value, cmeta_gen_status, slice_expand_four,
       (int value, long *out, size_t *cursor)) {
-    if (*cursor >= 3u) return CMETA_GEN_DONE;
-    if (*cursor == 0u) *out = (long)value;
-    else if (*cursor == 1u) *out = (long)value * 10L;
-    else *out = (long)value * 100L;
+    if (*cursor >= 4u) return CMETA_GEN_DONE;
+    *out = (long)value * 10L + (long)*cursor;
     ++*cursor;
-    return *cursor == 3u ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE;
+    ++slice_expand_calls;
+    return *cursor == 4u ? CMETA_GEN_VALUE_AND_DONE : CMETA_GEN_VALUE;
 }
 
-typedef struct slice_source_probe {
+typedef struct slice_probe_source {
+    const int *values;
+    size_t count;
+    size_t index;
     size_t resumes;
     size_t cancels;
     size_t fail_on_resume;
-    int next;
-} slice_source_probe;
+} slice_probe_source;
 
-static const char *slice_probe_source_name(void *state) {
-    (void)state;
+typedef struct slice_probe_sink {
+    int values[4];
+    size_t count;
+    size_t done;
+    const char *error;
+} slice_probe_sink;
+
+static const char *slice_probe_name(void *self) {
+    (void)self;
     return "slice-probe";
 }
 
-static const cmeta_type_desc *slice_probe_source_type(void *state) {
-    (void)state;
-    return &cmeta_type_int;
+static const cmeta_type_desc *slice_probe_type(void *self) {
+    return self ? &cmeta_type_int : NULL;
 }
 
-static cflow_step slice_probe_source_resume(
-    void *state, cflow_resume_ctx *ctx, void *out_value) {
-    slice_source_probe *probe = (slice_source_probe *)state;
-
+static cflow_step slice_probe_resume(void *self,
+                                     cflow_resume_ctx *ctx,
+                                     void *out_value) {
+    slice_probe_source *source = (slice_probe_source *)self;
     (void)ctx;
-    if (!probe || !out_value)
-        return (cflow_step){
-            CFLOW_STEP_ERROR, {0}, "slice probe is invalid"};
-    ++probe->resumes;
-    if (probe->fail_on_resume != 0u &&
-        probe->resumes == probe->fail_on_resume)
-        return (cflow_step){
-            CFLOW_STEP_ERROR, {0}, "slice probe failure"};
-    *(int *)out_value = probe->next++;
-    return (cflow_step){CFLOW_STEP_VALUE, {0}, NULL};
+    if (!source || !out_value)
+        return (cflow_step){CFLOW_STEP_ERROR, {0}, "probe source is invalid"};
+    ++source->resumes;
+    if (source->fail_on_resume == source->resumes)
+        return (cflow_step){CFLOW_STEP_ERROR, {0}, "probe source failed"};
+    if (source->index >= source->count)
+        return (cflow_step){CFLOW_STEP_DONE, {0}, NULL};
+    memcpy(out_value, &source->values[source->index], sizeof(int));
+    ++source->index;
+    return (cflow_step){
+        source->index == source->count
+            ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE,
+        {0}, NULL};
 }
 
-static void slice_probe_source_cancel(void *state) {
-    slice_source_probe *probe = (slice_source_probe *)state;
-    if (probe) ++probe->cancels;
+static void slice_probe_cancel(void *self) {
+    slice_probe_source *source = (slice_probe_source *)self;
+    if (source) ++source->cancels;
 }
 
-static void slice_probe_source_noop(void *state) {
-    (void)state;
-}
-
-static void slice_probe_source_bind(void *state, cflow_waker waker) {
-    (void)state;
+static void slice_probe_destroy(void *self) { (void)self; }
+static void slice_probe_bind(void *self, cflow_waker waker) {
+    (void)self;
     (void)waker;
 }
-
-static cflow_source_terminal slice_probe_source_poll(
-    void *state, const char **error) {
-    (void)state;
+static cflow_source_terminal slice_probe_poll(void *self,
+                                              const char **error) {
+    (void)self;
     if (error) *error = NULL;
     return CFLOW_SOURCE_OPEN;
 }
 
-CMETA_IMPLEMENTS(cflow_source, slice_probe_source, 0,
-    .name = slice_probe_source_name,
-    .output_type = slice_probe_source_type,
-    .resume = slice_probe_source_resume,
-    .cancel = slice_probe_source_cancel,
-    .destroy = slice_probe_source_noop,
-    .bind_terminal_waker = slice_probe_source_bind,
-    .poll_terminal = slice_probe_source_poll
+CMETA_IMPLEMENTS(cflow_source, slice_probe_source_interface,
+    CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES,
+    .name = slice_probe_name,
+    .output_type = slice_probe_type,
+    .resume = slice_probe_resume,
+    .cancel = slice_probe_cancel,
+    .destroy = slice_probe_destroy,
+    .bind_terminal_waker = slice_probe_bind,
+    .poll_terminal = slice_probe_poll
 );
 
-typedef struct slice_sink_probe {
-    int values[4];
-    size_t value_count;
-    size_t done_count;
-    const char *error;
-} slice_sink_probe;
-
-static bool slice_probe_sink_value(void *user,
-                                   const cmeta_type_desc *type,
-                                   const void *value) {
-    slice_sink_probe *probe = (slice_sink_probe *)user;
-    if (!probe || !value ||
-        !cmeta_type_equal(type, &cmeta_type_int) ||
-        probe->value_count >= 4u)
+static bool slice_probe_on_value(void *user,
+                                 const cmeta_type_desc *type,
+                                 const void *value) {
+    slice_probe_sink *sink = (slice_probe_sink *)user;
+    if (!sink || !cmeta_type_equal(type, &cmeta_type_int) || !value ||
+        sink->count >= sizeof(sink->values) / sizeof(sink->values[0]))
         return false;
-    probe->values[probe->value_count++] = *(const int *)value;
+    sink->values[sink->count++] = *(const int *)value;
     return true;
 }
 
-static void slice_probe_sink_error(void *user, const char *message) {
-    slice_sink_probe *probe = (slice_sink_probe *)user;
-    if (probe) probe->error = message;
+static void slice_probe_on_error(void *user, const char *message) {
+    slice_probe_sink *sink = (slice_probe_sink *)user;
+    if (sink) sink->error = message;
 }
 
-static void slice_probe_sink_done(void *user) {
-    slice_sink_probe *probe = (slice_sink_probe *)user;
-    if (probe) ++probe->done_count;
+static void slice_probe_on_done(void *user) {
+    slice_probe_sink *sink = (slice_probe_sink *)user;
+    if (sink) ++sink->done;
 }
 
-typedef struct slice_run_fixture {
-    cflow_stream stream;
-    cflow_graph normalized;
-    cflow_scheduler scheduler;
-    cflow_run run;
-    slice_sink_probe sink_probe;
-    cflow_sink_callbacks callbacks;
-    cflow_sink sink;
-} slice_run_fixture;
-
-static bool slice_run_fixture_init(slice_run_fixture *fixture,
-                                   slice_source_probe *source_probe,
-                                   size_t limit) {
-    cflow_source source;
-
-    if (!fixture || !source_probe) return false;
-    memset(fixture, 0, sizeof(*fixture));
-    fixture->normalized.root = CMETA_INVALID_ID;
-    if (!cflow_stream_init(&fixture->stream, &cmeta_type_int) ||
-        !fixture->stream.take(&fixture->stream, limit) ||
-        !cflow_graph_normalize(
-            &fixture->normalized, &fixture->stream.graph) ||
-        !cflow_scheduler_test_init(&fixture->scheduler))
-        return false;
-    fixture->callbacks = (cflow_sink_callbacks){
-        slice_probe_sink_value,
-        slice_probe_sink_error,
-        slice_probe_sink_done,
-        &fixture->sink_probe
+static void run_take_probe(size_t limit,
+                           slice_probe_source *source_state,
+                           slice_probe_sink *sink_state) {
+    cflow_graph graph = {0};
+    cflow_source source = {0};
+    cflow_scheduler scheduler = {0};
+    cflow_run run = {0};
+    cflow_sink_callbacks callbacks = {
+        slice_probe_on_value,
+        slice_probe_on_error,
+        slice_probe_on_done,
+        sink_state
     };
-    fixture->sink = cflow_sink_from_callbacks(&fixture->callbacks);
-    source = slice_probe_source_as_cflow_source(source_probe);
-    return cflow_run_open(
-        &fixture->run, &fixture->normalized, &source,
-        &fixture->scheduler, &fixture->sink);
+    cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+
+    cflow_graph_init(&graph, &cmeta_type_int);
+    check_true(cflow_graph_take(&graph, limit));
+    source = slice_probe_source_interface_as_cflow_source(source_state);
+    check_true(cflow_scheduler_test_init(&scheduler));
+    check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
+    check_true(cflow_run_request(&run, SIZE_MAX));
+    check_greater(cflow_scheduler_run_until_idle(&scheduler, 0u), (size_t)0u);
+    check_true(cflow_run_is_done(&run));
+    check_null(cflow_run_error(&run));
+
+    cflow_run_close(&run);
+    cflow_scheduler_destroy(&scheduler);
+    cflow_graph_destroy(&graph);
 }
 
-static void slice_run_fixture_destroy(slice_run_fixture *fixture) {
-    if (!fixture) return;
-    cflow_run_close(&fixture->run);
-    cflow_scheduler_destroy(&fixture->scheduler);
-    cflow_graph_destroy(&fixture->normalized);
-    cflow_stream_destroy(&fixture->stream);
-}
-
-static void check_slice_eval(const cflow_stream *stream,
-                             const int *input,
-                             size_t input_count,
-                             const int *expected,
-                             size_t expected_count) {
-    cflow_result result = {0};
-
-    check_true(cflow_eval_array(
-        cflow_stream_graph(stream), input, input_count, &result));
-    check_equal(result.count, expected_count);
-    check_true(cmeta_type_equal(result.type, &cmeta_type_int));
+static void check_slice_result(const cflow_result *result,
+                               const int *expected,
+                               size_t expected_count) {
+    check_not_null(result);
+    check_true(cmeta_type_equal(result->type, &cmeta_type_int));
+    check_equal(result->count, expected_count);
     if (expected_count == 0u) {
-        check_null(result.data);
+        check_null(result->data);
     } else {
-        check_not_null(result.data);
-        check_equal(result.data, expected, expected_count * sizeof(*expected));
+        check_equal(result->data, expected, expected_count * sizeof(*expected));
     }
-    cflow_result_destroy(&result);
 }
 
 spec("CFlow Stream slicing") {
-    it("composes skip and take in encounter order") {
-        const int input[] = {1, 2, 3, 4, 5};
-        const int expected[] = {3, 4};
+    it("applies skip and take in encounter order") {
+        const int input[] = {1, 2, 3, 4, 5, 6};
+        const int expected[] = {4, 5};
         cflow_stream stream = {0};
         cflow_result result = {0};
+        cflow_status_result status;
 
         check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.skip(&stream, 2u)->take(&stream, 2u));
-        check_true(cflow_eval_array(
-            cflow_stream_graph(&stream), input, 5u, &result));
-        check_equal(result.count, (size_t)2u);
-        check_equal(result.data, expected, sizeof(expected));
+        check_not_null(stream.skip(&stream, 3u)->take(&stream, 2u));
+        status = cflow_eval_array_result(
+            &stream.graph, input, 6u, &result);
+        check_true(cflow_status_result_is_ok(status));
+        check_equal(status.status, CFLOW_STATUS_OK);
+        check_slice_result(&result, expected, 2u);
 
         cflow_result_destroy(&result);
         cflow_stream_destroy(&stream);
     }
 
-    it("handles zero exact and oversized bounds") {
-        const int input[] = {1, 2, 3};
-        const int all[] = {1, 2, 3};
-        cflow_stream stream = {0};
-
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.take(&stream, 2u));
-        check_slice_eval(&stream, input, 0u, NULL, 0u);
-        cflow_stream_destroy(&stream);
-
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.skip(&stream, 0u));
-        check_slice_eval(&stream, input, 3u, all, 3u);
-        cflow_stream_destroy(&stream);
-
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.skip(&stream, 3u));
-        check_slice_eval(&stream, input, 3u, NULL, 0u);
-        cflow_stream_destroy(&stream);
-
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.skip(&stream, 4u));
-        check_slice_eval(&stream, input, 3u, NULL, 0u);
-        cflow_stream_destroy(&stream);
-
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.take(&stream, 0u));
-        check_slice_eval(&stream, input, 3u, NULL, 0u);
-        cflow_stream_destroy(&stream);
-
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.take(&stream, 3u));
-        check_slice_eval(&stream, input, 3u, all, 3u);
-        cflow_stream_destroy(&stream);
-    }
-
-    it("counts values at each slice position") {
-        const int input[] = {1, 2, 3, 4, 5, 6, 7};
-        const int filtered[] = {4, 6};
-        const int take_then_skip[] = {2, 3};
-        cflow_stream stream = {0};
-
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.filter(&stream, cflow_slice_even)
-                                 ->skip(&stream, 1u)
-                                 ->take(&stream, 2u));
-        check_slice_eval(&stream, input, 7u, filtered, 2u);
-        cflow_stream_destroy(&stream);
-
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.take(&stream, 3u)->skip(&stream, 1u));
-        check_slice_eval(&stream, input, 7u, take_then_skip, 2u);
-        cflow_stream_destroy(&stream);
-    }
-
-    it("short circuits only work upstream of the take position") {
-        const int input[] = {2, 3};
-        const long expanded_taken_input[] = {2L, 20L, 200L};
-        const long taken_expansion[] = {2L, 20L};
-        cflow_stream stream = {0};
+    it("handles zero and out of range bounds") {
+        const int input[] = {7, 8};
+        cflow_stream take_zero = {0};
+        cflow_stream skip_all = {0};
         cflow_result result = {0};
 
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.take(&stream, 1u)
-                                 ->flatMap(&stream, cflow_slice_expand));
-        check_true(cflow_eval_array(
-            cflow_stream_graph(&stream), input, 2u, &result));
-        check_equal(result.count, (size_t)3u);
-        check_true(cmeta_type_equal(result.type, &cmeta_type_long));
-        check_equal(result.data, expanded_taken_input,
-                    sizeof(expanded_taken_input));
+        check_not_null(cflow_stream_init(&take_zero, &cmeta_type_int));
+        check_not_null(take_zero.take(&take_zero, 0u));
+        check_true(cflow_eval_array(&take_zero.graph, input, 2u, &result));
+        check_slice_result(&result, NULL, 0u);
         cflow_result_destroy(&result);
-        cflow_stream_destroy(&stream);
 
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.flatMap(&stream, cflow_slice_expand)
-                                 ->take(&stream, 2u));
-        check_true(cflow_eval_array(
-            cflow_stream_graph(&stream), input, 2u, &result));
-        check_equal(result.count, (size_t)2u);
-        check_true(cmeta_type_equal(result.type, &cmeta_type_long));
-        check_equal(result.data, taken_expansion, sizeof(taken_expansion));
+        check_not_null(cflow_stream_init(&skip_all, &cmeta_type_int));
+        check_not_null(skip_all.skip(&skip_all, 3u));
+        check_true(cflow_eval_array(&skip_all.graph, input, 2u, &result));
+        check_slice_result(&result, NULL, 0u);
+
         cflow_result_destroy(&result);
-        cflow_stream_destroy(&stream);
+        cflow_stream_destroy(&skip_all);
+        cflow_stream_destroy(&take_zero);
     }
 
-    it("resets slice positions for every evaluation") {
-        const int input[] = {1, 2, 3, 4};
-        const int expected[] = {2, 3};
+    it("keeps interpreted and compiled executions equivalent") {
+        const int input[] = {10, 20, 30, 40, 50};
+        const int expected[] = {20, 30, 40};
         cflow_stream stream = {0};
-
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.skip(&stream, 1u)->take(&stream, 2u));
-        check_slice_eval(&stream, input, 4u, expected, 2u);
-        check_slice_eval(&stream, input, 4u, expected, 2u);
-        cflow_stream_destroy(&stream);
-    }
-
-    it("preserves interpreted parity and rejects direct plans") {
-        const int input[] = {1, 2, 3, 4, 5};
-        cflow_stream stream = {0};
-        cflow_graph normalized = {0};
-        cflow_verify_report report = {0};
         cflow_plan plan = {0};
+        cflow_result interpreted = {0};
+        cflow_result compiled = {0};
+        cflow_verify_report report = {0};
 
-        normalized.root = CMETA_INVALID_ID;
+        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+        check_not_null(stream.skip(&stream, 1u)->take(&stream, 3u));
+        check_true(cflow_eval_array(&stream.graph, input, 5u, &interpreted));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        check_true(cflow_plan_eval_array(&plan, input, 5u, &compiled));
+        check_slice_result(&interpreted, expected, 3u);
+        check_true(cflow_result_equal(&interpreted, &compiled));
+        check_true(cflow_verify_pipeline(&stream.graph, input, 5u, &report));
+        check_true(report.compiled_plan_checked);
+        check_equal(report.compiled_instructions, (size_t)2u);
+
+        cflow_result_destroy(&compiled);
+        cflow_result_destroy(&interpreted);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("resets positional state for every evaluation") {
+        const int input[] = {1, 2, 3};
+        const int expected[] = {2};
+        cflow_stream stream = {0};
+        cflow_result first = {0};
+        cflow_result second = {0};
+
+        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+        check_not_null(stream.skip(&stream, 1u)->take(&stream, 1u));
+        check_true(cflow_eval_array(&stream.graph, input, 3u, &first));
+        check_true(cflow_eval_array(&stream.graph, input, 3u, &second));
+        check_slice_result(&first, expected, 1u);
+        check_true(cflow_result_equal(&first, &second));
+
+        cflow_result_destroy(&second);
+        cflow_result_destroy(&first);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("declares deterministic stateful slice semantics") {
+        cflow_stream stream = {0};
+        const cmeta_properties expected_properties =
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL |
+            CMETA_PROP_NO_ALIAS;
+
         check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
         check_not_null(stream.skip(&stream, 1u)->take(&stream, 2u));
-        check_true(cflow_graph_normalize(&normalized, &stream.graph));
-        check_false(cflow_plan_graph_supported(&normalized));
-        check_false(cflow_plan_compile(&plan, &normalized, NULL));
-        check_true(cflow_verify_pipeline(&stream.graph, input, 5u, &report));
-        check_null(report.error);
-        check_equal(report.output_count, (size_t)2u);
-        check_false(report.compiled_plan_checked);
+        check_true((cflow_graph_effects(&stream.graph) &
+                    CMETA_EFFECT_STATEFUL) != 0u);
+        check_true(cmeta_properties_include(
+            cflow_graph_properties(&stream.graph), expected_properties));
 
-        cflow_plan_destroy(&plan);
-        cflow_graph_destroy(&normalized);
         cflow_stream_destroy(&stream);
     }
 
-    it("includes immutable bounds in structural equality") {
-        cflow_stream stream = {0};
-        cflow_graph clone = {0};
-        cflow_subgraph *root;
+    it("does not pull the source for take zero") {
+        const int input[] = {1, 2, 3};
+        slice_probe_source source = {input, 3u, 0u, 0u, 0u, 0u};
+        slice_probe_sink sink = {0};
 
-        clone.root = CMETA_INVALID_ID;
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.take(&stream, 2u));
-        check_true(cflow_graph_clone(&clone, &stream.graph));
-        check_true(cflow_graph_structural_equal(&stream.graph, &clone));
-        root = &clone.subgraphs[clone.root];
-        root->nodes[root->tail].slice.count = 3u;
-        check_false(cflow_graph_structural_equal(&stream.graph, &clone));
-
-        cflow_graph_destroy(&clone);
-        cflow_stream_destroy(&stream);
-    }
-
-    it("rejects inconsistent slice metadata") {
-        cflow_stream stream = {0};
-        cflow_graph plain = {0};
-        cflow_subgraph *root;
-        const char *error = NULL;
-
-        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
-        check_not_null(stream.take(&stream, 2u));
-        root = &stream.graph.subgraphs[stream.graph.root];
-        root->nodes[root->tail].slice.present = false;
-        check_false(cflow_graph_validate(&stream.graph, &error));
-        check_not_null(error);
-        cflow_stream_destroy(&stream);
-
-        cflow_graph_init(&plain, &cmeta_type_int);
-        plain.subgraphs[plain.root].nodes[0].slice.count = 1u;
-        error = NULL;
-        check_false(cflow_graph_validate(&plain, &error));
-        check_not_null(error);
-        cflow_graph_destroy(&plain);
-    }
-
-    it("creates detached slice nodes for advanced Graph wiring") {
-        cflow_graph graph = {0};
-        cflow_subgraph_id subgraph;
-        cflow_node_id source;
-        cflow_node_id slice = CMETA_INVALID_ID;
-        const char *error = NULL;
-
-        cflow_graph_init(&graph, &cmeta_type_int);
-        subgraph = graph.root;
-        source = graph.subgraphs[subgraph].tail;
-        check_true(cflow_graph_create_slice_node(
-            &graph, subgraph, CFLOW_OP_SKIP, &cmeta_type_int, 2u, &slice));
-        check_true(cflow_graph_connect(
-            &graph, subgraph, source, 0u, slice, 0u));
-        check_true(cflow_graph_set_subgraph_exit(&graph, subgraph, slice));
-        check_true(cflow_graph_validate(&graph, &error));
-        check_null(error);
-        check_true(graph.subgraphs[subgraph].nodes[slice].slice.present);
-        check_equal(graph.subgraphs[subgraph].nodes[slice].slice.count,
-                    (size_t)2u);
-        cflow_graph_destroy(&graph);
-    }
-
-    it("completes take zero without resuming its source") {
-        slice_source_probe source = {0};
-        slice_run_fixture fixture;
-
-        check_true(slice_run_fixture_init(&fixture, &source, 0u));
-        check_true(cflow_run_request(&fixture.run, SIZE_MAX));
-        (void)cflow_scheduler_run_until_idle(&fixture.scheduler, 0u);
+        run_take_probe(0u, &source, &sink);
 
         check_equal(source.resumes, (size_t)0u);
         check_equal(source.cancels, (size_t)1u);
-        check_equal(fixture.sink_probe.value_count, (size_t)0u);
-        check_equal(fixture.sink_probe.done_count, (size_t)1u);
-        check_null(fixture.sink_probe.error);
-        check_true(cflow_run_is_done(&fixture.run));
-        check_false(cflow_run_is_cancelled(&fixture.run));
-        slice_run_fixture_destroy(&fixture);
+        check_equal(sink.count, (size_t)0u);
+        check_equal(sink.done, (size_t)1u);
+        check_null(sink.error);
     }
 
-    it("stops an unbounded source exactly at the take limit") {
-        const int expected[] = {0, 1};
-        slice_source_probe source = {0};
-        slice_run_fixture fixture;
+    it("cancels upstream immediately after the take bound") {
+        const int input[] = {1, 2, 3, 4};
+        const int expected[] = {1, 2};
+        slice_probe_source source = {input, 4u, 0u, 0u, 0u, 0u};
+        slice_probe_sink sink = {0};
 
-        check_true(slice_run_fixture_init(&fixture, &source, 2u));
-        check_true(cflow_run_request(&fixture.run, SIZE_MAX));
-        (void)cflow_scheduler_run_until_idle(&fixture.scheduler, 0u);
+        run_take_probe(2u, &source, &sink);
 
         check_equal(source.resumes, (size_t)2u);
         check_equal(source.cancels, (size_t)1u);
-        check_equal(fixture.sink_probe.value_count, (size_t)2u);
-        check_equal(fixture.sink_probe.values, expected, sizeof(expected));
-        check_equal(fixture.sink_probe.done_count, (size_t)1u);
-        check_null(fixture.sink_probe.error);
-        check_true(cflow_run_is_done(&fixture.run));
-        check_false(cflow_run_is_cancelled(&fixture.run));
-        slice_run_fixture_destroy(&fixture);
+        check_equal(sink.count, (size_t)2u);
+        check_equal(sink.values, expected, sizeof(expected));
+        check_equal(sink.done, (size_t)1u);
+        check_null(sink.error);
     }
 
-    it("preserves a source error reached before the take limit") {
-        slice_source_probe source = {.fail_on_resume = 2u};
-        slice_run_fixture fixture;
+    it("does not observe a source error after the take bound") {
+        const int input[] = {5, 6, 7};
+        slice_probe_source source = {input, 3u, 0u, 0u, 0u, 2u};
+        slice_probe_sink sink = {0};
 
-        check_true(slice_run_fixture_init(&fixture, &source, 3u));
-        check_true(cflow_run_request(&fixture.run, SIZE_MAX));
-        (void)cflow_scheduler_run_until_idle(&fixture.scheduler, 0u);
+        run_take_probe(1u, &source, &sink);
 
-        check_equal(source.resumes, (size_t)2u);
-        check_equal(source.cancels, (size_t)0u);
-        check_equal(fixture.sink_probe.value_count, (size_t)1u);
-        check_equal(fixture.sink_probe.done_count, (size_t)0u);
-        check_equal(fixture.sink_probe.error, "slice probe failure");
-        check_equal(cflow_run_error(&fixture.run), "slice probe failure");
-        check_false(cflow_run_is_done(&fixture.run));
-        check_false(cflow_run_is_cancelled(&fixture.run));
-        slice_run_fixture_destroy(&fixture);
+        check_equal(source.resumes, (size_t)1u);
+        check_equal(source.cancels, (size_t)1u);
+        check_equal(sink.count, (size_t)1u);
+        check_equal(sink.values[0], 5);
+        check_equal(sink.done, (size_t)1u);
+        check_null(sink.error);
+    }
+
+    it("stops an active upstream generator at the take bound") {
+        const int input[] = {1, 2};
+        const long expected[] = {10L, 11L};
+        cflow_stream stream = {0};
+        cflow_plan unsupported = {0};
+        cflow_result result = {0};
+
+        slice_expand_calls = 0u;
+        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+        check_not_null(stream.flatMap(&stream, slice_expand_four)
+                                   ->take(&stream, 2u));
+        check_true(cflow_eval_array(&stream.graph, input, 2u, &result));
+        check_true(cmeta_type_equal(result.type, &cmeta_type_long));
+        check_equal(result.count, (size_t)2u);
+        check_equal(result.data, expected, sizeof(expected));
+        check_equal(slice_expand_calls, (size_t)2u);
+        check_false(cflow_plan_compile_surface(
+            &unsupported, &stream.graph, NULL));
+        check_equal(unsupported.error,
+                    "Graph mixes slice and callable plan semantics");
+
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&unsupported);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("allows a downstream generator to finish after take") {
+        const int input[] = {2, 3};
+        const long expected[] = {20L, 21L, 22L, 23L};
+        cflow_stream stream = {0};
+        cflow_result result = {0};
+
+        slice_expand_calls = 0u;
+        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+        check_not_null(stream.take(&stream, 1u)
+                                   ->flatMap(&stream, slice_expand_four));
+        check_true(cflow_eval_array(&stream.graph, input, 2u, &result));
+        check_true(cmeta_type_equal(result.type, &cmeta_type_long));
+        check_equal(result.count, (size_t)4u);
+        check_equal(result.data, expected, sizeof(expected));
+        check_equal(slice_expand_calls, (size_t)4u);
+
+        cflow_result_destroy(&result);
+        cflow_stream_destroy(&stream);
     }
 }

@@ -7,7 +7,9 @@ typedef enum cflow_plan_opcode {
     CMETA_PLAN_FILTER,
     CMETA_PLAN_MAP,
     CMETA_PLAN_FLAT_MAP,
-    CMETA_PLAN_REDUCE
+    CMETA_PLAN_REDUCE,
+    CMETA_PLAN_TAKE,
+    CMETA_PLAN_SKIP
 } cflow_plan_opcode;
 
 typedef struct cflow_plan_value_vec {
@@ -49,6 +51,8 @@ struct cflow_plan_inst {
     cflow_plan_call call;
     cflow_plan_call *fn_chain;
     size_t fn_chain_count;
+    bool has_size_parameter;
+    size_t size_parameter;
 };
 
 typedef struct cflow_plan_impl {

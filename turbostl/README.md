@@ -151,6 +151,11 @@ Graph stage and collection remains an explicit terminal. Capacity arguments are
 hard resource bounds: exceeding one fails the collection transaction instead of
 silently truncating the result.
 
+`TurboUtils::STLStream` is a compiled bridge target. Its `stream(...)` helpers
+bind the container Range and explicitly inject TurboSTL's bounded HashSet and
+Vec state backends; the core `TurboUtils::STL` target still has no CFlow
+dependency.
+
 Element predicates are already represented by CMeta callables. The callable
 owns the typed signature and declared contract; CFlow owns traversal, predicate
 invocation, value lifetime, and Graph execution. For example:
@@ -163,49 +168,44 @@ typed(filter, value, bool, keep_even, (int value)) {
 cflow_stream pipeline = {0};
 stream(&values, &pipeline)
     ->filter(&pipeline, keep_even)
+    ->distinct(&pipeline, 64u)
+    ->sorted(&pipeline, 64u)
     ->skip(&pipeline, 1u)
-    ->take(&pipeline, 2u);
+    ->take(&pipeline, 10u);
 ```
-
-`skip` and `take` are CFlow Graph operations, not TurboSTL container
-algorithms. They count values at their exact pipeline position and preserve
-encounter order. Every evaluation creates independent counters. `take(0)`
-performs no Range/Source resume; reaching a positive limit stops unneeded
-upstream work as normal completion rather than user cancellation. Interpreted
-collection supports managed values with the same COPY/MOVE/DESTROY ownership
-rules as other CFlow nodes. Direct compiled plans currently reject slice
-nodes explicitly.
-
-`turbostl_stream_count(&pipeline)` is the counting terminal:
-
-```c
-turbostl_count_result result = turbostl_stream_count(&pipeline);
-if (!result.ok) {
-    /* result.error is a borrowed diagnostic. */
-}
-```
-
-It executes the complete interpreted Graph and counts values after every
-preceding operator. Empty input succeeds with zero. It does not short-circuit,
-so an unbounded source needs an upstream bound such as `take`. Each call owns a
-fresh accumulator; repeated evaluation still requires the bound Range to be
-`REUSABLE`. Terminal callbacks only borrow managed values and add no
-count-specific COPY/MOVE/DESTROY operation. Failure, including Range mutation,
-callback/runtime error, or count overflow, returns `ok == false` and
-`count == 0`; `error` remains borrowed from CFlow. No global `count(...)` macro
-is defined because it would intercept C++ algorithms such as `std::count(...)`.
 
 Captured predicates use `lambda(filter, ...)` or `cmeta_bindable(filter, ...)`
 and enter the same Graph as immutable callable values. Filtering should not be
 reimplemented separately for `Vec`, `List`, `Set`, or other container kinds.
 
+`skip(n)` and `take(n)` are positional CFlow Graph nodes rather than terminal
+capacity options. They count values at their exact pipeline position and keep
+encounter order. `take(n)` short-circuits upstream after its bound;
+`take(0)` does not pull the source. Every evaluation owns fresh counters, so a
+reusable unchanged Range can execute the same sliced Graph again. Interpreted
+collection supports managed element traits. Direct compilation currently
+accepts slice-only trivial-value graphs; mixing a slice with callable nodes
+fails explicitly until the plan executor can preserve lazy short-circuit and
+error semantics.
+
+`distinct(max_unique)` keeps first-encounter order. The nonzero argument limits
+unique retained values, not source items. A duplicate is filtered without
+growing state; the next new value after the bound returns
+`CFLOW_STATUS_CAPACITY_EXCEEDED`. Element descriptors must provide `HASH` and
+`EQUAL`; managed elements are copied into the HashSet and destroyed when the
+Run closes. Direct/compiled plans reject this stateful operator explicitly.
+
+`sorted(max_elements)` uses a bounded TurboSTL Vec plus the stable
+`O(n log n)` sort implementation. It buffers the complete upstream, requires
+`COMPARE` plus lifecycle traits, preserves encounter order among equal values,
+and emits no partial result if the hard element bound is exceeded. Managed
+elements remain independently owned throughout collection and Run teardown.
+Direct/compiled plans reject this materializing operator explicitly.
+
 New convenience operations follow the same ownership boundary:
 
 - An element operation such as a new transform or selection rule belongs in
   CFlow as a typed operator accepting a CMeta callable.
-- A positional operation such as `skip` or `take` belongs in CFlow Graph/Run;
-  its immutable bound is Graph metadata and its mutable position belongs to
-  one execution.
 - A result operation such as counting, matching, or finding belongs in the
   terminal/collector layer, with explicit short-circuit, ownership, error, and
   capacity semantics.
@@ -215,6 +215,35 @@ New convenience operations follow the same ownership boundary:
 Names alone do not create API. A new operation is public only after its Graph or
 terminal semantics, managed-value lifetime behavior, failure contract, and
 tests are all present.
+
+The common result operations are available through prefixed helpers so they do
+not collide with generated container methods:
+
+```c
+size_t selected = 0u;
+bool has_even = false;
+turbostl_find_result first = {0};
+const char *error = NULL;
+
+turbostl_stream_count(&pipeline, &selected, &error);
+turbostl_stream_any_match(&pipeline, keep_even, &has_even, &error);
+turbostl_stream_find_first(&pipeline, &first, &error);
+turbostl_find_result_destroy(&first);
+```
+
+Structured variants such as `turbostl_stream_count_result` and
+`turbostl_stream_any_match_result` return the shared allocation-free
+`turbostl_status_result`. `turbostl_status_result_message` returns canonical
+library-owned static text; existing `bool + out_error` helpers remain available
+for detailed compatibility diagnostics.
+
+`turbostl_stream_all_match` and `turbostl_stream_for_each` complete the same
+terminal family. Empty input produces count zero, any false, all true, no first
+value, and no visitor calls. Matching and finding short-circuit the current
+execution; count and visiting require source completion. `find_first` owns an
+independent copy, including for managed element types. Predicate values retain
+their CMeta typed-callable validation, while a `for_each` visitor borrows each
+element only for its callback duration.
 
 Sequence/set wrappers derive Range information in the same declaration, so
 CFlow can bind an initialized typed object directly:
@@ -251,11 +280,32 @@ list_t raw_output = ListOf(int);
 turbostl_collect_result raw_result = to_list(&s, &raw_output, 100u);
 ```
 
+Trivial-copy streams can instead return an owned bounded byte result:
+
+```c
+cflow_result bytes = {0};
+turbostl_status_result byte_status =
+    to_array_result(&s, 100u, &bytes);
+if (turbostl_status_result_is_ok(byte_status))
+    cflow_result_destroy(&bytes);
+```
+
+`to_array_result()` distinguishes capacity, unsupported lifecycle, allocation,
+source admission, and Runtime failure. The legacy `to_array()` remains its
+`bool` compatibility projection. Both clear the result on failure.
+
 The erased form validates its descriptor at runtime; the typed form provides
 the stronger compile-time output pointer check. Collection is transactional.
 On failure, a generated wrapper is reset to zero. An erased raw handle releases
 its storage while retaining the descriptor and type binding supplied by its
 declaration or `*Of(...)` initializer, so it can be initialized again.
+`turbostl_collect_result.flow_status` classifies Range admission and CFlow
+Runtime failures; `status` remains the exact CMeta Collector status, and
+`count` remains the accepted transaction count. For example, a bounded
+`sorted()` Runtime overflow reports `CFLOW_STATUS_CAPACITY_EXCEEDED` together
+with the Collector's abort status, while output-collector overflow reports
+`CMETA_CAPACITY_EXCEEDED` directly. `error` remains a borrowed diagnostic and
+must not be freed or retained beyond its documented source lifetime.
 The core `TurboUtils::STL` target does not depend on CFlow.
 
 ### Worker-scheduler terminal

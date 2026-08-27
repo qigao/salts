@@ -124,7 +124,6 @@ typedef struct cflow_statechart_instance_impl {
     turbo_cond_t tasks_changed;
     const char *error;
     bool error_owned;
-    cflow_waker terminal_waiter;
     uint64_t configuration_version;
     uint64_t macrosteps;
     uint64_t microsteps;
@@ -139,6 +138,9 @@ typedef struct cflow_statechart_instance_impl {
     bool closed;
     bool cancelled;
     bool done;
+    bool adapter_attached;
+    cflow_waker downstream_waiter;
+    cflow_waker terminal_waiter;
     cflow_statechart_runtime_test_hooks test_hooks;
 } cflow_statechart_instance_impl;
 
@@ -1100,6 +1102,13 @@ static void invoke_detached_waker(cflow_waker waker) {
     if (waker.wake != NULL) waker.wake(waker.user);
 }
 
+static cflow_waker take_downstream_waiter_locked(
+    cflow_statechart_instance_impl *impl) {
+    cflow_waker waker = impl->downstream_waiter;
+    impl->downstream_waiter = (cflow_waker){0};
+    return waker;
+}
+
 static cflow_waker take_terminal_waiter_locked(
     cflow_statechart_instance_impl *impl) {
     cflow_waker waker = impl->terminal_waiter;
@@ -1108,51 +1117,27 @@ static cflow_waker take_terminal_waiter_locked(
 }
 
 static void finish_terminal_side_effects(
-    cflow_statechart_instance_impl *impl,
-    cflow_waker admission_waker,
-    cflow_waker terminal_waker) {
+    cflow_statechart_instance_impl *impl, cflow_waker waker) {
     bool terminal = false;
-    if (impl != NULL && impl->timers_initialized) {
+    bool settled = false;
+    cflow_waker downstream_waker = {0};
+    cflow_waker terminal_waker = {0};
+    if (impl != NULL) {
         turbo_mutex_lock(&impl->lock);
         terminal = impl->terminal_outcome != STATECHART_TERMINAL_NONE;
+        settled = impl->done || impl->error != NULL;
+        if (settled) {
+            downstream_waker = take_downstream_waiter_locked(impl);
+            terminal_waker = take_terminal_waiter_locked(impl);
+        }
         turbo_mutex_unlock(&impl->lock);
-        if (terminal) (void)cflow_timer_event_queue_close(&impl->timers);
+        if (terminal && impl->timers_initialized)
+            (void)cflow_timer_event_queue_close(&impl->timers);
     }
-    invoke_detached_waker(admission_waker);
+    invoke_detached_waker(waker);
+    invoke_detached_waker(downstream_waker);
     invoke_detached_waker(terminal_waker);
 }
-
-static bool statechart_terminal_wait_arm(
-    void *state, cflow_waker waker) {
-    cflow_statechart_instance_impl *impl =
-        (cflow_statechart_instance_impl *)state;
-    bool terminal;
-    if (impl == NULL || waker.wake == NULL) return false;
-    turbo_mutex_lock(&impl->lock);
-    terminal = impl->done;
-    if (!terminal && impl->terminal_waiter.wake != NULL) {
-        turbo_mutex_unlock(&impl->lock);
-        return false;
-    }
-    if (!terminal) impl->terminal_waiter = waker;
-    turbo_mutex_unlock(&impl->lock);
-    if (terminal) invoke_detached_waker(waker);
-    return true;
-}
-
-static void statechart_terminal_wait_cancel(void *state) {
-    cflow_statechart_instance_impl *impl =
-        (cflow_statechart_instance_impl *)state;
-    if (impl == NULL) return;
-    turbo_mutex_lock(&impl->lock);
-    impl->terminal_waiter = (cflow_waker){0};
-    turbo_mutex_unlock(&impl->lock);
-}
-
-CMETA_IMPLEMENTS(cflow_waitable, cflow_statechart_terminal_waitable, 0,
-    .arm = statechart_terminal_wait_arm,
-    .cancel = statechart_terminal_wait_cancel
-);
 
 static void cancel_external_admission_locked(
     cflow_statechart_instance_impl *impl, cflow_waker *out_waker) {
@@ -1191,16 +1176,13 @@ static void claim_external_for_failure_locked(
 
 static void finish_macrostep_locked(
     cflow_statechart_instance_impl *impl,
-    cflow_statechart_runtime_status settlement,
-    cflow_waker *out_terminal_waker) {
+    cflow_statechart_runtime_status settlement) {
     settle_external_locked(impl, settlement);
     if (impl->macrostep_active) counter_increment(&impl->macrosteps);
     impl->macrostep_active = false;
     impl->macrostep_has_external = false;
     impl->macrostep_microsteps = 0u;
     impl->done = true;
-    if (out_terminal_waker != NULL)
-        *out_terminal_waker = take_terminal_waiter_locked(impl);
 }
 
 static bool win_terminal_locked(
@@ -1210,8 +1192,7 @@ static bool win_terminal_locked(
     const char *message,
     bool settle_now,
     cflow_statechart_runtime_status settlement,
-    cflow_waker *out_admission_waker,
-    cflow_waker *out_terminal_waker) {
+    cflow_waker *out_waker) {
     if (impl->terminal_outcome != STATECHART_TERMINAL_NONE)
         return false;
     impl->terminal_outcome = outcome;
@@ -1222,31 +1203,29 @@ static bool win_terminal_locked(
         impl->last_status = status;
     }
     clear_semantic_queues_locked(impl);
-    cancel_external_admission_locked(impl, out_admission_waker);
+    cancel_external_admission_locked(impl, out_waker);
     if (impl->timers_initialized)
         (void)cflow_timer_event_queue_close_begin_internal(&impl->timers);
     impl->driver_repost = false;
     if (settle_now)
-        finish_macrostep_locked(impl, settlement, out_terminal_waker);
+        finish_macrostep_locked(impl, settlement);
     return true;
 }
 
 static void latch_terminal_failure(cflow_statechart_instance_impl *impl,
                                    cflow_statechart_runtime_status status,
                                    const char *message) {
-    cflow_waker admission_waker = {0};
-    cflow_waker terminal_waker = {0};
+    cflow_waker waker = {0};
     if (impl == NULL) return;
     turbo_mutex_lock(&impl->lock);
     if (impl->terminal_outcome == STATECHART_TERMINAL_NONE) {
         claim_external_for_failure_locked(impl);
         (void)win_terminal_locked(
             impl, STATECHART_TERMINAL_ERROR, status, message,
-            true, status, &admission_waker, &terminal_waker);
+            true, status, &waker);
     }
     turbo_mutex_unlock(&impl->lock);
-    finish_terminal_side_effects(
-        impl, admission_waker, terminal_waker);
+    finish_terminal_side_effects(impl, waker);
 }
 
 static bool source_is_proper_descendant(const cflow_statechart_impl *ir,
@@ -2138,8 +2117,7 @@ static void commit_completions(cflow_statechart_instance_impl *impl) {
 static void microstep_fail(cflow_statechart_instance_impl *impl,
                            cflow_statechart_runtime_status status,
                            const char *error) {
-    cflow_waker admission_waker = {0};
-    cflow_waker terminal_waker = {0};
+    cflow_waker waker = {0};
     impl->staged_event_count = 0u;
     turbo_mutex_lock(&impl->lock);
     impl->microstep_result = status;
@@ -2148,10 +2126,9 @@ static void microstep_fail(cflow_statechart_instance_impl *impl,
         impl, STATECHART_TERMINAL_ERROR, status,
         error != NULL && error[0] != '\0'
             ? error : "Statechart action failed",
-        true, status, &admission_waker, &terminal_waker);
+        true, status, &waker);
     turbo_mutex_unlock(&impl->lock);
-    finish_terminal_side_effects(
-        impl, admission_waker, terminal_waker);
+    finish_terminal_side_effects(impl, waker);
 }
 
 static void commit_internal_events(cflow_statechart_instance_impl *impl) {
@@ -2297,8 +2274,7 @@ static void statechart_microstep_run(void *user) {
 static void statechart_microstep_cancel(void *user) {
     cflow_statechart_instance_impl *impl =
         (cflow_statechart_instance_impl *)user;
-    cflow_waker admission_waker = {0};
-    cflow_waker terminal_waker = {0};
+    cflow_waker waker = {0};
     void (*after_cancel)(void *) = NULL;
     void *hook_user = NULL;
     turbo_mutex_lock(&impl->lock);
@@ -2308,8 +2284,7 @@ static void statechart_microstep_cancel(void *user) {
             impl, STATECHART_TERMINAL_ERROR,
             CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED,
             "Statechart SerialExecutor cancelled a queued microstep",
-            true, CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED,
-            &admission_waker, &terminal_waker);
+            true, CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED, &waker);
     } else {
         impl->microstep_result =
             impl->terminal_outcome == STATECHART_TERMINAL_ERROR
@@ -2321,8 +2296,7 @@ static void statechart_microstep_cancel(void *user) {
     after_cancel = impl->test_hooks.after_microstep_cancel;
     hook_user = impl->test_hooks.user;
     turbo_mutex_unlock(&impl->lock);
-    finish_terminal_side_effects(
-        impl, admission_waker, terminal_waker);
+    finish_terminal_side_effects(impl, waker);
     if (after_cancel != NULL) after_cancel(hook_user);
 }
 
@@ -2330,7 +2304,6 @@ static void statechart_microstep_finalize(void *user) {
     cflow_statechart_instance_impl *impl =
         (cflow_statechart_instance_impl *)user;
     cflow_statechart_runtime_status result;
-    cflow_waker terminal_waker = {0};
     bool continue_driver;
     turbo_mutex_lock(&impl->lock);
     if (impl->microstep_finalized != UINT64_MAX)
@@ -2347,8 +2320,7 @@ static void statechart_microstep_finalize(void *user) {
                     result == CFLOW_STATECHART_RUNTIME_OK
                 ? CFLOW_STATECHART_RUNTIME_OK
                 : CFLOW_STATECHART_RUNTIME_TASK_CANCELLED;
-            finish_macrostep_locked(
-                impl, settlement, &terminal_waker);
+            finish_macrostep_locked(impl, settlement);
             clear_semantic_queues_locked(impl);
         }
     }
@@ -2358,8 +2330,6 @@ static void statechart_microstep_finalize(void *user) {
     impl->driver_repost = false;
     if (!continue_driver) release_instance_task_locked(impl);
     turbo_mutex_unlock(&impl->lock);
-    finish_terminal_side_effects(
-        impl, (cflow_waker){0}, terminal_waker);
     if (continue_driver) {
         (void)schedule_statechart_driver_reserved(impl);
     }
@@ -2456,7 +2426,6 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
 
     admission = cflow_executor_try_post_task(impl->executor, &task);
     if (admission != CFLOW_ADMISSION_ACCEPTED) {
-        cflow_waker terminal_waker = {0};
         turbo_mutex_lock(&impl->lock);
         impl->microstep_pending = false;
         impl->selection_consumed = false;
@@ -2465,14 +2434,11 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
             (impl->terminal_outcome == STATECHART_TERMINAL_CLOSE ||
              impl->terminal_outcome == STATECHART_TERMINAL_CANCEL)) {
             finish_macrostep_locked(
-                impl, CFLOW_STATECHART_RUNTIME_TASK_CANCELLED,
-                &terminal_waker);
+                impl, CFLOW_STATECHART_RUNTIME_TASK_CANCELLED);
             clear_semantic_queues_locked(impl);
         }
         release_instance_task_locked(impl);
         turbo_mutex_unlock(&impl->lock);
-        finish_terminal_side_effects(
-            impl, (cflow_waker){0}, terminal_waker);
     }
     return admission;
 }
@@ -2579,16 +2545,14 @@ static int driver_try_trigger(cflow_statechart_instance_impl *impl,
 }
 
 static void settle_quiescent_macrostep(cflow_statechart_instance_impl *impl) {
-    cflow_waker admission_waker = {0};
-    cflow_waker terminal_waker = {0};
+    cflow_waker waker = {0};
     turbo_mutex_lock(&impl->lock);
     if (impl->terminal_outcome == STATECHART_TERMINAL_NONE &&
         root_configuration_complete(impl)) {
         (void)win_terminal_locked(
             impl, STATECHART_TERMINAL_CLEAN_DONE,
             CFLOW_STATECHART_RUNTIME_OK, NULL, true,
-            CFLOW_STATECHART_RUNTIME_OK,
-            &admission_waker, &terminal_waker);
+            CFLOW_STATECHART_RUNTIME_OK, &waker);
     } else if (impl->terminal_outcome == STATECHART_TERMINAL_NONE) {
         settle_external_locked(impl, CFLOW_STATECHART_RUNTIME_OK);
         if (impl->macrostep_active) counter_increment(&impl->macrosteps);
@@ -2598,8 +2562,7 @@ static void settle_quiescent_macrostep(cflow_statechart_instance_impl *impl) {
         impl->skip_to_external = true;
     }
     turbo_mutex_unlock(&impl->lock);
-    finish_terminal_side_effects(
-        impl, admission_waker, terminal_waker);
+    finish_terminal_side_effects(impl, waker);
 }
 
 static void statechart_driver_run(void *user) {
@@ -2720,8 +2683,7 @@ external_admission:
 static void statechart_driver_cancel(void *user) {
     cflow_statechart_instance_impl *impl =
         (cflow_statechart_instance_impl *)user;
-    cflow_waker admission_waker = {0};
-    cflow_waker terminal_waker = {0};
+    cflow_waker waker = {0};
     if (impl == NULL) return;
     turbo_mutex_lock(&impl->lock);
     if (impl->terminal_outcome == STATECHART_TERMINAL_NONE) {
@@ -2730,12 +2692,10 @@ static void statechart_driver_cancel(void *user) {
             impl, STATECHART_TERMINAL_ERROR,
             CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED,
             "Statechart SerialExecutor cancelled a queued quantum",
-            true, CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED,
-            &admission_waker, &terminal_waker);
+            true, CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED, &waker);
     }
     turbo_mutex_unlock(&impl->lock);
-    finish_terminal_side_effects(
-        impl, admission_waker, terminal_waker);
+    finish_terminal_side_effects(impl, waker);
 }
 
 static void statechart_driver_finalize(void *user) {
@@ -2788,20 +2748,18 @@ static cflow_admission_status schedule_statechart_driver_impl(
         const char *message = admission == CFLOW_ADMISSION_FULL
             ? "Statechart SerialExecutor is full"
             : "Statechart SerialExecutor is closed";
-        cflow_waker admission_waker = {0};
-        cflow_waker terminal_waker = {0};
+        cflow_waker waker = {0};
         turbo_mutex_lock(&impl->lock);
         impl->driver_scheduled = false;
         if (impl->terminal_outcome == STATECHART_TERMINAL_NONE) {
             claim_external_for_failure_locked(impl);
             (void)win_terminal_locked(
                 impl, STATECHART_TERMINAL_ERROR, failure, message,
-                true, failure, &admission_waker, &terminal_waker);
+                true, failure, &waker);
         }
         release_instance_task_locked(impl);
         turbo_mutex_unlock(&impl->lock);
-        finish_terminal_side_effects(
-            impl, admission_waker, terminal_waker);
+        finish_terminal_side_effects(impl, waker);
     }
     return admission;
 }
@@ -3273,67 +3231,205 @@ bool cflow_statechart_instance_claim_timer_internal(
             &impl->timers, claim, out_result);
 }
 
+static bool statechart_terminal_wait_arm(void *state, cflow_waker waker) {
+    cflow_statechart_instance_impl *impl =
+        (cflow_statechart_instance_impl *)state;
+    bool ready;
+    if (impl == NULL || waker.wake == NULL) return false;
+    turbo_mutex_lock(&impl->lock);
+    ready = impl->done || impl->error != NULL;
+    if (!ready && impl->downstream_waiter.wake != NULL) {
+        turbo_mutex_unlock(&impl->lock);
+        return false;
+    }
+    if (!ready) impl->downstream_waiter = waker;
+    turbo_mutex_unlock(&impl->lock);
+    if (ready) invoke_detached_waker(waker);
+    return true;
+}
+
+static void statechart_terminal_wait_cancel(void *state) {
+    cflow_statechart_instance_impl *impl =
+        (cflow_statechart_instance_impl *)state;
+    if (impl == NULL) return;
+    turbo_mutex_lock(&impl->lock);
+    impl->downstream_waiter = (cflow_waker){0};
+    turbo_mutex_unlock(&impl->lock);
+}
+
+CMETA_IMPLEMENTS(cflow_waitable, cflow_statechart_terminal_waitable, 0,
+    .arm = statechart_terminal_wait_arm,
+    .cancel = statechart_terminal_wait_cancel
+);
+
+static cflow_step statechart_terminal_resume(
+    void *state, cflow_resume_ctx *context, void *out_value) {
+    cflow_statechart_instance_impl *impl =
+        (cflow_statechart_instance_impl *)state;
+    const char *error;
+    bool done;
+    (void)context;
+    if (impl == NULL || out_value == NULL)
+        return (cflow_step){
+            CFLOW_STEP_ERROR, {0},
+            "Statechart terminal adapter is invalid"};
+    turbo_mutex_lock(&impl->lock);
+    error = impl->error;
+    done = impl->done;
+    turbo_mutex_unlock(&impl->lock);
+    if (error != NULL)
+        return (cflow_step){CFLOW_STEP_ERROR, {0}, error};
+    if (done)
+        return (cflow_step){CFLOW_STEP_DONE, {0}, NULL};
+    return (cflow_step){
+        CFLOW_STEP_WAIT,
+        cflow_statechart_terminal_waitable_as_cflow_waitable(impl),
+        NULL};
+}
+
+static void statechart_terminal_cancel(void *state) {
+    cflow_statechart_instance instance = {state};
+    cflow_statechart_instance_cancel(&instance);
+}
+
+static void statechart_terminal_detach(void *state) {
+    cflow_statechart_instance_impl *impl =
+        (cflow_statechart_instance_impl *)state;
+    if (impl == NULL) return;
+    statechart_terminal_cancel(impl);
+    turbo_mutex_lock(&impl->lock);
+    impl->downstream_waiter = (cflow_waker){0};
+    impl->terminal_waiter = (cflow_waker){0};
+    impl->adapter_attached = false;
+    turbo_mutex_unlock(&impl->lock);
+}
+
+static const cflow_resumable_ops statechart_terminal_resumable_ops = {
+    statechart_terminal_resume,
+    statechart_terminal_cancel,
+    statechart_terminal_detach
+};
+
+static const char *statechart_terminal_source_name(void *state) {
+    (void)state;
+    return "statechart-terminal";
+}
+
+static const cmeta_type_desc *statechart_terminal_source_type(void *state) {
+    cflow_statechart_instance_impl *impl =
+        (cflow_statechart_instance_impl *)state;
+    return impl != NULL ? impl->ir->state_type : NULL;
+}
+
+static void statechart_terminal_source_bind(
+    void *state, cflow_waker waker) {
+    cflow_statechart_instance_impl *impl =
+        (cflow_statechart_instance_impl *)state;
+    bool terminal;
+    if (impl == NULL) return;
+    turbo_mutex_lock(&impl->lock);
+    terminal = impl->done || impl->error != NULL;
+    impl->terminal_waiter = terminal ? (cflow_waker){0} : waker;
+    turbo_mutex_unlock(&impl->lock);
+    if (terminal) invoke_detached_waker(waker);
+}
+
+static cflow_source_terminal statechart_terminal_source_poll(
+    void *state, const char **out_error) {
+    cflow_statechart_instance_impl *impl =
+        (cflow_statechart_instance_impl *)state;
+    cflow_source_terminal result = CFLOW_SOURCE_OPEN;
+    if (out_error != NULL) *out_error = NULL;
+    if (impl == NULL) {
+        if (out_error != NULL)
+            *out_error = "Statechart terminal Source is invalid";
+        return CFLOW_SOURCE_ERROR;
+    }
+    turbo_mutex_lock(&impl->lock);
+    if (impl->error != NULL) {
+        result = CFLOW_SOURCE_ERROR;
+        if (out_error != NULL) *out_error = impl->error;
+    } else if (impl->done) {
+        result = CFLOW_SOURCE_DONE;
+    }
+    turbo_mutex_unlock(&impl->lock);
+    return result;
+}
+
+CMETA_IMPLEMENTS(cflow_source, cflow_statechart_terminal_source, 0,
+    .name = statechart_terminal_source_name,
+    .output_type = statechart_terminal_source_type,
+    .resume = statechart_terminal_resume,
+    .cancel = statechart_terminal_cancel,
+    .destroy = statechart_terminal_detach,
+    .bind_terminal_waker = statechart_terminal_source_bind,
+    .poll_terminal = statechart_terminal_source_poll
+);
+
+bool cflow_statechart_instance_as_terminal_resumable(
+    cflow_statechart_instance *instance, cflow_resumable *out) {
+    cflow_statechart_instance_impl *impl = instance != NULL
+        ? (cflow_statechart_instance_impl *)instance->impl : NULL;
+    if (impl == NULL || out == NULL || out->name != NULL ||
+        out->output_type != NULL || out->ops != NULL || out->state != NULL)
+        return false;
+    turbo_mutex_lock(&impl->lock);
+    if (impl->adapter_attached) {
+        turbo_mutex_unlock(&impl->lock);
+        return false;
+    }
+    impl->adapter_attached = true;
+    turbo_mutex_unlock(&impl->lock);
+    *out = (cflow_resumable){
+        "statechart-terminal", impl->ir->state_type,
+        &statechart_terminal_resumable_ops, impl};
+    return true;
+}
+
+bool cflow_statechart_instance_as_terminal_source(
+    cflow_statechart_instance *instance, cflow_source *out) {
+    cflow_statechart_instance_impl *impl = instance != NULL
+        ? (cflow_statechart_instance_impl *)instance->impl : NULL;
+    if (impl == NULL || out == NULL || out->self != NULL ||
+        out->vtable != NULL)
+        return false;
+    turbo_mutex_lock(&impl->lock);
+    if (impl->adapter_attached) {
+        turbo_mutex_unlock(&impl->lock);
+        return false;
+    }
+    impl->adapter_attached = true;
+    turbo_mutex_unlock(&impl->lock);
+    *out = cflow_statechart_terminal_source_as_cflow_source(impl);
+    return true;
+}
+
 void cflow_statechart_instance_close(cflow_statechart_instance *instance) {
     cflow_statechart_instance_impl *impl = instance != NULL
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
-    cflow_waker admission_waker = {0};
-    cflow_waker terminal_waker = {0};
+    cflow_waker waker = {0};
     if (impl == NULL) return;
     turbo_mutex_lock(&impl->lock);
     (void)win_terminal_locked(
         impl, STATECHART_TERMINAL_CLOSE,
         CFLOW_STATECHART_RUNTIME_OK, NULL, !impl->microstep_pending,
-        CFLOW_STATECHART_RUNTIME_TASK_CANCELLED,
-        &admission_waker, &terminal_waker);
+        CFLOW_STATECHART_RUNTIME_TASK_CANCELLED, &waker);
     turbo_mutex_unlock(&impl->lock);
-    finish_terminal_side_effects(
-        impl, admission_waker, terminal_waker);
+    finish_terminal_side_effects(impl, waker);
 }
 
 void cflow_statechart_instance_cancel(cflow_statechart_instance *instance) {
     cflow_statechart_instance_impl *impl = instance != NULL
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
-    cflow_waker admission_waker = {0};
-    cflow_waker terminal_waker = {0};
+    cflow_waker waker = {0};
     if (impl == NULL) return;
     turbo_mutex_lock(&impl->lock);
     (void)win_terminal_locked(
         impl, STATECHART_TERMINAL_CANCEL,
         CFLOW_STATECHART_RUNTIME_OK, NULL, !impl->microstep_pending,
-        CFLOW_STATECHART_RUNTIME_TASK_CANCELLED,
-        &admission_waker, &terminal_waker);
+        CFLOW_STATECHART_RUNTIME_TASK_CANCELLED, &waker);
     turbo_mutex_unlock(&impl->lock);
-    finish_terminal_side_effects(
-        impl, admission_waker, terminal_waker);
-}
-
-cflow_statechart_terminal_status cflow_statechart_instance_poll_terminal(
-    const cflow_statechart_instance *instance, const char **out_error) {
-    cflow_statechart_instance_impl *impl = instance != NULL
-        ? (cflow_statechart_instance_impl *)instance->impl : NULL;
-    cflow_statechart_terminal_status status;
-    if (out_error != NULL) *out_error = NULL;
-    if (impl == NULL) return CFLOW_STATECHART_TERMINAL_INVALID_ARGUMENT;
-    turbo_mutex_lock(&impl->lock);
-    if (impl->error != NULL) {
-        status = CFLOW_STATECHART_TERMINAL_ERROR;
-        if (out_error != NULL) *out_error = impl->error;
-    } else if (impl->done) {
-        status = CFLOW_STATECHART_TERMINAL_DONE;
-    } else {
-        status = CFLOW_STATECHART_TERMINAL_OPEN;
-    }
-    turbo_mutex_unlock(&impl->lock);
-    return status;
-}
-
-cflow_waitable cflow_statechart_instance_terminal_waitable(
-    cflow_statechart_instance *instance) {
-    cflow_statechart_instance_impl *impl = instance != NULL
-        ? (cflow_statechart_instance_impl *)instance->impl : NULL;
-    return impl != NULL
-        ? cflow_statechart_terminal_waitable_as_cflow_waitable(impl)
-        : (cflow_waitable){0};
+    finish_terminal_side_effects(impl, waker);
 }
 
 cflow_machine_state_id cflow_statechart_instance_current_state(
@@ -3437,9 +3533,14 @@ const char *cflow_statechart_instance_error(
 cflow_statechart_runtime_status cflow_statechart_instance_destroy(
     cflow_statechart_instance *instance) {
     cflow_statechart_instance_impl *impl;
+    bool adapter_attached;
     if (instance == NULL) return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
     impl = (cflow_statechart_instance_impl *)instance->impl;
     if (impl == NULL) return CFLOW_STATECHART_RUNTIME_OK;
+    turbo_mutex_lock(&impl->lock);
+    adapter_attached = impl->adapter_attached;
+    turbo_mutex_unlock(&impl->lock);
+    if (adapter_attached) return CFLOW_STATECHART_RUNTIME_WOULD_BLOCK;
     if (wait_instance_tasks(impl) != CFLOW_STATECHART_RUNTIME_OK)
         return CFLOW_STATECHART_RUNTIME_WOULD_BLOCK;
     instance->impl = NULL;
