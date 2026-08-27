@@ -2,6 +2,7 @@
 #define CFLOW_ACTOR_H
 
 #include <cflow/machine_runtime.h>
+#include <cflow/statechart_runtime.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -27,7 +28,9 @@ typedef enum cflow_actor_status {
     CFLOW_ACTOR_ALREADY_STARTED,
     CFLOW_ACTOR_STOPPING,
     CFLOW_ACTOR_STOPPED,
-    CFLOW_ACTOR_FAILED
+    CFLOW_ACTOR_FAILED,
+    /** Appended to preserve the numeric values of existing statuses. */
+    CFLOW_ACTOR_STATECHART_REJECTED
 } cflow_actor_status;
 
 typedef enum cflow_actor_send_status {
@@ -76,6 +79,42 @@ typedef struct cflow_actor_stats {
     uint64_t rejected_stale;
 } cflow_actor_stats;
 
+/** Terminal callbacks for a Statechart-backed Actor. */
+typedef struct cflow_statechart_actor_callbacks {
+    cflow_error_fn on_error;
+    cflow_done_fn on_done;
+    void *user;
+} cflow_statechart_actor_callbacks;
+
+/**
+ * Statechart Actor configuration copied during initialization.
+ *
+ * The Actor owns the resulting Statechart instance and lifecycle control
+ * block. It borrows everything borrowed by `statechart`, plus callback
+ * functions/user data, until `cflow_actor_destroy` returns. Callbacks run
+ * without the Actor gate held. They may self-send or request stop, but must not
+ * wait for or destroy the Actor.
+ */
+typedef struct cflow_statechart_actor_config {
+    cflow_statechart_instance_config statechart;
+    cflow_statechart_actor_callbacks callbacks;
+} cflow_statechart_actor_config;
+
+typedef struct cflow_statechart_actor_init_result {
+    cflow_actor_status status;
+    cflow_statechart_runtime_status statechart_status;
+} cflow_statechart_actor_init_result;
+
+typedef struct cflow_statechart_actor_stats {
+    cflow_actor_state state;
+    cflow_statechart_instance_stats statechart;
+    uint64_t rejected_not_started;
+    uint64_t rejected_stopping;
+    uint64_t rejected_stopped;
+    uint64_t rejected_failed;
+    uint64_t rejected_stale;
+} cflow_statechart_actor_stats;
+
 /** Owner handle retaining one root reference. Zero initialization is required. */
 typedef struct cflow_actor {
     void *impl;
@@ -95,6 +134,17 @@ typedef struct cflow_actor_ref {
  */
 cflow_actor_init_result cflow_actor_init(
     cflow_actor *actor, const cflow_actor_config *config);
+
+/**
+ * Initialize a Statechart-backed Actor in `START`.
+ *
+ * `statechart_status` is `CFLOW_STATECHART_RUNTIME_OK` unless `status` is
+ * `CFLOW_ACTOR_STATECHART_REJECTED`, when it preserves the exact rejection.
+ * Starting arms the Statechart terminal projection; clean final completion or
+ * controlled close reaches `STOPPED`, while a runtime error reaches `FAILED`.
+ */
+cflow_statechart_actor_init_result cflow_actor_init_statechart(
+    cflow_actor *actor, const cflow_statechart_actor_config *config);
 
 /** Start the single owned Run and request `SIZE_MAX` downstream demand. */
 cflow_actor_status cflow_actor_start(cflow_actor *actor);
@@ -118,6 +168,10 @@ cflow_actor_state cflow_actor_current_state(const cflow_actor *actor);
 
 /** Read one mutex-consistent Actor and Machine statistics snapshot. */
 bool cflow_actor_get_stats(const cflow_actor *actor, cflow_actor_stats *out);
+
+/** Read one mutex-consistent Actor and Statechart statistics snapshot. */
+bool cflow_actor_get_statechart_stats(
+    const cflow_actor *actor, cflow_statechart_actor_stats *out);
 
 /** Return the first Actor-owned failure text, or NULL when no failure exists. */
 const char *cflow_actor_error(const cflow_actor *actor);

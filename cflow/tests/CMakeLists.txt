@@ -98,6 +98,11 @@ cmake_add_test(cflow_actor_test
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_statechart_actor_test
+  SOURCES cflow_statechart_actor_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_io_actor_test
   SOURCES cflow_io_actor_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
@@ -196,6 +201,7 @@ set_target_properties(
   cflow_statechart_hierarchy_adapter_test
   cflow_machine_runtime_test
   cflow_actor_test
+  cflow_statechart_actor_test
   cflow_io_actor_test
   cflow_io_source_test
   cflow_io_native_test
