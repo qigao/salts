@@ -507,10 +507,6 @@ int cflow_source_from_io_actor(
     bool executor_initialized = false;
     int status = TURBO_ENOMEM;
 
-    if (out != NULL)
-        *out = (cflow_source){0};
-    if (owner != NULL)
-        *owner = (cflow_io_source_owner){0};
     if (!out_zero || !owner_zero || config == NULL ||
         config->backend.submit == NULL || config->prepare == NULL ||
         config->encode == NULL || config->drive == NULL ||

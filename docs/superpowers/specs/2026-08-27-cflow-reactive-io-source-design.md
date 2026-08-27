@@ -106,8 +106,9 @@ int cflow_io_source_owner_close(cflow_io_source_owner *owner);
 ```
 
 `cflow_source_from_io_actor()` 是 additive API。`out` 和 `owner` 必须为 zero state；
-失败保持二者为 zero state。`name`、backend、backend context、prepare/encode/drive
-context 和回调依赖均借用至 owner 成功关闭。
+zero-state 输入在失败时保持 zero state，occupied destination 则拒绝且不修改。
+`name`、backend、backend context、prepare/encode/drive context 和回调依赖均借用至
+owner 成功关闭。
 
 ## 数据与所有权协议
 
@@ -215,4 +216,3 @@ Source 可以在 Actor acknowledge 之前消费已复制 value。此时下一次
 - `cflow_io_actor_test`、`cflow_io_native_test`、`cflow_io_file_test`、
   `cflow_runtime_test`、`cflow_readiness_test` 相邻回归；
 - Windows Release 全量、install package consumer，并按可用环境补充 dev/ASan。
-

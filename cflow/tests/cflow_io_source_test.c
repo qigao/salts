@@ -578,6 +578,54 @@ spec("CFlow reactive IO source") {
         check_false(stats.source_live);
     }
 
+    it("preserves an occupied Source on rejected construction") {
+        io_source_fixture fixture = {0};
+        cflow_io_source_config config = io_source_config(&fixture);
+        cflow_source source = {0};
+        cflow_source original_source;
+        cflow_io_source_owner owner = {0};
+        cflow_io_source_owner second_owner = {0};
+
+        check_equal(cflow_source_from_io_actor(
+                        &source, &owner, &config), TURBO_OK);
+        original_source = source;
+        check_equal(cflow_source_from_io_actor(
+                        &source, &second_owner, &config), TURBO_EINVAL);
+        check_true(cflow_source_valid(&source));
+        check_equal(&source, &original_source, sizeof(source));
+        check_null(second_owner.impl);
+
+        if (cflow_source_valid(&source))
+            cflow_source_destroy(&source);
+        else
+            cflow_source_destroy(&original_source);
+        check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
+    }
+
+    it("preserves an occupied owner on rejected construction") {
+        io_source_fixture fixture = {0};
+        cflow_io_source_config config = io_source_config(&fixture);
+        cflow_source source = {0};
+        cflow_source second_source = {0};
+        cflow_io_source_owner owner = {0};
+        cflow_io_source_owner original_owner;
+
+        check_equal(cflow_source_from_io_actor(
+                        &source, &owner, &config), TURBO_OK);
+        original_owner = owner;
+        check_equal(cflow_source_from_io_actor(
+                        &second_source, &owner, &config), TURBO_EINVAL);
+        check_false(cflow_source_valid(&second_source));
+        check_equal(owner.impl, original_owner.impl);
+
+        cflow_source_destroy(&source);
+        if (owner.impl != NULL)
+            check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
+        else
+            check_equal(cflow_io_source_owner_close(
+                            &original_owner), TURBO_OK);
+    }
+
     it("requires only the callbacks needed by the adapter protocol") {
         io_source_fixture fixture = {0};
         cflow_io_source_config config = io_source_config(&fixture);

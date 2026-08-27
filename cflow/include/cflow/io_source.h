@@ -81,7 +81,8 @@ typedef struct cflow_io_source_stats {
 
 /**
  * Creates a typed Source and its external owner. out and owner must both be
- * zero state; on every failure they remain zero state. The adapter owns a
+ * zero state; on every failure valid zero-state destinations remain zero.
+ * Occupied destinations are rejected without mutation. The adapter owns a
  * request-capacity-one Actor, a capacity-one manual Executor, and one typed
  * completion slot. It borrows every config field and callback context until a
  * successful owner close. prepare is called only for positive downstream
