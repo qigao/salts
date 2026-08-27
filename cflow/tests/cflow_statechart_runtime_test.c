@@ -4588,3 +4588,299 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_destroy(&fixture);
     }
 }
+
+typedef struct statechart_timer_fixture {
+    cflow_statechart_state states[11];
+    cflow_event_type events[2];
+    cflow_statechart_transition transitions[5];
+    cflow_statechart_definition definition;
+    cflow_statechart statechart;
+    cflow_executor executor;
+    cflow_clock clock;
+    cflow_statechart_instance instance;
+    int initial_state;
+} statechart_timer_fixture;
+
+enum {
+    TIMER_SC_ROOT = 1000u,
+    TIMER_SC_INITIAL = 900u,
+    TIMER_SC_PARALLEL = 800u,
+    TIMER_SC_LEFT = 700u,
+    TIMER_SC_LEFT_INITIAL = 600u,
+    TIMER_SC_LEFT_A = 500u,
+    TIMER_SC_LEFT_B = 400u,
+    TIMER_SC_RIGHT = 300u,
+    TIMER_SC_RIGHT_INITIAL = 200u,
+    TIMER_SC_RIGHT_A = 100u,
+    TIMER_SC_OUTSIDE = 50u,
+    TIMER_SC_LEFT_EVENT = 10u,
+    TIMER_SC_OUT_EVENT = 11u
+};
+
+static void statechart_timer_definition(statechart_timer_fixture *fixture) {
+    memset(fixture, 0, sizeof(*fixture));
+    fixture->states[0] = (cflow_statechart_state){
+        TIMER_SC_ROOT, 0u, CFLOW_STATECHART_COMPOUND, 0u};
+    fixture->states[1] = (cflow_statechart_state){
+        TIMER_SC_INITIAL, TIMER_SC_ROOT, CFLOW_STATECHART_INITIAL, 1u};
+    fixture->states[2] = (cflow_statechart_state){
+        TIMER_SC_PARALLEL, TIMER_SC_ROOT, CFLOW_STATECHART_PARALLEL, 2u};
+    fixture->states[3] = (cflow_statechart_state){
+        TIMER_SC_LEFT, TIMER_SC_PARALLEL, CFLOW_STATECHART_COMPOUND, 3u};
+    fixture->states[4] = (cflow_statechart_state){
+        TIMER_SC_LEFT_INITIAL, TIMER_SC_LEFT,
+        CFLOW_STATECHART_INITIAL, 4u};
+    fixture->states[5] = (cflow_statechart_state){
+        TIMER_SC_LEFT_A, TIMER_SC_LEFT, CFLOW_STATECHART_ATOMIC, 5u};
+    fixture->states[6] = (cflow_statechart_state){
+        TIMER_SC_LEFT_B, TIMER_SC_LEFT, CFLOW_STATECHART_ATOMIC, 6u};
+    fixture->states[7] = (cflow_statechart_state){
+        TIMER_SC_RIGHT, TIMER_SC_PARALLEL, CFLOW_STATECHART_COMPOUND, 7u};
+    fixture->states[8] = (cflow_statechart_state){
+        TIMER_SC_RIGHT_INITIAL, TIMER_SC_RIGHT,
+        CFLOW_STATECHART_INITIAL, 8u};
+    fixture->states[9] = (cflow_statechart_state){
+        TIMER_SC_RIGHT_A, TIMER_SC_RIGHT, CFLOW_STATECHART_ATOMIC, 9u};
+    fixture->states[10] = (cflow_statechart_state){
+        TIMER_SC_OUTSIDE, TIMER_SC_ROOT, CFLOW_STATECHART_ATOMIC, 10u};
+    fixture->events[0] = (cflow_event_type){
+        TIMER_SC_LEFT_EVENT, &cmeta_type_int};
+    fixture->events[1] = (cflow_event_type){
+        TIMER_SC_OUT_EVENT, &cmeta_type_int};
+    fixture->transitions[0] = (cflow_statechart_transition){
+        1u, TIMER_SC_INITIAL, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+        0u, 0u, 0u, TIMER_SC_PARALLEL,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u};
+    fixture->transitions[1] = (cflow_statechart_transition){
+        2u, TIMER_SC_LEFT_INITIAL, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+        0u, 0u, 0u, TIMER_SC_LEFT_A,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u};
+    fixture->transitions[2] = (cflow_statechart_transition){
+        3u, TIMER_SC_RIGHT_INITIAL, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+        0u, 0u, 0u, TIMER_SC_RIGHT_A,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 2u};
+    fixture->transitions[3] = (cflow_statechart_transition){
+        4u, TIMER_SC_LEFT_A, CFLOW_STATECHART_TRIGGER_EVENT,
+        TIMER_SC_LEFT_EVENT, 0u, 0u, TIMER_SC_LEFT_B,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 3u};
+    fixture->transitions[4] = (cflow_statechart_transition){
+        5u, TIMER_SC_PARALLEL, CFLOW_STATECHART_TRIGGER_EVENT,
+        TIMER_SC_OUT_EVENT, 0u, 0u, TIMER_SC_OUTSIDE,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 4u};
+    fixture->definition = (cflow_statechart_definition){
+        &cmeta_type_int, fixture->states, 11u, fixture->events, 2u,
+        NULL, 0u, NULL, 0u, fixture->transitions, 5u,
+        NULL, 0u, NULL, 0u};
+    fixture->initial_state = 1;
+}
+
+static bool statechart_timer_fixture_init(
+    statechart_timer_fixture *fixture,
+    size_t external_capacity,
+    size_t timer_capacity) {
+    cflow_statechart_instance_config config;
+    statechart_timer_definition(fixture);
+    if (cflow_statechart_build(&fixture->statechart, &fixture->definition) !=
+            CFLOW_STATECHART_OK ||
+        !cflow_executor_serial_init(&fixture->executor) ||
+        !cflow_clock_virtual_init(&fixture->clock, (cflow_instant){0u}))
+        return false;
+    config = (cflow_statechart_instance_config){
+        .statechart = &fixture->statechart,
+        .initial_state = &fixture->initial_state,
+        .external_event_capacity = external_capacity,
+        .internal_event_capacity = 4u,
+        .completion_capacity = 4u,
+        .microstep_limit = 64u,
+        .executor = &fixture->executor,
+        .clock = &fixture->clock,
+        .timer_capacity = timer_capacity};
+    return cflow_statechart_instance_init(&fixture->instance, &config) ==
+        CFLOW_STATECHART_RUNTIME_OK;
+}
+
+static void statechart_timer_fixture_destroy(
+    statechart_timer_fixture *fixture) {
+    check_equal(cflow_statechart_instance_destroy(&fixture->instance),
+                CFLOW_STATECHART_RUNTIME_OK);
+    cflow_clock_destroy(&fixture->clock);
+    cflow_executor_destroy(&fixture->executor);
+    cflow_statechart_destroy(&fixture->statechart);
+}
+
+static void statechart_timer_send(
+    statechart_timer_fixture *fixture, cflow_event_id id) {
+    const int payload = 1;
+    const cflow_event_view event = {id, &cmeta_type_int, &payload};
+    check_equal(cflow_statechart_instance_try_send(&fixture->instance, &event),
+                CFLOW_MAILBOX_OK);
+    check_true(cflow_executor_wait_idle(&fixture->executor));
+}
+
+static cflow_timer_event_schedule_result statechart_timer_schedule(
+    statechart_timer_fixture *fixture,
+    cflow_machine_state_id scope,
+    cflow_event_id event_id,
+    uint64_t deadline) {
+    const int payload = 1;
+    const cflow_event_view event = {
+        event_id, &cmeta_type_int, &payload};
+    return cflow_statechart_instance_try_schedule_at(
+        &fixture->instance, scope, (cflow_deadline){deadline}, &event);
+}
+
+suite("CFlow Statechart configuration-scoped timers") {
+    it("rejects partial timer configuration and capacity overflow") {
+        statechart_timer_fixture fixture;
+        cflow_statechart_instance_config config;
+        statechart_timer_definition(&fixture);
+        check_equal(cflow_statechart_build(
+                        &fixture.statechart, &fixture.definition),
+                    CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&fixture.executor));
+        check_true(cflow_clock_virtual_init(
+            &fixture.clock, (cflow_instant){0u}));
+        config = (cflow_statechart_instance_config){
+            .statechart = &fixture.statechart,
+            .initial_state = &fixture.initial_state,
+            .external_event_capacity = 2u,
+            .internal_event_capacity = 2u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u,
+            .executor = &fixture.executor,
+            .timer_capacity = 1u};
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        config.clock = &fixture.clock;
+        config.timer_capacity = 0u;
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        config.timer_capacity = SIZE_MAX;
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED);
+        cflow_clock_destroy(&fixture.clock);
+        cflow_executor_destroy(&fixture.executor);
+        cflow_statechart_destroy(&fixture.statechart);
+    }
+
+    it("cancels exactly exited active scopes before publication") {
+        statechart_timer_fixture fixture;
+        cflow_statechart_instance_stats stats = {0};
+        cflow_timer_event_schedule_result delayed_result;
+        const int payload = 1;
+        const cflow_event_view delayed = {
+            TIMER_SC_LEFT_EVENT, &cmeta_type_int, &payload};
+        const cflow_machine_state_id scopes[] = {
+            TIMER_SC_ROOT, TIMER_SC_PARALLEL, TIMER_SC_LEFT,
+            TIMER_SC_LEFT_A, TIMER_SC_RIGHT, TIMER_SC_RIGHT_A};
+        size_t index;
+        check_true(statechart_timer_fixture_init(&fixture, 4u, 8u));
+        for (index = 0u; index < sizeof(scopes) / sizeof(scopes[0]); ++index)
+            check_equal(statechart_timer_schedule(
+                            &fixture, scopes[index], TIMER_SC_LEFT_EVENT,
+                            UINT64_C(100)).status,
+                        CFLOW_TIMER_EVENT_OK);
+
+        statechart_timer_send(&fixture, TIMER_SC_LEFT_EVENT);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.timers.pending, (size_t)5u);
+        check_equal(stats.timers.cancelled, UINT64_C(1));
+        check_equal(statechart_timer_schedule(
+                        &fixture, TIMER_SC_LEFT_A, TIMER_SC_LEFT_EVENT,
+                        UINT64_C(100)).status,
+                    CFLOW_TIMER_EVENT_INVALID_ARGUMENT);
+        delayed_result = cflow_statechart_instance_try_schedule_after(
+            &fixture.instance, TIMER_SC_LEFT_B,
+            (cflow_duration){UINT64_C(100)}, &delayed);
+        check_equal(delayed_result.status, CFLOW_TIMER_EVENT_OK);
+
+        statechart_timer_send(&fixture, TIMER_SC_OUT_EVENT);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.timers.scheduled, UINT64_C(7));
+        check_equal(stats.timers.pending, (size_t)1u);
+        check_equal(stats.timers.cancelled, UINT64_C(6));
+        check_equal(cflow_statechart_instance_run_one_ready_timer(
+                        &fixture.instance).status,
+                    CFLOW_TIMER_EVENT_FIRE_NOT_READY);
+        statechart_timer_fixture_destroy(&fixture);
+    }
+
+    it("preserves equal-deadline FIFO mailbox FULL and FIRE_WON") {
+        statechart_timer_fixture fixture;
+        microstep_executor_blocker blocker;
+        cflow_timer_event_schedule_result first, second, claimed;
+        cflow_timer_event_fire_result fired;
+        cflow_timer_event_claim claim = {0};
+        check_true(statechart_timer_fixture_init(&fixture, 1u, 3u));
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor, microstep_block_executor, &blocker),
+                    CFLOW_ADMISSION_ACCEPTED);
+        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        first = statechart_timer_schedule(
+            &fixture, TIMER_SC_ROOT, TIMER_SC_LEFT_EVENT, 0u);
+        second = statechart_timer_schedule(
+            &fixture, TIMER_SC_ROOT, TIMER_SC_LEFT_EVENT, 0u);
+        check_equal(first.status, CFLOW_TIMER_EVENT_OK);
+        check_equal(second.status, CFLOW_TIMER_EVENT_OK);
+        fired = cflow_statechart_instance_run_one_ready_timer(
+            &fixture.instance);
+        check_equal(fired.status, CFLOW_TIMER_EVENT_FIRE_DELIVERED);
+        check_equal(fired.timer_id, first.timer_id);
+        fired = cflow_statechart_instance_run_one_ready_timer(
+            &fixture.instance);
+        check_equal(fired.status, CFLOW_TIMER_EVENT_FIRE_MAILBOX_REJECTED);
+        check_equal(fired.mailbox_status, CFLOW_MAILBOX_FULL);
+        check_equal(fired.timer_id, second.timer_id);
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+
+        claimed = statechart_timer_schedule(
+            &fixture, TIMER_SC_ROOT, TIMER_SC_OUT_EVENT, 0u);
+        check_equal(claimed.status, CFLOW_TIMER_EVENT_OK);
+        check_true(cflow_statechart_instance_claim_timer_internal(
+            &fixture.instance, &claim, &fired));
+        check_equal(cflow_statechart_instance_cancel_timer(
+                        &fixture.instance, claimed.timer_id),
+                    CFLOW_TIMER_EVENT_FIRE_WON);
+        fired = cflow_timer_event_queue_commit_claim(&claim);
+        check_equal(fired.status, CFLOW_TIMER_EVENT_FIRE_DELIVERED);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        statechart_timer_fixture_destroy(&fixture);
+    }
+
+    it("closes and cancels all pending timers with the terminal winner") {
+        statechart_timer_fixture fixture;
+        cflow_statechart_instance_stats stats = {0};
+        check_true(statechart_timer_fixture_init(&fixture, 2u, 2u));
+        check_equal(statechart_timer_schedule(
+                        &fixture, TIMER_SC_ROOT, TIMER_SC_LEFT_EVENT,
+                        UINT64_C(100)).status,
+                    CFLOW_TIMER_EVENT_OK);
+        cflow_statechart_instance_close(&fixture.instance);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.timers.cancelled, UINT64_C(1));
+        check_true(stats.timers.closed);
+        check_equal(statechart_timer_schedule(
+                        &fixture, TIMER_SC_ROOT, TIMER_SC_LEFT_EVENT,
+                        UINT64_C(100)).status,
+                    CFLOW_TIMER_EVENT_CLOSED);
+        statechart_timer_fixture_destroy(&fixture);
+
+        check_true(statechart_timer_fixture_init(&fixture, 2u, 2u));
+        check_equal(statechart_timer_schedule(
+                        &fixture, TIMER_SC_ROOT, TIMER_SC_LEFT_EVENT,
+                        UINT64_C(100)).status,
+                    CFLOW_TIMER_EVENT_OK);
+        cflow_statechart_instance_cancel(&fixture.instance);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.timers.cancelled, UINT64_C(1));
+        check_true(stats.timers.closed);
+        statechart_timer_fixture_destroy(&fixture);
+    }
+}

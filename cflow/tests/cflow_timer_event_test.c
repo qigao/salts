@@ -174,6 +174,20 @@ static void timer_event_fixture_destroy(timer_event_fixture *fixture) {
 }
 
 suite("CFlow monotonic Timer Events") {
+    it("reports bounded target storage and rejects overflow") {
+        size_t one = 0u, two = 0u;
+        check_true(cflow_timer_event_queue_storage_requirements_internal(
+            sizeof(bool), 1u, &one));
+        check_true(cflow_timer_event_queue_storage_requirements_internal(
+            sizeof(bool), 2u, &two));
+        check(one > sizeof(bool));
+        check(two > one);
+        check_false(cflow_timer_event_queue_storage_requirements_internal(
+            SIZE_MAX, 2u, &two));
+        check_false(cflow_timer_event_queue_storage_requirements_internal(
+            sizeof(bool), SIZE_MAX, &two));
+    }
+
     it("fires at the exact VirtualClock boundary through Machine Mailbox") {
         timer_event_fixture fixture;
         bool payload = true;
@@ -487,8 +501,14 @@ suite("CFlow monotonic Timer Events") {
         scheduled = cflow_timer_event_queue_try_schedule_at(
             &fixture.timers, (cflow_deadline){2u}, &event);
         check_equal(scheduled.status, CFLOW_TIMER_EVENT_OK);
-        check_equal(cflow_timer_event_queue_close(&fixture.timers),
-                    CFLOW_TIMER_EVENT_OK);
+        check_equal(
+            cflow_timer_event_queue_close_begin_internal(&fixture.timers),
+            CFLOW_TIMER_EVENT_OK);
+        check_true(cflow_timer_event_queue_get_stats(&fixture.timers, &stats));
+        check_true(stats.closed);
+        check_equal(stats.pending, (size_t)0u);
+        check_equal(stats.in_flight, (size_t)0u);
+        check_equal(stats.cancelled_on_close, (uint64_t)2u);
         check_equal(cflow_timer_event_queue_close(&fixture.timers),
                     CFLOW_TIMER_EVENT_CLOSED);
         scheduled = cflow_timer_event_queue_try_schedule_at(

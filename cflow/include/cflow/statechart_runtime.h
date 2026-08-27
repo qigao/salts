@@ -1,8 +1,10 @@
 #ifndef CFLOW_STATECHART_RUNTIME_H
 #define CFLOW_STATECHART_RUNTIME_H
 
+#include <cflow/clock.h>
 #include <cflow/executor.h>
 #include <cflow/statechart.h>
+#include <cflow/timer_event.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -126,13 +128,25 @@ typedef struct cflow_statechart_instance_config {
     size_t internal_event_capacity;
     size_t completion_capacity;
     size_t microstep_limit;
-    /** Zero selects the 64 MiB compile-time instance storage ceiling. */
+    /**
+     * Zero selects the 64 MiB compile-time instance storage ceiling. The
+     * bound covers runtime state, bounded queues, and optional Timer Event
+     * slots plus their copied payload storage.
+     */
     size_t max_storage_bytes;
     /**
      * Borrowed non-manual SerialExecutor. It and all callback users must
      * outlive instance destruction. Every semantic quantum is posted to it.
      */
     cflow_executor *executor;
+    /**
+     * Optional borrowed monotonic Clock and fixed Timer Event capacity.
+     * Both zero/NULL disable timers; otherwise both must be provided and the
+     * Clock must outlive instance destruction. Mutating a shared Clock while
+     * timer APIs read it requires synchronization supplied by the caller.
+     */
+    cflow_clock *clock;
+    size_t timer_capacity;
 } cflow_statechart_instance_config;
 
 typedef struct cflow_statechart_instance_stats {
@@ -155,6 +169,8 @@ typedef struct cflow_statechart_instance_stats {
     bool cancelled;
     bool done;
     bool errored;
+    /** Zeroed when timers are disabled for this instance. */
+    cflow_timer_event_stats timers;
 } cflow_statechart_instance_stats;
 
 typedef struct cflow_statechart_instance { void *impl; }
@@ -166,10 +182,11 @@ typedef struct cflow_statechart_instance { void *impl; }
  * The initial extended state, binding rows, and all accepted Event payloads
  * are copied. Phase 1 admits only trivial CMeta state/Event storage; managed
  * copy/move/destroy traits are rejected with `UNSUPPORTED_TYPE`. All three
- * queue capacities and `microstep_limit` must be positive. Initialization
- * returns only after this instance's posted eventless/completion work reaches
- * quiescence; unrelated work on a shared Executor is not awaited. Failure
- * leaves `instance` empty.
+ * queue capacities and `microstep_limit` must be positive. Timer storage, when
+ * enabled, is included in `max_storage_bytes`. Initialization returns only
+ * after this instance's posted eventless/completion work reaches quiescence;
+ * unrelated work on a shared Executor is not awaited. Failure leaves
+ * `instance` empty.
  *
  * Guard and executable callbacks run only on the borrowed SerialExecutor.
  * Initial stabilization callbacks may run before this function returns; the
@@ -197,13 +214,50 @@ cflow_mailbox_status cflow_statechart_instance_try_send(
     cflow_statechart_instance *instance, const cflow_event_view *event);
 
 /**
- * Stop admission, preserve a microstep whose commit wins, then reach DONE.
- * No-op after any clean, controlled, or error terminal outcome already won.
+ * Schedule one copied Event at an absolute deadline in an active real-state
+ * scope. Unknown, pseudo, or inactive scopes return `INVALID_ARGUMENT`.
+ * Equal deadlines fire in schedule order. The Event payload is copied before
+ * this call returns and remains owned by the instance until firing or cancel.
+ */
+cflow_timer_event_schedule_result cflow_statechart_instance_try_schedule_at(
+    cflow_statechart_instance *instance,
+    cflow_machine_state_id scope,
+    cflow_deadline deadline,
+    const cflow_event_view *event);
+/**
+ * Schedule one copied Event after a duration in an active real-state scope.
+ * Scope, payload ownership, and equal-deadline ordering match `schedule_at`.
+ */
+cflow_timer_event_schedule_result cflow_statechart_instance_try_schedule_after(
+    cflow_statechart_instance *instance,
+    cflow_machine_state_id scope,
+    cflow_duration delay,
+    const cflow_event_view *event);
+/**
+ * Cancel one pending scoped timer. `FIRE_WON` means delivery already claimed
+ * the timer and will attempt exactly one external Mailbox admission.
+ */
+cflow_timer_event_status cflow_statechart_instance_cancel_timer(
+    cflow_statechart_instance *instance,
+    cflow_timer_event_id timer_id);
+/**
+ * Hand off at most one ready timer Event to this instance's external Mailbox.
+ * Mailbox FULL/CLOSED/CANCELLED is returned in the fire result and is never
+ * retried. Delivery enters the normal run-to-completion path.
+ */
+cflow_timer_event_fire_result cflow_statechart_instance_run_one_ready_timer(
+    cflow_statechart_instance *instance);
+
+/**
+ * Stop admission, cancel all pending timers, preserve a microstep whose commit
+ * wins, wait for any already claimed timer handoff, then reach DONE. No-op
+ * after any clean, controlled, or error terminal outcome already won.
  */
 void cflow_statechart_instance_close(cflow_statechart_instance *instance);
 /**
- * Stop admission and discard a microstep if cancellation wins before commit.
- * No-op after any clean, controlled, or error terminal outcome already won.
+ * Stop admission, cancel all pending timers, and discard a microstep if
+ * cancellation wins before commit. Any already claimed timer handoff settles
+ * before return. No-op after any terminal outcome already won.
  */
 void cflow_statechart_instance_cancel(cflow_statechart_instance *instance);
 

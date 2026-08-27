@@ -3,6 +3,8 @@
 
 #include <cflow/statechart_runtime.h>
 
+#include "timer_event_internal.h"
+
 #ifndef CFLOW_STATECHART_MAX_INSTANCE_BYTES
 #define CFLOW_STATECHART_MAX_INSTANCE_BYTES 67108864u
 #endif
@@ -112,5 +114,9 @@ cflow_statechart_runtime_status cflow_statechart_instance_init_test_internal(
     const cflow_statechart_instance_config *config,
     cflow_statechart_init_wait_hook_internal before_wait,
     void *hook_user);
+bool cflow_statechart_instance_claim_timer_internal(
+    cflow_statechart_instance *instance,
+    cflow_timer_event_claim *claim,
+    cflow_timer_event_fire_result *out_result);
 
 #endif
