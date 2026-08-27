@@ -374,7 +374,7 @@
   and build products are ignored, and confirm every Phase 1 issue row maps to a
   C test and Lean theorem or explicit proof boundary.
 
-- [ ] **Step 5: Commit, push, and create PR**
+- [x] **Step 5: Commit, push, and create PR**
 
   Use scoped commits as tasks become green. Push
   `feat/cflow-statechart-phase1`, create a PR against `master` with `Refs #122`
@@ -410,3 +410,6 @@
 - Final structural review: `codegraph sync .` succeeded; `codegraph affected`
   identified the three expected Statechart test files; `git diff --check`
   passed. Build trees and `.codegraph/` remained absent from the Git diff.
+- Delivery: scoped commits were pushed to `feat/cflow-statechart-phase1` and
+  [PR #124](https://github.com/qigao/turbo-utils/pull/124) was opened against
+  `master` with `Refs #122`. Merge remains gated on required CI.
