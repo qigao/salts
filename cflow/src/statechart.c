@@ -428,7 +428,7 @@ static cflow_statechart_status validate_document_preorder(
     const cflow_statechart_impl *impl) {
     statechart_index_ref *refs;
     size_t *path;
-    size_t ref_bytes, path_bytes, index;
+    size_t ref_bytes, path_bytes, index, previous_depth = 0u;
     if (!checked_bytes(impl->state_count, sizeof(*refs), &ref_bytes) ||
         !checked_bytes(impl->state_count, sizeof(*path), &path_bytes))
         return CFLOW_STATECHART_LIMIT_EXCEEDED;
@@ -439,6 +439,7 @@ static cflow_statechart_status validate_document_preorder(
         free(refs);
         return CFLOW_STATECHART_ALLOCATION_FAILED;
     }
+    memset(path, 0xff, path_bytes);
     for (index = 0u; index < impl->state_count; ++index) {
         refs[index].order = impl->states[index].document_order;
         refs[index].index = index;
@@ -447,14 +448,23 @@ static cflow_statechart_status validate_document_preorder(
     for (index = 0u; index < impl->state_count; ++index) {
         const size_t state = refs[index].index;
         const size_t depth = impl->depths[state];
-        if ((index == 0u && state != impl->root) ||
-            (index != 0u &&
-             (depth == 0u || path[depth - 1u] != impl->parents[state]))) {
+        if (index == 0u) {
+            if (state != impl->root || depth != 0u) {
+                free(path);
+                free(refs);
+                return CFLOW_STATECHART_INVALID_TREE;
+            }
+        } else if (depth == 0u ||
+                   (depth > previous_depth &&
+                    depth - previous_depth > 1u) ||
+                   path[depth - 1u] != impl->parents[state]) {
             free(path);
             free(refs);
             return CFLOW_STATECHART_INVALID_TREE;
         }
+        while (previous_depth > depth) path[previous_depth--] = SIZE_MAX;
         path[depth] = state;
+        previous_depth = depth;
     }
     free(path);
     free(refs);

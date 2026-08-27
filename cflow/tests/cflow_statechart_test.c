@@ -223,6 +223,36 @@ suite("CFlow format-neutral Statechart IR") {
                     CFLOW_STATECHART_INVALID_TREE);
     }
 
+    it("rejects a document-order depth jump before its parent") {
+        const cflow_statechart_state states[] = {
+            {20u, 0u, CFLOW_STATECHART_COMPOUND, 0u},
+            {30u, 10u, CFLOW_STATECHART_ATOMIC, 1u},
+            {10u, 20u, CFLOW_STATECHART_COMPOUND, 2u}
+        };
+        const cflow_statechart_definition definition = {
+            &cmeta_type_int, states, 3u, NULL, 0u, NULL, 0u, NULL, 0u,
+            NULL, 0u, NULL, 0u, NULL, 0u};
+
+        check_equal(rejected_build_status(&definition),
+                    CFLOW_STATECHART_INVALID_TREE);
+    }
+
+    it("rejects reentry into a closed document-order subtree") {
+        const cflow_statechart_state states[] = {
+            {10u, 0u, CFLOW_STATECHART_COMPOUND, 0u},
+            {20u, 10u, CFLOW_STATECHART_COMPOUND, 1u},
+            {30u, 20u, CFLOW_STATECHART_COMPOUND, 2u},
+            {40u, 10u, CFLOW_STATECHART_COMPOUND, 3u},
+            {50u, 30u, CFLOW_STATECHART_ATOMIC, 4u}
+        };
+        const cflow_statechart_definition definition = {
+            &cmeta_type_int, states, 5u, NULL, 0u, NULL, 0u, NULL, 0u,
+            NULL, 0u, NULL, 0u, NULL, 0u};
+
+        check_equal(rejected_build_status(&definition),
+                    CFLOW_STATECHART_INVALID_TREE);
+    }
+
     it("rejects illegal compound parallel and pseudo-state children") {
         statechart_fixture fixture;
         valid_fixture(&fixture);

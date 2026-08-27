@@ -229,10 +229,13 @@ A microstep executes one selected transition set in three global phases:
 3. compute effective targets, initial/history/default descendants and required
    ancestors, then run entry actions in ancestor-first/document order.
 
-The build-time depth-first-preorder invariant makes these ancestry/document
-comparators strict total orders over normalized states. Without that invariant,
-unique numeric document values alone are insufficient: an unrelated state may
-sort between an ancestor and descendant and create a comparison cycle.
+The build-time document-order invariant has two parts. Unique order plus
+ancestor-before-descendant makes the current ancestry/document comparators
+equivalent to reverse document order for exit and document order for entry,
+which makes both strict total orders. Contiguous subtree intervals are a
+stronger normalized-IR contract: they prevent a closed subtree from being
+reopened and support interval-oriented traversal, but are not independently
+required for comparator totality.
 
 Executable actions update one staged extended-state value sequentially. The
 next action observes the prior action's staged value. A callback may enqueue a
@@ -370,8 +373,12 @@ module because existing APIs are not redirected.
   large macrostep. Mitigation: explicit configurable limits, stats, and exact
   failure; no fallback.
 - **MED:** numeric document order supplied by native callers can be wrong.
-  Mitigation: unique-order validation and deterministic tests; the future
-  frontend generates it from source order.
+  Mitigation: build validates unique order and a hierarchy-compatible preorder
+  (ancestor-before-descendant plus contiguous subtree intervals), and exact
+  ordering tests use IDs that disagree with document order. This additive
+  Statechart admission has not been published, so rejecting malformed IR adds
+  no compatibility cost to a released API. The future frontend generates
+  document order from source order.
 - **LOW:** the additive installed header increases public API surface.
   Mitigation: opaque objects, C++ header compilation, examples, and install
   consumer tests.
