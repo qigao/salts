@@ -120,6 +120,43 @@ previous Node/Subgraph/Edge pointer. Stream keeps method fields concrete for the
 ISO C11 explicit-self facade; their values are initialized by CFlow and are not
 caller-replaceable strategies.
 
+### Opaque runtime owner policy
+
+A new public object uses a stack-storable opaque owner handle when it owns
+resources or mutable execution state beyond one call and its implementation is
+expected to evolve. The public carrier has one internal pointer, while all
+configuration, commands, observations, and release operations remain typed
+free functions. New public runtime owners must follow these rules:
+
+- The caller zero-initializes the handle. Initialization or open publishes it
+  only after complete admission; failure leaves it empty.
+- A live handle is neither copyable nor serializable. Its private allocation is
+  the sole mutable fact source and may change without exposing new fields.
+- Destruction is an explicit, exclusive control-plane operation. It settles or
+  rejects outstanding work according to the object's documented shutdown
+  protocol, releases owned state, and clears the handle.
+- Configuration is a separate caller-constructed value. Race-free observation
+  uses typed snapshots, query functions, or explicitly borrowed `const` views;
+  callers never inspect the carrier to infer lifecycle or errors.
+- Ownership, borrowed dependencies, thread topology, capacity/backpressure,
+  cancellation, and callback restrictions must be documented before the new
+  handle is admitted to the aggregate API.
+
+`cflow_run`, `cflow_stream_execution`, Mailbox/Channel, Machine/Statechart
+instances, Actor handles, and the I/O owners are the current runtime examples.
+CMeta-generated Source, Sink, Scheduler, and Executor values are extension
+interfaces rather than runtime owners, so their documented vtable/self carrier
+remains visible. Graph IR and Stream remain concrete for the introspection and
+explicit-self reasons above. Existing hybrid artifacts such as `cflow_plan`
+retain their source-compatible read-only fields, but are not the template for a
+new long-lived runtime owner.
+
+Every new opaque runtime owner must extend the public-header compile test and
+add lifecycle tests for zero-state rejection, failed initialization, successful
+shutdown, repeated empty destruction where promised, and forbidden callback or
+concurrent-control contexts. Tests assert those observable protocols rather
+than private pointer values or implementation layout.
+
 ### Lifecycle and ownership matrix
 
 | Object | Owned state | Borrowed dependencies | Mutable fact source | Required release boundary |
