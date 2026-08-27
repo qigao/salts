@@ -55,6 +55,8 @@ static_assert(std::is_standard_layout<cflow_io_source_config>::value,
               "IO Source config must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_source_stats>::value,
               "IO Source stats must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_io_source_window_stats>::value,
+              "windowed IO Source stats must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_timer_event_queue>::value,
               "timer Event queue must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_transition>::value,
@@ -88,6 +90,13 @@ using cflow_io_source_encode_callback = cflow_read_status (*)(
 static_assert(std::is_same<cflow_io_source_encode_fn,
                            cflow_io_source_encode_callback>::value,
               "IO Source encode callback must keep its exact C signature");
+using cflow_io_source_windowed_factory = int (*)(
+    cflow_source *, cflow_io_source_owner *,
+    const cflow_io_source_config *, size_t);
+static_assert(std::is_same<
+                  decltype(&cflow_source_from_io_actor_windowed),
+                  cflow_io_source_windowed_factory>::value,
+              "windowed IO Source factory must keep its exact C signature");
 
 suite("CFlow C++ public header") {
     it("exposes the aggregate API to C++ consumers") {
@@ -123,6 +132,7 @@ suite("CFlow C++ public header") {
         cflow_io_source_owner io_source_owner = {};
         cflow_io_source_config io_source_config = {};
         cflow_io_source_stats io_source_stats = {};
+        cflow_io_source_window_stats io_source_window_stats = {};
         cflow_io_native_backend_kind native_backend_kind = CFLOW_IO_NATIVE_POLL;
         cflow_io_native_pipe_operation_kind native_pipe_kind =
             CFLOW_IO_NATIVE_PIPE_READ;
@@ -195,6 +205,8 @@ suite("CFlow C++ public header") {
         check_null(io_source_config.encode);
         check_true(io_source_stats.actor.request_capacity == 0u);
         check_false(io_source_stats.source_live);
+        check_true(io_source_window_stats.capacity == 0u);
+        check_true(CFLOW_IO_SOURCE_MAX_WINDOW == 64u);
         (void)cflow_io_native_backend_file_operation_supported(
             native_backend_kind, native_file_kind);
         cflow_actor_ref_release(&actor_ref);

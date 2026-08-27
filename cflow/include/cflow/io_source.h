@@ -18,6 +18,11 @@ typedef struct cflow_io_source_owner {
     void *impl;
 } cflow_io_source_owner;
 
+enum {
+    /** Binds one resume's preparation work to the Runtime pump quantum. */
+    CFLOW_IO_SOURCE_MAX_WINDOW = 64u
+};
+
 typedef enum cflow_io_source_prepare_status {
     CFLOW_IO_SOURCE_PREPARE_OPERATION = 0,
     CFLOW_IO_SOURCE_PREPARE_DONE,
@@ -80,6 +85,19 @@ typedef struct cflow_io_source_stats {
 } cflow_io_source_stats;
 
 /**
+ * Diagnostic snapshot of the Adapter-owned bounded window. occupied includes
+ * entries waiting for result emission or Actor acknowledge. demand_reserved
+ * counts accepted operations whose values have not reached Runtime.
+ */
+typedef struct cflow_io_source_window_stats {
+    size_t capacity;
+    size_t occupied;
+    size_t demand_reserved;
+    size_t results_ready;
+    size_t peak_occupied;
+} cflow_io_source_window_stats;
+
+/**
  * Creates a typed Source and its external owner. out and owner must both be
  * zero state; on every failure valid zero-state destinations remain zero.
  * Occupied destinations are rejected without mutation. The adapter owns a
@@ -97,6 +115,27 @@ int cflow_source_from_io_actor(
     cflow_source *out,
     cflow_io_source_owner *owner,
     const cflow_io_source_config *config);
+
+/**
+ * Creates an opt-in bounded multi-request Source. window_capacity must be in
+ * [1, CFLOW_IO_SOURCE_MAX_WINDOW]; one preserves the exact sequential contract
+ * of cflow_source_from_io_actor(). Positive Runtime demand reserves at most
+ * min(demand, window_capacity) independent operations. Results are emitted in
+ * authoritative completion-delivery order, not preparation order.
+ *
+ * Actor request state remains authoritative. The Adapter allocates matching
+ * fixed request, command, manual-Executor and typed-result capacity during
+ * construction and never grows it at runtime. Full capacity applies
+ * backpressure by stopping preparation; it never retries, drops, overwrites or
+ * allocates a fallback queue. Ownership, callback threads, errors and shutdown
+ * otherwise follow cflow_source_from_io_actor(). Returns TURBO_OK,
+ * TURBO_EINVAL, or TURBO_ENOMEM.
+ */
+int cflow_source_from_io_actor_windowed(
+    cflow_source *out,
+    cflow_io_source_owner *owner,
+    const cflow_io_source_config *config,
+    size_t window_capacity);
 
 /**
  * Drives at most max_steps owner transitions and writes the completed count to
@@ -131,6 +170,15 @@ bool cflow_io_source_owner_is_quiescent(
 bool cflow_io_source_owner_get_stats(
     const cflow_io_source_owner *owner,
     cflow_io_source_stats *out);
+
+/**
+ * Copies a bounded-window snapshot. It is valid for both constructors; the
+ * sequential constructor reports capacity one. A concurrent snapshot may be
+ * stale immediately after return and does not authorize close.
+ */
+bool cflow_io_source_owner_get_window_stats(
+    const cflow_io_source_owner *owner,
+    cflow_io_source_window_stats *out);
 
 /**
  * Closes the external owner after Source cancellation/destruction and complete

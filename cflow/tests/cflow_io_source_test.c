@@ -633,6 +633,25 @@ spec("CFlow reactive IO source") {
         check_false(stats.source_live);
     }
 
+    it("rejects a window capacity outside the public bound") {
+        io_source_fixture fixture = {0};
+        cflow_io_source_config config = io_source_config(&fixture);
+        cflow_source source = {0};
+        cflow_io_source_owner owner = {0};
+
+        check_equal(cflow_source_from_io_actor_windowed(
+                        &source, &owner, &config, 0u), TURBO_EINVAL);
+        check_false(cflow_source_valid(&source));
+        check_null(owner.impl);
+
+        check_equal(cflow_source_from_io_actor_windowed(
+                        &source, &owner, &config,
+                        CFLOW_IO_SOURCE_MAX_WINDOW + 1u),
+                    TURBO_EINVAL);
+        check_false(cflow_source_valid(&source));
+        check_null(owner.impl);
+    }
+
     it("preserves an occupied Source on rejected construction") {
         io_source_fixture fixture = {0};
         cflow_io_source_config config = io_source_config(&fixture);
