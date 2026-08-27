@@ -45,8 +45,9 @@ typedef struct cflow_statechart_impl {
 
 /*
  * Dense indices address ID-sorted public rows. Span entries are deterministic:
- * children use document order, transitions use trigger key/priority/document
- * order, and actions use declared action order. Offsets have owner_count + 1
+ * children use document order, transitions use trigger key/lower numeric
+ * priority/document order, and actions use declared action order. Offsets have
+ * owner_count + 1
  * entries. Missing defaults, targetless domains, and the root parent use
  * SIZE_MAX. A targetless transition uses SIZE_MAX for no exit domain. A
  * target-bearing external transition with no modeled proper common compound

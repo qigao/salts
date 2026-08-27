@@ -32,6 +32,15 @@ typedef struct cflow_statechart_instance_impl {
     size_t bitset_bytes;
     size_t *entry_stack;
     size_t *path_stack;
+    cflow_statechart_transition_id *selected_transition_ids;
+    size_t *selected_transition_indices;
+    size_t *selected_sources;
+    size_t *selected_leaf_orders;
+    unsigned char *selected_exit_sets;
+    unsigned char *candidate_exit_set;
+    unsigned char *candidate_seen;
+    size_t selected_count;
+    char *error_storage;
     turbo_mutex_t lock;
     const char *error;
     bool error_owned;
@@ -87,12 +96,20 @@ static cflow_statechart_runtime_status calculate_storage_requirements(
     const cflow_statechart_impl *ir,
     cflow_statechart_storage_requirements *out) {
     cflow_statechart_storage_requirements requirements = {0};
-    size_t bitset_bytes, state_index_bytes, history_count = 0u;
+    size_t bitset_bytes, transition_bitset_bytes, state_index_bytes;
+    size_t selection_exit_bytes, selection_id_bytes;
+    size_t history_count = 0u;
     size_t history_table_bytes, one_binding_kind, index;
     if (ir == NULL || out == NULL ||
         !bitset_bytes_for(ir->state_count, &bitset_bytes) ||
+        !bitset_bytes_for(ir->transition_count, &transition_bitset_bytes) ||
         !checked_multiply(ir->state_count, sizeof(size_t),
-                          &state_index_bytes))
+                          &state_index_bytes) ||
+        !checked_multiply(ir->state_count,
+                          sizeof(cflow_statechart_transition_id),
+                          &selection_id_bytes) ||
+        !checked_multiply(ir->state_count, bitset_bytes,
+                          &selection_exit_bytes))
         return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
     for (index = 0u; index < ir->state_count; ++index) {
         const cflow_statechart_state_kind kind = ir->states[index].kind;
@@ -123,8 +140,18 @@ static cflow_statechart_runtime_status calculate_storage_requirements(
                           &requirements.history_count_bytes) ||
         !checked_multiply(ir->state_type->size, 2u,
                           &requirements.extended_state_bytes) ||
-        !checked_multiply(state_index_bytes, 3u,
-                          &requirements.index_work_bytes))
+        !checked_multiply(state_index_bytes, 6u,
+                          &requirements.index_work_bytes) ||
+        !checked_accumulate(selection_id_bytes,
+                            &requirements.index_work_bytes) ||
+        !checked_accumulate(selection_exit_bytes,
+                            &requirements.index_work_bytes) ||
+        !checked_accumulate(bitset_bytes,
+                            &requirements.index_work_bytes) ||
+        !checked_accumulate(transition_bitset_bytes,
+                            &requirements.index_work_bytes) ||
+        !checked_accumulate((size_t)CFLOW_STATECHART_ERROR_CAPACITY,
+                            &requirements.index_work_bytes))
         return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
 
     requirements.total_bytes = requirements.control_bytes;
@@ -190,6 +217,14 @@ static void instance_impl_free(cflow_statechart_instance_impl *impl) {
     if (impl == NULL) return;
     if (impl->lock != NULL) turbo_mutex_destroy(&impl->lock);
     if (impl->error_owned) free((void *)impl->error);
+    free(impl->error_storage);
+    free(impl->candidate_seen);
+    free(impl->candidate_exit_set);
+    free(impl->selected_exit_sets);
+    free(impl->selected_leaf_orders);
+    free(impl->selected_sources);
+    free(impl->selected_transition_indices);
+    free(impl->selected_transition_ids);
     free(impl->path_stack);
     free(impl->entry_stack);
     for (index = 0u; index < 2u; ++index) {
@@ -387,12 +422,20 @@ cflow_statechart_configuration_validate_internal(
 static cflow_statechart_runtime_status allocate_storage(
     cflow_statechart_instance_impl *impl,
     const cflow_statechart_storage_requirements *requirements) {
-    size_t state_bytes, history_bytes, history_count_bytes;
+    size_t state_bytes, transition_id_bytes, selected_exit_bytes;
+    size_t transition_bitset_bytes, history_bytes, history_count_bytes;
     size_t index, history_slot = 0u;
     if (requirements == NULL ||
         !bitset_bytes_for(impl->ir->state_count, &impl->bitset_bytes) ||
         !checked_multiply(impl->ir->state_count, sizeof(size_t),
-                          &state_bytes))
+                          &state_bytes) ||
+        !checked_multiply(impl->ir->state_count,
+                          sizeof(cflow_statechart_transition_id),
+                          &transition_id_bytes) ||
+        !checked_multiply(impl->ir->state_count, impl->bitset_bytes,
+                          &selected_exit_bytes) ||
+        !bitset_bytes_for(impl->ir->transition_count,
+                          &transition_bitset_bytes))
         return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
     for (index = 0u; index < impl->ir->state_count; ++index) {
         const cflow_statechart_state_kind kind = impl->ir->states[index].kind;
@@ -406,6 +449,21 @@ static cflow_statechart_runtime_status allocate_storage(
     impl->history_slots = (size_t *)malloc(state_bytes);
     impl->entry_stack = (size_t *)malloc(state_bytes);
     impl->path_stack = (size_t *)malloc(state_bytes);
+    impl->selected_transition_ids =
+        (cflow_statechart_transition_id *)malloc(transition_id_bytes);
+    impl->selected_transition_indices = (size_t *)malloc(state_bytes);
+    impl->selected_sources = (size_t *)malloc(state_bytes);
+    impl->selected_leaf_orders = (size_t *)malloc(state_bytes);
+    impl->selected_exit_sets =
+        (unsigned char *)calloc(1u, selected_exit_bytes);
+    impl->candidate_exit_set =
+        (unsigned char *)calloc(1u, impl->bitset_bytes);
+    impl->candidate_seen =
+        transition_bitset_bytes != 0u
+            ? (unsigned char *)calloc(1u, transition_bitset_bytes)
+            : NULL;
+    impl->error_storage =
+        (char *)malloc((size_t)CFLOW_STATECHART_ERROR_CAPACITY);
     for (index = 0u; index < 2u; ++index) {
         impl->configurations[index].bits =
             (unsigned char *)calloc(1u, impl->bitset_bytes);
@@ -420,7 +478,13 @@ static cflow_statechart_runtime_status allocate_storage(
         }
     }
     if (impl->history_slots == NULL || impl->entry_stack == NULL ||
-        impl->path_stack == NULL || impl->configurations[0].bits == NULL ||
+        impl->path_stack == NULL || impl->selected_transition_ids == NULL ||
+        impl->selected_transition_indices == NULL ||
+        impl->selected_sources == NULL || impl->selected_leaf_orders == NULL ||
+        impl->selected_exit_sets == NULL || impl->candidate_exit_set == NULL ||
+        (transition_bitset_bytes != 0u && impl->candidate_seen == NULL) ||
+        impl->error_storage == NULL ||
+        impl->configurations[0].bits == NULL ||
         impl->configurations[1].bits == NULL ||
         impl->configurations[0].states == NULL ||
         impl->configurations[1].states == NULL ||
@@ -535,6 +599,318 @@ static cflow_statechart_runtime_status build_initial_configuration(
     return configuration_status == CFLOW_STATECHART_CONFIGURATION_OK
         ? CFLOW_STATECHART_RUNTIME_OK
         : CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+}
+
+static const cflow_event_type *find_event_type(
+    const cflow_statechart_impl *ir, cflow_event_id id) {
+    size_t left = 0u, right = ir->event_count;
+    while (left < right) {
+        const size_t middle = left + (right - left) / 2u;
+        if (ir->events[middle].id == id) return &ir->events[middle];
+        if (ir->events[middle].id < id) left = middle + 1u;
+        else right = middle;
+    }
+    return NULL;
+}
+
+static const cflow_statechart_guard *find_guard_declaration(
+    const cflow_statechart_instance_impl *impl,
+    cflow_statechart_guard_id id) {
+    size_t left = 0u, right = impl->ir->guard_count;
+    while (left < right) {
+        const size_t middle = left + (right - left) / 2u;
+        if (impl->ir->guards[middle].id == id)
+            return &impl->ir->guards[middle];
+        if (impl->ir->guards[middle].id < id) left = middle + 1u;
+        else right = middle;
+    }
+    return NULL;
+}
+
+static const cflow_statechart_guard_binding *find_statechart_guard_binding(
+    const cflow_statechart_instance_impl *impl,
+    cflow_statechart_guard_id id) {
+    size_t left = 0u, right = impl->guard_count;
+    while (left < right) {
+        const size_t middle = left + (right - left) / 2u;
+        if (impl->guards[middle].id == id) return &impl->guards[middle];
+        if (impl->guards[middle].id < id) left = middle + 1u;
+        else right = middle;
+    }
+    return NULL;
+}
+
+static void preserve_first_error(cflow_statechart_instance_impl *impl,
+                                 const char *message) {
+    const char *source = message != NULL && message[0] != '\0'
+        ? message : "Statechart guard failed";
+    size_t length;
+    turbo_mutex_lock(&impl->lock);
+    if (impl->error != NULL) {
+        turbo_mutex_unlock(&impl->lock);
+        return;
+    }
+    length = strlen(source);
+    if (length >= (size_t)CFLOW_STATECHART_ERROR_CAPACITY)
+        length = (size_t)CFLOW_STATECHART_ERROR_CAPACITY - 1u;
+    memcpy(impl->error_storage, source, length);
+    impl->error_storage[length] = '\0';
+    impl->error = impl->error_storage;
+    turbo_mutex_unlock(&impl->lock);
+}
+
+static bool instance_has_error(cflow_statechart_instance_impl *impl) {
+    bool has_error;
+    turbo_mutex_lock(&impl->lock);
+    has_error = impl->error != NULL;
+    turbo_mutex_unlock(&impl->lock);
+    return has_error;
+}
+
+static bool source_is_proper_descendant(const cflow_statechart_impl *ir,
+                                        size_t descendant,
+                                        size_t ancestor) {
+    size_t current = descendant;
+    if (descendant == ancestor) return false;
+    while (current != SIZE_MAX) {
+        current = ir->parents[current];
+        if (current == ancestor) return true;
+    }
+    return false;
+}
+
+static bool trigger_valid(const cflow_statechart_instance_impl *impl,
+                          const cflow_statechart_selection_trigger *trigger) {
+    const cflow_event_type *event_type;
+    if (trigger->kind == CFLOW_STATECHART_TRIGGER_EVENTLESS)
+        return trigger->event == NULL && trigger->completion == 0u;
+    if (trigger->kind == CFLOW_STATECHART_TRIGGER_COMPLETION)
+        return trigger->event == NULL && trigger->completion != 0u &&
+            find_state_index(impl->ir, trigger->completion) != SIZE_MAX;
+    if (trigger->kind != CFLOW_STATECHART_TRIGGER_EVENT ||
+        trigger->event == NULL || trigger->completion != 0u ||
+        trigger->event->id == 0u || trigger->event->payload_type == NULL ||
+        trigger->event->payload == NULL)
+        return false;
+    event_type = find_event_type(impl->ir, trigger->event->id);
+    return event_type != NULL &&
+        cmeta_type_equal(event_type->payload_type,
+                         trigger->event->payload_type);
+}
+
+static bool trigger_matches(const cflow_statechart_transition *transition,
+                            const cflow_statechart_selection_trigger *trigger) {
+    if (transition->trigger != trigger->kind) return false;
+    if (trigger->kind == CFLOW_STATECHART_TRIGGER_EVENT)
+        return transition->event == trigger->event->id;
+    if (trigger->kind == CFLOW_STATECHART_TRIGGER_COMPLETION)
+        return transition->completion == trigger->completion;
+    return true;
+}
+
+static cflow_statechart_runtime_status guard_enabled(
+    cflow_statechart_instance_impl *impl,
+    const cflow_statechart_transition *transition,
+    const cflow_statechart_selection_trigger *trigger,
+    bool *out_enabled) {
+    const cflow_statechart_guard *declaration;
+    const cflow_statechart_guard_binding *binding;
+    const char *error = NULL;
+    bool enabled = false;
+    if (transition->guard == 0u) {
+        *out_enabled = true;
+        return CFLOW_STATECHART_RUNTIME_OK;
+    }
+    declaration = find_guard_declaration(impl, transition->guard);
+    binding = find_statechart_guard_binding(impl, transition->guard);
+    if (declaration == NULL || binding == NULL) {
+        preserve_first_error(impl, "Statechart guard binding is missing");
+        return CFLOW_STATECHART_RUNTIME_GUARD_FAILED;
+    }
+    if (!binding->fn(binding->user,
+                     impl->extended_states[impl->published],
+                     trigger->kind == CFLOW_STATECHART_TRIGGER_EVENT
+                         ? trigger->event : NULL,
+                     &enabled, &error)) {
+        preserve_first_error(
+            impl, (declaration->effects & CMETA_EFFECT_MAY_FAIL) != 0u
+                ? error : "Statechart guard contract violation");
+        return CFLOW_STATECHART_RUNTIME_GUARD_FAILED;
+    }
+    *out_enabled = enabled;
+    return CFLOW_STATECHART_RUNTIME_OK;
+}
+
+static void compute_exit_set(cflow_statechart_instance_impl *impl,
+                             size_t transition_index) {
+    const cflow_statechart_transition *transition =
+        &impl->ir->transitions[transition_index];
+    const statechart_configuration_buffer *configuration =
+        &impl->configurations[impl->published];
+    const size_t domain = impl->ir->transition_domains[transition_index];
+    size_t position;
+    memset(impl->candidate_exit_set, 0, impl->bitset_bytes);
+    if (transition->target == 0u) return;
+    for (position = 0u; position < configuration->state_count; ++position) {
+        const size_t state = configuration->states[position];
+        if (domain == SIZE_MAX ||
+            source_is_proper_descendant(impl->ir, state, domain))
+            bit_set(impl->candidate_exit_set, state);
+    }
+}
+
+static bool exit_sets_intersect(const unsigned char *left,
+                                const unsigned char *right,
+                                size_t bytes) {
+    size_t index;
+    for (index = 0u; index < bytes; ++index)
+        if ((left[index] & right[index]) != 0u) return true;
+    return false;
+}
+
+static void remove_selected(cflow_statechart_instance_impl *impl,
+                            size_t position) {
+    const size_t tail = impl->selected_count - position - 1u;
+    if (tail != 0u) {
+        memmove(&impl->selected_transition_ids[position],
+                &impl->selected_transition_ids[position + 1u],
+                tail * sizeof(*impl->selected_transition_ids));
+        memmove(&impl->selected_transition_indices[position],
+                &impl->selected_transition_indices[position + 1u],
+                tail * sizeof(*impl->selected_transition_indices));
+        memmove(&impl->selected_sources[position],
+                &impl->selected_sources[position + 1u],
+                tail * sizeof(*impl->selected_sources));
+        memmove(&impl->selected_leaf_orders[position],
+                &impl->selected_leaf_orders[position + 1u],
+                tail * sizeof(*impl->selected_leaf_orders));
+        memmove(impl->selected_exit_sets + position * impl->bitset_bytes,
+                impl->selected_exit_sets +
+                    (position + 1u) * impl->bitset_bytes,
+                tail * impl->bitset_bytes);
+    }
+    --impl->selected_count;
+}
+
+static void filter_candidate(cflow_statechart_instance_impl *impl,
+                             size_t transition_index,
+                             size_t source,
+                             size_t leaf_order) {
+    size_t position;
+    bool accepted = true;
+    for (position = 0u; position < impl->selected_count; ++position) {
+        const unsigned char *selected_exit = impl->selected_exit_sets +
+            position * impl->bitset_bytes;
+        if (!exit_sets_intersect(impl->candidate_exit_set, selected_exit,
+                                 impl->bitset_bytes))
+            continue;
+        if (!source_is_proper_descendant(
+                impl->ir, source, impl->selected_sources[position])) {
+            accepted = false;
+            break;
+        }
+    }
+    if (!accepted) return;
+    position = 0u;
+    while (position < impl->selected_count) {
+        const unsigned char *selected_exit = impl->selected_exit_sets +
+            position * impl->bitset_bytes;
+        if (exit_sets_intersect(impl->candidate_exit_set, selected_exit,
+                                impl->bitset_bytes))
+            remove_selected(impl, position);
+        else
+            ++position;
+    }
+    position = impl->selected_count++;
+    impl->selected_transition_ids[position] =
+        impl->ir->transitions[transition_index].id;
+    impl->selected_transition_indices[position] = transition_index;
+    impl->selected_sources[position] = source;
+    impl->selected_leaf_orders[position] = leaf_order;
+    memcpy(impl->selected_exit_sets + position * impl->bitset_bytes,
+           impl->candidate_exit_set, impl->bitset_bytes);
+}
+
+cflow_statechart_runtime_status cflow_statechart_instance_select_internal(
+    cflow_statechart_instance *instance,
+    const cflow_statechart_selection_trigger *trigger,
+    cflow_statechart_selection_snapshot *out) {
+    cflow_statechart_instance_impl *impl = instance != NULL
+        ? (cflow_statechart_instance_impl *)instance->impl : NULL;
+    const statechart_configuration_buffer *configuration;
+    size_t position, leaf_order = 0u;
+    if (out != NULL) memset(out, 0, sizeof(*out));
+    if (impl == NULL || trigger == NULL || out == NULL ||
+        !trigger_valid(impl, trigger))
+        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+    if (instance_has_error(impl))
+        return CFLOW_STATECHART_RUNTIME_GUARD_FAILED;
+    impl->selected_count = 0u;
+    if (impl->ir->transition_count != 0u)
+        memset(impl->candidate_seen, 0,
+               (impl->ir->transition_count + 7u) / 8u);
+    configuration = &impl->configurations[impl->published];
+    for (position = 0u; position < configuration->state_count; ++position) {
+        size_t source, span;
+        const size_t leaf = configuration->states[position];
+        bool candidate_found = false;
+        if (!leaf_kind(impl->ir->states[leaf].kind)) continue;
+        source = leaf;
+        while (source != SIZE_MAX && !candidate_found) {
+            for (span = impl->ir->transition_offsets[source];
+                 span < impl->ir->transition_offsets[source + 1u]; ++span) {
+                const size_t transition_index =
+                    impl->ir->transition_indices[span];
+                const cflow_statechart_transition *transition =
+                    &impl->ir->transitions[transition_index];
+                cflow_statechart_runtime_status status;
+                bool enabled = false;
+                if (!trigger_matches(transition, trigger)) continue;
+                status = guard_enabled(impl, transition, trigger, &enabled);
+                if (status != CFLOW_STATECHART_RUNTIME_OK) {
+                    impl->selected_count = 0u;
+                    return status;
+                }
+                if (!enabled) continue;
+                candidate_found = true;
+                if (!bit_test(impl->candidate_seen, transition_index)) {
+                    bit_set(impl->candidate_seen, transition_index);
+                    compute_exit_set(impl, transition_index);
+                    filter_candidate(impl, transition_index, source,
+                                     leaf_order);
+                }
+                break;
+            }
+            source = impl->ir->parents[source];
+        }
+        ++leaf_order;
+    }
+    out->transition_ids = impl->selected_transition_ids;
+    out->transition_count = impl->selected_count;
+    out->exit_sets = impl->selected_exit_sets;
+    out->exit_set_stride = impl->bitset_bytes;
+    return CFLOW_STATECHART_RUNTIME_OK;
+}
+
+bool cflow_statechart_selection_exits_internal(
+    const cflow_statechart_instance *instance,
+    const cflow_statechart_selection_snapshot *selection,
+    size_t transition_position,
+    cflow_machine_state_id state) {
+    const cflow_statechart_instance_impl *impl = instance != NULL
+        ? (const cflow_statechart_instance_impl *)instance->impl : NULL;
+    size_t state_index;
+    if (impl == NULL || selection == NULL ||
+        selection->transition_ids != impl->selected_transition_ids ||
+        selection->exit_sets != impl->selected_exit_sets ||
+        selection->exit_set_stride != impl->bitset_bytes ||
+        selection->transition_count != impl->selected_count ||
+        transition_position >= selection->transition_count)
+        return false;
+    state_index = find_state_index(impl->ir, state);
+    return state_index != SIZE_MAX && bit_test(
+        selection->exit_sets + transition_position * selection->exit_set_stride,
+        state_index);
 }
 
 cflow_statechart_runtime_status cflow_statechart_instance_init(

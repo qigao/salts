@@ -4,19 +4,58 @@
 #include "statechart_runtime_internal.h"
 #include "tinytest.h"
 
+#include <turbo/error_codes.h>
+#include <turbo/thread.h>
+
 #include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
 
 typedef struct runtime_fixture {
-    cflow_statechart_state states[7];
-    cflow_statechart_transition transitions[4];
+    cflow_statechart_state states[12];
+    cflow_event_type events[2];
+    cflow_statechart_guard guards[4];
+    cflow_statechart_transition transitions[12];
     cflow_statechart_definition definition;
     cflow_statechart statechart;
     cflow_executor executor;
     cflow_statechart_instance instance;
     int initial_state;
 } runtime_fixture;
+
+typedef struct selection_guard_probe {
+    const void *first_state;
+    int expected_state;
+    size_t calls;
+    bool enabled;
+    bool fail;
+    const char *error;
+} selection_guard_probe;
+
+typedef struct selection_error_reader_probe {
+    const cflow_statechart_instance *instance;
+    atomic_bool started;
+    atomic_bool stop;
+    atomic_bool observed;
+} selection_error_reader_probe;
+
+enum { SELECTION_ERROR_OBSERVE_ATTEMPTS = 1000 };
+static const char selection_guard_contract_error[] =
+    "Statechart guard contract violation";
+
+static void selection_error_reader(void *user) {
+    selection_error_reader_probe *probe =
+        (selection_error_reader_probe *)user;
+    atomic_store(&probe->started, true);
+    while (!atomic_load(&probe->stop)) {
+        const char *error = cflow_statechart_instance_error(probe->instance);
+        if (error != NULL &&
+            strcmp(error, selection_guard_contract_error) == 0) {
+            atomic_store(&probe->observed, true);
+            return;
+        }
+    }
+}
 
 typedef struct runtime_destroy_probe {
     cflow_statechart_instance *instance;
@@ -126,6 +165,94 @@ static bool guard_binding(void *user, const void *state,
     *out_error = NULL;
     if (user != NULL) atomic_fetch_add((atomic_int *)user, 1);
     return true;
+}
+
+static bool selection_guard(void *user, const void *state,
+                            const cflow_event_view *event,
+                            bool *out_enabled, const char **out_error) {
+    selection_guard_probe *probe = (selection_guard_probe *)user;
+    if (probe == NULL || state == NULL || event == NULL ||
+        out_enabled == NULL || out_error == NULL ||
+        *(const int *)state != probe->expected_state)
+        return false;
+    if (probe->first_state == NULL) probe->first_state = state;
+    else if (probe->first_state != state) return false;
+    ++probe->calls;
+    *out_error = probe->error;
+    *out_enabled = probe->enabled;
+    return !probe->fail;
+}
+
+static void selection_fixture(runtime_fixture *fixture) {
+    memset(fixture, 0, sizeof(*fixture));
+    fixture->states[0] = (cflow_statechart_state){
+        1u, 0u, CFLOW_STATECHART_PARALLEL, 0u};
+    fixture->states[1] = (cflow_statechart_state){
+        10u, 1u, CFLOW_STATECHART_COMPOUND, 1u};
+    fixture->states[2] = (cflow_statechart_state){
+        11u, 10u, CFLOW_STATECHART_INITIAL, 2u};
+    fixture->states[3] = (cflow_statechart_state){
+        12u, 10u, CFLOW_STATECHART_ATOMIC, 3u};
+    fixture->states[4] = (cflow_statechart_state){
+        20u, 1u, CFLOW_STATECHART_COMPOUND, 4u};
+    fixture->states[5] = (cflow_statechart_state){
+        21u, 20u, CFLOW_STATECHART_INITIAL, 5u};
+    fixture->states[6] = (cflow_statechart_state){
+        22u, 20u, CFLOW_STATECHART_ATOMIC, 6u};
+    fixture->events[0] = (cflow_event_type){100u, &cmeta_type_int};
+    fixture->transitions[0] = (cflow_statechart_transition){
+        100u, 11u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 12u,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u};
+    fixture->transitions[1] = (cflow_statechart_transition){
+        101u, 21u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 22u,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u};
+    fixture->definition = (cflow_statechart_definition){
+        &cmeta_type_int, fixture->states, 7u, fixture->events, 1u,
+        NULL, 0u, NULL, 0u, fixture->transitions, 2u,
+        NULL, 0u, NULL, 0u};
+    fixture->initial_state = 41;
+}
+
+static void add_event_transition(runtime_fixture *fixture,
+                                 cflow_statechart_transition_id id,
+                                 cflow_machine_state_id source,
+                                 cflow_statechart_guard_id guard,
+                                 cflow_machine_state_id target,
+                                 uint32_t priority) {
+    const size_t index = fixture->definition.transition_count++;
+    fixture->transitions[index] = (cflow_statechart_transition){
+        id, source, CFLOW_STATECHART_TRIGGER_EVENT, 100u, 0u, guard, target,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, priority, (uint32_t)index};
+}
+
+static cflow_statechart_runtime_status selection_fixture_init(
+    runtime_fixture *fixture,
+    const cflow_statechart_guard_binding *bindings,
+    size_t binding_count) {
+    cflow_statechart_instance_config config;
+    cflow_statechart_status build_status;
+    fixture->definition.transitions = fixture->transitions;
+    build_status = cflow_statechart_build(
+        &fixture->statechart, &fixture->definition);
+    check_equal(build_status, CFLOW_STATECHART_OK);
+    check_true(cflow_executor_serial_init(&fixture->executor));
+    config = (cflow_statechart_instance_config){
+        .statechart = &fixture->statechart,
+        .initial_state = &fixture->initial_state,
+        .guards = bindings,
+        .guard_count = binding_count,
+        .executor = &fixture->executor};
+    return cflow_statechart_instance_init(&fixture->instance, &config);
+}
+
+static cflow_statechart_runtime_status select_event(
+    runtime_fixture *fixture, cflow_statechart_selection_snapshot *out) {
+    const int payload = 7;
+    const cflow_event_view event = {100u, &cmeta_type_int, &payload};
+    const cflow_statechart_selection_trigger trigger = {
+        CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
+    return cflow_statechart_instance_select_internal(
+        &fixture->instance, &trigger, out);
 }
 
 static bool executable_binding(void *user,
@@ -535,6 +662,243 @@ suite("CFlow Statechart runtime initial configuration") {
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(atomic_load(&guard_calls), 0);
         check_equal(atomic_load(&executable_calls), 0);
+        runtime_fixture_destroy(&fixture);
+    }
+}
+
+suite("CFlow Statechart deterministic transition selection") {
+    it("selects compatible transitions from both parallel regions") {
+        runtime_fixture fixture;
+        cflow_statechart_selection_snapshot selected = {0};
+        const cflow_statechart_transition_id expected[] = {200u, 201u};
+        selection_fixture(&fixture);
+        add_event_transition(&fixture, 200u, 12u, 0u, 12u, 0u);
+        add_event_transition(&fixture, 201u, 22u, 0u, 22u, 0u);
+        check_equal(selection_fixture_init(&fixture, NULL, 0u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)2u);
+        check_equal(selected.transition_ids, expected, sizeof(expected));
+        check_true(cflow_statechart_selection_exits_internal(
+            &fixture.instance, &selected, 0u, 12u));
+        check_false(cflow_statechart_selection_exits_internal(
+            &fixture.instance, &selected, 0u, 22u));
+        check_true(cflow_statechart_selection_exits_internal(
+            &fixture.instance, &selected, 1u, 22u));
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("bubbles only after disabled child guards and keeps one state snapshot") {
+        runtime_fixture fixture;
+        selection_guard_probe child = {NULL, 41, 0u, false, false, NULL};
+        selection_guard_probe parent = {NULL, 41, 0u, true, false, NULL};
+        cflow_statechart_guard_binding bindings[] = {
+            {300u, selection_guard, &child},
+            {301u, selection_guard, &parent}};
+        cflow_statechart_selection_snapshot selected = {0};
+        selection_fixture(&fixture);
+        fixture.guards[0] = (cflow_statechart_guard){
+            300u, &cmeta_type_int, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        fixture.guards[1] = (cflow_statechart_guard){
+            301u, &cmeta_type_int, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 2u;
+        add_event_transition(&fixture, 200u, 12u, 300u, 0u, 0u);
+        add_event_transition(&fixture, 201u, 10u, 301u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, bindings, 2u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)1u);
+        check_equal(selected.transition_ids[0],
+                    (cflow_statechart_transition_id)201u);
+        check_equal(child.calls, (size_t)1u);
+        check_equal(parent.calls, (size_t)1u);
+        check_equal(child.first_state, parent.first_state);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("lets a child candidate hide its ancestor candidate") {
+        runtime_fixture fixture;
+        cflow_statechart_selection_snapshot selected = {0};
+        selection_fixture(&fixture);
+        add_event_transition(&fixture, 200u, 12u, 0u, 12u, 0u);
+        add_event_transition(&fixture, 201u, 10u, 0u, 12u, 0u);
+        check_equal(selection_fixture_init(&fixture, NULL, 0u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)1u);
+        check_equal(selected.transition_ids[0],
+                    (cflow_statechart_transition_id)200u);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("uses lower numeric priority before declaration order") {
+        runtime_fixture fixture;
+        cflow_statechart_selection_snapshot selected = {0};
+        selection_fixture(&fixture);
+        add_event_transition(&fixture, 200u, 12u, 0u, 0u, 5u);
+        add_event_transition(&fixture, 201u, 12u, 0u, 0u, 1u);
+        check_equal(selection_fixture_init(&fixture, NULL, 0u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)1u);
+        check_equal(selected.transition_ids[0],
+                    (cflow_statechart_transition_id)201u);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("deduplicates one ancestor candidate reached from both leaves") {
+        runtime_fixture fixture;
+        cflow_statechart_selection_snapshot selected = {0};
+        selection_fixture(&fixture);
+        add_event_transition(&fixture, 200u, 1u, 0u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, NULL, 0u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)1u);
+        check_equal(selected.transition_ids[0],
+                    (cflow_statechart_transition_id)200u);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("keeps the earlier leaf when unrelated sources conflict") {
+        runtime_fixture fixture;
+        cflow_statechart_selection_snapshot selected = {0};
+        selection_fixture(&fixture);
+        add_event_transition(&fixture, 200u, 12u, 0u, 22u, 0u);
+        add_event_transition(&fixture, 201u, 22u, 0u, 12u, 0u);
+        check_equal(selection_fixture_init(&fixture, NULL, 0u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)1u);
+        check_equal(selected.transition_ids[0],
+                    (cflow_statechart_transition_id)200u);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("lets a later descendant source preempt an earlier ancestor source") {
+        runtime_fixture fixture;
+        cflow_statechart_selection_snapshot selected = {0};
+        selection_fixture(&fixture);
+        add_event_transition(&fixture, 200u, 1u, 0u, 12u, 0u);
+        add_event_transition(&fixture, 201u, 22u, 0u, 12u, 0u);
+        check_equal(selection_fixture_init(&fixture, NULL, 0u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)1u);
+        check_equal(selected.transition_ids[0],
+                    (cflow_statechart_transition_id)201u);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("keeps targetless candidates from both regions") {
+        runtime_fixture fixture;
+        cflow_statechart_selection_snapshot selected = {0};
+        const cflow_statechart_transition_id expected[] = {200u, 201u};
+        size_t byte;
+        selection_fixture(&fixture);
+        add_event_transition(&fixture, 200u, 12u, 0u, 0u, 0u);
+        add_event_transition(&fixture, 201u, 22u, 0u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, NULL, 0u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)2u);
+        check_equal(selected.transition_ids, expected, sizeof(expected));
+        for (byte = 0u;
+             byte < selected.transition_count * selected.exit_set_stride;
+             ++byte)
+            check_equal(selected.exit_sets[byte], (unsigned char)0u);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("returns the same literal selection on repeated runs") {
+        runtime_fixture fixture;
+        cflow_statechart_selection_snapshot first = {0}, second = {0};
+        cflow_statechart_transition_id saved[2] = {0};
+        const cflow_statechart_transition_id expected[] = {200u, 201u};
+        selection_fixture(&fixture);
+        add_event_transition(&fixture, 200u, 12u, 0u, 12u, 0u);
+        add_event_transition(&fixture, 201u, 22u, 0u, 22u, 0u);
+        check_equal(selection_fixture_init(&fixture, NULL, 0u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &first),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        memcpy(saved, first.transition_ids, sizeof(saved));
+        check_equal(select_event(&fixture, &second),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(saved, expected, sizeof(expected));
+        check_equal(second.transition_ids, expected, sizeof(expected));
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("preserves the first guard failure without publishing semantic state") {
+        runtime_fixture fixture;
+        selection_guard_probe first_guard = {
+            NULL, 41, 0u, false, true, "first guard failed"};
+        selection_guard_probe second_guard = {
+            NULL, 41, 0u, false, true, "second guard failed"};
+        cflow_statechart_guard_binding bindings[] = {
+            {300u, selection_guard, &first_guard},
+            {301u, selection_guard, &second_guard}};
+        cflow_statechart_selection_snapshot selected = {0};
+        cflow_machine_state_id states[5] = {0};
+        const cflow_machine_state_id expected[] = {1u, 10u, 12u, 20u, 22u};
+        size_t count = 0u;
+        uint64_t version = 0u;
+        selection_error_reader_probe reader_probe;
+        turbo_thread_t reader = NULL;
+        size_t attempt;
+        selection_fixture(&fixture);
+        fixture.guards[0] = (cflow_statechart_guard){
+            300u, &cmeta_type_int, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        fixture.guards[1] = (cflow_statechart_guard){
+            301u, &cmeta_type_int, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 2u;
+        add_event_transition(&fixture, 200u, 12u, 300u, 0u, 0u);
+        add_event_transition(&fixture, 201u, 22u, 301u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, bindings, 2u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        reader_probe.instance = &fixture.instance;
+        atomic_init(&reader_probe.started, false);
+        atomic_init(&reader_probe.stop, false);
+        atomic_init(&reader_probe.observed, false);
+        check_equal(turbo_thread_create(
+                        &reader, selection_error_reader, &reader_probe),
+                    TURBO_OK);
+        while (!atomic_load(&reader_probe.started)) turbo_thread_yield();
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_GUARD_FAILED);
+        for (attempt = 0u;
+             attempt < (size_t)SELECTION_ERROR_OBSERVE_ATTEMPTS &&
+                 !atomic_load(&reader_probe.observed);
+             ++attempt)
+            turbo_sleep_ms(1u);
+        atomic_store(&reader_probe.stop, true);
+        check_equal(turbo_thread_join(&reader), TURBO_OK);
+        check_true(atomic_load(&reader_probe.observed));
+        check_equal(selected.transition_count, (size_t)0u);
+        check_equal(first_guard.calls, (size_t)1u);
+        check_equal(second_guard.calls, (size_t)0u);
+        check_equal(cflow_statechart_instance_error(&fixture.instance),
+                    selection_guard_contract_error);
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 5u, &count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(version, UINT64_C(1));
+        check_equal(states, expected, sizeof(expected));
         runtime_fixture_destroy(&fixture);
     }
 }

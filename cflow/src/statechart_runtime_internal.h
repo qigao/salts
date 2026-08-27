@@ -12,6 +12,10 @@
 #define CFLOW_STATECHART_MAX_INSTANCE_BYTES 67108864u
 #endif
 
+#ifndef CFLOW_STATECHART_ERROR_CAPACITY
+#define CFLOW_STATECHART_ERROR_CAPACITY 512u
+#endif
+
 /*
  * @internal @incomplete
  *
@@ -70,6 +74,7 @@ typedef enum cflow_statechart_runtime_status {
     CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED,
     CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED,
     CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION,
+    CFLOW_STATECHART_RUNTIME_GUARD_FAILED,
     CFLOW_STATECHART_RUNTIME_WOULD_BLOCK
 } cflow_statechart_runtime_status;
 
@@ -133,6 +138,23 @@ typedef struct cflow_statechart_instance_stats {
 typedef struct cflow_statechart_instance {
     void *impl;
 } cflow_statechart_instance;
+
+typedef struct cflow_statechart_selection_trigger {
+    cflow_statechart_trigger_kind kind;
+    /** Required only for EVENT; borrowed for this selection call. */
+    const cflow_event_view *event;
+    /** Required only for COMPLETION. */
+    cflow_machine_state_id completion;
+} cflow_statechart_selection_trigger;
+
+typedef struct cflow_statechart_selection_snapshot {
+    /** Borrowed immutable view, invalidated by the next selection or destroy. */
+    const cflow_statechart_transition_id *transition_ids;
+    size_t transition_count;
+    /** One dense-state bitset per transition, at `exit_set_stride` bytes. */
+    const unsigned char *exit_sets;
+    size_t exit_set_stride;
+} cflow_statechart_selection_snapshot;
 
 /*
  * Transactionally initialize one runtime shell. The immutable Statechart,
@@ -205,5 +227,22 @@ cflow_statechart_configuration_validate_internal(
     size_t state_count,
     unsigned char *scratch,
     size_t scratch_capacity);
+
+/*
+ * Allocation-free pure selection for the runtime's sole serial semantic owner.
+ * Guards borrow one published state snapshot and the trigger Event for the
+ * callback duration. Failure preserves the first owned error and publishes no
+ * configuration or extended-state change.
+ */
+cflow_statechart_runtime_status cflow_statechart_instance_select_internal(
+    cflow_statechart_instance *instance,
+    const cflow_statechart_selection_trigger *trigger,
+    cflow_statechart_selection_snapshot *out);
+
+bool cflow_statechart_selection_exits_internal(
+    const cflow_statechart_instance *instance,
+    const cflow_statechart_selection_snapshot *selection,
+    size_t transition_position,
+    cflow_machine_state_id state);
 
 #endif /* CFLOW_STATECHART_RUNTIME_INTERNAL_H */
