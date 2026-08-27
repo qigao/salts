@@ -1477,7 +1477,6 @@ spec("CFlow network benchmark configuration") {
     if (status == TURBO_OK) {
       check_equal(memcmp(received, sent, sizeof(sent)), 0);
       check_equal(fixture.stages.operations, (uint64_t)2u);
-      check_true(fixture.stages.admission_ns > 0u);
       check_true(fixture.stages.completion_drive_ns > 0u);
       check_true(network_endpoint_get_actor_stats(&fixture.client, &actor_stats));
       check_equal(actor_stats.acknowledged, (uint64_t)2u);
@@ -1687,14 +1686,18 @@ spec("CFlow network benchmark configuration") {
     check_equal(network_parse_stage_timing("1", NULL), TURBO_EINVAL);
   }
 
-  it("accumulates optional stage timing without partial overflow updates") {
+  it("accumulates optional stage timing including zero-duration samples") {
     network_stage_measurement stages = {0};
 
     check_equal(network_stage_measurement_add(&stages, 10u, 20u), TURBO_OK);
     check_equal(stages.operations, (uint64_t)0u);
     stages.enabled = true;
-    check_equal(network_stage_measurement_add(&stages, 10u, 20u), TURBO_OK);
+    check_equal(network_stage_measurement_add(&stages, 0u, 0u), TURBO_OK);
     check_equal(stages.operations, (uint64_t)1u);
+    check_equal(stages.admission_ns, (uint64_t)0u);
+    check_equal(stages.completion_drive_ns, (uint64_t)0u);
+    check_equal(network_stage_measurement_add(&stages, 10u, 20u), TURBO_OK);
+    check_equal(stages.operations, (uint64_t)2u);
     check_equal(stages.admission_ns, (uint64_t)10u);
     check_equal(stages.completion_drive_ns, (uint64_t)20u);
 
