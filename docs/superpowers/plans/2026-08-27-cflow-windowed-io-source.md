@@ -286,7 +286,7 @@
   its booleans from aggregate entry counts and still merges Actor active requests conservatively.
   Run the capacity 0/1/4/64/65 tests, full `cflow_io_source_test`, and `cflow_io_actor_test`.
 
-- [ ] **Step 6: Commit bounded window admission**
+- [x] **Step 6: Commit bounded window admission**
 
   ```text
   feat(cflow): add demand-bounded IO source window
@@ -356,7 +356,7 @@
   Runtime, readiness, native and file tests. Any lost wake, duplicate release, stale result or
   capacity-one behavior change blocks the task.
 
-- [ ] **Step 7: Commit multi-completion lifecycle**
+- [x] **Step 7: Commit multi-completion lifecycle**
 
   ```text
   feat(cflow): drain windowed IO completions in delivery order
@@ -426,13 +426,16 @@
   affected analysis, `git diff --check`, inspect public ABI changes and verify `.codegraph/` is not
   staged.
 
-- [ ] **Step 6: Commit only after the performance and correctness gates pass**
+- [x] **Step 6: Commit only after the performance and correctness gates pass**
 
   ```text
   perf(cflow): batch independent IO source completions
   ```
 
 ## Execution Evidence (2026-08-27)
+
+Tasks 3-5 were intentionally integrated in commit `b7d6b39` after the
+performance gate instead of creating intermediate production commits.
 
 - **事实:** Release benchmark used 15 interleaved process runs per capacity,
   20 samples per run and 4096 values per sample. All runs reported zero errors,
