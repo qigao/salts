@@ -56,6 +56,10 @@ static bool checked_multiply(size_t left, size_t right, size_t *out) {
     return true;
 }
 
+static bool checked_accumulate(size_t value, size_t *total) {
+    return checked_add(*total, value, total);
+}
+
 static bool bitset_bytes_for(size_t bit_count, size_t *out) {
     size_t rounded;
     return checked_add(bit_count, 7u, &rounded) && ((*out = rounded / 8u), true);
@@ -77,6 +81,78 @@ static bool pseudo_kind(cflow_statechart_state_kind kind) {
 
 static bool leaf_kind(cflow_statechart_state_kind kind) {
     return kind == CFLOW_STATECHART_ATOMIC || kind == CFLOW_STATECHART_FINAL;
+}
+
+static cflow_statechart_runtime_status calculate_storage_requirements(
+    const cflow_statechart_impl *ir,
+    cflow_statechart_storage_requirements *out) {
+    cflow_statechart_storage_requirements requirements = {0};
+    size_t bitset_bytes, state_index_bytes, history_count = 0u;
+    size_t history_table_bytes, one_binding_kind, index;
+    if (ir == NULL || out == NULL ||
+        !bitset_bytes_for(ir->state_count, &bitset_bytes) ||
+        !checked_multiply(ir->state_count, sizeof(size_t),
+                          &state_index_bytes))
+        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
+    for (index = 0u; index < ir->state_count; ++index) {
+        const cflow_statechart_state_kind kind = ir->states[index].kind;
+        if (kind == CFLOW_STATECHART_HISTORY_SHALLOW ||
+            kind == CFLOW_STATECHART_HISTORY_DEEP)
+            ++history_count;
+    }
+
+    requirements.control_bytes = sizeof(cflow_statechart_instance_impl);
+    if (!checked_multiply(ir->guard_count,
+                          sizeof(cflow_statechart_guard_binding),
+                          &requirements.binding_bytes) ||
+        !checked_multiply(ir->executable_count,
+                          sizeof(cflow_statechart_executable_binding),
+                          &one_binding_kind) ||
+        !checked_accumulate(one_binding_kind, &requirements.binding_bytes) ||
+        !checked_add(bitset_bytes, state_index_bytes,
+                     &requirements.configuration_bytes) ||
+        !checked_multiply(requirements.configuration_bytes, 2u,
+                          &requirements.configuration_bytes) ||
+        !checked_multiply(history_count, bitset_bytes,
+                          &history_table_bytes) ||
+        !checked_multiply(history_table_bytes, 2u,
+                          &requirements.history_bitset_bytes) ||
+        !checked_multiply(history_count, sizeof(size_t),
+                          &requirements.history_count_bytes) ||
+        !checked_multiply(requirements.history_count_bytes, 2u,
+                          &requirements.history_count_bytes) ||
+        !checked_multiply(ir->state_type->size, 2u,
+                          &requirements.extended_state_bytes) ||
+        !checked_multiply(state_index_bytes, 3u,
+                          &requirements.index_work_bytes))
+        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
+
+    requirements.total_bytes = requirements.control_bytes;
+    if (!checked_accumulate(requirements.binding_bytes,
+                            &requirements.total_bytes) ||
+        !checked_accumulate(requirements.configuration_bytes,
+                            &requirements.total_bytes) ||
+        !checked_accumulate(requirements.history_bitset_bytes,
+                            &requirements.total_bytes) ||
+        !checked_accumulate(requirements.history_count_bytes,
+                            &requirements.total_bytes) ||
+        !checked_accumulate(requirements.extended_state_bytes,
+                            &requirements.total_bytes) ||
+        !checked_accumulate(requirements.index_work_bytes,
+                            &requirements.total_bytes))
+        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
+    *out = requirements;
+    return CFLOW_STATECHART_RUNTIME_OK;
+}
+
+cflow_statechart_runtime_status
+cflow_statechart_instance_storage_requirements_internal(
+    const cflow_statechart *statechart,
+    cflow_statechart_storage_requirements *out) {
+    const cflow_statechart_impl *ir = cflow_statechart_internal_get(statechart);
+    if (ir == NULL || out == NULL)
+        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+    return calculate_storage_requirements(ir, out);
 }
 
 static size_t find_state_index(const cflow_statechart_impl *ir,
@@ -129,14 +205,20 @@ static void instance_impl_free(cflow_statechart_instance_impl *impl) {
     free(impl);
 }
 
+static bool binding_rows_shape_valid(
+    const cflow_statechart_impl *ir,
+    const cflow_statechart_instance_config *config) {
+    return config->guard_count == ir->guard_count &&
+        config->executable_count == ir->executable_count &&
+        (config->guard_count == 0u || config->guards != NULL) &&
+        (config->executable_count == 0u || config->executables != NULL);
+}
+
 static cflow_statechart_runtime_status copy_bindings(
     cflow_statechart_instance_impl *impl,
     const cflow_statechart_instance_config *config) {
     size_t index, bytes;
-    if (config->guard_count != impl->ir->guard_count ||
-        config->executable_count != impl->ir->executable_count ||
-        (config->guard_count != 0u && config->guards == NULL) ||
-        (config->executable_count != 0u && config->executables == NULL))
+    if (!binding_rows_shape_valid(impl->ir, config))
         return CFLOW_STATECHART_RUNTIME_BINDING_MISMATCH;
 
     if (config->guard_count != 0u) {
@@ -303,10 +385,12 @@ cflow_statechart_configuration_validate_internal(
 }
 
 static cflow_statechart_runtime_status allocate_storage(
-    cflow_statechart_instance_impl *impl) {
+    cflow_statechart_instance_impl *impl,
+    const cflow_statechart_storage_requirements *requirements) {
     size_t state_bytes, history_bytes, history_count_bytes;
     size_t index, history_slot = 0u;
-    if (!bitset_bytes_for(impl->ir->state_count, &impl->bitset_bytes) ||
+    if (requirements == NULL ||
+        !bitset_bytes_for(impl->ir->state_count, &impl->bitset_bytes) ||
         !checked_multiply(impl->ir->state_count, sizeof(size_t),
                           &state_bytes))
         return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
@@ -316,11 +400,8 @@ static cflow_statechart_runtime_status allocate_storage(
             kind == CFLOW_STATECHART_HISTORY_DEEP)
             ++impl->history_count;
     }
-    if (!checked_multiply(impl->history_count, impl->bitset_bytes,
-                          &history_bytes) ||
-        !checked_multiply(impl->history_count, sizeof(size_t),
-                          &history_count_bytes))
-        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
+    history_bytes = requirements->history_bitset_bytes / 2u;
+    history_count_bytes = requirements->history_count_bytes / 2u;
 
     impl->history_slots = (size_t *)malloc(state_bytes);
     impl->entry_stack = (size_t *)malloc(state_bytes);
@@ -460,7 +541,10 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
     cflow_statechart_instance *instance,
     const cflow_statechart_instance_config *config) {
     cflow_statechart_instance_impl *impl;
+    const cflow_statechart_impl *ir;
+    cflow_statechart_storage_requirements requirements;
     cflow_statechart_runtime_status status;
+    size_t effective_storage_limit;
     if (instance == NULL || config == NULL || instance->impl != NULL ||
         config->statechart == NULL || config->initial_state == NULL ||
         config->executor == NULL)
@@ -470,27 +554,38 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
         cflow_executor_has(config->executor, CMETA_EXEC_CAP_MANUAL))
         return CFLOW_STATECHART_RUNTIME_INVALID_EXECUTOR;
 
+    ir = cflow_statechart_internal_get(config->statechart);
+    if (ir == NULL || !cmeta_type_desc_valid(ir->state_type) ||
+        ir->state_type->size == 0u || ir->state_type->align == 0u ||
+        (ir->state_type->align & (ir->state_type->align - 1u)) !=
+            0u ||
+        ir->state_type->align > _Alignof(cmeta_capture_storage) ||
+        !cflow_value_storage_type_supported(ir->state_type))
+        return CFLOW_STATECHART_RUNTIME_UNSUPPORTED_TYPE;
+    if (!binding_rows_shape_valid(ir, config))
+        return CFLOW_STATECHART_RUNTIME_BINDING_MISMATCH;
+    if (config->max_storage_bytes >
+        (size_t)CFLOW_STATECHART_MAX_INSTANCE_BYTES)
+        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
+    status = calculate_storage_requirements(ir, &requirements);
+    if (status != CFLOW_STATECHART_RUNTIME_OK) return status;
+    effective_storage_limit = config->max_storage_bytes != 0u
+        ? config->max_storage_bytes
+        : (size_t)CFLOW_STATECHART_MAX_INSTANCE_BYTES;
+    if (requirements.total_bytes > effective_storage_limit)
+        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
+
     impl = (cflow_statechart_instance_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL) return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
     impl->statechart = config->statechart;
-    impl->ir = cflow_statechart_internal_get(config->statechart);
+    impl->ir = ir;
     impl->executor = config->executor;
-    if (impl->ir == NULL || !cmeta_type_desc_valid(impl->ir->state_type) ||
-        impl->ir->state_type->size == 0u ||
-        impl->ir->state_type->align == 0u ||
-        (impl->ir->state_type->align & (impl->ir->state_type->align - 1u)) !=
-            0u ||
-        impl->ir->state_type->align > _Alignof(cmeta_capture_storage) ||
-        !cflow_value_storage_type_supported(impl->ir->state_type)) {
-        instance_impl_free(impl);
-        return CFLOW_STATECHART_RUNTIME_UNSUPPORTED_TYPE;
-    }
     status = copy_bindings(impl, config);
     if (status != CFLOW_STATECHART_RUNTIME_OK) {
         instance_impl_free(impl);
         return status;
     }
-    status = allocate_storage(impl);
+    status = allocate_storage(impl, &requirements);
     if (status != CFLOW_STATECHART_RUNTIME_OK) {
         instance_impl_free(impl);
         return status;
@@ -635,11 +730,15 @@ const char *cflow_statechart_instance_error(
     return error;
 }
 
-void cflow_statechart_instance_destroy(cflow_statechart_instance *instance) {
+cflow_statechart_runtime_status cflow_statechart_instance_destroy(
+    cflow_statechart_instance *instance) {
     cflow_statechart_instance_impl *impl;
-    if (instance == NULL) return;
+    if (instance == NULL) return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
     impl = (cflow_statechart_instance_impl *)instance->impl;
+    if (impl == NULL) return CFLOW_STATECHART_RUNTIME_OK;
+    if (!cflow_executor_wait_idle(impl->executor))
+        return CFLOW_STATECHART_RUNTIME_WOULD_BLOCK;
     instance->impl = NULL;
-    if (impl != NULL) (void)cflow_executor_wait_idle(impl->executor);
     instance_impl_free(impl);
+    return CFLOW_STATECHART_RUNTIME_OK;
 }

@@ -8,6 +8,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef CFLOW_STATECHART_MAX_INSTANCE_BYTES
+#define CFLOW_STATECHART_MAX_INSTANCE_BYTES 67108864u
+#endif
+
 /*
  * @internal @incomplete
  *
@@ -65,7 +69,8 @@ typedef enum cflow_statechart_runtime_status {
     CFLOW_STATECHART_RUNTIME_UNSUPPORTED_TYPE,
     CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED,
     CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED,
-    CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION
+    CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION,
+    CFLOW_STATECHART_RUNTIME_WOULD_BLOCK
 } cflow_statechart_runtime_status;
 
 typedef enum cflow_statechart_snapshot_status {
@@ -93,8 +98,24 @@ typedef struct cflow_statechart_instance_config {
     size_t guard_count;
     const cflow_statechart_executable_binding *executables;
     size_t executable_count;
+    /**
+     * Zero selects CFLOW_STATECHART_MAX_INSTANCE_BYTES. A nonzero value is the
+     * exact per-instance hard limit and must not exceed that compile ceiling.
+     */
+    size_t max_storage_bytes;
     cflow_executor *executor;
 } cflow_statechart_instance_config;
+
+typedef struct cflow_statechart_storage_requirements {
+    size_t control_bytes;
+    size_t binding_bytes;
+    size_t configuration_bytes;
+    size_t history_bitset_bytes;
+    size_t history_count_bytes;
+    size_t extended_state_bytes;
+    size_t index_work_bytes;
+    size_t total_bytes;
+} cflow_statechart_storage_requirements;
 
 typedef struct cflow_statechart_instance_stats {
     uint64_t configuration_version;
@@ -122,6 +143,16 @@ typedef struct cflow_statechart_instance {
 cflow_statechart_runtime_status cflow_statechart_instance_init(
     cflow_statechart_instance *instance,
     const cflow_statechart_instance_config *config);
+
+/*
+ * Compute the exact configured allocation budget before reading binding rows.
+ * `control_bytes` includes the instance control block; allocator metadata and
+ * the platform mutex's private allocation are intentionally not counted.
+ */
+cflow_statechart_runtime_status
+cflow_statechart_instance_storage_requirements_internal(
+    const cflow_statechart *statechart,
+    cflow_statechart_storage_requirements *out);
 
 /**
  * Copy the published document-ordered real-state configuration. If capacity
@@ -153,10 +184,14 @@ const char *cflow_statechart_instance_error(
     const cflow_statechart_instance *instance);
 
 /*
- * Destroy at the control-plane boundary. The caller must prevent new work;
- * this waits for the borrowed executor to become idle before freeing storage.
+ * Destroy at a quiescent control-plane boundary. Before calling, the caller
+ * must prevent new work and ensure no query/admission races with destroy.
+ * An empty handle returns OK. If executor idle cannot be observed (including
+ * from the same executor callback), this returns WOULD_BLOCK and preserves the
+ * handle and every allocation. Only successful idle observation clears/frees.
  */
-void cflow_statechart_instance_destroy(cflow_statechart_instance *instance);
+cflow_statechart_runtime_status cflow_statechart_instance_destroy(
+    cflow_statechart_instance *instance);
 
 /*
  * Allocation-free legality check reused by initial entry and future history

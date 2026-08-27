@@ -12,6 +12,8 @@ set(CFLOW_MACHINE_MAX_TRANSITIONS 1048576 CACHE STRING
     "Maximum transitions accepted by one CFlow Machine")
 set(CFLOW_STATECHART_MAX_ACTION_REFS 1048576 CACHE STRING
     "Maximum ordered action references accepted by one CFlow Statechart")
+set(CFLOW_STATECHART_MAX_INSTANCE_BYTES 67108864 CACHE STRING
+    "Maximum dynamically allocated bytes accepted by one Statechart instance")
 foreach(machine_limit IN ITEMS
     CFLOW_MACHINE_MAX_STATES
     CFLOW_MACHINE_MAX_EVENTS
@@ -27,6 +29,14 @@ foreach(machine_limit IN ITEMS
       "${machine_limit} must not exceed the verified ceiling 1048576")
   endif()
 endforeach()
+if(NOT "${CFLOW_STATECHART_MAX_INSTANCE_BYTES}" MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR
+    "CFLOW_STATECHART_MAX_INSTANCE_BYTES must be a positive integer")
+endif()
+if(CFLOW_STATECHART_MAX_INSTANCE_BYTES GREATER 1073741824)
+  message(FATAL_ERROR
+    "CFLOW_STATECHART_MAX_INSTANCE_BYTES must not exceed 1073741824")
+endif()
 
 add_library(${TARGET_NAME}
   src/adapters.c
@@ -102,7 +112,8 @@ target_compile_definitions(
     CFLOW_MACHINE_MAX_GUARDS=${CFLOW_MACHINE_MAX_GUARDS}
     CFLOW_MACHINE_MAX_ACTIONS=${CFLOW_MACHINE_MAX_ACTIONS}
     CFLOW_MACHINE_MAX_TRANSITIONS=${CFLOW_MACHINE_MAX_TRANSITIONS}
-    CFLOW_STATECHART_MAX_ACTION_REFS=${CFLOW_STATECHART_MAX_ACTION_REFS})
+    CFLOW_STATECHART_MAX_ACTION_REFS=${CFLOW_STATECHART_MAX_ACTION_REFS}
+    CFLOW_STATECHART_MAX_INSTANCE_BYTES=${CFLOW_STATECHART_MAX_INSTANCE_BYTES})
 target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
