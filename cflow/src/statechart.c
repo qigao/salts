@@ -391,7 +391,8 @@ static cflow_statechart_status initialize_tree(cflow_statechart_impl *impl) {
         }
     }
     if (root_count != 1u || pseudo_kind(impl->states[impl->root].kind) ||
-        !cflow_statechart_internal_state_can_complete(impl, impl->root)) {
+        (impl->states[impl->root].kind != CFLOW_STATECHART_FINAL &&
+         !cflow_statechart_internal_state_can_complete(impl, impl->root))) {
         free(stack);
         free(colors);
         return CFLOW_STATECHART_INVALID_TREE;

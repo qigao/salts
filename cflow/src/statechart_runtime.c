@@ -1,6 +1,7 @@
 #include "statechart_runtime_internal.h"
 
 #include "executor_internal.h"
+#include "event_internal.h"
 #include "statechart_internal.h"
 #include "value_storage.h"
 
@@ -24,6 +25,8 @@ typedef struct cflow_statechart_instance_impl {
     const cflow_statechart *statechart;
     const cflow_statechart_impl *ir;
     cflow_executor *executor;
+    cflow_mailbox external_mailbox;
+    bool external_mailbox_initialized;
     cflow_statechart_guard_binding *guards;
     size_t guard_count;
     cflow_statechart_executable_binding *executables;
@@ -76,6 +79,25 @@ typedef struct cflow_statechart_instance_impl {
     size_t internal_event_count;
     size_t internal_event_capacity;
     size_t event_payload_stride;
+    unsigned char *driver_event_payload;
+    size_t driver_event_capacity;
+    size_t *completion_rows;
+    size_t completion_head;
+    size_t completion_count;
+    size_t completion_capacity;
+    unsigned char *completion_bits[2];
+    unsigned char *completion_work;
+    size_t *staged_completion_rows;
+    size_t staged_completion_count;
+    size_t microstep_limit;
+    size_t macrostep_microsteps;
+    bool macrostep_active;
+    bool macrostep_has_external;
+    bool external_in_flight;
+    bool driver_scheduled;
+    bool driver_repost;
+    bool driver_after_microstep;
+    bool skip_to_external;
     bool microstep_pending;
     cflow_statechart_runtime_status microstep_result;
     uint64_t microstep_accepted;
@@ -91,6 +113,10 @@ typedef struct cflow_statechart_instance_impl {
     uint64_t macrosteps;
     uint64_t microsteps;
     uint64_t actions;
+    uint64_t external_completed;
+    uint64_t external_failed;
+    uint64_t external_cancelled_in_flight;
+    cflow_statechart_runtime_status last_status;
     bool closed;
     bool cancelled;
     bool done;
@@ -98,6 +124,9 @@ typedef struct cflow_statechart_instance_impl {
 
 static atomic_uint_fast64_t statechart_instance_token_source =
     UINT64_C(1);
+
+static cflow_admission_status schedule_statechart_driver(
+    cflow_statechart_instance_impl *impl);
 
 static bool acquire_instance_token(uint64_t *out) {
     uint_fast64_t current;
@@ -202,7 +231,8 @@ static cflow_statechart_runtime_status normalize_internal_event_capacity(
 }
 
 static cflow_statechart_runtime_status calculate_storage_requirements(
-    const cflow_statechart_impl *ir, size_t internal_event_capacity,
+    const cflow_statechart_impl *ir, size_t external_event_capacity,
+    size_t internal_event_capacity, size_t completion_capacity,
     cflow_statechart_storage_requirements *out) {
     cflow_statechart_storage_requirements requirements = {0};
     size_t bitset_bytes, transition_bitset_bytes, state_index_bytes;
@@ -231,7 +261,9 @@ static cflow_statechart_runtime_status calculate_storage_requirements(
             ++history_count;
     }
 
+    requirements.external_event_capacity = external_event_capacity;
     requirements.internal_event_capacity = internal_event_capacity;
+    requirements.completion_capacity = completion_capacity;
     requirements.control_bytes = sizeof(cflow_statechart_instance_impl);
     if (!checked_multiply(ir->guard_count,
                           sizeof(cflow_statechart_guard_binding),
@@ -287,11 +319,23 @@ static cflow_statechart_runtime_status calculate_storage_requirements(
                               &one_binding_kind) ||
             !checked_accumulate(one_binding_kind,
                                 &requirements.internal_event_bytes) ||
-            !checked_multiply(event_stride, 2u, &one_binding_kind) ||
+            !checked_multiply(event_stride, 3u, &one_binding_kind) ||
             !checked_accumulate(one_binding_kind,
                                 &requirements.internal_event_bytes))
             return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
+        if (!cflow_mailbox_storage_requirements_internal(
+                ir->events, ir->event_count, external_event_capacity,
+                &requirements.external_event_bytes))
+            return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
     }
+    if (!checked_multiply(completion_capacity, sizeof(size_t),
+                          &requirements.completion_bytes) ||
+        !checked_multiply(requirements.completion_bytes, 2u,
+                          &requirements.completion_bytes) ||
+        !checked_multiply(bitset_bytes, 3u, &one_binding_kind) ||
+        !checked_accumulate(one_binding_kind,
+                            &requirements.completion_bytes))
+        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
 
     requirements.total_bytes = requirements.control_bytes;
     if (!checked_accumulate(requirements.binding_bytes,
@@ -309,6 +353,10 @@ static cflow_statechart_runtime_status calculate_storage_requirements(
         !checked_accumulate(requirements.action_scratch_bytes,
                             &requirements.total_bytes) ||
         !checked_accumulate(requirements.internal_event_bytes,
+                            &requirements.total_bytes) ||
+        !checked_accumulate(requirements.external_event_bytes,
+                            &requirements.total_bytes) ||
+        !checked_accumulate(requirements.completion_bytes,
                             &requirements.total_bytes))
         return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
     *out = requirements;
@@ -316,7 +364,8 @@ static cflow_statechart_runtime_status calculate_storage_requirements(
 }
 
 static cflow_statechart_runtime_status storage_requirements_for_ir(
-    const cflow_statechart_impl *ir, size_t requested_internal_event_capacity,
+    const cflow_statechart_impl *ir, size_t external_event_capacity,
+    size_t requested_internal_event_capacity, size_t completion_capacity,
     cflow_statechart_storage_requirements *out) {
     cflow_statechart_storage_requirements requirements;
     size_t effective_internal_event_capacity;
@@ -326,7 +375,8 @@ static cflow_statechart_runtime_status storage_requirements_for_ir(
             &effective_internal_event_capacity);
     if (status != CFLOW_STATECHART_RUNTIME_OK) return status;
     status = calculate_storage_requirements(
-        ir, effective_internal_event_capacity, &requirements);
+        ir, external_event_capacity, effective_internal_event_capacity,
+        completion_capacity, &requirements);
     if (status != CFLOW_STATECHART_RUNTIME_OK) return status;
     if (requirements.total_bytes >
         (size_t)CFLOW_STATECHART_MAX_INSTANCE_BYTES)
@@ -338,12 +388,18 @@ static cflow_statechart_runtime_status storage_requirements_for_ir(
 cflow_statechart_runtime_status
 cflow_statechart_instance_storage_requirements_internal(
     const cflow_statechart *statechart,
+    size_t external_event_capacity,
     size_t internal_event_capacity,
+    size_t completion_capacity,
     cflow_statechart_storage_requirements *out) {
     const cflow_statechart_impl *ir = cflow_statechart_internal_get(statechart);
     if (ir == NULL || out == NULL)
         return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
-    return storage_requirements_for_ir(ir, internal_event_capacity, out);
+    if (external_event_capacity == 0u || completion_capacity == 0u)
+        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+    return storage_requirements_for_ir(
+        ir, external_event_capacity, internal_event_capacity,
+        completion_capacity, out);
 }
 
 static size_t find_state_index(const cflow_statechart_impl *ir,
@@ -379,12 +435,18 @@ static int compare_executable_binding(const void *left, const void *right) {
 static void instance_impl_free(cflow_statechart_instance_impl *impl) {
     size_t index;
     if (impl == NULL) return;
+    if (impl->external_mailbox_initialized)
+        cflow_mailbox_destroy(&impl->external_mailbox);
     if (impl->lock != NULL) turbo_mutex_destroy(&impl->lock);
     if (impl->error_owned) free((void *)impl->error);
     free(impl->internal_event_payloads);
     free(impl->internal_event_slots);
     free(impl->staged_event_payloads);
     free(impl->staged_event_slots);
+    free(impl->driver_event_payload);
+    free(impl->completion_rows);
+    free(impl->completion_work);
+    free(impl->staged_completion_rows);
     free(impl->action_scratch);
     free(impl->entry_bits);
     free(impl->exit_union);
@@ -406,6 +468,7 @@ static void instance_impl_free(cflow_statechart_instance_impl *impl) {
     free(impl->entry_order);
     free(impl->exit_order);
     for (index = 0u; index < 2u; ++index) {
+        free(impl->completion_bits[index]);
         free(impl->extended_states[index]);
         free(impl->history_counts[index]);
         free(impl->history_bits[index]);
@@ -646,6 +709,11 @@ static cflow_statechart_runtime_status allocate_storage(
     impl->entry_bits = (unsigned char *)calloc(1u, impl->bitset_bytes);
     impl->action_scratch = (unsigned char *)malloc(
         requirements->action_scratch_bytes);
+    impl->completion_rows = (size_t *)malloc(
+        requirements->completion_capacity * sizeof(size_t));
+    impl->staged_completion_rows = (size_t *)malloc(
+        requirements->completion_capacity * sizeof(size_t));
+    impl->completion_work = (unsigned char *)calloc(1u, impl->bitset_bytes);
     impl->candidate_seen =
         transition_bitset_bytes != 0u
             ? (unsigned char *)calloc(1u, transition_bitset_bytes)
@@ -674,8 +742,13 @@ static cflow_statechart_runtime_status allocate_storage(
             (unsigned char *)malloc(impl->event_payload_stride);
         impl->selection_event_payload =
             (unsigned char *)malloc(impl->event_payload_stride);
+        impl->driver_event_payload =
+            (unsigned char *)malloc(impl->event_payload_stride);
+        impl->driver_event_capacity = impl->event_payload_stride;
     }
     for (index = 0u; index < 2u; ++index) {
+        impl->completion_bits[index] =
+            (unsigned char *)calloc(1u, impl->bitset_bytes);
         impl->configurations[index].bits =
             (unsigned char *)calloc(1u, impl->bitset_bytes);
         impl->configurations[index].states = (size_t *)malloc(state_bytes);
@@ -698,6 +771,9 @@ static cflow_statechart_runtime_status allocate_storage(
         impl->request_transition_indices == NULL ||
         impl->request_exit_sets == NULL || impl->exit_union == NULL ||
         impl->entry_bits == NULL || impl->action_scratch == NULL ||
+        impl->completion_rows == NULL ||
+        impl->staged_completion_rows == NULL ||
+        impl->completion_work == NULL ||
         (transition_bitset_bytes != 0u && impl->candidate_seen == NULL) ||
         impl->error_storage == NULL ||
         (impl->ir->event_count != 0u &&
@@ -706,7 +782,10 @@ static cflow_statechart_runtime_status allocate_storage(
           impl->staged_event_payloads == NULL ||
           impl->internal_event_payloads == NULL ||
           impl->selection_event_payload == NULL ||
-          impl->request_event_payload == NULL)) ||
+          impl->request_event_payload == NULL ||
+          impl->driver_event_payload == NULL)) ||
+        impl->completion_bits[0] == NULL ||
+        impl->completion_bits[1] == NULL ||
         impl->configurations[0].bits == NULL ||
         impl->configurations[1].bits == NULL ||
         impl->configurations[0].states == NULL ||
@@ -863,23 +942,84 @@ static const cflow_statechart_guard_binding *find_statechart_guard_binding(
     return NULL;
 }
 
-static void preserve_first_error(cflow_statechart_instance_impl *impl,
-                                 const char *message) {
+static void preserve_first_error_locked(cflow_statechart_instance_impl *impl,
+                                        const char *message) {
     const char *source = message != NULL && message[0] != '\0'
         ? message : "Statechart guard failed";
     size_t length;
-    turbo_mutex_lock(&impl->lock);
-    if (impl->error != NULL) {
-        turbo_mutex_unlock(&impl->lock);
-        return;
-    }
+    if (impl->error != NULL) return;
     length = strlen(source);
     if (length >= (size_t)CFLOW_STATECHART_ERROR_CAPACITY)
         length = (size_t)CFLOW_STATECHART_ERROR_CAPACITY - 1u;
     memcpy(impl->error_storage, source, length);
     impl->error_storage[length] = '\0';
     impl->error = impl->error_storage;
+}
+
+static void preserve_first_error(cflow_statechart_instance_impl *impl,
+                                 const char *message) {
+    turbo_mutex_lock(&impl->lock);
+    preserve_first_error_locked(impl, message);
     turbo_mutex_unlock(&impl->lock);
+}
+
+static void counter_increment(uint64_t *counter) {
+    if (*counter != UINT64_MAX) ++*counter;
+}
+
+static void settle_external_locked(cflow_statechart_instance_impl *impl,
+                                   cflow_statechart_runtime_status status) {
+    if (!impl->external_in_flight) return;
+    impl->external_in_flight = false;
+    if (status == CFLOW_STATECHART_RUNTIME_OK)
+        counter_increment(&impl->external_completed);
+    else if (status == CFLOW_STATECHART_RUNTIME_TASK_CANCELLED)
+        counter_increment(&impl->external_cancelled_in_flight);
+    else
+        counter_increment(&impl->external_failed);
+}
+
+static void clear_semantic_queues_locked(
+    cflow_statechart_instance_impl *impl) {
+    impl->internal_event_head = 0u;
+    impl->internal_event_count = 0u;
+    impl->staged_event_count = 0u;
+    impl->completion_head = 0u;
+    impl->completion_count = 0u;
+    impl->staged_completion_count = 0u;
+}
+
+static void claim_external_for_failure_locked(
+    cflow_statechart_instance_impl *impl) {
+    cflow_event_id event_id = 0u;
+    const cmeta_type_desc *event_type = NULL;
+    if (impl->external_in_flight ||
+        !impl->external_mailbox_initialized)
+        return;
+    if (cflow_mailbox_try_receive(
+            &impl->external_mailbox, &event_id, &event_type,
+            impl->driver_event_payload,
+            impl->driver_event_capacity) == CFLOW_MAILBOX_OK)
+        impl->external_in_flight = true;
+}
+
+static void latch_terminal_failure(cflow_statechart_instance_impl *impl,
+                                   cflow_statechart_runtime_status status,
+                                   const char *message) {
+    if (impl == NULL) return;
+    preserve_first_error(impl, message);
+    turbo_mutex_lock(&impl->lock);
+    claim_external_for_failure_locked(impl);
+    if (impl->last_status == CFLOW_STATECHART_RUNTIME_OK)
+        impl->last_status = status;
+    settle_external_locked(impl, status);
+    clear_semantic_queues_locked(impl);
+    impl->closed = true;
+    impl->done = true;
+    impl->driver_repost = false;
+    turbo_mutex_unlock(&impl->lock);
+    if (impl->external_mailbox_initialized)
+        (void)cflow_mailbox_cancel(&impl->external_mailbox);
 }
 
 static bool source_is_proper_descendant(const cflow_statechart_impl *ir,
@@ -1067,6 +1207,10 @@ cflow_statechart_runtime_status cflow_statechart_instance_select_internal(
         !trigger_valid(impl, trigger))
         return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
     turbo_mutex_lock(&impl->lock);
+    if (impl->closed || impl->done || impl->cancelled) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_STATECHART_RUNTIME_TASK_CANCELLED;
+    }
     if (impl->error != NULL) {
         turbo_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_RUNTIME_GUARD_FAILED;
@@ -1143,6 +1287,12 @@ cflow_statechart_runtime_status cflow_statechart_instance_select_internal(
         ++leaf_order;
     }
     turbo_mutex_lock(&impl->lock);
+    if (impl->closed || impl->done || impl->cancelled) {
+        impl->selected_count = 0u;
+        impl->selection_in_progress = false;
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_STATECHART_RUNTIME_TASK_CANCELLED;
+    }
     ++impl->selection_generation;
     impl->selection_valid = true;
     impl->selection_in_progress = false;
@@ -1412,7 +1562,10 @@ static void copy_staging_buffers(cflow_statechart_instance_impl *impl,
         memcpy(impl->history_counts[staged],
                impl->history_counts[published], history_count_bytes);
     }
+    memcpy(impl->completion_bits[staged],
+           impl->completion_bits[published], impl->bitset_bytes);
     impl->staged_event_count = 0u;
+    impl->staged_completion_count = 0u;
 }
 
 static void compute_exit_union(cflow_statechart_instance_impl *impl,
@@ -1685,6 +1838,82 @@ static cflow_statechart_runtime_status run_transition_action_span(
     return CFLOW_STATECHART_RUNTIME_OK;
 }
 
+static bool configuration_state_complete(
+    const cflow_statechart_instance_impl *impl,
+    const statechart_configuration_buffer *configuration,
+    size_t state) {
+    const cflow_statechart_state_kind kind = impl->ir->states[state].kind;
+    size_t child;
+    if (!bit_test(configuration->bits, state)) return false;
+    if (kind == CFLOW_STATECHART_FINAL) return true;
+    if (kind == CFLOW_STATECHART_ATOMIC || pseudo_kind(kind)) return false;
+    if (kind == CFLOW_STATECHART_COMPOUND) {
+        for (child = impl->ir->child_offsets[state];
+             child < impl->ir->child_offsets[state + 1u]; ++child) {
+            const size_t child_state = impl->ir->children[child];
+            if (!pseudo_kind(impl->ir->states[child_state].kind) &&
+                bit_test(configuration->bits, child_state))
+                return bit_test(impl->completion_work, child_state);
+        }
+        return false;
+    }
+    for (child = impl->ir->child_offsets[state];
+         child < impl->ir->child_offsets[state + 1u]; ++child) {
+        const size_t child_state = impl->ir->children[child];
+        if (pseudo_kind(impl->ir->states[child_state].kind)) continue;
+        if (!bit_test(configuration->bits, child_state) ||
+            !bit_test(impl->completion_work, child_state))
+            return false;
+    }
+    return true;
+}
+
+static cflow_statechart_runtime_status stage_completions(
+    cflow_statechart_instance_impl *impl, size_t staged) {
+    const statechart_configuration_buffer *configuration =
+        &impl->configurations[staged];
+    size_t order;
+    memset(impl->completion_work, 0, impl->bitset_bytes);
+    for (order = 0u; order < impl->ir->state_count; ++order) {
+        const size_t state = impl->ir->document_order_indices[
+            impl->ir->state_count - order - 1u];
+        const cflow_statechart_state_kind kind = impl->ir->states[state].kind;
+        if (!bit_test(configuration->bits, state)) {
+            bit_clear(impl->completion_bits[staged], state);
+            continue;
+        }
+        if (configuration_state_complete(impl, configuration, state))
+            bit_set(impl->completion_work, state);
+        if (kind != CFLOW_STATECHART_COMPOUND &&
+            kind != CFLOW_STATECHART_PARALLEL)
+            continue;
+        if (!bit_test(impl->completion_work, state)) {
+            bit_clear(impl->completion_bits[staged], state);
+            continue;
+        }
+        if (bit_test(impl->completion_bits[staged], state)) continue;
+        if (impl->completion_count > impl->completion_capacity ||
+            impl->staged_completion_count >=
+                impl->completion_capacity - impl->completion_count)
+            return CFLOW_STATECHART_RUNTIME_COMPLETION_QUEUE_FULL;
+        impl->staged_completion_rows[impl->staged_completion_count++] = state;
+        bit_set(impl->completion_bits[staged], state);
+    }
+    return CFLOW_STATECHART_RUNTIME_OK;
+}
+
+static void commit_completions(cflow_statechart_instance_impl *impl) {
+    size_t index;
+    for (index = 0u; index < impl->staged_completion_count; ++index) {
+        const size_t tail =
+            (impl->completion_head + impl->completion_count) %
+            impl->completion_capacity;
+        impl->completion_rows[tail] = impl->staged_completion_rows[index];
+        ++impl->completion_count;
+    }
+    impl->staged_completion_count = 0u;
+}
+
 static void microstep_fail(cflow_statechart_instance_impl *impl,
                            cflow_statechart_runtime_status status,
                            const char *error) {
@@ -1694,6 +1923,8 @@ static void microstep_fail(cflow_statechart_instance_impl *impl,
     impl->staged_event_count = 0u;
     turbo_mutex_lock(&impl->lock);
     impl->microstep_result = status;
+    if (impl->last_status == CFLOW_STATECHART_RUNTIME_OK)
+        impl->last_status = status;
     if (impl->microstep_failed != UINT64_MAX) ++impl->microstep_failed;
     turbo_mutex_unlock(&impl->lock);
 }
@@ -1782,11 +2013,27 @@ static cflow_statechart_runtime_status execute_microstep(
             return status;
         }
     }
+    status = stage_completions(impl, staged);
+    if (status != CFLOW_STATECHART_RUNTIME_OK) {
+        microstep_fail(impl, status,
+                       "Statechart completion queue is full");
+        return status;
+    }
     if (context.current_state != impl->extended_states[staged])
         memcpy(impl->extended_states[staged], context.current_state,
                impl->ir->state_type->size);
     turbo_mutex_lock(&impl->lock);
+    if (impl->cancelled) {
+        impl->staged_event_count = 0u;
+        impl->staged_completion_count = 0u;
+        impl->microstep_result = CFLOW_STATECHART_RUNTIME_TASK_CANCELLED;
+        if (impl->microstep_cancelled != UINT64_MAX)
+            ++impl->microstep_cancelled;
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_STATECHART_RUNTIME_TASK_CANCELLED;
+    }
     commit_internal_events(impl);
+    commit_completions(impl);
     impl->published = staged;
     if (impl->configuration_version != UINT64_MAX)
         ++impl->configuration_version;
@@ -1821,11 +2068,45 @@ static void statechart_microstep_cancel(void *user) {
 static void statechart_microstep_finalize(void *user) {
     cflow_statechart_instance_impl *impl =
         (cflow_statechart_instance_impl *)user;
+    cflow_statechart_runtime_status result;
+    bool continue_driver = false;
+    bool terminal = false;
     turbo_mutex_lock(&impl->lock);
     if (impl->microstep_finalized != UINT64_MAX)
         ++impl->microstep_finalized;
     impl->microstep_pending = false;
+    result = impl->microstep_result;
+    if (impl->driver_after_microstep) {
+        impl->driver_after_microstep = false;
+        if (result == CFLOW_STATECHART_RUNTIME_OK && !impl->cancelled &&
+            !impl->closed) {
+            continue_driver = true;
+        } else {
+            if (impl->cancelled ||
+                result == CFLOW_STATECHART_RUNTIME_TASK_CANCELLED)
+                settle_external_locked(
+                    impl, CFLOW_STATECHART_RUNTIME_TASK_CANCELLED);
+            else if (result == CFLOW_STATECHART_RUNTIME_OK)
+                settle_external_locked(impl, CFLOW_STATECHART_RUNTIME_OK);
+            else {
+                settle_external_locked(impl, result);
+                if (impl->last_status == CFLOW_STATECHART_RUNTIME_OK)
+                    impl->last_status = result;
+            }
+            if (impl->macrostep_active) counter_increment(&impl->macrosteps);
+            impl->macrostep_active = false;
+            clear_semantic_queues_locked(impl);
+            impl->done = true;
+            impl->closed = true;
+            terminal = true;
+        }
+    }
     turbo_mutex_unlock(&impl->lock);
+    if (terminal && impl->external_mailbox_initialized)
+        (void)cflow_mailbox_cancel(&impl->external_mailbox);
+    if (continue_driver) {
+        (void)schedule_statechart_driver(impl);
+    }
 }
 
 static bool trigger_matches_selection(
@@ -1861,6 +2142,10 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
         !trigger_valid(impl, trigger))
         return CFLOW_ADMISSION_INVALID_ARGUMENT;
     turbo_mutex_lock(&impl->lock);
+    if (impl->closed || impl->done || impl->cancelled) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_ADMISSION_CLOSED;
+    }
     if (impl->microstep_pending || impl->selection_in_progress ||
         impl->error != NULL) {
         turbo_mutex_unlock(&impl->lock);
@@ -1910,6 +2195,305 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
         impl->selection_consumed = false;
         if (impl->microstep_accepted != 0u) --impl->microstep_accepted;
         turbo_mutex_unlock(&impl->lock);
+    }
+    return admission;
+}
+
+static bool root_configuration_complete(
+    const cflow_statechart_instance_impl *impl) {
+    return (impl->ir->states[impl->ir->root].kind ==
+                CFLOW_STATECHART_FINAL &&
+            bit_test(impl->configurations[impl->published].bits,
+                     impl->ir->root)) ||
+        bit_test(impl->completion_bits[impl->published], impl->ir->root);
+}
+
+static bool pop_internal_event(cflow_statechart_instance_impl *impl,
+                               cflow_event_view *out) {
+    size_t slot, type_index;
+    const cmeta_type_desc *type;
+    turbo_mutex_lock(&impl->lock);
+    if (impl->internal_event_count == 0u) {
+        turbo_mutex_unlock(&impl->lock);
+        return false;
+    }
+    slot = impl->internal_event_head;
+    type_index = impl->internal_event_slots[slot].type_index;
+    type = impl->ir->events[type_index].payload_type;
+    memcpy(impl->driver_event_payload,
+           impl->internal_event_payloads +
+               slot * impl->event_payload_stride,
+           type->size);
+    impl->internal_event_head =
+        (impl->internal_event_head + 1u) % impl->internal_event_capacity;
+    --impl->internal_event_count;
+    *out = (cflow_event_view){
+        impl->ir->events[type_index].id, type, impl->driver_event_payload};
+    turbo_mutex_unlock(&impl->lock);
+    return true;
+}
+
+static bool pop_completion(cflow_statechart_instance_impl *impl,
+                           cflow_machine_state_id *out) {
+    size_t state;
+    turbo_mutex_lock(&impl->lock);
+    if (impl->completion_count == 0u) {
+        turbo_mutex_unlock(&impl->lock);
+        return false;
+    }
+    state = impl->completion_rows[impl->completion_head];
+    impl->completion_head =
+        (impl->completion_head + 1u) % impl->completion_capacity;
+    --impl->completion_count;
+    *out = impl->ir->states[state].id;
+    turbo_mutex_unlock(&impl->lock);
+    return true;
+}
+
+/* -1 failed, 0 unhandled, 1 posted one semantic microstep. */
+static int driver_try_trigger(cflow_statechart_instance_impl *impl,
+                              const cflow_statechart_selection_trigger *trigger) {
+    cflow_statechart_selection_snapshot selection = {0};
+    cflow_statechart_instance handle = {impl};
+    cflow_statechart_runtime_status status =
+        cflow_statechart_instance_select_internal(
+            &handle, trigger, &selection);
+    cflow_admission_status admission;
+    if (status == CFLOW_STATECHART_RUNTIME_TASK_CANCELLED)
+        return -1;
+    if (status != CFLOW_STATECHART_RUNTIME_OK) {
+        latch_terminal_failure(
+            impl, status, cflow_statechart_instance_error(&handle));
+        return -1;
+    }
+    if (selection.transition_count == 0u) return 0;
+    turbo_mutex_lock(&impl->lock);
+    if (impl->macrostep_microsteps >= impl->microstep_limit) {
+        turbo_mutex_unlock(&impl->lock);
+        latch_terminal_failure(
+            impl, CFLOW_STATECHART_RUNTIME_MICROSTEP_LIMIT_EXCEEDED,
+            "Statechart macrostep microstep limit exceeded");
+        return -1;
+    }
+    ++impl->macrostep_microsteps;
+    impl->driver_after_microstep = true;
+    turbo_mutex_unlock(&impl->lock);
+    admission = cflow_statechart_instance_try_microstep_internal(
+        &handle, trigger, &selection);
+    if (admission == CFLOW_ADMISSION_ACCEPTED) return 1;
+    turbo_mutex_lock(&impl->lock);
+    impl->driver_after_microstep = false;
+    if (impl->macrostep_microsteps != 0u) --impl->macrostep_microsteps;
+    {
+        const bool terminal = impl->closed || impl->done || impl->cancelled;
+        turbo_mutex_unlock(&impl->lock);
+        if (terminal) return -1;
+    }
+    latch_terminal_failure(
+        impl,
+        admission == CFLOW_ADMISSION_FULL
+            ? CFLOW_STATECHART_RUNTIME_EXECUTOR_FULL
+            : CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED,
+        admission == CFLOW_ADMISSION_FULL
+            ? "Statechart SerialExecutor is full"
+            : "Statechart SerialExecutor is closed");
+    return -1;
+}
+
+static void settle_quiescent_macrostep(cflow_statechart_instance_impl *impl) {
+    turbo_mutex_lock(&impl->lock);
+    settle_external_locked(impl, CFLOW_STATECHART_RUNTIME_OK);
+    if (impl->macrostep_active) counter_increment(&impl->macrosteps);
+    impl->macrostep_active = false;
+    impl->macrostep_has_external = false;
+    impl->macrostep_microsteps = 0u;
+    impl->skip_to_external = true;
+    if (root_configuration_complete(impl) || impl->closed) {
+        impl->closed = true;
+        impl->done = true;
+    }
+    turbo_mutex_unlock(&impl->lock);
+    if (impl->done && impl->external_mailbox_initialized)
+        (void)cflow_mailbox_cancel(&impl->external_mailbox);
+}
+
+static void statechart_driver_run(void *user) {
+    cflow_statechart_instance_impl *impl =
+        (cflow_statechart_instance_impl *)user;
+    cflow_statechart_selection_trigger trigger = {
+        CFLOW_STATECHART_TRIGGER_EVENTLESS, NULL, 0u};
+    cflow_event_view event = {0};
+    cflow_machine_state_id completion = 0u;
+    cflow_event_id event_id = 0u;
+    const cmeta_type_desc *event_type = NULL;
+    cflow_mailbox_status mailbox_status;
+    int result;
+    bool terminal, skip_to_external;
+    if (impl == NULL) return;
+    turbo_mutex_lock(&impl->lock);
+    impl->driver_repost = false;
+    terminal = impl->done || impl->cancelled || impl->error != NULL;
+    skip_to_external = impl->skip_to_external;
+    impl->skip_to_external = false;
+    turbo_mutex_unlock(&impl->lock);
+    if (terminal) return;
+
+    if (skip_to_external) goto external_admission;
+
+    result = driver_try_trigger(impl, &trigger);
+    if (result != 0) return;
+
+    if (pop_internal_event(impl, &event)) {
+        trigger = (cflow_statechart_selection_trigger){
+            CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
+        result = driver_try_trigger(impl, &trigger);
+        if (result != 0) return;
+        turbo_mutex_lock(&impl->lock);
+        impl->driver_repost = true;
+        turbo_mutex_unlock(&impl->lock);
+        return;
+    }
+    if (pop_completion(impl, &completion)) {
+        trigger = (cflow_statechart_selection_trigger){
+            CFLOW_STATECHART_TRIGGER_COMPLETION, NULL, completion};
+        result = driver_try_trigger(impl, &trigger);
+        if (result != 0) return;
+        turbo_mutex_lock(&impl->lock);
+        impl->driver_repost = true;
+        turbo_mutex_unlock(&impl->lock);
+        return;
+    }
+
+    turbo_mutex_lock(&impl->lock);
+    terminal = impl->macrostep_active;
+    turbo_mutex_unlock(&impl->lock);
+    if (terminal) {
+        settle_quiescent_macrostep(impl);
+        turbo_mutex_lock(&impl->lock);
+        terminal = impl->done;
+        if (!terminal) impl->driver_repost = true;
+        turbo_mutex_unlock(&impl->lock);
+        return;
+    }
+
+external_admission:
+    if (!impl->external_mailbox_initialized) return;
+    mailbox_status = cflow_mailbox_try_receive(
+        &impl->external_mailbox, &event_id, &event_type,
+        impl->driver_event_payload, impl->driver_event_capacity);
+    if (mailbox_status == CFLOW_MAILBOX_EMPTY) {
+        turbo_mutex_lock(&impl->lock);
+        impl->skip_to_external = true;
+        turbo_mutex_unlock(&impl->lock);
+        return;
+    }
+    if (mailbox_status == CFLOW_MAILBOX_CLOSED ||
+        mailbox_status == CFLOW_MAILBOX_CANCELLED) {
+        turbo_mutex_lock(&impl->lock);
+        impl->closed = true;
+        impl->done = true;
+        turbo_mutex_unlock(&impl->lock);
+        return;
+    }
+    if (mailbox_status != CFLOW_MAILBOX_OK) {
+        latch_terminal_failure(
+            impl, CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION,
+            "Statechart external mailbox receive failed");
+        return;
+    }
+    event = (cflow_event_view){
+        event_id, event_type, impl->driver_event_payload};
+    turbo_mutex_lock(&impl->lock);
+    impl->external_in_flight = true;
+    if (impl->closed || impl->done || impl->cancelled ||
+        impl->error != NULL) {
+        const cflow_statechart_runtime_status settlement =
+            impl->error != NULL &&
+                impl->last_status != CFLOW_STATECHART_RUNTIME_OK
+            ? impl->last_status
+            : CFLOW_STATECHART_RUNTIME_TASK_CANCELLED;
+        settle_external_locked(impl, settlement);
+        turbo_mutex_unlock(&impl->lock);
+        return;
+    }
+    impl->macrostep_active = true;
+    impl->macrostep_has_external = true;
+    impl->macrostep_microsteps = 0u;
+    turbo_mutex_unlock(&impl->lock);
+    trigger = (cflow_statechart_selection_trigger){
+        CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
+    result = driver_try_trigger(impl, &trigger);
+    if (result != 0) return;
+    settle_quiescent_macrostep(impl);
+    turbo_mutex_lock(&impl->lock);
+    if (!impl->done) impl->driver_repost = true;
+    turbo_mutex_unlock(&impl->lock);
+}
+
+static void statechart_driver_cancel(void *user) {
+    latch_terminal_failure(
+        (cflow_statechart_instance_impl *)user,
+        CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED,
+        "Statechart SerialExecutor cancelled a queued quantum");
+}
+
+static void statechart_driver_finalize(void *user) {
+    cflow_statechart_instance_impl *impl =
+        (cflow_statechart_instance_impl *)user;
+    bool repost;
+    turbo_mutex_lock(&impl->lock);
+    impl->driver_scheduled = false;
+    repost = impl->driver_repost && !impl->done && impl->error == NULL &&
+        !impl->microstep_pending;
+    impl->driver_repost = false;
+    turbo_mutex_unlock(&impl->lock);
+    if (repost) {
+        (void)schedule_statechart_driver(impl);
+    }
+}
+
+static cflow_admission_status schedule_statechart_driver(
+    cflow_statechart_instance_impl *impl) {
+    const cflow_executor_task task = {
+        statechart_driver_run, statechart_driver_cancel,
+        statechart_driver_finalize, impl};
+    cflow_admission_status admission;
+    if (impl == NULL) return CFLOW_ADMISSION_INVALID_ARGUMENT;
+    turbo_mutex_lock(&impl->lock);
+    if (impl->done || impl->error != NULL) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_ADMISSION_CLOSED;
+    }
+    if (impl->driver_scheduled || impl->microstep_pending) {
+        impl->driver_repost = true;
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_ADMISSION_ACCEPTED;
+    }
+    impl->driver_scheduled = true;
+    turbo_mutex_unlock(&impl->lock);
+    admission = cflow_executor_try_post_task(impl->executor, &task);
+    if (admission != CFLOW_ADMISSION_ACCEPTED) {
+        const cflow_statechart_runtime_status failure =
+            admission == CFLOW_ADMISSION_FULL
+                ? CFLOW_STATECHART_RUNTIME_EXECUTOR_FULL
+                : CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED;
+        const char *message = admission == CFLOW_ADMISSION_FULL
+            ? "Statechart SerialExecutor is full"
+            : "Statechart SerialExecutor is closed";
+        turbo_mutex_lock(&impl->lock);
+        impl->driver_scheduled = false;
+        claim_external_for_failure_locked(impl);
+        preserve_first_error_locked(impl, message);
+        if (impl->last_status == CFLOW_STATECHART_RUNTIME_OK)
+            impl->last_status = failure;
+        settle_external_locked(impl, failure);
+        clear_semantic_queues_locked(impl);
+        impl->closed = true;
+        impl->done = true;
+        impl->driver_repost = false;
+        turbo_mutex_unlock(&impl->lock);
+        if (impl->external_mailbox_initialized)
+            (void)cflow_mailbox_cancel(&impl->external_mailbox);
     }
     return admission;
 }
@@ -2028,11 +2612,15 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
     size_t effective_storage_limit;
     if (instance == NULL || config == NULL || instance->impl != NULL ||
         config->statechart == NULL || config->initial_state == NULL ||
-        config->executor == NULL)
+        config->executor == NULL || config->external_event_capacity == 0u ||
+        config->internal_event_capacity == 0u ||
+        config->completion_capacity == 0u ||
+        config->microstep_limit == 0u)
         return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
     if (!cflow_executor_valid(config->executor) ||
         !cflow_executor_has(config->executor, CMETA_EXEC_CAP_SERIAL) ||
-        cflow_executor_has(config->executor, CMETA_EXEC_CAP_MANUAL))
+        cflow_executor_has(config->executor, CMETA_EXEC_CAP_MANUAL) ||
+        cflow_executor_is_current_internal(config->executor))
         return CFLOW_STATECHART_RUNTIME_INVALID_EXECUTOR;
 
     ir = cflow_statechart_internal_get(config->statechart);
@@ -2049,7 +2637,9 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
         (size_t)CFLOW_STATECHART_MAX_INSTANCE_BYTES)
         return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
     status = storage_requirements_for_ir(
-        ir, config->internal_event_capacity, &requirements);
+        ir, config->external_event_capacity,
+        config->internal_event_capacity, config->completion_capacity,
+        &requirements);
     if (status != CFLOW_STATECHART_RUNTIME_OK) return status;
     effective_storage_limit = config->max_storage_bytes != 0u
         ? config->max_storage_bytes
@@ -2063,7 +2653,10 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
     impl->ir = ir;
     impl->executor = config->executor;
     impl->internal_event_capacity = requirements.internal_event_capacity;
+    impl->completion_capacity = requirements.completion_capacity;
+    impl->microstep_limit = config->microstep_limit;
     impl->microstep_result = CFLOW_STATECHART_RUNTIME_OK;
+    impl->last_status = CFLOW_STATECHART_RUNTIME_OK;
     if (!acquire_instance_token(&impl->instance_token)) {
         instance_impl_free(impl);
         return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
@@ -2083,6 +2676,18 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
         instance_impl_free(impl);
         return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
     }
+    if (ir->event_count != 0u) {
+        const cflow_mailbox_status mailbox_status = cflow_mailbox_init(
+            &impl->external_mailbox, ir->events, ir->event_count,
+            config->external_event_capacity);
+        if (mailbox_status != CFLOW_MAILBOX_OK) {
+            instance_impl_free(impl);
+            return mailbox_status == CFLOW_MAILBOX_ALLOCATION_FAILED
+                ? CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED
+                : CFLOW_STATECHART_RUNTIME_UNSUPPORTED_TYPE;
+        }
+        impl->external_mailbox_initialized = true;
+    }
     memcpy(impl->extended_states[0], config->initial_state,
            impl->ir->state_type->size);
     memcpy(impl->extended_states[1], config->initial_state,
@@ -2094,6 +2699,33 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
     }
     impl->published = 1u;
     impl->configuration_version = 1u;
+    status = stage_completions(impl, impl->published);
+    if (status != CFLOW_STATECHART_RUNTIME_OK) {
+        instance_impl_free(impl);
+        return status;
+    }
+    commit_completions(impl);
+    impl->macrostep_active = true;
+    {
+        const cflow_admission_status admission =
+            schedule_statechart_driver(impl);
+        if (admission != CFLOW_ADMISSION_ACCEPTED) {
+            instance_impl_free(impl);
+            return admission == CFLOW_ADMISSION_FULL
+                ? CFLOW_STATECHART_RUNTIME_EXECUTOR_FULL
+                : CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED;
+        }
+    }
+    if (!cflow_executor_wait_idle(impl->executor)) {
+        instance_impl_free(impl);
+        return CFLOW_STATECHART_RUNTIME_WOULD_BLOCK;
+    }
+    if (impl->error != NULL) {
+        status = impl->last_status;
+        instance_impl_free(impl);
+        return status != CFLOW_STATECHART_RUNTIME_OK
+            ? status : CFLOW_STATECHART_RUNTIME_ACTION_FAILED;
+    }
     instance->impl = impl;
     return CFLOW_STATECHART_RUNTIME_OK;
 }
@@ -2130,6 +2762,86 @@ cflow_statechart_instance_copy_configuration(
     *out_version = impl->configuration_version;
     turbo_mutex_unlock(&impl->lock);
     return CFLOW_STATECHART_SNAPSHOT_OK;
+}
+
+cflow_mailbox_status cflow_statechart_instance_try_send(
+    cflow_statechart_instance *instance, const cflow_event_view *event) {
+    cflow_statechart_instance_impl *impl = instance != NULL
+        ? (cflow_statechart_instance_impl *)instance->impl : NULL;
+    cflow_mailbox_status status;
+    bool closed, cancelled;
+    if (impl == NULL || !impl->external_mailbox_initialized)
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    turbo_mutex_lock(&impl->lock);
+    closed = impl->closed || impl->done || impl->error != NULL;
+    cancelled = impl->cancelled;
+    turbo_mutex_unlock(&impl->lock);
+    if (closed)
+        return cancelled ? CFLOW_MAILBOX_CANCELLED : CFLOW_MAILBOX_CLOSED;
+    status = cflow_mailbox_try_send(&impl->external_mailbox, event);
+    if (status != CFLOW_MAILBOX_OK) {
+        if (status == CFLOW_MAILBOX_CANCELLED) {
+            turbo_mutex_lock(&impl->lock);
+            cancelled = impl->cancelled;
+            turbo_mutex_unlock(&impl->lock);
+            return cancelled ? CFLOW_MAILBOX_CANCELLED
+                             : CFLOW_MAILBOX_CLOSED;
+        }
+        return status;
+    }
+    (void)schedule_statechart_driver(impl);
+    return CFLOW_MAILBOX_OK;
+}
+
+void cflow_statechart_instance_close(cflow_statechart_instance *instance) {
+    cflow_statechart_instance_impl *impl = instance != NULL
+        ? (cflow_statechart_instance_impl *)instance->impl : NULL;
+    bool settle_now;
+    if (impl == NULL) return;
+    turbo_mutex_lock(&impl->lock);
+    if (impl->cancelled || impl->done) {
+        turbo_mutex_unlock(&impl->lock);
+        return;
+    }
+    impl->closed = true;
+    settle_now = !impl->microstep_pending;
+    if (settle_now) {
+        settle_external_locked(
+            impl, CFLOW_STATECHART_RUNTIME_TASK_CANCELLED);
+        if (impl->macrostep_active) counter_increment(&impl->macrosteps);
+        impl->macrostep_active = false;
+        clear_semantic_queues_locked(impl);
+        impl->done = true;
+    }
+    turbo_mutex_unlock(&impl->lock);
+    if (impl->external_mailbox_initialized)
+        (void)cflow_mailbox_cancel(&impl->external_mailbox);
+}
+
+void cflow_statechart_instance_cancel(cflow_statechart_instance *instance) {
+    cflow_statechart_instance_impl *impl = instance != NULL
+        ? (cflow_statechart_instance_impl *)instance->impl : NULL;
+    bool settle_now;
+    if (impl == NULL) return;
+    turbo_mutex_lock(&impl->lock);
+    if (impl->done && impl->cancelled) {
+        turbo_mutex_unlock(&impl->lock);
+        return;
+    }
+    impl->closed = true;
+    impl->cancelled = true;
+    settle_now = !impl->microstep_pending;
+    if (settle_now) {
+        settle_external_locked(
+            impl, CFLOW_STATECHART_RUNTIME_TASK_CANCELLED);
+        if (impl->macrostep_active) counter_increment(&impl->macrosteps);
+        impl->macrostep_active = false;
+        clear_semantic_queues_locked(impl);
+        impl->done = true;
+    }
+    turbo_mutex_unlock(&impl->lock);
+    if (impl->external_mailbox_initialized)
+        (void)cflow_mailbox_cancel(&impl->external_mailbox);
 }
 
 cflow_machine_state_id cflow_statechart_instance_current_state(
@@ -2182,13 +2894,30 @@ bool cflow_statechart_instance_get_stats(
     cflow_statechart_instance_impl *impl = instance != NULL
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     cflow_statechart_instance_stats snapshot = {0};
+    cflow_mailbox_stats mailbox_stats = {0};
     size_t index;
     if (impl == NULL || out == NULL) return false;
+    if (impl->external_mailbox_initialized &&
+        !cflow_mailbox_get_stats(&impl->external_mailbox, &mailbox_stats))
+        return false;
     turbo_mutex_lock(&impl->lock);
     snapshot.configuration_version = impl->configuration_version;
+    snapshot.external_accepted = mailbox_stats.accepted;
+    snapshot.external_completed = impl->external_completed;
+    snapshot.external_failed = impl->external_failed;
+    snapshot.external_cancelled =
+        UINT64_MAX - mailbox_stats.cancelled <
+                impl->external_cancelled_in_flight
+            ? UINT64_MAX
+            : mailbox_stats.cancelled +
+                impl->external_cancelled_in_flight;
+    snapshot.external_pending = mailbox_stats.pending;
+    snapshot.external_in_flight = impl->external_in_flight ? 1u : 0u;
     snapshot.macrosteps = impl->macrosteps;
     snapshot.microsteps = impl->microsteps;
     snapshot.actions = impl->actions;
+    snapshot.internal_pending = impl->internal_event_count;
+    snapshot.completion_pending = impl->completion_count;
     snapshot.active_state_count =
         impl->configurations[impl->published].state_count;
     for (index = 0u; index < snapshot.active_state_count; ++index) {
@@ -2201,6 +2930,7 @@ bool cflow_statechart_instance_get_stats(
     snapshot.cancelled = impl->cancelled;
     snapshot.done = impl->done;
     snapshot.errored = impl->error != NULL;
+    snapshot.last_status = impl->last_status;
     turbo_mutex_unlock(&impl->lock);
     *out = snapshot;
     return true;

@@ -25,6 +25,10 @@ static_assert(std::is_standard_layout<cflow_statechart>::value,
               "statechart must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_statechart_definition>::value,
               "statechart definition must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_statechart_instance>::value,
+              "statechart runtime must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_statechart_instance_config>::value,
+              "statechart runtime config must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_actor>::value,
               "cflow_actor must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_actor_ref>::value,
@@ -91,6 +95,9 @@ suite("CFlow C++ public header") {
         cflow_machine_instance_config machine_config = {};
         cflow_statechart statechart = {};
         cflow_statechart_definition statechart_definition = {};
+        cflow_statechart_instance statechart_instance = {};
+        cflow_statechart_instance_config statechart_config = {};
+        cflow_statechart_instance_stats statechart_stats = {};
         cflow_actor actor = {};
         cflow_actor_ref actor_ref = {};
         cflow_io_actor io_actor = {};
@@ -149,6 +156,10 @@ suite("CFlow C++ public header") {
         check_null(machine_config.machine);
         check_null(statechart.impl);
         check_null(statechart_definition.state_type);
+        check_null(statechart_instance.impl);
+        check_null(statechart_config.statechart);
+        check_true(statechart_stats.last_status ==
+                   CFLOW_STATECHART_RUNTIME_OK);
         cflow_statechart_destroy(&statechart);
         check_null(actor.impl);
         check_null(actor_ref.impl);

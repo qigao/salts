@@ -313,4 +313,46 @@ theorem restoreDeep_satisfies
   simp only [restoreDeep, List.mem_eraseDups, List.mem_flatMap]
   exact ⟨leaf, leafMember, stateMember⟩
 
+theorem runMacrostep_quanta_bounded (execute : RuntimeQuantum)
+    (fuel : Nat) (allowExternal : Bool) (queues : RuntimeQueues) :
+    (runMacrostep execute fuel allowExternal queues).quanta ≤ fuel := by
+  induction fuel generalizing allowExternal queues with
+  | zero => simp [runMacrostep]
+  | succ fuel inductionHypothesis =>
+      simp only [runMacrostep]
+      cases popRuntimeTrigger allowExternal queues with
+      | none => simp
+      | some pair =>
+          rcases pair with ⟨trigger, remaining⟩
+          simp only
+          cases execute trigger remaining with
+          | mk next emitted =>
+              simp only
+              have bounded := inductionHypothesis
+                (allowExternal && !trigger.isExternal) next
+              omega
+
+/-- The trace of a nonempty macrostep is the current quantum's committed trace
+    followed by the remaining finite macrostep trace. -/
+theorem runMacrostep_trace_cons (execute : RuntimeQuantum) (fuel : Nat)
+    (allowExternal : Bool) (queues remaining next : RuntimeQueues)
+    (trigger : RuntimeTrigger) (emitted : List Nat)
+    (popped : popRuntimeTrigger allowExternal queues =
+      some (trigger, remaining))
+    (executed : execute trigger remaining = (next, emitted)) :
+    (runMacrostep execute (fuel + 1) allowExternal queues).trace =
+      emitted ++
+        (runMacrostep execute fuel
+          (allowExternal && !trigger.isExternal) next).trace := by
+  simp [runMacrostep, popped, executed]
+
+/-- Validation-gated C correspondence, analogous to Machine runtime trace
+    refinement: the Boolean checker recomputes the finite macrostep rather than
+    accepting a circular refinement assumption. -/
+theorem c_macrostep_row_sound {execute : RuntimeQuantum}
+    {row : CMacrostepRow}
+    (checked : checkCMacrostepRow execute row = true) :
+    CMacrostepRowRefines execute row := by
+  simpa [checkCMacrostepRow, CMacrostepRowRefines] using checked
+
 end CMetaCFlowCalculus.CFlow.Statechart

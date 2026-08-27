@@ -58,6 +58,15 @@ static cflow_statechart_status rejected_build_status(
 }
 
 suite("CFlow format-neutral Statechart IR") {
+    it("accepts one childless FINAL as a terminal root") {
+        const cflow_statechart_state states[] = {
+            {1u, 0u, CFLOW_STATECHART_FINAL, 0u}};
+        const cflow_statechart_definition definition = {
+            &cmeta_type_int, states, 1u, NULL, 0u, NULL, 0u,
+            NULL, 0u, NULL, 0u, NULL, 0u, NULL, 0u};
+        check_equal(build_status(&definition), CFLOW_STATECHART_OK);
+    }
+
     it("copies and publishes a valid compound declaration atomically") {
         statechart_fixture fixture;
         cflow_statechart statechart = {0};

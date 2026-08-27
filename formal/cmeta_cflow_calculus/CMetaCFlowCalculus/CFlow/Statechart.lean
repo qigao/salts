@@ -241,4 +241,117 @@ def DeepRestored (rememberedLeaves : List Nat)
   ∀ leaf ∈ rememberedLeaves, ∀ state ∈ ancestorsIncludingSelf leaf,
     state ∈ result
 
+/-- The four queues visible to the run-to-completion driver. Eventless rows
+    represent currently enabled eventless selections, not user Events. -/
+structure RuntimeQueues where
+  eventless : List Nat
+  internal : List Nat
+  completions : List Nat
+  external : List Nat
+  deriving Repr, DecidableEq
+
+inductive RuntimeTrigger where
+  | eventless (id : Nat)
+  | internal (id : Nat)
+  | completion (id : Nat)
+  | external (id : Nat)
+  deriving Repr, DecidableEq
+
+def RuntimeTrigger.id : RuntimeTrigger → Nat
+  | .eventless id | .internal id | .completion id | .external id => id
+
+def RuntimeTrigger.isExternal : RuntimeTrigger → Bool
+  | .external _ => true
+  | .eventless _ | .internal _ | .completion _ => false
+
+/-- Executable counterpart of the C driver's strict priority. `allowExternal`
+    becomes false after one external dequeue, so one invocation models exactly
+    one macrostep rather than draining the external mailbox. -/
+def popRuntimeTrigger (allowExternal : Bool) : RuntimeQueues →
+    Option (RuntimeTrigger × RuntimeQueues)
+  | queues =>
+      match queues.eventless with
+      | id :: remaining =>
+          some (.eventless id, { queues with eventless := remaining })
+      | [] =>
+          match queues.internal with
+          | id :: remaining =>
+              some (.internal id, { queues with internal := remaining })
+          | [] =>
+              match queues.completions with
+              | id :: remaining =>
+                  some (.completion id,
+                    { queues with completions := remaining })
+              | [] =>
+                  if allowExternal then
+                    match queues.external with
+                    | id :: remaining =>
+                        some (.external id,
+                          { queues with external := remaining })
+                    | [] => none
+                  else none
+
+structure MacrostepResult where
+  queues : RuntimeQueues
+  trace : List Nat
+  quanta : Nat
+  limited : Bool
+  deriving Repr, DecidableEq
+
+abbrev RuntimeQuantum := RuntimeTrigger → RuntimeQueues →
+  RuntimeQueues × List Nat
+
+/-- A fuel-indexed executable macrostep. Every recursive call consumes one
+    posted semantic quantum, making finiteness structural rather than assumed.
+    At zero fuel, `limited` distinguishes pending eligible work from genuine
+    quiescence. -/
+def runMacrostep (execute : RuntimeQuantum) : Nat → Bool → RuntimeQueues →
+    MacrostepResult
+  | 0, allowExternal, queues =>
+      { queues := queues
+        trace := []
+        quanta := 0
+        limited := (popRuntimeTrigger allowExternal queues).isSome }
+  | fuel + 1, allowExternal, queues =>
+      match popRuntimeTrigger allowExternal queues with
+      | none =>
+          { queues := queues, trace := [], quanta := 0, limited := false }
+      | some (trigger, remaining) =>
+          let executed := execute trigger remaining
+          let later := runMacrostep execute fuel
+            (allowExternal && !trigger.isExternal) executed.1
+          { queues := later.queues
+            trace := executed.2 ++ later.trace
+            quanta := later.quanta + 1
+            limited := later.limited }
+
+/-- One testable C trace row. It carries observations only; unlike a proof
+    premise, it contains no claimed refinement witness. -/
+structure CMacrostepRow where
+  fuel : Nat
+  allowExternal : Bool
+  before : RuntimeQueues
+  after : RuntimeQueues
+  trace : List Nat
+  quanta : Nat
+  limited : Bool
+  deriving Repr, DecidableEq
+
+def CMacrostepRowRefines (execute : RuntimeQuantum)
+    (row : CMacrostepRow) : Prop :=
+  let result := runMacrostep execute row.fuel row.allowExternal row.before
+  result.queues = row.after ∧ result.trace = row.trace ∧
+    result.quanta = row.quanta ∧ result.limited = row.limited
+
+/-- The executable conformance gate recomputes the Lean result from the C row's
+    input snapshot; successful checking cannot be manufactured by storing a
+    refinement proposition in the row. -/
+def checkCMacrostepRow (execute : RuntimeQuantum)
+    (row : CMacrostepRow) : Bool :=
+  let result := runMacrostep execute row.fuel row.allowExternal row.before
+  decide (result.queues = row.after) &&
+    (decide (result.trace = row.trace) &&
+      (decide (result.quanta = row.quanta) &&
+        decide (result.limited = row.limited)))
+
 end CMetaCFlowCalculus.CFlow.Statechart

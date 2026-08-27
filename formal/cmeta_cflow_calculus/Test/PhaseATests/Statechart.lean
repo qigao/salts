@@ -234,4 +234,44 @@ example : ShallowRestored [2] [4] shallowDefaults [2, 3] := by
 example : DeepRestored [3, 4] deepAncestors [1, 2, 3, 4] := by
   exact restoreDeep_satisfies _ _
 
+def macroQueues : RuntimeQueues :=
+  { eventless := [1]
+    internal := [2]
+    completions := [3]
+    external := [4, 5] }
+
+def recordTrigger (trigger : RuntimeTrigger)
+    (queues : RuntimeQueues) : RuntimeQueues × List Nat :=
+  (queues, [trigger.id])
+
+example : runMacrostep recordTrigger 4 true macroQueues =
+    { queues := { eventless := [], internal := [], completions := [],
+                  external := [5] }
+      trace := [1, 2, 3, 4]
+      quanta := 4
+      limited := false } := by
+  native_decide
+
+example : (runMacrostep recordTrigger 3 true macroQueues).limited = true := by
+  native_decide
+
+example : (runMacrostep recordTrigger 4 true macroQueues).quanta ≤ 4 := by
+  exact runMacrostep_quanta_bounded _ _ _ _
+
+def cMacrostepRow : CMacrostepRow :=
+  { fuel := 4
+    allowExternal := true
+    before := macroQueues
+    after := { eventless := [], internal := [], completions := [],
+               external := [5] }
+    trace := [1, 2, 3, 4]
+    quanta := 4
+    limited := false }
+
+example : checkCMacrostepRow recordTrigger cMacrostepRow = true := by
+  native_decide
+
+example : CMacrostepRowRefines recordTrigger cMacrostepRow := by
+  exact c_macrostep_row_sound (by native_decide)
+
 end CMetaCFlowCalculus.Tests.Statechart

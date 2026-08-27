@@ -1,5 +1,7 @@
 #include <cflow/event.h>
 
+#include "event_internal.h"
+
 #include <turbo/thread.h>
 
 #include <stdbool.h>
@@ -110,6 +112,31 @@ static bool cflow_schema_measure(const cflow_event_type *schema,
 
     *max_payload_size = largest_size;
     *max_payload_alignment = largest_alignment;
+    return true;
+}
+
+bool cflow_mailbox_storage_requirements_internal(
+    const cflow_event_type *schema, size_t schema_count, size_t capacity,
+    size_t *out_bytes) {
+    size_t max_payload_size, max_payload_alignment, payload_stride;
+    size_t schema_bytes, slot_bytes, payload_bytes, total;
+    if (out_bytes == NULL ||
+        !cflow_size_multiply(schema_count, sizeof(cflow_event_type),
+                             &schema_bytes) ||
+        !cflow_size_multiply(capacity, sizeof(cflow_event_slot),
+                             &slot_bytes) ||
+        !cflow_schema_measure(schema, schema_count, &max_payload_size,
+                              &max_payload_alignment) ||
+        !cflow_align_size(max_payload_size, max_payload_alignment,
+                          &payload_stride) ||
+        !cflow_size_multiply(capacity, payload_stride, &payload_bytes) ||
+        sizeof(cflow_mailbox_impl) > SIZE_MAX - schema_bytes)
+        return false;
+    total = sizeof(cflow_mailbox_impl) + schema_bytes;
+    if (slot_bytes > SIZE_MAX - total) return false;
+    total += slot_bytes;
+    if (payload_bytes > SIZE_MAX - total) return false;
+    *out_bytes = total + payload_bytes;
     return true;
 }
 

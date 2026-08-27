@@ -1,5 +1,6 @@
 #include <cflow/executor.h>
 #include <cflow/statechart.h>
+#include <cflow/statechart_runtime.h>
 
 #include "statechart_runtime_internal.h"
 #include "tinytest.h"
@@ -155,6 +156,10 @@ static cflow_statechart_runtime_status runtime_fixture_init(
     config = (cflow_statechart_instance_config){
         .statechart = &fixture->statechart,
         .initial_state = &fixture->initial_state,
+        .external_event_capacity = 4u,
+        .internal_event_capacity = 4u,
+        .completion_capacity = 4u,
+        .microstep_limit = 64u,
         .executor = &fixture->executor};
     return cflow_statechart_instance_init(&fixture->instance, &config);
 }
@@ -176,6 +181,19 @@ static bool guard_binding(void *user, const void *state,
     *out_enabled = true;
     *out_error = NULL;
     if (user != NULL) atomic_fetch_add((atomic_int *)user, 1);
+    return true;
+}
+
+static bool guard_binding_disabled(void *user, const void *state,
+                                   const cflow_event_view *event,
+                                   bool *out_enabled,
+                                   const char **out_error) {
+    (void)state;
+    (void)event;
+    if (out_enabled == NULL || out_error == NULL) return false;
+    if (user != NULL) atomic_fetch_add((atomic_int *)user, 1);
+    *out_enabled = false;
+    *out_error = NULL;
     return true;
 }
 
@@ -345,6 +363,10 @@ static cflow_statechart_runtime_status selection_fixture_init(
         .initial_state = &fixture->initial_state,
         .guards = bindings,
         .guard_count = binding_count,
+        .external_event_capacity = 4u,
+        .internal_event_capacity = 4u,
+        .completion_capacity = 4u,
+        .microstep_limit = 64u,
         .executor = &fixture->executor};
     return cflow_statechart_instance_init(&fixture->instance, &config);
 }
@@ -520,7 +542,7 @@ suite("CFlow Statechart runtime initial configuration") {
                         &fixture.statechart, &fixture.definition),
                     CFLOW_STATECHART_OK);
         check_equal(cflow_statechart_instance_storage_requirements_internal(
-                        &fixture.statechart, 0u, &requirements),
+                        &fixture.statechart, 4u, 0u, 4u, &requirements),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(requirements.history_bitset_bytes, (size_t)4u);
         check_equal(requirements.history_count_bytes,
@@ -533,11 +555,17 @@ suite("CFlow Statechart runtime initial configuration") {
                     requirements.extended_state_bytes +
                     requirements.index_work_bytes +
                     requirements.action_scratch_bytes +
-                    requirements.internal_event_bytes);
+                    requirements.internal_event_bytes +
+                    requirements.external_event_bytes +
+                    requirements.completion_bytes);
         check_true(cflow_executor_serial_init(&fixture.executor));
         config = (cflow_statechart_instance_config){
             .statechart = &fixture.statechart,
             .initial_state = &fixture.initial_state,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 64u,
             .max_storage_bytes = requirements.total_bytes - 1u,
             .executor = &fixture.executor};
         config.max_storage_bytes =
@@ -602,6 +630,10 @@ suite("CFlow Statechart runtime initial configuration") {
         config = (cflow_statechart_instance_config){
             .statechart = &fixture.statechart,
             .initial_state = &fixture.initial_state,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 64u,
             .executor = &fixture.executor};
 
         check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
@@ -621,6 +653,10 @@ suite("CFlow Statechart runtime initial configuration") {
         config = (cflow_statechart_instance_config){
             .statechart = &fixture.statechart,
             .initial_state = &fixture.initial_state,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 64u,
             .executor = &fixture.executor};
 
         check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
@@ -681,6 +717,10 @@ suite("CFlow Statechart runtime initial configuration") {
         config = (cflow_statechart_instance_config){
             .statechart = &fixture.statechart,
             .initial_state = &fixture.initial_state,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 64u,
             .executor = &fixture.executor};
         check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
                     CFLOW_STATECHART_RUNTIME_UNSUPPORTED_TYPE);
@@ -707,8 +747,8 @@ suite("CFlow Statechart runtime initial configuration") {
         atomic_int guard_calls;
         atomic_int executable_calls;
         cflow_statechart_guard_binding guards[] = {
-            {21u, guard_binding, &guard_calls},
-            {20u, guard_binding, &guard_calls}};
+            {21u, guard_binding_disabled, &guard_calls},
+            {20u, guard_binding_disabled, &guard_calls}};
         cflow_statechart_executable_binding executables[] = {
             {31u, executable_binding, &executable_calls},
             {30u, executable_binding, &executable_calls}};
@@ -744,10 +784,14 @@ suite("CFlow Statechart runtime initial configuration") {
             .guard_count = 2u,
             .executables = executables,
             .executable_count = 2u,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 64u,
             .executor = &fixture.executor};
 
         check_equal(cflow_statechart_instance_storage_requirements_internal(
-                        &fixture.statechart, 0u, &requirements),
+                        &fixture.statechart, 4u, 4u, 4u, &requirements),
                     CFLOW_STATECHART_RUNTIME_OK);
         config.max_storage_bytes = 1u;
         config.guards =
@@ -814,7 +858,7 @@ suite("CFlow Statechart runtime initial configuration") {
         config.executables = executables;
         check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
                     CFLOW_STATECHART_RUNTIME_OK);
-        check_equal(atomic_load(&guard_calls), 0);
+        check_equal(atomic_load(&guard_calls), 2);
         check_equal(atomic_load(&executable_calls), 0);
         runtime_fixture_destroy(&fixture);
     }
@@ -971,7 +1015,7 @@ suite("CFlow Statechart deterministic transition selection") {
     it("selects an eventless transition with a null guard event") {
         runtime_fixture fixture;
         selection_guard_probe guard = {
-            NULL, 41, 0u, true, false, NULL};
+            NULL, 41, 0u, false, false, NULL};
         const cflow_statechart_guard_binding binding = {
             300u, selection_nullable_event_guard, &guard};
         const int payload = 7;
@@ -988,6 +1032,8 @@ suite("CFlow Statechart deterministic transition selection") {
                                  300u, 0u, 0u);
         check_equal(selection_fixture_init(&fixture, &binding, 1u),
                     CFLOW_STATECHART_RUNTIME_OK);
+        guard.enabled = true;
+        guard.calls = 0u;
         check_equal(select_eventless(&fixture, NULL, &selected),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(selected.transition_count, (size_t)1u);
@@ -1536,7 +1582,10 @@ static cflow_statechart_runtime_status microstep_fixture_init(
         .initial_state = &fixture->initial_state,
         .executables = &binding,
         .executable_count = 1u,
+        .external_event_capacity = 4u,
         .internal_event_capacity = internal_event_capacity,
+        .completion_capacity = 4u,
+        .microstep_limit = 64u,
         .executor = &fixture->executor};
     return cflow_statechart_instance_init(&fixture->instance, &config);
 }
@@ -1560,7 +1609,10 @@ static cflow_statechart_runtime_status microstep_fixture_init_with_binding(
         .initial_state = &fixture->initial_state,
         .executables = binding,
         .executable_count = binding_count,
+        .external_event_capacity = 4u,
         .internal_event_capacity = internal_event_capacity,
+        .completion_capacity = 4u,
+        .microstep_limit = 64u,
         .executor = &fixture->executor};
     return cflow_statechart_instance_init(&fixture->instance, &config);
 }
@@ -1815,7 +1867,10 @@ static void parallel_entry_fixture_init(
         .initial_state = &fixture->initial_state,
         .executables = &binding,
         .executable_count = 1u,
+        .external_event_capacity = 4u,
         .internal_event_capacity = 2u,
+        .completion_capacity = 4u,
+        .microstep_limit = 64u,
         .executor = &fixture->executor};
     check_equal(cflow_statechart_instance_init(&fixture->instance, &config),
                 CFLOW_STATECHART_RUNTIME_OK);
@@ -1853,19 +1908,26 @@ suite("CFlow Statechart ordered atomic microsteps") {
             .initial_state = &fixture.initial_state,
             .executables = &binding,
             .executable_count = 1u,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 1u,
+            .completion_capacity = 4u,
+            .microstep_limit = 64u,
             .executor = &fixture.executor};
 
         check_equal(cflow_statechart_instance_storage_requirements_internal(
-                        &fixture.statechart, 0u, &default_requirements),
+                        &fixture.statechart, 4u, 0u, 4u,
+                        &default_requirements),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(default_requirements.internal_event_capacity,
                     (size_t)CFLOW_STATECHART_DEFAULT_INTERNAL_EVENT_CAPACITY);
         check_equal(cflow_statechart_instance_storage_requirements_internal(
-                        &fixture.statechart, 1u, &one_requirements),
+                        &fixture.statechart, 4u, 1u, 4u,
+                        &one_requirements),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(one_requirements.internal_event_capacity, (size_t)1u);
         check_equal(cflow_statechart_instance_storage_requirements_internal(
-                        &fixture.statechart, 17u, &seventeen_requirements),
+                        &fixture.statechart, 4u, 17u, 4u,
+                        &seventeen_requirements),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(seventeen_requirements.internal_event_capacity,
                     (size_t)17u);
@@ -1877,9 +1939,8 @@ suite("CFlow Statechart ordered atomic microsteps") {
         config.internal_event_capacity = 0u;
         config.max_storage_bytes = default_requirements.total_bytes;
         check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
-        check_equal(cflow_statechart_instance_destroy(&fixture.instance),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        check_null(fixture.instance.impl);
         config.internal_event_capacity = 1u;
         config.max_storage_bytes = one_requirements.total_bytes;
         check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
@@ -1898,11 +1959,12 @@ suite("CFlow Statechart ordered atomic microsteps") {
                     CFLOW_STATECHART_RUNTIME_OK);
 
         check_equal(cflow_statechart_instance_storage_requirements_internal(
-                        &fixture.statechart, SIZE_MAX, &one_requirements),
+                        &fixture.statechart, 4u, SIZE_MAX, 4u,
+                        &one_requirements),
                     CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED);
         check_equal(cflow_statechart_instance_storage_requirements_internal(
                         &fixture.statechart,
-                        (size_t)CFLOW_STATECHART_MAX_INSTANCE_BYTES,
+                        4u, (size_t)CFLOW_STATECHART_MAX_INSTANCE_BYTES, 4u,
                         &one_requirements),
                     CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED);
         config.internal_event_capacity =
@@ -2759,7 +2821,10 @@ static void history_fixture_init(history_fixture *fixture,
         .initial_state = &fixture->initial_state,
         .executables = &binding,
         .executable_count = 1u,
+        .external_event_capacity = 4u,
         .internal_event_capacity = 2u,
+        .completion_capacity = 4u,
+        .microstep_limit = 64u,
         .executor = &fixture->executor};
     check_equal(cflow_statechart_build(
                     &fixture->statechart, &fixture->definition),
@@ -2888,5 +2953,767 @@ suite("CFlow Statechart history restoration") {
         check_equal(cflow_statechart_instance_error(&fixture.instance),
                     "first action failure");
         history_fixture_destroy(&fixture);
+    }
+}
+
+typedef struct rtc_fixture {
+    cflow_statechart_state states[8];
+    cflow_event_type events[3];
+    cflow_statechart_executable executables[1];
+    cflow_statechart_transition transitions[8];
+    cflow_statechart_transition_action actions[5];
+    cflow_statechart_definition definition;
+    cflow_statechart statechart;
+    cflow_executor executor;
+    cflow_statechart_instance instance;
+    int initial_state;
+    int trace[12];
+    size_t trace_count;
+    bool raise_twice;
+    bool close_during_action;
+    bool cancel_during_action;
+} rtc_fixture;
+
+typedef struct rtc_producer_context {
+    cflow_statechart_instance *instance;
+    size_t count;
+    atomic_int *failures;
+} rtc_producer_context;
+
+enum {
+    RTC_ROOT = 100u, RTC_INITIAL = 101u, RTC_A = 110u, RTC_B = 120u,
+    RTC_C = 130u, RTC_FINAL = 140u, RTC_D = 150u, RTC_E = 160u,
+    RTC_GO = 10u, RTC_NEXT = 11u, RTC_OTHER = 12u, RTC_EXEC = 500u
+};
+
+static bool rtc_action(void *user, cflow_statechart_action_phase phase,
+                       cflow_machine_state_id owner, const void *state,
+                       const cflow_event_view *event, void *out_state,
+                       cflow_statechart_raise_fn raise_internal,
+                       void *raise_user, const char **out_error) {
+    rtc_fixture *fixture = (rtc_fixture *)user;
+    if (fixture == NULL || state == NULL || out_state == NULL ||
+        out_error == NULL || fixture->trace_count >= 12u)
+        return false;
+    fixture->trace[fixture->trace_count++] = (int)owner;
+    *(int *)out_state = *(const int *)state + 1;
+    *out_error = NULL;
+    if (phase == CFLOW_STATECHART_ACTION_TRANSITION &&
+        event != NULL && event->id == RTC_GO) {
+        const int payload = 77;
+        const cflow_event_view raised = {
+            RTC_NEXT, &cmeta_type_int, &payload};
+        if (raise_internal == NULL ||
+            !raise_internal(raise_user, &raised, out_error))
+            return false;
+        if (fixture->raise_twice &&
+            !raise_internal(raise_user, &raised, out_error))
+            return false;
+        if (fixture->close_during_action)
+            cflow_statechart_instance_close(&fixture->instance);
+        if (fixture->cancel_during_action)
+            cflow_statechart_instance_cancel(&fixture->instance);
+    }
+    return true;
+}
+
+static void rtc_producer(void *user) {
+    rtc_producer_context *context = (rtc_producer_context *)user;
+    const int payload = 1;
+    const cflow_event_view event = {
+        RTC_OTHER, &cmeta_type_int, &payload};
+    size_t index;
+    for (index = 0u; index < context->count; ++index) {
+        if (cflow_statechart_instance_try_send(
+                context->instance, &event) != CFLOW_MAILBOX_OK)
+            atomic_fetch_add(context->failures, 1);
+    }
+}
+
+static void rtc_definition(rtc_fixture *fixture,
+                           bool root_completion_transition,
+                           bool eventless_cycle) {
+    size_t transition_count = root_completion_transition ? 7u : 6u;
+    size_t action_count = root_completion_transition ? 5u : 4u;
+    memset(fixture, 0, sizeof(*fixture));
+    fixture->states[0] = (cflow_statechart_state){
+        RTC_ROOT, 0u, CFLOW_STATECHART_COMPOUND, 0u};
+    fixture->states[1] = (cflow_statechart_state){
+        RTC_INITIAL, RTC_ROOT, CFLOW_STATECHART_INITIAL, 1u};
+    fixture->states[2] = (cflow_statechart_state){
+        RTC_A, RTC_ROOT, CFLOW_STATECHART_ATOMIC, 2u};
+    fixture->states[3] = (cflow_statechart_state){
+        RTC_B, RTC_ROOT, CFLOW_STATECHART_ATOMIC, 3u};
+    fixture->states[4] = (cflow_statechart_state){
+        RTC_C, RTC_ROOT, CFLOW_STATECHART_ATOMIC, 4u};
+    fixture->states[5] = (cflow_statechart_state){
+        RTC_FINAL, RTC_ROOT, CFLOW_STATECHART_FINAL, 5u};
+    fixture->states[6] = (cflow_statechart_state){
+        RTC_D, RTC_ROOT, CFLOW_STATECHART_ATOMIC, 6u};
+    fixture->states[7] = (cflow_statechart_state){
+        RTC_E, RTC_ROOT, CFLOW_STATECHART_ATOMIC, 7u};
+    fixture->events[0] = (cflow_event_type){RTC_GO, &cmeta_type_int};
+    fixture->events[1] = (cflow_event_type){RTC_NEXT, &cmeta_type_int};
+    fixture->events[2] = (cflow_event_type){RTC_OTHER, &cmeta_type_int};
+    fixture->executables[0] = (cflow_statechart_executable){
+        RTC_EXEC, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+        CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+    fixture->transitions[0] = (cflow_statechart_transition){
+        1u, RTC_INITIAL, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+        0u, 0u, 0u, RTC_A, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u};
+    fixture->transitions[1] = (cflow_statechart_transition){
+        2u, RTC_A, CFLOW_STATECHART_TRIGGER_EVENT,
+        RTC_GO, 0u, 0u, RTC_B, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u};
+    fixture->transitions[2] = (cflow_statechart_transition){
+        3u, RTC_B, CFLOW_STATECHART_TRIGGER_EVENT,
+        RTC_NEXT, 0u, 0u, RTC_C, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 2u};
+    fixture->transitions[3] = (cflow_statechart_transition){
+        4u, RTC_C, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+        0u, 0u, 0u, eventless_cycle ? 0u : RTC_FINAL,
+        eventless_cycle ? CFLOW_STATECHART_TRANSITION_INTERNAL
+                        : CFLOW_STATECHART_TRANSITION_EXTERNAL,
+        0u, 3u};
+    fixture->transitions[4] = (cflow_statechart_transition){
+        5u, RTC_D, CFLOW_STATECHART_TRIGGER_EVENT,
+        RTC_OTHER, 0u, 0u, RTC_E, CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 4u};
+    fixture->transitions[5] = (cflow_statechart_transition){
+        6u, RTC_E, CFLOW_STATECHART_TRIGGER_EVENT,
+        RTC_OTHER, 0u, 0u, RTC_E, CFLOW_STATECHART_TRANSITION_EXTERNAL, 1u, 5u};
+    fixture->transitions[6] = (cflow_statechart_transition){
+        7u, RTC_ROOT, CFLOW_STATECHART_TRIGGER_COMPLETION,
+        0u, RTC_ROOT, 0u, RTC_D,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 6u};
+    fixture->actions[0] = (cflow_statechart_transition_action){
+        2u, RTC_EXEC, 0u};
+    fixture->actions[1] = (cflow_statechart_transition_action){
+        3u, RTC_EXEC, 0u};
+    fixture->actions[2] = (cflow_statechart_transition_action){
+        4u, RTC_EXEC, 0u};
+    fixture->actions[3] = (cflow_statechart_transition_action){
+        5u, RTC_EXEC, 0u};
+    fixture->actions[4] = (cflow_statechart_transition_action){
+        7u, RTC_EXEC, 0u};
+    fixture->definition = (cflow_statechart_definition){
+        &cmeta_type_int, fixture->states, 8u, fixture->events, 3u,
+        NULL, 0u, fixture->executables, 1u, fixture->transitions,
+        transition_count, NULL, 0u, fixture->actions, action_count};
+    fixture->initial_state = 0;
+}
+
+static cflow_statechart_runtime_status rtc_init_with_external(
+    rtc_fixture *fixture, size_t external_capacity, size_t internal_capacity,
+    size_t completion_capacity, size_t microstep_limit,
+    size_t executor_capacity) {
+    const cflow_statechart_executable_binding binding = {
+        RTC_EXEC, rtc_action, fixture};
+    cflow_statechart_instance_config config = {
+        .statechart = &fixture->statechart,
+        .initial_state = &fixture->initial_state,
+        .executables = &binding,
+        .executable_count = 1u,
+        .external_event_capacity = external_capacity,
+        .internal_event_capacity = internal_capacity,
+        .completion_capacity = completion_capacity,
+        .microstep_limit = microstep_limit,
+        .executor = &fixture->executor};
+    check_equal(cflow_statechart_build(
+                    &fixture->statechart, &fixture->definition),
+                CFLOW_STATECHART_OK);
+    check_true(cflow_executor_serial_init_with_capacity(
+        &fixture->executor, executor_capacity));
+    return cflow_statechart_instance_init(&fixture->instance, &config);
+}
+
+static cflow_statechart_runtime_status rtc_init(
+    rtc_fixture *fixture, size_t internal_capacity,
+    size_t completion_capacity, size_t microstep_limit,
+    size_t executor_capacity) {
+    return rtc_init_with_external(
+        fixture, 4u, internal_capacity, completion_capacity,
+        microstep_limit, executor_capacity);
+}
+
+static void rtc_destroy(rtc_fixture *fixture) {
+    check_equal(cflow_statechart_instance_destroy(&fixture->instance),
+                CFLOW_STATECHART_RUNTIME_OK);
+    cflow_executor_destroy(&fixture->executor);
+    cflow_statechart_destroy(&fixture->statechart);
+}
+
+suite("CFlow Statechart public run-to-completion runtime") {
+    it("rejects every zero runtime bound before publishing an instance") {
+        runtime_fixture fixture;
+        cflow_statechart_instance_config config;
+        nested_compound_fixture(&fixture);
+        check_equal(cflow_statechart_build(
+                        &fixture.statechart, &fixture.definition),
+                    CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&fixture.executor));
+        config = (cflow_statechart_instance_config){
+            .statechart = &fixture.statechart,
+            .initial_state = &fixture.initial_state,
+            .external_event_capacity = 1u,
+            .internal_event_capacity = 1u,
+            .completion_capacity = 1u,
+            .microstep_limit = 8u,
+            .executor = &fixture.executor};
+
+        config.external_event_capacity = 0u;
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        config.external_event_capacity = 1u;
+        config.internal_event_capacity = 0u;
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        config.internal_event_capacity = 1u;
+        config.completion_capacity = 0u;
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        config.completion_capacity = 1u;
+        config.microstep_limit = 0u;
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        check_null(fixture.instance.impl);
+        cflow_executor_destroy(&fixture.executor);
+        cflow_statechart_destroy(&fixture.statechart);
+    }
+
+    it("copies external events and reports exact bounded admission outcomes") {
+        runtime_fixture fixture;
+        cflow_statechart_instance_config config;
+        const int payload = 7;
+        const long wrong_payload = 7;
+        cflow_event_view event;
+        nested_compound_fixture(&fixture);
+        fixture.events[0] = (cflow_event_type){100u, &cmeta_type_int};
+        fixture.definition.events = fixture.events;
+        fixture.definition.event_count = 1u;
+        check_equal(cflow_statechart_build(
+                        &fixture.statechart, &fixture.definition),
+                    CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&fixture.executor));
+        config = (cflow_statechart_instance_config){
+            .statechart = &fixture.statechart,
+            .initial_state = &fixture.initial_state,
+            .external_event_capacity = 1u,
+            .internal_event_capacity = 1u,
+            .completion_capacity = 1u,
+            .microstep_limit = 8u,
+            .executor = &fixture.executor};
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+
+        event = (cflow_event_view){100u, &cmeta_type_long, &wrong_payload};
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_TYPE_MISMATCH);
+        event = (cflow_event_view){999u, &cmeta_type_int, &payload};
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_INVALID_ARGUMENT);
+        event = (cflow_event_view){100u, &cmeta_type_int, &payload};
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_null(cflow_statechart_instance_error(&fixture.instance));
+        cflow_statechart_instance_close(&fixture.instance);
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_CLOSED);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("terminates a root FINAL without synthesizing a completion row") {
+        const cflow_statechart_state states[] = {{
+            RTC_ROOT, 0u, CFLOW_STATECHART_FINAL, 0u}};
+        const cflow_statechart_definition definition = {
+            &cmeta_type_int, states, 1u, NULL, 0u, NULL, 0u,
+            NULL, 0u, NULL, 0u, NULL, 0u, NULL, 0u};
+        const int initial_state = 0;
+        cflow_statechart statechart = {0};
+        cflow_executor executor = {0};
+        cflow_statechart_instance instance = {0};
+        cflow_statechart_instance_stats stats = {0};
+        cflow_statechart_instance_config config;
+        check_equal(cflow_statechart_build(&statechart, &definition),
+                    CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        config = (cflow_statechart_instance_config){
+            .statechart = &statechart,
+            .initial_state = &initial_state,
+            .external_event_capacity = 1u,
+            .internal_event_capacity = 1u,
+            .completion_capacity = 1u,
+            .microstep_limit = 1u,
+            .executor = &executor};
+        check_equal(cflow_statechart_instance_init(&instance, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_statechart_instance_get_stats(&instance, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        check_equal(stats.completion_pending, (size_t)0u);
+        check_equal(cflow_statechart_instance_destroy(&instance),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_statechart_destroy(&statechart);
+    }
+
+    it("stabilizes an eventless transition before init returns") {
+        rtc_fixture fixture;
+        const cflow_machine_state_id expected[] = {RTC_ROOT, RTC_D};
+        cflow_machine_state_id states[2] = {0};
+        size_t count = 0u;
+        uint64_t version = 0u;
+        rtc_definition(&fixture, true, false);
+        fixture.transitions[7] = (cflow_statechart_transition){
+            8u, RTC_A, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+            0u, 0u, 0u, RTC_D,
+            CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 7u};
+        fixture.definition.transition_count = 8u;
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 2u, &count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(states, expected, sizeof(expected));
+        check_equal(version, UINT64_C(2));
+        rtc_destroy(&fixture);
+    }
+
+    it("returns external FULL while one admitted event waits to run") {
+        rtc_fixture fixture;
+        microstep_executor_blocker blocker;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        rtc_definition(&fixture, true, false);
+        check_equal(rtc_init_with_external(
+                        &fixture, 1u, 4u, 4u, 16u, 2u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor,
+                        microstep_block_executor, &blocker),
+                    CFLOW_ADMISSION_ACCEPTED);
+        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_FULL);
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        rtc_destroy(&fixture);
+    }
+
+    it("finishes eventless internal and root completion before next external") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
+        const int expected_trace[] = {
+            RTC_A, RTC_B, RTC_C, RTC_ROOT, RTC_D};
+        const cflow_machine_state_id expected_states[] = {RTC_ROOT, RTC_E};
+        cflow_machine_state_id states[2] = {0};
+        cflow_statechart_instance_stats stats = {0};
+        size_t count = 0u;
+        uint64_t version = 0u;
+        int state = 0;
+        const cmeta_type_desc *state_type = NULL;
+        rtc_definition(&fixture, true, false);
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &other),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(fixture.trace, expected_trace, sizeof(expected_trace));
+        check_equal(fixture.trace_count, (size_t)5u);
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 2u, &count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(states, expected_states, sizeof(expected_states));
+        check_true(cflow_statechart_instance_copy_state(
+            &fixture.instance, &state_type, &state, sizeof(state)));
+        check_equal(state, 5);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_accepted, UINT64_C(2));
+        check_equal(stats.external_completed, UINT64_C(2));
+        check_equal(stats.external_failed, UINT64_C(0));
+        check_equal(stats.external_cancelled, UINT64_C(0));
+        check_equal(stats.external_pending, (size_t)0u);
+        check_equal(stats.external_in_flight, (size_t)0u);
+        check_equal(stats.microsteps, UINT64_C(5));
+        check_equal(stats.macrosteps, UINT64_C(3));
+        check_false(stats.done);
+        rtc_destroy(&fixture);
+    }
+
+    it("processes an unhandled root completion then terminates") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const int expected_trace[] = {RTC_A, RTC_B, RTC_C};
+        cflow_statechart_instance_stats stats = {0};
+        rtc_definition(&fixture, false, false);
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(fixture.trace, expected_trace, sizeof(expected_trace));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        check_equal(stats.external_completed, UINT64_C(1));
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_CLOSED);
+        rtc_destroy(&fixture);
+    }
+
+    it("fails one external macrostep when an eventless cycle reaches its bound") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats stats = {0};
+        rtc_definition(&fixture, true, true);
+        check_equal(rtc_init(&fixture, 4u, 4u, 4u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(cflow_statechart_instance_error(&fixture.instance),
+                    "Statechart macrostep microstep limit exceeded");
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_RUNTIME_MICROSTEP_LIMIT_EXCEEDED);
+        check_equal(stats.external_failed, UINT64_C(1));
+        check_equal(stats.external_completed, UINT64_C(0));
+        check_true(stats.done);
+        rtc_destroy(&fixture);
+    }
+
+    it("rolls back and fails the external event when internal raise is full") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats stats = {0};
+        cflow_machine_state_id states[2] = {0};
+        const cflow_machine_state_id expected[] = {RTC_ROOT, RTC_A};
+        size_t count = 0u;
+        uint64_t version = 0u;
+        rtc_definition(&fixture, true, false);
+        fixture.raise_twice = true;
+        check_equal(rtc_init(&fixture, 1u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(cflow_statechart_instance_error(&fixture.instance),
+                    "Statechart internal event queue is full");
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 2u, &count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(states, expected, sizeof(expected));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_failed, UINT64_C(1));
+        check_equal(stats.internal_pending, (size_t)0u);
+        rtc_destroy(&fixture);
+    }
+
+    it("rolls back when one microstep would overflow completion rows") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const cflow_machine_state_id expected[] = {
+            RTC_ROOT, RTC_B, RTC_C};
+        cflow_machine_state_id states[3] = {0};
+        cflow_statechart_instance_stats stats = {0};
+        size_t count = 0u;
+        uint64_t version = 0u;
+        rtc_definition(&fixture, false, false);
+        fixture.states[3].kind = CFLOW_STATECHART_COMPOUND;
+        fixture.states[4].parent = RTC_B;
+        fixture.states[4].document_order = 5u;
+        fixture.states[5].parent = RTC_B;
+        fixture.states[5].document_order = 6u;
+        fixture.states[6] = (cflow_statechart_state){
+            RTC_D, RTC_B, CFLOW_STATECHART_INITIAL, 4u};
+        fixture.states[7].document_order = 7u;
+        fixture.transitions[1].target = RTC_C;
+        fixture.transitions[2].source = RTC_C;
+        fixture.transitions[2].target = RTC_FINAL;
+        fixture.transitions[3] = (cflow_statechart_transition){
+            4u, RTC_D, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+            0u, 0u, 0u, RTC_C,
+            CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 3u};
+        fixture.definition.transition_count = 4u;
+        fixture.definition.transition_action_count = 2u;
+        check_equal(rtc_init(&fixture, 4u, 1u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(cflow_statechart_instance_error(&fixture.instance),
+                    "Statechart completion queue is full");
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 3u, &count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(states, expected, sizeof(expected));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_RUNTIME_COMPLETION_QUEUE_FULL);
+        check_equal(stats.external_failed, UINT64_C(1));
+        check_equal(stats.completion_pending, (size_t)0u);
+        rtc_destroy(&fixture);
+    }
+
+    it("lets a reentrant close preserve the winning commit and clear queues") {
+        rtc_fixture fixture;
+        microstep_executor_blocker blocker;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
+        const cflow_machine_state_id expected[] = {RTC_ROOT, RTC_B};
+        cflow_machine_state_id states[2] = {0};
+        cflow_statechart_instance_stats stats = {0};
+        size_t count = 0u;
+        uint64_t version = 0u;
+        rtc_definition(&fixture, true, false);
+        fixture.close_during_action = true;
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor,
+                        microstep_block_executor, &blocker),
+                    CFLOW_ADMISSION_ACCEPTED);
+        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &other),
+                    CFLOW_MAILBOX_OK);
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 2u, &count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(states, expected, sizeof(expected));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_completed, UINT64_C(1));
+        check_equal(stats.external_cancelled, UINT64_C(1));
+        check_equal(stats.external_accepted, UINT64_C(2));
+        check_equal(stats.internal_pending, (size_t)0u);
+        check_equal(stats.completion_pending, (size_t)0u);
+        check_true(stats.closed);
+        check_true(stats.done);
+        check_false(stats.errored);
+        rtc_destroy(&fixture);
+    }
+
+    it("discards a microstep when cancel linearizes before commit") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const cflow_machine_state_id expected[] = {RTC_ROOT, RTC_A};
+        cflow_machine_state_id states[2] = {0};
+        cflow_statechart_instance_stats stats = {0};
+        size_t count = 0u;
+        uint64_t version = 0u;
+        rtc_definition(&fixture, true, false);
+        fixture.cancel_during_action = true;
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 2u, &count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(states, expected, sizeof(expected));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_completed, UINT64_C(0));
+        check_equal(stats.external_cancelled, UINT64_C(1));
+        check_equal(stats.external_failed, UINT64_C(0));
+        check_true(stats.cancelled);
+        check_true(stats.done);
+        rtc_destroy(&fixture);
+    }
+
+    it("keeps a committed macrostep visible when cancel arrives afterward") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const cflow_machine_state_id expected[] = {RTC_ROOT, RTC_D};
+        cflow_machine_state_id states[2] = {0};
+        cflow_statechart_instance_stats stats = {0};
+        size_t count = 0u;
+        uint64_t version = 0u;
+        rtc_definition(&fixture, true, false);
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        cflow_statechart_instance_cancel(&fixture.instance);
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 2u, &count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(states, expected, sizeof(expected));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_completed, UINT64_C(1));
+        check_equal(stats.external_cancelled, UINT64_C(0));
+        check_true(stats.cancelled);
+        rtc_destroy(&fixture);
+    }
+
+    it("keeps mailbox OK but settles failed when executor is closed") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats stats = {0};
+        rtc_definition(&fixture, true, false);
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_executor_shutdown(&fixture.executor));
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED);
+        check_equal(stats.external_accepted, UINT64_C(1));
+        check_equal(stats.external_failed, UINT64_C(1));
+        rtc_destroy(&fixture);
+    }
+
+    it("fails the oldest accepted event when shutdown cancels its driver") {
+        rtc_fixture fixture;
+        microstep_executor_blocker blocker;
+        cflow_executor_control control = {0};
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats stats = {0};
+        rtc_definition(&fixture, true, false);
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 2u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor,
+                        microstep_block_executor, &blocker),
+                    CFLOW_ADMISSION_ACCEPTED);
+        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_as_control(&fixture.executor, &control));
+        check_true(cflow_executor_control_shutdown(
+            &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED);
+        check_equal(stats.external_accepted, UINT64_C(1));
+        check_equal(stats.external_failed, UINT64_C(1));
+        check_equal(stats.external_cancelled, UINT64_C(0));
+        rtc_destroy(&fixture);
+    }
+
+    it("keeps mailbox OK but settles failed when executor post is full") {
+        rtc_fixture fixture;
+        microstep_executor_blocker blocker;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats stats = {0};
+        rtc_definition(&fixture, true, false);
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 1u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor, microstep_block_executor, &blocker),
+                    CFLOW_ADMISSION_ACCEPTED);
+        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor, microstep_noop, NULL),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.last_status, CFLOW_STATECHART_RUNTIME_EXECUTOR_FULL);
+        check_equal(stats.external_accepted, UINT64_C(1));
+        check_equal(stats.external_failed, UINT64_C(1));
+        check_equal(stats.external_cancelled, UINT64_C(0));
+        check_equal(stats.external_completed, UINT64_C(0));
+        check_equal(stats.external_accepted,
+                    stats.external_completed + stats.external_failed +
+                        stats.external_cancelled +
+                        (uint64_t)stats.external_pending +
+                        (uint64_t)stats.external_in_flight);
+        rtc_destroy(&fixture);
+    }
+
+    it("serializes all events admitted by concurrent producers") {
+        enum {
+            PRODUCER_COUNT = 4,
+            EVENTS_PER_PRODUCER = 8,
+            TOTAL_OTHER_EVENTS = PRODUCER_COUNT * EVENTS_PER_PRODUCER
+        };
+        rtc_fixture fixture;
+        rtc_producer_context context;
+        turbo_thread_t producers[PRODUCER_COUNT] = {0};
+        atomic_int failures;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats stats = {0};
+        size_t index;
+        rtc_definition(&fixture, true, false);
+        check_equal(rtc_init_with_external(
+                        &fixture, TOTAL_OTHER_EVENTS, 4u, 4u,
+                        16u, 8u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        atomic_init(&failures, 0);
+        context = (rtc_producer_context){
+            &fixture.instance, EVENTS_PER_PRODUCER, &failures};
+        for (index = 0u; index < PRODUCER_COUNT; ++index)
+            check_equal(turbo_thread_create(
+                &producers[index], rtc_producer, &context), 0);
+        for (index = 0u; index < PRODUCER_COUNT; ++index)
+            check_equal(turbo_thread_join(&producers[index]), 0);
+        check_equal(atomic_load(&failures), 0);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_accepted,
+                    UINT64_C(1) + (uint64_t)TOTAL_OTHER_EVENTS);
+        check_equal(stats.external_completed, stats.external_accepted);
+        check_equal(stats.external_failed, UINT64_C(0));
+        check_equal(stats.external_cancelled, UINT64_C(0));
+        check_equal(stats.external_pending, (size_t)0u);
+        check_equal(stats.external_in_flight, (size_t)0u);
+        rtc_destroy(&fixture);
     }
 }
