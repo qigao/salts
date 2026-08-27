@@ -41,6 +41,27 @@ cmake_add_test(cflow_stream_execution_test
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_adapter_lifecycle_test
+  SOURCES cflow_adapter_lifecycle_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_stream_terminal_test
+  SOURCES cflow_stream_terminal_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_status_test
+  SOURCES cflow_status_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_backend_test
+  SOURCES cflow_backend_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_runtime_test
   SOURCES
     cflow_runtime_test.c
@@ -86,6 +107,11 @@ cmake_add_test(cflow_statechart_runtime_test
   SOURCES cflow_statechart_runtime_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_statechart_runtime_adapter_test
+  SOURCES cflow_statechart_runtime_adapter_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_statechart_hierarchy_adapter_test
@@ -197,6 +223,10 @@ set_target_properties(
   cflow_pipeline_test
   cflow_stream_slice_test
   cflow_stream_execution_test
+  cflow_adapter_lifecycle_test
+  cflow_stream_terminal_test
+  cflow_status_test
+  cflow_backend_test
   cflow_runtime_test
   cflow_readiness_test
   cflow_event_mailbox_test
@@ -204,6 +234,7 @@ set_target_properties(
   cflow_machine_hierarchy_test
   cflow_statechart_test
   cflow_statechart_runtime_test
+  cflow_statechart_runtime_adapter_test
   cflow_statechart_hierarchy_adapter_test
   cflow_machine_runtime_test
   cflow_actor_test

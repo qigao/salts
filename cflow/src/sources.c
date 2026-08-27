@@ -53,19 +53,31 @@ CMETA_IMPLEMENTS(cflow_source, array_source,
     .poll_terminal = source_open_terminal
 );
 
+cmeta_status cflow_source_from_array_checked(
+    cflow_source *out,
+    const cmeta_type_desc *type,
+    const void *data,
+    size_t count) {
+    array_state *s;
+
+    if (!out || cflow_source_valid(out) || !cmeta_type_desc_valid(type) ||
+        (count && !data) ||
+        (count != 0u && type->size > SIZE_MAX / count))
+        return CMETA_INVALID_ARGUMENT;
+    if (!cflow_value_type_supported(type))
+        return CMETA_TRAIT_MISSING;
+    s = calloc(1, sizeof(*s));
+    if (!s) return CMETA_OUT_OF_MEMORY;
+    s->data = (const unsigned char *)data; s->type = type; s->count = count;
+    *out = array_source_as_cflow_source(s);
+    return CMETA_OK;
+}
+
 bool cflow_source_from_array(cflow_source *out,
                              const cmeta_type_desc *type,
                              const void *data,
                              size_t count) {
-    if (!out || cflow_source_valid(out) || !cmeta_type_desc_valid(type) ||
-        !cflow_value_type_supported(type) || (count && !data) ||
-        (count != 0u && type->size > SIZE_MAX / count))
-        return false;
-    array_state *s = calloc(1, sizeof(*s));
-    if (!s) return false;
-    s->data = (const unsigned char *)data; s->type = type; s->count = count;
-    *out = array_source_as_cflow_source(s);
-    return true;
+    return cflow_source_from_array_checked(out, type, data, count) == CMETA_OK;
 }
 
 /* ---------------- CMeta Range ---------------- */

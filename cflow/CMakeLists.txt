@@ -51,6 +51,7 @@ endif()
 add_library(${TARGET_NAME}
   src/adapters.c
   src/actor.c
+  src/backend.c
   src/certificate.c
   src/clock.c
   src/coord.c
@@ -84,6 +85,7 @@ add_library(${TARGET_NAME}
   src/statechart.c
   src/statechart_hierarchy_adapter.c
   src/statechart_runtime.c
+  src/status.c
   src/stream.c
   src/stream_execution.c
   src/subrun.c

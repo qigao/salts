@@ -222,6 +222,41 @@ static bool step_filter(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
     return true;
 }
 
+static bool step_take(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
+    if (!i || !v || !i->has_size_parameter ||
+        !cmeta_type_equal(v->type, i->input_type) ||
+        !cmeta_type_equal(i->input_type, i->output_type))
+        return false;
+    if (i->size_parameter == 0u) {
+        vec_destroy(v);
+        v->type = i->output_type;
+        return true;
+    }
+    if (v->count > i->size_parameter)
+        v->count = i->size_parameter;
+    return true;
+}
+
+static bool step_skip(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
+    size_t remaining;
+    if (!i || !v || !i->has_size_parameter ||
+        !cmeta_type_equal(v->type, i->input_type) ||
+        !cmeta_type_equal(i->input_type, i->output_type))
+        return false;
+    if (i->size_parameter >= v->count) {
+        vec_destroy(v);
+        v->type = i->output_type;
+        return true;
+    }
+    if (i->size_parameter == 0u) return true;
+    remaining = v->count - i->size_parameter;
+    memmove(v->data,
+            v->data + i->size_parameter * v->type->size,
+            remaining * v->type->size);
+    v->count = remaining;
+    return true;
+}
+
 static bool step_map(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
     if (!i || !v || !i->fn_chain_count || !cmeta_type_equal(v->type, i->input_type)) return false;
     cflow_plan_value_vec cur = *v;
@@ -309,6 +344,8 @@ cflow_plan_step_fn cflow_plan_step_for_opcode(cflow_plan_opcode opcode) {
         case CMETA_PLAN_MAP: return step_map;
         case CMETA_PLAN_FLAT_MAP: return step_flat_map;
         case CMETA_PLAN_REDUCE: return step_reduce;
+        case CMETA_PLAN_TAKE: return step_take;
+        case CMETA_PLAN_SKIP: return step_skip;
     }
     return NULL;
 }

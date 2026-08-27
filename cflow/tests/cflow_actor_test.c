@@ -611,6 +611,8 @@ suite("CFlow Actor lifecycle") {
         const cflow_event_view event = {
             100u, &cmeta_type_bool, &payload};
         cflow_actor_stats stats = {0};
+        cflow_statechart_actor_stats wrong_stats;
+        cflow_statechart_actor_stats wrong_snapshot;
 
         check_true(actor_fixture_init(&fixture));
         check_equal(cflow_actor_current_state(&fixture.actor),
@@ -631,6 +633,12 @@ suite("CFlow Actor lifecycle") {
         check_true(cflow_actor_get_stats(&fixture.actor, &stats));
         check_equal(stats.rejected_not_started, (uint64_t)1u);
         check_equal(stats.rejected_stopped, (uint64_t)1u);
+        memset(&wrong_stats, 0x5a, sizeof(wrong_stats));
+        wrong_snapshot = wrong_stats;
+        check_false(cflow_statechart_actor_get_stats(
+            &fixture.actor, &wrong_stats));
+        check_equal(memcmp(&wrong_stats, &wrong_snapshot,
+                           sizeof(wrong_stats)), 0);
 
         cflow_actor_ref_release(&retained);
         cflow_actor_ref_release(&ref);

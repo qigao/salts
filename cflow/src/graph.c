@@ -42,18 +42,22 @@ static const cflow_op_schema schemas[CFLOW_OP_COUNT] = {
         SUBGRAPH_RULE(subgraphrule_), CMETA_STR(semantic_), (cmeta_effects)(intrinsic_effects_) },
 Replay(CFlowOperators, CFLOW_OP_ROW)
 #undef CFLOW_OP_ROW
-    [CFLOW_OP_TAKE] = {
-        CFLOW_OP_TAKE, "take", 1u, -1, -1, 0u,
-        {CFLOW_PARAM_NONE, CFLOW_PARAM_NONE, CFLOW_PARAM_NONE},
+    [CFLOW_OP_TAKE] = { CFLOW_OP_TAKE, "take", 1u, -1, -1, 0u,
+        { CFLOW_PARAM_NONE, CFLOW_PARAM_NONE, CFLOW_PARAM_NONE },
         CFLOW_RETURN_INPUT, CFLOW_OUTPUT_SAME, CMETA_CARD_FILTER,
-        CFLOW_SUBGRAPH_NONE, "take", CMETA_EFFECT_STATEFUL
-    },
-    [CFLOW_OP_SKIP] = {
-        CFLOW_OP_SKIP, "skip", 1u, -1, -1, 0u,
-        {CFLOW_PARAM_NONE, CFLOW_PARAM_NONE, CFLOW_PARAM_NONE},
+        CFLOW_SUBGRAPH_NONE, "take", CMETA_EFFECT_STATEFUL },
+    [CFLOW_OP_SKIP] = { CFLOW_OP_SKIP, "skip", 1u, -1, -1, 0u,
+        { CFLOW_PARAM_NONE, CFLOW_PARAM_NONE, CFLOW_PARAM_NONE },
         CFLOW_RETURN_INPUT, CFLOW_OUTPUT_SAME, CMETA_CARD_FILTER,
-        CFLOW_SUBGRAPH_NONE, "skip", CMETA_EFFECT_STATEFUL
-    },
+        CFLOW_SUBGRAPH_NONE, "skip", CMETA_EFFECT_STATEFUL },
+    [CFLOW_OP_DISTINCT] = { CFLOW_OP_DISTINCT, "distinct", 1u, -1, -1, 0u,
+        { CFLOW_PARAM_NONE, CFLOW_PARAM_NONE, CFLOW_PARAM_NONE },
+        CFLOW_RETURN_INPUT, CFLOW_OUTPUT_SAME, CMETA_CARD_FILTER,
+        CFLOW_SUBGRAPH_NONE, "distinct", CMETA_EFFECT_STATEFUL },
+    [CFLOW_OP_SORTED] = { CFLOW_OP_SORTED, "sorted", 1u, -1, -1, 0u,
+        { CFLOW_PARAM_NONE, CFLOW_PARAM_NONE, CFLOW_PARAM_NONE },
+        CFLOW_RETURN_INPUT, CFLOW_OUTPUT_SAME, CMETA_CARD_FILTER,
+        CFLOW_SUBGRAPH_NONE, "sorted", CMETA_EFFECT_STATEFUL },
 };
 
 #undef P_RULE
@@ -96,6 +100,8 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
         case CFLOW_OP_RELATION:
         case CFLOW_OP_TAKE:
         case CFLOW_OP_SKIP:
+        case CFLOW_OP_DISTINCT:
+        case CFLOW_OP_SORTED:
         case CFLOW_OP_COUNT:
             return false;
     }
@@ -568,14 +574,11 @@ bool cflow_graph_create_slice_node(cflow_graph *g,
                                    cflow_subgraph_id subgraph,
                                    cflow_op op,
                                    const cmeta_type_desc *input_type,
-                                   size_t count,
+                                   size_t limit,
                                    cflow_node_id *out_node) {
     uint64_t version;
     cflow_subgraph *sg = g && subgraph < g->subgraph_count
         ? &g->subgraphs[subgraph] : NULL;
-    cflow_node node = {0};
-    cflow_node_id id;
-
     if (!sg || !out_node || !cmeta_type_desc_valid(input_type))
         return fail(g, "invalid slice node arguments");
     if (op != CFLOW_OP_TAKE && op != CFLOW_OP_SKIP)
@@ -583,14 +586,85 @@ bool cflow_graph_create_slice_node(cflow_graph *g,
     if (!cflow_graph_version_acquire(&version))
         return fail(g, "graph version space exhausted");
 
+    cflow_node node = {0};
     node.op = op;
     node.input_type = input_type;
     node.output_type = input_type;
-    node.slice.present = true;
-    node.slice.count = count;
-    id = subgraph_append_node(sg, node);
+    node.has_size_parameter = true;
+    node.size_parameter = limit;
+    node.param_kind = op == CFLOW_OP_TAKE
+        ? CFLOW_NODE_PARAM_TAKE : CFLOW_NODE_PARAM_SKIP;
+    if (op == CFLOW_OP_TAKE) node.params.take.count = limit;
+    else node.params.skip.count = limit;
+    cflow_node_id id = subgraph_append_node(sg, node);
     if (id == CMETA_INVALID_ID)
         return fail(g, "slice node allocation failed");
+    g->version = version;
+    g->error = NULL;
+    *out_node = id;
+    return true;
+}
+
+bool cflow_graph_create_distinct_node(cflow_graph *g,
+                                      cflow_subgraph_id subgraph,
+                                      const cmeta_type_desc *input_type,
+                                      size_t max_unique,
+                                      cflow_node_id *out_node) {
+    uint64_t version;
+    cflow_subgraph *sg = g && subgraph < g->subgraph_count
+        ? &g->subgraphs[subgraph] : NULL;
+    cflow_node node = {0};
+    cflow_node_id id;
+    const cmeta_trait_flags required = CMETA_TRAIT_HASH | CMETA_TRAIT_EQUAL;
+
+    if (!sg || !out_node || !cmeta_type_desc_valid(input_type) ||
+        max_unique == 0u)
+        return fail(g, "invalid distinct node arguments");
+    if (cmeta_type_require_traits(input_type, required) != CMETA_OK)
+        return fail(g, "distinct requires HASH and EQUAL traits");
+    if (!cflow_graph_version_acquire(&version))
+        return fail(g, "graph version space exhausted");
+    node.op = CFLOW_OP_DISTINCT;
+    node.input_type = input_type;
+    node.output_type = input_type;
+    node.param_kind = CFLOW_NODE_PARAM_DISTINCT;
+    node.params.distinct.max_unique = max_unique;
+    id = subgraph_append_node(sg, node);
+    if (id == CMETA_INVALID_ID)
+        return fail(g, "distinct node allocation failed");
+    g->version = version;
+    g->error = NULL;
+    *out_node = id;
+    return true;
+}
+
+bool cflow_graph_create_sorted_node(cflow_graph *g,
+                                    cflow_subgraph_id subgraph,
+                                    const cmeta_type_desc *input_type,
+                                    size_t max_elements,
+                                    cflow_node_id *out_node) {
+    cflow_subgraph *sg;
+    cflow_node node = {0};
+    cflow_node_id id;
+    uint64_t version;
+    const cmeta_trait_flags required = CMETA_TRAIT_COMPARE |
+        CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY;
+    if (!g || subgraph >= g->subgraph_count || !input_type ||
+        max_elements == 0u || !out_node)
+        return fail(g, "invalid sorted node arguments");
+    if (cmeta_type_require_traits(input_type, required) != CMETA_OK)
+        return fail(g, "sorted requires COMPARE and lifecycle traits");
+    if (!cflow_graph_version_acquire(&version))
+        return fail(g, "graph version space exhausted");
+    sg = &g->subgraphs[subgraph];
+    node.op = CFLOW_OP_SORTED;
+    node.input_type = input_type;
+    node.output_type = input_type;
+    node.param_kind = CFLOW_NODE_PARAM_SORTED;
+    node.params.sorted.max_elements = max_elements;
+    id = subgraph_append_node(sg, node);
+    if (id == CMETA_INVALID_ID)
+        return fail(g, "sorted node allocation failed");
     g->version = version;
     g->error = NULL;
     *out_node = id;
@@ -812,7 +886,7 @@ bool cflow_graph_add(cflow_graph *g, cflow_op op,
     return true;
 }
 
-static bool graph_add_slice(cflow_graph *g, cflow_op op, size_t count) {
+static bool graph_add_slice(cflow_graph *g, cflow_op op, size_t limit) {
     uint64_t version;
     cflow_subgraph *root;
     cflow_node node = {0};
@@ -825,13 +899,16 @@ static bool graph_add_slice(cflow_graph *g, cflow_op op, size_t count) {
         return fail(g, "slice operator is invalid");
     if (!cflow_graph_version_acquire(&version))
         return fail(g, "graph version space exhausted");
-
     root = &g->subgraphs[g->root];
     node.op = op;
     node.input_type = root->output_type;
     node.output_type = root->output_type;
-    node.slice.present = true;
-    node.slice.count = count;
+    node.has_size_parameter = true;
+    node.size_parameter = limit;
+    node.param_kind = op == CFLOW_OP_TAKE
+        ? CFLOW_NODE_PARAM_TAKE : CFLOW_NODE_PARAM_SKIP;
+    if (op == CFLOW_OP_TAKE) node.params.take.count = limit;
+    else node.params.skip.count = limit;
     old_tail = root->tail;
     id = subgraph_append_node(root, node);
     if (id == CMETA_INVALID_ID)
@@ -856,6 +933,82 @@ bool cflow_graph_take(cflow_graph *g, size_t limit) {
 
 bool cflow_graph_skip(cflow_graph *g, size_t count) {
     return graph_add_slice(g, CFLOW_OP_SKIP, count);
+}
+
+bool cflow_graph_distinct(cflow_graph *g, size_t max_unique) {
+    uint64_t version;
+    cflow_subgraph *root;
+    cflow_node node = {0};
+    cflow_node_id old_tail;
+    cflow_node_id id;
+    const cmeta_trait_flags required = CMETA_TRAIT_HASH | CMETA_TRAIT_EQUAL;
+
+    if (!g || g->root >= g->subgraph_count)
+        return fail(g, "graph is not initialized");
+    root = &g->subgraphs[g->root];
+    if (max_unique == 0u)
+        return fail(g, "distinct max_unique must be nonzero");
+    if (cmeta_type_require_traits(root->output_type, required) != CMETA_OK)
+        return fail(g, "distinct requires HASH and EQUAL traits");
+    if (!cflow_graph_version_acquire(&version))
+        return fail(g, "graph version space exhausted");
+    node.op = CFLOW_OP_DISTINCT;
+    node.input_type = root->output_type;
+    node.output_type = root->output_type;
+    node.param_kind = CFLOW_NODE_PARAM_DISTINCT;
+    node.params.distinct.max_unique = max_unique;
+    old_tail = root->tail;
+    id = subgraph_append_node(root, node);
+    if (id == CMETA_INVALID_ID)
+        return fail(g, "distinct node allocation failed");
+    if (old_tail != CMETA_INVALID_ID &&
+        !subgraph_add_edge(root, old_tail, id)) {
+        node_destroy(&root->nodes[id]);
+        --root->node_count;
+        root->tail = old_tail;
+        root->output_type = old_tail < root->node_count
+            ? root->nodes[old_tail].output_type : root->input_type;
+        return fail(g, "edge allocation failed");
+    }
+    g->version = version;
+    g->error = NULL;
+    return true;
+}
+
+bool cflow_graph_sorted(cflow_graph *g, size_t max_elements) {
+    cflow_subgraph *root;
+    cflow_node node = {0};
+    cflow_node_id old_tail;
+    cflow_node_id id;
+    uint64_t version;
+    const cmeta_trait_flags required = CMETA_TRAIT_COMPARE |
+        CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY;
+    if (!g || g->root >= g->subgraph_count)
+        return fail(g, "invalid graph");
+    root = &g->subgraphs[g->root];
+    if (max_elements == 0u)
+        return fail(g, "sorted max_elements must be nonzero");
+    if (cmeta_type_require_traits(root->output_type, required) != CMETA_OK)
+        return fail(g, "sorted requires COMPARE and lifecycle traits");
+    if (!cflow_graph_version_acquire(&version))
+        return fail(g, "graph version space exhausted");
+    node.op = CFLOW_OP_SORTED;
+    node.input_type = root->output_type;
+    node.output_type = root->output_type;
+    node.param_kind = CFLOW_NODE_PARAM_SORTED;
+    node.params.sorted.max_elements = max_elements;
+    old_tail = root->tail;
+    id = subgraph_append_node(root, node);
+    if (id == CMETA_INVALID_ID)
+        return fail(g, "sorted node allocation failed");
+    if (old_tail != CMETA_INVALID_ID &&
+        !cflow_graph_connect(g, g->root, old_tail, 0u, id, 0u))
+        return false;
+    root->tail = id;
+    root->output_type = node.output_type;
+    g->version = version;
+    g->error = NULL;
+    return true;
 }
 
 
@@ -1057,18 +1210,52 @@ static bool validate_subgraph_nodes(const cflow_graph *g,
                                     const char **error) {
     for (size_t n = 0; n < sg->node_count; ++n) {
         const cflow_node *node = &sg->nodes[n];
-        bool is_slice = node->op == CFLOW_OP_TAKE ||
-                        node->op == CFLOW_OP_SKIP;
+        const bool is_slice = node->op == CFLOW_OP_TAKE ||
+                              node->op == CFLOW_OP_SKIP;
+        const bool is_distinct = node->op == CFLOW_OP_DISTINCT;
+        const bool is_sorted = node->op == CFLOW_OP_SORTED;
         if (is_slice) {
-            if (!node->slice.present || node->has_fn ||
+            if (!node->has_size_parameter || node->has_fn ||
                 node->fn_chain_count != 0u || node->has_relation ||
                 node->subgraph_count != 0u ||
+                node->param_kind != (node->op == CFLOW_OP_TAKE
+                    ? CFLOW_NODE_PARAM_TAKE : CFLOW_NODE_PARAM_SKIP) ||
+                node->size_parameter != (node->op == CFLOW_OP_TAKE
+                    ? node->params.take.count : node->params.skip.count) ||
                 !cmeta_type_equal(node->input_type, node->output_type)) {
                 if (error) *error = "slice node metadata is inconsistent";
                 return false;
             }
-        } else if (node->slice.present || node->slice.count != 0u) {
-            if (error) *error = "non-slice node carries slice metadata";
+        } else if (node->has_size_parameter) {
+            if (error) *error = "non-slice node carries a size parameter";
+            return false;
+        } else if (is_distinct) {
+            if (node->param_kind != CFLOW_NODE_PARAM_DISTINCT ||
+                node->params.distinct.max_unique == 0u || node->has_fn ||
+                node->fn_chain_count != 0u || node->has_relation ||
+                node->subgraph_count != 0u ||
+                cmeta_type_require_traits(
+                    node->input_type,
+                    CMETA_TRAIT_HASH | CMETA_TRAIT_EQUAL) != CMETA_OK ||
+                !cmeta_type_equal(node->input_type, node->output_type)) {
+                if (error) *error = "distinct node metadata is inconsistent";
+                return false;
+            }
+        } else if (is_sorted) {
+            const cmeta_trait_flags required = CMETA_TRAIT_COMPARE |
+                CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY;
+            if (node->param_kind != CFLOW_NODE_PARAM_SORTED ||
+                node->params.sorted.max_elements == 0u || node->has_fn ||
+                node->fn_chain_count != 0u || node->has_relation ||
+                node->subgraph_count != 0u ||
+                cmeta_type_require_traits(node->input_type, required) !=
+                    CMETA_OK ||
+                !cmeta_type_equal(node->input_type, node->output_type)) {
+                if (error) *error = "sorted node metadata is inconsistent";
+                return false;
+            }
+        } else if (node->param_kind != CFLOW_NODE_PARAM_NONE) {
+            if (error) *error = "operator carries an unexpected typed parameter";
             return false;
         }
         if (node->has_fn && !cmeta_callable_contract_valid(node->fn)) {

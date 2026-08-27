@@ -120,11 +120,21 @@ static bool append_plain_node(opt_ctx *ctx, cflow_subgraph_id sgid,
         op = CFLOW_OP_MAP;
         if (ctx->stats) ++ctx->stats->transforms_canonicalized;
     }
-    bool created = op == CFLOW_OP_TAKE || op == CFLOW_OP_SKIP
-        ? cflow_graph_create_slice_node(
-              ctx->dst, sgid, op, src->input_type, src->slice.count, out)
-        : cflow_graph_create_node(
-              ctx->dst, sgid, op, src->fn, nested, nested_count, out);
+    bool created;
+    if (op == CFLOW_OP_TAKE || op == CFLOW_OP_SKIP)
+        created = cflow_graph_create_slice_node(
+            ctx->dst, sgid, op, src->input_type, src->size_parameter, out);
+    else if (op == CFLOW_OP_DISTINCT)
+        created = cflow_graph_create_distinct_node(
+            ctx->dst, sgid, src->input_type,
+            src->params.distinct.max_unique, out);
+    else if (op == CFLOW_OP_SORTED)
+        created = cflow_graph_create_sorted_node(
+            ctx->dst, sgid, src->input_type,
+            src->params.sorted.max_elements, out);
+    else
+        created = cflow_graph_create_node(
+            ctx->dst, sgid, op, src->fn, nested, nested_count, out);
     if (!created) {
         ctx->error = ctx->dst->error ? ctx->dst->error : "optimizer node creation failed";
         return false;

@@ -25,17 +25,29 @@ typedef enum cflow_op {
 #define CFLOW_OP_ROW(E, method, margc, fnarg, subgrapharg, farity, p0, p1, p2, ret, out, card, subgraphrule, semantic, intrinsic_effects) CFLOW_OP_##E,
 Replay(CFlowOperators, CFLOW_OP_ROW)
 #undef CFLOW_OP_ROW
-    /* Positional operators are appended to preserve existing opcode values. */
+    /* Intrinsic operators are appended so existing opcode values remain
+     * stable. They carry typed parameters but no user callable. */
     CFLOW_OP_TAKE,
     CFLOW_OP_SKIP,
+    CFLOW_OP_DISTINCT,
+    CFLOW_OP_SORTED,
     CFLOW_OP_COUNT
 } cflow_op;
 
-typedef struct cflow_slice_parameter {
-    /* Public read-only IR metadata; mutate only through Graph builders. */
-    bool present;
-    size_t count;
-} cflow_slice_parameter;
+typedef enum cflow_node_param_kind {
+    CFLOW_NODE_PARAM_NONE = 0,
+    CFLOW_NODE_PARAM_TAKE,
+    CFLOW_NODE_PARAM_SKIP,
+    CFLOW_NODE_PARAM_DISTINCT,
+    CFLOW_NODE_PARAM_SORTED
+} cflow_node_param_kind;
+
+typedef union cflow_node_params {
+    struct { size_t count; } take;
+    struct { size_t count; } skip;
+    struct { size_t max_unique; } distinct;
+    struct { size_t max_elements; } sorted;
+} cflow_node_params;
 
 Enum(cflow_param_rule,
     (CFLOW_PARAM_NONE,     "none"),
@@ -138,8 +150,15 @@ typedef struct cflow_node {
     const cmeta_type_desc *output_type;
     cflow_subgraph_id *subgraphs; /* graph-owned nested IR references */
     size_t subgraph_count;
-    /* Immutable Graph metadata. Mutable position belongs to each Run. */
-    cflow_slice_parameter slice;
+    /* Immutable Graph parameter. Present only for TAKE/SKIP; each execution
+     * owns its mutable positional counter separately. */
+    bool has_size_parameter;
+    size_t size_parameter;
+    /* Typed semantic parameters. TAKE/SKIP retain their legacy size fields as
+     * a compatibility mirror; stateful operators use this union as the
+     * canonical representation. */
+    cflow_node_param_kind param_kind;
+    cflow_node_params params;
 } cflow_node;
 
 typedef struct cflow_subgraph {
@@ -188,21 +207,24 @@ bool cflow_graph_create_node(cflow_graph *g,
                              const cflow_subgraph_id *nested,
                              size_t nested_count,
                              cflow_node_id *out_node);
-/**
- * Append one detached TAKE or SKIP node to `subgraph`.
- *
- * `input_type` is borrowed with the Graph and is also the output type. `count`
- * is immutable Graph metadata; execution position belongs to each Run.
- * Returns false for invalid arguments/opcodes, version exhaustion, or
- * allocation failure. On success `out_node` receives the new node id; callers
- * wire its data edges and select the subgraph exit explicitly.
- */
+/* Create a detached TAKE/SKIP node. input_type and limit are immutable Graph
+ * metadata; mutable position belongs to each execution. */
 bool cflow_graph_create_slice_node(cflow_graph *g,
                                    cflow_subgraph_id subgraph,
                                    cflow_op op,
                                    const cmeta_type_desc *input_type,
-                                   size_t count,
+                                   size_t limit,
                                    cflow_node_id *out_node);
+bool cflow_graph_create_distinct_node(cflow_graph *g,
+                                      cflow_subgraph_id subgraph,
+                                      const cmeta_type_desc *input_type,
+                                      size_t max_unique,
+                                      cflow_node_id *out_node);
+bool cflow_graph_create_sorted_node(cflow_graph *g,
+                                    cflow_subgraph_id subgraph,
+                                    const cmeta_type_desc *input_type,
+                                    size_t max_elements,
+                                    cflow_node_id *out_node);
 bool cflow_graph_create_relation_node(cflow_graph *g,
                                       cflow_subgraph_id subgraph,
                                       const cmeta_type_desc *input_type,
@@ -223,10 +245,17 @@ bool cflow_graph_set_subgraph_exit(cflow_graph *g,
 
 bool cflow_graph_add(cflow_graph *g, cflow_op op, cmeta_callable fn,
                      const cflow_graph *nested_graph);
-/** Append a linear TAKE node that forwards at most `limit` arriving values. */
+/* Positional intermediate operations. TAKE short-circuits upstream; SKIP
+ * discards without consuming downstream demand. */
 bool cflow_graph_take(cflow_graph *g, size_t limit);
-/** Append a linear SKIP node that drops the first `count` arriving values. */
 bool cflow_graph_skip(cflow_graph *g, size_t count);
+/* Preserve first-encounter order. max_unique is a nonzero hard bound; a new
+ * value beyond it fails execution instead of being dropped or spilling. */
+bool cflow_graph_distinct(cflow_graph *g, size_t max_unique);
+/* Stable ascending order from the type's COMPARE trait. max_elements is a
+ * nonzero hard materialization bound; overflow fails before any buffered
+ * value is emitted. */
+bool cflow_graph_sorted(cflow_graph *g, size_t max_elements);
 
 /* Data-driven structured relation. Every branch is snapshot-imported as a
  * Subgraph and receives the current value at the relation node. The relation

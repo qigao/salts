@@ -15,6 +15,12 @@ bool cflow_resumable_from_relation(cflow_resumable *out,
                                     const cflow_graph *graph,
                                     const cflow_node *node,
                                     const void *input);
+bool cflow_resumable_from_relation_with_options(
+    cflow_resumable *out,
+    const cflow_graph *graph,
+    const cflow_node *node,
+    const void *input,
+    const cflow_eval_options *options);
 
 #ifdef __cplusplus
 }
