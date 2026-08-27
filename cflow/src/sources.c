@@ -57,7 +57,7 @@ bool cflow_source_from_array(cflow_source *out,
                              const cmeta_type_desc *type,
                              const void *data,
                              size_t count) {
-    if (!out || !cmeta_type_desc_valid(type) ||
+    if (!out || cflow_source_valid(out) || !cmeta_type_desc_valid(type) ||
         !cflow_value_type_supported(type) || (count && !data) ||
         (count != 0u && type->size > SIZE_MAX / count))
         return false;
@@ -117,10 +117,12 @@ cmeta_status cflow_source_from_range_checked(cflow_source *out,
 
     if (out_error)
         *out_error = NULL;
-    if (!out || !range.object || !range.next ||
+    if (!out || cflow_source_valid(out) || !range.object || !range.next ||
         !cmeta_type_desc_valid(range.element_type)) {
         if (out_error)
-            *out_error = "invalid range source";
+            *out_error = out && cflow_source_valid(out)
+                ? "range source destination is occupied"
+                : "invalid range source";
         return CMETA_INVALID_ARGUMENT;
     }
     if (!cflow_value_type_supported(range.element_type)) {
@@ -156,28 +158,131 @@ typedef struct timer_state {
     size_t emitted;
     uint64_t interval;
     bool ready;
+    bool scheduled;
+    bool callback_outstanding;
+    bool source_live;
     cflow_scheduler *scheduler;
     cflow_task_id task;
     cflow_waker waker;
+    turbo_mutex_t lock;
+    turbo_cond_t changed;
+    size_t references;
+    size_t wake_inflight;
 } timer_state;
+
+static TURBO_THREAD_LOCAL timer_state *timer_active_callback;
+
+static void timer_state_release(timer_state *s) {
+    bool destroy = false;
+    if (!s) return;
+    turbo_mutex_lock(&s->lock);
+    if (s->references != 0u) {
+        --s->references;
+        destroy = s->references == 0u;
+    }
+    turbo_mutex_unlock(&s->lock);
+    if (!destroy) return;
+    turbo_cond_destroy(&s->changed);
+    turbo_mutex_destroy(&s->lock);
+    free(s);
+}
 
 static void timer_fire(void *user) {
     timer_state *s = (timer_state *)user;
-    s->task = 0; s->ready = true;
-    cflow_waker w = s->waker; s->waker = (cflow_waker){0};
-    if (w.wake) w.wake(w.user);
+    timer_state *previous;
+    cflow_waker w = {0};
+    if (!s) return;
+    turbo_mutex_lock(&s->lock);
+    if (s->scheduled) {
+        s->scheduled = false;
+        s->task = 0u;
+        if (s->source_live) {
+            s->ready = true;
+            w = s->waker;
+            if (w.wake) ++s->wake_inflight;
+        }
+        s->waker = (cflow_waker){0};
+    }
+    s->callback_outstanding = false;
+    turbo_cond_broadcast(&s->changed);
+    turbo_mutex_unlock(&s->lock);
+    if (w.wake) {
+        previous = timer_active_callback;
+        timer_active_callback = s;
+        w.wake(w.user);
+        timer_active_callback = previous;
+        turbo_mutex_lock(&s->lock);
+        --s->wake_inflight;
+        turbo_cond_broadcast(&s->changed);
+        turbo_mutex_unlock(&s->lock);
+    }
+    timer_state_release(s);
 }
 static bool timer_arm(void *state, cflow_waker w) {
     timer_state *s = (timer_state *)state;
-    if (!s || !s->scheduler || s->task) return false;
+    cflow_scheduler *scheduler;
+    cflow_task_id task;
+    uint64_t interval;
+    if (!s || !w.wake) return false;
+    turbo_mutex_lock(&s->lock);
+    if (!s->source_live || !s->scheduler || s->scheduled ||
+        s->callback_outstanding || s->ready) {
+        turbo_mutex_unlock(&s->lock);
+        return false;
+    }
+    scheduler = s->scheduler;
+    interval = s->interval;
+    s->scheduled = true;
+    s->callback_outstanding = true;
     s->waker = w;
-    s->task = cflow_scheduler_post_after(s->scheduler, s->interval, timer_fire, s);
-    return s->task != 0;
+    s->references += 2u; /* posting call and accepted callback */
+    turbo_mutex_unlock(&s->lock);
+
+    task = cflow_scheduler_post_after(scheduler, interval, timer_fire, s);
+    turbo_mutex_lock(&s->lock);
+    if (task != 0u && s->scheduled)
+        s->task = task;
+    else if (task == 0u) {
+        s->scheduled = false;
+        s->callback_outstanding = false;
+        s->waker = (cflow_waker){0};
+        turbo_cond_broadcast(&s->changed);
+    }
+    turbo_mutex_unlock(&s->lock);
+    if (task == 0u)
+        timer_state_release(s); /* rejected callback reference */
+    timer_state_release(s); /* posting reference */
+    return task != 0u;
 }
 static void timer_wait_cancel(void *state) {
     timer_state *s = (timer_state *)state;
-    if (s && s->task) { (void)cflow_scheduler_cancel(s->scheduler, s->task); s->task = 0; }
-    if (s) s->waker = (cflow_waker){0};
+    cflow_scheduler *scheduler = NULL;
+    cflow_task_id task = 0u;
+    bool cancelled = false;
+    if (!s) return;
+    turbo_mutex_lock(&s->lock);
+    if (s->scheduled) {
+        scheduler = s->scheduler;
+        task = s->task;
+        s->scheduled = false;
+        s->task = 0u;
+    }
+    s->ready = false;
+    s->waker = (cflow_waker){0};
+    turbo_mutex_unlock(&s->lock);
+    if (scheduler && task != 0u)
+        cancelled = cflow_scheduler_cancel(scheduler, task);
+    if (cancelled) {
+        turbo_mutex_lock(&s->lock);
+        s->callback_outstanding = false;
+        turbo_cond_broadcast(&s->changed);
+        turbo_mutex_unlock(&s->lock);
+        timer_state_release(s);
+    }
+    turbo_mutex_lock(&s->lock);
+    while (s->wake_inflight != 0u && timer_active_callback != s)
+        turbo_cond_wait(&s->changed, &s->lock);
+    turbo_mutex_unlock(&s->lock);
 }
 CMETA_IMPLEMENTS(cflow_waitable, timer_waitable, 0,
     .arm = timer_arm,
@@ -185,17 +290,41 @@ CMETA_IMPLEMENTS(cflow_waitable, timer_waitable, 0,
 );
 static cflow_step timer_resume(void *state, cflow_resume_ctx *ctx, void *out) {
     timer_state *s = (timer_state *)state;
+    cflow_step_kind kind;
+    size_t value;
     if (!s || !ctx || !ctx->scheduler) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "timer has no scheduler" };
+    turbo_mutex_lock(&s->lock);
+    if (!s->source_live) {
+        turbo_mutex_unlock(&s->lock);
+        return (cflow_step){ CFLOW_STEP_ERROR, {0}, "timer source unavailable" };
+    }
     s->scheduler = ctx->scheduler;
-    if (s->emitted >= s->count) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
-    if (!s->ready) return (cflow_step){ CFLOW_STEP_WAIT, timer_waitable_as_cflow_waitable(s), NULL };
+    if (s->emitted >= s->count) {
+        turbo_mutex_unlock(&s->lock);
+        return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
+    }
+    if (!s->ready) {
+        turbo_mutex_unlock(&s->lock);
+        return (cflow_step){ CFLOW_STEP_WAIT, timer_waitable_as_cflow_waitable(s), NULL };
+    }
     s->ready = false;
-    size_t v = s->emitted++;
-    memcpy(out, &v, sizeof v);
-    return (cflow_step){ s->emitted == s->count ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE, {0}, NULL };
+    value = s->emitted++;
+    kind = s->emitted == s->count
+        ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE;
+    turbo_mutex_unlock(&s->lock);
+    memcpy(out, &value, sizeof value);
+    return (cflow_step){ kind, {0}, NULL };
 }
 static void timer_cancel(void *state) { timer_wait_cancel(state); }
-static void timer_destroy(void *state) { timer_wait_cancel(state); free(state); }
+static void timer_destroy(void *state) {
+    timer_state *s = (timer_state *)state;
+    if (!s) return;
+    turbo_mutex_lock(&s->lock);
+    s->source_live = false;
+    turbo_mutex_unlock(&s->lock);
+    timer_wait_cancel(s);
+    timer_state_release(s);
+}
 static const char *timer_name(void *state) { (void)state; return "timer"; }
 static const cmeta_type_desc *timer_type(void *state) { (void)state; return &cmeta_type_size; }
 CMETA_IMPLEMENTS(cflow_source, timer_source, 0,
@@ -211,10 +340,20 @@ CMETA_IMPLEMENTS(cflow_source, timer_source, 0,
 bool cflow_source_from_timer(cflow_source *out,
                              size_t count,
                              uint64_t interval_ticks) {
-    if (!out) return false;
+    if (!out || cflow_source_valid(out)) return false;
     timer_state *s = calloc(1, sizeof(*s));
     if (!s) return false;
+    turbo_mutex_init(&s->lock);
+    turbo_cond_init(&s->changed);
+    if (!s->lock || !s->changed) {
+        turbo_cond_destroy(&s->changed);
+        turbo_mutex_destroy(&s->lock);
+        free(s);
+        return false;
+    }
     s->count = count; s->interval = interval_ticks;
+    s->source_live = true;
+    s->references = 1u;
     *out = timer_source_as_cflow_source(s);
     return true;
 }
@@ -229,16 +368,24 @@ typedef struct channel_impl {
     turbo_mutex_t lock;
     cflow_waker waiter;
     cflow_waker terminal_waker;
+    size_t peak_pending;
+    uint64_t accepted;
+    uint64_t received;
+    uint64_t rejected_full;
+    uint64_t rejected_closed;
 } channel_impl;
 
 typedef struct channel_source_state { channel_impl *ch; } channel_source_state;
 
 static channel_impl *channel_of(cflow_channel *ch) { return ch ? (channel_impl *)ch->impl : NULL; }
+static const channel_impl *channel_of_const(const cflow_channel *ch) {
+    return ch ? (const channel_impl *)ch->impl : NULL;
+}
 
 bool cflow_channel_init(cflow_channel *ch,
                         const cmeta_type_desc *type,
                         size_t capacity) {
-    if (!ch || !cflow_value_storage_type_supported(type) ||
+    if (!ch || ch->impl || !cflow_value_storage_type_supported(type) ||
         type->size == 0u || capacity == 0u ||
         capacity > SIZE_MAX / type->size)
         return false;
@@ -255,16 +402,50 @@ bool cflow_channel_init(cflow_channel *ch,
     c->type = type; c->capacity = capacity; ch->impl = c; return true;
 }
 
-bool cflow_channel_push(cflow_channel *ch, const void *value) {
+cflow_channel_status cflow_channel_try_push(cflow_channel *ch,
+                                            const void *value) {
     channel_impl *c = channel_of(ch);
-    if (!c || !value) return false;
+    if (!c || !value) return CFLOW_CHANNEL_INVALID_ARGUMENT;
     turbo_mutex_lock(&c->lock);
-    if (c->closed || c->count == c->capacity) { turbo_mutex_unlock(&c->lock); return false; }
+    if (c->closed) {
+        ++c->rejected_closed;
+        turbo_mutex_unlock(&c->lock);
+        return CFLOW_CHANNEL_CLOSED;
+    }
+    if (c->count == c->capacity) {
+        ++c->rejected_full;
+        turbo_mutex_unlock(&c->lock);
+        return CFLOW_CHANNEL_FULL;
+    }
     size_t tail = (c->head + c->count) % c->capacity;
     memcpy(c->data + tail * c->type->size, value, c->type->size); ++c->count;
+    ++c->accepted;
+    if (c->count > c->peak_pending) c->peak_pending = c->count;
     cflow_waker w = c->waiter; c->waiter = (cflow_waker){0};
     turbo_mutex_unlock(&c->lock);
     if (w.wake) w.wake(w.user);
+    return CFLOW_CHANNEL_OK;
+}
+
+bool cflow_channel_push(cflow_channel *ch, const void *value) {
+    return cflow_channel_try_push(ch, value) == CFLOW_CHANNEL_OK;
+}
+
+bool cflow_channel_get_stats(const cflow_channel *ch,
+                             cflow_channel_stats *out) {
+    channel_impl *c = (channel_impl *)channel_of_const(ch);
+    if (!c || !out) return false;
+    turbo_mutex_lock(&c->lock);
+    *out = (cflow_channel_stats){
+        c->capacity,
+        c->count,
+        c->peak_pending,
+        c->accepted,
+        c->received,
+        c->rejected_full,
+        c->rejected_closed
+    };
+    turbo_mutex_unlock(&c->lock);
     return true;
 }
 
@@ -314,6 +495,7 @@ static cflow_step channel_resume(void *state, cflow_resume_ctx *ctx, void *out) 
     if (c->count) {
         memcpy(out, c->data + c->head * c->type->size, c->type->size);
         c->head = (c->head + 1) % c->capacity; --c->count;
+        ++c->received;
         bool final = c->closed && c->count == 0;
         turbo_mutex_unlock(&c->lock);
         return (cflow_step){ final ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE, {0}, NULL };
@@ -356,7 +538,7 @@ CMETA_IMPLEMENTS(cflow_source, channel_source, 0,
 );
 
 bool cflow_source_from_channel(cflow_source *out, cflow_channel *ch) {
-    channel_impl *c = channel_of(ch); if (!out || !c) return false;
+    channel_impl *c = channel_of(ch); if (!out || cflow_source_valid(out) || !c) return false;
     channel_source_state *s = calloc(1, sizeof(*s)); if (!s) return false;
     s->ch = c; *out = channel_source_as_cflow_source(s); return true;
 }
@@ -426,7 +608,8 @@ bool cflow_source_from_readiness(cflow_source *out,
                                  cflow_unwatch_fn cancel,
                                  cflow_resource_close_fn close,
                                  void *user) {
-    if (!out || !cflow_value_storage_type_supported(type) || !read || !arm)
+    if (!out || cflow_source_valid(out) ||
+        !cflow_value_storage_type_supported(type) || !read || !arm || !cancel)
         return false;
     readiness_state *s = calloc(1, sizeof(*s)); if (!s) return false;
     s->name = name ? name : "readiness"; s->type = type;

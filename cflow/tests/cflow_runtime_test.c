@@ -56,6 +56,7 @@ typedef struct pending_foreign_scheduler_state {
     size_t post_calls;
     size_t block_on_post;
     bool release_blocked_post;
+    bool run_inline;
     atomic_int blocked_posts;
     atomic_int cancel_calls;
 } pending_foreign_scheduler_state;
@@ -87,6 +88,11 @@ static cflow_schedule_result pending_foreign_try_post_after(
             turbo_cond_wait(&state->changed, &state->mutex);
     }
     id = ++state->next_id;
+    if (state->run_inline) {
+        turbo_mutex_unlock(&state->mutex);
+        fn(user);
+        return (cflow_schedule_result){CFLOW_ADMISSION_ACCEPTED, id};
+    }
     state->pending_fn = fn;
     state->pending_user = user;
     state->pending_id = id;
@@ -782,6 +788,82 @@ static bool destroy_reentrant_arm(void *user, cflow_waker waker) {
     (void)user;
     (void)waker;
     return true;
+}
+
+static void destroy_reentrant_cancel(void *user) { (void)user; }
+
+typedef struct readiness_order_state {
+    size_t sequence;
+    size_t cancel_calls;
+    size_t cancel_order;
+    size_t close_order;
+} readiness_order_state;
+
+static void readiness_order_cancel(void *user) {
+    readiness_order_state *state = (readiness_order_state *)user;
+    if (state != NULL) {
+        ++state->cancel_calls;
+        state->cancel_order = ++state->sequence;
+    }
+}
+
+static void readiness_order_close(void *user) {
+    readiness_order_state *state = (readiness_order_state *)user;
+    if (state != NULL) state->close_order = ++state->sequence;
+}
+
+typedef struct timer_wake_gate {
+    turbo_mutex_t mutex;
+    turbo_cond_t changed;
+    bool entered;
+    bool release;
+} timer_wake_gate;
+
+typedef struct source_destroy_context {
+    cflow_source *source;
+    atomic_int started;
+    atomic_int returned;
+} source_destroy_context;
+
+typedef struct reentrant_timer_wake_state {
+    cflow_source *source;
+    bool returned;
+} reentrant_timer_wake_state;
+
+typedef struct timer_wake_probe {
+    size_t wakes;
+} timer_wake_probe;
+
+static void timer_count_wake(void *user) {
+    timer_wake_probe *probe = (timer_wake_probe *)user;
+    if (probe != NULL) ++probe->wakes;
+}
+
+static void timer_blocking_wake(void *user) {
+    timer_wake_gate *gate = (timer_wake_gate *)user;
+    if (gate == NULL) return;
+    turbo_mutex_lock(&gate->mutex);
+    gate->entered = true;
+    turbo_cond_broadcast(&gate->changed);
+    while (!gate->release)
+        turbo_cond_wait(&gate->changed, &gate->mutex);
+    turbo_mutex_unlock(&gate->mutex);
+}
+
+static void source_destroy_thread(void *user) {
+    source_destroy_context *context = (source_destroy_context *)user;
+    atomic_store(&context->started, 1);
+    cflow_source_destroy(context->source);
+    *context->source = (cflow_source){0};
+    atomic_store(&context->returned, 1);
+}
+
+static void timer_reentrant_destroy_wake(void *user) {
+    reentrant_timer_wake_state *state = (reentrant_timer_wake_state *)user;
+    if (state == NULL) return;
+    cflow_source_destroy(state->source);
+    *state->source = (cflow_source){0};
+    state->returned = true;
 }
 
 static void destroy_reentrant_close(void *user) {
@@ -2309,6 +2391,248 @@ suite("CFlow runtime") {
             cflow_channel_destroy(&channel);
     }
 
+    it("preserves a live Source on rejected second construction") {
+        const int value = 17;
+        cflow_source source = {0};
+        cflow_channel channel = {0};
+        cflow_resume_ctx resume_context = {0};
+        cflow_step step;
+        cmeta_range range = {
+            .object = &value,
+            .element_type = &cmeta_type_int,
+            .flags = CMETA_RANGE_SIZED,
+            .size = owned_range_size,
+            .next = owned_range_next
+        };
+        void *source_owner;
+        int output = 0;
+
+        check_true(cflow_source_from_array(
+            &source, &cmeta_type_int, &value, 1u));
+        source_owner = source.self;
+        check_false(cflow_source_from_array(
+            &source, &cmeta_type_int, &value, 1u));
+        check_equal(source.self, source_owner);
+        check_false(cflow_source_from_range(&source, range));
+        check_equal(source.self, source_owner);
+        check_false(cflow_source_from_timer(&source, 1u, 1u));
+        check_equal(source.self, source_owner);
+        check_true(cflow_channel_init(&channel, &cmeta_type_int, 2u));
+        check_false(cflow_source_from_channel(&source, &channel));
+        check_equal(source.self, source_owner);
+        check_false(cflow_source_from_readiness(
+            &source, "occupied", &cmeta_type_int,
+            destroy_reentrant_read, destroy_reentrant_arm,
+            destroy_reentrant_cancel, NULL, NULL));
+        check_equal(source.self, source_owner);
+        step = cflow_source_resume(&source, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_VALUE_AND_DONE);
+        check_equal(output, value);
+
+        cflow_source_destroy(&source);
+        cflow_channel_destroy(&channel);
+    }
+
+    it("preserves a live Channel on rejected second initialization") {
+        cflow_channel channel = {0};
+        cflow_channel_stats stats = {0};
+        const int value = 23;
+        void *channel_owner;
+
+        check_true(cflow_channel_init(&channel, &cmeta_type_int, 2u));
+        channel_owner = channel.impl;
+        check_false(cflow_channel_init(&channel, &cmeta_type_int, 3u));
+        check_equal(channel.impl, channel_owner);
+        check_equal(cflow_channel_try_push(&channel, &value),
+                    CFLOW_CHANNEL_OK);
+        check_true(cflow_channel_get_stats(&channel, &stats));
+        check_equal(stats.capacity, (size_t)2u);
+        check_equal(stats.pending, (size_t)1u);
+
+        cflow_channel_destroy(&channel);
+    }
+
+    it("reports exact bounded Channel admission and statistics") {
+        cflow_channel channel = {0};
+        cflow_channel_stats stats = {0};
+        cflow_source source = {0};
+        cflow_resume_ctx resume_context = {0};
+        cflow_step step;
+        int value = 1;
+        int output = 0;
+
+        check_equal(cflow_channel_try_push(NULL, &value),
+                    CFLOW_CHANNEL_INVALID_ARGUMENT);
+        check_true(cflow_channel_init(&channel, &cmeta_type_int, 1u));
+        check_equal(cflow_channel_try_push(&channel, &value),
+                    CFLOW_CHANNEL_OK);
+        value = 2;
+        check_equal(cflow_channel_try_push(&channel, &value),
+                    CFLOW_CHANNEL_FULL);
+        check_false(cflow_channel_push(&channel, &value));
+        check_true(cflow_channel_get_stats(&channel, &stats));
+        check_equal(stats.capacity, (size_t)1u);
+        check_equal(stats.pending, (size_t)1u);
+        check_equal(stats.peak_pending, (size_t)1u);
+        check_equal(stats.accepted, UINT64_C(1));
+        check_equal(stats.received, UINT64_C(0));
+        check_equal(stats.rejected_full, UINT64_C(2));
+        check_equal(stats.rejected_closed, UINT64_C(0));
+
+        check_true(cflow_source_from_channel(&source, &channel));
+        step = cflow_source_resume(&source, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_VALUE);
+        check_equal(output, 1);
+        check_true(cflow_channel_get_stats(&channel, &stats));
+        check_equal(stats.pending, (size_t)0u);
+        check_equal(stats.received, UINT64_C(1));
+
+        cflow_channel_close(&channel);
+        check_equal(cflow_channel_try_push(&channel, &value),
+                    CFLOW_CHANNEL_CLOSED);
+        check_true(cflow_channel_get_stats(&channel, &stats));
+        check_equal(stats.rejected_closed, UINT64_C(1));
+        cflow_source_destroy(&source);
+        cflow_channel_destroy(&channel);
+    }
+
+    it("requires readiness cancellation and orders it before resource close") {
+        readiness_order_state state = {0};
+        cflow_source source = {0};
+
+        check_false(cflow_source_from_readiness(
+            &source, "missing_cancel", &cmeta_type_int,
+            destroy_reentrant_read, destroy_reentrant_arm,
+            NULL, readiness_order_close, &state));
+        check_false(cflow_source_valid(&source));
+        check_true(cflow_source_from_readiness(
+            &source, "ordered", &cmeta_type_int,
+            destroy_reentrant_read, destroy_reentrant_arm,
+            readiness_order_cancel, readiness_order_close, &state));
+        cflow_source_cancel(&source);
+        cflow_source_destroy(&source);
+
+        check_equal(state.cancel_calls, (size_t)2u);
+        check_equal(state.cancel_order, (size_t)2u);
+        check_equal(state.close_order, (size_t)3u);
+    }
+
+    it("waits for an executing Timer wake before destroy returns") {
+        pending_foreign_scheduler_state scheduler_state = {0};
+        cflow_scheduler scheduler;
+        cflow_source source = {0};
+        cflow_resume_ctx resume_context;
+        cflow_step step;
+        timer_wake_gate gate = {0};
+        pending_foreign_run_context run_context = {&scheduler_state};
+        source_destroy_context destroy_context = {&source};
+        turbo_thread_t run_thread = 0;
+        turbo_thread_t destroy_thread = 0;
+        size_t output = 0u;
+
+        turbo_mutex_init(&scheduler_state.mutex);
+        turbo_cond_init(&scheduler_state.changed);
+        turbo_mutex_init(&gate.mutex);
+        turbo_cond_init(&gate.changed);
+        scheduler = pending_foreign_scheduler_as_cflow_scheduler(
+            &scheduler_state);
+        resume_context = (cflow_resume_ctx){&scheduler};
+        check_true(cflow_source_from_timer(&source, 1u, 1u));
+        step = cflow_source_resume(&source, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_true(cflow_waitable_arm(
+            &step.waitable, (cflow_waker){timer_blocking_wake, &gate}));
+        check_equal(turbo_thread_create(
+            &run_thread, pending_foreign_run_one_thread, &run_context), 0);
+        turbo_mutex_lock(&gate.mutex);
+        while (!gate.entered)
+            turbo_cond_wait(&gate.changed, &gate.mutex);
+        turbo_mutex_unlock(&gate.mutex);
+        check_equal(turbo_thread_create(
+            &destroy_thread, source_destroy_thread, &destroy_context), 0);
+        if (!runtime_wait_until_at_least(&destroy_context.started, 1)) abort();
+        turbo_sleep_ms(20u);
+        check_equal(atomic_load(&destroy_context.returned), 0);
+
+        turbo_mutex_lock(&gate.mutex);
+        gate.release = true;
+        turbo_cond_broadcast(&gate.changed);
+        turbo_mutex_unlock(&gate.mutex);
+        check_equal(turbo_thread_join(&run_thread), 0);
+        check_equal(turbo_thread_join(&destroy_thread), 0);
+        check_equal(atomic_load(&destroy_context.returned), 1);
+        check_false(cflow_source_valid(&source));
+
+        cflow_scheduler_destroy(&scheduler);
+        turbo_cond_destroy(&gate.changed);
+        turbo_mutex_destroy(&gate.mutex);
+        turbo_cond_destroy(&scheduler_state.changed);
+        turbo_mutex_destroy(&scheduler_state.mutex);
+    }
+
+    it("survives inline Timer wake destruction during scheduler admission") {
+        pending_foreign_scheduler_state scheduler_state = {0};
+        cflow_scheduler scheduler;
+        cflow_source source = {0};
+        cflow_resume_ctx resume_context;
+        cflow_step step;
+        reentrant_timer_wake_state wake_state = {&source, false};
+        size_t output = 0u;
+
+        turbo_mutex_init(&scheduler_state.mutex);
+        turbo_cond_init(&scheduler_state.changed);
+        scheduler_state.run_inline = true;
+        scheduler = pending_foreign_scheduler_as_cflow_scheduler(
+            &scheduler_state);
+        resume_context = (cflow_resume_ctx){&scheduler};
+        check_true(cflow_source_from_timer(&source, 1u, 1u));
+        step = cflow_source_resume(&source, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_true(cflow_waitable_arm(
+            &step.waitable,
+            (cflow_waker){timer_reentrant_destroy_wake, &wake_state}));
+        check_true(wake_state.returned);
+        check_false(cflow_source_valid(&source));
+
+        cflow_scheduler_destroy(&scheduler);
+        turbo_cond_destroy(&scheduler_state.changed);
+        turbo_mutex_destroy(&scheduler_state.mutex);
+    }
+
+    it("rearms a Timer only after the prior callback settles") {
+        cflow_scheduler scheduler = {0};
+        cflow_source source = {0};
+        cflow_resume_ctx resume_context;
+        cflow_step step;
+        timer_wake_probe probe = {0};
+        size_t output = SIZE_MAX;
+
+        check_true(cflow_scheduler_test_init(&scheduler));
+        resume_context = (cflow_resume_ctx){&scheduler};
+        check_true(cflow_source_from_timer(&source, 2u, 1u));
+        step = cflow_source_resume(&source, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_true(cflow_waitable_arm(
+            &step.waitable, (cflow_waker){timer_count_wake, &probe}));
+        check_equal(cflow_scheduler_advance(&scheduler, 1u), (size_t)1u);
+        step = cflow_source_resume(&source, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_VALUE);
+        check_equal(output, (size_t)0u);
+
+        step = cflow_source_resume(&source, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_true(cflow_waitable_arm(
+            &step.waitable, (cflow_waker){timer_count_wake, &probe}));
+        check_equal(cflow_scheduler_advance(&scheduler, 1u), (size_t)1u);
+        step = cflow_source_resume(&source, &resume_context, &output);
+        check_equal(step.kind, CFLOW_STEP_VALUE_AND_DONE);
+        check_equal(output, (size_t)1u);
+        check_equal(probe.wakes, (size_t)2u);
+
+        cflow_source_destroy(&source);
+        cflow_scheduler_destroy(&scheduler);
+    }
+
     it("rejects array byte extent overflow") {
         unsigned char value = 0u;
         cflow_source source = {0};
@@ -2428,7 +2752,7 @@ suite("CFlow runtime") {
             &cmeta_type_int,
             destroy_reentrant_read,
             destroy_reentrant_arm,
-            NULL,
+            destroy_reentrant_cancel,
             destroy_reentrant_close,
             &state));
         check_true(cflow_run_open(
