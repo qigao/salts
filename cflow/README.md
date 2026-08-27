@@ -1442,8 +1442,23 @@ returns. Optimizer map fusion remains available for trivial values; managed map
 nodes stay separate so every intermediate descriptor retains its lifecycle.
 
 Range flags describe traversal semantics. The current Range Source consumes
-items through `cmeta_range_next()` and does not treat
-`cmeta_container_data()` as physical storage: that API returns a semantic
+items through `cmeta_range_next()`. For `cflow_result` collection, a `SIZED`
+Range supplies one initial-capacity hint only when
+`cflow_graph_is_one_to_one()` proves exact output cardinality. The hint is
+clamped to the explicit terminal limit; filtering, expansion, reduction, and
+other non-1:1 Graphs retain bounded geometric growth. This changes allocation
+shape only: every item still crosses the version-checked Range cursor and all
+failure paths discard the partial result transactionally.
+
+`cflow_direct_benchmark --filter "compares SIZED capacity hints"` compares
+16-, 256-, and 4096-item exact-cardinality collections against an otherwise
+identical Range without `SIZED`. For those powers of two, the collector's
+8-item geometric policy requires 2, 6, and 10 allocation attempts respectively;
+the admitted hint requires one. Wall-clock results remain platform-dependent
+and the benchmark retains both paths as the regression control.
+
+`CMETA_RANGE_CONTIGUOUS` does not make
+`cmeta_container_data()` a physical storage pointer: that API returns a semantic
 `cmeta_data_desc`. A contiguous batch fast path requires a separate versioned
 storage-view contract with explicit pointer, extent, stride, and invalidation
 rules, plus profiling evidence for the added path.

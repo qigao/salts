@@ -9,6 +9,29 @@ typedef struct cflow_test_range_owner {
     int value;
 } cflow_test_range_owner;
 
+typedef struct cflow_test_sized_range_owner {
+    const int *values;
+    size_t count;
+    size_t size_calls;
+} cflow_test_sized_range_owner;
+
+static size_t cflow_test_sized_range_size(const void *object) {
+    cflow_test_sized_range_owner *owner =
+        (cflow_test_sized_range_owner *)object;
+    ++owner->size_calls;
+    return owner->count;
+}
+
+static cmeta_gen_status cflow_test_sized_range_next(
+    const void *object, cmeta_range_cursor *cursor, void *out_value) {
+    const cflow_test_sized_range_owner *owner =
+        (const cflow_test_sized_range_owner *)object;
+    if (cursor->index >= owner->count) return CMETA_GEN_DONE;
+    *(int *)out_value = owner->values[cursor->index++];
+    return cursor->index == owner->count ? CMETA_GEN_VALUE_AND_DONE
+                                         : CMETA_GEN_VALUE;
+}
+
 static uint64_t cflow_test_range_version(const void *object) {
     return ((const cflow_test_range_owner *)object)->generation;
 }
@@ -55,6 +78,50 @@ static void cflow_test_check_expected(const cflow_result *result) {
 }
 
 suite("CFlow pipeline") {
+    it("consumes a SIZED Range hint for exact-cardinality collection") {
+        const int values[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+        cflow_test_sized_range_owner owner = {
+            values, sizeof(values) / sizeof(values[0]), 0u};
+        cmeta_range range = {
+            &owner, &cmeta_type_int,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
+            cflow_test_sized_range_size, cflow_test_sized_range_next, 0u, NULL};
+        cflow_stream stream = {0};
+        cflow_result result = {0};
+
+        check_not_null(cflow_stream_from_range(&stream, range));
+        check_true(cflow_eval_stream(&stream, &result));
+        check_equal(owner.size_calls, (size_t)1u);
+        check_equal(result.count, owner.count);
+        check_equal(result.data, values, sizeof(values));
+
+        cflow_result_destroy(&result);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("does not use a SIZED Range as an exact hint for filtering") {
+        const int values[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+        const int expected[] = {2, 4, 6, 8};
+        cflow_test_sized_range_owner owner = {
+            values, sizeof(values) / sizeof(values[0]), 0u};
+        cmeta_range range = {
+            &owner, &cmeta_type_int,
+            CMETA_RANGE_SIZED | CMETA_RANGE_ORDERED | CMETA_RANGE_REUSABLE,
+            cflow_test_sized_range_size, cflow_test_sized_range_next, 0u, NULL};
+        cflow_stream stream = {0};
+        cflow_result result = {0};
+
+        check_not_null(cflow_stream_from_range(&stream, range));
+        check_not_null(stream.filter(&stream, cflow_test_even));
+        check_true(cflow_eval_stream(&stream, &result));
+        check_equal(owner.size_calls, (size_t)0u);
+        check_equal(result.count, sizeof(expected) / sizeof(expected[0]));
+        check_equal(result.data, expected, sizeof(expected));
+
+        cflow_result_destroy(&result);
+        cflow_stream_destroy(&stream);
+    }
+
     it("rejects plans whose values require lifecycle callbacks") {
         cflow_graph surface = {0};
         cflow_graph normalized = {0};
