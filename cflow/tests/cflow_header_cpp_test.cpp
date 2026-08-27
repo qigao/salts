@@ -5,6 +5,8 @@
 
 static_assert(std::is_standard_layout<cflow_run>::value,
               "cflow_run must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_resume_ctx>::value,
+              "resume context must remain C-compatible");
 static_assert(std::is_standard_layout<cmeta_callable>::value,
               "cmeta_callable must remain a C-compatible value");
 static_assert(std::is_standard_layout<cflow_event_type>::value,
@@ -90,6 +92,9 @@ static_assert(std::is_same<cflow_io_source_encode_fn,
 suite("CFlow C++ public header") {
     it("exposes the aggregate API to C++ consumers") {
         cflow_run run = {};
+        cflow_scheduler resume_scheduler = {};
+        cflow_resume_ctx resume_context = {};
+        cflow_resume_ctx scheduler_only_context = {&resume_scheduler};
         cflow_source source = {};
         cflow_graph graph = {};
         cflow_stream stream = {};
@@ -133,6 +138,10 @@ suite("CFlow C++ public header") {
         int received = 0;
 
         check_null(run.impl);
+        check_null(resume_context.scheduler);
+        check_true(resume_context.downstream_demand == 0u);
+        check_true(scheduler_only_context.scheduler == &resume_scheduler);
+        check_true(scheduler_only_context.downstream_demand == 0u);
         check_false(cflow_source_valid(&source));
         cflow_graph_init(&graph, &cmeta_type_int);
         check_true(cmeta_type_equal(

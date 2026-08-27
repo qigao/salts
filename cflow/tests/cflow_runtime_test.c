@@ -1139,7 +1139,134 @@ static bool runtime_wait_until_true(atomic_bool *value) {
     return atomic_load(value);
 }
 
+typedef struct runtime_demand_probe {
+    size_t seen[4];
+    size_t calls;
+} runtime_demand_probe;
+
+static const char *runtime_demand_source_name(void *state) {
+    (void)state;
+    return "runtime-demand-probe";
+}
+
+static const cmeta_type_desc *runtime_demand_source_type(void *state) {
+    (void)state;
+    return &cmeta_type_int;
+}
+
+static cflow_step runtime_demand_source_resume(
+    void *state, cflow_resume_ctx *ctx, void *out_value) {
+    runtime_demand_probe *probe = (runtime_demand_probe *)state;
+
+    if (probe == NULL || ctx == NULL || out_value == NULL ||
+        probe->calls >= 4u)
+        return (cflow_step){
+            CFLOW_STEP_ERROR, {0}, "runtime demand probe is invalid"};
+    probe->seen[probe->calls] = ctx->downstream_demand;
+    ++probe->calls;
+    *(int *)out_value = (int)probe->calls;
+    return (cflow_step){
+        probe->calls == 4u ? CFLOW_STEP_VALUE_AND_DONE
+                           : CFLOW_STEP_VALUE,
+        {0}, NULL};
+}
+
+static void runtime_demand_source_noop(void *state) {
+    (void)state;
+}
+
+static void runtime_demand_source_bind(void *state, cflow_waker waker) {
+    (void)state;
+    (void)waker;
+}
+
+static cflow_source_terminal runtime_demand_source_poll(
+    void *state, const char **error) {
+    (void)state;
+    if (error != NULL)
+        *error = NULL;
+    return CFLOW_SOURCE_OPEN;
+}
+
+CMETA_IMPLEMENTS(cflow_source, runtime_demand_source, 0,
+    .name = runtime_demand_source_name,
+    .output_type = runtime_demand_source_type,
+    .resume = runtime_demand_source_resume,
+    .cancel = runtime_demand_source_noop,
+    .destroy = runtime_demand_source_noop,
+    .bind_terminal_waker = runtime_demand_source_bind,
+    .poll_terminal = runtime_demand_source_poll
+);
+
 suite("CFlow runtime") {
+    it("passes outstanding downstream demand to each source resume") {
+        runtime_demand_probe probe = {0};
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        cflow_scheduler scheduler = {0};
+        cflow_source source =
+            runtime_demand_source_as_cflow_source(&probe);
+        cflow_run run = {0};
+
+        normalized.root = CMETA_INVALID_ID;
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_scheduler_test_init(&scheduler));
+        check_true(cflow_run_open(
+            &run, &normalized, &source, &scheduler, NULL));
+        check_true(cflow_run_request(&run, 4u));
+
+        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+
+        check_equal(probe.calls, (size_t)4u);
+        check_equal(probe.seen[0], (size_t)4u);
+        check_equal(probe.seen[1], (size_t)3u);
+        check_equal(probe.seen[2], (size_t)2u);
+        check_equal(probe.seen[3], (size_t)1u);
+        check_true(cflow_run_is_done(&run));
+        check_null(cflow_run_error(&run));
+
+        cflow_run_close(&run);
+        cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("preserves downstream demand when a source value is filtered") {
+        runtime_demand_probe probe = {0};
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        cflow_scheduler scheduler = {0};
+        cflow_source source =
+            runtime_demand_source_as_cflow_source(&probe);
+        cflow_run run = {0};
+
+        normalized.root = CMETA_INVALID_ID;
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_true(cflow_graph_add(
+            &surface, CFLOW_OP_FILTER, cflow_test_even.fn, NULL));
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_scheduler_test_init(&scheduler));
+        check_true(cflow_run_open(
+            &run, &normalized, &source, &scheduler, NULL));
+        check_true(cflow_run_request(&run, 2u));
+
+        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+
+        check_equal(probe.calls, (size_t)4u);
+        check_equal(probe.seen[0], (size_t)2u);
+        check_equal(probe.seen[1], (size_t)2u);
+        check_equal(probe.seen[2], (size_t)1u);
+        check_equal(probe.seen[3], (size_t)1u);
+        check_true(cflow_run_is_done(&run));
+        check_null(cflow_run_error(&run));
+
+        cflow_run_close(&run);
+        cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
     it("preserves a live Run when a second open is rejected") {
         const int first_input[] = {11};
         const int second_input[] = {22};
