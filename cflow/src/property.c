@@ -68,6 +68,10 @@ static cmeta_properties node_props_rec(const cflow_graph *g,
         return p;
     }
 
+    if (node->op == CFLOW_OP_TAKE || node->op == CFLOW_OP_SKIP ||
+        node->op == CFLOW_OP_DISTINCT || node->op == CFLOW_OP_SORTED)
+        return COMPOSABLE;
+
     cmeta_properties p = COMPOSABLE;
     if (node->fn_chain_count) {
         if (!node->fn_chain) return CMETA_PROP_NONE;

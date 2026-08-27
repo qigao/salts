@@ -214,6 +214,24 @@ cflow_mailbox_status cflow_statechart_instance_try_send(
     cflow_statechart_instance *instance, const cflow_event_view *event);
 
 /**
+ * Attach the instance's terminal lifecycle as one borrowed Resumable.
+ *
+ * The adapter returns WAIT while the Statechart is active, DONE after clean
+ * completion/close/cancel settles, and ERROR for the stable first error. It
+ * never returns VALUE or VALUE_AND_DONE; `output_type` is the Statechart state
+ * type as an empty-sequence type witness. Only one Resumable or Source adapter
+ * may be attached at a time. Destroying the adapter cancels and detaches it,
+ * but does not destroy the instance. `out` must be zero-initialized; rejection
+ * leaves both the instance and destination unchanged.
+ */
+bool cflow_statechart_instance_as_terminal_resumable(
+    cflow_statechart_instance *instance, cflow_resumable *out);
+
+/** Attach the same terminal-only projection to a zero-initialized Source. */
+bool cflow_statechart_instance_as_terminal_source(
+    cflow_statechart_instance *instance, cflow_source *out);
+
+/**
  * Schedule one copied Event at an absolute deadline in an active real-state
  * scope. Unknown, pseudo, or inactive scopes return `INVALID_ARGUMENT`.
  * Equal deadlines fire in schedule order. The Event payload is copied before
@@ -293,6 +311,8 @@ const char *cflow_statechart_instance_error(
  * Wait for this instance's posted work to settle, free owned storage, and
  * clear the handle. Unrelated work on a shared Executor is not awaited.
  * Returns `WOULD_BLOCK` from a callback on the same Executor without freeing.
+ * An attached terminal adapter also returns `WOULD_BLOCK`; destroy that
+ * adapter first. The instance handle remains valid in either case.
  * Concurrent admission/control calls must already have stopped.
  */
 cflow_statechart_runtime_status cflow_statechart_instance_destroy(

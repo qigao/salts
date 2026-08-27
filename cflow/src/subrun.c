@@ -14,6 +14,7 @@ typedef struct subrun_state {
     cflow_value_slot value;
     cflow_run run;
     cflow_scheduler *scheduler;
+    cflow_eval_options eval_options;
 
     turbo_mutex_t lock;
     cflow_waker waiter;
@@ -97,7 +98,10 @@ static bool subrun_start(subrun_state *s, cflow_resume_ctx *ctx) {
                                  cflow_subgraph_source_type(s->graph, s->subgraph),
                                  s->input.storage,
                                  1)) return false;
-    if (!cflow_run_open_subgraph(&s->run, s->graph, s->subgraph, &source, ctx->scheduler, &sink)) {
+    cflow_status_result opened = cflow_run_open_subgraph_with_options(
+        &s->run, s->graph, s->subgraph, &source, ctx->scheduler, &sink,
+        &s->eval_options);
+    if (!cflow_status_result_is_ok(opened)) {
         cflow_source_destroy(&source);
         return false;
     }
@@ -224,6 +228,16 @@ bool cflow_resumable_from_subgraph(cflow_resumable *out,
                                     const cflow_graph *graph,
                                     cflow_subgraph_id subgraph,
                                     const void *source_value) {
+    return cflow_resumable_from_subgraph_with_options(
+        out, graph, subgraph, source_value, NULL);
+}
+
+bool cflow_resumable_from_subgraph_with_options(
+    cflow_resumable *out,
+    const cflow_graph *graph,
+    cflow_subgraph_id subgraph,
+    const void *source_value,
+    const cflow_eval_options *options) {
     if (!out || !graph || !cflow_graph_subgraph(graph, subgraph) ||
         !source_value || !cflow_value_runtime_graph_supported(graph))
         return false;
@@ -247,6 +261,7 @@ bool cflow_resumable_from_subgraph(cflow_resumable *out,
     }
     s->graph = graph;
     s->subgraph = subgraph;
+    if (options) s->eval_options = *options;
     *out = (cflow_resumable){ "subrun", out_type, &subrun_ops, s };
     return true;
 }

@@ -253,10 +253,12 @@
 
 - [x] **Step 4: Implement Source/Resumable and shutdown protocol**
 
-  Expose WAIT/DONE/ERROR and optional action VALUE observations through the
-  existing adapter pattern. Stop admission first, linearize commit versus
-  cancel under the instance mutex, cancel queued Events/timers, detach waits,
-  and wait for executor idle before storage destruction.
+  Expose the terminal-only WAIT/DONE/ERROR projection through the existing
+  adapter pattern. It deliberately emits no VALUE because Statechart actions
+  do not declare an observation contract; value/state observation remains
+  tracked by #125. Stop admission first, linearize commit versus cancel under
+  the instance mutex, cancel queued Events/timers, detach waits, and wait for
+  instance-owned executor work before storage destruction.
 
 - [x] **Step 5: Extend Lean macrostep trace refinement**
 

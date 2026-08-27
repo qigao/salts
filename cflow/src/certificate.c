@@ -13,6 +13,8 @@ _Static_assert(CFLOW_CERTIFIED_FILTER == 0, "certificate opcode ABI");
 _Static_assert(CFLOW_CERTIFIED_MAP == 1, "certificate opcode ABI");
 _Static_assert(CFLOW_CERTIFIED_FLAT_MAP == 2, "certificate opcode ABI");
 _Static_assert(CFLOW_CERTIFIED_REDUCE == 3, "certificate opcode ABI");
+_Static_assert(CFLOW_CERTIFIED_TAKE == 4, "certificate opcode ABI");
+_Static_assert(CFLOW_CERTIFIED_SKIP == 5, "certificate opcode ABI");
 _Static_assert(CFLOW_CERTIFIED_PATH_SEQUENTIAL == 0, "certificate path ABI");
 _Static_assert(CFLOW_CERTIFIED_PATH_ORDERED_PARALLEL_REDUCE == 1,
                "certificate path ABI");
@@ -33,6 +35,8 @@ static bool certified_opcode(cflow_plan_opcode opcode, uint32_t *out) {
     case CMETA_PLAN_MAP: *out = CFLOW_CERTIFIED_MAP; return true;
     case CMETA_PLAN_FLAT_MAP: *out = CFLOW_CERTIFIED_FLAT_MAP; return true;
     case CMETA_PLAN_REDUCE: *out = CFLOW_CERTIFIED_REDUCE; return true;
+    case CMETA_PLAN_TAKE: *out = CFLOW_CERTIFIED_TAKE; return true;
+    case CMETA_PLAN_SKIP: *out = CFLOW_CERTIFIED_SKIP; return true;
     }
     return false;
 }
@@ -66,6 +70,8 @@ static bool graph_fingerprint(const cflow_graph *graph, uint64_t *out) {
         hash = fingerprint_mix(hash, (uint64_t)node->op);
         hash = fingerprint_mix(hash, node->has_fn ? node->fn.meta.effects : 0u);
         hash = fingerprint_mix(hash, node->has_fn ? node->fn.meta.properties : 0u);
+        hash = fingerprint_mix(hash, node->has_size_parameter ? 1u : 0u);
+        hash = fingerprint_mix(hash, node->size_parameter);
         if (!cflow_dense_successor_index_successor(&index, id, &successor)) break;
         hash = fingerprint_mix(hash, successor);
         id = successor;
@@ -137,23 +143,30 @@ bool cflow_plan_certificate_build(cflow_plan_certificate *certificate,
         const cflow_plan_inst *inst = &impl->code[pc];
         const size_t calls = inst->opcode == CMETA_PLAN_MAP
             ? inst->fn_chain_count : 1u;
+        const bool intrinsic = inst->opcode == CMETA_PLAN_TAKE ||
+                               inst->opcode == CMETA_PLAN_SKIP;
         uint32_t opcode;
         if (!certified_opcode(inst->opcode, &opcode)) goto fail;
         for (size_t call_index = 0u; call_index < calls; ++call_index) {
             const cflow_plan_call *call = inst->opcode == CMETA_PLAN_MAP
                 ? &inst->fn_chain[call_index] : &inst->call;
             if (pc > UINT32_MAX || call_index > UINT32_MAX ||
-                !cmeta_callable_contract_valid(call->fn))
+                (!intrinsic && !cmeta_callable_contract_valid(call->fn)) ||
+                (intrinsic && !inst->has_size_parameter))
                 goto fail;
             built.rows[row++] = (cflow_plan_certificate_row){
                 .opcode = opcode,
                 .instruction_index = (uint32_t)pc,
                 .callable_index = (uint32_t)call_index,
-                .effects = call->fn.meta.effects,
-                .properties = call->fn.meta.properties,
+                .effects = intrinsic
+                    ? CMETA_EFFECT_STATEFUL : call->fn.meta.effects,
+                .properties = intrinsic
+                    ? CMETA_PROP_NONE : call->fn.meta.properties,
                 .input_type = call->input_type ? call->input_type : inst->input_type,
                 .output_type = call->output_type ? call->output_type : inst->output_type,
-                .callable = call->fn
+                .callable = call->fn,
+                .has_size_parameter = inst->has_size_parameter,
+                .size_parameter = inst->size_parameter
             };
         }
     }
@@ -201,7 +214,11 @@ static bool certificate_rows_equal(const cflow_plan_certificate *left,
         if (!cmeta_type_equal(a->input_type, b->input_type) ||
             !cmeta_type_equal(a->output_type, b->output_type))
             return certificate_fail(error, "certificate type mismatch");
-        if (!cmeta_callable_same(a->callable, b->callable))
+        if (a->has_size_parameter != b->has_size_parameter ||
+            a->size_parameter != b->size_parameter)
+            return certificate_fail(error, "certificate parameter mismatch");
+        if (!a->has_size_parameter &&
+            !cmeta_callable_same(a->callable, b->callable))
             return certificate_fail(error, "certificate callable mismatch");
         if (a->effects != b->effects)
             return certificate_fail(error, "certificate effect mismatch");

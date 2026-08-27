@@ -4,6 +4,7 @@
 #define CFLOW_STREAM_H
 
 #include <cflow/graph.h>
+#include <cflow/backend.h>
 #include <cmeta/range.h>
 
 #include <stdbool.h>
@@ -13,6 +14,8 @@ extern "C" {
 #endif
 
 typedef struct cflow_stream cflow_stream;
+typedef cflow_stream *(*cflow_stream_slice_method)(cflow_stream *self,
+                                                   size_t count);
 
 #define CFLOW_STREAM_METHOD_1(method) \
     typedef cflow_stream *(*cflow_stream_##method##_method)( \
@@ -40,16 +43,29 @@ struct cflow_stream {
     cflow_graph graph;
     cmeta_range source_range;
     bool has_source_range;
+    cflow_eval_options eval_options;
     bool failed;
 #define CFLOW_OP_ROW(E, method, margc, fnarg, subgrapharg, farity, p0, p1, p2, ret, out, card, subgraphrule, semantic, intrinsic_effects) \
     cflow_stream_##method##_method method;
 Replay(CFlowOperators, CFLOW_OP_ROW)
 #undef CFLOW_OP_ROW
+    cflow_stream_slice_method take;
+    cflow_stream_slice_method skip;
+    cflow_stream_slice_method distinct;
+    cflow_stream_slice_method sorted;
 };
 
 cflow_stream *cflow_stream_init(cflow_stream *s, const cmeta_type_desc *source_type);
 cflow_stream *cflow_stream_from_range(cflow_stream *s, cmeta_range range);
+cflow_stream *cflow_stream_from_range_with_options(
+    cflow_stream *s, cmeta_range range, const cflow_eval_options *options);
 void cflow_stream_destroy(cflow_stream *s);
+/* Append positional Graph operations. Their immutable bounds are reusable;
+ * every evaluation creates fresh counters. */
+cflow_stream *cflow_stream_take(cflow_stream *s, size_t limit);
+cflow_stream *cflow_stream_skip(cflow_stream *s, size_t count);
+cflow_stream *cflow_stream_distinct(cflow_stream *s, size_t max_unique);
+cflow_stream *cflow_stream_sorted(cflow_stream *s, size_t max_elements);
 
 cflow_stream *cflow_stream_from_object(cflow_stream *s, const void *object);
 cflow_stream *cflow_stream_from_object_view(cflow_stream *s, const void *object,

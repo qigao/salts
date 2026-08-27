@@ -215,6 +215,16 @@ bool cflow_resumable_from_relation(cflow_resumable *out,
                                     const cflow_graph *graph,
                                     const cflow_node *node,
                                     const void *input) {
+    return cflow_resumable_from_relation_with_options(
+        out, graph, node, input, NULL);
+}
+
+bool cflow_resumable_from_relation_with_options(
+    cflow_resumable *out,
+    const cflow_graph *graph,
+    const cflow_node *node,
+    const void *input,
+    const cflow_eval_options *options) {
     if (!out || !graph || !cflow_value_runtime_graph_supported(graph) ||
         !node || node->op != CFLOW_OP_RELATION ||
         !node->has_relation || !input || node->subgraph_count == 0u || !node->output_type)
@@ -224,8 +234,9 @@ bool cflow_resumable_from_relation(cflow_resumable *out,
     if (!children) return false;
     size_t made = 0;
     for (; made < node->subgraph_count; ++made) {
-        if (!cflow_resumable_from_subgraph(&children[made], graph,
-                                            node->subgraphs[made], input) ||
+        if (!cflow_resumable_from_subgraph_with_options(
+                &children[made], graph, node->subgraphs[made], input,
+                options) ||
             !wrap_child_policy(&children[made], node->relation.error)) break;
     }
     if (made != node->subgraph_count) {

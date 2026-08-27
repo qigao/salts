@@ -43,8 +43,22 @@ static bool append_typed_node(lower_ctx *ctx, cflow_subgraph_id sgid,
     if (!lower_nested_ids(ctx, node, &nested)) return false;
     cflow_subgraph *sg = &ctx->dst->subgraphs[sgid];
     cflow_node_id prev = sg->tail, id = CMETA_INVALID_ID;
-    bool ok = cflow_graph_create_node(ctx->dst, sgid, node->op, node->fn,
-                                     nested, node->subgraph_count, &id);
+    bool ok;
+    if (node->op == CFLOW_OP_TAKE || node->op == CFLOW_OP_SKIP)
+        ok = cflow_graph_create_slice_node(
+            ctx->dst, sgid, node->op, node->input_type,
+            node->size_parameter, &id);
+    else if (node->op == CFLOW_OP_DISTINCT)
+        ok = cflow_graph_create_distinct_node(
+            ctx->dst, sgid, node->input_type,
+            node->params.distinct.max_unique, &id);
+    else if (node->op == CFLOW_OP_SORTED)
+        ok = cflow_graph_create_sorted_node(
+            ctx->dst, sgid, node->input_type,
+            node->params.sorted.max_elements, &id);
+    else
+        ok = cflow_graph_create_node(ctx->dst, sgid, node->op, node->fn,
+                                    nested, node->subgraph_count, &id);
     free(nested);
     if (!ok || id == CMETA_INVALID_ID) {
         ctx->error = ctx->dst->error ? ctx->dst->error : "normalization node creation failed";

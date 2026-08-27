@@ -49,6 +49,14 @@ typedef struct run_impl {
     cflow_value_slot source_slot;
     cflow_value_slot *reduce_value;
     bool *reduce_flushed;
+    size_t *slice_counts;
+    void **set_states;
+    void **sequence_states;
+    cmeta_range *sequence_ranges;
+    cmeta_range_cursor *sequence_cursors;
+    bool *sequence_started;
+    bool *sequence_flushed;
+    cflow_eval_options eval_options;
 
     continuation_frame continuations[CMETA_RUN_MAX_CONTINUATIONS];
     size_t continuation_count;
@@ -78,6 +86,7 @@ typedef struct run_impl {
     bool destroying;
     bool closed;
     const char *error;
+    cflow_status status;
 } run_impl;
 
 static TURBO_THREAD_LOCAL run_impl *active_pump_run;
@@ -181,6 +190,42 @@ static void reducers_clear(run_impl *r) {
     free(r->reduce_flushed);
     r->reduce_value = NULL;
     r->reduce_flushed = NULL;
+    free(r->slice_counts);
+    r->slice_counts = NULL;
+}
+
+static void set_states_clear(run_impl *r) {
+    if (!r || !r->set_states) return;
+    if (r->eval_options.set_state && r->eval_options.set_state->close) {
+        for (size_t i = 0u; i < r->subgraph->node_count; ++i) {
+            if (r->set_states[i])
+                r->eval_options.set_state->close(r->set_states[i]);
+        }
+    }
+    free(r->set_states);
+    r->set_states = NULL;
+}
+
+static void sequence_states_clear(run_impl *r) {
+    if (!r) return;
+    if (r->sequence_states && r->eval_options.sequence_state &&
+        r->eval_options.sequence_state->close) {
+        for (size_t i = 0u; i < r->subgraph->node_count; ++i) {
+            if (r->sequence_states[i])
+                r->eval_options.sequence_state->close(
+                    r->sequence_states[i]);
+        }
+    }
+    free(r->sequence_states);
+    free(r->sequence_ranges);
+    free(r->sequence_cursors);
+    free(r->sequence_started);
+    free(r->sequence_flushed);
+    r->sequence_states = NULL;
+    r->sequence_ranges = NULL;
+    r->sequence_cursors = NULL;
+    r->sequence_started = NULL;
+    r->sequence_flushed = NULL;
 }
 
 
@@ -200,13 +245,17 @@ static bool demand_consume_one(run_impl *r) {
     return ok;
 }
 
-static void run_fail(run_impl *r, const char *message) {
+static void run_fail_status(run_impl *r,
+                            cflow_status status,
+                            const char *message) {
     if (!r) return;
     const char *msg = message ? message : "runtime error";
     bool notify = false;
     turbo_mutex_lock(&r->lock);
     if (!r->terminated) {
         r->error = msg;
+        r->status = status == CFLOW_STATUS_OK
+            ? CFLOW_STATUS_EXECUTION_ERROR : status;
         r->terminated = true;
         notify = true;
     }
@@ -214,13 +263,19 @@ static void run_fail(run_impl *r, const char *message) {
     if (notify && cflow_sink_valid(&r->sink)) cflow_sink_error(&r->sink, msg);
 }
 
-static bool reducers_done(const run_impl *r) {
+static void run_fail(run_impl *r, const char *message) {
+    run_fail_status(r, CFLOW_STATUS_EXECUTION_ERROR, message);
+}
+
+static bool terminal_nodes_done(const run_impl *r) {
     if (!r || !r->subgraph) return true;
     for (size_t i = 0; i < r->subgraph->node_count; ++i) {
         const cflow_node *node = cflow_subgraph_node(r->subgraph, (cflow_node_id)i);
         const cflow_op_schema *schema = node ? cflow_op_schema_get(node->op) : NULL;
         if (schema && schema->cardinality == CMETA_CARD_REDUCE &&
             r->reduce_value[i].live && !r->reduce_flushed[i]) return false;
+        if (node && node->op == CFLOW_OP_SORTED &&
+            (!r->sequence_flushed || !r->sequence_flushed[i])) return false;
     }
     return true;
 }
@@ -247,6 +302,125 @@ static node_action semantic_filter(run_impl *r, cflow_node_id i, const cflow_nod
     if (!cmeta_callable_invoke(&n->fn, &keep, args)) return NODE_FAIL;
     if (!keep) { cflow_value_slot_reset(owned); return NODE_STOP; }
     return NODE_CONTINUE;
+}
+
+static void short_circuit_before_current_node(run_impl *r,
+                                              cflow_node_id current_node) {
+    if (!r) return;
+    if (!r->source_done) cflow_source_cancel(&r->source);
+    r->source_done = true;
+    /* Every frame present while processing this value is upstream of the
+     * current node. Mark it terminal without destroying the live frame being
+     * unwound; a continuation created later in the same path is downstream
+     * and remains allowed to finish. */
+    for (size_t index = 0u; index < r->continuation_count; ++index) {
+        continuation_frame *frame = &r->continuations[index];
+        if (!frame->done && frame->machine.ops && frame->machine.ops->cancel)
+            frame->machine.ops->cancel(frame->machine.state);
+        frame->done = true;
+    }
+    if (r->sequence_flushed) {
+        for (size_t index = 0u;
+             index < r->subgraph->node_count && index < current_node;
+             ++index) {
+            const cflow_node *node = cflow_subgraph_node(
+                r->subgraph, (cflow_node_id)index);
+            if (node && node->op == CFLOW_OP_SORTED)
+                r->sequence_flushed[index] = true;
+        }
+    }
+}
+
+static node_action semantic_take(run_impl *r, cflow_node_id i,
+                                 const cflow_node *n,
+                                 cflow_value_slot *owned,
+                                 const cmeta_type_desc **cur_type,
+                                 const void *root_source) {
+    (void)owned;
+    (void)cur_type;
+    (void)root_source;
+    if (!r || !n || !r->slice_counts || !n->has_size_parameter)
+        return NODE_FAIL;
+    if (r->slice_counts[i] >= n->size_parameter)
+        return NODE_STOP;
+    ++r->slice_counts[i];
+    if (r->slice_counts[i] == n->size_parameter)
+        short_circuit_before_current_node(r, i);
+    return NODE_CONTINUE;
+}
+
+static node_action semantic_skip(run_impl *r, cflow_node_id i,
+                                 const cflow_node *n,
+                                 cflow_value_slot *owned,
+                                 const cmeta_type_desc **cur_type,
+                                 const void *root_source) {
+    (void)owned;
+    (void)cur_type;
+    (void)root_source;
+    if (!r || !n || !r->slice_counts || !n->has_size_parameter)
+        return NODE_FAIL;
+    if (r->slice_counts[i] < n->size_parameter) {
+        ++r->slice_counts[i];
+        return NODE_STOP;
+    }
+    return NODE_CONTINUE;
+}
+
+static node_action semantic_distinct(run_impl *r, cflow_node_id i,
+                                     const cflow_node *n,
+                                     cflow_value_slot *owned,
+                                     const cmeta_type_desc **cur_type,
+                                     const void *root_source) {
+    bool inserted = false;
+    cflow_status status;
+    (void)cur_type;
+    (void)root_source;
+    if (!r || !n || !owned || !owned->live || !r->set_states ||
+        !r->set_states[i] ||
+        !cflow_set_state_ops_valid(r->eval_options.set_state))
+        return NODE_FAIL;
+    status = r->eval_options.set_state->insert_if_absent(
+        r->set_states[i], owned->storage, &inserted);
+    if (status != CFLOW_STATUS_OK) {
+        run_fail_status(
+            r, status,
+            status == CFLOW_STATUS_CAPACITY_EXCEEDED
+                ? "distinct capacity exceeded"
+                : "distinct backend failed");
+        return NODE_FAIL;
+    }
+    if (!inserted) {
+        cflow_value_slot_reset(owned);
+        return NODE_STOP;
+    }
+    return NODE_CONTINUE;
+}
+
+static node_action semantic_sorted(run_impl *r, cflow_node_id i,
+                                   const cflow_node *n,
+                                   cflow_value_slot *owned,
+                                   const cmeta_type_desc **cur_type,
+                                   const void *root_source) {
+    cflow_status status;
+    (void)n;
+    (void)cur_type;
+    (void)root_source;
+    if (!r || !owned || !owned->live || !r->sequence_states ||
+        !r->sequence_states[i] ||
+        !cflow_sequence_state_ops_valid(r->eval_options.sequence_state))
+        return NODE_FAIL;
+    status = r->eval_options.sequence_state->append(
+        r->sequence_states[i], owned->storage);
+    if (status != CFLOW_STATUS_OK) {
+        run_fail_status(
+            r, status,
+            status == CFLOW_STATUS_CAPACITY_EXCEEDED
+                ? "sorted capacity exceeded"
+                : "sorted backend append failed");
+        return NODE_FAIL;
+    }
+    cflow_value_slot_reset(owned);
+    return NODE_STOP;
 }
 
 static node_action semantic_map(run_impl *r, cflow_node_id i, const cflow_node *n,
@@ -292,8 +466,9 @@ static node_action semantic_relation(run_impl *r, cflow_node_id i, const cflow_n
     if (!r || !n || !owned || !owned->live || r->continuation_count >= CMETA_RUN_MAX_CONTINUATIONS)
         return NODE_FAIL;
     cflow_resumable machine = {0};
-    if (!cflow_resumable_from_relation(&machine, r->graph, n,
-                                        owned->storage)) return NODE_FAIL;
+    if (!cflow_resumable_from_relation_with_options(
+            &machine, r->graph, n, owned->storage,
+            &r->eval_options)) return NODE_FAIL;
     cflow_value_slot_reset(owned);
     if (!push_continuation(r, i, machine, root_source)) {
         if (machine.ops && machine.ops->destroy) machine.ops->destroy(machine.state);
@@ -355,6 +530,10 @@ static node_action semantic_flat_map(run_impl *r, cflow_node_id i, const cflow_n
 
 static node_handler handlers[CFLOW_OP_COUNT] = {
     [CFLOW_OP_RELATION] = semantic_relation,
+    [CFLOW_OP_TAKE] = semantic_take,
+    [CFLOW_OP_SKIP] = semantic_skip,
+    [CFLOW_OP_DISTINCT] = semantic_distinct,
+    [CFLOW_OP_SORTED] = semantic_sorted,
 #define CFLOW_OP_ROW(E, method, margc, fnarg, childarg, farity, p0, p1, p2, ret, out, card, childrule, semantic, intrinsic_effects) \
     [CFLOW_OP_##E] = semantic_##semantic,
 Replay(CFlowOperators, CFLOW_OP_ROW)
@@ -481,10 +660,99 @@ static bool resume_top_continuation(run_impl *r) {
 }
 
 
-static bool flush_one_reducer(run_impl *r) {
+static bool terminal_predecessors_done(const run_impl *r, size_t node_index) {
+    size_t index;
+    if (!r || !r->subgraph) return false;
+    for (index = 0u; index < node_index; ++index) {
+        const cflow_node *node = cflow_subgraph_node(
+            r->subgraph, (cflow_node_id)index);
+        const cflow_op_schema *schema = node
+            ? cflow_op_schema_get(node->op) : NULL;
+        if (schema && schema->cardinality == CMETA_CARD_REDUCE &&
+            r->reduce_value[index].live && !r->reduce_flushed[index])
+            return false;
+        if (node && node->op == CFLOW_OP_SORTED &&
+            !r->sequence_flushed[index])
+            return false;
+    }
+    return true;
+}
+
+static bool flush_sorted_value(run_impl *r, size_t index,
+                               const cflow_node *node) {
+    cflow_value_slot value = {0};
+    cmeta_gen_status range_status;
+    cflow_status status;
+    cflow_node_id next = CMETA_INVALID_ID;
+    bool has_next = false;
+
+    if (!r->sequence_started[index]) {
+        status = r->eval_options.sequence_state->stable_sort(
+            r->sequence_states[index]);
+        if (status != CFLOW_STATUS_OK) {
+            run_fail_status(r, status, "sorted backend sort failed");
+            return false;
+        }
+        r->sequence_ranges[index] =
+            r->eval_options.sequence_state->range(
+                r->sequence_states[index]);
+        if (!r->sequence_ranges[index].object ||
+            !r->sequence_ranges[index].next ||
+            !cmeta_type_equal(r->sequence_ranges[index].element_type,
+                              node->output_type) ||
+            (!cflow_value_storage_type_supported(node->output_type) &&
+             (r->sequence_ranges[index].flags &
+              CMETA_RANGE_CONSTRUCTS_VALUES) == 0u)) {
+            run_fail_status(r, CFLOW_STATUS_EXECUTION_ERROR,
+                            "sorted backend returned an invalid range");
+            return false;
+        }
+        r->sequence_started[index] = true;
+    }
+    if (!cflow_value_slot_init(&value, node->output_type)) {
+        run_fail_status(r, CFLOW_STATUS_ALLOCATION_FAILED,
+                        "sorted output allocation failed");
+        return false;
+    }
+    range_status = cmeta_range_next(
+        &r->sequence_ranges[index], &r->sequence_cursors[index],
+        value.storage);
+    if (range_status == CMETA_GEN_DONE) {
+        r->sequence_flushed[index] = true;
+        cflow_value_slot_destroy(&value);
+        return true;
+    }
+    if (range_status != CMETA_GEN_VALUE &&
+        range_status != CMETA_GEN_VALUE_AND_DONE) {
+        cflow_value_slot_destroy(&value);
+        run_fail_status(
+            r, CFLOW_STATUS_EXECUTION_ERROR,
+            range_status == CMETA_GEN_MUTATED
+                ? "sorted backend range mutated"
+                : "sorted backend range failed");
+        return false;
+    }
+    value.live = true;
+    if (!successor_of(r, (cflow_node_id)index, &next, &has_next) ||
+        !process_path(r, has_next ? next : CMETA_INVALID_ID,
+                      value.storage, node->output_type, NULL)) {
+        cflow_value_slot_destroy(&value);
+        return false;
+    }
+    cflow_value_slot_destroy(&value);
+    if (range_status == CMETA_GEN_VALUE_AND_DONE)
+        r->sequence_flushed[index] = true;
+    return true;
+}
+
+static bool flush_one_terminal_node(run_impl *r) {
     for (size_t i = 0; i < r->subgraph->node_count; ++i) {
         const cflow_node *node = cflow_subgraph_node(r->subgraph, (cflow_node_id)i);
         const cflow_op_schema *schema = node ? cflow_op_schema_get(node->op) : NULL;
+        if (!terminal_predecessors_done(r, i)) continue;
+        if (node && node->op == CFLOW_OP_SORTED &&
+            !r->sequence_flushed[i])
+            return flush_sorted_value(r, i, node);
         if (!schema || schema->cardinality != CMETA_CARD_REDUCE ||
             !r->reduce_value[i].live || r->reduce_flushed[i]) continue;
         r->reduce_flushed[i] = true;
@@ -502,7 +770,8 @@ static bool flush_one_reducer(run_impl *r) {
 
 
 static void finish_if_possible(run_impl *r) {
-    if (!r || !r->source_done || r->continuation_count || !reducers_done(r)) return;
+    if (!r || !r->source_done || r->continuation_count ||
+        !terminal_nodes_done(r)) return;
     bool notify = false;
     turbo_mutex_lock(&r->lock);
     if (!r->terminated) { r->terminated = true; notify = true; }
@@ -621,9 +890,9 @@ static bool process_unit(run_impl *r) {
         return resume_top_continuation(r);
     }
     if (r->source_done) {
-        if (!reducers_done(r)) {
+        if (!terminal_nodes_done(r)) {
             if (demand_get(r) == 0) return false;
-            return flush_one_reducer(r);
+            return flush_one_terminal_node(r);
         }
         finish_if_possible(r);
         return false;
@@ -644,6 +913,8 @@ static void run_destroy_claimed(run_impl *r) {
     active_destroy_owner = owner;
     if (cflow_source_valid(&r->source)) cflow_source_destroy(&r->source);
     continuations_clear(r);
+    set_states_clear(r);
+    sequence_states_clear(r);
     reducers_clear(r);
     cflow_value_slot_destroy(&r->source_slot);
     turbo_mutex_lock(&r->lock);
@@ -707,7 +978,8 @@ static void pump_task(void *user) {
         if (waiting || r->terminated) break;
         if (demand_get(r) == 0 && r->continuation_count &&
             !r->continuations[r->continuation_count - 1].done) break;
-        if (r->source_done && !reducers_done(r) && demand_get(r) == 0) break;
+        if (r->source_done && !terminal_nodes_done(r) &&
+            demand_get(r) == 0) break;
         if (!process_unit(r)) break;
     }
 
@@ -722,8 +994,9 @@ static void pump_task(void *user) {
                           (r->continuations[r->continuation_count - 1].done || d > 0);
     bool runnable = continuation_runnable ||
                     (!r->source_done && d > 0) ||
-                    (r->source_done && r->continuation_count == 0 && reducers_done(r)) ||
-                    (r->source_done && !reducers_done(r) && d > 0);
+                    (r->source_done && r->continuation_count == 0 &&
+                     terminal_nodes_done(r)) ||
+                    (r->source_done && !terminal_nodes_done(r) && d > 0);
     if (!terminated && !waiting && runnable) (void)schedule_pump(r, true);
 
     active_pump_run = previous_active_run;
@@ -866,44 +1139,87 @@ static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
 }
 
 
-bool cflow_run_open_subgraph(cflow_run *run,
-                             const cflow_graph *graph,
-                             cflow_subgraph_id subgraph_id,
-                             cflow_source *source,
-                             cflow_scheduler *scheduler,
-                             const cflow_sink *sink) {
+static cflow_status backend_admit_graph(
+    const cflow_graph *graph,
+    const cflow_eval_options *options) {
+    if (!graph) return CFLOW_STATUS_INVALID_ARGUMENT;
+    for (size_t subgraph_id = 0u;
+         subgraph_id < graph->subgraph_count; ++subgraph_id) {
+        const cflow_subgraph *subgraph = cflow_graph_subgraph(
+            graph, (cflow_subgraph_id)subgraph_id);
+        if (!subgraph) return CFLOW_STATUS_INVALID_ARGUMENT;
+        for (size_t i = 0u; i < subgraph->node_count; ++i) {
+            const cflow_node *node = cflow_subgraph_node(
+                subgraph, (cflow_node_id)i);
+            if (!node) return CFLOW_STATUS_INVALID_ARGUMENT;
+            if (node->op == CFLOW_OP_DISTINCT &&
+                (!options ||
+                 !cflow_set_state_ops_valid(options->set_state)))
+                return CFLOW_STATUS_UNSUPPORTED;
+            if (node->op == CFLOW_OP_SORTED &&
+                (!options || !cflow_sequence_state_ops_valid(
+                    options->sequence_state)))
+                return CFLOW_STATUS_UNSUPPORTED;
+        }
+    }
+    return CFLOW_STATUS_OK;
+}
+
+cflow_status_result cflow_run_open_subgraph_with_options(
+    cflow_run *run,
+    const cflow_graph *graph,
+    cflow_subgraph_id subgraph_id,
+    cflow_source *source,
+    cflow_scheduler *scheduler,
+    const cflow_sink *sink,
+    const cflow_eval_options *options) {
     const cflow_subgraph *subgraph;
     const cmeta_type_desc *source_type;
     const char *validation_error = NULL;
+    cflow_status backend_status;
 
     if (!run || run->impl || !graph || !scheduler || !source ||
         !cflow_source_valid(source) || !cflow_graph_is_normalized(graph))
-        return false;
+        return (cflow_status_result){CFLOW_STATUS_INVALID_ARGUMENT};
     subgraph = cflow_graph_subgraph(graph, subgraph_id);
     source_type = cflow_source_output_type(source);
     if (!subgraph || !source_type)
-        return false;
-    if (!cflow_graph_validate(graph, &validation_error)) return false;
+        return (cflow_status_result){CFLOW_STATUS_INVALID_ARGUMENT};
+    if (!cflow_graph_validate(graph, &validation_error))
+        return (cflow_status_result){CFLOW_STATUS_INVALID_ARGUMENT};
     if (!cflow_value_type_supported(source_type) ||
         !cflow_value_runtime_graph_supported(graph) ||
         (!cflow_value_storage_type_supported(source_type) &&
          !cflow_source_has(source, CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES)))
-        return false;
+        return (cflow_status_result){CFLOW_STATUS_UNSUPPORTED};
     if (!cmeta_type_equal(cflow_subgraph_source_type(graph, subgraph_id),
                           source_type))
-        return false;
-    if (!run_lifecycle_ensure()) return false;
+        return (cflow_status_result){CFLOW_STATUS_TYPE_MISMATCH};
+    backend_status = backend_admit_graph(graph, options);
+    if (backend_status != CFLOW_STATUS_OK)
+        return (cflow_status_result){backend_status};
+    if (!run_lifecycle_ensure())
+        return (cflow_status_result){CFLOW_STATUS_EXECUTION_ERROR};
 
     run_impl *r = calloc(1, sizeof(*r));
-    if (!r) return false;
+    if (!r) return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
     turbo_mutex_init(&r->lock);
-    if (!r->lock) { free(r); return false; }
+    if (!r->lock) {
+        free(r);
+        return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
+    }
     turbo_cond_init(&r->task_cv);
-    if (!r->task_cv) { turbo_mutex_destroy(&r->lock); free(r); return false; }
+    if (!r->task_cv) {
+        turbo_mutex_destroy(&r->lock);
+        free(r);
+        return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
+    }
     r->owner = run;
     r->graph = graph;
     r->subgraph_id = subgraph_id;
     r->subgraph = subgraph;
+    r->status = CFLOW_STATUS_OK;
+    if (options) r->eval_options = *options;
     r->source = *source;
     r->scheduler = scheduler;
     r->resume_ctx.scheduler = scheduler;
@@ -912,16 +1228,40 @@ bool cflow_run_open_subgraph(cflow_run *run,
         turbo_cond_destroy(&r->task_cv);
         turbo_mutex_destroy(&r->lock);
         free(r);
-        return false;
+        return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
     }
     r->reduce_value = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_value));
     r->reduce_flushed = calloc(subgraph->node_count ? subgraph->node_count : 1, sizeof(*r->reduce_flushed));
-    if (!r->reduce_value || !r->reduce_flushed) {
+    r->slice_counts = calloc(subgraph->node_count ? subgraph->node_count : 1,
+                             sizeof(*r->slice_counts));
+    r->set_states = calloc(subgraph->node_count ? subgraph->node_count : 1,
+                           sizeof(*r->set_states));
+    r->sequence_states = calloc(
+        subgraph->node_count ? subgraph->node_count : 1,
+        sizeof(*r->sequence_states));
+    r->sequence_ranges = calloc(
+        subgraph->node_count ? subgraph->node_count : 1,
+        sizeof(*r->sequence_ranges));
+    r->sequence_cursors = calloc(
+        subgraph->node_count ? subgraph->node_count : 1,
+        sizeof(*r->sequence_cursors));
+    r->sequence_started = calloc(
+        subgraph->node_count ? subgraph->node_count : 1,
+        sizeof(*r->sequence_started));
+    r->sequence_flushed = calloc(
+        subgraph->node_count ? subgraph->node_count : 1,
+        sizeof(*r->sequence_flushed));
+    if (!r->reduce_value || !r->reduce_flushed || !r->slice_counts ||
+        !r->set_states || !r->sequence_states || !r->sequence_ranges ||
+        !r->sequence_cursors || !r->sequence_started ||
+        !r->sequence_flushed) {
         cflow_value_slot_destroy(&r->source_slot); reducers_clear(r);
+        set_states_clear(r);
+        sequence_states_clear(r);
         turbo_cond_destroy(&r->task_cv);
         turbo_mutex_destroy(&r->lock);
         free(r);
-        return false;
+        return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
     }
     for (size_t i = 0; i < subgraph->node_count; ++i) {
         const cflow_node *node = cflow_subgraph_node(
@@ -932,11 +1272,48 @@ bool cflow_run_open_subgraph(cflow_run *run,
             !cflow_value_slot_init(&r->reduce_value[i],
                                    node->output_type)) {
             cflow_value_slot_destroy(&r->source_slot);
+            set_states_clear(r);
+            sequence_states_clear(r);
             reducers_clear(r);
             turbo_cond_destroy(&r->task_cv);
             turbo_mutex_destroy(&r->lock);
             free(r);
-            return false;
+            return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
+        }
+        if (node && node->op == CFLOW_OP_DISTINCT) {
+            cflow_status state_status = r->eval_options.set_state->open(
+                &r->set_states[i], node->input_type,
+                node->params.distinct.max_unique);
+            if (state_status != CFLOW_STATUS_OK || !r->set_states[i]) {
+                set_states_clear(r);
+                cflow_value_slot_destroy(&r->source_slot);
+                reducers_clear(r);
+                turbo_cond_destroy(&r->task_cv);
+                turbo_mutex_destroy(&r->lock);
+                free(r);
+                return (cflow_status_result){
+                    state_status == CFLOW_STATUS_OK
+                        ? CFLOW_STATUS_EXECUTION_ERROR : state_status};
+            }
+        }
+        if (node && node->op == CFLOW_OP_SORTED) {
+            cflow_status state_status =
+                r->eval_options.sequence_state->open(
+                    &r->sequence_states[i], node->input_type,
+                    node->params.sorted.max_elements);
+            if (state_status != CFLOW_STATUS_OK ||
+                !r->sequence_states[i]) {
+                sequence_states_clear(r);
+                set_states_clear(r);
+                cflow_value_slot_destroy(&r->source_slot);
+                reducers_clear(r);
+                turbo_cond_destroy(&r->task_cv);
+                turbo_mutex_destroy(&r->lock);
+                free(r);
+                return (cflow_status_result){
+                    state_status == CFLOW_STATUS_OK
+                        ? CFLOW_STATUS_EXECUTION_ERROR : state_status};
+            }
         }
     }
     run->impl = r;
@@ -945,7 +1322,27 @@ bool cflow_run_open_subgraph(cflow_run *run,
         cflow_waker w = { wake_cb, run };
         cflow_source_bind_terminal_waker(&r->source, w);
     }
-    return true;
+    for (size_t i = 0; i < subgraph->node_count; ++i) {
+        const cflow_node *node = cflow_subgraph_node(
+            subgraph, (cflow_node_id)i);
+        if (node && node->op == CFLOW_OP_TAKE &&
+            node->has_size_parameter && node->size_parameter == 0u) {
+            r->source_done = true;
+            cflow_source_cancel(&r->source);
+            break;
+        }
+    }
+    return (cflow_status_result){CFLOW_STATUS_OK};
+}
+
+bool cflow_run_open_subgraph(cflow_run *run,
+                             const cflow_graph *graph,
+                             cflow_subgraph_id subgraph_id,
+                             cflow_source *source,
+                             cflow_scheduler *scheduler,
+                             const cflow_sink *sink) {
+    return cflow_status_result_is_ok(cflow_run_open_subgraph_with_options(
+        run, graph, subgraph_id, source, scheduler, sink, NULL));
 }
 
 bool cflow_run_open(cflow_run *run,
@@ -953,8 +1350,21 @@ bool cflow_run_open(cflow_run *run,
                     cflow_source *source,
                     cflow_scheduler *scheduler,
                     const cflow_sink *sink) {
-    if (!graph || graph->root >= graph->subgraph_count) return false;
-    return cflow_run_open_subgraph(run, graph, graph->root, source, scheduler, sink);
+    return cflow_status_result_is_ok(cflow_run_open_with_options(
+        run, graph, source, scheduler, sink, NULL));
+}
+
+cflow_status_result cflow_run_open_with_options(
+    cflow_run *run,
+    const cflow_graph *graph,
+    cflow_source *source,
+    cflow_scheduler *scheduler,
+    const cflow_sink *sink,
+    const cflow_eval_options *options) {
+    if (!graph || graph->root >= graph->subgraph_count)
+        return (cflow_status_result){CFLOW_STATUS_INVALID_ARGUMENT};
+    return cflow_run_open_subgraph_with_options(
+        run, graph, graph->root, source, scheduler, sink, options);
 }
 
 
@@ -1076,6 +1486,17 @@ const char *cflow_run_error(const cflow_run *run) {
     run_impl *r = impl_of(run); const char *v = "run is null";
     if (r) { turbo_mutex_lock(&r->lock); v = r->error; turbo_mutex_unlock(&r->lock); }
     return v;
+}
+cflow_status cflow_run_status(const cflow_run *run) {
+    run_impl *r = impl_of(run);
+    cflow_status status = CFLOW_STATUS_INVALID_ARGUMENT;
+    if (r) {
+        turbo_mutex_lock(&r->lock);
+        status = r->cancelled && r->status == CFLOW_STATUS_OK
+            ? CFLOW_STATUS_CANCELLED : r->status;
+        turbo_mutex_unlock(&r->lock);
+    }
+    return status;
 }
 size_t cflow_run_outstanding_demand(const cflow_run *run) {
     run_impl *r = impl_of(run); return r ? demand_get(r) : 0;

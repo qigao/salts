@@ -32,14 +32,24 @@ cflow_stream *cflow_stream_init(cflow_stream *s, const cmeta_type_desc *source_t
     s->method = cflow_stream_##method;
 Replay(CFlowOperators, CFLOW_OP_ROW)
 #undef CFLOW_OP_ROW
+    s->take = cflow_stream_take;
+    s->skip = cflow_stream_skip;
+    s->distinct = cflow_stream_distinct;
+    s->sorted = cflow_stream_sorted;
     return s;
 }
 
 cflow_stream *cflow_stream_from_range(cflow_stream *s, cmeta_range range) {
+    return cflow_stream_from_range_with_options(s, range, NULL);
+}
+
+cflow_stream *cflow_stream_from_range_with_options(
+    cflow_stream *s, cmeta_range range, const cflow_eval_options *options) {
     if (!range.object || !range.element_type || !range.next) return NULL;
     if (!cflow_stream_init(s, range.element_type)) return NULL;
     s->source_range = range;
     s->has_source_range = true;
+    if (options) s->eval_options = *options;
     return s;
 }
 
@@ -58,6 +68,26 @@ void cflow_stream_destroy(cflow_stream *s) {
     if (!s) return;
     cflow_graph_destroy(&s->graph);
     memset(s, 0, sizeof(*s));
+}
+
+cflow_stream *cflow_stream_take(cflow_stream *s, size_t limit) {
+    if (!s || s->failed) return s;
+    return mark_result(s, cflow_graph_take(&s->graph, limit));
+}
+
+cflow_stream *cflow_stream_skip(cflow_stream *s, size_t count) {
+    if (!s || s->failed) return s;
+    return mark_result(s, cflow_graph_skip(&s->graph, count));
+}
+
+cflow_stream *cflow_stream_distinct(cflow_stream *s, size_t max_unique) {
+    if (!s || s->failed) return s;
+    return mark_result(s, cflow_graph_distinct(&s->graph, max_unique));
+}
+
+cflow_stream *cflow_stream_sorted(cflow_stream *s, size_t max_elements) {
+    if (!s || s->failed) return s;
+    return mark_result(s, cflow_graph_sorted(&s->graph, max_elements));
 }
 
 #define CFLOW_STREAM_IMPL_1(E, method) \

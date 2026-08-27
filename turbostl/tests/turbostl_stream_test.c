@@ -10,6 +10,8 @@ Struct(StreamStudent,
 
 #include "tinytest.h"
 
+#include <string.h>
+
 typed(List, StreamIntList, int);
 typed(List, StreamLongList, long);
 typed(Map, StreamAgeMap, int, int);
@@ -41,6 +43,22 @@ typed(map, value, long, stream_age_as_long, (int age)) {
 
 typed(reduce, associative, long, stream_sum_age, (long left, long right)) {
     return left + right;
+}
+
+typedef struct stream_visit_sum {
+    int value;
+    size_t calls;
+} stream_visit_sum;
+
+static bool stream_add_value(void *user,
+                             const cmeta_type_desc *type,
+                             const void *value) {
+    stream_visit_sum *sum = (stream_visit_sum *)user;
+    if (!sum || !value || !cmeta_type_equal(type, &cmeta_type_int))
+        return false;
+    sum->value += *(const int *)value;
+    ++sum->calls;
+    return true;
 }
 
 static bool stream_test_input(StreamIntList *input) {
@@ -149,16 +167,194 @@ suite("TurboSTL CFlow Stream") {
         StreamIntList_destroy(&input);
     }
 
+    it("exposes prefixed scalar and visiting terminal conveniences") {
+        StreamIntList input = {0};
+        turbostl_stream_t pipeline = {0};
+        turbostl_find_result found = {0};
+        stream_visit_sum sum = {0};
+        const char *error = NULL;
+        size_t count = 0u;
+        bool matched = false;
+
+        check_true(stream_test_input(&input));
+        check_not_null(stream(&input, &pipeline));
+        check_not_null(pipeline.filter(&pipeline, stream_keep_even)
+                                   ->skip(&pipeline, 1u));
+        check_true(turbostl_stream_count(&pipeline, &count, &error));
+        check_equal(count, (size_t)2u);
+        {
+            turbostl_status_result result =
+                turbostl_stream_count_result(&pipeline, &count);
+            check_true(turbostl_status_result_is_ok(result));
+            check_equal(result.status, CFLOW_STATUS_OK);
+            check_true(strcmp(
+                turbostl_status_result_message(result), "ok") == 0);
+            check_equal(count, (size_t)2u);
+        }
+        check_true(turbostl_stream_any_match(
+            &pipeline, stream_keep_even, &matched, &error));
+        check_true(matched);
+        check_true(turbostl_stream_all_match(
+            &pipeline, stream_keep_even, &matched, &error));
+        check_true(matched);
+        check_true(turbostl_stream_find_first(
+            &pipeline, &found, &error));
+        check_true(turbostl_find_result_has_value(&found));
+        check_true(cmeta_type_equal(
+            turbostl_find_result_type(&found), &cmeta_type_int));
+        check_equal(*(const int *)turbostl_find_result_value(&found), 4);
+        check_true(turbostl_stream_for_each(
+            &pipeline, stream_add_value, &sum, &error));
+        check_equal(sum.calls, (size_t)2u);
+        check_equal(sum.value, 10);
+        check_null(error);
+
+        turbostl_find_result_destroy(&found);
+        turbostl_stream_destroy(&pipeline);
+        StreamIntList_destroy(&input);
+    }
+
+    it("injects the bounded HashSet backend for stable distinct") {
+        const int input_values[] = {3, 1, 3, 2, 1};
+        const int expected[] = {3, 1, 2};
+        StreamIntList input = {0};
+        StreamIntList output = {0};
+        turbostl_stream_t pipeline = {0};
+        turbostl_collect_result collected;
+        size_t index;
+
+        check_equal(StreamIntList_init(&input, 5u), STL_OK);
+        for (index = 0u; index < 5u; ++index)
+            check_equal(
+                StreamIntList_push_back(&input, input_values[index]), STL_OK);
+        check_not_null(stream(&input, &pipeline));
+        check_not_null(pipeline.distinct(&pipeline, 3u));
+        collected = to_list_typed(
+            &pipeline, StreamIntList, &output, 3u);
+        check_true(collected.ok);
+        check_equal(collected.count, (size_t)3u);
+        for (index = 0u; index < 3u; ++index) {
+            int value = 0;
+            check_equal(StreamIntList_pop_front(&output, &value), STL_OK);
+            check_equal(value, expected[index]);
+        }
+
+        StreamIntList_destroy(&output);
+        turbostl_stream_destroy(&pipeline);
+        StreamIntList_destroy(&input);
+    }
+
+    it("injects the bounded Vec backend for stable sorted") {
+        const int input_values[] = {3, 1, 2, 1};
+        const int expected[] = {1, 1, 2, 3};
+        StreamIntList input = {0};
+        StreamIntList output = {0};
+        turbostl_stream_t pipeline = {0};
+        turbostl_collect_result collected;
+        size_t index;
+
+        check_equal(StreamIntList_init(&input, 4u), STL_OK);
+        for (index = 0u; index < 4u; ++index)
+            check_equal(
+                StreamIntList_push_back(&input, input_values[index]), STL_OK);
+        check_not_null(stream(&input, &pipeline));
+        check_not_null(pipeline.sorted(&pipeline, 4u));
+        collected = to_list_typed(
+            &pipeline, StreamIntList, &output, 4u);
+        check_true(collected.ok);
+        check_equal(collected.count, (size_t)4u);
+        for (index = 0u; index < 4u; ++index) {
+            int value = 0;
+            check_equal(StreamIntList_pop_front(&output, &value), STL_OK);
+            check_equal(value, expected[index]);
+        }
+
+        StreamIntList_destroy(&output);
+        turbostl_stream_destroy(&pipeline);
+        StreamIntList_destroy(&input);
+    }
+
+    it("reports the TurboSTL sorted hard bound structurally") {
+        const int input_values[] = {3, 1, 2};
+        StreamIntList input = {0};
+        turbostl_stream_t pipeline = {0};
+        turbostl_status_result result;
+        size_t count = 99u;
+        size_t index;
+
+        check_equal(StreamIntList_init(&input, 3u), STL_OK);
+        for (index = 0u; index < 3u; ++index)
+            check_equal(
+                StreamIntList_push_back(&input, input_values[index]), STL_OK);
+        check_not_null(stream(&input, &pipeline));
+        check_not_null(pipeline.sorted(&pipeline, 2u));
+        result = turbostl_stream_count_result(&pipeline, &count);
+        check_equal(result.status, CFLOW_STATUS_CAPACITY_EXCEEDED);
+        check_equal(count, (size_t)0u);
+
+        turbostl_stream_destroy(&pipeline);
+        StreamIntList_destroy(&input);
+    }
+
+    it("preserves runtime and collector status when sorted collection fails") {
+        const int input_values[] = {3, 1, 2};
+        StreamIntList input = {0};
+        StreamIntList output = {0};
+        turbostl_stream_t pipeline = {0};
+        turbostl_collect_result result;
+        size_t index;
+
+        check_equal(StreamIntList_init(&input, 3u), STL_OK);
+        for (index = 0u; index < 3u; ++index)
+            check_equal(
+                StreamIntList_push_back(&input, input_values[index]), STL_OK);
+        check_not_null(stream(&input, &pipeline));
+        check_not_null(pipeline.sorted(&pipeline, 2u));
+        result = collect_typed(&pipeline, StreamIntList, &output, 3u);
+        check_false(result.ok);
+        check_equal(result.flow_status, CFLOW_STATUS_CAPACITY_EXCEEDED);
+        check_equal(result.status, CMETA_CALLBACK_ERROR);
+        check_equal(result.count, (size_t)0u);
+        check_null(cmeta_container_descriptor(&output));
+
+        turbostl_stream_destroy(&pipeline);
+        StreamIntList_destroy(&input);
+    }
+
+    it("reports the TurboSTL distinct hard bound structurally") {
+        const int input_values[] = {1, 2, 3};
+        StreamIntList input = {0};
+        turbostl_stream_t pipeline = {0};
+        turbostl_status_result result;
+        size_t count = 99u;
+        size_t index;
+
+        check_equal(StreamIntList_init(&input, 3u), STL_OK);
+        for (index = 0u; index < 3u; ++index)
+            check_equal(
+                StreamIntList_push_back(&input, input_values[index]), STL_OK);
+        check_not_null(stream(&input, &pipeline));
+        check_not_null(pipeline.distinct(&pipeline, 2u));
+        result = turbostl_stream_count_result(&pipeline, &count);
+        check_equal(result.status, CFLOW_STATUS_CAPACITY_EXCEEDED);
+        check_equal(count, (size_t)0u);
+
+        turbostl_stream_destroy(&pipeline);
+        StreamIntList_destroy(&input);
+    }
+
     it("rejects an array result that exceeds its explicit limit") {
         StreamIntList input = {0};
         turbostl_stream_t pipeline = {0};
         cflow_result output = {0};
+        turbostl_status_result result;
 
         check_true(stream_test_input(&input));
         check_not_null(stream(&input, &pipeline));
         check_not_null(pipeline.filter(&pipeline, stream_keep_even)
                                    ->map(&pipeline, stream_square));
-        check_false(to_array(&pipeline, 2u, &output));
+        result = to_array_result(&pipeline, 2u, &output);
+        check_equal(result.status, CFLOW_STATUS_CAPACITY_EXCEEDED);
         check_null(output.data);
         check_equal(output.count, (size_t)0u);
         check_null(output.type);
@@ -182,6 +378,7 @@ suite("TurboSTL CFlow Stream") {
         StreamIntList_clear(&input);
         result = collect_typed(&pipeline, StreamLongList, &output, 6u);
         check_false(result.ok);
+        check_equal(result.flow_status, CFLOW_STATUS_EXECUTION_ERROR);
         check_equal(result.error, "range owner mutated");
         check_equal(result.status, CMETA_CALLBACK_ERROR);
         check_null(cmeta_container_descriptor(&output));
@@ -204,6 +401,7 @@ suite("TurboSTL CFlow Stream") {
                                    ->map(&pipeline, stream_square));
         result = collect_typed(&pipeline, StreamLongList, &output, 2u);
         check_false(result.ok);
+        check_equal(result.flow_status, CFLOW_STATUS_CAPACITY_EXCEEDED);
         check_equal(result.error, "observer rejected value");
         check_equal(result.status, CMETA_CAPACITY_EXCEEDED);
         check_null(cmeta_container_descriptor(&output));

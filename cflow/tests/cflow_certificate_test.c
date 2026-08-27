@@ -172,4 +172,46 @@ suite("CFlow Plan refinement certificate") {
     cflow_stream_destroy(&right);
     cflow_stream_destroy(&left);
   }
+
+  it("certifies immutable Stream slice parameters") {
+    cflow_stream stream = {0};
+    cflow_graph normalized = {0};
+    cflow_graph optimized = {0};
+    cflow_plan plan = {0};
+    cflow_plan_certificate certificate = {0};
+    const char *error = NULL;
+    normalized.root = optimized.root = CMETA_INVALID_ID;
+
+    check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+    check_not_null(stream.skip(&stream, 2u)->take(&stream, 3u));
+    check_true(cflow_graph_normalize(&normalized, &stream.graph));
+    check_true(cflow_graph_optimize(
+        &optimized, &normalized,
+        (cflow_opt_options){CMETA_OPT_DEFAULT}, NULL));
+    check_true(cflow_plan_compile(&plan, &optimized, NULL));
+    check_true(cflow_plan_certificate_build(
+        &certificate, &optimized, &plan,
+        CFLOW_CERTIFIED_PATH_SEQUENTIAL));
+    check_equal(certificate.row_count, (size_t)2u);
+    check_equal(certificate.rows[0].opcode,
+                (uint32_t)CFLOW_CERTIFIED_SKIP);
+    check_true(certificate.rows[0].has_size_parameter);
+    check_equal(certificate.rows[0].size_parameter, (size_t)2u);
+    check_equal(certificate.rows[1].opcode,
+                (uint32_t)CFLOW_CERTIFIED_TAKE);
+    check_equal(certificate.rows[1].size_parameter, (size_t)3u);
+    check_true(cflow_plan_certificate_check(
+        &certificate, &optimized, &plan, &error));
+    check_null(error);
+    ++certificate.rows[0].size_parameter;
+    check_false(cflow_plan_certificate_check(
+        &certificate, &optimized, &plan, &error));
+    check_not_null(error);
+
+    cflow_plan_certificate_destroy(&certificate);
+    cflow_plan_destroy(&plan);
+    cflow_graph_destroy(&optimized);
+    cflow_graph_destroy(&normalized);
+    cflow_stream_destroy(&stream);
+  }
 }

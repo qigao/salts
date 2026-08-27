@@ -15,6 +15,12 @@ bool cflow_resumable_from_subgraph(cflow_resumable *out,
                                     const cflow_graph *graph,
                                     cflow_subgraph_id subgraph,
                                     const void *source_value);
+bool cflow_resumable_from_subgraph_with_options(
+    cflow_resumable *out,
+    const cflow_graph *graph,
+    cflow_subgraph_id subgraph,
+    const void *source_value,
+    const cflow_eval_options *options);
 
 #ifdef __cplusplus
 }
