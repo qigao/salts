@@ -16,8 +16,16 @@
 #define CFLOW_STATECHART_ERROR_CAPACITY 512u
 #endif
 
+#ifndef CFLOW_STATECHART_DEFAULT_INTERNAL_EVENT_CAPACITY
+#define CFLOW_STATECHART_DEFAULT_INTERNAL_EVENT_CAPACITY 16u
+#endif
+
 #if CFLOW_STATECHART_ERROR_CAPACITY < 1
 #error "CFLOW_STATECHART_ERROR_CAPACITY must be greater than zero"
+#endif
+
+#if CFLOW_STATECHART_DEFAULT_INTERNAL_EVENT_CAPACITY < 1
+#error "CFLOW_STATECHART_DEFAULT_INTERNAL_EVENT_CAPACITY must be greater than zero"
 #endif
 
 /*
@@ -79,6 +87,11 @@ typedef enum cflow_statechart_runtime_status {
     CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED,
     CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION,
     CFLOW_STATECHART_RUNTIME_GUARD_FAILED,
+    CFLOW_STATECHART_RUNTIME_ACTION_FAILED,
+    CFLOW_STATECHART_RUNTIME_INTERNAL_QUEUE_FULL,
+    CFLOW_STATECHART_RUNTIME_INTERNAL_EVENT_INVALID,
+    CFLOW_STATECHART_RUNTIME_INTERNAL_EVENT_TYPE_MISMATCH,
+    CFLOW_STATECHART_RUNTIME_TASK_CANCELLED,
     CFLOW_STATECHART_RUNTIME_WOULD_BLOCK
 } cflow_statechart_runtime_status;
 
@@ -107,6 +120,8 @@ typedef struct cflow_statechart_instance_config {
     size_t guard_count;
     const cflow_statechart_executable_binding *executables;
     size_t executable_count;
+    /** Zero selects CFLOW_STATECHART_DEFAULT_INTERNAL_EVENT_CAPACITY. */
+    size_t internal_event_capacity;
     /**
      * Zero selects CFLOW_STATECHART_MAX_INSTANCE_BYTES. A nonzero value is the
      * exact per-instance hard limit and must not exceed that compile ceiling.
@@ -123,8 +138,21 @@ typedef struct cflow_statechart_storage_requirements {
     size_t history_count_bytes;
     size_t extended_state_bytes;
     size_t index_work_bytes;
+    size_t action_scratch_bytes;
+    size_t internal_event_bytes;
     size_t total_bytes;
 } cflow_statechart_storage_requirements;
+
+typedef struct cflow_statechart_microstep_stats {
+    uint64_t accepted;
+    uint64_t completed;
+    uint64_t failed;
+    uint64_t cancelled;
+    uint64_t finalized;
+    cflow_statechart_runtime_status last_status;
+    size_t internal_capacity;
+    size_t internal_pending;
+} cflow_statechart_microstep_stats;
 
 typedef struct cflow_statechart_instance_stats {
     uint64_t configuration_version;
@@ -242,6 +270,40 @@ cflow_statechart_runtime_status cflow_statechart_instance_select_internal(
     cflow_statechart_instance *instance,
     const cflow_statechart_selection_trigger *trigger,
     cflow_statechart_selection_snapshot *out);
+
+/*
+ * Copy one current selection and trigger into the instance-owned request
+ * buffers and submit it to the borrowed non-manual SerialExecutor. Accepted
+ * work invokes exactly one run/cancel callback and then finalize. Rejected
+ * admission invokes no callback and rolls back the request reservation.
+ */
+cflow_admission_status cflow_statechart_instance_try_microstep_internal(
+    cflow_statechart_instance *instance,
+    const cflow_statechart_selection_trigger *trigger,
+    const cflow_statechart_selection_snapshot *selection);
+
+bool cflow_statechart_instance_get_microstep_stats_internal(
+    const cflow_statechart_instance *instance,
+    cflow_statechart_microstep_stats *out);
+
+/* Private observational copy; Task 5 owns dequeue/scheduling semantics. */
+cflow_statechart_runtime_status
+cflow_statechart_instance_copy_internal_event_internal(
+    const cflow_statechart_instance *instance,
+    size_t position,
+    cflow_event_id *out_id,
+    const cmeta_type_desc **out_type,
+    void *out_payload,
+    size_t payload_capacity);
+
+/* Copy one committed history slot in document order for atomicity tests. */
+cflow_statechart_snapshot_status
+cflow_statechart_instance_copy_history_internal(
+    const cflow_statechart_instance *instance,
+    cflow_machine_state_id history,
+    cflow_machine_state_id *out_states,
+    size_t state_capacity,
+    size_t *out_state_count);
 
 bool cflow_statechart_selection_exits_internal(
     const cflow_statechart_instance *instance,

@@ -85,4 +85,73 @@ example : evaluateFrom initialSelection ([ancestor] ++ [descendant]) =
     evaluateFrom (evaluateFrom initialSelection [ancestor]) [descendant] := by
   exact evaluateFrom_append _ _ _
 
+def stateAncestors : Nat → List Nat
+  | 3 => [2, 1]
+  | 2 => [1]
+  | _ => []
+
+def stateDocumentOrder : Nat → Nat
+  | 1 => 0
+  | 2 => 1
+  | 3 => 2
+  | 4 => 3
+  | _ => 99
+
+example : ExitOrdered stateAncestors stateDocumentOrder [4, 3, 2, 1] := by
+  simp [ExitOrdered, exitPrecedes, stateAncestors, stateDocumentOrder]
+
+example : EntryOrdered stateAncestors stateDocumentOrder [1, 2, 3, 4] := by
+  simp [EntryOrdered, entryPrecedes, stateAncestors, stateDocumentOrder]
+
+def configurationModel : ConfigurationModel where
+  stateUniverse := [1, 2, 3, 4]
+  ancestors
+    | 2 => [1]
+    | 3 => [2, 1]
+    | 4 => [2, 1]
+    | _ => []
+  children
+    | 1 => [2]
+    | 2 => [3, 4]
+    | _ => []
+  isReal := fun state => decide (state ∈ [1, 2, 3, 4])
+  isCompound := fun state => decide (state = 1 ∨ state = 2)
+  isParallel := fun _ => false
+  isLeaf := fun state => decide (state = 3 ∨ state = 4)
+
+def legalPlan : ModeledMicrostep configurationModel where
+  nextActive := [1, 2, 4]
+  nextLegal := by
+    simp [LegalConfiguration, configurationModel]
+
+example : LegalConfiguration configurationModel (applyMicrostep legalPlan) := by
+  exact modeled_microstep_preserves_legality legalPlan
+
+example : commitConfiguration false [1, 2, 3] [1, 4] = [1, 2, 3] := by
+  exact failed_commit_preserves _ _
+
+def shallowDefaults : Nat → List Nat
+  | 2 => [2, 3]
+  | _ => []
+
+example : restoreShallow [2] [4] shallowDefaults = [2, 3] := by
+  native_decide
+
+example : restoreShallow [] [4] shallowDefaults = [4] := by
+  native_decide
+
+def deepAncestors : Nat → List Nat
+  | 3 => [1, 2, 3]
+  | 4 => [1, 2, 4]
+  | _ => []
+
+example : restoreDeep [3, 4] deepAncestors = [1, 2, 3, 4] := by
+  native_decide
+
+example : ShallowRestored [2] [4] shallowDefaults [2, 3] := by
+  exact restoreShallow_satisfies _ _ _
+
+example : DeepRestored [3, 4] deepAncestors [1, 2, 3, 4] := by
+  exact restoreDeep_satisfies _ _
+
 end CMetaCFlowCalculus.Tests.Statechart

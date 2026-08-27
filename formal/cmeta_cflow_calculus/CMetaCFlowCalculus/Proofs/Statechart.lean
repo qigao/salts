@@ -98,4 +98,49 @@ theorem select_deterministic {first second : List Candidate}
     (sameOrderedInput : first = second) : select first = select second := by
   exact congrArg select sameOrderedInput
 
+theorem descendant_precedes_ancestor_on_exit
+    (ancestors : Nat → List Nat) (documentOrder : Nat → Nat)
+    {descendant ancestor : Nat}
+    (descends : (ancestors descendant).contains ancestor = true) :
+    exitPrecedes ancestors documentOrder descendant ancestor = true := by
+  have member : ancestor ∈ ancestors descendant := by simpa using descends
+  simp [exitPrecedes, member]
+
+theorem ancestor_precedes_descendant_on_entry
+    (ancestors : Nat → List Nat) (documentOrder : Nat → Nat)
+    {ancestor descendant : Nat}
+    (descends : (ancestors descendant).contains ancestor = true) :
+    entryPrecedes ancestors documentOrder ancestor descendant = true := by
+  have member : ancestor ∈ ancestors descendant := by simpa using descends
+  simp [entryPrecedes, member]
+
+theorem modeled_microstep_preserves_legality
+    {model : ConfigurationModel}
+    (microstep : ModeledMicrostep model) :
+    LegalConfiguration model (applyMicrostep microstep) := by
+  exact microstep.nextLegal
+
+theorem failed_commit_preserves (published staged : List Nat) :
+    commitConfiguration false published staged = published := by
+  rfl
+
+theorem successful_commit_publishes_staged
+    (published staged : List Nat) :
+    commitConfiguration true published staged = staged := by
+  rfl
+
+theorem restoreShallow_satisfies
+    (remembered defaultTarget : List Nat)
+    (defaultBelow : Nat → List Nat) :
+    ShallowRestored remembered defaultTarget defaultBelow
+      (restoreShallow remembered defaultTarget defaultBelow) := by
+  rfl
+
+theorem restoreDeep_satisfies
+    (rememberedLeaves : List Nat)
+    (ancestorsIncludingSelf : Nat → List Nat) :
+    DeepRestored rememberedLeaves ancestorsIncludingSelf
+      (restoreDeep rememberedLeaves ancestorsIncludingSelf) := by
+  rfl
+
 end CMetaCFlowCalculus.CFlow.Statechart
