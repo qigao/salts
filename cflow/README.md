@@ -17,6 +17,7 @@ include/cflow/
 ├── operators.h      single-source Operators(...) schema
 ├── graph.h
 ├── stream.h
+├── stream_execution.h asynchronous Stream collection handle
 ├── lower.h
 ├── effect.h
 ├── property.h
@@ -809,6 +810,27 @@ stage, and terminal adapters create independent executions. General parallel
 execution is selected through explicit CFlow plan/executor capabilities rather
 than a Stream mode. Bounded terminals treat their limits as resource contracts,
 not as truncating operators.
+
+`cflow_stream_execution_start()` is the asynchronous terminal for an existing
+concurrent scheduler. A worker scheduler may advance several independent
+executions concurrently, but each Run still serializes its own pump and
+Collector callbacks. It therefore adds pipeline-level concurrency without
+changing operator order or implying per-element parallel `filter`/`map`.
+
+The execution handle owns a normalized Graph copy, Run, Collector state, and
+terminal error. It borrows the scheduler, the Range's backing container, and
+the Collector's output/context until `cflow_stream_execution_destroy()`
+returns. `wait()` observes completion but does not release those borrows;
+destroy closes the Run synchronously. `cancel()` also closes synchronously and
+aborts an uncommitted Collector transaction. A manual scheduler is rejected,
+and scheduler/Collector capacity failure does not fall back to inline or
+unbounded execution.
+
+Control-plane calls are serialized by one external owner. Snapshot queries may
+run concurrently with workers. Calling wait, cancel, or destroy from any Range,
+operator, or Collector callback on the same active Run returns
+`CFLOW_STREAM_EXECUTION_WOULD_BLOCK` so an active callback cannot wait for or
+free its own Run.
 
 CFlow consumes, but does not own, CMeta Range metadata:
 

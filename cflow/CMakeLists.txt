@@ -84,6 +84,7 @@ add_library(${TARGET_NAME}
   src/statechart_hierarchy_adapter.c
   src/statechart_runtime.c
   src/stream.c
+  src/stream_execution.c
   src/subrun.c
   src/temporal.c
   src/timer_queue.c

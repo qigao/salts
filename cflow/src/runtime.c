@@ -8,6 +8,7 @@
 #include <turbo/thread.h>
 
 #include "value_storage.h"
+#include "runtime_internal.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -105,6 +106,12 @@ static bool run_lifecycle_ensure(void) {
 
 static run_impl *impl_of(const cflow_run *run) {
     return run ? (run_impl *)run->impl : NULL;
+}
+
+bool cflow_run_active_on_current_thread(const cflow_run *run) {
+    run_impl *impl = impl_of(run);
+    return (impl != NULL && active_pump_run == impl) ||
+           (run != NULL && active_destroy_owner == run);
 }
 
 static cflow_step generator_resume_machine(void *state, cflow_resume_ctx *ctx, void *out) {
