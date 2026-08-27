@@ -1344,23 +1344,6 @@ transactional Collector copies or moves each borrowed value before `accept()`
 returns. Optimizer map fusion remains available for trivial values; managed map
 nodes stay separate so every intermediate descriptor retains its lifecycle.
 
-`cflow_eval_count()` is the managed-safe counting terminal. It executes the
-bound Range and complete Graph through the interpreted resumable runtime and
-counts only values that reach the terminal. It deliberately does not use a
-`SIZED` Range shortcut: filters, flatMap, reduce, skip/take, callbacks, and
-Source errors can change the observable result. The terminal borrows each live
-value without copying, moving, or retaining it. Empty input succeeds with zero;
-an unbounded source must be bounded upstream (for example by `take`). The output
-is published only after normal completion, so invalid input, Range admission,
-runtime failure, or `size_t` overflow returns false with a zero count and an
-optional borrowed diagnostic. A reusable Range can be counted repeatedly, and
-each invocation owns fresh accumulator state. This API does not compile a Plan
-and does not fall back between compiled and interpreted execution. A Stream
-whose Graph construction already failed is rejected before Source admission.
-When exactly `SIZE_MAX` downstream values arrive without a terminal signal,
-the adapter requests one terminal probe: DONE publishes the exact count, while
-another value reports `stream count overflow`.
-
 Range flags describe traversal semantics. The current Range Source consumes
 items through `cmeta_range_next()` and does not treat
 `cmeta_container_data()` as physical storage: that API returns a semantic

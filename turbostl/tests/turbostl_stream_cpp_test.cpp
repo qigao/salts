@@ -8,8 +8,8 @@
 using turbostl_async_collect_fn = cflow_stream_execution_status (*)(
     turbostl_stream_execution_t *, const turbostl_stream_t *,
     cflow_scheduler *, cmeta_collector);
-using turbostl_count_fn = turbostl_count_result (*)(
-    const turbostl_stream_t *);
+using turbostl_count_fn = bool (*)(
+    const turbostl_stream_t *, size_t *, const char **);
 
 static_assert(std::is_standard_layout<turbostl_stream_execution_t>::value,
               "the async Stream handle must remain C-compatible");

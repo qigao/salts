@@ -38,7 +38,6 @@ cmake_add_test(cflow_stream_slice_test
 cmake_add_test(cflow_stream_count_test
   SOURCES cflow_stream_count_test.c
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
-  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_stream_execution_test

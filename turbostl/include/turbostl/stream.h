@@ -72,12 +72,6 @@ typedef struct turbostl_collect_result {
     cflow_status flow_status;
 } turbostl_collect_result;
 
-typedef struct turbostl_count_result {
-    bool ok;
-    const char *error;
-    size_t count;
-} turbostl_count_result;
-
 static inline turbostl_collect_result
 turbostl_stream_collect(const turbostl_stream_t *stream,
                         cmeta_collector collector) {
@@ -92,14 +86,6 @@ turbostl_stream_collect(const turbostl_stream_t *stream,
     result.status = collected.collector_status;
     result.count = collected.count;
     result.flow_status = collected.status;
-    return result;
-}
-
-static inline turbostl_count_result
-turbostl_stream_count(const turbostl_stream_t *stream) {
-    turbostl_count_result result = {false, NULL, 0u};
-
-    result.ok = cflow_eval_count(stream, &result.count, &result.error);
     return result;
 }
 
@@ -226,9 +212,7 @@ turbostl_container_collector(void *output, size_t limit) {
 }
 
 /* Typed terminals use distinct names so the three-argument #53 surface never
- * relies on variadic-arity dispatch over arbitrary C expressions. Count stays
- * a prefixed function because a global count(...) macro would intercept C++
- * calls such as std::count(...). */
+ * relies on variadic-arity dispatch over arbitrary C expressions. */
 #define collector(container_type, output_ptr, limit) \
     CMETA_TYPED_CALL(container_type, collector, (output_ptr), (limit))
 #define collect(stream_ptr, output_ptr, limit) \
