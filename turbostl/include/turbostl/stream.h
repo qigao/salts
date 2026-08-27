@@ -76,11 +76,8 @@ static inline turbostl_collect_result
 turbostl_stream_collect(const turbostl_stream_t *stream,
                         cmeta_collector collector) {
     turbostl_collect_result result = {
-        .ok = false,
-        .status = CMETA_INVALID_ARGUMENT,
-        .error = NULL,
-        .count = 0u,
-        .flow_status = CFLOW_STATUS_INVALID_ARGUMENT
+        false, CMETA_INVALID_ARGUMENT, NULL, 0u,
+        CFLOW_STATUS_INVALID_ARGUMENT
     };
     cflow_collect_result collected =
         cflow_eval_collect_result(stream, &collector, &result.error);
