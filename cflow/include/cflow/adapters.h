@@ -43,9 +43,10 @@ typedef struct cflow_collect_result {
 
 bool cflow_collect_result_is_ok(cflow_collect_result result);
 
-/* cflow_result owns one byte buffer and has no per-element destructor.
- * Result-producing adapters therefore accept only graphs whose value types
- * have TRIVIAL_COPY and TRIVIAL_DESTROY. */
+/* cflow_result owns one contiguous value buffer. Result-producing adapters
+ * accept only graphs whose value types have TRIVIAL_COPY and TRIVIAL_DESTROY;
+ * sequential compiled Plans may additionally return COPY/MOVE/DESTROY values.
+ * cflow_result_destroy() applies the result type's lifecycle when required. */
 
 /* Byte collection is a façade over the unified resumable runtime. Structured
  * variants classify source admission, trivial-storage admission, allocation,

@@ -1,5 +1,7 @@
 #include <cflow/plan_internal.h>
 
+#include "result_storage.h"
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,7 +12,13 @@ static const cflow_plan_impl *plan_impl(const cflow_plan *p) {
 
 static void vec_destroy(cflow_plan_value_vec *v) {
     if (!v) return;
-    free(v->data);
+    if (v->data && v->type) {
+        for (size_t index = 0u; index < v->count; ++index) {
+            cflow_value_destroy(
+                v->type, v->data + index * v->type->size);
+        }
+    }
+    free(v->allocation);
     memset(v, 0, sizeof(*v));
 }
 
@@ -28,6 +36,72 @@ static bool checked_bytes(size_t n, size_t size, size_t *bytes) {
 static bool checked_add(size_t left, size_t right, size_t *sum) {
     if (!sum || left > SIZE_MAX - right) return false;
     *sum = left + right;
+    return true;
+}
+
+static bool vec_init(cflow_plan_value_vec *v,
+                     const cmeta_type_desc *type,
+                     size_t capacity) {
+    if (!v || v->allocation || v->data || v->count || v->capacity || v->type ||
+        !cflow_result_storage_allocate(
+            type, capacity, &v->allocation, &v->data))
+        return false;
+    v->capacity = capacity;
+    v->type = type;
+    return true;
+}
+
+static bool vec_copy_append(cflow_plan_value_vec *v, const void *value) {
+    void *destination;
+
+    if (!v || !v->type || !value || v->count >= v->capacity) return false;
+    destination = v->data + v->count * v->type->size;
+    if (!cflow_value_construct(v->type, destination, value)) return false;
+    ++v->count;
+    return true;
+}
+
+static bool vec_reserve(cflow_plan_value_vec *v, size_t capacity) {
+    cflow_plan_value_vec replacement = {0};
+    size_t bytes;
+    unsigned char *data;
+
+    if (!v || !v->type || capacity < v->count) return false;
+    if (capacity <= v->capacity) return true;
+    if (cflow_value_storage_type_supported(v->type)) {
+        if (!checked_bytes(capacity, v->type->size, &bytes)) return false;
+        data = (unsigned char *)realloc(v->allocation, bytes);
+        if (!data) return false;
+        v->allocation = data;
+        v->data = data;
+        v->capacity = capacity;
+        return true;
+    }
+    if (!vec_init(&replacement, v->type, capacity)) return false;
+    for (size_t index = 0u; index < v->count; ++index) {
+        if (!vec_copy_append(
+                &replacement, v->data + index * v->type->size)) {
+            vec_destroy(&replacement);
+            return false;
+        }
+    }
+    vec_destroy(v);
+    *v = replacement;
+    return true;
+}
+
+static bool vec_move_append(cflow_plan_value_vec *v,
+                            cflow_value_slot *source) {
+    void *destination;
+
+    if (!v || !v->type || !source || !source->live ||
+        !cmeta_type_equal(v->type, source->type) || v->count >= v->capacity)
+        return false;
+    destination = v->data + v->count * v->type->size;
+    if (!cflow_value_move_construct(v->type, destination, source->storage))
+        return false;
+    source->live = false;
+    ++v->count;
     return true;
 }
 
@@ -196,29 +270,62 @@ static bool eval_fused_filters(const cflow_plan *plan,
 
 static bool copy_values(cflow_plan_value_vec *dst, const void *src, size_t count,
                         const cmeta_type_desc *type) {
-    size_t bytes = 0;
-    if (!dst || !type || (!src && count) || !checked_bytes(count, type->size, &bytes))
+    if (!dst || !type || (!src && count) || !vec_init(dst, type, count))
         return false;
-    unsigned char *p = bytes ? malloc(bytes) : NULL;
-    if (bytes && !p) return false;
-    if (bytes) memcpy(p, src, bytes);
-    dst->data = p; dst->count = count; dst->type = type;
+    if (cflow_value_storage_type_supported(type)) {
+        if (count) memcpy(dst->data, src, count * type->size);
+        dst->count = count;
+        return true;
+    }
+    for (size_t index = 0u; index < count; ++index) {
+        if (!vec_copy_append(
+                dst, (const unsigned char *)src + index * type->size)) {
+            vec_destroy(dst);
+            return false;
+        }
+    }
     return true;
 }
 
 static bool step_filter(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
+    cflow_plan_value_vec out = {0};
+
     if (!i || !v || !cmeta_type_equal(v->type, i->input_type)) return false;
-    size_t out = 0;
+    if (cflow_value_storage_type_supported(v->type)) {
+        size_t output_count = 0u;
+        for (size_t index = 0u; index < v->count; ++index) {
+            unsigned char *element = v->data + index * v->type->size;
+            _Bool keep = false;
+            const void *args[1] = {element};
+            if (!i->call.invoke ||
+                !i->call.invoke(&i->call.fn, &keep, args))
+                return false;
+            if (keep) {
+                if (output_count != index) {
+                    memmove(v->data + output_count * v->type->size,
+                            element, v->type->size);
+                }
+                ++output_count;
+            }
+        }
+        v->count = output_count;
+        return true;
+    }
+    if (!vec_init(&out, v->type, v->count)) return false;
     for (size_t n = 0; n < v->count; ++n) {
         unsigned char *elem = v->data + n * v->type->size;
         _Bool keep = false; const void *args[1] = { elem };
-        if (!i->call.invoke || !i->call.invoke(&i->call.fn, &keep, args)) return false;
-        if (keep) {
-            if (out != n) memmove(v->data + out * v->type->size, elem, v->type->size);
-            ++out;
+        if (!i->call.invoke || !i->call.invoke(&i->call.fn, &keep, args)) {
+            vec_destroy(&out);
+            return false;
+        }
+        if (keep && !vec_copy_append(&out, elem)) {
+            vec_destroy(&out);
+            return false;
         }
     }
-    v->count = out;
+    vec_destroy(v);
+    *v = out;
     return true;
 }
 
@@ -232,12 +339,20 @@ static bool step_take(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
         v->type = i->output_type;
         return true;
     }
-    if (v->count > i->size_parameter)
+    if (v->count > i->size_parameter) {
+        if (!cflow_value_storage_type_supported(v->type)) {
+            for (size_t index = i->size_parameter; index < v->count; ++index) {
+                cflow_value_destroy(
+                    v->type, v->data + index * v->type->size);
+            }
+        }
         v->count = i->size_parameter;
+    }
     return true;
 }
 
 static bool step_skip(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
+    cflow_plan_value_vec out = {0};
     size_t remaining;
     if (!i || !v || !i->has_size_parameter ||
         !cmeta_type_equal(v->type, i->input_type) ||
@@ -250,91 +365,177 @@ static bool step_skip(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
     }
     if (i->size_parameter == 0u) return true;
     remaining = v->count - i->size_parameter;
-    memmove(v->data,
-            v->data + i->size_parameter * v->type->size,
-            remaining * v->type->size);
-    v->count = remaining;
+    if (cflow_value_storage_type_supported(v->type)) {
+        memmove(v->data,
+                v->data + i->size_parameter * v->type->size,
+                remaining * v->type->size);
+        v->count = remaining;
+        return true;
+    }
+    if (!vec_init(&out, v->type, remaining)) return false;
+    for (size_t index = i->size_parameter; index < v->count; ++index) {
+        if (!vec_copy_append(&out, v->data + index * v->type->size)) {
+            vec_destroy(&out);
+            return false;
+        }
+    }
+    vec_destroy(v);
+    *v = out;
     return true;
 }
 
 static bool step_map(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
     if (!i || !v || !i->fn_chain_count || !cmeta_type_equal(v->type, i->input_type)) return false;
     cflow_plan_value_vec cur = *v;
-    v->data = NULL; v->count = 0; v->type = NULL;
+    memset(v, 0, sizeof(*v));
     for (size_t k = 0; k < i->fn_chain_count; ++k) {
         const cflow_plan_call *call = &i->fn_chain[k];
         if (!call->invoke || !cmeta_type_equal(call->input_type, cur.type)) { vec_destroy(&cur); return false; }
-        size_t bytes = 0;
-        if (!checked_bytes(cur.count, call->output_type->size, &bytes)) { vec_destroy(&cur); return false; }
-        unsigned char *next = bytes ? malloc(bytes) : NULL;
-        if (bytes && !next) { vec_destroy(&cur); return false; }
+        cflow_plan_value_vec next = {0};
+        if (!vec_init(&next, call->output_type, cur.count)) {
+            vec_destroy(&cur);
+            return false;
+        }
         for (size_t n = 0; n < cur.count; ++n) {
             const void *args[1] = { cur.data + n * cur.type->size };
-            if (!call->invoke(&call->fn, next + n * call->output_type->size, args)) {
-                free(next); vec_destroy(&cur); return false;
+            if (!call->invoke(
+                    &call->fn,
+                    next.data + next.count * call->output_type->size,
+                    args)) {
+                vec_destroy(&next);
+                vec_destroy(&cur);
+                return false;
             }
+            ++next.count;
         }
-        size_t next_count = cur.count;
         vec_destroy(&cur);
-        cur.data = next; cur.count = next_count; cur.type = call->output_type;
+        cur = next;
     }
     if (!cmeta_type_equal(cur.type, i->output_type)) { vec_destroy(&cur); return false; }
     *v = cur;
     return true;
 }
 
-static bool append_generated(cflow_plan_value_vec *dst, size_t *capacity, const void *value) {
-    if (!dst || !capacity || !dst->type) return false;
-    if (dst->count == *capacity) {
-        size_t next = *capacity ? *capacity * 2u : 8u;
-        if (next < *capacity || (dst->type->size && next > SIZE_MAX / dst->type->size)) return false;
-        unsigned char *p = realloc(dst->data, next * dst->type->size);
-        if (!p) return false;
-        dst->data = p; *capacity = next;
+static bool append_generated(cflow_plan_value_vec *dst,
+                             cflow_value_slot *value) {
+    if (!dst || !value || !dst->type) return false;
+    if (dst->count == dst->capacity) {
+        size_t next = dst->capacity ? dst->capacity * 2u : 8u;
+        if (next < dst->capacity || !vec_reserve(dst, next)) return false;
     }
-    memcpy(dst->data + dst->count * dst->type->size, value, dst->type->size);
-    ++dst->count;
-    return true;
+    return vec_move_append(dst, value);
 }
 
 static bool step_flat_map(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
     if (!i || !v || !cmeta_type_equal(v->type, i->input_type)) return false;
-    cflow_plan_value_vec out = {0}; out.type = i->output_type;
-    size_t capacity = 0;
-    unsigned char *slot = malloc(out.type->size ? out.type->size : 1u);
-    if (!slot) return false;
+    cflow_plan_value_vec out = {0};
+    cflow_value_slot slot = {0};
+    if (!vec_init(&out, i->output_type, 0u) ||
+        !cflow_value_slot_init(&slot, i->output_type)) {
+        vec_destroy(&out);
+        cflow_value_slot_destroy(&slot);
+        return false;
+    }
     for (size_t n = 0; n < v->count; ++n) {
         const void *input = v->data + n * v->type->size;
         size_t cursor = 0;
         for (;;) {
-            cmeta_gen_status st = cmeta_callable_generate(&i->call.fn, input, slot, &cursor);
-            if (st == CMETA_GEN_ERROR) { free(slot); vec_destroy(&out); return false; }
+            cmeta_gen_status st = cmeta_callable_generate(
+                &i->call.fn, input, slot.storage, &cursor);
+            if (st == CMETA_GEN_ERROR) {
+                cflow_value_slot_destroy(&slot);
+                vec_destroy(&out);
+                return false;
+            }
             if (st == CMETA_GEN_DONE) break;
-            if (st != CMETA_GEN_VALUE && st != CMETA_GEN_VALUE_AND_DONE) { free(slot); vec_destroy(&out); return false; }
-            if (!append_generated(&out, &capacity, slot)) { free(slot); vec_destroy(&out); return false; }
+            if (st != CMETA_GEN_VALUE && st != CMETA_GEN_VALUE_AND_DONE) {
+                cflow_value_slot_destroy(&slot);
+                vec_destroy(&out);
+                return false;
+            }
+            slot.live = true;
+            if (!append_generated(&out, &slot)) {
+                cflow_value_slot_destroy(&slot);
+                vec_destroy(&out);
+                return false;
+            }
             if (st == CMETA_GEN_VALUE_AND_DONE) break;
         }
     }
-    free(slot); vec_destroy(v); *v = out; return true;
+    cflow_value_slot_destroy(&slot);
+    vec_destroy(v);
+    *v = out;
+    return true;
 }
 
 static bool step_reduce(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
     if (!i || !v || !cmeta_type_equal(v->type, i->input_type) ||
         !cmeta_type_equal(i->input_type, i->output_type)) return false;
+    cflow_value_slot acc = {0};
+    cflow_value_slot next = {0};
+    cflow_plan_value_vec out = {0};
     if (!v->count) { vec_destroy(v); v->type = i->output_type; return true; }
-    unsigned char *acc = malloc(v->type->size ? v->type->size : 1u);
-    unsigned char *tmp = malloc(v->type->size ? v->type->size : 1u);
-    if (!acc || !tmp) { free(acc); free(tmp); return false; }
-    memcpy(acc, v->data, v->type->size);
-    for (size_t n = 1; n < v->count; ++n) {
-        const void *args[2] = { acc, v->data + n * v->type->size };
-        if (!i->call.invoke || !i->call.invoke(&i->call.fn, tmp, args)) {
-            free(acc); free(tmp); return false;
+    if (cflow_value_storage_type_supported(v->type)) {
+        unsigned char *byte_acc = (unsigned char *)malloc(v->type->size);
+        unsigned char *tmp = (unsigned char *)malloc(v->type->size);
+        if (!byte_acc || !tmp) {
+            free(byte_acc);
+            free(tmp);
+            return false;
         }
-        memcpy(acc, tmp, v->type->size);
+        memcpy(byte_acc, v->data, v->type->size);
+        for (size_t index = 1u; index < v->count; ++index) {
+            const void *args[2] = {
+                byte_acc, v->data + index * v->type->size };
+            if (!i->call.invoke ||
+                !i->call.invoke(&i->call.fn, tmp, args)) {
+                free(byte_acc);
+                free(tmp);
+                return false;
+            }
+            memcpy(byte_acc, tmp, v->type->size);
+        }
+        free(tmp);
+        vec_destroy(v);
+        v->allocation = byte_acc;
+        v->data = byte_acc;
+        v->count = 1u;
+        v->capacity = 1u;
+        v->type = i->output_type;
+        return true;
     }
-    free(tmp); vec_destroy(v);
-    v->data = acc; v->count = 1u; v->type = i->output_type;
+    if (!cflow_value_slot_init(&acc, v->type) ||
+        !cflow_value_slot_copy(&acc, v->data)) {
+        cflow_value_slot_destroy(&acc);
+        return false;
+    }
+    for (size_t n = 1; n < v->count; ++n) {
+        const void *args[2] = {
+            acc.storage, v->data + n * v->type->size };
+        if (!cflow_value_slot_init(&next, v->type) || !i->call.invoke ||
+            !i->call.invoke(&i->call.fn, next.storage, args)) {
+            cflow_value_slot_destroy(&next);
+            cflow_value_slot_destroy(&acc);
+            return false;
+        }
+        next.live = true;
+        cflow_value_slot_reset(&acc);
+        if (!cflow_value_slot_move(&acc, &next)) {
+            cflow_value_slot_destroy(&next);
+            cflow_value_slot_destroy(&acc);
+            return false;
+        }
+        cflow_value_slot_destroy(&next);
+    }
+    if (!vec_init(&out, i->output_type, 1u) ||
+        !vec_move_append(&out, &acc)) {
+        vec_destroy(&out);
+        cflow_value_slot_destroy(&acc);
+        return false;
+    }
+    cflow_value_slot_destroy(&acc);
+    vec_destroy(v);
+    *v = out;
     return true;
 }
 
@@ -361,6 +562,7 @@ static bool eval_materialized(const cflow_plan *plan,
         return false;
     if (!cmeta_type_equal(v.type, plan->output_type)) { vec_destroy(&v); return false; }
     out->data = v.data; out->count = v.count; out->type = v.type;
+    memset(&v, 0, sizeof(v));
     return true;
 }
 

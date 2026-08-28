@@ -55,7 +55,7 @@ static void cflow_test_check_expected(const cflow_result *result) {
 }
 
 suite("CFlow pipeline") {
-    it("rejects plans whose values require lifecycle callbacks") {
+    it("accepts normalized plans whose values provide lifecycle callbacks") {
         cflow_graph surface = {0};
         cflow_graph normalized = {0};
         cflow_plan plan = {0};
@@ -64,10 +64,11 @@ suite("CFlow pipeline") {
         cflow_graph_init(&surface, &cflow_test_owned_value_type);
         check_true(cflow_graph_normalize(&normalized, &surface));
 
-        check_false(cflow_plan_graph_supported(&normalized));
-        check_false(cflow_plan_compile(&plan, &normalized, NULL));
-        check_null(plan.impl);
-        check_equal(plan.error, "plan requires trivial value storage");
+        check_true(cflow_plan_graph_supported(&normalized));
+        check_true(cflow_plan_compile(&plan, &normalized, NULL));
+        check_not_null(plan.impl);
+        check_null(plan.error);
+        check_false(cflow_plan_parallel_reduce_supported(&plan));
 
         cflow_plan_destroy(&plan);
         cflow_graph_destroy(&normalized);

@@ -30,6 +30,11 @@ cmake_add_test(cflow_pipeline_test
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_plan_managed_test
+  SOURCES cflow_plan_managed_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_stream_slice_test
   SOURCES cflow_stream_slice_test.c
   LIBS TurboUtils::CFlow TurboUtils::TinyTest

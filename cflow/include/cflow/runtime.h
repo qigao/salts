@@ -117,7 +117,8 @@ typedef struct cflow_run {
  * clears *source.
  * Graph and scheduler are borrowed. Admission failure leaves source ownership
  * with the caller. Interpreted graphs accept managed COPY/MOVE/DESTROY values
- * from a CONSTRUCTS_VALUES Source. Compiled byte plans remain trivial-only. */
+ * from a CONSTRUCTS_VALUES Source. Sequential materialized Plans use the same
+ * lifecycle admission; fused and parallel Plan paths remain trivial-only. */
 bool cflow_run_open(cflow_run *run,
                     const cflow_graph *graph,
                     cflow_source *source,
