@@ -1,3 +1,7 @@
+#if !defined(_WIN32) && !defined(__APPLE__) && !defined(_POSIX_C_SOURCE)
+  #define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "tinytest.h"
 
 #include <cflow/cflow.h>
@@ -28,6 +32,7 @@ typedef SOCKET network_socket;
   #include <errno.h>
   #include <fcntl.h>
   #include <netinet/in.h>
+  #include <signal.h>
   #include <sys/resource.h>
   #include <sys/socket.h>
   #include <sys/time.h>
@@ -195,6 +200,15 @@ static int network_last_error(void) {
 #endif
 }
 
+static bool network_socket_call_interrupted(int result) {
+#if defined(_WIN32)
+  (void)result;
+  return false;
+#else
+  return result < 0 && errno == EINTR;
+#endif
+}
+
 static int network_socket_runtime_init(void) {
 #if defined(_WIN32)
   WSADATA data;
@@ -329,7 +343,10 @@ static int network_make_udp_pair(network_fixture *fixture, bool client_nonblocki
 static int network_recv_exact(network_socket socket_value, unsigned char *buffer, size_t size) {
   size_t offset = 0u;
   while (offset < size) {
-    int count = recv(socket_value, (char *)buffer + offset, (int)(size - offset), 0);
+    int count;
+    do {
+      count = recv(socket_value, (char *)buffer + offset, (int)(size - offset), 0);
+    } while (network_socket_call_interrupted(count));
     if (count == 0) return TURBO_EOF;
     if (count < 0) return network_last_error();
     offset += (size_t)count;
@@ -341,7 +358,10 @@ static int network_send_exact(network_socket socket_value, const unsigned char *
                               size_t size) {
   size_t offset = 0u;
   while (offset < size) {
-    int count = send(socket_value, (const char *)buffer + offset, (int)(size - offset), 0);
+    int count;
+    do {
+      count = send(socket_value, (const char *)buffer + offset, (int)(size - offset), 0);
+    } while (network_socket_call_interrupted(count));
     if (count <= 0) return network_last_error();
     offset += (size_t)count;
   }
@@ -366,13 +386,24 @@ static void network_server_entry(void *user) {
 #else
       socklen_t source_length = (socklen_t)sizeof(source);
 #endif
-      int count = recvfrom(server->socket_value, (char *)server->buffer, (int)server->payload_size,
-                           0, (struct sockaddr *)&source, &source_length);
+      int count;
+      do {
+#if defined(_WIN32)
+        source_length = (int)sizeof(source);
+#else
+        source_length = (socklen_t)sizeof(source);
+#endif
+        count = recvfrom(server->socket_value, (char *)server->buffer,
+                         (int)server->payload_size, 0, (struct sockaddr *)&source, &source_length);
+      } while (network_socket_call_interrupted(count));
       if (count != (int)server->payload_size) {
         server->status = count < 0 ? network_last_error() : TURBO_EIO;
       } else {
-        count = sendto(server->socket_value, (const char *)server->buffer, count, 0,
-                       (const struct sockaddr *)&source, source_length);
+        do {
+          count =
+              sendto(server->socket_value, (const char *)server->buffer,
+                     (int)server->payload_size, 0, (const struct sockaddr *)&source, source_length);
+        } while (network_socket_call_interrupted(count));
         if (count != (int)server->payload_size)
           server->status = count < 0 ? network_last_error() : TURBO_EIO;
       }
@@ -1125,13 +1156,23 @@ static int network_exchange_direct(network_fixture *fixture, network_protocol pr
 #else
     socklen_t source_length = (socklen_t)sizeof(source);
 #endif
-    int count = sendto(fixture->client_socket, (const char *)sent, (int)payload_size, 0,
-                       (const struct sockaddr *)&fixture->server_address,
-                       (int)sizeof(fixture->server_address));
+    int count;
+    do {
+      count = sendto(fixture->client_socket, (const char *)sent, (int)payload_size, 0,
+                     (const struct sockaddr *)&fixture->server_address,
+                     (int)sizeof(fixture->server_address));
+    } while (network_socket_call_interrupted(count));
     if (count != (int)payload_size) return count < 0 ? network_last_error() : TURBO_EIO;
     memset(&source, 0, sizeof(source));
-    count = recvfrom(fixture->client_socket, (char *)received, (int)payload_size, 0,
-                     (struct sockaddr *)&source, &source_length);
+    do {
+#if defined(_WIN32)
+      source_length = (int)sizeof(source);
+#else
+      source_length = (socklen_t)sizeof(source);
+#endif
+      count = recvfrom(fixture->client_socket, (char *)received, (int)payload_size, 0,
+                       (struct sockaddr *)&source, &source_length);
+    } while (network_socket_call_interrupted(count));
     if (count != (int)payload_size) return count < 0 ? network_last_error() : TURBO_EIO;
     if (!network_ipv4_endpoint_equal(&source, (size_t)source_length, &fixture->server_address))
       return TURBO_EIO;
@@ -1592,6 +1633,17 @@ static int network_u64_compare(const void *left, const void *right) {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+#if !defined(_WIN32)
+static volatile sig_atomic_t network_interrupt_writer = -1;
+
+static void network_interrupt_receive(int signal_number) {
+  const unsigned char value = 0x5au;
+  const int writer = (int)network_interrupt_writer;
+  (void)signal_number;
+  if (writer >= 0) (void)write(writer, &value, sizeof(value));
+}
+#endif
+
 static uint64_t network_percentile(uint64_t *sorted, size_t count, size_t numerator) {
   size_t rank = (numerator * count + 99u) / 100u;
   if (rank == 0u) rank = 1u;
@@ -1599,6 +1651,44 @@ static uint64_t network_percentile(uint64_t *sorted, size_t count, size_t numera
 }
 
 spec("CFlow network benchmark configuration") {
+#if !defined(_WIN32)
+  it("continues a blocking socket receive after a POSIX signal interruption") {
+    int sockets[2] = {-1, -1};
+    struct sigaction action;
+    struct sigaction previous_action;
+    struct itimerval timer;
+    unsigned char received = 0u;
+    int status = TURBO_EIO;
+    bool action_installed = false;
+
+    memset(&action, 0, sizeof(action));
+    memset(&previous_action, 0, sizeof(previous_action));
+    memset(&timer, 0, sizeof(timer));
+    check_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+    if (sockets[0] >= 0 && sockets[1] >= 0) {
+      action.sa_handler = network_interrupt_receive;
+      check_equal(sigemptyset(&action.sa_mask), 0);
+      if (sigaction(SIGALRM, &action, &previous_action) == 0) {
+        action_installed = true;
+        network_interrupt_writer = (sig_atomic_t)sockets[1];
+        timer.it_value.tv_usec = 1000;
+        const int timer_status = setitimer(ITIMER_REAL, &timer, NULL);
+        check_equal(timer_status, 0);
+        if (timer_status == 0) status = network_recv_exact(sockets[0], &received, sizeof(received));
+      }
+    }
+
+    memset(&timer, 0, sizeof(timer));
+    (void)setitimer(ITIMER_REAL, &timer, NULL);
+    network_interrupt_writer = -1;
+    if (action_installed) (void)sigaction(SIGALRM, &previous_action, NULL);
+    network_close(sockets[0]);
+    network_close(sockets[1]);
+    check_equal(status, TURBO_OK);
+    check_equal(received, 0x5au);
+  }
+#endif
+
   it("owns native UDP address storage independently from the caller") {
     struct sockaddr_in caller_address;
     network_operation owned = {0};

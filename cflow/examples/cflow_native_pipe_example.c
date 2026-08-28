@@ -1,0 +1,326 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
+#include "cflow_native_example_runtime.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#if defined(_WIN32)
+#if defined(interface)
+#undef interface
+#endif
+#include <windows.h>
+typedef HANDLE cflow_example_pipe;
+#define CFLOW_EXAMPLE_INVALID_PIPE INVALID_HANDLE_VALUE
+#else
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+typedef int cflow_example_pipe;
+#define CFLOW_EXAMPLE_INVALID_PIPE (-1)
+#endif
+
+enum {
+    CFLOW_PIPE_EXAMPLE_SKIP = 77,
+    CFLOW_PIPE_EXAMPLE_BUFFER_CAPACITY = 4096
+};
+
+typedef struct cflow_pipe_example_operation {
+    cflow_io_native_pipe_operation native;
+    size_t released;
+} cflow_pipe_example_operation;
+
+static cflow_io_native_backend_kind cflow_pipe_example_backend(void) {
+#if defined(_WIN32)
+    return CFLOW_IO_NATIVE_IOCP;
+#else
+    return CFLOW_IO_NATIVE_POLL;
+#endif
+}
+
+static void cflow_pipe_example_close(cflow_example_pipe pipe_value) {
+#if defined(_WIN32)
+    if (pipe_value != NULL && pipe_value != INVALID_HANDLE_VALUE)
+        (void)CloseHandle(pipe_value);
+#else
+    if (pipe_value >= 0)
+        (void)close(pipe_value);
+#endif
+}
+
+#if defined(_WIN32)
+static int cflow_pipe_example_pair(cflow_example_pipe pipes[2]) {
+    wchar_t name[128];
+    OVERLAPPED connected = {0};
+    HANDLE event = NULL;
+    DWORD error = ERROR_SUCCESS;
+    BOOL pending = FALSE;
+
+    pipes[0] = INVALID_HANDLE_VALUE;
+    pipes[1] = INVALID_HANDLE_VALUE;
+    if (_snwprintf_s(name, sizeof(name) / sizeof(name[0]), _TRUNCATE,
+                     L"\\\\.\\pipe\\cflow-native-example-%lu-%llu",
+                     GetCurrentProcessId(),
+                     (unsigned long long)turbo_hrtime()) < 0)
+        return TURBO_ERANGE;
+    pipes[0] = CreateNamedPipeW(
+        name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u,
+        CFLOW_PIPE_EXAMPLE_BUFFER_CAPACITY,
+        CFLOW_PIPE_EXAMPLE_BUFFER_CAPACITY, 0u, NULL);
+    if (pipes[0] == INVALID_HANDLE_VALUE)
+        return -(int)GetLastError();
+    event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (event == NULL) {
+        error = GetLastError();
+        goto failed;
+    }
+    connected.hEvent = event;
+    if (!ConnectNamedPipe(pipes[0], &connected)) {
+        error = GetLastError();
+        if (error == ERROR_IO_PENDING)
+            pending = TRUE;
+        else if (error != ERROR_PIPE_CONNECTED)
+            goto failed;
+    }
+    pipes[1] = CreateFileW(
+        name, GENERIC_READ | GENERIC_WRITE, 0u, NULL, OPEN_EXISTING,
+        FILE_FLAG_OVERLAPPED, NULL);
+    if (pipes[1] == INVALID_HANDLE_VALUE) {
+        error = GetLastError();
+        goto failed;
+    }
+    if (pending) {
+        DWORD transferred = 0u;
+        if (!GetOverlappedResult(
+                pipes[0], &connected, &transferred, TRUE)) {
+            error = GetLastError();
+            goto failed;
+        }
+    }
+    (void)CloseHandle(event);
+    return TURBO_OK;
+
+failed:
+    cflow_pipe_example_close(pipes[1]);
+    cflow_pipe_example_close(pipes[0]);
+    if (event != NULL)
+        (void)CloseHandle(event);
+    pipes[0] = INVALID_HANDLE_VALUE;
+    pipes[1] = INVALID_HANDLE_VALUE;
+    return -(int)error;
+}
+#else
+#if !defined(__linux__)
+static int cflow_pipe_example_set_flags(int pipe_value) {
+    int status_flags;
+    int descriptor_flags;
+    do {
+        status_flags = fcntl(pipe_value, F_GETFL);
+    } while (status_flags < 0 && errno == EINTR);
+    if (status_flags < 0)
+        return -errno;
+    while (fcntl(pipe_value, F_SETFL, status_flags | O_NONBLOCK) < 0) {
+        if (errno != EINTR)
+            return -errno;
+    }
+    do {
+        descriptor_flags = fcntl(pipe_value, F_GETFD);
+    } while (descriptor_flags < 0 && errno == EINTR);
+    if (descriptor_flags < 0)
+        return -errno;
+    while (fcntl(pipe_value, F_SETFD, descriptor_flags | FD_CLOEXEC) < 0) {
+        if (errno != EINTR)
+            return -errno;
+    }
+    return TURBO_OK;
+}
+#endif
+
+static int cflow_pipe_example_pair(cflow_example_pipe pipes[2]) {
+    pipes[0] = -1;
+    pipes[1] = -1;
+#if defined(__linux__)
+    if (pipe2(pipes, O_NONBLOCK | O_CLOEXEC) == 0)
+        return TURBO_OK;
+    return -errno;
+#else
+    int status;
+    if (pipe(pipes) != 0)
+        return -errno;
+    status = cflow_pipe_example_set_flags(pipes[0]);
+    if (status == TURBO_OK)
+        status = cflow_pipe_example_set_flags(pipes[1]);
+    if (status != TURBO_OK) {
+        cflow_pipe_example_close(pipes[0]);
+        cflow_pipe_example_close(pipes[1]);
+        pipes[0] = -1;
+        pipes[1] = -1;
+    }
+    return status;
+#endif
+}
+#endif
+
+static void cflow_pipe_example_release(void *user) {
+    cflow_pipe_example_operation *operation =
+        (cflow_pipe_example_operation *)user;
+    ++operation->released;
+}
+
+int main(void) {
+    static const unsigned char payload = 0x50u;
+    cflow_native_example_runtime runtime;
+    cflow_example_pipe pipes[2] = {
+        CFLOW_EXAMPLE_INVALID_PIPE, CFLOW_EXAMPLE_INVALID_PIPE};
+    cflow_pipe_example_operation read_operation = {0};
+    cflow_pipe_example_operation write_operation = {0};
+    cflow_io_operation read_token;
+    cflow_io_operation write_token;
+    cflow_io_submit_result read_result;
+    cflow_io_submit_result write_result;
+    cflow_io_actor_stats actor_stats = {0};
+    unsigned char received = 0u;
+    int status;
+    int result = EXIT_FAILURE;
+    bool success = false;
+    bool require_retained_identity;
+
+    if (!cflow_io_native_backend_pipe_supported(
+            cflow_pipe_example_backend())) {
+        fprintf(stderr,
+                "native pipe example: selected backend has no typed pipe "
+                "support; no fallback was attempted\n");
+        return CFLOW_PIPE_EXAMPLE_SKIP;
+    }
+    status = cflow_native_example_runtime_init(
+        &runtime, cflow_pipe_example_backend(),
+        cflow_io_native_backend_pipe_actor_ops());
+    if (status == TURBO_ENOTSUP) {
+        fprintf(stderr,
+                "native pipe example: selected backend is unsupported; "
+                "no fallback was attempted\n");
+        return CFLOW_PIPE_EXAMPLE_SKIP;
+    }
+    if (status != TURBO_OK) {
+        fprintf(stderr, "native pipe example: backend init failed: %d\n",
+                status);
+        (void)cflow_native_example_destroy_runtime(&runtime);
+        return result;
+    }
+    status = cflow_pipe_example_pair(pipes);
+    if (status != TURBO_OK) {
+        fprintf(stderr, "native pipe example: endpoint setup failed: %d\n",
+                status);
+        goto cleanup;
+    }
+
+    read_operation.native = (cflow_io_native_pipe_operation){
+        .kind = CFLOW_IO_NATIVE_PIPE_READ,
+        .handle = (uintptr_t)pipes[0],
+        .buffer = &received,
+        .length = sizeof(received),
+        .flags = CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
+    write_operation.native = (cflow_io_native_pipe_operation){
+        .kind = CFLOW_IO_NATIVE_PIPE_WRITE,
+        .handle = (uintptr_t)pipes[1],
+        .buffer = (void *)&payload,
+        .length = sizeof(payload),
+        .flags = CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
+    read_token = (cflow_io_operation){
+        &read_operation, cflow_pipe_example_release};
+    write_token = (cflow_io_operation){
+        &write_operation, cflow_pipe_example_release};
+    read_result = cflow_io_actor_try_submit(
+        &runtime.actor, 11u, &read_token);
+    write_result = cflow_io_actor_try_submit(
+        &runtime.actor, 12u, &write_token);
+    if (read_result.status != CFLOW_IO_SUBMIT_ACCEPTED ||
+        write_result.status != CFLOW_IO_SUBMIT_ACCEPTED) {
+        fprintf(stderr,
+                "native pipe example: bounded submit rejected: read=%d "
+                "write=%d\n",
+                (int)read_result.status, (int)write_result.status);
+        goto cleanup;
+    }
+    status = cflow_native_example_drive_until(
+        &runtime, CFLOW_NATIVE_EXAMPLE_CAPACITY);
+    if (status != TURBO_OK) {
+        fprintf(stderr, "native pipe example: completion drain failed: %d\n",
+                status);
+        goto cleanup;
+    }
+    for (size_t index = 0u; index < runtime.log.count; ++index) {
+        if (runtime.log.completions[index].kind != CFLOW_IO_COMPLETION_OK ||
+            runtime.log.completions[index].bytes != sizeof(payload)) {
+            fprintf(stderr,
+                    "native pipe example: unexpected completion kind=%d "
+                    "bytes=%zu\n",
+                    (int)runtime.log.completions[index].kind,
+                    runtime.log.completions[index].bytes);
+            goto cleanup;
+        }
+    }
+    if (received != payload || read_operation.released != 1u ||
+        write_operation.released != 1u ||
+        !cflow_io_actor_get_stats(&runtime.actor, &actor_stats) ||
+        actor_stats.active_requests != 0u ||
+        actor_stats.accepted != actor_stats.acknowledged) {
+        fprintf(stderr,
+                "native pipe example: ownership invariant failed: "
+                "received=%u releases=%zu/%zu active=%zu accepted=%llu "
+                "acknowledged=%llu\n",
+                (unsigned)received, read_operation.released,
+                write_operation.released, actor_stats.active_requests,
+                (unsigned long long)actor_stats.accepted,
+                (unsigned long long)actor_stats.acknowledged);
+        goto cleanup;
+    }
+    success = true;
+
+cleanup:
+    require_retained_identity = success;
+    if (!success) {
+        status = cflow_native_example_close_actor(&runtime);
+        if (status != TURBO_OK)
+            fprintf(stderr,
+                    "native pipe example: Actor cleanup failed: %d\n",
+                    status);
+    }
+    for (size_t index = 0u; index < 2u; ++index) {
+        if (pipes[index] != CFLOW_EXAMPLE_INVALID_PIPE) {
+            const uintptr_t identity = (uintptr_t)pipes[index];
+            cflow_pipe_example_close(pipes[index]);
+            pipes[index] = CFLOW_EXAMPLE_INVALID_PIPE;
+            status = cflow_io_native_backend_forget_pipe(
+                &runtime.backend, identity);
+            if (status != TURBO_OK &&
+                (require_retained_identity || status != TURBO_ENOENT)) {
+                fprintf(stderr,
+                        "native pipe example: endpoint forget failed: %d\n",
+                        status);
+                success = false;
+            }
+        }
+    }
+    status = cflow_native_example_close_actor(&runtime);
+    if (status != TURBO_OK) {
+        fprintf(stderr, "native pipe example: Actor close failed: %d\n",
+                status);
+        success = false;
+    }
+    status = cflow_native_example_destroy_runtime(&runtime);
+    if (status != TURBO_OK) {
+        fprintf(stderr, "native pipe example: runtime destroy failed: %d\n",
+                status);
+        success = false;
+    }
+    if (success) {
+        printf("native pipe: completions=2 acknowledged=2 releases=2 "
+               "active=0\n");
+        result = EXIT_SUCCESS;
+    }
+    return result;
+}
