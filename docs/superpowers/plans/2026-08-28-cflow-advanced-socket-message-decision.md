@@ -77,6 +77,8 @@
 
   Run `git diff --check`; inspect every changed file; confirm no public header, production source, test, workflow, dependency, or runtime file changed.
 
-- [ ] **Step 3: Update #132**
+- [x] **Step 3: Update #132**
 
   After PR creation, check the design/capability/no-fallback criteria that this decision satisfies. Leave implementation-specific test and benchmark evidence to the vectored-TCP follow-up.
+
+  Decision delivery: #138. Vectored-TCP implementation follow-up: #139.

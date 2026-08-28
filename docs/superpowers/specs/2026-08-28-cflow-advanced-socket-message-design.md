@@ -9,6 +9,9 @@ ancillary metadata 与 UDP batching。本阶段不修改公开 C API，不改变
 DNS、TLS、bind/listen、multicast、socket option policy、message framing 与跨进程通信不在
 本设计范围内。
 
+Portable vectored TCP 的独立实现、跨平台测试与 benchmark 由
+[#139](https://github.com/qigao/turbo-utils/issues/139) 跟踪；本设计不把该能力声明为已实现。
+
 ## 证据
 
 ### 仓库事实
