@@ -118,11 +118,21 @@ jobs:
             exit 1
           fi
 
-      - name: Verify CFlow minicoro adapter with AddressSanitizer
+      - name: Verify CFlow lifecycle paths with AddressSanitizer
         run: |
           cmake --preset linux-dev-user -DCFLOW_ENABLE_MINICORO=ON -DBUILD_BENCHMARKS=OFF
-          cmake --build --preset linux-dev-user --target cflow_minicoro_test
-          ctest --preset linux-dev-user -R "^cflow_minicoro_test$" --output-on-failure
+          cmake --build --preset linux-dev-user --target \
+            cflow_minicoro_test \
+            cflow_native_socket_example \
+            cflow_native_pipe_example \
+            cflow_native_file_example \
+            cflow_io_native_test \
+            cflow_io_pipe_test \
+            cflow_io_file_test \
+            cflow_process_test
+          ctest --preset linux-dev-user \
+            -R "^(cflow_minicoro_test|cflow_native_(socket|pipe|file)_example|cflow_io_(native|pipe|file)_test|cflow_process_test)$" \
+            --output-on-failure
 
   macos:
     name: macOS 15 release

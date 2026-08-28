@@ -31,6 +31,32 @@ add_turboutils_consumer(consume_stl_stream TurboUtils::STLStream
                        CONSUME_STL_STREAM)
 add_turboutils_consumer(consume_core TurboUtils::Core CONSUME_CORE)
 
+set(cflow_example_source_dir
+    "${CMAKE_CURRENT_LIST_DIR}/../../cflow/examples")
+foreach(cflow_example_name IN ITEMS
+    cflow_native_socket_example
+    cflow_native_pipe_example
+    cflow_native_file_example)
+  add_executable(consume_${cflow_example_name}
+                 "${cflow_example_source_dir}/${cflow_example_name}.c")
+  target_compile_features(consume_${cflow_example_name} PRIVATE c_std_11)
+  target_link_libraries(consume_${cflow_example_name}
+                        PRIVATE TurboUtils::CFlow)
+endforeach()
+if(WIN32)
+  target_link_libraries(consume_cflow_native_socket_example PRIVATE ws2_32)
+endif()
+
+if(TURBOUTILS_EXPECT_CAPTURE)
+  if(NOT TARGET TurboUtils::Capture)
+    message(FATAL_ERROR "TurboUtils::Capture was requested but is not exported")
+  endif()
+  add_turboutils_consumer(consume_capture TurboUtils::Capture CONSUME_CAPTURE)
+elseif(TARGET TurboUtils::Capture)
+  message(FATAL_ERROR
+          "feature-off TurboUtils package unexpectedly exports Capture")
+endif()
+
 if(TURBOUTILS_EXPECT_CFLOW_MINICORO)
   if(NOT TARGET TurboUtils::CFlowMinicoro)
     message(FATAL_ERROR
