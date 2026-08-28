@@ -170,8 +170,8 @@ value、Stream/Graph 等使用场景，但这不改变模块依赖事实。当�
 Core 或 TurboParser。
 
 `tinytest/`、vendor、build tools 与 Lean/formal generation 属于测试、构建或验证平面，
-不进入上面的 runtime ownership 图。`turbo_serial` 是 serial-port/串口子系统，与
-CSerde/CBind serialization architecture 没有语义 ownership 关系。
+不进入上面的 runtime ownership 图。设备采集与串口子系统由 TurboParser 所有，
+TurboUtils 不再导出对应 targets。
 
 ## 2. Single sources of truth
 

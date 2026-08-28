@@ -26,13 +26,6 @@
     }
   ],
   "features": {
-    "capture": {
-      "description": "Build the optional native audio/video/screen capture component",
-      "dependencies": [
-        "miniaudio",
-        "libyuv"
-      ]
-    },
     "usb": {
       "description": "Build the optional libusb-backed CFlow device adapter",
       "dependencies": [

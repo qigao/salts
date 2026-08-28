@@ -28,17 +28,6 @@ if(NOT install_result EQUAL 0)
   message(FATAL_ERROR "TurboUtils package install failed: ${install_result}")
 endif()
 
-if(EXPECT_CAPTURE_WINDOWS_RUNTIME)
-  foreach(capture_runtime_dependency libyuv.dll jpeg62.dll)
-    set(capture_runtime_path
-        "${install_prefix}/bin/${capture_runtime_dependency}")
-    if(NOT EXISTS "${capture_runtime_path}")
-      message(FATAL_ERROR
-              "TurboUtils Capture package is missing ${capture_runtime_path}")
-    endif()
-  endforeach()
-endif()
-
 execute_process(
   COMMAND "${CMAKE_COMMAND_PATH}"
           -S "${SOURCE_DIR}/tests/install_consumer"
@@ -49,7 +38,6 @@ execute_process(
           "-DTurboUtils_DIR=${install_prefix}/lib/cmake/TurboUtils"
           "-DTURBOUTILS_EXPECT_CFLOW_MINICORO=${EXPECT_CFLOW_MINICORO}"
           "-DTURBOUTILS_EXPECT_CFLOW_USB=${EXPECT_CFLOW_USB}"
-          "-DTURBOUTILS_EXPECT_CAPTURE=${EXPECT_CAPTURE}"
   RESULT_VARIABLE configure_result)
 if(NOT configure_result EQUAL 0)
   message(FATAL_ERROR
@@ -63,28 +51,4 @@ execute_process(
 if(NOT build_result EQUAL 0)
   message(FATAL_ERROR
           "TurboUtils installed consumer build failed: ${build_result}")
-endif()
-
-if(EXPECT_CAPTURE_WINDOWS_RUNTIME)
-  set(capture_consumer "${consumer_build}/consume_capture.exe")
-  if(NOT EXISTS "${capture_consumer}")
-    set(capture_consumer
-        "${consumer_build}/${BUILD_CONFIG}/consume_capture.exe")
-  endif()
-  if(NOT EXISTS "${capture_consumer}")
-    message(FATAL_ERROR
-            "TurboUtils Capture consumer executable was not generated")
-  endif()
-
-  set(capture_runtime_path
-      "${install_prefix}/bin;$ENV{SystemRoot}/System32;$ENV{SystemRoot}")
-  execute_process(
-    COMMAND "${CMAKE_COMMAND_PATH}" -E env "PATH=${capture_runtime_path}"
-            "${capture_consumer}"
-    WORKING_DIRECTORY "${install_prefix}/bin"
-    RESULT_VARIABLE capture_consumer_result)
-  if(NOT capture_consumer_result EQUAL 0)
-    message(FATAL_ERROR
-            "TurboUtils installed Capture consumer failed: ${capture_consumer_result}")
-  endif()
 endif()

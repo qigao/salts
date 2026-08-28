@@ -64,14 +64,10 @@ add_subdirectory(turbostl)
 add_subdirectory(utils)
 add_subdirectory(cflow-process)
 add_subdirectory(parser)
-if(TURBO_ENABLE_CAPTURE)
-  add_subdirectory(capture)
-endif()
 add_subdirectory(cflow-fs)
 if(CFLOW_ENABLE_USB)
   add_subdirectory(cflow-usb)
 endif()
-add_subdirectory(turbo_serial)
 
 set(verify_installed_dependencies
     turbo_platform
@@ -84,22 +80,13 @@ set(verify_installed_dependencies
     turbo_stl_stream
     turbo_utils
     turbo_cflow_process
-    turbo_cflow_fs
-    turbo_serial)
+    turbo_cflow_fs)
 if(CFLOW_ENABLE_MINICORO)
   list(APPEND verify_installed_dependencies turbo_cflow_minicoro)
 endif()
 if(CFLOW_ENABLE_USB)
   list(APPEND verify_installed_dependencies turbo_cflow_usb)
 endif()
-set(verify_capture_windows_runtime OFF)
-if(TURBO_ENABLE_CAPTURE)
-  list(APPEND verify_installed_dependencies turbo_capture)
-  if(WIN32)
-    set(verify_capture_windows_runtime ON)
-  endif()
-endif()
-
 add_custom_target(
   verify_installed_package
   COMMAND
@@ -111,8 +98,6 @@ add_custom_target(
     -DBUILD_GENERATOR=${CMAKE_GENERATOR}
     -DEXPECT_CFLOW_MINICORO=${CFLOW_ENABLE_MINICORO}
     -DEXPECT_CFLOW_USB=${CFLOW_ENABLE_USB}
-    -DEXPECT_CAPTURE=${TURBO_ENABLE_CAPTURE}
-    -DEXPECT_CAPTURE_WINDOWS_RUNTIME=${verify_capture_windows_runtime}
     -P
     ${CMAKE_SOURCE_DIR}/cmake/VerifyInstalledPackage.cmake
   DEPENDS ${verify_installed_dependencies}
