@@ -266,6 +266,44 @@ static bool native_test_socket_is_nonblocking(
 #endif
 }
 
+static int native_test_receive_exact(native_test_socket socket_value,
+                                     void *buffer, size_t length) {
+    unsigned char *bytes = (unsigned char *)buffer;
+    const uint64_t started = turbo_hrtime();
+    size_t received = 0u;
+    while (received < length) {
+        const size_t remaining = length - received;
+        const int chunk = remaining > (size_t)INT_MAX
+                              ? INT_MAX : (int)remaining;
+        const int result = recv(socket_value, (char *)&bytes[received],
+                                chunk, 0);
+        if (result > 0) {
+            received += (size_t)result;
+            continue;
+        }
+        if (result == 0)
+            return TURBO_EOF;
+#if defined(_WIN32)
+        {
+            const int error = WSAGetLastError();
+            if (error != WSAEINTR && error != WSAEWOULDBLOCK)
+                return -error;
+        }
+#else
+        {
+            const int error = errno;
+            if (error != EINTR && error != EAGAIN &&
+                error != EWOULDBLOCK)
+                return -error;
+        }
+#endif
+        if (turbo_hrtime() - started >= NATIVE_TEST_TIMEOUT_NS)
+            return TURBO_ETIMEDOUT;
+        turbo_thread_yield();
+    }
+    return TURBO_OK;
+}
+
 static int native_test_make_udp_pair(native_test_socket sockets[2],
                                      struct sockaddr_in addresses[2]) {
     int status = TURBO_OK;
@@ -1983,7 +2021,6 @@ static void native_check_vector_same_socket_bidirectional(
     cflow_io_native_buffer_span send_spans[2];
     unsigned char received[sizeof(incoming)] = {0};
     unsigned char peer_received[sizeof(outgoing)] = {0};
-    size_t peer_received_size = 0u;
 
     check_equal(native_vector_fixture_init(&fixture, kind, 2u), TURBO_OK);
     check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
@@ -2004,15 +2041,8 @@ static void native_check_vector_same_socket_bidirectional(
     check_equal(native_vector_submit(&fixture, 148u, &send_operation).status,
                 CFLOW_IO_SUBMIT_ACCEPTED);
     check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
-    while (peer_received_size < sizeof(peer_received)) {
-        int bytes = recv(sockets[1],
-                         (char *)&peer_received[peer_received_size],
-                         (int)(sizeof(peer_received) - peer_received_size), 0);
-        check(bytes > 0);
-        if (bytes <= 0) break;
-        peer_received_size += (size_t)bytes;
-    }
-    check_equal(peer_received_size, sizeof(peer_received));
+    check_equal(native_test_receive_exact(sockets[1], peer_received,
+                                          sizeof(peer_received)), TURBO_OK);
     check_equal(received, incoming, sizeof(incoming));
     check_equal(peer_received, outgoing, sizeof(outgoing));
     for (size_t index = 0u; index < fixture.completions.count; ++index) {

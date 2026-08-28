@@ -170,8 +170,8 @@ value、Stream/Graph 等使用场景，但这不改变模块依赖事实。当�
 Core 或 TurboParser。
 
 `tinytest/`、vendor、build tools 与 Lean/formal generation 属于测试、构建或验证平面，
-不进入上面的 runtime ownership 图。`turbo_serial` 是 serial-port/串口子系统，与
-CSerde/CBind serialization architecture 没有语义 ownership 关系。
+不进入上面的 runtime ownership 图。设备采集与串口子系统由 TurboParser 所有，
+TurboUtils 不再导出对应 targets。
 
 ## 2. Single sources of truth
 
@@ -324,10 +324,11 @@ CFlow Stream<T> / Graph / Machine
 - 把 `Stream<cserde_token>` 暴露为可任意 `filter/map` 的业务 stream；
 - 在 DataBind/TBE/CFlow 中维护第二套通用 type/semantic/binding truth。
 
-TurboParser 当前是独立 package，其现有公共 parser runtime 仍以 `TurboUtils::Core` 为基础
-依赖。Parser -> CSerde、DataBind -> CBind、Parser + CBind + CFlow composition 是已经接受的
-迁移/集成方向；在对应 TurboParser PR 落地之前，这些关系必须继续表示为虚线，而不能写成
-当前 target dependency。
+TurboParser 是独立 package，其公共 parser runtime 以 `TurboUtils::Core` 和独立 parser
+component targets 为基础依赖，不依赖 CSerde 或 CBind。具体 parser 与 CSerde 的组合只能位于
+显式 adapter target；例如 `TurboUtils::JsonCSerdeAdapter` 组合
+`TurboUtils::JsonParser` 与 `TurboUtils::CSerde`，而不会把 CSerde 传播给 JsonParser 或
+TurboParser。
 
 ## 5. Public target dependency matrix
 
@@ -353,8 +354,8 @@ target 不属于此表的 ownership 语义。
 2. **同一语义只保留一个 truth。** 类型与 semantic shape 属于 CMeta；canonical events
    属于 CSerde；native binding 属于 CBind；execution 属于 CFlow；container algorithms
    属于 TurboSTL。
-3. **repo ownership 与 link dependency 分离。** TurboParser 可以消费 CBind/CSerde，但不会
-   因此改变它们属于 TurboUtils 的事实。
+3. **repo ownership 与 link dependency 分离。** CBind/CSerde 属于 TurboUtils；TurboParser
+   不消费或重新导出它们，具体格式组合通过独立 adapter target 显式表达。
 4. **组合能力位于 adapter/composition layer。** Parser + CBind、CBind + CFlow、STL + CFlow
    不通过反向依赖污染底层 kernel。
 5. **raw structural transport 不是业务 stream。** CSerde token grammar 必须完整保留；CFlow

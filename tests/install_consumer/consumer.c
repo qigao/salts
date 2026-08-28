@@ -1,13 +1,4 @@
-#if defined(CONSUME_CAPTURE)
-#include <turbo_capture.h>
-
-int main(void) {
-  const turbo_video_native_mode_t ntsc = {
-      1920, 1080, 30000u, 1001u, TURBO_VIDEO_CAPTURE_FORMAT_NV12, 1u};
-  return turbo_video_mode_fps(&ntsc) == 30 ? 0 : 1;
-}
-
-#elif defined(CONSUME_PLATFORM)
+#if defined(CONSUME_PLATFORM)
 #include <turbo/clock.h>
 
 int main(void) { return turbo_hrtime() == 0u; }
@@ -69,6 +60,66 @@ int main(void) {
       CBIND_OK)
     return 1;
   return out == 7 ? 0 : 1;
+}
+
+#elif defined(CONSUME_JSON_CBIND)
+#include <cbind/cbind.h>
+#include <json_cserde_reader.h>
+#include <json_parser.h>
+
+#include <stddef.h>
+#include <stdint.h>
+
+#define JSON_CBIND_DATA_PREFIX_SIZE                                         \
+  (offsetof(cmeta_data_desc, shape) + sizeof(((cmeta_data_desc *)0)->shape))
+
+Struct(installed_json_record, (int, value));
+
+static const cmeta_type_identity installed_json_record_identity =
+    CMETA_TYPE_ID_ATOM_INIT("install.consumer.json.record");
+static const cmeta_type_desc installed_json_record_type = {
+    .name = "installed_json_record",
+    .size = sizeof(installed_json_record),
+    .align = _Alignof(installed_json_record),
+    .kind = CMETA_T_OBJECT,
+    .identity = &installed_json_record_identity};
+static const cmeta_data_field_desc installed_json_record_fields[] = {
+    {"install.consumer.json.record.value", "value",
+     offsetof(installed_json_record, value), &cmeta_data_int}};
+static const cmeta_data_struct_shape installed_json_record_shape = {
+    .layout = StructMeta(installed_json_record),
+    .fields = installed_json_record_fields,
+    .field_count = 1u};
+static const cmeta_data_desc installed_json_record_data = {
+    .struct_size = JSON_CBIND_DATA_PREFIX_SIZE,
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "install.consumer.json.record.data",
+    .display_name = "Installed JSON record",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &installed_json_record_type,
+    .shape = &installed_json_record_shape};
+
+int main(void) {
+  static const char json[] = "{\"value\":7}";
+  json_value_t *root = json_parse(json, sizeof(json) - 1u);
+  cserde_reader *reader;
+  unsigned char scratch[1] = {0};
+  cbind_context context = CBIND_CONTEXT_INIT(scratch, sizeof(scratch), 1u);
+  cbind_error error = CBIND_ERROR_INIT;
+  installed_json_record value = {0};
+  cbind_status status;
+
+  if (root == NULL) return 1;
+  reader = json_cserde_reader_create(root, 1u);
+  if (reader == NULL) {
+    json_free(root);
+    return 2;
+  }
+  status = cbind_decode(&context, &installed_json_record_data, reader, &value,
+                        &error);
+  json_cserde_reader_destroy(reader);
+  json_free(root);
+  return status == CBIND_OK && value.value == 7 ? 0 : 3;
 }
 
 #elif defined(CONSUME_CFLOW_PROCESS)

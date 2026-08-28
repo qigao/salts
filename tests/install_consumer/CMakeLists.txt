@@ -15,6 +15,13 @@ add_turboutils_consumer(consume_concurrency TurboUtils::Concurrency
                        CONSUME_CONCURRENCY)
 add_turboutils_consumer(consume_cmeta TurboUtils::CMeta CONSUME_CMETA)
 add_turboutils_consumer(consume_cbind TurboUtils::CBind CONSUME_CBIND)
+add_executable(consume_json_cbind consumer.c)
+target_compile_features(consume_json_cbind PRIVATE c_std_11)
+target_compile_definitions(consume_json_cbind PRIVATE CONSUME_JSON_CBIND=1)
+target_link_libraries(consume_json_cbind PRIVATE
+  TurboUtils::JsonCSerdeAdapter
+  TurboUtils::CBind
+  TurboUtils::Core)
 add_turboutils_consumer(consume_cflow TurboUtils::CFlow CONSUME_CFLOW)
 add_turboutils_consumer(consume_cflow_process TurboUtils::CFlowProcess
                        CONSUME_CFLOW_PROCESS)
