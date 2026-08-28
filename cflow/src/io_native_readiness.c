@@ -20,10 +20,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 #if !defined(MSG_DONTWAIT) || !defined(MSG_NOSIGNAL)
 #error "native readiness socket operations require per-call nonblocking and no-SIGPIPE flags"
+#endif
+
+#if defined(IOV_MAX)
+_Static_assert(CFLOW_IO_NATIVE_VECTOR_MAX <= IOV_MAX,
+               "vectored TCP requires the full fixed POSIX span budget");
 #endif
 
 enum {
@@ -53,6 +59,9 @@ typedef struct cflow_readiness_record {
     cflow_io_actor *actor;
     cflow_io_native_operation *operation;
     cflow_io_native_pipe_operation *pipe_operation;
+    struct iovec vector_buffers[CFLOW_IO_NATIVE_VECTOR_MAX];
+    cflow_io_native_vector_operation_kind vector_kind;
+    size_t vector_buffer_count;
     cflow_readiness_socket_record *socket_record;
     cflow_readiness_lane *lane;
     struct sockaddr_storage peer_address;
@@ -337,6 +346,17 @@ static int readiness_attempt(cflow_readiness_record *record,
                                pipe_operation->length);
             continue;
         }
+        if (record->vector_buffer_count != 0u) {
+            struct msghdr message;
+            memset(&message, 0, sizeof(message));
+            message.msg_iov = record->vector_buffers;
+            message.msg_iovlen = record->vector_buffer_count;
+            result = record->vector_kind == CFLOW_IO_NATIVE_TCP_RECV_VECTOR
+                         ? recvmsg(fd, &message, MSG_DONTWAIT)
+                         : sendmsg(fd, &message,
+                                   MSG_DONTWAIT | MSG_NOSIGNAL);
+            continue;
+        }
         switch (operation->kind) {
             case CFLOW_IO_NATIVE_TCP_RECV:
                 result = recv(fd, operation->buffer, operation->length,
@@ -453,7 +473,9 @@ static cflow_io_completion readiness_completion_for(
     if (status != TURBO_OK)
         return (cflow_io_completion){
             CFLOW_IO_COMPLETION_FAILED, 0u, status};
-    if (((record->operation != NULL &&
+    if (((record->vector_buffer_count != 0u &&
+          record->vector_kind == CFLOW_IO_NATIVE_TCP_RECV_VECTOR) ||
+         (record->operation != NULL &&
           record->operation->kind == CFLOW_IO_NATIVE_TCP_RECV) ||
          (record->pipe_operation != NULL &&
           record->pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ)) &&
@@ -741,6 +763,7 @@ static int readiness_ensure_lane(cflow_readiness_lane *lane,
 static int readiness_submit_record(
     cflow_readiness_impl *impl, cflow_io_actor *actor,
     cflow_io_request_id request_id, cflow_io_native_operation *operation,
+    cflow_io_native_vector_operation *vector_operation,
     cflow_io_native_pipe_operation *pipe_operation, uintptr_t identity,
     unsigned lane_kind) {
     cflow_readiness_record *record;
@@ -781,6 +804,17 @@ static int readiness_submit_record(
     record->actor = actor;
     record->operation = operation;
     record->pipe_operation = pipe_operation;
+    record->vector_buffer_count = 0u;
+    if (vector_operation != NULL) {
+        record->vector_kind = vector_operation->kind;
+        record->vector_buffer_count = vector_operation->buffer_count;
+        for (size_t index = 0u; index < record->vector_buffer_count; ++index) {
+            record->vector_buffers[index].iov_base =
+                vector_operation->buffers[index].data;
+            record->vector_buffers[index].iov_len =
+                vector_operation->buffers[index].length;
+        }
+    }
     record->socket_record = socket_record;
     record->lane = lane;
     record->connect_started = false;
@@ -839,8 +873,23 @@ static int readiness_submit(cflow_io_native_impl *base,
             return TURBO_EINVAL;
     }
     return readiness_submit_record(
-        impl, actor, request_id, operation, NULL, operation->socket,
+        impl, actor, request_id, operation, NULL, NULL, operation->socket,
         readiness_lane_kind(operation));
+}
+
+static int readiness_submit_vector(
+    cflow_io_native_impl *base, cflow_io_actor *actor,
+    cflow_io_request_id request_id,
+    cflow_io_native_vector_operation *operation) {
+    cflow_readiness_impl *impl = (cflow_readiness_impl *)base;
+    const unsigned lane_kind =
+        operation->kind == CFLOW_IO_NATIVE_TCP_RECV_VECTOR
+            ? CFLOW_READINESS_LANE_READ : CFLOW_READINESS_LANE_WRITE;
+    if (operation->socket > (uintptr_t)INT_MAX)
+        return TURBO_EINVAL;
+    return readiness_submit_record(
+        impl, actor, request_id, NULL, operation, NULL, operation->socket,
+        lane_kind);
 }
 
 static int readiness_submit_pipe(
@@ -862,7 +911,7 @@ static int readiness_submit_pipe(
     if ((flags & O_NONBLOCK) == 0)
         return TURBO_EINVAL;
     return readiness_submit_record(
-        impl, actor, request_id, NULL, operation, operation->handle,
+        impl, actor, request_id, NULL, NULL, operation, operation->handle,
         readiness_pipe_lane_kind(operation));
 }
 
@@ -1076,9 +1125,15 @@ static int readiness_destroy(cflow_io_native_impl *base) {
 }
 
 static const cflow_io_native_impl_ops readiness_ops = {
-    readiness_submit, readiness_submit_pipe, NULL, readiness_cancel,
-    readiness_get_stats, readiness_forget_socket, readiness_forget_pipe, NULL,
-    readiness_shutdown, readiness_destroy};
+    .submit = readiness_submit,
+    .submit_vector = readiness_submit_vector,
+    .submit_pipe = readiness_submit_pipe,
+    .cancel = readiness_cancel,
+    .get_stats = readiness_get_stats,
+    .forget_socket = readiness_forget_socket,
+    .forget_pipe = readiness_forget_pipe,
+    .shutdown = readiness_shutdown,
+    .destroy = readiness_destroy};
 
 int cflow_io_native_readiness_init(
     cflow_io_native_backend *backend,

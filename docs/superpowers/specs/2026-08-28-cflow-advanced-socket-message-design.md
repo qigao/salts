@@ -2,15 +2,16 @@
 
 ## 状态与范围
 
-本设计解决 #132，只决定当前 native socket 数据层是否接纳 vectored TCP、UDP
-ancillary metadata 与 UDP batching。本阶段不修改公开 C API，不改变既有 operation 数值、
-结构体布局、错误码、backend 选择或 Actor 状态机。
+本设计解决 #132，并作为 #139 的实现契约，决定 native socket 数据层如何接纳 vectored
+TCP，以及为何不接纳 raw UDP ancillary metadata 与 UDP batching。#139 只新增独立 vector
+类型、capability 与 Actor ops；不改变既有 scalar operation 数值、结构体布局、错误码、
+backend 选择或 Actor 状态机。
 
 DNS、TLS、bind/listen、multicast、socket option policy、message framing 与跨进程通信不在
 本设计范围内。
 
 Portable vectored TCP 的独立实现、跨平台测试与 benchmark 由
-[#139](https://github.com/qigao/turbo-utils/issues/139) 跟踪；本设计不把该能力声明为已实现。
+[#139](https://github.com/qigao/turbo-utils/issues/139) 跟踪。
 
 ## 证据
 
@@ -51,13 +52,13 @@ Portable vectored TCP 的独立实现、跨平台测试与 benchmark 由
 | UDP batch operation | 拒绝 portable request model | 会把一个 request 拆成多个 datagram terminal，破坏当前 Actor credit、cancel 和 acknowledge 不变量 |
 | Backend 内部 batching | 仅允许为不可观测优化 | 必须保持每个 request 的独立 terminal/cancel/order；只有 profiling 证明瓶颈后才可实现 |
 
-## Vectored TCP 的后续公开契约
+## Vectored TCP 的公开契约
 
 Vectored TCP 不追加字段到 `cflow_io_native_operation`，也不复用既有 enum。公开结构体没有
-size/version 字段，直接扩展其布局会改变 ABI。后续实现应新增独立 typed operation 与 Actor
-ops，同时复用同一 backend、socket identity、lane 和 completion state machine。
+size/version 字段，直接扩展其布局会改变 ABI。实现新增独立 typed operation 与 Actor ops，
+同时复用同一 backend、socket identity、lane 和 completion state machine。
 
-建议接口形状如下；这是后续实现约束，不是本设计 PR 新增的公开声明：
+接口形状如下：
 
 ```c
 #define CFLOW_IO_NATIVE_VECTOR_MAX 16u
@@ -80,12 +81,12 @@ typedef struct cflow_io_native_vector_operation {
 } cflow_io_native_vector_operation;
 ```
 
-后续 API 必须提供独立 capability query 和 Actor backend ops。所有 backend 都支持后才可将
+API 提供独立 capability query 和 Actor backend ops。所有 backend 都支持后才可将
 该 operation 声明为 portable；否则 capability query 必须按 backend/operation 明确返回
 unsupported，禁止循环调用 scalar operation 作为 fallback。
 
 Capability query 只报告当前 build 的 backend/operation 原生映射。需要 host limit 的 backend
-在 vector adapter 初始化时验证固定 16 段预算；host 不满足时该 vector adapter 以
+在 vector capability query 中验证固定 16 段预算；host 不满足时 vector submit 以
 `TURBO_ENOTSUP` 失败，既有 scalar backend 仍可使用。实现不能把 capability 缩成一个较小但
 未公开的段数，也不能在 submit 时拆成多个 scalar request。单个 socket/handle 的有效性仍在
 submit 边界检查，不由 compile-time capability query 代替。
@@ -97,9 +98,10 @@ submit 边界检查，不由 compile-time capability query 代替。
   probe 必须确认 backend 能原生提交 16 段；不能满足时整个 vector capability 为 unsupported。
 - 每段长度必须非零且 data 非空；总长度用 checked addition 计算，并限制到
   `UINT32_MAX`。
-- backend 在 submit 内把 span descriptors 转换并复制到固定 request record。descriptor
-  array 在 submit 返回后即可失效；payload storage 仍由调用方拥有并借用到 terminal
-  callback 返回。
+- Actor 按通用 contract 保留 `operation_user` 到 terminal callback/ack；公开契约要求 caller
+  span array 与 payload storage 都保持到 terminal callback 返回。backend 消费 Actor command
+  时把 span descriptors 转换并复制到固定 request record，之后不再保留 caller descriptor
+  指针；该内部隔离不缩短公开 Actor 生命周期。
 - 每个 request record 固定保留最多 16 个 `WSABUF` 或 `iovec`。不在数据面分配，也不因
   segment count 增长 record table。
 
@@ -107,10 +109,11 @@ submit 边界检查，不由 compile-time capability query 代替。
 
 | 对象 | 所有者 | 借用/有效期 | 终态行为 |
 |---|---|---|---|
-| vector operation 与 caller span array | caller | 只借用到 submit 返回；backend 在返回前校验并复制 descriptors | backend 不保留 caller descriptor 指针，也不释放它们 |
+| vector operation token | caller/Actor | 成功 Actor admission 后由 Actor 保留到 terminal callback/ack | 走既有 operation release callback；backend 不释放 |
+| caller span array | caller | 成功 Actor admission 后保持到 terminal callback 返回 | backend 消费 Actor command 时校验并复制，不保留 caller descriptor 指针；内部复制不缩短公开生命周期 |
 | receive payload spans | caller | 成功接纳后由 backend 独占写，直到 terminal callback 返回 | callback 返回后 caller 可读、复用或释放 |
 | send payload spans | caller | 成功接纳后保持不可修改，直到 terminal callback 返回 | callback 返回后 caller 可修改、复用或释放 |
-| converted `WSABUF`/`iovec` 与 native message header | backend request record | 从成功接纳保持到 native completion 被消费 | acknowledge/release request record 时回收固定 slot；无数据面 free |
+| converted `WSABUF`/`iovec` 与 native message header | backend request record | 从 backend 消费 Actor command 保持到 native completion 被消费 | terminal 投递前回收固定 backend slot；Actor token 独立保持到 acknowledge；无数据面 free |
 | completion/result | Actor | 只借给 terminal callback；`bytes` 是可按值复制的总前缀长度 | callback 返回后 completion 指针失效，Actor 继续 acknowledge/release 流程 |
 | socket | caller | backend 从接纳借用到 terminal callback 返回 | backend 不 close；quiescent 后由 caller close/forget |
 | UDP address storage | 既有 scalar API 的 caller | 本设计不改变现有 `io_native.h` 契约 | vector TCP 不接收 address，也不新增 address result |
@@ -195,15 +198,19 @@ Backend 可在内部批量 drain 已独立 admission 的 requests，但优化不
   Statechart 或通信层依赖。
 - 状态归属：Actor request table 仍是唯一业务事实源；platform vector descriptors 只是固定
   record 内的派生 native state。
-- 错误：现有 scalar API 不变；未来 vector shape 错误为 `TURBO_EINVAL`，unsupported 为
-  `TURBO_ENOTSUP`，容量满仍为 `TURBO_EBUSY`。
-- ABI：本设计 PR 无 ABI 变化；未来 vector 使用独立结构和 entry point，避免扩大现有公开
-  struct。
-- 性能：不宣称 vector 或 batching 有性能收益。后续 vector 实现先验证正确性；任何 hot-path
+- 错误：现有 scalar API 不变；vector shape 错误产生 `TURBO_EINVAL` terminal，unsupported
+  产生 `TURBO_ENOTSUP` terminal；Actor admission 容量满仍返回 `CFLOW_IO_SUBMIT_FULL`。
+- ABI：vector 使用独立结构和 entry point，避免扩大现有公开 scalar struct。
+- 性能：不宣称 vector 或 batching 有性能收益。vector 实现先验证正确性；任何 hot-path
   收益必须由现有 network benchmark 的同 runner 对比支持。
-- 回滚：删除本设计文档和 README 链接即可；没有数据、配置或运行时迁移。
+- benchmark：`CFLOW_NETWORK_DRIVER=actor` 是 scalar baseline；
+  `CFLOW_NETWORK_DRIVER=vector` 使用同一 TCP loopback runner、payload、peer、wait mode、采样和
+  `cflow-network-benchmark/v1` JSON 指标。vector driver 不接受 UDP，配置时返回
+  `TURBO_ENOTSUP`。
+- 回滚：可删除独立 vector types/ops 与各 backend 的 vector submit slot；没有数据或配置迁移，
+  scalar API 与 ABI 不需回滚。
 
-## 后续验证矩阵
+## 验证矩阵
 
 Vectored TCP 实现至少覆盖：1、2、16 segments；总长度边界与溢出；短 receive/send；跨
 segment boundary；EOF；pending cancel；same-socket bidirectional lanes；capacity full；stale

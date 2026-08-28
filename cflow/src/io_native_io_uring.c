@@ -24,6 +24,11 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
+#if defined(IOV_MAX)
+_Static_assert(CFLOW_IO_NATIVE_VECTOR_MAX <= IOV_MAX,
+               "vectored TCP requires the full fixed io_uring span budget");
+#endif
+
 typedef enum cflow_uring_record_phase {
     CFLOW_URING_RECORD_FREE = 0,
     CFLOW_URING_RECORD_PENDING
@@ -47,7 +52,11 @@ typedef struct cflow_uring_record {
     cflow_io_native_pipe_operation *pipe_operation;
     cflow_io_native_file_operation *file_operation;
     struct iovec vector;
+    struct iovec vector_buffers[CFLOW_IO_NATIVE_VECTOR_MAX];
     struct msghdr message;
+    cflow_io_native_vector_operation_kind vector_kind;
+    size_t vector_buffer_count;
+    int vector_fd;
     struct sockaddr_storage peer_address;
     socklen_t peer_address_length;
     bool cancel_requested;
@@ -237,6 +246,22 @@ static void uring_prepare_operation(cflow_uring_record *record,
         }
         return;
     }
+    if (record->vector_buffer_count != 0u) {
+        memset(&record->message, 0, sizeof(record->message));
+        record->message.msg_iov = record->vector_buffers;
+        record->message.msg_iovlen = record->vector_buffer_count;
+        sqe->fd = record->vector_fd;
+        sqe->user_data = record->native_token;
+        sqe->opcode = record->vector_kind == CFLOW_IO_NATIVE_TCP_RECV_VECTOR
+                          ? IORING_OP_RECVMSG : IORING_OP_SENDMSG;
+        sqe->addr = (uint64_t)(uintptr_t)&record->message;
+        sqe->len = 1u;
+#if defined(MSG_NOSIGNAL)
+        if (record->vector_kind == CFLOW_IO_NATIVE_TCP_SEND_VECTOR)
+            sqe->msg_flags = MSG_NOSIGNAL;
+#endif
+        return;
+    }
     sqe->fd = (int)operation->socket;
     sqe->user_data = record->native_token;
     switch (operation->kind) {
@@ -320,6 +345,8 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     cflow_io_native_pipe_operation *pipe_operation;
     cflow_io_native_file_operation *file_operation;
     cflow_uring_resource_kind resource_kind;
+    cflow_io_native_vector_operation_kind vector_kind;
+    size_t vector_buffer_count;
     cflow_io_completion completion;
     cflow_io_complete_status delivery_status;
     struct sockaddr_storage peer_address;
@@ -342,13 +369,17 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     operation = record->operation;
     pipe_operation = record->pipe_operation;
     file_operation = record->file_operation;
+    vector_kind = record->vector_kind;
+    vector_buffer_count = record->vector_buffer_count;
     cancelled = record->cancel_requested && result == -ECANCELED;
     if (resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
+        vector_buffer_count == 0u &&
         operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT && result >= 0) {
         peer_address = record->peer_address;
         peer_address_length = record->peer_address_length;
     }
     if (resource_kind == CFLOW_URING_RESOURCE_SOCKET && result >= 0 &&
+        vector_buffer_count == 0u &&
         operation->kind == CFLOW_IO_NATIVE_UDP_RECV_FROM)
         operation->address_length = (size_t)record->message.msg_namelen;
     record->phase = CFLOW_URING_RECORD_FREE;
@@ -359,6 +390,7 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     record->operation = NULL;
     record->pipe_operation = NULL;
     record->file_operation = NULL;
+    record->vector_buffer_count = 0u;
     record->cancel_requested = false;
     --impl->active_requests;
     uring_counter_increment(&impl->completed);
@@ -366,6 +398,7 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     turbo_mutex_unlock(&impl->gate);
 
     if (resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
+        vector_buffer_count == 0u &&
         operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT && result >= 0) {
         accepted_fd = result;
         effective_result = TURBO_OK;
@@ -390,7 +423,10 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     } else if (effective_result < 0) {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_FAILED, 0u, effective_result};
-    } else if (((resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
+    } else if (((vector_buffer_count != 0u &&
+                  vector_kind == CFLOW_IO_NATIVE_TCP_RECV_VECTOR) ||
+                (vector_buffer_count == 0u &&
+                 resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
                  operation->kind == CFLOW_IO_NATIVE_TCP_RECV) ||
                 (resource_kind == CFLOW_URING_RESOURCE_PIPE &&
                  pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ) ||
@@ -402,7 +438,8 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     } else {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_OK,
-            resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
+            vector_buffer_count == 0u &&
+                    resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
                     (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT ||
                      operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT)
                 ? 0u : (size_t)effective_result,
@@ -410,7 +447,8 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     }
     delivery_status = cflow_io_actor_complete(
         actor, request_id, &completion);
-    if (resource_kind == CFLOW_URING_RESOURCE_SOCKET && accepted_fd >= 0 &&
+    if (resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
+        vector_buffer_count == 0u && accepted_fd >= 0 &&
         (completion.kind != CFLOW_IO_COMPLETION_OK ||
          delivery_status != CFLOW_IO_COMPLETE_ACCEPTED)) {
         (void)close(accepted_fd);
@@ -497,6 +535,7 @@ static int uring_submit_record(
     cflow_uring_impl *impl, cflow_io_actor *actor,
     cflow_io_request_id request_id, cflow_uring_resource_kind resource_kind,
     cflow_io_native_operation *operation,
+    cflow_io_native_vector_operation *vector_operation,
     cflow_io_native_pipe_operation *pipe_operation,
     cflow_io_native_file_operation *file_operation) {
     cflow_uring_record *record;
@@ -527,6 +566,18 @@ static int uring_submit_record(
     record->actor = actor;
     record->resource_kind = resource_kind;
     record->operation = operation;
+    record->vector_buffer_count = 0u;
+    if (vector_operation != NULL) {
+        record->vector_kind = vector_operation->kind;
+        record->vector_buffer_count = vector_operation->buffer_count;
+        record->vector_fd = (int)vector_operation->socket;
+        for (size_t index = 0u; index < record->vector_buffer_count; ++index) {
+            record->vector_buffers[index].iov_base =
+                vector_operation->buffers[index].data;
+            record->vector_buffers[index].iov_len =
+                vector_operation->buffers[index].length;
+        }
+    }
     record->pipe_operation = pipe_operation;
     record->file_operation = file_operation;
     record->cancel_requested = false;
@@ -549,6 +600,7 @@ static int uring_submit_record(
         record->operation = NULL;
         record->pipe_operation = NULL;
         record->file_operation = NULL;
+        record->vector_buffer_count = 0u;
         record->cancel_requested = false;
         uring_counter_increment(&impl->native_submit_errors);
     }
@@ -576,7 +628,19 @@ static int uring_submit(cflow_io_native_impl *base,
     }
     return uring_submit_record(
         impl, actor, request_id, CFLOW_URING_RESOURCE_SOCKET,
-        operation, NULL, NULL);
+        operation, NULL, NULL, NULL);
+}
+
+static int uring_submit_vector(
+    cflow_io_native_impl *base, cflow_io_actor *actor,
+    cflow_io_request_id request_id,
+    cflow_io_native_vector_operation *operation) {
+    cflow_uring_impl *impl = (cflow_uring_impl *)base;
+    if (operation->socket > (uintptr_t)INT_MAX)
+        return TURBO_EINVAL;
+    return uring_submit_record(
+        impl, actor, request_id, CFLOW_URING_RESOURCE_SOCKET,
+        NULL, operation, NULL, NULL);
 }
 
 static int uring_submit_pipe(
@@ -590,7 +654,7 @@ static int uring_submit_pipe(
         return TURBO_EINVAL;
     return uring_submit_record(
         impl, actor, request_id, CFLOW_URING_RESOURCE_PIPE,
-        NULL, operation, NULL);
+        NULL, NULL, operation, NULL);
 }
 
 static int uring_submit_file(
@@ -611,7 +675,7 @@ static int uring_submit_file(
         return TURBO_EINVAL;
     return uring_submit_record(
         impl, actor, request_id, CFLOW_URING_RESOURCE_FILE,
-        NULL, NULL, operation);
+        NULL, NULL, NULL, operation);
 }
 
 static int uring_cancel(cflow_io_native_impl *base,
@@ -741,9 +805,17 @@ static int uring_destroy(cflow_io_native_impl *base) {
 }
 
 static const cflow_io_native_impl_ops uring_ops = {
-    uring_submit, uring_submit_pipe, uring_submit_file, uring_cancel,
-    uring_get_stats, uring_forget_socket, uring_forget_pipe,
-    uring_forget_file, uring_shutdown, uring_destroy};
+    .submit = uring_submit,
+    .submit_vector = uring_submit_vector,
+    .submit_pipe = uring_submit_pipe,
+    .submit_file = uring_submit_file,
+    .cancel = uring_cancel,
+    .get_stats = uring_get_stats,
+    .forget_socket = uring_forget_socket,
+    .forget_pipe = uring_forget_pipe,
+    .forget_file = uring_forget_file,
+    .shutdown = uring_shutdown,
+    .destroy = uring_destroy};
 
 static bool uring_mapped_extent(size_t offset, size_t count,
                                 size_t element_size, size_t *out) {

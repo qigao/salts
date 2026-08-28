@@ -32,6 +32,11 @@ typedef enum cflow_io_native_operation_kind {
     CFLOW_IO_NATIVE_TCP_CONNECT
 } cflow_io_native_operation_kind;
 
+typedef enum cflow_io_native_vector_operation_kind {
+    CFLOW_IO_NATIVE_TCP_RECV_VECTOR = 0,
+    CFLOW_IO_NATIVE_TCP_SEND_VECTOR
+} cflow_io_native_vector_operation_kind;
+
 typedef enum cflow_io_native_pipe_operation_kind {
     CFLOW_IO_NATIVE_PIPE_READ = 0,
     CFLOW_IO_NATIVE_PIPE_WRITE
@@ -52,6 +57,7 @@ typedef enum cflow_io_native_file_operation_flags {
 } cflow_io_native_file_operation_flags;
 
 #define CFLOW_IO_NATIVE_INVALID_SOCKET UINTPTR_MAX
+#define CFLOW_IO_NATIVE_VECTOR_MAX 16u
 
 /**
  * Caller-owned native socket operation borrowed from successful Actor submit
@@ -79,6 +85,31 @@ typedef struct cflow_io_native_operation {
     size_t address_length;
     uintptr_t result_socket;
 } cflow_io_native_operation;
+
+typedef struct cflow_io_native_buffer_span {
+    void *data;
+    size_t length;
+} cflow_io_native_buffer_span;
+
+/**
+ * Caller-owned vectored TCP operation retained by Actor like every other
+ * operation_user. buffers contains 1..CFLOW_IO_NATIVE_VECTOR_MAX non-empty
+ * spans whose checked total is at most UINT32_MAX. The operation token remains
+ * valid until the Actor invokes its release callback; the descriptor array and
+ * payload storage remain valid until the terminal callback returns.
+ * The native adapter copies descriptors into its fixed request record when it
+ * consumes the Actor command, but this internal copy does not shorten the
+ * public Actor lifetime. Payload is immutable for send and backend-exclusive
+ * mutable storage for recv during that lifetime. One completion byte count
+ * denotes the logical prefix transferred across the concatenated spans; a
+ * zero-byte recv is EOF.
+ */
+typedef struct cflow_io_native_vector_operation {
+    cflow_io_native_vector_operation_kind kind;
+    uintptr_t socket;
+    const cflow_io_native_buffer_span *buffers;
+    size_t buffer_count;
+} cflow_io_native_vector_operation;
 
 /**
  * Caller-owned byte-pipe operation borrowed from successful Actor submit
@@ -157,6 +188,11 @@ bool cflow_io_native_backend_supported(cflow_io_native_backend_kind kind);
 bool cflow_io_native_backend_pipe_supported(
     cflow_io_native_backend_kind kind);
 
+/** Returns independent vectored TCP capability; no scalar fallback is used. */
+bool cflow_io_native_backend_vector_operation_supported(
+    cflow_io_native_backend_kind kind,
+    cflow_io_native_vector_operation_kind operation_kind);
+
 /** Returns compile-time file-operation capability; handle checks occur on submit. */
 bool cflow_io_native_backend_file_operation_supported(
     cflow_io_native_backend_kind kind,
@@ -172,6 +208,9 @@ int cflow_io_native_backend_init(
 
 /** Ops are used with backend_user pointing at cflow_io_native_backend. */
 cflow_io_backend_ops cflow_io_native_backend_actor_ops(void);
+
+/** Ops are used with vectored TCP operations and backend_user at the backend. */
+cflow_io_backend_ops cflow_io_native_backend_vector_actor_ops(void);
 
 /** Ops are used with pipe operations and backend_user pointing at the backend. */
 cflow_io_backend_ops cflow_io_native_backend_pipe_actor_ops(void);

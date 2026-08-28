@@ -10,6 +10,10 @@ typedef struct cflow_io_native_impl_ops {
                   cflow_io_actor *actor,
                   cflow_io_request_id request_id,
                   cflow_io_native_operation *operation);
+    int (*submit_vector)(cflow_io_native_impl *impl,
+                         cflow_io_actor *actor,
+                         cflow_io_request_id request_id,
+                         cflow_io_native_vector_operation *operation);
     int (*submit_pipe)(cflow_io_native_impl *impl,
                        cflow_io_actor *actor,
                        cflow_io_request_id request_id,
@@ -35,6 +39,8 @@ struct cflow_io_native_impl {
 };
 
 bool cflow_io_native_operation_valid(const cflow_io_native_operation *operation);
+bool cflow_io_native_vector_operation_valid(
+    const cflow_io_native_vector_operation *operation);
 bool cflow_io_native_pipe_operation_valid(
     const cflow_io_native_pipe_operation *operation);
 bool cflow_io_native_file_operation_valid(

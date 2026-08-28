@@ -4,6 +4,10 @@
 
 #include <limits.h>
 
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
+
 static cflow_io_native_impl *native_impl(cflow_io_native_backend *backend) {
     return backend != NULL ? (cflow_io_native_impl *)backend->impl : NULL;
 }
@@ -55,6 +59,26 @@ bool cflow_io_native_operation_valid(const cflow_io_native_operation *operation)
                    operation->address_length <= UINT32_MAX;
     }
     return false;
+}
+
+bool cflow_io_native_vector_operation_valid(
+    const cflow_io_native_vector_operation *operation) {
+    size_t total = 0u;
+    if (operation == NULL ||
+        (operation->kind != CFLOW_IO_NATIVE_TCP_RECV_VECTOR &&
+         operation->kind != CFLOW_IO_NATIVE_TCP_SEND_VECTOR) ||
+        operation->socket == UINTPTR_MAX || operation->buffers == NULL ||
+        operation->buffer_count == 0u ||
+        operation->buffer_count > CFLOW_IO_NATIVE_VECTOR_MAX)
+        return false;
+    for (size_t index = 0u; index < operation->buffer_count; ++index) {
+        const cflow_io_native_buffer_span *span = &operation->buffers[index];
+        if (span->data == NULL || span->length == 0u ||
+            span->length > (size_t)UINT32_MAX - total)
+            return false;
+        total += span->length;
+    }
+    return true;
 }
 
 bool cflow_io_native_pipe_operation_valid(
@@ -119,6 +143,24 @@ bool cflow_io_native_backend_supported(cflow_io_native_backend_kind kind) {
 bool cflow_io_native_backend_pipe_supported(
     cflow_io_native_backend_kind kind) {
     return cflow_io_native_backend_supported(kind);
+}
+
+bool cflow_io_native_backend_vector_operation_supported(
+    cflow_io_native_backend_kind kind,
+    cflow_io_native_vector_operation_kind operation_kind) {
+    if (operation_kind != CFLOW_IO_NATIVE_TCP_RECV_VECTOR &&
+        operation_kind != CFLOW_IO_NATIVE_TCP_SEND_VECTOR)
+        return false;
+    if (!cflow_io_native_backend_supported(kind))
+        return false;
+#if !defined(_WIN32)
+    {
+        const long host_limit = sysconf(_SC_IOV_MAX);
+        return host_limit >= (long)CFLOW_IO_NATIVE_VECTOR_MAX;
+    }
+#else
+    return true;
+#endif
 }
 
 bool cflow_io_native_backend_file_operation_supported(
@@ -208,6 +250,27 @@ static int native_actor_cancel(void *backend_user,
     return impl->ops->cancel(impl, request_id);
 }
 
+static int native_vector_actor_submit(void *backend_user,
+                                      cflow_io_actor *actor,
+                                      cflow_io_request_id request_id,
+                                      cflow_io_lease_id lease_id,
+                                      void *operation_user) {
+    cflow_io_native_backend *backend = (cflow_io_native_backend *)backend_user;
+    cflow_io_native_impl *impl = native_impl(backend);
+    cflow_io_native_vector_operation *operation =
+        (cflow_io_native_vector_operation *)operation_user;
+    (void)lease_id;
+    if (impl == NULL || impl->ops == NULL || actor == NULL ||
+        request_id == 0u ||
+        !cflow_io_native_vector_operation_valid(operation))
+        return TURBO_EINVAL;
+    if (impl->ops->submit_vector == NULL ||
+        !cflow_io_native_backend_vector_operation_supported(
+            impl->kind, operation->kind))
+        return TURBO_ENOTSUP;
+    return impl->ops->submit_vector(impl, actor, request_id, operation);
+}
+
 static int native_pipe_actor_submit(void *backend_user,
                                     cflow_io_actor *actor,
                                     cflow_io_request_id request_id,
@@ -250,6 +313,12 @@ static int native_file_actor_submit(void *backend_user,
 
 cflow_io_backend_ops cflow_io_native_backend_actor_ops(void) {
     cflow_io_backend_ops ops = {native_actor_submit, native_actor_cancel};
+    return ops;
+}
+
+cflow_io_backend_ops cflow_io_native_backend_vector_actor_ops(void) {
+    cflow_io_backend_ops ops = {native_vector_actor_submit,
+                                native_actor_cancel};
     return ops;
 }
 
