@@ -71,6 +71,18 @@ int main(void) {
   return out == 7 ? 0 : 1;
 }
 
+#elif defined(CONSUME_CFLOW_PROCESS)
+#include <cflow/process.h>
+
+int main(void) {
+  cflow_process process = {0};
+  cflow_process_stats stats = {0};
+  return process.impl == NULL && !stats.stdin_open &&
+                 CFLOW_PROCESS_SUBMIT_ACCEPTED == 0
+             ? 0
+             : 1;
+}
+
 #elif defined(CONSUME_CFLOW)
 #include <cflow/actor.h>
 #include <cflow/adapters.h>

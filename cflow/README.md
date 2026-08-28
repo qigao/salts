@@ -34,6 +34,7 @@ include/cflow/
 ├── actor.h         bounded Actor lifecycle over Machine/Statechart and Run
 ├── io_actor.h      bounded asynchronous operation ownership/runtime
 ├── io_native.h     epoll/kqueue/poll/IOCP/io_uring socket, pipe, and file I/O
+├── io_pipe.h       named-pipe/FIFO rendezvous and endpoint ownership
 ├── io_source.h     demand-gated IO Actor completion Source adapter
 ├── runtime.h
 ├── scheduler.h
@@ -1076,8 +1077,11 @@ descriptor with `TURBO_EINVAL`. IOCP accepts already-connected, byte-mode named
 pipe handles opened with `FILE_FLAG_OVERLAPPED`; handles returned directly by
 `CreatePipe` are synchronous and are not supported. The flag is a caller
 attestation because Windows cannot query `FILE_FLAG_OVERLAPPED` from an
-arbitrary handle. io_uring uses native `IORING_OP_READ`/`IORING_OP_WRITE` with
-current-position semantics and does not require `O_NONBLOCK`.
+arbitrary handle. Byte mode is also an explicit precondition for a write-only
+Windows server handle because `GetNamedPipeInfo` requires read access that a
+least-privilege `PIPE_ACCESS_OUTBOUND` handle intentionally lacks. io_uring uses
+native `IORING_OP_READ`/`IORING_OP_WRITE` with current-position semantics and
+does not require `O_NONBLOCK`.
 
 The caller owns every endpoint and buffer through terminal callback return.
 After all requests for an endpoint are terminal and acknowledged, close the
@@ -1085,6 +1089,24 @@ endpoint first, then call `cflow_io_native_backend_forget_pipe()` for retained
 readiness/IOCP identity. io_uring retains no endpoint identity but preserves its
 existing quiescent forget contract. No backend closes a caller endpoint or
 silently moves the operation to a fallback backend or blocking worker.
+
+`<cflow/io_pipe.h>` supplies the control plane that deliberately stays outside
+those data operations. `cflow_io_pipe_capability_supported()` distinguishes
+Windows server accept, Windows client connect, and POSIX FIFO open. A Windows
+server owns at most `request_capacity` overlapped named-pipe instances; one
+successful callback receives the endpoint by value and becomes its sole close
+owner. Cancellation only requests `CancelIoEx`; `run_ready()` observes the
+authoritative result before reclaiming the slot. `ERROR_PIPE_CONNECTED` is the
+successful create/connect race, not a failure.
+
+Windows client connect is one synchronous `CreateFile` attempt. Missing and
+busy instances return `TURBO_ENOENT` and `TURBO_EBUSY`; the facade never calls
+`WaitNamedPipe`. POSIX FIFO open is likewise one synchronous control-plane call
+using `O_NONBLOCK | O_CLOEXEC`: read open does not claim a writer exists, and a
+write open without a reader returns `TURBO_EPIPE`. Neither path creates a
+worker, retries, or substitutes another backend. The Windows server requires
+exclusive owner access, including lifecycle; transferred endpoints may then be
+submitted to the existing native byte-pipe Actor contract.
 
 Regular-file operations use `cflow_io_native_file_operation` with
 `cflow_io_native_backend_file_actor_ops()`. `READ_AT` and `WRITE_AT` always use
@@ -1218,9 +1240,10 @@ CFlow may retain up to two Platform
 registrations per socket identity (one read lane and one write lane), so a
 request capacity of N produces a checked reactor capacity of 2N.
 
-Named-pipe connection lifecycle, POSIX FIFO pathname/open rendezvous, subprocess
-standard-stream ownership, message framing, asynchronous pathname open,
-file metadata/directory operations, and devices remain separate contracts.
+Subprocess standard-stream ownership is provided by the separate
+`TurboUtils::CFlowProcess` adapter target. Message framing, asynchronous
+pathname open, file metadata/directory operations, and devices remain separate
+contracts.
 POSIX regular-file readiness does not
 represent asynchronous disk completion. “Device” would mean an OS-specific descriptor/handle adapter;
 USB transfer semantics, discovery, permissions, cancellation, and hot-unplug

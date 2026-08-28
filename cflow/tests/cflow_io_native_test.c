@@ -610,6 +610,67 @@ failed:
     return -(int)error;
 }
 
+static int native_test_make_outbound_named_pipe_pair(HANDLE pipes[2]) {
+    static LONG sequence = 0;
+    wchar_t name[128];
+    OVERLAPPED connected = {0};
+    HANDLE event = NULL;
+    DWORD error = ERROR_SUCCESS;
+    BOOL pending = FALSE;
+
+    pipes[0] = INVALID_HANDLE_VALUE;
+    pipes[1] = INVALID_HANDLE_VALUE;
+    if (_snwprintf_s(name, sizeof(name) / sizeof(name[0]), _TRUNCATE,
+                     L"\\\\.\\pipe\\cflow-native-outbound-%lu-%ld",
+                     GetCurrentProcessId(),
+                     InterlockedIncrement(&sequence)) < 0)
+        return TURBO_ERANGE;
+    pipes[0] = CreateNamedPipeW(
+        name, PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u,
+        NATIVE_TEST_PIPE_BUFFER_CAPACITY,
+        NATIVE_TEST_PIPE_BUFFER_CAPACITY, 0u, NULL);
+    if (pipes[0] == INVALID_HANDLE_VALUE)
+        return -(int)GetLastError();
+    event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (event == NULL) {
+        error = GetLastError();
+        goto failed;
+    }
+    connected.hEvent = event;
+    if (!ConnectNamedPipe(pipes[0], &connected)) {
+        error = GetLastError();
+        if (error == ERROR_IO_PENDING)
+            pending = TRUE;
+        else if (error != ERROR_PIPE_CONNECTED)
+            goto failed;
+    }
+    pipes[1] = CreateFileW(
+        name, GENERIC_READ, 0u, NULL, OPEN_EXISTING, 0u, NULL);
+    if (pipes[1] == INVALID_HANDLE_VALUE) {
+        error = GetLastError();
+        goto failed;
+    }
+    if (pending) {
+        DWORD transferred = 0u;
+        if (!GetOverlappedResult(pipes[0], &connected, &transferred, TRUE)) {
+            error = GetLastError();
+            goto failed;
+        }
+    }
+    (void)CloseHandle(event);
+    return TURBO_OK;
+
+failed:
+    native_test_close_pipe(pipes[1]);
+    native_test_close_pipe(pipes[0]);
+    if (event != NULL)
+        (void)CloseHandle(event);
+    pipes[0] = INVALID_HANDLE_VALUE;
+    pipes[1] = INVALID_HANDLE_VALUE;
+    return -(int)error;
+}
+
 static void native_check_pipe_read_write(
     cflow_io_native_backend_kind kind) {
     static const unsigned char payload[] = {0x70u, 0x69u, 0x70u, 0x65u};
@@ -658,6 +719,43 @@ static void native_check_pipe_read_write(
                     &fixture, (uintptr_t)pipes[0]), TURBO_OK);
     check_equal(native_fixture_forget_pipe(
                     &fixture, (uintptr_t)pipes[1]), TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_outbound_pipe_write_iocp(void) {
+    static const unsigned char payload[] = {0x6fu, 0x75u, 0x74u};
+    native_fixture fixture;
+    HANDLE pipes[2];
+    native_test_pipe_operation write_operation = {0};
+    unsigned char received[sizeof(payload)] = {0};
+    DWORD received_size = 0u;
+    cflow_io_submit_result submitted;
+
+    check_equal(native_pipe_fixture_init(
+                    &fixture, CFLOW_IO_NATIVE_IOCP, 1u), TURBO_OK);
+    check_equal(native_test_make_outbound_named_pipe_pair(pipes), TURBO_OK);
+    write_operation.native = (cflow_io_native_pipe_operation){
+        CFLOW_IO_NATIVE_PIPE_WRITE, (uintptr_t)pipes[0],
+        (void *)payload, sizeof(payload),
+        CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
+    submitted = native_pipe_submit(&fixture, 96u, &write_operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_OK);
+    check_equal(fixture.completions.values[0].bytes, sizeof(payload));
+    check_true(ReadFile(pipes[1], received, (DWORD)sizeof(received),
+                        &received_size, NULL));
+    check_equal((size_t)received_size, sizeof(payload));
+    check_equal(received, payload, sizeof(payload));
+    check_equal(cflow_io_actor_acknowledge(
+                    &fixture.actor, submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+
+    native_test_close_pipe(pipes[0]);
+    native_test_close_pipe(pipes[1]);
+    check_equal(native_fixture_forget_pipe(
+                    &fixture, (uintptr_t)pipes[0]), TURBO_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -2798,8 +2896,13 @@ spec("CFlow native IO backend") {
         check_true(cflow_io_native_backend_vector_operation_supported(
             CFLOW_IO_NATIVE_POLL, CFLOW_IO_NATIVE_TCP_SEND_VECTOR));
 #elif defined(__linux__)
+#if defined(CFLOW_TEST_NATIVE_EPOLL)
         check_true(cflow_io_native_backend_vector_operation_supported(
             CFLOW_IO_NATIVE_EPOLL, CFLOW_IO_NATIVE_TCP_RECV_VECTOR));
+#else
+        check_false(cflow_io_native_backend_vector_operation_supported(
+            CFLOW_IO_NATIVE_EPOLL, CFLOW_IO_NATIVE_TCP_RECV_VECTOR));
+#endif
         check_true(cflow_io_native_backend_vector_operation_supported(
             CFLOW_IO_NATIVE_POLL, CFLOW_IO_NATIVE_TCP_SEND_VECTOR));
         check_equal(
@@ -3079,6 +3182,9 @@ spec("CFlow native IO backend") {
     }
     it("runs byte pipe read and write through IOCP") {
         native_check_pipe_read_write(CFLOW_IO_NATIVE_IOCP);
+    }
+    it("writes through a least-privilege outbound named pipe with IOCP") {
+        native_check_outbound_pipe_write_iocp();
     }
     it("cancels a pending byte pipe read through IOCP") {
         native_check_pipe_cancel(CFLOW_IO_NATIVE_IOCP);

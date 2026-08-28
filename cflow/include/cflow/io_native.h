@@ -122,7 +122,10 @@ typedef struct cflow_io_native_vector_operation {
  * opened the endpoint for asynchronous operation. POSIX readiness backends
  * additionally verify O_NONBLOCK. IOCP cannot recover FILE_FLAG_OVERLAPPED
  * from an arbitrary pipe handle, so a false declaration violates this API's
- * precondition and may block the submitting thread.
+ * precondition and may block the submitting thread. Byte mode is likewise a
+ * caller precondition for a write-only Windows server handle: Windows denies
+ * GetNamedPipeInfo on that least-privilege handle, so IOCP can only verify
+ * byte mode when the endpoint grants attribute-query access.
  */
 typedef struct cflow_io_native_pipe_operation {
     cflow_io_native_pipe_operation_kind kind;

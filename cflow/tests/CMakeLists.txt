@@ -172,6 +172,11 @@ cmake_add_test(cflow_io_file_test
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_io_pipe_test
+  SOURCES cflow_io_pipe_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_timer_event_test
   SOURCES cflow_timer_event_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
@@ -254,6 +259,7 @@ set_target_properties(
   cflow_io_source_test
   cflow_io_native_test
   cflow_io_file_test
+  cflow_io_pipe_test
   cflow_timer_event_test
   cflow_temporal_test
   cflow_calculus_conformance_test

@@ -89,6 +89,14 @@ static_assert(std::is_standard_layout<cflow_io_file_config>::value,
               "IO file config must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_file_stats>::value,
               "IO file stats must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_io_pipe_endpoint>::value,
+              "IO pipe endpoint must remain a C-compatible move token");
+static_assert(std::is_standard_layout<cflow_io_pipe_server>::value,
+              "IO pipe server must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_io_pipe_server_config>::value,
+              "IO pipe config must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_io_pipe_server_stats>::value,
+              "IO pipe stats must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_source_owner>::value,
               "IO Source owner must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_io_source_config>::value,
