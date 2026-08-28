@@ -1047,6 +1047,12 @@ cancellation, statistics, explicit socket-forget, and quiescent shutdown
 contracts. DNS and TLS remain outside this layer. `poll` is an explicit portable
 POSIX backend, not a fallback and not a new operation kind.
 
+The portable socket operation is deliberately single-buffer. Vectored TCP I/O,
+raw UDP ancillary buffers, and UDP multi-message batching are not current API
+capabilities. Their platform feasibility, ownership requirements, compatibility
+costs, and evidence-based reopen gates are recorded in the
+[advanced native socket capability decision](../docs/superpowers/specs/2026-08-28-cflow-native-socket-capability-decision.md).
+
 | Backend | Host | Execution model | Socket operations | Pipe operations | Regular-file operations | Default |
 |---|---|---|---|---|---|---|
 | epoll | Linux | readiness, O(ready) delivery | TCP/UDP plus accept/connect | nonblocking byte read/write | unsupported | Linux when enabled |
