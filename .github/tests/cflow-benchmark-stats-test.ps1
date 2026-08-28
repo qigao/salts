@@ -172,4 +172,70 @@ Assert-Throws {
     -Backend epoll -PayloadBytes 64 -ExpectedRuns 3
 } "mismatched direct baseline attempts"
 
+$ioSourceOutput = @(
+  ""
+  "CFlow windowed IO source benchmarks"
+  "      | benchmark | samples | ops/sample | bytes/sample | avg/op(ns) | avg/sample(us) | min/sample(us) | max/sample(us) | ops/s | MiB/s |"
+  "      | window=1 values=4 | 2 | 4 | - | 500.000 | 2.000 | 1.500 | 2.500 | 2000000 | - |"
+  'CFLOW_IO_SOURCE_BENCH_JSON {"schema":"cflow-io-source-benchmark/v1","capacity":1,"values_per_sample":4,"samples":2,"processed_values":12,"drive_calls":6,"driver_calls":6,"peak_occupied":1,"errors":0,"rejections":0,"stale_completions":0}'
+  ""
+)
+$ioSourceReport = ConvertFrom-CflowIoSourceBenchmarkOutput `
+  -Lines $ioSourceOutput -ExpectedCapacity 1 -ExpectedSamples 2 `
+  -ExpectedValuesPerSample 4 -BenchmarkRun 1
+Assert-Equal $ioSourceReport.schema "cflow-io-source-benchmark/v1" `
+  "IO Source report schema"
+Assert-Equal $ioSourceReport.benchmark_run 1 "IO Source benchmark run"
+Assert-Equal $ioSourceReport.timed_values 8 "IO Source timed values"
+Assert-Equal $ioSourceReport.processed_values 12 "IO Source processed values"
+Assert-Equal $ioSourceReport.mean_ns_per_value 500.0 `
+  "IO Source mean nanoseconds per value"
+Assert-Equal $ioSourceReport.drive_calls_per_value 0.5 `
+  "IO Source drive calls per processed value"
+
+$secondIoSourceReport = $ioSourceReport.psobject.Copy()
+$secondIoSourceReport.benchmark_run = 2
+$secondIoSourceReport.mean_ns_per_value = 300.0
+$secondIoSourceReport.drive_calls = 3
+$secondIoSourceReport.driver_calls = 3
+$secondIoSourceReport.drive_calls_per_value = 0.25
+$ioSourceSummary = Get-CflowIoSourceSummary `
+  -Reports @($ioSourceReport, $secondIoSourceReport) -ExpectedRuns 2
+Assert-Equal $ioSourceSummary.runs 2 "IO Source summary run count"
+Assert-Equal $ioSourceSummary.median_mean_ns_per_value 400.0 `
+  "IO Source median nanoseconds per value"
+Assert-Equal $ioSourceSummary.median_drive_calls 4.5 `
+  "IO Source median drive calls"
+Assert-Equal $ioSourceSummary.median_drive_calls_per_value 0.375 `
+  "IO Source median drive calls per processed value"
+
+Assert-Throws {
+  ConvertFrom-CflowIoSourceBenchmarkOutput `
+    -Lines @($ioSourceOutput | Where-Object {
+        $_ -notmatch '^CFLOW_IO_SOURCE_BENCH_JSON '
+      }) `
+    -ExpectedCapacity 1 -ExpectedSamples 2 `
+    -ExpectedValuesPerSample 4 -BenchmarkRun 1
+} "missing IO Source JSON record"
+$wrongProcessedValues = @($ioSourceOutput | ForEach-Object {
+    $_ -replace '"processed_values":12', '"processed_values":11'
+  })
+Assert-Throws {
+  ConvertFrom-CflowIoSourceBenchmarkOutput `
+    -Lines $wrongProcessedValues -ExpectedCapacity 1 -ExpectedSamples 2 `
+    -ExpectedValuesPerSample 4 -BenchmarkRun 1
+} "mismatched IO Source processed value count"
+$failedIoSourceOutput = @($ioSourceOutput | ForEach-Object {
+    $_ -replace '"errors":0', '"errors":1'
+  })
+Assert-Throws {
+  ConvertFrom-CflowIoSourceBenchmarkOutput `
+    -Lines $failedIoSourceOutput -ExpectedCapacity 1 -ExpectedSamples 2 `
+    -ExpectedValuesPerSample 4 -BenchmarkRun 1
+} "failed IO Source report"
+Assert-Throws {
+  Get-CflowIoSourceSummary `
+    -Reports @($ioSourceReport, $ioSourceReport) -ExpectedRuns 2
+} "duplicate IO Source benchmark run"
+
 Write-Output "cflow benchmark stats tests passed"

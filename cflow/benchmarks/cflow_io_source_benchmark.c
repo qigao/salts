@@ -361,15 +361,19 @@ bench("CFlow windowed IO source control path") {
     check_equal(window.demand_reserved, (size_t)0u);
     check_equal(window.results_ready, (size_t)0u);
     check_equal(fixture.drive_calls, fixture.driver_calls);
+    check_equal(fixture.sink_values,
+                (samples + 1u) * values_per_sample);
     printf("CFLOW_IO_SOURCE_BENCH_JSON "
-           "{\"capacity\":%zu,\"values_per_sample\":%zu,"
+           "{\"schema\":\"cflow-io-source-benchmark/v1\","
+           "\"capacity\":%zu,\"values_per_sample\":%zu,"
            "\"samples\":%zu,\"drive_calls\":%zu,"
            "\"driver_calls\":%zu,\"peak_occupied\":%zu,"
+           "\"processed_values\":%zu,"
            "\"errors\":0,\"rejections\":0,"
            "\"stale_completions\":0}\n",
            capacity, values_per_sample, samples,
            fixture.drive_calls, fixture.driver_calls,
-           window.peak_occupied);
+           window.peak_occupied, fixture.sink_values);
     check_equal(io_source_benchmark_destroy(&fixture), TURBO_OK);
 }
 }

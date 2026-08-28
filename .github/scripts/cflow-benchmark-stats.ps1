@@ -114,6 +114,186 @@ function Get-CflowPercentDelta {
   return 100.0 * ($Candidate - $Baseline) / $Baseline
 }
 
+function ConvertFrom-CflowIoSourceBenchmarkOutput {
+  param(
+    [Parameter(Mandatory = $true)]
+    [AllowEmptyString()]
+    [string[]]$Lines,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$ExpectedCapacity,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$ExpectedSamples,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$ExpectedValuesPerSample,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [int]::MaxValue)]
+    [int]$BenchmarkRun
+  )
+
+  $tableRecords = @()
+  $tablePattern =
+    '^\s*\|\s*window=(?<capacity>[0-9]+)\s+values=(?<values>[0-9]+)\s*\|' +
+    '\s*(?<samples>[0-9]+)\s*\|\s*(?<operations>[0-9]+)\s*\|' +
+    '\s*[^|]+\|\s*(?<mean>[0-9]+(?:\.[0-9]+)?)\s*\|'
+  foreach ($line in $Lines) {
+    if ($line -match $tablePattern) {
+      $tableRecords += [pscustomobject]@{
+        capacity = [int64]$Matches.capacity
+        values_per_sample = [int64]$Matches.values
+        samples = [int64]$Matches.samples
+        operations_per_sample = [int64]$Matches.operations
+        mean_ns_per_value = [double]$Matches.mean
+      }
+    }
+  }
+  if ($tableRecords.Count -ne 1) {
+    throw "Expected exactly one IO Source benchmark table record, found $($tableRecords.Count)"
+  }
+
+  $jsonLines = @($Lines | Where-Object {
+      $_ -match '^CFLOW_IO_SOURCE_BENCH_JSON '
+    })
+  if ($jsonLines.Count -ne 1) {
+    throw "Expected exactly one IO Source JSON record, found $($jsonLines.Count)"
+  }
+  $jsonText = $jsonLines[0].Substring("CFLOW_IO_SOURCE_BENCH_JSON ".Length)
+  try {
+    $report = $jsonText | ConvertFrom-Json
+  } catch {
+    throw "Invalid IO Source JSON record: $jsonText"
+  }
+  foreach ($field in @(
+      "schema", "capacity", "values_per_sample", "samples",
+      "processed_values", "drive_calls", "driver_calls", "peak_occupied",
+      "errors", "rejections", "stale_completions")) {
+    if ($null -eq $report.$field) {
+      throw "Missing IO Source report field '$field': $jsonText"
+    }
+  }
+
+  if ($ExpectedSamples -ge [long]::MaxValue) {
+    throw "IO Source expected value count overflows int64"
+  }
+  $maximumValuesPerSample = [decimal]::Floor(
+    ([decimal]([long]::MaxValue)) /
+      ([decimal]$ExpectedSamples + [decimal]1))
+  if ([decimal]$ExpectedValuesPerSample -gt $maximumValuesPerSample) {
+    throw "IO Source expected value count overflows int64"
+  }
+  $timedValues = [long](
+    [decimal]$ExpectedSamples * [decimal]$ExpectedValuesPerSample)
+  $processedValues = [long](
+    ([decimal]$ExpectedSamples + [decimal]1) *
+      [decimal]$ExpectedValuesPerSample)
+  $table = $tableRecords[0]
+  $meanNs = [double]$table.mean_ns_per_value
+  $driveCalls = [int64]$report.drive_calls
+  $driverCalls = [int64]$report.driver_calls
+  if ($report.schema -ne "cflow-io-source-benchmark/v1" -or
+      [int64]$report.capacity -ne $ExpectedCapacity -or
+      [int64]$report.values_per_sample -ne $ExpectedValuesPerSample -or
+      [int64]$report.samples -ne $ExpectedSamples -or
+      [int64]$report.processed_values -ne $processedValues -or
+      [int64]$table.capacity -ne $ExpectedCapacity -or
+      [int64]$table.values_per_sample -ne $ExpectedValuesPerSample -or
+      [int64]$table.samples -ne $ExpectedSamples -or
+      [int64]$table.operations_per_sample -ne $ExpectedValuesPerSample -or
+      [double]::IsNaN($meanNs) -or [double]::IsInfinity($meanNs) -or
+      $meanNs -le 0.0 -or $driveCalls -le 0 -or
+      $driverCalls -ne $driveCalls -or
+      [int64]$report.peak_occupied -le 0 -or
+      [int64]$report.peak_occupied -gt $ExpectedCapacity -or
+      [int64]$report.errors -ne 0 -or
+      [int64]$report.rejections -ne 0 -or
+      [int64]$report.stale_completions -ne 0) {
+    throw "Invalid or unsuccessful IO Source benchmark report: $jsonText"
+  }
+
+  return [pscustomobject][ordered]@{
+    schema = "cflow-io-source-benchmark/v1"
+    benchmark_run = $BenchmarkRun
+    capacity = $ExpectedCapacity
+    values_per_sample = $ExpectedValuesPerSample
+    samples = $ExpectedSamples
+    timed_values = $timedValues
+    processed_values = $processedValues
+    mean_ns_per_value = $meanNs
+    drive_calls = $driveCalls
+    driver_calls = $driverCalls
+    drive_calls_per_value = [double]$driveCalls / [double]$processedValues
+    peak_occupied = [int64]$report.peak_occupied
+    errors = [int64]$report.errors
+    rejections = [int64]$report.rejections
+    stale_completions = [int64]$report.stale_completions
+  }
+}
+
+function Get-CflowIoSourceSummary {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object[]]$Reports,
+
+    [Parameter(Mandatory = $true)]
+    [int]$ExpectedRuns
+  )
+
+  if ($ExpectedRuns -le 0) {
+    throw "ExpectedRuns must be positive"
+  }
+  if ($Reports.Count -ne $ExpectedRuns) {
+    throw "Expected $ExpectedRuns IO Source reports, found $($Reports.Count)"
+  }
+  $first = $Reports[0]
+  for ($run = 1; $run -le $ExpectedRuns; ++$run) {
+    $matching = @($Reports | Where-Object {
+        [int]$_.benchmark_run -eq $run
+      })
+    if ($matching.Count -ne 1) {
+      throw "Expected one IO Source report for run $run, found $($matching.Count)"
+    }
+    $report = $matching[0]
+    if ($report.schema -ne "cflow-io-source-benchmark/v1" -or
+        [int64]$report.capacity -ne [int64]$first.capacity -or
+        [int64]$report.values_per_sample -ne
+          [int64]$first.values_per_sample -or
+        [int64]$report.samples -ne [int64]$first.samples -or
+        [int64]$report.timed_values -ne [int64]$first.timed_values -or
+        [int64]$report.processed_values -ne
+          [int64]$first.processed_values -or
+        [double]$report.mean_ns_per_value -le 0.0 -or
+        [int64]$report.drive_calls -le 0 -or
+        [int64]$report.driver_calls -ne [int64]$report.drive_calls -or
+        [double]$report.drive_calls_per_value -le 0.0 -or
+        [int64]$report.errors -ne 0 -or
+        [int64]$report.rejections -ne 0 -or
+        [int64]$report.stale_completions -ne 0) {
+      throw "Invalid or incompatible IO Source report for run $run"
+    }
+  }
+
+  return [pscustomobject][ordered]@{
+    capacity = [int64]$first.capacity
+    values_per_sample = [int64]$first.values_per_sample
+    samples = [int64]$first.samples
+    runs = $ExpectedRuns
+    timed_values_per_run = [int64]$first.timed_values
+    processed_values_per_run = [int64]$first.processed_values
+    median_mean_ns_per_value = Get-CflowMedian @($Reports.mean_ns_per_value)
+    median_drive_calls = Get-CflowMedian @($Reports.drive_calls)
+    median_driver_calls = Get-CflowMedian @($Reports.driver_calls)
+    median_drive_calls_per_value =
+      Get-CflowMedian @($Reports.drive_calls_per_value)
+    median_peak_occupied = Get-CflowMedian @($Reports.peak_occupied)
+  }
+}
+
 function Get-CflowPairedSourceSummary {
   param(
     [Parameter(Mandatory = $true)]
