@@ -80,7 +80,8 @@ set(verify_installed_dependencies
     turbo_stl_stream
     turbo_utils
     turbo_cflow_process
-    turbo_cflow_fs)
+    turbo_cflow_fs
+    json_cserde_adapter)
 if(CFLOW_ENABLE_MINICORO)
   list(APPEND verify_installed_dependencies turbo_cflow_minicoro)
 endif()

@@ -4,7 +4,7 @@
 
 The low-level parser implementations previously lived under
 `turbo-parser/parser`. They depend on TurboUtils primitives (`Core`, `STL`,
-`CSerde`, memory pools, files, and TinyTest), while the higher-level
+memory pools, files, and TinyTest), while the higher-level
 `TurboParser::Parser` facade, Mustache, Cron, TBE schema, DataBind, and the TBE
 compiler compose those implementations.
 
@@ -17,13 +17,13 @@ package boundary.
 
 TurboUtils owns and exports the low-level parser and query targets under the
 `TurboUtils::` namespace. TurboParser remains the owner of the unified parser
-facade, XML vendor integration, Mustache, Cron, TBE schema, TBE CBind,
-DataBind, and schema generation.
+facade, XML vendor integration, Mustache, Cron, TBE schema, DataBind, and
+schema generation.
 
-The JSON-to-CSerde reader is part of `TurboUtils::JsonParser`. `TurboUtils::CBind`
-continues to consume the format-neutral `cserde_reader` interface. TBE CBind is
-not moved because its schema model and generated sidecars depend on the TBE
-schema/compiler fact source.
+The JSON parser has no CSerde dependency. The optional JSON-to-CSerde bridge is
+exported separately as `TurboUtils::JsonCSerdeAdapter`; consumers opt into that
+composition explicitly. TurboParser does not consume this adapter, CSerde, or
+CBind.
 
 ## Target Mapping
 
@@ -31,6 +31,7 @@ schema/compiler fact source.
 |---|---|
 | `query_vm` | `TurboUtils::QueryVM` |
 | `json_parser` | `TurboUtils::JsonParser` |
+| `json_cserde_adapter` | `TurboUtils::JsonCSerdeAdapter` |
 | `csv_parser` | `TurboUtils::CsvParser` |
 | `ini_parser` | `TurboUtils::IniParser` |
 | `uri_parser` | `TurboUtils::UriParser` |
@@ -51,9 +52,12 @@ schema/compiler fact source.
 
 ```text
 application -> TurboParser facade -> TurboUtils parser targets
-                                  -> TurboUtils Core/CSerde/CBind
+                                  -> TurboUtils Core
 
-application -> TurboUtils parser targets -> TurboUtils Core/CSerde/STL
+application -> TurboUtils parser targets -> TurboUtils Core/STL
+
+adapter consumer -> TurboUtils::JsonCSerdeAdapter
+                 -> TurboUtils::JsonParser + TurboUtils::CSerde
 ```
 
 TurboUtils never finds or links TurboParser. TurboParser finds one installed
@@ -107,8 +111,8 @@ finalized, rollback does not require reconstructing file contents.
 - Configure TurboUtils with its versioned Windows Release preset.
 - Build and run QueryVM, JSON parser, JSON-to-CSerde, and CBind integration tests.
 - Run the TurboUtils test suite and installation target.
-- Configure and run the external TurboUtils install consumer using
-  `TurboUtils::JsonParser` and `TurboUtils::CBind` together.
+- Configure and run the external TurboUtils install consumer using the explicit
+  `TurboUtils::JsonCSerdeAdapter` composition target.
 - Configure, build, and test TurboParser against the installed TurboUtils SDK.
 - Inspect both exported target files for source-tree paths and obsolete
   low-level `TurboParser::*` dependencies.

@@ -21,7 +21,7 @@ if(BUILD_TESTING)
   cmake_add_test(test_json_cserde_reader
       SOURCES test_json_cserde_reader.c
       FOLDER "parser/${TARGET_NAME}/test"
-      LIBS json_parser TurboUtils::TinyTest
+      LIBS json_cserde_adapter TurboUtils::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../include
   )
 endif()

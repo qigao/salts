@@ -19,7 +19,7 @@ add_executable(consume_json_cbind consumer.c)
 target_compile_features(consume_json_cbind PRIVATE c_std_11)
 target_compile_definitions(consume_json_cbind PRIVATE CONSUME_JSON_CBIND=1)
 target_link_libraries(consume_json_cbind PRIVATE
-  TurboUtils::JsonParser
+  TurboUtils::JsonCSerdeAdapter
   TurboUtils::CBind
   TurboUtils::Core)
 add_turboutils_consumer(consume_cflow TurboUtils::CFlow CONSUME_CFLOW)

@@ -26,6 +26,7 @@ add_subdirectory(selector)
 set(TURBOUTILS_PARSER_TARGETS
   ini_parser
   json_parser
+  json_cserde_adapter
   csv_parser
   uri_parser
   tlv_parser

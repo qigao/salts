@@ -4,7 +4,7 @@
 
 **Goal:** Build and install the moved low-level parsers from TurboUtils and make TurboParser consume those installed targets without duplicating parser sources.
 
-**Architecture:** TurboUtils exports component parser targets and owns the JSON-to-CSerde adapter. TurboParser retains its facade, XML vendor, Mustache, Cron, TBE, DataBind, and compiler layers and consumes the installed TurboUtils components.
+**Architecture:** TurboUtils exports component parser targets and a separate opt-in JSON-to-CSerde adapter. TurboParser retains its facade, XML vendor, Mustache, Cron, TBE, DataBind, and compiler layers, consumes only the installed parser components, and does not depend on CBind or CSerde.
 
 **Tech Stack:** C11/C++17, CMake 3.20+, CMake Presets, re2c, Lemon, TinyTest, vcpkg.
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Preserve all C parser APIs, ownership, error codes, accepted syntax, and serialized data.
-- Keep `cbind/` and `cserde/` in TurboUtils and keep `tbe/tbe_cbind` in TurboParser.
+- Keep `cbind/` and `cserde/` in TurboUtils; do not expose either through TurboParser.
 - Use only installed `TurboUtils::*` targets across the repository boundary.
 - Do not copy parser sources or fall back to a source-tree dependency.
 - Do not modify the existing CFlow working-tree changes.
@@ -28,10 +28,10 @@
 - Modify: `tests/install_consumer/consumer.c`
 
 **Interfaces:**
-- Consumes: installed `TurboUtils::JsonParser`, `TurboUtils::CBind`, and `json_cserde_reader_create`.
+- Consumes: installed `TurboUtils::JsonCSerdeAdapter`, `TurboUtils::CBind`, and `json_cserde_reader_create`.
 - Produces: `consume_json_cbind`, an external consumer that parses JSON and decodes it through CSerde/CBind.
 
-- [x] Add `consume_json_cbind` linked to `TurboUtils::JsonParser`, `TurboUtils::CBind`, and `TurboUtils::Core`.
+- [x] Add `consume_json_cbind` linked to `TurboUtils::JsonCSerdeAdapter`, `TurboUtils::CBind`, and `TurboUtils::Core`.
 - [x] Add a `CONSUME_JSON_CBIND` branch that parses `{"value":7}`, creates a JSON CSerde reader, decodes a CMeta-described C struct with `cbind_decode`, and releases reader/document ownership.
 - [x] Configure the install consumer against the current installed package and confirm failure because `TurboUtils::JsonParser` is absent.
 
@@ -43,13 +43,13 @@
 - Modify: `parser/*/CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: `TurboUtils::Core`, `TurboUtils::STL`, `TurboUtils::CSerde`, and `TurboUtils::TinyTest`.
+- Consumes: `TurboUtils::Core`, `TurboUtils::STL`, and `TurboUtils::TinyTest`; only the separate JSON CSerde adapter consumes `TurboUtils::CSerde`.
 - Produces: the component targets listed in the design spec under the `TurboUtils::` namespace.
 
 - [x] Add `parser/query_vm` within the parser subtree and add the parser subtree after Core/STL/CSerde/CBind exist.
 - [x] Rename build-tree aliases and internal component links from `TurboParser::*` to `TurboUtils::*`.
 - [x] Export every cross-repository static target through `TurboUtilsTargets` with stable `EXPORT_NAME` values.
-- [x] Install public headers at include paths matching every target's install interface, including `json_cserde_reader.h` and the CYaml JSON adapter header.
+- [x] Install public headers at include paths matching every target's install interface, including `json_cserde_reader.h` for `TurboUtils::JsonCSerdeAdapter` and the CYaml JSON adapter header.
 - [x] Reconfigure TurboUtils and build `test_query_vm`, `test_json_parser`, and `test_json_cserde_reader`.
 
 ### Task 3: TurboParser installed dependency migration
