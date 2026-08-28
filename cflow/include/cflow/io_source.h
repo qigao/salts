@@ -61,7 +61,8 @@ typedef cflow_read_status (*cflow_io_source_encode_fn)(
  * valid until cflow_io_source_owner_close() succeeds. type must have
  * TRIVIAL_COPY and TRIVIAL_DESTROY traits. drive is an advisory coalescing
  * edge notification that must schedule owner_run_ready(), not synchronously
- * close or destroy the owner.
+ * close or destroy the owner. Edges raised while owner_run_ready() is active
+ * are consumed by that driver or represented by one deferred drive call.
  */
 typedef struct cflow_io_source_config {
     const char *name;

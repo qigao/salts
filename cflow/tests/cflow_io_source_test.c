@@ -1398,9 +1398,10 @@ spec("CFlow reactive IO source") {
         check_equal(fixture.backend_submit_calls, (size_t)1u);
         check_equal(fixture.encode_calls, (size_t)1u);
         check_equal(fixture.release_calls, (size_t)1u);
-        check_true(fixture.drive_run_calls >= (size_t)1u);
+        check_equal(fixture.drive_calls, (size_t)1u);
+        check_equal(fixture.drive_run_calls, (size_t)1u);
         check_true(fixture.drive_run_progressed > (size_t)0u);
-        check_true(fixture.drive_run_busy >= (size_t)1u);
+        check_equal(fixture.drive_run_busy, (size_t)0u);
         check_equal(fixture.drive_run_error, TURBO_OK);
         check_true(cflow_io_source_owner_get_stats(
             &run_fixture.owner, &stats));
@@ -1464,7 +1465,8 @@ spec("CFlow reactive IO source") {
             check_equal(io_source_complete_backend(
                             &fixture, &completed),
                         CFLOW_IO_COMPLETE_ACCEPTED);
-            check_true(fixture.drive_run_busy >= (size_t)1u);
+            check_equal(fixture.drive_run_calls, (size_t)0u);
+            check_equal(fixture.drive_run_busy, (size_t)0u);
             check_equal(fixture.drive_run_busy_progressed,
                         (size_t)0u);
         }
@@ -1551,7 +1553,8 @@ spec("CFlow reactive IO source") {
             check_equal(io_source_complete_backend(
                             &fixture, &cancelled),
                         CFLOW_IO_COMPLETE_ACCEPTED);
-            check_true(fixture.drive_run_busy >= (size_t)1u);
+            check_equal(fixture.drive_run_calls, (size_t)0u);
+            check_equal(fixture.drive_run_busy, (size_t)0u);
             check_equal(fixture.drive_run_busy_progressed,
                         (size_t)0u);
         }
@@ -1617,7 +1620,9 @@ spec("CFlow reactive IO source") {
         check_equal(fixture.backend_active, (size_t)0u);
         check_equal(fixture.encode_calls, (size_t)2u);
         check_equal(fixture.release_calls, (size_t)2u);
-        check_true(fixture.drive_run_busy >= (size_t)2u);
+        check_equal(fixture.drive_calls, (size_t)2u);
+        check_equal(fixture.drive_run_calls, (size_t)2u);
+        check_equal(fixture.drive_run_busy, (size_t)0u);
         check_equal(fixture.drive_run_busy_progressed, (size_t)0u);
         check_true(run_fixture.inline_scheduler.posts >= (size_t)1u);
         check_true(cflow_io_source_owner_get_stats(

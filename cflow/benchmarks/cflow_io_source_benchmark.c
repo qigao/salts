@@ -360,6 +360,7 @@ bench("CFlow windowed IO source control path") {
     check_equal(window.occupied, (size_t)0u);
     check_equal(window.demand_reserved, (size_t)0u);
     check_equal(window.results_ready, (size_t)0u);
+    check_equal(fixture.drive_calls, fixture.driver_calls);
     printf("CFLOW_IO_SOURCE_BENCH_JSON "
            "{\"capacity\":%zu,\"values_per_sample\":%zu,"
            "\"samples\":%zu,\"drive_calls\":%zu,"

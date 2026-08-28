@@ -52,6 +52,11 @@ typedef struct io_executor_runner {
     size_t ran;
 } io_executor_runner;
 
+static void io_wake_count(void *user) {
+    size_t *calls = (size_t *)user;
+    ++*calls;
+}
+
 static void io_wake_drive(void *user) {
     io_wake_driver_probe *probe = (io_wake_driver_probe *)user;
     cflow_io_run_result result;
@@ -729,6 +734,64 @@ spec("CFlow IO Actor protocol") {
         io_fixture_destroy(&fixture);
     }
 
+    it("publishes one wake until the scheduled driver credit is consumed") {
+        io_fixture fixture;
+        cflow_io_actor_config config = {0};
+        int released[2] = {0};
+        cflow_io_operation operations[2] = {
+            {&released[0], io_operation_release},
+            {&released[1], io_operation_release}};
+        cflow_io_submit_result submitted[2];
+        const cflow_io_completion completion = {
+            CFLOW_IO_COMPLETION_OK, 4u, TURBO_OK};
+        size_t wake_calls = 0u;
+
+        memset(&fixture, 0, sizeof(fixture));
+        check_true(cflow_executor_manual_init_with_capacity(
+            &fixture.executor, 2u));
+        config.request_capacity = 2u;
+        config.command_capacity = 2u;
+        config.executor = &fixture.executor;
+        config.backend.submit = io_backend_submit;
+        config.backend.cancel = io_backend_cancel;
+        config.backend_user = &fixture.backend;
+        config.completion = io_completion_record;
+        config.completion_user = &fixture.completions;
+        config.wake = io_wake_count;
+        config.wake_user = &wake_calls;
+        check_equal(cflow_io_actor_init(&fixture.actor, &config), TURBO_OK);
+
+        submitted[0] = cflow_io_actor_try_submit(
+            &fixture.actor, 501u, &operations[0]);
+        submitted[1] = cflow_io_actor_try_submit(
+            &fixture.actor, 502u, &operations[1]);
+
+        check_equal(submitted[0].status, CFLOW_IO_SUBMIT_ACCEPTED);
+        check_equal(submitted[1].status, CFLOW_IO_SUBMIT_ACCEPTED);
+        check_equal(wake_calls, (size_t)1u);
+
+        (void)cflow_io_actor_run_ready(&fixture.actor, 16u);
+        check_equal(cflow_io_actor_complete(
+                        &fixture.actor, submitted[0].request_id, &completion),
+                    CFLOW_IO_COMPLETE_ACCEPTED);
+        check_equal(cflow_io_actor_complete(
+                        &fixture.actor, submitted[1].request_id, &completion),
+                    CFLOW_IO_COMPLETE_ACCEPTED);
+        check_equal(wake_calls, (size_t)2u);
+
+        (void)cflow_io_actor_run_ready(&fixture.actor, 16u);
+        (void)cflow_executor_run_ready(&fixture.executor);
+        check_equal(cflow_io_actor_acknowledge(
+                        &fixture.actor, submitted[0].request_id),
+                    CFLOW_IO_ACK_RELEASED);
+        check_equal(cflow_io_actor_acknowledge(
+                        &fixture.actor, submitted[1].request_id),
+                    CFLOW_IO_ACK_RELEASED);
+        check_equal(released[0], 1);
+        check_equal(released[1], 1);
+        io_fixture_destroy(&fixture);
+    }
+
     it("coalesces wake requests raised while the driver is active") {
         io_fixture fixture;
         cflow_io_actor_config config = {0};
@@ -757,7 +820,7 @@ spec("CFlow IO Actor protocol") {
         submitted = cflow_io_actor_try_submit(&fixture.actor, 403u, &operation);
         check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
         check_equal(wake.busy, (size_t)0u);
-        check_true(wake.calls >= (size_t)2u);
+        check_equal(wake.calls, (size_t)2u);
         (void)cflow_executor_run_ready(&fixture.executor);
         check_equal(fixture.completions.count, (size_t)1u);
         check_equal(cflow_io_actor_acknowledge(

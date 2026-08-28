@@ -12,6 +12,7 @@
 #include <turbo/thread.h>
 
 #include <inttypes.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,6 +90,11 @@ typedef struct network_operation {
   struct sockaddr_storage address;
 } network_operation;
 
+typedef struct network_operation_slot {
+  network_operation operation;
+  bool in_use;
+} network_operation_slot;
+
 typedef struct network_vector_operation {
   cflow_io_native_vector_operation native;
   cflow_io_native_buffer_span spans[2];
@@ -105,6 +111,7 @@ typedef struct network_source_driver {
   cflow_run run;
   cflow_sink_callbacks sink_callbacks;
   cflow_sink sink;
+  network_operation_slot operation_slots[NETWORK_REQUEST_CAPACITY];
   cflow_io_native_operation pending_operation;
   cflow_io_completion completion;
   size_t sink_values;
@@ -154,6 +161,7 @@ typedef struct network_endpoint {
   cflow_executor executor;
   cflow_io_actor actor;
   network_source_driver source;
+  network_operation_slot operation_slots[NETWORK_REQUEST_CAPACITY];
   network_completion_probe completions;
   network_stage_measurement *stages;
   uint64_t pending_admission_ns;
@@ -429,7 +437,28 @@ static int network_operation_prepare(network_operation *owned,
   return TURBO_OK;
 }
 
-static void network_operation_release(void *user) { free(user); }
+static network_operation_slot *network_operation_slot_try_acquire(
+    network_operation_slot *slots, size_t capacity) {
+  size_t index;
+  if (slots == NULL) return NULL;
+  for (index = 0u; index < capacity; ++index) {
+    if (!slots[index].in_use) {
+      slots[index].in_use = true;
+      memset(&slots[index].operation, 0, sizeof(slots[index].operation));
+      return &slots[index];
+    }
+  }
+  return NULL;
+}
+
+static void network_operation_slot_release(void *user) {
+  network_operation_slot *slot;
+  if (user == NULL) return;
+  slot = (network_operation_slot *)((unsigned char *)user -
+                                    offsetof(network_operation_slot, operation));
+  memset(&slot->operation, 0, sizeof(slot->operation));
+  slot->in_use = false;
+}
 
 static void network_vector_operation_release(void *user) { free(user); }
 
@@ -468,29 +497,29 @@ static void network_wake_signal(void *user) {
 static cflow_io_source_prepare_status
 network_source_prepare(void *user, cflow_io_operation *operation, const char **error) {
   static const char *const no_operation_error = "network Source has no pending operation";
-  static const char *const allocation_error = "network Source could not allocate an operation";
+  static const char *const capacity_error = "network Source operation storage is exhausted";
   static const char *const operation_error = "network Source received an invalid operation";
   network_source_driver *driver = (network_source_driver *)user;
-  network_operation *owned;
+  network_operation_slot *slot;
   int status;
 
   if (driver == NULL || operation == NULL || !driver->operation_pending) {
     if (error != NULL) *error = no_operation_error;
     return CFLOW_IO_SOURCE_PREPARE_ERROR;
   }
-  owned = (network_operation *)malloc(sizeof(*owned));
-  if (owned == NULL) {
-    if (error != NULL) *error = allocation_error;
+  slot = network_operation_slot_try_acquire(driver->operation_slots, NETWORK_REQUEST_CAPACITY);
+  if (slot == NULL) {
+    if (error != NULL) *error = capacity_error;
     return CFLOW_IO_SOURCE_PREPARE_ERROR;
   }
-  status = network_operation_prepare(owned, driver->pending_operation);
+  status = network_operation_prepare(&slot->operation, driver->pending_operation);
   if (status != TURBO_OK) {
-    free(owned);
+    network_operation_slot_release(&slot->operation);
     if (error != NULL) *error = operation_error;
     return CFLOW_IO_SOURCE_PREPARE_ERROR;
   }
   driver->operation_pending = false;
-  *operation = (cflow_io_operation){owned, network_operation_release};
+  *operation = (cflow_io_operation){&slot->operation, network_operation_slot_release};
   return CFLOW_IO_SOURCE_PREPARE_OPERATION;
 }
 
@@ -957,21 +986,23 @@ static int network_submit_native_operation(network_endpoint *endpoint,
   const bool timing_enabled =
       endpoint != NULL && endpoint->stages != NULL && endpoint->stages->enabled;
   const uint64_t admission_started = timing_enabled ? turbo_hrtime() : 0u;
-  network_operation *owned = (network_operation *)malloc(sizeof(*owned));
+  network_operation_slot *slot;
   cflow_io_operation actor_operation;
   cflow_io_submit_result submitted;
   int status;
-  if (owned == NULL) return TURBO_ENOMEM;
-  status = network_operation_prepare(owned, operation);
+  if (endpoint == NULL) return TURBO_EINVAL;
+  slot = network_operation_slot_try_acquire(endpoint->operation_slots, NETWORK_REQUEST_CAPACITY);
+  if (slot == NULL) return TURBO_EBUSY;
+  status = network_operation_prepare(&slot->operation, operation);
   if (status != TURBO_OK) {
-    free(owned);
+    network_operation_slot_release(&slot->operation);
     return status;
   }
-  actor_operation = (cflow_io_operation){owned, network_operation_release};
+  actor_operation = (cflow_io_operation){&slot->operation, network_operation_slot_release};
   endpoint->completions.count = 0u;
   submitted = cflow_io_actor_try_submit(&endpoint->actor, lease, &actor_operation);
   if (submitted.status != CFLOW_IO_SUBMIT_ACCEPTED) {
-    free(owned);
+    network_operation_slot_release(&slot->operation);
     return TURBO_EBUSY;
   }
   if (timing_enabled) {
@@ -1714,6 +1745,19 @@ spec("CFlow network benchmark configuration") {
     check_equal(owned_address->sin_family, AF_INET);
     check_equal(owned_address->sin_addr.s_addr, htonl(INADDR_LOOPBACK));
     check_equal(owned_address->sin_port, htons(4242u));
+  }
+
+  it("returns bounded native operation storage for reuse after release") {
+    network_operation_slot slots[1] = {0};
+    network_operation_slot *first =
+        network_operation_slot_try_acquire(slots, 1u);
+
+    check_not_null(first);
+    check_null(network_operation_slot_try_acquire(slots, 1u));
+    network_operation_slot_release(&first->operation);
+    first = network_operation_slot_try_acquire(slots, 1u);
+    check_true(first == &slots[0]);
+    network_operation_slot_release(&first->operation);
   }
 
   it("compares UDP source endpoints by family address and port") {

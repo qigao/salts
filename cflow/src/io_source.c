@@ -261,7 +261,7 @@ static void io_source_actor_drive(void *user) {
     if (state == NULL)
         return;
     turbo_mutex_lock(&state->gate);
-    if (io_source_record_drive_locked(state))
+    if (io_source_record_drive_locked(state) && !state->driver_active)
         (void)io_source_retain_drive_locked(
             state, &drive, &drive_user);
     turbo_mutex_unlock(&state->gate);
