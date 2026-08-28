@@ -1452,6 +1452,10 @@ the execution path. Reconsider `SIZED` preallocation only with a cached
 cardinality property or other evidence that avoids replacing allocation work
 with equivalent analysis work.
 
+`cflow_direct_benchmark` retains paired unsized and `SIZED` Range collection
+baselines at 16, 256, and 4096 items without claiming that the flag selects a
+different execution path.
+
 `CMETA_RANGE_CONTIGUOUS` does not make
 `cmeta_container_data()` a physical storage pointer: that API returns a semantic
 `cmeta_data_desc`. A contiguous batch fast path requires a separate versioned
