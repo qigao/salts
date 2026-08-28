@@ -1026,6 +1026,11 @@ still be delivered and acknowledged exactly once.
 backend. TCP now covers accept, connect, receive, and send; UDP covers
 receive-from and send-to. Backend availability is compile-time and initialization
 may still fail at runtime. CFlow never substitutes another backend implicitly.
+Runnable socket, typed pipe, and regular-file programs, together with the
+host/backend and resource-validation matrices, are in
+[Native I/O examples](examples/README.md). The same source files are compiled
+against both the repository targets and the installed `TurboUtils::CFlow`
+package target.
 
 The caller owns listening, connecting, and connected sockets and must keep them
 live through terminal completion. `CFLOW_IO_NATIVE_TCP_ACCEPT` is the only
