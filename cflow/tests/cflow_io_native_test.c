@@ -50,6 +50,11 @@ typedef struct native_test_operation {
     int released;
 } native_test_operation;
 
+typedef struct native_test_vector_operation {
+    cflow_io_native_vector_operation native;
+    int released;
+} native_test_vector_operation;
+
 typedef struct native_test_pipe_operation {
     cflow_io_native_pipe_operation native;
     int released;
@@ -291,6 +296,12 @@ static void native_operation_release(void *user) {
     ++operation->released;
 }
 
+static void native_vector_operation_release(void *user) {
+    native_test_vector_operation *operation =
+        (native_test_vector_operation *)user;
+    ++operation->released;
+}
+
 static void native_pipe_operation_release(void *user) {
     native_test_pipe_operation *operation =
         (native_test_pipe_operation *)user;
@@ -358,6 +369,14 @@ static int native_fixture_init(native_fixture *fixture,
         fixture, kind, capacity, cflow_io_native_backend_actor_ops());
 }
 
+static int native_vector_fixture_init(
+    native_fixture *fixture, cflow_io_native_backend_kind kind,
+    size_t capacity) {
+    return native_fixture_init_with_ops(
+        fixture, kind, capacity,
+        cflow_io_native_backend_vector_actor_ops());
+}
+
 static int native_pipe_fixture_init(native_fixture *fixture,
                                     cflow_io_native_backend_kind kind,
                                     size_t capacity) {
@@ -384,6 +403,21 @@ static int native_fixture_wait(native_fixture *fixture, size_t count) {
         turbo_thread_yield();
     }
     return TURBO_OK;
+}
+
+static int native_fixture_wait_native_submitted(native_fixture *fixture,
+                                                uint64_t count) {
+    const uint64_t started = turbo_hrtime();
+    cflow_io_native_backend_stats stats;
+    do {
+        (void)cflow_io_actor_run_ready(&fixture->actor, 64u);
+        (void)cflow_executor_run_ready(&fixture->executor);
+        if (cflow_io_native_backend_get_stats(&fixture->backend, &stats) &&
+            stats.submitted >= count)
+            return TURBO_OK;
+        turbo_thread_yield();
+    } while (turbo_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
+    return TURBO_ETIMEDOUT;
 }
 
 static int native_fixture_forget_socket(
@@ -445,6 +479,15 @@ static cflow_io_submit_result native_submit(
     native_test_operation *operation) {
     cflow_io_operation actor_operation = {
         operation, native_operation_release};
+    return cflow_io_actor_try_submit(
+        &fixture->actor, lease, &actor_operation);
+}
+
+static cflow_io_submit_result native_vector_submit(
+    native_fixture *fixture, cflow_io_lease_id lease,
+    native_test_vector_operation *operation) {
+    cflow_io_operation actor_operation = {
+        operation, native_vector_operation_release};
     return cflow_io_actor_try_submit(
         &fixture->actor, lease, &actor_operation);
 }
@@ -1632,6 +1675,415 @@ static void native_check_tcp(cflow_io_native_backend_kind kind) {
     native_fixture_destroy(&fixture);
 }
 
+static void native_check_vector_tcp(cflow_io_native_backend_kind kind) {
+    static const unsigned char first_payload[] = {0x31u, 0x32u};
+    static const unsigned char second_payload[] = {0x33u, 0x34u, 0x35u};
+    native_fixture fixture;
+    native_test_socket sockets[2];
+    native_test_vector_operation receive = {0};
+    native_test_vector_operation send_operation = {0};
+    cflow_io_native_buffer_span receive_spans[2];
+    cflow_io_native_buffer_span send_spans[2];
+    cflow_io_submit_result receive_result;
+    cflow_io_submit_result send_result;
+    unsigned char first_received[sizeof(first_payload)] = {0};
+    unsigned char second_received[sizeof(second_payload)] = {0};
+    const size_t total = sizeof(first_payload) + sizeof(second_payload);
+
+    check_equal(native_vector_fixture_init(&fixture, kind, 2u), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    receive_spans[0] = (cflow_io_native_buffer_span){
+        first_received, sizeof(first_received)};
+    receive_spans[1] = (cflow_io_native_buffer_span){
+        second_received, sizeof(second_received)};
+    send_spans[0] = (cflow_io_native_buffer_span){
+        (void *)first_payload, sizeof(first_payload)};
+    send_spans[1] = (cflow_io_native_buffer_span){
+        (void *)second_payload, sizeof(second_payload)};
+    receive.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1],
+        receive_spans, 2u};
+    send_operation.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_SEND_VECTOR, (uintptr_t)sockets[0],
+        send_spans, 2u};
+
+    receive_result = native_vector_submit(&fixture, 141u, &receive);
+    send_result = native_vector_submit(&fixture, 142u, &send_operation);
+    check_equal(receive_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(send_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(first_received, first_payload, sizeof(first_payload));
+    check_equal(second_received, second_payload, sizeof(second_payload));
+    for (size_t i = 0u; i < fixture.completions.count; ++i) {
+        check_equal(fixture.completions.values[i].kind,
+                    CFLOW_IO_COMPLETION_OK);
+        check_equal(fixture.completions.values[i].bytes, total);
+        check_equal(cflow_io_actor_acknowledge(
+                        &fixture.actor, fixture.completions.ids[i]),
+                    CFLOW_IO_ACK_RELEASED);
+    }
+    check_equal(receive.released, 1);
+    check_equal(send_operation.released, 1);
+    native_test_close_socket(sockets[0]);
+    native_test_close_socket(sockets[1]);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_vector_descriptor_copy_and_short(
+    cflow_io_native_backend_kind kind) {
+    static const unsigned char payload[] = {0x41u, 0x42u, 0x43u};
+    native_fixture fixture;
+    native_test_socket sockets[2];
+    native_test_vector_operation receive = {0};
+    cflow_io_native_buffer_span spans[2];
+    cflow_io_submit_result submitted;
+    unsigned char first[2] = {0};
+    unsigned char second[4] = {0};
+    unsigned char poison[6] = {0};
+
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    spans[0] = (cflow_io_native_buffer_span){first, sizeof(first)};
+    spans[1] = (cflow_io_native_buffer_span){second, sizeof(second)};
+    receive.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1], spans, 2u};
+    submitted = native_vector_submit(&fixture, 143u, &receive);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), TURBO_OK);
+
+    spans[0] = (cflow_io_native_buffer_span){poison, 2u};
+    spans[1] = (cflow_io_native_buffer_span){poison + 2u, 4u};
+    check_equal(send(sockets[0], (const char *)payload,
+                     (int)sizeof(payload), 0), (int)sizeof(payload));
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind, CFLOW_IO_COMPLETION_OK);
+    check_equal(fixture.completions.values[0].bytes, sizeof(payload));
+    check_equal(first, payload, sizeof(first));
+    check_equal(second[0], payload[2]);
+    check_equal(poison, (unsigned char[6]){0}, sizeof(poison));
+    check_equal(cflow_io_actor_acknowledge(&fixture.actor,
+                                            submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    check_equal(receive.released, 1);
+    native_test_close_socket(sockets[0]);
+    native_test_close_socket(sockets[1]);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)sockets[1]), TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_vector_eof(cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    native_test_socket sockets[2];
+    native_test_vector_operation receive = {0};
+    cflow_io_native_buffer_span span;
+    cflow_io_submit_result submitted;
+    unsigned char received[2] = {0};
+
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    span = (cflow_io_native_buffer_span){received, sizeof(received)};
+    receive.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1], &span, 1u};
+    submitted = native_vector_submit(&fixture, 144u, &receive);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), TURBO_OK);
+    native_test_close_socket(sockets[0]);
+    sockets[0] = NATIVE_TEST_INVALID_SOCKET;
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind, CFLOW_IO_COMPLETION_EOF);
+    check_equal(fixture.completions.values[0].bytes, 0u);
+    check_equal(cflow_io_actor_acknowledge(&fixture.actor,
+                                            submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    check_equal(receive.released, 1);
+    native_test_close_socket(sockets[1]);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)sockets[1]), TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_vector_cancel(cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    native_test_socket sockets[2];
+    native_test_vector_operation receive = {0};
+    cflow_io_native_buffer_span span;
+    cflow_io_submit_result submitted;
+    unsigned char received[2] = {0};
+
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    span = (cflow_io_native_buffer_span){received, sizeof(received)};
+    receive.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1], &span, 1u};
+    submitted = native_vector_submit(&fixture, 145u, &receive);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), TURBO_OK);
+    check_equal(cflow_io_actor_try_cancel(&fixture.actor,
+                                           submitted.request_id),
+                CFLOW_IO_CANCEL_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_CANCELLED);
+    check_equal(cflow_io_actor_acknowledge(&fixture.actor,
+                                            submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    check_equal(receive.released, 1);
+    native_test_close_socket(sockets[0]);
+    native_test_close_socket(sockets[1]);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)sockets[1]), TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_vector_max_segments(
+    cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    native_test_socket sockets[2];
+    native_test_vector_operation receive = {0};
+    cflow_io_native_buffer_span spans[CFLOW_IO_NATIVE_VECTOR_MAX];
+    cflow_io_submit_result submitted;
+    unsigned char payload[CFLOW_IO_NATIVE_VECTOR_MAX];
+    unsigned char received[CFLOW_IO_NATIVE_VECTOR_MAX] = {0};
+
+    for (size_t index = 0u; index < CFLOW_IO_NATIVE_VECTOR_MAX; ++index) {
+        payload[index] = (unsigned char)(index + 1u);
+        spans[index] = (cflow_io_native_buffer_span){&received[index], 1u};
+    }
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    receive.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1], spans,
+        CFLOW_IO_NATIVE_VECTOR_MAX};
+    submitted = native_vector_submit(&fixture, 146u, &receive);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(send(sockets[0], (const char *)payload, (int)sizeof(payload), 0),
+                (int)sizeof(payload));
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind, CFLOW_IO_COMPLETION_OK);
+    check_equal(fixture.completions.values[0].bytes, sizeof(payload));
+    check_equal(received, payload, sizeof(payload));
+    check_equal(cflow_io_actor_acknowledge(&fixture.actor,
+                                            submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    native_test_close_socket(sockets[0]);
+    native_test_close_socket(sockets[1]);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)sockets[1]), TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_vector_same_socket_bidirectional(
+    cflow_io_native_backend_kind kind) {
+    static const unsigned char incoming[] = {0x51u, 0x52u};
+    static const unsigned char outgoing[] = {0x61u, 0x62u};
+    native_fixture fixture;
+    native_test_socket sockets[2];
+    native_test_vector_operation receive = {0};
+    native_test_vector_operation send_operation = {0};
+    cflow_io_native_buffer_span receive_spans[2];
+    cflow_io_native_buffer_span send_spans[2];
+    unsigned char received[sizeof(incoming)] = {0};
+    unsigned char peer_received[sizeof(outgoing)] = {0};
+    size_t peer_received_size = 0u;
+
+    check_equal(native_vector_fixture_init(&fixture, kind, 2u), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(send(sockets[1], (const char *)incoming,
+                     (int)sizeof(incoming), 0), (int)sizeof(incoming));
+    receive_spans[0] = (cflow_io_native_buffer_span){&received[0], 1u};
+    receive_spans[1] = (cflow_io_native_buffer_span){&received[1], 1u};
+    send_spans[0] = (cflow_io_native_buffer_span){(void *)&outgoing[0], 1u};
+    send_spans[1] = (cflow_io_native_buffer_span){(void *)&outgoing[1], 1u};
+    receive.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[0],
+        receive_spans, 2u};
+    send_operation.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_SEND_VECTOR, (uintptr_t)sockets[0],
+        send_spans, 2u};
+    check_equal(native_vector_submit(&fixture, 147u, &receive).status,
+                CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_vector_submit(&fixture, 148u, &send_operation).status,
+                CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    while (peer_received_size < sizeof(peer_received)) {
+        int bytes = recv(sockets[1],
+                         (char *)&peer_received[peer_received_size],
+                         (int)(sizeof(peer_received) - peer_received_size), 0);
+        check(bytes > 0);
+        if (bytes <= 0) break;
+        peer_received_size += (size_t)bytes;
+    }
+    check_equal(peer_received_size, sizeof(peer_received));
+    check_equal(received, incoming, sizeof(incoming));
+    check_equal(peer_received, outgoing, sizeof(outgoing));
+    for (size_t index = 0u; index < fixture.completions.count; ++index) {
+        check_equal(fixture.completions.values[index].kind,
+                    CFLOW_IO_COMPLETION_OK);
+        check_equal(cflow_io_actor_acknowledge(
+                        &fixture.actor, fixture.completions.ids[index]),
+                    CFLOW_IO_ACK_RELEASED);
+    }
+    native_test_close_socket(sockets[0]);
+    native_test_close_socket(sockets[1]);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)sockets[0]), TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_vector_capacity(
+    cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    native_test_socket sockets[2];
+    native_test_vector_operation accepted_operation = {0};
+    native_test_vector_operation rejected_operation = {0};
+    cflow_io_native_buffer_span accepted_span;
+    cflow_io_native_buffer_span rejected_span;
+    cflow_io_submit_result accepted;
+    cflow_io_submit_result full;
+    unsigned char accepted_byte = 0u;
+    unsigned char rejected_byte = 0u;
+
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    accepted_span = (cflow_io_native_buffer_span){&accepted_byte, 1u};
+    rejected_span = (cflow_io_native_buffer_span){&rejected_byte, 1u};
+    accepted_operation.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1],
+        &accepted_span, 1u};
+    rejected_operation.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1],
+        &rejected_span, 1u};
+    accepted = native_vector_submit(&fixture, 149u, &accepted_operation);
+    full = native_vector_submit(&fixture, 150u, &rejected_operation);
+    check_equal(accepted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(full.status, CFLOW_IO_SUBMIT_FULL);
+    check_equal(rejected_operation.released, 0);
+    native_vector_operation_release(&rejected_operation);
+    check_equal(rejected_operation.released, 1);
+    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), TURBO_OK);
+    check_equal(cflow_io_actor_try_cancel(&fixture.actor,
+                                           accepted.request_id),
+                CFLOW_IO_CANCEL_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_CANCELLED);
+    check_equal(cflow_io_actor_acknowledge(&fixture.actor,
+                                            accepted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    check_equal(accepted_operation.released, 1);
+    native_test_close_socket(sockets[0]);
+    native_test_close_socket(sockets[1]);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)sockets[1]), TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_vector_identity_lifecycle(
+    cflow_io_native_backend_kind kind) {
+    static const unsigned char payload[] = {0x73u};
+    native_fixture fixture;
+    native_test_socket sockets[2];
+    native_test_vector_operation send_operation = {0};
+    cflow_io_native_buffer_span span;
+    cflow_io_submit_result submitted;
+
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    span = (cflow_io_native_buffer_span){(void *)payload, sizeof(payload)};
+    send_operation.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_SEND_VECTOR, (uintptr_t)sockets[0], &span, 1u};
+    submitted = native_vector_submit(&fixture, 151u, &send_operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_OK);
+    check_equal(cflow_io_actor_acknowledge(&fixture.actor,
+                                            submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    native_test_close_socket(sockets[0]);
+    native_test_close_socket(sockets[1]);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)sockets[0]), TURBO_OK);
+    check_equal(cflow_io_native_backend_forget_socket(
+                    &fixture.backend, (uintptr_t)sockets[0]),
+                kind == CFLOW_IO_NATIVE_IO_URING
+                    ? TURBO_OK : TURBO_ENOENT);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_vector_shutdown_drain(
+    cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    native_test_socket sockets[2];
+    native_test_vector_operation receive = {0};
+    cflow_io_native_buffer_span span;
+    cflow_io_submit_result submitted;
+    unsigned char received = 0u;
+
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    span = (cflow_io_native_buffer_span){&received, 1u};
+    receive.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1], &span, 1u};
+    submitted = native_vector_submit(&fixture, 152u, &receive);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), TURBO_OK);
+    check_equal(cflow_io_native_backend_shutdown(&fixture.backend),
+                TURBO_EBUSY);
+    check_equal(cflow_io_actor_close(&fixture.actor), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_CANCELLED);
+    check_equal(cflow_io_actor_acknowledge(&fixture.actor,
+                                            submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    check_equal(receive.released, 1);
+    native_test_close_socket(sockets[0]);
+    native_test_close_socket(sockets[1]);
+    check_equal(native_fixture_forget_socket(
+                    &fixture, (uintptr_t)sockets[1]), TURBO_OK);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_vector_invalid_shape_terminal(
+    cflow_io_native_backend_kind kind) {
+    native_fixture fixture;
+    native_test_vector_operation operation = {0};
+    cflow_io_native_buffer_span span;
+    cflow_io_submit_result submitted;
+    unsigned char byte = 0u;
+
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    span = (cflow_io_native_buffer_span){&byte, 1u};
+    operation.native = (cflow_io_native_vector_operation){
+        CFLOW_IO_NATIVE_TCP_RECV_VECTOR, 1u, &span, 0u};
+    submitted = native_vector_submit(&fixture, 153u, &operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(fixture.completions.values[0].kind,
+                CFLOW_IO_COMPLETION_FAILED);
+    check_equal(fixture.completions.values[0].error, TURBO_EINVAL);
+    check_equal(cflow_io_actor_acknowledge(&fixture.actor,
+                                            submitted.request_id),
+                CFLOW_IO_ACK_RELEASED);
+    check_equal(operation.released, 1);
+    native_fixture_destroy(&fixture);
+}
+
+static void native_check_vector_contract(cflow_io_native_backend_kind kind) {
+    native_check_vector_tcp(kind);
+    native_check_vector_descriptor_copy_and_short(kind);
+    native_check_vector_eof(kind);
+    native_check_vector_cancel(kind);
+    native_check_vector_max_segments(kind);
+    native_check_vector_same_socket_bidirectional(kind);
+    native_check_vector_capacity(kind);
+    native_check_vector_identity_lifecycle(kind);
+    native_check_vector_shutdown_drain(kind);
+    native_check_vector_invalid_shape_terminal(kind);
+}
+
 static const cflow_io_completion *native_completion_for(
     const native_fixture *fixture, cflow_io_request_id request_id) {
     for (size_t index = 0u; index < fixture->completions.count; ++index) {
@@ -2269,6 +2721,117 @@ static void native_check_backend(cflow_io_native_backend_kind kind) {
 }
 
 spec("CFlow native IO backend") {
+    it("validates the bounded vectored TCP operation contract") {
+        unsigned char bytes[2] = {0};
+        cflow_io_native_buffer_span maximum_spans[
+            CFLOW_IO_NATIVE_VECTOR_MAX];
+        cflow_io_native_buffer_span valid_spans[2] = {
+            {&bytes[0], 1u}, {&bytes[1], 1u}};
+        cflow_io_native_buffer_span overflow_spans[2] = {
+            {&bytes[0], UINT32_MAX}, {&bytes[1], 1u}};
+
+        for (size_t index = 0u; index < CFLOW_IO_NATIVE_VECTOR_MAX; ++index)
+            maximum_spans[index] =
+                (cflow_io_native_buffer_span){&bytes[index % 2u], 1u};
+
+        check_true(cflow_io_native_vector_operation_valid(
+            &(cflow_io_native_vector_operation){
+                CFLOW_IO_NATIVE_TCP_RECV_VECTOR, 1u, valid_spans, 2u}));
+        check_true(cflow_io_native_vector_operation_valid(
+            &(cflow_io_native_vector_operation){
+                CFLOW_IO_NATIVE_TCP_SEND_VECTOR, 1u, valid_spans, 2u}));
+        check_true(cflow_io_native_vector_operation_valid(
+            &(cflow_io_native_vector_operation){
+                CFLOW_IO_NATIVE_TCP_SEND_VECTOR, 1u, maximum_spans,
+                CFLOW_IO_NATIVE_VECTOR_MAX}));
+        check_false(cflow_io_native_vector_operation_valid(NULL));
+        check_false(cflow_io_native_vector_operation_valid(
+            &(cflow_io_native_vector_operation){
+                (cflow_io_native_vector_operation_kind)-1, 1u,
+                valid_spans, 2u}));
+        check_false(cflow_io_native_vector_operation_valid(
+            &(cflow_io_native_vector_operation){
+                CFLOW_IO_NATIVE_TCP_RECV_VECTOR, UINTPTR_MAX,
+                valid_spans, 2u}));
+        check_false(cflow_io_native_vector_operation_valid(
+            &(cflow_io_native_vector_operation){
+                CFLOW_IO_NATIVE_TCP_RECV_VECTOR, 1u, NULL, 2u}));
+        check_false(cflow_io_native_vector_operation_valid(
+            &(cflow_io_native_vector_operation){
+                CFLOW_IO_NATIVE_TCP_RECV_VECTOR, 1u, valid_spans, 0u}));
+        check_false(cflow_io_native_vector_operation_valid(
+            &(cflow_io_native_vector_operation){
+                CFLOW_IO_NATIVE_TCP_RECV_VECTOR, 1u, valid_spans,
+                CFLOW_IO_NATIVE_VECTOR_MAX + 1u}));
+        valid_spans[1].data = NULL;
+        check_false(cflow_io_native_vector_operation_valid(
+            &(cflow_io_native_vector_operation){
+                CFLOW_IO_NATIVE_TCP_RECV_VECTOR, 1u, valid_spans, 2u}));
+        valid_spans[1].data = &bytes[1];
+        valid_spans[1].length = 0u;
+        check_false(cflow_io_native_vector_operation_valid(
+            &(cflow_io_native_vector_operation){
+                CFLOW_IO_NATIVE_TCP_RECV_VECTOR, 1u, valid_spans, 2u}));
+        check_false(cflow_io_native_vector_operation_valid(
+            &(cflow_io_native_vector_operation){
+                CFLOW_IO_NATIVE_TCP_SEND_VECTOR, 1u,
+                overflow_spans, 2u}));
+    }
+
+    it("reports vectored TCP capability separately") {
+        check_false(cflow_io_native_backend_vector_operation_supported(
+            (cflow_io_native_backend_kind)0,
+            CFLOW_IO_NATIVE_TCP_RECV_VECTOR));
+        check_false(cflow_io_native_backend_vector_operation_supported(
+            CFLOW_IO_NATIVE_POLL,
+            (cflow_io_native_vector_operation_kind)-1));
+#if defined(_WIN32)
+        check_true(cflow_io_native_backend_vector_operation_supported(
+            CFLOW_IO_NATIVE_IOCP, CFLOW_IO_NATIVE_TCP_RECV_VECTOR));
+        check_true(cflow_io_native_backend_vector_operation_supported(
+            CFLOW_IO_NATIVE_IOCP, CFLOW_IO_NATIVE_TCP_SEND_VECTOR));
+        check_false(cflow_io_native_backend_vector_operation_supported(
+            CFLOW_IO_NATIVE_POLL, CFLOW_IO_NATIVE_TCP_RECV_VECTOR));
+#elif defined(__APPLE__)
+        check_true(cflow_io_native_backend_vector_operation_supported(
+            CFLOW_IO_NATIVE_KQUEUE, CFLOW_IO_NATIVE_TCP_RECV_VECTOR));
+        check_true(cflow_io_native_backend_vector_operation_supported(
+            CFLOW_IO_NATIVE_POLL, CFLOW_IO_NATIVE_TCP_SEND_VECTOR));
+#elif defined(__linux__)
+        check_true(cflow_io_native_backend_vector_operation_supported(
+            CFLOW_IO_NATIVE_EPOLL, CFLOW_IO_NATIVE_TCP_RECV_VECTOR));
+        check_true(cflow_io_native_backend_vector_operation_supported(
+            CFLOW_IO_NATIVE_POLL, CFLOW_IO_NATIVE_TCP_SEND_VECTOR));
+        check_equal(
+            cflow_io_native_backend_vector_operation_supported(
+                CFLOW_IO_NATIVE_IO_URING,
+                CFLOW_IO_NATIVE_TCP_RECV_VECTOR),
+            cflow_io_native_backend_supported(CFLOW_IO_NATIVE_IO_URING));
+#endif
+    }
+
+    it("returns unsupported when a backend has no native vector submit") {
+        unsigned char byte = 0u;
+        cflow_io_native_buffer_span span = {&byte, 1u};
+        cflow_io_native_vector_operation operation = {
+            CFLOW_IO_NATIVE_TCP_RECV_VECTOR, 1u, &span, 1u};
+        const cflow_io_native_impl_ops impl_ops = {0};
+        cflow_io_native_impl impl = {
+            &impl_ops,
+#if defined(_WIN32)
+            CFLOW_IO_NATIVE_IOCP
+#else
+            CFLOW_IO_NATIVE_POLL
+#endif
+        };
+        cflow_io_native_backend backend = {&impl};
+        cflow_io_actor actor = {0};
+        cflow_io_backend_ops actor_ops =
+            cflow_io_native_backend_vector_actor_ops();
+
+        check_equal(actor_ops.submit(&backend, &actor, 1u, 1u, &operation),
+                    TURBO_ENOTSUP);
+    }
     it("validates the bounded native file operation contract") {
         unsigned char byte = 0u;
 
@@ -2487,8 +3050,12 @@ spec("CFlow native IO backend") {
 
     it("exposes complete Actor strategy callbacks") {
         cflow_io_backend_ops ops = cflow_io_native_backend_actor_ops();
+        cflow_io_backend_ops vector_ops =
+            cflow_io_native_backend_vector_actor_ops();
         check_not_null(ops.submit);
         check_not_null(ops.cancel);
+        check_not_null(vector_ops.submit);
+        check_not_null(vector_ops.cancel);
     }
 
 #if defined(_WIN32)
@@ -2506,6 +3073,9 @@ spec("CFlow native IO backend") {
     it("runs TCP lifecycle UDP and cancellation through IOCP") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_IOCP));
         native_check_backend(CFLOW_IO_NATIVE_IOCP);
+    }
+    it("runs vectored TCP receive and send through IOCP") {
+        native_check_vector_contract(CFLOW_IO_NATIVE_IOCP);
     }
     it("runs byte pipe read and write through IOCP") {
         native_check_pipe_read_write(CFLOW_IO_NATIVE_IOCP);
@@ -2542,6 +3112,9 @@ spec("CFlow native IO backend") {
     it("runs TCP UDP and cancellation through kqueue") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_KQUEUE));
         native_check_backend(CFLOW_IO_NATIVE_KQUEUE);
+    }
+    it("runs vectored TCP receive and send through kqueue") {
+        native_check_vector_contract(CFLOW_IO_NATIVE_KQUEUE);
     }
     it("retains each kqueue socket identity until it is forgotten") {
         native_check_forget_socket_identity(CFLOW_IO_NATIVE_KQUEUE);
@@ -2584,6 +3157,9 @@ spec("CFlow native IO backend") {
     it("runs TCP UDP and cancellation through epoll") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_EPOLL));
         native_check_backend(CFLOW_IO_NATIVE_EPOLL);
+    }
+    it("runs vectored TCP receive and send through epoll") {
+        native_check_vector_contract(CFLOW_IO_NATIVE_EPOLL);
     }
     it("retains each epoll socket identity until it is forgotten") {
         native_check_forget_socket_identity(CFLOW_IO_NATIVE_EPOLL);
@@ -2632,6 +3208,7 @@ spec("CFlow native IO backend") {
                 check_equal(cflow_io_native_backend_shutdown(&probe), TURBO_OK);
                 check_equal(cflow_io_native_backend_destroy(&probe), TURBO_OK);
                 native_check_backend(CFLOW_IO_NATIVE_IO_URING);
+                native_check_vector_contract(CFLOW_IO_NATIVE_IO_URING);
                 native_check_cancelled_slot_reuse(
                     CFLOW_IO_NATIVE_IO_URING);
                 native_check_pipe_read_write(
@@ -2660,6 +3237,9 @@ spec("CFlow native IO backend") {
     it("runs the shared TCP UDP and cancellation contract through poll") {
         check_true(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_POLL));
         native_check_backend(CFLOW_IO_NATIVE_POLL);
+    }
+    it("runs vectored TCP receive and send through poll") {
+        native_check_vector_contract(CFLOW_IO_NATIVE_POLL);
     }
     it("retains each poll socket identity until it is forgotten") {
         native_check_forget_socket_identity(CFLOW_IO_NATIVE_POLL);
