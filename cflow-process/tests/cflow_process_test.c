@@ -113,7 +113,7 @@ static void init_process_options(turbo_process_options_t *options, bool echo_std
 #else
   static const char *args[] = {NULL};
   turbo_process_options_init(options);
-  options->program = echo_stdin ? "/bin/cat" : "/bin/true";
+  options->program = echo_stdin ? "/bin/cat" : "/usr/bin/true";
   options->args = args;
 #endif
   options->flags = 0u;

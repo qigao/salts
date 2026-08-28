@@ -79,7 +79,7 @@ int main(void) {
 #else
     {
         static const char *args[] = {NULL};
-        options.program = "/bin/true";
+        options.program = "/usr/bin/true";
         options.args = args;
         config.backend_kind = CFLOW_IO_NATIVE_POLL;
     }
