@@ -1047,6 +1047,14 @@ cancellation, statistics, explicit socket-forget, and quiescent shutdown
 contracts. DNS and TLS remain outside this layer. `poll` is an explicit portable
 POSIX backend, not a fallback and not a new operation kind.
 
+The current portable socket operations remain scalar. They do not expose raw
+ancillary/control buffers, packet metadata, receive timestamps, or multi-datagram
+batch completion. Vectored TCP is accepted only as a future independent additive
+API so the existing operation structure and exactly-once Actor completion contract
+remain ABI-stable. The ownership model, platform evidence, rejected alternatives,
+and reopen gates are recorded in the
+[advanced socket message design](../docs/superpowers/specs/2026-08-28-cflow-advanced-socket-message-design.md).
+
 | Backend | Host | Execution model | Socket operations | Pipe operations | Regular-file operations | Default |
 |---|---|---|---|---|---|---|
 | epoll | Linux | readiness, O(ready) delivery | TCP/UDP plus accept/connect | nonblocking byte read/write | unsupported | Linux when enabled |
