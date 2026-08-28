@@ -3,6 +3,7 @@
 #include <cflow/sources.h>
 
 #include "adapters_internal.h"
+#include "result_storage.h"
 #include "sources_internal.h"
 #include "value_storage.h"
 
@@ -797,6 +798,5 @@ void cflow_find_result_destroy(cflow_find_result *result) {
 }
 
 void cflow_result_destroy(cflow_result *result) {
-    if (!result) return;
-    free(result->data); memset(result, 0, sizeof(*result));
+    cflow_result_storage_destroy(result);
 }

@@ -122,7 +122,7 @@ static void prepare_fused_value(cflow_plan_impl *impl) {
     size_t filter_count = 0u;
     size_t map_call_count = 0u;
 
-    if (!impl || !impl->count) return;
+    if (!impl || !impl->count || impl->managed_values) return;
     for (size_t pc = 0u; pc < impl->count; ++pc) {
         const cflow_plan_inst *inst = &impl->code[pc];
         if (inst->opcode == CMETA_PLAN_FILTER) {
@@ -159,7 +159,7 @@ static void prepare_parallel_reduce(cflow_plan_impl *impl) {
 
     if (!impl) return;
     impl->terminal_reduce_index = SIZE_MAX;
-    if (!impl->count) return;
+    if (!impl->count || impl->managed_values) return;
     reduce = &impl->code[impl->count - 1u];
     if (reduce->opcode != CMETA_PLAN_REDUCE ||
         !cmeta_type_equal(reduce->input_type, reduce->output_type) ||
@@ -288,7 +288,7 @@ bool cflow_plan_graph_supported(const cflow_graph *graph) {
 
     if (!graph || !cflow_graph_is_normalized(graph) ||
         graph->root >= graph->subgraph_count ||
-        !cflow_value_storage_graph_supported(graph))
+        !cflow_value_runtime_graph_supported(graph))
         return false;
     const cflow_subgraph *sg = &graph->subgraphs[graph->root];
     if (cflow_plan_inference_build(&inference) != CMETA_INFER_OK)
@@ -310,8 +310,8 @@ bool cflow_plan_compile(cflow_plan *plan,
     if (!cflow_graph_is_normalized(graph)) return plan_fail(plan, "plan requires normalized Graph");
     const char *err = NULL;
     if (!cflow_graph_validate(graph, &err)) return plan_fail(plan, err ? err : "invalid Graph");
-    if (!cflow_value_storage_graph_supported(graph))
-        return plan_fail(plan, "plan requires trivial value storage");
+    if (!cflow_value_runtime_graph_supported(graph))
+        return plan_fail(plan, "plan requires supported value lifecycle");
     const cflow_subgraph *sg = &graph->subgraphs[graph->root];
     cflow_dense_successor_index index = {0};
     cflow_plan_inference inference;
@@ -339,6 +339,7 @@ bool cflow_plan_compile(cflow_plan *plan,
         return plan_fail(plan, "allocation failed");
     }
     impl->terminal_reduce_index = SIZE_MAX;
+    impl->managed_values = !cflow_value_storage_graph_supported(graph);
     if (instruction_count) {
         if (instruction_count > SIZE_MAX / sizeof(*impl->code)) {
             free(impl);

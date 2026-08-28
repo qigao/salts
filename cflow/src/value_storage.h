@@ -57,6 +57,21 @@ static inline void cflow_value_destroy(const cmeta_type_desc *type,
     type->traits->destroy(value);
 }
 
+static inline bool cflow_value_move_construct(const cmeta_type_desc *type,
+                                              void *destination,
+                                              void *source) {
+    if (!destination || !source || destination == source ||
+        !cflow_value_type_supported(type))
+        return false;
+    if (cflow_value_storage_type_supported(type)) {
+        memcpy(destination, source, type->size);
+    } else {
+        type->traits->move_construct(destination, source);
+        type->traits->destroy(source);
+    }
+    return true;
+}
+
 static inline bool cflow_value_slot_init(cflow_value_slot *slot,
                                          const cmeta_type_desc *type) {
     size_t allocation_size;
@@ -108,13 +123,9 @@ static inline bool cflow_value_slot_move(cflow_value_slot *destination,
         !cmeta_type_equal(destination->type, source->type))
         return false;
 
-    if (cflow_value_storage_type_supported(source->type)) {
-        memcpy(destination->storage, source->storage, source->type->size);
-    } else {
-        source->type->traits->move_construct(destination->storage,
-                                             source->storage);
-        source->type->traits->destroy(source->storage);
-    }
+    if (!cflow_value_move_construct(source->type, destination->storage,
+                                    source->storage))
+        return false;
     destination->live = true;
     source->live = false;
     return true;

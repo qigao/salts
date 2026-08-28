@@ -13,8 +13,10 @@ typedef enum cflow_plan_opcode {
 } cflow_plan_opcode;
 
 typedef struct cflow_plan_value_vec {
+    void *allocation;
     unsigned char *data;
     size_t count;
+    size_t capacity;
     const cmeta_type_desc *type;
 } cflow_plan_value_vec;
 
@@ -60,6 +62,7 @@ typedef struct cflow_plan_impl {
     size_t count;
     size_t terminal_reduce_index;
     bool parallel_reduce_supported;
+    bool managed_values;
     bool fused_value;
     size_t fused_filter_count;
     size_t fused_map_call_count;

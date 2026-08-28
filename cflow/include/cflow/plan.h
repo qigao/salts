@@ -42,9 +42,10 @@ typedef struct cflow_plan_eval_options {
 
 /* Compile an already-normalized primitive Graph root into a direct synchronous
  * collection plan. The plan pre-resolves topology and execution step handlers;
- * execution never queries Graph/Node/Edge/Subgraph. Every Graph value type
- * must have TRIVIAL_COPY and TRIVIAL_DESTROY. Structured RELATION and other
- * unsupported resumable semantics are rejected instead of falling back. */
+ * execution never queries Graph/Node/Edge/Subgraph. Sequential materialized
+ * execution accepts either TRIVIAL_COPY/TRIVIAL_DESTROY values or values with
+ * COPY/MOVE/DESTROY lifecycle traits. Structured RELATION and other unsupported
+ * resumable semantics are rejected instead of falling back. */
 bool cflow_plan_compile(cflow_plan *plan,
                         const cflow_graph *graph,
                         cflow_plan_compile_stats *stats);
@@ -64,13 +65,16 @@ bool cflow_plan_graph_supported(const cflow_graph *graph);
  * admission contract. No property is inferred from a function pointer. */
 bool cflow_plan_parallel_reduce_supported(const cflow_plan *plan);
 
-/* Execute the pre-decoded plan without Graph topology queries. */
+/* Execute the pre-decoded plan without Graph topology queries. Caller input is
+ * borrowed. A successful result independently owns every returned value and
+ * must be released with cflow_result_destroy(). */
 bool cflow_plan_eval_array(const cflow_plan *plan,
                            const void *inputs,
                            size_t input_count,
                            cflow_result *out);
 
-/* Parallel mode is explicit and fail-fast: unsupported plans, insufficient
+/* Parallel mode currently requires trivial value storage and is explicit and
+ * fail-fast: unsupported plans, insufficient
  * nonempty chunks, invalid options, or rejected tasks return false without a
  * sequential retry. The borrowed input and executor must outlive this call. */
 bool cflow_plan_eval_array_with_options(

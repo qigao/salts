@@ -1290,10 +1290,12 @@ responsible for traversal, filtering, and value lifetime during execution.
 `take(0)` does not resume the Source. Their immutable bounds belong to the
 Graph, while each interpreted Run owns fresh positional counters, so repeated
 evaluation does not share traversal state. Direct Plans support slice-only
-trivial-value graphs through the materialized path. A plan that mixes slicing
-with callable nodes currently fails compilation explicitly because eager batch
-materialization would not preserve `take` short-circuit/error semantics.
-Slice plans also remain outside filter/map fusion and ordered parallel reduce.
+trivial or managed COPY/MOVE/DESTROY values through the materialized path. A
+managed result independently owns each live element until
+`cflow_result_destroy()`. A plan that mixes slicing with callable nodes currently
+fails compilation explicitly because eager batch materialization would not
+preserve `take` short-circuit/error semantics. Slice plans also remain outside
+filter/map fusion and ordered parallel reduce.
 
 `distinct(max_unique)` preserves the first occurrence of each value and uses a
 per-Run set state. `max_unique` must be nonzero and is a hard bound: attempting
@@ -1433,13 +1435,18 @@ typed ownership slots. Filter and Sink borrow during callbacks; map/reduce
 callbacks construct their result in empty output storage. Cancellation, error,
 and close destroy every live slot exactly once.
 
-Compiled Plans, direct byte execution, channels, readiness sources, and
-`cflow_result` byte-array adapters remain trivial-only and fail admission for
-managed values. `cflow_eval_collect_result()` and its compatibility wrapper
-`cflow_eval_collect()` are the managed terminal path: the
-transactional Collector copies or moves each borrowed value before `accept()`
-returns. Optimizer map fusion remains available for trivial values; managed map
-nodes stay separate so every intermediate descriptor retains its lifecycle.
+Sequential materialized Plans admit trivial values or managed values with
+`COPY`, `MOVE`, and `DESTROY`. Their live-prefix executor copy/move-constructs
+each element, cleans partial outputs transactionally, and transfers ownership to
+`cflow_result` only on success. `cflow_result_destroy()` applies the returned
+descriptor's destructor to every managed element. Fused Plan evaluation,
+ordered parallel reduce, direct byte adapters, channels, and readiness sources
+remain trivial-only and fail admission for managed values. Interpreted managed
+Streams normally terminate through `cflow_eval_collect_result()` or its
+compatibility wrapper `cflow_eval_collect()`; the transactional Collector copies
+or moves each borrowed value before `accept()` returns. Optimizer map fusion
+remains available for trivial values; managed map nodes stay separate so every
+intermediate descriptor retains its lifecycle.
 
 Range flags describe traversal semantics. The current Range Source consumes
 items through `cmeta_range_next()`, and the `cflow_result` collector retains its
