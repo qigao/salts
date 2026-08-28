@@ -8,10 +8,94 @@
 #include <string.h>
 
 #ifdef _WIN32
+  #include <windows.h>
   #define TEST_SHELL "cmd.exe"
 #else
+  #include <errno.h>
+  #include <unistd.h>
   #define TEST_SHELL "/bin/sh"
 #endif
+
+typedef struct test_process_pipe {
+#ifdef _WIN32
+  HANDLE read_handle;
+  HANDLE write_handle;
+#else
+  int read_handle;
+  int write_handle;
+#endif
+} test_process_pipe;
+
+static int test_process_pipe_init(test_process_pipe *channel) {
+#ifdef _WIN32
+  SECURITY_ATTRIBUTES security = {sizeof(security), NULL, TRUE};
+  channel->read_handle = INVALID_HANDLE_VALUE;
+  channel->write_handle = INVALID_HANDLE_VALUE;
+  if (!CreatePipe(&channel->read_handle, &channel->write_handle, &security, 0)) return -1;
+  if (!SetHandleInformation(channel->read_handle, HANDLE_FLAG_INHERIT, 0)) {
+    CloseHandle(channel->read_handle);
+    CloseHandle(channel->write_handle);
+    channel->read_handle = INVALID_HANDLE_VALUE;
+    channel->write_handle = INVALID_HANDLE_VALUE;
+    return -1;
+  }
+#else
+  int handles[2];
+  channel->read_handle = -1;
+  channel->write_handle = -1;
+  if (pipe(handles) != 0) return -1;
+  channel->read_handle = handles[0];
+  channel->write_handle = handles[1];
+#endif
+  return 0;
+}
+
+static uintptr_t test_process_pipe_write_handle(const test_process_pipe *pipe) {
+  return (uintptr_t)pipe->write_handle;
+}
+
+static void test_process_pipe_close_write(test_process_pipe *pipe) {
+#ifdef _WIN32
+  if (pipe->write_handle != INVALID_HANDLE_VALUE) CloseHandle(pipe->write_handle);
+  pipe->write_handle = INVALID_HANDLE_VALUE;
+#else
+  if (pipe->write_handle >= 0) close(pipe->write_handle);
+  pipe->write_handle = -1;
+#endif
+}
+
+static size_t test_process_pipe_read_all(test_process_pipe *pipe, char *buffer, size_t capacity) {
+  size_t total = 0;
+  while (total < capacity) {
+#ifdef _WIN32
+    DWORD count = 0;
+    if (!ReadFile(pipe->read_handle, buffer + total, (DWORD)(capacity - total), &count, NULL))
+      break;
+    if (count == 0) break;
+    total += (size_t)count;
+#else
+    ssize_t count = read(pipe->read_handle, buffer + total, capacity - total);
+    if (count > 0) {
+      total += (size_t)count;
+      continue;
+    }
+    if (count < 0 && errno == EINTR) continue;
+    break;
+#endif
+  }
+  return total;
+}
+
+static void test_process_pipe_destroy(test_process_pipe *pipe) {
+  test_process_pipe_close_write(pipe);
+#ifdef _WIN32
+  if (pipe->read_handle != INVALID_HANDLE_VALUE) CloseHandle(pipe->read_handle);
+  pipe->read_handle = INVALID_HANDLE_VALUE;
+#else
+  if (pipe->read_handle >= 0) close(pipe->read_handle);
+  pipe->read_handle = -1;
+#endif
+}
 
 static void init_shell_options(turbo_process_options_t *options, const char *command) {
 #ifdef _WIN32
@@ -56,6 +140,27 @@ static int path_exists(const char *path) {
 
 spec("turbo_process") {
   group("configuration") {
+    it("rejects an external stdout binding combined with capture") {
+      turbo_process_options_t options;
+      turbo_process_stdio_bindings_t bindings = {
+          TURBO_PROCESS_STDIO_INHERIT, TURBO_PROCESS_STDIO_INHERIT, TURBO_PROCESS_STDIO_INHERIT};
+      turbo_process_t *process = NULL;
+      test_process_pipe output_pipe;
+      int rc;
+      bool returned_process;
+
+      init_shell_options(&options, "echo unreachable");
+      check_equal(test_process_pipe_init(&output_pipe), 0);
+      bindings.stdout_handle = test_process_pipe_write_handle(&output_pipe);
+
+      rc = turbo_process_spawn_with_stdio(&options, &bindings, &process);
+      returned_process = process != NULL;
+      if (process) turbo_process_destroy(process);
+      test_process_pipe_destroy(&output_pipe);
+      check_equal(rc, TURBO_EINVAL);
+      check_false(returned_process);
+    }
+
     it("initializes safe defaults and rejects an empty program") {
       turbo_process_options_t options;
       turbo_process_t *process = (turbo_process_t *)1;
@@ -95,6 +200,115 @@ spec("turbo_process") {
   }
 
   group("execution") {
+#ifndef _WIN32
+    it("preserves crossed standard descriptor bindings") {
+      turbo_process_options_t options;
+      turbo_process_stdio_bindings_t bindings = {
+          TURBO_PROCESS_STDIO_INHERIT, STDERR_FILENO, STDOUT_FILENO};
+      turbo_process_t *process = NULL;
+      turbo_process_result_t result = {0};
+      test_process_pipe stdout_destination;
+      test_process_pipe stderr_destination;
+      char stdout_bytes[32] = {0};
+      char stderr_bytes[32] = {0};
+      int saved_stdout;
+      int saved_stderr;
+      int stdout_redirect;
+      int stderr_redirect;
+      int stdout_restore;
+      int stderr_restore;
+      int spawn_status = TURBO_EINVAL;
+      int wait_status = TURBO_EINVAL;
+      int exit_code = -1;
+      size_t stdout_size;
+      size_t stderr_size;
+
+      init_shell_options(&options, "printf stdout-side; printf stderr-side >&2");
+      options.flags &= ~(TURBO_PROCESS_CAPTURE_STDOUT | TURBO_PROCESS_CAPTURE_STDERR);
+      check_equal(test_process_pipe_init(&stdout_destination), 0);
+      check_equal(test_process_pipe_init(&stderr_destination), 0);
+      saved_stdout = dup(STDOUT_FILENO);
+      saved_stderr = dup(STDERR_FILENO);
+      check_true(saved_stdout >= 0);
+      check_true(saved_stderr >= 0);
+
+      stdout_redirect = dup2(stdout_destination.write_handle, STDOUT_FILENO);
+      stderr_redirect = dup2(stderr_destination.write_handle, STDERR_FILENO);
+      if (stdout_redirect == STDOUT_FILENO && stderr_redirect == STDERR_FILENO)
+        spawn_status = turbo_process_spawn_with_stdio(&options, &bindings, &process);
+      stdout_restore = dup2(saved_stdout, STDOUT_FILENO);
+      stderr_restore = dup2(saved_stderr, STDERR_FILENO);
+      close(saved_stdout);
+      close(saved_stderr);
+      test_process_pipe_close_write(&stdout_destination);
+      test_process_pipe_close_write(&stderr_destination);
+      if (process != NULL) {
+        wait_status = turbo_process_wait(process, &result);
+        if (wait_status == TURBO_OK) exit_code = result.exit_code;
+        turbo_process_destroy(process);
+      }
+      stdout_size = test_process_pipe_read_all(&stdout_destination, stdout_bytes,
+                                               sizeof(stdout_bytes));
+      stderr_size = test_process_pipe_read_all(&stderr_destination, stderr_bytes,
+                                               sizeof(stderr_bytes));
+      test_process_pipe_destroy(&stdout_destination);
+      test_process_pipe_destroy(&stderr_destination);
+
+      check_equal(stdout_redirect, STDOUT_FILENO);
+      check_equal(stderr_redirect, STDERR_FILENO);
+      check_equal(stdout_restore, STDOUT_FILENO);
+      check_equal(stderr_restore, STDERR_FILENO);
+      check_equal(spawn_status, TURBO_OK);
+      check_equal(wait_status, TURBO_OK);
+      check_equal(exit_code, 0);
+      check_equal(stdout_size, strlen("stderr-side"));
+      check_equal(stdout_bytes, "stderr-side", stdout_size);
+      check_equal(stderr_size, strlen("stdout-side"));
+      check_equal(stderr_bytes, "stdout-side", stderr_size);
+    }
+#endif
+
+    it("borrows an external stdout handle without capturing or closing it") {
+      turbo_process_options_t options;
+      turbo_process_stdio_bindings_t bindings = {
+          TURBO_PROCESS_STDIO_INHERIT, TURBO_PROCESS_STDIO_INHERIT, TURBO_PROCESS_STDIO_INHERIT};
+      turbo_process_t *process = NULL;
+      turbo_process_result_t result;
+      test_process_pipe output_pipe;
+      char output[64] = {0};
+      char captured[8] = {0};
+      size_t output_size;
+      size_t captured_size = 1;
+#ifdef _WIN32
+      const char *expected_output = "bound-output\r\n";
+#else
+      const char *expected_output = "bound-output";
+#endif
+
+#ifdef _WIN32
+      init_shell_options(&options, "echo bound-output");
+#else
+      init_shell_options(&options, "printf bound-output");
+#endif
+      options.flags &= ~TURBO_PROCESS_CAPTURE_STDOUT;
+      check_equal(test_process_pipe_init(&output_pipe), 0);
+      bindings.stdout_handle = test_process_pipe_write_handle(&output_pipe);
+
+      check_equal(turbo_process_spawn_with_stdio(&options, &bindings, &process), TURBO_OK);
+      test_process_pipe_close_write(&output_pipe);
+      check_equal(turbo_process_wait(process, &result), TURBO_OK);
+      check_equal(result.exit_code, 0);
+      output_size = test_process_pipe_read_all(&output_pipe, output, sizeof(output));
+      check_equal(output_size, strlen(expected_output));
+      check_equal(output, expected_output, output_size);
+      check_equal(turbo_process_read_stdout(process, captured, sizeof(captured), &captured_size),
+                  TURBO_EOF);
+      check_equal(captured_size, 0U);
+
+      turbo_process_destroy(process);
+      test_process_pipe_destroy(&output_pipe);
+    }
+
     it("captures stdout stderr and the exit code") {
       turbo_process_options_t options;
       turbo_process_t *process = NULL;

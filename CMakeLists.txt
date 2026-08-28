@@ -62,6 +62,7 @@ add_subdirectory(cbind)
 add_subdirectory(cflow)
 add_subdirectory(turbostl)
 add_subdirectory(utils)
+add_subdirectory(cflow-process)
 if(TURBO_ENABLE_CAPTURE)
   add_subdirectory(capture)
 endif()
@@ -79,7 +80,9 @@ set(verify_installed_dependencies
     turbo_cbind
     turbo_cflow
     turbo_stl
+    turbo_stl_stream
     turbo_utils
+    turbo_cflow_process
     turbo_cflow_fs
     turbo_serial)
 if(CFLOW_ENABLE_MINICORO)

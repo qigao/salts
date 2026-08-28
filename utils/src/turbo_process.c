@@ -86,6 +86,18 @@ static int process_validate_options(const turbo_process_options_t *options) {
   return TURBO_OK;
 }
 
+static int process_validate_stdio_conflicts(const turbo_process_options_t *options,
+                                            const turbo_process_stdio_bindings_t *bindings) {
+  if ((bindings->stdin_handle != TURBO_PROCESS_STDIO_INHERIT &&
+       (options->flags & TURBO_PROCESS_PIPE_STDIN) != 0U) ||
+      (bindings->stdout_handle != TURBO_PROCESS_STDIO_INHERIT &&
+       (options->flags & TURBO_PROCESS_CAPTURE_STDOUT) != 0U) ||
+      (bindings->stderr_handle != TURBO_PROCESS_STDIO_INHERIT &&
+       (options->flags & TURBO_PROCESS_CAPTURE_STDERR) != 0U))
+    return TURBO_EINVAL;
+  return TURBO_OK;
+}
+
 static int process_init(turbo_process_t *process, const turbo_process_options_t *options) {
   memset(process, 0, sizeof(*process));
 #ifdef _WIN32
@@ -339,6 +351,14 @@ static int duplicate_standard_handle(DWORD standard_handle, DWORD fallback_acces
     close_win_handle(out_handle);
     return rc;
   }
+  return TURBO_OK;
+}
+
+static int duplicate_bound_handle(uintptr_t source_value, HANDLE *out_handle) {
+  HANDLE source = (HANDLE)source_value;
+  if (!DuplicateHandle(GetCurrentProcess(), source, GetCurrentProcess(), out_handle, 0, TRUE,
+                       DUPLICATE_SAME_ACCESS))
+    return win32_error();
   return TURBO_OK;
 }
 
@@ -733,8 +753,8 @@ static void process_monitor(void *arg) {
                  error_code);
 }
 
-static int process_platform_spawn(turbo_process_t *process,
-                                  const turbo_process_options_t *options) {
+static int process_platform_spawn(turbo_process_t *process, const turbo_process_options_t *options,
+                                  const turbo_process_stdio_bindings_t *bindings) {
   SECURITY_ATTRIBUTES security = {sizeof(security), NULL, TRUE};
   STARTUPINFOEXW startup;
   PROCESS_INFORMATION info;
@@ -764,7 +784,10 @@ static int process_platform_spawn(turbo_process_t *process,
         options->env, (options->flags & TURBO_PROCESS_CLEAN_ENVIRONMENT) != 0U, &environment);
   if (rc != TURBO_OK) goto cleanup;
 
-  if ((options->flags & TURBO_PROCESS_PIPE_STDIN) != 0U) {
+  if (bindings && bindings->stdin_handle != TURBO_PROCESS_STDIO_INHERIT) {
+    rc = duplicate_bound_handle(bindings->stdin_handle, &inherited_handles[0]);
+    if (rc != TURBO_OK) goto cleanup;
+  } else if ((options->flags & TURBO_PROCESS_PIPE_STDIN) != 0U) {
     if (!CreatePipe(&stdin_read, &process->stdin_write, &security, 0) ||
         !SetHandleInformation(process->stdin_write, HANDLE_FLAG_INHERIT, 0)) {
       rc = win32_error();
@@ -775,7 +798,10 @@ static int process_platform_spawn(turbo_process_t *process,
     rc = duplicate_standard_handle(STD_INPUT_HANDLE, GENERIC_READ, &inherited_handles[0]);
     if (rc != TURBO_OK) goto cleanup;
   }
-  if ((options->flags & TURBO_PROCESS_CAPTURE_STDOUT) != 0U) {
+  if (bindings && bindings->stdout_handle != TURBO_PROCESS_STDIO_INHERIT) {
+    rc = duplicate_bound_handle(bindings->stdout_handle, &inherited_handles[1]);
+    if (rc != TURBO_OK) goto cleanup;
+  } else if ((options->flags & TURBO_PROCESS_CAPTURE_STDOUT) != 0U) {
     if (!CreatePipe(&process->stdout_read, &stdout_write, &security, 0) ||
         !SetHandleInformation(process->stdout_read, HANDLE_FLAG_INHERIT, 0)) {
       rc = win32_error();
@@ -787,7 +813,10 @@ static int process_platform_spawn(turbo_process_t *process,
     rc = duplicate_standard_handle(STD_OUTPUT_HANDLE, GENERIC_WRITE, &inherited_handles[1]);
     if (rc != TURBO_OK) goto cleanup;
   }
-  if ((options->flags & TURBO_PROCESS_CAPTURE_STDERR) != 0U) {
+  if (bindings && bindings->stderr_handle != TURBO_PROCESS_STDIO_INHERIT) {
+    rc = duplicate_bound_handle(bindings->stderr_handle, &inherited_handles[2]);
+    if (rc != TURBO_OK) goto cleanup;
+  } else if ((options->flags & TURBO_PROCESS_CAPTURE_STDERR) != 0U) {
     if (!CreatePipe(&process->stderr_read, &stderr_write, &security, 0) ||
         !SetHandleInformation(process->stderr_read, HANDLE_FLAG_INHERIT, 0)) {
       rc = win32_error();
@@ -1133,6 +1162,14 @@ static void child_exec(char **candidates, size_t candidate_count, char *const ar
   _exit(127);
 }
 
+static int duplicate_child_stdio(int source) {
+  int duplicated;
+  do {
+    duplicated = fcntl(source, F_DUPFD, STDERR_FILENO + 1);
+  } while (duplicated < 0 && errno == EINTR);
+  return duplicated;
+}
+
 static int process_platform_terminate(turbo_process_t *process) {
   pid_t pid;
   int rc;
@@ -1258,8 +1295,8 @@ static void process_monitor(void *arg) {
                  WIFSIGNALED(status) ? WTERMSIG(status) : 0, error_code);
 }
 
-static int process_platform_spawn(turbo_process_t *process,
-                                  const turbo_process_options_t *options) {
+static int process_platform_spawn(turbo_process_t *process, const turbo_process_options_t *options,
+                                  const turbo_process_stdio_bindings_t *bindings) {
   int stdin_pipe[2] = {-1, -1};
   int stdout_pipe[2] = {-1, -1};
   int stderr_pipe[2] = {-1, -1};
@@ -1272,6 +1309,25 @@ static int process_platform_spawn(turbo_process_t *process,
   int child_error = 0;
   ssize_t error_size;
   int rc = TURBO_OK;
+  int bound_stdin = -1;
+  int bound_stdout = -1;
+  int bound_stderr = -1;
+
+  if (bindings != NULL) {
+    if ((bindings->stdin_handle != TURBO_PROCESS_STDIO_INHERIT &&
+         bindings->stdin_handle > INT_MAX) ||
+        (bindings->stdout_handle != TURBO_PROCESS_STDIO_INHERIT &&
+         bindings->stdout_handle > INT_MAX) ||
+        (bindings->stderr_handle != TURBO_PROCESS_STDIO_INHERIT &&
+         bindings->stderr_handle > INT_MAX))
+      return TURBO_EINVAL;
+    if (bindings->stdin_handle != TURBO_PROCESS_STDIO_INHERIT)
+      bound_stdin = (int)bindings->stdin_handle;
+    if (bindings->stdout_handle != TURBO_PROCESS_STDIO_INHERIT)
+      bound_stdout = (int)bindings->stdout_handle;
+    if (bindings->stderr_handle != TURBO_PROCESS_STDIO_INHERIT)
+      bound_stderr = (int)bindings->stderr_handle;
+  }
 
   if ((options->flags & TURBO_PROCESS_PIPE_STDIN) != 0U &&
       (rc = create_pipe(stdin_pipe)) != TURBO_OK)
@@ -1303,22 +1359,34 @@ static int process_platform_spawn(turbo_process_t *process,
     goto cleanup;
   }
   if (pid == 0) {
+    int child_stdin = bound_stdin >= 0 ? duplicate_child_stdio(bound_stdin) : -1;
+    int child_stdout = bound_stdout >= 0 ? duplicate_child_stdio(bound_stdout) : -1;
+    int child_stderr = bound_stderr >= 0 ? duplicate_child_stdio(bound_stderr) : -1;
     close_fd(&exec_pipe[0]);
-    if (setpgid(0, 0) != 0 ||
-        ((options->flags & TURBO_PROCESS_PIPE_STDIN) != 0U &&
-         dup2(stdin_pipe[0], STDIN_FILENO) < 0) ||
-        ((options->flags & TURBO_PROCESS_CAPTURE_STDOUT) != 0U &&
-         dup2(stdout_pipe[1], STDOUT_FILENO) < 0) ||
-        ((options->flags & TURBO_PROCESS_CAPTURE_STDERR) != 0U &&
-         dup2(stderr_pipe[1], STDERR_FILENO) < 0) ||
+    if ((bound_stdin >= 0 && child_stdin < 0) ||
+        (bound_stdout >= 0 && child_stdout < 0) ||
+        (bound_stderr >= 0 && child_stderr < 0) || setpgid(0, 0) != 0 ||
+        ((bound_stdin >= 0 || (options->flags & TURBO_PROCESS_PIPE_STDIN) != 0U) &&
+         dup2(bound_stdin >= 0 ? child_stdin : stdin_pipe[0], STDIN_FILENO) < 0) ||
+        ((bound_stdout >= 0 || (options->flags & TURBO_PROCESS_CAPTURE_STDOUT) != 0U) &&
+         dup2(bound_stdout >= 0 ? child_stdout : stdout_pipe[1], STDOUT_FILENO) < 0) ||
+        ((bound_stderr >= 0 || (options->flags & TURBO_PROCESS_CAPTURE_STDERR) != 0U) &&
+         dup2(bound_stderr >= 0 ? child_stderr : stderr_pipe[1], STDERR_FILENO) < 0) ||
         (options->cwd && chdir(options->cwd) != 0)) {
       child_error = errno;
       (void)write(exec_pipe[1], &child_error, sizeof(child_error));
       _exit(127);
     }
+    if (child_stdin >= 0) close(child_stdin);
+    if (child_stdout >= 0) close(child_stdout);
+    if (child_stderr >= 0) close(child_stderr);
     close_pipe(stdin_pipe);
     close_pipe(stdout_pipe);
     close_pipe(stderr_pipe);
+    if (bound_stdin > STDERR_FILENO) close(bound_stdin);
+    if (bound_stdout > STDERR_FILENO && bound_stdout != bound_stdin) close(bound_stdout);
+    if (bound_stderr > STDERR_FILENO && bound_stderr != bound_stdin && bound_stderr != bound_stdout)
+      close(bound_stderr);
     child_exec(candidates, candidate_count, argv, environment ? environment : environ,
                exec_pipe[1]);
   }
@@ -1429,18 +1497,24 @@ int turbo_process_is_pid_alive(int pid, bool *out_alive) {
 
 #endif
 
-int turbo_process_spawn(const turbo_process_options_t *options, turbo_process_t **out_process) {
+static int process_spawn(const turbo_process_options_t *options,
+                         const turbo_process_stdio_bindings_t *bindings,
+                         turbo_process_t **out_process) {
   turbo_process_t *process;
   int rc;
   if (!out_process) return TURBO_EINVAL;
   *out_process = NULL;
   rc = process_validate_options(options);
   if (rc != TURBO_OK) return rc;
+  if (bindings) {
+    rc = process_validate_stdio_conflicts(options, bindings);
+    if (rc != TURBO_OK) return rc;
+  }
   process = (turbo_process_t *)calloc(1, sizeof(*process));
   if (!process) return TURBO_ENOMEM;
   rc = process_init(process, options);
   if (rc != TURBO_OK) goto error;
-  rc = process_platform_spawn(process, options);
+  rc = process_platform_spawn(process, options, bindings);
   if (rc != TURBO_OK) goto error;
   rc = turbo_thread_create(&process->monitor_thread, process_monitor, process);
   if (rc != TURBO_OK) {
@@ -1474,6 +1548,20 @@ error:
   turbo_mutex_destroy(&process->mutex);
   free(process);
   return rc;
+}
+
+int turbo_process_spawn(const turbo_process_options_t *options, turbo_process_t **out_process) {
+  return process_spawn(options, NULL, out_process);
+}
+
+int turbo_process_spawn_with_stdio(const turbo_process_options_t *options,
+                                   const turbo_process_stdio_bindings_t *bindings,
+                                   turbo_process_t **out_process) {
+  if (!bindings) {
+    if (out_process) *out_process = NULL;
+    return TURBO_EINVAL;
+  }
+  return process_spawn(options, bindings, out_process);
 }
 
 int turbo_process_terminate(turbo_process_t *process) {

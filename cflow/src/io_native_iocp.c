@@ -741,10 +741,14 @@ static int iocp_submit_pipe(cflow_io_native_impl *base,
         return iocp_error(error);
     if (file_type != FILE_TYPE_PIPE)
         return TURBO_ENOTSUP;
-    if (!GetNamedPipeInfo(handle, &pipe_flags, NULL, NULL, NULL))
-        return iocp_error(GetLastError());
-    if ((pipe_flags & PIPE_TYPE_MESSAGE) != 0u)
+    if (!GetNamedPipeInfo(handle, &pipe_flags, NULL, NULL, NULL)) {
+        error = GetLastError();
+        if (error != ERROR_ACCESS_DENIED ||
+            operation->kind != CFLOW_IO_NATIVE_PIPE_WRITE)
+            return iocp_error(error);
+    } else if ((pipe_flags & PIPE_TYPE_MESSAGE) != 0u) {
         return TURBO_ENOTSUP;
+    }
     return iocp_submit_record(
         impl, actor, request_id, CFLOW_IOCP_RESOURCE_PIPE, NULL, NULL,
         operation, NULL, handle, INVALID_SOCKET);

@@ -65,6 +65,7 @@ add_library(${TARGET_NAME}
   src/io_actor.c
   src/io_source.c
   src/io_file.c
+  src/io_pipe.c
   src/io_native.c
   src/lower.c
   src/machine.c

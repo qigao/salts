@@ -16,6 +16,8 @@ add_turboutils_consumer(consume_concurrency TurboUtils::Concurrency
 add_turboutils_consumer(consume_cmeta TurboUtils::CMeta CONSUME_CMETA)
 add_turboutils_consumer(consume_cbind TurboUtils::CBind CONSUME_CBIND)
 add_turboutils_consumer(consume_cflow TurboUtils::CFlow CONSUME_CFLOW)
+add_turboutils_consumer(consume_cflow_process TurboUtils::CFlowProcess
+                       CONSUME_CFLOW_PROCESS)
 add_turboutils_consumer(consume_cflow_fs TurboUtils::CFlowFS CONSUME_CFLOW_FS)
 add_turboutils_consumer(consume_stl TurboUtils::STL CONSUME_STL)
 add_turboutils_consumer(consume_stl_stream TurboUtils::STLStream

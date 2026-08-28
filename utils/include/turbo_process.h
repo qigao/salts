@@ -74,6 +74,20 @@ typedef struct {
   int error_code;
 } turbo_process_result_t;
 
+/** Select parent standard-handle inheritance for one spawn binding. */
+#define TURBO_PROCESS_STDIO_INHERIT UINTPTR_MAX
+
+/**
+ * Child-side standard handles borrowed until turbo_process_spawn_with_stdio()
+ * returns. Each value is a native HANDLE/fd or TURBO_PROCESS_STDIO_INHERIT.
+ * The spawn call never closes or consumes a supplied handle.
+ */
+typedef struct {
+  uintptr_t stdin_handle;
+  uintptr_t stdout_handle;
+  uintptr_t stderr_handle;
+} turbo_process_stdio_bindings_t;
+
 /** Fill options with defaults: stdout/stderr capture and no execution deadline. */
 TURBO_C_API void turbo_process_options_init(turbo_process_options_t *options);
 
@@ -89,6 +103,19 @@ TURBO_C_API const char *turbo_process_state_name(turbo_process_state_t state);
  */
 TURBO_C_API int turbo_process_spawn(const turbo_process_options_t *options,
                                   turbo_process_t **out_process);
+
+/**
+ * Start a child with explicitly borrowed child-side standard handles.
+ *
+ * A supplied stdin handle conflicts with TURBO_PROCESS_PIPE_STDIN. Supplied
+ * stdout/stderr handles conflict with their corresponding capture flags.
+ * Contradictory bindings return TURBO_EINVAL without consuming any handle.
+ * The returned process owns its lifecycle but never reads or closes a supplied
+ * parent handle.
+ */
+TURBO_C_API int turbo_process_spawn_with_stdio(const turbo_process_options_t *options,
+                                               const turbo_process_stdio_bindings_t *bindings,
+                                               turbo_process_t **out_process);
 
 /** Return the owned child PID, or -1 for an invalid handle. */
 TURBO_C_API int turbo_process_pid(const turbo_process_t *process);
