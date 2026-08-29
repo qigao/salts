@@ -2478,8 +2478,7 @@ spec("CFlow network benchmark configuration") {
       check_equal(memcmp(received, sent, sizeof(sent)), 0);
       check_equal(fixture.stages.operations, (uint64_t)2u);
       check_true(fixture.stages.completion_drive_ns > 0u);
-      check_true(fixture.stages.drive_ns > 0u);
-      check_true(fixture.stages.completion_process_ns > 0u);
+      /* Individual substage intervals may quantize to zero. */
       check_true(fixture.stages.completion_drive_ns >=
                  fixture.stages.drive_ns + fixture.stages.wait_ns +
                      fixture.stages.completion_process_ns);
