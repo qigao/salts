@@ -35,6 +35,10 @@ typedef struct cflow_statechart_instance_impl {
     cflow_executor *executor;
     cflow_mailbox external_mailbox;
     bool external_mailbox_initialized;
+    uint64_t *external_source_tokens;
+    size_t external_source_head;
+    size_t external_source_tail;
+    size_t external_event_capacity;
     cflow_mailbox adapter_internal_mailbox;
     bool adapter_internal_mailbox_initialized;
     cflow_timer_event_queue timers;
@@ -149,6 +153,8 @@ typedef struct cflow_statechart_instance_impl {
     bool cancelled;
     bool done;
     bool adapter_attached;
+    cflow_statechart_runtime_hooks runtime_hooks;
+    void *runtime_hook_user;
     cflow_waker downstream_waiter;
     cflow_waker terminal_waiter;
     cflow_statechart_runtime_test_hooks test_hooks;
@@ -495,6 +501,7 @@ static void instance_impl_free(cflow_statechart_instance_impl *impl) {
     if (impl->lock != NULL) turbo_mutex_destroy(&impl->lock);
     if (impl->error_owned) free((void *)impl->error);
     free(impl->internal_event_payloads);
+    free(impl->external_source_tokens);
     free(impl->internal_event_slots);
     free(impl->staged_event_payloads);
     free(impl->staged_event_slots);
@@ -1134,6 +1141,7 @@ static void cancel_pending_external_locked(
     const uint64_t pending = impl->external_pending > (size_t)UINT64_MAX
         ? UINT64_MAX : (uint64_t)impl->external_pending;
     impl->external_pending = 0u;
+    impl->external_source_head = impl->external_source_tail;
     if (UINT64_MAX - impl->external_cancelled < pending)
         impl->external_cancelled = UINT64_MAX;
     else
@@ -1217,6 +1225,13 @@ static void claim_external_for_failure_locked(
             impl->driver_event_payload,
             impl->driver_event_capacity) == CFLOW_MAILBOX_OK) {
         if (impl->external_pending != 0u) --impl->external_pending;
+        if (impl->external_source_tokens != NULL) {
+            impl->external_source_tokens[
+                impl->external_source_head] = UINT64_C(0);
+            impl->external_source_head =
+                (impl->external_source_head + 1u) %
+                impl->external_event_capacity;
+        }
         impl->external_in_flight = true;
     }
 }
@@ -1674,6 +1689,134 @@ static size_t find_event_index(const cflow_statechart_impl *ir,
         else right = middle;
     }
     return SIZE_MAX;
+}
+
+typedef struct statechart_runtime_hook_call {
+    cflow_statechart_instance_impl *impl;
+    const unsigned char *configuration_bits;
+} statechart_runtime_hook_call;
+
+static bool runtime_hook_configuration_is_active(
+    void *user, cflow_machine_state_id state) {
+    const statechart_runtime_hook_call *call =
+        (const statechart_runtime_hook_call *)user;
+    const cflow_statechart_instance_impl *impl =
+        call != NULL ? call->impl : NULL;
+    size_t state_index;
+    if (impl == NULL || call->configuration_bits == NULL) return false;
+    state_index = find_state_index(impl->ir, state);
+    return state_index != SIZE_MAX &&
+           !pseudo_kind(impl->ir->states[state_index].kind) &&
+           bit_test(call->configuration_bits, state_index);
+}
+
+static bool runtime_hook_enqueue_internal(
+    void *user, const cflow_event_view *event, const char **out_error) {
+    statechart_runtime_hook_call *call =
+        (statechart_runtime_hook_call *)user;
+    cflow_statechart_instance_impl *impl =
+        call != NULL ? call->impl : NULL;
+    size_t type_index, slot;
+    const cmeta_type_desc *type;
+    if (out_error != NULL) *out_error = NULL;
+    if (impl == NULL || event == NULL || out_error == NULL ||
+        event->payload_type == NULL || event->payload == NULL) {
+        if (out_error != NULL)
+            *out_error = "Statechart hook internal event is invalid";
+        return false;
+    }
+    type_index = find_event_index(impl->ir, event->id);
+    if (type_index == SIZE_MAX) {
+        *out_error = "Statechart hook internal event is unknown";
+        return false;
+    }
+    type = impl->ir->events[type_index].payload_type;
+    if (!cmeta_type_equal(type, event->payload_type)) {
+        *out_error = "Statechart hook internal event type mismatch";
+        return false;
+    }
+    turbo_mutex_lock(&impl->lock);
+    if (impl->terminal_outcome != STATECHART_TERMINAL_NONE ||
+        impl->error != NULL) {
+        turbo_mutex_unlock(&impl->lock);
+        *out_error = "Statechart hook cannot enqueue after termination";
+        return false;
+    }
+    if (impl->internal_event_count >= impl->internal_event_capacity) {
+        turbo_mutex_unlock(&impl->lock);
+        *out_error = "Statechart hook internal event queue is full";
+        return false;
+    }
+    slot = (impl->internal_event_head + impl->internal_event_count) %
+        impl->internal_event_capacity;
+    impl->internal_event_slots[slot].type_index = type_index;
+    memcpy(impl->internal_event_payloads +
+               slot * impl->event_payload_stride,
+           event->payload, type->size);
+    ++impl->internal_event_count;
+    impl->macrostep_active = true;
+    impl->skip_to_external = false;
+    turbo_mutex_unlock(&impl->lock);
+    return true;
+}
+
+static cflow_statechart_runtime_hook_context runtime_hook_context(
+    cflow_statechart_instance_impl *impl,
+    statechart_runtime_hook_call *call) {
+    cflow_statechart_runtime_hook_context context;
+    const size_t published = impl->published;
+    call->impl = impl;
+    call->configuration_bits = impl->configurations[published].bits;
+    context = (cflow_statechart_runtime_hook_context){
+        .state = impl->extended_states[published],
+        .configuration_version = impl->configuration_version,
+        .is_active = runtime_hook_configuration_is_active,
+        .configuration_user = call,
+        .enqueue_internal = runtime_hook_enqueue_internal,
+        .enqueue_user = call};
+    return context;
+}
+
+static bool run_stable_runtime_hook(
+    cflow_statechart_instance_impl *impl) {
+    statechart_runtime_hook_call call;
+    cflow_statechart_runtime_hook_context context;
+    const char *error = NULL;
+    if (impl->runtime_hooks.on_stable == NULL) return true;
+    context = runtime_hook_context(impl, &call);
+    if (!impl->runtime_hooks.on_stable(
+            impl->runtime_hook_user, &context, &error) || error != NULL) {
+        latch_terminal_failure(
+            impl, CFLOW_STATECHART_RUNTIME_HOOK_FAILED,
+            error != NULL ? error : "Statechart stable hook failed");
+        return false;
+    }
+    return true;
+}
+
+static cflow_statechart_external_preprocess_result
+run_external_preprocess_runtime_hook(
+    cflow_statechart_instance_impl *impl, const cflow_event_view *event,
+    uint64_t source_token) {
+    statechart_runtime_hook_call call;
+    cflow_statechart_runtime_hook_context context;
+    cflow_statechart_external_preprocess_result result;
+    const char *error = NULL;
+    if (impl->runtime_hooks.preprocess_external == NULL)
+        return CFLOW_STATECHART_EXTERNAL_PREPROCESS_CONTINUE;
+    context = runtime_hook_context(impl, &call);
+    result = impl->runtime_hooks.preprocess_external(
+        impl->runtime_hook_user, &context, event, source_token, &error);
+    if (error != NULL ||
+        (result != CFLOW_STATECHART_EXTERNAL_PREPROCESS_CONTINUE &&
+         result != CFLOW_STATECHART_EXTERNAL_PREPROCESS_DROP)) {
+        latch_terminal_failure(
+            impl, CFLOW_STATECHART_RUNTIME_HOOK_FAILED,
+            error != NULL ? error :
+                "Statechart external preprocess hook failed");
+        return CFLOW_STATECHART_EXTERNAL_PREPROCESS_FATAL;
+    }
+    return result;
 }
 
 typedef struct statechart_action_context {
@@ -2894,8 +3037,10 @@ static void statechart_driver_run(void *user) {
     cflow_event_id event_id = 0u;
     const cmeta_type_desc *event_type = NULL;
     cflow_mailbox_status mailbox_status;
+    uint64_t source_token = UINT64_C(0);
+    cflow_statechart_external_preprocess_result preprocess_result;
     int result;
-    bool terminal, skip_to_external;
+    bool terminal, skip_to_external, internal_work;
     if (impl == NULL) return;
     turbo_mutex_lock(&impl->lock);
     impl->driver_repost = false;
@@ -2949,6 +3094,13 @@ static void statechart_driver_run(void *user) {
     terminal = impl->macrostep_active;
     turbo_mutex_unlock(&impl->lock);
     if (terminal) {
+        if (!run_stable_runtime_hook(impl)) return;
+        turbo_mutex_lock(&impl->lock);
+        internal_work = impl->internal_event_count != 0u ||
+            impl->adapter_internal_pending != 0u;
+        if (internal_work) impl->driver_repost = true;
+        turbo_mutex_unlock(&impl->lock);
+        if (internal_work) return;
         settle_quiescent_macrostep(impl);
         turbo_mutex_lock(&impl->lock);
         terminal = impl->done;
@@ -3002,6 +3154,15 @@ external_admission:
         return;
     }
     if (impl->external_pending != 0u) --impl->external_pending;
+    if (impl->external_source_tokens != NULL) {
+        source_token = impl->external_source_tokens[
+            impl->external_source_head];
+        impl->external_source_tokens[
+            impl->external_source_head] = UINT64_C(0);
+        impl->external_source_head =
+            (impl->external_source_head + 1u) %
+            impl->external_event_capacity;
+    }
     event = (cflow_event_view){
         event_id, event_type, impl->driver_event_payload};
     impl->external_in_flight = true;
@@ -3009,10 +3170,38 @@ external_admission:
     impl->macrostep_has_external = true;
     impl->macrostep_microsteps = 0u;
     turbo_mutex_unlock(&impl->lock);
+    preprocess_result = run_external_preprocess_runtime_hook(
+        impl, &event, source_token);
+    if (preprocess_result ==
+        CFLOW_STATECHART_EXTERNAL_PREPROCESS_FATAL)
+        return;
+    turbo_mutex_lock(&impl->lock);
+    internal_work = impl->internal_event_count != 0u ||
+        impl->adapter_internal_pending != 0u;
+    turbo_mutex_unlock(&impl->lock);
+    if (preprocess_result == CFLOW_STATECHART_EXTERNAL_PREPROCESS_DROP) {
+        if (internal_work) {
+            turbo_mutex_lock(&impl->lock);
+            impl->driver_repost = true;
+            turbo_mutex_unlock(&impl->lock);
+            return;
+        }
+        settle_quiescent_macrostep(impl);
+        turbo_mutex_lock(&impl->lock);
+        if (!impl->done) impl->driver_repost = true;
+        turbo_mutex_unlock(&impl->lock);
+        return;
+    }
     trigger = (cflow_statechart_selection_trigger){
         CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
     result = driver_try_trigger(impl, &trigger);
     if (result != 0) return;
+    if (internal_work) {
+        turbo_mutex_lock(&impl->lock);
+        impl->driver_repost = true;
+        turbo_mutex_unlock(&impl->lock);
+        return;
+    }
     settle_quiescent_macrostep(impl);
     turbo_mutex_lock(&impl->lock);
     if (!impl->done) impl->driver_repost = true;
@@ -3246,6 +3435,7 @@ static cflow_statechart_runtime_status statechart_instance_init_with_hook(
     size_t effective_storage_limit, required_storage;
     size_t timer_storage_bytes = 0u, effect_storage_bytes = 0u;
     size_t adapter_internal_storage_bytes = 0u;
+    size_t external_source_storage_bytes = 0u;
     size_t event_stride = 0u;
     if (instance == NULL || config == NULL || instance->impl != NULL ||
         config->statechart == NULL || config->initial_state == NULL ||
@@ -3254,7 +3444,12 @@ static cflow_statechart_runtime_status statechart_instance_init_with_hook(
         config->completion_capacity == 0u ||
         config->microstep_limit == 0u ||
         ((config->clock == NULL) != (config->timer_capacity == 0u)) ||
-        (config->clock != NULL && !cflow_clock_valid(config->clock)))
+        (config->clock != NULL && !cflow_clock_valid(config->clock)) ||
+        (config->runtime_hooks != NULL &&
+         (config->runtime_hooks->abi_version !=
+              CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1 ||
+          config->runtime_hooks->struct_size <
+              sizeof(cflow_statechart_runtime_hooks))))
         return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
     if (!cflow_executor_valid(config->executor) ||
         !cflow_executor_has(config->executor, CMETA_EXEC_CAP_SERIAL) ||
@@ -3281,6 +3476,14 @@ static cflow_statechart_runtime_status statechart_instance_init_with_hook(
         &requirements);
     if (status != CFLOW_STATECHART_RUNTIME_OK) return status;
     required_storage = requirements.total_bytes;
+    if (config->runtime_hooks != NULL &&
+        config->runtime_hooks->preprocess_external != NULL &&
+        (!checked_multiply(config->external_event_capacity,
+                           sizeof(uint64_t),
+                           &external_source_storage_bytes) ||
+         !checked_add(required_storage, external_source_storage_bytes,
+                      &required_storage)))
+        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
     if (!checked_multiply(config->effect_capacity,
                           sizeof(cflow_statechart_effect_ticket),
                           &effect_storage_bytes) ||
@@ -3322,6 +3525,9 @@ static cflow_statechart_runtime_status statechart_instance_init_with_hook(
     impl->statechart = config->statechart;
     impl->ir = ir;
     impl->executor = config->executor;
+    if (config->runtime_hooks != NULL)
+        impl->runtime_hooks = *config->runtime_hooks;
+    impl->runtime_hook_user = config->runtime_hook_user;
     impl->internal_event_capacity = requirements.internal_event_capacity;
     impl->completion_capacity = requirements.completion_capacity;
     impl->effect_capacity = config->effect_capacity;
@@ -3341,6 +3547,15 @@ static cflow_statechart_runtime_status statechart_instance_init_with_hook(
     if (status != CFLOW_STATECHART_RUNTIME_OK) {
         instance_impl_free(impl);
         return status;
+    }
+    if (external_source_storage_bytes != 0u) {
+        impl->external_source_tokens = (uint64_t *)calloc(
+            config->external_event_capacity, sizeof(uint64_t));
+        if (impl->external_source_tokens == NULL) {
+            instance_impl_free(impl);
+            return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
+        }
+        impl->external_event_capacity = config->external_event_capacity;
     }
     turbo_mutex_init(&impl->lock);
     turbo_cond_init(&impl->tasks_changed);
@@ -3476,6 +3691,13 @@ cflow_statechart_instance_copy_configuration(
 
 cflow_mailbox_status cflow_statechart_instance_try_send(
     cflow_statechart_instance *instance, const cflow_event_view *event) {
+    return cflow_statechart_instance_try_send_tagged(
+        instance, event, UINT64_C(0));
+}
+
+cflow_mailbox_status cflow_statechart_instance_try_send_tagged(
+    cflow_statechart_instance *instance, const cflow_event_view *event,
+    uint64_t source_token) {
     cflow_statechart_instance_impl *impl = instance != NULL
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     cflow_mailbox_status status;
@@ -3490,6 +3712,13 @@ cflow_mailbox_status cflow_statechart_instance_try_send(
     }
     status = cflow_mailbox_try_send(&impl->external_mailbox, event);
     if (status == CFLOW_MAILBOX_OK) {
+        if (impl->external_source_tokens != NULL) {
+            impl->external_source_tokens[
+                impl->external_source_tail] = source_token;
+            impl->external_source_tail =
+                (impl->external_source_tail + 1u) %
+                impl->external_event_capacity;
+        }
         counter_increment(&impl->external_accepted);
         ++impl->external_pending;
     }

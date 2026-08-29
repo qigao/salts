@@ -543,18 +543,20 @@ The Event is non-NULL only for Event-triggered selection. Unknown and
 pseudo-state IDs query false, and no context member may be retained. Appending
 the contextual callback changes `sizeof(cflow_statechart_guard_binding)`;
 consumers built against an older header must be rebuilt and relinked.
-`TurboUtils::CFlow` therefore carries component library version `2.0.0` and
-shared-library ABI identity `2`; Windows shared builds use the
-`turbo_cflow-2` basename so an older DLL cannot satisfy the new binding ABI.
+Those contextual bindings introduced component library version `2.0.0` and
+shared-library ABI identity `2`. The runtime-hook extension below appends to
+`cflow_statechart_instance_config`, so this release advances CFlow to `3.0.0`
+and shared ABI identity `3`; Windows shared builds use the `turbo_cflow-3`
+basename so an older DLL cannot satisfy the new configuration ABI.
 The exported CMake target name remains `TurboUtils::CFlow`.
 
 The CFlow core remains format-neutral and does not parse XML. The optional
 `TurboUtils::CFlowScxml` frontend described below performs bounded SCXML Core
 admission and lowering without changing the Statechart runtime dependency
 surface. CFlow is not a durable workflow engine. The optional frontend
-supports the bounded literal `send`/`cancel` profile described below, but does
-not implement SCXML `invoke`, `finalize`, persistence, recovery, retries,
-compensation, or distributed coordination.
+supports the bounded literal `send`/`cancel` and `invoke`/restricted-`finalize`
+profiles described below, but does not implement persistence, recovery,
+retries, compensation, or distributed coordination.
 
 ### Optional SCXML Core frontend
 
@@ -637,9 +639,9 @@ int main(void) {
 low-level binding path above from programs that require an owning
 `cflow_scxml_session`. `cflow_scxml_program_runtime_bindings()` fails without
 modifying its outputs when Event I/O is required. A session copies its adapter
-operation table, borrows the adapter context and program, owns the native
-Statechart instance plus bounded effect/send registries, and must be destroyed
-before the program, executor, or adapter context.
+operation tables, borrows the adapter contexts and program, owns the native
+Statechart instance plus bounded effect/send/invocation registries, and must be
+destroyed before the program, executor, or adapter context.
 
 Event I/O adapters use a reservation protocol. `prepare_send` and
 `prepare_cancel` reserve capacity without publishing an external effect and
@@ -651,6 +653,39 @@ attachment, including an initialization failure;
 `cflow_scxml_session_destroy()` returns
 `CFLOW_STATECHART_RUNTIME_WOULD_BLOCK` until `is_quiescent` confirms that no
 adapter callback can still reach the borrowed session or adapter context.
+
+Invocation adapters use the same versioned reservation contract. Literal
+`invoke` declarations on `state` or `parallel` accept `id`, `type`, `src`, and
+boolean `autoforward`; an omitted ID is generated deterministically as
+`<state-id>.invoke.<sibling-ordinal>`. `idlocation`, `typeexpr`, `srcexpr`,
+`namelist`, `param`, and `content` remain unsupported because the null data
+model has no location/value evaluator. A restricted `finalize` may contain
+only label-only `log` and nested null-model `if` partitions; Event-producing
+or external-effect content is rejected during compilation.
+
+Each session owns one fixed invocation row per compiled declaration and a
+bounded lifecycle-ticket pool. `invocation_capacity` must cover every row;
+`effect_capacity` bounds rollback-capable enter/exit intents, and
+`adapter_internal_event_capacity` bounds recoverable adapter errors. Entry
+records a pending intent, but `prepare_start` runs only after eventless,
+internal, and completion processing reaches a stable configuration. A
+committed exit cancels the matching live token; rollback publishes neither
+start nor cancel. Autoforward requires the adapter forward capability and
+visits live declarations in document order. All prepare callbacks receive
+call-scoped borrowed fields outside native and session mutexes and must return
+one valid ticket on acceptance.
+
+`cflow_scxml_session_report_invoke_event()` admits a copied external Event with
+the invocation's nonzero token. The session validates at admission and again
+immediately before transition selection, so a result queued before a committed
+cancel is dropped as stale and cannot select a parent transition. A live
+returned Event runs only its owning `finalize`, then is forwarded to live
+autoforward declarations, then enters normal selection. Its matching
+`done.invoke.<id>` Event completes the row without canceling that completed
+service. Stats distinguish accepted/rejected returns, starts, completions,
+cancellations, forwards, and failures. Adapter `close` is exactly once, and
+session destruction waits for both Event I/O and invocation adapters to report
+quiescence.
 
 The supported compatibility subset is deliberately strict:
 
@@ -699,19 +734,24 @@ The supported compatibility subset is deliberately strict:
   Asynchronous failures enter the prioritized bounded internal ingress through
   `cflow_scxml_session_report_adapter_error()`. Adapters release a completed
   delayed-send registry row through `cflow_scxml_session_report_send_done()`;
+- literal `invoke` on `state`/`parallel`, deterministic generated IDs,
+  `done.invoke.<id>` Events, stable-only activation, committed-exit cancel,
+  declaration-ordered autoforward, and restricted `finalize` preprocessing as
+  described above;
 - compile-time rejection of malformed, quoted, unknown, or pseudo-state
   `In(id)` arguments. Null-model system variables remain inaccessible.
 
-Executable elements other than `raise`, literal `send`/`cancel`, label-only
-`log`, and conditional partitions, wildcard event descriptors, multiple
-targets, dynamic send expressions/content/parameters, non-null data models,
-and other SCXML elements fail during compilation with the first byte offset
-and one-based line/column diagnostic.
+Executable elements outside `raise`, literal `send`/`cancel`, label-only
+`log`, conditional partitions, and the restricted invocation `finalize`
+profile; wildcard event descriptors; multiple targets; dynamic
+send/invocation expressions, content, or parameters; non-null data models; and
+other SCXML elements fail during compilation with the first byte offset and
+one-based line/column diagnostic.
 There is no fallback or silent feature removal. Configurable hard limits cover
 XML input, depth, nodes, attributes, states, events, transitions, and action
-references. State/event names plus NUL-terminated log and Event I/O literals
-share the bounded `max_name_bytes` retained-string budget; a failed compile
-leaves the output program empty.
+references. State/event names plus NUL-terminated log, Event I/O, and
+invocation literals share the bounded `max_name_bytes` retained-string budget;
+a failed compile leaves the output program empty.
 
 ## Bounded Actor lifecycle
 

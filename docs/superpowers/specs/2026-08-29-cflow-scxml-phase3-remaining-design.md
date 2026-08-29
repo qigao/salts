@@ -3,7 +3,9 @@
 **Issue:** [qigao/turbo-utils#122](https://github.com/qigao/turbo-utils/issues/122)
 
 **Status:** Accepted. Increment A (`send`, `cancel`, recoverable adapter errors,
-and owning sessions) is implemented; later increments remain design scope.
+and owning sessions) and Increment B (`invoke`, restricted `finalize`, stable
+lifecycle, returned Events, and autoforward) are implemented. Increments C-E
+remain design scope.
 
 **Date:** 2026-08-29
 
@@ -41,8 +43,9 @@ externally visible effect; a successful ticket has exactly one terminal call;
 
 ### Repository facts
 
-- `cflow-scxml/src/scxml.c` currently owns `scxml_block`, `scxml_step`, and
-  `scxml_branch`; supported step kinds are `RAISE`, `IF`, and `LOG`.
+- `cflow-scxml/src/scxml.c` owns immutable block, step, branch, Event I/O, and
+  invocation descriptors. Supported inline steps include `RAISE`, `IF`,
+  `LOG`, `SEND`, `CANCEL`, and internal invocation enter/exit intents.
 - `execute_scxml_block()` is one contextual native executable callback. It
   copies the staged state, walks an immutable step range, uses the native
   `raise_internal` staging function, and observes the action-time
@@ -50,10 +53,10 @@ externally visible effect; a successful ticket has exactly one terminal call;
 - `cflow/src/statechart_runtime.c` commits staged internal events,
   completions, extended state, and configuration together. A callback that
   returns false currently causes a terminal Statechart action failure.
-- `settle_quiescent_macrostep()` is the native point at which eventless and
-  pending internal work has reached a stable configuration. There is no
-  public lifecycle hook at that boundary and no adapter ingress that can add
-  an asynchronous result to the internal queue.
+- The native runtime now exposes optional versioned, format-neutral stable and
+  external-preprocess hooks plus bounded adapter-internal Event ingress.
+  Callbacks execute on the SerialExecutor outside the runtime mutex and see
+  only call-scoped borrowed configuration/Event views.
 - `cflow_scxml_program_runtime_bindings()` returns program-owned binding rows;
   their `user` values are shared by all instances and therefore cannot hold
   per-session adapter state.
@@ -258,11 +261,12 @@ active. Exit processing records cancellation; a committed exit cancels the
 matching live invocation exactly once. A discarded microstep neither starts
 nor cancels an external service.
 
-An adapter completion/event enters the session with its invoke ID. The session
-verifies that the invocation is live, runs only that invocation's finalize
-block, performs autoforwarding if configured, and then offers the Event for
-normal transition selection. Late results from a canceled or destroyed
-invocation are rejected and counted, not rebound to a new invocation.
+An adapter completion/event enters the session with its nonzero execution
+token. The session validates it at admission and again before selection, runs
+only that invocation's finalize block, performs declaration-ordered
+autoforwarding, and then offers the Event for normal transition selection.
+Late results from a canceled or destroyed invocation are rejected or dropped
+and counted, never rebound to a new invocation.
 
 ## Native Statechart hooks
 
@@ -282,8 +286,11 @@ the runtime mutex is held, or permit a callback to retain borrowed Event or
 configuration views. Hook failure must map to an explicit native runtime
 status and stable first error.
 
-This public/runtime change requires separate approval and native tests before
-SCXML adapters are admitted.
+The hooks are implemented with native ABI/version, ordering, tagged-FIFO,
+failure, and compatibility tests; absent hooks preserve existing runtime
+behavior. Because the hook pointers append to the public native instance
+configuration, CFlow component version `3.0.0` / shared ABI identity `3`
+requires existing binary consumers to rebuild and relink.
 
 ## Non-null data model boundary
 
@@ -372,6 +379,8 @@ Statechart fact source.
 
 ### A. Session, recoverable errors, literal `send` and `cancel`
 
+**Implementation status:** complete.
+
 - Add internal program requirements and per-session binding ownership.
 - Add bounded internal adapter ingress and the v1 Event I/O reservation API.
 - Admit literal-only null-model send/cancel forms, including canonical
@@ -380,6 +389,8 @@ Statechart fact source.
 - Preserve the legacy adapter-free runtime path.
 
 ### B. `invoke` and `finalize`
+
+**Implementation status:** complete for the literal null-data-model profile.
 
 - Add native quiescent and external-preprocess hooks.
 - Add the versioned invoke adapter and bounded invocation registry.

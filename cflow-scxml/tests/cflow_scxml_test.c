@@ -6,8 +6,10 @@
 #include "tinytest.h"
 
 #include <stdio.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <turbo/thread.h>
 
 #define SCXML_LOG_CAPTURE_CAPACITY 4u
 #define SCXML_LOG_COMPONENT_CAPACITY 32u
@@ -213,6 +215,160 @@ static bool scxml_adapter_is_quiescent(void *user) {
     const scxml_adapter_probe *probe =
         (const scxml_adapter_probe *)user;
     return probe != NULL && probe->quiescent;
+}
+
+typedef struct scxml_invoke_probe {
+    size_t close_calls;
+    size_t prepare_start_calls;
+    size_t prepare_cancel_calls;
+    size_t prepare_forward_calls;
+    size_t commit_calls;
+    size_t discard_calls;
+    uint64_t start_tokens[4];
+    uint64_t cancel_tokens[4];
+    uint64_t forward_tokens[8];
+    cflow_event_id forward_events[8];
+    const cmeta_type_desc *forward_types[8];
+    bool forward_payloads[8];
+    char last_id[64];
+    char last_type[64];
+    char last_src[64];
+    bool last_autoforward;
+    bool quiescent;
+    cflow_scxml_adapter_status start_status;
+    cflow_scxml_adapter_status cancel_status;
+    cflow_scxml_adapter_status forward_status;
+    const scxml_log_capture *log_capture;
+    bool finalize_seen_before_forward;
+} scxml_invoke_probe;
+
+static void scxml_invoke_ticket_commit(void *user) {
+    scxml_invoke_probe *probe = (scxml_invoke_probe *)user;
+    if (probe != NULL) ++probe->commit_calls;
+}
+
+static void scxml_invoke_ticket_discard(void *user) {
+    scxml_invoke_probe *probe = (scxml_invoke_probe *)user;
+    if (probe != NULL) ++probe->discard_calls;
+}
+
+static void copy_invoke_field(
+    char *destination, size_t capacity,
+    const char *source, size_t source_size) {
+    const size_t copied = source_size < capacity - 1u
+        ? source_size : capacity - 1u;
+    if (copied != 0u) memcpy(destination, source, copied);
+    destination[copied] = '\0';
+}
+
+static cflow_scxml_adapter_status scxml_invoke_prepare_start(
+    void *user, const cflow_scxml_invoke_start_request *request,
+    cflow_statechart_effect_ticket *out_ticket,
+    const char **out_error) {
+    scxml_invoke_probe *probe = (scxml_invoke_probe *)user;
+    if (probe == NULL || request == NULL || out_ticket == NULL ||
+        out_error == NULL || request->token == UINT64_C(0))
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    if (probe->prepare_start_calls < 4u)
+        probe->start_tokens[probe->prepare_start_calls] = request->token;
+    ++probe->prepare_start_calls;
+    copy_invoke_field(
+        probe->last_id, sizeof(probe->last_id), request->id,
+        request->id_size);
+    copy_invoke_field(
+        probe->last_type, sizeof(probe->last_type), request->type,
+        request->type_size);
+    copy_invoke_field(
+        probe->last_src, sizeof(probe->last_src), request->src,
+        request->src_size);
+    probe->last_autoforward = request->autoforward;
+    if (probe->start_status != CFLOW_SCXML_ADAPTER_ACCEPTED) {
+        *out_error = "injected invoke start failure";
+        return probe->start_status;
+    }
+    *out_ticket = (cflow_statechart_effect_ticket){
+        scxml_invoke_ticket_commit, scxml_invoke_ticket_discard, probe};
+    *out_error = NULL;
+    return CFLOW_SCXML_ADAPTER_ACCEPTED;
+}
+
+static cflow_scxml_adapter_status scxml_invoke_prepare_cancel(
+    void *user, const cflow_scxml_invoke_cancel_request *request,
+    cflow_statechart_effect_ticket *out_ticket,
+    const char **out_error) {
+    scxml_invoke_probe *probe = (scxml_invoke_probe *)user;
+    if (probe == NULL || request == NULL || out_ticket == NULL ||
+        out_error == NULL || request->token == UINT64_C(0))
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    if (probe->prepare_cancel_calls < 4u)
+        probe->cancel_tokens[probe->prepare_cancel_calls] = request->token;
+    ++probe->prepare_cancel_calls;
+    if (probe->cancel_status != CFLOW_SCXML_ADAPTER_ACCEPTED) {
+        *out_error = "injected invoke cancel failure";
+        return probe->cancel_status;
+    }
+    *out_ticket = (cflow_statechart_effect_ticket){
+        scxml_invoke_ticket_commit, scxml_invoke_ticket_discard, probe};
+    *out_error = NULL;
+    return CFLOW_SCXML_ADAPTER_ACCEPTED;
+}
+
+static cflow_scxml_adapter_status scxml_invoke_prepare_forward(
+    void *user, const cflow_scxml_invoke_forward_request *request,
+    cflow_statechart_effect_ticket *out_ticket,
+    const char **out_error) {
+    scxml_invoke_probe *probe = (scxml_invoke_probe *)user;
+    size_t index;
+    if (probe == NULL || request == NULL || request->event == NULL ||
+        request->event->payload_type == NULL ||
+        request->event->payload == NULL || out_ticket == NULL ||
+        out_error == NULL || request->token == UINT64_C(0))
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    index = probe->prepare_forward_calls;
+    if (index < 8u) {
+        probe->forward_tokens[index] = request->token;
+        probe->forward_events[index] = request->event->id;
+        probe->forward_types[index] = request->event->payload_type;
+        probe->forward_payloads[index] =
+            *(const bool *)request->event->payload;
+    }
+    ++probe->prepare_forward_calls;
+    if (probe->log_capture != NULL) {
+        tlog_t *logger = tlog_peek_default();
+        if (logger != NULL) tlog_flush(logger);
+        if (probe->log_capture->count != 0u)
+            probe->finalize_seen_before_forward = true;
+    }
+    if (probe->forward_status != CFLOW_SCXML_ADAPTER_ACCEPTED) {
+        *out_error = "injected invoke forward failure";
+        return probe->forward_status;
+    }
+    *out_ticket = (cflow_statechart_effect_ticket){
+        scxml_invoke_ticket_commit, scxml_invoke_ticket_discard, probe};
+    *out_error = NULL;
+    return CFLOW_SCXML_ADAPTER_ACCEPTED;
+}
+
+static void scxml_invoke_close(void *user) {
+    scxml_invoke_probe *probe = (scxml_invoke_probe *)user;
+    if (probe != NULL) ++probe->close_calls;
+}
+
+static bool scxml_invoke_is_quiescent(void *user) {
+    const scxml_invoke_probe *probe =
+        (const scxml_invoke_probe *)user;
+    return probe != NULL && probe->quiescent;
+}
+
+typedef struct scxml_executor_blocker {
+    atomic_bool entered;
+    atomic_bool release;
+} scxml_executor_blocker;
+
+static void scxml_block_executor(void *user) {
+    scxml_executor_blocker *blocker = (scxml_executor_blocker *)user;
+    atomic_store(&blocker->entered, true);
+    while (!atomic_load(&blocker->release)) turbo_thread_yield();
 }
 
 static const cflow_statechart_state *find_state(
@@ -1653,6 +1809,691 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(before, (cflow_event_id)2u);
         check_equal(execution, (cflow_event_id)3u);
         check_equal(communication, (cflow_event_id)4u);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("admits literal invoke and restricted finalize with deterministic IR") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><onentry><log label='entry'/></onentry>"
+            "<onexit><log label='exit'/></onexit>"
+            "<invoke id='job' type='worker.type' "
+            "src='worker://one' autoforward='true'><finalize>"
+            "<log label='finalizing'/><if cond='In(worker)'>"
+            "<log label='active'/></if></finalize></invoke>"
+            "<transition event='done.invoke.job' target='done'/>"
+            "</state><final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        const cflow_statechart_executable_binding *bindings =
+            (const cflow_statechart_executable_binding *)(uintptr_t)1u;
+        size_t binding_count = 99u;
+        cflow_event_id done_event = 0u;
+        uint32_t requirements = 0u;
+        const cflow_statechart *statechart;
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_scxml_program_requirements(
+            &program, &requirements));
+        check_true((requirements & CFLOW_SCXML_REQUIREMENT_INVOKE) != 0u);
+        check_true(cflow_scxml_program_event_id(
+            &program, "done.invoke.job", 15u, &done_event));
+        check_true(done_event != 0u);
+        statechart = cflow_scxml_program_statechart(&program);
+        check_equal(cflow_statechart_executable_count(statechart),
+                    (size_t)4u);
+        check_equal(cflow_statechart_state_action_count(statechart),
+                    (size_t)4u);
+        check_equal(cflow_statechart_state_action_at(statechart, 0u)->kind,
+                    CFLOW_STATECHART_STATE_ACTION_ENTRY);
+        check_equal(cflow_statechart_state_action_at(statechart, 0u)->order,
+                    (uint32_t)0u);
+        check_equal(cflow_statechart_state_action_at(statechart, 1u)->kind,
+                    CFLOW_STATECHART_STATE_ACTION_ENTRY);
+        check_equal(cflow_statechart_state_action_at(statechart, 1u)->order,
+                    (uint32_t)1u);
+        check_equal(cflow_statechart_state_action_at(statechart, 2u)->kind,
+                    CFLOW_STATECHART_STATE_ACTION_EXIT);
+        check_equal(cflow_statechart_state_action_at(statechart, 2u)->order,
+                    (uint32_t)0u);
+        check_equal(cflow_statechart_state_action_at(statechart, 3u)->kind,
+                    CFLOW_STATECHART_STATE_ACTION_EXIT);
+        check_equal(cflow_statechart_state_action_at(statechart, 3u)->order,
+                    (uint32_t)1u);
+        check_false(cflow_scxml_program_runtime_bindings(
+            &program, &bindings, &binding_count));
+        check_true(bindings ==
+                   (const cflow_statechart_executable_binding *)
+                       (uintptr_t)1u);
+        check_equal(binding_count, (size_t)99u);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("generates stable invocation IDs and done Events in document order") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<parallel id='worker'><invoke/><invoke autoforward='false'/>"
+            "<state id='left'/><state id='right'/></parallel></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_event_id first = 0u;
+        cflow_event_id second = 0u;
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_scxml_program_event_id(
+            &program, "done.invoke.worker.invoke.1", 27u, &first));
+        check_true(cflow_scxml_program_event_id(
+            &program, "done.invoke.worker.invoke.2", 27u, &second));
+        check_true(first != 0u);
+        check_equal(second, first + 1u);
+        check_equal(cflow_statechart_executable_count(
+                        cflow_scxml_program_statechart(&program)),
+                    (size_t)4u);
+        check_equal(cflow_statechart_state_action_count(
+                        cflow_scxml_program_statechart(&program)),
+                    (size_t)4u);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("rejects unsupported invoke data forms and unsafe finalize content") {
+        static const char root_invoke[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<invoke id='job'/><state id='worker'/></scxml>";
+        static const char orphan_finalize[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><finalize/></state></scxml>";
+        static const char duplicate_id[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke id='job'/><invoke id='job'/>"
+            "</state></scxml>";
+        static const char invalid_id[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke id='1job'/></state></scxml>";
+        static const char expression[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke typeexpr='kind'/></state></scxml>";
+        static const char idlocation[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke idlocation='slot'/></state></scxml>";
+        static const char srcexpr[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke srcexpr='target'/></state></scxml>";
+        static const char namelist[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke namelist='x'/></state></scxml>";
+        static const char parameter[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke><param name='x' expr='1'/>"
+            "</invoke></state></scxml>";
+        static const char content[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke><content>payload</content>"
+            "</invoke></state></scxml>";
+        static const char unsafe_finalize[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke><finalize><raise event='bad'/>"
+            "</finalize></invoke></state></scxml>";
+        static const char finalize_send[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke><finalize><send event='bad'/>"
+            "</finalize></invoke></state></scxml>";
+        static const char finalize_cancel[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke><finalize><cancel sendid='bad'/>"
+            "</finalize></invoke></state></scxml>";
+        static const char duplicate_finalize[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke><finalize/><finalize/>"
+            "</invoke></state></scxml>";
+        static const char bad_autoforward[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke autoforward='yes'/>"
+            "</state></scxml>";
+        const char *invalid[] = {
+            root_invoke, orphan_finalize, duplicate_id, invalid_id,
+            expression, idlocation, srcexpr, namelist, parameter, content,
+            unsafe_finalize, finalize_send, finalize_cancel,
+            duplicate_finalize, bad_autoforward};
+        const cflow_scxml_status expected[] = {
+            CFLOW_SCXML_INVALID_STRUCTURE,
+            CFLOW_SCXML_INVALID_STRUCTURE,
+            CFLOW_SCXML_DUPLICATE_ID,
+            CFLOW_SCXML_INVALID_STRUCTURE,
+            CFLOW_SCXML_UNSUPPORTED_FEATURE,
+            CFLOW_SCXML_UNSUPPORTED_FEATURE,
+            CFLOW_SCXML_UNSUPPORTED_FEATURE,
+            CFLOW_SCXML_UNSUPPORTED_FEATURE,
+            CFLOW_SCXML_UNSUPPORTED_FEATURE,
+            CFLOW_SCXML_UNSUPPORTED_FEATURE,
+            CFLOW_SCXML_UNSUPPORTED_FEATURE,
+            CFLOW_SCXML_UNSUPPORTED_FEATURE,
+            CFLOW_SCXML_UNSUPPORTED_FEATURE,
+            CFLOW_SCXML_INVALID_STRUCTURE,
+            CFLOW_SCXML_INVALID_STRUCTURE};
+        size_t index;
+
+        for (index = 0u; index < sizeof(invalid) / sizeof(invalid[0]);
+             ++index) {
+            cflow_scxml_program program = {0};
+            cflow_scxml_diagnostic diagnostic = {0};
+            check_equal(compile_status(invalid[index], &program, &diagnostic),
+                        expected[index]);
+            check_null(program.impl);
+            check_true(diagnostic.location.byte_offset != 0u);
+        }
+    }
+
+    it("validates invocation adapter ABI capacity and quiescent ownership") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke id='job'/></state></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_session session = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_executor executor = {0};
+        scxml_invoke_probe probe = {0};
+        cflow_scxml_invoke_adapter_v1 adapter = {
+            .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1,
+            .struct_size = sizeof(cflow_scxml_invoke_adapter_v1),
+            .capabilities = CFLOW_SCXML_INVOKE_CAP_START |
+                CFLOW_SCXML_INVOKE_CAP_CANCEL |
+                CFLOW_SCXML_INVOKE_CAP_FORWARD,
+            .prepare_start = scxml_invoke_prepare_start,
+            .prepare_cancel = scxml_invoke_prepare_cancel,
+            .prepare_forward = scxml_invoke_prepare_forward,
+            .close = scxml_invoke_close,
+            .is_quiescent = scxml_invoke_is_quiescent};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 2u,
+            .internal_event_capacity = 2u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u,
+            .effect_capacity = 2u,
+            .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u,
+            .invoke = &adapter,
+            .invoke_user = &probe};
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        config.invocation_capacity = 0u;
+        check_equal(cflow_scxml_session_init(&session, &config),
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        adapter.abi_version = 0u;
+        config.invocation_capacity = 1u;
+        check_equal(cflow_scxml_session_init(&session, &config),
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        adapter.abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1;
+        check_equal(cflow_scxml_session_init(&session, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_WOULD_BLOCK);
+        check_equal(probe.close_calls, (size_t)1u);
+        probe.quiescent = true;
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(probe.close_calls, (size_t)1u);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("starts only stable invocations and cancels the committed exit") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='transient'><state id='transient'>"
+            "<invoke id='short'/><transition target='worker'/></state>"
+            "<state id='worker'><invoke id='job' type='worker.type' "
+            "src='worker://one' autoforward='true'/>"
+            "<transition event='leave' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_session session = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_executor executor = {0};
+        scxml_invoke_probe probe = {.quiescent = true};
+        cflow_scxml_invoke_adapter_v1 adapter = {
+            .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1,
+            .struct_size = sizeof(cflow_scxml_invoke_adapter_v1),
+            .capabilities = CFLOW_SCXML_INVOKE_CAP_START |
+                CFLOW_SCXML_INVOKE_CAP_CANCEL |
+                CFLOW_SCXML_INVOKE_CAP_FORWARD,
+            .prepare_start = scxml_invoke_prepare_start,
+            .prepare_cancel = scxml_invoke_prepare_cancel,
+            .prepare_forward = scxml_invoke_prepare_forward,
+            .close = scxml_invoke_close,
+            .is_quiescent = scxml_invoke_is_quiescent};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 2u,
+            .internal_event_capacity = 2u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u,
+            .effect_capacity = 4u,
+            .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 2u,
+            .invoke = &adapter,
+            .invoke_user = &probe};
+        cflow_event_view leave = {0};
+        cflow_scxml_invoke_stats invoke_stats = {0};
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init(&session, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(probe.prepare_start_calls, (size_t)1u);
+        check_equal(probe.commit_calls, (size_t)1u);
+        check_equal(probe.last_id, "job");
+        check_equal(probe.last_type, "worker.type");
+        check_equal(probe.last_src, "worker://one");
+        check_true(probe.last_autoforward);
+        check_true(probe.start_tokens[0] != UINT64_C(0));
+        check_true(cflow_scxml_session_get_invoke_stats(
+            &session, &invoke_stats));
+        check_equal(invoke_stats.active, (size_t)1u);
+        check_equal(invoke_stats.started, UINT64_C(1));
+
+        check_true(cflow_scxml_program_event(
+            &program, "leave", 5u, &leave));
+        check_equal(cflow_scxml_session_try_send(&session, &leave),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.prepare_cancel_calls, (size_t)1u);
+        check_equal(probe.cancel_tokens[0], probe.start_tokens[0]);
+        check_equal(probe.prepare_forward_calls, (size_t)1u);
+        check_equal(probe.commit_calls, (size_t)3u);
+        check_true(cflow_scxml_session_get_invoke_stats(
+            &session, &invoke_stats));
+        check_equal(invoke_stats.active, (size_t)0u);
+        check_equal(invoke_stats.cancelled, UINT64_C(1));
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("discards invocation lifecycle intents when the microstep rolls back") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='one'><state id='one'><invoke id='first'/>"
+            "<transition event='swap' target='two'/></state>"
+            "<state id='two'><invoke id='second'/></state></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_session session = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_executor executor = {0};
+        scxml_invoke_probe probe = {.quiescent = true};
+        cflow_scxml_invoke_adapter_v1 adapter = {
+            .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1,
+            .struct_size = sizeof(cflow_scxml_invoke_adapter_v1),
+            .capabilities = CFLOW_SCXML_INVOKE_CAP_START |
+                CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            .prepare_start = scxml_invoke_prepare_start,
+            .prepare_cancel = scxml_invoke_prepare_cancel,
+            .close = scxml_invoke_close,
+            .is_quiescent = scxml_invoke_is_quiescent};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 2u,
+            .internal_event_capacity = 2u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u,
+            .effect_capacity = 1u,
+            .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 2u,
+            .invoke = &adapter,
+            .invoke_user = &probe};
+        cflow_event_view swap = {0};
+        cflow_statechart_instance_stats stats = {0};
+        cflow_scxml_invoke_stats invoke_stats = {0};
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init(&session, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(probe.prepare_start_calls, (size_t)1u);
+        check_true(cflow_scxml_program_event(
+            &program, "swap", 4u, &swap));
+        check_equal(cflow_scxml_session_try_send(&session, &swap),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_RUNTIME_EFFECT_JOURNAL_FULL);
+        check_equal(probe.prepare_cancel_calls, (size_t)0u);
+        check_equal(probe.prepare_start_calls, (size_t)1u);
+        check_true(cflow_scxml_session_get_invoke_stats(
+            &session, &invoke_stats));
+        check_equal(invoke_stats.active, (size_t)1u);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("finalizes matching returned Events before forwarding and selection") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke id='first' autoforward='true'>"
+            "<finalize><log label='finalizing'/><if cond='In(worker)'>"
+            "<log label='active'/></if></finalize></invoke>"
+            "<invoke id='second' autoforward='true'/>"
+            "<transition event='tick'/>"
+            "<transition event='done.invoke.first' target='done'>"
+            "<log label='transition'/></transition></state>"
+            "<final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_session session = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_executor executor = {0};
+        scxml_log_capture capture = {0};
+        scxml_invoke_probe probe = {
+            .quiescent = true, .log_capture = &capture};
+        cflow_scxml_invoke_adapter_v1 adapter = {
+            .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1,
+            .struct_size = sizeof(cflow_scxml_invoke_adapter_v1),
+            .capabilities = CFLOW_SCXML_INVOKE_CAP_START |
+                CFLOW_SCXML_INVOKE_CAP_CANCEL |
+                CFLOW_SCXML_INVOKE_CAP_FORWARD,
+            .prepare_start = scxml_invoke_prepare_start,
+            .prepare_cancel = scxml_invoke_prepare_cancel,
+            .prepare_forward = scxml_invoke_prepare_forward,
+            .close = scxml_invoke_close,
+            .is_quiescent = scxml_invoke_is_quiescent};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 32u,
+            .effect_capacity = 8u,
+            .adapter_internal_event_capacity = 4u,
+            .invocation_capacity = 2u,
+            .invoke = &adapter,
+            .invoke_user = &probe};
+        const tlog_config_t log_config = {
+            .min_level = TURBO_LOG_LEVEL_DEBUG, .buffer_size = 0u};
+        tlog_t *previous_logger = tlog_peek_default();
+        tlog_t *logger = tlog_create(&log_config);
+        turbo_log_sink_t *sink = turbo_sink_callback_create(
+            capture_scxml_log, &capture);
+        cflow_event_view tick = {0};
+        cflow_event_view done = {0};
+        cflow_statechart_instance_stats runtime_stats = {0};
+        cflow_scxml_invoke_stats invoke_stats = {0};
+
+        check_not_null(logger);
+        check_not_null(sink);
+        check_equal(tlog_add_sink(logger, sink), 0);
+        sink = NULL;
+        tlog_set_default(logger);
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init(&session, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(probe.prepare_start_calls, (size_t)2u);
+        check_true(cflow_scxml_program_event(&program, "tick", 4u, &tick));
+        check_equal(cflow_scxml_session_try_send(&session, &tick),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(capture.count, (size_t)0u);
+        check_equal(probe.prepare_forward_calls, (size_t)2u);
+        check_equal(probe.forward_tokens[0], probe.start_tokens[0]);
+        check_equal(probe.forward_tokens[1], probe.start_tokens[1]);
+
+        check_true(cflow_scxml_program_event(
+            &program, "done.invoke.first", 17u, &done));
+        check_equal(cflow_scxml_session_report_invoke_event(
+                        &session, probe.start_tokens[0], &done),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        tlog_flush(logger);
+        check_equal(capture.count, (size_t)3u);
+        check_equal(capture.messages[0], "finalizing");
+        check_equal(capture.messages[1], "active");
+        check_equal(capture.messages[2], "transition");
+        check_true(probe.finalize_seen_before_forward);
+        check_equal(probe.prepare_forward_calls, (size_t)3u);
+        check_equal(probe.forward_tokens[2], probe.start_tokens[1]);
+        check_equal(probe.forward_events[2], done.id);
+        check_true(probe.forward_types[2] == done.payload_type);
+        check_equal(probe.forward_payloads[2], false);
+        check_true(cflow_scxml_session_get_stats(
+            &session, &runtime_stats));
+        check_true(runtime_stats.done);
+        check_true(cflow_scxml_session_get_invoke_stats(
+            &session, &invoke_stats));
+        check_equal(invoke_stats.returned_accepted, UINT64_C(1));
+        check_equal(invoke_stats.returned_rejected, UINT64_C(0));
+        check_equal(invoke_stats.completed, UINT64_C(1));
+        check_equal(invoke_stats.forwarded, UINT64_C(3));
+        check_equal(invoke_stats.active, (size_t)0u);
+        check_equal(invoke_stats.cancelled, UINT64_C(1));
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+        tlog_set_default(previous_logger);
+        if (sink != NULL) turbo_sink_destroy(sink);
+        tlog_destroy(logger);
+    }
+
+    it("drops admitted invoke results whose token became stale") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke id='job'/>"
+            "<transition event='leave' target='idle'/></state>"
+            "<state id='idle'><transition event='done.invoke.job' "
+            "target='bad'/></state><final id='bad'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_session session = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_executor executor = {0};
+        scxml_executor_blocker blocker;
+        scxml_invoke_probe probe = {.quiescent = true};
+        cflow_scxml_invoke_adapter_v1 adapter = {
+            .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1,
+            .struct_size = sizeof(cflow_scxml_invoke_adapter_v1),
+            .capabilities = CFLOW_SCXML_INVOKE_CAP_START |
+                CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            .prepare_start = scxml_invoke_prepare_start,
+            .prepare_cancel = scxml_invoke_prepare_cancel,
+            .close = scxml_invoke_close,
+            .is_quiescent = scxml_invoke_is_quiescent};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 32u,
+            .effect_capacity = 4u,
+            .adapter_internal_event_capacity = 4u,
+            .invocation_capacity = 1u,
+            .invoke = &adapter,
+            .invoke_user = &probe};
+        cflow_event_view leave = {0};
+        cflow_event_view done = {0};
+        cflow_statechart_instance_stats runtime_stats = {0};
+        cflow_scxml_invoke_stats invoke_stats = {0};
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init(&session, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_scxml_program_event(
+            &program, "leave", 5u, &leave));
+        check_true(cflow_scxml_program_event(
+            &program, "done.invoke.job", 15u, &done));
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        check_equal(cflow_executor_try_post(
+                        &executor, scxml_block_executor, &blocker),
+                    CFLOW_ADMISSION_ACCEPTED);
+        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        check_equal(cflow_scxml_session_try_send(&session, &leave),
+                    CFLOW_MAILBOX_OK);
+        check_equal(cflow_scxml_session_report_invoke_event(
+                        &session, probe.start_tokens[0], &done),
+                    CFLOW_MAILBOX_OK);
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(
+            &session, &runtime_stats));
+        check_false(runtime_stats.done);
+        check_equal(probe.prepare_cancel_calls, (size_t)1u);
+        check_true(cflow_scxml_session_get_invoke_stats(
+            &session, &invoke_stats));
+        check_equal(invoke_stats.returned_accepted, UINT64_C(1));
+        check_equal(invoke_stats.returned_rejected, UINT64_C(1));
+        check_equal(cflow_scxml_session_report_invoke_event(
+                        &session, probe.start_tokens[0], &done),
+                    CFLOW_MAILBOX_INVALID_ARGUMENT);
+        check_true(cflow_scxml_session_get_invoke_stats(
+            &session, &invoke_stats));
+        check_equal(invoke_stats.returned_rejected, UINT64_C(2));
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("keeps the current external Event ahead of forward failures") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke id='job' autoforward='true'/>"
+            "<transition event='tick' target='seen'/></state>"
+            "<state id='seen'><transition event='error.communication' "
+            "target='done'/></state><final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_session session = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_executor executor = {0};
+        scxml_invoke_probe probe = {
+            .quiescent = true,
+            .forward_status = CFLOW_SCXML_ADAPTER_ERROR_COMMUNICATION};
+        cflow_scxml_invoke_adapter_v1 adapter = {
+            .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1,
+            .struct_size = sizeof(cflow_scxml_invoke_adapter_v1),
+            .capabilities = CFLOW_SCXML_INVOKE_CAP_START |
+                CFLOW_SCXML_INVOKE_CAP_CANCEL |
+                CFLOW_SCXML_INVOKE_CAP_FORWARD,
+            .prepare_start = scxml_invoke_prepare_start,
+            .prepare_cancel = scxml_invoke_prepare_cancel,
+            .prepare_forward = scxml_invoke_prepare_forward,
+            .close = scxml_invoke_close,
+            .is_quiescent = scxml_invoke_is_quiescent};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 32u,
+            .effect_capacity = 4u,
+            .adapter_internal_event_capacity = 4u,
+            .invocation_capacity = 1u,
+            .invoke = &adapter,
+            .invoke_user = &probe};
+        cflow_event_view tick = {0};
+        cflow_statechart_instance_stats runtime_stats = {0};
+        cflow_scxml_invoke_stats invoke_stats = {0};
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init(&session, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_scxml_program_event(&program, "tick", 4u, &tick));
+        check_equal(cflow_scxml_session_try_send(&session, &tick),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(
+            &session, &runtime_stats));
+        check_true(runtime_stats.done);
+        check_equal(probe.prepare_forward_calls, (size_t)1u);
+        check_true(cflow_scxml_session_get_invoke_stats(
+            &session, &invoke_stats));
+        check_equal(invoke_stats.forwarded, UINT64_C(0));
+        check_equal(invoke_stats.forward_failed, UINT64_C(1));
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("records committed-exit cancellation failures before recovery") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke id='job'/>"
+            "<transition event='leave' target='waiting'/></state>"
+            "<state id='waiting'><transition event='error.communication' "
+            "target='done'/></state><final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_session session = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_executor executor = {0};
+        scxml_invoke_probe probe = {
+            .quiescent = true,
+            .cancel_status = CFLOW_SCXML_ADAPTER_ERROR_COMMUNICATION};
+        cflow_scxml_invoke_adapter_v1 adapter = {
+            .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1,
+            .struct_size = sizeof(cflow_scxml_invoke_adapter_v1),
+            .capabilities = CFLOW_SCXML_INVOKE_CAP_START |
+                CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            .prepare_start = scxml_invoke_prepare_start,
+            .prepare_cancel = scxml_invoke_prepare_cancel,
+            .close = scxml_invoke_close,
+            .is_quiescent = scxml_invoke_is_quiescent};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 32u,
+            .effect_capacity = 4u,
+            .adapter_internal_event_capacity = 4u,
+            .invocation_capacity = 1u,
+            .invoke = &adapter,
+            .invoke_user = &probe};
+        cflow_event_view leave = {0};
+        cflow_statechart_instance_stats runtime_stats = {0};
+        cflow_scxml_invoke_stats invoke_stats = {0};
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init(&session, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_scxml_program_event(
+            &program, "leave", 5u, &leave));
+        check_equal(cflow_scxml_session_try_send(&session, &leave),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(
+            &session, &runtime_stats));
+        check_true(runtime_stats.done);
+        check_true(cflow_scxml_session_get_invoke_stats(
+            &session, &invoke_stats));
+        check_equal(invoke_stats.cancelled, UINT64_C(0));
+        check_equal(invoke_stats.cancel_failed, UINT64_C(1));
+        check_equal(invoke_stats.adapter_error_rejected, UINT64_C(0));
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
 
