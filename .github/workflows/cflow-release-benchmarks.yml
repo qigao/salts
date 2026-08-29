@@ -261,7 +261,7 @@ jobs:
           [string[]]$sourcePayloads = @("64", "1024", "65536")
           $sourceSamples = 100
           $sourceExchanges = 64
-          $sourceControlWindow = 1
+          [int64[]]$sourceControlWindows = @(1, 4, 8, 16, 32, 64)
           $sourceControlSamples = 50
           $sourceControlValues = 4096
 
@@ -282,7 +282,8 @@ jobs:
             "direct_baseline_payload_bytes=$($sourcePayloads -join ',')"
             "direct_baseline_samples=$sourceSamples"
             "direct_baseline_exchanges_per_sample=$sourceExchanges"
-            "io_source_control_window=$sourceControlWindow"
+            "io_source_control_window=$($sourceControlWindows[0])"
+            "io_source_control_windows=$($sourceControlWindows -join ',')"
             "io_source_control_samples=$sourceControlSamples"
             "io_source_control_values_per_sample=$sourceControlValues"
           ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
@@ -413,7 +414,6 @@ jobs:
 
           $env:CFLOW_NETWORK_DRIVER = "actor"
           $env:CFLOW_NETWORK_STAGE_TIMING = "0"
-          $env:CFLOW_IO_SOURCE_WINDOW = $sourceControlWindow.ToString()
           $env:CFLOW_IO_SOURCE_SAMPLES = $sourceControlSamples.ToString()
           $env:CFLOW_IO_SOURCE_VALUES = $sourceControlValues.ToString()
           for ($run = 1; $run -le [int]$env:BENCHMARK_RUNS; ++$run) {
@@ -427,38 +427,44 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               throw "Parallel Reduce benchmark run $run failed with exit code $LASTEXITCODE"
             }
-            $sourceControlRunFile = Join-Path $sourceControlDir `
-              ("run-source-control-{0:D2}.txt" -f $run)
-            & $sourceControlBenchmark --no-color 2>&1 |
-              Tee-Object -FilePath $sourceControlRunFile
-            if ($LASTEXITCODE -ne 0) {
-              throw "IO Source control benchmark run $run failed with exit code $LASTEXITCODE"
+            $orderedSourceControlWindows = @(
+              Get-CflowRotatedOrder -Values $sourceControlWindows -Run $run)
+            foreach ($sourceControlWindow in $orderedSourceControlWindows) {
+              $env:CFLOW_IO_SOURCE_WINDOW = $sourceControlWindow.ToString()
+              $sourceControlRunFile = Join-Path $sourceControlDir `
+                ("run-source-control-w{0}-{1:D2}.txt" -f `
+                  $sourceControlWindow, $run)
+              & $sourceControlBenchmark --no-color 2>&1 |
+                Tee-Object -FilePath $sourceControlRunFile
+              if ($LASTEXITCODE -ne 0) {
+                throw "IO Source control benchmark window $sourceControlWindow run $run failed with exit code $LASTEXITCODE"
+              }
+              $sourceControlReport =
+                ConvertFrom-CflowIoSourceBenchmarkOutput `
+                  -Lines @(Get-Content -LiteralPath $sourceControlRunFile) `
+                  -ExpectedCapacity $sourceControlWindow `
+                  -ExpectedSamples $sourceControlSamples `
+                  -ExpectedValuesPerSample $sourceControlValues `
+                  -BenchmarkRun $run
+              $sourceControlJson =
+                $sourceControlReport | ConvertTo-Json -Compress
+              Add-Content -LiteralPath $sourceControlJsonl `
+                -Value $sourceControlJson
+              Add-Content -LiteralPath $sourceControlSummary -Value `
+                ("| {0} | {1} | {2} | {3} | {4} | {5} | {6:N3} | {7} | {8} | {9} | {10:N6} | {11} |" -f `
+                  $sourceControlReport.benchmark_run,
+                  $sourceControlReport.capacity,
+                  $sourceControlReport.samples,
+                  $sourceControlReport.values_per_sample,
+                  $sourceControlReport.timed_values,
+                  $sourceControlReport.processed_values,
+                  $sourceControlReport.mean_ns_per_value,
+                  $sourceControlReport.drive_calls,
+                  $sourceControlReport.driver_calls,
+                  $sourceControlReport.pending_drive_credit,
+                  $sourceControlReport.drive_calls_per_value,
+                  $sourceControlReport.peak_occupied)
             }
-            $sourceControlReport =
-              ConvertFrom-CflowIoSourceBenchmarkOutput `
-                -Lines @(Get-Content -LiteralPath $sourceControlRunFile) `
-                -ExpectedCapacity $sourceControlWindow `
-                -ExpectedSamples $sourceControlSamples `
-                -ExpectedValuesPerSample $sourceControlValues `
-                -BenchmarkRun $run
-            $sourceControlJson =
-              $sourceControlReport | ConvertTo-Json -Compress
-            Add-Content -LiteralPath $sourceControlJsonl `
-              -Value $sourceControlJson
-            Add-Content -LiteralPath $sourceControlSummary -Value `
-              ("| {0} | {1} | {2} | {3} | {4} | {5} | {6:N3} | {7} | {8} | {9} | {10:N6} | {11} |" -f `
-                $sourceControlReport.benchmark_run,
-                $sourceControlReport.capacity,
-                $sourceControlReport.samples,
-                $sourceControlReport.values_per_sample,
-                $sourceControlReport.timed_values,
-                $sourceControlReport.processed_values,
-                $sourceControlReport.mean_ns_per_value,
-                $sourceControlReport.drive_calls,
-                $sourceControlReport.driver_calls,
-                $sourceControlReport.pending_drive_credit,
-                $sourceControlReport.drive_calls_per_value,
-                $sourceControlReport.peak_occupied)
             $orderedBackends = @(Get-CflowRotatedOrder -Values $networkBackends -Run $run)
             foreach ($backend in $orderedBackends) {
               $backendIndex = [array]::IndexOf($networkBackends, $backend)
@@ -774,27 +780,37 @@ jobs:
           $sourceControlReports = @(
             Get-Content -LiteralPath $sourceControlJsonl |
               ForEach-Object { $_ | ConvertFrom-Json })
-          $sourceControlAggregate = Get-CflowIoSourceSummary `
-            -Reports $sourceControlReports `
-            -ExpectedRuns ([int]$env:BENCHMARK_RUNS)
           "| Window | Runs | Samples/run | Values/sample | Timed values/run | Processed values/run | Median ns/value | Median drive calls | Median driver calls | Median pending drive credit | Median drive calls/value | Median peak occupied |" |
             Set-Content -LiteralPath $sourceControlMedianSummary
           "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
             Add-Content -LiteralPath $sourceControlMedianSummary
-          Add-Content -LiteralPath $sourceControlMedianSummary -Value `
-            ("| {0} | {1} | {2} | {3} | {4} | {5} | {6:N3} | {7:N3} | {8:N3} | {9:N3} | {10:N6} | {11:N3} |" -f `
-              $sourceControlAggregate.capacity,
-              $sourceControlAggregate.runs,
-              $sourceControlAggregate.samples,
-              $sourceControlAggregate.values_per_sample,
-              $sourceControlAggregate.timed_values_per_run,
-              $sourceControlAggregate.processed_values_per_run,
-              $sourceControlAggregate.median_mean_ns_per_value,
-              $sourceControlAggregate.median_drive_calls,
-              $sourceControlAggregate.median_driver_calls,
-              $sourceControlAggregate.median_pending_drive_credit,
-              $sourceControlAggregate.median_drive_calls_per_value,
-              $sourceControlAggregate.median_peak_occupied)
+          $sourceControlGroups = @($sourceControlReports |
+            Group-Object capacity)
+          if ($sourceControlGroups.Count -ne $sourceControlWindows.Count) {
+            throw "Expected $($sourceControlWindows.Count) IO Source window groups, found $($sourceControlGroups.Count)"
+          }
+          foreach ($sourceControlWindow in $sourceControlWindows) {
+            $windowReports = @($sourceControlReports | Where-Object {
+                [int64]$_.capacity -eq $sourceControlWindow
+              })
+            $sourceControlAggregate = Get-CflowIoSourceSummary `
+              -Reports $windowReports `
+              -ExpectedRuns ([int]$env:BENCHMARK_RUNS)
+            Add-Content -LiteralPath $sourceControlMedianSummary -Value `
+              ("| {0} | {1} | {2} | {3} | {4} | {5} | {6:N3} | {7:N3} | {8:N3} | {9:N3} | {10:N6} | {11:N3} |" -f `
+                $sourceControlAggregate.capacity,
+                $sourceControlAggregate.runs,
+                $sourceControlAggregate.samples,
+                $sourceControlAggregate.values_per_sample,
+                $sourceControlAggregate.timed_values_per_run,
+                $sourceControlAggregate.processed_values_per_run,
+                $sourceControlAggregate.median_mean_ns_per_value,
+                $sourceControlAggregate.median_drive_calls,
+                $sourceControlAggregate.median_driver_calls,
+                $sourceControlAggregate.median_pending_drive_credit,
+                $sourceControlAggregate.median_drive_calls_per_value,
+                $sourceControlAggregate.median_peak_occupied)
+          }
 
           $baselineReports = @(Get-Content -LiteralPath $baselineJsonl |
             ForEach-Object { $_ | ConvertFrom-Json })
@@ -928,7 +944,7 @@ jobs:
           Add-Content -LiteralPath $summary -Value ""
           Add-Content -LiteralPath $summary -Value "### Windowed IO Source control path"
           Add-Content -LiteralPath $summary -Value ""
-          Add-Content -LiteralPath $summary -Value "Each run measures $sourceControlSamples timed samples of $sourceControlValues values at window $sourceControlWindow. Processed values and callback counts include the benchmark's single untimed warm-up sample; timed values and mean ns/value exclude it."
+          Add-Content -LiteralPath $summary -Value "Each run measures $sourceControlSamples timed samples of $sourceControlValues values at windows $($sourceControlWindows -join ', '). Window order rotates by run. Processed values and callback counts include each benchmark's single untimed warm-up sample; timed values and mean ns/value exclude it."
           Add-Content -LiteralPath $summary -Value ""
           Get-Content -LiteralPath $sourceControlMedianSummary |
             Add-Content -LiteralPath $summary
