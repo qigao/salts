@@ -2,6 +2,22 @@
 
 Status: Accepted for Increment C foundation
 
+## Implementation status
+
+The managed CMeta extended-state lifecycle is implemented in CFlow. The
+private CFlowScxml scalar-expression foundation now compiles Boolean, numeric,
+enum, reflected struct-field, comparison, logical, and `In("state")`
+expressions into bounded immutable QueryVM programs and evaluates them without
+runtime allocation. Logical conjunction and disjunction short circuit.
+
+This foundation does not yet admit `datamodel="cmeta"` through the public SCXML
+compiler or session API. Public schema/initial-state configuration,
+transactional `<assign>` bindings, system variables, string reads, sequence
+descriptors and indices, `<foreach>`, and structured CBind/CSerde input remain
+separate implementation increments. In particular, string and sequence
+expressions stay rejected until CMeta exposes explicit read/traversal and
+lifetime contracts; no private storage convention is inferred by CFlowScxml.
+
 ## Context
 
 Issue #122 leaves the first non-null SCXML data model as an explicit design

@@ -11,3 +11,14 @@ set_target_properties(cflow_scxml_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+cmake_add_test(cflow_scxml_cmeta_expr_test
+  SOURCES cflow_scxml_cmeta_expr_test.c
+  LIBS TurboUtils::CFlowScxml TurboUtils::CMeta TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  FOLDER "cflow-scxml/tests")
+
+set_target_properties(cflow_scxml_cmeta_expr_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
