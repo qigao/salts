@@ -758,7 +758,7 @@ jobs:
                   $waitMode = "blocking"
                   $env:CFLOW_NETWORK_WAIT_MODE = $waitMode
                   $executionOrder = @(Get-CflowSourceWindowOrder `
-                    -SourceWindows @([int64]1) -Run $run `
+                    -SourceWindows @([int64]2) -Run $run `
                     -WaitMode $waitMode `
                     -BackendIndex ($backendIndex + $protocolIndex) `
                     -PayloadIndex $payloadIndex)
@@ -768,10 +768,10 @@ jobs:
                       $sourceWindow = [int64]0
                       Remove-Item Env:CFLOW_NETWORK_SOURCE_WINDOW `
                         -ErrorAction SilentlyContinue
-                    } elseif ($execution -eq "source-1") {
+                    } elseif ($execution -eq "source-2") {
                       $driver = "source"
-                      $sourceWindow = [int64]1
-                      $env:CFLOW_NETWORK_SOURCE_WINDOW = "1"
+                      $sourceWindow = [int64]2
+                      $env:CFLOW_NETWORK_SOURCE_WINDOW = "2"
                     } else {
                       throw "Unknown Source diagnostic execution: $execution"
                     }
