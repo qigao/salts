@@ -10,6 +10,7 @@
 
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 bool cflow_executor_is_current_internal(const cflow_executor *executor);
@@ -576,6 +577,219 @@ static bool initial_entry_binding(
     return true;
 }
 
+typedef struct managed_state_value {
+    int *resource;
+} managed_state_value;
+
+static size_t managed_state_copy_attempts;
+static size_t managed_state_copies;
+static size_t managed_state_destroys;
+static size_t managed_state_live_resources;
+static size_t managed_state_fail_copy_at;
+
+static void managed_state_reset(void) {
+    managed_state_copy_attempts = 0u;
+    managed_state_copies = 0u;
+    managed_state_destroys = 0u;
+    managed_state_live_resources = 0u;
+    managed_state_fail_copy_at = SIZE_MAX;
+}
+
+static managed_state_value managed_state_make(int value) {
+    managed_state_value result = {0};
+    result.resource = (int *)malloc(sizeof(*result.resource));
+    if (result.resource != NULL) {
+        *result.resource = value;
+        ++managed_state_live_resources;
+    }
+    return result;
+}
+
+static bool managed_state_copy(void *destination_, const void *source_) {
+    managed_state_value *destination =
+        (managed_state_value *)destination_;
+    const managed_state_value *source =
+        (const managed_state_value *)source_;
+    const size_t attempt = managed_state_copy_attempts++;
+    destination->resource = NULL;
+    if (attempt == managed_state_fail_copy_at) return false;
+    if (source->resource != NULL) {
+        destination->resource =
+            (int *)malloc(sizeof(*destination->resource));
+        if (destination->resource == NULL) return false;
+        *destination->resource = *source->resource;
+        ++managed_state_live_resources;
+    }
+    ++managed_state_copies;
+    return true;
+}
+
+static void managed_state_move(void *destination_, void *source_) {
+    managed_state_value *destination =
+        (managed_state_value *)destination_;
+    managed_state_value *source = (managed_state_value *)source_;
+    destination->resource = source->resource;
+    source->resource = NULL;
+}
+
+static void managed_state_destroy(void *value_) {
+    managed_state_value *value = (managed_state_value *)value_;
+    if (value->resource != NULL) {
+        free(value->resource);
+        value->resource = NULL;
+        --managed_state_live_resources;
+    }
+    ++managed_state_destroys;
+}
+
+static const cmeta_type_traits managed_state_traits = {
+    .flags = CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
+    .copy_construct = managed_state_copy,
+    .move_construct = managed_state_move,
+    .destroy = managed_state_destroy};
+
+static const cmeta_type_desc managed_state_type = {
+    .name = "managed_state_value",
+    .size = sizeof(managed_state_value),
+    .align = _Alignof(managed_state_value),
+    .kind = CMETA_T_OBJECT,
+    .traits = &managed_state_traits};
+
+static cflow_statechart_runtime_status managed_state_fixture_init(
+    runtime_fixture *fixture, const managed_state_value *initial_state) {
+    cflow_statechart_instance_config config;
+    nested_compound_fixture(fixture);
+    fixture->definition.state_type = &managed_state_type;
+    check_equal(cflow_statechart_build(
+                    &fixture->statechart, &fixture->definition),
+                CFLOW_STATECHART_OK);
+    check_true(cflow_executor_serial_init(&fixture->executor));
+    config = (cflow_statechart_instance_config){
+        .statechart = &fixture->statechart,
+        .initial_state = initial_state,
+        .external_event_capacity = 4u,
+        .internal_event_capacity = 4u,
+        .completion_capacity = 4u,
+        .microstep_limit = 64u,
+        .executor = &fixture->executor};
+    return cflow_statechart_instance_init(&fixture->instance, &config);
+}
+
+typedef struct managed_action_probe {
+    int observed[4];
+    size_t calls;
+    size_t fail_at;
+    size_t cancel_at;
+    cflow_statechart_instance *instance;
+} managed_action_probe;
+
+static bool managed_state_action(
+    void *user, cflow_statechart_action_phase phase,
+    cflow_machine_state_id owner, const void *state,
+    const cflow_event_view *event, void *out_state,
+    cflow_statechart_raise_fn raise_internal, void *raise_user,
+    const char **out_error) {
+    managed_action_probe *probe = (managed_action_probe *)user;
+    const managed_state_value *current =
+        (const managed_state_value *)state;
+    managed_state_value next;
+    size_t call;
+    (void)phase;
+    (void)owner;
+    (void)event;
+    (void)raise_internal;
+    (void)raise_user;
+    if (probe == NULL || current == NULL || current->resource == NULL ||
+        out_state == NULL || out_error == NULL || probe->calls >= 4u)
+        return false;
+    call = probe->calls++;
+    probe->observed[call] = *current->resource;
+    if (call == probe->fail_at) {
+        *out_error = "managed action failure";
+        return false;
+    }
+    next = managed_state_make(*current->resource + 1);
+    if (next.resource == NULL) {
+        *out_error = "managed action allocation failed";
+        return false;
+    }
+    *(managed_state_value *)out_state = next;
+    if (call == probe->cancel_at && probe->instance != NULL)
+        cflow_statechart_instance_cancel(probe->instance);
+    *out_error = NULL;
+    return true;
+}
+
+static cflow_statechart_runtime_status managed_action_fixture_init(
+    runtime_fixture *fixture, const managed_state_value *initial_state,
+    managed_action_probe *probe) {
+    static const cflow_event_type events[] = {
+        {7u, &cmeta_type_int}};
+    static const cflow_statechart_executable executables[] = {
+        {20u, &managed_state_type,
+         CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL,
+         CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS},
+        {21u, &managed_state_type,
+         CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL,
+         CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS}};
+    static const cflow_statechart_transition_action transition_actions[] = {
+        {11u, 20u, 0u}, {11u, 21u, 1u}};
+    const cflow_statechart_executable_binding bindings[] = {
+        {20u, managed_state_action, probe},
+        {21u, managed_state_action, probe}};
+    cflow_statechart_instance_config config;
+    memset(fixture, 0, sizeof(*fixture));
+    fixture->states[0] = (cflow_statechart_state){
+        1u, 0u, CFLOW_STATECHART_COMPOUND, 0u};
+    fixture->states[1] = (cflow_statechart_state){
+        2u, 1u, CFLOW_STATECHART_INITIAL, 1u};
+    fixture->states[2] = (cflow_statechart_state){
+        3u, 1u, CFLOW_STATECHART_ATOMIC, 2u};
+    fixture->transitions[0] = (cflow_statechart_transition){
+        10u, 2u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 3u,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u};
+    fixture->transitions[1] = (cflow_statechart_transition){
+        11u, 3u, CFLOW_STATECHART_TRIGGER_EVENT, 7u, 0u, 0u, 0u,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u};
+    fixture->definition = (cflow_statechart_definition){
+        .state_type = &managed_state_type,
+        .states = fixture->states,
+        .state_count = 3u,
+        .events = events,
+        .event_count = 1u,
+        .executables = executables,
+        .executable_count = 2u,
+        .transitions = fixture->transitions,
+        .transition_count = 2u,
+        .transition_actions = transition_actions,
+        .transition_action_count = 2u};
+    check_equal(cflow_statechart_build(
+                    &fixture->statechart, &fixture->definition),
+                CFLOW_STATECHART_OK);
+    check_true(cflow_executor_serial_init(&fixture->executor));
+    config = (cflow_statechart_instance_config){
+        .statechart = &fixture->statechart,
+        .initial_state = initial_state,
+        .executables = bindings,
+        .executable_count = 2u,
+        .external_event_capacity = 4u,
+        .internal_event_capacity = 4u,
+        .completion_capacity = 4u,
+        .microstep_limit = 64u,
+        .executor = &fixture->executor};
+    return cflow_statechart_instance_init(&fixture->instance, &config);
+}
+
+static void managed_action_send(runtime_fixture *fixture) {
+    const int payload = 1;
+    const cflow_event_view event = {
+        7u, &cmeta_type_int, &payload};
+    check_equal(cflow_statechart_instance_try_send(
+                    &fixture->instance, &event),
+                CFLOW_MAILBOX_OK);
+    check_true(cflow_executor_wait_idle(&fixture->executor));
+}
+
 suite("CFlow Statechart runtime initial configuration") {
     it("enters nested compound defaults and projects its sole leaf") {
         runtime_fixture fixture;
@@ -923,14 +1137,184 @@ suite("CFlow Statechart runtime initial configuration") {
         cflow_statechart_destroy(&fixture.statechart);
     }
 
-    it("rejects nontrivial extended state without publishing an instance") {
-        static const cmeta_type_desc nontrivial_state_type = {
-            "nontrivial_state", sizeof(int), _Alignof(int),
-            CMETA_T_OBJECT, NULL, NULL, NULL};
+    it("owns independent managed initial-state copies") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+
+        check_equal(managed_state_fixture_init(&fixture, &initial_state),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(managed_state_copies, (size_t)2u);
+        check_equal(managed_state_live_resources, (size_t)3u);
+        runtime_fixture_destroy(&fixture);
+        check_equal(managed_state_live_resources, (size_t)1u);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+        check_equal(managed_state_destroys, (size_t)3u);
+    }
+
+    it("rolls back managed initial-state copies when construction fails") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_state_reset();
+        initial_state = managed_state_make(73);
+        check_not_null(initial_state.resource);
+        managed_state_fail_copy_at = 1u;
+
+        check_equal(managed_state_fixture_init(&fixture, &initial_state),
+                    CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED);
+        check_null(fixture.instance.impl);
+        check_equal(managed_state_copy_attempts, (size_t)2u);
+        check_equal(managed_state_copies, (size_t)1u);
+        check_equal(managed_state_live_resources, (size_t)1u);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+        check_equal(managed_state_destroys, (size_t)2u);
+    }
+
+    it("publishes managed state across both action buffer directions") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_action_probe probe = {
+            .fail_at = SIZE_MAX, .cancel_at = SIZE_MAX};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_action_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_RUNTIME_OK);
+
+        managed_action_send(&fixture);
+        check_equal(probe.calls, (size_t)2u);
+        check_equal(probe.observed[0], 41);
+        check_equal(probe.observed[1], 42);
+        check_equal(managed_state_live_resources, (size_t)3u);
+
+        probe.fail_at = 2u;
+        managed_action_send(&fixture);
+        check_equal(probe.calls, (size_t)3u);
+        check_equal(probe.observed[2], 43);
+        check_equal(managed_state_live_resources, (size_t)2u);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("rolls back managed output when a later action fails") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_action_probe probe = {
+            .fail_at = 1u, .cancel_at = SIZE_MAX};
+        cflow_statechart_instance_stats stats = {0};
+        managed_state_reset();
+        initial_state = managed_state_make(19);
+        check_not_null(initial_state.resource);
+        check_equal(managed_action_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_RUNTIME_OK);
+
+        managed_action_send(&fixture);
+        check_equal(probe.calls, (size_t)2u);
+        check_equal(probe.observed[0], 19);
+        check_equal(probe.observed[1], 20);
+        check_equal(managed_state_live_resources, (size_t)2u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.external_failed, UINT64_C(1));
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("destroys managed transaction state when cancellation wins") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_action_probe probe = {
+            .fail_at = SIZE_MAX, .cancel_at = 0u};
+        cflow_statechart_instance_stats stats = {0};
+        managed_state_reset();
+        initial_state = managed_state_make(23);
+        check_not_null(initial_state.resource);
+        check_equal(managed_action_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        probe.instance = &fixture.instance;
+
+        managed_action_send(&fixture);
+        check_equal(probe.calls, (size_t)2u);
+        check_equal(managed_state_live_resources, (size_t)2u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.cancelled);
+        check_equal(stats.external_cancelled, UINT64_C(1));
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("keeps managed published state when staging copy fails") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_action_probe probe = {
+            .fail_at = SIZE_MAX, .cancel_at = SIZE_MAX};
+        cflow_statechart_instance_stats stats = {0};
+        managed_state_reset();
+        initial_state = managed_state_make(29);
+        check_not_null(initial_state.resource);
+        check_equal(managed_action_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        managed_state_fail_copy_at = managed_state_copy_attempts;
+
+        managed_action_send(&fixture);
+        check_equal(probe.calls, (size_t)0u);
+        check_equal(managed_state_live_resources, (size_t)2u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("does not expose a shallow snapshot of managed state") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_state_value output = {
+            (int *)(uintptr_t)UINT64_C(0x1234)};
+        const cmeta_type_desc *type = &cmeta_type_int;
+        managed_state_reset();
+        initial_state = managed_state_make(7);
+        check_not_null(initial_state.resource);
+        check_equal(managed_state_fixture_init(&fixture, &initial_state),
+                    CFLOW_STATECHART_RUNTIME_OK);
+
+        check_false(cflow_statechart_instance_copy_state(
+            &fixture.instance, &type, &output, sizeof(output)));
+        check_null(type);
+        check_equal((uintptr_t)output.resource,
+                    (uintptr_t)UINT64_C(0x1234));
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("rejects state without trivial or complete lifecycle traits") {
+        static const cmeta_type_desc incomplete_state_type = {
+            .name = "incomplete_state",
+            .size = sizeof(int),
+            .align = _Alignof(int),
+            .kind = CMETA_T_OBJECT};
         runtime_fixture fixture;
         cflow_statechart_instance_config config;
         nested_compound_fixture(&fixture);
-        fixture.definition.state_type = &nontrivial_state_type;
+        fixture.definition.state_type = &incomplete_state_type;
         check_equal(cflow_statechart_build(
                         &fixture.statechart, &fixture.definition),
                     CFLOW_STATECHART_OK);
