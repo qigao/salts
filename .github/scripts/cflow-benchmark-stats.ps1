@@ -1901,12 +1901,15 @@ function Get-CflowTransportPayloadLabel {
 function Format-CflowTransportNumber {
   param(
     [Parameter(Mandatory = $true)]
-    [double]$Value
+    [double]$Value,
+
+    [switch]$AllowZero
   )
 
   if ([double]::IsNaN($Value) -or [double]::IsInfinity($Value) -or
-      $Value -le 0.0) {
-    throw "Transport report values must be finite and positive"
+      $Value -lt 0.0 -or (-not $AllowZero -and $Value -eq 0.0)) {
+    $requirement = if ($AllowZero) { "non-negative" } else { "positive" }
+    throw "Transport report values must be finite and $requirement"
   }
   return $Value.ToString("N3", [cultureinfo]::InvariantCulture)
 }
@@ -2094,7 +2097,11 @@ function Format-CflowHandoffReport {
               throw "Handoff comparison is missing $field for $protocol/$backend/$($comparison.payload_bytes)"
             }
           }
-          $lines += "| $payloadLabel | $driver | $(Format-CflowTransportNumber $comparison."${prefix}_median_dispatch_mean_ns") | $(Format-CflowTransportNumber $comparison."${prefix}_median_executor_mean_ns") | $(Format-CflowTransportNumber $comparison."${prefix}_median_drive_residual_mean_ns") | $(Format-CflowTransportNumber $comparison."${prefix}_median_completion_ready_mean_ns") | $(Format-CflowTransportNumber $comparison."${prefix}_median_wake_resume_mean_ns") | $(Format-CflowTransportNumber $comparison."${prefix}_median_wait_residual_mean_ns") |"
+          $formatted = @($required | ForEach-Object {
+              Format-CflowTransportNumber -Value ([double]$comparison.$_) `
+                -AllowZero
+            })
+          $lines += "| $payloadLabel | $driver | $($formatted -join ' | ') |"
         }
       }
     }

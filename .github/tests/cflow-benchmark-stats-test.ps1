@@ -89,6 +89,10 @@ Assert-Equal (Get-CflowMedian -Values @(3.0, 1.0, 2.0)) 2.0 `
 Assert-Equal (Get-CflowMedian -Values @(3.0, 1.0)) 2.0 `
   "even median"
 Assert-Throws { Get-CflowMedian -Values @() } "empty median"
+Assert-ThrowsLike { Format-CflowTransportNumber -Value 0.0 } `
+  "*finite and positive*" "transport formatter still rejects zero"
+Assert-ThrowsLike { Format-CflowTransportNumber -Value -0.1 -AllowZero } `
+  "*finite and non-negative*" "handoff formatter rejects negative values"
 
 $validStageTiming = [pscustomobject]@{
   stage_timing=$true; stage_timing_version=2; io_operations=4
@@ -373,6 +377,12 @@ Assert-Equal ($handoffTable -match "\| Actor \| 9") $true `
   "handoff table Actor dispatch value"
 Assert-Equal ($handoffTable -match "Completion ready") $true `
   "handoff table wait boundary header"
+$zeroHandoffSummary = $summary.psobject.Copy()
+$zeroHandoffSummary.actor_median_wait_residual_mean_ns = 0.0
+$zeroHandoffTable = Format-CflowHandoffReport `
+  -Comparisons @($zeroHandoffSummary) -Backends @("epoll") -Protocols @("tcp")
+Assert-Equal ($zeroHandoffTable -match "\| Actor \| .* \| 0\.000 \|") $true `
+  "handoff table accepts a timer-quantized zero stage"
 $udpHandoffSummary = $summary.psobject.Copy()
 $udpHandoffSummary.protocol = "udp"
 $splitHandoffTable = Format-CflowHandoffReport `
