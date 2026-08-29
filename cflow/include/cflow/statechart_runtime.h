@@ -70,6 +70,26 @@ typedef bool (*cflow_statechart_executable_fn)(void *user,
 typedef bool (*cflow_statechart_is_active_fn)(void *user,
     cflow_machine_state_id state);
 
+/** Borrowed arguments for one contextual guard callback. */
+typedef struct cflow_statechart_guard_context {
+    const void *state;
+    /** Non-NULL only while selecting an Event-triggered transition. */
+    const cflow_event_view *event;
+    /** Valid only until the contextual guard returns. */
+    cflow_statechart_is_active_fn is_active;
+    void *configuration_user;
+} cflow_statechart_guard_context;
+
+/**
+ * Evaluate one guard with a call-scoped active-configuration query.
+ * State, Event, enabled, error, and no-retention rules are identical to
+ * `cflow_statechart_guard_fn`. The context and every borrowed member are
+ * invalid after return and must not be retained.
+ */
+typedef bool (*cflow_statechart_contextual_guard_fn)(
+    void *user, const cflow_statechart_guard_context *context,
+    bool *out_enabled, const char **out_error);
+
 /** Borrowed arguments for one contextual executable callback. */
 typedef struct cflow_statechart_executable_context {
     cflow_statechart_action_phase phase;
@@ -98,6 +118,8 @@ typedef struct cflow_statechart_guard_binding {
     cflow_statechart_guard_id id;
     cflow_statechart_guard_fn fn;
     void *user;
+    /** Exactly one of `fn` and `contextual_fn` must be non-NULL. */
+    cflow_statechart_contextual_guard_fn contextual_fn;
 } cflow_statechart_guard_binding;
 
 typedef struct cflow_statechart_executable_binding {

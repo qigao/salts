@@ -35,6 +35,16 @@ typedef struct selection_guard_probe {
     const char *error;
 } selection_guard_probe;
 
+typedef struct contextual_selection_guard_probe {
+    cflow_machine_state_id active_state;
+    cflow_machine_state_id inactive_state;
+    cflow_machine_state_id pseudo_state;
+    bool expect_event;
+    bool enabled;
+    bool observations_valid;
+    size_t calls;
+} contextual_selection_guard_probe;
+
 typedef struct selection_error_reader_probe {
     const cflow_statechart_instance *instance;
     atomic_bool started;
@@ -247,6 +257,52 @@ static bool guard_binding_disabled(void *user, const void *state,
     if (out_enabled == NULL || out_error == NULL) return false;
     if (user != NULL) atomic_fetch_add((atomic_int *)user, 1);
     *out_enabled = false;
+    *out_error = NULL;
+    return true;
+}
+
+static bool contextual_guard_binding_disabled(
+    void *user, const cflow_statechart_guard_context *context,
+    bool *out_enabled, const char **out_error) {
+    if (context == NULL || context->state == NULL || out_enabled == NULL ||
+        out_error == NULL) {
+        return false;
+    }
+    if (user != NULL) atomic_fetch_add((atomic_int *)user, 1);
+    *out_enabled = false;
+    *out_error = NULL;
+    return true;
+}
+
+static bool contextual_selection_guard(
+    void *user, const cflow_statechart_guard_context *context,
+    bool *out_enabled, const char **out_error) {
+    contextual_selection_guard_probe *probe =
+        (contextual_selection_guard_probe *)user;
+    const bool event_valid = probe != NULL &&
+        (probe->expect_event
+             ? context != NULL && context->event != NULL &&
+                   context->event->id == 100u &&
+                   context->event->payload_type == &cmeta_type_int &&
+                   context->event->payload != NULL &&
+                   *(const int *)context->event->payload == 7
+             : context != NULL && context->event == NULL);
+    if (probe == NULL || context == NULL || context->state == NULL ||
+        context->is_active == NULL || context->configuration_user == NULL ||
+        out_enabled == NULL || out_error == NULL) {
+        return false;
+    }
+    probe->observations_valid = event_valid &&
+        *(const int *)context->state == 41 &&
+        context->is_active(context->configuration_user,
+                           probe->active_state) &&
+        !context->is_active(context->configuration_user,
+                            probe->inactive_state) &&
+        !context->is_active(context->configuration_user,
+                            probe->pseudo_state) &&
+        !context->is_active(context->configuration_user, 999999u);
+    ++probe->calls;
+    *out_enabled = probe->enabled;
     *out_error = NULL;
     return true;
 }
@@ -1189,9 +1245,164 @@ suite("CFlow Statechart runtime initial configuration") {
         cflow_executor_destroy(&fixture.executor);
         cflow_statechart_destroy(&fixture.statechart);
     }
+
+    it("admits exactly one legacy or contextual guard callback") {
+        runtime_fixture fixture;
+        const cflow_statechart_guard declaration = {
+            300u, &cmeta_type_int, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        atomic_int calls;
+        const cflow_statechart_guard_binding legacy = {
+            300u, guard_binding_disabled, &calls};
+        const cflow_statechart_guard_binding contextual = {
+            .id = 300u,
+            .user = &calls,
+            .contextual_fn = contextual_guard_binding_disabled};
+        const cflow_statechart_guard_binding neither = {
+            .id = 300u, .user = &calls};
+        const cflow_statechart_guard_binding both = {
+            .id = 300u,
+            .fn = guard_binding_disabled,
+            .user = &calls,
+            .contextual_fn = contextual_guard_binding_disabled};
+        cflow_statechart_instance_config config;
+        atomic_init(&calls, 0);
+        selection_fixture(&fixture);
+        fixture.guards[0] = declaration;
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                             300u, 0u, 0u);
+        fixture.definition.transitions = fixture.transitions;
+        check_equal(
+            cflow_statechart_build(&fixture.statechart, &fixture.definition),
+            CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&fixture.executor));
+        config = (cflow_statechart_instance_config){
+            .statechart = &fixture.statechart,
+            .initial_state = &fixture.initial_state,
+            .guards = &legacy,
+            .guard_count = 1u,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 64u,
+            .executor = &fixture.executor};
+
+        check_equal(
+            cflow_statechart_instance_init(&fixture.instance, &config),
+            CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_destroy(&fixture.instance),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        config.guards = &contextual;
+        check_equal(
+            cflow_statechart_instance_init(&fixture.instance, &config),
+            CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_destroy(&fixture.instance),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        config.guards = &neither;
+        check_equal(
+            cflow_statechart_instance_init(&fixture.instance, &config),
+            CFLOW_STATECHART_RUNTIME_BINDING_MISMATCH);
+        check_null(fixture.instance.impl);
+        config.guards = &both;
+        check_equal(
+            cflow_statechart_instance_init(&fixture.instance, &config),
+            CFLOW_STATECHART_RUNTIME_BINDING_MISMATCH);
+        check_null(fixture.instance.impl);
+        check_equal(atomic_load(&calls), 0);
+        cflow_executor_destroy(&fixture.executor);
+        cflow_statechart_destroy(&fixture.statechart);
+    }
 }
 
 suite("CFlow Statechart deterministic transition selection") {
+    it("queries the published configuration from an Event contextual guard") {
+        runtime_fixture fixture;
+        contextual_selection_guard_probe probe = {
+            SELECTION_LEFT_LEAF, SELECTION_LEFT_FINAL,
+            SELECTION_LEFT_INITIAL, true, true, false, 0u};
+        const cflow_statechart_guard_binding binding = {
+            .id = 300u,
+            .user = &probe,
+            .contextual_fn = contextual_selection_guard};
+        cflow_statechart_selection_snapshot selected = {0};
+        selection_fixture(&fixture);
+        fixture.guards[0] = (cflow_statechart_guard){
+            300u, &cmeta_type_int, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                             300u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, &binding, 1u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)1u);
+        check_equal(selected.transition_ids[0],
+                    (cflow_statechart_transition_id)200u);
+        check_equal(probe.calls, (size_t)1u);
+        check_true(probe.observations_valid);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("passes no Event to an eventless contextual guard") {
+        runtime_fixture fixture;
+        contextual_selection_guard_probe probe = {
+            SELECTION_RIGHT_LEAF, SELECTION_LEFT_FINAL,
+            SELECTION_RIGHT_INITIAL, false, false, false, 0u};
+        const cflow_statechart_guard_binding binding = {
+            .id = 300u,
+            .user = &probe,
+            .contextual_fn = contextual_selection_guard};
+        selection_fixture(&fixture);
+        fixture.guards[0] = (cflow_statechart_guard){
+            300u, &cmeta_type_int, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        add_eventless_transition(&fixture, 200u, SELECTION_RIGHT_LEAF,
+                                 300u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, &binding, 1u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(probe.calls >= (size_t)1u);
+        check_true(probe.observations_valid);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("passes no Event to a completion contextual guard") {
+        runtime_fixture fixture;
+        contextual_selection_guard_probe probe = {
+            SELECTION_ROOT, SELECTION_LEFT_FINAL,
+            SELECTION_LEFT_INITIAL, false, true, false, 0u};
+        const cflow_statechart_guard_binding binding = {
+            .id = 300u,
+            .user = &probe,
+            .contextual_fn = contextual_selection_guard};
+        cflow_statechart_selection_snapshot selected = {0};
+        selection_fixture(&fixture);
+        fixture.guards[0] = (cflow_statechart_guard){
+            300u, &cmeta_type_int, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        add_completion_transition(
+            &fixture, 200u, SELECTION_ROOT, SELECTION_LEFT_REGION,
+            300u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, &binding, 1u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(select_completion(
+                        &fixture, SELECTION_LEFT_REGION, &selected),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(selected.transition_count, (size_t)1u);
+        check_equal(selected.transition_ids[0],
+                    (cflow_statechart_transition_id)200u);
+        check_true(probe.calls >= (size_t)1u);
+        check_true(probe.observations_valid);
+        runtime_fixture_destroy(&fixture);
+    }
+
     it("selects compatible transitions from both parallel regions") {
         runtime_fixture fixture;
         cflow_statechart_selection_snapshot selected = {0};

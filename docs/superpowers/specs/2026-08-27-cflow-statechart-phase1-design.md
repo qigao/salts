@@ -241,6 +241,12 @@ The selected ordered set is immutable for the microstep. Guards are evaluated
 against the same published extended-state snapshot. No transition action runs
 until conflict filtering finishes.
 
+Contextual guard bindings may additionally query the same immutable published
+configuration used by selection. The query is call-scoped, returns false for
+unknown and pseudo-state IDs, and cannot expose or retain the instance-owned
+configuration bitset. Legacy guard callbacks retain their existing signature
+and behavior.
+
 ## Microstep and macrostep
 
 A microstep executes one selected transition set in three global phases:

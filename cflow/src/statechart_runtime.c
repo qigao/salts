@@ -579,7 +579,8 @@ static cflow_statechart_runtime_status copy_bindings(
                   compare_guard_binding);
         for (index = 0u; index < config->guard_count; ++index) {
             if (impl->guards[index].id != impl->ir->guards[index].id ||
-                impl->guards[index].fn == NULL)
+                (impl->guards[index].fn == NULL) ==
+                    (impl->guards[index].contextual_fn == NULL))
                 return CFLOW_STATECHART_RUNTIME_BINDING_MISMATCH;
         }
     }
@@ -1299,6 +1300,24 @@ static bool trigger_matches(const cflow_statechart_transition *transition,
     return true;
 }
 
+typedef struct statechart_configuration_query {
+    const cflow_statechart_instance_impl *impl;
+    const unsigned char *bits;
+} statechart_configuration_query;
+
+static bool configuration_query_is_active(
+    void *user, cflow_machine_state_id state) {
+    const statechart_configuration_query *query =
+        (const statechart_configuration_query *)user;
+    size_t state_index;
+    if (query == NULL || query->impl == NULL || query->bits == NULL)
+        return false;
+    state_index = find_state_index(query->impl->ir, state);
+    return state_index != SIZE_MAX &&
+           !pseudo_kind(query->impl->ir->states[state_index].kind) &&
+           bit_test(query->bits, state_index);
+}
+
 static cflow_statechart_runtime_status guard_enabled(
     cflow_statechart_instance_impl *impl,
     const cflow_statechart_transition *transition,
@@ -1308,6 +1327,7 @@ static cflow_statechart_runtime_status guard_enabled(
     const cflow_statechart_guard_binding *binding;
     const char *error = NULL;
     bool enabled = false;
+    bool succeeded;
     if (transition->guard == 0u) {
         *out_enabled = true;
         return CFLOW_STATECHART_RUNTIME_OK;
@@ -1320,11 +1340,25 @@ static cflow_statechart_runtime_status guard_enabled(
             "Statechart guard binding is missing");
         return CFLOW_STATECHART_RUNTIME_GUARD_FAILED;
     }
-    if (!binding->fn(binding->user,
-                     impl->extended_states[impl->published],
-                     trigger->kind == CFLOW_STATECHART_TRIGGER_EVENT
-                         ? trigger->event : NULL,
-                     &enabled, &error)) {
+    if (binding->contextual_fn != NULL) {
+        const statechart_configuration_query query = {
+            impl, impl->configurations[impl->published].bits};
+        const cflow_statechart_guard_context context = {
+            impl->extended_states[impl->published],
+            trigger->kind == CFLOW_STATECHART_TRIGGER_EVENT
+                ? trigger->event : NULL,
+            configuration_query_is_active,
+            (void *)&query};
+        succeeded = binding->contextual_fn(
+            binding->user, &context, &enabled, &error);
+    } else {
+        succeeded = binding->fn(
+            binding->user, impl->extended_states[impl->published],
+            trigger->kind == CFLOW_STATECHART_TRIGGER_EVENT
+                ? trigger->event : NULL,
+            &enabled, &error);
+    }
+    if (!succeeded) {
         latch_terminal_failure(
             impl, CFLOW_STATECHART_RUNTIME_GUARD_FAILED,
             (declaration->effects & CMETA_EFFECT_MAY_FAIL) != 0u
