@@ -91,6 +91,14 @@ filtering and delivery are observability behavior, not Statechart transaction
 state. The callback then advances to the next step exactly as it does for a
 successful raise or conditional.
 
+The application owns the default logger. tlog synchronizes access to the
+default pointer but does not retain the pointed-to logger, so an installed
+logger must remain alive until every executor that could run an SCXML `log`
+step is quiescent. Concurrent replacement followed by destruction while a
+default-log call is in flight violates the tlog object-lifetime contract; the
+SCXML frontend neither acquires ownership nor attempts to repair that invalid
+lifecycle.
+
 An executable block containing at least one log step adds `CMETA_EFFECT_IO` to
 its existing `CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL` descriptor. It
 retains deterministic/no-alias properties because document-order calls and

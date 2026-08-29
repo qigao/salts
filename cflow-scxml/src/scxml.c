@@ -511,6 +511,12 @@ static cflow_scxml_status validate_element_attributes(
         const turbo_xml_string_view name =
             turbo_xml_attribute_local_name(attribute);
         if (!is_empty_view(namespace_uri)) continue;
+        if (kind == SCXML_ELEMENT_LOG && view_equal_raw(name, "expr")) {
+            return scxml_fail(
+                build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
+                turbo_xml_attribute_location(attribute),
+                "SCXML null data model has no log value expressions");
+        }
         if (!attribute_allowed(kind, name)) {
             return scxml_fail(
                 build,
@@ -655,7 +661,6 @@ static cflow_scxml_status analyze_log(scxml_build *build,
                                       turbo_xml_node node,
                                       scxml_counts *counts) {
     const turbo_xml_attribute label_attribute = find_attribute(node, "label");
-    const turbo_xml_attribute expression_attribute = find_attribute(node, "expr");
     const turbo_xml_string_view label =
         label_attribute.impl != NULL
             ? turbo_xml_attribute_value(label_attribute)
@@ -665,12 +670,6 @@ static cflow_scxml_status analyze_log(scxml_build *build,
     cflow_scxml_status status = validate_element_attributes(
         build, node, SCXML_ELEMENT_LOG);
     if (status != CFLOW_SCXML_OK) return status;
-    if (expression_attribute.impl != NULL) {
-        return scxml_fail(
-            build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
-            turbo_xml_attribute_location(expression_attribute),
-            "SCXML null data model has no log value expressions");
-    }
     for (index = 0u; index < turbo_xml_node_child_count(node); ++index) {
         const turbo_xml_node child = turbo_xml_node_child_at(node, index);
         if (turbo_xml_node_type(child) != TURBO_XML_COMMENT) {

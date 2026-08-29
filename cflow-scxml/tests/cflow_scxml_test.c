@@ -672,19 +672,73 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(capture.count, (size_t)0u);
     }
 
+    it("marks only log-containing executable blocks with the IO effect") {
+        static const char log_source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='active'><onentry><log label='effect'/></onentry>"
+            "</state></scxml>";
+        static const char raise_source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='active'><onentry><raise event='next'/></onentry>"
+            "</state></scxml>";
+        const char *sources[] = {log_source, raise_source};
+        const bool expected_io[] = {true, false};
+        size_t index;
+
+        for (index = 0u; index < sizeof(sources) / sizeof(sources[0]);
+             ++index) {
+            cflow_scxml_program program = {0};
+            cflow_scxml_diagnostic diagnostic = {0};
+            const cflow_statechart *statechart;
+            const cflow_statechart_executable *executable;
+            check_equal(compile_status(sources[index], &program, &diagnostic),
+                        CFLOW_SCXML_OK);
+            statechart = cflow_scxml_program_statechart(&program);
+            check_equal(cflow_statechart_executable_count(statechart),
+                        (size_t)1u);
+            executable = cflow_statechart_executable_at(statechart, 0u);
+            check_not_null(executable);
+            check_true((executable->effects & CMETA_EFFECT_STATEFUL) != 0u);
+            check_true((executable->effects & CMETA_EFFECT_MAY_FAIL) != 0u);
+            check_equal((executable->effects & CMETA_EFFECT_IO) != 0u,
+                        expected_io[index]);
+            cflow_scxml_program_destroy(&program);
+        }
+    }
+
     it("rejects unsupported log expressions at the owning attribute") {
-        static const char source[] =
+        static const char expression_only[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
             "<state id='active'><onentry><log label='value' expr='1'/>"
             "</onentry></state></scxml>";
-        cflow_scxml_program program = {0};
-        cflow_scxml_diagnostic diagnostic = {0};
+        static const char expression_first[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='active'><onentry><log expr='1' bad='x'/>"
+            "</onentry></state></scxml>";
+        static const char invalid_first[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='active'><onentry><log bad='x' expr='1'/>"
+            "</onentry></state></scxml>";
+        const char *sources[] = {
+            expression_only, expression_first, invalid_first};
+        const char *owners[] = {"expr=", "expr=", "bad="};
+        const cflow_scxml_status expected[] = {
+            CFLOW_SCXML_UNSUPPORTED_FEATURE,
+            CFLOW_SCXML_UNSUPPORTED_FEATURE,
+            CFLOW_SCXML_INVALID_STRUCTURE};
+        size_t index;
 
-        check_equal(compile_status(source, &program, &diagnostic),
-                    CFLOW_SCXML_UNSUPPORTED_FEATURE);
-        check_equal(diagnostic.location.byte_offset,
-                    (size_t)(strstr(source, "expr=") - source));
-        check_null(program.impl);
+        for (index = 0u; index < sizeof(sources) / sizeof(sources[0]);
+             ++index) {
+            cflow_scxml_program program = {0};
+            cflow_scxml_diagnostic diagnostic = {0};
+            check_equal(compile_status(sources[index], &program, &diagnostic),
+                        expected[index]);
+            check_equal(diagnostic.location.byte_offset,
+                        (size_t)(strstr(sources[index], owners[index]) -
+                                 sources[index]));
+            check_null(program.impl);
+        }
     }
 
     it("rejects unknown log attributes and non-comment children") {

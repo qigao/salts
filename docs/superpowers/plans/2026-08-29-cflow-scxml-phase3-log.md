@@ -15,6 +15,9 @@
 - Keep all tlog calls inside `cflow-scxml`; do not change CFlow runtime headers or implementation.
 - Use DEBUG and `tlog_peek_default()`; never initialize, flush, retry, sample, or destroy a logger in production SCXML code.
 - Logger absence, filtering, backpressure, and dropped records must not alter Statechart state or errors.
+- The application-owned default logger must outlive every executor that may run
+  a log step; pointer lookup does not retain it, so destruction requires caller
+  quiescence.
 - Support only the null-model label; reject every present `expr` at compile time.
 - Copy labels into bounded program-owned storage and include their terminators in `max_name_bytes`.
 - Preserve deterministic document order, checked arithmetic, transactional cleanup, and installed-package behavior.
@@ -168,7 +171,7 @@ git commit -m "docs: describe SCXML log execution"
 
 ### Task 4: Review and integration
 
-- [ ] **Step 1: Request code review focused on dependency direction, label ownership, log non-interference, and limit accounting**
-- [ ] **Step 2: Apply verified findings and rerun affected tests**
-- [ ] **Step 3: Use verification-before-completion and finishing-a-development-branch for handoff**
+- [x] **Step 1: Request code review focused on dependency direction, label ownership, log non-interference, and limit accounting**
+- [x] **Step 2: Apply verified findings and rerun affected tests**
+- [x] **Step 3: Use verification-before-completion and finishing-a-development-branch for handoff**
 - [ ] **Step 4: After merge only, mark `Implement logging` complete in #122**

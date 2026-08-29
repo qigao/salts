@@ -658,7 +658,9 @@ The supported compatibility subset is deliberately strict:
   missing label emits an empty message. A present `expr` is unsupported by the
   null data model and fails during compilation. The frontend does not create,
   flush, retry, sample, or destroy a logger, and missing or dropped logging
-  never changes Statechart success;
+  never changes Statechart success. The application owns any installed default
+  logger and must keep it alive until all executors that may run SCXML log
+  actions are quiescent; default-pointer access does not retain the logger;
 - compile-time rejection of malformed, quoted, unknown, or pseudo-state
   `In(id)` arguments. Null-model system variables remain inaccessible.
 
