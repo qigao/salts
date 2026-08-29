@@ -233,6 +233,8 @@ $pairedMetricFixtures = @(
 for ($index = 0; $index -lt $reports.Count; ++$index) {
   $reports[$index] | Add-Member -NotePropertyName protocol `
     -NotePropertyValue "tcp"
+  $reports[$index] | Add-Member -NotePropertyName source_window_capacity `
+    -NotePropertyValue $(if ($reports[$index].driver -eq "source") { 2 } else { 0 })
   foreach ($field in $pairedMetricFixtures[$index].Keys) {
     $reports[$index] | Add-Member -NotePropertyName $field `
       -NotePropertyValue $pairedMetricFixtures[$index][$field]
@@ -303,8 +305,8 @@ Assert-Equal $mixedProtocolSummary.protocol "tcp" `
 $windowedReports = @()
 foreach ($report in @($reports | Where-Object { $_.payload_bytes -eq 64 })) {
   $copy = $report.psobject.Copy()
-  $copy | Add-Member -NotePropertyName source_window_capacity `
-    -NotePropertyValue $(if ($copy.driver -eq "source") { 1 } else { 0 })
+  $copy.source_window_capacity =
+    $(if ($copy.driver -eq "source") { 1 } else { 0 })
   $copy | Add-Member -NotePropertyName source_peak_occupied `
     -NotePropertyValue $(if ($copy.driver -eq "source") { 1 } else { 0 })
   $windowedReports += $copy

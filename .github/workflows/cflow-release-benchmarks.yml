@@ -1224,7 +1224,7 @@ jobs:
               $comparison = Get-CflowPairedSourceSummary `
                 -Reports $diagnosticReports -Backend $backend `
                 -Protocol $protocol -WaitMode blocking `
-                -PayloadBytes ([int64]$payloadText) -SourceWindow 1 `
+                -PayloadBytes ([int64]$payloadText) `
                 -ExpectedRuns ([int]$env:BENCHMARK_RUNS)
               $payloadLabel = switch ([int64]$payloadText) {
                 1024 { "1 KiB" }

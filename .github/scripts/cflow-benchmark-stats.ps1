@@ -896,7 +896,8 @@ function Get-CflowPairedSourceSummary {
     [long]$PayloadBytes,
 
     [ValidateRange(1, [long]::MaxValue)]
-    [long]$SourceWindow = 1,
+    [long]$SourceWindow = (Get-CflowSourceOperationCapacity `
+      -Driver source -Workload round-trip -WorkloadWindow 1),
 
     [Parameter(Mandatory = $true)]
     [int]$ExpectedRuns
