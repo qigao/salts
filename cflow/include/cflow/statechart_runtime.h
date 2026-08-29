@@ -90,6 +90,25 @@ typedef bool (*cflow_statechart_contextual_guard_fn)(
     void *user, const cflow_statechart_guard_context *context,
     bool *out_enabled, const char **out_error);
 
+/**
+ * One move-only external-effect reservation prepared by an action callback.
+ *
+ * Successful staging transfers the ticket to the Statechart runtime. The
+ * runtime calls `commit(user)` exactly once after the owning microstep is
+ * published, or `discard(user)` exactly once when that microstep rolls back.
+ * Both callbacks must be nonblocking, infallible, and must not destroy or wait
+ * on the owning instance. Failed staging leaves ownership with the caller.
+ */
+typedef struct cflow_statechart_effect_ticket {
+    void (*commit)(void *user);
+    void (*discard)(void *user);
+    void *user;
+} cflow_statechart_effect_ticket;
+
+typedef bool (*cflow_statechart_stage_effect_fn)(
+    void *user, const cflow_statechart_effect_ticket *ticket,
+    const char **out_error);
+
 /** Borrowed arguments for one contextual executable callback. */
 typedef struct cflow_statechart_executable_context {
     cflow_statechart_action_phase phase;
@@ -99,6 +118,9 @@ typedef struct cflow_statechart_executable_context {
     void *out_state;
     cflow_statechart_raise_fn raise_internal;
     void *raise_user;
+    /** Optional bounded transactional external-effect staging. */
+    cflow_statechart_stage_effect_fn stage_effect;
+    void *effect_user;
     /** Valid only until the contextual executable returns. */
     cflow_statechart_is_active_fn is_active;
     void *configuration_user;
@@ -145,6 +167,7 @@ typedef enum cflow_statechart_runtime_status {
     CFLOW_STATECHART_RUNTIME_COMPLETION_QUEUE_FULL,
     CFLOW_STATECHART_RUNTIME_INTERNAL_EVENT_INVALID,
     CFLOW_STATECHART_RUNTIME_INTERNAL_EVENT_TYPE_MISMATCH,
+    CFLOW_STATECHART_RUNTIME_EFFECT_JOURNAL_FULL,
     CFLOW_STATECHART_RUNTIME_MICROSTEP_LIMIT_EXCEEDED,
     CFLOW_STATECHART_RUNTIME_EXECUTOR_FULL,
     CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED,
@@ -187,8 +210,9 @@ typedef struct cflow_statechart_instance_config {
     size_t microstep_limit;
     /**
      * Zero selects the 64 MiB compile-time instance storage ceiling. The
-     * bound covers runtime state, bounded queues, and optional Timer Event
-     * slots plus their copied payload storage.
+     * bound covers runtime state, bounded queues, optional Timer Event slots
+     * plus copied payload storage, optional effect-ticket storage, and the
+     * optional adapter-internal copied-Event mailbox.
      */
     size_t max_storage_bytes;
     /**
@@ -204,6 +228,18 @@ typedef struct cflow_statechart_instance_config {
      */
     cflow_clock *clock;
     size_t timer_capacity;
+    /**
+     * Optional fixed count of move-only effect tickets staged by contextual
+     * actions. Zero disables effect staging. Ticket storage is included in
+     * `max_storage_bytes` and never grows after initialization.
+     */
+    size_t effect_capacity;
+    /**
+     * Optional MPSC copied-Event ingress for asynchronous adapter results.
+     * Zero disables it. Accepted Events are consumed by the SerialExecutor
+     * after already staged internal Events and before external mailbox Events.
+     */
+    size_t adapter_internal_event_capacity;
 } cflow_statechart_instance_config;
 
 typedef struct cflow_statechart_instance_stats {
@@ -219,6 +255,8 @@ typedef struct cflow_statechart_instance_stats {
     uint64_t actions;
     size_t internal_pending;
     size_t completion_pending;
+    uint64_t adapter_internal_accepted;
+    size_t adapter_internal_pending;
     size_t active_state_count;
     size_t active_leaf_count;
     cflow_statechart_runtime_status last_status;
@@ -268,6 +306,17 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
  * `get_stats` and `error`.
  */
 cflow_mailbox_status cflow_statechart_instance_try_send(
+    cflow_statechart_instance *instance, const cflow_event_view *event);
+
+/**
+ * Copy one typed adapter result into the bounded internal-priority ingress.
+ *
+ * Successful MPSC admission transfers an independent trivial payload copy.
+ * The SerialExecutor consumes normal staged internal Events first, then this
+ * ingress, and only then an external Event. Disabled ingress, unknown Events,
+ * type mismatch, full, close, and cancellation are returned explicitly.
+ */
+cflow_mailbox_status cflow_statechart_instance_try_send_internal(
     cflow_statechart_instance *instance, const cflow_event_view *event);
 
 /**

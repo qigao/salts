@@ -551,9 +551,10 @@ The exported CMake target name remains `TurboUtils::CFlow`.
 The CFlow core remains format-neutral and does not parse XML. The optional
 `TurboUtils::CFlowScxml` frontend described below performs bounded SCXML Core
 admission and lowering without changing the Statechart runtime dependency
-surface. CFlow is not a durable workflow engine and does not implement SCXML
-`send`, `invoke`, `finalize`, external communication, persistence, recovery,
-retries, compensation, or distributed coordination.
+surface. CFlow is not a durable workflow engine. The optional frontend
+supports the bounded literal `send`/`cancel` profile described below, but does
+not implement SCXML `invoke`, `finalize`, persistence, recovery, retries,
+compensation, or distributed coordination.
 
 ### Optional SCXML Core frontend
 
@@ -566,10 +567,10 @@ cxml, CSerde, CBind, or tlog dependency. cxml is a private implementation
 detail of XmlParser and is not installed or exported.
 
 `cflow_scxml_compile()` owns the compiled native Statechart and its stable
-state/event name maps, log-label storage, executable blocks, guard users, and
-native binding rows. Input is borrowed only for the call. The returned program
-must outlive every runtime instance borrowing its Statechart, guard users, or
-executable binding users and must be destroyed with
+state/event name maps, retained literal storage, executable blocks, guard
+users, and native binding rows. Input is borrowed only for the call. The
+returned program must outlive every native instance or `cflow_scxml_session`
+borrowing it and must be destroyed with
 `cflow_scxml_program_destroy()` after those instances are quiescent. The null
 data model is represented by an inert CMeta `bool` value; named event helpers
 produce the matching borrowed false payload, which runtime mailbox admission
@@ -632,6 +633,25 @@ int main(void) {
 }
 ```
 
+`cflow_scxml_program_requirements()` distinguishes programs that can use the
+low-level binding path above from programs that require an owning
+`cflow_scxml_session`. `cflow_scxml_program_runtime_bindings()` fails without
+modifying its outputs when Event I/O is required. A session copies its adapter
+operation table, borrows the adapter context and program, owns the native
+Statechart instance plus bounded effect/send registries, and must be destroyed
+before the program, executor, or adapter context.
+
+Event I/O adapters use a reservation protocol. `prepare_send` and
+`prepare_cancel` reserve capacity without publishing an external effect and
+copy any request fields needed after the callback returns. On acceptance they
+return a move-only ticket; the session calls exactly one of `commit` after the
+native microstep is published or `discard` when it rolls back. Ticket callbacks
+and adapter `close` must be nonblocking. `close` is called exactly once after
+attachment, including an initialization failure;
+`cflow_scxml_session_destroy()` returns
+`CFLOW_STATECHART_RUNTIME_WOULD_BLOCK` until `is_quiescent` confirms that no
+adapter callback can still reach the borrowed session or adapter context.
+
 The supported compatibility subset is deliberately strict:
 
 - SCXML namespace `http://www.w3.org/2005/07/scxml`, version `1.0`, and omitted
@@ -661,18 +681,37 @@ The supported compatibility subset is deliberately strict:
   never changes Statechart success. The application owns any installed default
   logger and must keep it alive until all executors that may run SCXML log
   actions are quiescent; default-pointer access does not retain the logger;
+- literal `send` and `cancel` in the same executable positions. `event` is one
+  XML NMTOKEN; optional `target`, `type`, and `id` are retained literals, with
+  `id` an XML NCName. Delay accepts unsigned integer milliseconds (`250ms`) or
+  seconds with at most millisecond precision (`1.5s`); a non-zero delay
+  requires a literal `id`. Immediate `#_internal` and `_internal` sends use the
+  native transactional internal queue without an adapter. Other sends require
+  a version-1 Event I/O adapter and bounded `effect_capacity` plus
+  `adapter_internal_event_capacity`; delayed sends additionally require
+  `delayed_send_capacity` and the delayed-send capability. `cancel` is scoped
+  to the session registry and is a no-op when delivery or an earlier cancel
+  already won;
+- synchronous adapter execution errors and dispatch failures abort only the
+  current executable block and stage `error.execution` or
+  `error.communication` as internal Events. Full and closed adapter outcomes
+  map to `error.communication`; invalid adapter contracts remain fatal.
+  Asynchronous failures enter the prioritized bounded internal ingress through
+  `cflow_scxml_session_report_adapter_error()`. Adapters release a completed
+  delayed-send registry row through `cflow_scxml_session_report_send_done()`;
 - compile-time rejection of malformed, quoted, unknown, or pseudo-state
   `In(id)` arguments. Null-model system variables remain inaccessible.
 
-Executable elements other than `raise`, label-only `log`, and conditional
-partitions, wildcard event descriptors, multiple targets, non-null data models,
-and other SCXML elements fail during compilation with the first byte offset and
-one-based line/column diagnostic.
+Executable elements other than `raise`, literal `send`/`cancel`, label-only
+`log`, and conditional partitions, wildcard event descriptors, multiple
+targets, dynamic send expressions/content/parameters, non-null data models,
+and other SCXML elements fail during compilation with the first byte offset
+and one-based line/column diagnostic.
 There is no fallback or silent feature removal. Configurable hard limits cover
 XML input, depth, nodes, attributes, states, events, transitions, and action
-references. State/event names and NUL-terminated log labels share the bounded
-`max_name_bytes` retained-string budget; a failed compile leaves the output
-program empty.
+references. State/event names plus NUL-terminated log and Event I/O literals
+share the bounded `max_name_bytes` retained-string budget; a failed compile
+leaves the output program empty.
 
 ## Bounded Actor lifecycle
 

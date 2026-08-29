@@ -93,8 +93,12 @@ if(TURBOUTILS_EXPECT_CFLOW_SCXML)
   add_turboutils_consumer(consume_cflow_scxml
                          TurboUtils::CFlowScxml CONSUME_CFLOW_SCXML)
   add_custom_command(TARGET consume_cflow_scxml POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:consume_cflow_scxml>
+            $<TARGET_FILE_DIR:consume_cflow_scxml>
     COMMAND $<TARGET_FILE:consume_cflow_scxml>
-    COMMENT "Running installed CFlow SCXML consumer")
+    COMMENT "Running installed CFlow SCXML consumer"
+    COMMAND_EXPAND_LISTS)
 elseif(TARGET TurboUtils::CFlowScxml)
   message(FATAL_ERROR
           "feature-off TurboUtils package unexpectedly exports CFlowScxml")
