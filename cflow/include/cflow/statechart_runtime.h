@@ -47,10 +47,12 @@ typedef bool (*cflow_statechart_guard_fn)(void *user, const void *state,
  *
  * `state` is a borrowed immutable input of the declared state type. `event`
  * and its payload are borrowed until return and are NULL for eventless and
- * completion work. `out_state` is a distinct, non-aliasing writable object of
- * exactly that type; a successful callback must fully initialize it. The
- * next action observes that value. A false return discards `out_state` and all
- * staged raises. Error text follows the guard lifetime rule. `raise_internal`
+ * completion work. `out_state` is distinct, non-aliasing, uninitialized
+ * storage of exactly that type; a successful callback must fully construct it.
+ * A false callback must leave it uninitialized. The next action observes a
+ * successful value, and the runtime destroys it exactly once when it is
+ * replaced or rolled back. A false return also discards all staged raises.
+ * Error text follows the guard lifetime rule. `raise_internal`
  * copies a valid Event before returning and may be called repeatedly until it
  * reports bounded-queue/type failure; neither it nor `raise_user` may escape
  * this callback.
@@ -328,9 +330,10 @@ typedef struct cflow_statechart_instance { void *impl; }
  * Initialize and stabilize one owning Statechart runtime handle.
  *
  * The initial extended state, binding rows, and all accepted Event payloads
- * are copied. Phase 1 admits only trivial CMeta state/Event storage; managed
- * copy/move/destroy traits are rejected with `UNSUPPORTED_TYPE`. All three
- * queue capacities and `microstep_limit` must be positive. Timer storage, when
+ * are copied. Extended state may either be trivial or provide CMeta
+ * copy/move/destroy traits. Event payloads remain trivial storage; managed
+ * Event traits are rejected with `UNSUPPORTED_TYPE`. All three queue capacities
+ * and `microstep_limit` must be positive. Timer storage, when
  * enabled, is included in `max_storage_bytes`. Initialization returns only
  * after this instance's posted eventless/completion work reaches quiescence;
  * unrelated work on a shared Executor is not awaited. Failure leaves
@@ -458,7 +461,11 @@ cflow_statechart_snapshot_status cflow_statechart_instance_copy_configuration(
     size_t *out_state_count, uint64_t *out_version);
 cflow_machine_state_id cflow_statechart_instance_current_state(
     const cflow_statechart_instance *instance);
-/** Copy the published extended state and return its borrowed type descriptor. */
+/**
+ * Byte-copy the published trivial extended state and return its borrowed type
+ * descriptor. Managed state returns false without writing output or exposing a
+ * descriptor; use executor-owned actions to observe it.
+ */
 bool cflow_statechart_instance_copy_state(
     const cflow_statechart_instance *instance,
     const cmeta_type_desc **out_type, void *out_state,

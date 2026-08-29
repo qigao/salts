@@ -53,6 +53,7 @@ typedef struct cflow_statechart_instance_impl {
     size_t *history_slots;
     size_t history_count;
     unsigned char *extended_states[2];
+    bool extended_state_live[2];
     size_t published;
     size_t bitset_bytes;
     size_t *entry_stack;
@@ -89,6 +90,7 @@ typedef struct cflow_statechart_instance_impl {
     unsigned char *entry_bits;
     unsigned char *action_configuration_bits;
     unsigned char *action_scratch;
+    bool action_scratch_live;
     statechart_internal_event_slot *staged_event_slots;
     unsigned char *staged_event_payloads;
     size_t staged_event_count;
@@ -483,6 +485,34 @@ static int compare_executable_binding(const void *left, const void *right) {
     return a->id < b->id ? -1 : a->id > b->id;
 }
 
+static void reset_state_value(cflow_statechart_instance_impl *impl,
+                              unsigned char *storage, bool *live) {
+    if (impl == NULL || storage == NULL || live == NULL || !*live) return;
+    cflow_value_destroy(impl->ir->state_type, storage);
+    *live = false;
+}
+
+static bool copy_state_value(cflow_statechart_instance_impl *impl,
+                             unsigned char *destination,
+                             bool *destination_live,
+                             const unsigned char *source) {
+    reset_state_value(impl, destination, destination_live);
+    if (!cflow_value_construct(
+            impl->ir->state_type, destination, source))
+        return false;
+    *destination_live = true;
+    return true;
+}
+
+static void reset_transaction_state(cflow_statechart_instance_impl *impl,
+                                    size_t staged) {
+    reset_state_value(
+        impl, impl->extended_states[staged],
+        &impl->extended_state_live[staged]);
+    reset_state_value(
+        impl, impl->action_scratch, &impl->action_scratch_live);
+}
+
 static void instance_impl_free(cflow_statechart_instance_impl *impl) {
     size_t index;
     if (impl == NULL) return;
@@ -490,6 +520,12 @@ static void instance_impl_free(cflow_statechart_instance_impl *impl) {
         impl->staged_effects[index].discard(
             impl->staged_effects[index].user);
     impl->staged_effect_count = 0u;
+    reset_state_value(
+        impl, impl->action_scratch, &impl->action_scratch_live);
+    for (index = 0u; index < 2u; ++index)
+        reset_state_value(
+            impl, impl->extended_states[index],
+            &impl->extended_state_live[index]);
     if (impl->timers_initialized)
         cflow_timer_event_queue_destroy(&impl->timers);
     if (impl->external_mailbox_initialized)
@@ -1824,6 +1860,8 @@ typedef struct statechart_action_context {
     const cflow_event_view *event;
     unsigned char *current_state;
     unsigned char *next_state;
+    bool *current_state_live;
+    bool *next_state_live;
     unsigned char *configuration_bits;
     size_t invoked;
     cflow_statechart_runtime_status raise_status;
@@ -1951,6 +1989,7 @@ static cflow_statechart_runtime_status invoke_executable(
     const char *callback_error = NULL;
     bool succeeded;
     unsigned char *previous;
+    bool *previous_live;
     if (out_error != NULL) *out_error = NULL;
     if (declaration == NULL || binding == NULL ||
         !cflow_executor_is_current_internal(impl->executor)) {
@@ -1962,6 +2001,8 @@ static cflow_statechart_runtime_status invoke_executable(
     context->raise_error = NULL;
     context->effect_status = CFLOW_STATECHART_RUNTIME_OK;
     context->effect_error = NULL;
+    reset_state_value(
+        impl, context->next_state, context->next_state_live);
     if (binding->contextual_fn != NULL) {
         const cflow_statechart_executable_context executable_context = {
             .phase = phase,
@@ -1982,6 +2023,7 @@ static cflow_statechart_runtime_status invoke_executable(
             binding->user, phase, owner, context->current_state, context->event,
             context->next_state, stage_internal_event, context, &callback_error);
     }
+    if (succeeded) *context->next_state_live = true;
     ++context->invoked;
     if (context->raise_status != CFLOW_STATECHART_RUNTIME_OK) {
         if (out_error != NULL) *out_error = context->raise_error;
@@ -2001,9 +2043,34 @@ static cflow_statechart_runtime_status invoke_executable(
         return CFLOW_STATECHART_RUNTIME_ACTION_FAILED;
     }
     previous = context->current_state;
+    previous_live = context->current_state_live;
     context->current_state = context->next_state;
+    context->current_state_live = context->next_state_live;
     context->next_state = previous;
+    context->next_state_live = previous_live;
     return CFLOW_STATECHART_RUNTIME_OK;
+}
+
+static bool finalize_transaction_state(
+    statechart_action_context *context, size_t staged) {
+    cflow_statechart_instance_impl *impl = context->impl;
+    if (context->current_state_live == NULL ||
+        !*context->current_state_live)
+        return false;
+    if (context->current_state != impl->extended_states[staged]) {
+        reset_state_value(
+            impl, impl->extended_states[staged],
+            &impl->extended_state_live[staged]);
+        if (!cflow_value_move_construct(
+                impl->ir->state_type, impl->extended_states[staged],
+                context->current_state))
+            return false;
+        impl->extended_state_live[staged] = true;
+        *context->current_state_live = false;
+    }
+    reset_state_value(
+        impl, impl->action_scratch, &impl->action_scratch_live);
+    return true;
 }
 
 static bool exit_before(const cflow_statechart_impl *ir,
@@ -2038,7 +2105,7 @@ static void stable_order_states(const cflow_statechart_impl *ir,
     }
 }
 
-static void copy_staging_buffers(cflow_statechart_instance_impl *impl,
+static bool copy_staging_buffers(cflow_statechart_instance_impl *impl,
                                  size_t staged) {
     const size_t published = impl->published;
     const size_t history_bytes = impl->history_count * impl->bitset_bytes;
@@ -2051,8 +2118,11 @@ static void copy_staging_buffers(cflow_statechart_instance_impl *impl,
            impl->configurations[published].state_count * sizeof(size_t));
     impl->configurations[staged].state_count =
         impl->configurations[published].state_count;
-    memcpy(impl->extended_states[staged], impl->extended_states[published],
-           impl->ir->state_type->size);
+    if (!copy_state_value(
+            impl, impl->extended_states[staged],
+            &impl->extended_state_live[staged],
+            impl->extended_states[published]))
+        return false;
     if (history_bytes != 0u) {
         memcpy(impl->history_bits[staged], impl->history_bits[published],
                history_bytes);
@@ -2063,6 +2133,7 @@ static void copy_staging_buffers(cflow_statechart_instance_impl *impl,
            impl->completion_bits[published], impl->bitset_bytes);
     impl->staged_event_count = 0u;
     impl->staged_completion_count = 0u;
+    return true;
 }
 
 static void compute_exit_union(cflow_statechart_instance_impl *impl,
@@ -2445,6 +2516,7 @@ static void microstep_fail(cflow_statechart_instance_impl *impl,
                            cflow_statechart_runtime_status status,
                            const char *error) {
     cflow_waker waker = {0};
+    reset_transaction_state(impl, 1u - impl->published);
     impl->staged_event_count = 0u;
     impl->staged_completion_count = 0u;
     discard_staged_effects(impl);
@@ -2507,6 +2579,8 @@ static cflow_statechart_runtime_status execute_initial_entry_actions(
         .event = NULL,
         .current_state = impl->extended_states[staged],
         .next_state = impl->action_scratch,
+        .current_state_live = &impl->extended_state_live[staged],
+        .next_state_live = &impl->action_scratch_live,
         .configuration_bits = impl->action_configuration_bits,
         .raise_status = CFLOW_STATECHART_RUNTIME_OK};
     const char *error = NULL;
@@ -2540,9 +2614,11 @@ static cflow_statechart_runtime_status execute_initial_entry_actions(
         error = "Statechart completion queue is full";
         goto fail;
     }
-    if (context.current_state != impl->extended_states[staged])
-        memcpy(impl->extended_states[staged], context.current_state,
-               impl->ir->state_type->size);
+    if (!finalize_transaction_state(&context, staged)) {
+        status = CFLOW_STATECHART_RUNTIME_ACTION_FAILED;
+        error = "Statechart action state finalization failed";
+        goto fail;
+    }
     turbo_mutex_lock(&impl->lock);
     commit_internal_events(impl);
     commit_completions(impl);
@@ -2558,6 +2634,7 @@ static cflow_statechart_runtime_status execute_initial_entry_actions(
     return CFLOW_STATECHART_RUNTIME_OK;
 
 fail:
+    reset_transaction_state(impl, staged);
     impl->staged_event_count = 0u;
     impl->staged_completion_count = 0u;
     discard_staged_effects(impl);
@@ -2576,7 +2653,12 @@ static cflow_statechart_runtime_status execute_microstep(
     const char *error = NULL;
     cflow_statechart_runtime_status status;
     impl->staged_effect_count = 0u;
-    copy_staging_buffers(impl, staged);
+    if (!copy_staging_buffers(impl, staged)) {
+        microstep_fail(
+            impl, CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED,
+            "Statechart staged state copy failed");
+        return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
+    }
     compute_exit_union(impl, &exit_count);
     save_affected_history(impl, staged);
     memcpy(impl->action_configuration_bits,
@@ -2587,6 +2669,8 @@ static cflow_statechart_runtime_status execute_microstep(
             ? &impl->request_event : NULL,
         .current_state = impl->extended_states[staged],
         .next_state = impl->action_scratch,
+        .current_state_live = &impl->extended_state_live[staged],
+        .next_state_live = &impl->action_scratch_live,
         .configuration_bits = impl->action_configuration_bits,
         .raise_status = CFLOW_STATECHART_RUNTIME_OK};
     for (position = 0u; position < exit_count; ++position) {
@@ -2664,9 +2748,12 @@ static cflow_statechart_runtime_status execute_microstep(
                        "Statechart completion queue is full");
         return status;
     }
-    if (context.current_state != impl->extended_states[staged])
-        memcpy(impl->extended_states[staged], context.current_state,
-               impl->ir->state_type->size);
+    if (!finalize_transaction_state(&context, staged)) {
+        microstep_fail(
+            impl, CFLOW_STATECHART_RUNTIME_ACTION_FAILED,
+            "Statechart action state finalization failed");
+        return CFLOW_STATECHART_RUNTIME_ACTION_FAILED;
+    }
     for (position = 0u; position < exit_count; ++position)
         impl->timer_exit_scopes[position] =
             impl->ir->states[impl->exit_order[position]].id;
@@ -2679,6 +2766,7 @@ static cflow_statechart_runtime_status execute_microstep(
             ++impl->microstep_cancelled;
         turbo_mutex_unlock(&impl->lock);
         discard_staged_effects(impl);
+        reset_transaction_state(impl, staged);
         return CFLOW_STATECHART_RUNTIME_TASK_CANCELLED;
     }
     if (impl->timers_initialized)
@@ -3463,7 +3551,7 @@ static cflow_statechart_runtime_status statechart_instance_init_with_hook(
         (ir->state_type->align & (ir->state_type->align - 1u)) !=
             0u ||
         ir->state_type->align > _Alignof(cmeta_capture_storage) ||
-        !cflow_value_storage_type_supported(ir->state_type))
+        !cflow_value_type_supported(ir->state_type))
         return CFLOW_STATECHART_RUNTIME_UNSUPPORTED_TYPE;
     if (!binding_rows_shape_valid(ir, config))
         return CFLOW_STATECHART_RUNTIME_BINDING_MISMATCH;
@@ -3602,10 +3690,15 @@ static cflow_statechart_runtime_status statechart_instance_init_with_hook(
         }
         impl->timers_initialized = true;
     }
-    memcpy(impl->extended_states[0], config->initial_state,
-           impl->ir->state_type->size);
-    memcpy(impl->extended_states[1], config->initial_state,
-           impl->ir->state_type->size);
+    if (!copy_state_value(
+            impl, impl->extended_states[0],
+            &impl->extended_state_live[0], config->initial_state) ||
+        !copy_state_value(
+            impl, impl->extended_states[1],
+            &impl->extended_state_live[1], config->initial_state)) {
+        instance_impl_free(impl);
+        return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
+    }
     status = build_initial_configuration(impl, 1u);
     if (status != CFLOW_STATECHART_RUNTIME_OK) {
         instance_impl_free(impl);
@@ -4093,7 +4186,8 @@ bool cflow_statechart_instance_copy_state(
     if (out_type != NULL) *out_type = NULL;
     if (impl == NULL || out_type == NULL || out_state == NULL) return false;
     turbo_mutex_lock(&impl->lock);
-    if (state_capacity < impl->ir->state_type->size) {
+    if (state_capacity < impl->ir->state_type->size ||
+        !cflow_value_storage_type_supported(impl->ir->state_type)) {
         turbo_mutex_unlock(&impl->lock);
         return false;
     }
