@@ -1386,12 +1386,17 @@ function Get-CflowPairedTransportSummary {
         throw "Transport workload or completion status is invalid for $Protocol/$Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
       }
       foreach ($metric in @("exchanges_per_second", "application_mib_per_second",
-                            "p50_ns", "p95_ns", "p99_ns", "process_cpu_ns")) {
+                            "p50_ns", "p95_ns", "p99_ns")) {
         $value = [double]$report.$metric
         if ([double]::IsNaN($value) -or [double]::IsInfinity($value) -or
             $value -le 0.0) {
           throw "$metric values must be finite and positive for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
         }
+      }
+      $processCpuNs = [double]$report.process_cpu_ns
+      if ([double]::IsNaN($processCpuNs) -or
+          [double]::IsInfinity($processCpuNs) -or $processCpuNs -lt 0.0) {
+        throw "process_cpu_ns values must be finite and non-negative for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
       }
     }
     $attempted = [int64]$direct.attempted
@@ -1422,12 +1427,21 @@ function Get-CflowPairedTransportSummary {
     $actorDirectP99Ratios += [double]$actor.p99_ns / [double]$direct.p99_ns
     $sourceActorP99Ratios += [double]$source.p99_ns / [double]$actor.p99_ns
     $sourceDirectP99Ratios += [double]$source.p99_ns / [double]$direct.p99_ns
-    $actorDirectCpuRatios +=
-      [double]$actor.process_cpu_ns / [double]$direct.process_cpu_ns
-    $sourceActorCpuRatios +=
-      [double]$source.process_cpu_ns / [double]$actor.process_cpu_ns
-    $sourceDirectCpuRatios +=
-      [double]$source.process_cpu_ns / [double]$direct.process_cpu_ns
+    if ([double]$actor.process_cpu_ns -gt 0.0 -and
+        [double]$direct.process_cpu_ns -gt 0.0) {
+      $actorDirectCpuRatios +=
+        [double]$actor.process_cpu_ns / [double]$direct.process_cpu_ns
+    }
+    if ([double]$source.process_cpu_ns -gt 0.0 -and
+        [double]$actor.process_cpu_ns -gt 0.0) {
+      $sourceActorCpuRatios +=
+        [double]$source.process_cpu_ns / [double]$actor.process_cpu_ns
+    }
+    if ([double]$source.process_cpu_ns -gt 0.0 -and
+        [double]$direct.process_cpu_ns -gt 0.0) {
+      $sourceDirectCpuRatios +=
+        [double]$source.process_cpu_ns / [double]$direct.process_cpu_ns
+    }
     $directs += $direct
     $actors += $actor
     $sources += $source
@@ -1481,11 +1495,17 @@ function Get-CflowPairedTransportSummary {
     actor_median_cpu_pct = Get-CflowMedian @($actors.process_cpu_pct)
     source_median_cpu_pct = Get-CflowMedian @($sources.process_cpu_pct)
     paired_actor_direct_cpu_time_ratio =
-      [math]::Round((Get-CflowMedian $actorDirectCpuRatios), 6)
+      if ($actorDirectCpuRatios.Count -gt 0) {
+        [math]::Round((Get-CflowMedian $actorDirectCpuRatios), 6)
+      } else { $null }
     paired_source_actor_cpu_time_ratio =
-      [math]::Round((Get-CflowMedian $sourceActorCpuRatios), 6)
+      if ($sourceActorCpuRatios.Count -gt 0) {
+        [math]::Round((Get-CflowMedian $sourceActorCpuRatios), 6)
+      } else { $null }
     paired_source_direct_cpu_time_ratio =
-      [math]::Round((Get-CflowMedian $sourceDirectCpuRatios), 6)
+      if ($sourceDirectCpuRatios.Count -gt 0) {
+        [math]::Round((Get-CflowMedian $sourceDirectCpuRatios), 6)
+      } else { $null }
   }
 }
 

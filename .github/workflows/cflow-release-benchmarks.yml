@@ -49,6 +49,7 @@ concurrency:
 
 env:
   BENCHMARK_RUNS: 5
+  BENCHMARK_REQUIRED_UDP_DATAGRAM_BYTES: 65507
 
 jobs:
   benchmark:
@@ -148,6 +149,27 @@ jobs:
         run: |
           set -euo pipefail
           brew install re2c
+          if ! [[ "$BENCHMARK_REQUIRED_UDP_DATAGRAM_BYTES" =~ ^[1-9][0-9]*$ ]]; then
+            echo "BENCHMARK_REQUIRED_UDP_DATAGRAM_BYTES must be a positive integer" >&2
+            exit 1
+          fi
+          udp_maxdgram_original="$(sysctl -n net.inet.udp.maxdgram)"
+          if ! [[ "$udp_maxdgram_original" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Invalid net.inet.udp.maxdgram value: $udp_maxdgram_original" >&2
+            exit 1
+          fi
+          if (( udp_maxdgram_original < BENCHMARK_REQUIRED_UDP_DATAGRAM_BYTES )); then
+            sudo sysctl -w \
+              "net.inet.udp.maxdgram=$BENCHMARK_REQUIRED_UDP_DATAGRAM_BYTES"
+          fi
+          udp_maxdgram_configured="$(sysctl -n net.inet.udp.maxdgram)"
+          if ! [[ "$udp_maxdgram_configured" =~ ^[1-9][0-9]*$ ]] ||
+             (( udp_maxdgram_configured < BENCHMARK_REQUIRED_UDP_DATAGRAM_BYTES )); then
+            echo "macOS UDP datagram capacity $udp_maxdgram_configured is below required $BENCHMARK_REQUIRED_UDP_DATAGRAM_BYTES" >&2
+            exit 1
+          fi
+          echo "BENCHMARK_UDP_MAX_DATAGRAM_ORIGINAL=$udp_maxdgram_original" >> "$GITHUB_ENV"
+          echo "BENCHMARK_UDP_MAX_DATAGRAM_CONFIGURED=$udp_maxdgram_configured" >> "$GITHUB_ENV"
           if [ -n "${VCPKG_ROOT:-}" ] &&
              [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
             true
@@ -270,6 +292,21 @@ jobs:
           $transportMatrix = Get-CflowTransportBenchmarkMatrix
           $transportCases = @(
             Get-CflowTransportBenchmarkCases -Matrix $transportMatrix)
+          if ($env:BENCHMARK_REQUIRED_UDP_DATAGRAM_BYTES -notmatch '^[1-9][0-9]*$') {
+            throw "BENCHMARK_REQUIRED_UDP_DATAGRAM_BYTES must be a positive integer"
+          }
+          [int64]$requiredUdpDatagramBytes =
+            [int64]$env:BENCHMARK_REQUIRED_UDP_DATAGRAM_BYTES
+          if ([int64]$transportMatrix.udp.maximum_payload_bytes -ne
+              $requiredUdpDatagramBytes) {
+            throw "UDP transport maximum $($transportMatrix.udp.maximum_payload_bytes) does not match required host capacity $requiredUdpDatagramBytes"
+          }
+          if ($IsMacOS -and
+              ($env:BENCHMARK_UDP_MAX_DATAGRAM_CONFIGURED -notmatch '^[1-9][0-9]*$' -or
+               [int64]$env:BENCHMARK_UDP_MAX_DATAGRAM_CONFIGURED -lt
+                 $requiredUdpDatagramBytes)) {
+            throw "macOS UDP datagram capacity was not configured for the transport matrix"
+          }
           $transportPayloads = @{}
           foreach ($protocol in @("tcp", "udp")) {
             $transportPayloads[$protocol] = [string[]]@(
@@ -302,6 +339,9 @@ jobs:
             "transport_udp_payload_bytes=$($transportPayloads.udp -join ',')"
             "transport_udp_boundary_payload_bytes=$($transportMatrix.udp.boundary_payload_bytes -join ',')"
             "transport_udp_maximum_in_flight_bytes=$($transportMatrix.udp.maximum_in_flight_bytes)"
+            "transport_udp_required_datagram_bytes=$requiredUdpDatagramBytes"
+            "host_udp_max_datagram_original=$env:BENCHMARK_UDP_MAX_DATAGRAM_ORIGINAL"
+            "host_udp_max_datagram_configured=$env:BENCHMARK_UDP_MAX_DATAGRAM_CONFIGURED"
             "network_target_application_bytes_per_driver=$networkTargetApplicationBytes"
             "direct_baseline_payload_bytes=$($sourcePayloads -join ',')"
             "direct_baseline_maximum_samples=$sourceSamples"
@@ -1304,6 +1344,10 @@ jobs:
           Add-Content -LiteralPath $summary -Value ""
           Add-Content -LiteralPath $summary -Value "TCP uses sequential round-trip at window 1 because it is a byte stream. UDP latency uses window 1; throughput is capped at 8 operations and 64 KiB of payload in flight, so 1-8 KiB uses window 8, 16 KiB uses window 4, and 32 KiB uses window 2. The 65,507-byte maximum UDP datagram is a separate window-1 boundary case; 64 KiB is not a valid UDP payload. Each driver/run uses 64 exchanges per sample and at most 100 samples, reduced for large payloads to cap measured application data near 64 MiB."
           Add-Content -LiteralPath $summary -Value ""
+          if ($IsMacOS) {
+            Add-Content -LiteralPath $summary -Value "macOS net.inet.udp.maxdgram was configured from $env:BENCHMARK_UDP_MAX_DATAGRAM_ORIGINAL to $env:BENCHMARK_UDP_MAX_DATAGRAM_CONFIGURED bytes before sockets were created, so the UDP payload matrix matches the other hosts."
+            Add-Content -LiteralPath $summary -Value ""
+          }
           Get-Content -LiteralPath $transportOneKiBSummary |
             Add-Content -LiteralPath $summary
           Add-Content -LiteralPath $summary -Value ""

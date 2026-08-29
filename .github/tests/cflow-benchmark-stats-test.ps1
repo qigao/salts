@@ -400,6 +400,48 @@ Assert-Equal $pipelineLayerSummary.paired_source_actor_cpu_time_ratio 1.1875 `
   "pipeline Source/Actor CPU-time ratio"
 Assert-Equal $pipelineLayerSummary.paired_source_direct_cpu_time_ratio 1.2 `
   "pipeline Source/direct CPU-time ratio"
+$zeroResolutionCpuReports = @($pipelineLayerReports | ForEach-Object {
+    $_.psobject.Copy()
+  })
+foreach ($report in @($zeroResolutionCpuReports | Where-Object {
+      [int]$_.benchmark_run -eq 1
+    })) {
+  $report.process_cpu_ns = 0
+  $report.process_cpu_pct = 0
+}
+$zeroResolutionCpuSummary = Get-CflowPairedTransportSummary `
+  -Reports $zeroResolutionCpuReports -Backend epoll -Protocol udp `
+  -WaitMode blocking -PayloadBytes 64 -WindowCapacity 4 -ExpectedRuns 2
+Assert-Equal $zeroResolutionCpuSummary.paired_actor_direct_cpu_time_ratio 0.8 `
+  "zero-resolution CPU samples are excluded from Actor/direct ratios"
+Assert-Equal $zeroResolutionCpuSummary.paired_source_actor_cpu_time_ratio 1.125 `
+  "zero-resolution CPU samples are excluded from Source/Actor ratios"
+Assert-Equal $zeroResolutionCpuSummary.paired_source_direct_cpu_time_ratio 0.9 `
+  "zero-resolution CPU samples are excluded from Source/direct ratios"
+$allZeroCpuReports = @($pipelineLayerReports | ForEach-Object {
+    $copy = $_.psobject.Copy()
+    $copy.process_cpu_ns = 0
+    $copy.process_cpu_pct = 0
+    $copy
+  })
+$allZeroCpuSummary = Get-CflowPairedTransportSummary `
+  -Reports $allZeroCpuReports -Backend epoll -Protocol udp `
+  -WaitMode blocking -PayloadBytes 64 -WindowCapacity 4 -ExpectedRuns 2
+Assert-Equal $allZeroCpuSummary.paired_actor_direct_cpu_time_ratio $null `
+  "unobservable Actor/direct CPU-time ratio"
+Assert-Equal $allZeroCpuSummary.paired_source_actor_cpu_time_ratio $null `
+  "unobservable Source/Actor CPU-time ratio"
+Assert-Equal $allZeroCpuSummary.paired_source_direct_cpu_time_ratio $null `
+  "unobservable Source/direct CPU-time ratio"
+$negativeCpuReports = @($pipelineLayerReports | ForEach-Object {
+    $_.psobject.Copy()
+  })
+$negativeCpuReports[0].process_cpu_ns = -1
+Assert-Throws {
+  Get-CflowPairedTransportSummary `
+    -Reports $negativeCpuReports -Backend epoll -Protocol udp `
+    -WaitMode blocking -PayloadBytes 64 -WindowCapacity 4 -ExpectedRuns 2
+} "negative transport CPU time"
 $tcpLayerReports = @($pipelineLayerReports | ForEach-Object {
     $copy = $_.psobject.Copy()
     $copy.protocol = "tcp"
