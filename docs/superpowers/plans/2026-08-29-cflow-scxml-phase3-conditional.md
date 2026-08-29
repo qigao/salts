@@ -227,6 +227,6 @@ git commit -m "docs: describe SCXML conditional execution"
 
 - [x] **Step 1: Run final verification from a clean branch state**
 - [x] **Step 2: Request code review focused on ABI, ordering, ownership, and rollback**
-- [ ] **Step 3: Push the branch and create a PR linked to issue #122**
+- [x] **Step 3: Push the branch and create a PR linked to issue #122**
 - [ ] **Step 4: Wait for Linux/macOS/Windows CI and address reproducible failures**
 - [ ] **Step 5: After merge only, mark `Implement conditional executable content` complete in #122**
