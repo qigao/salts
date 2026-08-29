@@ -536,6 +536,14 @@ be retained. Appending the contextual callback changes
 `sizeof(cflow_statechart_executable_binding)`; consumers built against an older
 header must be rebuilt and relinked.
 
+Native guard bindings follow the same exactly-one rule. A contextual guard
+receives `cflow_statechart_guard_context`, whose call-scoped `is_active` query
+observes the immutable published configuration used by transition selection.
+The Event is non-NULL only for Event-triggered selection. Unknown and
+pseudo-state IDs query false, and no context member may be retained. Appending
+the contextual callback changes `sizeof(cflow_statechart_guard_binding)`;
+consumers built against an older header must be rebuilt and relinked.
+
 The CFlow core remains format-neutral and does not parse XML. The optional
 `TurboUtils::CFlowScxml` frontend described below performs bounded SCXML Core
 admission and lowering without changing the Statechart runtime dependency
@@ -553,9 +561,9 @@ dependency. cxml is a private implementation detail of XmlParser and is not
 installed or exported.
 
 `cflow_scxml_compile()` owns the compiled native Statechart and its stable
-state/event name maps, executable blocks, and native binding rows. Input is
+state/event name maps, executable blocks, guard users, and native binding rows. Input is
 borrowed only for the call. The returned program must outlive every runtime
-instance borrowing its Statechart or executable binding users and must be
+instance borrowing its Statechart, guard users, or executable binding users and must be
 destroyed with `cflow_scxml_program_destroy()` after those instances are
 quiescent. The null data model is represented by an inert CMeta `bool` value;
 named event helpers produce the matching borrowed false payload, which runtime
@@ -572,7 +580,9 @@ int main(void) {
     cflow_scxml_program program = {0};
     cflow_scxml_diagnostic diagnostic = {0};
     const cflow_statechart_executable_binding *bindings = NULL;
+    const cflow_statechart_guard_binding *guards = NULL;
     size_t binding_count = 0u;
+    size_t guard_count = 0u;
     cflow_executor executor = {0};
     cflow_statechart_instance instance = {0};
     cflow_statechart_instance_config config;
@@ -583,6 +593,8 @@ int main(void) {
     }
     if (!cflow_scxml_program_runtime_bindings(
             &program, &bindings, &binding_count) ||
+        !cflow_scxml_program_guard_bindings(
+            &program, &guards, &guard_count) ||
         !cflow_executor_serial_init(&executor)) {
         cflow_scxml_program_destroy(&program);
         return 1;
@@ -590,6 +602,8 @@ int main(void) {
     config = (cflow_statechart_instance_config){
         .statechart = cflow_scxml_program_statechart(&program),
         .initial_state = cflow_scxml_program_initial_state(&program),
+        .guards = guards,
+        .guard_count = guard_count,
         .executables = bindings,
         .executable_count = binding_count,
         .external_event_capacity = 16u,
@@ -621,6 +635,11 @@ The supported compatibility subset is deliberately strict:
 - default/explicit initial transitions, shallow/deep history defaults,
   eventless transitions, exact named events, `done.state.<id>` completion
   events, and internal/external transition kinds;
+- ordinary Event, eventless, and completion transitions may use null-model
+  `cond="In(id)"`. The predicate observes the published selection
+  configuration; malformed, quoted, unknown, or pseudo-state arguments fail
+  during compilation, and initial/history default transitions remain
+  unconditional;
 - bounded executable blocks containing `raise event="NMTOKEN"` and nested
   `if`/`elseif`/`else` partitions under `onentry`, `onexit`, and
   ordinary/initial/history transitions. The null-model condition grammar is
@@ -629,12 +648,10 @@ The supported compatibility subset is deliberately strict:
   partitions are legal, document order is retained, and raise failure rolls
   the whole microstep back transactionally;
 - compile-time rejection of malformed, quoted, unknown, or pseudo-state
-  `In(id)` arguments. Null-model system variables remain inaccessible, and
-  transition `cond` remains unsupported because it belongs to selection rather
-  than executable-content evaluation.
+  `In(id)` arguments. Null-model system variables remain inaccessible.
 
-Executable elements other than `raise` and conditional partitions, transition
-conditions, wildcard event descriptors, multiple targets, non-null data
+Executable elements other than `raise` and conditional partitions, wildcard
+event descriptors, multiple targets, non-null data
 models, and other SCXML elements fail during compilation with the first byte
 offset and one-based line/column diagnostic.
 There is no fallback or silent feature removal. Configurable hard limits cover

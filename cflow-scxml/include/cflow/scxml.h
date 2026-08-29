@@ -108,6 +108,20 @@ bool cflow_scxml_program_runtime_bindings(
     const cflow_statechart_executable_binding **out_bindings,
     size_t *out_count);
 
+/**
+ * Borrow the native guard bindings compiled for transition conditions.
+ *
+ * A program without conditioned transitions succeeds with a NULL view and
+ * zero count. The returned rows and callback user pointers are invalidated by
+ * program destruction, so the program must outlive every configured
+ * Statechart instance. Invalid arguments return false without modifying either
+ * output.
+ */
+bool cflow_scxml_program_guard_bindings(
+    const cflow_scxml_program *program,
+    const cflow_statechart_guard_binding **out_bindings,
+    size_t *out_count);
+
 #ifdef __cplusplus
 }
 #endif

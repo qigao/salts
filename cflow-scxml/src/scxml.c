@@ -66,12 +66,17 @@ typedef struct scxml_block {
     size_t max_conditional_depth;
 } scxml_block;
 
+typedef struct scxml_guard_user {
+    cflow_machine_state_id state;
+} scxml_guard_user;
+
 typedef struct scxml_counts {
     size_t state_rows;
     size_t node_refs;
     size_t state_names;
     size_t synthetic_initials;
     size_t transition_rows;
+    size_t guard_rows;
     size_t event_occurrences;
     size_t executable_blocks;
     size_t executable_steps;
@@ -86,11 +91,14 @@ typedef struct scxml_build {
     cflow_scxml_diagnostic *diagnostic;
     cflow_statechart_state *states;
     cflow_statechart_transition *transitions;
+    cflow_statechart_guard *guards;
     cflow_event_type *events;
     cflow_statechart_executable *executables;
     cflow_statechart_state_action *state_actions;
     cflow_statechart_transition_action *transition_actions;
     cflow_statechart_executable_binding *bindings;
+    cflow_statechart_guard_binding *guard_bindings;
+    scxml_guard_user *guard_users;
     scxml_block *blocks;
     scxml_step *steps;
     scxml_branch *branches;
@@ -104,6 +112,7 @@ typedef struct scxml_build {
     size_t state_name_index;
     size_t synthetic_index;
     size_t transition_index;
+    size_t guard_index;
     size_t event_occurrence_index;
     size_t event_name_count;
     size_t executable_index;
@@ -111,6 +120,7 @@ typedef struct scxml_build {
     size_t branch_index;
     size_t step_capacity;
     size_t branch_capacity;
+    size_t guard_capacity;
     size_t max_conditional_depth;
     size_t state_action_index;
     size_t transition_action_index;
@@ -124,6 +134,9 @@ typedef struct cflow_scxml_program_impl {
     size_t event_name_count;
     cflow_statechart_executable_binding *bindings;
     size_t binding_count;
+    cflow_statechart_guard_binding *guard_bindings;
+    scxml_guard_user *guard_users;
+    size_t guard_binding_count;
     scxml_block *blocks;
     scxml_step *steps;
     scxml_branch *branches;
@@ -485,11 +498,6 @@ static cflow_scxml_status validate_element_attributes(
         const turbo_xml_string_view name =
             turbo_xml_attribute_local_name(attribute);
         if (!is_empty_view(namespace_uri)) continue;
-        if (kind == SCXML_ELEMENT_TRANSITION && view_equal_raw(name, "cond")) {
-            return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
-                              turbo_xml_attribute_location(attribute),
-                              "transition conditions require a later data-model phase");
-        }
         if (!attribute_allowed(kind, name)) {
             return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
                               turbo_xml_attribute_location(attribute),
@@ -815,6 +823,7 @@ static cflow_scxml_status analyze_transition(scxml_build *build,
                                              scxml_counts *counts) {
     turbo_xml_attribute event_attribute;
     turbo_xml_attribute target_attribute;
+    turbo_xml_attribute condition_attribute;
     turbo_xml_string_view value;
     turbo_xml_string_view token;
     size_t cursor = 0u;
@@ -826,6 +835,7 @@ static cflow_scxml_status analyze_transition(scxml_build *build,
     if (status != CFLOW_SCXML_OK) return status;
     event_attribute = find_attribute(node, "event");
     target_attribute = find_attribute(node, "target");
+    condition_attribute = find_attribute(node, "cond");
     if (require_default && event_attribute.impl != NULL) {
         return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
                           turbo_xml_attribute_location(event_attribute),
@@ -835,6 +845,22 @@ static cflow_scxml_status analyze_transition(scxml_build *build,
         return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
                           turbo_xml_node_location(node),
                           "initial and history defaults require one target");
+    }
+    if (require_default && condition_attribute.impl != NULL) {
+        return scxml_fail(
+            build, CFLOW_SCXML_INVALID_STRUCTURE,
+            turbo_xml_attribute_location(condition_attribute),
+            "initial and history default transitions cannot have cond");
+    }
+    if (condition_attribute.impl != NULL) {
+        turbo_xml_string_view state_name;
+        if (!parse_null_in_condition(
+                turbo_xml_attribute_value(condition_attribute), &state_name)) {
+            return scxml_fail(
+                build, CFLOW_SCXML_INVALID_STRUCTURE,
+                turbo_xml_attribute_location(condition_attribute),
+                "null-model transition condition must be In(id)");
+        }
     }
     if (target_attribute.impl != NULL) {
         value = turbo_xml_attribute_value(target_attribute);
@@ -879,6 +905,13 @@ static cflow_scxml_status analyze_transition(scxml_build *build,
         return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
                           turbo_xml_node_location(node),
                           "transition count overflow");
+    }
+    if (condition_attribute.impl != NULL &&
+        !checked_add(counts->guard_rows, token_count,
+                     &counts->guard_rows)) {
+        return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                          turbo_xml_attribute_location(condition_attribute),
+                          "transition guard count overflow");
     }
     status = analyze_executable_block(build, node, counts, &nonempty);
     if (status != CFLOW_SCXML_OK) return status;
@@ -1419,6 +1452,21 @@ static cflow_scxml_status resolve_condition_state(
     return CFLOW_SCXML_OK;
 }
 
+static bool evaluate_scxml_transition_guard(
+    void *user, const cflow_statechart_guard_context *context,
+    bool *out_enabled, const char **out_error) {
+    const scxml_guard_user *guard = (const scxml_guard_user *)user;
+    if (guard == NULL || context == NULL || context->state == NULL ||
+        context->is_active == NULL || context->configuration_user == NULL ||
+        out_enabled == NULL || out_error == NULL) {
+        return false;
+    }
+    *out_enabled = context->is_active(
+        context->configuration_user, guard->state);
+    *out_error = NULL;
+    return true;
+}
+
 static cflow_scxml_status emit_executable_node(scxml_build *build, turbo_xml_node node);
 
 static cflow_scxml_status emit_raise_step(
@@ -1630,6 +1678,8 @@ static cflow_scxml_status emit_transition_token(
         find_attribute(transition_node, "target");
     const turbo_xml_attribute type_attribute =
         find_attribute(transition_node, "type");
+    const turbo_xml_attribute condition_attribute =
+        find_attribute(transition_node, "cond");
     cflow_statechart_transition row;
     cflow_scxml_status status;
 
@@ -1679,6 +1729,30 @@ static cflow_scxml_status emit_transition_token(
             row.trigger = CFLOW_STATECHART_TRIGGER_EVENT;
             row.event = (cflow_event_id)event->id;
         }
+    }
+    if (condition_attribute.impl != NULL) {
+        cflow_machine_state_id condition_state = 0u;
+        const size_t guard_index = build->guard_index;
+        status = resolve_condition_state(
+            build, transition_node, &condition_state);
+        if (status != CFLOW_SCXML_OK) return status;
+        if (guard_index >= build->guard_capacity) {
+            return scxml_fail(
+                build, CFLOW_SCXML_NATIVE_IR_REJECTED,
+                turbo_xml_attribute_location(condition_attribute),
+                "transition guard storage invariant failed");
+        }
+        row.guard = (cflow_statechart_guard_id)(guard_index + 1u);
+        build->guards[guard_index] = (cflow_statechart_guard){
+            row.guard, &cmeta_type_bool, CMETA_EFFECT_PURE,
+            CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
+        build->guard_users[guard_index].state = condition_state;
+        build->guard_bindings[guard_index] =
+            (cflow_statechart_guard_binding){
+                .id = row.guard,
+                .user = &build->guard_users[guard_index],
+                .contextual_fn = evaluate_scxml_transition_guard};
+        ++build->guard_index;
     }
     build->transitions[build->transition_index++] = row;
     *out_transition = row.id;
@@ -1786,11 +1860,14 @@ static cflow_scxml_status emit_transitions(scxml_build *build,
 static void free_build(scxml_build *build) {
     free(build->states);
     free(build->transitions);
+    free(build->guards);
     free(build->events);
     free(build->executables);
     free(build->state_actions);
     free(build->transition_actions);
     free(build->bindings);
+    free(build->guard_bindings);
+    free(build->guard_users);
     free(build->blocks);
     free(build->steps);
     free(build->branches);
@@ -1921,6 +1998,7 @@ cflow_scxml_status cflow_scxml_compile(
         counts.transition_rows > limits.max_transitions ||
         counts.state_rows > UINT32_MAX ||
         counts.transition_rows > UINT32_MAX ||
+        counts.guard_rows > CFLOW_MACHINE_MAX_GUARDS ||
         counts.executable_blocks > CFLOW_MACHINE_MAX_ACTIONS ||
         counts.state_action_rows > CFLOW_STATECHART_MAX_ACTION_REFS ||
         counts.transition_action_rows > CFLOW_STATECHART_MAX_ACTION_REFS ||
@@ -1934,6 +2012,7 @@ cflow_scxml_status cflow_scxml_compile(
     build.states = allocate_rows(counts.state_rows, sizeof(*build.states));
     build.transitions =
         allocate_rows(counts.transition_rows, sizeof(*build.transitions));
+    build.guards = allocate_rows(counts.guard_rows, sizeof(*build.guards));
     build.events =
         allocate_rows(counts.event_occurrences, sizeof(*build.events));
     build.executables = allocate_rows(counts.executable_blocks,
@@ -1944,6 +2023,10 @@ cflow_scxml_status cflow_scxml_compile(
         counts.transition_action_rows, sizeof(*build.transition_actions));
     build.bindings = allocate_rows(counts.executable_blocks,
                                    sizeof(*build.bindings));
+    build.guard_bindings = allocate_rows(
+        counts.guard_rows, sizeof(*build.guard_bindings));
+    build.guard_users = allocate_rows(
+        counts.guard_rows, sizeof(*build.guard_users));
     build.blocks = allocate_rows(counts.executable_blocks,
                                  sizeof(*build.blocks));
     build.steps = allocate_rows(counts.executable_steps,
@@ -1952,6 +2035,7 @@ cflow_scxml_status cflow_scxml_compile(
         counts.conditional_branches, sizeof(*build.branches));
     build.step_capacity = counts.executable_steps;
     build.branch_capacity = counts.conditional_branches;
+    build.guard_capacity = counts.guard_rows;
     build.max_conditional_depth = counts.max_conditional_depth;
     build.state_names =
         allocate_rows(counts.state_names, sizeof(*build.state_names));
@@ -1965,6 +2049,9 @@ cflow_scxml_status cflow_scxml_compile(
         counts.synthetic_initials, sizeof(*build.synthetic_initials));
     if ((counts.state_rows != 0u && build.states == NULL) ||
         (counts.transition_rows != 0u && build.transitions == NULL) ||
+        (counts.guard_rows != 0u &&
+         (build.guards == NULL || build.guard_bindings == NULL ||
+          build.guard_users == NULL)) ||
         (counts.event_occurrences != 0u &&
           (build.events == NULL || build.event_names == NULL ||
            build.event_occurrences == NULL)) ||
@@ -2041,6 +2128,8 @@ cflow_scxml_status cflow_scxml_compile(
     definition.state_count = build.state_index;
     definition.events = build.events;
     definition.event_count = build.event_name_count;
+    definition.guards = build.guards;
+    definition.guard_count = build.guard_index;
     definition.executables = build.executables;
     definition.executable_count = build.executable_index;
     definition.transitions = build.transitions;
@@ -2088,10 +2177,15 @@ cflow_scxml_status cflow_scxml_compile(
     impl->event_name_count = build.event_name_count;
     impl->bindings = build.bindings;
     impl->binding_count = build.executable_index;
+    impl->guard_bindings = build.guard_bindings;
+    impl->guard_users = build.guard_users;
+    impl->guard_binding_count = build.guard_index;
     impl->blocks = build.blocks;
     impl->steps = build.steps;
     impl->branches = build.branches;
     build.bindings = NULL;
+    build.guard_bindings = NULL;
+    build.guard_users = NULL;
     build.blocks = NULL;
     build.steps = NULL;
     build.branches = NULL;
@@ -2110,6 +2204,8 @@ cleanup:
         free(impl->state_names);
         free(impl->event_names);
         free(impl->bindings);
+        free(impl->guard_bindings);
+        free(impl->guard_users);
         free(impl->blocks);
         free(impl->steps);
         free(impl->branches);
@@ -2129,6 +2225,8 @@ void cflow_scxml_program_destroy(cflow_scxml_program *program) {
     free(impl->state_names);
     free(impl->event_names);
     free(impl->bindings);
+    free(impl->guard_bindings);
+    free(impl->guard_users);
     free(impl->blocks);
     free(impl->steps);
     free(impl->branches);
@@ -2227,6 +2325,23 @@ bool cflow_scxml_program_runtime_bindings(
             (const cflow_scxml_program_impl *)program->impl;
         *out_bindings = impl->bindings;
         *out_count = impl->binding_count;
+    }
+    return true;
+}
+
+bool cflow_scxml_program_guard_bindings(
+    const cflow_scxml_program *program,
+    const cflow_statechart_guard_binding **out_bindings,
+    size_t *out_count) {
+    if (program == NULL || program->impl == NULL || out_bindings == NULL ||
+        out_count == NULL) {
+        return false;
+    }
+    {
+        const cflow_scxml_program_impl *impl =
+            (const cflow_scxml_program_impl *)program->impl;
+        *out_bindings = impl->guard_bindings;
+        *out_count = impl->guard_binding_count;
     }
     return true;
 }

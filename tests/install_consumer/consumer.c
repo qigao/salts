@@ -154,16 +154,33 @@ static bool installed_legacy_action(void *user, cflow_statechart_action_phase ph
   return true;
 }
 
+static bool installed_legacy_guard(void *user, const void *state,
+                                   const cflow_event_view *event,
+                                   bool *out_enabled,
+                                   const char **out_error) {
+  (void)user;
+  (void)event;
+  if (state == NULL || out_enabled == NULL || out_error == NULL) return false;
+  *out_enabled = true;
+  *out_error = NULL;
+  return true;
+}
+
 int main(void) {
   static const char source[] =
       "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
       "<state id='active'><onentry><if cond='In(active)'/>"
-      "</onentry></state></scxml>";
+      "</onentry><transition cond='In(active)' target='done'/></state>"
+      "<final id='done'/></scxml>";
   const cflow_statechart_executable_binding legacy = {
       1u, installed_legacy_action, NULL};
+  const cflow_statechart_guard_binding legacy_guard = {
+      1u, installed_legacy_guard, NULL};
   cflow_scxml_program program = {0};
   const cflow_statechart_executable_binding *bindings = NULL;
+  const cflow_statechart_guard_binding *guard_bindings = NULL;
   size_t binding_count = 0u;
+  size_t guard_count = 0u;
   cflow_scxml_status status = cflow_scxml_compile(
       &program, source, sizeof(source) - 1u, NULL, NULL);
   if (status == CFLOW_SCXML_OK &&
@@ -172,9 +189,19 @@ int main(void) {
     cflow_scxml_program_destroy(&program);
     return 1;
   }
+  if (status == CFLOW_SCXML_OK &&
+      !cflow_scxml_program_guard_bindings(
+          &program, &guard_bindings, &guard_count)) {
+    cflow_scxml_program_destroy(&program);
+    return 1;
+  }
   if (status != CFLOW_SCXML_OK || bindings == NULL || binding_count != 1u ||
       bindings[0].fn != NULL || bindings[0].contextual_fn == NULL ||
-      legacy.fn == NULL || legacy.contextual_fn != NULL) {
+      guard_bindings == NULL || guard_count != 1u ||
+      guard_bindings[0].fn != NULL ||
+      guard_bindings[0].contextual_fn == NULL ||
+      legacy.fn == NULL || legacy.contextual_fn != NULL ||
+      legacy_guard.fn == NULL || legacy_guard.contextual_fn != NULL) {
     cflow_scxml_program_destroy(&program);
     return 1;
   }
