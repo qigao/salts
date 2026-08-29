@@ -32,6 +32,77 @@ static const cflow_statechart_state *find_state(
     return NULL;
 }
 
+static bool run_condition_program(const char *source, const char *event_name,
+                                  size_t *out_guard_count, bool *out_done,
+                                  cflow_machine_state_id *out_current_state) {
+    cflow_scxml_program program = {0};
+    cflow_scxml_diagnostic diagnostic = {0};
+    const cflow_statechart_executable_binding *executables = NULL;
+    const cflow_statechart_guard_binding *guards = NULL;
+    size_t executable_count = 0u;
+    size_t guard_count = 0u;
+    cflow_executor executor = {0};
+    cflow_statechart_instance instance = {0};
+    cflow_statechart_instance_config config = {0};
+    cflow_statechart_instance_stats stats = {0};
+    cflow_event_view event = {0};
+    bool executor_initialized = false;
+    bool instance_initialized = false;
+    bool succeeded = false;
+
+    if (source == NULL || out_guard_count == NULL || out_done == NULL ||
+        compile_status(source, &program, &diagnostic) != CFLOW_SCXML_OK ||
+        !cflow_scxml_program_runtime_bindings(
+            &program, &executables, &executable_count) ||
+        !cflow_scxml_program_guard_bindings(
+            &program, &guards, &guard_count) ||
+        !cflow_executor_serial_init(&executor)) {
+        goto cleanup;
+    }
+    executor_initialized = true;
+    config = (cflow_statechart_instance_config){
+        .statechart = cflow_scxml_program_statechart(&program),
+        .initial_state = cflow_scxml_program_initial_state(&program),
+        .guards = guards,
+        .guard_count = guard_count,
+        .executables = executables,
+        .executable_count = executable_count,
+        .external_event_capacity = 2u,
+        .internal_event_capacity = 2u,
+        .completion_capacity = 4u,
+        .microstep_limit = 32u,
+        .executor = &executor};
+    if (cflow_statechart_instance_init(&instance, &config) !=
+        CFLOW_STATECHART_RUNTIME_OK) {
+        goto cleanup;
+    }
+    instance_initialized = true;
+    if (event_name != NULL) {
+        if (!cflow_scxml_program_event(
+                &program, event_name, strlen(event_name), &event) ||
+            cflow_statechart_instance_try_send(&instance, &event) !=
+                CFLOW_MAILBOX_OK ||
+            !cflow_executor_wait_idle(&executor)) {
+            goto cleanup;
+        }
+    }
+    if (!cflow_statechart_instance_get_stats(&instance, &stats)) goto cleanup;
+    *out_guard_count = guard_count;
+    *out_done = stats.done;
+    if (out_current_state != NULL) {
+        *out_current_state =
+            cflow_statechart_instance_current_state(&instance);
+    }
+    succeeded = true;
+
+cleanup:
+    if (instance_initialized)
+        (void)cflow_statechart_instance_destroy(&instance);
+    if (executor_initialized) cflow_executor_destroy(&executor);
+    cflow_scxml_program_destroy(&program);
+    return succeeded;
+}
+
 suite("SCXML Core to native CFlow Statechart compiler") {
     it("lowers supported structural elements and deterministic name maps") {
         static const char source[] =
@@ -147,7 +218,223 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                    (const cflow_statechart_executable_binding *)(uintptr_t)1u);
         check_equal(binding_count, SIZE_MAX);
 
+        {
+            const cflow_statechart_guard_binding *guard_bindings =
+                (const cflow_statechart_guard_binding *)(uintptr_t)1u;
+            size_t guard_count = SIZE_MAX;
+            check_true(cflow_scxml_program_guard_bindings(
+                &program, &guard_bindings, &guard_count));
+            check_null(guard_bindings);
+            check_equal(guard_count, (size_t)0u);
+
+            guard_bindings =
+                (const cflow_statechart_guard_binding *)(uintptr_t)1u;
+            guard_count = SIZE_MAX;
+            check_false(cflow_scxml_program_guard_bindings(
+                NULL, &guard_bindings, &guard_count));
+            check_true(
+                guard_bindings ==
+                (const cflow_statechart_guard_binding *)(uintptr_t)1u);
+            check_equal(guard_count, SIZE_MAX);
+        }
+
         cflow_scxml_program_destroy(&program);
+    }
+
+    it("lowers one null transition condition to a borrowed native guard") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='active'><state id='active'>"
+            "<transition event='go' cond='  In ( active )  ' target='done'/>"
+            "</state><final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        const cflow_statechart *statechart;
+        const cflow_statechart_guard *guard;
+        const cflow_statechart_transition *conditioned = NULL;
+        const cflow_statechart_guard_binding *guard_bindings = NULL;
+        size_t guard_count = 0u;
+        size_t index;
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        statechart = cflow_scxml_program_statechart(&program);
+        check_not_null(statechart);
+        check_equal(cflow_statechart_guard_count(statechart), (size_t)1u);
+        guard = cflow_statechart_guard_at(statechart, 0u);
+        check_not_null(guard);
+        for (index = 0u;
+             index < cflow_statechart_transition_count(statechart); ++index) {
+            const cflow_statechart_transition *candidate =
+                cflow_statechart_transition_at(statechart, index);
+            if (candidate != NULL && candidate->guard != 0u) {
+                conditioned = candidate;
+                break;
+            }
+        }
+        check_not_null(conditioned);
+        check_equal(conditioned->guard, guard->id);
+        check_true(cflow_scxml_program_guard_bindings(
+            &program, &guard_bindings, &guard_count));
+        check_not_null(guard_bindings);
+        check_equal(guard_count, (size_t)1u);
+        check_equal(guard_bindings[0].id, guard->id);
+        check_null(guard_bindings[0].fn);
+        check_not_null(guard_bindings[0].contextual_fn);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("diagnoses invalid transition conditions at the cond attribute") {
+        static const char malformed[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='a'><transition cond='ready' target='a'/></state>"
+            "</scxml>";
+        static const char quoted[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='a'><transition cond=\"In('a')\" target='a'/>"
+            "</state></scxml>";
+        static const char unknown[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='a'><transition cond='In(missing)' target='a'/>"
+            "</state></scxml>";
+        static const char pseudo[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='a'><history id='memory'>"
+            "<transition target='leaf'/></history>"
+            "<transition cond='In(memory)' target='leaf'/>"
+            "<state id='leaf'/></state></scxml>";
+        static const char initial_default[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<initial><transition cond='In(a)' target='a'/></initial>"
+            "<state id='a'/></scxml>";
+        static const char history_default[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='a'><history id='memory'>"
+            "<transition cond='In(a)' target='leaf'/></history>"
+            "<state id='leaf'/></state></scxml>";
+        const char *invalid[] = {
+            malformed, quoted, unknown, pseudo, initial_default,
+            history_default};
+        const cflow_scxml_status expected[] = {
+            CFLOW_SCXML_INVALID_STRUCTURE, CFLOW_SCXML_INVALID_STRUCTURE,
+            CFLOW_SCXML_UNKNOWN_TARGET, CFLOW_SCXML_INVALID_STRUCTURE,
+            CFLOW_SCXML_INVALID_STRUCTURE, CFLOW_SCXML_INVALID_STRUCTURE};
+        size_t index;
+
+        for (index = 0u; index < sizeof(invalid) / sizeof(invalid[0]);
+             ++index) {
+            cflow_scxml_program program = {0};
+            cflow_scxml_diagnostic diagnostic = {0};
+            check_equal(compile_status(invalid[index], &program, &diagnostic),
+                        expected[index]);
+            check_equal(
+                diagnostic.location.byte_offset,
+                (size_t)(strstr(invalid[index], "cond") - invalid[index]));
+            check_null(program.impl);
+        }
+    }
+
+    it("falls through a false child condition to a true ancestor condition") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='parent'><state id='parent' initial='leaf'>"
+            "<transition event='go' cond='In(parent)' target='done'/>"
+            "<state id='leaf'><transition event='go' cond='In(other)' "
+            "target='wrong'/></state></state><state id='other'/>"
+            "<final id='done'/><final id='wrong'/></scxml>";
+        size_t guard_count = 0u;
+        cflow_machine_state_id done_id = 0u;
+        cflow_machine_state_id current_state = 0u;
+        bool done = false;
+
+        check_true(run_condition_program(
+            source, "go", &guard_count, &done, &current_state));
+        {
+            cflow_scxml_program program = {0};
+            cflow_scxml_diagnostic diagnostic = {0};
+            check_equal(compile_status(source, &program, &diagnostic),
+                        CFLOW_SCXML_OK);
+            check_true(cflow_scxml_program_state_id(
+                &program, "done", 4u, &done_id));
+            cflow_scxml_program_destroy(&program);
+        }
+        check_equal(guard_count, (size_t)2u);
+        check_true(done);
+        check_equal(current_state, done_id);
+    }
+
+    it("selects the first document-ordered transition whose condition is true") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='start'><state id='start'>"
+            "<transition event='go' cond='In(other)' target='wrong'/>"
+            "<transition event='go' cond='In(start)' target='done'/>"
+            "</state><state id='other'/><final id='wrong'/>"
+            "<final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_machine_state_id done_id = 0u;
+        cflow_machine_state_id current_state = 0u;
+        size_t guard_count = 0u;
+        bool done = false;
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_scxml_program_state_id(
+            &program, "done", 4u, &done_id));
+        cflow_scxml_program_destroy(&program);
+        check_true(run_condition_program(
+            source, "go", &guard_count, &done, &current_state));
+        check_equal(guard_count, (size_t)2u);
+        check_true(done);
+        check_equal(current_state, done_id);
+    }
+
+    it("stabilizes a true eventless transition condition") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='start'><state id='start'>"
+            "<transition cond='In(start)' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        size_t guard_count = 0u;
+        bool done = false;
+
+        check_true(run_condition_program(
+            source, NULL, &guard_count, &done, NULL));
+        check_equal(guard_count, (size_t)1u);
+        check_true(done);
+    }
+
+    it("selects a conditioned completion transition") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='parent'><state id='parent' initial='child_done'>"
+            "<transition event='done.state.parent' cond='In(parent)' "
+            "target='done'/><final id='child_done'/></state>"
+            "<final id='done'/></scxml>";
+        size_t guard_count = 0u;
+        bool done = false;
+
+        check_true(run_condition_program(
+            source, NULL, &guard_count, &done, NULL));
+        check_equal(guard_count, (size_t)1u);
+        check_true(done);
+    }
+
+    it("expands a parallel condition across multiple Event descriptors") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='both'><parallel id='both'>"
+            "<transition event='go retry' cond='In(left)' target='done'/>"
+            "<state id='left'/><state id='right'/></parallel>"
+            "<final id='done'/></scxml>";
+        size_t guard_count = 0u;
+        bool done = false;
+
+        check_true(run_condition_program(
+            source, "retry", &guard_count, &done, NULL));
+        check_equal(guard_count, (size_t)2u);
+        check_true(done);
     }
 
     it("executes an onentry raise block through native runtime bindings") {
@@ -749,11 +1036,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         cflow_scxml_program_destroy(&program);
     }
 
-    it("fails fast for Phase 3 behavior instead of discarding it") {
-        static const char condition[] =
-            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>\n"
-            "  <state id='a'><transition cond='ready' target='a'/></state>\n"
-            "</scxml>";
+    it("fails fast for unsupported behavior instead of discarding it") {
         static const char executable[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>\n"
             "  <state id='a'><onentry><log expr='x'/></onentry></state>\n"
@@ -765,11 +1048,6 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             "</scxml>";
         cflow_scxml_program program = {0};
         cflow_scxml_diagnostic diagnostic = {0};
-
-        check_equal(compile_status(condition, &program, &diagnostic),
-                    CFLOW_SCXML_UNSUPPORTED_FEATURE);
-        check_equal(diagnostic.location.byte_offset,
-                    (size_t)(strstr(condition, "cond") - condition));
 
         check_equal(compile_status(executable, &program, &diagnostic),
                     CFLOW_SCXML_UNSUPPORTED_FEATURE);

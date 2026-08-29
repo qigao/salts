@@ -92,6 +92,9 @@ if(TURBOUTILS_EXPECT_CFLOW_SCXML)
   endif()
   add_turboutils_consumer(consume_cflow_scxml
                          TurboUtils::CFlowScxml CONSUME_CFLOW_SCXML)
+  add_custom_command(TARGET consume_cflow_scxml POST_BUILD
+    COMMAND $<TARGET_FILE:consume_cflow_scxml>
+    COMMENT "Running installed CFlow SCXML consumer")
 elseif(TARGET TurboUtils::CFlowScxml)
   message(FATAL_ERROR
           "feature-off TurboUtils package unexpectedly exports CFlowScxml")

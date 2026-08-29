@@ -1,4 +1,6 @@
 set(TARGET_NAME turbo_cflow)
+set(CFLOW_LIBRARY_VERSION 2.0.0)
+set(CFLOW_ABI_VERSION 2)
 
 set(CFLOW_MACHINE_MAX_STATES 65536 CACHE STRING
     "Maximum state declarations accepted by one CFlow Machine")
@@ -117,7 +119,14 @@ cmake_config_target(
   ${TARGET_NAME}
   ALIAS TurboUtils::CFlow
   FOLDER "cflow"
-  EXPORT_NAME CFlow)
+  EXPORT_NAME CFlow
+  VERSION ${CFLOW_LIBRARY_VERSION}
+  SOVERSION ${CFLOW_ABI_VERSION})
+
+if(WIN32 AND BUILD_SHARED_LIBS)
+  set_target_properties(${TARGET_NAME} PROPERTIES
+    OUTPUT_NAME "turbo_cflow-${CFLOW_ABI_VERSION}")
+endif()
 
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
 target_compile_definitions(
