@@ -338,7 +338,8 @@ static cflow_uring_record *uring_record_for_token(cflow_uring_impl *impl,
 }
 
 static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
-                         int result) {
+                         int result,
+                         cflow_io_completion_batch *batch) {
     cflow_uring_record *record;
     cflow_io_actor *actor;
     cflow_io_request_id request_id;
@@ -446,8 +447,8 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
                 ? 0u : (size_t)effective_result,
             TURBO_OK};
     }
-    delivery_status = cflow_io_actor_publish_completion(
-        actor, request_id, &completion);
+    delivery_status = cflow_io_actor_completion_batch_publish(
+        batch, actor, request_id, &completion);
     if (resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
         vector_buffer_count == 0u && accepted_fd >= 0 &&
         (completion.kind != CFLOW_IO_COMPLETION_OK ||
@@ -459,6 +460,7 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
 }
 
 static void uring_fail_all(cflow_uring_impl *impl, int status) {
+    cflow_io_completion_batch batch = {0};
     for (size_t index = 0u; index < impl->request_capacity; ++index) {
         cflow_uring_record *record = &impl->records[index];
         uint64_t native_token;
@@ -469,8 +471,9 @@ static void uring_fail_all(cflow_uring_impl *impl, int status) {
         }
         native_token = record->native_token;
         turbo_mutex_unlock(&impl->gate);
-        uring_finish(impl, native_token, status);
+        uring_finish(impl, native_token, status, &batch);
     }
+    cflow_io_actor_completion_batch_end(&batch);
 }
 
 static void uring_worker(void *user) {
@@ -485,6 +488,7 @@ static void uring_worker(void *user) {
         goto failed;
     }
     for (;;) {
+        cflow_io_completion_batch batch = {0};
         unsigned head;
         unsigned tail;
         size_t drained = 0u;
@@ -509,16 +513,19 @@ static void uring_worker(void *user) {
                                   memory_order_release);
             if (token == CFLOW_URING_CANCEL_TOKEN)
                 continue;
-            if (token == CFLOW_URING_STOP_TOKEN)
+            if (token == CFLOW_URING_STOP_TOKEN) {
+                cflow_io_actor_completion_batch_end(&batch);
                 goto stopped;
+            }
             if (uring_record_for_token(impl, token) == NULL) {
                 turbo_mutex_lock(&impl->gate);
                 uring_counter_increment(&impl->stale_native_completions);
                 turbo_mutex_unlock(&impl->gate);
                 continue;
             }
-            uring_finish(impl, token, result);
+            uring_finish(impl, token, result, &batch);
         }
+        cflow_io_actor_completion_batch_end(&batch);
     }
 failed:
     turbo_mutex_lock(&impl->gate);

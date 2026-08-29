@@ -920,29 +920,17 @@ cflow_io_cancel_status cflow_io_actor_try_cancel(
     return result;
 }
 
-cflow_io_complete_status cflow_io_actor_publish_completion(
-    cflow_io_actor *actor,
+static cflow_io_complete_status io_publish_completion_entry(
+    cflow_io_actor_impl *impl,
     cflow_io_request_id request_id,
     const cflow_io_completion *completion) {
-    cflow_io_actor_impl *impl = io_impl(actor);
     cflow_io_request_slot *slot;
     disruptor_cursor_t cursor = {0};
     cflow_io_completion_event *entry;
-    cflow_io_complete_status reservation_status;
 
-    if (impl == NULL || request_id == 0u ||
-        !io_completion_valid(completion))
-        return CFLOW_IO_COMPLETE_INVALID_ARGUMENT;
-    /* A ring entry becomes visible before its coalesced wake has necessarily
-       returned. Keep Actor destruction out of that publication tail. */
-    (void)atomic_fetch_add_explicit(
-        &impl->completion_publishers_inflight, 1u, memory_order_acq_rel);
     slot = io_reserve_completion_slot(impl, request_id);
     if (slot == NULL) {
-        reservation_status =
-            io_completion_reservation_failure(impl, request_id);
-        io_finish_completion_publication(impl);
-        return reservation_status;
+        return io_completion_reservation_failure(impl, request_id);
     }
 
     disruptor_publisher_next_entry_blocking(impl->completions, &cursor);
@@ -954,8 +942,56 @@ cflow_io_complete_status cflow_io_actor_publish_completion(
     disruptor_publisher_commit_entry_blocking(impl->completions, &cursor);
     (void)atomic_fetch_add_explicit(
         &impl->completion_depth, 1u, memory_order_release);
-    io_finish_completion_publication(impl);
     return CFLOW_IO_COMPLETE_ACCEPTED;
+}
+
+cflow_io_complete_status cflow_io_actor_completion_batch_publish(
+    cflow_io_completion_batch *batch,
+    cflow_io_actor *actor,
+    cflow_io_request_id request_id,
+    const cflow_io_completion *completion) {
+    cflow_io_actor_impl *impl = io_impl(actor);
+
+    if (batch == NULL || impl == NULL || request_id == 0u ||
+        !io_completion_valid(completion))
+        return CFLOW_IO_COMPLETE_INVALID_ARGUMENT;
+    if (batch->impl != impl) {
+        cflow_io_actor_completion_batch_end(batch);
+        /* Keep Actor destruction out of the complete native publication
+           scope until the gathered entries receive their coalesced wake. */
+        (void)atomic_fetch_add_explicit(
+            &impl->completion_publishers_inflight, 1u,
+            memory_order_acq_rel);
+        batch->impl = impl;
+    }
+    return io_publish_completion_entry(impl, request_id, completion);
+}
+
+void cflow_io_actor_completion_batch_end(
+    cflow_io_completion_batch *batch) {
+    cflow_io_actor_impl *impl;
+    if (batch == NULL || batch->impl == NULL)
+        return;
+    impl = (cflow_io_actor_impl *)batch->impl;
+    batch->impl = NULL;
+    io_finish_completion_publication(impl);
+}
+
+cflow_io_complete_status cflow_io_actor_publish_completion(
+    cflow_io_actor *actor,
+    cflow_io_request_id request_id,
+    const cflow_io_completion *completion) {
+    cflow_io_actor_impl *impl = io_impl(actor);
+    cflow_io_complete_status status;
+    if (impl == NULL || request_id == 0u ||
+        !io_completion_valid(completion))
+        return CFLOW_IO_COMPLETE_INVALID_ARGUMENT;
+    (void)atomic_fetch_add_explicit(
+        &impl->completion_publishers_inflight, 1u, memory_order_acq_rel);
+    status = io_publish_completion_entry(
+        impl, request_id, completion);
+    io_finish_completion_publication(impl);
+    return status;
 }
 
 cflow_io_complete_status cflow_io_actor_complete(

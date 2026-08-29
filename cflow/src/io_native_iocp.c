@@ -378,7 +378,8 @@ static int iocp_finish_connect(SOCKET socket_value) {
 static void iocp_finish_record(cflow_iocp_impl *impl,
                                cflow_iocp_record *record,
                                DWORD bytes,
-                               DWORD native_error) {
+                               DWORD native_error,
+                               cflow_io_completion_batch *batch) {
     cflow_io_actor *actor;
     cflow_io_request_id request_id;
     cflow_io_native_operation *operation;
@@ -501,8 +502,8 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_OK, (size_t)bytes, TURBO_OK};
     }
-    delivery_status = cflow_io_actor_publish_completion(
-        actor, request_id, &completion);
+    delivery_status = cflow_io_actor_completion_batch_publish(
+        batch, actor, request_id, &completion);
     if (resource_kind == CFLOW_IOCP_RESOURCE_SOCKET &&
         vector_buffer_count == 0u &&
         operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT &&
@@ -584,6 +585,7 @@ static int iocp_associate_resource(cflow_iocp_impl *impl,
 static void iocp_worker(void *user) {
     cflow_iocp_impl *impl = (cflow_iocp_impl *)user;
     for (;;) {
+        cflow_io_completion_batch batch = {0};
         size_t batch_index;
         for (batch_index = 0u;
              batch_index < impl->completion_batch_capacity;
@@ -597,15 +599,18 @@ static void iocp_worker(void *user) {
             const DWORD native_error = ok ? ERROR_SUCCESS : GetLastError();
 
             if (overlapped == NULL) {
-                if (ok && completion_key == CFLOW_IOCP_STOP_KEY)
+                if (ok && completion_key == CFLOW_IOCP_STOP_KEY) {
+                    cflow_io_actor_completion_batch_end(&batch);
                     goto stopped;
+                }
                 if (native_error == WAIT_TIMEOUT)
                     break;
                 continue;
             }
             iocp_finish_record(impl, (cflow_iocp_record *)overlapped,
-                               bytes, native_error);
+                               bytes, native_error, &batch);
         }
+        cflow_io_actor_completion_batch_end(&batch);
     }
 
 stopped:
