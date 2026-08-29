@@ -475,6 +475,39 @@ static bool executable_binding(void *user,
     return true;
 }
 
+typedef struct initial_entry_probe {
+    cflow_executor *executor;
+    cflow_statechart_action_phase phases[5];
+    cflow_machine_state_id owners[5];
+    size_t count;
+    bool executor_only;
+} initial_entry_probe;
+
+static bool initial_entry_binding(
+    void *user, cflow_statechart_action_phase phase,
+    cflow_machine_state_id owner, const void *state,
+    const cflow_event_view *event, void *out_state,
+    cflow_statechart_raise_fn raise_internal, void *raise_user,
+    const char **out_error) {
+    initial_entry_probe *probe = (initial_entry_probe *)user;
+    (void)raise_internal;
+    (void)raise_user;
+    if (probe == NULL || probe->executor == NULL || state == NULL ||
+        out_state == NULL || out_error == NULL ||
+        (phase != CFLOW_STATECHART_ACTION_INITIAL &&
+         phase != CFLOW_STATECHART_ACTION_ENTRY) ||
+        event != NULL || probe->count >= 5u)
+        return false;
+    probe->executor_only = probe->executor_only &&
+        cflow_executor_is_current_internal(probe->executor);
+    probe->phases[probe->count] = phase;
+    probe->owners[probe->count] = owner;
+    *(int *)out_state = *(const int *)state + 1;
+    ++probe->count;
+    *out_error = NULL;
+    return true;
+}
+
 suite("CFlow Statechart runtime initial configuration") {
     it("enters nested compound defaults and projects its sole leaf") {
         runtime_fixture fixture;
@@ -556,6 +589,72 @@ suite("CFlow Statechart runtime initial configuration") {
         check_equal(stats.active_state_count, (size_t)3u);
         check_equal(stats.active_leaf_count, (size_t)1u);
         check_null(cflow_statechart_instance_error(&fixture.instance));
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("runs initial transition then entry actions on the SerialExecutor") {
+        runtime_fixture fixture;
+        const cflow_statechart_executable executable = {
+            30u, &cmeta_type_int, CMETA_EFFECT_STATEFUL,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        const cflow_statechart_state_action state_actions[] = {
+            {90u, CFLOW_STATECHART_STATE_ACTION_ENTRY, 30u, 0u},
+            {70u, CFLOW_STATECHART_STATE_ACTION_ENTRY, 30u, 0u},
+            {20u, CFLOW_STATECHART_STATE_ACTION_ENTRY, 30u, 0u}};
+        const cflow_statechart_transition_action transition_actions[] = {
+            {10u, 30u, 0u}, {11u, 30u, 0u}};
+        const cflow_statechart_action_phase expected_phases[] = {
+            CFLOW_STATECHART_ACTION_INITIAL,
+            CFLOW_STATECHART_ACTION_INITIAL,
+            CFLOW_STATECHART_ACTION_ENTRY,
+            CFLOW_STATECHART_ACTION_ENTRY,
+            CFLOW_STATECHART_ACTION_ENTRY};
+        const cflow_machine_state_id expected_owners[] = {
+            40u, 80u, 70u, 20u, 90u};
+        initial_entry_probe probe = {0};
+        const cflow_statechart_executable_binding binding = {
+            30u, initial_entry_binding, &probe};
+        cflow_statechart_instance_config config;
+        cflow_statechart_instance_stats stats = {0};
+        const cmeta_type_desc *type = NULL;
+        int state = 0;
+        nested_compound_fixture(&fixture);
+        fixture.definition.executables = &executable;
+        fixture.definition.executable_count = 1u;
+        fixture.definition.state_actions = state_actions;
+        fixture.definition.state_action_count = 3u;
+        fixture.definition.transition_actions = transition_actions;
+        fixture.definition.transition_action_count = 2u;
+        check_equal(cflow_statechart_build(
+                        &fixture.statechart, &fixture.definition),
+                    CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&fixture.executor));
+        probe.executor = &fixture.executor;
+        probe.executor_only = true;
+        config = (cflow_statechart_instance_config){
+            .statechart = &fixture.statechart,
+            .initial_state = &fixture.initial_state,
+            .executables = &binding,
+            .executable_count = 1u,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 64u,
+            .executor = &fixture.executor};
+
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(probe.executor_only);
+        check_equal(probe.count, (size_t)5u);
+        check_equal(probe.phases, expected_phases, sizeof(expected_phases));
+        check_equal(probe.owners, expected_owners, sizeof(expected_owners));
+        check_true(cflow_statechart_instance_copy_state(
+            &fixture.instance, &type, &state, sizeof(state)));
+        check_true(cmeta_type_equal(type, &cmeta_type_int));
+        check_equal(state, 46);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.actions, UINT64_C(5));
         runtime_fixture_destroy(&fixture);
     }
 
@@ -1000,7 +1099,7 @@ suite("CFlow Statechart runtime initial configuration") {
         check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
                     CFLOW_STATECHART_RUNTIME_OK);
         check_equal(atomic_load(&guard_calls), 2);
-        check_equal(atomic_load(&executable_calls), 0);
+        check_equal(atomic_load(&executable_calls), 2);
         runtime_fixture_destroy(&fixture);
     }
 }
@@ -1554,6 +1653,15 @@ static bool microstep_action(void *user,
     cflow_event_view raised;
     const char *raise_error = NULL;
     bool raised_ok = true;
+    if (probe != NULL &&
+        (phase == CFLOW_STATECHART_ACTION_INITIAL ||
+         phase == CFLOW_STATECHART_ACTION_ENTRY) &&
+        event == NULL && state != NULL && out_state != NULL &&
+        out_error != NULL) {
+        *(int *)out_state = *(const int *)state;
+        *out_error = NULL;
+        return true;
+    }
     if (probe == NULL || state == NULL || out_state == NULL ||
         out_error == NULL || event == NULL ||
         event->payload_type == NULL ||
@@ -1827,8 +1935,14 @@ static bool microstep_raise_sequence_action(
     const char **out_error) {
     microstep_raise_probe *probe = (microstep_raise_probe *)user;
     size_t index;
-    (void)phase;
     (void)owner;
+    if (probe != NULL && phase == CFLOW_STATECHART_ACTION_ENTRY &&
+        event == NULL && state != NULL && out_state != NULL &&
+        out_error != NULL) {
+        *(int *)out_state = *(const int *)state;
+        *out_error = NULL;
+        return true;
+    }
     if (probe == NULL || state == NULL || event == NULL || out_state == NULL ||
         raise_internal == NULL || out_error == NULL)
         return false;

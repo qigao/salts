@@ -102,6 +102,7 @@ typedef struct cflow_statechart_instance_impl {
     size_t staged_completion_count;
     size_t microstep_limit;
     size_t macrostep_microsteps;
+    bool initial_configuration_pending;
     bool macrostep_active;
     bool macrostep_has_external;
     bool external_in_flight;
@@ -2150,6 +2151,83 @@ static void commit_internal_events(cflow_statechart_instance_impl *impl) {
     impl->staged_event_count = 0u;
 }
 
+static cflow_statechart_runtime_status execute_initial_entry_actions(
+    cflow_statechart_instance_impl *impl) {
+    const size_t staged = 1u;
+    const statechart_configuration_buffer *configuration =
+        &impl->configurations[staged];
+    statechart_action_context context = {
+        impl, NULL, impl->extended_states[staged], impl->action_scratch, 0u,
+        CFLOW_STATECHART_RUNTIME_OK, NULL};
+    const char *error = NULL;
+    cflow_statechart_runtime_status status;
+    size_t position, initial_count = 0u;
+    impl->staged_event_count = 0u;
+    impl->staged_completion_count = 0u;
+    for (position = 0u; position < configuration->state_count; ++position)
+        impl->entry_order[position] = configuration->states[position];
+    stable_order_states(
+        impl->ir, impl->entry_order, configuration->state_count,
+        entry_before);
+    for (position = 0u; position < configuration->state_count; ++position) {
+        const size_t state = configuration->states[position];
+        size_t child;
+        if (impl->ir->states[state].kind != CFLOW_STATECHART_COMPOUND)
+            continue;
+        for (child = impl->ir->child_offsets[state];
+             child < impl->ir->child_offsets[state + 1u]; ++child) {
+            const size_t initial = impl->ir->children[child];
+            if (impl->ir->states[initial].kind ==
+                    CFLOW_STATECHART_INITIAL) {
+                impl->pseudo_transition_order[initial_count++] =
+                    impl->ir->default_transition_indices[initial];
+                break;
+            }
+        }
+    }
+    for (position = 0u; position < initial_count; ++position) {
+        status = run_transition_action_span(
+            &context, impl->pseudo_transition_order[position],
+            CFLOW_STATECHART_ACTION_INITIAL, &error);
+        if (status != CFLOW_STATECHART_RUNTIME_OK) goto fail;
+    }
+    for (position = 0u; position < configuration->state_count; ++position) {
+        status = run_state_action_span(
+            &context, impl->entry_order[position],
+            CFLOW_STATECHART_STATE_ACTION_ENTRY, &error);
+        if (status != CFLOW_STATECHART_RUNTIME_OK) goto fail;
+    }
+    status = stage_completions(impl, staged);
+    if (status != CFLOW_STATECHART_RUNTIME_OK) {
+        error = "Statechart completion queue is full";
+        goto fail;
+    }
+    if (context.current_state != impl->extended_states[staged])
+        memcpy(impl->extended_states[staged], context.current_state,
+               impl->ir->state_type->size);
+    turbo_mutex_lock(&impl->lock);
+    commit_internal_events(impl);
+    commit_completions(impl);
+    impl->published = staged;
+    impl->configuration_version = 1u;
+    if (UINT64_MAX - impl->actions < (uint64_t)context.invoked)
+        impl->actions = UINT64_MAX;
+    else
+        impl->actions += (uint64_t)context.invoked;
+    impl->initial_configuration_pending = false;
+    turbo_mutex_unlock(&impl->lock);
+    return CFLOW_STATECHART_RUNTIME_OK;
+
+fail:
+    impl->staged_event_count = 0u;
+    impl->staged_completion_count = 0u;
+    latch_terminal_failure(
+        impl, status,
+        error != NULL && error[0] != '\0'
+            ? error : "Statechart initial entry action failed");
+    return status;
+}
+
 static cflow_statechart_runtime_status execute_microstep(
     cflow_statechart_instance_impl *impl) {
     const size_t staged = 1u - impl->published;
@@ -2585,6 +2663,10 @@ static void statechart_driver_run(void *user) {
     impl->skip_to_external = false;
     turbo_mutex_unlock(&impl->lock);
     if (terminal) return;
+    if (impl->initial_configuration_pending &&
+        execute_initial_entry_actions(impl) !=
+            CFLOW_STATECHART_RUNTIME_OK)
+        return;
 
     if (skip_to_external) goto external_admission;
 
@@ -3024,14 +3106,7 @@ static cflow_statechart_runtime_status statechart_instance_init_with_hook(
         instance_impl_free(impl);
         return status;
     }
-    impl->published = 1u;
-    impl->configuration_version = 1u;
-    status = stage_completions(impl, impl->published);
-    if (status != CFLOW_STATECHART_RUNTIME_OK) {
-        instance_impl_free(impl);
-        return status;
-    }
-    commit_completions(impl);
+    impl->initial_configuration_pending = true;
     impl->macrostep_active = true;
     {
         const cflow_admission_status admission =
