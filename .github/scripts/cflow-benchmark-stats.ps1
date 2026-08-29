@@ -160,6 +160,31 @@ function Get-CflowDriverOrder {
   return @("actor", "source")
 }
 
+function Get-CflowSourceOperationCapacity {
+  param(
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("direct", "actor", "source")]
+    [string]$Driver,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("round-trip", "pipeline")]
+    [string]$Workload,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$WorkloadWindow
+  )
+
+  if ($Driver -ne "source") {
+    return [long]0
+  }
+  if ($Workload -eq "round-trip") {
+    $receiveAndSendOperationCapacity = [long]2
+    return $receiveAndSendOperationCapacity
+  }
+  return $WorkloadWindow
+}
+
 function Get-CflowSourceWindowOrder {
   param(
     [Parameter(Mandatory = $true)]

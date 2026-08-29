@@ -149,6 +149,26 @@ Assert-Sequence `
 Assert-Sequence `
   (Get-CflowDriverOrder -Run 1 -WaitMode blocking -BackendIndex 0 -PayloadIndex 1) `
   @("source", "actor") "next-payload driver order"
+Assert-Equal `
+  (Get-CflowSourceOperationCapacity -Driver source -Workload round-trip `
+    -WorkloadWindow 1) 2 `
+  "round-trip Source operation capacity"
+Assert-Equal `
+  (Get-CflowSourceOperationCapacity -Driver actor -Workload round-trip `
+    -WorkloadWindow 1) 0 `
+  "round-trip Actor operation capacity"
+Assert-Equal `
+  (Get-CflowSourceOperationCapacity -Driver source -Workload pipeline `
+    -WorkloadWindow 1) 1 `
+  "single-window pipeline Source operation capacity"
+Assert-Equal `
+  (Get-CflowSourceOperationCapacity -Driver source -Workload pipeline `
+    -WorkloadWindow 4) 4 `
+  "windowed pipeline Source operation capacity"
+Assert-Throws {
+  Get-CflowSourceOperationCapacity -Driver source -Workload round-trip `
+    -WorkloadWindow 0
+} "zero workload window"
 Assert-Sequence `
   (Get-CflowSourceWindowOrder -SourceWindows @(1, 4, 8) -Run 1 `
     -WaitMode blocking -BackendIndex 0 -PayloadIndex 0) `

@@ -757,21 +757,24 @@ jobs:
                   $env:CFLOW_NETWORK_PAYLOAD = $payloadText
                   $waitMode = "blocking"
                   $env:CFLOW_NETWORK_WAIT_MODE = $waitMode
+                  $roundTripSourceWindow = Get-CflowSourceOperationCapacity `
+                    -Driver source -Workload round-trip -WorkloadWindow 1
                   $executionOrder = @(Get-CflowSourceWindowOrder `
-                    -SourceWindows @([int64]2) -Run $run `
+                    -SourceWindows @($roundTripSourceWindow) -Run $run `
                     -WaitMode $waitMode `
                     -BackendIndex ($backendIndex + $protocolIndex) `
                     -PayloadIndex $payloadIndex)
                   foreach ($execution in $executionOrder) {
                     if ($execution -eq "actor") {
                       $driver = "actor"
-                      $sourceWindow = [int64]0
+                      $sourceWindow = Get-CflowSourceOperationCapacity `
+                        -Driver $driver -Workload round-trip -WorkloadWindow 1
                       Remove-Item Env:CFLOW_NETWORK_SOURCE_WINDOW `
                         -ErrorAction SilentlyContinue
-                    } elseif ($execution -eq "source-2") {
+                    } elseif ($execution -eq "source-$roundTripSourceWindow") {
                       $driver = "source"
-                      $sourceWindow = [int64]2
-                      $env:CFLOW_NETWORK_SOURCE_WINDOW = "2"
+                      $sourceWindow = $roundTripSourceWindow
+                      $env:CFLOW_NETWORK_SOURCE_WINDOW = $sourceWindow.ToString()
                     } else {
                       throw "Unknown Source diagnostic execution: $execution"
                     }
@@ -930,8 +933,9 @@ jobs:
                       Assert-NetworkMetricFields $report $jsonText $expectedBackend
                       $expectedAttempts = [int64]$transportSamples *
                         [int64]$sourceExchanges
-                      $expectedSourceWindow =
-                        if ($driver -eq "source") { $windowCapacity } else { 0 }
+                      $expectedSourceWindow = Get-CflowSourceOperationCapacity `
+                        -Driver $driver -Workload $expectedWorkload `
+                        -WorkloadWindow $windowCapacity
                       if ($report.schema -ne "cflow-network-benchmark/v1" -or
                           $report.protocol -ne $protocol -or
                           $report.profile -ne "throughput" -or
