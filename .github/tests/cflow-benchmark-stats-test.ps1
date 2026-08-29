@@ -42,9 +42,15 @@ function Add-StageTimingFixture([object]$Report) {
   $waitTotal = [int64]($completionTotal / 2)
   $processTotal = [int64]($completionTotal / 10)
   $residualTotal = $completionTotal - $driveTotal - $waitTotal - $processTotal
+  $dispatchTotal = [int64]($driveTotal / 4)
+  $executorTotal = [int64]($driveTotal / 2)
+  $driveResidualTotal = $driveTotal - $dispatchTotal - $executorTotal
+  $completionReadyTotal = [int64]($waitTotal / 2)
+  $wakeResumeTotal = [int64]($waitTotal / 4)
+  $waitResidualTotal = $waitTotal - $completionReadyTotal - $wakeResumeTotal
   $fields = [ordered]@{
     stage_timing = $true
-    stage_timing_version = 2
+    stage_timing_version = 3
     io_operations = $operations
     admission_ns = [int64]([double]$Report.admission_mean_ns * $operations)
     completion_drive_ns = $completionTotal
@@ -56,6 +62,18 @@ function Add-StageTimingFixture([object]$Report) {
     wait_mean_ns = [double]$waitTotal / $operations
     completion_process_mean_ns = [double]$processTotal / $operations
     completion_residual_mean_ns = [double]$residualTotal / $operations
+    dispatch_ns = $dispatchTotal
+    executor_ns = $executorTotal
+    drive_residual_ns = $driveResidualTotal
+    completion_ready_ns = $completionReadyTotal
+    wake_resume_ns = $wakeResumeTotal
+    wait_residual_ns = $waitResidualTotal
+    dispatch_mean_ns = [double]$dispatchTotal / $operations
+    executor_mean_ns = [double]$executorTotal / $operations
+    drive_residual_mean_ns = [double]$driveResidualTotal / $operations
+    completion_ready_mean_ns = [double]$completionReadyTotal / $operations
+    wake_resume_mean_ns = [double]$wakeResumeTotal / $operations
+    wait_residual_mean_ns = [double]$waitResidualTotal / $operations
   }
   foreach ($field in $fields.Keys) {
     $Report | Add-Member -NotePropertyName $field -NotePropertyValue $fields[$field]
@@ -81,6 +99,30 @@ $validStageTiming = [pscustomobject]@{
   completion_process_mean_ns=2.5; completion_residual_mean_ns=5.0
 }
 Assert-CflowStageTimingReport -Report $validStageTiming
+$validHandoffTiming = [pscustomobject]@{
+  stage_timing=$true; stage_timing_version=3; io_operations=4
+  admission_ns=20; completion_drive_ns=100
+  drive_ns=20; wait_ns=50; completion_process_ns=10
+  completion_residual_ns=20; admission_mean_ns=5.0
+  completion_drive_mean_ns=25.0; drive_mean_ns=5.0; wait_mean_ns=12.5
+  completion_process_mean_ns=2.5; completion_residual_mean_ns=5.0
+  dispatch_ns=8; executor_ns=7; drive_residual_ns=5
+  completion_ready_ns=30; wake_resume_ns=12; wait_residual_ns=8
+  dispatch_mean_ns=2.0; executor_mean_ns=1.75; drive_residual_mean_ns=1.25
+  completion_ready_mean_ns=7.5; wake_resume_mean_ns=3.0
+  wait_residual_mean_ns=2.0
+}
+Assert-CflowStageTimingReport -Report $validHandoffTiming
+$invalidDriveHandoff = $validHandoffTiming.psobject.Copy()
+$invalidDriveHandoff.drive_residual_ns = 4
+Assert-ThrowsLike {
+  Assert-CflowStageTimingReport -Report $invalidDriveHandoff
+} "*drive residual*" "drive handoff residual mismatch"
+$invalidWaitHandoff = $validHandoffTiming.psobject.Copy()
+$invalidWaitHandoff.wait_residual_ns = 7
+Assert-ThrowsLike {
+  Assert-CflowStageTimingReport -Report $invalidWaitHandoff
+} "*wait residual*" "wait handoff residual mismatch"
 $binaryRoundingBoundary = [pscustomobject]@{
   stage_timing=$true; stage_timing_version=2; io_operations=12800
   admission_ns=1363943; completion_drive_ns=296307423
@@ -117,8 +159,28 @@ $disabledStageTiming = [pscustomobject]@{
   admission_mean_ns=0.0; completion_drive_mean_ns=0.0; drive_mean_ns=0.0
   wait_mean_ns=0.0; completion_process_mean_ns=0.0
   completion_residual_mean_ns=0.0
+  dispatch_ns=0; executor_ns=0; drive_residual_ns=0
+  completion_ready_ns=0; wake_resume_ns=0; wait_residual_ns=0
+  dispatch_mean_ns=0.0; executor_mean_ns=0.0; drive_residual_mean_ns=0.0
+  completion_ready_mean_ns=0.0; wake_resume_mean_ns=0.0
+  wait_residual_mean_ns=0.0
 }
 Assert-CflowStageTimingReport -Report $disabledStageTiming
+$legacyDisabledStageTiming = [pscustomobject]@{
+  stage_timing=$false; stage_timing_version=0; io_operations=0
+  admission_ns=0; completion_drive_ns=0; drive_ns=0; wait_ns=0
+  completion_process_ns=0; completion_residual_ns=0
+  admission_mean_ns=0.0; completion_drive_mean_ns=0.0; drive_mean_ns=0.0
+  wait_mean_ns=0.0; completion_process_mean_ns=0.0
+  completion_residual_mean_ns=0.0
+}
+Assert-CflowStageTimingReport -Report $legacyDisabledStageTiming
+$partialDisabledHandoff = $legacyDisabledStageTiming.psobject.Copy()
+$partialDisabledHandoff | Add-Member -NotePropertyName dispatch_ns `
+  -NotePropertyValue 0
+Assert-ThrowsLike {
+  Assert-CflowStageTimingReport -Report $partialDisabledHandoff
+} "*missing executor_ns*" "partial disabled handoff fields"
 $legacyStageTiming = [pscustomobject]@{
   stage_timing=$true; io_operations=4; admission_ns=20
   completion_drive_ns=100; admission_mean_ns=5.0
@@ -289,6 +351,36 @@ Assert-Equal $summary.paired_completion_process_delta_ns 3.0 `
   "paired completion-process absolute delta"
 Assert-Equal $summary.paired_completion_residual_delta_ns 6.0 `
   "paired completion-residual absolute delta"
+Assert-Equal $summary.actor_median_dispatch_mean_ns 9.0 `
+  "Actor dispatch median"
+Assert-Equal $summary.source_median_dispatch_mean_ns 10.5 `
+  "Source dispatch median"
+Assert-Equal $summary.actor_median_executor_mean_ns 18.0 `
+  "Actor executor median"
+Assert-Equal $summary.source_median_executor_mean_ns 21.0 `
+  "Source executor median"
+Assert-Equal $summary.actor_median_completion_ready_mean_ns 45.0 `
+  "Actor completion-ready median"
+Assert-Equal $summary.source_median_wake_resume_mean_ns 26.2 `
+  "Source wake-resume median"
+Assert-Equal $summary.paired_wait_residual_delta_ns 3.8 `
+  "paired wait-residual absolute delta"
+$handoffTable = Format-CflowHandoffReport `
+  -Comparisons @($summary) -Backends @("epoll") -Protocols @("tcp")
+Assert-Equal ($handoffTable -match "#### TCP \(epoll\)") $true `
+  "handoff table TCP section"
+Assert-Equal ($handoffTable -match "\| Actor \| 9") $true `
+  "handoff table Actor dispatch value"
+Assert-Equal ($handoffTable -match "Completion ready") $true `
+  "handoff table wait boundary header"
+$udpHandoffSummary = $summary.psobject.Copy()
+$udpHandoffSummary.protocol = "udp"
+$splitHandoffTable = Format-CflowHandoffReport `
+  -Comparisons @($summary, $udpHandoffSummary) -Backends @("epoll")
+Assert-Equal ($splitHandoffTable -match "#### TCP \(epoll\)") $true `
+  "split handoff table TCP section"
+Assert-Equal ($splitHandoffTable -match "#### UDP \(epoll\)") $true `
+  "split handoff table UDP section"
 Assert-Equal $summary.source_slower_p50_runs 2 "slower P50 run count"
 Assert-Equal $summary.source_slower_p99_runs 2 "slower P99 run count"
 $udpReports = @($reports | ForEach-Object {

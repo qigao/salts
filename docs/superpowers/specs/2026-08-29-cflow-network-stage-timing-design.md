@@ -117,3 +117,41 @@ fields.
 - The release benchmark workflow validates every emitted record before upload.
 - Windows Release builds and runs the benchmark target through repository
   presets; CI remains the cross-platform validation boundary.
+
+## Version 3 Handoff Attribution
+
+Version 2 established that `drive_ns` and `wait_ns` dominate the measured
+post-admission interval, but each remains too broad to identify the handoff
+cost. Version 3 keeps every version-2 field and adds two nested decompositions:
+
+```text
+drive_residual_ns = drive_ns - dispatch_ns - executor_ns
+wait_residual_ns = wait_ns - completion_ready_ns - wake_resume_ns
+```
+
+`dispatch_ns` measures Actor mailbox driving for the Actor adapter and CFlow
+scheduler driving for the Source adapter. `executor_ns` measures the manual
+Executor for Actor and the Source-owned IO driver for Source. The Source owner
+encapsulates its Actor and Executor, so this boundary intentionally measures
+the public owner operation rather than reaching into production internals.
+
+For blocking waits, `completion_ready_ns` starts immediately before the
+condition wait and stops at the first coalesced wake signal. `wake_resume_ns`
+starts at that signal and stops after the waiting thread has reacquired the
+latch mutex. A timeout or spurious wake without an observed signal remains in
+`wait_residual_ns`. Busy-yield runs have no condition signal, so both named
+wait subcomponents remain zero.
+
+The wake timestamp is benchmark-local state protected by the existing latch
+mutex. The backend wake callback is the producer and the benchmark wait loop
+is the consumer. The callback preserves the first pending signal timestamp;
+the consumer clears it together with `pending`. Destruction remains legal only
+after endpoint/backend quiescence, exactly as in version 2. No queue,
+allocation, runtime ownership, or public API is added.
+
+Readers accept versions 0, 2, and 3. Historical version-0 records may omit the
+version-3 fields; if any new field is present, all must be present and zero.
+Version 3 requires all nested totals and means, exact residual arithmetic, and
+non-negative values. The release report adds a separate compact handoff table
+instead of widening the existing stage table. Rollback can stop emitting
+version 3 while the reader continues to accept stored version-3 artifacts.

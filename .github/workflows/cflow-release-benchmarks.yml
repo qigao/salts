@@ -412,6 +412,7 @@ jobs:
           $transportLatencySummary = Join-Path $pipelineDir "transport-latency.md"
           $transportThroughputSummary = Join-Path $pipelineDir "transport-throughput.md"
           $transportStageSummary = Join-Path $pipelineDir "transport-stages.md"
+          $transportHandoffSummary = Join-Path $pipelineDir "transport-handoff.md"
           "| Run | Protocol | Workload | Comparison backend | Native backend | Payload bytes | Window | Driver | Wait mode | P50 ns | P95 ns | P99 ns | Echo/s | App MiB/s | CPU % | Peak in-flight |" |
             Set-Content -LiteralPath $pipelineSummary
           "| ---: | :--- | :--- | :--- | :--- | ---: | ---: | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
@@ -440,7 +441,11 @@ jobs:
                 "completion_process_ns", "completion_residual_ns",
                 "admission_mean_ns", "completion_drive_mean_ns", "drive_mean_ns",
                 "wait_mean_ns", "completion_process_mean_ns",
-                "completion_residual_mean_ns")) {
+                "completion_residual_mean_ns", "dispatch_ns", "executor_ns",
+                "drive_residual_ns", "completion_ready_ns", "wake_resume_ns",
+                "wait_residual_ns", "dispatch_mean_ns", "executor_mean_ns",
+                "drive_residual_mean_ns", "completion_ready_mean_ns",
+                "wake_resume_mean_ns", "wait_residual_mean_ns")) {
               if ($null -eq $report.$field) {
                 throw "Missing network report field '$field': $jsonText"
               }
@@ -818,6 +823,7 @@ jobs:
                         $report.wait_mode -ne $waitMode -or
                         $report.peer_mode -ne "raw" -or
                         $report.driver -ne $driver -or
+                        [int]$report.stage_timing_version -ne 3 -or
                         [int64]$report.source_window_capacity -ne $sourceWindow -or
                         [int64]$report.source_peak_occupied -lt `
                           $(if ($driver -eq "source") { 1 } else { 0 }) -or
@@ -1210,6 +1216,7 @@ jobs:
               throw "Expected $env:BENCHMARK_RUNS reports for $($group.Name), found $($group.Count)"
             }
           }
+          $handoffComparisons = @()
           "### Transport stage timing" |
             Set-Content -LiteralPath $sourceMedianSummary
           foreach ($backend in $networkBackends) {
@@ -1226,6 +1233,7 @@ jobs:
                 -Protocol $protocol -WaitMode blocking `
                 -PayloadBytes ([int64]$payloadText) `
                 -ExpectedRuns ([int]$env:BENCHMARK_RUNS)
+              $handoffComparisons += $comparison
               $payloadLabel = switch ([int64]$payloadText) {
                 1024 { "1 KiB" }
                 8192 { "8 KiB" }
@@ -1255,6 +1263,9 @@ jobs:
             }
           Get-Content -LiteralPath $sourceMedianSummary |
             Set-Content -LiteralPath $transportStageSummary
+          Format-CflowHandoffReport -Comparisons $handoffComparisons `
+            -Backends $networkBackends |
+            Set-Content -LiteralPath $transportHandoffSummary
 
           $pipelineReports = @(Get-Content -LiteralPath $pipelineJsonl |
             ForEach-Object { $_ | ConvertFrom-Json })
@@ -1364,6 +1375,11 @@ jobs:
           Add-Content -LiteralPath $summary -Value "Stage values are medians of per-operation means from a separate stage-enabled blocking round-trip run. Total is admission plus completion/drive; completion/drive is decomposed into drive, wait, completion processing, and residual."
           Add-Content -LiteralPath $summary -Value ""
           Get-Content -LiteralPath $transportStageSummary |
+            Add-Content -LiteralPath $summary
+          Add-Content -LiteralPath $summary -Value ""
+          Add-Content -LiteralPath $summary -Value "Execution is the manual Executor boundary for Actor and the public IO-owner drive boundary for Source. Completion ready ends at the first coalesced backend wake; wake resume ends after the waiting thread reacquires the latch mutex. Other columns are exact residuals inside the corresponding drive or wait total."
+          Add-Content -LiteralPath $summary -Value ""
+          Get-Content -LiteralPath $transportHandoffSummary |
             Add-Content -LiteralPath $summary
           Add-Content -LiteralPath $summary -Value ""
           Add-Content -LiteralPath $summary -Value "<details><summary>Additional diagnostics and raw tables</summary>"

@@ -153,3 +153,72 @@ zero-valued disabled fields.
 
 Check that no public header or runtime implementation changed, no generated
 artifact or `.codegraph/` file is staged, and all legacy JSON fields remain.
+
+### Task 5: Version-3 statistics contract
+
+**Files:**
+- Modify: `.github/tests/cflow-benchmark-stats-test.ps1`
+- Modify: `.github/scripts/cflow-benchmark-stats.ps1`
+
+- [x] **Step 1: Add a valid version-3 fixture and malformed nested sums**
+
+Require `dispatch`, `executor`, `completion-ready`, `wake-resume`, and both
+nested residual totals and means. Retain explicit version-2 coverage.
+
+- [x] **Step 2: Run the PowerShell test and observe version 3 rejection**
+
+Run: `pwsh -NoProfile -File .github/tests/cflow-benchmark-stats-test.ps1`
+
+- [x] **Step 3: Accept and validate versions 0, 2, and 3**
+
+Version 0 requires every present field to be zero and accepts historical
+records without version-3 fields; version 2 remains readable; version 3
+additionally enforces both nested conservation equations.
+
+### Task 6: Version-3 benchmark measurements
+
+**Files:**
+- Modify: `cflow/benchmarks/cflow_network_benchmark.c`
+
+- [x] **Step 1: Add failing deterministic accumulator and wait-split tests**
+
+Exercise exact nested residuals, atomic overflow rejection, signal-before-
+resume attribution, and no-signal residual attribution without relying on wall
+clock duration.
+
+- [x] **Step 2: Build the benchmark target and observe the focused failure**
+
+- [x] **Step 3: Implement private pump and wake-latch instrumentation**
+
+Time Actor/Source dispatch and execution boundaries. Store the first pending
+wake timestamp under the existing latch mutex and clear it with the pending
+edge. Do not change runtime APIs or synchronization topology.
+
+- [x] **Step 4: Emit additive version-3 totals and means**
+
+Keep the schema string and every legacy field; emit version `3` only for
+enabled timing and version `0` otherwise.
+
+### Task 7: Compact handoff report
+
+**Files:**
+- Modify: `.github/scripts/cflow-benchmark-stats.ps1`
+- Modify: `.github/tests/cflow-benchmark-stats-test.ps1`
+- Modify: `.github/workflows/cflow-release-benchmarks.yml`
+
+- [x] **Step 1: Add paired v3 summary assertions**
+
+- [x] **Step 2: Generate `transport-handoff.md`**
+
+Use separate TCP/UDP sections and one row per Actor/Source payload. Show only
+dispatch, execution, drive residual, completion-ready, wake-resume, and wait
+residual medians in ns/op.
+
+- [x] **Step 3: Parse embedded workflow PowerShell and run stats tests**
+
+### Task 8: Version-3 verification and review
+
+- [x] **Step 1: Run PowerShell and focused TinyTest tests**
+- [x] **Step 2: Run adjacent Release benchmark tests**
+- [x] **Step 3: Inspect emitted timed and disabled JSON records**
+- [x] **Step 4: Review compatibility, ownership, and scoped diff**

@@ -154,6 +154,10 @@ typedef struct network_stage_sample {
   uint64_t drive_ns;
   uint64_t wait_ns;
   uint64_t completion_process_ns;
+  uint64_t dispatch_ns;
+  uint64_t executor_ns;
+  uint64_t completion_ready_ns;
+  uint64_t wake_resume_ns;
 } network_stage_sample;
 
 typedef struct network_stage_measurement {
@@ -165,6 +169,12 @@ typedef struct network_stage_measurement {
   uint64_t wait_ns;
   uint64_t completion_process_ns;
   uint64_t completion_residual_ns;
+  uint64_t dispatch_ns;
+  uint64_t executor_ns;
+  uint64_t drive_residual_ns;
+  uint64_t completion_ready_ns;
+  uint64_t wake_resume_ns;
+  uint64_t wait_residual_ns;
 } network_stage_measurement;
 
 typedef struct network_completion_probe {
@@ -181,6 +191,8 @@ struct network_wake_latch {
   turbo_mutex_t mutex;
   turbo_cond_t changed;
   bool pending;
+  bool timing_enabled;
+  uint64_t signal_ns;
 };
 
 typedef struct network_server {
@@ -239,6 +251,9 @@ typedef struct network_measurement {
   uint64_t cpu_ns;
   uint64_t peak_rss_bytes;
 } network_measurement;
+
+static int network_stage_sample_add_elapsed(uint64_t *total,
+                                            uint64_t started_ns);
 
 static int network_exchange_source_pipeline_batch(
     network_fixture *fixture, const unsigned char *sent,
@@ -541,9 +556,21 @@ static void network_wake_signal(void *user) {
   network_wake_latch *latch = (network_wake_latch *)user;
   if (latch == NULL) return;
   turbo_mutex_lock(&latch->mutex);
+  if (!latch->pending)
+    latch->signal_ns = latch->timing_enabled ? turbo_hrtime() : 0u;
   latch->pending = true;
   turbo_cond_signal(&latch->changed);
   turbo_mutex_unlock(&latch->mutex);
+}
+
+static void network_fixture_set_stage_timing(network_fixture *fixture,
+                                             bool enabled) {
+  if (fixture == NULL) return;
+  fixture->stages.enabled = enabled;
+  if (!fixture->wake_latch_initialized) return;
+  turbo_mutex_lock(&fixture->wake_latch.mutex);
+  fixture->wake_latch.timing_enabled = enabled;
+  turbo_mutex_unlock(&fixture->wake_latch.mutex);
 }
 
 static cflow_io_source_prepare_status
@@ -642,14 +669,34 @@ static void network_source_sink_done(void *user) {
     driver->sink_error = "network Source completed before fixture shutdown";
 }
 
-static int network_source_pump(network_source_driver *driver) {
+static int network_source_pump(network_source_driver *driver,
+                               network_stage_sample *stage) {
   size_t progressed = 0u;
+  uint64_t timing_started;
   int status;
   if (driver == NULL || !driver->run_initialized) return TURBO_EINVAL;
+  timing_started = stage != NULL ? turbo_hrtime() : 0u;
   (void)cflow_scheduler_run_until_idle(&driver->scheduler, 0u);
+  if (stage != NULL) {
+    status = network_stage_sample_add_elapsed(&stage->dispatch_ns,
+                                              timing_started);
+    if (status != TURBO_OK) return status;
+  }
+  timing_started = stage != NULL ? turbo_hrtime() : 0u;
   status = cflow_io_source_owner_run_ready(&driver->owner, 64u, &progressed);
+  if (stage != NULL) {
+    const int timing_status = network_stage_sample_add_elapsed(
+        &stage->executor_ns, timing_started);
+    if (status == TURBO_OK) status = timing_status;
+  }
   if (status != TURBO_OK) return status;
+  timing_started = stage != NULL ? turbo_hrtime() : 0u;
   (void)cflow_scheduler_run_until_idle(&driver->scheduler, 0u);
+  if (stage != NULL) {
+    status = network_stage_sample_add_elapsed(&stage->dispatch_ns,
+                                              timing_started);
+    if (status != TURBO_OK) return status;
+  }
   if (driver->sink_error != NULL || cflow_run_error(&driver->run) != NULL) return TURBO_EIO;
   return TURBO_OK;
 }
@@ -858,6 +905,10 @@ static int network_stage_measurement_add_operations(
     const network_stage_sample *sample) {
   uint64_t component_ns;
   uint64_t residual_ns;
+  uint64_t drive_component_ns;
+  uint64_t drive_residual_ns;
+  uint64_t wait_component_ns;
+  uint64_t wait_residual_ns;
   if (measurement == NULL || sample == NULL) return TURBO_EINVAL;
   if (!measurement->enabled) return TURBO_OK;
   if (sample->drive_ns > UINT64_MAX - sample->wait_ns ||
@@ -868,6 +919,16 @@ static int network_stage_measurement_add_operations(
                  sample->completion_process_ns;
   if (component_ns > sample->completion_drive_ns) return TURBO_ERANGE;
   residual_ns = sample->completion_drive_ns - component_ns;
+  if (sample->dispatch_ns > UINT64_MAX - sample->executor_ns)
+    return TURBO_ERANGE;
+  drive_component_ns = sample->dispatch_ns + sample->executor_ns;
+  if (drive_component_ns > sample->drive_ns) return TURBO_ERANGE;
+  drive_residual_ns = sample->drive_ns - drive_component_ns;
+  if (sample->completion_ready_ns > UINT64_MAX - sample->wake_resume_ns)
+    return TURBO_ERANGE;
+  wait_component_ns = sample->completion_ready_ns + sample->wake_resume_ns;
+  if (wait_component_ns > sample->wait_ns) return TURBO_ERANGE;
+  wait_residual_ns = sample->wait_ns - wait_component_ns;
   if (operations == 0u || operations > UINT64_MAX - measurement->operations ||
       sample->admission_ns > UINT64_MAX - measurement->admission_ns ||
       sample->completion_drive_ns >
@@ -876,7 +937,14 @@ static int network_stage_measurement_add_operations(
       sample->wait_ns > UINT64_MAX - measurement->wait_ns ||
       sample->completion_process_ns >
           UINT64_MAX - measurement->completion_process_ns ||
-      residual_ns > UINT64_MAX - measurement->completion_residual_ns)
+      residual_ns > UINT64_MAX - measurement->completion_residual_ns ||
+      sample->dispatch_ns > UINT64_MAX - measurement->dispatch_ns ||
+      sample->executor_ns > UINT64_MAX - measurement->executor_ns ||
+      drive_residual_ns > UINT64_MAX - measurement->drive_residual_ns ||
+      sample->completion_ready_ns >
+          UINT64_MAX - measurement->completion_ready_ns ||
+      sample->wake_resume_ns > UINT64_MAX - measurement->wake_resume_ns ||
+      wait_residual_ns > UINT64_MAX - measurement->wait_residual_ns)
     return TURBO_ERANGE;
   measurement->operations += (uint64_t)operations;
   measurement->admission_ns += sample->admission_ns;
@@ -885,6 +953,12 @@ static int network_stage_measurement_add_operations(
   measurement->wait_ns += sample->wait_ns;
   measurement->completion_process_ns += sample->completion_process_ns;
   measurement->completion_residual_ns += residual_ns;
+  measurement->dispatch_ns += sample->dispatch_ns;
+  measurement->executor_ns += sample->executor_ns;
+  measurement->drive_residual_ns += drive_residual_ns;
+  measurement->completion_ready_ns += sample->completion_ready_ns;
+  measurement->wake_resume_ns += sample->wake_resume_ns;
+  measurement->wait_residual_ns += wait_residual_ns;
   return TURBO_OK;
 }
 
@@ -901,6 +975,53 @@ static int network_stage_sample_add_elapsed(uint64_t *total,
   if (elapsed_ns > UINT64_MAX - *total) return TURBO_ERANGE;
   *total += elapsed_ns;
   return TURBO_OK;
+}
+
+static int network_stage_sample_add_wait_interval(
+    network_stage_sample *sample, uint64_t started_ns, uint64_t signal_ns,
+    uint64_t finished_ns, bool signal_observed) {
+  uint64_t wait_ns;
+  uint64_t completion_ready_ns = 0u;
+  uint64_t wake_resume_ns = 0u;
+  if (sample == NULL || finished_ns < started_ns) return TURBO_ERANGE;
+  wait_ns = finished_ns - started_ns;
+  if (signal_observed) {
+    if (signal_ns < started_ns || signal_ns > finished_ns)
+      return TURBO_ERANGE;
+    completion_ready_ns = signal_ns - started_ns;
+    wake_resume_ns = finished_ns - signal_ns;
+  }
+  if (wait_ns > UINT64_MAX - sample->wait_ns ||
+      completion_ready_ns > UINT64_MAX - sample->completion_ready_ns ||
+      wake_resume_ns > UINT64_MAX - sample->wake_resume_ns)
+    return TURBO_ERANGE;
+  sample->wait_ns += wait_ns;
+  sample->completion_ready_ns += completion_ready_ns;
+  sample->wake_resume_ns += wake_resume_ns;
+  return TURBO_OK;
+}
+
+static int network_wait_latch(network_fixture *fixture, uint64_t timeout_ns,
+                              network_stage_sample *stage) {
+  int status = TURBO_OK;
+  turbo_mutex_lock(&fixture->wake_latch.mutex);
+  if (!fixture->wake_latch.pending) {
+    const uint64_t wait_started = stage != NULL ? turbo_hrtime() : 0u;
+    (void)turbo_cond_timedwait(&fixture->wake_latch.changed,
+                               &fixture->wake_latch.mutex, timeout_ns);
+    if (stage != NULL) {
+      const uint64_t wait_finished = turbo_hrtime();
+      const bool signal_observed = fixture->wake_latch.pending &&
+                                   fixture->wake_latch.signal_ns != 0u;
+      status = network_stage_sample_add_wait_interval(
+          stage, wait_started, fixture->wake_latch.signal_ns,
+          wait_finished, signal_observed);
+    }
+  }
+  fixture->wake_latch.pending = false;
+  fixture->wake_latch.signal_ns = 0u;
+  turbo_mutex_unlock(&fixture->wake_latch.mutex);
+  return status;
 }
 
 static const char *network_wait_mode_name(network_wait_mode mode) {
@@ -1103,13 +1224,40 @@ static bool network_endpoint_get_actor_stats(const network_endpoint *endpoint,
   return cflow_io_actor_get_stats(&endpoint->actor, out);
 }
 
-static void network_pump(network_fixture *fixture) {
+static int network_pump(network_fixture *fixture,
+                        network_stage_sample *stage) {
+  uint64_t timing_started = stage != NULL ? turbo_hrtime() : 0u;
+  int status;
   (void)cflow_io_actor_run_ready(&fixture->client.actor, 64u);
-  (void)cflow_executor_run_ready(&fixture->client.executor);
-  if (fixture->peer_mode == NETWORK_PEER_NATIVE) {
-    (void)cflow_io_actor_run_ready(&fixture->native_server.actor, 64u);
-    (void)cflow_executor_run_ready(&fixture->native_server.executor);
+  if (stage != NULL) {
+    status = network_stage_sample_add_elapsed(&stage->dispatch_ns,
+                                              timing_started);
+    if (status != TURBO_OK) return status;
   }
+  timing_started = stage != NULL ? turbo_hrtime() : 0u;
+  (void)cflow_executor_run_ready(&fixture->client.executor);
+  if (stage != NULL) {
+    status = network_stage_sample_add_elapsed(&stage->executor_ns,
+                                              timing_started);
+    if (status != TURBO_OK) return status;
+  }
+  if (fixture->peer_mode == NETWORK_PEER_NATIVE) {
+    timing_started = stage != NULL ? turbo_hrtime() : 0u;
+    (void)cflow_io_actor_run_ready(&fixture->native_server.actor, 64u);
+    if (stage != NULL) {
+      status = network_stage_sample_add_elapsed(&stage->dispatch_ns,
+                                                timing_started);
+      if (status != TURBO_OK) return status;
+    }
+    timing_started = stage != NULL ? turbo_hrtime() : 0u;
+    (void)cflow_executor_run_ready(&fixture->native_server.executor);
+    if (stage != NULL) {
+      status = network_stage_sample_add_elapsed(&stage->executor_ns,
+                                                timing_started);
+      if (status != TURBO_OK) return status;
+    }
+  }
+  return TURBO_OK;
 }
 
 static int network_wait_busy(network_fixture *fixture, network_endpoint *endpoint,
@@ -1118,12 +1266,13 @@ static int network_wait_busy(network_fixture *fixture, network_endpoint *endpoin
   uint64_t started = turbo_hrtime();
   while (endpoint->completions.count < completion_count) {
     const uint64_t drive_started = stage != NULL ? turbo_hrtime() : 0u;
-    network_pump(fixture);
+    int status = network_pump(fixture, stage);
     if (stage != NULL) {
       const int timing_status =
           network_stage_sample_add_elapsed(&stage->drive_ns, drive_started);
-      if (timing_status != TURBO_OK) return timing_status;
+      if (status == TURBO_OK) status = timing_status;
     }
+    if (status != TURBO_OK) return status;
     if (turbo_hrtime() - started >= NETWORK_WAIT_TIMEOUT_NS) return TURBO_ETIMEDOUT;
     const uint64_t wait_started = stage != NULL ? turbo_hrtime() : 0u;
     turbo_thread_yield();
@@ -1144,33 +1293,19 @@ static int network_wait_blocking(network_fixture *fixture, network_endpoint *end
     uint64_t elapsed;
     uint64_t remaining;
     const uint64_t drive_started = stage != NULL ? turbo_hrtime() : 0u;
-    network_pump(fixture);
+    int status = network_pump(fixture, stage);
     if (stage != NULL) {
       const int timing_status =
           network_stage_sample_add_elapsed(&stage->drive_ns, drive_started);
-      if (timing_status != TURBO_OK) return timing_status;
+      if (status == TURBO_OK) status = timing_status;
     }
+    if (status != TURBO_OK) return status;
     if (endpoint->completions.count >= completion_count) break;
     elapsed = turbo_hrtime() - started;
     if (elapsed >= NETWORK_WAIT_TIMEOUT_NS) return TURBO_ETIMEDOUT;
     remaining = NETWORK_WAIT_TIMEOUT_NS - elapsed;
-    turbo_mutex_lock(&fixture->wake_latch.mutex);
-    if (!fixture->wake_latch.pending) {
-      const uint64_t wait_started = stage != NULL ? turbo_hrtime() : 0u;
-      (void)turbo_cond_timedwait(&fixture->wake_latch.changed, &fixture->wake_latch.mutex,
-                                 remaining);
-      if (stage != NULL) {
-        const int timing_status =
-            network_stage_sample_add_elapsed(&stage->wait_ns, wait_started);
-        if (timing_status != TURBO_OK) {
-          fixture->wake_latch.pending = false;
-          turbo_mutex_unlock(&fixture->wake_latch.mutex);
-          return timing_status;
-        }
-      }
-    }
-    fixture->wake_latch.pending = false;
-    turbo_mutex_unlock(&fixture->wake_latch.mutex);
+    status = network_wait_latch(fixture, remaining, stage);
+    if (status != TURBO_OK) return status;
   }
   return TURBO_OK;
 }
@@ -1475,7 +1610,7 @@ static int network_run_source_operations(
   while (driver->sink_values < target_values) {
     uint64_t elapsed;
     const uint64_t drive_started = timing_enabled ? turbo_hrtime() : 0u;
-    status = network_source_pump(driver);
+    status = network_source_pump(driver, timing_enabled ? &stage : NULL);
     if (timing_enabled) {
       const int timing_status =
           network_stage_sample_add_elapsed(&stage.drive_ns, drive_started);
@@ -1489,19 +1624,9 @@ static int network_run_source_operations(
       break;
     }
     if (fixture->wait_mode == NETWORK_WAIT_BLOCKING) {
-      turbo_mutex_lock(&fixture->wake_latch.mutex);
-      if (!fixture->wake_latch.pending) {
-        const uint64_t wait_started = timing_enabled ? turbo_hrtime() : 0u;
-        (void)turbo_cond_timedwait(&fixture->wake_latch.changed, &fixture->wake_latch.mutex,
-                                   NETWORK_WAIT_TIMEOUT_NS - elapsed);
-        if (timing_enabled) {
-          const int timing_status =
-              network_stage_sample_add_elapsed(&stage.wait_ns, wait_started);
-          if (status == TURBO_OK) status = timing_status;
-        }
-      }
-      fixture->wake_latch.pending = false;
-      turbo_mutex_unlock(&fixture->wake_latch.mutex);
+      status = network_wait_latch(
+          fixture, NETWORK_WAIT_TIMEOUT_NS - elapsed,
+          timing_enabled ? &stage : NULL);
     } else {
       const uint64_t wait_started = timing_enabled ? turbo_hrtime() : 0u;
       turbo_thread_yield();
@@ -2586,7 +2711,7 @@ spec("CFlow network benchmark configuration") {
     }
     check_equal(status, TURBO_OK);
     if (status == TURBO_OK) {
-      fixture.stages.enabled = true;
+      network_fixture_set_stage_timing(&fixture, true);
       status = network_exchange(&fixture, NETWORK_PROTOCOL_TCP, sent, received, sizeof(sent),
                                 UINT64_C(1));
     }
@@ -2603,6 +2728,18 @@ spec("CFlow network benchmark configuration") {
                   fixture.stages.completion_drive_ns -
                       fixture.stages.drive_ns - fixture.stages.wait_ns -
                       fixture.stages.completion_process_ns);
+      check_true(fixture.stages.drive_ns >=
+                 fixture.stages.dispatch_ns + fixture.stages.executor_ns);
+      check_equal(fixture.stages.drive_residual_ns,
+                  fixture.stages.drive_ns - fixture.stages.dispatch_ns -
+                      fixture.stages.executor_ns);
+      check_true(fixture.stages.wait_ns >=
+                 fixture.stages.completion_ready_ns +
+                     fixture.stages.wake_resume_ns);
+      check_equal(fixture.stages.wait_residual_ns,
+                  fixture.stages.wait_ns -
+                      fixture.stages.completion_ready_ns -
+                      fixture.stages.wake_resume_ns);
       check_true(network_endpoint_get_actor_stats(&fixture.client, &actor_stats));
       check_equal(actor_stats.acknowledged, (uint64_t)2u);
       check_equal(actor_stats.active_requests, (size_t)0u);
@@ -2676,7 +2813,7 @@ spec("CFlow network benchmark configuration") {
     }
     check_equal(status, TURBO_OK);
     if (status == TURBO_OK) {
-      fixture.stages.enabled = true;
+      network_fixture_set_stage_timing(&fixture, true);
       status = network_exchange_pipeline_batch(
           &fixture, sent, &received[0][0], sizeof(sent),
           PIPELINE_EXCHANGES, completion_latencies);
@@ -2728,7 +2865,7 @@ spec("CFlow network benchmark configuration") {
     }
     check_equal(status, TURBO_OK);
     if (status == TURBO_OK) {
-      fixture.stages.enabled = true;
+      network_fixture_set_stage_timing(&fixture, true);
       status = network_exchange_pipeline_batch(
           &fixture, sent, &received[0][0], sizeof(sent),
           PIPELINE_EXCHANGES, completion_latencies);
@@ -3095,7 +3232,11 @@ spec("CFlow network benchmark configuration") {
         .completion_drive_ns = 100u,
         .drive_ns = 20u,
         .wait_ns = 50u,
-        .completion_process_ns = 10u};
+        .completion_process_ns = 10u,
+        .dispatch_ns = 8u,
+        .executor_ns = 7u,
+        .completion_ready_ns = 30u,
+        .wake_resume_ns = 12u};
 
     check_equal(network_stage_measurement_add(&stages, &sample), TURBO_OK);
     check_equal(stages.operations, (uint64_t)0u);
@@ -3108,6 +3249,12 @@ spec("CFlow network benchmark configuration") {
     check_equal(stages.wait_ns, (uint64_t)0u);
     check_equal(stages.completion_process_ns, (uint64_t)0u);
     check_equal(stages.completion_residual_ns, (uint64_t)0u);
+    check_equal(stages.dispatch_ns, (uint64_t)0u);
+    check_equal(stages.executor_ns, (uint64_t)0u);
+    check_equal(stages.drive_residual_ns, (uint64_t)0u);
+    check_equal(stages.completion_ready_ns, (uint64_t)0u);
+    check_equal(stages.wake_resume_ns, (uint64_t)0u);
+    check_equal(stages.wait_residual_ns, (uint64_t)0u);
     check_equal(network_stage_measurement_add(&stages, &sample), TURBO_OK);
     check_equal(stages.operations, (uint64_t)2u);
     check_equal(stages.admission_ns, (uint64_t)10u);
@@ -3116,6 +3263,12 @@ spec("CFlow network benchmark configuration") {
     check_equal(stages.wait_ns, (uint64_t)50u);
     check_equal(stages.completion_process_ns, (uint64_t)10u);
     check_equal(stages.completion_residual_ns, (uint64_t)20u);
+    check_equal(stages.dispatch_ns, (uint64_t)8u);
+    check_equal(stages.executor_ns, (uint64_t)7u);
+    check_equal(stages.drive_residual_ns, (uint64_t)5u);
+    check_equal(stages.completion_ready_ns, (uint64_t)30u);
+    check_equal(stages.wake_resume_ns, (uint64_t)12u);
+    check_equal(stages.wait_residual_ns, (uint64_t)8u);
 
     stages.operations = UINT64_MAX;
     check_equal(network_stage_measurement_add(&stages, &sample), TURBO_ERANGE);
@@ -3140,6 +3293,34 @@ spec("CFlow network benchmark configuration") {
       check_equal(stages.operations, (uint64_t)1u);
       check_equal(stages.drive_ns, (uint64_t)20u);
     }
+    {
+      const network_stage_sample invalid = {
+          .completion_drive_ns = 20u,
+          .drive_ns = 10u,
+          .dispatch_ns = 6u,
+          .executor_ns = 5u};
+      check_equal(network_stage_measurement_add(&stages, &invalid), TURBO_ERANGE);
+      check_equal(stages.operations, (uint64_t)1u);
+      check_equal(stages.dispatch_ns, (uint64_t)8u);
+    }
+  }
+
+  it("attributes a blocking wait around the first observed wake signal") {
+    network_stage_sample sample = {0};
+
+    check_equal(network_stage_sample_add_wait_interval(
+                    &sample, 100u, 160u, 180u, true), TURBO_OK);
+    check_equal(sample.wait_ns, (uint64_t)80u);
+    check_equal(sample.completion_ready_ns, (uint64_t)60u);
+    check_equal(sample.wake_resume_ns, (uint64_t)20u);
+    check_equal(network_stage_sample_add_wait_interval(
+                    &sample, 200u, 0u, 250u, false), TURBO_OK);
+    check_equal(sample.wait_ns, (uint64_t)130u);
+    check_equal(sample.completion_ready_ns, (uint64_t)60u);
+    check_equal(sample.wake_resume_ns, (uint64_t)20u);
+    check_equal(network_stage_sample_add_wait_interval(
+                    &sample, 300u, 299u, 350u, true), TURBO_ERANGE);
+    check_equal(sample.wait_ns, (uint64_t)130u);
   }
 
   it("names drivers and normalizes stage sums by completed IO operations") {
@@ -3151,7 +3332,13 @@ spec("CFlow network benchmark configuration") {
         .drive_ns = 20u,
         .wait_ns = 50u,
         .completion_process_ns = 10u,
-        .completion_residual_ns = 20u};
+        .completion_residual_ns = 20u,
+        .dispatch_ns = 8u,
+        .executor_ns = 7u,
+        .drive_residual_ns = 5u,
+        .completion_ready_ns = 30u,
+        .wake_resume_ns = 12u,
+        .wait_residual_ns = 8u};
 
     check_equal(strcmp(network_driver_mode_name(NETWORK_DRIVER_ACTOR), "actor"), 0);
     check_equal(strcmp(network_driver_mode_name(NETWORK_DRIVER_SOURCE), "source"), 0);
@@ -3335,7 +3522,7 @@ suite("CFlow network benchmarks") {
                     driver_mode, fixture_request_capacity, total_exchanges,
                     payload_size),
                 TURBO_OK);
-    fixture.stages.enabled = stage_timing;
+    network_fixture_set_stage_timing(&fixture, stage_timing);
     if (workload == NETWORK_WORKLOAD_PIPELINE)
       (void)snprintf(title, sizeof(title), "%s-%s-%s-%s-%s-%s-w%zu",
                      protocol == NETWORK_PROTOCOL_TCP ? "tcp" : "udp",
@@ -3455,6 +3642,16 @@ suite("CFlow network benchmarks") {
           "\"drive_mean_ns\":%.3f,\"wait_mean_ns\":%.3f,"
           "\"completion_process_mean_ns\":%.3f,"
           "\"completion_residual_mean_ns\":%.3f,"
+          "\"dispatch_ns\":%" PRIu64 ",\"executor_ns\":%" PRIu64 ","
+          "\"drive_residual_ns\":%" PRIu64 ","
+          "\"completion_ready_ns\":%" PRIu64 ","
+          "\"wake_resume_ns\":%" PRIu64 ","
+          "\"wait_residual_ns\":%" PRIu64 ","
+          "\"dispatch_mean_ns\":%.3f,\"executor_mean_ns\":%.3f,"
+          "\"drive_residual_mean_ns\":%.3f,"
+          "\"completion_ready_mean_ns\":%.3f,"
+          "\"wake_resume_mean_ns\":%.3f,"
+          "\"wait_residual_mean_ns\":%.3f,"
           "\"process_cpu_ns\":%" PRIu64 ",\"process_cpu_pct\":%.3f,"
           "\"cpu_core_equivalents\":%.6f,"
           "\"exchanges_per_second\":%.3f,"
@@ -3469,7 +3666,7 @@ suite("CFlow network benchmarks") {
           network_wait_mode_name(wait_mode), network_peer_mode_name(peer_mode),
           network_driver_mode_name(driver_mode),
           stage_timing ? "true" : "false",
-          stage_timing ? 2u : 0u,
+          stage_timing ? 3u : 0u,
           driver_mode == NETWORK_DRIVER_SOURCE ? source_window_stats.capacity : 0u,
           driver_mode == NETWORK_DRIVER_SOURCE ? source_window_stats.peak_occupied : 0u,
           workload_window_capacity,
@@ -3491,6 +3688,22 @@ suite("CFlow network benchmarks") {
           network_stage_mean_ns(fixture.stages.completion_process_ns,
                                 fixture.stages.operations),
           network_stage_mean_ns(fixture.stages.completion_residual_ns,
+                                fixture.stages.operations),
+          fixture.stages.dispatch_ns, fixture.stages.executor_ns,
+          fixture.stages.drive_residual_ns,
+          fixture.stages.completion_ready_ns, fixture.stages.wake_resume_ns,
+          fixture.stages.wait_residual_ns,
+          network_stage_mean_ns(fixture.stages.dispatch_ns,
+                                fixture.stages.operations),
+          network_stage_mean_ns(fixture.stages.executor_ns,
+                                fixture.stages.operations),
+          network_stage_mean_ns(fixture.stages.drive_residual_ns,
+                                fixture.stages.operations),
+          network_stage_mean_ns(fixture.stages.completion_ready_ns,
+                                fixture.stages.operations),
+          network_stage_mean_ns(fixture.stages.wake_resume_ns,
+                                fixture.stages.operations),
+          network_stage_mean_ns(fixture.stages.wait_residual_ns,
                                 fixture.stages.operations),
           measured.cpu_ns,
           measured.wall_ns != 0u ? (double)measured.cpu_ns * 100.0 / (double)measured.wall_ns : 0.0,
