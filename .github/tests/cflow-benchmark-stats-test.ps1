@@ -211,6 +211,8 @@ $pairedMetricFixtures = @(
   @{ p95_ns=345; exchanges_per_second=180; application_mib_per_second=18 }
 )
 for ($index = 0; $index -lt $reports.Count; ++$index) {
+  $reports[$index] | Add-Member -NotePropertyName protocol `
+    -NotePropertyValue "tcp"
   foreach ($field in $pairedMetricFixtures[$index].Keys) {
     $reports[$index] | Add-Member -NotePropertyName $field `
       -NotePropertyValue $pairedMetricFixtures[$index][$field]
@@ -219,7 +221,8 @@ for ($index = 0; $index -lt $reports.Count; ++$index) {
 }
 
 $summary = Get-CflowPairedSourceSummary -Reports $reports `
-  -Backend epoll -WaitMode blocking -PayloadBytes 64 -ExpectedRuns 3
+  -Backend epoll -Protocol tcp -WaitMode blocking -PayloadBytes 64 `
+  -ExpectedRuns 3
 Assert-Equal $summary.runs 3 "paired run count"
 Assert-Equal $summary.payload_bytes 64 "paired payload"
 Assert-Equal $summary.actor_median_p50_ns 1000.0 "Actor P50 median"
@@ -266,6 +269,16 @@ Assert-Equal $summary.paired_completion_residual_delta_ns 6.0 `
   "paired completion-residual absolute delta"
 Assert-Equal $summary.source_slower_p50_runs 2 "slower P50 run count"
 Assert-Equal $summary.source_slower_p99_runs 2 "slower P99 run count"
+$udpReports = @($reports | ForEach-Object {
+    $copy = $_.psobject.Copy()
+    $copy.protocol = "udp"
+    $copy
+  })
+$mixedProtocolSummary = Get-CflowPairedSourceSummary `
+  -Reports @($reports + $udpReports) -Backend epoll -Protocol tcp `
+  -WaitMode blocking -PayloadBytes 64 -ExpectedRuns 3
+Assert-Equal $mixedProtocolSummary.protocol "tcp" `
+  "Source summary filters TCP from mixed protocol records"
 
 $windowedReports = @()
 foreach ($report in @($reports | Where-Object { $_.payload_bytes -eq 64 })) {
@@ -283,7 +296,7 @@ foreach ($report in @($reports | Where-Object { $_.payload_bytes -eq 64 })) {
   }
 }
 $windowFourSummary = Get-CflowPairedSourceSummary `
-  -Reports $windowedReports -Backend epoll -WaitMode blocking `
+  -Reports $windowedReports -Backend epoll -Protocol tcp -WaitMode blocking `
   -PayloadBytes 64 -SourceWindow 4 -ExpectedRuns 3
 Assert-Equal $windowFourSummary.source_window 4 `
   "windowed Source summary capacity"
@@ -337,12 +350,12 @@ Assert-Throws {
 } "missing pipeline window pair"
 
 $pipelineLayerReports = @(
-  [pscustomobject]@{ benchmark_run=1; comparison_backend="epoll"; backend="socket"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="direct"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p99_ns=100; exchanges_per_second=100; application_mib_per_second=10; process_cpu_ns=1000; process_cpu_pct=10 },
-  [pscustomobject]@{ benchmark_run=1; comparison_backend="epoll"; backend="epoll"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="actor"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p99_ns=130; exchanges_per_second=80; application_mib_per_second=8; process_cpu_ns=1200; process_cpu_pct=12 },
-  [pscustomobject]@{ benchmark_run=1; comparison_backend="epoll"; backend="epoll"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="source"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p99_ns=180; exchanges_per_second=60; application_mib_per_second=6; process_cpu_ns=1500; process_cpu_pct=15 },
-  [pscustomobject]@{ benchmark_run=2; comparison_backend="epoll"; backend="socket"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="direct"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p99_ns=1000; exchanges_per_second=1000; application_mib_per_second=100; process_cpu_ns=10000; process_cpu_pct=20 },
-  [pscustomobject]@{ benchmark_run=2; comparison_backend="epoll"; backend="epoll"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="actor"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p99_ns=900; exchanges_per_second=500; application_mib_per_second=50; process_cpu_ns=8000; process_cpu_pct=16 },
-  [pscustomobject]@{ benchmark_run=2; comparison_backend="epoll"; backend="epoll"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="source"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p99_ns=1200; exchanges_per_second=250; application_mib_per_second=25; process_cpu_ns=9000; process_cpu_pct=18 }
+  [pscustomobject]@{ benchmark_run=1; comparison_backend="epoll"; backend="socket"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="direct"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p50_ns=50; p95_ns=80; p99_ns=100; exchanges_per_second=100; application_mib_per_second=10; process_cpu_ns=1000; process_cpu_pct=10 },
+  [pscustomobject]@{ benchmark_run=1; comparison_backend="epoll"; backend="epoll"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="actor"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p50_ns=70; p95_ns=100; p99_ns=130; exchanges_per_second=80; application_mib_per_second=8; process_cpu_ns=1200; process_cpu_pct=12 },
+  [pscustomobject]@{ benchmark_run=1; comparison_backend="epoll"; backend="epoll"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="source"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p50_ns=90; p95_ns=140; p99_ns=180; exchanges_per_second=60; application_mib_per_second=6; process_cpu_ns=1500; process_cpu_pct=15 },
+  [pscustomobject]@{ benchmark_run=2; comparison_backend="epoll"; backend="socket"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="direct"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p50_ns=500; p95_ns=800; p99_ns=1000; exchanges_per_second=1000; application_mib_per_second=100; process_cpu_ns=10000; process_cpu_pct=20 },
+  [pscustomobject]@{ benchmark_run=2; comparison_backend="epoll"; backend="epoll"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="actor"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p50_ns=450; p95_ns=700; p99_ns=900; exchanges_per_second=500; application_mib_per_second=50; process_cpu_ns=8000; process_cpu_pct=16 },
+  [pscustomobject]@{ benchmark_run=2; comparison_backend="epoll"; backend="epoll"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="source"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p50_ns=600; p95_ns=900; p99_ns=1200; exchanges_per_second=250; application_mib_per_second=25; process_cpu_ns=9000; process_cpu_pct=18 }
 )
 foreach ($report in $pipelineLayerReports) {
   $report | Add-Member schema "cflow-network-benchmark/v1"
@@ -355,11 +368,20 @@ foreach ($report in $pipelineLayerReports) {
   $report | Add-Member rejections 0
   $report | Add-Member stale_completions 0
 }
-$pipelineLayerSummary = Get-CflowPairedPipelineLayerSummary `
-  -Reports $pipelineLayerReports -Backend epoll -WaitMode blocking `
+$pipelineLayerSummary = Get-CflowPairedTransportSummary `
+  -Reports $pipelineLayerReports -Backend epoll -Protocol udp `
+  -WaitMode blocking `
   -PayloadBytes 64 -WindowCapacity 4 -ExpectedRuns 2
 Assert-Equal $pipelineLayerSummary.runs 2 "pipeline layer paired run count"
+Assert-Equal $pipelineLayerSummary.protocol "udp" `
+  "pipeline layer protocol identity"
 Assert-Equal $pipelineLayerSummary.window_capacity 4 "pipeline layer window"
+Assert-Equal $pipelineLayerSummary.direct_median_p50_ns 275.0 `
+  "pipeline Direct P50 median"
+Assert-Equal $pipelineLayerSummary.actor_median_p95_ns 400.0 `
+  "pipeline Actor P95 median"
+Assert-Equal $pipelineLayerSummary.source_median_application_mib_per_second 15.5 `
+  "pipeline Source application throughput median"
 Assert-Equal $pipelineLayerSummary.paired_actor_direct_echo_ratio 0.65 `
   "pipeline Actor/direct Echo/s ratio"
 Assert-Equal $pipelineLayerSummary.paired_source_actor_echo_ratio 0.625 `
@@ -378,10 +400,26 @@ Assert-Equal $pipelineLayerSummary.paired_source_actor_cpu_time_ratio 1.1875 `
   "pipeline Source/Actor CPU-time ratio"
 Assert-Equal $pipelineLayerSummary.paired_source_direct_cpu_time_ratio 1.2 `
   "pipeline Source/direct CPU-time ratio"
+$tcpLayerReports = @($pipelineLayerReports | ForEach-Object {
+    $copy = $_.psobject.Copy()
+    $copy.protocol = "tcp"
+    $copy.workload = "round-trip"
+    $copy.workload_window_capacity = 1
+    $copy.workload_peak_in_flight = 1
+    $copy
+  })
+$tcpLayerSummary = Get-CflowPairedTransportSummary `
+  -Reports @($pipelineLayerReports + $tcpLayerReports) -Backend epoll `
+  -Protocol tcp -WaitMode blocking -PayloadBytes 64 `
+  -WindowCapacity 1 -ExpectedRuns 2
+Assert-Equal $tcpLayerSummary.protocol "tcp" `
+  "transport summary filters TCP from mixed protocol records"
+Assert-Equal $tcpLayerSummary.workload "round-trip" `
+  "TCP transport summary uses the byte-stream-safe workload"
 Assert-Throws {
-  Get-CflowPairedPipelineLayerSummary `
+  Get-CflowPairedTransportSummary `
     -Reports @($pipelineLayerReports | Select-Object -First 5) `
-    -Backend epoll -WaitMode blocking -PayloadBytes 64 `
+    -Backend epoll -Protocol udp -WaitMode blocking -PayloadBytes 64 `
     -WindowCapacity 4 -ExpectedRuns 2
 } "missing pipeline layer report"
 $mismatchedPipelineLayerAttempts = @($pipelineLayerReports | ForEach-Object {
@@ -389,8 +427,8 @@ $mismatchedPipelineLayerAttempts = @($pipelineLayerReports | ForEach-Object {
   })
 $mismatchedPipelineLayerAttempts[2].attempted = 9
 Assert-Throws {
-  Get-CflowPairedPipelineLayerSummary `
-    -Reports $mismatchedPipelineLayerAttempts -Backend epoll `
+  Get-CflowPairedTransportSummary `
+    -Reports $mismatchedPipelineLayerAttempts -Backend epoll -Protocol udp `
     -WaitMode blocking -PayloadBytes 64 -WindowCapacity 4 -ExpectedRuns 2
 } "mismatched pipeline layer attempts"
 $mismatchedPipelineLayerProfile = @($pipelineLayerReports | ForEach-Object {
@@ -398,8 +436,8 @@ $mismatchedPipelineLayerProfile = @($pipelineLayerReports | ForEach-Object {
   })
 $mismatchedPipelineLayerProfile[2].profile = "latency"
 Assert-Throws {
-  Get-CflowPairedPipelineLayerSummary `
-    -Reports $mismatchedPipelineLayerProfile -Backend epoll `
+  Get-CflowPairedTransportSummary `
+    -Reports $mismatchedPipelineLayerProfile -Backend epoll -Protocol udp `
     -WaitMode blocking -PayloadBytes 64 -WindowCapacity 4 -ExpectedRuns 2
 } "mismatched pipeline layer profile"
 $failedPipelineLayer = @($pipelineLayerReports | ForEach-Object {
@@ -407,13 +445,15 @@ $failedPipelineLayer = @($pipelineLayerReports | ForEach-Object {
   })
 $failedPipelineLayer[1].errors = 1
 Assert-Throws {
-  Get-CflowPairedPipelineLayerSummary `
-    -Reports $failedPipelineLayer -Backend epoll -WaitMode blocking `
+  Get-CflowPairedTransportSummary `
+    -Reports $failedPipelineLayer -Backend epoll -Protocol udp `
+    -WaitMode blocking `
     -PayloadBytes 64 -WindowCapacity 4 -ExpectedRuns 2
 } "failed pipeline layer record"
 
 $largeSummary = Get-CflowPairedSourceSummary -Reports $reports `
-  -Backend epoll -WaitMode blocking -PayloadBytes 1024 -ExpectedRuns 1
+  -Backend epoll -Protocol tcp -WaitMode blocking -PayloadBytes 1024 `
+  -ExpectedRuns 1
 Assert-Equal $largeSummary.payload_bytes 1024 "large paired payload"
 Assert-Equal $largeSummary.paired_p50_delta_ns 30.0 `
   "large paired P50 absolute delta"
@@ -423,20 +463,23 @@ Assert-Equal $largeSummary.paired_wall_delta_ns_per_exchange 8.0 `
 $missingPair = @($reports | Select-Object -First 5)
 Assert-Throws {
   Get-CflowPairedSourceSummary -Reports $missingPair `
-    -Backend epoll -WaitMode blocking -PayloadBytes 64 -ExpectedRuns 3
+    -Backend epoll -Protocol tcp -WaitMode blocking -PayloadBytes 64 `
+    -ExpectedRuns 3
 } "missing Source pair"
 
 $duplicatePair = @($reports + $reports[1])
 Assert-Throws {
   Get-CflowPairedSourceSummary -Reports $duplicatePair `
-    -Backend epoll -WaitMode blocking -PayloadBytes 64 -ExpectedRuns 3
+    -Backend epoll -Protocol tcp -WaitMode blocking -PayloadBytes 64 `
+    -ExpectedRuns 3
 } "duplicate Source pair"
 
 $mismatchedAttempts = @($reports | ForEach-Object { $_.psobject.Copy() })
 $mismatchedAttempts[1].attempted = 9
 Assert-Throws {
   Get-CflowPairedSourceSummary -Reports $mismatchedAttempts `
-    -Backend epoll -WaitMode blocking -PayloadBytes 64 -ExpectedRuns 3
+    -Backend epoll -Protocol tcp -WaitMode blocking -PayloadBytes 64 `
+    -ExpectedRuns 3
 } "mismatched pair attempt counts"
 
 $baselineReports = @(

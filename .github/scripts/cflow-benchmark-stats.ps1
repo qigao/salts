@@ -859,6 +859,10 @@ function Get-CflowPairedSourceSummary {
     [string]$Backend,
 
     [Parameter(Mandatory = $true)]
+    [ValidateSet("tcp", "udp")]
+    [string]$Protocol,
+
+    [Parameter(Mandatory = $true)]
     [ValidateSet("blocking", "busy")]
     [string]$WaitMode,
 
@@ -878,6 +882,7 @@ function Get-CflowPairedSourceSummary {
   }
   $matching = @($Reports | Where-Object {
       $_.backend -eq $Backend -and
+      $_.protocol -eq $Protocol -and
       [int64]$_.payload_bytes -eq $PayloadBytes -and
       $_.wait_mode -eq $WaitMode -and
       ($_.driver -eq "actor" -or
@@ -986,6 +991,7 @@ function Get-CflowPairedSourceSummary {
 
   return [pscustomobject][ordered]@{
     backend = $Backend
+    protocol = $Protocol
     payload_bytes = $PayloadBytes
     wait_mode = $WaitMode
     source_window = $SourceWindow
@@ -1279,13 +1285,17 @@ function Get-CflowPairedSourceWindowSummary {
   }
 }
 
-function Get-CflowPairedPipelineLayerSummary {
+function Get-CflowPairedTransportSummary {
   param(
     [Parameter(Mandatory = $true)]
     [object[]]$Reports,
 
     [Parameter(Mandatory = $true)]
     [string]$Backend,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("tcp", "udp")]
+    [string]$Protocol,
 
     [Parameter(Mandatory = $true)]
     [ValidateSet("blocking", "busy")]
@@ -1306,10 +1316,15 @@ function Get-CflowPairedPipelineLayerSummary {
   if ($ExpectedRuns -le 0) {
     throw "ExpectedRuns must be positive"
   }
+  $expectedWorkload =
+    if ($Protocol -eq "udp") { "pipeline" } else { "round-trip" }
+  if ($Protocol -eq "tcp" -and $WindowCapacity -ne 1) {
+    throw "TCP transport comparisons require window capacity 1"
+  }
   $matching = @($Reports | Where-Object {
       $_.schema -eq "cflow-network-benchmark/v1" -and
-      $_.comparison_backend -eq $Backend -and $_.protocol -eq "udp" -and
-      $_.profile -eq "throughput" -and $_.workload -eq "pipeline" -and
+      $_.comparison_backend -eq $Backend -and $_.protocol -eq $Protocol -and
+      $_.profile -eq "throughput" -and $_.workload -eq $expectedWorkload -and
       $_.peer_mode -eq "raw" -and -not [bool]$_.stage_timing -and
       $_.wait_mode -eq $WaitMode -and
       [int64]$_.payload_bytes -eq $PayloadBytes -and
@@ -1317,7 +1332,7 @@ function Get-CflowPairedPipelineLayerSummary {
       $_.driver -in @("direct", "actor", "source")
     })
   if ($matching.Count -ne 3 * $ExpectedRuns) {
-    throw "Expected $ExpectedRuns Direct/Actor/Source pipeline triples for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity, found $($matching.Count) records"
+    throw "Expected $ExpectedRuns Direct/Actor/Source $Protocol transport triples for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity, found $($matching.Count) records"
   }
 
   $directs = @()
@@ -1347,18 +1362,18 @@ function Get-CflowPairedPipelineLayerSummary {
         [int]$_.benchmark_run -eq $run -and $_.driver -eq "source"
       })
     if ($direct.Count -ne 1 -or $actor.Count -ne 1 -or $source.Count -ne 1) {
-      throw "Expected one Direct, Actor, and Source pipeline report for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run, found $($direct.Count), $($actor.Count), and $($source.Count)"
+      throw "Expected one Direct, Actor, and Source transport report for $Protocol/$Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run, found $($direct.Count), $($actor.Count), and $($source.Count)"
     }
     $direct = $direct[0]
     $actor = $actor[0]
     $source = $source[0]
     if ($direct.backend -ne "socket" -or $actor.backend -ne $Backend -or
         $source.backend -ne $Backend) {
-      throw "Pipeline layer backends must be socket/$Backend/$Backend for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
+      throw "Transport backends must be socket/$Backend/$Backend for $Protocol/$Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
     }
     foreach ($report in @($direct, $actor, $source)) {
       if ([int64]$report.workload_peak_in_flight -ne $WindowCapacity) {
-        throw "Pipeline peak in-flight must equal window $WindowCapacity for $Backend/$PayloadBytes/$WaitMode run $run"
+        throw "Transport peak in-flight must equal window $WindowCapacity for $Protocol/$Backend/$PayloadBytes/$WaitMode run $run"
       }
       if ([int64]$report.samples -le 0 -or
           [int64]$report.exchanges_per_sample -le 0 -or
@@ -1368,10 +1383,10 @@ function Get-CflowPairedPipelineLayerSummary {
           [int64]$report.errors -ne 0 -or
           [int64]$report.rejections -ne 0 -or
           [int64]$report.stale_completions -ne 0) {
-        throw "Pipeline workload or completion status is invalid for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
+        throw "Transport workload or completion status is invalid for $Protocol/$Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
       }
       foreach ($metric in @("exchanges_per_second", "application_mib_per_second",
-                            "p99_ns", "process_cpu_ns")) {
+                            "p50_ns", "p95_ns", "p99_ns", "process_cpu_ns")) {
         $value = [double]$report.$metric
         if ([double]::IsNaN($value) -or [double]::IsInfinity($value) -or
             $value -le 0.0) {
@@ -1386,7 +1401,7 @@ function Get-CflowPairedPipelineLayerSummary {
         $attempted -ne [int64]$expectedAttempts -or
         [int64]$actor.attempted -ne $attempted -or
         [int64]$source.attempted -ne $attempted) {
-      throw "Pipeline layer attempted counts must match the common workload for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
+      throw "Transport attempted counts must match the common workload for $Protocol/$Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
     }
 
     $actorDirectEchoRatios +=
@@ -1420,14 +1435,21 @@ function Get-CflowPairedPipelineLayerSummary {
 
   return [pscustomobject][ordered]@{
     backend = $Backend
+    protocol = $Protocol
     payload_bytes = $PayloadBytes
     wait_mode = $WaitMode
-    workload = "pipeline"
+    workload = $expectedWorkload
     window_capacity = $WindowCapacity
     runs = $ExpectedRuns
     direct_median_echo_per_second = Get-CflowMedian @($directs.exchanges_per_second)
     actor_median_echo_per_second = Get-CflowMedian @($actors.exchanges_per_second)
     source_median_echo_per_second = Get-CflowMedian @($sources.exchanges_per_second)
+    direct_median_application_mib_per_second =
+      Get-CflowMedian @($directs.application_mib_per_second)
+    actor_median_application_mib_per_second =
+      Get-CflowMedian @($actors.application_mib_per_second)
+    source_median_application_mib_per_second =
+      Get-CflowMedian @($sources.application_mib_per_second)
     paired_actor_direct_echo_ratio =
       [math]::Round((Get-CflowMedian $actorDirectEchoRatios), 6)
     paired_source_actor_echo_ratio =
@@ -1440,6 +1462,12 @@ function Get-CflowPairedPipelineLayerSummary {
       [math]::Round((Get-CflowMedian $sourceActorApplicationRatios), 6)
     paired_source_direct_application_mib_ratio =
       [math]::Round((Get-CflowMedian $sourceDirectApplicationRatios), 6)
+    direct_median_p50_ns = Get-CflowMedian @($directs.p50_ns)
+    actor_median_p50_ns = Get-CflowMedian @($actors.p50_ns)
+    source_median_p50_ns = Get-CflowMedian @($sources.p50_ns)
+    direct_median_p95_ns = Get-CflowMedian @($directs.p95_ns)
+    actor_median_p95_ns = Get-CflowMedian @($actors.p95_ns)
+    source_median_p95_ns = Get-CflowMedian @($sources.p95_ns)
     direct_median_p99_ns = Get-CflowMedian @($directs.p99_ns)
     actor_median_p99_ns = Get-CflowMedian @($actors.p99_ns)
     source_median_p99_ns = Get-CflowMedian @($sources.p99_ns)
