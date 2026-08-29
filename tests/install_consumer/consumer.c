@@ -171,7 +171,8 @@ static bool installed_legacy_guard(void *user, const void *state,
 int main(void) {
   static const char source[] =
       "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
-      "<state id='active'><onentry><if cond='In(active)'/>"
+      "<state id='active'><onentry><log label='installed'/>"
+      "<if cond='In(active)'/>"
       "</onentry><transition cond='In(active)' target='done'/></state>"
       "<final id='done'/></scxml>";
   const cflow_statechart_executable_binding legacy = {

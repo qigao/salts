@@ -1,4 +1,5 @@
 #include <cflow/scxml.h>
+#include <tlog.h>
 
 #include <ctype.h>
 #include <stdio.h>
@@ -38,7 +39,8 @@ typedef struct scxml_synthetic_initial {
 
 typedef enum scxml_step_kind {
     SCXML_STEP_RAISE = 1,
-    SCXML_STEP_IF
+    SCXML_STEP_IF,
+    SCXML_STEP_LOG
 } scxml_step_kind;
 
 typedef struct scxml_step {
@@ -47,6 +49,7 @@ typedef struct scxml_step {
     cflow_event_id event;
     size_t branch_first;
     size_t branch_count;
+    const char *label;
 } scxml_step;
 
 typedef struct scxml_branch {
@@ -80,6 +83,7 @@ typedef struct scxml_counts {
     size_t event_occurrences;
     size_t executable_blocks;
     size_t executable_steps;
+    size_t log_label_bytes;
     size_t conditional_branches;
     size_t max_conditional_depth;
     size_t state_action_rows;
@@ -102,6 +106,7 @@ typedef struct scxml_build {
     scxml_block *blocks;
     scxml_step *steps;
     scxml_branch *branches;
+    char *log_storage;
     scxml_name_ref *state_names;
     scxml_name_ref *event_names;
     scxml_name_ref *event_occurrences;
@@ -118,8 +123,10 @@ typedef struct scxml_build {
     size_t executable_index;
     size_t step_index;
     size_t branch_index;
+    size_t log_storage_index;
     size_t step_capacity;
     size_t branch_capacity;
+    size_t log_storage_capacity;
     size_t guard_capacity;
     size_t max_conditional_depth;
     size_t state_action_index;
@@ -141,6 +148,7 @@ typedef struct cflow_scxml_program_impl {
     scxml_step *steps;
     scxml_branch *branches;
     char *name_storage;
+    char *log_storage;
     bool null_value;
 } cflow_scxml_program_impl;
 
@@ -156,6 +164,7 @@ typedef enum scxml_element_kind {
     SCXML_ELEMENT_ONENTRY,
     SCXML_ELEMENT_ONEXIT,
     SCXML_ELEMENT_RAISE,
+    SCXML_ELEMENT_LOG,
     SCXML_ELEMENT_IF,
     SCXML_ELEMENT_ELSEIF,
     SCXML_ELEMENT_ELSE
@@ -422,6 +431,7 @@ static scxml_element_kind element_kind(turbo_xml_node node) {
     if (view_equal_raw(name, "onentry")) return SCXML_ELEMENT_ONENTRY;
     if (view_equal_raw(name, "onexit")) return SCXML_ELEMENT_ONEXIT;
     if (view_equal_raw(name, "raise")) return SCXML_ELEMENT_RAISE;
+    if (view_equal_raw(name, "log")) return SCXML_ELEMENT_LOG;
     if (view_equal_raw(name, "if")) return SCXML_ELEMENT_IF;
     if (view_equal_raw(name, "elseif")) return SCXML_ELEMENT_ELSEIF;
     if (view_equal_raw(name, "else")) return SCXML_ELEMENT_ELSE;
@@ -475,6 +485,9 @@ static bool attribute_allowed(scxml_element_kind kind,
                    view_equal_raw(name, "cond");
         case SCXML_ELEMENT_RAISE:
             return view_equal_raw(name, "event");
+        case SCXML_ELEMENT_LOG:
+            return view_equal_raw(name, "label") ||
+                   view_equal_raw(name, "expr");
         case SCXML_ELEMENT_IF:
         case SCXML_ELEMENT_ELSEIF:
             return view_equal_raw(name, "cond");
@@ -498,10 +511,22 @@ static cflow_scxml_status validate_element_attributes(
         const turbo_xml_string_view name =
             turbo_xml_attribute_local_name(attribute);
         if (!is_empty_view(namespace_uri)) continue;
+        if (kind == SCXML_ELEMENT_LOG && view_equal_raw(name, "expr")) {
+            return scxml_fail(
+                build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
+                turbo_xml_attribute_location(attribute),
+                "SCXML null data model has no log value expressions");
+        }
         if (!attribute_allowed(kind, name)) {
-            return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
-                              turbo_xml_attribute_location(attribute),
-                              "unsupported unqualified SCXML attribute");
+            return scxml_fail(
+                build,
+                kind == SCXML_ELEMENT_LOG
+                    ? CFLOW_SCXML_INVALID_STRUCTURE
+                    : CFLOW_SCXML_UNSUPPORTED_FEATURE,
+                turbo_xml_attribute_location(attribute),
+                kind == SCXML_ELEMENT_LOG
+                    ? "log has an invalid unqualified attribute"
+                    : "unsupported unqualified SCXML attribute");
         }
     }
     return CFLOW_SCXML_OK;
@@ -632,6 +657,45 @@ static cflow_scxml_status analyze_executable_content(
     scxml_build *build, turbo_xml_node node, scxml_counts *counts,
     size_t conditional_depth);
 
+static cflow_scxml_status analyze_log(scxml_build *build,
+                                      turbo_xml_node node,
+                                      scxml_counts *counts) {
+    const turbo_xml_attribute label_attribute = find_attribute(node, "label");
+    const turbo_xml_string_view label =
+        label_attribute.impl != NULL
+            ? turbo_xml_attribute_value(label_attribute)
+            : (turbo_xml_string_view){NULL, 0u};
+    size_t retained_bytes;
+    size_t index;
+    cflow_scxml_status status = validate_element_attributes(
+        build, node, SCXML_ELEMENT_LOG);
+    if (status != CFLOW_SCXML_OK) return status;
+    for (index = 0u; index < turbo_xml_node_child_count(node); ++index) {
+        const turbo_xml_node child = turbo_xml_node_child_at(node, index);
+        if (turbo_xml_node_type(child) != TURBO_XML_COMMENT) {
+            return scxml_fail(
+                build, CFLOW_SCXML_INVALID_STRUCTURE,
+                turbo_xml_node_location(child),
+                "log cannot contain executable or text content");
+        }
+    }
+    if (!checked_add(label.size, 1u, &retained_bytes) ||
+        !checked_add(counts->log_label_bytes, retained_bytes,
+                     &counts->log_label_bytes) ||
+        !checked_add(counts->executable_steps, 1u,
+                     &counts->executable_steps)) {
+        return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                          turbo_xml_node_location(node),
+                          "log label storage size overflow");
+    }
+    if (counts->log_label_bytes > build->limits.max_name_bytes) {
+        return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                          turbo_xml_node_location(node),
+                          "log labels exceed max_name_bytes");
+    }
+    return CFLOW_SCXML_OK;
+}
+
 static cflow_scxml_status validate_condition_attribute(
     scxml_build *build, turbo_xml_node node) {
     const turbo_xml_attribute condition = find_attribute(node, "cond");
@@ -725,6 +789,9 @@ static cflow_scxml_status analyze_conditional(
         } else if (child_kind == SCXML_ELEMENT_RAISE) {
             status = analyze_raise(build, child, counts);
             if (status != CFLOW_SCXML_OK) return status;
+        } else if (child_kind == SCXML_ELEMENT_LOG) {
+            status = analyze_log(build, child, counts);
+            if (status != CFLOW_SCXML_OK) return status;
         } else if (child_kind == SCXML_ELEMENT_IF) {
             size_t next_depth;
             if (!checked_add(conditional_depth, 1u, &next_depth)) {
@@ -773,6 +840,8 @@ static cflow_scxml_status analyze_executable_content(
         if (status != CFLOW_SCXML_OK) return status;
         if (child_kind == SCXML_ELEMENT_RAISE) {
             status = analyze_raise(build, child, counts);
+        } else if (child_kind == SCXML_ELEMENT_LOG) {
+            status = analyze_log(build, child, counts);
         } else if (child_kind == SCXML_ELEMENT_IF) {
             size_t next_depth;
             if (!checked_add(conditional_depth, 1u, &next_depth)) {
@@ -1343,6 +1412,13 @@ static bool execute_scxml_range(
             if (!context->raise_internal(
                     context->raise_user, &raised, out_error))
                 return false;
+        } else if (step->kind == SCXML_STEP_LOG) {
+            if (step->label == NULL) {
+                *out_error = "SCXML log label storage is invalid";
+                return false;
+            }
+            TURBO_LOG_DEBUG(
+                tlog_peek_default(), "cflow.scxml", step->label);
         } else if (step->kind == SCXML_STEP_IF) {
             size_t branch;
             const scxml_branch *selected = NULL;
@@ -1553,10 +1629,43 @@ static cflow_scxml_status emit_conditional_step(
     return CFLOW_SCXML_OK;
 }
 
+static cflow_scxml_status emit_log_step(scxml_build *build,
+                                        turbo_xml_node node) {
+    const turbo_xml_attribute label_attribute = find_attribute(node, "label");
+    const turbo_xml_string_view label =
+        label_attribute.impl != NULL
+            ? turbo_xml_attribute_value(label_attribute)
+            : (turbo_xml_string_view){NULL, 0u};
+    const size_t step = build->step_index;
+    size_t retained_bytes;
+    char *stored_label;
+    if (!checked_add(label.size, 1u, &retained_bytes) ||
+        step >= build->step_capacity ||
+        build->log_storage_index > build->log_storage_capacity ||
+        retained_bytes >
+            build->log_storage_capacity - build->log_storage_index) {
+        return scxml_fail(build, CFLOW_SCXML_NATIVE_IR_REJECTED,
+                          turbo_xml_node_location(node),
+                          "log exceeded admitted storage");
+    }
+    stored_label = build->log_storage + build->log_storage_index;
+    if (label.size != 0u)
+        memcpy(stored_label, label.data, label.size);
+    stored_label[label.size] = '\0';
+    build->log_storage_index += retained_bytes;
+    ++build->step_index;
+    build->steps[step] = (scxml_step){
+        .kind = SCXML_STEP_LOG,
+        .next = build->step_index,
+        .label = stored_label};
+    return CFLOW_SCXML_OK;
+}
+
 static cflow_scxml_status emit_executable_node(
     scxml_build *build, turbo_xml_node node) {
     const scxml_element_kind kind = element_kind(node);
     if (kind == SCXML_ELEMENT_RAISE) return emit_raise_step(build, node);
+    if (kind == SCXML_ELEMENT_LOG) return emit_log_step(build, node);
     if (kind == SCXML_ELEMENT_IF) return emit_conditional_step(build, node);
     return scxml_fail(
         build, CFLOW_SCXML_NATIVE_IR_REJECTED,
@@ -1569,6 +1678,7 @@ static cflow_scxml_status emit_executable_block(
     cflow_statechart_executable_id *out_executable) {
     const size_t block_index = build->executable_index;
     const size_t first_step = build->step_index;
+    const size_t first_log_byte = build->log_storage_index;
     const cflow_statechart_executable_id executable =
         (cflow_statechart_executable_id)(block_index + 1u);
     size_t index;
@@ -1593,7 +1703,9 @@ static cflow_scxml_status emit_executable_block(
         build->max_conditional_depth};
     build->executables[block_index] = (cflow_statechart_executable){
         executable, &cmeta_type_bool,
-        CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL,
+        CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL |
+            (build->log_storage_index != first_log_byte
+                 ? CMETA_EFFECT_IO : CMETA_EFFECT_PURE),
         CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
     build->bindings[block_index] = (cflow_statechart_executable_binding){
         .id = executable,
@@ -1871,6 +1983,7 @@ static void free_build(scxml_build *build) {
     free(build->blocks);
     free(build->steps);
     free(build->branches);
+    free(build->log_storage);
     free(build->state_names);
     free(build->event_names);
     free(build->event_occurrences);
@@ -1930,6 +2043,7 @@ cflow_scxml_status cflow_scxml_compile(
     turbo_xml_attribute datamodel;
     size_t index;
     size_t name_bytes = 0u;
+    size_t retained_string_bytes = 0u;
     size_t action_ref_count = 0u;
     char *name_cursor;
 
@@ -2033,8 +2147,12 @@ cflow_scxml_status cflow_scxml_compile(
                                 sizeof(*build.steps));
     build.branches = allocate_rows(
         counts.conditional_branches, sizeof(*build.branches));
+    build.log_storage = counts.log_label_bytes != 0u
+                            ? (char *)calloc(counts.log_label_bytes, 1u)
+                            : NULL;
     build.step_capacity = counts.executable_steps;
     build.branch_capacity = counts.conditional_branches;
+    build.log_storage_capacity = counts.log_label_bytes;
     build.guard_capacity = counts.guard_rows;
     build.max_conditional_depth = counts.max_conditional_depth;
     build.state_names =
@@ -2060,6 +2178,7 @@ cflow_scxml_status cflow_scxml_compile(
           build.blocks == NULL)) ||
         (counts.executable_steps != 0u && build.steps == NULL) ||
         (counts.conditional_branches != 0u && build.branches == NULL) ||
+        (counts.log_label_bytes != 0u && build.log_storage == NULL) ||
         (counts.state_action_rows != 0u && build.state_actions == NULL) ||
         (counts.transition_action_rows != 0u &&
          build.transition_actions == NULL) ||
@@ -2115,10 +2234,17 @@ cflow_scxml_status cflow_scxml_compile(
             goto cleanup;
         }
     }
-    if (name_bytes > limits.max_name_bytes) {
+    if (!checked_add(name_bytes, counts.log_label_bytes,
+                     &retained_string_bytes)) {
         status = scxml_fail(&build, CFLOW_SCXML_LIMIT_EXCEEDED,
                             turbo_xml_node_location(root),
-                            "retained SCXML names exceed max_name_bytes");
+                            "retained SCXML string size overflow");
+        goto cleanup;
+    }
+    if (retained_string_bytes > limits.max_name_bytes) {
+        status = scxml_fail(&build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                            turbo_xml_node_location(root),
+                            "retained SCXML strings exceed max_name_bytes");
         goto cleanup;
     }
 
@@ -2183,12 +2309,14 @@ cflow_scxml_status cflow_scxml_compile(
     impl->blocks = build.blocks;
     impl->steps = build.steps;
     impl->branches = build.branches;
+    impl->log_storage = build.log_storage;
     build.bindings = NULL;
     build.guard_bindings = NULL;
     build.guard_users = NULL;
     build.blocks = NULL;
     build.steps = NULL;
     build.branches = NULL;
+    build.log_storage = NULL;
     impl->null_value = false;
     qsort(impl->state_names, impl->state_name_count,
           sizeof(*impl->state_names), compare_program_name);
@@ -2210,6 +2338,7 @@ cleanup:
         free(impl->steps);
         free(impl->branches);
         free(impl->name_storage);
+        free(impl->log_storage);
         free(impl);
     }
     free_build(&build);
@@ -2231,6 +2360,7 @@ void cflow_scxml_program_destroy(cflow_scxml_program *program) {
     free(impl->steps);
     free(impl->branches);
     free(impl->name_storage);
+    free(impl->log_storage);
     free(impl);
     program->impl = NULL;
 }

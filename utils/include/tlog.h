@@ -375,6 +375,12 @@ TURBO_C_API turbo_log_level_t tlog_get_level(const tlog_t *logger);
 // Default Logger
 // =============================================================================
 
+/**
+ * Default-logger access synchronizes only the global pointer. It does not
+ * retain the logger or extend its lifetime. The application must keep an
+ * installed logger alive while any thread may log through the default and
+ * must quiesce those callers before replacing and destroying that logger.
+ */
 TURBO_C_API void tlog_set_default(tlog_t *logger);
 TURBO_C_API tlog_t *tlog_get_default(void);
 TURBO_C_API tlog_t *tlog_peek_default(void);

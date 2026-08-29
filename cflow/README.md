@@ -559,19 +559,21 @@ retries, compensation, or distributed coordination.
 
 Configure with `-DCFLOW_ENABLE_SCXML=ON` to build and install
 `TurboUtils::CFlowScxml` and `<cflow/scxml.h>`. The option is OFF by default.
-The frontend depends only on `TurboUtils::CFlow` and
-`TurboUtils::XmlParser`; CFlow itself has no XML, cxml, CSerde, or CBind
-dependency. cxml is a private implementation detail of XmlParser and is not
-installed or exported.
+Its public surface depends on `TurboUtils::CFlow` and
+`TurboUtils::XmlParser`; the installed static frontend also carries a
+link-only `TurboUtils::Core` dependency for tlog. CFlow itself has no XML,
+cxml, CSerde, CBind, or tlog dependency. cxml is a private implementation
+detail of XmlParser and is not installed or exported.
 
 `cflow_scxml_compile()` owns the compiled native Statechart and its stable
-state/event name maps, executable blocks, guard users, and native binding rows. Input is
-borrowed only for the call. The returned program must outlive every runtime
-instance borrowing its Statechart, guard users, or executable binding users and must be
-destroyed with `cflow_scxml_program_destroy()` after those instances are
-quiescent. The null data model is represented by an inert CMeta `bool` value;
-named event helpers produce the matching borrowed false payload, which runtime
-mailbox admission copies.
+state/event name maps, log-label storage, executable blocks, guard users, and
+native binding rows. Input is borrowed only for the call. The returned program
+must outlive every runtime instance borrowing its Statechart, guard users, or
+executable binding users and must be destroyed with
+`cflow_scxml_program_destroy()` after those instances are quiescent. The null
+data model is represented by an inert CMeta `bool` value; named event helpers
+produce the matching borrowed false payload, which runtime mailbox admission
+copies.
 
 ```c
 #include <cflow/executor.h>
@@ -651,17 +653,26 @@ The supported compatibility subset is deliberately strict:
   declared real state. Only the first matching partition executes, empty
   partitions are legal, document order is retained, and raise failure rolls
   the whole microstep back transactionally;
+- label-only `log` elements in the same executable positions. Each executed
+  element attempts one tlog DEBUG record with component `cflow.scxml`; a
+  missing label emits an empty message. A present `expr` is unsupported by the
+  null data model and fails during compilation. The frontend does not create,
+  flush, retry, sample, or destroy a logger, and missing or dropped logging
+  never changes Statechart success. The application owns any installed default
+  logger and must keep it alive until all executors that may run SCXML log
+  actions are quiescent; default-pointer access does not retain the logger;
 - compile-time rejection of malformed, quoted, unknown, or pseudo-state
   `In(id)` arguments. Null-model system variables remain inaccessible.
 
-Executable elements other than `raise` and conditional partitions, wildcard
-event descriptors, multiple targets, non-null data
-models, and other SCXML elements fail during compilation with the first byte
-offset and one-based line/column diagnostic.
+Executable elements other than `raise`, label-only `log`, and conditional
+partitions, wildcard event descriptors, multiple targets, non-null data models,
+and other SCXML elements fail during compilation with the first byte offset and
+one-based line/column diagnostic.
 There is no fallback or silent feature removal. Configurable hard limits cover
-XML input, depth, nodes, attributes, retained strings, states, events,
-transitions, action references, and retained name bytes; a failed compile
-leaves the output program empty.
+XML input, depth, nodes, attributes, states, events, transitions, and action
+references. State/event names and NUL-terminated log labels share the bounded
+`max_name_bytes` retained-string budget; a failed compile leaves the output
+program empty.
 
 ## Bounded Actor lifecycle
 
