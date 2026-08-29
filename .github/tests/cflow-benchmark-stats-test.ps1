@@ -21,6 +21,19 @@ function Assert-Throws([scriptblock]$Action, [string]$Message) {
   throw "$Message`: expected an exception"
 }
 
+function Assert-ThrowsLike([scriptblock]$Action, [string]$Pattern,
+                           [string]$Message) {
+  try {
+    & $Action
+  } catch {
+    if ($_.Exception.Message -notlike $Pattern) {
+      throw "$Message`: exception '$($_.Exception.Message)' did not match '$Pattern'"
+    }
+    return
+  }
+  throw "$Message`: expected an exception"
+}
+
 function Add-StageTimingFixture([object]$Report) {
   $operations = [int64]$Report.attempted
   $completionTotal = [int64]([double]$Report.completion_drive_mean_ns *
@@ -68,6 +81,22 @@ $validStageTiming = [pscustomobject]@{
   completion_process_mean_ns=2.5; completion_residual_mean_ns=5.0
 }
 Assert-CflowStageTimingReport -Report $validStageTiming
+$binaryRoundingBoundary = [pscustomobject]@{
+  stage_timing=$true; stage_timing_version=2; io_operations=12800
+  admission_ns=1363943; completion_drive_ns=296307423
+  drive_ns=96744140; wait_ns=189813324; completion_process_ns=1561191
+  completion_residual_ns=8188768; admission_mean_ns=106.558
+  completion_drive_mean_ns=23149.017; drive_mean_ns=7558.136
+  wait_mean_ns=14829.166; completion_process_mean_ns=121.968
+  completion_residual_mean_ns=639.747
+}
+Assert-CflowStageTimingReport -Report $binaryRoundingBoundary
+$outsideThreeDecimalPrecision = $binaryRoundingBoundary.psobject.Copy()
+$outsideThreeDecimalPrecision.completion_residual_mean_ns = 639.746
+Assert-ThrowsLike {
+  Assert-CflowStageTimingReport -Report $outsideThreeDecimalPrecision
+} "*completion_residual_mean_ns*total=8188768*operations=12800*" `
+  "stage mean outside three-decimal precision"
 $invalidStageTiming = $validStageTiming.psobject.Copy()
 $invalidStageTiming.completion_residual_ns = 19
 Assert-Throws {

@@ -97,11 +97,13 @@ function Assert-CflowStageTimingReport {
     @("completion_process_ns", "completion_process_mean_ns"),
     @("completion_residual_ns", "completion_residual_mean_ns")
   )
+  $threeDecimalHalfUnit = [decimal]5 / [decimal]10000
   foreach ($pair in $meanPairs) {
-    $expectedMean = [math]::Round(
-      [double]([decimal]$Report.($pair[0]) / $operations), 3)
-    if ([math]::Abs([double]$Report.($pair[1]) - $expectedMean) -gt 0.0005) {
-      throw "Stage timing mean $($pair[1]) does not match $($pair[0])"
+    $exactMean = [decimal]$Report.($pair[0]) / $operations
+    $meanDifference = [decimal]$Report.($pair[1]) - $exactMean
+    if ($meanDifference -lt 0) { $meanDifference = -$meanDifference }
+    if ($meanDifference -gt $threeDecimalHalfUnit) {
+      throw "Stage timing mean $($pair[1]) is outside emitted precision: reported=$($Report.($pair[1])) exact=$exactMean total=$($Report.($pair[0])) operations=$operations"
     }
   }
 }

@@ -45,8 +45,13 @@ completion_residual_ns = completion_drive_ns
                          - wait_ns
                          - completion_process_ns
 operations > 0
-each mean = corresponding total / operations
+abs(emitted mean - corresponding total / operations) <= 0.0005
 ```
+
+The half-unit tolerance is the exact contract for the benchmark's three-digit
+`%.3f` JSON representation. It accepts either adjacent result at a binary
+floating-point tie while still rejecting a value outside the emitted
+precision; totals remain the authoritative exact values.
 
 Checked arithmetic is required before committing any accumulator update. An
 invalid decomposition or overflow fails the benchmark with the existing
