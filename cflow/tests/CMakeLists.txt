@@ -147,6 +147,7 @@ cmake_add_test(cflow_statechart_actor_test
 cmake_add_test(cflow_io_actor_test
   SOURCES cflow_io_actor_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_io_source_test

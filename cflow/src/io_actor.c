@@ -5,8 +5,11 @@
 #include <turbo/thread.h>
 
 #include <limits.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "io_actor_internal.h"
 
 typedef enum cflow_io_command_kind {
     CFLOW_IO_COMMAND_SUBMIT = 0,
@@ -18,11 +21,18 @@ typedef struct cflow_io_command {
     cflow_io_request_id request_id;
 } cflow_io_command;
 
+typedef struct cflow_io_completion_event {
+    cflow_io_request_id request_id;
+    size_t slot_index;
+    cflow_io_completion completion;
+} cflow_io_completion_event;
+
 typedef enum cflow_io_request_phase {
     CFLOW_IO_REQUEST_FREE = 0,
     CFLOW_IO_REQUEST_ADMITTED,
     CFLOW_IO_REQUEST_READY,
     CFLOW_IO_REQUEST_BACKEND_PENDING,
+    CFLOW_IO_REQUEST_COMPLETION_QUEUED,
     CFLOW_IO_REQUEST_COMPLETED,
     CFLOW_IO_REQUEST_DISPATCH_QUEUED,
     CFLOW_IO_REQUEST_DISPATCH_RUNNING,
@@ -44,7 +54,7 @@ typedef struct cflow_io_request_slot {
     cflow_io_actor_impl *owner;
     cflow_io_request_id request_id;
     cflow_io_lease_id lease_id;
-    cflow_io_request_phase phase;
+    atomic_uint phase;
     cflow_io_operation operation;
     cflow_io_completion completion;
     bool cancel_requested;
@@ -79,6 +89,11 @@ struct cflow_io_actor_impl {
     disruptor_t *commands;
     disruptor_consumer_t command_consumer;
     uint64_t next_command_sequence;
+    disruptor_t *completions;
+    disruptor_consumer_t completion_consumer;
+    uint64_t next_completion_sequence;
+    atomic_size_t completion_depth;
+    atomic_size_t completion_publishers_inflight;
     cflow_executor *executor;
     cflow_io_backend_ops backend;
     void *backend_user;
@@ -103,6 +118,18 @@ struct cflow_io_actor_impl {
     uint64_t executor_rejected_closed;
     uint64_t executor_rejected_invalid;
 };
+
+static cflow_io_request_phase io_phase_load_locked(
+    const cflow_io_request_slot *slot) {
+    return (cflow_io_request_phase)atomic_load_explicit(
+        &slot->phase, memory_order_relaxed);
+}
+
+static void io_phase_store_locked(cflow_io_request_slot *slot,
+                                  cflow_io_request_phase phase) {
+    atomic_store_explicit(&slot->phase, (unsigned)phase,
+                          memory_order_relaxed);
+}
 
 static void io_counter_increment(uint64_t *counter) {
     if (*counter != UINT64_MAX)
@@ -134,7 +161,7 @@ static cflow_io_request_slot *io_find_request_locked(
     size_t index;
     for (index = 0u; index < impl->request_capacity; ++index) {
         cflow_io_request_slot *slot = &impl->requests[index];
-        if (slot->phase != CFLOW_IO_REQUEST_FREE &&
+        if (io_phase_load_locked(slot) != CFLOW_IO_REQUEST_FREE &&
             slot->request_id == request_id)
             return slot;
     }
@@ -145,7 +172,8 @@ static cflow_io_request_slot *io_find_free_request_locked(
     cflow_io_actor_impl *impl) {
     size_t index;
     for (index = 0u; index < impl->request_capacity; ++index) {
-        if (impl->requests[index].phase == CFLOW_IO_REQUEST_FREE)
+        if (io_phase_load_locked(&impl->requests[index]) ==
+            CFLOW_IO_REQUEST_FREE)
             return &impl->requests[index];
     }
     return NULL;
@@ -156,7 +184,7 @@ static bool io_lease_in_use_locked(const cflow_io_actor_impl *impl,
     size_t index;
     for (index = 0u; index < impl->request_capacity; ++index) {
         const cflow_io_request_slot *slot = &impl->requests[index];
-        if (slot->phase != CFLOW_IO_REQUEST_FREE &&
+        if (io_phase_load_locked(slot) != CFLOW_IO_REQUEST_FREE &&
             slot->lease_id == lease_id)
             return true;
     }
@@ -177,6 +205,25 @@ static bool io_completion_valid(const cflow_io_completion *completion) {
             return completion->bytes == 0u && completion->error != TURBO_OK;
     }
     return false;
+}
+
+static cflow_io_request_slot *io_reserve_completion_slot(
+    cflow_io_actor_impl *impl, cflow_io_request_id request_id) {
+    size_t index;
+    for (index = 0u; index < impl->request_capacity; ++index) {
+        cflow_io_request_slot *slot = &impl->requests[index];
+        unsigned expected = CFLOW_IO_REQUEST_BACKEND_PENDING;
+        if (atomic_load_explicit(&slot->phase, memory_order_acquire) !=
+                CFLOW_IO_REQUEST_BACKEND_PENDING ||
+            slot->request_id != request_id)
+            continue;
+        if (atomic_compare_exchange_strong_explicit(
+                &slot->phase, &expected,
+                CFLOW_IO_REQUEST_COMPLETION_QUEUED,
+                memory_order_acq_rel, memory_order_acquire))
+            return slot;
+    }
+    return NULL;
 }
 
 static bool io_prepare_wake_locked(cflow_io_actor_impl *impl,
@@ -205,6 +252,50 @@ static void io_notify(cflow_io_actor_impl *impl) {
         turbo_mutex_lock(&impl->gate);
         --impl->callbacks_inflight;
         turbo_mutex_unlock(&impl->gate);
+    }
+}
+
+static void io_finish_completion_publication(cflow_io_actor_impl *impl) {
+    cflow_io_wake_fn wake_fn = NULL;
+    void *wake_user = NULL;
+
+    for (;;) {
+        size_t publishers = atomic_load_explicit(
+            &impl->completion_publishers_inflight, memory_order_acquire);
+        if (publishers > 1u) {
+            if (atomic_compare_exchange_weak_explicit(
+                    &impl->completion_publishers_inflight, &publishers,
+                    publishers - 1u, memory_order_acq_rel,
+                    memory_order_acquire))
+                return;
+            continue;
+        }
+        if (publishers == 0u)
+            return;
+
+        /* The last publisher releases its credit and establishes the batch
+           wake while holding gate. A consumer can therefore never observe a
+           visible batch whose final publisher still has Actor work to do. */
+        turbo_mutex_lock(&impl->gate);
+        publishers = 1u;
+        if (!atomic_compare_exchange_strong_explicit(
+                &impl->completion_publishers_inflight, &publishers, 0u,
+                memory_order_acq_rel, memory_order_acquire)) {
+            turbo_mutex_unlock(&impl->gate);
+            continue;
+        }
+        if (atomic_load_explicit(&impl->completion_depth,
+                                 memory_order_acquire) != 0u &&
+            io_prepare_wake_locked(impl, &wake_fn, &wake_user))
+            ++impl->callbacks_inflight;
+        turbo_mutex_unlock(&impl->gate);
+        if (wake_fn != NULL) {
+            wake_fn(wake_user);
+            turbo_mutex_lock(&impl->gate);
+            --impl->callbacks_inflight;
+            turbo_mutex_unlock(&impl->gate);
+        }
+        return;
     }
 }
 
@@ -247,13 +338,30 @@ static bool io_take_command_locked(cflow_io_actor_impl *impl,
     return true;
 }
 
-static cflow_io_complete_status io_complete_impl(
+static cflow_io_complete_status io_completion_reservation_failure(
+    cflow_io_actor_impl *impl,
+    cflow_io_request_id request_id) {
+    cflow_io_request_slot *slot;
+    turbo_mutex_lock(&impl->gate);
+    slot = io_find_request_locked(impl, request_id);
+    if (slot == NULL) {
+        io_counter_increment(&impl->stale_completions);
+        turbo_mutex_unlock(&impl->gate);
+        return CFLOW_IO_COMPLETE_NOT_FOUND;
+    }
+    io_counter_increment(&impl->stale_completions);
+    turbo_mutex_unlock(&impl->gate);
+    return CFLOW_IO_COMPLETE_NOT_PENDING;
+}
+
+static cflow_io_complete_status io_complete_inline(
     cflow_io_actor_impl *impl,
     cflow_io_request_id request_id,
     const cflow_io_completion *completion) {
     cflow_io_request_slot *slot;
     cflow_io_wake_fn wake_fn = NULL;
     void *wake_user = NULL;
+
     if (impl == NULL || request_id == 0u ||
         !io_completion_valid(completion))
         return CFLOW_IO_COMPLETE_INVALID_ARGUMENT;
@@ -264,15 +372,14 @@ static cflow_io_complete_status io_complete_impl(
         turbo_mutex_unlock(&impl->gate);
         return CFLOW_IO_COMPLETE_NOT_FOUND;
     }
-    if (slot->phase != CFLOW_IO_REQUEST_BACKEND_PENDING) {
+    if (io_phase_load_locked(slot) !=
+        CFLOW_IO_REQUEST_BACKEND_PENDING) {
         io_counter_increment(&impl->stale_completions);
         turbo_mutex_unlock(&impl->gate);
         return CFLOW_IO_COMPLETE_NOT_PENDING;
     }
     slot->completion = *completion;
-    slot->phase = CFLOW_IO_REQUEST_COMPLETED;
-    /* COMPLETED and its wake linearize together. With no wake there is no
-       Actor access after unlock; with one, callback credit blocks destroy. */
+    io_phase_store_locked(slot, CFLOW_IO_REQUEST_COMPLETED);
     if (io_prepare_wake_locked(impl, &wake_fn, &wake_user))
         ++impl->callbacks_inflight;
     turbo_mutex_unlock(&impl->gate);
@@ -283,6 +390,54 @@ static cflow_io_complete_status io_complete_impl(
         turbo_mutex_unlock(&impl->gate);
     }
     return CFLOW_IO_COMPLETE_ACCEPTED;
+}
+
+static bool io_take_completion_locked(cflow_io_actor_impl *impl) {
+    disruptor_cursor_t available;
+    disruptor_cursor_t current;
+    const cflow_io_completion_event *entry;
+    cflow_io_request_slot *slot;
+
+    if (atomic_load_explicit(&impl->completion_depth,
+                             memory_order_acquire) == 0u ||
+        atomic_load_explicit(&impl->completion_publishers_inflight,
+                             memory_order_acquire) != 0u)
+        return false;
+    current.sequence = impl->next_completion_sequence;
+    available = current;
+    if (!disruptor_consumer_wait_for_nonblocking_for(
+            impl->completions, &impl->completion_consumer, &available))
+        return false;
+    entry = (const cflow_io_completion_event *)disruptor_show_entry(
+        impl->completions, &current);
+    if (entry == NULL)
+        return false;
+
+    slot = entry->slot_index < impl->request_capacity
+        ? &impl->requests[entry->slot_index] : NULL;
+    if (slot != NULL && slot->request_id == entry->request_id &&
+        io_phase_load_locked(slot) ==
+            CFLOW_IO_REQUEST_COMPLETION_QUEUED) {
+        slot->completion = entry->completion;
+        io_phase_store_locked(slot, CFLOW_IO_REQUEST_COMPLETED);
+    } else {
+        io_counter_increment(&impl->stale_completions);
+    }
+    disruptor_consumer_release_entry(
+        impl->completions, &impl->completion_consumer, &current);
+    ++impl->next_completion_sequence;
+    (void)atomic_fetch_sub_explicit(&impl->completion_depth, 1u,
+                                    memory_order_release);
+    return true;
+}
+
+static bool io_drain_completions_locked(cflow_io_actor_impl *impl) {
+    bool progressed = false;
+    /* Admission also takes gate, so at most the already-active bounded request
+       set can publish while this single consumer drains the batch. */
+    while (io_take_completion_locked(impl))
+        progressed = true;
+    return progressed;
 }
 
 static void io_delivery_task(void *user) {
@@ -301,11 +456,12 @@ static void io_delivery_task(void *user) {
         return;
     impl = slot->owner;
     turbo_mutex_lock(&impl->gate);
-    if (slot->phase != CFLOW_IO_REQUEST_DISPATCH_QUEUED) {
+    if (io_phase_load_locked(slot) !=
+        CFLOW_IO_REQUEST_DISPATCH_QUEUED) {
         turbo_mutex_unlock(&impl->gate);
         return;
     }
-    slot->phase = CFLOW_IO_REQUEST_DISPATCH_RUNNING;
+    io_phase_store_locked(slot, CFLOW_IO_REQUEST_DISPATCH_RUNNING);
     ++impl->callbacks_inflight;
     completion_fn = impl->completion;
     completion_user = impl->completion_user;
@@ -319,8 +475,9 @@ static void io_delivery_task(void *user) {
                   operation_user, &completion);
 
     turbo_mutex_lock(&impl->gate);
-    if (slot->phase == CFLOW_IO_REQUEST_DISPATCH_RUNNING)
-        slot->phase = CFLOW_IO_REQUEST_DELIVERED;
+    if (io_phase_load_locked(slot) ==
+        CFLOW_IO_REQUEST_DISPATCH_RUNNING)
+        io_phase_store_locked(slot, CFLOW_IO_REQUEST_DELIVERED);
     (void)io_prepare_wake_locked(impl, &wake_fn, &wake_user);
     /* Delivery linearizes here and the slot is never touched again. A wake
        keeps the callback credit until its borrowed context has returned; the
@@ -340,27 +497,30 @@ static bool io_select_action_locked(cflow_io_actor_impl *impl,
                                     cflow_io_action *action) {
     cflow_io_command command;
     cflow_io_request_slot *slot = NULL;
+    const bool gathered_completion = io_drain_completions_locked(impl);
     size_t index;
 
     if (io_take_command_locked(impl, &command)) {
         slot = io_find_request_locked(impl, command.request_id);
         if (slot != NULL) {
             if (command.kind == CFLOW_IO_COMMAND_SUBMIT &&
-                slot->phase == CFLOW_IO_REQUEST_ADMITTED) {
+                io_phase_load_locked(slot) == CFLOW_IO_REQUEST_ADMITTED) {
                 if (impl->lifecycle == CFLOW_IO_CLOSING) {
                     slot->completion = (cflow_io_completion){
                         CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
-                    slot->phase = CFLOW_IO_REQUEST_COMPLETED;
+                    io_phase_store_locked(slot, CFLOW_IO_REQUEST_COMPLETED);
                 } else {
-                    slot->phase = CFLOW_IO_REQUEST_READY;
+                    io_phase_store_locked(slot, CFLOW_IO_REQUEST_READY);
                 }
             } else if (command.kind == CFLOW_IO_COMMAND_CANCEL) {
-                if (slot->phase == CFLOW_IO_REQUEST_ADMITTED ||
-                    slot->phase == CFLOW_IO_REQUEST_READY) {
+                const cflow_io_request_phase phase =
+                    io_phase_load_locked(slot);
+                if (phase == CFLOW_IO_REQUEST_ADMITTED ||
+                    phase == CFLOW_IO_REQUEST_READY) {
                     slot->completion = (cflow_io_completion){
                         CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
-                    slot->phase = CFLOW_IO_REQUEST_COMPLETED;
-                } else if (slot->phase == CFLOW_IO_REQUEST_BACKEND_PENDING) {
+                    io_phase_store_locked(slot, CFLOW_IO_REQUEST_COMPLETED);
+                } else if (phase == CFLOW_IO_REQUEST_BACKEND_PENDING) {
                     slot->cancel_requested = true;
                 }
             }
@@ -371,7 +531,8 @@ static bool io_select_action_locked(cflow_io_actor_impl *impl,
 
     for (index = 0u; index < impl->request_capacity; ++index) {
         slot = &impl->requests[index];
-        if (slot->phase == CFLOW_IO_REQUEST_BACKEND_PENDING &&
+        if (io_phase_load_locked(slot) ==
+                CFLOW_IO_REQUEST_BACKEND_PENDING &&
             slot->cancel_requested && !slot->cancel_dispatched) {
             slot->cancel_dispatched = true;
             action->kind = CFLOW_IO_ACTION_CANCEL_BACKEND;
@@ -383,7 +544,7 @@ static bool io_select_action_locked(cflow_io_actor_impl *impl,
     slot = NULL;
     for (index = 0u; index < impl->request_capacity; ++index) {
         cflow_io_request_slot *candidate = &impl->requests[index];
-        if (candidate->phase == CFLOW_IO_REQUEST_READY &&
+        if (io_phase_load_locked(candidate) == CFLOW_IO_REQUEST_READY &&
             (slot == NULL || candidate->request_id < slot->request_id))
             slot = candidate;
     }
@@ -391,10 +552,14 @@ static bool io_select_action_locked(cflow_io_actor_impl *impl,
         if (impl->lifecycle == CFLOW_IO_CLOSING) {
             slot->completion = (cflow_io_completion){
                 CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
-            slot->phase = CFLOW_IO_REQUEST_COMPLETED;
+            io_phase_store_locked(slot, CFLOW_IO_REQUEST_COMPLETED);
             action->kind = CFLOW_IO_ACTION_STATE_ONLY;
         } else {
-            slot->phase = CFLOW_IO_REQUEST_BACKEND_PENDING;
+            /* Native completion producers acquire this transition before
+               reading the stable request identity outside gate. */
+            atomic_store_explicit(&slot->phase,
+                                  CFLOW_IO_REQUEST_BACKEND_PENDING,
+                                  memory_order_release);
             action->kind = CFLOW_IO_ACTION_SUBMIT_BACKEND;
             action->request_id = slot->request_id;
             action->lease_id = slot->lease_id;
@@ -404,14 +569,20 @@ static bool io_select_action_locked(cflow_io_actor_impl *impl,
     }
 
     for (index = 0u; index < impl->request_capacity; ++index) {
-        if (impl->requests[index].phase == CFLOW_IO_REQUEST_COMPLETED) {
+        if (io_phase_load_locked(&impl->requests[index]) ==
+            CFLOW_IO_REQUEST_COMPLETED) {
             action->kind = CFLOW_IO_ACTION_DISPATCH_COMPLETION;
             action->slot = &impl->requests[index];
-            action->slot->phase = CFLOW_IO_REQUEST_DISPATCH_QUEUED;
+            io_phase_store_locked(action->slot,
+                                  CFLOW_IO_REQUEST_DISPATCH_QUEUED);
             return true;
         }
     }
 
+    if (gathered_completion) {
+        action->kind = CFLOW_IO_ACTION_STATE_ONLY;
+        return true;
+    }
     return false;
 }
 
@@ -445,10 +616,12 @@ static bool io_execute_action(cflow_io_actor_impl *impl,
                 io_counter_increment(&impl->backend_submit_errors);
                 slot = io_find_request_locked(impl, action->request_id);
                 if (slot != NULL &&
-                    slot->phase == CFLOW_IO_REQUEST_BACKEND_PENDING) {
+                    io_phase_load_locked(slot) ==
+                        CFLOW_IO_REQUEST_BACKEND_PENDING) {
                     slot->completion = (cflow_io_completion){
                         CFLOW_IO_COMPLETION_FAILED, 0u, status};
-                    slot->phase = CFLOW_IO_REQUEST_COMPLETED;
+                    io_phase_store_locked(slot,
+                                          CFLOW_IO_REQUEST_COMPLETED);
                     completed_failure = true;
                 }
                 turbo_mutex_unlock(&impl->gate);
@@ -463,8 +636,10 @@ static bool io_execute_action(cflow_io_actor_impl *impl,
             if (admitted == CFLOW_ADMISSION_ACCEPTED)
                 return true;
             turbo_mutex_lock(&impl->gate);
-            if (action->slot->phase == CFLOW_IO_REQUEST_DISPATCH_QUEUED)
-                action->slot->phase = CFLOW_IO_REQUEST_COMPLETED;
+            if (io_phase_load_locked(action->slot) ==
+                CFLOW_IO_REQUEST_DISPATCH_QUEUED)
+                io_phase_store_locked(action->slot,
+                                      CFLOW_IO_REQUEST_COMPLETED);
             if (admitted == CFLOW_ADMISSION_FULL)
                 io_counter_increment(&impl->executor_rejected_full);
             else if (admitted == CFLOW_ADMISSION_CLOSED)
@@ -499,6 +674,29 @@ static bool io_run_step(cflow_io_actor_impl *impl) {
     return selected && io_execute_action(impl, &action);
 }
 
+static bool io_has_runnable_action_locked(
+    const cflow_io_actor_impl *impl) {
+    size_t index;
+
+    if (impl->command_depth != 0u)
+        return true;
+    if (atomic_load_explicit(&impl->completion_depth,
+                             memory_order_acquire) != 0u &&
+        atomic_load_explicit(&impl->completion_publishers_inflight,
+                             memory_order_acquire) == 0u)
+        return true;
+    for (index = 0u; index < impl->request_capacity; ++index) {
+        const cflow_io_request_slot *slot = &impl->requests[index];
+        const cflow_io_request_phase phase = io_phase_load_locked(slot);
+        if (phase == CFLOW_IO_REQUEST_READY ||
+            phase == CFLOW_IO_REQUEST_COMPLETED ||
+            (phase == CFLOW_IO_REQUEST_BACKEND_PENDING &&
+             slot->cancel_requested && !slot->cancel_dispatched))
+            return true;
+    }
+    return false;
+}
+
 static bool io_driver_enter(cflow_io_actor_impl *impl) {
     bool entered = false;
     turbo_mutex_lock(&impl->gate);
@@ -511,10 +709,13 @@ static bool io_driver_enter(cflow_io_actor_impl *impl) {
     return entered;
 }
 
-static void io_driver_leave(cflow_io_actor_impl *impl) {
+static void io_driver_leave(cflow_io_actor_impl *impl,
+                            bool stopped_at_quantum) {
     cflow_io_wake_fn wake_fn = NULL;
     void *wake_user = NULL;
     turbo_mutex_lock(&impl->gate);
+    if (stopped_at_quantum && io_has_runnable_action_locked(impl))
+        impl->wake_pending = true;
     if (impl->wake_pending && impl->wake != NULL) {
         impl->runner_state = CFLOW_IO_RUNNER_SCHEDULED;
         impl->wake_pending = false;
@@ -538,8 +739,11 @@ int cflow_io_actor_init(cflow_io_actor *actor,
                         const cflow_io_actor_config *config) {
     cflow_io_actor_impl *impl;
     disruptor_config_t command_config;
+    disruptor_config_t completion_config;
     uint64_t physical_command_capacity;
+    uint64_t physical_completion_capacity;
     uint64_t next_sequence = 0u;
+    uint64_t next_completion_sequence = 0u;
     size_t index;
 
     if (actor == NULL || actor->impl != NULL || config == NULL ||
@@ -551,7 +755,10 @@ int cflow_io_actor_init(cflow_io_actor *actor,
         return TURBO_EINVAL;
     physical_command_capacity = io_round_up_power_of_two(
         config->command_capacity);
-    if (physical_command_capacity == 0u)
+    physical_completion_capacity = io_round_up_power_of_two(
+        config->request_capacity);
+    if (physical_command_capacity == 0u ||
+        physical_completion_capacity == 0u)
         return TURBO_EINVAL;
 
     impl = (cflow_io_actor_impl *)calloc(1u, sizeof(*impl));
@@ -575,8 +782,27 @@ int cflow_io_actor_init(cflow_io_actor *actor,
         free(impl);
         return TURBO_ENOMEM;
     }
+    completion_config = (disruptor_config_t){
+        sizeof(cflow_io_completion_event), physical_completion_capacity, 1u,
+        DISRUPTOR_MODE_BROADCAST};
+    impl->completions = disruptor_create(&completion_config);
+    if (impl->completions == NULL ||
+        !disruptor_consumer_try_register(
+            impl->completions, &impl->completion_consumer,
+            &next_completion_sequence)) {
+        disruptor_destroy(impl->completions);
+        disruptor_consumer_unregister(
+            impl->commands, &impl->command_consumer);
+        disruptor_destroy(impl->commands);
+        free(impl->requests);
+        free(impl);
+        return TURBO_ENOMEM;
+    }
     turbo_mutex_init(&impl->gate);
     if (impl->gate == NULL) {
+        disruptor_consumer_unregister(
+            impl->completions, &impl->completion_consumer);
+        disruptor_destroy(impl->completions);
         disruptor_consumer_unregister(
             impl->commands, &impl->command_consumer);
         disruptor_destroy(impl->commands);
@@ -589,6 +815,9 @@ int cflow_io_actor_init(cflow_io_actor *actor,
     impl->request_capacity = config->request_capacity;
     impl->command_capacity = config->command_capacity;
     impl->next_command_sequence = next_sequence;
+    impl->next_completion_sequence = next_completion_sequence;
+    atomic_init(&impl->completion_depth, 0u);
+    atomic_init(&impl->completion_publishers_inflight, 0u);
     impl->executor = config->executor;
     impl->backend = config->backend;
     impl->backend_user = config->backend_user;
@@ -598,8 +827,11 @@ int cflow_io_actor_init(cflow_io_actor *actor,
     impl->wake_user = config->wake_user;
     impl->next_request_id = 1u;
     impl->lifecycle = CFLOW_IO_RUNNING;
-    for (index = 0u; index < impl->request_capacity; ++index)
+    for (index = 0u; index < impl->request_capacity; ++index) {
         impl->requests[index].owner = impl;
+        atomic_init(&impl->requests[index].phase,
+                    CFLOW_IO_REQUEST_FREE);
+    }
     actor->impl = impl;
     return TURBO_OK;
 }
@@ -643,7 +875,7 @@ cflow_io_submit_result cflow_io_actor_try_submit(
         } else {
             slot->request_id = request_id;
             slot->lease_id = lease_id;
-            slot->phase = CFLOW_IO_REQUEST_ADMITTED;
+            io_phase_store_locked(slot, CFLOW_IO_REQUEST_ADMITTED);
             slot->operation = *operation;
             slot->completion = (cflow_io_completion){0};
             slot->cancel_requested = false;
@@ -688,11 +920,49 @@ cflow_io_cancel_status cflow_io_actor_try_cancel(
     return result;
 }
 
+cflow_io_complete_status cflow_io_actor_publish_completion(
+    cflow_io_actor *actor,
+    cflow_io_request_id request_id,
+    const cflow_io_completion *completion) {
+    cflow_io_actor_impl *impl = io_impl(actor);
+    cflow_io_request_slot *slot;
+    disruptor_cursor_t cursor = {0};
+    cflow_io_completion_event *entry;
+    cflow_io_complete_status reservation_status;
+
+    if (impl == NULL || request_id == 0u ||
+        !io_completion_valid(completion))
+        return CFLOW_IO_COMPLETE_INVALID_ARGUMENT;
+    /* A ring entry becomes visible before its coalesced wake has necessarily
+       returned. Keep Actor destruction out of that publication tail. */
+    (void)atomic_fetch_add_explicit(
+        &impl->completion_publishers_inflight, 1u, memory_order_acq_rel);
+    slot = io_reserve_completion_slot(impl, request_id);
+    if (slot == NULL) {
+        reservation_status =
+            io_completion_reservation_failure(impl, request_id);
+        io_finish_completion_publication(impl);
+        return reservation_status;
+    }
+
+    disruptor_publisher_next_entry_blocking(impl->completions, &cursor);
+    entry = (cflow_io_completion_event *)disruptor_acquire_entry(
+        impl->completions, &cursor);
+    entry->request_id = request_id;
+    entry->slot_index = (size_t)(slot - impl->requests);
+    entry->completion = *completion;
+    disruptor_publisher_commit_entry_blocking(impl->completions, &cursor);
+    (void)atomic_fetch_add_explicit(
+        &impl->completion_depth, 1u, memory_order_release);
+    io_finish_completion_publication(impl);
+    return CFLOW_IO_COMPLETE_ACCEPTED;
+}
+
 cflow_io_complete_status cflow_io_actor_complete(
     cflow_io_actor *actor,
     cflow_io_request_id request_id,
     const cflow_io_completion *completion) {
-    return io_complete_impl(io_impl(actor), request_id, completion);
+    return io_complete_inline(io_impl(actor), request_id, completion);
 }
 
 cflow_io_run_result cflow_io_actor_run_one(cflow_io_actor *actor) {
@@ -711,7 +981,7 @@ cflow_io_run_result cflow_io_actor_run_one(cflow_io_actor *actor) {
     } else {
         result.status = CFLOW_IO_RUN_IDLE;
     }
-    io_driver_leave(impl);
+    io_driver_leave(impl, result.progressed != 0u);
     return result;
 }
 
@@ -726,11 +996,35 @@ cflow_io_run_result cflow_io_actor_run_ready(cflow_io_actor *actor,
         result.status = CFLOW_IO_RUN_BUSY;
         return result;
     }
-    while (result.progressed < max_steps && io_run_step(impl))
+    while (result.progressed < max_steps) {
+        cflow_io_action action = {
+            CFLOW_IO_ACTION_NONE, NULL, 0u, 0u, NULL};
+        bool selected;
+
+        turbo_mutex_lock(&impl->gate);
+        do {
+            selected = io_select_action_locked(impl, &action);
+            if (selected && action.kind == CFLOW_IO_ACTION_STATE_ONLY) {
+                ++result.progressed;
+                action = (cflow_io_action){
+                    CFLOW_IO_ACTION_NONE, NULL, 0u, 0u, NULL};
+            }
+        } while (selected &&
+                 result.progressed < max_steps &&
+                 action.kind == CFLOW_IO_ACTION_NONE);
+        if (!selected)
+            impl->wake_pending = false;
+        turbo_mutex_unlock(&impl->gate);
+
+        if (!selected || result.progressed == max_steps)
+            break;
+        if (!io_execute_action(impl, &action))
+            break;
         ++result.progressed;
+    }
     result.status = result.progressed != 0u
                         ? CFLOW_IO_RUN_PROGRESSED : CFLOW_IO_RUN_IDLE;
-    io_driver_leave(impl);
+    io_driver_leave(impl, result.progressed == max_steps);
     return result;
 }
 
@@ -747,22 +1041,23 @@ cflow_io_ack_status cflow_io_actor_acknowledge(
         turbo_mutex_unlock(&impl->gate);
         return CFLOW_IO_ACK_NOT_FOUND;
     }
-    if (slot->phase != CFLOW_IO_REQUEST_DELIVERED) {
+    if (io_phase_load_locked(slot) != CFLOW_IO_REQUEST_DELIVERED) {
         turbo_mutex_unlock(&impl->gate);
         return CFLOW_IO_ACK_BUSY;
     }
-    slot->phase = CFLOW_IO_REQUEST_RELEASING;
+    io_phase_store_locked(slot, CFLOW_IO_REQUEST_RELEASING);
     operation = slot->operation;
     turbo_mutex_unlock(&impl->gate);
 
     operation.release(operation.user);
 
     turbo_mutex_lock(&impl->gate);
-    if (slot->phase == CFLOW_IO_REQUEST_RELEASING &&
+    if (io_phase_load_locked(slot) == CFLOW_IO_REQUEST_RELEASING &&
         slot->request_id == request_id) {
         cflow_io_actor_impl *owner = slot->owner;
         memset(slot, 0, sizeof(*slot));
         slot->owner = owner;
+        atomic_init(&slot->phase, CFLOW_IO_REQUEST_FREE);
         --impl->active_requests;
         io_counter_increment(&impl->acknowledged);
     }
@@ -784,12 +1079,13 @@ int cflow_io_actor_close(cflow_io_actor *actor) {
     impl->lifecycle = CFLOW_IO_CLOSING;
     for (index = 0u; index < impl->request_capacity; ++index) {
         cflow_io_request_slot *slot = &impl->requests[index];
-        if (slot->phase == CFLOW_IO_REQUEST_ADMITTED ||
-            slot->phase == CFLOW_IO_REQUEST_READY) {
+        const cflow_io_request_phase phase = io_phase_load_locked(slot);
+        if (phase == CFLOW_IO_REQUEST_ADMITTED ||
+            phase == CFLOW_IO_REQUEST_READY) {
             slot->completion = (cflow_io_completion){
                 CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
-            slot->phase = CFLOW_IO_REQUEST_COMPLETED;
-        } else if (slot->phase == CFLOW_IO_REQUEST_BACKEND_PENDING) {
+            io_phase_store_locked(slot, CFLOW_IO_REQUEST_COMPLETED);
+        } else if (phase == CFLOW_IO_REQUEST_BACKEND_PENDING) {
             slot->cancel_requested = true;
         }
     }
@@ -812,7 +1108,7 @@ bool cflow_io_actor_get_stats(const cflow_io_actor *actor,
     snapshot.active_requests = impl->active_requests;
     snapshot.queued_commands = impl->command_depth;
     for (index = 0u; index < impl->request_capacity; ++index) {
-        switch (impl->requests[index].phase) {
+        switch (io_phase_load_locked(&impl->requests[index])) {
             case CFLOW_IO_REQUEST_ADMITTED:
                 ++snapshot.admitted;
                 break;
@@ -822,6 +1118,7 @@ bool cflow_io_actor_get_stats(const cflow_io_actor *actor,
             case CFLOW_IO_REQUEST_BACKEND_PENDING:
                 ++snapshot.backend_pending;
                 break;
+            case CFLOW_IO_REQUEST_COMPLETION_QUEUED:
             case CFLOW_IO_REQUEST_COMPLETED:
                 ++snapshot.completions_ready;
                 break;
@@ -865,10 +1162,15 @@ bool cflow_io_actor_is_quiescent(const cflow_io_actor *actor) {
         return false;
     turbo_mutex_lock(&impl->gate);
     quiescent = impl->lifecycle == CFLOW_IO_CLOSING &&
-                impl->command_depth == 0u &&
-                impl->active_requests == 0u &&
-                impl->runner_state != CFLOW_IO_RUNNER_RUNNING &&
-                impl->callbacks_inflight == 0u;
+                 impl->command_depth == 0u &&
+                 atomic_load_explicit(&impl->completion_depth,
+                                      memory_order_acquire) == 0u &&
+                 atomic_load_explicit(
+                     &impl->completion_publishers_inflight,
+                     memory_order_acquire) == 0u &&
+                 impl->active_requests == 0u &&
+                 impl->runner_state != CFLOW_IO_RUNNER_RUNNING &&
+                 impl->callbacks_inflight == 0u;
     turbo_mutex_unlock(&impl->gate);
     return quiescent;
 }
@@ -880,16 +1182,24 @@ int cflow_io_actor_destroy(cflow_io_actor *actor) {
         return TURBO_EINVAL;
     turbo_mutex_lock(&impl->gate);
     quiescent = impl->lifecycle == CFLOW_IO_CLOSING &&
-                impl->command_depth == 0u &&
-                impl->active_requests == 0u &&
-                impl->runner_state != CFLOW_IO_RUNNER_RUNNING &&
-                impl->callbacks_inflight == 0u;
+                 impl->command_depth == 0u &&
+                 atomic_load_explicit(&impl->completion_depth,
+                                      memory_order_acquire) == 0u &&
+                 atomic_load_explicit(
+                     &impl->completion_publishers_inflight,
+                     memory_order_acquire) == 0u &&
+                 impl->active_requests == 0u &&
+                 impl->runner_state != CFLOW_IO_RUNNER_RUNNING &&
+                 impl->callbacks_inflight == 0u;
     if (quiescent)
         actor->impl = NULL;
     turbo_mutex_unlock(&impl->gate);
     if (!quiescent)
         return TURBO_EBUSY;
     impl->backend_actor.impl = NULL;
+    disruptor_consumer_unregister(
+        impl->completions, &impl->completion_consumer);
+    disruptor_destroy(impl->completions);
     disruptor_consumer_unregister(
         impl->commands, &impl->command_consumer);
     disruptor_destroy(impl->commands);

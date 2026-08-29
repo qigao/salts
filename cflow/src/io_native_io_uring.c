@@ -3,6 +3,7 @@
 #endif
 
 #include "io_native_internal.h"
+#include "io_actor_internal.h"
 
 #include <turbo/error_codes.h>
 #include <turbo/thread.h>
@@ -445,7 +446,7 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
                 ? 0u : (size_t)effective_result,
             TURBO_OK};
     }
-    delivery_status = cflow_io_actor_complete(
+    delivery_status = cflow_io_actor_publish_completion(
         actor, request_id, &completion);
     if (resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
         vector_buffer_count == 0u && accepted_fd >= 0 &&

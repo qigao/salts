@@ -6,6 +6,7 @@
 #endif
 
 #include "io_native_internal.h"
+#include "io_actor_internal.h"
 
 #include <turbo/error_codes.h>
 #include <turbo/readiness.h>
@@ -527,8 +528,8 @@ static void readiness_deliver(cflow_readiness_delivery delivery) {
     cflow_io_complete_status status;
     if (!delivery.valid)
         return;
-    status = cflow_io_actor_complete(delivery.actor, delivery.request_id,
-                                     &delivery.completion);
+    status = cflow_io_actor_publish_completion(
+        delivery.actor, delivery.request_id, &delivery.completion);
     if (delivery.accepted_fd >= 0 &&
         (delivery.completion.kind != CFLOW_IO_COMPLETION_OK ||
          status != CFLOW_IO_COMPLETE_ACCEPTED)) {

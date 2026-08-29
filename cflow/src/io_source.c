@@ -391,6 +391,7 @@ static cflow_step io_source_window_resume(
         bool close_actor = false;
 
         turbo_mutex_lock(&state->gate);
+inspect_locked:
         if (state->terminal != CFLOW_SOURCE_OPEN) {
             step = io_source_terminal_step(state);
             turbo_mutex_unlock(&state->gate);
@@ -450,8 +451,7 @@ static cflow_step io_source_window_resume(
             io_source_window_release_entry_locked(state, entry);
             state->submission_in_progress = false;
             state->prepare_done = true;
-            turbo_mutex_unlock(&state->gate);
-            continue;
+            goto inspect_locked;
         }
         if (prepared != CFLOW_IO_SOURCE_PREPARE_OPERATION ||
             operation.release == NULL) {
@@ -504,7 +504,7 @@ static cflow_step io_source_window_resume(
             state->terminal_error = io_source_result_state_error;
         }
         state->submission_in_progress = false;
-        turbo_mutex_unlock(&state->gate);
+        goto inspect_locked;
     }
 }
 

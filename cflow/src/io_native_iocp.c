@@ -1,4 +1,5 @@
 #include "io_native_internal.h"
+#include "io_actor_internal.h"
 
 #include <turbo/error_codes.h>
 #include <turbo/thread.h>
@@ -500,7 +501,7 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_OK, (size_t)bytes, TURBO_OK};
     }
-    delivery_status = cflow_io_actor_complete(
+    delivery_status = cflow_io_actor_publish_completion(
         actor, request_id, &completion);
     if (resource_kind == CFLOW_IOCP_RESOURCE_SOCKET &&
         vector_buffer_count == 0u &&

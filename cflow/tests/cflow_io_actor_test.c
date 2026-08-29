@@ -3,6 +3,7 @@
 #include <turbo/error_codes.h>
 #include <turbo/thread.h>
 
+#include "io_actor_internal.h"
 #include "tinytest.h"
 
 #include <stdatomic.h>
@@ -41,6 +42,12 @@ typedef struct io_wake_driver_probe {
     size_t busy;
 } io_wake_driver_probe;
 
+typedef struct io_bounded_wake_driver_probe {
+    cflow_io_actor *actor;
+    size_t calls;
+    size_t progressed;
+} io_bounded_wake_driver_probe;
+
 typedef struct io_blocking_wake_probe {
     atomic_bool block;
     atomic_bool started;
@@ -64,6 +71,15 @@ static void io_wake_drive(void *user) {
     result = cflow_io_actor_run_ready(probe->actor, 16u);
     if (result.status == CFLOW_IO_RUN_BUSY)
         ++probe->busy;
+}
+
+static void io_wake_drive_one(void *user) {
+    io_bounded_wake_driver_probe *probe =
+        (io_bounded_wake_driver_probe *)user;
+    const cflow_io_run_result result =
+        cflow_io_actor_run_ready(probe->actor, 1u);
+    ++probe->calls;
+    probe->progressed += result.progressed;
 }
 
 static void io_wake_block(void *user) {
@@ -140,6 +156,15 @@ typedef struct io_submitter_context {
     int *released;
 } io_submitter_context;
 
+typedef struct io_completion_publisher_context {
+    cflow_io_actor *actor;
+    atomic_bool *go;
+    size_t first;
+    size_t count;
+    const cflow_io_submit_result *requests;
+    cflow_io_complete_status *statuses;
+} io_completion_publisher_context;
+
 static void io_submitter(void *user) {
     io_submitter_context *context = (io_submitter_context *)user;
     size_t offset;
@@ -151,6 +176,22 @@ static void io_submitter(void *user) {
             &context->released[index], io_operation_release};
         context->results[index] = cflow_io_actor_try_submit(
             context->actor, (cflow_io_lease_id)(1000u + index), &operation);
+    }
+}
+
+static void io_completion_publisher(void *user) {
+    io_completion_publisher_context *context =
+        (io_completion_publisher_context *)user;
+    size_t offset;
+    while (!atomic_load(context->go))
+        turbo_thread_yield();
+    for (offset = 0u; offset < context->count; ++offset) {
+        const size_t index = context->first + offset;
+        const cflow_io_completion completion = {
+            CFLOW_IO_COMPLETION_OK, index + 1u, TURBO_OK};
+        context->statuses[index] = cflow_io_actor_publish_completion(
+            context->actor, context->requests[index].request_id,
+            &completion);
     }
 }
 
@@ -463,6 +504,35 @@ spec("CFlow IO Actor protocol") {
         check_equal(stats.ready, (size_t)1u);
         check_equal(stats.accepted,
                     stats.acknowledged + (uint64_t)stats.active_requests);
+
+        io_fixture_settle(&fixture, submitted.request_id);
+        io_fixture_destroy(&fixture);
+    }
+
+    it("preserves transition accounting across bounded ready runs") {
+        io_fixture fixture;
+        int released = 0;
+        cflow_io_operation operation = {&released, io_operation_release};
+        cflow_io_submit_result submitted;
+        cflow_io_run_result run;
+        cflow_io_actor_stats stats = {0};
+
+        check_true(io_fixture_init(&fixture, 1u, 1u));
+        submitted = cflow_io_actor_try_submit(&fixture.actor, 811u, &operation);
+        check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+
+        run = cflow_io_actor_run_ready(&fixture.actor, 1u);
+        check_equal(run.status, CFLOW_IO_RUN_PROGRESSED);
+        check_equal(run.progressed, (size_t)1u);
+        check_equal(fixture.backend.submitted_count, (size_t)0u);
+        check_true(cflow_io_actor_get_stats(&fixture.actor, &stats));
+        check_equal(stats.admitted, (size_t)0u);
+        check_equal(stats.ready, (size_t)1u);
+
+        run = cflow_io_actor_run_ready(&fixture.actor, 1u);
+        check_equal(run.status, CFLOW_IO_RUN_PROGRESSED);
+        check_equal(run.progressed, (size_t)1u);
+        check_equal(fixture.backend.submitted_count, (size_t)1u);
 
         io_fixture_settle(&fixture, submitted.request_id);
         io_fixture_destroy(&fixture);
@@ -789,6 +859,153 @@ spec("CFlow IO Actor protocol") {
                     CFLOW_IO_ACK_RELEASED);
         check_equal(released[0], 1);
         check_equal(released[1], 1);
+        io_fixture_destroy(&fixture);
+    }
+
+    it("gathers native completion publications before delivery") {
+        io_fixture fixture;
+        int released[2] = {0};
+        cflow_io_operation operations[2] = {
+            {&released[0], io_operation_release},
+            {&released[1], io_operation_release}};
+        cflow_io_submit_result submitted[2];
+        const cflow_io_completion completion = {
+            CFLOW_IO_COMPLETION_OK, 7u, TURBO_OK};
+        cflow_io_actor_stats stats = {0};
+
+        check_true(io_fixture_init(&fixture, 2u, 2u));
+        submitted[0] = cflow_io_actor_try_submit(
+            &fixture.actor, 601u, &operations[0]);
+        submitted[1] = cflow_io_actor_try_submit(
+            &fixture.actor, 602u, &operations[1]);
+        check_equal(submitted[0].status, CFLOW_IO_SUBMIT_ACCEPTED);
+        check_equal(submitted[1].status, CFLOW_IO_SUBMIT_ACCEPTED);
+        (void)cflow_io_actor_run_ready(&fixture.actor, 16u);
+
+        check_equal(cflow_io_actor_publish_completion(
+                        &fixture.actor, submitted[0].request_id, &completion),
+                    CFLOW_IO_COMPLETE_ACCEPTED);
+        check_equal(cflow_io_actor_publish_completion(
+                        &fixture.actor, submitted[1].request_id, &completion),
+                    CFLOW_IO_COMPLETE_ACCEPTED);
+        check_true(cflow_io_actor_get_stats(&fixture.actor, &stats));
+        check_equal(stats.completions_ready, (size_t)2u);
+
+        (void)cflow_io_actor_run_ready(&fixture.actor, 16u);
+        (void)cflow_executor_run_ready(&fixture.executor);
+        check_equal(fixture.completions.count, (size_t)2u);
+        check_equal(fixture.completions.completions[0].bytes, (size_t)7u);
+        check_equal(fixture.completions.completions[1].bytes, (size_t)7u);
+        check_equal(cflow_io_actor_acknowledge(
+                        &fixture.actor, submitted[0].request_id),
+                    CFLOW_IO_ACK_RELEASED);
+        check_equal(cflow_io_actor_acknowledge(
+                        &fixture.actor, submitted[1].request_id),
+                    CFLOW_IO_ACK_RELEASED);
+        check_equal(released[0], 1);
+        check_equal(released[1], 1);
+        io_fixture_destroy(&fixture);
+    }
+
+    it("gathers concurrent native completion publishers as one bounded batch") {
+        enum { PRODUCERS = 4, PER_PRODUCER = 8, TOTAL = 32 };
+        io_fixture fixture;
+        turbo_thread_t threads[PRODUCERS] = {0};
+        io_completion_publisher_context contexts[PRODUCERS] = {0};
+        cflow_io_submit_result requests[TOTAL] = {0};
+        cflow_io_complete_status statuses[TOTAL] = {0};
+        int released[TOTAL] = {0};
+        atomic_bool go = false;
+        cflow_io_actor_stats stats = {0};
+        size_t producer;
+        size_t index;
+
+        check_true(io_fixture_init(&fixture, TOTAL, TOTAL));
+        for (index = 0u; index < TOTAL; ++index) {
+            cflow_io_operation operation = {
+                &released[index], io_operation_release};
+            requests[index] = cflow_io_actor_try_submit(
+                &fixture.actor, (cflow_io_lease_id)(700u + index),
+                &operation);
+            check_equal(requests[index].status,
+                        CFLOW_IO_SUBMIT_ACCEPTED);
+        }
+        (void)cflow_io_actor_run_ready(&fixture.actor, 256u);
+        check_equal(fixture.backend.submitted_count, (size_t)TOTAL);
+
+        for (producer = 0u; producer < PRODUCERS; ++producer) {
+            contexts[producer] = (io_completion_publisher_context){
+                &fixture.actor, &go, producer * PER_PRODUCER,
+                PER_PRODUCER, requests, statuses};
+            check_equal(turbo_thread_create(
+                            &threads[producer], io_completion_publisher,
+                            &contexts[producer]),
+                        0);
+        }
+        atomic_store(&go, true);
+        for (producer = 0u; producer < PRODUCERS; ++producer)
+            check_equal(turbo_thread_join(&threads[producer]), 0);
+        for (index = 0u; index < TOTAL; ++index)
+            check_equal(statuses[index], CFLOW_IO_COMPLETE_ACCEPTED);
+        check_true(cflow_io_actor_get_stats(&fixture.actor, &stats));
+        check_equal(stats.completions_ready, (size_t)TOTAL);
+
+        (void)cflow_io_actor_run_ready(&fixture.actor, 256u);
+        (void)cflow_executor_run_ready(&fixture.executor);
+        check_equal(fixture.completions.count, (size_t)TOTAL);
+        for (index = 0u; index < TOTAL; ++index) {
+            size_t completion_index;
+            for (completion_index = 0u;
+                 completion_index < fixture.completions.count;
+                 ++completion_index) {
+                if (fixture.completions.request_ids[completion_index] ==
+                    requests[index].request_id)
+                    break;
+            }
+            check_true(completion_index < fixture.completions.count);
+            if (completion_index < fixture.completions.count)
+                check_equal(
+                    fixture.completions.completions[completion_index].bytes,
+                    index + 1u);
+            check_equal(cflow_io_actor_acknowledge(
+                            &fixture.actor, requests[index].request_id),
+                        CFLOW_IO_ACK_RELEASED);
+            check_equal(released[index], 1);
+        }
+        io_fixture_destroy(&fixture);
+    }
+
+    it("reissues a wake when a bounded driver leaves runnable work") {
+        io_fixture fixture;
+        cflow_io_actor_config config = {0};
+        io_bounded_wake_driver_probe wake = {0};
+        int released = 0;
+        cflow_io_operation operation = {&released, io_operation_release};
+        cflow_io_submit_result submitted;
+
+        memset(&fixture, 0, sizeof(fixture));
+        check_true(cflow_executor_manual_init_with_capacity(
+            &fixture.executor, 1u));
+        config.request_capacity = 1u;
+        config.command_capacity = 1u;
+        config.executor = &fixture.executor;
+        config.backend.submit = io_backend_submit;
+        config.backend.cancel = io_backend_cancel;
+        config.backend_user = &fixture.backend;
+        config.completion = io_completion_record;
+        config.completion_user = &fixture.completions;
+        config.wake = io_wake_drive_one;
+        config.wake_user = &wake;
+        wake.actor = &fixture.actor;
+        check_equal(cflow_io_actor_init(&fixture.actor, &config), TURBO_OK);
+
+        submitted = cflow_io_actor_try_submit(&fixture.actor, 503u, &operation);
+        check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+        check_equal(wake.calls, (size_t)2u);
+        check_equal(wake.progressed, (size_t)2u);
+        check_equal(fixture.backend.submitted_count, (size_t)1u);
+
+        io_fixture_settle(&fixture, submitted.request_id);
         io_fixture_destroy(&fixture);
     }
 
