@@ -43,6 +43,7 @@ struct cflow_minicoro {
     cflow_resume_ctx *resume_context;
     const void *pending_value;
     cflow_waitable pending_waitable;
+    cflow_source *awaited_source;
     const char *error;
     cflow_minicoro_alloc_fn alloc;
     cflow_minicoro_dealloc_fn dealloc;
@@ -206,6 +207,7 @@ static cflow_step minicoro_resume(void *state,
 
 static void minicoro_cancel(void *state) {
     cflow_minicoro *coroutine = (cflow_minicoro *)state;
+    cflow_source *awaited_source;
     cflow_waitable waitable;
 
     if (coroutine == NULL)
@@ -214,9 +216,13 @@ static void minicoro_cancel(void *state) {
         return;
     coroutine->cancelled = true;
     coroutine->terminal = true;
+    awaited_source = coroutine->awaited_source;
+    coroutine->awaited_source = NULL;
     waitable = coroutine->pending_waitable;
     coroutine->pending_waitable = (cflow_waitable){0};
-    if (cflow_waitable_valid(&waitable))
+    if (awaited_source != NULL && cflow_source_valid(awaited_source))
+        cflow_source_cancel(awaited_source);
+    else if (cflow_waitable_valid(&waitable))
         cflow_waitable_cancel(&waitable);
 }
 
@@ -338,6 +344,53 @@ bool cflow_minicoro_wait(cflow_minicoro *coroutine,
         return false;
     }
     return true;
+}
+
+cflow_step cflow_minicoro_await_source(cflow_minicoro *coroutine,
+                                        cflow_source *source,
+                                        void *out_value) {
+    const cmeta_trait_flags required = CMETA_TRAIT_TRIVIAL_COPY |
+                                       CMETA_TRAIT_TRIVIAL_DESTROY;
+    const cmeta_type_desc *source_type;
+    cflow_step step;
+
+    if (coroutine == NULL || source == NULL || out_value == NULL ||
+        !coroutine->running || coroutine->terminal || coroutine->cancelled ||
+        coroutine->awaited_source != NULL || !cflow_source_valid(source))
+        return minicoro_step(CFLOW_STEP_ERROR, (cflow_waitable){0},
+                             "minicoro Source await is invalid");
+
+    source_type = cflow_source_output_type(source);
+    if (!cmeta_type_desc_valid(source_type) || source_type->size == 0u ||
+        cmeta_type_require_traits(source_type, required) != CMETA_OK)
+        return minicoro_step(CFLOW_STEP_ERROR, (cflow_waitable){0},
+                             "minicoro awaited Source type is not trivial");
+
+    for (;;) {
+        step = cflow_source_resume(source, coroutine->resume_context,
+                                   out_value);
+        if (step.kind == CFLOW_STEP_VALUE ||
+            step.kind == CFLOW_STEP_VALUE_AND_DONE ||
+            step.kind == CFLOW_STEP_DONE ||
+            step.kind == CFLOW_STEP_ERROR)
+            return step;
+        if (step.kind != CFLOW_STEP_WAIT)
+            return minicoro_step(
+                CFLOW_STEP_ERROR, (cflow_waitable){0},
+                "minicoro awaited Source returned invalid step");
+        if (!cflow_waitable_valid(&step.waitable))
+            return minicoro_step(
+                CFLOW_STEP_ERROR, (cflow_waitable){0},
+                "minicoro awaited Source returned invalid WAIT");
+
+        coroutine->awaited_source = source;
+        if (!cflow_minicoro_wait(coroutine, step.waitable)) {
+            coroutine->awaited_source = NULL;
+            return minicoro_step(CFLOW_STEP_ERROR, (cflow_waitable){0},
+                                 "minicoro Source wait failed");
+        }
+        coroutine->awaited_source = NULL;
+    }
 }
 
 bool cflow_minicoro_fail(cflow_minicoro *coroutine,

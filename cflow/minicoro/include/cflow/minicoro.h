@@ -65,6 +65,21 @@ bool cflow_minicoro_return_value(cflow_minicoro *coroutine,
 bool cflow_minicoro_wait(cflow_minicoro *coroutine,
                          cflow_waitable waitable);
 
+/* Await a borrowed Source from the active coroutine callback. WAIT suspends
+ * the frame with the exact Source waitable and retries Source resume after the
+ * owner resumes the frame. The function therefore returns only VALUE,
+ * VALUE_AND_DONE, DONE, or ERROR. out_value is empty storage for the Source
+ * output type; on a value step the caller owns the constructed value.
+ *
+ * The Source remains caller-owned and must outlive the call, every suspension,
+ * and coroutine cancel/destroy while the await is active. Cancelling the
+ * coroutine cancels the active Source but never destroys it. Source output is
+ * currently restricted to TRIVIAL_COPY and TRIVIAL_DESTROY because destroying
+ * a minicoro frame does not unwind C object lifetimes. */
+cflow_step cflow_minicoro_await_source(cflow_minicoro *coroutine,
+                                        cflow_source *source,
+                                        void *out_value);
+
 /* Suspend with ERROR. error is borrowed until the returned step is consumed
  * or the Resumable is destroyed. */
 bool cflow_minicoro_fail(cflow_minicoro *coroutine,

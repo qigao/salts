@@ -164,10 +164,10 @@ if(BUILD_EXAMPLES)
   add_subdirectory(examples)
 endif()
 
-if(BUILD_BENCHMARKS)
-  add_subdirectory(benchmarks)
-endif()
-
 if(CFLOW_ENABLE_MINICORO)
   add_subdirectory(minicoro)
+endif()
+
+if(BUILD_BENCHMARKS)
+  add_subdirectory(benchmarks)
 endif()

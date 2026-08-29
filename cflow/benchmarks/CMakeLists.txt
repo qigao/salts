@@ -29,6 +29,13 @@ cmake_add_benchmark(cflow_io_source_benchmark
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/benchmarks")
 
+if(CFLOW_ENABLE_MINICORO)
+  target_link_libraries(cflow_io_source_benchmark
+    PRIVATE TurboUtils::CFlowMinicoro)
+  target_compile_definitions(cflow_io_source_benchmark
+    PRIVATE CFLOW_IO_SOURCE_BENCH_HAS_MINICORO=1)
+endif()
+
 if(WIN32)
   target_link_libraries(cflow_network_benchmark PRIVATE ws2_32 psapi)
   target_compile_definitions(cflow_network_benchmark

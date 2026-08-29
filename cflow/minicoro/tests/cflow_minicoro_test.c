@@ -113,6 +113,141 @@ typedef struct wait_script_state {
     size_t after_wait;
 } wait_script_state;
 
+typedef enum await_source_mode {
+    AWAIT_SOURCE_IMMEDIATE = 0,
+    AWAIT_SOURCE_WAIT_VALUE,
+    AWAIT_SOURCE_ERROR,
+    AWAIT_SOURCE_INVALID_WAIT,
+    AWAIT_SOURCE_INVALID_STEP
+} await_source_mode;
+
+typedef struct await_source_probe {
+    await_source_mode mode;
+    const cmeta_type_desc *output_type;
+    test_waitable_state *waitable;
+    cflow_resume_ctx *contexts[2];
+    size_t resumes;
+    size_t cancels;
+    size_t destroys;
+} await_source_probe;
+
+static const char *await_source_name(void *state) {
+    (void)state;
+    return "await-source-probe";
+}
+
+static const cmeta_type_desc *await_source_type(void *state) {
+    await_source_probe *probe = (await_source_probe *)state;
+    return probe != NULL ? probe->output_type : NULL;
+}
+
+static cflow_step await_source_resume(void *state,
+                                      cflow_resume_ctx *context,
+                                      void *out_value) {
+    await_source_probe *probe = (await_source_probe *)state;
+    size_t resume_index;
+
+    if (probe == NULL || out_value == NULL)
+        return (cflow_step){CFLOW_STEP_ERROR, {0},
+                            "await Source probe is invalid"};
+    resume_index = probe->resumes++;
+    if (resume_index < 2u)
+        probe->contexts[resume_index] = context;
+
+    switch (probe->mode) {
+        case AWAIT_SOURCE_IMMEDIATE:
+            *(int *)out_value = 53;
+            return (cflow_step){CFLOW_STEP_VALUE_AND_DONE, {0}, NULL};
+        case AWAIT_SOURCE_WAIT_VALUE:
+            if (resume_index == 0u)
+                return (cflow_step){
+                    CFLOW_STEP_WAIT,
+                    test_waitable_as_cflow_waitable(probe->waitable),
+                    NULL
+                };
+            *(int *)out_value = 59;
+            return (cflow_step){CFLOW_STEP_VALUE_AND_DONE, {0}, NULL};
+        case AWAIT_SOURCE_ERROR:
+            return (cflow_step){CFLOW_STEP_ERROR, {0},
+                                "await Source failed"};
+        case AWAIT_SOURCE_INVALID_WAIT:
+            return (cflow_step){CFLOW_STEP_WAIT, {0}, NULL};
+        case AWAIT_SOURCE_INVALID_STEP:
+            return (cflow_step){(cflow_step_kind)99, {0}, NULL};
+    }
+    return (cflow_step){CFLOW_STEP_ERROR, {0},
+                        "await Source mode is invalid"};
+}
+
+static void await_source_cancel(void *state) {
+    await_source_probe *probe = (await_source_probe *)state;
+    cflow_waitable waitable;
+
+    if (probe == NULL)
+        return;
+    ++probe->cancels;
+    if (probe->waitable == NULL)
+        return;
+    waitable = test_waitable_as_cflow_waitable(probe->waitable);
+    cflow_waitable_cancel(&waitable);
+}
+
+static void await_source_destroy(void *state) {
+    await_source_probe *probe = (await_source_probe *)state;
+    if (probe != NULL)
+        ++probe->destroys;
+}
+
+static void await_source_bind_terminal(void *state, cflow_waker waker) {
+    (void)state;
+    (void)waker;
+}
+
+static cflow_source_terminal await_source_poll_terminal(
+    void *state, const char **error) {
+    (void)state;
+    if (error != NULL)
+        *error = NULL;
+    return CFLOW_SOURCE_OPEN;
+}
+
+CMETA_IMPLEMENTS(cflow_source, await_source_probe_interface,
+    CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES,
+    .name = await_source_name,
+    .output_type = await_source_type,
+    .resume = await_source_resume,
+    .cancel = await_source_cancel,
+    .destroy = await_source_destroy,
+    .bind_terminal_waker = await_source_bind_terminal,
+    .poll_terminal = await_source_poll_terminal
+);
+
+typedef struct await_script_state {
+    cflow_source *source;
+    cflow_step result;
+    int value;
+    size_t after_await;
+} await_script_state;
+
+static void minicoro_await_source_then_return(cflow_minicoro *coroutine,
+                                               void *user) {
+    await_script_state *script = (await_script_state *)user;
+
+    script->result = cflow_minicoro_await_source(
+        coroutine, script->source, &script->value);
+    if (script->result.kind == CFLOW_STEP_VALUE ||
+        script->result.kind == CFLOW_STEP_VALUE_AND_DONE) {
+        ++script->after_await;
+        (void)cflow_minicoro_return_value(coroutine, &script->value);
+    } else if (script->result.kind == CFLOW_STEP_ERROR) {
+        (void)cflow_minicoro_fail(
+            coroutine,
+            script->result.error != NULL
+                ? script->result.error
+                : "await Source returned an error");
+    }
+}
+
 static void minicoro_wait_then_value(cflow_minicoro *coroutine, void *user) {
     wait_script_state *script = (wait_script_state *)user;
     const int value = 41;
@@ -387,6 +522,251 @@ spec("CFlow minicoro Resumable adapter") {
         check_equal(script.after_wait, (size_t)1u);
 
         destroy_resumable(&coroutine);
+    }
+
+    it("awaits an immediate Source value without taking ownership") {
+        await_source_probe probe = {
+            AWAIT_SOURCE_IMMEDIATE, &cmeta_type_int, NULL, {0}, 0u, 0u, 0u
+        };
+        cflow_source source =
+            await_source_probe_interface_as_cflow_source(&probe);
+        await_script_state script = {&source, {0}, 0, 0u};
+        cflow_resumable coroutine = {0};
+        cflow_minicoro_config config = {
+            "await-immediate", &cmeta_type_int,
+            minicoro_await_source_then_return, &script,
+            0u, NULL, NULL, NULL
+        };
+        cflow_resume_ctx context = {0};
+        int output = 0;
+        cflow_step step;
+
+        check_true(cflow_resumable_from_minicoro(&coroutine, &config));
+        step = coroutine.ops->resume(coroutine.state, &context, &output);
+
+        check_equal(step.kind, CFLOW_STEP_VALUE_AND_DONE);
+        check_equal(output, 53);
+        check_equal(script.result.kind, CFLOW_STEP_VALUE_AND_DONE);
+        check_equal(script.after_await, (size_t)1u);
+        check_equal(probe.resumes, (size_t)1u);
+        check_equal(probe.destroys, (size_t)0u);
+
+        destroy_resumable(&coroutine);
+        check_equal(probe.destroys, (size_t)0u);
+        cflow_source_destroy(&source);
+        check_equal(probe.destroys, (size_t)1u);
+    }
+
+    it("awaits a Source across WAIT with the active resume context") {
+        test_waitable_state waitable = {0};
+        await_source_probe probe = {
+            AWAIT_SOURCE_WAIT_VALUE, &cmeta_type_int, &waitable,
+            {0}, 0u, 0u, 0u
+        };
+        cflow_source source =
+            await_source_probe_interface_as_cflow_source(&probe);
+        await_script_state script = {&source, {0}, 0, 0u};
+        wake_probe wake = {0};
+        cflow_resumable coroutine = {0};
+        cflow_minicoro_config config = {
+            "await-wait", &cmeta_type_int,
+            minicoro_await_source_then_return, &script,
+            0u, NULL, NULL, NULL
+        };
+        cflow_scheduler scheduler = {0};
+        cflow_resume_ctx context = {&scheduler, 7u};
+        int output = 0;
+        cflow_step step;
+
+        check_true(cflow_resumable_from_minicoro(&coroutine, &config));
+        step = coroutine.ops->resume(coroutine.state, &context, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_true(cflow_waitable_arm(
+            &step.waitable, (cflow_waker){count_wake, &wake}));
+        check_equal(script.after_await, (size_t)0u);
+        check(probe.contexts[0] == &context);
+
+        test_waitable_wake(&waitable);
+        check_equal(wake.wakes, (size_t)1u);
+        check_equal(script.after_await, (size_t)0u);
+        step = coroutine.ops->resume(coroutine.state, &context, &output);
+
+        check_equal(step.kind, CFLOW_STEP_VALUE_AND_DONE);
+        check_equal(output, 59);
+        check_equal(script.after_await, (size_t)1u);
+        check_equal(probe.resumes, (size_t)2u);
+        check(probe.contexts[1] == &context);
+
+        destroy_resumable(&coroutine);
+        cflow_source_destroy(&source);
+    }
+
+    it("cancels the authoritative Source once while await is suspended") {
+        test_waitable_state waitable = {0};
+        await_source_probe probe = {
+            AWAIT_SOURCE_WAIT_VALUE, &cmeta_type_int, &waitable,
+            {0}, 0u, 0u, 0u
+        };
+        cflow_source source =
+            await_source_probe_interface_as_cflow_source(&probe);
+        await_script_state script = {&source, {0}, 0, 0u};
+        wake_probe wake = {0};
+        cflow_resumable coroutine = {0};
+        cflow_minicoro_config config = {
+            "await-cancel", &cmeta_type_int,
+            minicoro_await_source_then_return, &script,
+            0u, NULL, NULL, NULL
+        };
+        cflow_resume_ctx context = {0};
+        int output = 0;
+        cflow_step step;
+
+        check_true(cflow_resumable_from_minicoro(&coroutine, &config));
+        step = coroutine.ops->resume(coroutine.state, &context, &output);
+        check_equal(step.kind, CFLOW_STEP_WAIT);
+        check_true(cflow_waitable_arm(
+            &step.waitable, (cflow_waker){count_wake, &wake}));
+
+        coroutine.ops->cancel(coroutine.state);
+
+        check_equal(probe.cancels, (size_t)1u);
+        check_equal(waitable.cancels, (size_t)1u);
+        check_equal(script.after_await, (size_t)0u);
+        step = coroutine.ops->resume(coroutine.state, &context, &output);
+        check_equal(step.kind, CFLOW_STEP_DONE);
+        check_equal(probe.resumes, (size_t)1u);
+
+        destroy_resumable(&coroutine);
+        check_equal(probe.cancels, (size_t)1u);
+        cflow_source_destroy(&source);
+    }
+
+    it("fails fast when an awaited Source returns invalid WAIT") {
+        await_source_probe probe = {
+            AWAIT_SOURCE_INVALID_WAIT, &cmeta_type_int, NULL,
+            {0}, 0u, 0u, 0u
+        };
+        cflow_source source =
+            await_source_probe_interface_as_cflow_source(&probe);
+        await_script_state script = {&source, {0}, 0, 0u};
+        cflow_resumable coroutine = {0};
+        cflow_minicoro_config config = {
+            "await-invalid-wait", &cmeta_type_int,
+            minicoro_await_source_then_return, &script,
+            0u, NULL, NULL, NULL
+        };
+        cflow_resume_ctx context = {0};
+        int output = 0;
+        cflow_step step;
+
+        check_true(cflow_resumable_from_minicoro(&coroutine, &config));
+        step = coroutine.ops->resume(coroutine.state, &context, &output);
+
+        check_equal(step.kind, CFLOW_STEP_ERROR);
+        check_equal(step.error,
+                    "minicoro awaited Source returned invalid WAIT");
+        check_equal(probe.resumes, (size_t)1u);
+        check_equal(script.after_await, (size_t)0u);
+
+        destroy_resumable(&coroutine);
+        cflow_source_destroy(&source);
+    }
+
+    it("propagates awaited Source errors without fallback") {
+        await_source_probe probe = {
+            AWAIT_SOURCE_ERROR, &cmeta_type_int, NULL, {0}, 0u, 0u, 0u
+        };
+        cflow_source source =
+            await_source_probe_interface_as_cflow_source(&probe);
+        await_script_state script = {&source, {0}, 0, 0u};
+        cflow_resumable coroutine = {0};
+        cflow_minicoro_config config = {
+            "await-error", &cmeta_type_int,
+            minicoro_await_source_then_return, &script,
+            0u, NULL, NULL, NULL
+        };
+        cflow_resume_ctx context = {0};
+        int output = 0;
+        cflow_step step;
+
+        check_true(cflow_resumable_from_minicoro(&coroutine, &config));
+        step = coroutine.ops->resume(coroutine.state, &context, &output);
+
+        check_equal(step.kind, CFLOW_STEP_ERROR);
+        check_equal(step.error, "await Source failed");
+        check_equal(probe.resumes, (size_t)1u);
+
+        destroy_resumable(&coroutine);
+        cflow_source_destroy(&source);
+    }
+
+    it("fails fast when an awaited Source returns an invalid step") {
+        await_source_probe probe = {
+            AWAIT_SOURCE_INVALID_STEP, &cmeta_type_int, NULL,
+            {0}, 0u, 0u, 0u
+        };
+        cflow_source source =
+            await_source_probe_interface_as_cflow_source(&probe);
+        await_script_state script = {&source, {0}, 0, 0u};
+        cflow_resumable coroutine = {0};
+        cflow_minicoro_config config = {
+            "await-invalid-step", &cmeta_type_int,
+            minicoro_await_source_then_return, &script,
+            0u, NULL, NULL, NULL
+        };
+        cflow_resume_ctx context = {0};
+        int output = 0;
+        cflow_step step;
+
+        check_true(cflow_resumable_from_minicoro(&coroutine, &config));
+        step = coroutine.ops->resume(coroutine.state, &context, &output);
+
+        check_equal(step.kind, CFLOW_STEP_ERROR);
+        check_equal(step.error,
+                    "minicoro awaited Source returned invalid step");
+        check_equal(probe.resumes, (size_t)1u);
+
+        destroy_resumable(&coroutine);
+        cflow_source_destroy(&source);
+    }
+
+    it("rejects managed Source values before resuming the Source") {
+        static const cmeta_type_traits managed_traits = {0};
+        static const cmeta_type_desc managed_type = {
+            "managed-await-value",
+            sizeof(int),
+            _Alignof(int),
+            CMETA_T_OBJECT,
+            NULL,
+            &managed_traits,
+            NULL
+        };
+        await_source_probe probe = {
+            AWAIT_SOURCE_IMMEDIATE, &managed_type, NULL, {0}, 0u, 0u, 0u
+        };
+        cflow_source source =
+            await_source_probe_interface_as_cflow_source(&probe);
+        await_script_state script = {&source, {0}, 0, 0u};
+        cflow_resumable coroutine = {0};
+        cflow_minicoro_config config = {
+            "await-managed", &cmeta_type_int,
+            minicoro_await_source_then_return, &script,
+            0u, NULL, NULL, NULL
+        };
+        cflow_resume_ctx context = {0};
+        int output = 0;
+        cflow_step step;
+
+        check_true(cflow_resumable_from_minicoro(&coroutine, &config));
+        step = coroutine.ops->resume(coroutine.state, &context, &output);
+
+        check_equal(step.kind, CFLOW_STEP_ERROR);
+        check_equal(step.error,
+                    "minicoro awaited Source type is not trivial");
+        check_equal(probe.resumes, (size_t)0u);
+
+        destroy_resumable(&coroutine);
+        cflow_source_destroy(&source);
     }
 
     it("cancels an armed WAIT before terminating the frame") {

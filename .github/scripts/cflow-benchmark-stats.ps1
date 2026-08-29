@@ -128,6 +128,38 @@ function Get-CflowBaselineDriverOrder {
   return @("actor", "direct")
 }
 
+function Get-CflowPipelineDriverOrder {
+  param(
+    [Parameter(Mandatory = $true)]
+    [int]$Run,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(0, [int]::MaxValue)]
+    [int]$BackendIndex,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(0, [int]::MaxValue)]
+    [int]$PayloadIndex,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(0, [int]::MaxValue)]
+    [int]$WindowIndex,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("blocking", "busy")]
+    [string]$WaitMode
+  )
+
+  if ($Run -le 0) {
+    throw "Run must be positive"
+  }
+  $waitOffset = if ($WaitMode -eq "busy") { 1 } else { 0 }
+  $rotation = 1 + (($Run - 1 + $BackendIndex + $PayloadIndex +
+        $WindowIndex + $waitOffset) % 3)
+  return Get-CflowRotatedOrder -Values @("direct", "actor", "source") `
+    -Run $rotation
+}
+
 function Get-CflowPercentDelta {
   param(
     [Parameter(Mandatory = $true)]
@@ -149,6 +181,384 @@ function Get-CflowPercentDelta {
     throw "$Metric values must be finite and positive"
   }
   return 100.0 * ($Candidate - $Baseline) / $Baseline
+}
+
+function ConvertFrom-CflowIoModelBenchmarkOutput {
+  param(
+    [Parameter(Mandatory = $true)]
+    [AllowEmptyString()]
+    [string[]]$Lines,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$ExpectedCapacity,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$ExpectedSamples,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$ExpectedValuesPerSample,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [int]::MaxValue)]
+    [int]$BenchmarkRun
+  )
+
+  if ($ExpectedSamples -ge [long]::MaxValue) {
+    throw "IO model expected value count overflows int64"
+  }
+  $maximumValuesPerSample = [decimal]::Floor(
+    ([decimal]([long]::MaxValue)) /
+      ([decimal]$ExpectedSamples + [decimal]1))
+  if ([decimal]$ExpectedValuesPerSample -gt $maximumValuesPerSample) {
+    throw "IO model expected value count overflows int64"
+  }
+  $timedValues = [long](
+    [decimal]$ExpectedSamples * [decimal]$ExpectedValuesPerSample)
+  $processedValues = [long](
+    ([decimal]$ExpectedSamples + [decimal]1) *
+      [decimal]$ExpectedValuesPerSample)
+
+  $tablePatterns = [ordered]@{
+    "direct-control" =
+      '^\s*\|\s*mock direct-control\s*\|\s*(?<samples>[0-9]+)\s*\|' +
+      '\s*(?<operations>[0-9]+)\s*\|\s*[^|]+\|' +
+      '\s*(?<mean>[0-9]+(?:\.[0-9]+)?)\s*\|'
+    actor =
+      '^\s*\|\s*mock Actor\s*\|\s*(?<samples>[0-9]+)\s*\|' +
+      '\s*(?<operations>[0-9]+)\s*\|\s*[^|]+\|' +
+      '\s*(?<mean>[0-9]+(?:\.[0-9]+)?)\s*\|'
+    "io-source-adapter" =
+      '^\s*\|\s*mock IO Source adapter\s*\|' +
+      '\s*(?<samples>[0-9]+)\s*\|\s*(?<operations>[0-9]+)\s*\|' +
+      '\s*[^|]+\|\s*(?<mean>[0-9]+(?:\.[0-9]+)?)\s*\|'
+    "coroutine-source-adapter" =
+      '^\s*\|\s*mock coroutine Source adapter\s*\|' +
+      '\s*(?<samples>[0-9]+)\s*\|\s*(?<operations>[0-9]+)\s*\|' +
+      '\s*[^|]+\|\s*(?<mean>[0-9]+(?:\.[0-9]+)?)\s*\|'
+    "source-runtime" =
+      '^\s*\|\s*mock Source runtime window=(?<capacity>[0-9]+)\s+' +
+      'values=(?<values>[0-9]+)\s*\|\s*(?<samples>[0-9]+)\s*\|' +
+      '\s*(?<operations>[0-9]+)\s*\|\s*[^|]+\|' +
+      '\s*(?<mean>[0-9]+(?:\.[0-9]+)?)\s*\|'
+  }
+  $tableRecords = @{}
+  foreach ($model in $tablePatterns.Keys) {
+    $matching = @()
+    foreach ($line in $Lines) {
+      if ($line -match $tablePatterns[$model]) {
+        $matching += [pscustomobject]@{
+          samples = [int64]$Matches.samples
+          operations_per_sample = [int64]$Matches.operations
+          mean_ns_per_value = [double]$Matches.mean
+          capacity = if ($model -eq "source-runtime") {
+            [int64]$Matches.capacity
+          } else {
+            $ExpectedCapacity
+          }
+          values_per_sample = if ($model -eq "source-runtime") {
+            [int64]$Matches.values
+          } else {
+            $ExpectedValuesPerSample
+          }
+        }
+      }
+    }
+    if ($matching.Count -ne 1) {
+      throw "Expected exactly one $model IO model table record, found $($matching.Count)"
+    }
+    $tableRecords[$model] = $matching[0]
+  }
+
+  $jsonLines = @($Lines | Where-Object {
+      $_ -match '^CFLOW_IO_MODEL_BENCH_JSON '
+    })
+  if ($jsonLines.Count -ne 5) {
+    throw "Expected exactly five IO model JSON records, found $($jsonLines.Count)"
+  }
+  $jsonRecords = @{}
+  foreach ($line in $jsonLines) {
+    $jsonText = $line.Substring("CFLOW_IO_MODEL_BENCH_JSON ".Length)
+    try {
+      $report = $jsonText | ConvertFrom-Json
+    } catch {
+      throw "Invalid IO model JSON record: $jsonText"
+    }
+    foreach ($field in @(
+        "schema", "model", "capacity", "values_per_sample", "samples",
+        "timed_values", "processed_values", "errors", "rejections",
+        "stale_completions")) {
+      if ($null -eq $report.$field) {
+        throw "Missing IO model report field '$field': $jsonText"
+      }
+    }
+    if ($report.model -notin $tablePatterns.Keys) {
+      throw "Unknown IO model '$($report.model)': $jsonText"
+    }
+    if ($jsonRecords.ContainsKey($report.model)) {
+      throw "Duplicate IO model '$($report.model)'"
+    }
+    $jsonRecords[$report.model] = $report
+  }
+
+  $reports = @()
+  foreach ($model in $tablePatterns.Keys) {
+    if (-not $jsonRecords.ContainsKey($model)) {
+      throw "Missing IO model '$model'"
+    }
+    $report = $jsonRecords[$model]
+    $table = $tableRecords[$model]
+    $meanNs = [double]$table.mean_ns_per_value
+    if ($report.schema -ne "cflow-io-model-benchmark/v1" -or
+        [int64]$report.capacity -ne $ExpectedCapacity -or
+        [int64]$report.values_per_sample -ne $ExpectedValuesPerSample -or
+        [int64]$report.samples -ne $ExpectedSamples -or
+        [int64]$report.timed_values -ne $timedValues -or
+        [int64]$report.processed_values -ne $processedValues -or
+        [int64]$table.capacity -ne $ExpectedCapacity -or
+        [int64]$table.values_per_sample -ne $ExpectedValuesPerSample -or
+        [int64]$table.samples -ne $ExpectedSamples -or
+        [int64]$table.operations_per_sample -ne $ExpectedValuesPerSample -or
+        [double]::IsNaN($meanNs) -or [double]::IsInfinity($meanNs) -or
+        $meanNs -le 0.0 -or [int64]$report.errors -ne 0 -or
+        [int64]$report.rejections -ne 0 -or
+        [int64]$report.stale_completions -ne 0) {
+      throw "Invalid or unsuccessful $model IO model report"
+    }
+
+    $accepted = [int64]0
+    $acknowledged = [int64]0
+    if ($model -ne "direct-control") {
+      foreach ($field in @("accepted", "acknowledged")) {
+        if ($null -eq $report.$field) {
+          throw "Missing $model IO model report field '$field'"
+        }
+      }
+      $accepted = [int64]$report.accepted
+      $acknowledged = [int64]$report.acknowledged
+      if ($accepted -ne $processedValues -or
+          $acknowledged -ne $processedValues) {
+        throw "$model IO model accepted/acknowledged counts are invalid"
+      }
+    }
+
+    $driveCalls = [int64]0
+    $driverCalls = [int64]0
+    $peakOccupied = [int64]0
+    if ($model -in @(
+        "io-source-adapter", "coroutine-source-adapter", "source-runtime")) {
+      foreach ($field in @("drive_calls", "driver_calls", "peak_occupied")) {
+        if ($null -eq $report.$field) {
+          throw "Missing $model IO model report field '$field'"
+        }
+      }
+      $driveCalls = [int64]$report.drive_calls
+      $driverCalls = [int64]$report.driver_calls
+      $peakOccupied = [int64]$report.peak_occupied
+      if ($driveCalls -le 0 -or $driverCalls -le 0 -or
+          $peakOccupied -le 0 -or $peakOccupied -gt $ExpectedCapacity) {
+        throw "$model IO model scheduling counters are invalid"
+      }
+    }
+
+    $addedWorkerThreads = [int64]0
+    if ($model -eq "coroutine-source-adapter") {
+      if ($null -eq $report.added_worker_threads) {
+        throw "Missing coroutine-source-adapter IO model report field 'added_worker_threads'"
+      }
+      $addedWorkerThreads = [int64]$report.added_worker_threads
+      if ($addedWorkerThreads -ne 0) {
+        throw "Coroutine Source adapter must not add worker threads"
+      }
+    }
+
+    $reports += [pscustomobject][ordered]@{
+      schema = "cflow-io-model-benchmark/v1"
+      benchmark_run = $BenchmarkRun
+      model = $model
+      capacity = $ExpectedCapacity
+      values_per_sample = $ExpectedValuesPerSample
+      samples = $ExpectedSamples
+      timed_values = $timedValues
+      processed_values = $processedValues
+      mean_ns_per_value = $meanNs
+      accepted = $accepted
+      acknowledged = $acknowledged
+      drive_calls = $driveCalls
+      driver_calls = $driverCalls
+      peak_occupied = $peakOccupied
+      added_worker_threads = $addedWorkerThreads
+      errors = [int64]$report.errors
+      rejections = [int64]$report.rejections
+      stale_completions = [int64]$report.stale_completions
+    }
+  }
+  return $reports
+}
+
+function Get-CflowPairedIoModelSummary {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object[]]$Reports,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$Capacity,
+
+    [Parameter(Mandatory = $true)]
+    [int]$ExpectedRuns
+  )
+
+  if ($ExpectedRuns -le 0) {
+    throw "ExpectedRuns must be positive"
+  }
+  $matching = @($Reports | Where-Object {
+      $_.schema -eq "cflow-io-model-benchmark/v1" -and
+      [int64]$_.capacity -eq $Capacity -and
+      $_.model -in @(
+        "direct-control", "actor", "io-source-adapter",
+        "coroutine-source-adapter", "source-runtime")
+    })
+  if ($matching.Count -ne 5 * $ExpectedRuns) {
+    throw "Expected $ExpectedRuns mock IO model layer sets for capacity $Capacity, found $($matching.Count) records"
+  }
+
+  $directs = @()
+  $actors = @()
+  $adapters = @()
+  $coroutines = @()
+  $runtimes = @()
+  $actorDirectRatios = @()
+  $adapterActorRatios = @()
+  $coroutineAdapterRatios = @()
+  $runtimeAdapterRatios = @()
+  $actorDirectDeltas = @()
+  $adapterActorDeltas = @()
+  $coroutineAdapterDeltas = @()
+  $runtimeAdapterDeltas = @()
+  for ($run = 1; $run -le $ExpectedRuns; ++$run) {
+    $direct = @($matching | Where-Object {
+        [int]$_.benchmark_run -eq $run -and $_.model -eq "direct-control"
+      })
+    $actor = @($matching | Where-Object {
+        [int]$_.benchmark_run -eq $run -and $_.model -eq "actor"
+      })
+    $adapter = @($matching | Where-Object {
+        [int]$_.benchmark_run -eq $run -and
+        $_.model -eq "io-source-adapter"
+      })
+    $coroutine = @($matching | Where-Object {
+        [int]$_.benchmark_run -eq $run -and
+        $_.model -eq "coroutine-source-adapter"
+      })
+    $runtime = @($matching | Where-Object {
+        [int]$_.benchmark_run -eq $run -and $_.model -eq "source-runtime"
+      })
+    if ($direct.Count -ne 1 -or $actor.Count -ne 1 -or
+        $adapter.Count -ne 1 -or $coroutine.Count -ne 1 -or
+        $runtime.Count -ne 1) {
+      throw "Expected one direct-control, Actor, IO Source adapter, coroutine Source adapter, and Source runtime report for capacity $Capacity run $run"
+    }
+    $direct = $direct[0]
+    $actor = $actor[0]
+    $adapter = $adapter[0]
+    $coroutine = $coroutine[0]
+    $runtime = $runtime[0]
+    foreach ($report in @(
+        $direct, $actor, $adapter, $coroutine, $runtime)) {
+      if ([int64]$report.values_per_sample -ne
+            [int64]$direct.values_per_sample -or
+          [int64]$report.samples -ne [int64]$direct.samples -or
+          [int64]$report.timed_values -ne [int64]$direct.timed_values -or
+          [int64]$report.processed_values -ne
+            [int64]$direct.processed_values) {
+        throw "Mock IO model workload mismatch for capacity $Capacity run $run"
+      }
+      $meanNs = [double]$report.mean_ns_per_value
+      if ([double]::IsNaN($meanNs) -or [double]::IsInfinity($meanNs) -or
+          $meanNs -le 0.0 -or [int64]$report.errors -ne 0 -or
+          [int64]$report.rejections -ne 0 -or
+          [int64]$report.stale_completions -ne 0) {
+        throw "Invalid mock IO model report for capacity $Capacity run $run"
+      }
+      if ($report.model -ne "direct-control" -and
+          ([int64]$report.accepted -ne [int64]$report.processed_values -or
+           [int64]$report.acknowledged -ne
+             [int64]$report.processed_values)) {
+        throw "Invalid mock IO model lifecycle counts for capacity $Capacity run $run"
+      }
+      if ($report.model -in @(
+          "io-source-adapter", "coroutine-source-adapter", "source-runtime") -and
+          ([int64]$report.drive_calls -le 0 -or
+           [int64]$report.driver_calls -le 0 -or
+           [int64]$report.peak_occupied -le 0 -or
+           [int64]$report.peak_occupied -gt $Capacity)) {
+        throw "Invalid mock IO Source scheduling counts for capacity $Capacity run $run"
+      }
+      if ($report.model -eq "coroutine-source-adapter" -and
+          [int64]$report.added_worker_threads -ne 0) {
+        throw "Invalid mock coroutine Source adapter worker count for capacity $Capacity run $run"
+      }
+    }
+    $actorDirectRatios +=
+      [double]$actor.mean_ns_per_value / [double]$direct.mean_ns_per_value
+    $adapterActorRatios +=
+      [double]$adapter.mean_ns_per_value / [double]$actor.mean_ns_per_value
+    $coroutineAdapterRatios +=
+      [double]$coroutine.mean_ns_per_value /
+        [double]$adapter.mean_ns_per_value
+    $runtimeAdapterRatios +=
+      [double]$runtime.mean_ns_per_value / [double]$adapter.mean_ns_per_value
+    $actorDirectDeltas +=
+      [double]$actor.mean_ns_per_value - [double]$direct.mean_ns_per_value
+    $adapterActorDeltas +=
+      [double]$adapter.mean_ns_per_value - [double]$actor.mean_ns_per_value
+    $coroutineAdapterDeltas +=
+      [double]$coroutine.mean_ns_per_value -
+        [double]$adapter.mean_ns_per_value
+    $runtimeAdapterDeltas +=
+      [double]$runtime.mean_ns_per_value - [double]$adapter.mean_ns_per_value
+    $directs += $direct
+    $actors += $actor
+    $adapters += $adapter
+    $coroutines += $coroutine
+    $runtimes += $runtime
+  }
+
+  return [pscustomobject][ordered]@{
+    capacity = $Capacity
+    values_per_sample = [int64]$directs[0].values_per_sample
+    samples = [int64]$directs[0].samples
+    runs = $ExpectedRuns
+    direct_median_mean_ns_per_value =
+      Get-CflowMedian @($directs.mean_ns_per_value)
+    actor_median_mean_ns_per_value =
+      Get-CflowMedian @($actors.mean_ns_per_value)
+    adapter_median_mean_ns_per_value =
+      Get-CflowMedian @($adapters.mean_ns_per_value)
+    coroutine_median_mean_ns_per_value =
+      Get-CflowMedian @($coroutines.mean_ns_per_value)
+    runtime_median_mean_ns_per_value =
+      Get-CflowMedian @($runtimes.mean_ns_per_value)
+    paired_actor_direct_cost_ratio =
+      [math]::Round((Get-CflowMedian $actorDirectRatios), 6)
+    paired_adapter_actor_cost_ratio =
+      [math]::Round((Get-CflowMedian $adapterActorRatios), 6)
+    paired_coroutine_adapter_cost_ratio =
+      [math]::Round((Get-CflowMedian $coroutineAdapterRatios), 6)
+    paired_runtime_adapter_cost_ratio =
+      [math]::Round((Get-CflowMedian $runtimeAdapterRatios), 6)
+    paired_actor_direct_delta_ns =
+      [math]::Round((Get-CflowMedian $actorDirectDeltas), 6)
+    paired_adapter_actor_delta_ns =
+      [math]::Round((Get-CflowMedian $adapterActorDeltas), 6)
+    paired_coroutine_adapter_delta_ns =
+      [math]::Round((Get-CflowMedian $coroutineAdapterDeltas), 6)
+    paired_runtime_adapter_delta_ns =
+      [math]::Round((Get-CflowMedian $runtimeAdapterDeltas), 6)
+  }
 }
 
 function ConvertFrom-CflowIoSourceBenchmarkOutput {
@@ -176,7 +586,8 @@ function ConvertFrom-CflowIoSourceBenchmarkOutput {
 
   $tableRecords = @()
   $tablePattern =
-    '^\s*\|\s*window=(?<capacity>[0-9]+)\s+values=(?<values>[0-9]+)\s*\|' +
+    '^\s*\|\s*(?:mock Source runtime )?window=(?<capacity>[0-9]+)\s+' +
+    'values=(?<values>[0-9]+)\s*\|' +
     '\s*(?<samples>[0-9]+)\s*\|\s*(?<operations>[0-9]+)\s*\|' +
     '\s*[^|]+\|\s*(?<mean>[0-9]+(?:\.[0-9]+)?)\s*\|'
   foreach ($line in $Lines) {
@@ -670,6 +1081,188 @@ function Get-CflowPairedSourceWindowSummary {
       Get-CflowMedian @($baselines.source_peak_occupied)
     source_median_peak_occupied =
       Get-CflowMedian @($sources.source_peak_occupied)
+  }
+}
+
+function Get-CflowPairedPipelineLayerSummary {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object[]]$Reports,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Backend,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("blocking", "busy")]
+    [string]$WaitMode,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$PayloadBytes,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$WindowCapacity,
+
+    [Parameter(Mandatory = $true)]
+    [int]$ExpectedRuns
+  )
+
+  if ($ExpectedRuns -le 0) {
+    throw "ExpectedRuns must be positive"
+  }
+  $matching = @($Reports | Where-Object {
+      $_.schema -eq "cflow-network-benchmark/v1" -and
+      $_.comparison_backend -eq $Backend -and $_.protocol -eq "udp" -and
+      $_.profile -eq "throughput" -and $_.workload -eq "pipeline" -and
+      $_.peer_mode -eq "raw" -and -not [bool]$_.stage_timing -and
+      $_.wait_mode -eq $WaitMode -and
+      [int64]$_.payload_bytes -eq $PayloadBytes -and
+      [int64]$_.workload_window_capacity -eq $WindowCapacity -and
+      $_.driver -in @("direct", "actor", "source")
+    })
+  if ($matching.Count -ne 3 * $ExpectedRuns) {
+    throw "Expected $ExpectedRuns Direct/Actor/Source pipeline triples for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity, found $($matching.Count) records"
+  }
+
+  $directs = @()
+  $actors = @()
+  $sources = @()
+  $actorDirectEchoRatios = @()
+  $sourceActorEchoRatios = @()
+  $sourceDirectEchoRatios = @()
+  $actorDirectApplicationRatios = @()
+  $sourceActorApplicationRatios = @()
+  $sourceDirectApplicationRatios = @()
+  $actorDirectP99Ratios = @()
+  $sourceActorP99Ratios = @()
+  $sourceDirectP99Ratios = @()
+  $actorDirectCpuRatios = @()
+  $sourceActorCpuRatios = @()
+  $sourceDirectCpuRatios = @()
+
+  for ($run = 1; $run -le $ExpectedRuns; ++$run) {
+    $direct = @($matching | Where-Object {
+        [int]$_.benchmark_run -eq $run -and $_.driver -eq "direct"
+      })
+    $actor = @($matching | Where-Object {
+        [int]$_.benchmark_run -eq $run -and $_.driver -eq "actor"
+      })
+    $source = @($matching | Where-Object {
+        [int]$_.benchmark_run -eq $run -and $_.driver -eq "source"
+      })
+    if ($direct.Count -ne 1 -or $actor.Count -ne 1 -or $source.Count -ne 1) {
+      throw "Expected one Direct, Actor, and Source pipeline report for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run, found $($direct.Count), $($actor.Count), and $($source.Count)"
+    }
+    $direct = $direct[0]
+    $actor = $actor[0]
+    $source = $source[0]
+    if ($direct.backend -ne "socket" -or $actor.backend -ne $Backend -or
+        $source.backend -ne $Backend) {
+      throw "Pipeline layer backends must be socket/$Backend/$Backend for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
+    }
+    foreach ($report in @($direct, $actor, $source)) {
+      if ([int64]$report.workload_peak_in_flight -ne $WindowCapacity) {
+        throw "Pipeline peak in-flight must equal window $WindowCapacity for $Backend/$PayloadBytes/$WaitMode run $run"
+      }
+      if ([int64]$report.samples -le 0 -or
+          [int64]$report.exchanges_per_sample -le 0 -or
+          [int64]$report.samples -ne [int64]$direct.samples -or
+          [int64]$report.exchanges_per_sample -ne
+            [int64]$direct.exchanges_per_sample -or
+          [int64]$report.errors -ne 0 -or
+          [int64]$report.rejections -ne 0 -or
+          [int64]$report.stale_completions -ne 0) {
+        throw "Pipeline workload or completion status is invalid for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
+      }
+      foreach ($metric in @("exchanges_per_second", "application_mib_per_second",
+                            "p99_ns", "process_cpu_ns")) {
+        $value = [double]$report.$metric
+        if ([double]::IsNaN($value) -or [double]::IsInfinity($value) -or
+            $value -le 0.0) {
+          throw "$metric values must be finite and positive for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
+        }
+      }
+    }
+    $attempted = [int64]$direct.attempted
+    $expectedAttempts =
+      [decimal]$direct.samples * [decimal]$direct.exchanges_per_sample
+    if ($expectedAttempts -gt [decimal]([long]::MaxValue) -or
+        $attempted -ne [int64]$expectedAttempts -or
+        [int64]$actor.attempted -ne $attempted -or
+        [int64]$source.attempted -ne $attempted) {
+      throw "Pipeline layer attempted counts must match the common workload for $Backend/$PayloadBytes/$WaitMode/window=$WindowCapacity run $run"
+    }
+
+    $actorDirectEchoRatios +=
+      [double]$actor.exchanges_per_second / [double]$direct.exchanges_per_second
+    $sourceActorEchoRatios +=
+      [double]$source.exchanges_per_second / [double]$actor.exchanges_per_second
+    $sourceDirectEchoRatios +=
+      [double]$source.exchanges_per_second / [double]$direct.exchanges_per_second
+    $actorDirectApplicationRatios +=
+      [double]$actor.application_mib_per_second /
+        [double]$direct.application_mib_per_second
+    $sourceActorApplicationRatios +=
+      [double]$source.application_mib_per_second /
+        [double]$actor.application_mib_per_second
+    $sourceDirectApplicationRatios +=
+      [double]$source.application_mib_per_second /
+        [double]$direct.application_mib_per_second
+    $actorDirectP99Ratios += [double]$actor.p99_ns / [double]$direct.p99_ns
+    $sourceActorP99Ratios += [double]$source.p99_ns / [double]$actor.p99_ns
+    $sourceDirectP99Ratios += [double]$source.p99_ns / [double]$direct.p99_ns
+    $actorDirectCpuRatios +=
+      [double]$actor.process_cpu_ns / [double]$direct.process_cpu_ns
+    $sourceActorCpuRatios +=
+      [double]$source.process_cpu_ns / [double]$actor.process_cpu_ns
+    $sourceDirectCpuRatios +=
+      [double]$source.process_cpu_ns / [double]$direct.process_cpu_ns
+    $directs += $direct
+    $actors += $actor
+    $sources += $source
+  }
+
+  return [pscustomobject][ordered]@{
+    backend = $Backend
+    payload_bytes = $PayloadBytes
+    wait_mode = $WaitMode
+    workload = "pipeline"
+    window_capacity = $WindowCapacity
+    runs = $ExpectedRuns
+    direct_median_echo_per_second = Get-CflowMedian @($directs.exchanges_per_second)
+    actor_median_echo_per_second = Get-CflowMedian @($actors.exchanges_per_second)
+    source_median_echo_per_second = Get-CflowMedian @($sources.exchanges_per_second)
+    paired_actor_direct_echo_ratio =
+      [math]::Round((Get-CflowMedian $actorDirectEchoRatios), 6)
+    paired_source_actor_echo_ratio =
+      [math]::Round((Get-CflowMedian $sourceActorEchoRatios), 6)
+    paired_source_direct_echo_ratio =
+      [math]::Round((Get-CflowMedian $sourceDirectEchoRatios), 6)
+    paired_actor_direct_application_mib_ratio =
+      [math]::Round((Get-CflowMedian $actorDirectApplicationRatios), 6)
+    paired_source_actor_application_mib_ratio =
+      [math]::Round((Get-CflowMedian $sourceActorApplicationRatios), 6)
+    paired_source_direct_application_mib_ratio =
+      [math]::Round((Get-CflowMedian $sourceDirectApplicationRatios), 6)
+    direct_median_p99_ns = Get-CflowMedian @($directs.p99_ns)
+    actor_median_p99_ns = Get-CflowMedian @($actors.p99_ns)
+    source_median_p99_ns = Get-CflowMedian @($sources.p99_ns)
+    paired_actor_direct_p99_ratio =
+      [math]::Round((Get-CflowMedian $actorDirectP99Ratios), 6)
+    paired_source_actor_p99_ratio =
+      [math]::Round((Get-CflowMedian $sourceActorP99Ratios), 6)
+    paired_source_direct_p99_ratio =
+      [math]::Round((Get-CflowMedian $sourceDirectP99Ratios), 6)
+    direct_median_cpu_pct = Get-CflowMedian @($directs.process_cpu_pct)
+    actor_median_cpu_pct = Get-CflowMedian @($actors.process_cpu_pct)
+    source_median_cpu_pct = Get-CflowMedian @($sources.process_cpu_pct)
+    paired_actor_direct_cpu_time_ratio =
+      [math]::Round((Get-CflowMedian $actorDirectCpuRatios), 6)
+    paired_source_actor_cpu_time_ratio =
+      [math]::Round((Get-CflowMedian $sourceActorCpuRatios), 6)
+    paired_source_direct_cpu_time_ratio =
+      [math]::Round((Get-CflowMedian $sourceDirectCpuRatios), 6)
   }
 }
 

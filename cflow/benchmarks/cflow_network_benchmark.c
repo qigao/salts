@@ -156,10 +156,12 @@ typedef struct network_stage_measurement {
 } network_stage_measurement;
 
 typedef struct network_completion_probe {
-  cflow_io_request_id ids[NETWORK_REQUEST_CAPACITY];
-  cflow_io_completion values[NETWORK_REQUEST_CAPACITY];
-  struct sockaddr_storage addresses[NETWORK_REQUEST_CAPACITY];
-  size_t address_lengths[NETWORK_REQUEST_CAPACITY];
+  cflow_io_request_id ids[NETWORK_SOURCE_MAX_WINDOW];
+  cflow_io_completion values[NETWORK_SOURCE_MAX_WINDOW];
+  struct sockaddr_storage addresses[NETWORK_SOURCE_MAX_WINDOW];
+  size_t address_lengths[NETWORK_SOURCE_MAX_WINDOW];
+  size_t result_indices[NETWORK_SOURCE_MAX_WINDOW];
+  uint64_t completed_ns[NETWORK_SOURCE_MAX_WINDOW];
   size_t count;
 } network_completion_probe;
 
@@ -183,11 +185,12 @@ typedef struct network_endpoint {
   cflow_executor executor;
   cflow_io_actor actor;
   network_source_driver source;
-  network_operation_slot operation_slots[NETWORK_REQUEST_CAPACITY];
+  network_operation_slot operation_slots[NETWORK_SOURCE_MAX_WINDOW];
   network_completion_probe completions;
   network_stage_measurement *stages;
   uint64_t pending_admission_ns;
   uint64_t completion_drive_started_ns;
+  size_t request_capacity;
   network_driver_mode driver_mode;
   bool actor_initialized;
   bool executor_initialized;
@@ -208,6 +211,8 @@ typedef struct network_fixture {
   struct sockaddr_in server_address;
   turbo_thread_t server_thread;
   network_server server;
+  cflow_io_lease_id next_lease;
+  size_t workload_peak_in_flight;
   bool server_started;
   bool wake_latch_initialized;
   bool socket_runtime_initialized;
@@ -223,6 +228,10 @@ typedef struct network_measurement {
 } network_measurement;
 
 static int network_exchange_source_pipeline_batch(
+    network_fixture *fixture, const unsigned char *sent,
+    unsigned char *received, size_t payload_size, size_t exchanges,
+    uint64_t *completion_latencies);
+static int network_exchange_pipeline_batch(
     network_fixture *fixture, const unsigned char *sent,
     unsigned char *received, size_t payload_size, size_t exchanges,
     uint64_t *completion_latencies);
@@ -499,11 +508,14 @@ static void network_completion_record(void *user, cflow_io_request_id request_id
           ? (network_operation *)operation_user : NULL;
   (void)lease_id;
   if (probe == NULL) return;
-  if (probe->count < NETWORK_REQUEST_CAPACITY) {
+  if (probe->count < endpoint->request_capacity) {
     const size_t address_length = operation != NULL ? operation->native.address_length : 0u;
     probe->ids[probe->count] = request_id;
     probe->values[probe->count] = *completion;
     probe->address_lengths[probe->count] = address_length;
+    probe->result_indices[probe->count] =
+        operation != NULL ? operation->source_result_index : 0u;
+    probe->completed_ns[probe->count] = turbo_hrtime();
     if (operation != NULL && address_length != 0u &&
         address_length <= sizeof(probe->addresses[probe->count]) &&
         operation->native.address != NULL)
@@ -822,7 +834,7 @@ static int network_validate_workload(network_workload workload,
                                      network_peer_mode peer, bool throughput) {
   if (workload == NETWORK_WORKLOAD_ROUND_TRIP) return TURBO_OK;
   if (workload != NETWORK_WORKLOAD_PIPELINE ||
-      protocol != NETWORK_PROTOCOL_UDP || driver != NETWORK_DRIVER_SOURCE ||
+      protocol != NETWORK_PROTOCOL_UDP || driver == NETWORK_DRIVER_VECTOR ||
       peer != NETWORK_PEER_RAW || !throughput)
     return TURBO_EINVAL;
   return TURBO_OK;
@@ -895,15 +907,15 @@ static int network_endpoint_init(network_endpoint *endpoint,
                                  network_wait_mode wait_mode, network_wake_latch *wake_latch,
                                  network_driver_mode driver_mode,
                                  size_t source_window_capacity) {
-  const size_t backend_capacity = driver_mode == NETWORK_DRIVER_SOURCE
-                                      ? source_window_capacity
-                                      : NETWORK_REQUEST_CAPACITY;
+  const size_t request_capacity = source_window_capacity;
+  const size_t backend_capacity = request_capacity;
   cflow_io_native_backend_config backend_config = {backend_kind, backend_capacity,
                                                    backend_capacity};
   cflow_io_actor_config actor_config;
   int status;
   memset(endpoint, 0, sizeof(*endpoint));
   endpoint->driver_mode = driver_mode;
+  endpoint->request_capacity = request_capacity;
   if (source_window_capacity == 0u ||
       source_window_capacity > NETWORK_SOURCE_MAX_WINDOW)
     return TURBO_EINVAL;
@@ -914,12 +926,12 @@ static int network_endpoint_init(network_endpoint *endpoint,
   if (driver_mode == NETWORK_DRIVER_SOURCE)
     return network_source_driver_init(&endpoint->source, &endpoint->backend, wait_mode,
                                       wake_latch, source_window_capacity);
-  if (!cflow_executor_manual_init_with_capacity(&endpoint->executor, NETWORK_REQUEST_CAPACITY))
+  if (!cflow_executor_manual_init_with_capacity(&endpoint->executor, request_capacity))
     return TURBO_ENOMEM;
   endpoint->executor_initialized = true;
   memset(&actor_config, 0, sizeof(actor_config));
-  actor_config.request_capacity = NETWORK_REQUEST_CAPACITY;
-  actor_config.command_capacity = NETWORK_REQUEST_CAPACITY;
+  actor_config.request_capacity = request_capacity;
+  actor_config.command_capacity = request_capacity;
   actor_config.executor = &endpoint->executor;
   actor_config.backend = driver_mode == NETWORK_DRIVER_VECTOR
                              ? cflow_io_native_backend_vector_actor_ops()
@@ -961,6 +973,7 @@ static int network_fixture_init_with_driver_window(
   fixture->wait_mode = wait_mode;
   fixture->peer_mode = peer_mode;
   fixture->driver_mode = driver_mode;
+  fixture->next_lease = UINT64_C(1);
   fixture->client_socket = NETWORK_INVALID_SOCKET;
   fixture->server_socket = NETWORK_INVALID_SOCKET;
   if (driver_mode == NETWORK_DRIVER_DIRECT) {
@@ -1018,8 +1031,13 @@ static int network_fixture_init_with_driver(network_fixture *fixture, network_pr
                                             network_peer_mode peer_mode,
                                             network_driver_mode driver_mode, size_t total_exchanges,
                                             size_t payload_size) {
+  const size_t request_capacity =
+      driver_mode == NETWORK_DRIVER_ACTOR || driver_mode == NETWORK_DRIVER_VECTOR
+          ? NETWORK_REQUEST_CAPACITY
+          : 1u;
   return network_fixture_init_with_driver_window(
-      fixture, protocol, backend_kind, wait_mode, peer_mode, driver_mode, 1u,
+      fixture, protocol, backend_kind, wait_mode, peer_mode, driver_mode,
+      request_capacity,
       total_exchanges, payload_size);
 }
 
@@ -1102,7 +1120,8 @@ static int network_submit_native_operation(network_endpoint *endpoint,
   cflow_io_submit_result submitted;
   int status;
   if (endpoint == NULL) return TURBO_EINVAL;
-  slot = network_operation_slot_try_acquire(endpoint->operation_slots, NETWORK_REQUEST_CAPACITY);
+  slot = network_operation_slot_try_acquire(endpoint->operation_slots,
+                                            endpoint->request_capacity);
   if (slot == NULL) return TURBO_EBUSY;
   status = network_operation_prepare(&slot->operation, operation);
   if (status != TURBO_OK) {
@@ -1216,6 +1235,107 @@ static int network_finish_native_operation_details(network_fixture *fixture,
 static int network_finish_native_operation(network_fixture *fixture, network_endpoint *endpoint,
                                            size_t *bytes) {
   return network_finish_native_operation_details(fixture, endpoint, bytes, NULL, 0u, NULL);
+}
+
+static int network_acknowledge_completions(network_endpoint *endpoint) {
+  int status = TURBO_OK;
+  for (size_t index = 0u; index < endpoint->completions.count; ++index) {
+    if (cflow_io_actor_acknowledge(&endpoint->actor, endpoint->completions.ids[index]) !=
+        CFLOW_IO_ACK_RELEASED)
+      status = TURBO_EIO;
+  }
+  endpoint->completions.count = 0u;
+  return status;
+}
+
+static int network_run_actor_operations(
+    network_fixture *fixture, network_endpoint *endpoint,
+    const cflow_io_native_operation *operations, size_t operation_count,
+    network_source_result *results) {
+  const bool timing_enabled =
+      endpoint != NULL && endpoint->stages != NULL && endpoint->stages->enabled;
+  const uint64_t admission_started = timing_enabled ? turbo_hrtime() : 0u;
+  uint64_t admission_ns = 0u;
+  uint64_t completion_drive_started = 0u;
+  size_t admitted = 0u;
+  int status = TURBO_OK;
+
+  if (fixture == NULL || endpoint == NULL || operations == NULL || results == NULL ||
+      endpoint->driver_mode != NETWORK_DRIVER_ACTOR || operation_count == 0u ||
+      operation_count > endpoint->request_capacity ||
+      operation_count > NETWORK_SOURCE_MAX_WINDOW || endpoint->completions.count != 0u ||
+      fixture->next_lease == 0u ||
+      operation_count - 1u > UINT64_MAX - fixture->next_lease)
+    return TURBO_EINVAL;
+
+  memset(results, 0, operation_count * sizeof(*results));
+  for (size_t index = 0u; index < operation_count; ++index) {
+    network_operation_slot *slot = network_operation_slot_try_acquire(
+        endpoint->operation_slots, endpoint->request_capacity);
+    cflow_io_operation actor_operation;
+    cflow_io_submit_result submitted;
+
+    if (slot == NULL) {
+      status = TURBO_EBUSY;
+      break;
+    }
+    status = network_operation_prepare(&slot->operation, operations[index]);
+    if (status != TURBO_OK) {
+      network_operation_slot_release(&slot->operation);
+      break;
+    }
+    slot->operation.source_result_index = index;
+    actor_operation = (cflow_io_operation){&slot->operation,
+                                           network_operation_slot_release};
+    submitted = cflow_io_actor_try_submit(&endpoint->actor,
+                                          fixture->next_lease,
+                                          &actor_operation);
+    if (submitted.status != CFLOW_IO_SUBMIT_ACCEPTED) {
+      network_operation_slot_release(&slot->operation);
+      status = TURBO_EBUSY;
+      break;
+    }
+    ++fixture->next_lease;
+    ++admitted;
+  }
+  if (timing_enabled && admitted == operation_count) {
+    const uint64_t admitted_at = turbo_hrtime();
+    admission_ns = admitted_at - admission_started;
+    completion_drive_started = admitted_at;
+  }
+  if (admitted != 0u) {
+    const int wait_status = network_wait(fixture, endpoint, admitted);
+    if (status == TURBO_OK) status = wait_status;
+  }
+  for (size_t index = 0u; index < endpoint->completions.count; ++index) {
+    const size_t result_index = endpoint->completions.result_indices[index];
+    if (result_index >= operation_count || results[result_index].ready) {
+      if (status == TURBO_OK) status = TURBO_EIO;
+      continue;
+    }
+    results[result_index].completion = endpoint->completions.values[index];
+    results[result_index].address = endpoint->completions.addresses[index];
+    results[result_index].address_length = endpoint->completions.address_lengths[index];
+    results[result_index].completed_ns = endpoint->completions.completed_ns[index];
+    results[result_index].ready = true;
+  }
+  for (size_t index = 0u; status == TURBO_OK && index < operation_count; ++index) {
+    if (!results[index].ready)
+      status = TURBO_EIO;
+    else if (results[index].completion.kind == CFLOW_IO_COMPLETION_FAILED)
+      status = results[index].completion.error;
+    else if (results[index].completion.kind != CFLOW_IO_COMPLETION_OK)
+      status = TURBO_EIO;
+  }
+  {
+    const int acknowledge_status = network_acknowledge_completions(endpoint);
+    if (status == TURBO_OK) status = acknowledge_status;
+  }
+  if (status == TURBO_OK && timing_enabled)
+    status = network_stage_measurement_add_operations(
+        endpoint->stages, operation_count, admission_ns,
+        turbo_hrtime() - completion_drive_started);
+  return status;
 }
 
 static int network_run_source_operations(
@@ -1393,6 +1513,160 @@ static int network_exchange_source_pipeline_batch(
       completion_latencies[exchange] =
           results[exchange].completed_ns - started;
   }
+  return status;
+}
+
+static int network_exchange_actor_pipeline_batch(
+    network_fixture *fixture, const unsigned char *sent,
+    unsigned char *received, size_t payload_size, size_t exchanges,
+    uint64_t *completion_latencies) {
+  cflow_io_native_operation operations[NETWORK_SOURCE_MAX_WINDOW] = {0};
+  network_source_result results[NETWORK_SOURCE_MAX_WINDOW] = {0};
+  struct sockaddr_storage source_addresses[NETWORK_SOURCE_MAX_WINDOW];
+  uint64_t started;
+  int status;
+
+  if (fixture == NULL || sent == NULL || received == NULL ||
+      completion_latencies == NULL || payload_size == 0u || exchanges == 0u ||
+      exchanges > fixture->client.request_capacity ||
+      exchanges > NETWORK_SOURCE_MAX_WINDOW ||
+      exchanges > SIZE_MAX / payload_size ||
+      fixture->driver_mode != NETWORK_DRIVER_ACTOR ||
+      fixture->peer_mode != NETWORK_PEER_RAW)
+    return TURBO_EINVAL;
+
+  memset(received, 0, exchanges * payload_size);
+  memset(source_addresses, 0, sizeof(source_addresses));
+  started = turbo_hrtime();
+  for (size_t exchange = 0u; exchange < exchanges; ++exchange) {
+    operations[exchange] = (cflow_io_native_operation){
+        CFLOW_IO_NATIVE_UDP_SEND_TO,
+        (uintptr_t)fixture->client_socket,
+        (void *)sent,
+        payload_size,
+        &fixture->server_address,
+        sizeof(fixture->server_address),
+        sizeof(fixture->server_address)};
+  }
+  status = network_run_actor_operations(
+      fixture, &fixture->client, operations, exchanges, results);
+  for (size_t exchange = 0u; status == TURBO_OK && exchange < exchanges;
+       ++exchange) {
+    if (results[exchange].completion.bytes != payload_size)
+      status = TURBO_EIO;
+  }
+  memset(operations, 0, sizeof(operations));
+  memset(results, 0, sizeof(results));
+  for (size_t exchange = 0u; status == TURBO_OK && exchange < exchanges;
+       ++exchange) {
+    operations[exchange] = (cflow_io_native_operation){
+        CFLOW_IO_NATIVE_UDP_RECV_FROM,
+        (uintptr_t)fixture->client_socket,
+        received + exchange * payload_size,
+        payload_size,
+        &source_addresses[exchange],
+        sizeof(source_addresses[exchange]),
+        0u};
+  }
+  if (status == TURBO_OK)
+    status = network_run_actor_operations(
+        fixture, &fixture->client, operations, exchanges, results);
+  for (size_t exchange = 0u; status == TURBO_OK && exchange < exchanges;
+       ++exchange) {
+    if (results[exchange].completion.bytes != payload_size ||
+        results[exchange].completed_ns < started ||
+        !network_ipv4_endpoint_equal(&results[exchange].address,
+                                     results[exchange].address_length,
+                                     &fixture->server_address) ||
+        memcmp(received + exchange * payload_size, sent, payload_size) != 0)
+      status = TURBO_EIO;
+    else
+      completion_latencies[exchange] =
+          results[exchange].completed_ns - started;
+  }
+  return status;
+}
+
+static int network_exchange_direct_pipeline_batch(
+    network_fixture *fixture, const unsigned char *sent,
+    unsigned char *received, size_t payload_size, size_t exchanges,
+    uint64_t *completion_latencies) {
+  uint64_t started;
+
+  if (fixture == NULL || sent == NULL || received == NULL ||
+      completion_latencies == NULL || payload_size == 0u || exchanges == 0u ||
+      exchanges > NETWORK_SOURCE_MAX_WINDOW ||
+      exchanges > SIZE_MAX / payload_size ||
+      fixture->driver_mode != NETWORK_DRIVER_DIRECT ||
+      fixture->peer_mode != NETWORK_PEER_RAW)
+    return TURBO_EINVAL;
+
+  memset(received, 0, exchanges * payload_size);
+  started = turbo_hrtime();
+  for (size_t exchange = 0u; exchange < exchanges; ++exchange) {
+    int count;
+    do {
+      count = sendto(fixture->client_socket, (const char *)sent,
+                     (int)payload_size, 0,
+                     (const struct sockaddr *)&fixture->server_address,
+                     (int)sizeof(fixture->server_address));
+    } while (network_socket_call_interrupted(count));
+    if (count != (int)payload_size)
+      return count < 0 ? network_last_error() : TURBO_EIO;
+  }
+  for (size_t exchange = 0u; exchange < exchanges; ++exchange) {
+    struct sockaddr_storage source;
+#if defined(_WIN32)
+    int source_length = (int)sizeof(source);
+#else
+    socklen_t source_length = (socklen_t)sizeof(source);
+#endif
+    int count;
+    memset(&source, 0, sizeof(source));
+    do {
+#if defined(_WIN32)
+      source_length = (int)sizeof(source);
+#else
+      source_length = (socklen_t)sizeof(source);
+#endif
+      count = recvfrom(fixture->client_socket,
+                       (char *)(received + exchange * payload_size),
+                       (int)payload_size, 0,
+                       (struct sockaddr *)&source, &source_length);
+    } while (network_socket_call_interrupted(count));
+    if (count != (int)payload_size)
+      return count < 0 ? network_last_error() : TURBO_EIO;
+    if (!network_ipv4_endpoint_equal(&source, (size_t)source_length,
+                                     &fixture->server_address) ||
+        memcmp(received + exchange * payload_size, sent, payload_size) != 0)
+      return TURBO_EIO;
+    completion_latencies[exchange] = turbo_hrtime() - started;
+  }
+  return TURBO_OK;
+}
+
+static int network_exchange_pipeline_batch(
+    network_fixture *fixture, const unsigned char *sent,
+    unsigned char *received, size_t payload_size, size_t exchanges,
+    uint64_t *completion_latencies) {
+  int status;
+  if (fixture == NULL) return TURBO_EINVAL;
+  if (fixture->driver_mode == NETWORK_DRIVER_SOURCE)
+    status = network_exchange_source_pipeline_batch(
+        fixture, sent, received, payload_size, exchanges,
+        completion_latencies);
+  else if (fixture->driver_mode == NETWORK_DRIVER_ACTOR)
+    status = network_exchange_actor_pipeline_batch(
+        fixture, sent, received, payload_size, exchanges,
+        completion_latencies);
+  else if (fixture->driver_mode == NETWORK_DRIVER_DIRECT)
+    status = network_exchange_direct_pipeline_batch(
+        fixture, sent, received, payload_size, exchanges,
+        completion_latencies);
+  else
+    status = TURBO_ENOTSUP;
+  if (status == TURBO_OK && exchanges > fixture->workload_peak_in_flight)
+    fixture->workload_peak_in_flight = exchanges;
   return status;
 }
 
@@ -1656,17 +1930,6 @@ static int network_exchange(network_fixture *fixture, network_protocol protocol,
 
 static void network_preserve_cleanup_status(int candidate, int *status) {
   if (*status == TURBO_OK && candidate != TURBO_OK) *status = candidate;
-}
-
-static int network_acknowledge_completions(network_endpoint *endpoint) {
-  int status = TURBO_OK;
-  for (size_t index = 0u; index < endpoint->completions.count; ++index) {
-    if (cflow_io_actor_acknowledge(&endpoint->actor, endpoint->completions.ids[index]) !=
-        CFLOW_IO_ACK_RELEASED)
-      status = TURBO_EIO;
-  }
-  endpoint->completions.count = 0u;
-  return status;
 }
 
 static int network_forget_closed_socket(network_endpoint *endpoint,
@@ -2131,7 +2394,7 @@ spec("CFlow network benchmark configuration") {
     check_equal(status, TURBO_OK);
     if (status == TURBO_OK) {
       fixture.stages.enabled = true;
-      status = network_exchange_source_pipeline_batch(
+      status = network_exchange_pipeline_batch(
           &fixture, sent, &received[0][0], sizeof(sent),
           PIPELINE_EXCHANGES, completion_latencies);
     }
@@ -2153,6 +2416,92 @@ spec("CFlow network benchmark configuration") {
       check_equal(window_stats.capacity, (size_t)PIPELINE_EXCHANGES);
       check_equal(window_stats.peak_occupied,
                   (size_t)PIPELINE_EXCHANGES);
+    }
+    if (init_attempted)
+      check_equal(network_fixture_destroy(&fixture), TURBO_OK);
+  }
+
+  it("pipelines four independent UDP exchanges through one Actor window") {
+    enum { PIPELINE_EXCHANGES = 4, PIPELINE_PAYLOAD_SIZE = 128 };
+    cflow_io_native_backend_kind backend_kind = CFLOW_IO_NATIVE_EPOLL;
+    network_fixture fixture = {0};
+    unsigned char sent[PIPELINE_PAYLOAD_SIZE];
+    unsigned char received[PIPELINE_EXCHANGES][PIPELINE_PAYLOAD_SIZE];
+    uint64_t completion_latencies[PIPELINE_EXCHANGES] = {0};
+    cflow_io_actor_stats actor_stats = {0};
+    bool init_attempted = false;
+    int status = network_select_backend(&backend_kind);
+
+    for (size_t index = 0u; index < sizeof(sent); ++index)
+      sent[index] = (unsigned char)(index * 19u + 7u);
+    memset(received, 0, sizeof(received));
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) {
+      init_attempted = true;
+      status = network_fixture_init_with_driver_window(
+          &fixture, NETWORK_PROTOCOL_UDP, backend_kind,
+          NETWORK_WAIT_BLOCKING, NETWORK_PEER_RAW, NETWORK_DRIVER_ACTOR,
+          PIPELINE_EXCHANGES, PIPELINE_EXCHANGES, sizeof(sent));
+    }
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) {
+      fixture.stages.enabled = true;
+      status = network_exchange_pipeline_batch(
+          &fixture, sent, &received[0][0], sizeof(sent),
+          PIPELINE_EXCHANGES, completion_latencies);
+    }
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) {
+      for (size_t exchange = 0u; exchange < PIPELINE_EXCHANGES;
+           ++exchange) {
+        check_equal(memcmp(received[exchange], sent, sizeof(sent)), 0);
+        check_true(completion_latencies[exchange] > 0u);
+      }
+      check_equal(fixture.stages.operations,
+                  (uint64_t)(PIPELINE_EXCHANGES * 2u));
+      check_true(network_endpoint_get_actor_stats(&fixture.client,
+                                                  &actor_stats));
+      check_equal(actor_stats.acknowledged,
+                  (uint64_t)(PIPELINE_EXCHANGES * 2u));
+      check_equal(actor_stats.active_requests, (size_t)0u);
+    }
+    if (init_attempted)
+      check_equal(network_fixture_destroy(&fixture), TURBO_OK);
+  }
+
+  it("pipelines four independent UDP exchanges through one Direct window") {
+    enum { PIPELINE_EXCHANGES = 4, PIPELINE_PAYLOAD_SIZE = 128 };
+    cflow_io_native_backend_kind backend_kind = CFLOW_IO_NATIVE_EPOLL;
+    network_fixture fixture = {0};
+    unsigned char sent[PIPELINE_PAYLOAD_SIZE];
+    unsigned char received[PIPELINE_EXCHANGES][PIPELINE_PAYLOAD_SIZE];
+    uint64_t completion_latencies[PIPELINE_EXCHANGES] = {0};
+    bool init_attempted = false;
+    int status = network_select_backend(&backend_kind);
+
+    for (size_t index = 0u; index < sizeof(sent); ++index)
+      sent[index] = (unsigned char)(index * 23u + 13u);
+    memset(received, 0, sizeof(received));
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) {
+      init_attempted = true;
+      status = network_fixture_init_with_driver_window(
+          &fixture, NETWORK_PROTOCOL_UDP, backend_kind,
+          NETWORK_WAIT_BLOCKING, NETWORK_PEER_RAW, NETWORK_DRIVER_DIRECT,
+          PIPELINE_EXCHANGES, PIPELINE_EXCHANGES, sizeof(sent));
+    }
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK)
+      status = network_exchange_pipeline_batch(
+          &fixture, sent, &received[0][0], sizeof(sent),
+          PIPELINE_EXCHANGES, completion_latencies);
+    check_equal(status, TURBO_OK);
+    if (status == TURBO_OK) {
+      for (size_t exchange = 0u; exchange < PIPELINE_EXCHANGES;
+           ++exchange) {
+        check_equal(memcmp(received[exchange], sent, sizeof(sent)), 0);
+        check_true(completion_latencies[exchange] > 0u);
+      }
     }
     if (init_attempted)
       check_equal(network_fixture_destroy(&fixture), TURBO_OK);
@@ -2409,7 +2758,7 @@ spec("CFlow network benchmark configuration") {
     check_equal(network_parse_stage_timing("1", NULL), TURBO_EINVAL);
   }
 
-  it("accepts pipeline workload only for Source UDP throughput") {
+  it("accepts pipeline workload for bounded Direct Actor and Source UDP throughput") {
     network_workload workload = NETWORK_WORKLOAD_PIPELINE;
 
     check_equal(network_parse_workload(NULL, &workload), TURBO_OK);
@@ -2432,6 +2781,14 @@ spec("CFlow network benchmark configuration") {
     check_equal(network_validate_workload(
                     NETWORK_WORKLOAD_PIPELINE, NETWORK_PROTOCOL_UDP,
                     NETWORK_DRIVER_ACTOR, NETWORK_PEER_RAW, true),
+                TURBO_OK);
+    check_equal(network_validate_workload(
+                    NETWORK_WORKLOAD_PIPELINE, NETWORK_PROTOCOL_UDP,
+                    NETWORK_DRIVER_DIRECT, NETWORK_PEER_RAW, true),
+                TURBO_OK);
+    check_equal(network_validate_workload(
+                    NETWORK_WORKLOAD_PIPELINE, NETWORK_PROTOCOL_UDP,
+                    NETWORK_DRIVER_VECTOR, NETWORK_PEER_RAW, true),
                 TURBO_EINVAL);
     check_equal(network_validate_workload(
                     NETWORK_WORKLOAD_PIPELINE, NETWORK_PROTOCOL_UDP,
@@ -2531,6 +2888,7 @@ suite("CFlow network benchmarks") {
     const char *peer_mode_text = getenv("CFLOW_NETWORK_PEER");
     const char *driver_mode_text = getenv("CFLOW_NETWORK_DRIVER");
     const char *source_window_text = getenv("CFLOW_NETWORK_SOURCE_WINDOW");
+    const char *workload_window_text = getenv("CFLOW_NETWORK_WINDOW");
     const char *stage_timing_text = getenv("CFLOW_NETWORK_STAGE_TIMING");
     network_protocol protocol = NETWORK_PROTOCOL_TCP;
     network_wait_mode wait_mode = NETWORK_WAIT_BLOCKING;
@@ -2563,13 +2921,30 @@ suite("CFlow network benchmarks") {
       config_status = TURBO_ENOTSUP;
     if (config_status == TURBO_OK && driver_mode != NETWORK_DRIVER_DIRECT)
       config_status = network_select_backend(&backend_kind);
-    const size_t source_window_capacity = network_env_size(
-        "CFLOW_NETWORK_SOURCE_WINDOW", 1u, NETWORK_SOURCE_MAX_WINDOW);
+    const size_t configured_window_capacity = network_env_size(
+        workload_window_text != NULL ? "CFLOW_NETWORK_WINDOW"
+                                     : "CFLOW_NETWORK_SOURCE_WINDOW",
+        1u, NETWORK_SOURCE_MAX_WINDOW);
     if (config_status == TURBO_OK &&
-        (source_window_capacity == 0u ||
-         (driver_mode != NETWORK_DRIVER_SOURCE && source_window_text != NULL &&
-          source_window_capacity != 1u)))
+        (configured_window_capacity == 0u ||
+         (source_window_text != NULL && workload_window_text != NULL) ||
+         (workload_window_text != NULL &&
+          workload != NETWORK_WORKLOAD_PIPELINE) ||
+         (driver_mode != NETWORK_DRIVER_SOURCE &&
+          workload != NETWORK_WORKLOAD_PIPELINE &&
+          source_window_text != NULL && configured_window_capacity != 1u)))
       config_status = TURBO_EINVAL;
+    const size_t workload_window_capacity =
+        workload == NETWORK_WORKLOAD_PIPELINE ? configured_window_capacity : 1u;
+    const size_t fixture_request_capacity =
+        workload == NETWORK_WORKLOAD_PIPELINE
+            ? configured_window_capacity
+            : (driver_mode == NETWORK_DRIVER_SOURCE
+                   ? configured_window_capacity
+                   : (driver_mode == NETWORK_DRIVER_ACTOR ||
+                              driver_mode == NETWORK_DRIVER_VECTOR
+                          ? NETWORK_REQUEST_CAPACITY
+                          : 1u));
     const size_t samples = network_env_size(
         "CFLOW_NETWORK_SAMPLES", throughput ? NETWORK_THROUGHPUT_SAMPLES : NETWORK_LATENCY_SAMPLES,
         NETWORK_MAX_SAMPLES);
@@ -2589,8 +2964,9 @@ suite("CFlow network benchmarks") {
         payload_size != 0u && exchanges <= SIZE_MAX / payload_size ? exchanges * payload_size : 0u;
     const size_t receive_buffer_size =
         workload == NETWORK_WORKLOAD_PIPELINE
-            ? (payload_size != 0u && source_window_capacity <= SIZE_MAX / payload_size
-                   ? source_window_capacity * payload_size
+            ? (payload_size != 0u &&
+                       workload_window_capacity <= SIZE_MAX / payload_size
+                   ? workload_window_capacity * payload_size
                    : 0u)
             : payload_size;
     const uint64_t application_bytes = (uint64_t)total_exchanges * (uint64_t)payload_size;
@@ -2631,16 +3007,24 @@ suite("CFlow network benchmarks") {
     memset(sent, 0x5a, payload_size);
     check_equal(network_fixture_init_with_driver_window(
                     &fixture, protocol, backend_kind, wait_mode, peer_mode,
-                    driver_mode, source_window_capacity, total_exchanges,
+                    driver_mode, fixture_request_capacity, total_exchanges,
                     payload_size),
                 TURBO_OK);
     fixture.stages.enabled = stage_timing;
-    if (driver_mode == NETWORK_DRIVER_SOURCE)
+    if (workload == NETWORK_WORKLOAD_PIPELINE)
+      (void)snprintf(title, sizeof(title), "%s-%s-%s-%s-%s-%s-w%zu",
+                     protocol == NETWORK_PROTOCOL_TCP ? "tcp" : "udp",
+                     throughput ? "throughput" : "latency",
+                     network_result_backend_name(driver_mode, backend_kind),
+                     network_wait_mode_name(wait_mode),
+                     network_driver_mode_name(driver_mode),
+                     network_workload_name(workload), workload_window_capacity);
+    else if (driver_mode == NETWORK_DRIVER_SOURCE)
       (void)snprintf(title, sizeof(title), "%s-%s-%s-%s-%s-source-w%zu-%s",
                      protocol == NETWORK_PROTOCOL_TCP ? "tcp" : "udp",
                      throughput ? "throughput" : "latency", network_backend_name(backend_kind),
                      network_wait_mode_name(wait_mode), network_peer_mode_name(peer_mode),
-                     source_window_capacity, network_workload_name(workload));
+                     configured_window_capacity, network_workload_name(workload));
     else if (driver_mode == NETWORK_DRIVER_DIRECT)
       (void)snprintf(title, sizeof(title), "%s-%s-socket-%s-%s-direct",
                      protocol == NETWORK_PROTOCOL_TCP ? "tcp" : "udp",
@@ -2663,11 +3047,11 @@ suite("CFlow network benchmarks") {
         if (workload == NETWORK_WORKLOAD_PIPELINE) {
           for (size_t exchange = 0u; exchange < exchanges;) {
             const size_t remaining = exchanges - exchange;
-            const size_t batch = remaining < source_window_capacity
+            const size_t batch = remaining < workload_window_capacity
                                      ? remaining
-                                     : source_window_capacity;
+                                     : workload_window_capacity;
             uint64_t batch_latencies[NETWORK_SOURCE_MAX_WINDOW] = {0};
-            run_status = network_exchange_source_pipeline_batch(
+            run_status = network_exchange_pipeline_batch(
                 &fixture, sent, received, payload_size, batch,
                 batch_latencies);
             if (run_status != TURBO_OK) break;
@@ -2731,6 +3115,8 @@ suite("CFlow network benchmarks") {
           "\"driver\":\"%s\","
           "\"stage_timing\":%s,\"source_window_capacity\":%zu,"
           "\"source_peak_occupied\":%zu,"
+          "\"workload_window_capacity\":%zu,"
+          "\"workload_peak_in_flight\":%zu,"
           "\"samples\":%zu,\"exchanges_per_sample\":%zu,"
           "\"payload_bytes\":%zu,\"application_bytes\":%" PRIu64 ","
           "\"wire_bytes\":%" PRIu64 ",\"wall_ns\":%" PRIu64 ","
@@ -2753,6 +3139,10 @@ suite("CFlow network benchmarks") {
           stage_timing ? "true" : "false",
           driver_mode == NETWORK_DRIVER_SOURCE ? source_window_stats.capacity : 0u,
           driver_mode == NETWORK_DRIVER_SOURCE ? source_window_stats.peak_occupied : 0u,
+          workload_window_capacity,
+          workload == NETWORK_WORKLOAD_PIPELINE
+              ? fixture.workload_peak_in_flight
+              : 1u,
           samples, exchanges, payload_size, application_bytes,
           application_bytes * UINT64_C(2), measured.wall_ns, fixture.stages.operations,
           fixture.stages.admission_ns, fixture.stages.completion_drive_ns,

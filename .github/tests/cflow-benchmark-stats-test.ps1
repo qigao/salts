@@ -82,6 +82,18 @@ Assert-Sequence `
 Assert-Sequence `
   (Get-CflowBaselineDriverOrder -Run 1 -BackendIndex 1 -PayloadIndex 0) `
   @("actor", "direct") "next-backend baseline driver order"
+Assert-Sequence `
+  (Get-CflowPipelineDriverOrder -Run 1 -BackendIndex 0 -PayloadIndex 0 `
+    -WindowIndex 0 -WaitMode blocking) `
+  @("direct", "actor", "source") "first pipeline driver order"
+Assert-Sequence `
+  (Get-CflowPipelineDriverOrder -Run 2 -BackendIndex 0 -PayloadIndex 0 `
+    -WindowIndex 0 -WaitMode blocking) `
+  @("actor", "source", "direct") "next-run pipeline driver order"
+Assert-Sequence `
+  (Get-CflowPipelineDriverOrder -Run 1 -BackendIndex 0 -PayloadIndex 0 `
+    -WindowIndex 0 -WaitMode busy) `
+  @("actor", "source", "direct") "busy pipeline driver order"
 
 $reports = @(
   [pscustomobject]@{ benchmark_run=1; backend="epoll"; payload_bytes=64; driver="actor"; wait_mode="blocking"; attempted=10; p50_ns=100; p99_ns=200; wall_ns=1000; process_cpu_ns=500; process_cpu_pct=50; application_mib_per_cpu_second=10; admission_mean_ns=10; completion_drive_mean_ns=90 },
@@ -205,6 +217,82 @@ Assert-Throws {
     -BaselineWindow 1 -SourceWindow 4 -ExpectedRuns 2
 } "missing pipeline window pair"
 
+$pipelineLayerReports = @(
+  [pscustomobject]@{ benchmark_run=1; comparison_backend="epoll"; backend="socket"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="direct"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p99_ns=100; exchanges_per_second=100; application_mib_per_second=10; process_cpu_ns=1000; process_cpu_pct=10 },
+  [pscustomobject]@{ benchmark_run=1; comparison_backend="epoll"; backend="epoll"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="actor"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p99_ns=130; exchanges_per_second=80; application_mib_per_second=8; process_cpu_ns=1200; process_cpu_pct=12 },
+  [pscustomobject]@{ benchmark_run=1; comparison_backend="epoll"; backend="epoll"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="source"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p99_ns=180; exchanges_per_second=60; application_mib_per_second=6; process_cpu_ns=1500; process_cpu_pct=15 },
+  [pscustomobject]@{ benchmark_run=2; comparison_backend="epoll"; backend="socket"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="direct"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p99_ns=1000; exchanges_per_second=1000; application_mib_per_second=100; process_cpu_ns=10000; process_cpu_pct=20 },
+  [pscustomobject]@{ benchmark_run=2; comparison_backend="epoll"; backend="epoll"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="actor"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p99_ns=900; exchanges_per_second=500; application_mib_per_second=50; process_cpu_ns=8000; process_cpu_pct=16 },
+  [pscustomobject]@{ benchmark_run=2; comparison_backend="epoll"; backend="epoll"; protocol="udp"; workload="pipeline"; payload_bytes=64; driver="source"; wait_mode="blocking"; workload_window_capacity=4; workload_peak_in_flight=4; attempted=10; p99_ns=1200; exchanges_per_second=250; application_mib_per_second=25; process_cpu_ns=9000; process_cpu_pct=18 }
+)
+foreach ($report in $pipelineLayerReports) {
+  $report | Add-Member schema "cflow-network-benchmark/v1"
+  $report | Add-Member profile "throughput"
+  $report | Add-Member peer_mode "raw"
+  $report | Add-Member stage_timing $false
+  $report | Add-Member samples 2
+  $report | Add-Member exchanges_per_sample 5
+  $report | Add-Member errors 0
+  $report | Add-Member rejections 0
+  $report | Add-Member stale_completions 0
+}
+$pipelineLayerSummary = Get-CflowPairedPipelineLayerSummary `
+  -Reports $pipelineLayerReports -Backend epoll -WaitMode blocking `
+  -PayloadBytes 64 -WindowCapacity 4 -ExpectedRuns 2
+Assert-Equal $pipelineLayerSummary.runs 2 "pipeline layer paired run count"
+Assert-Equal $pipelineLayerSummary.window_capacity 4 "pipeline layer window"
+Assert-Equal $pipelineLayerSummary.paired_actor_direct_echo_ratio 0.65 `
+  "pipeline Actor/direct Echo/s ratio"
+Assert-Equal $pipelineLayerSummary.paired_source_actor_echo_ratio 0.625 `
+  "pipeline Source/Actor Echo/s ratio"
+Assert-Equal $pipelineLayerSummary.paired_source_direct_echo_ratio 0.425 `
+  "pipeline Source/direct Echo/s ratio"
+Assert-Equal $pipelineLayerSummary.paired_actor_direct_p99_ratio 1.1 `
+  "pipeline Actor/direct P99 ratio"
+Assert-Equal $pipelineLayerSummary.paired_source_actor_p99_ratio 1.358974 `
+  "pipeline Source/Actor P99 ratio"
+Assert-Equal $pipelineLayerSummary.paired_source_direct_p99_ratio 1.5 `
+  "pipeline Source/direct P99 ratio"
+Assert-Equal $pipelineLayerSummary.paired_actor_direct_cpu_time_ratio 1.0 `
+  "pipeline Actor/direct CPU-time ratio"
+Assert-Equal $pipelineLayerSummary.paired_source_actor_cpu_time_ratio 1.1875 `
+  "pipeline Source/Actor CPU-time ratio"
+Assert-Equal $pipelineLayerSummary.paired_source_direct_cpu_time_ratio 1.2 `
+  "pipeline Source/direct CPU-time ratio"
+Assert-Throws {
+  Get-CflowPairedPipelineLayerSummary `
+    -Reports @($pipelineLayerReports | Select-Object -First 5) `
+    -Backend epoll -WaitMode blocking -PayloadBytes 64 `
+    -WindowCapacity 4 -ExpectedRuns 2
+} "missing pipeline layer report"
+$mismatchedPipelineLayerAttempts = @($pipelineLayerReports | ForEach-Object {
+    $_.psobject.Copy()
+  })
+$mismatchedPipelineLayerAttempts[2].attempted = 9
+Assert-Throws {
+  Get-CflowPairedPipelineLayerSummary `
+    -Reports $mismatchedPipelineLayerAttempts -Backend epoll `
+    -WaitMode blocking -PayloadBytes 64 -WindowCapacity 4 -ExpectedRuns 2
+} "mismatched pipeline layer attempts"
+$mismatchedPipelineLayerProfile = @($pipelineLayerReports | ForEach-Object {
+    $_.psobject.Copy()
+  })
+$mismatchedPipelineLayerProfile[2].profile = "latency"
+Assert-Throws {
+  Get-CflowPairedPipelineLayerSummary `
+    -Reports $mismatchedPipelineLayerProfile -Backend epoll `
+    -WaitMode blocking -PayloadBytes 64 -WindowCapacity 4 -ExpectedRuns 2
+} "mismatched pipeline layer profile"
+$failedPipelineLayer = @($pipelineLayerReports | ForEach-Object {
+    $_.psobject.Copy()
+  })
+$failedPipelineLayer[1].errors = 1
+Assert-Throws {
+  Get-CflowPairedPipelineLayerSummary `
+    -Reports $failedPipelineLayer -Backend epoll -WaitMode blocking `
+    -PayloadBytes 64 -WindowCapacity 4 -ExpectedRuns 2
+} "failed pipeline layer record"
+
 $largeSummary = Get-CflowPairedSourceSummary -Reports $reports `
   -Backend epoll -WaitMode blocking -PayloadBytes 1024 -ExpectedRuns 1
 Assert-Equal $largeSummary.payload_bytes 1024 "large paired payload"
@@ -294,6 +382,98 @@ Assert-Equal $ioSourceReport.drive_calls_per_value 0.5833333333333334 `
   "IO Source drive calls per processed value"
 Assert-Equal $ioSourceReport.pending_drive_credit 1 `
   "IO Source pending drive credit"
+
+$ioModelOutput = @(
+  "      | mock direct-control | 2 | 4 | - | 10.000 | 0.040 | 0.040 | 0.040 | 100000000 | - |"
+  'CFLOW_IO_MODEL_BENCH_JSON {"schema":"cflow-io-model-benchmark/v1","model":"direct-control","capacity":4,"values_per_sample":4,"samples":2,"timed_values":8,"processed_values":12,"errors":0,"rejections":0,"stale_completions":0}'
+  "      | mock Actor | 2 | 4 | - | 50.000 | 0.200 | 0.200 | 0.200 | 20000000 | - |"
+  'CFLOW_IO_MODEL_BENCH_JSON {"schema":"cflow-io-model-benchmark/v1","model":"actor","capacity":4,"values_per_sample":4,"samples":2,"timed_values":8,"processed_values":12,"accepted":12,"acknowledged":12,"errors":0,"rejections":0,"stale_completions":0}'
+  "      | mock IO Source adapter | 2 | 4 | - | 80.000 | 0.320 | 0.320 | 0.320 | 12500000 | - |"
+  'CFLOW_IO_MODEL_BENCH_JSON {"schema":"cflow-io-model-benchmark/v1","model":"io-source-adapter","capacity":4,"values_per_sample":4,"samples":2,"timed_values":8,"processed_values":12,"accepted":12,"acknowledged":12,"drive_calls":3,"driver_calls":3,"peak_occupied":4,"errors":0,"rejections":0,"stale_completions":0}'
+  "      | mock coroutine Source adapter | 2 | 4 | - | 110.000 | 0.440 | 0.440 | 0.440 | 9090909 | - |"
+  'CFLOW_IO_MODEL_BENCH_JSON {"schema":"cflow-io-model-benchmark/v1","model":"coroutine-source-adapter","capacity":4,"values_per_sample":4,"samples":2,"timed_values":8,"processed_values":12,"accepted":12,"acknowledged":12,"drive_calls":3,"driver_calls":3,"peak_occupied":4,"added_worker_threads":0,"errors":0,"rejections":0,"stale_completions":0}'
+  "      | mock Source runtime window=4 values=4 | 2 | 4 | - | 100.000 | 0.400 | 0.400 | 0.400 | 10000000 | - |"
+  'CFLOW_IO_MODEL_BENCH_JSON {"schema":"cflow-io-model-benchmark/v1","model":"source-runtime","capacity":4,"values_per_sample":4,"samples":2,"timed_values":8,"processed_values":12,"accepted":12,"acknowledged":12,"drive_calls":3,"driver_calls":3,"peak_occupied":4,"errors":0,"rejections":0,"stale_completions":0}'
+)
+$ioModelReports = @(ConvertFrom-CflowIoModelBenchmarkOutput `
+  -Lines $ioModelOutput -ExpectedCapacity 4 -ExpectedSamples 2 `
+  -ExpectedValuesPerSample 4 -BenchmarkRun 1)
+Assert-Equal $ioModelReports.Count 5 "IO model report count"
+Assert-Equal $ioModelReports[0].model "direct-control" "direct model identity"
+Assert-Equal $ioModelReports[1].model "actor" "Actor model identity"
+Assert-Equal $ioModelReports[2].model "io-source-adapter" `
+  "IO Source adapter model identity"
+Assert-Equal $ioModelReports[3].model "coroutine-source-adapter" `
+  "coroutine Source adapter model identity"
+Assert-Equal $ioModelReports[4].model "source-runtime" `
+  "Source runtime model identity"
+Assert-Equal $ioModelReports[0].mean_ns_per_value 10.0 "direct model mean"
+Assert-Equal $ioModelReports[1].mean_ns_per_value 50.0 "Actor model mean"
+Assert-Equal $ioModelReports[2].mean_ns_per_value 80.0 `
+  "IO Source adapter model mean"
+Assert-Equal $ioModelReports[3].mean_ns_per_value 110.0 `
+  "coroutine Source adapter model mean"
+Assert-Equal $ioModelReports[3].added_worker_threads 0 `
+  "coroutine Source adapter added worker count"
+Assert-Equal $ioModelReports[4].mean_ns_per_value 100.0 `
+  "Source runtime model mean"
+$secondIoModelReports = @($ioModelReports | ForEach-Object {
+    $_.psobject.Copy()
+  })
+foreach ($report in $secondIoModelReports) { $report.benchmark_run = 2 }
+$secondIoModelReports[0].mean_ns_per_value = 20.0
+$secondIoModelReports[1].mean_ns_per_value = 80.0
+$secondIoModelReports[2].mean_ns_per_value = 100.0
+$secondIoModelReports[3].mean_ns_per_value = 140.0
+$secondIoModelReports[4].mean_ns_per_value = 120.0
+$ioModelSummary = Get-CflowPairedIoModelSummary `
+  -Reports @($ioModelReports + $secondIoModelReports) `
+  -Capacity 4 -ExpectedRuns 2
+Assert-Equal $ioModelSummary.paired_actor_direct_cost_ratio 4.5 `
+  "mock Actor/direct cost ratio"
+Assert-Equal $ioModelSummary.paired_adapter_actor_cost_ratio 1.425 `
+  "mock IO Source adapter/Actor cost ratio"
+Assert-Equal $ioModelSummary.paired_runtime_adapter_cost_ratio 1.225 `
+  "mock Source runtime/adapter cost ratio"
+Assert-Equal $ioModelSummary.paired_coroutine_adapter_cost_ratio 1.3875 `
+  "mock coroutine Source adapter/adapter cost ratio"
+Assert-Equal $ioModelSummary.paired_actor_direct_delta_ns 50.0 `
+  "mock Actor/direct absolute cost"
+Assert-Equal $ioModelSummary.paired_adapter_actor_delta_ns 25.0 `
+  "mock IO Source adapter/Actor absolute cost"
+Assert-Equal $ioModelSummary.paired_runtime_adapter_delta_ns 20.0 `
+  "mock Source runtime/adapter absolute cost"
+Assert-Equal $ioModelSummary.paired_coroutine_adapter_delta_ns 35.0 `
+  "mock coroutine Source adapter/adapter absolute cost"
+Assert-Throws {
+  Get-CflowPairedIoModelSummary `
+    -Reports @($ioModelReports + $secondIoModelReports | Select-Object -First 9) `
+    -Capacity 4 -ExpectedRuns 2
+} "missing mock model pair"
+$invalidIoModelLifecycle = @($ioModelReports | ForEach-Object {
+    $_.psobject.Copy()
+  })
+$invalidIoModelLifecycle[1].acknowledged = 11
+Assert-Throws {
+  Get-CflowPairedIoModelSummary -Reports $invalidIoModelLifecycle `
+    -Capacity 4 -ExpectedRuns 1
+} "invalid mock Actor lifecycle counts"
+$invalidIoModelDrive = @($ioModelReports | ForEach-Object {
+    $_.psobject.Copy()
+  })
+$invalidIoModelDrive[2].drive_calls = 0
+Assert-Throws {
+  Get-CflowPairedIoModelSummary -Reports $invalidIoModelDrive `
+    -Capacity 4 -ExpectedRuns 1
+} "invalid mock IO Source adapter drive count"
+$invalidCoroutineThreadCount = @($ioModelReports | ForEach-Object {
+    $_.psobject.Copy()
+  })
+$invalidCoroutineThreadCount[3].added_worker_threads = 1
+Assert-Throws {
+  Get-CflowPairedIoModelSummary -Reports $invalidCoroutineThreadCount `
+    -Capacity 4 -ExpectedRuns 1
+} "invalid mock coroutine Source adapter worker count"
 
 $legacyIoSourceOutput = @($ioSourceOutput | ForEach-Object {
     $_ -replace '"drive_calls":7,"driver_calls":6,"pending_drive_credit":1', `
