@@ -526,10 +526,46 @@ exclusive adapter invariant has exactly one active leaf. Callback execution,
 allocation, and the legacy unhandled-Event difference remain outside that pure
 proof boundary.
 
-This module is not an SCXML processor or a durable workflow engine. It does not
-parse XML or implement SCXML data models, `send`, `invoke`, `finalize`, external
-communication, persistence, recovery, retries, compensation, or distributed
-coordination. Those require separate frontends and runtime protocols.
+The CFlow core remains format-neutral and does not parse XML. The optional
+`TurboUtils::CFlowScxml` frontend described below performs bounded SCXML Core
+admission and lowering without changing the Statechart runtime dependency
+surface. CFlow is not a durable workflow engine and does not implement SCXML
+`send`, `invoke`, `finalize`, external communication, persistence, recovery,
+retries, compensation, or distributed coordination.
+
+### Optional SCXML Core frontend
+
+Configure with `-DCFLOW_ENABLE_SCXML=ON` to build and install
+`TurboUtils::CFlowScxml` and `<cflow/scxml.h>`. The option is OFF by default.
+The frontend depends only on `TurboUtils::CFlow` and
+`TurboUtils::XmlParser`; CFlow itself has no XML, cxml, CSerde, or CBind
+dependency. cxml is a private implementation detail of XmlParser and is not
+installed or exported.
+
+`cflow_scxml_compile()` owns the compiled native Statechart and its stable
+state/event name maps. Input is borrowed only for the call. The returned
+program must outlive every runtime instance borrowing its Statechart and must
+be destroyed with `cflow_scxml_program_destroy()` after those instances are
+quiescent. The null data model is represented by an inert CMeta `bool` value;
+named event helpers produce the matching borrowed false payload, which runtime
+mailbox admission copies.
+
+The supported compatibility subset is deliberately strict:
+
+- SCXML namespace `http://www.w3.org/2005/07/scxml`, version `1.0`, and omitted
+  or `null` data model;
+- `scxml`, `state`, `parallel`, `transition`, `initial`, `final`, `history`, and
+  empty `onentry`/`onexit` elements;
+- default/explicit initial transitions, shallow/deep history defaults,
+  eventless transitions, exact named events, `done.state.<id>` completion
+  events, and internal/external transition kinds.
+
+Conditions, executable content, wildcard event descriptors, multiple targets,
+non-null data models, and other SCXML elements fail during compilation with the
+first byte offset and one-based line/column diagnostic. There is no fallback
+or silent feature removal. Configurable hard limits cover XML input, depth,
+nodes, attributes, retained strings, states, events, transitions, and retained
+name bytes; a failed compile leaves the output program empty.
 
 ## Bounded Actor lifecycle
 

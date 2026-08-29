@@ -23,6 +23,8 @@ target_link_libraries(consume_json_cbind PRIVATE
   TurboUtils::CBind
   TurboUtils::Core)
 add_turboutils_consumer(consume_cflow TurboUtils::CFlow CONSUME_CFLOW)
+add_turboutils_consumer(consume_xml_parser TurboUtils::XmlParser
+                       CONSUME_XML_PARSER)
 add_turboutils_consumer(consume_cflow_process TurboUtils::CFlowProcess
                        CONSUME_CFLOW_PROCESS)
 add_turboutils_consumer(consume_cflow_fs TurboUtils::CFlowFS CONSUME_CFLOW_FS)
@@ -81,6 +83,18 @@ if(TURBOUTILS_EXPECT_CFLOW_USB)
 elseif(TARGET TurboUtils::CFlowUSB)
   message(FATAL_ERROR
           "feature-off TurboUtils package unexpectedly exports CFlowUSB")
+endif()
+
+if(TURBOUTILS_EXPECT_CFLOW_SCXML)
+  if(NOT TARGET TurboUtils::CFlowScxml)
+    message(FATAL_ERROR
+            "TurboUtils::CFlowScxml was requested but is not exported")
+  endif()
+  add_turboutils_consumer(consume_cflow_scxml
+                         TurboUtils::CFlowScxml CONSUME_CFLOW_SCXML)
+elseif(TARGET TurboUtils::CFlowScxml)
+  message(FATAL_ERROR
+          "feature-off TurboUtils package unexpectedly exports CFlowScxml")
 endif()
 
 add_executable(consume_stl_cpp consumer.cpp)

@@ -18,6 +18,8 @@ cmake_dependent_option(BUILD_BENCHMARKS "Build benchmark executables" ON
                        "BUILD_TESTS" OFF)
 option(CFLOW_ENABLE_MINICORO
        "Build the optional minicoro-backed CFlow Resumable adapter" OFF)
+option(CFLOW_ENABLE_SCXML
+       "Build the optional XML SCXML Core frontend for CFlow Statechart" OFF)
 
 option(TURBO_ENABLE_EPOLL_READINESS
        "Enable the Linux epoll readiness backend" OFF)

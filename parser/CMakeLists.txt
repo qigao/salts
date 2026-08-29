@@ -9,6 +9,7 @@ message(STATUS "Parser module enabled")
 add_subdirectory(query_vm)
 add_subdirectory(ini_parser)
 add_subdirectory(json_parser)
+add_subdirectory(xml_parser)
 add_subdirectory(csv_parser)
 add_subdirectory(uri_parser)
 add_subdirectory(tlv_parser)
@@ -27,6 +28,7 @@ set(TURBOUTILS_PARSER_TARGETS
   ini_parser
   json_parser
   json_cserde_adapter
+  xml_parser
   csv_parser
   uri_parser
   tlv_parser
@@ -50,6 +52,7 @@ install(
 set(TURBOUTILS_PARSER_FLAT_INCLUDE_DIRS
   ini_parser/include
   json_parser/include
+  xml_parser/include
   csv_parser/include
   uri_parser/include
   tlv_parser/include

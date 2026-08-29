@@ -122,6 +122,32 @@ int main(void) {
   return status == CBIND_OK && value.value == 7 ? 0 : 3;
 }
 
+#elif defined(CONSUME_XML_PARSER)
+#include <xml_parser/xml_parser.h>
+
+int main(void) {
+  static const char xml[] = "<installed/>";
+  turbo_xml_document document = {0};
+  turbo_xml_status status = turbo_xml_parse(
+      &document, xml, sizeof(xml) - 1u, NULL, NULL);
+  turbo_xml_document_destroy(&document);
+  return status == TURBO_XML_OK ? 0 : 1;
+}
+
+#elif defined(CONSUME_CFLOW_SCXML)
+#include <cflow/scxml.h>
+
+int main(void) {
+  static const char source[] =
+      "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+      "<final id='done'/></scxml>";
+  cflow_scxml_program program = {0};
+  cflow_scxml_status status = cflow_scxml_compile(
+      &program, source, sizeof(source) - 1u, NULL, NULL);
+  cflow_scxml_program_destroy(&program);
+  return status == CFLOW_SCXML_OK ? 0 : 1;
+}
+
 #elif defined(CONSUME_CFLOW_PROCESS)
 #include <cflow/process.h>
 
