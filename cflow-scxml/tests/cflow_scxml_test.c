@@ -1,12 +1,132 @@
 #include <cflow/scxml.h>
 #include <cflow/executor.h>
 #include <cflow/statechart_runtime.h>
+#include <tlog.h>
 
 #include "tinytest.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define SCXML_LOG_CAPTURE_CAPACITY 4u
+#define SCXML_LOG_COMPONENT_CAPACITY 32u
+#define SCXML_LOG_MESSAGE_CAPACITY 64u
+
+typedef struct scxml_log_capture {
+    size_t count;
+    turbo_log_level_t levels[SCXML_LOG_CAPTURE_CAPACITY];
+    char components[SCXML_LOG_CAPTURE_CAPACITY]
+                   [SCXML_LOG_COMPONENT_CAPACITY];
+    char messages[SCXML_LOG_CAPTURE_CAPACITY][SCXML_LOG_MESSAGE_CAPACITY];
+} scxml_log_capture;
+
+static cflow_scxml_status compile_status(
+    const char *source, cflow_scxml_program *program,
+    cflow_scxml_diagnostic *diagnostic);
+
+static void capture_scxml_log(const turbo_log_entry_t *entry,
+                              void *user_data) {
+    scxml_log_capture *capture = (scxml_log_capture *)user_data;
+    size_t index;
+    size_t component_size;
+    size_t message_size;
+    if (entry == NULL || capture == NULL ||
+        capture->count >= SCXML_LOG_CAPTURE_CAPACITY) {
+        return;
+    }
+    index = capture->count++;
+    capture->levels[index] = entry->level;
+    component_size = entry->component != NULL ? strlen(entry->component) : 0u;
+    if (component_size >= SCXML_LOG_COMPONENT_CAPACITY)
+        component_size = SCXML_LOG_COMPONENT_CAPACITY - 1u;
+    if (component_size != 0u)
+        memcpy(capture->components[index], entry->component, component_size);
+    capture->components[index][component_size] = '\0';
+    message_size = entry->message_len;
+    if (message_size >= SCXML_LOG_MESSAGE_CAPACITY)
+        message_size = SCXML_LOG_MESSAGE_CAPACITY - 1u;
+    if (message_size != 0u)
+        memcpy(capture->messages[index], entry->message, message_size);
+    capture->messages[index][message_size] = '\0';
+}
+
+static bool run_log_program(const char *source, bool install_logger,
+                            scxml_log_capture *capture, bool *out_done,
+                            bool *out_errored) {
+    cflow_scxml_program program = {0};
+    cflow_scxml_diagnostic diagnostic = {0};
+    const cflow_statechart_executable_binding *bindings = NULL;
+    size_t binding_count = 0u;
+    cflow_executor executor = {0};
+    cflow_statechart_instance instance = {0};
+    cflow_statechart_instance_config config = {0};
+    cflow_statechart_instance_stats stats = {0};
+    tlog_t *previous_logger = tlog_peek_default();
+    tlog_t *logger = NULL;
+    turbo_log_sink_t *sink = NULL;
+    bool executor_initialized = false;
+    bool instance_initialized = false;
+    bool succeeded = false;
+
+    if (source == NULL || capture == NULL || out_done == NULL ||
+        out_errored == NULL) {
+        return false;
+    }
+    memset(capture, 0, sizeof(*capture));
+    if (install_logger) {
+        const tlog_config_t log_config = {
+            .min_level = TURBO_LOG_LEVEL_DEBUG, .buffer_size = 0u};
+        logger = tlog_create(&log_config);
+        if (logger == NULL) goto cleanup;
+        sink = turbo_sink_callback_create(capture_scxml_log, capture);
+        if (sink == NULL || tlog_add_sink(logger, sink) != 0) goto cleanup;
+        sink = NULL;
+        tlog_set_default(logger);
+    } else {
+        tlog_set_default(NULL);
+    }
+    if (compile_status(source, &program, &diagnostic) != CFLOW_SCXML_OK ||
+        !cflow_scxml_program_runtime_bindings(
+            &program, &bindings, &binding_count) ||
+        !cflow_executor_serial_init(&executor)) {
+        goto cleanup;
+    }
+    executor_initialized = true;
+    config = (cflow_statechart_instance_config){
+        .statechart = cflow_scxml_program_statechart(&program),
+        .initial_state = cflow_scxml_program_initial_state(&program),
+        .executables = bindings,
+        .executable_count = binding_count,
+        .external_event_capacity = 2u,
+        .internal_event_capacity = 2u,
+        .completion_capacity = 2u,
+        .microstep_limit = 16u,
+        .executor = &executor};
+    if (cflow_statechart_instance_init(&instance, &config) !=
+        CFLOW_STATECHART_RUNTIME_OK) {
+        goto cleanup;
+    }
+    instance_initialized = true;
+    if (!cflow_executor_wait_idle(&executor) ||
+        !cflow_statechart_instance_get_stats(&instance, &stats)) {
+        goto cleanup;
+    }
+    *out_done = stats.done;
+    *out_errored = stats.errored;
+    succeeded = true;
+
+cleanup:
+    if (instance_initialized)
+        (void)cflow_statechart_instance_destroy(&instance);
+    if (executor_initialized) cflow_executor_destroy(&executor);
+    if (logger != NULL) tlog_flush(logger);
+    tlog_set_default(previous_logger);
+    if (sink != NULL) turbo_sink_destroy(sink);
+    if (logger != NULL) tlog_destroy(logger);
+    cflow_scxml_program_destroy(&program);
+    return succeeded;
+}
 
 static cflow_scxml_status compile_status(const char *source,
                                          cflow_scxml_program *program,
@@ -489,6 +609,125 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                     CFLOW_STATECHART_RUNTIME_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
+    }
+
+    it("emits a label-only log and continues executable content") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='start'><state id='start'><onentry>"
+            "<log label='entered'/><raise event='advance'/></onentry>"
+            "<transition event='advance' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        scxml_log_capture capture = {0};
+        bool done = false;
+        bool errored = false;
+
+        check_true(run_log_program(
+            source, true, &capture, &done, &errored));
+        check_true(done);
+        check_false(errored);
+        check_equal(capture.count, (size_t)1u);
+        check_equal(capture.levels[0], TURBO_LOG_LEVEL_DEBUG);
+        check_equal(capture.components[0], "cflow.scxml");
+        check_equal(capture.messages[0], "entered");
+    }
+
+    it("emits only the selected conditional log steps in document order") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='active'><state id='active'><onentry>"
+            "<log label='before'/><if cond='In(active)'>"
+            "<log label='chosen'/><else/><log label='wrong'/></if>"
+            "<raise event='advance'/></onentry>"
+            "<transition event='advance' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        scxml_log_capture capture = {0};
+        bool done = false;
+        bool errored = false;
+
+        check_true(run_log_program(
+            source, true, &capture, &done, &errored));
+        check_true(done);
+        check_false(errored);
+        check_equal(capture.count, (size_t)2u);
+        check_equal(capture.messages[0], "before");
+        check_equal(capture.messages[1], "chosen");
+    }
+
+    it("treats a missing default logger as a successful log no-op") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='start'><state id='start'><onentry>"
+            "<log/><raise event='advance'/></onentry>"
+            "<transition event='advance' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        scxml_log_capture capture = {0};
+        bool done = false;
+        bool errored = false;
+
+        check_true(run_log_program(
+            source, false, &capture, &done, &errored));
+        check_true(done);
+        check_false(errored);
+        check_equal(capture.count, (size_t)0u);
+    }
+
+    it("rejects unsupported log expressions at the owning attribute") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='active'><onentry><log label='value' expr='1'/>"
+            "</onentry></state></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_UNSUPPORTED_FEATURE);
+        check_equal(diagnostic.location.byte_offset,
+                    (size_t)(strstr(source, "expr=") - source));
+        check_null(program.impl);
+    }
+
+    it("rejects unknown log attributes and non-comment children") {
+        static const char unknown_attribute[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='active'><onentry><log target='sink'/>"
+            "</onentry></state></scxml>";
+        static const char child[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='active'><onentry><log><raise event='bad'/></log>"
+            "</onentry></state></scxml>";
+        const char *sources[] = {unknown_attribute, child};
+        const char *owners[] = {"target=", "<raise"};
+        size_t index;
+
+        for (index = 0u; index < sizeof(sources) / sizeof(sources[0]);
+             ++index) {
+            cflow_scxml_program program = {0};
+            cflow_scxml_diagnostic diagnostic = {0};
+            check_equal(compile_status(sources[index], &program, &diagnostic),
+                        CFLOW_SCXML_INVALID_STRUCTURE);
+            check_equal(diagnostic.location.byte_offset,
+                        (size_t)(strstr(sources[index], owners[index]) -
+                                 sources[index]));
+            check_null(program.impl);
+        }
+    }
+
+    it("shares max_name_bytes across state names and retained log labels") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='s'><state id='s'><onentry><log label='x'/>"
+            "</onentry></state></scxml>";
+        cflow_scxml_limits limits = cflow_scxml_default_limits();
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+
+        limits.max_name_bytes = 2u;
+        check_equal(cflow_scxml_compile(&program, source, strlen(source),
+                                        &limits, &diagnostic),
+                    CFLOW_SCXML_LIMIT_EXCEEDED);
+        check_not_null(strstr(diagnostic.message, "max_name_bytes"));
+        check_null(program.impl);
     }
 
     it("preserves exit transition entry and in-block raise order") {

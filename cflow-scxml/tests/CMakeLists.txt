@@ -1,6 +1,6 @@
 cmake_add_test(cflow_scxml_test
   SOURCES cflow_scxml_test.c
-  LIBS TurboUtils::CFlowScxml TurboUtils::TinyTest
+  LIBS TurboUtils::CFlowScxml TurboUtils::Core TurboUtils::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../include
   FOLDER "cflow-scxml/tests")
 
