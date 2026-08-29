@@ -1,0 +1,25 @@
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" initial="idle">
+  <state id="idle">
+    <onexit>
+      <raise event="exit.first"/>
+      <raise event="exit.second"/>
+    </onexit>
+    <transition event="go" target="after_exit">
+      <raise event="transition.raised"/>
+    </transition>
+  </state>
+  <state id="after_exit">
+    <onentry><raise event="entry.raised"/></onentry>
+    <transition event="exit.first" target="after_first"/>
+  </state>
+  <state id="after_first">
+    <transition event="exit.second" target="after_second"/>
+  </state>
+  <state id="after_second">
+    <transition event="transition.raised" target="after_transition"/>
+  </state>
+  <state id="after_transition">
+    <transition event="entry.raised" target="done"/>
+  </state>
+  <final id="done"/>
+</scxml>

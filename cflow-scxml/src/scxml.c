@@ -36,6 +36,20 @@ typedef struct scxml_synthetic_initial {
     turbo_xml_location location;
 } scxml_synthetic_initial;
 
+typedef enum scxml_step_kind {
+    SCXML_STEP_RAISE = 1
+} scxml_step_kind;
+
+typedef struct scxml_step {
+    scxml_step_kind kind;
+    cflow_event_id event;
+} scxml_step;
+
+typedef struct scxml_block {
+    const scxml_step *steps;
+    size_t step_count;
+} scxml_block;
+
 typedef struct scxml_counts {
     size_t state_rows;
     size_t node_refs;
@@ -43,6 +57,10 @@ typedef struct scxml_counts {
     size_t synthetic_initials;
     size_t transition_rows;
     size_t event_occurrences;
+    size_t executable_blocks;
+    size_t executable_steps;
+    size_t state_action_rows;
+    size_t transition_action_rows;
 } scxml_counts;
 
 typedef struct scxml_build {
@@ -51,6 +69,12 @@ typedef struct scxml_build {
     cflow_statechart_state *states;
     cflow_statechart_transition *transitions;
     cflow_event_type *events;
+    cflow_statechart_executable *executables;
+    cflow_statechart_state_action *state_actions;
+    cflow_statechart_transition_action *transition_actions;
+    cflow_statechart_executable_binding *bindings;
+    scxml_block *blocks;
+    scxml_step *steps;
     scxml_name_ref *state_names;
     scxml_name_ref *event_names;
     scxml_name_ref *event_occurrences;
@@ -63,6 +87,10 @@ typedef struct scxml_build {
     size_t transition_index;
     size_t event_occurrence_index;
     size_t event_name_count;
+    size_t executable_index;
+    size_t step_index;
+    size_t state_action_index;
+    size_t transition_action_index;
 } scxml_build;
 
 typedef struct cflow_scxml_program_impl {
@@ -71,6 +99,10 @@ typedef struct cflow_scxml_program_impl {
     size_t state_name_count;
     scxml_program_name *event_names;
     size_t event_name_count;
+    cflow_statechart_executable_binding *bindings;
+    size_t binding_count;
+    scxml_block *blocks;
+    scxml_step *steps;
     char *name_storage;
     bool null_value;
 } cflow_scxml_program_impl;
@@ -85,7 +117,8 @@ typedef enum scxml_element_kind {
     SCXML_ELEMENT_FINAL,
     SCXML_ELEMENT_HISTORY,
     SCXML_ELEMENT_ONENTRY,
-    SCXML_ELEMENT_ONEXIT
+    SCXML_ELEMENT_ONEXIT,
+    SCXML_ELEMENT_RAISE
 } scxml_element_kind;
 
 static bool checked_add(size_t left, size_t right, size_t *out) {
@@ -281,6 +314,19 @@ static bool is_xml_ncname(turbo_xml_string_view name) {
     return true;
 }
 
+static bool is_xml_nmtoken(turbo_xml_string_view token) {
+    size_t cursor = 0u;
+    uint32_t codepoint;
+    if (is_empty_view(token)) return false;
+    while (cursor < token.size) {
+        if (!decode_utf8(token.data, token.size, &cursor, &codepoint) ||
+            !(is_ncname_char(codepoint) || codepoint == ':')) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static scxml_element_kind element_kind(turbo_xml_node node) {
     const turbo_xml_string_view name = turbo_xml_node_local_name(node);
     if (view_equal_raw(name, "scxml")) return SCXML_ELEMENT_SCXML;
@@ -292,6 +338,7 @@ static scxml_element_kind element_kind(turbo_xml_node node) {
     if (view_equal_raw(name, "history")) return SCXML_ELEMENT_HISTORY;
     if (view_equal_raw(name, "onentry")) return SCXML_ELEMENT_ONENTRY;
     if (view_equal_raw(name, "onexit")) return SCXML_ELEMENT_ONEXIT;
+    if (view_equal_raw(name, "raise")) return SCXML_ELEMENT_RAISE;
     return SCXML_ELEMENT_UNKNOWN;
 }
 
@@ -340,6 +387,8 @@ static bool attribute_allowed(scxml_element_kind kind,
                    view_equal_raw(name, "target") ||
                    view_equal_raw(name, "type") ||
                    view_equal_raw(name, "cond");
+        case SCXML_ELEMENT_RAISE:
+            return view_equal_raw(name, "event");
         case SCXML_ELEMENT_INITIAL:
         case SCXML_ELEMENT_ONENTRY:
         case SCXML_ELEMENT_ONEXIT:
@@ -457,6 +506,80 @@ static bool completion_token(turbo_xml_string_view token,
     return true;
 }
 
+static cflow_scxml_status analyze_raise(scxml_build *build,
+                                        turbo_xml_node node,
+                                        scxml_counts *counts) {
+    const turbo_xml_attribute event_attribute = find_attribute(node, "event");
+    cflow_scxml_status status = validate_element_attributes(
+        build, node, SCXML_ELEMENT_RAISE);
+    size_t index;
+    if (status != CFLOW_SCXML_OK) return status;
+    if (event_attribute.impl == NULL) {
+        return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
+                          turbo_xml_node_location(node),
+                          "raise requires one event NMTOKEN");
+    }
+    if (!is_xml_nmtoken(turbo_xml_attribute_value(event_attribute))) {
+        return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
+                          turbo_xml_attribute_location(event_attribute),
+                          "raise event must be one XML NMTOKEN");
+    }
+    for (index = 0u; index < turbo_xml_node_child_count(node); ++index) {
+        const turbo_xml_node child = turbo_xml_node_child_at(node, index);
+        if (turbo_xml_node_type(child) != TURBO_XML_COMMENT) {
+            return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
+                              turbo_xml_node_location(child),
+                              "raise cannot contain executable or text content");
+        }
+    }
+    if (!checked_add(counts->executable_steps, 1u,
+                     &counts->executable_steps) ||
+        !checked_add(counts->event_occurrences, 1u,
+                     &counts->event_occurrences)) {
+        return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                          turbo_xml_attribute_location(event_attribute),
+                          "raise step count overflow");
+    }
+    return CFLOW_SCXML_OK;
+}
+
+static cflow_scxml_status analyze_executable_block(
+    scxml_build *build, turbo_xml_node node, scxml_counts *counts,
+    bool *out_nonempty) {
+    const size_t first_step = counts->executable_steps;
+    size_t index;
+    *out_nonempty = false;
+    for (index = 0u; index < turbo_xml_node_child_count(node); ++index) {
+        const turbo_xml_node child = turbo_xml_node_child_at(node, index);
+        scxml_element_kind child_kind;
+        cflow_scxml_status status;
+        if (turbo_xml_node_type(child) == TURBO_XML_COMMENT) continue;
+        if (turbo_xml_node_type(child) != TURBO_XML_ELEMENT) {
+            return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
+                              turbo_xml_node_location(child),
+                              "executable block text content is not supported");
+        }
+        status = require_scxml_element(build, child, &child_kind);
+        if (status != CFLOW_SCXML_OK) return status;
+        if (child_kind != SCXML_ELEMENT_RAISE) {
+            return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
+                              turbo_xml_node_location(child),
+                              "unsupported executable element");
+        }
+        status = analyze_raise(build, child, counts);
+        if (status != CFLOW_SCXML_OK) return status;
+    }
+    if (counts->executable_steps != first_step &&
+        !checked_add(counts->executable_blocks, 1u,
+                     &counts->executable_blocks)) {
+        return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                          turbo_xml_node_location(node),
+                          "executable block count overflow");
+    }
+    *out_nonempty = counts->executable_steps != first_step;
+    return CFLOW_SCXML_OK;
+}
+
 static cflow_scxml_status analyze_transition(scxml_build *build,
                                              turbo_xml_node node,
                                              bool require_default,
@@ -467,16 +590,11 @@ static cflow_scxml_status analyze_transition(scxml_build *build,
     turbo_xml_string_view token;
     size_t cursor = 0u;
     size_t token_count = 0u;
+    bool nonempty = false;
     cflow_scxml_status status;
-    size_t index;
 
     status = validate_element_attributes(build, node, SCXML_ELEMENT_TRANSITION);
     if (status != CFLOW_SCXML_OK) return status;
-    if (turbo_xml_node_child_count(node) != 0u) {
-        return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
-                          turbo_xml_node_location(node),
-                          "transition executable content is not supported");
-    }
     event_attribute = find_attribute(node, "event");
     target_attribute = find_attribute(node, "target");
     if (require_default && event_attribute.impl != NULL) {
@@ -533,14 +651,14 @@ static cflow_scxml_status analyze_transition(scxml_build *build,
                           turbo_xml_node_location(node),
                           "transition count overflow");
     }
-    for (index = 0u; index < turbo_xml_node_child_count(node); ++index) {
-        if (turbo_xml_node_type(turbo_xml_node_child_at(node, index)) ==
-            TURBO_XML_TEXT) {
-            return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
-                              turbo_xml_node_location(
-                                  turbo_xml_node_child_at(node, index)),
-                              "transition text content is not supported");
-        }
+    status = analyze_executable_block(build, node, counts, &nonempty);
+    if (status != CFLOW_SCXML_OK) return status;
+    if (nonempty &&
+        !checked_add(counts->transition_action_rows, token_count,
+                     &counts->transition_action_rows)) {
+        return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                          turbo_xml_node_location(node),
+                          "transition action count overflow");
     }
     return CFLOW_SCXML_OK;
 }
@@ -694,18 +812,22 @@ static cflow_scxml_status analyze_state(scxml_build *build,
                 counts);
         } else if (child_kind == SCXML_ELEMENT_ONENTRY ||
                    child_kind == SCXML_ELEMENT_ONEXIT) {
+            bool nonempty = false;
             if (kind == SCXML_ELEMENT_INITIAL || kind == SCXML_ELEMENT_HISTORY ||
                 is_root) {
                 return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
                                   turbo_xml_node_location(child),
                                   "onentry/onexit is not allowed at this location");
             }
-            if (turbo_xml_node_child_count(child) != 0u) {
-                return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
-                                  turbo_xml_node_location(child),
-                                  "onentry/onexit executable content is not supported");
+            status = analyze_executable_block(
+                build, child, counts, &nonempty);
+            if (status == CFLOW_SCXML_OK && nonempty &&
+                !checked_add(counts->state_action_rows, 1u,
+                             &counts->state_action_rows)) {
+                status = scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                                    turbo_xml_node_location(child),
+                                    "state action count overflow");
             }
-            status = CFLOW_SCXML_OK;
         } else {
             return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
                               turbo_xml_node_location(child),
@@ -867,9 +989,25 @@ static cflow_scxml_status collect_transition_events(
                     }
                 }
             }
+            {
+                cflow_scxml_status status =
+                    collect_transition_events(build, child);
+                if (status != CFLOW_SCXML_OK) return status;
+            }
+        } else if (child_kind == SCXML_ELEMENT_RAISE) {
+            const turbo_xml_attribute event_attribute =
+                find_attribute(child, "event");
+            build->event_occurrences[build->event_occurrence_index] =
+                (scxml_name_ref){
+                    turbo_xml_attribute_value(event_attribute),
+                    turbo_xml_attribute_location(event_attribute), 0u,
+                    build->event_occurrence_index};
+            ++build->event_occurrence_index;
         } else if (is_state_element(child_kind) ||
                    child_kind == SCXML_ELEMENT_INITIAL ||
-                   child_kind == SCXML_ELEMENT_HISTORY) {
+                   child_kind == SCXML_ELEMENT_HISTORY ||
+                   child_kind == SCXML_ELEMENT_ONENTRY ||
+                   child_kind == SCXML_ELEMENT_ONEXIT) {
             cflow_scxml_status status =
                 collect_transition_events(build, child);
             if (status != CFLOW_SCXML_OK) return status;
@@ -919,6 +1057,127 @@ static cflow_scxml_status build_event_names(scxml_build *build,
     return CFLOW_SCXML_OK;
 }
 
+static bool execute_scxml_block(void *user,
+                                cflow_statechart_action_phase phase,
+                                cflow_machine_state_id owner,
+                                const void *state,
+                                const cflow_event_view *event,
+                                void *out_state,
+                                cflow_statechart_raise_fn raise_internal,
+                                void *raise_user,
+                                const char **out_error) {
+    const scxml_block *block = (const scxml_block *)user;
+    const bool null_value = false;
+    size_t index;
+    (void)phase;
+    (void)owner;
+    (void)event;
+    if (out_error != NULL) *out_error = NULL;
+    if (block == NULL || block->steps == NULL || block->step_count == 0u ||
+        state == NULL || out_state == NULL || raise_internal == NULL ||
+        out_error == NULL) {
+        if (out_error != NULL)
+            *out_error = "SCXML executable block context is invalid";
+        return false;
+    }
+    *(bool *)out_state = *(const bool *)state;
+    for (index = 0u; index < block->step_count; ++index) {
+        const scxml_step *step = &block->steps[index];
+        const cflow_event_view raised = {
+            step->event, &cmeta_type_bool, &null_value};
+        if (step->kind != SCXML_STEP_RAISE) {
+            *out_error = "SCXML executable step is invalid";
+            return false;
+        }
+        if (!raise_internal(raise_user, &raised, out_error)) return false;
+    }
+    return true;
+}
+
+static cflow_scxml_status emit_executable_block(
+    scxml_build *build, turbo_xml_node node,
+    cflow_statechart_executable_id *out_executable) {
+    const size_t block_index = build->executable_index;
+    const size_t first_step = build->step_index;
+    const cflow_statechart_executable_id executable =
+        (cflow_statechart_executable_id)(block_index + 1u);
+    size_t index;
+    *out_executable = 0u;
+    for (index = 0u; index < turbo_xml_node_child_count(node); ++index) {
+        const turbo_xml_node child = turbo_xml_node_child_at(node, index);
+        const turbo_xml_attribute event_attribute = find_attribute(child, "event");
+        const scxml_name_ref *event;
+        if (turbo_xml_node_type(child) != TURBO_XML_ELEMENT ||
+            element_kind(child) != SCXML_ELEMENT_RAISE) {
+            continue;
+        }
+        event = find_name_ref(build->event_names, build->event_name_count,
+                              turbo_xml_attribute_value(event_attribute));
+        if (event == NULL) {
+            return scxml_fail(build, CFLOW_SCXML_NATIVE_IR_REJECTED,
+                              turbo_xml_attribute_location(event_attribute),
+                              "raise event was not retained in the event map");
+        }
+        build->steps[build->step_index++] = (scxml_step){
+            SCXML_STEP_RAISE, (cflow_event_id)event->id};
+    }
+    if (build->step_index == first_step) return CFLOW_SCXML_OK;
+    build->blocks[block_index] = (scxml_block){
+        build->steps + first_step, build->step_index - first_step};
+    build->executables[block_index] = (cflow_statechart_executable){
+        executable, &cmeta_type_bool,
+        CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL,
+        CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+    build->bindings[block_index] = (cflow_statechart_executable_binding){
+        executable, execute_scxml_block, &build->blocks[block_index]};
+    ++build->executable_index;
+    *out_executable = executable;
+    return CFLOW_SCXML_OK;
+}
+
+static cflow_scxml_status emit_state_executables(scxml_build *build,
+                                                 turbo_xml_node node,
+                                                 size_t node_count) {
+    const cflow_machine_state_id owner = node_id(build, node, node_count);
+    uint32_t entry_order = 0u;
+    uint32_t exit_order = 0u;
+    size_t index;
+    if (owner == 0u) {
+        return scxml_fail(build, CFLOW_SCXML_NATIVE_IR_REJECTED,
+                          turbo_xml_node_location(node),
+                          "SCXML state has no native owner for executable content");
+    }
+    for (index = 0u; index < turbo_xml_node_child_count(node); ++index) {
+        const turbo_xml_node child = turbo_xml_node_child_at(node, index);
+        const scxml_element_kind child_kind = element_kind(child);
+        cflow_scxml_status status;
+        if (turbo_xml_node_type(child) != TURBO_XML_ELEMENT) continue;
+        if (child_kind == SCXML_ELEMENT_ONENTRY ||
+            child_kind == SCXML_ELEMENT_ONEXIT) {
+            cflow_statechart_executable_id executable = 0u;
+            status = emit_executable_block(build, child, &executable);
+            if (status != CFLOW_SCXML_OK) return status;
+            if (executable != 0u) {
+                const cflow_statechart_state_action_kind action_kind =
+                    child_kind == SCXML_ELEMENT_ONENTRY
+                        ? CFLOW_STATECHART_STATE_ACTION_ENTRY
+                        : CFLOW_STATECHART_STATE_ACTION_EXIT;
+                uint32_t *order = child_kind == SCXML_ELEMENT_ONENTRY
+                    ? &entry_order : &exit_order;
+                build->state_actions[build->state_action_index++] =
+                    (cflow_statechart_state_action){
+                        owner, action_kind, executable, (*order)++};
+            }
+        } else if (is_state_element(child_kind) ||
+                   child_kind == SCXML_ELEMENT_INITIAL ||
+                   child_kind == SCXML_ELEMENT_HISTORY) {
+            status = emit_state_executables(build, child, node_count);
+            if (status != CFLOW_SCXML_OK) return status;
+        }
+    }
+    return CFLOW_SCXML_OK;
+}
+
 static cflow_scxml_status resolve_target(scxml_build *build,
                                          turbo_xml_attribute target_attribute,
                                          cflow_machine_state_id *out_target) {
@@ -945,7 +1204,7 @@ static cflow_scxml_status resolve_target(scxml_build *build,
 static cflow_scxml_status emit_transition_token(
     scxml_build *build, cflow_machine_state_id source,
     turbo_xml_node transition_node, turbo_xml_string_view event_token,
-    bool has_event) {
+    bool has_event, cflow_statechart_transition_id *out_transition) {
     const turbo_xml_attribute target_attribute =
         find_attribute(transition_node, "target");
     const turbo_xml_attribute type_attribute =
@@ -1001,6 +1260,7 @@ static cflow_scxml_status emit_transition_token(
         }
     }
     build->transitions[build->transition_index++] = row;
+    *out_transition = row.id;
     return CFLOW_SCXML_OK;
 }
 
@@ -1057,20 +1317,38 @@ static cflow_scxml_status emit_transitions(scxml_build *build,
         if (child_kind == SCXML_ELEMENT_TRANSITION) {
             const turbo_xml_attribute event_attribute =
                 find_attribute(child, "event");
+            cflow_statechart_executable_id executable = 0u;
+            cflow_scxml_status status = emit_executable_block(
+                build, child, &executable);
+            if (status != CFLOW_SCXML_OK) return status;
             if (event_attribute.impl == NULL) {
-                cflow_scxml_status status = emit_transition_token(
+                cflow_statechart_transition_id transition = 0u;
+                status = emit_transition_token(
                     build, source, child, (turbo_xml_string_view){NULL, 0u},
-                    false);
+                    false, &transition);
                 if (status != CFLOW_SCXML_OK) return status;
+                if (executable != 0u) {
+                    build->transition_actions[
+                        build->transition_action_index++] =
+                        (cflow_statechart_transition_action){
+                            transition, executable, 0u};
+                }
             } else {
                 const turbo_xml_string_view value =
                     turbo_xml_attribute_value(event_attribute);
                 turbo_xml_string_view token;
                 size_t cursor = 0u;
                 while (token_next(value, &cursor, &token)) {
-                    cflow_scxml_status status = emit_transition_token(
-                        build, source, child, token, true);
+                    cflow_statechart_transition_id transition = 0u;
+                    status = emit_transition_token(
+                        build, source, child, token, true, &transition);
                     if (status != CFLOW_SCXML_OK) return status;
+                    if (executable != 0u) {
+                        build->transition_actions[
+                            build->transition_action_index++] =
+                            (cflow_statechart_transition_action){
+                                transition, executable, 0u};
+                    }
                 }
             }
         } else if (is_state_element(child_kind) ||
@@ -1088,6 +1366,12 @@ static void free_build(scxml_build *build) {
     free(build->states);
     free(build->transitions);
     free(build->events);
+    free(build->executables);
+    free(build->state_actions);
+    free(build->transition_actions);
+    free(build->bindings);
+    free(build->blocks);
+    free(build->steps);
     free(build->state_names);
     free(build->event_names);
     free(build->event_occurrences);
@@ -1147,6 +1431,7 @@ cflow_scxml_status cflow_scxml_compile(
     turbo_xml_attribute datamodel;
     size_t index;
     size_t name_bytes = 0u;
+    size_t action_ref_count = 0u;
     char *name_cursor;
 
     memset(&build, 0, sizeof(build));
@@ -1207,10 +1492,17 @@ cflow_scxml_status cflow_scxml_compile(
     }
     status = analyze_state(&build, root, SCXML_ELEMENT_SCXML, true, &counts);
     if (status != CFLOW_SCXML_OK) goto cleanup;
-    if (counts.state_rows > limits.max_states ||
+    if (!checked_add(counts.state_action_rows,
+                     counts.transition_action_rows,
+                     &action_ref_count) ||
+        counts.state_rows > limits.max_states ||
         counts.transition_rows > limits.max_transitions ||
         counts.state_rows > UINT32_MAX ||
-        counts.transition_rows > UINT32_MAX) {
+        counts.transition_rows > UINT32_MAX ||
+        counts.executable_blocks > CFLOW_MACHINE_MAX_ACTIONS ||
+        counts.state_action_rows > CFLOW_STATECHART_MAX_ACTION_REFS ||
+        counts.transition_action_rows > CFLOW_STATECHART_MAX_ACTION_REFS ||
+        action_ref_count > CFLOW_STATECHART_MAX_ACTION_REFS) {
         status = scxml_fail(&build, CFLOW_SCXML_LIMIT_EXCEEDED,
                             turbo_xml_node_location(root),
                             "SCXML state or transition count exceeds limits");
@@ -1222,6 +1514,18 @@ cflow_scxml_status cflow_scxml_compile(
         allocate_rows(counts.transition_rows, sizeof(*build.transitions));
     build.events =
         allocate_rows(counts.event_occurrences, sizeof(*build.events));
+    build.executables = allocate_rows(counts.executable_blocks,
+                                      sizeof(*build.executables));
+    build.state_actions = allocate_rows(counts.state_action_rows,
+                                        sizeof(*build.state_actions));
+    build.transition_actions = allocate_rows(
+        counts.transition_action_rows, sizeof(*build.transition_actions));
+    build.bindings = allocate_rows(counts.executable_blocks,
+                                   sizeof(*build.bindings));
+    build.blocks = allocate_rows(counts.executable_blocks,
+                                 sizeof(*build.blocks));
+    build.steps = allocate_rows(counts.executable_steps,
+                                sizeof(*build.steps));
     build.state_names =
         allocate_rows(counts.state_names, sizeof(*build.state_names));
     build.event_names =
@@ -1235,8 +1539,15 @@ cflow_scxml_status cflow_scxml_compile(
     if ((counts.state_rows != 0u && build.states == NULL) ||
         (counts.transition_rows != 0u && build.transitions == NULL) ||
         (counts.event_occurrences != 0u &&
-         (build.events == NULL || build.event_names == NULL ||
-          build.event_occurrences == NULL)) ||
+          (build.events == NULL || build.event_names == NULL ||
+           build.event_occurrences == NULL)) ||
+        (counts.executable_blocks != 0u &&
+         (build.executables == NULL || build.bindings == NULL ||
+          build.blocks == NULL)) ||
+        (counts.executable_steps != 0u && build.steps == NULL) ||
+        (counts.state_action_rows != 0u && build.state_actions == NULL) ||
+        (counts.transition_action_rows != 0u &&
+         build.transition_actions == NULL) ||
         (counts.state_names != 0u && build.state_names == NULL) ||
         (counts.node_refs != 0u && build.node_refs == NULL) ||
         (counts.synthetic_initials != 0u &&
@@ -1265,6 +1576,8 @@ cflow_scxml_status cflow_scxml_compile(
     status = collect_transition_events(&build, root);
     if (status != CFLOW_SCXML_OK) goto cleanup;
     status = build_event_names(&build, build.event_occurrence_index);
+    if (status != CFLOW_SCXML_OK) goto cleanup;
+    status = emit_state_executables(&build, root, build.node_ref_index);
     if (status != CFLOW_SCXML_OK) goto cleanup;
     status = emit_transitions(&build, root, build.node_ref_index,
                               build.synthetic_index);
@@ -1300,8 +1613,14 @@ cflow_scxml_status cflow_scxml_compile(
     definition.state_count = build.state_index;
     definition.events = build.events;
     definition.event_count = build.event_name_count;
+    definition.executables = build.executables;
+    definition.executable_count = build.executable_index;
     definition.transitions = build.transitions;
     definition.transition_count = build.transition_index;
+    definition.state_actions = build.state_actions;
+    definition.state_action_count = build.state_action_index;
+    definition.transition_actions = build.transition_actions;
+    definition.transition_action_count = build.transition_action_index;
     impl = (cflow_scxml_program_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL) {
         status = scxml_fail(&build, CFLOW_SCXML_ALLOCATION_FAILED,
@@ -1339,6 +1658,13 @@ cflow_scxml_status cflow_scxml_compile(
                        build.event_name_count, &name_cursor);
     impl->state_name_count = build.state_name_index;
     impl->event_name_count = build.event_name_count;
+    impl->bindings = build.bindings;
+    impl->binding_count = build.executable_index;
+    impl->blocks = build.blocks;
+    impl->steps = build.steps;
+    build.bindings = NULL;
+    build.blocks = NULL;
+    build.steps = NULL;
     impl->null_value = false;
     qsort(impl->state_names, impl->state_name_count,
           sizeof(*impl->state_names), compare_program_name);
@@ -1353,6 +1679,9 @@ cleanup:
         cflow_statechart_destroy(&impl->statechart);
         free(impl->state_names);
         free(impl->event_names);
+        free(impl->bindings);
+        free(impl->blocks);
+        free(impl->steps);
         free(impl->name_storage);
         free(impl);
     }
@@ -1368,6 +1697,9 @@ void cflow_scxml_program_destroy(cflow_scxml_program *program) {
     cflow_statechart_destroy(&impl->statechart);
     free(impl->state_names);
     free(impl->event_names);
+    free(impl->bindings);
+    free(impl->blocks);
+    free(impl->steps);
     free(impl->name_storage);
     free(impl);
     program->impl = NULL;
@@ -1458,7 +1790,11 @@ bool cflow_scxml_program_runtime_bindings(
         out_count == NULL) {
         return false;
     }
-    *out_bindings = NULL;
-    *out_count = 0u;
+    {
+        const cflow_scxml_program_impl *impl =
+            (const cflow_scxml_program_impl *)program->impl;
+        *out_bindings = impl->bindings;
+        *out_count = impl->binding_count;
+    }
     return true;
 }
