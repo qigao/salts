@@ -792,7 +792,7 @@ spec("CFlow IO Actor protocol") {
         io_fixture_destroy(&fixture);
     }
 
-    it("coalesces wake requests raised while the driver is active") {
+    it("consumes synchronous completion wakes before the driver becomes idle") {
         io_fixture fixture;
         cflow_io_actor_config config = {0};
         io_wake_driver_probe wake = {0};
@@ -820,7 +820,7 @@ spec("CFlow IO Actor protocol") {
         submitted = cflow_io_actor_try_submit(&fixture.actor, 403u, &operation);
         check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
         check_equal(wake.busy, (size_t)0u);
-        check_equal(wake.calls, (size_t)2u);
+        check_equal(wake.calls, (size_t)1u);
         (void)cflow_executor_run_ready(&fixture.executor);
         check_equal(fixture.completions.count, (size_t)1u);
         check_equal(cflow_io_actor_acknowledge(

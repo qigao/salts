@@ -489,6 +489,12 @@ static bool io_run_step(cflow_io_actor_impl *impl) {
        Selection is O(request_capacity) with O(1) borrowed action state. */
     turbo_mutex_lock(&impl->gate);
     selected = io_select_action_locked(impl, &action);
+    if (!selected) {
+        /* This idle observation consumes every edge published before it.
+           A completion published after this point takes the same gate and
+           restores one replacement wake before the driver leaves. */
+        impl->wake_pending = false;
+    }
     turbo_mutex_unlock(&impl->gate);
     return selected && io_execute_action(impl, &action);
 }

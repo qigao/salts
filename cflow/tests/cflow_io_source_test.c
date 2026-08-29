@@ -983,6 +983,43 @@ spec("CFlow reactive IO source") {
         check_equal(fixture.release_calls, (size_t)4u);
     }
 
+    it("reschedules a bounded driver when its quantum is exhausted") {
+        io_source_fixture fixture = {
+            .prepare_status = CFLOW_IO_SOURCE_PREPARE_OPERATION,
+            .encode_status = CFLOW_READ_VALUE,
+            .encoded_value = 17,
+            .prepare_valid_operation = true,
+            .complete_during_submit = true
+        };
+        io_source_run_fixture run_fixture;
+        size_t progressed = 0u;
+
+        check_true(io_source_run_fixture_init_windowed(
+            &run_fixture, &fixture, 4u));
+        check_true(cflow_run_open(
+            &run_fixture.run, &run_fixture.normalized,
+            &run_fixture.source, &run_fixture.scheduler,
+            &run_fixture.sink));
+        check_true(cflow_run_request(&run_fixture.run, 4u));
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+
+        check_equal(fixture.drive_calls, (size_t)1u);
+        check_equal(cflow_io_source_owner_run_ready(
+            &run_fixture.owner, 1u, &progressed), TURBO_OK);
+        check_equal(progressed, (size_t)1u);
+        check_equal(fixture.drive_calls, (size_t)2u);
+
+        check_equal(cflow_io_source_owner_run_ready(
+            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+        (void)cflow_scheduler_run_until_idle(
+            &run_fixture.scheduler, 0u);
+        check_equal(run_fixture.sink_probe.values, (size_t)4u);
+        check_equal(fixture.release_calls, (size_t)4u);
+
+        io_source_run_fixture_close(&run_fixture);
+    }
+
     it("emits windowed values in authoritative completion delivery order") {
         const size_t completion_order[] = {2u, 0u, 3u, 1u};
         io_source_fixture fixture = {

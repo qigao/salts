@@ -62,7 +62,9 @@ typedef cflow_read_status (*cflow_io_source_encode_fn)(
  * TRIVIAL_COPY and TRIVIAL_DESTROY traits. drive is an advisory coalescing
  * edge notification that must schedule owner_run_ready(), not synchronously
  * close or destroy the owner. Edges raised while owner_run_ready() is active
- * are consumed by that driver or represented by one deferred drive call.
+ * are consumed by that driver or represented by one deferred drive call. A
+ * driver that exhausts max_steps also publishes one continuation edge so a
+ * schedule-driven owner cannot stall solely at a quantum boundary.
  */
 typedef struct cflow_io_source_config {
     const char *name;
@@ -140,7 +142,9 @@ int cflow_source_from_io_actor_windowed(
 
 /**
  * Drives at most max_steps owner transitions and writes the completed count to
- * progressed. Exactly one driver may run; concurrent or reentrant calls return
+ * progressed. Exhausting max_steps schedules one advisory continuation drive;
+ * it may be stale if another component completes the work before that drive is
+ * consumed. Exactly one driver may run; concurrent or reentrant calls return
  * TURBO_EBUSY. Backend completions may arrive on any thread, while completion
  * encoding runs on this owner's manual Executor. Returns TURBO_OK,
  * TURBO_EINVAL, or TURBO_EBUSY.

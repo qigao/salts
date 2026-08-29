@@ -33,6 +33,7 @@ typedef struct io_source_benchmark_fixture {
     size_t sink_values;
     size_t drive_calls;
     size_t driver_calls;
+    bool drive_scheduled;
     const char *sink_error;
     bool surface_initialized;
     bool normalized_initialized;
@@ -127,8 +128,10 @@ static int io_source_benchmark_submit(
 static void io_source_benchmark_drive(void *user) {
     io_source_benchmark_fixture *fixture =
         (io_source_benchmark_fixture *)user;
-    if (fixture != NULL)
+    if (fixture != NULL) {
         ++fixture->drive_calls;
+        fixture->drive_scheduled = true;
+    }
 }
 
 static bool io_source_benchmark_sink_value(
@@ -283,6 +286,11 @@ static int io_source_benchmark_run_batch(
         int status;
 
         (void)cflow_scheduler_run_until_idle(&fixture->scheduler, 0u);
+        if (fixture->sink_values >= target)
+            break;
+        if (!fixture->drive_scheduled)
+            return TURBO_EPROTO;
+        fixture->drive_scheduled = false;
         ++fixture->driver_calls;
         status = cflow_io_source_owner_run_ready(
             &fixture->owner, IO_SOURCE_BENCH_DRIVER_STEPS,
@@ -360,19 +368,23 @@ bench("CFlow windowed IO source control path") {
     check_equal(window.occupied, (size_t)0u);
     check_equal(window.demand_reserved, (size_t)0u);
     check_equal(window.results_ready, (size_t)0u);
-    check_equal(fixture.drive_calls, fixture.driver_calls);
+    check_equal(fixture.driver_calls,
+                fixture.drive_calls -
+                    (fixture.drive_scheduled ? 1u : 0u));
     check_equal(fixture.sink_values,
                 (samples + 1u) * values_per_sample);
     printf("CFLOW_IO_SOURCE_BENCH_JSON "
            "{\"schema\":\"cflow-io-source-benchmark/v1\","
            "\"capacity\":%zu,\"values_per_sample\":%zu,"
            "\"samples\":%zu,\"drive_calls\":%zu,"
-           "\"driver_calls\":%zu,\"peak_occupied\":%zu,"
+           "\"driver_calls\":%zu,\"pending_drive_credit\":%u,"
+           "\"peak_occupied\":%zu,"
            "\"processed_values\":%zu,"
            "\"errors\":0,\"rejections\":0,"
            "\"stale_completions\":0}\n",
            capacity, values_per_sample, samples,
            fixture.drive_calls, fixture.driver_calls,
+           fixture.drive_scheduled ? 1u : 0u,
            window.peak_occupied, fixture.sink_values);
     check_equal(io_source_benchmark_destroy(&fixture), TURBO_OK);
 }

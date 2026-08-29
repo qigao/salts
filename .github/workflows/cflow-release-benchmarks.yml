@@ -296,9 +296,9 @@ jobs:
             "source-control-medians.md"
           New-Item -ItemType Directory -Force -Path $sourceControlDir |
             Out-Null
-          "| Run | Window | Samples | Values/sample | Timed values | Processed values | Mean ns/value | Drive calls | Driver calls | Drive calls/value | Peak occupied |" |
+          "| Run | Window | Samples | Values/sample | Timed values | Processed values | Mean ns/value | Drive calls | Driver calls | Pending drive credit | Drive calls/value | Peak occupied |" |
             Set-Content -LiteralPath $sourceControlSummary
-          "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
+          "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
             Add-Content -LiteralPath $sourceControlSummary
 
           $networkDir = Join-Path $resultDir "network"
@@ -446,7 +446,7 @@ jobs:
             Add-Content -LiteralPath $sourceControlJsonl `
               -Value $sourceControlJson
             Add-Content -LiteralPath $sourceControlSummary -Value `
-              ("| {0} | {1} | {2} | {3} | {4} | {5} | {6:N3} | {7} | {8} | {9:N6} | {10} |" -f `
+              ("| {0} | {1} | {2} | {3} | {4} | {5} | {6:N3} | {7} | {8} | {9} | {10:N6} | {11} |" -f `
                 $sourceControlReport.benchmark_run,
                 $sourceControlReport.capacity,
                 $sourceControlReport.samples,
@@ -456,6 +456,7 @@ jobs:
                 $sourceControlReport.mean_ns_per_value,
                 $sourceControlReport.drive_calls,
                 $sourceControlReport.driver_calls,
+                $sourceControlReport.pending_drive_credit,
                 $sourceControlReport.drive_calls_per_value,
                 $sourceControlReport.peak_occupied)
             $orderedBackends = @(Get-CflowRotatedOrder -Values $networkBackends -Run $run)
@@ -776,12 +777,12 @@ jobs:
           $sourceControlAggregate = Get-CflowIoSourceSummary `
             -Reports $sourceControlReports `
             -ExpectedRuns ([int]$env:BENCHMARK_RUNS)
-          "| Window | Runs | Samples/run | Values/sample | Timed values/run | Processed values/run | Median ns/value | Median drive calls | Median driver calls | Median drive calls/value | Median peak occupied |" |
+          "| Window | Runs | Samples/run | Values/sample | Timed values/run | Processed values/run | Median ns/value | Median drive calls | Median driver calls | Median pending drive credit | Median drive calls/value | Median peak occupied |" |
             Set-Content -LiteralPath $sourceControlMedianSummary
-          "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
+          "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
             Add-Content -LiteralPath $sourceControlMedianSummary
           Add-Content -LiteralPath $sourceControlMedianSummary -Value `
-            ("| {0} | {1} | {2} | {3} | {4} | {5} | {6:N3} | {7:N3} | {8:N3} | {9:N6} | {10:N3} |" -f `
+            ("| {0} | {1} | {2} | {3} | {4} | {5} | {6:N3} | {7:N3} | {8:N3} | {9:N3} | {10:N6} | {11:N3} |" -f `
               $sourceControlAggregate.capacity,
               $sourceControlAggregate.runs,
               $sourceControlAggregate.samples,
@@ -791,6 +792,7 @@ jobs:
               $sourceControlAggregate.median_mean_ns_per_value,
               $sourceControlAggregate.median_drive_calls,
               $sourceControlAggregate.median_driver_calls,
+              $sourceControlAggregate.median_pending_drive_credit,
               $sourceControlAggregate.median_drive_calls_per_value,
               $sourceControlAggregate.median_peak_occupied)
 

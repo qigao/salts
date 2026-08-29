@@ -132,10 +132,11 @@ typedef void (*cflow_io_completion_fn)(
  * Advisory edge notification. Calls may be concurrent and reentrant; the
  * callback should schedule/drive the Actor and must tolerate coalescing. At
  * most one edge remains scheduled until cflow_io_actor_run_one() or
- * cflow_io_actor_run_ready() consumes it; notifications observed while the
- * driver runs produce at most one replacement edge on driver exit. The context
- * remains borrowed until return, so synchronous destroy is rejected as busy;
- * schedule destruction after the callback returns.
+ * cflow_io_actor_run_ready() consumes it. run_ready consumes notifications
+ * published before its final locked idle observation; a later notification or
+ * a bounded run that stops before idle retains at most one replacement edge.
+ * The context remains borrowed until return, so synchronous destroy is
+ * rejected as busy; schedule destruction after the callback returns.
  */
 typedef void (*cflow_io_wake_fn)(void *wake_user);
 

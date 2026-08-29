@@ -196,6 +196,11 @@ function ConvertFrom-CflowIoSourceBenchmarkOutput {
   $meanNs = [double]$table.mean_ns_per_value
   $driveCalls = [int64]$report.drive_calls
   $driverCalls = [int64]$report.driver_calls
+  $pendingDriveCredit = if ($null -eq $report.pending_drive_credit) {
+    [int64]0
+  } else {
+    [int64]$report.pending_drive_credit
+  }
   if ($report.schema -ne "cflow-io-source-benchmark/v1" -or
       [int64]$report.capacity -ne $ExpectedCapacity -or
       [int64]$report.values_per_sample -ne $ExpectedValuesPerSample -or
@@ -207,7 +212,9 @@ function ConvertFrom-CflowIoSourceBenchmarkOutput {
       [int64]$table.operations_per_sample -ne $ExpectedValuesPerSample -or
       [double]::IsNaN($meanNs) -or [double]::IsInfinity($meanNs) -or
       $meanNs -le 0.0 -or $driveCalls -le 0 -or
-      $driverCalls -ne $driveCalls -or
+      $driverCalls -le 0 -or
+      ($pendingDriveCredit -ne 0 -and $pendingDriveCredit -ne 1) -or
+      $driverCalls -ne ($driveCalls - $pendingDriveCredit) -or
       [int64]$report.peak_occupied -le 0 -or
       [int64]$report.peak_occupied -gt $ExpectedCapacity -or
       [int64]$report.errors -ne 0 -or
@@ -227,6 +234,7 @@ function ConvertFrom-CflowIoSourceBenchmarkOutput {
     mean_ns_per_value = $meanNs
     drive_calls = $driveCalls
     driver_calls = $driverCalls
+    pending_drive_credit = $pendingDriveCredit
     drive_calls_per_value = [double]$driveCalls / [double]$processedValues
     peak_occupied = [int64]$report.peak_occupied
     errors = [int64]$report.errors
@@ -269,7 +277,12 @@ function Get-CflowIoSourceSummary {
           [int64]$first.processed_values -or
         [double]$report.mean_ns_per_value -le 0.0 -or
         [int64]$report.drive_calls -le 0 -or
-        [int64]$report.driver_calls -ne [int64]$report.drive_calls -or
+        [int64]$report.driver_calls -le 0 -or
+        ([int64]$report.pending_drive_credit -ne 0 -and
+         [int64]$report.pending_drive_credit -ne 1) -or
+        [int64]$report.driver_calls -ne
+          ([int64]$report.drive_calls -
+            [int64]$report.pending_drive_credit) -or
         [double]$report.drive_calls_per_value -le 0.0 -or
         [int64]$report.errors -ne 0 -or
         [int64]$report.rejections -ne 0 -or
@@ -288,6 +301,8 @@ function Get-CflowIoSourceSummary {
     median_mean_ns_per_value = Get-CflowMedian @($Reports.mean_ns_per_value)
     median_drive_calls = Get-CflowMedian @($Reports.drive_calls)
     median_driver_calls = Get-CflowMedian @($Reports.driver_calls)
+    median_pending_drive_credit =
+      Get-CflowMedian @($Reports.pending_drive_credit)
     median_drive_calls_per_value =
       Get-CflowMedian @($Reports.drive_calls_per_value)
     median_peak_occupied = Get-CflowMedian @($Reports.peak_occupied)

@@ -1131,11 +1131,8 @@ int cflow_io_source_owner_run_ready(
                 break;
             }
 
-            actor_result = cflow_io_actor_run_one(&state->actor);
-            if (actor_result.status == CFLOW_IO_RUN_PROGRESSED) {
-                ++count;
-                continue;
-            }
+            actor_result = cflow_io_actor_run_ready(
+                &state->actor, max_steps - count);
             if (actor_result.status == CFLOW_IO_RUN_BUSY) {
                 status = TURBO_EBUSY;
                 break;
@@ -1144,10 +1141,15 @@ int cflow_io_source_owner_run_ready(
                 status = TURBO_EINVAL;
                 break;
             }
+            count += actor_result.progressed;
+            if (count == max_steps)
+                continue;
             if (cflow_executor_run_one(&state->executor)) {
                 ++count;
                 continue;
             }
+            if (actor_result.progressed != 0u)
+                continue;
             break;
         }
 
@@ -1160,8 +1162,12 @@ int cflow_io_source_owner_run_ready(
             /* This gate orders the final pending-edge observation against
                driver release; callbacks remain outside the critical section. */
             turbo_mutex_lock(&state->gate);
+            /* Exhausting the bounded quantum is itself a continuation edge:
+               retained Actor/Executor/ack work may not publish another edge
+               after the last counted transition. */
             pending_drive = state->drive_pending ||
-                state->drive_generation != observed_generation;
+                state->drive_generation != observed_generation ||
+                (status == TURBO_OK && count == max_steps);
             if (pending_drive && status == TURBO_OK &&
                 count < max_steps) {
                 state->drive_pending = false;
