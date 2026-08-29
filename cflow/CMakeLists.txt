@@ -1,6 +1,6 @@
 set(TARGET_NAME turbo_cflow)
-set(CFLOW_LIBRARY_VERSION 2.0.0)
-set(CFLOW_ABI_VERSION 2)
+set(CFLOW_LIBRARY_VERSION 3.0.0)
+set(CFLOW_ABI_VERSION 3)
 
 set(CFLOW_MACHINE_MAX_STATES 65536 CACHE STRING
     "Maximum state declarations accepted by one CFlow Machine")

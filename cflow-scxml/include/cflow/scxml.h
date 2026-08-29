@@ -16,6 +16,7 @@ extern "C" {
 
 #define CFLOW_SCXML_DIAGNOSTIC_CAPACITY 256u
 #define CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V1 1u
+#define CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1 1u
 
 typedef enum cflow_scxml_status {
     CFLOW_SCXML_OK = 0,
@@ -55,7 +56,8 @@ typedef enum cflow_scxml_program_requirement {
     CFLOW_SCXML_REQUIREMENT_NONE = 0u,
     CFLOW_SCXML_REQUIREMENT_EVENT_IO = 1u << 0u,
     CFLOW_SCXML_REQUIREMENT_DELAYED_SEND = 1u << 1u,
-    CFLOW_SCXML_REQUIREMENT_CANCEL = 1u << 2u
+    CFLOW_SCXML_REQUIREMENT_CANCEL = 1u << 2u,
+    CFLOW_SCXML_REQUIREMENT_INVOKE = 1u << 3u
 } cflow_scxml_program_requirement;
 
 typedef enum cflow_scxml_event_io_capability {
@@ -125,6 +127,83 @@ typedef struct cflow_scxml_event_io_adapter_v1 {
     bool (*is_quiescent)(void *user);
 } cflow_scxml_event_io_adapter_v1;
 
+typedef enum cflow_scxml_invoke_capability {
+    CFLOW_SCXML_INVOKE_CAP_START = UINT64_C(1) << 0u,
+    CFLOW_SCXML_INVOKE_CAP_CANCEL = UINT64_C(1) << 1u,
+    CFLOW_SCXML_INVOKE_CAP_FORWARD = UINT64_C(1) << 2u
+} cflow_scxml_invoke_capability;
+
+/** Borrowed invocation fields valid only during one prepare callback. */
+typedef struct cflow_scxml_invoke_start_request {
+    uint64_t token;
+    const char *id;
+    size_t id_size;
+    const char *type;
+    size_t type_size;
+    const char *src;
+    size_t src_size;
+    bool autoforward;
+} cflow_scxml_invoke_start_request;
+
+typedef struct cflow_scxml_invoke_cancel_request {
+    uint64_t token;
+    const char *id;
+    size_t id_size;
+} cflow_scxml_invoke_cancel_request;
+
+typedef struct cflow_scxml_invoke_forward_request {
+    uint64_t token;
+    const char *id;
+    size_t id_size;
+    /** Borrowed Event view valid only for the callback duration. */
+    const cflow_event_view *event;
+} cflow_scxml_invoke_forward_request;
+
+/**
+ * Versioned invocation adapter copied by session initialization.
+ *
+ * Prepare callbacks run on the session SerialExecutor without the session
+ * registry mutex held. ACCEPTED transfers one valid move-only effect ticket;
+ * the session invokes exactly one of commit and discard. The adapter must copy
+ * every borrowed request field retained after return. `close` and
+ * `is_quiescent` follow the Event I/O adapter ownership contract above.
+ */
+typedef struct cflow_scxml_invoke_adapter_v1 {
+    uint32_t abi_version;
+    size_t struct_size;
+    uint64_t capabilities;
+    cflow_scxml_adapter_status (*prepare_start)(
+        void *user, const cflow_scxml_invoke_start_request *request,
+        cflow_statechart_effect_ticket *out_ticket,
+        const char **out_error);
+    cflow_scxml_adapter_status (*prepare_cancel)(
+        void *user, const cflow_scxml_invoke_cancel_request *request,
+        cflow_statechart_effect_ticket *out_ticket,
+        const char **out_error);
+    cflow_scxml_adapter_status (*prepare_forward)(
+        void *user, const cflow_scxml_invoke_forward_request *request,
+        cflow_statechart_effect_ticket *out_ticket,
+        const char **out_error);
+    void (*close)(void *user);
+    bool (*is_quiescent)(void *user);
+} cflow_scxml_invoke_adapter_v1;
+
+typedef struct cflow_scxml_invoke_stats {
+    uint64_t started;
+    uint64_t start_failed;
+    uint64_t cancelled;
+    /** Committed exits whose adapter cancellation could not be published. */
+    uint64_t cancel_failed;
+    uint64_t completed;
+    uint64_t returned_accepted;
+    uint64_t returned_rejected;
+    uint64_t forwarded;
+    uint64_t forward_failed;
+    /** Recoverable adapter errors rejected by the bounded internal ingress. */
+    uint64_t adapter_error_rejected;
+    size_t active;
+} cflow_scxml_invoke_stats;
+
 typedef struct cflow_scxml_session_config {
     /** Borrowed immutable program; it must outlive session destruction. */
     const cflow_scxml_program *program;
@@ -145,6 +224,11 @@ typedef struct cflow_scxml_session_config {
     /** Ops are copied; adapter_user remains borrowed through destruction. */
     const cflow_scxml_event_io_adapter_v1 *event_io;
     void *adapter_user;
+    /** Fixed invocation registry rows; must cover the compiled descriptors. */
+    size_t invocation_capacity;
+    /** Ops are copied; invoke_user remains borrowed through destruction. */
+    const cflow_scxml_invoke_adapter_v1 *invoke;
+    void *invoke_user;
 } cflow_scxml_session_config;
 
 typedef struct cflow_scxml_session {
@@ -240,6 +324,15 @@ cflow_statechart_runtime_status cflow_scxml_session_init(
 cflow_mailbox_status cflow_scxml_session_try_send(
     cflow_scxml_session *session, const cflow_event_view *event);
 /**
+ * Copy one returned invocation Event into the external FIFO with its live
+ * session token. Admission validates the token once; external preprocessing
+ * revalidates it to close the admission/cancellation race. Stale tokens return
+ * `INVALID_ARGUMENT` before admission or are dropped after dequeue.
+ */
+cflow_mailbox_status cflow_scxml_session_report_invoke_event(
+    cflow_scxml_session *session, uint64_t token,
+    const cflow_event_view *event);
+/**
  * Concurrently admit one asynchronous adapter failure to the prioritized
  * bounded internal ingress. The exact mailbox result is returned; there is no
  * retry or external-queue fallback.
@@ -258,6 +351,9 @@ void cflow_scxml_session_cancel(cflow_scxml_session *session);
 bool cflow_scxml_session_get_stats(
     const cflow_scxml_session *session,
     cflow_statechart_instance_stats *out);
+/** Copy the fixed invocation registry counters under the session mutex. */
+bool cflow_scxml_session_get_invoke_stats(
+    const cflow_scxml_session *session, cflow_scxml_invoke_stats *out);
 const char *cflow_scxml_session_error(
     const cflow_scxml_session *session);
 

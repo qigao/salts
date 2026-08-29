@@ -136,6 +136,52 @@ typedef bool (*cflow_statechart_contextual_executable_fn)(
     void *user, const cflow_statechart_executable_context *context,
     const char **out_error);
 
+#define CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1 1u
+
+/** Borrowed published state and configuration access for one runtime hook. */
+typedef struct cflow_statechart_runtime_hook_context {
+    const void *state;
+    uint64_t configuration_version;
+    cflow_statechart_is_active_fn is_active;
+    void *configuration_user;
+    /**
+     * Copy one Event into the current macrostep's bounded internal FIFO.
+     * The function, user, Event, payload, and error are call-scoped.
+     */
+    cflow_statechart_raise_fn enqueue_internal;
+    void *enqueue_user;
+} cflow_statechart_runtime_hook_context;
+
+typedef enum cflow_statechart_external_preprocess_result {
+    CFLOW_STATECHART_EXTERNAL_PREPROCESS_CONTINUE = 0,
+    CFLOW_STATECHART_EXTERNAL_PREPROCESS_DROP,
+    CFLOW_STATECHART_EXTERNAL_PREPROCESS_FATAL
+} cflow_statechart_external_preprocess_result;
+
+typedef bool (*cflow_statechart_stable_hook_fn)(
+    void *user, const cflow_statechart_runtime_hook_context *context,
+    const char **out_error);
+
+typedef cflow_statechart_external_preprocess_result
+    (*cflow_statechart_external_preprocess_hook_fn)(
+        void *user, const cflow_statechart_runtime_hook_context *context,
+        const cflow_event_view *event, uint64_t source_token,
+        const char **out_error);
+
+/**
+ * Optional format-neutral runtime boundaries copied during initialization.
+ * Callbacks run on the SerialExecutor without the instance mutex held. They
+ * must not retain any context member, wait on, or destroy the instance.
+ */
+typedef struct cflow_statechart_runtime_hooks {
+    uint32_t abi_version;
+    size_t struct_size;
+    /** Runs after internal/eventless/completion work drains, before settle. */
+    cflow_statechart_stable_hook_fn on_stable;
+    /** Runs after external dequeue and before transition selection. */
+    cflow_statechart_external_preprocess_hook_fn preprocess_external;
+} cflow_statechart_runtime_hooks;
+
 typedef struct cflow_statechart_guard_binding {
     cflow_statechart_guard_id id;
     cflow_statechart_guard_fn fn;
@@ -172,7 +218,8 @@ typedef enum cflow_statechart_runtime_status {
     CFLOW_STATECHART_RUNTIME_EXECUTOR_FULL,
     CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED,
     CFLOW_STATECHART_RUNTIME_TASK_CANCELLED,
-    CFLOW_STATECHART_RUNTIME_WOULD_BLOCK
+    CFLOW_STATECHART_RUNTIME_WOULD_BLOCK,
+    CFLOW_STATECHART_RUNTIME_HOOK_FAILED
 } cflow_statechart_runtime_status;
 
 typedef enum cflow_statechart_snapshot_status {
@@ -240,6 +287,12 @@ typedef struct cflow_statechart_instance_config {
      * after already staged internal Events and before external mailbox Events.
      */
     size_t adapter_internal_event_capacity;
+    /**
+     * Optional copied v1 hook table. `runtime_hook_user` remains borrowed
+     * until instance destruction and is passed to every configured callback.
+     */
+    const cflow_statechart_runtime_hooks *runtime_hooks;
+    void *runtime_hook_user;
 } cflow_statechart_instance_config;
 
 typedef struct cflow_statechart_instance_stats {
@@ -307,6 +360,15 @@ cflow_statechart_runtime_status cflow_statechart_instance_init(
  */
 cflow_mailbox_status cflow_statechart_instance_try_send(
     cflow_statechart_instance *instance, const cflow_event_view *event);
+
+/**
+ * Copy one external Event together with an opaque nonzero source identity.
+ * The token is FIFO-aligned with the Event and is visible only to the optional
+ * external preprocess hook. Token zero has the same semantics as `try_send`.
+ */
+cflow_mailbox_status cflow_statechart_instance_try_send_tagged(
+    cflow_statechart_instance *instance, const cflow_event_view *event,
+    uint64_t source_token);
 
 /**
  * Copy one typed adapter result into the bounded internal-priority ingress.

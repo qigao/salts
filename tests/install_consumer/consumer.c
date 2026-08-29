@@ -179,11 +179,24 @@ int main(void) {
       1u, installed_legacy_action, NULL};
   const cflow_statechart_guard_binding legacy_guard = {
       1u, installed_legacy_guard, NULL};
+  const cflow_statechart_runtime_hooks runtime_hooks = {
+      CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1,
+      sizeof(cflow_statechart_runtime_hooks), NULL, NULL};
+  cflow_mailbox_status (*tagged_send)(
+      cflow_statechart_instance *, const cflow_event_view *, uint64_t) =
+      cflow_statechart_instance_try_send_tagged;
+  cflow_mailbox_status (*report_invoke_event)(
+      cflow_scxml_session *, uint64_t, const cflow_event_view *) =
+      cflow_scxml_session_report_invoke_event;
+  const cflow_scxml_invoke_adapter_v1 invoke_adapter_shape = {
+      .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1,
+      .struct_size = sizeof(cflow_scxml_invoke_adapter_v1)};
   cflow_scxml_program program = {0};
   cflow_executor executor = {0};
   cflow_statechart_instance instance = {0};
   cflow_scxml_session session = {0};
   cflow_statechart_instance_stats stats = {0};
+  cflow_scxml_invoke_stats invoke_stats = {0};
   cflow_statechart_instance_config config;
   cflow_scxml_session_config session_config;
   const cflow_statechart_executable_binding *bindings = NULL;
@@ -198,7 +211,10 @@ int main(void) {
   if (cflow_scxml_session_report_adapter_error(
           NULL, CFLOW_SCXML_ADAPTER_ERROR_KIND_EXECUTION) !=
           CFLOW_MAILBOX_INVALID_ARGUMENT ||
-      cflow_scxml_session_report_send_done(NULL, "none", 4u)) {
+      cflow_scxml_session_report_send_done(NULL, "none", 4u) ||
+      cflow_scxml_session_report_invoke_event(NULL, UINT64_C(1), NULL) !=
+          CFLOW_MAILBOX_INVALID_ARGUMENT ||
+      cflow_scxml_session_get_invoke_stats(NULL, &invoke_stats)) {
     goto cleanup;
   }
   cflow_scxml_status status = cflow_scxml_compile(
@@ -220,6 +236,11 @@ int main(void) {
       guard_bindings[0].contextual_fn == NULL ||
       legacy.fn == NULL || legacy.contextual_fn != NULL ||
       legacy_guard.fn == NULL || legacy_guard.contextual_fn != NULL ||
+      tagged_send == NULL || report_invoke_event == NULL ||
+      invoke_adapter_shape.abi_version !=
+          CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1 ||
+      invoke_adapter_shape.struct_size !=
+          sizeof(cflow_scxml_invoke_adapter_v1) ||
       !cflow_scxml_program_requirements(&program, &requirements) ||
       requirements != CFLOW_SCXML_REQUIREMENT_NONE) {
     goto cleanup;
@@ -237,7 +258,8 @@ int main(void) {
       .internal_event_capacity = 2u,
       .completion_capacity = 2u,
       .microstep_limit = 16u,
-      .executor = &executor};
+      .executor = &executor,
+      .runtime_hooks = &runtime_hooks};
   if (cflow_statechart_instance_init(&instance, &config) !=
       CFLOW_STATECHART_RUNTIME_OK) {
     goto cleanup;

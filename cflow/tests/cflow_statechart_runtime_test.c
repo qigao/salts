@@ -3925,6 +3925,17 @@ typedef struct rtc_fixture {
     bool fail_action;
     struct microstep_executor_blocker *guard_blocker;
     cflow_statechart_guard guards[1];
+    cflow_statechart_runtime_hooks runtime_hooks;
+    size_t stable_hook_calls;
+    size_t preprocess_hook_calls;
+    uint64_t observed_source_token;
+    uint64_t observed_source_tokens[4];
+    uint64_t observed_configuration_version;
+    bool observed_a_active;
+    bool observed_d_active;
+    bool enqueue_other_once;
+    bool drop_tagged_external;
+    bool fail_stable_hook;
 } rtc_fixture;
 
 typedef struct rtc_producer_context {
@@ -3946,6 +3957,57 @@ enum {
     RTC_GO = 10u, RTC_NEXT = 11u, RTC_OTHER = 12u, RTC_EXEC = 500u,
     RTC_QUEUE_GUARD = 501u
 };
+
+static bool rtc_stable_hook(
+    void *user, const cflow_statechart_runtime_hook_context *context,
+    const char **out_error) {
+    rtc_fixture *fixture = (rtc_fixture *)user;
+    const int payload = 1;
+    const cflow_event_view other = {
+        RTC_OTHER, &cmeta_type_int, &payload};
+    if (fixture == NULL || context == NULL || out_error == NULL ||
+        context->is_active == NULL || context->enqueue_internal == NULL)
+        return false;
+    ++fixture->stable_hook_calls;
+    fixture->observed_configuration_version =
+        context->configuration_version;
+    fixture->observed_a_active = context->is_active(
+        context->configuration_user, RTC_A);
+    fixture->observed_d_active = context->is_active(
+        context->configuration_user, RTC_D);
+    *out_error = NULL;
+    if (fixture->fail_stable_hook) {
+        *out_error = "deliberate stable hook failure";
+        return false;
+    }
+    if (fixture->enqueue_other_once) {
+        fixture->enqueue_other_once = false;
+        return context->enqueue_internal(
+            context->enqueue_user, &other, out_error);
+    }
+    return true;
+}
+
+static cflow_statechart_external_preprocess_result rtc_external_preprocess(
+    void *user, const cflow_statechart_runtime_hook_context *context,
+    const cflow_event_view *event, uint64_t source_token,
+    const char **out_error) {
+    rtc_fixture *fixture = (rtc_fixture *)user;
+    if (fixture == NULL || context == NULL || event == NULL ||
+        out_error == NULL)
+        return CFLOW_STATECHART_EXTERNAL_PREPROCESS_FATAL;
+    if (fixture->preprocess_hook_calls < 4u)
+        fixture->observed_source_tokens[
+            fixture->preprocess_hook_calls] = source_token;
+    ++fixture->preprocess_hook_calls;
+    fixture->observed_source_token = source_token;
+    fixture->observed_configuration_version =
+        context->configuration_version;
+    *out_error = NULL;
+    return fixture->drop_tagged_external && source_token != UINT64_C(0)
+        ? CFLOW_STATECHART_EXTERNAL_PREPROCESS_DROP
+        : CFLOW_STATECHART_EXTERNAL_PREPROCESS_CONTINUE;
+}
 
 static void rtc_cancel_instance(void *user) {
     cflow_statechart_instance_cancel((cflow_statechart_instance *)user);
@@ -4130,7 +4192,10 @@ static cflow_statechart_runtime_status rtc_init_with_external(
         .internal_event_capacity = internal_capacity,
         .completion_capacity = completion_capacity,
         .microstep_limit = microstep_limit,
-        .executor = &fixture->executor};
+        .executor = &fixture->executor,
+        .runtime_hooks = fixture->runtime_hooks.abi_version != 0u
+            ? &fixture->runtime_hooks : NULL,
+        .runtime_hook_user = fixture};
     check_equal(cflow_statechart_build(
                     &fixture->statechart, &fixture->definition),
                 CFLOW_STATECHART_OK);
@@ -4587,6 +4652,144 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_equal(states, expected, sizeof(expected));
         check_equal(version, UINT64_C(2));
         rtc_destroy(&fixture);
+    }
+
+    it("calls the stable hook only after the published macrostep is stable") {
+        rtc_fixture fixture;
+        rtc_definition(&fixture, true, false);
+        fixture.transitions[7] = (cflow_statechart_transition){
+            8u, RTC_A, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+            0u, 0u, 0u, RTC_D,
+            CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 7u};
+        fixture.definition.transition_count = 8u;
+        fixture.runtime_hooks = (cflow_statechart_runtime_hooks){
+            .abi_version = CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1,
+            .struct_size = sizeof(cflow_statechart_runtime_hooks),
+            .on_stable = rtc_stable_hook};
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(fixture.stable_hook_calls, (size_t)1u);
+        check_false(fixture.observed_a_active);
+        check_true(fixture.observed_d_active);
+        check_equal(fixture.observed_configuration_version, UINT64_C(2));
+        rtc_destroy(&fixture);
+    }
+
+    it("drains a stable-hook internal Event before exposing quiescence") {
+        rtc_fixture fixture;
+        const cflow_machine_state_id expected[] = {RTC_ROOT, RTC_D};
+        cflow_machine_state_id states[2] = {0};
+        size_t count = 0u;
+        uint64_t version = 0u;
+        rtc_definition(&fixture, true, false);
+        fixture.transitions[7] = (cflow_statechart_transition){
+            8u, RTC_A, CFLOW_STATECHART_TRIGGER_EVENT,
+            RTC_OTHER, 0u, 0u, RTC_D,
+            CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 7u};
+        fixture.definition.transition_count = 8u;
+        fixture.enqueue_other_once = true;
+        fixture.runtime_hooks = (cflow_statechart_runtime_hooks){
+            .abi_version = CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1,
+            .struct_size = sizeof(cflow_statechart_runtime_hooks),
+            .on_stable = rtc_stable_hook};
+        check_equal(rtc_init_with_external(
+                        &fixture, 4u, 1u, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 2u, &count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(states, expected, sizeof(expected));
+        check_equal(version, UINT64_C(2));
+        check_equal(fixture.stable_hook_calls, (size_t)2u);
+        rtc_destroy(&fixture);
+    }
+
+    it("preprocesses FIFO-aligned tagged external Events before selection") {
+        rtc_fixture fixture;
+        microstep_executor_blocker blocker;
+        const int payload = 1;
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
+        cflow_statechart_instance_stats stats = {0};
+        rtc_definition(&fixture, true, false);
+        fixture.transitions[7] = (cflow_statechart_transition){
+            8u, RTC_A, CFLOW_STATECHART_TRIGGER_EVENT,
+            RTC_OTHER, 0u, 0u, RTC_D,
+            CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 7u};
+        fixture.definition.transition_count = 8u;
+        fixture.drop_tagged_external = true;
+        fixture.runtime_hooks = (cflow_statechart_runtime_hooks){
+            .abi_version = CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1,
+            .struct_size = sizeof(cflow_statechart_runtime_hooks),
+            .preprocess_external = rtc_external_preprocess};
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor,
+                        microstep_block_executor, &blocker),
+                    CFLOW_ADMISSION_ACCEPTED);
+        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &other, UINT64_C(77)),
+                    CFLOW_MAILBOX_OK);
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &other),
+                    CFLOW_MAILBOX_OK);
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(fixture.preprocess_hook_calls, (size_t)2u);
+        check_equal(fixture.observed_source_tokens[0], UINT64_C(77));
+        check_equal(fixture.observed_source_tokens[1], UINT64_C(0));
+        check_equal(fixture.observed_source_token, UINT64_C(0));
+        check_equal(cflow_statechart_instance_current_state(
+                        &fixture.instance), RTC_D);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_completed, UINT64_C(2));
+        rtc_destroy(&fixture);
+    }
+
+    it("rejects incompatible runtime hook ABI shapes") {
+        rtc_fixture version_fixture;
+        rtc_fixture size_fixture;
+        rtc_definition(&version_fixture, true, false);
+        version_fixture.runtime_hooks = (cflow_statechart_runtime_hooks){
+            .abi_version = CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1 + 1u,
+            .struct_size = sizeof(cflow_statechart_runtime_hooks),
+            .on_stable = rtc_stable_hook};
+        check_equal(rtc_init(&version_fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        check_null(version_fixture.instance.impl);
+        cflow_executor_destroy(&version_fixture.executor);
+        cflow_statechart_destroy(&version_fixture.statechart);
+
+        rtc_definition(&size_fixture, true, false);
+        size_fixture.runtime_hooks = (cflow_statechart_runtime_hooks){
+            .abi_version = CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1,
+            .struct_size = sizeof(cflow_statechart_runtime_hooks) - 1u,
+            .on_stable = rtc_stable_hook};
+        check_equal(rtc_init(&size_fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        check_null(size_fixture.instance.impl);
+        cflow_executor_destroy(&size_fixture.executor);
+        cflow_statechart_destroy(&size_fixture.statechart);
+    }
+
+    it("fails initialization explicitly when the stable hook fails") {
+        rtc_fixture fixture;
+        rtc_definition(&fixture, true, false);
+        fixture.fail_stable_hook = true;
+        fixture.runtime_hooks = (cflow_statechart_runtime_hooks){
+            .abi_version = CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1,
+            .struct_size = sizeof(cflow_statechart_runtime_hooks),
+            .on_stable = rtc_stable_hook};
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_HOOK_FAILED);
+        check_null(fixture.instance.impl);
+        cflow_executor_destroy(&fixture.executor);
+        cflow_statechart_destroy(&fixture.statechart);
     }
 
     it("returns external FULL while one admitted event waits to run") {
