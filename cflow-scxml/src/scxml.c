@@ -1449,3 +1449,16 @@ bool cflow_scxml_program_event(const cflow_scxml_program *program,
     *out_event = (cflow_event_view){id, &cmeta_type_bool, &impl->null_value};
     return true;
 }
+
+bool cflow_scxml_program_runtime_bindings(
+    const cflow_scxml_program *program,
+    const cflow_statechart_executable_binding **out_bindings,
+    size_t *out_count) {
+    if (program == NULL || program->impl == NULL || out_bindings == NULL ||
+        out_count == NULL) {
+        return false;
+    }
+    *out_bindings = NULL;
+    *out_count = 0u;
+    return true;
+}

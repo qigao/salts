@@ -121,6 +121,35 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         cflow_scxml_program_destroy(&program);
     }
 
+    it("publishes an empty borrowed runtime binding view for structural programs") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='only'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        const cflow_statechart_executable_binding *bindings =
+            (const cflow_statechart_executable_binding *)(uintptr_t)1u;
+        size_t binding_count = SIZE_MAX;
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_scxml_program_runtime_bindings(
+            &program, &bindings, &binding_count));
+        check_null(bindings);
+        check_equal(binding_count, (size_t)0u);
+
+        bindings =
+            (const cflow_statechart_executable_binding *)(uintptr_t)1u;
+        binding_count = SIZE_MAX;
+        check_false(cflow_scxml_program_runtime_bindings(
+            NULL, &bindings, &binding_count));
+        check_true(bindings ==
+                   (const cflow_statechart_executable_binding *)(uintptr_t)1u);
+        check_equal(binding_count, SIZE_MAX);
+
+        cflow_scxml_program_destroy(&program);
+    }
+
     it("reports namespace version and data-model admission precisely") {
         static const char wrong_namespace[] =
             "<scxml xmlns='urn:not-scxml' version='1.0'><state id='x'/></scxml>";
