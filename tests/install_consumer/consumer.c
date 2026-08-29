@@ -142,10 +142,20 @@ int main(void) {
       "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
       "<final id='done'/></scxml>";
   cflow_scxml_program program = {0};
+  const cflow_statechart_executable_binding *bindings = NULL;
+  size_t binding_count = 0u;
   cflow_scxml_status status = cflow_scxml_compile(
       &program, source, sizeof(source) - 1u, NULL, NULL);
+  if (status == CFLOW_SCXML_OK &&
+      !cflow_scxml_program_runtime_bindings(
+          &program, &bindings, &binding_count)) {
+    cflow_scxml_program_destroy(&program);
+    return 1;
+  }
   cflow_scxml_program_destroy(&program);
-  return status == CFLOW_SCXML_OK ? 0 : 1;
+  return status == CFLOW_SCXML_OK && bindings == NULL && binding_count == 0u
+             ? 0
+             : 1;
 }
 
 #elif defined(CONSUME_CFLOW_PROCESS)

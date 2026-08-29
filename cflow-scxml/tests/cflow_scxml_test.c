@@ -121,6 +121,334 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         cflow_scxml_program_destroy(&program);
     }
 
+    it("publishes an empty borrowed runtime binding view for structural programs") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='only'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        const cflow_statechart_executable_binding *bindings =
+            (const cflow_statechart_executable_binding *)(uintptr_t)1u;
+        size_t binding_count = SIZE_MAX;
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_scxml_program_runtime_bindings(
+            &program, &bindings, &binding_count));
+        check_null(bindings);
+        check_equal(binding_count, (size_t)0u);
+
+        bindings =
+            (const cflow_statechart_executable_binding *)(uintptr_t)1u;
+        binding_count = SIZE_MAX;
+        check_false(cflow_scxml_program_runtime_bindings(
+            NULL, &bindings, &binding_count));
+        check_true(bindings ==
+                   (const cflow_statechart_executable_binding *)(uintptr_t)1u);
+        check_equal(binding_count, SIZE_MAX);
+
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("executes an onentry raise block through native runtime bindings") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='start'>"
+            "<onentry><raise event='advance'/></onentry>"
+            "<transition event='advance' target='done'/>"
+            "</state>"
+            "<final id='done'/>"
+            "</scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        const cflow_statechart_executable_binding *bindings = NULL;
+        size_t binding_count = 0u;
+        cflow_executor executor = {0};
+        cflow_statechart_instance instance = {0};
+        cflow_statechart_instance_config config = {0};
+        cflow_statechart_instance_stats stats = {0};
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_scxml_program_runtime_bindings(
+            &program, &bindings, &binding_count));
+        check_not_null(bindings);
+        check_equal(binding_count, (size_t)1u);
+        check_equal(cflow_statechart_executable_count(
+                        cflow_scxml_program_statechart(&program)),
+                    (size_t)1u);
+        check_equal(cflow_statechart_state_action_count(
+                        cflow_scxml_program_statechart(&program)),
+                    (size_t)1u);
+
+        check_true(cflow_executor_serial_init(&executor));
+        config = (cflow_statechart_instance_config){
+            .statechart = cflow_scxml_program_statechart(&program),
+            .initial_state = cflow_scxml_program_initial_state(&program),
+            .executables = bindings,
+            .executable_count = binding_count,
+            .external_event_capacity = 2u,
+            .internal_event_capacity = 2u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u,
+            .executor = &executor};
+        check_equal(cflow_statechart_instance_init(&instance, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_statechart_instance_get_stats(&instance, &stats));
+        check_true(stats.done);
+        check_equal(stats.actions, (uint64_t)1u);
+
+        check_equal(cflow_statechart_instance_destroy(&instance),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("preserves exit transition entry and in-block raise order") {
+        static const char source_path[] =
+            CFLOW_SCXML_FIXTURE_DIR "/raise_trace.scxml";
+        static const char expected_path[] =
+            CFLOW_SCXML_FIXTURE_DIR "/raise_trace.expected";
+        char *source;
+        char *expected;
+        size_t source_size = 0u;
+        size_t expected_size = 0u;
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        const cflow_statechart_executable_binding *bindings = NULL;
+        size_t binding_count = 0u;
+        cflow_executor executor = {0};
+        cflow_statechart_instance instance = {0};
+        cflow_statechart_instance_config config = {0};
+        cflow_statechart_instance_stats stats = {0};
+        cflow_event_view go = {0};
+        char actual[64];
+        size_t actual_size;
+
+        source = tt_read_file(source_path, &source_size);
+        expected = tt_read_file(expected_path, &expected_size);
+        check_not_null(source);
+        check_not_null(expected);
+        check_equal(cflow_scxml_compile(&program, source, source_size, NULL,
+                                        &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_scxml_program_runtime_bindings(
+            &program, &bindings, &binding_count));
+        check_equal(binding_count, (size_t)3u);
+        check_true(cflow_executor_serial_init(&executor));
+        config = (cflow_statechart_instance_config){
+            .statechart = cflow_scxml_program_statechart(&program),
+            .initial_state = cflow_scxml_program_initial_state(&program),
+            .executables = bindings,
+            .executable_count = binding_count,
+            .external_event_capacity = 2u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 2u,
+            .microstep_limit = 32u,
+            .executor = &executor};
+        check_equal(cflow_statechart_instance_init(&instance, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_scxml_program_event(&program, "go", 2u, &go));
+        check_equal(cflow_statechart_instance_try_send(&instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_statechart_instance_get_stats(&instance, &stats));
+        actual_size = (size_t)snprintf(
+            actual, sizeof(actual), "done %s\nactions %llu\n",
+            stats.done ? "true" : "false",
+            (unsigned long long)stats.actions);
+        check_equal(actual_size, expected_size);
+        check_equal(actual, expected);
+
+        check_equal(cflow_statechart_instance_destroy(&instance),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+        free(expected);
+        free(source);
+    }
+
+    it("shares one transition block across every event descriptor") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='start'><transition event='go retry' target='next'>"
+            "<raise event='hit'/></transition></state>"
+            "<state id='next'><transition event='hit' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_equal(cflow_statechart_executable_count(
+                        cflow_scxml_program_statechart(&program)),
+                    (size_t)1u);
+        check_equal(cflow_statechart_transition_action_count(
+                        cflow_scxml_program_statechart(&program)),
+                    (size_t)2u);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("executes raise blocks on initial and history default transitions") {
+        static const char initial_source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<initial><transition target='ready'>"
+            "<raise event='initialized'/></transition></initial>"
+            "<state id='ready'><transition event='initialized' "
+            "target='done'/></state><final id='done'/></scxml>";
+        static const char history_source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='parent'>"
+            "<history id='memory'><transition target='ready'>"
+            "<raise event='restored'/></transition></history>"
+            "<state id='ready'>"
+            "<transition event='restore' target='memory'/>"
+            "<transition event='restored' target='done'/>"
+            "</state><final id='done'/></state></scxml>";
+        const char *sources[] = {initial_source, history_source};
+        const char *trigger_names[] = {NULL, "restore"};
+        size_t index;
+        for (index = 0u; index < 2u; ++index) {
+            cflow_scxml_program program = {0};
+            cflow_scxml_diagnostic diagnostic = {0};
+            const cflow_statechart_executable_binding *bindings = NULL;
+            size_t binding_count = 0u;
+            cflow_executor executor = {0};
+            cflow_statechart_instance instance = {0};
+            cflow_statechart_instance_config config = {0};
+            cflow_statechart_instance_stats stats = {0};
+            cflow_event_view trigger = {0};
+            check_equal(compile_status(sources[index], &program, &diagnostic),
+                        CFLOW_SCXML_OK);
+            check_true(cflow_scxml_program_runtime_bindings(
+                &program, &bindings, &binding_count));
+            check_equal(binding_count, (size_t)1u);
+            check_true(cflow_executor_serial_init(&executor));
+            config = (cflow_statechart_instance_config){
+                .statechart = cflow_scxml_program_statechart(&program),
+                .initial_state = cflow_scxml_program_initial_state(&program),
+                .executables = bindings,
+                .executable_count = binding_count,
+                .external_event_capacity = 2u,
+                .internal_event_capacity = 2u,
+                .completion_capacity = 2u,
+                .microstep_limit = 16u,
+                .executor = &executor};
+            check_equal(cflow_statechart_instance_init(&instance, &config),
+                        CFLOW_STATECHART_RUNTIME_OK);
+            if (trigger_names[index] != NULL) {
+                check_true(cflow_scxml_program_event(
+                    &program, trigger_names[index],
+                    strlen(trigger_names[index]), &trigger));
+                check_equal(cflow_statechart_instance_try_send(
+                                &instance, &trigger),
+                            CFLOW_MAILBOX_OK);
+                check_true(cflow_executor_wait_idle(&executor));
+            }
+            check_true(cflow_statechart_instance_get_stats(&instance, &stats));
+            check_true(stats.done);
+            check_equal(cflow_statechart_instance_destroy(&instance),
+                        CFLOW_STATECHART_RUNTIME_OK);
+            cflow_executor_destroy(&executor);
+            cflow_scxml_program_destroy(&program);
+        }
+    }
+
+    it("rolls back a transition block when its raised Event queue is full") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='start'><transition event='go' target='next'>"
+            "<raise event='first'/><raise event='second'/>"
+            "</transition></state><state id='next'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        const cflow_statechart_executable_binding *bindings = NULL;
+        size_t binding_count = 0u;
+        cflow_executor executor = {0};
+        cflow_statechart_instance instance = {0};
+        cflow_statechart_instance_config config = {0};
+        cflow_statechart_instance_stats stats = {0};
+        cflow_event_view go = {0};
+        const cflow_statechart_state *start;
+        cflow_machine_state_id states[2] = {0};
+        size_t state_count = 0u;
+        uint64_t version = 0u;
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_scxml_program_runtime_bindings(
+            &program, &bindings, &binding_count));
+        check_true(cflow_executor_serial_init(&executor));
+        config = (cflow_statechart_instance_config){
+            .statechart = cflow_scxml_program_statechart(&program),
+            .initial_state = cflow_scxml_program_initial_state(&program),
+            .executables = bindings,
+            .executable_count = binding_count,
+            .external_event_capacity = 2u,
+            .internal_event_capacity = 1u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u,
+            .executor = &executor};
+        check_equal(cflow_statechart_instance_init(&instance, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        start = find_state(&program, "start");
+        check_not_null(start);
+        check_true(cflow_scxml_program_event(&program, "go", 2u, &go));
+        check_equal(cflow_statechart_instance_try_send(&instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_statechart_instance_get_stats(&instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_RUNTIME_INTERNAL_QUEUE_FULL);
+        check_equal(stats.internal_pending, (size_t)0u);
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &instance, states, 2u, &state_count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(version, UINT64_C(1));
+        check_equal(states[state_count - 1u], start->id);
+
+        check_equal(cflow_statechart_instance_destroy(&instance),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("diagnoses invalid raise syntax at the owning token") {
+        static const char missing[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='a'><onentry><raise/></onentry></state></scxml>";
+        static const char empty[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='a'><onentry><raise event=''/></onentry></state></scxml>";
+        static const char whitespace[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='a'><onentry><raise event='two words'/>"
+            "</onentry></state></scxml>";
+        static const char child[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='a'><onentry><raise event='x'><raise event='y'/>"
+            "</raise></onentry></state></scxml>";
+        static const char attribute[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='a'><onentry><raise event='x' extra='bad'/>"
+            "</onentry></state></scxml>";
+        const char *sources[] = {missing, empty, whitespace, child, attribute};
+        const char *owners[] = {"<raise/>", "event=", "event=", "<raise event='y'", "extra="};
+        size_t index;
+        for (index = 0u; index < 5u; ++index) {
+            cflow_scxml_program program = {0};
+            cflow_scxml_diagnostic diagnostic = {0};
+            check_equal(compile_status(sources[index], &program, &diagnostic),
+                        index == 4u ? CFLOW_SCXML_UNSUPPORTED_FEATURE
+                                    : CFLOW_SCXML_INVALID_STRUCTURE);
+            check_equal(diagnostic.location.byte_offset,
+                        (size_t)(strstr(sources[index], owners[index]) -
+                                 sources[index]));
+            check_null(program.impl);
+        }
+    }
+
     it("reports namespace version and data-model admission precisely") {
         static const char wrong_namespace[] =
             "<scxml xmlns='urn:not-scxml' version='1.0'><state id='x'/></scxml>";

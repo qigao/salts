@@ -543,29 +543,86 @@ dependency. cxml is a private implementation detail of XmlParser and is not
 installed or exported.
 
 `cflow_scxml_compile()` owns the compiled native Statechart and its stable
-state/event name maps. Input is borrowed only for the call. The returned
-program must outlive every runtime instance borrowing its Statechart and must
-be destroyed with `cflow_scxml_program_destroy()` after those instances are
+state/event name maps, executable blocks, and native binding rows. Input is
+borrowed only for the call. The returned program must outlive every runtime
+instance borrowing its Statechart or executable binding users and must be
+destroyed with `cflow_scxml_program_destroy()` after those instances are
 quiescent. The null data model is represented by an inert CMeta `bool` value;
 named event helpers produce the matching borrowed false payload, which runtime
 mailbox admission copies.
+
+```c
+#include <cflow/executor.h>
+#include <cflow/scxml.h>
+
+int main(void) {
+    static const char source[] =
+        "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+        "<final id='done'/></scxml>";
+    cflow_scxml_program program = {0};
+    cflow_scxml_diagnostic diagnostic = {0};
+    const cflow_statechart_executable_binding *bindings = NULL;
+    size_t binding_count = 0u;
+    cflow_executor executor = {0};
+    cflow_statechart_instance instance = {0};
+    cflow_statechart_instance_config config;
+
+    if (cflow_scxml_compile(&program, source, sizeof(source) - 1u, NULL,
+                            &diagnostic) != CFLOW_SCXML_OK) {
+        return 1;
+    }
+    if (!cflow_scxml_program_runtime_bindings(
+            &program, &bindings, &binding_count) ||
+        !cflow_executor_serial_init(&executor)) {
+        cflow_scxml_program_destroy(&program);
+        return 1;
+    }
+    config = (cflow_statechart_instance_config){
+        .statechart = cflow_scxml_program_statechart(&program),
+        .initial_state = cflow_scxml_program_initial_state(&program),
+        .executables = bindings,
+        .executable_count = binding_count,
+        .external_event_capacity = 16u,
+        .internal_event_capacity = 16u,
+        .completion_capacity = 16u,
+        .microstep_limit = 256u,
+        .executor = &executor
+    };
+    if (cflow_statechart_instance_init(&instance, &config) !=
+            CFLOW_STATECHART_RUNTIME_OK) {
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+        return 1;
+    }
+    /* Destroy the instance before releasing its borrowed program. */
+    (void)cflow_statechart_instance_destroy(&instance);
+    cflow_executor_destroy(&executor);
+    cflow_scxml_program_destroy(&program);
+    return 0;
+}
+```
 
 The supported compatibility subset is deliberately strict:
 
 - SCXML namespace `http://www.w3.org/2005/07/scxml`, version `1.0`, and omitted
   or `null` data model;
 - `scxml`, `state`, `parallel`, `transition`, `initial`, `final`, `history`, and
-  empty `onentry`/`onexit` elements;
+  `onentry`/`onexit` elements;
 - default/explicit initial transitions, shallow/deep history defaults,
   eventless transitions, exact named events, `done.state.<id>` completion
-  events, and internal/external transition kinds.
+  events, and internal/external transition kinds;
+- bounded executable blocks containing only `raise event="NMTOKEN"` under
+  `onentry`, `onexit`, and ordinary/initial/history transitions. Blocks retain
+  document order and fail transactionally when the runtime internal queue is
+  full.
 
-Conditions, executable content, wildcard event descriptors, multiple targets,
-non-null data models, and other SCXML elements fail during compilation with the
-first byte offset and one-based line/column diagnostic. There is no fallback
-or silent feature removal. Configurable hard limits cover XML input, depth,
-nodes, attributes, retained strings, states, events, transitions, and retained
-name bytes; a failed compile leaves the output program empty.
+Conditions, executable elements other than `raise`, wildcard event descriptors,
+multiple targets, non-null data models, and other SCXML elements fail during
+compilation with the first byte offset and one-based line/column diagnostic.
+There is no fallback or silent feature removal. Configurable hard limits cover
+XML input, depth, nodes, attributes, retained strings, states, events,
+transitions, action references, and retained name bytes; a failed compile
+leaves the output program empty.
 
 ## Bounded Actor lifecycle
 

@@ -3,6 +3,7 @@
 
 #include <cflow/event.h>
 #include <cflow/statechart.h>
+#include <cflow/statechart_runtime.h>
 #include <xml_parser/xml_parser.h>
 
 #include <stdbool.h>
@@ -93,6 +94,19 @@ bool cflow_scxml_program_event(const cflow_scxml_program *program,
                                const char *name,
                                size_t name_size,
                                cflow_event_view *out_event);
+
+/**
+ * Borrow the native executable bindings compiled for this program.
+ *
+ * A structural program succeeds with a NULL view and zero count. The returned
+ * rows and their callback user pointers are invalidated by program destruction,
+ * so the program must outlive every Statechart instance configured with them.
+ * Invalid arguments return false without modifying either output.
+ */
+bool cflow_scxml_program_runtime_bindings(
+    const cflow_scxml_program *program,
+    const cflow_statechart_executable_binding **out_bindings,
+    size_t *out_count);
 
 #ifdef __cplusplus
 }
