@@ -15,6 +15,7 @@ extern "C" {
 #endif
 
 #define CFLOW_SCXML_DIAGNOSTIC_CAPACITY 256u
+#define CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V1 1u
 
 typedef enum cflow_scxml_status {
     CFLOW_SCXML_OK = 0,
@@ -49,6 +50,106 @@ typedef struct cflow_scxml_diagnostic {
 typedef struct cflow_scxml_program {
     void *impl;
 } cflow_scxml_program;
+
+typedef enum cflow_scxml_program_requirement {
+    CFLOW_SCXML_REQUIREMENT_NONE = 0u,
+    CFLOW_SCXML_REQUIREMENT_EVENT_IO = 1u << 0u,
+    CFLOW_SCXML_REQUIREMENT_DELAYED_SEND = 1u << 1u,
+    CFLOW_SCXML_REQUIREMENT_CANCEL = 1u << 2u
+} cflow_scxml_program_requirement;
+
+typedef enum cflow_scxml_event_io_capability {
+    CFLOW_SCXML_EVENT_IO_CAP_SEND = UINT64_C(1) << 0u,
+    CFLOW_SCXML_EVENT_IO_CAP_DELAYED_SEND = UINT64_C(1) << 1u,
+    CFLOW_SCXML_EVENT_IO_CAP_CANCEL = UINT64_C(1) << 2u
+} cflow_scxml_event_io_capability;
+
+typedef enum cflow_scxml_adapter_status {
+    CFLOW_SCXML_ADAPTER_ACCEPTED = 0,
+    CFLOW_SCXML_ADAPTER_ERROR_EXECUTION,
+    CFLOW_SCXML_ADAPTER_ERROR_COMMUNICATION,
+    CFLOW_SCXML_ADAPTER_FULL,
+    CFLOW_SCXML_ADAPTER_CLOSED,
+    CFLOW_SCXML_ADAPTER_INVALID_CONTRACT
+} cflow_scxml_adapter_status;
+
+typedef enum cflow_scxml_adapter_error_kind {
+    CFLOW_SCXML_ADAPTER_ERROR_KIND_EXECUTION = 1,
+    CFLOW_SCXML_ADAPTER_ERROR_KIND_COMMUNICATION
+} cflow_scxml_adapter_error_kind;
+
+/** Borrowed literal request fields valid only during one prepare callback. */
+typedef struct cflow_scxml_send_request {
+    const char *event;
+    size_t event_size;
+    const char *target;
+    size_t target_size;
+    const char *type;
+    size_t type_size;
+    const char *id;
+    size_t id_size;
+    uint64_t delay_ms;
+} cflow_scxml_send_request;
+
+typedef struct cflow_scxml_cancel_request {
+    const char *send_id;
+    size_t send_id_size;
+} cflow_scxml_cancel_request;
+
+/**
+ * Versioned Event I/O reservation table copied by session initialization.
+ *
+ * Prepare callbacks run on the session SerialExecutor. They must reserve all
+ * capacity without publishing the effect and copy every request field needed
+ * after return. ACCEPTED transfers one valid move-only ticket to the session;
+ * its commit or discard callback is invoked exactly once and must be
+ * nonblocking and infallible. Non-ACCEPTED results transfer no ticket.
+ *
+ * `close` is nonblocking and called exactly once after adapter attachment,
+ * including initialization failures. Once `is_quiescent` returns true after
+ * close, no adapter-owned callback may reach the borrowed session or user.
+ */
+typedef struct cflow_scxml_event_io_adapter_v1 {
+    uint32_t abi_version;
+    size_t struct_size;
+    uint64_t capabilities;
+    cflow_scxml_adapter_status (*prepare_send)(
+        void *user, const cflow_scxml_send_request *request,
+        cflow_statechart_effect_ticket *out_ticket,
+        const char **out_error);
+    cflow_scxml_adapter_status (*prepare_cancel)(
+        void *user, const cflow_scxml_cancel_request *request,
+        cflow_statechart_effect_ticket *out_ticket,
+        const char **out_error);
+    void (*close)(void *user);
+    bool (*is_quiescent)(void *user);
+} cflow_scxml_event_io_adapter_v1;
+
+typedef struct cflow_scxml_session_config {
+    /** Borrowed immutable program; it must outlive session destruction. */
+    const cflow_scxml_program *program;
+    cflow_executor *executor;
+    size_t external_event_capacity;
+    size_t internal_event_capacity;
+    size_t completion_capacity;
+    size_t microstep_limit;
+    size_t max_storage_bytes;
+    cflow_clock *clock;
+    size_t timer_capacity;
+    /** Maximum effect tickets staged by one rollback-capable microstep. */
+    size_t effect_capacity;
+    /** Bounded MPSC ingress for asynchronous adapter error Events. */
+    size_t adapter_internal_event_capacity;
+    /** Maximum retained delayed sends in this session. */
+    size_t delayed_send_capacity;
+    /** Ops are copied; adapter_user remains borrowed through destruction. */
+    const cflow_scxml_event_io_adapter_v1 *event_io;
+    void *adapter_user;
+} cflow_scxml_session_config;
+
+typedef struct cflow_scxml_session {
+    void *impl;
+} cflow_scxml_session;
 
 cflow_scxml_limits cflow_scxml_default_limits(void);
 
@@ -95,6 +196,10 @@ bool cflow_scxml_program_event(const cflow_scxml_program *program,
                                size_t name_size,
                                cflow_event_view *out_event);
 
+/** Copy the program's immutable execution requirements bitmask. */
+bool cflow_scxml_program_requirements(
+    const cflow_scxml_program *program, uint32_t *out_requirements);
+
 /**
  * Borrow the native executable bindings compiled for this program.
  *
@@ -121,6 +226,48 @@ bool cflow_scxml_program_guard_bindings(
     const cflow_scxml_program *program,
     const cflow_statechart_guard_binding **out_bindings,
     size_t *out_count);
+
+/**
+ * Initialize one owning mutable SCXML session over an immutable program.
+ * Required capacities and adapter capabilities are checked against the
+ * program requirements before attachment. The program, executor, and adapter
+ * user remain borrowed until successful session destruction.
+ */
+cflow_statechart_runtime_status cflow_scxml_session_init(
+    cflow_scxml_session *session,
+    const cflow_scxml_session_config *config);
+
+cflow_mailbox_status cflow_scxml_session_try_send(
+    cflow_scxml_session *session, const cflow_event_view *event);
+/**
+ * Concurrently admit one asynchronous adapter failure to the prioritized
+ * bounded internal ingress. The exact mailbox result is returned; there is no
+ * retry or external-queue fallback.
+ */
+cflow_mailbox_status cflow_scxml_session_report_adapter_error(
+    cflow_scxml_session *session,
+    cflow_scxml_adapter_error_kind kind);
+/**
+ * Release one committed delayed-send registry row. Returns true only when the
+ * named row was active in this session and this call won the completion race.
+ */
+bool cflow_scxml_session_report_send_done(
+    cflow_scxml_session *session, const char *send_id, size_t send_id_size);
+void cflow_scxml_session_close(cflow_scxml_session *session);
+void cflow_scxml_session_cancel(cflow_scxml_session *session);
+bool cflow_scxml_session_get_stats(
+    const cflow_scxml_session *session,
+    cflow_statechart_instance_stats *out);
+const char *cflow_scxml_session_error(
+    const cflow_scxml_session *session);
+
+/**
+ * Stop admission and close the adapter exactly once. Destruction returns
+ * `WOULD_BLOCK` while the adapter reports non-quiescent and preserves the
+ * owning handle for a later retry.
+ */
+cflow_statechart_runtime_status cflow_scxml_session_destroy(
+    cflow_scxml_session *session);
 
 #ifdef __cplusplus
 }

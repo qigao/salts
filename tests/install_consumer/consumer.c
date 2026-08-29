@@ -182,15 +182,25 @@ int main(void) {
   cflow_scxml_program program = {0};
   cflow_executor executor = {0};
   cflow_statechart_instance instance = {0};
+  cflow_scxml_session session = {0};
   cflow_statechart_instance_stats stats = {0};
   cflow_statechart_instance_config config;
+  cflow_scxml_session_config session_config;
   const cflow_statechart_executable_binding *bindings = NULL;
   const cflow_statechart_guard_binding *guard_bindings = NULL;
   size_t binding_count = 0u;
   size_t guard_count = 0u;
   bool executor_initialized = false;
   bool instance_initialized = false;
+  bool session_initialized = false;
+  uint32_t requirements = UINT32_MAX;
   int result = 1;
+  if (cflow_scxml_session_report_adapter_error(
+          NULL, CFLOW_SCXML_ADAPTER_ERROR_KIND_EXECUTION) !=
+          CFLOW_MAILBOX_INVALID_ARGUMENT ||
+      cflow_scxml_session_report_send_done(NULL, "none", 4u)) {
+    goto cleanup;
+  }
   cflow_scxml_status status = cflow_scxml_compile(
       &program, source, sizeof(source) - 1u, NULL, NULL);
   if (status == CFLOW_SCXML_OK &&
@@ -209,7 +219,9 @@ int main(void) {
       guard_bindings[0].fn != NULL ||
       guard_bindings[0].contextual_fn == NULL ||
       legacy.fn == NULL || legacy.contextual_fn != NULL ||
-      legacy_guard.fn == NULL || legacy_guard.contextual_fn != NULL) {
+      legacy_guard.fn == NULL || legacy_guard.contextual_fn != NULL ||
+      !cflow_scxml_program_requirements(&program, &requirements) ||
+      requirements != CFLOW_SCXML_REQUIREMENT_NONE) {
     goto cleanup;
   }
   if (!cflow_executor_serial_init(&executor)) goto cleanup;
@@ -236,9 +248,32 @@ int main(void) {
       !stats.done || stats.errored) {
     goto cleanup;
   }
+  session_config = (cflow_scxml_session_config){
+      .program = &program,
+      .executor = &executor,
+      .external_event_capacity = 2u,
+      .internal_event_capacity = 2u,
+      .completion_capacity = 2u,
+      .microstep_limit = 16u,
+      .effect_capacity = 2u};
+  if (cflow_scxml_session_init(&session, &session_config) !=
+      CFLOW_STATECHART_RUNTIME_OK) {
+    goto cleanup;
+  }
+  session_initialized = true;
+  if (!cflow_executor_wait_idle(&executor) ||
+      !cflow_scxml_session_get_stats(&session, &stats) ||
+      !stats.done || stats.errored) {
+    goto cleanup;
+  }
   result = 0;
 
 cleanup:
+  if (session_initialized &&
+      cflow_scxml_session_destroy(&session) !=
+          CFLOW_STATECHART_RUNTIME_OK) {
+    result = 1;
+  }
   if (instance_initialized &&
       cflow_statechart_instance_destroy(&instance) !=
           CFLOW_STATECHART_RUNTIME_OK) {
