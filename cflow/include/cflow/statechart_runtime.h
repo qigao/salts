@@ -61,6 +61,39 @@ typedef bool (*cflow_statechart_executable_fn)(void *user,
     cflow_statechart_raise_fn raise_internal, void *raise_user,
     const char **out_error);
 
+/**
+ * Query the action-time active configuration for one declared real state.
+ * The callback and `user` are borrowed only for the enclosing contextual
+ * executable call and must not be retained. Unknown and pseudo-state IDs are
+ * not active and return false.
+ */
+typedef bool (*cflow_statechart_is_active_fn)(void *user,
+    cflow_machine_state_id state);
+
+/** Borrowed arguments for one contextual executable callback. */
+typedef struct cflow_statechart_executable_context {
+    cflow_statechart_action_phase phase;
+    cflow_machine_state_id owner;
+    const void *state;
+    const cflow_event_view *event;
+    void *out_state;
+    cflow_statechart_raise_fn raise_internal;
+    void *raise_user;
+    /** Valid only until the contextual executable returns. */
+    cflow_statechart_is_active_fn is_active;
+    void *configuration_user;
+} cflow_statechart_executable_context;
+
+/**
+ * Execute one action with a call-scoped active-configuration query.
+ * State, Event, output, raise, error, and non-aliasing rules are identical to
+ * `cflow_statechart_executable_fn`. The context and every borrowed member are
+ * invalid after return and must not be retained.
+ */
+typedef bool (*cflow_statechart_contextual_executable_fn)(
+    void *user, const cflow_statechart_executable_context *context,
+    const char **out_error);
+
 typedef struct cflow_statechart_guard_binding {
     cflow_statechart_guard_id id;
     cflow_statechart_guard_fn fn;
@@ -71,6 +104,8 @@ typedef struct cflow_statechart_executable_binding {
     cflow_statechart_executable_id id;
     cflow_statechart_executable_fn fn;
     void *user;
+    /** Exactly one of `fn` and `contextual_fn` must be non-NULL. */
+    cflow_statechart_contextual_executable_fn contextual_fn;
 } cflow_statechart_executable_binding;
 
 typedef enum cflow_statechart_runtime_status {

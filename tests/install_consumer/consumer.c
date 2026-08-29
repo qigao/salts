@@ -137,10 +137,30 @@ int main(void) {
 #elif defined(CONSUME_CFLOW_SCXML)
 #include <cflow/scxml.h>
 
+static bool installed_legacy_action(void *user, cflow_statechart_action_phase phase,
+                                    cflow_machine_state_id owner, const void *state,
+                                    const cflow_event_view *event, void *out_state,
+                                    cflow_statechart_raise_fn raise_internal, void *raise_user,
+                                    const char **out_error) {
+  (void)user;
+  (void)phase;
+  (void)owner;
+  (void)event;
+  (void)raise_internal;
+  (void)raise_user;
+  if (state == NULL || out_state == NULL || out_error == NULL) return false;
+  *(bool *)out_state = *(const bool *)state;
+  *out_error = NULL;
+  return true;
+}
+
 int main(void) {
   static const char source[] =
       "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
-      "<final id='done'/></scxml>";
+      "<state id='active'><onentry><if cond='In(active)'/>"
+      "</onentry></state></scxml>";
+  const cflow_statechart_executable_binding legacy = {
+      1u, installed_legacy_action, NULL};
   cflow_scxml_program program = {0};
   const cflow_statechart_executable_binding *bindings = NULL;
   size_t binding_count = 0u;
@@ -152,10 +172,14 @@ int main(void) {
     cflow_scxml_program_destroy(&program);
     return 1;
   }
+  if (status != CFLOW_SCXML_OK || bindings == NULL || binding_count != 1u ||
+      bindings[0].fn != NULL || bindings[0].contextual_fn == NULL ||
+      legacy.fn == NULL || legacy.contextual_fn != NULL) {
+    cflow_scxml_program_destroy(&program);
+    return 1;
+  }
   cflow_scxml_program_destroy(&program);
-  return status == CFLOW_SCXML_OK && bindings == NULL && binding_count == 0u
-             ? 0
-             : 1;
+  return 0;
 }
 
 #elif defined(CONSUME_CFLOW_PROCESS)

@@ -140,11 +140,32 @@ typedef bool (*cflow_statechart_executable_fn)(
     cflow_statechart_raise_fn raise_internal,
     void *raise_user,
     const char **out_error);
+
+typedef bool (*cflow_statechart_is_active_fn)(
+    void *user, cflow_machine_state_id state);
+
+typedef struct cflow_statechart_executable_context {
+    cflow_statechart_action_phase phase;
+    cflow_machine_state_id owner;
+    const void *state;
+    const cflow_event_view *event;
+    void *out_state;
+    cflow_statechart_raise_fn raise_internal;
+    void *raise_user;
+    cflow_statechart_is_active_fn is_active;
+    void *configuration_user;
+} cflow_statechart_executable_context;
 ```
 
 Executable rows declare one state type and effect/property contract. State
 actions and transition actions are separate ordered reference rows. Every
-referenced executable has one exact runtime binding. The runtime admits only
+referenced executable has one exact runtime binding. A binding supplies exactly
+one legacy callback or contextual callback. Contextual callback arguments and
+the active-state query are borrowed for the callback only; the query reads a
+bounded executor-owned working configuration and never exposes or duplicates
+the published configuration. Appending the contextual callback preserves
+three-field source initializers but changes the binding row ABI size, so old
+consumers must relink. The runtime admits only
 the existing ABI-safe trivial state/Event fragment during Phase 1. Managed
 values remain a later admission extension, not a byte-copy fallback.
 
@@ -228,7 +249,16 @@ A microstep executes one selected transition set in three global phases:
    descendant-first/reverse-document order;
 2. run selected transition actions in selection order;
 3. compute effective targets, initial/history/default descendants and required
-   ancestors, then run entry actions in ancestor-first/document order.
+   ancestors, then enter in ancestor-first/document order.
+
+Callbacks observe the W3C action-time configuration through contextual
+bindings. Each exit action span runs before its owner is removed; transition
+content sees every selected exit removed; each entering state is added before
+its entry span; and selected initial/history default transition content runs
+after its owning state's entry span but before later descendant entries.
+Initial stabilization starts from an empty working configuration. The final
+staged configuration remains the only commit artifact; callback or bounded
+queue failure discards the working view with all other staged state.
 
 The build-time document-order invariant has two parts. Unique order plus
 ancestor-before-descendant makes the current ancestry/document comparators

@@ -526,6 +526,16 @@ exclusive adapter invariant has exactly one active leaf. Callback execution,
 allocation, and the legacy unhandled-Event difference remain outside that pure
 proof boundary.
 
+Native executable bindings accept exactly one callback form. The legacy
+`cflow_statechart_executable_fn` remains source-compatible. A contextual
+binding instead receives `cflow_statechart_executable_context`, whose
+`is_active(configuration_user, state_id)` query observes the incremental
+action-time configuration. The context, query function, configuration user,
+Event, and raise function are borrowed only until callback return and must not
+be retained. Appending the contextual callback changes
+`sizeof(cflow_statechart_executable_binding)`; consumers built against an older
+header must be rebuilt and relinked.
+
 The CFlow core remains format-neutral and does not parse XML. The optional
 `TurboUtils::CFlowScxml` frontend described below performs bounded SCXML Core
 admission and lowering without changing the Statechart runtime dependency
@@ -611,14 +621,22 @@ The supported compatibility subset is deliberately strict:
 - default/explicit initial transitions, shallow/deep history defaults,
   eventless transitions, exact named events, `done.state.<id>` completion
   events, and internal/external transition kinds;
-- bounded executable blocks containing only `raise event="NMTOKEN"` under
-  `onentry`, `onexit`, and ordinary/initial/history transitions. Blocks retain
-  document order and fail transactionally when the runtime internal queue is
-  full.
+- bounded executable blocks containing `raise event="NMTOKEN"` and nested
+  `if`/`elseif`/`else` partitions under `onentry`, `onexit`, and
+  ordinary/initial/history transitions. The null-model condition grammar is
+  exactly `In(id)` with optional XML whitespace around tokens; `id` must name a
+  declared real state. Only the first matching partition executes, empty
+  partitions are legal, document order is retained, and raise failure rolls
+  the whole microstep back transactionally;
+- compile-time rejection of malformed, quoted, unknown, or pseudo-state
+  `In(id)` arguments. Null-model system variables remain inaccessible, and
+  transition `cond` remains unsupported because it belongs to selection rather
+  than executable-content evaluation.
 
-Conditions, executable elements other than `raise`, wildcard event descriptors,
-multiple targets, non-null data models, and other SCXML elements fail during
-compilation with the first byte offset and one-based line/column diagnostic.
+Executable elements other than `raise` and conditional partitions, transition
+conditions, wildcard event descriptors, multiple targets, non-null data
+models, and other SCXML elements fail during compilation with the first byte
+offset and one-based line/column diagnostic.
 There is no fallback or silent feature removal. Configurable hard limits cover
 XML input, depth, nodes, attributes, retained strings, states, events,
 transitions, action references, and retained name bytes; a failed compile

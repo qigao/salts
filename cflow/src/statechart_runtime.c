@@ -55,6 +55,7 @@ typedef struct cflow_statechart_instance_impl {
     cflow_machine_state_id *timer_exit_scopes;
     size_t *entry_order;
     size_t *pseudo_transition_order;
+    size_t *pseudo_transition_by_state;
     cflow_statechart_transition_id *selected_transition_ids;
     size_t *selected_transition_indices;
     size_t *selected_sources;
@@ -80,6 +81,7 @@ typedef struct cflow_statechart_instance_impl {
     unsigned char *request_event_payload;
     unsigned char *exit_union;
     unsigned char *entry_bits;
+    unsigned char *action_configuration_bits;
     unsigned char *action_scratch;
     statechart_internal_event_slot *staged_event_slots;
     unsigned char *staged_event_payloads;
@@ -317,7 +319,7 @@ static cflow_statechart_runtime_status calculate_storage_requirements(
                           &requirements.history_count_bytes) ||
         !checked_multiply(ir->state_type->size, 2u,
                           &requirements.extended_state_bytes) ||
-        !checked_multiply(state_index_bytes, 10u,
+        !checked_multiply(state_index_bytes, 11u,
                           &requirements.index_work_bytes) ||
         !checked_accumulate(timer_scope_bytes,
                             &requirements.index_work_bytes) ||
@@ -326,6 +328,8 @@ static cflow_statechart_runtime_status calculate_storage_requirements(
         !checked_accumulate(selection_exit_bytes,
                             &requirements.index_work_bytes) ||
         !checked_accumulate(selection_exit_bytes,
+                            &requirements.index_work_bytes) ||
+        !checked_accumulate(bitset_bytes,
                             &requirements.index_work_bytes) ||
         !checked_accumulate(bitset_bytes,
                             &requirements.index_work_bytes) ||
@@ -485,6 +489,7 @@ static void instance_impl_free(cflow_statechart_instance_impl *impl) {
     free(impl->completion_work);
     free(impl->staged_completion_rows);
     free(impl->action_scratch);
+    free(impl->action_configuration_bits);
     free(impl->entry_bits);
     free(impl->exit_union);
     free(impl->selection_event_payload);
@@ -502,6 +507,7 @@ static void instance_impl_free(cflow_statechart_instance_impl *impl) {
     free(impl->path_stack);
     free(impl->entry_stack);
     free(impl->pseudo_transition_order);
+    free(impl->pseudo_transition_by_state);
     free(impl->entry_order);
     free(impl->exit_order);
     free(impl->timer_exit_scopes);
@@ -593,7 +599,8 @@ static cflow_statechart_runtime_status copy_bindings(
         for (index = 0u; index < config->executable_count; ++index) {
             if (impl->executables[index].id !=
                     impl->ir->executables[index].id ||
-                impl->executables[index].fn == NULL)
+                (impl->executables[index].fn == NULL) ==
+                    (impl->executables[index].contextual_fn == NULL))
                 return CFLOW_STATECHART_RUNTIME_BINDING_MISMATCH;
         }
     }
@@ -762,6 +769,7 @@ static cflow_statechart_runtime_status allocate_storage(
         (cflow_machine_state_id *)malloc(timer_scope_bytes);
     impl->entry_order = (size_t *)malloc(state_bytes);
     impl->pseudo_transition_order = (size_t *)malloc(state_bytes);
+    impl->pseudo_transition_by_state = (size_t *)malloc(state_bytes);
     impl->selected_transition_ids =
         (cflow_statechart_transition_id *)malloc(transition_id_bytes);
     impl->selected_transition_indices = (size_t *)malloc(state_bytes);
@@ -776,6 +784,8 @@ static cflow_statechart_runtime_status allocate_storage(
         (unsigned char *)calloc(1u, selected_exit_bytes);
     impl->exit_union = (unsigned char *)calloc(1u, impl->bitset_bytes);
     impl->entry_bits = (unsigned char *)calloc(1u, impl->bitset_bytes);
+    impl->action_configuration_bits =
+        (unsigned char *)calloc(1u, impl->bitset_bytes);
     impl->action_scratch = (unsigned char *)malloc(
         requirements->action_scratch_bytes);
     impl->completion_rows = (size_t *)malloc(
@@ -834,13 +844,16 @@ static cflow_statechart_runtime_status allocate_storage(
         impl->path_stack == NULL || impl->exit_order == NULL ||
         impl->timer_exit_scopes == NULL ||
         impl->entry_order == NULL || impl->pseudo_transition_order == NULL ||
+        impl->pseudo_transition_by_state == NULL ||
         impl->selected_transition_ids == NULL ||
         impl->selected_transition_indices == NULL ||
         impl->selected_sources == NULL || impl->selected_leaf_orders == NULL ||
         impl->selected_exit_sets == NULL || impl->candidate_exit_set == NULL ||
         impl->request_transition_indices == NULL ||
         impl->request_exit_sets == NULL || impl->exit_union == NULL ||
-        impl->entry_bits == NULL || impl->action_scratch == NULL ||
+        impl->entry_bits == NULL ||
+        impl->action_configuration_bits == NULL ||
+        impl->action_scratch == NULL ||
         impl->completion_rows == NULL ||
         impl->staged_completion_rows == NULL ||
         impl->completion_work == NULL ||
@@ -921,6 +934,8 @@ static cflow_statechart_runtime_status build_initial_configuration(
     cflow_statechart_configuration_status configuration_status;
     memset(configuration->bits, 0, impl->bitset_bytes);
     configuration->state_count = 0u;
+    for (index = 0u; index < impl->ir->state_count; ++index)
+        impl->pseudo_transition_by_state[index] = SIZE_MAX;
     if (!activate_state(impl, configuration, impl->ir->root, &stack_count))
         return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
 
@@ -943,11 +958,17 @@ static cflow_statechart_runtime_status build_initial_configuration(
             }
             if (active_child_count > 1u || initial == SIZE_MAX)
                 return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
-            if (active_child_count == 0u &&
-                !activate_target_path(
-                    impl, configuration, state,
-                    impl->ir->default_target_indices[initial], &stack_count))
-                return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+            if (active_child_count == 0u) {
+                const size_t transition =
+                    impl->ir->default_transition_indices[initial];
+                if (transition == SIZE_MAX ||
+                    impl->pseudo_transition_by_state[state] != SIZE_MAX ||
+                    !activate_target_path(
+                        impl, configuration, state,
+                        impl->ir->default_target_indices[initial], &stack_count))
+                    return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+                impl->pseudo_transition_by_state[state] = transition;
+            }
         } else if (kind == CFLOW_STATECHART_PARALLEL) {
             for (child = impl->ir->child_offsets[state];
                  child < impl->ir->child_offsets[state + 1u]; ++child) {
@@ -1602,10 +1623,25 @@ typedef struct statechart_action_context {
     const cflow_event_view *event;
     unsigned char *current_state;
     unsigned char *next_state;
+    unsigned char *configuration_bits;
     size_t invoked;
     cflow_statechart_runtime_status raise_status;
     const char *raise_error;
 } statechart_action_context;
+
+static bool action_configuration_is_active(
+    void *user, cflow_machine_state_id state) {
+    const statechart_action_context *context =
+        (const statechart_action_context *)user;
+    const cflow_statechart_instance_impl *impl =
+        context != NULL ? context->impl : NULL;
+    size_t state_index;
+    if (impl == NULL || context->configuration_bits == NULL) return false;
+    state_index = find_state_index(impl->ir, state);
+    return state_index != SIZE_MAX &&
+           !pseudo_kind(impl->ir->states[state_index].kind) &&
+           bit_test(context->configuration_bits, state_index);
+}
 
 static bool stage_internal_event(void *user, const cflow_event_view *event,
                                  const char **out_error) {
@@ -1687,9 +1723,24 @@ static cflow_statechart_runtime_status invoke_executable(
     }
     context->raise_status = CFLOW_STATECHART_RUNTIME_OK;
     context->raise_error = NULL;
-    succeeded = binding->fn(
-        binding->user, phase, owner, context->current_state, context->event,
-        context->next_state, stage_internal_event, context, &callback_error);
+    if (binding->contextual_fn != NULL) {
+        const cflow_statechart_executable_context executable_context = {
+            phase,
+            owner,
+            context->current_state,
+            context->event,
+            context->next_state,
+            stage_internal_event,
+            context,
+            action_configuration_is_active,
+            context};
+        succeeded = binding->contextual_fn(
+            binding->user, &executable_context, &callback_error);
+    } else {
+        succeeded = binding->fn(
+            binding->user, phase, owner, context->current_state, context->event,
+            context->next_state, stage_internal_event, context, &callback_error);
+    }
     ++context->invoked;
     if (context->raise_status != CFLOW_STATECHART_RUNTIME_OK) {
         if (out_error != NULL) *out_error = context->raise_error;
@@ -1863,10 +1914,20 @@ static bool collect_pseudo_transition(cflow_statechart_instance_impl *impl,
                                       size_t pseudo,
                                       size_t *pseudo_count) {
     const size_t transition = impl->ir->default_transition_indices[pseudo];
-    if (transition == SIZE_MAX || *pseudo_count >= impl->ir->state_count)
+    const size_t owner = impl->ir->parents[pseudo];
+    if (transition == SIZE_MAX || owner == SIZE_MAX ||
+        *pseudo_count >= impl->ir->state_count ||
+        impl->pseudo_transition_by_state[owner] != SIZE_MAX)
         return false;
+    impl->pseudo_transition_by_state[owner] = transition;
     impl->pseudo_transition_order[(*pseudo_count)++] = transition;
     return true;
+}
+
+static void reset_pseudo_transition_map(cflow_statechart_instance_impl *impl) {
+    size_t state;
+    for (state = 0u; state < impl->ir->state_count; ++state)
+        impl->pseudo_transition_by_state[state] = SIZE_MAX;
 }
 
 static bool enter_default_descendants(
@@ -1954,6 +2015,7 @@ static bool build_target_configuration(
         &impl->configurations[staged];
     size_t transition, stack_count = 0u, pseudo_count = 0u, index;
     memset(impl->entry_bits, 0, impl->bitset_bytes);
+    reset_pseudo_transition_map(impl);
     for (index = 0u; index < impl->ir->state_count; ++index) {
         if (bit_test(impl->exit_union, index))
             bit_clear(configuration->bits, index);
@@ -2037,6 +2099,25 @@ static cflow_statechart_runtime_status run_transition_action_span(
         if (status != CFLOW_STATECHART_RUNTIME_OK) return status;
     }
     return CFLOW_STATECHART_RUNTIME_OK;
+}
+
+static cflow_statechart_runtime_status
+run_pseudo_transition_action(
+    statechart_action_context *context, size_t transition,
+    const char **out_error) {
+    cflow_statechart_instance_impl *impl = context->impl;
+    const size_t source = find_state_index(
+        impl->ir, impl->ir->transitions[transition].source);
+    cflow_statechart_action_phase phase;
+    if (source == SIZE_MAX) {
+        if (out_error != NULL)
+            *out_error = "Statechart pseudo transition source is invalid";
+        return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+    }
+    phase = impl->ir->states[source].kind == CFLOW_STATECHART_INITIAL
+        ? CFLOW_STATECHART_ACTION_INITIAL
+        : CFLOW_STATECHART_ACTION_HISTORY;
+    return run_transition_action_span(context, transition, phase, out_error);
 }
 
 static bool configuration_state_complete(
@@ -2157,45 +2238,36 @@ static cflow_statechart_runtime_status execute_initial_entry_actions(
     const statechart_configuration_buffer *configuration =
         &impl->configurations[staged];
     statechart_action_context context = {
-        impl, NULL, impl->extended_states[staged], impl->action_scratch, 0u,
-        CFLOW_STATECHART_RUNTIME_OK, NULL};
+        .impl = impl,
+        .event = NULL,
+        .current_state = impl->extended_states[staged],
+        .next_state = impl->action_scratch,
+        .configuration_bits = impl->action_configuration_bits,
+        .raise_status = CFLOW_STATECHART_RUNTIME_OK};
     const char *error = NULL;
     cflow_statechart_runtime_status status;
-    size_t position, initial_count = 0u;
+    size_t position;
     impl->staged_event_count = 0u;
     impl->staged_completion_count = 0u;
+    memset(impl->action_configuration_bits, 0, impl->bitset_bytes);
     for (position = 0u; position < configuration->state_count; ++position)
         impl->entry_order[position] = configuration->states[position];
     stable_order_states(
         impl->ir, impl->entry_order, configuration->state_count,
         entry_before);
     for (position = 0u; position < configuration->state_count; ++position) {
-        const size_t state = configuration->states[position];
-        size_t child;
-        if (impl->ir->states[state].kind != CFLOW_STATECHART_COMPOUND)
-            continue;
-        for (child = impl->ir->child_offsets[state];
-             child < impl->ir->child_offsets[state + 1u]; ++child) {
-            const size_t initial = impl->ir->children[child];
-            if (impl->ir->states[initial].kind ==
-                    CFLOW_STATECHART_INITIAL) {
-                impl->pseudo_transition_order[initial_count++] =
-                    impl->ir->default_transition_indices[initial];
-                break;
-            }
-        }
-    }
-    for (position = 0u; position < initial_count; ++position) {
-        status = run_transition_action_span(
-            &context, impl->pseudo_transition_order[position],
-            CFLOW_STATECHART_ACTION_INITIAL, &error);
-        if (status != CFLOW_STATECHART_RUNTIME_OK) goto fail;
-    }
-    for (position = 0u; position < configuration->state_count; ++position) {
+        const size_t state = impl->entry_order[position];
+        const size_t transition = impl->pseudo_transition_by_state[state];
+        bit_set(impl->action_configuration_bits, state);
         status = run_state_action_span(
-            &context, impl->entry_order[position],
+            &context, state,
             CFLOW_STATECHART_STATE_ACTION_ENTRY, &error);
         if (status != CFLOW_STATECHART_RUNTIME_OK) goto fail;
+        if (transition != SIZE_MAX) {
+            status = run_pseudo_transition_action(
+                &context, transition, &error);
+            if (status != CFLOW_STATECHART_RUNTIME_OK) goto fail;
+        }
     }
     status = stage_completions(impl, staged);
     if (status != CFLOW_STATECHART_RUNTIME_OK) {
@@ -2238,20 +2310,26 @@ static cflow_statechart_runtime_status execute_microstep(
     copy_staging_buffers(impl, staged);
     compute_exit_union(impl, &exit_count);
     save_affected_history(impl, staged);
+    memcpy(impl->action_configuration_bits,
+           impl->configurations[impl->published].bits, impl->bitset_bytes);
     context = (statechart_action_context){
-        impl,
-        impl->request_trigger.kind == CFLOW_STATECHART_TRIGGER_EVENT
+        .impl = impl,
+        .event = impl->request_trigger.kind == CFLOW_STATECHART_TRIGGER_EVENT
             ? &impl->request_event : NULL,
-        impl->extended_states[staged], impl->action_scratch, 0u,
-        CFLOW_STATECHART_RUNTIME_OK, NULL};
+        .current_state = impl->extended_states[staged],
+        .next_state = impl->action_scratch,
+        .configuration_bits = impl->action_configuration_bits,
+        .raise_status = CFLOW_STATECHART_RUNTIME_OK};
     for (position = 0u; position < exit_count; ++position) {
+        const size_t state = impl->exit_order[position];
         status = run_state_action_span(
-            &context, impl->exit_order[position],
+            &context, state,
             CFLOW_STATECHART_STATE_ACTION_EXIT, &error);
         if (status != CFLOW_STATECHART_RUNTIME_OK) {
             microstep_fail(impl, status, error);
             return status;
         }
+        bit_clear(impl->action_configuration_bits, state);
     }
     for (position = 0u; position < impl->request_transition_count; ++position) {
         status = run_transition_action_span(
@@ -2271,26 +2349,36 @@ static cflow_statechart_runtime_status execute_microstep(
     }
     for (position = 0u; position < pseudo_count; ++position) {
         const size_t transition = impl->pseudo_transition_order[position];
-        const size_t source = find_state_index(
+        const size_t pseudo = find_state_index(
             impl->ir, impl->ir->transitions[transition].source);
-        const cflow_statechart_action_phase phase =
-            impl->ir->states[source].kind == CFLOW_STATECHART_INITIAL
-                ? CFLOW_STATECHART_ACTION_INITIAL
-                : CFLOW_STATECHART_ACTION_HISTORY;
-        status = run_transition_action_span(
-            &context, transition, phase, &error);
+        const size_t owner = pseudo != SIZE_MAX
+            ? impl->ir->parents[pseudo] : SIZE_MAX;
+        if (owner != SIZE_MAX && bit_test(impl->entry_bits, owner)) continue;
+        status = run_pseudo_transition_action(
+            &context, transition, &error);
         if (status != CFLOW_STATECHART_RUNTIME_OK) {
             microstep_fail(impl, status, error);
             return status;
         }
     }
     for (position = 0u; position < entry_count; ++position) {
+        const size_t state = impl->entry_order[position];
+        const size_t transition = impl->pseudo_transition_by_state[state];
+        bit_set(impl->action_configuration_bits, state);
         status = run_state_action_span(
-            &context, impl->entry_order[position],
+            &context, state,
             CFLOW_STATECHART_STATE_ACTION_ENTRY, &error);
         if (status != CFLOW_STATECHART_RUNTIME_OK) {
             microstep_fail(impl, status, error);
             return status;
+        }
+        if (transition != SIZE_MAX) {
+            status = run_pseudo_transition_action(
+                &context, transition, &error);
+            if (status != CFLOW_STATECHART_RUNTIME_OK) {
+                microstep_fail(impl, status, error);
+                return status;
+            }
         }
     }
     for (position = 0u; position < impl->ir->state_count; ++position) {
